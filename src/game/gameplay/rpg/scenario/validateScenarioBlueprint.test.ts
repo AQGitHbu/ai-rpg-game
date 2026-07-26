@@ -258,6 +258,46 @@ describe("validateScenarioBlueprintCandidate：引用完整", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 4b. 结局要求合法性（闭合 kind 联合 + 载荷 id 防御）
+// ---------------------------------------------------------------------------
+
+describe("validateScenarioBlueprintCandidate：结局要求合法性", () => {
+  it("未知的 requirement kind 拒绝", () => {
+    const candidate = draft();
+    (candidate.endings[0].requirements[0] as { kind: string }).kind = "bogus";
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "endings[0].requirements[0]",
+      code: "INVALID_ENDING_REQUIREMENT",
+      params: { kind: "bogus" }
+    });
+  });
+
+  it("quest_completed 缺少 questId 时拒绝（不落入悬空引用检查）", () => {
+    const candidate = draft();
+    delete (candidate.endings[0].requirements[0] as { questId?: string }).questId;
+    const issues = issuesOf(candidate);
+    expect(issues).toContainEqual({
+      path: "endings[0].requirements[0]",
+      code: "INVALID_ENDING_REQUIREMENT",
+      params: { kind: "quest_completed", reason: "missing_quest_id" }
+    });
+    expect(issues.filter((issue) => issue.code === "DANGLING_REFERENCE")).toEqual([]);
+  });
+
+  it("fact_discovered 的 factId 非字符串时拒绝（不落入悬空引用检查）", () => {
+    const candidate = draft();
+    (candidate.endings[1].requirements[0] as { factId: unknown }).factId = 42;
+    const issues = issuesOf(candidate);
+    expect(issues).toContainEqual({
+      path: "endings[1].requirements[0]",
+      code: "INVALID_ENDING_REQUIREMENT",
+      params: { kind: "fact_discovered", reason: "missing_fact_id" }
+    });
+    expect(issues.filter((issue) => issue.code === "DANGLING_REFERENCE")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 5. 开场场景
 // ---------------------------------------------------------------------------
 

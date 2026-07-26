@@ -43,6 +43,7 @@ export type ScenarioBlueprintIssueCode =
   | "COMPANION_OVERBUDGET"
   | "DUPLICATE_GLOBAL_ID"
   | "DANGLING_REFERENCE"
+  | "INVALID_ENDING_REQUIREMENT"
   | "OPENING_SCENE_HIDDEN_LOCATION"
   | "OPENING_NPC_NOT_AT_LOCATION"
   | "FORBIDDEN_TAG"
@@ -248,9 +249,33 @@ function validateReferences(
     (ending.requirements ?? []).forEach((requirement, reqIndex) => {
       const path = `endings[${index}].requirements[${reqIndex}]`;
       if (requirement.kind === "quest_completed") {
+        // 载荷 id 缺失/非字符串时在此拒绝，不落入悬空引用检查（params 契约只允许 string|number）。
+        if (typeof requirement.questId !== "string" || requirement.questId.trim() === "") {
+          issues.push({
+            path,
+            code: "INVALID_ENDING_REQUIREMENT",
+            params: { kind: requirement.kind, reason: "missing_quest_id" }
+          });
+          return;
+        }
         check(`${path}.questId`, "quest", requirement.questId, questIds);
       } else if (requirement.kind === "fact_discovered") {
+        if (typeof requirement.factId !== "string" || requirement.factId.trim() === "") {
+          issues.push({
+            path,
+            code: "INVALID_ENDING_REQUIREMENT",
+            params: { kind: requirement.kind, reason: "missing_fact_id" }
+          });
+          return;
+        }
         check(`${path}.factId`, "fact", requirement.factId, factIds);
+      } else {
+        // 未知 kind：候选来自 JSON，闭合联合之外的值必须显式拒绝，防止带病编译冻结。
+        issues.push({
+          path,
+          code: "INVALID_ENDING_REQUIREMENT",
+          params: { kind: String((requirement as { kind?: unknown }).kind ?? "") }
+        });
       }
     });
   });
