@@ -12,7 +12,7 @@ import scienceFictionFixture from "../../../../../data/fixtures/phase1/science_f
 import urbanFixture from "../../../../../data/fixtures/phase1/urban.json";
 import { compileScenarioBlueprint, initializeGameState } from "./compileScenarioBlueprint";
 import { createFallbackBlueprint, FALLBACK_TEMPLATE_VERSION } from "./createFallbackBlueprint";
-import { loadScenarioProfiles } from "./gameTypeProfiles";
+import { loadScenarioProfiles, type ScenarioProfiles } from "./gameTypeProfiles";
 import { createFallbackBlueprint as createFallbackBlueprintViaFacade } from "./index";
 import { analyzeQuestReachability } from "./questGraph";
 import {
@@ -152,6 +152,24 @@ describe("createFallbackBlueprint：inputDigest 覆盖全部影响字段", () =>
     const b = generate({}, "seed-repeat");
     expect(a.inputDigest).toBe(b.inputDigest);
     expect(a.generationId).toBe(b.generationId);
+  });
+
+  it("注入 profile 的 allowedTags 变化会翻转 digest 与 generationId", () => {
+    const input = buildInput();
+    const base = createFallbackBlueprint(input, "seed-profile", { profiles: PROFILES });
+    const mutated: ScenarioProfiles = {
+      ...PROFILES,
+      gameTypeProfiles: {
+        ...PROFILES.gameTypeProfiles,
+        wuxia: {
+          ...PROFILES.gameTypeProfiles.wuxia,
+          allowedTags: [...PROFILES.gameTypeProfiles.wuxia.allowedTags, "注入新标签"]
+        }
+      }
+    };
+    const changed = createFallbackBlueprint(input, "seed-profile", { profiles: mutated });
+    expect(changed.inputDigest).not.toBe(base.inputDigest);
+    expect(changed.generationId).not.toBe(base.generationId);
   });
 });
 
@@ -297,12 +315,13 @@ describe("createFallbackBlueprint：输入来源标记（provenance）", () => {
     expect(candidate.openingScene.narration).toContain("【玩家输入】");
   });
 
-  it("主线冲突描述携带玩家姓名与世界观痕迹", () => {
+  it("主线冲突描述携带玩家姓名、世界观痕迹与来源标记", () => {
     const stageOne = candidate.quests.find(
       (entry) => entry.kind === "main" && entry.stage === 1
     );
     expect(stageOne?.description).toContain(input.characterName);
     expect(stageOne?.description).toContain(input.worldPremise);
+    expect(stageOne?.description).toContain("【玩家输入】");
   });
 });
 

@@ -19,8 +19,9 @@ import { loadScenarioProfiles, type GameTypeProfile, type ScenarioProfiles } fro
 // 设计约束（见 plan / brief）：
 //   - 随机源只能显式来自 `seed` 参数：本文件内实现 FNV-1a 字符串哈希 +
 //     mulberry32 PRNG，全程无 Math.random / Date / 网络 / AI。
-//   - `inputDigest` 覆盖影响蓝图的全部输入 + seed + templateVersion；任一字段
-//     变化都会改变 digest；`generationId` 由 digest+seed 派生，无 uuid/time。
+//   - `inputDigest` 覆盖影响蓝图的全部输入 + seed + templateVersion + 解析后
+//     profile 的 allowedTags（tags 派生来源）；任一字段变化都会改变 digest；
+//     `generationId` 由 digest+seed 派生，无 uuid/time。
 //   - 内容配额固定：4 主要地点 + 1 隐藏地点、4–6 核心 NPC、三阶段主线各一、
 //     1–2 短支线、3 普通敌人 + 1 Boss、2 个可达结局。
 //   - 输入来源标记：世界摘要 / 玩家身份 / 开场叙事 / 主线冲突中嵌入玩家输入，
@@ -34,7 +35,7 @@ import { loadScenarioProfiles, type GameTypeProfile, type ScenarioProfiles } fro
 /** fallback 模板版本；纳入 inputDigest，模板演进时提升。 */
 export const FALLBACK_TEMPLATE_VERSION = "fallback-1";
 
-/** 玩家输入来源标记：出现在世界摘要 / 身份 / 开场 / 事实文本中，便于追溯。 */
+/** 玩家输入来源标记：出现在世界摘要 / 身份 / 开场 / 主线冲突 / 事实文本中，便于追溯。 */
 const PLAYER_INPUT_MARK = "【玩家输入】";
 
 // ---------------------------------------------------------------------------
@@ -431,7 +432,7 @@ export function createFallbackBlueprint(
   const profile = profiles.gameTypeProfiles[input.gameType];
   const template = TEMPLATES[input.gameType];
 
-  const inputDigest = computeInputDigest(input, seed);
+  const inputDigest = computeInputDigest(input, seed, profile);
   const generationId = `gen-${hashHex(`${inputDigest}|${seed}`)}`;
 
   // 全部随机选择均来自 seed（不掺入 input），保证“随机源只来自 seed”。
@@ -470,12 +471,18 @@ export function createFallbackBlueprint(
 }
 
 // ---------------------------------------------------------------------------
-// inputDigest：覆盖影响蓝图的全部输入 + seed + templateVersion。
+// inputDigest：覆盖影响蓝图的全部输入 + seed + templateVersion + profile 内容。
 // ---------------------------------------------------------------------------
 
-function computeInputDigest(input: ValidatedNewGameInput, seed: string): string {
+function computeInputDigest(
+  input: ValidatedNewGameInput,
+  seed: string,
+  profile: GameTypeProfile
+): string {
   // 固定 key 顺序的规范化序列化；undefined 的 characterProfile 归一为 null，
   // 与“有 profile”明确区分。personalityTags 保留规范化后的顺序。
+  // profileAllowedTags：解析后 profile 中影响蓝图的内容（全部 tags 由它派生），
+  // 无论来自注入还是默认配置，内容漂移必然翻转 digest（fixture pin 会显式报错）。
   const source = JSON.stringify({
     gameType: input.gameType,
     characterName: input.characterName,
@@ -487,7 +494,8 @@ function computeInputDigest(input: ValidatedNewGameInput, seed: string): string 
     narrativeStyle: input.narrativeStyle,
     contentIntensity: input.contentIntensity,
     seed,
-    templateVersion: FALLBACK_TEMPLATE_VERSION
+    templateVersion: FALLBACK_TEMPLATE_VERSION,
+    profileAllowedTags: profile.allowedTags
   });
   return hashHex(source);
 }
@@ -583,7 +591,7 @@ function buildNpcs(
       locationId: npcLocationId(i),
       isCompanion,
       knownFactIds,
-      tags: []
+      tags: [pickTag(profile, i)]
     });
   }
   return npcs;
@@ -659,8 +667,8 @@ function buildQuests(
       stage: 1,
       id: QUEST_MAIN_IDS[0],
       name: template.mainQuests[0].name,
-      // 主线冲突描述嵌入玩家姓名与世界观（provenance 标记）。
-      description: `${input.characterName}${template.mainQuests[0].description}线索指向：${input.worldPremise}`,
+      // 主线冲突描述嵌入玩家姓名与世界观，带来源标记（provenance）。
+      description: `${input.characterName}${template.mainQuests[0].description}线索指向：${PLAYER_INPUT_MARK}${input.worldPremise}`,
       objectives: [{ kind: "visit_location", locationId: "loc_2" }],
       onSuccess: { kind: "unlock_quests", questIds: [QUEST_MAIN_IDS[1], ...sideIds] },
       onFailure: { kind: "closed" },
@@ -733,7 +741,7 @@ function buildPlayer(
   input: ValidatedNewGameInput,
   template: TypeTemplate
 ): ScenarioBlueprintCandidate["player"] {
-  const profileText = input.characterProfile !== undefined ? `${input.characterProfile}` : "";
+  const profileText = input.characterProfile !== undefined ? input.characterProfile : "";
   return {
     name: input.characterName,
     identity: input.characterIdentity,

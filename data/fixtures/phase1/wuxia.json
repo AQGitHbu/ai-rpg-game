@@ -14,8 +14,8 @@
   "seed": "phase1-wuxia-001",
   "expected": {
     "templateVersion": "fallback-1",
-    "inputDigest": "7b6829c1a4a91a85",
-    "generationId": "gen-2c9a0f14be41ee16",
+    "inputDigest": "be7511da759ab4ca",
+    "generationId": "gen-f2e34dbc3cdc03fa",
     "locationIds": ["loc_1", "loc_2", "loc_3", "loc_4", "loc_hidden"],
     "questIds": ["quest_m1", "quest_m2", "quest_m3", "quest_s1", "quest_s2"],
     "endingIds": ["ending_1", "ending_2"],
