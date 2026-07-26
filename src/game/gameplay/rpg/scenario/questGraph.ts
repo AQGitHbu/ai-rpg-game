@@ -31,6 +31,7 @@ export type QuestGraphIssueCode =
   | "INVALID_OUTCOME"
   | "NO_INITIAL_MAIN_QUEST"
   | "MULTIPLE_INITIAL_MAIN_QUESTS"
+  | "MISSING_MAIN_STAGE"
   | "LOOP_WITHOUT_CLOSURE"
   | "UNREACHABLE_ENDING"
   | "ENDING_COUNT_MISMATCH"
@@ -219,6 +220,11 @@ function validateOutcome(
     return;
   }
   if (outcome?.kind === "unlock_quests" && Array.isArray(outcome.questIds)) {
+    if (outcome.questIds.length === 0) {
+      // 空解锁列表 = 无出边的死局：不构成自环，SCC 闭环检查不会命中，必须在此拒绝。
+      issues.push({ path, code: "INVALID_OUTCOME", params: { questId: quest.id, reason: "empty_unlock_list" } });
+      return;
+    }
     outcome.questIds.forEach((questId, index) => {
       if (!questIds.has(questId)) {
         issues.push({
@@ -266,6 +272,10 @@ function validateStructure(
   }
   for (const stage of [1, 2, 3]) {
     const count = stageCounts.get(stage) ?? 0;
+    // 主线固定三阶段：stage 2、3 缺失单独报告（stage 1 缺失已由 NO_INITIAL_MAIN_QUEST 覆盖）。
+    if (count === 0 && stage !== 1) {
+      issues.push({ path: "quests", code: "MISSING_MAIN_STAGE", params: { stage } });
+    }
     if (count > 1) {
       issues.push({ path: "quests", code: "MAIN_STAGE_OVERBUDGET", params: { stage, count } });
     }

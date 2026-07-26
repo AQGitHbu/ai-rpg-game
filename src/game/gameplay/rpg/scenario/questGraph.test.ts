@@ -219,6 +219,17 @@ describe("validateQuestGraph：节点关闭路径（运行时防御）", () => {
     } as unknown as QuestDefinitionCandidate;
     expect(codesOf(issuesOf(quests))).toContain("INVALID_OUTCOME");
   });
+
+  it("unlock_quests 列表为空时拒绝（无出边的死局）", () => {
+    const quests = makeQuests();
+    quests[3] = sideQuest({ id: "s1", onSuccess: unlock() });
+    const issues = issuesOf(quests);
+    expect(issues).toContainEqual({
+      path: "quests[3].onSuccess",
+      code: "INVALID_OUTCOME",
+      params: { questId: "s1", reason: "empty_unlock_list" }
+    });
+  });
 });
 
 describe("validateQuestGraph：无限循环且无可达关闭", () => {
@@ -314,6 +325,29 @@ describe("validateQuestGraph：主线阶段与支线预算", () => {
       code: "SIDE_QUEST_OVERBUDGET",
       params: { count: 3, max: 2 }
     });
+  });
+
+  it("主线缺少 stage 3 时拒绝", () => {
+    const quests = [
+      mainQuest(1, { id: "m1", onSuccess: unlock("m2", "s1") }),
+      mainQuest(2, { id: "m2", onSuccess: ending("e1"), onFailure: ending("e2") }),
+      sideQuest({ id: "s1" })
+    ];
+    const issues = issuesOf(quests);
+    expect(issues).toContainEqual({
+      path: "quests",
+      code: "MISSING_MAIN_STAGE",
+      params: { stage: 3 }
+    });
+  });
+
+  it("单个 stage 1 主线直达两个结局也拒绝（主线必须三阶段）", () => {
+    const quests = [mainQuest(1, { id: "m1", onSuccess: ending("e1"), onFailure: ending("e2") })];
+    const issues = issuesOf(quests);
+    expect(issues).toEqual([
+      { path: "quests", code: "MISSING_MAIN_STAGE", params: { stage: 2 } },
+      { path: "quests", code: "MISSING_MAIN_STAGE", params: { stage: 3 } }
+    ]);
   });
 });
 
