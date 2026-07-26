@@ -1,0 +1,26 @@
+{
+  "$comment": "回归 pin fixture：expected 中的值由 createFallbackBlueprint 实现在确定性验证通过后运行一次固定（regression pin），只存摘要与关键 ID，不存完整文案。",
+  "input": {
+    "gameType": "urban",
+    "characterName": "林之遥",
+    "characterIdentity": "财经记者",
+    "characterProfile": "跑了五年财经口，写过两篇让上市公司股价跳水的深度报道。",
+    "personalityTags": ["执拗", "敏锐"],
+    "worldPremise": "滨江金融城连环并购案背后，一笔离奇消失的资金牵动着各方神经。",
+    "storyOpening": "深夜的编辑部只剩一盏灯，主角收到一封匿名邮件，附件是半份审计底稿。",
+    "narrativeStyle": "concise",
+    "contentIntensity": "normal"
+  },
+  "seed": "phase1-urban-001",
+  "expected": {
+    "templateVersion": "fallback-1",
+    "inputDigest": "e4be14430176b333",
+    "generationId": "gen-f41cd58f9f68af33",
+    "locationIds": ["loc_1", "loc_2", "loc_3", "loc_4", "loc_hidden"],
+    "questIds": ["quest_m1", "quest_m2", "quest_m3", "quest_s1", "quest_s2"],
+    "endingIds": ["ending_1", "ending_2"],
+    "npcCount": 4,
+    "normalEnemyCount": 3,
+    "bossEnemyId": "enemy_boss"
+  }
+}

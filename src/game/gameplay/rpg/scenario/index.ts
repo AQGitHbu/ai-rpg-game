@@ -33,3 +33,4 @@ export {
   initializeGameState,
   type CompileScenarioBlueprintResult
 } from "./compileScenarioBlueprint";
+export { createFallbackBlueprint } from "./createFallbackBlueprint";

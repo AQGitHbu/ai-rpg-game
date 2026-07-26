@@ -1,0 +1,26 @@
+{
+  "$comment": "回归 pin fixture：expected 中的值由 createFallbackBlueprint 实现在确定性验证通过后运行一次固定（regression pin），只存摘要与关键 ID，不存完整文案。",
+  "input": {
+    "gameType": "science_fiction",
+    "characterName": "程曜",
+    "characterIdentity": "货运飞船领航员",
+    "characterProfile": "在环带航线上跑了八年货运，熟悉每一个中转站的暗面规矩。",
+    "personalityTags": ["冷静", "好奇"],
+    "worldPremise": "殖民星环带航线接连失联，星港各方势力都在暗中打探失踪船队的下落。",
+    "storyOpening": "货舱警报骤响，主角在曙光站候船大厅里收到一条来历不明的加密讯息。",
+    "narrativeStyle": "cinematic",
+    "contentIntensity": "normal"
+  },
+  "seed": "phase1-scifi-001",
+  "expected": {
+    "templateVersion": "fallback-1",
+    "inputDigest": "78c8ace5234bfc2f",
+    "generationId": "gen-c35f66eeb5435a80",
+    "locationIds": ["loc_1", "loc_2", "loc_3", "loc_4", "loc_hidden"],
+    "questIds": ["quest_m1", "quest_m2", "quest_m3", "quest_s1"],
+    "endingIds": ["ending_1", "ending_2"],
+    "npcCount": 4,
+    "normalEnemyCount": 3,
+    "bossEnemyId": "enemy_boss"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "$comment": "回归 pin fixture：expected 中的值由 createFallbackBlueprint 实现在确定性验证通过后运行一次固定（regression pin），只存摘要与关键 ID，不存完整文案。",
+  "input": {
+    "gameType": "wuxia",
+    "characterName": "沈青崖",
+    "characterIdentity": "落魄镖师",
+    "characterProfile": "青崖镖局独子，镖局一夜覆灭后流落江湖，靠押送散货为生。",
+    "personalityTags": ["坚毅", "重情义"],
+    "worldPremise": "镖局一夜覆灭，江湖各派暗流涌动，真凶身份成谜，官府与门派各怀心思。",
+    "storyOpening": "暮色四合，主角背着旧刀走进青石镇，镇口贴着一张字迹潦草的缉凶告示。",
+    "narrativeStyle": "novel",
+    "contentIntensity": "normal"
+  },
+  "seed": "phase1-wuxia-001",
+  "expected": {
+    "templateVersion": "fallback-1",
+    "inputDigest": "7b6829c1a4a91a85",
+    "generationId": "gen-2c9a0f14be41ee16",
+    "locationIds": ["loc_1", "loc_2", "loc_3", "loc_4", "loc_hidden"],
+    "questIds": ["quest_m1", "quest_m2", "quest_m3", "quest_s1", "quest_s2"],
+    "endingIds": ["ending_1", "ending_2"],
+    "npcCount": 6,
+    "normalEnemyCount": 3,
+    "bossEnemyId": "enemy_boss"
+  }
+}
