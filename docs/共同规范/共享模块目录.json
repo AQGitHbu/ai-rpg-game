@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "repository": "ai-game-foundation",
+  "packages": [
+    {
+      "name": "@ai-game/standards",
+      "status": "shared",
+      "responsibility": [
+        "共同设计原则",
+        "共同开发规范",
+        "共享模块开发流程",
+        "共享模块目录"
+      ],
+      "nonGoals": [
+        "具体玩法规则",
+        "项目代码路径",
+        "项目 Agent 系统现状"
+      ]
+    }
+  ],
+  "plannedPackages": [],
+  "note": "UI、AI Runtime 和其他基础能力尚未有第二个真实消费者，不在当前目录中。"
+}

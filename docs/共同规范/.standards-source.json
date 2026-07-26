@@ -1,0 +1,24 @@
+{
+  "source": "local-bootstrap",
+  "foundation": "ai-game-foundation",
+  "package": "@ai-game/standards",
+  "version": "0.1.0",
+  "files": [
+    {
+      "file": "共同游戏设计原则.md",
+      "sha256": "7cf3ae2a909e8fc90cfa830e5241d4d5e10bb29dc735ef5850152f81d566837f"
+    },
+    {
+      "file": "共同游戏开发规范.md",
+      "sha256": "8365ccfecef1c77e30c7e9b9adc4c62ddfde23b0a9136bae74f9f761ea60a232"
+    },
+    {
+      "file": "共享模块开发流程.md",
+      "sha256": "9705c4b3da1b682c9bfd76f1fb6adb088959537fcd14802b11f38dbaddede04c"
+    },
+    {
+      "file": "共享模块目录.json",
+      "sha256": "5102b402da0a454962b593b620563803a3c445bc7433ded891b80490e086ef42"
+    }
+  ]
+}

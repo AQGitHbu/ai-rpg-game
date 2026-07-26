@@ -1,0 +1,39 @@
+:root {
+  color-scheme: dark;
+  --game-surface-bg: #151713;
+  --game-surface-border: #68624d;
+  --game-text-primary: #f3ead5;
+  --game-accent: #c9a85a;
+  --game-danger: #c4675f;
+  --game-shadow-modal: 0 18px 56px rgb(0 0 0 / 40%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--game-surface-bg);
+  color: var(--game-text-primary);
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+}
+
+main {
+  display: grid;
+  min-height: 100dvh;
+  place-content: center;
+  gap: 12px;
+  padding: 32px;
+  text-align: center;
+}
+
+h1,
+p {
+  margin: 0;
+}

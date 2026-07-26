@@ -1,0 +1,14 @@
+node_modules/
+.next/
+out/
+dist/
+coverage/
+.env
+.env.local
+npm-debug.log*
+tsconfig.tsbuildinfo
+next-env.d.ts
+db/
+logs/
+tmp/
+.worktrees/
