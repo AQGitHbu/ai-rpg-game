@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertFoundationRoot } from "./foundationLocator.mjs";
+import { AI_ENV_KEYS, readAiEnv, validateAiEnv } from "./aiEnv.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
@@ -14,6 +15,30 @@ const nodeOk = !floor || current[0] > floor[0] || (current[0] === floor[0] && (c
 results.push(["Node 版本", nodeOk, `当前 ${process.versions.node}，要求 ${pkg.engines.node}`]);
 results.push(["共同规范副本", existsSync(resolve(root, "docs", "共同规范", ".standards-source.json")), "运行 npm run sync:standards 后存在"]);
 results.push(["架构边界测试", existsSync(resolve(root, "src", "dependencyBoundaries.test.ts")), "边界测试文件存在"]);
+
+const examplePath = resolve(root, ".env.example");
+const exampleValues = existsSync(examplePath) ? readAiEnv(examplePath) : new Map();
+results.push([
+  "AI 环境契约",
+  AI_ENV_KEYS.every((key) => exampleValues.has(key)),
+  `.env.example 声明 ${AI_ENV_KEYS.join("、")}`,
+]);
+
+const localEnvPath = resolve(root, ".env.local");
+if (existsSync(localEnvPath)) {
+  const failures = validateAiEnv(readAiEnv(localEnvPath));
+  results.push([
+    "RPG 自有 AI 环境",
+    failures.length === 0,
+    failures.length === 0 ? "已配置（未显示任何值）" : failures.join("；"),
+  ]);
+} else {
+  results.push([
+    "RPG 自有 AI 环境",
+    true,
+    "尚未配置；Phase 1 可继续，真实 AI 接入前运行 npm run env:bootstrap 和 env:check",
+  ]);
+}
 
 try {
   const foundationRoot = assertFoundationRoot();

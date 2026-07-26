@@ -151,7 +151,7 @@ type PlayerIntent = {
 
 所有模块定义版本化 input/output schema、超时、重试次数、最大上下文、温度和 fallback。prompt 不得包含 API Key；日志默认记录模块、模型、耗时、token/成本估算、校验结果和 traceId，不记录密钥，玩家原文按日志规范截断/脱敏。
 
-环境变量沿用 SLG 契约：
+RPG 独立拥有以下环境变量：
 
 ```dotenv
 AI_API_BASE_URL=...
@@ -159,7 +159,9 @@ AI_MODEL=...
 AI_API_KEY=...
 ```
 
-真实值放 `.env.local`，不得提交。RPG 第一版只解析系统环境变量，不搬运 SLG 的账户级 Provider、密钥加密和多账户设置。
+真实值放 RPG 仓库自己的 `.env.local` 或部署 secret，不得提交。为减少本地重复配置，`npm run env:bootstrap` 可以把 RPG 主工作区或 sibling SLG 本地 env 中这三个键的当前值一次性复制到 RPG 当前工作区；它不复制其他变量、不输出值，也不建立运行时跨仓读取。初始化后两个项目的 URL、模型和 Key 可以独立变化。
+
+RPG 应用运行时只能解析自身进程环境，禁止读取 `../ai-slg-game/.env*`。第一版不搬运 SLG 的账户级 Provider、密钥加密和多账户设置。
 
 ## 8. 共享 package 计划
 
@@ -167,7 +169,7 @@ AI_API_KEY=...
 
 开始 RPG 产品 UI 前先写单独 public API Spec，只抽取 RPG 首批界面真实使用且 SLG 已有稳定实现的最小集合。首批候选为 `InlineButton`、`Panel`、`Tag`；只有 RPG 实际需要时才加入 `TabBar` 或通用 Surface/focus/portal。共享 package 不包含对白 UI、SLG HUD、地图、产品主题或业务状态。
 
-迁移顺序：foundation package/test → SLG adapter/consumer contract → RPG consumer contract → 两边主题验证。当前本地联调允许精确 `file:../ai-game-foundation/packages/ui`，registry 可用后改为精确版本。
+迁移顺序：foundation package/test → SLG adapter/consumer contract → RPG consumer contract → 两边主题验证。发布前本地联调使用 worktree-aware `.foundation` 链接和 `file:.foundation/packages/ui`；registry 发布后改为精确版本。
 
 ### `@ai-game/ai-transport`
 

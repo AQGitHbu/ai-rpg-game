@@ -4,7 +4,7 @@
   "foundationPathHint": "../ai-game-foundation",
   "pathOverrideEnvironmentVariable": "AI_GAME_FOUNDATION_DIR",
   "package": "@ai-game/standards",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "files": [
     {
       "file": "共同游戏设计原则.md",
@@ -12,19 +12,19 @@
     },
     {
       "file": "共同游戏开发规范.md",
-      "sha256": "7cf15a8b2070bea05256cea732f302e9e8515d34b5e03f31354261c30ecb21e4"
+      "sha256": "5cbc360d12182a3bd9110e430b3c1d6efa2b70eea5eb1701d4a01dc392bd4249"
     },
     {
       "file": "共享模块开发流程.md",
-      "sha256": "c0941f7db41191f61e2a91de7a08a34a803596460f92bf9b783d32c8e021eaaa"
+      "sha256": "965290076938a2ee04d35cfa67ce1e04911b5a060438138515af7832f3be1cb4"
     },
     {
       "file": "项目族定位与共享实践备忘.md",
-      "sha256": "2c67eed099479360952b9f911f19f11d19056e8efe3beef7d2018bb167d1d355"
+      "sha256": "90d08f461db53fed656f8bd5ed6c4a310dd9bc4d08e7b360d8b2c97e423dfa31"
     },
     {
       "file": "共享模块目录.json",
-      "sha256": "8f23c8fa85044c2dd29eccc6e2a9021916ff708f36fd42d304dee0926b045347"
+      "sha256": "3a8622feb53b23b1864da677ba23f8ffaa4e181d79d1931cc0a3403f5245ba99"
     }
   ]
 }

@@ -15,6 +15,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "test:boundaries": "vitest run src/dependencyBoundaries.test.ts",
+    "test:shared-ui": "vitest run src/components/sharedUiContract.test.tsx",
     "sync:standards": "node scripts/syncStandards.mjs",
     "check:standards": "node scripts/checkStandards.mjs",
     "shared:lookup": "node scripts/sharedLookup.mjs",
@@ -22,9 +23,16 @@
     "test:foundation-locator": "node --test scripts/foundationLocator.node-test.mjs",
     "link:foundation": "node scripts/linkFoundation.mjs",
     "bootstrap:foundation": "node scripts/linkFoundation.mjs",
-    "test:fast": "npm run check:standards && npm run test:foundation-locator && npm run shared:check && npm run typecheck && npm run test:boundaries",
+    "test:fast": "npm run check:standards && npm run test:foundation-locator && npm run test:ai-env && npm run shared:check && npm run typecheck && npm run test:boundaries",
     "doctor": "node scripts/doctor.mjs",
-    "setup": "npm run bootstrap:foundation && npm ci && npm run sync:standards && npm run doctor"
+    "env:bootstrap": "node scripts/bootstrapAiEnv.mjs",
+    "env:check": "node scripts/checkAiEnv.mjs",
+    "test:ai-env": "node --test scripts/aiEnv.node-test.mjs",
+    "phase:status": "node scripts/checkHandoff.mjs --status",
+    "phase:start": "node scripts/startCurrentPhase.mjs",
+    "handoff:check:docs": "node scripts/checkHandoff.mjs",
+    "handoff:check": "node scripts/checkHandoff.mjs --strict-branch",
+    "setup": "npm run env:bootstrap && npm run bootstrap:foundation && npm ci && npm run sync:standards && npm run doctor"
   },
   "dependencies": {
     "@ai-game/ui": "file:.foundation/packages/ui",

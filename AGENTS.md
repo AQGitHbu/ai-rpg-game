@@ -2,6 +2,7 @@
 
 - 设计玩法/系统：先读 `docs/游戏设计原则.md`、`docs/Agent文档索引.md` 和对应 `docs/agent/<系统>.md`
 - 编写/修改代码：先读 `docs/游戏开发规范.md`、`docs/Agent文档索引.md` 和对应 `docs/agent/<系统>.md`
+- 执行已规划 MVP 阶段：再读 `docs/agent/当前开发阶段.md` 及其指向的唯一 Plan
 - 同一任务内已读文档不重复读，除非任务边界或实现事实变化
 
 ## 共享基础设施触发

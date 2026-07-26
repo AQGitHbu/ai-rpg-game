@@ -15,8 +15,13 @@ AI 驱动的单人叙事 RPG。工程边界、共享规范和正式 MVP 开发�
 
 ```powershell
 npm run setup
+npm run phase:status
 npm run dev
 ```
+
+执行当前 MVP 阶段前，在干净的 RPG `main` 运行 `npm run phase:start`。它会按 `docs/agent/current-phase.json` 创建目标 worktree/分支、执行 setup 和严格交接检查；通过后 Plan 才可交给新 Agent 编码。
+
+`setup` 会尝试初始化 RPG 自己的 `.env.local`。它可以从本机 RPG 主工作区或 sibling SLG 复制三个 AI 键的初始值，但应用运行时永远不读取 SLG 文件；真实 AI 接入前用 `npm run env:check` 严格验收。
 
 ## 常用命令
 
@@ -27,6 +32,10 @@ npm test
 npm run test:boundaries
 npm run test:fast
 npm run build
+npm run phase:status
+npm run phase:start -- --dry-run
+npm run handoff:check
+npm run env:check
 ```
 
 ## 文档入口

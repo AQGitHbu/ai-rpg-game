@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "phase": "mvp-phase-1-scenario-contracts",
+  "status": "planned",
+  "implementationStatus": "not_started",
+  "targetBranch": "codex/mvp-phase-1-scenario-contracts",
+  "worktreeName": "mvp-phase-1-scenario-contracts",
+  "repositories": [
+    "ai-rpg-game"
+  ],
+  "plan": "docs/superpowers/plans/2026-07-26-mvp-phase-1-scenario-contracts.md",
+  "entryDocs": [
+    "docs/游戏设计原则.md",
+    "docs/游戏开发规范.md",
+    "docs/Agent文档索引.md",
+    "docs/agent/MVP核心闭环.md",
+    "docs/策划文档/AI生成RPG_MVP.md",
+    "docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md"
+  ],
+  "acceptanceCommands": [
+    "npm run lint",
+    "npm test",
+    "npm run test:fast",
+    "npm run build",
+    "npm run phase:status"
+  ],
+  "startCommand": "npm run phase:start",
+  "sharedInfrastructureChangeAllowed": false
+}
