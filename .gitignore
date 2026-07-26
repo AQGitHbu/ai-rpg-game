@@ -13,3 +13,8 @@ logs/
 tmp/
 .worktrees/
 .foundation/
+.agents/commands/*
+.agents/skills/*
+.qoder/
+.codebuddy/
+.opencode/
