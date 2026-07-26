@@ -18,3 +18,18 @@ export {
   type QuestGraphKnownEntityIds,
   type QuestReachabilityAnalysis
 } from "./questGraph";
+export {
+  PHASE1_NUMERIC_RANGES,
+  validateScenarioBlueprintCandidate,
+  type NumericRange,
+  type ScenarioBlueprintIssue,
+  type ScenarioBlueprintIssueCode,
+  type ScenarioValidationContext,
+  type ValidateScenarioBlueprintResult,
+  type ValidatedScenarioBlueprintCandidate
+} from "./validateScenarioBlueprint";
+export {
+  compileScenarioBlueprint,
+  initializeGameState,
+  type CompileScenarioBlueprintResult
+} from "./compileScenarioBlueprint";
