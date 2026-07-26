@@ -36,7 +36,9 @@ for (const entry of manifest.files) {
 console.log(`共同规范检查通过：${manifest.package}@${manifest.version}`);
 
 function hash(file) {
-  return createHash("sha256").update(readFileSync(file)).digest("hex");
+  return createHash("sha256")
+    .update(readFileSync(file, "utf8").replace(/\r\n/g, "\n"))
+    .digest("hex");
 }
 
 function resolveSource(sourceRoot, file) {

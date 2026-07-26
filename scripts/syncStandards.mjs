@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,7 +27,7 @@ for (const [from, to] of files) {
   const source = resolve(sourceRoot, from);
   if (!existsSync(source)) throw new Error(`缺少共同规范源文件：${source}`);
   const destination = resolve(destinationRoot, to);
-  copyFileSync(source, destination);
+  writeFileSync(destination, normalizedContent(source), "utf8");
   copied.push({ file: to, sha256: hash(destination) });
 }
 
@@ -49,5 +49,9 @@ writeFileSync(
 console.log(`共同规范已从 ${sourceRoot} 同步。`);
 
 function hash(file) {
-  return createHash("sha256").update(readFileSync(file)).digest("hex");
+  return createHash("sha256").update(normalizedContent(file)).digest("hex");
+}
+
+function normalizedContent(file) {
+  return readFileSync(file, "utf8").replace(/\r\n/g, "\n");
 }
