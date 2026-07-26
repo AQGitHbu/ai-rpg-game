@@ -69,6 +69,12 @@ const RELATIVE_ESCAPE_FROM_GAMEPLAY: BoundaryPattern = {
   regex: /["'](?:\.\.\/)+(?:application|components|store|app|providers)\//
 };
 
+/** UI/API/store 用相对路径绕过别名规则时的兜底：../game/gameplay/** 一律禁止。 */
+const RELATIVE_GAMEPLAY_IMPORT: BoundaryPattern = {
+  label: "relative import into game/gameplay from ui/api/store layer",
+  regex: /["'](?:\.\.\/)+game\/gameplay\//
+};
+
 type BoundaryRule = { readonly directory: string; readonly patterns: readonly BoundaryPattern[] };
 
 const rules: readonly BoundaryRule[] = [
@@ -102,7 +108,11 @@ const rules: readonly BoundaryRule[] = [
   // deep-import 规则单列：即便未来放开门面，内部文件依旧禁止。
   ...["app", "components", "store"].map((directory) => ({
     directory,
-    patterns: [forbiddenSpecifierPrefix("@/game/gameplay/"), SCENARIO_DEEP_IMPORT]
+    patterns: [
+      forbiddenSpecifierPrefix("@/game/gameplay/"),
+      RELATIVE_GAMEPLAY_IMPORT,
+      SCENARIO_DEEP_IMPORT
+    ]
   })),
   { directory: "game", patterns: [AI_GAME_PACKAGE_IMPORT] },
   { directory: ".", patterns: [NEW_AI_GAME_PACKAGE_IMPORT, SLG_IMPORT] }
@@ -160,6 +170,10 @@ describe("boundary patterns detect synthetic violations", () => {
     {
       pattern: RELATIVE_ESCAPE_FROM_GAMEPLAY,
       snippet: `import { persist } from "../../application/server/persist";`
+    },
+    {
+      pattern: RELATIVE_GAMEPLAY_IMPORT,
+      snippet: `import { questGraph } from "../game/gameplay/rpg/scenario/questGraph";`
     }
   ];
 
@@ -182,6 +196,11 @@ describe("boundary patterns detect synthetic violations", () => {
   it("relative data import does not trip the gameplay escape rule", () => {
     const snippet = `import profiles from "../../../../../data/base/gameTypeProfiles.json";`;
     expect(findBoundaryViolations(snippet, [RELATIVE_ESCAPE_FROM_GAMEPLAY])).toEqual([]);
+  });
+
+  it("relative domain import does not trip the relative gameplay rule", () => {
+    const snippet = `import { types } from "../game/domain/scenarioBlueprint";`;
+    expect(findBoundaryViolations(snippet, [RELATIVE_GAMEPLAY_IMPORT])).toEqual([]);
   });
 });
 
