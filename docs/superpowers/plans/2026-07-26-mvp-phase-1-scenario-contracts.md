@@ -1,7 +1,7 @@
 # MVP Phase 1：领域契约与确定性生成执行 Plan
 
 > 日期：2026-07-26
-> 状态：待执行
+> 状态：已完成（2026-07-26，分支 `codex/mvp-phase-1-scenario-contracts`）
 > 目标分支：`codex/mvp-phase-1-scenario-contracts`
 > 唯一修改仓库：`ai-rpg-game`
 > 上游 Spec：`docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md`

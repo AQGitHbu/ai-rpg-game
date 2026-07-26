@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "mvp-phase-1-scenario-contracts",
-  "status": "planned",
-  "implementationStatus": "not_started",
+  "status": "completed",
+  "implementationStatus": "implemented",
   "targetBranch": "codex/mvp-phase-1-scenario-contracts",
   "worktreeName": "mvp-phase-1-scenario-contracts",
   "repositories": [

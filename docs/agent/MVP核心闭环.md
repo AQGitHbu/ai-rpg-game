@@ -14,7 +14,7 @@
 
 ## 当前实现现状
 
-工程脚手架和文档基线已建立。Phase 0 已实现 UI-only 的新游戏资料表单，真实消费 `@ai-game/ui`。Phase 1 已建立可交接执行 Plan，但领域输入、生成世界、玩法、存档或 AI 仍未实现。
+工程脚手架和文档基线已建立。Phase 0 已实现 UI-only 的新游戏资料表单，真实消费 `@ai-game/ui`。Phase 1 已实现领域基线：`NewGameInput` 校验、7 类型/艺术风格 profile、蓝图与运行时类型、任务图可达性、候选蓝图 validate/compile、`GameState` 初始化和确定性 fallback 生成（同输入 + seed + templateVersion 结果相同，武侠/科幻/都市 fixture 钉值）。玩法回合推进、存档或 AI 调用仍未实现。
 
 ## 核心数据流
 
@@ -24,7 +24,10 @@
 
 - 玩家规则：`docs/策划文档/AI生成RPG_MVP.md`
 - 开发 Spec：`docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md`
-- 预期实现：`src/game/domain/`、`src/game/gameplay/rpg/`、`src/game/application/`、`src/game/application/server/`
+- 领域层：`src/game/domain/`（`newGame.ts`、`scenarioBlueprint.ts`、`gameState.ts`、`events.ts`，facade `index.ts`）
+- 玩法层：`src/game/gameplay/rpg/scenario/`（`gameTypeProfiles.ts`、`questGraph.ts`、`validateScenarioBlueprint.ts`、`compileScenarioBlueprint.ts`、`createFallbackBlueprint.ts`，facade `index.ts`）
+- 数据：`data/base/gameTypeProfiles.json`、`data/base/artStyleProfiles.json`、`data/fixtures/phase1/*.json`
+- 预留实现：`src/game/application/`、`src/game/application/server/`
 - 当前 UI：`src/components/NewGameSetupForm.tsx`
 - 当前阶段：`docs/agent/当前开发阶段.md`
 - Phase 1 Plan：`docs/superpowers/plans/2026-07-26-mvp-phase-1-scenario-contracts.md`
@@ -33,7 +36,9 @@
 
 - `src/components/NewGameSetupForm.test.tsx`
 - `src/components/sharedUiContract.test.tsx`
-- 领域与玩法测试尚未建立；开发 Spec 规定 schema、规则、AI 合同、固定 seed 通关和边界测试。
+- 领域：`src/game/domain/*.test.ts`（输入校验、蓝图/GameState 类型契约）
+- 玩法：`src/game/gameplay/rpg/scenario/*.test.ts`（profile loader、任务图、validate/compile、确定性 fallback + fixture 钉值）
+- 边界与回归：`src/dependencyBoundaries.test.ts`、`src/game/gameplay/rpg/scenario/phase1Regression.test.ts`（含越权输入不进结构化状态）
 
 ## 修改注意事项
 
@@ -44,6 +49,7 @@
 
 ## 最近维护
 
+- 2026-07-26：完成 Phase 1 领域契约与确定性生成实现（domain + gameplay/scenario + 边界与回归测试，12 文件 / 229 用例）。
 - 2026-07-26：建立 Phase 1 领域契约与确定性生成执行 Plan、机器可读当前阶段和 Agent 交接检查。
 - 2026-07-26：Phase 0 新游戏资料表单成为 `@ai-game/ui@0.1.0` 的真实 RPG 消费者；提交只做 UI 校验，不提前创建 GameState 或调用 AI。
 - 2026-07-26：建立动态生成型 MVP 开发基线。
