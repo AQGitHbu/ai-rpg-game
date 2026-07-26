@@ -16,15 +16,29 @@
         "项目代码路径",
         "项目 Agent 系统现状"
       ]
+    },
+    {
+      "name": "@ai-game/ui",
+      "status": "shared-local",
+      "version": "0.1.0",
+      "responsibility": [
+        "无业务语义的 React UI 原语",
+        "稳定语义结构与 class contract",
+        "两个消费者共同需要的可访问性行为"
+      ],
+      "exports": [
+        "InlineButton",
+        "Panel",
+        "Tag"
+      ],
+      "nonGoals": [
+        "产品主题 CSS",
+        "对白、地图、HUD 或业务 Modal",
+        "游戏状态和玩法逻辑"
+      ]
     }
   ],
   "plannedPackages": [
-    {
-      "name": "@ai-game/ui",
-      "status": "candidate-confirmed",
-      "trigger": "RPG 首批 UI public API Spec 明确，且 SLG 迁移范围完成消费者影响分析",
-      "scope": "两个产品真实使用的无业务 React UI 原语；不含题材主题和业务界面"
-    },
     {
       "name": "@ai-game/ai-transport",
       "status": "candidate-confirmed",
@@ -32,5 +46,5 @@
       "scope": "OpenAI-compatible transport、超时、取消、并发和错误契约；不含产品 prompt/schema"
     }
   ],
-  "note": "candidate-confirmed 只表示已出现第二消费者和明确抽取时机，不表示 package 已创建或可导入。"
+  "note": "shared-local 表示本地 package 已建立并由两个产品契约验证，但尚未发布 registry；candidate-confirmed 不表示 package 已创建。"
 }

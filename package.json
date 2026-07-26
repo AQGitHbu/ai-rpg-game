@@ -19,11 +19,15 @@
     "check:standards": "node scripts/checkStandards.mjs",
     "shared:lookup": "node scripts/sharedLookup.mjs",
     "shared:check": "node scripts/checkSharedBoundaries.mjs",
-    "test:fast": "npm run check:standards && npm run shared:check && npm run typecheck && npm run test:boundaries",
+    "test:foundation-locator": "node --test scripts/foundationLocator.node-test.mjs",
+    "link:foundation": "node scripts/linkFoundation.mjs",
+    "bootstrap:foundation": "node scripts/linkFoundation.mjs",
+    "test:fast": "npm run check:standards && npm run test:foundation-locator && npm run shared:check && npm run typecheck && npm run test:boundaries",
     "doctor": "node scripts/doctor.mjs",
-    "setup": "npm ci && npm run sync:standards && npm run doctor"
+    "setup": "npm run bootstrap:foundation && npm ci && npm run sync:standards && npm run doctor"
   },
   "dependencies": {
+    "@ai-game/ui": "file:.foundation/packages/ui",
     "@libsql/client": "0.17.3",
     "next": "16.2.10",
     "react": "19.1.0",

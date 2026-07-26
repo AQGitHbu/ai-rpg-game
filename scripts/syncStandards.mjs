@@ -2,11 +2,10 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertFoundationRoot } from "./foundationLocator.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const foundationRoot = process.env.AI_GAME_FOUNDATION_DIR
-  ? resolve(process.env.AI_GAME_FOUNDATION_DIR)
-  : resolve(root, "..", "ai-game-foundation");
+const foundationRoot = assertFoundationRoot();
 const sourceRoot = resolve(foundationRoot, "packages", "standards");
 const destinationRoot = resolve(root, "docs", "共同规范");
 

@@ -3,6 +3,8 @@
   "repository": "ai-game-foundation",
   "scope": "@ai-game",
   "localPath": "../ai-game-foundation",
+  "coordinatedWorktreeDirectory": ".worktrees",
+  "localLinkPath": ".foundation",
   "pathOverrideEnvironmentVariable": "AI_GAME_FOUNDATION_DIR",
   "standardsPackage": "@ai-game/standards"
 }

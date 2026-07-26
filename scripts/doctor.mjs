@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertFoundationRoot } from "./foundationLocator.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
@@ -13,6 +14,28 @@ const nodeOk = !floor || current[0] > floor[0] || (current[0] === floor[0] && (c
 results.push(["Node 版本", nodeOk, `当前 ${process.versions.node}，要求 ${pkg.engines.node}`]);
 results.push(["共同规范副本", existsSync(resolve(root, "docs", "共同规范", ".standards-source.json")), "运行 npm run sync:standards 后存在"]);
 results.push(["架构边界测试", existsSync(resolve(root, "src", "dependencyBoundaries.test.ts")), "边界测试文件存在"]);
+
+try {
+  const foundationRoot = assertFoundationRoot();
+  results.push([
+    "Foundation 定位",
+    existsSync(resolve(foundationRoot, "packages", "ui", "package.json")),
+    `当前 ${foundationRoot}`,
+  ]);
+  results.push([
+    "Foundation 本地链接",
+    existsSync(resolve(root, ".foundation", "packages", "ui", "package.json")),
+    "运行 npm run link:foundation 后存在",
+  ]);
+  results.push([
+    "Foundation UI 产物",
+    existsSync(resolve(root, ".foundation", "packages", "ui", "dist", "index.js")) &&
+      existsSync(resolve(root, ".foundation", "packages", "ui", "dist", "index.d.ts")),
+    "foundation 必须提交构建后的 dist/index.js 与 dist/index.d.ts",
+  ]);
+} catch (error) {
+  results.push(["Foundation 定位", false, String(error.message ?? error)]);
+}
 
 try {
   execFileSync(process.execPath, ["scripts/checkStandards.mjs"], { cwd: root, stdio: "pipe" });

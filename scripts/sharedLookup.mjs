@@ -15,6 +15,12 @@ for (const pkg of catalog.packages) {
   for (const responsibility of pkg.responsibility) console.log(`- ${responsibility}`);
 }
 
+for (const pkg of catalog.plannedPackages) {
+  console.log(`\n${pkg.name} [${pkg.status}]`);
+  console.log(`- 范围：${pkg.scope}`);
+  console.log(`- 触发：${pkg.trigger}`);
+}
+
 if (catalog.plannedPackages.length === 0) {
   console.log("\n当前没有预建 UI、AI Runtime 或引擎 package。新能力第一次出现默认留在本项目；命中 AGENTS 触发条件时再读共享模块流程。");
 }

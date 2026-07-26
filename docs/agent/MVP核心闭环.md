@@ -14,7 +14,7 @@
 
 ## 当前实现现状
 
-仅有工程脚手架和文档基线；领域类型、世界生成、玩法、存档、AI 和业务 UI 均未实现。
+工程脚手架和文档基线已建立。Phase 0 已实现 UI-only 的新游戏资料表单，真实消费 `@ai-game/ui`，但尚未定义领域输入、生成世界、玩法、存档或 AI。
 
 ## 核心数据流
 
@@ -25,10 +25,13 @@
 - 玩家规则：`docs/策划文档/AI生成RPG_MVP.md`
 - 开发 Spec：`docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md`
 - 预期实现：`src/game/domain/`、`src/game/gameplay/rpg/`、`src/game/application/`、`src/game/application/server/`
+- 当前 UI：`src/components/NewGameSetupForm.tsx`
 
 ## 主要测试
 
-尚未建立。开发 Spec 规定 schema、规则、AI 合同、固定 seed 通关和边界测试。
+- `src/components/NewGameSetupForm.test.tsx`
+- `src/components/sharedUiContract.test.tsx`
+- 领域与玩法测试尚未建立；开发 Spec 规定 schema、规则、AI 合同、固定 seed 通关和边界测试。
 
 ## 修改注意事项
 
@@ -39,4 +42,5 @@
 
 ## 最近维护
 
+- 2026-07-26：Phase 0 新游戏资料表单成为 `@ai-game/ui@0.1.0` 的真实 RPG 消费者；提交只做 UI 校验，不提前创建 GameState 或调用 AI。
 - 2026-07-26：建立动态生成型 MVP 开发基线。
