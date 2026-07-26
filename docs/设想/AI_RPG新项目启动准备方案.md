@@ -329,9 +329,8 @@ flowchart TD
 共享仓库先修改
 → package 测试
 → 两个消费者兼容测试
-→ 发布 prerelease
-→ 当前项目升级
-→ 稳定版本
+→ npm run ready:family
+→ foundation、SLG、RPG 依次提交、合并和推送
 ```
 
 禁止在项目内写一份临时替代实现。
@@ -362,24 +361,17 @@ flowchart TD
 - 两个消费者都有 contract test；
 - 抽取后的理解和维护成本低于两份实现。
 
-### 6.4 公共变更不会立即影响另一项目
+### 6.4 公共变更必须原子验收
 
-两个游戏使用精确版本：
+两个游戏固定通过内部 sibling package 消费：
 
 ```json
 {
-  "@ai-game/ui-react": "0.1.0"
+  "@ai-game/ui": "file:.foundation/packages/ui"
 }
 ```
 
-禁止 `*`、`latest` 和自动漂移版本。
-
-公共仓库发布新版本后：
-
-- 未升级的项目仍使用旧版本；
-- prerelease 必须跑两个项目兼容测试；
-- 破坏性变更使用 major version；
-- 项目升级公共 package 单独提交，便于回滚。
+package 的语义版本记录 API 契约，但不发布外部 registry。公共修改必须在三个同名 worktree 中运行 package 测试和两个消费者 contract test，再按 foundation、SLG、RPG 顺序独立提交，便于审查和回滚。
 
 ## 7. 脚手架目标目录
 
@@ -787,9 +779,9 @@ AI+RPG MVP Scope 收敛 Spec
 
 1. RPG 正式仓库名为 `ai-rpg-game`。
 2. 共享基础仓库名为 `ai-game-foundation`。
-3. 后续 `@ai-game/*` 使用 registry 分发；当前仅建立本地 source package，尚未发布。
+3. `@ai-game/*` 仅供三个 Private GitHub 仓库内部使用，固定通过 sibling 本地 package 分发，禁止发布外部 registry。
 4. 脚手架阶段不预建 UI package；RPG MVP 首批界面开始前，以真实消费者契约抽取最小 `@ai-game/ui`，作为共享流程的第一次实践。
-5. 当前只建立本地 Git 仓库，不配置远程。
+5. 三个仓库均使用 Private GitHub 远程；代码 package 仍通过 sibling 本地路径消费。
 6. 两个 sibling 仓库均已在 `F:\AI2` 创建。
 
 正式 MVP 范围已经收敛到 `docs/策划文档/AI生成RPG_MVP.md`，可执行开发约束见 `docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md`。实际编码前仍需为 Phase 0 创建功能分支/worktree 和执行 Plan。

@@ -169,7 +169,7 @@ RPG 应用运行时只能解析自身进程环境，禁止读取 `../ai-slg-game
 
 开始 RPG 产品 UI 前先写单独 public API Spec，只抽取 RPG 首批界面真实使用且 SLG 已有稳定实现的最小集合。首批候选为 `InlineButton`、`Panel`、`Tag`；只有 RPG 实际需要时才加入 `TabBar` 或通用 Surface/focus/portal。共享 package 不包含对白 UI、SLG HUD、地图、产品主题或业务状态。
 
-迁移顺序：foundation package/test → SLG adapter/consumer contract → RPG consumer contract → 两边主题验证。发布前本地联调使用 worktree-aware `.foundation` 链接和 `file:.foundation/packages/ui`；registry 发布后改为精确版本。
+迁移顺序：foundation package/test → SLG adapter/consumer contract → RPG consumer contract → 两边主题验证。`@ai-game/*` 仅供三个 Private GitHub 仓库内部使用，固定通过 worktree-aware `.foundation` 链接和 `file:.foundation/packages/ui` 消费，不发布外部 registry。
 
 ### `@ai-game/ai-transport`
 

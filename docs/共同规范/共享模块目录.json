@@ -46,5 +46,5 @@
       "scope": "OpenAI-compatible transport、超时、取消、并发和错误契约；不含产品 prompt/schema"
     }
   ],
-  "note": "shared-local 表示本地 package 已建立并由两个产品契约验证，但尚未发布 registry；candidate-confirmed 不表示 package 已创建。"
+  "note": "shared-local 表示内部 package 已建立并由两个产品契约验证，固定通过 sibling 本地路径消费且禁止发布外部 registry；candidate-confirmed 不表示 package 已创建。"
 }

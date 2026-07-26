@@ -74,7 +74,7 @@
 ## 风险与回滚
 
 - 如果 package 使 SLG 视觉或测试回退，恢复三个 adapter 的本地实现，RPG 暂留本地组件，foundation package 不发布。
-- 如果 `.foundation` junction 在环境中不可创建，保留 locator，并改用同一路径下的目录链接或后续 registry；不得提交绝对路径。
+- 如果 `.foundation` junction 在环境中不可创建，先修复同一父目录/文件系统布局或目录链接权限；不得提交绝对路径，也不得绕到外部 registry。
 - 如果 RPG 对某原语没有真实使用，立即从 v0.1 exports 和候选清单移除，不为满足数量保留。
 
 ## 完成记录
