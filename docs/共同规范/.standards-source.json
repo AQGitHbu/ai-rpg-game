@@ -1,8 +1,10 @@
 {
   "source": "local-bootstrap",
   "foundation": "ai-game-foundation",
+  "foundationPathHint": "../ai-game-foundation",
+  "pathOverrideEnvironmentVariable": "AI_GAME_FOUNDATION_DIR",
   "package": "@ai-game/standards",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "files": [
     {
       "file": "共同游戏设计原则.md",
@@ -14,11 +16,15 @@
     },
     {
       "file": "共享模块开发流程.md",
-      "sha256": "9705c4b3da1b682c9bfd76f1fb6adb088959537fcd14802b11f38dbaddede04c"
+      "sha256": "69710c3f098af8c9acc93818a73cced14bd27db2f7498e4362cf06e656554682"
+    },
+    {
+      "file": "项目族定位与共享实践备忘.md",
+      "sha256": "6b5a8e1fcc2464d91ddf16230121d30f8cb8ebfc8454eb1c164eb2792011089a"
     },
     {
       "file": "共享模块目录.json",
-      "sha256": "5102b402da0a454962b593b620563803a3c445bc7433ded891b80490e086ef42"
+      "sha256": "b194cfde9a98ef950e7f6f7f2053d8536122985c1644ff032f7975cdf9cba23b"
     }
   ]
 }

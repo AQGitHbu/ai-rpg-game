@@ -14,6 +14,7 @@ const files = [
   ["docs/共同游戏设计原则.md", "共同游戏设计原则.md"],
   ["docs/共同游戏开发规范.md", "共同游戏开发规范.md"],
   ["docs/共享模块开发流程.md", "共享模块开发流程.md"],
+  ["docs/项目族定位与共享实践备忘.md", "项目族定位与共享实践备忘.md"],
   ["catalog/共享模块目录.json", "共享模块目录.json"]
 ];
 
@@ -37,6 +38,8 @@ writeFileSync(
   `${JSON.stringify({
     source: "local-bootstrap",
     foundation: "ai-game-foundation",
+    foundationPathHint: "../ai-game-foundation",
+    pathOverrideEnvironmentVariable: "AI_GAME_FOUNDATION_DIR",
     package: packageJson.name,
     version: packageJson.version,
     files: copied

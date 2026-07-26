@@ -28,7 +28,8 @@
 - 2026-07-26：已迁入原始设想材料，并归档为 `ai-rpg-game/docs/设想/`。
 - 2026-07-26：已建立 `@ai-game/standards@0.1.0` 的本地 source package，并同步共同规范到 RPG。
 - 2026-07-26：RPG 工程、根 AGENTS、文档骨架、快速质量闸门和共享目录查询已建立。
-- 2026-07-26：UI 抽取明确延后到 RPG 首次真实使用通用 UI 原语时，作为共享流程的第一次实践。
+- 2026-07-26：RPG MVP 已确认需要通用 UI 原语；UI 成为正式开发的第一次共享实践，但只在首批界面 public API 明确后抽取最小集合。
+- 2026-07-26：已确认游戏类型采用“武侠、仙侠、奇幻、科幻、都市、历史架空、末日”等固定选择，用于约束世界生成和 AI 绘图风格；具体剧情、角色和场景按玩家输入动态生成。
 
 ## 2. 当前结论
 
@@ -787,12 +788,8 @@ AI+RPG MVP Scope 收敛 Spec
 1. RPG 正式仓库名为 `ai-rpg-game`。
 2. 共享基础仓库名为 `ai-game-foundation`。
 3. 后续 `@ai-game/*` 使用 registry 分发；当前仅建立本地 source package，尚未发布。
-4. 不在脚手架阶段抽取 UI；等 RPG 首次真实使用通用 UI 原语时再实践抽取流程。
+4. 脚手架阶段不预建 UI package；RPG MVP 首批界面开始前，以真实消费者契约抽取最小 `@ai-game/ui`，作为共享流程的第一次实践。
 5. 当前只建立本地 Git 仓库，不配置远程。
 6. 两个 sibling 仓库均已在 `F:\AI2` 创建。
 
-开始正式 RPG MVP Scope Spec 前，还需确认：
-
-- 第一个垂直切片的内容规模；
-- 是否开始接入任何 AI 能力；
-- 是否需要创建第一条功能分支和 worktree。
+正式 MVP 范围已经收敛到 `docs/策划文档/AI生成RPG_MVP.md`，可执行开发约束见 `docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md`。实际编码前仍需为 Phase 0 创建功能分支/worktree 和执行 Plan。

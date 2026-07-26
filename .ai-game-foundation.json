@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "repository": "ai-game-foundation",
+  "scope": "@ai-game",
+  "localPath": "../ai-game-foundation",
+  "pathOverrideEnvironmentVariable": "AI_GAME_FOUNDATION_DIR",
+  "standardsPackage": "@ai-game/standards"
+}

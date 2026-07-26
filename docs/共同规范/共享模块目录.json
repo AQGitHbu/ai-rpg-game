@@ -18,6 +18,19 @@
       ]
     }
   ],
-  "plannedPackages": [],
-  "note": "UI、AI Runtime 和其他基础能力尚未有第二个真实消费者，不在当前目录中。"
+  "plannedPackages": [
+    {
+      "name": "@ai-game/ui",
+      "status": "candidate-confirmed",
+      "trigger": "RPG 首批 UI public API Spec 明确，且 SLG 迁移范围完成消费者影响分析",
+      "scope": "两个产品真实使用的无业务 React UI 原语；不含题材主题和业务界面"
+    },
+    {
+      "name": "@ai-game/ai-transport",
+      "status": "candidate-confirmed",
+      "trigger": "RPG 首次真实模型调用",
+      "scope": "OpenAI-compatible transport、超时、取消、并发和错误契约；不含产品 prompt/schema"
+    }
+  ],
+  "note": "candidate-confirmed 只表示已出现第二消费者和明确抽取时机，不表示 package 已创建或可导入。"
 }
