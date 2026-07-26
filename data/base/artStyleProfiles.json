@@ -1,0 +1,58 @@
+{
+  "ink_wash": {
+    "id": "ink_wash",
+    "promptPrefix": "中国水墨武侠插画，写意笔触，侠客剪影",
+    "palette": "黑白灰为主，点缀朱红与黛青",
+    "texture": "宣纸纹理，墨色晕染，飞白笔锋",
+    "composition": "大面积留白，远山近人，纵深意境",
+    "negativePrompt": "霓虹灯, 科幻机械, 现代建筑, photorealistic"
+  },
+  "celestial_mist": {
+    "id": "celestial_mist",
+    "promptPrefix": "东方仙侠工笔插画，云雾缭绕，仙气流转",
+    "palette": "青碧、月白与鎏金，流光溢彩",
+    "texture": "丝绢质感，灵光粒子，薄雾渐层",
+    "composition": "纵深云海，仙山悬浮，人物凌空",
+    "negativePrompt": "现代服饰, 枪械, 都市街景, 机械结构"
+  },
+  "epic_fantasy_oil": {
+    "id": "epic_fantasy_oil",
+    "promptPrefix": "欧式史诗奇幻油画风概念插画",
+    "palette": "饱和暖金与深影冷色强对比",
+    "texture": "厚涂笔触，金属铠甲反光，布纹与石质",
+    "composition": "史诗广角，城堡与巨龙剪影，英雄居前景",
+    "negativePrompt": "汉服, 水墨, 现代科技, 卡通低幼"
+  },
+  "neon_hologram": {
+    "id": "neon_hologram",
+    "promptPrefix": "硬科幻概念艺术，未来都市与星舰",
+    "palette": "冷蓝紫霓虹搭配金属灰黑",
+    "texture": "光滑金属，全息光效，玻璃与线路细节",
+    "composition": "巨构透视，低角度仰视，星空或舷窗背景",
+    "negativePrompt": "古装, 魔法光效, 水墨, 中世纪盔甲"
+  },
+  "urban_cinematic": {
+    "id": "urban_cinematic",
+    "promptPrefix": "现代都市电影感写实插画",
+    "palette": "城市夜景暖冷对比，霓虹与路灯光晕",
+    "texture": "玻璃幕墙反光，雨后湿润街道，织物细节",
+    "composition": "浅景深人物特写，街景虚化背景",
+    "negativePrompt": "铠甲, 法术特效, 废土残骸, 奇幻生物"
+  },
+  "aged_chronicle": {
+    "id": "aged_chronicle",
+    "promptPrefix": "历史写实绘卷风格插画，庄重厚重",
+    "palette": "做旧褐调与庄重原色，绢本设色",
+    "texture": "帆布与绢面纹理，细腻笔触，岁月磨损",
+    "composition": "群像叙事，宫廷与战场全景，横卷式布局",
+    "negativePrompt": "霓虹灯, 未来机械, 魔法阵, 现代服装"
+  },
+  "wasteland_grunge": {
+    "id": "wasteland_grunge",
+    "promptPrefix": "末世废土写实概念图，荒凉压抑",
+    "palette": "沙尘黄褐与锈蚀绿，低饱和灰调",
+    "texture": "粗粝颗粒，锈迹斑驳，裂纹与尘埃",
+    "composition": "低角度废墟透视，孤独人影，辽阔天际线",
+    "negativePrompt": "明亮童话色彩, 仙侠飘逸服饰, 整洁都市, 魔法光效"
+  }
+}
