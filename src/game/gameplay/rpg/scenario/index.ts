@@ -9,3 +9,12 @@ export {
   type ScenarioConfigIssueCode,
   type ScenarioProfiles
 } from "./gameTypeProfiles";
+export {
+  analyzeQuestReachability,
+  validateQuestGraph,
+  type QuestGraphInput,
+  type QuestGraphIssue,
+  type QuestGraphIssueCode,
+  type QuestGraphKnownEntityIds,
+  type QuestReachabilityAnalysis
+} from "./questGraph";
