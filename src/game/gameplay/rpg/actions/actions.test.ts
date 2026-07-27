@@ -6,10 +6,17 @@ import {
   asGenerationId,
   asItemId,
   asQuestId,
+  CONTENT_BUDGET,
   type GameState,
   type GenerationMetadata,
-  type ScenarioBlueprint
+  type ScenarioBlueprint,
+  type ScenarioBlueprintCandidate
 } from "@/game/domain";
+import {
+  compileScenarioBlueprint,
+  validateScenarioBlueprintCandidate
+} from "../scenario";
+import { TEST_PROFILE } from "../scenario/scenarioBlueprintFixture.testutil";
 import {
   validateIntent,
   resolveAction,
@@ -18,7 +25,9 @@ import {
 } from "./index";
 
 // ---------------------------------------------------------------------------
-// 测试 fixture：手工构造最小蓝图 + 状态，覆盖 Phase 3 行动与 Phase 4 move（`location_visited`）场景。
+// 测试 fixture：手工构造最小候选蓝图，走真实 validate → compile 管线获得
+// 品牌化 ScenarioBlueprint（不再强转），覆盖 Phase 3 行动、Phase 4 move
+//（`location_visited`）与 Phase 5 take_item（`item_obtained`）场景。
 // ---------------------------------------------------------------------------
 
 const GEN: GenerationMetadata = {
@@ -38,23 +47,29 @@ const NPC_2 = asNpcId("npc_2");
 const FACT_KNOWN = asFactId("fact_known");
 const FACT_INVESTIGABLE = asFactId("fact_investigable");
 const FACT_OTHER = asFactId("fact_other");
+// 物品布局：item_1 为初始背包物品（不可再取得）；item_2 预置在 loc_a；
+// item_3 预置在 loc_b；item_4 存在但未配置在任何地点。
+const ITEM_START = asItemId("item_1");
+const ITEM_AT_A = asItemId("item_2");
+const ITEM_AT_B = asItemId("item_3");
+const ITEM_UNPLACED = asItemId("item_4");
 
 function buildBlueprint(): ScenarioBlueprint {
-  const candidate = {
-    schemaVersion: 1 as const,
+  const candidate: ScenarioBlueprintCandidate = {
+    schemaVersion: 1,
     generationId: "gen-0001",
     seed: "seed-1",
     templateVersion: "tpl-1",
-    gameType: "wuxia" as const,
+    gameType: "wuxia",
     inputDigest: "digest-abc",
     world: {
       summary: "测试世界。",
       tone: "测试",
       themes: ["测试"],
       facts: [
-        { id: "fact_known", text: "已知事实。", source: "player_input" as const },
-        { id: "fact_investigable", text: "可调查事实。", source: "generated" as const },
-        { id: "fact_other", text: "其他事实。", source: "generated" as const },
+        { id: "fact_known", text: "已知事实。", source: "player_input" },
+        { id: "fact_investigable", text: "可调查事实。", source: "generated" },
+        { id: "fact_other", text: "其他事实。", source: "generated" },
       ],
       tags: ["测试"],
     },
@@ -67,28 +82,34 @@ function buildBlueprint(): ScenarioBlueprint {
       baseStats: { hp: 30, attack: 6, defense: 4 },
     },
     locations: [
-      { id: "loc_a", name: "地点A", description: "测试地点A。", kind: "main" as const, connectedLocationIds: ["loc_b"], npcIds: ["npc_1"], tags: [] },
-      { id: "loc_b", name: "地点B", description: "测试地点B。", kind: "main" as const, connectedLocationIds: ["loc_a"], npcIds: ["npc_2"], tags: [] },
-      { id: "loc_c", name: "地点C", description: "测试地点C。", kind: "main" as const, connectedLocationIds: ["loc_a"], npcIds: [], tags: [] },
-      { id: "loc_d", name: "地点D", description: "测试地点D。", kind: "main" as const, connectedLocationIds: ["loc_c"], npcIds: [], tags: [] },
+      { id: "loc_a", name: "地点A", description: "测试地点A。", kind: "main", connectedLocationIds: ["loc_b"], npcIds: ["npc_1"], availableItemIds: ["item_2"], tags: [] },
+      { id: "loc_b", name: "地点B", description: "测试地点B。", kind: "main", connectedLocationIds: ["loc_a"], npcIds: ["npc_2"], availableItemIds: ["item_3"], tags: [] },
+      { id: "loc_c", name: "地点C", description: "测试地点C。", kind: "main", connectedLocationIds: ["loc_a"], npcIds: ["npc_3"], availableItemIds: [], tags: [] },
+      { id: "loc_d", name: "地点D", description: "测试地点D。", kind: "main", connectedLocationIds: ["loc_c"], npcIds: ["npc_4"], availableItemIds: [], tags: [] },
     ],
     npcs: [
       { id: "npc_1", name: "NPC1", role: "线人", description: "在场NPC。", locationId: "loc_a", isCompanion: false, knownFactIds: [], tags: [] },
       { id: "npc_2", name: "NPC2", role: "商贩", description: "不在场NPC。", locationId: "loc_b", isCompanion: false, knownFactIds: [], tags: [] },
+      { id: "npc_3", name: "NPC3", role: "盟友", description: "内容预算补位NPC。", locationId: "loc_c", isCompanion: false, knownFactIds: [], tags: [] },
+      { id: "npc_4", name: "NPC4", role: "同伴", description: "内容预算补位NPC。", locationId: "loc_d", isCompanion: false, knownFactIds: [], tags: [] },
     ],
     quests: [
-      { kind: "main" as const, stage: 1 as const, id: "q1", name: "主线", description: "主线任务。", objectives: [{ kind: "visit_location" as const, locationId: "loc_b" }], onSuccess: { kind: "unlock_quests" as const, questIds: ["q2"] }, onFailure: { kind: "closed" as const }, tags: [] },
-      { kind: "main" as const, stage: 2 as const, id: "q2", name: "主线2", description: "主线2。", objectives: [{ kind: "defeat_enemy" as const, enemyId: "enemy_1" }], onSuccess: { kind: "reach_ending" as const, endingId: "e1" }, onFailure: { kind: "reach_ending" as const, endingId: "e2" }, tags: [] },
+      { kind: "main", stage: 1, id: "q1", name: "主线", description: "主线任务。", objectives: [{ kind: "visit_location", locationId: "loc_b" }], onSuccess: { kind: "unlock_quests", questIds: ["q2"] }, onFailure: { kind: "closed" }, tags: [] },
+      { kind: "main", stage: 2, id: "q2", name: "主线2", description: "主线2。", objectives: [{ kind: "talk_to_npc", npcId: "npc_2" }, { kind: "obtain_item", itemId: "item_3" }], onSuccess: { kind: "unlock_quests", questIds: ["q3"] }, onFailure: { kind: "closed" }, tags: [] },
+      { kind: "main", stage: 3, id: "q3", name: "主线3", description: "主线3。", objectives: [{ kind: "defeat_enemy", enemyId: "enemy_1" }], onSuccess: { kind: "reach_ending", endingId: "e1" }, onFailure: { kind: "reach_ending", endingId: "e2" }, tags: [] },
     ],
     enemies: [
-      { id: "enemy_1", name: "敌人", tier: "boss" as const, stats: { hp: 50, attack: 8, defense: 3 }, tags: [] },
+      { id: "enemy_1", name: "敌人", tier: "boss", stats: { hp: 50, attack: 8, defense: 3 }, tags: [] },
     ],
     items: [
       { id: "item_1", name: "物品", description: "测试物品。", kind: "weapon", tags: [] },
+      { id: "item_2", name: "地点A物品", description: "预置在地点A。", kind: "key", tags: [] },
+      { id: "item_3", name: "地点B物品", description: "预置在地点B。", kind: "key", tags: [] },
+      { id: "item_4", name: "无主物品", description: "未配置在任何地点。", kind: "misc", tags: [] },
     ],
     endings: [
-      { id: "e1", name: "结局1", description: "好结局。", requirements: [{ kind: "quest_completed" as const, questId: "q2" }] },
-      { id: "e2", name: "结局2", description: "坏结局。", requirements: [{ kind: "fact_discovered" as const, factId: "fact_investigable" }] },
+      { id: "e1", name: "结局1", description: "好结局。", requirements: [{ kind: "quest_completed", questId: "q3" }] },
+      { id: "e2", name: "结局2", description: "坏结局。", requirements: [{ kind: "fact_discovered", factId: "fact_investigable" }] },
     ],
     openingScene: {
       id: "scene_opening",
@@ -98,9 +119,15 @@ function buildBlueprint(): ScenarioBlueprint {
       suggestedActions: ["观察周围", "与NPC1交谈"],
       investigableFactIds: ["fact_investigable"],
     },
-    contentBudget: { mainLocations: 4, hiddenLocationsMax: 1, coreNpcsMin: 4, coreNpcsMax: 6, companionsMax: 1, sideQuestsMax: 2, endings: 2 },
+    contentBudget: { ...CONTENT_BUDGET },
   };
-  return candidate as unknown as ScenarioBlueprint;
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE })
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
 }
 
 function buildInitialState(): GameState {
@@ -118,8 +145,9 @@ function buildInitialState(): GameState {
     quests: [
       { questId: asQuestId("q1"), status: "active" },
       { questId: asQuestId("q2"), status: "locked" },
+      { questId: asQuestId("q3"), status: "locked" },
     ],
-    inventory: [asItemId("item_1")],
+    inventory: [ITEM_START],
     worldFacts: [
       { factId: FACT_KNOWN, discovered: true },
       { factId: FACT_INVESTIGABLE, discovered: false },
@@ -659,6 +687,204 @@ describe("projectAvailableActions: move 与场景切换", () => {
     expect(rejected.ok).toBe(false);
     if (!rejected.ok) {
       expect(rejected.code).toBe("FACT_NOT_INVESTIGABLE");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// take_item（Phase 5 Task 2）：validateIntent
+// ---------------------------------------------------------------------------
+
+describe("validateIntent: take_item", () => {
+  it("take_item 当前地点预置且未拥有的物品有效", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const result = validateIntent(bp, st, { type: "take_item", itemId: ITEM_AT_A });
+    expect(result.ok).toBe(true);
+  });
+
+  it("take_item 未知物品拒绝 (UNKNOWN_ITEM)", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const result = validateIntent(bp, st, { type: "take_item", itemId: asItemId("ghost") });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("UNKNOWN_ITEM");
+    }
+  });
+
+  it("take_item 配置在其他地点的物品拒绝 (ITEM_NOT_AVAILABLE_HERE)", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const result = validateIntent(bp, st, { type: "take_item", itemId: ITEM_AT_B });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("ITEM_NOT_AVAILABLE_HERE");
+    }
+  });
+
+  it("take_item 未配置在任何地点的物品拒绝 (ITEM_NOT_AVAILABLE_HERE)", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const result = validateIntent(bp, st, { type: "take_item", itemId: ITEM_UNPLACED });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("ITEM_NOT_AVAILABLE_HERE");
+    }
+  });
+
+  it("take_item 已拥有的当地物品拒绝 (ITEM_ALREADY_OWNED)", () => {
+    const bp = buildBlueprint();
+    const st: GameState = {
+      ...buildInitialState(),
+      inventory: [ITEM_START, ITEM_AT_A],
+    };
+    const result = validateIntent(bp, st, { type: "take_item", itemId: ITEM_AT_A });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("ITEM_ALREADY_OWNED");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// take_item（Phase 5 Task 2）：resolveAction
+// ---------------------------------------------------------------------------
+
+describe("resolveAction: take_item", () => {
+  it("take_item 成功：只追加背包 ID 与 item_obtained 事件，其余状态不变", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const snapshot = JSON.stringify(st);
+    const result = resolveAction(bp, st, { type: "take_item", itemId: ITEM_AT_A }, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.events).toHaveLength(1);
+      expect(result.events[0]).toEqual({
+        type: "item_obtained",
+        itemId: ITEM_AT_A,
+        locationId: LOC_A,
+        occurredAt: FIXED_TIME,
+      });
+      expect(result.state.inventory).toEqual([ITEM_START, ITEM_AT_A]);
+      expect(result.state.eventLedger).toHaveLength(2);
+      expect(result.state.eventLedger[1]).toEqual(result.events[0]);
+      // 不改变数值、NPC、任务、事实或地点。
+      expect(result.state.player).toEqual(st.player);
+      expect(result.state.npcs).toEqual(st.npcs);
+      expect(result.state.quests).toEqual(st.quests);
+      expect(result.state.worldFacts).toEqual(st.worldFacts);
+      expect(result.state.currentLocationId).toBe(st.currentLocationId);
+      expect(result.feedback.message).toBeTruthy();
+    }
+    // 不修改输入
+    expect(JSON.stringify(st)).toBe(snapshot);
+  });
+
+  it("take_item 事件时间来自注入时钟", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const later = "2026-07-27T18:30:00Z";
+    const result = resolveAction(bp, st, { type: "take_item", itemId: ITEM_AT_A }, { now: () => later });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.events[0]).toMatchObject({ type: "item_obtained", occurredAt: later });
+    }
+  });
+
+  it("移动后可取得新地点预置物品，事件携带新地点 ID", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const moved = resolveAction(bp, st, { type: "move", locationId: LOC_B }, deps);
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    const result = resolveAction(bp, moved.state, { type: "take_item", itemId: ITEM_AT_B }, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.events[0]).toEqual({
+        type: "item_obtained",
+        itemId: ITEM_AT_B,
+        locationId: LOC_B,
+        occurredAt: FIXED_TIME,
+      });
+      expect(result.state.inventory).toEqual([ITEM_START, ITEM_AT_B]);
+    }
+  });
+
+  it("take_item 各拒绝码零状态变化、不产生事件", () => {
+    const bp = buildBlueprint();
+    const rejections: readonly { readonly state: GameState; readonly itemId: string; readonly code: string }[] = [
+      { state: buildInitialState(), itemId: "ghost", code: "UNKNOWN_ITEM" },
+      { state: buildInitialState(), itemId: "item_3", code: "ITEM_NOT_AVAILABLE_HERE" },
+      { state: buildInitialState(), itemId: "item_4", code: "ITEM_NOT_AVAILABLE_HERE" },
+      {
+        state: { ...buildInitialState(), inventory: [ITEM_START, ITEM_AT_A] },
+        itemId: "item_2",
+        code: "ITEM_ALREADY_OWNED",
+      },
+    ];
+    for (const { state, itemId, code } of rejections) {
+      const snapshot = JSON.stringify(state);
+      const result = resolveAction(bp, state, { type: "take_item", itemId: asItemId(itemId) }, deps);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe(code);
+        expect(result.feedback.message).toBeTruthy();
+        expect("state" in result).toBe(false);
+      }
+      expect(JSON.stringify(state)).toBe(snapshot);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// take_item（Phase 5 Task 2）：可用行动投影
+// ---------------------------------------------------------------------------
+
+describe("projectAvailableActions: take_item", () => {
+  it("投影当前地点预置且未拥有的 take_item 行动", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const takeActions = projectAvailableActions(bp, st).filter((a) => a.type === "take_item");
+    expect(takeActions).toHaveLength(1);
+    expect(takeActions[0].itemId).toBe(ITEM_AT_A);
+    expect(takeActions[0].label).toBeTruthy();
+  });
+
+  it("已拥有的当地物品不投影 take_item 行动", () => {
+    const bp = buildBlueprint();
+    const st: GameState = {
+      ...buildInitialState(),
+      inventory: [ITEM_START, ITEM_AT_A],
+    };
+    const takeActions = projectAvailableActions(bp, st).filter((a) => a.type === "take_item");
+    expect(takeActions).toHaveLength(0);
+  });
+
+  it("移动后 take_item 投影切换到新地点的预置物品", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const moved = resolveAction(bp, st, { type: "move", locationId: LOC_B }, deps);
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    const takeActions = projectAvailableActions(bp, moved.state).filter((a) => a.type === "take_item");
+    expect(takeActions).toHaveLength(1);
+    expect(takeActions[0].itemId).toBe(ITEM_AT_B);
+  });
+
+  it("取得后同一物品不再投影 take_item 行动", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const taken = resolveAction(bp, st, { type: "take_item", itemId: ITEM_AT_A }, deps);
+    expect(taken.ok).toBe(true);
+    if (!taken.ok) return;
+    const takeActions = projectAvailableActions(bp, taken.state).filter((a) => a.type === "take_item");
+    expect(takeActions).toHaveLength(0);
+    // 重复取得被拒绝。
+    const again = resolveAction(bp, taken.state, { type: "take_item", itemId: ITEM_AT_A }, deps);
+    expect(again.ok).toBe(false);
+    if (!again.ok) {
+      expect(again.code).toBe("ITEM_ALREADY_OWNED");
     }
   });
 });

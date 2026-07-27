@@ -53,6 +53,11 @@ function factText(blueprint: ScenarioBlueprint, factId: string): string {
   return blueprint.world.facts.find((f) => f.id === factId)?.text ?? "未知线索";
 }
 
+/** 查找物品名称用于反馈文案。 */
+function itemName(blueprint: ScenarioBlueprint, itemId: string): string {
+  return blueprint.items.find((i) => i.id === itemId)?.name ?? "未知物品";
+}
+
 /** 根据校验失败码生成确定性反馈。 */
 function rejectionFeedback(
   blueprint: ScenarioBlueprint,
@@ -83,6 +88,12 @@ function rejectionFeedback(
       return { message: "未知线索。" };
     case "FACT_ALREADY_DISCOVERED":
       return { message: "你已经调查过这个线索了。" };
+    case "UNKNOWN_ITEM":
+      return { message: "未知物品。" };
+    case "ITEM_NOT_AVAILABLE_HERE":
+      return { message: "这里没有这件物品。" };
+    case "ITEM_ALREADY_OWNED":
+      return { message: `你已经持有${itemName(blueprint, result.params.itemId)}了。` };
   }
 }
 
@@ -194,6 +205,27 @@ export function resolveAction(
         state: newState,
         events: [event],
         feedback: { message: `你来到了${locationName(blueprint, intent.locationId)}。` },
+      };
+    }
+
+    case "take_item": {
+      const event: GameEvent = {
+        type: "item_obtained",
+        itemId: intent.itemId,
+        locationId: state.currentLocationId,
+        occurredAt,
+      };
+      const newState: GameState = {
+        ...state,
+        // 只把物品 ID 加入背包；不改数值、NPC、任务或地点。
+        inventory: [...state.inventory, intent.itemId],
+        eventLedger: [...state.eventLedger, event],
+      };
+      return {
+        ok: true,
+        state: newState,
+        events: [event],
+        feedback: { message: `你取得了${itemName(blueprint, intent.itemId)}。` },
       };
     }
   }

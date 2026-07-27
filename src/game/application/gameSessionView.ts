@@ -50,7 +50,9 @@ export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
 /** 输入与 opening 投影完全一致：调用方无需区分两个 read model 的装配来源。 */
 export type ProjectGameSessionViewInput = ProjectOpeningGameViewInput;
 
-function toSessionActionView(action: AvailableAction): SessionActionView {
+function toSessionActionView(
+  action: Exclude<AvailableAction, { type: "take_item" }>
+): SessionActionView {
   switch (action.type) {
     case "observe":
       return { type: "observe", locationId: action.locationId, label: action.label };
@@ -110,7 +112,13 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
   return {
     ...base,
     // 不再过滤 move：完整的可用行动投影（观察/交谈/调查/前往）。
-    availableActions: projectAvailableActions(blueprint, state).map(toSessionActionView),
+    // take_item 暂不进入会话视图：由 Phase 5 Task 3/4 接入 read model 与 UI。
+    availableActions: projectAvailableActions(blueprint, state)
+      .filter(
+        (action): action is Exclude<AvailableAction, { type: "take_item" }> =>
+          action.type !== "take_item"
+      )
+      .map(toSessionActionView),
     // 运行时在场 NPC：按 GameState 中的 NPC 位置投影，不读开场名单。
     presentNpcs: state.npcs
       .filter((npcState) => npcState.locationId === state.currentLocationId)

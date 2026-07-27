@@ -95,7 +95,9 @@ function requireEntity<T>(entity: T | undefined, kind: string): T {
 }
 
 /** 将 actions facade 的 AvailableAction 转为 UI 安全的 AvailableActionView。 */
-function toActionView(action: Exclude<AvailableAction, { type: "move" }>): AvailableActionView {
+function toActionView(
+  action: Exclude<AvailableAction, { type: "move" | "take_item" }>
+): AvailableActionView {
   switch (action.type) {
     case "observe":
       return { type: "observe", locationId: action.locationId, label: action.label };
@@ -150,7 +152,9 @@ export function projectOpeningGameView(input: ProjectOpeningGameViewInput): Open
     // Phase 4 Task 1 新增 move 投影：opening view 的 move 展示由 Task 3/4 接入，此处先过滤。
     availableActions: projectAvailableActions(blueprint, state)
       .filter(
-        (action): action is Exclude<AvailableAction, { type: "move" }> => action.type !== "move"
+        // 开场视图不含 move / take_item：后者由 Phase 5 Task 3/4 接入会话视图与 UI。
+        (action): action is Exclude<AvailableAction, { type: "move" | "take_item" }> =>
+          action.type !== "move" && action.type !== "take_item"
       )
       .map(toActionView),
     // 已发现事实：只展示文本，不泄漏未发现事实的 ID 或内容。

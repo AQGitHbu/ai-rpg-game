@@ -1,4 +1,4 @@
-import type { GameState, ScenarioBlueprint, FactId, LocationId, NpcId } from "@/game/domain";
+import type { GameState, ScenarioBlueprint, FactId, ItemId, LocationId, NpcId } from "@/game/domain";
 
 // ---------------------------------------------------------------------------
 // actions facade（Phase 3 Task 2）：application 可用的唯一 actions 入口。
@@ -22,13 +22,15 @@ export {
 // 可用行动投影：由已编译蓝图和当前 GameState 投影。
 // UI 不得自己猜测哪些目标可行动。
 // Phase 4：talk 目标改由运行时 NPC 位置投影，新增 move 目标投影。
+// Phase 5：新增 take_item 目标投影（当前地点预置且未拥有的物品）。
 // ---------------------------------------------------------------------------
 
 export type AvailableAction =
   | { readonly type: "observe"; readonly locationId: LocationId; readonly label: string }
   | { readonly type: "talk"; readonly npcId: NpcId; readonly label: string }
   | { readonly type: "investigate"; readonly factId: FactId; readonly label: string }
-  | { readonly type: "move"; readonly locationId: LocationId; readonly label: string };
+  | { readonly type: "move"; readonly locationId: LocationId; readonly label: string }
+  | { readonly type: "take_item"; readonly itemId: ItemId; readonly label: string };
 
 /** 检查事件账本中是否已有特定地点的观察事件。 */
 function hasObservedLocation(state: GameState, locationId: LocationId): boolean {
@@ -96,6 +98,21 @@ export function projectAvailableActions(
         type: "move",
         locationId: targetId,
         label: `前往${target.name}`,
+      });
+    }
+  }
+
+  // take_item：当前地点预置且背包尚未拥有的物品
+  for (const itemId of currentLocation?.availableItemIds ?? []) {
+    if (state.inventory.includes(itemId)) {
+      continue;
+    }
+    const item = blueprint.items.find((i) => i.id === itemId);
+    if (item !== undefined) {
+      actions.push({
+        type: "take_item",
+        itemId,
+        label: `拾取${item.name}`,
       });
     }
   }

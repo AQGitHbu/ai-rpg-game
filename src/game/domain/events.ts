@@ -1,8 +1,9 @@
-import type { FactId, GenerationMetadata, LocationId, NpcId, QuestId } from "./scenarioBlueprint";
+import type { FactId, GenerationMetadata, ItemId, LocationId, NpcId, QuestId } from "./scenarioBlueprint";
 
 // 领域事件：纯数据，时间戳等外部信息由调用方传入（domain 不读取时钟）。
 // Phase 3 扩展：行动 resolver 产出地点观察、NPC 初次交谈和事实发现三种事件。
 // Phase 4 扩展：move 行动成功时追加地点到访事件；任务 reconciliation 产出任务完成与解锁事件。
+// Phase 5 扩展：take_item 行动成功时追加物品取得事件。
 
 /** 初始事件账本条目：记录本局的生成元数据（Task 5 初始化时写入）。 */
 export type GameInitializedEvent = {
@@ -53,6 +54,14 @@ export type QuestUnlockedEvent = {
   readonly occurredAt: string;
 };
 
+/** 玩家取得地点预置物品：由 take_item 行动成功时追加；locationId 为取得时所在地点。 */
+export type ItemObtainedEvent = {
+  readonly type: "item_obtained";
+  readonly itemId: ItemId;
+  readonly locationId: LocationId;
+  readonly occurredAt: string;
+};
+
 export type GameEvent =
   | GameInitializedEvent
   | LocationObservedEvent
@@ -60,4 +69,5 @@ export type GameEvent =
   | FactDiscoveredEvent
   | LocationVisitedEvent
   | QuestCompletedEvent
-  | QuestUnlockedEvent;
+  | QuestUnlockedEvent
+  | ItemObtainedEvent;

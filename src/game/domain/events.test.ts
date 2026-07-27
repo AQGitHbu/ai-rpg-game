@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent, LocationVisitedEvent, QuestCompletedEvent, QuestUnlockedEvent } from "./events";
-import { asLocationId, asNpcId, asFactId, asGenerationId, asQuestId, type GenerationMetadata } from "./scenarioBlueprint";
+import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent, LocationVisitedEvent, QuestCompletedEvent, QuestUnlockedEvent, ItemObtainedEvent } from "./events";
+import { asLocationId, asNpcId, asFactId, asGenerationId, asItemId, asQuestId, type GenerationMetadata } from "./scenarioBlueprint";
 
 function buildGeneration(): GenerationMetadata {
   return {
@@ -77,6 +77,19 @@ describe("GameEvent union (Phase 3 action events)", () => {
     expect(event.occurredAt).toBe("2026-07-27T10:05:00Z");
   });
 
+  it("accepts item_obtained event with injected timestamp (Phase 5 take_item)", () => {
+    const event: ItemObtainedEvent = {
+      type: "item_obtained",
+      itemId: asItemId("item_key"),
+      locationId: asLocationId("loc_3"),
+      occurredAt: "2026-07-27T10:06:00Z",
+    };
+    expect(event.type).toBe("item_obtained");
+    expect(event.itemId).toBe("item_key");
+    expect(event.locationId).toBe("loc_3");
+    expect(event.occurredAt).toBe("2026-07-27T10:06:00Z");
+  });
+
   it("GameEvent union narrows on all Phase 3 type discriminators", () => {
     const events: GameEvent[] = [
       { type: "game_initialized", generation: buildGeneration() },
@@ -86,6 +99,7 @@ describe("GameEvent union (Phase 3 action events)", () => {
       { type: "location_visited", locationId: asLocationId("loc_2"), occurredAt: "t4" },
       { type: "quest_completed", questId: asQuestId("m1"), occurredAt: "t5" },
       { type: "quest_unlocked", questId: asQuestId("m2"), occurredAt: "t6" },
+      { type: "item_obtained", itemId: asItemId("item_1"), locationId: asLocationId("loc_3"), occurredAt: "t7" },
     ];
 
     const types = events.map((e) => e.type);
@@ -97,6 +111,7 @@ describe("GameEvent union (Phase 3 action events)", () => {
       "location_visited",
       "quest_completed",
       "quest_unlocked",
+      "item_obtained",
     ]);
   });
 

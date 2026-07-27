@@ -2,7 +2,7 @@ import type { GameState, ScenarioBlueprint, LocationId } from "@/game/domain";
 import type { PlayerIntent } from "./intents";
 
 // ---------------------------------------------------------------------------
-// 纯 intent 校验（Phase 3 Task 2，Phase 4 扩展 move）。
+// 纯 intent 校验（Phase 3 Task 2，Phase 4 扩展 move，Phase 5 扩展 take_item）。
 //
 // 只读取 compiled blueprint + 当前 GameState，返回稳定验证码/参数，不改状态。
 // 不依赖 application、repository、UI、Date、Math.random 或 AI。
@@ -20,7 +20,10 @@ export type ValidationCode =
   | "NPC_ALREADY_MET"
   | "FACT_NOT_INVESTIGABLE"
   | "UNKNOWN_FACT"
-  | "FACT_ALREADY_DISCOVERED";
+  | "FACT_ALREADY_DISCOVERED"
+  | "UNKNOWN_ITEM"
+  | "ITEM_NOT_AVAILABLE_HERE"
+  | "ITEM_ALREADY_OWNED";
 
 export type ValidateIntentResult =
   | { readonly ok: true }
@@ -130,6 +133,26 @@ export function validateIntent(
       }
       if (!state.unlockedLocationIds.includes(intent.locationId)) {
         return { ok: false, code: "LOCATION_LOCKED", params: { locationId: intent.locationId } };
+      }
+      return { ok: true };
+    }
+
+    case "take_item": {
+      const item = blueprint.items.find((i) => i.id === intent.itemId);
+      if (item === undefined) {
+        return { ok: false, code: "UNKNOWN_ITEM", params: { itemId: intent.itemId } };
+      }
+      // 可取得性只看蓝图中当前地点的预置清单；未配置到任何地点的物品同样拒绝。
+      const currentLocation = blueprint.locations.find((l) => l.id === state.currentLocationId);
+      if (currentLocation === undefined || !currentLocation.availableItemIds.includes(intent.itemId)) {
+        return {
+          ok: false,
+          code: "ITEM_NOT_AVAILABLE_HERE",
+          params: { itemId: intent.itemId, currentLocationId: state.currentLocationId },
+        };
+      }
+      if (state.inventory.includes(intent.itemId)) {
+        return { ok: false, code: "ITEM_ALREADY_OWNED", params: { itemId: intent.itemId } };
       }
       return { ok: true };
     }

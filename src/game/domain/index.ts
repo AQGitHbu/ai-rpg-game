@@ -74,7 +74,8 @@ export {
   type FactDiscoveredEvent,
   type LocationVisitedEvent,
   type QuestCompletedEvent,
-  type QuestUnlockedEvent
+  type QuestUnlockedEvent,
+  type ItemObtainedEvent
 } from "./events";
 export {
   type GameState,
