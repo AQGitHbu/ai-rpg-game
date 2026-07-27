@@ -23,6 +23,13 @@ export {
   type AvailableActionView,
   type OpeningFactView
 } from "./openingGameView";
+// Phase 4 Task 3：语义中性的会话 read model（OpeningGameView 的演进）。
+export {
+  type GameSessionView,
+  type SessionActionView,
+  type ActiveQuestView,
+  type QuestObjectiveView
+} from "./gameSessionView";
 export {
   performAction,
   type PerformActionCommand,

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { NewGameInput } from "@/game/domain";
+import { asLocationId, type GameState, type NewGameInput } from "@/game/domain";
+import { resolveAction } from "@/game/gameplay/rpg/actions";
+import { reconcileQuests } from "@/game/gameplay/rpg/quests";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { performAction, type PerformActionDependencies } from "./performAction";
 import {
@@ -116,6 +118,90 @@ describe("performAction：成功行动", () => {
     expect(repository.applyCalls).toHaveLength(1);
     expect(repository.applyCalls[0].gameId).toBe(TEST_GAME_ID);
     expect(repository.applyCalls[0].expectedRevision).toBe(0);
+  });
+});
+
+describe("performAction：move + 任务 reconciliation 单次写入（Phase 4 Task 3）", () => {
+  it("applyResolvedAction 收到 reconcile 后的最终 state：move 与 quest 事件同一次写入", async () => {
+    const repository = createFakeGameRepository();
+    const record = buildActiveRecord();
+    repository.setCurrentResult({ ok: true, status: "active", record });
+
+    // 独立复跑 actions + quests facade 得到期望的最终 state。
+    const moveIntent = { type: "move" as const, locationId: asLocationId("loc_2") };
+    const resolved = resolveAction(record.blueprint, record.state, moveIntent, {
+      now: () => FIXED_TIME
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    const reconciled = reconcileQuests(record.blueprint, resolved.state, {
+      now: () => FIXED_TIME
+    });
+    expect(reconciled.events.length).toBeGreaterThan(0);
+
+    repository.setApplyResult({
+      ok: true,
+      record: { ...record, state: reconciled.state, revision: 1 }
+    });
+
+    const result = await performAction(
+      { intent: moveIntent, expectedRevision: 0 },
+      buildPerformDeps(repository)
+    );
+
+    expect(result.ok).toBe(true);
+    // 恰好一次写入，且载荷已含任务事件与状态迁移（无第二次写入、无旁路）。
+    expect(repository.applyCalls).toHaveLength(1);
+    expect(repository.applyCalls[0].nextState).toEqual(reconciled.state);
+    const ledger = repository.applyCalls[0].nextState.eventLedger;
+    const tailTypes = ledger.slice(record.state.eventLedger.length).map((event) => event.type);
+    expect(tailTypes[0]).toBe("location_visited");
+    expect(tailTypes).toContain("quest_completed");
+    expect(tailTypes).toContain("quest_unlocked");
+  });
+
+  it("任务 reconciliation 契约外抛错 ⇒ INFRASTRUCTURE_FAILURE 且零写入", async () => {
+    const repository = createFakeGameRepository();
+    const record = buildActiveRecord();
+    // 构造 quests 字段缺失的坏状态：resolver 可通过，但 reconciliation 会抛 TypeError。
+    const brokenState = { ...record.state, quests: undefined } as unknown as GameState;
+    repository.setCurrentResult({
+      ok: true,
+      status: "active",
+      record: { ...record, state: brokenState }
+    });
+
+    const result = await performAction(
+      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      buildPerformDeps(repository)
+    );
+
+    expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
+    expect(repository.applyCalls).toHaveLength(0);
+  });
+
+  it("陈旧 revision + 损坏记录时场景投影抛错 ⇒ INFRASTRUCTURE_FAILURE 且零写入", async () => {
+    const repository = createFakeGameRepository();
+    const record = buildActiveRecord();
+    // currentLocationId 悬挂：投影当前 view 时 requireEntity 抛错，
+    // 必须映射稳定基础设施失败，不得向 API 层抛异常文本。
+    const danglingState = {
+      ...record.state,
+      currentLocationId: asLocationId("loc-does-not-exist")
+    };
+    repository.setCurrentResult({
+      ok: true,
+      status: "active",
+      record: { ...record, state: danglingState, revision: 5 }
+    });
+
+    const result = await performAction(
+      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      buildPerformDeps(repository)
+    );
+
+    expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
+    expect(repository.applyCalls).toHaveLength(0);
   });
 });
 

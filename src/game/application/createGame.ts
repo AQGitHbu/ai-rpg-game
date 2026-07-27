@@ -11,7 +11,7 @@ import {
   validateScenarioBlueprintCandidate,
   type ScenarioProfiles
 } from "@/game/gameplay/rpg/scenario";
-import { projectOpeningGameView, type OpeningGameView } from "./openingGameView";
+import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
 import type {
   CreateInitialGameResult,
   GameId,
@@ -22,7 +22,7 @@ import type {
 // createGame use case（Task 1 契约）。
 // 严格顺序：validateNewGameInput → loadScenarioProfiles + createFallbackBlueprint
 //   → validate/compile → initializeGameState → repository.createInitialGame
-//   → 投影 OpeningGameView。
+//   → 投影 GameSessionView（Phase 4 Task 3：由 OpeningGameView 演进）。
 // 验证失败立即返回字段错误；任何生成/编译诊断映射为稳定 GENERATION_INVALID，
 // 且绝不触及 repository。application 不读 process.env / 文件路径 / libsql 类型。
 // ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ export type CreateGameResult =
       readonly ok: true;
       readonly gameId: GameId;
       readonly source: GenerationSource;
-      readonly view: OpeningGameView;
+      readonly view: GameSessionView;
     }
   // 输入验证失败：字段错误原样透传（含可显示 params），供表单逐字段提示。
   | {
@@ -116,7 +116,7 @@ export async function createGame(
     ok: true,
     gameId,
     source: "fallback",
-    view: projectOpeningGameView({
+    view: projectGameSessionView({
       gameId,
       blueprint: compiled.blueprint,
       state,

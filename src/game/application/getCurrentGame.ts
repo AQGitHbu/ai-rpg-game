@@ -1,5 +1,5 @@
 import { loadScenarioProfiles, type ScenarioProfiles } from "@/game/gameplay/rpg/scenario";
-import { projectOpeningGameView, type OpeningGameView } from "./openingGameView";
+import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
 import type { CorruptGameReason, GameRepository } from "./server/persistence/gameRepository";
 
 // ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@ export type CurrentGameUnavailableReason = CorruptGameReason | "INFRASTRUCTURE_F
 
 export type CurrentGameResult =
   | { readonly status: "none" }
-  | { readonly status: "active"; readonly view: OpeningGameView }
+  | { readonly status: "active"; readonly view: GameSessionView }
   | { readonly status: "corrupt"; readonly reason: CurrentGameUnavailableReason };
 
 export async function getCurrentGame(
@@ -42,7 +42,7 @@ export async function getCurrentGame(
   try {
     return {
       status: "active",
-      view: projectOpeningGameView({
+      view: projectGameSessionView({
         gameId: record.gameId,
         blueprint: record.blueprint,
         state: record.state,

@@ -33,8 +33,8 @@ export type ReconcileQuestsResult = {
   readonly events: readonly GameEvent[];
 };
 
-/** objective 是否已被状态事实满足；未支持类型永远返回 false。 */
-function isObjectiveSatisfied(state: GameState, objective: QuestObjective): boolean {
+/** objective 是否已被状态事实满足；未支持类型永远返回 false。read model 投影复用。 */
+export function isQuestObjectiveSatisfied(state: GameState, objective: QuestObjective): boolean {
   switch (objective.kind) {
     case "visit_location":
       return state.visitedLocationIds.includes(objective.locationId);
@@ -64,7 +64,7 @@ export function reconcileQuests(
     changed = false;
     for (const quest of blueprint.quests) {
       if (statusById.get(quest.id) !== "active") continue;
-      if (!quest.objectives.every((objective) => isObjectiveSatisfied(state, objective))) continue;
+      if (!quest.objectives.every((objective) => isQuestObjectiveSatisfied(state, objective))) continue;
 
       // closed outcome：完成即关闭，无后续解锁；unlock_quests / reach_ending 标记 completed。
       statusById.set(quest.id, quest.onSuccess.kind === "closed" ? "closed" : "completed");

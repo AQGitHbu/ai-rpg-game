@@ -94,6 +94,20 @@ function corrupt(reason: CorruptGameReason): GetCurrentGameRecordResult {
   return { ok: true, status: "corrupt", reason };
 }
 
+// Phase 4 Task 3：Phase 3 旧存档的 stateJSON 无 visitedLocationIds 字段。
+// 读取时补默认值 [currentLocationId]（与 initializeGameState 的开场语义一致），
+// 不升 schema 版本也不回写；连 currentLocationId 都缺失则无法补齐，由调用方标记 corrupt。
+function withVisitedLocationDefault(state: JsonObject): JsonObject | null {
+  if (state["visitedLocationIds"] !== undefined) {
+    return state;
+  }
+  const currentLocationId = state["currentLocationId"];
+  if (typeof currentLocationId !== "string" || currentLocationId.length === 0) {
+    return null;
+  }
+  return { ...state, visitedLocationIds: [currentLocationId] };
+}
+
 // 单行 → 结构化结果：只做端口要求的版本 / generationId 校验与形状检查，
 // 不做蓝图内部引用完整性校验（Task 1 评审确认由上游编译器保证）。
 function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordResult {
@@ -138,6 +152,10 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordRes
   if (stateGenerationId !== blueprintGenerationId) {
     return corrupt("GENERATION_MISMATCH");
   }
+  const migratedState = withVisitedLocationDefault(state);
+  if (migratedState === null) {
+    return corrupt("UNPARSEABLE_RECORD");
+  }
 
   return {
     ok: true,
@@ -146,7 +164,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordRes
       gameId: asGameId(gameId),
       // 通过全部防御性检查后按端口契约还原类型；深度结构由写入侧的编译器保证。
       blueprint: blueprint as unknown as ScenarioBlueprint,
-      state: state as unknown as GameState,
+      state: migratedState as unknown as GameState,
       revision,
       createdAt
     }

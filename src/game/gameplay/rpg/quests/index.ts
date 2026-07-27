@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 export {
+  isQuestObjectiveSatisfied,
   reconcileQuests,
   type ReconcileQuestsDependencies,
   type ReconcileQuestsResult,

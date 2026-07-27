@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { handlePerformActionRequest } from "./actionHandler";
 import type {
   PerformActionResult,
-  OpeningGameView,
+  GameSessionView,
   ActionFeedbackView
 } from "@/game/application";
 import type { ServerGameEntryPoints } from "@/game/application/server/compositionRoot";
@@ -14,7 +14,7 @@ import type { ServerGameEntryPoints } from "@/game/application/server/compositio
 // ---------------------------------------------------------------------------
 
 /** 最小可用 view（结构完整即可，字段值不影响 HTTP 映射）。 */
-const STUB_VIEW: OpeningGameView = {
+const STUB_VIEW: GameSessionView = {
   gameId: "game-1" as never,
   world: { name: "测试世界", summary: "摘要", gameType: "wuxia" },
   player: { name: "测试角色", identity: "测试身份" },
@@ -28,7 +28,10 @@ const STUB_VIEW: OpeningGameView = {
   availableActions: [
     { type: "observe", locationId: "loc_a", label: "观察地点A" }
   ],
-  knownFacts: []
+  knownFacts: [],
+  // Phase 4 Task 3：GameSessionView 新增字段（HTTP 映射不读内容）。
+  presentNpcs: [],
+  activeQuests: []
 };
 
 const STUB_FEEDBACK: ActionFeedbackView = { ok: true, message: "你观察了地点A。" };
@@ -108,7 +111,7 @@ describe("actionHandler：陈旧 revision", () => {
     expect(response.status).toBe(409);
     const body = await parseBody(response);
     expect(body["code"]).toBe("STALE_GAME_REVISION");
-    expect((body["view"] as OpeningGameView).revision).toBe(5);
+    expect((body["view"] as GameSessionView).revision).toBe(5);
   });
 });
 

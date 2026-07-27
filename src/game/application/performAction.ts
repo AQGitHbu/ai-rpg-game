@@ -4,17 +4,21 @@ import {
   type PlayerIntent,
   type ResolveActionDependencies,
 } from "@/game/gameplay/rpg/actions";
-import { projectOpeningGameView, type OpeningGameView } from "./openingGameView";
+import { reconcileQuests } from "@/game/gameplay/rpg/quests";
+import type { GameState } from "@/game/domain";
+import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
 import type { GameRepository } from "./server/persistence/gameRepository";
 
 // ---------------------------------------------------------------------------
-// performAction use case（Phase 3 Task 4）。
+// performAction use case（Phase 3 Task 4 + Phase 4 Task 3）。
 //
 // 严格顺序：读取当前游戏 → 检查 revision → 调用 actions facade resolveAction
-//   → 有效结果经原子 repository.applyResolvedAction 写入 → 从已保存 state 投影
-//   最新 OpeningGameView 与反馈。
+//   → 成功后调用 quests facade reconcileQuests 得到最终 state（行动事件 +
+//   任务事件按序入账）→ 一次 repository.applyResolvedAction 原子写入
+//   → 从已保存 state 投影最新 GameSessionView 与反馈。
 //
-// 无存档/损坏/基础设施失败均映射稳定结果；application 注入时钟以保证测试可重复；
+// 无存档/损坏/基础设施失败均映射稳定结果；reconciliation 契约外抛错同样
+// 映射基础设施失败且零写入；application 注入时钟以保证测试可重复；
 // 不读取 process.env、路径、libsql 或 AI 环境。
 // ---------------------------------------------------------------------------
 
@@ -40,19 +44,19 @@ export type ActionFeedbackView = {
 export type PerformActionResult =
   | {
       readonly ok: true;
-      readonly view: OpeningGameView;
+      readonly view: GameSessionView;
       readonly feedback: ActionFeedbackView;
     }
   | {
       readonly ok: false;
       readonly code: "ACTION_REJECTED";
-      readonly view: OpeningGameView;
+      readonly view: GameSessionView;
       readonly feedback: ActionFeedbackView;
     }
   | {
       readonly ok: false;
       readonly code: "STALE_GAME_REVISION";
-      readonly view: OpeningGameView;
+      readonly view: GameSessionView;
     }
   | {
       readonly ok: false;
@@ -79,24 +83,29 @@ export async function performAction(
   const profiles = deps.profiles ?? loadScenarioProfiles();
   const worldName = profiles.gameTypeProfiles[record.blueprint.gameType].label;
 
-  // 投影当前 view（用于拒绝/陈旧时返回给客户端）。
-  function projectCurrentView(): OpeningGameView {
-    return projectOpeningGameView({
-      gameId: record.gameId,
-      blueprint: record.blueprint,
-      state: record.state,
-      revision: record.revision,
-      worldName
-    });
+  // 投影当前 view（用于拒绝/陈旧时返回给客户端）；投影抛错意味着记录
+  // 内部引用被改坏，返回 null 由调用处映射稳定基础设施失败（零写入）。
+  function projectCurrentView(): GameSessionView | null {
+    try {
+      return projectGameSessionView({
+        gameId: record.gameId,
+        blueprint: record.blueprint,
+        state: record.state,
+        revision: record.revision,
+        worldName
+      });
+    } catch {
+      return null;
+    }
   }
 
   // Step 2: 检查 expectedRevision。
   if (command.expectedRevision !== record.revision) {
-    return {
-      ok: false,
-      code: "STALE_GAME_REVISION",
-      view: projectCurrentView()
-    };
+    const view = projectCurrentView();
+    if (view === null) {
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
+    return { ok: false, code: "STALE_GAME_REVISION", view };
   }
 
   // Step 3: 调用纯规则 resolver。
@@ -111,21 +120,35 @@ export async function performAction(
 
   // Step 4: 拒绝 → 返回当前 view + 拒绝反馈，不写入。
   if (!resolved.ok) {
+    const view = projectCurrentView();
+    if (view === null) {
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
     return {
       ok: false,
       code: "ACTION_REJECTED",
-      view: projectCurrentView(),
+      view,
       feedback: { ok: false, message: resolved.feedback.message }
     };
   }
 
-  // Step 5: 有效结果 → 原子 compare-and-swap 写入。
+  // Step 5: 成功行动后纯任务 reconciliation：任务事件与状态迁移并入同一份
+  // 最终 state（事件账本按序追加），保证下方恰好一次写入。
+  let nextState: GameState;
+  try {
+    nextState = reconcileQuests(record.blueprint, resolved.state, { now: deps.now }).state;
+  } catch {
+    // reconciliation 契约外抛错：零写入，映射为基础设施失败。
+    return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+  }
+
+  // Step 6: 最终 state → 原子 compare-and-swap 写入（唯一一次写入）。
   let saved;
   try {
     saved = await deps.repository.applyResolvedAction({
       gameId: record.gameId,
       expectedRevision: command.expectedRevision,
-      nextState: resolved.state
+      nextState
     });
   } catch {
     return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
@@ -134,21 +157,21 @@ export async function performAction(
   if (!saved.ok) {
     if (saved.code === "STALE_GAME_REVISION") {
       // 并发写入：返回当前 view 让客户端更新后重试。
-      return {
-        ok: false,
-        code: "STALE_GAME_REVISION",
-        view: projectCurrentView()
-      };
+      const view = projectCurrentView();
+      if (view === null) {
+        return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      }
+      return { ok: false, code: "STALE_GAME_REVISION", view };
     }
     return { ok: false, code: saved.code };
   }
 
-  // Step 6: 从已保存 state 投影最新 view。
+  // Step 7: 从已保存 state 投影最新 view。
   const { record: savedRecord } = saved;
   try {
     return {
       ok: true,
-      view: projectOpeningGameView({
+      view: projectGameSessionView({
         gameId: savedRecord.gameId,
         blueprint: savedRecord.blueprint,
         state: savedRecord.state,
