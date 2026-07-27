@@ -393,7 +393,8 @@ export function createSqliteGameRepository(
 
         const record: GameRecord = {
           gameId: asGameId(row["game_id"] as string),
-          blueprint: blueprint as unknown as ScenarioBlueprint,
+          // 与 interpretGameRow 同样补旧档蓝图的 availableItemIds 默认值，避免类型契约缺口。
+          blueprint: withAvailableItemsDefault(blueprint) as unknown as ScenarioBlueprint,
           state: state as unknown as GameState,
           revision: row["revision"] as number,
           createdAt: row["created_at"] as string

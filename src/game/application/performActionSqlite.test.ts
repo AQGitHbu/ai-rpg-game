@@ -505,4 +505,49 @@ describe("performAction × 真实 SQLite：Phase 4 旧存档兼容（无 availab
       after.state.quests.find((quest) => quest.questId === asQuestId("quest_m1"))?.status
     ).toBe("completed");
   });
+
+  it("旧档成功行动后 applyResolvedAction read-back 蓝图每个地点 availableItemIds 均为数组", async () => {
+    const databasePath = nextDbPath();
+    const repository = openRepository(databasePath);
+    // 与上一用例相同的 Phase 4 旧档构造：序列化前剔除每个地点的 availableItemIds。
+    const legacyBlueprint = {
+      ...PIPELINE.blueprint,
+      locations: PIPELINE.blueprint.locations.map((location) => {
+        const { availableItemIds: _stripped, ...rest } = location;
+        void _stripped;
+        return rest;
+      })
+    } as unknown as ScenarioBlueprint;
+    const created = await repository.createInitialGame({
+      gameId: asGameId("game-legacy-readback"),
+      blueprint: legacyBlueprint,
+      state: PIPELINE.state,
+      createdAt: FIXED_CREATED_AT
+    });
+    expect(created).toEqual({ ok: true });
+
+    // 包装 repository 捕获 applyResolvedAction 的 read-back 记录：
+    // 类型契约声明 availableItemIds 必有，read-back 路径也必须补默认值。
+    let readBack: GameRecord | undefined;
+    const capturingRepository: GameRepository = {
+      createInitialGame: (input) => repository.createInitialGame(input),
+      getCurrentGame: () => repository.getCurrentGame(),
+      applyResolvedAction: async (input) => {
+        const applied = await repository.applyResolvedAction(input);
+        if (applied.ok) readBack = applied.record;
+        return applied;
+      }
+    };
+    const moved = await performAction(
+      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      performDependencies(capturingRepository)
+    );
+    expect(moved.ok).toBe(true);
+    expect(readBack).toBeDefined();
+    if (readBack === undefined) return;
+    expect(readBack.blueprint.locations.length).toBeGreaterThan(0);
+    for (const location of readBack.blueprint.locations) {
+      expect(Array.isArray(location.availableItemIds)).toBe(true);
+    }
+  });
 });
