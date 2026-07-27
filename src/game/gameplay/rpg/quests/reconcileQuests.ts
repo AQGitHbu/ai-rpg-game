@@ -90,7 +90,8 @@ export function reconcileQuests(
     state: {
       ...state,
       quests: state.quests.map((quest) => {
-        const status = statusById.get(quest.questId) ?? quest.status;
+        // statusById 由 state.quests 全量构建，每个 questId 必命中。
+        const status = statusById.get(quest.questId)!;
         return status === quest.status ? quest : { ...quest, status };
       }),
       eventLedger: [...state.eventLedger, ...events],
