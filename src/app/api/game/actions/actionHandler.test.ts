@@ -405,6 +405,28 @@ describe("actionHandler：take_item intent（Phase 5 Task 3）", () => {
   });
 });
 
+describe("actionHandler：既有 intent 携带多余目标字段 ⇒ 400（Phase 5 Task 5，T3-M1）", () => {
+  // INTENT_TARGET_FIELD 白名单对既有 intent 同样生效：除 type + 本类型目标
+  // 字段外，携带其他目标字段（伪造载荷）一律拒收。
+  const cases: readonly { name: string; intent: Record<string, unknown> }[] = [
+    { name: "observe 附带 npcId", intent: { type: "observe", locationId: "loc_a", npcId: "npc_1" } },
+    { name: "talk 附带 locationId", intent: { type: "talk", npcId: "npc_1", locationId: "loc_a" } },
+    { name: "investigate 附带 itemId", intent: { type: "investigate", factId: "fact_1", itemId: "item_key" } },
+    { name: "move 附带 factId", intent: { type: "move", locationId: "loc_b", factId: "fact_1" } }
+  ];
+
+  for (const { name, intent } of cases) {
+    it(`${name} ⇒ 400 INVALID_INTENT`, async () => {
+      const response = await handlePerformActionRequest(
+        makeRequest({ intent, revision: 0 }),
+        fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+      );
+      expect(response.status).toBe(400);
+      expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+    });
+  }
+});
+
 describe("actionHandler：不泄漏敏感信息", () => {
   it("成功响应 body 不含 SQL/seed/state/blueprint/inputDigest", async () => {
     const response = await handlePerformActionRequest(

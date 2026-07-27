@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { asItemId, asLocationId, asQuestId, type GameState, type NewGameInput } from "@/game/domain";
+import {
+  asItemId,
+  asLocationId,
+  asNpcId,
+  asQuestId,
+  type GameState,
+  type NewGameInput
+} from "@/game/domain";
 import { resolveAction, type PlayerIntent } from "@/game/gameplay/rpg/actions";
 import { reconcileQuests } from "@/game/gameplay/rpg/quests";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
@@ -186,6 +193,29 @@ describe("projectGameSessionView：物品摘要与 take_item 行动（Phase 5 Ta
       completed: true,
       supported: true
     });
+  });
+});
+
+describe("projectGameSessionView：defeat_enemy objective 渲染（Phase 5 Task 5，T3-M2 回归锁）", () => {
+  it("stage 2 完成后 stage 3 进入 active：defeat_enemy 保持 supported: false / completed: false", () => {
+    // 完整推进到 stage 3：移动完成 stage 1 → 抵达 loc_3 → 交谈 npc_3
+    // → 取得 key → stage 2 完成、stage 3（唯一 objective 为 defeat_enemy）解锁。
+    const moved = advance(PIPELINE.state, { type: "move", locationId: asLocationId("loc_2") });
+    const atKeyLocation = advance(moved, { type: "move", locationId: asLocationId("loc_3") });
+    const talked = advance(atKeyLocation, { type: "talk", npcId: asNpcId("npc_3") });
+    const taken = advance(talked, { type: "take_item", itemId: asItemId("item_key") });
+
+    const view = project(taken, 4);
+    const names = view.activeQuests.map((quest) => quest.name);
+    expect(names).not.toContain(questName("quest_m2"));
+    expect(names).toContain(questName("quest_m3"));
+
+    // 未支持类型的展示契约：中性文案、永不 completed、supported: false，
+    // UI 不得把它呈现为本阶段可完成的目标。
+    const m3 = view.activeQuests.find((quest) => quest.name === questName("quest_m3"));
+    expect(m3?.objectives).toEqual([
+      { label: "战胜强敌", completed: false, supported: false }
+    ]);
   });
 });
 

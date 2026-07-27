@@ -6,7 +6,8 @@ const sourceRoot = resolve(process.cwd(), "src");
 
 // ---------------------------------------------------------------------------
 // 架构边界守卫（Phase 1 Task 7 建立，Phase 2 Task 5 扩展持久化方向，
-// Phase 4 Task 5 补充 actions/quests 门面 deep-import 守卫）。
+// Phase 4 Task 5 补充 actions/quests 门面 deep-import 守卫，
+// Phase 5 Task 5 补充 take_item 新增面的扫描覆盖自检）。
 // 默认只扫描生产源码：同目录 *.test.ts(x) / *.testutil.ts 允许导入内部 helper；
 // 个别规则（app/api）显式连测试一起扫，见 BoundaryRule.includeTestFiles。
 // 匹配统一针对引号内的 import/require 说明符，避免误伤普通注释文字。
@@ -300,6 +301,15 @@ describe("boundary patterns detect synthetic violations", () => {
       snippet: `import { resolveAction } from "@/game/gameplay/rpg/actions/resolveAction";`
     },
     {
+      // Phase 5：take_item 所在的 intents/validateIntent 内部模块同样被拦。
+      pattern: ACTIONS_DEEP_IMPORT,
+      snippet: `import { validatePlayerIntent } from "@/game/gameplay/rpg/actions/validateIntent";`
+    },
+    {
+      pattern: ACTIONS_DEEP_IMPORT,
+      snippet: `import type { TakeItemIntent } from "@/game/gameplay/rpg/actions/intents";`
+    },
+    {
       pattern: QUESTS_DEEP_IMPORT,
       snippet: `import { reconcileQuests } from "@/game/gameplay/rpg/quests/reconcileQuests";`
     },
@@ -403,6 +413,36 @@ describe("boundary patterns detect synthetic violations", () => {
   it("pure gameRepository port import does not trip the sqlite module rule", () => {
     const snippet = `import { asGameId } from "./server/persistence/gameRepository";`;
     expect(findBoundaryViolations(snippet, [SQLITE_MODULE_IMPORT, LIBSQL_IMPORT])).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 5（Task 5）：take_item 新增面的扫描覆盖自检。上方目录规则已禁止
+// UI/API/store 绕过 "@/game/application" 门面；这里额外钉死：Phase 5 落地的
+// 具体文件确实在对应规则的扫描范围内（守卫不空转），且它们对游戏层的
+// 唯一触达就是 application 门面。
+// ---------------------------------------------------------------------------
+
+describe("phase 5 take_item surfaces stay behind the application facade", () => {
+  it("ItemPanel/gameActionRequest/actions route are inside the scanned rule scopes", () => {
+    const componentFiles = exists(resolve(sourceRoot, "components"), false).map(toPosixRelative);
+    expect(componentFiles).toContain("components/ItemPanel.tsx");
+    expect(componentFiles).toContain("components/gameActionRequest.ts");
+    const apiFiles = exists(resolve(sourceRoot, "app/api"), true).map(toPosixRelative);
+    expect(apiFiles).toContain("app/api/game/actions/actionHandler.ts");
+    expect(apiFiles).toContain("app/api/game/actions/route.ts");
+  });
+
+  it("ItemPanel and gameActionRequest import game types only via @/game/application", () => {
+    for (const relative of ["components/ItemPanel.tsx", "components/gameActionRequest.ts"]) {
+      const specifiers = extractSpecifiers(readFileSync(resolve(sourceRoot, relative), "utf8"));
+      // 门面确实被使用（而非碰巧零导入），且除门面外没有任何 @/game/** 说明符。
+      expect(specifiers, relative).toContain("@/game/application");
+      const offenders = specifiers.filter(
+        (specifier) => specifier.startsWith("@/game/") && specifier !== "@/game/application"
+      );
+      expect(offenders, relative).toEqual([]);
+    }
   });
 });
 
