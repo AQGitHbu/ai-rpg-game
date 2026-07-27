@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
-  "phase": "mvp-phase-4-exploration-quest-progression",
-  "status": "completed",
-  "implementationStatus": "implemented",
-  "targetBranch": "codex/mvp-phase-4-exploration-quest-progression",
-  "worktreeName": "mvp-phase-4-exploration-quest-progression",
+  "phase": "mvp-phase-5-item-acquisition-quest-stage-2",
+  "status": "planned",
+  "implementationStatus": "not_started",
+  "targetBranch": "codex/mvp-phase-5-item-acquisition-quest-stage-2",
+  "worktreeName": "mvp-phase-5-item-acquisition-quest-stage-2",
   "repositories": [
     "ai-rpg-game"
   ],
-  "plan": "docs/superpowers/plans/2026-07-27-mvp-phase-4-exploration-quest-progression.md",
+  "plan": "docs/superpowers/plans/2026-07-27-mvp-phase-5-item-acquisition-quest-stage-2.md",
   "entryDocs": [
     "docs/游戏设计原则.md",
     "docs/游戏开发规范.md",
@@ -16,6 +16,7 @@
     "docs/agent/MVP核心闭环.md",
     "docs/agent/行动裁决.md",
     "docs/agent/探索与任务推进.md",
+    "docs/agent/物品与任务奖励.md",
     "docs/策划文档/AI生成RPG_MVP.md",
     "docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md"
   ],
