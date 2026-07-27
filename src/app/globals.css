@@ -299,6 +299,80 @@ select:focus,
   align-items: center;
 }
 
+/* Task 4：表单提交状态与字段错误 */
+.form-field {
+  display: grid;
+  gap: 6px;
+}
+
+.form-status {
+  min-height: 1.4em;
+  margin: 0;
+  color: var(--game-text-muted);
+  font-size: 0.9rem;
+}
+
+.field-error {
+  color: #e09a91;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+/* Task 4：开场视图（纯展示，无交互） */
+.opening-view {
+  display: grid;
+  gap: 20px;
+}
+
+.opening-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+
+.opening-facts dt {
+  color: var(--game-accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.opening-facts dd {
+  margin: 4px 0 0;
+}
+
+.opening-description,
+.opening-narration {
+  margin: 0;
+  line-height: 1.9;
+}
+
+.opening-hint {
+  margin: 0;
+  color: var(--game-text-muted);
+  font-size: 0.85rem;
+}
+
+.opening-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.opening-columns h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.opening-view ul {
+  margin: 0;
+  padding-left: 1.2em;
+  color: var(--game-text-muted);
+  line-height: 1.8;
+}
+
+
 .sr-only {
   position: absolute;
   width: 1px;

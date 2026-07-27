@@ -1,4 +1,4 @@
-import { NewGameSetupForm } from "@/components/NewGameSetupForm";
+import { CurrentGameScreen } from "@/components/CurrentGameScreen";
 
 export default function HomePage() {
   return (
@@ -11,7 +11,7 @@ export default function HomePage() {
           AI 负责生成候选，规则系统负责判断真正发生的事。
         </p>
       </header>
-      <NewGameSetupForm />
+      <CurrentGameScreen />
     </main>
   );
 }
