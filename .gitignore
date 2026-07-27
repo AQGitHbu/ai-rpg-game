@@ -12,6 +12,7 @@ db/
 logs/
 tmp/
 .worktrees/
+.superpowers/
 .foundation/
 .agents/commands/*
 .agents/skills/*
