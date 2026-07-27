@@ -35,8 +35,12 @@ function npmRun(script) {
     cwd: worktreePath,
     stdio: "inherit",
     windowsHide: true,
+    // Windows 的 .cmd 不能以 CreateProcess 直接启动；交由 shell 包装，
+    // 否则 spawnSync 会返回 EINVAL，phase:start 会误报 setup 失败。
+    shell: process.platform === "win32",
   });
-  if (result.status !== 0) throw new Error(`npm run ${script} 失败`);
+  if (result.error) throw new Error(`npm run ${script} 无法启动：${result.error.message}`);
+  if (result.status !== 0) throw new Error(`npm run ${script} 失败（退出码 ${result.status}）`);
 }
 
 if (config.status !== "planned" || config.implementationStatus !== "not_started") {
