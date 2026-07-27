@@ -12,7 +12,11 @@ import {
   type ScenarioProfiles
 } from "@/game/gameplay/rpg/scenario";
 import { projectOpeningGameView, type OpeningGameView } from "./openingGameView";
-import type { GameId, GameRepository } from "./server/persistence/gameRepository";
+import type {
+  CreateInitialGameResult,
+  GameId,
+  GameRepository
+} from "./server/persistence/gameRepository";
 
 // ---------------------------------------------------------------------------
 // createGame use case（Task 1 契约）。
@@ -91,12 +95,19 @@ export async function createGame(
 
   const state = initializeGameState(compiled.blueprint);
   const gameId = deps.newGameId();
-  const created = await deps.repository.createInitialGame({
-    gameId,
-    blueprint: compiled.blueprint,
-    state,
-    createdAt: deps.now()
-  });
+  let created: CreateInitialGameResult;
+  try {
+    created = await deps.repository.createInitialGame({
+      gameId,
+      blueprint: compiled.blueprint,
+      state,
+      createdAt: deps.now()
+    });
+  } catch {
+    // 端口契约外的意外抛错（adapter 漏网的驱动异常等）：与结构化失败同样
+    // 映射稳定代码，异常文本绝不向 API/UI 层泄漏。
+    return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+  }
   if (!created.ok) {
     return { ok: false, code: created.code };
   }

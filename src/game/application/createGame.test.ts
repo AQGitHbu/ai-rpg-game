@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { validateNewGameInput, type NewGameInput } from "@/game/domain";
 import { loadScenarioProfiles, type ScenarioProfiles } from "@/game/gameplay/rpg/scenario";
+import scienceFictionFixture from "../../../data/fixtures/phase1/science_fiction.json";
+import urbanFixture from "../../../data/fixtures/phase1/urban.json";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { createGame } from "./createGame";
+import type { GameRepository } from "./server/persistence/gameRepository";
 import {
   createFakeGameRepository,
   createTestDependencies,
@@ -106,6 +109,39 @@ describe("createGame：有效输入产出开场视图", () => {
   });
 });
 
+describe("createGame：三种游戏类型均成功创建（Task 3）", () => {
+  // wuxia 的字段级细节由上一组用例覆盖；这里保证三种类型走完整编排都成功，
+  // 且持久化载荷与独立复跑的管线逐类型一致。
+  const fixtures: readonly Phase1Fixture[] = [
+    wuxiaFixture,
+    scienceFictionFixture,
+    urbanFixture
+  ] as unknown as Phase1Fixture[];
+
+  for (const fixture of fixtures) {
+    it(`${fixture.input.gameType}：创建成功，view 与持久化载荷与管线一致`, async () => {
+      const repository = createFakeGameRepository();
+      const result = await createGame(
+        { input: fixture.input, seed: fixture.seed },
+        createTestDependencies(repository)
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.source).toBe("fallback");
+      const expected = runScenarioPipeline(fixture.input, fixture.seed);
+      expect(result.view.world.gameType).toBe(fixture.input.gameType);
+      expect(result.view.world.name).toBe(
+        PROFILES.gameTypeProfiles[fixture.input.gameType].label
+      );
+      expect(result.view.generation.generationId).toBe(expected.blueprint.generationId);
+      expect(repository.createCalls).toHaveLength(1);
+      expect(repository.createCalls[0].blueprint).toEqual(expected.blueprint);
+      expect(repository.createCalls[0].state).toEqual(expected.state);
+    });
+  }
+});
+
 describe("createGame：验证失败立即返回字段错误", () => {
   const invalidInput: NewGameInput = {
     ...FIXTURE.input,
@@ -178,6 +214,25 @@ describe("createGame：repository 结构化失败透传稳定代码", () => {
       createTestDependencies(repository)
     );
     expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
+  });
+
+  it("repository 端口契约外意外抛错 ⇒ 捕获为 INFRASTRUCTURE_FAILURE，不泄漏异常文本", async () => {
+    // 模拟 adapter 漏网的驱动异常：use case 必须兜底为稳定代码，绝不向 API 层抛出。
+    const throwingRepository: GameRepository = {
+      async createInitialGame() {
+        throw new Error("libsql 驱动崩溃：connection refused at F:\\db\\rpg.sqlite");
+      },
+      async getCurrentGame() {
+        return { ok: true, status: "none" };
+      }
+    };
+    const result = await createGame(
+      { input: FIXTURE.input, seed: FIXTURE.seed },
+      createTestDependencies(throwingRepository)
+    );
+    // toEqual 精确匹配：结果对象只含稳定代码，异常 message/堆栈不得出现。
+    expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
+    expect(JSON.stringify(result)).not.toContain("connection refused");
   });
 });
 
