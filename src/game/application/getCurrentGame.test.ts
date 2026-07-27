@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { NewGameInput } from "@/game/domain";
+import { asLocationId, type NewGameInput } from "@/game/domain";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { getCurrentGame } from "./getCurrentGame";
 import {
@@ -65,7 +65,7 @@ describe("getCurrentGame：损坏存档", () => {
     const repository = createFakeGameRepository();
     const { blueprint, state } = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
     // generationId 一致但引用被改坏：永久性损坏，不得伪装成暂时性故障。
-    const danglingState = { ...state, currentLocationId: "loc-does-not-exist" };
+    const danglingState = { ...state, currentLocationId: asLocationId("loc-does-not-exist") };
     repository.setCurrentResult({
       ok: true,
       status: "active",
