@@ -61,6 +61,20 @@ describe("getCurrentGame：损坏存档", () => {
     expect(result).toEqual({ status: "corrupt", reason: "GENERATION_MISMATCH" });
   });
 
+  it("记录可解析但 currentLocationId 悬挂 ⇒ corrupt(UNPARSEABLE_RECORD)，不向上抛投影异常", async () => {
+    const repository = createFakeGameRepository();
+    const { blueprint, state } = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
+    // generationId 一致但引用被改坏：永久性损坏，不得伪装成暂时性故障。
+    const danglingState = { ...state, currentLocationId: "loc-does-not-exist" };
+    repository.setCurrentResult({
+      ok: true,
+      status: "active",
+      record: { gameId: TEST_GAME_ID, blueprint, state: danglingState, createdAt: TEST_CREATED_AT }
+    });
+    const result = await getCurrentGame(createTestDependencies(repository));
+    expect(result).toEqual({ status: "corrupt", reason: "UNPARSEABLE_RECORD" });
+  });
+
   it("基础设施失败也归为可恢复的 corrupt 态，不抛出异常文本", async () => {
     const repository = createFakeGameRepository();
     repository.setCurrentResult({ ok: false, code: "INFRASTRUCTURE_FAILURE" });

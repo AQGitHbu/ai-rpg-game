@@ -39,13 +39,19 @@ export async function getCurrentGame(
 
   const profiles = deps.profiles ?? loadScenarioProfiles();
   const { record } = loaded;
-  return {
-    status: "active",
-    view: projectOpeningGameView({
-      gameId: record.gameId,
-      blueprint: record.blueprint,
-      state: record.state,
-      worldName: profiles.gameTypeProfiles[record.blueprint.gameType].label
-    })
-  };
+  try {
+    return {
+      status: "active",
+      view: projectOpeningGameView({
+        gameId: record.gameId,
+        blueprint: record.blueprint,
+        state: record.state,
+        worldName: profiles.gameTypeProfiles[record.blueprint.gameType].label
+      })
+    };
+  } catch {
+    // 投影抛错意味着记录内部引用被改坏（如悬挂的 currentLocationId）：
+    // 这是永久性数据损坏，归入 corrupt，绝不伪装成暂时性基础设施故障。
+    return { status: "corrupt", reason: "UNPARSEABLE_RECORD" };
+  }
 }
