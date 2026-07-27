@@ -30,6 +30,8 @@ export {
 } from "@/game/domain";
 export {
   asGameId,
+  type ApplyResolvedActionInput,
+  type ApplyResolvedActionResult,
   type CorruptGameReason,
   type CreateInitialGameInput,
   type CreateInitialGameResult,

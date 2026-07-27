@@ -35,7 +35,7 @@ describe("getCurrentGame：存在可玩存档", () => {
     repository.setCurrentResult({
       ok: true,
       status: "active",
-      record: { gameId: TEST_GAME_ID, blueprint, state, createdAt: TEST_CREATED_AT }
+      record: { gameId: TEST_GAME_ID, blueprint, state, revision: 0, createdAt: TEST_CREATED_AT }
     });
     const result = await getCurrentGame(createTestDependencies(repository));
 
@@ -69,7 +69,7 @@ describe("getCurrentGame：损坏存档", () => {
     repository.setCurrentResult({
       ok: true,
       status: "active",
-      record: { gameId: TEST_GAME_ID, blueprint, state: danglingState, createdAt: TEST_CREATED_AT }
+      record: { gameId: TEST_GAME_ID, blueprint, state: danglingState, revision: 0, createdAt: TEST_CREATED_AT }
     });
     const result = await getCurrentGame(createTestDependencies(repository));
     expect(result).toEqual({ status: "corrupt", reason: "UNPARSEABLE_RECORD" });

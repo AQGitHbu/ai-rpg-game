@@ -2,14 +2,16 @@
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import type { NewGameInput } from "@/game/domain";
+import type { GameState, NewGameInput } from "@/game/domain";
 import wuxiaFixture from "../../../../../data/fixtures/phase1/wuxia.json";
 import { runScenarioPipeline } from "../../applicationFixture.testutil";
-import { asGameId, type CreateInitialGameInput } from "./gameRepository";
+import { asGameId, type ApplyResolvedActionInput, type CreateInitialGameInput } from "./gameRepository";
 import { createSqliteClient, type SqliteClient } from "./sqliteClient";
 import {
   createSqliteGameRepository,
   GAME_RECORD_VERSION,
+  GAME_SCHEMA_VERSION,
+  INITIAL_REVISION,
   type SqliteGameRepository
 } from "./sqliteGameRepository";
 
@@ -156,7 +158,7 @@ describe("sqliteGameRepository：round-trip", () => {
     expect(await reader.getCurrentGame()).toEqual({
       ok: true,
       status: "active",
-      record: input
+      record: { ...input, revision: 0 }
     });
   });
 });
@@ -181,7 +183,7 @@ describe("sqliteGameRepository：重复创建", () => {
     expect(await repository.getCurrentGame()).toEqual({
       ok: true,
       status: "active",
-      record: original
+      record: { ...original, revision: 0 }
     });
     const raw = openRawClient(databasePath);
     expect(await countRows(raw, "games")).toBe(1);
@@ -353,5 +355,386 @@ describe("sqliteGameRepository：基础设施失败", () => {
       code: "INFRASTRUCTURE_FAILURE"
     });
     expect(loggedErrors.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3 Task 3：v1→v2 schema migration 测试。
+// 以可控方式构造真实 v1 SQLite 临时文件（无 revision 列），验证升级到 v2 后
+// 状态、蓝图、指针、generationId 都保留且 revision 为 0；重复初始化不改变数据。
+// ---------------------------------------------------------------------------
+
+/** 手工构造 v1 schema + 数据（不经过 v2 adapter），模拟 Phase 2 遗留数据库。 */
+async function seedV1Database(databasePath: string, input: CreateInitialGameInput): Promise<void> {
+  const raw = openRawClient(databasePath);
+  await raw.batch([
+    { sql: `CREATE TABLE IF NOT EXISTS schema_meta (meta_key TEXT PRIMARY KEY, meta_value TEXT NOT NULL)` },
+    { sql: `INSERT INTO schema_meta (meta_key, meta_value) VALUES ('schema_version', '1')` },
+    {
+      sql: `CREATE TABLE IF NOT EXISTS games (
+              game_id TEXT PRIMARY KEY,
+              record_version INTEGER NOT NULL,
+              generation_id TEXT NOT NULL,
+              blueprint_json TEXT NOT NULL,
+              state_json TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            )`
+    },
+    {
+      sql: `CREATE TABLE IF NOT EXISTS current_game (
+              slot INTEGER PRIMARY KEY CHECK (slot = 1),
+              game_id TEXT NOT NULL
+            )`
+    }
+  ], "write");
+  await raw.execute({
+    sql: `INSERT INTO games (game_id, record_version, generation_id, blueprint_json, state_json, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+    args: [
+      input.gameId,
+      GAME_RECORD_VERSION,
+      input.blueprint.generationId,
+      JSON.stringify(input.blueprint),
+      JSON.stringify(input.state),
+      input.createdAt
+    ]
+  });
+  await raw.execute({
+    sql: "INSERT INTO current_game (slot, game_id) VALUES (1, ?)",
+    args: [input.gameId]
+  });
+}
+
+describe("sqliteGameRepository：v1→v2 schema migration", () => {
+  it("v1 数据库升级后保留状态、蓝图、指针、generationId，revision 为 0", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    await seedV1Database(databasePath, input);
+
+    // v2 adapter 首次读取触发 migration。
+    const reader = openRepository(databasePath);
+    const result = await reader.getCurrentGame();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.status).toBe("active");
+    if (result.status !== "active") return;
+    expect(result.record.gameId).toBe(input.gameId);
+    expect(result.record.blueprint).toEqual(input.blueprint);
+    expect(result.record.state).toEqual(input.state);
+    expect(result.record.revision).toBe(INITIAL_REVISION);
+    expect(result.record.createdAt).toBe(input.createdAt);
+
+    // schema_meta 已更新为 v2。
+    const raw = openRawClient(databasePath);
+    const meta = await raw.execute({
+      sql: "SELECT meta_value FROM schema_meta WHERE meta_key = 'schema_version'",
+      args: []
+    });
+    expect(meta.rows[0]?.["meta_value"]).toBe(String(GAME_SCHEMA_VERSION));
+  });
+
+  it("重复初始化不改变数据（迁移幂等）", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    await seedV1Database(databasePath, input);
+
+    // 第一次迁移。
+    const first = openRepository(databasePath);
+    await first.initializeSchema();
+    await first.close();
+
+    // 第二次打开同一文件：不应再次尝试迁移，数据不变。
+    const second = openRepository(databasePath);
+    await second.initializeSchema();
+    const result = await second.getCurrentGame();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.status).toBe("active");
+    if (result.status !== "active") return;
+    expect(result.record.revision).toBe(INITIAL_REVISION);
+    expect(result.record.state).toEqual(input.state);
+  });
+
+  it("未知未来 schema 版本安全失败，绝不重置玩家存档", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    await seedV1Database(databasePath, input);
+
+    // 篡改 schema_meta 为未来版本。
+    const raw = openRawClient(databasePath);
+    await raw.execute({
+      sql: "UPDATE schema_meta SET meta_value = '999' WHERE meta_key = 'schema_version'",
+      args: []
+    });
+
+    const reader = openRepository(databasePath);
+    // ensureSchema 抛错 → getCurrentGame 捕获为 INFRASTRUCTURE_FAILURE。
+    const result = await reader.getCurrentGame();
+    expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
+
+    // 存档行原样保留，不被清理或重置。
+    expect(await countRows(raw, "games")).toBe(1);
+    expect(await countRows(raw, "current_game")).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3 Task 3：applyResolvedAction (compare-and-swap) 测试。
+// 用真实临时 SQLite 验证：成功 action 只递增一次 revision、写入完整下一 state；
+// 模拟事务故障时旧 state/revision 完整保留；并发相同 expectedRevision 时仅一个成功。
+// ---------------------------------------------------------------------------
+
+/** 构造一份修改后的 GameState：在事件账本末尾追加一条 location_observed 事件。 */
+function buildNextState(): GameState {
+  return {
+    ...PIPELINE.state,
+    eventLedger: [
+      ...PIPELINE.state.eventLedger,
+      {
+        type: "location_observed" as const,
+        locationId: PIPELINE.state.currentLocationId,
+        occurredAt: "2026-07-27T10:00:00Z"
+      }
+    ]
+  };
+}
+
+describe("sqliteGameRepository：applyResolvedAction (compare-and-swap)", () => {
+  it("成功行动：revision 递增一次，state 更新，返回完整 record", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    const writer = openRepository(databasePath);
+    expect(await writer.createInitialGame(input)).toEqual({ ok: true });
+
+    const nextState = buildNextState();
+    const actionInput: ApplyResolvedActionInput = {
+      gameId: input.gameId,
+      expectedRevision: INITIAL_REVISION,
+      nextState
+    };
+    const result = await writer.applyResolvedAction(actionInput);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.record.gameId).toBe(input.gameId);
+    expect(result.record.revision).toBe(1);
+    expect(result.record.state).toEqual(nextState);
+    expect(result.record.blueprint).toEqual(input.blueprint);
+    expect(result.record.createdAt).toBe(input.createdAt);
+  });
+
+  it("陈旧 revision 返回 STALE_GAME_REVISION，不修改状态", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    const writer = openRepository(databasePath);
+    expect(await writer.createInitialGame(input)).toEqual({ ok: true });
+
+    const nextState = buildNextState();
+
+    // 第一次成功：revision 0 → 1。
+    const first = await writer.applyResolvedAction({
+      gameId: input.gameId,
+      expectedRevision: INITIAL_REVISION,
+      nextState
+    });
+    expect(first.ok).toBe(true);
+
+    // 第二次用旧 revision 0：必须拒绝。
+    const second = await writer.applyResolvedAction({
+      gameId: input.gameId,
+      expectedRevision: INITIAL_REVISION,
+      nextState
+    });
+    expect(second).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
+
+    // 当前存档的 revision 仍为 1，state 为第一次写入的 nextState。
+    const current = await writer.getCurrentGame();
+    expect(current.ok).toBe(true);
+    if (!current.ok) return;
+    expect(current.status).toBe("active");
+    if (current.status !== "active") return;
+    expect(current.record.revision).toBe(1);
+    expect(current.record.state).toEqual(nextState);
+  });
+
+  it("连续成功行动：revision 单调递增", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    const writer = openRepository(databasePath);
+    expect(await writer.createInitialGame(input)).toEqual({ ok: true });
+
+    // 第一次行动：revision 0 → 1。
+    const state1 = buildNextState();
+    const r1 = await writer.applyResolvedAction({
+      gameId: input.gameId,
+      expectedRevision: 0,
+      nextState: state1
+    });
+    expect(r1.ok).toBe(true);
+    if (!r1.ok) return;
+    expect(r1.record.revision).toBe(1);
+
+    // 第二次行动：revision 1 → 2。
+    const state2: GameState = {
+      ...state1,
+      eventLedger: [
+        ...state1.eventLedger,
+        {
+          type: "location_observed" as const,
+          locationId: state1.currentLocationId,
+          occurredAt: "2026-07-27T11:00:00Z"
+        }
+      ]
+    };
+    const r2 = await writer.applyResolvedAction({
+      gameId: input.gameId,
+      expectedRevision: 1,
+      nextState: state2
+    });
+    expect(r2.ok).toBe(true);
+    if (!r2.ok) return;
+    expect(r2.record.revision).toBe(2);
+    expect(r2.record.state).toEqual(state2);
+  });
+
+  it("无 active game 时返回 NO_ACTIVE_GAME", async () => {
+    const databasePath = nextDbPath();
+    const repository = openRepository(databasePath);
+    await repository.initializeSchema();
+
+    const result = await repository.applyResolvedAction({
+      gameId: asGameId("game-nonexistent"),
+      expectedRevision: 0,
+      nextState: buildNextState()
+    });
+    expect(result).toEqual({ ok: false, code: "NO_ACTIVE_GAME" });
+  });
+
+  it("gameId 不匹配时返回 NO_ACTIVE_GAME", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    const writer = openRepository(databasePath);
+    expect(await writer.createInitialGame(input)).toEqual({ ok: true });
+
+    const result = await writer.applyResolvedAction({
+      gameId: asGameId("game-wrong-id"),
+      expectedRevision: 0,
+      nextState: buildNextState()
+    });
+    expect(result).toEqual({ ok: false, code: "NO_ACTIVE_GAME" });
+  });
+
+  it("并发相同 expectedRevision 时仅一个成功", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    const writer = openRepository(databasePath);
+    expect(await writer.createInitialGame(input)).toEqual({ ok: true });
+    await writer.close();
+
+    // 两个独立 repository 实例（各自有独立 client）同时发起 compare-and-swap。
+    // SQLite 写锁串行化：先获得锁的那个 UPDATE 命中，后到的 revision 已变，
+    // 要么 STALE_GAME_REVISION（锁等到 commit 后再读），要么 INFRASTRUCTURE_FAILURE（BUSY）。
+    // 关键不变量：只有一个成功，最终 revision 只递增一次。
+    const repoA = openRepository(databasePath);
+    const repoB = openRepository(databasePath);
+    const nextState = buildNextState();
+
+    const [r1, r2] = await Promise.all([
+      repoA.applyResolvedAction({ gameId: input.gameId, expectedRevision: 0, nextState }),
+      repoB.applyResolvedAction({ gameId: input.gameId, expectedRevision: 0, nextState })
+    ]);
+
+    const successCount = [r1, r2].filter((r) => r.ok).length;
+    expect(successCount).toBe(1);
+
+    // 最终 revision 只递增一次。
+    const reader = openRepository(databasePath);
+    const current = await reader.getCurrentGame();
+    expect(current.ok).toBe(true);
+    if (!current.ok) return;
+    expect(current.status).toBe("active");
+    if (current.status !== "active") return;
+    expect(current.record.revision).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyResolvedAction 事务故障：注入 UPDATE 故障，验证旧 state/revision 完整保留。
+// ---------------------------------------------------------------------------
+
+function wrapTransactionWithUpdateFault(tx: SqliteTransaction): SqliteTransaction {
+  return new Proxy(tx, {
+    get(target, property) {
+      if (property === "execute") {
+        return (async (stmtOrSql: unknown, args?: unknown) => {
+          const sql =
+            typeof stmtOrSql === "string" ? stmtOrSql : (stmtOrSql as { sql: string }).sql;
+          if (/update\s+games\s+set/i.test(sql)) {
+            throw new Error("注入故障：UPDATE games 失败");
+          }
+          return (target.execute as (a: unknown, b?: unknown) => Promise<unknown>)(
+            stmtOrSql,
+            args
+          );
+        }) as SqliteTransaction["execute"];
+      }
+      const value = Reflect.get(target, property) as unknown;
+      return typeof value === "function"
+        ? (value as (...callArgs: unknown[]) => unknown).bind(target)
+        : value;
+    }
+  });
+}
+
+function createUpdateFaultClient(real: SqliteClient): SqliteClient {
+  openedClients.push(real);
+  return new Proxy(real, {
+    get(target, property) {
+      if (property === "transaction") {
+        return (async (mode?: "write" | "read" | "deferred") => {
+          const tx = mode === undefined ? await target.transaction() : await target.transaction(mode);
+          return wrapTransactionWithUpdateFault(tx);
+        }) as SqliteClient["transaction"];
+      }
+      const value = Reflect.get(target, property) as unknown;
+      return typeof value === "function"
+        ? (value as (...callArgs: unknown[]) => unknown).bind(target)
+        : value;
+    }
+  });
+}
+
+describe("sqliteGameRepository：applyResolvedAction 事务故障", () => {
+  it("UPDATE 故障时旧 state/revision 完整保留", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    // 先用正常 adapter 创建存档。
+    const writer = openRepository(databasePath);
+    expect(await writer.createInitialGame(input)).toEqual({ ok: true });
+    await writer.close();
+
+    // 用注入故障的 adapter 尝试行动。
+    const faulty = openRepository(databasePath, () =>
+      createUpdateFaultClient(createSqliteClient(databasePath))
+    );
+    const result = await faulty.applyResolvedAction({
+      gameId: input.gameId,
+      expectedRevision: 0,
+      nextState: buildNextState()
+    });
+    expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
+    await faulty.close();
+
+    // 干净实例读取：旧 state 和 revision 0 完整保留。
+    const reader = openRepository(databasePath);
+    const current = await reader.getCurrentGame();
+    expect(current.ok).toBe(true);
+    if (!current.ok) return;
+    expect(current.status).toBe("active");
+    if (current.status !== "active") return;
+    expect(current.record.revision).toBe(0);
+    expect(current.record.state).toEqual(input.state);
   });
 });

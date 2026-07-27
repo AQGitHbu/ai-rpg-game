@@ -224,6 +224,9 @@ describe("createGame：repository 结构化失败透传稳定代码", () => {
       },
       async getCurrentGame() {
         return { ok: true, status: "none" };
+      },
+      async applyResolvedAction() {
+        throw new Error("libsql 驱动崩溃：connection refused at F:\\db\\rpg.sqlite");
       }
     };
     const result = await createGame(

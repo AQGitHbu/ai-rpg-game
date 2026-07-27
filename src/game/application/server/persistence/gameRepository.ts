@@ -19,16 +19,23 @@ export function asGameId(raw: string): GameId {
   return raw as GameId;
 }
 
-/** 完整存档记录：编译蓝图 + 初始状态 + 创建时间（注入时钟产出的 ISO 字符串）。 */
+/** 完整存档记录：编译蓝图 + 当前状态 + 单调递增 revision + 创建时间。 */
 export type GameRecord = {
+  readonly gameId: GameId;
+  readonly blueprint: ScenarioBlueprint;
+  readonly state: GameState;
+  /** 单调递增 revision：初始游戏为 0，每次成功行动 +1。 */
+  readonly revision: number;
+  readonly createdAt: string;
+};
+
+/** 首次创建的写入载荷：不含 revision（adapter 内部固定写入 0）。 */
+export type CreateInitialGameInput = {
   readonly gameId: GameId;
   readonly blueprint: ScenarioBlueprint;
   readonly state: GameState;
   readonly createdAt: string;
 };
-
-/** 首次创建的写入载荷：与 GameRecord 同构，字段全部由 application 注入。 */
-export type CreateInitialGameInput = GameRecord;
 
 export type CreateInitialGameResult =
   | { readonly ok: true }
@@ -49,9 +56,29 @@ export type GetCurrentGameRecordResult =
   | { readonly ok: true; readonly status: "corrupt"; readonly reason: CorruptGameReason }
   | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" };
 
+/** 原子行动写入载荷：resolver 已产出的下一状态 + 预期 revision。 */
+export type ApplyResolvedActionInput = {
+  readonly gameId: GameId;
+  /** 调用方读取时的 revision：不匹配则 STALE_GAME_REVISION，不重试不覆盖。 */
+  readonly expectedRevision: number;
+  readonly nextState: GameState;
+};
+
+export type ApplyResolvedActionResult =
+  | { readonly ok: true; readonly record: GameRecord }
+  | { readonly ok: false; readonly code: "STALE_GAME_REVISION" }
+  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" }
+  | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" };
+
 export interface GameRepository {
   /** 原子创建：蓝图、状态与当前存档指针必须在同一事务内写入，失败整体回滚。 */
   createInitialGame(input: CreateInitialGameInput): Promise<CreateInitialGameResult>;
   /** 读取当前存档：区分无存档 / 可用记录 / 损坏记录 / 基础设施失败。 */
   getCurrentGame(): Promise<GetCurrentGameRecordResult>;
+  /**
+   * 原子 compare-and-swap 续存档：同一写事务内按 gameId + expectedRevision
+   * 条件更新 state JSON 与 revision；不匹配返回 STALE_GAME_REVISION，不重试不覆盖。
+   * 持久化层不认识 PlayerIntent 规则语义，只接收 resolver 已产出的 state 数据。
+   */
+  applyResolvedAction(input: ApplyResolvedActionInput): Promise<ApplyResolvedActionResult>;
 }

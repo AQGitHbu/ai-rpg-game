@@ -10,6 +10,8 @@ import {
 import type { CreateGameDependencies } from "./createGame";
 import {
   asGameId,
+  type ApplyResolvedActionInput,
+  type ApplyResolvedActionResult,
   type CreateInitialGameInput,
   type CreateInitialGameResult,
   type GameRepository,
@@ -27,21 +29,30 @@ export const TEST_CREATED_AT = "2026-07-27T00:00:00.000Z";
 export type FakeGameRepository = GameRepository & {
   /** spy：记录每次 createInitialGame 收到的完整载荷。 */
   readonly createCalls: CreateInitialGameInput[];
+  /** spy：记录每次 applyResolvedAction 收到的完整载荷。 */
+  readonly applyCalls: ApplyResolvedActionInput[];
   setCreateResult(result: CreateInitialGameResult): void;
   setCurrentResult(result: GetCurrentGameRecordResult): void;
+  setApplyResult(result: ApplyResolvedActionResult): void;
 };
 
 export function createFakeGameRepository(): FakeGameRepository {
   const createCalls: CreateInitialGameInput[] = [];
+  const applyCalls: ApplyResolvedActionInput[] = [];
   let createResult: CreateInitialGameResult = { ok: true };
   let currentResult: GetCurrentGameRecordResult = { ok: true, status: "none" };
+  let applyResult: ApplyResolvedActionResult = { ok: false, code: "NO_ACTIVE_GAME" };
   return {
     createCalls,
+    applyCalls,
     setCreateResult(result) {
       createResult = result;
     },
     setCurrentResult(result) {
       currentResult = result;
+    },
+    setApplyResult(result) {
+      applyResult = result;
     },
     async createInitialGame(input) {
       createCalls.push(input);
@@ -49,6 +60,10 @@ export function createFakeGameRepository(): FakeGameRepository {
     },
     async getCurrentGame() {
       return currentResult;
+    },
+    async applyResolvedAction(input) {
+      applyCalls.push(input);
+      return applyResult;
     }
   };
 }

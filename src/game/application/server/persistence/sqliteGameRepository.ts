@@ -1,31 +1,39 @@
 import type { GameState, ScenarioBlueprint } from "@/game/domain";
 import {
   asGameId,
+  type ApplyResolvedActionInput,
+  type ApplyResolvedActionResult,
   type CorruptGameReason,
   type CreateInitialGameInput,
   type CreateInitialGameResult,
+  type GameRecord,
   type GameRepository,
   type GetCurrentGameRecordResult
 } from "./gameRepository";
 import type { SqliteClient, SqliteClientFactory, SqliteStatement } from "./sqliteClient";
 
 // ---------------------------------------------------------------------------
-// SQLite adapter（Task 2）：GameRepository 端口的 libsql 实现。
+// SQLite adapter（Phase 2 + Phase 3）：GameRepository 端口的 libsql 实现。
 //   - schema 版本化且可重复初始化（CREATE TABLE IF NOT EXISTS + schema_meta）；
+//   - Phase 3: schema v1→v2 migration 追加 revision 列，旧记录补 revision 0；
 //   - createInitialGame 在单个写事务内写入存档行与 current_game 指针，
 //     任一步失败整体回滚，「蓝图成功、状态失败」不可能发生；
+//   - applyResolvedAction 以 compare-and-swap 原子更新 state + revision；
 //   - 读取防御性 JSON 解析并校验记录版本 / generationId 一致性，坏数据只标记
 //     corrupt，绝不自动重置或覆盖；
 //   - 所有失败只返回端口定义的稳定代码，SQL/libsql 细节仅进注入的 logError。
 // ---------------------------------------------------------------------------
 
-/** 整库 schema 版本：写入 schema_meta，供后续迁移识别；不匹配视为基础设施问题。 */
-export const GAME_SCHEMA_VERSION = 1;
+/** 整库 schema 版本：v2 新增 revision 列。 */
+export const GAME_SCHEMA_VERSION = 2;
 
 /** 存档行的记录格式版本：读取时不匹配即 corrupt(VERSION_MISMATCH)。 */
 export const GAME_RECORD_VERSION = 1;
 
-// 幂等建表语句：值一律走 args 参数化，禁止拼接 SQL 字符串。
+/** 初始 revision：新存档与 v1 迁移后的旧记录均为 0。 */
+export const INITIAL_REVISION = 0;
+
+// 幂等建表语句（v2 schema）：fresh DB 直接建含 revision 列的表。
 const SCHEMA_STATEMENTS: readonly SqliteStatement[] = [
   {
     sql: `CREATE TABLE IF NOT EXISTS schema_meta (
@@ -34,18 +42,14 @@ const SCHEMA_STATEMENTS: readonly SqliteStatement[] = [
           )`
   },
   {
-    sql: `INSERT INTO schema_meta (meta_key, meta_value) VALUES ('schema_version', ?)
-          ON CONFLICT(meta_key) DO NOTHING`,
-    args: [String(GAME_SCHEMA_VERSION)]
-  },
-  {
     sql: `CREATE TABLE IF NOT EXISTS games (
             game_id TEXT PRIMARY KEY,
             record_version INTEGER NOT NULL,
             generation_id TEXT NOT NULL,
             blueprint_json TEXT NOT NULL,
             state_json TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT ${INITIAL_REVISION}
           )`
   },
   {
@@ -98,6 +102,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordRes
   const blueprintJson = row["blueprint_json"];
   const stateJson = row["state_json"];
   const createdAt = row["created_at"];
+  const revision = row["revision"];
   // LEFT JOIN 下指针悬空（games 行缺失）或列类型不对：记录无法成形。
   if (
     typeof gameId !== "string" ||
@@ -109,6 +114,10 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordRes
   }
   if (recordVersion !== GAME_RECORD_VERSION) {
     return corrupt("VERSION_MISMATCH");
+  }
+  // revision 必须是非负整数（v1 迁移后 DEFAULT 0，正常写入 ≥ 0）。
+  if (typeof revision !== "number" || !Number.isInteger(revision) || revision < 0) {
+    return corrupt("UNPARSEABLE_RECORD");
   }
 
   const blueprint = parseJsonObject(blueprintJson);
@@ -138,6 +147,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordRes
       // 通过全部防御性检查后按端口契约还原类型；深度结构由写入侧的编译器保证。
       blueprint: blueprint as unknown as ScenarioBlueprint,
       state: state as unknown as GameState,
+      revision,
       createdAt
     }
   };
@@ -167,16 +177,46 @@ export function createSqliteGameRepository(
   async function ensureSchema(): Promise<void> {
     if (schemaReady) return;
     const db = getClient();
+
+    // Step 1: 幂等建表（fresh DB 直接建含 revision 列的 v2 表）。
     await db.batch([...SCHEMA_STATEMENTS], "write");
+
+    // Step 2: 读取当前 schema 版本。
     const meta = await db.execute({
       sql: "SELECT meta_value FROM schema_meta WHERE meta_key = 'schema_version'",
       args: []
     });
     const stored = meta.rows[0]?.["meta_value"];
-    if (stored !== String(GAME_SCHEMA_VERSION)) {
-      // 整库版本不认识属于部署/迁移问题：交由调用方映射为基础设施失败。
+
+    if (stored === undefined) {
+      // Fresh DB：schema_meta 行尚不存在（CREATE TABLE IF NOT EXISTS 不插入数据）。
+      // 写入当前版本号。
+      await db.execute({
+        sql: "INSERT INTO schema_meta (meta_key, meta_value) VALUES ('schema_version', ?)",
+        args: [String(GAME_SCHEMA_VERSION)]
+      });
+    } else if (stored === "1") {
+      // v1 → v2 migration：追加 revision 列，旧记录 DEFAULT 0。
+      // ALTER TABLE 在事务中执行，保证幂等且原子。
+      const tx = await db.transaction("write");
+      try {
+        await tx.execute({
+          sql: `ALTER TABLE games ADD COLUMN revision INTEGER NOT NULL DEFAULT ${INITIAL_REVISION}`,
+          args: []
+        });
+        await tx.execute({
+          sql: "UPDATE schema_meta SET meta_value = ? WHERE meta_key = 'schema_version'",
+          args: [String(GAME_SCHEMA_VERSION)]
+        });
+        await tx.commit();
+      } finally {
+        tx.close();
+      }
+    } else if (stored !== String(GAME_SCHEMA_VERSION)) {
+      // 未知未来版本：安全失败，绝不重置玩家存档。
       throw new Error(`不支持的 schema_version：${String(stored)}`);
     }
+
     schemaReady = true;
   }
 
@@ -207,15 +247,16 @@ export function createSqliteGameRepository(
           return { ok: false, code: "ACTIVE_GAME_EXISTS" };
         }
         await tx.execute({
-          sql: `INSERT INTO games (game_id, record_version, generation_id, blueprint_json, state_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)`,
+          sql: `INSERT INTO games (game_id, record_version, generation_id, blueprint_json, state_json, created_at, revision)
+                VALUES (?, ?, ?, ?, ?, ?, ?)`,
           args: [
             input.gameId,
             GAME_RECORD_VERSION,
             input.blueprint.generationId,
             blueprintJson,
             stateJson,
-            input.createdAt
+            input.createdAt,
+            INITIAL_REVISION
           ]
         });
         await tx.execute({
@@ -238,7 +279,7 @@ export function createSqliteGameRepository(
     try {
       await ensureSchema();
       const result = await getClient().execute({
-        sql: `SELECT g.game_id, g.record_version, g.blueprint_json, g.state_json, g.created_at
+        sql: `SELECT g.game_id, g.record_version, g.blueprint_json, g.state_json, g.created_at, g.revision
               FROM current_game c LEFT JOIN games g ON g.game_id = c.game_id
               WHERE c.slot = 1`,
         args: []
@@ -253,9 +294,89 @@ export function createSqliteGameRepository(
     }
   }
 
+  async function applyResolvedAction(
+    input: ApplyResolvedActionInput
+  ): Promise<ApplyResolvedActionResult> {
+    let stateJson: string;
+    try {
+      await ensureSchema();
+      stateJson = JSON.stringify(input.nextState);
+    } catch (error) {
+      logError("applyResolvedAction 准备阶段失败", error);
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
+
+    try {
+      const tx = await getClient().transaction("write");
+      try {
+        // 检查 current_game 指针：无 active game 时返回稳定代码。
+        const pointer = await tx.execute({
+          sql: "SELECT game_id FROM current_game WHERE slot = 1",
+          args: []
+        });
+        if (pointer.rows.length === 0) {
+          return { ok: false, code: "NO_ACTIVE_GAME" };
+        }
+        const activeGameId = pointer.rows[0]?.["game_id"];
+        if (activeGameId !== input.gameId) {
+          return { ok: false, code: "NO_ACTIVE_GAME" };
+        }
+
+        // Compare-and-swap：条件更新 state + revision。
+        // WHERE game_id = ? AND revision = ? 确保只有期望版本才更新。
+        const updateResult = await tx.execute({
+          sql: `UPDATE games SET state_json = ?, revision = revision + 1
+                WHERE game_id = ? AND revision = ?`,
+          args: [stateJson, input.gameId, input.expectedRevision]
+        });
+        const rowsAffected = Number(updateResult.rowsAffected ?? 0);
+        if (rowsAffected === 0) {
+          // revision 不匹配：并发写入或客户端使用旧 revision。
+          return { ok: false, code: "STALE_GAME_REVISION" };
+        }
+
+        // 读回完整记录以返回给 application 层投影 view。
+        const readBack = await tx.execute({
+          sql: `SELECT game_id, record_version, blueprint_json, state_json, created_at, revision
+                FROM games WHERE game_id = ?`,
+          args: [input.gameId]
+        });
+        const row = readBack.rows[0];
+        if (row === undefined) {
+          // 理论不可达（刚更新成功），但防御性处理。
+          return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        }
+
+        const blueprint = parseJsonObject(row["blueprint_json"] as string);
+        const state = parseJsonObject(row["state_json"] as string);
+        if (blueprint === null || state === null) {
+          return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        }
+
+        const record: GameRecord = {
+          gameId: asGameId(row["game_id"] as string),
+          blueprint: blueprint as unknown as ScenarioBlueprint,
+          state: state as unknown as GameState,
+          revision: row["revision"] as number,
+          createdAt: row["created_at"] as string
+        };
+
+        await tx.commit();
+        return { ok: true, record };
+      } finally {
+        // 未 commit 时 close 即 ROLLBACK：旧 state/revision 完整保留。
+        tx.close();
+      }
+    } catch (error) {
+      logError("applyResolvedAction 事务失败，已回滚", error);
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
+  }
+
   return {
     createInitialGame,
     getCurrentGame,
+    applyResolvedAction,
     async initializeSchema() {
       await ensureSchema();
     },
