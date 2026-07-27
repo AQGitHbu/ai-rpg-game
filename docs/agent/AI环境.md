@@ -21,6 +21,17 @@ AI_API_KEY=...
 - 脚本、日志、错误和测试不得输出任何值。
 - `AI_GAME_ENV_SOURCE` 只用于本地 bootstrap 指定来源路径，不是应用运行时配置，也不能提交到配置文件。
 
+## 持久化环境变量（Phase 2）
+
+```dotenv
+GAME_DB_PATH=./db/rpg.sqlite
+```
+
+- 仅 server 运行时读取：全库只有 `src/game/application/server/persistence/sqliteClient.ts` 解析该键（经 composition root 注入的 env 记录）；客户端 bundle、domain/gameplay 与 application 本体均不感知，边界由 `src/dependencyBoundaries.test.ts` 静态守卫强制。
+- 未设置或空白时回退默认 `db/rpg.sqlite`（`db/` 目录已被 `.gitignore` 忽略，不提交数据库文件）。
+- 测试不读全局配置：一律显式注入 `tmp/` 下的临时路径，用完自清理。
+- `.env.example` 已含该键示例；`GAME_PERSISTENCE_BACKEND` 目前仅为声明性占位，代码未读取（Phase 2 只支持 sqlite）。
+
 ## 本地操作
 
 ```powershell
@@ -39,4 +50,4 @@ npm run env:check
 
 ## 阶段边界
 
-Phase 1 不发起 AI 调用，因此缺少真实 AI 值不会阻止 `setup` 或 `doctor`；开始真实 AI 阶段前，`npm run env:check` 必须成为该阶段验收命令。Provider transport 仍需按共享候选流程判断，不在环境脚本中实现。
+Phase 1/Phase 2 不发起 AI 调用（Phase 2 仅确定性 fallback 生成），因此缺少真实 AI 值不会阻止 `setup` 或 `doctor`；开始真实 AI 阶段前，`npm run env:check` 必须成为该阶段验收命令。Provider transport 仍需按共享候选流程判断，不在环境脚本中实现。

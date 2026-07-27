@@ -12,9 +12,9 @@
 |---|---|---|---|
 | 共享基础设施 | `共同规范/共享模块开发流程.md` | `共同规范/共享模块目录.json` | 仅按触发条件读取 |
 | 项目脚手架 | `agent/项目脚手架.md` | — | 已建立 |
-| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | Phase 2 已规划，尚未实现 |
-| MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | Phase 1 已完成；Phase 2 将实现创建、存档与开场恢复 |
-| AI 环境 | `agent/AI环境.md` | `.env.example` | 独立环境契约已建立；真实调用尚未实现 |
+| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | Phase 2 已实现（completed / implemented）；下一阶段尚未规划 |
+| MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | Phase 2 已完成：创建、SQLite 存档与开场恢复；行动系统与真实 AI 未实现 |
+| AI 环境 | `agent/AI环境.md` | `.env.example` | 独立环境契约已建立；真实 AI 调用尚未实现；`GAME_DB_PATH` 为 server-only 持久化配置 |
 
 ## 维护规则
 

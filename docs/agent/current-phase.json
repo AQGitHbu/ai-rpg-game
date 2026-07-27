@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "mvp-phase-2-create-game-persistence",
-  "status": "planned",
-  "implementationStatus": "not_started",
+  "status": "completed",
+  "implementationStatus": "implemented",
   "targetBranch": "codex/mvp-phase-2-create-game-persistence",
   "worktreeName": "mvp-phase-2-create-game-persistence",
   "repositories": [
