@@ -12,11 +12,11 @@
 |---|---|---|---|
 | 共享基础设施 | `共同规范/共享模块开发流程.md` | `共同规范/共享模块目录.json` | 仅按触发条件读取 |
 | 项目脚手架 | `agent/项目脚手架.md` | — | 已建立 |
-| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | Phase 5 已规划：确定性物品取得与主线第二阶段 |
-| MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | Phase 4 已完成：创建、恢复、固定行动、移动与受支持任务推进闭环 |
-| 行动裁决 | `agent/行动裁决.md` | `策划文档/AI生成RPG_MVP.md` | Phase 4 已实现：observe / talk / investigate / move；Phase 5 计划新增 take_item |
-| 探索与任务推进 | `agent/探索与任务推进.md` | `策划文档/AI生成RPG_MVP.md` | Phase 4 已实现：移动、visit/talk/discover objective 与解锁 |
-| 物品与任务奖励 | `agent/物品与任务奖励.md` | `策划文档/AI生成RPG_MVP.md` | Phase 5 已规划：地点预置物品、取得和 obtain_item objective；不含物品使用/奖励数值 |
+| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | Phase 5 已完成：确定性物品取得与主线第二阶段；下一阶段待规划 |
+| MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | Phase 5 已完成：创建、恢复、固定行动、移动、物品取得与 stage 1-2 任务闭环 |
+| 行动裁决 | `agent/行动裁决.md` | `策划文档/AI生成RPG_MVP.md` | Phase 5 已实现：observe / talk / investigate / move / take_item |
+| 探索与任务推进 | `agent/探索与任务推进.md` | `策划文档/AI生成RPG_MVP.md` | Phase 5 已实现：移动、visit/talk/discover/obtain_item objective 与解锁；defeat_enemy 未支持 |
+| 物品与任务奖励 | `agent/物品与任务奖励.md` | `策划文档/AI生成RPG_MVP.md` | Phase 5 已实现：地点预置物品、take_item 取得和 obtain_item objective；不含物品使用/奖励数值 |
 | AI 环境 | `agent/AI环境.md` | `.env.example` | 独立环境契约已建立；真实 AI 调用尚未实现；`GAME_DB_PATH` 为 server-only 持久化配置 |
 
 ## 维护规则

@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "mvp-phase-5-item-acquisition-quest-stage-2",
-  "status": "planned",
-  "implementationStatus": "not_started",
+  "status": "completed",
+  "implementationStatus": "implemented",
   "targetBranch": "codex/mvp-phase-5-item-acquisition-quest-stage-2",
   "worktreeName": "mvp-phase-5-item-acquisition-quest-stage-2",
   "repositories": [
