@@ -1,7 +1,7 @@
 # MVP Phase 2：创建游戏与本地存档执行 Plan
 
 > 日期：2026-07-27
-> 状态：待执行
+> 状态：已完成（2026-07-27）
 > 目标分支：`codex/mvp-phase-2-create-game-persistence`
 > 唯一修改仓库：`ai-rpg-game`
 > 上游基线：Phase 1 已合入 `main`（`e71cc2b`）
@@ -160,8 +160,10 @@ npm test
 npm run test:fast
 npm run build
 npm run phase:status
-npm run handoff:check
 ```
+
+`npm run handoff:check` 是本 Plan 的启动前检查（验证 `planned / not_started` 和目标 worktree），
+在完成时 `current-phase.json` 已更新为 `completed / implemented`，因此不属于完成后验收命令。
 
 完成时还必须：
 
