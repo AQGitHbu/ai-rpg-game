@@ -26,18 +26,19 @@ function git(args, { cwd = mainRoot, capture = false } = {}) {
 }
 
 function npmRun(script) {
-  const command = process.platform === "win32" ? "npm.cmd" : "npm";
+  const isWindows = process.platform === "win32";
+  // 调用方只传入本文件中固定的 npm script 名称，Windows 经 cmd.exe 执行 .cmd，
+  // 避免 Node 直接 CreateProcess .cmd 的 EINVAL，也不用 shell: true 拼接参数。
+  const command = isWindows ? (process.env.ComSpec ?? "cmd.exe") : "npm";
+  const args = isWindows ? ["/d", "/s", "/c", `npm.cmd run ${script}`] : ["run", script];
   if (dryRun) {
     console.log(`[${worktreePath}] npm run ${script}`);
     return;
   }
-  const result = spawnSync(command, ["run", script], {
+  const result = spawnSync(command, args, {
     cwd: worktreePath,
     stdio: "inherit",
     windowsHide: true,
-    // Windows 的 .cmd 不能以 CreateProcess 直接启动；交由 shell 包装，
-    // 否则 spawnSync 会返回 EINVAL，phase:start 会误报 setup 失败。
-    shell: process.platform === "win32",
   });
   if (result.error) throw new Error(`npm run ${script} 无法启动：${result.error.message}`);
   if (result.status !== 0) throw new Error(`npm run ${script} 失败（退出码 ${result.status}）`);
