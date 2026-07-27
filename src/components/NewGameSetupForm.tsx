@@ -2,16 +2,16 @@
 
 import { useState, type FormEvent } from "react";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
-import type { OpeningGameView } from "@/game/application";
 import {
   validateNewGameInput,
   type NewGameInput,
-  type NewGameInputError
-} from "@/game/domain";
+  type NewGameInputError,
+  type OpeningGameView
+} from "@/game/application";
 
 // ---------------------------------------------------------------------------
 // 新开局表单（Task 4）：受控表单，提交时真实调用 POST /api/game。
-// 客户端先用 domain 的 validateNewGameInput 预校验（server 会重新校验），
+// 客户端先用 application facade 转发的 validateNewGameInput 预校验（server 会重新校验），
 // 通过后只提交 NewGameInput 允许的字段——seed/gameId/生成来源无从伪造。
 // loading 期间禁用提交防止重复请求，状态经 aria-live 区域反馈。
 // ---------------------------------------------------------------------------

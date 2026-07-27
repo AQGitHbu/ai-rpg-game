@@ -21,6 +21,13 @@ export {
   type OpeningPlayerView,
   type OpeningWorldView
 } from "./openingGameView";
+// UI 端预校验经由 application facade 中转，禁止直连 domain。
+export {
+  validateNewGameInput,
+  type NewGameInput,
+  type NewGameInputError,
+  type ValidateNewGameInputResult
+} from "@/game/domain";
 export {
   asGameId,
   type CorruptGameReason,
