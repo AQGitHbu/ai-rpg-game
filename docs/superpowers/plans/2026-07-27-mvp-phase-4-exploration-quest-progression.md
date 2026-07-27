@@ -1,7 +1,7 @@
 # MVP Phase 4：确定性探索与任务推进执行 Plan
 
 > 日期：2026-07-27
-> 状态：待执行
+> 状态：已完成（2026-07-27）
 > 目标分支：`codex/mvp-phase-4-exploration-quest-progression`
 > 唯一修改仓库：`ai-rpg-game`
 > 上游基线：Phase 3 已合入 `main`（`4943ef6`）

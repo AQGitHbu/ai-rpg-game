@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "mvp-phase-4-exploration-quest-progression",
-  "status": "planned",
-  "implementationStatus": "not_started",
+  "status": "completed",
+  "implementationStatus": "implemented",
   "targetBranch": "codex/mvp-phase-4-exploration-quest-progression",
   "worktreeName": "mvp-phase-4-exploration-quest-progression",
   "repositories": [
