@@ -1,0 +1,57 @@
+import type { GameState, ScenarioBlueprint } from "@/game/domain";
+
+// ---------------------------------------------------------------------------
+// 持久化端口（Task 1）：application 与 SQLite adapter（后续任务）之间的唯一契约。
+// 纯 TypeScript 接口 + 结构化结果：
+//   - 零运行时依赖：不导入 @libsql/client、server-only、路径或环境配置；
+//   - 失败一律以稳定代码返回，绝不向上抛 SQL/驱动异常文本；
+//   - adapter 读取时必须自行完成 JSON 解析、版本与 generationId 一致性校验，
+//     不合法数据以 corrupt 返回，不得伪装成可玩存档，也不得自动重置。
+// ---------------------------------------------------------------------------
+
+declare const gameIdBrand: unique symbol;
+
+/** 本局存档 ID：面向 API/read model 的稳定标识，与蓝图的 generationId 各司其职。 */
+export type GameId = string & { readonly [gameIdBrand]: true };
+
+/** 铸造 GameId：由 server 端注入的 ID provider（如 UUID）调用；不做格式校验。 */
+export function asGameId(raw: string): GameId {
+  return raw as GameId;
+}
+
+/** 完整存档记录：编译蓝图 + 初始状态 + 创建时间（注入时钟产出的 ISO 字符串）。 */
+export type GameRecord = {
+  readonly gameId: GameId;
+  readonly blueprint: ScenarioBlueprint;
+  readonly state: GameState;
+  readonly createdAt: string;
+};
+
+/** 首次创建的写入载荷：与 GameRecord 同构，字段全部由 application 注入。 */
+export type CreateInitialGameInput = GameRecord;
+
+export type CreateInitialGameResult =
+  | { readonly ok: true }
+  // 已存在当前存档：不覆盖、不删除，由 use case 原样转成业务错误。
+  | { readonly ok: false; readonly code: "ACTIVE_GAME_EXISTS" }
+  // 基础设施失败（连接/事务/IO）：稳定代码，细节只进服务端日志。
+  | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" };
+
+/** 损坏原因：稳定可显示参数，供 UI 提示；不携带原始记录内容。 */
+export type CorruptGameReason =
+  | "UNPARSEABLE_RECORD"
+  | "VERSION_MISMATCH"
+  | "GENERATION_MISMATCH";
+
+export type GetCurrentGameRecordResult =
+  | { readonly ok: true; readonly status: "none" }
+  | { readonly ok: true; readonly status: "active"; readonly record: GameRecord }
+  | { readonly ok: true; readonly status: "corrupt"; readonly reason: CorruptGameReason }
+  | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" };
+
+export interface GameRepository {
+  /** 原子创建：蓝图、状态与当前存档指针必须在同一事务内写入，失败整体回滚。 */
+  createInitialGame(input: CreateInitialGameInput): Promise<CreateInitialGameResult>;
+  /** 读取当前存档：区分无存档 / 可用记录 / 损坏记录 / 基础设施失败。 */
+  getCurrentGame(): Promise<GetCurrentGameRecordResult>;
+}
