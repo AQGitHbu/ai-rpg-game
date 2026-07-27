@@ -1,7 +1,7 @@
 # MVP Phase 5：确定性物品取得与主线第二阶段执行 Plan
 
 > 日期：2026-07-27  
-> 状态：已规划，尚未开始  
+> 状态：待执行  
 > 目标分支：`codex/mvp-phase-5-item-acquisition-quest-stage-2`  
 > 唯一修改仓库：`ai-rpg-game`  
 > 上游基线：Phase 4 已合入 `main`（`60d3d90`）  
