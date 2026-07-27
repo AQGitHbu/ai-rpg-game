@@ -1,6 +1,5 @@
-import type { CreateGameResult } from "@/game/application";
+import type { CreateGameResult, NewGameInput } from "@/game/application";
 import type { ServerGameEntryPoints } from "@/game/application/server/compositionRoot";
-import type { NewGameInput } from "@/game/domain";
 
 // ---------------------------------------------------------------------------
 // POST /api/game 的 HTTP adapter（Task 4）：只做参数/响应映射，无业务逻辑。

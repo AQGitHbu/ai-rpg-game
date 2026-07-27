@@ -2,7 +2,7 @@
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import type { NewGameInput } from "@/game/domain";
+import type { NewGameInput } from "@/game/application";
 import {
   createServerGameEntryPoints,
   type ServerGameEntryPoints
