@@ -119,8 +119,8 @@ export function ItemPanel({
           <p className="action-hint">背包目前是空的。</p>
         ) : (
           <ul className="item-list">
-            {view.inventoryItems.map((item) => (
-              <li key={item.name} className="item-entry">
+            {view.inventoryItems.map((item, index) => (
+              <li key={`${item.name}-${index}`} className="item-entry">
                 <p className="item-summary">
                   <strong>{item.name}</strong>
                   <span className="item-description">{item.description}</span>
