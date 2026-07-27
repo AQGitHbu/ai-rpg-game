@@ -13,14 +13,15 @@
   },
   "seed": "phase1-urban-001",
   "expected": {
-    "templateVersion": "fallback-1",
-    "inputDigest": "52bb059cc9786d12",
-    "generationId": "gen-cdc3d8a86db57546",
+    "templateVersion": "fallback-2",
+    "inputDigest": "675087a5d2cf9489",
+    "generationId": "gen-7e0efbe668415fd8",
     "locationIds": ["loc_1", "loc_2", "loc_3", "loc_4", "loc_hidden"],
     "questIds": ["quest_m1", "quest_m2", "quest_m3", "quest_s1", "quest_s2"],
     "endingIds": ["ending_1", "ending_2"],
     "npcCount": 4,
     "normalEnemyCount": 3,
-    "bossEnemyId": "enemy_boss"
+    "bossEnemyId": "enemy_boss",
+    "keyItemLocationId": "loc_3"
   }
 }

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { ScenarioBlueprint, ScenarioBlueprintCandidate } from "@/game/domain";
+import {
+  asItemId,
+  asLocationId,
+  type ItemId,
+  type ScenarioBlueprint,
+  type ScenarioBlueprintCandidate
+} from "@/game/domain";
 import { compileScenarioBlueprint, initializeGameState } from "./compileScenarioBlueprint";
 import { validateScenarioBlueprintCandidate } from "./validateScenarioBlueprint";
 import { TEST_PROFILE, makeValidCandidate } from "./scenarioBlueprintFixture.testutil";
@@ -64,6 +70,16 @@ describe("compileScenarioBlueprint：成功路径", () => {
     expect(Object.isFrozen(blueprint.world.facts[0])).toBe(true);
     expect(Object.isFrozen(blueprint.player.baseStats)).toBe(true);
     expect(Object.isFrozen(blueprint.openingScene.presentNpcIds)).toBe(true);
+  });
+
+  it("availableItemIds 原样保留、冻结，且编译后为品牌化 ItemId", () => {
+    const blueprint = compileValid();
+    const locC = blueprint.locations.find((entry) => entry.id === asLocationId("loc_c"));
+    expect(locC?.availableItemIds).toEqual([asItemId("item_b")]);
+    expect(Object.isFrozen(locC?.availableItemIds)).toBe(true);
+    // 类型层面：编译产物的元素可直接赋给 ItemId，无需再铸造。
+    const first: ItemId | undefined = locC?.availableItemIds[0];
+    expect(first).toBe("item_b");
   });
 
   it("不修改候选：候选被深度冻结后依然可以编译", () => {

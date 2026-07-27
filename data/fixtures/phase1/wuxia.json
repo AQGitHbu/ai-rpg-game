@@ -13,14 +13,15 @@
   },
   "seed": "phase1-wuxia-001",
   "expected": {
-    "templateVersion": "fallback-1",
-    "inputDigest": "be7511da759ab4ca",
-    "generationId": "gen-f2e34dbc3cdc03fa",
+    "templateVersion": "fallback-2",
+    "inputDigest": "b4c635057cee39bf",
+    "generationId": "gen-7a30e74066b7c24a",
     "locationIds": ["loc_1", "loc_2", "loc_3", "loc_4", "loc_hidden"],
     "questIds": ["quest_m1", "quest_m2", "quest_m3", "quest_s1", "quest_s2"],
     "endingIds": ["ending_1", "ending_2"],
     "npcCount": 6,
     "normalEnemyCount": 3,
-    "bossEnemyId": "enemy_boss"
+    "bossEnemyId": "enemy_boss",
+    "keyItemLocationId": "loc_3"
   }
 }

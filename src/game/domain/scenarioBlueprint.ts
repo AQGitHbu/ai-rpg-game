@@ -87,6 +87,8 @@ type LocationDefinitionOf<I extends IdSet> = {
   readonly kind: LocationKind;
   readonly connectedLocationIds: readonly I["location"][];
   readonly npcIds: readonly I["npc"][];
+  /** Phase 5: 该地点可取得的预定义物品 ID（单个 item 至多出现在一个地点，不得与 startingItemIds 重复）。 */
+  readonly availableItemIds: readonly I["item"][];
   readonly tags: readonly string[];
 };
 

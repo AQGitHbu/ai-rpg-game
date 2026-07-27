@@ -50,6 +50,7 @@ function buildCandidate(): ScenarioBlueprintCandidate {
         kind: "main",
         connectedLocationIds: ["loc_forest"],
         npcIds: ["npc_elder"],
+        availableItemIds: [],
         tags: []
       },
       {
@@ -59,6 +60,7 @@ function buildCandidate(): ScenarioBlueprintCandidate {
         kind: "hidden",
         connectedLocationIds: ["loc_village"],
         npcIds: [],
+        availableItemIds: [],
         tags: []
       }
     ],

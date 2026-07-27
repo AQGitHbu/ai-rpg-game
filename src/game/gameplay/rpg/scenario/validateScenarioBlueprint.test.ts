@@ -258,6 +258,69 @@ describe("validateScenarioBlueprintCandidate：引用完整", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 4a. 地点可取得物品（Phase 5：availableItemIds）
+// ---------------------------------------------------------------------------
+
+describe("validateScenarioBlueprintCandidate：地点可取得物品", () => {
+  it("合法候选中 availableItemIds 引用存在且唯一，校验通过", () => {
+    const candidate = makeValidCandidate();
+    expect(candidate.locations.some((entry) => entry.availableItemIds.length > 0)).toBe(true);
+    expect(validate(candidate).ok).toBe(true);
+  });
+
+  it("拒绝：availableItemIds 指向不存在的物品", () => {
+    const candidate = draft();
+    candidate.locations[2].availableItemIds = ["ghost"];
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "locations[2].availableItemIds[0]",
+      code: "DANGLING_REFERENCE",
+      params: { refKind: "item", id: "ghost" }
+    });
+  });
+
+  it("拒绝：同一物品出现在多个地点（首次出现的地点回填在 params）", () => {
+    const candidate = draft();
+    // 合法 fixture 中 item_b 已在 loc_c（locations[2]）；再挂到 loc_b（locations[1]）。
+    candidate.locations[1].availableItemIds = ["item_b"];
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "locations[2].availableItemIds[0]",
+      code: "DUPLICATE_AVAILABLE_ITEM",
+      params: { itemId: "item_b", firstLocationId: "loc_b" }
+    });
+  });
+
+  it("拒绝：同一地点内重复列出同一物品", () => {
+    const candidate = draft();
+    candidate.locations[2].availableItemIds = ["item_b", "item_b"];
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "locations[2].availableItemIds[1]",
+      code: "DUPLICATE_AVAILABLE_ITEM",
+      params: { itemId: "item_b", firstLocationId: "loc_c" }
+    });
+  });
+
+  it("拒绝：玩家初始物品同时被列为地点可取得物品", () => {
+    const candidate = draft();
+    candidate.locations[0].availableItemIds = ["item_a"];
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "locations[0].availableItemIds[0]",
+      code: "STARTING_ITEM_AVAILABLE_AT_LOCATION",
+      params: { itemId: "item_a" }
+    });
+  });
+
+  it("collect-all：悬空引用、多地点重复与初始物品冲突一次性全部检出", () => {
+    const candidate = draft();
+    candidate.locations[0].availableItemIds = ["item_a"]; // 初始物品冲突
+    candidate.locations[1].availableItemIds = ["item_b", "ghost"]; // item_b 与 loc_c 重复 + 悬空
+    const codes = codesOf(issuesOf(candidate));
+    expect(codes).toContain("STARTING_ITEM_AVAILABLE_AT_LOCATION");
+    expect(codes).toContain("DUPLICATE_AVAILABLE_ITEM");
+    expect(codes).toContain("DANGLING_REFERENCE");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 4b. 结局要求合法性（闭合 kind 联合 + 载荷 id 防御）
 // ---------------------------------------------------------------------------
 

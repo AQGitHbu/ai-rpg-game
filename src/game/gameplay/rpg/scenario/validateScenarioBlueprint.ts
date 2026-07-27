@@ -43,6 +43,8 @@ export type ScenarioBlueprintIssueCode =
   | "COMPANION_OVERBUDGET"
   | "DUPLICATE_GLOBAL_ID"
   | "DANGLING_REFERENCE"
+  | "DUPLICATE_AVAILABLE_ITEM"
+  | "STARTING_ITEM_AVAILABLE_AT_LOCATION"
   | "INVALID_ENDING_REQUIREMENT"
   | "OPENING_SCENE_HIDDEN_LOCATION"
   | "OPENING_NPC_NOT_AT_LOCATION"
@@ -83,6 +85,7 @@ export function validateScenarioBlueprintCandidate(
   validateBudgetCounts(issues, candidate);
   validateGlobalIdUniqueness(issues, candidate);
   validateReferences(issues, candidate);
+  validateAvailableItems(issues, candidate);
   validateOpeningScene(issues, candidate);
   // 任务 objective/outcome 引用、主线阶段、支线/结局预算与可达性全部委托任务图校验。
   issues.push(
@@ -285,6 +288,37 @@ function validateReferences(
   (candidate.player.startingItemIds ?? []).forEach((id, refIndex) =>
     check(`player.startingItemIds[${refIndex}]`, "item", id, itemIds)
   );
+}
+
+// ---------------------------------------------------------------------------
+// 4a. 地点可取得物品（Phase 5）：引用存在、全局至多出现一次、不与初始物品重复
+// ---------------------------------------------------------------------------
+
+function validateAvailableItems(
+  issues: ScenarioBlueprintIssue[],
+  candidate: ScenarioBlueprintCandidate
+): void {
+  const itemIds = new Set(candidate.items.map((entry) => entry.id));
+  const startingItemIds = new Set(candidate.player.startingItemIds ?? []);
+  const seen = new Map<string, string>(); // itemId → 首次出现的地点 ID
+
+  candidate.locations.forEach((location, index) => {
+    (location.availableItemIds ?? []).forEach((itemId, refIndex) => {
+      const path = `locations[${index}].availableItemIds[${refIndex}]`;
+      if (!itemIds.has(itemId)) {
+        issues.push({ path, code: "DANGLING_REFERENCE", params: { refKind: "item", id: itemId } });
+      }
+      const firstLocationId = seen.get(itemId);
+      if (firstLocationId !== undefined) {
+        issues.push({ path, code: "DUPLICATE_AVAILABLE_ITEM", params: { itemId, firstLocationId } });
+      } else {
+        seen.set(itemId, location.id);
+      }
+      if (startingItemIds.has(itemId)) {
+        issues.push({ path, code: "STARTING_ITEM_AVAILABLE_AT_LOCATION", params: { itemId } });
+      }
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -57,6 +57,7 @@ export function makeValidCandidate(): ScenarioBlueprintCandidate {
         kind: "main",
         connectedLocationIds: ["loc_b"],
         npcIds: ["npc_a"],
+        availableItemIds: [],
         tags: ["江湖"]
       },
       {
@@ -66,6 +67,7 @@ export function makeValidCandidate(): ScenarioBlueprintCandidate {
         kind: "main",
         connectedLocationIds: ["loc_a", "loc_c"],
         npcIds: ["npc_b"],
+        availableItemIds: [],
         tags: []
       },
       {
@@ -75,6 +77,8 @@ export function makeValidCandidate(): ScenarioBlueprintCandidate {
         kind: "main",
         connectedLocationIds: ["loc_b", "loc_d"],
         npcIds: ["npc_c"],
+        // m2（主线二阶段）的 obtain_item 目标：信物放在铁剑山庄（npc_c 所在地）。
+        availableItemIds: ["item_b"],
         tags: []
       },
       {
@@ -84,6 +88,7 @@ export function makeValidCandidate(): ScenarioBlueprintCandidate {
         kind: "main",
         connectedLocationIds: ["loc_c"],
         npcIds: ["npc_d"],
+        availableItemIds: [],
         tags: []
       },
       {
@@ -93,6 +98,7 @@ export function makeValidCandidate(): ScenarioBlueprintCandidate {
         kind: "hidden",
         connectedLocationIds: ["loc_d"],
         npcIds: [],
+        availableItemIds: [],
         tags: []
       }
     ],

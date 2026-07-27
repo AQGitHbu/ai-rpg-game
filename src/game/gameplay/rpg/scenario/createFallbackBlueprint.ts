@@ -32,8 +32,8 @@ import { loadScenarioProfiles, type GameTypeProfile, type ScenarioProfiles } fro
 //     forbiddenTags），因此 7 种类型均安全。
 // ---------------------------------------------------------------------------
 
-/** fallback 模板版本；纳入 inputDigest，模板演进时提升。 */
-export const FALLBACK_TEMPLATE_VERSION = "fallback-1";
+/** fallback 模板版本；纳入 inputDigest，模板演进时提升。fallback-2：地点新增 availableItemIds。 */
+export const FALLBACK_TEMPLATE_VERSION = "fallback-2";
 
 /** 玩家输入来源标记：出现在世界摘要 / 身份 / 开场 / 主线冲突 / 事实文本中，便于追溯。 */
 const PLAYER_INPUT_MARK = "【玩家输入】";
@@ -537,6 +537,10 @@ function buildWorld(
 
 const LOCATION_IDS = ["loc_1", "loc_2", "loc_3", "loc_4", "loc_hidden"] as const;
 
+// 主线关键物品落位：与二阶段 talk_to_npc 目标 npc_3 同在 loc_3（主要地点开局
+// 即解锁且互相连通，对二阶段一定可达；隐藏地点开局锁定，不可用作落位）。
+const KEY_ITEM_LOCATION_ID = LOCATION_IDS[2];
+
 /** NPC 落位：按索引映射到主要地点，隐藏地点不驻留 NPC。 */
 function npcLocationId(npcIndex: number): string {
   const mainSlots = [LOCATION_IDS[0], LOCATION_IDS[1], LOCATION_IDS[2], LOCATION_IDS[3]];
@@ -567,6 +571,8 @@ function buildLocations(
       kind: index === 4 ? ("hidden" as const) : ("main" as const),
       connectedLocationIds: connections[index],
       npcIds: npcIdsHere,
+      // 初始物品（ITEM_START）不列为可取得物品；关键物品只落在唯一地点。
+      availableItemIds: id === KEY_ITEM_LOCATION_ID ? [ITEM_KEY] : [],
       tags: [pickTag(profile, index)]
     };
   });

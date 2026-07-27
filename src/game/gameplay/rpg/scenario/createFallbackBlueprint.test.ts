@@ -366,6 +366,38 @@ describe("createFallbackBlueprint：标签来自 profile.allowedTags", () => {
   }
 });
 
+describe("createFallbackBlueprint：地点可取得物品（Phase 5）", () => {
+  for (const gameType of ALL_GAME_TYPES) {
+    it(`${gameType} 的主线二阶段 obtain_item 目标物品放在唯一的二阶段可达主要地点`, () => {
+      const candidate = generate({ gameType }, `available-items-${gameType}`);
+      const stageTwo = candidate.quests.find(
+        (entry) => entry.kind === "main" && entry.stage === 2
+      );
+      const obtainObjective = stageTwo?.objectives.find((entry) => entry.kind === "obtain_item");
+      expect(obtainObjective).toBeDefined();
+      if (obtainObjective?.kind !== "obtain_item") return;
+      const hosts = candidate.locations.filter((entry) =>
+        entry.availableItemIds.includes(obtainObjective.itemId)
+      );
+      expect(hosts).toHaveLength(1);
+      // 主要地点开局即解锁且互相连通，因此对二阶段一定可达；隐藏地点开局锁定。
+      expect(hosts[0]?.kind).toBe("main");
+    });
+
+    it(`${gameType} 的初始物品不出现在任何地点的可取得列表，且引用均存在`, () => {
+      const candidate = generate({ gameType }, `available-items-${gameType}`);
+      const itemIds = new Set(candidate.items.map((entry) => entry.id));
+      const startingItemIds = new Set(candidate.player.startingItemIds);
+      for (const location of candidate.locations) {
+        for (const itemId of location.availableItemIds) {
+          expect(itemIds.has(itemId), `itemId=${itemId}`).toBe(true);
+          expect(startingItemIds.has(itemId), `itemId=${itemId}`).toBe(false);
+        }
+      }
+    });
+  }
+});
+
 describe("createFallbackBlueprint：fixture 回归 pin", () => {
   type FallbackFixture = {
     input: NewGameInput;
@@ -380,6 +412,7 @@ describe("createFallbackBlueprint：fixture 回归 pin", () => {
       npcCount: number;
       normalEnemyCount: number;
       bossEnemyId: string;
+      keyItemLocationId: string;
     };
   };
 
@@ -406,6 +439,11 @@ describe("createFallbackBlueprint：fixture 回归 pin", () => {
         .toHaveLength(fixture.expected.normalEnemyCount);
       expect(candidate.enemies.find((entry) => entry.tier === "boss")?.id)
         .toBe(fixture.expected.bossEnemyId);
+      // Phase 5 pin：主线关键物品的落位地点。
+      const keyHost = candidate.locations.find((entry) =>
+        entry.availableItemIds.includes("item_key")
+      );
+      expect(keyHost?.id).toBe(fixture.expected.keyItemLocationId);
     });
   }
 });
