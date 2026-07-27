@@ -1,5 +1,4 @@
 import type { GameState, ScenarioBlueprint, FactId, LocationId, NpcId } from "@/game/domain";
-import type { PlayerIntent } from "./intents";
 
 // ---------------------------------------------------------------------------
 // actions facade（Phase 3 Task 2）：application 可用的唯一 actions 入口。

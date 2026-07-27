@@ -2,9 +2,10 @@ import { Panel, Tag } from "@ai-game/ui";
 import type { OpeningGameView as OpeningGameViewModel } from "@/game/application";
 
 // ---------------------------------------------------------------------------
-// 开场视图（Task 4）：纯展示组件，只消费 application 的 read model 类型。
-// 不出现任何可执行交互——没有动作按钮、自由输入或战斗入口；
-// 建议行动仅为文本列表，并明确提示交互将在下一阶段开放。
+// 开场视图（Phase 2 + Phase 3）：纯展示组件，只消费 application 的 read model 类型。
+// Phase 3：显示已发现事实与当前 revision；建议行动仍为文本灵感，
+// 实际可执行行动由 SceneActionPanel 渲染。
+// 不出现自由输入框、战斗入口或未来阶段的功能。
 // ---------------------------------------------------------------------------
 
 type OpeningGameViewProps = {
@@ -70,12 +71,22 @@ export function OpeningGameView({ view }: OpeningGameViewProps) {
         </div>
       </Panel>
 
+      {view.knownFacts.length > 0 && (
+        <Panel eyebrow="已发现线索" title="你目前掌握的信息">
+          <ul className="known-facts">
+            {view.knownFacts.map((fact, index) => (
+              <li key={index}>{fact.text}</li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
       <Panel
         eyebrow="下一步"
         header={(
           <div className="panel-heading">
             <h2>可能的行动方向</h2>
-            <Tag variant="info">交互将在下一阶段开放</Tag>
+            <Tag variant="info">灵感参考</Tag>
           </div>
         )}
       >
@@ -85,7 +96,7 @@ export function OpeningGameView({ view }: OpeningGameViewProps) {
           ))}
         </ul>
         <p className="opening-hint">
-          以上仅为开场提供的行动灵感，本阶段不可执行，也不会改变任何游戏状态。
+          以上为开场提供的行动灵感，可在下方行动面板中选择具体操作。
         </p>
       </Panel>
     </div>

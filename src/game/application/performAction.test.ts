@@ -1,19 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { asLocationId, type NewGameInput } from "@/game/domain";
+import type { NewGameInput } from "@/game/domain";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { performAction, type PerformActionDependencies } from "./performAction";
 import {
   createFakeGameRepository,
-  createTestDependencies,
   runScenarioPipeline,
   TEST_CREATED_AT,
   TEST_GAME_ID
 } from "./applicationFixture.testutil";
 import {
-  asGameId,
   type ApplyResolvedActionResult,
   type GameRecord,
-  type GetCurrentGameRecordResult
 } from "./server/persistence/gameRepository";
 
 // ---------------------------------------------------------------------------

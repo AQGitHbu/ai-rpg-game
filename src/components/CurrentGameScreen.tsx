@@ -5,11 +5,13 @@ import { Panel, Tag } from "@ai-game/ui";
 import type { OpeningGameView as OpeningGameViewModel } from "@/game/application";
 import { NewGameSetupForm } from "./NewGameSetupForm";
 import { OpeningGameView } from "./OpeningGameView";
+import { SceneActionPanel } from "./SceneActionPanel";
 
 // ---------------------------------------------------------------------------
-// 根页面客户端协调器（Task 4）：挂载时读取 GET /api/game/current。
+// 根页面客户端协调器（Phase 2 + Phase 3）：挂载时读取 GET /api/game/current。
 //   none    → 显示创建表单；创建成功后无需刷新，直接切换到开场视图。
-//   active  → 恢复已保存的开场（刷新后回到同一开场）。
+//   active  → 恢复已保存的开场 + 渲染行动面板；成功行动用 API 返回的最新 view
+//             替换本地 view；版本冲突后重新请求 current-game。
 //   corrupt → 按 reason 分支可恢复提示：真实数据损坏 ≠ 数据库暂时不可用。
 // 只消费 API 响应与 application 的 read model 类型，不接触持久化/gameplay。
 // ---------------------------------------------------------------------------
@@ -38,9 +40,27 @@ const CORRUPT_REASON_COPY: Record<string, string> = {
 export function CurrentGameScreen() {
   const [state, setState] = useState<ScreenState>({ phase: "loading" });
 
+  async function loadCurrentGame(): Promise<void> {
+    try {
+      const response = await fetch("/api/game/current");
+      const body = (await response.json().catch(() => null)) as CurrentGameApiBody | null;
+      if (body?.status === "none") {
+        setState({ phase: "none" });
+      } else if (body?.status === "active" && body.view !== undefined) {
+        setState({ phase: "active", view: body.view });
+      } else if (body?.status === "corrupt" && typeof body.reason === "string") {
+        setState({ phase: "corrupt", reason: body.reason });
+      } else {
+        setState({ phase: "unreachable" });
+      }
+    } catch {
+      setState({ phase: "unreachable" });
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
-    async function loadCurrentGame() {
+    async function init() {
       try {
         const response = await fetch("/api/game/current");
         const body = (await response.json().catch(() => null)) as CurrentGameApiBody | null;
@@ -58,7 +78,7 @@ export function CurrentGameScreen() {
         if (!cancelled) setState({ phase: "unreachable" });
       }
     }
-    void loadCurrentGame();
+    void init();
     return () => {
       cancelled = true;
     };
@@ -73,7 +93,16 @@ export function CurrentGameScreen() {
   }
 
   if (state.phase === "active") {
-    return <OpeningGameView view={state.view} />;
+    return (
+      <div className="game-screen">
+        <OpeningGameView view={state.view} />
+        <SceneActionPanel
+          view={state.view}
+          onActionSuccess={(view) => setState({ phase: "active", view })}
+          onStaleRevision={() => void loadCurrentGame()}
+        />
+      </div>
+    );
   }
 
   if (state.phase === "none") {

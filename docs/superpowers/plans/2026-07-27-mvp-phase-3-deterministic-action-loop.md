@@ -1,7 +1,7 @@
 # MVP Phase 3：确定性场景行动与续存档执行 Plan
 
 > 日期：2026-07-27
-> 状态：待执行
+> 状态：已完成（2026-07-27）
 > 目标分支：`codex/mvp-phase-3-deterministic-action-loop`
 > 唯一修改仓库：`ai-rpg-game`
 > 上游基线：Phase 2 已合入 `main`（`3b41b21`）

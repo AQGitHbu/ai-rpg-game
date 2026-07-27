@@ -4,7 +4,7 @@
   "foundationPathHint": "../ai-game-foundation",
   "pathOverrideEnvironmentVariable": "AI_GAME_FOUNDATION_DIR",
   "package": "@ai-game/standards",
-  "version": "0.1.0",
+  "version": "0.4.2",
   "files": [
     {
       "file": "共同游戏设计原则.md",

@@ -318,7 +318,12 @@ select:focus,
   line-height: 1.5;
 }
 
-/* Task 4：开场视图（纯展示，无交互） */
+/* Phase 2 + 3：开场视图与固定行动面板 */
+.game-screen {
+  display: grid;
+  gap: 20px;
+}
+
 .opening-view {
   display: grid;
   gap: 20px;
@@ -370,6 +375,32 @@ select:focus,
   padding-left: 1.2em;
   color: var(--game-text-muted);
   line-height: 1.8;
+}
+
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.action-feedback,
+.action-hint {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.action-feedback.success {
+  color: var(--game-success);
+}
+
+.action-feedback.rejected,
+.action-feedback.error {
+  color: #e09a91;
+}
+
+.action-feedback.submitting,
+.action-hint {
+  color: var(--game-text-muted);
 }
 
 

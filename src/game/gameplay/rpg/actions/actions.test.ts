@@ -8,18 +8,13 @@ import {
   asQuestId,
   type GameState,
   type GenerationMetadata,
-  type ScenarioBlueprint,
-  type LocationId,
-  type NpcId,
-  type FactId
+  type ScenarioBlueprint
 } from "@/game/domain";
 import {
   validateIntent,
   resolveAction,
   projectAvailableActions,
-  type PlayerIntent,
-  type ValidationCode,
-  type ResolveActionResult
+  type PlayerIntent
 } from "./index";
 
 // ---------------------------------------------------------------------------

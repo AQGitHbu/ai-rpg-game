@@ -1,4 +1,4 @@
-import type { GameState, ScenarioBlueprint, LocationId, NpcId, FactId } from "@/game/domain";
+import type { GameState, ScenarioBlueprint, LocationId } from "@/game/domain";
 import type { PlayerIntent } from "./intents";
 
 // ---------------------------------------------------------------------------
