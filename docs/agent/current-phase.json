@@ -1,19 +1,20 @@
 {
   "schemaVersion": 1,
-  "phase": "mvp-phase-2-create-game-persistence",
-  "status": "completed",
-  "implementationStatus": "implemented",
-  "targetBranch": "codex/mvp-phase-2-create-game-persistence",
-  "worktreeName": "mvp-phase-2-create-game-persistence",
+  "phase": "mvp-phase-3-deterministic-action-loop",
+  "status": "planned",
+  "implementationStatus": "not_started",
+  "targetBranch": "codex/mvp-phase-3-deterministic-action-loop",
+  "worktreeName": "mvp-phase-3-deterministic-action-loop",
   "repositories": [
     "ai-rpg-game"
   ],
-  "plan": "docs/superpowers/plans/2026-07-27-mvp-phase-2-create-game-persistence.md",
+  "plan": "docs/superpowers/plans/2026-07-27-mvp-phase-3-deterministic-action-loop.md",
   "entryDocs": [
     "docs/游戏设计原则.md",
     "docs/游戏开发规范.md",
     "docs/Agent文档索引.md",
     "docs/agent/MVP核心闭环.md",
+    "docs/agent/行动裁决.md",
     "docs/策划文档/AI生成RPG_MVP.md",
     "docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md"
   ],

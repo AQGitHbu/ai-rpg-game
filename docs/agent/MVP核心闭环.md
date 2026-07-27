@@ -14,7 +14,7 @@
 
 ## 当前实现现状
 
-工程脚手架和文档基线已建立。Phase 0 已实现 UI-only 的新游戏资料表单，真实消费 `@ai-game/ui`。Phase 1 已实现领域基线：`NewGameInput` 校验、7 类型/艺术风格 profile、蓝图与运行时类型、任务图可达性、候选蓝图 validate/compile、`GameState` 初始化和确定性 fallback 生成（同输入 + seed + templateVersion 结果相同，武侠/科幻/都市 fixture 钉值）。Phase 2 已实现创建与本地存档闭环：表单提交经 POST /api/game 进入 `createGame` use case（domain 校验 → fallback 生成 → validate/compile → SQLite 原子保存，失败无半存档），返回只含允许信息的开场 read model；刷新经 GET /api/game/current 恢复同一存档；UI/API 只消费 `@/game/application` 门面，libsql 与数据库路径只存在于 server-only 层。玩法回合推进和 AI 调用仍未实现。
+工程脚手架和文档基线已建立。Phase 0 已实现 UI-only 的新游戏资料表单，真实消费 `@ai-game/ui`。Phase 1 已实现领域基线：`NewGameInput` 校验、7 类型/艺术风格 profile、蓝图与运行时类型、任务图可达性、候选蓝图 validate/compile、`GameState` 初始化和确定性 fallback 生成（同输入 + seed + templateVersion 结果相同，武侠/科幻/都市 fixture 钉值）。Phase 2 已实现创建与本地存档闭环：表单提交经 POST /api/game 进入 `createGame` use case（domain 校验 → fallback 生成 → validate/compile → SQLite 原子保存，失败无半存档），返回只含允许信息的开场 read model；刷新经 GET /api/game/current 恢复同一存档；UI/API 只消费 `@/game/application` 门面，libsql 与数据库路径只存在于 server-only 层。Phase 3 已规划固定选项的确定性行动、revision 续存档和行动 UI；玩法回合推进、自由输入与 AI 调用仍未实现。
 
 ## 核心数据流
 
@@ -32,6 +32,7 @@
 - API：`src/app/api/game/route.ts` + `createGameHandler.ts`（POST 创建）、`src/app/api/game/current/route.ts` + `currentGameHandler.ts`（GET 恢复）
 - 当前 UI：`src/components/CurrentGameScreen.tsx`（协调器）、`NewGameSetupForm.tsx`（真实提交）、`OpeningGameView.tsx`（开场展示）
 - 当前阶段：`docs/agent/当前开发阶段.md`
+- Phase 3 Plan：`docs/superpowers/plans/2026-07-27-mvp-phase-3-deterministic-action-loop.md`
 - Phase 1 Plan：`docs/superpowers/plans/2026-07-26-mvp-phase-1-scenario-contracts.md`
 - Phase 2 Plan：`docs/superpowers/plans/2026-07-27-mvp-phase-2-create-game-persistence.md`
 
