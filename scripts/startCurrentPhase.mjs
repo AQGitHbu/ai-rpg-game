@@ -86,4 +86,4 @@ if (existsSync(worktreePath)) {
 
 npmRun("setup");
 npmRun("handoff:check");
-console.log(`Phase 1 已可交接：${worktreePath}`);
+console.log(`当前阶段已可交接：${worktreePath}`);

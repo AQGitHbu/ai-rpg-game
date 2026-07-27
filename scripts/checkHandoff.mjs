@@ -37,24 +37,24 @@ if (config.status !== "planned") {
   failures.push(`当前交接状态应为 planned，实际为 ${config.status}`);
 }
 if (config.implementationStatus !== "not_started") {
-  failures.push(`Phase 1 交接前实现状态应为 not_started，实际为 ${config.implementationStatus}`);
+  failures.push(`当前阶段交接前实现状态应为 not_started，实际为 ${config.implementationStatus}`);
 }
 if (JSON.stringify(config.repositories) !== JSON.stringify(["ai-rpg-game"])) {
-  failures.push("Phase 1 只允许修改 ai-rpg-game");
+  failures.push("当前阶段只允许修改 ai-rpg-game");
 }
 if (config.startCommand !== "npm run phase:start") {
-  failures.push("Phase 1 startCommand 必须指向 npm run phase:start");
+  failures.push("当前阶段 startCommand 必须指向 npm run phase:start");
 }
 if (config.sharedInfrastructureChangeAllowed !== false) {
-  failures.push("Phase 1 不允许修改共享基础设施");
+  failures.push("当前阶段不允许修改共享基础设施");
 }
 
 const plan = existsSync(resolve(root, config.plan))
   ? readFileSync(resolve(root, config.plan), "utf8")
   : "";
-if (!plan.includes("> 状态：待执行")) failures.push("Phase 1 Plan 状态不是“待执行”");
+if (!plan.includes("> 状态：待执行")) failures.push("当前 Phase Plan 状态不是“待执行”");
 if (!plan.includes("### 排除") && !plan.includes("## 明确边界")) {
-  failures.push("Phase 1 Plan 缺少明确边界");
+  failures.push("当前 Phase Plan 缺少明确边界");
 }
 
 const branch = execFileSync("git", ["branch", "--show-current"], {

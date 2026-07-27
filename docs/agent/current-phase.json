@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
-  "phase": "mvp-phase-1-scenario-contracts",
-  "status": "completed",
-  "implementationStatus": "implemented",
-  "targetBranch": "codex/mvp-phase-1-scenario-contracts",
-  "worktreeName": "mvp-phase-1-scenario-contracts",
+  "phase": "mvp-phase-2-create-game-persistence",
+  "status": "planned",
+  "implementationStatus": "not_started",
+  "targetBranch": "codex/mvp-phase-2-create-game-persistence",
+  "worktreeName": "mvp-phase-2-create-game-persistence",
   "repositories": [
     "ai-rpg-game"
   ],
-  "plan": "docs/superpowers/plans/2026-07-26-mvp-phase-1-scenario-contracts.md",
+  "plan": "docs/superpowers/plans/2026-07-27-mvp-phase-2-create-game-persistence.md",
   "entryDocs": [
     "docs/游戏设计原则.md",
     "docs/游戏开发规范.md",

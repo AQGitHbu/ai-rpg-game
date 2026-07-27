@@ -14,7 +14,7 @@
 
 ## 当前实现现状
 
-工程脚手架和文档基线已建立。Phase 0 已实现 UI-only 的新游戏资料表单，真实消费 `@ai-game/ui`。Phase 1 已实现领域基线：`NewGameInput` 校验、7 类型/艺术风格 profile、蓝图与运行时类型、任务图可达性、候选蓝图 validate/compile、`GameState` 初始化和确定性 fallback 生成（同输入 + seed + templateVersion 结果相同，武侠/科幻/都市 fixture 钉值）。玩法回合推进、存档或 AI 调用仍未实现。
+工程脚手架和文档基线已建立。Phase 0 已实现 UI-only 的新游戏资料表单，真实消费 `@ai-game/ui`。Phase 1 已实现领域基线：`NewGameInput` 校验、7 类型/艺术风格 profile、蓝图与运行时类型、任务图可达性、候选蓝图 validate/compile、`GameState` 初始化和确定性 fallback 生成（同输入 + seed + templateVersion 结果相同，武侠/科幻/都市 fixture 钉值）。Phase 2 已规划：将 fallback 管线接入 `createGame`、本地 SQLite 事务存档、开场 read model 与刷新恢复。玩法回合推进和 AI 调用仍未实现。
 
 ## 核心数据流
 
@@ -31,6 +31,7 @@
 - 当前 UI：`src/components/NewGameSetupForm.tsx`
 - 当前阶段：`docs/agent/当前开发阶段.md`
 - Phase 1 Plan：`docs/superpowers/plans/2026-07-26-mvp-phase-1-scenario-contracts.md`
+- Phase 2 Plan：`docs/superpowers/plans/2026-07-27-mvp-phase-2-create-game-persistence.md`
 
 ## 主要测试
 
@@ -46,10 +47,12 @@
 - 不让 UI/API/store deep-import gameplay。
 - 通用 UI 或 AI transport 命中共享触发条件，先读取 `docs/共同规范/`。
 - 新建 gameplay 文件前先完成 Spec 对应阶段的测试用例。
+- Phase 2 的 UI/API 只调用 application facade；不得直接读取 scenario 或 SQLite repository。
 
 ## 最近维护
 
 - 2026-07-26：完成 Phase 1 领域契约与确定性生成实现（domain + gameplay/scenario + 边界与回归测试，12 文件 / 229 用例）。
+- 2026-07-27：建立 Phase 2 创建游戏、本地事务存档与开场恢复执行 Plan；实现尚未开始。
 - 2026-07-26：建立 Phase 1 领域契约与确定性生成执行 Plan、机器可读当前阶段和 Agent 交接检查。
 - 2026-07-26：Phase 0 新游戏资料表单成为 `@ai-game/ui@0.1.0` 的真实 RPG 消费者；提交只做 UI 校验，不提前创建 GameState 或调用 AI。
 - 2026-07-26：建立动态生成型 MVP 开发基线。
