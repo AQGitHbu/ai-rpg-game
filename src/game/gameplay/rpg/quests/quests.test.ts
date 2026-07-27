@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   asFactId,
+  asItemId,
+  asEnemyId,
   asLocationId,
   asNpcId,
   asQuestId,
@@ -18,7 +20,7 @@ import {
   validateScenarioBlueprintCandidate
 } from "../scenario";
 import { makeValidCandidate, TEST_PROFILE } from "../scenario/scenarioBlueprintFixture.testutil";
-import { reconcileQuests } from "./index";
+import { isQuestObjectiveSatisfied, reconcileQuests } from "./index";
 
 // ---------------------------------------------------------------------------
 // 测试走真实管线：候选 → validate → compile → initializeGameState → resolveAction，
@@ -88,6 +90,10 @@ const talkTo = (npcId: string): PlayerIntent => ({ type: "talk", npcId: asNpcId(
 const investigate = (factId: string): PlayerIntent => ({
   type: "investigate",
   factId: asFactId(factId)
+});
+const takeItem = (itemId: string): PlayerIntent => ({
+  type: "take_item",
+  itemId: asItemId(itemId)
 });
 
 describe("reconcileQuests：初始状态与幂等基线", () => {
@@ -250,8 +256,8 @@ describe("reconcileQuests：多 objective 与未支持 objective", () => {
     expect(questStatus(full.state, "m3")).toBe("active");
   });
 
-  it("含 obtain_item 的任务即使其余 objective 满足也保持 active（不得绕过）", () => {
-    // 默认 fixture 的 m2 = talk npc_c + obtain item_b（后者 Phase 4 未支持）。
+  it("含 obtain_item 的任务只完成交谈时保持 active（不得绕过未取得的物品）", () => {
+    // 默认 fixture 的 m2 = talk npc_c + obtain item_b（后者尚未取得）。
     const { blueprint, state } = setup();
     const unlocked = reconcileQuests(
       blueprint,
@@ -265,6 +271,87 @@ describe("reconcileQuests：多 objective 与未支持 objective", () => {
     expect(result.events).toEqual([]);
     expect(questStatus(result.state, "m2")).toBe("active");
     expect(result.state).toBe(talked);
+  });
+});
+
+describe("reconcileQuests：obtain_item objective 与 stage 2（Phase 5）", () => {
+  /** 推进到 m2 已解锁且人在铁剑山庄（item_b 预置地）的基准状态。 */
+  function setupAtLocC(): { blueprint: ScenarioBlueprint; state: GameState } {
+    const { blueprint, state } = setup();
+    const unlocked = reconcileQuests(
+      blueprint,
+      performOk(blueprint, state, moveTo("loc_b")),
+      deps
+    );
+    return { blueprint, state: performOk(blueprint, unlocked.state, moveTo("loc_c")) };
+  }
+
+  it("isQuestObjectiveSatisfied：obtain_item 读背包 ID，defeat_enemy 仍不支持", () => {
+    const { state } = setup();
+    // 初始背包含 item_a（startingItemIds），不含 item_b。
+    expect(
+      isQuestObjectiveSatisfied(state, { kind: "obtain_item", itemId: asItemId("item_a") })
+    ).toBe(true);
+    expect(
+      isQuestObjectiveSatisfied(state, { kind: "obtain_item", itemId: asItemId("item_b") })
+    ).toBe(false);
+    expect(
+      isQuestObjectiveSatisfied(state, { kind: "defeat_enemy", enemyId: asEnemyId("enemy_b") })
+    ).toBe(false);
+  });
+
+  it("先交谈后取得：m2 完成并解锁 m3，事件恰好各一条", () => {
+    const { blueprint, state } = setupAtLocC();
+    const talked = performOk(blueprint, state, talkTo("npc_c"));
+    const taken = performOk(blueprint, talked, takeItem("item_b"));
+    const result = reconcileQuests(blueprint, taken, deps);
+
+    expect(questStatus(result.state, "m2")).toBe("completed");
+    expect(questStatus(result.state, "m3")).toBe("active");
+    expect(result.events).toEqual([
+      { type: "quest_completed", questId: asQuestId("m2"), occurredAt: FIXED_TIME },
+      { type: "quest_unlocked", questId: asQuestId("m3"), occurredAt: FIXED_TIME }
+    ]);
+  });
+
+  it("先取得后交谈：任意顺序均完成 stage 2", () => {
+    const { blueprint, state } = setupAtLocC();
+    const taken = performOk(blueprint, state, takeItem("item_b"));
+    // 只取得未交谈：m2 保持 active，零事件、原样返回。
+    const partial = reconcileQuests(blueprint, taken, deps);
+    expect(partial.events).toEqual([]);
+    expect(questStatus(partial.state, "m2")).toBe("active");
+    expect(partial.state).toBe(taken);
+
+    const talked = performOk(blueprint, partial.state, talkTo("npc_c"));
+    const result = reconcileQuests(blueprint, talked, deps);
+    expect(questStatus(result.state, "m2")).toBe("completed");
+    expect(questStatus(result.state, "m3")).toBe("active");
+    expect(result.events).toEqual([
+      { type: "quest_completed", questId: asQuestId("m2"), occurredAt: FIXED_TIME },
+      { type: "quest_unlocked", questId: asQuestId("m3"), occurredAt: FIXED_TIME }
+    ]);
+  });
+
+  it("完成与解锁只发生一次：重复 reconcile 幂等", () => {
+    const { blueprint, state } = setupAtLocC();
+    const talked = performOk(blueprint, state, talkTo("npc_c"));
+    const taken = performOk(blueprint, talked, takeItem("item_b"));
+    const first = reconcileQuests(blueprint, taken, deps);
+    const second = reconcileQuests(blueprint, first.state, deps);
+
+    expect(second.events).toEqual([]);
+    expect(second.state).toBe(first.state);
+    expect(
+      first.state.eventLedger.filter(
+        (e) => e.type === "quest_completed" && e.questId === asQuestId("m2")
+      )
+    ).toHaveLength(1);
+    expect(
+      first.state.eventLedger.filter(
+        (e) => e.type === "quest_unlocked" && e.questId === asQuestId("m3")
+      )
+    ).toHaveLength(1);
   });
 });
 

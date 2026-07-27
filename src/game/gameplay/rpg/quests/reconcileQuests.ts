@@ -13,7 +13,8 @@ import type {
 //   - visit_location 读 GameState.visitedLocationIds（含开场地点）；
 //   - talk_to_npc    读 NpcRuntimeState.met；
 //   - discover_fact  读 WorldFactState.discovered；
-//   - obtain_item / defeat_enemy 在 Phase 4 未支持，永不满足（不得绕过完成）。
+//   - obtain_item    读 GameState.inventory（Phase 5 支持）；
+//   - defeat_enemy   在 Phase 5 仍未支持，永不满足（不得绕过完成）。
 // 只有 active 任务的全部 objective 满足时才完成；完成时按序应用 onSuccess：
 //   - unlock_quests：仍为 locked 的目标置为 active 并追加 quest_unlocked 事件；
 //   - closed：任务标记为 closed（完成即关闭，无后续解锁）；
@@ -43,6 +44,7 @@ export function isQuestObjectiveSatisfied(state: GameState, objective: QuestObje
     case "discover_fact":
       return state.worldFacts.some((fact) => fact.factId === objective.factId && fact.discovered);
     case "obtain_item":
+      return state.inventory.includes(objective.itemId);
     case "defeat_enemy":
       return false;
   }
