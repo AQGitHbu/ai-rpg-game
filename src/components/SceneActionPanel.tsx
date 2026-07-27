@@ -15,7 +15,7 @@ import { postGameAction, type GameActionPayload } from "./gameActionRequest";
 // 不显示未发现事实、任务/战斗按钮，也不提供自由文本输入框。
 // ---------------------------------------------------------------------------
 
-type SceneActionView = Exclude<SessionActionView, { type: "move" }>;
+type SceneActionView = Exclude<SessionActionView, { type: "move" | "take_item" }>;
 
 type SceneActionPanelProps = {
   view: GameSessionView;
@@ -57,9 +57,11 @@ export function SceneActionPanel({
   const isSubmitting = feedback.phase === "submitting";
   const disabled = busy || isSubmitting;
 
-  // move 行动由 TravelPanel 渲染：这里只保留观察/交谈/调查。
+  // move 行动由 TravelPanel 渲染、take_item 由 Phase 5 Task 4 接入 UI：
+  // 这里只保留观察/交谈/调查。
   const sceneActions = view.availableActions.filter(
-    (action): action is SceneActionView => action.type !== "move"
+    (action): action is SceneActionView =>
+      action.type !== "move" && action.type !== "take_item"
   );
 
   async function handleAction(action: SceneActionView) {

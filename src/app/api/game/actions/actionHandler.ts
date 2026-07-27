@@ -1,5 +1,6 @@
 import {
   asFactId,
+  asItemId,
   asLocationId,
   asNpcId,
   type PerformActionResult,
@@ -39,15 +40,26 @@ const ALLOWED_INTENT_FIELDS: ReadonlySet<string> = new Set([
   "type",
   "locationId",
   "npcId",
-  "factId"
+  "factId",
+  "itemId"
 ]);
 
 const VALID_INTENT_TYPES: ReadonlySet<string> = new Set([
   "observe",
   "talk",
   "investigate",
-  "move"
+  "move",
+  "take_item"
 ]);
+
+/** 每种 intent 唯一允许的目标字段：携带其他目标字段（伪造载荷）一律拒收。 */
+const INTENT_TARGET_FIELD: Readonly<Record<string, string>> = {
+  observe: "locationId",
+  talk: "npcId",
+  investigate: "factId",
+  move: "locationId",
+  take_item: "itemId"
+};
 
 /** 从原始 JSON 构造 PlayerIntent；校验失败返回错误详情。 */
 function parseIntent(raw: unknown):
@@ -68,7 +80,16 @@ function parseIntent(raw: unknown):
 
   const type = obj["type"];
   if (typeof type !== "string" || !VALID_INTENT_TYPES.has(type)) {
-    return { ok: false, detail: "intent.type 必须是 observe/talk/investigate/move 之一" };
+    return { ok: false, detail: "intent.type 必须是 observe/talk/investigate/move/take_item 之一" };
+  }
+
+  // 除 type + 本类型目标字段外，携带其他目标字段（如 take_item 附带 locationId）一律拒收。
+  const targetField = INTENT_TARGET_FIELD[type];
+  const extraTargets = Object.keys(obj)
+    .filter((key) => key !== "type" && key !== targetField)
+    .sort();
+  if (extraTargets.length > 0) {
+    return { ok: false, detail: `${type} 不接受字段：${extraTargets.join(", ")}` };
   }
 
   switch (type) {
@@ -99,6 +120,13 @@ function parseIntent(raw: unknown):
         return { ok: false, detail: "move 需要 locationId 字符串" };
       }
       return { ok: true, intent: { type: "move", locationId: asLocationId(locationId) } };
+    }
+    case "take_item": {
+      const itemId = obj["itemId"];
+      if (typeof itemId !== "string" || itemId.length === 0) {
+        return { ok: false, detail: "take_item 需要 itemId 字符串" };
+      }
+      return { ok: true, intent: { type: "take_item", itemId: asItemId(itemId) } };
     }
     default:
       return { ok: false, detail: "未知 intent.type" };

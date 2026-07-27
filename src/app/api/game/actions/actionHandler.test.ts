@@ -31,7 +31,10 @@ const STUB_VIEW: GameSessionView = {
   knownFacts: [],
   // Phase 4 Task 3：GameSessionView 新增字段（HTTP 映射不读内容）。
   presentNpcs: [],
-  activeQuests: []
+  activeQuests: [],
+  // Phase 5 Task 3：物品摘要字段（HTTP 映射同样不读内容）。
+  obtainableItems: [],
+  inventoryItems: []
 };
 
 const STUB_FEEDBACK: ActionFeedbackView = { ok: true, message: "你观察了地点A。" };
@@ -312,6 +315,87 @@ describe("actionHandler：move intent（Phase 4 Task 4）", () => {
     const response = await handlePerformActionRequest(
       makeRequest({
         intent: { type: "move", locationId: "loc_b", freeText: "御剑飞过去" },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+});
+
+describe("actionHandler：take_item intent（Phase 5 Task 3）", () => {
+  it("合法 take_item ⇒ 200，intent 与 revision 原样交给 performAction", async () => {
+    let received: unknown;
+    const entry: Pick<ServerGameEntryPoints, "performAction"> = {
+      async performAction(command) {
+        received = command;
+        return { ok: true, view: STUB_VIEW, feedback: { ok: true, message: "你取得了物品。" } };
+      }
+    };
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "take_item", itemId: "item_key" }, revision: 4 }),
+      entry
+    );
+    expect(response.status).toBe(200);
+    expect(received).toEqual({
+      intent: { type: "take_item", itemId: "item_key" },
+      expectedRevision: 4
+    });
+  });
+
+  it("take_item 缺少 itemId ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "take_item" }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("take_item itemId 为空字符串 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "take_item", itemId: "" }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("take_item itemId 非字符串（数字伪造）⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "take_item", itemId: 42 }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("take_item itemId 为对象载荷 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "take_item", itemId: { id: "item_key" } }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("take_item 含 freeText 未知字段 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "take_item", itemId: "item_key", freeText: "把信物塑进袖口" },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("take_item 附带伪造 locationId ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "take_item", itemId: "item_key", locationId: "loc_hidden" },
         revision: 0
       }),
       fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })

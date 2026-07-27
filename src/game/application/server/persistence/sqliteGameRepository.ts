@@ -108,6 +108,25 @@ function withVisitedLocationDefault(state: JsonObject): JsonObject | null {
   return { ...state, visitedLocationIds: [currentLocationId] };
 }
 
+// Phase 5 Task 3：Phase 4 旧存档的蓝图地点无 availableItemIds 字段。
+// 读取时补默认 []（旧地点无预置物品），不升 schema 版本也不回写；
+// 保证 validateIntent 的 availableItemIds 读取不会在旧档上抛错。
+function withAvailableItemsDefault(blueprint: JsonObject): JsonObject {
+  const locations = blueprint["locations"];
+  if (!Array.isArray(locations)) {
+    return blueprint;
+  }
+  let changed = false;
+  const patched = locations.map((entry) => {
+    if (isPlainObject(entry) && entry["availableItemIds"] === undefined) {
+      changed = true;
+      return { ...entry, availableItemIds: [] };
+    }
+    return entry;
+  });
+  return changed ? { ...blueprint, locations: patched } : blueprint;
+}
+
 // 单行 → 结构化结果：只做端口要求的版本 / generationId 校验与形状检查，
 // 不做蓝图内部引用完整性校验（Task 1 评审确认由上游编译器保证）。
 function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordResult {
@@ -156,6 +175,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordRes
   if (migratedState === null) {
     return corrupt("UNPARSEABLE_RECORD");
   }
+  const migratedBlueprint = withAvailableItemsDefault(blueprint);
 
   return {
     ok: true,
@@ -163,7 +183,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordRes
     record: {
       gameId: asGameId(gameId),
       // 通过全部防御性检查后按端口契约还原类型；深度结构由写入侧的编译器保证。
-      blueprint: blueprint as unknown as ScenarioBlueprint,
+      blueprint: migratedBlueprint as unknown as ScenarioBlueprint,
       state: migratedState as unknown as GameState,
       revision,
       createdAt

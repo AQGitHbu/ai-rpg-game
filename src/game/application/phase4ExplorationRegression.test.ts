@@ -197,10 +197,10 @@ describe.each(CASES)("Phase 4 探索回归（$gameType）", ({ gameType, fixture
     expect(record.blueprint.endings).toHaveLength(2);
   });
 
-  it("stage 2 不能被跳过：未支持的 obtain_item objective 使任务保持 active", async () => {
+  it("stage 2 不能被跳过：obtain_item objective 未满足前任务保持 active", async () => {
     const baseline = runScenarioPipeline(fixture.input, fixture.seed);
     const stage2 = mainQuestOfStage(baseline.blueprint, 2);
-    // 前提确认：stage 2 含 obtain_item objective（Phase 4 未支持，永不满足）。
+    // 前提确认：stage 2 含 obtain_item objective（Phase 5 已支持，但未取得前不满足）。
     expect(stage2.objectives.some((objective) => objective.kind === "obtain_item")).toBe(true);
 
     const databasePath = join(RUN_ROOT, `no-skip-${gameType}.sqlite`);
@@ -212,9 +212,9 @@ describe.each(CASES)("Phase 4 探索回归（$gameType）", ({ gameType, fixture
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    // 解锁 stage 2 后把能做的都做完：移动到 npc_3 所在的 loc_3 并与其交谈，
-    // 满足 talk_to_npc objective——但 obtain_item 仍未满足，任务必须保持
-    // active，不得产生 stage 2 的 quest_completed。
+    // 解锁 stage 2 后只做交谈：移动到 npc_3 所在的 loc_3 并与其交谈，
+    // 满足 talk_to_npc objective——但 obtain_item 尚未满足（未拾取），任务必须
+    // 保持 active，不得产生 stage 2 的 quest_completed。
     const talkObjective = stage2.objectives.find(
       (objective) => objective.kind === "talk_to_npc"
     );
@@ -237,14 +237,11 @@ describe.each(CASES)("Phase 4 探索回归（$gameType）", ({ gameType, fixture
 
     const stage2View = lastView?.activeQuests.find((quest) => quest.name === stage2.name);
     expect(stage2View).toBeDefined();
-    // talk objective 已完成；read model 将未支持 objective 标记为
-    // supported: false 且永不 completed。
+    // talk objective 已完成；obtain_item objective（Phase 5 起 supported: true）
+    // 在未拾取前保持 completed: false，任务因此不可被 talk 单独完成。
     expect(stage2View?.objectives.some((o) => o.supported && o.completed)).toBe(true);
-    const unsupported = stage2View?.objectives.filter((objective) => !objective.supported) ?? [];
-    expect(unsupported.length).toBeGreaterThanOrEqual(1);
-    for (const objective of unsupported) {
-      expect(objective.completed).toBe(false);
-    }
+    const pending = stage2View?.objectives.filter((objective) => !objective.completed) ?? [];
+    expect(pending.length).toBeGreaterThanOrEqual(1);
 
     // 持久化事实复核：stage 2 仍 active，整本账只有 stage 1 的 quest_completed。
     const record = await loadActiveRecord(repository);

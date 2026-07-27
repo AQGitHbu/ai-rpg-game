@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asLocationId, asQuestId, type GameState, type NewGameInput } from "@/game/domain";
+import { asItemId, asLocationId, asQuestId, type GameState, type NewGameInput } from "@/game/domain";
 import { resolveAction, type PlayerIntent } from "@/game/gameplay/rpg/actions";
 import { reconcileQuests } from "@/game/gameplay/rpg/quests";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
@@ -49,6 +49,12 @@ function locationName(locationId: string): string {
   );
   if (location === undefined) throw new Error(`fixture 应含地点 ${locationId}`);
   return location.name;
+}
+
+function blueprintItem(itemId: string): { name: string; description: string } {
+  const item = PIPELINE.blueprint.items.find((entry) => entry.id === asItemId(itemId));
+  if (item === undefined) throw new Error(`fixture 应含物品 ${itemId}`);
+  return { name: item.name, description: item.description };
 }
 
 describe("projectGameSessionView：开场视图", () => {
@@ -114,18 +120,72 @@ describe("projectGameSessionView：移动完成主线后", () => {
     expect(names).not.toContain(questName("quest_m1"));
   });
 
-  it("obtain_item objective 标记为未支持（后续阶段能力），不给假完成", () => {
+  it("obtain_item objective 为受支持目标：中性文案，未取得时未完成", () => {
     const view = project(moved, 1);
     const m2 = view.activeQuests.find((quest) => quest.name === questName("quest_m2"));
     expect(m2).toBeDefined();
-    const unsupported = m2?.objectives.filter((objective) => !objective.supported) ?? [];
-    expect(unsupported).toHaveLength(1);
-    expect(unsupported[0].completed).toBe(false);
+    expect(m2?.objectives).toContainEqual({
+      label: "取得关键物品",
+      completed: false,
+      supported: true
+    });
+    expect(m2?.objectives.every((objective) => objective.supported)).toBe(true);
   });
 
   it("锁定的 stage 3 主线名称不泄漏", () => {
     const view = project(moved, 1);
     expect(JSON.stringify(view.activeQuests)).not.toContain(questName("quest_m3"));
+  });
+});
+
+describe("projectGameSessionView：物品摘要与 take_item 行动（Phase 5 Task 3）", () => {
+  const moved = advance(PIPELINE.state, { type: "move", locationId: asLocationId("loc_2") });
+  const atKeyLocation = advance(moved, { type: "move", locationId: asLocationId("loc_3") });
+  const keyItem = blueprintItem("item_key");
+
+  it("开场背包摘要：inventoryItems 只含初始物品的名称与描述", () => {
+    const view = project(PIPELINE.state, 0);
+    expect(view.inventoryItems).toEqual([blueprintItem("item_start")]);
+  });
+
+  it("当前地点可取得物品：obtainableItems 摘要与 take_item 可用行动一致", () => {
+    const view = project(atKeyLocation, 2);
+    expect(view.obtainableItems).toEqual([keyItem]);
+    const takeActions = view.availableActions.filter((action) => action.type === "take_item");
+    expect(takeActions).toEqual([
+      { type: "take_item", itemId: "item_key", label: `拾取${keyItem.name}` }
+    ]);
+  });
+
+  it("其他地点的可取得物品不泄漏：loc_1/loc_2 视图 JSON 不含 key 物品名称与 ID", () => {
+    const cases: readonly (readonly [GameState, number])[] = [
+      [PIPELINE.state, 0],
+      [moved, 1]
+    ];
+    for (const [state, revision] of cases) {
+      const viewJson = JSON.stringify(project(state, revision));
+      expect(viewJson.includes(keyItem.name)).toBe(false);
+      expect(viewJson.includes("item_key")).toBe(false);
+    }
+  });
+
+  it("取得物品后：take 行动与 obtainableItems 消失，inventoryItems 收录新物品", () => {
+    const taken = advance(atKeyLocation, { type: "take_item", itemId: asItemId("item_key") });
+    const view = project(taken, 3);
+    expect(view.obtainableItems).toEqual([]);
+    expect(view.availableActions.filter((action) => action.type === "take_item")).toEqual([]);
+    expect(view.inventoryItems).toContainEqual(keyItem);
+  });
+
+  it("obtain_item objective 随背包立即完成：取得后 talk 前 completed=true", () => {
+    const taken = advance(atKeyLocation, { type: "take_item", itemId: asItemId("item_key") });
+    const view = project(taken, 3);
+    const m2 = view.activeQuests.find((quest) => quest.name === questName("quest_m2"));
+    expect(m2?.objectives).toContainEqual({
+      label: "取得关键物品",
+      completed: true,
+      supported: true
+    });
   });
 });
 

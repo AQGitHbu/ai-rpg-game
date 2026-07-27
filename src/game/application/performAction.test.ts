@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { asLocationId, type GameState, type NewGameInput } from "@/game/domain";
-import { resolveAction } from "@/game/gameplay/rpg/actions";
+import { asItemId, asLocationId, asNpcId, asQuestId, type GameState, type NewGameInput } from "@/game/domain";
+import { resolveAction, type PlayerIntent } from "@/game/gameplay/rpg/actions";
 import { reconcileQuests } from "@/game/gameplay/rpg/quests";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { performAction, type PerformActionDependencies } from "./performAction";
@@ -13,6 +13,7 @@ import {
 import {
   type ApplyResolvedActionResult,
   type GameRecord,
+  type GameRepository,
 } from "./server/persistence/gameRepository";
 
 // ---------------------------------------------------------------------------
@@ -202,6 +203,122 @@ describe("performAction：move + 任务 reconciliation 单次写入（Phase 4 Ta
 
     expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
     expect(repository.applyCalls).toHaveLength(0);
+  });
+});
+
+describe("performAction：take_item + 任务 reconciliation 单次写入（Phase 5 Task 3）", () => {
+  const ruleDeps = { now: () => FIXED_TIME };
+
+  /** 走真实规则管线推进到 stage-2 就绪：loc_2 → loc_3 → talk npc_3（未取物品）。 */
+  function buildStageTwoReadyState(): GameState {
+    const intents: readonly PlayerIntent[] = [
+      { type: "move", locationId: asLocationId("loc_2") },
+      { type: "move", locationId: asLocationId("loc_3") },
+      { type: "talk", npcId: asNpcId("npc_3") }
+    ];
+    let state = PIPELINE.state;
+    for (const intent of intents) {
+      const resolved = resolveAction(PIPELINE.blueprint, state, intent, ruleDeps);
+      if (!resolved.ok) throw new Error(`前置行动应当成功：${resolved.code}`);
+      state = reconcileQuests(PIPELINE.blueprint, resolved.state, ruleDeps).state;
+    }
+    return state;
+  }
+
+  it("applyResolvedAction 收到含 item_obtained + quest_completed + quest_unlocked 的最终 state，仅一次写入", async () => {
+    const repository = createFakeGameRepository();
+    const readyState = buildStageTwoReadyState();
+    const record = { ...buildActiveRecord(), state: readyState, revision: 3 };
+    repository.setCurrentResult({ ok: true, status: "active", record });
+
+    // 独立复跑 actions + quests facade 得到期望的最终 state。
+    const takeIntent: PlayerIntent = { type: "take_item", itemId: asItemId("item_key") };
+    const resolved = resolveAction(record.blueprint, readyState, takeIntent, ruleDeps);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    const reconciled = reconcileQuests(record.blueprint, resolved.state, ruleDeps);
+    repository.setApplyResult({
+      ok: true,
+      record: { ...record, state: reconciled.state, revision: 4 }
+    });
+
+    const result = await performAction(
+      { intent: takeIntent, expectedRevision: 3 },
+      buildPerformDeps(repository)
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // 恰好一次写入：行动事件、完成事件与三阶段解锁事件全在同一份载荷。
+    expect(repository.applyCalls).toHaveLength(1);
+    expect(repository.applyCalls[0].nextState).toEqual(reconciled.state);
+    const tailTypes = repository.applyCalls[0].nextState.eventLedger
+      .slice(readyState.eventLedger.length)
+      .map((event) => event.type);
+    expect(tailTypes).toEqual(["item_obtained", "quest_completed", "quest_unlocked"]);
+    const statusById = new Map(
+      repository.applyCalls[0].nextState.quests.map((quest) => [quest.questId, quest.status])
+    );
+    expect(statusById.get(asQuestId("quest_m2"))).toBe("completed");
+    expect(statusById.get(asQuestId("quest_m3"))).toBe("active");
+    // 已保存 state 投影的 view：背包收录 key 物品，可取得列表清空。
+    expect(result.view.revision).toBe(4);
+    expect(result.view.obtainableItems).toEqual([]);
+    const keyItem = PIPELINE.blueprint.items.find((item) => item.id === asItemId("item_key"));
+    expect(result.view.inventoryItems).toContainEqual({
+      name: keyItem?.name,
+      description: keyItem?.description
+    });
+  });
+
+  it("已拥有物品的 take 被拒 ⇒ ACTION_REJECTED 且零写入", async () => {
+    const repository = createFakeGameRepository();
+    const readyState = buildStageTwoReadyState();
+    const ownedState = {
+      ...readyState,
+      inventory: [...readyState.inventory, asItemId("item_key")]
+    };
+    repository.setCurrentResult({
+      ok: true,
+      status: "active",
+      record: { ...buildActiveRecord(), state: ownedState, revision: 3 }
+    });
+
+    const result = await performAction(
+      { intent: { type: "take_item", itemId: asItemId("item_key") }, expectedRevision: 3 },
+      buildPerformDeps(repository)
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("ACTION_REJECTED");
+    if (result.code !== "ACTION_REJECTED") return;
+    expect(result.feedback.ok).toBe(false);
+    expect(repository.applyCalls).toHaveLength(0);
+  });
+
+  it("repository.applyResolvedAction 抛错 ⇒ INFRASTRUCTURE_FAILURE（异常文本不外泄）", async () => {
+    const repository = createFakeGameRepository();
+    const readyState = buildStageTwoReadyState();
+    repository.setCurrentResult({
+      ok: true,
+      status: "active",
+      record: { ...buildActiveRecord(), state: readyState, revision: 3 }
+    });
+    const throwingRepository: GameRepository = {
+      createInitialGame: (input) => repository.createInitialGame(input),
+      getCurrentGame: () => repository.getCurrentGame(),
+      applyResolvedAction: async () => {
+        throw new Error("libsql 崩溃：disk I/O error");
+      }
+    };
+
+    const result = await performAction(
+      { intent: { type: "take_item", itemId: asItemId("item_key") }, expectedRevision: 3 },
+      { repository: throwingRepository, now: () => FIXED_TIME }
+    );
+
+    expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
   });
 });
 

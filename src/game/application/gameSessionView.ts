@@ -8,6 +8,7 @@ import {
   projectOpeningGameView,
   type AvailableActionView,
   type OpeningGameView,
+  type OpeningItemView,
   type OpeningNpcView,
   type ProjectOpeningGameViewInput
 } from "./openingGameView";
@@ -19,12 +20,13 @@ import {
 // seed / inputDigest。OpeningGameView 类型原样保留（Task 4 前 UI 仍引用）。
 // ---------------------------------------------------------------------------
 
-/** 会话视图的可用行动：在 opening 三种之上追加 move（UI 安全的 plain string）。 */
+/** 会话视图的可用行动：在 opening 三种之上追加 move 与 take_item（UI 安全的 plain string）。 */
 export type SessionActionView =
   | AvailableActionView
-  | { readonly type: "move"; readonly locationId: string; readonly label: string };
+  | { readonly type: "move"; readonly locationId: string; readonly label: string }
+  | { readonly type: "take_item"; readonly itemId: string; readonly label: string };
 
-/** 任务 objective 的展示视图：未支持类型（obtain_item/defeat_enemy）标记为后续阶段能力。 */
+/** 任务 objective 的展示视图：未支持类型（defeat_enemy）标记为后续阶段能力。 */
 export type QuestObjectiveView = {
   readonly label: string;
   readonly completed: boolean;
@@ -45,14 +47,16 @@ export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly presentNpcs: readonly OpeningNpcView[];
   /** 仅 active 任务：locked/completed/closed 一律不出现，名称与 ID 不泄漏。 */
   readonly activeQuests: readonly ActiveQuestView[];
+  /** 当前地点可取得物品摘要：与 take_item 可用行动一一对应，不泄漏其他地点。 */
+  readonly obtainableItems: readonly OpeningItemView[];
+  /** 运行时背包摘要：与 initialItems（开场快照语义）区分，取得后即时更新。 */
+  readonly inventoryItems: readonly OpeningItemView[];
 };
 
 /** 输入与 opening 投影完全一致：调用方无需区分两个 read model 的装配来源。 */
 export type ProjectGameSessionViewInput = ProjectOpeningGameViewInput;
 
-function toSessionActionView(
-  action: Exclude<AvailableAction, { type: "take_item" }>
-): SessionActionView {
+function toSessionActionView(action: AvailableAction): SessionActionView {
   switch (action.type) {
     case "observe":
       return { type: "observe", locationId: action.locationId, label: action.label };
@@ -62,6 +66,8 @@ function toSessionActionView(
       return { type: "investigate", factId: action.factId, label: action.label };
     case "move":
       return { type: "move", locationId: action.locationId, label: action.label };
+    case "take_item":
+      return { type: "take_item", itemId: action.itemId, label: action.label };
   }
 }
 
@@ -96,8 +102,8 @@ function projectObjectiveView(
     case "discover_fact":
       return { label: "查明相关线索", completed, supported: true };
     case "obtain_item":
-      // Phase 4 未支持：永不完成，UI 应标注为后续阶段能力。
-      return { label: "取得关键物品", completed: false, supported: false };
+      // Phase 5 已支持：完成态跟随背包；文案保持中性，不泄漏未取得的物品名。
+      return { label: "取得关键物品", completed, supported: true };
     case "defeat_enemy":
       return { label: "战胜强敌", completed: false, supported: false };
   }
@@ -108,17 +114,33 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
   const base = projectOpeningGameView(input);
   const npcById = new Map(blueprint.npcs.map((npc) => [npc.id, npc]));
   const questById = new Map(blueprint.quests.map((quest) => [quest.id, quest]));
+  const itemById = new Map(blueprint.items.map((item) => [item.id, item]));
+  const availableActions = projectAvailableActions(blueprint, state);
 
   return {
     ...base,
-    // 不再过滤 move：完整的可用行动投影（观察/交谈/调查/前往）。
-    // take_item 暂不进入会话视图：由 Phase 5 Task 3/4 接入 read model 与 UI。
-    availableActions: projectAvailableActions(blueprint, state)
-      .filter(
-        (action): action is Exclude<AvailableAction, { type: "take_item" }> =>
-          action.type !== "take_item"
+    // 完整的可用行动投影（观察/交谈/调查/前往/拾取），不再过滤 take_item。
+    availableActions: availableActions.map(toSessionActionView),
+    // 可取得物品摘要：从 take_item 可用行动派生，保证与行动列表一致且只含当前地点。
+    obtainableItems: availableActions
+      .filter((action): action is Extract<AvailableAction, { type: "take_item" }> =>
+        action.type === "take_item"
       )
-      .map(toSessionActionView),
+      .map((action) => {
+        const item = itemById.get(action.itemId);
+        if (item === undefined) {
+          throw new Error("会话视图投影失败：可取得物品引用在蓝图中不存在");
+        }
+        return { name: item.name, description: item.description };
+      }),
+    // 运行时背包摘要：按 GameState.inventory 投影（initialItems 保留开场快照语义）。
+    inventoryItems: state.inventory.map((itemId) => {
+      const item = itemById.get(itemId);
+      if (item === undefined) {
+        throw new Error("会话视图投影失败：背包物品引用在蓝图中不存在");
+      }
+      return { name: item.name, description: item.description };
+    }),
     // 运行时在场 NPC：按 GameState 中的 NPC 位置投影，不读开场名单。
     presentNpcs: state.npcs
       .filter((npcState) => npcState.locationId === state.currentLocationId)

@@ -44,14 +44,16 @@ export {
   type NewGameInputError,
   type ValidateNewGameInputResult
 } from "@/game/domain";
-// Phase 3: API handler 需要品牌化 ID 转换与 PlayerIntent 类型。
+// Phase 3: API handler 需要品牌化 ID 转换与 PlayerIntent 类型（Phase 5 追加 itemId）。
 export {
   asLocationId,
   asNpcId,
   asFactId,
+  asItemId,
   type LocationId,
   type NpcId,
-  type FactId
+  type FactId,
+  type ItemId
 } from "@/game/domain";
 export { type PlayerIntent } from "@/game/gameplay/rpg/actions";
 export {
