@@ -72,7 +72,9 @@ export {
   type LocationObservedEvent,
   type NpcMetEvent,
   type FactDiscoveredEvent,
-  type LocationVisitedEvent
+  type LocationVisitedEvent,
+  type QuestCompletedEvent,
+  type QuestUnlockedEvent
 } from "./events";
 export {
   type GameState,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent, LocationVisitedEvent } from "./events";
-import { asLocationId, asNpcId, asFactId, asGenerationId, type GenerationMetadata } from "./scenarioBlueprint";
+import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent, LocationVisitedEvent, QuestCompletedEvent, QuestUnlockedEvent } from "./events";
+import { asLocationId, asNpcId, asFactId, asGenerationId, asQuestId, type GenerationMetadata } from "./scenarioBlueprint";
 
 function buildGeneration(): GenerationMetadata {
   return {
@@ -55,6 +55,28 @@ describe("GameEvent union (Phase 3 action events)", () => {
     expect(event.occurredAt).toBe("2026-07-27T10:03:00Z");
   });
 
+  it("accepts quest_completed event with injected timestamp (Phase 4 reconciliation)", () => {
+    const event: QuestCompletedEvent = {
+      type: "quest_completed",
+      questId: asQuestId("m1"),
+      occurredAt: "2026-07-27T10:04:00Z",
+    };
+    expect(event.type).toBe("quest_completed");
+    expect(event.questId).toBe("m1");
+    expect(event.occurredAt).toBe("2026-07-27T10:04:00Z");
+  });
+
+  it("accepts quest_unlocked event with injected timestamp (Phase 4 reconciliation)", () => {
+    const event: QuestUnlockedEvent = {
+      type: "quest_unlocked",
+      questId: asQuestId("m2"),
+      occurredAt: "2026-07-27T10:05:00Z",
+    };
+    expect(event.type).toBe("quest_unlocked");
+    expect(event.questId).toBe("m2");
+    expect(event.occurredAt).toBe("2026-07-27T10:05:00Z");
+  });
+
   it("GameEvent union narrows on all Phase 3 type discriminators", () => {
     const events: GameEvent[] = [
       { type: "game_initialized", generation: buildGeneration() },
@@ -62,6 +84,8 @@ describe("GameEvent union (Phase 3 action events)", () => {
       { type: "npc_met", npcId: asNpcId("npc_1"), occurredAt: "t2" },
       { type: "fact_discovered", factId: asFactId("fact_1"), occurredAt: "t3" },
       { type: "location_visited", locationId: asLocationId("loc_2"), occurredAt: "t4" },
+      { type: "quest_completed", questId: asQuestId("m1"), occurredAt: "t5" },
+      { type: "quest_unlocked", questId: asQuestId("m2"), occurredAt: "t6" },
     ];
 
     const types = events.map((e) => e.type);
@@ -71,6 +95,8 @@ describe("GameEvent union (Phase 3 action events)", () => {
       "npc_met",
       "fact_discovered",
       "location_visited",
+      "quest_completed",
+      "quest_unlocked",
     ]);
   });
 
