@@ -140,7 +140,8 @@ function buildCandidate(): ScenarioBlueprintCandidate {
       locationId: "loc_village",
       narration: "雨后的青石村格外安静。",
       presentNpcIds: ["npc_elder"],
-      suggestedActions: ["去找村长", "查看铁剑"]
+      suggestedActions: ["去找村长", "查看铁剑"],
+      investigableFactIds: ["fact_sword_stolen"]
     },
     contentBudget: CONTENT_BUDGET
   };

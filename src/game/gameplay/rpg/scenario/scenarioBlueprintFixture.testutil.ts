@@ -237,7 +237,8 @@ export function makeValidCandidate(): ScenarioBlueprintCandidate {
       locationId: "loc_a",
       narration: "暮色里的青崖镇一片死寂，老掌柜提着灯笼迎面走来。",
       presentNpcIds: ["npc_a"],
-      suggestedActions: ["向老掌柜打听旧案", "查看镖局废墟"]
+      suggestedActions: ["向老掌柜打听旧案", "查看镖局废墟"],
+      investigableFactIds: ["fact_b"]
     },
     contentBudget: { ...CONTENT_BUDGET }
   };

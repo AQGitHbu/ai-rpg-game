@@ -764,6 +764,8 @@ function buildOpeningScene(
     // 开场叙事嵌入玩家的故事开端并带来源标记。
     narration: `${PLAYER_INPUT_MARK}${input.storyOpening}${template.openingFlavor}`,
     presentNpcIds: ["npc_1"],
-    suggestedActions: [...template.sceneActions]
+    suggestedActions: [...template.sceneActions],
+    // 开场可调查事实：选择生成型事实（非玩家输入宣称），玩家需主动调查才能发现。
+    investigableFactIds: [FACT_GEN_1, FACT_GEN_2]
   };
 }

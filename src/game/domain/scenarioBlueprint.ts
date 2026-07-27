@@ -173,6 +173,8 @@ type SceneDefinitionOf<I extends IdSet> = {
   readonly narration: string;
   readonly presentNpcIds: readonly I["npc"][];
   readonly suggestedActions: readonly string[];
+  /** Phase 3: 当前场景中可调查的世界事实 ID（opening scene 至少一个）。 */
+  readonly investigableFactIds: readonly I["fact"][];
 };
 
 type GeneratedPlayerDefinitionOf<I extends IdSet> = {

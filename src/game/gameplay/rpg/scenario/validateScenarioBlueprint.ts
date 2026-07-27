@@ -46,6 +46,8 @@ export type ScenarioBlueprintIssueCode =
   | "INVALID_ENDING_REQUIREMENT"
   | "OPENING_SCENE_HIDDEN_LOCATION"
   | "OPENING_NPC_NOT_AT_LOCATION"
+  | "OPENING_SCENE_NO_INVESTIGABLE_FACTS"
+  | "DUPLICATE_INVESTIGABLE_FACT"
   | "FORBIDDEN_TAG"
   | "OUT_OF_RANGE";
 
@@ -321,6 +323,34 @@ function validateOpeningScene(
         code: "OPENING_NPC_NOT_AT_LOCATION",
         params: { npcId, npcLocationId: npc.locationId, sceneLocationId: scene.locationId }
       });
+    }
+  });
+
+  // Phase 3: 开场可调查事实校验
+  const factIds = new Set(candidate.world.facts.map((entry) => entry.id));
+  const investigableIds = scene.investigableFactIds ?? [];
+  if (investigableIds.length === 0) {
+    issues.push({
+      path: "openingScene.investigableFactIds",
+      code: "OPENING_SCENE_NO_INVESTIGABLE_FACTS",
+      params: {}
+    });
+  }
+  const seenInvestigable = new Map<string, number>();
+  investigableIds.forEach((factId, index) => {
+    const path = `openingScene.investigableFactIds[${index}]`;
+    if (!factIds.has(factId)) {
+      issues.push({ path, code: "DANGLING_REFERENCE", params: { refKind: "fact", id: factId } });
+    }
+    const firstIndex = seenInvestigable.get(factId);
+    if (firstIndex !== undefined) {
+      issues.push({
+        path,
+        code: "DUPLICATE_INVESTIGABLE_FACT",
+        params: { factId, firstIndex }
+      });
+    } else {
+      seenInvestigable.set(factId, index);
     }
   });
 }

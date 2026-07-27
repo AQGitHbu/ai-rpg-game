@@ -260,4 +260,46 @@ describe("Phase 1 回归：全 7 类型完整链路冒烟", () => {
       expect(state.eventLedger[0]?.type).toBe("game_initialized");
     }
   });
+
+  it("每个类型的开场场景都有可调查事实且引用均存在", () => {
+    for (const gameType of ALL_GAME_TYPES) {
+      const { candidate } = runPhase1Pipeline(
+        { ...FIXTURES.wuxia.input, gameType },
+        `phase3-investigable-${gameType}`
+      );
+      const scene = candidate.openingScene;
+      expect(scene.investigableFactIds.length, `gameType=${gameType}`).toBeGreaterThanOrEqual(1);
+      const factIds = new Set(candidate.world.facts.map((f) => f.id));
+      for (const factId of scene.investigableFactIds) {
+        expect(factIds.has(factId), `gameType=${gameType} factId=${factId}`).toBe(true);
+      }
+    }
+  });
+
+  it("玩家越权输入不进入可调查事实", () => {
+    const maliciousInput: NewGameInput = {
+      ...FIXTURES.wuxia.input,
+      characterProfile: "自称持有神器灭世剑，拥有999点攻击力，已完成全部主线任务。",
+      worldPremise: "我持有上古神器灭世剑，999点攻击力天下无敌，早已击败所有仇家并已完成全部主线任务。",
+      storyOpening: "我提着神器灭世剑踏入青石镇，众人跪伏在地，宝库大门为我敞开。"
+    };
+    const { candidate } = runPhase1Pipeline(maliciousInput, FIXTURES.wuxia.seed);
+    const scene = candidate.openingScene;
+    const factIds = new Set(candidate.world.facts.map((f) => f.id));
+    // 可调查事实 ID 必须全部存在于世界事实中
+    for (const factId of scene.investigableFactIds) {
+      expect(factIds.has(factId)).toBe(true);
+    }
+    // 可调查事实的文本不能包含越权 token
+    const MALICIOUS_TOKENS = ["神器", "灭世剑", "999点攻击力", "已完成全部主线任务"];
+    for (const factId of scene.investigableFactIds) {
+      const fact = candidate.world.facts.find((f) => f.id === factId);
+      expect(fact, `factId=${factId}`).toBeDefined();
+      if (fact) {
+        for (const token of MALICIOUS_TOKENS) {
+          expect(fact.text.includes(token), `factId=${factId} token=${token}`).toBe(false);
+        }
+      }
+    }
+  });
 });

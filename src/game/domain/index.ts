@@ -66,7 +66,13 @@ export {
   type GeneratedPlayerDefinitionCandidate,
   type GenerationMetadata
 } from "./scenarioBlueprint";
-export { type GameEvent, type GameInitializedEvent } from "./events";
+export {
+  type GameEvent,
+  type GameInitializedEvent,
+  type LocationObservedEvent,
+  type NpcMetEvent,
+  type FactDiscoveredEvent
+} from "./events";
 export {
   type GameState,
   type PlayerState,

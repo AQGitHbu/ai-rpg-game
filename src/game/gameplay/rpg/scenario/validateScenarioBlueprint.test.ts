@@ -344,6 +344,56 @@ describe("validateScenarioBlueprintCandidate：开场场景", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 5b. 开场场景可调查事实 (Phase 3)
+// ---------------------------------------------------------------------------
+
+describe("validateScenarioBlueprintCandidate：开场可调查事实", () => {
+  it("开场可调查事实为空时拒绝", () => {
+    const candidate = draft();
+    candidate.openingScene.investigableFactIds = [];
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "openingScene.investigableFactIds",
+      code: "OPENING_SCENE_NO_INVESTIGABLE_FACTS",
+      params: {}
+    });
+  });
+
+  it("开场可调查事实引用不存在的事实时拒绝", () => {
+    const candidate = draft();
+    candidate.openingScene.investigableFactIds = ["ghost_fact"];
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "openingScene.investigableFactIds[0]",
+      code: "DANGLING_REFERENCE",
+      params: { refKind: "fact", id: "ghost_fact" }
+    });
+  });
+
+  it("开场可调查事实有重复 ID 时拒绝", () => {
+    const candidate = draft();
+    candidate.openingScene.investigableFactIds = ["fact_b", "fact_b"];
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "openingScene.investigableFactIds[1]",
+      code: "DUPLICATE_INVESTIGABLE_FACT",
+      params: { factId: "fact_b", firstIndex: 0 }
+    });
+  });
+
+  it("合法的可调查事实通过校验", () => {
+    const candidate = draft();
+    candidate.openingScene.investigableFactIds = ["fact_b"];
+    const result = validate(candidate as ScenarioBlueprintCandidate);
+    expect(result.ok).toBe(true);
+  });
+
+  it("多个不同可调查事实通过校验", () => {
+    const candidate = draft();
+    candidate.openingScene.investigableFactIds = ["fact_a", "fact_b"];
+    const result = validate(candidate as ScenarioBlueprintCandidate);
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 7. 任务图问题直接并入（复用 questGraph，不另行包装）
 // ---------------------------------------------------------------------------
 

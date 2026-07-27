@@ -33,4 +33,4 @@ export {
   initializeGameState,
   type CompileScenarioBlueprintResult
 } from "./compileScenarioBlueprint";
-export { createFallbackBlueprint } from "./createFallbackBlueprint";
+export { createFallbackBlueprint, FALLBACK_TEMPLATE_VERSION } from "./createFallbackBlueprint";
