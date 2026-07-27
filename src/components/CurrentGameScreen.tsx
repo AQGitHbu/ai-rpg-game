@@ -2,16 +2,19 @@
 
 import { useEffect, useState } from "react";
 import { Panel, Tag } from "@ai-game/ui";
-import type { OpeningGameView as OpeningGameViewModel } from "@/game/application";
+import type { GameSessionView } from "@/game/application";
 import { NewGameSetupForm } from "./NewGameSetupForm";
 import { OpeningGameView } from "./OpeningGameView";
 import { SceneActionPanel } from "./SceneActionPanel";
+import { TravelPanel } from "./TravelPanel";
+import { QuestTracker } from "./QuestTracker";
 
 // ---------------------------------------------------------------------------
-// 根页面客户端协调器（Phase 2 + Phase 3）：挂载时读取 GET /api/game/current。
-//   none    → 显示创建表单；创建成功后无需刷新，直接切换到开场视图。
-//   active  → 恢复已保存的开场 + 渲染行动面板；成功行动用 API 返回的最新 view
-//             替换本地 view；版本冲突后重新请求 current-game。
+// 根页面客户端协调器（Phase 2 + Phase 3 + Phase 4）：挂载时读取 GET /api/game/current。
+//   none    → 显示创建表单；创建成功后无需刷新，直接切换到会话视图。
+//   active  → 恢复已保存的会话视图：场景 + 行动面板 + 移动面板 + 任务面板；
+//             成功行动用 API 返回的最新 view 替换本地 view；任一面板提交中
+//             禁用全部行动按钮；版本冲突后重新请求 current-game。
 //   corrupt → 按 reason 分支可恢复提示：真实数据损坏 ≠ 数据库暂时不可用。
 // 只消费 API 响应与 application 的 read model 类型，不接触持久化/gameplay。
 // ---------------------------------------------------------------------------
@@ -19,14 +22,14 @@ import { SceneActionPanel } from "./SceneActionPanel";
 type ScreenState =
   | { phase: "loading" }
   | { phase: "none" }
-  | { phase: "active"; view: OpeningGameViewModel }
+  | { phase: "active"; view: GameSessionView }
   | { phase: "corrupt"; reason: string }
   | { phase: "unreachable" };
 
 /** GET /api/game/current 的响应形态（宽松解析：非法 body 按不可达处理）。 */
 type CurrentGameApiBody = {
   status?: string;
-  view?: OpeningGameViewModel;
+  view?: GameSessionView;
   reason?: string;
 };
 
@@ -39,6 +42,8 @@ const CORRUPT_REASON_COPY: Record<string, string> = {
 
 export function CurrentGameScreen() {
   const [state, setState] = useState<ScreenState>({ phase: "loading" });
+  // 任一面板提交中：场景与移动面板的全部按钮一律禁用，避免并发写入。
+  const [actionBusy, setActionBusy] = useState(false);
 
   async function loadCurrentGame(): Promise<void> {
     try {
@@ -98,9 +103,19 @@ export function CurrentGameScreen() {
         <OpeningGameView view={state.view} />
         <SceneActionPanel
           view={state.view}
+          busy={actionBusy}
+          onBusyChange={setActionBusy}
           onActionSuccess={(view) => setState({ phase: "active", view })}
           onStaleRevision={() => void loadCurrentGame()}
         />
+        <TravelPanel
+          view={state.view}
+          busy={actionBusy}
+          onBusyChange={setActionBusy}
+          onActionSuccess={(view) => setState({ phase: "active", view })}
+          onStaleRevision={() => void loadCurrentGame()}
+        />
+        <QuestTracker quests={state.view.activeQuests} />
       </div>
     );
   }

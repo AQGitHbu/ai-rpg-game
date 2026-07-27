@@ -403,6 +403,59 @@ select:focus,
   color: var(--game-text-muted);
 }
 
+/* Phase 4：任务追踪面板 */
+.quest-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 18px;
+}
+
+.quest-item {
+  display: grid;
+  gap: 8px;
+}
+
+.quest-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.quest-heading h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.quest-description {
+  margin: 0;
+  color: var(--game-text-muted);
+  line-height: 1.6;
+}
+
+.quest-objectives {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.quest-objectives li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  line-height: 1.6;
+}
+
+.quest-hint {
+  margin: 0;
+  color: var(--game-text-muted);
+  line-height: 1.6;
+}
+
 
 .sr-only {
   position: absolute;

@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent, { type UserEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NewGameSetupForm } from "./NewGameSetupForm";
-import { buildOpeningViewFixture } from "./openingViewFixture.testutil";
+import { buildSessionViewFixture } from "./sessionViewFixture.testutil";
 
 // ---------------------------------------------------------------------------
 // Task 4：表单真实提交测试。fetch 一律以 vi.stubGlobal 打桩——jsdom 测试
@@ -58,8 +58,8 @@ describe("NewGameSetupForm", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("有效表单 → loading → 只向 /api/game 提交允许字段 → onCreated 收到 opening view", async () => {
-    const view = buildOpeningViewFixture();
+  it("有效表单 → loading → 只向 /api/game 提交允许字段 → onCreated 收到 session view", async () => {
+    const view = buildSessionViewFixture();
     const pending = deferred<FakeResponse>();
     const fetchMock = stubFetch(() => pending.promise);
     const onCreated = vi.fn();
@@ -114,7 +114,7 @@ describe("NewGameSetupForm", () => {
     await user.click(submit);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    pending.resolve(jsonResponse(201, { view: buildOpeningViewFixture() }));
+    pending.resolve(jsonResponse(201, { view: buildSessionViewFixture() }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "确认开局资料" })).toBeEnabled()
     );

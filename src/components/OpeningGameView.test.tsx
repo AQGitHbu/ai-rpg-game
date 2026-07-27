@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { OpeningGameView } from "./OpeningGameView";
-import { buildOpeningViewFixture } from "./openingViewFixture.testutil";
+import { buildSessionViewFixture } from "./sessionViewFixture.testutil";
 
 // ---------------------------------------------------------------------------
 // Task 4：开场视图为纯展示组件——只呈现 read model 允许的信息，
@@ -9,7 +9,7 @@ import { buildOpeningViewFixture } from "./openingViewFixture.testutil";
 // ---------------------------------------------------------------------------
 
 describe("OpeningGameView", () => {
-  const view = buildOpeningViewFixture();
+  const view = buildSessionViewFixture();
 
   it("展示世界、角色、当前地点、开场叙事、NPC、物品与建议行动", () => {
     render(<OpeningGameView view={view} />);

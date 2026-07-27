@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SceneActionPanel } from "./SceneActionPanel";
-import { buildOpeningViewFixture } from "./openingViewFixture.testutil";
+import { buildSessionViewFixture } from "./sessionViewFixture.testutil";
 
 type FakeResponse = { json: () => Promise<unknown> };
 
@@ -15,8 +15,8 @@ afterEach(() => {
 });
 
 describe("SceneActionPanel", () => {
-  it("提交固定行动时带上 read model revision，并用成功响应替换开场视图", async () => {
-    const view = buildOpeningViewFixture();
+  it("提交固定行动时带上 read model revision，并用成功响应替换会话视图", async () => {
+    const view = buildSessionViewFixture();
     const updatedView = { ...view, revision: 1, availableActions: [] };
     let submittedRequest: RequestInit | undefined;
     const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
@@ -56,7 +56,7 @@ describe("SceneActionPanel", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
-    const view = buildOpeningViewFixture();
+    const view = buildSessionViewFixture();
 
     render(<SceneActionPanel view={view} onActionSuccess={vi.fn()} onStaleRevision={vi.fn()} />);
     await user.click(screen.getByRole("button", { name: "观察青石镇" }));
@@ -70,8 +70,38 @@ describe("SceneActionPanel", () => {
     await screen.findByText("完成");
   });
 
+  it("只渲染非 move 行动：move 按钮归 TravelPanel", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    render(
+      <SceneActionPanel
+        view={buildSessionViewFixture()}
+        onActionSuccess={vi.fn()}
+        onStaleRevision={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "观察青石镇" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "前往城外官道" })).toBeNull();
+  });
+
+  it("外部 busy 时禁用全部固定行动按钮（其他面板正在提交）", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    render(
+      <SceneActionPanel
+        view={buildSessionViewFixture()}
+        busy
+        onActionSuccess={vi.fn()}
+        onStaleRevision={vi.fn()}
+      />
+    );
+
+    for (const button of screen.getAllByRole("button")) {
+      expect(button).toBeDisabled();
+    }
+  });
+
   it("规则拒绝显示反馈但不伪造成功", async () => {
-    const view = buildOpeningViewFixture();
+    const view = buildSessionViewFixture();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -99,7 +129,7 @@ describe("SceneActionPanel", () => {
 
     render(
       <SceneActionPanel
-        view={buildOpeningViewFixture()}
+        view={buildSessionViewFixture()}
         onActionSuccess={vi.fn()}
         onStaleRevision={onStaleRevision}
       />
@@ -116,7 +146,7 @@ describe("SceneActionPanel", () => {
 
     render(
       <SceneActionPanel
-        view={buildOpeningViewFixture()}
+        view={buildSessionViewFixture()}
         onActionSuccess={vi.fn()}
         onStaleRevision={vi.fn()}
       />

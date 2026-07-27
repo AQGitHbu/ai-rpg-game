@@ -3,21 +3,20 @@
 import { useState } from "react";
 import { Panel, Tag, InlineButton } from "@ai-game/ui";
 import type { GameSessionView, SessionActionView } from "@/game/application";
-import { postGameAction, type GameActionPayload } from "./gameActionRequest";
+import { postGameAction } from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
-// SceneActionPanel（Phase 3 Task 5 + Phase 4 Task 4）：固定行动面板。
-// 消费 GameSessionView.availableActions 中的非 move 行动（move 归
-// TravelPanel），禁用提交中的所有按钮，以 aria-live 提示结果。
-// 成功后用 API 返回的最新 view 替换本地 view；规则拒绝显示具体但不
-// 伪造成功；版本冲突后触发重新请求 current-game。外部 busy（其他
-// 面板提交中）同样禁用，避免并发写入。
-// 不显示未发现事实、任务/战斗按钮，也不提供自由文本输入框。
+// TravelPanel（Phase 4 Task 4）：地点移动面板。
+// 只渲染 GameSessionView.availableActions 中的 move 行动（连通且已解锁的
+// 目的地由 read model 决定，UI 不自行猜测），提交/反馈模式与
+// SceneActionPanel 一致：提交期间禁用全部按钮、aria-live 提示结果、
+// 成功后用最新 view 替换、版本冲突触发重新读取当前存档。
+// 外部 busy（另一面板提交中）同样禁用，避免并发写入。
 // ---------------------------------------------------------------------------
 
-type SceneActionView = Exclude<SessionActionView, { type: "move" }>;
+type MoveActionView = Extract<SessionActionView, { type: "move" }>;
 
-type SceneActionPanelProps = {
+type TravelPanelProps = {
   view: GameSessionView;
   /** 其他面板提交中：为 true 时禁用本面板全部按钮。 */
   busy?: boolean;
@@ -34,39 +33,30 @@ type FeedbackState =
   | { readonly phase: "rejected"; readonly message: string }
   | { readonly phase: "error"; readonly message: string };
 
-function buildIntentPayload(action: SceneActionView, revision: number): GameActionPayload {
-  switch (action.type) {
-    case "observe":
-      return { intent: { type: "observe", locationId: action.locationId }, revision };
-    case "talk":
-      return { intent: { type: "talk", npcId: action.npcId }, revision };
-    case "investigate":
-      return { intent: { type: "investigate", factId: action.factId }, revision };
-  }
-}
-
-export function SceneActionPanel({
+export function TravelPanel({
   view,
   busy = false,
   onBusyChange,
   onActionSuccess,
   onStaleRevision
-}: SceneActionPanelProps) {
+}: TravelPanelProps) {
   const [feedback, setFeedback] = useState<FeedbackState>({ phase: "idle" });
 
   const isSubmitting = feedback.phase === "submitting";
   const disabled = busy || isSubmitting;
 
-  // move 行动由 TravelPanel 渲染：这里只保留观察/交谈/调查。
-  const sceneActions = view.availableActions.filter(
-    (action): action is SceneActionView => action.type !== "move"
+  const moveActions = view.availableActions.filter(
+    (action): action is MoveActionView => action.type === "move"
   );
 
-  async function handleAction(action: SceneActionView) {
+  async function handleMove(action: MoveActionView) {
     setFeedback({ phase: "submitting" });
     onBusyChange?.(true);
 
-    const outcome = await postGameAction(buildIntentPayload(action, view.revision));
+    const outcome = await postGameAction({
+      intent: { type: "move", locationId: action.locationId },
+      revision: view.revision
+    });
 
     onBusyChange?.(false);
     switch (outcome.kind) {
@@ -75,7 +65,6 @@ export function SceneActionPanel({
         onActionSuccess(outcome.view);
         return;
       case "rejected":
-        // 拒绝不改状态：只显示反馈，不更新 view。
         setFeedback({ phase: "rejected", message: outcome.message });
         return;
       case "stale":
@@ -89,22 +78,22 @@ export function SceneActionPanel({
 
   return (
     <Panel
-      eyebrow="行动面板"
+      eyebrow="移动"
       header={(
         <div className="panel-heading">
-          <h2>你可以执行的行动</h2>
-          <Tag variant="info">Revision {view.revision}</Tag>
+          <h2>可前往的地点</h2>
+          <Tag variant="info">当前：{view.currentLocation.name}</Tag>
         </div>
       )}
     >
-      {sceneActions.length === 0 ? (
-        <p className="action-hint">当前没有可执行的新行动。</p>
+      {moveActions.length === 0 ? (
+        <p className="action-hint">当前没有可前往的相邻地点。</p>
       ) : (
-        <div className="action-buttons" role="group" aria-label="可用行动">
-          {sceneActions.map((action, index) => (
+        <div className="action-buttons" role="group" aria-label="可前往的地点">
+          {moveActions.map((action) => (
             <InlineButton
-              key={`${action.type}-${index}`}
-              onClick={() => void handleAction(action)}
+              key={action.locationId}
+              onClick={() => void handleMove(action)}
               disabled={disabled}
             >
               {action.label}
@@ -131,7 +120,7 @@ export function SceneActionPanel({
 
       {isSubmitting && (
         <p role="status" aria-live="polite" className="action-feedback submitting">
-          正在处理行动……
+          正在赶路……
         </p>
       )}
     </Panel>

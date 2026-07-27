@@ -6,7 +6,7 @@ import {
   validateNewGameInput,
   type NewGameInput,
   type NewGameInputError,
-  type OpeningGameView
+  type GameSessionView
 } from "@/game/application";
 
 // ---------------------------------------------------------------------------
@@ -60,14 +60,14 @@ function toFieldErrorMap(errors: readonly NewGameInputError[]): FieldErrorMap {
 
 /** POST /api/game 的响应形态（宽松解析：非法 body 一律按未知错误处理）。 */
 type CreateGameApiBody = {
-  view?: OpeningGameView;
+  view?: GameSessionView;
   code?: string;
   fieldErrors?: NewGameInputError[];
 };
 
 type NewGameSetupFormProps = {
-  /** 创建成功回调：父级用返回的 opening view 切换到开场画面。 */
-  onCreated?: (view: OpeningGameView) => void;
+  /** 创建成功回调：父级用返回的会话视图切换到开场画面。 */
+  onCreated?: (view: GameSessionView) => void;
 };
 
 export function NewGameSetupForm({ onCreated }: NewGameSetupFormProps = {}) {

@@ -215,7 +215,7 @@ describe("actionHandler：请求校验", () => {
 
   it("intent.type 非法值 ⇒ 400 INVALID_INTENT", async () => {
     const response = await handlePerformActionRequest(
-      makeRequest({ intent: { type: "move", locationId: "loc_a" }, revision: 0 }),
+      makeRequest({ intent: { type: "use_item", locationId: "loc_a" }, revision: 0 }),
       fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
     );
     expect(response.status).toBe(400);
@@ -267,6 +267,57 @@ describe("actionHandler：请求校验", () => {
       fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
     );
     expect(response.status).toBe(400);
+  });
+});
+
+describe("actionHandler：move intent（Phase 4 Task 4）", () => {
+  it("合法 move ⇒ 200，intent 与 revision 原样交给 performAction", async () => {
+    let received: unknown;
+    const entry: Pick<ServerGameEntryPoints, "performAction"> = {
+      async performAction(command) {
+        received = command;
+        return { ok: true, view: STUB_VIEW, feedback: { ok: true, message: "你来到了地点B。" } };
+      }
+    };
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "move", locationId: "loc_b" }, revision: 3 }),
+      entry
+    );
+    expect(response.status).toBe(200);
+    expect(received).toEqual({
+      intent: { type: "move", locationId: "loc_b" },
+      expectedRevision: 3
+    });
+  });
+
+  it("move 缺少 locationId ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "move" }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("move locationId 非字符串 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "move", locationId: 42 }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("move 含 freeText 未知字段 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "move", locationId: "loc_b", freeText: "御剑飞过去" },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
   });
 });
 

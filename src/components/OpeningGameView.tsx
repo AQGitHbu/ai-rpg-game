@@ -1,15 +1,16 @@
 import { Panel, Tag } from "@ai-game/ui";
-import type { OpeningGameView as OpeningGameViewModel } from "@/game/application";
+import type { GameSessionView } from "@/game/application";
 
 // ---------------------------------------------------------------------------
-// 开场视图（Phase 2 + Phase 3）：纯展示组件，只消费 application 的 read model 类型。
-// Phase 3：显示已发现事实与当前 revision；建议行动仍为文本灵感，
-// 实际可执行行动由 SceneActionPanel 渲染。
+// 开场/场景视图（Phase 2 + Phase 3 + Phase 4）：纯展示组件，只消费
+// application 的 GameSessionView。Phase 4：在场人物改用运行时 presentNpcs
+//（随当前地点变化），不再误用开场快照名单 visibleNpcs。
+// 建议行动仍为文本灵感，实际可执行行动由 SceneActionPanel/TravelPanel 渲染。
 // 不出现自由输入框、战斗入口或未来阶段的功能。
 // ---------------------------------------------------------------------------
 
 type OpeningGameViewProps = {
-  view: OpeningGameViewModel;
+  view: GameSessionView;
 };
 
 export function OpeningGameView({ view }: OpeningGameViewProps) {
@@ -51,7 +52,7 @@ export function OpeningGameView({ view }: OpeningGameViewProps) {
           <section>
             <h3>在场人物</h3>
             <ul>
-              {view.visibleNpcs.map((npc) => (
+              {view.presentNpcs.map((npc) => (
                 <li key={npc.name}>
                   {npc.name}（{npc.role}）
                 </li>

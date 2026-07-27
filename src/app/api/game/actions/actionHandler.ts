@@ -8,7 +8,7 @@ import {
 import type { ServerGameEntryPoints } from "@/game/application/server/compositionRoot";
 
 // ---------------------------------------------------------------------------
-// POST /api/game/actions 的 HTTP adapter（Phase 3 Task 4）。
+// POST /api/game/actions 的 HTTP adapter（Phase 3 Task 4 + Phase 4 Task 4）。
 // 只做参数/响应映射，无业务逻辑。route.ts 保持薄壳注入生产单例。
 //
 // 请求体只接受 { intent: { type, ...targetId }, revision }，
@@ -45,7 +45,8 @@ const ALLOWED_INTENT_FIELDS: ReadonlySet<string> = new Set([
 const VALID_INTENT_TYPES: ReadonlySet<string> = new Set([
   "observe",
   "talk",
-  "investigate"
+  "investigate",
+  "move"
 ]);
 
 /** 从原始 JSON 构造 PlayerIntent；校验失败返回错误详情。 */
@@ -67,7 +68,7 @@ function parseIntent(raw: unknown):
 
   const type = obj["type"];
   if (typeof type !== "string" || !VALID_INTENT_TYPES.has(type)) {
-    return { ok: false, detail: "intent.type 必须是 observe/talk/investigate 之一" };
+    return { ok: false, detail: "intent.type 必须是 observe/talk/investigate/move 之一" };
   }
 
   switch (type) {
@@ -91,6 +92,13 @@ function parseIntent(raw: unknown):
         return { ok: false, detail: "investigate 需要 factId 字符串" };
       }
       return { ok: true, intent: { type: "investigate", factId: asFactId(factId) } };
+    }
+    case "move": {
+      const locationId = obj["locationId"];
+      if (typeof locationId !== "string" || locationId.length === 0) {
+        return { ok: false, detail: "move 需要 locationId 字符串" };
+      }
+      return { ok: true, intent: { type: "move", locationId: asLocationId(locationId) } };
     }
     default:
       return { ok: false, detail: "未知 intent.type" };
