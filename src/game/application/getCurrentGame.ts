@@ -46,6 +46,7 @@ export async function getCurrentGame(
         gameId: record.gameId,
         blueprint: record.blueprint,
         state: record.state,
+        revision: record.revision,
         worldName: profiles.gameTypeProfiles[record.blueprint.gameType].label
       })
     };

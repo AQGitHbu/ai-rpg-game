@@ -19,8 +19,17 @@ export {
   type OpeningLocationView,
   type OpeningNpcView,
   type OpeningPlayerView,
-  type OpeningWorldView
+  type OpeningWorldView,
+  type AvailableActionView,
+  type OpeningFactView
 } from "./openingGameView";
+export {
+  performAction,
+  type PerformActionCommand,
+  type PerformActionDependencies,
+  type PerformActionResult,
+  type ActionFeedbackView
+} from "./performAction";
 // UI 端预校验经由 application facade 中转，禁止直连 domain。
 export {
   validateNewGameInput,
@@ -28,6 +37,16 @@ export {
   type NewGameInputError,
   type ValidateNewGameInputResult
 } from "@/game/domain";
+// Phase 3: API handler 需要品牌化 ID 转换与 PlayerIntent 类型。
+export {
+  asLocationId,
+  asNpcId,
+  asFactId,
+  type LocationId,
+  type NpcId,
+  type FactId
+} from "@/game/domain";
+export { type PlayerIntent } from "@/game/gameplay/rpg/actions";
 export {
   asGameId,
   type ApplyResolvedActionInput,

@@ -1,9 +1,14 @@
 import type { GameState, GameTypeId, ScenarioBlueprint } from "@/game/domain";
+import {
+  projectAvailableActions,
+  type AvailableAction
+} from "@/game/gameplay/rpg/actions";
 import type { GameId } from "./server/persistence/gameRepository";
 
 // ---------------------------------------------------------------------------
-// OpeningGameView（Task 1）：面向浏览器的开场 read model。
-// 只从已编译蓝图 + 初始 GameState 投影，UI 不得自行拼装规则事实。
+// OpeningGameView（Phase 2 + Phase 3）：面向浏览器的开场 read model。
+// 只从已编译蓝图 + 当前 GameState 投影，UI 不得自行拼装规则事实。
+// Phase 3 扩展：revision、availableActions、knownFacts。
 // 刻意不包含：完整蓝图、隐藏地点、未解锁任务、结局、敌人数值、
 // seed / inputDigest（可复现生成的内部信息）以及任何 repository 实体。
 // ---------------------------------------------------------------------------
@@ -41,6 +46,17 @@ export type OpeningGenerationView = {
   readonly templateVersion: string;
 };
 
+/** UI 安全的可用行动视图：品牌化 ID 降级为 plain string，附展示用 label。 */
+export type AvailableActionView =
+  | { readonly type: "observe"; readonly locationId: string; readonly label: string }
+  | { readonly type: "talk"; readonly npcId: string; readonly label: string }
+  | { readonly type: "investigate"; readonly factId: string; readonly label: string };
+
+/** 已发现事实的展示视图：只含文本，不含 ID 或来源等内部信息。 */
+export type OpeningFactView = {
+  readonly text: string;
+};
+
 export type OpeningGameView = {
   readonly gameId: GameId;
   readonly world: OpeningWorldView;
@@ -51,12 +67,21 @@ export type OpeningGameView = {
   readonly openingNarration: string;
   readonly suggestedActions: readonly string[];
   readonly generation: OpeningGenerationView;
+  // Phase 3 扩展：
+  /** 当前存档 revision：客户端提交行动时必须附带此值。 */
+  readonly revision: number;
+  /** 当前可执行的行动列表：由蓝图 + 状态投影，UI 不得自行猜测。 */
+  readonly availableActions: readonly AvailableActionView[];
+  /** 已发现的世界事实：只展示已发现的，不泄漏未发现事实。 */
+  readonly knownFacts: readonly OpeningFactView[];
 };
 
 export type ProjectOpeningGameViewInput = {
   readonly gameId: GameId;
   readonly blueprint: ScenarioBlueprint;
   readonly state: GameState;
+  /** 当前存档 revision：初始为 0，每次成功行动递增。 */
+  readonly revision: number;
   /** 展示用世界名称：由 use case 从类型 profile 的 label 提供（非规则事实）。 */
   readonly worldName: string;
 };
@@ -69,14 +94,27 @@ function requireEntity<T>(entity: T | undefined, kind: string): T {
   return entity;
 }
 
+/** 将 actions facade 的 AvailableAction 转为 UI 安全的 AvailableActionView。 */
+function toActionView(action: AvailableAction): AvailableActionView {
+  switch (action.type) {
+    case "observe":
+      return { type: "observe", locationId: action.locationId, label: action.label };
+    case "talk":
+      return { type: "talk", npcId: action.npcId, label: action.label };
+    case "investigate":
+      return { type: "investigate", factId: action.factId, label: action.label };
+  }
+}
+
 export function projectOpeningGameView(input: ProjectOpeningGameViewInput): OpeningGameView {
-  const { gameId, blueprint, state, worldName } = input;
+  const { gameId, blueprint, state, revision, worldName } = input;
   const currentLocation = requireEntity(
     blueprint.locations.find((entry) => entry.id === state.currentLocationId),
     "当前地点"
   );
   const npcById = new Map(blueprint.npcs.map((npc) => [npc.id, npc]));
   const itemById = new Map(blueprint.items.map((item) => [item.id, item]));
+  const factById = new Map(blueprint.world.facts.map((fact) => [fact.id, fact]));
 
   return {
     gameId,
@@ -107,6 +145,15 @@ export function projectOpeningGameView(input: ProjectOpeningGameViewInput): Open
     generation: {
       generationId: blueprint.generationId,
       templateVersion: blueprint.templateVersion
-    }
+    },
+    revision,
+    availableActions: projectAvailableActions(blueprint, state).map(toActionView),
+    // 已发现事实：只展示文本，不泄漏未发现事实的 ID 或内容。
+    knownFacts: state.worldFacts
+      .filter((f) => f.discovered)
+      .map((f) => {
+        const fact = requireEntity(factById.get(f.factId), "已发现事实");
+        return { text: fact.text };
+      })
   };
 }

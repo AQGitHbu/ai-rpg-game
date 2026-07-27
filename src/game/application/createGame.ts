@@ -120,6 +120,7 @@ export async function createGame(
       gameId,
       blueprint: compiled.blueprint,
       state,
+      revision: 0,
       worldName: profile.label
     })
   };

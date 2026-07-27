@@ -6,6 +6,12 @@ import {
   type CreateGameResult
 } from "../createGame";
 import { getCurrentGame, type CurrentGameResult } from "../getCurrentGame";
+import {
+  performAction,
+  type PerformActionCommand,
+  type PerformActionDependencies,
+  type PerformActionResult
+} from "../performAction";
 import { asGameId, type GameId } from "./persistence/gameRepository";
 import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
 import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
@@ -25,6 +31,8 @@ export type ServerGameEntryPoints = {
   createGame(input: NewGameInput): Promise<CreateGameResult>;
   /** 读取当前本地存档的 read model。 */
   getCurrentGame(): Promise<CurrentGameResult>;
+  /** 执行玩家行动：纯规则裁决 + 原子续存档。 */
+  performAction(command: PerformActionCommand): Promise<PerformActionResult>;
   /** 释放底层 SQLite 客户端：测试清理临时文件 / 进程收尾用；重复调用安全。 */
   close(): Promise<void>;
 };
@@ -46,10 +54,15 @@ export function createServerGameEntryPoints(
     newSeed: () => randomUUID(),
     now: () => new Date().toISOString()
   };
+  const performDeps: PerformActionDependencies = {
+    repository,
+    now: () => new Date().toISOString()
+  };
   return {
     // 刻意不透传 command.seed：浏览器/API 无法指定 seed 或 gameId。
     createGame: (input) => createGame({ input }, dependencies),
     getCurrentGame: () => getCurrentGame({ repository }),
+    performAction: (command) => performAction(command, performDeps),
     close: () => repository.close()
   };
 }
