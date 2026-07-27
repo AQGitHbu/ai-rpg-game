@@ -42,6 +42,8 @@ export type GameState = {
   readonly player: PlayerState;
   readonly currentLocationId: LocationId;
   readonly unlockedLocationIds: readonly LocationId[];
+  /** 已到访地点（含开场地点）：Phase 4 任务 reconciliation 读取的 visit 事实。 */
+  readonly visitedLocationIds: readonly LocationId[];
   readonly npcs: readonly NpcRuntimeState[];
   readonly quests: readonly QuestRuntimeState[];
   readonly inventory: readonly ItemId[];

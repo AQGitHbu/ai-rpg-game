@@ -93,6 +93,8 @@ export function initializeGameState(blueprint: ScenarioBlueprint): GameState {
     unlockedLocationIds: blueprint.locations
       .filter((entry) => entry.kind !== "hidden")
       .map((entry) => entry.id),
+    // 开场地点即初始已到访事实：Phase 4 的 visit_location objective 读取此列表。
+    visitedLocationIds: [blueprint.openingScene.locationId],
     // 相遇状态从 false 起步：开场叙事尚未发生，在场 NPC 由 openingScene 呈现。
     npcs: blueprint.npcs.map((npc) => ({ npcId: npc.id, locationId: npc.locationId, met: false })),
     // 唯一 stage 1 主线（校验已保证）为 active，其余等待解锁。

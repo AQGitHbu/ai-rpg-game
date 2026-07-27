@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent } from "./events";
+import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent, LocationVisitedEvent } from "./events";
 import { asLocationId, asNpcId, asFactId, asGenerationId, type GenerationMetadata } from "./scenarioBlueprint";
 
 function buildGeneration(): GenerationMetadata {
@@ -44,12 +44,24 @@ describe("GameEvent union (Phase 3 action events)", () => {
     expect(event.factId).toBe("fact_gen_1");
   });
 
+  it("accepts location_visited event with injected timestamp (Phase 4 move)", () => {
+    const event: LocationVisitedEvent = {
+      type: "location_visited",
+      locationId: asLocationId("loc_2"),
+      occurredAt: "2026-07-27T10:03:00Z",
+    };
+    expect(event.type).toBe("location_visited");
+    expect(event.locationId).toBe("loc_2");
+    expect(event.occurredAt).toBe("2026-07-27T10:03:00Z");
+  });
+
   it("GameEvent union narrows on all Phase 3 type discriminators", () => {
     const events: GameEvent[] = [
       { type: "game_initialized", generation: buildGeneration() },
       { type: "location_observed", locationId: asLocationId("loc_1"), occurredAt: "t1" },
       { type: "npc_met", npcId: asNpcId("npc_1"), occurredAt: "t2" },
       { type: "fact_discovered", factId: asFactId("fact_1"), occurredAt: "t3" },
+      { type: "location_visited", locationId: asLocationId("loc_2"), occurredAt: "t4" },
     ];
 
     const types = events.map((e) => e.type);
@@ -58,6 +70,7 @@ describe("GameEvent union (Phase 3 action events)", () => {
       "location_observed",
       "npc_met",
       "fact_discovered",
+      "location_visited",
     ]);
   });
 

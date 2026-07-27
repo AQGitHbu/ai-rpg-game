@@ -65,6 +65,12 @@ function rejectionFeedback(
       return { message: "未知地点。" };
     case "LOCATION_ALREADY_OBSERVED":
       return { message: "你已经观察过这里了。" };
+    case "LOCATION_ALREADY_CURRENT":
+      return { message: "你已经在这里了。" };
+    case "LOCATION_NOT_CONNECTED":
+      return { message: "从这里无法直接前往目标地点。" };
+    case "LOCATION_LOCKED":
+      return { message: "目标地点尚未解锁。" };
     case "NPC_NOT_PRESENT":
       return { message: `${npcName(blueprint, result.params.npcId)}不在当前地点。` };
     case "UNKNOWN_NPC":
@@ -165,6 +171,29 @@ export function resolveAction(
         state: newState,
         events: [event],
         feedback: { message: `你调查了${factText(blueprint, intent.factId)}。` },
+      };
+    }
+
+    case "move": {
+      const event: GameEvent = {
+        type: "location_visited",
+        locationId: intent.locationId,
+        occurredAt,
+      };
+      const newState: GameState = {
+        ...state,
+        currentLocationId: intent.locationId,
+        // 到访事实去重记录：重复到访只追加事件，不重复登记地点。
+        visitedLocationIds: state.visitedLocationIds.includes(intent.locationId)
+          ? state.visitedLocationIds
+          : [...state.visitedLocationIds, intent.locationId],
+        eventLedger: [...state.eventLedger, event],
+      };
+      return {
+        ok: true,
+        state: newState,
+        events: [event],
+        feedback: { message: `你来到了${locationName(blueprint, intent.locationId)}。` },
       };
     }
   }

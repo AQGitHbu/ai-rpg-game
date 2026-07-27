@@ -110,6 +110,7 @@ function buildInitialState(): GameState {
     player: { name: "测试角色", identity: "测试身份", stats: { hp: 30, attack: 6, defense: 4 } },
     currentLocationId: LOC_A,
     unlockedLocationIds: [LOC_A, LOC_B, LOC_C, LOC_D],
+    visitedLocationIds: [LOC_A],
     npcs: [
       { npcId: NPC_1, locationId: LOC_A, met: false },
       { npcId: NPC_2, locationId: LOC_B, met: false },
@@ -450,5 +451,214 @@ describe("projectAvailableActions", () => {
     };
     const actions = projectAvailableActions(bp, st);
     expect(actions.filter((a) => a.type === "investigate")).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// move（Phase 4 Task 1）：validateIntent
+// ---------------------------------------------------------------------------
+
+describe("validateIntent: move", () => {
+  it("move 到连通且已解锁的非当前地点有效", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const result = validateIntent(bp, st, { type: "move", locationId: LOC_B });
+    expect(result.ok).toBe(true);
+  });
+
+  it("move 未知地点拒绝 (UNKNOWN_LOCATION)", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const result = validateIntent(bp, st, { type: "move", locationId: asLocationId("ghost") });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("UNKNOWN_LOCATION");
+    }
+  });
+
+  it("move 当前地点拒绝 (LOCATION_ALREADY_CURRENT)", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const result = validateIntent(bp, st, { type: "move", locationId: LOC_A });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("LOCATION_ALREADY_CURRENT");
+    }
+  });
+
+  it("move 未连通地点拒绝 (LOCATION_NOT_CONNECTED)", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    // loc_c 连向 loc_a，但 loc_a 的 connectedLocationIds 只有 loc_b：连通性只读当前地点出边。
+    const result = validateIntent(bp, st, { type: "move", locationId: LOC_C });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("LOCATION_NOT_CONNECTED");
+    }
+  });
+
+  it("move 未解锁地点拒绝 (LOCATION_LOCKED)", () => {
+    const bp = buildBlueprint();
+    const st: GameState = {
+      ...buildInitialState(),
+      unlockedLocationIds: [LOC_A, LOC_C, LOC_D],
+    };
+    const result = validateIntent(bp, st, { type: "move", locationId: LOC_B });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("LOCATION_LOCKED");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// move（Phase 4 Task 1）：resolveAction
+// ---------------------------------------------------------------------------
+
+describe("resolveAction: move", () => {
+  it("move 成功：切换当前地点、记录访问、追加 location_visited 事件", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const snapshot = JSON.stringify(st);
+    const result = resolveAction(bp, st, { type: "move", locationId: LOC_B }, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.state.currentLocationId).toBe(LOC_B);
+      expect(result.state.visitedLocationIds).toEqual([LOC_A, LOC_B]);
+      expect(result.events).toHaveLength(1);
+      expect(result.events[0]).toEqual({
+        type: "location_visited",
+        locationId: LOC_B,
+        occurredAt: FIXED_TIME,
+      });
+      expect(result.state.eventLedger).toHaveLength(2);
+      expect(result.state.eventLedger[1]).toEqual(result.events[0]);
+      expect(result.feedback.message).toBeTruthy();
+    }
+    // 不修改输入
+    expect(JSON.stringify(st)).toBe(snapshot);
+  });
+
+  it("move 回到已访问地点：事件照常追加，visitedLocationIds 不重复", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const first = resolveAction(bp, st, { type: "move", locationId: LOC_B }, deps);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const second = resolveAction(bp, first.state, { type: "move", locationId: LOC_A }, deps);
+    expect(second.ok).toBe(true);
+    if (second.ok) {
+      expect(second.state.currentLocationId).toBe(LOC_A);
+      expect(second.state.visitedLocationIds).toEqual([LOC_A, LOC_B]);
+      expect(second.state.eventLedger).toHaveLength(3);
+      expect(second.state.eventLedger[2]).toEqual({
+        type: "location_visited",
+        locationId: LOC_A,
+        occurredAt: FIXED_TIME,
+      });
+    }
+  });
+
+  it("move 各拒绝码零状态变化、不产生事件", () => {
+    const bp = buildBlueprint();
+    const rejections: readonly { readonly state: GameState; readonly target: string; readonly code: string }[] = [
+      { state: buildInitialState(), target: "ghost", code: "UNKNOWN_LOCATION" },
+      { state: buildInitialState(), target: "loc_a", code: "LOCATION_ALREADY_CURRENT" },
+      { state: buildInitialState(), target: "loc_c", code: "LOCATION_NOT_CONNECTED" },
+      {
+        state: { ...buildInitialState(), unlockedLocationIds: [LOC_A, LOC_C, LOC_D] },
+        target: "loc_b",
+        code: "LOCATION_LOCKED",
+      },
+    ];
+    for (const { state, target, code } of rejections) {
+      const snapshot = JSON.stringify(state);
+      const result = resolveAction(bp, state, { type: "move", locationId: asLocationId(target) }, deps);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe(code);
+        expect(result.feedback.message).toBeTruthy();
+        expect("state" in result).toBe(false);
+      }
+      expect(JSON.stringify(state)).toBe(snapshot);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// move（Phase 4 Task 1）：当前场景投影与场景切换
+// ---------------------------------------------------------------------------
+
+describe("projectAvailableActions: move 与场景切换", () => {
+  it("投影当前地点连通且解锁的 move 行动", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const moveActions = projectAvailableActions(bp, st).filter((a) => a.type === "move");
+    expect(moveActions).toHaveLength(1);
+    expect(moveActions[0].locationId).toBe(LOC_B);
+  });
+
+  it("未解锁的连通地点不投影 move 行动", () => {
+    const bp = buildBlueprint();
+    const st: GameState = {
+      ...buildInitialState(),
+      unlockedLocationIds: [LOC_A, LOC_C, LOC_D],
+    };
+    const moveActions = projectAvailableActions(bp, st).filter((a) => a.type === "move");
+    expect(moveActions).toHaveLength(0);
+  });
+
+  it("移动后 talk 行动切换到新地点 NPC，opening NPC 不泄漏", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const moved = resolveAction(bp, st, { type: "move", locationId: LOC_B }, deps);
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    const talkActions = projectAvailableActions(bp, moved.state).filter((a) => a.type === "talk");
+    expect(talkActions).toHaveLength(1);
+    expect(talkActions[0].npcId).toBe(NPC_2);
+  });
+
+  it("移动后 talk 校验：新地点 NPC 有效，旧 opening NPC 拒绝 (NPC_NOT_PRESENT)", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const moved = resolveAction(bp, st, { type: "move", locationId: LOC_B }, deps);
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    expect(validateIntent(bp, moved.state, { type: "talk", npcId: NPC_2 }).ok).toBe(true);
+    const stale = validateIntent(bp, moved.state, { type: "talk", npcId: NPC_1 });
+    expect(stale.ok).toBe(false);
+    if (!stale.ok) {
+      expect(stale.code).toBe("NPC_NOT_PRESENT");
+    }
+  });
+
+  it("移动后新地点的 observe 行动可用", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const moved = resolveAction(bp, st, { type: "move", locationId: LOC_B }, deps);
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    const observeActions = projectAvailableActions(bp, moved.state).filter((a) => a.type === "observe");
+    expect(observeActions).toHaveLength(1);
+    expect(observeActions[0].locationId).toBe(LOC_B);
+    expect(validateIntent(bp, moved.state, { type: "observe", locationId: LOC_B }).ok).toBe(true);
+  });
+
+  it("移动后 opening 场景的 investigate 不泄漏到其他地点", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const moved = resolveAction(bp, st, { type: "move", locationId: LOC_B }, deps);
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    const investigateActions = projectAvailableActions(bp, moved.state).filter(
+      (a) => a.type === "investigate",
+    );
+    expect(investigateActions).toHaveLength(0);
+    const rejected = validateIntent(bp, moved.state, { type: "investigate", factId: FACT_INVESTIGABLE });
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) {
+      expect(rejected.code).toBe("FACT_NOT_INVESTIGABLE");
+    }
   });
 });

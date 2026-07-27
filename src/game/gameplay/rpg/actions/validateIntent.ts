@@ -2,7 +2,7 @@ import type { GameState, ScenarioBlueprint, LocationId } from "@/game/domain";
 import type { PlayerIntent } from "./intents";
 
 // ---------------------------------------------------------------------------
-// 纯 intent 校验（Phase 3 Task 2）。
+// 纯 intent 校验（Phase 3 Task 2，Phase 4 扩展 move）。
 //
 // 只读取 compiled blueprint + 当前 GameState，返回稳定验证码/参数，不改状态。
 // 不依赖 application、repository、UI、Date、Math.random 或 AI。
@@ -12,6 +12,9 @@ export type ValidationCode =
   | "LOCATION_NOT_CURRENT"
   | "UNKNOWN_LOCATION"
   | "LOCATION_ALREADY_OBSERVED"
+  | "LOCATION_ALREADY_CURRENT"
+  | "LOCATION_NOT_CONNECTED"
+  | "LOCATION_LOCKED"
   | "NPC_NOT_PRESENT"
   | "UNKNOWN_NPC"
   | "NPC_ALREADY_MET"
@@ -66,10 +69,9 @@ export function validateIntent(
       if (npc === undefined) {
         return { ok: false, code: "UNKNOWN_NPC", params: { npcId: intent.npcId } };
       }
-      // NPC 必须在当前地点在场（由 openingScene.presentNpcIds 或 NPC locationId 判断）
-      const presentNpcIds = blueprint.openingScene.presentNpcIds;
-      const isPresent =
-        presentNpcIds.includes(intent.npcId) || npc.locationId === state.currentLocationId;
+      // 在场判断只看运行时 NPC 位置：opening scene 的 NPC 不得泄漏到其他地点。
+      const npcState = state.npcs.find((n) => n.npcId === intent.npcId);
+      const isPresent = npcState?.locationId === state.currentLocationId;
       if (!isPresent) {
         return {
           ok: false,
@@ -77,7 +79,6 @@ export function validateIntent(
           params: { npcId: intent.npcId, currentLocationId: state.currentLocationId },
         };
       }
-      const npcState = state.npcs.find((n) => n.npcId === intent.npcId);
       if (npcState?.met === true) {
         return { ok: false, code: "NPC_ALREADY_MET", params: { npcId: intent.npcId } };
       }
@@ -89,14 +90,46 @@ export function validateIntent(
       if (fact === undefined) {
         return { ok: false, code: "UNKNOWN_FACT", params: { factId: intent.factId } };
       }
-      // 事实必须在当前场景的可调查事实列表中
+      // 事实必须在当前场景的可调查事实列表中；目前只有 opening 场景携带
+      // 可调查列表，离开开场地点后不得泄漏到其他地点。
+      const atOpeningLocation = state.currentLocationId === blueprint.openingScene.locationId;
       const investigableIds = blueprint.openingScene.investigableFactIds;
-      if (!investigableIds.includes(intent.factId)) {
+      if (!atOpeningLocation || !investigableIds.includes(intent.factId)) {
         return { ok: false, code: "FACT_NOT_INVESTIGABLE", params: { factId: intent.factId } };
       }
       const factState = state.worldFacts.find((f) => f.factId === intent.factId);
       if (factState?.discovered === true) {
         return { ok: false, code: "FACT_ALREADY_DISCOVERED", params: { factId: intent.factId } };
+      }
+      return { ok: true };
+    }
+
+    case "move": {
+      const location = blueprint.locations.find((l) => l.id === intent.locationId);
+      if (location === undefined) {
+        return { ok: false, code: "UNKNOWN_LOCATION", params: { locationId: intent.locationId } };
+      }
+      if (intent.locationId === state.currentLocationId) {
+        return {
+          ok: false,
+          code: "LOCATION_ALREADY_CURRENT",
+          params: { locationId: intent.locationId },
+        };
+      }
+      // 连通性只读当前地点蓝图的出边，不做反向推导。
+      const currentLocation = blueprint.locations.find((l) => l.id === state.currentLocationId);
+      if (currentLocation === undefined || !currentLocation.connectedLocationIds.includes(intent.locationId)) {
+        return {
+          ok: false,
+          code: "LOCATION_NOT_CONNECTED",
+          params: {
+            currentLocationId: state.currentLocationId,
+            targetLocationId: intent.locationId,
+          },
+        };
+      }
+      if (!state.unlockedLocationIds.includes(intent.locationId)) {
+        return { ok: false, code: "LOCATION_LOCKED", params: { locationId: intent.locationId } };
       }
       return { ok: true };
     }

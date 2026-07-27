@@ -34,6 +34,7 @@ function buildInitialState(): GameState {
     },
     currentLocationId: asLocationId("loc_village"),
     unlockedLocationIds: [asLocationId("loc_village")],
+    visitedLocationIds: [asLocationId("loc_village")],
     npcs: [{ npcId: asNpcId("npc_elder"), locationId: asLocationId("loc_village"), met: false }],
     quests: [
       { questId: asQuestId("quest_main_1"), status: "active" },

@@ -115,6 +115,7 @@ describe("initializeGameState", () => {
       },
       currentLocationId: "loc_a",
       unlockedLocationIds: ["loc_a", "loc_b", "loc_c", "loc_d"],
+      visitedLocationIds: ["loc_a"],
       npcs: [
         { npcId: "npc_a", locationId: "loc_a", met: false },
         { npcId: "npc_b", locationId: "loc_b", met: false },
@@ -139,6 +140,12 @@ describe("initializeGameState", () => {
   it("隐藏地点不进入初始解锁列表", () => {
     const state = initializeGameState(compileValid());
     expect(state.unlockedLocationIds).not.toContain("loc_h");
+  });
+
+  it("初始已访问地点只有开场地点（Phase 4 visit 事实基线）", () => {
+    const blueprint = compileValid();
+    const state = initializeGameState(blueprint);
+    expect(state.visitedLocationIds).toEqual([blueprint.openingScene.locationId]);
   });
 
   it("初始事件账本只有一条 game_initialized，携带生成元数据", () => {

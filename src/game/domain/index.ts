@@ -71,7 +71,8 @@ export {
   type GameInitializedEvent,
   type LocationObservedEvent,
   type NpcMetEvent,
-  type FactDiscoveredEvent
+  type FactDiscoveredEvent,
+  type LocationVisitedEvent
 } from "./events";
 export {
   type GameState,

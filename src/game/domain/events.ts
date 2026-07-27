@@ -2,6 +2,7 @@ import type { FactId, GenerationMetadata, LocationId, NpcId } from "./scenarioBl
 
 // 领域事件：纯数据，时间戳等外部信息由调用方传入（domain 不读取时钟）。
 // Phase 3 扩展：行动 resolver 产出地点观察、NPC 初次交谈和事实发现三种事件。
+// Phase 4 扩展：move 行动成功时追加地点到访事件。
 
 /** 初始事件账本条目：记录本局的生成元数据（Task 5 初始化时写入）。 */
 export type GameInitializedEvent = {
@@ -31,8 +32,16 @@ export type FactDiscoveredEvent = {
   readonly occurredAt: string;
 };
 
+/** 玩家移动到达地点：由 move 行动成功时追加；重复到访照常追加事件。 */
+export type LocationVisitedEvent = {
+  readonly type: "location_visited";
+  readonly locationId: LocationId;
+  readonly occurredAt: string;
+};
+
 export type GameEvent =
   | GameInitializedEvent
   | LocationObservedEvent
   | NpcMetEvent
-  | FactDiscoveredEvent;
+  | FactDiscoveredEvent
+  | LocationVisitedEvent;
