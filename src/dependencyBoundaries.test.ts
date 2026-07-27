@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 const sourceRoot = resolve(process.cwd(), "src");
 
 // ---------------------------------------------------------------------------
-// 架构边界守卫（Phase 1 Task 7 建立，Phase 2 Task 5 扩展持久化方向）。
+// 架构边界守卫（Phase 1 Task 7 建立，Phase 2 Task 5 扩展持久化方向，
+// Phase 4 Task 5 补充 actions/quests 门面 deep-import 守卫）。
 // 默认只扫描生产源码：同目录 *.test.ts(x) / *.testutil.ts 允许导入内部 helper；
 // 个别规则（app/api）显式连测试一起扫，见 BoundaryRule.includeTestFiles。
 // 匹配统一针对引号内的 import/require 说明符，避免误伤普通注释文字。
@@ -38,6 +39,18 @@ const SERVER_ONLY_IMPORT: BoundaryPattern = {
 const SCENARIO_DEEP_IMPORT: BoundaryPattern = {
   label: "scenario deep import (only the facade @/game/gameplay/rpg/scenario is allowed)",
   regex: /["']@\/game\/gameplay\/rpg\/scenario\/[^"']+["']/
+};
+
+/** Phase 4：actions 只许门面 "@/game/gameplay/rpg/actions"，禁止 deep-import 内部文件。 */
+const ACTIONS_DEEP_IMPORT: BoundaryPattern = {
+  label: "actions deep import (only the facade @/game/gameplay/rpg/actions is allowed)",
+  regex: /["']@\/game\/gameplay\/rpg\/actions\/[^"']+["']/
+};
+
+/** Phase 4：quests 只许门面 "@/game/gameplay/rpg/quests"，禁止 deep-import 内部文件。 */
+const QUESTS_DEEP_IMPORT: BoundaryPattern = {
+  label: "quests deep import (only the facade @/game/gameplay/rpg/quests is allowed)",
+  regex: /["']@\/game\/gameplay\/rpg\/quests\/[^"']+["']/
 };
 
 /** Phase 1 约束：src/game/** 不引入任何 @ai-game/* 共享包（共享包仅限 UI 层）。 */
@@ -137,6 +150,8 @@ const UI_LAYER_PATTERNS: readonly BoundaryPattern[] = [
   forbiddenSpecifierPrefix("@/game/gameplay/"),
   RELATIVE_GAMEPLAY_IMPORT,
   SCENARIO_DEEP_IMPORT,
+  ACTIONS_DEEP_IMPORT,
+  QUESTS_DEEP_IMPORT,
   APPLICATION_SERVER_IMPORT,
   RELATIVE_APPLICATION_SERVER_IMPORT,
   DOMAIN_IMPORT,
@@ -175,9 +190,9 @@ const rules: readonly BoundaryRule[] = [
       LIBSQL_IMPORT
     ]
   },
-  // application 本体（server 子目录除外）：允许 domain / scenario 门面，禁止 UI、
-  // libsql 与 sqlite adapter——对 server 目录唯一合法入口是纯端口 gameRepository
-  //（精确许可清单见下方 server-only 静态守卫）。
+  // application 本体（server 子目录除外）：允许 domain / scenario / actions /
+  // quests 门面，禁止 deep-import、UI、libsql 与 sqlite adapter——对 server
+  // 目录唯一合法入口是纯端口 gameRepository（精确许可清单见下方 server-only 静态守卫）。
   {
     directory: "game/application",
     excludePath: /[\\/]server[\\/]/,
@@ -187,6 +202,8 @@ const rules: readonly BoundaryRule[] = [
       forbiddenSpecifierPrefix("@/app/"),
       forbiddenSpecifierPrefix("@/providers/"),
       SCENARIO_DEEP_IMPORT,
+      ACTIONS_DEEP_IMPORT,
+      QUESTS_DEEP_IMPORT,
       RELATIVE_ESCAPE_FROM_APPLICATION,
       SERVER_ONLY_IMPORT,
       LIBSQL_IMPORT,
@@ -202,6 +219,8 @@ const rules: readonly BoundaryRule[] = [
       forbiddenSpecifierPrefix("@/app/"),
       forbiddenSpecifierPrefix("@/providers/"),
       SCENARIO_DEEP_IMPORT,
+      ACTIONS_DEEP_IMPORT,
+      QUESTS_DEEP_IMPORT,
       RELATIVE_ESCAPE_FROM_APPLICATION
     ]
   },
@@ -218,6 +237,8 @@ const rules: readonly BoundaryRule[] = [
       forbiddenSpecifierPrefix("@/game/gameplay/"),
       RELATIVE_GAMEPLAY_IMPORT,
       SCENARIO_DEEP_IMPORT,
+      ACTIONS_DEEP_IMPORT,
+      QUESTS_DEEP_IMPORT,
       APPLICATION_SERVER_DEEP_IMPORT,
       RELATIVE_APPLICATION_SERVER_IMPORT,
       DOMAIN_IMPORT,
@@ -273,6 +294,14 @@ describe("boundary patterns detect synthetic violations", () => {
     {
       pattern: SCENARIO_DEEP_IMPORT,
       snippet: `import { hidden } from "@/game/gameplay/rpg/scenario/createFallbackBlueprint";`
+    },
+    {
+      pattern: ACTIONS_DEEP_IMPORT,
+      snippet: `import { resolveAction } from "@/game/gameplay/rpg/actions/resolveAction";`
+    },
+    {
+      pattern: QUESTS_DEEP_IMPORT,
+      snippet: `import { reconcileQuests } from "@/game/gameplay/rpg/quests/reconcileQuests";`
     },
     { pattern: AI_GAME_PACKAGE_IMPORT, snippet: `import { Panel } from "@ai-game/ui";` },
     { pattern: NEW_AI_GAME_PACKAGE_IMPORT, snippet: `import { db } from "@ai-game/persistence";` },
@@ -330,6 +359,13 @@ describe("boundary patterns detect synthetic violations", () => {
   it("facade import does not trip the scenario deep-import rule", () => {
     const snippet = `import { createFallbackBlueprint } from "@/game/gameplay/rpg/scenario";`;
     expect(findBoundaryViolations(snippet, [SCENARIO_DEEP_IMPORT])).toEqual([]);
+  });
+
+  it("facade imports do not trip the actions/quests deep-import rules", () => {
+    const snippet =
+      `import { resolveAction } from "@/game/gameplay/rpg/actions";\n` +
+      `import { reconcileQuests } from "@/game/gameplay/rpg/quests";`;
+    expect(findBoundaryViolations(snippet, [ACTIONS_DEEP_IMPORT, QUESTS_DEEP_IMPORT])).toEqual([]);
   });
 
   it("@ai-game/ui does not trip the new-package rule", () => {
