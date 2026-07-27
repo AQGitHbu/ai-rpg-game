@@ -1,7 +1,8 @@
 import type { GameSessionView } from "@/game/application";
 
 // Phase 4 Task 4 组件测试共享 fixture：手写一份形如 GameSessionView 的会话视图
-//（openingViewFixture 的演进：追加 move 行动、presentNpcs 与 activeQuests）。
+//（openingViewFixture 的演进：追加 move 行动、presentNpcs 与 activeQuests；
+// Phase 5 Task 4 再追加 take_item 行动、obtainableItems 与 inventoryItems）。
 // gameId 为 branded type，测试数据经 unknown 断言为 GameSessionView。
 export function buildSessionViewFixture(): GameSessionView {
   return {
@@ -22,7 +23,14 @@ export function buildSessionViewFixture(): GameSessionView {
       { type: "observe", locationId: "loc_qingshi", label: "观察青石镇" },
       { type: "talk", npcId: "npc_lu", label: "与陆掌柜交谈" },
       { type: "investigate", factId: "fact_notice", label: "调查缉凶告示" },
-      { type: "move", locationId: "loc_guandao", label: "前往城外官道" }
+      { type: "move", locationId: "loc_guandao", label: "前往城外官道" },
+      { type: "take_item", itemId: "item_key", label: "拾取锈铁钥匙" }
+    ],
+    obtainableItems: [
+      { name: "锈铁钥匙", description: "钥匙柄上刻着镖局的徽记。" }
+    ],
+    inventoryItems: [
+      { name: "旧刀", description: "父亲留下的佩刀，刀鞘磨损严重。" }
     ],
     knownFacts: [
       { text: "【玩家输入】沈青崖自述身份：落魄镖师" }
@@ -46,6 +54,33 @@ export function buildSessionViewFixture(): GameSessionView {
   } as unknown as GameSessionView;
 }
 
+/** 拾取成功后的会话视图：物品从可取得列表消失、进入背包，对应任务目标完成。 */
+export function buildItemTakenSessionViewFixture(): GameSessionView {
+  const base = buildSessionViewFixture();
+  return {
+    ...base,
+    revision: 1,
+    availableActions: base.availableActions.filter((action) => action.type !== "take_item"),
+    obtainableItems: [],
+    inventoryItems: [
+      { name: "旧刀", description: "父亲留下的佩刀，刀鞘磨损严重。" },
+      { name: "锈铁钥匙", description: "钥匙柄上刻着镖局的徽记。" }
+    ],
+    activeQuests: [
+      {
+        name: "查明灭门真相",
+        description: "追查镖局灭门案背后的真凶。",
+        kind: "main",
+        objectives: [
+          { label: "与陆掌柜交谈", completed: true, supported: true },
+          { label: "到访城外官道", completed: false, supported: true },
+          { label: "取得关键物品", completed: true, supported: true }
+        ]
+      }
+    ]
+  } as unknown as GameSessionView;
+}
+
 /** 移动成功后的会话视图：新地点、新在场 NPC、新行动与更新后的任务。 */
 export function buildMovedSessionViewFixture(): GameSessionView {
   const base = buildSessionViewFixture();
@@ -54,6 +89,7 @@ export function buildMovedSessionViewFixture(): GameSessionView {
     revision: 1,
     currentLocation: { name: "城外官道", description: "黄土道上车辙纵横，隐约可见几处暗色血迹。" },
     presentNpcs: [{ name: "巡道老兵", role: "老兵" }],
+    obtainableItems: [],
     availableActions: [
       { type: "observe", locationId: "loc_guandao", label: "观察城外官道" },
       { type: "move", locationId: "loc_qingshi", label: "返回青石镇" }

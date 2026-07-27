@@ -6,9 +6,10 @@ import type { GameSessionView, SessionActionView } from "@/game/application";
 import { postGameAction, type GameActionPayload } from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
-// SceneActionPanel（Phase 3 Task 5 + Phase 4 Task 4）：固定行动面板。
-// 消费 GameSessionView.availableActions 中的非 move 行动（move 归
-// TravelPanel），禁用提交中的所有按钮，以 aria-live 提示结果。
+// SceneActionPanel（Phase 3 Task 5 + Phase 4 Task 4 + Phase 5 Task 4）：固定行动面板。
+// 消费 GameSessionView.availableActions 中的观察/交谈/调查行动（move 归
+// TravelPanel、take_item 归 ItemPanel，与各自业务区域的上下文一起渲染），
+// 禁用提交中的所有按钮，以 aria-live 提示结果。
 // 成功后用 API 返回的最新 view 替换本地 view；规则拒绝显示具体但不
 // 伪造成功；版本冲突后触发重新请求 current-game。外部 busy（其他
 // 面板提交中）同样禁用，避免并发写入。
@@ -57,8 +58,8 @@ export function SceneActionPanel({
   const isSubmitting = feedback.phase === "submitting";
   const disabled = busy || isSubmitting;
 
-  // move 行动由 TravelPanel 渲染、take_item 由 Phase 5 Task 4 接入 UI：
-  // 这里只保留观察/交谈/调查。
+  // move 行动由 TravelPanel 渲染、take_item 由 ItemPanel 渲染（物品名称/描述
+  // 与拾取按钮同区展示）：这里只保留观察/交谈/调查。
   const sceneActions = view.availableActions.filter(
     (action): action is SceneActionView =>
       action.type !== "move" && action.type !== "take_item"

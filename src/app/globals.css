@@ -456,6 +456,39 @@ select:focus,
   line-height: 1.6;
 }
 
+/* Phase 5：物品面板（可取得物品 + 背包） */
+.item-section h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.item-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.item-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.item-summary {
+  margin: 0;
+  line-height: 1.6;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.item-description {
+  color: var(--game-text-muted);
+}
+
 
 .sr-only {
   position: absolute;

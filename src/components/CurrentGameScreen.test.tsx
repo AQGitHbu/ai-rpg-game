@@ -1,8 +1,12 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CurrentGameScreen } from "./CurrentGameScreen";
-import { buildMovedSessionViewFixture, buildSessionViewFixture } from "./sessionViewFixture.testutil";
+import {
+  buildItemTakenSessionViewFixture,
+  buildMovedSessionViewFixture,
+  buildSessionViewFixture
+} from "./sessionViewFixture.testutil";
 
 // ---------------------------------------------------------------------------
 // Task 4（Phase 3）+ Phase 4 Task 4：根页面客户端协调器测试。
@@ -53,6 +57,12 @@ describe("CurrentGameScreen", () => {
     expect(screen.getByText("查明灭门真相")).toBeInTheDocument();
     expect(screen.getByText("后续阶段能力")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "前往城外官道" })).toBeInTheDocument();
+    // 刷新恢复（Phase 5）：物品面板的可取得区与背包一并还原。
+    expect(screen.getByRole("button", { name: "拾取锈铁钥匙" })).toBeInTheDocument();
+    const obtainable = screen.getByRole("region", { name: "可取得物品" });
+    expect(within(obtainable).getByText("锈铁钥匙")).toBeInTheDocument();
+    const inventory = screen.getByRole("region", { name: "背包" });
+    expect(within(inventory).getByText("旧刀")).toBeInTheDocument();
     expect(screen.queryByText("选择游戏类型")).toBeNull();
   });
 
@@ -179,6 +189,77 @@ describe("CurrentGameScreen", () => {
       })
     );
     await screen.findByText("你来到了城外官道。");
+  });
+
+  it("拾取闭环：发送 take_item payload 与 revision，成功后物品从可取得区消失并进入背包", async () => {
+    const view = buildSessionViewFixture();
+    const takenView = buildItemTakenSessionViewFixture();
+    let submittedRequest: RequestInit | undefined;
+    const fetchMock = stubFetch(async (input, init) => {
+      if (input === "/api/game/current") return jsonResponse(200, { status: "active", view });
+      if (input === "/api/game/actions") {
+        submittedRequest = init;
+        return jsonResponse(200, {
+          view: takenView,
+          feedback: { ok: true, message: "你拾起了锈铁钥匙。" }
+        });
+      }
+      throw new Error(`unexpected fetch: ${String(input)}`);
+    });
+    const user = userEvent.setup();
+    render(<CurrentGameScreen />);
+
+    await user.click(await screen.findByRole("button", { name: "拾取锈铁钥匙" }));
+
+    // 成功后整页替换为服务端 read model：可取得区清空、背包收录新物品。
+    const obtainable = screen.getByRole("region", { name: "可取得物品" });
+    expect(
+      await within(obtainable).findByText("当前地点没有可取得的物品。")
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "拾取锈铁钥匙" })).toBeNull();
+    const inventory = screen.getByRole("region", { name: "背包" });
+    expect(within(inventory).getByText("锈铁钥匙")).toBeInTheDocument();
+    // 任务目标同步到完成态（服务端视图驱动，UI 不自行推断）。
+    expect(screen.queryByText("后续阶段能力")).toBeNull();
+    // 请求 payload 只含 intent + revision。
+    expect(JSON.parse(String(submittedRequest?.body))).toEqual({
+      intent: { type: "take_item", itemId: "item_key" },
+      revision: 0
+    });
+    // 无 AI 网络请求：全部调用都指向本地 /api/game*。
+    for (const call of fetchMock.mock.calls) {
+      expect(String(call[0])).toMatch(/^\/api\/game\/(current|actions)$/);
+    }
+  });
+
+  it("拾取遇到陈旧 revision：重新读取当前存档并渲染最新视图", async () => {
+    const view = buildSessionViewFixture();
+    const refreshedView = { ...buildItemTakenSessionViewFixture(), revision: 2 };
+    let currentCalls = 0;
+    stubFetch(async (input) => {
+      if (input === "/api/game/current") {
+        currentCalls += 1;
+        return jsonResponse(200, {
+          status: "active",
+          view: currentCalls === 1 ? view : refreshedView
+        });
+      }
+      if (input === "/api/game/actions") {
+        return jsonResponse(409, { code: "STALE_GAME_REVISION" });
+      }
+      throw new Error(`unexpected fetch: ${String(input)}`);
+    });
+    const user = userEvent.setup();
+    render(<CurrentGameScreen />);
+
+    await user.click(await screen.findByRole("button", { name: "拾取锈铁钥匙" }));
+
+    // 冲突后重新请求 current-game：最新视图里钥匙已在背包、拾取按钮消失。
+    const obtainable = screen.getByRole("region", { name: "可取得物品" });
+    expect(
+      await within(obtainable).findByText("当前地点没有可取得的物品。")
+    ).toBeInTheDocument();
+    expect(currentCalls).toBe(2);
   });
 
   it("移动遇到陈旧 revision：重新读取当前存档并渲染最新视图", async () => {

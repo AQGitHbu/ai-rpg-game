@@ -70,7 +70,7 @@ describe("SceneActionPanel", () => {
     await screen.findByText("完成");
   });
 
-  it("只渲染非 move 行动：move 按钮归 TravelPanel", () => {
+  it("只渲染观察/交谈/调查：move 按钮归 TravelPanel、take_item 按钮归 ItemPanel", () => {
     vi.stubGlobal("fetch", vi.fn());
     render(
       <SceneActionPanel
@@ -82,6 +82,7 @@ describe("SceneActionPanel", () => {
 
     expect(screen.getByRole("button", { name: "观察青石镇" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "前往城外官道" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "拾取锈铁钥匙" })).toBeNull();
   });
 
   it("外部 busy 时禁用全部固定行动按钮（其他面板正在提交）", () => {

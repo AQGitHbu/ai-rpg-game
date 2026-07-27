@@ -7,14 +7,15 @@ import { NewGameSetupForm } from "./NewGameSetupForm";
 import { OpeningGameView } from "./OpeningGameView";
 import { SceneActionPanel } from "./SceneActionPanel";
 import { TravelPanel } from "./TravelPanel";
+import { ItemPanel } from "./ItemPanel";
 import { QuestTracker } from "./QuestTracker";
 
 // ---------------------------------------------------------------------------
-// 根页面客户端协调器（Phase 2 + Phase 3 + Phase 4）：挂载时读取 GET /api/game/current。
+// 根页面客户端协调器（Phase 2 + Phase 3 + Phase 4 + Phase 5）：挂载时读取 GET /api/game/current。
 //   none    → 显示创建表单；创建成功后无需刷新，直接切换到会话视图。
-//   active  → 恢复已保存的会话视图：场景 + 行动面板 + 移动面板 + 任务面板；
-//             成功行动用 API 返回的最新 view 替换本地 view；任一面板提交中
-//             禁用全部行动按钮；版本冲突后重新请求 current-game。
+//   active  → 恢复已保存的会话视图：场景 + 行动面板 + 移动面板 + 物品面板 +
+//             任务面板；成功行动用 API 返回的最新 view 替换本地 view；任一面板
+//             提交中禁用全部行动按钮；版本冲突后重新请求 current-game。
 //   corrupt → 按 reason 分支可恢复提示：真实数据损坏 ≠ 数据库暂时不可用。
 // 只消费 API 响应与 application 的 read model 类型，不接触持久化/gameplay。
 // ---------------------------------------------------------------------------
@@ -109,6 +110,13 @@ export function CurrentGameScreen() {
           onStaleRevision={() => void loadCurrentGame()}
         />
         <TravelPanel
+          view={state.view}
+          busy={actionBusy}
+          onBusyChange={setActionBusy}
+          onActionSuccess={(view) => setState({ phase: "active", view })}
+          onStaleRevision={() => void loadCurrentGame()}
+        />
+        <ItemPanel
           view={state.view}
           busy={actionBusy}
           onBusyChange={setActionBusy}

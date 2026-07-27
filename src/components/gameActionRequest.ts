@@ -12,7 +12,8 @@ export type GameActionPayload =
   | { readonly intent: { readonly type: "observe"; readonly locationId: string }; readonly revision: number }
   | { readonly intent: { readonly type: "talk"; readonly npcId: string }; readonly revision: number }
   | { readonly intent: { readonly type: "investigate"; readonly factId: string }; readonly revision: number }
-  | { readonly intent: { readonly type: "move"; readonly locationId: string }; readonly revision: number };
+  | { readonly intent: { readonly type: "move"; readonly locationId: string }; readonly revision: number }
+  | { readonly intent: { readonly type: "take_item"; readonly itemId: string }; readonly revision: number };
 
 /** 请求结果的稳定四态：成功 / 规则拒绝 / 版本冲突 / 其他错误。 */
 export type GameActionOutcome =
