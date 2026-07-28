@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
-  "phase": "mvp-phase-6-deterministic-battle-endings",
-  "status": "completed",
-  "implementationStatus": "implemented",
-  "targetBranch": "codex/mvp-phase-6-deterministic-battle-endings",
-  "worktreeName": "mvp-phase-6-deterministic-battle-endings",
+  "phase": "mvp-no-ai-playable-vertical-slice",
+  "status": "planned",
+  "implementationStatus": "not_started",
+  "targetBranch": "codex/mvp-no-ai-playable-vertical-slice",
+  "worktreeName": "mvp-no-ai-playable-vertical-slice",
   "repositories": [
     "ai-rpg-game"
   ],
-  "plan": "docs/superpowers/plans/2026-07-28-mvp-phase-6-deterministic-battle-endings.md",
+  "plan": "docs/superpowers/plans/2026-07-28-mvp-no-ai-playable-vertical-slice.md",
   "entryDocs": [
     "docs/游戏设计原则.md",
     "docs/游戏开发规范.md",
@@ -18,8 +18,10 @@
     "docs/agent/探索与任务推进.md",
     "docs/agent/物品与任务奖励.md",
     "docs/agent/战斗与结局.md",
+    "docs/agent/无AI试玩验收.md",
     "docs/策划文档/AI生成RPG_MVP.md",
-    "docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md"
+    "docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md",
+    "docs/superpowers/plans/2026-07-28-mvp-no-ai-playable-vertical-slice.md"
   ],
   "acceptanceCommands": [
     "npm run lint",
