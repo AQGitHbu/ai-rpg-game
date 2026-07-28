@@ -34,7 +34,10 @@ const STUB_VIEW: GameSessionView = {
   activeQuests: [],
   // Phase 5 Task 3：物品摘要字段（HTTP 映射同样不读内容）。
   obtainableItems: [],
-  inventoryItems: []
+  inventoryItems: [],
+  // Phase 6 Task 3：战斗与结局摘要。
+  battle: null,
+  ending: null
 };
 
 const STUB_FEEDBACK: ActionFeedbackView = { ok: true, message: "你观察了地点A。" };
@@ -462,5 +465,241 @@ describe("actionHandler：不泄漏敏感信息", () => {
     expect(body).toEqual({ code: "INTERNAL_ERROR" });
     expect(JSON.stringify(body)).not.toContain("connection refused");
     expect(JSON.stringify(body)).not.toContain("libsql");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 6 Task 3d：start_battle / battle_action intent 的 HTTP 白名单。
+// 客户端只能提交 type + 对应字段；hp、damage、round、quest status、ending、
+// state/freeText 等一律拒收。
+// ---------------------------------------------------------------------------
+
+describe("actionHandler：start_battle intent（Phase 6 Task 3d）", () => {
+  it("合法 start_battle ⇒ 200，intent 与 revision 原样交给 performAction", async () => {
+    let received: unknown;
+    const entry: Pick<ServerGameEntryPoints, "performAction"> = {
+      async performAction(command) {
+        received = command;
+        return { ok: true, view: STUB_VIEW, feedback: { ok: true, message: "战斗开始！" } };
+      }
+    };
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "start_battle", enemyId: "enemy_boss" }, revision: 7 }),
+      entry
+    );
+    expect(response.status).toBe(200);
+    expect(received).toEqual({
+      intent: { type: "start_battle", enemyId: "enemy_boss" },
+      expectedRevision: 7
+    });
+  });
+
+  it("start_battle 缺少 enemyId ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "start_battle" }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("start_battle enemyId 为空字符串 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "start_battle", enemyId: "" }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("start_battle enemyId 非字符串（数字伪造）⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "start_battle", enemyId: 42 }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("start_battle 携带客户端伪造 hp 字段 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "start_battle", enemyId: "enemy_boss", hp: 999 },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("start_battle 携带 damage 字段 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "start_battle", enemyId: "enemy_boss", damage: 50 },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("start_battle 携带 round 字段 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "start_battle", enemyId: "enemy_boss", round: 3 },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("start_battle 携带 freeText 未知字段 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "start_battle", enemyId: "enemy_boss", freeText: "必胜！" },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("start_battle 附带伪造 locationId ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "start_battle", enemyId: "enemy_boss", locationId: "loc_hidden" },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("start_battle 附带伪造 action 字段 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "start_battle", enemyId: "enemy_boss", action: "attack" },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+});
+
+describe("actionHandler：battle_action intent（Phase 6 Task 3d）", () => {
+  for (const action of ["attack", "guard", "withdraw"] as const) {
+    it(`合法 battle_action ${action} ⇒ 200，intent 原样交给 performAction`, async () => {
+      let received: unknown;
+      const entry: Pick<ServerGameEntryPoints, "performAction"> = {
+        async performAction(command) {
+          received = command;
+          return { ok: true, view: STUB_VIEW, feedback: { ok: true, message: `执行了 ${action}。` } };
+        }
+      };
+      const response = await handlePerformActionRequest(
+        makeRequest({ intent: { type: "battle_action", action }, revision: 5 }),
+        entry
+      );
+      expect(response.status).toBe(200);
+      expect(received).toEqual({
+        intent: { type: "battle_action", action },
+        expectedRevision: 5
+      });
+    });
+  }
+
+  it("battle_action 缺少 action ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "battle_action" }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("battle_action action 为非法值（use_item）⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "battle_action", action: "use_item" }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("battle_action action 非字符串（数字伪造）⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "battle_action", action: 1 }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("battle_action 携带客户端伪造 hp 字段 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "battle_action", action: "attack", hp: 100 },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("battle_action 携带 damage 字段 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "battle_action", action: "attack", damage: 30 },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("battle_action 携带 round 字段 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "battle_action", action: "guard", round: 5 },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("battle_action 携带 enemyId 伪造字段 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "battle_action", action: "attack", enemyId: "enemy_boss" },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("battle_action 携带 freeText 未知字段 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "battle_action", action: "withdraw", freeText: "撤退！" },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
   });
 });

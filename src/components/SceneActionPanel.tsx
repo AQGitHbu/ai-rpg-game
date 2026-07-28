@@ -6,9 +6,9 @@ import type { GameSessionView, SessionActionView } from "@/game/application";
 import { postGameAction, type GameActionPayload } from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
-// SceneActionPanel（Phase 3 Task 5 + Phase 4 Task 4 + Phase 5 Task 4）：固定行动面板。
-// 消费 GameSessionView.availableActions 中的观察/交谈/调查行动（move 归
-// TravelPanel、take_item 归 ItemPanel，与各自业务区域的上下文一起渲染），
+// SceneActionPanel（Phase 3 Task 5 + Phase 4 Task 4 + Phase 5 Task 4 + Phase 6 Task 3d）：固定行动面板。
+// 消费 GameSessionView.availableActions 中的观察/交谈/调查/开始战斗行动（move 归
+// TravelPanel、take_item 归 ItemPanel、battle_action 归 BattlePanel，与各自业务区域的上下文一起渲染），
 // 禁用提交中的所有按钮，以 aria-live 提示结果。
 // 成功后用 API 返回的最新 view 替换本地 view；规则拒绝显示具体但不
 // 伪造成功；版本冲突后触发重新请求 current-game。外部 busy（其他
@@ -16,7 +16,7 @@ import { postGameAction, type GameActionPayload } from "./gameActionRequest";
 // 不显示未发现事实、任务/战斗按钮，也不提供自由文本输入框。
 // ---------------------------------------------------------------------------
 
-type SceneActionView = Exclude<SessionActionView, { type: "move" | "take_item" }>;
+type SceneActionView = Extract<SessionActionView, { type: "observe" | "talk" | "investigate" | "start_battle" }>;
 
 type SceneActionPanelProps = {
   view: GameSessionView;
@@ -43,6 +43,8 @@ function buildIntentPayload(action: SceneActionView, revision: number): GameActi
       return { intent: { type: "talk", npcId: action.npcId }, revision };
     case "investigate":
       return { intent: { type: "investigate", factId: action.factId }, revision };
+    case "start_battle":
+      return { intent: { type: "start_battle", enemyId: action.enemyId }, revision };
   }
 }
 
@@ -58,11 +60,12 @@ export function SceneActionPanel({
   const isSubmitting = feedback.phase === "submitting";
   const disabled = busy || isSubmitting;
 
-  // move 行动由 TravelPanel 渲染、take_item 由 ItemPanel 渲染（物品名称/描述
-  // 与拾取按钮同区展示）：这里只保留观察/交谈/调查。
+  // move 行动由 TravelPanel 渲染、take_item 由 ItemPanel 渲染、battle_action 由
+  // BattlePanel 渲染：这里只保留观察/交谈/调查/开始战斗。
   const sceneActions = view.availableActions.filter(
     (action): action is SceneActionView =>
-      action.type !== "move" && action.type !== "take_item"
+      action.type === "observe" || action.type === "talk" ||
+      action.type === "investigate" || action.type === "start_battle"
   );
 
   async function handleAction(action: SceneActionView) {

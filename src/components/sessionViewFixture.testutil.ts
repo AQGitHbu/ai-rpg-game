@@ -2,7 +2,8 @@ import type { GameSessionView } from "@/game/application";
 
 // Phase 4 Task 4 组件测试共享 fixture：手写一份形如 GameSessionView 的会话视图
 //（openingViewFixture 的演进：追加 move 行动、presentNpcs 与 activeQuests；
-// Phase 5 Task 4 再追加 take_item 行动、obtainableItems 与 inventoryItems）。
+// Phase 5 Task 4 再追加 take_item 行动、obtainableItems 与 inventoryItems；
+// Phase 6 Task 4 追加 battle/ending 字段）。
 // gameId 为 branded type，测试数据经 unknown 断言为 GameSessionView。
 export function buildSessionViewFixture(): GameSessionView {
   return {
@@ -50,7 +51,10 @@ export function buildSessionViewFixture(): GameSessionView {
           { label: "取得关键物品", completed: false, supported: false }
         ]
       }
-    ]
+    ],
+    // Phase 6 Task 4：默认无战斗、无结局。
+    battle: null,
+    ending: null
   } as unknown as GameSessionView;
 }
 
@@ -101,6 +105,64 @@ export function buildMovedSessionViewFixture(): GameSessionView {
         kind: "main",
         objectives: [{ label: "查明相关线索", completed: false, supported: true }]
       }
-    ]
+    ],
+    battle: null,
+    ending: null
+  } as unknown as GameSessionView;
+}
+
+/** Phase 6 Task 4：战斗中的会话视图——active battle + battle_action 行动。 */
+export function buildBattleSessionViewFixture(): GameSessionView {
+  const base = buildSessionViewFixture();
+  return {
+    ...base,
+    revision: 3,
+    currentLocation: { name: "密林深处", description: "树影摇曳，杀气森森。" },
+    availableActions: [
+      { type: "battle_action", action: "attack", label: "攻击" },
+      { type: "battle_action", action: "guard", label: "防御" },
+      { type: "battle_action", action: "withdraw", label: "撤退" }
+    ],
+    battle: {
+      enemyName: "暗影刺客",
+      playerHp: 28,
+      enemyHp: 15,
+      round: 2
+    },
+    ending: null
+  } as unknown as GameSessionView;
+}
+
+/** Phase 6 Task 4：成功结局的会话视图——ending outcome = success。 */
+export function buildSuccessEndingSessionViewFixture(): GameSessionView {
+  const base = buildSessionViewFixture();
+  return {
+    ...base,
+    revision: 5,
+    availableActions: [],
+    obtainableItems: [],
+    battle: null,
+    ending: {
+      name: "真相大白",
+      description: "刺客伏诛，灭门真相终于大白于天下。",
+      outcome: "success"
+    }
+  } as unknown as GameSessionView;
+}
+
+/** Phase 6 Task 4：失败结局的会话视图——ending outcome = failure。 */
+export function buildFailureEndingSessionViewFixture(): GameSessionView {
+  const base = buildSessionViewFixture();
+  return {
+    ...base,
+    revision: 5,
+    availableActions: [],
+    obtainableItems: [],
+    battle: null,
+    ending: {
+      name: "功亏一篑",
+      description: "撤退后线索断裂，真相终被掩埋。",
+      outcome: "failure"
+    }
   } as unknown as GameSessionView;
 }

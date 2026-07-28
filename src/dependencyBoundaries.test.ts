@@ -54,6 +54,12 @@ const QUESTS_DEEP_IMPORT: BoundaryPattern = {
   regex: /["']@\/game\/gameplay\/rpg\/quests\/[^"']+["']/
 };
 
+/** Phase 6：battle 只许门面 "@/game/gameplay/rpg/battle"，禁止 deep-import 内部文件。 */
+const BATTLE_DEEP_IMPORT: BoundaryPattern = {
+  label: "battle deep import (only the facade @/game/gameplay/rpg/battle is allowed)",
+  regex: /["']@\/game\/gameplay\/rpg\/battle\/[^"']+["']/
+};
+
 /** Phase 1 约束：src/game/** 不引入任何 @ai-game/* 共享包（共享包仅限 UI 层）。 */
 const AI_GAME_PACKAGE_IMPORT: BoundaryPattern = {
   label: "@ai-game/* package import",
@@ -153,6 +159,7 @@ const UI_LAYER_PATTERNS: readonly BoundaryPattern[] = [
   SCENARIO_DEEP_IMPORT,
   ACTIONS_DEEP_IMPORT,
   QUESTS_DEEP_IMPORT,
+  BATTLE_DEEP_IMPORT,
   APPLICATION_SERVER_IMPORT,
   RELATIVE_APPLICATION_SERVER_IMPORT,
   DOMAIN_IMPORT,
@@ -205,6 +212,7 @@ const rules: readonly BoundaryRule[] = [
       SCENARIO_DEEP_IMPORT,
       ACTIONS_DEEP_IMPORT,
       QUESTS_DEEP_IMPORT,
+      BATTLE_DEEP_IMPORT,
       RELATIVE_ESCAPE_FROM_APPLICATION,
       SERVER_ONLY_IMPORT,
       LIBSQL_IMPORT,
@@ -240,6 +248,7 @@ const rules: readonly BoundaryRule[] = [
       SCENARIO_DEEP_IMPORT,
       ACTIONS_DEEP_IMPORT,
       QUESTS_DEEP_IMPORT,
+      BATTLE_DEEP_IMPORT,
       APPLICATION_SERVER_DEEP_IMPORT,
       RELATIVE_APPLICATION_SERVER_IMPORT,
       DOMAIN_IMPORT,
@@ -313,6 +322,15 @@ describe("boundary patterns detect synthetic violations", () => {
       pattern: QUESTS_DEEP_IMPORT,
       snippet: `import { reconcileQuests } from "@/game/gameplay/rpg/quests/reconcileQuests";`
     },
+    {
+      // Phase 6：battle facade 内部模块 deep-import 同样被拦。
+      pattern: BATTLE_DEEP_IMPORT,
+      snippet: `import { startBattle } from "@/game/gameplay/rpg/battle/startBattle";`
+    },
+    {
+      pattern: BATTLE_DEEP_IMPORT,
+      snippet: `import type { BattleAction } from "@/game/gameplay/rpg/battle/battleAction";`
+    },
     { pattern: AI_GAME_PACKAGE_IMPORT, snippet: `import { Panel } from "@ai-game/ui";` },
     { pattern: NEW_AI_GAME_PACKAGE_IMPORT, snippet: `import { db } from "@ai-game/persistence";` },
     { pattern: SLG_IMPORT, snippet: `import { grid } from "../ai-slg-game/src/map";` },
@@ -371,11 +389,12 @@ describe("boundary patterns detect synthetic violations", () => {
     expect(findBoundaryViolations(snippet, [SCENARIO_DEEP_IMPORT])).toEqual([]);
   });
 
-  it("facade imports do not trip the actions/quests deep-import rules", () => {
+  it("facade imports do not trip the actions/quests/battle deep-import rules", () => {
     const snippet =
       `import { resolveAction } from "@/game/gameplay/rpg/actions";\n` +
-      `import { reconcileQuests } from "@/game/gameplay/rpg/quests";`;
-    expect(findBoundaryViolations(snippet, [ACTIONS_DEEP_IMPORT, QUESTS_DEEP_IMPORT])).toEqual([]);
+      `import { reconcileQuests } from "@/game/gameplay/rpg/quests";\n` +
+      `import { startBattle } from "@/game/gameplay/rpg/battle";`;
+    expect(findBoundaryViolations(snippet, [ACTIONS_DEEP_IMPORT, QUESTS_DEEP_IMPORT, BATTLE_DEEP_IMPORT])).toEqual([]);
   });
 
   it("@ai-game/ui does not trip the new-package rule", () => {
@@ -442,6 +461,42 @@ describe("phase 5 take_item surfaces stay behind the application facade", () => 
         (specifier) => specifier.startsWith("@/game/") && specifier !== "@/game/application"
       );
       expect(offenders, relative).toEqual([]);
+    }
+  });
+});
+
+describe("phase 6 battle/ending surfaces stay behind the application facade", () => {
+  it("BattlePanel/EndingPanel/gameActionRequest are inside the scanned rule scopes", () => {
+    const componentFiles = exists(resolve(sourceRoot, "components"), false).map(toPosixRelative);
+    expect(componentFiles).toContain("components/BattlePanel.tsx");
+    expect(componentFiles).toContain("components/EndingPanel.tsx");
+    expect(componentFiles).toContain("components/gameActionRequest.ts");
+  });
+
+  it("BattlePanel and EndingPanel import game types only via @/game/application", () => {
+    for (const relative of ["components/BattlePanel.tsx", "components/EndingPanel.tsx"]) {
+      const specifiers = extractSpecifiers(readFileSync(resolve(sourceRoot, relative), "utf8"));
+      const offenders = specifiers.filter(
+        (specifier) => specifier.startsWith("@/game/") && specifier !== "@/game/application"
+      );
+      expect(offenders, relative).toEqual([]);
+    }
+  });
+
+  it("battle facade directory exists and is scanned by the gameplay boundary rule", () => {
+    const battleFiles = exists(resolve(sourceRoot, "game/gameplay/rpg/battle"), false).map(toPosixRelative);
+    expect(battleFiles.length).toBeGreaterThan(0);
+    // battle 内部文件不导入 application/UI 层
+    for (const file of battleFiles) {
+      const specifiers = extractSpecifiers(readFileSync(resolve(sourceRoot, file), "utf8"));
+      const offenders = specifiers.filter(
+        (specifier) =>
+          specifier.startsWith("@/game/application") ||
+          specifier.startsWith("@/components/") ||
+          specifier.startsWith("@/store/") ||
+          specifier.startsWith("@/app/")
+      );
+      expect(offenders, file).toEqual([]);
     }
   });
 });

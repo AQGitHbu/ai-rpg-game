@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { GameEvent } from "./events";
 import type { GameState } from "./gameState";
 import {
-  asEnemyId,
   asFactId,
   asGenerationId,
   asItemId,

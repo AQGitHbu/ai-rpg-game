@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "mvp-phase-6-deterministic-battle-endings",
-  "status": "planned",
-  "implementationStatus": "not_started",
+  "status": "completed",
+  "implementationStatus": "implemented",
   "targetBranch": "codex/mvp-phase-6-deterministic-battle-endings",
   "worktreeName": "mvp-phase-6-deterministic-battle-endings",
   "repositories": [

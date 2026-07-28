@@ -14,10 +14,13 @@ import {
 } from "./openingGameView";
 
 // ---------------------------------------------------------------------------
-// GameSessionView（Phase 4 Task 3）：OpeningGameView 演进出的语义中性场景
-// read model。plan 固定规则：availableActions 不再过滤 move、追加运行时
-// presentNpcs 与 active 任务摘要；仍不泄漏锁定任务、隐藏地点、完整蓝图、
-// seed / inputDigest。OpeningGameView 类型原样保留（Task 4 前 UI 仍引用）。
+// GameSessionView（Phase 4 Task 3 + Phase 6 Task 3）：OpeningGameView 演进出的
+// 语义中性场景 read model。plan 固定规则：availableActions 不再过滤 move、追加
+// 运行时 presentNpcs 与 active 任务摘要；仍不泄漏锁定任务、隐藏地点、完整蓝图、
+// seed / inputDigest。Phase 6 追加 battle 摘要与 ending read model：
+//   - 未结局时可公开当前 battle 摘要及允许 battle action；
+//   - 结局时只公开 ending 名称、描述、outcome 与终局状态，availableActions 为空。
+// OpeningGameView 类型原样保留（UI 仍引用）。
 // ---------------------------------------------------------------------------
 
 /** 会话视图的可用行动：在 opening 三种之上追加 move、take_item、start_battle 与 battle_action。 */
@@ -43,6 +46,21 @@ export type ActiveQuestView = {
   readonly objectives: readonly QuestObjectiveView[];
 };
 
+/** Phase 6：战斗摘要视图——仅在 active battle 时投影，不泄漏 enemyId/stats/tier。 */
+export type BattleView = {
+  readonly enemyName: string;
+  readonly playerHp: number;
+  readonly enemyHp: number;
+  readonly round: number;
+};
+
+/** Phase 6：结局视图——结局抵达后投影，不泄漏 endingId。 */
+export type EndingView = {
+  readonly name: string;
+  readonly description: string;
+  readonly outcome: "success" | "failure";
+};
+
 export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly availableActions: readonly SessionActionView[];
   /** 运行时位于当前地点的 NPC：与 visibleNpcs（开场名单快照）语义区分。 */
@@ -53,6 +71,10 @@ export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly obtainableItems: readonly OpeningItemView[];
   /** 运行时背包摘要：与 initialItems（开场快照语义）区分，取得后即时更新。 */
   readonly inventoryItems: readonly OpeningItemView[];
+  /** Phase 6：战斗摘要——仅 active battle 时非 null，不泄漏 enemyId/stats。 */
+  readonly battle: BattleView | null;
+  /** Phase 6：结局视图——结局抵达后非 null，不泄漏 endingId。 */
+  readonly ending: EndingView | null;
 };
 
 /** 输入与 opening 投影完全一致：调用方无需区分两个 read model 的装配来源。 */
@@ -116,6 +138,43 @@ function projectObjectiveView(
   }
 }
 
+/** Phase 6：投影战斗摘要——仅 active battle 时返回非 null。 */
+function projectBattleView(
+  blueprint: ScenarioBlueprint,
+  state: GameState
+): BattleView | null {
+  const battle = state.battle;
+  if (battle.status !== "active") return null;
+  const enemy = blueprint.enemies.find((e) => e.id === battle.enemyId);
+  if (enemy === undefined) {
+    throw new Error("会话视图投影失败：战斗敌人引用在蓝图中不存在");
+  }
+  return {
+    enemyName: enemy.name,
+    playerHp: battle.playerHp,
+    enemyHp: battle.enemyHp,
+    round: battle.round,
+  };
+}
+
+/** Phase 6：投影结局视图——结局抵达后返回非 null，不泄漏 endingId。 */
+function projectEndingView(
+  blueprint: ScenarioBlueprint,
+  state: GameState
+): EndingView | null {
+  const endingState = state.ending;
+  if (endingState === null) return null;
+  const ending = blueprint.endings.find((e) => e.id === endingState.endingId);
+  if (ending === undefined) {
+    throw new Error("会话视图投影失败：结局引用在蓝图中不存在");
+  }
+  return {
+    name: ending.name,
+    description: ending.description,
+    outcome: endingState.outcome,
+  };
+}
+
 export function projectGameSessionView(input: ProjectGameSessionViewInput): GameSessionView {
   const { blueprint, state } = input;
   const base = projectOpeningGameView(input);
@@ -124,22 +183,38 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
   const itemById = new Map(blueprint.items.map((item) => [item.id, item]));
   const availableActions = projectAvailableActions(blueprint, state);
 
+  // Phase 6：结局抵达后不投影任何可用行动；战斗中只投影 battle_action。
+  const projectedActions = state.ending !== null
+    ? []
+    : state.battle.status === "active"
+      ? availableActions
+          .filter((a): a is Extract<AvailableAction, { type: "battle_action" }> =>
+            a.type === "battle_action"
+          )
+          .map(toSessionActionView)
+      : availableActions.map(toSessionActionView);
+
+  // Phase 6：结局抵达后不投影可取得物品与在场 NPC（终局状态不需要）。
+  const obtainableItems = state.ending !== null
+    ? []
+    : availableActions
+        .filter((action): action is Extract<AvailableAction, { type: "take_item" }> =>
+          action.type === "take_item"
+        )
+        .map((action) => {
+          const item = itemById.get(action.itemId);
+          if (item === undefined) {
+            throw new Error("会话视图投影失败：可取得物品引用在蓝图中不存在");
+          }
+          return { name: item.name, description: item.description };
+        });
+
   return {
     ...base,
-    // 完整的可用行动投影（观察/交谈/调查/前往/拾取），不再过滤 take_item。
-    availableActions: availableActions.map(toSessionActionView),
-    // 可取得物品摘要：从 take_item 可用行动派生，保证与行动列表一致且只含当前地点。
-    obtainableItems: availableActions
-      .filter((action): action is Extract<AvailableAction, { type: "take_item" }> =>
-        action.type === "take_item"
-      )
-      .map((action) => {
-        const item = itemById.get(action.itemId);
-        if (item === undefined) {
-          throw new Error("会话视图投影失败：可取得物品引用在蓝图中不存在");
-        }
-        return { name: item.name, description: item.description };
-      }),
+    // 完整的可用行动投影（观察/交谈/调查/前往/拾取），结局后为空。
+    availableActions: projectedActions,
+    // 可取得物品摘要：结局后为空。
+    obtainableItems,
     // 运行时背包摘要：按 GameState.inventory 投影（initialItems 保留开场快照语义）。
     inventoryItems: state.inventory.map((itemId) => {
       const item = itemById.get(itemId);
@@ -173,6 +248,9 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
             projectObjectiveView(blueprint, state, objective)
           )
         };
-      })
+      }),
+    // Phase 6：战斗摘要与结局视图。
+    battle: projectBattleView(blueprint, state),
+    ending: projectEndingView(blueprint, state),
   };
 }

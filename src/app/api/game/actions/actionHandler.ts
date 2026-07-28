@@ -1,4 +1,5 @@
 import {
+  asEnemyId,
   asFactId,
   asItemId,
   asLocationId,
@@ -35,13 +36,15 @@ function json(status: number, body: unknown): Response {
 /** 顶层允许的字段：intent + revision，其余一律拒收。 */
 const ALLOWED_TOP_FIELDS: ReadonlySet<string> = new Set(["intent", "revision"]);
 
-/** intent 允许的字段（按 type 区分）：type + 对应 targetId。 */
+/** intent 允许的字段（按 type 区分）：type + 对应 targetId/action。 */
 const ALLOWED_INTENT_FIELDS: ReadonlySet<string> = new Set([
   "type",
   "locationId",
   "npcId",
   "factId",
-  "itemId"
+  "itemId",
+  "enemyId",
+  "action"
 ]);
 
 const VALID_INTENT_TYPES: ReadonlySet<string> = new Set([
@@ -49,8 +52,13 @@ const VALID_INTENT_TYPES: ReadonlySet<string> = new Set([
   "talk",
   "investigate",
   "move",
-  "take_item"
+  "take_item",
+  "start_battle",
+  "battle_action"
 ]);
+
+/** battle_action 允许的 action 值。 */
+const VALID_BATTLE_ACTIONS: ReadonlySet<string> = new Set(["attack", "guard", "withdraw"]);
 
 /** 每种 intent 唯一允许的目标字段：携带其他目标字段（伪造载荷）一律拒收。 */
 const INTENT_TARGET_FIELD: Readonly<Record<string, string>> = {
@@ -58,7 +66,9 @@ const INTENT_TARGET_FIELD: Readonly<Record<string, string>> = {
   talk: "npcId",
   investigate: "factId",
   move: "locationId",
-  take_item: "itemId"
+  take_item: "itemId",
+  start_battle: "enemyId",
+  battle_action: "action"
 };
 
 /** 从原始 JSON 构造 PlayerIntent；校验失败返回错误详情。 */
@@ -80,7 +90,7 @@ function parseIntent(raw: unknown):
 
   const type = obj["type"];
   if (typeof type !== "string" || !VALID_INTENT_TYPES.has(type)) {
-    return { ok: false, detail: "intent.type 必须是 observe/talk/investigate/move/take_item 之一" };
+    return { ok: false, detail: "intent.type 必须是 observe/talk/investigate/move/take_item/start_battle/battle_action 之一" };
   }
 
   // 除 type + 本类型目标字段外，携带其他目标字段（如 take_item 附带 locationId）一律拒收。
@@ -127,6 +137,23 @@ function parseIntent(raw: unknown):
         return { ok: false, detail: "take_item 需要 itemId 字符串" };
       }
       return { ok: true, intent: { type: "take_item", itemId: asItemId(itemId) } };
+    }
+    case "start_battle": {
+      const enemyId = obj["enemyId"];
+      if (typeof enemyId !== "string" || enemyId.length === 0) {
+        return { ok: false, detail: "start_battle 需要 enemyId 字符串" };
+      }
+      return { ok: true, intent: { type: "start_battle", enemyId: asEnemyId(enemyId) } };
+    }
+    case "battle_action": {
+      const action = obj["action"];
+      if (typeof action !== "string" || !VALID_BATTLE_ACTIONS.has(action)) {
+        return { ok: false, detail: "battle_action.action 必须是 attack/guard/withdraw 之一" };
+      }
+      return {
+        ok: true,
+        intent: { type: "battle_action", action: action as "attack" | "guard" | "withdraw" }
+      };
     }
     default:
       return { ok: false, detail: "未知 intent.type" };

@@ -5,11 +5,14 @@ import { CurrentGameScreen } from "./CurrentGameScreen";
 import {
   buildItemTakenSessionViewFixture,
   buildMovedSessionViewFixture,
-  buildSessionViewFixture
+  buildSessionViewFixture,
+  buildBattleSessionViewFixture,
+  buildSuccessEndingSessionViewFixture,
+  buildFailureEndingSessionViewFixture
 } from "./sessionViewFixture.testutil";
 
 // ---------------------------------------------------------------------------
-// Task 4（Phase 3）+ Phase 4 Task 4：根页面客户端协调器测试。
+// Task 4（Phase 3）+ Phase 4 Task 4 + Phase 6 Task 4：根页面客户端协调器测试。
 // 挂载时读取 /api/game/current：none → 创建表单；active → 会话视图
 //（场景 + 行动面板 + 移动面板 + 任务面板）；corrupt → 按 reason 分支的
 // 可恢复提示（真实数据损坏 ≠ 数据库不可用）。fetch 全程打桩。
@@ -289,5 +292,108 @@ describe("CurrentGameScreen", () => {
       await screen.findByText("黄土道上车辙纵横，隐约可见几处暗色血迹。")
     ).toBeInTheDocument();
     expect(currentCalls).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 6 Task 4：战斗与结局 UI 集成测试。
+// ---------------------------------------------------------------------------
+
+describe("CurrentGameScreen：战斗面板", () => {
+  it("active battle 时渲染战斗面板与 battle_action 按钮", async () => {
+    const view = buildBattleSessionViewFixture();
+    stubFetch(async () => jsonResponse(200, { status: "active", view }));
+    render(<CurrentGameScreen />);
+
+    expect(await screen.findByRole("region", { name: "战斗" })).toBeInTheDocument();
+    expect(screen.getByText("暗影刺客")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "攻击" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "防御" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "撤退" })).toBeInTheDocument();
+  });
+
+  it("战斗中提交 attack 带正确 revision 与 payload", async () => {
+    const view = buildBattleSessionViewFixture();
+    const updatedView = {
+      ...view,
+      revision: 4,
+      battle: { ...view.battle!, enemyHp: 11, round: 3 },
+    };
+    let submittedBody: unknown;
+    stubFetch(async (input, init?) => {
+      if (input === "/api/game/current") return jsonResponse(200, { status: "active", view });
+      submittedBody = JSON.parse(String(init?.body));
+      return jsonResponse(200, {
+        view: updatedView,
+        feedback: { ok: true, message: "你挥刀斩中敌人！" },
+      });
+    });
+    const user = userEvent.setup();
+    render(<CurrentGameScreen />);
+
+    await user.click(await screen.findByRole("button", { name: "攻击" }));
+
+    expect(submittedBody).toEqual({
+      intent: { type: "battle_action", action: "attack" },
+      revision: 3,
+    });
+    expect(await screen.findByText("你挥刀斩中敌人！")).toBeInTheDocument();
+  });
+
+  it("战斗中提交期间禁用全部按钮", async () => {
+    const view = buildBattleSessionViewFixture();
+    let resolvePost: ((response: FakeResponse) => void) | undefined;
+    stubFetch(async (input) => {
+      if (input === "/api/game/current") return jsonResponse(200, { status: "active", view });
+      return new Promise<FakeResponse>((resolve) => { resolvePost = resolve; });
+    });
+    const user = userEvent.setup();
+    render(<CurrentGameScreen />);
+
+    await user.click(await screen.findByRole("button", { name: "攻击" }));
+
+    for (const button of screen.getAllByRole("button")) {
+      expect(button).toBeDisabled();
+    }
+
+    resolvePost?.(
+      jsonResponse(200, { view, feedback: { ok: true, message: "攻击成功。" } })
+    );
+    await screen.findByText("攻击成功。");
+  });
+});
+
+describe("CurrentGameScreen：结局面板", () => {
+  it("成功结局时渲染结局面板，不渲染行动按钮", async () => {
+    const view = buildSuccessEndingSessionViewFixture();
+    stubFetch(async () => jsonResponse(200, { status: "active", view }));
+    render(<CurrentGameScreen />);
+
+    expect(await screen.findByRole("region", { name: "结局" })).toBeInTheDocument();
+    expect(screen.getByText("真相大白")).toBeInTheDocument();
+    expect(screen.getByText(/成功/)).toBeInTheDocument();
+    // 结局后无可操作按钮
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("失败结局时渲染结局面板，不渲染行动按钮", async () => {
+    const view = buildFailureEndingSessionViewFixture();
+    stubFetch(async () => jsonResponse(200, { status: "active", view }));
+    render(<CurrentGameScreen />);
+
+    expect(await screen.findByRole("region", { name: "结局" })).toBeInTheDocument();
+    expect(screen.getByText("功亏一篑")).toBeInTheDocument();
+    expect(screen.getByText(/失败/)).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("结局后中途刷新恢复结局状态", async () => {
+    const view = buildSuccessEndingSessionViewFixture();
+    stubFetch(async () => jsonResponse(200, { status: "active", view }));
+    render(<CurrentGameScreen />);
+
+    // 刷新恢复：结局面板仍在
+    expect(await screen.findByText("真相大白")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

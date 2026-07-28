@@ -23,12 +23,14 @@ export {
   type AvailableActionView,
   type OpeningFactView
 } from "./openingGameView";
-// Phase 4 Task 3：语义中性的会话 read model（OpeningGameView 的演进）。
+// Phase 4 Task 3 + Phase 6 Task 3：语义中性的会话 read model（OpeningGameView 的演进）。
 export {
   type GameSessionView,
   type SessionActionView,
   type ActiveQuestView,
-  type QuestObjectiveView
+  type QuestObjectiveView,
+  type BattleView,
+  type EndingView
 } from "./gameSessionView";
 export {
   performAction,
@@ -44,16 +46,18 @@ export {
   type NewGameInputError,
   type ValidateNewGameInputResult
 } from "@/game/domain";
-// Phase 3: API handler 需要品牌化 ID 转换与 PlayerIntent 类型（Phase 5 追加 itemId）。
+// Phase 3: API handler 需要品牌化 ID 转换与 PlayerIntent 类型（Phase 5 追加 itemId，Phase 6 追加 enemyId）。
 export {
   asLocationId,
   asNpcId,
   asFactId,
   asItemId,
+  asEnemyId,
   type LocationId,
   type NpcId,
   type FactId,
-  type ItemId
+  type ItemId,
+  type EnemyId
 } from "@/game/domain";
 export { type PlayerIntent } from "@/game/gameplay/rpg/actions";
 export {

@@ -1,5 +1,4 @@
 import type {
-  EnemyId,
   GameEvent,
   GameState,
   ScenarioBlueprint

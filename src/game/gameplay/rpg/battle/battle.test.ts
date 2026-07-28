@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   asEnemyId,
-  asItemId,
   asLocationId,
   asQuestId,
   type GameState,
@@ -259,7 +258,7 @@ describe("battleAction：attack", () => {
 
   it("attack 连续 5 回合击杀 boss → 胜利、无最终反击、enemy_defeated", () => {
     const { blueprint, state } = setupAtBossLocation();
-    let st = startBattle(blueprint, state, ENEMY_B, deps);
+    const st = startBattle(blueprint, state, ENEMY_B, deps);
     if (!st.ok) throw new Error("前置 startBattle 应当成功");
     let current = st.state;
 
@@ -418,7 +417,7 @@ describe("isQuestObjectiveSatisfied: defeat_enemy", () => {
 
   it("战斗胜利后 reconcileQuests 完成 stage 3", () => {
     const { blueprint, state } = setupAtBossLocation();
-    let st = startBattle(blueprint, state, ENEMY_B, deps);
+    const st = startBattle(blueprint, state, ENEMY_B, deps);
     if (!st.ok) throw new Error("前置 startBattle 应当成功");
     let current = st.state;
     for (let i = 0; i < 5; i++) {
@@ -533,7 +532,7 @@ describe("完整战斗→胜利→任务完成流程", () => {
   it("startBattle → 5×attack → 胜利 → reconcileQuests 完成 m3", () => {
     const { blueprint, state } = setupAtBossLocation();
 
-    let st = startBattle(blueprint, state, ENEMY_B, deps);
+    const st = startBattle(blueprint, state, ENEMY_B, deps);
     if (!st.ok) throw new Error("startBattle 应当成功");
     let current = st.state;
 
