@@ -27,3 +27,4 @@
 ## 核心约束
 
 - 分支放 `.worktrees/`，不用 `git checkout`
+- `../ai-game-foundation` 是受保护的 sibling Git 仓库，`.foundation` 是其 junction：禁止删除、移动、重建二者，尤其禁止递归删除 junction；异常时停止并按共享流程恢复/链接。
