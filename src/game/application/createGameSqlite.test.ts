@@ -7,6 +7,10 @@ import urbanFixture from "../../../data/fixtures/phase1/urban.json";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { createGame, type CreateGameDependencies } from "./createGame";
 import { getCurrentGame } from "./getCurrentGame";
+import {
+  createUnavailableTestScenarioSource,
+  TEST_TRACE_ID
+} from "./applicationFixture.testutil";
 import { asGameId } from "./server/persistence/gameRepository";
 import { createSqliteClient } from "./server/persistence/sqliteClient";
 import {
@@ -87,7 +91,9 @@ function realDependencies(
     repository,
     newGameId: () => asGameId(gameId),
     newSeed: () => "seed-unused",
-    now: () => "2026-07-27T00:00:00.000Z"
+    now: () => "2026-07-27T00:00:00.000Z",
+    scenarioCandidateSource: createUnavailableTestScenarioSource(),
+    newTraceId: () => TEST_TRACE_ID
   };
 }
 

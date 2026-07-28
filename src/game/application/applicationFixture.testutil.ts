@@ -9,6 +9,10 @@ import {
 } from "@/game/gameplay/rpg/scenario";
 import type { CreateGameDependencies } from "./createGame";
 import {
+  SCENARIO_CANDIDATE_CONTRACT_VERSION,
+  type ScenarioCandidateSource
+} from "./scenarioGeneration";
+import {
   asGameId,
   type ApplyResolvedActionInput,
   type ApplyResolvedActionResult,
@@ -25,6 +29,25 @@ import {
 
 export const TEST_GAME_ID = asGameId("game-test-0001");
 export const TEST_CREATED_AT = "2026-07-27T00:00:00.000Z";
+export const TEST_TRACE_ID = "trace-test-0001";
+
+/**
+ * 默认注入的 unavailable 假 source（纯 inline，不碰 server/ai）：两次尝试都
+ * 失败 ⇒ 编排稳定走 fallback，既有测试的蓝图/视图期望与 Phase 2 完全一致。
+ */
+export function createUnavailableTestScenarioSource(): ScenarioCandidateSource {
+  return {
+    async generate() {
+      return {
+        ok: false,
+        contractVersion: SCENARIO_CANDIDATE_CONTRACT_VERSION,
+        origin: "unavailable",
+        category: "service_error",
+        diagnostics: ["PHASE4A_NO_LIVE_SOURCE"]
+      };
+    }
+  };
+}
 
 export type FakeGameRepository = GameRepository & {
   /** spy：记录每次 createInitialGame 收到的完整载荷。 */
@@ -78,6 +101,8 @@ export function createTestDependencies(
     newGameId: () => TEST_GAME_ID,
     newSeed: () => "seed-from-provider",
     now: () => TEST_CREATED_AT,
+    scenarioCandidateSource: createUnavailableTestScenarioSource(),
+    newTraceId: () => TEST_TRACE_ID,
     ...overrides
   };
 }

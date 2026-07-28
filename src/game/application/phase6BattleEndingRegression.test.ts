@@ -18,7 +18,7 @@ import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { createGame, type CreateGameDependencies } from "./createGame";
 import { getCurrentGame } from "./getCurrentGame";
 import { performAction } from "./performAction";
-import { runScenarioPipeline } from "./applicationFixture.testutil";
+import { runScenarioPipeline, createUnavailableTestScenarioSource, TEST_TRACE_ID } from "./applicationFixture.testutil";
 import {
   asGameId,
   type GameRecord,
@@ -107,7 +107,9 @@ function createDependencies(repository: GameRepository, gameId: string): CreateG
     repository,
     newGameId: () => asGameId(gameId),
     newSeed: () => "seed-unused",
-    now: () => FIXED_CREATED_AT
+    now: () => FIXED_CREATED_AT,
+    scenarioCandidateSource: createUnavailableTestScenarioSource(),
+    newTraceId: () => TEST_TRACE_ID
   };
 }
 

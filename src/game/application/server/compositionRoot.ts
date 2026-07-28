@@ -13,6 +13,7 @@ import {
   type PerformActionResult
 } from "../performAction";
 import { asGameId, type GameId } from "./persistence/gameRepository";
+import { createUnavailableScenarioCandidateSource } from "./ai/fixtureScenarioCandidateSource";
 import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
 import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
 
@@ -56,7 +57,11 @@ export function createServerGameEntryPoints(
     // 生产 provider：UUID 存档 ID、随机 seed、真实时钟（ISO 8601）。
     newGameId: (): GameId => asGameId(randomUUID()),
     newSeed: () => randomUUID(),
-    now: () => new Date().toISOString()
+    now: () => new Date().toISOString(),
+    // Phase 4A：生产注入 unavailable source（玩家稳定走 fallback），不读 AI 环境；
+    // traceId 只进 source 请求与日志，不传 observer。
+    scenarioCandidateSource: createUnavailableScenarioCandidateSource(),
+    newTraceId: () => randomUUID()
   };
   const performDeps: PerformActionDependencies = {
     repository,

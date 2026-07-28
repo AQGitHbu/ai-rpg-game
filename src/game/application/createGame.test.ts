@@ -1,6 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { validateNewGameInput, type NewGameInput } from "@/game/domain";
-import { loadScenarioProfiles, type ScenarioProfiles } from "@/game/gameplay/rpg/scenario";
+import {
+  validateNewGameInput,
+  type NewGameInput,
+  type ScenarioBlueprintCandidate
+} from "@/game/domain";
+import {
+  createFallbackBlueprint,
+  loadScenarioProfiles,
+  type ScenarioProfiles
+} from "@/game/gameplay/rpg/scenario";
+import {
+  SCENARIO_CANDIDATE_CONTRACT_VERSION,
+  type ScenarioCandidateAttempt,
+  type ScenarioCandidateSource,
+  type ScenarioGenerationEvent,
+  type ScenarioGenerationRequest
+} from "./scenarioGeneration";
 import scienceFictionFixture from "../../../data/fixtures/phase1/science_fiction.json";
 import urbanFixture from "../../../data/fixtures/phase1/urban.json";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
@@ -279,6 +294,301 @@ describe("createGame：视图不泄漏隐藏内容", () => {
     expect(viewJson.includes(blueprint.seed)).toBe(false);
     expect(viewJson.includes(blueprint.inputDigest)).toBe(false);
     expect(viewJson.includes("contentBudget")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3（Phase 4A）：候选编排失败矩阵。
+// 合法候选 generated；repairable 修复后 generated；首次不可修复→重试；两次失败
+// →fallback；repository 冲突/抛错稳定错误 + failed(persistence_failure) 事件；
+// 输入无效时 source/repository 零调用；observer 抛错不影响结果。
+// ---------------------------------------------------------------------------
+
+// 此 seed 下的 fallback 候选恰好满额 6 名 NPC：追加第 7 人必然超预算。
+const CANDIDATE_SEED = "phase4a-candidate-002";
+// 测试专用：去掉根字段 readonly 并允许挂未知字段，便于构造非法候选。
+type MutableCandidate = {
+  -readonly [K in keyof ScenarioBlueprintCandidate]: ScenarioBlueprintCandidate[K];
+} & Record<string, unknown>;
+
+/** 与 fallback 管线同构但 seed 不同的合法候选：可证明持久化蓝图来自 source。 */
+function buildSourceCandidate(): ScenarioBlueprintCandidate {
+  const validated = validateNewGameInput(FIXTURE.input);
+  if (!validated.ok) throw new Error("fixture 输入必须合法");
+  return createFallbackBlueprint(validated.value, CANDIDATE_SEED, { profiles: PROFILES });
+}
+
+/** 可机械修复：多余根字段 + 超预算第 7 个 NPC（无任何引用指向它）。 */
+function buildRepairableCandidate(): ScenarioBlueprintCandidate {
+  const candidate = buildSourceCandidate() as MutableCandidate;
+  candidate.extraPromptInstruction = "多余指令字段";
+  candidate.npcs = [
+    ...candidate.npcs,
+    {
+      id: "npc_7",
+      name: "多余随从",
+      role: "路人",
+      description: "超预算第七人，未被任何地点引用。",
+      locationId: "loc_2",
+      isCompanion: false,
+      knownFactIds: [],
+      tags: []
+    }
+  ];
+  return candidate;
+}
+
+/** 不可修复：悬空 fact 引用（机械修复禁止伪造引用）。 */
+function buildUnrepairableCandidate(): ScenarioBlueprintCandidate {
+  const candidate = buildSourceCandidate() as MutableCandidate;
+  candidate.npcs = candidate.npcs.map((npc, index) =>
+    index === 0 ? { ...npc, knownFactIds: ["fact_missing"] } : npc
+  );
+  return candidate;
+}
+
+/** 记录 calls 的脚本化 source：按预设序列逐次返回 attempt。 */
+function createScriptedSource(attempts: readonly ScenarioCandidateAttempt[]): {
+  source: ScenarioCandidateSource;
+  calls: ScenarioGenerationRequest[];
+} {
+  const calls: ScenarioGenerationRequest[] = [];
+  return {
+    calls,
+    source: {
+      async generate(request) {
+        calls.push(request);
+        const attempt = attempts[calls.length - 1];
+        if (attempt === undefined) throw new Error("scripted source 超出预设尝试次数");
+        return attempt;
+      }
+    }
+  };
+}
+
+function okAttempt(candidate: ScenarioBlueprintCandidate): ScenarioCandidateAttempt {
+  return {
+    ok: true,
+    contractVersion: SCENARIO_CANDIDATE_CONTRACT_VERSION,
+    origin: "fixture",
+    candidate,
+    diagnostics: []
+  };
+}
+
+const TIMEOUT_ATTEMPT: ScenarioCandidateAttempt = {
+  ok: false,
+  contractVersion: SCENARIO_CANDIDATE_CONTRACT_VERSION,
+  origin: "fixture",
+  category: "timeout",
+  diagnostics: ["FIXTURE_TIMEOUT"]
+};
+
+describe("createGame：Phase 4A 候选编排", () => {
+  it("合法候选一次通过 ⇒ source=generated，持久化 source 候选蓝图", async () => {
+    const repository = createFakeGameRepository();
+    const scripted = createScriptedSource([okAttempt(buildSourceCandidate())]);
+    const events: ScenarioGenerationEvent[] = [];
+    const result = await createGame(
+      { input: FIXTURE.input, seed: FIXTURE.seed },
+      createTestDependencies(repository, {
+        scenarioCandidateSource: scripted.source,
+        generationObserver: (event) => events.push(event)
+      })
+    );
+
+    expect(result).toMatchObject({ ok: true, source: "generated" });
+    // source 只调用一次，请求携带 validated 输入、command seed 与注入 traceId。
+    expect(scripted.calls).toHaveLength(1);
+    const validated = validateNewGameInput(FIXTURE.input);
+    if (!validated.ok) throw new Error("fixture 输入必须合法");
+    expect(scripted.calls[0]).toEqual({
+      input: validated.value,
+      seed: FIXTURE.seed,
+      traceId: "trace-test-0001"
+    });
+    // 持久化蓝图来自 source 候选（CANDIDATE_SEED），而非本地 fallback。
+    const expected = runScenarioPipeline(FIXTURE.input, CANDIDATE_SEED);
+    expect(repository.createCalls).toHaveLength(1);
+    expect(repository.createCalls[0].blueprint).toEqual(expected.blueprint);
+    if (!result.ok) return;
+    expect(result.view.generation.generationId).toBe(expected.blueprint.generationId);
+    // 阶段序列与 manifest GENERATED 约定一致，completed 携带 outcome。
+    expect(events.map((event) => event.stage)).toEqual([
+      "requested",
+      "candidate_received",
+      "validating",
+      "completed"
+    ]);
+    expect(events.at(-1)).toEqual({ stage: "completed", outcome: "generated" });
+  });
+
+  it("repairable 候选 ⇒ 修复后 generated，source 只调用一次", async () => {
+    const repository = createFakeGameRepository();
+    const scripted = createScriptedSource([okAttempt(buildRepairableCandidate())]);
+    const events: ScenarioGenerationEvent[] = [];
+    const result = await createGame(
+      { input: FIXTURE.input, seed: FIXTURE.seed },
+      createTestDependencies(repository, {
+        scenarioCandidateSource: scripted.source,
+        generationObserver: (event) => events.push(event)
+      })
+    );
+
+    expect(result).toMatchObject({ ok: true, source: "generated" });
+    expect(scripted.calls).toHaveLength(1);
+    // 修复只删多余字段/裁剪尾部 ⇒ 与合法候选编译结果完全一致。
+    const expected = runScenarioPipeline(FIXTURE.input, CANDIDATE_SEED);
+    expect(repository.createCalls).toHaveLength(1);
+    expect(repository.createCalls[0].blueprint).toEqual(expected.blueprint);
+    expect(repository.createCalls[0].blueprint.npcs).toHaveLength(6);
+    expect(events.map((event) => event.stage)).toEqual([
+      "requested",
+      "candidate_received",
+      "validating",
+      "repairing",
+      "completed"
+    ]);
+    expect(events.at(-1)).toEqual({ stage: "completed", outcome: "generated" });
+  });
+
+  it("首次不可修复、第二次合法 ⇒ generated 且 source 调用两次", async () => {
+    const repository = createFakeGameRepository();
+    const scripted = createScriptedSource([
+      okAttempt(buildUnrepairableCandidate()),
+      okAttempt(buildSourceCandidate())
+    ]);
+    const events: ScenarioGenerationEvent[] = [];
+    const result = await createGame(
+      { input: FIXTURE.input, seed: FIXTURE.seed },
+      createTestDependencies(repository, {
+        scenarioCandidateSource: scripted.source,
+        generationObserver: (event) => events.push(event)
+      })
+    );
+
+    expect(result).toMatchObject({ ok: true, source: "generated" });
+    expect(scripted.calls).toHaveLength(2);
+    expect(repository.createCalls).toHaveLength(1);
+    expect(repository.createCalls[0].blueprint).toEqual(
+      runScenarioPipeline(FIXTURE.input, CANDIDATE_SEED).blueprint
+    );
+    // 修复失败不发 repairing；retrying 标记第二次 source 调用。
+    expect(events.map((event) => event.stage)).toEqual([
+      "requested",
+      "candidate_received",
+      "validating",
+      "retrying",
+      "candidate_received",
+      "validating",
+      "completed"
+    ]);
+  });
+
+  it("两次 timeout ⇒ fallback 完整可玩，repository 仍收到一次创建", async () => {
+    const repository = createFakeGameRepository();
+    const scripted = createScriptedSource([TIMEOUT_ATTEMPT, TIMEOUT_ATTEMPT]);
+    const events: ScenarioGenerationEvent[] = [];
+    const result = await createGame(
+      { input: FIXTURE.input, seed: FIXTURE.seed },
+      createTestDependencies(repository, {
+        scenarioCandidateSource: scripted.source,
+        generationObserver: (event) => events.push(event)
+      })
+    );
+
+    expect(result).toMatchObject({ ok: true, source: "fallback" });
+    expect(scripted.calls).toHaveLength(2);
+    expect(repository.createCalls).toHaveLength(1);
+    // fallback 蓝图使用 command seed，与既有管线一致。
+    expect(repository.createCalls[0].blueprint).toEqual(
+      runScenarioPipeline(FIXTURE.input, FIXTURE.seed).blueprint
+    );
+    expect(events.map((event) => event.stage)).toEqual([
+      "requested",
+      "retrying",
+      "falling_back",
+      "completed"
+    ]);
+    expect(events.at(-1)).toEqual({ stage: "completed", outcome: "fallback" });
+  });
+
+  it("候选合法但 repository 冲突 ⇒ ACTIVE_GAME_EXISTS + failed(persistence_failure)", async () => {
+    const repository = createFakeGameRepository();
+    repository.setCreateResult({ ok: false, code: "ACTIVE_GAME_EXISTS" });
+    const scripted = createScriptedSource([okAttempt(buildSourceCandidate())]);
+    const events: ScenarioGenerationEvent[] = [];
+    const result = await createGame(
+      { input: FIXTURE.input, seed: FIXTURE.seed },
+      createTestDependencies(repository, {
+        scenarioCandidateSource: scripted.source,
+        generationObserver: (event) => events.push(event)
+      })
+    );
+
+    expect(result).toEqual({ ok: false, code: "ACTIVE_GAME_EXISTS" });
+    expect(events.at(-1)).toEqual({ stage: "failed", category: "persistence_failure" });
+  });
+
+  it("候选合法但 repository 抛错 ⇒ INFRASTRUCTURE_FAILURE + failed(persistence_failure)", async () => {
+    const throwingRepository: GameRepository = {
+      async createInitialGame() {
+        throw new Error("libsql 驱动崩溃");
+      },
+      async getCurrentGame() {
+        return { ok: true, status: "none" };
+      },
+      async applyResolvedAction() {
+        throw new Error("libsql 驱动崩溃");
+      }
+    };
+    const scripted = createScriptedSource([okAttempt(buildSourceCandidate())]);
+    const events: ScenarioGenerationEvent[] = [];
+    const result = await createGame(
+      { input: FIXTURE.input, seed: FIXTURE.seed },
+      createTestDependencies(throwingRepository, {
+        scenarioCandidateSource: scripted.source,
+        generationObserver: (event) => events.push(event)
+      })
+    );
+
+    expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
+    expect(events.at(-1)).toEqual({ stage: "failed", category: "persistence_failure" });
+  });
+
+  it("输入无效 ⇒ source 与 repository 调用均为零，且无任何阶段事件", async () => {
+    const repository = createFakeGameRepository();
+    const scripted = createScriptedSource([okAttempt(buildSourceCandidate())]);
+    const events: ScenarioGenerationEvent[] = [];
+    const result = await createGame(
+      { input: { ...FIXTURE.input, characterName: "" }, seed: FIXTURE.seed },
+      createTestDependencies(repository, {
+        scenarioCandidateSource: scripted.source,
+        generationObserver: (event) => events.push(event)
+      })
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "INVALID_INPUT" });
+    expect(scripted.calls).toHaveLength(0);
+    expect(repository.createCalls).toHaveLength(0);
+    expect(events).toHaveLength(0);
+  });
+
+  it("observer 抛错不得影响创建结果", async () => {
+    const repository = createFakeGameRepository();
+    const scripted = createScriptedSource([okAttempt(buildSourceCandidate())]);
+    const result = await createGame(
+      { input: FIXTURE.input, seed: FIXTURE.seed },
+      createTestDependencies(repository, {
+        scenarioCandidateSource: scripted.source,
+        generationObserver: () => {
+          throw new Error("observer 崩溃");
+        }
+      })
+    );
+
+    expect(result).toMatchObject({ ok: true, source: "generated" });
+    expect(repository.createCalls).toHaveLength(1);
   });
 });
 
