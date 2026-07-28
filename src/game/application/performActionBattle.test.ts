@@ -193,6 +193,7 @@ describe("performAction：战斗中的 intent 隔离", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("ACTION_REJECTED");
+    if (result.code !== "ACTION_REJECTED") return;
     expect(result.feedback.message).toContain("战斗进行中");
     expect(repository.applyCalls).toHaveLength(0);
     expect(record.state.battle.status).toBe("active");
