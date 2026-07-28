@@ -191,6 +191,24 @@ describe("sqliteGameRepository：重复创建", () => {
   });
 });
 
+describe("sqliteGameRepository：开发环境当前存档清除", () => {
+  it("只原子清除当前槽位及其指向的游戏，随后可重新创建", async () => {
+    const databasePath = nextDbPath();
+    const repository = openRepository(databasePath);
+    const input = buildCreateInput("game-clear-current");
+    expect(await repository.createInitialGame(input)).toEqual({ ok: true });
+
+    expect(await repository.clearCurrentGame()).toEqual({ ok: true, status: "cleared" });
+    expect(await repository.getCurrentGame()).toEqual({ ok: true, status: "none" });
+    const raw = openRawClient(databasePath);
+    expect(await countRows(raw, "current_game")).toBe(0);
+    expect(await countRows(raw, "games")).toBe(0);
+
+    expect(await repository.clearCurrentGame()).toEqual({ ok: true, status: "none" });
+    expect(await repository.createInitialGame(buildCreateInput("game-clear-recreated"))).toEqual({ ok: true });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 事务原子性：包一层真实客户端，仅让事务内的 current_game 指针写入失败，
 // 其余语句全部走真实 libsql——「蓝图成功、状态失败」必须整体回滚。

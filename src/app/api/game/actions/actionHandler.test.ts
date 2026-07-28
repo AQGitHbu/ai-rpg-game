@@ -17,7 +17,7 @@ import type { ServerGameEntryPoints } from "@/game/application/server/compositio
 const STUB_VIEW: GameSessionView = {
   gameId: "game-1" as never,
   world: { name: "测试世界", summary: "摘要", gameType: "wuxia" },
-  player: { name: "测试角色", identity: "测试身份" },
+  player: { name: "测试角色", identity: "测试身份", stats: { hp: 30, attack: 6, defense: 4 } },
   currentLocation: { name: "地点A", description: "描述" },
   visibleNpcs: [{ name: "NPC1", role: "线人" }],
   initialItems: [],
@@ -37,7 +37,8 @@ const STUB_VIEW: GameSessionView = {
   inventoryItems: [],
   // Phase 6 Task 3：战斗与结局摘要。
   battle: null,
-  ending: null
+  ending: null,
+  storyEvents: []
 };
 
 const STUB_FEEDBACK: ActionFeedbackView = { ok: true, message: "你观察了地点A。" };

@@ -1,4 +1,4 @@
-import type { GameState, QuestObjective, ScenarioBlueprint } from "@/game/domain";
+import type { GameEvent, GameState, QuestObjective, ScenarioBlueprint } from "@/game/domain";
 import {
   projectAvailableActions,
   type AvailableAction
@@ -61,6 +61,11 @@ export type EndingView = {
   readonly outcome: "success" | "failure";
 };
 
+/** 已发生事件的玩家可见叙事；不携带 ID、时间、seed 或完整领域状态。 */
+export type StoryEventView = {
+  readonly text: string;
+};
+
 export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly availableActions: readonly SessionActionView[];
   /** 运行时位于当前地点的 NPC：与 visibleNpcs（开场名单快照）语义区分。 */
@@ -75,6 +80,8 @@ export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly battle: BattleView | null;
   /** Phase 6：结局视图——结局抵达后非 null，不泄漏 endingId。 */
   readonly ending: EndingView | null;
+  /** 最近发生的结构化事件，用于确定性试玩叙事。 */
+  readonly storyEvents: readonly StoryEventView[];
 };
 
 /** 输入与 opening 投影完全一致：调用方无需区分两个 read model 的装配来源。 */
@@ -175,12 +182,50 @@ function projectEndingView(
   };
 }
 
+function projectStoryEvent(
+  event: GameEvent,
+  locations: ReadonlyMap<unknown, { readonly name: string }>,
+  npcs: ReadonlyMap<unknown, { readonly name: string; readonly role: string }>,
+  items: ReadonlyMap<unknown, { readonly name: string }>,
+  facts: ReadonlyMap<unknown, { readonly text: string }>,
+  quests: ReadonlyMap<unknown, { readonly name: string }>,
+  enemies: ReadonlyMap<unknown, { readonly name: string }>,
+  endings: ReadonlyMap<unknown, { readonly name: string }>
+): StoryEventView | null {
+  const location = (id: string) => locations.get(id)?.name ?? "未知地点";
+  const npc = (id: string) => npcs.get(id)?.name ?? "一位旅人";
+  const item = (id: string) => items.get(id)?.name ?? "一件物品";
+  const fact = (id: string) => facts.get(id)?.text ?? "一条线索";
+  const quest = (id: string) => quests.get(id)?.name ?? "一项任务";
+  const enemy = (id: string) => enemies.get(id)?.name ?? "强敌";
+  switch (event.type) {
+    case "game_initialized": return null;
+    case "location_observed": return { text: `你仔细观察了${location(event.locationId)}，周遭细节逐渐清晰。` };
+    case "npc_met": return { text: `你与${npc(event.npcId)}交谈。对方以自己的身份和立场回应了你。` };
+    case "fact_discovered": return { text: `你查明了一条线索：${fact(event.factId)}` };
+    case "location_visited": return { text: `你抵达${location(event.locationId)}，故事继续向前。` };
+    case "quest_completed": return { text: `任务「${quest(event.questId)}」已完成。` };
+    case "quest_unlocked": return { text: `新的线索将你引向任务「${quest(event.questId)}」。` };
+    case "item_obtained": return { text: `你在${location(event.locationId)}取得了${item(event.itemId)}。` };
+    case "battle_started": return { text: `${enemy(event.enemyId)}挡住了去路，战斗开始。` };
+    case "battle_round_resolved": return { text: event.action === "withdraw" ? "你选择撤离战场。" : `第 ${event.round} 回合结束，双方仍在交锋。` };
+    case "battle_resolved": return { text: event.outcome === "victory" ? `你战胜了${enemy(event.enemyId)}。` : `与${enemy(event.enemyId)}的战斗以${event.outcome === "withdraw" ? "撤退" : "失利"}告终。` };
+    case "enemy_defeated": return { text: `${enemy(event.enemyId)}已被击败。` };
+    case "quest_failed": return { text: `任务「${quest(event.questId)}」失败，后果已被记录。` };
+    case "ending_reached": return { text: `你抵达结局「${endings.get(event.endingId)?.name ?? "终章"}」。` };
+  }
+}
+
 export function projectGameSessionView(input: ProjectGameSessionViewInput): GameSessionView {
   const { blueprint, state } = input;
   const base = projectOpeningGameView(input);
   const npcById = new Map(blueprint.npcs.map((npc) => [npc.id, npc]));
   const questById = new Map(blueprint.quests.map((quest) => [quest.id, quest]));
   const itemById = new Map(blueprint.items.map((item) => [item.id, item]));
+  const locationById = new Map(blueprint.locations.map((location) => [location.id, location]));
+  const factById = new Map(blueprint.world.facts.map((fact) => [fact.id, fact]));
+  const enemyById = new Map(blueprint.enemies.map((enemy) => [enemy.id, enemy]));
+  const endingById = new Map(blueprint.endings.map((ending) => [ending.id, ending]));
   const availableActions = projectAvailableActions(blueprint, state);
 
   // Phase 6：结局抵达后不投影任何可用行动；战斗中只投影 battle_action。
@@ -252,5 +297,9 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
     // Phase 6：战斗摘要与结局视图。
     battle: projectBattleView(blueprint, state),
     ending: projectEndingView(blueprint, state),
+    storyEvents: state.eventLedger
+      .slice(-12)
+      .map((event) => projectStoryEvent(event, locationById, npcById, itemById, factById, questById, enemyById, endingById))
+      .filter((event): event is StoryEventView => event !== null),
   };
 }

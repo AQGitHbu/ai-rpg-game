@@ -16,24 +16,27 @@ function json(status: number, body: unknown): Response {
 }
 
 export async function handleCurrentGameRequest(
-  entryPoints: Pick<ServerGameEntryPoints, "getCurrentGame">
+  entryPoints: Pick<ServerGameEntryPoints, "getCurrentGame"> & Partial<Pick<ServerGameEntryPoints, "developmentToolsEnabled">>
 ): Promise<Response> {
+  const developmentTools = entryPoints.developmentToolsEnabled === true;
+  const developmentMetadata = developmentTools ? { developmentTools: true } : {};
   let result: CurrentGameResult;
   try {
     result = await entryPoints.getCurrentGame();
   } catch {
     // 契约外抛错（如投影异常）：对玩家同样是「暂不可用」，异常文本不外泄。
-    return json(503, { status: "corrupt", reason: "INFRASTRUCTURE_FAILURE" });
+    return json(503, { status: "corrupt", reason: "INFRASTRUCTURE_FAILURE", ...developmentMetadata });
   }
   switch (result.status) {
     case "none":
-      return json(200, { status: "none" });
+      return json(200, { status: "none", ...developmentMetadata });
     case "active":
-      return json(200, { status: "active", view: result.view });
+      return json(200, { status: "active", view: result.view, ...developmentMetadata });
     case "corrupt":
       return json(result.reason === "INFRASTRUCTURE_FAILURE" ? 503 : 200, {
         status: "corrupt",
-        reason: result.reason
+        reason: result.reason,
+        ...developmentMetadata
       });
   }
 }

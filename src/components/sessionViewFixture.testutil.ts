@@ -9,7 +9,7 @@ export function buildSessionViewFixture(): GameSessionView {
   return {
     gameId: "game-test-0001",
     world: { name: "武侠", summary: "镖局一夜覆灭，江湖各派暗流涌动。", gameType: "wuxia" },
-    player: { name: "沈青崖", identity: "落魄镖师" },
+    player: { name: "沈青崖", identity: "落魄镖师", stats: { hp: 30, attack: 6, defense: 4 } },
     currentLocation: { name: "青石镇", description: "镇口贴着一张字迹潦草的缉凶告示。" },
     visibleNpcs: [
       { name: "陆掌柜", role: "客栈掌柜" },
@@ -54,7 +54,8 @@ export function buildSessionViewFixture(): GameSessionView {
     ],
     // Phase 6 Task 4：默认无战斗、无结局。
     battle: null,
-    ending: null
+    ending: null,
+    storyEvents: [{ text: "你与陆掌柜交谈。对方以自己的身份和立场回应了你。" }]
   } as unknown as GameSessionView;
 }
 

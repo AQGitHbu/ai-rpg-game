@@ -23,6 +23,8 @@ export type OpeningWorldView = {
 export type OpeningPlayerView = {
   readonly name: string;
   readonly identity: string;
+  /** 已知的基础数值；战斗中的当前生命由 GameSessionView.battle 单独投影。 */
+  readonly stats: { readonly hp: number; readonly attack: number; readonly defense: number };
 };
 
 export type OpeningLocationView = {
@@ -127,7 +129,8 @@ export function projectOpeningGameView(input: ProjectOpeningGameViewInput): Open
     },
     player: {
       name: state.player.name,
-      identity: state.player.identity
+      identity: state.player.identity,
+      stats: state.player.stats
     },
     currentLocation: {
       name: currentLocation.name,

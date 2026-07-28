@@ -1,7 +1,7 @@
 # 无 AI MVP 试玩验收执行 Plan
 
 > 日期：2026-07-28  
-> 状态：待执行  
+> 状态：已完成（2026-07-28）
 > 目标分支：`codex/mvp-no-ai-playable-vertical-slice`  
 > 唯一修改仓库：`ai-rpg-game`  
 > 上游基线：MVP Phase 6 已合入 `main`（`501f99f`）

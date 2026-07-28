@@ -30,7 +30,8 @@ export {
   type ActiveQuestView,
   type QuestObjectiveView,
   type BattleView,
-  type EndingView
+  type EndingView,
+  type StoryEventView
 } from "./gameSessionView";
 export {
   performAction,
@@ -64,6 +65,8 @@ export {
   asGameId,
   type ApplyResolvedActionInput,
   type ApplyResolvedActionResult,
+  type ClearCurrentGameResult,
+  type DevelopmentGameRepository,
   type CorruptGameReason,
   type CreateInitialGameInput,
   type CreateInitialGameResult,

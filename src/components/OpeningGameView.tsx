@@ -36,6 +36,12 @@ export function OpeningGameView({ view }: OpeningGameViewProps) {
             </dd>
           </div>
           <div>
+            <dt>基础属性</dt>
+            <dd>
+              生命 {view.player.stats.hp} · 攻击 {view.player.stats.attack} · 防御 {view.player.stats.defense}
+            </dd>
+          </div>
+          <div>
             <dt>当前地点</dt>
             <dd>{view.currentLocation.name}</dd>
           </div>
