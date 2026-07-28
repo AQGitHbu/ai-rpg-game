@@ -5,6 +5,22 @@ import { fileURLToPath } from "node:url";
 
 export const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+// foundation 必须是完整的 sibling Git 仓库/同名 worktree；仅存在 packages
+// 目录不足以证明它可用。这个最小根契约同时防止残缺目录被静默当成依赖。
+const FOUNDATION_CONTRACT_PATHS = [
+  ".git",
+  "package.json",
+  "project-family.json",
+  "packages/standards/package.json",
+  "packages/ui/package.json",
+];
+
+export function hasFoundationContract(root, pathExists = existsSync) {
+  return FOUNDATION_CONTRACT_PATHS.every((relativePath) =>
+    pathExists(resolve(root, relativePath)),
+  );
+}
+
 export function resolveFoundationRoot({
   root = projectRoot,
   env = process.env,
@@ -24,7 +40,7 @@ export function resolveFoundationRoot({
       manifest.coordinatedWorktreeDirectory,
       worktreeName,
     );
-    if (pathExists(resolve(candidate, "packages", "standards"))) return candidate;
+    if (hasFoundationContract(candidate, pathExists)) return candidate;
   }
   return foundationMain;
 }
@@ -44,10 +60,9 @@ export function resolveWorktreeName(root, primaryRoot, worktreeDirectory = ".wor
 }
 
 export function assertFoundationRoot(root = resolveFoundationRoot()) {
-  const standards = resolve(root, "packages", "standards", "package.json");
-  if (!existsSync(standards)) {
+  if (!hasFoundationContract(root)) {
     throw new Error(
-      `未找到 ai-game-foundation：${root}。请检查 .ai-game-foundation.json 或设置 AI_GAME_FOUNDATION_DIR。`,
+      `ai-game-foundation 缺失或不完整：${root}。它必须是完整 sibling Git 仓库；请停止清理操作并检查 .ai-game-foundation.json、链接或恢复流程。`,
     );
   }
   return root;
