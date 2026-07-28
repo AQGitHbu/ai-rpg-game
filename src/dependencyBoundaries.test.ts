@@ -352,8 +352,18 @@ describe("boundary patterns detect synthetic violations", () => {
       snippet: `import { getServerGameEntryPoints } from "@/game/application/server/compositionRoot";`
     },
     {
+      // Phase 4A：UI 层连 server-only fixture source 也碰不到。
+      pattern: APPLICATION_SERVER_IMPORT,
+      snippet: `import { createFixtureScenarioCandidateSource } from "@/game/application/server/ai/fixtureScenarioCandidateSource";`
+    },
+    {
       pattern: APPLICATION_SERVER_DEEP_IMPORT,
       snippet: `import { adapter } from "@/game/application/server/persistence/sqliteGameRepository";`
+    },
+    {
+      // Phase 4A：api 层只许组合根，deep-import ai 目录同样被拦。
+      pattern: APPLICATION_SERVER_DEEP_IMPORT,
+      snippet: `import { createFixtureScenarioCandidateSource } from "@/game/application/server/ai/fixtureScenarioCandidateSource";`
     },
     {
       pattern: DOMAIN_IMPORT,
@@ -498,6 +508,60 @@ describe("phase 6 battle/ending surfaces stay behind the application facade", ()
       );
       expect(offenders, file).toEqual([]);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4A（Task 5）：scenario source 分层守卫。上方目录规则已禁止 UI/API
+// 直达 application/server（ai 目录包含在内）；这里额外钉死：
+//   1) fixture source 自身不得导入 persistence/sqlite/libsql；
+//   2) domain/gameplay 不得导入 application 的 scenarioGeneration 纯 port；
+//   3) 许可面真实存在（createGame 经纯 port、组合根经 fixture 工厂），守卫不空转。
+// ---------------------------------------------------------------------------
+
+describe("phase 4a scenario source stays server-only and layered", () => {
+  const aiDir = resolve(sourceRoot, "game/application/server/ai");
+
+  it("fixture source files exist and are inside the server rule scope", () => {
+    const files = exists(aiDir, false).map(toPosixRelative);
+    expect(files).toContain("game/application/server/ai/fixtureScenarioCandidateSource.ts");
+  });
+
+  it("fixture source never imports persistence/sqlite/libsql", () => {
+    for (const file of exists(aiDir, false)) {
+      const offenders = extractSpecifiers(readFileSync(file, "utf8")).filter(
+        (specifier) =>
+          /persistence\//.test(specifier) ||
+          /sqlite(?:Client|GameRepository)/.test(specifier) ||
+          /@libsql\//.test(specifier)
+      );
+      expect(offenders, toPosixRelative(file)).toEqual([]);
+    }
+  });
+
+  it("domain/gameplay never import the application scenarioGeneration port", () => {
+    const files = [
+      ...exists(resolve(sourceRoot, "game/domain"), false),
+      ...exists(resolve(sourceRoot, "game/gameplay"), false)
+    ];
+    const offenders = files.flatMap((file) =>
+      extractSpecifiers(readFileSync(file, "utf8"))
+        .filter((specifier) => /scenarioGeneration/.test(specifier))
+        .map((specifier) => `${toPosixRelative(file)}: ${specifier}`)
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("sanctioned imports actually exist (guard is not vacuous)", () => {
+    // createGame 只经层内纯 port 取契约；组合根经 fixture 工厂注入 unavailable source。
+    const createGameSpecifiers = extractSpecifiers(
+      readFileSync(resolve(sourceRoot, "game/application/createGame.ts"), "utf8")
+    );
+    expect(createGameSpecifiers).toContain("./scenarioGeneration");
+    const rootSpecifiers = extractSpecifiers(
+      readFileSync(resolve(sourceRoot, "game/application/server/compositionRoot.ts"), "utf8")
+    );
+    expect(rootSpecifiers).toContain("./ai/fixtureScenarioCandidateSource");
   });
 });
 

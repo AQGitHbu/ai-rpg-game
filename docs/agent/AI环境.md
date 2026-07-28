@@ -51,3 +51,10 @@ npm run env:check
 ## 阶段边界
 
 Phase 1/Phase 2 不发起 AI 调用（Phase 2 仅确定性 fallback 生成），因此缺少真实 AI 值不会阻止 `setup` 或 `doctor`；开始真实 AI 阶段前，`npm run env:check` 必须成为该阶段验收命令。Provider transport 仍需按共享候选流程判断，不在环境脚本中实现。
+
+## Phase 4A：AI 契约模拟（已实现，无真实 AI 调用）
+
+- Phase 4A 不读取 `AI_API_BASE_URL` / `AI_MODEL` / `AI_API_KEY`，不发起任何外网 AI 请求；真实 AI 接入与 shared `@ai-game/ai-transport` 留给 Phase 4B。
+- 生成链路经纯 `ScenarioCandidateSource` port（契约 `phase4a-v1`）：开发/测试用 server-only fixture source（`src/game/application/server/ai/fixtureScenarioCandidateSource.ts` + `data/fixtures/phase4/`）驱动合法/可修复/超时/不可修复候选；编排层提供一次机械确定性修复 + 一次重试，全部失败稳定走确定性 fallback。
+- 生产 composition root 固定注入 `createUnavailableScenarioCandidateSource()`：玩家创建路径恒为 fallback，`POST /api/game` 仅返回安全的 `generationSource: "generated" | "fallback"`；生成阶段事件仅供内部 contract test 与结构化日志，不进玩家 API。
+- fixture 与契约回归不依赖任何 env 键；`env:check` 仍未进入验收命令，到 Phase 4B 才启用。
