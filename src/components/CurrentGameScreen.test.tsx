@@ -1,5 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import userEvent, { type UserEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CurrentGameScreen } from "./CurrentGameScreen";
 import {
@@ -28,6 +28,21 @@ function stubFetch(implementation: (input: unknown, init?: RequestInit) => Promi
   const fetchMock = vi.fn(implementation);
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+/** Phase 4A：fallback 开局后的一次性降级提示文案。 */
+const FALLBACK_NOTICE = "已使用稳定模板完成开局，仍可完整游玩。";
+
+/** 在 none 状态下填写并提交新开局表单（与会话视图 fixture 同一故事）。 */
+async function fillAndSubmitSetupForm(user: UserEvent) {
+  await screen.findByText("选择游戏类型");
+  await user.type(screen.getByLabelText("角色名字"), "沈青崖");
+  await user.type(screen.getByLabelText("身份 / 职业"), "落魄镖师");
+  await user.click(screen.getByLabelText("世界观背景"));
+  await user.paste("镖局一夜覆灭，江湖各派暗流涌动，真凶身份成谜。");
+  await user.click(screen.getByLabelText("故事开端"));
+  await user.paste("暮色四合，主角背着旧刀走进青石镇，镇口贴着缉凶告示。");
+  await user.click(screen.getByRole("button", { name: "确认开局资料" }));
 }
 
 afterEach(() => {
@@ -121,27 +136,49 @@ describe("CurrentGameScreen", () => {
     const view = buildSessionViewFixture();
     const fetchMock = stubFetch(async (input) => {
       if (input === "/api/game/current") return jsonResponse(200, { status: "none" });
-      if (input === "/api/game") return jsonResponse(201, { view });
+      if (input === "/api/game") return jsonResponse(201, { view, generationSource: "generated" });
       throw new Error(`unexpected fetch: ${String(input)}`);
     });
     const user = userEvent.setup();
     render(<CurrentGameScreen />);
 
-    await screen.findByText("选择游戏类型");
-    await user.type(screen.getByLabelText("角色名字"), "沈青崖");
-    await user.type(screen.getByLabelText("身份 / 职业"), "落魄镖师");
-    await user.click(screen.getByLabelText("世界观背景"));
-    await user.paste("镖局一夜覆灭，江湖各派暗流涌动，真凶身份成谜。");
-    await user.click(screen.getByLabelText("故事开端"));
-    await user.paste("暮色四合，主角背着旧刀走进青石镇，镇口贴着缉凶告示。");
-    await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+    await fillAndSubmitSetupForm(user);
 
     expect(await screen.findByText("暮色四合，你背着旧刀走进青石镇。")).toBeInTheDocument();
     expect(screen.queryByText("选择游戏类型")).toBeNull();
+    // generated 来源：不显示降级提示。
+    expect(screen.queryByText(FALLBACK_NOTICE)).toBeNull();
     // 无 AI 网络请求：全部调用都指向本地 /api/game*。
     for (const call of fetchMock.mock.calls) {
       expect(String(call[0])).toMatch(/^\/api\/game(\/current)?$/);
     }
+  });
+
+  it("fallback 创建后：显示一次性降级提示，不阻断游玩", async () => {
+    const view = buildSessionViewFixture();
+    stubFetch(async (input) => {
+      if (input === "/api/game/current") return jsonResponse(200, { status: "none" });
+      if (input === "/api/game") return jsonResponse(201, { view, generationSource: "fallback" });
+      throw new Error(`unexpected fetch: ${String(input)}`);
+    });
+    const user = userEvent.setup();
+    render(<CurrentGameScreen />);
+
+    await fillAndSubmitSetupForm(user);
+
+    expect(await screen.findByText("暮色四合，你背着旧刀走进青石镇。")).toBeInTheDocument();
+    // 降级提示：warning 样式的一次性说明，不影响其余面板正常渲染。
+    expect(screen.getByText(FALLBACK_NOTICE)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "前往城外官道" })).toBeInTheDocument();
+  });
+
+  it("刷新恢复同一存档：GET current 不携带来源 ⇒ 不显示降级提示", async () => {
+    const view = buildSessionViewFixture();
+    stubFetch(async () => jsonResponse(200, { status: "active", view }));
+    render(<CurrentGameScreen />);
+
+    expect(await screen.findByText("暮色四合，你背着旧刀走进青石镇。")).toBeInTheDocument();
+    expect(screen.queryByText(FALLBACK_NOTICE)).toBeNull();
   });
 
   it("移动闭环：发送 move payload 与 revision，成功后新地点/NPC/任务更新", async () => {

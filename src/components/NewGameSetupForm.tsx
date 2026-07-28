@@ -6,7 +6,8 @@ import {
   validateNewGameInput,
   type NewGameInput,
   type NewGameInputError,
-  type GameSessionView
+  type GameSessionView,
+  type GenerationSource
 } from "@/game/application";
 
 // ---------------------------------------------------------------------------
@@ -61,13 +62,19 @@ function toFieldErrorMap(errors: readonly NewGameInputError[]): FieldErrorMap {
 /** POST /api/game 的响应形态（宽松解析：非法 body 一律按未知错误处理）。 */
 type CreateGameApiBody = {
   view?: GameSessionView;
+  generationSource?: unknown;
   code?: string;
   fieldErrors?: NewGameInputError[];
 };
 
+/** 严格收窄安全来源字段：缺失或未知值都不得默认按 generated 处理。 */
+function parseGenerationSource(value: unknown): GenerationSource | null {
+  return value === "generated" || value === "fallback" ? value : null;
+}
+
 type NewGameSetupFormProps = {
-  /** 创建成功回调：父级用返回的会话视图切换到开场画面。 */
-  onCreated?: (view: GameSessionView) => void;
+  /** 创建成功回调：父级用会话视图与安全来源切换到开场画面。 */
+  onCreated?: (view: GameSessionView, generationSource: GenerationSource) => void;
 };
 
 export function NewGameSetupForm({ onCreated }: NewGameSetupFormProps = {}) {
@@ -132,7 +139,7 @@ export function NewGameSetupForm({ onCreated }: NewGameSetupFormProps = {}) {
     setFieldErrors({});
     setErrorMessage("");
     setSubmitting(true);
-    setStatusMessage("正在生成开局，请稍候……");
+    setStatusMessage("正在生成世界，请稍候……");
     try {
       const response = await fetch("/api/game", {
         method: "POST",
@@ -140,9 +147,11 @@ export function NewGameSetupForm({ onCreated }: NewGameSetupFormProps = {}) {
         body: JSON.stringify(input)
       });
       const body = (await response.json().catch(() => null)) as CreateGameApiBody | null;
-      if (response.ok && body?.view !== undefined) {
+      // 成功判定要求 view 与合法来源同时存在：来源缺失/未知视为契约失败。
+      const generationSource = parseGenerationSource(body?.generationSource);
+      if (response.ok && body?.view !== undefined && generationSource !== null) {
         setStatusMessage("开局已生成。");
-        onCreated?.(body.view);
+        onCreated?.(body.view, generationSource);
         return;
       }
       setStatusMessage("");

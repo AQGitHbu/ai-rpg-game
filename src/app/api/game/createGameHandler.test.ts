@@ -90,8 +90,13 @@ describe("handleCreateGameRequest：合法开局资料", () => {
     expect(body.view.player.name).toBe(FIXTURE.input.characterName);
     expect(body.view.world.gameType).toBe("wuxia");
     expect(body.view.openingNarration).not.toBe("");
+    // Phase 4A：成功 body 只含 view + 安全来源字段。生产组合根注入 unavailable
+    // source，玩家路径必然走稳定模板 ⇒ generationSource 恒为 "fallback"。
+    expect(Object.keys(body).sort()).toEqual(["generationSource", "view"]);
+    expect(body.generationSource).toBe("fallback");
 
-    // 「刷新恢复」的 API 层证明：current handler 返回完全相同的 view。
+    // 「刷新恢复」的 API 层证明：current handler 返回完全相同的 view，
+    // 且不携带 generationSource——降级提示只属于创建那一次。
     const current = await handleCurrentGameRequest(entryPoints);
     expect(current.status).toBe(200);
     expect(await current.json()).toEqual({ status: "active", view: body.view });
@@ -101,7 +106,18 @@ describe("handleCreateGameRequest：合法开局资料", () => {
     const entryPoints = openEntryPoints(nextDbPath());
     const response = await handleCreateGameRequest(postJson(FIXTURE.input), entryPoints);
     const text = await response.text();
-    for (const secret of ['"seed"', '"blueprint"', '"state"', '"inputDigest"']) {
+    // Phase 4A 追加：候选生成的内部诊断（diagnostics/fixtureId/origin/traceId）
+    // 同样只属于内部记录，绝不进入玩家响应。
+    for (const secret of [
+      '"seed"',
+      '"blueprint"',
+      '"state"',
+      '"inputDigest"',
+      '"diagnostics"',
+      '"fixtureId"',
+      '"origin"',
+      '"traceId"'
+    ]) {
       expect(text).not.toContain(secret);
     }
   });

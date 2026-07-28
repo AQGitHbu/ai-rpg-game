@@ -28,7 +28,9 @@ import { AdventureLogPanel } from "./AdventureLogPanel";
 type ScreenState =
   | { phase: "loading" }
   | { phase: "none" }
-  | { phase: "active"; view: GameSessionView }
+  // createdWithFallback：仅在本次创建回调中置 true 的一次性降级标记；
+  // 刷新恢复/行动成功/重新读取都会清除，不随存档持久化。
+  | { phase: "active"; view: GameSessionView; createdWithFallback: boolean }
   | { phase: "corrupt"; reason: string }
   | { phase: "unreachable" };
 
@@ -58,7 +60,8 @@ export function CurrentGameScreen() {
     if (body?.status === "none") {
       setState({ phase: "none" });
     } else if (body?.status === "active" && body.view !== undefined) {
-      setState({ phase: "active", view: body.view });
+      // GET current 不携带生成来源：刷新恢复永远不显示降级提示。
+      setState({ phase: "active", view: body.view, createdWithFallback: false });
     } else if (body?.status === "corrupt" && typeof body.reason === "string") {
       setState({ phase: "corrupt", reason: body.reason });
     } else {
@@ -134,6 +137,14 @@ export function CurrentGameScreen() {
 
     return (
       <div className="game-screen">
+        {state.createdWithFallback ? (
+          <Panel className="setup-result" compact>
+            <Tag variant="warning">稳定模板开局</Tag>
+            <p role="status" aria-live="polite">
+              已使用稳定模板完成开局，仍可完整游玩。
+            </p>
+          </Panel>
+        ) : null}
         <OpeningGameView view={state.view} />
         <AdventureLogPanel events={state.view.storyEvents} />
         {hasEnding ? (
@@ -144,28 +155,28 @@ export function CurrentGameScreen() {
               view={state.view}
               busy={actionBusy}
               onBusyChange={setActionBusy}
-              onActionSuccess={(view) => setState({ phase: "active", view })}
+              onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
               onStaleRevision={() => void loadCurrentGame()}
             />
             <TravelPanel
               view={state.view}
               busy={actionBusy}
               onBusyChange={setActionBusy}
-              onActionSuccess={(view) => setState({ phase: "active", view })}
+              onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
               onStaleRevision={() => void loadCurrentGame()}
             />
             <ItemPanel
               view={state.view}
               busy={actionBusy}
               onBusyChange={setActionBusy}
-              onActionSuccess={(view) => setState({ phase: "active", view })}
+              onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
               onStaleRevision={() => void loadCurrentGame()}
             />
             <BattlePanel
               view={state.view}
               busy={actionBusy}
               onBusyChange={setActionBusy}
-              onActionSuccess={(view) => setState({ phase: "active", view })}
+              onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
               onStaleRevision={() => void loadCurrentGame()}
             />
             <QuestTracker quests={state.view.activeQuests} />
@@ -177,7 +188,17 @@ export function CurrentGameScreen() {
   }
 
   if (state.phase === "none") {
-    return <NewGameSetupForm onCreated={(view) => setState({ phase: "active", view })} />;
+    return (
+      <NewGameSetupForm
+        onCreated={(view, generationSource) =>
+          setState({
+            phase: "active",
+            view,
+            createdWithFallback: generationSource === "fallback"
+          })
+        }
+      />
+    );
   }
 
   if (state.phase === "corrupt") {

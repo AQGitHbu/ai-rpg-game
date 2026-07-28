@@ -58,7 +58,7 @@ describe("NewGameSetupForm", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("有效表单 → loading → 只向 /api/game 提交允许字段 → onCreated 收到 session view", async () => {
+  it("有效表单 → loading → 只向 /api/game 提交允许字段 → onCreated 收到 view 与安全来源", async () => {
     const view = buildSessionViewFixture();
     const pending = deferred<FakeResponse>();
     const fetchMock = stubFetch(() => pending.promise);
@@ -69,12 +69,13 @@ describe("NewGameSetupForm", () => {
     await fillValidForm(user);
     await user.click(screen.getByRole("button", { name: "确认开局资料" }));
 
-    // loading：aria-live 状态反馈 + 提交按钮禁用。
-    expect(screen.getByRole("status")).toHaveTextContent("正在生成开局");
+    // loading：aria-live 等待态 + 提交按钮与类型 fieldset 禁用。
+    expect(screen.getByRole("status")).toHaveTextContent("正在生成世界，请稍候……");
     expect(screen.getByRole("button", { name: "确认开局资料" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /科幻/ })).toBeDisabled();
 
-    pending.resolve(jsonResponse(201, { view }));
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(view));
+    pending.resolve(jsonResponse(201, { view, generationSource: "generated" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(view, "generated"));
 
     // 只调用一次，且只打向本地 API（无 AI 网络请求）。
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -114,10 +115,56 @@ describe("NewGameSetupForm", () => {
     await user.click(submit);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    pending.resolve(jsonResponse(201, { view: buildSessionViewFixture() }));
+    pending.resolve(jsonResponse(201, { view: buildSessionViewFixture(), generationSource: "generated" }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "确认开局资料" })).toBeEnabled()
     );
+  });
+
+  it("fallback 来源：onCreated 收到 (view, 'fallback')", async () => {
+    const view = buildSessionViewFixture();
+    stubFetch(async () => jsonResponse(201, { view, generationSource: "fallback" }));
+    const onCreated = vi.fn();
+    const user = userEvent.setup();
+    render(<NewGameSetupForm onCreated={onCreated} />);
+
+    await fillValidForm(user);
+    await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(view, "fallback"));
+  });
+
+  it("201 但缺失 generationSource：视为失败，不调用 onCreated", async () => {
+    stubFetch(async () => jsonResponse(201, { view: buildSessionViewFixture() }));
+    const onCreated = vi.fn();
+    const user = userEvent.setup();
+    render(<NewGameSetupForm onCreated={onCreated} />);
+
+    await fillValidForm(user);
+    await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("创建开局失败")
+    );
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "确认开局资料" })).toBeEnabled();
+  });
+
+  it("201 但 generationSource 未知：同样失败，绝不默认按 generated 处理", async () => {
+    stubFetch(async () =>
+      jsonResponse(201, { view: buildSessionViewFixture(), generationSource: "ai_live" })
+    );
+    const onCreated = vi.fn();
+    const user = userEvent.setup();
+    render(<NewGameSetupForm onCreated={onCreated} />);
+
+    await fillValidForm(user);
+    await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("创建开局失败")
+    );
+    expect(onCreated).not.toHaveBeenCalled();
   });
 
   it("客户端校验失败：不发请求，逐字段提示并标记 aria-invalid", async () => {

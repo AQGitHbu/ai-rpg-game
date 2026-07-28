@@ -6,7 +6,7 @@ import type { ServerGameEntryPoints } from "@/game/application/server/compositio
 // route.ts 保持薄壳注入生产单例，本函数接受任意入口以便测试注入临时 SQLite。
 //
 // 状态码映射（响应只含稳定代码，绝无 SQL/异常文本/密钥）：
-//   201 创建成功（body: { view }）
+//   201 创建成功（body: { view, generationSource }，来源仅二元安全值）
 //   400 MALFORMED_JSON       —— JSON 不合法或不是对象
 //   400 UNEXPECTED_FIELDS    —— 出现开局资料之外的字段（seed/gameId/source/state…）
 //   400 INVALID_FIELD_TYPES  —— 已知字段的 JSON 类型不对
@@ -101,8 +101,9 @@ export async function handleCreateGameRequest(
     return json(500, { code: "INTERNAL_ERROR" });
   }
   if (result.ok) {
-    // 只回传 read model view；gameId 已含在 view 内，seed/blueprint/state 不存在。
-    return json(201, { view: result.view });
+    // 只回传 read model view + 安全来源字段（"generated" | "fallback"）；
+    // gameId 已含在 view 内，seed/blueprint/state/诊断信息不存在。
+    return json(201, { view: result.view, generationSource: result.source });
   }
   switch (result.code) {
     case "INVALID_INPUT":
