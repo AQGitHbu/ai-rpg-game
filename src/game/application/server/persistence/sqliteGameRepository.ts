@@ -127,6 +127,50 @@ function withAvailableItemsDefault(blueprint: JsonObject): JsonObject {
   return changed ? { ...blueprint, locations: patched } : blueprint;
 }
 
+// Phase 6 Task 1：Phase 1–5 旧存档的蓝图敌人无 locationId 字段。
+// 读取时补默认值：取第一个地点 ID 作为 locationId（旧敌人不自动暴露为 battle 行动，
+// start_battle 校验会检查全部前置条件）。不升 schema 版本也不回写。
+function withEnemyLocationIdDefault(blueprint: JsonObject): JsonObject {
+  const enemies = blueprint["enemies"];
+  if (!Array.isArray(enemies)) {
+    return blueprint;
+  }
+  const locations = blueprint["locations"];
+  let fallbackLocationId: string | undefined;
+  if (Array.isArray(locations)) {
+    const firstLocation = locations.find((entry) => isPlainObject(entry) && typeof entry["id"] === "string");
+    fallbackLocationId = isPlainObject(firstLocation ?? null) ? (firstLocation as JsonObject)["id"] as string : undefined;
+  }
+  if (fallbackLocationId === undefined) {
+    return blueprint;
+  }
+  let changed = false;
+  const patched = enemies.map((entry) => {
+    if (isPlainObject(entry) && entry["locationId"] === undefined) {
+      changed = true;
+      return { ...entry, locationId: fallbackLocationId };
+    }
+    return entry;
+  });
+  return changed ? { ...blueprint, enemies: patched } : blueprint;
+}
+
+// Phase 6 Task 1：Phase 1–5 旧存档的 stateJSON 无 defeatedEnemyIds / battle / ending 字段。
+// 读取时补默认值（与 initializeGameState 的初始语义一致），不升 schema 版本也不回写。
+function withPhase6StateDefaults(state: JsonObject): JsonObject {
+  let patched = state;
+  if (patched["defeatedEnemyIds"] === undefined) {
+    patched = { ...patched, defeatedEnemyIds: [] };
+  }
+  if (patched["battle"] === undefined) {
+    patched = { ...patched, battle: { status: "idle" } };
+  }
+  if (patched["ending"] === undefined) {
+    patched = { ...patched, ending: null };
+  }
+  return patched;
+}
+
 // 单行 → 结构化结果：只做端口要求的版本 / generationId 校验与形状检查，
 // 不做蓝图内部引用完整性校验（Task 1 评审确认由上游编译器保证）。
 function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordResult {
@@ -175,7 +219,8 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordRes
   if (migratedState === null) {
     return corrupt("UNPARSEABLE_RECORD");
   }
-  const migratedBlueprint = withAvailableItemsDefault(blueprint);
+  const migratedBlueprint = withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint));
+  const phase6State = withPhase6StateDefaults(migratedState);
 
   return {
     ok: true,
@@ -184,7 +229,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordRes
       gameId: asGameId(gameId),
       // 通过全部防御性检查后按端口契约还原类型；深度结构由写入侧的编译器保证。
       blueprint: migratedBlueprint as unknown as ScenarioBlueprint,
-      state: migratedState as unknown as GameState,
+      state: phase6State as unknown as GameState,
       revision,
       createdAt
     }
@@ -393,8 +438,9 @@ export function createSqliteGameRepository(
 
         const record: GameRecord = {
           gameId: asGameId(row["game_id"] as string),
-          // 与 interpretGameRow 同样补旧档蓝图的 availableItemIds 默认值，避免类型契约缺口。
-          blueprint: withAvailableItemsDefault(blueprint) as unknown as ScenarioBlueprint,
+          // 与 interpretGameRow 同样补旧档蓝图的 availableItemIds 和 enemy locationId 默认值，
+          // 避免类型契约缺口。
+          blueprint: withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint)) as unknown as ScenarioBlueprint,
           state: state as unknown as GameState,
           revision: row["revision"] as number,
           createdAt: row["created_at"] as string

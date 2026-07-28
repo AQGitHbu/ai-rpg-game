@@ -75,7 +75,13 @@ export {
   type LocationVisitedEvent,
   type QuestCompletedEvent,
   type QuestUnlockedEvent,
-  type ItemObtainedEvent
+  type ItemObtainedEvent,
+  type BattleStartedEvent,
+  type BattleRoundResolvedEvent,
+  type BattleResolvedEvent,
+  type EnemyDefeatedEvent,
+  type QuestFailedEvent,
+  type EndingReachedEvent
 } from "./events";
 export {
   type GameState,
@@ -83,5 +89,8 @@ export {
   type NpcRuntimeState,
   type QuestStatus,
   type QuestRuntimeState,
-  type WorldFactState
+  type WorldFactState,
+  type BattleStatus,
+  type BattleState,
+  type EndingState
 } from "./gameState";

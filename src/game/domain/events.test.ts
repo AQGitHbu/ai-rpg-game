@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent, LocationVisitedEvent, QuestCompletedEvent, QuestUnlockedEvent, ItemObtainedEvent } from "./events";
-import { asLocationId, asNpcId, asFactId, asGenerationId, asItemId, asQuestId, type GenerationMetadata } from "./scenarioBlueprint";
+import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent, LocationVisitedEvent, QuestCompletedEvent, QuestUnlockedEvent, ItemObtainedEvent, BattleStartedEvent, BattleRoundResolvedEvent, BattleResolvedEvent, EnemyDefeatedEvent, QuestFailedEvent, EndingReachedEvent } from "./events";
+import { asLocationId, asNpcId, asFactId, asGenerationId, asItemId, asQuestId, asEnemyId, asEndingId, type GenerationMetadata } from "./scenarioBlueprint";
 
 function buildGeneration(): GenerationMetadata {
   return {
@@ -125,5 +125,118 @@ describe("GameEvent union (Phase 3 action events)", () => {
     // @ts-expect-error locationId requires a branded LocationId
     const badEvent: LocationObservedEvent = { type: "location_observed", locationId: "loc_1", occurredAt: "t" };
     expect(badEvent).toBeDefined();
+  });
+});
+
+describe("GameEvent union (Phase 6 battle and ending events)", () => {
+  it("accepts battle_started event with enemyId and timestamp", () => {
+    const event: BattleStartedEvent = {
+      type: "battle_started",
+      enemyId: asEnemyId("enemy_boss"),
+      occurredAt: "2026-07-28T10:00:00Z",
+    };
+    expect(event.type).toBe("battle_started");
+    expect(event.enemyId).toBe("enemy_boss");
+  });
+
+  it("accepts battle_round_resolved event with full round data", () => {
+    const event: BattleRoundResolvedEvent = {
+      type: "battle_round_resolved",
+      enemyId: asEnemyId("enemy_boss"),
+      round: 1,
+      playerHp: 28,
+      enemyHp: 16,
+      action: "attack",
+      occurredAt: "2026-07-28T10:01:00Z",
+    };
+    expect(event.type).toBe("battle_round_resolved");
+    expect(event.round).toBe(1);
+    expect(event.playerHp).toBe(28);
+    expect(event.enemyHp).toBe(16);
+    expect(event.action).toBe("attack");
+  });
+
+  it("accepts battle_resolved event with victory outcome", () => {
+    const event: BattleResolvedEvent = {
+      type: "battle_resolved",
+      enemyId: asEnemyId("enemy_boss"),
+      outcome: "victory",
+      occurredAt: "2026-07-28T10:05:00Z",
+    };
+    expect(event.type).toBe("battle_resolved");
+    expect(event.outcome).toBe("victory");
+  });
+
+  it("accepts battle_resolved event with withdraw outcome", () => {
+    const event: BattleResolvedEvent = {
+      type: "battle_resolved",
+      enemyId: asEnemyId("enemy_boss"),
+      outcome: "withdraw",
+      occurredAt: "2026-07-28T10:05:00Z",
+    };
+    expect(event.outcome).toBe("withdraw");
+  });
+
+  it("accepts enemy_defeated event with enemyId and timestamp", () => {
+    const event: EnemyDefeatedEvent = {
+      type: "enemy_defeated",
+      enemyId: asEnemyId("enemy_boss"),
+      occurredAt: "2026-07-28T10:06:00Z",
+    };
+    expect(event.type).toBe("enemy_defeated");
+    expect(event.enemyId).toBe("enemy_boss");
+  });
+
+  it("accepts quest_failed event with questId and timestamp", () => {
+    const event: QuestFailedEvent = {
+      type: "quest_failed",
+      questId: asQuestId("quest_m3"),
+      occurredAt: "2026-07-28T10:07:00Z",
+    };
+    expect(event.type).toBe("quest_failed");
+    expect(event.questId).toBe("quest_m3");
+  });
+
+  it("accepts ending_reached event with endingId, outcome and timestamp", () => {
+    const event: EndingReachedEvent = {
+      type: "ending_reached",
+      endingId: asEndingId("ending_1"),
+      outcome: "success",
+      occurredAt: "2026-07-28T10:08:00Z",
+    };
+    expect(event.type).toBe("ending_reached");
+    expect(event.endingId).toBe("ending_1");
+    expect(event.outcome).toBe("success");
+  });
+
+  it("accepts ending_reached event with failure outcome", () => {
+    const event: EndingReachedEvent = {
+      type: "ending_reached",
+      endingId: asEndingId("ending_2"),
+      outcome: "failure",
+      occurredAt: "2026-07-28T10:09:00Z",
+    };
+    expect(event.outcome).toBe("failure");
+  });
+
+  it("GameEvent union includes all Phase 6 type discriminators", () => {
+    const events: GameEvent[] = [
+      { type: "battle_started", enemyId: asEnemyId("e1"), occurredAt: "t1" },
+      { type: "battle_round_resolved", enemyId: asEnemyId("e1"), round: 1, playerHp: 10, enemyHp: 5, action: "attack", occurredAt: "t2" },
+      { type: "battle_resolved", enemyId: asEnemyId("e1"), outcome: "victory", occurredAt: "t3" },
+      { type: "enemy_defeated", enemyId: asEnemyId("e1"), occurredAt: "t4" },
+      { type: "quest_failed", questId: asQuestId("q1"), occurredAt: "t5" },
+      { type: "ending_reached", endingId: asEndingId("ed1"), outcome: "success", occurredAt: "t6" },
+    ];
+
+    const types = events.map((e) => e.type);
+    expect(types).toEqual([
+      "battle_started",
+      "battle_round_resolved",
+      "battle_resolved",
+      "enemy_defeated",
+      "quest_failed",
+      "ending_reached",
+    ]);
   });
 });

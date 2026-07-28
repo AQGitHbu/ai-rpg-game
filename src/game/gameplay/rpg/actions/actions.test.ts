@@ -99,7 +99,7 @@ function buildBlueprint(): ScenarioBlueprint {
       { kind: "main", stage: 3, id: "q3", name: "主线3", description: "主线3。", objectives: [{ kind: "defeat_enemy", enemyId: "enemy_1" }], onSuccess: { kind: "reach_ending", endingId: "e1" }, onFailure: { kind: "reach_ending", endingId: "e2" }, tags: [] },
     ],
     enemies: [
-      { id: "enemy_1", name: "敌人", tier: "boss", stats: { hp: 50, attack: 8, defense: 3 }, tags: [] },
+      { id: "enemy_1", name: "敌人", tier: "boss", stats: { hp: 50, attack: 8, defense: 3 }, locationId: "loc_d", tags: [] },
     ],
     items: [
       { id: "item_1", name: "物品", description: "测试物品。", kind: "weapon", tags: [] },
@@ -153,6 +153,9 @@ function buildInitialState(): GameState {
       { factId: FACT_INVESTIGABLE, discovered: false },
       { factId: FACT_OTHER, discovered: false },
     ],
+    defeatedEnemyIds: [],
+    battle: { status: "idle" },
+    ending: null,
     eventLedger: [{ type: "game_initialized", generation: GEN }],
   };
 }

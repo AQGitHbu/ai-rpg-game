@@ -551,3 +551,102 @@ describe("performAction × 真实 SQLite：Phase 4 旧存档兼容（无 availab
     }
   });
 });
+
+describe("performAction × 真实 SQLite：Phase 6 旧存档兼容（无 defeatedEnemyIds / battle / ending / enemy locationId）", () => {
+  it("无 Phase 6 state 字段的旧存档读取默认值，并可正常移动", async () => {
+    const databasePath = nextDbPath();
+    const repository = openRepository(databasePath);
+    // 模拟 Phase 5 存档：序列化前剥离 defeatedEnemyIds / battle / ending 字段。
+    const { defeatedEnemyIds: _1, battle: _2, ending: _3, ...legacyState } = PIPELINE.state;
+    void _1; void _2; void _3;
+    // 模拟 Phase 5 蓝图：剥离每个敌人的 locationId 字段。
+    const legacyBlueprint = {
+      ...PIPELINE.blueprint,
+      enemies: PIPELINE.blueprint.enemies.map((enemy) => {
+        const { locationId: _stripped, ...rest } = enemy;
+        void _stripped;
+        return rest;
+      })
+    } as unknown as ScenarioBlueprint;
+    const created = await repository.createInitialGame({
+      gameId: asGameId("game-legacy-phase6"),
+      blueprint: legacyBlueprint,
+      state: legacyState as unknown as GameState,
+      createdAt: FIXED_CREATED_AT
+    });
+    expect(created).toEqual({ ok: true });
+
+    // 读取时补默认值：state 有 Phase 6 默认值，blueprint 敌人有 locationId。
+    const record = await loadActiveRecord(repository);
+    expect(record.state.defeatedEnemyIds).toEqual([]);
+    expect(record.state.battle).toEqual({ status: "idle" });
+    expect(record.state.ending).toBeNull();
+    for (const enemy of record.blueprint.enemies) {
+      expect(typeof enemy.locationId).toBe("string");
+      expect(enemy.locationId.length).toBeGreaterThan(0);
+    }
+
+    // 旧存档可直接移动：不崩溃、正常完成 quest_m1。
+    const result = await performAction(
+      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      performDependencies(repository)
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.view.revision).toBe(1);
+
+    const after = await loadActiveRecord(repository);
+    expect(after.state.visitedLocationIds).toContain(asLocationId("loc_2"));
+    expect(
+      after.state.quests.find((quest) => quest.questId === asQuestId("quest_m1"))?.status
+    ).toBe("completed");
+  });
+
+  it("applyResolvedAction read-back 也补 Phase 6 蓝图 enemy locationId 默认值", async () => {
+    const databasePath = nextDbPath();
+    const repository = openRepository(databasePath);
+    // 与上一用例相同的 Phase 5 旧档构造。
+    const { defeatedEnemyIds: _1, battle: _2, ending: _3, ...legacyState } = PIPELINE.state;
+    void _1; void _2; void _3;
+    const legacyBlueprint = {
+      ...PIPELINE.blueprint,
+      enemies: PIPELINE.blueprint.enemies.map((enemy) => {
+        const { locationId: _stripped, ...rest } = enemy;
+        void _stripped;
+        return rest;
+      })
+    } as unknown as ScenarioBlueprint;
+    const created = await repository.createInitialGame({
+      gameId: asGameId("game-legacy-readback-phase6"),
+      blueprint: legacyBlueprint,
+      state: legacyState as unknown as GameState,
+      createdAt: FIXED_CREATED_AT
+    });
+    expect(created).toEqual({ ok: true });
+
+    // 捕获 applyResolvedAction 的 read-back 记录。
+    let readBack: GameRecord | undefined;
+    const capturingRepository: GameRepository = {
+      createInitialGame: (input) => repository.createInitialGame(input),
+      getCurrentGame: () => repository.getCurrentGame(),
+      applyResolvedAction: async (input) => {
+        const result = await repository.applyResolvedAction(input);
+        if (result.ok) readBack = result.record;
+        return result;
+      }
+    };
+
+    const moved = await performAction(
+      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      performDependencies(capturingRepository)
+    );
+    expect(moved.ok).toBe(true);
+    expect(readBack).toBeDefined();
+    if (readBack === undefined) return;
+    expect(readBack.blueprint.enemies.length).toBeGreaterThan(0);
+    for (const enemy of readBack.blueprint.enemies) {
+      expect(typeof enemy.locationId).toBe("string");
+      expect(enemy.locationId.length).toBeGreaterThan(0);
+    }
+  });
+});

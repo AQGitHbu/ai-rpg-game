@@ -198,13 +198,15 @@ export function makeValidCandidate(): ScenarioBlueprintCandidate {
         name: "黑衣刺客",
         tier: "normal",
         stats: { hp: 20, attack: 5, defense: 2 },
+        locationId: "loc_b",
         tags: []
       },
       {
         id: "enemy_b",
         name: "幕后黑手",
         tier: "boss",
-        stats: { hp: 120, attack: 12, defense: 8 },
+        stats: { hp: 20, attack: 5, defense: 2 },
+        locationId: "loc_d",
         tags: []
       }
     ],
@@ -235,7 +237,7 @@ export function makeValidCandidate(): ScenarioBlueprintCandidate {
         id: "e2",
         name: "遁入山门",
         description: "复仇失败，借密道远走。",
-        requirements: [{ kind: "fact_discovered", factId: "fact_b" }]
+        requirements: [{ kind: "quest_failed", questId: "m3" }]
       }
     ],
     openingScene: {

@@ -250,11 +250,26 @@ function validateReferences(
       check(`npcs[${index}].knownFactIds[${refIndex}]`, "fact", id, factIds)
     );
   });
+  // Phase 6：敌人预置地点必须引用已存在的 location。
+  candidate.enemies.forEach((enemy, index) => {
+    check(`enemies[${index}].locationId`, "location", enemy.locationId, locationIds);
+  });
   candidate.endings.forEach((ending, index) => {
     (ending.requirements ?? []).forEach((requirement, reqIndex) => {
       const path = `endings[${index}].requirements[${reqIndex}]`;
       if (requirement.kind === "quest_completed") {
         // 载荷 id 缺失/非字符串时在此拒绝，不落入悬空引用检查（params 契约只允许 string|number）。
+        if (typeof requirement.questId !== "string" || requirement.questId.trim() === "") {
+          issues.push({
+            path,
+            code: "INVALID_ENDING_REQUIREMENT",
+            params: { kind: requirement.kind, reason: "missing_quest_id" }
+          });
+          return;
+        }
+        check(`${path}.questId`, "quest", requirement.questId, questIds);
+      } else if (requirement.kind === "quest_failed") {
+        // Phase 6：quest_failed 与 quest_completed 同样引用 quest ID。
         if (typeof requirement.questId !== "string" || requirement.questId.trim() === "") {
           issues.push({
             path,

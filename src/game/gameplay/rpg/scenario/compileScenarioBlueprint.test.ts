@@ -149,6 +149,9 @@ describe("initializeGameState", () => {
         { factId: "fact_a", discovered: true },
         { factId: "fact_b", discovered: false }
       ],
+      defeatedEnemyIds: [],
+      battle: { status: "idle" },
+      ending: null,
       eventLedger: [{ type: "game_initialized", generation }]
     });
   });

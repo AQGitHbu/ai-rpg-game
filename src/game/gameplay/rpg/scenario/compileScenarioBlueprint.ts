@@ -108,6 +108,10 @@ export function initializeGameState(blueprint: ScenarioBlueprint): GameState {
       factId: fact.id,
       discovered: fact.source === "player_input"
     })),
+    // Phase 6：初始无已击败敌人、无战斗、未抵达结局。
+    defeatedEnemyIds: [],
+    battle: { status: "idle" },
+    ending: null,
     eventLedger: [{ type: "game_initialized", generation }]
   };
 }

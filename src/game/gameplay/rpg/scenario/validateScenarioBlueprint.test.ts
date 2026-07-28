@@ -225,10 +225,16 @@ describe("validateScenarioBlueprintCandidate：引用完整", () => {
       refKind: "quest"
     },
     {
-      name: "结局要求指向不存在的事实",
-      mutate: (c) => { (c.endings[1].requirements[0] as { factId: string }).factId = "ghost"; },
-      path: "endings[1].requirements[0].factId",
-      refKind: "fact"
+      name: "结局要求 quest_failed 指向不存在的任务",
+      mutate: (c) => { (c.endings[1].requirements[0] as { questId: string }).questId = "ghost"; },
+      path: "endings[1].requirements[0].questId",
+      refKind: "quest"
+    },
+    {
+      name: "敌人预置地点不存在",
+      mutate: (c) => { c.enemies[0].locationId = "ghost"; },
+      path: "enemies[0].locationId",
+      refKind: "location"
     },
     {
       name: "玩家起始地点不存在",
@@ -347,12 +353,26 @@ describe("validateScenarioBlueprintCandidate：结局要求合法性", () => {
     expect(issues.filter((issue) => issue.code === "DANGLING_REFERENCE")).toEqual([]);
   });
 
-  it("fact_discovered 的 factId 非字符串时拒绝（不落入悬空引用检查）", () => {
+  it("quest_failed 缺少 questId 时拒绝（不落入悬空引用检查）", () => {
     const candidate = draft();
-    (candidate.endings[1].requirements[0] as { factId: unknown }).factId = 42;
+    delete (candidate.endings[1].requirements[0] as { questId?: string }).questId;
     const issues = issuesOf(candidate);
     expect(issues).toContainEqual({
       path: "endings[1].requirements[0]",
+      code: "INVALID_ENDING_REQUIREMENT",
+      params: { kind: "quest_failed", reason: "missing_quest_id" }
+    });
+    expect(issues.filter((issue) => issue.code === "DANGLING_REFERENCE")).toEqual([]);
+  });
+
+  it("fact_discovered 的 factId 非字符串时拒绝（不落入悬空引用检查）", () => {
+    const candidate = draft();
+    // 构造一个 fact_discovered requirement 来测试 factId 非字符串。
+    (candidate.endings[0].requirements[0] as { kind: string; factId?: unknown }).kind = "fact_discovered";
+    (candidate.endings[0].requirements[0] as { factId?: unknown }).factId = 42;
+    const issues = issuesOf(candidate);
+    expect(issues).toContainEqual({
+      path: "endings[0].requirements[0]",
       code: "INVALID_ENDING_REQUIREMENT",
       params: { kind: "fact_discovered", reason: "missing_fact_id" }
     });

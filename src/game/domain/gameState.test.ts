@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { GameEvent } from "./events";
 import type { GameState } from "./gameState";
 import {
+  asEnemyId,
   asFactId,
   asGenerationId,
   asItemId,
@@ -42,6 +43,9 @@ function buildInitialState(): GameState {
     ],
     inventory: [asItemId("item_sword")],
     worldFacts: [{ factId: asFactId("fact_master_missing"), discovered: false }],
+    defeatedEnemyIds: [],
+    battle: { status: "idle" },
+    ending: null,
     eventLedger: [{ type: "game_initialized", generation }]
   };
 }

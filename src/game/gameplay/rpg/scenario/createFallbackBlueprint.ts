@@ -32,8 +32,8 @@ import { loadScenarioProfiles, type GameTypeProfile, type ScenarioProfiles } fro
 //     forbiddenTags），因此 7 种类型均安全。
 // ---------------------------------------------------------------------------
 
-/** fallback 模板版本；纳入 inputDigest，模板演进时提升。fallback-2：地点新增 availableItemIds。 */
-export const FALLBACK_TEMPLATE_VERSION = "fallback-2";
+/** fallback 模板版本；纳入 inputDigest，模板演进时提升。fallback-3：敌人新增 locationId、boss 数值调整、结局 requirement 使用 quest_failed。 */
+export const FALLBACK_TEMPLATE_VERSION = "fallback-3";
 
 /** 玩家输入来源标记：出现在世界摘要 / 身份 / 开场 / 主线冲突 / 事实文本中，便于追溯。 */
 const PLAYER_INPUT_MARK = "【玩家输入】";
@@ -634,7 +634,16 @@ const NORMAL_ENEMY_STATS: readonly StatBlock[] = [
   { hp: 30, attack: 6, defense: 3 },
   { hp: 36, attack: 7, defense: 4 }
 ];
-const BOSS_ENEMY_STATS: StatBlock = { hp: 120, attack: 12, defense: 8 };
+// Phase 6：boss 数值调整为在玩家初始数值下存在有限 attack 胜利序列。
+// 玩家 attack=6, defense=4；boss hp=20, attack=5, defense=2：
+// 玩家每回合造成 max(1,6-2)=4 伤害，5 回合击杀；boss 每回合造成 max(1,5-4)=1 伤害，
+// 4 回合反击共 4 伤害，玩家剩余 26 HP。满足有限胜利序列。
+const BOSS_ENEMY_STATS: StatBlock = { hp: 20, attack: 5, defense: 2 };
+
+// Phase 6：敌人预置地点。boss 放在 loc_4（stage 2 后由现有连通图可达）。
+// 普通敌人分配到前三个主要地点，有落位但绝不自动暴露为 battle 行动。
+const ENEMY_LOCATION_IDS: readonly string[] = [LOCATION_IDS[0], LOCATION_IDS[1], LOCATION_IDS[2]];
+const BOSS_LOCATION_ID = LOCATION_IDS[3];
 
 function buildEnemies(template: TypeTemplate, profile: GameTypeProfile): EnemyTemplateCandidate[] {
   const normals: EnemyTemplateCandidate[] = ENEMY_NORMAL_IDS.map((id, index) => ({
@@ -642,6 +651,7 @@ function buildEnemies(template: TypeTemplate, profile: GameTypeProfile): EnemyTe
     name: template.normalEnemies[index],
     tier: "normal" as const,
     stats: { ...NORMAL_ENEMY_STATS[index] },
+    locationId: ENEMY_LOCATION_IDS[index],
     tags: [pickTag(profile, index + 3)]
   }));
   return [
@@ -651,6 +661,7 @@ function buildEnemies(template: TypeTemplate, profile: GameTypeProfile): EnemyTe
       name: template.bossEnemy,
       tier: "boss" as const,
       stats: { ...BOSS_ENEMY_STATS },
+      locationId: BOSS_LOCATION_ID,
       tags: []
     }
   ];
@@ -732,13 +743,15 @@ function buildEndings(template: TypeTemplate): ScenarioBlueprintCandidate["endin
       id: ENDING_IDS[0],
       name: template.endings[0].name,
       description: template.endings[0].description,
+      // Phase 6：成功 ending 依赖 stage 3 completed。
       requirements: [{ kind: "quest_completed", questId: QUEST_MAIN_IDS[2] }]
     },
     {
       id: ENDING_IDS[1],
       name: template.endings[1].name,
       description: template.endings[1].description,
-      requirements: [{ kind: "fact_discovered", factId: FACT_GEN_1 }]
+      // Phase 6：失败 ending 依赖 stage 3 failed。
+      requirements: [{ kind: "quest_failed", questId: QUEST_MAIN_IDS[2] }]
     }
   ];
 }

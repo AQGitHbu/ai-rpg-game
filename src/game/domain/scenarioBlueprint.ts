@@ -147,6 +147,8 @@ type EnemyTemplateOf<I extends IdSet> = {
   readonly name: string;
   readonly tier: EnemyTier;
   readonly stats: StatBlock;
+  /** Phase 6：敌人预置地点；validator 要求地点存在。 */
+  readonly locationId: I["location"];
   readonly tags: readonly string[];
 };
 
@@ -160,6 +162,7 @@ type ItemDefinitionOf<I extends IdSet> = {
 
 type EndingRequirementOf<I extends IdSet> =
   | { readonly kind: "quest_completed"; readonly questId: I["quest"] }
+  | { readonly kind: "quest_failed"; readonly questId: I["quest"] }
   | { readonly kind: "fact_discovered"; readonly factId: I["fact"] };
 
 type EndingDefinitionOf<I extends IdSet> = {

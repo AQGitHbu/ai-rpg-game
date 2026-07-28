@@ -111,6 +111,7 @@ function buildCandidate(): ScenarioBlueprintCandidate {
         name: "山贼",
         tier: "normal",
         stats: { hp: 10, attack: 3, defense: 1 },
+        locationId: "loc_forest",
         tags: []
       }
     ],

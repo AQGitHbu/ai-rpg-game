@@ -1,4 +1,4 @@
-import type { FactId, GenerationMetadata, ItemId, LocationId, NpcId, QuestId } from "./scenarioBlueprint";
+import type { EndingId, EnemyId, FactId, GenerationMetadata, ItemId, LocationId, NpcId, QuestId } from "./scenarioBlueprint";
 
 // 领域事件：纯数据，时间戳等外部信息由调用方传入（domain 不读取时钟）。
 // Phase 3 扩展：行动 resolver 产出地点观察、NPC 初次交谈和事实发现三种事件。
@@ -62,6 +62,54 @@ export type ItemObtainedEvent = {
   readonly occurredAt: string;
 };
 
+/** Phase 6：战斗开始——由 start_battle 成功时追加。 */
+export type BattleStartedEvent = {
+  readonly type: "battle_started";
+  readonly enemyId: EnemyId;
+  readonly occurredAt: string;
+};
+
+/** Phase 6：单回合结算——由 battle_action 成功时追加，含回合后双方剩余生命。 */
+export type BattleRoundResolvedEvent = {
+  readonly type: "battle_round_resolved";
+  readonly enemyId: EnemyId;
+  readonly round: number;
+  readonly playerHp: number;
+  readonly enemyHp: number;
+  readonly action: "attack" | "guard" | "withdraw";
+  readonly occurredAt: string;
+};
+
+/** Phase 6：战斗结束——胜利、失败或撤退。 */
+export type BattleResolvedEvent = {
+  readonly type: "battle_resolved";
+  readonly enemyId: EnemyId;
+  readonly outcome: "victory" | "defeat" | "withdraw";
+  readonly occurredAt: string;
+};
+
+/** Phase 6：敌人被击败——胜利战斗后追加，写入 defeatedEnemyIds。 */
+export type EnemyDefeatedEvent = {
+  readonly type: "enemy_defeated";
+  readonly enemyId: EnemyId;
+  readonly occurredAt: string;
+};
+
+/** Phase 6：任务失败——由显式 failQuest 入口将 active quest 置为 failed 时追加。 */
+export type QuestFailedEvent = {
+  readonly type: "quest_failed";
+  readonly questId: QuestId;
+  readonly occurredAt: string;
+};
+
+/** Phase 6：结局抵达——由 ending resolver 在满足结局条件后追加，结局状态只能写入一次。 */
+export type EndingReachedEvent = {
+  readonly type: "ending_reached";
+  readonly endingId: EndingId;
+  readonly outcome: "success" | "failure";
+  readonly occurredAt: string;
+};
+
 export type GameEvent =
   | GameInitializedEvent
   | LocationObservedEvent
@@ -70,4 +118,10 @@ export type GameEvent =
   | LocationVisitedEvent
   | QuestCompletedEvent
   | QuestUnlockedEvent
-  | ItemObtainedEvent;
+  | ItemObtainedEvent
+  | BattleStartedEvent
+  | BattleRoundResolvedEvent
+  | BattleResolvedEvent
+  | EnemyDefeatedEvent
+  | QuestFailedEvent
+  | EndingReachedEvent;
