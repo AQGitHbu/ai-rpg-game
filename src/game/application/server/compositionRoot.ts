@@ -27,12 +27,16 @@ import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
 
 /** API 层（Task 4）可直接使用的入口：不暴露 repository、libsql 或路径配置。 */
 export type ServerGameEntryPoints = {
+  /** 由 server composition root 决定，客户端与 API adapter 不读取环境变量。 */
+  readonly developmentToolsEnabled: boolean;
   /** 创建当前本地存档：只承载浏览器允许提交的开局资料。 */
   createGame(input: NewGameInput): Promise<CreateGameResult>;
   /** 读取当前本地存档的 read model。 */
   getCurrentGame(): Promise<CurrentGameResult>;
   /** 执行玩家行动：纯规则裁决 + 原子续存档。 */
   performAction(command: PerformActionCommand): Promise<PerformActionResult>;
+  /** 仅 development composition 可调用；生产环境一律返回 disabled。 */
+  clearDevelopmentCurrentGame(): Promise<"cleared" | "none" | "disabled" | "unavailable">;
   /** 释放底层 SQLite 客户端：测试清理临时文件 / 进程收尾用；重复调用安全。 */
   close(): Promise<void>;
 };
@@ -59,10 +63,17 @@ export function createServerGameEntryPoints(
     now: () => new Date().toISOString()
   };
   return {
+    developmentToolsEnabled: env.NODE_ENV === "development",
     // 刻意不透传 command.seed：浏览器/API 无法指定 seed 或 gameId。
     createGame: (input) => createGame({ input }, dependencies),
     getCurrentGame: () => getCurrentGame({ repository }),
     performAction: (command) => performAction(command, performDeps),
+    clearDevelopmentCurrentGame: async () => {
+      if (env.NODE_ENV !== "development") return "disabled";
+      const result = await repository.clearCurrentGame();
+      if (!result.ok) return "unavailable";
+      return result.status;
+    },
     close: () => repository.close()
   };
 }

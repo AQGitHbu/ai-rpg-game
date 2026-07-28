@@ -58,6 +58,8 @@
 
 ## 最近维护
 
+- 2026-07-28：完成无 AI MVP 试玩验收工作包：`GameSessionView` 安全投影基础属性与最近结构化事件，`AdventureLogPanel` 提供确定性冒险记录；`DELETE /api/game/dev/current` 仅在 server development 门禁下原子清除 current slot；`CurrentGameScreen` 仅在 API 显式授权时显示确认清档按钮。未接入 AI、自由输入或共享 package。
+
 - 2026-07-28：完成 Phase 6 确定性轻量战斗与双结局（battle/defeatedEnemyIds/ending runtime state + start_battle/battle_action intent + 确定性伤害计算 + failQuest/resolveEnding + BattleView/EndingView + BattlePanel/EndingPanel + 三类型固定 seed 战斗与双结局 SQLite 回归；无随机命中、技能、掉落、经验、治疗、装备、普通敌人或 AI）。
 - 2026-07-27：完成 Phase 5 确定性物品取得与主线第二阶段（availableItemIds 蓝图契约 + take_item 裁决与 item_obtained、obtain_item reconciliation、obtainableItems/inventoryItems read model + ItemPanel、三类型固定 seed 物品回归；无 AI、物品使用、战斗或结局）。
 - 2026-07-27：完成 Phase 4 确定性探索与任务推进（move 裁决 + location_visited、纯任务 reconciliation（visit/talk/discover、unlock_quests/closed）、GameSessionView + TravelPanel/QuestTracker、三类型固定 seed 探索回归；无 AI、物品、战斗或结局）。

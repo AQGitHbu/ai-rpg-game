@@ -60,6 +60,7 @@ describe("CurrentGameScreen", () => {
     expect(screen.getByText("查明灭门真相")).toBeInTheDocument();
     expect(screen.getByText("后续阶段能力")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "前往城外官道" })).toBeInTheDocument();
+    expect(screen.getByText("你与陆掌柜交谈。对方以自己的身份和立场回应了你。")).toBeInTheDocument();
     // 刷新恢复（Phase 5）：物品面板的可取得区与背包一并还原。
     expect(screen.getByRole("button", { name: "拾取锈铁钥匙" })).toBeInTheDocument();
     const obtainable = screen.getByRole("region", { name: "可取得物品" });
@@ -67,6 +68,22 @@ describe("CurrentGameScreen", () => {
     const inventory = screen.getByRole("region", { name: "背包" });
     expect(within(inventory).getByText("旧刀")).toBeInTheDocument();
     expect(screen.queryByText("选择游戏类型")).toBeNull();
+  });
+
+  it("developmentTools=true：确认后只请求开发清档接口并回到新开局表单", async () => {
+    const view = buildSessionViewFixture();
+    const fetchMock = stubFetch(async (input, init) => {
+      if (input === "/api/game/current") return jsonResponse(200, { status: "active", view, developmentTools: true });
+      if (input === "/api/game/dev/current" && init?.method === "DELETE") return jsonResponse(200, { status: "cleared" });
+      throw new Error(`unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    const user = userEvent.setup();
+    render(<CurrentGameScreen />);
+
+    await user.click(await screen.findByRole("button", { name: "清除本地试玩存档" }));
+    expect(await screen.findByText("选择游戏类型")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/game/dev/current", { method: "DELETE" });
   });
 
   it("corrupt=UNPARSEABLE_RECORD：显示数据损坏提示，而非数据库不可用", async () => {
@@ -155,8 +172,8 @@ describe("CurrentGameScreen", () => {
     // 任务面板同步更新：旧主线完成后只展示新解锁的 active 任务。
     expect(screen.getByText("追查马帮下落")).toBeInTheDocument();
     expect(screen.queryByText("查明灭门真相")).toBeNull();
-    // 开场快照 NPC 不泄漏到新地点（在场名单来自运行时 presentNpcs）。
-    expect(screen.queryByText(/陆掌柜/)).toBeNull();
+    // 当前地点人物来自运行时 presentNpcs；冒险记录可保留此前已发生的 NPC 对话。
+    expect(screen.getByText(/巡道老兵/)).toBeInTheDocument();
     // 请求 payload 只含 intent + revision。
     expect(JSON.parse(String(submittedRequest?.body))).toEqual({
       intent: { type: "move", locationId: "loc_guandao" },

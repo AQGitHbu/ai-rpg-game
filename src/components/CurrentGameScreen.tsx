@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Panel, Tag } from "@ai-game/ui";
+import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
 import { NewGameSetupForm } from "./NewGameSetupForm";
 import { OpeningGameView } from "./OpeningGameView";
@@ -11,6 +11,7 @@ import { ItemPanel } from "./ItemPanel";
 import { QuestTracker } from "./QuestTracker";
 import { BattlePanel } from "./BattlePanel";
 import { EndingPanel } from "./EndingPanel";
+import { AdventureLogPanel } from "./AdventureLogPanel";
 
 // ---------------------------------------------------------------------------
 // 根页面客户端协调器（Phase 2–5 + Phase 6）：挂载时读取 GET /api/game/current。
@@ -36,6 +37,7 @@ type CurrentGameApiBody = {
   status?: string;
   view?: GameSessionView;
   reason?: string;
+  developmentTools?: boolean;
 };
 
 /** 数据损坏 reason → 可显示的具体原因（区别于基础设施失败）。 */
@@ -49,20 +51,26 @@ export function CurrentGameScreen() {
   const [state, setState] = useState<ScreenState>({ phase: "loading" });
   // 任一面板提交中：场景与移动面板的全部按钮一律禁用，避免并发写入。
   const [actionBusy, setActionBusy] = useState(false);
+  const [developmentTools, setDevelopmentTools] = useState(false);
+
+  function applyCurrentGameBody(body: CurrentGameApiBody | null): void {
+    setDevelopmentTools(body?.developmentTools === true);
+    if (body?.status === "none") {
+      setState({ phase: "none" });
+    } else if (body?.status === "active" && body.view !== undefined) {
+      setState({ phase: "active", view: body.view });
+    } else if (body?.status === "corrupt" && typeof body.reason === "string") {
+      setState({ phase: "corrupt", reason: body.reason });
+    } else {
+      setState({ phase: "unreachable" });
+    }
+  }
 
   async function loadCurrentGame(): Promise<void> {
     try {
       const response = await fetch("/api/game/current");
       const body = (await response.json().catch(() => null)) as CurrentGameApiBody | null;
-      if (body?.status === "none") {
-        setState({ phase: "none" });
-      } else if (body?.status === "active" && body.view !== undefined) {
-        setState({ phase: "active", view: body.view });
-      } else if (body?.status === "corrupt" && typeof body.reason === "string") {
-        setState({ phase: "corrupt", reason: body.reason });
-      } else {
-        setState({ phase: "unreachable" });
-      }
+      applyCurrentGameBody(body);
     } catch {
       setState({ phase: "unreachable" });
     }
@@ -75,15 +83,7 @@ export function CurrentGameScreen() {
         const response = await fetch("/api/game/current");
         const body = (await response.json().catch(() => null)) as CurrentGameApiBody | null;
         if (cancelled) return;
-        if (body?.status === "none") {
-          setState({ phase: "none" });
-        } else if (body?.status === "active" && body.view !== undefined) {
-          setState({ phase: "active", view: body.view });
-        } else if (body?.status === "corrupt" && typeof body.reason === "string") {
-          setState({ phase: "corrupt", reason: body.reason });
-        } else {
-          setState({ phase: "unreachable" });
-        }
+        applyCurrentGameBody(body);
       } catch {
         if (!cancelled) setState({ phase: "unreachable" });
       }
@@ -93,6 +93,33 @@ export function CurrentGameScreen() {
       cancelled = true;
     };
   }, []);
+
+  async function clearDevelopmentSave(): Promise<void> {
+    if (!window.confirm("仅清除当前本地试玩存档并重新开局？此操作只在开发环境可用。")) return;
+    setActionBusy(true);
+    try {
+      const response = await fetch("/api/game/dev/current", { method: "DELETE" });
+      const body = (await response.json().catch(() => null)) as { status?: string } | null;
+      if (response.ok && (body?.status === "cleared" || body?.status === "none")) {
+        setState({ phase: "none" });
+        return;
+      }
+      // 生产或服务异常都不清空当前 UI，避免前端伪造新开局。
+      await loadCurrentGame();
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  const developmentControl = developmentTools ? (
+    <Panel className="setup-result" compact>
+      <Tag variant="warning">开发工具</Tag>
+      <p>仅清除当前本地试玩存档；不会删除数据库文件或其它项目数据。</p>
+      <InlineButton disabled={actionBusy} onClick={() => void clearDevelopmentSave()}>
+        清除本地试玩存档
+      </InlineButton>
+    </Panel>
+  ) : null;
 
   if (state.phase === "loading") {
     return (
@@ -108,6 +135,7 @@ export function CurrentGameScreen() {
     return (
       <div className="game-screen">
         <OpeningGameView view={state.view} />
+        <AdventureLogPanel events={state.view.storyEvents} />
         {hasEnding ? (
           <EndingPanel view={state.view} />
         ) : (
@@ -143,6 +171,7 @@ export function CurrentGameScreen() {
             <QuestTracker quests={state.view.activeQuests} />
           </>
         )}
+        {developmentControl}
       </div>
     );
   }
@@ -154,30 +183,39 @@ export function CurrentGameScreen() {
   if (state.phase === "corrupt") {
     if (state.reason === "INFRASTRUCTURE_FAILURE") {
       return (
-        <Panel className="setup-result" compact>
-          <Tag variant="warning">暂时无法读取</Tag>
-          <p role="alert">
-            本地存档数据库暂时不可用：存档并未丢失，请稍后刷新页面重试。
-          </p>
-        </Panel>
+        <>
+          <Panel className="setup-result" compact>
+            <Tag variant="warning">暂时无法读取</Tag>
+            <p role="alert">
+              本地存档数据库暂时不可用：存档并未丢失，请稍后刷新页面重试。
+            </p>
+          </Panel>
+          {developmentControl}
+        </>
       );
     }
     const detail = CORRUPT_REASON_COPY[state.reason] ?? "存档记录出现未知异常";
     return (
-      <Panel className="setup-result" compact>
-        <Tag variant="danger">存档数据已损坏</Tag>
-        <p role="alert">
-          {detail}（原因代码：{state.reason}）。本阶段不会自动重置或覆盖该存档，
-          恢复方案将在后续阶段提供。
-        </p>
-      </Panel>
+      <>
+        <Panel className="setup-result" compact>
+          <Tag variant="danger">存档数据已损坏</Tag>
+          <p role="alert">
+            {detail}（原因代码：{state.reason}）。本阶段不会自动重置或覆盖该存档，
+            恢复方案将在后续阶段提供。
+          </p>
+        </Panel>
+        {developmentControl}
+      </>
     );
   }
 
   return (
-    <Panel className="setup-result" compact>
-      <Tag variant="warning">读取失败</Tag>
-      <p role="alert">未能读取当前存档：网络或本地服务异常，请刷新页面重试。</p>
-    </Panel>
+    <>
+      <Panel className="setup-result" compact>
+        <Tag variant="warning">读取失败</Tag>
+        <p role="alert">未能读取当前存档：网络或本地服务异常，请刷新页面重试。</p>
+      </Panel>
+      {developmentControl}
+    </>
   );
 }

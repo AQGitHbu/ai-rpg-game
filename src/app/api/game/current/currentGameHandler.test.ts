@@ -65,6 +65,14 @@ afterAll(async () => {
 });
 
 describe("handleCurrentGameRequest", () => {
+  it("开发入口显式公开开发工具可用性，但不公开其它环境信息", async () => {
+    const response = await handleCurrentGameRequest({
+      developmentToolsEnabled: true,
+      getCurrentGame: async () => ({ status: "none" })
+    });
+    expect(await response.json()).toEqual({ status: "none", developmentTools: true });
+  });
+
   it("无存档 ⇒ 200 { status: 'none' }", async () => {
     const entryPoints = openEntryPoints();
     const response = await handleCurrentGameRequest(entryPoints);

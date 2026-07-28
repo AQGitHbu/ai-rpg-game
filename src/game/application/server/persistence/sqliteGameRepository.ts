@@ -3,6 +3,8 @@ import {
   asGameId,
   type ApplyResolvedActionInput,
   type ApplyResolvedActionResult,
+  type ClearCurrentGameResult,
+  type DevelopmentGameRepository,
   type CorruptGameReason,
   type CreateInitialGameInput,
   type CreateInitialGameResult,
@@ -67,7 +69,7 @@ export type SqliteGameRepositoryOptions = {
   readonly logError?: (context: string, error: unknown) => void;
 };
 
-export type SqliteGameRepository = GameRepository & {
+export type SqliteGameRepository = GameRepository & DevelopmentGameRepository & {
   /** 幂等初始化 schema：各方法首次使用时也会自动执行；失败直接抛错（非端口方法）。 */
   initializeSchema(): Promise<void>;
   /** 释放底层客户端：Windows 下便于测试删除临时文件；重复调用安全。 */
@@ -458,10 +460,42 @@ export function createSqliteGameRepository(
     }
   }
 
+  async function clearCurrentGame(): Promise<ClearCurrentGameResult> {
+    try {
+      await ensureSchema();
+      const tx = await getClient().transaction("write");
+      try {
+        const pointer = await tx.execute({
+          sql: "SELECT game_id FROM current_game WHERE slot = 1",
+          args: []
+        });
+        if (pointer.rows.length === 0) {
+          await tx.commit();
+          return { ok: true, status: "none" };
+        }
+        const gameId = pointer.rows[0]?.["game_id"];
+        if (typeof gameId !== "string") {
+          return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        }
+        // 顺序不可交换：先删除指针，再只删除它指向的那一行，绝不触碰 schema/其它表。
+        await tx.execute({ sql: "DELETE FROM current_game WHERE slot = 1", args: [] });
+        await tx.execute({ sql: "DELETE FROM games WHERE game_id = ?", args: [gameId] });
+        await tx.commit();
+        return { ok: true, status: "cleared" };
+      } finally {
+        tx.close();
+      }
+    } catch (error) {
+      logError("clearCurrentGame 事务失败，已回滚", error);
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
+  }
+
   return {
     createInitialGame,
     getCurrentGame,
     applyResolvedAction,
+    clearCurrentGame,
     async initializeSchema() {
       await ensureSchema();
     },

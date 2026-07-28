@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "mvp-no-ai-playable-vertical-slice",
-  "status": "planned",
-  "implementationStatus": "not_started",
+  "status": "completed",
+  "implementationStatus": "implemented",
   "targetBranch": "codex/mvp-no-ai-playable-vertical-slice",
   "worktreeName": "mvp-no-ai-playable-vertical-slice",
   "repositories": [

@@ -15,6 +15,23 @@
 - 开发环境清档只处理当前 RPG 槽位。客户端只在开发构建显示；服务端必须再次检查 `NODE_ENV === "development"`。不删除 DB 文件、schema、其它表、worktree、`.foundation` 或 sibling 仓库。
 - UI/API 仍只能从 `@/game/application` 导入游戏业务；SQLite 只留在 `application/server/persistence`。
 
-## 验收入口
+## 手工试玩路线
 
-实现完成后，按 `docs/superpowers/plans/2026-07-28-mvp-no-ai-playable-vertical-slice.md` 的自动与手工路线执行。手工步骤、成功路线和失败路线将在本文件完成时补全。
+1. 在 RPG 主工作区运行 `npm run dev`，浏览器打开本地地址；若已有旧局，在开发工具中确认“清除本地试玩存档”。
+2. 填写角色名字、身份、世界观背景、故事开端，任选预设类型与叙事风格，确认开局。
+3. 确认开场可见：世界与地点、基础 HP/攻击/防御、在场 NPC、初始物品、任务和开场叙事。
+4. 依次按行动/任务面板完成交谈、调查、移动、拾取与后续移动；每一步确认冒险记录增加模板叙事，刷新页面后地点、物品、任务与记录仍在。
+5. 到 boss 地点开始战斗，持续攻击到成功结局；刷新后结局仍在，且普通行动按钮不再出现。
+6. 清档后重新开局，按同一路线在 boss 战选择撤退，确认失败结局和刷新恢复。
+
+## 自动验收
+
+```powershell
+npm run lint
+npm test
+npm run test:fast
+npm run build
+npm run phase:status
+```
+
+完整 UI 测试需要 foundation 本地依赖可用：在 `../ai-game-foundation` 运行一次 `npm ci`（只安装其 lockfile 锁定的忽略依赖，不修改 package/source）。这是 `file:` 本地包在 Vitest 真实路径解析 React peer dependency 的运行时前置条件。

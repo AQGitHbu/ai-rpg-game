@@ -70,6 +70,11 @@ export type ApplyResolvedActionResult =
   | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" }
   | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" };
 
+/** 开发环境重开局：只清除当前槽位及其指向的一局存档。 */
+export type ClearCurrentGameResult =
+  | { readonly ok: true; readonly status: "cleared" | "none" }
+  | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" };
+
 export interface GameRepository {
   /** 原子创建：蓝图、状态与当前存档指针必须在同一事务内写入，失败整体回滚。 */
   createInitialGame(input: CreateInitialGameInput): Promise<CreateInitialGameResult>;
@@ -81,4 +86,10 @@ export interface GameRepository {
    * 持久化层不认识 PlayerIntent 规则语义，只接收 resolver 已产出的 state 数据。
    */
   applyResolvedAction(input: ApplyResolvedActionInput): Promise<ApplyResolvedActionResult>;
+}
+
+/** 开发工具的可选持久化能力；不扩大正常 game use case 的测试 stub 责任。 */
+export interface DevelopmentGameRepository {
+  /** 原子清除当前槽位；调用方负责在 server 端限制为开发环境。 */
+  clearCurrentGame(): Promise<ClearCurrentGameResult>;
 }
