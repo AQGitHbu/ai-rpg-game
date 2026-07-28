@@ -178,6 +178,28 @@ describe("performAction：start_battle 路由", () => {
   });
 });
 
+describe("performAction：战斗中的 intent 隔离", () => {
+  it("active battle 时 move 直接被拒绝，零写入且不改变当前战斗", async () => {
+    const repository = createFakeGameRepository();
+    const activeState = buildBattleActiveState();
+    const record = buildActiveRecord(activeState);
+    repository.setCurrentResult({ ok: true, status: "active", record });
+
+    const result = await performAction(
+      { intent: { type: "move", locationId: asLocationId("loc_3") }, expectedRevision: record.revision },
+      buildPerformDeps(repository)
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("ACTION_REJECTED");
+    expect(result.feedback.message).toContain("战斗进行中");
+    expect(repository.applyCalls).toHaveLength(0);
+    expect(record.state.battle.status).toBe("active");
+    expect(record.state.currentLocationId).toBe(asLocationId("loc_4"));
+  });
+});
+
 // ===========================================================================
 // battle_action 路由 — 胜利路径
 // ===========================================================================

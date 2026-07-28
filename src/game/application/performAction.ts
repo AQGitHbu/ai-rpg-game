@@ -141,6 +141,22 @@ export async function performAction(
     };
   }
 
+  // Step 2.6: active battle 期间只允许 battle_action。UI 虽然只投影战斗按钮，
+  // 但 HTTP 客户端可以直接构造旧 intent；必须在 application 唯一门面阻断，
+  // 才能保证移动/拾取/交谈等不能绕过回合与战斗状态。
+  if (record.state.battle.status === "active" && command.intent.type !== "battle_action") {
+    const view = projectCurrentView();
+    if (view === null) {
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
+    return {
+      ok: false,
+      code: "ACTION_REJECTED",
+      view,
+      feedback: { ok: false, message: "战斗进行中，只能选择战斗行动。" }
+    };
+  }
+
   // Step 3: 路由到对应的纯规则 resolver。
   const resolverDeps: ResolveActionDependencies = { now: deps.now };
   const battleDeps = { now: deps.now };
