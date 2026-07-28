@@ -1,4 +1,17 @@
 // 应用层公共门面：UI/API 只能从这里导入游戏业务能力，后续任务在此追加导出。
+// Phase 4A：候选生成纯 port（只有类型与冻结常量；server factory 不得经此导出）。
+export {
+  SCENARIO_CANDIDATE_CONTRACT_VERSION,
+  SCENARIO_CANDIDATE_FAILURE_CATEGORIES,
+  type ScenarioCandidateAttempt,
+  type ScenarioCandidateContractVersion,
+  type ScenarioCandidateFailureCategory,
+  type ScenarioCandidateSource,
+  type ScenarioGenerationEvent,
+  type ScenarioGenerationRequest,
+  type ScenarioGenerationSource,
+  type ScenarioGenerationStage
+} from "./scenarioGeneration";
 export {
   createGame,
   type CreateGameCommand,

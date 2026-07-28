@@ -1,0 +1,7 @@
+{
+  "$comment": "空响应故障：source 直接返回 ok=false，category=empty_response。",
+  "failureMode": "empty_response",
+  "diagnostics": [
+    "FIXTURE_EMPTY_RESPONSE"
+  ]
+}

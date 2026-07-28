@@ -1,0 +1,7 @@
+{
+  "$comment": "超时故障：source 直接返回 ok=false，category=timeout。",
+  "failureMode": "timeout",
+  "diagnostics": [
+    "FIXTURE_TIMEOUT"
+  ]
+}

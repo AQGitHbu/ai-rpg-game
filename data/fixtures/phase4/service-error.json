@@ -1,0 +1,7 @@
+{
+  "$comment": "5xx 服务故障：source 直接返回 ok=false，category=service_error。",
+  "failureMode": "service_error",
+  "diagnostics": [
+    "FIXTURE_SERVICE_ERROR"
+  ]
+}

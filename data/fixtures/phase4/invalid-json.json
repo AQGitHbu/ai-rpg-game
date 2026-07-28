@@ -1,0 +1,4 @@
+{
+  "$comment": "无效 JSON 故障：source 解析 responseText 失败后映射 invalid_json。",
+  "responseText": "{not-json"
+}

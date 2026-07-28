@@ -1,0 +1,7 @@
+{
+  "$comment": "429 限流故障：source 直接返回 ok=false，category=rate_limited。",
+  "failureMode": "rate_limited",
+  "diagnostics": [
+    "FIXTURE_RATE_LIMITED"
+  ]
+}
