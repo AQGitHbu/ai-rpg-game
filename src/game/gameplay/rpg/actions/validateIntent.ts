@@ -23,7 +23,9 @@ export type ValidationCode =
   | "FACT_ALREADY_DISCOVERED"
   | "UNKNOWN_ITEM"
   | "ITEM_NOT_AVAILABLE_HERE"
-  | "ITEM_ALREADY_OWNED";
+  | "ITEM_ALREADY_OWNED"
+  // Phase 6：战斗 intent 由 application 路由到 battle facade，不应进入 actions facade。
+  | "INTENT_NOT_ROUTED";
 
 export type ValidateIntentResult =
   | { readonly ok: true }
@@ -156,5 +158,9 @@ export function validateIntent(
       }
       return { ok: true };
     }
+    // Phase 6：战斗 intent 由 application 路由到 battle facade，不应进入 actions facade。
+    case "start_battle":
+    case "battle_action":
+      return { ok: false, code: "INTENT_NOT_ROUTED", params: {} };
   }
 }

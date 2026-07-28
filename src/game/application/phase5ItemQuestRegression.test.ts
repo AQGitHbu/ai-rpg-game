@@ -198,7 +198,7 @@ describe.each(CASES)("Phase 5 物品取得回归（$gameType）", ({ gameType, f
     expect(activeNames).toContain(stage3.name);
     const stage3View = taken.view.activeQuests.find((quest) => quest.name === stage3.name);
     expect(stage3View?.objectives).toEqual([
-      { label: "战胜强敌", completed: false, supported: false }
+      { label: "战胜强敌", completed: false, supported: true }
     ]);
     await writer.close();
 

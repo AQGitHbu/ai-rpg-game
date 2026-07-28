@@ -94,6 +94,8 @@ function rejectionFeedback(
       return { message: "这里没有这件物品。" };
     case "ITEM_ALREADY_OWNED":
       return { message: `你已经持有${itemName(blueprint, result.params.itemId)}了。` };
+    case "INTENT_NOT_ROUTED":
+      return { message: "此行动类型应由战斗系统处理。" };
   }
 }
 
@@ -228,5 +230,14 @@ export function resolveAction(
         feedback: { message: `你取得了${itemName(blueprint, intent.itemId)}。` },
       };
     }
+    // Phase 6：战斗 intent 由 application 路由到 battle facade，不应进入 actions facade。
+    case "start_battle":
+    case "battle_action":
+      return {
+        ok: false,
+        code: "INTENT_NOT_ROUTED",
+        params: {},
+        feedback: { message: "此行动类型应由战斗系统处理。" },
+      };
   }
 }

@@ -214,7 +214,7 @@ describe("projectGameSessionView：defeat_enemy objective 渲染（Phase 5 Task 
     // UI 不得把它呈现为本阶段可完成的目标。
     const m3 = view.activeQuests.find((quest) => quest.name === questName("quest_m3"));
     expect(m3?.objectives).toEqual([
-      { label: "战胜强敌", completed: false, supported: false }
+      { label: "战胜强敌", completed: false, supported: true }
     ]);
   });
 });

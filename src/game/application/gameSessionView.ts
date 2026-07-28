@@ -20,11 +20,13 @@ import {
 // seed / inputDigest。OpeningGameView 类型原样保留（Task 4 前 UI 仍引用）。
 // ---------------------------------------------------------------------------
 
-/** 会话视图的可用行动：在 opening 三种之上追加 move 与 take_item（UI 安全的 plain string）。 */
+/** 会话视图的可用行动：在 opening 三种之上追加 move、take_item、start_battle 与 battle_action。 */
 export type SessionActionView =
   | AvailableActionView
   | { readonly type: "move"; readonly locationId: string; readonly label: string }
-  | { readonly type: "take_item"; readonly itemId: string; readonly label: string };
+  | { readonly type: "take_item"; readonly itemId: string; readonly label: string }
+  | { readonly type: "start_battle"; readonly enemyId: string; readonly label: string }
+  | { readonly type: "battle_action"; readonly action: "attack" | "guard" | "withdraw"; readonly label: string };
 
 /** 任务 objective 的展示视图：未支持类型（defeat_enemy）标记为后续阶段能力。 */
 export type QuestObjectiveView = {
@@ -68,6 +70,10 @@ function toSessionActionView(action: AvailableAction): SessionActionView {
       return { type: "move", locationId: action.locationId, label: action.label };
     case "take_item":
       return { type: "take_item", itemId: action.itemId, label: action.label };
+    case "start_battle":
+      return { type: "start_battle", enemyId: action.enemyId, label: action.label };
+    case "battle_action":
+      return { type: "battle_action", action: action.action, label: action.label };
   }
 }
 
@@ -105,7 +111,8 @@ function projectObjectiveView(
       // Phase 5 已支持：完成态跟随背包；文案保持中性，不泄漏未取得的物品名。
       return { label: "取得关键物品", completed, supported: true };
     case "defeat_enemy":
-      return { label: "战胜强敌", completed: false, supported: false };
+      // Phase 6：已支持——完成态跟随 defeatedEnemyIds。
+      return { label: "战胜强敌", completed, supported: true };
   }
 }
 

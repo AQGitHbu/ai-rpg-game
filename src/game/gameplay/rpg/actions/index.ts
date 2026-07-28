@@ -1,4 +1,4 @@
-import type { GameState, ScenarioBlueprint, FactId, ItemId, LocationId, NpcId } from "@/game/domain";
+import type { EnemyId, GameState, ScenarioBlueprint, FactId, ItemId, LocationId, NpcId } from "@/game/domain";
 
 // ---------------------------------------------------------------------------
 // actions facade（Phase 3 Task 2）：application 可用的唯一 actions 入口。
@@ -30,7 +30,9 @@ export type AvailableAction =
   | { readonly type: "talk"; readonly npcId: NpcId; readonly label: string }
   | { readonly type: "investigate"; readonly factId: FactId; readonly label: string }
   | { readonly type: "move"; readonly locationId: LocationId; readonly label: string }
-  | { readonly type: "take_item"; readonly itemId: ItemId; readonly label: string };
+  | { readonly type: "take_item"; readonly itemId: ItemId; readonly label: string }
+  | { readonly type: "start_battle"; readonly enemyId: EnemyId; readonly label: string }
+  | { readonly type: "battle_action"; readonly action: "attack" | "guard" | "withdraw"; readonly label: string };
 
 /** 检查事件账本中是否已有特定地点的观察事件。 */
 function hasObservedLocation(state: GameState, locationId: LocationId): boolean {
@@ -115,6 +117,35 @@ export function projectAvailableActions(
         label: `拾取${item.name}`,
       });
     }
+  }
+
+  // Phase 6: start_battle — 位于敌人地点、敌人是 active stage 3 defeat_enemy 目标、未已击败
+  if (state.battle.status === "idle" && state.ending === null) {
+    for (const enemy of blueprint.enemies) {
+      if (enemy.locationId !== state.currentLocationId) continue;
+      if (state.defeatedEnemyIds.includes(enemy.id)) continue;
+      // 只投影 active stage 3 defeat_enemy 目标
+      const isStage3Target = blueprint.quests.some((quest) => {
+        if (quest.kind !== "main" || quest.stage !== 3) return false;
+        const questState = state.quests.find((qs) => qs.questId === quest.id);
+        return questState?.status === "active" &&
+          quest.objectives.some((obj) => obj.kind === "defeat_enemy" && obj.enemyId === enemy.id);
+      });
+      if (isStage3Target) {
+        actions.push({
+          type: "start_battle",
+          enemyId: enemy.id,
+          label: `挑战${enemy.name}`,
+        });
+      }
+    }
+  }
+
+  // Phase 6: battle_action — 战斗中才投影
+  if (state.battle.status === "active") {
+    actions.push({ type: "battle_action", action: "attack", label: "攻击" });
+    actions.push({ type: "battle_action", action: "guard", label: "防御" });
+    actions.push({ type: "battle_action", action: "withdraw", label: "撤退" });
   }
 
   return actions;
