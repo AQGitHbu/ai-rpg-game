@@ -1,30 +1,29 @@
 {
   "schemaVersion": 1,
-  "phase": "mvp-no-ai-playable-vertical-slice",
-  "status": "completed",
-  "implementationStatus": "implemented",
-  "targetBranch": "codex/mvp-no-ai-playable-vertical-slice",
-  "worktreeName": "mvp-no-ai-playable-vertical-slice",
+  "phase": "mvp-phase-4a-ai-contract-simulation",
+  "status": "planned",
+  "implementationStatus": "not_started",
+  "targetBranch": "codex/mvp-phase-4a-ai-contract-simulation",
+  "worktreeName": "mvp-phase-4a-ai-contract-simulation",
   "repositories": [
     "ai-rpg-game"
   ],
-  "plan": "docs/superpowers/plans/2026-07-28-mvp-no-ai-playable-vertical-slice.md",
+  "plan": "docs/superpowers/plans/2026-07-28-mvp-phase-4a-ai-contract-simulation.md",
   "entryDocs": [
     "docs/游戏设计原则.md",
     "docs/游戏开发规范.md",
     "docs/Agent文档索引.md",
+    "docs/agent/当前开发阶段.md",
     "docs/agent/MVP核心闭环.md",
-    "docs/agent/行动裁决.md",
-    "docs/agent/探索与任务推进.md",
-    "docs/agent/物品与任务奖励.md",
-    "docs/agent/战斗与结局.md",
-    "docs/agent/无AI试玩验收.md",
+    "docs/agent/AI环境.md",
     "docs/策划文档/AI生成RPG_MVP.md",
     "docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md",
-    "docs/superpowers/plans/2026-07-28-mvp-no-ai-playable-vertical-slice.md"
+    "docs/superpowers/specs/2026-07-28-ai-contract-simulation-and-dynamic-opening-design.md",
+    "docs/superpowers/plans/2026-07-28-mvp-phase-4a-ai-contract-simulation.md"
   ],
   "acceptanceCommands": [
     "npm run lint",
+    "npm run typecheck",
     "npm test",
     "npm run test:fast",
     "npm run build",
