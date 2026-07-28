@@ -11,7 +11,7 @@
 - **Phase 4A：AI 契约模拟与生成体验。** 用版本化 fixture 和可注入的假适配器驱动完整生成链路、错误分支和 UI；不发起网络 AI 请求。
 - **Phase 4B：真实动态开局。** 在 4A 的契约、验证器、降级和 UI 已证明可用后，抽取并接入真实 transport，以同一输出契约替换假适配器。
 
-这保留既有确定性 fallback 和 704 项回归测试作为可用基线。目标是先证明系统能安全消费 AI *候选*，再验证模型能稳定产生这些候选；两者不能互相替代。
+这保留既有确定性 fallback 和全量回归测试套件（2026-07 时点约 704 项）作为可用基线。目标是先证明系统能安全消费 AI *候选*，再验证模型能稳定产生这些候选；两者不能互相替代。
 
 ## 2. 范围与非目标
 
@@ -21,7 +21,7 @@
 - 建立代表性成功 fixture，以及越权、格式、预算、引用、任务图、类型边界和服务故障 fixture。
 - 用可控延迟、阶段事件和失败模式的 fake adapter 覆盖生成页的 loading、retry、fallback 与错误表达。
 - 保持 `createGame` 的原子初始化：只有通过既有 validate/compile 的候选才能保存；其余路径继续使用确定性 fallback。
-- 为 UI 提供真实发生的生成阶段 read model，而不是用定时器伪造成功进度。
+- 为测试和开发诊断记录真实发生的生成阶段，而不是用定时器伪造成功进度；玩家 UI 在请求飞行中只显示诚实的等待态（见 §4）。
 - 在测试和开发工具中记录 fixture ID、契约版本和结果；普通玩家路径不暴露 fixture 选择器。
 
 ### Phase 4B 包含
@@ -56,14 +56,38 @@ type ScenarioGenerationStage =
   | "repairing"
   | "retrying"
   | "falling_back"
-  | "completed";
+  | "completed"   // 终态：携带 outcome "generated" | "fallback"
+  | "failed";     // 终态：携带稳定失败类别（如事务失败）
+
+type ScenarioCandidateFailureCategory =
+  | "invalid_json"
+  | "schema_violation"
+  | "budget_exceeded"
+  | "reference_broken"
+  | "unreachable_ending"
+  | "cross_type_content"
+  | "illegal_entity"
+  | "timeout"
+  | "rate_limited"
+  | "service_error"
+  | "empty_response";
+
+type ScenarioCandidateAttempt = {
+  readonly contractVersion: string;
+  readonly origin: "fixture" | "live";
+  readonly outcome:
+    | { readonly ok: true; readonly candidate: ScenarioBlueprintCandidate }
+    | { readonly ok: false; readonly category: ScenarioCandidateFailureCategory };
+  /** 非敏感诊断摘要：不含 prompt、完整玩家输入或原始响应。 */
+  readonly diagnostics: readonly string[];
+};
 
 type ScenarioCandidateSource = {
   generate(request: ScenarioGenerationRequest): Promise<ScenarioCandidateAttempt>;
 };
 ```
 
-`ScenarioCandidateAttempt` 必须带候选或稳定失败类别、来源（`fixture` / `live`）、契约版本和非敏感诊断摘要。应用层只消费该结果，通过现有 validate/compile 和 transactional repository 完成创建。AI source 不获得 repository 或状态写权限。
+阶段机的终态集合在 4A 固定为 `completed` / `failed`；4B 引入取消时追加 `cancelled` 并升级契约版本。失败类别以上述枚举为初始集合；新增类别必须同步升级契约版本并补齐对应 fixture 与 manifest。应用层只消费 attempt 结果，通过现有 validate/compile 和 transactional repository 完成创建。AI source 不获得 repository 或状态写权限。
 
 fixture 以 JSON 保存于 `data/fixtures/phase4/`，每份附带 manifest：输入类型、seed、候选/故障模式、预期阶段序列、预期诊断码和是否必须 fallback。至少覆盖：武侠、科幻、都市的合法候选；无效 JSON；未知枚举；重复 ID；悬空引用；内容超预算；不可达结局；跨类型内容；非法属性/物品；超时；429；5xx；空响应。
 
@@ -81,13 +105,15 @@ NewGameInput
 → opening read model
 ```
 
-候选失败时流程是：确定性修复一次 → 同一 source 重试一次 → `createFallbackBlueprint(input, seed)` → validate/compile/save。每个分支均产生结构化阶段与诊断；任何失败都不能留下半存档。
+候选失败时流程是：确定性修复一次 → 同一 source 重试一次 → `createFallbackBlueprint(input, seed, { profiles })` → validate/compile/save。确定性修复住在 `createGame` 编排层（source 之外），fixture source 与 4B live source 共享同一实现：只做机械、无内容创造的修复（剔除未知字段、trim 文本、裁剪超预算列表尾部），绝不新增或改写剧情内容，修复后必须重新通过完整 validate。fixture 至少各提供一份“可修复”与“不可修复”样本覆盖两分支。每个分支均产生结构化阶段与诊断；任何失败都不能留下半存档。
 
-4A 的 fake source 可以按 fixture 产生上述阶段、延迟与错误，但不应在 UI 内硬编码网络延迟。UI 仅根据 application 暴露的生成状态渲染“生成中、校验中、正在使用稳定模板、已完成”；没有真实阶段事件时只显示诚实的“正在生成世界”。取消只在 4B transport 已支持且未写入存档时开放。
+阶段记录仅供 source/orchestration contract test、结构化日志和受控开发诊断使用；它不随玩家 API 返回，也不含 prompt、原始响应或玩家原文。`createGame` 保持单次 `POST /api/game`：请求飞行中 UI 只显示诚实的“正在生成世界”等待态，不引入轮询端点或流式响应；4B 若需飞行中实时进度，作为独立决策另行评估。
+
+4A 的 fake source 可以按 fixture 产生上述阶段、延迟与错误，但不应在 UI 内硬编码网络延迟。延迟只用于验证等待态、按钮禁用与错误恢复；阶段序列不驱动飞行中的玩家 UI。取消只在 4B transport 已支持且未写入存档时开放。
 
 ## 5. UI 与边界
 
-新游戏创建页提交后进入生成状态视图。它需要：可访问的当前状态文本、等待说明、确定性 fallback 已启用的提示、稳定的失败说明与重试动作。成功后仍进入当前开场 read model；UI 不知道 fixture、provider、prompt、seed 或原始蓝图。
+新游戏创建页提交后进入生成状态视图。它需要：可访问的当前状态文本、等待说明、确定性 fallback 已启用的提示、稳定的失败说明与重试动作。成功后仍进入当前开场 read model。`CreateGameResult.source` 扩展为 `"generated" | "fallback"` 二元值；`POST /api/game` 成功响应明确返回同名的安全字段，`CurrentGameScreen` 仅在本次创建后用它显示降级提示。刷新恢复仍只返回持久化的 read model，故不承诺保留这条瞬时提示。`fixture` / `live` 的区分只存在于 attempt 诊断与开发工具，UI 不知道 fixture、provider、prompt、seed 或原始蓝图，4A→4B 切换时 UI 零改动。
 
 UI/API/store 仍然只导入 `@/game/application` facade。fixture source、live source、环境变量、日志和 provider 都留在 `src/game/application/server/`；领域、玩法、客户端 bundle 和 SQLite adapter 均不依赖 AI provider。Phase 4A 的模拟能力先保留在 RPG 内，因为它目前只有这一个产品消费者。
 
