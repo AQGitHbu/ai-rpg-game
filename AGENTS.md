@@ -28,4 +28,4 @@
 
 - 分支放 `.worktrees/`，不用 `git checkout`
 - `../ai-game-foundation` 是受保护的 sibling Git 仓库，`.foundation` 是其 junction：禁止删除、移动、重建二者，尤其禁止递归删除 junction；异常时停止并按共享流程恢复/链接。
-- **Windows worktree 清理禁令**：只要 phase worktree 内存在 `.foundation` junction，禁止执行 `git worktree remove`（它可能沿 junction 递归到 `../ai-game-foundation`）。不得尝试手动替代删除；保留残留 worktree 并报告给仓库维护者处理。
+- **Windows worktree 清理**：只要 phase worktree 内存在 `.foundation` junction，禁止直接执行 `git worktree remove`（它可能沿 junction 递归到 `../ai-game-foundation`）。必须从本仓 main 运行 `node ../ai-game-foundation/scripts/cleanupConsumerWorktree.mjs --repository . --worktree-name <name>`；该工具会无递归解绑 junction、复核 foundation 完整，再调用 Git。工具报错时保留残留 worktree 并报告。
