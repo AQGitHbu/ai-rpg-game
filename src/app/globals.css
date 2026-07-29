@@ -540,3 +540,103 @@ select:focus,
     grid-template-columns: 1fr;
   }
 }
+
+/* Phase 7 Task 4：地图 / 地点场景与本地 SVG 视觉档案的 RPG 主题 */
+.adventure-visual {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.adventure-map {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.location-scene {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: end;
+  padding: clamp(14px, 3vw, 24px);
+  border: 1px solid var(--game-surface-border);
+  border-radius: 14px;
+  background: rgb(7 12 9 / 34%);
+}
+
+.scene-slot-left {
+  grid-column: 1;
+}
+
+.scene-slot-center {
+  grid-column: 2;
+}
+
+.scene-slot-right {
+  grid-column: 3;
+}
+
+.scene-slot-foreground {
+  grid-column: 1 / -1;
+}
+
+.scene-hotspot {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #405044;
+  border-radius: 12px;
+  background: rgb(5 9 6 / 55%);
+  color: var(--game-text-primary);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.scene-hotspot:hover {
+  transform: translateY(-2px);
+  border-color: #809074;
+}
+
+.scene-hotspot:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.scene-hotspot:focus-visible,
+.adventure-map :focus-visible {
+  outline: 2px solid var(--game-accent);
+  outline-offset: 3px;
+  border-color: var(--game-accent);
+}
+
+.adventure-details {
+  display: grid;
+  gap: 12px;
+  color: var(--game-text-muted);
+  line-height: 1.7;
+}
+
+/* 窄屏：场景槽位退化为单列列表，地图节点同样单列。 */
+@media (max-width: 700px) {
+  .location-scene {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .scene-slot-left,
+  .scene-slot-center,
+  .scene-slot-right,
+  .scene-slot-foreground {
+    grid-column: auto;
+  }
+
+  .adventure-map {
+    grid-template-columns: 1fr;
+  }
+}
