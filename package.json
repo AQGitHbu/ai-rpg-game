@@ -33,6 +33,8 @@
     "worktree:remove": "node scripts/removeWorktree.mjs",
     "test:worktree-remove": "node --test scripts/removeWorktree.node-test.mjs",
     "test:handoff-check": "node --test scripts/checkHandoff.node-test.mjs",
+    "test:phase4b-ai-smoke-script": "node --test scripts/phase4bAiSmoke.node-test.mjs",
+    "smoke:ai:phase4b": "node scripts/phase4bAiSmoke.mjs",
     "handoff:check:docs": "node scripts/checkHandoff.mjs",
     "handoff:check": "node scripts/checkHandoff.mjs --strict-branch",
     "setup": "npm run env:bootstrap && npm run bootstrap:foundation && npm ci && npm run sync:standards && npm run doctor"
