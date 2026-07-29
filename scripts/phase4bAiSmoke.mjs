@@ -27,8 +27,9 @@ import { projectRoot, readAiEnv } from "./aiEnv.mjs";
 //
 // 本文件是 .mjs（Node 直接运行）：真实链路的 TS 依赖只在 opt-in 实跑路径里，
 // 经 node:module registerHooks 惰性加载（Node 24 原生 strip-types；钩子补齐
-// tsconfig 的 @/ 别名、无扩展名相对导入与 JSON 导入）。测试只 import 下方纯函数
-// 并注入 mock，绝不加载 TS、绝不触网。
+// tsconfig 的 @/ 别名、无扩展名相对导入与 JSON 导入）。门禁测试主体 import 下方
+// 纯函数并注入 mock；另有一条离线实跑用例以占位 AI 配置驱动 realRunCase
+// （unavailable → fallback，会加载 TS 但绝不触网）。
 // ---------------------------------------------------------------------------
 
 const DIAG_PREFIX = "[phase4b-smoke]";
@@ -196,7 +197,8 @@ export async function runPhase4bAiSmoke(deps) {
 }
 
 // ---------------------------------------------------------------------------
-// 真实实跑装配（仅 opt-in CLI 路径使用；门禁测试不触达以下任何代码）。
+// 真实实跑装配（opt-in CLI 路径使用；门禁测试仅经离线 fallback 用例触达，
+// 即 overrides.aiEnv 注入占位配置 → unavailable source，不发起任何请求）。
 // ---------------------------------------------------------------------------
 
 let tsHooksInstalled = false;
@@ -280,27 +282,33 @@ function realRunEnvCheck() {
   return { ok: result.status === 0 };
 }
 
-/** 从（本就脱敏的）audit 事件提取稳定诊断码与 token 合计；不透传其他字段。 */
-function summarizeAuditEvents(events) {
+/** 从（本就脱敏的）audit 事件提取稳定诊断码、token 合计与成本估算合计；
+ * 非对象/非数值字段一律忽略，绝不透传其他字段。 */
+export function summarizeAuditEvents(events) {
   const codes = [];
   const usage = {};
+  let estimatedCostUsd;
   const addTokens = (key, value) => {
     if (typeof value !== "number") return;
     usage[key] = (usage[key] ?? 0) + value;
   };
   for (const event of events) {
+    if (!event || typeof event !== "object") continue;
     if (event.outcome === "ok") codes.push("attempt_ok");
     else if (typeof event.transportCode === "string") codes.push(`transport_${event.transportCode}`);
     else if (typeof event.category === "string") codes.push(event.category);
     addTokens("promptTokens", event.promptTokens);
     addTokens("completionTokens", event.completionTokens);
     addTokens("totalTokens", event.totalTokens);
+    if (typeof event.estimatedCostUsd === "number") {
+      estimatedCostUsd = (estimatedCostUsd ?? 0) + event.estimatedCostUsd;
+    }
   }
-  return { codes, usage: Object.keys(usage).length > 0 ? usage : undefined };
+  return { codes, usage: Object.keys(usage).length > 0 ? usage : undefined, estimatedCostUsd };
 }
 
 /** blueprint 预算复查：与 domain CONTENT_BUDGET 完全对照（双结局包含在内）。 */
-function checkContentBudget(blueprint, CONTENT_BUDGET) {
+export function checkContentBudget(blueprint, CONTENT_BUDGET) {
   const mainCount = blueprint.locations.filter((entry) => entry.kind === "main").length;
   const hiddenCount = blueprint.locations.filter((entry) => entry.kind === "hidden").length;
   const npcCount = blueprint.npcs.length;
@@ -407,10 +415,17 @@ export async function realRunCase(smokeCase, overrides = {}) {
       console.log = originalConsoleLog;
     }
     const durationMs = performance.now() - startedAt;
-    const { codes, usage } = summarizeAuditEvents(auditEvents);
+    const { codes, usage, estimatedCostUsd } = summarizeAuditEvents(auditEvents);
 
     if (!result.ok) {
-      return { gameType: smokeCase.gameType, ok: false, failureCode: result.code, durationMs, codes };
+      return {
+        gameType: smokeCase.gameType,
+        ok: false,
+        failureCode: result.code,
+        durationMs,
+        codes,
+        estimatedCostUsd,
+      };
     }
 
     const reload = await entry.getCurrentGame();
@@ -439,6 +454,7 @@ export async function realRunCase(smokeCase, overrides = {}) {
       durationMs,
       codes,
       usage,
+      estimatedCostUsd,
       reloadOk,
       endingCount,
       budgetOk,

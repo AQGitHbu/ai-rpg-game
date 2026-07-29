@@ -3,13 +3,18 @@ import test from "node:test";
 import {
   SMOKE_CASES,
   buildCaseSummaryLine,
+  checkContentBudget,
+  realRunCase,
   runPhase4bAiSmoke,
+  summarizeAuditEvents,
   validateCaseReport,
 } from "./phase4bAiSmoke.mjs";
 
 // ---------------------------------------------------------------------------
-// Phase 4B 真实 AI smoke 的安全门禁测试：全部 mock runEnvCheck/runCase，
-// 绝不访问网络。真实 smoke（RUN_REAL_AI_SMOKE=1）只允许人工 opt-in 执行。
+// Phase 4B 真实 AI smoke 的安全门禁测试：绝不访问网络。主体用例 mock
+// runEnvCheck/runCase；末尾另有一条离线实跑用例，以占位 AI 配置驱动真实
+// realRunCase（unavailable → 确定性 fallback，临时 SQLite，fetch 记录器拦截）。
+// 真实 smoke（RUN_REAL_AI_SMOKE=1）只允许人工 opt-in 执行。
 // ---------------------------------------------------------------------------
 
 const SECRET_ENV = {
@@ -214,4 +219,146 @@ test("摘要行只包含白名单字段，usage 缺失时省略 tokens", () => {
   const parsed = JSON.parse(line.slice(line.indexOf("{")));
   assert.deepEqual(Object.keys(parsed).sort(), ["codes", "durationMs", "gameType", "source"]);
   assert.ok(!line.includes("should-never-appear"));
+});
+
+// ---------------------------------------------------------------------------
+// 真实路径纯函数直接覆盖：checkContentBudget / summarizeAuditEvents。
+// ---------------------------------------------------------------------------
+
+/** 与 domain CONTENT_BUDGET 同值的字面量（测试不加载 TS，预算经参数注入）。 */
+const TEST_BUDGET = Object.freeze({
+  mainLocations: 4,
+  hiddenLocationsMax: 1,
+  coreNpcsMin: 4,
+  coreNpcsMax: 6,
+  companionsMax: 1,
+  sideQuestsMax: 2,
+  endings: 2,
+});
+
+/** 刚好踩在预算内的最小 blueprint 骨架（只含 checkContentBudget 读的字段）。 */
+function budgetOkBlueprint() {
+  return {
+    locations: [
+      { kind: "main" },
+      { kind: "main" },
+      { kind: "main" },
+      { kind: "main" },
+      { kind: "hidden" },
+    ],
+    npcs: [
+      { isCompanion: true },
+      { isCompanion: false },
+      { isCompanion: false },
+      { isCompanion: false },
+    ],
+    quests: [{ kind: "main" }, { kind: "side" }, { kind: "side" }],
+    endings: [{}, {}],
+  };
+}
+
+test("checkContentBudget：预算内 blueprint 通过，含上限边界", () => {
+  assert.equal(checkContentBudget(budgetOkBlueprint(), TEST_BUDGET), true);
+  // 下限边界：无隐藏地点 / 无同伴 / 无支线也合法。
+  const minimal = budgetOkBlueprint();
+  minimal.locations = minimal.locations.filter((entry) => entry.kind === "main");
+  minimal.npcs = minimal.npcs.map(() => ({ isCompanion: false }));
+  minimal.quests = [{ kind: "main" }];
+  assert.equal(checkContentBudget(minimal, TEST_BUDGET), true);
+});
+
+test("checkContentBudget：主地点/隐藏/NPC/同伴/支线/结局越界各自判败", () => {
+  const mutations = [
+    (bp) => bp.locations.push({ kind: "main" }), // 5 个主地点
+    (bp) => bp.locations.splice(0, 1), // 3 个主地点
+    (bp) => bp.locations.push({ kind: "hidden" }), // 2 个隐藏地点
+    (bp) => bp.npcs.splice(0, 1), // 3 个 NPC（低于下限）
+    (bp) => bp.npcs.push({}, {}, {}), // 7 个 NPC（超上限）
+    (bp) => bp.npcs.push({ isCompanion: true }), // 2 个同伴
+    (bp) => bp.quests.push({ kind: "side" }), // 3 条支线
+    (bp) => bp.endings.push({}), // 3 个结局
+    (bp) => bp.endings.splice(0, 1), // 1 个结局
+  ];
+  for (const [index, mutate] of mutations.entries()) {
+    const blueprint = budgetOkBlueprint();
+    mutate(blueprint);
+    assert.equal(checkContentBudget(blueprint, TEST_BUDGET), false, `变异 #${index} 应判败`);
+  }
+});
+
+test("summarizeAuditEvents：混合事件提取诊断码、tokens 与成本合计", () => {
+  const summary = summarizeAuditEvents([
+    {
+      outcome: "failure",
+      transportCode: "timeout",
+      promptTokens: 100,
+      completionTokens: 20,
+      totalTokens: 120,
+      estimatedCostUsd: 0.001,
+    },
+    { outcome: "failure", category: "schema_violation" },
+    {
+      outcome: "ok",
+      promptTokens: 200,
+      completionTokens: 80,
+      totalTokens: 280,
+      estimatedCostUsd: 0.002,
+    },
+  ]);
+  assert.deepEqual(summary.codes, ["transport_timeout", "schema_violation", "attempt_ok"]);
+  assert.deepEqual(summary.usage, { promptTokens: 300, completionTokens: 100, totalTokens: 400 });
+  assert.ok(Math.abs(summary.estimatedCostUsd - 0.003) < 1e-12);
+});
+
+test("summarizeAuditEvents：畸形事件与非数值字段一律忽略，空入参得空摘要", () => {
+  const summary = summarizeAuditEvents([
+    null,
+    "not-an-object",
+    42,
+    { outcome: "ok", promptTokens: "100", estimatedCostUsd: "0.5" },
+    { transportCode: 500, category: 7 },
+  ]);
+  // 只有合法的 ok 事件产生诊断码；字符串/数字字段不计入 tokens 与成本。
+  assert.deepEqual(summary.codes, ["attempt_ok"]);
+  assert.equal(summary.usage, undefined);
+  assert.equal(summary.estimatedCostUsd, undefined);
+
+  const empty = summarizeAuditEvents([]);
+  assert.deepEqual(empty, { codes: [], usage: undefined, estimatedCostUsd: undefined });
+});
+
+// ---------------------------------------------------------------------------
+// 离线实跑：用占位 AI 配置驱动真实 realRunCase（加载 TS 链路，不触网）。
+// ---------------------------------------------------------------------------
+
+/** 占位配置：parseAiRuntimeConfig 必判 unavailable（PLACEHOLDER 诊断），
+ * 值本身兼作“绝不入日志”的泄漏探针。 */
+const OFFLINE_PLACEHOLDER_ENV = {
+  AI_API_BASE_URL: "https://offline-probe-should-never-appear.invalid/v1",
+  AI_MODEL: "replace-me",
+  AI_API_KEY: "<offline-probe-key-should-never-appear>",
+};
+
+test("离线实跑：占位配置驱动真实链路 → 确定性 fallback，零 fetch，输出不含配置值", async () => {
+  const { result, fetchCalls } = await withFetchRecorder(() =>
+    realRunCase(SMOKE_CASES[0], { aiEnv: OFFLINE_PLACEHOLDER_ENV }),
+  );
+  assert.equal(fetchCalls.length, 0);
+
+  // 完整穿过真实装配：创建成功、降级 fallback、存档可 reload、预算/双结局复查通过。
+  assert.equal(result.ok, true);
+  assert.equal(result.source, "fallback");
+  assert.equal(result.reloadOk, true);
+  assert.equal(result.endingCount, 2);
+  assert.equal(result.budgetOk, true);
+  assert.deepEqual(validateCaseReport(result), []);
+
+  // 摘要行与 report 序列化中都不得出现任何配置值或玩家输入。
+  const line = buildCaseSummaryLine(result);
+  const serialized = `${line}\n${JSON.stringify(result)}`;
+  for (const value of Object.values(OFFLINE_PLACEHOLDER_ENV)) {
+    assert.ok(!serialized.includes(value));
+  }
+  assert.ok(!serialized.includes(SMOKE_CASES[0].input.worldPremise));
+  assert.ok(!serialized.includes(SMOKE_CASES[0].input.characterName));
 });
