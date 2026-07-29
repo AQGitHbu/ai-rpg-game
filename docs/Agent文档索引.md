@@ -20,6 +20,7 @@
 | 战斗与结局 | `agent/战斗与结局.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现：boss 轻量回合战、任务成功/失败 outcome 与双结局 |
 | 无 AI 试玩验收 | `agent/无AI试玩验收.md` | `superpowers/plans/2026-07-28-mvp-no-ai-playable-vertical-slice.md` | 已实现：属性/模板叙事、开发环境清档、成功/失败手工试玩路线 |
 | AI 环境 | `agent/AI环境.md` | `.env.example` | 独立环境契约已建立；Phase 4A 已实现 AI 契约模拟（fixture source + 确定性 fallback，不读 AI env 键）；真实 AI 调用与 shared transport 尚未实现（Phase 4B）；`GAME_DB_PATH` 为 server-only 持久化配置 |
+| 小镇程序化生成 | `agent/小镇程序化生成.md` | `设想/AI驱动RPG_大地图-小镇地图-场景与小镇生成方案_v0.1.md` | Demo 已实现：确定性生成器 + /town-demo SVG 演示；未接入游戏主循环与 AI 生图 |
 
 ## 维护规则
 
