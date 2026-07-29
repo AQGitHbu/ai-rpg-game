@@ -176,8 +176,11 @@ export async function runPhase4bAiSmoke(deps) {
       log(`${DIAG_PREFIX} SMOKE_CASE_CRASHED gameType=${smokeCase.gameType}`);
       continue;
     }
-    log(buildCaseSummaryLine(report));
     const issues = validateCaseReport(report);
+    // 报告结构存在才输出摘要行；缺失/非对象时只记违约码，避免抛出原始堆栈。
+    if (report && typeof report === "object") {
+      log(buildCaseSummaryLine(report));
+    }
     if (issues.length > 0) {
       failures += 1;
       log(`${DIAG_PREFIX} SMOKE_CASE_VIOLATION gameType=${smokeCase.gameType} codes=${issues.join(",")}`);

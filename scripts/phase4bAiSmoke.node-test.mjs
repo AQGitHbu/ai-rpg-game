@@ -193,6 +193,16 @@ test("runCase 抛错（本地故障）：退出非零且错误文本不进日志
   assert.ok(joined.includes("SMOKE_CASE_CRASHED"));
 });
 
+test("runCase 返回非对象报告：退出非零且不抛出", async () => {
+  const harness = createHarness({
+    env: { RUN_REAL_AI_SMOKE: "1" },
+    runCase: async () => null,
+  });
+  const exitCode = await runPhase4bAiSmoke(harness.deps);
+  assert.notEqual(exitCode, 0);
+  assert.ok(harness.logs.some((line) => line.includes("REPORT_MISSING")));
+});
+
 test("摘要行只包含白名单字段，usage 缺失时省略 tokens", () => {
   const line = buildCaseSummaryLine({
     ...okReport("urban", "fallback"),
