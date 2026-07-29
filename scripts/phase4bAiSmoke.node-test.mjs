@@ -5,8 +5,10 @@ import {
   buildCaseSummaryLine,
   checkContentBudget,
   realRunCase,
+  resolveOutputFormatLabel,
   runPhase4bAiSmoke,
   summarizeAuditEvents,
+  summarizeSmokeRun,
   validateCaseReport,
 } from "./phase4bAiSmoke.mjs";
 
@@ -325,6 +327,105 @@ test("summarizeAuditEvents：畸形事件与非数值字段一律忽略，空入
 
   const empty = summarizeAuditEvents([]);
   assert.deepEqual(empty, { codes: [], usage: undefined, estimatedCostUsd: undefined });
+});
+
+// ---------------------------------------------------------------------------
+// Task 6：按输出格式聚合的安全汇总（resolveOutputFormatLabel / summarizeSmokeRun
+// / summary 行门禁）。红线：通过条件不变，summary 只含白名单字段且绝不回显原值。
+// ---------------------------------------------------------------------------
+
+test("resolveOutputFormatLabel：合法值原样、缺失/空白按 prompt_only、非法值判 invalid 且不回显", () => {
+  assert.equal(resolveOutputFormatLabel("json_schema"), "json_schema");
+  assert.equal(resolveOutputFormatLabel("json_object"), "json_object");
+  assert.equal(resolveOutputFormatLabel("prompt_only"), "prompt_only");
+  assert.equal(resolveOutputFormatLabel(undefined), "prompt_only");
+  assert.equal(resolveOutputFormatLabel(""), "prompt_only");
+  assert.equal(resolveOutputFormatLabel("  "), "prompt_only");
+  const invalid = resolveOutputFormatLabel("bogus-value");
+  assert.equal(invalid, "invalid");
+  assert.ok(!invalid.includes("bogus"));
+});
+
+test("summarizeSmokeRun：generated/fallback/failed 三份报告聚合白名单统计", () => {
+  const summary = summarizeSmokeRun(
+    [
+      {
+        gameType: "wuxia",
+        ok: true,
+        source: "generated",
+        durationMs: 1000,
+        codes: ["attempt_ok"],
+        usage: { promptTokens: 100, completionTokens: 200, totalTokens: 300 },
+        estimatedCostUsd: 0.001,
+      },
+      {
+        gameType: "science_fiction",
+        ok: true,
+        source: "fallback",
+        durationMs: 2000,
+        codes: ["transport_timeout"],
+        usage: { promptTokens: 50, completionTokens: 60, totalTokens: 110 },
+        estimatedCostUsd: 0.002,
+      },
+      { gameType: "urban", ok: false },
+    ],
+    "json_schema",
+  );
+  assert.deepEqual(summary, {
+    outputFormat: "json_schema",
+    cases: 3,
+    generated: 1,
+    fallback: 1,
+    failed: 1,
+    fallbackCategories: { transport_timeout: 1 },
+    totalDurationMs: 3000,
+    usage: { promptTokens: 150, completionTokens: 260, totalTokens: 410 },
+    estimatedCostUsd: 0.003,
+  });
+});
+
+test("summary 行：恰一行、JSON 键集合在白名单内、不泄漏玩家输入", async () => {
+  const harness = createHarness({
+    env: { RUN_REAL_AI_SMOKE: "1" },
+    runCase: async (smokeCase) => okReport(smokeCase.gameType, "generated"),
+  });
+  harness.deps.outputFormatLabel = "json_object";
+  const exitCode = await runPhase4bAiSmoke(harness.deps);
+  assert.equal(exitCode, 0);
+  const summaryLines = harness.logs.filter((line) =>
+    line.startsWith("[phase4b-smoke] summary "),
+  );
+  assert.equal(summaryLines.length, 1);
+  const parsed = JSON.parse(summaryLines[0].slice(summaryLines[0].indexOf("{")));
+  const allowedKeys = [
+    "outputFormat",
+    "cases",
+    "generated",
+    "fallback",
+    "failed",
+    "fallbackCategories",
+    "totalDurationMs",
+    "usage",
+    "estimatedCostUsd",
+  ];
+  for (const key of Object.keys(parsed)) {
+    assert.ok(allowedKeys.includes(key), `summary 出现白名单外的键：${key}`);
+  }
+  assert.equal(parsed.outputFormat, "json_object");
+  assert.equal(parsed.cases, 3);
+  assert.equal(parsed.generated, 3);
+  for (const smokeCase of SMOKE_CASES) {
+    assert.ok(!summaryLines[0].includes(smokeCase.input.characterName));
+    assert.ok(!summaryLines[0].includes(smokeCase.input.worldPremise));
+  }
+});
+
+test("无 opt-in：仍提前退出，不输出 summary 行", async () => {
+  const harness = createHarness({ env: {} });
+  harness.deps.outputFormatLabel = "json_schema";
+  const exitCode = await runPhase4bAiSmoke(harness.deps);
+  assert.notEqual(exitCode, 0);
+  assert.ok(!harness.logs.some((line) => line.includes("summary")));
 });
 
 // ---------------------------------------------------------------------------

@@ -181,6 +181,14 @@ describe("createLiveScenarioCandidateSource：内容解析失败", () => {
     if (!attempt.ok) expect(attempt.diagnostics.join(" ")).not.toContain("LEAK_ME_RAW");
   });
 
+  it("多个 ```json fence ⇒ invalid_json（不满足单一 fence 契约）", async () => {
+    const multi = '```json\n{"a":1}\n```\n再补充一份：\n```json\n{"b":2}\n```';
+    const { source } = makeSource([okResult(multi)]);
+    const attempt = await source.generate(REQUEST);
+    expect(attempt).toMatchObject({ ok: false, origin: "live", category: "invalid_json" });
+    if (!attempt.ok) expect(attempt.diagnostics).toEqual(["LIVE_INVALID_JSON"]);
+  });
+
   it("root 结构错误 ⇒ schema_violation", async () => {
     const broken = { ...MINIMAL_CANDIDATE, npcs: "oops" };
     const { source } = makeSource([okResult(JSON.stringify(broken))]);
@@ -251,6 +259,55 @@ describe("createLiveScenarioCandidateSource：脱敏与稳定性", () => {
     const attempt = await source.generate(REQUEST);
     expect(attempt).toMatchObject({ ok: false, origin: "live", category: "service_error" });
     expect(JSON.stringify(attempt)).not.toContain("驱动崩溃");
+  });
+});
+
+describe("Phase 4C：extraBody 透传", () => {
+  /** 记录 complete 三个入参的 fake transport（沿用既有 fakeTransport 风格）。 */
+  function recordingTransport(): { transport: AiTransport; calls: unknown[][] } {
+    const calls: unknown[][] = [];
+    return {
+      calls,
+      transport: {
+        async complete(config, messages, requestOptions) {
+          calls.push([config, messages, requestOptions]);
+          return { ok: false, code: "timeout", retryable: true, latencyMs: 5 };
+        },
+        async stream() {
+          throw new Error("live source 不使用 stream");
+        }
+      }
+    };
+  }
+
+  it("提供 extraBody 时以第三参数 { extraBody } 传给 transport.complete", async () => {
+    const { transport, calls } = recordingTransport();
+    const { audit } = spyAudit();
+    const extraBody = { response_format: { type: "json_object" } };
+    const source = createLiveScenarioCandidateSource({
+      transport,
+      config: CONFIG,
+      buildMessages: () => [{ role: "user", content: "x" }],
+      audit,
+      extraBody
+    });
+    await source.generate(REQUEST);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][2]).toEqual({ extraBody });
+  });
+
+  it("未提供 extraBody 时第三参数为 undefined（Phase 4B 形状不变）", async () => {
+    const { transport, calls } = recordingTransport();
+    const { audit } = spyAudit();
+    const source = createLiveScenarioCandidateSource({
+      transport,
+      config: CONFIG,
+      buildMessages: () => [{ role: "user", content: "x" }],
+      audit
+    });
+    await source.generate(REQUEST);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][2]).toBeUndefined();
   });
 });
 

@@ -1,18 +1,16 @@
 {
   "schemaVersion": 1,
-  "phase": "mvp-phase-4b-real-ai-dynamic-opening",
+  "phase": "mvp-phase-4c-structured-output-offline-regression",
   "status": "completed",
   "implementationStatus": "implemented",
-  "targetBranch": "codex/mvp-phase-4b-real-ai-dynamic-opening",
-  "worktreeName": "mvp-phase-4b-real-ai-dynamic-opening",
+  "targetBranch": "codex/phase4c-planning",
+  "worktreeName": "phase4c-planning",
   "repositories": [
-    "ai-game-foundation",
-    "ai-slg-game",
     "ai-rpg-game"
   ],
-  "plan": "docs/superpowers/plans/2026-07-29-mvp-phase-4b-real-ai-dynamic-opening.md",
-  "sharedInfrastructureChangeAllowed": true,
-  "startCommand": "manual coordinated worktree setup (see Phase 4B Plan Task 1)",
+  "plan": "docs/superpowers/plans/2026-07-29-mvp-phase-4c-structured-output-offline-regression.md",
+  "sharedInfrastructureChangeAllowed": false,
+  "startCommand": "npm run phase:start",
   "entryDocs": [
     "docs/游戏设计原则.md",
     "docs/游戏开发规范.md",
@@ -24,7 +22,9 @@
     "docs/策划文档/AI生成RPG_MVP.md",
     "docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md",
     "docs/superpowers/specs/2026-07-28-ai-contract-simulation-and-dynamic-opening-design.md",
-    "docs/superpowers/plans/2026-07-29-mvp-phase-4b-real-ai-dynamic-opening.md"
+    "docs/superpowers/plans/2026-07-29-mvp-phase-4b-real-ai-dynamic-opening.md",
+    "docs/superpowers/specs/2026-07-29-phase4c-real-ai-output-reliability-and-offline-regression-design.md",
+    "docs/superpowers/plans/2026-07-29-mvp-phase-4c-structured-output-offline-regression.md"
   ],
   "acceptanceCommands": [
     "npm run lint",
@@ -33,33 +33,5 @@
     "npm run test:fast",
     "npm run build",
     "npm run phase:status"
-  ],
-  "familyAcceptance": {
-    "runFrom": "ai-game-foundation worktree",
-    "repositories": {
-      "ai-game-foundation": [
-        "npm test",
-        "npm run verify:ui-dist",
-        "npm run pack:standards -- --dry-run",
-        "npm run pack:ui -- --dry-run"
-      ],
-      "ai-slg-game": [
-        "npm run lint",
-        "npm run test:fast",
-        "npm run test:shared-ui",
-        "npm run build"
-      ],
-      "ai-rpg-game": [
-        "npm run lint",
-        "npm test",
-        "npm run test:fast",
-        "npm run build",
-        "npm run phase:status"
-      ]
-    },
-    "commands": [
-      "npm run validate:family",
-      "npm run ready:family"
-    ]
-  }
+  ]
 }

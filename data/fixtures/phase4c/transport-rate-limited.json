@@ -1,0 +1,1 @@
+{ "failureMode": "rate_limited", "diagnostics": ["FIXTURE_TRANSPORT_RATE_LIMITED"] }

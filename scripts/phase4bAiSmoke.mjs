@@ -151,7 +151,7 @@ export function buildCaseSummaryLine(report) {
  * deps.env / runEnvCheck / runCase / log 由调用方提供，门禁测试注入 mock。
  */
 export async function runPhase4bAiSmoke(deps) {
-  const { env, runEnvCheck, runCase, log } = deps;
+  const { env, runEnvCheck, runCase, log, outputFormatLabel } = deps;
 
   if (env.RUN_REAL_AI_SMOKE !== "1") {
     log(
@@ -167,6 +167,7 @@ export async function runPhase4bAiSmoke(deps) {
   }
 
   let failures = 0;
+  const reports = [];
   for (const smokeCase of SMOKE_CASES) {
     let report;
     try {
@@ -175,8 +176,11 @@ export async function runPhase4bAiSmoke(deps) {
       // 本地脚本/持久化崩溃：异常文本可能含路径等细节，绝不回显，只记稳定码。
       failures += 1;
       log(`${DIAG_PREFIX} SMOKE_CASE_CRASHED gameType=${smokeCase.gameType}`);
+      // 占位报告：计入汇总的 failed，不携带任何异常细节。
+      reports.push({ gameType: smokeCase.gameType, ok: false });
       continue;
     }
+    reports.push(report);
     const issues = validateCaseReport(report);
     // 报告结构存在才输出摘要行；缺失/非对象时只记违约码，避免抛出原始堆栈。
     if (report && typeof report === "object") {
@@ -187,6 +191,9 @@ export async function runPhase4bAiSmoke(deps) {
       log(`${DIAG_PREFIX} SMOKE_CASE_VIOLATION gameType=${smokeCase.gameType} codes=${issues.join(",")}`);
     }
   }
+
+  // 安全汇总行（spec §4）：只聚合白名单字段，不影响下方通过判定。
+  log(buildRunSummaryLine(reports, outputFormatLabel ?? "prompt_only"));
 
   if (failures > 0) {
     log(`${DIAG_PREFIX} SMOKE_FAILED：${failures}/${SMOKE_CASES.length} 例违约。`);
@@ -307,6 +314,63 @@ export function summarizeAuditEvents(events) {
   return { codes, usage: Object.keys(usage).length > 0 ? usage : undefined, estimatedCostUsd };
 }
 
+/** 输出格式安全标签：合法值原样、缺失/空白→prompt_only、其余→invalid（绝不回显原值）。 */
+export const AI_OUTPUT_FORMAT_LABELS = Object.freeze(["json_schema", "json_object", "prompt_only"]);
+export function resolveOutputFormatLabel(value) {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (trimmed === "") return "prompt_only";
+  return AI_OUTPUT_FORMAT_LABELS.includes(trimmed) ? trimmed : "invalid";
+}
+
+/** 安全汇总（spec §4）：只聚合白名单可观测字段，通过条件不受影响。 */
+export function summarizeSmokeRun(reports, outputFormatLabel) {
+  const summary = {
+    outputFormat: outputFormatLabel,
+    cases: 0,
+    generated: 0,
+    fallback: 0,
+    failed: 0,
+    fallbackCategories: {},
+    totalDurationMs: 0,
+  };
+  const usage = {};
+  let estimatedCostUsd;
+  for (const report of reports) {
+    if (!report || typeof report !== "object") continue;
+    summary.cases += 1;
+    if (typeof report.durationMs === "number") {
+      summary.totalDurationMs += Math.round(report.durationMs);
+    }
+    if (report.ok === true && report.source === "generated") {
+      summary.generated += 1;
+    } else if (report.ok === true && report.source === "fallback") {
+      summary.fallback += 1;
+      for (const code of Array.isArray(report.codes) ? report.codes : []) {
+        if (typeof code !== "string" || code === "attempt_ok") continue;
+        summary.fallbackCategories[code] = (summary.fallbackCategories[code] ?? 0) + 1;
+      }
+    } else {
+      summary.failed += 1;
+    }
+    const reportUsage = report.usage;
+    if (reportUsage && typeof reportUsage === "object") {
+      for (const key of ["promptTokens", "completionTokens", "totalTokens"]) {
+        if (typeof reportUsage[key] === "number") usage[key] = (usage[key] ?? 0) + reportUsage[key];
+      }
+    }
+    if (typeof report.estimatedCostUsd === "number") {
+      estimatedCostUsd = (estimatedCostUsd ?? 0) + report.estimatedCostUsd;
+    }
+  }
+  if (Object.keys(usage).length > 0) summary.usage = usage;
+  if (estimatedCostUsd !== undefined) summary.estimatedCostUsd = estimatedCostUsd;
+  return summary;
+}
+
+export function buildRunSummaryLine(reports, outputFormatLabel) {
+  return `${DIAG_PREFIX} summary ${JSON.stringify(summarizeSmokeRun(reports, outputFormatLabel))}`;
+}
+
 /** blueprint 预算复查：与 domain CONTENT_BUDGET 完全对照（双结局包含在内）。 */
 export function checkContentBudget(blueprint, CONTENT_BUDGET) {
   const mainCount = blueprint.locations.filter((entry) => entry.kind === "main").length;
@@ -325,12 +389,13 @@ export function checkContentBudget(blueprint, CONTENT_BUDGET) {
   );
 }
 
-/** 把 aiEnv.mjs 的解析结果收敛为纯三键记录：其余键一概不带入装配 env。 */
+/** 把 aiEnv.mjs 的解析结果收敛为纯四键记录：其余键一概不带入装配 env。 */
 function toAiEnvRecord(values) {
   return {
     AI_API_BASE_URL: values.get("AI_API_BASE_URL")?.decoded,
     AI_MODEL: values.get("AI_MODEL")?.decoded,
     AI_API_KEY: values.get("AI_API_KEY")?.decoded,
+    AI_OUTPUT_FORMAT: values.get("AI_OUTPUT_FORMAT")?.decoded,
   };
 }
 
@@ -390,6 +455,7 @@ export async function realRunCase(smokeCase, overrides = {}) {
     AI_API_BASE_URL: aiEnv.AI_API_BASE_URL,
     AI_MODEL: aiEnv.AI_MODEL,
     AI_API_KEY: aiEnv.AI_API_KEY,
+    AI_OUTPUT_FORMAT: aiEnv.AI_OUTPUT_FORMAT,
     GAME_DB_PATH: databasePath,
   });
 
@@ -465,12 +531,23 @@ export async function realRunCase(smokeCase, overrides = {}) {
   }
 }
 
+/** 从 .env.local 读输出格式标签：文件不可读按缺省 prompt_only，绝不抛出。 */
+function realOutputFormatLabel() {
+  try {
+    const values = readAiEnv(resolve(projectRoot, ".env.local"));
+    return resolveOutputFormatLabel(values.get("AI_OUTPUT_FORMAT")?.decoded);
+  } catch {
+    return "prompt_only";
+  }
+}
+
 async function main() {
   const exitCode = await runPhase4bAiSmoke({
     env: process.env,
     runEnvCheck: realRunEnvCheck,
     runCase: realRunCase,
     log: (line) => console.log(line),
+    outputFormatLabel: realOutputFormatLabel(),
   });
   process.exitCode = exitCode;
 }
