@@ -74,6 +74,22 @@ export {
   type EnemyId
 } from "@/game/domain";
 export { type PlayerIntent } from "@/game/gameplay/rpg/actions";
+// Town demo（Task 7）：小镇 demo 投影门面 + 预留生图 port（生产实现恒 not_requested）。
+export {
+  generateTownDemoView,
+  type GenerateTownDemoResult,
+  type TownDemoStats,
+  type TownDemoView
+} from "./townDemo";
+export {
+  TOWN_ASSET_CONTRACT_VERSION,
+  createUnavailableTownIllustrationSource,
+  type TownAssetKind,
+  type TownAssetRequest,
+  type TownAssetResult,
+  type TownAssetStatus,
+  type TownIllustrationSource
+} from "./townAssets";
 export {
   asGameId,
   type ApplyResolvedActionInput,
