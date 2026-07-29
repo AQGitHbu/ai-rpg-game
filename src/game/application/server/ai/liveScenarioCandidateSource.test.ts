@@ -5,6 +5,7 @@ import type {
   AiTransport,
   AiTransportConfig
 } from "@ai-game/ai-transport";
+import { validateNewGameInput } from "@/game/domain";
 import type { ScenarioGenerationRequest } from "../../scenarioGeneration";
 import type { ScenarioAuditEvent, ScenarioGenerationAudit } from "./scenarioGenerationAudit";
 import {
@@ -67,8 +68,10 @@ const MINIMAL_CANDIDATE = {
   }
 };
 
-const REQUEST: ScenarioGenerationRequest = {
-  input: {
+const REQUEST: ScenarioGenerationRequest = buildRequest();
+
+function buildRequest(): ScenarioGenerationRequest {
+  const validated = validateNewGameInput({
     gameType: "wuxia",
     characterName: "沈青崖",
     characterIdentity: "落魄镖师",
@@ -77,10 +80,10 @@ const REQUEST: ScenarioGenerationRequest = {
     storyOpening: "暮色四合，主角背着旧刀走进青石镇，镇口贴着一张缉凶告示。",
     narrativeStyle: "novel",
     contentIntensity: "normal"
-  } as ScenarioGenerationRequest["input"],
-  seed: "phase4b-seed-001",
-  traceId: "trace-live-0001"
-};
+  });
+  if (!validated.ok) throw new Error("测试输入必须合法");
+  return { input: validated.value, seed: "phase4b-seed-001", traceId: "trace-live-0001" };
+}
 
 function fakeTransport(results: readonly AiCompletionResult[]): {
   transport: AiTransport;
