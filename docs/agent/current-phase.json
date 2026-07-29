@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "mvp-phase-4b-real-ai-dynamic-opening",
-  "status": "planned",
-  "implementationStatus": "not_started",
+  "status": "completed",
+  "implementationStatus": "implemented",
   "targetBranch": "codex/mvp-phase-4b-real-ai-dynamic-opening",
   "worktreeName": "mvp-phase-4b-real-ai-dynamic-opening",
   "repositories": [

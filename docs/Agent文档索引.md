@@ -12,14 +12,14 @@
 |---|---|---|---|
 | 共享基础设施 | `共同规范/共享模块开发流程.md` | `共同规范/共享模块目录.json` | 仅按触发条件读取 |
 | 项目脚手架 | `agent/项目脚手架.md` | — | 已建立 |
-| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | Phase 4B：真实 AI 动态开局已交接（planned / not_started，跨仓原子工作包）；唯一 Plan：`superpowers/plans/2026-07-29-mvp-phase-4b-real-ai-dynamic-opening.md` |
-| MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | Phase 4A 已完成：创建、恢复、固定行动、探索、物品、战斗与双结局 + AI 契约模拟（fixture source、一次修复/重试、fallback、`generationSource`）；真实 AI 调用未实现 |
+| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | Phase 4B：真实 AI 动态开局已实现（completed / implemented，跨仓原子工作包）；真实计费 smoke 待人工执行；唯一 Plan：`superpowers/plans/2026-07-29-mvp-phase-4b-real-ai-dynamic-opening.md` |
+| MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | Phase 4B 已实现：创建、恢复、固定行动、探索、物品、战斗与双结局 + 真实 AI 动态开局（有效配置时 live source，失败安全 fallback，fixture 仍为主回归） |
 | 行动裁决 | `agent/行动裁决.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现：observe / talk / investigate / move / take_item / battle intents |
 | 探索与任务推进 | `agent/探索与任务推进.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现：移动、任务解锁、obtain_item / defeat_enemy objective 与 outcome |
 | 物品与任务奖励 | `agent/物品与任务奖励.md` | `策划文档/AI生成RPG_MVP.md` | Phase 5 已实现：地点预置物品、take_item 取得和 obtain_item objective；不含物品使用/奖励数值 |
 | 战斗与结局 | `agent/战斗与结局.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现：boss 轻量回合战、任务成功/失败 outcome 与双结局 |
 | 无 AI 试玩验收 | `agent/无AI试玩验收.md` | `superpowers/plans/2026-07-28-mvp-no-ai-playable-vertical-slice.md` | 已实现：属性/模板叙事、开发环境清档、成功/失败手工试玩路线 |
-| AI 环境 | `agent/AI环境.md` | `.env.example` | 独立环境契约已建立；Phase 4A 已实现 AI 契约模拟（fixture source + 确定性 fallback，不读 AI env 键）；真实 AI 调用与 shared transport 尚未实现（Phase 4B）；`GAME_DB_PATH` 为 server-only 持久化配置 |
+| AI 环境 | `agent/AI环境.md` | `.env.example` | 独立环境契约已建立；Phase 4B 已实现真实 AI 接入（shared `@ai-game/ai-transport` + live source + `AI_CONFIG_*`/`LIVE_*` 诊断 + 脱敏 audit）与 opt-in smoke（`smoke:ai:phase4b`，真实计费 smoke 待人工执行）；`GAME_DB_PATH` 为 server-only 持久化配置 |
 
 ## 维护规则
 

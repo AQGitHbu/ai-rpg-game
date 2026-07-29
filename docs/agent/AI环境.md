@@ -59,7 +59,9 @@ Phase 1/Phase 2 不发起 AI 调用（Phase 2 仅确定性 fallback 生成），
 - 生产 composition root 固定注入 `createUnavailableScenarioCandidateSource()`：玩家创建路径恒为 fallback，`POST /api/game` 仅返回安全的 `generationSource: "generated" | "fallback"`；生成阶段事件仅供内部 contract test 与结构化日志，不进玩家 API。
 - fixture 与契约回归不依赖任何 env 键；`env:check` 自 Phase 4B 起进入真实 AI 阶段的验收命令。
 
-## Phase 4B：真实 AI 接入与 opt-in smoke
+## Phase 4B：真实 AI 接入与 opt-in smoke（已实现）
+
+代码与门禁已全部落地（live source、配置解析、audit、smoke 脚本与安全门禁）；**真实计费 smoke 尚未执行**，待人工按下方流程外部验收，本文档不记录任何未发生的执行日期或结果。
 
 ### 运行时配置
 
