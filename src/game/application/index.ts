@@ -81,6 +81,14 @@ export {
   type TownDemoStats,
   type TownDemoView
 } from "./townDemo";
+// Town demo（Task 8）：UI 渲染地图/档案所需的 domain 类型与纯索引函数经门面中转。
+export {
+  tileIndex,
+  type TileType,
+  type TownSnapshot,
+  type TownBuilding,
+  type TownBuildingType
+} from "@/game/domain";
 export {
   TOWN_ASSET_CONTRACT_VERSION,
   createUnavailableTownIllustrationSource,
