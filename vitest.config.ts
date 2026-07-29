@@ -6,7 +6,7 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
     globals: true,
-    exclude: [...configDefaults.exclude, ".foundation/**", "scripts/**/*.node-test.mjs"]
+    exclude: [...configDefaults.exclude, ".foundation/**", ".worktrees/**", "scripts/**/*.node-test.mjs"]
   },
   resolve: {
     // @ai-game/ui 是 file: 依赖。保留 consumer 的 symlink 路径，才能由 consumer
