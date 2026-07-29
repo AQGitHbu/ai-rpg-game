@@ -2,3 +2,5 @@
 // dependencyBoundaries.test.ts 拦截）。内部工具（hashTownSeed 等）不出门面。
 export { createFallbackTownPlan } from "./fallbackTownPlan";
 export { createTownRng, type TownRng } from "./townRandom";
+export { generateTown, TownGenerationError, type TownGenerationInput } from "./generateTown";
+export { validateTownDraft, type TownDraft, type TownValidationIssue } from "./validateTown";

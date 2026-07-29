@@ -151,8 +151,49 @@ function insetAxis(lo: number, hi: number, keepLo: boolean): { lo: number; hi: n
 }
 
 /**
+ * 地块内最大矩形（兼作内缩失败的兜底）：直方图法逐行扫描，面积优先，
+ * 平局取行小→列小（确定性）；不足 2×2 返回 null。尾并产生的 L 形地块
+ * bounding box 内缩常失败，若直接降 reserved 会把预留率抽高到 0.5+，
+ * 远离 Spec §5 的 0.2（Task 6 批量回归断言 reserved 占比 ≤ 0.35）。
+ */
+function largestRectIn(cells: readonly Cell[]): Rect | null {
+  const box = boundingBox(cells);
+  const width = box.maxX - box.minX + 1;
+  const height = box.maxY - box.minY + 1;
+  const inside: boolean[] = new Array(width * height).fill(false);
+  for (const cell of cells) inside[(cell.y - box.minY) * width + (cell.x - box.minX)] = true;
+
+  let best: Rect | null = null;
+  const heights: number[] = new Array(width).fill(0);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) heights[x] = inside[y * width + x] ? heights[x] + 1 : 0;
+    // 每列向左右扩张至高度不足：O(w²) 枚举，地块尺寸小，确定性优先。
+    for (let left = 0; left < width; left += 1) {
+      let minHeight = heights[left];
+      for (let right = left; right < width; right += 1) {
+        if (heights[right] < minHeight) minHeight = heights[right];
+        if (minHeight < FOOTPRINT_MIN) break;
+        const rectWidth = right - left + 1;
+        if (rectWidth < FOOTPRINT_MIN) continue;
+        const area = rectWidth * minHeight;
+        if (best === null || area > best.width * best.height) {
+          best = {
+            x: box.minX + left,
+            y: box.minY + y - minHeight + 1,
+            width: rectWidth,
+            height: minHeight
+          };
+        }
+      }
+    }
+  }
+  return best;
+}
+
+/**
  * footprint = 地块 bounding box 内缩 1 格（最小 2×2）。内缩后必须全部
- * 落在地块格内（尾并产生的 L 形地块可能不满足）→ 否则 null 降 reserved。
+ * 落在地块格内（尾并产生的 L 形地块可能不满足）→ 退而取地块内
+ * 最大矩形；仍不足 2×2 才 null 降 reserved。
  */
 function computeGeometry(plot: TownPlot): PlotGeometry {
   const box = boundingBox(plot.cells);
@@ -168,12 +209,14 @@ function computeGeometry(plot: TownPlot): PlotGeometry {
   // 临街轴保留临街侧；交叉轴长度 3 时固定保留低坐标侧（确定性）。
   const xRange = insetAxis(box.minX, box.maxX, frontSide !== "east");
   const yRange = insetAxis(box.minY, box.maxY, frontSide !== "south");
-  if (xRange === null || yRange === null) return { plot, footprint: null, frontSide, centroid };
+  if (xRange === null || yRange === null) {
+    return { plot, footprint: largestRectIn(plot.cells), frontSide, centroid };
+  }
 
   const cellSet = new Set(plot.cells.map((cell) => `${cell.x},${cell.y}`));
   for (let y = yRange.lo; y <= yRange.hi; y += 1) {
     for (let x = xRange.lo; x <= xRange.hi; x += 1) {
-      if (!cellSet.has(`${x},${y}`)) return { plot, footprint: null, frontSide, centroid };
+      if (!cellSet.has(`${x},${y}`)) return { plot, footprint: largestRectIn(plot.cells), frontSide, centroid };
     }
   }
   return {
@@ -377,18 +420,23 @@ export function placeBuildings(
     place(geometry, buildingType, "generic", `${GENERIC_NAMES[buildingType]}·${sequence}`, false);
   }
 
-  // 4. 状态回写：有建筑 → occupied；放不下 footprint 的先降 reserved；
-  //    其余按地块原序补 reserved 至预留率 0.2，再余下保持 generic。
+  // 4. 状态回写：有建筑 → occupied；预留配额 round(总数 × 0.2) 优先给
+  //    放不下 footprint 的地块，不足再按地块原序补；超出配额的一律
+  //    generic（空地）——否则细小地块多的 seed 会把预留率抽到 0.45+，
+  //    远离 Spec §5 的 0.2。
   const occupiedIds = new Set(buildings.map((building) => building.plotId));
   const reserveTarget = Math.round(blockPlots.plots.length * RESERVE_RATIO);
   const statusById = new Map<string, PlotStatus>();
   let reservedCount = 0;
   for (const geometry of geometries) {
     if (occupiedIds.has(geometry.plot.id)) statusById.set(geometry.plot.id, "occupied");
-    else if (geometry.footprint === null) {
+  }
+  for (const geometry of geometries) {
+    if (statusById.has(geometry.plot.id) || geometry.footprint !== null) continue;
+    if (reservedCount < reserveTarget) {
       statusById.set(geometry.plot.id, "reserved");
       reservedCount += 1;
-    }
+    } else statusById.set(geometry.plot.id, "generic");
   }
   for (const geometry of geometries) {
     if (statusById.has(geometry.plot.id)) continue;
