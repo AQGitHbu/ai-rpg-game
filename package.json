@@ -38,6 +38,7 @@
     "setup": "npm run env:bootstrap && npm run bootstrap:foundation && npm ci && npm run sync:standards && npm run doctor"
   },
   "dependencies": {
+    "@ai-game/ai-transport": "file:.foundation/packages/ai-transport",
     "@ai-game/ui": "file:.foundation/packages/ui",
     "@libsql/client": "0.17.3",
     "next": "16.2.10",

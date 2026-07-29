@@ -36,15 +36,27 @@
         "对白、地图、HUD 或业务 Modal",
         "游戏状态和玩法逻辑"
       ]
-    }
-  ],
-  "plannedPackages": [
+    },
     {
       "name": "@ai-game/ai-transport",
-      "status": "candidate-confirmed",
-      "trigger": "RPG 首次真实模型调用",
-      "scope": "OpenAI-compatible transport、超时、取消、并发和错误契约；不含产品 prompt/schema"
+      "status": "shared-local",
+      "version": "0.1.0",
+      "responsibility": [
+        "OpenAI-compatible chat completion 请求",
+        "超时、取消与 non-stream 并发上限",
+        "stream reader 获取与取消",
+        "稳定脱敏错误契约"
+      ],
+      "exports": [
+        "createOpenAiCompatibleTransport"
+      ],
+      "nonGoals": [
+        "读取环境变量或账号配置",
+        "产品 prompt、schema 与业务 fallback",
+        "重试策略、日志与业务语义"
+      ]
     }
   ],
-  "note": "shared-local 表示内部 package 已建立并由两个产品契约验证，固定通过 sibling 本地路径消费且禁止发布外部 registry；candidate-confirmed 不表示 package 已创建。"
+  "plannedPackages": [],
+  "note": "shared-local 表示内部 package 已在 foundation 建立契约测试，固定通过 sibling 本地路径消费且禁止发布外部 registry；candidate-confirmed 不表示 package 已创建。"
 }

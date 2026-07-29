@@ -5,8 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { validateNewGameInput, type NewGameInput } from "@/game/domain";
 import type { ScenarioGenerationRequest } from "../../scenarioGeneration";
 import {
-  createFixtureScenarioCandidateSource,
-  createUnavailableScenarioCandidateSource
+  createFixtureScenarioCandidateSource
 } from "./fixtureScenarioCandidateSource";
 
 // ---------------------------------------------------------------------------
@@ -74,7 +73,7 @@ const MINIMAL_CANDIDATE = {
 };
 
 const MANIFEST = {
-  contractVersion: "phase4a-v1",
+  contractVersion: "phase4b-v1",
   fixtures: [
     { id: "generated-wuxia", file: "generated-wuxia.json", gameType: "wuxia", seed: "phase1-wuxia-001" },
     { id: "timeout", file: "timeout.json", gameType: "wuxia", seed: "phase1-wuxia-001" },
@@ -108,7 +107,7 @@ describe("createFixtureScenarioCandidateSource", () => {
     const attempt = await source.generate(buildRequest());
     expect(attempt).toMatchObject({
       ok: true,
-      contractVersion: "phase4a-v1",
+      contractVersion: "phase4b-v1",
       origin: "fixture"
     });
     if (attempt.ok) {
@@ -173,18 +172,5 @@ describe("createFixtureScenarioCandidateSource", () => {
     const source = createFixtureScenarioCandidateSource({ fixtureRoot, fixtureId: "broken-root" });
     const attempt = await source.generate(buildRequest());
     expect(attempt).toMatchObject({ ok: false, origin: "fixture", category: "schema_violation" });
-  });
-});
-
-describe("createUnavailableScenarioCandidateSource", () => {
-  it("恒返回 service_error 与 PHASE4A_NO_LIVE_SOURCE", async () => {
-    const source = createUnavailableScenarioCandidateSource();
-    expect(await source.generate(buildRequest())).toEqual({
-      ok: false,
-      contractVersion: "phase4a-v1",
-      origin: "unavailable",
-      category: "service_error",
-      diagnostics: ["PHASE4A_NO_LIVE_SOURCE"]
-    });
   });
 });

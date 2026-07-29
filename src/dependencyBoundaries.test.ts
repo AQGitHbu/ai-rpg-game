@@ -60,16 +60,26 @@ const BATTLE_DEEP_IMPORT: BoundaryPattern = {
   regex: /["']@\/game\/gameplay\/rpg\/battle\/[^"']+["']/
 };
 
-/** Phase 1 约束：src/game/** 不引入任何 @ai-game/* 共享包（共享包仅限 UI 层）。 */
+/**
+ * Phase 1 约束：src/game/** 不引入 @ai-game/* 共享包（共享包仅限 UI 层）。
+ * Phase 4B 例外：@ai-game/ai-transport 允许出现在 application/server/ai（见下方专项守卫），
+ * 故此处放行 ai-transport，其余 @ai-game/* 在 game/** 内仍一律禁止。
+ */
 const AI_GAME_PACKAGE_IMPORT: BoundaryPattern = {
   label: "@ai-game/* package import",
-  regex: /["']@ai-game\//
+  regex: /["']@ai-game\/(?!ai-transport)/
 };
 
-/** Phase 0 只用过 @ai-game/ui：不得新增其他 @ai-game/* 说明符。 */
+/** 只用过 @ai-game/ui；Phase 4B 起额外允许 @ai-game/ai-transport（仅 server/ai，见专项守卫）。 */
 const NEW_AI_GAME_PACKAGE_IMPORT: BoundaryPattern = {
-  label: "new @ai-game/* package import (only @ai-game/ui was used in Phase 0)",
-  regex: /["']@ai-game\/(?!ui["'])/
+  label: "new @ai-game/* package import (only @ai-game/ui and @ai-game/ai-transport are allowed)",
+  regex: /["']@ai-game\/(?!ui["']|ai-transport["'])/
+};
+
+/** Phase 4B：@ai-game/ai-transport 只允许 application/server/ai 导入（其余目录一律禁止）。 */
+const AI_TRANSPORT_IMPORT: BoundaryPattern = {
+  label: "@ai-game/ai-transport import (only application/server/ai may import it)",
+  regex: /["']@ai-game\/ai-transport/
 };
 
 /** 禁止任何指向 SLG 项目的说明符（含相对路径 ../ai-slg-game）。 */
@@ -258,6 +268,14 @@ const rules: readonly BoundaryRule[] = [
     ]
   },
   { directory: "game", patterns: [AI_GAME_PACKAGE_IMPORT] },
+  // Phase 4B：@ai-game/ai-transport 只能在 application/server/ai 内使用；其余任何目录
+  // （含 composition root、domain/gameplay/UI/API）导入都视为违例。沿用默认跳过
+  // *.test.ts（本守卫文件自含合成片段）；生产代码覆盖另见下方 phase 4b 专项守卫。
+  {
+    directory: ".",
+    excludePath: /[\\/]application[\\/]server[\\/]ai[\\/]/,
+    patterns: [AI_TRANSPORT_IMPORT]
+  },
   { directory: ".", patterns: [NEW_AI_GAME_PACKAGE_IMPORT, SLG_IMPORT] }
 ];
 
@@ -333,6 +351,41 @@ describe("boundary patterns detect synthetic violations", () => {
     },
     { pattern: AI_GAME_PACKAGE_IMPORT, snippet: `import { Panel } from "@ai-game/ui";` },
     { pattern: NEW_AI_GAME_PACKAGE_IMPORT, snippet: `import { db } from "@ai-game/persistence";` },
+    {
+      // Phase 4B：ai-transport 只许 application/server/ai；其余目录导入都被专项规则拦下。
+      pattern: AI_TRANSPORT_IMPORT,
+      snippet: `import { createOpenAiCompatibleTransport } from "@ai-game/ai-transport";`
+    },
+    {
+      // Phase 4B：UI 层连 server-only live source 也碰不到（前缀规则整段拦截）。
+      pattern: APPLICATION_SERVER_IMPORT,
+      snippet: `import { createLiveScenarioCandidateSource } from "@/game/application/server/ai/liveScenarioCandidateSource";`
+    },
+    {
+      // Phase 4B：私有 prompt builder 是 server-only，UI 层不可达。
+      pattern: APPLICATION_SERVER_IMPORT,
+      snippet: `import { buildScenarioPromptMessages } from "@/game/application/server/ai/scenarioPrompt";`
+    },
+    {
+      // Phase 4B：脱敏 audit 是 server-only，UI 层不可达。
+      pattern: APPLICATION_SERVER_IMPORT,
+      snippet: `import { createStructuredScenarioGenerationAudit } from "@/game/application/server/ai/scenarioGenerationAudit";`
+    },
+    {
+      // Phase 4B：AI 运行时配置解析是 server-only，UI 层不可达。
+      pattern: APPLICATION_SERVER_IMPORT,
+      snippet: `import { parseAiRuntimeConfig } from "@/game/application/server/ai/aiRuntimeConfig";`
+    },
+    {
+      // Phase 4B：api 层只许组合根，deep-import live source/prompt/audit/config 一律被拦。
+      pattern: APPLICATION_SERVER_DEEP_IMPORT,
+      snippet: `import { createLiveScenarioCandidateSource } from "@/game/application/server/ai/liveScenarioCandidateSource";`
+    },
+    {
+      // Phase 4B：domain/gameplay 连 application 门面本体都禁止（含 server/ai live source）。
+      pattern: forbiddenSpecifierPrefix("@/game/application"),
+      snippet: `import { buildScenarioPromptMessages } from "@/game/application/server/ai/scenarioPrompt";`
+    },
     { pattern: SLG_IMPORT, snippet: `import { grid } from "../ai-slg-game/src/map";` },
     { pattern: SLG_IMPORT, snippet: `import { hex } from "@ai-slg-game/map";` },
     {
@@ -410,6 +463,15 @@ describe("boundary patterns detect synthetic violations", () => {
   it("@ai-game/ui does not trip the new-package rule", () => {
     const snippet = `import { Panel } from "@ai-game/ui";`;
     expect(findBoundaryViolations(snippet, [NEW_AI_GAME_PACKAGE_IMPORT])).toEqual([]);
+  });
+
+  it("@ai-game/ai-transport does not trip the blanket @ai-game rules (only its own专项守卫拦它)", () => {
+    const snippet = `import { createOpenAiCompatibleTransport } from "@ai-game/ai-transport";`;
+    expect(
+      findBoundaryViolations(snippet, [AI_GAME_PACKAGE_IMPORT, NEW_AI_GAME_PACKAGE_IMPORT])
+    ).toEqual([]);
+    // 但专项守卫必须仍然抓得住它。
+    expect(findBoundaryViolations(snippet, [AI_TRANSPORT_IMPORT])).toEqual([AI_TRANSPORT_IMPORT.label]);
   });
 
   it("relative data import does not trip the gameplay escape rule", () => {
@@ -553,7 +615,7 @@ describe("phase 4a scenario source stays server-only and layered", () => {
   });
 
   it("sanctioned imports actually exist (guard is not vacuous)", () => {
-    // createGame 只经层内纯 port 取契约；组合根经 fixture 工厂注入 unavailable source。
+    // createGame 只经层内纯 port 取契约；组合根经候选来源工厂装配 live/unavailable source。
     const createGameSpecifiers = extractSpecifiers(
       readFileSync(resolve(sourceRoot, "game/application/createGame.ts"), "utf8")
     );
@@ -561,7 +623,65 @@ describe("phase 4a scenario source stays server-only and layered", () => {
     const rootSpecifiers = extractSpecifiers(
       readFileSync(resolve(sourceRoot, "game/application/server/compositionRoot.ts"), "utf8")
     );
-    expect(rootSpecifiers).toContain("./ai/fixtureScenarioCandidateSource");
+    expect(rootSpecifiers).toContain("./ai/scenarioCandidateSourceFactory");
+    // 工厂确实接通 shared transport、live source、私有 prompt 与脱敏 audit。
+    const factorySpecifiers = extractSpecifiers(
+      readFileSync(
+        resolve(sourceRoot, "game/application/server/ai/scenarioCandidateSourceFactory.ts"),
+        "utf8"
+      )
+    );
+    expect(factorySpecifiers).toContain("@ai-game/ai-transport");
+    expect(factorySpecifiers).toContain("./liveScenarioCandidateSource");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4B（Task 5）：live source / 私有 prompt / 脱敏 audit / 运行时配置与
+// @ai-game/ai-transport 共享包的分层守卫。上方目录规则已禁止 UI/API/
+// domain/gameplay 达到 server/ai；这里额外钉死：
+//   1) 全库只有 application/server/ai 内的生产代码可导入 @ai-game/ai-transport；
+//   2) live source 与工厂不得导入 persistence/sqlite/libsql（与 fixture 同级）；
+//   3) 只有 composition root 经工厂读取运行时配置（process.env 守卫已在下方覆盖）。
+// ---------------------------------------------------------------------------
+
+describe("phase 4b live source + ai-transport stay confined to application/server/ai", () => {
+  const AI_DIR = "game/application/server/ai/";
+  const productionFiles = walk(sourceRoot, false).filter(
+    (file) => toPosixRelative(file) !== "dependencyBoundaries.test.ts"
+  );
+
+  it("only application/server/ai imports @ai-game/ai-transport (all production files)", () => {
+    const offenders = productionFiles
+      .filter((file) => !toPosixRelative(file).startsWith(AI_DIR))
+      .filter((file) => /["']@ai-game\/ai-transport/.test(readFileSync(file, "utf8")))
+      .map(toPosixRelative);
+    expect(offenders).toEqual([]);
+  });
+
+  it("the ai-transport import is actually exercised inside application/server/ai (guard is not vacuous)", () => {
+    const users = walk(resolve(sourceRoot, "game/application/server/ai"), false).filter((file) =>
+      /["']@ai-game\/ai-transport/.test(readFileSync(file, "utf8"))
+    );
+    expect(users.length).toBeGreaterThan(0);
+  });
+
+  it("live source + prompt + audit + factory never import persistence/sqlite/libsql", () => {
+    for (const relative of [
+      "liveScenarioCandidateSource.ts",
+      "scenarioPrompt.ts",
+      "scenarioGenerationAudit.ts",
+      "scenarioCandidateSourceFactory.ts"
+    ]) {
+      const file = resolve(sourceRoot, "game/application/server/ai", relative);
+      const offenders = extractSpecifiers(readFileSync(file, "utf8")).filter(
+        (specifier) =>
+          /persistence\//.test(specifier) ||
+          /sqlite(?:Client|GameRepository)/.test(specifier) ||
+          /@libsql\//.test(specifier)
+      );
+      expect(offenders, relative).toEqual([]);
+    }
   });
 });
 

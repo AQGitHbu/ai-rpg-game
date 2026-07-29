@@ -1,6 +1,6 @@
 {
-  "$comment": "Phase 4A fixture manifest：expectedStages 是 createGame 编排 observer 的事件序列（仅供 contract test 与诊断，不随玩家 API 返回）；expectedCategory 是候选/故障被归类的稳定失败类别。",
-  "contractVersion": "phase4a-v1",
+  "$comment": "Phase 4A/4B fixture manifest：expectedStages 是 createGame 编排 observer 的事件序列（仅供 contract test 与诊断，不随玩家 API 返回）；expectedCategory 是候选/故障被归类的稳定失败类别。",
+  "contractVersion": "phase4b-v1",
   "fixtures": [
     {
       "id": "generated-wuxia",

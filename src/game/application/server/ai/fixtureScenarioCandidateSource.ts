@@ -56,21 +56,6 @@ export function createFixtureScenarioCandidateSource(
   };
 }
 
-/** 生产 composition root 注入：4A 无 live source，玩家路径稳定走 fallback。 */
-export function createUnavailableScenarioCandidateSource(): ScenarioCandidateSource {
-  return {
-    async generate() {
-      return {
-        ok: false,
-        contractVersion: SCENARIO_CANDIDATE_CONTRACT_VERSION,
-        origin: "unavailable",
-        category: "service_error",
-        diagnostics: ["PHASE4A_NO_LIVE_SOURCE"]
-      };
-    }
-  };
-}
-
 // ---------------------------------------------------------------------------
 // 内部实现
 // ---------------------------------------------------------------------------
