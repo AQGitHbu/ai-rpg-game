@@ -11,6 +11,9 @@ import type { TileType, TownSnapshot } from "@/game/application";
 // role="button" 的可点击矩形（aria-label=displayName），storyRequired
 // 加高亮描边；点击空白处 onSelectBuilding(null)。
 // 调试开关：地块边界 / 路网节点覆盖层，默认关闭。
+// 试验开关（spike，待定）：showAiBuildingArt 把手工预生成的 AI 俯视贴图
+// （public/assets/town-experiment/<type>.jpg）叠到 footprint 上，
+// 人工评估真实生图与格子地图的和谐度；确认方向后再接正式管线。
 // ---------------------------------------------------------------------------
 
 /** 每个网格瓦片的边长（SVG 用户单位）。 */
@@ -38,6 +41,7 @@ type TownMapSvgProps = {
   onSelectBuilding: (buildingId: string | null) => void;
   showPlotBorders?: boolean;
   showRoadNodes?: boolean;
+  showAiBuildingArt?: boolean;
 };
 
 export function TownMapSvg({
@@ -45,7 +49,8 @@ export function TownMapSvg({
   selectedBuildingId,
   onSelectBuilding,
   showPlotBorders = false,
-  showRoadNodes = false
+  showRoadNodes = false,
+  showAiBuildingArt = false
 }: TownMapSvgProps) {
   const { grid } = snapshot;
   const viewWidth = grid.width * TILE_SIZE;
@@ -91,6 +96,23 @@ export function TownMapSvg({
       onClick={() => onSelectBuilding(null)}
     >
       {tiles}
+
+      {showAiBuildingArt && (
+        <g data-building-art>
+          {snapshot.buildings.map((building) => (
+            <image
+              key={`art-${building.buildingId}`}
+              href={`/assets/town-experiment/${building.buildingType}.jpg`}
+              x={building.footprint.x * TILE_SIZE}
+              y={building.footprint.y * TILE_SIZE}
+              width={building.footprint.width * TILE_SIZE}
+              height={building.footprint.height * TILE_SIZE}
+              preserveAspectRatio="xMidYMid slice"
+              pointerEvents="none"
+            />
+          ))}
+        </g>
+      )}
 
       {showPlotBorders && (
         <g data-plot-borders>

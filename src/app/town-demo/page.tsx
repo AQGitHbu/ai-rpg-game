@@ -26,6 +26,7 @@ export default function TownDemoPage() {
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
   const [showPlotBorders, setShowPlotBorders] = useState(false);
   const [showRoadNodes, setShowRoadNodes] = useState(false);
+  const [showAiBuildingArt, setShowAiBuildingArt] = useState(true);
 
   function handleGenerate() {
     setResult(generateTownDemoView(seedText));
@@ -47,7 +48,7 @@ export default function TownDemoPage() {
         <h1>小镇程序化生成 Demo</h1>
         <p>
           输入种子生成确定性小镇布局，点击地图上的建筑查看档案。
-          建筑插图为程序生成的 SVG 占位图，未接入 AI 生图。
+          档案插图为程序生成的 SVG 占位图；地图可叠加预生成的 AI 俯视贴图（试验），实时生图管线未接入。
         </p>
       </header>
 
@@ -83,6 +84,14 @@ export default function TownDemoPage() {
             />
             显示路网节点
           </label>
+          <label className="town-demo-toggle">
+            <input
+              type="checkbox"
+              checked={showAiBuildingArt}
+              onChange={(event) => setShowAiBuildingArt(event.target.checked)}
+            />
+            实验：AI 建筑贴图
+          </label>
         </div>
         {result !== null && !result.ok && (
           <p role="alert" aria-live="polite" className="town-demo-error">
@@ -112,6 +121,7 @@ export default function TownDemoPage() {
               onSelectBuilding={setSelectedBuildingId}
               showPlotBorders={showPlotBorders}
               showRoadNodes={showRoadNodes}
+              showAiBuildingArt={showAiBuildingArt}
             />
             <aside className="town-demo-side">
               {selectedBuilding === null ? (
