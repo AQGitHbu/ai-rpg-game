@@ -89,7 +89,14 @@ describe("createScenarioCandidateSource：extraBody 按格式装配", () => {
       { transportFactory: () => transport as never }
     );
     await source.generate(REQUEST);
-    const options = calls[0][2] as { extraBody: { response_format: Record<string, any> } };
+    const options = calls[0][2] as {
+      extraBody: {
+        response_format: {
+          type: string;
+          json_schema: { name: string; strict: boolean };
+        };
+      };
+    };
     expect(options.extraBody.response_format.type).toBe("json_schema");
     expect(options.extraBody.response_format.json_schema.name).toBe("scenario_blueprint_candidate");
     expect(options.extraBody.response_format.json_schema.strict).toBe(true);

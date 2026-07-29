@@ -36,9 +36,18 @@ describe("buildScenarioResponseFormatExtraBody", () => {
   });
 });
 
+// 类型收窄：导出类型为 Record<string, unknown>，测试内以结构化视图访问断言字段。
+type SchemaNodeView = {
+  additionalProperties: boolean;
+  required: string[];
+  properties: Record<string, SchemaNodeView>;
+  items: SchemaNodeView;
+  enum: unknown[];
+  anyOf: unknown[];
+};
+
 describe("SCENARIO_CANDIDATE_JSON_SCHEMA：strict 结构守卫", () => {
-  // 类型收窄：导出类型为 Record<string, unknown>，测试内统一放宽访问。
-  const schema = SCENARIO_CANDIDATE_JSON_SCHEMA as Record<string, any>;
+  const schema = SCENARIO_CANDIDATE_JSON_SCHEMA as SchemaNodeView;
 
   it("根节点覆盖候选全部 16 个字段且拒绝未知字段", () => {
     expect(schema.additionalProperties).toBe(false);
@@ -84,7 +93,7 @@ describe("SCENARIO_CANDIDATE_JSON_SCHEMA：strict 结构守卫", () => {
   });
 
   it("关键封闭 union 与常量：gameType 七值、contentBudget 全 const、quest anyOf 两分支", () => {
-    const properties = schema.properties as Record<string, any>;
+    const properties = schema.properties;
     expect(properties.gameType.enum).toEqual([
       "wuxia", "xianxia", "fantasy", "science_fiction",
       "urban", "alternate_history", "post_apocalypse"
