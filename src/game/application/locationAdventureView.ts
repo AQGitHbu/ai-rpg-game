@@ -27,21 +27,26 @@ import {
 const SCENE_SLOTS = ["left", "center", "right", "foreground"] as const;
 export type SceneSlot = (typeof SCENE_SLOTS)[number];
 
+export const MAP_NODE_POSITIONS = ["north_west", "north_east", "south_west", "south_east", "center"] as const;
+export type MapNodePosition = (typeof MAP_NODE_POSITIONS)[number];
+
 export type WorldMapNodeView =
-  | { readonly state: "current"; readonly locationId: string; readonly name: string; readonly visual: "map_node" }
-  | { readonly state: "travelable"; readonly locationId: string; readonly name: string; readonly visual: "map_node" }
+  | { readonly state: "current"; readonly locationId: string; readonly name: string; readonly visual: "map_node"; readonly position: MapNodePosition }
+  | { readonly state: "travelable"; readonly locationId: string; readonly name: string; readonly visual: "map_node"; readonly position: MapNodePosition }
   | {
       readonly state: "known";
       readonly locationId: string;
       readonly name: string;
       readonly hint: "需从相邻地点前往";
       readonly visual: "map_node";
+      readonly position: MapNodePosition;
     }
   | {
       readonly state: "locked";
       readonly name: "探寻未知之地";
       readonly hint: "尚未解锁";
       readonly visual: "map_node_locked";
+      readonly position: MapNodePosition;
     };
 
 export type WorldMapView = {
@@ -87,6 +92,11 @@ function slotForId(stableId: string): SceneSlot {
   return SCENE_SLOTS[sum % SCENE_SLOTS.length];
 }
 
+function positionForLocation(blueprint: ScenarioBlueprint, locationId: string): MapNodePosition {
+  const index = blueprint.locations.findIndex((entry) => String(entry.id) === locationId);
+  return MAP_NODE_POSITIONS[Math.max(index, 0) % MAP_NODE_POSITIONS.length];
+}
+
 /** 收集 active 任务中尚未解锁的 visit_location 目标（按遍历顺序去重）。 */
 function collectLockedVisitTargets(
   blueprint: ScenarioBlueprint,
@@ -125,14 +135,14 @@ function projectWorldMap(blueprint: ScenarioBlueprint, state: GameState): WorldM
   const adjacent = new Set(currentLocation.connectedLocationIds.map((id) => String(id)));
 
   const nodes: WorldMapNodeView[] = [
-    { state: "current", locationId: currentId, name: currentLocation.name, visual: "map_node" }
+    { state: "current", locationId: currentId, name: currentLocation.name, visual: "map_node", position: positionForLocation(blueprint, currentId) }
   ];
 
   // travelable：已解锁 ∩ 与当前地点直接连通（可点击直达），按解锁顺序稳定输出。
   for (const rawId of state.unlockedLocationIds) {
     const id = String(rawId);
     if (id === currentId || !adjacent.has(id)) continue;
-    nodes.push({ state: "travelable", locationId: id, name: nameById.get(id) ?? "", visual: "map_node" });
+    nodes.push({ state: "travelable", locationId: id, name: nameById.get(id) ?? "", visual: "map_node", position: positionForLocation(blueprint, id) });
   }
   // known：已解锁但不相邻——展示真实名称，提示需从相邻地点前往（不可直达）。
   for (const rawId of state.unlockedLocationIds) {
@@ -143,13 +153,14 @@ function projectWorldMap(blueprint: ScenarioBlueprint, state: GameState): WorldM
       locationId: id,
       name: nameById.get(id) ?? "",
       hint: "需从相邻地点前往",
-      visual: "map_node"
+      visual: "map_node",
+      position: positionForLocation(blueprint, id)
     });
   }
   // locked：active visit_location 目标但尚未解锁——中性文案，无 locationId，零泄漏。
-  for (const _targetId of collectLockedVisitTargets(blueprint, state)) {
-    void _targetId;
-    nodes.push({ state: "locked", name: "探寻未知之地", hint: "尚未解锁", visual: "map_node_locked" });
+  const lockedTargets = collectLockedVisitTargets(blueprint, state);
+  for (let i = 0; i < lockedTargets.length; i++) {
+    nodes.push({ state: "locked", name: "探寻未知之地", hint: "尚未解锁", visual: "map_node_locked", position: MAP_NODE_POSITIONS[i % MAP_NODE_POSITIONS.length] });
   }
   return { nodes };
 }

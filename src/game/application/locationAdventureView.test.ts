@@ -84,31 +84,35 @@ describe("projectLocationAdventureView：世界地图封闭可见范围", () => 
   it("current/travelable/known 携带真实地点信息，locked 节点用中性文案且无 locationId", () => {
     const view = project(state);
     const [current, travelable, known, locked] = view.worldMap.nodes;
-    expect(current).toEqual({
+    expect(current).toMatchObject({
       state: "current",
       locationId: "loc_3",
       name: locationName("loc_3"),
       visual: "map_node"
     });
-    expect(travelable).toEqual({
+    expect(current).toHaveProperty("position");
+    expect(travelable).toMatchObject({
       state: "travelable",
       locationId: "loc_4",
       name: locationName("loc_4"),
       visual: "map_node"
     });
-    expect(known).toEqual({
+    expect(travelable).toHaveProperty("position");
+    expect(known).toMatchObject({
       state: "known",
       locationId: "loc_1",
       name: locationName("loc_1"),
       hint: "需从相邻地点前往",
       visual: "map_node"
     });
-    expect(view.worldMap.nodes.at(-1)).toEqual({
+    expect(known).toHaveProperty("position");
+    expect(view.worldMap.nodes.at(-1)).toMatchObject({
       state: "locked",
       name: "探寻未知之地",
       hint: "尚未解锁",
       visual: "map_node_locked"
     });
+    expect(locked).toHaveProperty("position");
     // locked 节点绝不携带 locationId 键（不是 undefined，而是根本不存在）。
     expect(Object.prototype.hasOwnProperty.call(locked, "locationId")).toBe(false);
   });
@@ -122,6 +126,15 @@ describe("projectLocationAdventureView：世界地图封闭可见范围", () => 
     }
     expect(json.includes(blueprint.seed)).toBe(false);
     expect(json.includes(blueprint.inputDigest)).toBe(false);
+  });
+
+  it("为同一安全节点集投影稳定位置，locked 仍无真实标识", () => {
+    const first = project(state).worldMap.nodes;
+    expect(project(state).worldMap.nodes).toEqual(first);
+    expect(first.every((node) => "position" in node)).toBe(true);
+    const locked = first.find((node) => node.state === "locked");
+    expect(locked).toMatchObject({ state: "locked", position: expect.any(String) });
+    expect(locked).not.toHaveProperty("locationId");
   });
 });
 
