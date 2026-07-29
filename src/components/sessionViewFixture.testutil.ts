@@ -16,16 +16,17 @@ import type {
 /** Phase 7：青石镇为当前地点的世界地图——四种节点状态各一。 */
 const QINGSHI_WORLD_MAP: WorldMapView = {
   nodes: [
-    { state: "current", locationId: "loc_qingshi", name: "青石镇", visual: "map_node" },
-    { state: "travelable", locationId: "loc_guandao", name: "城外官道", visual: "map_node" },
+    { state: "current", locationId: "loc_qingshi", name: "青石镇", visual: "map_node", position: "north_west" },
+    { state: "travelable", locationId: "loc_guandao", name: "城外官道", visual: "map_node", position: "north_east" },
     {
       state: "known",
       locationId: "loc_milin",
       name: "密林深处",
       hint: "需从相邻地点前往",
-      visual: "map_node"
+      visual: "map_node",
+      position: "south_west"
     },
-    { state: "locked", name: "探寻未知之地", hint: "尚未解锁", visual: "map_node_locked" }
+    { state: "locked", name: "探寻未知之地", hint: "尚未解锁", visual: "map_node_locked", position: "south_east" }
   ]
 };
 
@@ -175,16 +176,17 @@ export function buildMovedSessionViewFixture(): GameSessionView {
     // Phase 7：移动成功后地图以城外官道为当前节点，场景与对话同步切换。
     worldMap: {
       nodes: [
-        { state: "current", locationId: "loc_guandao", name: "城外官道", visual: "map_node" },
-        { state: "travelable", locationId: "loc_qingshi", name: "青石镇", visual: "map_node" },
+        { state: "current", locationId: "loc_guandao", name: "城外官道", visual: "map_node", position: "north_east" },
+        { state: "travelable", locationId: "loc_qingshi", name: "青石镇", visual: "map_node", position: "north_west" },
         {
           state: "known",
           locationId: "loc_milin",
           name: "密林深处",
           hint: "需从相邻地点前往",
-          visual: "map_node"
+          visual: "map_node",
+          position: "south_west"
         },
-        { state: "locked", name: "探寻未知之地", hint: "尚未解锁", visual: "map_node_locked" }
+        { state: "locked", name: "探寻未知之地", hint: "尚未解锁", visual: "map_node_locked", position: "south_east" }
       ]
     } satisfies WorldMapView,
     locationScene: {
@@ -233,13 +235,14 @@ export function buildBattleSessionViewFixture(): GameSessionView {
     // Phase 7：active battle 为只读投影——互动为空、无可写对话 choice。
     worldMap: {
       nodes: [
-        { state: "current", locationId: "loc_milin", name: "密林深处", visual: "map_node" },
+        { state: "current", locationId: "loc_milin", name: "密林深处", visual: "map_node", position: "south_west" },
         {
           state: "known",
           locationId: "loc_qingshi",
           name: "青石镇",
           hint: "需从相邻地点前往",
-          visual: "map_node"
+          visual: "map_node",
+          position: "north_west"
         }
       ]
     } satisfies WorldMapView,
