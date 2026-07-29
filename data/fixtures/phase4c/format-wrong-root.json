@@ -1,0 +1,4 @@
+{
+  "$comment": "根形状缺少六个数组字段 ⇒ schema_violation（root-shape 检查层）。",
+  "candidate": { "world": {}, "openingScene": {}, "player": {} }
+}

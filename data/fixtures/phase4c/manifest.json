@@ -1,0 +1,192 @@
+{
+  "$comment": "Phase 4C fixture manifest：候选契约仍是 phase4b-v1（未升级）；fixtureSetVersion 标识本离线集合版本。expectedStages 仅供契约测试。",
+  "contractVersion": "phase4b-v1",
+  "fixtureSetVersion": "phase4c-v1",
+  "fixtures": [
+    {
+      "id": "generated-wuxia",
+      "file": "generated-wuxia.json",
+      "gameType": "wuxia",
+      "seed": "phase1-wuxia-001",
+      "expectedAttempt": "ok",
+      "expectedFallback": false,
+      "expectedStages": [
+        "requested",
+        "candidate_received",
+        "validating",
+        "completed"
+      ]
+    },
+    {
+      "id": "generated-science-fiction",
+      "file": "generated-science-fiction.json",
+      "gameType": "science_fiction",
+      "seed": "phase1-scifi-001",
+      "expectedAttempt": "ok",
+      "expectedFallback": false,
+      "expectedStages": [
+        "requested",
+        "candidate_received",
+        "validating",
+        "completed"
+      ]
+    },
+    {
+      "id": "generated-urban",
+      "file": "generated-urban.json",
+      "gameType": "urban",
+      "seed": "phase1-urban-001",
+      "expectedAttempt": "ok",
+      "expectedFallback": false,
+      "expectedStages": [
+        "requested",
+        "candidate_received",
+        "validating",
+        "completed"
+      ]
+    },
+    {
+      "id": "repairable-extra-fields",
+      "file": "repairable-extra-fields.json",
+      "gameType": "wuxia",
+      "seed": "phase1-wuxia-001",
+      "expectedAttempt": "ok",
+      "expectedFallback": false,
+      "expectedStages": [
+        "requested",
+        "candidate_received",
+        "validating",
+        "repairing",
+        "completed"
+      ]
+    },
+    {
+      "id": "format-not-json",
+      "file": "format-not-json.json",
+      "gameType": "wuxia",
+      "seed": "phase1-wuxia-001",
+      "expectedAttempt": "failed",
+      "expectedCategory": "invalid_json",
+      "expectedFallback": true,
+      "expectedStages": [
+        "requested",
+        "retrying",
+        "falling_back",
+        "completed"
+      ]
+    },
+    {
+      "id": "format-multi-fence",
+      "file": "format-multi-fence.json",
+      "gameType": "wuxia",
+      "seed": "phase1-wuxia-001",
+      "expectedAttempt": "failed",
+      "expectedCategory": "invalid_json",
+      "expectedFallback": true,
+      "expectedStages": [
+        "requested",
+        "retrying",
+        "falling_back",
+        "completed"
+      ]
+    },
+    {
+      "id": "format-wrong-root",
+      "file": "format-wrong-root.json",
+      "gameType": "wuxia",
+      "seed": "phase1-wuxia-001",
+      "expectedAttempt": "failed",
+      "expectedCategory": "schema_violation",
+      "expectedFallback": true,
+      "expectedStages": [
+        "requested",
+        "retrying",
+        "falling_back",
+        "completed"
+      ]
+    },
+    {
+      "id": "unrepairable-reference",
+      "file": "unrepairable-reference.json",
+      "gameType": "wuxia",
+      "seed": "phase1-wuxia-001",
+      "expectedAttempt": "ok",
+      "expectedCategory": "reference_broken",
+      "expectedFallback": true,
+      "expectedStages": [
+        "requested",
+        "candidate_received",
+        "validating",
+        "retrying",
+        "candidate_received",
+        "validating",
+        "falling_back",
+        "completed"
+      ]
+    },
+    {
+      "id": "budget-exceeded",
+      "file": "budget-exceeded.json",
+      "gameType": "wuxia",
+      "seed": "phase1-wuxia-001",
+      "expectedAttempt": "ok",
+      "expectedCategory": "budget_exceeded",
+      "expectedFallback": true,
+      "expectedStages": [
+        "requested",
+        "candidate_received",
+        "validating",
+        "retrying",
+        "candidate_received",
+        "validating",
+        "falling_back",
+        "completed"
+      ]
+    },
+    {
+      "id": "transport-timeout",
+      "file": "transport-timeout.json",
+      "gameType": "wuxia",
+      "seed": "phase1-wuxia-001",
+      "expectedAttempt": "failed",
+      "expectedCategory": "timeout",
+      "expectedFallback": true,
+      "expectedStages": [
+        "requested",
+        "retrying",
+        "falling_back",
+        "completed"
+      ]
+    },
+    {
+      "id": "transport-rate-limited",
+      "file": "transport-rate-limited.json",
+      "gameType": "wuxia",
+      "seed": "phase1-wuxia-001",
+      "expectedAttempt": "failed",
+      "expectedCategory": "rate_limited",
+      "expectedFallback": true,
+      "expectedStages": [
+        "requested",
+        "retrying",
+        "falling_back",
+        "completed"
+      ]
+    },
+    {
+      "id": "transport-service-error",
+      "file": "transport-service-error.json",
+      "gameType": "wuxia",
+      "seed": "phase1-wuxia-001",
+      "expectedAttempt": "failed",
+      "expectedCategory": "service_error",
+      "expectedFallback": true,
+      "expectedStages": [
+        "requested",
+        "retrying",
+        "falling_back",
+        "completed"
+      ]
+    }
+  ]
+}

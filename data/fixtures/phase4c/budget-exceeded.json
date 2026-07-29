@@ -1,0 +1,425 @@
+{
+  "$comment": "预算违规候选：核心 NPC 仅 3 个，低于 coreNpcsMin=4（CORE_NPC_COUNT_OUT_OF_RANGE）。",
+  "candidate": {
+    "schemaVersion": 1,
+    "generationId": "gen-baf9d18291380dec",
+    "seed": "phase1-wuxia-001",
+    "templateVersion": "fallback-3",
+    "gameType": "wuxia",
+    "inputDigest": "473359f44c9c966c",
+    "world": {
+      "summary": "【玩家输入】镖局一夜覆灭，江湖各派暗流涌动，真凶身份成谜，官府与门派各怀心思。刀光剑影之下，人人各怀心事，一桩旧案搅动了整片江湖。",
+      "tone": "苍凉侠气",
+      "themes": [
+        "恩怨情仇",
+        "侠义抉择",
+        "门派纷争"
+      ],
+      "facts": [
+        {
+          "id": "fact_premise",
+          "text": "【玩家输入】世界背景：镖局一夜覆灭，江湖各派暗流涌动，真凶身份成谜，官府与门派各怀心思。",
+          "source": "player_input"
+        },
+        {
+          "id": "fact_identity",
+          "text": "【玩家输入】沈青崖自述身份：落魄镖师",
+          "source": "player_input"
+        },
+        {
+          "id": "fact_gen_1",
+          "text": "山门密道尽头似另有出口，去向成谜。",
+          "source": "generated"
+        },
+        {
+          "id": "fact_gen_2",
+          "text": "近来常有黑衣人在镇外徘徊。",
+          "source": "generated"
+        }
+      ],
+      "tags": [
+        "江湖",
+        "门派"
+      ]
+    },
+    "player": {
+      "name": "沈青崖",
+      "identity": "落魄镖师",
+      "backgroundSummary": "【玩家输入】身为落魄镖师，沈青崖青崖镖局独子，镖局一夜覆灭后流落江湖，靠押送散货为生。旧刀在鞘中低鸣，一段江湖往事就此揭开。",
+      "startingLocationId": "loc_1",
+      "startingItemIds": [
+        "item_start"
+      ],
+      "baseStats": {
+        "hp": 30,
+        "attack": 6,
+        "defense": 4
+      }
+    },
+    "locations": [
+      {
+        "id": "loc_1",
+        "name": "青石镇",
+        "description": "旧案发端的边陲小镇，镇口常年贴着缉凶告示。",
+        "kind": "main",
+        "connectedLocationIds": [
+          "loc_2"
+        ],
+        "npcIds": [
+          "npc_1"
+        ],
+        "availableItemIds": [],
+        "tags": [
+          "江湖"
+        ]
+      },
+      {
+        "id": "loc_2",
+        "name": "渡口集市",
+        "description": "三教九流往来歇脚，消息在此散得最快。",
+        "kind": "main",
+        "connectedLocationIds": [
+          "loc_1",
+          "loc_3"
+        ],
+        "npcIds": [
+          "npc_2"
+        ],
+        "availableItemIds": [],
+        "tags": [
+          "门派"
+        ]
+      },
+      {
+        "id": "loc_3",
+        "name": "铁剑山庄",
+        "description": "武林世家坐镇之地，庄门深锁却暗流涌动。",
+        "kind": "main",
+        "connectedLocationIds": [
+          "loc_2",
+          "loc_4"
+        ],
+        "npcIds": [
+          "npc_3"
+        ],
+        "availableItemIds": [
+          "item_key"
+        ],
+        "tags": [
+          "武功秘籍"
+        ]
+      },
+      {
+        "id": "loc_4",
+        "name": "断魂崖",
+        "description": "传说恩怨了断之处，崖风凛冽杀机四伏。",
+        "kind": "main",
+        "connectedLocationIds": [
+          "loc_3",
+          "loc_hidden"
+        ],
+        "npcIds": [],
+        "availableItemIds": [],
+        "tags": [
+          "侠义"
+        ]
+      },
+      {
+        "id": "loc_hidden",
+        "name": "山门密道",
+        "description": "隐匿于崖壁之后的古旧密道，鲜有人知。",
+        "kind": "hidden",
+        "connectedLocationIds": [
+          "loc_4"
+        ],
+        "npcIds": [],
+        "availableItemIds": [],
+        "tags": [
+          "恩怨情仇"
+        ]
+      }
+    ],
+    "npcs": [
+      {
+        "id": "npc_1",
+        "name": "老掌柜",
+        "role": "线人",
+        "description": "镖局旧识，知道当年不少内情。",
+        "locationId": "loc_1",
+        "isCompanion": false,
+        "knownFactIds": [
+          "fact_identity"
+        ],
+        "tags": [
+          "江湖"
+        ]
+      },
+      {
+        "id": "npc_2",
+        "name": "渡口船娘",
+        "role": "消息贩子",
+        "description": "撑船摆渡，听尽南来北往的风声。",
+        "locationId": "loc_2",
+        "isCompanion": false,
+        "knownFactIds": [],
+        "tags": [
+          "门派"
+        ]
+      },
+      {
+        "id": "npc_3",
+        "name": "铁剑庄主",
+        "role": "盟友",
+        "description": "武林世家之主，正为家门声誉所困。",
+        "locationId": "loc_3",
+        "isCompanion": false,
+        "knownFactIds": [
+          "fact_gen_1"
+        ],
+        "tags": [
+          "武功秘籍"
+        ]
+      }
+    ],
+    "quests": [
+      {
+        "kind": "main",
+        "stage": 1,
+        "id": "quest_m1",
+        "name": "旧案重启",
+        "description": "沈青崖循着告示追查灭门旧案的头绪。线索指向：【玩家输入】镖局一夜覆灭，江湖各派暗流涌动，真凶身份成谜，官府与门派各怀心思。",
+        "objectives": [
+          {
+            "kind": "visit_location",
+            "locationId": "loc_2"
+          }
+        ],
+        "onSuccess": {
+          "kind": "unlock_quests",
+          "questIds": [
+            "quest_m2",
+            "quest_s1",
+            "quest_s2"
+          ]
+        },
+        "onFailure": {
+          "kind": "closed"
+        },
+        "tags": [
+          "江湖"
+        ]
+      },
+      {
+        "kind": "main",
+        "stage": 2,
+        "id": "quest_m2",
+        "name": "山庄求证",
+        "description": "深入铁剑山庄求证并取回关键信物。",
+        "objectives": [
+          {
+            "kind": "talk_to_npc",
+            "npcId": "npc_3"
+          },
+          {
+            "kind": "obtain_item",
+            "itemId": "item_key"
+          }
+        ],
+        "onSuccess": {
+          "kind": "unlock_quests",
+          "questIds": [
+            "quest_m3"
+          ]
+        },
+        "onFailure": {
+          "kind": "closed"
+        },
+        "tags": []
+      },
+      {
+        "kind": "main",
+        "stage": 3,
+        "id": "quest_m3",
+        "name": "断魂决战",
+        "description": "在断魂崖直面幕后黑手，了结恩怨。",
+        "objectives": [
+          {
+            "kind": "defeat_enemy",
+            "enemyId": "enemy_boss"
+          }
+        ],
+        "onSuccess": {
+          "kind": "reach_ending",
+          "endingId": "ending_1"
+        },
+        "onFailure": {
+          "kind": "reach_ending",
+          "endingId": "ending_2"
+        },
+        "tags": []
+      },
+      {
+        "kind": "side",
+        "id": "quest_s1",
+        "name": "密道传闻",
+        "description": "查证山门密道的古老传闻。",
+        "objectives": [
+          {
+            "kind": "discover_fact",
+            "factId": "fact_gen_1"
+          }
+        ],
+        "onSuccess": {
+          "kind": "closed"
+        },
+        "onFailure": {
+          "kind": "closed"
+        },
+        "tags": []
+      },
+      {
+        "kind": "side",
+        "id": "quest_s2",
+        "name": "崖畔巡踪",
+        "description": "沿断魂崖搜寻残留的蛛丝马迹。",
+        "objectives": [
+          {
+            "kind": "visit_location",
+            "locationId": "loc_4"
+          }
+        ],
+        "onSuccess": {
+          "kind": "closed"
+        },
+        "onFailure": {
+          "kind": "closed"
+        },
+        "tags": []
+      }
+    ],
+    "enemies": [
+      {
+        "id": "enemy_normal_1",
+        "name": "黑衣刺客",
+        "tier": "normal",
+        "stats": {
+          "hp": 24,
+          "attack": 5,
+          "defense": 2
+        },
+        "locationId": "loc_1",
+        "tags": [
+          "侠义"
+        ]
+      },
+      {
+        "id": "enemy_normal_2",
+        "name": "山道劫匪",
+        "tier": "normal",
+        "stats": {
+          "hp": 30,
+          "attack": 6,
+          "defense": 3
+        },
+        "locationId": "loc_2",
+        "tags": [
+          "恩怨情仇"
+        ]
+      },
+      {
+        "id": "enemy_normal_3",
+        "name": "门派死士",
+        "tier": "normal",
+        "stats": {
+          "hp": 36,
+          "attack": 7,
+          "defense": 4
+        },
+        "locationId": "loc_3",
+        "tags": [
+          "镖局"
+        ]
+      },
+      {
+        "id": "enemy_boss",
+        "name": "幕后黑手",
+        "tier": "boss",
+        "stats": {
+          "hp": 20,
+          "attack": 5,
+          "defense": 2
+        },
+        "locationId": "loc_4",
+        "tags": []
+      }
+    ],
+    "items": [
+      {
+        "id": "item_start",
+        "name": "护身短刀",
+        "description": "随身旧刀，伴主角走过风霜。",
+        "kind": "weapon",
+        "tags": [
+          "武功秘籍"
+        ]
+      },
+      {
+        "id": "item_key",
+        "name": "镖局信物",
+        "description": "证明当年身份的关键信物。",
+        "kind": "key",
+        "tags": []
+      }
+    ],
+    "endings": [
+      {
+        "id": "ending_1",
+        "name": "沉冤得雪",
+        "description": "真相大白，旧案昭雪，江湖重归安宁。",
+        "requirements": [
+          {
+            "kind": "quest_completed",
+            "questId": "quest_m3"
+          }
+        ]
+      },
+      {
+        "id": "ending_2",
+        "name": "遁入山门",
+        "description": "复仇未竟，主角借密道悄然远走。",
+        "requirements": [
+          {
+            "kind": "quest_failed",
+            "questId": "quest_m3"
+          }
+        ]
+      }
+    ],
+    "openingScene": {
+      "id": "scene_opening",
+      "locationId": "loc_1",
+      "narration": "【玩家输入】暮色四合，主角背着旧刀走进青石镇，镇口贴着一张字迹潦草的缉凶告示。旧刀在鞘中低鸣，一段江湖往事就此揭开。",
+      "presentNpcIds": [
+        "npc_1"
+      ],
+      "suggestedActions": [
+        "打听旧案线索",
+        "查看告示细节",
+        "寻访当年旧识"
+      ],
+      "investigableFactIds": [
+        "fact_gen_1",
+        "fact_gen_2"
+      ]
+    },
+    "contentBudget": {
+      "mainLocations": 4,
+      "hiddenLocationsMax": 1,
+      "coreNpcsMin": 4,
+      "coreNpcsMax": 6,
+      "companionsMax": 1,
+      "sideQuestsMax": 2,
+      "endings": 2
+    }
+  }
+}

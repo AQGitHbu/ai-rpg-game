@@ -1,0 +1,438 @@
+{
+  "candidate": {
+    "schemaVersion": 1,
+    "generationId": "gen-b2e11e7bba9cd3bf",
+    "seed": "phase1-urban-001",
+    "templateVersion": "fallback-3",
+    "gameType": "urban",
+    "inputDigest": "784230c207fe4c98",
+    "world": {
+      "summary": "【玩家输入】滨江金融城连环并购案背后，一笔离奇消失的资金牵动着各方神经。在当代城市的规则之内，一笔消失的资金串起了层层内幕。",
+      "tone": "写实冷静",
+      "themes": [
+        "商战博弈",
+        "悬疑调查",
+        "职业操守"
+      ],
+      "facts": [
+        {
+          "id": "fact_premise",
+          "text": "【玩家输入】世界背景：滨江金融城连环并购案背后，一笔离奇消失的资金牵动着各方神经。",
+          "source": "player_input"
+        },
+        {
+          "id": "fact_identity",
+          "text": "【玩家输入】林之遥自述身份：财经记者",
+          "source": "player_input"
+        },
+        {
+          "id": "fact_gen_1",
+          "text": "地下档案室近期频繁有人出入。",
+          "source": "generated"
+        },
+        {
+          "id": "fact_gen_2",
+          "text": "一笔资金在并购完成前被悄然转移。",
+          "source": "generated"
+        }
+      ],
+      "tags": [
+        "职场",
+        "商战"
+      ]
+    },
+    "player": {
+      "name": "林之遥",
+      "identity": "财经记者",
+      "backgroundSummary": "【玩家输入】身为财经记者，林之遥跑了五年财经口，写过两篇让上市公司股价跳水的深度报道。屏幕微光映着倦容，一场深夜调查悄然启动。",
+      "startingLocationId": "loc_1",
+      "startingItemIds": [
+        "item_start"
+      ],
+      "baseStats": {
+        "hp": 30,
+        "attack": 6,
+        "defense": 4
+      }
+    },
+    "locations": [
+      {
+        "id": "loc_1",
+        "name": "报社编辑部",
+        "description": "深夜仍亮着灯的编辑部，线索从这里出发。",
+        "kind": "main",
+        "connectedLocationIds": [
+          "loc_2"
+        ],
+        "npcIds": [
+          "npc_1"
+        ],
+        "availableItemIds": [],
+        "tags": [
+          "职场"
+        ]
+      },
+      {
+        "id": "loc_2",
+        "name": "滨江金融城",
+        "description": "玻璃幕墙林立的金融核心区。",
+        "kind": "main",
+        "connectedLocationIds": [
+          "loc_1",
+          "loc_3"
+        ],
+        "npcIds": [
+          "npc_2"
+        ],
+        "availableItemIds": [],
+        "tags": [
+          "商战"
+        ]
+      },
+      {
+        "id": "loc_3",
+        "name": "老城巷口咖啡馆",
+        "description": "闹市一隅的咖啡馆，谈话不易被打扰。",
+        "kind": "main",
+        "connectedLocationIds": [
+          "loc_2",
+          "loc_4"
+        ],
+        "npcIds": [
+          "npc_3"
+        ],
+        "availableItemIds": [
+          "item_key"
+        ],
+        "tags": [
+          "悬疑调查"
+        ]
+      },
+      {
+        "id": "loc_4",
+        "name": "城郊仓库",
+        "description": "记录着可疑资金流向的偏僻仓库。",
+        "kind": "main",
+        "connectedLocationIds": [
+          "loc_3",
+          "loc_hidden"
+        ],
+        "npcIds": [
+          "npc_4"
+        ],
+        "availableItemIds": [],
+        "tags": [
+          "都市夜景"
+        ]
+      },
+      {
+        "id": "loc_hidden",
+        "name": "地下停车场档案室",
+        "description": "藏在停车场深处的临时档案室。",
+        "kind": "hidden",
+        "connectedLocationIds": [
+          "loc_4"
+        ],
+        "npcIds": [],
+        "availableItemIds": [],
+        "tags": [
+          "人脉博弈"
+        ]
+      }
+    ],
+    "npcs": [
+      {
+        "id": "npc_1",
+        "name": "报社主编",
+        "role": "线人",
+        "description": "老练的主编，为报道尺度反复权衡。",
+        "locationId": "loc_1",
+        "isCompanion": false,
+        "knownFactIds": [
+          "fact_identity"
+        ],
+        "tags": [
+          "职场"
+        ]
+      },
+      {
+        "id": "npc_2",
+        "name": "咖啡馆老板",
+        "role": "消息贩子",
+        "description": "见多识广，认得城里各色人物。",
+        "locationId": "loc_2",
+        "isCompanion": false,
+        "knownFactIds": [],
+        "tags": [
+          "商战"
+        ]
+      },
+      {
+        "id": "npc_3",
+        "name": "投行合伙人",
+        "role": "盟友",
+        "description": "熟悉并购内情，暗中提供帮助。",
+        "locationId": "loc_3",
+        "isCompanion": false,
+        "knownFactIds": [
+          "fact_gen_1"
+        ],
+        "tags": [
+          "悬疑调查"
+        ]
+      },
+      {
+        "id": "npc_4",
+        "name": "律师朋友",
+        "role": "同伴",
+        "description": "多年好友，愿在法律边界内相助。",
+        "locationId": "loc_4",
+        "isCompanion": true,
+        "knownFactIds": [],
+        "tags": [
+          "都市夜景"
+        ]
+      }
+    ],
+    "quests": [
+      {
+        "kind": "main",
+        "stage": 1,
+        "id": "quest_m1",
+        "name": "匿名线索",
+        "description": "林之遥顺着匿名邮件核实资金异动的线索。线索指向：【玩家输入】滨江金融城连环并购案背后，一笔离奇消失的资金牵动着各方神经。",
+        "objectives": [
+          {
+            "kind": "visit_location",
+            "locationId": "loc_2"
+          }
+        ],
+        "onSuccess": {
+          "kind": "unlock_quests",
+          "questIds": [
+            "quest_m2",
+            "quest_s1",
+            "quest_s2"
+          ]
+        },
+        "onFailure": {
+          "kind": "closed"
+        },
+        "tags": [
+          "职场"
+        ]
+      },
+      {
+        "kind": "main",
+        "stage": 2,
+        "id": "quest_m2",
+        "name": "仓库取证",
+        "description": "潜入城郊仓库取回关键审计底稿。",
+        "objectives": [
+          {
+            "kind": "talk_to_npc",
+            "npcId": "npc_3"
+          },
+          {
+            "kind": "obtain_item",
+            "itemId": "item_key"
+          }
+        ],
+        "onSuccess": {
+          "kind": "unlock_quests",
+          "questIds": [
+            "quest_m3"
+          ]
+        },
+        "onFailure": {
+          "kind": "closed"
+        },
+        "tags": []
+      },
+      {
+        "kind": "main",
+        "stage": 3,
+        "id": "quest_m3",
+        "name": "对簿真相",
+        "description": "在档案室与幕后操盘人当面摊牌。",
+        "objectives": [
+          {
+            "kind": "defeat_enemy",
+            "enemyId": "enemy_boss"
+          }
+        ],
+        "onSuccess": {
+          "kind": "reach_ending",
+          "endingId": "ending_1"
+        },
+        "onFailure": {
+          "kind": "reach_ending",
+          "endingId": "ending_2"
+        },
+        "tags": []
+      },
+      {
+        "kind": "side",
+        "id": "quest_s1",
+        "name": "档案疑云",
+        "description": "核实地下档案室的可疑传闻。",
+        "objectives": [
+          {
+            "kind": "discover_fact",
+            "factId": "fact_gen_1"
+          }
+        ],
+        "onSuccess": {
+          "kind": "closed"
+        },
+        "onFailure": {
+          "kind": "closed"
+        },
+        "tags": []
+      },
+      {
+        "kind": "side",
+        "id": "quest_s2",
+        "name": "街角摸排",
+        "description": "在金融城周边摸排相关人证。",
+        "objectives": [
+          {
+            "kind": "visit_location",
+            "locationId": "loc_4"
+          }
+        ],
+        "onSuccess": {
+          "kind": "closed"
+        },
+        "onFailure": {
+          "kind": "closed"
+        },
+        "tags": []
+      }
+    ],
+    "enemies": [
+      {
+        "id": "enemy_normal_1",
+        "name": "私人保镖",
+        "tier": "normal",
+        "stats": {
+          "hp": 24,
+          "attack": 5,
+          "defense": 2
+        },
+        "locationId": "loc_1",
+        "tags": [
+          "都市夜景"
+        ]
+      },
+      {
+        "id": "enemy_normal_2",
+        "name": "收账打手",
+        "tier": "normal",
+        "stats": {
+          "hp": 30,
+          "attack": 6,
+          "defense": 3
+        },
+        "locationId": "loc_2",
+        "tags": [
+          "人脉博弈"
+        ]
+      },
+      {
+        "id": "enemy_normal_3",
+        "name": "神秘跟踪者",
+        "tier": "normal",
+        "stats": {
+          "hp": 36,
+          "attack": 7,
+          "defense": 4
+        },
+        "locationId": "loc_3",
+        "tags": [
+          "豪门恩怨"
+        ]
+      },
+      {
+        "id": "enemy_boss",
+        "name": "幕后操盘人",
+        "tier": "boss",
+        "stats": {
+          "hp": 20,
+          "attack": 5,
+          "defense": 2
+        },
+        "locationId": "loc_4",
+        "tags": []
+      }
+    ],
+    "items": [
+      {
+        "id": "item_start",
+        "name": "记者证",
+        "description": "随身证件，是采访调查的通行凭据。",
+        "kind": "gear",
+        "tags": [
+          "悬疑调查"
+        ]
+      },
+      {
+        "id": "item_key",
+        "name": "审计底稿",
+        "description": "揭示资金去向的关键审计底稿。",
+        "kind": "key",
+        "tags": []
+      }
+    ],
+    "endings": [
+      {
+        "id": "ending_1",
+        "name": "真相见报",
+        "description": "调查成稿见报，黑幕曝光于众。",
+        "requirements": [
+          {
+            "kind": "quest_completed",
+            "questId": "quest_m3"
+          }
+        ]
+      },
+      {
+        "id": "ending_2",
+        "name": "悄然收手",
+        "description": "压力之下选择收手，真相暂被掩埋。",
+        "requirements": [
+          {
+            "kind": "quest_failed",
+            "questId": "quest_m3"
+          }
+        ]
+      }
+    ],
+    "openingScene": {
+      "id": "scene_opening",
+      "locationId": "loc_1",
+      "narration": "【玩家输入】深夜的编辑部只剩一盏灯，主角收到一封匿名邮件，附件是半份审计底稿。屏幕微光映着倦容，一场深夜调查悄然启动。",
+      "presentNpcIds": [
+        "npc_1"
+      ],
+      "suggestedActions": [
+        "核实匿名邮件",
+        "梳理资金线索",
+        "约见可靠信源"
+      ],
+      "investigableFactIds": [
+        "fact_gen_1",
+        "fact_gen_2"
+      ]
+    },
+    "contentBudget": {
+      "mainLocations": 4,
+      "hiddenLocationsMax": 1,
+      "coreNpcsMin": 4,
+      "coreNpcsMax": 6,
+      "companionsMax": 1,
+      "sideQuestsMax": 2,
+      "endings": 2
+    }
+  }
+}

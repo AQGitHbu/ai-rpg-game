@@ -1,0 +1,4 @@
+{
+  "$comment": "多个 code fence 不满足单一 fence 契约：整体不是合法 JSON ⇒ invalid_json。",
+  "responseText": "```json\n{\"a\":1}\n```\n再补充一份：\n```json\n{\"b\":2}\n```"
+}
