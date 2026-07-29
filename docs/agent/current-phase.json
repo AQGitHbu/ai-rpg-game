@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "mvp-phase-7-map-first-location-playable-loop",
-  "status": "planned",
-  "implementationStatus": "not_started",
+  "status": "completed",
+  "implementationStatus": "implemented",
   "targetBranch": "codex/phase7-map-scene-playable-loop-planning",
   "worktreeName": "phase7-map-scene-playable-loop-planning",
   "repositories": ["ai-rpg-game"],
