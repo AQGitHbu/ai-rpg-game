@@ -118,7 +118,7 @@ describe("LocationSceneScreen", () => {
       />
     );
 
-    await user.click(screen.getByRole("button", { name: "返回地图" }));
+    await user.click(screen.getByRole("button", { name: "地图" }));
     expect(onReturnMap).toHaveBeenCalledOnce();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -137,7 +137,7 @@ describe("LocationSceneScreen", () => {
 
     const buttons = screen.getAllByRole("button");
     for (const button of buttons) {
-      if (button.textContent !== "返回地图") {
+      if (button.textContent !== "地图") {
         expect(button).toBeDisabled();
       }
     }
@@ -158,7 +158,8 @@ describe("LocationSceneScreen", () => {
 
     const interactionCount = view.locationScene.interactions.length;
     const npcCount = view.dialogues.length;
-    // interactions + NPC hotspots + return button
-    expect(screen.getAllByRole("button").length).toBe(interactionCount + npcCount + 1);
+    // hotspot buttons + action rail (人物 + 观察 + 线索 + 物品 + 地图)
+    const actionRailCount = 5;
+    expect(screen.getAllByRole("button").length).toBe(interactionCount + npcCount + actionRailCount);
   });
 });
