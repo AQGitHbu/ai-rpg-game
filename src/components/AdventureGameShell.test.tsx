@@ -7,15 +7,6 @@ import {
   buildSessionViewFixture
 } from "./sessionViewFixture.testutil";
 
-// ---------------------------------------------------------------------------
-// Phase 7 Task 5：地图优先游戏壳测试。壳只维护本地 screen: map | scene 状态机：
-//   - 首次 active view 显示地图；
-//   - 进入当前地点 = 纯本地 map → scene 切换，零请求、revision 不变；
-//   - move 走 postGameAction 协议：success 上报最新 view 并自动切到 scene，
-//     rejected 留在地图显示反馈，stale 只触发 onStaleRevision，error 不伪造成功。
-// fetch 全程打桩，绝不发真实请求。
-// ---------------------------------------------------------------------------
-
 type FakeResponse = { json: () => Promise<unknown> };
 
 function jsonResponse(body: unknown): FakeResponse {
@@ -43,12 +34,27 @@ afterEach(() => {
 });
 
 describe("AdventureGameShell", () => {
-  it("首次 active view 显示世界地图，不显示地点场景", () => {
+  it("首次 active view 显示 HUD 与世界地图", () => {
     vi.stubGlobal("fetch", vi.fn());
     renderShell();
 
     expect(screen.getByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "返回地图" })).toBeNull();
+    expect(screen.getByRole("button", { name: "角色" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "背包" })).toBeInTheDocument();
+  });
+
+  it("HUD 打开背包弹层，关闭后回到触发按钮", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const user = userEvent.setup();
+    renderShell();
+
+    const inventory = screen.getByRole("button", { name: "背包" });
+    await user.click(inventory);
+    expect(screen.getByRole("dialog", { name: "背包" })).toBeVisible();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(inventory).toHaveFocus();
   });
 
   it("进入当前地点只做本地 map → scene 切换：零请求、view 不变", async () => {
@@ -60,8 +66,7 @@ describe("AdventureGameShell", () => {
 
     await user.click(screen.getByRole("button", { name: "进入青石镇" }));
 
-    expect(screen.getByRole("heading", { name: "青石镇" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "返回地图" })).toBeInTheDocument();
+    expect(screen.getByText("镇口贴着一张字迹潦草的缉凶告示。")).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(onViewChange).not.toHaveBeenCalled();
   });
@@ -73,7 +78,7 @@ describe("AdventureGameShell", () => {
     renderShell();
 
     await user.click(screen.getByRole("button", { name: "进入青石镇" }));
-    await user.click(screen.getByRole("button", { name: "返回地图" }));
+    await user.click(screen.getByRole("button", { name: "地图" }));
 
     expect(screen.getByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -106,10 +111,8 @@ describe("AdventureGameShell", () => {
     expect(onBusyChange).toHaveBeenNthCalledWith(1, true);
     expect(onBusyChange).toHaveBeenLastCalledWith(false);
 
-    // 父级用最新 view 重渲染后，壳已自动处于目标地点场景。
     rerender(<AdventureGameShell {...props} view={movedView} />);
-    expect(screen.getByRole("heading", { name: "城外官道" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "返回地图" })).toBeInTheDocument();
+    expect(screen.getByText("黄土道上车辙纵横，隐约可见几处暗色血迹。")).toBeInTheDocument();
   });
 
   it("移动被规则拒绝：留在地图并显示反馈，不上报新 view", async () => {
@@ -132,7 +135,6 @@ describe("AdventureGameShell", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent("那条路尚未打通。");
     expect(screen.getByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "返回地图" })).toBeNull();
     expect(onViewChange).not.toHaveBeenCalled();
   });
 
@@ -148,7 +150,6 @@ describe("AdventureGameShell", () => {
     await waitFor(() => expect(onStaleRevision).toHaveBeenCalledTimes(1));
     expect(onViewChange).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "返回地图" })).toBeNull();
   });
 
   it("网络异常：显示错误、留在地图，绝不伪造移动成功", async () => {
@@ -166,21 +167,25 @@ describe("AdventureGameShell", () => {
       "网络异常，请检查连接后重试。"
     );
     expect(screen.getByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "返回地图" })).toBeNull();
     expect(onViewChange).not.toHaveBeenCalled();
     expect(onStaleRevision).not.toHaveBeenCalled();
   });
 
-  it("次级面板入口是本地开关：切换 aria-expanded，零请求", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+  it("成功行动用 toast 显示反馈", async () => {
+    const movedView = buildMovedSessionViewFixture();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ view: movedView, feedback: { ok: true, message: "你来到了城外官道。" } })
+      )
+    );
     const user = userEvent.setup();
-    renderShell();
+    renderShell({ onViewChange: vi.fn() });
 
-    const toggle = screen.getByRole("button", { name: "冒险详情" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    await user.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(fetchMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "前往城外官道" }));
+
+    const toast = await screen.findByRole("status");
+    expect(toast).toHaveTextContent("你来到了城外官道。");
+    expect(toast).toHaveClass("adventure-toast");
   });
 });

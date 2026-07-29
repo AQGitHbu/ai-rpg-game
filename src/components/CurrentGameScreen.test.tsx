@@ -68,10 +68,9 @@ describe("CurrentGameScreen", () => {
     stubFetch(async () => jsonResponse(200, { status: "active", view }));
     render(<CurrentGameScreen />);
 
-    expect(await screen.findByText("暮色四合，你背着旧刀走进青石镇。")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "前往城外官道" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "冒险详情" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "角色" })).toBeInTheDocument();
     expect(screen.queryByText("选择游戏类型")).toBeNull();
   });
 
@@ -83,12 +82,11 @@ describe("CurrentGameScreen", () => {
 
     await user.click(await screen.findByRole("button", { name: "进入青石镇" }));
 
-    expect(screen.getByRole("heading", { name: "青石镇" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "观察青石镇" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "陆掌柜，客栈掌柜" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "返回地图" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "地图" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "返回地图" }));
+    await user.click(screen.getByRole("button", { name: "地图" }));
     expect(screen.getByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     // 进入/返回地图都是纯本地导航：只有初始 GET current 一次 fetch。
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -187,7 +185,7 @@ describe("CurrentGameScreen", () => {
 
     await fillAndSubmitSetupForm(user);
 
-    expect(await screen.findByText("暮色四合，你背着旧刀走进青石镇。")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     expect(screen.queryByText("选择游戏类型")).toBeNull();
     expect(screen.queryByText(FALLBACK_NOTICE)).toBeNull();
     for (const call of fetchMock.mock.calls) {
@@ -207,9 +205,8 @@ describe("CurrentGameScreen", () => {
 
     await fillAndSubmitSetupForm(user);
 
-    expect(await screen.findByText("暮色四合，你背着旧刀走进青石镇。")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     expect(screen.getByText(FALLBACK_NOTICE)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
   });
 
   it("刷新恢复同一存档：GET current 不携带来源 ⇒ 不显示降级提示", async () => {
@@ -217,7 +214,7 @@ describe("CurrentGameScreen", () => {
     stubFetch(async () => jsonResponse(200, { status: "active", view }));
     render(<CurrentGameScreen />);
 
-    expect(await screen.findByText("暮色四合，你背着旧刀走进青石镇。")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     expect(screen.queryByText(FALLBACK_NOTICE)).toBeNull();
   });
 
@@ -267,7 +264,7 @@ describe("CurrentGameScreen", () => {
     await user.click(await screen.findByRole("button", { name: "前往城外官道" }));
 
     const buttons = screen.getAllByRole("button").filter(
-      (b) => b.textContent !== "冒险详情"
+      (b) => !["地图", "角色", "背包", "任务", "日志"].includes(b.textContent ?? "")
     );
     for (const button of buttons) {
       expect(button).toBeDisabled();
@@ -336,8 +333,8 @@ describe("CurrentGameScreen", () => {
     await user.click(await screen.findByRole("button", { name: "前往城外官道" }));
 
     expect(
-      (await screen.findAllByText("黄土道上车辙纵横，隐约可见几处暗色血迹。")).length
-    ).toBeGreaterThanOrEqual(1);
+      await screen.findByRole("button", { name: "进入城外官道" })
+    ).toBeInTheDocument();
     expect(currentCalls).toBe(2);
   });
 });

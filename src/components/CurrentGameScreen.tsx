@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
 import { NewGameSetupForm } from "./NewGameSetupForm";
-import { OpeningGameView } from "./OpeningGameView";
 import { AdventureGameShell } from "./AdventureGameShell";
 import { BattlePanel } from "./BattlePanel";
 import { EndingPanel } from "./EndingPanel";
@@ -142,7 +141,6 @@ export function CurrentGameScreen() {
             </p>
           </Panel>
         ) : null}
-        <OpeningGameView view={state.view} />
         {hasEnding ? (
           <EndingPanel view={state.view} />
         ) : hasBattle ? (

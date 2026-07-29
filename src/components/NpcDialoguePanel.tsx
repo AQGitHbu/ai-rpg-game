@@ -1,59 +1,52 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { InlineButton } from "@ai-game/ui";
+import { useState } from "react";
 import type { NpcDialogueView } from "@/game/application";
+import { AdventureVisual } from "./adventureVisuals";
 
 type NpcDialoguePanelProps = {
   readonly dialogue: NpcDialogueView;
+  readonly gameType: string;
   readonly onChoice: (npcId: string, choiceId: string) => void;
-  readonly onClose: () => void;
   readonly busy: boolean;
 };
 
-export function NpcDialoguePanel({ dialogue, onChoice, onClose, busy }: NpcDialoguePanelProps) {
+export function NpcDialoguePanel({ dialogue, gameType, onChoice, busy }: NpcDialoguePanelProps) {
   const [cluesExpanded, setCluesExpanded] = useState(false);
 
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    },
-    [onClose]
-  );
-
-  useEffect(() => {
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
-
   return (
-    <div role="dialog" aria-label={`与${dialogue.name}对话`} className="npc-dialogue-panel">
+    <div className="npc-dialogue-panel">
       <div className="npc-dialogue-header">
+        <AdventureVisual gameType={gameType} kind="npc" label={dialogue.name} decorative />
         <h3>{dialogue.name}</h3>
         <span>{dialogue.role}</span>
       </div>
+
+      <p className="npc-dialogue-greeting">{dialogue.name}向你点了点头。</p>
 
       <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
         {dialogue.choices.map((choice) => {
           if (choice.kind === "review_clue") {
             return (
-              <InlineButton
+              <button
                 key="review_clue"
+                type="button"
                 onClick={() => setCluesExpanded((expanded) => !expanded)}
                 aria-expanded={cluesExpanded}
               >
                 {choice.label}
-              </InlineButton>
+              </button>
             );
           }
           return (
-            <InlineButton
+            <button
               key={choice.choiceId}
+              type="button"
               disabled={busy}
               onClick={() => onChoice(dialogue.npcId, choice.choiceId)}
             >
               {choice.label}
-            </InlineButton>
+            </button>
           );
         })}
       </div>
@@ -65,8 +58,6 @@ export function NpcDialoguePanel({ dialogue, onChoice, onClose, busy }: NpcDialo
           ))}
         </ul>
       ) : null}
-
-      <InlineButton onClick={onClose}>关闭对话</InlineButton>
     </div>
   );
 }

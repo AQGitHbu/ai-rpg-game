@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { InlineButton } from "@ai-game/ui";
+import { useRef, useState } from "react";
 import type { GameSessionView } from "@/game/application";
 import { postGameAction } from "./gameActionRequest";
+import { AdventureHud, type DetailsPanel } from "./AdventureHud";
+import { AdventureOverlay } from "./AdventureOverlay";
+import { AdventureDetailsPanel } from "./AdventureDetailsPanel";
 import { WorldMapScreen } from "./WorldMapScreen";
 import { LocationSceneScreen } from "./LocationSceneScreen";
 import { NpcDialoguePanel } from "./NpcDialoguePanel";
-import { AdventureDetailsPanel } from "./AdventureDetailsPanel";
 
 type AdventureGameShellProps = {
   readonly view: GameSessionView;
@@ -32,6 +33,13 @@ type SceneAction =
   | { readonly type: "take_item"; readonly itemId: string }
   | { readonly type: "start_battle"; readonly enemyId: string };
 
+const DETAIL_TITLE: Record<DetailsPanel, string> = {
+  character: "角色",
+  inventory: "背包",
+  quests: "任务",
+  journal: "日志"
+};
+
 export function AdventureGameShell({
   view,
   busy,
@@ -40,9 +48,10 @@ export function AdventureGameShell({
   onStaleRevision
 }: AdventureGameShellProps) {
   const [screen, setScreen] = useState<AdventureScreen>("map");
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsPanel, setDetailsPanel] = useState<DetailsPanel | null>(null);
   const [feedback, setFeedback] = useState<ActionFeedback>({ phase: "idle" });
   const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
 
   const isSubmitting = feedback.phase === "submitting";
   const shellBusy = busy || isSubmitting;
@@ -50,6 +59,16 @@ export function AdventureGameShell({
   const activeDialogue = dialogueNpcId !== null
     ? view.dialogues.find((d) => d.npcId === dialogueNpcId) ?? null
     : null;
+
+  function openDetails(panel: DetailsPanel): void {
+    triggerRef.current = document.activeElement as HTMLElement;
+    setDetailsPanel(panel);
+  }
+
+  function closeOverlay(): void {
+    setDetailsPanel(null);
+    setDialogueNpcId(null);
+  }
 
   async function handleMove(locationId: string): Promise<void> {
     setFeedback({ phase: "submitting" });
@@ -141,7 +160,9 @@ export function AdventureGameShell({
   }
 
   return (
-    <div className="game-screen">
+    <div className="adventure-game-shell">
+      <AdventureHud view={view} onOpen={openDetails} />
+
       {screen === "map" ? (
         <WorldMapScreen
           view={view}
@@ -154,32 +175,36 @@ export function AdventureGameShell({
           view={view}
           busy={shellBusy}
           onAction={(action) => void handleSceneAction(action)}
-          onOpenDialogue={(npcId) => setDialogueNpcId(npcId)}
+          onOpenDialogue={(npcId) => { triggerRef.current = document.activeElement as HTMLElement; setDialogueNpcId(npcId); }}
           onReturnMap={() => setScreen("map")}
         />
       )}
 
-      {activeDialogue !== null ? (
-        <NpcDialoguePanel
-          dialogue={activeDialogue}
-          busy={shellBusy}
-          onChoice={(npcId, choiceId) => void handleDialogueChoice(npcId, choiceId)}
-          onClose={() => setDialogueNpcId(null)}
-        />
+      {detailsPanel !== null ? (
+        <AdventureOverlay title={DETAIL_TITLE[detailsPanel]} onClose={closeOverlay} returnFocusRef={triggerRef}>
+          <AdventureDetailsPanel view={view} panel={detailsPanel} />
+        </AdventureOverlay>
       ) : null}
 
-      {feedback.phase === "success" || feedback.phase === "rejected" || feedback.phase === "error" ? (
-        <p
-          role="status"
-          aria-live="polite"
-          className={
-            feedback.phase === "success"
-              ? "action-feedback success"
-              : feedback.phase === "rejected"
-                ? "action-feedback rejected"
-                : "action-feedback error"
-          }
-        >
+      {activeDialogue !== null ? (
+        <AdventureOverlay title={`与${activeDialogue.name}对话`} onClose={closeOverlay} returnFocusRef={triggerRef}>
+          <NpcDialoguePanel
+            dialogue={activeDialogue}
+            gameType={view.world.gameType}
+            busy={shellBusy}
+            onChoice={(npcId, choiceId) => void handleDialogueChoice(npcId, choiceId)}
+          />
+        </AdventureOverlay>
+      ) : null}
+
+      {feedback.phase === "success" ? (
+        <p className="adventure-toast" role="status" aria-live="polite">
+          {feedback.message}
+        </p>
+      ) : null}
+
+      {feedback.phase === "rejected" || feedback.phase === "error" ? (
+        <p role="status" aria-live="polite" className={`action-feedback ${feedback.phase}`}>
           {feedback.message}
         </p>
       ) : null}
@@ -189,11 +214,6 @@ export function AdventureGameShell({
           正在处理……
         </p>
       ) : null}
-
-      <InlineButton aria-expanded={detailsOpen} onClick={() => setDetailsOpen((open) => !open)}>
-        冒险详情
-      </InlineButton>
-      {detailsOpen ? <AdventureDetailsPanel view={view} /> : null}
     </div>
   );
 }
