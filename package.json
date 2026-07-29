@@ -23,7 +23,7 @@
     "test:foundation-locator": "node --test scripts/foundationLocator.node-test.mjs",
     "link:foundation": "node scripts/linkFoundation.mjs",
     "bootstrap:foundation": "node scripts/linkFoundation.mjs",
-    "test:fast": "npm run check:standards && npm run test:foundation-locator && npm run test:ai-env && npm run shared:check && npm run typecheck && npm run test:boundaries",
+    "test:fast": "npm run check:standards && npm run test:foundation-locator && npm run test:ai-env && npm run test:handoff-check && npm run shared:check && npm run typecheck && npm run test:boundaries",
     "doctor": "node scripts/doctor.mjs",
     "env:bootstrap": "node scripts/bootstrapAiEnv.mjs",
     "env:check": "node scripts/checkAiEnv.mjs",
@@ -32,6 +32,7 @@
     "phase:start": "node scripts/startCurrentPhase.mjs",
     "worktree:remove": "node scripts/removeWorktree.mjs",
     "test:worktree-remove": "node --test scripts/removeWorktree.node-test.mjs",
+    "test:handoff-check": "node --test scripts/checkHandoff.node-test.mjs",
     "handoff:check:docs": "node scripts/checkHandoff.mjs",
     "handoff:check": "node scripts/checkHandoff.mjs --strict-branch",
     "setup": "npm run env:bootstrap && npm run bootstrap:foundation && npm ci && npm run sync:standards && npm run doctor"
