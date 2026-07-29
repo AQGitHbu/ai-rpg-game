@@ -94,3 +94,4 @@ export {
   type BattleState,
   type EndingState
 } from "./gameState";
+export * from "./townSnapshot";
