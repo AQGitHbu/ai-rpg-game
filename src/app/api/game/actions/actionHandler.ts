@@ -44,7 +44,8 @@ const ALLOWED_INTENT_FIELDS: ReadonlySet<string> = new Set([
   "factId",
   "itemId",
   "enemyId",
-  "action"
+  "action",
+  "choiceId"
 ]);
 
 const VALID_INTENT_TYPES: ReadonlySet<string> = new Set([
@@ -54,21 +55,23 @@ const VALID_INTENT_TYPES: ReadonlySet<string> = new Set([
   "move",
   "take_item",
   "start_battle",
-  "battle_action"
+  "battle_action",
+  "dialogue_choice"
 ]);
 
 /** battle_action 允许的 action 值。 */
 const VALID_BATTLE_ACTIONS: ReadonlySet<string> = new Set(["attack", "guard", "withdraw"]);
 
 /** 每种 intent 唯一允许的目标字段：携带其他目标字段（伪造载荷）一律拒收。 */
-const INTENT_TARGET_FIELD: Readonly<Record<string, string>> = {
-  observe: "locationId",
-  talk: "npcId",
-  investigate: "factId",
-  move: "locationId",
-  take_item: "itemId",
-  start_battle: "enemyId",
-  battle_action: "action"
+const INTENT_TARGET_FIELD: Readonly<Record<string, readonly string[]>> = {
+  observe: ["locationId"],
+  talk: ["npcId"],
+  investigate: ["factId"],
+  move: ["locationId"],
+  take_item: ["itemId"],
+  start_battle: ["enemyId"],
+  battle_action: ["action"],
+  dialogue_choice: ["npcId", "choiceId"]
 };
 
 /** 从原始 JSON 构造 PlayerIntent；校验失败返回错误详情。 */
@@ -90,13 +93,13 @@ function parseIntent(raw: unknown):
 
   const type = obj["type"];
   if (typeof type !== "string" || !VALID_INTENT_TYPES.has(type)) {
-    return { ok: false, detail: "intent.type 必须是 observe/talk/investigate/move/take_item/start_battle/battle_action 之一" };
+    return { ok: false, detail: "intent.type 必须是 observe/talk/investigate/move/take_item/start_battle/battle_action/dialogue_choice 之一" };
   }
 
   // 除 type + 本类型目标字段外，携带其他目标字段（如 take_item 附带 locationId）一律拒收。
-  const targetField = INTENT_TARGET_FIELD[type];
+  const targetFields = INTENT_TARGET_FIELD[type];
   const extraTargets = Object.keys(obj)
-    .filter((key) => key !== "type" && key !== targetField)
+    .filter((key) => key !== "type" && !targetFields.includes(key))
     .sort();
   if (extraTargets.length > 0) {
     return { ok: false, detail: `${type} 不接受字段：${extraTargets.join(", ")}` };
@@ -154,6 +157,17 @@ function parseIntent(raw: unknown):
         ok: true,
         intent: { type: "battle_action", action: action as "attack" | "guard" | "withdraw" }
       };
+    }
+    case "dialogue_choice": {
+      const npcId = obj["npcId"];
+      const choiceId = obj["choiceId"];
+      if (typeof npcId !== "string" || npcId.length === 0) {
+        return { ok: false, detail: "dialogue_choice 需要 npcId 字符串" };
+      }
+      if (typeof choiceId !== "string" || choiceId.length === 0) {
+        return { ok: false, detail: "dialogue_choice 需要 choiceId 字符串" };
+      }
+      return { ok: true, intent: { type: "dialogue_choice", npcId: asNpcId(npcId), choiceId } };
     }
     default:
       return { ok: false, detail: "未知 intent.type" };

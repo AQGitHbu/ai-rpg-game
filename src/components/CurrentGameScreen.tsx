@@ -5,13 +5,9 @@ import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
 import { NewGameSetupForm } from "./NewGameSetupForm";
 import { OpeningGameView } from "./OpeningGameView";
-import { SceneActionPanel } from "./SceneActionPanel";
-import { TravelPanel } from "./TravelPanel";
-import { ItemPanel } from "./ItemPanel";
-import { QuestTracker } from "./QuestTracker";
+import { AdventureGameShell } from "./AdventureGameShell";
 import { BattlePanel } from "./BattlePanel";
 import { EndingPanel } from "./EndingPanel";
-import { AdventureLogPanel } from "./AdventureLogPanel";
 
 // ---------------------------------------------------------------------------
 // 根页面客户端协调器（Phase 2–5 + Phase 6）：挂载时读取 GET /api/game/current。
@@ -134,6 +130,7 @@ export function CurrentGameScreen() {
 
   if (state.phase === "active") {
     const hasEnding = state.view.ending !== null;
+    const hasBattle = state.view.battle !== null;
 
     return (
       <div className="game-screen">
@@ -146,41 +143,24 @@ export function CurrentGameScreen() {
           </Panel>
         ) : null}
         <OpeningGameView view={state.view} />
-        <AdventureLogPanel events={state.view.storyEvents} />
         {hasEnding ? (
           <EndingPanel view={state.view} />
+        ) : hasBattle ? (
+          <BattlePanel
+            view={state.view}
+            busy={actionBusy}
+            onBusyChange={setActionBusy}
+            onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
+            onStaleRevision={() => void loadCurrentGame()}
+          />
         ) : (
-          <>
-            <SceneActionPanel
-              view={state.view}
-              busy={actionBusy}
-              onBusyChange={setActionBusy}
-              onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
-              onStaleRevision={() => void loadCurrentGame()}
-            />
-            <TravelPanel
-              view={state.view}
-              busy={actionBusy}
-              onBusyChange={setActionBusy}
-              onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
-              onStaleRevision={() => void loadCurrentGame()}
-            />
-            <ItemPanel
-              view={state.view}
-              busy={actionBusy}
-              onBusyChange={setActionBusy}
-              onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
-              onStaleRevision={() => void loadCurrentGame()}
-            />
-            <BattlePanel
-              view={state.view}
-              busy={actionBusy}
-              onBusyChange={setActionBusy}
-              onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
-              onStaleRevision={() => void loadCurrentGame()}
-            />
-            <QuestTracker quests={state.view.activeQuests} />
-          </>
+          <AdventureGameShell
+            view={state.view}
+            busy={actionBusy}
+            onBusyChange={setActionBusy}
+            onViewChange={(view) => setState({ phase: "active", view, createdWithFallback: false })}
+            onStaleRevision={() => void loadCurrentGame()}
+          />
         )}
         {developmentControl}
       </div>

@@ -22,6 +22,7 @@ type AdventureScreen = "map" | "scene";
 type ActionFeedback =
   | { readonly phase: "idle" }
   | { readonly phase: "submitting" }
+  | { readonly phase: "success"; readonly message: string }
   | { readonly phase: "rejected"; readonly message: string }
   | { readonly phase: "error"; readonly message: string };
 
@@ -62,7 +63,7 @@ export function AdventureGameShell({
     onBusyChange(false);
     switch (outcome.kind) {
       case "success":
-        setFeedback({ phase: "idle" });
+        setFeedback({ phase: "success", message: outcome.message });
         onViewChange(outcome.view);
         setScreen("scene");
         return;
@@ -96,7 +97,7 @@ export function AdventureGameShell({
     onBusyChange(false);
     switch (outcome.kind) {
       case "success":
-        setFeedback({ phase: "idle" });
+        setFeedback({ phase: "success", message: outcome.message });
         onViewChange(outcome.view);
         return;
       case "rejected":
@@ -123,7 +124,7 @@ export function AdventureGameShell({
     onBusyChange(false);
     switch (outcome.kind) {
       case "success":
-        setFeedback({ phase: "idle" });
+        setFeedback({ phase: "success", message: outcome.message });
         onViewChange(outcome.view);
         return;
       case "rejected":
@@ -167,12 +168,16 @@ export function AdventureGameShell({
         />
       ) : null}
 
-      {feedback.phase === "rejected" || feedback.phase === "error" ? (
+      {feedback.phase === "success" || feedback.phase === "rejected" || feedback.phase === "error" ? (
         <p
           role="status"
           aria-live="polite"
           className={
-            feedback.phase === "rejected" ? "action-feedback rejected" : "action-feedback error"
+            feedback.phase === "success"
+              ? "action-feedback success"
+              : feedback.phase === "rejected"
+                ? "action-feedback rejected"
+                : "action-feedback error"
           }
         >
           {feedback.message}
