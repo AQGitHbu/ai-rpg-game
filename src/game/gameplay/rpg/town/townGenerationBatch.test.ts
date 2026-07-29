@@ -127,21 +127,17 @@ describe("generateTown 1000 seed 批量回归", () => {
     "batch-0..999 全部成功且满足全部不变量，总耗时 < 60s",
     () => {
       const startedAt = performance.now();
-      let repairTotal = 0;
-      let retryTotal = 0;
       for (let i = 0; i < SEED_COUNT; i += 1) {
         const seed = `batch-${i}`;
         const snapshot = generateTown({ seed }); // 抛错即测试失败
         assertTown(seed, snapshot);
-        repairTotal += snapshot.validation.repairCount;
-        retryTotal += snapshot.validation.retryCount;
+        // 修复/重试计数落在 Spec §5 上限内（与 MAX_REPAIR_PASSES/MAX_RETRIES 对齐）。
+        expect(snapshot.validation.repairCount, seed).toBeLessThanOrEqual(20);
+        expect(snapshot.validation.retryCount, seed).toBeLessThanOrEqual(3);
       }
       const elapsed = performance.now() - startedAt;
       // 预算护栏（宽松）：CI/慢机也应达标；均值目标 < 50ms（Spec §8）。
       expect(elapsed).toBeLessThan(TIME_BUDGET_MS);
-      // 修复/重试计数落在合法域（诊断信息见失败输出）。
-      expect(repairTotal).toBeGreaterThanOrEqual(0);
-      expect(retryTotal).toBeGreaterThanOrEqual(0);
     },
     TIME_BUDGET_MS + 30_000
   );

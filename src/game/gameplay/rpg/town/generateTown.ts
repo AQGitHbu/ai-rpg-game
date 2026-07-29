@@ -21,8 +21,9 @@ import { placeBuildings } from "./buildings";
 import { computeRoadReachable, validateTownDraft, type TownDraft, type TownValidationIssue } from "./validateTown";
 
 // 顶层编排：terrain → anchors → roads → blocks/plots → buildings → validate。
-// 有 issue 时按序局部修复（换入口方向 → 开 1–3 格门前巷道 → 泛化建筑降
-// reserved），每轮修复后重验；修复以「验证轮次」计数 ≤ 20（一轮批量处理
+// 有 issue 时按序局部修复（换入口方向 → 开 1–3 格门前巷道 → 舍弃非剧情建筑，
+// footprint 回写地面、地块回退 generic，理由见 discardBuilding），每轮修复后重验；
+// 修复以「验证轮次」计数 ≤ 20（一轮批量处理
 // 当轮全部可修 issue —— 若按建筑逐个计数，plot 环带导致的高频
 // ENTRANCE_UNREACHABLE 会耗尽预算）。仍失败以 hashTownSeed(seed+"#retry"+n)
 // 派生 seed 重跑整镇 ≤ 3 次；全败抛 TownGenerationError。
