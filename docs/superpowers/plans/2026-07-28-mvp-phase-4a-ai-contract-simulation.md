@@ -453,9 +453,8 @@ Expected: PASS。
     npm run test:fast
     npm run build
     npm run phase:status
-    npm run handoff:check
 
-Expected: 全部退出码 0；phase status 显示 Phase 4A；无外网 AI 调用。
+Expected: 全部命令退出码为 0；phase status 显示 Phase 4A；无外网 AI 调用。handoff:check 仅在任务启动前验证 planned/not_started，因此阶段完成后不运行它。
 
 - [ ] **Step 5: 提交**
 
