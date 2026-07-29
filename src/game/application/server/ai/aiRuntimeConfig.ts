@@ -1,7 +1,7 @@
 import type { AiTransportConfig } from "@ai-game/ai-transport";
 
 // ---------------------------------------------------------------------------
-// Phase 4B server-only runtime config（spec §2）。
+// Phase 4B/4C server-only runtime config（spec §2）。
 //
 // 唯一职责：把注入的 env 记录解析为脱敏的 AiTransportConfig，或给出稳定诊断。
 // 约束：
@@ -9,12 +9,17 @@ import type { AiTransportConfig } from "@ai-game/ai-transport";
 //   （生产唯一注入点是 compositionRoot.ts，测试显式注入 env。）
 // - 复用 scripts/aiEnv.mjs 的三键规则：AI_API_BASE_URL 必须 http(s)、model/key trim 非空、
 //   拒绝占位值；语义与部署前 `npm run env:check` 保持一致。
+// - Phase 4C 新增第四个非敏感键 AI_OUTPUT_FORMAT（三值严格、缺省 prompt_only）。
 // - 诊断码稳定（AI_CONFIG_*），绝不回显任何值，绝不抛出。
 // ---------------------------------------------------------------------------
 
+/** Phase 4C：显式输出格式（spec §1）。缺省 prompt_only，绝不隐式探测 provider 能力。 */
+export const AI_OUTPUT_FORMATS = ["json_schema", "json_object", "prompt_only"] as const;
+export type AiOutputFormat = (typeof AI_OUTPUT_FORMATS)[number];
+
 /** 解析结果：available 携带脱敏 config；unavailable 只含稳定诊断码。 */
 export type AiRuntimeConfigResult =
-  | Readonly<{ status: "available"; config: AiTransportConfig }>
+  | Readonly<{ status: "available"; config: AiTransportConfig; outputFormat: AiOutputFormat }>
   | Readonly<{ status: "unavailable"; diagnostics: readonly string[] }>;
 
 type FieldSpec = Readonly<{
@@ -75,12 +80,25 @@ export function parseAiRuntimeConfig(
     delete values.baseUrl;
   }
 
+  // Phase 4C：AI_OUTPUT_FORMAT 严格三值（大小写敏感）；缺失/空白默认 prompt_only，
+  // 无效值给稳定诊断码（绝不回显），生产最终走 unavailable → fallback。
+  const rawFormat = (env.AI_OUTPUT_FORMAT ?? "").trim();
+  let outputFormat: AiOutputFormat = "prompt_only";
+  if (rawFormat !== "") {
+    if ((AI_OUTPUT_FORMATS as readonly string[]).includes(rawFormat)) {
+      outputFormat = rawFormat as AiOutputFormat;
+    } else {
+      diagnostics.push("AI_CONFIG_OUTPUT_FORMAT_INVALID");
+    }
+  }
+
   if (diagnostics.length > 0 || values.baseUrl === undefined || values.model === undefined || values.apiKey === undefined) {
     return { status: "unavailable", diagnostics };
   }
   return {
     status: "available",
-    config: { baseUrl: values.baseUrl, model: values.model, apiKey: values.apiKey }
+    config: { baseUrl: values.baseUrl, model: values.model, apiKey: values.apiKey },
+    outputFormat
   };
 }
 

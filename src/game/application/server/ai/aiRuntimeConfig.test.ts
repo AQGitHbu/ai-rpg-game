@@ -22,7 +22,8 @@ describe("parseAiRuntimeConfig：有效配置", () => {
         baseUrl: "https://api.example.com/v1",
         model: "some-model",
         apiKey: "sk-secret-value-123"
-      }
+      },
+      outputFormat: "prompt_only"
     });
   });
 
@@ -34,7 +35,8 @@ describe("parseAiRuntimeConfig：有效配置", () => {
     });
     expect(result).toEqual({
       status: "available",
-      config: { baseUrl: "http://localhost:1234/v1", model: "m", apiKey: "k" }
+      config: { baseUrl: "http://localhost:1234/v1", model: "m", apiKey: "k" },
+      outputFormat: "prompt_only"
     });
   });
 });
@@ -110,5 +112,67 @@ describe("parseAiRuntimeConfig：脱敏与健壮性", () => {
     expect(() =>
       parseAiRuntimeConfig({ AI_API_BASE_URL: undefined, AI_MODEL: undefined, AI_API_KEY: undefined })
     ).not.toThrow();
+  });
+});
+
+describe("parseAiRuntimeConfig：AI_OUTPUT_FORMAT（Phase 4C）", () => {
+  it.each(["json_schema", "json_object", "prompt_only"] as const)(
+    "合法值 %s ⇒ available 且 outputFormat 原样",
+    (format) => {
+      const result = parseAiRuntimeConfig({ ...VALID_ENV, AI_OUTPUT_FORMAT: format });
+      expect(result.status).toBe("available");
+      if (result.status === "available") expect(result.outputFormat).toBe(format);
+    }
+  );
+
+  it("缺失 / 空白 ⇒ 默认 prompt_only（既有部署请求形状不变）", () => {
+    for (const value of [undefined, "", "   "]) {
+      const result = parseAiRuntimeConfig({ ...VALID_ENV, AI_OUTPUT_FORMAT: value });
+      expect(result).toEqual({
+        status: "available",
+        config: {
+          baseUrl: "https://api.example.com/v1",
+          model: "some-model",
+          apiKey: "sk-secret-value-123"
+        },
+        outputFormat: "prompt_only"
+      });
+    }
+  });
+
+  it("包裹空白的合法值 trim 后接受", () => {
+    const result = parseAiRuntimeConfig({ ...VALID_ENV, AI_OUTPUT_FORMAT: "  json_object  " });
+    expect(result.status).toBe("available");
+    if (result.status === "available") expect(result.outputFormat).toBe("json_object");
+  });
+
+  it("无效值 ⇒ unavailable + AI_CONFIG_OUTPUT_FORMAT_INVALID（不回显值）", () => {
+    const result = parseAiRuntimeConfig({ ...VALID_ENV, AI_OUTPUT_FORMAT: "yaml-forever" });
+    expect(result).toEqual({
+      status: "unavailable",
+      diagnostics: ["AI_CONFIG_OUTPUT_FORMAT_INVALID"]
+    });
+    expect(JSON.stringify(result)).not.toContain("yaml-forever");
+  });
+
+  it("大小写敏感：JSON_SCHEMA 视为无效", () => {
+    const result = parseAiRuntimeConfig({ ...VALID_ENV, AI_OUTPUT_FORMAT: "JSON_SCHEMA" });
+    expect(result).toEqual({
+      status: "unavailable",
+      diagnostics: ["AI_CONFIG_OUTPUT_FORMAT_INVALID"]
+    });
+  });
+
+  it("与三键诊断共存时追加在末尾（顺序稳定可断言）", () => {
+    const result = parseAiRuntimeConfig({
+      AI_API_BASE_URL: "",
+      AI_MODEL: "m",
+      AI_API_KEY: "k",
+      AI_OUTPUT_FORMAT: "bogus"
+    });
+    expect(result).toEqual({
+      status: "unavailable",
+      diagnostics: ["AI_CONFIG_BASE_URL_MISSING", "AI_CONFIG_OUTPUT_FORMAT_INVALID"]
+    });
   });
 });
