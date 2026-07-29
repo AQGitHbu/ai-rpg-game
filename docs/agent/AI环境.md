@@ -81,7 +81,7 @@ $env:RUN_REAL_AI_SMOKE='1'; npm run smoke:ai:phase4b
 - smoke 对三组固定合法输入（武侠 / 科幻 / 都市）各创建一局：默认使用 `tmp/` 下的临时 SQLite，跑完显式关闭并删除（Windows 句柄延迟时留待下次运行清扫）。
 - 判定标准：结果 `source` 属于 `generated | fallback` 即为成功——真实服务慢、限流或返回非法输出时，可观测地降级到 fallback 也算通过。smoke 不评估生成文本质量，也不依赖固定模型文本。只有本地脚本 / 配置 / 持久化失败或 fallback 违约（存档不可 reload、内容预算 / 双结局不满足）才退出非零。
 - 输出白名单：每例只打印 `gameType`、`generated|fallback`、耗时、稳定诊断码与 tokens/cost（如有）；永不输出玩家输入、prompt、模型原文、URL 或 Key。安全门禁由 `npm run test:phase4b-ai-smoke-script`（mock，不触网）强制。
-- 汇总行（Phase 4C）：opt-in 实跑结束时输出恰一行 `[phase4b-smoke] summary {...}`，JSON 字段为白名单：`outputFormat`、`cases`、`generated`、`fallback`、`failed`、`fallbackCategories`（按稳定失败码计数）、`totalDurationMs`，以及可选的 `usage`（tokens 合计）与 `estimatedCostUsd`（合计）。`outputFormat` 是安全标签：合法三值原样、缺失/空白 → `prompt_only`、其余一律 → `invalid`，**绝不回显原值**。汇总只做可观测聚合，通过条件不变（仍是 `generated|fallback` 契约）；无 opt-in 时不输出汇总行、零请求。
+- 汇总行（Phase 4C）：opt-in 实跑结束时输出恰一行 `[phase4b-smoke] summary {...}`，JSON 字段为白名单：`outputFormat`、`cases`、`generated`、`fallback`、`failed`、`fallbackCategories`（按稳定失败码计数）、`totalDurationMs`，以及可选的 `usage`（tokens 合计）与 `estimatedCostUsd`（合计）。`fallbackCategories` 同时汇聚 source audit 与 `createGame` 最终 `falling_back` 事件：后者将候选校验失败收敛为既有稳定类别，避免“attempt_ok 但最终 fallback”遗漏原因。`outputFormat` 是安全标签：合法三值原样、缺失/空白 → `prompt_only`、其余一律 → `invalid`，**绝不回显原值**。汇总只做可观测聚合，通过条件不变（仍是 `generated|fallback` 契约）；无 opt-in 时不输出汇总行、零请求。
 - smoke 决不进入 `npm test` / `test:fast` / build / CI；只作为人工外部验收命令。
 
 ### audit 字段与错误码

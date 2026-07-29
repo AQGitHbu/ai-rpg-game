@@ -510,7 +510,28 @@ describe("createGame：Phase 4A 候选编排", () => {
       "falling_back",
       "completed"
     ]);
+    expect(events.at(-2)).toEqual({ stage: "falling_back", category: "timeout" });
     expect(events.at(-1)).toEqual({ stage: "completed", outcome: "fallback" });
+  });
+
+  it("两次候选引用违规 ⇒ fallback 记录 reference_broken，供脱敏 smoke 汇总", async () => {
+    const repository = createFakeGameRepository();
+    const scripted = createScriptedSource([
+      okAttempt(buildUnrepairableCandidate()),
+      okAttempt(buildUnrepairableCandidate())
+    ]);
+    const events: ScenarioGenerationEvent[] = [];
+    const result = await createGame(
+      { input: FIXTURE.input, seed: FIXTURE.seed },
+      createTestDependencies(repository, {
+        scenarioCandidateSource: scripted.source,
+        generationObserver: (event) => events.push(event)
+      })
+    );
+
+    expect(result).toMatchObject({ ok: true, source: "fallback" });
+    expect(scripted.calls).toHaveLength(2);
+    expect(events.at(-2)).toEqual({ stage: "falling_back", category: "reference_broken" });
   });
 
   it("候选合法但 repository 冲突 ⇒ ACTIVE_GAME_EXISTS + failed(persistence_failure)", async () => {

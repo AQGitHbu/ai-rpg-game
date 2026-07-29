@@ -5,6 +5,7 @@ import {
   type CreateGameDependencies,
   type CreateGameResult
 } from "../createGame";
+import type { ScenarioGenerationEvent } from "../scenarioGeneration";
 import { getCurrentGame, type CurrentGameResult } from "../getCurrentGame";
 import {
   performAction,
@@ -42,12 +43,18 @@ export type ServerGameEntryPoints = {
   close(): Promise<void>;
 };
 
+/** 仅供 server 侧 smoke/结构化日志观察生成阶段，绝不由浏览器或 API 提供。 */
+export type ServerGameEntryPointOptions = {
+  readonly generationObserver?: (event: ScenarioGenerationEvent) => void;
+};
+
 /**
  * 装配一套真实入口：env 记录仅经 sqliteClient 的工厂解析 GAME_DB_PATH，
  * 测试注入指向 tmp/ 的记录，生产默认 process.env（本层是唯一允许读取处）。
  */
 export function createServerGameEntryPoints(
-  env: Record<string, string | undefined> = process.env
+  env: Record<string, string | undefined> = process.env,
+  options: ServerGameEntryPointOptions = {}
 ): ServerGameEntryPoints {
   const repository = createSqliteGameRepository({
     clientFactory: createServerSqliteClientFactory(env)
@@ -60,9 +67,10 @@ export function createServerGameEntryPoints(
     now: () => new Date().toISOString(),
     // Phase 4B：按 AI 运行时配置装配 source——配置有效走 live，否则 unavailable
     // （玩家稳定走 fallback）。fixture source 绝不按 env 切入生产。
-    // traceId 只进 source 请求与脱敏审计，不传 observer。
+    // traceId 只进 source 请求与脱敏审计；observer 仅接收脱敏阶段事件。
     scenarioCandidateSource: createScenarioCandidateSource(env),
-    newTraceId: () => randomUUID()
+    newTraceId: () => randomUUID(),
+    generationObserver: options.generationObserver
   };
   const performDeps: PerformActionDependencies = {
     repository,

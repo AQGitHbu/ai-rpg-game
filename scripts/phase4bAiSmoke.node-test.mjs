@@ -452,6 +452,7 @@ test("离线实跑：占位配置驱动真实链路 → 确定性 fallback，零
   assert.equal(result.reloadOk, true);
   assert.equal(result.endingCount, 2);
   assert.equal(result.budgetOk, true);
+  assert.deepEqual(result.codes, ["service_error"]);
   assert.deepEqual(validateCaseReport(result), []);
 
   // 摘要行与 report 序列化中都不得出现任何配置值或玩家输入。

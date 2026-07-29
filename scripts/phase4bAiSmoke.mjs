@@ -450,6 +450,7 @@ export async function realRunCase(smokeCase, overrides = {}) {
   mkdirSync(resolve(projectRoot, "tmp"), { recursive: true });
   sweepStaleTempDatabases();
   const databasePath = join(resolve(projectRoot, "tmp"), `${TEMP_DB_PREFIX}${randomUUID()}.sqlite`);
+  const generationEvents = [];
 
   const entry = modules.createServerGameEntryPoints({
     AI_API_BASE_URL: aiEnv.AI_API_BASE_URL,
@@ -457,6 +458,8 @@ export async function realRunCase(smokeCase, overrides = {}) {
     AI_API_KEY: aiEnv.AI_API_KEY,
     AI_OUTPUT_FORMAT: aiEnv.AI_OUTPUT_FORMAT,
     GAME_DB_PATH: databasePath,
+  }, {
+    generationObserver: (event) => generationEvents.push(event),
   });
 
   try {
@@ -481,7 +484,13 @@ export async function realRunCase(smokeCase, overrides = {}) {
       console.log = originalConsoleLog;
     }
     const durationMs = performance.now() - startedAt;
-    const { codes, usage, estimatedCostUsd } = summarizeAuditEvents(auditEvents);
+    const { codes: auditCodes, usage, estimatedCostUsd } = summarizeAuditEvents(auditEvents);
+    const fallbackCodes = generationEvents.flatMap((event) =>
+      event.stage === "falling_back" && typeof event.category === "string"
+        ? [event.category]
+        : [],
+    );
+    const codes = [...auditCodes, ...fallbackCodes];
 
     if (!result.ok) {
       return {
