@@ -4,7 +4,6 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   asLocationId,
-  asNpcId,
   type GameTypeId,
   type NewGameInput
 } from "@/game/domain";

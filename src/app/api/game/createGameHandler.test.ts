@@ -108,10 +108,14 @@ describe("handleCreateGameRequest：合法开局资料", () => {
     const text = await response.text();
     // Phase 4A 追加：候选生成的内部诊断（diagnostics/fixtureId/origin/traceId）
     // 同样只属于内部记录，绝不进入玩家响应。
+    // Phase 7：worldMap.nodes[].state 是安全的 UI 显示状态字段，不属内部 GameState；
+    // 改用 state_json/stateVersion/eventLedger 等真正的内部字段名检测泄漏。
     for (const secret of [
       '"seed"',
       '"blueprint"',
-      '"state"',
+      '"state_json"',
+      '"stateVersion"',
+      '"eventLedger"',
       '"inputDigest"',
       '"diagnostics"',
       '"fixtureId"',

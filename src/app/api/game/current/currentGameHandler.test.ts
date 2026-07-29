@@ -90,7 +90,7 @@ describe("handleCurrentGameRequest", () => {
     expect(response.status).toBe(200);
     const text = await response.text();
     expect(JSON.parse(text)).toEqual({ status: "active", view: created.view });
-    for (const secret of ['"blueprint"', '"state"', '"seed"', '"inputDigest"']) {
+    for (const secret of ['"blueprint"', '"state_json"', '"stateVersion"', '"eventLedger"', '"seed"', '"inputDigest"']) {
       expect(text).not.toContain(secret);
     }
   });
