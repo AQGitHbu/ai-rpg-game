@@ -1,14 +1,12 @@
 {
   "schemaVersion": 1,
-  "phase": "mvp-phase-4c-structured-output-offline-regression",
-  "status": "completed",
-  "implementationStatus": "implemented",
-  "targetBranch": "codex/phase4c-planning",
-  "worktreeName": "phase4c-planning",
-  "repositories": [
-    "ai-rpg-game"
-  ],
-  "plan": "docs/superpowers/plans/2026-07-29-mvp-phase-4c-structured-output-offline-regression.md",
+  "phase": "mvp-phase-7-map-first-location-playable-loop",
+  "status": "planned",
+  "implementationStatus": "not_started",
+  "targetBranch": "codex/phase7-map-scene-playable-loop-planning",
+  "worktreeName": "phase7-map-scene-playable-loop-planning",
+  "repositories": ["ai-rpg-game"],
+  "plan": "docs/superpowers/plans/2026-07-29-mvp-phase-7-map-first-location-playable-loop.md",
   "sharedInfrastructureChangeAllowed": false,
   "startCommand": "npm run phase:start",
   "entryDocs": [
@@ -17,14 +15,9 @@
     "docs/Agent文档索引.md",
     "docs/agent/当前开发阶段.md",
     "docs/agent/MVP核心闭环.md",
-    "docs/agent/AI环境.md",
-    "docs/共同规范/共享模块开发流程.md",
-    "docs/策划文档/AI生成RPG_MVP.md",
-    "docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md",
-    "docs/superpowers/specs/2026-07-28-ai-contract-simulation-and-dynamic-opening-design.md",
-    "docs/superpowers/plans/2026-07-29-mvp-phase-4b-real-ai-dynamic-opening.md",
-    "docs/superpowers/specs/2026-07-29-phase4c-real-ai-output-reliability-and-offline-regression-design.md",
-    "docs/superpowers/plans/2026-07-29-mvp-phase-4c-structured-output-offline-regression.md"
+    "docs/agent/地图与地点冒险.md",
+    "docs/superpowers/specs/2026-07-29-map-first-location-playable-loop-design.md",
+    "docs/superpowers/plans/2026-07-29-mvp-phase-7-map-first-location-playable-loop.md"
   ],
   "acceptanceCommands": [
     "npm run lint",

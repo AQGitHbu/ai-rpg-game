@@ -61,6 +61,7 @@
 
 ## 最近维护
 
+- 2026-07-29：Phase 7 计划中（planned / not_started，实现未开始）：地图优先地点冒险主循环（地图旅行层 `current|travelable|known|locked` 四状态节点 → 地点场景点击互动 → `dialogue_choice` 固定对话（greet|ask_main_quest|review_clue）→ 任务推进 → 返回地图；本仓 SVG 占位视觉，零 AI/图片调用）；唯一 Plan：`docs/superpowers/plans/2026-07-29-mvp-phase-7-map-first-location-playable-loop.md`，见 `docs/agent/地图与地点冒险.md`。
 - 2026-07-29：完成 Phase 4C 结构化输出可靠性与离线回归（`AI_OUTPUT_FORMAT` 三值配置 + `response_format` extraBody 纯函数与 strict schema + live source/factory 装配 + `data/fixtures/phase4c/` 契约与三类型完整旅程离线回归 + smoke 脱敏安全汇总；失败类别/重试/fallback 语义不变，最终 fallback 额外携带既有稳定分类以避免汇总漏因，零 foundation 改动）；Phase 4B 真实计费 smoke 已于本机执行，三例均满足 generated|fallback 契约。
 - 2026-07-29：完成 Phase 4B 真实 AI 动态开局（跨仓：foundation `@ai-game/ai-transport@0.1.0` + SLG 迁移 + RPG live source）：生产在有效本项目 AI 配置时使用 live source；配置/服务/候选失败在最多两次尝试与一次机械修复后安全 fallback；fixture 测试仍为主回归；opt-in 真实 smoke（`smoke:ai:phase4b`）就绪（后已执行，见上条）。
 - 2026-07-28：完成 Phase 4A AI 契约模拟与生成体验（`ScenarioCandidateSource` 纯 port + `phase4a-v1` 契约 + server-only fixture source；一次机械修复/一次重试/确定性 fallback 编排；生产注入 unavailable source；`generationSource` 安全字段 + 等待态与一次性降级提示 UI；边界守卫与契约回归）。真实 AI 网络调用与 shared `@ai-game/ai-transport` 尚未实现（Phase 4B）。
