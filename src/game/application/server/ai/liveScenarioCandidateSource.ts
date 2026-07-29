@@ -26,6 +26,8 @@ export type LiveScenarioCandidateSourceOptions = Readonly<{
   config: AiTransportConfig;
   buildMessages: (request: ScenarioGenerationRequest) => readonly AiMessage[];
   audit: ScenarioGenerationAudit;
+  /** Phase 4C：结构化输出 extraBody（response_format）；undefined = 不发送。 */
+  extraBody?: Readonly<Record<string, unknown>>;
 }>;
 
 const CANDIDATE_ARRAY_FIELDS = [
@@ -55,7 +57,7 @@ const TRANSPORT_CATEGORY: Readonly<Record<AiTransportFailureCode, ScenarioCandid
 export function createLiveScenarioCandidateSource(
   options: LiveScenarioCandidateSourceOptions
 ): ScenarioCandidateSource {
-  const { transport, config, buildMessages, audit } = options;
+  const { transport, config, buildMessages, audit, extraBody } = options;
   let attempts = 0;
 
   return {
@@ -66,7 +68,11 @@ export function createLiveScenarioCandidateSource(
 
       let result;
       try {
-        result = await transport.complete(config, messages);
+        result = await transport.complete(
+          config,
+          messages,
+          extraBody === undefined ? undefined : { extraBody: { ...extraBody } }
+        );
       } catch {
         // transport 意外抛错：不泄漏 message，映射稳定 service_error。
         audit.record({
