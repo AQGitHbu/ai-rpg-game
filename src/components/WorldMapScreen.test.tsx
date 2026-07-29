@@ -121,4 +121,21 @@ describe("WorldMapScreen", () => {
 
     expect(screen.getAllByRole("button")).toHaveLength(view.worldMap.nodes.length);
   });
+
+  it("用装饰性地图底图覆盖安全节点，并只让真实节点操作", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const view = buildSessionViewFixture();
+    render(
+      <WorldMapScreen view={view} onEnterCurrent={vi.fn()} onMove={vi.fn()} busy={false} />
+    );
+
+    expect(screen.getByTestId("world-map-viewport")).toHaveTextContent("当前目标");
+    expect(screen.getByTestId("world-map-backdrop")).toHaveAttribute("aria-hidden", "true");
+    const moveButtons = screen.getAllByRole("button", { name: /前往/ });
+    expect(moveButtons.length).toBeGreaterThan(0);
+    for (const btn of moveButtons) {
+      expect(btn).toHaveAttribute("data-map-position");
+    }
+    expect(screen.getByRole("button", { name: /探寻未知之地/ })).toBeDisabled();
+  });
 });
