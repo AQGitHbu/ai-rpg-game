@@ -1,22 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { InlineButton, Panel } from "@ai-game/ui";
+import { InlineButton } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
 import { postGameAction } from "./gameActionRequest";
 import { WorldMapScreen } from "./WorldMapScreen";
-
-// ---------------------------------------------------------------------------
-// AdventureGameShell（Phase 7 Task 5）：地图优先的导航状态机 + action 协议编排。
-// 只维护三份本地 UI 状态：screen: map | scene（首次 active view 显示地图）、
-// 次级信息面板开关（Task 6 填充内容）与移动反馈；持久化状态一律来自 view prop。
-//   - 进入当前地点 / 返回地图 = 纯本地切换：零请求、不递增 revision；
-//   - move 经 postGameAction 提交：success 上报最新 view 并自动切到 scene，
-//     rejected 留在地图显示服务端反馈，stale 只触发 onStaleRevision（由父级
-//     重新读取 current-game），error 显示稳定文案、绝不伪造移动成功。
-// 地点场景本任务先渲染最小占位（标题 + 描述 + 返回地图）；完整热点与对话
-// 由 Task 6 的 LocationSceneScreen 接管。
-// ---------------------------------------------------------------------------
+import { LocationSceneScreen } from "./LocationSceneScreen";
+import { NpcDialoguePanel } from "./NpcDialoguePanel";
+import { AdventureDetailsPanel } from "./AdventureDetailsPanel";
 
 type AdventureGameShellProps = {
   readonly view: GameSessionView;
@@ -28,11 +19,17 @@ type AdventureGameShellProps = {
 
 type AdventureScreen = "map" | "scene";
 
-type MoveFeedback =
+type ActionFeedback =
   | { readonly phase: "idle" }
   | { readonly phase: "submitting" }
   | { readonly phase: "rejected"; readonly message: string }
   | { readonly phase: "error"; readonly message: string };
+
+type SceneAction =
+  | { readonly type: "observe"; readonly locationId: string }
+  | { readonly type: "investigate"; readonly factId: string }
+  | { readonly type: "take_item"; readonly itemId: string }
+  | { readonly type: "start_battle"; readonly enemyId: string };
 
 export function AdventureGameShell({
   view,
@@ -42,12 +39,16 @@ export function AdventureGameShell({
   onStaleRevision
 }: AdventureGameShellProps) {
   const [screen, setScreen] = useState<AdventureScreen>("map");
-  // Task 6 的角色/背包/任务/日志次级面板挂在这个开关下；本任务只保留入口状态。
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [feedback, setFeedback] = useState<MoveFeedback>({ phase: "idle" });
+  const [feedback, setFeedback] = useState<ActionFeedback>({ phase: "idle" });
+  const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
 
   const isSubmitting = feedback.phase === "submitting";
   const shellBusy = busy || isSubmitting;
+
+  const activeDialogue = dialogueNpcId !== null
+    ? view.dialogues.find((d) => d.npcId === dialogueNpcId) ?? null
+    : null;
 
   async function handleMove(locationId: string): Promise<void> {
     setFeedback({ phase: "submitting" });
@@ -61,22 +62,79 @@ export function AdventureGameShell({
     onBusyChange(false);
     switch (outcome.kind) {
       case "success":
-        // 移动成功：上报最新 view 并自动进入目标地点场景。
         setFeedback({ phase: "idle" });
         onViewChange(outcome.view);
         setScreen("scene");
         return;
       case "rejected":
-        // 规则拒绝：留在地图，显示服务端稳定原因。
         setFeedback({ phase: "rejected", message: outcome.message });
         return;
       case "stale":
-        // 版本冲突：只交给父级重新读取当前存档，不显示伪造结果。
         setFeedback({ phase: "idle" });
         onStaleRevision();
         return;
       case "error":
-        // 其他错误：显示稳定文案，绝不伪造移动成功。
+        setFeedback({ phase: "error", message: outcome.message });
+    }
+  }
+
+  async function handleSceneAction(action: SceneAction): Promise<void> {
+    setFeedback({ phase: "submitting" });
+    onBusyChange(true);
+
+    const payload =
+      action.type === "observe"
+        ? { intent: { type: "observe" as const, locationId: action.locationId }, revision: view.revision }
+        : action.type === "investigate"
+          ? { intent: { type: "investigate" as const, factId: action.factId }, revision: view.revision }
+          : action.type === "take_item"
+            ? { intent: { type: "take_item" as const, itemId: action.itemId }, revision: view.revision }
+            : { intent: { type: "start_battle" as const, enemyId: action.enemyId }, revision: view.revision };
+
+    const outcome = await postGameAction(payload);
+
+    onBusyChange(false);
+    switch (outcome.kind) {
+      case "success":
+        setFeedback({ phase: "idle" });
+        onViewChange(outcome.view);
+        return;
+      case "rejected":
+        setFeedback({ phase: "rejected", message: outcome.message });
+        return;
+      case "stale":
+        setFeedback({ phase: "idle" });
+        onStaleRevision();
+        return;
+      case "error":
+        setFeedback({ phase: "error", message: outcome.message });
+    }
+  }
+
+  async function handleDialogueChoice(npcId: string, choiceId: string): Promise<void> {
+    setFeedback({ phase: "submitting" });
+    onBusyChange(true);
+
+    const outcome = await postGameAction({
+      intent: { type: "dialogue_choice", npcId, choiceId },
+      revision: view.revision
+    });
+
+    onBusyChange(false);
+    switch (outcome.kind) {
+      case "success":
+        setFeedback({ phase: "idle" });
+        onViewChange(outcome.view);
+        return;
+      case "rejected":
+        setFeedback({ phase: "rejected", message: outcome.message });
+        return;
+      case "stale":
+        setFeedback({ phase: "idle" });
+        setDialogueNpcId(null);
+        onStaleRevision();
+        return;
+      case "error":
         setFeedback({ phase: "error", message: outcome.message });
     }
   }
@@ -91,14 +149,23 @@ export function AdventureGameShell({
           onMove={(locationId) => void handleMove(locationId)}
         />
       ) : (
-        // Task 5 的最小地点场景占位：Task 6 用 LocationSceneScreen 替换主体。
-        <Panel eyebrow="地点场景" header={<h2>{view.locationScene.title}</h2>}>
-          <p>{view.locationScene.description}</p>
-          <InlineButton disabled={shellBusy} onClick={() => setScreen("map")}>
-            返回地图
-          </InlineButton>
-        </Panel>
+        <LocationSceneScreen
+          view={view}
+          busy={shellBusy}
+          onAction={(action) => void handleSceneAction(action)}
+          onOpenDialogue={(npcId) => setDialogueNpcId(npcId)}
+          onReturnMap={() => setScreen("map")}
+        />
       )}
+
+      {activeDialogue !== null ? (
+        <NpcDialoguePanel
+          dialogue={activeDialogue}
+          busy={shellBusy}
+          onChoice={(npcId, choiceId) => void handleDialogueChoice(npcId, choiceId)}
+          onClose={() => setDialogueNpcId(null)}
+        />
+      ) : null}
 
       {feedback.phase === "rejected" || feedback.phase === "error" ? (
         <p
@@ -114,17 +181,14 @@ export function AdventureGameShell({
 
       {isSubmitting ? (
         <p role="status" aria-live="polite" className="action-feedback submitting">
-          正在赶路……
+          正在处理……
         </p>
       ) : null}
 
       <InlineButton aria-expanded={detailsOpen} onClick={() => setDetailsOpen((open) => !open)}>
         冒险详情
       </InlineButton>
-      {detailsOpen ? (
-        // Task 6 在此渲染 AdventureDetailsPanel（角色 / 背包 / 任务 / 日志）。
-        <div className="adventure-details" aria-label="冒险详情面板" />
-      ) : null}
+      {detailsOpen ? <AdventureDetailsPanel view={view} /> : null}
     </div>
   );
 }
