@@ -5,11 +5,16 @@ import type { TerrainLayout } from "./terrain";
 // 锚点阶段：在地形上放置城门/广场/区域中心/水井，供道路管线连通。
 // 纯函数：随机只来自传入 rng；约束不满足时向外螺旋探测重选（不放弃产出）。
 
-/** 锚点两两最小曼哈顿间距（Spec §5）。 */
-const MIN_ANCHOR_DISTANCE = 4;
+/** 锚点两两最小曼哈顿间距（Spec §5 下限 4；取 8 拉开中心锚点，
+ * 否则 square/market/well 挤在中心 6×6 内，路网退化成一条直线）。 */
+const MIN_ANCHOR_DISTANCE = 8;
 
 /** 区域中心目标点的 rng 抖动幅度（±2 格）。 */
 const CENTER_JITTER = 2;
+
+/** 区域中心沿切向轴的散布半幅分母：±(边长/4)。areaTarget 把四向目标
+ * 全映射到中轴线上，不加切向散布时全部锚点共线，MST 无分岔。 */
+const LATERAL_SPREAD_DIVISOR = 4;
 
 export type TownAnchor = {
   readonly id: string;
@@ -92,6 +97,13 @@ function areaTarget(area: AreaHint, terrain: TerrainLayout): Cell {
   }
 }
 
+/** 区位的切向轴：north/south/edge 沿 x 散布，east/west 沿 y 散布，center 无切向。 */
+function lateralAxis(area: AreaHint): "x" | "y" | null {
+  if (area === "north" || area === "south" || area === "edge") return "x";
+  if (area === "east" || area === "west") return "y";
+  return null;
+}
+
 export function placeAnchors(
   plan: TownSemanticPlan,
   terrain: TerrainLayout,
@@ -113,13 +125,17 @@ export function placeAnchors(
   // 2. 广场：最靠近网格中心的可建格（螺旋自证最近）。
   place("anchor_square", "square", midCell);
 
-  // 3. 区域中心：每个非 reserved district 一个，目标点带 ±2 格 rng 抖动。
+  // 3. 区域中心：每个非 reserved district 一个。径向 ±2 格抖动；切向
+  //    ±(边长/4) 大散布，把中心拉出中轴线，让道路 MST 长出分岔。
   for (const district of plan.districts) {
     if (district.type === "reserved") continue;
     const base = areaTarget(district.preferredArea, terrain);
+    const axis = lateralAxis(district.preferredArea);
+    const halfX = axis === "x" ? Math.floor(terrain.width / LATERAL_SPREAD_DIVISOR) : CENTER_JITTER;
+    const halfY = axis === "y" ? Math.floor(terrain.height / LATERAL_SPREAD_DIVISOR) : CENTER_JITTER;
     const target = {
-      x: base.x + rng.nextInt(CENTER_JITTER * 2 + 1) - CENTER_JITTER,
-      y: base.y + rng.nextInt(CENTER_JITTER * 2 + 1) - CENTER_JITTER
+      x: base.x + rng.nextInt(halfX * 2 + 1) - halfX,
+      y: base.y + rng.nextInt(halfY * 2 + 1) - halfY
     };
     place(`anchor_district_${district.type}`, "district_center", target, district.type);
   }

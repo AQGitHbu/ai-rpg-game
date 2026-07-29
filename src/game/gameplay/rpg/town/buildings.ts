@@ -39,7 +39,7 @@ const WEIGHT_STORY_PREFERENCE = 25;
 /** roadFrontage 归一化分母：临街 ≥ 4 格视为满分。 */
 const FRONTAGE_NORM = 4;
 
-/** 各类型期望占地（格）：areaFit 用 min/max 比值贴合。 */
+/** 各类型期望占地（格）：areaFit 用 min/max 比值贴合；兼作 footprint 边长上限依据。 */
 const DESIRED_AREA: Readonly<Record<TownBuildingType, number>> = {
   tavern: 12,
   blacksmith: 10,
@@ -50,6 +50,21 @@ const DESIRED_AREA: Readonly<Record<TownBuildingType, number>> = {
   well: 4,
   gatehouse: 4
 };
+
+/** footprint 边长上限 = ceil(√期望面积)：大地块上不再产出 2×9 / 11×5
+ * 的畸形建筑，余格留作院子（plot）。 */
+function maxSideOf(buildingType: TownBuildingType): number {
+  return Math.max(FOOTPRINT_MIN, Math.ceil(Math.sqrt(DESIRED_AREA[buildingType])));
+}
+
+/** footprint 按类型收缩到边长上限：临街边保持贴街，切向保低坐标端（确定性）。 */
+function clampFootprint(footprint: Rect, frontSide: Direction, maxSide: number): Rect {
+  const width = Math.min(footprint.width, maxSide);
+  const height = Math.min(footprint.height, maxSide);
+  const x = frontSide === "east" ? footprint.x + footprint.width - width : footprint.x;
+  const y = frontSide === "south" ? footprint.y + footprint.height - height : footprint.y;
+  return { x, y, width, height };
+}
 
 /** 剧情建筑固定中文名表；表外类型兜底用 requiredBuilding.key。 */
 const REQUIRED_NAMES: Readonly<Partial<Record<TownBuildingType, string>>> = {
@@ -139,8 +154,8 @@ function pickFrontSide(plot: TownPlot, box: ReturnType<typeof boundingBox>): Dir
 }
 
 /**
- * 单轴内缩：优先两侧各缩 1；长度 3 时只缩 1 侧（keepLo 决定保留哪侧，
- * 临街轴保留临街侧）；长度 2 不缩；不足 2 返回 null（放不下）。
+ * 单轴内缩（交叉轴用）：优先两侧各缩 1；长度 3 时只缩 1 侧（keepLo 决定保留哪侧）；
+ * 长度 2 不缩；不足 2 返回 null（放不下）。
  */
 function insetAxis(lo: number, hi: number, keepLo: boolean): { lo: number; hi: number } | null {
   const size = hi - lo + 1;
@@ -148,6 +163,18 @@ function insetAxis(lo: number, hi: number, keepLo: boolean): { lo: number; hi: n
   if (size === FOOTPRINT_MIN) return { lo, hi };
   if (size === FOOTPRINT_MIN + 1) return keepLo ? { lo, hi: hi - 1 } : { lo: lo + 1, hi };
   return { lo: lo + 1, hi: hi - 1 };
+}
+
+/**
+ * 临街轴内缩：临街侧贴街不缩、背街侧缩 1（长度 ≥ 3 时）。若临街侧也缩，
+ * 建筑与道路间永隔一圈 plot 环带，入口只能靠修复管线开 1 格巷道打通，
+ * 视觉上建筑全部离路。
+ */
+function insetFrontAxis(lo: number, hi: number, frontAtLo: boolean): { lo: number; hi: number } | null {
+  const size = hi - lo + 1;
+  if (size < FOOTPRINT_MIN) return null;
+  if (size === FOOTPRINT_MIN) return { lo, hi };
+  return frontAtLo ? { lo, hi: hi - 1 } : { lo: lo + 1, hi };
 }
 
 /**
@@ -191,9 +218,10 @@ function largestRectIn(cells: readonly Cell[]): Rect | null {
 }
 
 /**
- * footprint = 地块 bounding box 内缩 1 格（最小 2×2）。内缩后必须全部
- * 落在地块格内（尾并产生的 L 形地块可能不满足）→ 退而取地块内
- * 最大矩形；仍不足 2×2 才 null 降 reserved。
+ * footprint = 地块 bounding box 内缩（最小 2×2）：临街轴贴街（临街侧
+ * 不缩、背街侧缩 1），交叉轴两侧各缩 1。内缩后必须全部落在地块格内
+ * （尾并产生的 L 形地块可能不满足）→ 退而取地块内最大矩形；
+ * 仍不足 2×2 才 null 降 reserved。
  */
 function computeGeometry(plot: TownPlot): PlotGeometry {
   const box = boundingBox(plot.cells);
@@ -206,9 +234,14 @@ function computeGeometry(plot: TownPlot): PlotGeometry {
   }
   const centroid = { x: Math.round(sumX / plot.cells.length), y: Math.round(sumY / plot.cells.length) };
 
-  // 临街轴保留临街侧；交叉轴长度 3 时固定保留低坐标侧（确定性）。
-  const xRange = insetAxis(box.minX, box.maxX, frontSide !== "east");
-  const yRange = insetAxis(box.minY, box.maxY, frontSide !== "south");
+  // 临街轴贴街；交叉轴长度 3 时固定保留低坐标侧（确定性）。
+  const frontHorizontal = frontSide === "north" || frontSide === "south";
+  const xRange = frontHorizontal
+    ? insetAxis(box.minX, box.maxX, true)
+    : insetFrontAxis(box.minX, box.maxX, frontSide === "west");
+  const yRange = frontHorizontal
+    ? insetFrontAxis(box.minY, box.maxY, frontSide === "north")
+    : insetAxis(box.minY, box.maxY, true);
   if (xRange === null || yRange === null) {
     return { plot, footprint: largestRectIn(plot.cells), frontSide, centroid };
   }
@@ -352,7 +385,9 @@ export function placeBuildings(
     displayName: string,
     storyRequired: boolean
   ): void => {
-    const footprint = geometry.footprint!;
+    // 按类型裁剪到边长上限（临街边保持贴街）：裁剪后仍是原 footprint
+    // 的子矩形，必落在地块格内。
+    const footprint = clampFootprint(geometry.footprint!, geometry.frontSide, maxSideOf(buildingType));
     buildings.push({
       buildingId: `building_${buildings.length + 1}`,
       plotId: geometry.plot.id,
@@ -438,7 +473,12 @@ export function placeBuildings(
       reservedCount += 1;
     } else statusById.set(geometry.plot.id, "generic");
   }
-  for (const geometry of geometries) {
+  // 配额未满时按面积升序补（tie 按 id）：小地块优先预留，大地块避免
+  // 整块变成深色死区。
+  const byAreaAsc = [...geometries].sort(
+    (a, b) => a.plot.cells.length - b.plot.cells.length || (a.plot.id < b.plot.id ? -1 : 1)
+  );
+  for (const geometry of byAreaAsc) {
     if (statusById.has(geometry.plot.id)) continue;
     if (reservedCount < reserveTarget) {
       statusById.set(geometry.plot.id, "reserved");

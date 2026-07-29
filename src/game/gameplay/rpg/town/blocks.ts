@@ -29,6 +29,11 @@ const FRONTAGE_WIDTH_MAX = 4;
 const PLOT_DEPTH_MIN = 3;
 const PLOT_DEPTH_MAX = 8;
 
+/** 尾并阶段单地块面积上限：达到上限的地块不再吸收内部剩余格，
+ * 剩余格保持草/林（自然留白）。无上限时巨型街区会并出 100+ 格的
+ * 怪物地块，成为大片无建筑的死区。 */
+const PLOT_AREA_MAX = 24;
+
 /** 视为道路/广场的瓦片：街区边界与临街判定共用。 */
 const ROAD_TILES: ReadonlySet<TileType> = new Set<TileType>(["road_main", "road_minor", "alley", "square"]);
 
@@ -245,7 +250,8 @@ export function subdivideIntoPlots(
     }
   }
 
-  // 2. 内部剩余并入相邻地块：行优先迭代扫描直至稳定（街区连通 → 有地块必收敛）。
+  // 2. 内部剩余并入相邻地块：行优先迭代扫描直至稳定。单地块并到
+  //    PLOT_AREA_MAX 封顶，剩余格不再认领（保持草/林，自然留白）。
   let changed = plotCells.length > 0;
   while (changed) {
     changed = false;
@@ -257,7 +263,7 @@ export function subdivideIntoPlots(
         const ny = cell.y + direction.dy;
         if (nx < 0 || ny < 0 || nx >= gridWidth || ny >= gridHeight) continue;
         const target = claimed.get(ny * gridWidth + nx);
-        if (target === undefined) continue;
+        if (target === undefined || plotCells[target].length >= PLOT_AREA_MAX) continue;
         claimed.set(index, target);
         plotCells[target].push(index);
         changed = true;
