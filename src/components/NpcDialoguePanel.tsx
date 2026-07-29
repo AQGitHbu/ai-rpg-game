@@ -1,12 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import type { NpcDialogueView } from "@/game/application";
+import type { NewGameInput, NpcDialogueView } from "@/game/application";
 import { AdventureVisual } from "./adventureVisuals";
+
+type GameTypeId = NewGameInput["gameType"];
 
 type NpcDialoguePanelProps = {
   readonly dialogue: NpcDialogueView;
-  readonly gameType: string;
+  readonly gameType: GameTypeId;
   readonly onChoice: (npcId: string, choiceId: string) => void;
   readonly busy: boolean;
 };

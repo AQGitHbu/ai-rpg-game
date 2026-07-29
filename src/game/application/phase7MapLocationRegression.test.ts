@@ -154,6 +154,18 @@ describe.each(CASES)("Phase 7 地图地点回归（$gameType）", ({ gameType, f
     expect(moved.view.worldMap.nodes[0]?.state).toBe("current");
     expect(moved.view.locationScene.title).toBe(moved.view.currentLocation.name);
 
+    // Phase 8: map node positions are stable across actions
+    const beforeMove = created.view.worldMap.nodes
+      .filter((node): node is typeof node & { locationId: string } => node.state !== "locked")
+      .map((node) => [node.locationId, node.position] as const);
+    expect(beforeMove.every(([, position]) => typeof position === "string")).toBe(true);
+    const afterMove = moved.view.worldMap.nodes
+      .filter((node): node is typeof node & { locationId: string } => node.state !== "locked");
+    for (const [locationId, position] of beforeMove) {
+      const after = afterMove.find((node) => node.locationId === locationId);
+      if (after !== undefined) expect(after.position).toBe(position);
+    }
+
     // view safety: no hidden location names, no seed, no inputDigest
     const adventureJson = JSON.stringify({
       worldMap: moved.view.worldMap,

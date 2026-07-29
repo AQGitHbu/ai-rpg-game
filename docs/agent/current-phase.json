@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "mvp-phase-8-noncombat-game-viewport",
-  "status": "planned",
-  "implementationStatus": "not_started",
+  "status": "implemented",
+  "implementationStatus": "implemented",
   "targetBranch": "codex/phase8-noncombat-game-viewport",
   "worktreeName": "phase8-noncombat-game-viewport",
   "repositories": ["ai-rpg-game"],
