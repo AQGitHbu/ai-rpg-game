@@ -30,6 +30,8 @@
     "test:ai-env": "node --test scripts/aiEnv.node-test.mjs",
     "phase:status": "node scripts/checkHandoff.mjs --status",
     "phase:start": "node scripts/startCurrentPhase.mjs",
+    "worktree:remove": "node scripts/removeWorktree.mjs",
+    "test:worktree-remove": "node --test scripts/removeWorktree.node-test.mjs",
     "handoff:check:docs": "node scripts/checkHandoff.mjs",
     "handoff:check": "node scripts/checkHandoff.mjs --strict-branch",
     "setup": "npm run env:bootstrap && npm run bootstrap:foundation && npm ci && npm run sync:standards && npm run doctor"
