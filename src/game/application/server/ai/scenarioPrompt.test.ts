@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { validateNewGameInput, CONTENT_BUDGET, type NewGameInput } from "@/game/domain";
-import { loadScenarioProfiles } from "@/game/gameplay/rpg/scenario";
+import {
+  createFallbackBlueprint,
+  loadScenarioProfiles
+} from "@/game/gameplay/rpg/scenario";
 import type { ScenarioGenerationRequest } from "../../scenarioGeneration";
 import { buildScenarioPromptMessages } from "./scenarioPrompt";
 
@@ -66,6 +69,18 @@ describe("buildScenarioPromptMessages", () => {
     expect(joined).toContain(String(CONTENT_BUDGET.coreNpcsMax));
     expect(joined).toContain(String(CONTENT_BUDGET.endings));
     expect(joined).toMatch(/结局/);
+  });
+
+  it("嵌入由同一输入与 seed 派生的完整有效候选样例，作为模型必须遵守的 JSON 契约", () => {
+    const request = buildRequest();
+    const messages = buildScenarioPromptMessages(request, PROFILES);
+    const expectedTemplate = createFallbackBlueprint(request.input, request.seed, {
+      profiles: PROFILES
+    });
+    const userMessage = messages.find((message) => message.role === "user")?.content ?? "";
+
+    expect(userMessage).toContain("严格候选 JSON 契约");
+    expect(userMessage).toContain(JSON.stringify(expectedTemplate));
   });
 
   it("相同 request + profiles 产出确定性一致的消息", () => {
