@@ -161,6 +161,22 @@ describe.each(CASES)("Phase 4 探索回归（$gameType）", ({ gameType, fixture
     const activeNames = moved.view.activeQuests.map((quest) => quest.name);
     expect(activeNames).not.toContain(stage1.name);
     expect(activeNames).toContain(stage2.name);
+
+    // Phase 7：地图/地点/对话 read model 保持封闭可见范围——首节点是当前地点，
+    // 且地图/地点/对话投影 JSON 不泄漏隐藏地点真实名称、seed 或 inputDigest。
+    //（activeQuests 描述等叙事文案由现有内容决策控制，不属本任务新增面。）
+    expect(moved.view.worldMap.nodes[0]?.state).toBe("current");
+    expect(moved.view.locationScene.title).toBe(loc2.name);
+    const adventureJson = JSON.stringify({
+      worldMap: moved.view.worldMap,
+      locationScene: moved.view.locationScene,
+      dialogues: moved.view.dialogues
+    });
+    for (const hidden of baseline.blueprint.locations.filter((entry) => entry.kind === "hidden")) {
+      expect(adventureJson.includes(hidden.name), `hidden=${hidden.name}`).toBe(false);
+    }
+    expect(adventureJson.includes(baseline.blueprint.seed)).toBe(false);
+    expect(adventureJson.includes(baseline.blueprint.inputDigest)).toBe(false);
     await writer.close();
 
     // 4) reload：全新 repository 实例重开同一文件，恢复出完全相同的视图。

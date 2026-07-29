@@ -38,7 +38,11 @@ const STUB_VIEW: GameSessionView = {
   // Phase 6 Task 3：战斗与结局摘要。
   battle: null,
   ending: null,
-  storyEvents: []
+  storyEvents: [],
+  // Phase 7 Task 3：地图 / 地点场景 / 对话 read model（HTTP 映射同样不读内容）。
+  worldMap: { nodes: [] },
+  locationScene: { title: "地点A", description: "描述", backdrop: "location_backdrop", interactions: [] },
+  dialogues: []
 };
 
 const STUB_FEEDBACK: ActionFeedbackView = { ok: true, message: "你观察了地点A。" };

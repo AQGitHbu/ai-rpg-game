@@ -46,6 +46,17 @@ export {
   type EndingView,
   type StoryEventView
 } from "./gameSessionView";
+// Phase 7 Task 3：地图 / 地点场景 / 安全对话 read model 只读 view 类型。
+export {
+  type LocationAdventureView,
+  type LocationSceneView,
+  type NpcDialogueView,
+  type DialogueChoiceView,
+  type SceneInteractionView,
+  type SceneSlot,
+  type WorldMapView,
+  type WorldMapNodeView
+} from "./locationAdventureView";
 export {
   performAction,
   type PerformActionCommand,

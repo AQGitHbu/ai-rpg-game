@@ -12,6 +12,12 @@ import {
   type OpeningNpcView,
   type ProjectOpeningGameViewInput
 } from "./openingGameView";
+import {
+  projectLocationAdventureView,
+  type LocationSceneView,
+  type NpcDialogueView,
+  type WorldMapView
+} from "./locationAdventureView";
 
 // ---------------------------------------------------------------------------
 // GameSessionView（Phase 4 Task 3 + Phase 6 Task 3）：OpeningGameView 演进出的
@@ -82,6 +88,12 @@ export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly ending: EndingView | null;
   /** 最近发生的结构化事件，用于确定性试玩叙事。 */
   readonly storyEvents: readonly StoryEventView[];
+  /** Phase 7：封闭可见范围的世界地图节点（无隐藏地点泄漏）。 */
+  readonly worldMap: WorldMapView;
+  /** Phase 7：当前地点场景与场景互动（结局/战斗时 interactions 为空）。 */
+  readonly locationScene: LocationSceneView;
+  /** Phase 7：当前地点在场 NPC 的安全对话（结局/战斗时无可写 choice）。 */
+  readonly dialogues: readonly NpcDialogueView[];
 };
 
 /** 输入与 opening 投影完全一致：调用方无需区分两个 read model 的装配来源。 */
@@ -301,5 +313,8 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
       .slice(-12)
       .map((event) => projectStoryEvent(event, locationById, npcById, itemById, factById, questById, enemyById, endingById))
       .filter((event): event is StoryEventView => event !== null),
+    // Phase 7：地图 / 地点场景 / 安全对话 read model。传入未过滤的可用行动，由
+    // 投影内部按结局 / active battle 语义把 interactions 置空、对话降级为只读。
+    ...projectLocationAdventureView(blueprint, state, availableActions)
   };
 }

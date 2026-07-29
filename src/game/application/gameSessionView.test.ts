@@ -252,3 +252,44 @@ describe("projectGameSessionView：closed 支线与泄漏防护", () => {
     }
   });
 });
+
+describe("projectGameSessionView：地图 / 地点场景 / 对话 read model（Phase 7 Task 3）", () => {
+  it("worldMap 首节点是当前地点，且为封闭可见范围（无隐藏地点泄漏）", () => {
+    const view = project(PIPELINE.state, 0);
+    expect(view.worldMap.nodes.length).toBeGreaterThan(0);
+    expect(view.worldMap.nodes[0]).toMatchObject({
+      state: "current",
+      locationId: "loc_1",
+      name: locationName("loc_1")
+    });
+    const json = JSON.stringify(view.worldMap);
+    for (const location of PIPELINE.blueprint.locations.filter((l) => l.kind === "hidden")) {
+      expect(json.includes(location.name), `hidden=${location.name}`).toBe(false);
+    }
+  });
+
+  it("locationScene 投影当前地点标题/描述与只读背景", () => {
+    const view = project(PIPELINE.state, 0);
+    expect(view.locationScene.title).toBe(locationName("loc_1"));
+    expect(view.locationScene.description).toBe(view.currentLocation.description);
+    expect(view.locationScene.backdrop).toBe("location_backdrop");
+  });
+
+  it("dialogues 为当前地点在场 NPC 投影，含只读 review_clue choice", () => {
+    const view = project(PIPELINE.state, 0);
+    const presentNpcIds = new Set(
+      PIPELINE.state.npcs
+        .filter((npc) => npc.locationId === PIPELINE.state.currentLocationId)
+        .map((npc) => String(npc.npcId))
+    );
+    expect(view.dialogues.length).toBe(presentNpcIds.size);
+    for (const dialogue of view.dialogues) {
+      expect(presentNpcIds.has(dialogue.npcId)).toBe(true);
+      expect(dialogue.choices).toContainEqual({
+        kind: "review_clue",
+        label: "回顾已知线索",
+        mutatesState: false
+      });
+    }
+  });
+});
