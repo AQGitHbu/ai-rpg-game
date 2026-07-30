@@ -115,12 +115,14 @@ export {
   toDirectorContext,
   toSceneScriptContext,
   toNpcLineContext,
+  toTownSpatialContext,
   type DirectorContext,
   type DirectorContextInput,
   type SceneScriptContext,
   type SceneScriptContextInput,
   type NpcLineContext,
   type NpcLineContextInput,
+  type TownSpatialContext,
 } from "./runtimeNarrativeContexts";
 export {
   orchestrateNarrativeScene,
