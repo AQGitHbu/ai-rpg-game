@@ -26,8 +26,10 @@ import {
   projectLocationAdventureView,
   type LocationSceneView,
   type NpcDialogueView,
+    type TownLayerStatus,
   type WorldMapView
 } from "./locationAdventureView";
+import type { TownLayerView } from "./townRuntimeView";
 
 // ---------------------------------------------------------------------------
 // GameSessionView（Phase 4 Task 3 + Phase 6 Task 3）：OpeningGameView 演进出的
@@ -136,6 +138,10 @@ export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly locationScene: LocationSceneView;
   /** Phase 7：当前地点在场 NPC 的安全对话（结局/战斗时无可写 choice）。 */
   readonly dialogues: readonly NpcDialogueView[];
+  /** Town 层：当前地点小镇层就绪状态（locationScene.scale 透出层级）。 */
+  readonly townStatus: TownLayerStatus;
+  /** Town 层：小镇层视图——仅 townStatus === "ready" 时存在。 */
+  readonly town?: TownLayerView;
   /** Phase 10：运行时 AI 导演叙事场景——null 表示尚未生成。 */
   readonly narrative: NarrativeSceneView;
   /** Phase 10：场景后台生成状态；无内部 task / provider 信息。 */

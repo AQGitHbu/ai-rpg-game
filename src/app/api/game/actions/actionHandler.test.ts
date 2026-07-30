@@ -41,8 +41,10 @@ const STUB_VIEW: GameSessionView = {
   storyEvents: [],
   // Phase 7 Task 3：地图 / 地点场景 / 对话 read model（HTTP 映射同样不读内容）。
   worldMap: { nodes: [] },
-  locationScene: { title: "地点A", description: "描述", backdrop: "location_backdrop", interactions: [] },
+  locationScene: { title: "地点A", description: "描述", backdrop: "location_backdrop", scale: "scene", interactions: [] },
   dialogues: [],
+  // Town 层：默认非 town 地点（HTTP 映射不读内容）。
+  townStatus: "none",
   // Phase 10：叙事场景视图。
   narrative: null,
   narrativeGeneration: { status: "ready" }

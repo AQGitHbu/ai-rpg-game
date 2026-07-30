@@ -10,6 +10,7 @@ import {
   type QuestId
 } from "@/game/domain";
 import { composeNpcSpeech, projectAvailableActions } from "@/game/gameplay/rpg/actions";
+import { ensureTownRuntime } from "@/game/gameplay/rpg/town";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { projectLocationAdventureView, SPEECH_PAGE_CHAR_BUDGET } from "./locationAdventureView";
 import { runScenarioPipeline } from "./applicationFixture.testutil";
@@ -328,5 +329,75 @@ describe("projectLocationAdventureView：结局 / 战斗只读投影", () => {
     for (const dialogue of view.dialogues) {
       expect(dialogue.choices.every((c) => c.mutatesState === false)).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Town 主循环 S4：town 层投影三态（非 town / pending / ready）与 scale 透出。
+// fallback 蓝图的 loc_2 固定为 town 地点（createFallbackBlueprint 约定）。
+// ---------------------------------------------------------------------------
+
+describe("projectLocationAdventureView：town 层三态", () => {
+  const TOWN_ID = asLocationId("loc_2");
+  const FIXED_TIME = "2026-07-27T12:00:00.000Z";
+
+  function stateAt(locationId: LocationId): GameState {
+    return { ...PIPELINE.state, currentLocationId: locationId };
+  }
+
+  /** 经 ensureTownRuntime 离线路径派生 towns 条目（与 performAction 写入一致）。 */
+  function readyTownState(): GameState {
+    const base = stateAt(TOWN_ID);
+    const entry = ensureTownRuntime(blueprint, base, "loc_2", "offline", FIXED_TIME);
+    if (entry.kind !== "generated") throw new Error("loc_2 应为 town 地点");
+    return { ...base, towns: [entry.town] };
+  }
+
+  it("非 town 地点：townStatus 为 none、无 town 视图、scale 为 scene", () => {
+    const view = project(stateAt(asLocationId("loc_1")));
+    expect(view.townStatus).toBe("none");
+    expect(view.town).toBeUndefined();
+    expect(view.locationScene.scale).toBe("scene");
+  });
+
+  it("town 地点尚未派生规划：townStatus 为 none，但 scale 透出 town", () => {
+    const view = project(stateAt(TOWN_ID));
+    expect(view.townStatus).toBe("none");
+    expect(view.town).toBeUndefined();
+    expect(view.locationScene.scale).toBe("town");
+  });
+
+  it("pending：townGeneration 指向当前地点时输出 pending 且无 town 视图", () => {
+    const state: GameState = {
+      ...stateAt(TOWN_ID),
+      townGeneration: { status: "pending", locationId: TOWN_ID, requestedAt: FIXED_TIME }
+    };
+    const view = project(state);
+    expect(view.townStatus).toBe("pending");
+    expect(view.town).toBeUndefined();
+  });
+
+  it("其他地点的 pending 不影响当前地点的三态判定", () => {
+    const state: GameState = {
+      ...stateAt(asLocationId("loc_1")),
+      townGeneration: { status: "pending", locationId: TOWN_ID, requestedAt: FIXED_TIME }
+    };
+    const view = project(state);
+    expect(view.townStatus).toBe("none");
+  });
+
+  it("ready：towns 已有条目时投影小镇层视图", () => {
+    const view = project(readyTownState());
+    expect(view.townStatus).toBe("ready");
+    expect(view.town).toBeDefined();
+    expect(view.town?.locationId).toBe("loc_2");
+    expect(view.town?.planSource).toBe("offline");
+    expect(view.town?.snapshot.buildings.length).toBeGreaterThan(0);
+    expect(view.town?.semanticView.sentences.length).toBeGreaterThan(0);
+  });
+
+  it("ready 投影确定性：同状态两次投影深度相等", () => {
+    const state = readyTownState();
+    expect(project(state)).toEqual(project(state));
   });
 });

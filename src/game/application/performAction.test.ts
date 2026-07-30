@@ -179,8 +179,13 @@ describe("performAction：move + 任务 reconciliation 单次写入（Phase 4 Ta
 
     expect(result.ok).toBe(true);
     // 恰好一次写入，且载荷已含任务事件与状态迁移（无第二次写入、无旁路）。
+    // Town 层：loc_2 为 town 地点且存档为 ai 模式，performAction 在同一次写入中
+    // 附加 pending 标记（Step 4.5 懒生成，见 town 层懒生成 describe）。
     expect(repository.applyCalls).toHaveLength(1);
-    expect(repository.applyCalls[0].nextState).toEqual(reconciled.state);
+    expect(repository.applyCalls[0].nextState).toEqual({
+      ...reconciled.state,
+      townGeneration: { status: "pending", locationId: asLocationId("loc_2"), requestedAt: FIXED_TIME }
+    });
     const ledger = repository.applyCalls[0].nextState.eventLedger;
     const tailTypes = ledger.slice(record.state.eventLedger.length).map((event) => event.type);
     expect(tailTypes[0]).toBe("location_visited");
@@ -642,5 +647,114 @@ describe("performAction：不泄漏敏感信息", () => {
     expect(json).not.toContain("blueprint");
     expect(json).not.toContain("stateVersion");
     expect(json).not.toContain("contentBudget");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Town 主循环 S4：抵达 scale="town" 地点时的懒生成。离线存档同步派生，
+// AI 存档只置 pending；非 town 地点与已生成地点均零变更。
+// fallback 蓝图的 loc_2 固定为 town 地点且与开场 loc_1 相邻。
+// ---------------------------------------------------------------------------
+
+describe("performAction：town 层懒生成", () => {
+  const TOWN_ID = asLocationId("loc_2");
+
+  function buildRecordWithMode(mode: "offline" | "ai"): GameRecord {
+    const base = buildActiveRecord();
+    return {
+      ...base,
+      state: {
+        ...base.state,
+        narrative: { currentScene: null, generation: { status: "idle" }, mode }
+      }
+    };
+  }
+
+  async function performMoveToTown(record: GameRecord) {
+    const repository = createFakeGameRepository();
+    repository.setCurrentResult({ ok: true, status: "active", record });
+    repository.setApplyResult({ ok: true, record: { ...record, revision: 1 } });
+    const result = await performAction(
+      { intent: { type: "move", locationId: TOWN_ID }, expectedRevision: 0 },
+      buildPerformDeps(repository)
+    );
+    expect(result.ok).toBe(true);
+    expect(repository.applyCalls).toHaveLength(1);
+    return repository.applyCalls[0].nextState;
+  }
+
+  it("离线存档 move 到 town 地点：同步派生 towns 条目 + 事件，无 pending", async () => {
+    const next = await performMoveToTown(buildRecordWithMode("offline"));
+
+    expect(next.towns).toHaveLength(1);
+    expect(String(next.towns[0].locationId)).toBe("loc_2");
+    expect(next.towns[0].planSource).toBe("offline");
+    expect(next.towns[0].seed).toBe(`${PIPELINE.blueprint.seed}#town#loc_2`);
+    expect(next.townGeneration).toEqual({ status: "idle" });
+    const townEvents = next.eventLedger.filter((event) => event.type === "town_plan_generated");
+    expect(townEvents).toHaveLength(1);
+    expect(townEvents[0]).toEqual({
+      type: "town_plan_generated",
+      locationId: TOWN_ID,
+      planSource: "offline",
+      occurredAt: FIXED_TIME
+    });
+  });
+
+  it("AI 存档 move 到 town 地点：只置 pending，不同步生成、不写事件", async () => {
+    const next = await performMoveToTown(buildRecordWithMode("ai"));
+
+    expect(next.towns).toEqual([]);
+    expect(next.townGeneration).toEqual({
+      status: "pending",
+      locationId: TOWN_ID,
+      requestedAt: FIXED_TIME
+    });
+    expect(next.eventLedger.some((event) => event.type === "town_plan_generated")).toBe(false);
+  });
+
+  it("非 town 地点的行动：towns / townGeneration 零变更", async () => {
+    const record = buildRecordWithMode("offline");
+    const repository = createFakeGameRepository();
+    repository.setCurrentResult({ ok: true, status: "active", record });
+    repository.setApplyResult({ ok: true, record: { ...record, revision: 1 } });
+
+    const result = await performAction(
+      {
+        intent: { type: "observe", locationId: record.state.currentLocationId },
+        expectedRevision: 0
+      },
+      buildPerformDeps(repository)
+    );
+
+    expect(result.ok).toBe(true);
+    const next = repository.applyCalls[0].nextState;
+    expect(next.towns).toEqual([]);
+    expect(next.townGeneration).toEqual({ status: "idle" });
+  });
+
+  it("towns 已有条目时重复行动不重复生成", async () => {
+    const base = buildRecordWithMode("offline");
+    const seeded = await performMoveToTown(base);
+    const record: GameRecord = {
+      ...base,
+      state: seeded,
+      revision: 1
+    };
+    const repository = createFakeGameRepository();
+    repository.setCurrentResult({ ok: true, status: "active", record });
+    repository.setApplyResult({ ok: true, record: { ...record, revision: 2 } });
+
+    const result = await performAction(
+      { intent: { type: "observe", locationId: TOWN_ID }, expectedRevision: 1 },
+      buildPerformDeps(repository)
+    );
+
+    expect(result.ok).toBe(true);
+    const next = repository.applyCalls[0].nextState;
+    expect(next.towns).toHaveLength(1);
+    expect(
+      next.eventLedger.filter((event) => event.type === "town_plan_generated")
+    ).toHaveLength(1);
   });
 });

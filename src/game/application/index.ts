@@ -63,6 +63,7 @@ export {
   type DialogueChoiceView,
   type SceneInteractionView,
   type SceneSlot,
+  type TownLayerStatus,
   type WorldMapView,
   type WorldMapNodeView
 } from "./locationAdventureView";
@@ -170,6 +171,29 @@ export {
   type TownAssetStatus,
   type TownIllustrationSource
 } from "./townAssets";
+// Town 主循环（S4）：AI 规划纯 port + 小镇层 read model。
+export {
+  TOWN_PLAN_CONTRACT_VERSION,
+  TOWN_PLAN_FAILURE_CATEGORIES,
+  type TownPlanAttempt,
+  type TownPlanCandidateSource,
+  type TownPlanContractVersion,
+  type TownPlanFailureCategory,
+  type TownPlanRequest
+} from "./townPlanGeneration";
+export {
+  projectTownLayerView,
+  type TownInteractiveBuildingView,
+  type TownLayerStats,
+  type TownLayerView
+} from "./townRuntimeView";
+// Town 主循环：UI 消费语义投影与规划来源类型经门面中转。
+export {
+  type TownCompassArea,
+  type TownSemanticBuilding,
+  type TownSemanticView
+} from "@/game/gameplay/rpg/town";
+export { type TownPlanSource, type TownSemanticPlan } from "@/game/domain";
 export {
   asGameId,
   type ApplyResolvedActionInput,

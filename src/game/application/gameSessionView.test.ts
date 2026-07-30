@@ -9,6 +9,7 @@ import {
 } from "@/game/domain";
 import { resolveAction, type PlayerIntent } from "@/game/gameplay/rpg/actions";
 import { reconcileQuests } from "@/game/gameplay/rpg/quests";
+import { ensureTownRuntime } from "@/game/gameplay/rpg/town";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
 import { runScenarioPipeline, TEST_GAME_ID } from "./applicationFixture.testutil";
@@ -320,5 +321,30 @@ describe("projectGameSessionView：地图 / 地点场景 / 对话 read model（P
         mutatesState: false
       });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Town 主循环 S4：会话视图透出地点层级（locationScene.scale）与 town 就绪
+// 状态（townStatus / town）——由 locationAdventureView 投影展开而来。
+// ---------------------------------------------------------------------------
+
+describe("projectGameSessionView：town 层透出", () => {
+  it("开场地点（scene）：scale 为 scene、townStatus 为 none", () => {
+    const view = project(PIPELINE.state, 0);
+    expect(view.locationScene.scale).toBe("scene");
+    expect(view.townStatus).toBe("none");
+    expect(view.town).toBeUndefined();
+  });
+
+  it("town 地点就绪后：scale 为 town、townStatus 为 ready 且透出小镇视图", () => {
+    const base: GameState = { ...PIPELINE.state, currentLocationId: asLocationId("loc_2") };
+    const entry = ensureTownRuntime(PIPELINE.blueprint, base, "loc_2", "offline", FIXED_TIME);
+    if (entry.kind !== "generated") throw new Error("loc_2 应为 town 地点");
+    const view = project({ ...base, towns: [entry.town] }, 0);
+    expect(view.locationScene.scale).toBe("town");
+    expect(view.townStatus).toBe("ready");
+    expect(view.town?.townName).toBe(locationName("loc_2"));
+    expect(view.town?.interactiveBuildings.length).toBeGreaterThan(0);
   });
 });
