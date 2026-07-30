@@ -13,6 +13,7 @@ import type {
 } from "../runtimeNarrative";
 import { NARRATIVE_CONTRACT_VERSION } from "../runtimeNarrative";
 import { createGame, type CreateGameDependencies } from "../createGame";
+import { generatePendingNarrativeScene } from "../generatePendingNarrativeScene";
 import { getCurrentGame } from "../getCurrentGame";
 import { performAction, type PerformActionDependencies } from "../performAction";
 import {
@@ -284,6 +285,15 @@ function actionDeps(repository: GameRepository, sources: RuntimeSources): Perfor
   };
 }
 
+function narrativeTaskDeps(repository: GameRepository, sources: RuntimeSources) {
+  let trace = 0;
+  return {
+    repository,
+    newTraceId: () => `journey-task-trace-${trace++}`,
+    runtimeNarrativeSources: sources,
+  };
+}
+
 async function runJourney(
   name: string,
   sources: RuntimeSources,
@@ -296,7 +306,15 @@ async function runJourney(
     createDeps(repository, sources),
   );
   if (!created.ok) throw new Error("journey create failed");
-  let view = created.view;
+  const taskDeps = narrativeTaskDeps(repository, sources);
+  async function materializePendingScene() {
+    const generated = await generatePendingNarrativeScene(taskDeps);
+    if (generated !== "saved") throw new Error(`pending narrative was not saved: ${generated}`);
+    const current = await getCurrentGame({ repository });
+    if (current.status !== "active") throw new Error("generated narrative view unavailable");
+    return current.view;
+  }
+  let view = await materializePendingScene();
   let narrativeChoices = 0;
   let generatedNpcLines = view.narrative?.npcLine === null ? 0 : 1;
   let reloadConsistent = true;
@@ -318,6 +336,9 @@ async function runJourney(
     }
     narrativeChoices += 1;
     view = result.view;
+    if (view.narrativeGeneration.status === "pending") {
+      view = await materializePendingScene();
+    }
     if (view.narrative?.npcLine !== null && view.narrative?.npcLine !== undefined) {
       generatedNpcLines += 1;
     }

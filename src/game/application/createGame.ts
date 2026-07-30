@@ -27,8 +27,8 @@ import type {
   GameId,
   GameRepository
 } from "./server/persistence/gameRepository";
-import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
 import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
+import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 
 /**
  * 将校验器的细粒度 issue 收敛为生成契约已有的、可脱敏汇总的失败分类。
@@ -231,9 +231,13 @@ export async function createGame(
   }
 
   let state = initializeGameState(blueprint);
-  if (deps.runtimeNarrativeSources !== undefined) {
-    const narrative = await orchestrateNarrativeScene({ traceId: deps.newTraceId(), blueprint, state, ...deps.runtimeNarrativeSources });
-    state = { ...state, narrative: { currentScene: narrative.scene } };
+  if (deps.runtimeNarrativeSources !== undefined && canQueueRuntimeNarrativeScene(blueprint, state)) {
+    // Rules and the initial save complete immediately. The server-side task
+    // coordinator later produces the scene and CAS-saves it from this marker.
+    state = {
+      ...state,
+      narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() } },
+    };
   }
   const gameId = deps.newGameId();
   let created: CreateInitialGameResult;

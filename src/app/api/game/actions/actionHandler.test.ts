@@ -44,7 +44,8 @@ const STUB_VIEW: GameSessionView = {
   locationScene: { title: "地点A", description: "描述", backdrop: "location_backdrop", interactions: [] },
   dialogues: [],
   // Phase 10：叙事场景视图。
-  narrative: null
+  narrative: null,
+  narrativeGeneration: { status: "ready" }
 };
 
 const STUB_FEEDBACK: ActionFeedbackView = { ok: true, message: "你观察了地点A。" };

@@ -122,6 +122,32 @@ describe("performAction：成功行动", () => {
   });
 });
 
+describe("performAction：pending 叙事任务", () => {
+  it("场景尚未 ready 时拒绝任何规则推进，且零写入", async () => {
+    const repository = createFakeGameRepository();
+    const base = buildActiveRecord();
+    const record: GameRecord = {
+      ...base,
+      state: {
+        ...base.state,
+        narrative: {
+          currentScene: null,
+          generation: { status: "pending", requestedAt: FIXED_TIME },
+        },
+      },
+    };
+    repository.setCurrentResult({ ok: true, status: "active", record });
+
+    const result = await performAction(
+      { intent: { type: "observe", locationId: record.state.currentLocationId }, expectedRevision: 0 },
+      buildPerformDeps(repository),
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "ACTION_REJECTED" });
+    expect(repository.applyCalls).toHaveLength(0);
+  });
+});
+
 describe("performAction：move + 任务 reconciliation 单次写入（Phase 4 Task 3）", () => {
   it("applyResolvedAction 收到 reconcile 后的最终 state：move 与 quest 事件同一次写入", async () => {
     const repository = createFakeGameRepository();

@@ -1,6 +1,6 @@
 # Phase 10 Runtime AI Director and Scene Performance Implementation Plan
 
-> 状态：待执行
+> 状态：已实施；异步场景任务与轮询恢复进行中
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -1243,6 +1243,27 @@ Update `current-phase.json`:
 git add docs/agent/运行时AI导演与场景表演.md docs/agent/MVP核心闭环.md docs/agent/AI环境.md docs/Agent文档索引.md docs/策划文档/AI生成RPG_MVP.md docs/agent/current-phase.json docs/agent/当前开发阶段.md src/dependencyBoundaries.test.ts
 git commit -m "docs: complete runtime AI director phase"
 ```
+
+### Task 10: 异步场景任务、轮询与恢复
+
+**目标：** 规则结算不等待任一 AI provider；持久化一个可恢复的 pending 标记，
+由客户端显式 ensure 请求启动单飞后台任务，并通过 current-game 轮询恢复。
+
+- [x] `GameState.narrative` 增加持久化 `generation: idle | pending`，旧档缺失时默认 `idle`。
+- [x] `createGame` 与 `narrative_choice` 只写规则结果和 `pending`，不在请求路径调用 director / writer / NPC。
+- [x] `generatePendingNarrativeScene` 从当前 revision 读取 pending 标记，生成后以 CAS 保存场景；
+  restart 后同一标记可再次执行。CAS stale 一律丢弃生成结果。
+- [x] `RuntimeNarrativeTaskCoordinator` 只做进程内单飞；持久化状态而非内存队列才是恢复依据。
+- [x] `POST /api/game/narrative/ensure` 仅返回 `202 pending` / `200 ready` / `503 unavailable`，绝不等待 provider。
+- [x] `CurrentGameScreen` 在 pending 时 ensure 并以 750ms 轮询 `/api/game/current`；UI 显示生成中，
+  application 同时拒绝任何推进规则的 action。
+- [x] 若规则层不足两个合法行动，清除 pending 而不让 AI 或 fallback 伪造选项。
+- [x] 离线完整旅程改为显式 materialize pending 任务；黄金基线记录场景写入造成的 revision 变化。
+- [x] 覆盖 pending 保存、fallback、重复 ensure 单飞、HTTP 映射与零网络完整旅程。
+
+**边界：** Phase 10 的 introduced entity 仍只能是蓝图中既有 ID 的首次登场。
+任何 AI 创建 NPC、地点、道具或其它 blueprint ID 的能力属于后续独立的“受审批蓝图扩展”阶段，
+不得由本任务或 fallback 实现。
 
 ## Final Review Checklist
 

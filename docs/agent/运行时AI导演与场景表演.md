@@ -2,7 +2,7 @@
 
 ## 系统定位
 
-Phase 10 建立第一条真实运行时 AI 剧情闭环：玩家从两个服务端批准的固定选项中选择，既有规则先裁决对应行动，世界导演、剧情编剧和当前 NPC 再以三份不同知识权限生成下一场景，最终与规则结果一次 CAS 保存。
+Phase 10 建立第一条真实运行时 AI 剧情闭环：玩家从两个服务端批准的固定选项中选择，既有规则先裁决对应行动并持久化下一幕的 pending 标记；世界导演、剧情编剧和当前 NPC 随后以三份不同知识权限生成场景，后台任务再用 CAS 保存为 ready。
 
 ## 当前状态
 
@@ -33,7 +33,7 @@ Phase 10 建立第一条真实运行时 AI 剧情闭环：玩家从两个服务�
 - provider 不支持 guided grammar（缺少 `xgrammar`），因此使用 prompt-only JSON、严格本地解析和审批。
 - source 在审批前只做机械归一化：action key、NPC ID、fact ID 从最小上下文复制；writer/NPC 的枚举和长度收敛到领域 schema；不修改场景叙述、NPC 正文、选项策略或任何规则结果。
 - `narrative_choice` 解出 `start_battle` 后进入正式 battle facade；AI 不能直接启动战斗或决定胜负。
-- 同步完整场景仍受 provider 延迟影响。真实完整旅程观测到单调用约 7–52 秒；生产 UI 后续应改为异步场景任务/轮询，但不影响当前规则闭环。
+- provider 延迟不会阻塞创建或 choice 请求。pending 场景经 `POST /api/game/narrative/ensure` 触发，客户端每 750ms 读取 current-game；进程重启后同一 pending 标记可恢复。进程内 coordinator 只负责单飞，不承担可靠队列语义。
 
 ## 双模式完整旅程
 
@@ -47,18 +47,17 @@ Phase 10 建立第一条真实运行时 AI 剧情闭环：玩家从两个服务�
 ## 最小运行链路
 
 ```text
-createGame 初始化规则状态
-→ director → 规则批准
-→ writer → 规则批准
-→ npc 最小知识表演
-→ 初始 NarrativeSceneState 与存档一次写入
+createGame 初始化规则状态 + narrative pending 一次写入
+→ 客户端 POST ensure / 轮询恢复
+→ director → 规则批准 → writer → 规则批准 → npc 最小知识表演
+→ NarrativeSceneState 以 CAS 写入 ready
 
 narrative_choice(choiceToken, revision)
 → token 解析为当前合法 AvailableAction
 → 既有规则裁决 / quest / ending
-→ director → writer → npc 或完整 fallback
-→ 规则结果与下一 NarrativeSceneState 一次 CAS 写入
-→ GameSessionView 安全投影两个新选项
+→ 规则结果与下一场景 pending 一次 CAS 写入并立即返回
+→ 客户端 ensure → director → writer → npc 或完整 fallback
+→ 场景以 CAS 写入 ready → GameSessionView 安全投影两个新选项
 ```
 
 ## 验收重点
@@ -76,4 +75,6 @@ narrative_choice(choiceToken, revision)
 - NPC prompt builder 只能接受 `NpcPerformanceRequest`，不能接受 blueprint/state 后再“自行过滤”。
 - AI 输出先经过 pure approval，再构造新的批准对象；不能把 AI 原对象直接持久化。
 - CAS 冲突时丢弃已生成内容，不重复调用 AI。
+- pending 时 application 拒绝行动；少于两个合法行动时清除 pending，不让 AI 或 fallback 伪造选项。
+- Phase 10 的人物、地点、道具首次登场仅能引用既有蓝图 ID；动态创建 ID 是后续独立、受审批的蓝图扩展阶段。
 - 真实 smoke 是否执行必须按事实记录，不能把 fixture 通过写成真实调用成功。

@@ -424,7 +424,7 @@ async function seedV1Database(databasePath: string, input: CreateInitialGameInpu
 }
 
 describe("sqliteGameRepository：Phase 10 narrative 旧存档默认值", () => {
-  it("state_json 不含 narrative 时补齐 { currentScene: null }", async () => {
+  it("state_json 不含 narrative 时补齐 idle generation", async () => {
     const databasePath = nextDbPath();
     const input = buildCreateInput();
     await seedV1Database(databasePath, input);
@@ -435,7 +435,7 @@ describe("sqliteGameRepository：Phase 10 narrative 旧存档默认值", () => {
     if (!result.ok) return;
     expect(result.status).toBe("active");
     if (result.status === "active") {
-      expect(result.record.state.narrative).toEqual({ currentScene: null });
+      expect(result.record.state.narrative).toEqual({ currentScene: null, generation: { status: "idle" } });
     }
   });
 });

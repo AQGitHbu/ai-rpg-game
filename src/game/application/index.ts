@@ -119,6 +119,11 @@ export {
   type OrchestrateSceneResult,
 } from "./orchestrateNarrativeScene";
 export {
+  generatePendingNarrativeScene,
+  type GeneratePendingNarrativeSceneDependencies,
+  type GeneratePendingNarrativeSceneResult,
+} from "./generatePendingNarrativeScene";
+export {
   getOrCreateScene,
   type GetOrCreateSceneInput,
   type GetOrCreateSceneResult,

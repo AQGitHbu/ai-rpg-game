@@ -173,12 +173,18 @@ function withPhase6StateDefaults(state: JsonObject): JsonObject {
   return patched;
 }
 
-// Phase 10 Task 1：Phase 1–9 旧存档的 stateJSON 无 narrative 字段。
-// 读取时补默认值 { currentScene: null }（与 initializeGameState 的初始语义一致），
+// Phase 10：旧存档无 narrative / generation 字段时补 idle 默认值，
 // 不升 schema 版本也不回写。
 function withNarrativeDefault(state: JsonObject): JsonObject {
-  if (state["narrative"] !== undefined) return state;
-  return { ...state, narrative: { currentScene: null } };
+  const narrative = state["narrative"];
+  if (!isPlainObject(narrative)) {
+    return { ...state, narrative: { currentScene: null, generation: { status: "idle" } } };
+  }
+  if (isPlainObject(narrative["generation"])) return state;
+  return {
+    ...state,
+    narrative: { ...narrative, generation: { status: "idle" } },
+  };
 }
 
 // 单行 → 结构化结果：只做端口要求的版本 / generationId 校验与形状检查，

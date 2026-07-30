@@ -7,7 +7,6 @@ import {
 } from "@/game/gameplay/rpg/actions";
 import { startBattle, battleAction } from "@/game/gameplay/rpg/battle";
 import { findAvailableActionByKey } from "@/game/gameplay/rpg/narrative";
-import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
 import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
 import {
   reconcileQuests,
@@ -17,6 +16,7 @@ import {
 import type { GameState, QuestId, EnemyId, ScenarioBlueprint } from "@/game/domain";
 import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
 import type { GameRepository } from "./server/persistence/gameRepository";
+import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 
 // ---------------------------------------------------------------------------
 // performAction use case（Phase 3 Task 4 + Phase 4 Task 3 + Phase 6 Task 3）。
@@ -224,7 +224,7 @@ export async function performAction(
       resolved = {
         state: {
           ...choiceState,
-          narrative: { currentScene: null },
+          narrative: { currentScene: null, generation: { status: "idle" } },
           eventLedger: [...choiceState.eventLedger, { type: "narrative_choice", choiceToken: choice.choiceToken, actionKey: choice.actionKey, sceneId: scene.sceneId, occurredAt: deps.now() }],
         },
         feedbackMessage: choiceFeedback,
@@ -330,10 +330,34 @@ export async function performAction(
     return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
   }
 
-  // Generate only after the deterministic rule result exists, before the sole CAS write.
-  if (command.intent.type === "narrative_choice" && deps.runtimeNarrativeSources !== undefined && nextState.ending === null && nextState.battle.status !== "active") {
-    const narrative = await orchestrateNarrativeScene({ traceId: deps.newTraceId?.() ?? `narrative-${command.expectedRevision + 1}`, blueprint: record.blueprint, state: nextState, ...deps.runtimeNarrativeSources });
-    nextState = { ...nextState, narrative: { currentScene: narrative.scene } };
+  // A pending scene is a durable job boundary. Do not allow a client to
+  // advance the deterministic world a second time while the next narrative
+  // projection is still being produced (including after a process restart).
+  if (record.state.narrative.generation.status === "pending") {
+    const view = projectCurrentView();
+    if (view === null) {
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
+    return {
+      ok: false,
+      code: "ACTION_REJECTED",
+      view,
+      feedback: { ok: false, message: "正在编排下一幕，请稍候。" }
+    };
+  }
+
+  // A narrative choice commits its deterministic rule result immediately.
+  // Scene generation is a recoverable server-side job and must not make the
+  // player request wait for the provider.
+  if (
+    command.intent.type === "narrative_choice" &&
+    deps.runtimeNarrativeSources !== undefined &&
+    canQueueRuntimeNarrativeScene(record.blueprint, nextState)
+  ) {
+    nextState = {
+      ...nextState,
+      narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() } },
+    };
   }
 
   // Step 5: 最终 state → 原子 compare-and-swap 写入（唯一一次写入）。

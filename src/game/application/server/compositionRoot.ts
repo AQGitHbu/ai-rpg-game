@@ -16,6 +16,10 @@ import {
 import { asGameId, type GameId } from "./persistence/gameRepository";
 import { createScenarioCandidateSource } from "./ai/scenarioCandidateSourceFactory";
 import { createRuntimeNarrativeSources } from "./ai/runtimeNarrativeSourceFactory";
+import {
+  RuntimeNarrativeTaskCoordinator,
+  type NarrativeEnsureResult,
+} from "./ai/runtimeNarrativeTaskCoordinator";
 import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
 import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
 
@@ -38,6 +42,8 @@ export type ServerGameEntryPoints = {
   getCurrentGame(): Promise<CurrentGameResult>;
   /** 执行玩家行动：纯规则裁决 + 原子续存档。 */
   performAction(command: PerformActionCommand): Promise<PerformActionResult>;
+  /** 快速启动或恢复当前存档的后台叙事生成；绝不等待 provider。 */
+  ensureNarrativeGeneration(): Promise<NarrativeEnsureResult>;
   /** 仅 development composition 可调用；生产环境一律返回 disabled。 */
   clearDevelopmentCurrentGame(): Promise<"cleared" | "none" | "disabled" | "unavailable">;
   /** 释放底层 SQLite 客户端：测试清理临时文件 / 进程收尾用；重复调用安全。 */
@@ -60,6 +66,7 @@ export function createServerGameEntryPoints(
   const repository = createSqliteGameRepository({
     clientFactory: createServerSqliteClientFactory(env)
   });
+  const runtimeNarrativeSources = createRuntimeNarrativeSources(env);
   const dependencies: CreateGameDependencies = {
     repository,
     // 生产 provider：UUID 存档 ID、随机 seed、真实时钟（ISO 8601）。
@@ -71,21 +78,27 @@ export function createServerGameEntryPoints(
     // traceId 只进 source 请求与脱敏审计；observer 仅接收脱敏阶段事件。
     scenarioCandidateSource: createScenarioCandidateSource(env),
     newTraceId: () => randomUUID(),
-    generationObserver: options.generationObserver
-    ,runtimeNarrativeSources: createRuntimeNarrativeSources(env)
+    generationObserver: options.generationObserver,
+    runtimeNarrativeSources,
   };
   const performDeps: PerformActionDependencies = {
     repository,
     now: () => new Date().toISOString(),
     newTraceId: () => randomUUID(),
-    runtimeNarrativeSources: createRuntimeNarrativeSources(env)
+    runtimeNarrativeSources
   };
+  const narrativeCoordinator = new RuntimeNarrativeTaskCoordinator({
+    repository,
+    newTraceId: () => randomUUID(),
+    runtimeNarrativeSources,
+  });
   return {
     developmentToolsEnabled: env.NODE_ENV === "development",
     // 刻意不透传 command.seed：浏览器/API 无法指定 seed 或 gameId。
     createGame: (input) => createGame({ input }, dependencies),
     getCurrentGame: () => getCurrentGame({ repository }),
     performAction: (command) => performAction(command, performDeps),
+    ensureNarrativeGeneration: () => narrativeCoordinator.ensure(),
     clearDevelopmentCurrentGame: async () => {
       if (env.NODE_ENV !== "development") return "disabled";
       const result = await repository.clearCurrentGame();

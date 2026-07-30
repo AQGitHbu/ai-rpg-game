@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { GameSessionView } from "@/game/application";
-import { InlineButton } from "@ai-game/ui";
+import { InlineButton, Panel } from "@ai-game/ui";
 import { postGameAction } from "./gameActionRequest";
 import { AdventureHud, type DetailsPanel } from "./AdventureHud";
 import { AdventureOverlay } from "./AdventureOverlay";
@@ -56,6 +56,9 @@ export function AdventureGameShell({
   const [screen, setScreen] = useState<AdventureScreen>("map");
   const [detailsPanel, setDetailsPanel] = useState<DetailsPanel | null>(null);
   const [feedback, setFeedback] = useState<ActionFeedback>({ phase: "idle" });
+  // Older persisted/API test views predate the explicit generation field.
+  // Treat their absence as ready so a compatible client can still render them.
+  const narrativePending = view.narrativeGeneration?.status === "pending";
   const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
   const [devToolsOpen, setDevToolsOpen] = useState(false);
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -190,7 +193,12 @@ export function AdventureGameShell({
         }}
       />
 
-      {view.narrative !== null && view.battle === null && view.ending === null ? (
+      {narrativePending && view.battle === null && view.ending === null ? (
+        <Panel className="narrative-scene-panel narrative-pending-panel" aria-label="正在生成剧情">
+          <p role="status" aria-live="polite">正在编排下一幕…</p>
+          <p>世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。</p>
+        </Panel>
+      ) : view.narrative !== null && view.battle === null && view.ending === null ? (
         <NarrativeScenePanel scene={view.narrative} busy={shellBusy} onChoose={(token) => void handleNarrativeChoice(token)} />
       ) : screen === "map" ? (
         <WorldMapScreen

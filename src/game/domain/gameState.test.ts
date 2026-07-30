@@ -45,7 +45,7 @@ function buildInitialState(): GameState {
     defeatedEnemyIds: [],
     battle: { status: "idle" },
     ending: null,
-    narrative: { currentScene: null },
+    narrative: { currentScene: null, generation: { status: "idle" } },
     eventLedger: [{ type: "game_initialized", generation }]
   };
 }

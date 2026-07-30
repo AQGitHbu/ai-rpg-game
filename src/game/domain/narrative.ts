@@ -28,6 +28,11 @@ export type NarrativeSceneState = {
   readonly source: "generated" | "fallback";
 };
 
+export type NarrativeGenerationState =
+  | { readonly status: "idle" }
+  | { readonly status: "pending"; readonly requestedAt: string };
+
 export type NarrativeRuntimeState = {
   readonly currentScene: NarrativeSceneState | null;
+  readonly generation: NarrativeGenerationState;
 };

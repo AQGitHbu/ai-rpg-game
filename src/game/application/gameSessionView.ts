@@ -82,6 +82,11 @@ export type NarrativeSceneView = {
   ];
 } | null;
 
+/** Pending is deliberately a tiny public state: the UI may wait, not inspect work. */
+export type NarrativeGenerationView = {
+  readonly status: "ready" | "pending";
+};
+
 export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly availableActions: readonly SessionActionView[];
   /** 运行时位于当前地点的 NPC：与 visibleNpcs（开场名单快照）语义区分。 */
@@ -106,6 +111,8 @@ export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly dialogues: readonly NpcDialogueView[];
   /** Phase 10：运行时 AI 导演叙事场景——null 表示尚未生成。 */
   readonly narrative: NarrativeSceneView;
+  /** Phase 10：场景后台生成状态；无内部 task / provider 信息。 */
+  readonly narrativeGeneration: NarrativeGenerationView;
 };
 
 /** 输入与 opening 投影完全一致：调用方无需区分两个 read model 的装配来源。 */
@@ -260,6 +267,14 @@ function projectNarrativeSceneView(
   };
 }
 
+function projectNarrativeGenerationView(state: GameState): NarrativeGenerationView {
+  return {
+    status: state.narrative.currentScene !== null
+      ? "ready"
+      : state.narrative.generation.status === "pending" ? "pending" : "ready",
+  };
+}
+
 export function projectGameSessionView(input: ProjectGameSessionViewInput): GameSessionView {
   const { blueprint, state } = input;
   const base = projectOpeningGameView(input);
@@ -350,5 +365,6 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
     ...projectLocationAdventureView(blueprint, state, availableActions),
     // Phase 10：AI 导演叙事场景视图——不泄漏 sceneId/turn/usedFactIds 等内部细节。
     narrative: projectNarrativeSceneView(state),
+    narrativeGeneration: projectNarrativeGenerationView(state),
   };
 }

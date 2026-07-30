@@ -2,7 +2,7 @@
   "version": "phase10-journey-report-v1",
   "mode": "record",
   "outcome": "success",
-  "turns": 11,
+  "turns": 17,
   "aiCalls": 14,
   "maxTurns": 20,
   "maxAiCalls": 40,
