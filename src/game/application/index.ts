@@ -112,6 +112,11 @@ export {
   type NpcLineContext,
   type NpcLineContextInput,
 } from "./runtimeNarrativeContexts";
+export {
+  orchestrateNarrativeScene,
+  type OrchestrateNarrativeSceneInput,
+  type OrchestrateSceneResult,
+} from "./orchestrateNarrativeScene";
 export { type PlayerIntent } from "@/game/gameplay/rpg/actions";
 export {
   asGameId,
