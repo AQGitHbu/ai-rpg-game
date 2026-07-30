@@ -94,3 +94,12 @@ $env:RUN_REAL_AI_SMOKE='1'; npm run smoke:ai:phase4b
 ### 回滚方式
 
 真实 AI 出现不可接受行为时，把 `compositionRoot.ts` 的 `scenarioCandidateSource` 改回固定注入 `createUnavailableScenarioCandidateSource([...])`（Phase 4A 形态）即可：玩家创建路径恒为 fallback，API 契约与 fixture regression（`data/fixtures/phase4/`）全部保持不变，无需迁移数据。
+
+## Phase 10：运行时 AI 导演与场景表演（已设计，待实现）
+
+- 复用现有 `AI_API_BASE_URL`、`AI_MODEL`、`AI_API_KEY`、`AI_OUTPUT_FORMAT` 和 `@ai-game/ai-transport@0.1.0` public API，不修改 foundation。
+- director、writer、npc 是三次独立 non-stream 请求；共享 transport 不等于共享 prompt 或上下文。
+- 日常 fixture 回归零网络零计费；真实最小链路只在 `RUN_REAL_AI_RUNTIME_SMOKE=1` 时运行。
+- 新 smoke 目标命令为 `npm run smoke:ai:phase10`，在实现前不得声称可用或已执行。
+- audit 只允许 traceId、role、attempt、稳定失败类别、generated/fallback、latency 和 provider 安全 usage；禁止 prompt、响应原文、事实正文、URL、模型原文、Authorization 和 key。
+- 回滚时只把 runtime narrative sources 装配为 unavailable，开局蓝图 AI 与既有确定性规则路径保持不变。

@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "phase": "mvp-phase-9-battle-viewport",
-  "status": "implemented",
-  "implementationStatus": "implemented",
-  "targetBranch": "codex/phase9-battle-viewport",
-  "worktreeName": "phase9-battle-viewport",
+  "phase": "mvp-phase-10-runtime-ai-director",
+  "status": "planned",
+  "implementationStatus": "not_started",
+  "targetBranch": "codex/phase10-runtime-ai-director",
+  "worktreeName": "phase10-runtime-ai-director",
   "repositories": ["ai-rpg-game"],
-  "plan": "docs/superpowers/plans/2026-07-30-mvp-phase-9-battle-viewport.md",
+  "plan": "docs/superpowers/plans/2026-07-30-mvp-phase-10-runtime-ai-director.md",
   "sharedInfrastructureChangeAllowed": false,
   "startCommand": "npm run phase:start",
   "entryDocs": [
@@ -14,9 +14,9 @@
     "docs/游戏开发规范.md",
     "docs/Agent文档索引.md",
     "docs/agent/当前开发阶段.md",
-    "docs/agent/战斗与结局.md",
-    "docs/superpowers/specs/2026-07-30-battle-viewport-design.md",
-    "docs/superpowers/plans/2026-07-30-mvp-phase-9-battle-viewport.md"
+    "docs/agent/运行时AI导演与场景表演.md",
+    "docs/superpowers/specs/2026-07-30-runtime-ai-director-scene-performance-design.md",
+    "docs/superpowers/plans/2026-07-30-mvp-phase-10-runtime-ai-director.md"
   ],
   "acceptanceCommands": [
     "npm run lint",
