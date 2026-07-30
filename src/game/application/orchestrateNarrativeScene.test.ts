@@ -2,9 +2,7 @@ import { describe, expect, it } from "vitest";
 import { asFactId, asLocationId, asNpcId, type GameState, type ScenarioBlueprint } from "@/game/domain";
 import type {
   DirectorSource,
-  DirectorAttempt,
   SceneScriptSource,
-  SceneScriptAttempt,
 } from "./runtimeNarrative";
 import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
 

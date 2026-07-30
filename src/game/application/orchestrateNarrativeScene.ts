@@ -25,7 +25,6 @@ import {
   toNpcLineContext,
 } from "./runtimeNarrativeContexts";
 import {
-  FALLBACK_DIRECTOR_PLAN,
   FALLBACK_SCENE_SCRIPT,
 } from "./internal/runtimeNarrativeFallbacks";
 
