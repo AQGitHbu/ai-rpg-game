@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { NewGameInput } from "@/game/domain";
+import wuxiaFixture from "../../../../data/fixtures/phase1/wuxia.json";
 import {
   createGame,
   type CreateGameDependencies,
   type CreateGameResult
 } from "../createGame";
 import type { ScenarioGenerationEvent } from "../scenarioGeneration";
+import {
+  SCENARIO_CANDIDATE_CONTRACT_VERSION,
+  type ScenarioCandidateSource,
+} from "../scenarioGeneration";
 import { getCurrentGame, type CurrentGameResult } from "../getCurrentGame";
 import {
   performAction,
@@ -23,6 +28,29 @@ import {
 import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
 import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
 
+type Phase1Fixture = { input: NewGameInput; seed: string };
+const PHASE10_JOURNEY_BASELINE = wuxiaFixture as unknown as Phase1Fixture;
+
+/** The journey baseline must never make an opening-world provider request. */
+function createOfflineJourneyScenarioSource(): ScenarioCandidateSource {
+  return {
+    async generate() {
+      return {
+        ok: false,
+        contractVersion: SCENARIO_CANDIDATE_CONTRACT_VERSION,
+        origin: "unavailable",
+        category: "service_error",
+        diagnostics: ["OFFLINE_PHASE10_JOURNEY_BASELINE"],
+      };
+    },
+  };
+}
+
+export type OfflineJourneyGameResult = CreateGameResult | {
+  readonly ok: false;
+  readonly code: "DEVELOPMENT_TOOLS_DISABLED";
+};
+
 // ---------------------------------------------------------------------------
 // production composition root（Task 3）：server-only 层唯一的真实依赖装配点。
 // 只有这里把真实 SQLite repository（经 sqliteClient 的 env 配置助手解析路径）、
@@ -38,6 +66,8 @@ export type ServerGameEntryPoints = {
   readonly developmentToolsEnabled: boolean;
   /** 创建当前本地存档：只承载浏览器允许提交的开局资料。 */
   createGame(input: NewGameInput): Promise<CreateGameResult>;
+  /** 开发专用：使用 Phase 10 离线完整旅程的固定开局基线，零 AI 调用。 */
+  createOfflineJourneyGame(): Promise<OfflineJourneyGameResult>;
   /** 读取当前本地存档的 read model。 */
   getCurrentGame(): Promise<CurrentGameResult>;
   /** 执行玩家行动：纯规则裁决 + 原子续存档。 */
@@ -87,6 +117,11 @@ export function createServerGameEntryPoints(
     newTraceId: () => randomUUID(),
     runtimeNarrativeSources
   };
+  const offlineJourneyDependencies: CreateGameDependencies = {
+    ...dependencies,
+    scenarioCandidateSource: createOfflineJourneyScenarioSource(),
+    runtimeNarrativeMode: "offline",
+  };
   const narrativeCoordinator = new RuntimeNarrativeTaskCoordinator({
     repository,
     newTraceId: () => randomUUID(),
@@ -96,6 +131,15 @@ export function createServerGameEntryPoints(
     developmentToolsEnabled: env.NODE_ENV === "development",
     // 刻意不透传 command.seed：浏览器/API 无法指定 seed 或 gameId。
     createGame: (input) => createGame({ input }, dependencies),
+    createOfflineJourneyGame: () => {
+      if (env.NODE_ENV !== "development") {
+        return Promise.resolve({ ok: false, code: "DEVELOPMENT_TOOLS_DISABLED" });
+      }
+      return createGame({
+        input: PHASE10_JOURNEY_BASELINE.input,
+        seed: PHASE10_JOURNEY_BASELINE.seed,
+      }, offlineJourneyDependencies);
+    },
     getCurrentGame: () => getCurrentGame({ repository }),
     performAction: (command) => performAction(command, performDeps),
     ensureNarrativeGeneration: () => narrativeCoordinator.ensure(),

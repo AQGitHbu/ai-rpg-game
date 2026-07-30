@@ -193,19 +193,24 @@ export function AdventureGameShell({
         }}
       />
 
-      {narrativePending && view.battle === null && view.ending === null ? (
-        <Panel className="narrative-scene-panel narrative-pending-panel" aria-label="正在生成剧情">
-          <p role="status" aria-live="polite">正在编排下一幕…</p>
-          <p>世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。</p>
-        </Panel>
-      ) : view.narrative !== null && view.battle === null && view.ending === null ? (
-        <NarrativeScenePanel scene={view.narrative} busy={shellBusy} onChoose={(token) => void handleNarrativeChoice(token)} />
-      ) : screen === "map" ? (
+      {screen === "map" ? (
         <WorldMapScreen
           view={view}
           busy={shellBusy}
           onEnterCurrent={() => setScreen("scene")}
           onMove={(locationId) => void handleMove(locationId)}
+        />
+      ) : narrativePending && view.battle === null && view.ending === null ? (
+        <Panel className="narrative-scene-panel narrative-pending-panel" aria-label="正在生成剧情">
+          <p role="status" aria-live="polite">正在编排下一幕…</p>
+          <p>世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。</p>
+        </Panel>
+      ) : view.narrative !== null && view.battle === null && view.ending === null ? (
+        <NarrativeScenePanel
+          scene={view.narrative}
+          busy={shellBusy}
+          onChoose={(token) => void handleNarrativeChoice(token)}
+          onReturnMap={() => setScreen("map")}
         />
       ) : (
         <LocationSceneScreen

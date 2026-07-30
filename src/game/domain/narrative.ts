@@ -32,7 +32,11 @@ export type NarrativeGenerationState =
   | { readonly status: "idle" }
   | { readonly status: "pending"; readonly requestedAt: string };
 
+/** Runtime AI is opt-in per save. Offline development presets never call it. */
+export type NarrativeMode = "ai" | "offline";
+
 export type NarrativeRuntimeState = {
   readonly currentScene: NarrativeSceneState | null;
   readonly generation: NarrativeGenerationState;
+  readonly mode: NarrativeMode;
 };

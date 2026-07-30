@@ -75,9 +75,11 @@ function parseGenerationSource(value: unknown): GenerationSource | null {
 type NewGameSetupFormProps = {
   /** 创建成功回调：父级用会话视图与安全来源切换到开场画面。 */
   onCreated?: (view: GameSessionView, generationSource: GenerationSource) => void;
+  /** 仅由 current-game 的 server metadata 提供，浏览器不可自行开启。 */
+  developmentTools?: boolean;
 };
 
-export function NewGameSetupForm({ onCreated }: NewGameSetupFormProps = {}) {
+export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGameSetupFormProps = {}) {
   const [gameType, setGameType] = useState<(typeof GAME_TYPES)[number]["id"]>("wuxia");
   const [characterName, setCharacterName] = useState("");
   const [characterIdentity, setCharacterIdentity] = useState("");
@@ -182,8 +184,47 @@ export function NewGameSetupForm({ onCreated }: NewGameSetupFormProps = {}) {
     }
   }
 
+  async function handleOfflineJourneyStart(): Promise<void> {
+    if (submitting) return;
+    setFieldErrors({});
+    setErrorMessage("");
+    setSubmitting(true);
+    setStatusMessage("正在载入离线完整旅程开局……");
+    try {
+      const response = await fetch("/api/game", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ developmentPreset: "phase10-journey-v1" })
+      });
+      const body = (await response.json().catch(() => null)) as CreateGameApiBody | null;
+      const generationSource = parseGenerationSource(body?.generationSource);
+      if (response.ok && body?.view !== undefined && generationSource !== null) {
+        setStatusMessage("离线完整旅程开局已载入。");
+        onCreated?.(body.view, generationSource);
+        return;
+      }
+      setStatusMessage("");
+      setErrorMessage(body?.code === "ACTIVE_GAME_EXISTS"
+        ? "已存在进行中的存档：请先在开发工具中清除当前存档。"
+        : "离线完整旅程开局未能载入，请稍后重试。");
+    } catch {
+      setStatusMessage("");
+      setErrorMessage("网络异常：请求未能到达本地服务，请稍后重试。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <form className="new-game-form" noValidate onSubmit={handleSubmit}>
+      {developmentTools ? (
+        <Panel eyebrow="开发开局" title="使用已有数据开始" compact>
+          <p>载入 Phase 10 离线完整旅程使用的固定开局数据；不调用开局 AI 或运行时 AI。</p>
+          <InlineButton type="button" disabled={submitting} onClick={() => void handleOfflineJourneyStart()}>
+            使用已有数据开始
+          </InlineButton>
+        </Panel>
+      ) : null}
       <Panel
         eyebrow="01 / 世界范围"
         header={(

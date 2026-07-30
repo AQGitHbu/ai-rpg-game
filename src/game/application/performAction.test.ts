@@ -133,6 +133,7 @@ describe("performAction：pending 叙事任务", () => {
         narrative: {
           currentScene: null,
           generation: { status: "pending", requestedAt: FIXED_TIME },
+          mode: "ai",
         },
       },
     };

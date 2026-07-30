@@ -33,6 +33,7 @@ const ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   "characterProfile",
   "personalityTags"
 ]);
+const OFFLINE_JOURNEY_PRESET = "phase10-journey-v1";
 
 function json(status: number, body: unknown): Response {
   return Response.json(body, { status });
@@ -40,7 +41,7 @@ function json(status: number, body: unknown): Response {
 
 export async function handleCreateGameRequest(
   request: Request,
-  entryPoints: Pick<ServerGameEntryPoints, "createGame">
+  entryPoints: Pick<ServerGameEntryPoints, "createGame"> & Partial<Pick<ServerGameEntryPoints, "createOfflineJourneyGame">>
 ): Promise<Response> {
   let parsed: unknown;
   try {
@@ -52,6 +53,33 @@ export async function handleCreateGameRequest(
     return json(400, { code: "MALFORMED_JSON" });
   }
   const record = parsed as Record<string, unknown>;
+
+  // Development preset is an exclusive, server-recognised marker. It never
+  // accepts player input, seed, source or state supplied by the browser.
+  if (record["developmentPreset"] === OFFLINE_JOURNEY_PRESET && Object.keys(record).length === 1) {
+    if (entryPoints.createOfflineJourneyGame === undefined) {
+      return json(403, { code: "DEVELOPMENT_TOOLS_DISABLED" });
+    }
+    let presetResult;
+    try {
+      presetResult = await entryPoints.createOfflineJourneyGame();
+    } catch {
+      return json(500, { code: "INTERNAL_ERROR" });
+    }
+    if (presetResult.ok) {
+      return json(201, { view: presetResult.view, generationSource: presetResult.source });
+    }
+    if (presetResult.code === "DEVELOPMENT_TOOLS_DISABLED") {
+      return json(403, { code: presetResult.code });
+    }
+    // All remaining failures retain the normal creation response mapping.
+    switch (presetResult.code) {
+      case "INVALID_INPUT": return json(400, { code: presetResult.code, fieldErrors: presetResult.fieldErrors });
+      case "ACTIVE_GAME_EXISTS": return json(409, { code: presetResult.code });
+      case "GENERATION_INVALID": return json(422, { code: presetResult.code });
+      case "INFRASTRUCTURE_FAILURE": return json(503, { code: presetResult.code });
+    }
+  }
 
   // 白名单外字段一律拒收：seed/gameId/生成来源/state 无从由浏览器伪造。
   const unexpected = Object.keys(record)

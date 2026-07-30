@@ -58,6 +58,27 @@ describe("NewGameSetupForm", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("开发环境可使用已有离线旅程数据开始，且请求不含玩家输入", async () => {
+    const view = buildSessionViewFixture();
+    const fetchMock = stubFetch(async () => jsonResponse(201, { view, generationSource: "fallback" }));
+    const onCreated = vi.fn();
+    const user = userEvent.setup();
+    render(<NewGameSetupForm developmentTools onCreated={onCreated} />);
+
+    await user.click(screen.getByRole("button", { name: "使用已有数据开始" }));
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(view, "fallback"));
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      developmentPreset: "phase10-journey-v1"
+    });
+  });
+
+  it("非开发环境不显示已有数据开局入口", () => {
+    stubFetch(async () => jsonResponse(200, {}));
+    render(<NewGameSetupForm />);
+    expect(screen.queryByRole("button", { name: "使用已有数据开始" })).toBeNull();
+  });
+
   it("有效表单 → loading → 只向 /api/game 提交允许字段 → onCreated 收到 view 与安全来源", async () => {
     const view = buildSessionViewFixture();
     const pending = deferred<FakeResponse>();

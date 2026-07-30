@@ -47,6 +47,34 @@ describe("AdventureGameShell", () => {
     expect(screen.getByRole("button", { name: "背包" })).toBeInTheDocument();
   });
 
+  it("已生成 AI 剧情仍以地图为入口；进入地点后才显示剧情", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const base = buildSessionViewFixture();
+    const view = {
+      ...base,
+      narrativeGeneration: { status: "ready" as const },
+      narrative: {
+        narration: "客栈的灯火在雨幕里摇曳。",
+        npcLine: null,
+        choices: [
+          { label: "推门进入客栈", choiceToken: "scene:a" },
+          { label: "先查看告示", choiceToken: "scene:b" },
+        ] as const,
+      },
+    };
+    const user = userEvent.setup();
+    renderShell({ view });
+
+    expect(screen.getByRole("button", { name: "进入青石镇" })).toBeVisible();
+    expect(screen.queryByText("客栈的灯火在雨幕里摇曳。")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "进入青石镇" }));
+    expect(screen.getByText("客栈的灯火在雨幕里摇曳。")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "返回地图" }));
+    expect(screen.getByRole("button", { name: "进入青石镇" })).toBeVisible();
+  });
+
   describe("开发工具入口", () => {
     it("developmentTools=false：右上角不显示“开发工具”入口", () => {
       vi.stubGlobal("fetch", vi.fn());

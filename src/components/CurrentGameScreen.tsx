@@ -196,6 +196,7 @@ export function CurrentGameScreen() {
   if (state.phase === "none") {
     return (
       <NewGameSetupForm
+        developmentTools={developmentTools}
         onCreated={(view, generationSource) =>
           setState({
             phase: "active",

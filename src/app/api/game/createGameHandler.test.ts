@@ -52,6 +52,12 @@ function openEntryPoints(databasePath: string): ServerGameEntryPoints {
   return entryPoints;
 }
 
+function openDevelopmentEntryPoints(databasePath: string): ServerGameEntryPoints {
+  const entryPoints = createServerGameEntryPoints({ GAME_DB_PATH: databasePath, NODE_ENV: "development" });
+  openedEntryPoints.push(entryPoints);
+  return entryPoints;
+}
+
 afterAll(async () => {
   for (const entryPoints of openedEntryPoints) {
     try {
@@ -124,6 +130,31 @@ describe("handleCreateGameRequest：合法开局资料", () => {
     ]) {
       expect(text).not.toContain(secret);
     }
+  });
+});
+
+describe("handleCreateGameRequest：开发离线旅程开局", () => {
+  it("专用 marker ⇒ 201 固定基线；不会要求或接受浏览器输入", async () => {
+    const entryPoints = openDevelopmentEntryPoints(nextDbPath());
+    const response = await handleCreateGameRequest(
+      postJson({ developmentPreset: "phase10-journey-v1" }),
+      entryPoints,
+    );
+
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.view.world.gameType).toBe("wuxia");
+    expect(body.view.narrative).toBeNull();
+    expect(body.view.narrativeGeneration).toEqual({ status: "ready" });
+  });
+
+  it("生产入口或缺少开发能力时拒绝 preset", async () => {
+    const response = await handleCreateGameRequest(
+      postJson({ developmentPreset: "phase10-journey-v1" }),
+      { createGame: vi.fn() },
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ code: "DEVELOPMENT_TOOLS_DISABLED" });
   });
 });
 

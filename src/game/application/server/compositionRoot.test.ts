@@ -54,6 +54,12 @@ function openEntryPoints(databasePath: string): ServerGameEntryPoints {
   return entryPoints;
 }
 
+function openDevelopmentEntryPoints(databasePath: string): ServerGameEntryPoints {
+  const entryPoints = createServerGameEntryPoints({ GAME_DB_PATH: databasePath, NODE_ENV: "development" });
+  openedEntryPoints.push(entryPoints);
+  return entryPoints;
+}
+
 afterAll(async () => {
   for (const entryPoints of openedEntryPoints) {
     try {
@@ -132,5 +138,23 @@ describe("compositionRoot：注入 env 记录接通真实持久化", () => {
     expect(result.code).toBe("INVALID_INPUT");
     // repository 未被触及 ⇒ 惰性客户端从未建连 ⇒ 文件不存在。
     expect(existsSync(databasePath)).toBe(false);
+  });
+
+  it("开发离线旅程开局使用固定基线，并禁用运行时 AI 场景任务", async () => {
+    const entryPoints = openDevelopmentEntryPoints(nextDbPath());
+    const created = await entryPoints.createOfflineJourneyGame();
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.view.world.gameType).toBe("wuxia");
+    expect(created.view.narrative).toBeNull();
+    expect(created.view.narrativeGeneration).toEqual({ status: "ready" });
+  });
+
+  it("非开发 composition 明确拒绝离线旅程开局", async () => {
+    const entryPoints = openEntryPoints(nextDbPath());
+    expect(await entryPoints.createOfflineJourneyGame()).toEqual({
+      ok: false,
+      code: "DEVELOPMENT_TOOLS_DISABLED",
+    });
   });
 });

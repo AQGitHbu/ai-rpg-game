@@ -435,7 +435,7 @@ describe("sqliteGameRepository：Phase 10 narrative 旧存档默认值", () => {
     if (!result.ok) return;
     expect(result.status).toBe("active");
     if (result.status === "active") {
-      expect(result.record.state.narrative).toEqual({ currentScene: null, generation: { status: "idle" } });
+      expect(result.record.state.narrative).toEqual({ currentScene: null, generation: { status: "idle" }, mode: "ai" });
     }
   });
 });

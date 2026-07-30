@@ -23,6 +23,7 @@ function pendingRecord(): GameRecord {
       narrative: {
         currentScene: null,
         generation: { status: "pending", requestedAt: "2026-07-30T08:00:00.000Z" },
+        mode: "ai",
       },
     },
     revision: 0,

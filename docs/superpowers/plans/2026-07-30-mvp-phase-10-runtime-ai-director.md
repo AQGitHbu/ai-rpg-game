@@ -1265,6 +1265,80 @@ git commit -m "docs: complete runtime AI director phase"
 任何 AI 创建 NPC、地点、道具或其它 blueprint ID 的能力属于后续独立的“受审批蓝图扩展”阶段，
 不得由本任务或 fallback 实现。
 
+### Task 11: 地图优先叙事视图与离线旅程开发开局
+
+**目标：** 地图始终是非战斗主视图；AI 场景只能在玩家进入当前地点后显示。
+开发环境可一键用 Phase 10 完整旅程使用的固定输入和 seed 创建无 AI 的可重复地图开局。
+
+**Files:**
+- Modify: `src/components/AdventureGameShell.tsx`, `src/components/NarrativeScenePanel.tsx` and their tests.
+- Modify: `src/components/CurrentGameScreen.tsx`, `src/components/NewGameSetupForm.tsx` and its tests.
+- Modify: `src/game/domain/narrative.ts`, `src/game/application/createGame.ts`, `src/game/application/performAction.ts`, persistence defaults and their tests.
+- Modify: `src/game/application/server/compositionRoot.ts`, `src/app/api/game/createGameHandler.ts` and their tests.
+- Modify: `docs/agent/地图与地点冒险.md`, `docs/agent/运行时AI导演与场景表演.md`, `docs/Agent文档索引.md`.
+
+**Interfaces:**
+- `NarrativeRuntimeState.mode` is `"ai" | "offline"`; old saves default to `"ai"`.
+- `CreateGameDependencies.runtimeNarrativeMode?: NarrativeMode`; `offline` never queues a scene provider call.
+- `ServerGameEntryPoints.createOfflineJourneyGame()` is development-only and owns the fixed input/seed; browser submits only `{ developmentPreset: "phase10-journey-v1" }`.
+
+- [x] **Step 1: Add failing UI tests**
+
+```tsx
+renderShell({ view: viewWithNarrative });
+expect(screen.getByRole("button", { name: "进入青石镇" })).toBeVisible();
+expect(screen.queryByText(viewWithNarrative.narrative!.narration)).toBeNull();
+await user.click(screen.getByRole("button", { name: "进入青石镇" }));
+expect(screen.getByText(viewWithNarrative.narrative!.narration)).toBeVisible();
+```
+
+Assert the development setup button submits exactly the preset marker and no player-entered fields.
+
+- [x] **Step 2: Implement minimal map-first composition**
+
+```tsx
+const showNarrative = screen === "scene" && view.narrative !== null;
+return screen === "map" ? <WorldMapScreen ... /> : showNarrative
+  ? <NarrativeScenePanel ... onReturnMap={() => setScreen("map")} />
+  : <LocationSceneScreen ... />;
+```
+
+`NarrativeScenePanel` owns only player-safe text, two opaque tokens and a local `返回地图` button.
+
+- [x] **Step 3: Add persistent offline-mode gate and server-owned preset**
+
+```ts
+type NarrativeMode = "ai" | "offline";
+if (state.narrative.mode !== "offline" && deps.runtimeNarrativeSources !== undefined) {
+  // mark pending after a narrative choice
+}
+```
+
+The composition root reads the committed Phase 1 wuxia fixture as the exact input/seed used by the Phase 10 journey test, injects an unavailable scenario source and `runtimeNarrativeMode: "offline"`, and exposes it only when `NODE_ENV === "development"`.
+
+- [x] **Step 4: Implement strict API/UI wiring**
+
+```ts
+if (record.developmentPreset === "phase10-journey-v1" && Object.keys(record).length === 1) {
+  return mapDevelopmentPreset(await entryPoints.createOfflineJourneyGame());
+}
+```
+
+All other payloads continue through the existing NewGameInput whitelist; production returns a stable development-disabled result.
+
+- [x] **Step 5: Run focused tests and offline acceptance**
+
+```powershell
+npx vitest run src/components/AdventureGameShell.test.tsx src/components/NewGameSetupForm.test.tsx src/app/api/game/createGameHandler.test.ts src/game/application/createGame.test.ts src/game/application/server/compositionRoot.test.ts
+npm run journey:phase10
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+Expected: the preset makes zero provider calls, map remains reachable before/after narrative generation, all ordinary API whitelist and persistence safeguards remain intact.
+
 ## Final Review Checklist
 
 - [ ] Spec §2–5 的角色权限、固定两选项、现有实体范围和零状态写入分别映射到 Tasks 1–7。

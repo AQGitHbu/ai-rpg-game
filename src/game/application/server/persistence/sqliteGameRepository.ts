@@ -178,12 +178,16 @@ function withPhase6StateDefaults(state: JsonObject): JsonObject {
 function withNarrativeDefault(state: JsonObject): JsonObject {
   const narrative = state["narrative"];
   if (!isPlainObject(narrative)) {
-    return { ...state, narrative: { currentScene: null, generation: { status: "idle" } } };
+    return { ...state, narrative: { currentScene: null, generation: { status: "idle" }, mode: "ai" } };
   }
-  if (isPlainObject(narrative["generation"])) return state;
+  if (isPlainObject(narrative["generation"]) && narrative["mode"] !== undefined) return state;
   return {
     ...state,
-    narrative: { ...narrative, generation: { status: "idle" } },
+    narrative: {
+      ...narrative,
+      generation: isPlainObject(narrative["generation"]) ? narrative["generation"] : { status: "idle" },
+      mode: narrative["mode"] ?? "ai",
+    },
   };
 }
 

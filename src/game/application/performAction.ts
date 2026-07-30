@@ -224,7 +224,7 @@ export async function performAction(
       resolved = {
         state: {
           ...choiceState,
-          narrative: { currentScene: null, generation: { status: "idle" } },
+          narrative: { ...choiceState.narrative, currentScene: null, generation: { status: "idle" } },
           eventLedger: [...choiceState.eventLedger, { type: "narrative_choice", choiceToken: choice.choiceToken, actionKey: choice.actionKey, sceneId: scene.sceneId, occurredAt: deps.now() }],
         },
         feedbackMessage: choiceFeedback,
@@ -351,12 +351,13 @@ export async function performAction(
   // player request wait for the provider.
   if (
     command.intent.type === "narrative_choice" &&
+    record.state.narrative.mode !== "offline" &&
     deps.runtimeNarrativeSources !== undefined &&
     canQueueRuntimeNarrativeScene(record.blueprint, nextState)
   ) {
     nextState = {
       ...nextState,
-      narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() } },
+      narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() }, mode: "ai" },
     };
   }
 

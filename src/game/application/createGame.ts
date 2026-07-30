@@ -2,6 +2,7 @@ import {
   validateNewGameInput,
   type NewGameInput,
   type NewGameInputError,
+  type NarrativeMode,
   type ScenarioBlueprint
 } from "@/game/domain";
 import {
@@ -120,6 +121,8 @@ export type CreateGameDependencies = {
   readonly profiles?: ScenarioProfiles;
   /** Optional only for legacy/unit callers; production always injects the three sources. */
   readonly runtimeNarrativeSources?: Readonly<{ directorSource: DirectorSource; sceneScriptSource: SceneScriptSource; npcLineSource: NpcLineSource }>;
+  /** Server-owned save mode; offline development presets never call a provider. */
+  readonly runtimeNarrativeMode?: NarrativeMode;
 };
 
 export type CreateGameResult =
@@ -231,12 +234,18 @@ export async function createGame(
   }
 
   let state = initializeGameState(blueprint);
-  if (deps.runtimeNarrativeSources !== undefined && canQueueRuntimeNarrativeScene(blueprint, state)) {
+  const narrativeMode = deps.runtimeNarrativeMode ?? "ai";
+  if (narrativeMode === "offline") {
+    state = {
+      ...state,
+      narrative: { currentScene: null, generation: { status: "idle" }, mode: "offline" },
+    };
+  } else if (deps.runtimeNarrativeSources !== undefined && canQueueRuntimeNarrativeScene(blueprint, state)) {
     // Rules and the initial save complete immediately. The server-side task
     // coordinator later produces the scene and CAS-saves it from this marker.
     state = {
       ...state,
-      narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() } },
+      narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() }, mode: "ai" },
     };
   }
   const gameId = deps.newGameId();

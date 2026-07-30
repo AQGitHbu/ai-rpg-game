@@ -76,5 +76,6 @@ narrative_choice(choiceToken, revision)
 - AI 输出先经过 pure approval，再构造新的批准对象；不能把 AI 原对象直接持久化。
 - CAS 冲突时丢弃已生成内容，不重复调用 AI。
 - pending 时 application 拒绝行动；少于两个合法行动时清除 pending，不让 AI 或 fallback 伪造选项。
+- `NarrativeRuntimeState.mode` 由服务端保存：正常局为 `ai`；开发环境“使用已有数据开始”创建 `offline` 局，固定使用 Phase 10 完整旅程的输入/seed，既不调用开局 AI，也不排队运行时 AI。该模式只用于开发现有地图、地点和 NPC UI，不是玩家可配置的 AI 开关。
 - Phase 10 的人物、地点、道具首次登场仅能引用既有蓝图 ID；动态创建 ID 是后续独立、受审批的蓝图扩展阶段。
 - 真实 smoke 是否执行必须按事实记录，不能把 fixture 通过写成真实调用成功。

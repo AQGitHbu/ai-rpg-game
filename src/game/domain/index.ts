@@ -96,6 +96,7 @@ export {
 } from "./gameState";
 export {
   type NarrativeRuntimeState,
+  type NarrativeMode,
   type NarrativeSceneState,
   type NarrativeChoiceState,
   type NarrativeNpcLineState,

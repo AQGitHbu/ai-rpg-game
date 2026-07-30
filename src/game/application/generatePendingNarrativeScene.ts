@@ -48,7 +48,7 @@ export async function generatePendingNarrativeScene(
       expectedRevision: record.revision,
       nextState: {
         ...record.state,
-        narrative: { currentScene: null, generation: { status: "idle" } },
+        narrative: { ...record.state.narrative, currentScene: null, generation: { status: "idle" } },
       },
     });
     if (!cleared.ok) return cleared.code === "STALE_GAME_REVISION" ? "stale" : "unavailable";
@@ -69,6 +69,7 @@ export async function generatePendingNarrativeScene(
       narrative: {
         currentScene: generated.scene,
         generation: { status: "idle" },
+        mode: record.state.narrative.mode,
       },
     },
   });

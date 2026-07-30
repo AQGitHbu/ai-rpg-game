@@ -23,6 +23,7 @@ function pendingRecord(): GameRecord {
       narrative: {
         currentScene: null,
         generation: { status: "pending", requestedAt: "2026-07-30T08:00:00.000Z" },
+        mode: "ai",
       },
     },
     revision: 4,
@@ -91,7 +92,7 @@ describe("generatePendingNarrativeScene", () => {
     const record = pendingRecord();
     const readyState: GameState = {
       ...record.state,
-      narrative: { currentScene: null, generation: { status: "idle" } },
+      narrative: { currentScene: null, generation: { status: "idle" }, mode: "ai" },
     };
     let writes = 0;
     const repository = repositoryFor({ ...record, state: readyState }, () => { writes += 1; });
