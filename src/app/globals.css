@@ -878,6 +878,163 @@ body:has(.adventure-game-shell) {
   border: 1px solid var(--game-surface-border);
 }
 
+/* 角色横屏面板：弹窗加宽（规范 2.1，仅在包含横屏角色卡时生效） */
+.adventure-overlay-content:has(.details-character-landscape) {
+  max-width: min(92vw, 680px);
+}
+
+.details-character-landscape {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 24px;
+  min-width: min(100%, 600px);
+  padding: 8px 4px;
+}
+
+@media (max-width: 700px) {
+  .details-character-landscape {
+    grid-template-columns: 1fr;
+  }
+}
+
+.character-card-portrait {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 20px 16px;
+  background: var(--game-surface-bg);
+  border: 1px solid var(--game-surface-border);
+  border-radius: 12px;
+  gap: 12px;
+}
+
+.character-avatar-frame {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #2d261e 0%, #15120e 100%);
+  border: 2px solid #a88948;
+  box-shadow: 0 0 12px rgb(168 137 72 / 25%);
+  display: grid;
+  place-items: center;
+  padding: 12px;
+}
+
+.character-avatar-frame svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: #ebd8a3;
+  stroke-width: 2.5;
+}
+
+.character-identity-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.character-name {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--game-text-primary);
+}
+
+.character-tag {
+  display: inline-block;
+  padding: 2px 10px;
+  font-size: 0.8125rem;
+  background: #332b1f;
+  color: #d4c088;
+  border: 1px solid #574830;
+  border-radius: 12px;
+}
+
+.character-level-badge {
+  font-size: 0.75rem;
+  color: var(--game-text-muted);
+  margin-top: 4px;
+}
+
+.character-card-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.character-vitals-section {
+  background: var(--game-surface-bg);
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.character-stat-bar-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.character-stat-bar {
+  height: 10px;
+  background: #1f1b14;
+  border-radius: 5px;
+  overflow: hidden;
+  border: 1px solid #3d3427;
+}
+
+.character-stat-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #9e2a2b 0%, #d90429 100%);
+  border-radius: 5px;
+  transition: width 0.3s ease;
+}
+
+.character-attributes-section h4 {
+  margin: 0 0 8px;
+  font-size: 0.875rem;
+  color: var(--game-text-muted);
+  border-bottom: 1px solid var(--game-surface-border);
+  padding-bottom: 4px;
+}
+
+.character-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  background: var(--game-surface-bg);
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+}
+
+.stat-card-label {
+  font-size: 0.75rem;
+  color: var(--game-text-muted);
+}
+
+.stat-card-value {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--game-text-primary);
+  margin-top: 2px;
+}
+
+.stat-card-extended {
+  opacity: 0.85;
+}
+
 .adventure-overlay-content > button:first-child {
   position: absolute;
   top: 8px;

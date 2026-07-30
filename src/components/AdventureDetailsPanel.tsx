@@ -2,6 +2,7 @@
 
 import type { GameSessionView } from "@/game/application";
 import type { DetailsPanel } from "./AdventureHud";
+import { CharacterAvatarIcon } from "./CharacterAvatarIcon";
 import { InventoryPanel } from "./InventoryPanel";
 
 type AdventureDetailsPanelProps = {
@@ -54,28 +55,80 @@ export function AdventureDetailsPanel({ view, panel }: AdventureDetailsPanelProp
     );
   }
 
+  return <CharacterPanel view={view} />;
+}
+
+// 扩展属性插槽：玩家属性字典暂无扩展数据时展示的缺省基准值（规范 2.3），
+// 非来自 view.player，后续接入真实衍生数值时替换为数据驱动。
+const EXTENDED_STAT_SLOTS = [
+  { label: "速度", value: "10" },
+  { label: "暴击率", value: "5%" },
+  { label: "闪避率", value: "5%" }
+] as const;
+
+function CharacterPanel({ view }: { readonly view: GameSessionView }) {
+  const { player } = view;
+
   return (
-    <dl className="details-character">
-      <div>
-        <dt>姓名</dt>
-        <dd>{view.player.name}</dd>
+    <div className="details-character-landscape">
+      <div className="character-card-portrait">
+        <div className="character-avatar-frame" aria-hidden="true">
+          <CharacterAvatarIcon />
+        </div>
+        <div className="character-identity-info">
+          <h3 className="character-name">{player.name}</h3>
+          <span className="character-tag">{player.identity}</span>
+          <div className="character-level-badge">等级 1</div>
+        </div>
       </div>
-      <div>
-        <dt>身份</dt>
-        <dd>{view.player.identity}</dd>
+
+      <div className="character-card-stats">
+        {/* 当前领域模型无 maxHP 字段，血条暂按满值显示（规范 2.3 的 MVP 近似）。 */}
+        <section className="character-vitals-section">
+          <div className="character-stat-bar-header">
+            <span className="stat-label">生命 (HP)</span>
+            <span className="stat-value">
+              {player.stats.hp} / {player.stats.hp}
+            </span>
+          </div>
+          <div
+            className="character-stat-bar"
+            role="progressbar"
+            aria-label="生命值"
+            aria-valuenow={100}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div className="character-stat-bar-fill" style={{ width: "100%" }} />
+          </div>
+        </section>
+
+        <section className="character-attributes-section">
+          <h4>基础属性</h4>
+          <div className="character-stats-grid">
+            <div className="stat-card">
+              <span className="stat-card-label">攻击</span>
+              <span className="stat-card-value">{player.stats.attack}</span>
+            </div>
+            <div className="stat-card">
+              <span className="stat-card-label">防御</span>
+              <span className="stat-card-value">{player.stats.defense}</span>
+            </div>
+          </div>
+        </section>
+
+        <section className="character-attributes-section">
+          <h4>拓展属性</h4>
+          <div className="character-stats-grid">
+            {EXTENDED_STAT_SLOTS.map((slot) => (
+              <div key={slot.label} className="stat-card stat-card-extended">
+                <span className="stat-card-label">{slot.label}</span>
+                <span className="stat-card-value">{slot.value}</span>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
-      <div>
-        <dt>生命</dt>
-        <dd>{view.player.stats.hp}</dd>
-      </div>
-      <div>
-        <dt>攻击</dt>
-        <dd>{view.player.stats.attack}</dd>
-      </div>
-      <div>
-        <dt>防御</dt>
-        <dd>{view.player.stats.defense}</dd>
-      </div>
-    </dl>
+    </div>
   );
 }

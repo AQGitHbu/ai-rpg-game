@@ -1,6 +1,7 @@
 "use client";
 
 import type { GameSessionView } from "@/game/application";
+import { CharacterAvatarIcon } from "./CharacterAvatarIcon";
 
 export type DetailsPanel = "character" | "inventory" | "quests" | "journal";
 
@@ -28,7 +29,7 @@ export function AdventureHud({ view, screen, onOpen, developmentTools, onOpenDev
     <div className="adventure-hud-layer" aria-label="游戏 HUD">
       <div className="adventure-hud-player-card">
         <span className="adventure-hud-avatar" aria-hidden="true">
-          <svg viewBox="0 0 64 64" focusable="false" aria-hidden="true"><circle cx="32" cy="32" r="30" /><circle cx="32" cy="25" r="11" /><path d="M12 56c4-13 12-19 20-19s16 6 20 19" /></svg>
+          <CharacterAvatarIcon />
         </span>
         <span><strong>{view.player.name}</strong><small>HP {view.player.stats.hp}</small></span>
       </div>
