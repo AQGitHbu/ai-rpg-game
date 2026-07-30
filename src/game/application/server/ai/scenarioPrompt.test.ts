@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { validateNewGameInput, CONTENT_BUDGET, type NewGameInput } from "@/game/domain";
 import {
   createFallbackBlueprint,
-  loadScenarioProfiles
+  loadScenarioProfiles,
+  TOWN_SCALE_LOCATIONS_MAX
 } from "@/game/gameplay/rpg/scenario";
 import type { ScenarioGenerationRequest } from "../../scenarioGeneration";
 import { buildScenarioPromptMessages } from "./scenarioPrompt";
@@ -69,6 +70,15 @@ describe("buildScenarioPromptMessages", () => {
     expect(joined).toContain(String(CONTENT_BUDGET.coreNpcsMax));
     expect(joined).toContain(String(CONTENT_BUDGET.endings));
     expect(joined).toMatch(/结局/);
+  });
+
+  it("user 消息指导地点分级：大型聚落标 town（至多 2 个）、其余标 scene", () => {
+    const messages = buildScenarioPromptMessages(buildRequest(), PROFILES);
+    const joined = messages.map((message) => message.content).join("\n");
+    expect(joined).toContain("scale");
+    expect(joined).toContain("\"town\"");
+    expect(joined).toContain("\"scene\"");
+    expect(joined).toContain(String(TOWN_SCALE_LOCATIONS_MAX));
   });
 
   it("嵌入由同一输入与 seed 派生的完整有效候选样例，作为模型必须遵守的 JSON 契约", () => {
