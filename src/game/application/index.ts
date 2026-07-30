@@ -185,7 +185,8 @@ export {
   projectTownLayerView,
   type TownInteractiveBuildingView,
   type TownLayerStats,
-  type TownLayerView
+  type TownLayerView,
+  type TownRenderSnapshot
 } from "./townRuntimeView";
 // Town 主循环（S5）：pending 小镇规划生成 use case。
 export {

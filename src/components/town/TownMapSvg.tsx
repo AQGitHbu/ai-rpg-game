@@ -2,7 +2,7 @@
 
 import type { KeyboardEvent, MouseEvent } from "react";
 import { tileIndex } from "@/game/application";
-import type { TileType, TownSnapshot } from "@/game/application";
+import type { TileType, TownRenderSnapshot } from "@/game/application";
 
 // ---------------------------------------------------------------------------
 // Town demo（Task 8）：SVG 逻辑地图。
@@ -36,7 +36,7 @@ const TILE_FILL: Record<TileType, string> = {
 };
 
 type TownMapSvgProps = {
-  snapshot: TownSnapshot;
+  snapshot: TownRenderSnapshot;
   selectedBuildingId: string | null;
   onSelectBuilding: (buildingId: string | null) => void;
   showPlotBorders?: boolean;

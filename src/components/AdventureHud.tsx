@@ -13,7 +13,7 @@ const PANEL_LABELS: Record<DetailsPanel, string> = {
 
 type AdventureHudProps = {
   readonly view: GameSessionView;
-  readonly screen: "map" | "scene";
+  readonly screen: "map" | "town" | "scene";
   readonly onOpen: (panel: DetailsPanel) => void;
   readonly developmentTools?: boolean;
   readonly onOpenDevTools?: () => void;
@@ -33,6 +33,7 @@ export function AdventureHud({ view, screen, onOpen, developmentTools, onOpenDev
         <span><strong>{view.player.name}</strong><small>HP {view.player.stats.hp}</small></span>
       </div>
       {screen === "scene" ? <h1 className="adventure-hud-location-title">{view.locationScene.title}</h1> : null}
+      {screen === "town" ? <h1 className="adventure-hud-location-title">{view.town?.townName ?? view.locationScene.title}</h1> : null}
       <aside className="adventure-hud-objective"><span>当前目标</span><strong>{objectiveText}</strong></aside>
       <nav className="adventure-hud-actions" aria-label="信息入口">
         {(Object.keys(PANEL_LABELS) as DetailsPanel[]).map((panel) => (

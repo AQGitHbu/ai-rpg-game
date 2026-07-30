@@ -1592,3 +1592,72 @@ label.town-demo-toggle {
   }
 }
 
+/* Town 层（主循环第三层入口）：小镇逻辑地图 + 方位语义。 */
+.town-layer-viewport {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+}
+
+.town-layer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.town-layer-header h2 {
+  margin: 0;
+  color: var(--game-text-primary);
+}
+
+.town-layer-body {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.town-layer-body .town-demo-map {
+  width: 100%;
+}
+
+.town-layer-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.town-layer-building h3 {
+  margin: 0 0 8px;
+  color: var(--game-accent);
+}
+
+.town-layer-hint {
+  margin: 0;
+  color: var(--game-text-muted);
+  line-height: 1.7;
+}
+
+.town-layer-sentences {
+  margin: 0;
+  padding-left: 1.1em;
+  display: grid;
+  gap: 6px;
+  color: var(--game-text-primary);
+  line-height: 1.6;
+}
+
+.town-pending-panel {
+  display: grid;
+  gap: 12px;
+  padding: 24px;
+}
+
+@media (max-width: 900px) {
+  .town-layer-body {
+    grid-template-columns: 1fr;
+  }
+}
+
