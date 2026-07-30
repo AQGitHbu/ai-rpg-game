@@ -3,3 +3,10 @@
 export { createFallbackTownPlan } from "./fallbackTownPlan";
 export { createTownRng, type TownRng } from "./townRandom";
 export { generateTown, TownGenerationError, type TownGenerationInput } from "./generateTown";
+export { createTownPlanFromLocation } from "./planFromBlueprint";
+export {
+  projectTownSemanticView,
+  type TownCompassArea,
+  type TownSemanticBuilding,
+  type TownSemanticView
+} from "./projectTownSemantics";

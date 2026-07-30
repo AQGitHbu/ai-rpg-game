@@ -66,6 +66,8 @@ export type TownSemanticPlan = {
     readonly buildingType: TownBuildingType;
     readonly preferredDistrict: TownDistrictType;
     readonly importance: "story_required";
+    /** 可选展示名（如「张铁匠的铁匠铺」）；缺省由生成器固定名表兜底。 */
+    readonly displayName?: string;
   }[];
   readonly landmarks: readonly { readonly type: "well"; readonly preferredArea: AreaHint }[];
 };
@@ -119,6 +121,8 @@ export type TownBuilding = {
   readonly footprint: Rect;
   readonly entrance: { readonly x: number; readonly y: number; readonly direction: Direction };
   readonly storyRequired: boolean;
+  /** 剧情建筑回指 plan.requiredBuildings.key（如 story_npc_xxx），供建筑↔NPC 反查。 */
+  readonly planKey?: string;
 };
 
 /** 行优先扁平网格（索引见 tileIndex）。 */

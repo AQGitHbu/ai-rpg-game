@@ -383,7 +383,8 @@ export function placeBuildings(
     buildingType: TownBuildingType,
     definitionState: TownBuilding["definitionState"],
     displayName: string,
-    storyRequired: boolean
+    storyRequired: boolean,
+    planKey?: string
   ): void => {
     // 按类型裁剪到边长上限（临街边保持贴街）：裁剪后仍是原 footprint
     // 的子矩形，必落在地块格内。
@@ -397,7 +398,9 @@ export function placeBuildings(
       district: geometry.plot.district,
       footprint,
       entrance: selectEntrance(footprint, geometry.frontSide, blockPlots.tiles, width, height),
-      storyRequired
+      storyRequired,
+      // 剧情建筑才携带 planKey：非剧情建筑不写入该可选字段，旧快照期望不变。
+      ...(planKey !== undefined ? { planKey } : {})
     });
     available.delete(geometry.plot.id);
   };
@@ -422,7 +425,14 @@ export function placeBuildings(
       }
     }
     if (best === null) continue; // 无可用地块：留给 Task 6 验证/重试兜底
-    place(best, required.buildingType, "named", REQUIRED_NAMES[required.buildingType] ?? required.key, true);
+    place(
+      best,
+      required.buildingType,
+      "named",
+      required.displayName ?? REQUIRED_NAMES[required.buildingType] ?? required.key,
+      true,
+      required.key
+    );
   }
 
   // 2. 基础建筑：well 已是锚点不占地块；每 gate 一个 gatehouse，取距门最近
