@@ -349,4 +349,25 @@ describe("validateNewGameInput", () => {
       expect(invalid).toBe(raw);
     });
   });
+
+  describe("gameLength 档位", () => {
+    it("缺省规范化为 open", () => {
+      const value = expectOk(baseInput());
+      expect(value.gameLength).toBe("open");
+    });
+
+    it("显式档位原样保留", () => {
+      const value = expectOk({ ...baseInput(), gameLength: "long" });
+      expect(value.gameLength).toBe("long");
+    });
+
+    it("非法值报 INVALID_ENUM", () => {
+      const errors = expectErrors({ ...baseInput(), gameLength: "epic" as never });
+      expect(errors).toContainEqual({
+        field: "gameLength",
+        code: "INVALID_ENUM",
+        params: { value: "epic" }
+      });
+    });
+  });
 });

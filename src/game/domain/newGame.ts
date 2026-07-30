@@ -4,6 +4,7 @@ export type GameTypeId =
 
 export type NarrativeStyle = "concise" | "novel" | "cinematic";
 export type ContentIntensity = "normal" | "dark";
+export type GameLength = "short" | "medium" | "long" | "open";
 
 export type NewGameInput = {
   gameType: GameTypeId;
@@ -15,6 +16,7 @@ export type NewGameInput = {
   storyOpening: string;        // 故事开端, 20–300 chars
   narrativeStyle: NarrativeStyle;
   contentIntensity: ContentIntensity;
+  gameLength?: GameLength;
 };
 
 export type NewGameInputErrorCode =
@@ -36,6 +38,7 @@ declare const validatedNewGameInputBrand: unique symbol;
 
 /** 规范化后的输入：字段已 trim、标签已去空白。与原始 NewGameInput 类型不可互换。 */
 export type ValidatedNewGameInput = NewGameInput & {
+  gameLength: GameLength;
   readonly [validatedNewGameInputBrand]: true;
 };
 
@@ -49,6 +52,7 @@ const GAME_TYPE_IDS: readonly GameTypeId[] = [
 ];
 const NARRATIVE_STYLES: readonly NarrativeStyle[] = ["concise", "novel", "cinematic"];
 const CONTENT_INTENSITIES: readonly ContentIntensity[] = ["normal", "dark"];
+const GAME_LENGTHS: readonly GameLength[] = ["short", "medium", "long", "open"];
 
 const LIMITS = {
   characterName: { min: 2, max: 20 },
@@ -76,6 +80,9 @@ export function validateNewGameInput(input: NewGameInput): ValidateNewGameInputR
   validateEnum(errors, "gameType", input.gameType, GAME_TYPE_IDS);
   validateEnum(errors, "narrativeStyle", input.narrativeStyle, NARRATIVE_STYLES);
   validateEnum(errors, "contentIntensity", input.contentIntensity, CONTENT_INTENSITIES);
+  // 时长档位：缺省视为 open（不选=随剧情推演）
+  const gameLength = input.gameLength ?? "open";
+  validateEnum(errors, "gameLength", gameLength, GAME_LENGTHS);
 
   if (errors.length > 0) return { ok: false, errors };
 
@@ -88,7 +95,8 @@ export function validateNewGameInput(input: NewGameInput): ValidateNewGameInputR
     worldPremise,
     storyOpening,
     narrativeStyle: input.narrativeStyle,
-    contentIntensity: input.contentIntensity
+    contentIntensity: input.contentIntensity,
+    gameLength
   } as ValidatedNewGameInput;
   return { ok: true, value };
 }

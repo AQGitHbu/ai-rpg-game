@@ -4,6 +4,7 @@ export {
   type GameTypeId,
   type NarrativeStyle,
   type ContentIntensity,
+  type GameLength,
   type NewGameInput,
   type NewGameInputError,
   type NewGameInputErrorCode,
