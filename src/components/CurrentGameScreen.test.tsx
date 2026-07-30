@@ -124,7 +124,7 @@ describe("CurrentGameScreen", () => {
 
     await user.click(await screen.findByRole("button", { name: "进入青石镇" }));
     await user.click(screen.getByRole("button", { name: "捕头赵五，官府捕头" }));
-    await user.click(screen.getByRole("button", { name: "与捕头赵五初次交谈" }));
+    await user.click(screen.getByRole("button", { name: "1. 与捕头赵五初次交谈" }));
 
     expect(submittedBody).toEqual({
       intent: { type: "dialogue_choice", npcId: "npc_zhao", choiceId: "npc_zhao:greet" },

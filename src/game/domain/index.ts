@@ -83,6 +83,7 @@ export {
   type QuestFailedEvent,
   type EndingReachedEvent
 } from "./events";
+export { paginateSpeechText } from "./speechPagination";
 export {
   type GameState,
   type PlayerState,

@@ -49,6 +49,7 @@ const QINGSHI_DIALOGUES: readonly NpcDialogueView[] = [
     name: "陆掌柜",
     role: "客栈掌柜",
     slot: "left",
+    speechPages: ["陆掌柜擦着酒碗抬起头。又见面了，若有新的发现，随时可以来找我。"],
     choices: [{ kind: "review_clue", label: "回顾已知线索", mutatesState: false }],
     reviewClues: ["【玩家输入】沈青崖自述身份：落魄镖师"]
   },
@@ -57,6 +58,10 @@ const QINGSHI_DIALOGUES: readonly NpcDialogueView[] = [
     name: "捕头赵五",
     role: "官府捕头",
     slot: "right",
+    speechPages: [
+      "捕头赵五按着刀柄扫了你一眼。初次见面，我是捕头赵五，官府捕头。",
+      "最近镖局灭门案闹得人心惶惶——你愿意帮官府查明真相吗？"
+    ],
     choices: [
       { kind: "greet", choiceId: "npc_zhao:greet", label: "与捕头赵五初次交谈", mutatesState: true },
       { kind: "review_clue", label: "回顾已知线索", mutatesState: false }
@@ -203,6 +208,7 @@ export function buildMovedSessionViewFixture(): GameSessionView {
         name: "巡道老兵",
         role: "老兵",
         slot: "center",
+        speechPages: ["巡道老兵拄着长枪打量你。初次见面，我是巡道老兵，老兵。"],
         choices: [
           { kind: "greet", choiceId: "npc_laobing:greet", label: "与巡道老兵初次交谈", mutatesState: true },
           { kind: "review_clue", label: "回顾已知线索", mutatesState: false }

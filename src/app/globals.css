@@ -908,13 +908,87 @@ body:has(.adventure-game-shell) {
   font-size: 0.875rem;
 }
 
-.npc-dialogue-header {
-  display: flex;
-  align-items: center;
+.npc-dialogue-panel {
+  display: grid;
   gap: 12px;
 }
 
-.npc-dialogue-greeting {
+.npc-dialogue-stage {
+  display: grid;
+  grid-template-columns: minmax(96px, 140px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.npc-dialogue-figure {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 12px 8px;
+  border-radius: 10px;
+  background: var(--game-surface-raised);
+  border: 1px solid var(--game-surface-border);
+  text-align: center;
+}
+
+.npc-dialogue-figure h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.npc-dialogue-figure span {
+  color: var(--game-text-muted);
+  font-size: 0.8rem;
+}
+
+.npc-dialogue-speech {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 120px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--game-surface-raised);
+  border: 1px solid var(--game-surface-border);
+}
+
+.npc-dialogue-speech-text {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.npc-dialogue-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.npc-dialogue-pager button {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.npc-dialogue-pager button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.npc-dialogue-pager-status {
+  color: var(--game-text-muted);
+  font-size: 0.8rem;
+}
+
+.npc-dialogue-reply {
+  margin: 0;
   color: var(--game-text-muted);
   font-style: italic;
 }
@@ -922,7 +996,6 @@ body:has(.adventure-game-shell) {
 .npc-dialogue-choices {
   display: grid;
   gap: 8px;
-  margin-block: 12px;
 }
 
 .npc-dialogue-choices button {
@@ -937,6 +1010,29 @@ body:has(.adventure-game-shell) {
 .npc-dialogue-choices button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.npc-dialogue-input {
+  display: flex;
+  gap: 8px;
+}
+
+.npc-dialogue-input input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: var(--game-surface-raised);
+  color: inherit;
+}
+
+.npc-dialogue-input button {
+  padding: 8px 16px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: var(--game-accent);
+  color: #fff;
+  cursor: pointer;
 }
 
 @media (max-width: 700px) {

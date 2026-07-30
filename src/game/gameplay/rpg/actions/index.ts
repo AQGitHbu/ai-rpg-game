@@ -26,6 +26,8 @@ export {
   type DialogueChoiceIntent,
   type DialogueChoiceKind,
 } from "./dialogueChoices";
+// 对话布局重构：确定性 NPC 对白组合。
+export { composeNpcSpeech } from "./npcSpeech";
 
 // ---------------------------------------------------------------------------
 // 可用行动投影：由已编译蓝图和当前 GameState 投影。
