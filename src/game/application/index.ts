@@ -187,6 +187,13 @@ export {
   type TownLayerStats,
   type TownLayerView
 } from "./townRuntimeView";
+// Town 主循环（S5）：pending 小镇规划生成 use case。
+export {
+  generatePendingTownPlan,
+  TOWN_PLAN_MAX_ATTEMPTS,
+  type GeneratePendingTownPlanDependencies,
+  type GeneratePendingTownPlanResult
+} from "./generatePendingTownPlan";
 // Town 主循环：UI 消费语义投影与规划来源类型经门面中转。
 export {
   type TownCompassArea,

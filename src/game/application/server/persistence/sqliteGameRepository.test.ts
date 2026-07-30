@@ -440,6 +440,29 @@ describe("sqliteGameRepository：Phase 10 narrative 旧存档默认值", () => {
   });
 });
 
+describe("sqliteGameRepository：Town 旧存档默认值", () => {
+  it("state_json 不含 towns / townGeneration 时补齐空数组与 idle", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    // 剥离 Town 字段，模拟 Phase 1–10 旧存档。
+    const legacyState = { ...(input.state as unknown as Record<string, unknown>) };
+    delete legacyState["towns"];
+    delete legacyState["townGeneration"];
+    const legacyInput: CreateInitialGameInput = {
+      ...input,
+      state: legacyState as unknown as GameState
+    };
+    await seedV1Database(databasePath, legacyInput);
+
+    const reader = openRepository(databasePath);
+    const result = await reader.getCurrentGame();
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.status !== "active") return;
+    expect(result.record.state.towns).toEqual([]);
+    expect(result.record.state.townGeneration).toEqual({ status: "idle" });
+  });
+});
+
 describe("sqliteGameRepository：v1→v2 schema migration", () => {
   it("v1 数据库升级后保留状态、蓝图、指针、generationId，revision 为 0", async () => {
     const databasePath = nextDbPath();
