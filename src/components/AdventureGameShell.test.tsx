@@ -214,6 +214,18 @@ describe("AdventureGameShell", () => {
     expect(onStaleRevision).not.toHaveBeenCalled();
   });
 
+  it("进入地点后显示 HUD 场景标题，返回地图后隐藏", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const user = userEvent.setup();
+    renderShell();
+
+    expect(screen.queryByText("青石镇", { selector: ".adventure-hud-location-title" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "进入青石镇" }));
+    expect(screen.getByText("青石镇", { selector: ".adventure-hud-location-title" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "地图" }));
+    expect(screen.queryByText("青石镇", { selector: ".adventure-hud-location-title" })).toBeNull();
+  });
+
   it("成功行动用 toast 显示反馈", async () => {
     const movedView = buildMovedSessionViewFixture();
     vi.stubGlobal(

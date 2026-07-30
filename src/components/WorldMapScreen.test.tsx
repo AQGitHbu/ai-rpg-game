@@ -129,7 +129,7 @@ describe("WorldMapScreen", () => {
       <WorldMapScreen view={view} onEnterCurrent={vi.fn()} onMove={vi.fn()} busy={false} />
     );
 
-    expect(screen.getByTestId("world-map-viewport")).toHaveTextContent("当前目标");
+    expect(screen.getByTestId("world-map-viewport")).not.toHaveTextContent("当前目标");
     expect(screen.getByTestId("world-map-backdrop")).toHaveAttribute("aria-hidden", "true");
     const moveButtons = screen.getAllByRole("button", { name: /前往/ });
     expect(moveButtons.length).toBeGreaterThan(0);
@@ -137,5 +137,10 @@ describe("WorldMapScreen", () => {
       expect(btn).toHaveAttribute("data-map-position");
     }
     expect(screen.getByRole("button", { name: /探寻未知之地/ })).toBeDisabled();
+  });
+
+  it("当前目标由 HUD 承担，地图视窗不再重复渲染", () => {
+    render(<WorldMapScreen view={buildSessionViewFixture()} onEnterCurrent={vi.fn()} onMove={vi.fn()} busy={false} />);
+    expect(screen.getByTestId("world-map-viewport")).not.toHaveTextContent("当前目标");
   });
 });
