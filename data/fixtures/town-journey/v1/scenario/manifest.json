@@ -1,0 +1,9 @@
+{
+  "contractVersion": "phase4b-v1",
+  "fixtures": [
+    {
+      "id": "town-journey",
+      "file": "blueprint.json"
+    }
+  ]
+}

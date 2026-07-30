@@ -280,7 +280,7 @@ describe("Phase 4C：extraBody 透传", () => {
     };
   }
 
-  it("提供 extraBody 时以第三参数 { extraBody } 传给 transport.complete", async () => {
+  it("提供 extraBody 时并入 enable_thinking + 低温 + 长超时传给 transport.complete", async () => {
     const { transport, calls } = recordingTransport();
     const { audit } = spyAudit();
     const extraBody = { response_format: { type: "json_object" } };
@@ -293,10 +293,14 @@ describe("Phase 4C：extraBody 透传", () => {
     });
     await source.generate(REQUEST);
     expect(calls).toHaveLength(1);
-    expect(calls[0][2]).toEqual({ extraBody });
+    expect(calls[0][2]).toEqual({
+      extraBody: { enable_thinking: false, response_format: { type: "json_object" } },
+      temperature: 0.2,
+      timeoutMs: 120_000
+    });
   });
 
-  it("未提供 extraBody 时第三参数为 undefined（Phase 4B 形状不变）", async () => {
+  it("未提供 extraBody 时仍发送 enable_thinking + 低温 + 长超时（与兄弟 source 对齐）", async () => {
     const { transport, calls } = recordingTransport();
     const { audit } = spyAudit();
     const source = createLiveScenarioCandidateSource({
@@ -307,7 +311,11 @@ describe("Phase 4C：extraBody 透传", () => {
     });
     await source.generate(REQUEST);
     expect(calls).toHaveLength(1);
-    expect(calls[0][2]).toBeUndefined();
+    expect(calls[0][2]).toEqual({
+      extraBody: { enable_thinking: false },
+      temperature: 0.2,
+      timeoutMs: 120_000
+    });
   });
 });
 
