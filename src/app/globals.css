@@ -881,7 +881,6 @@ body:has(.adventure-game-shell) {
 /* 角色横屏面板：弹窗加宽（规范 2.1，仅在包含横屏角色卡时生效） */
 .adventure-overlay-content:has(.details-character-landscape) {
   max-width: min(92vw, 680px);
-  width: min(92vw, 680px);
 }
 
 .details-character-landscape {
@@ -892,7 +891,7 @@ body:has(.adventure-game-shell) {
   padding: 8px 4px;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 700px) {
   .details-character-landscape {
     grid-template-columns: 1fr;
   }
@@ -904,7 +903,7 @@ body:has(.adventure-game-shell) {
   align-items: center;
   text-align: center;
   padding: 20px 16px;
-  background: var(--game-surface);
+  background: var(--game-surface-bg);
   border: 1px solid var(--game-surface-border);
   border-radius: 12px;
   gap: 12px;
@@ -942,7 +941,7 @@ body:has(.adventure-game-shell) {
   margin: 0;
   font-size: 1.25rem;
   font-weight: 700;
-  color: var(--game-text);
+  color: var(--game-text-primary);
 }
 
 .character-tag {
@@ -968,7 +967,7 @@ body:has(.adventure-game-shell) {
 }
 
 .character-vitals-section {
-  background: var(--game-surface);
+  background: var(--game-surface-bg);
   border: 1px solid var(--game-surface-border);
   border-radius: 8px;
   padding: 12px 16px;
@@ -1015,7 +1014,7 @@ body:has(.adventure-game-shell) {
   display: flex;
   flex-direction: column;
   padding: 10px 12px;
-  background: var(--game-surface);
+  background: var(--game-surface-bg);
   border: 1px solid var(--game-surface-border);
   border-radius: 8px;
 }
@@ -1028,7 +1027,7 @@ body:has(.adventure-game-shell) {
 .stat-card-value {
   font-size: 1.125rem;
   font-weight: 700;
-  color: var(--game-text);
+  color: var(--game-text-primary);
   margin-top: 2px;
 }
 

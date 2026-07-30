@@ -2,6 +2,7 @@
 
 import type { GameSessionView } from "@/game/application";
 import type { DetailsPanel } from "./AdventureHud";
+import { CharacterAvatarIcon } from "./CharacterAvatarIcon";
 import { InventoryPanel } from "./InventoryPanel";
 
 type AdventureDetailsPanelProps = {
@@ -57,18 +58,8 @@ export function AdventureDetailsPanel({ view, panel }: AdventureDetailsPanelProp
   return <CharacterPanel view={view} />;
 }
 
-// 与 AdventureHud 一致的矢量头像，供角色卡左侧大图使用。
-function CharacterAvatarIcon() {
-  return (
-    <svg viewBox="0 0 64 64" focusable="false" aria-hidden="true">
-      <circle cx="32" cy="32" r="30" />
-      <circle cx="32" cy="25" r="11" />
-      <path d="M12 56c4-13 12-19 20-19s16 6 20 19" />
-    </svg>
-  );
-}
-
-// 扩展属性插槽：玩家属性字典暂无扩展数据时展示基准值（示意图规范 2.3）。
+// 扩展属性插槽：玩家属性字典暂无扩展数据时展示的缺省基准值（规范 2.3），
+// 非来自 view.player，后续接入真实衍生数值时替换为数据驱动。
 const EXTENDED_STAT_SLOTS = [
   { label: "速度", value: "10" },
   { label: "暴击率", value: "5%" },
@@ -92,6 +83,7 @@ function CharacterPanel({ view }: { readonly view: GameSessionView }) {
       </div>
 
       <div className="character-card-stats">
+        {/* 当前领域模型无 maxHP 字段，血条暂按满值显示（规范 2.3 的 MVP 近似）。 */}
         <section className="character-vitals-section">
           <div className="character-stat-bar-header">
             <span className="stat-label">生命 (HP)</span>
