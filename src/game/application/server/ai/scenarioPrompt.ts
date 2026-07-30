@@ -2,6 +2,7 @@ import type { AiMessage } from "@ai-game/ai-transport";
 import { CONTENT_BUDGET } from "@/game/domain";
 import {
   createFallbackBlueprint,
+  TOWN_SCALE_LOCATIONS_MAX,
   type ScenarioProfiles
 } from "@/game/gameplay/rpg/scenario";
 import type { ScenarioGenerationRequest } from "../../scenarioGeneration";
@@ -58,6 +59,8 @@ export function buildScenarioPromptMessages(
     `结局数量：必须恰好 ${CONTENT_BUDGET.endings} 个结局，且每个结局都必须从开局可达。`,
     "# 结局可达性要求",
     `请确保 ${CONTENT_BUDGET.endings} 个结局分别对应不同的剧情走向，任务图中存在从开局到每个结局的可达路径。`,
+    "# 地点分级（scale 字段）",
+    `每个地点都要带 scale 字段：城镇、集市、村寨等有街巷与多座建筑的大型聚落标为 "town"，其余小型场景标为 "scene"。scale 为 "town" 的主要地点至多 ${TOWN_SCALE_LOCATIONS_MAX} 个；无法明确判断时一律用 "scene"。`,
     "# 严格候选 JSON 契约",
     "以下对象是以本次输入和 seed 派生、已通过校验的完整候选样例。你的输出必须保留其全部字段、对象/数组层级、ID、引用、枚举、数量、metadata、contentBudget 与任务/结局拓扑；只能在不破坏这些关系的前提下改写世界、地点、NPC、任务、物品、敌人与结局的叙事文本。只输出最终 JSON 对象。",
     JSON.stringify(contractTemplate)

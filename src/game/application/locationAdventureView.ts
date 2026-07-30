@@ -1,11 +1,12 @@
-import type { GameState, ScenarioBlueprint } from "@/game/domain";
-import { paginateSpeechText } from "@/game/domain";
+import type { GameState, LocationScale, ScenarioBlueprint } from "@/game/domain";
+import { locationScaleOf, paginateSpeechText } from "@/game/domain";
 import {
   composeNpcSpeech,
   projectDialogueChoices,
   type AvailableAction,
   type DialogueChoice
 } from "@/game/gameplay/rpg/actions";
+import { projectTownLayerView, type TownLayerView } from "./townRuntimeView";
 
 // ---------------------------------------------------------------------------
 // LocationAdventureView（Phase 7 Task 3）：由已编译蓝图 + 当前 GameState +
@@ -65,6 +66,8 @@ export type LocationSceneView = {
   readonly title: string;
   readonly description: string;
   readonly backdrop: "location_backdrop";
+  /** Town 层：地点层级（scene = 两层，town = 三层），UI 据此切换视图形态。 */
+  readonly scale: LocationScale;
   readonly interactions: readonly SceneInteractionView[];
 };
 
@@ -83,10 +86,20 @@ export type NpcDialogueView = {
   readonly reviewClues: readonly string[];
 };
 
+/**
+ * Town 层就绪状态：none = 非 town 地点或规划尚未派生（按普通场景渲染）；
+ * pending = AI 规划生成中（UI 显示占位并轮询 town/ensure）；ready = 可渲染。
+ */
+export type TownLayerStatus = "none" | "pending" | "ready";
+
 export type LocationAdventureView = {
   readonly worldMap: WorldMapView;
   readonly locationScene: LocationSceneView;
   readonly dialogues: readonly NpcDialogueView[];
+  /** Town 层：当前地点的小镇层就绪状态。 */
+  readonly townStatus: TownLayerStatus;
+  /** Town 层：小镇层视图——仅 townStatus === "ready" 时存在。 */
+  readonly town?: TownLayerView;
 };
 
 /** 稳定槽位：ID 字符码累加后对 4 取模——纯确定性，无 Math.random / 时间 / AI。 */
@@ -298,14 +311,37 @@ export function projectLocationAdventureView(
   }
   // 结局或 active battle：只读投影——互动为空、对话无可写 choice。
   const readOnly = state.ending !== null || state.battle.status === "active";
+
+  // Town 层三态：ready（towns 已有条目 → 重建快照投影）/ pending（AI 生成中）
+  // / none（非 town 地点，或 town 地点尚未进入过 → 按普通场景渲染）。
+  const scale = locationScaleOf(currentLocation);
+  const currentId = String(state.currentLocationId);
+  let townStatus: TownLayerStatus = "none";
+  let town: TownLayerView | undefined;
+  if (scale === "town") {
+    const entry = state.towns.find((item) => String(item.locationId) === currentId);
+    if (entry !== undefined) {
+      townStatus = "ready";
+      town = projectTownLayerView(blueprint, entry);
+    } else if (
+      state.townGeneration.status === "pending" &&
+      String(state.townGeneration.locationId) === currentId
+    ) {
+      townStatus = "pending";
+    }
+  }
+
   return {
     worldMap: projectWorldMap(blueprint, state),
     locationScene: {
       title: currentLocation.name,
       description: currentLocation.description,
       backdrop: "location_backdrop",
+      scale,
       interactions: readOnly ? [] : projectSceneInteractions(availableActions)
     },
-    dialogues: projectDialogues(blueprint, state, readOnly)
+    dialogues: projectDialogues(blueprint, state, readOnly),
+    townStatus,
+    ...(town !== undefined ? { town } : {})
   };
 }

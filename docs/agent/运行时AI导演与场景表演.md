@@ -35,6 +35,12 @@ Phase 10 建立第一条真实运行时 AI 剧情闭环：玩家从两个服务�
 - `narrative_choice` 解出 `start_battle` 后进入正式 battle facade；AI 不能直接启动战斗或决定胜负。
 - provider 延迟不会阻塞创建或 choice 请求。pending 场景经 `POST /api/game/narrative/ensure` 触发，客户端每 750ms 读取 current-game；进程重启后同一 pending 标记可恢复。进程内 coordinator 只负责单飞，不承担可靠队列语义。
 
+## 小镇空间语义上下文（townSpatial）
+
+- 当当前地点为已就绪的 town（`scale === "town"` 且 `GameState.towns` 已含该地点）时，`toDirectorContext` / `toSceneScriptContext`（`runtimeNarrativeContexts.ts`）注入可选 `townSpatial?: TownSpatialContext`，使导演与编剧可引用建筑位置关系（如“铁匠铺位于大石镇北侧”）。
+- `TownSpatialContext = { townName; sentences: readonly string[]; buildings: readonly { displayName; area; buildingType }[] }`：由 `projectTownLayerView` 的 `semanticView` 投影，**只含方位/邻近的确定性句子，不含坐标、seed、footprint、planKey**，继续遵守“不把完整 blueprint/GameState 作为通用 AI 上下文”。
+- 非 town 地点或 town 未就绪时，`townSpatial` 为 `undefined`（条件 spread，不写入 context）；context 对象直接序列化作为 prompt 载荷，无需单独改 prompt builder。详见 `docs/agent/小镇程序化生成.md`。
+
 ## 双模式完整旅程
 
 - `npm run journey:phase10` 从 `data/fixtures/phase10-journey/v1/` 零网络回放 14 条真实 AI 候选。

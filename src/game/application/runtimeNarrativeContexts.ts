@@ -7,8 +7,49 @@ import type { GameState, ScenarioBlueprint } from "@/game/domain";
 import { projectAvailableActions } from "@/game/gameplay/rpg/actions";
 import { actionKeyOf } from "@/game/gameplay/rpg/narrative";
 import type { ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
+import { projectTownLayerView } from "./townRuntimeView";
 
 const LAST_EVENT_COUNT = 5;
+
+// ---------------------------------------------------------------------------
+// 小镇空间语义上下文
+// ---------------------------------------------------------------------------
+
+/** 当前地点为就绪 town 时注入的坐标无关空间语义（供 AI 引用位置关系）。 */
+export type TownSpatialContext = {
+  readonly townName: string;
+  /** 确定性方位/邻近句子（如「铁匠铺位于大石镇北侧」）。 */
+  readonly sentences: readonly string[];
+  readonly buildings: readonly {
+    readonly displayName: string;
+    readonly area: string;
+    readonly buildingType: string;
+  }[];
+};
+
+/**
+ * 当前地点在 state.towns 中已就绪时，投影其语义视图为空间上下文；否则 undefined。
+ * 纯坐标无关：只透出方位/邻近句子与具名建筑，绝不含 seed 或几何坐标。
+ */
+export function toTownSpatialContext(
+  blueprint: ScenarioBlueprint,
+  state: GameState
+): TownSpatialContext | undefined {
+  const town = (state.towns ?? []).find(
+    (entry) => String(entry.locationId) === String(state.currentLocationId)
+  );
+  if (town === undefined) return undefined;
+  const view = projectTownLayerView(blueprint, town);
+  return {
+    townName: view.semanticView.townName,
+    sentences: view.semanticView.sentences,
+    buildings: view.semanticView.buildings.map((building) => ({
+      displayName: building.displayName,
+      area: building.area,
+      buildingType: building.buildingType
+    }))
+  };
+}
 
 // ---------------------------------------------------------------------------
 // 导演上下文
@@ -21,6 +62,8 @@ export type DirectorContext = {
   readonly recentEvents: readonly string[];
   readonly npcIdsPresent: readonly string[];
   readonly actionCandidates: readonly { actionKey: string; kind: string; label: string }[];
+  /** 当前地点为就绪 town 时的空间语义；小场景地点缺省。 */
+  readonly townSpatial?: TownSpatialContext;
 };
 
 export type DirectorContextInput = {
@@ -50,6 +93,8 @@ export function toDirectorContext(input: DirectorContextInput): DirectorContext 
     label: a.label,
   }));
 
+  const townSpatial = toTownSpatialContext(blueprint, state);
+
   const context: DirectorContext = {
     currentLocationId: String(state.currentLocationId),
     discoveredFactIds,
@@ -57,6 +102,7 @@ export function toDirectorContext(input: DirectorContextInput): DirectorContext 
     recentEvents,
     npcIdsPresent,
     actionCandidates,
+    ...(townSpatial !== undefined ? { townSpatial } : {}),
   };
 
   return context;
@@ -73,6 +119,8 @@ export type SceneScriptContext = {
   readonly allowedFactCards: readonly Record<string, unknown>[];
   readonly narrative: { readonly currentScene: GameState["narrative"]["currentScene"] };
   readonly actionCandidates: readonly { actionKey: string; kind: string; label: string }[];
+  /** 当前地点为就绪 town 时的空间语义；小场景地点缺省。 */
+  readonly townSpatial?: TownSpatialContext;
 };
 
 export type SceneScriptContextInput = {
@@ -114,6 +162,8 @@ export function toSceneScriptContext(input: SceneScriptContextInput): SceneScrip
     label: a.label,
   }));
 
+  const townSpatial = toTownSpatialContext(blueprint, state);
+
   const context: SceneScriptContext = {
     currentLocationId: String(state.currentLocationId),
     plan: {
@@ -128,6 +178,7 @@ export function toSceneScriptContext(input: SceneScriptContextInput): SceneScrip
     allowedFactCards,
     narrative: { currentScene: state.narrative.currentScene },
     actionCandidates,
+    ...(townSpatial !== undefined ? { townSpatial } : {}),
   };
 
   return context;

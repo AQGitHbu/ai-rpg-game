@@ -20,6 +20,7 @@ export {
 } from "./questGraph";
 export {
   PHASE1_NUMERIC_RANGES,
+  TOWN_SCALE_LOCATIONS_MAX,
   validateScenarioBlueprintCandidate,
   type NumericRange,
   type ScenarioBlueprintIssue,

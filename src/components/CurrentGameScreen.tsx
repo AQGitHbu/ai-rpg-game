@@ -119,6 +119,33 @@ export function CurrentGameScreen() {
     };
   }, [narrativePending]);
 
+  const townPending = state.phase === "active" &&
+    state.view.townStatus === "pending";
+
+  useEffect(() => {
+    if (!townPending) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function ensureAndPoll(): Promise<void> {
+      try {
+        await fetch("/api/game/town/ensure", { method: "POST" });
+        if (cancelled) return;
+        const response = await fetch("/api/game/current");
+        const body = (await response.json().catch(() => null)) as CurrentGameApiBody | null;
+        if (!cancelled) applyCurrentGameBody(body);
+      } catch {
+        // Keep the current pending view. The next polling tick can recover a
+        // temporarily unavailable local server without discarding the save.
+      }
+      if (!cancelled) timer = setTimeout(() => void ensureAndPoll(), 750);
+    }
+    void ensureAndPoll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [townPending]);
+
   async function clearDevelopmentSave(): Promise<void> {
     if (!window.confirm("仅清除当前本地试玩存档并重新开局？此操作只在开发环境可用。")) return;
     setActionBusy(true);

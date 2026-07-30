@@ -114,6 +114,9 @@ export function initializeGameState(blueprint: ScenarioBlueprint): GameState {
     ending: null,
     // Phase 10：初始无叙事场景。
     narrative: { currentScene: null, generation: { status: "idle" }, mode: "ai" },
+    // Town 层：小镇规划按地点懒生成，初始为空。
+    towns: [],
+    townGeneration: { status: "idle" },
     eventLedger: [{ type: "game_initialized", generation }]
   };
 }

@@ -68,11 +68,14 @@ export function createLiveScenarioCandidateSource(
 
       let result;
       try {
-        result = await transport.complete(
-          config,
-          messages,
-          extraBody === undefined ? undefined : { extraBody: { ...extraBody } }
-        );
+        // 与 town plan / runtime narrative 相同的 provider 约定：关闭扩展思考、低温、
+        // 长超时（120s）。开局蓝图是三个 live source 中最大的产物，30s 默认超时会
+        // 在真实 provider 上稳定超时；此处对齐兄弟 source 的健壮配置。
+        result = await transport.complete(config, messages, {
+          extraBody: { enable_thinking: false, ...(extraBody ?? {}) },
+          temperature: 0.2,
+          timeoutMs: 120_000
+        });
       } catch {
         // transport 意外抛错：不泄漏 message，映射稳定 service_error。
         audit.record({

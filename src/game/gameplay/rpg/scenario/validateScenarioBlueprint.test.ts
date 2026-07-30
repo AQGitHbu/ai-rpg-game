@@ -675,6 +675,52 @@ describe("validateScenarioBlueprintCandidate：物品展示元数据", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 11. Town 层：地点层级（可选字段，提供时必须合法）
+// ---------------------------------------------------------------------------
+
+describe("validateScenarioBlueprintCandidate：地点层级", () => {
+  it("scale 缺省时通过（旧候选零迁移）", () => {
+    expect(validate(makeValidCandidate()).ok).toBe(true);
+  });
+
+  it("合法的显式 scene / town 通过", () => {
+    const candidate = draft();
+    candidate.locations[0].scale = "town";
+    candidate.locations[1].scale = "scene";
+    expect(issuesOf(candidate)).toEqual([]);
+  });
+
+  it("未知 scale 拒绝", () => {
+    const candidate = draft();
+    (candidate.locations[0] as { scale?: string }).scale = "city";
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "locations[0].scale",
+      code: "INVALID_LOCATION_SCALE",
+      params: { value: "city" }
+    });
+  });
+
+  it("town 地点超过 2 个拒绝", () => {
+    const candidate = draft();
+    candidate.locations[0].scale = "town";
+    candidate.locations[1].scale = "town";
+    candidate.locations[2].scale = "town";
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "locations",
+      code: "TOWN_LOCATION_OVERBUDGET",
+      params: { max: 2, actual: 3 }
+    });
+  });
+
+  it("恰好 2 个 town 地点通过", () => {
+    const candidate = draft();
+    candidate.locations[0].scale = "town";
+    candidate.locations[1].scale = "town";
+    expect(issuesOf(candidate)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // collect-all：一次返回全部问题
 // ---------------------------------------------------------------------------
 

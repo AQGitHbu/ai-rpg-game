@@ -62,6 +62,7 @@ const LOCATION = strictObject({
   name: STRING,
   description: STRING,
   kind: { enum: ["main", "hidden"] },
+  scale: { enum: ["scene", "town"] },
   connectedLocationIds: STRING_ARRAY,
   npcIds: STRING_ARRAY,
   availableItemIds: STRING_ARRAY,

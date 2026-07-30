@@ -66,6 +66,12 @@ const NARRATIVE_DEEP_IMPORT: BoundaryPattern = {
   regex: /["']@\/game\/gameplay\/rpg\/narrative\/[^"']+["']/
 };
 
+/** Town demo（Task 7）：town 只许门面 "@/game/gameplay/rpg/town"，禁止 deep-import 内部文件。 */
+const TOWN_DEEP_IMPORT: BoundaryPattern = {
+  label: "town deep import (only the facade @/game/gameplay/rpg/town is allowed)",
+  regex: /["']@\/game\/gameplay\/rpg\/town\/[^"']+["']/
+};
+
 /**
  * Phase 1 约束：src/game/** 不引入 @ai-game/* 共享包（共享包仅限 UI 层）。
  * Phase 4B 例外：@ai-game/ai-transport 允许出现在 application/server/ai（见下方专项守卫），
@@ -177,6 +183,7 @@ const UI_LAYER_PATTERNS: readonly BoundaryPattern[] = [
   QUESTS_DEEP_IMPORT,
   BATTLE_DEEP_IMPORT,
   NARRATIVE_DEEP_IMPORT,
+  TOWN_DEEP_IMPORT,
   APPLICATION_SERVER_IMPORT,
   RELATIVE_APPLICATION_SERVER_IMPORT,
   DOMAIN_IMPORT,
@@ -230,6 +237,7 @@ const rules: readonly BoundaryRule[] = [
       ACTIONS_DEEP_IMPORT,
       QUESTS_DEEP_IMPORT,
       BATTLE_DEEP_IMPORT,
+      TOWN_DEEP_IMPORT,
       RELATIVE_ESCAPE_FROM_APPLICATION,
       SERVER_ONLY_IMPORT,
       LIBSQL_IMPORT,
@@ -267,6 +275,7 @@ const rules: readonly BoundaryRule[] = [
       QUESTS_DEEP_IMPORT,
       BATTLE_DEEP_IMPORT,
       NARRATIVE_DEEP_IMPORT,
+      TOWN_DEEP_IMPORT,
       APPLICATION_SERVER_DEEP_IMPORT,
       RELATIVE_APPLICATION_SERVER_IMPORT,
       DOMAIN_IMPORT,
@@ -365,6 +374,15 @@ describe("boundary patterns detect synthetic violations", () => {
     {
       pattern: NARRATIVE_DEEP_IMPORT,
       snippet: `import type { DirectorProposal } from "@/game/gameplay/rpg/narrative/types";`
+    },
+    {
+      // Town demo：generateTown 等内部模块 deep-import 同样被拦。
+      pattern: TOWN_DEEP_IMPORT,
+      snippet: `import { generateTown } from "@/game/gameplay/rpg/town/generateTown";`
+    },
+    {
+      pattern: TOWN_DEEP_IMPORT,
+      snippet: `import { hashTownSeed } from "@/game/gameplay/rpg/town/townRandom";`
     },
     { pattern: AI_GAME_PACKAGE_IMPORT, snippet: `import { Panel } from "@ai-game/ui";` },
     { pattern: NEW_AI_GAME_PACKAGE_IMPORT, snippet: `import { db } from "@ai-game/persistence";` },
@@ -476,6 +494,11 @@ describe("boundary patterns detect synthetic violations", () => {
       `import { startBattle } from "@/game/gameplay/rpg/battle";\n` +
       `import { approveDirectorProposal } from "@/game/gameplay/rpg/narrative";`;
     expect(findBoundaryViolations(snippet, [ACTIONS_DEEP_IMPORT, QUESTS_DEEP_IMPORT, BATTLE_DEEP_IMPORT, NARRATIVE_DEEP_IMPORT])).toEqual([]);
+  });
+
+  it("town facade import does not trip the town deep-import rule", () => {
+    const snippet = `import { generateTown } from "@/game/gameplay/rpg/town";`;
+    expect(findBoundaryViolations(snippet, [TOWN_DEEP_IMPORT])).toEqual([]);
   });
 
   it("@ai-game/ui does not trip the new-package rule", () => {

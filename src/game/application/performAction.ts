@@ -6,6 +6,7 @@ import {
   type ResolveActionDependencies,
 } from "@/game/gameplay/rpg/actions";
 import { startBattle, battleAction } from "@/game/gameplay/rpg/battle";
+import { ensureTownRuntime } from "@/game/gameplay/rpg/town";
 import { findAvailableActionByKey } from "@/game/gameplay/rpg/narrative";
 import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
 import {
@@ -327,6 +328,32 @@ export async function performAction(
     );
     nextState = endingResult.state;
   } catch {
+    return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+  }
+
+  // Step 4.5: Town 层懒生成——抵达 scale="town" 地点时确保小镇规划就绪。
+  // 离线存档同步派生（towns 追加 + 事件）；AI 存档只置 pending 标记，真正
+  // 生成由 town/ensure 轮询消费。非 town 地点 / 已生成 / 已 pending 均 no-op，
+  // 因此无需区分 intent 类型（move 与 narrative_choice 解析出的 move 同样覆盖）。
+  try {
+    const townEntry = ensureTownRuntime(
+      record.blueprint,
+      nextState,
+      String(nextState.currentLocationId),
+      record.state.narrative.mode === "offline" ? "offline" : "ai",
+      deps.now()
+    );
+    if (townEntry.kind === "generated") {
+      nextState = {
+        ...nextState,
+        towns: [...nextState.towns, townEntry.town],
+        eventLedger: [...nextState.eventLedger, townEntry.event]
+      };
+    } else if (townEntry.kind === "pending") {
+      nextState = { ...nextState, townGeneration: townEntry.townGeneration };
+    }
+  } catch {
+    // 规划派生契约外抛错（地点/NPC 引用被改坏）：映射为基础设施失败且零写入。
     return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
   }
 

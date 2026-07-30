@@ -1,4 +1,5 @@
 import type { EndingId, EnemyId, FactId, GenerationMetadata, ItemId, LocationId, NpcId, QuestId } from "./scenarioBlueprint";
+import type { TownPlanSource } from "./townSnapshot";
 
 // 领域事件：纯数据，时间戳等外部信息由调用方传入（domain 不读取时钟）。
 // Phase 3 扩展：行动 resolver 产出地点观察、NPC 初次交谈和事实发现三种事件。
@@ -119,6 +120,14 @@ export type NarrativeChoiceEvent = {
   readonly occurredAt: string;
 };
 
+/** Town 层：小镇规划生成完成——离线同步写入或 AI ensure 写回时追加。 */
+export type TownPlanGeneratedEvent = {
+  readonly type: "town_plan_generated";
+  readonly locationId: LocationId;
+  readonly planSource: TownPlanSource;
+  readonly occurredAt: string;
+};
+
 export type GameEvent =
   | GameInitializedEvent
   | LocationObservedEvent
@@ -134,4 +143,5 @@ export type GameEvent =
   | EnemyDefeatedEvent
   | QuestFailedEvent
   | EndingReachedEvent
-  | NarrativeChoiceEvent;
+  | NarrativeChoiceEvent
+  | TownPlanGeneratedEvent;

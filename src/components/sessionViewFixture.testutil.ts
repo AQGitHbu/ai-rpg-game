@@ -35,6 +35,7 @@ const QINGSHI_LOCATION_SCENE: LocationSceneView = {
   title: "青石镇",
   description: "镇口贴着一张字迹潦草的缉凶告示。",
   backdrop: "location_backdrop",
+  scale: "scene",
   interactions: [
     { kind: "observe", locationId: "loc_qingshi", label: "观察青石镇", slot: "center" },
     { kind: "investigate", factId: "fact_notice", label: "调查缉凶告示", slot: "left" },
@@ -136,6 +137,8 @@ export function buildSessionViewFixture(): GameSessionView {
     worldMap: QINGSHI_WORLD_MAP,
     locationScene: QINGSHI_LOCATION_SCENE,
     dialogues: QINGSHI_DIALOGUES,
+    // Town 层：默认非 town 地点。
+    townStatus: "none",
     // Phase 10：叙事场景视图——默认无 AI 导演场景。
     narrative: null,
   } as unknown as GameSessionView;
@@ -230,6 +233,7 @@ export function buildMovedSessionViewFixture(): GameSessionView {
       title: "城外官道",
       description: "黄土道上车辙纵横，隐约可见几处暗色血迹。",
       backdrop: "location_backdrop",
+      scale: "scene",
       interactions: [
         { kind: "observe", locationId: "loc_guandao", label: "观察城外官道", slot: "center" }
       ]
@@ -288,6 +292,7 @@ export function buildBattleSessionViewFixture(): GameSessionView {
       title: "密林深处",
       description: "树影摇曳，杀气森森。",
       backdrop: "location_backdrop",
+      scale: "scene",
       interactions: []
     } satisfies LocationSceneView,
     dialogues: [] satisfies readonly NpcDialogueView[]

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { asFactId, asLocationId, asNpcId, type GameState, type ScenarioBlueprint } from "@/game/domain";
-import { toDirectorContext, toNpcLineContext, toSceneScriptContext } from "./runtimeNarrativeContexts";
+import { asFactId, asLocationId, asNpcId, type GameState, type NewGameInput, type ScenarioBlueprint } from "@/game/domain";
+import { ensureTownRuntime } from "@/game/gameplay/rpg/town";
+import type { ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
+import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
+import { toDirectorContext, toNpcLineContext, toSceneScriptContext, toTownSpatialContext } from "./runtimeNarrativeContexts";
+import { runScenarioPipeline } from "./applicationFixture.testutil";
 
 function buildTestBlueprint(): ScenarioBlueprint {
   return {
@@ -199,5 +203,67 @@ describe("runtimeNarrativeContexts 演员", () => {
     const line = JSON.stringify(context);
     expect(line).not.toMatch(/\bprompt\b/i);
     expect(line).not.toMatch(/\bkey\b/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Town 主循环 S8：小镇空间语义注入（当前地点为就绪 town 时才注入）。
+// fallback 蓝图的 loc_2 固定为 town 地点（createFallbackBlueprint 约定）。
+// ---------------------------------------------------------------------------
+
+describe("runtimeNarrativeContexts 小镇空间语义", () => {
+  const FIXTURE = wuxiaFixture as unknown as { input: NewGameInput; seed: string };
+  const PIPELINE = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
+  const TOWN_ID = "loc_2";
+  const FIXED_TIME = "2026-07-27T12:00:00.000Z";
+
+  function readyTownState(): GameState {
+    const base: GameState = { ...PIPELINE.state, currentLocationId: asLocationId(TOWN_ID) };
+    const entry = ensureTownRuntime(PIPELINE.blueprint, base, TOWN_ID, "offline", FIXED_TIME);
+    if (entry.kind !== "generated") throw new Error("loc_2 应为 town 地点");
+    return { ...base, towns: [entry.town] };
+  }
+
+  const scenePlan: ApprovedDirectorPlan = {
+    sceneGoal: "探查",
+    tensionLevel: 2,
+    focusNpcId: null,
+    relevantFactIds: [],
+    allowedRevealFactIds: [],
+    suggestedActionKeys: ["observe:loc_2", "observe:loc_2"],
+    introducedEntities: [],
+    pacing: "develop",
+  };
+
+  it("非 town 地点：toTownSpatialContext 返回 undefined，两个上下文均不注入", () => {
+    const state: GameState = { ...PIPELINE.state, currentLocationId: asLocationId("loc_1") };
+    expect(toTownSpatialContext(PIPELINE.blueprint, state)).toBeUndefined();
+    expect(toDirectorContext({ blueprint: PIPELINE.blueprint, state }).townSpatial).toBeUndefined();
+    expect(
+      toSceneScriptContext({ blueprint: PIPELINE.blueprint, state, plan: scenePlan }).townSpatial
+    ).toBeUndefined();
+  });
+
+  it("就绪 town：导演上下文注入镇名与非空语义句子", () => {
+    const state = readyTownState();
+    const context = toDirectorContext({ blueprint: PIPELINE.blueprint, state });
+    expect(context.townSpatial).toBeDefined();
+    expect(context.townSpatial?.townName.length).toBeGreaterThan(0);
+    expect(context.townSpatial?.sentences.length).toBeGreaterThan(0);
+  });
+
+  it("就绪 town：编剧上下文注入建筑方位语义且不含坐标", () => {
+    const state = readyTownState();
+    const context = toSceneScriptContext({ blueprint: PIPELINE.blueprint, state, plan: scenePlan });
+    expect(context.townSpatial).toBeDefined();
+    for (const building of context.townSpatial?.buildings ?? []) {
+      expect(typeof building.displayName).toBe("string");
+      expect(typeof building.area).toBe("string");
+      expect(typeof building.buildingType).toBe("string");
+    }
+    // 坐标无关：投影不得泄露 seed 或几何坐标字段。
+    const line = JSON.stringify(context.townSpatial);
+    expect(line).not.toMatch(/\bseed\b/i);
+    expect(line).not.toMatch(/footprint|entrance|\bx\b|\by\b/i);
   });
 });

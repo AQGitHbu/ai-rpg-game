@@ -80,6 +80,9 @@ type WorldDefinitionOf<I extends IdSet> = {
 
 export type LocationKind = "main" | "hidden";
 
+/** Town 层：地点层级。scene = 两层（大地图→场景）；town = 三层（大地图→小镇→场景）。 */
+export type LocationScale = "scene" | "town";
+
 type LocationDefinitionOf<I extends IdSet> = {
   readonly id: I["location"];
   readonly name: string;
@@ -90,7 +93,14 @@ type LocationDefinitionOf<I extends IdSet> = {
   /** Phase 5: 该地点可取得的预定义物品 ID（单个 item 至多出现在一个地点，不得与 startingItemIds 重复）。 */
   readonly availableItemIds: readonly I["item"][];
   readonly tags: readonly string[];
+  /** Town 层：可选层级标记；缺省视为 "scene"（旧蓝图/旧存档零迁移，读取经 locationScaleOf）。 */
+  readonly scale?: LocationScale;
 };
+
+/** 地点层级读取 helper：缺省回 "scene"，调用方不得直接读可选字段。 */
+export function locationScaleOf(location: { readonly scale?: LocationScale }): LocationScale {
+  return location.scale ?? "scene";
+}
 
 type NpcDefinitionOf<I extends IdSet> = {
   readonly id: I["npc"];

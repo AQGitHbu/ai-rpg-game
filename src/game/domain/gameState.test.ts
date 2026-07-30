@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { GameEvent } from "./events";
-import type { GameState } from "./gameState";
+import type { GameState, TownGenerationState, TownRuntimeState } from "./gameState";
+import { TOWN_GENERATOR_VERSION, type TownSemanticPlan } from "./townSnapshot";
 import {
   asFactId,
   asGenerationId,
@@ -46,6 +47,8 @@ function buildInitialState(): GameState {
     battle: { status: "idle" },
     ending: null,
     narrative: { currentScene: null, generation: { status: "idle" }, mode: "ai" },
+    towns: [],
+    townGeneration: { status: "idle" },
     eventLedger: [{ type: "game_initialized", generation }]
   };
 }
@@ -83,5 +86,54 @@ describe("GameEvent", () => {
 // @ts-expect-error only declared Phase 1 event types are allowed
     const unknownEvent: GameEvent = { type: "combat_resolved" };
     expect(unknownEvent).toBeDefined();
+  });
+});
+
+describe("Town runtime state", () => {
+  const plan: TownSemanticPlan = {
+    planVersion: 1,
+    theme: "青石镇",
+    gridSize: { width: 32, height: 32 },
+    terrain: { river: "none", externalRoad: "east_west" },
+    districts: [{ type: "market", preferredArea: "center", weight: 2 }],
+    requiredBuildings: [
+      { key: "story_npc_elder", buildingType: "house", preferredDistrict: "residential", importance: "story_required" }
+    ],
+    landmarks: [{ type: "well", preferredArea: "center" }]
+  };
+
+  it("attaches a lazily generated town plan per location", () => {
+    const town: TownRuntimeState = {
+      locationId: asLocationId("loc_village"),
+      seed: "seed-1#town#loc_village",
+      plan,
+      planSource: "offline",
+      generatorVersion: TOWN_GENERATOR_VERSION
+    };
+    const state: GameState = { ...buildInitialState(), towns: [town] };
+    expect(state.towns).toHaveLength(1);
+    expect(state.towns[0].planSource).toBe("offline");
+  });
+
+  it("models pending AI generation with the target location", () => {
+    const pending: TownGenerationState = {
+      status: "pending",
+      locationId: asLocationId("loc_village"),
+      requestedAt: "2026-07-30T00:00:00.000Z"
+    };
+    const state: GameState = { ...buildInitialState(), townGeneration: pending };
+    expect(state.townGeneration.status).toBe("pending");
+  });
+
+  it("rejects unknown plan sources at compile time", () => {
+    const town: TownRuntimeState = {
+      locationId: asLocationId("loc_village"),
+      seed: "seed-1",
+      plan,
+// @ts-expect-error only offline | generated | fallback are legal plan sources
+      planSource: "manual",
+      generatorVersion: TOWN_GENERATOR_VERSION
+    };
+    expect(town.planSource).toBe("manual");
   });
 });

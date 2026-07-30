@@ -10,6 +10,7 @@ import {
   asNpcId,
   asQuestId,
   asSceneId,
+  locationScaleOf,
   type LocationId,
   type ScenarioBlueprint,
   type ScenarioBlueprintCandidate
@@ -206,5 +207,24 @@ describe("candidate vs compiled blueprint", () => {
 // @ts-expect-error candidate must pass validate/compile before becoming ScenarioBlueprint
     const compiled: ScenarioBlueprint = candidate;
     expect(compiled).toBe(candidate);
+  });
+});
+
+describe("locationScaleOf", () => {
+  it("defaults missing scale to scene (zero-migration for legacy blueprints)", () => {
+    const candidate = buildCandidate();
+    expect(locationScaleOf(candidate.locations[0])).toBe("scene");
+  });
+
+  it("returns the explicit scale when present", () => {
+    const town = { ...buildCandidate().locations[0], scale: "town" as const };
+    expect(locationScaleOf(town)).toBe("town");
+    const scene = { ...buildCandidate().locations[0], scale: "scene" as const };
+    expect(locationScaleOf(scene)).toBe("scene");
+  });
+
+  it("rejects unknown scale literals at compile time", () => {
+// @ts-expect-error only "scene" | "town" are legal LocationScale values
+    expect(locationScaleOf({ scale: "city" })).toBe("city");
   });
 });

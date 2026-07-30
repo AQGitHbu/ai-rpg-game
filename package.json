@@ -39,6 +39,9 @@
     "test:phase10-journey-script": "node --test scripts/phase10Journey.node-test.mjs",
     "journey:phase10": "node scripts/phase10Journey.mjs --mode=replay",
     "smoke:ai:phase10-journey": "node scripts/phase10Journey.mjs --mode=record",
+    "test:town-journey": "vitest run src/game/application/testing/townAiJourney.test.ts",
+    "journey:town": "node scripts/townAiJourney.mjs --mode=replay",
+    "smoke:ai:town-journey": "node scripts/townAiJourney.mjs --mode=record",
     "handoff:check:docs": "node scripts/checkHandoff.mjs",
     "handoff:check": "node scripts/checkHandoff.mjs --strict-branch",
     "setup": "npm run env:bootstrap && npm run bootstrap:foundation && npm ci && npm run sync:standards && npm run doctor"

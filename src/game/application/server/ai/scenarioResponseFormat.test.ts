@@ -103,4 +103,8 @@ describe("SCENARIO_CANDIDATE_JSON_SCHEMA：strict 结构守卫", () => {
     expect(properties.contentBudget.properties.endings).toEqual({ const: 2 });
     expect(properties.quests.items.anyOf).toHaveLength(2);
   });
+
+  it("location.scale 为封闭枚举 scene / town", () => {
+    expect(schema.properties.locations.items.properties.scale.enum).toEqual(["scene", "town"]);
+  });
 });

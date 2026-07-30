@@ -21,6 +21,7 @@ export {
   asEndingId,
   asFactId,
   asSceneId,
+  locationScaleOf,
   type GenerationId,
   type LocationId,
   type NpcId,
@@ -32,6 +33,7 @@ export {
   type SceneId,
   type FactSource,
   type LocationKind,
+  type LocationScale,
   type MainQuestStage,
   type EnemyTier,
   type StatBlock,
@@ -90,7 +92,9 @@ export {
   type BattleResolvedEvent,
   type EnemyDefeatedEvent,
   type QuestFailedEvent,
-  type EndingReachedEvent
+  type EndingReachedEvent,
+  type NarrativeChoiceEvent,
+  type TownPlanGeneratedEvent
 } from "./events";
 export { paginateSpeechText } from "./speechPagination";
 export {
@@ -102,7 +106,9 @@ export {
   type WorldFactState,
   type BattleStatus,
   type BattleState,
-  type EndingState
+  type EndingState,
+  type TownRuntimeState,
+  type TownGenerationState
 } from "./gameState";
 export {
   type NarrativeRuntimeState,
@@ -113,3 +119,4 @@ export {
   type NarrativeEmotion,
   NARRATIVE_EMOTIONS
 } from "./narrative";
+export * from "./townSnapshot";

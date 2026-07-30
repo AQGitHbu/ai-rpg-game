@@ -21,10 +21,15 @@ import {
 import { asGameId, type GameId } from "./persistence/gameRepository";
 import { createScenarioCandidateSource } from "./ai/scenarioCandidateSourceFactory";
 import { createRuntimeNarrativeSources } from "./ai/runtimeNarrativeSourceFactory";
+import { createTownPlanSource } from "./ai/townPlanSourceFactory";
 import {
   RuntimeNarrativeTaskCoordinator,
   type NarrativeEnsureResult,
 } from "./ai/runtimeNarrativeTaskCoordinator";
+import {
+  TownPlanTaskCoordinator,
+  type TownEnsureResult,
+} from "./ai/townPlanTaskCoordinator";
 import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
 import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
 
@@ -74,6 +79,8 @@ export type ServerGameEntryPoints = {
   performAction(command: PerformActionCommand): Promise<PerformActionResult>;
   /** 快速启动或恢复当前存档的后台叙事生成；绝不等待 provider。 */
   ensureNarrativeGeneration(): Promise<NarrativeEnsureResult>;
+  /** 快速启动或恢复当前存档的后台小镇规划生成；绝不等待 provider。 */
+  ensureTownGeneration(): Promise<TownEnsureResult>;
   /** 仅 development composition 可调用；生产环境一律返回 disabled。 */
   clearDevelopmentCurrentGame(): Promise<"cleared" | "none" | "disabled" | "unavailable">;
   /** 释放底层 SQLite 客户端：测试清理临时文件 / 进程收尾用；重复调用安全。 */
@@ -127,6 +134,12 @@ export function createServerGameEntryPoints(
     newTraceId: () => randomUUID(),
     runtimeNarrativeSources,
   });
+  const townPlanCoordinator = new TownPlanTaskCoordinator({
+    repository,
+    newTraceId: () => randomUUID(),
+    now: () => new Date().toISOString(),
+    townPlanSource: createTownPlanSource(env),
+  });
   return {
     developmentToolsEnabled: env.NODE_ENV === "development",
     // 刻意不透传 command.seed：浏览器/API 无法指定 seed 或 gameId。
@@ -143,6 +156,7 @@ export function createServerGameEntryPoints(
     getCurrentGame: () => getCurrentGame({ repository }),
     performAction: (command) => performAction(command, performDeps),
     ensureNarrativeGeneration: () => narrativeCoordinator.ensure(),
+    ensureTownGeneration: () => townPlanCoordinator.ensure(),
     clearDevelopmentCurrentGame: async () => {
       if (env.NODE_ENV !== "development") return "disabled";
       const result = await repository.clearCurrentGame();

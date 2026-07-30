@@ -41,6 +41,10 @@ const ITEM_RARITIES: ReadonlySet<ItemRarity> = new Set(["common", "fine", "rare"
 export const ITEM_LEVEL_RANGE: NumericRange = Object.freeze({ min: 1, max: 99 });
 export const ITEM_STAT_LINES_MAX = 6;
 
+// Town 层：地点层级封闭枚举与 town 地点配额（懒生成成本约束）。
+const LOCATION_SCALES: ReadonlySet<string> = new Set(["scene", "town"]);
+export const TOWN_SCALE_LOCATIONS_MAX = 2;
+
 export type ScenarioBlueprintIssueCode =
   | QuestGraphIssueCode
   | "INVALID_SCHEMA_VERSION"
@@ -62,6 +66,8 @@ export type ScenarioBlueprintIssueCode =
   | "DUPLICATE_INVESTIGABLE_FACT"
   | "FORBIDDEN_TAG"
   | "INVALID_ITEM_PRESENTATION"
+  | "INVALID_LOCATION_SCALE"
+  | "TOWN_LOCATION_OVERBUDGET"
   | "OUT_OF_RANGE";
 
 export type ScenarioBlueprintIssue = {
@@ -109,6 +115,7 @@ export function validateScenarioBlueprintCandidate(
   validateNumericRanges(issues, candidate);
   validateForbiddenTags(issues, candidate, context.profile);
   validateItemPresentationMetadata(issues, candidate);
+  validateLocationScales(issues, candidate);
 
   if (issues.length > 0) return { ok: false, issues };
   return { ok: true, validated: candidate as ValidatedScenarioBlueprintCandidate };
@@ -551,6 +558,37 @@ function validateItemPresentationMetadata(
       });
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// Town 层：地点层级
+// ---------------------------------------------------------------------------
+
+/** scale 为可选字段：提供时必须合法；town 地点总数 ≤ 配额（懒生成成本约束）。 */
+function validateLocationScales(
+  issues: ScenarioBlueprintIssue[],
+  candidate: ScenarioBlueprintCandidate
+): void {
+  let townCount = 0;
+  candidate.locations.forEach((location, index) => {
+    if (location.scale === undefined) return;
+    if (!LOCATION_SCALES.has(location.scale)) {
+      issues.push({
+        path: `locations[${index}].scale`,
+        code: "INVALID_LOCATION_SCALE",
+        params: { value: String(location.scale) }
+      });
+      return;
+    }
+    if (location.scale === "town") townCount += 1;
+  });
+  if (townCount > TOWN_SCALE_LOCATIONS_MAX) {
+    issues.push({
+      path: "locations",
+      code: "TOWN_LOCATION_OVERBUDGET",
+      params: { max: TOWN_SCALE_LOCATIONS_MAX, actual: townCount }
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

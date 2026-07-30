@@ -9,6 +9,7 @@ import { AdventureOverlay } from "./AdventureOverlay";
 import { AdventureDetailsPanel } from "./AdventureDetailsPanel";
 import { WorldMapScreen } from "./WorldMapScreen";
 import { LocationSceneScreen } from "./LocationSceneScreen";
+import { TownLayerScreen } from "./TownLayerScreen";
 import { NpcDialoguePanel } from "./NpcDialoguePanel";
 import { NarrativeScenePanel } from "./NarrativeScenePanel";
 import { ToastContainer, type ToastMessage } from "./ToastNotification";
@@ -23,7 +24,7 @@ type AdventureGameShellProps = {
   readonly onClearDevelopmentSave: () => Promise<void>;
 };
 
-type AdventureScreen = "map" | "scene";
+type AdventureScreen = "map" | "town" | "scene";
 
 type ActionFeedback =
   | { readonly phase: "idle" }
@@ -43,6 +44,11 @@ const DETAIL_TITLE: Record<DetailsPanel, string> = {
   quests: "任务",
   journal: "日志"
 };
+
+/** 进入某地点的初始层级：town 地点先落在小镇层（第三层入口），否则直达场景层。 */
+function entryScreenFor(view: GameSessionView): AdventureScreen {
+  return view.townStatus === "none" ? "scene" : "town";
+}
 
 export function AdventureGameShell({
   view,
@@ -112,7 +118,7 @@ export function AdventureGameShell({
         setFeedback({ phase: "idle" });
         pushToast(outcome.message);
         onViewChange(outcome.view);
-        setScreen("scene");
+        setScreen(entryScreenFor(outcome.view));
         return;
       case "rejected":
         setFeedback({ phase: "rejected", message: outcome.message });
@@ -199,6 +205,13 @@ export function AdventureGameShell({
     setFeedback({ phase: "error", message: outcome.message });
   }
 
+  // Town 第三层入口：点击剧情建筑 = 纯 UI 导航，打开该地点场景并聚焦绑定 NPC 对话。
+  function handleEnterBuilding(npcId: string): void {
+    triggerRef.current = document.activeElement as HTMLElement;
+    setDialogueNpcId(npcId);
+    setScreen("scene");
+  }
+
   return (
     <div className="adventure-game-shell">
       <AdventureHud
@@ -216,9 +229,24 @@ export function AdventureGameShell({
         <WorldMapScreen
           view={view}
           busy={shellBusy}
-          onEnterCurrent={() => setScreen("scene")}
+          onEnterCurrent={() => setScreen(entryScreenFor(view))}
           onMove={(locationId) => void handleMove(locationId)}
         />
+      ) : screen === "town" ? (
+        view.town === undefined ? (
+          <Panel className="town-layer-viewport town-pending-panel" aria-label="正在生成小镇">
+            <p role="status" aria-live="polite">正在匀开小镇的街巷与建筑…</p>
+            <p>世界导演正依据已保存的规则结果编译小镇布局。</p>
+            <InlineButton onClick={() => setScreen("map")}>返回地图</InlineButton>
+          </Panel>
+        ) : (
+          <TownLayerScreen
+            town={view.town}
+            busy={shellBusy}
+            onEnterBuilding={handleEnterBuilding}
+            onReturnMap={() => setScreen("map")}
+          />
+        )
       ) : narrativePending && view.battle === null && view.ending === null ? (
         <Panel className="narrative-scene-panel narrative-pending-panel" aria-label="正在生成剧情">
           <p role="status" aria-live="polite">正在编排下一幕…</p>
@@ -237,7 +265,7 @@ export function AdventureGameShell({
           busy={shellBusy}
           onAction={(action) => void handleSceneAction(action)}
           onOpenDialogue={(npcId) => { triggerRef.current = document.activeElement as HTMLElement; setDialogueNpcId(npcId); }}
-          onReturnMap={() => setScreen("map")}
+          onReturnMap={() => setScreen(view.townStatus === "none" ? "map" : "town")}
         />
       )}
 
