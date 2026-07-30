@@ -18,6 +18,7 @@ interface ToastItemProps {
 function ToastItem({ toast, onDismiss }: ToastItemProps) {
   const elementRef = useRef<HTMLParagraphElement | null>(null);
   const onDismissRef = useRef(onDismiss);
+  const dismissedRef = useRef(false);
 
   useEffect(() => {
     onDismissRef.current = onDismiss;
@@ -26,18 +27,24 @@ function ToastItem({ toast, onDismiss }: ToastItemProps) {
   useEffect(() => {
     const element = elementRef.current;
 
+    const triggerDismiss = () => {
+      if (dismissedRef.current) return;
+      dismissedRef.current = true;
+      onDismissRef.current(toast.id);
+    };
+
     // React 委托的 onAnimationEnd 在缺少 AnimationEvent 的环境（如 jsdom）
     // 不会派发，这里使用原生监听器保证浏览器与测试环境行为一致。
     const handleAnimationEnd = (event: Event) => {
       const animationName = (event as AnimationEvent).animationName;
       if (animationName === "adventure-toast-exit") {
-        onDismissRef.current(toast.id);
+        triggerDismiss();
       }
     };
     element?.addEventListener("animationend", handleAnimationEnd);
 
     const timer = setTimeout(() => {
-      onDismissRef.current(toast.id);
+      triggerDismiss();
     }, TOAST_FALLBACK_TIMEOUT_MS);
 
     return () => {
