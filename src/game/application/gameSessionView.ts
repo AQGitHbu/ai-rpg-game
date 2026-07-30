@@ -225,6 +225,7 @@ function projectStoryEvent(
     case "enemy_defeated": return { text: `${enemy(event.enemyId)}已被击败。` };
     case "quest_failed": return { text: `任务「${quest(event.questId)}」失败，后果已被记录。` };
     case "ending_reached": return { text: `你抵达结局「${endings.get(event.endingId)?.name ?? "终章"}」。` };
+    case "narrative_choice": return { text: "你做出了抉择，故事在你脚边展开。" };
   }
 }
 
