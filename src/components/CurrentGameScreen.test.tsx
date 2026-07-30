@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent, { type UserEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CurrentGameScreen } from "./CurrentGameScreen";
@@ -12,10 +12,10 @@ import {
 } from "./sessionViewFixture.testutil";
 
 // ---------------------------------------------------------------------------
-// Task 4（Phase 3）+ Phase 4 Task 4 + Phase 6 Task 4：根页面客户端协调器测试。
-// 挂载时读取 /api/game/current：none → 创建表单；active → 会话视图
-//（场景 + 行动面板 + 移动面板 + 任务面板）；corrupt → 按 reason 分支的
-// 可恢复提示（真实数据损坏 ≠ 数据库不可用）。fetch 全程打桩。
+// Phase 7 Task 7：根页面客户端协调器测试。
+// 挂载时读取 /api/game/current：none → 创建表单；active → 地图优先游戏壳
+//（世界地图 → 地点场景 → NPC 对话 → 返回地图）；corrupt → 按 reason 分支的
+// 可恢复提示。battle/ending 仍渲染既有面板。fetch 全程打桩。
 // ---------------------------------------------------------------------------
 
 type FakeResponse = { ok: boolean; status: number; json: () => Promise<unknown> };
@@ -30,10 +30,8 @@ function stubFetch(implementation: (input: unknown, init?: RequestInit) => Promi
   return fetchMock;
 }
 
-/** Phase 4A：fallback 开局后的一次性降级提示文案。 */
 const FALLBACK_NOTICE = "已使用稳定模板完成开局，仍可完整游玩。";
 
-/** 在 none 状态下填写并提交新开局表单（与会话视图 fixture 同一故事）。 */
 async function fillAndSubmitSetupForm(user: UserEvent) {
   await screen.findByText("选择游戏类型");
   await user.type(screen.getByLabelText("角色名字"), "沈青崖");
@@ -65,24 +63,74 @@ describe("CurrentGameScreen", () => {
     expect(fetchMock.mock.calls[0]![0]).toBe("/api/game/current");
   });
 
-  it("current=active：恢复会话视图含任务与移动面板，不显示表单", async () => {
+  it("current=active：显示地图壳（世界地图），不显示旧面板主布局", async () => {
     const view = buildSessionViewFixture();
     stubFetch(async () => jsonResponse(200, { status: "active", view }));
     render(<CurrentGameScreen />);
 
-    expect(await screen.findByText("暮色四合，你背着旧刀走进青石镇。")).toBeInTheDocument();
-    // 刷新恢复：GET /api/game/current 还原任务面板与移动面板。
-    expect(screen.getByText("查明灭门真相")).toBeInTheDocument();
-    expect(screen.getByText("后续阶段能力")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "前往城外官道" })).toBeInTheDocument();
-    expect(screen.getByText("你与陆掌柜交谈。对方以自己的身份和立场回应了你。")).toBeInTheDocument();
-    // 刷新恢复（Phase 5）：物品面板的可取得区与背包一并还原。
-    expect(screen.getByRole("button", { name: "拾取锈铁钥匙" })).toBeInTheDocument();
-    const obtainable = screen.getByRole("region", { name: "可取得物品" });
-    expect(within(obtainable).getByText("锈铁钥匙")).toBeInTheDocument();
-    const inventory = screen.getByRole("region", { name: "背包" });
-    expect(within(inventory).getByText("旧刀")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "角色" })).toBeInTheDocument();
     expect(screen.queryByText("选择游戏类型")).toBeNull();
+  });
+
+  it("非战斗 active 会话渲染地图 HUD", async () => {
+    stubFetch(async () => jsonResponse(200, { status: "active", view: buildSessionViewFixture() }));
+    render(<CurrentGameScreen />);
+    expect(await screen.findByLabelText("游戏 HUD")).toBeInTheDocument();
+    expect(document.querySelector(".adventure-game-shell")).toBeTruthy();
+  });
+
+  it("进入地点场景后可见互动热点和 NPC，返回地图零请求", async () => {
+    const view = buildSessionViewFixture();
+    const fetchMock = stubFetch(async () => jsonResponse(200, { status: "active", view }));
+    const user = userEvent.setup();
+    render(<CurrentGameScreen />);
+
+    await user.click(await screen.findByRole("button", { name: "进入青石镇" }));
+
+    expect(screen.getByRole("button", { name: "观察青石镇" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "陆掌柜，客栈掌柜" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "地图" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "地图" }));
+    expect(screen.getByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
+    // 进入/返回地图都是纯本地导航：只有初始 GET current 一次 fetch。
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("NPC 对话：greet 提交 dialogue_choice payload，成功后更新 view", async () => {
+    const view = buildSessionViewFixture();
+    const greetedView = {
+      ...view,
+      revision: 1,
+      dialogues: view.dialogues.map((d) =>
+        d.npcId === "npc_zhao"
+          ? { ...d, choices: d.choices.filter((c) => c.kind !== "greet") }
+          : d
+      )
+    };
+    let submittedBody: unknown;
+    stubFetch(async (input, init?) => {
+      if (input === "/api/game/current") return jsonResponse(200, { status: "active", view });
+      submittedBody = JSON.parse(String(init?.body));
+      return jsonResponse(200, {
+        view: greetedView,
+        feedback: { ok: true, message: "你与捕头赵五交谈。" }
+      });
+    });
+    const user = userEvent.setup();
+    render(<CurrentGameScreen />);
+
+    await user.click(await screen.findByRole("button", { name: "进入青石镇" }));
+    await user.click(screen.getByRole("button", { name: "捕头赵五，官府捕头" }));
+    await user.click(screen.getByRole("button", { name: "1. 与捕头赵五初次交谈" }));
+
+    expect(submittedBody).toEqual({
+      intent: { type: "dialogue_choice", npcId: "npc_zhao", choiceId: "npc_zhao:greet" },
+      revision: 0
+    });
+    expect(await screen.findByText("你与捕头赵五交谈。")).toBeInTheDocument();
   });
 
   it("developmentTools=true：确认后只请求开发清档接口并回到新开局表单", async () => {
@@ -96,6 +144,7 @@ describe("CurrentGameScreen", () => {
     const user = userEvent.setup();
     render(<CurrentGameScreen />);
 
+    await user.click(await screen.findByRole("button", { name: "开发工具" }));
     await user.click(await screen.findByRole("button", { name: "清除本地试玩存档" }));
     expect(await screen.findByText("选择游戏类型")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/game/dev/current", { method: "DELETE" });
@@ -144,11 +193,9 @@ describe("CurrentGameScreen", () => {
 
     await fillAndSubmitSetupForm(user);
 
-    expect(await screen.findByText("暮色四合，你背着旧刀走进青石镇。")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     expect(screen.queryByText("选择游戏类型")).toBeNull();
-    // generated 来源：不显示降级提示。
     expect(screen.queryByText(FALLBACK_NOTICE)).toBeNull();
-    // 无 AI 网络请求：全部调用都指向本地 /api/game*。
     for (const call of fetchMock.mock.calls) {
       expect(String(call[0])).toMatch(/^\/api\/game(\/current)?$/);
     }
@@ -166,10 +213,8 @@ describe("CurrentGameScreen", () => {
 
     await fillAndSubmitSetupForm(user);
 
-    expect(await screen.findByText("暮色四合，你背着旧刀走进青石镇。")).toBeInTheDocument();
-    // 降级提示：warning 样式的一次性说明，不影响其余面板正常渲染。
+    expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     expect(screen.getByText(FALLBACK_NOTICE)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "前往城外官道" })).toBeInTheDocument();
   });
 
   it("刷新恢复同一存档：GET current 不携带来源 ⇒ 不显示降级提示", async () => {
@@ -177,11 +222,11 @@ describe("CurrentGameScreen", () => {
     stubFetch(async () => jsonResponse(200, { status: "active", view }));
     render(<CurrentGameScreen />);
 
-    expect(await screen.findByText("暮色四合，你背着旧刀走进青石镇。")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     expect(screen.queryByText(FALLBACK_NOTICE)).toBeNull();
   });
 
-  it("移动闭环：发送 move payload 与 revision，成功后新地点/NPC/任务更新", async () => {
+  it("移动闭环：发送 move payload 与 revision，成功后自动进入新地点场景", async () => {
     const view = buildSessionViewFixture();
     const movedView = buildMovedSessionViewFixture();
     let submittedRequest: RequestInit | undefined;
@@ -201,28 +246,20 @@ describe("CurrentGameScreen", () => {
 
     await user.click(await screen.findByRole("button", { name: "前往城外官道" }));
 
-    // 新地点描述与运行时在场 NPC。
     expect(
-      await screen.findByText("黄土道上车辙纵横，隐约可见几处暗色血迹。")
-    ).toBeInTheDocument();
-    expect(screen.getByText(/巡道老兵/)).toBeInTheDocument();
-    // 任务面板同步更新：旧主线完成后只展示新解锁的 active 任务。
-    expect(screen.getByText("追查马帮下落")).toBeInTheDocument();
-    expect(screen.queryByText("查明灭门真相")).toBeNull();
-    // 当前地点人物来自运行时 presentNpcs；冒险记录可保留此前已发生的 NPC 对话。
-    expect(screen.getByText(/巡道老兵/)).toBeInTheDocument();
-    // 请求 payload 只含 intent + revision。
+      (await screen.findAllByText("黄土道上车辙纵横，隐约可见几处暗色血迹。")).length
+    ).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/巡道老兵/).length).toBeGreaterThanOrEqual(1);
     expect(JSON.parse(String(submittedRequest?.body))).toEqual({
       intent: { type: "move", locationId: "loc_guandao" },
       revision: 0
     });
-    // 无 AI 网络请求：全部调用都指向本地 /api/game*。
     for (const call of fetchMock.mock.calls) {
       expect(String(call[0])).toMatch(/^\/api\/game\/(current|actions)$/);
     }
   });
 
-  it("行动请求进行中：场景与移动面板的全部按钮一律禁用", async () => {
+  it("行动请求进行中：行动按钮一律禁用", async () => {
     const view = buildSessionViewFixture();
     let resolvePost: ((response: FakeResponse) => void) | undefined;
     stubFetch(async (input) => {
@@ -234,8 +271,10 @@ describe("CurrentGameScreen", () => {
 
     await user.click(await screen.findByRole("button", { name: "前往城外官道" }));
 
-    // 提交期间：行动面板 + 移动面板的所有按钮都禁用，避免并发写入。
-    for (const button of screen.getAllByRole("button")) {
+    const buttons = screen.getAllByRole("button").filter(
+      (b) => !["地图", "角色", "背包", "任务", "日志"].includes(b.textContent ?? "")
+    );
+    for (const button of buttons) {
       expect(button).toBeDisabled();
     }
 
@@ -248,7 +287,7 @@ describe("CurrentGameScreen", () => {
     await screen.findByText("你来到了城外官道。");
   });
 
-  it("拾取闭环：发送 take_item payload 与 revision，成功后物品从可取得区消失并进入背包", async () => {
+  it("拾取闭环：进入场景后发送 take_item payload，成功后更新 view", async () => {
     const view = buildSessionViewFixture();
     const takenView = buildItemTakenSessionViewFixture();
     let submittedRequest: RequestInit | undefined;
@@ -266,57 +305,17 @@ describe("CurrentGameScreen", () => {
     const user = userEvent.setup();
     render(<CurrentGameScreen />);
 
-    await user.click(await screen.findByRole("button", { name: "拾取锈铁钥匙" }));
+    await user.click(await screen.findByRole("button", { name: "进入青石镇" }));
+    await user.click(screen.getByRole("button", { name: "拾取锈铁钥匙" }));
 
-    // 成功后整页替换为服务端 read model：可取得区清空、背包收录新物品。
-    const obtainable = screen.getByRole("region", { name: "可取得物品" });
-    expect(
-      await within(obtainable).findByText("当前地点没有可取得的物品。")
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "拾取锈铁钥匙" })).toBeNull();
-    const inventory = screen.getByRole("region", { name: "背包" });
-    expect(within(inventory).getByText("锈铁钥匙")).toBeInTheDocument();
-    // 任务目标同步到完成态（服务端视图驱动，UI 不自行推断）。
-    expect(screen.queryByText("后续阶段能力")).toBeNull();
-    // 请求 payload 只含 intent + revision。
+    expect(await screen.findByText("你拾起了锈铁钥匙。")).toBeInTheDocument();
     expect(JSON.parse(String(submittedRequest?.body))).toEqual({
       intent: { type: "take_item", itemId: "item_key" },
       revision: 0
     });
-    // 无 AI 网络请求：全部调用都指向本地 /api/game*。
     for (const call of fetchMock.mock.calls) {
       expect(String(call[0])).toMatch(/^\/api\/game\/(current|actions)$/);
     }
-  });
-
-  it("拾取遇到陈旧 revision：重新读取当前存档并渲染最新视图", async () => {
-    const view = buildSessionViewFixture();
-    const refreshedView = { ...buildItemTakenSessionViewFixture(), revision: 2 };
-    let currentCalls = 0;
-    stubFetch(async (input) => {
-      if (input === "/api/game/current") {
-        currentCalls += 1;
-        return jsonResponse(200, {
-          status: "active",
-          view: currentCalls === 1 ? view : refreshedView
-        });
-      }
-      if (input === "/api/game/actions") {
-        return jsonResponse(409, { code: "STALE_GAME_REVISION" });
-      }
-      throw new Error(`unexpected fetch: ${String(input)}`);
-    });
-    const user = userEvent.setup();
-    render(<CurrentGameScreen />);
-
-    await user.click(await screen.findByRole("button", { name: "拾取锈铁钥匙" }));
-
-    // 冲突后重新请求 current-game：最新视图里钥匙已在背包、拾取按钮消失。
-    const obtainable = screen.getByRole("region", { name: "可取得物品" });
-    expect(
-      await within(obtainable).findByText("当前地点没有可取得的物品。")
-    ).toBeInTheDocument();
-    expect(currentCalls).toBe(2);
   });
 
   it("移动遇到陈旧 revision：重新读取当前存档并渲染最新视图", async () => {
@@ -341,9 +340,8 @@ describe("CurrentGameScreen", () => {
 
     await user.click(await screen.findByRole("button", { name: "前往城外官道" }));
 
-    // 冲突后重新请求 current-game，渲染服务器最新视图。
     expect(
-      await screen.findByText("黄土道上车辙纵横，隐约可见几处暗色血迹。")
+      await screen.findByRole("button", { name: "进入城外官道" })
     ).toBeInTheDocument();
     expect(currentCalls).toBe(2);
   });
@@ -359,11 +357,19 @@ describe("CurrentGameScreen：战斗面板", () => {
     stubFetch(async () => jsonResponse(200, { status: "active", view }));
     render(<CurrentGameScreen />);
 
-    expect(await screen.findByRole("region", { name: "战斗" })).toBeInTheDocument();
-    expect(screen.getByText("暗影刺客")).toBeInTheDocument();
+    const region = await screen.findByRole("region", { name: "战斗" });
+    expect(region).toBeInTheDocument();
+    expect(region).toHaveTextContent("暗影刺客");
     expect(screen.getByRole("button", { name: "攻击" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "防御" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "撤退" })).toBeInTheDocument();
+  });
+
+  it("active battle 显示战斗主视窗，且不渲染地图壳", async () => {
+    stubFetch(async () => jsonResponse(200, { status: "active", view: buildBattleSessionViewFixture() }));
+    render(<CurrentGameScreen />);
+    expect(await screen.findByRole("region", { name: "战斗" })).toHaveClass("battle-viewport");
+    expect(screen.queryByRole("button", { name: "进入青石镇" })).toBeNull();
   });
 
   it("战斗中提交 attack 带正确 revision 与 payload", async () => {
@@ -426,7 +432,6 @@ describe("CurrentGameScreen：结局面板", () => {
     expect(await screen.findByRole("region", { name: "结局" })).toBeInTheDocument();
     expect(screen.getByText("真相大白")).toBeInTheDocument();
     expect(screen.getByText(/成功/)).toBeInTheDocument();
-    // 结局后无可操作按钮
     expect(screen.queryByRole("button")).toBeNull();
   });
 
@@ -446,7 +451,6 @@ describe("CurrentGameScreen：结局面板", () => {
     stubFetch(async () => jsonResponse(200, { status: "active", view }));
     render(<CurrentGameScreen />);
 
-    // 刷新恢复：结局面板仍在
     expect(await screen.findByText("真相大白")).toBeInTheDocument();
     expect(screen.queryByRole("button")).toBeNull();
   });

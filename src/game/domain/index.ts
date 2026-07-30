@@ -35,6 +35,9 @@ export {
   type MainQuestStage,
   type EnemyTier,
   type StatBlock,
+  type ItemCategory,
+  type ItemRarity,
+  type ItemStatLine,
   type ContentBudget,
   type ScenarioBlueprint,
   type ScenarioBlueprintCandidate,
@@ -67,6 +70,12 @@ export {
   type GenerationMetadata
 } from "./scenarioBlueprint";
 export {
+  resolveItemPresentation,
+  type ItemIconKey,
+  type ItemPresentation,
+  type ItemPresentationSource
+} from "./itemPresentation";
+export {
   type GameEvent,
   type GameInitializedEvent,
   type LocationObservedEvent,
@@ -83,6 +92,7 @@ export {
   type QuestFailedEvent,
   type EndingReachedEvent
 } from "./events";
+export { paginateSpeechText } from "./speechPagination";
 export {
   type GameState,
   type PlayerState,
@@ -94,4 +104,13 @@ export {
   type BattleState,
   type EndingState
 } from "./gameState";
+export {
+  type NarrativeRuntimeState,
+  type NarrativeMode,
+  type NarrativeSceneState,
+  type NarrativeChoiceState,
+  type NarrativeNpcLineState,
+  type NarrativeEmotion,
+  NARRATIVE_EMOTIONS
+} from "./narrative";
 export * from "./townSnapshot";

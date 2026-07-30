@@ -1,10 +1,13 @@
 import { loadScenarioProfiles, type ScenarioProfiles } from "@/game/gameplay/rpg/scenario";
 import {
   resolveAction,
+  projectAvailableActions,
   type PlayerIntent,
   type ResolveActionDependencies,
 } from "@/game/gameplay/rpg/actions";
 import { startBattle, battleAction } from "@/game/gameplay/rpg/battle";
+import { findAvailableActionByKey } from "@/game/gameplay/rpg/narrative";
+import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
 import {
   reconcileQuests,
   failQuest,
@@ -13,6 +16,7 @@ import {
 import type { GameState, QuestId, EnemyId, ScenarioBlueprint } from "@/game/domain";
 import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
 import type { GameRepository } from "./server/persistence/gameRepository";
+import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 
 // ---------------------------------------------------------------------------
 // performAction use case（Phase 3 Task 4 + Phase 4 Task 3 + Phase 6 Task 3）。
@@ -46,6 +50,8 @@ export type PerformActionDependencies = {
   readonly now: () => string;
   /** 场景 profile 配置：缺省加载内置 data/base 配置，测试可注入变体。 */
   readonly profiles?: ScenarioProfiles;
+  readonly runtimeNarrativeSources?: Readonly<{ directorSource: DirectorSource; sceneScriptSource: SceneScriptSource; npcLineSource: NpcLineSource }>;
+  readonly newTraceId?: () => string;
 };
 
 /** 行动反馈视图：成功或拒绝的玩家可读消息。 */
@@ -164,7 +170,66 @@ export async function performAction(
   let resolved: ResolvedAction;
 
   try {
-    switch (command.intent.type) {
+    if (command.intent.type === "narrative_choice") {
+      const choiceToken = command.intent.choiceToken;
+      const scene = record.state.narrative.currentScene;
+      const choice = scene?.choices.find((entry) => entry.choiceToken === choiceToken);
+      if (scene === null || scene === undefined || choice === undefined) {
+        const view = projectCurrentView();
+        if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "该剧情选项已失效。" } };
+      }
+      const available = projectAvailableActions(record.blueprint, record.state);
+      const resolvedIntent = findAvailableActionByKey(available, choice.actionKey);
+      if (resolvedIntent === null) {
+        const view = projectCurrentView();
+        if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "该剧情选项已不再合法。" } };
+      }
+      // A narrative choice is only an opaque selection mechanism. Once its
+      // approved action key is resolved, route it through the same
+      // authoritative rule facade as the equivalent direct intent.
+      let choiceState: GameState;
+      let choiceFeedback: string;
+      if (resolvedIntent.type === "start_battle") {
+        const result = startBattle(
+          record.blueprint,
+          record.state,
+          resolvedIntent.enemyId,
+          battleDeps,
+        );
+        if (!result.ok) {
+          const view = projectCurrentView();
+          if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+          return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: result.feedback.message } };
+        }
+        choiceState = result.state;
+        choiceFeedback = result.feedback.message;
+      } else if (resolvedIntent.type === "battle_action") {
+        // Active battles do not expose narrative scenes. Reject a stale or
+        // forged scene mapping instead of introducing a second battle route.
+        const view = projectCurrentView();
+        if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "战斗行动必须在战斗界面中选择。" } };
+      } else {
+        const result = resolveAction(record.blueprint, record.state, resolvedIntent, resolverDeps);
+        if (!result.ok) {
+          const view = projectCurrentView();
+          if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+          return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: result.feedback.message } };
+        }
+        choiceState = reconcileQuests(record.blueprint, result.state, questDeps).state;
+        choiceFeedback = result.feedback.message;
+      }
+      resolved = {
+        state: {
+          ...choiceState,
+          narrative: { ...choiceState.narrative, currentScene: null, generation: { status: "idle" } },
+          eventLedger: [...choiceState.eventLedger, { type: "narrative_choice", choiceToken: choice.choiceToken, actionKey: choice.actionKey, sceneId: scene.sceneId, occurredAt: deps.now() }],
+        },
+        feedbackMessage: choiceFeedback,
+      };
+    } else switch (command.intent.type) {
       case "start_battle": {
         const result = startBattle(
           record.blueprint, record.state, command.intent.enemyId, battleDeps
@@ -263,6 +328,37 @@ export async function performAction(
     nextState = endingResult.state;
   } catch {
     return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+  }
+
+  // A pending scene is a durable job boundary. Do not allow a client to
+  // advance the deterministic world a second time while the next narrative
+  // projection is still being produced (including after a process restart).
+  if (record.state.narrative.generation.status === "pending") {
+    const view = projectCurrentView();
+    if (view === null) {
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
+    return {
+      ok: false,
+      code: "ACTION_REJECTED",
+      view,
+      feedback: { ok: false, message: "正在编排下一幕，请稍候。" }
+    };
+  }
+
+  // A narrative choice commits its deterministic rule result immediately.
+  // Scene generation is a recoverable server-side job and must not make the
+  // player request wait for the provider.
+  if (
+    command.intent.type === "narrative_choice" &&
+    record.state.narrative.mode !== "offline" &&
+    deps.runtimeNarrativeSources !== undefined &&
+    canQueueRuntimeNarrativeScene(record.blueprint, nextState)
+  ) {
+    nextState = {
+      ...nextState,
+      narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() }, mode: "ai" },
+    };
   }
 
   // Step 5: 最终 state → 原子 compare-and-swap 写入（唯一一次写入）。

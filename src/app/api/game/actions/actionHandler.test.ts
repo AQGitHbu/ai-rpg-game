@@ -38,7 +38,14 @@ const STUB_VIEW: GameSessionView = {
   // Phase 6 Task 3：战斗与结局摘要。
   battle: null,
   ending: null,
-  storyEvents: []
+  storyEvents: [],
+  // Phase 7 Task 3：地图 / 地点场景 / 对话 read model（HTTP 映射同样不读内容）。
+  worldMap: { nodes: [] },
+  locationScene: { title: "地点A", description: "描述", backdrop: "location_backdrop", interactions: [] },
+  dialogues: [],
+  // Phase 10：叙事场景视图。
+  narrative: null,
+  narrativeGeneration: { status: "ready" }
 };
 
 const STUB_FEEDBACK: ActionFeedbackView = { ok: true, message: "你观察了地点A。" };
@@ -698,6 +705,75 @@ describe("actionHandler：battle_action intent（Phase 6 Task 3d）", () => {
         intent: { type: "battle_action", action: "withdraw", freeText: "撤退！" },
         revision: 0
       }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+});
+
+describe("actionHandler：dialogue_choice intent（Phase 7 Task 7）", () => {
+  it("合法 dialogue_choice ⇒ 200，intent 与 revision 原样交给 performAction", async () => {
+    let received: unknown;
+    const entry: Pick<ServerGameEntryPoints, "performAction"> = {
+      async performAction(command) {
+        received = command;
+        return { ok: true, view: STUB_VIEW, feedback: { ok: true, message: "你与对方交谈。" } };
+      }
+    };
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "dialogue_choice", npcId: "npc_1", choiceId: "npc_1:greet" }, revision: 0 }),
+      entry
+    );
+    expect(response.status).toBe(200);
+    expect(received).toEqual({
+      intent: { type: "dialogue_choice", npcId: "npc_1", choiceId: "npc_1:greet" },
+      expectedRevision: 0
+    });
+  });
+
+  it("dialogue_choice 缺少 choiceId ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "dialogue_choice", npcId: "npc_1" }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("dialogue_choice 缺少 npcId ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "dialogue_choice", choiceId: "npc_1:greet" }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("dialogue_choice choiceId 非字符串 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "dialogue_choice", npcId: "npc_1", choiceId: 42 }, revision: 0 }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("dialogue_choice 附带伪造 locationId ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({
+        intent: { type: "dialogue_choice", npcId: "npc_1", choiceId: "npc_1:greet", locationId: "loc_a" },
+        revision: 0
+      }),
+      fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
+    );
+    expect(response.status).toBe(400);
+    expect((await parseBody(response))["code"]).toBe("INVALID_INTENT");
+  });
+
+  it("dialogue_choice choiceId 为空字符串 ⇒ 400 INVALID_INTENT", async () => {
+    const response = await handlePerformActionRequest(
+      makeRequest({ intent: { type: "dialogue_choice", npcId: "npc_1", choiceId: "" }, revision: 0 }),
       fakeEntryPoints({ ok: true, view: STUB_VIEW, feedback: STUB_FEEDBACK })
     );
     expect(response.status).toBe(400);

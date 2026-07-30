@@ -1,8 +1,10 @@
 import type { GameState, ScenarioBlueprint, LocationId } from "@/game/domain";
 import type { PlayerIntent } from "./intents";
+import { parseDialogueChoiceKind, projectDialogueChoices } from "./dialogueChoices";
 
 // ---------------------------------------------------------------------------
-// 纯 intent 校验（Phase 3 Task 2，Phase 4 扩展 move，Phase 5 扩展 take_item）。
+// 纯 intent 校验（Phase 3 Task 2，Phase 4 扩展 move，Phase 5 扩展 take_item，
+// Phase 7 扩展 dialogue_choice）。
 //
 // 只读取 compiled blueprint + 当前 GameState，返回稳定验证码/参数，不改状态。
 // 不依赖 application、repository、UI、Date、Math.random 或 AI。
@@ -24,6 +26,9 @@ export type ValidationCode =
   | "UNKNOWN_ITEM"
   | "ITEM_NOT_AVAILABLE_HERE"
   | "ITEM_ALREADY_OWNED"
+  // Phase 7：封闭对话选择——伪造/变形 choiceId 与当前不可用的 choice 分开拒绝。
+  | "INVALID_DIALOGUE_CHOICE"
+  | "DIALOGUE_CHOICE_UNAVAILABLE"
   // Phase 6：战斗 intent 由 application 路由到 battle facade，不应进入 actions facade。
   | "INTENT_NOT_ROUTED";
 
@@ -158,9 +163,45 @@ export function validateIntent(
       }
       return { ok: true };
     }
+    case "dialogue_choice": {
+      const npc = blueprint.npcs.find((n) => n.id === intent.npcId);
+      if (npc === undefined) {
+        return { ok: false, code: "UNKNOWN_NPC", params: { npcId: intent.npcId } };
+      }
+      // 封闭枚举：choiceId 必须与 makeDialogueChoiceId 产出完全相等。
+      const kind = parseDialogueChoiceKind(intent.npcId, intent.choiceId);
+      if (kind === null) {
+        return {
+          ok: false,
+          code: "INVALID_DIALOGUE_CHOICE",
+          params: { npcId: intent.npcId, choiceId: intent.choiceId },
+        };
+      }
+      // 在场判断与 talk 一致：只看运行时 NPC 位置。
+      const npcState = state.npcs.find((n) => n.npcId === intent.npcId);
+      const isPresent = npcState?.locationId === state.currentLocationId;
+      if (!isPresent) {
+        return {
+          ok: false,
+          code: "NPC_NOT_PRESENT",
+          params: { npcId: intent.npcId, currentLocationId: state.currentLocationId },
+        };
+      }
+      // 形式合法但当前未投影（已结识/互斥替代）→ 稳定拒绝。
+      const available = projectDialogueChoices(blueprint, state, intent.npcId);
+      if (!available.some((choice) => choice.choiceId === intent.choiceId)) {
+        return {
+          ok: false,
+          code: "DIALOGUE_CHOICE_UNAVAILABLE",
+          params: { npcId: intent.npcId, choiceId: intent.choiceId },
+        };
+      }
+      return { ok: true };
+    }
     // Phase 6：战斗 intent 由 application 路由到 battle facade，不应进入 actions facade。
     case "start_battle":
     case "battle_action":
+    case "narrative_choice":
       return { ok: false, code: "INTENT_NOT_ROUTED", params: {} };
   }
 }

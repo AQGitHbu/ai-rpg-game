@@ -86,8 +86,9 @@ describe("BattlePanel：渲染条件", () => {
       />
     );
 
-    expect(screen.getByRole("region", { name: "战斗" })).toBeInTheDocument();
-    expect(screen.getByText("暗影刺客")).toBeInTheDocument();
+    const region = screen.getByRole("region", { name: "战斗" });
+    expect(region).toBeInTheDocument();
+    expect(region).toHaveTextContent("暗影刺客");
   });
 
   it("view.battle 为 null 时不渲染战斗面板", () => {
@@ -115,12 +116,12 @@ describe("BattlePanel：服务器 read model 展示", () => {
       />
     );
 
-    expect(screen.getByText("暗影刺客")).toBeInTheDocument();
-    // 使用 dd 元素精确匹配 HP/回合数值
-    const stats = screen.getAllByText((content, element) =>
-      element?.tagName === "DD" && (content === "28" || content === "15" || content === "2")
-    );
-    expect(stats).toHaveLength(3);
+    const region = screen.getByRole("region", { name: "战斗" });
+    // BattleArena 直接显示 BattleView 中的 HP 和回合
+    expect(region).toHaveTextContent("暗影刺客");
+    expect(region).toHaveTextContent("生命 28");
+    expect(region).toHaveTextContent("生命 15");
+    expect(screen.getByText("回合 2")).toBeVisible();
   });
 
   it("只渲染 battle_action 按钮，不渲染 observe/talk 等普通行动", () => {
@@ -348,6 +349,105 @@ describe("BattlePanel：反馈与错误处理", () => {
     await user.click(screen.getByRole("button", { name: "攻击" }));
 
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("网络异常"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 9 Task 3：战斗视窗集成测试。
+// BattlePanel 使用 BattleArena 呈现战场，BattleActionRail 呈现行动栏；
+// rail 选择提交为原 battle_action payload；反馈只在 API 返回后显示。
+// ---------------------------------------------------------------------------
+
+describe("BattlePanel：Phase 9 战斗视窗", () => {
+  it("战斗主视窗使用服务端 BattleView，并把 rail 选择提交为原 payload", async () => {
+    const view = buildBattleViewFixture();
+    let request: RequestInit | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_input: unknown, init?: RequestInit) => {
+      request = init;
+      return jsonResponse({
+        view: { ...view, revision: 4, battle: { ...view.battle!, enemyHp: 11 } },
+        feedback: { ok: true, message: "你挥刀斩中敌人！" },
+      });
+    }));
+    const onSuccess = vi.fn();
+    const user = userEvent.setup();
+
+    render(<BattlePanel view={view} onActionSuccess={onSuccess} onStaleRevision={vi.fn()} />);
+
+    expect(screen.getByRole("region", { name: "战斗" })).toHaveTextContent("回合 2");
+    expect(screen.getByRole("button", { name: "攻击" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "攻击" }));
+
+    await waitFor(() => expect(JSON.parse(String(request?.body))).toEqual({
+      intent: { type: "battle_action", action: "attack" }, revision: 3
+    }));
+  });
+
+  it("成功反馈只在 API 返回后作为战斗日志显示", async () => {
+    const view = buildBattleViewFixture();
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      jsonResponse({
+        view,
+        feedback: { ok: true, message: "你举刀防御，减轻了伤害。" },
+      })
+    ));
+    const user = userEvent.setup();
+
+    render(<BattlePanel view={view} onActionSuccess={vi.fn()} onStaleRevision={vi.fn()} />);
+
+    expect(screen.queryByLabelText("战斗日志")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "防御" }));
+
+    expect(await screen.findByLabelText("战斗日志")).toHaveClass(
+      "battle-log",
+      "battle-log--success"
+    );
+  });
+
+  it("战斗视窗包含玩家名与敌人 HP，均来自 BattleView", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    render(
+      <BattlePanel
+        view={buildBattleViewFixture()}
+        onActionSuccess={vi.fn()}
+        onStaleRevision={vi.fn()}
+      />
+    );
+
+    const region = screen.getByRole("region", { name: "战斗" });
+    expect(region).toHaveTextContent("沈青崖");
+    expect(region).toHaveTextContent("生命 28");
+    expect(region).toHaveTextContent("生命 15");
+  });
+
+  it("提交期间显示正在裁决本回合状态", async () => {
+    let resolveResponse: ((response: FakeResponse) => void) | undefined;
+    vi.stubGlobal("fetch", vi.fn(
+      () => new Promise<FakeResponse>((resolve) => { resolveResponse = resolve; })
+    ));
+    const user = userEvent.setup();
+
+    render(
+      <BattlePanel
+        view={buildBattleViewFixture()}
+        onActionSuccess={vi.fn()}
+        onStaleRevision={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "攻击" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("正在裁决本回合");
+
+    resolveResponse?.(
+      jsonResponse({
+        view: buildBattleViewFixture(),
+        feedback: { ok: true, message: "攻击成功。" },
+      })
+    );
+    await screen.findByText("攻击成功。");
   });
 });
 

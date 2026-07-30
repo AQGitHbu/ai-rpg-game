@@ -44,8 +44,28 @@ export {
   type QuestObjectiveView,
   type BattleView,
   type EndingView,
-  type StoryEventView
+  type InventoryItemView,
+  type StoryEventView,
+  type NarrativeSceneView
 } from "./gameSessionView";
+// 背包富视图的展示元数据基础类型：UI 经由 facade 中转，禁止直连 domain。
+export {
+  type ItemCategory,
+  type ItemIconKey,
+  type ItemRarity,
+  type ItemStatLine
+} from "@/game/domain";
+// Phase 7 Task 3：地图 / 地点场景 / 安全对话 read model 只读 view 类型。
+export {
+  type LocationAdventureView,
+  type LocationSceneView,
+  type NpcDialogueView,
+  type DialogueChoiceView,
+  type SceneInteractionView,
+  type SceneSlot,
+  type WorldMapView,
+  type WorldMapNodeView
+} from "./locationAdventureView";
 export {
   performAction,
   type PerformActionCommand,
@@ -73,6 +93,58 @@ export {
   type ItemId,
   type EnemyId
 } from "@/game/domain";
+// Phase 10 Task 3：运行时导演 / 编剧 / 演员 contracts 与 contexts。
+export {
+  NARRATIVE_CONTRACT_VERSION,
+  NARRATIVE_FAILURE_CATEGORIES,
+  type NarrativeContractVersion,
+  type NarrativeFailureCategory,
+  type NarrativeDiagnostics,
+  type DirectorRequest,
+  type DirectorAttempt,
+  type DirectorSource,
+  type SceneScriptRequest,
+  type SceneScriptAttempt,
+  type SceneScriptSource,
+  type NpcLineRequest,
+  type NpcLineAttempt,
+  type NpcLineSource,
+} from "./runtimeNarrative";
+export {
+  toDirectorContext,
+  toSceneScriptContext,
+  toNpcLineContext,
+  type DirectorContext,
+  type DirectorContextInput,
+  type SceneScriptContext,
+  type SceneScriptContextInput,
+  type NpcLineContext,
+  type NpcLineContextInput,
+} from "./runtimeNarrativeContexts";
+export {
+  orchestrateNarrativeScene,
+  type OrchestrateNarrativeSceneInput,
+  type OrchestrateSceneResult,
+} from "./orchestrateNarrativeScene";
+export {
+  generatePendingNarrativeScene,
+  type GeneratePendingNarrativeSceneDependencies,
+  type GeneratePendingNarrativeSceneResult,
+} from "./generatePendingNarrativeScene";
+export {
+  getOrCreateScene,
+  type GetOrCreateSceneInput,
+  type GetOrCreateSceneResult,
+} from "./getOrCreateScene";
+export {
+  JOURNEY_REPORT_VERSION,
+  JOURNEY_ISSUE_CODES,
+  validateJourneyReport,
+  toJourneySummary,
+  type JourneyCoverage,
+  type JourneyIssueCode,
+  type JourneyReport,
+} from "./testing/runtimeNarrativeJourney";
 export { type PlayerIntent } from "@/game/gameplay/rpg/actions";
 // Town demo（Task 7）：小镇 demo 投影门面 + 预留生图 port（生产实现恒 not_requested）。
 export {

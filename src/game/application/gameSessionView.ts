@@ -1,4 +1,14 @@
-import type { GameEvent, GameState, QuestObjective, ScenarioBlueprint } from "@/game/domain";
+import {
+  resolveItemPresentation,
+  type GameEvent,
+  type GameState,
+  type ItemCategory,
+  type ItemIconKey,
+  type ItemRarity,
+  type ItemStatLine,
+  type QuestObjective,
+  type ScenarioBlueprint
+} from "@/game/domain";
 import {
   projectAvailableActions,
   type AvailableAction
@@ -12,6 +22,12 @@ import {
   type OpeningNpcView,
   type ProjectOpeningGameViewInput
 } from "./openingGameView";
+import {
+  projectLocationAdventureView,
+  type LocationSceneView,
+  type NpcDialogueView,
+  type WorldMapView
+} from "./locationAdventureView";
 
 // ---------------------------------------------------------------------------
 // GameSessionView（Phase 4 Task 3 + Phase 6 Task 3）：OpeningGameView 演进出的
@@ -61,9 +77,40 @@ export type EndingView = {
   readonly outcome: "success" | "failure";
 };
 
+/**
+ * 背包物品富视图：在名称/描述之上附带展示元数据（分类页签、稀有度、等级、
+ * 属性行、图标键）。缺省字段由 domain 的 resolveItemPresentation 按 kind 推导，
+ * 数值仅供展示、不进战斗结算；不泄漏 itemId / tags。
+ */
+export type InventoryItemView = {
+  readonly name: string;
+  readonly description: string;
+  readonly category: ItemCategory;
+  readonly rarity: ItemRarity;
+  /** null = 不显示等级行。 */
+  readonly level: number | null;
+  readonly statLines: readonly ItemStatLine[];
+  readonly icon: ItemIconKey;
+};
+
 /** 已发生事件的玩家可见叙事；不携带 ID、时间、seed 或完整领域状态。 */
 export type StoryEventView = {
   readonly text: string;
+};
+
+/** Phase 10：叙事场景安全视图——AI 导演产出的运行时叙事场景与两个固定选项。 */
+export type NarrativeSceneView = {
+  readonly narration: string;
+  readonly npcLine: { readonly text: string; readonly emotion: string } | null;
+  readonly choices: readonly [
+    { readonly label: string; readonly choiceToken: string },
+    { readonly label: string; readonly choiceToken: string },
+  ];
+} | null;
+
+/** Pending is deliberately a tiny public state: the UI may wait, not inspect work. */
+export type NarrativeGenerationView = {
+  readonly status: "ready" | "pending";
 };
 
 export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
@@ -74,14 +121,25 @@ export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly activeQuests: readonly ActiveQuestView[];
   /** 当前地点可取得物品摘要：与 take_item 可用行动一一对应，不泄漏其他地点。 */
   readonly obtainableItems: readonly OpeningItemView[];
-  /** 运行时背包摘要：与 initialItems（开场快照语义）区分，取得后即时更新。 */
-  readonly inventoryItems: readonly OpeningItemView[];
+  /** 运行时背包摘要：与 initialItems（开场快照语义）区分，取得后即时更新；
+   *  富视图携带背包界面所需的展示元数据。 */
+  readonly inventoryItems: readonly InventoryItemView[];
   /** Phase 6：战斗摘要——仅 active battle 时非 null，不泄漏 enemyId/stats。 */
   readonly battle: BattleView | null;
   /** Phase 6：结局视图——结局抵达后非 null，不泄漏 endingId。 */
   readonly ending: EndingView | null;
   /** 最近发生的结构化事件，用于确定性试玩叙事。 */
   readonly storyEvents: readonly StoryEventView[];
+  /** Phase 7：封闭可见范围的世界地图节点（无隐藏地点泄漏）。 */
+  readonly worldMap: WorldMapView;
+  /** Phase 7：当前地点场景与场景互动（结局/战斗时 interactions 为空）。 */
+  readonly locationScene: LocationSceneView;
+  /** Phase 7：当前地点在场 NPC 的安全对话（结局/战斗时无可写 choice）。 */
+  readonly dialogues: readonly NpcDialogueView[];
+  /** Phase 10：运行时 AI 导演叙事场景——null 表示尚未生成。 */
+  readonly narrative: NarrativeSceneView;
+  /** Phase 10：场景后台生成状态；无内部 task / provider 信息。 */
+  readonly narrativeGeneration: NarrativeGenerationView;
 };
 
 /** 输入与 opening 投影完全一致：调用方无需区分两个 read model 的装配来源。 */
@@ -213,7 +271,35 @@ function projectStoryEvent(
     case "enemy_defeated": return { text: `${enemy(event.enemyId)}已被击败。` };
     case "quest_failed": return { text: `任务「${quest(event.questId)}」失败，后果已被记录。` };
     case "ending_reached": return { text: `你抵达结局「${endings.get(event.endingId)?.name ?? "终章"}」。` };
+    case "narrative_choice": return { text: "你做出了抉择，故事在你脚边展开。" };
   }
+}
+
+/** Phase 10：将 GameState.narrative 投影为安全视图（不泄漏内部 detail）。 */
+function projectNarrativeSceneView(
+  state: GameState
+): NarrativeSceneView {
+  const scene = state.narrative.currentScene;
+  if (scene === null) return null;
+  return {
+    narration: scene.narration,
+    npcLine: scene.npcLine === null ? null : {
+      text: scene.npcLine.text,
+      emotion: scene.npcLine.emotion,
+    },
+    choices: scene.choices.map((choice) => ({
+      label: choice.label,
+      choiceToken: choice.choiceToken,
+    })) as NarrativeSceneView extends { choices: infer C } ? C : never,
+  };
+}
+
+function projectNarrativeGenerationView(state: GameState): NarrativeGenerationView {
+  return {
+    status: state.narrative.currentScene !== null
+      ? "ready"
+      : state.narrative.generation.status === "pending" ? "pending" : "ready",
+  };
 }
 
 export function projectGameSessionView(input: ProjectGameSessionViewInput): GameSessionView {
@@ -260,13 +346,18 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
     availableActions: projectedActions,
     // 可取得物品摘要：结局后为空。
     obtainableItems,
-    // 运行时背包摘要：按 GameState.inventory 投影（initialItems 保留开场快照语义）。
+    // 运行时背包摘要：按 GameState.inventory 投影为富视图（initialItems 保留
+    // 开场快照语义与简单形态）。
     inventoryItems: state.inventory.map((itemId) => {
       const item = itemById.get(itemId);
       if (item === undefined) {
         throw new Error("会话视图投影失败：背包物品引用在蓝图中不存在");
       }
-      return { name: item.name, description: item.description };
+      return {
+        name: item.name,
+        description: item.description,
+        ...resolveItemPresentation(item)
+      };
     }),
     // 运行时在场 NPC：按 GameState 中的 NPC 位置投影，不读开场名单。
     presentNpcs: state.npcs
@@ -301,5 +392,11 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
       .slice(-12)
       .map((event) => projectStoryEvent(event, locationById, npcById, itemById, factById, questById, enemyById, endingById))
       .filter((event): event is StoryEventView => event !== null),
+    // Phase 7：地图 / 地点场景 / 安全对话 read model。传入未过滤的可用行动，由
+    // 投影内部按结局 / active battle 语义把 interactions 置空、对话降级为只读。
+    ...projectLocationAdventureView(blueprint, state, availableActions),
+    // Phase 10：AI 导演叙事场景视图——不泄漏 sceneId/turn/usedFactIds 等内部细节。
+    narrative: projectNarrativeSceneView(state),
+    narrativeGeneration: projectNarrativeGenerationView(state),
   };
 }

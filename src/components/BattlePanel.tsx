@@ -1,17 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Panel, Tag, InlineButton } from "@ai-game/ui";
 import type { GameSessionView, SessionActionView, BattleView } from "@/game/application";
 import { postGameAction } from "./gameActionRequest";
+import { BattleArena } from "./BattleArena";
+import { BattleActionRail } from "./BattleActionRail";
 
 // ---------------------------------------------------------------------------
-// BattlePanel（Phase 6 Task 4）：战斗面板。
-// 只在 view.battle 非 null 时渲染；显示服务器 read model 给出的敌人名称、
-// 双方血量与回合数；只渲染 battle_action 按钮（attack/guard/withdraw）；
-// 提交带 revision 的 battle_action payload；提交期间禁用全部按钮；
-// aria-live 报告规则反馈。
-// 不得用前端逻辑自行减少 HP 或判断胜负——所有数值来自服务器。
+// BattlePanel（Phase 9 Task 3）：战斗面板——场景化战斗主视窗。
+// 使用 BattleArena 呈现战场背景、敌我肖像与 HP；BattleActionRail 呈现
+// 固定行动栏。仍是唯一调用 postGameAction 的协调器：过滤 battle_action，
+// 提交带 revision 的 payload，根据 API 结果显示反馈日志。
+// 不引入本地 HP、回合或胜负状态——所有数值来自服务端 GameSessionView。
 // ---------------------------------------------------------------------------
 
 type BattleActionView = Extract<SessionActionView, { type: "battle_action" }>;
@@ -81,69 +81,34 @@ export function BattlePanel({
   }
 
   return (
-    <Panel
-      data-battle-panel
-      eyebrow="战斗"
-      header={
-        <div className="panel-heading">
-          <h2>战斗中</h2>
-          <Tag variant="danger">回合 {battle.round}</Tag>
-        </div>
-      }
+    <BattleArena
+      gameType={view.world.gameType}
+      playerName={view.player.name}
+      playerHp={battle.playerHp}
+      enemyName={battle.enemyName}
+      enemyHp={battle.enemyHp}
+      round={battle.round}
     >
-      <section className="battle-section" role="region" aria-label="战斗">
-        <div className="battle-enemy-info">
-          <h3>{battle.enemyName}</h3>
-          <dl className="battle-stats">
-            <div>
-              <dt>敌方生命</dt>
-              <dd>{battle.enemyHp}</dd>
-            </div>
-            <div>
-              <dt>我方生命</dt>
-              <dd>{battle.playerHp}</dd>
-            </div>
-            <div>
-              <dt>当前回合</dt>
-              <dd>{battle.round}</dd>
-            </div>
-          </dl>
-        </div>
-
-        <div className="action-buttons" role="group" aria-label="战斗行动">
-          {battleActions.map((action) => (
-            <InlineButton
-              key={action.action}
-              onClick={() => void handleBattleAction(action)}
-              disabled={disabled}
-            >
-              {action.label}
-            </InlineButton>
-          ))}
-        </div>
-      </section>
-
-      {feedback.phase !== "idle" && feedback.phase !== "submitting" && (
+      <BattleActionRail
+        actions={battleActions}
+        busy={disabled}
+        onSelect={(action) => void handleBattleAction(action)}
+      />
+      {feedback.phase === "submitting" ? (
+        <p role="status" aria-live="polite" className="battle-log battle-log--submitting">
+          正在裁决本回合…
+        </p>
+      ) : null}
+      {feedback.phase === "success" || feedback.phase === "rejected" || feedback.phase === "error" ? (
         <p
           role="status"
           aria-live="polite"
-          className={
-            feedback.phase === "success"
-              ? "action-feedback success"
-              : feedback.phase === "rejected"
-                ? "action-feedback rejected"
-                : "action-feedback error"
-          }
+          aria-label="战斗日志"
+          className={`battle-log battle-log--${feedback.phase}`}
         >
           {feedback.message}
         </p>
-      )}
-
-      {isSubmitting && (
-        <p role="status" aria-live="polite" className="action-feedback submitting">
-          正在战斗……
-        </p>
-      )}
-    </Panel>
+      ) : null}
+    </BattleArena>
   );
 }

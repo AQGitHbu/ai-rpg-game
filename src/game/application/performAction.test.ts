@@ -122,6 +122,33 @@ describe("performAction：成功行动", () => {
   });
 });
 
+describe("performAction：pending 叙事任务", () => {
+  it("场景尚未 ready 时拒绝任何规则推进，且零写入", async () => {
+    const repository = createFakeGameRepository();
+    const base = buildActiveRecord();
+    const record: GameRecord = {
+      ...base,
+      state: {
+        ...base.state,
+        narrative: {
+          currentScene: null,
+          generation: { status: "pending", requestedAt: FIXED_TIME },
+          mode: "ai",
+        },
+      },
+    };
+    repository.setCurrentResult({ ok: true, status: "active", record });
+
+    const result = await performAction(
+      { intent: { type: "observe", locationId: record.state.currentLocationId }, expectedRevision: 0 },
+      buildPerformDeps(repository),
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "ACTION_REJECTED" });
+    expect(repository.applyCalls).toHaveLength(0);
+  });
+});
+
 describe("performAction：move + 任务 reconciliation 单次写入（Phase 4 Task 3）", () => {
   it("applyResolvedAction 收到 reconcile 后的最终 state：move 与 quest 事件同一次写入", async () => {
     const repository = createFakeGameRepository();
@@ -265,10 +292,15 @@ describe("performAction：take_item + 任务 reconciliation 单次写入（Phase
     expect(result.view.revision).toBe(4);
     expect(result.view.obtainableItems).toEqual([]);
     const keyItem = PIPELINE.blueprint.items.find((item) => item.id === asItemId("item_key"));
-    expect(result.view.inventoryItems).toContainEqual({
-      name: keyItem?.name,
-      description: keyItem?.description
-    });
+    // 背包已升级为富视图：附带展示元数据（契约详见 gameSessionView.test）。
+    expect(result.view.inventoryItems).toContainEqual(
+      expect.objectContaining({
+        name: keyItem?.name,
+        description: keyItem?.description,
+        category: "quest",
+        icon: "key"
+      })
+    );
   });
 
   it("已拥有物品的 take 被拒 ⇒ ACTION_REJECTED 且零写入", async () => {
@@ -319,6 +351,109 @@ describe("performAction：take_item + 任务 reconciliation 单次写入（Phase
     );
 
     expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
+  });
+});
+
+describe("performAction：dialogue_choice 单次写入与零写入（Phase 7 Task 2）", () => {
+  const ruleDeps = { now: () => FIXED_TIME };
+
+  it("成功对话：恰好一次 CAS，尾部恰好一个 npc_met 事件", async () => {
+    const repository = createFakeGameRepository();
+    const record = buildActiveRecord();
+    repository.setCurrentResult({ ok: true, status: "active", record });
+
+    // 开局无 npc_1 的 talk_to_npc 目标（quest_m1 是 visit_location）→ greet 可用。
+    const intent: PlayerIntent = {
+      type: "dialogue_choice",
+      npcId: asNpcId("npc_1"),
+      choiceId: "npc_1:greet"
+    };
+    // 独立复跑 actions + quests facade 得到期望的最终 state。
+    const resolved = resolveAction(record.blueprint, record.state, intent, ruleDeps);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    const reconciled = reconcileQuests(record.blueprint, resolved.state, ruleDeps);
+    repository.setApplyResult({
+      ok: true,
+      record: { ...record, state: reconciled.state, revision: 1 }
+    });
+
+    const result = await performAction(
+      { intent, expectedRevision: 0 },
+      buildPerformDeps(repository)
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // 恰好一次写入，且尾部只有一个 npc_met（无多余事件/无旁路写入）。
+    expect(repository.applyCalls).toHaveLength(1);
+    expect(repository.applyCalls[0].nextState).toEqual(reconciled.state);
+    const tailTypes = repository.applyCalls[0].nextState.eventLedger
+      .slice(record.state.eventLedger.length)
+      .map((event) => event.type);
+    expect(tailTypes).toEqual(["npc_met"]);
+    expect(result.feedback.ok).toBe(true);
+    expect(result.feedback.message).toBeTruthy();
+  });
+
+  it("伪造 choiceId 被拒 ⇒ ACTION_REJECTED 且零 CAS", async () => {
+    const repository = createFakeGameRepository();
+    const record = buildActiveRecord();
+    repository.setCurrentResult({ ok: true, status: "active", record });
+
+    const result = await performAction(
+      {
+        intent: {
+          type: "dialogue_choice",
+          npcId: asNpcId("npc_1"),
+          choiceId: "npc_1:steal_items"
+        },
+        expectedRevision: 0
+      },
+      buildPerformDeps(repository)
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("ACTION_REJECTED");
+    if (result.code !== "ACTION_REJECTED") return;
+    expect(result.feedback.ok).toBe(false);
+    expect(repository.applyCalls).toHaveLength(0);
+  });
+
+  it("过期 choice（NPC 已结识）被拒 ⇒ ACTION_REJECTED 且零 CAS", async () => {
+    const repository = createFakeGameRepository();
+    const record = buildActiveRecord();
+    const metState = {
+      ...record.state,
+      npcs: record.state.npcs.map((npc) =>
+        npc.npcId === asNpcId("npc_1") ? { ...npc, met: true } : npc
+      )
+    };
+    repository.setCurrentResult({
+      ok: true,
+      status: "active",
+      record: { ...record, state: metState }
+    });
+
+    const result = await performAction(
+      {
+        intent: {
+          type: "dialogue_choice",
+          npcId: asNpcId("npc_1"),
+          choiceId: "npc_1:greet"
+        },
+        expectedRevision: 0
+      },
+      buildPerformDeps(repository)
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("ACTION_REJECTED");
+    if (result.code !== "ACTION_REJECTED") return;
+    expect(result.feedback.ok).toBe(false);
+    expect(repository.applyCalls).toHaveLength(0);
   });
 });
 

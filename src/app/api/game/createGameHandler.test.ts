@@ -52,6 +52,12 @@ function openEntryPoints(databasePath: string): ServerGameEntryPoints {
   return entryPoints;
 }
 
+function openDevelopmentEntryPoints(databasePath: string): ServerGameEntryPoints {
+  const entryPoints = createServerGameEntryPoints({ GAME_DB_PATH: databasePath, NODE_ENV: "development" });
+  openedEntryPoints.push(entryPoints);
+  return entryPoints;
+}
+
 afterAll(async () => {
   for (const entryPoints of openedEntryPoints) {
     try {
@@ -108,10 +114,14 @@ describe("handleCreateGameRequest：合法开局资料", () => {
     const text = await response.text();
     // Phase 4A 追加：候选生成的内部诊断（diagnostics/fixtureId/origin/traceId）
     // 同样只属于内部记录，绝不进入玩家响应。
+    // Phase 7：worldMap.nodes[].state 是安全的 UI 显示状态字段，不属内部 GameState；
+    // 改用 state_json/stateVersion/eventLedger 等真正的内部字段名检测泄漏。
     for (const secret of [
       '"seed"',
       '"blueprint"',
-      '"state"',
+      '"state_json"',
+      '"stateVersion"',
+      '"eventLedger"',
       '"inputDigest"',
       '"diagnostics"',
       '"fixtureId"',
@@ -120,6 +130,31 @@ describe("handleCreateGameRequest：合法开局资料", () => {
     ]) {
       expect(text).not.toContain(secret);
     }
+  });
+});
+
+describe("handleCreateGameRequest：开发离线旅程开局", () => {
+  it("专用 marker ⇒ 201 固定基线；不会要求或接受浏览器输入", async () => {
+    const entryPoints = openDevelopmentEntryPoints(nextDbPath());
+    const response = await handleCreateGameRequest(
+      postJson({ developmentPreset: "phase10-journey-v1" }),
+      entryPoints,
+    );
+
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.view.world.gameType).toBe("wuxia");
+    expect(body.view.narrative).toBeNull();
+    expect(body.view.narrativeGeneration).toEqual({ status: "ready" });
+  });
+
+  it("生产入口或缺少开发能力时拒绝 preset", async () => {
+    const response = await handleCreateGameRequest(
+      postJson({ developmentPreset: "phase10-journey-v1" }),
+      { createGame: vi.fn() },
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ code: "DEVELOPMENT_TOOLS_DISABLED" });
   });
 });
 

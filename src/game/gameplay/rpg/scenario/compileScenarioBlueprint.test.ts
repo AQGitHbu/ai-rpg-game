@@ -112,6 +112,11 @@ describe("compileScenarioBlueprint：失败路径", () => {
 // ---------------------------------------------------------------------------
 
 describe("initializeGameState", () => {
+  it("初始状态包含 idle narrative scene（Phase 10 默认值）", () => {
+    const state = initializeGameState(compileValid());
+    expect(state.narrative).toEqual({ currentScene: null, generation: { status: "idle" }, mode: "ai" });
+  });
+
   it("完全由蓝图派生出初始状态", () => {
     const state = initializeGameState(compileValid());
     const generation = {
@@ -152,6 +157,7 @@ describe("initializeGameState", () => {
       defeatedEnemyIds: [],
       battle: { status: "idle" },
       ending: null,
+      narrative: { currentScene: null, generation: { status: "idle" }, mode: "ai" },
       eventLedger: [{ type: "game_initialized", generation }]
     });
   });

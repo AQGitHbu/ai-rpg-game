@@ -4,14 +4,9 @@ import { useEffect, useState } from "react";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
 import { NewGameSetupForm } from "./NewGameSetupForm";
-import { OpeningGameView } from "./OpeningGameView";
-import { SceneActionPanel } from "./SceneActionPanel";
-import { TravelPanel } from "./TravelPanel";
-import { ItemPanel } from "./ItemPanel";
-import { QuestTracker } from "./QuestTracker";
+import { AdventureGameShell } from "./AdventureGameShell";
 import { BattlePanel } from "./BattlePanel";
 import { EndingPanel } from "./EndingPanel";
-import { AdventureLogPanel } from "./AdventureLogPanel";
 
 // ---------------------------------------------------------------------------
 // 根页面客户端协调器（Phase 2–5 + Phase 6）：挂载时读取 GET /api/game/current。
@@ -97,6 +92,33 @@ export function CurrentGameScreen() {
     };
   }, []);
 
+  const narrativePending = state.phase === "active" &&
+    state.view.narrativeGeneration?.status === "pending";
+
+  useEffect(() => {
+    if (!narrativePending) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function ensureAndPoll(): Promise<void> {
+      try {
+        await fetch("/api/game/narrative/ensure", { method: "POST" });
+        if (cancelled) return;
+        const response = await fetch("/api/game/current");
+        const body = (await response.json().catch(() => null)) as CurrentGameApiBody | null;
+        if (!cancelled) applyCurrentGameBody(body);
+      } catch {
+        // Keep the current pending view. The next polling tick can recover a
+        // temporarily unavailable local server without discarding the save.
+      }
+      if (!cancelled) timer = setTimeout(() => void ensureAndPoll(), 750);
+    }
+    void ensureAndPoll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [narrativePending]);
+
   async function clearDevelopmentSave(): Promise<void> {
     if (!window.confirm("仅清除当前本地试玩存档并重新开局？此操作只在开发环境可用。")) return;
     setActionBusy(true);
@@ -134,6 +156,7 @@ export function CurrentGameScreen() {
 
   if (state.phase === "active") {
     const hasEnding = state.view.ending !== null;
+    const hasBattle = state.view.battle !== null;
 
     return (
       <div className="game-screen">
@@ -145,44 +168,27 @@ export function CurrentGameScreen() {
             </p>
           </Panel>
         ) : null}
-        <OpeningGameView view={state.view} />
-        <AdventureLogPanel events={state.view.storyEvents} />
         {hasEnding ? (
           <EndingPanel view={state.view} />
+        ) : hasBattle ? (
+          <BattlePanel
+            view={state.view}
+            busy={actionBusy}
+            onBusyChange={setActionBusy}
+            onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
+            onStaleRevision={() => void loadCurrentGame()}
+          />
         ) : (
-          <>
-            <SceneActionPanel
-              view={state.view}
-              busy={actionBusy}
-              onBusyChange={setActionBusy}
-              onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
-              onStaleRevision={() => void loadCurrentGame()}
-            />
-            <TravelPanel
-              view={state.view}
-              busy={actionBusy}
-              onBusyChange={setActionBusy}
-              onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
-              onStaleRevision={() => void loadCurrentGame()}
-            />
-            <ItemPanel
-              view={state.view}
-              busy={actionBusy}
-              onBusyChange={setActionBusy}
-              onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
-              onStaleRevision={() => void loadCurrentGame()}
-            />
-            <BattlePanel
-              view={state.view}
-              busy={actionBusy}
-              onBusyChange={setActionBusy}
-              onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
-              onStaleRevision={() => void loadCurrentGame()}
-            />
-            <QuestTracker quests={state.view.activeQuests} />
-          </>
+          <AdventureGameShell
+            view={state.view}
+            busy={actionBusy}
+            onBusyChange={setActionBusy}
+            onViewChange={(view) => setState({ phase: "active", view, createdWithFallback: false })}
+            onStaleRevision={() => void loadCurrentGame()}
+            developmentTools={developmentTools}
+            onClearDevelopmentSave={clearDevelopmentSave}
+          />
         )}
-        {developmentControl}
       </div>
     );
   }
@@ -190,6 +196,7 @@ export function CurrentGameScreen() {
   if (state.phase === "none") {
     return (
       <NewGameSetupForm
+        developmentTools={developmentTools}
         onCreated={(view, generationSource) =>
           setState({
             phase: "active",

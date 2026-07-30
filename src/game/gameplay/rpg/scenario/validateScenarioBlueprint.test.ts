@@ -598,6 +598,83 @@ describe("validateScenarioBlueprintCandidate：禁止标签", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 10. 物品展示元数据（背包界面重构）：可选字段，提供时必须合法
+// ---------------------------------------------------------------------------
+
+describe("validateScenarioBlueprintCandidate：物品展示元数据", () => {
+  it("全部展示字段缺省时通过（旧候选零迁移）", () => {
+    expect(validate(makeValidCandidate()).ok).toBe(true);
+  });
+
+  it("合法的显式 category / rarity / level / statLines 通过", () => {
+    const candidate = draft();
+    candidate.items[0].category = "equipment";
+    candidate.items[0].rarity = "rare";
+    candidate.items[0].level = 8;
+    candidate.items[0].statLines = [
+      { label: "攻击力", value: "24" },
+      { label: "暴击率", value: "+3%" }
+    ];
+    expect(issuesOf(candidate)).toEqual([]);
+  });
+
+  it("未知 category 拒绝", () => {
+    const candidate = draft();
+    (candidate.items[0] as { category?: string }).category = "bogus";
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "items[0].category",
+      code: "INVALID_ITEM_PRESENTATION",
+      params: { reason: "unknown_category", value: "bogus" }
+    });
+  });
+
+  it("未知 rarity 拒绝", () => {
+    const candidate = draft();
+    (candidate.items[0] as { rarity?: string }).rarity = "legendary";
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "items[0].rarity",
+      code: "INVALID_ITEM_PRESENTATION",
+      params: { reason: "unknown_rarity", value: "legendary" }
+    });
+  });
+
+  it("level 越界（0、非整数、超上限）拒绝", () => {
+    for (const level of [0, 2.5, 100]) {
+      const candidate = draft();
+      candidate.items[0].level = level;
+      expect(issuesOf(candidate)).toContainEqual({
+        path: "items[0].level",
+        code: "INVALID_ITEM_PRESENTATION",
+        params: { reason: "level_out_of_range", value: String(level) }
+      });
+    }
+  });
+
+  it("statLines 条目 label/value 为空时拒绝", () => {
+    const candidate = draft();
+    candidate.items[0].statLines = [{ label: " ", value: "24" }];
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "items[0].statLines[0]",
+      code: "INVALID_ITEM_PRESENTATION",
+      params: { reason: "empty_stat_line" }
+    });
+  });
+
+  it("statLines 超过 6 条拒绝", () => {
+    const candidate = draft();
+    candidate.items[0].statLines = Array.from({ length: 7 }, (_, i) => ({
+      label: `属性${i}`,
+      value: String(i)
+    }));
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "items[0].statLines",
+      code: "INVALID_ITEM_PRESENTATION",
+      params: { reason: "too_many_stat_lines", max: 6, actual: 7 }
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // collect-all：一次返回全部问题
 // ---------------------------------------------------------------------------
 

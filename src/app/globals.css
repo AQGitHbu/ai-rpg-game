@@ -541,6 +541,922 @@ select:focus,
   }
 }
 
+/* Phase 7 Task 4：地图 / 地点场景与本地 SVG 视觉档案的 RPG 主题 */
+.adventure-visual {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.adventure-map {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.location-scene {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: end;
+  padding: clamp(14px, 3vw, 24px);
+  border: 1px solid var(--game-surface-border);
+  border-radius: 14px;
+  background: rgb(7 12 9 / 34%);
+}
+
+.scene-slot-left {
+  grid-column: 1;
+}
+
+.scene-slot-center {
+  grid-column: 2;
+}
+
+.scene-slot-right {
+  grid-column: 3;
+}
+
+.scene-slot-foreground {
+  grid-column: 1 / -1;
+}
+
+.scene-hotspot {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #405044;
+  border-radius: 12px;
+  background: rgb(5 9 6 / 55%);
+  color: var(--game-text-primary);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.scene-hotspot:hover {
+  transform: translateY(-2px);
+  border-color: #809074;
+}
+
+.scene-hotspot:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.scene-hotspot:focus-visible,
+.adventure-map :focus-visible {
+  outline: 2px solid var(--game-accent);
+  outline-offset: 3px;
+  border-color: var(--game-accent);
+}
+
+.adventure-details {
+  display: grid;
+  gap: 12px;
+  color: var(--game-text-muted);
+  line-height: 1.7;
+}
+
+/* 窄屏：场景槽位退化为单列列表，地图节点同样单列。 */
+@media (max-width: 700px) {
+  .location-scene {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .scene-slot-left,
+  .scene-slot-center,
+  .scene-slot-right,
+  .scene-slot-foreground {
+    grid-column: auto;
+  }
+
+  .adventure-map {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Phase 8: RPG viewport layout */
+body:has(.adventure-game-shell) {
+  overflow: hidden;
+}
+
+.adventure-game-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  min-height: 100dvh;
+  overflow: hidden;
+  background: var(--game-surface-bg);
+}
+
+/* HUD layer: absolute full-screen, pointer events only on clusters */
+.adventure-hud-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.adventure-hud-player-card,
+.adventure-hud-location-title,
+.adventure-hud-objective,
+.adventure-hud-actions {
+  position: absolute;
+  pointer-events: auto;
+}
+
+.adventure-hud-player-card {
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 10px;
+  background: rgb(17 22 18 / 86%);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+}
+
+.adventure-hud-avatar {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--game-accent-soft);
+}
+
+.adventure-hud-avatar svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: var(--game-accent);
+  stroke-width: 3;
+}
+
+.adventure-hud-player-card small,
+.adventure-hud-objective span {
+  display: block;
+  color: var(--game-text-muted);
+  font-size: .75rem;
+}
+
+.adventure-hud-location-title {
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  max-width: min(52vw, 32rem);
+  overflow: hidden;
+  color: var(--game-text-primary);
+  font-size: clamp(1rem, 2.2vw, 1.5rem);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adventure-hud-objective {
+  top: 50%;
+  left: max(12px, env(safe-area-inset-left));
+  transform: translateY(-50%);
+  display: grid;
+  gap: 3px;
+  max-width: min(14rem, calc(100vw - 24px));
+  padding: 9px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: rgb(17 22 18 / 86%);
+}
+
+.adventure-hud-actions {
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: min(34rem, calc(100vw - 24px));
+}
+
+.world-map-viewport,
+.location-viewport {
+  position: absolute;
+  inset: 0;
+  min-height: 100dvh;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+
+.world-map-backdrop,
+.location-backdrop {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0.3;
+}
+
+.world-map-backdrop svg,
+.location-backdrop svg {
+  width: 100%;
+  height: 100%;
+}
+
+.world-map-nodes {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.map-node {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  width: clamp(112px, 16vw, 170px);
+  padding: 12px 16px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: var(--game-surface-raised);
+  cursor: pointer;
+  font-size: 0.875rem;
+  pointer-events: auto;
+}
+
+.map-node[data-map-position="north_west"] { top: 18%; left: 11%; }
+.map-node[data-map-position="north_east"] { top: 16%; right: 11%; }
+.map-node[data-map-position="south_west"] { bottom: 16%; left: 15%; }
+.map-node[data-map-position="south_east"] { right: 14%; bottom: 18%; }
+.map-node[data-map-position="center"] { top: 49%; left: 50%; translate: -50% -50%; }
+
+.map-node:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.location-scene-caption {
+  position: relative;
+  z-index: 1;
+  color: var(--game-text-muted);
+  max-width: 60ch;
+  text-align: center;
+}
+
+.scene-hotspot-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.scene-hotspot-layer .scene-hotspot {
+  position: absolute;
+  width: clamp(120px, 18vw, 190px);
+  pointer-events: auto;
+}
+
+.scene-hotspot-layer .scene-slot-left { top: 46%; left: 8%; }
+.scene-hotspot-layer .scene-slot-center { top: 32%; left: 50%; translate: -50% 0; }
+.scene-hotspot-layer .scene-slot-right { top: 46%; right: 8%; }
+.scene-hotspot-layer .scene-slot-foreground { bottom: 9%; left: 50%; translate: -50% 0; }
+
+.scene-action-rail {
+  position: absolute;
+  inset: 1rem 1rem auto auto;
+  z-index: 2;
+  display: grid;
+  gap: 6px;
+}
+
+.scene-action-rail button {
+  padding: 8px 14px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: var(--game-surface-raised);
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.scene-action-rail button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.adventure-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+}
+
+.adventure-overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 60%);
+}
+
+.adventure-overlay-content {
+  position: relative;
+  z-index: 1;
+  max-width: min(90vw, 560px);
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 24px;
+  border-radius: 12px;
+  background: var(--game-surface-raised);
+  border: 1px solid var(--game-surface-border);
+}
+
+.adventure-overlay-content > button:first-child {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  border: none;
+  background: none;
+  font-size: 1.25rem;
+  cursor: pointer;
+  color: var(--game-text-muted);
+}
+
+.development-tools-hint {
+  margin: 8px 0 16px;
+  color: var(--game-text-muted);
+  line-height: 1.6;
+}
+
+.adventure-toast-container {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.adventure-toast {
+  margin: 0;
+  padding: 10px 20px;
+  border-radius: 12px;
+  background: #ebd8a3;
+  color: #1c1912;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: 1px solid #d4c088;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  text-align: center;
+  max-width: 90vw;
+  pointer-events: auto;
+  animation:
+    adventure-toast-enter 0.3s ease-out,
+    adventure-toast-exit 0.5s ease-in 4.5s forwards;
+}
+
+@keyframes adventure-toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes adventure-toast-exit {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .adventure-toast {
+    animation: none;
+  }
+}
+
+.npc-dialogue-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.npc-dialogue-stage {
+  display: grid;
+  grid-template-columns: minmax(96px, 140px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.npc-dialogue-figure {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 12px 8px;
+  border-radius: 10px;
+  background: var(--game-surface-raised);
+  border: 1px solid var(--game-surface-border);
+  text-align: center;
+}
+
+.npc-dialogue-figure h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.npc-dialogue-figure span {
+  color: var(--game-text-muted);
+  font-size: 0.8rem;
+}
+
+.npc-dialogue-speech {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 120px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--game-surface-raised);
+  border: 1px solid var(--game-surface-border);
+}
+
+.npc-dialogue-speech-text {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.npc-dialogue-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.npc-dialogue-pager button {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.npc-dialogue-pager button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.npc-dialogue-pager-status {
+  color: var(--game-text-muted);
+  font-size: 0.8rem;
+}
+
+.npc-dialogue-reply {
+  margin: 0;
+  color: var(--game-text-muted);
+  font-style: italic;
+}
+
+.npc-dialogue-choices {
+  display: grid;
+  gap: 8px;
+}
+
+.npc-dialogue-choices button {
+  padding: 8px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: var(--game-surface-raised);
+  cursor: pointer;
+  text-align: left;
+}
+
+.npc-dialogue-choices button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.npc-dialogue-input {
+  display: flex;
+  gap: 8px;
+}
+
+.npc-dialogue-input input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: var(--game-surface-raised);
+  color: inherit;
+}
+
+.npc-dialogue-input button {
+  padding: 8px 16px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: var(--game-accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+@media (max-width: 700px) {
+  .adventure-hud-player-card {
+    padding: 6px 8px;
+  }
+
+  .adventure-hud-avatar {
+    width: 40px;
+    height: 40px;
+  }
+
+  .adventure-hud-location-title {
+    top: calc(max(8px, env(safe-area-inset-top)) + 2px);
+    max-width: 48vw;
+    font-size: .95rem;
+  }
+
+  .adventure-hud-objective {
+    top: auto;
+    bottom: calc(max(76px, env(safe-area-inset-bottom)) + 10px);
+    transform: none;
+    max-width: 42vw;
+  }
+
+  .adventure-hud-actions {
+    gap: 6px;
+  }
+
+  .adventure-hud-actions button {
+    padding: 7px 9px;
+    font-size: .82rem;
+  }
+
+  .scene-action-rail {
+    inset: auto 0.75rem 0.75rem;
+    grid-auto-flow: column;
+    overflow-x: auto;
+  }
+
+  .world-map-nodes {
+    inset: 0;
+  }
+
+  .map-node {
+    width: min(34vw, 150px);
+    padding: 8px;
+  }
+
+  .scene-hotspot-layer .scene-hotspot {
+    width: min(38vw, 155px);
+    padding: 8px;
+  }
+
+  .scene-hotspot-layer .scene-slot-left { left: 4%; }
+  .scene-hotspot-layer .scene-slot-right { right: 4%; }
+}
+
+/* Phase 9: 场景化战斗视窗 */
+.battle-viewport {
+  position: relative;
+  min-height: min(72vh, 760px);
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: end;
+}
+
+.battle-arena-backdrop {
+  position: absolute;
+  inset: 0;
+  opacity: .34;
+}
+
+.battle-arena-backdrop svg {
+  width: 100%;
+  height: 100%;
+}
+
+.battle-hud {
+  position: absolute;
+  inset: 1rem 1rem auto;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.battle-hud strong {
+  font-family: Georgia, "STSong", serif;
+  font-size: clamp(1.1rem, 2.5vw, 1.6rem);
+}
+
+.battle-combatant {
+  position: relative;
+  z-index: 1;
+  padding: clamp(1rem, 3vw, 2rem);
+}
+
+.battle-combatant h3 {
+  margin: 8px 0 4px;
+  font-size: 1rem;
+}
+
+.battle-combatant p {
+  margin: 0;
+  color: var(--game-text-muted);
+  font-size: 0.875rem;
+}
+
+.battle-combatant--enemy {
+  text-align: right;
+}
+
+.battle-combatant-visual {
+  max-width: 120px;
+}
+
+.battle-action-rail {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 2;
+  display: grid;
+  gap: .5rem;
+}
+
+.battle-action-rail button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: var(--game-surface-raised);
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--game-text-primary);
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.battle-action-rail button:hover:not(:disabled) {
+  border-color: var(--game-accent);
+}
+
+.battle-action-rail button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.battle-action-rail button:focus-visible {
+  outline: 2px solid var(--game-accent);
+  outline-offset: 3px;
+}
+
+.battle-log {
+  position: absolute;
+  z-index: 2;
+  right: 10rem;
+  bottom: 1rem;
+  left: 1rem;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: rgb(17 22 18 / 84%);
+  line-height: 1.5;
+}
+
+.battle-log--success {
+  color: var(--game-success);
+}
+
+.battle-log--rejected,
+.battle-log--error {
+  color: #e09a91;
+}
+
+.battle-log--submitting {
+  color: var(--game-text-muted);
+}
+
+@media (max-width: 700px) {
+  .battle-viewport {
+    grid-template-columns: 1fr;
+    min-height: 72dvh;
+  }
+
+  .battle-action-rail {
+    inset: auto .75rem .75rem;
+    grid-auto-flow: column;
+    overflow-x: auto;
+  }
+
+  .battle-log {
+    right: .75rem;
+    bottom: 4.5rem;
+    left: .75rem;
+  }
+}
+
+/* 背包界面（示意图 G）：四分类页签 + 图标网格 + 选中物品详情 */
+:root {
+  --rarity-common: #9aa694;
+  --rarity-fine: #7fb069;
+  --rarity-rare: #6f9fd8;
+  --rarity-epic: #b07fd8;
+}
+
+.inventory-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.inventory-tabs {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid var(--game-surface-border);
+  padding-bottom: 8px;
+}
+
+.inventory-tab {
+  padding: 6px 16px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px 6px 0 0;
+  background: none;
+  color: var(--game-text-muted);
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.inventory-tab:hover {
+  border-color: var(--game-accent);
+}
+
+.inventory-tab--active {
+  background: var(--game-accent-soft);
+  border-color: var(--game-accent);
+  color: var(--game-accent);
+}
+
+.inventory-tab:focus-visible {
+  outline: 2px solid var(--game-accent);
+  outline-offset: 2px;
+}
+
+.inventory-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 8px;
+  align-content: start;
+}
+
+.inventory-cell {
+  aspect-ratio: 1;
+  padding: 8px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: rgb(17 22 18 / 84%);
+  color: var(--rarity-common);
+  cursor: pointer;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.inventory-cell:hover {
+  border-color: var(--game-accent);
+}
+
+.inventory-cell:focus-visible {
+  outline: 2px solid var(--game-accent);
+  outline-offset: 2px;
+}
+
+.inventory-cell--fine { color: var(--rarity-fine); }
+.inventory-cell--rare { color: var(--rarity-rare); }
+.inventory-cell--epic { color: var(--rarity-epic); }
+
+.inventory-cell--selected {
+  border-color: var(--game-accent);
+  box-shadow: 0 0 0 1px var(--game-accent), 0 0 12px rgb(215 185 111 / 30%);
+}
+
+.inventory-icon {
+  width: 100%;
+  height: 100%;
+}
+
+.inventory-category-empty,
+.inventory-empty {
+  margin: 8px 0;
+  color: var(--game-text-muted);
+}
+
+.inventory-details {
+  padding: 14px 16px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: var(--game-surface-raised);
+}
+
+.inventory-details-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.inventory-details-name {
+  margin: 0;
+  font-family: Georgia, "STSong", serif;
+  font-size: 1.15rem;
+}
+
+.inventory-rarity {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid currentcolor;
+  font-size: 0.75rem;
+  color: var(--rarity-common);
+}
+
+.inventory-rarity--fine { color: var(--rarity-fine); }
+.inventory-rarity--rare { color: var(--rarity-rare); }
+.inventory-rarity--epic { color: var(--rarity-epic); }
+
+.inventory-details-type {
+  margin: 6px 0 0;
+  color: var(--game-text-muted);
+  font-size: 0.85rem;
+}
+
+.inventory-details-stats {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--game-surface-border);
+}
+
+.inventory-details-stats > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inventory-details-stats dt {
+  color: var(--game-text-muted);
+}
+
+.inventory-details-stats dd {
+  margin: 0;
+  color: var(--game-accent);
+}
+
+.inventory-details-description {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--game-surface-border);
+  color: var(--game-text-muted);
+  line-height: 1.6;
+}
+
+@media (max-width: 700px) {
+  .inventory-body {
+    grid-template-columns: 1fr;
+  }
+
+  .inventory-grid {
+    grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+  }
+}
+
+
 /* Town demo（Task 8）：/town-demo 页面布局与 SVG 地图/档案样式 */
 .town-demo-page {
   display: grid;

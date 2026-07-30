@@ -2,14 +2,14 @@ import type { ValidatedNewGameInput } from "@/game/domain";
 import type { ScenarioBlueprintCandidate } from "@/game/domain";
 
 // ---------------------------------------------------------------------------
-// Phase 4A：AI 候选生成的纯 application port（spec §3，契约 phase4a-v1）。
+// Phase 4A/4B：AI 候选生成的纯 application port（spec §3，契约 phase4b-v1）。
 // 本文件只有类型与冻结常量：不读文件、不读 process.env、不 import server 代码。
-// server-only fixture source 与未来的 live source 都实现 ScenarioCandidateSource；
+// server-only fixture source 与 live source 都实现 ScenarioCandidateSource；
 // 候选永远不能绕过既有 validateScenarioBlueprintCandidate/compileScenarioBlueprint。
 // ---------------------------------------------------------------------------
 
-/** 当前候选契约版本；新增失败类别或阶段（如 4B 的 cancelled）必须升级。 */
-export const SCENARIO_CANDIDATE_CONTRACT_VERSION = "phase4a-v1" as const;
+/** 当前候选契约版本；Phase 4B 升至 phase4b-v1（新增 live origin）。 */
+export const SCENARIO_CANDIDATE_CONTRACT_VERSION = "phase4b-v1" as const;
 export type ScenarioCandidateContractVersion = typeof SCENARIO_CANDIDATE_CONTRACT_VERSION;
 
 /** 创建结果暴露给 API/UI 的唯一安全来源区分（spec §5）。 */
@@ -71,14 +71,14 @@ export type ScenarioCandidateAttempt =
   | Readonly<{
       ok: true;
       contractVersion: ScenarioCandidateContractVersion;
-      origin: "fixture";
+      origin: "fixture" | "live";
       candidate: ScenarioBlueprintCandidate;
       diagnostics: readonly string[];
     }>
   | Readonly<{
       ok: false;
       contractVersion: ScenarioCandidateContractVersion;
-      origin: "fixture" | "unavailable";
+      origin: "fixture" | "live" | "unavailable";
       category: ScenarioCandidateFailureCategory;
       diagnostics: readonly string[];
     }>;

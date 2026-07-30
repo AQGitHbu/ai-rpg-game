@@ -447,3 +447,40 @@ describe("createFallbackBlueprint：fixture 回归 pin", () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// 背包界面重构：fallback 模板物品携带展示元数据，且仍通过完整管线。
+// ---------------------------------------------------------------------------
+
+describe("createFallbackBlueprint：物品展示元数据", () => {
+  for (const gameType of ALL_GAME_TYPES) {
+    it(`${gameType} 的两件物品都有显式 category/rarity，并通过校验管线`, () => {
+      const candidate = generate({ gameType });
+      const startItem = candidate.items.find((entry) => entry.id === "item_start");
+      const keyItem = candidate.items.find((entry) => entry.id === "item_key");
+      expect(startItem).toBeDefined();
+      expect(keyItem).toBeDefined();
+
+      // 初始物品：随身装备，至少一条展示属性行与等级。
+      expect(startItem?.category).toBe("equipment");
+      expect(startItem?.rarity).toBeDefined();
+      expect(startItem?.level).toBeGreaterThanOrEqual(1);
+      expect(startItem?.statLines?.length).toBeGreaterThanOrEqual(1);
+      for (const line of startItem?.statLines ?? []) {
+        expect(line.label.trim()).not.toBe("");
+        expect(line.value.trim()).not.toBe("");
+      }
+
+      // 主线关键物品：任务分类 + 稀有。
+      expect(keyItem?.category).toBe("quest");
+      expect(keyItem?.rarity).toBe("rare");
+
+      // 携带新字段的候选仍能通过校验 + 编译管线。
+      const profile = PROFILES.gameTypeProfiles[gameType];
+      const compiled = compileScenarioBlueprint(
+        validateScenarioBlueprintCandidate(candidate, { profile })
+      );
+      expect(compiled.ok).toBe(true);
+    });
+  }
+});

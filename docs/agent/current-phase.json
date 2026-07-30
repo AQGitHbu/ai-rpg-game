@@ -1,25 +1,22 @@
 {
   "schemaVersion": 1,
-  "phase": "mvp-phase-4a-ai-contract-simulation",
-  "status": "completed",
-  "implementationStatus": "implemented",
-  "targetBranch": "codex/mvp-phase-4a-ai-contract-simulation",
-  "worktreeName": "mvp-phase-4a-ai-contract-simulation",
-  "repositories": [
-    "ai-rpg-game"
-  ],
-  "plan": "docs/superpowers/plans/2026-07-28-mvp-phase-4a-ai-contract-simulation.md",
+  "phase": "mvp-phase-10-runtime-ai-director",
+  "status": "in_progress",
+  "implementationStatus": "partial",
+  "targetBranch": "codex/phase10-runtime-ai-director",
+  "worktreeName": "phase10-runtime-ai-director",
+  "repositories": ["ai-rpg-game"],
+  "plan": "docs/superpowers/plans/2026-07-30-mvp-phase-10-runtime-ai-director.md",
+  "sharedInfrastructureChangeAllowed": false,
+  "startCommand": "npm run phase:start",
   "entryDocs": [
     "docs/游戏设计原则.md",
     "docs/游戏开发规范.md",
     "docs/Agent文档索引.md",
     "docs/agent/当前开发阶段.md",
-    "docs/agent/MVP核心闭环.md",
-    "docs/agent/AI环境.md",
-    "docs/策划文档/AI生成RPG_MVP.md",
-    "docs/superpowers/specs/2026-07-26-ai-rpg-mvp-development-spec.md",
-    "docs/superpowers/specs/2026-07-28-ai-contract-simulation-and-dynamic-opening-design.md",
-    "docs/superpowers/plans/2026-07-28-mvp-phase-4a-ai-contract-simulation.md"
+    "docs/agent/运行时AI导演与场景表演.md",
+    "docs/superpowers/specs/2026-07-30-runtime-ai-director-scene-performance-design.md",
+    "docs/superpowers/plans/2026-07-30-mvp-phase-10-runtime-ai-director.md"
   ],
   "acceptanceCommands": [
     "npm run lint",
@@ -28,7 +25,5 @@
     "npm run test:fast",
     "npm run build",
     "npm run phase:status"
-  ],
-  "startCommand": "npm run phase:start",
-  "sharedInfrastructureChangeAllowed": false
+  ]
 }

@@ -24,7 +24,7 @@ export type GameRecord = {
   readonly gameId: GameId;
   readonly blueprint: ScenarioBlueprint;
   readonly state: GameState;
-  /** 单调递增 revision：初始游戏为 0，每次成功行动 +1。 */
+  /** 单调递增 revision：初始游戏为 0，每次成功写入（玩家行动或可恢复任务）+1。 */
   readonly revision: number;
   readonly createdAt: string;
 };

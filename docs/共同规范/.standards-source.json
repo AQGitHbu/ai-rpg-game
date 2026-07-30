@@ -4,7 +4,7 @@
   "foundationPathHint": "../ai-game-foundation",
   "pathOverrideEnvironmentVariable": "AI_GAME_FOUNDATION_DIR",
   "package": "@ai-game/standards",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "files": [
     {
       "file": "共同游戏设计原则.md",
@@ -24,7 +24,7 @@
     },
     {
       "file": "共享模块目录.json",
-      "sha256": "579502e67854da42f202dc4068748262e0fb22be9343ed5a7e651e979b47b45c"
+      "sha256": "6b7054dbdd727e0960596b419078a81efce3bf469592432826b7301c3f6e79d0"
     }
   ]
 }
