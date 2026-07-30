@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe("AdventureHud", () => {
-  it("HUD 只显示安全主线摘要，并把四个入口交给 shell", async () => {
+  it("HUD 显示玩家姓名 HP 并保留四个信息入口", async () => {
     vi.stubGlobal("fetch", vi.fn());
     const onOpen = vi.fn();
     const view = buildSessionViewFixture();
@@ -18,16 +18,14 @@ describe("AdventureHud", () => {
     await userEvent.click(screen.getByRole("button", { name: "背包" }));
     expect(onOpen).toHaveBeenCalledWith("inventory");
 
-    expect(screen.getByText(view.activeQuests[0].name)).toBeVisible();
+    expect(screen.getByText("沈青崖")).toBeVisible();
   });
 
-  it("显示世界名、当前地点、玩家姓名/身份和 HP", () => {
+  it("HUD 玩家卡片显示姓名和 HP", () => {
     vi.stubGlobal("fetch", vi.fn());
     const view = buildSessionViewFixture();
     render(<AdventureHud view={view} screen="map" onOpen={vi.fn()} />);
 
-    expect(screen.getByText("武侠")).toBeVisible();
-    expect(screen.getByText("青石镇")).toBeVisible();
     expect(screen.getByText("沈青崖")).toBeVisible();
     expect(screen.getByText(/30/)).toBeVisible();
   });

@@ -46,7 +46,6 @@ export function LocationSceneScreen({
       <div className="location-backdrop" aria-hidden="true">
         <AdventureVisual gameType={gameType} kind={scene.backdrop} label="" decorative />
       </div>
-      <h2 className="location-scene-title">{scene.title}</h2>
       <p className="location-scene-caption">{scene.description}</p>
 
       <div className="scene-hotspot-layer" role="group" aria-label="场景互动">

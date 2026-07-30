@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe("LocationSceneScreen", () => {
-  it("渲染地点标题、描述和观察热点", () => {
+  it("渲染地点描述和观察热点，视窗保留可访问名称", () => {
     vi.stubGlobal("fetch", vi.fn());
     render(
       <LocationSceneScreen
@@ -21,7 +21,7 @@ describe("LocationSceneScreen", () => {
       />
     );
 
-    expect(screen.getByRole("heading", { name: "青石镇" })).toBeInTheDocument();
+    expect(screen.getByLabelText("地点场景：青石镇")).toBeInTheDocument();
     expect(screen.getByText("镇口贴着一张字迹潦草的缉凶告示。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "观察青石镇" })).toBeInTheDocument();
   });
