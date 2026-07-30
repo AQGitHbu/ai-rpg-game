@@ -2,6 +2,7 @@
 
 import type { GameSessionView } from "@/game/application";
 import type { DetailsPanel } from "./AdventureHud";
+import { InventoryPanel } from "./InventoryPanel";
 
 type AdventureDetailsPanelProps = {
   readonly view: GameSessionView;
@@ -27,16 +28,8 @@ export function AdventureDetailsPanel({ view, panel }: AdventureDetailsPanelProp
   }
 
   if (panel === "inventory") {
-    return (
-      <ul className="details-inventory">
-        {view.inventoryItems.map((item) => (
-          <li key={item.name}>
-            <strong>{item.name}</strong>：{item.description}
-          </li>
-        ))}
-        {view.inventoryItems.length === 0 ? <li>背包空空如也。</li> : null}
-      </ul>
-    );
+    // 背包升级为四分类页签 + 图标网格 + 详情的专属界面（示意图 G）。
+    return <InventoryPanel items={view.inventoryItems} />;
   }
 
   if (panel === "quests") {

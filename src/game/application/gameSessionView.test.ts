@@ -64,6 +64,29 @@ function blueprintItem(itemId: string): { name: string; description: string } {
   return { name: item.name, description: item.description };
 }
 
+// 背包富视图预期值：直接钉死 wuxia fallback 模板的展示元数据，避免测试与实现
+// 共用同一推导函数（resolveItemPresentation）导致互证。
+const INVENTORY_ITEM_START = {
+  ...blueprintItem("item_start"),
+  category: "equipment",
+  rarity: "fine",
+  level: 2,
+  statLines: [
+    { label: "攻击力", value: "+6" },
+    { label: "身法", value: "+3%" }
+  ],
+  icon: "sword"
+} as const;
+
+const INVENTORY_ITEM_KEY = {
+  ...blueprintItem("item_key"),
+  category: "quest",
+  rarity: "rare",
+  level: null,
+  statLines: [],
+  icon: "key"
+} as const;
+
 describe("projectGameSessionView：开场视图", () => {
   it("availableActions 不再过滤 move，含前往已连通已解锁地点的行动", () => {
     const view = project(PIPELINE.state, 0);
@@ -150,9 +173,15 @@ describe("projectGameSessionView：物品摘要与 take_item 行动（Phase 5 Ta
   const atKeyLocation = advance(moved, { type: "move", locationId: asLocationId("loc_3") });
   const keyItem = blueprintItem("item_key");
 
-  it("开场背包摘要：inventoryItems 只含初始物品的名称与描述", () => {
+  it("开场背包摘要：inventoryItems 为含展示元数据的富视图（分类/稀有度/等级/属性行/图标）", () => {
     const view = project(PIPELINE.state, 0);
-    expect(view.inventoryItems).toEqual([blueprintItem("item_start")]);
+    expect(view.inventoryItems).toEqual([INVENTORY_ITEM_START]);
+  });
+
+  it("initialItems 与 obtainableItems 保持简单形态：只含名称与描述", () => {
+    const view = project(atKeyLocation, 2);
+    expect(view.initialItems).toEqual([blueprintItem("item_start")]);
+    expect(view.obtainableItems).toEqual([blueprintItem("item_key")]);
   });
 
   it("当前地点可取得物品：obtainableItems 摘要与 take_item 可用行动一致", () => {
@@ -176,12 +205,12 @@ describe("projectGameSessionView：物品摘要与 take_item 行动（Phase 5 Ta
     }
   });
 
-  it("取得物品后：take 行动与 obtainableItems 消失，inventoryItems 收录新物品", () => {
+  it("取得物品后：take 行动与 obtainableItems 消失，inventoryItems 收录新物品富视图", () => {
     const taken = advance(atKeyLocation, { type: "take_item", itemId: asItemId("item_key") });
     const view = project(taken, 3);
     expect(view.obtainableItems).toEqual([]);
     expect(view.availableActions.filter((action) => action.type === "take_item")).toEqual([]);
-    expect(view.inventoryItems).toContainEqual(keyItem);
+    expect(view.inventoryItems).toContainEqual(INVENTORY_ITEM_KEY);
   });
 
   it("obtain_item objective 随背包立即完成：取得后 talk 前 completed=true", () => {

@@ -152,12 +152,30 @@ type EnemyTemplateOf<I extends IdSet> = {
   readonly tags: readonly string[];
 };
 
+/** 背包界面页签的封闭分类：装备 / 道具 / 材料 / 任务。 */
+export type ItemCategory = "equipment" | "consumable" | "material" | "quest";
+
+/** 展示用稀有度（不参与规则结算）。 */
+export type ItemRarity = "common" | "fine" | "rare" | "epic";
+
+/** 展示用属性行（如「攻击力 24」「暴击率 +3%」），只读文本、不进战斗结算。 */
+export type ItemStatLine = {
+  readonly label: string;
+  readonly value: string;
+};
+
 type ItemDefinitionOf<I extends IdSet> = {
   readonly id: I["item"];
   readonly name: string;
   readonly description: string;
   readonly kind: string;
   readonly tags: readonly string[];
+  // 以下均为可选展示元数据：缺省时由 resolveItemPresentation 按 kind 推导，
+  // 旧存档蓝图与不含新字段的 AI 候选零迁移可用。
+  readonly category?: ItemCategory;
+  readonly rarity?: ItemRarity;
+  readonly level?: number;
+  readonly statLines?: readonly ItemStatLine[];
 };
 
 type EndingRequirementOf<I extends IdSet> =

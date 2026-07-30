@@ -292,10 +292,15 @@ describe("performAction：take_item + 任务 reconciliation 单次写入（Phase
     expect(result.view.revision).toBe(4);
     expect(result.view.obtainableItems).toEqual([]);
     const keyItem = PIPELINE.blueprint.items.find((item) => item.id === asItemId("item_key"));
-    expect(result.view.inventoryItems).toContainEqual({
-      name: keyItem?.name,
-      description: keyItem?.description
-    });
+    // 背包已升级为富视图：附带展示元数据（契约详见 gameSessionView.test）。
+    expect(result.view.inventoryItems).toContainEqual(
+      expect.objectContaining({
+        name: keyItem?.name,
+        description: keyItem?.description,
+        category: "quest",
+        icon: "key"
+      })
+    );
   });
 
   it("已拥有物品的 take 被拒 ⇒ ACTION_REJECTED 且零写入", async () => {

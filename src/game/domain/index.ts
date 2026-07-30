@@ -35,6 +35,9 @@ export {
   type MainQuestStage,
   type EnemyTier,
   type StatBlock,
+  type ItemCategory,
+  type ItemRarity,
+  type ItemStatLine,
   type ContentBudget,
   type ScenarioBlueprint,
   type ScenarioBlueprintCandidate,
@@ -66,6 +69,12 @@ export {
   type GeneratedPlayerDefinitionCandidate,
   type GenerationMetadata
 } from "./scenarioBlueprint";
+export {
+  resolveItemPresentation,
+  type ItemIconKey,
+  type ItemPresentation,
+  type ItemPresentationSource
+} from "./itemPresentation";
 export {
   type GameEvent,
   type GameInitializedEvent,

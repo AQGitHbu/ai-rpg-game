@@ -44,9 +44,17 @@ export {
   type QuestObjectiveView,
   type BattleView,
   type EndingView,
+  type InventoryItemView,
   type StoryEventView,
   type NarrativeSceneView
 } from "./gameSessionView";
+// 背包富视图的展示元数据基础类型：UI 经由 facade 中转，禁止直连 domain。
+export {
+  type ItemCategory,
+  type ItemIconKey,
+  type ItemRarity,
+  type ItemStatLine
+} from "@/game/domain";
 // Phase 7 Task 3：地图 / 地点场景 / 安全对话 read model 只读 view 类型。
 export {
   type LocationAdventureView,
