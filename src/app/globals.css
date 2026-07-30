@@ -654,8 +654,8 @@ select:focus,
   justify-content: space-between;
   gap: 12px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--game-border);
-  background: var(--game-surface);
+  border-bottom: 1px solid var(--game-surface-border);
+  background: var(--game-surface-raised);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -705,27 +705,32 @@ select:focus,
 }
 
 .world-map-nodes {
-  position: relative;
+  position: absolute;
+  inset: 0;
   z-index: 1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  justify-content: center;
-  padding: 24px;
+  pointer-events: none;
 }
 
 .map-node {
-  position: relative;
+  position: absolute;
   display: grid;
   place-items: center;
   gap: 4px;
+  width: clamp(112px, 16vw, 170px);
   padding: 12px 16px;
-  border: 1px solid var(--game-border);
+  border: 1px solid var(--game-surface-border);
   border-radius: 8px;
-  background: var(--game-surface);
+  background: var(--game-surface-raised);
   cursor: pointer;
   font-size: 0.875rem;
+  pointer-events: auto;
 }
+
+.map-node[data-map-position="north_west"] { top: 18%; left: 11%; }
+.map-node[data-map-position="north_east"] { top: 16%; right: 11%; }
+.map-node[data-map-position="south_west"] { bottom: 16%; left: 15%; }
+.map-node[data-map-position="south_east"] { right: 14%; bottom: 18%; }
+.map-node[data-map-position="center"] { top: 49%; left: 50%; translate: -50% -50%; }
 
 .map-node:disabled {
   opacity: 0.5;
@@ -739,8 +744,8 @@ select:focus,
   z-index: 2;
   padding: 8px 12px;
   border-radius: 6px;
-  background: var(--game-surface);
-  border: 1px solid var(--game-border);
+  background: var(--game-surface-raised);
+  border: 1px solid var(--game-surface-border);
   font-size: 0.8rem;
   display: grid;
   gap: 2px;
@@ -761,14 +766,22 @@ select:focus,
 }
 
 .scene-hotspot-layer {
-  position: relative;
+  position: absolute;
+  inset: 0;
   z-index: 1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  justify-content: center;
-  padding: 16px;
+  pointer-events: none;
 }
+
+.scene-hotspot-layer .scene-hotspot {
+  position: absolute;
+  width: clamp(120px, 18vw, 190px);
+  pointer-events: auto;
+}
+
+.scene-hotspot-layer .scene-slot-left { top: 46%; left: 8%; }
+.scene-hotspot-layer .scene-slot-center { top: 32%; left: 50%; translate: -50% 0; }
+.scene-hotspot-layer .scene-slot-right { top: 46%; right: 8%; }
+.scene-hotspot-layer .scene-slot-foreground { bottom: 9%; left: 50%; translate: -50% 0; }
 
 .scene-action-rail {
   position: absolute;
@@ -780,9 +793,9 @@ select:focus,
 
 .scene-action-rail button {
   padding: 8px 14px;
-  border: 1px solid var(--game-border);
+  border: 1px solid var(--game-surface-border);
   border-radius: 6px;
-  background: var(--game-surface);
+  background: var(--game-surface-raised);
   cursor: pointer;
   font-size: 0.8rem;
 }
@@ -814,8 +827,8 @@ select:focus,
   overflow-y: auto;
   padding: 24px;
   border-radius: 12px;
-  background: var(--game-surface);
-  border: 1px solid var(--game-border);
+  background: var(--game-surface-raised);
+  border: 1px solid var(--game-surface-border);
 }
 
 .adventure-overlay-content > button:first-child {
@@ -861,9 +874,9 @@ select:focus,
 
 .npc-dialogue-choices button {
   padding: 8px 12px;
-  border: 1px solid var(--game-border);
+  border: 1px solid var(--game-surface-border);
   border-radius: 6px;
-  background: var(--game-surface);
+  background: var(--game-surface-raised);
   cursor: pointer;
   text-align: left;
 }
@@ -891,7 +904,19 @@ select:focus,
   }
 
   .world-map-nodes {
-    flex-direction: column;
-    align-items: stretch;
+    inset: 0;
   }
+
+  .map-node {
+    width: min(34vw, 150px);
+    padding: 8px;
+  }
+
+  .scene-hotspot-layer .scene-hotspot {
+    width: min(38vw, 155px);
+    padding: 8px;
+  }
+
+  .scene-hotspot-layer .scene-slot-left { left: 4%; }
+  .scene-hotspot-layer .scene-slot-right { right: 4%; }
 }

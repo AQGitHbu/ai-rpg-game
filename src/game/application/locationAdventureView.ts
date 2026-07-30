@@ -159,8 +159,14 @@ function projectWorldMap(blueprint: ScenarioBlueprint, state: GameState): WorldM
   }
   // locked：active visit_location 目标但尚未解锁——中性文案，无 locationId，零泄漏。
   const lockedTargets = collectLockedVisitTargets(blueprint, state);
+  const usedPositions = new Set(nodes.map((node) => node.position));
   for (let i = 0; i < lockedTargets.length; i++) {
-    nodes.push({ state: "locked", name: "探寻未知之地", hint: "尚未解锁", visual: "map_node_locked", position: MAP_NODE_POSITIONS[i % MAP_NODE_POSITIONS.length] });
+    // locked 节点只按当前安全可见节点占用的位置寻找空位：既不携带、也不按
+    // 被锁目标的 ID/蓝图顺序决定位置，避免视觉布局成为身份侧信道。
+    const position = MAP_NODE_POSITIONS.find((candidate) => !usedPositions.has(candidate))
+      ?? MAP_NODE_POSITIONS[i % MAP_NODE_POSITIONS.length];
+    usedPositions.add(position);
+    nodes.push({ state: "locked", name: "探寻未知之地", hint: "尚未解锁", visual: "map_node_locked", position });
   }
   return { nodes };
 }

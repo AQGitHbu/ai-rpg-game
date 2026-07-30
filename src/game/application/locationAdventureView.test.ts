@@ -132,6 +132,8 @@ describe("projectLocationAdventureView：世界地图封闭可见范围", () => 
     const first = project(state).worldMap.nodes;
     expect(project(state).worldMap.nodes).toEqual(first);
     expect(first.every((node) => "position" in node)).toBe(true);
+    // 节点数未超过可用位置时，locked 不得遮住任何已知节点。
+    expect(new Set(first.map((node) => node.position)).size).toBe(first.length);
     const locked = first.find((node) => node.state === "locked");
     expect(locked).toMatchObject({ state: "locked", position: expect.any(String) });
     expect(locked).not.toHaveProperty("locationId");
