@@ -1,5 +1,4 @@
 import {
-  CONTENT_BUDGET,
   type EndingDefinitionCandidate,
   type QuestDefinitionCandidate,
   type QuestOutcomeCandidate
@@ -58,6 +57,7 @@ export type QuestGraphInput = {
   quests: readonly QuestDefinitionCandidate[];
   endings: readonly EndingDefinitionCandidate[];
   knownEntityIds: QuestGraphKnownEntityIds;
+  budget: { readonly mainActs: number; readonly sideQuestsMax: number; readonly endings: number };
 };
 
 export type QuestReachabilityAnalysis = {
@@ -133,7 +133,7 @@ export function analyzeQuestReachability(
  * 不抛异常——候选来自 AI/JSON，由 Task 5 聚合全部问题后决定修复或 fallback。
  */
 export function validateQuestGraph(input: QuestGraphInput): readonly QuestGraphIssue[] {
-  const { quests, endings, knownEntityIds } = input;
+  const { quests, endings, knownEntityIds, budget } = input;
   const issues: QuestGraphIssue[] = [];
 
   const questIds = collectUniqueIds(issues, quests, "quests", "DUPLICATE_QUEST_ID");
@@ -174,7 +174,7 @@ export function validateQuestGraph(input: QuestGraphInput): readonly QuestGraphI
     });
   });
 
-  validateStructure(issues, quests, endings);
+  validateStructure(issues, quests, endings, budget);
   validateReachability(issues, quests, endings);
   return issues;
 }
@@ -243,7 +243,8 @@ function validateOutcome(
 function validateStructure(
   issues: QuestGraphIssue[],
   quests: readonly QuestDefinitionCandidate[],
-  endings: readonly EndingDefinitionCandidate[]
+  endings: readonly EndingDefinitionCandidate[],
+  budget: { readonly mainActs: number; readonly sideQuestsMax: number; readonly endings: number }
 ): void {
   const stageCounts = new Map<number, number>();
   let sideCount = 0;
@@ -253,7 +254,7 @@ function validateStructure(
       return;
     }
     const stage = quest.stage as number;
-    if (stage !== 1 && stage !== 2 && stage !== 3) {
+    if (!Number.isInteger(stage) || stage < 1 || stage > budget.mainActs) {
       issues.push({
         path: `quests[${index}].stage`,
         code: "INVALID_MAIN_STAGE",
@@ -270,28 +271,27 @@ function validateStructure(
   } else if (initialCount > 1) {
     issues.push({ path: "quests", code: "MULTIPLE_INITIAL_MAIN_QUESTS", params: { count: initialCount } });
   }
-  for (const stage of [1, 2, 3]) {
-    const count = stageCounts.get(stage) ?? 0;
-    // 主线固定三阶段：stage 2、3 缺失单独报告（stage 1 缺失已由 NO_INITIAL_MAIN_QUEST 覆盖）。
-    if (count === 0 && stage !== 1) {
-      issues.push({ path: "quests", code: "MISSING_MAIN_STAGE", params: { stage } });
+  for (let act = 1; act <= budget.mainActs; act++) {
+    const count = stageCounts.get(act) ?? 0;
+    if (count === 0 && act !== 1) {
+      issues.push({ path: "quests", code: "MISSING_MAIN_STAGE", params: { stage: act } });
     }
     if (count > 1) {
-      issues.push({ path: "quests", code: "MAIN_STAGE_OVERBUDGET", params: { stage, count } });
+      issues.push({ path: "quests", code: "MAIN_STAGE_OVERBUDGET", params: { stage: act, count } });
     }
   }
-  if (sideCount > CONTENT_BUDGET.sideQuestsMax) {
+  if (sideCount > budget.sideQuestsMax) {
     issues.push({
       path: "quests",
       code: "SIDE_QUEST_OVERBUDGET",
-      params: { count: sideCount, max: CONTENT_BUDGET.sideQuestsMax }
+      params: { count: sideCount, max: budget.sideQuestsMax }
     });
   }
-  if (endings.length !== CONTENT_BUDGET.endings) {
+  if (endings.length !== budget.endings) {
     issues.push({
       path: "endings",
       code: "ENDING_COUNT_MISMATCH",
-      params: { count: endings.length, expected: CONTENT_BUDGET.endings }
+      params: { count: endings.length, expected: budget.endings }
     });
   }
 }

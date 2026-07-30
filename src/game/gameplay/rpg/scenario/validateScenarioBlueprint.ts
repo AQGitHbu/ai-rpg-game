@@ -109,7 +109,8 @@ export function validateScenarioBlueprintCandidate(
     ...validateQuestGraph({
       quests: candidate.quests,
       endings: candidate.endings,
-      knownEntityIds: collectKnownEntityIds(candidate)
+      knownEntityIds: collectKnownEntityIds(candidate),
+      budget: { mainActs: 3, sideQuestsMax: CONTENT_BUDGET.sideQuestsMax, endings: CONTENT_BUDGET.endings }
     })
   );
   validateNumericRanges(issues, candidate);

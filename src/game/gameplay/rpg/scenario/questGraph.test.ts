@@ -39,7 +39,7 @@ function ending(endingId: string): QuestOutcomeCandidate {
 
 type QuestOverrides = Partial<QuestDefinitionCandidate> & { id: string };
 
-function mainQuest(stage: 1 | 2 | 3, overrides: QuestOverrides): QuestDefinitionCandidate {
+function mainQuest(stage: number, overrides: QuestOverrides): QuestDefinitionCandidate {
   return {
     kind: "main",
     stage,
@@ -83,12 +83,15 @@ function makeEndings(): EndingDefinitionCandidate[] {
   return [makeEnding("e1"), makeEnding("e2")];
 }
 
+const DEFAULT_BUDGET = { mainActs: 3, sideQuestsMax: 2, endings: 2 };
+
 function issuesOf(
   quests: readonly QuestDefinitionCandidate[],
   endings: readonly EndingDefinitionCandidate[] = makeEndings(),
-  knownEntityIds: QuestGraphKnownEntityIds = KNOWN_ENTITIES
+  knownEntityIds: QuestGraphKnownEntityIds = KNOWN_ENTITIES,
+  budget = DEFAULT_BUDGET
 ): readonly QuestGraphIssue[] {
-  return validateQuestGraph({ quests, endings, knownEntityIds });
+  return validateQuestGraph({ quests, endings, knownEntityIds, budget });
 }
 
 function codesOf(issues: readonly QuestGraphIssue[]): string[] {
@@ -348,6 +351,45 @@ describe("validateQuestGraph：主线阶段与支线预算", () => {
       { path: "quests", code: "MISSING_MAIN_STAGE", params: { stage: 2 } },
       { path: "quests", code: "MISSING_MAIN_STAGE", params: { stage: 3 } }
     ]);
+  });
+});
+
+describe("validateQuestGraph：可变主线幕数", () => {
+  const BUDGET_5 = { mainActs: 5, sideQuestsMax: 2, endings: 2 };
+
+  function make5ActQuests(): QuestDefinitionCandidate[] {
+    return [
+      mainQuest(1, { id: "m1", onSuccess: unlock("m2") }),
+      mainQuest(2, { id: "m2", onSuccess: unlock("m3") }),
+      mainQuest(3, { id: "m3", onSuccess: unlock("m4") }),
+      mainQuest(4, { id: "m4", onSuccess: unlock("m5") }),
+      mainQuest(5, { id: "m5", onSuccess: ending("e1"), onFailure: ending("e2") })
+    ];
+  }
+
+  it("5 幕合法链无 issue", () => {
+    expect(issuesOf(make5ActQuests(), makeEndings(), KNOWN_ENTITIES, BUDGET_5)).toEqual([]);
+  });
+
+  it("缺 stage 3（mainActs 5）→ MISSING_MAIN_STAGE", () => {
+    const quests = make5ActQuests().filter((q) => q.id !== "m3");
+    quests[1] = mainQuest(2, { id: "m2", onSuccess: unlock("m4") });
+    const issues = issuesOf(quests, makeEndings(), KNOWN_ENTITIES, BUDGET_5);
+    expect(issues).toContainEqual({ path: "quests", code: "MISSING_MAIN_STAGE", params: { stage: 3 } });
+  });
+
+  it("stage 6（mainActs 5）→ INVALID_MAIN_STAGE", () => {
+    const quests = make5ActQuests();
+    quests[4] = { ...mainQuest(5, { id: "m5" }), stage: 6 } as unknown as QuestDefinitionCandidate;
+    const issues = issuesOf(quests, makeEndings(), KNOWN_ENTITIES, BUDGET_5);
+    expect(codesOf(issues)).toContain("INVALID_MAIN_STAGE");
+  });
+
+  it("stage 2 出现两次 → MAIN_STAGE_OVERBUDGET", () => {
+    const quests = [...make5ActQuests(), mainQuest(2, { id: "m2b" })];
+    quests[0] = mainQuest(1, { id: "m1", onSuccess: unlock("m2", "m2b") });
+    const issues = issuesOf(quests, makeEndings(), KNOWN_ENTITIES, BUDGET_5);
+    expect(issues).toContainEqual({ path: "quests", code: "MAIN_STAGE_OVERBUDGET", params: { stage: 2, count: 2 } });
   });
 });
 
