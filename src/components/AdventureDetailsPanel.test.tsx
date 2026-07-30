@@ -8,12 +8,44 @@ afterEach(() => {
 });
 
 describe("AdventureDetailsPanel", () => {
-  it("panel=character 显示角色信息", () => {
+  it("panel=character 渲染横屏角色面板，包含头像、身份与扩展属性卡片", () => {
     vi.stubGlobal("fetch", vi.fn());
-    render(<AdventureDetailsPanel view={buildSessionViewFixture()} panel="character" />);
+    const { container } = render(
+      <AdventureDetailsPanel view={buildSessionViewFixture()} panel="character" />
+    );
 
     expect(screen.getByText("沈青崖")).toBeInTheDocument();
     expect(screen.getByText("落魄镖师")).toBeInTheDocument();
+    expect(screen.getByText("等级 1")).toBeInTheDocument();
+    expect(screen.getByText("生命 (HP)")).toBeInTheDocument();
+    expect(screen.getByText("基础属性")).toBeInTheDocument();
+    expect(screen.getByText("拓展属性")).toBeInTheDocument();
+
+    // 验证带有 .details-character-landscape 容器与 SVG 头像
+    expect(container.querySelector(".details-character-landscape")).not.toBeNull();
+    expect(container.querySelector(".character-avatar-frame svg")).not.toBeNull();
+  });
+
+  it("panel=character 渲染 HP 血条与基础/拓展属性数值", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const fixture = buildSessionViewFixture();
+    const { container } = render(<AdventureDetailsPanel view={fixture} panel="character" />);
+
+    const hp = fixture.player.stats.hp;
+    expect(screen.getByText(`${hp} / ${hp}`)).toBeInTheDocument();
+    const bar = screen.getByRole("progressbar");
+    expect(bar).toHaveAttribute("aria-valuenow", "100");
+
+    expect(screen.getByText("攻击")).toBeInTheDocument();
+    expect(screen.getByText(String(fixture.player.stats.attack))).toBeInTheDocument();
+    expect(screen.getByText("防御")).toBeInTheDocument();
+    expect(screen.getByText(String(fixture.player.stats.defense))).toBeInTheDocument();
+
+    // 扩展属性插槽：速度 / 暴击率 / 闪避率
+    expect(screen.getByText("速度")).toBeInTheDocument();
+    expect(screen.getByText("暴击率")).toBeInTheDocument();
+    expect(screen.getByText("闪避率")).toBeInTheDocument();
+    expect(container.querySelectorAll(".stat-card-extended")).toHaveLength(3);
   });
 
   it("panel=inventory 显示物品列表", () => {
