@@ -1,5 +1,6 @@
 import { createOpenAiCompatibleTransport, type AiTransport } from "@ai-game/ai-transport";
 import { loadScenarioProfiles } from "@/game/gameplay/rpg/scenario";
+import type { GameLogger } from "@/game/logging";
 import type { ScenarioCandidateSource } from "../../scenarioGeneration";
 import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
 import {
@@ -25,6 +26,7 @@ import { buildScenarioResponseFormatExtraBody } from "./scenarioResponseFormat";
 /** 测试注入点：只允许替换 transport 创建（保持生产装配唯一）。 */
 export type ScenarioCandidateSourceFactoryOptions = Readonly<{
   transportFactory?: () => AiTransport;
+  logger?: GameLogger;
 }>;
 
 /** 依 AI 运行时配置装配候选来源；env 由 composition root 注入，本工厂不读 process.env。 */
@@ -42,7 +44,7 @@ export function createScenarioCandidateSource(
     config: runtime.config,
     buildMessages: (request) => buildScenarioPromptMessages(request, profiles),
     // 默认结构化审计：只输出脱敏白名单字段，绝不落 prompt/响应原文/密钥。
-    audit: createStructuredScenarioGenerationAudit({ log: (line) => console.log(line) }),
+    audit: createStructuredScenarioGenerationAudit({ logger: options.logger }),
     // Phase 4C：按显式输出格式构建 response_format；prompt_only ⇒ undefined。
     extraBody: buildScenarioResponseFormatExtraBody(runtime.outputFormat)
   });

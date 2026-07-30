@@ -1,4 +1,5 @@
 import type { AiTransportFailureCode, AiUsage } from "@ai-game/ai-transport";
+import type { GameLogger } from "@/game/logging";
 import type { ScenarioCandidateFailureCategory } from "../../scenarioGeneration";
 
 // ---------------------------------------------------------------------------
@@ -34,6 +35,7 @@ export type ScenarioAuditPricing = Readonly<{
 
 export type StructuredScenarioGenerationAuditOptions = Readonly<{
   log?: (line: string) => void;
+  logger?: GameLogger;
   pricing?: ScenarioAuditPricing;
 }>;
 
@@ -44,11 +46,12 @@ export type StructuredScenarioGenerationAuditOptions = Readonly<{
 export function createStructuredScenarioGenerationAudit(
   options: StructuredScenarioGenerationAuditOptions = {}
 ): ScenarioGenerationAudit {
-  const { log, pricing } = options;
+  const { log, logger, pricing } = options;
   return {
     record(event) {
-      if (log === undefined) return;
-      log(JSON.stringify(buildPayload(event, pricing)));
+      const payload = buildPayload(event, pricing);
+      if (logger !== undefined) logger.info("scenario_generation", payload);
+      else if (log !== undefined) log(JSON.stringify(payload));
     }
   };
 }

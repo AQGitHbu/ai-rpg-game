@@ -1,4 +1,5 @@
 import type { GameRepository } from "./server/persistence/gameRepository";
+import type { GameLogger } from "@/game/logging";
 import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
 import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
@@ -11,6 +12,7 @@ export type GeneratePendingNarrativeSceneDependencies = Readonly<{
     sceneScriptSource: SceneScriptSource;
     npcLineSource: NpcLineSource;
   }>;
+  logger?: GameLogger;
 }>;
 
 export type GeneratePendingNarrativeSceneResult =
@@ -60,6 +62,7 @@ export async function generatePendingNarrativeScene(
     blueprint: record.blueprint,
     state: record.state,
     ...deps.runtimeNarrativeSources,
+    logger: deps.logger,
   });
   const saved = await deps.repository.applyResolvedAction({
     gameId: record.gameId,

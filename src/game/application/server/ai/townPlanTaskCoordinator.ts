@@ -2,6 +2,7 @@ import {
   generatePendingTownPlan,
   type GeneratePendingTownPlanDependencies,
 } from "../../generatePendingTownPlan";
+import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
 
 export type TownEnsureResult =
   | "queued"
@@ -18,7 +19,7 @@ export class TownPlanTaskCoordinator {
 
   constructor(
     private readonly deps: GeneratePendingTownPlanDependencies,
-    private readonly log: (event: Readonly<Record<string, unknown>>) => void = console.log,
+    private readonly logger: GameLogger = NOOP_GAME_LOGGER,
   ) {}
 
   async ensure(): Promise<TownEnsureResult> {
@@ -31,10 +32,10 @@ export class TownPlanTaskCoordinator {
     const task = Promise.resolve()
       .then(() => generatePendingTownPlan(this.deps))
       .then((result) => {
-        if (result === "unavailable") this.log({ event: "town_plan_task", result });
+        if (result === "unavailable") this.logger.warn("town_plan_task", { result });
       })
       .catch(() => {
-        this.log({ event: "town_plan_task", result: "unavailable" });
+        this.logger.error("town_plan_task", { result: "unavailable" });
       })
       .finally(() => {
         this.running.delete(key);

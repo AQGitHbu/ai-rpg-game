@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { NewGameInput } from "@/game/domain";
+import { createServerConsoleLogger } from "@/game/logging/serverConsoleLogger";
 import wuxiaFixture from "../../../../data/fixtures/phase1/wuxia.json";
 import {
   createGame,
@@ -100,10 +101,12 @@ export function createServerGameEntryPoints(
   env: Record<string, string | undefined> = process.env,
   options: ServerGameEntryPointOptions = {}
 ): ServerGameEntryPoints {
+  const logger = createServerConsoleLogger();
   const repository = createSqliteGameRepository({
-    clientFactory: createServerSqliteClientFactory(env)
+    clientFactory: createServerSqliteClientFactory(env),
+    logError: (operation) => logger.error("sqlite_repository_failure", { operation })
   });
-  const runtimeNarrativeSources = createRuntimeNarrativeSources(env);
+  const runtimeNarrativeSources = createRuntimeNarrativeSources(env, { logger });
   const dependencies: CreateGameDependencies = {
     repository,
     // 生产 provider：UUID 存档 ID、随机 seed、真实时钟（ISO 8601）。
@@ -113,7 +116,7 @@ export function createServerGameEntryPoints(
     // Phase 4B：按 AI 运行时配置装配 source——配置有效走 live，否则 unavailable
     // （玩家稳定走 fallback）。fixture source 绝不按 env 切入生产。
     // traceId 只进 source 请求与脱敏审计；observer 仅接收脱敏阶段事件。
-    scenarioCandidateSource: createScenarioCandidateSource(env),
+    scenarioCandidateSource: createScenarioCandidateSource(env, { logger }),
     newTraceId: () => randomUUID(),
     generationObserver: options.generationObserver,
     runtimeNarrativeSources,
@@ -133,13 +136,14 @@ export function createServerGameEntryPoints(
     repository,
     newTraceId: () => randomUUID(),
     runtimeNarrativeSources,
-  });
+    logger
+  }, logger);
   const townPlanCoordinator = new TownPlanTaskCoordinator({
     repository,
     newTraceId: () => randomUUID(),
     now: () => new Date().toISOString(),
-    townPlanSource: createTownPlanSource(env),
-  });
+    townPlanSource: createTownPlanSource(env, { logger }),
+  }, logger);
   return {
     developmentToolsEnabled: env.NODE_ENV === "development",
     // 刻意不透传 command.seed：浏览器/API 无法指定 seed 或 gameId。

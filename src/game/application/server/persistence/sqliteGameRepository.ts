@@ -1,4 +1,5 @@
 import type { GameState, ScenarioBlueprint } from "@/game/domain";
+import { NOOP_GAME_LOGGER } from "@/game/logging";
 import {
   asGameId,
   type ApplyResolvedActionInput,
@@ -276,9 +277,9 @@ export function createSqliteGameRepository(
 ): SqliteGameRepository {
   const logError =
     options.logError ??
-    ((context: string, error: unknown) => {
-      // 默认只进 server 端日志：绝不把异常文本放进返回结果。
-      console.error(`[sqliteGameRepository] ${context}`, error);
+    ((context: string, _error: unknown) => {
+      // production composition root 注入真正的脱敏 server logger；默认不输出。
+      NOOP_GAME_LOGGER.error("sqlite_repository_failure", { operation: context });
     });
 
   let client: SqliteClient | null = null;

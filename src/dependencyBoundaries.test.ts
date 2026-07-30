@@ -786,6 +786,7 @@ const SERVER_DIR = "game/application/server/";
 const PURE_PORT_SPECIFIER = "./server/persistence/gameRepository";
 /** API route 层唯一许可的 server 入口。 */
 const COMPOSITION_ROOT_SPECIFIER = "@/game/application/server/compositionRoot";
+const SERVER_LOGGER_SPECIFIER = "@/game/logging/serverConsoleLogger";
 
 /** src 相对路径（POSIX 分隔符），便于断言与报告。 */
 function toPosixRelative(file: string): string {
@@ -895,5 +896,18 @@ describe("server-only modules stay out of client-importable code", () => {
       .filter((file) => /process\.env/.test(stripComments(readFileSync(file, "utf8"))))
       .map(toPosixRelative);
     expect(offenders).toEqual([]);
+  });
+
+  it("only the server composition root imports the server console logger", () => {
+    const violations = productionFiles
+      .filter((file) => toPosixRelative(file) !== "game/application/server/compositionRoot.ts")
+      .filter((file) => extractSpecifiers(readFileSync(file, "utf8")).includes(SERVER_LOGGER_SPECIFIER))
+      .map(toPosixRelative);
+    expect(violations).toEqual([]);
+    const compositionRoot = readFileSync(
+      resolve(sourceRoot, "game/application/server/compositionRoot.ts"),
+      "utf8"
+    );
+    expect(extractSpecifiers(compositionRoot)).toContain(SERVER_LOGGER_SPECIFIER);
   });
 });

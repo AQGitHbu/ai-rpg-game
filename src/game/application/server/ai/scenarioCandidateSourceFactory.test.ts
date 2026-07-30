@@ -70,7 +70,6 @@ describe("createScenarioCandidateSource：extraBody 按格式装配", () => {
     ["prompt_only", undefined],
     ["json_object", { response_format: { type: "json_object" } }]
   ] as const)("AI_OUTPUT_FORMAT=%s ⇒ extraBody 并入 enable_thinking + 低温 + 长超时", async (format, expected) => {
-    vi.spyOn(console, "log").mockImplementation(() => {}); // 静音默认 audit
     const { calls, transport } = fakeTransport();
     const source = createScenarioCandidateSource(
       { ...VALID_ENV, AI_OUTPUT_FORMAT: format },
@@ -86,7 +85,6 @@ describe("createScenarioCandidateSource：extraBody 按格式装配", () => {
   });
 
   it("json_schema ⇒ strict 命名 schema 进入 extraBody", async () => {
-    vi.spyOn(console, "log").mockImplementation(() => {});
     const { calls, transport } = fakeTransport();
     const source = createScenarioCandidateSource(
       { ...VALID_ENV, AI_OUTPUT_FORMAT: "json_schema" },

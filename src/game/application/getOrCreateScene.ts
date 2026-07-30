@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import type { GameState, ScenarioBlueprint, NarrativeSceneState } from "@/game/domain";
+import type { GameLogger } from "@/game/logging";
 import type {
   DirectorSource,
   SceneScriptSource,
@@ -21,6 +22,7 @@ export type GetOrCreateSceneInput = {
   readonly directorSource: DirectorSource;
   readonly sceneScriptSource: SceneScriptSource;
   readonly npcLineSource: NpcLineSource;
+  readonly logger?: GameLogger;
 };
 
 export type GetOrCreateSceneResult = {
@@ -59,6 +61,7 @@ export async function getOrCreateScene(
     directorSource,
     sceneScriptSource,
     npcLineSource,
+    logger: input.logger,
   });
 
   return {

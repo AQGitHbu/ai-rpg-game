@@ -2,6 +2,7 @@ import {
   generatePendingNarrativeScene,
   type GeneratePendingNarrativeSceneDependencies,
 } from "../../generatePendingNarrativeScene";
+import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
 
 export type NarrativeEnsureResult =
   | "queued"
@@ -18,7 +19,7 @@ export class RuntimeNarrativeTaskCoordinator {
 
   constructor(
     private readonly deps: GeneratePendingNarrativeSceneDependencies,
-    private readonly log: (event: Readonly<Record<string, unknown>>) => void = console.log,
+    private readonly logger: GameLogger = NOOP_GAME_LOGGER,
   ) {}
 
   async ensure(): Promise<NarrativeEnsureResult> {
@@ -38,10 +39,10 @@ export class RuntimeNarrativeTaskCoordinator {
     const task = Promise.resolve()
       .then(() => generatePendingNarrativeScene(this.deps))
       .then((result) => {
-        if (result === "unavailable") this.log({ event: "runtime_narrative_task", result });
+        if (result === "unavailable") this.logger.warn("runtime_narrative_task", { result });
       })
       .catch(() => {
-        this.log({ event: "runtime_narrative_task", result: "unavailable" });
+        this.logger.error("runtime_narrative_task", { result: "unavailable" });
       })
       .finally(() => {
         this.running.delete(key);

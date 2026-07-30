@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import type { GameState, ScenarioBlueprint, NarrativeSceneState, NpcId, FactId } from "@/game/domain";
+import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
 import type { NarrativeActionCandidate, ApprovedDirectorPlan, ApprovedSceneScript } from "@/game/gameplay/rpg/narrative";
 import {
   approveDirectorProposal,
@@ -42,6 +43,7 @@ export type OrchestrateNarrativeSceneInput = {
   readonly directorSource: DirectorSource;
   readonly sceneScriptSource: SceneScriptSource;
   readonly npcLineSource: NpcLineSource;
+  readonly logger?: GameLogger;
 };
 
 export type OrchestrateSceneResult = {
@@ -62,6 +64,7 @@ export async function orchestrateNarrativeScene(
   input: OrchestrateNarrativeSceneInput
 ): Promise<OrchestrateSceneResult> {
   const { traceId, blueprint, state, directorSource, sceneScriptSource, npcLineSource } = input;
+  const logger = input.logger ?? NOOP_GAME_LOGGER;
 
   // 构建 action candidates
   const availableActions = projectAvailableActions(blueprint, state);
@@ -87,7 +90,7 @@ export async function orchestrateNarrativeScene(
     if (!directorAttempt.ok) continue;
     const approval = approveDirectorProposal({ proposal: directorAttempt.plan, blueprint, state, candidates });
     if (approval.ok) { plan = approval.value; break; }
-    console.log(JSON.stringify({ event: "runtime_narrative_approval", role: "director", approved: false, category: approval.category }));
+    logger.warn("runtime_narrative_approval", { traceId, role: "director", category: approval.category });
   }
   if (plan === undefined) return buildFallbackResult(traceId, directorAttempt, null, false, candidates, state);
 
@@ -105,7 +108,7 @@ export async function orchestrateNarrativeScene(
     if (!scriptAttempt.ok) continue;
     const approval = approveSceneScript({ proposal: scriptAttempt.script, plan, blueprint });
     if (approval.ok) { script = approval.value; break; }
-    console.log(JSON.stringify({ event: "runtime_narrative_approval", role: "writer", approved: false, category: approval.category }));
+    logger.warn("runtime_narrative_approval", { traceId, role: "writer", category: approval.category });
   }
   if (script === undefined || scriptAttempt === null) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false, candidates, state);
 

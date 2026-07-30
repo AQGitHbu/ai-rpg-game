@@ -5,6 +5,7 @@ import type {
   AiTransport,
   AiTransportConfig
 } from "@ai-game/ai-transport";
+import { createGameLogger, type GameLogEntry } from "@/game/logging";
 import { TOWN_PLAN_CONTRACT_VERSION, type TownPlanRequest } from "../../townPlanGeneration";
 import {
   createLiveTownPlanSource,
@@ -70,8 +71,12 @@ function okResult(content: string): AiCompletionResult {
 
 function makeLive(results: readonly AiCompletionResult[]) {
   const { transport, calls } = fakeTransport(results);
-  const logs: string[] = [];
-  const source = createLiveTownPlanSource({ transport, config: CONFIG, log: (line) => logs.push(line) });
+  const logs: GameLogEntry[] = [];
+  const source = createLiveTownPlanSource({
+    transport,
+    config: CONFIG,
+    logger: createGameLogger({ write: (entry) => logs.push(entry) })
+  });
   return { source, calls, logs };
 }
 
@@ -123,7 +128,7 @@ describe("createLiveTownPlanSource", () => {
   it("遥测与诊断绝不泄漏 prompt / 密钥 / URL / 模型输出", async () => {
     const { source, logs } = makeLive([okResult(JSON.stringify({ theme: "泄漏检测", secretEcho: "sk-should-never-leak" }))]);
     await source.generate(REQUEST);
-    const blob = logs.join("\n");
+    const blob = JSON.stringify(logs);
     expect(blob).not.toContain("sk-should-never-leak");
     expect(blob).not.toContain(CONFIG.baseUrl);
     expect(blob).not.toContain(REQUEST.traceId);

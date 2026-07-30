@@ -66,7 +66,7 @@ describe("TownPlanTaskCoordinator", () => {
       newTraceId: () => "town-trace",
       now: () => "2026-07-30T08:00:01.000Z",
       townPlanSource
-    }, () => {});
+    });
 
     expect(await coordinator.ensure()).toBe("queued");
     await sourceStarted.promise;
@@ -97,7 +97,7 @@ describe("TownPlanTaskCoordinator", () => {
       newTraceId: () => "t",
       now: () => "t",
       townPlanSource: { async generate() { throw new Error("not reached"); } }
-    }, () => {});
+    });
 
     expect(await coordinator.ensure()).toBe("not_pending");
   });

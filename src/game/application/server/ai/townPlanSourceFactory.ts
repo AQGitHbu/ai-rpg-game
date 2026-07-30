@@ -1,4 +1,5 @@
 import { createOpenAiCompatibleTransport, type AiTransport } from "@ai-game/ai-transport";
+import type { GameLogger } from "@/game/logging";
 import type { TownPlanCandidateSource } from "../../townPlanGeneration";
 import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
 import {
@@ -17,6 +18,7 @@ import {
 /** 测试注入点：只允许替换 transport 创建（保持生产装配唯一）。 */
 export type TownPlanSourceFactoryOptions = Readonly<{
   transportFactory?: () => AiTransport;
+  logger?: GameLogger;
 }>;
 
 /** 依 AI 运行时配置装配来源；env 由 composition root 注入。 */
@@ -30,6 +32,7 @@ export function createTownPlanSource(
   }
   return createLiveTownPlanSource({
     transport: (options.transportFactory ?? createOpenAiCompatibleTransport)(),
-    config: runtime.config
+    config: runtime.config,
+    logger: options.logger
   });
 }

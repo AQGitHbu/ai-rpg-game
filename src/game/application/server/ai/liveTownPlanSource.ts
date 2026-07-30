@@ -1,4 +1,5 @@
 import type { AiTransport, AiTransportConfig, AiTransportFailureCode } from "@ai-game/ai-transport";
+import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
 import {
   TOWN_PLAN_CONTRACT_VERSION,
   type TownPlanAttempt,
@@ -47,13 +48,13 @@ export function createUnavailableTownPlanSource(
 export type LiveTownPlanSourceInput = Readonly<{
   transport: AiTransport;
   config: AiTransportConfig;
-  /** 脱敏审计出口：默认 console.log；测试注入收集器。 */
-  log?: (line: string) => void;
+  /** 脱敏审计出口：由 composition root 注入；测试可收集结构化 entry。 */
+  logger?: GameLogger;
 }>;
 
 /** 真实 provider 来源：一次请求 = 一次 attempt，失败映射稳定类别。 */
 export function createLiveTownPlanSource(input: LiveTownPlanSourceInput): TownPlanCandidateSource {
-  const log = input.log ?? ((line: string) => console.log(line));
+  const logger = input.logger ?? NOOP_GAME_LOGGER;
   return {
     async generate(request: TownPlanRequest): Promise<TownPlanAttempt> {
       const startedAt = Date.now();
@@ -66,21 +67,21 @@ export function createLiveTownPlanSource(input: LiveTownPlanSourceInput): TownPl
           timeoutMs: 120_000
         });
       } catch {
-        audit(log, false, "service_error", Date.now() - startedAt);
+        audit(logger, false, "service_error", Date.now() - startedAt);
         return failure("service_error");
       }
       if (!completed.ok) {
         const category = FAILURE_CATEGORY[completed.code];
-        audit(log, false, category, completed.latencyMs);
+        audit(logger, false, category, completed.latencyMs);
         return failure(category);
       }
       const candidate = parseObject(completed.content);
       if (candidate === null) {
         const category = completed.content.trim() === "" ? "empty_response" : "invalid_json";
-        audit(log, false, category, completed.latencyMs);
+        audit(logger, false, category, completed.latencyMs);
         return failure(category);
       }
-      audit(log, true, undefined, completed.latencyMs);
+      audit(logger, true, undefined, completed.latencyMs);
       return {
         ok: true,
         contractVersion: TOWN_PLAN_CONTRACT_VERSION,
@@ -104,17 +105,16 @@ function failure(category: TownPlanFailureCategory): TownPlanAttempt {
 
 /** 白名单遥测：绝不含 prompt、模型输出、model、URL 或密钥。 */
 function audit(
-  log: (line: string) => void,
+  logger: GameLogger,
   generated: boolean,
   category: TownPlanFailureCategory | undefined,
   latencyMs: number
 ): void {
-  log(JSON.stringify({
-    event: "town_plan",
+  logger.info("town_plan", {
     generated,
     ...(category === undefined ? {} : { category }),
     latencyMs
-  }));
+  });
 }
 
 /** 本地解析：容忍 ```json 围栏；解析失败只映射稳定类别，绝不外泄模型文本。 */

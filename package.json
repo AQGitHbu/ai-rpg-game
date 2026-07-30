@@ -14,7 +14,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "test:boundaries": "vitest run src/dependencyBoundaries.test.ts",
+    "test:boundaries": "vitest run src/dependencyBoundaries.test.ts src/game/logging/dependencyBoundaries.test.ts",
     "test:shared-ui": "vitest run src/components/sharedUiContract.test.tsx",
     "sync:standards": "node scripts/syncStandards.mjs",
     "check:standards": "node scripts/checkStandards.mjs",

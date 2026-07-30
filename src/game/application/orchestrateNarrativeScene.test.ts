@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { asFactId, asLocationId, asNpcId, type GameState, type ScenarioBlueprint } from "@/game/domain";
+import { createGameLogger, type GameLogEntry } from "@/game/logging";
 import type {
   DirectorSource,
   SceneScriptSource,
@@ -144,5 +145,52 @@ describe("orchestrateNarrativeScene fallback", () => {
     expect(result.scene.narration.length).toBeGreaterThan(0);
     expect(result.scene.choices).toHaveLength(2);
     expect(directorCalls).toBe(3);
+  });
+
+  it("记录被规则拒绝的 director 提案，但不写入提案内容", async () => {
+    const entries: GameLogEntry[] = [];
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-rejected-proposal",
+      blueprint,
+      state,
+      directorSource: {
+        async generate() {
+          return {
+            ok: true,
+            provenance: "generated",
+            plan: {
+              sceneGoal: "不应进入日志",
+              tensionLevel: 1,
+              focusNpcId: null,
+              relevantFactIds: [],
+              allowedRevealFactIds: [],
+              suggestedActionKeys: ["invalid:first", "invalid:second"],
+              introducedEntities: [],
+              pacing: "setup"
+            },
+            diagnostics: {
+              traceId: "test-rejected-proposal-director",
+              contractVersion: "runtime-narrative-v1",
+              stage: "candidate_received"
+            }
+          } as never;
+        }
+      },
+      sceneScriptSource: { async generate() { throw new Error("not reached"); } },
+      npcLineSource: { async generate() { throw new Error("not reached"); } },
+      logger: createGameLogger({ write: (entry) => entries.push(entry) })
+    });
+
+    expect(result.provenance).toBe("fallback");
+    expect(entries).toContainEqual({
+      level: "warn",
+      event: "runtime_narrative_approval",
+      details: {
+        traceId: "test-rejected-proposal",
+        role: "director",
+        category: "choice_not_legal"
+      }
+    });
+    expect(JSON.stringify(entries)).not.toContain("不应进入日志");
   });
 });

@@ -72,7 +72,7 @@ describe("RuntimeNarrativeTaskCoordinator", () => {
         sceneScriptSource: { async generate() { throw new Error("not reached"); } },
         npcLineSource: { async generate() { throw new Error("not reached"); } },
       },
-    }, () => {});
+    });
 
     expect(await coordinator.ensure()).toBe("queued");
     await directorStarted.promise;
