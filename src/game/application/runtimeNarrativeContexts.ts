@@ -141,6 +141,8 @@ export type NpcLineContext = {
   readonly npcDefinition: Record<string, unknown>;
   readonly factCards: readonly Record<string, unknown>[];
   readonly recentEvents: readonly string[];
+  readonly speechAct: string;
+  readonly mayLie: boolean;
 };
 
 export type NpcLineContextInput = {
@@ -174,14 +176,14 @@ export function toNpcLineContext(input: NpcLineContextInput): NpcLineContext {
           id: String(npcDef.id),
           name: npcDef.name,
           role: npcDef.role,
-          knownFactTexts: npcDef.knownFactIds.map((fid) => {
-            const f = blueprint.world.facts.find((wf) => wf.id === fid);
-            return f?.text ?? "???";
-          }),
+          // Deliberately omit the NPC's full known-fact list.  The performer
+          // receives only the fact cards approved for this exact line.
         }
       : { id: npcId, name: "???", role: "unknown" },
     factCards,
     recentEvents,
+    speechAct: input.speechAct,
+    mayLie: input.mayLie,
   };
 
   return context;

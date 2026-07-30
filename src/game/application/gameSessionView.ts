@@ -75,9 +75,10 @@ export type StoryEventView = {
 /** Phase 10：叙事场景安全视图——AI 导演产出的运行时叙事场景与两个固定选项。 */
 export type NarrativeSceneView = {
   readonly narration: string;
+  readonly npcLine: { readonly text: string; readonly emotion: string } | null;
   readonly choices: readonly [
-    { readonly label: string; readonly actionKey: string },
-    { readonly label: string; readonly actionKey: string },
+    { readonly label: string; readonly choiceToken: string },
+    { readonly label: string; readonly choiceToken: string },
   ];
 } | null;
 
@@ -248,9 +249,13 @@ function projectNarrativeSceneView(
   if (scene === null) return null;
   return {
     narration: scene.narration,
+    npcLine: scene.npcLine === null ? null : {
+      text: scene.npcLine.text,
+      emotion: scene.npcLine.emotion,
+    },
     choices: scene.choices.map((choice) => ({
       label: choice.label,
-      actionKey: choice.actionKey,
+      choiceToken: choice.choiceToken,
     })) as NarrativeSceneView extends { choices: infer C } ? C : never,
   };
 }

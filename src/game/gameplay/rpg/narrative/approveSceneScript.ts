@@ -62,12 +62,13 @@ export function approveSceneScript(
 
     // NPC allowedFactIds must be subset of NPC knownFactIds
     const npcDef = blueprint.npcs.find((n) => String(n.id) === npcInst.npcId);
-    if (npcDef !== undefined) {
-      const knownSet = new Set(npcDef.knownFactIds.map((id) => String(id)));
-      for (const factId of npcInst.allowedFactIds) {
-        if (!knownSet.has(factId)) {
-          return { ok: false, category: "knowledge_scope_violation" };
-        }
+    if (npcDef === undefined) {
+      return { ok: false, category: "reference_broken" };
+    }
+    const knownSet = new Set(npcDef.knownFactIds.map((id) => String(id)));
+    for (const factId of npcInst.allowedFactIds) {
+      if (!knownSet.has(factId)) {
+        return { ok: false, category: "knowledge_scope_violation" };
       }
     }
   }

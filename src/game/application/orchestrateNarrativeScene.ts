@@ -4,11 +4,12 @@
 // 只返回结构化结果，不写入 repository。
 // ---------------------------------------------------------------------------
 
-import type { GameState, ScenarioBlueprint, NarrativeSceneState } from "@/game/domain";
+import type { GameState, ScenarioBlueprint, NarrativeSceneState, NpcId, FactId } from "@/game/domain";
 import type { NarrativeActionCandidate } from "@/game/gameplay/rpg/narrative";
 import {
   approveDirectorProposal,
   approveSceneScript,
+  approveNpcPerformance,
   actionKeyOf,
 } from "@/game/gameplay/rpg/narrative";
 import { projectAvailableActions } from "@/game/gameplay/rpg/actions";
@@ -70,14 +71,16 @@ export async function orchestrateNarrativeScene(
 
   // Step 1：投影导演上下文 → 调用导演 source
   const directorContext = toDirectorContext({ blueprint, state });
-  const directorAttempt = await directorSource.generate({
-    traceId: `${traceId}-director`,
-    context: directorContext as unknown as Record<string, unknown>,
-  });
+  let directorAttempt: DirectorAttempt;
+  try {
+    directorAttempt = await directorSource.generate({ traceId: `${traceId}-director`, context: directorContext as unknown as Record<string, unknown> });
+  } catch {
+    return buildFallbackResult(traceId, unavailableDirectorAttempt(traceId), null, false, candidates, state);
+  }
 
   // Step 2：规则审批导演计划（失败即 fallback）
   if (!directorAttempt.ok) {
-    return buildFallbackResult(traceId, directorAttempt, null, false);
+    return buildFallbackResult(traceId, directorAttempt, null, false, candidates, state);
   }
 
   const planApproval = approveDirectorProposal({
@@ -88,21 +91,23 @@ export async function orchestrateNarrativeScene(
   });
 
   if (!planApproval.ok) {
-    return buildFallbackResult(traceId, directorAttempt, null, false);
+    return buildFallbackResult(traceId, directorAttempt, null, false, candidates, state);
   }
 
   const plan = planApproval.value;
 
   // Step 3：投影编剧上下文 → 调用编剧 source
   const sceneScriptContext = toSceneScriptContext({ blueprint, state, plan });
-  const scriptAttempt = await sceneScriptSource.generate({
-    traceId: `${traceId}-script`,
-    context: sceneScriptContext as unknown as Record<string, unknown>,
-  });
+  let scriptAttempt: SceneScriptAttempt;
+  try {
+    scriptAttempt = await sceneScriptSource.generate({ traceId: `${traceId}-script`, context: sceneScriptContext as unknown as Record<string, unknown> });
+  } catch {
+    return buildFallbackResult(traceId, directorAttempt, null, false, candidates, state);
+  }
 
   // Step 4：规则审批场景脚本（失败即 fallback）
   if (!scriptAttempt.ok) {
-    return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false);
+    return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false, candidates, state);
   }
 
   const scriptApproval = approveSceneScript({
@@ -112,13 +117,14 @@ export async function orchestrateNarrativeScene(
   });
 
   if (!scriptApproval.ok) {
-    return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false);
+    return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false, candidates, state);
   }
 
   const script = scriptApproval.value;
 
-  // Step 5：演员 NPC 台词（可选，fire-and-forget）
+  // Step 5：演员只能收到该 NPC 获批准的事实卡；其输出也必须复核。
   let npcLineAttempted = false;
+  let npcLine: NarrativeSceneState["npcLine"] = null;
   if (script.npcInstruction !== null) {
     const npcInst = script.npcInstruction;
     const npcLineContext = toNpcLineContext({
@@ -131,11 +137,17 @@ export async function orchestrateNarrativeScene(
     });
 
     try {
-      await npcLineSource.generate({
+      const attempt = await npcLineSource.generate({
         traceId: `${traceId}-npcLine`,
         context: npcLineContext as unknown as Record<string, unknown>,
       });
       npcLineAttempted = true;
+      if (attempt.ok) {
+        const approved = approveNpcPerformance({ proposal: attempt.performance, allowedFactIds: npcInst.allowedFactIds });
+        if (approved.ok) {
+          npcLine = { npcId: npcInst.npcId as NpcId, text: approved.value.text, emotion: approved.value.emotion, usedFactIds: approved.value.usedFactIds as readonly FactId[] };
+        }
+      }
     } catch {
       // 演员调用失败不阻断流程
     }
@@ -147,13 +159,13 @@ export async function orchestrateNarrativeScene(
     turn: calculateTurn(state),
     narration: script.narration,
     usedFactIds: script.usedFactIds as unknown as NarrativeSceneState["usedFactIds"],
-    npcLine: null,
+    npcLine,
     choices: script.choices.map((choice, index) => ({
       choiceToken: `${traceId}-choice:${index}`,
       label: choice.label,
       actionKey: choice.actionKey,
     })) as unknown as NarrativeSceneState["choices"],
-    source: scriptAttempt.provenance === "fixture" ? "fallback" : "generated",
+    source: "generated",
   };
 
   return {
@@ -175,24 +187,26 @@ function buildFallbackResult(
   traceId: string,
   directorAttempt: DirectorAttempt,
   scriptAttempt: SceneScriptAttempt | null,
-  npcLineAttempted: boolean
+  npcLineAttempted: boolean,
+  candidates: readonly NarrativeActionCandidate[],
+  state: GameState
 ): OrchestrateSceneResult {
   const fallbackScene: NarrativeSceneState = {
     sceneId: `${traceId}-fallback-${Date.now()}`,
-    turn: 0,
+    turn: calculateTurn(state),
     narration: FALLBACK_SCENE_SCRIPT.narration,
     usedFactIds: [] as unknown as NarrativeSceneState["usedFactIds"],
     npcLine: null,
     choices: [
       {
         choiceToken: `${traceId}-fallback:a`,
-        label: FALLBACK_SCENE_SCRIPT.choices[0].label,
-        actionKey: FALLBACK_SCENE_SCRIPT.choices[0].actionKey,
+        label: candidates[0]?.publicLabel ?? FALLBACK_SCENE_SCRIPT.choices[0].label,
+        actionKey: candidates[0]?.actionKey ?? FALLBACK_SCENE_SCRIPT.choices[0].actionKey,
       },
       {
         choiceToken: `${traceId}-fallback:b`,
-        label: FALLBACK_SCENE_SCRIPT.choices[1].label,
-        actionKey: FALLBACK_SCENE_SCRIPT.choices[1].actionKey,
+        label: candidates[1]?.publicLabel ?? FALLBACK_SCENE_SCRIPT.choices[1].label,
+        actionKey: candidates[1]?.actionKey ?? FALLBACK_SCENE_SCRIPT.choices[1].actionKey,
       },
     ],
     source: "fallback",
@@ -207,6 +221,10 @@ function buildFallbackResult(
       npcLineAttempted,
     },
   };
+}
+
+function unavailableDirectorAttempt(traceId: string): DirectorAttempt {
+  return { ok: false, provenance: "unavailable", category: "service_error", diagnostics: { traceId, contractVersion: "runtime-narrative-v1", stage: "failed", category: "service_error" } };
 }
 
 function calculateTurn(state: GameState): number {

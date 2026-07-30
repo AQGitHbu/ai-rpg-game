@@ -23,6 +23,8 @@ export {
   type SceneScriptProposal,
 } from "./approveSceneScript";
 
+export { approveNpcPerformance } from "./approveNpcPerformance";
+
 export {
   type NarrativeActionCandidate,
   type NpcPerformanceProposal,
