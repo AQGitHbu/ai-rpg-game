@@ -423,6 +423,23 @@ async function seedV1Database(databasePath: string, input: CreateInitialGameInpu
   });
 }
 
+describe("sqliteGameRepository：Phase 10 narrative 旧存档默认值", () => {
+  it("state_json 不含 narrative 时补齐 { currentScene: null }", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    await seedV1Database(databasePath, input);
+    // 从 v1 数据库读取：stateJSON 不含 narrative 字段。
+    const reader = openRepository(databasePath);
+    const result = await reader.getCurrentGame();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.status).toBe("active");
+    if (result.status === "active") {
+      expect(result.record.state.narrative).toEqual({ currentScene: null });
+    }
+  });
+});
+
 describe("sqliteGameRepository：v1→v2 schema migration", () => {
   it("v1 数据库升级后保留状态、蓝图、指针、generationId，revision 为 0", async () => {
     const databasePath = nextDbPath();

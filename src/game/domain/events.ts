@@ -110,6 +110,15 @@ export type EndingReachedEvent = {
   readonly occurredAt: string;
 };
 
+/** Phase 10：叙事选择——玩家在 AI 导演场景中做出的选择。 */
+export type NarrativeChoiceEvent = {
+  readonly type: "narrative_choice";
+  readonly choiceToken: string;
+  readonly actionKey: string;
+  readonly sceneId: string;
+  readonly occurredAt: string;
+};
+
 export type GameEvent =
   | GameInitializedEvent
   | LocationObservedEvent
@@ -124,4 +133,5 @@ export type GameEvent =
   | BattleResolvedEvent
   | EnemyDefeatedEvent
   | QuestFailedEvent
-  | EndingReachedEvent;
+  | EndingReachedEvent
+  | NarrativeChoiceEvent;

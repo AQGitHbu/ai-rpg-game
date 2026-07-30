@@ -173,6 +173,14 @@ function withPhase6StateDefaults(state: JsonObject): JsonObject {
   return patched;
 }
 
+// Phase 10 Task 1：Phase 1–9 旧存档的 stateJSON 无 narrative 字段。
+// 读取时补默认值 { currentScene: null }（与 initializeGameState 的初始语义一致），
+// 不升 schema 版本也不回写。
+function withNarrativeDefault(state: JsonObject): JsonObject {
+  if (state["narrative"] !== undefined) return state;
+  return { ...state, narrative: { currentScene: null } };
+}
+
 // 单行 → 结构化结果：只做端口要求的版本 / generationId 校验与形状检查，
 // 不做蓝图内部引用完整性校验（Task 1 评审确认由上游编译器保证）。
 function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordResult {
@@ -217,10 +225,11 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordRes
   if (stateGenerationId !== blueprintGenerationId) {
     return corrupt("GENERATION_MISMATCH");
   }
-  const migratedState = withVisitedLocationDefault(state);
-  if (migratedState === null) {
+  const visitedState = withVisitedLocationDefault(state);
+  if (visitedState === null) {
     return corrupt("UNPARSEABLE_RECORD");
   }
+  const migratedState = withNarrativeDefault(visitedState);
   const migratedBlueprint = withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint));
   const phase6State = withPhase6StateDefaults(migratedState);
 
@@ -443,7 +452,7 @@ export function createSqliteGameRepository(
           // 与 interpretGameRow 同样补旧档蓝图的 availableItemIds 和 enemy locationId 默认值，
           // 避免类型契约缺口。
           blueprint: withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint)) as unknown as ScenarioBlueprint,
-          state: state as unknown as GameState,
+          state: withNarrativeDefault(state) as unknown as GameState,
           revision: row["revision"] as number,
           createdAt: row["created_at"] as string
         };

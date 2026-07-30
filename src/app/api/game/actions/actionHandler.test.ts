@@ -42,7 +42,9 @@ const STUB_VIEW: GameSessionView = {
   // Phase 7 Task 3：地图 / 地点场景 / 对话 read model（HTTP 映射同样不读内容）。
   worldMap: { nodes: [] },
   locationScene: { title: "地点A", description: "描述", backdrop: "location_backdrop", interactions: [] },
-  dialogues: []
+  dialogues: [],
+  // Phase 10：叙事场景视图。
+  narrative: null
 };
 
 const STUB_FEEDBACK: ActionFeedbackView = { ok: true, message: "你观察了地点A。" };

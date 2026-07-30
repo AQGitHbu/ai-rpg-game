@@ -44,7 +44,8 @@ export {
   type QuestObjectiveView,
   type BattleView,
   type EndingView,
-  type StoryEventView
+  type StoryEventView,
+  type NarrativeSceneView
 } from "./gameSessionView";
 // Phase 7 Task 3：地图 / 地点场景 / 安全对话 read model 只读 view 类型。
 export {
@@ -84,6 +85,44 @@ export {
   type ItemId,
   type EnemyId
 } from "@/game/domain";
+// Phase 10 Task 3：运行时导演 / 编剧 / 演员 contracts 与 contexts。
+export {
+  NARRATIVE_CONTRACT_VERSION,
+  NARRATIVE_FAILURE_CATEGORIES,
+  type NarrativeContractVersion,
+  type NarrativeFailureCategory,
+  type NarrativeDiagnostics,
+  type DirectorRequest,
+  type DirectorAttempt,
+  type DirectorSource,
+  type SceneScriptRequest,
+  type SceneScriptAttempt,
+  type SceneScriptSource,
+  type NpcLineRequest,
+  type NpcLineAttempt,
+  type NpcLineSource,
+} from "./runtimeNarrative";
+export {
+  toDirectorContext,
+  toSceneScriptContext,
+  toNpcLineContext,
+  type DirectorContext,
+  type DirectorContextInput,
+  type SceneScriptContext,
+  type SceneScriptContextInput,
+  type NpcLineContext,
+  type NpcLineContextInput,
+} from "./runtimeNarrativeContexts";
+export {
+  orchestrateNarrativeScene,
+  type OrchestrateNarrativeSceneInput,
+  type OrchestrateSceneResult,
+} from "./orchestrateNarrativeScene";
+export {
+  getOrCreateScene,
+  type GetOrCreateSceneInput,
+  type GetOrCreateSceneResult,
+} from "./getOrCreateScene";
 export { type PlayerIntent } from "@/game/gameplay/rpg/actions";
 export {
   asGameId,

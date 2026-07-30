@@ -60,6 +60,12 @@ const BATTLE_DEEP_IMPORT: BoundaryPattern = {
   regex: /["']@\/game\/gameplay\/rpg\/battle\/[^"']+["']/
 };
 
+/** Phase 10：narrative 只许门面 "@/game/gameplay/rpg/narrative"，禁止 deep-import 内部文件。 */
+const NARRATIVE_DEEP_IMPORT: BoundaryPattern = {
+  label: "narrative deep import (only the facade @/game/gameplay/rpg/narrative is allowed)",
+  regex: /["']@\/game\/gameplay\/rpg\/narrative\/[^"']+["']/
+};
+
 /**
  * Phase 1 约束：src/game/** 不引入 @ai-game/* 共享包（共享包仅限 UI 层）。
  * Phase 4B 例外：@ai-game/ai-transport 允许出现在 application/server/ai（见下方专项守卫），
@@ -170,6 +176,7 @@ const UI_LAYER_PATTERNS: readonly BoundaryPattern[] = [
   ACTIONS_DEEP_IMPORT,
   QUESTS_DEEP_IMPORT,
   BATTLE_DEEP_IMPORT,
+  NARRATIVE_DEEP_IMPORT,
   APPLICATION_SERVER_IMPORT,
   RELATIVE_APPLICATION_SERVER_IMPORT,
   DOMAIN_IMPORT,
@@ -259,6 +266,7 @@ const rules: readonly BoundaryRule[] = [
       ACTIONS_DEEP_IMPORT,
       QUESTS_DEEP_IMPORT,
       BATTLE_DEEP_IMPORT,
+      NARRATIVE_DEEP_IMPORT,
       APPLICATION_SERVER_DEEP_IMPORT,
       RELATIVE_APPLICATION_SERVER_IMPORT,
       DOMAIN_IMPORT,
@@ -348,6 +356,15 @@ describe("boundary patterns detect synthetic violations", () => {
     {
       pattern: BATTLE_DEEP_IMPORT,
       snippet: `import type { BattleAction } from "@/game/gameplay/rpg/battle/battleAction";`
+    },
+    {
+      // Phase 10：narrative facade 内部模块 deep-import 同样被拦。
+      pattern: NARRATIVE_DEEP_IMPORT,
+      snippet: `import { actionKeyOf } from "@/game/gameplay/rpg/narrative/actionCandidates";`
+    },
+    {
+      pattern: NARRATIVE_DEEP_IMPORT,
+      snippet: `import type { DirectorProposal } from "@/game/gameplay/rpg/narrative/types";`
     },
     { pattern: AI_GAME_PACKAGE_IMPORT, snippet: `import { Panel } from "@ai-game/ui";` },
     { pattern: NEW_AI_GAME_PACKAGE_IMPORT, snippet: `import { db } from "@ai-game/persistence";` },
@@ -452,12 +469,13 @@ describe("boundary patterns detect synthetic violations", () => {
     expect(findBoundaryViolations(snippet, [SCENARIO_DEEP_IMPORT])).toEqual([]);
   });
 
-  it("facade imports do not trip the actions/quests/battle deep-import rules", () => {
+  it("facade imports do not trip the actions/quests/battle/narrative deep-import rules", () => {
     const snippet =
       `import { resolveAction } from "@/game/gameplay/rpg/actions";\n` +
       `import { reconcileQuests } from "@/game/gameplay/rpg/quests";\n` +
-      `import { startBattle } from "@/game/gameplay/rpg/battle";`;
-    expect(findBoundaryViolations(snippet, [ACTIONS_DEEP_IMPORT, QUESTS_DEEP_IMPORT, BATTLE_DEEP_IMPORT])).toEqual([]);
+      `import { startBattle } from "@/game/gameplay/rpg/battle";\n` +
+      `import { approveDirectorProposal } from "@/game/gameplay/rpg/narrative";`;
+    expect(findBoundaryViolations(snippet, [ACTIONS_DEEP_IMPORT, QUESTS_DEEP_IMPORT, BATTLE_DEEP_IMPORT, NARRATIVE_DEEP_IMPORT])).toEqual([]);
   });
 
   it("@ai-game/ui does not trip the new-package rule", () => {

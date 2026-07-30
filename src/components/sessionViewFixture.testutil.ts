@@ -119,7 +119,9 @@ export function buildSessionViewFixture(): GameSessionView {
     // Phase 7 Task 5：地图 / 地点场景 / 安全对话 read model。
     worldMap: QINGSHI_WORLD_MAP,
     locationScene: QINGSHI_LOCATION_SCENE,
-    dialogues: QINGSHI_DIALOGUES
+    dialogues: QINGSHI_DIALOGUES,
+    // Phase 10：叙事场景视图——默认无 AI 导演场景。
+    narrative: null,
   } as unknown as GameSessionView;
 }
 

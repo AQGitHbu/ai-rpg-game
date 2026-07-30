@@ -112,6 +112,8 @@ export function initializeGameState(blueprint: ScenarioBlueprint): GameState {
     defeatedEnemyIds: [],
     battle: { status: "idle" },
     ending: null,
+    // Phase 10：初始无叙事场景。
+    narrative: { currentScene: null },
     eventLedger: [{ type: "game_initialized", generation }]
   };
 }

@@ -1,4 +1,5 @@
 import type { GameEvent } from "./events";
+import type { NarrativeRuntimeState } from "./narrative";
 import type {
   EndingId,
   EnemyId,
@@ -81,6 +82,8 @@ export type GameState = {
   readonly battle: BattleState;
   /** Phase 6：结局运行时状态；null 表示未抵达结局。 */
   readonly ending: EndingState;
+  /** Phase 10：运行时叙事场景状态。 */
+  readonly narrative: NarrativeRuntimeState;
   /** 追加式事件账本：初始条目必须是 game_initialized。 */
   readonly eventLedger: readonly GameEvent[];
 };
