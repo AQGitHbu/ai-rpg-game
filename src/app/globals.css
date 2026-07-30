@@ -895,17 +895,61 @@ body:has(.adventure-game-shell) {
   line-height: 1.6;
 }
 
-.adventure-toast {
+.adventure-toast-container {
   position: fixed;
   bottom: 24px;
   left: 50%;
   translate: -50% 0;
   z-index: 200;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.adventure-toast {
+  margin: 0;
   padding: 10px 20px;
-  border-radius: 8px;
-  background: var(--game-accent);
-  color: #fff;
+  border-radius: 12px;
+  background: #ebd8a3;
+  color: #1c1912;
   font-size: 0.875rem;
+  font-weight: 500;
+  border: 1px solid #d4c088;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  text-align: center;
+  max-width: 90vw;
+  pointer-events: auto;
+  animation:
+    adventure-toast-enter 0.3s ease-out,
+    adventure-toast-exit 0.5s ease-in 4.5s forwards;
+}
+
+@keyframes adventure-toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes adventure-toast-exit {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .adventure-toast {
+    animation: none;
+  }
 }
 
 .npc-dialogue-panel {

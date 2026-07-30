@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdventureGameShell } from "./AdventureGameShell";
@@ -270,5 +270,53 @@ describe("AdventureGameShell", () => {
     const toast = await screen.findByRole("status");
     expect(toast).toHaveTextContent("你来到了城外官道。");
     expect(toast).toHaveClass("adventure-toast");
+  });
+
+  describe("统一 toast 通知", () => {
+    it("连续成功行动叠加显示多条 toast", async () => {
+      const movedView = buildMovedSessionViewFixture();
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse({ view: movedView, feedback: { ok: true, message: "你来到了城外官道。" } })
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({ view: movedView, feedback: { ok: true, message: "你再次踏上了官道。" } })
+        );
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+      renderShell({ onViewChange: vi.fn() });
+
+      await user.click(screen.getByRole("button", { name: "前往城外官道" }));
+      await screen.findByText("你来到了城外官道。");
+
+      await user.click(screen.getByRole("button", { name: "地图" }));
+      await user.click(screen.getByRole("button", { name: "前往城外官道" }));
+      await screen.findByText("你再次踏上了官道。");
+
+      expect(screen.getByText("你来到了城外官道。")).toBeInTheDocument();
+      expect(document.querySelectorAll(".adventure-toast")).toHaveLength(2);
+    });
+
+    it("toast 退场动画结束后自动移除", async () => {
+      const movedView = buildMovedSessionViewFixture();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          jsonResponse({ view: movedView, feedback: { ok: true, message: "你来到了城外官道。" } })
+        )
+      );
+      const user = userEvent.setup();
+      renderShell({ onViewChange: vi.fn() });
+
+      await user.click(screen.getByRole("button", { name: "前往城外官道" }));
+      const toast = await screen.findByText("你来到了城外官道。");
+
+      const exitAnimationEnd = new Event("animationend", { bubbles: true });
+      Object.assign(exitAnimationEnd, { animationName: "adventure-toast-exit" });
+      fireEvent(toast, exitAnimationEnd);
+
+      expect(screen.queryByText("你来到了城外官道。")).toBeNull();
+    });
   });
 });
