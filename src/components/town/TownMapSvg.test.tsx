@@ -98,6 +98,7 @@ function renderMap(overrides?: {
   onSelectBuilding?: (buildingId: string | null) => void;
   showPlotBorders?: boolean;
   showRoadNodes?: boolean;
+  showAiBuildingArt?: boolean;
 }) {
   const onSelectBuilding = overrides?.onSelectBuilding ?? vi.fn();
   const utils = render(
@@ -107,6 +108,7 @@ function renderMap(overrides?: {
       onSelectBuilding={onSelectBuilding}
       showPlotBorders={overrides?.showPlotBorders}
       showRoadNodes={overrides?.showRoadNodes}
+      showAiBuildingArt={overrides?.showAiBuildingArt}
     />
   );
   return { ...utils, onSelectBuilding };
@@ -207,5 +209,22 @@ describe("TownMapSvg：调试开关", () => {
     const layer = container.querySelector("[data-road-nodes]");
     expect(layer).not.toBeNull();
     expect(layer?.querySelectorAll("circle")).toHaveLength(2);
+  });
+
+  it("默认不渲染建筑贴图层", () => {
+    const { container } = renderMap();
+
+    expect(container.querySelector("[data-building-art]")).toBeNull();
+  });
+
+  it("showAiBuildingArt 按 buildingType 叠加 demo 预生成贴图到 footprint", () => {
+    const { container } = renderMap({ showAiBuildingArt: true });
+
+    const layer = container.querySelector("[data-building-art]");
+    expect(layer).not.toBeNull();
+    const images = layer?.querySelectorAll("image") ?? [];
+    expect(images).toHaveLength(2);
+    expect(images[0]?.getAttribute("href")).toBe("/assets/town-experiment/tavern.jpg");
+    expect(images[1]?.getAttribute("href")).toBe("/assets/town-experiment/house.jpg");
   });
 });

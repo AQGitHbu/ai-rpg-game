@@ -87,6 +87,18 @@ describe("TownLayerScreen", () => {
     expect(screen.getByText("铁匠铺位于大石镇北侧。")).toBeInTheDocument();
   });
 
+  it("默认叠加 demo 预生成的建筑贴图占位", () => {
+    const { container } = render(
+      <TownLayerScreen town={buildTownView()} busy={false} onEnterBuilding={vi.fn()} onReturnMap={vi.fn()} />
+    );
+
+    const layer = container.querySelector("[data-building-art]");
+    expect(layer).not.toBeNull();
+    expect(layer?.querySelector("image")?.getAttribute("href")).toBe(
+      "/assets/town-experiment/blacksmith.jpg"
+    );
+  });
+
   it("点击剧情建筑后可进入，回调绑定 NPC id", async () => {
     const onEnterBuilding = vi.fn();
     const user = userEvent.setup();
