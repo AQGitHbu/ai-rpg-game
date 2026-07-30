@@ -94,3 +94,11 @@ export {
   type BattleState,
   type EndingState
 } from "./gameState";
+export {
+  type NarrativeRuntimeState,
+  type NarrativeSceneState,
+  type NarrativeChoiceState,
+  type NarrativeNpcLineState,
+  type NarrativeEmotion,
+  NARRATIVE_EMOTIONS
+} from "./narrative";
