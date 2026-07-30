@@ -1,5 +1,9 @@
-// 小镇程序化生成 demo 的领域类型：纯类型 + 冻结常量，无业务逻辑。
-// 独立于 ScenarioBlueprint / GameState，不接入游戏主循环（见 Spec §3）。
+// Town 层领域类型：纯类型 + 冻结常量，无业务逻辑。
+// 主循环权威结构：scale="town" 地点的小镇规划（TownSemanticPlan）存入
+// GameState.towns，快照（TownSnapshot）由 seed+plan 经 generateTown 确定性重建。
+
+/** 小镇规划来源：离线规则 / AI 生成 / AI 尝试耗尽后降级。 */
+export type TownPlanSource = "offline" | "generated" | "fallback";
 
 /** 网格瓦片类型：底图（outside/grass/forest/water）+ 道路 + 地块/建筑层。 */
 export type TileType =

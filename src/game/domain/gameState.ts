@@ -11,6 +11,7 @@ import type {
   QuestId,
   StatBlock
 } from "./scenarioBlueprint";
+import type { TownPlanSource, TownSemanticPlan } from "./townSnapshot";
 
 // Phase 1 最小运行时状态：纯数据类型，不含行动 resolver 或任何方法。
 // 状态只能由已编译蓝图初始化（Task 5 的 initializeGameState）。
@@ -64,6 +65,22 @@ export type EndingState = {
   readonly outcome: "success" | "failure";
 } | null;
 
+// Town 层：scale="town" 地点首次进入时懒生成的小镇规划。只存 plan+seed，
+// 快照由 generateTown 在 read model 中确定性重建（存档小、同 seed 深度相等）。
+export type TownRuntimeState = {
+  readonly locationId: LocationId;
+  readonly seed: string;
+  readonly plan: TownSemanticPlan;
+  readonly planSource: TownPlanSource;
+  readonly generatorVersion: string;
+};
+
+// Town 层：AI 小镇规划生成状态；pending 由 town/ensure 轮询消费（镜像
+// narrative.generation 的 pending/ensure/CAS 模式）。
+export type TownGenerationState =
+  | { readonly status: "idle" }
+  | { readonly status: "pending"; readonly locationId: LocationId; readonly requestedAt: string };
+
 export type GameState = {
   readonly stateVersion: 1;
   readonly generation: GenerationMetadata;
@@ -84,6 +101,10 @@ export type GameState = {
   readonly ending: EndingState;
   /** Phase 10：运行时叙事场景状态。 */
   readonly narrative: NarrativeRuntimeState;
+  /** Town 层：已生成的小镇规划（按地点懒生成，每地点至多一条）。 */
+  readonly towns: readonly TownRuntimeState[];
+  /** Town 层：AI 小镇规划生成状态。 */
+  readonly townGeneration: TownGenerationState;
   /** 追加式事件账本：初始条目必须是 game_initialized。 */
   readonly eventLedger: readonly GameEvent[];
 };

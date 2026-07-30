@@ -154,6 +154,8 @@ function buildInitialState(): GameState {
     battle: { status: "idle" },
     ending: null,
     narrative: { currentScene: null, generation: { status: "idle" }, mode: "ai" },
+    towns: [],
+    townGeneration: { status: "idle" },
     eventLedger: [{ type: "game_initialized", generation: GEN }],
   };
 }
