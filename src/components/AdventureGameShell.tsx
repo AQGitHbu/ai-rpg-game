@@ -170,6 +170,7 @@ export function AdventureGameShell({
     <div className="adventure-game-shell">
       <AdventureHud
         view={view}
+        screen={screen}
         onOpen={openDetails}
         developmentTools={developmentTools}
         onOpenDevTools={() => {

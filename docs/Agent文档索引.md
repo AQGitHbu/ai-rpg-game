@@ -18,7 +18,7 @@
 | 探索与任务推进 | `agent/探索与任务推进.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现：移动、任务解锁、obtain_item / defeat_enemy objective 与 outcome |
 | 物品与任务奖励 | `agent/物品与任务奖励.md` | `策划文档/AI生成RPG_MVP.md` | Phase 5 已实现：地点预置物品、take_item 取得和 obtain_item objective；不含物品使用/奖励数值 |
 | 战斗与结局 | `agent/战斗与结局.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现确定性 boss 回合战与双结局；Phase 9 已实现：场景化战斗视窗（BattleArena + BattleActionRail），不改规则或 AI |
-| 地图与地点冒险 | `agent/地图与地点冒险.md` | `策划文档/AI生成RPG_MVP.md` | Phase 7 地图/地点主循环与 Phase 8 非战斗 HUD、视窗、行动栏、详情/对话层均已完成；不改战斗或 AI |
+| 地图与地点冒险 | `agent/地图与地点冒险.md` | `策划文档/AI生成RPG_MVP.md` | Phase 7 地图/地点主循环、Phase 8 非战斗 HUD/视窗/行动栏/详情/对话层、响应式全屏地图 HUD 细化均已实现；不改战斗或 AI |
 | 无 AI 试玩验收 | `agent/无AI试玩验收.md` | `superpowers/plans/2026-07-28-mvp-no-ai-playable-vertical-slice.md` | 已实现：属性/模板叙事、开发环境清档、成功/失败手工试玩路线 |
 | AI 环境 | `agent/AI环境.md` | `.env.example` | 独立环境契约已建立；Phase 4B 已实现真实 AI 接入（shared `@ai-game/ai-transport` + live source + `AI_CONFIG_*`/`LIVE_*` 诊断 + 脱敏 audit）与 opt-in smoke（`smoke:ai:phase4b`，真实计费 smoke 已于本机执行，三例满足 generated|fallback 契约）；Phase 4C 新增 `AI_OUTPUT_FORMAT`（json_schema|json_object|prompt_only，缺省 prompt_only）与 smoke 脱敏汇总行；`GAME_DB_PATH` 为 server-only 持久化配置 |
 

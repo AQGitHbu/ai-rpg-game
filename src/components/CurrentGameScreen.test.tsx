@@ -74,6 +74,13 @@ describe("CurrentGameScreen", () => {
     expect(screen.queryByText("选择游戏类型")).toBeNull();
   });
 
+  it("非战斗 active 会话渲染地图 HUD", async () => {
+    stubFetch(async () => jsonResponse(200, { status: "active", view: buildSessionViewFixture() }));
+    render(<CurrentGameScreen />);
+    expect(await screen.findByLabelText("游戏 HUD")).toBeInTheDocument();
+    expect(document.querySelector(".adventure-game-shell")).toBeTruthy();
+  });
+
   it("进入地点场景后可见互动热点和 NPC，返回地图零请求", async () => {
     const view = buildSessionViewFixture();
     const fetchMock = stubFetch(async () => jsonResponse(200, { status: "active", view }));

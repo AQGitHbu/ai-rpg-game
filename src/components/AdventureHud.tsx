@@ -13,33 +13,27 @@ const PANEL_LABELS: Record<DetailsPanel, string> = {
 
 type AdventureHudProps = {
   readonly view: GameSessionView;
+  readonly screen: "map" | "scene";
   readonly onOpen: (panel: DetailsPanel) => void;
   readonly developmentTools?: boolean;
   readonly onOpenDevTools?: () => void;
 };
 
-export function AdventureHud({ view, onOpen, developmentTools, onOpenDevTools }: AdventureHudProps) {
+export function AdventureHud({ view, screen, onOpen, developmentTools, onOpenDevTools }: AdventureHudProps) {
   const mainQuest = view.activeQuests.find((quest) => quest.kind === "main");
   const objective = mainQuest?.objectives.find((entry) => !entry.completed);
+  const objectiveText = objective ? objective.label : "暂无线索";
 
   return (
-    <header className="adventure-hud">
-      <div className="adventure-hud-info">
-        <span className="adventure-hud-world">{view.world.name}</span>
-        <span className="adventure-hud-location">{view.currentLocation.name}</span>
-        <span className="adventure-hud-player">{view.player.name}</span>
-        <span className="adventure-hud-hp">HP {view.player.stats.hp}</span>
-        <span className="adventure-hud-quest">
-          {mainQuest ? (
-            <>
-              {mainQuest.name}
-              {objective ? <small>{objective.label}</small> : null}
-            </>
-          ) : (
-            "暂无线索"
-          )}
+    <div className="adventure-hud-layer" aria-label="游戏 HUD">
+      <div className="adventure-hud-player-card">
+        <span className="adventure-hud-avatar" aria-hidden="true">
+          <svg viewBox="0 0 64 64" focusable="false" aria-hidden="true"><circle cx="32" cy="32" r="30" /><circle cx="32" cy="25" r="11" /><path d="M12 56c4-13 12-19 20-19s16 6 20 19" /></svg>
         </span>
+        <span><strong>{view.player.name}</strong><small>HP {view.player.stats.hp}</small></span>
       </div>
+      {screen === "scene" ? <h1 className="adventure-hud-location-title">{view.locationScene.title}</h1> : null}
+      <aside className="adventure-hud-objective"><span>当前目标</span><strong>{objectiveText}</strong></aside>
       <nav className="adventure-hud-actions" aria-label="信息入口">
         {(Object.keys(PANEL_LABELS) as DetailsPanel[]).map((panel) => (
           <button key={panel} type="button" onClick={() => onOpen(panel)}>
@@ -52,6 +46,6 @@ export function AdventureHud({ view, onOpen, developmentTools, onOpenDevTools }:
           </button>
         ) : null}
       </nav>
-    </header>
+    </div>
   );
 }

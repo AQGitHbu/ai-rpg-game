@@ -16,19 +16,12 @@ function nodeKey(node: WorldMapNodeView, index: number): string {
 
 export function WorldMapScreen({ view, onEnterCurrent, onMove, busy }: WorldMapScreenProps) {
   const gameType = view.world.gameType;
-  const mainQuest = view.activeQuests.find((quest) => quest.kind === "main");
-  const objective = mainQuest?.objectives.find((entry) => !entry.completed);
-  const objectiveText = objective ? objective.label : "暂无线索";
 
   return (
     <section data-testid="world-map-viewport" className="world-map-viewport" aria-label="世界地图">
       <div data-testid="world-map-backdrop" className="world-map-backdrop" aria-hidden="true">
         <AdventureVisual gameType={gameType} kind="map_base" label="" decorative />
       </div>
-      <aside className="map-objective-card">
-        <span>当前目标</span>
-        <strong>{objectiveText}</strong>
-      </aside>
       <div className="world-map-nodes" role="group" aria-label="世界地图节点">
         {view.worldMap.nodes.map((node, index) => {
           switch (node.state) {
