@@ -137,6 +137,7 @@ describe("CurrentGameScreen", () => {
     const user = userEvent.setup();
     render(<CurrentGameScreen />);
 
+    await user.click(await screen.findByRole("button", { name: "开发工具" }));
     await user.click(await screen.findByRole("button", { name: "清除本地试玩存档" }));
     expect(await screen.findByText("选择游戏类型")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/game/dev/current", { method: "DELETE" });

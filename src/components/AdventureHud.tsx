@@ -14,9 +14,11 @@ const PANEL_LABELS: Record<DetailsPanel, string> = {
 type AdventureHudProps = {
   readonly view: GameSessionView;
   readonly onOpen: (panel: DetailsPanel) => void;
+  readonly developmentTools?: boolean;
+  readonly onOpenDevTools?: () => void;
 };
 
-export function AdventureHud({ view, onOpen }: AdventureHudProps) {
+export function AdventureHud({ view, onOpen, developmentTools, onOpenDevTools }: AdventureHudProps) {
   const mainQuest = view.activeQuests.find((quest) => quest.kind === "main");
   const objective = mainQuest?.objectives.find((entry) => !entry.completed);
 
@@ -44,6 +46,11 @@ export function AdventureHud({ view, onOpen }: AdventureHudProps) {
             {PANEL_LABELS[panel]}
           </button>
         ))}
+        {developmentTools ? (
+          <button type="button" onClick={() => onOpenDevTools?.()}>
+            开发工具
+          </button>
+        ) : null}
       </nav>
     </header>
   );
