@@ -90,8 +90,10 @@ describe("orchestrateNarrativeScene fallback", () => {
   const state = buildTestGameState();
 
   it("当 director source 失败时返回 fallback scene", async () => {
+    let directorCalls = 0;
     const failingDirector: DirectorSource = {
       async generate(_request) {
+        directorCalls += 1;
         return {
           ok: false,
           provenance: "unavailable",
@@ -141,5 +143,6 @@ describe("orchestrateNarrativeScene fallback", () => {
     expect(result.scene.source).toBe("fallback");
     expect(result.scene.narration.length).toBeGreaterThan(0);
     expect(result.scene.choices).toHaveLength(2);
+    expect(directorCalls).toBe(2);
   });
 });

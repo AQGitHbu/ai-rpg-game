@@ -18,9 +18,9 @@ export function createLiveRuntimeNarrativeSources(input: Readonly<{ transport: A
 async function run<T extends object, A>(role: Role, request: Request, input: { transport: AiTransport; config: AiTransportConfig; responseFormat?: (role: Role) => Readonly<Record<string, unknown>> | undefined }, field: "plan" | "script" | "performance"): Promise<A> {
   const startedAt = Date.now();
   let completed;
-  // Match the project's SLG consumer contract: prompt-directed JSON plus local
-  // parsing/approval, with the provider-neutral reasoning switch disabled.
-  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { reasoning_effort: "none", ...input.responseFormat?.(role) }, temperature: 0.2 }); } catch { audit(role, false, "service_error", Date.now() - startedAt); return failure(request, "service_error") as A; }
+  // This provider disables extended reasoning through enable_thinking. Output
+  // shape remains prompt-directed and is always locally parsed and approved.
+  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { enable_thinking: false, ...input.responseFormat?.(role) }, temperature: 0.2, timeoutMs: 120_000 }); } catch { audit(role, false, "service_error", Date.now() - startedAt); return failure(request, "service_error") as A; }
   if (!completed.ok) { audit(role, false, category[completed.code], completed.latencyMs); return failure(request, category[completed.code]) as A; }
   const payload = parseObject(completed.content);
   if (payload === null) { const failureCategory = completed.content.trim() === "" ? "empty_response" : "invalid_json"; audit(role, false, failureCategory, completed.latencyMs); return failure(request, failureCategory) as A; }
@@ -41,7 +41,7 @@ function messages(role: Role, request: Request): readonly AiMessage[] {
   const instruction = role === "director"
     ? "You are the world director. Return one JSON object only, with exactly sceneGoal, tensionLevel (1-5), focusNpcId (string|null), relevantFactIds (string[]), allowedRevealFactIds (string[]), suggestedActionKeys ([string,string]), introducedEntities ({kind,id}[]), pacing (setup|develop|turn|climax|resolution). Copy suggestedActionKeys exactly from actionCandidates, use two different keys. focusNpcId must be null or copied exactly from npcIdsPresent. Every fact ID must be copied from discoveredFactIds; if none are listed, both fact arrays must be []. introducedEntities must be []. Never invent an ID, location, NPC, fact, action, or entity."
     : role === "writer"
-      ? "You are the scene writer. Return one JSON object only, with exactly narration, usedFactIds, npcInstruction (or null), choices. npcInstruction has npcId, speechAct, emotion, allowedFactIds, mayLie. choices is exactly two objects with actionKey, label, strategy. Copy both choice actionKey values exactly from plan.suggestedActionKeys. Copy usedFactIds only from allowedFactCards. If npcProfile is null, npcInstruction must be null; otherwise use that exact NPC id and only its supplied fact cards. Never invent an ID."
+      ? "You are the scene writer. Output JSON only: no markdown, no explanation, no extra keys. Exact template: {\"narration\":\"1-600 chars\",\"usedFactIds\":[],\"npcInstruction\":null,\"choices\":[{\"actionKey\":\"copy first plan.suggestedActionKeys exactly\",\"label\":\"1-40 chars\",\"strategy\":\"1-80 chars\"},{\"actionKey\":\"copy second plan.suggestedActionKeys exactly\",\"label\":\"1-40 chars\",\"strategy\":\"1-80 chars\"}]}. Keep npcInstruction null unless npcProfile is provided. Copy usedFactIds only from allowedFactCards. Never invent an ID."
       : "You are one NPC performer. Return one JSON object only, with exactly text, usedFactIds, emotion. You may use only the supplied NPC profile and fact cards; never infer hidden facts.";
   return [{ role: "system", content: `${instruction} Contract: ${NARRATIVE_CONTRACT_VERSION}.` }, { role: "user", content: JSON.stringify(request.context) }];
 }

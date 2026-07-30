@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import type { GameState, ScenarioBlueprint, NarrativeSceneState, NpcId, FactId } from "@/game/domain";
-import type { NarrativeActionCandidate } from "@/game/gameplay/rpg/narrative";
+import type { NarrativeActionCandidate, ApprovedDirectorPlan, ApprovedSceneScript } from "@/game/gameplay/rpg/narrative";
 import {
   approveDirectorProposal,
   approveSceneScript,
@@ -71,62 +71,46 @@ export async function orchestrateNarrativeScene(
 
   // Step 1：投影导演上下文 → 调用导演 source
   const directorContext = toDirectorContext({ blueprint, state });
-  let directorAttempt: DirectorAttempt;
-  try {
-    directorAttempt = await directorSource.generate({ traceId: `${traceId}-director`, context: directorContext as unknown as Record<string, unknown> });
-  } catch {
-    return buildFallbackResult(traceId, unavailableDirectorAttempt(traceId), null, false, candidates, state);
+  let directorAttempt: DirectorAttempt = unavailableDirectorAttempt(traceId);
+  let plan: ApprovedDirectorPlan | undefined;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      directorAttempt = await directorSource.generate({
+        traceId: `${traceId}-director${attempt === 0 ? "" : "-retry"}`,
+        context: attempt === 0
+          ? directorContext as unknown as Record<string, unknown>
+          : { ...(directorContext as unknown as Record<string, unknown>), retryInstruction: "Previous proposal was rejected. Return a complete proposal using only the exact IDs and action keys supplied." },
+      });
+    } catch { continue; }
+    if (!directorAttempt.ok) continue;
+    const approval = approveDirectorProposal({ proposal: directorAttempt.plan, blueprint, state, candidates });
+    if (approval.ok) { plan = approval.value; break; }
+    console.log(JSON.stringify({ event: "runtime_narrative_approval", role: "director", approved: false, category: approval.category }));
   }
-
-  // Step 2：规则审批导演计划（失败即 fallback）
-  if (!directorAttempt.ok) {
-    return buildFallbackResult(traceId, directorAttempt, null, false, candidates, state);
-  }
-
-  const planApproval = approveDirectorProposal({
-    proposal: directorAttempt.plan,
-    blueprint,
-    state,
-    candidates,
-  });
-
-  if (!planApproval.ok) {
-    console.log(JSON.stringify({ event: "runtime_narrative_approval", role: "director", approved: false, category: planApproval.category }));
-    return buildFallbackResult(traceId, directorAttempt, null, false, candidates, state);
-  }
-
-  const plan = planApproval.value;
+  if (plan === undefined) return buildFallbackResult(traceId, directorAttempt, null, false, candidates, state);
 
   // Step 3：投影编剧上下文 → 调用编剧 source
   const sceneScriptContext = toSceneScriptContext({ blueprint, state, plan });
-  let scriptAttempt: SceneScriptAttempt;
-  try {
-    scriptAttempt = await sceneScriptSource.generate({ traceId: `${traceId}-script`, context: sceneScriptContext as unknown as Record<string, unknown> });
-  } catch {
-    return buildFallbackResult(traceId, directorAttempt, null, false, candidates, state);
+  let scriptAttempt: SceneScriptAttempt | null = null;
+  let script: ApprovedSceneScript | undefined;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      scriptAttempt = await sceneScriptSource.generate({
+        traceId: `${traceId}-script${attempt === 0 ? "" : "-retry"}`,
+        context: attempt === 0 ? sceneScriptContext as unknown as Record<string, unknown> : { ...(sceneScriptContext as unknown as Record<string, unknown>), retryInstruction: "Previous output failed approval. Return a complete JSON object with exactly the required fields, two choices, and only supplied IDs." },
+      });
+    } catch { continue; }
+    if (!scriptAttempt.ok) continue;
+    const approval = approveSceneScript({ proposal: scriptAttempt.script, plan, blueprint });
+    if (approval.ok) { script = approval.value; break; }
+    console.log(JSON.stringify({ event: "runtime_narrative_approval", role: "writer", approved: false, category: approval.category }));
   }
-
-  // Step 4：规则审批场景脚本（失败即 fallback）
-  if (!scriptAttempt.ok) {
-    return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false, candidates, state);
-  }
-
-  const scriptApproval = approveSceneScript({
-    proposal: scriptAttempt.script,
-    plan,
-    blueprint,
-  });
-
-  if (!scriptApproval.ok) {
-    console.log(JSON.stringify({ event: "runtime_narrative_approval", role: "writer", approved: false, category: scriptApproval.category }));
-    return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false, candidates, state);
-  }
-
-  const script = scriptApproval.value;
+  if (script === undefined || scriptAttempt === null) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false, candidates, state);
 
   // Step 5：演员只能收到该 NPC 获批准的事实卡；其输出也必须复核。
   let npcLineAttempted = false;
   let npcLine: NarrativeSceneState["npcLine"] = null;
+  let npcApproved = script.npcInstruction === null;
   if (script.npcInstruction !== null) {
     const npcInst = script.npcInstruction;
     const npcLineContext = toNpcLineContext({
@@ -138,22 +122,23 @@ export async function orchestrateNarrativeScene(
       mayLie: npcInst.mayLie,
     });
 
-    try {
-      const attempt = await npcLineSource.generate({
-        traceId: `${traceId}-npcLine`,
-        context: npcLineContext as unknown as Record<string, unknown>,
-      });
-      npcLineAttempted = true;
-      if (attempt.ok) {
+    for (let attemptIndex = 0; attemptIndex < 2; attemptIndex += 1) {
+      try {
+        const attempt = await npcLineSource.generate({
+          traceId: `${traceId}-npcLine${attemptIndex === 0 ? "" : "-retry"}`,
+          context: attemptIndex === 0 ? npcLineContext as unknown as Record<string, unknown> : { ...(npcLineContext as unknown as Record<string, unknown>), retryInstruction: "Previous output failed approval. Return one complete JSON object using only the supplied fact cards." },
+        });
+        npcLineAttempted = true;
+        if (!attempt.ok) continue;
         const approved = approveNpcPerformance({ proposal: attempt.performance, allowedFactIds: npcInst.allowedFactIds });
-        if (approved.ok) {
-          npcLine = { npcId: npcInst.npcId as NpcId, text: approved.value.text, emotion: approved.value.emotion, usedFactIds: approved.value.usedFactIds as readonly FactId[] };
-        }
-      }
-    } catch {
-      // 演员调用失败不阻断流程
+        if (!approved.ok) continue;
+        npcLine = { npcId: npcInst.npcId as NpcId, text: approved.value.text, emotion: approved.value.emotion, usedFactIds: approved.value.usedFactIds as readonly FactId[] };
+        npcApproved = true;
+        break;
+      } catch { /* one bounded retry, then full fallback */ }
     }
   }
+  if (!npcApproved) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, npcLineAttempted, candidates, state);
 
   // Step 6：组装 NarrativeSceneState
   const scene: NarrativeSceneState = {
