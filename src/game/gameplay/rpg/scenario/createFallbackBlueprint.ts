@@ -617,6 +617,10 @@ function buildWorld(
 
 const LOCATION_IDS = ["loc_1", "loc_2", "loc_3", "loc_4", "loc_hidden"] as const;
 
+// Town 层：固定把第二个主要地点标为 town（各题材模板 index 1 均为集市/商埠
+// 型聚落，且是主线一阶段的 visit 目标），保证离线旅程确定性覆盖三层。
+const TOWN_LOCATION_ID = LOCATION_IDS[1];
+
 // 主线关键物品落位：与二阶段 talk_to_npc 目标 npc_3 同在 loc_3（主要地点开局
 // 即解锁且互相连通，对二阶段一定可达；隐藏地点开局锁定，不可用作落位）。
 const KEY_ITEM_LOCATION_ID = LOCATION_IDS[2];
@@ -649,6 +653,7 @@ function buildLocations(
       name: template.locations[index].name,
       description: template.locations[index].description,
       kind: index === 4 ? ("hidden" as const) : ("main" as const),
+      ...(id === TOWN_LOCATION_ID ? { scale: "town" as const } : {}),
       connectedLocationIds: connections[index],
       npcIds: npcIdsHere,
       // 初始物品（ITEM_START）不列为可取得物品；关键物品只落在唯一地点。

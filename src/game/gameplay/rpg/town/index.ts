@@ -5,6 +5,18 @@ export { createTownRng, type TownRng } from "./townRandom";
 export { generateTown, TownGenerationError, type TownGenerationInput } from "./generateTown";
 export { createTownPlanFromLocation } from "./planFromBlueprint";
 export {
+  ensureTownRuntime,
+  townSeedFor,
+  type TownEntryMode,
+  type TownEntryResult
+} from "./enterTown";
+export {
+  validateTownPlanCandidate,
+  type TownPlanRejectReason,
+  type TownPlanValidationContext,
+  type TownPlanValidationResult
+} from "./validateTownPlanCandidate";
+export {
   projectTownSemanticView,
   type TownCompassArea,
   type TownSemanticBuilding,

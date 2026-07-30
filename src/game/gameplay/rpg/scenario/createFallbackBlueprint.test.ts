@@ -398,6 +398,20 @@ describe("createFallbackBlueprint：地点可取得物品（Phase 5）", () => {
   }
 });
 
+describe("createFallbackBlueprint：town 地点覆盖", () => {
+  it("全题材模板恰含一个 town 地点（loc_2，主线一阶段 visit 目标）", () => {
+    for (const gameType of ALL_GAME_TYPES) {
+      const candidate = generate({ gameType });
+      const townLocations = candidate.locations.filter((entry) => entry.scale === "town");
+      expect(townLocations.map((entry) => entry.id)).toEqual(["loc_2"]);
+      // 其余地点不写 scale 字段（缺省即 scene，旧存档零迁移模式）。
+      for (const location of candidate.locations) {
+        if (String(location.id) !== "loc_2") expect(location.scale).toBeUndefined();
+      }
+    }
+  });
+});
+
 describe("createFallbackBlueprint：fixture 回归 pin", () => {
   type FallbackFixture = {
     input: NewGameInput;
