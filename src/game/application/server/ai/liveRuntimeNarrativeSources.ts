@@ -7,7 +7,7 @@ type Request = DirectorRequest | SceneScriptRequest | NpcLineRequest;
 const category: Record<AiTransportFailureCode, NarrativeFailureCategory> = { timeout: "timeout", rate_limited: "rate_limited", empty_response: "empty_response", service_error: "service_error", network_error: "service_error", http_error: "service_error", invalid_response: "service_error", aborted: "service_error", invalid_config: "service_error" };
 
 /** Three separate sources and requests; each builder receives only its already-projected context. */
-export function createLiveRuntimeNarrativeSources(input: Readonly<{ transport: AiTransport; config: AiTransportConfig }>): Readonly<{ directorSource: DirectorSource; sceneScriptSource: SceneScriptSource; npcLineSource: NpcLineSource }> {
+export function createLiveRuntimeNarrativeSources(input: Readonly<{ transport: AiTransport; config: AiTransportConfig; responseFormat?: (role: Role) => Readonly<Record<string, unknown>> | undefined }>): Readonly<{ directorSource: DirectorSource; sceneScriptSource: SceneScriptSource; npcLineSource: NpcLineSource }> {
   return {
     directorSource: { generate: async (request) => run<DirectorProposal, DirectorAttempt>("director", request, input, "plan") },
     sceneScriptSource: { generate: async (request) => run<SceneScriptProposal, SceneScriptAttempt>("writer", request, input, "script") },
@@ -15,12 +15,12 @@ export function createLiveRuntimeNarrativeSources(input: Readonly<{ transport: A
   };
 }
 
-async function run<T extends object, A>(role: Role, request: Request, input: { transport: AiTransport; config: AiTransportConfig }, field: "plan" | "script" | "performance"): Promise<A> {
+async function run<T extends object, A>(role: Role, request: Request, input: { transport: AiTransport; config: AiTransportConfig; responseFormat?: (role: Role) => Readonly<Record<string, unknown>> | undefined }, field: "plan" | "script" | "performance"): Promise<A> {
   const startedAt = Date.now();
   let completed;
   // The configured OpenAI-compatible provider supports this optional extension;
   // it keeps this short structured-control call out of extended reasoning mode.
-  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { enable_thinking: false } }); } catch { audit(role, false, "service_error", Date.now() - startedAt); return failure(request, "service_error") as A; }
+  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { enable_thinking: false, ...input.responseFormat?.(role) } }); } catch { audit(role, false, "service_error", Date.now() - startedAt); return failure(request, "service_error") as A; }
   if (!completed.ok) { audit(role, false, category[completed.code], completed.latencyMs); return failure(request, category[completed.code]) as A; }
   const payload = parseObject(completed.content);
   if (payload === null) { const failureCategory = completed.content.trim() === "" ? "empty_response" : "invalid_json"; audit(role, false, failureCategory, completed.latencyMs); return failure(request, failureCategory) as A; }
