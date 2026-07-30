@@ -1,4 +1,5 @@
 import type { GameTypeId } from "./newGame";
+import type { BudgetPolicy } from "./budgetPolicy";
 
 // ---------------------------------------------------------------------------
 // 品牌化稳定 ID
@@ -127,7 +128,8 @@ type QuestOutcomeOf<I extends IdSet> =
   | { readonly kind: "reach_ending"; readonly endingId: I["ending"] }
   | { readonly kind: "closed" };
 
-export type MainQuestStage = 1 | 2 | 3;
+// 正整数，上限由 budgetPolicy.mainActs 决定，结构校验在 questGraph
+export type MainQuestStage = number;
 
 type QuestCommonOf<I extends IdSet> = {
   readonly id: I["quest"];
@@ -263,6 +265,8 @@ type ScenarioBlueprintShapeOf<I extends IdSet> = {
   readonly items: readonly ItemDefinitionOf<I>[];
   readonly endings: readonly EndingDefinitionOf<I>[];
   readonly openingScene: SceneDefinitionOf<I>;
+  // 旧存档缺省，读取一律经 budgetPolicyOf
+  readonly budgetPolicy?: BudgetPolicy;
   readonly contentBudget: ContentBudget;
 };
 
