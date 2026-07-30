@@ -1,5 +1,7 @@
 import type { GameState, ScenarioBlueprint } from "@/game/domain";
+import { paginateSpeechText } from "@/game/domain";
 import {
+  composeNpcSpeech,
   projectDialogueChoices,
   type AvailableAction,
   type DialogueChoice
@@ -75,6 +77,8 @@ export type NpcDialogueView = {
   readonly name: string;
   readonly role: string;
   readonly slot: SceneSlot;
+  /** 确定性对白分页：composeNpcSpeech 产出按每页字符预算切页，顺序拼接无损。 */
+  readonly speechPages: readonly string[];
   readonly choices: readonly DialogueChoiceView[];
   readonly reviewClues: readonly string[];
 };
@@ -234,6 +238,9 @@ function toWritableChoiceView(choice: DialogueChoice): DialogueChoiceView {
   return { kind: choice.kind, choiceId: choice.choiceId, label: choice.label, mutatesState: true };
 }
 
+/** 对白每页字符预算：纯展示策略常量，UI 不得自行重新分页。 */
+export const SPEECH_PAGE_CHAR_BUDGET = 48;
+
 /**
  * 安全对话：只投影当前地点在场 NPC（已结识者仍作为对话对象出现）。
  * readOnly（active battle 或结局）时不投影任何可写 choice，仅保留只读 review_clue。
@@ -267,6 +274,10 @@ function projectDialogues(
       name: npc.name,
       role: npc.role,
       slot: slotForId(String(npcState.npcId)),
+      speechPages: paginateSpeechText(
+        composeNpcSpeech(blueprint, state, npcState.npcId),
+        SPEECH_PAGE_CHAR_BUDGET
+      ),
       choices: [...writableChoices, reviewChoice],
       reviewClues
     });

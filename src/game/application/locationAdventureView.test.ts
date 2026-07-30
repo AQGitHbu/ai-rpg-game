@@ -9,9 +9,9 @@ import {
   type NewGameInput,
   type QuestId
 } from "@/game/domain";
-import { projectAvailableActions } from "@/game/gameplay/rpg/actions";
+import { composeNpcSpeech, projectAvailableActions } from "@/game/gameplay/rpg/actions";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
-import { projectLocationAdventureView } from "./locationAdventureView";
+import { projectLocationAdventureView, SPEECH_PAGE_CHAR_BUDGET } from "./locationAdventureView";
 import { runScenarioPipeline } from "./applicationFixture.testutil";
 
 // ---------------------------------------------------------------------------
@@ -258,6 +258,44 @@ describe("projectLocationAdventureView：安全对话", () => {
       const other = second.find((d) => d.npcId === dialogue.npcId);
       expect(other?.slot).toBe(dialogue.slot);
       expect(dialogue.slot).toBe(expectedSlot(dialogue.npcId));
+    }
+  });
+});
+
+describe("projectLocationAdventureView：对白分页投影", () => {
+  it("speechPages 非空，顺序拼接 === composeNpcSpeech 产出，每页不超预算", () => {
+    const view = project(PIPELINE.state);
+    const dialogue = view.dialogues.find((d) => d.npcId === "npc_1");
+    expect(dialogue).toBeDefined();
+    expect(dialogue!.speechPages.length).toBeGreaterThan(0);
+    const speech = composeNpcSpeech(blueprint, PIPELINE.state, asNpcId("npc_1"));
+    expect(speech).not.toBe("");
+    expect(dialogue!.speechPages.join("")).toBe(speech);
+    for (const page of dialogue!.speechPages) {
+      expect(page.length).toBeLessThanOrEqual(SPEECH_PAGE_CHAR_BUDGET);
+    }
+  });
+
+  it("确定性：两次投影的 speechPages 完全一致", () => {
+    const first = project(PIPELINE.state).dialogues;
+    const second = project(PIPELINE.state).dialogues;
+    expect(first.length).toBeGreaterThan(0);
+    for (const dialogue of first) {
+      const other = second.find((d) => d.npcId === dialogue.npcId);
+      expect(other?.speechPages).toEqual(dialogue.speechPages);
+    }
+  });
+
+  it("只读投影（active battle）下对白仍存在，供回顾展示", () => {
+    const state: GameState = {
+      ...PIPELINE.state,
+      currentLocationId: asLocationId("loc_3"),
+      battle: { status: "active", enemyId: asEnemyId("enemy_boss"), playerHp: 20, enemyHp: 10, round: 1 }
+    };
+    const view = project(state);
+    expect(view.dialogues.length).toBeGreaterThan(0);
+    for (const dialogue of view.dialogues) {
+      expect(dialogue.speechPages.length).toBeGreaterThan(0);
     }
   });
 });

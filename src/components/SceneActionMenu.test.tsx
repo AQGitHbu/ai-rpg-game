@@ -34,6 +34,7 @@ const NPC: NpcDialogueView = {
   name: "陆掌柜",
   role: "客栈掌柜",
   slot: "left",
+  speechPages: ["陆掌柜擦着酒碗抬起头。"],
   choices: [{ kind: "review_clue", label: "回顾已知线索", mutatesState: false }],
   reviewClues: []
 };
