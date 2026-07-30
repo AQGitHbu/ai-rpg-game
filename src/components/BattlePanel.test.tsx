@@ -400,7 +400,10 @@ describe("BattlePanel：Phase 9 战斗视窗", () => {
 
     await user.click(screen.getByRole("button", { name: "防御" }));
 
-    await screen.findByLabelText("战斗日志");
+    expect(await screen.findByLabelText("战斗日志")).toHaveClass(
+      "battle-log",
+      "battle-log--success"
+    );
   });
 
   it("战斗视窗包含玩家名与敌人 HP，均来自 BattleView", () => {

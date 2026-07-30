@@ -40,14 +40,14 @@ export function BattleArena({
         <span>回合 {round}</span>
       </header>
       <section className="battle-combatant battle-combatant--player">
-        <div data-testid="battle-combatant-visual">
+        <div className="battle-combatant-visual" data-testid="battle-combatant-visual">
           <AdventureVisual gameType={gameType} kind="npc" label="" decorative />
         </div>
         <h3>{playerName}</h3>
         <p>生命 {playerHp}</p>
       </section>
       <section className="battle-combatant battle-combatant--enemy">
-        <div data-testid="battle-combatant-visual">
+        <div className="battle-combatant-visual" data-testid="battle-combatant-visual">
           <AdventureVisual gameType={gameType} kind="enemy" label="" decorative />
         </div>
         <h3>{enemyName}</h3>

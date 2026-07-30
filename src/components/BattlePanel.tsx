@@ -95,10 +95,17 @@ export function BattlePanel({
         onSelect={(action) => void handleBattleAction(action)}
       />
       {feedback.phase === "submitting" ? (
-        <p role="status">正在裁决本回合…</p>
+        <p role="status" aria-live="polite" className="battle-log battle-log--submitting">
+          正在裁决本回合…
+        </p>
       ) : null}
       {feedback.phase === "success" || feedback.phase === "rejected" || feedback.phase === "error" ? (
-        <p role="status" aria-live="polite" aria-label="战斗日志">
+        <p
+          role="status"
+          aria-live="polite"
+          aria-label="战斗日志"
+          className={`battle-log battle-log--${feedback.phase}`}
+        >
           {feedback.message}
         </p>
       ) : null}

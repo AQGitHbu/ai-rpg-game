@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "mvp-phase-9-battle-viewport",
-  "status": "planned",
-  "implementationStatus": "not_started",
+  "status": "implemented",
+  "implementationStatus": "implemented",
   "targetBranch": "codex/phase9-battle-viewport",
   "worktreeName": "phase9-battle-viewport",
   "repositories": ["ai-rpg-game"],

@@ -1025,6 +1025,33 @@ select:focus,
   outline-offset: 3px;
 }
 
+.battle-log {
+  position: absolute;
+  z-index: 2;
+  right: 10rem;
+  bottom: 1rem;
+  left: 1rem;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: rgb(17 22 18 / 84%);
+  line-height: 1.5;
+}
+
+.battle-log--success {
+  color: var(--game-success);
+}
+
+.battle-log--rejected,
+.battle-log--error {
+  color: #e09a91;
+}
+
+.battle-log--submitting {
+  color: var(--game-text-muted);
+}
+
 @media (max-width: 700px) {
   .battle-viewport {
     grid-template-columns: 1fr;
@@ -1035,5 +1062,11 @@ select:focus,
     inset: auto .75rem .75rem;
     grid-auto-flow: column;
     overflow-x: auto;
+  }
+
+  .battle-log {
+    right: .75rem;
+    bottom: 4.5rem;
+    left: .75rem;
   }
 }

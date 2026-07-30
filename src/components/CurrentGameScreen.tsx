@@ -159,7 +159,7 @@ export function CurrentGameScreen() {
             onViewChange={(view) => setState({ phase: "active", view, createdWithFallback: false })}
             onStaleRevision={() => void loadCurrentGame()}
             developmentTools={developmentTools}
-            onClearDevelopmentSave={() => void clearDevelopmentSave()}
+            onClearDevelopmentSave={clearDevelopmentSave}
           />
         )}
       </div>
