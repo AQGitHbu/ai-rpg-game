@@ -642,6 +642,10 @@ select:focus,
 }
 
 /* Phase 8: RPG viewport layout */
+body:has(.adventure-game-shell) {
+  overflow: hidden;
+}
+
 .adventure-game-shell {
   position: fixed;
   inset: 0;
