@@ -11,6 +11,7 @@ import { WorldMapScreen } from "./WorldMapScreen";
 import { LocationSceneScreen } from "./LocationSceneScreen";
 import { NpcDialoguePanel } from "./NpcDialoguePanel";
 import { NarrativeScenePanel } from "./NarrativeScenePanel";
+import { ToastContainer, type ToastMessage } from "./ToastNotification";
 
 type AdventureGameShellProps = {
   readonly view: GameSessionView;
@@ -27,7 +28,6 @@ type AdventureScreen = "map" | "scene";
 type ActionFeedback =
   | { readonly phase: "idle" }
   | { readonly phase: "submitting" }
-  | { readonly phase: "success"; readonly message: string }
   | { readonly phase: "rejected"; readonly message: string }
   | { readonly phase: "error"; readonly message: string };
 
@@ -56,6 +56,22 @@ export function AdventureGameShell({
   const [screen, setScreen] = useState<AdventureScreen>("map");
   const [detailsPanel, setDetailsPanel] = useState<DetailsPanel | null>(null);
   const [feedback, setFeedback] = useState<ActionFeedback>({ phase: "idle" });
+  const [toasts, setToasts] = useState<readonly ToastMessage[]>([]);
+  const toastSequenceRef = useRef(0);
+
+  function pushToast(message: string): void {
+    toastSequenceRef.current += 1;
+    const toast: ToastMessage = {
+      id: `toast-${toastSequenceRef.current}`,
+      message,
+      createdAt: Date.now()
+    };
+    setToasts((prev) => [...prev, toast]);
+  }
+
+  function dismissToast(id: string): void {
+    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  }
   // Older persisted/API test views predate the explicit generation field.
   // Treat their absence as ready so a compatible client can still render them.
   const narrativePending = view.narrativeGeneration?.status === "pending";
@@ -93,7 +109,8 @@ export function AdventureGameShell({
     onBusyChange(false);
     switch (outcome.kind) {
       case "success":
-        setFeedback({ phase: "success", message: outcome.message });
+        setFeedback({ phase: "idle" });
+        pushToast(outcome.message);
         onViewChange(outcome.view);
         setScreen("scene");
         return;
@@ -127,7 +144,8 @@ export function AdventureGameShell({
     onBusyChange(false);
     switch (outcome.kind) {
       case "success":
-        setFeedback({ phase: "success", message: outcome.message });
+        setFeedback({ phase: "idle" });
+        pushToast(outcome.message);
         onViewChange(outcome.view);
         return;
       case "rejected":
@@ -154,7 +172,8 @@ export function AdventureGameShell({
     onBusyChange(false);
     switch (outcome.kind) {
       case "success":
-        setFeedback({ phase: "success", message: outcome.message });
+        setFeedback({ phase: "idle" });
+        pushToast(outcome.message);
         onViewChange(outcome.view);
         return;
       case "rejected":
@@ -174,7 +193,7 @@ export function AdventureGameShell({
     setFeedback({ phase: "submitting" }); onBusyChange(true);
     const outcome = await postGameAction({ intent: { type: "narrative_choice", choiceToken }, revision: view.revision });
     onBusyChange(false);
-    if (outcome.kind === "success") { setFeedback({ phase: "success", message: outcome.message }); onViewChange(outcome.view); return; }
+    if (outcome.kind === "success") { setFeedback({ phase: "idle" }); pushToast(outcome.message); onViewChange(outcome.view); return; }
     if (outcome.kind === "rejected") { setFeedback({ phase: "rejected", message: outcome.message }); return; }
     if (outcome.kind === "stale") { setFeedback({ phase: "idle" }); onStaleRevision(); return; }
     setFeedback({ phase: "error", message: outcome.message });
@@ -250,11 +269,7 @@ export function AdventureGameShell({
         </AdventureOverlay>
       ) : null}
 
-      {feedback.phase === "success" ? (
-        <p className="adventure-toast" role="status" aria-live="polite">
-          {feedback.message}
-        </p>
-      ) : null}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       {feedback.phase === "rejected" || feedback.phase === "error" ? (
         <p role="status" aria-live="polite" className={`action-feedback ${feedback.phase}`}>

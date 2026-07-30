@@ -1,4 +1,4 @@
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ToastContainer, type ToastMessage } from "./ToastNotification";
 
@@ -14,6 +14,20 @@ describe("ToastNotification", () => {
     expect(statusElements).toHaveLength(2);
     expect(statusElements[0]).toHaveTextContent("你来到了铁剑山庄。");
     expect(statusElements[1]).toHaveTextContent("你获得了锈铁钥匙。");
+  });
+
+  it("退场动画结束时触发 onDismiss 回调", () => {
+    const onDismiss = vi.fn();
+    const toasts: ToastMessage[] = [
+      { id: "t1", message: "你来到了铁剑山庄。", createdAt: 1000 }
+    ];
+    render(<ToastContainer toasts={toasts} onDismiss={onDismiss} />);
+
+    const exitAnimationEnd = new Event("animationend", { bubbles: true });
+    Object.assign(exitAnimationEnd, { animationName: "adventure-toast-exit" });
+    fireEvent(screen.getByRole("status"), exitAnimationEnd);
+
+    expect(onDismiss).toHaveBeenCalledWith("t1");
   });
 
   it("当动画结束或超时 5.1s 时触发 onDismiss 回调", () => {
