@@ -14,6 +14,7 @@ import {
   failQuest,
   resolveEnding,
 } from "@/game/gameplay/rpg/quests";
+import { finalMainActOf } from "@/game/domain";
 import type { GameState, QuestId, EnemyId, ScenarioBlueprint } from "@/game/domain";
 import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
 import type { GameRepository } from "./server/persistence/gameRepository";
@@ -449,7 +450,7 @@ function findStage3QuestForEnemy(
   enemyId: EnemyId
 ): QuestId | undefined {
   const quest = blueprint.quests.find((q) =>
-    q.kind === "main" && q.stage === 3 &&
+    q.kind === "main" && q.stage === finalMainActOf(blueprint) &&
     q.objectives.some((obj) => obj.kind === "defeat_enemy" && obj.enemyId === enemyId)
   );
   return quest?.id;

@@ -1,3 +1,4 @@
+import { finalMainActOf } from "@/game/domain";
 import type {
   EnemyId,
   GameEvent,
@@ -106,9 +107,9 @@ export function startBattle(
     };
   }
 
-  // 6. 敌人是 active stage 3 的 defeat_enemy 目标
+  // 6. 敌人是 active 终幕的 defeat_enemy 目标
   const isStage3Target = blueprint.quests.some((quest) => {
-    if (quest.kind !== "main" || quest.stage !== 3) return false;
+    if (quest.kind !== "main" || quest.stage !== finalMainActOf(blueprint)) return false;
     const questState = state.quests.find((qs) => qs.questId === quest.id);
     return questState?.status === "active" &&
       quest.objectives.some((obj) => obj.kind === "defeat_enemy" && obj.enemyId === enemyId);

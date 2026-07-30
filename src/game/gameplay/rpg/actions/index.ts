@@ -1,3 +1,4 @@
+import { finalMainActOf } from "@/game/domain";
 import type { EnemyId, GameState, ScenarioBlueprint, FactId, ItemId, LocationId, NpcId } from "@/game/domain";
 
 // ---------------------------------------------------------------------------
@@ -135,9 +136,9 @@ export function projectAvailableActions(
     for (const enemy of blueprint.enemies) {
       if (enemy.locationId !== state.currentLocationId) continue;
       if (state.defeatedEnemyIds.includes(enemy.id)) continue;
-      // 只投影 active stage 3 defeat_enemy 目标
+      // 只投影 active 终幕 defeat_enemy 目标
       const isStage3Target = blueprint.quests.some((quest) => {
-        if (quest.kind !== "main" || quest.stage !== 3) return false;
+        if (quest.kind !== "main" || quest.stage !== finalMainActOf(blueprint)) return false;
         const questState = state.quests.find((qs) => qs.questId === quest.id);
         return questState?.status === "active" &&
           quest.objectives.some((obj) => obj.kind === "defeat_enemy" && obj.enemyId === enemy.id);
