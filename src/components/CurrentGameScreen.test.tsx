@@ -349,11 +349,19 @@ describe("CurrentGameScreen：战斗面板", () => {
     stubFetch(async () => jsonResponse(200, { status: "active", view }));
     render(<CurrentGameScreen />);
 
-    expect(await screen.findByRole("region", { name: "战斗" })).toBeInTheDocument();
-    expect(screen.getByText("暗影刺客")).toBeInTheDocument();
+    const region = await screen.findByRole("region", { name: "战斗" });
+    expect(region).toBeInTheDocument();
+    expect(region).toHaveTextContent("暗影刺客");
     expect(screen.getByRole("button", { name: "攻击" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "防御" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "撤退" })).toBeInTheDocument();
+  });
+
+  it("active battle 显示战斗主视窗，且不渲染地图壳", async () => {
+    stubFetch(async () => jsonResponse(200, { status: "active", view: buildBattleSessionViewFixture() }));
+    render(<CurrentGameScreen />);
+    expect(await screen.findByRole("region", { name: "战斗" })).toHaveClass("battle-viewport");
+    expect(screen.queryByRole("button", { name: "进入青石镇" })).toBeNull();
   });
 
   it("战斗中提交 attack 带正确 revision 与 payload", async () => {

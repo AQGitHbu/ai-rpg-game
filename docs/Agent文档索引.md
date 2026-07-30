@@ -12,12 +12,12 @@
 |---|---|---|---|
 | 共享基础设施 | `共同规范/共享模块开发流程.md` | `共同规范/共享模块目录.json` | 仅按触发条件读取 |
 | 项目脚手架 | `agent/项目脚手架.md` | — | 已建立 |
-| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | Phase 9：场景化战斗与敌人遭遇待执行（planned / not_started，单仓 `codex/phase9-battle-viewport`）；唯一 Plan：`superpowers/plans/2026-07-30-mvp-phase-9-battle-viewport.md`；Spec：`superpowers/specs/2026-07-30-battle-viewport-design.md` |
+| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | Phase 9：场景化战斗与敌人遭遇已实现（implemented，单仓 `codex/phase9-battle-viewport`）；唯一 Plan：`superpowers/plans/2026-07-30-mvp-phase-9-battle-viewport.md`；Spec：`superpowers/specs/2026-07-30-battle-viewport-design.md` |
 | MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | Phase 4C 已实现：创建、恢复、固定行动、探索、物品、战斗与双结局 + 真实 AI 动态开局（`AI_OUTPUT_FORMAT` 结构化输出，失败安全 fallback，phase4c 离线 fixture 集为主回归） |
 | 行动裁决 | `agent/行动裁决.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现：observe / talk / investigate / move / take_item / battle intents |
 | 探索与任务推进 | `agent/探索与任务推进.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现：移动、任务解锁、obtain_item / defeat_enemy objective 与 outcome |
 | 物品与任务奖励 | `agent/物品与任务奖励.md` | `策划文档/AI生成RPG_MVP.md` | Phase 5 已实现：地点预置物品、take_item 取得和 obtain_item objective；不含物品使用/奖励数值 |
-| 战斗与结局 | `agent/战斗与结局.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现确定性 boss 回合战与双结局；Phase 9 待执行：只将既有 BattleView 和 battle_action 场景化，不改规则或 AI |
+| 战斗与结局 | `agent/战斗与结局.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现确定性 boss 回合战与双结局；Phase 9 已实现：场景化战斗视窗（BattleArena + BattleActionRail），不改规则或 AI |
 | 地图与地点冒险 | `agent/地图与地点冒险.md` | `策划文档/AI生成RPG_MVP.md` | Phase 7 地图/地点主循环与 Phase 8 非战斗 HUD、视窗、行动栏、详情/对话层均已完成；不改战斗或 AI |
 | 无 AI 试玩验收 | `agent/无AI试玩验收.md` | `superpowers/plans/2026-07-28-mvp-no-ai-playable-vertical-slice.md` | 已实现：属性/模板叙事、开发环境清档、成功/失败手工试玩路线 |
 | AI 环境 | `agent/AI环境.md` | `.env.example` | 独立环境契约已建立；Phase 4B 已实现真实 AI 接入（shared `@ai-game/ai-transport` + live source + `AI_CONFIG_*`/`LIVE_*` 诊断 + 脱敏 audit）与 opt-in smoke（`smoke:ai:phase4b`，真实计费 smoke 已于本机执行，三例满足 generated|fallback 契约）；Phase 4C 新增 `AI_OUTPUT_FORMAT`（json_schema|json_object|prompt_only，缺省 prompt_only）与 smoke 脱敏汇总行；`GAME_DB_PATH` 为 server-only 持久化配置 |
