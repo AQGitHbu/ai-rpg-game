@@ -19,4 +19,6 @@ export type PlayerIntent =
   | { readonly type: "take_item"; readonly itemId: ItemId }
   | { readonly type: "start_battle"; readonly enemyId: EnemyId }
   | { readonly type: "battle_action"; readonly action: "attack" | "guard" | "withdraw" }
+  /** Server resolves this opaque token against the persisted current scene. */
+  | { readonly type: "narrative_choice"; readonly choiceToken: string }
   | DialogueChoiceIntent;

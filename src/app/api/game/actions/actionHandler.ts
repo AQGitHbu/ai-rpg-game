@@ -45,7 +45,8 @@ const ALLOWED_INTENT_FIELDS: ReadonlySet<string> = new Set([
   "itemId",
   "enemyId",
   "action",
-  "choiceId"
+  "choiceId",
+  "choiceToken"
 ]);
 
 const VALID_INTENT_TYPES: ReadonlySet<string> = new Set([
@@ -56,6 +57,7 @@ const VALID_INTENT_TYPES: ReadonlySet<string> = new Set([
   "take_item",
   "start_battle",
   "battle_action",
+  "narrative_choice",
   "dialogue_choice"
 ]);
 
@@ -71,7 +73,8 @@ const INTENT_TARGET_FIELD: Readonly<Record<string, readonly string[]>> = {
   take_item: ["itemId"],
   start_battle: ["enemyId"],
   battle_action: ["action"],
-  dialogue_choice: ["npcId", "choiceId"]
+  dialogue_choice: ["npcId", "choiceId"],
+  narrative_choice: ["choiceToken"]
 };
 
 /** 从原始 JSON 构造 PlayerIntent；校验失败返回错误详情。 */
@@ -168,6 +171,13 @@ function parseIntent(raw: unknown):
         return { ok: false, detail: "dialogue_choice 需要 choiceId 字符串" };
       }
       return { ok: true, intent: { type: "dialogue_choice", npcId: asNpcId(npcId), choiceId } };
+    }
+    case "narrative_choice": {
+      const choiceToken = obj["choiceToken"];
+      if (typeof choiceToken !== "string" || choiceToken.length === 0) {
+        return { ok: false, detail: "narrative_choice 需要 choiceToken 字符串" };
+      }
+      return { ok: true, intent: { type: "narrative_choice", choiceToken } };
     }
     default:
       return { ok: false, detail: "未知 intent.type" };

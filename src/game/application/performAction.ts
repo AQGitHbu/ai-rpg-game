@@ -1,10 +1,14 @@
 import { loadScenarioProfiles, type ScenarioProfiles } from "@/game/gameplay/rpg/scenario";
 import {
   resolveAction,
+  projectAvailableActions,
   type PlayerIntent,
   type ResolveActionDependencies,
 } from "@/game/gameplay/rpg/actions";
 import { startBattle, battleAction } from "@/game/gameplay/rpg/battle";
+import { findAvailableActionByKey } from "@/game/gameplay/rpg/narrative";
+import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
+import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
 import {
   reconcileQuests,
   failQuest,
@@ -46,6 +50,8 @@ export type PerformActionDependencies = {
   readonly now: () => string;
   /** 场景 profile 配置：缺省加载内置 data/base 配置，测试可注入变体。 */
   readonly profiles?: ScenarioProfiles;
+  readonly runtimeNarrativeSources?: Readonly<{ directorSource: DirectorSource; sceneScriptSource: SceneScriptSource; npcLineSource: NpcLineSource }>;
+  readonly newTraceId?: () => string;
 };
 
 /** 行动反馈视图：成功或拒绝的玩家可读消息。 */
@@ -164,7 +170,38 @@ export async function performAction(
   let resolved: ResolvedAction;
 
   try {
-    switch (command.intent.type) {
+    if (command.intent.type === "narrative_choice") {
+      const choiceToken = command.intent.choiceToken;
+      const scene = record.state.narrative.currentScene;
+      const choice = scene?.choices.find((entry) => entry.choiceToken === choiceToken);
+      if (scene === null || scene === undefined || choice === undefined) {
+        const view = projectCurrentView();
+        if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "该剧情选项已失效。" } };
+      }
+      const available = projectAvailableActions(record.blueprint, record.state);
+      const resolvedIntent = findAvailableActionByKey(available, choice.actionKey);
+      if (resolvedIntent === null) {
+        const view = projectCurrentView();
+        if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "该剧情选项已不再合法。" } };
+      }
+      const result = resolveAction(record.blueprint, record.state, resolvedIntent, resolverDeps);
+      if (!result.ok) {
+        const view = projectCurrentView();
+        if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: result.feedback.message } };
+      }
+      const reconciled = reconcileQuests(record.blueprint, result.state, questDeps);
+      resolved = {
+        state: {
+          ...reconciled.state,
+          narrative: { currentScene: null },
+          eventLedger: [...reconciled.state.eventLedger, { type: "narrative_choice", choiceToken: choice.choiceToken, actionKey: choice.actionKey, sceneId: scene.sceneId, occurredAt: deps.now() }],
+        },
+        feedbackMessage: result.feedback.message,
+      };
+    } else switch (command.intent.type) {
       case "start_battle": {
         const result = startBattle(
           record.blueprint, record.state, command.intent.enemyId, battleDeps
@@ -263,6 +300,12 @@ export async function performAction(
     nextState = endingResult.state;
   } catch {
     return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+  }
+
+  // Generate only after the deterministic rule result exists, before the sole CAS write.
+  if (command.intent.type === "narrative_choice" && deps.runtimeNarrativeSources !== undefined && nextState.ending === null && nextState.battle.status !== "active") {
+    const narrative = await orchestrateNarrativeScene({ traceId: deps.newTraceId?.() ?? `narrative-${command.expectedRevision + 1}`, blueprint: record.blueprint, state: nextState, ...deps.runtimeNarrativeSources });
+    nextState = { ...nextState, narrative: { currentScene: narrative.scene } };
   }
 
   // Step 5: 最终 state → 原子 compare-and-swap 写入（唯一一次写入）。

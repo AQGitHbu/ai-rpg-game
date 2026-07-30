@@ -15,6 +15,7 @@ import {
 } from "../performAction";
 import { asGameId, type GameId } from "./persistence/gameRepository";
 import { createScenarioCandidateSource } from "./ai/scenarioCandidateSourceFactory";
+import { createRuntimeNarrativeSources } from "./ai/runtimeNarrativeSourceFactory";
 import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
 import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
 
@@ -71,10 +72,13 @@ export function createServerGameEntryPoints(
     scenarioCandidateSource: createScenarioCandidateSource(env),
     newTraceId: () => randomUUID(),
     generationObserver: options.generationObserver
+    ,runtimeNarrativeSources: createRuntimeNarrativeSources(env)
   };
   const performDeps: PerformActionDependencies = {
     repository,
-    now: () => new Date().toISOString()
+    now: () => new Date().toISOString(),
+    newTraceId: () => randomUUID(),
+    runtimeNarrativeSources: createRuntimeNarrativeSources(env)
   };
   return {
     developmentToolsEnabled: env.NODE_ENV === "development",

@@ -91,6 +91,7 @@ export async function orchestrateNarrativeScene(
   });
 
   if (!planApproval.ok) {
+    console.log(JSON.stringify({ event: "runtime_narrative_approval", role: "director", approved: false, category: planApproval.category }));
     return buildFallbackResult(traceId, directorAttempt, null, false, candidates, state);
   }
 
@@ -117,6 +118,7 @@ export async function orchestrateNarrativeScene(
   });
 
   if (!scriptApproval.ok) {
+    console.log(JSON.stringify({ event: "runtime_narrative_approval", role: "writer", approved: false, category: scriptApproval.category }));
     return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false, candidates, state);
   }
 

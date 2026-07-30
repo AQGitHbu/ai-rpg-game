@@ -10,6 +10,7 @@ import { AdventureDetailsPanel } from "./AdventureDetailsPanel";
 import { WorldMapScreen } from "./WorldMapScreen";
 import { LocationSceneScreen } from "./LocationSceneScreen";
 import { NpcDialoguePanel } from "./NpcDialoguePanel";
+import { NarrativeScenePanel } from "./NarrativeScenePanel";
 
 type AdventureGameShellProps = {
   readonly view: GameSessionView;
@@ -166,6 +167,16 @@ export function AdventureGameShell({
     }
   }
 
+  async function handleNarrativeChoice(choiceToken: string): Promise<void> {
+    setFeedback({ phase: "submitting" }); onBusyChange(true);
+    const outcome = await postGameAction({ intent: { type: "narrative_choice", choiceToken }, revision: view.revision });
+    onBusyChange(false);
+    if (outcome.kind === "success") { setFeedback({ phase: "success", message: outcome.message }); onViewChange(outcome.view); return; }
+    if (outcome.kind === "rejected") { setFeedback({ phase: "rejected", message: outcome.message }); return; }
+    if (outcome.kind === "stale") { setFeedback({ phase: "idle" }); onStaleRevision(); return; }
+    setFeedback({ phase: "error", message: outcome.message });
+  }
+
   return (
     <div className="adventure-game-shell">
       <AdventureHud
@@ -179,7 +190,9 @@ export function AdventureGameShell({
         }}
       />
 
-      {screen === "map" ? (
+      {view.narrative !== null && view.battle === null && view.ending === null ? (
+        <NarrativeScenePanel scene={view.narrative} busy={shellBusy} onChoose={(token) => void handleNarrativeChoice(token)} />
+      ) : screen === "map" ? (
         <WorldMapScreen
           view={view}
           busy={shellBusy}

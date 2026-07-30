@@ -16,6 +16,7 @@ export type GameActionPayload =
   | { readonly intent: { readonly type: "take_item"; readonly itemId: string }; readonly revision: number }
   | { readonly intent: { readonly type: "start_battle"; readonly enemyId: string }; readonly revision: number }
   | { readonly intent: { readonly type: "battle_action"; readonly action: "attack" | "guard" | "withdraw" }; readonly revision: number }
+  | { readonly intent: { readonly type: "narrative_choice"; readonly choiceToken: string }; readonly revision: number }
   | { readonly intent: { readonly type: "dialogue_choice"; readonly npcId: string; readonly choiceId: string }; readonly revision: number };
 
 /** 请求结果的稳定四态：成功 / 规则拒绝 / 版本冲突 / 其他错误。 */

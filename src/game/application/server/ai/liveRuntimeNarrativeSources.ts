@@ -1,0 +1,52 @@
+import type { AiMessage, AiTransport, AiTransportConfig, AiTransportFailureCode } from "@ai-game/ai-transport";
+import type { DirectorProposal, NpcPerformanceProposal, SceneScriptProposal } from "@/game/gameplay/rpg/narrative";
+import { NARRATIVE_CONTRACT_VERSION, type DirectorAttempt, type DirectorRequest, type DirectorSource, type NarrativeFailureCategory, type NpcLineAttempt, type NpcLineRequest, type NpcLineSource, type SceneScriptAttempt, type SceneScriptRequest, type SceneScriptSource } from "../../runtimeNarrative";
+
+type Role = "director" | "writer" | "npc";
+type Request = DirectorRequest | SceneScriptRequest | NpcLineRequest;
+const category: Record<AiTransportFailureCode, NarrativeFailureCategory> = { timeout: "timeout", rate_limited: "rate_limited", empty_response: "empty_response", service_error: "service_error", network_error: "service_error", http_error: "service_error", invalid_response: "service_error", aborted: "service_error", invalid_config: "service_error" };
+
+/** Three separate sources and requests; each builder receives only its already-projected context. */
+export function createLiveRuntimeNarrativeSources(input: Readonly<{ transport: AiTransport; config: AiTransportConfig }>): Readonly<{ directorSource: DirectorSource; sceneScriptSource: SceneScriptSource; npcLineSource: NpcLineSource }> {
+  return {
+    directorSource: { generate: async (request) => run<DirectorProposal, DirectorAttempt>("director", request, input, "plan") },
+    sceneScriptSource: { generate: async (request) => run<SceneScriptProposal, SceneScriptAttempt>("writer", request, input, "script") },
+    npcLineSource: { generate: async (request) => run<NpcPerformanceProposal, NpcLineAttempt>("npc", request, input, "performance") },
+  };
+}
+
+async function run<T extends object, A>(role: Role, request: Request, input: { transport: AiTransport; config: AiTransportConfig }, field: "plan" | "script" | "performance"): Promise<A> {
+  const startedAt = Date.now();
+  let completed;
+  // The configured OpenAI-compatible provider supports this optional extension;
+  // it keeps this short structured-control call out of extended reasoning mode.
+  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { enable_thinking: false } }); } catch { audit(role, false, "service_error", Date.now() - startedAt); return failure(request, "service_error") as A; }
+  if (!completed.ok) { audit(role, false, category[completed.code], completed.latencyMs); return failure(request, category[completed.code]) as A; }
+  const payload = parseObject(completed.content);
+  if (payload === null) { const failureCategory = completed.content.trim() === "" ? "empty_response" : "invalid_json"; audit(role, false, failureCategory, completed.latencyMs); return failure(request, failureCategory) as A; }
+  audit(role, true, undefined, completed.latencyMs);
+  return { ok: true, provenance: "generated", [field]: payload as T, diagnostics: { traceId: request.traceId, contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" } } as A;
+}
+
+/** Whitelisted server telemetry: never includes prompt, output, model, URL, player text or credentials. */
+function audit(role: Role, generated: boolean, failureCategory: NarrativeFailureCategory | undefined, latencyMs: number): void {
+  console.log(JSON.stringify({ event: "runtime_narrative", role, generated, ...(failureCategory === undefined ? {} : { category: failureCategory }), latencyMs }));
+}
+
+function failure(request: Request, failureCategory: NarrativeFailureCategory) {
+  return { ok: false, provenance: "generated", category: failureCategory, diagnostics: { traceId: request.traceId, contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "failed", category: failureCategory } };
+}
+
+function messages(role: Role, request: Request): readonly AiMessage[] {
+  const instruction = role === "director"
+    ? "You are the world director. Return one JSON object only, with exactly sceneGoal, tensionLevel (1-5), focusNpcId (string|null), relevantFactIds (string[]), allowedRevealFactIds (string[]), suggestedActionKeys ([string,string]), introducedEntities ({kind,id}[]), pacing (setup|develop|turn|climax|resolution). Propose only IDs and action keys present in the supplied context."
+    : role === "writer"
+      ? "You are the scene writer. Return one JSON object only, with exactly narration, usedFactIds, npcInstruction (or null), choices. npcInstruction has npcId, speechAct, emotion, allowedFactIds, mayLie. choices is exactly two objects with actionKey, label, strategy. Use only the approved plan, fact cards, and action candidates."
+      : "You are one NPC performer. Return one JSON object only, with exactly text, usedFactIds, emotion. You may use only the supplied NPC profile and fact cards; never infer hidden facts.";
+  return [{ role: "system", content: `${instruction} Contract: ${NARRATIVE_CONTRACT_VERSION}.` }, { role: "user", content: JSON.stringify(request.context) }];
+}
+
+function parseObject(content: string): Record<string, unknown> | null {
+  const text = content.trim().replace(/^```json\s*/i, "").replace(/\s*```$/, "");
+  try { const parsed: unknown = JSON.parse(text); return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; } catch { return null; }
+}

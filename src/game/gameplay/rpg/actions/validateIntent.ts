@@ -201,6 +201,7 @@ export function validateIntent(
     // Phase 6：战斗 intent 由 application 路由到 battle facade，不应进入 actions facade。
     case "start_battle":
     case "battle_action":
+    case "narrative_choice":
       return { ok: false, code: "INTENT_NOT_ROUTED", params: {} };
   }
 }

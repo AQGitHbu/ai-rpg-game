@@ -27,6 +27,8 @@ import type {
   GameId,
   GameRepository
 } from "./server/persistence/gameRepository";
+import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
+import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
 
 /**
  * 将校验器的细粒度 issue 收敛为生成契约已有的、可脱敏汇总的失败分类。
@@ -116,6 +118,8 @@ export type CreateGameDependencies = {
   readonly generationObserver?: (event: ScenarioGenerationEvent) => void;
   /** 场景 profile 配置：缺省加载内置 data/base 配置，测试可注入变体。 */
   readonly profiles?: ScenarioProfiles;
+  /** Optional only for legacy/unit callers; production always injects the three sources. */
+  readonly runtimeNarrativeSources?: Readonly<{ directorSource: DirectorSource; sceneScriptSource: SceneScriptSource; npcLineSource: NpcLineSource }>;
 };
 
 export type CreateGameResult =
@@ -226,7 +230,11 @@ export async function createGame(
     source = "fallback";
   }
 
-  const state = initializeGameState(blueprint);
+  let state = initializeGameState(blueprint);
+  if (deps.runtimeNarrativeSources !== undefined) {
+    const narrative = await orchestrateNarrativeScene({ traceId: deps.newTraceId(), blueprint, state, ...deps.runtimeNarrativeSources });
+    state = { ...state, narrative: { currentScene: narrative.scene } };
+  }
   const gameId = deps.newGameId();
   let created: CreateInitialGameResult;
   try {
