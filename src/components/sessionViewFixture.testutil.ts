@@ -91,7 +91,18 @@ export function buildSessionViewFixture(): GameSessionView {
       { name: "锈铁钥匙", description: "钥匙柄上刻着镖局的徽记。" }
     ],
     inventoryItems: [
-      { name: "旧刀", description: "父亲留下的佩刀，刀鞘磨损严重。" }
+      {
+        name: "旧刀",
+        description: "父亲留下的佩刀，刀鞘磨损严重。",
+        category: "equipment",
+        rarity: "fine",
+        level: 2,
+        statLines: [
+          { label: "攻击力", value: "+6" },
+          { label: "身法", value: "+3%" }
+        ],
+        icon: "sword"
+      }
     ],
     knownFacts: [
       { text: "【玩家输入】沈青崖自述身份：落魄镖师" }
@@ -132,8 +143,27 @@ export function buildItemTakenSessionViewFixture(): GameSessionView {
     availableActions: base.availableActions.filter((action) => action.type !== "take_item"),
     obtainableItems: [],
     inventoryItems: [
-      { name: "旧刀", description: "父亲留下的佩刀，刀鞘磨损严重。" },
-      { name: "锈铁钥匙", description: "钥匙柄上刻着镖局的徽记。" }
+      {
+        name: "旧刀",
+        description: "父亲留下的佩刀，刀鞘磨损严重。",
+        category: "equipment",
+        rarity: "fine",
+        level: 2,
+        statLines: [
+          { label: "攻击力", value: "+6" },
+          { label: "身法", value: "+3%" }
+        ],
+        icon: "sword"
+      },
+      {
+        name: "锈铁钥匙",
+        description: "钥匙柄上刻着镖局的徽记。",
+        category: "quest",
+        rarity: "rare",
+        level: null,
+        statLines: [],
+        icon: "key"
+      }
     ],
     activeQuests: [
       {

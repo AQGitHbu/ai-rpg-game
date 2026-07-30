@@ -2,7 +2,10 @@ import {
   CONTENT_BUDGET,
   type GameTypeId,
   type EnemyTemplateCandidate,
+  type ItemCategory,
   type ItemDefinitionCandidate,
+  type ItemRarity,
+  type ItemStatLine,
   type LocationDefinitionCandidate,
   type NpcDefinitionCandidate,
   type QuestDefinitionCandidate,
@@ -32,8 +35,8 @@ import { loadScenarioProfiles, type GameTypeProfile, type ScenarioProfiles } fro
 //     forbiddenTags），因此 7 种类型均安全。
 // ---------------------------------------------------------------------------
 
-/** fallback 模板版本；纳入 inputDigest，模板演进时提升。fallback-3：敌人新增 locationId、boss 数值调整、结局 requirement 使用 quest_failed。 */
-export const FALLBACK_TEMPLATE_VERSION = "fallback-3";
+/** fallback 模板版本；纳入 inputDigest，模板演进时提升。fallback-4：物品新增展示元数据（category / rarity / level / statLines，仅展示不进结算）。 */
+export const FALLBACK_TEMPLATE_VERSION = "fallback-4";
 
 /** 玩家输入来源标记：出现在世界摘要 / 身份 / 开场 / 主线冲突 / 事实文本中，便于追溯。 */
 const PLAYER_INPUT_MARK = "【玩家输入】";
@@ -80,7 +83,14 @@ function randInt(rng: () => number, maxExclusive: number): number {
 
 type EntityText = { readonly name: string; readonly description: string };
 type NpcText = { readonly name: string; readonly role: string; readonly description: string };
-type ItemText = EntityText & { readonly kind: string };
+/** 模板物品文本 + 展示元数据：展示字段只进背包界面，不参与任何规则结算。 */
+type ItemText = EntityText & {
+  readonly kind: string;
+  readonly category: ItemCategory;
+  readonly rarity: ItemRarity;
+  readonly level?: number;
+  readonly statLines?: readonly ItemStatLine[];
+};
 
 type TypeTemplate = {
   readonly tone: string;
@@ -130,8 +140,18 @@ const TEMPLATES: Readonly<Record<GameTypeId, TypeTemplate>> = {
     normalEnemies: ["黑衣刺客", "山道劫匪", "门派死士"],
     bossEnemy: "幕后黑手",
     items: [
-      { name: "护身短刀", description: "随身旧刀，伴主角走过风霜。", kind: "weapon" },
-      { name: "镖局信物", description: "证明当年身份的关键信物。", kind: "key" }
+      {
+        name: "护身短刀", description: "随身旧刀，伴主角走过风霜。", kind: "weapon",
+        category: "equipment", rarity: "fine", level: 2,
+        statLines: [
+          { label: "攻击力", value: "+6" },
+          { label: "身法", value: "+3%" }
+        ]
+      },
+      {
+        name: "镖局信物", description: "证明当年身份的关键信物。", kind: "key",
+        category: "quest", rarity: "rare"
+      }
     ],
     mainQuests: [
       { name: "旧案重启", description: "循着告示追查灭门旧案的头绪。" },
@@ -172,8 +192,18 @@ const TEMPLATES: Readonly<Record<GameTypeId, TypeTemplate>> = {
     normalEnemies: ["治安巡逻无人机", "走私团打手", "失控工程机甲"],
     bossEnemy: "叛逃AI核心",
     items: [
-      { name: "领航员终端", description: "随身终端，存有旧航线数据。", kind: "gear" },
-      { name: "加密数据核心", description: "封存失联真相的加密核心。", kind: "key" }
+      {
+        name: "领航员终端", description: "随身终端，存有旧航线数据。", kind: "gear",
+        category: "equipment", rarity: "fine", level: 2,
+        statLines: [
+          { label: "数据解析", value: "+8%" },
+          { label: "导航精度", value: "+5%" }
+        ]
+      },
+      {
+        name: "加密数据核心", description: "封存失联真相的加密核心。", kind: "key",
+        category: "quest", rarity: "rare"
+      }
     ],
     mainQuests: [
       { name: "失联溯源", description: "从港区记录追查船队失联的起点。" },
@@ -214,8 +244,18 @@ const TEMPLATES: Readonly<Record<GameTypeId, TypeTemplate>> = {
     normalEnemies: ["私人保镖", "收账打手", "神秘跟踪者"],
     bossEnemy: "幕后操盘人",
     items: [
-      { name: "记者证", description: "随身证件，是采访调查的通行凭据。", kind: "gear" },
-      { name: "审计底稿", description: "揭示资金去向的关键审计底稿。", kind: "key" }
+      {
+        name: "记者证", description: "随身证件，是采访调查的通行凭据。", kind: "gear",
+        category: "equipment", rarity: "common", level: 1,
+        statLines: [
+          { label: "调查效率", value: "+5%" },
+          { label: "人脉", value: "+3" }
+        ]
+      },
+      {
+        name: "审计底稿", description: "揭示资金去向的关键审计底稿。", kind: "key",
+        category: "quest", rarity: "rare"
+      }
     ],
     mainQuests: [
       { name: "匿名线索", description: "顺着匿名邮件核实资金异动的线索。" },
@@ -256,8 +296,18 @@ const TEMPLATES: Readonly<Record<GameTypeId, TypeTemplate>> = {
     normalEnemies: ["炼气邪修", "护山灵兽", "宗门叛徒"],
     bossEnemy: "夺舍魔头",
     items: [
-      { name: "养气玉符", description: "随身玉符，护持心神。", kind: "talisman" },
-      { name: "残卷秘录", description: "记载封印秘辛的残卷。", kind: "key" }
+      {
+        name: "养气玉符", description: "随身玉符，护持心神。", kind: "talisman",
+        category: "equipment", rarity: "fine", level: 2,
+        statLines: [
+          { label: "心神防护", value: "+6" },
+          { label: "灵气亲和", value: "+4%" }
+        ]
+      },
+      {
+        name: "残卷秘录", description: "记载封印秘辛的残卷。", kind: "key",
+        category: "quest", rarity: "rare"
+      }
     ],
     mainQuests: [
       { name: "秘辛初现", description: "从山门旧事中察觉被封印的秘辛。" },
@@ -298,8 +348,18 @@ const TEMPLATES: Readonly<Record<GameTypeId, TypeTemplate>> = {
     normalEnemies: ["劫掠强盗", "遗迹魔像", "堕落骑士"],
     bossEnemy: "苏醒的古祸",
     items: [
-      { name: "旅人短剑", description: "随身佩剑，陪伴征途。", kind: "weapon" },
-      { name: "封印纹石", description: "维系古老封印的纹石。", kind: "key" }
+      {
+        name: "旅人短剑", description: "随身佩剑，陪伴征途。", kind: "weapon",
+        category: "equipment", rarity: "fine", level: 2,
+        statLines: [
+          { label: "攻击力", value: "+6" },
+          { label: "挥砍速度", value: "+4%" }
+        ]
+      },
+      {
+        name: "封印纹石", description: "维系古老封印的纹石。", kind: "key",
+        category: "quest", rarity: "rare"
+      }
     ],
     mainQuests: [
       { name: "遗祸初醒", description: "循边境异象追查古老遗祸的源头。" },
@@ -340,8 +400,18 @@ const TEMPLATES: Readonly<Record<GameTypeId, TypeTemplate>> = {
     normalEnemies: ["私盐死士", "边地马匪", "叛军斥候"],
     bossEnemy: "通敌权臣",
     items: [
-      { name: "随身佩刀", description: "护身佩刀，久经风霜。", kind: "weapon" },
-      { name: "粮道密档", description: "记载粮道内情的关键密档。", kind: "key" }
+      {
+        name: "随身佩刀", description: "护身佩刀，久经风霜。", kind: "weapon",
+        category: "equipment", rarity: "fine", level: 2,
+        statLines: [
+          { label: "攻击力", value: "+6" },
+          { label: "破甲", value: "+2" }
+        ]
+      },
+      {
+        name: "粮道密档", description: "记载粮道内情的关键密档。", kind: "key",
+        category: "quest", rarity: "rare"
+      }
     ],
     mainQuests: [
       { name: "粮道悬案", description: "从府衙案牍追查粮道被劫的悬案。" },
@@ -382,8 +452,18 @@ const TEMPLATES: Readonly<Record<GameTypeId, TypeTemplate>> = {
     normalEnemies: ["废土劫掠者", "变异走兽", "叛离幸存者"],
     bossEnemy: "水源霸主",
     items: [
-      { name: "简易护具", description: "拼装的随身护具，聊胜于无。", kind: "gear" },
-      { name: "水脉图纸", description: "标注地下水脉的关键图纸。", kind: "key" }
+      {
+        name: "简易护具", description: "拼装的随身护具，聊胜于无。", kind: "gear",
+        category: "equipment", rarity: "common", level: 1,
+        statLines: [
+          { label: "防御力", value: "+5" },
+          { label: "耐久", value: "+3" }
+        ]
+      },
+      {
+        name: "水脉图纸", description: "标注地下水脉的关键图纸。", kind: "key",
+        category: "quest", rarity: "rare"
+      }
     ],
     mainQuests: [
       { name: "断水危机", description: "追查聚落供水骤减背后的缘由。" },
@@ -610,19 +690,28 @@ function buildItems(template: TypeTemplate, profile: GameTypeProfile): ItemDefin
   return [
     {
       id: ITEM_START,
-      name: template.items[0].name,
-      description: template.items[0].description,
-      kind: template.items[0].kind,
+      ...toItemCandidateFields(template.items[0]),
       tags: [pickTag(profile, 2)]
     },
     {
       id: ITEM_KEY,
-      name: template.items[1].name,
-      description: template.items[1].description,
-      kind: template.items[1].kind,
+      ...toItemCandidateFields(template.items[1]),
       tags: []
     }
   ];
+}
+
+/** 模板物品文本 → 候选字段：可选展示字段缺省时不写入键，保持序列化稳定。 */
+function toItemCandidateFields(item: ItemText): Omit<ItemDefinitionCandidate, "id" | "tags"> {
+  return {
+    name: item.name,
+    description: item.description,
+    kind: item.kind,
+    category: item.category,
+    rarity: item.rarity,
+    ...(item.level !== undefined ? { level: item.level } : {}),
+    ...(item.statLines !== undefined ? { statLines: item.statLines } : {})
+  };
 }
 
 const ENEMY_NORMAL_IDS = ["enemy_normal_1", "enemy_normal_2", "enemy_normal_3"] as const;

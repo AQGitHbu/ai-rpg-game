@@ -1,5 +1,7 @@
 import {
   CONTENT_BUDGET,
+  type ItemCategory,
+  type ItemRarity,
   type ScenarioBlueprintCandidate,
   type StatBlock
 } from "@/game/domain";
@@ -31,6 +33,14 @@ export const PHASE1_NUMERIC_RANGES = Object.freeze({
   enemyDefense: Object.freeze({ min: 0, max: 99 })
 } as const) satisfies Readonly<Record<string, NumericRange>>;
 
+// 背包界面重构：物品展示元数据的封闭枚举与边界（可选字段，提供时必须合法）。
+const ITEM_CATEGORIES: ReadonlySet<ItemCategory> = new Set([
+  "equipment", "consumable", "material", "quest"
+]);
+const ITEM_RARITIES: ReadonlySet<ItemRarity> = new Set(["common", "fine", "rare", "epic"]);
+export const ITEM_LEVEL_RANGE: NumericRange = Object.freeze({ min: 1, max: 99 });
+export const ITEM_STAT_LINES_MAX = 6;
+
 export type ScenarioBlueprintIssueCode =
   | QuestGraphIssueCode
   | "INVALID_SCHEMA_VERSION"
@@ -51,6 +61,7 @@ export type ScenarioBlueprintIssueCode =
   | "OPENING_SCENE_NO_INVESTIGABLE_FACTS"
   | "DUPLICATE_INVESTIGABLE_FACT"
   | "FORBIDDEN_TAG"
+  | "INVALID_ITEM_PRESENTATION"
   | "OUT_OF_RANGE";
 
 export type ScenarioBlueprintIssue = {
@@ -97,6 +108,7 @@ export function validateScenarioBlueprintCandidate(
   );
   validateNumericRanges(issues, candidate);
   validateForbiddenTags(issues, candidate, context.profile);
+  validateItemPresentationMetadata(issues, candidate);
 
   if (issues.length > 0) return { ok: false, issues };
   return { ok: true, validated: candidate as ValidatedScenarioBlueprintCandidate };
@@ -476,6 +488,69 @@ function validateForbiddenTags(
   candidate.quests.forEach((entry, index) => checkTags(`quests[${index}].tags`, entry.tags));
   candidate.enemies.forEach((entry, index) => checkTags(`enemies[${index}].tags`, entry.tags));
   candidate.items.forEach((entry, index) => checkTags(`items[${index}].tags`, entry.tags));
+}
+
+// ---------------------------------------------------------------------------
+// 10. 物品展示元数据（背包界面重构）：可选字段，提供时必须合法
+// ---------------------------------------------------------------------------
+
+function validateItemPresentationMetadata(
+  issues: ScenarioBlueprintIssue[],
+  candidate: ScenarioBlueprintCandidate
+): void {
+  candidate.items.forEach((item, index) => {
+    const path = `items[${index}]`;
+    if (item.category !== undefined && !ITEM_CATEGORIES.has(item.category)) {
+      issues.push({
+        path: `${path}.category`,
+        code: "INVALID_ITEM_PRESENTATION",
+        params: { reason: "unknown_category", value: String(item.category) }
+      });
+    }
+    if (item.rarity !== undefined && !ITEM_RARITIES.has(item.rarity)) {
+      issues.push({
+        path: `${path}.rarity`,
+        code: "INVALID_ITEM_PRESENTATION",
+        params: { reason: "unknown_rarity", value: String(item.rarity) }
+      });
+    }
+    if (
+      item.level !== undefined &&
+      (!Number.isInteger(item.level) ||
+        item.level < ITEM_LEVEL_RANGE.min ||
+        item.level > ITEM_LEVEL_RANGE.max)
+    ) {
+      issues.push({
+        path: `${path}.level`,
+        code: "INVALID_ITEM_PRESENTATION",
+        params: { reason: "level_out_of_range", value: String(item.level) }
+      });
+    }
+    if (item.statLines !== undefined) {
+      if (item.statLines.length > ITEM_STAT_LINES_MAX) {
+        issues.push({
+          path: `${path}.statLines`,
+          code: "INVALID_ITEM_PRESENTATION",
+          params: {
+            reason: "too_many_stat_lines",
+            max: ITEM_STAT_LINES_MAX,
+            actual: item.statLines.length
+          }
+        });
+      }
+      item.statLines.forEach((line, lineIndex) => {
+        const label = typeof line.label === "string" ? line.label.trim() : "";
+        const value = typeof line.value === "string" ? line.value.trim() : "";
+        if (label === "" || value === "") {
+          issues.push({
+            path: `${path}.statLines[${lineIndex}]`,
+            code: "INVALID_ITEM_PRESENTATION",
+            params: { reason: "empty_stat_line" }
+          });
+        }
+      });
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

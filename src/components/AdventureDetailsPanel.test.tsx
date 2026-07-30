@@ -23,6 +23,21 @@ describe("AdventureDetailsPanel", () => {
     expect(screen.getByText("旧刀")).toBeInTheDocument();
   });
 
+  it("panel=inventory 渲染四分类背包界面（装备/道具/材料/任务）", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    render(<AdventureDetailsPanel view={buildSessionViewFixture()} panel="inventory" />);
+
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "装备",
+      "道具",
+      "材料",
+      "任务"
+    ]);
+    // 默认选中装备页签：旧刀的详情（稀有度/描述）可见。
+    expect(screen.getByText("精良")).toBeInTheDocument();
+    expect(screen.getByText("父亲留下的佩刀，刀鞘磨损严重。")).toBeInTheDocument();
+  });
+
   it("panel=inventory 空背包显示空态", () => {
     vi.stubGlobal("fetch", vi.fn());
     const view = { ...buildSessionViewFixture(), inventoryItems: [] };

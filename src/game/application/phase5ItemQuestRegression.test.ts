@@ -192,9 +192,13 @@ describe.each(CASES)("Phase 5 物品取得回归（$gameType）", ({ gameType, f
     //    stage 2 退出 active 列表，stage 3 进入且 defeat_enemy 标记为未支持。
     expect(taken.view.obtainableItems).toEqual([]);
     expect(taken.view.availableActions.filter((action) => action.type === "take_item")).toEqual([]);
+    // 背包已升级为富视图：此处只验证“恰好收录一份”与名称/描述，展示元数据
+    // 契约由 gameSessionView.test 覆盖。
     expect(
       taken.view.inventoryItems.filter((item) => item.name === keyItem.name)
-    ).toEqual([{ name: keyItem.name, description: keyItem.description }]);
+    ).toEqual([
+      expect.objectContaining({ name: keyItem.name, description: keyItem.description })
+    ]);
     const activeNames = taken.view.activeQuests.map((quest) => quest.name);
     expect(activeNames).not.toContain(stage2.name);
     expect(activeNames).toContain(stage3.name);

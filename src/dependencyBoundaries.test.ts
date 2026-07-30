@@ -574,6 +574,30 @@ describe("phase 6 battle/ending surfaces stay behind the application facade", ()
 });
 
 // ---------------------------------------------------------------------------
+// 背包界面重构：四分类页签 + 图标网格 + 详情。钩死新增的 InventoryPanel /
+// inventoryVisuals 确实在扫描范围内，且对游戏层的唯一触达是 application 门面。
+// ---------------------------------------------------------------------------
+
+describe("inventory panel surfaces stay behind the application facade", () => {
+  it("InventoryPanel/inventoryVisuals are inside the scanned rule scopes", () => {
+    const componentFiles = exists(resolve(sourceRoot, "components"), false).map(toPosixRelative);
+    expect(componentFiles).toContain("components/InventoryPanel.tsx");
+    expect(componentFiles).toContain("components/inventoryVisuals.tsx");
+  });
+
+  it("InventoryPanel and inventoryVisuals import game types only via @/game/application", () => {
+    for (const relative of ["components/InventoryPanel.tsx", "components/inventoryVisuals.tsx"]) {
+      const specifiers = extractSpecifiers(readFileSync(resolve(sourceRoot, relative), "utf8"));
+      expect(specifiers, relative).toContain("@/game/application");
+      const offenders = specifiers.filter(
+        (specifier) => specifier.startsWith("@/game/") && specifier !== "@/game/application"
+      );
+      expect(offenders, relative).toEqual([]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Phase 4A（Task 5）：scenario source 分层守卫。上方目录规则已禁止 UI/API
 // 直达 application/server（ai 目录包含在内）；这里额外钉死：
 //   1) fixture source 自身不得导入 persistence/sqlite/libsql；

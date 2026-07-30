@@ -1138,3 +1138,181 @@ body:has(.adventure-game-shell) {
     left: .75rem;
   }
 }
+
+/* 背包界面（示意图 G）：四分类页签 + 图标网格 + 选中物品详情 */
+:root {
+  --rarity-common: #9aa694;
+  --rarity-fine: #7fb069;
+  --rarity-rare: #6f9fd8;
+  --rarity-epic: #b07fd8;
+}
+
+.inventory-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.inventory-tabs {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid var(--game-surface-border);
+  padding-bottom: 8px;
+}
+
+.inventory-tab {
+  padding: 6px 16px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px 6px 0 0;
+  background: none;
+  color: var(--game-text-muted);
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.inventory-tab:hover {
+  border-color: var(--game-accent);
+}
+
+.inventory-tab--active {
+  background: var(--game-accent-soft);
+  border-color: var(--game-accent);
+  color: var(--game-accent);
+}
+
+.inventory-tab:focus-visible {
+  outline: 2px solid var(--game-accent);
+  outline-offset: 2px;
+}
+
+.inventory-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 8px;
+  align-content: start;
+}
+
+.inventory-cell {
+  aspect-ratio: 1;
+  padding: 8px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: rgb(17 22 18 / 84%);
+  color: var(--rarity-common);
+  cursor: pointer;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.inventory-cell:hover {
+  border-color: var(--game-accent);
+}
+
+.inventory-cell:focus-visible {
+  outline: 2px solid var(--game-accent);
+  outline-offset: 2px;
+}
+
+.inventory-cell--fine { color: var(--rarity-fine); }
+.inventory-cell--rare { color: var(--rarity-rare); }
+.inventory-cell--epic { color: var(--rarity-epic); }
+
+.inventory-cell--selected {
+  border-color: var(--game-accent);
+  box-shadow: 0 0 0 1px var(--game-accent), 0 0 12px rgb(215 185 111 / 30%);
+}
+
+.inventory-icon {
+  width: 100%;
+  height: 100%;
+}
+
+.inventory-category-empty,
+.inventory-empty {
+  margin: 8px 0;
+  color: var(--game-text-muted);
+}
+
+.inventory-details {
+  padding: 14px 16px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: var(--game-surface-raised);
+}
+
+.inventory-details-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.inventory-details-name {
+  margin: 0;
+  font-family: Georgia, "STSong", serif;
+  font-size: 1.15rem;
+}
+
+.inventory-rarity {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid currentcolor;
+  font-size: 0.75rem;
+  color: var(--rarity-common);
+}
+
+.inventory-rarity--fine { color: var(--rarity-fine); }
+.inventory-rarity--rare { color: var(--rarity-rare); }
+.inventory-rarity--epic { color: var(--rarity-epic); }
+
+.inventory-details-type {
+  margin: 6px 0 0;
+  color: var(--game-text-muted);
+  font-size: 0.85rem;
+}
+
+.inventory-details-stats {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--game-surface-border);
+}
+
+.inventory-details-stats > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inventory-details-stats dt {
+  color: var(--game-text-muted);
+}
+
+.inventory-details-stats dd {
+  margin: 0;
+  color: var(--game-accent);
+}
+
+.inventory-details-description {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--game-surface-border);
+  color: var(--game-text-muted);
+  line-height: 1.6;
+}
+
+@media (max-width: 700px) {
+  .inventory-body {
+    grid-template-columns: 1fr;
+  }
+
+  .inventory-grid {
+    grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+  }
+}
+

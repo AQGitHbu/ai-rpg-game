@@ -1,4 +1,14 @@
-import type { GameEvent, GameState, QuestObjective, ScenarioBlueprint } from "@/game/domain";
+import {
+  resolveItemPresentation,
+  type GameEvent,
+  type GameState,
+  type ItemCategory,
+  type ItemIconKey,
+  type ItemRarity,
+  type ItemStatLine,
+  type QuestObjective,
+  type ScenarioBlueprint
+} from "@/game/domain";
 import {
   projectAvailableActions,
   type AvailableAction
@@ -67,6 +77,22 @@ export type EndingView = {
   readonly outcome: "success" | "failure";
 };
 
+/**
+ * 背包物品富视图：在名称/描述之上附带展示元数据（分类页签、稀有度、等级、
+ * 属性行、图标键）。缺省字段由 domain 的 resolveItemPresentation 按 kind 推导，
+ * 数值仅供展示、不进战斗结算；不泄漏 itemId / tags。
+ */
+export type InventoryItemView = {
+  readonly name: string;
+  readonly description: string;
+  readonly category: ItemCategory;
+  readonly rarity: ItemRarity;
+  /** null = 不显示等级行。 */
+  readonly level: number | null;
+  readonly statLines: readonly ItemStatLine[];
+  readonly icon: ItemIconKey;
+};
+
 /** 已发生事件的玩家可见叙事；不携带 ID、时间、seed 或完整领域状态。 */
 export type StoryEventView = {
   readonly text: string;
@@ -80,8 +106,9 @@ export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly activeQuests: readonly ActiveQuestView[];
   /** 当前地点可取得物品摘要：与 take_item 可用行动一一对应，不泄漏其他地点。 */
   readonly obtainableItems: readonly OpeningItemView[];
-  /** 运行时背包摘要：与 initialItems（开场快照语义）区分，取得后即时更新。 */
-  readonly inventoryItems: readonly OpeningItemView[];
+  /** 运行时背包摘要：与 initialItems（开场快照语义）区分，取得后即时更新；
+   *  富视图携带背包界面所需的展示元数据。 */
+  readonly inventoryItems: readonly InventoryItemView[];
   /** Phase 6：战斗摘要——仅 active battle 时非 null，不泄漏 enemyId/stats。 */
   readonly battle: BattleView | null;
   /** Phase 6：结局视图——结局抵达后非 null，不泄漏 endingId。 */
@@ -272,13 +299,18 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
     availableActions: projectedActions,
     // 可取得物品摘要：结局后为空。
     obtainableItems,
-    // 运行时背包摘要：按 GameState.inventory 投影（initialItems 保留开场快照语义）。
+    // 运行时背包摘要：按 GameState.inventory 投影为富视图（initialItems 保留
+    // 开场快照语义与简单形态）。
     inventoryItems: state.inventory.map((itemId) => {
       const item = itemById.get(itemId);
       if (item === undefined) {
         throw new Error("会话视图投影失败：背包物品引用在蓝图中不存在");
       }
-      return { name: item.name, description: item.description };
+      return {
+        name: item.name,
+        description: item.description,
+        ...resolveItemPresentation(item)
+      };
     }),
     // 运行时在场 NPC：按 GameState 中的 NPC 位置投影，不读开场名单。
     presentNpcs: state.npcs

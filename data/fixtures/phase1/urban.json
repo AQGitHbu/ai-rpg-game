@@ -13,9 +13,9 @@
   },
   "seed": "phase1-urban-001",
   "expected": {
-    "templateVersion": "fallback-3",
-    "inputDigest": "784230c207fe4c98",
-    "generationId": "gen-b2e11e7bba9cd3bf",
+    "templateVersion": "fallback-4",
+    "inputDigest": "0525f31316abe22f",
+    "generationId": "gen-3de04c24d53ecc76",
     "locationIds": ["loc_1", "loc_2", "loc_3", "loc_4", "loc_hidden"],
     "questIds": ["quest_m1", "quest_m2", "quest_m3", "quest_s1", "quest_s2"],
     "endingIds": ["ending_1", "ending_2"],
