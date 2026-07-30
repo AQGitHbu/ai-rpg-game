@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "mvp-phase-10-runtime-ai-director",
-  "status": "in_progress",
-  "implementationStatus": "partial",
+  "status": "completed",
+  "implementationStatus": "merged",
   "targetBranch": "codex/phase10-runtime-ai-director",
   "worktreeName": "phase10-runtime-ai-director",
   "repositories": ["ai-rpg-game"],

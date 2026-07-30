@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // 跨仓家族阶段的唯一合法组合：顺序与内容都必须精确匹配（见 Phase 4B Plan Task 1）。
@@ -11,6 +11,28 @@ export const CROSS_REPO_FAMILY_REPOSITORIES = Object.freeze([
 ]);
 export const CROSS_REPO_FAMILY_START_COMMAND =
   "manual coordinated worktree setup (see Phase 4B Plan Task 1)";
+
+// 已收尾阶段：分支已合并回 main、worktree 已按规范清理，交接检查转为存档一致性模式。
+export const CLOSED_PHASE_STATUSES = Object.freeze(["completed"]);
+
+export function isClosedPhase(config) {
+  return CLOSED_PHASE_STATUSES.includes(config.status);
+}
+
+/**
+ * 阶段与 git 事实一致性：阶段声明的 worktree 必须存在于 git worktree list，
+ * 或阶段状态已标记为已收尾；planned（尚未 phase:start，worktree 未创建）同样豁免。
+ * 防止阶段指针漂移：worktree 已清理但 current-phase.json 仍声称进行中。
+ */
+export function collectWorktreeConsistencyFailures(config, registeredWorktreeNames) {
+  if (config.status === "planned" || isClosedPhase(config)) return [];
+  if (!registeredWorktreeNames.includes(config.worktreeName)) {
+    return [
+      `阶段声明的 worktree ${config.worktreeName} 不在 git worktree list 中；请恢复 worktree，或将阶段状态标记为已收尾（${CLOSED_PHASE_STATUSES.join("/")}）`,
+    ];
+  }
+  return [];
+}
 
 export function isCrossRepoFamilyPhase(config) {
   return (
@@ -85,20 +107,30 @@ function runHandoffCheck() {
     if (!existsSync(resolve(root, file))) failures.push(`入口文档不存在：${file}`);
   }
 
-  if (config.status !== "planned") {
-    failures.push(`当前交接状态应为 planned，实际为 ${config.status}`);
-  }
-  if (config.implementationStatus !== "not_started") {
-    failures.push(`当前阶段交接前实现状态应为 not_started，实际为 ${config.implementationStatus}`);
+  if (isClosedPhase(config)) {
+    if (config.implementationStatus !== "merged") {
+      failures.push(
+        `已收尾阶段实现状态应为 merged，实际为 ${config.implementationStatus}`,
+      );
+    }
+  } else {
+    if (config.status !== "planned") {
+      failures.push(`当前交接状态应为 planned 或已收尾（completed），实际为 ${config.status}`);
+    }
+    if (config.implementationStatus !== "not_started") {
+      failures.push(`当前阶段交接前实现状态应为 not_started，实际为 ${config.implementationStatus}`);
+    }
   }
 
   const plan = existsSync(resolve(root, config.plan))
     ? readFileSync(resolve(root, config.plan), "utf8")
     : "";
   failures.push(...collectPhasePolicyFailures(config, plan));
-  if (!plan.includes("> 状态：待执行")) failures.push("当前 Phase Plan 状态不是“待执行”");
-  if (!plan.includes("### 排除") && !plan.includes("## 明确边界")) {
-    failures.push("当前 Phase Plan 缺少明确边界");
+  if (!isClosedPhase(config)) {
+    if (!plan.includes("> 状态：待执行")) failures.push("当前 Phase Plan 状态不是“待执行”");
+    if (!plan.includes("### 排除") && !plan.includes("## 明确边界")) {
+      failures.push("当前 Phase Plan 缺少明确边界");
+    }
   }
 
   const branch = execFileSync("git", ["branch", "--show-current"], {
@@ -109,8 +141,16 @@ function runHandoffCheck() {
     cwd: root,
     encoding: "utf8",
   }).trim();
+  const registeredWorktreeNames = execFileSync("git", ["worktree", "list", "--porcelain"], {
+    cwd: root,
+    encoding: "utf8",
+  })
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => basename(line.slice("worktree ".length).trim()));
+  failures.push(...collectWorktreeConsistencyFailures(config, registeredWorktreeNames));
 
-  if (strictBranch && branch !== config.targetBranch) {
+  if (strictBranch && !isClosedPhase(config) && branch !== config.targetBranch) {
     failures.push(`当前分支 ${branch || "(detached)"}，期望 ${config.targetBranch}`);
   }
   if (strictBranch && !commonDir.replaceAll("\\", "/").includes("/.git")) {

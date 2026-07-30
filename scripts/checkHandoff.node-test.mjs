@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  CLOSED_PHASE_STATUSES,
   CROSS_REPO_FAMILY_REPOSITORIES,
   CROSS_REPO_FAMILY_START_COMMAND,
   collectPhasePolicyFailures,
+  collectWorktreeConsistencyFailures,
+  isClosedPhase,
   isCrossRepoFamilyPhase,
 } from "./checkHandoff.mjs";
 
@@ -115,5 +118,41 @@ test("常量与 Plan 固定值保持一致", () => {
   assert.equal(
     CROSS_REPO_FAMILY_START_COMMAND,
     "manual coordinated worktree setup (see Phase 4B Plan Task 1)",
+  );
+});
+
+test("completed 状态被识别为已收尾阶段", () => {
+  assert.deepEqual([...CLOSED_PHASE_STATUSES], ["completed"]);
+  assert.equal(isClosedPhase({ status: "completed" }), true);
+  assert.equal(isClosedPhase({ status: "in_progress" }), false);
+  assert.equal(isClosedPhase({ status: "planned" }), false);
+});
+
+test("进行中阶段声明的 worktree 必须存在于 git worktree list", () => {
+  const config = { status: "in_progress", worktreeName: "phase10-runtime-ai-director" };
+  assert.deepEqual(
+    collectWorktreeConsistencyFailures(config, ["ai-rpg-game", "phase10-runtime-ai-director"]),
+    [],
+  );
+  const failures = collectWorktreeConsistencyFailures(config, ["ai-rpg-game"]);
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /phase10-runtime-ai-director/);
+  assert.match(failures[0], /已收尾/);
+});
+
+test("已收尾与 planned 阶段豁免 worktree 一致性检查", () => {
+  assert.deepEqual(
+    collectWorktreeConsistencyFailures(
+      { status: "completed", worktreeName: "phase10-runtime-ai-director" },
+      ["ai-rpg-game"],
+    ),
+    [],
+  );
+  assert.deepEqual(
+    collectWorktreeConsistencyFailures(
+      { status: "planned", worktreeName: "next-phase" },
+      ["ai-rpg-game"],
+    ),
+    [],
   );
 });
