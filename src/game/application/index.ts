@@ -81,6 +81,13 @@ export {
   type NewGameInputError,
   type ValidateNewGameInputResult
 } from "@/game/domain";
+export {
+  createBudgetPolicy,
+  budgetPolicyOf,
+  finalMainActOf,
+  LEGACY_BUDGET_POLICY,
+  type BudgetPolicy
+} from "@/game/domain";
 // Phase 3: API handler 需要品牌化 ID 转换与 PlayerIntent 类型（Phase 5 追加 itemId，Phase 6 追加 enemyId）。
 export {
   asLocationId,

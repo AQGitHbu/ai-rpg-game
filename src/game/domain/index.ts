@@ -12,6 +12,13 @@ export {
   type ValidateNewGameInputResult
 } from "./newGame";
 export {
+  createBudgetPolicy,
+  budgetPolicyOf,
+  finalMainActOf,
+  LEGACY_BUDGET_POLICY,
+  type BudgetPolicy
+} from "./budgetPolicy";
+export {
   CONTENT_BUDGET,
   asGenerationId,
   asLocationId,
