@@ -72,6 +72,15 @@ export type StoryEventView = {
   readonly text: string;
 };
 
+/** Phase 10：叙事场景安全视图——AI 导演产出的运行时叙事场景与两个固定选项。 */
+export type NarrativeSceneView = {
+  readonly narration: string;
+  readonly choices: readonly [
+    { readonly label: string; readonly actionKey: string },
+    { readonly label: string; readonly actionKey: string },
+  ];
+} | null;
+
 export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly availableActions: readonly SessionActionView[];
   /** 运行时位于当前地点的 NPC：与 visibleNpcs（开场名单快照）语义区分。 */
@@ -94,6 +103,8 @@ export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly locationScene: LocationSceneView;
   /** Phase 7：当前地点在场 NPC 的安全对话（结局/战斗时无可写 choice）。 */
   readonly dialogues: readonly NpcDialogueView[];
+  /** Phase 10：运行时 AI 导演叙事场景——null 表示尚未生成。 */
+  readonly narrative: NarrativeSceneView;
 };
 
 /** 输入与 opening 投影完全一致：调用方无需区分两个 read model 的装配来源。 */
@@ -229,6 +240,21 @@ function projectStoryEvent(
   }
 }
 
+/** Phase 10：将 GameState.narrative 投影为安全视图（不泄漏内部 detail）。 */
+function projectNarrativeSceneView(
+  state: GameState
+): NarrativeSceneView {
+  const scene = state.narrative.currentScene;
+  if (scene === null) return null;
+  return {
+    narration: scene.narration,
+    choices: scene.choices.map((choice) => ({
+      label: choice.label,
+      actionKey: choice.actionKey,
+    })) as NarrativeSceneView extends { choices: infer C } ? C : never,
+  };
+}
+
 export function projectGameSessionView(input: ProjectGameSessionViewInput): GameSessionView {
   const { blueprint, state } = input;
   const base = projectOpeningGameView(input);
@@ -316,6 +342,8 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
       .filter((event): event is StoryEventView => event !== null),
     // Phase 7：地图 / 地点场景 / 安全对话 read model。传入未过滤的可用行动，由
     // 投影内部按结局 / active battle 语义把 interactions 置空、对话降级为只读。
-    ...projectLocationAdventureView(blueprint, state, availableActions)
+    ...projectLocationAdventureView(blueprint, state, availableActions),
+    // Phase 10：AI 导演叙事场景视图——不泄漏 sceneId/turn/usedFactIds 等内部细节。
+    narrative: projectNarrativeSceneView(state),
   };
 }

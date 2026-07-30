@@ -44,7 +44,8 @@ export {
   type QuestObjectiveView,
   type BattleView,
   type EndingView,
-  type StoryEventView
+  type StoryEventView,
+  type NarrativeSceneView
 } from "./gameSessionView";
 // Phase 7 Task 3：地图 / 地点场景 / 安全对话 read model 只读 view 类型。
 export {
@@ -117,6 +118,11 @@ export {
   type OrchestrateNarrativeSceneInput,
   type OrchestrateSceneResult,
 } from "./orchestrateNarrativeScene";
+export {
+  getOrCreateScene,
+  type GetOrCreateSceneInput,
+  type GetOrCreateSceneResult,
+} from "./getOrCreateScene";
 export { type PlayerIntent } from "@/game/gameplay/rpg/actions";
 export {
   asGameId,
