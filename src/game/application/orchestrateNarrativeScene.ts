@@ -29,6 +29,8 @@ import {
   FALLBACK_SCENE_SCRIPT,
 } from "./internal/runtimeNarrativeFallbacks";
 
+const MAX_ROLE_ATTEMPTS = 3;
+
 // ---------------------------------------------------------------------------
 // 输入 / 输出
 // ---------------------------------------------------------------------------
@@ -73,7 +75,7 @@ export async function orchestrateNarrativeScene(
   const directorContext = toDirectorContext({ blueprint, state });
   let directorAttempt: DirectorAttempt = unavailableDirectorAttempt(traceId);
   let plan: ApprovedDirectorPlan | undefined;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < MAX_ROLE_ATTEMPTS; attempt += 1) {
     try {
       directorAttempt = await directorSource.generate({
         traceId: `${traceId}-director${attempt === 0 ? "" : "-retry"}`,
@@ -93,7 +95,7 @@ export async function orchestrateNarrativeScene(
   const sceneScriptContext = toSceneScriptContext({ blueprint, state, plan });
   let scriptAttempt: SceneScriptAttempt | null = null;
   let script: ApprovedSceneScript | undefined;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < MAX_ROLE_ATTEMPTS; attempt += 1) {
     try {
       scriptAttempt = await sceneScriptSource.generate({
         traceId: `${traceId}-script${attempt === 0 ? "" : "-retry"}`,
@@ -122,7 +124,7 @@ export async function orchestrateNarrativeScene(
       mayLie: npcInst.mayLie,
     });
 
-    for (let attemptIndex = 0; attemptIndex < 2; attemptIndex += 1) {
+    for (let attemptIndex = 0; attemptIndex < MAX_ROLE_ATTEMPTS; attemptIndex += 1) {
       try {
         const attempt = await npcLineSource.generate({
           traceId: `${traceId}-npcLine${attemptIndex === 0 ? "" : "-retry"}`,
@@ -135,7 +137,7 @@ export async function orchestrateNarrativeScene(
         npcLine = { npcId: npcInst.npcId as NpcId, text: approved.value.text, emotion: approved.value.emotion, usedFactIds: approved.value.usedFactIds as readonly FactId[] };
         npcApproved = true;
         break;
-      } catch { /* one bounded retry, then full fallback */ }
+      } catch { /* bounded same-role retry, then full fallback */ }
     }
   }
   if (!npcApproved) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, npcLineAttempted, candidates, state);

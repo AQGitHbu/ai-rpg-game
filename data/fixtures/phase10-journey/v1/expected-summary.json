@@ -1,0 +1,21 @@
+{
+  "version": "phase10-journey-report-v1",
+  "mode": "record",
+  "outcome": "success",
+  "turns": 11,
+  "aiCalls": 14,
+  "maxTurns": 20,
+  "maxAiCalls": 40,
+  "reloadConsistent": true,
+  "contentBudgetValid": true,
+  "mandatoryFallbacks": 0,
+  "coverage": {
+    "narrativeChoices": 6,
+    "generatedNpcLines": 2,
+    "firstVisitedLocations": 3,
+    "firstMetNpcs": 1,
+    "obtainedItems": 1,
+    "battlesStarted": 1,
+    "battlesWon": 1
+  }
+}

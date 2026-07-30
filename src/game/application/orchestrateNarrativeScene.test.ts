@@ -143,6 +143,6 @@ describe("orchestrateNarrativeScene fallback", () => {
     expect(result.scene.source).toBe("fallback");
     expect(result.scene.narration.length).toBeGreaterThan(0);
     expect(result.scene.choices).toHaveLength(2);
-    expect(directorCalls).toBe(2);
+    expect(directorCalls).toBe(3);
   });
 });

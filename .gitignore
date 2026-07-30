@@ -10,6 +10,7 @@ tsconfig.tsbuildinfo
 next-env.d.ts
 db/
 logs/
+artifacts/
 tmp/
 .worktrees/
 .superpowers/

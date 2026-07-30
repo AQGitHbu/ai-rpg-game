@@ -35,6 +35,10 @@
     "test:handoff-check": "node --test scripts/checkHandoff.node-test.mjs",
     "test:phase4b-ai-smoke-script": "node --test scripts/phase4bAiSmoke.node-test.mjs",
     "smoke:ai:phase4b": "node scripts/phase4bAiSmoke.mjs",
+    "test:phase10-journey": "vitest run src/game/application/testing/phase10FullJourney.test.ts",
+    "test:phase10-journey-script": "node --test scripts/phase10Journey.node-test.mjs",
+    "journey:phase10": "node scripts/phase10Journey.mjs --mode=replay",
+    "smoke:ai:phase10-journey": "node scripts/phase10Journey.mjs --mode=record",
     "handoff:check:docs": "node scripts/checkHandoff.mjs",
     "handoff:check": "node scripts/checkHandoff.mjs --strict-branch",
     "setup": "npm run env:bootstrap && npm run bootstrap:foundation && npm ci && npm run sync:standards && npm run doctor"

@@ -186,20 +186,48 @@ export async function performAction(
         if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "该剧情选项已不再合法。" } };
       }
-      const result = resolveAction(record.blueprint, record.state, resolvedIntent, resolverDeps);
-      if (!result.ok) {
+      // A narrative choice is only an opaque selection mechanism. Once its
+      // approved action key is resolved, route it through the same
+      // authoritative rule facade as the equivalent direct intent.
+      let choiceState: GameState;
+      let choiceFeedback: string;
+      if (resolvedIntent.type === "start_battle") {
+        const result = startBattle(
+          record.blueprint,
+          record.state,
+          resolvedIntent.enemyId,
+          battleDeps,
+        );
+        if (!result.ok) {
+          const view = projectCurrentView();
+          if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+          return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: result.feedback.message } };
+        }
+        choiceState = result.state;
+        choiceFeedback = result.feedback.message;
+      } else if (resolvedIntent.type === "battle_action") {
+        // Active battles do not expose narrative scenes. Reject a stale or
+        // forged scene mapping instead of introducing a second battle route.
         const view = projectCurrentView();
         if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-        return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: result.feedback.message } };
+        return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "战斗行动必须在战斗界面中选择。" } };
+      } else {
+        const result = resolveAction(record.blueprint, record.state, resolvedIntent, resolverDeps);
+        if (!result.ok) {
+          const view = projectCurrentView();
+          if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+          return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: result.feedback.message } };
+        }
+        choiceState = reconcileQuests(record.blueprint, result.state, questDeps).state;
+        choiceFeedback = result.feedback.message;
       }
-      const reconciled = reconcileQuests(record.blueprint, result.state, questDeps);
       resolved = {
         state: {
-          ...reconciled.state,
+          ...choiceState,
           narrative: { currentScene: null },
-          eventLedger: [...reconciled.state.eventLedger, { type: "narrative_choice", choiceToken: choice.choiceToken, actionKey: choice.actionKey, sceneId: scene.sceneId, occurredAt: deps.now() }],
+          eventLedger: [...choiceState.eventLedger, { type: "narrative_choice", choiceToken: choice.choiceToken, actionKey: choice.actionKey, sceneId: scene.sceneId, occurredAt: deps.now() }],
         },
-        feedbackMessage: result.feedback.message,
+        feedbackMessage: choiceFeedback,
       };
     } else switch (command.intent.type) {
       case "start_battle": {

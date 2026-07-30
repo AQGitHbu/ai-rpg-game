@@ -24,8 +24,164 @@ async function run<T extends object, A>(role: Role, request: Request, input: { t
   if (!completed.ok) { audit(role, false, category[completed.code], completed.latencyMs); return failure(request, category[completed.code]) as A; }
   const payload = parseObject(completed.content);
   if (payload === null) { const failureCategory = completed.content.trim() === "" ? "empty_response" : "invalid_json"; audit(role, false, failureCategory, completed.latencyMs); return failure(request, failureCategory) as A; }
+  const repaired = repairRuntimeNarrativeReferences(role, payload, request.context);
   audit(role, true, undefined, completed.latencyMs);
-  return { ok: true, provenance: "generated", [field]: payload as T, diagnostics: { traceId: request.traceId, contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" } } as A;
+  return { ok: true, provenance: "generated", [field]: repaired as T, diagnostics: { traceId: request.traceId, contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" } } as A;
+}
+
+/**
+ * Mechanical reference repair only. Narrative prose, strategy, emotion and
+ * rule outcomes remain model-owned; IDs and action keys are copied from the
+ * already-approved/minimal request context before the normal approval layer.
+ */
+export function repairRuntimeNarrativeReferences(
+  role: Role,
+  payload: Record<string, unknown>,
+  context: Record<string, unknown>,
+): Record<string, unknown> {
+  if (role === "director") {
+    const candidates = Array.isArray(context.actionCandidates)
+      ? context.actionCandidates.filter((entry): entry is Record<string, unknown> =>
+          typeof entry === "object" && entry !== null && typeof (entry as Record<string, unknown>).actionKey === "string"
+        )
+      : [];
+    const candidateKeys = candidates.map((entry) => entry.actionKey as string);
+    const proposed = Array.isArray(payload.suggestedActionKeys)
+      ? payload.suggestedActionKeys.filter((key): key is string =>
+          typeof key === "string" && candidateKeys.includes(key)
+        )
+      : [];
+    const preferred = typeof context.coverageTargetActionKey === "string" &&
+      candidateKeys.includes(context.coverageTargetActionKey)
+      ? context.coverageTargetActionKey
+      : undefined;
+    const first = preferred ?? proposed[0] ?? candidateKeys[0];
+    const second = proposed.find((key) => key !== first) ??
+      candidateKeys.find((key) => key !== first);
+    const discovered = new Set(
+      Array.isArray(context.discoveredFactIds)
+        ? context.discoveredFactIds.filter((id): id is string => typeof id === "string")
+        : [],
+    );
+    const filterFacts = (value: unknown) =>
+      Array.isArray(value)
+        ? value.filter((id): id is string => typeof id === "string" && discovered.has(id))
+        : value;
+    const presentNpcIds = Array.isArray(context.npcIdsPresent)
+      ? context.npcIdsPresent.filter((id): id is string => typeof id === "string")
+      : [];
+    const targetNpc = first?.startsWith("talk:") ? first.slice("talk:".length) : undefined;
+    const proposedFocus = typeof payload.focusNpcId === "string" &&
+      presentNpcIds.includes(payload.focusNpcId)
+      ? payload.focusNpcId
+      : null;
+    return {
+      ...payload,
+      ...(first !== undefined && second !== undefined
+        ? { suggestedActionKeys: [first, second] }
+        : {}),
+      focusNpcId: targetNpc !== undefined && presentNpcIds.includes(targetNpc)
+        ? targetNpc
+        : proposedFocus,
+      relevantFactIds: filterFacts(payload.relevantFactIds),
+      allowedRevealFactIds: filterFacts(payload.allowedRevealFactIds),
+      introducedEntities: [],
+    };
+  }
+
+  if (role === "writer") {
+    const plan = typeof context.plan === "object" && context.plan !== null
+      ? context.plan as Record<string, unknown>
+      : {};
+    const planKeys = Array.isArray(plan.suggestedActionKeys)
+      ? plan.suggestedActionKeys.filter((key): key is string => typeof key === "string")
+      : [];
+    const actionCandidates = Array.isArray(context.actionCandidates)
+      ? context.actionCandidates.filter((entry): entry is Record<string, unknown> =>
+          typeof entry === "object" && entry !== null
+        )
+      : [];
+    const truncate = (value: string, max: number) => Array.from(value).slice(0, max).join("");
+    const choices = Array.isArray(payload.choices) && payload.choices.length === 2
+      ? payload.choices.map((choice, index) => {
+          if (typeof choice !== "object" || choice === null || planKeys[index] === undefined) {
+            return choice;
+          }
+          const record = choice as Record<string, unknown>;
+          const candidate = actionCandidates.find((entry) => entry.actionKey === planKeys[index]);
+          const fallbackLabel = typeof candidate?.label === "string" ? candidate.label : `选择 ${index + 1}`;
+          const label = typeof record.label === "string" && Array.from(record.label).length > 0
+            ? truncate(record.label, 40)
+            : truncate(fallbackLabel, 40);
+          const strategy = typeof record.strategy === "string" && Array.from(record.strategy).length > 0
+            ? truncate(record.strategy, 80)
+            : "遵循当前目标";
+          return { ...record, actionKey: planKeys[index], label, strategy };
+        })
+      : payload.choices;
+    const allowedCards = Array.isArray(context.allowedFactCards)
+      ? new Set(context.allowedFactCards.flatMap((card) =>
+          typeof card === "object" && card !== null && typeof (card as Record<string, unknown>).id === "string"
+            ? [(card as Record<string, unknown>).id as string]
+            : []
+        ))
+      : new Set<string>();
+    const usedFactIds = Array.isArray(payload.usedFactIds)
+      ? payload.usedFactIds.filter((id): id is string => typeof id === "string" && allowedCards.has(id))
+      : payload.usedFactIds;
+    const npcProfile = typeof context.npcProfile === "object" && context.npcProfile !== null
+      ? context.npcProfile as Record<string, unknown>
+      : null;
+    let npcInstruction = payload.npcInstruction;
+    if (npcProfile === null) {
+      npcInstruction = null;
+    } else if (typeof npcProfile.id === "string") {
+      const instruction = typeof npcInstruction === "object" && npcInstruction !== null
+        ? npcInstruction as Record<string, unknown>
+        : {};
+      const speechActs = new Set(["inform", "ask", "evade", "deny", "warn", "encourage"]);
+      const emotions = new Set(["neutral", "warm", "guarded", "afraid", "angry", "sad"]);
+      npcInstruction = {
+        ...instruction,
+        npcId: npcProfile.id,
+        speechAct: typeof instruction.speechAct === "string" && speechActs.has(instruction.speechAct)
+          ? instruction.speechAct
+          : "warn",
+        emotion: typeof instruction.emotion === "string" && emotions.has(instruction.emotion)
+          ? instruction.emotion
+          : "guarded",
+        allowedFactIds: [],
+        mayLie: typeof instruction.mayLie === "boolean" ? instruction.mayLie : false,
+      };
+    }
+    const narration = typeof payload.narration === "string"
+      ? truncate(payload.narration, 600)
+      : payload.narration;
+    return { ...payload, narration, usedFactIds, npcInstruction, choices };
+  }
+
+  const allowedFacts = Array.isArray(context.factCards)
+    ? new Set(context.factCards.flatMap((card) =>
+        typeof card === "object" && card !== null && typeof (card as Record<string, unknown>).id === "string"
+          ? [(card as Record<string, unknown>).id as string]
+          : []
+      ))
+    : new Set<string>();
+  const npcEmotions = new Set(["neutral", "warm", "guarded", "afraid", "angry", "sad"]);
+  const text = typeof payload.text === "string"
+    ? Array.from(payload.text).slice(0, 360).join("")
+    : payload.text;
+  const emotion = typeof payload.emotion === "string" && npcEmotions.has(payload.emotion)
+    ? payload.emotion
+    : "guarded";
+  return {
+    ...payload,
+    text,
+    emotion,
+    usedFactIds: Array.isArray(payload.usedFactIds)
+      ? payload.usedFactIds.filter((id): id is string => typeof id === "string" && allowedFacts.has(id))
+      : payload.usedFactIds,
+  };
 }
 
 /** Whitelisted server telemetry: never includes prompt, output, model, URL, player text or credentials. */
@@ -39,9 +195,9 @@ function failure(request: Request, failureCategory: NarrativeFailureCategory) {
 
 function messages(role: Role, request: Request): readonly AiMessage[] {
   const instruction = role === "director"
-    ? "You are the world director. Return one JSON object only, with exactly sceneGoal, tensionLevel (1-5), focusNpcId (string|null), relevantFactIds (string[]), allowedRevealFactIds (string[]), suggestedActionKeys ([string,string]), introducedEntities ({kind,id}[]), pacing (setup|develop|turn|climax|resolution). Copy suggestedActionKeys exactly from actionCandidates, use two different keys. focusNpcId must be null or copied exactly from npcIdsPresent. Every fact ID must be copied from discoveredFactIds; if none are listed, both fact arrays must be []. introducedEntities must be []. Never invent an ID, location, NPC, fact, action, or entity."
+    ? "You are the world director. Return one JSON object only, with exactly sceneGoal, tensionLevel (1-5), focusNpcId (string|null), relevantFactIds (string[]), allowedRevealFactIds (string[]), suggestedActionKeys ([string,string]), introducedEntities ({kind,id}[]), pacing (setup|develop|turn|climax|resolution). Copy suggestedActionKeys exactly from actionCandidates, use two different keys. If coverageTargetActionKey is supplied and exists in actionCandidates, put it first in suggestedActionKeys; it is only a preference among already legal actions. If that key starts with talk:, set focusNpcId to the suffix when it is present in npcIdsPresent. Otherwise focusNpcId must be null or copied exactly from npcIdsPresent. Every fact ID must be copied from discoveredFactIds; if none are listed, both fact arrays must be []. introducedEntities must be []. Never invent an ID, location, NPC, fact, action, or entity."
     : role === "writer"
-      ? "You are the scene writer. Output JSON only: no markdown, no explanation, no extra keys. Exact template: {\"narration\":\"1-600 chars\",\"usedFactIds\":[],\"npcInstruction\":null,\"choices\":[{\"actionKey\":\"copy first plan.suggestedActionKeys exactly\",\"label\":\"1-40 chars\",\"strategy\":\"1-80 chars\"},{\"actionKey\":\"copy second plan.suggestedActionKeys exactly\",\"label\":\"1-40 chars\",\"strategy\":\"1-80 chars\"}]}. Keep npcInstruction null unless npcProfile is provided. Copy usedFactIds only from allowedFactCards. Never invent an ID."
+      ? "You are the scene writer. Output JSON only: no markdown, no explanation, no extra keys. Exact template: {\"narration\":\"1-600 chars\",\"usedFactIds\":[],\"npcInstruction\":null,\"choices\":[{\"actionKey\":\"copy first plan.suggestedActionKeys exactly\",\"label\":\"1-40 chars\",\"strategy\":\"1-80 chars\"},{\"actionKey\":\"copy second plan.suggestedActionKeys exactly\",\"label\":\"1-40 chars\",\"strategy\":\"1-80 chars\"}]}. Keep npcInstruction null when npcProfile is null. When npcProfile is provided, npcInstruction must use its exact id, one allowed speechAct/emotion, allowedFactIds:[], and mayLie:false so the separate NPC performer is exercised. Copy usedFactIds only from allowedFactCards. Never invent an ID."
       : "You are one NPC performer. Return one JSON object only, with exactly text, usedFactIds, emotion. You may use only the supplied NPC profile and fact cards; never infer hidden facts.";
   return [{ role: "system", content: `${instruction} Contract: ${NARRATIVE_CONTRACT_VERSION}.` }, { role: "user", content: JSON.stringify(request.context) }];
 }

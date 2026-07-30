@@ -123,6 +123,15 @@ export {
   type GetOrCreateSceneInput,
   type GetOrCreateSceneResult,
 } from "./getOrCreateScene";
+export {
+  JOURNEY_REPORT_VERSION,
+  JOURNEY_ISSUE_CODES,
+  validateJourneyReport,
+  toJourneySummary,
+  type JourneyCoverage,
+  type JourneyIssueCode,
+  type JourneyReport,
+} from "./testing/runtimeNarrativeJourney";
 export { type PlayerIntent } from "@/game/gameplay/rpg/actions";
 export {
   asGameId,
