@@ -12,6 +12,9 @@ const PANEL_LABELS: Record<DetailsPanel, string> = {
   journal: "日志"
 };
 
+// 角色面板改由左上角头像打开，右下角信息入口只保留背包/任务/日志
+const ACTION_PANELS: DetailsPanel[] = ["inventory", "quests", "journal"];
+
 type AdventureHudProps = {
   readonly view: GameSessionView;
   readonly screen: "map" | "scene";
@@ -27,16 +30,21 @@ export function AdventureHud({ view, screen, onOpen, developmentTools, onOpenDev
 
   return (
     <div className="adventure-hud-layer" aria-label="游戏 HUD">
-      <div className="adventure-hud-player-card">
+      <button
+        type="button"
+        className="adventure-hud-player-card"
+        aria-label="打开角色面板"
+        onClick={() => onOpen("character")}
+      >
         <span className="adventure-hud-avatar" aria-hidden="true">
           <CharacterAvatarIcon />
         </span>
         <span><strong>{view.player.name}</strong><small>HP {view.player.stats.hp}</small></span>
-      </div>
+      </button>
       {screen === "scene" ? <h1 className="adventure-hud-location-title">{view.locationScene.title}</h1> : null}
       <aside className="adventure-hud-objective"><span>当前目标</span><strong>{objectiveText}</strong></aside>
       <nav className="adventure-hud-actions" aria-label="信息入口">
-        {(Object.keys(PANEL_LABELS) as DetailsPanel[]).map((panel) => (
+        {ACTION_PANELS.map((panel) => (
           <button key={panel} type="button" onClick={() => onOpen(panel)}>
             {PANEL_LABELS[panel]}
           </button>

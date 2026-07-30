@@ -43,7 +43,7 @@ describe("AdventureGameShell", () => {
     renderShell();
 
     expect(screen.getByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "角色" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开角色面板" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "背包" })).toBeInTheDocument();
   });
 
@@ -126,6 +126,20 @@ describe("AdventureGameShell", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(inventory).toHaveFocus();
+  });
+
+  it("点击左上角头像打开角色弹层，关闭后焦点回到头像", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const user = userEvent.setup();
+    renderShell();
+
+    const avatar = screen.getByRole("button", { name: "打开角色面板" });
+    await user.click(avatar);
+    expect(screen.getByRole("dialog", { name: "角色" })).toBeVisible();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(avatar).toHaveFocus();
   });
 
   it("进入当前地点只做本地 map → scene 切换：零请求、view 不变", async () => {

@@ -70,7 +70,7 @@ describe("CurrentGameScreen", () => {
 
     expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "前往城外官道" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "角色" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开角色面板" })).toBeInTheDocument();
     expect(screen.queryByText("选择游戏类型")).toBeNull();
   });
 
@@ -272,7 +272,9 @@ describe("CurrentGameScreen", () => {
     await user.click(await screen.findByRole("button", { name: "前往城外官道" }));
 
     const buttons = screen.getAllByRole("button").filter(
-      (b) => !["地图", "角色", "背包", "任务", "日志"].includes(b.textContent ?? "")
+      (b) =>
+        !["地图", "背包", "任务", "日志"].includes(b.textContent ?? "") &&
+        b.getAttribute("aria-label") !== "打开角色面板"
     );
     for (const button of buttons) {
       expect(button).toBeDisabled();

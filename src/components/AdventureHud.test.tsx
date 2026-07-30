@@ -46,17 +46,37 @@ describe("AdventureHud", () => {
     expect(screen.getByText("暂无线索")).toBeVisible();
   });
 
-  it("四个入口均可键盘访问", async () => {
+  it("右下三个信息入口均可打开对应面板", async () => {
     vi.stubGlobal("fetch", vi.fn());
     const onOpen = vi.fn();
     render(<AdventureHud view={buildSessionViewFixture()} screen="map" onOpen={onOpen} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "角色" }));
-    expect(onOpen).toHaveBeenCalledWith("character");
+    await userEvent.click(screen.getByRole("button", { name: "背包" }));
+    expect(onOpen).toHaveBeenCalledWith("inventory");
     await userEvent.click(screen.getByRole("button", { name: "任务" }));
     expect(onOpen).toHaveBeenCalledWith("quests");
     await userEvent.click(screen.getByRole("button", { name: "日志" }));
     expect(onOpen).toHaveBeenCalledWith("journal");
+  });
+
+  it("点击左上角头像打开角色面板", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const onOpen = vi.fn();
+    const user = userEvent.setup();
+    render(<AdventureHud view={buildSessionViewFixture()} screen="map" onOpen={onOpen} />);
+
+    const avatar = screen.getByRole("button", { name: "打开角色面板" });
+    await user.click(avatar);
+    expect(onOpen).toHaveBeenCalledWith("character");
+  });
+
+  it("右下角信息入口不再包含角色，仅含背包、任务、日志", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    render(<AdventureHud view={buildSessionViewFixture()} screen="map" onOpen={vi.fn()} />);
+
+    const actions = screen.getByRole("navigation", { name: "信息入口" });
+    const labels = within(actions).getAllByRole("button").map((b) => b.textContent);
+    expect(labels).toEqual(["背包", "任务", "日志"]);
   });
 
   it("developmentTools=true：右上角在\u201c日志\u201d之后显示\u201c开发工具\u201d入口并触发回调", async () => {
@@ -91,14 +111,14 @@ describe("AdventureHud", () => {
     expect(screen.queryByRole("button", { name: "开发工具" })).toBeNull();
   });
 
-  it("地图模式显示角色、当前目标和右下入口，但不显示中央地点名", () => {
+  it("地图模式显示头像卡片、当前目标和右下入口，但不显示中央地点名", () => {
     render(<AdventureHud view={buildSessionViewFixture()} screen="map" onOpen={vi.fn()} />);
     const hud = screen.getByLabelText("游戏 HUD");
     expect(hud.querySelector(".adventure-hud-player-card")).toHaveTextContent("沈青崖");
     expect(hud.querySelector(".adventure-hud-avatar svg")).toHaveAttribute("aria-hidden", "true");
     expect(hud.querySelector(".adventure-hud-objective")).toHaveTextContent("到访城外官道");
     expect(hud.querySelector(".adventure-hud-location-title")).toBeNull();
-    expect(hud.querySelector(".adventure-hud-actions")).toHaveTextContent("角色背包任务日志");
+    expect(hud.querySelector(".adventure-hud-actions")).toHaveTextContent("背包任务日志");
   });
 
   it("地点模式在 HUD 顶部中央显示当前场景名", () => {
