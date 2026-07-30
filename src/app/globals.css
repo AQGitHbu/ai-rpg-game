@@ -924,9 +924,9 @@ body:has(.adventure-game-shell) {
 .character-avatar-frame svg {
   width: 100%;
   height: 100%;
-  fill: #ebd8a3;
+  fill: none;
   stroke: #ebd8a3;
-  stroke-width: 2;
+  stroke-width: 2.5;
 }
 
 .character-identity-info {

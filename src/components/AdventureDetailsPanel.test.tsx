@@ -33,7 +33,7 @@ describe("AdventureDetailsPanel", () => {
 
     const hp = fixture.player.stats.hp;
     expect(screen.getByText(`${hp} / ${hp}`)).toBeInTheDocument();
-    const bar = screen.getByRole("progressbar");
+    const bar = screen.getByRole("progressbar", { name: "生命值" });
     expect(bar).toHaveAttribute("aria-valuenow", "100");
 
     expect(screen.getByText("攻击")).toBeInTheDocument();

@@ -94,6 +94,7 @@ function CharacterPanel({ view }: { readonly view: GameSessionView }) {
           <div
             className="character-stat-bar"
             role="progressbar"
+            aria-label="生命值"
             aria-valuenow={100}
             aria-valuemin={0}
             aria-valuemax={100}
