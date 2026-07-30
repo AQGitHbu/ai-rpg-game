@@ -1,6 +1,6 @@
 # Phase 10 Runtime AI Director and Scene Performance Implementation Plan
 
-> 状态：已实施；异步场景任务与轮询恢复进行中
+> 状态：已收尾（completed / merged）；异步场景任务、轮询恢复和离线可靠性门禁均已完成
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

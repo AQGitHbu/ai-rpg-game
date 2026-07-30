@@ -6,8 +6,8 @@ import { dirname, resolve } from "node:path";
 // sqliteClient（Task 2）：整个代码库中唯一允许 import @libsql/client 与感知
 // 数据库路径配置的文件。application/UI 一律通过 GameRepository 端口访问持久化，
 // 客户端代码绝不建连。
-// server-only 说明：仓库尚未安装 server-only 包（见 Task 2 报告 concern），
-// 暂以下方运行时守卫达到同等效果；后续任务会补静态测试禁止客户端导入。
+// server-only 说明：server-only marker 由上层 server composition/logger
+// 声明；本 adapter 仍保留下面的运行时守卫，防止被任何非 server 环境加载。
 // ---------------------------------------------------------------------------
 
 if (typeof window !== "undefined") {

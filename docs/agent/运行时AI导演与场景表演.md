@@ -6,7 +6,7 @@ Phase 10 建立第一条真实运行时 AI 剧情闭环：玩家从两个服务�
 
 ## 当前状态
 
-- 状态：真实链路与双模式完整旅程已实现（in_progress，待 Phase 10 最终阶段交接）。
+- 状态：已收尾（completed / merged）。真实链路、双模式完整旅程与离线可靠性门禁均已通过。
 - Spec：`docs/superpowers/specs/2026-07-30-runtime-ai-director-scene-performance-design.md`。
 - 唯一 Plan：`docs/superpowers/plans/2026-07-30-mvp-phase-10-runtime-ai-director.md`。
 - 当前实现已合入主仓 `main`。
@@ -74,6 +74,7 @@ narrative_choice(choiceToken, revision)
 - AI 开关不改变同一选择对应的确定性规则结果。
 - reload 恢复相同场景、NPC 台词和两个选项。
 - 日常回归零网络零计费；完整真实认证仅由 `RUN_REAL_AI_JOURNEY=1` 显式开启。
+- 2026-07-31 收口验收：`npm run lint`、`npm run typecheck`、`npm test`、`npm run test:fast`、`npm run build`、`npm run journey:phase10` 均通过；全量测试为 124 个文件、1,360 个通过、2 个显式跳过。此次未执行真实 AI 调用。
 
 ## 修改注意事项
 

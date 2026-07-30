@@ -18,6 +18,10 @@ export default defineConfig({
       "react/jsx-runtime": path.resolve(__dirname, "./node_modules/react/jsx-runtime.js"),
       "react/jsx-dev-runtime": path.resolve(__dirname, "./node_modules/react/jsx-dev-runtime.js"),
       react: path.resolve(__dirname, "./node_modules/react"),
+      // `server-only` intentionally throws outside Next's server compiler.
+      // Unit tests exercise server composition directly, so map only Vitest to
+      // a no-op shim while keeping the production import intact.
+      "server-only": path.resolve(__dirname, "./src/test-server-only.ts"),
       "@": path.resolve(__dirname, "./src")
     }
   }
