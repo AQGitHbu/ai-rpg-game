@@ -842,6 +842,12 @@ select:focus,
   color: var(--game-text-muted);
 }
 
+.development-tools-hint {
+  margin: 8px 0 16px;
+  color: var(--game-text-muted);
+  line-height: 1.6;
+}
+
 .adventure-toast {
   position: fixed;
   bottom: 24px;

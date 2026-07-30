@@ -158,9 +158,10 @@ export function CurrentGameScreen() {
             onBusyChange={setActionBusy}
             onViewChange={(view) => setState({ phase: "active", view, createdWithFallback: false })}
             onStaleRevision={() => void loadCurrentGame()}
+            developmentTools={developmentTools}
+            onClearDevelopmentSave={() => void clearDevelopmentSave()}
           />
         )}
-        {developmentControl}
       </div>
     );
   }

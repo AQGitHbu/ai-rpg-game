@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdventureHud } from "./AdventureHud";
@@ -59,5 +59,36 @@ describe("AdventureHud", () => {
     expect(onOpen).toHaveBeenCalledWith("quests");
     await userEvent.click(screen.getByRole("button", { name: "日志" }));
     expect(onOpen).toHaveBeenCalledWith("journal");
+  });
+
+  it("developmentTools=true：右上角在“日志”之后显示“开发工具”入口并触发回调", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const onOpen = vi.fn();
+    const onOpenDevTools = vi.fn();
+    render(
+      <AdventureHud
+        view={buildSessionViewFixture()}
+        onOpen={onOpen}
+        developmentTools
+        onOpenDevTools={onOpenDevTools}
+      />
+    );
+
+    const devButton = screen.getByRole("button", { name: "开发工具" });
+    expect(devButton).toBeInTheDocument();
+
+    const actions = screen.getByRole("navigation", { name: "信息入口" });
+    const buttons = within(actions).getAllByRole("button");
+    expect(buttons[buttons.length - 1].textContent).toBe("开发工具");
+
+    await userEvent.click(devButton);
+    expect(onOpenDevTools).toHaveBeenCalledTimes(1);
+  });
+
+  it("developmentTools 缺省/假：不显示“开发工具”入口", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    render(<AdventureHud view={buildSessionViewFixture()} onOpen={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: "开发工具" })).toBeNull();
   });
 });

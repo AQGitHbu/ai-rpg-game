@@ -18,13 +18,17 @@ function renderShell(overrides?: {
   onBusyChange?: ReturnType<typeof vi.fn>;
   onViewChange?: ReturnType<typeof vi.fn>;
   onStaleRevision?: ReturnType<typeof vi.fn>;
+  developmentTools?: boolean;
+  onClearDevelopmentSave?: ReturnType<typeof vi.fn>;
 }) {
   const props = {
     view: overrides?.view ?? buildSessionViewFixture(),
     busy: false,
     onBusyChange: overrides?.onBusyChange ?? vi.fn(),
     onViewChange: overrides?.onViewChange ?? vi.fn(),
-    onStaleRevision: overrides?.onStaleRevision ?? vi.fn()
+    onStaleRevision: overrides?.onStaleRevision ?? vi.fn(),
+    developmentTools: overrides?.developmentTools ?? false,
+    onClearDevelopmentSave: overrides?.onClearDevelopmentSave ?? vi.fn()
   };
   return { ...render(<AdventureGameShell {...props} />), props };
 }
@@ -41,6 +45,45 @@ describe("AdventureGameShell", () => {
     expect(screen.getByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "角色" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "背包" })).toBeInTheDocument();
+  });
+
+  describe("开发工具入口", () => {
+    it("developmentTools=false：右上角不显示“开发工具”入口", () => {
+      vi.stubGlobal("fetch", vi.fn());
+      renderShell();
+
+      expect(screen.queryByRole("button", { name: "开发工具" })).toBeNull();
+    });
+
+    it("developmentTools=true：点击“开发工具”弹出提示与清除按钮，并触发清档回调", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+      const onClearDevelopmentSave = vi.fn();
+      const user = userEvent.setup();
+      renderShell({ developmentTools: true, onClearDevelopmentSave });
+
+      await user.click(screen.getByRole("button", { name: "开发工具" }));
+
+      const dialog = screen.getByRole("dialog");
+      expect(dialog).toBeInTheDocument();
+      expect(
+        screen.getByText("仅清除当前本地试玩存档；不会删除数据库文件或其它项目数据。")
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "清除本地试玩存档" }));
+      expect(onClearDevelopmentSave).toHaveBeenCalledTimes(1);
+    });
+
+    it("开发工具弹窗可通过关闭按钮收起", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+      const user = userEvent.setup();
+      renderShell({ developmentTools: true, onClearDevelopmentSave: vi.fn() });
+
+      await user.click(screen.getByRole("button", { name: "开发工具" }));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "关闭开发工具" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
   });
 
   it("HUD 打开背包弹层，关闭后回到触发按钮", async () => {

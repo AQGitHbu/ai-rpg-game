@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { GameSessionView } from "@/game/application";
+import { InlineButton } from "@ai-game/ui";
 import { postGameAction } from "./gameActionRequest";
 import { AdventureHud, type DetailsPanel } from "./AdventureHud";
 import { AdventureOverlay } from "./AdventureOverlay";
@@ -16,6 +17,8 @@ type AdventureGameShellProps = {
   readonly onBusyChange: (busy: boolean) => void;
   readonly onViewChange: (view: GameSessionView) => void;
   readonly onStaleRevision: () => void;
+  readonly developmentTools: boolean;
+  readonly onClearDevelopmentSave: () => Promise<void>;
 };
 
 type AdventureScreen = "map" | "scene";
@@ -45,13 +48,17 @@ export function AdventureGameShell({
   busy,
   onBusyChange,
   onViewChange,
-  onStaleRevision
+  onStaleRevision,
+  developmentTools,
+  onClearDevelopmentSave
 }: AdventureGameShellProps) {
   const [screen, setScreen] = useState<AdventureScreen>("map");
   const [detailsPanel, setDetailsPanel] = useState<DetailsPanel | null>(null);
   const [feedback, setFeedback] = useState<ActionFeedback>({ phase: "idle" });
   const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
+  const [devToolsOpen, setDevToolsOpen] = useState(false);
   const triggerRef = useRef<HTMLElement | null>(null);
+  const devToolsTriggerRef = useRef<HTMLElement | null>(null);
 
   const isSubmitting = feedback.phase === "submitting";
   const shellBusy = busy || isSubmitting;
@@ -161,7 +168,15 @@ export function AdventureGameShell({
 
   return (
     <div className="adventure-game-shell">
-      <AdventureHud view={view} onOpen={openDetails} />
+      <AdventureHud
+        view={view}
+        onOpen={openDetails}
+        developmentTools={developmentTools}
+        onOpenDevTools={() => {
+          devToolsTriggerRef.current = document.activeElement as HTMLElement;
+          setDevToolsOpen(true);
+        }}
+      />
 
       {screen === "map" ? (
         <WorldMapScreen
@@ -194,6 +209,17 @@ export function AdventureGameShell({
             busy={shellBusy}
             onChoice={(npcId, choiceId) => void handleDialogueChoice(npcId, choiceId)}
           />
+        </AdventureOverlay>
+      ) : null}
+
+      {devToolsOpen ? (
+        <AdventureOverlay title="开发工具" onClose={() => setDevToolsOpen(false)} returnFocusRef={devToolsTriggerRef}>
+          <p className="development-tools-hint">
+            仅清除当前本地试玩存档；不会删除数据库文件或其它项目数据。
+          </p>
+          <InlineButton onClick={() => void onClearDevelopmentSave()}>
+            清除本地试玩存档
+          </InlineButton>
         </AdventureOverlay>
       ) : null}
 
