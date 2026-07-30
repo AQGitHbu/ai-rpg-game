@@ -18,9 +18,9 @@ export function createLiveRuntimeNarrativeSources(input: Readonly<{ transport: A
 async function run<T extends object, A>(role: Role, request: Request, input: { transport: AiTransport; config: AiTransportConfig; responseFormat?: (role: Role) => Readonly<Record<string, unknown>> | undefined }, field: "plan" | "script" | "performance"): Promise<A> {
   const startedAt = Date.now();
   let completed;
-  // The configured OpenAI-compatible provider supports this optional extension;
-  // it keeps this short structured-control call out of extended reasoning mode.
-  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { enable_thinking: false, ...input.responseFormat?.(role) } }); } catch { audit(role, false, "service_error", Date.now() - startedAt); return failure(request, "service_error") as A; }
+  // Match the project's SLG consumer contract: prompt-directed JSON plus local
+  // parsing/approval, with the provider-neutral reasoning switch disabled.
+  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { reasoning_effort: "none", ...input.responseFormat?.(role) }, temperature: 0.2 }); } catch { audit(role, false, "service_error", Date.now() - startedAt); return failure(request, "service_error") as A; }
   if (!completed.ok) { audit(role, false, category[completed.code], completed.latencyMs); return failure(request, category[completed.code]) as A; }
   const payload = parseObject(completed.content);
   if (payload === null) { const failureCategory = completed.content.trim() === "" ? "empty_response" : "invalid_json"; audit(role, false, failureCategory, completed.latencyMs); return failure(request, failureCategory) as A; }
@@ -47,6 +47,14 @@ function messages(role: Role, request: Request): readonly AiMessage[] {
 }
 
 function parseObject(content: string): Record<string, unknown> | null {
-  const text = content.trim().replace(/^```json\s*/i, "").replace(/\s*```$/, "");
-  try { const parsed: unknown = JSON.parse(text); return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; } catch { return null; }
+  const trimmed = content.trim();
+  const fenced = /^```(?:json)?\s*\n?([\s\S]*?)\s*```$/i.exec(trimmed)?.[1];
+  const candidates = [trimmed, fenced].filter((value): value is string => value !== undefined);
+  for (const text of candidates) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+    } catch { /* local approval reports stable invalid_json; never expose model text */ }
+  }
+  return null;
 }
