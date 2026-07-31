@@ -125,6 +125,8 @@ export {
   type NarrativeChoiceState,
   type NarrativeNpcLineState,
   type NarrativeEmotion,
+  type NarrativeGenerationState,
+  type PlayerNpcChatState,
   NARRATIVE_EMOTIONS
 } from "./narrative";
 export {
