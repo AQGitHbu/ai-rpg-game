@@ -145,7 +145,9 @@ function createCuratedJourneySources(): RuntimeSources {
         introducedEntities: introducedKind === null
           ? []
           : [{ kind: introducedKind, id: introducedId }],
-          pacing: sceneIndex < 3 ? "develop" : sceneIndex < 6 ? "turn" : "climax",
+          // Phase 11：pacing 与当前主线阶段对齐——scenes 1(stage1)、2-4(stage2)、5-6(stage3)。
+          // 见 contentProgression 契约；否则 approveDirectorProposal 以 continuity_violation 拒绝。
+          pacing: sceneIndex <= 1 ? "develop" : sceneIndex <= 4 ? "turn" : "climax",
         },
         diagnostics: {
           traceId: request.traceId,
@@ -394,7 +396,7 @@ async function runJourney(
 }
 
 describe("Phase 10 complete narrative journey", () => {
-  it("replays the committed real-AI golden fixture with zero network calls", async () => {
+  it("replays the committed golden fixture with zero network calls (Phase 11: re-recorded with stage-aware pacing)", async () => {
     const calls = readFileSync(join(goldenRoot, "calls.jsonl"), "utf8")
       .trim()
       .split("\n")

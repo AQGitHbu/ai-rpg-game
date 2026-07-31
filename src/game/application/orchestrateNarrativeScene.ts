@@ -4,7 +4,7 @@
 // 只返回结构化结果，不写入 repository。
 // ---------------------------------------------------------------------------
 
-import type { GameState, ScenarioBlueprint, NarrativeSceneState, NpcId, FactId } from "@/game/domain";
+import type { GameState, ScenarioBlueprint, NarrativeSceneState, NpcId, FactId, StoryPacing } from "@/game/domain";
 import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
 import type { NarrativeActionCandidate, ApprovedDirectorPlan, ApprovedSceneScript } from "@/game/gameplay/rpg/narrative";
 import {
@@ -12,6 +12,7 @@ import {
   approveSceneScript,
   approveNpcPerformance,
   actionKeyOf,
+  deriveContentProgression,
 } from "@/game/gameplay/rpg/narrative";
 import { projectAvailableActions } from "@/game/gameplay/rpg/actions";
 import type {
@@ -49,6 +50,8 @@ export type OrchestrateNarrativeSceneInput = {
 export type OrchestrateSceneResult = {
   readonly scene: NarrativeSceneState;
   readonly provenance: "generated" | "fixture" | "fallback";
+  /** Phase 11：本场景的节奏标签——生成场景取自导演受批准的 plan.pacing；fallback 取阶段派生值。 */
+  readonly pacing: StoryPacing;
   readonly diagnostics: {
     readonly director: DirectorAttempt;
     readonly script: SceneScriptAttempt | null;
@@ -73,11 +76,15 @@ export async function orchestrateNarrativeScene(
     kind: a.type,
     publicLabel: a.label,
   }));
+  // Phase 11：fallback 场景无导演声明的 pacing，按当前主线阶段派生一个受控值
+  // （生成场景则取导演受批准的 plan.pacing）。
+  const fallbackPacing = deriveContentProgression({ blueprint, state }).allowedPacing.at(-1) ?? "setup";
 
   // Step 1：投影导演上下文 → 调用导演 source
   const directorContext = toDirectorContext({ blueprint, state });
   let directorAttempt: DirectorAttempt = unavailableDirectorAttempt(traceId);
   let plan: ApprovedDirectorPlan | undefined;
+  let continuityViolationLogged = false;
   for (let attempt = 0; attempt < MAX_ROLE_ATTEMPTS; attempt += 1) {
     try {
       directorAttempt = await directorSource.generate({
@@ -90,9 +97,17 @@ export async function orchestrateNarrativeScene(
     if (!directorAttempt.ok) continue;
     const approval = approveDirectorProposal({ proposal: directorAttempt.plan, blueprint, state, candidates });
     if (approval.ok) { plan = approval.value; break; }
-    logger.warn("runtime_narrative_approval", { traceId, role: "director", category: approval.category });
+    // Phase 11：同场景内 pacing continuity_violation 至多告警一次（重试不重复）。
+    if (approval.category === "continuity_violation") {
+      if (!continuityViolationLogged) {
+        continuityViolationLogged = true;
+        logger.warn("runtime_narrative_approval", { traceId, role: "director", category: approval.category });
+      }
+    } else {
+      logger.warn("runtime_narrative_approval", { traceId, role: "director", category: approval.category });
+    }
   }
-  if (plan === undefined) return buildFallbackResult(traceId, directorAttempt, null, false, candidates, state);
+  if (plan === undefined) return buildFallbackResult(traceId, directorAttempt, null, false, candidates, state, fallbackPacing);
 
   // Step 3：投影编剧上下文 → 调用编剧 source
   const sceneScriptContext = toSceneScriptContext({ blueprint, state, plan });
@@ -110,7 +125,7 @@ export async function orchestrateNarrativeScene(
     if (approval.ok) { script = approval.value; break; }
     logger.warn("runtime_narrative_approval", { traceId, role: "writer", category: approval.category });
   }
-  if (script === undefined || scriptAttempt === null) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false, candidates, state);
+  if (script === undefined || scriptAttempt === null) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false, candidates, state, fallbackPacing);
 
   // Step 5：演员只能收到该 NPC 获批准的事实卡；其输出也必须复核。
   let npcLineAttempted = false;
@@ -143,7 +158,7 @@ export async function orchestrateNarrativeScene(
       } catch { /* bounded same-role retry, then full fallback */ }
     }
   }
-  if (!npcApproved) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, npcLineAttempted, candidates, state);
+  if (!npcApproved) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, npcLineAttempted, candidates, state, fallbackPacing);
 
   // Step 6：组装 NarrativeSceneState
   const scene: NarrativeSceneState = {
@@ -163,6 +178,7 @@ export async function orchestrateNarrativeScene(
   return {
     scene,
     provenance: scriptAttempt.provenance === "fixture" ? "fixture" : "generated",
+    pacing: plan.pacing,
     diagnostics: {
       director: directorAttempt,
       script: scriptAttempt,
@@ -181,7 +197,8 @@ function buildFallbackResult(
   scriptAttempt: SceneScriptAttempt | null,
   npcLineAttempted: boolean,
   candidates: readonly NarrativeActionCandidate[],
-  state: GameState
+  state: GameState,
+  pacing: StoryPacing
 ): OrchestrateSceneResult {
   const fallbackScene: NarrativeSceneState = {
     sceneId: `${traceId}-fallback-${Date.now()}`,
@@ -207,6 +224,7 @@ function buildFallbackResult(
   return {
     scene: fallbackScene,
     provenance: "fallback",
+    pacing,
     diagnostics: {
       director: directorAttempt,
       script: scriptAttempt,

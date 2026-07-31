@@ -194,3 +194,48 @@ describe("orchestrateNarrativeScene fallback", () => {
     expect(JSON.stringify(entries)).not.toContain("不应进入日志");
   });
 });
+
+describe("orchestrateNarrativeScene：Phase 11 pacing continuity 告警去重", () => {
+  const blueprint = buildTestBlueprint();
+  const state = buildTestGameState();
+
+  it("同场景内 pacing continuity_violation 至多记录一次（重试不重复告警）", async () => {
+    const entries: GameLogEntry[] = [];
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-continuity-once",
+      blueprint,
+      state,
+      directorSource: {
+        async generate() {
+          return {
+            ok: true,
+            provenance: "generated",
+            plan: {
+              sceneGoal: "推进",
+              tensionLevel: 2,
+              focusNpcId: null,
+              relevantFactIds: [],
+              allowedRevealFactIds: [],
+              suggestedActionKeys: ["x:a", "x:b"],
+              introducedEntities: [],
+              pacing: "climax"
+            },
+            diagnostics: { traceId: "t", contractVersion: "runtime-narrative-v1", stage: "candidate_received" }
+          } as never;
+        }
+      },
+      sceneScriptSource: { async generate() { throw new Error("not reached"); } },
+      npcLineSource: { async generate() { throw new Error("not reached"); } },
+      logger: createGameLogger({ write: (entry) => entries.push(entry) })
+    });
+
+    expect(result.provenance).toBe("fallback");
+    const continuityWarns = entries.filter(
+      (entry) =>
+        entry.level === "warn" &&
+        entry.event === "runtime_narrative_approval" &&
+        (entry.details as { category?: string }).category === "continuity_violation"
+    );
+    expect(continuityWarns).toHaveLength(1);
+  });
+});

@@ -4,7 +4,7 @@ import type { GameState } from "@/game/domain";
 import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
 import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
-import { reconcileStoryMemory, deriveContentProgression } from "@/game/gameplay/rpg/narrative";
+import { reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
 
 export type GeneratePendingNarrativeSceneDependencies = Readonly<{
   repository: GameRepository;
@@ -68,18 +68,17 @@ export async function generatePendingNarrativeScene(
   });
   const scene = generated.scene;
   // Phase 11：场景应用时提交一条 narrative_scene_presented 事件——只携带结构索引
-  // （场景 ID、当前地点、焦点 NPC、已呈现的已发现事实、阶段节奏、注入时间戳），
+  // （场景 ID、当前地点、焦点 NPC、已呈现的已发现事实、节奏标签、注入时间戳），
   // 绝不携带 narration、对白、choiceToken、actionKey 或 AI provenance。
-  // pacing 由内容推进器按当前主线阶段派生（Task 5 落地后改用导演声明的 pacing）。
-  const progression = deriveContentProgression({ blueprint: record.blueprint, state: record.state });
-  const pacing = progression.allowedPacing[progression.allowedPacing.length - 1] ?? "setup";
+  // pacing 取自导演受批准的 plan.pacing（经 orchestrateNarrativeScene 转发；
+  // fallback 场景为内容推进器按当前主线阶段派生的受控值）。
   const presentedEvent = {
     type: "narrative_scene_presented" as const,
     sceneId: scene.sceneId,
     locationId: record.state.currentLocationId,
     focusNpcId: scene.npcLine?.npcId ?? null,
     revealedFactIds: scene.usedFactIds,
-    pacing,
+    pacing: generated.pacing,
     occurredAt: record.state.narrative.generation.requestedAt
   };
   let nextState: GameState = {
