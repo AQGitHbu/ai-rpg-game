@@ -16,11 +16,17 @@ export type TownEnsureResult =
  */
 export class TownPlanTaskCoordinator {
   private readonly running = new Map<string, Promise<void>>();
+  // 不用 TS parameter property：Node strip-types（phase4b smoke 脚本）无法加载该语法。
+  private readonly deps: GeneratePendingTownPlanDependencies;
+  private readonly logger: GameLogger;
 
   constructor(
-    private readonly deps: GeneratePendingTownPlanDependencies,
-    private readonly logger: GameLogger = NOOP_GAME_LOGGER,
-  ) {}
+    deps: GeneratePendingTownPlanDependencies,
+    logger: GameLogger = NOOP_GAME_LOGGER,
+  ) {
+    this.deps = deps;
+    this.logger = logger;
+  }
 
   async ensure(): Promise<TownEnsureResult> {
     const loaded = await this.deps.repository.getCurrentGame();

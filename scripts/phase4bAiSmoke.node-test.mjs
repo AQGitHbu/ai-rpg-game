@@ -227,15 +227,19 @@ test("摘要行只包含白名单字段，usage 缺失时省略 tokens", () => {
 // 真实路径纯函数直接覆盖：checkContentBudget / summarizeAuditEvents。
 // ---------------------------------------------------------------------------
 
-/** 与 domain CONTENT_BUDGET 同值的字面量（测试不加载 TS，预算经参数注入）。 */
+/** 与 domain budgetPolicy.opening 同值的字面量（测试不加载 TS，预算经参数注入）。 */
 const TEST_BUDGET = Object.freeze({
-  mainLocations: 4,
-  hiddenLocationsMax: 1,
-  coreNpcsMin: 4,
-  coreNpcsMax: 6,
-  companionsMax: 1,
-  sideQuestsMax: 2,
-  endings: 2,
+  opening: Object.freeze({
+    mainLocationsMin: 3,
+    mainLocationsMax: 5,
+    hiddenLocationsMax: 1,
+    coreNpcsMin: 4,
+    coreNpcsMax: 6,
+    companionsMax: 1,
+    sideQuestsMax: 2,
+    endings: 2,
+    townLocationsMax: 2,
+  }),
 });
 
 /** 刚好踩在预算内的最小 blueprint 骨架（只含 checkContentBudget 读的字段）。 */
@@ -271,8 +275,8 @@ test("checkContentBudget：预算内 blueprint 通过，含上限边界", () => 
 
 test("checkContentBudget：主地点/隐藏/NPC/同伴/支线/结局越界各自判败", () => {
   const mutations = [
-    (bp) => bp.locations.push({ kind: "main" }), // 5 个主地点
-    (bp) => bp.locations.splice(0, 1), // 3 个主地点
+    (bp) => bp.locations.push({ kind: "main" }, { kind: "main" }), // 6 个主地点（超上限）
+    (bp) => bp.locations.splice(0, 2), // 2 个主地点（低于下限）
     (bp) => bp.locations.push({ kind: "hidden" }), // 2 个隐藏地点
     (bp) => bp.npcs.splice(0, 1), // 3 个 NPC（低于下限）
     (bp) => bp.npcs.push({}, {}, {}), // 7 个 NPC（超上限）

@@ -16,11 +16,17 @@ export type NarrativeEnsureResult =
  */
 export class RuntimeNarrativeTaskCoordinator {
   private readonly running = new Map<string, Promise<void>>();
+  // 不用 TS parameter property：Node strip-types（phase4b smoke 脚本）无法加载该语法。
+  private readonly deps: GeneratePendingNarrativeSceneDependencies;
+  private readonly logger: GameLogger;
 
   constructor(
-    private readonly deps: GeneratePendingNarrativeSceneDependencies,
-    private readonly logger: GameLogger = NOOP_GAME_LOGGER,
-  ) {}
+    deps: GeneratePendingNarrativeSceneDependencies,
+    logger: GameLogger = NOOP_GAME_LOGGER,
+  ) {
+    this.deps = deps;
+    this.logger = logger;
+  }
 
   async ensure(): Promise<NarrativeEnsureResult> {
     const loaded = await this.deps.repository.getCurrentGame();

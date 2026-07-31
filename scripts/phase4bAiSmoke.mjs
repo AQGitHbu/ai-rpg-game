@@ -37,7 +37,7 @@ const DIAG_PREFIX = "[phase4b-smoke]";
 /** 结果来源白名单：只有这两种算成功；其余（fixture/unavailable 等）视为违约。 */
 export const ALLOWED_SOURCES = Object.freeze(["generated", "fallback"]);
 
-/** 内容预算里的结局数量硬约束（与 domain CONTENT_BUDGET.endings 对齐）。 */
+/** 内容预算里的结局数量硬约束（与 domain budgetPolicy.opening.endings 对齐）。 */
 export const REQUIRED_ENDING_COUNT = 2;
 
 /**
@@ -227,6 +227,10 @@ function installTsHooks() {
 
   registerHooks({
     resolve(specifier, context, nextResolve) {
+      // `server-only` 在 Next 编译器外会直接抛错；与 vitest.config.ts 同策略映射到无行为 shim。
+      if (specifier === "server-only") {
+        return { url: pathToFileURL(resolve(srcRoot, "test-server-only.ts")).href, shortCircuit: true };
+      }
       if (specifier.startsWith("@/")) {
         const found = tryFile(resolve(srcRoot, specifier.slice(2)));
         if (found) return { url: pathToFileURL(found).href, shortCircuit: true };
@@ -267,7 +271,7 @@ function loadTsModules() {
     ]);
     return {
       createServerGameEntryPoints: composition.createServerGameEntryPoints,
-      CONTENT_BUDGET: domain.CONTENT_BUDGET,
+      budgetPolicyOf: domain.budgetPolicyOf,
       createSqliteClient: sqliteClient.createSqliteClient,
       createSqliteGameRepository: sqliteRepository.createSqliteGameRepository,
     };
@@ -371,21 +375,23 @@ export function buildRunSummaryLine(reports, outputFormatLabel) {
   return `${DIAG_PREFIX} summary ${JSON.stringify(summarizeSmokeRun(reports, outputFormatLabel))}`;
 }
 
-/** blueprint 预算复查：与 domain CONTENT_BUDGET 完全对照（双结局包含在内）。 */
-export function checkContentBudget(blueprint, CONTENT_BUDGET) {
+/** blueprint 预算复查：与 domain budgetPolicy.opening 完全对照（双结局包含在内）。 */
+export function checkContentBudget(blueprint, policy) {
+  const opening = policy.opening;
   const mainCount = blueprint.locations.filter((entry) => entry.kind === "main").length;
   const hiddenCount = blueprint.locations.filter((entry) => entry.kind === "hidden").length;
   const npcCount = blueprint.npcs.length;
   const companionCount = blueprint.npcs.filter((entry) => entry.isCompanion).length;
   const sideCount = blueprint.quests.filter((entry) => entry.kind === "side").length;
   return (
-    mainCount === CONTENT_BUDGET.mainLocations &&
-    hiddenCount <= CONTENT_BUDGET.hiddenLocationsMax &&
-    npcCount >= CONTENT_BUDGET.coreNpcsMin &&
-    npcCount <= CONTENT_BUDGET.coreNpcsMax &&
-    companionCount <= CONTENT_BUDGET.companionsMax &&
-    sideCount <= CONTENT_BUDGET.sideQuestsMax &&
-    blueprint.endings.length === CONTENT_BUDGET.endings
+    mainCount >= opening.mainLocationsMin &&
+    mainCount <= opening.mainLocationsMax &&
+    hiddenCount <= opening.hiddenLocationsMax &&
+    npcCount >= opening.coreNpcsMin &&
+    npcCount <= opening.coreNpcsMax &&
+    companionCount <= opening.companionsMax &&
+    sideCount <= opening.sideQuestsMax &&
+    blueprint.endings.length === opening.endings
   );
 }
 
@@ -516,7 +522,7 @@ export async function realRunCase(smokeCase, overrides = {}) {
       const loaded = await repository.getCurrentGame();
       if (loaded.ok && loaded.status === "active") {
         endingCount = loaded.record.blueprint.endings.length;
-        budgetOk = checkContentBudget(loaded.record.blueprint, modules.CONTENT_BUDGET);
+        budgetOk = checkContentBudget(loaded.record.blueprint, modules.budgetPolicyOf(loaded.record.blueprint));
       }
     } finally {
       await repository.close();
