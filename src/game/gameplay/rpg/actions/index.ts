@@ -31,6 +31,8 @@ export {
 export { composeNpcSpeech } from "./npcSpeech";
 // NPC 自由输入：纯规则分类器（零 AI）。
 export { classifyFreeDialogue } from "./classifyFreeDialogue";
+// NPC 自由输入：确定性闲聊回应（零 AI，与 composeNpcSpeech 并列）。
+export { composeNpcCasualReply } from "./npcCasualReply";
 
 // ---------------------------------------------------------------------------
 // 可用行动投影：由已编译蓝图和当前 GameState 投影。
