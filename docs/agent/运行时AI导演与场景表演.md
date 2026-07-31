@@ -23,7 +23,7 @@ Phase 10 建立第一条真实运行时 AI 剧情闭环：玩家从两个服务�
 - 规则 resolver、quest reconciliation、battle、ending 和 SQLite CAS 继续独占正式状态写入。
 - 每个角色最多三次有界尝试；只重试当前失败角色，不重跑已经批准的上游角色。耗尽后整场使用确定性 fallback，不拼接部分 AI 输出。
 - active battle、ending 或合法非战斗行动少于两个时，不生成普通 narrative scene。
-- Phase 10 中“新人物/地点/道具”只表示首次向玩家引入开局蓝图已有实体；不运行时追加蓝图 ID。
+- 场景生成中”新人物/地点/道具”表示首次向玩家引入蓝图已有实体。导演可额外提议新地点/NPC（`proposedNewLocations` / `proposedNewNpcs`），经 `approveBlueprintExpansion` 闸门审批后由 `compileBlueprintExpansion` 铸 ID 并以 `applyBlueprintExpansion` CAS 追加进蓝图；详见 `docs/agent/蓝图动态化.md`。
 - 不做自由输入、意图解析 AI、streaming、AI 图片、语音或视觉描述生成。
 - 美术只保留后续 `VisualAssetPort` 的设计方向；本阶段不创建未使用 production port，继续使用本地 SVG。
 
@@ -84,5 +84,5 @@ narrative_choice(choiceToken, revision)
 - CAS 冲突时丢弃已生成内容，不重复调用 AI。
 - pending 时 application 拒绝行动；少于两个合法行动时清除 pending，不让 AI 或 fallback 伪造选项。
 - `NarrativeRuntimeState.mode` 由服务端保存：正常局为 `ai`；开发环境“使用已有数据开始”创建 `offline` 局，固定使用 Phase 10 完整旅程的输入/seed，既不调用开局 AI，也不排队运行时 AI。该模式只用于开发现有地图、地点和 NPC UI，不是玩家可配置的 AI 开关。
-- Phase 10 的人物、地点、道具首次登场仅能引用既有蓝图 ID；动态创建 ID 是后续独立、受审批的蓝图扩展阶段。
+- 场景内人物、地点、道具首次登场仅能引用既有蓝图 ID；运行时蓝图扩展（新地点/NPC）经独立闸门审批后追加，见 `docs/agent/蓝图动态化.md`。
 - 真实 smoke 是否执行必须按事实记录，不能把 fixture 通过写成真实调用成功。
