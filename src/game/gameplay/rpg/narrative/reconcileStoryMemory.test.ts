@@ -245,6 +245,28 @@ describe("reconcileStoryMemory npc_met interactionKind", () => {
     expect(contact?.lastInteractionSummary).toBe("你向NPC询问了重要线索。");
   });
 
+  it("后续场景接触更新保留既有互动摘要", () => {
+    const ledger: GameEvent[] = [
+      ...baseState().eventLedger,
+      { type: "npc_met", npcId: asNpcId("npc_a"), occurredAt: FIXED_TIME, interactionKind: "greet" },
+      {
+        type: "narrative_scene_presented",
+        sceneId: "scene-1",
+        locationId: asLocationId("loc_2"),
+        focusNpcId: asNpcId("npc_a"),
+        revealedFactIds: [],
+        pacing: "develop",
+        occurredAt: FIXED_TIME,
+      },
+    ];
+    const memory = reconcileStoryMemory({ state: baseState({ eventLedger: ledger }) });
+    expect(memory.npcContacts.find((entry) => entry.npcId === asNpcId("npc_a"))).toMatchObject({
+      lastContactTurn: 2,
+      lastLocationId: asLocationId("loc_2"),
+      lastInteractionSummary: "你初次结识了这位NPC。",
+    });
+  });
+
   it("旧存档无 interactionKind 时不生成摘要", () => {
     const ledger: GameEvent[] = [
       ...baseState().eventLedger,

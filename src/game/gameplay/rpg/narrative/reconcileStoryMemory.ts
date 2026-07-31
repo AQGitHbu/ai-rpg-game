@@ -132,5 +132,8 @@ function resolveNpcLocation(state: GameState, npcId: NpcId): LocationId | null {
 function upsertContact(contacts: NpcContinuityMemory[], contact: NpcContinuityMemory): void {
   const index = contacts.findIndex((entry) => entry.npcId === contact.npcId);
   if (index === -1) contacts.push(contact);
-  else contacts[index] = contact;
+  // Scene events only advance the contact time/location. Preserve the last
+  // explicit interaction summary until a later npc_met event provides a new
+  // one, so an NPC does not forget the player's greeting after one scene.
+  else contacts[index] = { ...contacts[index], ...contact };
 }

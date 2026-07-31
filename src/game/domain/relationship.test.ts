@@ -5,8 +5,6 @@ import {
   RELATIONSHIP_CHANGE,
   RELATIONSHIP_MIN,
   RELATIONSHIP_MAX,
-  type RelationshipTier,
-  type RelationshipValue,
 } from "./relationship";
 
 describe("relationshipTierOf", () => {

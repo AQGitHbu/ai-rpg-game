@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { projectRelationshipSummary } from "./relationshipSummary";
-import type { GameState, ScenarioBlueprint, NpcId } from "@/game/domain";
+import type { GameState, ScenarioBlueprint } from "@/game/domain";
 
 function buildState(overrides?: Partial<GameState>): GameState {
   return {
