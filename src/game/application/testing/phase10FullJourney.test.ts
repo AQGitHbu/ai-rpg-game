@@ -41,6 +41,7 @@ import {
   validateJourneyReport,
   type JourneyReport,
 } from "./runtimeNarrativeJourney";
+import { prepareTmpRunDir } from "./tmpRunDir.testutil";
 import wuxiaFixture from "../../../../data/fixtures/phase1/wuxia.json";
 
 type Phase1Fixture = { input: NewGameInput; seed: string };
@@ -53,8 +54,8 @@ type RuntimeSources = Readonly<{
 const fixture = wuxiaFixture as unknown as Phase1Fixture;
 const baseline = runScenarioPipeline(fixture.input, fixture.seed);
 const goldenRoot = resolve("data", "fixtures", "phase10-journey", "v1");
-const tmpRoot = resolve("tmp", `phase10-full-journey-${process.pid}-${Date.now()}`);
-mkdirSync(tmpRoot, { recursive: true });
+// 共享 tmp/ 策略：创建前先清扫上一轮同前缀残留（见 tmpRunDir.testutil.ts）。
+const tmpRoot = prepareTmpRunDir("phase10-full-journey-");
 const openRepositories: SqliteGameRepository[] = [];
 const fixedNow = "2026-07-30T08:00:00.000Z";
 

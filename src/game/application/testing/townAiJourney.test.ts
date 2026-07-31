@@ -35,6 +35,7 @@ import {
   createReplayTownPlanSource,
   type TownPlanRecordedCall
 } from "../server/ai/townPlanRecording";
+import { prepareTmpRunDir } from "./tmpRunDir.testutil";
 import wuxiaFixture from "../../../../data/fixtures/phase1/wuxia.json";
 
 // ---------------------------------------------------------------------------
@@ -59,8 +60,8 @@ const SCENARIO_FIXTURE_ID = "town-journey";
 const TOWN_JOURNEY_SUMMARY_VERSION = "town-journey-summary-v1" as const;
 const fixedNow = "2026-07-31T08:00:00.000Z";
 
-const tmpRoot = resolve("tmp", `town-ai-journey-${process.pid}-${Date.now()}`);
-mkdirSync(tmpRoot, { recursive: true });
+// 共享 tmp/ 策略：创建前先清扫上一轮同前缀残留（见 tmpRunDir.testutil.ts）。
+const tmpRoot = prepareTmpRunDir("town-ai-journey-");
 const openRepositories: SqliteGameRepository[] = [];
 
 afterAll(async () => {
