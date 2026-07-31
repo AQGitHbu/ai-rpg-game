@@ -154,6 +154,7 @@ S4 评分规则：早期预测测试独立于完整评审之前执行（避免�
 | 变量 | 作用 |
 | --- | --- |
 | `STORY_EVAL_CAPTURE` | `1` 时 composition 层装配采集回调 |
+| `STORY_EVAL_ARTIFACT_DIR` | 覆盖产物目录（门禁脚本逐局注入 `artifacts/story-eval/<run-id>/`；缺省派生 `<ISO 时间戳>-<pid>`） |
 | `RUN_REAL_AI_STORY_EVAL` | `1` 时评估旅程脚本才发真实计费调用 |
 | `STORY_EVAL_SEED` | 选择策略与抽样的确定性种子 |
 | `STORY_EVAL_MAX_SCENES` | 单局场景上限（默认 60，安全阀） |
