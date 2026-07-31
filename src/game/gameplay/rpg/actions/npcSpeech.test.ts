@@ -6,7 +6,6 @@ import {
   asLocationId,
   asNpcId,
   asQuestId,
-  CONTENT_BUDGET,
   type GameState,
   type GenerationMetadata,
   type ScenarioBlueprint,
@@ -111,7 +110,6 @@ function buildBlueprint(): ScenarioBlueprint {
       suggestedActions: ["观察周围", "与NPC1交谈"],
       investigableFactIds: ["fact_investigable"],
     },
-    contentBudget: { ...CONTENT_BUDGET },
     budgetPolicy: TEST_POLICY,
   };
   const compiled = compileScenarioBlueprint(

@@ -60,20 +60,11 @@ const MINIMAL_CANDIDATE = {
     presentNpcIds: [],
     suggestedActions: [],
     investigableFactIds: []
-  },
-  contentBudget: {
-    mainLocations: 4,
-    hiddenLocationsMax: 1,
-    coreNpcsMin: 4,
-    coreNpcsMax: 6,
-    companionsMax: 1,
-    sideQuestsMax: 2,
-    endings: 2
   }
 };
 
 const MANIFEST = {
-  contractVersion: "phase4b-v1",
+  contractVersion: "scenario-dynamic-v2",
   fixtures: [
     { id: "generated-wuxia", file: "generated-wuxia.json", gameType: "wuxia", seed: "phase1-wuxia-001" },
     { id: "timeout", file: "timeout.json", gameType: "wuxia", seed: "phase1-wuxia-001" },
@@ -107,7 +98,7 @@ describe("createFixtureScenarioCandidateSource", () => {
     const attempt = await source.generate(buildRequest());
     expect(attempt).toMatchObject({
       ok: true,
-      contractVersion: "phase4b-v1",
+      contractVersion: "scenario-dynamic-v2",
       origin: "fixture"
     });
     if (attempt.ok) {

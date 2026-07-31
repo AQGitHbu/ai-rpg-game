@@ -56,15 +56,6 @@ const MINIMAL_CANDIDATE = {
     presentNpcIds: [],
     suggestedActions: [],
     investigableFactIds: []
-  },
-  contentBudget: {
-    mainLocations: 4,
-    hiddenLocationsMax: 1,
-    coreNpcsMin: 4,
-    coreNpcsMax: 6,
-    companionsMax: 1,
-    sideQuestsMax: 2,
-    endings: 2
   }
 };
 
@@ -137,7 +128,7 @@ describe("createLiveScenarioCandidateSource：成功路径", () => {
   it("完整 JSON 内容 ⇒ ok/live，携带候选与 audit(ok, usage)", async () => {
     const { source, events } = makeSource([okResult(JSON.stringify(MINIMAL_CANDIDATE))]);
     const attempt = await source.generate(REQUEST);
-    expect(attempt).toMatchObject({ ok: true, origin: "live", contractVersion: "phase4b-v1" });
+    expect(attempt).toMatchObject({ ok: true, origin: "live", contractVersion: "scenario-dynamic-v2" });
     if (attempt.ok) expect(attempt.candidate.generationId).toBe("gen-live");
     expect(events[0]).toMatchObject({
       outcome: "ok",
@@ -323,7 +314,7 @@ describe("createUnavailableScenarioCandidateSource", () => {
     const source = createUnavailableScenarioCandidateSource(["AI_CONFIG_MODEL_MISSING"]);
     expect(await source.generate(REQUEST)).toEqual({
       ok: false,
-      contractVersion: "phase4b-v1",
+      contractVersion: "scenario-dynamic-v2",
       origin: "unavailable",
       category: "service_error",
       diagnostics: ["AI_CONFIG_MODEL_MISSING"]

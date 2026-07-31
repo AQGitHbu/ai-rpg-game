@@ -4,7 +4,6 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   asLocationId,
-  CONTENT_BUDGET,
   type GameTypeId,
   type NewGameInput,
   type QuestDefinition,
@@ -209,7 +208,6 @@ describe.each(CASES)("Phase 4 探索回归（$gameType）", ({ gameType, fixture
     // 6) 内容预算不变：整个旅程后已存蓝图与独立复跑基准逐字节相同。
     expect(record.blueprint).toEqual(baseline.blueprint);
     expect(JSON.stringify(record.blueprint)).toBe(JSON.stringify(baseline.blueprint));
-    expect(record.blueprint.contentBudget).toEqual(CONTENT_BUDGET);
     expect(record.blueprint.locations.filter((entry) => entry.kind === "main")).toHaveLength(4);
     expect(record.blueprint.quests.filter((entry) => entry.kind === "main")).toHaveLength(3);
     expect(record.blueprint.endings).toHaveLength(2);

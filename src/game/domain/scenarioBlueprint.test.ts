@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  CONTENT_BUDGET,
   asEndingId,
   asEnemyId,
   asFactId,
@@ -146,28 +145,9 @@ function buildCandidate(): ScenarioBlueprintCandidate {
       presentNpcIds: ["npc_elder"],
       suggestedActions: ["去找村长", "查看铁剑"],
       investigableFactIds: ["fact_sword_stolen"]
-    },
-    contentBudget: CONTENT_BUDGET
+    }
   };
 }
-
-describe("CONTENT_BUDGET", () => {
-  it("is frozen", () => {
-    expect(Object.isFrozen(CONTENT_BUDGET)).toBe(true);
-  });
-
-  it("carries the fixed Phase 1 values", () => {
-    expect(CONTENT_BUDGET).toEqual({
-      mainLocations: 4,
-      hiddenLocationsMax: 1,
-      coreNpcsMin: 4,
-      coreNpcsMax: 6,
-      companionsMax: 1,
-      sideQuestsMax: 2,
-      endings: 2
-    });
-  });
-});
 
 describe("branded id helpers", () => {
   it("return the raw string value unchanged", () => {

@@ -41,9 +41,8 @@ const ITEM_RARITIES: ReadonlySet<ItemRarity> = new Set(["common", "fine", "rare"
 export const ITEM_LEVEL_RANGE: NumericRange = Object.freeze({ min: 1, max: 99 });
 export const ITEM_STAT_LINES_MAX = 6;
 
-// Town 层：地点层级封闭枚举与 town 地点配额（懒生成成本约束）。
+// Town 层：地点层级封闭枚举（town 配额由 policy.opening.townLocationsMax 驱动）。
 const LOCATION_SCALES: ReadonlySet<string> = new Set(["scene", "town"]);
-export const TOWN_SCALE_LOCATIONS_MAX = 2;
 
 export type ScenarioBlueprintIssueCode =
   | QuestGraphIssueCode

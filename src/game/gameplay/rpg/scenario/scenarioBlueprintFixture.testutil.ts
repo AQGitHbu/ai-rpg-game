@@ -1,4 +1,4 @@
-import { CONTENT_BUDGET, createBudgetPolicy, type ScenarioBlueprintCandidate } from "@/game/domain";
+import { createBudgetPolicy, type ScenarioBlueprintCandidate } from "@/game/domain";
 import type { GameTypeProfile } from "./gameTypeProfiles";
 
 // ---------------------------------------------------------------------------
@@ -251,7 +251,6 @@ export function makeValidCandidate(): ScenarioBlueprintCandidate {
       suggestedActions: ["向老掌柜打听旧案", "查看镖局废墟"],
       investigableFactIds: ["fact_b"]
     },
-    contentBudget: { ...CONTENT_BUDGET },
     budgetPolicy: TEST_POLICY
   };
 }

@@ -411,15 +411,6 @@
         "fact_gen_1",
         "fact_gen_2"
       ]
-    },
-    "contentBudget": {
-      "mainLocations": 4,
-      "hiddenLocationsMax": 1,
-      "coreNpcsMin": 4,
-      "coreNpcsMax": 6,
-      "companionsMax": 1,
-      "sideQuestsMax": 2,
-      "endings": 2
     }
   }
 }

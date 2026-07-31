@@ -2,7 +2,7 @@
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { CONTENT_BUDGET, type NewGameInput } from "@/game/domain";
+import { budgetPolicyOf, type NewGameInput } from "@/game/domain";
 import scienceFictionFixture from "../../../data/fixtures/phase1/science_fiction.json";
 import urbanFixture from "../../../data/fixtures/phase1/urban.json";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
@@ -156,18 +156,19 @@ async function createAndReload(
 /** 蓝图必须守住内容预算与既有双结局路线（成功/失败两条 route 各占其一）。 */
 function assertBudgetsAndEndings(record: GameRecord, label: string): void {
   const { blueprint } = record;
-  expect(blueprint.locations.length, label).toBeGreaterThanOrEqual(CONTENT_BUDGET.mainLocations);
+  const policy = budgetPolicyOf(blueprint);
+  expect(blueprint.locations.length, label).toBeGreaterThanOrEqual(policy.opening.mainLocationsMin);
   expect(blueprint.locations.length, label).toBeLessThanOrEqual(
-    CONTENT_BUDGET.mainLocations + CONTENT_BUDGET.hiddenLocationsMax
+    policy.opening.mainLocationsMax + policy.opening.hiddenLocationsMax
   );
-  expect(blueprint.npcs.length, label).toBeGreaterThanOrEqual(CONTENT_BUDGET.coreNpcsMin);
-  expect(blueprint.npcs.length, label).toBeLessThanOrEqual(CONTENT_BUDGET.coreNpcsMax);
+  expect(blueprint.npcs.length, label).toBeGreaterThanOrEqual(policy.opening.coreNpcsMin);
+  expect(blueprint.npcs.length, label).toBeLessThanOrEqual(policy.opening.coreNpcsMax);
   const sideQuests = blueprint.quests.filter((quest) => quest.kind === "side");
-  expect(sideQuests.length, label).toBeLessThanOrEqual(CONTENT_BUDGET.sideQuestsMax);
+  expect(sideQuests.length, label).toBeLessThanOrEqual(policy.opening.sideQuestsMax);
   // 双结局路线：恰好两个结局、ID 互异，且都有可判定的达成条件。
-  expect(blueprint.endings.length, label).toBe(CONTENT_BUDGET.endings);
+  expect(blueprint.endings.length, label).toBe(policy.opening.endings);
   const endingIds = new Set(blueprint.endings.map((ending) => ending.id));
-  expect(endingIds.size, label).toBe(CONTENT_BUDGET.endings);
+  expect(endingIds.size, label).toBe(policy.opening.endings);
   for (const ending of blueprint.endings) {
     expect(ending.requirements.length, label).toBeGreaterThan(0);
   }

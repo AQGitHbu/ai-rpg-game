@@ -1,4 +1,4 @@
-import { CONTENT_BUDGET, type BudgetPolicy, type ScenarioBlueprintCandidate } from "@/game/domain";
+import { type BudgetPolicy, type ScenarioBlueprintCandidate } from "@/game/domain";
 import {
   loadScenarioProfiles,
   validateScenarioBlueprintCandidate,
@@ -32,7 +32,6 @@ const ROOT_FIELD_WHITELIST = [
   "items",
   "endings",
   "openingScene",
-  "contentBudget",
   "budgetPolicy"
 ] as const;
 
@@ -48,7 +47,7 @@ export function repairScenarioCandidate(
 ): ScenarioBlueprintCandidate | null {
   let repaired: ScenarioBlueprintCandidate;
   try {
-    repaired = mechanicalRepair(candidate);
+    repaired = mechanicalRepair(candidate, options.policy);
   } catch {
     // 结构烂到无法机械处理（缺数组等）：不可修复。
     return null;
@@ -66,7 +65,7 @@ export function repairScenarioCandidate(
 // 内部实现：先 clone，绝不原地修改传入候选（可能是被冻结的 fixture）。
 // ---------------------------------------------------------------------------
 
-function mechanicalRepair(candidate: ScenarioBlueprintCandidate): ScenarioBlueprintCandidate {
+function mechanicalRepair(candidate: ScenarioBlueprintCandidate, policy: BudgetPolicy): ScenarioBlueprintCandidate {
   const source = candidate as unknown as Record<string, unknown>;
   const picked: Record<string, unknown> = {};
   for (const field of ROOT_FIELD_WHITELIST) {
@@ -75,16 +74,16 @@ function mechanicalRepair(candidate: ScenarioBlueprintCandidate): ScenarioBluepr
   const cloned = deepTrimClone(picked) as Record<string, unknown>;
 
   // 裁剪超预算列表尾部：数量不足或其余违规交给完整 validator 判死。
-  const maxLocations = CONTENT_BUDGET.mainLocations + CONTENT_BUDGET.hiddenLocationsMax;
+  const maxLocations = policy.opening.mainLocationsMax + policy.opening.hiddenLocationsMax;
   cloned.locations = (cloned.locations as unknown[]).slice(0, maxLocations);
-  cloned.npcs = (cloned.npcs as unknown[]).slice(0, CONTENT_BUDGET.coreNpcsMax);
+  cloned.npcs = (cloned.npcs as unknown[]).slice(0, policy.opening.coreNpcsMax);
 
   // side quests 只裁剪 side 类目的尾部，主线相对顺序保持不变。
   let sideKept = 0;
   cloned.quests = (cloned.quests as { kind?: unknown }[]).filter((quest) => {
     if (quest.kind !== "side") return true;
     sideKept += 1;
-    return sideKept <= CONTENT_BUDGET.sideQuestsMax;
+    return sideKept <= policy.opening.sideQuestsMax;
   });
 
   return cloned as unknown as ScenarioBlueprintCandidate;

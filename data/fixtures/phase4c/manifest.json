@@ -1,6 +1,6 @@
 {
-  "$comment": "Phase 4C fixture manifest：候选契约仍是 phase4b-v1（未升级）；fixtureSetVersion 标识本离线集合版本。expectedStages 仅供契约测试。",
-  "contractVersion": "phase4b-v1",
+  "$comment": "Phase 4C fixture manifest：候选契约升至 scenario-dynamic-v2；fixtureSetVersion 标识本离线集合版本。expectedStages 仅供契约测试。",
+  "contractVersion": "scenario-dynamic-v2",
   "fixtureSetVersion": "phase4c-v1",
   "fixtures": [
     {

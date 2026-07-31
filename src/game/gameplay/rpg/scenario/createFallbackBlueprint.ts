@@ -1,5 +1,4 @@
 import {
-  CONTENT_BUDGET,
   createBudgetPolicy,
   type GameTypeId,
   type EnemyTemplateCandidate,
@@ -519,8 +518,8 @@ export function createFallbackBlueprint(
 
   // 全部随机选择均来自 seed（不掺入 input），保证”随机源只来自 seed”。
   const rng = mulberry32(fnv1a(seed, 0x811c9dc5));
-  const npcCount = CONTENT_BUDGET.coreNpcsMin + randInt(rng, 3); // 4–6
-  const sideQuestCount = 1 + randInt(rng, CONTENT_BUDGET.sideQuestsMax); // 1–2
+  const npcCount = policy.opening.coreNpcsMin + randInt(rng, 3); // 4–6
+  const sideQuestCount = 1 + randInt(rng, policy.opening.sideQuestsMax); // 1–2
 
   const world = buildWorld(input, template, profile);
   const locations = buildLocations(template, profile, npcCount);
@@ -548,7 +547,6 @@ export function createFallbackBlueprint(
     items,
     endings,
     openingScene,
-    contentBudget: { ...CONTENT_BUDGET },
     budgetPolicy: policy
   };
 }

@@ -4,7 +4,6 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   asLocationId,
-  CONTENT_BUDGET,
   type GameTypeId,
   type NewGameInput,
   type QuestDefinition,
@@ -377,7 +376,6 @@ describe.each(CASES)(
 
       // 13) 蓝图与内容预算在整个旅程后原封不动
       expect(record.blueprint).toEqual(blueprint);
-      expect(record.blueprint.contentBudget).toEqual(CONTENT_BUDGET);
 
       // 14) 结局后 action 安全拒绝且零写入
       const postEndingAction = await performAction(
@@ -480,7 +478,6 @@ describe("Phase 4C 离线旅程：失败结局同样是完整存档（wuxia）",
 
     // 9) 蓝图与内容预算不变
     expect(record.blueprint).toEqual(blueprint);
-    expect(record.blueprint.contentBudget).toEqual(CONTENT_BUDGET);
 
     // 10) 结局后 action 安全拒绝且零写入
     const postEndingAction = await performAction(

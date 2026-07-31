@@ -2,14 +2,14 @@ import type { ValidatedNewGameInput } from "@/game/domain";
 import type { ScenarioBlueprintCandidate } from "@/game/domain";
 
 // ---------------------------------------------------------------------------
-// Phase 4A/4B：AI 候选生成的纯 application port（spec §3，契约 phase4b-v1）。
+// Phase 4A/4B：AI 候选生成的纯 application port（spec §3，契约 scenario-dynamic-v2）。
 // 本文件只有类型与冻结常量：不读文件、不读 process.env、不 import server 代码。
 // server-only fixture source 与 live source 都实现 ScenarioCandidateSource；
 // 候选永远不能绕过既有 validateScenarioBlueprintCandidate/compileScenarioBlueprint。
 // ---------------------------------------------------------------------------
 
-/** 当前候选契约版本；Phase 4B 升至 phase4b-v1（新增 live origin）。 */
-export const SCENARIO_CANDIDATE_CONTRACT_VERSION = "phase4b-v1" as const;
+/** 当前候选契约版本；蓝图动态化升至 scenario-dynamic-v2（budgetPolicy 取代 contentBudget）。 */
+export const SCENARIO_CANDIDATE_CONTRACT_VERSION = "scenario-dynamic-v2" as const;
 export type ScenarioCandidateContractVersion = typeof SCENARIO_CANDIDATE_CONTRACT_VERSION;
 
 /** 创建结果暴露给 API/UI 的唯一安全来源区分（spec §5）。 */

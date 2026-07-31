@@ -2,7 +2,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { CONTENT_BUDGET, type NewGameInput } from "@/game/domain";
+import { budgetPolicyOf, type NewGameInput } from "@/game/domain";
 import type {
   DirectorAttempt,
   DirectorSource,
@@ -376,12 +376,15 @@ async function runJourney(
     maxTurns: 20,
     maxAiCalls: 40,
     reloadConsistent,
-    contentBudgetValid:
-      record.blueprint.contentBudget.mainLocations === CONTENT_BUDGET.mainLocations &&
-      record.blueprint.contentBudget.endings === CONTENT_BUDGET.endings &&
-      record.blueprint.locations.filter((entry) => entry.kind === "main").length === CONTENT_BUDGET.mainLocations &&
-      record.blueprint.npcs.length >= CONTENT_BUDGET.coreNpcsMin &&
-      record.blueprint.npcs.length <= CONTENT_BUDGET.coreNpcsMax,
+    contentBudgetValid: (() => {
+      const policy = budgetPolicyOf(record.blueprint);
+      const mainCount = record.blueprint.locations.filter((entry) => entry.kind === "main").length;
+      return mainCount >= policy.opening.mainLocationsMin &&
+        mainCount <= policy.opening.mainLocationsMax &&
+        record.blueprint.endings.length === policy.opening.endings &&
+        record.blueprint.npcs.length >= policy.opening.coreNpcsMin &&
+        record.blueprint.npcs.length <= policy.opening.coreNpcsMax;
+    })(),
     mandatoryFallbacks,
     coverage: {
       narrativeChoices,

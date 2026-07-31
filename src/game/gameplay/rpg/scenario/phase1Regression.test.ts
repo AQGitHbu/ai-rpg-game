@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  CONTENT_BUDGET,
   createBudgetPolicy,
   validateNewGameInput,
   type GameState,
@@ -152,17 +151,17 @@ describe("Phase 1 回归点 4：改变 seed 改变生成 ID，但内容预算不
       expect(reseeded.candidate.generationId).not.toBe(base.candidate.generationId);
       expect(reseeded.candidate.inputDigest).not.toBe(base.candidate.inputDigest);
       for (const run of [base, reseeded]) {
-        expect(run.candidate.contentBudget).toEqual(CONTENT_BUDGET);
+        expect(run.candidate.budgetPolicy).toEqual(policy);
         expect(run.candidate.locations.filter((entry) => entry.kind === "main")).toHaveLength(4);
         expect(run.candidate.locations.filter((entry) => entry.kind === "hidden")).toHaveLength(1);
         expect(run.candidate.quests.filter((entry) => entry.kind === "main")).toHaveLength(policy.mainActs);
         expect(run.candidate.endings).toHaveLength(2);
         expect(run.candidate.enemies.filter((entry) => entry.tier === "normal")).toHaveLength(3);
         expect(run.candidate.enemies.filter((entry) => entry.tier === "boss")).toHaveLength(1);
-        expect(run.candidate.npcs.length).toBeGreaterThanOrEqual(CONTENT_BUDGET.coreNpcsMin);
-        expect(run.candidate.npcs.length).toBeLessThanOrEqual(CONTENT_BUDGET.coreNpcsMax);
+        expect(run.candidate.npcs.length).toBeGreaterThanOrEqual(policy.opening.coreNpcsMin);
+        expect(run.candidate.npcs.length).toBeLessThanOrEqual(policy.opening.coreNpcsMax);
         expect(run.candidate.quests.filter((entry) => entry.kind === "side").length)
-          .toBeLessThanOrEqual(CONTENT_BUDGET.sideQuestsMax);
+          .toBeLessThanOrEqual(policy.opening.sideQuestsMax);
       }
     });
   }

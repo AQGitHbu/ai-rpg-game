@@ -19,7 +19,6 @@ export {
   type BudgetPolicy
 } from "./budgetPolicy";
 export {
-  CONTENT_BUDGET,
   asGenerationId,
   asLocationId,
   asNpcId,
@@ -48,7 +47,6 @@ export {
   type ItemCategory,
   type ItemRarity,
   type ItemStatLine,
-  type ContentBudget,
   type ScenarioBlueprint,
   type ScenarioBlueprintCandidate,
   type WorldDefinition,

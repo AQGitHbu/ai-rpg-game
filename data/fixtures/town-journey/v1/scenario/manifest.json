@@ -1,5 +1,5 @@
 {
-  "contractVersion": "phase4b-v1",
+  "contractVersion": "scenario-dynamic-v2",
   "fixtures": [
     {
       "id": "town-journey",

@@ -4,7 +4,6 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   asLocationId,
-  CONTENT_BUDGET,
   type EnemyId,
   type GameTypeId,
   type NewGameInput,
@@ -316,7 +315,6 @@ describe.each(CASES)("Phase 6 战斗与双结局回归（$gameType）", ({ gameT
 
     // 11) 内容预算不变
     expect(record.blueprint).toEqual(baseline.blueprint);
-    expect(record.blueprint.contentBudget).toEqual(CONTENT_BUDGET);
 
     // 12) 结局后 action 安全拒绝且零写入
     const postEndingAction = await performAction(
@@ -422,7 +420,6 @@ describe.each(CASES)("Phase 6 战斗与双结局回归（$gameType）", ({ gameT
 
     // 10) 内容预算不变
     expect(record.blueprint).toEqual(baseline.blueprint);
-    expect(record.blueprint.contentBudget).toEqual(CONTENT_BUDGET);
 
     // 11) 结局后 action 安全拒绝且零写入
     const postEndingAction = await performAction(

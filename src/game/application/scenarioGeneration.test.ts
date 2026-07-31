@@ -6,10 +6,10 @@ import {
 
 // Phase 4A Task 2：候选失败类别是版本化契约的一部分。
 // 顺序与 spec §3 的枚举一致；新增类别必须升级契约版本并补齐 fixture。
-// Phase 4B Task 4：契约升至 phase4b-v1（新增 live origin），失败类别集合不变。
+// 蓝图动态化：契约升至 scenario-dynamic-v2（budgetPolicy 取代 contentBudget），失败类别集合不变。
 describe("scenarioGeneration port 契约", () => {
-  it("契约版本为 phase4b-v1", () => {
-    expect(SCENARIO_CANDIDATE_CONTRACT_VERSION).toBe("phase4b-v1");
+  it("契约版本为 scenario-dynamic-v2", () => {
+    expect(SCENARIO_CANDIDATE_CONTRACT_VERSION).toBe("scenario-dynamic-v2");
   });
 
   it("公开完整且冻结的候选失败类别", () => {

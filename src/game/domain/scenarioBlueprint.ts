@@ -222,30 +222,6 @@ type GeneratedPlayerDefinitionOf<I extends IdSet> = {
 };
 
 // ---------------------------------------------------------------------------
-// 内容预算：Phase 1 固定字面量，不可配置。
-// ---------------------------------------------------------------------------
-
-export type ContentBudget = {
-  readonly mainLocations: 4;
-  readonly hiddenLocationsMax: 1;
-  readonly coreNpcsMin: 4;
-  readonly coreNpcsMax: 6;
-  readonly companionsMax: 1;
-  readonly sideQuestsMax: 2;
-  readonly endings: 2;
-};
-
-export const CONTENT_BUDGET: ContentBudget = Object.freeze({
-  mainLocations: 4,
-  hiddenLocationsMax: 1,
-  coreNpcsMin: 4,
-  coreNpcsMax: 6,
-  companionsMax: 1,
-  sideQuestsMax: 2,
-  endings: 2
-} as const);
-
-// ---------------------------------------------------------------------------
 // 蓝图：候选 vs 已编译
 // ---------------------------------------------------------------------------
 
@@ -267,7 +243,6 @@ type ScenarioBlueprintShapeOf<I extends IdSet> = {
   readonly openingScene: SceneDefinitionOf<I>;
   // 旧存档缺省，读取一律经 budgetPolicyOf
   readonly budgetPolicy?: BudgetPolicy;
-  readonly contentBudget: ContentBudget;
 };
 
 /** 生成器（AI 或 fallback）产出的原始候选：ID 为普通字符串，未经校验。 */

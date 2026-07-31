@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  CONTENT_BUDGET,
   createBudgetPolicy,
   validateNewGameInput,
   type GameTypeId,
@@ -114,11 +113,11 @@ describe("createFallbackBlueprint：seed 敏感性", () => {
     expect(b.generationId).not.toBe(a.generationId);
     expect(b.inputDigest).not.toBe(a.inputDigest);
     for (const candidate of [a, b]) {
-      expect(candidate.contentBudget).toEqual(CONTENT_BUDGET);
+      expect(candidate.budgetPolicy).toEqual(policyFor());
       expect(candidate.locations.filter((entry) => entry.kind === "main")).toHaveLength(4);
       expect(candidate.endings).toHaveLength(2);
-      expect(candidate.npcs.length).toBeGreaterThanOrEqual(CONTENT_BUDGET.coreNpcsMin);
-      expect(candidate.npcs.length).toBeLessThanOrEqual(CONTENT_BUDGET.coreNpcsMax);
+      expect(candidate.npcs.length).toBeGreaterThanOrEqual(policyFor().opening.coreNpcsMin);
+      expect(candidate.npcs.length).toBeLessThanOrEqual(policyFor().opening.coreNpcsMax);
     }
   });
 
@@ -128,7 +127,7 @@ describe("createFallbackBlueprint：seed 敏感性", () => {
       expect(candidate.npcs.length).toBeGreaterThanOrEqual(4);
       expect(candidate.npcs.length).toBeLessThanOrEqual(6);
       expect(candidate.quests.filter((entry) => entry.kind === "side").length)
-        .toBeLessThanOrEqual(CONTENT_BUDGET.sideQuestsMax);
+        .toBeLessThanOrEqual(policyFor().opening.sideQuestsMax);
     }
   });
 });

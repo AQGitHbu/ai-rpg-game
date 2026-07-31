@@ -123,8 +123,9 @@ describe("buildScenarioResponseFormatExtraBody：policy 参数", () => {
   });
 
   it("json_schema ⇒ strict + 对应 policy 的 schema", () => {
-    const body = buildScenarioResponseFormatExtraBody("json_schema", policy) as Record<string, any>;
-    const jsonSchema = body.response_format.json_schema;
+    const body = buildScenarioResponseFormatExtraBody("json_schema", policy) as Record<string, unknown>;
+    const responseFormat = body.response_format as Record<string, unknown>;
+    const jsonSchema = responseFormat.json_schema as Record<string, unknown>;
     expect(jsonSchema.name).toBe("scenario_blueprint_candidate");
     expect(jsonSchema.strict).toBe(true);
     expect(jsonSchema.schema).toEqual(buildScenarioCandidateJsonSchema(policy));
