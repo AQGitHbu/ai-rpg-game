@@ -19,6 +19,12 @@ import {
   type PerformActionDependencies,
   type PerformActionResult
 } from "../performAction";
+import {
+  handleNpcDialogue,
+  type HandleNpcDialogueCommand,
+  type HandleNpcDialogueDependencies,
+  type HandleNpcDialogueResult
+} from "../handleNpcDialogue";
 import { asGameId, type GameId } from "./persistence/gameRepository";
 import { createScenarioCandidateSource } from "./ai/scenarioCandidateSourceFactory";
 import { createRuntimeNarrativeSources } from "./ai/runtimeNarrativeSourceFactory";
@@ -78,6 +84,8 @@ export type ServerGameEntryPoints = {
   getCurrentGame(): Promise<CurrentGameResult>;
   /** 执行玩家行动：纯规则裁决 + 原子续存档。 */
   performAction(command: PerformActionCommand): Promise<PerformActionResult>;
+  /** NPC 自由输入：纯规则分类→闲聊回应或排队叙事场景；自身零 AI 调用。 */
+  handleNpcDialogue(command: HandleNpcDialogueCommand): Promise<HandleNpcDialogueResult>;
   /** 快速启动或恢复当前存档的后台叙事生成；绝不等待 provider。 */
   ensureNarrativeGeneration(): Promise<NarrativeEnsureResult>;
   /** 快速启动或恢复当前存档的后台小镇规划生成；绝不等待 provider。 */
@@ -127,6 +135,13 @@ export function createServerGameEntryPoints(
     newTraceId: () => randomUUID(),
     runtimeNarrativeSources
   };
+  // 与 performDeps 共享同一 repository/时钟/sources 引用：对话触发的 pending
+  // 与行动触发的 pending 走完全相同的持久化与恢复链路。
+  const npcDialogueDeps: HandleNpcDialogueDependencies = {
+    repository,
+    now: () => new Date().toISOString(),
+    runtimeNarrativeSources
+  };
   const offlineJourneyDependencies: CreateGameDependencies = {
     ...dependencies,
     scenarioCandidateSource: createOfflineJourneyScenarioSource(),
@@ -160,6 +175,7 @@ export function createServerGameEntryPoints(
     },
     getCurrentGame: () => getCurrentGame({ repository }),
     performAction: (command) => performAction(command, performDeps),
+    handleNpcDialogue: (command) => handleNpcDialogue(command, npcDialogueDeps),
     ensureNarrativeGeneration: () => narrativeCoordinator.ensure(),
     ensureTownGeneration: () => townPlanCoordinator.ensure(),
     clearDevelopmentCurrentGame: async () => {
