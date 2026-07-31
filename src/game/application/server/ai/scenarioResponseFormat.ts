@@ -1,11 +1,11 @@
+import type { BudgetPolicy } from "@/game/domain";
 import type { AiOutputFormat } from "./aiRuntimeConfig";
 
 // ---------------------------------------------------------------------------
-// Phase 4C spec §2：RPG 私有的结构化请求 body 构建（纯函数、纯数据）。
+// Task 8：RPG 私有的结构化请求 body 构建（纯函数、纯数据）。
 //
-// - schema 静态对应 domain 的 ScenarioBlueprintCandidate（scenarioBlueprint.ts），
-//   strict 模式要求每个 object 节点 additionalProperties:false 且 required 全覆盖；
-//   封闭 union 用 anyOf，字面量用 const/enum。
+// - schema 按 BudgetPolicy 动态构建：stage 区间、budgetPolicy 叶子精确锁定；
+//   strict 模式要求每个 object 节点 additionalProperties:false 且 required 全覆盖。
 // - 无论 provider 是否遵守 schema，返回内容仍走 root-shape 检查、
 //   validateScenarioBlueprintCandidate、机械修复与 compile——schema 不是信任边界。
 // - transport 不感知本模块：extraBody 经 liveScenarioCandidateSource 透传。
@@ -18,8 +18,8 @@ const NUMBER: JsonSchema = { type: "number" };
 const BOOLEAN: JsonSchema = { type: "boolean" };
 const STRING_ARRAY: JsonSchema = { type: "array", items: STRING };
 
-function arrayOf(items: JsonSchema): JsonSchema {
-  return { type: "array", items };
+function arrayOf(items: JsonSchema, extra?: Record<string, unknown>): JsonSchema {
+  return { type: "array", items, ...extra };
 }
 
 /** strict object：required 恒等于全部 properties 键，杜绝手写遗漏。 */
@@ -30,6 +30,11 @@ function strictObject(properties: Record<string, JsonSchema>): JsonSchema {
     required: Object.keys(properties),
     properties
   };
+}
+
+/** 叶子精确锁定：JSON Schema 无 null const 惯例，统一用 enum: [value]。 */
+function enumLock(value: unknown): JsonSchema {
+  return { enum: [value] };
 }
 
 const STAT_BLOCK = strictObject({ hp: NUMBER, attack: NUMBER, defense: NUMBER });
@@ -108,13 +113,6 @@ const QUEST_COMMON: Record<string, JsonSchema> = {
   tags: STRING_ARRAY
 };
 
-const QUEST: JsonSchema = {
-  anyOf: [
-    strictObject({ ...QUEST_COMMON, kind: { const: "main" }, stage: { enum: [1, 2, 3] } }),
-    strictObject({ ...QUEST_COMMON, kind: { const: "side" } })
-  ]
-};
-
 const ENEMY = strictObject({
   id: STRING,
   name: STRING,
@@ -156,48 +154,83 @@ const OPENING_SCENE = strictObject({
   investigableFactIds: STRING_ARRAY
 });
 
-// 与 domain CONTENT_BUDGET 完全对照的字面量：候选必须原样复述预算。
-const CONTENT_BUDGET_SCHEMA = strictObject({
-  mainLocations: { const: 4 },
-  hiddenLocationsMax: { const: 1 },
-  coreNpcsMin: { const: 4 },
-  coreNpcsMax: { const: 6 },
-  companionsMax: { const: 1 },
-  sideQuestsMax: { const: 2 },
-  endings: { const: 2 }
-});
+function budgetPolicySchemaOf(policy: BudgetPolicy): JsonSchema {
+  return strictObject({
+    policyVersion: enumLock(policy.policyVersion),
+    gameLength: enumLock(policy.gameLength),
+    mainActs: enumLock(policy.mainActs),
+    opening: strictObject({
+      mainLocationsMin: enumLock(policy.opening.mainLocationsMin),
+      mainLocationsMax: enumLock(policy.opening.mainLocationsMax),
+      hiddenLocationsMax: enumLock(policy.opening.hiddenLocationsMax),
+      coreNpcsMin: enumLock(policy.opening.coreNpcsMin),
+      coreNpcsMax: enumLock(policy.opening.coreNpcsMax),
+      companionsMax: enumLock(policy.opening.companionsMax),
+      sideQuestsMax: enumLock(policy.opening.sideQuestsMax),
+      endings: enumLock(policy.opening.endings),
+      townLocationsMax: enumLock(policy.opening.townLocationsMax)
+    }),
+    expansion: strictObject({
+      locationsSoftMax: enumLock(policy.expansion.locationsSoftMax),
+      npcsSoftMax: enumLock(policy.expansion.npcsSoftMax)
+    }),
+    safety: strictObject({
+      locationsHardMax: enumLock(policy.safety.locationsHardMax),
+      npcsHardMax: enumLock(policy.safety.npcsHardMax)
+    })
+  });
+}
 
-/** ScenarioBlueprintCandidate 的静态 strict JSON Schema（版本随候选契约 phase4b-v1）。 */
-export const SCENARIO_CANDIDATE_JSON_SCHEMA = strictObject({
-  schemaVersion: { const: 1 },
-  generationId: STRING,
-  seed: STRING,
-  templateVersion: STRING,
-  gameType: {
-    enum: [
-      "wuxia", "xianxia", "fantasy", "science_fiction",
-      "urban", "alternate_history", "post_apocalypse"
+function questSchemaOf(policy: BudgetPolicy): JsonSchema {
+  return {
+    anyOf: [
+      strictObject({
+        ...QUEST_COMMON,
+        kind: { const: "main" },
+        stage: { type: "integer", minimum: 1, maximum: policy.mainActs }
+      }),
+      strictObject({ ...QUEST_COMMON, kind: { const: "side" } })
     ]
-  },
-  inputDigest: STRING,
-  world: WORLD,
-  player: PLAYER,
-  locations: arrayOf(LOCATION),
-  npcs: arrayOf(NPC),
-  quests: arrayOf(QUEST),
-  enemies: arrayOf(ENEMY),
-  items: arrayOf(ITEM),
-  endings: arrayOf(ENDING),
-  openingScene: OPENING_SCENE,
-  contentBudget: CONTENT_BUDGET_SCHEMA
-});
+  };
+}
+
+/** 按 BudgetPolicy 构建 ScenarioBlueprintCandidate 的 strict JSON Schema。 */
+export function buildScenarioCandidateJsonSchema(policy: BudgetPolicy): Readonly<JsonSchema> {
+  return strictObject({
+    schemaVersion: { const: 1 },
+    generationId: STRING,
+    seed: STRING,
+    templateVersion: STRING,
+    gameType: {
+      enum: [
+        "wuxia", "xianxia", "fantasy", "science_fiction",
+        "urban", "alternate_history", "post_apocalypse"
+      ]
+    },
+    inputDigest: STRING,
+    world: WORLD,
+    player: PLAYER,
+    locations: arrayOf(LOCATION, {
+      minItems: policy.opening.mainLocationsMin,
+      maxItems: policy.opening.mainLocationsMax + policy.opening.hiddenLocationsMax
+    }),
+    npcs: arrayOf(NPC),
+    quests: arrayOf(questSchemaOf(policy)),
+    enemies: arrayOf(ENEMY),
+    items: arrayOf(ITEM),
+    endings: arrayOf(ENDING),
+    openingScene: OPENING_SCENE,
+    budgetPolicy: budgetPolicySchemaOf(policy)
+  });
+}
 
 /**
  * 输出格式 → chat completion extraBody。prompt_only 返回 undefined：
  * 请求形状与 Phase 4B 完全一致（不发送 response_format）。
  */
 export function buildScenarioResponseFormatExtraBody(
-  format: AiOutputFormat
+  format: AiOutputFormat,
+  policy: BudgetPolicy
 ): Readonly<Record<string, unknown>> | undefined {
   switch (format) {
     case "prompt_only":
@@ -211,7 +244,7 @@ export function buildScenarioResponseFormatExtraBody(
           json_schema: {
             name: "scenario_blueprint_candidate",
             strict: true,
-            schema: SCENARIO_CANDIDATE_JSON_SCHEMA
+            schema: buildScenarioCandidateJsonSchema(policy)
           }
         }
       };

@@ -1,42 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { createBudgetPolicy } from "@/game/domain";
 import {
-  buildScenarioResponseFormatExtraBody,
-  SCENARIO_CANDIDATE_JSON_SCHEMA
+  buildScenarioCandidateJsonSchema,
+  buildScenarioResponseFormatExtraBody
 } from "./scenarioResponseFormat";
 
 // ---------------------------------------------------------------------------
-// Phase 4C spec §2：三种输出格式 → response_format extraBody 的纯函数契约。
-// schema 是静态版本化数据：本测试同时守卫 strict 模式的结构性约束
-// （所有 object 节点 additionalProperties:false 且 required 全覆盖）。
+// Task 8：schema 工厂化。
+// buildScenarioCandidateJsonSchema(policy) 按 BudgetPolicy 构建 strict schema；
+// buildScenarioResponseFormatExtraBody(format, policy) 透传 policy 到 schema。
 // ---------------------------------------------------------------------------
 
-describe("buildScenarioResponseFormatExtraBody", () => {
-  it("prompt_only ⇒ undefined（请求形状与 Phase 4B 完全一致）", () => {
-    expect(buildScenarioResponseFormatExtraBody("prompt_only")).toBeUndefined();
-  });
-
-  it("json_object ⇒ 通用 JSON object response_format", () => {
-    expect(buildScenarioResponseFormatExtraBody("json_object")).toEqual({
-      response_format: { type: "json_object" }
-    });
-  });
-
-  it("json_schema ⇒ strict 命名 schema", () => {
-    const body = buildScenarioResponseFormatExtraBody("json_schema");
-    expect(body).toEqual({
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "scenario_blueprint_candidate",
-          strict: true,
-          schema: SCENARIO_CANDIDATE_JSON_SCHEMA
-        }
-      }
-    });
-  });
-});
-
-// 类型收窄：导出类型为 Record<string, unknown>，测试内以结构化视图访问断言字段。
 type SchemaNodeView = {
   additionalProperties: boolean;
   required: string[];
@@ -44,23 +18,70 @@ type SchemaNodeView = {
   items: SchemaNodeView;
   enum: unknown[];
   anyOf: unknown[];
+  const: unknown;
+  type: string;
+  minimum: number;
+  maximum: number;
+  minItems: number;
+  maxItems: number;
 };
 
-describe("SCENARIO_CANDIDATE_JSON_SCHEMA：strict 结构守卫", () => {
-  const schema = SCENARIO_CANDIDATE_JSON_SCHEMA as SchemaNodeView;
-
-  it("根节点覆盖候选全部 16 个字段且拒绝未知字段", () => {
-    expect(schema.additionalProperties).toBe(false);
-    expect([...schema.required].sort()).toEqual(
-      [
-        "schemaVersion", "generationId", "seed", "templateVersion", "gameType",
-        "inputDigest", "world", "player", "locations", "npcs", "quests",
-        "enemies", "items", "endings", "openingScene", "contentBudget"
-      ].sort()
-    );
+describe("buildScenarioCandidateJsonSchema：policy 驱动", () => {
+  it("long 档位 quest main stage 为 integer [1, 8]", () => {
+    const schema = buildScenarioCandidateJsonSchema(createBudgetPolicy("long")) as SchemaNodeView;
+    const questAnyOf = schema.properties.quests.items.anyOf;
+    const mainVariant = questAnyOf.find(
+      (branch) => (branch as SchemaNodeView).properties?.kind?.const === "main"
+    ) as SchemaNodeView;
+    expect(mainVariant.properties.stage).toEqual({ type: "integer", minimum: 1, maximum: 8 });
   });
 
-  it("所有 object 节点 additionalProperties:false 且 required 全覆盖（strict 前提）", () => {
+  it("short 档位 quest main stage 为 integer [1, 3]", () => {
+    const schema = buildScenarioCandidateJsonSchema(createBudgetPolicy("short")) as SchemaNodeView;
+    const questAnyOf = schema.properties.quests.items.anyOf;
+    const mainVariant = questAnyOf.find(
+      (branch) => (branch as SchemaNodeView).properties?.kind?.const === "main"
+    ) as SchemaNodeView;
+    expect(mainVariant.properties.stage).toEqual({ type: "integer", minimum: 1, maximum: 3 });
+  });
+
+  it("budgetPolicy 子 schema 叶子用 enum 精确锁定（long 档）", () => {
+    const schema = buildScenarioCandidateJsonSchema(createBudgetPolicy("long")) as SchemaNodeView;
+    const bp = schema.properties.budgetPolicy;
+    expect(bp.properties.mainActs).toEqual({ enum: [8] });
+    expect(bp.properties.expansion.properties.locationsSoftMax).toEqual({ enum: [22] });
+    expect(bp.properties.safety.properties.locationsHardMax).toEqual({ enum: [40] });
+  });
+
+  it("open 档位 null 叶子用 enum: [null] 表达", () => {
+    const schema = buildScenarioCandidateJsonSchema(createBudgetPolicy("open")) as SchemaNodeView;
+    const bp = schema.properties.budgetPolicy;
+    expect(bp.properties.expansion.properties.locationsSoftMax).toEqual({ enum: [null] });
+    expect(bp.properties.expansion.properties.npcsSoftMax).toEqual({ enum: [null] });
+  });
+
+  it("required 列表含 budgetPolicy 而非 contentBudget", () => {
+    const schema = buildScenarioCandidateJsonSchema(createBudgetPolicy("medium")) as SchemaNodeView;
+    expect(schema.required).toContain("budgetPolicy");
+    expect(schema.required).not.toContain("contentBudget");
+  });
+
+  it("locations 数组带 minItems/maxItems（opening 3..6）", () => {
+    const schema = buildScenarioCandidateJsonSchema(createBudgetPolicy("short")) as SchemaNodeView;
+    const locations = schema.properties.locations;
+    expect(locations.minItems).toBe(3);
+    expect(locations.maxItems).toBe(6);
+  });
+
+  it("同 policy 两次构建 JSON round-trip 相等", () => {
+    const policy = createBudgetPolicy("medium");
+    const a = buildScenarioCandidateJsonSchema(policy);
+    const b = buildScenarioCandidateJsonSchema(policy);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it("所有 object 节点 additionalProperties:false 且 required 全覆盖", () => {
+    const schema = buildScenarioCandidateJsonSchema(createBudgetPolicy("long"));
     const violations: string[] = [];
     const walk = (node: unknown, path: string): void => {
       if (Array.isArray(node)) {
@@ -83,28 +104,29 @@ describe("SCENARIO_CANDIDATE_JSON_SCHEMA：strict 结构守卫", () => {
       }
       for (const [key, value] of Object.entries(record)) walk(value, `${path}.${key}`);
     };
-    walk(SCENARIO_CANDIDATE_JSON_SCHEMA, "$");
+    walk(schema, "$");
     expect(violations).toEqual([]);
   });
+});
 
-  it("schema 可 JSON 序列化往返（纯数据，无函数/undefined）", () => {
-    const roundTrip = JSON.parse(JSON.stringify(SCENARIO_CANDIDATE_JSON_SCHEMA));
-    expect(roundTrip).toEqual(SCENARIO_CANDIDATE_JSON_SCHEMA);
+describe("buildScenarioResponseFormatExtraBody：policy 参数", () => {
+  const policy = createBudgetPolicy("medium");
+
+  it("prompt_only ⇒ undefined", () => {
+    expect(buildScenarioResponseFormatExtraBody("prompt_only", policy)).toBeUndefined();
   });
 
-  it("关键封闭 union 与常量：gameType 七值、contentBudget 全 const、quest anyOf 两分支", () => {
-    const properties = schema.properties;
-    expect(properties.gameType.enum).toEqual([
-      "wuxia", "xianxia", "fantasy", "science_fiction",
-      "urban", "alternate_history", "post_apocalypse"
-    ]);
-    expect(properties.schemaVersion).toEqual({ const: 1 });
-    expect(properties.contentBudget.properties.mainLocations).toEqual({ const: 4 });
-    expect(properties.contentBudget.properties.endings).toEqual({ const: 2 });
-    expect(properties.quests.items.anyOf).toHaveLength(2);
+  it("json_object ⇒ 通用 JSON object（不含 schema）", () => {
+    expect(buildScenarioResponseFormatExtraBody("json_object", policy)).toEqual({
+      response_format: { type: "json_object" }
+    });
   });
 
-  it("location.scale 为封闭枚举 scene / town", () => {
-    expect(schema.properties.locations.items.properties.scale.enum).toEqual(["scene", "town"]);
+  it("json_schema ⇒ strict + 对应 policy 的 schema", () => {
+    const body = buildScenarioResponseFormatExtraBody("json_schema", policy) as Record<string, any>;
+    const jsonSchema = body.response_format.json_schema;
+    expect(jsonSchema.name).toBe("scenario_blueprint_candidate");
+    expect(jsonSchema.strict).toBe(true);
+    expect(jsonSchema.schema).toEqual(buildScenarioCandidateJsonSchema(policy));
   });
 });
