@@ -26,8 +26,8 @@ export type LiveScenarioCandidateSourceOptions = Readonly<{
   config: AiTransportConfig;
   buildMessages: (request: ScenarioGenerationRequest) => readonly AiMessage[];
   audit: ScenarioGenerationAudit;
-  /** Phase 4C：结构化输出 extraBody（response_format）；undefined = 不发送。 */
-  extraBody?: Readonly<Record<string, unknown>>;
+  /** Task 9：按请求构建结构化输出 extraBody（response_format）；undefined = 不发送。 */
+  buildExtraBody?: (request: ScenarioGenerationRequest) => Readonly<Record<string, unknown>> | undefined;
 }>;
 
 const CANDIDATE_ARRAY_FIELDS = [
@@ -57,7 +57,7 @@ const TRANSPORT_CATEGORY: Readonly<Record<AiTransportFailureCode, ScenarioCandid
 export function createLiveScenarioCandidateSource(
   options: LiveScenarioCandidateSourceOptions
 ): ScenarioCandidateSource {
-  const { transport, config, buildMessages, audit, extraBody } = options;
+  const { transport, config, buildMessages, audit, buildExtraBody } = options;
   let attempts = 0;
 
   return {
@@ -65,12 +65,10 @@ export function createLiveScenarioCandidateSource(
       attempts += 1;
       const attempt = attempts;
       const messages = buildMessages(request);
+      const extraBody = buildExtraBody?.(request);
 
       let result;
       try {
-        // 与 town plan / runtime narrative 相同的 provider 约定：关闭扩展思考、低温、
-        // 长超时（120s）。开局蓝图是三个 live source 中最大的产物，30s 默认超时会
-        // 在真实 provider 上稳定超时；此处对齐兄弟 source 的健壮配置。
         result = await transport.complete(config, messages, {
           extraBody: { enable_thinking: false, ...(extraBody ?? {}) },
           temperature: 0.2,

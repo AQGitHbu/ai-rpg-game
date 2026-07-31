@@ -1,5 +1,5 @@
 import type { AiMessage } from "@ai-game/ai-transport";
-import { CONTENT_BUDGET } from "@/game/domain";
+import { createBudgetPolicy } from "@/game/domain";
 import {
   createFallbackBlueprint,
   TOWN_SCALE_LOCATIONS_MAX,
@@ -32,6 +32,7 @@ export function buildScenarioPromptMessages(
 ): readonly AiMessage[] {
   const { input, seed } = request;
   const profile = profiles.gameTypeProfiles[input.gameType];
+  const policy = createBudgetPolicy(input.gameLength);
   // 用当前输入和 seed 派生一份已通过领域契约的完整实例，作为模型必须遵守的
   // 结构、ID、引用和预算模板。模型可重写叙事表达，但不能猜测或省略 schema。
   const contractTemplate = createFallbackBlueprint(input, seed, { profiles });
@@ -52,17 +53,19 @@ export function buildScenarioPromptMessages(
     `开场设定：${input.storyOpening}`,
     `叙事风格：${input.narrativeStyle}`,
     `内容强度：${input.contentIntensity}`,
+    "# 时长档位",
+    `游戏时长档位：${policy.gameLength}；主线任务恰好 ${policy.mainActs} 幕。`,
     "# 内容预算（数量硬约束）",
-    `主要地点：${CONTENT_BUDGET.mainLocations}；隐藏地点上限：${CONTENT_BUDGET.hiddenLocationsMax}`,
-    `核心 NPC：${CONTENT_BUDGET.coreNpcsMin}~${CONTENT_BUDGET.coreNpcsMax}；同伴上限：${CONTENT_BUDGET.companionsMax}`,
-    `支线任务上限：${CONTENT_BUDGET.sideQuestsMax}`,
-    `结局数量：必须恰好 ${CONTENT_BUDGET.endings} 个结局，且每个结局都必须从开局可达。`,
+    `主要地点：${policy.opening.mainLocationsMin}~${policy.opening.mainLocationsMax} 个；隐藏地点上限：${policy.opening.hiddenLocationsMax}`,
+    `核心 NPC：${policy.opening.coreNpcsMin}~${policy.opening.coreNpcsMax}；同伴上限：${policy.opening.companionsMax}`,
+    `支线任务上限：${policy.opening.sideQuestsMax}`,
+    `结局数量：必须恰好 ${policy.opening.endings} 个结局，且每个结局都必须从开局可达。`,
     "# 结局可达性要求",
-    `请确保 ${CONTENT_BUDGET.endings} 个结局分别对应不同的剧情走向，任务图中存在从开局到每个结局的可达路径。`,
+    `请确保 ${policy.opening.endings} 个结局分别对应不同的剧情走向，任务图中存在从开局到每个结局的可达路径。`,
     "# 地点分级（scale 字段）",
     `每个地点都要带 scale 字段：城镇、集市、村寨等有街巷与多座建筑的大型聚落标为 "town"，其余小型场景标为 "scene"。scale 为 "town" 的主要地点至多 ${TOWN_SCALE_LOCATIONS_MAX} 个；无法明确判断时一律用 "scene"。`,
     "# 严格候选 JSON 契约",
-    "以下对象是以本次输入和 seed 派生、已通过校验的完整候选样例。你的输出必须保留其全部字段、对象/数组层级、ID、引用、枚举、数量、metadata、contentBudget 与任务/结局拓扑；只能在不破坏这些关系的前提下改写世界、地点、NPC、任务、物品、敌人与结局的叙事文本。只输出最终 JSON 对象。",
+    "以下对象是以本次输入和 seed 派生、已通过校验的完整候选样例。你的输出必须保留其全部字段、对象/数组层级、ID、引用、枚举、数量、metadata、budgetPolicy 与任务/结局拓扑；只能在不破坏这些关系的前提下改写世界、地点、NPC、任务、物品、敌人与结局的叙事文本。只输出最终 JSON 对象。",
     JSON.stringify(contractTemplate)
   ].filter((section): section is string => section !== undefined);
 

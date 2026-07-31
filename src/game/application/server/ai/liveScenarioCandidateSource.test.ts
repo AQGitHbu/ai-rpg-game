@@ -262,7 +262,7 @@ describe("createLiveScenarioCandidateSource：脱敏与稳定性", () => {
   });
 });
 
-describe("Phase 4C：extraBody 透传", () => {
+describe("Task 9：buildExtraBody 按请求透传", () => {
   /** 记录 complete 三个入参的 fake transport（沿用既有 fakeTransport 风格）。 */
   function recordingTransport(): { transport: AiTransport; calls: unknown[][] } {
     const calls: unknown[][] = [];
@@ -280,16 +280,15 @@ describe("Phase 4C：extraBody 透传", () => {
     };
   }
 
-  it("提供 extraBody 时并入 enable_thinking + 低温 + 长超时传给 transport.complete", async () => {
+  it("提供 buildExtraBody 时按请求构建并并入 enable_thinking + 低温 + 长超时", async () => {
     const { transport, calls } = recordingTransport();
     const { audit } = spyAudit();
-    const extraBody = { response_format: { type: "json_object" } };
     const source = createLiveScenarioCandidateSource({
       transport,
       config: CONFIG,
       buildMessages: () => [{ role: "user", content: "x" }],
       audit,
-      extraBody
+      buildExtraBody: () => ({ response_format: { type: "json_object" } })
     });
     await source.generate(REQUEST);
     expect(calls).toHaveLength(1);
@@ -300,7 +299,7 @@ describe("Phase 4C：extraBody 透传", () => {
     });
   });
 
-  it("未提供 extraBody 时仍发送 enable_thinking + 低温 + 长超时（与兄弟 source 对齐）", async () => {
+  it("未提供 buildExtraBody 时仍发送 enable_thinking + 低温 + 长超时", async () => {
     const { transport, calls } = recordingTransport();
     const { audit } = spyAudit();
     const source = createLiveScenarioCandidateSource({

@@ -46,8 +46,8 @@ export function createScenarioCandidateSource(
     buildMessages: (request) => buildScenarioPromptMessages(request, profiles),
     // 默认结构化审计：只输出脱敏白名单字段，绝不落 prompt/响应原文/密钥。
     audit: createStructuredScenarioGenerationAudit({ logger: options.logger }),
-    // Phase 4C：按显式输出格式构建 response_format；prompt_only ⇒ undefined。
-    // Task 9 将改为按请求的 gameLength 动态构建。
-    extraBody: buildScenarioResponseFormatExtraBody(runtime.outputFormat, createBudgetPolicy("open"))
+    // Task 9：按请求的 gameLength 动态构建 response_format。
+    buildExtraBody: (request) =>
+      buildScenarioResponseFormatExtraBody(runtime.outputFormat, createBudgetPolicy(request.input.gameLength))
   });
 }
