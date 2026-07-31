@@ -333,4 +333,86 @@ describe("AdventureGameShell", () => {
       expect(screen.queryByText("你来到了城外官道。")).toBeNull();
     });
   });
+
+  describe("NPC 自由对话", () => {
+    async function openLuDialogue(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+      await user.click(screen.getByRole("button", { name: "进入青石镇" }));
+      // 场景行动菜单的“人物”按钮打开 dialogues[0]（陆掌柜）的对话面板。
+      await user.click(screen.getByRole("button", { name: "人物" }));
+    }
+
+    it("闲聊结果：提交精确 payload 到对话端点，面板显示 NPC 回应，不上报新 view", async () => {
+      let submittedRequest: RequestInit | undefined;
+      const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
+        submittedRequest = init;
+        return jsonResponse({
+          kind: "chat",
+          npcSpeech: "陆掌柜笑了笑：雨夜路滑，客官早些歇息。",
+          view: buildSessionViewFixture()
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const onViewChange = vi.fn();
+      const onBusyChange = vi.fn();
+      const user = userEvent.setup();
+      renderShell({ onViewChange, onBusyChange });
+
+      await openLuDialogue(user);
+      await user.type(screen.getByPlaceholderText("请输入你的话..."), "今天生意如何？");
+      await user.click(screen.getByRole("button", { name: "发送" }));
+
+      expect(
+        await screen.findByText("陆掌柜笑了笑：雨夜路滑，客官早些歇息。")
+      ).toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/game/npc/dialogue",
+        expect.objectContaining({ method: "POST" })
+      );
+      expect(JSON.parse(String(submittedRequest?.body))).toEqual({
+        npcId: "npc_lu",
+        text: "今天生意如何？",
+        revision: 0
+      });
+      // 闲聊零写入：不切换全局 view，对话面板保持打开。
+      expect(onViewChange).not.toHaveBeenCalled();
+      expect(onBusyChange).toHaveBeenNthCalledWith(1, true);
+      expect(onBusyChange).toHaveBeenLastCalledWith(false);
+    });
+
+    it("叙事触发：上报 pending view 以便 CurrentGameScreen 自动轮询", async () => {
+      const pendingView = {
+        ...buildSessionViewFixture(),
+        narrativeGeneration: { status: "pending" as const }
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => jsonResponse({ kind: "narrative_trigger", view: pendingView }))
+      );
+      const onViewChange = vi.fn();
+      const user = userEvent.setup();
+      renderShell({ onViewChange });
+
+      await openLuDialogue(user);
+      await user.type(screen.getByPlaceholderText("请输入你的话..."), "带我去看看后院");
+      await user.click(screen.getByRole("button", { name: "发送" }));
+
+      await waitFor(() => expect(onViewChange).toHaveBeenCalledWith(pendingView));
+    });
+
+    it("网络异常：面板显示兜底闲聊回应，不伪造叙事触发", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => {
+        throw new Error("network down");
+      }));
+      const onViewChange = vi.fn();
+      const user = userEvent.setup();
+      renderShell({ onViewChange });
+
+      await openLuDialogue(user);
+      await user.type(screen.getByPlaceholderText("请输入你的话..."), "你听得见吗？");
+      await user.click(screen.getByRole("button", { name: "发送" }));
+
+      expect(await screen.findByText("（对方似乎没听清。）")).toBeInTheDocument();
+      expect(onViewChange).not.toHaveBeenCalled();
+    });
+  });
 });

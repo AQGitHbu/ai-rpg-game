@@ -1,7 +1,8 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NpcDialoguePanel } from "./NpcDialoguePanel";
+import type { FreeInputResult } from "./NpcDialoguePanel";
 import { buildSessionViewFixture } from "./sessionViewFixture.testutil";
 import type { NpcDialogueView } from "@/game/application";
 
@@ -24,7 +25,7 @@ describe("NpcDialoguePanel：左侧立绘与名字", () => {
   it("左侧立绘区渲染 NPC 名字与身份", () => {
     vi.stubGlobal("fetch", vi.fn());
     render(
-      <NpcDialoguePanel dialogue={LU()} gameType="wuxia" onChoice={vi.fn()} busy={false} />
+      <NpcDialoguePanel dialogue={LU()} gameType="wuxia" onChoice={vi.fn()} onFreeInput={vi.fn()} busy={false} />
     );
 
     const figure = screen.getByTestId("npc-dialogue-figure");
@@ -37,7 +38,7 @@ describe("NpcDialoguePanel：右侧对白分页", () => {
   it("显示第一页对白；单页时不渲染翻页按钮与页码", () => {
     vi.stubGlobal("fetch", vi.fn());
     render(
-      <NpcDialoguePanel dialogue={LU()} gameType="wuxia" onChoice={vi.fn()} busy={false} />
+      <NpcDialoguePanel dialogue={LU()} gameType="wuxia" onChoice={vi.fn()} onFreeInput={vi.fn()} busy={false} />
     );
 
     expect(
@@ -52,7 +53,7 @@ describe("NpcDialoguePanel：右侧对白分页", () => {
     const user = userEvent.setup();
     const zhao = ZHAO();
     render(
-      <NpcDialoguePanel dialogue={zhao} gameType="wuxia" onChoice={vi.fn()} busy={false} />
+      <NpcDialoguePanel dialogue={zhao} gameType="wuxia" onChoice={vi.fn()} onFreeInput={vi.fn()} busy={false} />
     );
 
     // 第一页可见，第二页不可见；页码 1 / 2。
@@ -80,7 +81,7 @@ describe("NpcDialoguePanel：右侧对白分页", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(
-      <NpcDialoguePanel dialogue={ZHAO()} gameType="wuxia" onChoice={vi.fn()} busy={false} />
+      <NpcDialoguePanel dialogue={ZHAO()} gameType="wuxia" onChoice={vi.fn()} onFreeInput={vi.fn()} busy={false} />
     );
 
     const next = screen.getByRole("button", { name: "下一页" });
@@ -99,7 +100,7 @@ describe("NpcDialoguePanel：底部选项", () => {
     const user = userEvent.setup();
 
     render(
-      <NpcDialoguePanel dialogue={ZHAO()} gameType="wuxia" onChoice={onChoice} busy={false} />
+      <NpcDialoguePanel dialogue={ZHAO()} gameType="wuxia" onChoice={onChoice} onFreeInput={vi.fn()} busy={false} />
     );
 
     await user.click(screen.getByRole("button", { name: "1. 与捕头赵五初次交谈" }));
@@ -115,7 +116,7 @@ describe("NpcDialoguePanel：底部选项", () => {
     const user = userEvent.setup();
 
     render(
-      <NpcDialoguePanel dialogue={LU()} gameType="wuxia" onChoice={onChoice} busy={false} />
+      <NpcDialoguePanel dialogue={LU()} gameType="wuxia" onChoice={onChoice} onFreeInput={vi.fn()} busy={false} />
     );
 
     await user.click(screen.getByRole("button", { name: "1. 回顾已知线索" }));
@@ -128,7 +129,7 @@ describe("NpcDialoguePanel：底部选项", () => {
   it("busy 时写状态 choice 禁用，review_clue 仍可用", () => {
     vi.stubGlobal("fetch", vi.fn());
     render(
-      <NpcDialoguePanel dialogue={ZHAO()} gameType="wuxia" onChoice={vi.fn()} busy />
+      <NpcDialoguePanel dialogue={ZHAO()} gameType="wuxia" onChoice={vi.fn()} onFreeInput={vi.fn()} busy />
     );
 
     expect(screen.getByRole("button", { name: "1. 与捕头赵五初次交谈" })).toBeDisabled();
@@ -137,38 +138,96 @@ describe("NpcDialoguePanel：底部选项", () => {
 });
 
 describe("NpcDialoguePanel：自由输入", () => {
-  it("输入框与发送按钮存在；发送后显示本地确定性回应、清空输入、零 fetch", async () => {
+  it("发送经 onFreeInput 回调提交；chat 结果显示 NPC 回应并清空输入，面板零 fetch", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const onChoice = vi.fn();
+    const onFreeInput = vi.fn(
+      async (): Promise<FreeInputResult> => ({ kind: "chat", npcSpeech: "铁匠笑了笑" })
+    );
     const user = userEvent.setup();
 
     render(
-      <NpcDialoguePanel dialogue={ZHAO()} gameType="wuxia" onChoice={onChoice} busy={false} />
+      <NpcDialoguePanel
+        dialogue={ZHAO()}
+        gameType="wuxia"
+        onChoice={onChoice}
+        onFreeInput={onFreeInput}
+        busy={false}
+      />
     );
 
     const input = screen.getByPlaceholderText("请输入你的话...");
     await user.type(input, "你见过刺客吗？");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    expect(
-      screen.getByText("捕头赵五沉吟片刻，没有接你的话。（自由对话尚未开放）")
-    ).toBeInTheDocument();
+    expect(onFreeInput).toHaveBeenCalledWith("npc_zhao", "你见过刺客吗？");
+    expect(await screen.findByText("铁匠笑了笑")).toBeInTheDocument();
     expect(input).toHaveValue("");
+    // 网络请求属于父组件职责，面板自身不 fetch。
     expect(fetchMock).not.toHaveBeenCalled();
     expect(onChoice).not.toHaveBeenCalled();
   });
 
-  it("空输入发送不产生回应", async () => {
+  it("narrative_trigger 结果不显示本地回应（父组件已切换全局 view）", async () => {
     vi.stubGlobal("fetch", vi.fn());
+    const onFreeInput = vi.fn(
+      async (): Promise<FreeInputResult> => ({ kind: "narrative_trigger" })
+    );
     const user = userEvent.setup();
 
     render(
-      <NpcDialoguePanel dialogue={ZHAO()} gameType="wuxia" onChoice={vi.fn()} busy={false} />
+      <NpcDialoguePanel
+        dialogue={ZHAO()}
+        gameType="wuxia"
+        onChoice={vi.fn()}
+        onFreeInput={onFreeInput}
+        busy={false}
+      />
+    );
+
+    await user.type(screen.getByPlaceholderText("请输入你的话..."), "带我去看看现场");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => expect(onFreeInput).toHaveBeenCalledTimes(1));
+    expect(document.querySelector(".npc-dialogue-reply")).toBeNull();
+  });
+
+  it("空输入发送不调 onFreeInput", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const onFreeInput = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <NpcDialoguePanel
+        dialogue={ZHAO()}
+        gameType="wuxia"
+        onChoice={vi.fn()}
+        onFreeInput={onFreeInput}
+        busy={false}
+      />
     );
 
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    expect(screen.queryByText(/自由对话尚未开放/)).not.toBeInTheDocument();
+    expect(onFreeInput).not.toHaveBeenCalled();
+  });
+
+  it("freeInputBusy 时输入框与发送按钮禁用", () => {
+    vi.stubGlobal("fetch", vi.fn());
+
+    render(
+      <NpcDialoguePanel
+        dialogue={ZHAO()}
+        gameType="wuxia"
+        onChoice={vi.fn()}
+        onFreeInput={vi.fn()}
+        busy={false}
+        freeInputBusy
+      />
+    );
+
+    expect(screen.getByPlaceholderText("请输入你的话...")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
   });
 });

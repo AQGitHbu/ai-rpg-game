@@ -6,11 +6,20 @@ import { AdventureVisual } from "./adventureVisuals";
 
 type GameTypeId = NewGameInput["gameType"];
 
+/** 自由输入提交结果：父组件 fetch 对话端点后归一化为两种面板行为。 */
+export type FreeInputResult =
+  | { readonly kind: "chat"; readonly npcSpeech: string }
+  | { readonly kind: "narrative_trigger" };
+
 type NpcDialoguePanelProps = {
   readonly dialogue: NpcDialogueView;
   readonly gameType: GameTypeId;
   readonly onChoice: (npcId: string, choiceId: string) => void;
   readonly busy: boolean;
+  /** 自由输入提交：父组件负责 fetch，返回结果决定面板行为。 */
+  readonly onFreeInput: (npcId: string, text: string) => Promise<FreeInputResult>;
+  /** 自由输入进行中：禁用发送按钮与输入框。 */
+  readonly freeInputBusy?: boolean;
 };
 
 /** 翻页箭头：本仓内联装饰性 SVG，零网络、零 AI。 */
@@ -31,10 +40,17 @@ function PagerArrowIcon({ direction }: { readonly direction: "prev" | "next" }) 
 
 /**
  * 场景化 NPC 对话面板：左侧立绘+名字，右侧分页对白（单页时不显示翻页），
- * 底部编号选项 + 自由输入框。自由输入当前只产生本地确定性回应
- * （自由对话规则尚未实现，零 fetch、零状态写入）。
+ * 底部编号选项 + 自由输入框。自由输入经 onFreeInput 回调由父组件提交端点：
+ * 闲聊结果就地显示 NPC 回应；叙事触发时父组件已切换全局 view，面板不设本地回应。
  */
-export function NpcDialoguePanel({ dialogue, gameType, onChoice, busy }: NpcDialoguePanelProps) {
+export function NpcDialoguePanel({
+  dialogue,
+  gameType,
+  onChoice,
+  busy,
+  onFreeInput,
+  freeInputBusy = false
+}: NpcDialoguePanelProps) {
   const [cluesExpanded, setCluesExpanded] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const [draft, setDraft] = useState("");
@@ -44,11 +60,16 @@ export function NpcDialoguePanel({ dialogue, gameType, onChoice, busy }: NpcDial
   const pageCount = pages.length;
   const safeIndex = Math.min(pageIndex, Math.max(pageCount - 1, 0));
 
-  const handleSend = () => {
-    if (draft.trim() === "") return;
-    // 本地确定性回应：自由对话规则未实现前不提交任何 intent。
-    setLocalReply(`${dialogue.name}沉吟片刻，没有接你的话。（自由对话尚未开放）`);
+  const handleSend = async () => {
+    const text = draft.trim();
+    if (text === "") return;
+    const result = await onFreeInput(dialogue.npcId, text);
     setDraft("");
+    // narrative_trigger 时父组件已 onViewChange，对话面板即将被 pending 面板覆盖，
+    // 不设本地回应，避免闪现无意义文本。
+    if (result.kind === "chat") {
+      setLocalReply(result.npcSpeech);
+    }
   };
 
   return (
@@ -133,7 +154,7 @@ export function NpcDialoguePanel({ dialogue, gameType, onChoice, busy }: NpcDial
         className="npc-dialogue-input"
         onSubmit={(event) => {
           event.preventDefault();
-          handleSend();
+          void handleSend();
         }}
       >
         <input
@@ -141,9 +162,10 @@ export function NpcDialoguePanel({ dialogue, gameType, onChoice, busy }: NpcDial
           value={draft}
           placeholder="请输入你的话..."
           aria-label="自由输入"
+          disabled={freeInputBusy}
           onChange={(event) => setDraft(event.target.value)}
         />
-        <button type="submit">发送</button>
+        <button type="submit" disabled={freeInputBusy}>发送</button>
       </form>
     </div>
   );
