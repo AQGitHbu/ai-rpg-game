@@ -59,6 +59,26 @@ function pendingRecord(): GameRecord {
   };
 }
 
+/** 将主线推进到末幕（终幕 active、前幕 completed），使 progression 允许 climax pacing。 */
+function climaxPendingRecord(): GameRecord {
+  const record = pendingRecord();
+  const mainStageById = new Map(
+    record.blueprint.quests.filter((quest) => quest.kind === "main").map((quest) => [quest.id, quest.stage])
+  );
+  const finalAct = Math.max(...mainStageById.values());
+  return {
+    ...record,
+    state: {
+      ...record.state,
+      quests: record.state.quests.map((quest) => {
+        const stage = mainStageById.get(quest.questId);
+        if (stage === undefined) return quest;
+        return { ...quest, status: (stage >= finalAct ? "active" : "completed") as typeof quest.status };
+      }),
+    },
+  };
+}
+
 /** 导演 fake：从上下文取前两个合法 actionKey，附带指定扩展提案与 pacing。 */
 function proposingDirector(options: {
   readonly proposedNewLocations: readonly ProposedNewLocation[];
@@ -234,6 +254,7 @@ describe("blueprintExpansionJourney：落库与视图旅程", () => {
     const result = await generatePendingNarrativeScene({
       repository: repo.repository,
       newTraceId: () => "journey-persist",
+      now: () => "2026-07-31T02:00:00.000Z",
       runtimeNarrativeSources: sourcesWith(proposingDirector({
         proposedNewLocations: [VALID_LOCATION_PROPOSAL],
         proposedNewNpcs: [VALID_NPC_PROPOSAL],
@@ -281,10 +302,13 @@ describe("blueprintExpansionJourney：落库与视图旅程", () => {
   });
 
   it("pacing climax 时扩展被拒（pacing_locked），场景仍照常保存且蓝图不变", async () => {
-    const repo = statefulRepository(pendingRecord());
+    // Phase 11 起 progression 约束 pacing：需处于末幕 climax 才是合法提案，
+    // 从而单独命中扩展闸门的 pacing_locked（闸门顺序在 endgame_locked 之前）。
+    const repo = statefulRepository(climaxPendingRecord());
     const result = await generatePendingNarrativeScene({
       repository: repo.repository,
       newTraceId: () => "journey-pacing",
+      now: () => "2026-07-31T02:00:00.000Z",
       runtimeNarrativeSources: sourcesWith(proposingDirector({
         proposedNewLocations: [VALID_LOCATION_PROPOSAL],
         proposedNewNpcs: [],
@@ -318,6 +342,7 @@ describe("blueprintExpansionJourney：落库与视图旅程", () => {
     const result = await generatePendingNarrativeScene({
       repository: repo.repository,
       newTraceId: () => "journey-softcap",
+      now: () => "2026-07-31T02:00:00.000Z",
       runtimeNarrativeSources: sourcesWith(proposingDirector({
         proposedNewLocations: [VALID_LOCATION_PROPOSAL],
         proposedNewNpcs: [],
@@ -337,6 +362,7 @@ describe("blueprintExpansionJourney：落库与视图旅程", () => {
     const result = await generatePendingNarrativeScene({
       repository: repo.repository,
       newTraceId: () => "journey-stale",
+      now: () => "2026-07-31T02:00:00.000Z",
       runtimeNarrativeSources: sourcesWith(proposingDirector({
         proposedNewLocations: [VALID_LOCATION_PROPOSAL],
         proposedNewNpcs: [VALID_NPC_PROPOSAL],

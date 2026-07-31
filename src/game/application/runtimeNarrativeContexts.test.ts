@@ -388,6 +388,8 @@ describe("runtimeNarrativeContexts Phase 11 连续性", () => {
       suggestedActionKeys: ["observe:loc_1", "move:loc_2"],
       introducedEntities: [],
       pacing: "develop",
+      proposedNewLocations: [],
+      proposedNewNpcs: [],
     };
     expect(toDirectorContext({ blueprint: PIPELINE.blueprint, state }).recentContinuity).toHaveLength(12);
     expect(toSceneScriptContext({ blueprint: PIPELINE.blueprint, state, plan }).recentContinuity).toHaveLength(6);
@@ -413,6 +415,8 @@ describe("runtimeNarrativeContexts Phase 11 连续性", () => {
         suggestedActionKeys: ["observe:loc_1", "move:loc_2"],
         introducedEntities: [],
         pacing: "develop",
+        proposedNewLocations: [],
+        proposedNewNpcs: [],
       },
     });
     expect(JSON.stringify(context)).not.toContain(hiddenFact.text);

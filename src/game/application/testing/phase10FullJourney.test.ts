@@ -98,6 +98,7 @@ function createCuratedJourneySources(): RuntimeSources {
       const context = request.context as {
         actionCandidates: readonly { actionKey: string; kind: string; label: string }[];
         npcIdsPresent: readonly string[];
+        progression: { allowedPacing: readonly ("setup" | "develop" | "turn" | "climax" | "resolution")[] };
       };
       const prefix = targets[sceneIndex];
       const target = context.actionCandidates.find((candidate) =>
@@ -146,9 +147,10 @@ function createCuratedJourneySources(): RuntimeSources {
         introducedEntities: introducedKind === null
           ? []
           : [{ kind: introducedKind, id: introducedId }],
-          // Phase 11：pacing 与当前主线阶段对齐——scenes 1(stage1)、2-4(stage2)、5-6(stage3)。
-          // 见 contentProgression 契约；否则 approveDirectorProposal 以 continuity_violation 拒绝。
-          pacing: sceneIndex <= 1 ? "develop" : sceneIndex <= 4 ? "turn" : "climax",
+          // 蓝图动态化后幕数由 BudgetPolicy 驱动（open 档 5 幕），不再硬编码阶段公式；
+          // 直接取上下文 progression.allowedPacing 末位（当前阶段最激进的合法节奏），
+          // 否则 approveDirectorProposal 以 continuity_violation 拒绝。
+          pacing: context.progression.allowedPacing[context.progression.allowedPacing.length - 1] ?? "develop",
         proposedNewLocations: [],
         proposedNewNpcs: [],
         },
@@ -398,7 +400,19 @@ async function runJourney(
       battlesWon: eventTypes.filter((type) => type === "enemy_defeated").length,
     },
   };
-  expect(record.blueprint).toEqual(baseline.blueprint);
+  // 蓝图动态化：真实导演可能在旅程中提议扩展（loc_dyn_*/npc_dyn_*）。剔除动态
+  // 实体与锚点上的动态反向连边后，基础蓝图必须与 baseline 逐字一致（运行时层不得篡改既有内容）。
+  const strippedBlueprint = {
+    ...record.blueprint,
+    locations: record.blueprint.locations
+      .filter((loc) => !/^loc_dyn_\d+$/.test(String(loc.id)))
+      .map((loc) => ({
+        ...loc,
+        connectedLocationIds: loc.connectedLocationIds.filter((id) => !/^loc_dyn_\d+$/.test(String(id))),
+      })),
+    npcs: record.blueprint.npcs.filter((npc) => !/^npc_dyn_\d+$/.test(String(npc.id))),
+  };
+  expect(strippedBlueprint).toEqual(baseline.blueprint);
   return report;
 }
 

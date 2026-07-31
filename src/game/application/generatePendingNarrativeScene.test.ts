@@ -154,6 +154,9 @@ describe("generatePendingNarrativeScene：Phase 11 场景提交事件与记忆�
       async applyResolvedAction() {
         return { ok: false as const, code: "STALE_GAME_REVISION" as const };
       },
+      async applyBlueprintExpansion() {
+        return { ok: false as const, code: "STALE_GAME_REVISION" as const };
+      },
     };
     const result = await generatePendingNarrativeScene({
       repository,
