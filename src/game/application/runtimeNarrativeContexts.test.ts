@@ -342,6 +342,35 @@ describe("runtimeNarrativeContexts 演员", () => {
     expect(line).not.toMatch(/\bprompt\b/i);
     expect(line).not.toMatch(/\bkey\b/i);
   });
+
+  describe("toNpcLineContext 关系值", () => {
+    it("注入 relationshipTier 与 relationshipAffinity", () => {
+      const stateWithRel = {
+        ...buildTestGameState(),
+        npcs: [{ npcId: asNpcId("npc_1"), locationId: asLocationId("loc_a"), met: true, relationship: { affinity: 45 } }],
+      } as unknown as GameState;
+      const context = toNpcLineContext({
+        blueprint, state: stateWithRel, npcId: "npc_1", speechAct: "inform", allowedFactIds: [], mayLie: false,
+      });
+      expect(context.relationshipTier).toBe("friendly");
+      expect(context.relationshipAffinity).toBe(45);
+    });
+
+    it("无关系值时默认为 neutral / 0", () => {
+      const context = toNpcLineContext({
+        blueprint, state, npcId: "npc_1", speechAct: "inform", allowedFactIds: [], mayLie: false,
+      });
+      expect(context.relationshipTier).toBe("neutral");
+      expect(context.relationshipAffinity).toBe(0);
+    });
+
+    it("注入 relationshipSummary", () => {
+      const context = toNpcLineContext({
+        blueprint, state, npcId: "npc_1", speechAct: "inform", allowedFactIds: [], mayLie: false,
+      });
+      expect(typeof context.relationshipSummary).toBe("string");
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
