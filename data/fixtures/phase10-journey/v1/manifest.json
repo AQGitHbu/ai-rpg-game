@@ -1,6 +1,6 @@
 {
   "fixtureVersion": "runtime-narrative-fixture-v1",
-  "contractVersion": "runtime-narrative-v1",
+  "contractVersion": "runtime-narrative-v2",
   "origin": "recorded",
   "blueprintFixture": "phase1/wuxia",
   "callCount": 14,

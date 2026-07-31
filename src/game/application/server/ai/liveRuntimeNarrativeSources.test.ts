@@ -106,4 +106,49 @@ describe("runtime narrative mechanical reference repair", () => {
       emotion: "guarded",
     });
   });
+
+  it("director: malformed proposedNewLocations discarded to []", () => {
+    const context = { actionCandidates: [{ actionKey: "move:loc_2" }, { actionKey: "observe:loc_1" }], npcIdsPresent: [], discoveredFactIds: [] };
+    const cases = [
+      "not-an-array",
+      [{ name: "x" }],
+      [{ name: "a", description: "b", connectFromLocationId: "loc_1", reason: "c", scale: "invalid" }],
+      [{ name: "a", description: "b", connectFromLocationId: "loc_1", reason: "c", scale: "scene" }, { name: "two" }],
+      [],
+      undefined,
+    ];
+    for (const proposedNewLocations of cases) {
+      const repaired = repairRuntimeNarrativeReferences("director", { proposedNewLocations }, context);
+      expect(repaired.proposedNewLocations).toEqual([]);
+    }
+  });
+
+  it("director: valid proposedNewLocations passes through", () => {
+    const context = { actionCandidates: [{ actionKey: "move:loc_2" }, { actionKey: "observe:loc_1" }], npcIdsPresent: [], discoveredFactIds: [] };
+    const proposal = { name: "迷雾谷", description: "一处隐秘山谷", connectFromLocationId: "loc_1", reason: "剧情需要", scale: "scene" };
+    const repaired = repairRuntimeNarrativeReferences("director", { proposedNewLocations: [proposal] }, context);
+    expect(repaired.proposedNewLocations).toEqual([proposal]);
+  });
+
+  it("director: malformed proposedNewNpcs discarded to []", () => {
+    const context = { actionCandidates: [{ actionKey: "move:loc_2" }, { actionKey: "observe:loc_1" }], npcIdsPresent: [], discoveredFactIds: [] };
+    const cases = [
+      "string",
+      [{ name: "x" }],
+      [{ name: "a", role: "b", description: "c", locationId: 123 }],
+      [],
+      undefined,
+    ];
+    for (const proposedNewNpcs of cases) {
+      const repaired = repairRuntimeNarrativeReferences("director", { proposedNewNpcs }, context);
+      expect(repaired.proposedNewNpcs).toEqual([]);
+    }
+  });
+
+  it("director: valid proposedNewNpcs passes through", () => {
+    const context = { actionCandidates: [{ actionKey: "move:loc_2" }, { actionKey: "observe:loc_1" }], npcIdsPresent: [], discoveredFactIds: [] };
+    const proposal = { name: "线人", role: "情报贩子", description: "戴斗笠的人", locationId: "new:0" };
+    const repaired = repairRuntimeNarrativeReferences("director", { proposedNewNpcs: [proposal] }, context);
+    expect(repaired.proposedNewNpcs).toEqual([proposal]);
+  });
 });

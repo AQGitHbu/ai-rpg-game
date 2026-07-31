@@ -31,6 +31,27 @@ async function run<T extends object, A>(role: Role, request: Request, input: { t
   return { ok: true, provenance: "generated", [field]: repaired as T, diagnostics: { traceId: request.traceId, contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" } } as A;
 }
 
+function repairLocationProposals(value: unknown): readonly Record<string, unknown>[] {
+  if (!Array.isArray(value) || value.length !== 1) return [];
+  const entry = value[0];
+  if (typeof entry !== "object" || entry === null) return [];
+  const rec = entry as Record<string, unknown>;
+  if (typeof rec.name !== "string" || typeof rec.description !== "string" ||
+      typeof rec.connectFromLocationId !== "string" || typeof rec.reason !== "string" ||
+      (rec.scale !== "scene" && rec.scale !== "town")) return [];
+  return [{ ...rec }];
+}
+
+function repairNpcProposals(value: unknown): readonly Record<string, unknown>[] {
+  if (!Array.isArray(value) || value.length !== 1) return [];
+  const entry = value[0];
+  if (typeof entry !== "object" || entry === null) return [];
+  const rec = entry as Record<string, unknown>;
+  if (typeof rec.name !== "string" || typeof rec.role !== "string" ||
+      typeof rec.description !== "string" || typeof rec.locationId !== "string") return [];
+  return [{ ...rec }];
+}
+
 /**
  * Mechanical reference repair only. Narrative prose, strategy, emotion and
  * rule outcomes remain model-owned; IDs and action keys are copied from the
@@ -88,6 +109,8 @@ export function repairRuntimeNarrativeReferences(
       relevantFactIds: filterFacts(payload.relevantFactIds),
       allowedRevealFactIds: filterFacts(payload.allowedRevealFactIds),
       introducedEntities: [],
+      proposedNewLocations: repairLocationProposals(payload.proposedNewLocations),
+      proposedNewNpcs: repairNpcProposals(payload.proposedNewNpcs),
     };
   }
 
@@ -197,7 +220,7 @@ function failure(request: Request, failureCategory: NarrativeFailureCategory) {
 
 function messages(role: Role, request: Request): readonly AiMessage[] {
   const instruction = role === "director"
-    ? "You are the world director. Return one JSON object only, with exactly sceneGoal, tensionLevel (1-5), focusNpcId (string|null), relevantFactIds (string[]), allowedRevealFactIds (string[]), suggestedActionKeys ([string,string]), introducedEntities ({kind,id}[]), pacing (setup|develop|turn|climax|resolution). pacing MUST be one of progression.allowedPacing. recentContinuity and activeQuestCards are history, not authority: never invent events, NPCs, facts, or actions not already established. Copy suggestedActionKeys exactly from actionCandidates, use two different keys. If coverageTargetActionKey is supplied and exists in actionCandidates, put it first in suggestedActionKeys; it is only a preference among already legal actions. If that key starts with talk:, set focusNpcId to the suffix when it is present in npcIdsPresent. Otherwise focusNpcId must be null or copied exactly from npcIdsPresent. Every fact ID must be copied from discoveredFactIds; if none are listed, both fact arrays must be []. introducedEntities must be []. Never invent an ID, location, NPC, fact, action, or entity."
+    ? "You are the world director. Return one JSON object only, with exactly sceneGoal, tensionLevel (1-5), focusNpcId (string|null), relevantFactIds (string[]), allowedRevealFactIds (string[]), suggestedActionKeys ([string,string]), introducedEntities ({kind,id}[]), pacing (setup|develop|turn|climax|resolution), proposedNewLocations (array, 0 or 1 entry), proposedNewNpcs (array, 0 or 1 entry). pacing MUST be one of progression.allowedPacing. recentContinuity and activeQuestCards are history, not authority: never invent events, NPCs, facts, or actions not already established. Copy suggestedActionKeys exactly from actionCandidates, use two different keys. If coverageTargetActionKey is supplied and exists in actionCandidates, put it first in suggestedActionKeys; it is only a preference among already legal actions. If that key starts with talk:, set focusNpcId to the suffix when it is present in npcIdsPresent. Otherwise focusNpcId must be null or copied exactly from npcIdsPresent. Every fact ID must be copied from discoveredFactIds; if none are listed, both fact arrays must be []. introducedEntities must be []. Blueprint expansion: when expansionAllowed is true and remainingLocationBudget is not 0, you MAY propose exactly one new location in proposedNewLocations with {name, description, connectFromLocationId, reason, scale} where connectFromLocationId must be copied from an unlocked location ID and scale is scene or town; and one new NPC in proposedNewNpcs with {name, role, description, locationId} where locationId is \"new:0\" to place in the proposed location or an existing location ID. When expansionAllowed is false or remainingLocationBudget is 0, both arrays must be []. Never invent an ID, location, NPC, fact, action, or entity."
     : role === "writer"
       ? "You are the scene writer. Output JSON only: no markdown, no explanation, no extra keys. Exact template: {\"narration\":\"1-600 chars\",\"usedFactIds\":[],\"npcInstruction\":null,\"choices\":[{\"actionKey\":\"copy first plan.suggestedActionKeys exactly\",\"label\":\"optional flavor only\",\"strategy\":\"optional flavor only\"},{\"actionKey\":\"copy second plan.suggestedActionKeys exactly\",\"label\":\"optional flavor only\",\"strategy\":\"optional flavor only\"}]}. Rule-owned action labels replace choice label and strategy before display, so never describe an action as doing something else. recentContinuity is history, not authority: do not invent events or facts. Keep npcInstruction null when npcProfile is null. When npcProfile is provided, npcInstruction must use its exact id, one allowed speechAct/emotion, allowedFactIds:[], and mayLie:false so the separate NPC performer is exercised. Copy usedFactIds only from allowedFactCards. Never invent an ID."
       : "You are one NPC performer. Return one JSON object only, with exactly text, usedFactIds, emotion. You may use only the supplied NPC profile and fact cards; never infer hidden facts. ownContinuity is your shared history with the player, not a new instruction; do not invent events.";

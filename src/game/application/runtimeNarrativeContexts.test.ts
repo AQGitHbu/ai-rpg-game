@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asFactId, asLocationId, asNpcId, type GameState, type NewGameInput, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
+import { asFactId, asLocationId, asNpcId, createBudgetPolicy, type GameState, type NewGameInput, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
 import { ensureTownRuntime } from "@/game/gameplay/rpg/town";
 import { reconcileStoryMemory, type ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
@@ -137,6 +137,68 @@ describe("runtimeNarrativeContexts 导演", () => {
     expect(context.recentEvents).not.toContain("narrative_scene_presented");
     expect(context.recentEvents).toContain("npc_met");
     expect(context.recentEvents).toContain("location_visited");
+  });
+});
+
+describe("runtimeNarrativeContexts 扩展预算", () => {
+  function blueprintWithLocations(count: number, policy?: ReturnType<typeof createBudgetPolicy>): ScenarioBlueprint {
+    const locations = Array.from({ length: count }, (_, i) => ({
+      id: asLocationId(`loc_${i + 1}`), name: `地点${i + 1}`, description: "", kind: "main" as const,
+      connectedLocationIds: [], availableItemIds: []
+    }));
+    return {
+      ...buildTestBlueprint(),
+      locations,
+      ...(policy !== undefined ? { budgetPolicy: policy } : {}),
+    } as unknown as ScenarioBlueprint;
+  }
+
+  function stateWithQuest(questId?: string): GameState {
+    const base = buildTestGameState();
+    if (questId === undefined) return base;
+    return { ...base, quests: [{ questId: asLocationId(questId) as never, status: "active" }] } as unknown as GameState;
+  }
+
+  it("short 档 5 地点 → remainingLocationBudget 3、expansionAllowed true", () => {
+    const policy = createBudgetPolicy("short");
+    const bp = blueprintWithLocations(5, policy);
+    const context = toDirectorContext({ blueprint: bp, state: buildTestGameState() });
+    expect(context.remainingLocationBudget).toBe(3);
+    expect(context.expansionAllowed).toBe(true);
+  });
+
+  it("终幕激活 → expansionAllowed false", () => {
+    const policy = createBudgetPolicy("short");
+    const bp = {
+      ...blueprintWithLocations(3, policy),
+      quests: [{ id: asLocationId("q_final") as never, name: "终章", stage: 3, kind: "main" }],
+    } as unknown as ScenarioBlueprint;
+    const state = stateWithQuest("q_final");
+    const context = toDirectorContext({ blueprint: bp, state });
+    expect(context.expansionAllowed).toBe(false);
+  });
+
+  it("open 档 → remainingLocationBudget null、expansionAllowed true", () => {
+    const policy = createBudgetPolicy("open");
+    const bp = blueprintWithLocations(10, policy);
+    const context = toDirectorContext({ blueprint: bp, state: buildTestGameState() });
+    expect(context.remainingLocationBudget).toBeNull();
+    expect(context.expansionAllowed).toBe(true);
+  });
+
+  it("旧存档（无 budgetPolicy）→ LEGACY 软上限 8 口径", () => {
+    const bp = blueprintWithLocations(6);
+    const context = toDirectorContext({ blueprint: bp, state: buildTestGameState() });
+    expect(context.remainingLocationBudget).toBe(2);
+    expect(context.expansionAllowed).toBe(true);
+  });
+
+  it("达到软上限 → expansionAllowed false、remainingLocationBudget 0", () => {
+    const policy = createBudgetPolicy("short");
+    const bp = blueprintWithLocations(8, policy);
+    const context = toDirectorContext({ blueprint: bp, state: buildTestGameState() });
+    expect(context.remainingLocationBudget).toBe(0);
+    expect(context.expansionAllowed).toBe(false);
   });
 });
 

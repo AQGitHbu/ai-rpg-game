@@ -3,7 +3,7 @@
 // 每个函数将 domain state → 纯净 context JSON（绝不含 AI prompt 原文、密钥）。
 // ---------------------------------------------------------------------------
 
-import { storyMemoryOf, type GameState, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
+import { budgetPolicyOf, storyMemoryOf, type GameState, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
 import { projectAvailableActions } from "@/game/gameplay/rpg/actions";
 import { actionKeyOf, deriveContentProgression, type ContentProgression } from "@/game/gameplay/rpg/narrative";
 import type { ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
@@ -159,6 +159,10 @@ export type DirectorContext = {
   readonly recentContinuity: readonly ContinuityMilestone[];
   /** 当前地点为就绪 town 时的空间语义；小场景地点缺省。 */
   readonly townSpatial?: TownSpatialContext;
+  /** 预判非 pacing 项闸门：终幕未激活且未达软/硬上限时为 true。 */
+  readonly expansionAllowed: boolean;
+  /** locationsSoftMax - 当前地点总数；open 档为 null；下限 0。 */
+  readonly remainingLocationBudget: number | null;
 };
 
 export type DirectorContextInput = {
@@ -191,6 +195,22 @@ export function toDirectorContext(input: DirectorContextInput): DirectorContext 
 
   const townSpatial = toTownSpatialContext(blueprint, state);
 
+  const policy = budgetPolicyOf(blueprint);
+  const locationCount = blueprint.locations.length;
+  const softMax = policy.expansion.locationsSoftMax;
+  const hardMax = policy.safety.locationsHardMax;
+  const finalAct = policy.mainActs;
+  const activeMainQuest = state.quests.find((q) => q.status === "active");
+  const mainQuestDefs = blueprint.quests.filter((q) => q.kind === "main");
+  const activeMainDef = activeMainQuest !== undefined
+    ? mainQuestDefs.find((qd) => qd.id === activeMainQuest.questId)
+    : undefined;
+  const isEndgame = activeMainDef !== undefined && activeMainDef.stage === finalAct;
+  const atHardCap = locationCount >= hardMax;
+  const atSoftCap = softMax !== null && locationCount >= softMax;
+  const expansionAllowed = !isEndgame && !atHardCap && !atSoftCap;
+  const remainingLocationBudget = softMax === null ? null : Math.max(0, softMax - locationCount);
+
   const context: DirectorContext = {
     currentLocationId: String(state.currentLocationId),
     discoveredFactIds,
@@ -201,6 +221,8 @@ export function toDirectorContext(input: DirectorContextInput): DirectorContext 
     progression: deriveContentProgression({ blueprint, state }),
     activeQuestCards: projectActiveQuestCards(blueprint, state),
     recentContinuity: projectRecentContinuity(state, blueprint, DIRECTOR_CONTINUITY_LIMIT),
+    expansionAllowed,
+    remainingLocationBudget,
     ...(townSpatial !== undefined ? { townSpatial } : {}),
   };
 
