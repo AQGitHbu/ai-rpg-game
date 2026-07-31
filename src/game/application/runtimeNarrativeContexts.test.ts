@@ -114,6 +114,30 @@ describe("runtimeNarrativeContexts 导演", () => {
     expect(line).not.toMatch(/\bprompt\b/i);
     expect(line).not.toMatch(/\bkey\b/i);
   });
+
+  it("toDirectorContext 的 recentEvents 排除 narrative_scene_presented（Phase 11 场景审计不污染导演上下文指纹）", () => {
+    const stateWithScene = {
+      ...state,
+      eventLedger: [
+        ...state.eventLedger,
+        { type: "location_visited", locationId: asLocationId("loc_a"), occurredAt: "2026-07-31T00:00:00.000Z" },
+        {
+          type: "narrative_scene_presented",
+          sceneId: "scene-1",
+          locationId: asLocationId("loc_a"),
+          focusNpcId: null,
+          revealedFactIds: [],
+          pacing: "develop",
+          occurredAt: "2026-07-31T00:00:00.000Z"
+        },
+        { type: "npc_met", npcId: asNpcId("npc_1"), occurredAt: "2026-07-31T00:00:00.000Z" }
+      ]
+    } as unknown as GameState;
+    const context = toDirectorContext({ blueprint, state: stateWithScene });
+    expect(context.recentEvents).not.toContain("narrative_scene_presented");
+    expect(context.recentEvents).toContain("npc_met");
+    expect(context.recentEvents).toContain("location_visited");
+  });
 });
 
 describe("runtimeNarrativeContexts 编剧", () => {

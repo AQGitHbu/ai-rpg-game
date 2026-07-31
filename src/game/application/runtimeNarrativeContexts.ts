@@ -83,6 +83,7 @@ export function toDirectorContext(input: DirectorContextInput): DirectorContext 
     .map((n) => String(n.npcId));
 
   const recentEvents = state.eventLedger
+    .filter((evt) => evt.type !== "narrative_scene_presented")
     .slice(-LAST_EVENT_COUNT)
     .map((evt) => evt.type);
 
@@ -218,6 +219,7 @@ export function toNpcLineContext(input: NpcLineContextInput): NpcLineContext {
     });
 
   const recentEvents = state.eventLedger
+    .filter((evt) => evt.type !== "narrative_scene_presented")
     .slice(-LAST_EVENT_COUNT)
     .map((evt) => evt.type);
 
