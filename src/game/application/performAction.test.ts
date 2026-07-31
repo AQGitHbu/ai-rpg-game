@@ -5,6 +5,7 @@ import { reconcileQuests } from "@/game/gameplay/rpg/quests";
 import { reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { performAction, type PerformActionDependencies } from "./performAction";
+import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 import {
   createFakeGameRepository,
   runScenarioPipeline,
@@ -470,6 +471,156 @@ describe("performAction：dialogue_choice 单次写入与零写入（Phase 7 Tas
     if (result.code !== "ACTION_REJECTED") return;
     expect(result.feedback.ok).toBe(false);
     expect(repository.applyCalls).toHaveLength(0);
+  });
+});
+
+describe("performAction：dialogue_choice 触发 pending（NPC 对话驱动叙事场景）", () => {
+  const ruleDeps = { now: () => FIXED_TIME };
+
+  /** performAction 不会调用这些 source，仅作为已装配运行时叙事的标记。 */
+  function fakeNarrativeSources() {
+    return {
+      directorSource: { async generate() { throw new Error("performAction 不得调用导演"); } },
+      sceneScriptSource: { async generate() { throw new Error("performAction 不得调用编剧"); } },
+      npcLineSource: { async generate() { throw new Error("performAction 不得调用 NPC 演员"); } },
+    } as unknown as NonNullable<PerformActionDependencies["runtimeNarrativeSources"]>;
+  }
+
+  /** 真实规则管线推进到 loc_3：npc_3 未结识且有 active 主线 talk_to_npc 目标。 */
+  function buildAskMainQuestReadyState(): GameState {
+    const intents: readonly PlayerIntent[] = [
+      { type: "move", locationId: asLocationId("loc_2") },
+      { type: "move", locationId: asLocationId("loc_3") },
+    ];
+    let state = PIPELINE.state;
+    for (const intent of intents) {
+      const resolved = resolveAction(PIPELINE.blueprint, state, intent, ruleDeps);
+      if (!resolved.ok) throw new Error(`前置行动应当成功：${resolved.code}`);
+      state = reconcileQuests(PIPELINE.blueprint, resolved.state, ruleDeps).state;
+    }
+    return state;
+  }
+
+  it("ask_main_quest 且 canQueueRuntimeNarrativeScene → 排队 pending", async () => {
+    const repository = createFakeGameRepository();
+    const readyState = buildAskMainQuestReadyState();
+    const record = { ...buildActiveRecord(), state: readyState, revision: 2 };
+    repository.setCurrentResult({ ok: true, status: "active", record });
+    repository.setApplyResult({ ok: true, record: { ...record, revision: 3 } });
+
+    const result = await performAction(
+      {
+        intent: { type: "dialogue_choice", npcId: asNpcId("npc_3"), choiceId: "npc_3:ask_main_quest" },
+        expectedRevision: 2
+      },
+      buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
+    );
+
+    expect(result.ok).toBe(true);
+    expect(repository.applyCalls).toHaveLength(1);
+    const saved = repository.applyCalls[0].nextState;
+    expect(saved.narrative.generation.status).toBe("pending");
+    if (saved.narrative.generation.status !== "pending") return;
+    expect(saved.narrative.generation.requestedAt).toBe(FIXED_TIME);
+    expect(saved.narrative.currentScene).toBeNull();
+  });
+
+  it("greet（首次）且 canQueueRuntimeNarrativeScene → 排队 pending", async () => {
+    const repository = createFakeGameRepository();
+    const record = buildActiveRecord();
+    repository.setCurrentResult({ ok: true, status: "active", record });
+    repository.setApplyResult({ ok: true, record: { ...record, revision: 1 } });
+
+    const result = await performAction(
+      {
+        intent: { type: "dialogue_choice", npcId: asNpcId("npc_1"), choiceId: "npc_1:greet" },
+        expectedRevision: 0
+      },
+      buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
+    );
+
+    expect(result.ok).toBe(true);
+    expect(repository.applyCalls).toHaveLength(1);
+    const saved = repository.applyCalls[0].nextState;
+    expect(saved.narrative.generation.status).toBe("pending");
+    // 规则结果与排队解耦：npc_met 事件在同一次写入中已持久化。
+    const tailTypes = saved.eventLedger
+      .slice(record.state.eventLedger.length)
+      .map((event) => event.type);
+    expect(tailTypes).toContain("npc_met");
+  });
+
+  it("greet（首次）但 canQueueRuntimeNarrativeScene 为 false → 不排队，规则结果仍写入", async () => {
+    const repository = createFakeGameRepository();
+    const record = buildActiveRecord();
+    // 构造“合法行动 < 2”的局面：已观察开场地点、所有事实已发现、
+    // 同地点其他 NPC 已结识，greet 后只剩 move 一个合法行动。
+    const sparseState: GameState = {
+      ...record.state,
+      worldFacts: record.state.worldFacts.map((fact) => ({ ...fact, discovered: true })),
+      npcs: record.state.npcs.map((npc) =>
+        npc.npcId === asNpcId("npc_1") ? npc : { ...npc, met: true }
+      ),
+      eventLedger: [
+        ...record.state.eventLedger,
+        { type: "location_observed" as const, locationId: record.state.currentLocationId, occurredAt: FIXED_TIME }
+      ]
+    };
+    repository.setCurrentResult({ ok: true, status: "active", record: { ...record, state: sparseState } });
+    repository.setApplyResult({ ok: true, record: { ...record, revision: 1 } });
+
+    // 前置断言：greet 解决后的状态确实不满足排队条件（fixture 变化时快速暴露）。
+    const resolved = resolveAction(
+      record.blueprint, sparseState,
+      { type: "dialogue_choice", npcId: asNpcId("npc_1"), choiceId: "npc_1:greet" },
+      ruleDeps
+    );
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(canQueueRuntimeNarrativeScene(record.blueprint, resolved.state)).toBe(false);
+
+    const result = await performAction(
+      {
+        intent: { type: "dialogue_choice", npcId: asNpcId("npc_1"), choiceId: "npc_1:greet" },
+        expectedRevision: 0
+      },
+      buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
+    );
+
+    expect(result.ok).toBe(true);
+    expect(repository.applyCalls).toHaveLength(1);
+    const saved = repository.applyCalls[0].nextState;
+    expect(saved.narrative.generation.status).not.toBe("pending");
+    const tailTypes = saved.eventLedger
+      .slice(sparseState.eventLedger.length)
+      .map((event) => event.type);
+    expect(tailTypes).toContain("npc_met");
+  });
+
+  it("offline 模式不排队 pending", async () => {
+    const repository = createFakeGameRepository();
+    const base = buildActiveRecord();
+    const record: GameRecord = {
+      ...base,
+      state: {
+        ...base.state,
+        narrative: { currentScene: null, generation: { status: "idle" }, mode: "offline" }
+      }
+    };
+    repository.setCurrentResult({ ok: true, status: "active", record });
+    repository.setApplyResult({ ok: true, record: { ...record, revision: 1 } });
+
+    const result = await performAction(
+      {
+        intent: { type: "dialogue_choice", npcId: asNpcId("npc_1"), choiceId: "npc_1:greet" },
+        expectedRevision: 0
+      },
+      buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
+    );
+
+    expect(result.ok).toBe(true);
+    expect(repository.applyCalls).toHaveLength(1);
+    expect(repository.applyCalls[0].nextState.narrative.generation.status).not.toBe("pending");
   });
 });
 

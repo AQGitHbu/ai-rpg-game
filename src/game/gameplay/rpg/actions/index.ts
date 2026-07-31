@@ -22,6 +22,7 @@ export {
 export {
   DIALOGUE_CHOICE_KINDS,
   makeDialogueChoiceId,
+  parseDialogueChoiceKind,
   projectDialogueChoices,
   type DialogueChoice,
   type DialogueChoiceIntent,
