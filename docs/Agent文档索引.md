@@ -12,14 +12,15 @@
 |---|---|---|---|
 | 共享基础设施 | `共同规范/共享模块开发流程.md` | `共同规范/共享模块目录.json` | 仅按触发条件读取 |
 | 项目脚手架 | `agent/项目脚手架.md` | — | 已建立 |
-| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | Phase 11 已实现（implemented）：剧情连续性与结构化记忆（内容推进引擎）；唯一阶段 Plan：`superpowers/plans/2026-07-31-mvp-phase-11-story-continuity-memory.md` |
+| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | Phase 12 已实现（implemented）：NPC 对话驱动叙事场景触发（固定选项 + 纯规则自由输入）；唯一阶段 Plan：`superpowers/plans/2026-07-31-npc-dialogue-narrative-trigger.md` |
 | MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | Phase 4C 已实现：创建、恢复、固定行动、探索、物品、战斗与双结局 + 真实 AI 动态开局（`AI_OUTPUT_FORMAT` 结构化输出，失败安全 fallback，phase4c 离线 fixture 集为主回归） |
 | 行动裁决 | `agent/行动裁决.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现：observe / talk / investigate / move / take_item / battle intents |
 | 探索与任务推进 | `agent/探索与任务推进.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现：移动、任务解锁、obtain_item / defeat_enemy objective 与 outcome |
 | 物品与任务奖励 | `agent/物品与任务奖励.md` | `策划文档/AI生成RPG_MVP.md` | Phase 5 已实现：地点预置物品、take_item 取得和 obtain_item objective；背包界面已重构（2026-07-30）：四分类页签 + 图标网格 + 详情，展示元数据缺省推导；不含物品使用/奖励数值 |
 | 战斗与结局 | `agent/战斗与结局.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现确定性 boss 回合战与双结局；Phase 9 已实现：场景化战斗视窗（BattleArena + BattleActionRail），不改规则或 AI |
 | 地图与地点冒险 | `agent/地图与地点冒险.md` | `策划文档/AI生成RPG_MVP.md` | Phase 7 地图/地点主循环、Phase 8 非战斗 HUD/视窗/行动栏/详情/对话层、响应式全屏地图 HUD 细化均已实现；Phase 10 narrative 仅在进入地点后显示，地图始终为入口；town 层已接入主循环（map→town→scene 三层导航，2026-07-31） |
-| 运行时 AI 导演与场景表演 | `agent/运行时AI导演与场景表演.md` | `策划文档/AI生成RPG_MVP.md` | Phase 10 已收尾：真实三请求最小权限链路、两个服务端批准选项、三次同角色有界尝试、机械 schema/引用收敛、完整 fallback 和双模式完整旅程；就绪 town 地点注入 `townSpatial` 空间语义上下文（不含坐标，2026-07-31）；无自由输入或生图 |
+| 运行时 AI 导演与场景表演 | `agent/运行时AI导演与场景表演.md` | `策划文档/AI生成RPG_MVP.md` | Phase 10 已收尾：真实三请求最小权限链路、两个服务端批准选项、三次同角色有界尝试、机械 schema/引用收敛、完整 fallback 和双模式完整旅程；就绪 town 地点注入 `townSpatial` 空间语义上下文（不含坐标，2026-07-31）；自由输入入口见 `agent/NPC对话驱动叙事场景触发.md`；无生图 |
+| NPC 对话驱动叙事场景触发 | `agent/NPC对话驱动叙事场景触发.md` | `策划文档/AI生成RPG_MVP.md` | Phase 12 已实现（2026-07-31）：dialogue_choice 与 narrative_choice 共用 pending 排队（重复 greet 不排队）；自由输入经 `POST /api/game/npc/dialogue` 纯规则分类（零 AI）：触发场景或确定性闲聊（零写入）；`playerNpcChat` 快照仅投影导演、ready 后自动丢弃 |
 | 剧情连续性与结构化记忆 | `agent/剧情连续性与结构化记忆.md` | `策划文档/AI生成RPG_MVP.md` | Phase 11 已实现：规则事件归约有界记忆、主线节奏约束、最小权限连续性上下文与离线 replay；2026-07-31 审计修复后真实 15 调用 journey（一次可恢复 writer 重试）与即时 replay 均通过 |
 | 蓝图动态化 | `agent/蓝图动态化.md` | `策划文档/AI生成RPG_MVP.md` §4 | BudgetPolicy 时长档位驱动、主线幕数可变、运行时导演提议扩展经闸门审批后 CAS 持久化；契约 scenario-dynamic-v2 / runtime-narrative-v2 |
 | 无 AI 试玩验收 | `agent/无AI试玩验收.md` | `superpowers/plans/2026-07-28-mvp-no-ai-playable-vertical-slice.md` | 已实现：属性/模板叙事、开发环境清档、成功/失败手工试玩路线；开发开局可使用 Phase 10 固定离线旅程基线 |
