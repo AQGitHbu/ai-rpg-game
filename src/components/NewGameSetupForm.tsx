@@ -88,6 +88,8 @@ export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGam
   const [storyOpening, setStoryOpening] = useState("");
   const [narrativeStyle, setNarrativeStyle] =
     useState<NewGameInput["narrativeStyle"]>("cinematic");
+  const [gameLength, setGameLength] =
+    useState<NewGameInput["gameLength"]>("open");
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -126,6 +128,7 @@ export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGam
       worldPremise,
       storyOpening,
       narrativeStyle,
+      gameLength,
       contentIntensity: "normal"
     };
 
@@ -350,6 +353,21 @@ export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGam
             <option value="concise">简洁</option>
             <option value="novel">小说化</option>
             <option value="cinematic">电影化</option>
+          </select>
+        </label>
+        <label className="game-length">
+          <span>游戏时长</span>
+          <select
+            name="gameLength"
+            value={gameLength}
+            onChange={(event) =>
+              setGameLength(event.target.value as NewGameInput["gameLength"])
+            }
+          >
+            <option value="open">不限（随剧情推演）</option>
+            <option value="short">短篇</option>
+            <option value="medium">中篇</option>
+            <option value="long">长篇</option>
           </select>
         </label>
       </Panel>

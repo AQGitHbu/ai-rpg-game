@@ -109,6 +109,7 @@ describe("NewGameSetupForm", () => {
       "characterName",
       "characterProfile",
       "contentIntensity",
+      "gameLength",
       "gameType",
       "narrativeStyle",
       "personalityTags",
