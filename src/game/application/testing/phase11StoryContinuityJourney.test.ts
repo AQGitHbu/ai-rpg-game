@@ -292,6 +292,7 @@ function narrativeTaskDeps(repository: GameRepository, sources: RuntimeSources) 
   return {
     repository,
     newTraceId: () => `journey-task-trace-${trace++}`,
+    now: () => fixedNow,
     runtimeNarrativeSources: sources,
   };
 }

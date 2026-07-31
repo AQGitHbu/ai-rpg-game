@@ -54,6 +54,7 @@ describe("RuntimeNarrativeTaskCoordinator", () => {
     const coordinator = new RuntimeNarrativeTaskCoordinator({
       repository,
       newTraceId: () => "coordinator-trace",
+      now: () => "2026-07-31T01:02:03.000Z",
       runtimeNarrativeSources: {
         directorSource: {
           async generate() {

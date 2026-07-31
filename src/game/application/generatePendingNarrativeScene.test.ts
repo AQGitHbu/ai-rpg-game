@@ -79,6 +79,7 @@ describe("generatePendingNarrativeScene", () => {
     const result = await generatePendingNarrativeScene({
       repository: repositoryFor(pendingRecord(), (input) => writes.push(input)),
       newTraceId: () => "task-trace-1",
+      now: () => "2026-07-31T01:02:03.000Z",
       runtimeNarrativeSources: unavailableSources(),
     });
 
@@ -100,6 +101,7 @@ describe("generatePendingNarrativeScene", () => {
     const result = await generatePendingNarrativeScene({
       repository,
       newTraceId: () => "unused",
+      now: () => "2026-07-31T01:02:03.000Z",
       runtimeNarrativeSources: unavailableSources(),
     });
 
@@ -114,6 +116,7 @@ describe("generatePendingNarrativeScene：Phase 11 场景提交事件与记忆�
     const result = await generatePendingNarrativeScene({
       repository,
       newTraceId: () => "phase11-scene",
+      now: () => "2026-07-31T01:02:03.000Z",
       runtimeNarrativeSources: unavailableSources(),
     });
 
@@ -126,6 +129,7 @@ describe("generatePendingNarrativeScene：Phase 11 场景提交事件与记忆�
     if (last?.type === "narrative_scene_presented") {
       expect(last.sceneId).toBe(record.record.state.narrative.currentScene?.sceneId);
       expect(last.locationId).toBe(record.record.state.currentLocationId);
+      expect(last.occurredAt).toBe("2026-07-31T01:02:03.000Z");
       expect(Object.keys(last).sort()).toEqual([
         "focusNpcId", "locationId", "occurredAt", "pacing", "revealedFactIds", "sceneId", "type"
       ]);
@@ -150,6 +154,7 @@ describe("generatePendingNarrativeScene：Phase 11 场景提交事件与记忆�
     const result = await generatePendingNarrativeScene({
       repository,
       newTraceId: () => "phase11-stale",
+      now: () => "2026-07-31T01:02:03.000Z",
       runtimeNarrativeSources: unavailableSources(),
     });
 

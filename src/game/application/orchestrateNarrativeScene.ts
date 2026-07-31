@@ -46,6 +46,8 @@ export type OrchestrateSceneResult = {
   readonly provenance: "generated" | "fixture" | "fallback";
   /** Phase 11：本场景的节奏标签——生成场景取自导演受批准的 plan.pacing；fallback 取阶段派生值。 */
   readonly pacing: StoryPacing;
+  /** 已批准 director plan 的焦点 NPC；不能从可选台词结果反推。 */
+  readonly focusNpcId: NpcId | null;
   readonly diagnostics: {
     readonly director: DirectorAttempt;
     readonly script: SceneScriptAttempt | null;
@@ -173,6 +175,7 @@ export async function orchestrateNarrativeScene(
     scene,
     provenance: scriptAttempt.provenance === "fixture" ? "fixture" : "generated",
     pacing: plan.pacing,
+    focusNpcId: plan.focusNpcId as NpcId | null,
     diagnostics: {
       director: directorAttempt,
       script: scriptAttempt,
@@ -219,6 +222,7 @@ function buildFallbackResult(
     scene: fallbackScene,
     provenance: "fallback",
     pacing,
+    focusNpcId: null,
     diagnostics: {
       director: directorAttempt,
       script: scriptAttempt,

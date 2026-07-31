@@ -9,6 +9,8 @@ import { reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
 export type GeneratePendingNarrativeSceneDependencies = Readonly<{
   repository: GameRepository;
   newTraceId: () => string;
+  /** 场景提交时刻：由 application/server 注入，不能复用 pending 请求时刻。 */
+  now: () => string;
   runtimeNarrativeSources: Readonly<{
     directorSource: DirectorSource;
     sceneScriptSource: SceneScriptSource;
@@ -76,10 +78,10 @@ export async function generatePendingNarrativeScene(
     type: "narrative_scene_presented" as const,
     sceneId: scene.sceneId,
     locationId: record.state.currentLocationId,
-    focusNpcId: scene.npcLine?.npcId ?? null,
+    focusNpcId: generated.focusNpcId,
     revealedFactIds: scene.usedFactIds,
     pacing: generated.pacing,
-    occurredAt: record.state.narrative.generation.requestedAt
+    occurredAt: deps.now()
   };
   let nextState: GameState = {
     ...record.state,
