@@ -7,7 +7,9 @@ const sourceRoot = resolve(process.cwd(), "src");
 // ---------------------------------------------------------------------------
 // 架构边界守卫（Phase 1 Task 7 建立，Phase 2 Task 5 扩展持久化方向，
 // Phase 4 Task 5 补充 actions/quests 门面 deep-import 守卫，
-// Phase 5 Task 5 补充 take_item 新增面的扫描覆盖自检）。
+// Phase 5 Task 5 补充 take_item 新增面的扫描覆盖自检，
+// 2026-07 数据驱动化：gameplay facade 清单 FACADES → 自动生成 deep-import
+// 规则、合成违例用例与负例，新加 facade 只改清单一处）。
 // 默认只扫描生产源码：同目录 *.test.ts(x) / *.testutil.ts 允许导入内部 helper；
 // 个别规则（app/api）显式连测试一起扫，见 BoundaryRule.includeTestFiles。
 // 匹配统一针对引号内的 import/require 说明符，避免误伤普通注释文字。
@@ -36,41 +38,45 @@ const SERVER_ONLY_IMPORT: BoundaryPattern = {
   regex: /["']server-only["']/
 };
 
-/** UI/API/store 只允许门面 "@/game/gameplay/rpg/scenario"，禁止 deep-import 内部文件。 */
-const SCENARIO_DEEP_IMPORT: BoundaryPattern = {
-  label: "scenario deep import (only the facade @/game/gameplay/rpg/scenario is allowed)",
-  regex: /["']@\/game\/gameplay\/rpg\/scenario\/[^"']+["']/
+/** UI/API/store 只允许门面，禁止 deep-import 内部文件——由下方 FACADES 清单自动生成。 */
+
+/**
+ * gameplay facade 数据清单：新增 facade 只改这一处——
+ * deep-import 规则、合成违例用例与负例测试均由它自动生成。
+ * anchors 是历史 phase 钉死的语义内部模块（见下方合成用例）。
+ */
+type FacadeSpec = {
+  readonly name: string;
+  /** facade 别名路径（无尾斜杠）。 */
+  readonly path: string;
+  /** 必须钉死的内部模块名（对应历史 phase 专项用例）。 */
+  readonly anchors: readonly string[];
 };
 
-/** Phase 4：actions 只许门面 "@/game/gameplay/rpg/actions"，禁止 deep-import 内部文件。 */
-const ACTIONS_DEEP_IMPORT: BoundaryPattern = {
-  label: "actions deep import (only the facade @/game/gameplay/rpg/actions is allowed)",
-  regex: /["']@\/game\/gameplay\/rpg\/actions\/[^"']+["']/
-};
+const FACADES: readonly FacadeSpec[] = [
+  { name: "scenario", path: "@/game/gameplay/rpg/scenario", anchors: ["createFallbackBlueprint"] },
+  // Phase 4/5：actions 额外钉死 take_item 的 validateIntent 与 intents 内部模块。
+  { name: "actions", path: "@/game/gameplay/rpg/actions", anchors: ["resolveAction", "validateIntent", "intents"] },
+  { name: "quests", path: "@/game/gameplay/rpg/quests", anchors: ["reconcileQuests"] },
+  // Phase 6：battle 额外钉死 battleAction 类型模块。
+  { name: "battle", path: "@/game/gameplay/rpg/battle", anchors: ["startBattle", "battleAction"] },
+  // Phase 10：narrative 额外钉死 actionCandidates 与 types 内部模块。
+  { name: "narrative", path: "@/game/gameplay/rpg/narrative", anchors: ["actionCandidates", "types"] },
+  // Town demo（Task 7）：town 额外钉死 generateTown 与 townRandom 内部模块。
+  { name: "town", path: "@/game/gameplay/rpg/town", anchors: ["generateTown", "townRandom"] }
+] as const satisfies readonly FacadeSpec[];
 
-/** Phase 4：quests 只许门面 "@/game/gameplay/rpg/quests"，禁止 deep-import 内部文件。 */
-const QUESTS_DEEP_IMPORT: BoundaryPattern = {
-  label: "quests deep import (only the facade @/game/gameplay/rpg/quests is allowed)",
-  regex: /["']@\/game\/gameplay\/rpg\/quests\/[^"']+["']/
-};
+/** 由 facade 清单生成 deep-import 规则：只许门面本体，禁止任何内部文件。 */
+function facadeDeepImportPattern(facade: FacadeSpec): BoundaryPattern {
+  return {
+    label: `${facade.name} deep import (only the facade ${facade.path} is allowed)`,
+    regex: new RegExp(`["']${escapeRegExp(facade.path)}\/[^"']+["']`)
+  };
+}
 
-/** Phase 6：battle 只许门面 "@/game/gameplay/rpg/battle"，禁止 deep-import 内部文件。 */
-const BATTLE_DEEP_IMPORT: BoundaryPattern = {
-  label: "battle deep import (only the facade @/game/gameplay/rpg/battle is allowed)",
-  regex: /["']@\/game\/gameplay\/rpg\/battle\/[^"']+["']/
-};
-
-/** Phase 10：narrative 只许门面 "@/game/gameplay/rpg/narrative"，禁止 deep-import 内部文件。 */
-const NARRATIVE_DEEP_IMPORT: BoundaryPattern = {
-  label: "narrative deep import (only the facade @/game/gameplay/rpg/narrative is allowed)",
-  regex: /["']@\/game\/gameplay\/rpg\/narrative\/[^"']+["']/
-};
-
-/** Town demo（Task 7）：town 只许门面 "@/game/gameplay/rpg/town"，禁止 deep-import 内部文件。 */
-const TOWN_DEEP_IMPORT: BoundaryPattern = {
-  label: "town deep import (only the facade @/game/gameplay/rpg/town is allowed)",
-  regex: /["']@\/game\/gameplay\/rpg\/town\/[^"']+["']/
-};
+const FACADE_DEEP_IMPORTS: Readonly<Record<string, BoundaryPattern>> = Object.fromEntries(
+  FACADES.map((facade) => [facade.name, facadeDeepImportPattern(facade)])
+) as Readonly<Record<string, BoundaryPattern>>;
 
 /**
  * Phase 1 约束：src/game/** 不引入 @ai-game/* 共享包（共享包仅限 UI 层）。
@@ -178,12 +184,7 @@ type BoundaryRule = {
 const UI_LAYER_PATTERNS: readonly BoundaryPattern[] = [
   forbiddenSpecifierPrefix("@/game/gameplay/"),
   RELATIVE_GAMEPLAY_IMPORT,
-  SCENARIO_DEEP_IMPORT,
-  ACTIONS_DEEP_IMPORT,
-  QUESTS_DEEP_IMPORT,
-  BATTLE_DEEP_IMPORT,
-  NARRATIVE_DEEP_IMPORT,
-  TOWN_DEEP_IMPORT,
+  ...Object.values(FACADE_DEEP_IMPORTS),
   APPLICATION_SERVER_IMPORT,
   RELATIVE_APPLICATION_SERVER_IMPORT,
   DOMAIN_IMPORT,
@@ -233,11 +234,12 @@ const rules: readonly BoundaryRule[] = [
       forbiddenSpecifierPrefix("@/store/"),
       forbiddenSpecifierPrefix("@/app/"),
       forbiddenSpecifierPrefix("@/providers/"),
-      SCENARIO_DEEP_IMPORT,
-      ACTIONS_DEEP_IMPORT,
-      QUESTS_DEEP_IMPORT,
-      BATTLE_DEEP_IMPORT,
-      TOWN_DEEP_IMPORT,
+      // 现状保留：narrative 未列入本层（与历史行为一致），scenario/actions/quests/battle/town 有。
+      FACADE_DEEP_IMPORTS.scenario,
+      FACADE_DEEP_IMPORTS.actions,
+      FACADE_DEEP_IMPORTS.quests,
+      FACADE_DEEP_IMPORTS.battle,
+      FACADE_DEEP_IMPORTS.town,
       RELATIVE_ESCAPE_FROM_APPLICATION,
       SERVER_ONLY_IMPORT,
       LIBSQL_IMPORT,
@@ -252,9 +254,10 @@ const rules: readonly BoundaryRule[] = [
       forbiddenSpecifierPrefix("@/store/"),
       forbiddenSpecifierPrefix("@/app/"),
       forbiddenSpecifierPrefix("@/providers/"),
-      SCENARIO_DEEP_IMPORT,
-      ACTIONS_DEEP_IMPORT,
-      QUESTS_DEEP_IMPORT,
+      // 现状保留：仅 scenario/actions/quests 列入（与历史行为一致）。
+      FACADE_DEEP_IMPORTS.scenario,
+      FACADE_DEEP_IMPORTS.actions,
+      FACADE_DEEP_IMPORTS.quests,
       RELATIVE_ESCAPE_FROM_APPLICATION
     ]
   },
@@ -270,12 +273,7 @@ const rules: readonly BoundaryRule[] = [
     patterns: [
       forbiddenSpecifierPrefix("@/game/gameplay/"),
       RELATIVE_GAMEPLAY_IMPORT,
-      SCENARIO_DEEP_IMPORT,
-      ACTIONS_DEEP_IMPORT,
-      QUESTS_DEEP_IMPORT,
-      BATTLE_DEEP_IMPORT,
-      NARRATIVE_DEEP_IMPORT,
-      TOWN_DEEP_IMPORT,
+      ...Object.values(FACADE_DEEP_IMPORTS),
       APPLICATION_SERVER_DEEP_IMPORT,
       RELATIVE_APPLICATION_SERVER_IMPORT,
       DOMAIN_IMPORT,
@@ -325,7 +323,19 @@ describe("architecture boundaries (phase 1 + phase 2 persistence)", () => {
 // ---------------------------------------------------------------------------
 
 describe("boundary patterns detect synthetic violations", () => {
+  // facade deep-import 用例由 FACADES 自动生成：每个语义锚点 + 通用内部模块各一条。
+  const facadeCases = FACADES.flatMap((facade) => [
+    ...facade.anchors.map((anchor) => ({
+      pattern: facadeDeepImportPattern(facade),
+      snippet: `import { hidden } from "${facade.path}/${anchor}";`
+    })),
+    {
+      pattern: facadeDeepImportPattern(facade),
+      snippet: `import { hidden } from "${facade.path}/someInternalModule";`
+    }
+  ]);
   const cases: readonly { pattern: BoundaryPattern; snippet: string }[] = [
+    ...facadeCases,
     {
       pattern: forbiddenSpecifierPrefix("@/game/gameplay/"),
       snippet: `import { x } from "@/game/gameplay/rpg/foo";`
@@ -336,54 +346,6 @@ describe("boundary patterns detect synthetic violations", () => {
     },
     { pattern: JSON_IMPORT, snippet: `import data from "../../data/base/gameTypeProfiles.json";` },
     { pattern: SERVER_ONLY_IMPORT, snippet: `import "server-only";` },
-    {
-      pattern: SCENARIO_DEEP_IMPORT,
-      snippet: `import { hidden } from "@/game/gameplay/rpg/scenario/createFallbackBlueprint";`
-    },
-    {
-      pattern: ACTIONS_DEEP_IMPORT,
-      snippet: `import { resolveAction } from "@/game/gameplay/rpg/actions/resolveAction";`
-    },
-    {
-      // Phase 5：take_item 所在的 intents/validateIntent 内部模块同样被拦。
-      pattern: ACTIONS_DEEP_IMPORT,
-      snippet: `import { validatePlayerIntent } from "@/game/gameplay/rpg/actions/validateIntent";`
-    },
-    {
-      pattern: ACTIONS_DEEP_IMPORT,
-      snippet: `import type { TakeItemIntent } from "@/game/gameplay/rpg/actions/intents";`
-    },
-    {
-      pattern: QUESTS_DEEP_IMPORT,
-      snippet: `import { reconcileQuests } from "@/game/gameplay/rpg/quests/reconcileQuests";`
-    },
-    {
-      // Phase 6：battle facade 内部模块 deep-import 同样被拦。
-      pattern: BATTLE_DEEP_IMPORT,
-      snippet: `import { startBattle } from "@/game/gameplay/rpg/battle/startBattle";`
-    },
-    {
-      pattern: BATTLE_DEEP_IMPORT,
-      snippet: `import type { BattleAction } from "@/game/gameplay/rpg/battle/battleAction";`
-    },
-    {
-      // Phase 10：narrative facade 内部模块 deep-import 同样被拦。
-      pattern: NARRATIVE_DEEP_IMPORT,
-      snippet: `import { actionKeyOf } from "@/game/gameplay/rpg/narrative/actionCandidates";`
-    },
-    {
-      pattern: NARRATIVE_DEEP_IMPORT,
-      snippet: `import type { DirectorProposal } from "@/game/gameplay/rpg/narrative/types";`
-    },
-    {
-      // Town demo：generateTown 等内部模块 deep-import 同样被拦。
-      pattern: TOWN_DEEP_IMPORT,
-      snippet: `import { generateTown } from "@/game/gameplay/rpg/town/generateTown";`
-    },
-    {
-      pattern: TOWN_DEEP_IMPORT,
-      snippet: `import { hashTownSeed } from "@/game/gameplay/rpg/town/townRandom";`
-    },
     { pattern: AI_GAME_PACKAGE_IMPORT, snippet: `import { Panel } from "@ai-game/ui";` },
     { pattern: NEW_AI_GAME_PACKAGE_IMPORT, snippet: `import { db } from "@ai-game/persistence";` },
     {
@@ -482,23 +444,14 @@ describe("boundary patterns detect synthetic violations", () => {
     });
   }
 
-  it("facade import does not trip the scenario deep-import rule", () => {
-    const snippet = `import { createFallbackBlueprint } from "@/game/gameplay/rpg/scenario";`;
-    expect(findBoundaryViolations(snippet, [SCENARIO_DEEP_IMPORT])).toEqual([]);
-  });
-
-  it("facade imports do not trip the actions/quests/battle/narrative deep-import rules", () => {
-    const snippet =
-      `import { resolveAction } from "@/game/gameplay/rpg/actions";\n` +
-      `import { reconcileQuests } from "@/game/gameplay/rpg/quests";\n` +
-      `import { startBattle } from "@/game/gameplay/rpg/battle";\n` +
-      `import { approveDirectorProposal } from "@/game/gameplay/rpg/narrative";`;
-    expect(findBoundaryViolations(snippet, [ACTIONS_DEEP_IMPORT, QUESTS_DEEP_IMPORT, BATTLE_DEEP_IMPORT, NARRATIVE_DEEP_IMPORT])).toEqual([]);
-  });
-
-  it("town facade import does not trip the town deep-import rule", () => {
-    const snippet = `import { generateTown } from "@/game/gameplay/rpg/town";`;
-    expect(findBoundaryViolations(snippet, [TOWN_DEEP_IMPORT])).toEqual([]);
+  it("facade imports do not trip any facade deep-import rule", () => {
+    for (const facade of FACADES) {
+      const snippet = `import { x } from "${facade.path}";`;
+      expect(
+        findBoundaryViolations(snippet, Object.values(FACADE_DEEP_IMPORTS)),
+        facade.name
+      ).toEqual([]);
+    }
   });
 
   it("@ai-game/ui does not trip the new-package rule", () => {
