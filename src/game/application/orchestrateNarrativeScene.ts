@@ -6,11 +6,12 @@
 
 import type { GameState, ScenarioBlueprint, NarrativeSceneState, NpcId, FactId, StoryPacing } from "@/game/domain";
 import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
-import type { NarrativeActionCandidate, ApprovedDirectorPlan, ApprovedSceneScript } from "@/game/gameplay/rpg/narrative";
+import type { NarrativeActionCandidate, ApprovedDirectorPlan, ApprovedSceneScript, BlueprintExpansionDecision } from "@/game/gameplay/rpg/narrative";
 import {
   approveDirectorProposal,
   approveSceneScript,
   approveNpcPerformance,
+  approveBlueprintExpansion,
   actionKeyOf,
   deriveContentProgression,
 } from "@/game/gameplay/rpg/narrative";
@@ -48,6 +49,8 @@ export type OrchestrateSceneResult = {
   readonly pacing: StoryPacing;
   /** 已批准 director plan 的焦点 NPC；不能从可选台词结果反推。 */
   readonly focusNpcId: NpcId | null;
+  /** 蓝图动态化：本幕扩展提案的纯语义审批结果；fallback 固定 none_proposed。 */
+  readonly expansionDecision: BlueprintExpansionDecision;
   readonly diagnostics: {
     readonly director: DirectorAttempt;
     readonly script: SceneScriptAttempt | null;
@@ -157,6 +160,7 @@ export async function orchestrateNarrativeScene(
   if (!npcApproved) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, npcLineAttempted, candidates, state, fallbackPacing);
 
   // Step 6：组装 NarrativeSceneState
+  const expansionDecision = approveBlueprintExpansion({ blueprint, state, plan });
   const scene: NarrativeSceneState = {
     sceneId: `${traceId}-scene-${Date.now()}`,
     turn: calculateTurn(state),
@@ -183,6 +187,7 @@ export async function orchestrateNarrativeScene(
     provenance: scriptAttempt.provenance === "fixture" ? "fixture" : "generated",
     pacing: plan.pacing,
     focusNpcId: plan.focusNpcId as NpcId | null,
+    expansionDecision,
     diagnostics: {
       director: directorAttempt,
       script: scriptAttempt,
@@ -230,6 +235,7 @@ function buildFallbackResult(
     provenance: "fallback",
     pacing,
     focusNpcId: null,
+    expansionDecision: { ok: false, reason: "none_proposed" },
     diagnostics: {
       director: directorAttempt,
       script: scriptAttempt,

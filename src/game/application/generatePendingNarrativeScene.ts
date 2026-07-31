@@ -2,6 +2,7 @@ import type { GameRepository } from "./server/persistence/gameRepository";
 import type { GameLogger } from "@/game/logging";
 import type { GameState } from "@/game/domain";
 import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
+import { compileBlueprintExpansion } from "@/game/gameplay/rpg/narrative";
 import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 import { reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
@@ -97,11 +98,23 @@ export async function generatePendingNarrativeScene(
     ...nextState,
     storyMemory: reconcileStoryMemory({ state: nextState })
   };
-  const saved = await deps.repository.applyResolvedAction({
-    gameId: record.gameId,
-    expectedRevision: record.revision,
-    nextState
-  });
+  // 蓝图动态化：审批通过的扩展与场景同一次 CAS 落库；否则仅写场景。
+  const saved = generated.expansionDecision.ok
+    ? await deps.repository.applyBlueprintExpansion({
+        gameId: record.gameId,
+        expectedRevision: record.revision,
+        ...compileBlueprintExpansion({
+          blueprint: record.blueprint,
+          state: nextState,
+          expansion: generated.expansionDecision.expansion,
+          occurredAt: deps.now(),
+        }),
+      })
+    : await deps.repository.applyResolvedAction({
+        gameId: record.gameId,
+        expectedRevision: record.revision,
+        nextState,
+      });
   if (!saved.ok) return saved.code === "STALE_GAME_REVISION" ? "stale" : "unavailable";
   return "saved";
 }
