@@ -140,6 +140,52 @@ describe("runtimeNarrativeContexts 导演", () => {
   });
 });
 
+describe("runtimeNarrativeContexts 导演 playerNpcChat（NPC 自由输入上下文）", () => {
+  const blueprint = buildTestBlueprint();
+
+  it("toDirectorContext 从 pending state 读取 playerNpcChat", () => {
+    const state = {
+      ...buildTestGameState(),
+      narrative: {
+        currentScene: null,
+        generation: {
+          status: "pending",
+          requestedAt: "2026-07-31T00:00:00.000Z",
+          playerNpcChat: {
+            npcId: asNpcId("npc_1"),
+            playerText: "我想去废弃矿坑",
+            npcName: "铁匠",
+            npcRole: "铁匠铺老板"
+          }
+        },
+        mode: "ai"
+      }
+    } as unknown as GameState;
+    const context = toDirectorContext({ blueprint, state });
+    expect(context.playerNpcChat?.playerText).toBe("我想去废弃矿坑");
+    expect(context.playerNpcChat?.npcName).toBe("铁匠");
+    expect(context.playerNpcChat?.npcRole).toBe("铁匠铺老板");
+  });
+
+  it("toDirectorContext 在 idle state 下 playerNpcChat 为 undefined", () => {
+    const context = toDirectorContext({ blueprint, state: buildTestGameState() });
+    expect(context.playerNpcChat).toBeUndefined();
+  });
+
+  it("pending 但无 playerNpcChat（行动/固定选项触发）→ undefined", () => {
+    const state = {
+      ...buildTestGameState(),
+      narrative: {
+        currentScene: null,
+        generation: { status: "pending", requestedAt: "2026-07-31T00:00:00.000Z" },
+        mode: "ai"
+      }
+    } as unknown as GameState;
+    const context = toDirectorContext({ blueprint, state });
+    expect(context.playerNpcChat).toBeUndefined();
+  });
+});
+
 describe("runtimeNarrativeContexts 扩展预算", () => {
   function blueprintWithLocations(count: number, policy?: ReturnType<typeof createBudgetPolicy>): ScenarioBlueprint {
     const locations = Array.from({ length: count }, (_, i) => ({
