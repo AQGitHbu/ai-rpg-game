@@ -1,5 +1,6 @@
 import type { GameEvent } from "./events";
 import type { NarrativeRuntimeState } from "./narrative";
+import type { RelationshipValue } from "./relationship";
 import type {
   EndingId,
   EnemyId,
@@ -27,6 +28,8 @@ export type NpcRuntimeState = {
   readonly npcId: NpcId;
   readonly locationId: LocationId;
   readonly met: boolean;
+  // Phase 13：可选关系值；旧存档缺省时回退到 { affinity: 0 }（中立）
+  readonly relationship?: RelationshipValue;
 };
 
 export type QuestStatus = "locked" | "active" | "completed" | "failed" | "closed";

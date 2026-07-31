@@ -53,6 +53,8 @@ export type NpcContinuityMemory = {
   readonly npcId: NpcId;
   readonly lastContactTurn: number;
   readonly lastLocationId: LocationId;
+  // Phase 13：可选，旧存档兼容。由 reconcileStoryMemory 从 npc_met.interactionKind 推导生成。
+  readonly lastInteractionSummary?: string;
 };
 
 /** 版本化、有界的结构化剧情记忆。reducedThroughEventCount 为已归约到的事件数（cursor）。 */

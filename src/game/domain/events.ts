@@ -26,6 +26,9 @@ export type NpcMetEvent = {
   readonly type: "npc_met";
   readonly npcId: NpcId;
   readonly occurredAt: string;
+  // Phase 13：可选交互类型，reconcileStoryMemory 据此生成 lastInteractionSummary。
+  // 旧存档缺省时回退到 undefined，reducer 安全跳过。
+  readonly interactionKind?: "greet" | "ask_main_quest";
 };
 
 /** 玩家发现世界事实：由 investigate 行动成功时追加；重复调查不产生此事件。 */

@@ -106,6 +106,12 @@ export {
 } from "./events";
 export { paginateSpeechText } from "./speechPagination";
 export {
+  relationshipTierOf,
+  clampAffinity,
+  type RelationshipValue,
+  type RelationshipTier
+} from "./relationship";
+export {
   type GameState,
   type PlayerState,
   type NpcRuntimeState,
