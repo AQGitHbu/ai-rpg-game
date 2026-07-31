@@ -2,10 +2,10 @@
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import type { GameState, NewGameInput } from "@/game/domain";
+import type { GameState, NewGameInput, ScenarioBlueprint } from "@/game/domain";
 import wuxiaFixture from "../../../../../data/fixtures/phase1/wuxia.json";
 import { runScenarioPipeline } from "../../applicationFixture.testutil";
-import { asGameId, type ApplyResolvedActionInput, type CreateInitialGameInput } from "./gameRepository";
+import { asGameId, type ApplyBlueprintExpansionInput, type ApplyResolvedActionInput, type CreateInitialGameInput } from "./gameRepository";
 import { createSqliteClient, type SqliteClient } from "./sqliteClient";
 import {
   createSqliteGameRepository,
@@ -794,5 +794,156 @@ describe("sqliteGameRepository：applyResolvedAction 事务故障", () => {
     if (current.status !== "active") return;
     expect(current.record.revision).toBe(0);
     expect(current.record.state).toEqual(input.state);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 蓝图动态化 Task 14：applyBlueprintExpansion (CAS + blueprint 列同步更新)。
+// ---------------------------------------------------------------------------
+
+function buildExpandedBlueprint(): ScenarioBlueprint {
+  const base = PIPELINE.blueprint;
+  const newLocation = {
+    id: "loc_dyn_1",
+    name: "迷雾深谷",
+    description: "一处被浓雾笼罩的隐秘山谷。",
+    kind: "main" as const,
+    connectedLocationIds: [base.locations[0].id],
+    availableItemIds: [] as readonly string[]
+  };
+  const patchedLocations = base.locations.map((loc, i) =>
+    i === 0
+      ? { ...loc, connectedLocationIds: [...loc.connectedLocationIds, "loc_dyn_1"] }
+      : loc
+  );
+  return {
+    ...base,
+    locations: [...patchedLocations, newLocation]
+  } as ScenarioBlueprint;
+}
+
+function buildExpandedState(): GameState {
+  return {
+    ...PIPELINE.state,
+    unlockedLocationIds: [...PIPELINE.state.unlockedLocationIds, "loc_dyn_1"],
+    eventLedger: [
+      ...PIPELINE.state.eventLedger,
+      {
+        type: "blueprint_expanded" as const,
+        newLocationIds: ["loc_dyn_1"],
+        newNpcIds: [],
+        occurredAt: "2026-07-31T00:00:00Z"
+      }
+    ]
+  } as unknown as GameState;
+}
+
+describe("sqliteGameRepository：applyBlueprintExpansion (CAS + blueprint 更新)", () => {
+  it("成功路径：blueprint 与 state 同步更新，revision + 1", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    const writer = openRepository(databasePath);
+    expect(await writer.createInitialGame(input)).toEqual({ ok: true });
+
+    const nextBlueprint = buildExpandedBlueprint();
+    const nextState = buildExpandedState();
+    const expansionInput: ApplyBlueprintExpansionInput = {
+      gameId: input.gameId,
+      expectedRevision: INITIAL_REVISION,
+      nextBlueprint,
+      nextState
+    };
+    const result = await writer.applyBlueprintExpansion(expansionInput);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.record.revision).toBe(1);
+    expect(result.record.blueprint).toEqual(nextBlueprint);
+    expect(result.record.state).toEqual(nextState);
+
+    // 用全新实例读回验证持久化。
+    await writer.close();
+    const reader = openRepository(databasePath);
+    const current = await reader.getCurrentGame();
+    expect(current.ok).toBe(true);
+    if (!current.ok || current.status !== "active") return;
+    expect(current.record.revision).toBe(1);
+    expect(current.record.blueprint).toEqual(nextBlueprint);
+    expect(current.record.state).toEqual(nextState);
+  });
+
+  it("CAS 冲突：过期 revision 返回 STALE_GAME_REVISION，库中数据不变", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    const writer = openRepository(databasePath);
+    expect(await writer.createInitialGame(input)).toEqual({ ok: true });
+
+    // 先成功一次把 revision 推到 1。
+    const first = await writer.applyBlueprintExpansion({
+      gameId: input.gameId,
+      expectedRevision: INITIAL_REVISION,
+      nextBlueprint: buildExpandedBlueprint(),
+      nextState: buildExpandedState()
+    });
+    expect(first.ok).toBe(true);
+
+    // 用旧 revision 0 再次调用：必须拒绝。
+    const stale = await writer.applyBlueprintExpansion({
+      gameId: input.gameId,
+      expectedRevision: INITIAL_REVISION,
+      nextBlueprint: buildExpandedBlueprint(),
+      nextState: buildExpandedState()
+    });
+    expect(stale).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
+
+    // 库中 blueprint/state/revision 均为第一次写入的值。
+    const current = await writer.getCurrentGame();
+    expect(current.ok).toBe(true);
+    if (!current.ok || current.status !== "active") return;
+    expect(current.record.revision).toBe(1);
+    expect(current.record.blueprint).toEqual(buildExpandedBlueprint());
+    expect(current.record.state).toEqual(buildExpandedState());
+  });
+
+  it("与 applyResolvedAction 交错：expansion 后 action 携带新 revision 成功", async () => {
+    const databasePath = nextDbPath();
+    const input = buildCreateInput();
+    const writer = openRepository(databasePath);
+    expect(await writer.createInitialGame(input)).toEqual({ ok: true });
+
+    // expansion：revision 0 → 1。
+    const nextBlueprint = buildExpandedBlueprint();
+    const nextState = buildExpandedState();
+    const expansion = await writer.applyBlueprintExpansion({
+      gameId: input.gameId,
+      expectedRevision: INITIAL_REVISION,
+      nextBlueprint,
+      nextState
+    });
+    expect(expansion.ok).toBe(true);
+
+    // applyResolvedAction 携带 revision 1：revision 1 → 2。
+    const actionState: GameState = {
+      ...nextState,
+      eventLedger: [
+        ...nextState.eventLedger,
+        {
+          type: "location_observed" as const,
+          locationId: nextState.currentLocationId,
+          occurredAt: "2026-07-31T01:00:00Z"
+        }
+      ]
+    };
+    const action = await writer.applyResolvedAction({
+      gameId: input.gameId,
+      expectedRevision: 1,
+      nextState: actionState
+    });
+    expect(action.ok).toBe(true);
+    if (!action.ok) return;
+    expect(action.record.revision).toBe(2);
+    expect(action.record.state).toEqual(actionState);
+    // blueprint 保持 expansion 后的版本。
+    expect(action.record.blueprint).toEqual(nextBlueprint);
   });
 });

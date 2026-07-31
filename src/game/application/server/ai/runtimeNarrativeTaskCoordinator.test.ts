@@ -50,6 +50,10 @@ describe("RuntimeNarrativeTaskCoordinator", () => {
         writeCompleted.resolve();
         return { ok: true as const, record };
       },
+      async applyBlueprintExpansion(input) {
+        record = { ...record, blueprint: input.nextBlueprint, state: input.nextState, revision: record.revision + 1 };
+        return { ok: true as const, record };
+      },
     };
     const coordinator = new RuntimeNarrativeTaskCoordinator({
       repository,

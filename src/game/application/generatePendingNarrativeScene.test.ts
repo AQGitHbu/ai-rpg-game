@@ -70,6 +70,10 @@ function repositoryFor(record: GameRecord, apply?: (input: ApplyResolvedActionIn
       current = { ...current, state: input.nextState, revision: current.revision + 1 };
       return { ok: true as const, record: current };
     },
+    async applyBlueprintExpansion(input) {
+      current = { ...current, blueprint: input.nextBlueprint, state: input.nextState, revision: current.revision + 1 };
+      return { ok: true as const, record: current };
+    },
   };
 }
 

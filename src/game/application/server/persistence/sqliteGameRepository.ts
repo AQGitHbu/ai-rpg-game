@@ -2,6 +2,7 @@ import type { GameState, ScenarioBlueprint } from "@/game/domain";
 import { NOOP_GAME_LOGGER } from "@/game/logging";
 import {
   asGameId,
+  type ApplyBlueprintExpansionInput,
   type ApplyResolvedActionInput,
   type ApplyResolvedActionResult,
   type ClearCurrentGameResult,
@@ -494,6 +495,80 @@ export function createSqliteGameRepository(
     }
   }
 
+  async function applyBlueprintExpansion(
+    input: ApplyBlueprintExpansionInput
+  ): Promise<ApplyResolvedActionResult> {
+    let blueprintJson: string;
+    let stateJson: string;
+    try {
+      await ensureSchema();
+      blueprintJson = JSON.stringify(input.nextBlueprint);
+      stateJson = JSON.stringify(input.nextState);
+    } catch (error) {
+      logError("applyBlueprintExpansion 准备阶段失败", error);
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
+
+    try {
+      const tx = await getClient().transaction("write");
+      try {
+        const pointer = await tx.execute({
+          sql: "SELECT game_id FROM current_game WHERE slot = 1",
+          args: []
+        });
+        if (pointer.rows.length === 0) {
+          return { ok: false, code: "NO_ACTIVE_GAME" };
+        }
+        const activeGameId = pointer.rows[0]?.["game_id"];
+        if (activeGameId !== input.gameId) {
+          return { ok: false, code: "NO_ACTIVE_GAME" };
+        }
+
+        const updateResult = await tx.execute({
+          sql: `UPDATE games SET blueprint_json = ?, state_json = ?, revision = revision + 1
+                WHERE game_id = ? AND revision = ?`,
+          args: [blueprintJson, stateJson, input.gameId, input.expectedRevision]
+        });
+        const rowsAffected = Number(updateResult.rowsAffected ?? 0);
+        if (rowsAffected === 0) {
+          return { ok: false, code: "STALE_GAME_REVISION" };
+        }
+
+        const readBack = await tx.execute({
+          sql: `SELECT game_id, record_version, blueprint_json, state_json, created_at, revision
+                FROM games WHERE game_id = ?`,
+          args: [input.gameId]
+        });
+        const row = readBack.rows[0];
+        if (row === undefined) {
+          return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        }
+
+        const blueprint = parseJsonObject(row["blueprint_json"] as string);
+        const state = parseJsonObject(row["state_json"] as string);
+        if (blueprint === null || state === null) {
+          return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        }
+
+        const record: GameRecord = {
+          gameId: asGameId(row["game_id"] as string),
+          blueprint: withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint)) as unknown as ScenarioBlueprint,
+          state: withTownDefaults(withNarrativeDefault(state)) as unknown as GameState,
+          revision: row["revision"] as number,
+          createdAt: row["created_at"] as string
+        };
+
+        await tx.commit();
+        return { ok: true, record };
+      } finally {
+        tx.close();
+      }
+    } catch (error) {
+      logError("applyBlueprintExpansion 事务失败，已回滚", error);
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
+  }
+
   async function clearCurrentGame(): Promise<ClearCurrentGameResult> {
     try {
       await ensureSchema();
@@ -529,6 +604,7 @@ export function createSqliteGameRepository(
     createInitialGame,
     getCurrentGame,
     applyResolvedAction,
+    applyBlueprintExpansion,
     clearCurrentGame,
     async initializeSchema() {
       await ensureSchema();

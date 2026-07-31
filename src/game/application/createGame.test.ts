@@ -242,6 +242,9 @@ describe("createGame：repository 结构化失败透传稳定代码", () => {
       },
       async applyResolvedAction() {
         throw new Error("libsql 驱动崩溃：connection refused at F:\\db\\rpg.sqlite");
+      },
+      async applyBlueprintExpansion() {
+        throw new Error("libsql 驱动崩溃：connection refused at F:\\db\\rpg.sqlite");
       }
     };
     const result = await createGame(
@@ -560,6 +563,9 @@ describe("createGame：Phase 4A 候选编排", () => {
         return { ok: true, status: "none" };
       },
       async applyResolvedAction() {
+        throw new Error("libsql 驱动崩溃");
+      },
+      async applyBlueprintExpansion() {
         throw new Error("libsql 驱动崩溃");
       }
     };

@@ -14,6 +14,7 @@ import {
 } from "./scenarioGeneration";
 import {
   asGameId,
+  type ApplyBlueprintExpansionInput,
   type ApplyResolvedActionInput,
   type ApplyResolvedActionResult,
   type CreateInitialGameInput,
@@ -54,20 +55,26 @@ export type FakeGameRepository = GameRepository & {
   readonly createCalls: CreateInitialGameInput[];
   /** spy：记录每次 applyResolvedAction 收到的完整载荷。 */
   readonly applyCalls: ApplyResolvedActionInput[];
+  /** spy：记录每次 applyBlueprintExpansion 收到的完整载荷。 */
+  readonly expansionCalls: ApplyBlueprintExpansionInput[];
   setCreateResult(result: CreateInitialGameResult): void;
   setCurrentResult(result: GetCurrentGameRecordResult): void;
   setApplyResult(result: ApplyResolvedActionResult): void;
+  setExpansionResult(result: ApplyResolvedActionResult): void;
 };
 
 export function createFakeGameRepository(): FakeGameRepository {
   const createCalls: CreateInitialGameInput[] = [];
   const applyCalls: ApplyResolvedActionInput[] = [];
+  const expansionCalls: ApplyBlueprintExpansionInput[] = [];
   let createResult: CreateInitialGameResult = { ok: true };
   let currentResult: GetCurrentGameRecordResult = { ok: true, status: "none" };
   let applyResult: ApplyResolvedActionResult = { ok: false, code: "NO_ACTIVE_GAME" };
+  let expansionResult: ApplyResolvedActionResult = { ok: false, code: "NO_ACTIVE_GAME" };
   return {
     createCalls,
     applyCalls,
+    expansionCalls,
     setCreateResult(result) {
       createResult = result;
     },
@@ -76,6 +83,9 @@ export function createFakeGameRepository(): FakeGameRepository {
     },
     setApplyResult(result) {
       applyResult = result;
+    },
+    setExpansionResult(result) {
+      expansionResult = result;
     },
     async createInitialGame(input) {
       createCalls.push(input);
@@ -87,6 +97,10 @@ export function createFakeGameRepository(): FakeGameRepository {
     async applyResolvedAction(input) {
       applyCalls.push(input);
       return applyResult;
+    },
+    async applyBlueprintExpansion(input) {
+      expansionCalls.push(input);
+      return expansionResult;
     }
   };
 }

@@ -64,6 +64,14 @@ export type ApplyResolvedActionInput = {
   readonly nextState: GameState;
 };
 
+/** 蓝图扩展写入载荷：同时更新 blueprint 与 state，CAS 语义同 applyResolvedAction。 */
+export type ApplyBlueprintExpansionInput = {
+  readonly gameId: GameId;
+  readonly expectedRevision: number;
+  readonly nextBlueprint: ScenarioBlueprint;
+  readonly nextState: GameState;
+};
+
 export type ApplyResolvedActionResult =
   | { readonly ok: true; readonly record: GameRecord }
   | { readonly ok: false; readonly code: "STALE_GAME_REVISION" }
@@ -86,6 +94,11 @@ export interface GameRepository {
    * 持久化层不认识 PlayerIntent 规则语义，只接收 resolver 已产出的 state 数据。
    */
   applyResolvedAction(input: ApplyResolvedActionInput): Promise<ApplyResolvedActionResult>;
+  /**
+   * 原子蓝图扩展写入：同一写事务内按 gameId + expectedRevision 条件更新
+   * blueprint JSON、state JSON 与 revision；CAS 语义同 applyResolvedAction。
+   */
+  applyBlueprintExpansion(input: ApplyBlueprintExpansionInput): Promise<ApplyResolvedActionResult>;
 }
 
 /** 开发工具的可选持久化能力；不扩大正常 game use case 的测试 stub 责任。 */

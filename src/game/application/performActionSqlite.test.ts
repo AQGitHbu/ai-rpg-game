@@ -238,7 +238,8 @@ describe("performAction × 真实 SQLite：竞争同一 revision 仅一方成功
     const staleReader: GameRepository = {
       createInitialGame: (input) => repository.createInitialGame(input),
       getCurrentGame: async () => staleLoaded,
-      applyResolvedAction: (input) => repository.applyResolvedAction(input)
+      applyResolvedAction: (input) => repository.applyResolvedAction(input),
+      applyBlueprintExpansion: (input) => repository.applyBlueprintExpansion(input)
     };
     const second = await performAction(
       { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
@@ -388,7 +389,8 @@ describe("performAction × 真实 SQLite：take_item 竞争同一 revision 仅�
     const staleReader: GameRepository = {
       createInitialGame: (input) => repository.createInitialGame(input),
       getCurrentGame: async () => staleLoaded,
-      applyResolvedAction: (input) => repository.applyResolvedAction(input)
+      applyResolvedAction: (input) => repository.applyResolvedAction(input),
+      applyBlueprintExpansion: (input) => repository.applyBlueprintExpansion(input)
     };
     const second = await performAction(
       { intent: TAKE_KEY_INTENT, expectedRevision: readyRevision },
@@ -441,6 +443,9 @@ describe("performAction × 真实 SQLite：take 拒绝与故障注入零写入",
       createInitialGame: (input) => repository.createInitialGame(input),
       getCurrentGame: () => repository.getCurrentGame(),
       applyResolvedAction: async () => {
+        throw new Error("injected sqlite fault");
+      },
+      applyBlueprintExpansion: async () => {
         throw new Error("injected sqlite fault");
       }
     };
@@ -543,7 +548,8 @@ describe("performAction × 真实 SQLite：Phase 4 旧存档兼容（无 availab
         const applied = await repository.applyResolvedAction(input);
         if (applied.ok) readBack = applied.record;
         return applied;
-      }
+      },
+      applyBlueprintExpansion: (input) => repository.applyBlueprintExpansion(input)
     };
     const moved = await performAction(
       { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
@@ -640,7 +646,8 @@ describe("performAction × 真实 SQLite：Phase 6 旧存档兼容（无 defeate
         const result = await repository.applyResolvedAction(input);
         if (result.ok) readBack = result.record;
         return result;
-      }
+      },
+      applyBlueprintExpansion: (input) => repository.applyBlueprintExpansion(input)
     };
 
     const moved = await performAction(

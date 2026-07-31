@@ -46,6 +46,10 @@ describe("TownPlanTaskCoordinator", () => {
         record = { ...record, state: input.nextState, revision: record.revision + 1 };
         writeCompleted.resolve();
         return { ok: true as const, record };
+      },
+      async applyBlueprintExpansion(input) {
+        record = { ...record, blueprint: input.nextBlueprint, state: input.nextState, revision: record.revision + 1 };
+        return { ok: true as const, record };
       }
     };
     const townPlanSource: TownPlanCandidateSource = {
@@ -90,7 +94,8 @@ describe("TownPlanTaskCoordinator", () => {
           record: { gameId: asGameId("t"), blueprint, state, revision: 0, createdAt: "t" }
         };
       },
-      async applyResolvedAction() { throw new Error("not reached"); }
+      async applyResolvedAction() { throw new Error("not reached"); },
+      async applyBlueprintExpansion() { throw new Error("not reached"); }
     };
     const coordinator = new TownPlanTaskCoordinator({
       repository,

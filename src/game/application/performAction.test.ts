@@ -352,6 +352,9 @@ describe("performAction：take_item + 任务 reconciliation 单次写入（Phase
       getCurrentGame: () => repository.getCurrentGame(),
       applyResolvedAction: async () => {
         throw new Error("libsql 崩溃：disk I/O error");
+      },
+      applyBlueprintExpansion: async () => {
+        throw new Error("libsql 崩溃：disk I/O error");
       }
     };
 
