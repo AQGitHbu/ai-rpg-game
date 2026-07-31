@@ -3,7 +3,7 @@
 // 每个函数将 domain state → 纯净 context JSON（绝不含 AI prompt 原文、密钥）。
 // ---------------------------------------------------------------------------
 
-import { budgetPolicyOf, storyMemoryOf, type GameState, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
+import { budgetPolicyOf, storyMemoryOf, type GameState, type PlayerNpcChatState, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
 import { projectAvailableActions } from "@/game/gameplay/rpg/actions";
 import { actionKeyOf, deriveContentProgression, type ContentProgression } from "@/game/gameplay/rpg/narrative";
 import type { ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
@@ -163,6 +163,8 @@ export type DirectorContext = {
   readonly expansionAllowed: boolean;
   /** locationsSoftMax - 当前地点总数；open 档为 null；下限 0。 */
   readonly remainingLocationBudget: number | null;
+  /** NPC 自由输入触发时的上下文线索：导演独立判断是否采纳，不强制。 */
+  readonly playerNpcChat?: PlayerNpcChatState;
 };
 
 export type DirectorContextInput = {
@@ -211,6 +213,13 @@ export function toDirectorContext(input: DirectorContextInput): DirectorContext 
   const expansionAllowed = !isEndgame && !atHardCap && !atSoftCap;
   const remainingLocationBudget = softMax === null ? null : Math.max(0, softMax - locationCount);
 
+  // NPC 自由输入的上下文只挂在 pending 变体上：场景 ready 后 generation 收窄
+  // 回 idle 自动丢弃，不会污染下一轮场景的导演上下文。
+  const playerNpcChat =
+    state.narrative.generation.status === "pending"
+      ? state.narrative.generation.playerNpcChat
+      : undefined;
+
   const context: DirectorContext = {
     currentLocationId: String(state.currentLocationId),
     discoveredFactIds,
@@ -224,6 +233,7 @@ export function toDirectorContext(input: DirectorContextInput): DirectorContext 
     expansionAllowed,
     remainingLocationBudget,
     ...(townSpatial !== undefined ? { townSpatial } : {}),
+    ...(playerNpcChat !== undefined ? { playerNpcChat } : {}),
   };
 
   return context;

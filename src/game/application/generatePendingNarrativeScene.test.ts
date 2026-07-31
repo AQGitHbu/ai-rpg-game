@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GameState, NewGameInput } from "@/game/domain";
+import { asNpcId } from "@/game/domain";
 import {
   asGameId,
   type ApplyResolvedActionInput,
@@ -8,6 +9,7 @@ import {
 } from "./server/persistence/gameRepository";
 import { generatePendingNarrativeScene } from "./generatePendingNarrativeScene";
 import { NARRATIVE_CONTRACT_VERSION } from "./runtimeNarrative";
+import { toDirectorContext } from "./runtimeNarrativeContexts";
 import { runScenarioPipeline } from "./applicationFixture.testutil";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 
@@ -172,5 +174,50 @@ describe("generatePendingNarrativeScene：Phase 11 场景提交事件与记忆�
     expect(record.record.state.eventLedger.at(-1)?.type).not.toBe("narrative_scene_presented");
     expect(record.record.state.storyMemory?.reducedThroughEventCount).toBe(0);
     expect(record.record.state.narrative.generation.status).toBe("pending");
+  });
+});
+
+describe("generatePendingNarrativeScene：playerNpcChat 单次消费（spec §8 纪律 3）", () => {
+  it("场景 ready 后 state.narrative.generation 不含 playerNpcChat", async () => {
+    // 构造：pending 变体携带自由输入快照（NPC 对话触发路径写入的形态）。
+    const base = pendingRecord();
+    const record: GameRecord = {
+      ...base,
+      state: {
+        ...base.state,
+        narrative: {
+          currentScene: null,
+          generation: {
+            status: "pending",
+            requestedAt: "2026-07-30T08:00:00.000Z",
+            playerNpcChat: {
+              npcId: asNpcId("npc_1"),
+              playerText: "我想去废弃矿坑",
+              npcName: "铁匠",
+              npcRole: "铁匠铺老板",
+            },
+          },
+          mode: "ai",
+        },
+      },
+    };
+    const repository = repositoryFor(record);
+    const result = await generatePendingNarrativeScene({
+      repository,
+      newTraceId: () => "chat-consume",
+      now: () => "2026-07-31T01:02:03.000Z",
+      runtimeNarrativeSources: unavailableSources(),
+    });
+
+    expect(result).toBe("saved");
+    const saved = await repository.getCurrentGame();
+    if (!saved.ok || saved.status !== "active") throw new Error("期望 active 存档");
+    const generation = saved.record.state.narrative.generation;
+    // ready 后 generation 收窄回 idle：pending 变体的 playerNpcChat 随类型丢弃。
+    expect(generation.status).toBe("idle");
+    expect((generation as { playerNpcChat?: unknown }).playerNpcChat).toBeUndefined();
+    // 下一轮导演上下文不会读到上一次自由输入（不跨场景残留）。
+    const context = toDirectorContext({ blueprint: saved.record.blueprint, state: saved.record.state });
+    expect(context.playerNpcChat).toBeUndefined();
   });
 });

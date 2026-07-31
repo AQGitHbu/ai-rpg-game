@@ -74,6 +74,13 @@ export {
   type PerformActionResult,
   type ActionFeedbackView
 } from "./performAction";
+// NPC 自由输入：分类→闲聊/叙事触发编排 use case（零 AI 调用）。
+export {
+  handleNpcDialogue,
+  type HandleNpcDialogueCommand,
+  type HandleNpcDialogueDependencies,
+  type HandleNpcDialogueResult
+} from "./handleNpcDialogue";
 // UI 端预校验经由 application facade 中转，禁止直连 domain。
 export {
   validateNewGameInput,

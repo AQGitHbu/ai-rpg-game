@@ -2,6 +2,7 @@ import { loadScenarioProfiles, type ScenarioProfiles } from "@/game/gameplay/rpg
 import {
   resolveAction,
   projectAvailableActions,
+  parseDialogueChoiceKind,
   type PlayerIntent,
   type ResolveActionDependencies,
 } from "@/game/gameplay/rpg/actions";
@@ -377,16 +378,29 @@ export async function performAction(
   // A narrative choice commits its deterministic rule result immediately.
   // Scene generation is a recoverable server-side job and must not make the
   // player request wait for the provider.
+  // dialogue_choice（greet 首遇 / ask_main_quest）与 narrative_choice 共用同一
+  // 排队条件：对话是叙事场景的入口之一，复用 CAS + ensure 轮询恢复链路。
   if (
-    command.intent.type === "narrative_choice" &&
+    (command.intent.type === "narrative_choice" || command.intent.type === "dialogue_choice") &&
     record.state.narrative.mode !== "offline" &&
     deps.runtimeNarrativeSources !== undefined &&
     canQueueRuntimeNarrativeScene(record.blueprint, nextState)
   ) {
-    nextState = {
-      ...nextState,
-      narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() }, mode: "ai" },
-    };
+    const intent = command.intent;
+    // 防御性守卫：greet 只应在首次结识时触发场景。正常路径下已结识 NPC 不会
+    // 投影 greet 选项且 validateIntent 会拒绝伪造 choiceId，此处防止上游契约
+    // 变化时误触发。必须用 record.state（resolveAction 前）判断——resolveAction
+    // 对所有 dialogue_choice 都会设置 met: true，nextState 中恒为 true。
+    const isRepeatGreet =
+      intent.type === "dialogue_choice" &&
+      parseDialogueChoiceKind(intent.npcId, intent.choiceId) === "greet" &&
+      (record.state.npcs.find((npc) => npc.npcId === intent.npcId)?.met ?? true);
+    if (!isRepeatGreet) {
+      nextState = {
+        ...nextState,
+        narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() }, mode: "ai" },
+      };
+    }
   }
 
   // Phase 11：每次规则 CAS 写入前同步归约结构化剧情记忆。reducer 为纯函数，

@@ -28,9 +28,18 @@ export type NarrativeSceneState = {
   readonly source: "generated" | "fallback";
 };
 
+// 玩家自由输入触发叙事场景时的上下文快照：随 pending 变体单次消费，
+// 场景 ready 时 generation 收窄回 idle 自动丢弃，防止跨场景残留。
+export type PlayerNpcChatState = {
+  readonly npcId: NpcId;
+  readonly playerText: string;
+  readonly npcName: string;
+  readonly npcRole: string;
+};
+
 export type NarrativeGenerationState =
   | { readonly status: "idle" }
-  | { readonly status: "pending"; readonly requestedAt: string };
+  | { readonly status: "pending"; readonly requestedAt: string; readonly playerNpcChat?: PlayerNpcChatState };
 
 /** Runtime AI is opt-in per save. Offline development presets never call it. */
 export type NarrativeMode = "ai" | "offline";

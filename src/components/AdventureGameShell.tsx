@@ -10,7 +10,7 @@ import { AdventureDetailsPanel } from "./AdventureDetailsPanel";
 import { WorldMapScreen } from "./WorldMapScreen";
 import { LocationSceneScreen } from "./LocationSceneScreen";
 import { TownLayerScreen } from "./TownLayerScreen";
-import { NpcDialoguePanel } from "./NpcDialoguePanel";
+import { NpcDialoguePanel, type FreeInputResult } from "./NpcDialoguePanel";
 import { NarrativeScenePanel } from "./NarrativeScenePanel";
 import { ToastContainer, type ToastMessage } from "./ToastNotification";
 
@@ -205,6 +205,43 @@ export function AdventureGameShell({
     setFeedback({ phase: "error", message: outcome.message });
   }
 
+  /**
+   * NPC 自由输入：提交到对话端点（非行动端点，服务端纯规则分类）。
+   * 闲聊零写入，只把 NPC 回应交回面板就地显示；叙事触发时上报 pending view，
+   * CurrentGameScreen 的 ensure 轮询会自动接管后续场景生成，这里不写轮询代码。
+   */
+  async function handleFreeDialogue(npcId: string, text: string): Promise<FreeInputResult> {
+    setFeedback({ phase: "submitting" });
+    onBusyChange(true);
+    try {
+      const response = await fetch("/api/game/npc/dialogue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ npcId, text, revision: view.revision })
+      });
+      const body = (await response.json().catch(() => null)) as
+        | { kind?: string; npcSpeech?: string; view?: GameSessionView }
+        | null;
+      if (body?.kind === "chat" && typeof body.npcSpeech === "string") {
+        setFeedback({ phase: "idle" });
+        return { kind: "chat", npcSpeech: body.npcSpeech };
+      }
+      if (body?.kind === "narrative_trigger" && body.view !== undefined) {
+        setFeedback({ phase: "idle" });
+        onViewChange(body.view);
+        return { kind: "narrative_trigger" };
+      }
+      // 错误/降级（含 ACTION_REJECTED 等）：当作闲聊兜底，绝不伪造叙事触发。
+      setFeedback({ phase: "idle" });
+      return { kind: "chat", npcSpeech: "（对方似乎没听清。）" };
+    } catch {
+      setFeedback({ phase: "idle" });
+      return { kind: "chat", npcSpeech: "（对方似乎没听清。）" };
+    } finally {
+      onBusyChange(false);
+    }
+  }
+
   // Town 第三层入口：点击剧情建筑 = 纯 UI 导航，打开该地点场景并聚焦绑定 NPC 对话。
   function handleEnterBuilding(npcId: string): void {
     triggerRef.current = document.activeElement as HTMLElement;
@@ -282,6 +319,8 @@ export function AdventureGameShell({
             gameType={view.world.gameType}
             busy={shellBusy}
             onChoice={(npcId, choiceId) => void handleDialogueChoice(npcId, choiceId)}
+            onFreeInput={handleFreeDialogue}
+            freeInputBusy={shellBusy}
           />
         </AdventureOverlay>
       ) : null}

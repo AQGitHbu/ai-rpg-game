@@ -69,7 +69,8 @@ function buildTestGameState(): GameState {
     defeatedEnemyIds: [],
     battle: { status: "idle" },
     ending: null,
-    narrative: { currentScene: null },
+    // 与 domain 真实形态一致：narrative.generation 是必选字段（toDirectorContext 直接读取 status）。
+    narrative: { currentScene: null, generation: { status: "idle" }, mode: "ai" },
     eventLedger: [{
       type: "game_initialized",
       generation: {
