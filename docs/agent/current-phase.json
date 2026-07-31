@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "phase": "mvp-phase-12-npc-dialogue-narrative-trigger",
-  "status": "implemented",
-  "implementationStatus": "done",
-  "targetBranch": "codex/npc-dialogue-narrative-trigger",
-  "worktreeName": "npc-dialogue-narrative-trigger",
+  "phase": "mvp-phase-13-npc-relationship-knowledge-evolution",
+  "status": "completed",
+  "implementationStatus": "implemented",
+  "targetBranch": "codex/phase13-npc-relationship",
+  "worktreeName": "phase13-npc-relationship",
   "repositories": ["ai-rpg-game"],
-  "plan": "docs/superpowers/plans/2026-07-31-npc-dialogue-narrative-trigger.md",
+  "plan": "docs/superpowers/plans/2026-07-31-mvp-phase-13-npc-relationship-knowledge-evolution.md",
   "sharedInfrastructureChangeAllowed": false,
   "startCommand": "npm run phase:start",
   "entryDocs": [
@@ -14,9 +14,8 @@
     "docs/游戏开发规范.md",
     "docs/Agent文档索引.md",
     "docs/agent/当前开发阶段.md",
-    "docs/agent/NPC对话驱动叙事场景触发.md",
-    "docs/superpowers/specs/2026-07-31-npc-dialogue-narrative-trigger.md",
-    "docs/superpowers/plans/2026-07-31-npc-dialogue-narrative-trigger.md"
+    "docs/superpowers/specs/2026-07-31-npc-relationship-knowledge-evolution-design.md",
+    "docs/superpowers/plans/2026-07-31-mvp-phase-13-npc-relationship-knowledge-evolution.md"
   ],
   "acceptanceCommands": [
     "npm run accept"
