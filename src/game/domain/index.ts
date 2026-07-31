@@ -106,6 +106,7 @@ export {
 } from "./events";
 export { paginateSpeechText } from "./speechPagination";
 export {
+  RELATIONSHIP_CHANGE,
   relationshipTierOf,
   clampAffinity,
   type RelationshipValue,
