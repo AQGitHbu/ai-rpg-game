@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  asFactId,
   asItemId,
   asLocationId,
   asNpcId,
   asQuestId,
+  createEmptyStoryMemory,
   type GameState,
-  type NewGameInput
+  type NewGameInput,
+  type StoryMemoryEntry
 } from "@/game/domain";
 import { resolveAction, type PlayerIntent } from "@/game/gameplay/rpg/actions";
 import { reconcileQuests } from "@/game/gameplay/rpg/quests";
@@ -373,5 +376,34 @@ describe("projectGameSessionView：Phase 11 场景提交事件不污染日志", 
     expect(view.storyEvents.every((entry) => entry != null && typeof entry.text === "string")).toBe(true);
     // 场景提交事件不作为单条日志行重复呈现（仅经本章进展里程碑呈现，Task 7 落地）。
     expect(view.storyEvents.some((entry) => entry.text.includes("scene-1"))).toBe(false);
+  });
+});
+
+describe("projectGameSessionView：Phase 11 本章进展 (storyContinuity)", () => {
+  it("显示最近 6 条里程碑；相邻重复 scene 折叠为一条；不含原始 ID", () => {
+    const recent: readonly StoryMemoryEntry[] = [
+      { kind: "location", locationId: asLocationId("loc_1"), turn: 1 },
+      { kind: "scene", sceneId: "s1", locationId: asLocationId("loc_1"), focusNpcId: null, pacing: "develop", turn: 2 },
+      { kind: "scene", sceneId: "s2", locationId: asLocationId("loc_1"), focusNpcId: null, pacing: "develop", turn: 3 },
+      { kind: "npc", npcId: asNpcId("npc_1"), locationId: asLocationId("loc_1"), turn: 4 },
+      { kind: "fact", factId: asFactId("fact_1"), turn: 5 },
+      { kind: "item", itemId: asItemId("item_key"), locationId: asLocationId("loc_1"), turn: 6 }
+    ];
+    const state = {
+      ...PIPELINE.state,
+      storyMemory: { ...createEmptyStoryMemory(), reducedThroughEventCount: 7, recent }
+    } as GameState;
+    const view = project(state, 0);
+    expect(view.storyContinuity).toHaveLength(5);
+    expect(view.storyContinuity.every((m) => typeof m.text === "string" && m.text.length > 0)).toBe(true);
+    expect(JSON.stringify(view.storyContinuity)).not.toContain("loc_1");
+    expect(JSON.stringify(view.storyContinuity)).not.toContain("s1");
+  });
+
+  it("缺省 storyMemory 的旧存档回退为空 storyContinuity（不抛错）", () => {
+    const { storyMemory: _omit, ...legacy } = PIPELINE.state;
+    void _omit;
+    const view = project(legacy as GameState, 0);
+    expect(view.storyContinuity).toEqual([]);
   });
 });

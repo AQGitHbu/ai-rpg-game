@@ -133,6 +133,8 @@ export function buildSessionViewFixture(): GameSessionView {
     battle: null,
     ending: null,
     storyEvents: [{ text: "你与陆掌柜交谈。对方以自己的身份和立场回应了你。" }],
+    // Phase 11 Task 7：本章进展里程碑（具名、安全文本）。
+    storyContinuity: [{ text: "到访青石镇" }, { text: "初会陆掌柜" }],
     // Phase 7 Task 5：地图 / 地点场景 / 安全对话 read model。
     worldMap: QINGSHI_WORLD_MAP,
     locationScene: QINGSHI_LOCATION_SCENE,

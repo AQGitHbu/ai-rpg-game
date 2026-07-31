@@ -1,13 +1,16 @@
 import {
   resolveItemPresentation,
+  storyMemoryOf,
   type GameEvent,
   type GameState,
+  type LocationId,
   type ItemCategory,
   type ItemIconKey,
   type ItemRarity,
   type ItemStatLine,
   type QuestObjective,
-  type ScenarioBlueprint
+  type ScenarioBlueprint,
+  type StoryMemoryEntry
 } from "@/game/domain";
 import {
   projectAvailableActions,
@@ -132,6 +135,8 @@ export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly ending: EndingView | null;
   /** 最近发生的结构化事件，用于确定性试玩叙事。 */
   readonly storyEvents: readonly StoryEventView[];
+  /** Phase 11：本章进展——最近 6 条结构化里程碑的安全文本（相邻重复 scene 折叠，不含原始 ID/对白/事实原文）。 */
+  readonly storyContinuity: readonly StoryEventView[];
   /** Phase 7：封闭可见范围的世界地图节点（无隐藏地点泄漏）。 */
   readonly worldMap: WorldMapView;
   /** Phase 7：当前地点场景与场景互动（结局/战斗时 interactions 为空）。 */
@@ -285,6 +290,47 @@ function projectStoryEvent(
   }
 }
 
+/**
+ * Phase 11：本章进展——把 storyMemory.recent 最后 6 条里程碑投影为安全文本。
+ * 相邻重复 scene 折叠为一条；仅具名实体（复用 projectStoryEvent 的具名词汇），
+ * 不含原始 ID、对白、事实原文或 pacing 枚举。旧存档缺省 storyMemory 时回退为空。
+ */
+function projectStoryContinuity(
+  blueprint: ScenarioBlueprint,
+  state: GameState
+): readonly StoryEventView[] {
+  const recent = storyMemoryOf(state).recent.slice(-6);
+  const collapsed: StoryMemoryEntry[] = [];
+  for (const entry of recent) {
+    const prev = collapsed[collapsed.length - 1];
+    if (entry.kind === "scene" && prev !== undefined && prev.kind === "scene") continue;
+    collapsed.push(entry);
+  }
+  const locationName = (id: LocationId): string =>
+    blueprint.locations.find((loc) => loc.id === id)?.name ?? "未知地点";
+  const npcName = (id: string): string =>
+    blueprint.npcs.find((npc) => String(npc.id) === id)?.name ?? "某人";
+  const questName = (id: string): string =>
+    blueprint.quests.find((quest) => String(quest.id) === id)?.name ?? "某事";
+  const itemName = (id: string): string =>
+    blueprint.items.find((item) => String(item.id) === id)?.name ?? "某物";
+  const enemyName = (id: string): string =>
+    blueprint.enemies.find((enemy) => String(enemy.id) === id)?.name ?? "某敌";
+  return collapsed.map((entry): StoryEventView => {
+    switch (entry.kind) {
+      case "location": return { text: `到访${locationName(entry.locationId)}` };
+      case "npc": return { text: `初会${npcName(String(entry.npcId))}` };
+      case "fact": return { text: "查明一条线索" };
+      case "quest":
+        return { text: `任务「${questName(String(entry.questId))}」${entry.status === "completed" ? "完成" : entry.status === "failed" ? "失败" : "解锁"}` };
+      case "item": return { text: `取得${itemName(String(entry.itemId))}` };
+      case "battle":
+        return { text: `${entry.outcome === "victory" ? "战胜" : entry.outcome === "defeat" ? "败于" : "撤离"}${enemyName(String(entry.enemyId))}` };
+      case "scene": return { text: "新的一幕展开" };
+    }
+  });
+}
+
 /** Phase 10：将 GameState.narrative 投影为安全视图（不泄漏内部 detail）。 */
 function projectNarrativeSceneView(
   state: GameState
@@ -402,6 +448,8 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
       .slice(-12)
       .map((event) => projectStoryEvent(event, locationById, npcById, itemById, factById, questById, enemyById, endingById))
       .filter((event): event is StoryEventView => event !== null),
+    // Phase 11：本章进展（最近 6 条里程碑安全文本，相邻重复 scene 折叠）。
+    storyContinuity: projectStoryContinuity(blueprint, state),
     // Phase 7：地图 / 地点场景 / 安全对话 read model。传入未过滤的可用行动，由
     // 投影内部按结局 / active battle 语义把 interactions 置空、对话降级为只读。
     ...projectLocationAdventureView(blueprint, state, availableActions),
