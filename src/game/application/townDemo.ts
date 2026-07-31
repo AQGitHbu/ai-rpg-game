@@ -5,6 +5,9 @@ import { generateTown, TownGenerationError } from "@/game/gameplay/rpg/town";
 // Task 7：小镇 demo 的 application 投影门面。纯同步、无 IO/env/随机：
 // 随机性只在 gameplay 层由 seed 决定，本层仅做输入校验、调用门面与
 // stats 投影。生成失败只回稳定错误码，不外泄 issue 细节。
+//
+// 边界：仅服务 /town-demo 实验页用于手动验证小镇生成，**不属于游戏主循环**。
+// 主循环的小镇生成走 townPlan 管线（generatePendingTownPlan / TownPlanTaskCoordinator）。
 // ---------------------------------------------------------------------------
 
 /** seed 长度上限（trim 后计）。 */

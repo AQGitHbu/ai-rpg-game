@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { fingerprint } from "./_shared/canonicalJson";
+import { createReplayCursor, type RecordSink } from "./_shared/recording";
 import {
   TOWN_PLAN_CONTRACT_VERSION,
   type TownPlanAttempt,
@@ -27,28 +28,14 @@ export type TownPlanRecordedCall = Readonly<{
     | Readonly<{ ok: false; category: TownPlanFailureCategory }>;
 }>;
 
-export type TownPlanRecordSink = {
-  append(call: TownPlanRecordedCall): void | Promise<void>;
-};
+export type TownPlanRecordSink = RecordSink<TownPlanRecordedCall>;
 
 // traceId 是唯一 volatile 字段：回放时 seed/地点/NPC 全部确定性复现。
-const VOLATILE_REQUEST_KEYS = new Set(["traceId"]);
-
-function canonicalJson(value: unknown, parentKey?: string): string {
-  if (parentKey !== undefined && VOLATILE_REQUEST_KEYS.has(parentKey)) {
-    return JSON.stringify("<volatile>");
-  }
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map((entry) => canonicalJson(entry)).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) =>
-    `${JSON.stringify(key)}:${canonicalJson(record[key], key)}`
-  ).join(",")}}`;
-}
+const TOWN_PLAN_VOLATILE_KEYS = new Set(["traceId"]);
 
 /** 请求指纹：canonical JSON + sha256，traceId 置占位。 */
 export function fingerprintTownPlanRequest(request: TownPlanRequest): string {
-  return createHash("sha256").update(canonicalJson(request as unknown)).digest("hex");
+  return fingerprint(request as unknown, TOWN_PLAN_VOLATILE_KEYS);
 }
 
 function recordedResult(attempt: TownPlanAttempt): TownPlanRecordedCall["result"] {
@@ -93,20 +80,18 @@ export class TownPlanFixtureDriftError extends Error {
 export function createReplayTownPlanSource(
   calls: readonly TownPlanRecordedCall[]
 ): TownPlanCandidateSource & Readonly<{ assertComplete(): void }> {
-  let cursor = 0;
+  const cursor = createReplayCursor(calls, () => {
+    throw new TownPlanFixtureDriftError();
+  });
   return {
     async generate(request): Promise<TownPlanAttempt> {
-      const call = calls[cursor];
-      if (
-        call === undefined ||
-        call.sequence !== cursor ||
-        call.fixtureVersion !== TOWN_PLAN_FIXTURE_VERSION ||
-        call.contractVersion !== TOWN_PLAN_CONTRACT_VERSION ||
-        call.requestFingerprint !== fingerprintTownPlanRequest(request)
-      ) {
-        throw new TownPlanFixtureDriftError();
-      }
-      cursor += 1;
+      const requestFingerprint = fingerprintTownPlanRequest(request);
+      const call = cursor.consume(
+        (recorded) =>
+          recorded.fixtureVersion === TOWN_PLAN_FIXTURE_VERSION &&
+          recorded.contractVersion === TOWN_PLAN_CONTRACT_VERSION &&
+          recorded.requestFingerprint === requestFingerprint
+      );
       if (!call.result.ok) {
         return {
           ok: false,
@@ -125,7 +110,7 @@ export function createReplayTownPlanSource(
       };
     },
     assertComplete() {
-      if (cursor !== calls.length) throw new TownPlanFixtureDriftError();
+      cursor.assertComplete();
     }
   };
 }

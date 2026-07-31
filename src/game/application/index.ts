@@ -163,7 +163,7 @@ export {
   type JourneyReport,
 } from "./testing/runtimeNarrativeJourney";
 export { type PlayerIntent } from "@/game/gameplay/rpg/actions";
-// Town demo（Task 7）：小镇 demo 投影门面 + 预留生图 port（生产实现恒 not_requested）。
+// Town demo（Task 7）：小镇 demo 投影门面。仅服务 /town-demo 实验页，非主循环路径。
 export {
   generateTownDemoView,
   type GenerateTownDemoResult,
@@ -178,15 +178,6 @@ export {
   type TownBuilding,
   type TownBuildingType
 } from "@/game/domain";
-export {
-  TOWN_ASSET_CONTRACT_VERSION,
-  createUnavailableTownIllustrationSource,
-  type TownAssetKind,
-  type TownAssetRequest,
-  type TownAssetResult,
-  type TownAssetStatus,
-  type TownIllustrationSource
-} from "./townAssets";
 // Town 主循环（S4）：AI 规划纯 port + 小镇层 read model。
 export {
   TOWN_PLAN_CONTRACT_VERSION,
