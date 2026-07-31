@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { asLocationId, asNpcId, type GameState, type NewGameInput } from "@/game/domain";
-import { classifyFreeDialogue } from "@/game/gameplay/rpg/actions";
+import { asNpcId, type GameState, type NewGameInput } from "@/game/domain";
+import { classifyDialogueTone, classifyFreeDialogue } from "@/game/gameplay/rpg/actions";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
-import { classifyDialogueTone } from "@/game/gameplay/rpg/actions/classifyFreeDialogue";
 import { handleNpcDialogue, type HandleNpcDialogueDependencies } from "./handleNpcDialogue";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 import {
