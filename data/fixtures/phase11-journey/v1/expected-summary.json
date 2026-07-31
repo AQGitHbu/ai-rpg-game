@@ -3,7 +3,7 @@
   "mode": "record",
   "outcome": "success",
   "turns": 17,
-  "aiCalls": 14,
+  "aiCalls": 15,
   "maxTurns": 20,
   "maxAiCalls": 40,
   "reloadConsistent": true,

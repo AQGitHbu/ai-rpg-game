@@ -397,7 +397,11 @@ async function runJourney(
 }
 
 describe("Phase 11 story continuity journey", () => {
-  it("replays the committed Phase 11 golden fixture with zero network calls", async () => {
+  // A live re-record deliberately changes context fingerprints before its
+  // artifact is promoted. Do not let that expected stale golden fixture mask
+  // the live journey plus its own immediate replay; default replay mode still
+  // executes this test and remains the daily zero-network gate.
+  it.runIf(process.env.RUN_REAL_AI_JOURNEY !== "1")("replays the committed Phase 11 golden fixture with zero network calls", async () => {
     const calls = readFileSync(join(goldenRoot, "calls.jsonl"), "utf8")
       .trim()
       .split("\n")

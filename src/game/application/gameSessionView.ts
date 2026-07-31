@@ -316,11 +316,18 @@ function projectStoryContinuity(
     blueprint.items.find((item) => String(item.id) === id)?.name ?? "某物";
   const enemyName = (id: string): string =>
     blueprint.enemies.find((enemy) => String(enemy.id) === id)?.name ?? "某敌";
+  const discoveredFactText = (id: string): string => {
+    const discovered = state.worldFacts.some(
+      (entry) => String(entry.factId) === id && entry.discovered,
+    );
+    const fact = blueprint.world.facts.find((entry) => String(entry.id) === id);
+    return discovered && fact !== undefined ? fact.text : "一条线索";
+  };
   return collapsed.map((entry): StoryEventView => {
     switch (entry.kind) {
       case "location": return { text: `到访${locationName(entry.locationId)}` };
       case "npc": return { text: `初会${npcName(String(entry.npcId))}` };
-      case "fact": return { text: "查明一条线索" };
+      case "fact": return { text: `查明线索：${discoveredFactText(String(entry.factId))}` };
       case "quest":
         return { text: `任务「${questName(String(entry.questId))}」${entry.status === "completed" ? "完成" : entry.status === "failed" ? "失败" : "解锁"}` };
       case "item": return { text: `取得${itemName(String(entry.itemId))}` };

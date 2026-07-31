@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asFactId, asLocationId, asNpcId, type GameState, type NewGameInput, type ScenarioBlueprint } from "@/game/domain";
+import { asFactId, asLocationId, asNpcId, type GameState, type NewGameInput, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
 import { ensureTownRuntime } from "@/game/gameplay/rpg/town";
 import { reconcileStoryMemory, type ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
@@ -301,6 +301,79 @@ describe("runtimeNarrativeContexts Phase 11 连续性", () => {
   const PIPELINE = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
   const FIXED_TIME = "2026-07-31T00:00:00.000Z";
 
+  it("director 保留完整 12 条连续性，而 writer 只接收最近 6 条", () => {
+    const recent: readonly StoryMemoryEntry[] = Array.from({ length: 13 }, (_, turn) => ({
+      kind: "location" as const,
+      locationId: PIPELINE.state.currentLocationId,
+      turn,
+    }));
+    const state = {
+      ...PIPELINE.state,
+      storyMemory: { version: 1 as const, reducedThroughEventCount: 13, recent, npcContacts: [] },
+    } as GameState;
+    const plan: ApprovedDirectorPlan = {
+      sceneGoal: "承接",
+      tensionLevel: 2,
+      focusNpcId: null,
+      relevantFactIds: [],
+      allowedRevealFactIds: [],
+      suggestedActionKeys: ["observe:loc_1", "move:loc_2"],
+      introducedEntities: [],
+      pacing: "develop",
+    };
+    expect(toDirectorContext({ blueprint: PIPELINE.blueprint, state }).recentContinuity).toHaveLength(12);
+    expect(toSceneScriptContext({ blueprint: PIPELINE.blueprint, state, plan }).recentContinuity).toHaveLength(6);
+  });
+
+  it("writer 的 NPC profile 不泄漏其未发现的已知事实", () => {
+    const hiddenFact = PIPELINE.blueprint.world.facts.find((entry) =>
+      !PIPELINE.state.worldFacts.some((stateFact) => stateFact.factId === entry.id && stateFact.discovered),
+    );
+    const npc = PIPELINE.blueprint.npcs.find((entry) =>
+      hiddenFact !== undefined && entry.knownFactIds.includes(hiddenFact.id),
+    );
+    if (hiddenFact === undefined || npc === undefined) throw new Error("fixture must provide an NPC-private hidden fact");
+    const context = toSceneScriptContext({
+      blueprint: PIPELINE.blueprint,
+      state: PIPELINE.state,
+      plan: {
+        sceneGoal: "承接",
+        tensionLevel: 2,
+        focusNpcId: String(npc.id),
+        relevantFactIds: [],
+        allowedRevealFactIds: [],
+        suggestedActionKeys: ["observe:loc_1", "move:loc_2"],
+        introducedEntities: [],
+        pacing: "develop",
+      },
+    });
+    expect(JSON.stringify(context)).not.toContain(hiddenFact.text);
+    expect(JSON.stringify(context.npcProfile)).not.toContain("knownFact");
+  });
+
+  it("已发现线索以文本承接，未发现线索绝不投影", () => {
+    const discovered = PIPELINE.state.worldFacts.find((entry) => entry.discovered);
+    const hidden = PIPELINE.state.worldFacts.find((entry) => !entry.discovered);
+    if (discovered === undefined || hidden === undefined) throw new Error("fixture must contain discovered and hidden facts");
+    const state = {
+      ...PIPELINE.state,
+      storyMemory: {
+        version: 1 as const,
+        reducedThroughEventCount: 2,
+        recent: [
+          { kind: "fact" as const, factId: discovered.factId, turn: 0 },
+          { kind: "fact" as const, factId: hidden.factId, turn: 1 },
+        ],
+        npcContacts: [],
+      },
+    } as GameState;
+    const contextJson = JSON.stringify(toDirectorContext({ blueprint: PIPELINE.blueprint, state }));
+    const discoveredText = PIPELINE.blueprint.world.facts.find((entry) => entry.id === discovered.factId)?.text;
+    const hiddenText = PIPELINE.blueprint.world.facts.find((entry) => entry.id === hidden.factId)?.text;
+    expect(contextJson).toContain(discoveredText);
+    expect(contextJson).not.toContain(hiddenText);
+  });
+
   it("director 得到具名里程碑与 active 任务卡，且不含完整 ledger 或原始 ID", () => {
     const openingLocation = PIPELINE.blueprint.locations[0];
     const stateWithVisit = {
@@ -338,6 +411,8 @@ describe("runtimeNarrativeContexts Phase 11 连续性", () => {
     // ownContinuity 只含该 NPC 自身；npcB 未接触 → null（不泄漏 npcA 的接触）
     expect(context.ownContinuity).toBeNull();
     expect(JSON.stringify(context)).not.toContain(npcA.name);
+    expect("recentEvents" in context).toBe(false);
+    expect(JSON.stringify(context)).not.toContain("npc_met");
     // allowedFactIds 为空 → 不含任何事实原文
     for (const fact of PIPELINE.blueprint.world.facts) {
       expect(JSON.stringify(context)).not.toContain(fact.text);

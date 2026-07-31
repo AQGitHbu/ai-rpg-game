@@ -163,11 +163,18 @@ export async function orchestrateNarrativeScene(
     narration: script.narration,
     usedFactIds: script.usedFactIds as unknown as NarrativeSceneState["usedFactIds"],
     npcLine,
-    choices: script.choices.map((choice, index) => ({
-      choiceToken: `${traceId}-choice:${index}`,
-      label: choice.label,
-      actionKey: choice.actionKey,
-    })) as unknown as NarrativeSceneState["choices"],
+    choices: script.choices.map((choice, index) => {
+      // AI may phrase a choice attractively, but only the rule candidate knows
+      // what its actionKey actually does. Persisting that candidate label keeps
+      // a move from being presented as an observe (and vice versa).
+      const candidate = candidates.find((entry) => entry.actionKey === choice.actionKey);
+      if (candidate === undefined) throw new Error("approved action candidate disappeared");
+      return {
+        choiceToken: `${traceId}-choice:${index}`,
+        label: candidate.publicLabel,
+        actionKey: choice.actionKey,
+      };
+    }) as unknown as NarrativeSceneState["choices"],
     source: "generated",
   };
 

@@ -10,7 +10,8 @@ import type { ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
 import { projectTownLayerView } from "./townRuntimeView";
 
 const LAST_EVENT_COUNT = 5;
-const RECENT_CONTINUITY_LIMIT = 6;
+const DIRECTOR_CONTINUITY_LIMIT = 12;
+const WRITER_CONTINUITY_LIMIT = 6;
 
 // ---------------------------------------------------------------------------
 // Phase 11 连续性投影：把结构化里程碑映射为安全文本（仅具名实体，不含原始 ID/对白/事实原文）。
@@ -39,11 +40,15 @@ function enemyNameOf(blueprint: ScenarioBlueprint, enemyId: string): string {
 }
 
 /** 单条里程碑 → 安全中文短句（不泄漏原始 ID、对白、事实原文、pacing 枚举）。 */
-function continuityMilestoneText(entry: StoryMemoryEntry, blueprint: ScenarioBlueprint): string {
+function continuityMilestoneText(
+  entry: StoryMemoryEntry,
+  blueprint: ScenarioBlueprint,
+  state: GameState,
+): string {
   switch (entry.kind) {
     case "location": return `到访${locationNameOf(blueprint, entry.locationId)}`;
     case "npc": return `初会${npcNameOf(blueprint, entry.npcId)}`;
-    case "fact": return "查明一条线索";
+    case "fact": return `线索：${discoveredFactText(blueprint, state, String(entry.factId))}`;
     case "quest":
       return `任务「${questNameOf(blueprint, entry.questId)}」${entry.status === "completed" ? "完成" : entry.status === "failed" ? "失败" : "解锁"}`;
     case "item": return `取得${itemNameOf(blueprint, entry.itemId)}`;
@@ -54,10 +59,23 @@ function continuityMilestoneText(entry: StoryMemoryEntry, blueprint: ScenarioBlu
 }
 
 /** 最近 6 条里程碑的安全文本（director/writer 共用）。 */
-function projectRecentContinuity(state: GameState, blueprint: ScenarioBlueprint): readonly ContinuityMilestone[] {
-  return storyMemoryOf(state).recent.slice(-RECENT_CONTINUITY_LIMIT).map((entry) => ({
-    text: continuityMilestoneText(entry, blueprint)
+function projectRecentContinuity(
+  state: GameState,
+  blueprint: ScenarioBlueprint,
+  limit: number,
+): readonly ContinuityMilestone[] {
+  return storyMemoryOf(state).recent.slice(-limit).map((entry) => ({
+    text: continuityMilestoneText(entry, blueprint, state)
   }));
+}
+
+/** 已发现事实才能以文本进入 AI/read-model；损坏 memory 绝不能借此泄漏未发现事实。 */
+function discoveredFactText(blueprint: ScenarioBlueprint, state: GameState, factId: string): string {
+  const discovered = state.worldFacts.some(
+    (entry) => String(entry.factId) === factId && entry.discovered,
+  );
+  const fact = blueprint.world.facts.find((entry) => String(entry.id) === factId);
+  return discovered && fact !== undefined ? fact.text : "一条线索";
 }
 
 /** 当前 active 主线/支线任务卡（仅 name + description，不含目标细节或状态机）。 */
@@ -137,7 +155,7 @@ export type DirectorContext = {
   readonly progression: ContentProgression;
   /** Phase 11：当前 active 任务卡（name/description，不含状态机）。 */
   readonly activeQuestCards: readonly { readonly questId: string; readonly name: string; readonly description: string }[];
-  /** Phase 11：最近 6 条里程碑安全文本（不含原始 ID/对白/事实原文）。 */
+  /** Phase 11：最近 12 条里程碑安全文本（不含原始 ID/对白）。 */
   readonly recentContinuity: readonly ContinuityMilestone[];
   /** 当前地点为就绪 town 时的空间语义；小场景地点缺省。 */
   readonly townSpatial?: TownSpatialContext;
@@ -182,7 +200,7 @@ export function toDirectorContext(input: DirectorContextInput): DirectorContext 
     actionCandidates,
     progression: deriveContentProgression({ blueprint, state }),
     activeQuestCards: projectActiveQuestCards(blueprint, state),
-    recentContinuity: projectRecentContinuity(state, blueprint),
+    recentContinuity: projectRecentContinuity(state, blueprint, DIRECTOR_CONTINUITY_LIMIT),
     ...(townSpatial !== undefined ? { townSpatial } : {}),
   };
 
@@ -231,10 +249,8 @@ export function toSceneScriptContext(input: SceneScriptContextInput): SceneScrip
         id: String(npcDef.id),
         name: npcDef.name,
         role: npcDef.role,
-        knownFactTexts: npcDef.knownFactIds.map((fid) => {
-          const f = blueprint.world.facts.find((wf) => wf.id === fid);
-          return f?.text ?? "???";
-        }),
+        // Facts are intentionally absent here. The writer may receive text only
+        // through plan-approved allowedFactCards below.
       };
     }
   }
@@ -263,7 +279,7 @@ export function toSceneScriptContext(input: SceneScriptContextInput): SceneScrip
     narrative: { currentScene: state.narrative.currentScene },
     actionCandidates,
     progression: deriveContentProgression({ blueprint, state }),
-    recentContinuity: projectRecentContinuity(state, blueprint),
+    recentContinuity: projectRecentContinuity(state, blueprint, WRITER_CONTINUITY_LIMIT),
     ...(townSpatial !== undefined ? { townSpatial } : {}),
   };
 
@@ -277,7 +293,6 @@ export function toSceneScriptContext(input: SceneScriptContextInput): SceneScrip
 export type NpcLineContext = {
   readonly npcDefinition: Record<string, unknown>;
   readonly factCards: readonly Record<string, unknown>[];
-  readonly recentEvents: readonly string[];
   /** Phase 11：该 NPC 自身连续性（最后接触回合与地点名），不含对白或关系数值。 */
   readonly ownContinuity: { readonly lastContactTurn: number; readonly lastLocationName: string } | null;
   readonly speechAct: string;
@@ -305,11 +320,6 @@ export function toNpcLineContext(input: NpcLineContextInput): NpcLineContext {
       return { id: String(def.id), text: def.text, source: def.source };
     });
 
-  const recentEvents = state.eventLedger
-    .filter((evt) => evt.type !== "narrative_scene_presented")
-    .slice(-LAST_EVENT_COUNT)
-    .map((evt) => evt.type);
-
   const context: NpcLineContext = {
     npcDefinition: npcDef !== undefined
       ? {
@@ -321,7 +331,6 @@ export function toNpcLineContext(input: NpcLineContextInput): NpcLineContext {
         }
       : { id: npcId, name: "???", role: "unknown" },
     factCards,
-    recentEvents,
     ownContinuity: projectOwnContinuity(state, blueprint, npcId),
     speechAct: input.speechAct,
     mayLie: input.mayLie,

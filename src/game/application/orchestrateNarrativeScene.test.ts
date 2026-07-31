@@ -236,3 +236,64 @@ describe("orchestrateNarrativeScene：Phase 11 pacing continuity 告警去重", 
     expect(continuityWarns).toHaveLength(1);
   });
 });
+
+describe("orchestrateNarrativeScene：规则行动文案", () => {
+  const blueprint = buildTestBlueprint();
+  const state = buildTestGameState();
+
+  it("忽略会误导玩家的模型 choice 文案，保存与 actionKey 匹配的规则标签", async () => {
+    const unmetState = {
+      ...state,
+      npcs: [{ npcId: asNpcId("npc_1"), locationId: asLocationId("loc_a"), met: false }],
+    } as GameState;
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-authoritative-choice-copy",
+      blueprint,
+      state: unmetState,
+      directorSource: {
+        async generate() {
+          return {
+            ok: true,
+            provenance: "generated",
+            plan: {
+              sceneGoal: "承接",
+              tensionLevel: 2,
+              focusNpcId: null,
+              relevantFactIds: [],
+              allowedRevealFactIds: [],
+              suggestedActionKeys: ["talk:npc_1", "observe:loc_a"],
+              introducedEntities: [],
+              pacing: "setup",
+            },
+            diagnostics: { traceId: "director", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" },
+          } as never;
+        },
+      },
+      sceneScriptSource: {
+        async generate() {
+          return {
+            ok: true,
+            provenance: "generated",
+            script: {
+              narration: "局势未明。",
+              usedFactIds: [],
+              npcInstruction: null,
+              choices: [
+                { actionKey: "talk:npc_1", label: "离开此地", strategy: "立刻远行" },
+                { actionKey: "observe:loc_a", label: "攻击守卫", strategy: "发动战斗" },
+              ],
+            },
+            diagnostics: { traceId: "writer", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" },
+          } as never;
+        },
+      },
+      npcLineSource: { async generate() { throw new Error("not reached"); } },
+    });
+
+    expect(result.provenance).toBe("generated");
+    expect(result.scene.choices).toEqual([
+      expect.objectContaining({ actionKey: "talk:npc_1", label: "与NPC1交谈" }),
+      expect.objectContaining({ actionKey: "observe:loc_a", label: "观察地点A" }),
+    ]);
+  });
+});

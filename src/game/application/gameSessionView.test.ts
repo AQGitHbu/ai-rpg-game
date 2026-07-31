@@ -400,6 +400,28 @@ describe("projectGameSessionView：Phase 11 本章进展 (storyContinuity)", () 
     expect(JSON.stringify(view.storyContinuity)).not.toContain("s1");
   });
 
+  it("已发现事实显示安全文本，memory 中的未发现事实仍保持泛化", () => {
+    const discovered = PIPELINE.state.worldFacts.find((entry) => entry.discovered);
+    const hidden = PIPELINE.state.worldFacts.find((entry) => !entry.discovered);
+    if (discovered === undefined || hidden === undefined) throw new Error("fixture must contain both fact kinds");
+    const state = {
+      ...PIPELINE.state,
+      storyMemory: {
+        ...createEmptyStoryMemory(),
+        reducedThroughEventCount: 2,
+        recent: [
+          { kind: "fact" as const, factId: discovered.factId, turn: 0 },
+          { kind: "fact" as const, factId: hidden.factId, turn: 1 },
+        ],
+      },
+    } as GameState;
+    const json = JSON.stringify(project(state, 0).storyContinuity);
+    const discoveredText = PIPELINE.blueprint.world.facts.find((entry) => entry.id === discovered.factId)?.text;
+    const hiddenText = PIPELINE.blueprint.world.facts.find((entry) => entry.id === hidden.factId)?.text;
+    expect(json).toContain(discoveredText);
+    expect(json).not.toContain(hiddenText);
+  });
+
   it("缺省 storyMemory 的旧存档回退为空 storyContinuity（不抛错）", () => {
     const { storyMemory: _omit, ...legacy } = PIPELINE.state;
     void _omit;
