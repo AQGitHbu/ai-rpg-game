@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { fingerprint } from "./_shared/canonicalJson";
+import { createReplayCursor, type RecordSink } from "./_shared/recording";
 import type {
   DirectorAttempt,
   DirectorRequest,
@@ -30,9 +31,7 @@ export type RuntimeNarrativeRecordedCall = Readonly<{
   result: RecordedSuccess | Readonly<{ ok: false; category: NarrativeFailureCategory }>;
 }>;
 
-export type RuntimeNarrativeRecordSink = {
-  append(call: RuntimeNarrativeRecordedCall): void | Promise<void>;
-};
+export type RuntimeNarrativeRecordSink = RecordSink<RuntimeNarrativeRecordedCall>;
 
 type RuntimeNarrativeSources = Readonly<{
   directorSource: DirectorSource;
@@ -40,22 +39,11 @@ type RuntimeNarrativeSources = Readonly<{
   npcLineSource: NpcLineSource;
 }>;
 
-const VOLATILE_CONTEXT_KEYS = new Set(["sceneId", "choiceToken"]);
-
-function canonicalJson(value: unknown, parentKey?: string): string {
-  if (parentKey !== undefined && VOLATILE_CONTEXT_KEYS.has(parentKey)) {
-    return JSON.stringify("<volatile>");
-  }
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map((entry) => canonicalJson(entry)).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) =>
-    `${JSON.stringify(key)}:${canonicalJson(record[key], key)}`
-  ).join(",")}}`;
-}
+// 运行时易变字段：回放时 sceneId / choiceToken 不参与请求指纹。
+const NARRATIVE_VOLATILE_KEYS = new Set(["sceneId", "choiceToken"]);
 
 export function fingerprintNarrativeContext(context: Record<string, unknown>): string {
-  return createHash("sha256").update(canonicalJson(context)).digest("hex");
+  return fingerprint(context, NARRATIVE_VOLATILE_KEYS);
 }
 
 function recordedResult(
@@ -123,25 +111,22 @@ export class RuntimeNarrativeFixtureDriftError extends Error {
 export function createReplayRuntimeNarrativeSources(
   calls: readonly RuntimeNarrativeRecordedCall[],
 ): RuntimeNarrativeSources & Readonly<{ assertComplete(): void }> {
-  let cursor = 0;
+  const cursor = createReplayCursor(calls, () => {
+    throw new RuntimeNarrativeFixtureDriftError();
+  });
 
   function consume(
     role: RuntimeNarrativeRole,
     request: DirectorRequest | SceneScriptRequest | NpcLineRequest,
   ): RuntimeNarrativeRecordedCall {
-    const call = calls[cursor];
-    if (
-      call === undefined ||
-      call.sequence !== cursor ||
-      call.fixtureVersion !== RUNTIME_NARRATIVE_FIXTURE_VERSION ||
-      call.contractVersion !== NARRATIVE_CONTRACT_VERSION ||
-      call.role !== role ||
-      call.requestFingerprint !== fingerprintNarrativeContext(request.context)
-    ) {
-      throw new RuntimeNarrativeFixtureDriftError();
-    }
-    cursor += 1;
-    return call;
+    const requestFingerprint = fingerprintNarrativeContext(request.context);
+    return cursor.consume(
+      (call) =>
+        call.fixtureVersion === RUNTIME_NARRATIVE_FIXTURE_VERSION &&
+        call.contractVersion === NARRATIVE_CONTRACT_VERSION &&
+        call.role === role &&
+        call.requestFingerprint === requestFingerprint,
+    );
   }
 
   function diagnostics(traceId: string, ok: boolean, category?: NarrativeFailureCategory) {
@@ -179,7 +164,7 @@ export function createReplayRuntimeNarrativeSources(
       },
     },
     assertComplete() {
-      if (cursor !== calls.length) throw new RuntimeNarrativeFixtureDriftError();
+      cursor.assertComplete();
     },
   };
 }
