@@ -31,3 +31,14 @@ export {
   type NarrativeApprovalCategory,
   type NarrativeApprovalResult,
 } from "./types";
+
+export {
+  reconcileStoryMemory,
+  type ReconcileStoryMemoryInput,
+} from "./reconcileStoryMemory";
+
+export {
+  deriveContentProgression,
+  type ContentProgression,
+  type DeriveContentProgressionInput,
+} from "./contentProgression";
