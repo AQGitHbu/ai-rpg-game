@@ -81,6 +81,7 @@ describe("PlayerNpcChatState 类型", () => {
 
 - [ ] **Step 2:** `npx vitest run src/game/domain/narrative.test.ts` → FAIL（类型不存在）
 - [ ] **Step 3: 实现**：`narrative.ts` 新增 `PlayerNpcChatState` 类型；`NarrativeGenerationState` 的 `pending` 变体增加 `readonly playerNpcChat?: PlayerNpcChatState`。
+  - **自动清除**：`playerNpcChat` 挂在 `pending` 变体上，场景 ready 时 `generation` 被设为 `{ status: "idle" }`（见 [generatePendingNarrativeScene.ts:87-95](file:///f:/AI2/ai-rpg-game/src/game/application/generatePendingNarrativeScene.ts#L87-L95)），`playerNpcChat` 随类型收窄自动丢弃，**无需额外清除代码**。原 Task 7 已合并为此备注。
 - [ ] **Step 4:** `npx vitest run src/game/domain/narrative.test.ts` → PASS
 - [ ] **Step 5:** `git add -A && git commit -m "feat(domain): 新增 PlayerNpcChatState 与 NarrativeGenerationState pending 扩展"`
 
@@ -413,6 +414,7 @@ export function composeNpcCasualReply(
 - 行为（spec §4.1 表格）：
   - `ask_main_quest` 且 `canQueueRuntimeNarrativeScene` → 排队 pending
   - `greet` 且 `npcState.met === false` 且 `canQueueRuntimeNarrativeScene` → 排队 pending
+    - 注：`met === false` 检查为**防御性**。正常路径下 `greet` 只在未结识时由 `projectDialogueChoices` 投影（[dialogueChoices.ts:78](file:///f:/AI2/ai-rpg-game/src/game/gameplay/rpg/actions/dialogueChoices.ts#L78)），HTTP 客户端伪造的 choiceId 也会被 [validateIntent.ts:191](file:///f:/AI2/ai-rpg-game/src/game/gameplay/rpg/actions/validateIntent.ts#L191) 复核拒绝。此守卫防止上游契约变化时误触发场景。
   - 已结识 NPC（`projectDialogueChoices` 投影 `[]`，不提交 intent）→ 不排队
 - 守卫（spec §4.4）：
   - `narrative.mode === "offline"` → 不排队 pending
@@ -440,133 +442,274 @@ describe("dialogue_choice 触发 pending", () => {
 ```
 
 - [ ] **Step 2:** `npx vitest run src/game/application/performAction.test.ts` → FAIL（pending 未实现）
-- [ ] **Step 3: 实现**：在 `performAction.ts` 的 `resolveAction` 成功后（`dialogue_choice` 分支走 default 路线的 case），在 `resolveEnding` 之后、`reconcileStoryMemory` 之前，增加与 `narrative_choice` 分支相同的 pending 排队逻辑（条件：`command.intent.type === "dialogue_choice"`、`narrative.mode !== "offline"`、`deps.runtimeNarrativeSources !== undefined`、`canQueueRuntimeNarrativeScene(blueprint, nextState)`）。
+- [ ] **Step 3: 实现**：**扩展现有 pending 条件块**（[performAction.ts:380-390](file:///f:/AI2/ai-rpg-game/src/game/application/performAction.ts#L380-L390)），在 `command.intent.type === "narrative_choice"` 同一条件中增加 `"dialogue_choice"` 分支，**不要新增独立 if 块**：
+
+```ts
+// performAction.ts line 380 附近，扩展条件：
+if (
+  (command.intent.type === "narrative_choice" || command.intent.type === "dialogue_choice") &&
+  record.state.narrative.mode !== "offline" &&
+  deps.runtimeNarrativeSources !== undefined &&
+  canQueueRuntimeNarrativeScene(record.blueprint, nextState)
+) {
+  // 对 dialogue_choice 的 greet，需额外防御性检查 npcState.met === false
+  // （ask_main_quest 与 narrative_choice 不需要此检查）
+  const isGreetFirstMeet =
+    command.intent.type === "dialogue_choice" &&
+    parseDialogueChoiceKind(command.intent.npcId, command.intent.choiceId) === "greet";
+  if (isGreetFirstMeet) {
+    // 使用 record.state（resolveAction 前的原始状态）做防御性检查。
+    // resolveAction 对所有 dialogue_choice 都会设置 met: true，所以 nextState 始终为 true。
+    const npcState = record.state.npcs.find((n) => n.npcId === command.intent.npcId);
+    if (npcState === undefined || npcState.met) {
+      // 已结识 greet 不排队 pending（防御性，正常路径不会到这里）
+    } else {
+      nextState = {
+        ...nextState,
+        narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() }, mode: "ai" },
+      };
+    }
+  } else {
+    nextState = {
+      ...nextState,
+      narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() }, mode: "ai" },
+    };
+  }
+}
+```
+
+  - `parseDialogueChoiceKind` 从 `@/game/gameplay/rpg/actions/dialogueChoices` 导入
+  - `dialogue_choice` 的 `ask_main_quest` 直接走 else 分支排队 pending
 - [ ] **Step 4:** `npx vitest run src/game/application/performAction.test.ts` → PASS
 - [ ] **Step 5:** `git commit -am "feat(application): dialogue_choice 支持排队 pending narrative scene"`
 
 ---
 
-### Task 5: application — 新增 `POST /api/game/npc/dialogue` 端点
+### Task 5a: application — `handleNpcDialogue` use case
 
 **Files:**
-- Create: `src/app/api/game/npc/dialogue/route.ts`
-- Create: `src/app/api/game/npc/dialogue/dialogueHandler.ts`（HTTP adapter）
-- Modify: `src/game/application/server/compositionRoot.ts`（注入新端口）
-- Modify: `src/game/application/index.ts`（导出新类型）
-- Test: `src/app/api/game/npc/dialogue/dialogueHandler.test.ts`
+- Create: `src/game/application/handleNpcDialogue.ts`（业务编排：classify → pending/chat）
+- Modify: `src/game/application/index.ts`（导出新类型与函数）
+- Test: `src/game/application/handleNpcDialogue.test.ts`
+
+**Architecture 纪律**：现有 HTTP adapter（[actionHandler.ts](file:///f:/AI2/ai-rpg-game/src/app/api/game/actions/actionHandler.ts)）是薄壳，只做参数解析→调 use case→响应映射，**零业务逻辑**。本任务把 classify/pending/CAS 编排放进 application use case，HTTP adapter 保持薄壳。
 
 **Interfaces:**
-- 请求体：`{ npcId: string; text: string; revision: number }`
-- 响应（叙事触发）：`{ kind: "narrative_trigger"; view: GameSessionView }`
-- 响应（闲聊）：`{ kind: "chat"; npcSpeech: string; view: GameSessionView }`
+- 请求体（use case command）：`{ npcId: NpcId; text: string; expectedRevision: number }`
+- 响应：
+  - `{ kind: "chat"; npcSpeech: string; view: GameSessionView }`（零 CAS 写入）
+  - `{ kind: "narrative_trigger"; view: GameSessionView }`（pending 已写入）
+  - 失败：复用现有 `{ ok: false; code: "STALE_GAME_REVISION" | "ACTION_REJECTED" | ... }` 形态
 - 服务端处理流程（spec §5.2/5.3）：
-  1. 加载当前游戏，检查 revision
-  2. 检查无 pending scene（`canQueueRuntimeNarrativeScene`）
-  3. `classifyFreeDialogue` → `"chat"` 或 `"narrative"`
-  4. `"chat"` → `composeNpcCasualReply` → 返回闲聊回应（零 CAS 写入）
-  5. `"narrative"` → 设置 pending + `playerNpcChat` → CAS 写入 → 返回叙事触发
+  1. `repository.getCurrentGame()` 加载存档，检查 revision（与 `performAction` 一致）
+  2. 检查 `canQueueRuntimeNarrativeScene`：返回 false 时闲聊路径照常、叙事路径降级为闲聊（spec §4.4 合法行动<2 降级）
+  3. `classifyFreeDialogue(blueprint, state, npcId, text)` → `"chat" | "narrative"`
+  4. `"chat"` → `composeNpcCasualReply` → 投影 view → 返回 `{ kind: "chat", npcSpeech, view }`（**不调 `applyResolvedAction`**，零 CAS 写入）
+  5. `"narrative"` → 构造 `nextState`：`narrative.generation = { status: "pending", requestedAt: now, playerNpcChat: {...} }` → `repository.applyResolvedAction` CAS 写入 → 投影 view → 返回 `{ kind: "narrative_trigger", view }`
+  6. `offline` 模式：叙事路径降级为闲聊（spec §4.4/§8.6），不调 AI
+  7. 已有 pending：返回 `ACTION_REJECTED`（复用现有守卫语义）
 
-- [ ] **Step 1: 写失败测试**
+- [ ] **Step 1: 写失败测试**（`handleNpcDialogue.test.ts`，注入内存 repository 与依赖）
 
 ```ts
-import { describe, expect, it, vi } from "vitest";
-import { handleNpcDialogueRequest } from "./dialogueHandler";
-
-describe("POST /api/game/npc/dialogue", () => {
-  it("闲聊输入 → 返回 chat 响应（零 CAS 写入）", async () => { /* ... */ });
-  it("叙事触发输入 → 返回 narrative_trigger 响应（pending）", async () => { /* ... */ });
-  it("已有 pending → 拒绝", async () => { /* ... */ });
-  it("stale revision → 409", async () => { /* ... */ });
-  it("非法字段 → 400", async () => { /* ... */ });
+describe("handleNpcDialogue", () => {
+  it("闲聊输入 → 返回 chat，零 CAS 写入", async () => {
+    // 构造：NPC 在当前地点、met=true、active 主线
+    // 断言：result.kind === "chat"；mockRepository.applyResolvedAction 未被调用
+  });
+  it("叙事触发输入 → 返回 narrative_trigger，CAS 写入 pending + playerNpcChat", async () => {
+    // 断言：result.kind === "narrative_trigger"；applyResolvedAction 被调用一次；
+    //       写入的 nextState.narrative.generation.status === "pending"；
+    //       写入的 nextState.narrative.generation.playerNpcChat.playerText === 输入文本
+  });
+  it("已有 pending → ACTION_REJECTED", async () => { /* ... */ });
+  it("stale revision → STALE_GAME_REVISION", async () => { /* ... */ });
+  it("offline 模式叙事输入降级为 chat", async () => { /* ... */ });
+  it("canQueueRuntimeNarrativeScene=false 时叙事输入降级为 chat", async () => { /* ... */ });
 });
 ```
 
-- [ ] **Step 2:** `npx vitest run src/app/api/game/npc/dialogue/dialogueHandler.test.ts` → FAIL
-- [ ] **Step 3: 实现**：`dialogueHandler.ts` 实现 `handleNpcDialogueRequest`，编排 `repository.getCurrentGame` → `classifyFreeDialogue` → `composeNpcCasualReply` / 设置 pending → `repository.applyResolvedAction` → 投影 view。`route.ts` 调用 handler。
-- [ ] **Step 4:** `npx vitest run src/app/api/game/npc/dialogue/` → PASS
-- [ ] **Step 5:** `git commit -am "feat(api): POST /api/game/npc/dialogue 端点"`
+- [ ] **Step 2:** `npx vitest run src/game/application/handleNpcDialogue.test.ts` → FAIL（模块不存在）
+- [ ] **Step 3: 实现** `handleNpcDialogue.ts`：导出 `HandleNpcDialogueCommand`、`HandleNpcDialogueDependencies`（`{ repository, now, runtimeNarrativeSources? }`，与 `performAction` 依赖形态一致）、`HandleNpcDialogueResult`。函数体编排上述流程；view 投影复用 `projectCurrentView`（与 `performAction` 同一投影函数）。`playerNpcChat` 的 `npcName`/`npcRole` 从 `blueprint.npcs` 查表填充。
+- [ ] **Step 4:** `npx vitest run src/game/application/handleNpcDialogue.test.ts` → PASS
+- [ ] **Step 5:** `git add -A && git commit -m "feat(application): handleNpcDialogue use case"`
 
 ---
 
-### Task 6: application — `DirectorContext` 注入 `playerNpcChat`
+### Task 5b: application/server — `ServerGameEntryPoints` 装配 + HTTP adapter
 
 **Files:**
-- Modify: `src/game/application/runtimeNarrativeContexts.ts`（`DirectorContext` 增 `playerNpcChat` 可选字段；`toDirectorContext` 参数扩展接受 `playerNpcChat`）
+- Modify: `src/game/application/server/compositionRoot.ts`（`ServerGameEntryPoints` 接口新增 `handleNpcDialogue`；`createServerGameEntryPoints` 装配 `handleNpcDialogueDependencies`）
+- Create: `src/app/api/game/npc/dialogue/dialogueHandler.ts`（薄壳 HTTP adapter，与 `actionHandler.ts` 同构）
+- Create: `src/app/api/game/npc/dialogue/route.ts`（注入生产单例，调 handler）
+- Test: `src/app/api/game/npc/dialogue/dialogueHandler.test.ts`
+
+**Interfaces:**
+- HTTP 请求体：`{ npcId: string; text: string; revision: number }`（白名单校验，拒绝未知字段，与 `actionHandler.ts` 同纪律）
+- HTTP 响应（与 use case 结果对应）：
+  - 200 `{ kind: "chat", npcSpeech, view }`
+  - 200 `{ kind: "narrative_trigger", view }`
+  - 200 `{ code: "ACTION_REJECTED", view, feedback }`
+  - 409 `{ code: "STALE_GAME_REVISION", view }`
+  - 404 `{ code: "NO_ACTIVE_GAME" }`
+  - 400 `{ code: "MALFORMED_JSON" | "UNEXPECTED_FIELDS" | "INVALID_INTENT", detail? }`
+  - 500 `{ code: "INTERNAL_ERROR" }`
+
+- [ ] **Step 1: 写失败测试**（`dialogueHandler.test.ts`，参考 `actionHandler.test.ts` 结构：mock `entryPoints.handleNpcDialogue`，断言状态码与 body 形态）
+- [ ] **Step 2:** `npx vitest run src/app/api/game/npc/dialogue/dialogueHandler.test.ts` → FAIL
+- [ ] **Step 3: 实现**：
+  - `compositionRoot.ts`：`ServerGameEntryPoints` 接口加 `handleNpcDialogue(command: HandleNpcDialogueCommand): Promise<HandleNpcDialogueResult>`；在 `createServerGameEntryPoints` 装配 `handleNpcDialogueDeps = { repository, now, runtimeNarrativeSources }`（复用现有 `performDeps` 的同一 `repository`/`now`/`runtimeNarrativeSources` 引用），返回 `handleNpcDialogue: (command) => handleNpcDialogue(command, handleNpcDialogueDeps)`。
+  - `dialogueHandler.ts`：实现 `handleNpcDialogueRequest(request, entryPoints)`，只做 JSON 解析→白名单校验→调 `entryPoints.handleNpcDialogue`→状态码/body 映射，**零业务逻辑**。
+  - `route.ts`：`POST` handler 调 `getServerGameEntryPoints()` → `handleNpcDialogueRequest`。
+- [ ] **Step 4:** `npx vitest run src/app/api/game/npc/dialogue/` → PASS
+- [ ] **Step 5:** `git commit -am "feat(api): POST /api/game/npc/dialogue 端点（薄壳 adapter + compositionRoot 装配）"`
+
+---
+
+### Task 6: application — `DirectorContext` 从 state 读取 `playerNpcChat`
+
+**设计决策**：`playerNpcChat` 已挂在 `state.narrative.generation.playerNpcChat`（Task 1 设计，仅 pending 变体存在）。`toDirectorContext` 已接收 `state` 参数，**直接从 state 读取即可，不扩展 `toDirectorContext` 入参，不修改任何调用点**（`orchestrateNarrativeScene`、`generatePendingNarrativeScene`、既有测试均无需改动签名）。
+
+**Files:**
+- Modify: `src/game/application/runtimeNarrativeContexts.ts`（`DirectorContext` 增 `playerNpcChat` 可选字段；`toDirectorContext` 内部从 `state.narrative.generation` 读取）
 - Test: `src/game/application/runtimeNarrativeContexts.test.ts`（追加）
-- Modify: `src/game/application/orchestrateNarrativeScene.ts`（传递 `playerNpcChat`）
-- Modify: `src/game/application/generatePendingNarrativeScene.ts`（读取 `playerNpcChat` 传入编排器）
 
 **Interfaces:**
 - `DirectorContext` 新增 `readonly playerNpcChat?: PlayerNpcChatState`
-- `toDirectorContext` 入参扩展 `{ readonly blueprint: ScenarioBlueprint; readonly state: GameState; readonly playerNpcChat?: PlayerNpcChatState }`
-- `orchestrateNarrativeScene` 入参扩展 `readonly playerNpcChat?: PlayerNpcChatState`
-- `generatePendingNarrativeScene` 从 `record.state.narrative.generation` 读取 `playerNpcChat`
+- `toDirectorContext` 签名不变：仍为 `(input: { blueprint, state }) => DirectorContext`；内部读取逻辑：
+
+```ts
+// toDirectorContext 内部：
+const playerNpcChat =
+  state.narrative.generation.status === "pending"
+    ? state.narrative.generation.playerNpcChat
+    : undefined;
+```
+
+- `orchestrateNarrativeScene`、`generatePendingNarrativeScene` **无需改动**：前者已把 `state` 透传给 `toDirectorContext`（[generatePendingNarrativeScene.ts:65-71](file:///f:/AI2/ai-rpg-game/src/game/application/generatePendingNarrativeScene.ts#L65-L71) 传入 `record.state`），后者场景 ready 时 `generation` 置 idle 自动丢弃 `playerNpcChat`（见 Task 1 自动清除备注）。
 
 - [ ] **Step 1: 写失败测试**
 
 ```ts
-it("toDirectorContext 注入 playerNpcChat", () => {
-  const chat = { npcId: "npc_1" as never, playerText: "我想去废弃矿坑", npcName: "铁匠", npcRole: "铁匠铺老板" };
-  const context = toDirectorContext({ blueprint, state, playerNpcChat: chat });
-  expect(context.playerNpcChat).toEqual(chat);
+it("toDirectorContext 从 pending state 读取 playerNpcChat", () => {
+  const state = buildStateWithPending({
+    playerNpcChat: { npcId: "npc_1" as never, playerText: "我想去废弃矿坑", npcName: "铁匠", npcRole: "铁匠铺老板" }
+  });
+  const context = toDirectorContext({ blueprint, state });
+  expect(context.playerNpcChat?.playerText).toBe("我想去废弃矿坑");
 });
-it("toDirectorContext 无 playerNpcChat 时缺省", () => {
+it("toDirectorContext 在 idle state 下 playerNpcChat 为 undefined", () => {
+  const state = buildStateWithIdle();
   const context = toDirectorContext({ blueprint, state });
   expect(context.playerNpcChat).toBeUndefined();
 });
 ```
 
-- [ ] **Step 2:** `npx vitest run src/game/application/runtimeNarrativeContexts.test.ts` → FAIL
-- [ ] **Step 3: 实现**：`DirectorContext` 类型追加字段；`toDirectorContext` 签名扩展；`orchestrateNarrativeScene` 转发 `playerNpcChat` 到 `toDirectorContext`；`generatePendingNarrativeScene` 从 `record.state.narrative.generation` 读取并在调用 `orchestrateNarrativeScene` 时传入。
+- [ ] **Step 2:** `npx vitest run src/game/application/runtimeNarrativeContexts.test.ts` → FAIL（字段不存在）
+- [ ] **Step 3: 实现**：`DirectorContext` 类型追加 `readonly playerNpcChat?: PlayerNpcChatState`；`toDirectorContext` 内部按上述逻辑从 `state.narrative.generation` 读取。**不改函数签名，不改其他调用点。**
 - [ ] **Step 4:** `npx vitest run src/game/application/runtimeNarrativeContexts.test.ts` → PASS
-- [ ] **Step 5:** `git commit -am "feat(application): DirectorContext 注入 playerNpcChat"`
+- [ ] **Step 5:** `git commit -am "feat(application): DirectorContext 从 state 读取 playerNpcChat"`
 
 ---
 
-### Task 7: application — `generatePendingNarrativeScene` 清除 `playerNpcChat`
+### Task 7: 回归测试 — 场景 ready 后 `playerNpcChat` 不残留
+
+**说明**：`playerNpcChat` 的清除已由 Task 1 的类型设计自动保证（场景 ready 时 `generation` 变为 `{ status: "idle" }`，pending 变体的 `playerNpcChat` 随类型收窄丢弃，[generatePendingNarrativeScene.ts:87-95](file:///f:/AI2/ai-rpg-game/src/game/application/generatePendingNarrativeScene.ts#L87-L95) 无需改动）。本任务**仅加固回归测试**，无实现改动，防止后续重构破坏 spec §8 纪律 3 / §10 验收 11。
 
 **Files:**
-- Modify: `src/game/application/generatePendingNarrativeScene.ts`（场景 ready 的同一 CAS 写入中清除 `playerNpcChat`）
 - Test: `src/game/application/generatePendingNarrativeScene.test.ts`（追加）
 
-**Interfaces:**
-- 场景 ready 时，`narrative.generation` 设为 `{ status: "idle" }`（不含 `playerNpcChat`）
-- `playerNpcChat` 不跨场景残留（spec §8 纪律 3）
-
-- [ ] **Step 1: 写失败测试**
+- [ ] **Step 1: 写回归测试**
 
 ```ts
-it("场景 ready 后清除 playerNpcChat", async () => {
-  // 构造 state 含 pending + playerNpcChat
+it("场景 ready 后 state.narrative.generation 不含 playerNpcChat", async () => {
+  // 构造：state 含 pending + playerNpcChat
+  // mock 导演/编剧/NPC source 返回固定场景
   // 执行 generatePendingNarrativeScene
-  // 断言：保存后的 state.narrative.generation 不含 playerNpcChat
+  // 断言：保存后的 state.narrative.generation.status === "idle"
+  //       且 (state.narrative.generation as any).playerNpcChat === undefined
+  //       且下一次 toDirectorContext(state) 返回的 playerNpcChat 为 undefined
 });
 ```
 
-- [ ] **Step 2:** 运行 → FAIL（当前代码不处理清除）
-- [ ] **Step 3: 实现**：`generatePendingNarrativeScene.ts` 中构建 `nextState.narrative` 时，`generation: { status: "idle" }`（不保留 `playerNpcChat`）。
-- [ ] **Step 4:** 运行 → PASS
-- [ ] **Step 5:** `git commit -am "fix(application): 场景 ready 时清除 playerNpcChat"`
+- [ ] **Step 2:** 运行 → 应直接 PASS（实现已由 Task 1 保证）。若 FAIL，说明 Task 1 类型或既有 ready 逻辑被破坏，停止并回查。
+- [ ] **Step 3:** `git commit -am "test(application): 场景 ready 后 playerNpcChat 不残留回归"`
 
 ---
 
 ### Task 8: UI — `NpcDialoguePanel` 启用自由输入框
 
+**架构纪律**：现有 `NpcDialoguePanel` 不调 fetch——`onChoice(npcId, choiceId): void` 回调由父组件 `AdventureGameShell.handleDialogueChoice`（[AdventureGameShell.tsx:169](file:///f:/AI2/ai-rpg-game/src/components/AdventureGameShell.tsx#L169)）负责 fetch + `onViewChange(outcome.view)`。本任务沿用此惯例：**面板不调 fetch，新增 `onFreeInput` 回调由父组件实现 fetch + view 更新**。
+
+**关键澄清（轮询无需新写）**：叙事触发路径返回的 view 中 `narrativeGeneration.status === "pending"`，父组件调用 `onViewChange(view)` 更新全局 view 后，`CurrentGameScreen` 的 `useEffect`（[CurrentGameScreen.tsx:95-120](file:///f:/AI2/ai-rpg-game/src/components/CurrentGameScreen.tsx#L95-L120)）会**自动启动 `/api/game/narrative/ensure` + `/api/game/current` 轮询**，场景 ready 后自动切到 `NarrativeScenePanel`。**本任务不写任何轮询代码，不碰 `src/store/`。**
+
 **Files:**
-- Modify: `src/components/NpcDialoguePanel.tsx`（`handleSend` 从本地确定性回应改为调用 `POST /api/game/npc/dialogue`）
+- Modify: `src/components/NpcDialoguePanel.tsx`（`handleSend` 改为调 `onFreeInput` 回调；`NpcDialoguePanelProps` 新增 `onFreeInput` 与 `onFreeInputBusy`）
+- Modify: `src/components/AdventureGameShell.tsx`（实现 `handleFreeDialogue`：fetch `/api/game/npc/dialogue` → 闲聊返回文本 / 叙事触发 `onViewChange`）
 - Test: `src/components/NpcDialoguePanel.test.tsx`（追加）
-- Modify: 可选——`src/store/` 或调用方（添加轮询逻辑）
+- Test: `src/components/AdventureGameShell.test.tsx`（追加 `handleFreeDialogue` 行为）
 
 **Interfaces:**
-- `handleSend` 调用 `POST /api/game/npc/dialogue` 而不是本地回应
-- 返回 `kind: "chat"` → `setLocalReply(npcSpeech)`
-- 返回 `kind: "narrative_trigger"` → 客户端进入轮询，等待场景 ready 后显示 `NarrativeScenePanel`
 
-- [ ] **Step 1: 写失败测试**（组件测试模拟 fetch 响应）
+```ts
+// NpcDialoguePanelProps 新增：
+type FreeInputResult =
+  | { readonly kind: "chat"; readonly npcSpeech: string }
+  | { readonly kind: "narrative_trigger" };
+
+type NpcDialoguePanelProps = {
+  // 既有字段...
+  /** 自由输入提交：父组件负责 fetch，返回结果决定面板行为。 */
+  readonly onFreeInput: (npcId: string, text: string) => Promise<FreeInputResult>;
+  /** 自由输入进行中：禁用发送按钮与固定选项。 */
+  readonly freeInputBusy?: boolean;
+};
+```
+
+**面板行为**：
+- `handleSend` 改为 `async`：调 `await onFreeInput(dialogue.npcId, draft)`
+  - 返回 `kind: "chat"` → `setLocalReply(result.npcSpeech)`，面板停留在对话面板
+  - 返回 `kind: "narrative_trigger"` → 不设 `localReply`（父组件已 `onViewChange`，全局 view 变为 pending，对话 overlay 会被卸载或被 NarrativeScenePanel 覆盖）
+- 发送中 `freeInputBusy` 为 true 时禁用发送按钮与输入框
+
+**父组件 `AdventureGameShell.handleFreeDialogue`**：
+
+```ts
+async function handleFreeDialogue(npcId: string, text: string): Promise<FreeInputResult> {
+  setFeedback({ phase: "submitting" });
+  onBusyChange(true);
+  try {
+    const response = await fetch("/api/game/npc/dialogue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ npcId, text, revision: view.revision }),
+    });
+    const body = await response.json().catch(() => null);
+    if (body?.kind === "chat") {
+      setFeedback({ phase: "idle" });
+      return { kind: "chat", npcSpeech: body.npcSpeech };
+    }
+    if (body?.kind === "narrative_trigger" && body.view) {
+      setFeedback({ phase: "idle" });
+      onViewChange(body.view); // 触发 CurrentGameScreen 自动轮询
+      return { kind: "narrative_trigger" };
+    }
+    // 错误/降级：当作闲聊兜底
+    setFeedback({ phase: "idle" });
+    return { kind: "chat", npcSpeech: "（对方似乎没听清。）" };
+  } finally {
+    onBusyChange(false);
+  }
+}
+```
+
+- [ ] **Step 1: 写失败测试**（`NpcDialoguePanel.test.tsx`：mock `onFreeInput` 返回 `{ kind: "chat", npcSpeech: "铁匠笑了笑" }`，断言 `localReply` 显示；mock 返回 `{ kind: "narrative_trigger" }`，断言不设 `localReply`。`AdventureGameShell.test.tsx`：mock fetch 返回 narrative_trigger，断言 `onViewChange` 被调用）
 - [ ] **Step 2:** 运行 → FAIL
-- [ ] **Step 3: 实现**：`NpcDialoguePanel` 的 `handleSend` 改为异步函数，调用 fetch + 解析响应；`NpcDialoguePanelProps` 可能需要新增 `onNarrativeTrigger` 回调让父组件处理轮询/场景切换。
+- [ ] **Step 3: 实现**：
+  - `NpcDialoguePanel.tsx`：`NpcDialoguePanelProps` 加 `onFreeInput` + `freeInputBusy`；`handleSend` 改 async 调 `onFreeInput`，按 `kind` 分支处理；删除本地确定性回应占位文案。
+  - `AdventureGameShell.tsx`：新增 `handleFreeDialogue` 函数；`NpcDialoguePanel` 调用处传入 `onFreeInput={handleFreeDialogue}` 与 `freeInputBusy`。
 - [ ] **Step 4:** 运行 → PASS
-- [ ] **Step 5:** `git commit -am "feat(ui): NpcDialoguePanel 自由输入调用新端点"`
+- [ ] **Step 5:** `git commit -am "feat(ui): NpcDialoguePanel 自由输入经 onFreeInput 回调触发端点"`
 
 ---
 
