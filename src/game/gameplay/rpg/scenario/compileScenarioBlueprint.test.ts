@@ -10,10 +10,10 @@ import {
 } from "@/game/domain";
 import { compileScenarioBlueprint, initializeGameState } from "./compileScenarioBlueprint";
 import { validateScenarioBlueprintCandidate } from "./validateScenarioBlueprint";
-import { TEST_PROFILE, makeValidCandidate } from "./scenarioBlueprintFixture.testutil";
+import { TEST_POLICY, TEST_PROFILE, makeValidCandidate } from "./scenarioBlueprintFixture.testutil";
 
 function compileValid(candidate: ScenarioBlueprintCandidate = makeValidCandidate()): ScenarioBlueprint {
-  const validation = validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE });
+  const validation = validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY });
   const compiled = compileScenarioBlueprint(validation);
   if (!compiled.ok) throw new Error("fixture 应当编译成功");
   return compiled.blueprint;
@@ -99,7 +99,7 @@ describe("compileScenarioBlueprint：成功路径", () => {
 describe("compileScenarioBlueprint：失败路径", () => {
   it("校验失败时透传结构化诊断，不产生部分结果", () => {
     const candidate = { ...makeValidCandidate(), seed: " " };
-    const validation = validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE });
+    const validation = validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY });
     const compiled = compileScenarioBlueprint(validation);
     expect(compiled.ok).toBe(false);
     if (!compiled.ok) {

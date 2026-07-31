@@ -16,7 +16,7 @@ import {
   compileScenarioBlueprint,
   validateScenarioBlueprintCandidate
 } from "../scenario";
-import { TEST_PROFILE } from "../scenario/scenarioBlueprintFixture.testutil";
+import { TEST_POLICY, TEST_PROFILE } from "../scenario/scenarioBlueprintFixture.testutil";
 import { reconcileQuests } from "../quests";
 import {
   makeDialogueChoiceId,
@@ -117,9 +117,10 @@ function buildBlueprint(): ScenarioBlueprint {
       investigableFactIds: ["fact_investigable"],
     },
     contentBudget: { ...CONTENT_BUDGET },
+    budgetPolicy: TEST_POLICY,
   };
   const compiled = compileScenarioBlueprint(
-    validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE })
+    validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY })
   );
   if (!compiled.ok) {
     throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);

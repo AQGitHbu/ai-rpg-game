@@ -48,10 +48,15 @@ import {
 
 type Phase1Fixture = { input: NewGameInput; seed: string };
 
+/** 固定为 short 档位（3 幕）：本回归只覆盖 stage 1→2→3→boss 路径。 */
+function shortFixture(raw: { input: Record<string, unknown>; seed: string }): Phase1Fixture {
+  return { input: { ...raw.input, gameLength: "short" } as unknown as NewGameInput, seed: raw.seed };
+}
+
 const CASES: readonly { gameType: GameTypeId; fixture: Phase1Fixture }[] = [
-  { gameType: "wuxia", fixture: wuxiaFixture as unknown as Phase1Fixture },
-  { gameType: "science_fiction", fixture: scienceFictionFixture as unknown as Phase1Fixture },
-  { gameType: "urban", fixture: urbanFixture as unknown as Phase1Fixture }
+  { gameType: "wuxia", fixture: shortFixture(wuxiaFixture) },
+  { gameType: "science_fiction", fixture: shortFixture(scienceFictionFixture) },
+  { gameType: "urban", fixture: shortFixture(urbanFixture) }
 ];
 
 const FIXED_CREATED_AT = "2026-07-28T00:00:00.000Z";

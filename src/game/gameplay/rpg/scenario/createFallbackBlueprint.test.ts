@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CONTENT_BUDGET,
+  createBudgetPolicy,
   validateNewGameInput,
   type GameTypeId,
   type NewGameInput,
@@ -58,6 +59,10 @@ function generate(
   seed = "seed-base"
 ): ScenarioBlueprintCandidate {
   return createFallbackBlueprint(buildInput(overrides), seed);
+}
+
+function policyFor(overrides: Partial<NewGameInput> = {}) {
+  return createBudgetPolicy(buildInput(overrides).gameLength);
 }
 
 /** 收集候选里全部结构化 tags（world/locations/npcs/quests/enemies/items）。 */
@@ -181,9 +186,12 @@ describe("createFallbackBlueprint：内容预算与结构", () => {
     expect(candidate.locations.filter((entry) => entry.kind === "hidden")).toHaveLength(1);
   });
 
-  it("三阶段主线各恰好一个，支线 1–2 条", () => {
+  it("主线幕数等于 policy.mainActs，支线 1–2 条", () => {
+    const policy = policyFor();
     const mains = candidate.quests.filter((entry) => entry.kind === "main");
-    expect(mains.map((entry) => (entry.kind === "main" ? entry.stage : 0)).sort()).toEqual([1, 2, 3]);
+    expect(mains).toHaveLength(policy.mainActs);
+    expect(mains.map((entry) => (entry.kind === "main" ? entry.stage : 0)).sort((a, b) => a - b))
+      .toEqual(Array.from({ length: policy.mainActs }, (_, i) => i + 1));
     const sides = candidate.quests.filter((entry) => entry.kind === "side");
     expect(sides.length).toBeGreaterThanOrEqual(1);
     expect(sides.length).toBeLessThanOrEqual(2);
@@ -262,7 +270,8 @@ describe("createFallbackBlueprint：完整管线集成（validate → compile �
     it(`${gameType} 候选通过 validate、compile 与 initializeGameState`, () => {
       const candidate = generate(overrides, `pipeline-${gameType}`);
       const validation = validateScenarioBlueprintCandidate(candidate, {
-        profile: PROFILES.gameTypeProfiles[gameType as GameTypeId]
+        profile: PROFILES.gameTypeProfiles[gameType as GameTypeId],
+        policy: policyFor(overrides)
       });
       expect(validation.ok ? [] : validation.issues).toEqual([]);
       const compiled = compileScenarioBlueprint(validation);
@@ -279,7 +288,8 @@ describe("createFallbackBlueprint：完整管线集成（validate → compile �
     for (const gameType of ALL_GAME_TYPES) {
       const candidate = generate({ gameType }, `all-types-${gameType}`);
       const validation = validateScenarioBlueprintCandidate(candidate, {
-        profile: PROFILES.gameTypeProfiles[gameType]
+        profile: PROFILES.gameTypeProfiles[gameType],
+        policy: policyFor({ gameType })
       });
       expect(validation.ok ? [] : validation.issues, `gameType=${gameType}`).toEqual([]);
     }
@@ -368,20 +378,25 @@ describe("createFallbackBlueprint：标签来自 profile.allowedTags", () => {
 
 describe("createFallbackBlueprint：地点可取得物品（Phase 5）", () => {
   for (const gameType of ALL_GAME_TYPES) {
-    it(`${gameType} 的主线二阶段 obtain_item 目标物品放在唯一的二阶段可达主要地点`, () => {
+    it(`${gameType} 的 obtain_item 目标物品放在唯一的可达主要地点`, () => {
       const candidate = generate({ gameType }, `available-items-${gameType}`);
-      const stageTwo = candidate.quests.find(
-        (entry) => entry.kind === "main" && entry.stage === 2
+      const mains = candidate.quests.filter((entry) => entry.kind === "main");
+      const obtainObjectives = mains.flatMap((quest) =>
+        quest.objectives.filter((o): o is { kind: "obtain_item"; itemId: string } => o.kind === "obtain_item")
       );
-      const obtainObjective = stageTwo?.objectives.find((entry) => entry.kind === "obtain_item");
-      expect(obtainObjective).toBeDefined();
-      if (obtainObjective?.kind !== "obtain_item") return;
-      const hosts = candidate.locations.filter((entry) =>
-        entry.availableItemIds.includes(obtainObjective.itemId)
+      for (const obj of obtainObjectives) {
+        const hosts = candidate.locations.filter((entry) =>
+          entry.availableItemIds.includes(obj.itemId)
+        );
+        expect(hosts).toHaveLength(1);
+        expect(hosts[0]?.kind).toBe("main");
+      }
+      // 关键物品始终放在某个主要地点（无论是否有 obtain_item 目标引用）。
+      const keyHosts = candidate.locations.filter((entry) =>
+        entry.availableItemIds.includes("item_key")
       );
-      expect(hosts).toHaveLength(1);
-      // 主要地点开局即解锁且互相连通，因此对二阶段一定可达；隐藏地点开局锁定。
-      expect(hosts[0]?.kind).toBe("main");
+      expect(keyHosts).toHaveLength(1);
+      expect(keyHosts[0]?.kind).toBe("main");
     });
 
     it(`${gameType} 的初始物品不出现在任何地点的可取得列表，且引用均存在`, () => {
@@ -492,7 +507,7 @@ describe("createFallbackBlueprint：物品展示元数据", () => {
       // 携带新字段的候选仍能通过校验 + 编译管线。
       const profile = PROFILES.gameTypeProfiles[gameType];
       const compiled = compileScenarioBlueprint(
-        validateScenarioBlueprintCandidate(candidate, { profile })
+        validateScenarioBlueprintCandidate(candidate, { profile, policy: policyFor({ gameType }) })
       );
       expect(compiled.ok).toBe(true);
     });

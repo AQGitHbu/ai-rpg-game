@@ -225,7 +225,7 @@
       {
         "kind": "main",
         "stage": 1,
-        "id": "quest_m1",
+        "id": "quest_main_1",
         "name": "旧案重启",
         "description": "沈青崖循着告示追查灭门旧案的头绪。线索指向：【玩家输入】镖局一夜覆灭，江湖各派暗流涌动，真凶身份成谜，官府与门派各怀心思。",
         "objectives": [
@@ -237,7 +237,7 @@
         "onSuccess": {
           "kind": "unlock_quests",
           "questIds": [
-            "quest_m2",
+            "quest_main_2",
             "quest_s1",
             "quest_s2"
           ]
@@ -252,7 +252,7 @@
       {
         "kind": "main",
         "stage": 2,
-        "id": "quest_m2",
+        "id": "quest_main_2",
         "name": "山庄求证",
         "description": "深入铁剑山庄求证并取回关键信物。",
         "objectives": [
@@ -268,7 +268,7 @@
         "onSuccess": {
           "kind": "unlock_quests",
           "questIds": [
-            "quest_m3"
+            "quest_main_3"
           ]
         },
         "onFailure": {
@@ -279,7 +279,7 @@
       {
         "kind": "main",
         "stage": 3,
-        "id": "quest_m3",
+        "id": "quest_main_3",
         "name": "断魂决战",
         "description": "在断魂崖直面幕后黑手，了结恩怨。",
         "objectives": [
@@ -434,7 +434,7 @@
         "requirements": [
           {
             "kind": "quest_completed",
-            "questId": "quest_m3"
+            "questId": "quest_main_3"
           }
         ]
       },
@@ -445,7 +445,7 @@
         "requirements": [
           {
             "kind": "quest_failed",
-            "questId": "quest_m3"
+            "questId": "quest_main_3"
           }
         ]
       }
@@ -475,6 +475,30 @@
       "companionsMax": 1,
       "sideQuestsMax": 2,
       "endings": 2
+    },
+    "budgetPolicy": {
+      "policyVersion": 1,
+      "gameLength": "short",
+      "mainActs": 3,
+      "opening": {
+        "mainLocationsMin": 3,
+        "mainLocationsMax": 5,
+        "hiddenLocationsMax": 1,
+        "coreNpcsMin": 4,
+        "coreNpcsMax": 6,
+        "companionsMax": 1,
+        "sideQuestsMax": 2,
+        "endings": 2,
+        "townLocationsMax": 2
+      },
+      "safety": {
+        "locationsHardMax": 40,
+        "npcsHardMax": 30
+      },
+      "expansion": {
+        "locationsSoftMax": 8,
+        "npcsSoftMax": 10
+      }
     }
   }
 }

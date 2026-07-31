@@ -12,7 +12,7 @@ import {
   initializeGameState,
   validateScenarioBlueprintCandidate,
 } from "../scenario";
-import { makeValidCandidate, TEST_PROFILE } from "../scenario/scenarioBlueprintFixture.testutil";
+import { makeValidCandidate, TEST_POLICY, TEST_PROFILE } from "../scenario/scenarioBlueprintFixture.testutil";
 import { resolveEnding, failQuest, reconcileQuests } from "./index";
 
 // ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ const deps = { now: () => FIXED_TIME };
 
 function compileFrom(candidate: ScenarioBlueprintCandidate = makeValidCandidate()) {
   const compiled = compileScenarioBlueprint(
-    validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE })
+    validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY })
   );
   if (!compiled.ok) {
     throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);

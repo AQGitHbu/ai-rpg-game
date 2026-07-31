@@ -26,7 +26,7 @@ import { runScenarioPipeline, TEST_GAME_ID } from "./applicationFixture.testutil
 
 type Phase1Fixture = { input: NewGameInput; seed: string };
 const FIXTURE = wuxiaFixture as unknown as Phase1Fixture;
-const PIPELINE = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
+const PIPELINE = runScenarioPipeline({ ...FIXTURE.input, gameLength: "short" }, FIXTURE.seed);
 
 const FIXED_TIME = "2026-07-27T12:00:00.000Z";
 const ruleDeps = { now: () => FIXED_TIME };
@@ -124,7 +124,7 @@ describe("projectGameSessionView：开场视图", () => {
     const view = project(PIPELINE.state, 0);
     expect(view.activeQuests).toHaveLength(1);
     const quest = view.activeQuests[0];
-    expect(quest.name).toBe(questName("quest_m1"));
+    expect(quest.name).toBe(questName("quest_main_1"));
     expect(quest.kind).toBe("main");
     expect(quest.objectives).toEqual([
       { label: `到访${locationName("loc_2")}`, completed: false, supported: true }
@@ -150,13 +150,13 @@ describe("projectGameSessionView：移动完成主线后", () => {
   it("completed 主线退出 activeQuests，解锁的 stage 2 进入", () => {
     const view = project(moved, 1);
     const names = view.activeQuests.map((quest) => quest.name);
-    expect(names).toContain(questName("quest_m2"));
-    expect(names).not.toContain(questName("quest_m1"));
+    expect(names).toContain(questName("quest_main_2"));
+    expect(names).not.toContain(questName("quest_main_1"));
   });
 
   it("obtain_item objective 为受支持目标：中性文案，未取得时未完成", () => {
     const view = project(moved, 1);
-    const m2 = view.activeQuests.find((quest) => quest.name === questName("quest_m2"));
+    const m2 = view.activeQuests.find((quest) => quest.name === questName("quest_main_2"));
     expect(m2).toBeDefined();
     expect(m2?.objectives).toContainEqual({
       label: "取得关键物品",
@@ -168,7 +168,7 @@ describe("projectGameSessionView：移动完成主线后", () => {
 
   it("锁定的 stage 3 主线名称不泄漏", () => {
     const view = project(moved, 1);
-    expect(JSON.stringify(view.activeQuests)).not.toContain(questName("quest_m3"));
+    expect(JSON.stringify(view.activeQuests)).not.toContain(questName("quest_main_3"));
   });
 });
 
@@ -220,7 +220,7 @@ describe("projectGameSessionView：物品摘要与 take_item 行动（Phase 5 Ta
   it("obtain_item objective 随背包立即完成：取得后 talk 前 completed=true", () => {
     const taken = advance(atKeyLocation, { type: "take_item", itemId: asItemId("item_key") });
     const view = project(taken, 3);
-    const m2 = view.activeQuests.find((quest) => quest.name === questName("quest_m2"));
+    const m2 = view.activeQuests.find((quest) => quest.name === questName("quest_main_2"));
     expect(m2?.objectives).toContainEqual({
       label: "取得关键物品",
       completed: true,
@@ -240,12 +240,12 @@ describe("projectGameSessionView：defeat_enemy objective 渲染（Phase 5 Task 
 
     const view = project(taken, 4);
     const names = view.activeQuests.map((quest) => quest.name);
-    expect(names).not.toContain(questName("quest_m2"));
-    expect(names).toContain(questName("quest_m3"));
+    expect(names).not.toContain(questName("quest_main_2"));
+    expect(names).toContain(questName("quest_main_3"));
 
     // 未支持类型的展示契约：中性文案、永不 completed、supported: false，
     // UI 不得把它呈现为本阶段可完成的目标。
-    const m3 = view.activeQuests.find((quest) => quest.name === questName("quest_m3"));
+    const m3 = view.activeQuests.find((quest) => quest.name === questName("quest_main_3"));
     expect(m3?.objectives).toEqual([
       { label: "战胜强敌", completed: false, supported: true }
     ]);

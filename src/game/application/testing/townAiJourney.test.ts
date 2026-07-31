@@ -51,7 +51,7 @@ import wuxiaFixture from "../../../../data/fixtures/phase1/wuxia.json";
 // ---------------------------------------------------------------------------
 
 type Phase1Fixture = { input: NewGameInput; seed: string };
-const fixture = wuxiaFixture as unknown as Phase1Fixture;
+const fixture: Phase1Fixture = { ...(wuxiaFixture as unknown as Phase1Fixture), input: { ...(wuxiaFixture as unknown as Phase1Fixture).input, gameLength: "short" } };
 
 const goldenRoot = resolve("data", "fixtures", "town-journey", "v1");
 const scenarioFixtureDir = join(goldenRoot, "scenario");

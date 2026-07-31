@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { asLocationId, asNpcId, type ScenarioBlueprint } from "@/game/domain";
 import { compileScenarioBlueprint } from "../scenario/compileScenarioBlueprint";
 import { validateScenarioBlueprintCandidate } from "../scenario/validateScenarioBlueprint";
-import { TEST_PROFILE, makeValidCandidate } from "../scenario/scenarioBlueprintFixture.testutil";
+import { TEST_POLICY, TEST_PROFILE, makeValidCandidate } from "../scenario/scenarioBlueprintFixture.testutil";
 import { createFallbackTownPlan } from "./fallbackTownPlan";
 import { createTownPlanFromLocation } from "./planFromBlueprint";
 
@@ -10,7 +10,7 @@ import { createTownPlanFromLocation } from "./planFromBlueprint";
 // 的方式给 loc_a 标 scale: "town"，与旧存档零迁移的可选字段模式一致。
 
 function compileFixtureBlueprint(): ScenarioBlueprint {
-  const validation = validateScenarioBlueprintCandidate(makeValidCandidate(), { profile: TEST_PROFILE });
+  const validation = validateScenarioBlueprintCandidate(makeValidCandidate(), { profile: TEST_PROFILE, policy: TEST_POLICY });
   const compiled = compileScenarioBlueprint(validation);
   if (!compiled.ok) throw new Error("fixture 应当编译成功");
   return compiled.blueprint;

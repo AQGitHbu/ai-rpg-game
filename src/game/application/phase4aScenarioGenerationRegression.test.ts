@@ -33,9 +33,9 @@ import {
 // ---------------------------------------------------------------------------
 
 type Phase1Fixture = { input: NewGameInput; seed: string };
-const WUXIA = wuxiaFixture as unknown as Phase1Fixture;
-const SCIENCE_FICTION = scienceFictionFixture as unknown as Phase1Fixture;
-const URBAN = urbanFixture as unknown as Phase1Fixture;
+const WUXIA: Phase1Fixture = { ...(wuxiaFixture as unknown as Phase1Fixture), input: { ...(wuxiaFixture as unknown as Phase1Fixture).input, gameLength: "short" } };
+const SCIENCE_FICTION: Phase1Fixture = { ...(scienceFictionFixture as unknown as Phase1Fixture), input: { ...(scienceFictionFixture as unknown as Phase1Fixture).input, gameLength: "short" } };
+const URBAN: Phase1Fixture = { ...(urbanFixture as unknown as Phase1Fixture), input: { ...(urbanFixture as unknown as Phase1Fixture).input, gameLength: "short" } };
 
 const FIXTURE_ROOT = resolve("data/fixtures/phase4");
 

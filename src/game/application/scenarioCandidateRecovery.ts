@@ -1,4 +1,4 @@
-import { CONTENT_BUDGET, type ScenarioBlueprintCandidate } from "@/game/domain";
+import { CONTENT_BUDGET, type BudgetPolicy, type ScenarioBlueprintCandidate } from "@/game/domain";
 import {
   loadScenarioProfiles,
   validateScenarioBlueprintCandidate,
@@ -32,17 +32,19 @@ const ROOT_FIELD_WHITELIST = [
   "items",
   "endings",
   "openingScene",
-  "contentBudget"
+  "contentBudget",
+  "budgetPolicy"
 ] as const;
 
 export type RepairScenarioCandidateOptions = {
   /** 可注入 profiles 以便测试；默认加载内置 data/base 配置。 */
   readonly profiles?: ScenarioProfiles;
+  readonly policy: BudgetPolicy;
 };
 
 export function repairScenarioCandidate(
   candidate: ScenarioBlueprintCandidate,
-  options: RepairScenarioCandidateOptions = {}
+  options: RepairScenarioCandidateOptions
 ): ScenarioBlueprintCandidate | null {
   let repaired: ScenarioBlueprintCandidate;
   try {
@@ -56,7 +58,7 @@ export function repairScenarioCandidate(
   const profile = profiles.gameTypeProfiles[repaired.gameType];
   if (profile === undefined) return null;
 
-  const result = validateScenarioBlueprintCandidate(repaired, { profile });
+  const result = validateScenarioBlueprintCandidate(repaired, { profile, policy: options.policy });
   return result.ok ? repaired : null;
 }
 

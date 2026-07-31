@@ -37,7 +37,7 @@ import { runScenarioPipeline } from "./applicationFixture.testutil";
 
 type Phase1Fixture = { input: NewGameInput; seed: string };
 const FIXTURE = wuxiaFixture as unknown as Phase1Fixture;
-const PIPELINE = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
+const PIPELINE = runScenarioPipeline({ ...FIXTURE.input, gameLength: "short" }, FIXTURE.seed);
 
 const FIXED_TIME = "2026-07-27T10:00:00.000Z";
 const ruleDeps = { now: () => FIXED_TIME };
@@ -155,7 +155,7 @@ describe("GameSessionView：结局状态", () => {
     const withdrawn = battleAction(PIPELINE.blueprint, started.state, "withdraw", ruleDeps);
     if (!withdrawn.ok) throw new Error("withdraw 应当成功");
 
-    const failResult = failQuest(PIPELINE.blueprint, withdrawn.state, asQuestId("quest_m3"), ruleDeps);
+    const failResult = failQuest(PIPELINE.blueprint, withdrawn.state, asQuestId("quest_main_3"), ruleDeps);
     if (!failResult.ok) throw new Error("failQuest 应当成功");
     const endingResult = resolveEnding(PIPELINE.blueprint, failResult.state, ruleDeps);
 

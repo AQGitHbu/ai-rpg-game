@@ -198,7 +198,7 @@
       {
         "kind": "main",
         "stage": 1,
-        "id": "quest_m1",
+        "id": "quest_main_1",
         "name": "匿名线索",
         "description": "林之遥顺着匿名邮件核实资金异动的线索。线索指向：【玩家输入】滨江金融城连环并购案背后，一笔离奇消失的资金牵动着各方神经。",
         "objectives": [
@@ -210,7 +210,7 @@
         "onSuccess": {
           "kind": "unlock_quests",
           "questIds": [
-            "quest_m2",
+            "quest_main_2",
             "quest_s1",
             "quest_s2"
           ]
@@ -225,7 +225,7 @@
       {
         "kind": "main",
         "stage": 2,
-        "id": "quest_m2",
+        "id": "quest_main_2",
         "name": "仓库取证",
         "description": "潜入城郊仓库取回关键审计底稿。",
         "objectives": [
@@ -241,7 +241,7 @@
         "onSuccess": {
           "kind": "unlock_quests",
           "questIds": [
-            "quest_m3"
+            "quest_main_3"
           ]
         },
         "onFailure": {
@@ -252,7 +252,7 @@
       {
         "kind": "main",
         "stage": 3,
-        "id": "quest_m3",
+        "id": "quest_main_3",
         "name": "对簿真相",
         "description": "在档案室与幕后操盘人当面摊牌。",
         "objectives": [
@@ -392,7 +392,7 @@
         "requirements": [
           {
             "kind": "quest_completed",
-            "questId": "quest_m3"
+            "questId": "quest_main_3"
           }
         ]
       },
@@ -403,7 +403,7 @@
         "requirements": [
           {
             "kind": "quest_failed",
-            "questId": "quest_m3"
+            "questId": "quest_main_3"
           }
         ]
       }
@@ -433,6 +433,30 @@
       "companionsMax": 1,
       "sideQuestsMax": 2,
       "endings": 2
+    },
+    "budgetPolicy": {
+      "policyVersion": 1,
+      "gameLength": "short",
+      "mainActs": 3,
+      "opening": {
+        "mainLocationsMin": 3,
+        "mainLocationsMax": 5,
+        "hiddenLocationsMax": 1,
+        "coreNpcsMin": 4,
+        "coreNpcsMax": 6,
+        "companionsMax": 1,
+        "sideQuestsMax": 2,
+        "endings": 2,
+        "townLocationsMax": 2
+      },
+      "safety": {
+        "locationsHardMax": 40,
+        "npcsHardMax": 30
+      },
+      "expansion": {
+        "locationsSoftMax": 8,
+        "npcsSoftMax": 10
+      }
     }
   }
 }

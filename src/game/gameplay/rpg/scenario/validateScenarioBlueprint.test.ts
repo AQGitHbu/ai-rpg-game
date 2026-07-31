@@ -5,7 +5,7 @@ import {
   validateScenarioBlueprintCandidate,
   type ScenarioBlueprintIssue
 } from "./validateScenarioBlueprint";
-import { TEST_PROFILE, makeValidCandidate } from "./scenarioBlueprintFixture.testutil";
+import { TEST_POLICY, TEST_PROFILE, makeValidCandidate } from "./scenarioBlueprintFixture.testutil";
 
 // ---------------------------------------------------------------------------
 // 测试内可变异视图：候选类型全 readonly，变异测试通过 DeepWritable 草稿修改。
@@ -24,7 +24,7 @@ function draft(): Draft {
 }
 
 function validate(candidate: ScenarioBlueprintCandidate) {
-  return validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE });
+  return validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY });
 }
 
 function issuesOf(candidate: Draft | ScenarioBlueprintCandidate): readonly ScenarioBlueprintIssue[] {
@@ -101,13 +101,13 @@ describe("validateScenarioBlueprintCandidate：schema 基础", () => {
     });
   });
 
-  it("候选自带的 contentBudget 与 CONTENT_BUDGET 不符时拒绝", () => {
+  it("候选自带的 budgetPolicy 与派生 policy 不符时拒绝", () => {
     const candidate = draft();
-    (candidate.contentBudget as { endings: number }).endings = 3;
+    candidate.budgetPolicy = { ...candidate.budgetPolicy!, mainActs: 99 };
     expect(issuesOf(candidate)).toContainEqual({
-      path: "contentBudget.endings",
-      code: "CONTENT_BUDGET_MISMATCH",
-      params: { expected: 2, actual: "3" }
+      path: "budgetPolicy",
+      code: "BUDGET_POLICY_MISMATCH",
+      params: {}
     });
   });
 });
@@ -117,19 +117,20 @@ describe("validateScenarioBlueprintCandidate：schema 基础", () => {
 // ---------------------------------------------------------------------------
 
 describe("validateScenarioBlueprintCandidate：内容预算", () => {
-  it("主要地点不是 4 个时拒绝（同时检出隐藏地点超额）", () => {
+  it("主要地点少于 3 个时拒绝（同时检出隐藏地点超额）", () => {
     const candidate = draft();
+    candidate.locations[2].kind = "hidden";
     candidate.locations[3].kind = "hidden";
     const issues = issuesOf(candidate);
     expect(issues).toContainEqual({
       path: "locations",
-      code: "MAIN_LOCATION_COUNT_MISMATCH",
-      params: { expected: 4, actual: 3 }
+      code: "MAIN_LOCATION_COUNT_OUT_OF_RANGE",
+      params: { min: 3, max: 5, actual: 2 }
     });
     expect(issues).toContainEqual({
       path: "locations",
       code: "HIDDEN_LOCATION_OVERBUDGET",
-      params: { max: 1, actual: 2 }
+      params: { max: 1, actual: 3 }
     });
   });
 

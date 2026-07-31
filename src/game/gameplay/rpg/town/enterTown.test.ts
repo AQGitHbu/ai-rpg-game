@@ -3,14 +3,14 @@ import type { GameState, ScenarioBlueprint } from "@/game/domain";
 import { TOWN_GENERATOR_VERSION } from "@/game/domain";
 import { compileScenarioBlueprint, initializeGameState } from "../scenario/compileScenarioBlueprint";
 import { validateScenarioBlueprintCandidate } from "../scenario/validateScenarioBlueprint";
-import { TEST_PROFILE, makeValidCandidate } from "../scenario/scenarioBlueprintFixture.testutil";
+import { TEST_POLICY, TEST_PROFILE, makeValidCandidate } from "../scenario/scenarioBlueprintFixture.testutil";
 import { createTownPlanFromLocation } from "./planFromBlueprint";
 import { ensureTownRuntime, townSeedFor } from "./enterTown";
 
 const OCCURRED_AT = "2024-01-01T00:00:00.000Z";
 
 function compileFixtureBlueprint(): ScenarioBlueprint {
-  const validation = validateScenarioBlueprintCandidate(makeValidCandidate(), { profile: TEST_PROFILE });
+  const validation = validateScenarioBlueprintCandidate(makeValidCandidate(), { profile: TEST_PROFILE, policy: TEST_POLICY });
   const compiled = compileScenarioBlueprint(validation);
   if (!compiled.ok) throw new Error("fixture 应当编译成功");
   return compiled.blueprint;

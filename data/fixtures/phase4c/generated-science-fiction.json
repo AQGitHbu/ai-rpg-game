@@ -198,7 +198,7 @@
       {
         "kind": "main",
         "stage": 1,
-        "id": "quest_m1",
+        "id": "quest_main_1",
         "name": "失联溯源",
         "description": "程曜从港区记录追查船队失联的起点。线索指向：【玩家输入】殖民星环带航线接连失联，星港各方势力都在暗中打探失踪船队的下落。",
         "objectives": [
@@ -210,7 +210,7 @@
         "onSuccess": {
           "kind": "unlock_quests",
           "questIds": [
-            "quest_m2",
+            "quest_main_2",
             "quest_s1"
           ]
         },
@@ -224,7 +224,7 @@
       {
         "kind": "main",
         "stage": 2,
-        "id": "quest_m2",
+        "id": "quest_main_2",
         "name": "残骸取证",
         "description": "潜入静默号残骸取回加密数据核心。",
         "objectives": [
@@ -240,7 +240,7 @@
         "onSuccess": {
           "kind": "unlock_quests",
           "questIds": [
-            "quest_m3"
+            "quest_main_3"
           ]
         },
         "onFailure": {
@@ -251,7 +251,7 @@
       {
         "kind": "main",
         "stage": 3,
-        "id": "quest_m3",
+        "id": "quest_main_3",
         "name": "核心对峙",
         "description": "在废弃机房与叛逃AI核心正面对峙。",
         "objectives": [
@@ -372,7 +372,7 @@
         "requirements": [
           {
             "kind": "quest_completed",
-            "questId": "quest_m3"
+            "questId": "quest_main_3"
           }
         ]
       },
@@ -383,7 +383,7 @@
         "requirements": [
           {
             "kind": "quest_failed",
-            "questId": "quest_m3"
+            "questId": "quest_main_3"
           }
         ]
       }
@@ -413,6 +413,30 @@
       "companionsMax": 1,
       "sideQuestsMax": 2,
       "endings": 2
+    },
+    "budgetPolicy": {
+      "policyVersion": 1,
+      "gameLength": "short",
+      "mainActs": 3,
+      "opening": {
+        "mainLocationsMin": 3,
+        "mainLocationsMax": 5,
+        "hiddenLocationsMax": 1,
+        "coreNpcsMin": 4,
+        "coreNpcsMax": 6,
+        "companionsMax": 1,
+        "sideQuestsMax": 2,
+        "endings": 2,
+        "townLocationsMax": 2
+      },
+      "safety": {
+        "locationsHardMax": 40,
+        "npcsHardMax": 30
+      },
+      "expansion": {
+        "locationsSoftMax": 8,
+        "npcsSoftMax": 10
+      }
     }
   }
 }

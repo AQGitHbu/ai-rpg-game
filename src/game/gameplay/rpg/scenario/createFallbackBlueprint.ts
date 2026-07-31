@@ -1,5 +1,6 @@
 import {
   CONTENT_BUDGET,
+  createBudgetPolicy,
   type GameTypeId,
   type EnemyTemplateCandidate,
   type ItemCategory,
@@ -514,8 +515,9 @@ export function createFallbackBlueprint(
 
   const inputDigest = computeInputDigest(input, seed, profile);
   const generationId = `gen-${hashHex(`${inputDigest}|${seed}`)}`;
+  const policy = createBudgetPolicy(input.gameLength);
 
-  // 全部随机选择均来自 seed（不掺入 input），保证“随机源只来自 seed”。
+  // 全部随机选择均来自 seed（不掺入 input），保证”随机源只来自 seed”。
   const rng = mulberry32(fnv1a(seed, 0x811c9dc5));
   const npcCount = CONTENT_BUDGET.coreNpcsMin + randInt(rng, 3); // 4–6
   const sideQuestCount = 1 + randInt(rng, CONTENT_BUDGET.sideQuestsMax); // 1–2
@@ -525,8 +527,8 @@ export function createFallbackBlueprint(
   const npcs = buildNpcs(template, profile, npcCount);
   const items = buildItems(template, profile);
   const enemies = buildEnemies(template, profile);
-  const quests = buildQuests(input, template, profile, sideQuestCount);
-  const endings = buildEndings(template);
+  const quests = buildQuests(input, template, profile, sideQuestCount, policy.mainActs);
+  const endings = buildEndings(template, policy.mainActs);
   const player = buildPlayer(input, template);
   const openingScene = buildOpeningScene(input, template);
 
@@ -546,7 +548,8 @@ export function createFallbackBlueprint(
     items,
     endings,
     openingScene,
-    contentBudget: { ...CONTENT_BUDGET }
+    contentBudget: { ...CONTENT_BUDGET },
+    budgetPolicy: policy
   };
 }
 
@@ -565,6 +568,7 @@ function computeInputDigest(
   // 无论来自注入还是默认配置，内容漂移必然翻转 digest（fixture pin 会显式报错）。
   const source = JSON.stringify({
     gameType: input.gameType,
+    gameLength: input.gameLength,
     characterName: input.characterName,
     characterIdentity: input.characterIdentity,
     characterProfile: input.characterProfile ?? null,
@@ -761,56 +765,72 @@ function buildEnemies(template: TypeTemplate, profile: GameTypeProfile): EnemyTe
   ];
 }
 
-const QUEST_MAIN_IDS = ["quest_m1", "quest_m2", "quest_m3"] as const;
 const QUEST_SIDE_IDS = ["quest_s1", "quest_s2"] as const;
 const ENDING_IDS = ["ending_1", "ending_2"] as const;
+
+function mainQuestId(act: number): string {
+  return `quest_main_${act}`;
+}
+
+// 中段幕 objective 轮换：引用既有实体，不引入新 ID。
+const MID_OBJECTIVES: readonly (readonly { kind: string; [key: string]: string }[])[] = [
+  [{ kind: "visit_location", locationId: "loc_2" }],
+  [{ kind: "talk_to_npc", npcId: "npc_2" }],
+  [{ kind: "discover_fact", factId: FACT_GEN_1 }]
+];
 
 function buildQuests(
   input: ValidatedNewGameInput,
   template: TypeTemplate,
   profile: GameTypeProfile,
-  sideQuestCount: number
+  sideQuestCount: number,
+  mainActs: number
 ): QuestDefinitionCandidate[] {
   const sideIds = QUEST_SIDE_IDS.slice(0, sideQuestCount);
-  const quests: QuestDefinitionCandidate[] = [
-    {
-      kind: "main",
-      stage: 1,
-      id: QUEST_MAIN_IDS[0],
-      name: template.mainQuests[0].name,
-      // 主线冲突描述嵌入玩家姓名与世界观，带来源标记（provenance）。
-      description: `${input.characterName}${template.mainQuests[0].description}线索指向：${PLAYER_INPUT_MARK}${input.worldPremise}`,
-      objectives: [{ kind: "visit_location", locationId: "loc_2" }],
-      onSuccess: { kind: "unlock_quests", questIds: [QUEST_MAIN_IDS[1], ...sideIds] },
-      onFailure: { kind: "closed" },
-      tags: [pickTag(profile, 0)]
-    },
-    {
-      kind: "main",
-      stage: 2,
-      id: QUEST_MAIN_IDS[1],
-      name: template.mainQuests[1].name,
-      description: template.mainQuests[1].description,
-      objectives: [
-        { kind: "talk_to_npc", npcId: "npc_3" },
-        { kind: "obtain_item", itemId: ITEM_KEY }
-      ],
-      onSuccess: { kind: "unlock_quests", questIds: [QUEST_MAIN_IDS[2]] },
-      onFailure: { kind: "closed" },
-      tags: []
-    },
-    {
-      kind: "main",
-      stage: 3,
-      id: QUEST_MAIN_IDS[2],
-      name: template.mainQuests[2].name,
-      description: template.mainQuests[2].description,
-      objectives: [{ kind: "defeat_enemy", enemyId: ENEMY_BOSS_ID }],
-      onSuccess: { kind: "reach_ending", endingId: ENDING_IDS[0] },
-      onFailure: { kind: "reach_ending", endingId: ENDING_IDS[1] },
-      tags: []
+  const quests: QuestDefinitionCandidate[] = [];
+
+  for (let act = 1; act <= mainActs; act++) {
+    const id = mainQuestId(act);
+    const nextId = act < mainActs ? mainQuestId(act + 1) : null;
+
+    if (act === 1) {
+      quests.push({
+        kind: "main", stage: act, id,
+        name: template.mainQuests[0].name,
+        description: `${input.characterName}${template.mainQuests[0].description}线索指向：${PLAYER_INPUT_MARK}${input.worldPremise}`,
+        objectives: [{ kind: "visit_location", locationId: "loc_2" }],
+        onSuccess: { kind: "unlock_quests", questIds: [mainQuestId(2), ...sideIds] },
+        onFailure: { kind: "closed" },
+        tags: [pickTag(profile, 0)]
+      });
+    } else if (act === mainActs) {
+      quests.push({
+        kind: "main", stage: act, id,
+        name: template.mainQuests[2].name,
+        description: template.mainQuests[2].description,
+        objectives: [{ kind: "defeat_enemy", enemyId: ENEMY_BOSS_ID }],
+        onSuccess: { kind: "reach_ending", endingId: ENDING_IDS[0] },
+        onFailure: { kind: "reach_ending", endingId: ENDING_IDS[1] },
+        tags: []
+      });
+    } else {
+      const midIndex = (act - 2) % MID_OBJECTIVES.length;
+      // 3 幕时保持旧行为：原名、原 objective（talk + obtain）
+      const isLegacyMid = mainActs === 3 && act === 2;
+      quests.push({
+        kind: "main", stage: act, id,
+        name: isLegacyMid ? template.mainQuests[1].name : `第 ${act} 章·${template.mainQuests[1].name}`,
+        description: template.mainQuests[1].description,
+        objectives: isLegacyMid
+          ? [{ kind: "talk_to_npc", npcId: "npc_3" }, { kind: "obtain_item", itemId: ITEM_KEY }]
+          : MID_OBJECTIVES[midIndex] as QuestDefinitionCandidate["objectives"],
+        onSuccess: { kind: "unlock_quests", questIds: [nextId as string] },
+        onFailure: { kind: "closed" },
+        tags: []
+      });
     }
-  ];
+  }
+
   // 支线：objective 引用真实实体；outcome 直接关闭，不影响主线可达性。
   const sideObjectives: QuestDefinitionCandidate["objectives"][] = [
     [{ kind: "discover_fact", factId: FACT_GEN_1 }],
@@ -831,21 +851,20 @@ function buildQuests(
   return quests;
 }
 
-function buildEndings(template: TypeTemplate): ScenarioBlueprintCandidate["endings"] {
+function buildEndings(template: TypeTemplate, mainActs: number): ScenarioBlueprintCandidate["endings"] {
+  const finalQuestId = mainQuestId(mainActs);
   return [
     {
       id: ENDING_IDS[0],
       name: template.endings[0].name,
       description: template.endings[0].description,
-      // Phase 6：成功 ending 依赖 stage 3 completed。
-      requirements: [{ kind: "quest_completed", questId: QUEST_MAIN_IDS[2] }]
+      requirements: [{ kind: "quest_completed", questId: finalQuestId }]
     },
     {
       id: ENDING_IDS[1],
       name: template.endings[1].name,
       description: template.endings[1].description,
-      // Phase 6：失败 ending 依赖 stage 3 failed。
-      requirements: [{ kind: "quest_failed", questId: QUEST_MAIN_IDS[2] }]
+      requirements: [{ kind: "quest_failed", questId: finalQuestId }]
     }
   ];
 }

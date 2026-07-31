@@ -1,4 +1,5 @@
 import {
+  createBudgetPolicy,
   validateNewGameInput,
   type NewGameInput,
   type NewGameInputError,
@@ -40,8 +41,8 @@ function classifyValidationFailure(
   issues: readonly ScenarioBlueprintIssue[]
 ): ScenarioCandidateFailureCategory {
   switch (issues[0]?.code) {
-    case "CONTENT_BUDGET_MISMATCH":
-    case "MAIN_LOCATION_COUNT_MISMATCH":
+    case "BUDGET_POLICY_MISMATCH":
+    case "MAIN_LOCATION_COUNT_OUT_OF_RANGE":
     case "HIDDEN_LOCATION_OVERBUDGET":
     case "CORE_NPC_COUNT_OUT_OF_RANGE":
     case "COMPANION_OVERBUDGET":
@@ -155,6 +156,7 @@ export async function createGame(
 
   const profiles = deps.profiles ?? loadScenarioProfiles();
   const profile = profiles.gameTypeProfiles[validatedInput.value.gameType];
+  const policy = createBudgetPolicy(validatedInput.value.gameLength);
   const seed = command.seed ?? deps.newSeed();
   const emit = (event: ScenarioGenerationEvent): void => {
     try {
@@ -189,7 +191,7 @@ export async function createGame(
 
     emit({ stage: "candidate_received" });
     emit({ stage: "validating" });
-    const validation = validateScenarioBlueprintCandidate(attempt.candidate, { profile });
+    const validation = validateScenarioBlueprintCandidate(attempt.candidate, { profile, policy });
     if (validation.ok) {
       const compiled = compileScenarioBlueprint(validation);
       if (compiled.ok) {
@@ -202,10 +204,10 @@ export async function createGame(
     }
     lastFailureCategory = classifyValidationFailure(validation.issues);
     // 一次机械修复：修复成功（非 null）才发 repairing，否则直接重试/fallback。
-    const repaired = repairScenarioCandidate(attempt.candidate, { profiles });
+    const repaired = repairScenarioCandidate(attempt.candidate, { profiles, policy });
     if (repaired === null) continue;
     emit({ stage: "repairing" });
-    const repairedValidation = validateScenarioBlueprintCandidate(repaired, { profile });
+    const repairedValidation = validateScenarioBlueprintCandidate(repaired, { profile, policy });
     if (!repairedValidation.ok) {
       lastFailureCategory = classifyValidationFailure(repairedValidation.issues);
       continue;
@@ -223,7 +225,7 @@ export async function createGame(
     emit({ stage: "falling_back", category: lastFailureCategory });
     const candidate = createFallbackBlueprint(validatedInput.value, seed, { profiles });
     const compiled = compileScenarioBlueprint(
-      validateScenarioBlueprintCandidate(candidate, { profile })
+      validateScenarioBlueprintCandidate(candidate, { profile, policy })
     );
     if (!compiled.ok) {
       // 仅 fallback 本身不可编译才返回该码：不外泄 issue，也不触及 repository。

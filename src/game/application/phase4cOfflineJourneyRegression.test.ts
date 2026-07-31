@@ -50,13 +50,13 @@ import {
 type Phase1Fixture = { input: NewGameInput; seed: string };
 
 const CASES: readonly { gameType: GameTypeId; fixture: Phase1Fixture; fixtureId: string }[] = [
-  { gameType: "wuxia", fixture: wuxiaFixture as unknown as Phase1Fixture, fixtureId: "generated-wuxia" },
+  { gameType: "wuxia", fixture: { ...(wuxiaFixture as unknown as Phase1Fixture), input: { ...(wuxiaFixture as unknown as Phase1Fixture).input, gameLength: "short" } }, fixtureId: "generated-wuxia" },
   {
     gameType: "science_fiction",
-    fixture: scienceFictionFixture as unknown as Phase1Fixture,
+    fixture: { ...(scienceFictionFixture as unknown as Phase1Fixture), input: { ...(scienceFictionFixture as unknown as Phase1Fixture).input, gameLength: "short" } },
     fixtureId: "generated-science-fiction"
   },
-  { gameType: "urban", fixture: urbanFixture as unknown as Phase1Fixture, fixtureId: "generated-urban" }
+  { gameType: "urban", fixture: { ...(urbanFixture as unknown as Phase1Fixture), input: { ...(urbanFixture as unknown as Phase1Fixture).input, gameLength: "short" } }, fixtureId: "generated-urban" }
 ];
 
 const FIXTURE_ROOT = resolve("data/fixtures/phase4c");

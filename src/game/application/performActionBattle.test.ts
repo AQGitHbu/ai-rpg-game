@@ -47,7 +47,7 @@ import {
 
 type Phase1Fixture = { input: NewGameInput; seed: string };
 const FIXTURE = wuxiaFixture as unknown as Phase1Fixture;
-const PIPELINE = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
+const PIPELINE = runScenarioPipeline({ ...FIXTURE.input, gameLength: "short" }, FIXTURE.seed);
 
 const FIXED_TIME = "2026-07-27T10:00:00.000Z";
 const ruleDeps = { now: () => FIXED_TIME };
@@ -68,7 +68,7 @@ function buildStage3BossReadyState(): GameState {
     state = reconcileQuests(PIPELINE.blueprint, resolved.state, ruleDeps).state;
   }
   // 确认 stage 3 active
-  const m3Status = state.quests.find((q) => q.questId === asQuestId("quest_m3"))?.status;
+  const m3Status = state.quests.find((q) => q.questId === asQuestId("quest_main_3"))?.status;
   if (m3Status !== "active") throw new Error(`前置应当 stage 3 active，实际：${m3Status}`);
   return state;
 }
@@ -282,7 +282,7 @@ describe("performAction：battle_action 胜利路径", () => {
     });
     // stage 3 completed
     const m3Status = lastCall.nextState.quests.find(
-      (q) => q.questId === asQuestId("quest_m3")
+      (q) => q.questId === asQuestId("quest_main_3")
     )?.status;
     expect(m3Status).toBe("completed");
   });
@@ -304,7 +304,7 @@ describe("performAction：battle_action 撤退失败路径", () => {
     if (!withdrawResult.ok) throw new Error("withdraw 应当成功");
     let expectedState = withdrawResult.state;
     // failQuest stage 3
-    const failResult = failQuest(PIPELINE.blueprint, expectedState, asQuestId("quest_m3"), ruleDeps);
+    const failResult = failQuest(PIPELINE.blueprint, expectedState, asQuestId("quest_main_3"), ruleDeps);
     if (!failResult.ok) throw new Error("failQuest 应当成功");
     expectedState = failResult.state;
     // resolveEnding → e2 failure ending
@@ -335,7 +335,7 @@ describe("performAction：battle_action 撤退失败路径", () => {
     });
     // stage 3 failed
     const m3Status = repository.applyCalls[0].nextState.quests.find(
-      (q) => q.questId === asQuestId("quest_m3")
+      (q) => q.questId === asQuestId("quest_main_3")
     )?.status;
     expect(m3Status).toBe("failed");
   });

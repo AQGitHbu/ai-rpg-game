@@ -24,7 +24,7 @@ import { runScenarioPipeline } from "./applicationFixture.testutil";
 
 type Phase1Fixture = { input: NewGameInput; seed: string };
 const FIXTURE = wuxiaFixture as unknown as Phase1Fixture;
-const PIPELINE = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
+const PIPELINE = runScenarioPipeline({ ...FIXTURE.input, gameLength: "short" }, FIXTURE.seed);
 const { blueprint } = PIPELINE;
 
 const SLOTS = ["left", "center", "right", "foreground"] as const;
@@ -185,7 +185,7 @@ describe("projectLocationAdventureView：地点场景互动", () => {
     // 当前 loc_4（boss 所在地），quest_m3（defeat enemy_boss）设为 active。
     const atBoss = withQuestStatuses(
       { ...PIPELINE.state, currentLocationId: asLocationId("loc_4") },
-      new Map<QuestId, GameState["quests"][number]["status"]>([[asQuestId("quest_m3"), "active"]])
+      new Map<QuestId, GameState["quests"][number]["status"]>([[asQuestId("quest_main_3"), "active"]])
     );
     const view = project(atBoss);
     const battle = view.locationScene.interactions.find((i) => i.kind === "start_battle");
@@ -201,7 +201,7 @@ describe("projectLocationAdventureView：安全对话", () => {
     // 当前 loc_3，npc_3 在场未结识，quest_m2（talk npc_3）active ⇒ ask_main_quest。
     const state = withQuestStatuses(
       { ...PIPELINE.state, currentLocationId: asLocationId("loc_3") },
-      new Map<QuestId, GameState["quests"][number]["status"]>([[asQuestId("quest_m2"), "active"]])
+      new Map<QuestId, GameState["quests"][number]["status"]>([[asQuestId("quest_main_2"), "active"]])
     );
     const view = project(state);
     expect(view.dialogues).toHaveLength(1);

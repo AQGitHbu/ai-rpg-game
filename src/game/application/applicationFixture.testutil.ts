@@ -1,4 +1,4 @@
-import { validateNewGameInput, type GameState, type NewGameInput, type ScenarioBlueprint } from "@/game/domain";
+import { createBudgetPolicy, validateNewGameInput, type GameState, type NewGameInput, type ScenarioBlueprint } from "@/game/domain";
 import {
   compileScenarioBlueprint,
   createFallbackBlueprint,
@@ -120,7 +120,8 @@ export function runScenarioPipeline(
   const candidate = createFallbackBlueprint(validatedInput.value, seed, { profiles });
   const compiled = compileScenarioBlueprint(
     validateScenarioBlueprintCandidate(candidate, {
-      profile: profiles.gameTypeProfiles[input.gameType]
+      profile: profiles.gameTypeProfiles[input.gameType],
+      policy: createBudgetPolicy(validatedInput.value.gameLength)
     })
   );
   if (!compiled.ok) {

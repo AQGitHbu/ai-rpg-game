@@ -40,9 +40,9 @@ import {
 type Phase1Fixture = { input: NewGameInput; seed: string };
 
 const CASES: readonly { gameType: GameTypeId; fixture: Phase1Fixture }[] = [
-  { gameType: "wuxia", fixture: wuxiaFixture as unknown as Phase1Fixture },
-  { gameType: "science_fiction", fixture: scienceFictionFixture as unknown as Phase1Fixture },
-  { gameType: "urban", fixture: urbanFixture as unknown as Phase1Fixture }
+  { gameType: "wuxia", fixture: { ...(wuxiaFixture as unknown as Phase1Fixture), input: { ...(wuxiaFixture as unknown as Phase1Fixture).input, gameLength: "short" } } },
+  { gameType: "science_fiction", fixture: { ...(scienceFictionFixture as unknown as Phase1Fixture), input: { ...(scienceFictionFixture as unknown as Phase1Fixture).input, gameLength: "short" } } },
+  { gameType: "urban", fixture: { ...(urbanFixture as unknown as Phase1Fixture), input: { ...(urbanFixture as unknown as Phase1Fixture).input, gameLength: "short" } } }
 ];
 
 const PROFILES = loadScenarioProfiles();

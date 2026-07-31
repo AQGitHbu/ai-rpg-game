@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CONTENT_BUDGET,
+  createBudgetPolicy,
   validateNewGameInput,
   type GameState,
   type GameTypeId,
@@ -53,9 +54,11 @@ function runPhase1Pipeline(raw: NewGameInput, seed: string): PipelineRun {
   if (!validatedInput.ok) {
     throw new Error(`输入校验失败：${JSON.stringify(validatedInput.errors)}`);
   }
+  const policy = createBudgetPolicy(validatedInput.value.gameLength);
   const candidate = createFallbackBlueprint(validatedInput.value, seed);
   const validation = validateScenarioBlueprintCandidate(candidate, {
-    profile: PROFILES.gameTypeProfiles[raw.gameType]
+    profile: PROFILES.gameTypeProfiles[raw.gameType],
+    policy
   });
   if (!validation.ok) {
     throw new Error(`蓝图校验失败：${JSON.stringify(validation.issues)}`);
@@ -103,7 +106,8 @@ describe("Phase 1 回归点 1：三类 fixture 原始输入通过完整 validato
       if (!validatedInput.ok) return;
       const candidate = createFallbackBlueprint(validatedInput.value, fixture.seed);
       const validation = validateScenarioBlueprintCandidate(candidate, {
-        profile: PROFILES.gameTypeProfiles[fixture.input.gameType]
+        profile: PROFILES.gameTypeProfiles[fixture.input.gameType],
+        policy: createBudgetPolicy(validatedInput.value.gameLength)
       });
       expect(validation.ok ? [] : validation.issues).toEqual([]);
     });
@@ -140,6 +144,9 @@ describe("Phase 1 回归点 3：相同输入/seed/版本 ⇒ 蓝图与 GameState
 describe("Phase 1 回归点 4：改变 seed 改变生成 ID，但内容预算不变", () => {
   for (const [name, fixture] of Object.entries(FIXTURES)) {
     it(`${name}：seed 变化翻转 generationId，预算指标保持`, () => {
+      const validatedInput = validateNewGameInput(fixture.input);
+      if (!validatedInput.ok) throw new Error("input validation failed");
+      const policy = createBudgetPolicy(validatedInput.value.gameLength);
       const base = runPhase1Pipeline(fixture.input, fixture.seed);
       const reseeded = runPhase1Pipeline(fixture.input, `${fixture.seed}-reseeded`);
       expect(reseeded.candidate.generationId).not.toBe(base.candidate.generationId);
@@ -148,7 +155,7 @@ describe("Phase 1 回归点 4：改变 seed 改变生成 ID，但内容预算不
         expect(run.candidate.contentBudget).toEqual(CONTENT_BUDGET);
         expect(run.candidate.locations.filter((entry) => entry.kind === "main")).toHaveLength(4);
         expect(run.candidate.locations.filter((entry) => entry.kind === "hidden")).toHaveLength(1);
-        expect(run.candidate.quests.filter((entry) => entry.kind === "main")).toHaveLength(3);
+        expect(run.candidate.quests.filter((entry) => entry.kind === "main")).toHaveLength(policy.mainActs);
         expect(run.candidate.endings).toHaveLength(2);
         expect(run.candidate.enemies.filter((entry) => entry.tier === "normal")).toHaveLength(3);
         expect(run.candidate.enemies.filter((entry) => entry.tier === "boss")).toHaveLength(1);
@@ -172,7 +179,8 @@ describe("Phase 1 回归点 5：compile 与 initialize 不修改候选", () => {
     // 双保险：strict mode 下对冻结对象的写入直接抛错 + 事后快照比对。
     deepFreeze(candidate);
     const validation = validateScenarioBlueprintCandidate(candidate, {
-      profile: PROFILES.gameTypeProfiles[fixture.input.gameType]
+      profile: PROFILES.gameTypeProfiles[fixture.input.gameType],
+      policy: createBudgetPolicy(validatedInput.value.gameLength)
     });
     expect(validation.ok).toBe(true);
     if (!validation.ok) return;

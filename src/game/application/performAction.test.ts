@@ -25,7 +25,7 @@ import {
 
 type Phase1Fixture = { input: NewGameInput; seed: string };
 const FIXTURE = wuxiaFixture as unknown as Phase1Fixture;
-const PIPELINE = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
+const PIPELINE = runScenarioPipeline({ ...FIXTURE.input, gameLength: "short" }, FIXTURE.seed);
 
 const FIXED_TIME = "2026-07-27T10:00:00.000Z";
 
@@ -296,8 +296,8 @@ describe("performAction：take_item + 任务 reconciliation 单次写入（Phase
     const statusById = new Map(
       repository.applyCalls[0].nextState.quests.map((quest) => [quest.questId, quest.status])
     );
-    expect(statusById.get(asQuestId("quest_m2"))).toBe("completed");
-    expect(statusById.get(asQuestId("quest_m3"))).toBe("active");
+    expect(statusById.get(asQuestId("quest_main_2"))).toBe("completed");
+    expect(statusById.get(asQuestId("quest_main_3"))).toBe("active");
     // 已保存 state 投影的 view：背包收录 key 物品，可取得列表清空。
     expect(result.view.revision).toBe(4);
     expect(result.view.obtainableItems).toEqual([]);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateNewGameInput, type NewGameInput, type ScenarioBlueprintCandidate } from "@/game/domain";
+import { createBudgetPolicy, validateNewGameInput, type NewGameInput, type ScenarioBlueprintCandidate } from "@/game/domain";
 import { createFallbackBlueprint, loadScenarioProfiles } from "@/game/gameplay/rpg/scenario";
 import { repairScenarioCandidate } from "./scenarioCandidateRecovery";
 
@@ -7,6 +7,8 @@ import { repairScenarioCandidate } from "./scenarioCandidateRecovery";
 // 机械修复 helper 契约：只删未知根字段 / trim 字符串 / 裁剪超预算列表尾部；
 // 悬空引用、任务图、tag、数值、文本内容一律不可修复（返回 null）。
 // ---------------------------------------------------------------------------
+
+const REPAIR_POLICY = createBudgetPolicy("short");
 
 const NEW_GAME_INPUT: NewGameInput = {
   gameType: "wuxia",
@@ -17,7 +19,8 @@ const NEW_GAME_INPUT: NewGameInput = {
   worldPremise: "镖局一夜覆灭，江湖各派暗流涌动，真凶身份成谜，官府与门派各怀心思。",
   storyOpening: "暮色四合，主角背着旧刀走进青石镇，镇口贴着一张字迹潦草的缉凶告示。",
   narrativeStyle: "novel",
-  contentIntensity: "normal"
+  contentIntensity: "normal",
+  gameLength: "short"
 };
 
 function buildValidCandidate(): ScenarioBlueprintCandidate {
@@ -37,7 +40,7 @@ describe("repairScenarioCandidate", () => {
   it("合法候选原样通过且不被原地修改", () => {
     const candidate = buildValidCandidate();
     const snapshot = JSON.parse(JSON.stringify(candidate));
-    const repaired = repairScenarioCandidate(candidate);
+    const repaired = repairScenarioCandidate(candidate, { policy: REPAIR_POLICY });
     expect(repaired).not.toBeNull();
     expect(repaired).toEqual(snapshot);
     expect(candidate).toEqual(snapshot);
@@ -59,7 +62,7 @@ describe("repairScenarioCandidate", () => {
         tags: []
       }
     ];
-    const repaired = repairScenarioCandidate(candidate) as MutableCandidate | null;
+    const repaired = repairScenarioCandidate(candidate, { policy: REPAIR_POLICY }) as MutableCandidate | null;
     expect(repaired?.extraPromptInstruction).toBeUndefined();
     expect(repaired?.npcs).toHaveLength(6);
   });
@@ -67,7 +70,7 @@ describe("repairScenarioCandidate", () => {
   it("trim 字符串字段后仍需通过完整校验", () => {
     const candidate = buildValidCandidate() as MutableCandidate;
     candidate.generationId = `  ${candidate.generationId}  `;
-    const repaired = repairScenarioCandidate(candidate);
+    const repaired = repairScenarioCandidate(candidate, { policy: REPAIR_POLICY });
     expect(repaired?.generationId).toBe(buildValidCandidate().generationId);
   });
 
@@ -76,7 +79,7 @@ describe("repairScenarioCandidate", () => {
     candidate.npcs = candidate.npcs.map((npc, index) =>
       index === 0 ? { ...npc, knownFactIds: ["fact_missing"] } : npc
     );
-    expect(repairScenarioCandidate(candidate)).toBeNull();
+    expect(repairScenarioCandidate(candidate, { policy: REPAIR_POLICY })).toBeNull();
   });
 
   it("低于预算下限的候选不可修复", () => {
@@ -91,6 +94,6 @@ describe("repairScenarioCandidate", () => {
       ...candidate.openingScene,
       presentNpcIds: candidate.openingScene.presentNpcIds.filter((id) => kept.has(id))
     };
-    expect(repairScenarioCandidate(candidate)).toBeNull();
+    expect(repairScenarioCandidate(candidate, { policy: REPAIR_POLICY })).toBeNull();
   });
 });

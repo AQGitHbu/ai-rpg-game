@@ -1,5 +1,5 @@
 import {
-  CONTENT_BUDGET,
+  type BudgetPolicy,
   type ItemCategory,
   type ItemRarity,
   type ScenarioBlueprintCandidate,
@@ -50,8 +50,8 @@ export type ScenarioBlueprintIssueCode =
   | "INVALID_SCHEMA_VERSION"
   | "REQUIRED"
   | "GAME_TYPE_MISMATCH"
-  | "CONTENT_BUDGET_MISMATCH"
-  | "MAIN_LOCATION_COUNT_MISMATCH"
+  | "BUDGET_POLICY_MISMATCH"
+  | "MAIN_LOCATION_COUNT_OUT_OF_RANGE"
   | "HIDDEN_LOCATION_OVERBUDGET"
   | "CORE_NPC_COUNT_OUT_OF_RANGE"
   | "COMPANION_OVERBUDGET"
@@ -76,9 +76,10 @@ export type ScenarioBlueprintIssue = {
   params: Record<string, string | number>;
 };
 
-/** 校验上下文：profile 由调用方（application 层 / Task 6）注入。 */
+/** 校验上下文：profile 与 policy 由调用方（application 层）注入。 */
 export type ScenarioValidationContext = {
   profile: GameTypeProfile;
+  policy: BudgetPolicy;
 };
 
 declare const validatedScenarioBlueprintCandidateBrand: unique symbol;
@@ -98,8 +99,8 @@ export function validateScenarioBlueprintCandidate(
 ): ValidateScenarioBlueprintResult {
   const issues: ScenarioBlueprintIssue[] = [];
 
-  validateSchemaBasics(issues, candidate, context.profile);
-  validateBudgetCounts(issues, candidate);
+  validateSchemaBasics(issues, candidate, context.profile, context.policy);
+  validateBudgetCounts(issues, candidate, context.policy);
   validateGlobalIdUniqueness(issues, candidate);
   validateReferences(issues, candidate);
   validateAvailableItems(issues, candidate);
@@ -110,13 +111,13 @@ export function validateScenarioBlueprintCandidate(
       quests: candidate.quests,
       endings: candidate.endings,
       knownEntityIds: collectKnownEntityIds(candidate),
-      budget: { mainActs: 3, sideQuestsMax: CONTENT_BUDGET.sideQuestsMax, endings: CONTENT_BUDGET.endings }
+      budget: { mainActs: context.policy.mainActs, sideQuestsMax: context.policy.opening.sideQuestsMax, endings: context.policy.opening.endings }
     })
   );
   validateNumericRanges(issues, candidate);
   validateForbiddenTags(issues, candidate, context.profile);
   validateItemPresentationMetadata(issues, candidate);
-  validateLocationScales(issues, candidate);
+  validateLocationScales(issues, candidate, context.policy);
 
   if (issues.length > 0) return { ok: false, issues };
   return { ok: true, validated: candidate as ValidatedScenarioBlueprintCandidate };
@@ -131,7 +132,8 @@ const REQUIRED_TEXT_FIELDS = ["generationId", "seed", "templateVersion", "inputD
 function validateSchemaBasics(
   issues: ScenarioBlueprintIssue[],
   candidate: ScenarioBlueprintCandidate,
-  profile: GameTypeProfile
+  profile: GameTypeProfile,
+  policy: BudgetPolicy
 ): void {
   if (candidate.schemaVersion !== 1) {
     issues.push({
@@ -153,16 +155,10 @@ function validateSchemaBasics(
       params: { expected: profile.id, actual: String(candidate.gameType) }
     });
   }
-  // 候选自带的 contentBudget 必须逐字段等于 Phase 1 常量（候选来自 JSON，运行时防御）。
-  const declaredBudget = (candidate.contentBudget ?? {}) as Record<string, unknown>;
-  for (const [key, expected] of Object.entries(CONTENT_BUDGET)) {
-    if (declaredBudget[key] !== expected) {
-      issues.push({
-        path: `contentBudget.${key}`,
-        code: "CONTENT_BUDGET_MISMATCH",
-        params: { expected, actual: String(declaredBudget[key]) }
-      });
-    }
+  // 候选必须原样复述派生的 budgetPolicy（JSON round-trip 深比较，防 AI 私改预算）。
+  const declared = candidate.budgetPolicy;
+  if (JSON.stringify(declared ?? null) !== JSON.stringify(policy)) {
+    issues.push({ path: "budgetPolicy", code: "BUDGET_POLICY_MISMATCH", params: {} });
   }
 }
 
@@ -172,38 +168,39 @@ function validateSchemaBasics(
 
 function validateBudgetCounts(
   issues: ScenarioBlueprintIssue[],
-  candidate: ScenarioBlueprintCandidate
+  candidate: ScenarioBlueprintCandidate,
+  policy: BudgetPolicy
 ): void {
   const mainCount = candidate.locations.filter((entry) => entry.kind === "main").length;
-  if (mainCount !== CONTENT_BUDGET.mainLocations) {
+  if (mainCount < policy.opening.mainLocationsMin || mainCount > policy.opening.mainLocationsMax) {
     issues.push({
       path: "locations",
-      code: "MAIN_LOCATION_COUNT_MISMATCH",
-      params: { expected: CONTENT_BUDGET.mainLocations, actual: mainCount }
+      code: "MAIN_LOCATION_COUNT_OUT_OF_RANGE",
+      params: { min: policy.opening.mainLocationsMin, max: policy.opening.mainLocationsMax, actual: mainCount }
     });
   }
   const hiddenCount = candidate.locations.filter((entry) => entry.kind === "hidden").length;
-  if (hiddenCount > CONTENT_BUDGET.hiddenLocationsMax) {
+  if (hiddenCount > policy.opening.hiddenLocationsMax) {
     issues.push({
       path: "locations",
       code: "HIDDEN_LOCATION_OVERBUDGET",
-      params: { max: CONTENT_BUDGET.hiddenLocationsMax, actual: hiddenCount }
+      params: { max: policy.opening.hiddenLocationsMax, actual: hiddenCount }
     });
   }
   const npcCount = candidate.npcs.length;
-  if (npcCount < CONTENT_BUDGET.coreNpcsMin || npcCount > CONTENT_BUDGET.coreNpcsMax) {
+  if (npcCount < policy.opening.coreNpcsMin || npcCount > policy.opening.coreNpcsMax) {
     issues.push({
       path: "npcs",
       code: "CORE_NPC_COUNT_OUT_OF_RANGE",
-      params: { min: CONTENT_BUDGET.coreNpcsMin, max: CONTENT_BUDGET.coreNpcsMax, actual: npcCount }
+      params: { min: policy.opening.coreNpcsMin, max: policy.opening.coreNpcsMax, actual: npcCount }
     });
   }
   const companionCount = candidate.npcs.filter((entry) => entry.isCompanion === true).length;
-  if (companionCount > CONTENT_BUDGET.companionsMax) {
+  if (companionCount > policy.opening.companionsMax) {
     issues.push({
       path: "npcs",
       code: "COMPANION_OVERBUDGET",
-      params: { max: CONTENT_BUDGET.companionsMax, actual: companionCount }
+      params: { max: policy.opening.companionsMax, actual: companionCount }
     });
   }
 }
@@ -568,7 +565,8 @@ function validateItemPresentationMetadata(
 /** scale 为可选字段：提供时必须合法；town 地点总数 ≤ 配额（懒生成成本约束）。 */
 function validateLocationScales(
   issues: ScenarioBlueprintIssue[],
-  candidate: ScenarioBlueprintCandidate
+  candidate: ScenarioBlueprintCandidate,
+  policy: BudgetPolicy
 ): void {
   let townCount = 0;
   candidate.locations.forEach((location, index) => {
@@ -583,11 +581,11 @@ function validateLocationScales(
     }
     if (location.scale === "town") townCount += 1;
   });
-  if (townCount > TOWN_SCALE_LOCATIONS_MAX) {
+  if (townCount > policy.opening.townLocationsMax) {
     issues.push({
       path: "locations",
       code: "TOWN_LOCATION_OVERBUDGET",
-      params: { max: TOWN_SCALE_LOCATIONS_MAX, actual: townCount }
+      params: { max: policy.opening.townLocationsMax, actual: townCount }
     });
   }
 }

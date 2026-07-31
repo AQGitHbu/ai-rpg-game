@@ -51,7 +51,7 @@ type RuntimeSources = Readonly<{
   npcLineSource: NpcLineSource;
 }>;
 
-const fixture = wuxiaFixture as unknown as Phase1Fixture;
+const fixture: Phase1Fixture = { ...(wuxiaFixture as unknown as Phase1Fixture), input: { ...(wuxiaFixture as unknown as Phase1Fixture).input, gameLength: "short" } };
 const baseline = runScenarioPipeline(fixture.input, fixture.seed);
 const goldenRoot = resolve("data", "fixtures", "phase10-journey", "v1");
 // 共享 tmp/ 策略：创建前先清扫上一轮同前缀残留（见 tmpRunDir.testutil.ts）。

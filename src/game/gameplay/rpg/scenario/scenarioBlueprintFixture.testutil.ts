@@ -1,4 +1,4 @@
-import { CONTENT_BUDGET, type ScenarioBlueprintCandidate } from "@/game/domain";
+import { CONTENT_BUDGET, createBudgetPolicy, type ScenarioBlueprintCandidate } from "@/game/domain";
 import type { GameTypeProfile } from "./gameTypeProfiles";
 
 // ---------------------------------------------------------------------------
@@ -22,6 +22,9 @@ export const TEST_PROFILE: GameTypeProfile = {
   namingGuide: ["中文姓名"],
   artStyleProfileId: "ink_wash"
 };
+
+/** 测试用 policy：short 档位（3 幕、主地点 3..5）与既有 fixture 兼容。 */
+export const TEST_POLICY = createBudgetPolicy("short");
 
 export function makeValidCandidate(): ScenarioBlueprintCandidate {
   return {
@@ -248,6 +251,7 @@ export function makeValidCandidate(): ScenarioBlueprintCandidate {
       suggestedActions: ["向老掌柜打听旧案", "查看镖局废墟"],
       investigableFactIds: ["fact_b"]
     },
-    contentBudget: { ...CONTENT_BUDGET }
+    contentBudget: { ...CONTENT_BUDGET },
+    budgetPolicy: TEST_POLICY
   };
 }
