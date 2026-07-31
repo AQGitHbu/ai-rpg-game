@@ -149,7 +149,10 @@ export async function handleNpcDialogue(
 
   if (!canTriggerNarrative) {
     // chat 路径：确定性模板回应，零 CAS 写入、零事件。
-    const npcSpeech = composeNpcCasualReply(record.blueprint, record.state, command.npcId, command.text);
+    // composeNpcCasualReply 在 NPC 不在当前地点时返回空串（如伪造请求），
+    // 兜底为通用提示避免 UI 显示空白。
+    const raw = composeNpcCasualReply(record.blueprint, record.state, command.npcId, command.text);
+    const npcSpeech = raw === "" ? "（对方似乎没听清。）" : raw;
     const view = projectCurrentView();
     if (view === null) {
       return { ok: false, code: "INFRASTRUCTURE_FAILURE" };

@@ -59,4 +59,23 @@ describe("composeNpcCasualReply", () => {
     const reply = composeNpcCasualReply(blueprint, state, "npc_1" as never, "嗨");
     expect(reply).toContain("嗯？");
   });
+
+  it("未知 role → 默认模板", () => {
+    const bpUnknownRole = {
+      npcs: [
+        { id: "npc_4" as never, name: "神秘人", role: "刺客", locationId: "loc_1" as never, knownFactIds: [] },
+      ],
+    } as unknown as ScenarioBlueprint;
+    // npc_4 需同时在 state.npcs 中且位于当前地点，否则返回空串。
+    const state: GameState = {
+      ...buildMinimalState(),
+      npcs: [
+        ...buildMinimalState().npcs,
+        { npcId: "npc_4" as never, locationId: "loc_1" as never, met: true },
+      ],
+    };
+    const reply = composeNpcCasualReply(bpUnknownRole, state, "npc_4" as never, "今天天气真好");
+    expect(reply).toContain("神秘人");
+    expect(reply).toContain("沉吟片刻");
+  });
 });

@@ -86,4 +86,11 @@ describe("classifyFreeDialogue", () => {
     const noQuestState = buildState({ quests: [] });
     expect(classifyFreeDialogue(blueprint, noQuestState, "npc_1" as never, "废弃矿坑")).toBe("narrative");
   });
+
+  it("命中物品名称 → narrative", () => {
+    const bpWithItem = buildMinimalBlueprint({
+      items: [{ id: "item_1" as never, name: "玄铁令", description: "", kind: "key", tags: [] }],
+    });
+    expect(classifyFreeDialogue(bpWithItem, state, "npc_1" as never, "玄铁令在哪里")).toBe("narrative");
+  });
 });

@@ -243,4 +243,20 @@ describe("handleNpcDialogue", () => {
     expect(result.kind).toBe("chat");
     expect(repository.applyCalls).toHaveLength(0);
   });
+
+  it("NPC ID 不在蓝图中 → ACTION_REJECTED，零写入", async () => {
+    const repository = createFakeGameRepository();
+    const record = buildActiveRecord();
+    repository.setCurrentResult({ ok: true, status: "active", record });
+
+    const result = await handleNpcDialogue(
+      { npcId: asNpcId("npc_nonexistent"), text: CHAT_TEXT, expectedRevision: 0 },
+      buildDeps(repository)
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("ACTION_REJECTED");
+    expect(repository.applyCalls).toHaveLength(0);
+  });
 });
