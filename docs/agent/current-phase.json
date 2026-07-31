@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "mvp-phase-12-npc-dialogue-narrative-trigger",
-  "status": "implemented",
-  "implementationStatus": "done",
+  "status": "completed",
+  "implementationStatus": "merged",
   "targetBranch": "codex/npc-dialogue-narrative-trigger",
   "worktreeName": "npc-dialogue-narrative-trigger",
   "repositories": ["ai-rpg-game"],
