@@ -56,3 +56,29 @@ export function classifyFreeDialogue(
 
   return "chat";
 }
+
+// ---------------------------------------------------------------------------
+// Phase 13：自由输入语气分类器。纯规则，零 AI。
+// 与 classifyFreeDialogue 并列，供 handleNpcDialogue 在关系变化中使用。
+// ---------------------------------------------------------------------------
+
+export type DialogueTone = "positive" | "neutral" | "negative";
+
+/** 中文语气关键词表。纯规则匹配，不调 AI。 */
+const POSITIVE_KEYWORDS = ["谢谢", "帮忙", "你好", "佩服", "感激", "请", "拜托", "劳驾", "请问", "感谢"];
+const NEGATIVE_KEYWORDS = ["混蛋", "滚", "威胁", "少管闲事", "闭嘴", "该死", "可恶", "别烦", "滚开", "去死"];
+
+export function classifyDialogueTone(text: string): DialogueTone {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return "neutral";
+
+  for (const kw of NEGATIVE_KEYWORDS) {
+    if (trimmed.includes(kw)) return "negative";
+  }
+  for (const kw of POSITIVE_KEYWORDS) {
+    if (trimmed.includes(kw)) return "positive";
+  }
+
+  // 问句倾向中性（但"你吃饭了吗？"不触发关系变化）
+  return "neutral";
+}

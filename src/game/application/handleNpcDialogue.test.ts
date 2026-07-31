@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { asNpcId, type GameState, type NewGameInput } from "@/game/domain";
-import { classifyFreeDialogue } from "@/game/gameplay/rpg/actions";
+import { classifyDialogueTone, classifyFreeDialogue } from "@/game/gameplay/rpg/actions";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { handleNpcDialogue, type HandleNpcDialogueDependencies } from "./handleNpcDialogue";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
@@ -258,5 +258,143 @@ describe("handleNpcDialogue", () => {
     if (result.ok) return;
     expect(result.code).toBe("ACTION_REJECTED");
     expect(repository.applyCalls).toHaveLength(0);
+  });
+});
+
+describe("handleNpcDialogue 关系变化", () => {
+  const FIXED_TIME = "2026-07-27T10:00:00.000Z";
+  const POSITIVE_NARRATIVE_TEXT = "谢谢你帮忙，我想出去走走";
+  const NEGATIVE_NARRATIVE_TEXT = "混蛋，我想出去走走";
+  const NEUTRAL_NARRATIVE_TEXT = "我想出去走走，去外面看一眼";
+
+  function buildDeps(
+    repository: ReturnType<typeof createFakeGameRepository>,
+    overrides: Partial<HandleNpcDialogueDependencies> = {}
+  ): HandleNpcDialogueDependencies {
+    return {
+      repository,
+      now: () => FIXED_TIME,
+      runtimeNarrativeSources: fakeNarrativeSources(),
+      ...overrides
+    };
+  }
+
+  /** 使用 pipeline 中的 currentLocationId 构建 NPC 运行时状态。 */
+  function buildNpcState(): GameState["npcs"][number] {
+    const currentLocationId = PIPELINE.state.currentLocationId;
+    return { npcId: asNpcId("npc_1"), locationId: currentLocationId, met: true, relationship: { affinity: 10 } };
+  }
+
+  it("正面语气 → 好感度 +3", async () => {
+    const repository = createFakeGameRepository();
+    const record = {
+      ...buildActiveRecord(),
+      state: {
+        ...buildActiveRecord().state,
+        npcs: [buildNpcState()],
+      }
+    } as GameRecord;
+    repository.setCurrentResult({ ok: true, status: "active", record });
+    // 前置：确认输入分类为 narrative 且语气为 positive。
+    expect(classifyFreeDialogue(record.blueprint, record.state, asNpcId("npc_1"), POSITIVE_NARRATIVE_TEXT)).toBe("narrative");
+    expect(classifyDialogueTone(POSITIVE_NARRATIVE_TEXT)).toBe("positive");
+
+    const pendingState: GameState = {
+      ...record.state,
+      narrative: {
+        currentScene: null,
+        generation: { status: "pending", requestedAt: FIXED_TIME },
+        mode: "ai"
+      }
+    };
+    repository.setApplyResult({ ok: true, record: { ...record, state: pendingState, revision: 1 } });
+
+    const result = await handleNpcDialogue(
+      { npcId: asNpcId("npc_1"), text: POSITIVE_NARRATIVE_TEXT, expectedRevision: 0 },
+      buildDeps(repository)
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.kind).toBe("narrative_trigger");
+    expect(repository.applyCalls).toHaveLength(1);
+    const savedNpcs = repository.applyCalls[0].nextState.npcs;
+    const npc1 = savedNpcs.find((n) => n.npcId === asNpcId("npc_1"));
+    expect(npc1?.relationship?.affinity).toBe(13); // 10 + 3
+  });
+
+  it("负面语气 → 好感度 -3", async () => {
+    const repository = createFakeGameRepository();
+    const record = {
+      ...buildActiveRecord(),
+      state: {
+        ...buildActiveRecord().state,
+        npcs: [buildNpcState()],
+      }
+    } as GameRecord;
+    repository.setCurrentResult({ ok: true, status: "active", record });
+    expect(classifyFreeDialogue(record.blueprint, record.state, asNpcId("npc_1"), NEGATIVE_NARRATIVE_TEXT)).toBe("narrative");
+    expect(classifyDialogueTone(NEGATIVE_NARRATIVE_TEXT)).toBe("negative");
+
+    const pendingState: GameState = {
+      ...record.state,
+      narrative: {
+        currentScene: null,
+        generation: { status: "pending", requestedAt: FIXED_TIME },
+        mode: "ai"
+      }
+    };
+    repository.setApplyResult({ ok: true, record: { ...record, state: pendingState, revision: 1 } });
+
+    const result = await handleNpcDialogue(
+      { npcId: asNpcId("npc_1"), text: NEGATIVE_NARRATIVE_TEXT, expectedRevision: 0 },
+      buildDeps(repository)
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.kind).toBe("narrative_trigger");
+    expect(repository.applyCalls).toHaveLength(1);
+    const savedNpcs = repository.applyCalls[0].nextState.npcs;
+    const npc1 = savedNpcs.find((n) => n.npcId === asNpcId("npc_1"));
+    expect(npc1?.relationship?.affinity).toBe(7); // 10 - 3
+  });
+
+  it("中性语气 → 好感度不变", async () => {
+    const repository = createFakeGameRepository();
+    const record = {
+      ...buildActiveRecord(),
+      state: {
+        ...buildActiveRecord().state,
+        npcs: [buildNpcState()],
+      }
+    } as GameRecord;
+    repository.setCurrentResult({ ok: true, status: "active", record });
+    expect(classifyFreeDialogue(record.blueprint, record.state, asNpcId("npc_1"), NEUTRAL_NARRATIVE_TEXT)).toBe("narrative");
+    expect(classifyDialogueTone(NEUTRAL_NARRATIVE_TEXT)).toBe("neutral");
+
+    const pendingState: GameState = {
+      ...record.state,
+      narrative: {
+        currentScene: null,
+        generation: { status: "pending", requestedAt: FIXED_TIME },
+        mode: "ai"
+      }
+    };
+    repository.setApplyResult({ ok: true, record: { ...record, state: pendingState, revision: 1 } });
+
+    const result = await handleNpcDialogue(
+      { npcId: asNpcId("npc_1"), text: NEUTRAL_NARRATIVE_TEXT, expectedRevision: 0 },
+      buildDeps(repository)
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.kind).toBe("narrative_trigger");
+    expect(repository.applyCalls).toHaveLength(1);
+    const savedNpcs = repository.applyCalls[0].nextState.npcs;
+    const npc1 = savedNpcs.find((n) => n.npcId === asNpcId("npc_1"));
+    // 中性语气 delta=0 → relationship 不写入（保留原值）
+    expect(npc1?.relationship?.affinity).toBe(10); // 不变
   });
 });

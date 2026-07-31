@@ -1,11 +1,20 @@
 import { loadScenarioProfiles, type ScenarioProfiles } from "@/game/gameplay/rpg/scenario";
-import { classifyFreeDialogue, composeNpcCasualReply } from "@/game/gameplay/rpg/actions";
-import type { GameState, NpcId, PlayerNpcChatState } from "@/game/domain";
+import { classifyFreeDialogue, classifyDialogueTone, composeNpcCasualReply } from "@/game/gameplay/rpg/actions";
+import { RELATIONSHIP_CHANGE, clampAffinity, type GameState, type NpcId, type PlayerNpcChatState } from "@/game/domain";
 import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
 import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
 import type { ActionFeedbackView } from "./performAction";
 import type { GameRepository } from "./server/persistence/gameRepository";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
+
+// ---------------------------------------------------------------------------
+// Phase 13：不可变更新辅助函数（与 resolveAction.ts 同构）。
+// ---------------------------------------------------------------------------
+
+/** 不可变更新：替换数组中匹配元素。 */
+function replaceInArray<T>(array: readonly T[], predicate: (item: T) => boolean, replacement: (item: T) => T): T[] {
+  return array.map((item) => (predicate(item) ? replacement(item) : item));
+}
 
 // ---------------------------------------------------------------------------
 // handleNpcDialogue use case（NPC 自由输入，spec §5.2/5.3）。
@@ -162,6 +171,18 @@ export async function handleNpcDialogue(
 
   // Step 6: narrative 路径：pending + playerNpcChat 快照一次 CAS 写入。
   // 快照随 pending 变体单次消费，场景 ready 时随类型收窄自动丢弃。
+  // Phase 13：在构造 nextState 前计算关系变化。
+  const tone = classifyDialogueTone(command.text);
+  const delta =
+    tone === "positive" ? RELATIONSHIP_CHANGE.FREE_INPUT_POSITIVE :
+    tone === "negative" ? RELATIONSHIP_CHANGE.FREE_INPUT_NEGATIVE :
+    0;
+
+  const currentRelationship = record.state.npcs.find(
+    (n) => n.npcId === command.npcId,
+  )?.relationship ?? { affinity: 0 };
+  const newAffinity = clampAffinity(currentRelationship.affinity + delta);
+
   const playerNpcChat: PlayerNpcChatState = {
     npcId: command.npcId,
     playerText: command.text,
@@ -170,6 +191,14 @@ export async function handleNpcDialogue(
   };
   const nextState: GameState = {
     ...record.state,
+    npcs: replaceInArray(
+      record.state.npcs,
+      (n) => n.npcId === command.npcId,
+      (n) => ({
+        ...n,
+        relationship: delta !== 0 ? { affinity: newAffinity } : n.relationship,
+      }),
+    ),
     narrative: {
       currentScene: null,
       generation: { status: "pending", requestedAt: deps.now(), playerNpcChat },

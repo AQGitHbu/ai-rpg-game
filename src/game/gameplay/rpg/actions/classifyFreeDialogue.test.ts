@@ -94,3 +94,26 @@ describe("classifyFreeDialogue", () => {
     expect(classifyFreeDialogue(bpWithItem, state, "npc_1" as never, "玄铁令在哪里")).toBe("narrative");
   });
 });
+
+describe("classifyDialogueTone", () => {
+  it("正面关键词 → positive", async () => {
+    const { classifyDialogueTone } = await import("./classifyFreeDialogue");
+    expect(classifyDialogueTone("谢谢你帮忙")).toBe("positive");
+    expect(classifyDialogueTone("佩服你的勇气")).toBe("positive");
+    expect(classifyDialogueTone("请带我去矿坑")).toBe("positive");
+  });
+
+  it("负面关键词 → negative", async () => {
+    const { classifyDialogueTone } = await import("./classifyFreeDialogue");
+    expect(classifyDialogueTone("混蛋，滚开")).toBe("negative");
+    expect(classifyDialogueTone("少管闲事")).toBe("negative");
+    expect(classifyDialogueTone("闭嘴")).toBe("negative");
+  });
+
+  it("中性文本 → neutral", async () => {
+    const { classifyDialogueTone } = await import("./classifyFreeDialogue");
+    expect(classifyDialogueTone("今天天气真好")).toBe("neutral");
+    expect(classifyDialogueTone("你吃饭了吗？")).toBe("neutral");
+    expect(classifyDialogueTone("")).toBe("neutral");
+  });
+});

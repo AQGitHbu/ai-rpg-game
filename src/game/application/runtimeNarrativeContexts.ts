@@ -3,8 +3,8 @@
 // 每个函数将 domain state → 纯净 context JSON（绝不含 AI prompt 原文、密钥）。
 // ---------------------------------------------------------------------------
 
-import { budgetPolicyOf, storyMemoryOf, type GameState, type PlayerNpcChatState, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
-import { projectAvailableActions } from "@/game/gameplay/rpg/actions";
+import { budgetPolicyOf, relationshipTierOf, storyMemoryOf, type GameState, type PlayerNpcChatState, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
+import { projectAvailableActions, projectRelationshipSummary } from "@/game/gameplay/rpg/actions";
 import { actionKeyOf, deriveContentProgression, type ContentProgression } from "@/game/gameplay/rpg/narrative";
 import type { ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
 import { projectTownLayerView } from "./townRuntimeView";
@@ -329,6 +329,10 @@ export type NpcLineContext = {
   readonly ownContinuity: { readonly lastContactTurn: number; readonly lastLocationName: string } | null;
   readonly speechAct: string;
   readonly mayLie: boolean;
+  // Phase 13：NPC 关系值（好感度档位、数值、交互摘要），供演员调整台词语气与态度。
+  readonly relationshipTier: string;
+  readonly relationshipAffinity: number;
+  readonly relationshipSummary: string;
 };
 
 export type NpcLineContextInput = {
@@ -352,6 +356,12 @@ export function toNpcLineContext(input: NpcLineContextInput): NpcLineContext {
       return { id: String(def.id), text: def.text, source: def.source };
     });
 
+  // Phase 13：读取关系值
+  const npcState = state.npcs.find((n) => String(n.npcId) === npcId);
+  const relationship = npcState?.relationship ?? { affinity: 0 };
+  const tier = relationshipTierOf(relationship);
+  const summary = projectRelationshipSummary(state, blueprint, npcId);
+
   const context: NpcLineContext = {
     npcDefinition: npcDef !== undefined
       ? {
@@ -366,6 +376,10 @@ export function toNpcLineContext(input: NpcLineContextInput): NpcLineContext {
     ownContinuity: projectOwnContinuity(state, blueprint, npcId),
     speechAct: input.speechAct,
     mayLie: input.mayLie,
+    // Phase 13：
+    relationshipTier: tier,
+    relationshipAffinity: relationship.affinity,
+    relationshipSummary: summary,
   };
 
   return context;

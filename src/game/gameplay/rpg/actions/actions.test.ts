@@ -16,6 +16,7 @@ import {
   validateScenarioBlueprintCandidate
 } from "../scenario";
 import { TEST_POLICY, TEST_PROFILE } from "../scenario/scenarioBlueprintFixture.testutil";
+import { reconcileQuests } from "../quests";
 import {
   validateIntent,
   resolveAction,
@@ -160,6 +161,16 @@ function buildInitialState(): GameState {
     townGeneration: { status: "idle" },
     eventLedger: [{ type: "game_initialized", generation: GEN }],
   };
+}
+
+/** 走真实规则管线：move 到 loc_b → q1 完成、q2（talk_to_npc npc_2）激活。 */
+function buildActiveTalkTargetState(blueprint: ScenarioBlueprint): GameState {
+  const moved = resolveAction(blueprint, buildInitialState(), { type: "move", locationId: LOC_B }, deps);
+  if (!moved.ok) throw new Error(`前置 move 应当成功：${moved.code}`);
+  const state = reconcileQuests(blueprint, moved.state, deps).state;
+  const q2 = state.quests.find((quest) => quest.questId === asQuestId("q2"));
+  if (q2?.status !== "active") throw new Error("前置条件失败：q2 应当已激活");
+  return state;
 }
 
 const FIXED_TIME = "2026-07-27T10:00:00Z";
@@ -838,6 +849,64 @@ describe("resolveAction: take_item", () => {
         expect("state" in result).toBe(false);
       }
       expect(JSON.stringify(state)).toBe(snapshot);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dialogue_choice（Phase 13 Task 3）：resolveAction 关系变化
+// ---------------------------------------------------------------------------
+
+describe("resolveAction dialogue_choice 关系变化", () => {
+  it("greet（首次结识）→ 好感度 +5", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const result = resolveAction(bp, st, {
+      type: "dialogue_choice", npcId: NPC_1, choiceId: "npc_1:greet",
+    } as never, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const npc = result.state.npcs.find((n) => n.npcId === NPC_1);
+      expect(npc?.relationship?.affinity).toBe(5);
+    }
+  });
+
+  it("ask_main_quest → 好感度 +10", () => {
+    const bp = buildBlueprint();
+    const st = buildActiveTalkTargetState(bp);
+    const result = resolveAction(bp, st, {
+      type: "dialogue_choice", npcId: NPC_2, choiceId: "npc_2:ask_main_quest",
+    } as never, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const npc = result.state.npcs.find((n) => n.npcId === NPC_2);
+      expect(npc?.relationship?.affinity).toBe(10);
+    }
+  });
+
+  it("npc_met 事件携带 interactionKind greet", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const result = resolveAction(bp, st, {
+      type: "dialogue_choice", npcId: NPC_1, choiceId: "npc_1:greet",
+    } as never, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const event = result.events.find((e) => e.type === "npc_met");
+      expect(event?.interactionKind).toBe("greet");
+    }
+  });
+
+  it("npc_met 事件携带 interactionKind ask_main_quest", () => {
+    const bp = buildBlueprint();
+    const st = buildActiveTalkTargetState(bp);
+    const result = resolveAction(bp, st, {
+      type: "dialogue_choice", npcId: NPC_2, choiceId: "npc_2:ask_main_quest",
+    } as never, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const event = result.events.find((e) => e.type === "npc_met");
+      expect(event?.interactionKind).toBe("ask_main_quest");
     }
   });
 });

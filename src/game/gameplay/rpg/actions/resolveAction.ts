@@ -1,4 +1,5 @@
 import type { GameEvent, GameState, ScenarioBlueprint } from "@/game/domain";
+import { RELATIONSHIP_CHANGE, clampAffinity } from "@/game/domain";
 import type { PlayerIntent } from "./intents";
 import { parseDialogueChoiceKind } from "./dialogueChoices";
 import {
@@ -239,17 +240,36 @@ export function resolveAction(
       // 校验已保证 choiceId 封闭合法且当前可用；成功效果与 talk 完全一致：
       // 只把对应 NPC 的 met 置为 true、追加一个 npc_met 事件；仅文案随 kind 不同。
       const kind = parseDialogueChoiceKind(intent.npcId, intent.choiceId);
+
+      // Phase 13：计算关系变化量
+      const delta =
+        kind === "ask_main_quest"
+          ? RELATIONSHIP_CHANGE.ASK_MAIN_QUEST_COMPLETE
+          : RELATIONSHIP_CHANGE.GREET_FIRST_MEET;
+
+      const currentRelationship = state.npcs.find(
+        (n) => n.npcId === intent.npcId,
+      )?.relationship ?? { affinity: 0 };
+      const newAffinity = clampAffinity(currentRelationship.affinity + delta);
+
       const event: GameEvent = {
         type: "npc_met",
         npcId: intent.npcId,
         occurredAt,
+        // Phase 13：携带交互类型供 reducer 推导摘要
+        interactionKind: kind === "ask_main_quest" ? "ask_main_quest" : "greet",
       };
       const newState: GameState = {
         ...state,
         npcs: replaceInArray(
           state.npcs,
           (n) => n.npcId === intent.npcId,
-          (n) => ({ ...n, met: true }),
+          (n) => ({
+            ...n,
+            met: true,
+            // Phase 13：写入关系值（首次结识时设置初始值）
+            relationship: { affinity: newAffinity },
+          }),
         ),
         eventLedger: [...state.eventLedger, event],
       };

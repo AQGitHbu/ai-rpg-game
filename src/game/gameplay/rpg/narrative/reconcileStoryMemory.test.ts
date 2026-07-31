@@ -195,6 +195,17 @@ describe("reconcileStoryMemory：有界归约与不变性", () => {
     expect(memory.recent).toEqual([]);
   });
 
+  it("npc_met 事件无 interactionKind 时不生成摘要（旧存档兼容）", () => {
+    const ledger: GameEvent[] = [
+      ...baseState().eventLedger,
+      { type: "npc_met", npcId: asNpcId("npc_a"), occurredAt: FIXED_TIME }
+    ];
+    const state = baseState({ eventLedger: ledger });
+    const memory = reconcileStoryMemory({ state });
+    const contact = memory.npcContacts.find((c) => c.npcId === asNpcId("npc_a"));
+    expect(contact?.lastInteractionSummary).toBeUndefined();
+  });
+
   it("缺省 storyMemory 的旧存档安全归约（cursor 视为 0）", () => {
     const ledger: GameEvent[] = [
       ...baseState().eventLedger,
@@ -208,5 +219,62 @@ describe("reconcileStoryMemory：有界归约与不变性", () => {
     expect(memory.reducedThroughEventCount).toBe(ledger.length);
     expect(memory.recent).toHaveLength(1);
     expect(storyMemoryOf({ storyMemory: memory })).toBe(memory);
+  });
+});
+
+describe("reconcileStoryMemory npc_met interactionKind", () => {
+  it("greet 事件生成 lastInteractionSummary", () => {
+    const ledger: GameEvent[] = [
+      ...baseState().eventLedger,
+      { type: "npc_met", npcId: asNpcId("npc_a"), occurredAt: FIXED_TIME, interactionKind: "greet" },
+    ];
+    const state = baseState({ eventLedger: ledger });
+    const memory = reconcileStoryMemory({ state });
+    const contact = memory.npcContacts.find((c) => c.npcId === asNpcId("npc_a"));
+    expect(contact?.lastInteractionSummary).toBe("你初次结识了这位NPC。");
+  });
+
+  it("ask_main_quest 事件生成对应摘要", () => {
+    const ledger: GameEvent[] = [
+      ...baseState().eventLedger,
+      { type: "npc_met", npcId: asNpcId("npc_a"), occurredAt: FIXED_TIME, interactionKind: "ask_main_quest" },
+    ];
+    const state = baseState({ eventLedger: ledger });
+    const memory = reconcileStoryMemory({ state });
+    const contact = memory.npcContacts.find((c) => c.npcId === asNpcId("npc_a"));
+    expect(contact?.lastInteractionSummary).toBe("你向NPC询问了重要线索。");
+  });
+
+  it("后续场景接触更新保留既有互动摘要", () => {
+    const ledger: GameEvent[] = [
+      ...baseState().eventLedger,
+      { type: "npc_met", npcId: asNpcId("npc_a"), occurredAt: FIXED_TIME, interactionKind: "greet" },
+      {
+        type: "narrative_scene_presented",
+        sceneId: "scene-1",
+        locationId: asLocationId("loc_2"),
+        focusNpcId: asNpcId("npc_a"),
+        revealedFactIds: [],
+        pacing: "develop",
+        occurredAt: FIXED_TIME,
+      },
+    ];
+    const memory = reconcileStoryMemory({ state: baseState({ eventLedger: ledger }) });
+    expect(memory.npcContacts.find((entry) => entry.npcId === asNpcId("npc_a"))).toMatchObject({
+      lastContactTurn: 2,
+      lastLocationId: asLocationId("loc_2"),
+      lastInteractionSummary: "你初次结识了这位NPC。",
+    });
+  });
+
+  it("旧存档无 interactionKind 时不生成摘要", () => {
+    const ledger: GameEvent[] = [
+      ...baseState().eventLedger,
+      { type: "npc_met", npcId: asNpcId("npc_a"), occurredAt: FIXED_TIME },
+    ];
+    const state = baseState({ eventLedger: ledger });
+    const memory = reconcileStoryMemory({ state });
+    const contact = memory.npcContacts.find((c) => c.npcId === asNpcId("npc_a"));
+    expect(contact?.lastInteractionSummary).toBeUndefined();
   });
 });

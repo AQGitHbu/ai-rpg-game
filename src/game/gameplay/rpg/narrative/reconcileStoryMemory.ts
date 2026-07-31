@@ -100,7 +100,19 @@ function contactUpdateFromEvent(event: GameEvent, turn: number, state: GameState
     case "npc_met": {
       const locationId = resolveNpcLocation(state, event.npcId);
       if (locationId === null) return null;
-      return { npcId: event.npcId, lastContactTurn: turn, lastLocationId: locationId };
+      // Phase 13：按 interactionKind 生成安全摘要（旧存档缺省时不生成）
+      let summary: string | undefined;
+      if (event.interactionKind === "ask_main_quest") {
+        summary = "你向NPC询问了重要线索。";
+      } else if (event.interactionKind === "greet") {
+        summary = "你初次结识了这位NPC。";
+      }
+      return {
+        npcId: event.npcId,
+        lastContactTurn: turn,
+        lastLocationId: locationId,
+        ...(summary !== undefined ? { lastInteractionSummary: summary } : {}),
+      };
     }
     case "narrative_scene_presented": {
       if (event.focusNpcId === null) return null;
@@ -120,5 +132,8 @@ function resolveNpcLocation(state: GameState, npcId: NpcId): LocationId | null {
 function upsertContact(contacts: NpcContinuityMemory[], contact: NpcContinuityMemory): void {
   const index = contacts.findIndex((entry) => entry.npcId === contact.npcId);
   if (index === -1) contacts.push(contact);
-  else contacts[index] = contact;
+  // Scene events only advance the contact time/location. Preserve the last
+  // explicit interaction summary until a later npc_met event provides a new
+  // one, so an NPC does not forget the player's greeting after one scene.
+  else contacts[index] = { ...contacts[index], ...contact };
 }

@@ -391,6 +391,7 @@ describe("resolveAction: dialogue_choice", () => {
         type: "npc_met",
         npcId: NPC_1,
         occurredAt: FIXED_TIME,
+        interactionKind: "greet",
       });
       const npc = result.state.npcs.find((n) => n.npcId === NPC_1);
       expect(npc?.met).toBe(true);
@@ -419,6 +420,7 @@ describe("resolveAction: dialogue_choice", () => {
         type: "npc_met",
         npcId: NPC_2,
         occurredAt: FIXED_TIME,
+        interactionKind: "ask_main_quest",
       });
       const npc = result.state.npcs.find((n) => n.npcId === NPC_2);
       expect(npc?.met).toBe(true);

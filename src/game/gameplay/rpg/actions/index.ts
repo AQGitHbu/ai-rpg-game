@@ -32,8 +32,12 @@ export {
 export { composeNpcSpeech } from "./npcSpeech";
 // NPC 自由输入：纯规则分类器（零 AI）。
 export { classifyFreeDialogue } from "./classifyFreeDialogue";
+export { classifyDialogueTone } from "./classifyFreeDialogue";
+export type { DialogueTone } from "./classifyFreeDialogue";
 // NPC 自由输入：确定性闲聊回应（零 AI，与 composeNpcSpeech 并列）。
 export { composeNpcCasualReply } from "./npcCasualReply";
+// Phase 13：NPC 关系交互摘要投影。
+export { projectRelationshipSummary } from "./relationshipSummary";
 
 // ---------------------------------------------------------------------------
 // 可用行动投影：由已编译蓝图和当前 GameState 投影。
