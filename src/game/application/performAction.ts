@@ -7,7 +7,7 @@ import {
 } from "@/game/gameplay/rpg/actions";
 import { startBattle, battleAction } from "@/game/gameplay/rpg/battle";
 import { ensureTownRuntime } from "@/game/gameplay/rpg/town";
-import { findAvailableActionByKey } from "@/game/gameplay/rpg/narrative";
+import { findAvailableActionByKey, reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
 import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
 import {
   reconcileQuests,
@@ -387,6 +387,14 @@ export async function performAction(
       narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() }, mode: "ai" },
     };
   }
+
+  // Phase 11：每次规则 CAS 写入前同步归约结构化剧情记忆。reducer 为纯函数，
+  // 只读 eventLedger cursor 与 npcs，不读 IO/Date/随机；拒绝/pending 分支已提前
+  // return，故此处覆盖所有将写入的成功状态。AI 文案/token 绝不入记忆。
+  nextState = {
+    ...nextState,
+    storyMemory: reconcileStoryMemory({ state: nextState })
+  };
 
   // Step 5: 最终 state → 原子 compare-and-swap 写入（唯一一次写入）。
   let saved;

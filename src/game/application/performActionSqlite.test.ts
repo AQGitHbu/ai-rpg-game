@@ -195,6 +195,9 @@ describe("performAction × 真实 SQLite：move 与 quest 事件同一次写入"
     const statusById = new Map(record.state.quests.map((quest) => [quest.questId, quest.status]));
     expect(statusById.get(asQuestId("quest_m1"))).toBe("completed");
     expect(statusById.get(asQuestId("quest_m2"))).toBe("active");
+    // Phase 11：重载后 storyMemory 已持久化并追齐 ledger（真实 SQLite 回读证明）。
+    expect(record.state.storyMemory?.reducedThroughEventCount).toBe(record.state.eventLedger.length);
+    expect(record.state.storyMemory?.recent.some((entry) => entry.kind === "location")).toBe(true);
   });
 
   it("reload 后 getCurrentGame 端口记录与 performAction 返回 view 一致", async () => {
@@ -249,6 +252,8 @@ describe("performAction × 真实 SQLite：竞争同一 revision 仅一方成功
     const record = await loadActiveRecord(repository);
     expect(record.revision).toBe(1);
     expect(record.state.currentLocationId).toBe(asLocationId("loc_2"));
+    // Phase 11：陈旧第二次行动零写入——storyMemory 只反映第一次成功保存。
+    expect(record.state.storyMemory?.reducedThroughEventCount).toBe(record.state.eventLedger.length);
   });
 });
 
