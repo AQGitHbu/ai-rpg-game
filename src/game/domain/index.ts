@@ -94,7 +94,8 @@ export {
   type QuestFailedEvent,
   type EndingReachedEvent,
   type NarrativeChoiceEvent,
-  type TownPlanGeneratedEvent
+  type TownPlanGeneratedEvent,
+  type NarrativeScenePresentedEvent
 } from "./events";
 export { paginateSpeechText } from "./speechPagination";
 export {
@@ -119,4 +120,14 @@ export {
   type NarrativeEmotion,
   NARRATIVE_EMOTIONS
 } from "./narrative";
+export {
+  STORY_MEMORY_VERSION,
+  STORY_MEMORY_RECENT_LIMIT,
+  createEmptyStoryMemory,
+  storyMemoryOf,
+  type StoryPacing,
+  type StoryMemoryEntry,
+  type NpcContinuityMemory,
+  type StoryMemoryState
+} from "./storyMemory";
 export * from "./townSnapshot";

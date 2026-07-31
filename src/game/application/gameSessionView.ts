@@ -279,6 +279,9 @@ function projectStoryEvent(
     case "ending_reached": return { text: `你抵达结局「${endings.get(event.endingId)?.name ?? "终章"}」。` };
     case "narrative_choice": return { text: "你做出了抉择，故事在你脚边展开。" };
     case "town_plan_generated": return { text: `${location(event.locationId)}的市井轮廓在你眼前展开。` };
+    // Phase 11：场景提交事件不作为单条日志行重复呈现——其结构索引经
+    // storyMemory.recent 由本章进展里程碑（Task 7 projectStoryContinuity）单独投影。
+    case "narrative_scene_presented": return null;
   }
 }
 

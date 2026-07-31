@@ -11,6 +11,7 @@ import type {
   QuestId,
   StatBlock
 } from "./scenarioBlueprint";
+import type { StoryMemoryState } from "./storyMemory";
 import type { TownPlanSource, TownSemanticPlan } from "./townSnapshot";
 
 // Phase 1 最小运行时状态：纯数据类型，不含行动 resolver 或任何方法。
@@ -105,6 +106,11 @@ export type GameState = {
   readonly towns: readonly TownRuntimeState[];
   /** Town 层：AI 小镇规划生成状态。 */
   readonly townGeneration: TownGenerationState;
+  /**
+   * Phase 11：结构化剧情记忆。可选以兼容旧 v1 存档（缺失时读取安全回退为空记忆）；
+   * 由纯 reducer 从 eventLedger 归约，AI 文案不入记忆。
+   */
+  readonly storyMemory?: StoryMemoryState;
   /** 追加式事件账本：初始条目必须是 game_initialized。 */
   readonly eventLedger: readonly GameEvent[];
 };

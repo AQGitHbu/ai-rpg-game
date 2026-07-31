@@ -348,3 +348,30 @@ describe("projectGameSessionView：town 层透出", () => {
     expect(view.town?.interactiveBuildings.length).toBeGreaterThan(0);
   });
 });
+
+describe("projectGameSessionView：Phase 11 场景提交事件不污染日志", () => {
+  it("narrative_scene_presented 不产出 storyEvents 行、不泄 undefined（由本章进展单独呈现）", () => {
+    const sceneEvent = {
+      type: "narrative_scene_presented" as const,
+      sceneId: "scene-1",
+      locationId: asLocationId("loc_1"),
+      focusNpcId: null,
+      revealedFactIds: [],
+      pacing: "develop" as const,
+      occurredAt: "2026-07-31T00:00:00.000Z"
+    };
+    const state: GameState = {
+      ...PIPELINE.state,
+      eventLedger: [...PIPELINE.state.eventLedger, sceneEvent]
+    };
+    const view = project(state, 0);
+    // 每条 storyEvent 都必须是带非空 text 的结构，绝不泄 undefined/null。
+    for (const entry of view.storyEvents) {
+      expect(typeof entry.text).toBe("string");
+      expect(entry.text.length).toBeGreaterThan(0);
+    }
+    expect(view.storyEvents.every((entry) => entry != null && typeof entry.text === "string")).toBe(true);
+    // 场景提交事件不作为单条日志行重复呈现（仅经本章进展里程碑呈现，Task 7 落地）。
+    expect(view.storyEvents.some((entry) => entry.text.includes("scene-1"))).toBe(false);
+  });
+});
