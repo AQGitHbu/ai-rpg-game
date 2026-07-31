@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 建立可重复的 AI 故事质量评估管线：评估专用采集通道（三采集点写 `artifacts/story-eval/<run-id>/`）、长故事旅程驱动、离线指标分析、LLM-as-judge 评审，以及版本化量表文档 v1。
+**Goal:** 建立可重复、证据充分的 AI 故事质量评估管线：评估专用采集通道（三采集点写 `artifacts/story-eval/<run-id>/`）、多题材/双策略长故事旅程、成对选择分支、离线指标分析、经校验的 LLM-as-judge 评审，以及版本化量表文档 v2。
 
 **Architecture:** 采集不做单一装饰器，而是三个采集点各取其唯一可见的数据——source 工厂内注入 `captureSink`（prompt/模型原文只在 source 内部可见）、编排层 `approvalObserver`（审批结果 + 已批准导演计划）、旅程驱动侧组装 story.jsonl。所有注入均为可选参数，`STORY_EVAL_CAPTURE` 未设置时装配与行为与现状完全一致。旅程经 `createServerGameEntryPoints` 驱动（唯一命中装配点的服务端路径），驱动侧另开评估专用只读 repository 读取 actionKey/seed/蓝图。
 
@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- 规格唯一事实源：`docs/superpowers/specs/2026-07-31-ai-story-quality-evaluation-design.md`（approved，commit b7120a6）。任务实现与之冲突时以 spec 为准并报告。
+- 规格唯一事实源：`docs/superpowers/specs/2026-07-31-ai-story-quality-evaluation-design.md`（approved，2026-08-01 评审修订）。任务实现与之冲突时以 spec 为准并报告。
 - 环境变量全部可选，未设置零影响：`STORY_EVAL_CAPTURE`、`STORY_EVAL_ARTIFACT_DIR`（门禁脚本专用，composition root 缺省派生 `<ISO时间戳>-<pid>`）、`RUN_REAL_AI_STORY_EVAL`、`STORY_EVAL_SEED`、`STORY_EVAL_MAX_SCENES`（默认 60）、`RUN_REAL_AI_STORY_EVAL_JUDGE`、`STORY_EVAL_JUDGE_MODEL`。
 - 安全红线：不改日志脱敏、fixture 录制格式、审批红线、journey 契约；`artifacts/` 与 `tmp/` 已在 .gitignore，产物永不进 git；`AI_API_KEY` 等凭据永不落盘；真实计费调用必须显式 env 开关；采集失败静默降级，绝不抛错到游戏主流程。
 - 不修改 `@ai-game/*` foundation package（含 `.foundation/packages/ai-transport`）；不修改现有 npm 脚本的既有行为。
@@ -3700,4 +3700,130 @@ Run: `npm run analyze:story-eval -- <离线 run 目录>`（从 `tmp/` 或测试�
 git status --short
 git add -A
 git commit -m "chore(ai-story-eval): finalize plan artifacts"   # 仅当存在未提交改动
+```
+
+---
+
+### Task 13: 评估有效性修订（v2，必须在真实基线前完成）
+
+> 此任务取代 Task 7–12 中与 v2 spec 冲突的输入、产物、指标、judge 和基线口径；未完成本任务不得将任何分数称为“故事生成质量基线”。
+
+**Files:**
+- Create: `data/story-eval/cases/v2.json`
+- Create: `src/game/application/testing/storyEvalCases.ts`
+- Create: `src/game/application/testing/storyEvalArtifacts.ts`
+- Test: `src/game/application/testing/storyEvalCases.test.ts`
+- Test: `src/game/application/testing/storyEvalArtifacts.test.ts`
+- Modify: `src/game/application/testing/storyEvalStrategy.ts`
+- Modify: `src/game/application/testing/storyEvalJourney.test.ts`
+- Modify: `scripts/storyEvalJourney.mjs`
+- Modify: `scripts/storyEvalAnalyze.mjs`
+- Modify: `scripts/storyEvalAnalyze.node-test.mjs`
+- Modify: `scripts/storyEvalJudge.mjs`
+- Modify: `scripts/storyEvalJudge.node-test.mjs`
+- Modify: `docs/策划文档/AI内容质量评估标准.md`（Task 12 创建时直接使用 v2，不创建 v1 再迁移）
+- Modify: `docs/agent/AI内容质量评估.md`
+
+**Interfaces:**
+
+```ts
+export type StoryEvalCase = Readonly<{
+  caseId: string;
+  input: NewGameInput; // gameLength 固定为 "long"
+  strategy: "explore" | "objective";
+}>;
+
+export type StoryEvalEvidence = Readonly<{
+  sceneIndex: number;
+  previousScene: StoryRow | null;
+  currentScene: StoryRow;
+  npcProfile: Readonly<Record<string, unknown>> | null;
+  relationshipSummary: string | null;
+  memorySummary: readonly Readonly<Record<string, unknown>>[];
+}>;
+
+export type StoryEvalCompleteness = Readonly<{
+  complete: boolean;
+  missing: readonly string[];
+}>;
+
+export type EarlyPredictionScore = Readonly<{
+  score: 1 | 2 | 3 | 4 | 5;
+  hitWeight: number;
+  matched: readonly { item: string; match: "exact" | "directional" | "miss"; confidence: number }[];
+}>;
+```
+
+`v2.json` 必须定义 6 个固定 case：`wuxia`、`science_fiction`、`urban` 各两个不同的 worldPremise/storyOpening；每个输入满足 `NewGameInput` 校验，使用固定角色、人格、narrativeStyle、contentIntensity 和 `gameLength: "long"`。门禁脚本对每个 case 运行 `explore` 与 `objective`，因此真实基线共 12 条主旅程；`--case=<caseId>` 仅用于试点或定向复测。
+
+- [ ] **Step 1: 写失败测试——case 集、证据与完整性**
+
+`storyEvalCases.test.ts` 断言恰有 6 个唯一 caseId、三种 gameType 各 2 个、全部 `gameLength === "long"` 且输入可通过 `validateNewGameInput`。`storyEvalArtifacts.test.ts` 用手工 artifact 分别断言：缺 `factId` 的 `fact_discovered`、缺 S4 answer key、缺 memory 的 NPC 场景、缺 prompt/contract 版本时 `complete === false`；完整行含 `previousScene`、NPC profile、memory、关系和安全事件 ID 时 `complete === true`。
+
+- [ ] **Step 2: 运行失败测试**
+
+Run: `npx vitest run src/game/application/testing/storyEvalCases.test.ts src/game/application/testing/storyEvalArtifacts.test.ts`
+
+Expected: FAIL（case/complete helpers 不存在）。
+
+- [ ] **Step 3: 实现评测集与证据采集**
+
+实现 `loadStoryEvalCases()`、`resolveStoryEvalCase(caseId)`、`buildStoryEvalEvidence(story, manifest, sceneIndex)`、`validateStoryEvalArtifacts({ calls, story, manifest })`。旅程不再调用固定的 `buildStoryEvalInput("long", seed)`；改为按 case 构造输入，并在 manifest 写入 `caseId`、`strategy`、`worldSeed`、`gitCommit`、`NARRATIVE_CONTRACT_VERSION`、四个角色 prompt 版本、AI model、temperature 与 timeout。
+
+将每一个 story row 的 `newEvents` 从 `{ type }` 改为安全结构 `{ type, factId?, entityId?, questId?, endingId? }`；同时写入 `memorySummary`、当前 NPC 的 profile/relationship/lastInteractionSummary、`directorPlan.allowedRevealFactIds`、`introducedEntities` 和扩展实体 ID。不得写入 prompt、provider 原文或不在现有评估采集开关允许范围内的敏感资料。
+
+- [ ] **Step 4: 实现双策略与成对选择分支**
+
+在同一个 ready `GameRecord` 的预设第 2、4、6 个主线阶段检查点创建两个独立的**测试专用 SQLite 快照**，分别执行两个当前 choiceToken，并各继续生成两场。每个 branch artifact 记录 parent scene、所选 actionKey、两场后的结构化事件、状态差异（地点/事实/任务/关系/物品/战斗/ending）和玩家可读 narration。若当前没有两个合法选项，记录 `not_applicable`，不伪造比较。
+
+`explore` 保持原探索优先语义；`objective` 优先选择推进主线阶段、取得任务物品、战斗或与任务目标 NPC 交谈的合法动作，同类才使用同一 PRNG。测试须断言两个策略都能记录选择理由，且 branch 的两个 actionKey 不同。
+
+- [ ] **Step 5: 实现指标的真实口径**
+
+`computeStoryEvalMetrics` 必须返回：
+
+```js
+factsPerAct: [{ act, plannedFactIds, actualFactIds, overlapFactIds, missedFactIds }]
+entities: {
+  npc: { introduced, interacted, contributed },
+  location: { introduced, interacted, contributed },
+  item: { introduced, interacted, contributed },
+  expansion: { proposed, approved, persisted, adopted }
+}
+choices: { pairedCheckpoints, stateDifferent, eventDifferent, narrationDifferent, notApplicable }
+```
+
+`expansion.adopted` 只能统计已持久化且实际首次登场的扩展实体，不能复用 `approved`；`factsPerAct.actualFactIds` 只能来自 `fact_discovered.factId`。更新 node-test：同一 proposal 被批准但未登场时 `approved === 1`、`adopted === 0`；一个实际发现但未计划的事实进入 actual 而不进入 overlap；两个 branch 仅 actionKey 不同但状态/事件/文本相同不得算后果差异。
+
+- [ ] **Step 6: 实现可判定的 judge 输入与输出验证**
+
+修改 `buildSceneLevelPrompt`：C1 为每条台词附该 NPC 的姓名、role、description、relationship tier/summary 和最近接触；C2 为每条抽样场景附紧邻前序场景与 memory；C3/C4 仍只输入玩家可见场景和必要世界资料。不能把 `calls.jsonl` 或原始 prompt 交给 judge。
+
+新增 `validateStoryLevelResult`、`validateSceneLevelResult`、`scoreEarlyPrediction`。前两个校验所有应评维度、整数 1–5、已存在 sceneIndex 和原文子串证据；任何失败使该 call 触发一次重试。`scoreEarlyPrediction(predictions, manifest.answerKey)` 按 v2 spec 的 exact/directional/miss 权重确定性生成 S4；report 的故事级表必须显示 S1–S9（含 S4 分数与匹配证据），不能只打印预测 JSON。
+
+node-test 至少覆盖：无 NPC profile 的 C1 输入拒绝、C2 没有前序场景拒绝、分数 6 拒绝、虚构 sceneIndex 拒绝、虚构引文拒绝、S4 高置信精确命中为 1、低置信/未命中样例按公式得到相应分数。
+
+- [ ] **Step 7: 通过测试并更新使用说明**
+
+Run: `npx vitest run src/game/application/testing/storyEvalCases.test.ts src/game/application/testing/storyEvalArtifacts.test.ts src/game/application/testing/storyEvalJourney.test.ts`
+
+Expected: PASS。
+
+Run: `node --test scripts/storyEvalAnalyze.node-test.mjs scripts/storyEvalJudge.node-test.mjs`
+
+Expected: PASS。
+
+更新量表为 v2：包含 S9、C1 身份/关系口径、C2 前序/memory 证据要求、S4 公式、实体和选择漏斗。更新 agent 文档，明确 `incomplete` 产物不能产生基线分数、12 条主旅程与人工/异模型校准流程。
+
+- [ ] **Step 8: 校准与真实基线验收（需用户逐步确认）**
+
+先只运行一个 case 的两种策略和分支：`RUN_REAL_AI_STORY_EVAL=1 npm run smoke:ai:story-eval -- --case=<caseId>`；完整性校验和 analyze 通过后，执行 judge。两位人工评审独立复核固定高/中/低分证据包，并由不同模型系列复评；分歧 >1 分、无证据或 artifact incomplete 时回到本任务修正，不能补录分数。
+
+校准通过后，用户再次确认才执行其余 case。完成 12 条主旅程后按 `caseId × strategy` 配对报告均值、中位数、最差值、空值率和模型配置；报告只说明该评测集与模型配置下的质量，不作无依据的全局结论。
+
+- [ ] **Step 9: 提交**
+
+```bash
+git add data/story-eval/cases/v2.json src/game/application/testing/storyEvalCases.ts src/game/application/testing/storyEvalCases.test.ts src/game/application/testing/storyEvalArtifacts.ts src/game/application/testing/storyEvalArtifacts.test.ts src/game/application/testing/storyEvalStrategy.ts src/game/application/testing/storyEvalJourney.test.ts scripts/storyEvalJourney.mjs scripts/storyEvalAnalyze.mjs scripts/storyEvalAnalyze.node-test.mjs scripts/storyEvalJudge.mjs scripts/storyEvalJudge.node-test.mjs docs/策划文档/AI内容质量评估标准.md docs/agent/AI内容质量评估.md
+git commit -m "feat(ai-story-eval): make v2 evaluation evidence-complete"
 ```

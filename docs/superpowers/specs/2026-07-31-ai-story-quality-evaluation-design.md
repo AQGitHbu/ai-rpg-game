@@ -1,6 +1,6 @@
 # Spec：AI 故事质量评估方案与基线（Story Quality Evaluation）
 
-> 日期：2026-07-31 ｜ 状态：approved ｜ 关联 Plan：待创建（writing-plans 产出）
+> 日期：2026-07-31 ｜ 状态：approved（2026-08-01 评审修订） ｜ 关联 Plan：`docs/superpowers/plans/2026-07-31-ai-story-quality-evaluation.md`
 
 ## 1. 背景
 
@@ -12,18 +12,19 @@
 
 ## 2. 目标
 
-1. 建立版本化的 AI 内容质量评估标准（8 个故事级维度 + 4 个场景级维度 + 确定性客观指标），落为 `docs/策划文档/AI内容质量评估标准.md` v1，作为评审 prompt 的唯一事实源。
+1. 建立版本化的 AI 内容质量评估标准（9 个故事级维度 + 4 个场景级维度 + 确定性客观指标），落为 `docs/策划文档/AI内容质量评估标准.md` v2，作为评审 prompt 的唯一事实源。
 2. 新增评估专用采集通道：仅当 `STORY_EVAL_CAPTURE=1` 时由 composition 层向 AI source 工厂注入捕获回调、向编排层注入审批观察回调（prompt/模型原文只在 source 内部可见、审批结果只在编排层可见，外部装饰器拿不到，见 §6.1），落到本地 `artifacts/story-eval/<run-id>/`；未设置开关时装配与行为与现状完全一致。
 3. 新增可复现的长故事评估旅程脚本：以 `gameLength=long`（8 幕主线）真实跑完整局，seed 驱动的确定性选择策略，产出玩家视角故事流水。
 4. 新增零 AI 成本的客观指标分析脚本与 LLM-as-judge 评审脚本（评审模型默认复用 `AI_MODEL`，可用 `STORY_EVAL_JUDGE_MODEL` 覆盖），输出结构化分数、证据引用与人工抽查清单。
-5. 分阶段建立描述性基线 v1：先 1 局试点验证管线并人工复核评审可靠性，稳定后补 2 局，3 局汇总均值/最差值 + 全部客观指标。
-6. 全流程遵守既有安全红线：不改日志脱敏、fixture 格式、审批红线、journey 契约；真实计费调用一律显式 env 开关；日常回归零网络零计费。
+5. 建立覆盖三种已支持题材、两种玩家策略和两类故事前提的版本化评测集；基线按案例、题材和策略分别报告，不能把单一武侠旅程或仅三次随机运行外推为整体质量。
+6. 在首个真实试点后校准评审：两位人工评审独立复核预先抽取的证据包，并用不同模型系列复评同一批素材；只有证据可追溯、人工/模型分歧可解释时，才将 LLM 分数用作比较依据。
+7. 全流程遵守既有安全红线：不改日志脱敏、fixture 格式、审批红线、journey 契约；真实计费调用一律显式 env 开关；日常回归零网络零计费。
 
 ## 3. 非目标
 
 - 不做任何 prompt 调优改写——基线数据出来后另起 spec（已知靶点：三角色 system prompt 缺叙事质量指令、writer 选项文案被规则覆盖、导演 pacing 缺指导）。
 - 不给开局蓝图单独量表（蓝图作为评审素材与上下文纳入，其质量通过 S7 结局兑现度、S3 铺垫回收间接反映）；不评估小镇语义规划。
-- 不做评审结果可视化 UI、不做双模型交叉评审、不做评审结果自动门禁（基线是描述性快照，不是及格线）。
+- 不做评审结果可视化 UI、不把分数自动设为发布门禁；试点所需的一次异模型复评和人工校准属于评估可信度验证，不是日常双模型评审。
 - 不修改 `@ai-game/*` foundation package。
 
 ## 4. 评估范围与角色对应
@@ -59,8 +60,9 @@
 | S6 | 战斗铺垫合理性 | boss 战突兀出现，无动机建立与张力积累 | 有铺垫但张力积累不足或动机牵强 | boss 战前有清晰的动机链与逐幕升级的张力，战斗是剧情必然 |
 | S7 | 结局兑现度 | 结局未回应主线冲突或与玩家行动矛盾 | 回应主线但部分悬念未闭合 | 结局回应主线冲突与主要悬念，与玩家行动逻辑自洽 |
 | S8 | 选择后果感 | 选项选什么后续叙事都一样，选择无痕迹 | 部分选择被承接，部分被无视 | 上一幕的选择在下一幕叙事中被明确承接并体现差异 |
+| S9 | 游戏性与玩家能动性 | 场景只换背景或复述信息，行动不改变可达信息、关系、资源、任务或风险 | 部分场景提供可理解的取舍，但中段常只剩形式选择 | 每幕至少有一种可读的取舍（信息、关系、资源、风险或路线），玩家行动持续改变可见局势并驱动下一幕 |
 
-S4 评分规则：早期预测测试在故事级评审（S1–S3、S5–S8）**之后**执行，且使用**独立的 callJudge 调用**（不共享评审模型实例的对话状态）。评审模型只读前 25% 场景 + 非剧透 manifest（只含世界观与 NPC 档案，**不含**双结局、任务结构与后续场景），预测结局走向、boss 身份、关键反转并自报置信度（1–5）；预测命中项越多且置信越高，S4 得分越低（全中且置信 5 → S4=1；方向错误或置信 ≤2 → S4≥4，由锚点裁量）。
+S4 评分规则：早期预测与故事级评审使用**独立的 callJudge 调用**（不共享对话状态）。评审模型只读前 25% 场景 + 非剧透 manifest（只含世界观与 NPC 档案，**不含**双结局、任务结构与后续场景），预测结局走向、boss 身份、关键反转并自报置信度（1–5）。评估器再把预测逐项同 run 的结构化 answer key 比对：高置信精确命中 2 分、低置信精确命中 1 分、仅方向命中 0.5 分、未命中 0 分；总命中率 `h = min(1, sum / 6)`，S4 为 `max(1, min(5, 5 - round(4h)))`。answer key 由开局蓝图的结局/敌人/任务结构和已收敛的事件结果生成，绝不传入预测 prompt。
 
 **上下文隔离要点**：早期预测与故事级评审之间的顺序隔离（先评质量再测预测能力）防止了"评审模型在早期预测中已看到答案，在故事级评审中偏袒与自己预测一致的故事走向"的自我验证偏差。两个阶段的 prompt 内容互不重叠——早期预测的 manifest 不含结局与任务结构，故事级评审的 prompt 不引用早期预测结果。
 
@@ -68,23 +70,25 @@ S4 评分规则：早期预测测试在故事级评审（S1–S3、S5–S8）**�
 
 | # | 维度 | 评分口径与边界 |
 | --- | --- | --- |
-| C1 | NPC 声线一致性 | 只评语气、用词、性格是否符合 manifest 中的 NPC 档案，以及不同 NPC 是否有区分度。知识越权已由规则审批硬性保证（引用未知事实会被驳回、mayLie 恒 false），不重复评。 |
-| C2 | 场景衔接连续性 | 与前序场景及结构化记忆无矛盾；无凭空引用的事件、地点或人物关系。 |
+| C1 | NPC 身份、声线与关系一致性 | 只评语气、用词、性格、关系阶段是否符合该 NPC 的姓名、role、description、已知事实与最近交互摘要；不同 NPC 应可区分。知识越权已由规则审批硬性保证，不重复评。 |
+| C2 | 场景衔接连续性 | 与**紧邻前序场景**及当时结构化记忆无矛盾；无凭空引用的事件、地点或人物关系。 |
 | C3 | 选项抉择质量 | 实际评的是 director 挑选的两个行动是否构成有意义的策略差异。架构约束：writer 写的 label 会被规则文案（candidate.publicLabel）替换后才展示、strategy 不进入持久化状态即被丢弃，玩家看到的选项文字不是 AI 写的——若基线发现选项无聊，改 prompt 无效，需改规则文案或放开 writer 文案（记为发现，不在本 spec 内修）。 |
 | C4 | 文本质量 | 重复感/流水账、辞藻堆砌、与 sceneGoal 的相关度；含文风与世界观一致性（跨场景不串腔、与开局蓝图设定不脱节）。 |
 
-抽样：C1 对全部含 NPC 台词的场景逐条评；C2–C4 每幕抽 2 个场景（seed 确定性抽样）。幕边界与主线阶段对齐（不用任务事件切分——`quest_completed`/`quest_failed` 事件本身只带 questId，须关联蓝图 quest.kind 才能区分主线/支线，且正常通关不触发 `quest_failed`）：`story.jsonl` 每条场景记录当时的主线阶段序号（驱动侧经 §7 的评估专用 repository 读取 `GameRecord`，用 `deriveContentProgression({ blueprint, state })` 计算——entry points 公开视图不含该数据），同一阶段的场景为一幕；幕数上限即 BudgetPolicy 的 mainActs（long=8），实际幕数少于上限时按实际数评估并在报告中注明。
+抽样：C1 对全部含 NPC 台词的场景逐条评；C2–C4 每幕抽 2 个场景（seed 确定性抽样）。每个 C1 包必须带该 NPC profile/relationship/最近接触；每个 C2 包必须带紧邻前序场景与当时 memory 摘要，不能只交给 judge 孤立场景。幕边界与主线阶段对齐（不用任务事件切分——`quest_completed`/`quest_failed` 事件本身只带 questId，须关联蓝图 quest.kind 才能区分主线/支线，且正常通关不触发 `quest_failed`）：`story.jsonl` 每条场景记录当时的主线阶段序号（驱动侧经 §7 的评估专用 repository 读取 `GameRecord`，用 `deriveContentProgression({ blueprint, state })` 计算——entry points 公开视图不含该数据），同一阶段的场景为一幕；幕数上限即 BudgetPolicy 的 mainActs（long=8），实际幕数少于上限时按实际数评估并在报告中注明。
 
 ### 5.3 客观指标（确定性计算，零 AI 成本）
 
 - 整局 fallback 率；各角色重试率与 invalid_json 率；审批驳回分类分布。
 - tensionLevel 曲线（完整序列 + 标准差作为平坦度）；pacing 分布与顺序合法性。
-- 每幕事实揭示密度（两种口径：**计划揭示** = `directorPlan.allowedRevealFactIds` 长度；**实际揭示** = `story.jsonl` 中 `newEvents` 内 `fact_discovered` 事件数。二者在报告中并列报告，差异反映 writer 对揭示计划的执行度）；相邻场景 narration 字符 3-gram 重复率；narration/台词长度分布。
-- 扩展提议数与采纳率；场景总数与是否收敛到结局（场景上限内，见 §7）。
+- 每幕事实揭示密度（两种口径：**计划揭示** = `directorPlan.allowedRevealFactIds` 集合；**实际揭示** = `story.jsonl` 具 `factId` 的 `fact_discovered` 事件集合）。报告并列 `planned / actual / overlap / missed`，不以仅有事件类型的记录代替事实 ID；相邻场景 narration 字符 3-gram 重复率；narration/台词长度分布。
+- 实体漏斗：初始及扩展实体的 `introduced → interacted/used → quest/relationship/fact/battle/ending contribution`，按 NPC、地点、物品分列；扩展提议的 approval rate 与 adoption rate 分开，后者只能表示实体已持久化且在故事中首次登场。
+- 选择漏斗：每一对选项的 actionKey、规则状态差异、分支后两场的事件/叙事差异及可见后果；没有成对分支证据的 run 不得为 S8/S9 给出高于 3 分的结论。
+- 场景总数与是否收敛到结局（场景上限内，见 §7）。
 
 ### 5.4 人工抽查清单
 
-评审报告自动列出：所有任一维度 ≤2 分的场景 + 每局 seed 随机 3 个场景，附检查要点（声线、连续性、选项差异、证据引文），由人工复核评审模型的判断是否成立。人工结论用于校准量表锚点与评审 prompt（量表变化则文档升版本）。
+评审报告自动列出：所有任一维度 ≤2 分的场景 + 每局 seed 随机 3 个场景，附检查要点（身份/声线、连续性、选项差异、实体功能、证据引文），由人工复核评审模型的判断是否成立。试点另从高、中、低分各抽取固定证据包，交由两位人工评审独立标注；分歧 >1 分或证据不支持结论时必须记录原因并修正量表/prompt。量表变化则升版本。
 
 ## 6. 采集通道设计
 
@@ -107,8 +111,8 @@ S4 评分规则：早期预测测试在故事级评审（S1–S3、S5–S8）**�
 | 文件 | 写入方 | 每条记录 | 用途 |
 | --- | --- | --- | --- |
 | `calls.jsonl` | source 捕获回调 + 编排层审批回调 | 角色（scenario/director/writer/npc）、traceId、尝试序号、完整 prompt messages、模型原始输出、解析后候选、延迟 ms；审批记录（通过/驳回分类）按 traceId+角色+尝试序号关联 | prompt 调优诊断 |
-| `story.jsonl` | 旅程驱动脚本 | 场景序号、当时主线阶段序号、玩家可见 narration、NPC 台词与情绪、两个选项最终展示文案、导演计划摘要（sceneGoal/pacing/tensionLevel/focusNpcId/揭示事实数/扩展提议及裁决——由驱动脚本按 sceneId 前缀中的 traceId 关联本 run `calls.jsonl` 的审批记录拼接，来源即 §6.1 第 2 点回调）、是否 fallback、玩家实际选择及策略理由、规则事件（任务/战斗/结局） | LLM 评审与人工阅读的唯一评估正文 |
-| `manifest.json` | 旅程驱动脚本 | gameId、世界 seed、策略 seed、gameLength、模型名、开局蓝图快照（世界观、NPC 档案、任务结构含每个任务的 id+kind+stage、双结局）——世界 seed 与蓝图快照取自评估专用 repository 读到的 `GameRecord`（`blueprint.seed` 即世界 seed；entry points 公开 API 刻意不含这些数据） | 评审对照上下文 + 复现信息 |
+| `story.jsonl` | 旅程驱动脚本 | 场景序号、当时主线阶段序号、玩家可见 narration、NPC 台词与情绪、两个选项最终展示文案、导演计划摘要（含 allowedRevealFactIds、introducedEntityIds、扩展提议及裁决）、是否 fallback、玩家实际选择及策略理由、带安全 ID 的规则事件（factId/entityId/questId/endingId）、当时 memory 摘要、NPC relationship/最近接触摘要 | LLM 评审与人工阅读的评估正文；字段不足时相应维度不得评分 |
+| `manifest.json` | 旅程驱动脚本 | gameId、世界 seed、策略 seed、评测 caseId、代码提交、prompt/契约版本、模型及推理参数、开局蓝图快照（世界观、事实、地点、NPC 档案、物品、敌人、任务结构、双结局）、S4 answer key | 评审对照上下文 + 可比较的复现信息 |
 
 ### 6.4 安全红线
 
@@ -120,11 +124,11 @@ S4 评分规则：早期预测测试在故事级评审（S1–S3、S5–S8）**�
 
 新建 `scripts/storyEvalJourney.mjs`（env 门禁 + spawnSync vitest 子进程，沿用 `scripts/phase11StoryContinuityJourney.mjs` 的门禁模式，配 `storyEvalJourney.node-test.mjs`）与旅程本体 `src/game/application/testing/storyEvalJourney.test.ts`。
 
-- 驱动路径：旅程本体经 `createServerGameEntryPoints`（composition root）驱动——这是唯一能命中 §6.2 装配点、且与浏览器局同一条服务端路径的方式（phase11 旅程测试绕开 composition root 手工构造 deps，本旅程不沿用该内部模式）。entry points 的 ensure 不等待 provider，驱动循环轮询场景直至 ready（带超时）。entry points 刻意不暴露 repository/actionKey/seed/蓝图（安全红线不动、不新增公开 API）：驱动侧另以 `createSqliteGameRepository` + 同一 `GAME_DB_PATH` 打开一个**评估专用 repository**（server-only 测试进程内、只读使用），从 `GameRecord` 读取 actionKey、主线阶段、世界 seed 与蓝图快照，不经过任何客户端投影。
+- 驱动路径：旅程本体经 `createServerGameEntryPoints`（composition root）驱动——这是唯一能命中 §6.2 装配点、且与浏览器局同一条服务端路径的方式（phase11 旅程测试绕开 composition root 手工构造 deps，本旅程不沿用该内部模式）。entry points 的 ensure 不等待 provider，驱动循环轮询场景直至 ready（带超时）。entry points 刻意不暴露 repository/actionKey/seed/蓝图（安全红线不动、不新增公开 API）：驱动侧另以 `createSqliteGameRepository` + 同一 `GAME_DB_PATH` 打开一个**评估专用 repository**（server-only 测试进程内、只读使用），从 `GameRecord` 读取 actionKey、主线阶段、世界 seed、蓝图、memory、关系和结构化事件，不经过任何客户端投影。
 - 开关与环境穿透：必须显式 `RUN_REAL_AI_STORY_EVAL=1` 才发真实计费调用；未设置时打印提示 exit 0。门禁脚本向子进程 childEnv 显式传递 `STORY_EVAL_CAPTURE=1`、run 目录、`STORY_EVAL_SEED` 与指向 `tmp/` 临时 SQLite 的 `GAME_DB_PATH`（参照 phase11 传递 artifact 目录的方式）。
-- 单局流程：创建 `gameLength=long` 新局（开局 AI 不可用则本次运行判失败并如实报告，不评 fallback 开局）→ 轮询 ready → 记录 → 按策略提交选择 → 直至结局或场景上限（默认 60：按 8 幕 × 约 6–8 场景/幕 ≈ 48–64 的上界取整，启发式安全阀而非领域预算，`STORY_EVAL_MAX_SCENES` 可配；超限如实记"未收敛"，本身是基线发现）→ 战斗阶段 attack 优先打完（`battle_action` 为独立 intent，与 phase11 现有实践一致）。
-- 选择策略（可复现 + 覆盖面）：`STORY_EVAL_SEED` 驱动确定性 PRNG（mulberry32 级别）。探索优先：两选项中若有"前往未访问地点 / 与未见 NPC 交谈 / 调查新事实"类行动则优先选它；同类时 PRNG 掷硬币。行动分类需要 actionKey，而客户端视图刻意不含 actionKey（安全红线），驱动侧经上述评估专用 repository 读取场景状态获得 actionKey——不经过客户端投影，不破坏红线。策略 seed 与每次选择理由记入 `story.jsonl`（S8 评审对照）。
-- 复现边界：`STORY_EVAL_SEED` 只保证选择策略与抽样确定；世界 seed 由 composition root 随机生成（记入 manifest 供参考），AI 输出本身不可复现，跨运行对比以指标与评分为准。
+- 单局流程：创建 `gameLength=long` 新局（开局 AI 不可用则本次运行判失败并如实报告，不评 fallback 开局）→ 轮询 ready → 记录 → 按策略提交选择 → 直至结局或场景上限（默认 60：按 8 幕 × 约 6–8 场景/幕 ≈ 48–64 的上界取整，启发式安全阀而非领域预算，`STORY_EVAL_MAX_SCENES` 可配；超限如实记"未收敛"，本身是基线发现）→ 战斗阶段 attack 优先打完（`battle_action` 为独立 intent，与 phase11 现有实践一致）。每局结束先做 artifact completeness 校验；缺 `calls.jsonl`、必要 manifest、S4 answer key 或任一场的评估字段时标为 `incomplete`，不可进入分析或评审。
+- 选择策略（可复现 + 覆盖面）：每个评测 case 至少运行探索优先和目标优先两种策略。对选项对比，驱动在预设的三个主线检查点从同一 ready `GameRecord` 快照复制两个隔离评估库，各执行两个 choiceToken 并继续两场；该成对 branch artifact 是 S8/S9 的唯一反事实证据。行动分类需要 actionKey，而客户端视图刻意不含 actionKey（安全红线），驱动侧经上述评估专用 repository 读取场景状态获得 actionKey——不经过客户端投影，不破坏红线。策略 seed、检查点与每次选择理由记入 `story.jsonl`。
+- 评测集与复现边界：`data/story-eval/cases/v2.json` 定义 6 个固定 long case：wuxia、science_fiction、urban 各两种不同主线前提；每 case 运行两种策略，共 12 条主旅程。`STORY_EVAL_SEED` 只保证选择策略、分支检查点与抽样确定；世界 seed 和 AI 输出本身不可复现。每条 manifest 记录 caseId、worldSeed、代码提交、prompt/契约版本、模型/参数；跨版本比较只能在相同 caseId + 策略下做配对汇总，并把模型或参数变化单列。
 - 失败处理：单局 fallback 率超 50% 时提前终止并标记 `aborted`，已采集数据保留。
 - 多局：`--runs N`（策略 seed 依次递增），每局独立 run-id、独立临时 SQLite（落 `tmp/`，按既有 journey 清扫实践结束即清）。
 
@@ -137,9 +141,9 @@ S4 评分规则：早期预测测试在故事级评审（S1–S3、S5–S8）**�
 ### 8.2 `scripts/storyEvalJudge.mjs`
 
 - 开关：`RUN_REAL_AI_STORY_EVAL_JUDGE=1` 才调用；模型默认 `AI_MODEL`，`STORY_EVAL_JUDGE_MODEL` 可覆盖；复用 `AI_API_BASE_URL`/`AI_API_KEY`。
-- 输入只有 `story.jsonl` + `manifest.json`；不喂 `calls.jsonl`（评审只看玩家视角，避免被内部计划带偏）。
-- 三段评审（约 10–20 次调用/局）：① 早期预测测试（S4，独立先行，**输入隔离**：只喂前 25% 场景 + manifest 中的非剧透部分——世界观与 NPC 档案，明确排除双结局、任务结构与后 75% 场景，防止答案泄漏）；② 故事级评审（S1–S3、S5–S8，此段才允许完整 manifest 与全部场景，逐维打分且每个分数必须附场景序号 + 引文证据，无证据重评一次）；③ 场景级评审（C1 全量、C2–C4 每幕抽 2）。
-- 输出强制 JSON，本地解析 + 一次重试，仍失败则该维度记 `null` 并如实呈现，不编分。
+- 输入只有经 completeness 校验的 `story.jsonl` + `manifest.json`；不喂 `calls.jsonl`（评审只看玩家视角，避免被内部计划带偏）。C1/C2 使用从这两份评估产物中裁出的身份、关系、前序和 memory 证据包，而非读取内部 prompt。
+- 三段评审（约 10–20 次调用/局）：① 早期预测测试（S4，独立先行，**输入隔离**：只喂前 25% 场景 + manifest 中的非剧透部分——世界观与 NPC 档案，明确排除双结局、任务结构与后 75% 场景，防止答案泄漏）；② 故事级评审（S1–S3、S5–S9，此段才允许完整 manifest 与全部场景，逐维打分且每个分数必须附场景序号 + 引文证据，无证据重评一次）；③ 场景级评审（C1 全量、C2–C4 每幕抽 2）。
+- 输出强制 JSON，本地 schema 校验：所有要求维度齐全、分数只能为 1–5、sceneIndex 必须存在、引文必须是相应证据包的原文子串。缺字段、越界或证据不成立即重试一次；仍失败则该维度记 `null` 并如实呈现，不编分。S4 不由 judge 自报分数，而由预测 JSON 与 manifest answer key 的确定性匹配器计算。
 - 产物：`scores.json`（结构化分数 + 证据）+ `report.md`（人类可读，含 §5.4 人工抽查清单）。
 - 量表事实源：judge 内嵌量表文本必须与 `docs/策划文档/AI内容质量评估标准.md` 一致，引用时标注文档版本号。
 
@@ -147,10 +151,10 @@ S4 评分规则：早期预测测试在故事级评审（S1–S3、S5–S8）**�
 
 分两步，每步发真实调用前需用户确认：
 
-1. **试点**：1 局 `long`（约 80–130 次生成调用 + 10–20 次评审调用）→ 跑通采集/分析/评审全管线 → 人工抽查复核评审模型判断 → 修正管线或量表（量表变化升 v2）。
-2. **补齐**：管线稳定后再跑 2 局（seed 递增）→ 3 局各维度均值/最差值 + 全部客观指标汇总为**基线 v1**，产出 `artifacts/story-eval/baseline-v1/report.md`。
+1. **试点**：从 6 个固定 case 中选一个，完整执行两种策略和三个成对分支（调用量按实际记录）→ completeness 通过后跑采集/分析/评审 → 两位人工评审独立复核固定的高/中/低分证据包，并以不同模型系列复评。分歧必须写入校准记录；修正管线或量表时升 v3。
+2. **补齐**：校准通过后完成剩余 5 个 case 的两种策略（共 12 条主旅程）→ 按 case、题材、策略报告均值/中位数/最差值/空值率，并汇总客观指标为**基线 v2**，产出 `artifacts/story-eval/baseline-v2/report.md`。
 
-基线定位：描述性快照，不是及格线。报告附建议门槛（如 fallback 率上限、C2 均分下限）供用户裁定。后续每轮 prompt 调优用相同 seed 策略复测对比。`artifacts/` 不入 git，`report.md` 只是工作产物：持久基线以回填到 `docs/策划文档/AI内容质量评估标准.md` 的各维度分数表、客观指标摘要与关键发现为准。
+基线定位：描述性快照，不是及格线。报告附建议门槛（如 fallback 率上限、C2 均分下限）供用户裁定。后续每轮 prompt 调优用相同 caseId、策略和分支检查点复测对比；若模型/参数变化，只能说明“该配置”的差异。`artifacts/` 不入 git，`report.md` 只是工作产物：持久基线以回填到 `docs/策划文档/AI内容质量评估标准.md` 的各维度分数表、客观指标摘要、校准结果与关键发现为准。
 
 文档归档：基线数值回填 `docs/策划文档/AI内容质量评估标准.md`；实现事实新建 `docs/agent/AI内容质量评估.md` 并更新 `docs/Agent文档索引.md`。
 
