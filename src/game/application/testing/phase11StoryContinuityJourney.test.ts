@@ -41,7 +41,6 @@ import {
   validateJourneyReport,
   type JourneyReport,
 } from "./runtimeNarrativeJourney";
-import { prepareTmpRunDir } from "./tmpRunDir.testutil";
 import wuxiaFixture from "../../../../data/fixtures/phase1/wuxia.json";
 
 type Phase1Fixture = { input: NewGameInput; seed: string };
@@ -53,9 +52,9 @@ type RuntimeSources = Readonly<{
 
 const fixture = wuxiaFixture as unknown as Phase1Fixture;
 const baseline = runScenarioPipeline(fixture.input, fixture.seed);
-const goldenRoot = resolve("data", "fixtures", "phase10-journey", "v1");
-// 共享 tmp/ 策略：创建前先清扫上一轮同前缀残留（见 tmpRunDir.testutil.ts）。
-const tmpRoot = prepareTmpRunDir("phase10-full-journey-");
+const goldenRoot = resolve("data", "fixtures", "phase11-journey", "v1");
+const tmpRoot = resolve("tmp", `phase11-full-journey-${process.pid}-${Date.now()}`);
+mkdirSync(tmpRoot, { recursive: true });
 const openRepositories: SqliteGameRepository[] = [];
 const fixedNow = "2026-07-30T08:00:00.000Z";
 
@@ -269,7 +268,7 @@ function createDeps(repository: GameRepository, sources: RuntimeSources): Create
   let trace = 0;
   return {
     repository,
-    newGameId: () => asGameId("phase10-full-journey"),
+    newGameId: () => asGameId("phase11-full-journey"),
     newSeed: () => fixture.seed,
     now: () => fixedNow,
     scenarioCandidateSource: createUnavailableTestScenarioSource(),
@@ -397,8 +396,12 @@ async function runJourney(
   return report;
 }
 
-describe("Phase 10 complete narrative journey", () => {
-  it("replays the committed golden fixture with zero network calls (Phase 11: re-recorded with stage-aware pacing)", async () => {
+describe("Phase 11 story continuity journey", () => {
+  // A live re-record deliberately changes context fingerprints before its
+  // artifact is promoted. Do not let that expected stale golden fixture mask
+  // the live journey plus its own immediate replay; default replay mode still
+  // executes this test and remains the daily zero-network gate.
+  it.runIf(process.env.RUN_REAL_AI_JOURNEY !== "1")("replays the committed Phase 11 golden fixture with zero network calls", async () => {
     const calls = readFileSync(join(goldenRoot, "calls.jsonl"), "utf8")
       .trim()
       .split("\n")
@@ -475,7 +478,7 @@ describe("Phase 10 complete narrative journey", () => {
       expect(validateJourneyReport(replayReport)).toEqual([]);
       expect(replayReport.coverage).toEqual(report.coverage);
 
-      const artifactDir = process.env.PHASE10_JOURNEY_ARTIFACT_DIR;
+      const artifactDir = process.env.PHASE11_JOURNEY_ARTIFACT_DIR;
       if (artifactDir === undefined) throw new Error("missing safe journey artifact directory");
       mkdirSync(artifactDir, { recursive: true });
       writeFileSync(

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent, LocationVisitedEvent, QuestCompletedEvent, QuestUnlockedEvent, ItemObtainedEvent, BattleStartedEvent, BattleRoundResolvedEvent, BattleResolvedEvent, EnemyDefeatedEvent, QuestFailedEvent, EndingReachedEvent } from "./events";
+import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent, LocationVisitedEvent, QuestCompletedEvent, QuestUnlockedEvent, ItemObtainedEvent, BattleStartedEvent, BattleRoundResolvedEvent, BattleResolvedEvent, EnemyDefeatedEvent, QuestFailedEvent, EndingReachedEvent, NarrativeScenePresentedEvent } from "./events";
 import { asLocationId, asNpcId, asFactId, asGenerationId, asItemId, asQuestId, asEnemyId, asEndingId, type GenerationMetadata } from "./scenarioBlueprint";
 
 function buildGeneration(): GenerationMetadata {
@@ -238,5 +238,51 @@ describe("GameEvent union (Phase 6 battle and ending events)", () => {
       "quest_failed",
       "ending_reached",
     ]);
+  });
+});
+
+describe("GameEvent union (Phase 11 narrative scene presented)", () => {
+  it("accepts narrative_scene_presented event carrying only structural indexes", () => {
+    const event: NarrativeScenePresentedEvent = {
+      type: "narrative_scene_presented",
+      sceneId: "scene-1",
+      locationId: asLocationId("loc_1"),
+      focusNpcId: null,
+      revealedFactIds: [],
+      pacing: "develop",
+      occurredAt: "2026-07-31T00:00:00.000Z"
+    };
+    expect(event.type).toBe("narrative_scene_presented");
+    expect(event.focusNpcId).toBeNull();
+    expect(event.pacing).toBe("develop");
+    // 仅结构索引：不携带叙事文本、choiceToken、actionKey 或 provider 输出。
+    const keys = Object.keys(event).sort();
+    expect(keys).toEqual([
+      "focusNpcId",
+      "locationId",
+      "occurredAt",
+      "pacing",
+      "revealedFactIds",
+      "sceneId",
+      "type"
+    ]);
+  });
+
+  it("narrative_scene_presented narrows via type discriminator in the GameEvent union", () => {
+    const event: GameEvent = {
+      type: "narrative_scene_presented",
+      sceneId: "scene-1",
+      locationId: asLocationId("loc_1"),
+      focusNpcId: null,
+      revealedFactIds: [],
+      pacing: "climax",
+      occurredAt: "2026-07-31T00:00:00.000Z"
+    };
+    if (event.type === "narrative_scene_presented") {
+      expect(event.sceneId).toBe("scene-1");
+      expect(event.pacing).toBe("climax");
+    } else {
+      throw new Error("discriminator narrowing failed");
+    }
   });
 });

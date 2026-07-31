@@ -67,7 +67,8 @@ export type NarrativeApprovalCategory =
   | "schema_violation"
   | "reference_broken"
   | "knowledge_scope_violation"
-  | "choice_not_legal";
+  | "choice_not_legal"
+  | "continuity_violation";
 
 export type NarrativeApprovalResult<T> =
   | Readonly<{ ok: true; value: T }>

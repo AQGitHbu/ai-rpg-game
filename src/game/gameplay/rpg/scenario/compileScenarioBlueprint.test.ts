@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   asItemId,
   asLocationId,
+  createEmptyStoryMemory,
+  storyMemoryOf,
   type ItemId,
   type ScenarioBlueprint,
   type ScenarioBlueprintCandidate
@@ -160,8 +162,16 @@ describe("initializeGameState", () => {
       narrative: { currentScene: null, generation: { status: "idle" }, mode: "ai" },
       towns: [],
       townGeneration: { status: "idle" },
+      storyMemory: createEmptyStoryMemory(),
       eventLedger: [{ type: "game_initialized", generation }]
     });
+  });
+
+  it("新局初始化 v1 空 storyMemory，旧 state 缺省时 storyMemoryOf 返回同构空 memory (Phase 11)", () => {
+    const state = initializeGameState(compileValid());
+    expect(state.storyMemory).toEqual(createEmptyStoryMemory());
+    // 旧存档缺少 storyMemory 字段时安全回退为同构空记忆（不提高存档版本）。
+    expect(storyMemoryOf({ ...state, storyMemory: undefined })).toEqual(createEmptyStoryMemory());
   });
 
   it("隐藏地点不进入初始解锁列表", () => {

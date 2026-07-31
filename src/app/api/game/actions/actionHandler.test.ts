@@ -39,6 +39,8 @@ const STUB_VIEW: GameSessionView = {
   battle: null,
   ending: null,
   storyEvents: [],
+  // Phase 11 Task 7：本章进展里程碑（HTTP 映射不读内容）。
+  storyContinuity: [],
   // Phase 7 Task 3：地图 / 地点场景 / 对话 read model（HTTP 映射同样不读内容）。
   worldMap: { nodes: [] },
   locationScene: { title: "地点A", description: "描述", backdrop: "location_backdrop", scale: "scene", interactions: [] },

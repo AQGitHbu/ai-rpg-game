@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  asFactId,
   asItemId,
   asLocationId,
   asNpcId,
   asQuestId,
+  createEmptyStoryMemory,
   type GameState,
-  type NewGameInput
+  type NewGameInput,
+  type StoryMemoryEntry
 } from "@/game/domain";
 import { resolveAction, type PlayerIntent } from "@/game/gameplay/rpg/actions";
 import { reconcileQuests } from "@/game/gameplay/rpg/quests";
@@ -346,5 +349,83 @@ describe("projectGameSessionView：town 层透出", () => {
     expect(view.townStatus).toBe("ready");
     expect(view.town?.townName).toBe(locationName("loc_2"));
     expect(view.town?.interactiveBuildings.length).toBeGreaterThan(0);
+  });
+});
+
+describe("projectGameSessionView：Phase 11 场景提交事件不污染日志", () => {
+  it("narrative_scene_presented 不产出 storyEvents 行、不泄 undefined（由本章进展单独呈现）", () => {
+    const sceneEvent = {
+      type: "narrative_scene_presented" as const,
+      sceneId: "scene-1",
+      locationId: asLocationId("loc_1"),
+      focusNpcId: null,
+      revealedFactIds: [],
+      pacing: "develop" as const,
+      occurredAt: "2026-07-31T00:00:00.000Z"
+    };
+    const state: GameState = {
+      ...PIPELINE.state,
+      eventLedger: [...PIPELINE.state.eventLedger, sceneEvent]
+    };
+    const view = project(state, 0);
+    // 每条 storyEvent 都必须是带非空 text 的结构，绝不泄 undefined/null。
+    for (const entry of view.storyEvents) {
+      expect(typeof entry.text).toBe("string");
+      expect(entry.text.length).toBeGreaterThan(0);
+    }
+    expect(view.storyEvents.every((entry) => entry != null && typeof entry.text === "string")).toBe(true);
+    // 场景提交事件不作为单条日志行重复呈现（仅经本章进展里程碑呈现，Task 7 落地）。
+    expect(view.storyEvents.some((entry) => entry.text.includes("scene-1"))).toBe(false);
+  });
+});
+
+describe("projectGameSessionView：Phase 11 本章进展 (storyContinuity)", () => {
+  it("显示最近 6 条里程碑；相邻重复 scene 折叠为一条；不含原始 ID", () => {
+    const recent: readonly StoryMemoryEntry[] = [
+      { kind: "location", locationId: asLocationId("loc_1"), turn: 1 },
+      { kind: "scene", sceneId: "s1", locationId: asLocationId("loc_1"), focusNpcId: null, pacing: "develop", turn: 2 },
+      { kind: "scene", sceneId: "s2", locationId: asLocationId("loc_1"), focusNpcId: null, pacing: "develop", turn: 3 },
+      { kind: "npc", npcId: asNpcId("npc_1"), locationId: asLocationId("loc_1"), turn: 4 },
+      { kind: "fact", factId: asFactId("fact_1"), turn: 5 },
+      { kind: "item", itemId: asItemId("item_key"), locationId: asLocationId("loc_1"), turn: 6 }
+    ];
+    const state = {
+      ...PIPELINE.state,
+      storyMemory: { ...createEmptyStoryMemory(), reducedThroughEventCount: 7, recent }
+    } as GameState;
+    const view = project(state, 0);
+    expect(view.storyContinuity).toHaveLength(5);
+    expect(view.storyContinuity.every((m) => typeof m.text === "string" && m.text.length > 0)).toBe(true);
+    expect(JSON.stringify(view.storyContinuity)).not.toContain("loc_1");
+    expect(JSON.stringify(view.storyContinuity)).not.toContain("s1");
+  });
+
+  it("已发现事实显示安全文本，memory 中的未发现事实仍保持泛化", () => {
+    const discovered = PIPELINE.state.worldFacts.find((entry) => entry.discovered);
+    const hidden = PIPELINE.state.worldFacts.find((entry) => !entry.discovered);
+    if (discovered === undefined || hidden === undefined) throw new Error("fixture must contain both fact kinds");
+    const state = {
+      ...PIPELINE.state,
+      storyMemory: {
+        ...createEmptyStoryMemory(),
+        reducedThroughEventCount: 2,
+        recent: [
+          { kind: "fact" as const, factId: discovered.factId, turn: 0 },
+          { kind: "fact" as const, factId: hidden.factId, turn: 1 },
+        ],
+      },
+    } as GameState;
+    const json = JSON.stringify(project(state, 0).storyContinuity);
+    const discoveredText = PIPELINE.blueprint.world.facts.find((entry) => entry.id === discovered.factId)?.text;
+    const hiddenText = PIPELINE.blueprint.world.facts.find((entry) => entry.id === hidden.factId)?.text;
+    expect(json).toContain(discoveredText);
+    expect(json).not.toContain(hiddenText);
+  });
+
+  it("缺省 storyMemory 的旧存档回退为空 storyContinuity（不抛错）", () => {
+    const { storyMemory: _omit, ...legacy } = PIPELINE.state;
+    void _omit;
+    const view = project(legacy as GameState, 0);
+    expect(view.storyContinuity).toEqual([]);
   });
 });

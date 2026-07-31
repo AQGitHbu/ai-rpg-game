@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { asFactId, asLocationId, asNpcId, type GameState, type ScenarioBlueprint } from "@/game/domain";
-import type { DirectorSource, SceneScriptSource, NpcLineSource } from "./runtimeNarrative";
+import { NARRATIVE_CONTRACT_VERSION, type DirectorSource, type SceneScriptSource, type NpcLineSource } from "./runtimeNarrative";
 import { getOrCreateScene } from "./getOrCreateScene";
 
 function buildTestBlueprint(): ScenarioBlueprint {
@@ -88,7 +88,7 @@ const mockDirectorSource: DirectorSource = {
       category: "service_error",
       diagnostics: {
         traceId: "test",
-        contractVersion: "runtime-narrative-v1",
+        contractVersion: NARRATIVE_CONTRACT_VERSION,
         stage: "failed",
         category: "service_error",
       },
@@ -104,7 +104,7 @@ const mockScriptSource: SceneScriptSource = {
       category: "service_error",
       diagnostics: {
         traceId: "test",
-        contractVersion: "runtime-narrative-v1",
+        contractVersion: NARRATIVE_CONTRACT_VERSION,
         stage: "failed",
         category: "service_error",
       },
@@ -120,7 +120,7 @@ const mockNpcSource: NpcLineSource = {
       category: "service_error",
       diagnostics: {
         traceId: "test",
-        contractVersion: "runtime-narrative-v1",
+        contractVersion: NARRATIVE_CONTRACT_VERSION,
         stage: "failed",
       },
     };

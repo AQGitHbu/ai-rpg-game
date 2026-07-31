@@ -135,6 +135,7 @@ export function createServerGameEntryPoints(
   const narrativeCoordinator = new RuntimeNarrativeTaskCoordinator({
     repository,
     newTraceId: () => randomUUID(),
+    now: () => new Date().toISOString(),
     runtimeNarrativeSources,
     logger
   }, logger);

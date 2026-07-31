@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { NewGameInput } from "@/game/domain";
 import { asGameId, type GameRecord, type GameRepository } from "../persistence/gameRepository";
 import { runScenarioPipeline } from "../../applicationFixture.testutil";
+import { NARRATIVE_CONTRACT_VERSION } from "../../runtimeNarrative";
 import { RuntimeNarrativeTaskCoordinator } from "./runtimeNarrativeTaskCoordinator";
 import wuxiaFixture from "../../../../../data/fixtures/phase1/wuxia.json";
 
@@ -53,6 +54,7 @@ describe("RuntimeNarrativeTaskCoordinator", () => {
     const coordinator = new RuntimeNarrativeTaskCoordinator({
       repository,
       newTraceId: () => "coordinator-trace",
+      now: () => "2026-07-31T01:02:03.000Z",
       runtimeNarrativeSources: {
         directorSource: {
           async generate() {
@@ -63,7 +65,7 @@ describe("RuntimeNarrativeTaskCoordinator", () => {
               provenance: "unavailable" as const,
               category: "service_error" as const,
               diagnostics: {
-                traceId: "test", contractVersion: "runtime-narrative-v1" as const,
+                traceId: "test", contractVersion: NARRATIVE_CONTRACT_VERSION,
                 stage: "failed" as const, category: "service_error" as const,
               },
             };

@@ -324,7 +324,7 @@ describe("Town 主循环回归：AI 模式 town fixture 分支", () => {
     expect(opened.state.narrative.mode).toBe("ai");
     expect(opened.state.narrative.generation.status).toBe("pending");
 
-    const taskDeps = { repository, newTraceId: () => "ai-town-task", runtimeNarrativeSources: sources };
+    const taskDeps = { repository, newTraceId: () => "ai-town-task", now: () => FIXED_ACTION_TIME, runtimeNarrativeSources: sources };
     expect(await generatePendingNarrativeScene(taskDeps)).toBe("saved");
 
     // 首幕 choice 的权威 actionKey 落在存档 scene 上（视图对客户端脱敏）。

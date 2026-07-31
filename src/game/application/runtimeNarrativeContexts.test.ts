@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { asFactId, asLocationId, asNpcId, type GameState, type NewGameInput, type ScenarioBlueprint } from "@/game/domain";
+import { asFactId, asLocationId, asNpcId, type GameState, type NewGameInput, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
 import { ensureTownRuntime } from "@/game/gameplay/rpg/town";
-import type { ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
+import { reconcileStoryMemory, type ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { toDirectorContext, toNpcLineContext, toSceneScriptContext, toTownSpatialContext } from "./runtimeNarrativeContexts";
 import { runScenarioPipeline } from "./applicationFixture.testutil";
@@ -113,6 +113,30 @@ describe("runtimeNarrativeContexts 导演", () => {
     const line = JSON.stringify(context);
     expect(line).not.toMatch(/\bprompt\b/i);
     expect(line).not.toMatch(/\bkey\b/i);
+  });
+
+  it("toDirectorContext 的 recentEvents 排除 narrative_scene_presented（Phase 11 场景审计不污染导演上下文指纹）", () => {
+    const stateWithScene = {
+      ...state,
+      eventLedger: [
+        ...state.eventLedger,
+        { type: "location_visited", locationId: asLocationId("loc_a"), occurredAt: "2026-07-31T00:00:00.000Z" },
+        {
+          type: "narrative_scene_presented",
+          sceneId: "scene-1",
+          locationId: asLocationId("loc_a"),
+          focusNpcId: null,
+          revealedFactIds: [],
+          pacing: "develop",
+          occurredAt: "2026-07-31T00:00:00.000Z"
+        },
+        { type: "npc_met", npcId: asNpcId("npc_1"), occurredAt: "2026-07-31T00:00:00.000Z" }
+      ]
+    } as unknown as GameState;
+    const context = toDirectorContext({ blueprint, state: stateWithScene });
+    expect(context.recentEvents).not.toContain("narrative_scene_presented");
+    expect(context.recentEvents).toContain("npc_met");
+    expect(context.recentEvents).toContain("location_visited");
   });
 });
 
@@ -265,5 +289,133 @@ describe("runtimeNarrativeContexts 小镇空间语义", () => {
     const line = JSON.stringify(context.townSpatial);
     expect(line).not.toMatch(/\bseed\b/i);
     expect(line).not.toMatch(/footprint|entrance|\bx\b|\by\b/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 11：最小连续性 context（progression、recentContinuity、activeQuestCards、ownContinuity）。
+// ---------------------------------------------------------------------------
+
+describe("runtimeNarrativeContexts Phase 11 连续性", () => {
+  const FIXTURE = wuxiaFixture as unknown as { input: NewGameInput; seed: string };
+  const PIPELINE = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
+  const FIXED_TIME = "2026-07-31T00:00:00.000Z";
+
+  it("director 保留完整 12 条连续性，而 writer 只接收最近 6 条", () => {
+    const recent: readonly StoryMemoryEntry[] = Array.from({ length: 13 }, (_, turn) => ({
+      kind: "location" as const,
+      locationId: PIPELINE.state.currentLocationId,
+      turn,
+    }));
+    const state = {
+      ...PIPELINE.state,
+      storyMemory: { version: 1 as const, reducedThroughEventCount: 13, recent, npcContacts: [] },
+    } as GameState;
+    const plan: ApprovedDirectorPlan = {
+      sceneGoal: "承接",
+      tensionLevel: 2,
+      focusNpcId: null,
+      relevantFactIds: [],
+      allowedRevealFactIds: [],
+      suggestedActionKeys: ["observe:loc_1", "move:loc_2"],
+      introducedEntities: [],
+      pacing: "develop",
+    };
+    expect(toDirectorContext({ blueprint: PIPELINE.blueprint, state }).recentContinuity).toHaveLength(12);
+    expect(toSceneScriptContext({ blueprint: PIPELINE.blueprint, state, plan }).recentContinuity).toHaveLength(6);
+  });
+
+  it("writer 的 NPC profile 不泄漏其未发现的已知事实", () => {
+    const hiddenFact = PIPELINE.blueprint.world.facts.find((entry) =>
+      !PIPELINE.state.worldFacts.some((stateFact) => stateFact.factId === entry.id && stateFact.discovered),
+    );
+    const npc = PIPELINE.blueprint.npcs.find((entry) =>
+      hiddenFact !== undefined && entry.knownFactIds.includes(hiddenFact.id),
+    );
+    if (hiddenFact === undefined || npc === undefined) throw new Error("fixture must provide an NPC-private hidden fact");
+    const context = toSceneScriptContext({
+      blueprint: PIPELINE.blueprint,
+      state: PIPELINE.state,
+      plan: {
+        sceneGoal: "承接",
+        tensionLevel: 2,
+        focusNpcId: String(npc.id),
+        relevantFactIds: [],
+        allowedRevealFactIds: [],
+        suggestedActionKeys: ["observe:loc_1", "move:loc_2"],
+        introducedEntities: [],
+        pacing: "develop",
+      },
+    });
+    expect(JSON.stringify(context)).not.toContain(hiddenFact.text);
+    expect(JSON.stringify(context.npcProfile)).not.toContain("knownFact");
+  });
+
+  it("已发现线索以文本承接，未发现线索绝不投影", () => {
+    const discovered = PIPELINE.state.worldFacts.find((entry) => entry.discovered);
+    const hidden = PIPELINE.state.worldFacts.find((entry) => !entry.discovered);
+    if (discovered === undefined || hidden === undefined) throw new Error("fixture must contain discovered and hidden facts");
+    const state = {
+      ...PIPELINE.state,
+      storyMemory: {
+        version: 1 as const,
+        reducedThroughEventCount: 2,
+        recent: [
+          { kind: "fact" as const, factId: discovered.factId, turn: 0 },
+          { kind: "fact" as const, factId: hidden.factId, turn: 1 },
+        ],
+        npcContacts: [],
+      },
+    } as GameState;
+    const contextJson = JSON.stringify(toDirectorContext({ blueprint: PIPELINE.blueprint, state }));
+    const discoveredText = PIPELINE.blueprint.world.facts.find((entry) => entry.id === discovered.factId)?.text;
+    const hiddenText = PIPELINE.blueprint.world.facts.find((entry) => entry.id === hidden.factId)?.text;
+    expect(contextJson).toContain(discoveredText);
+    expect(contextJson).not.toContain(hiddenText);
+  });
+
+  it("director 得到具名里程碑与 active 任务卡，且不含完整 ledger 或原始 ID", () => {
+    const openingLocation = PIPELINE.blueprint.locations[0];
+    const stateWithVisit = {
+      ...PIPELINE.state,
+      eventLedger: [...PIPELINE.state.eventLedger, { type: "location_visited", locationId: PIPELINE.state.currentLocationId, occurredAt: FIXED_TIME }],
+    } as unknown as GameState;
+    const state = { ...stateWithVisit, storyMemory: reconcileStoryMemory({ state: stateWithVisit }) } as GameState;
+    const context = toDirectorContext({ blueprint: PIPELINE.blueprint, state });
+    expect(context.recentContinuity.some((m) => m.text.includes(openingLocation.name))).toBe(true);
+    expect(context.activeQuestCards.length).toBeGreaterThan(0);
+    expect(context.progression.mainStage).toBe(1);
+    expect(context.progression.allowedPacing).toContain("develop");
+    // 不泄漏原始 ledger、原始 ID、对白或事实原文
+    expect(JSON.stringify(context)).not.toContain("eventLedger");
+    expect(JSON.stringify(context.recentContinuity)).not.toContain(String(PIPELINE.state.currentLocationId));
+  });
+
+  it("NPC B 请求排除 NPC A 接触与未公开事实原文", () => {
+    const npcs = PIPELINE.blueprint.npcs;
+    const npcA = npcs[0];
+    const npcB = npcs[1] ?? npcs[0];
+    const stateWithContact = {
+      ...PIPELINE.state,
+      eventLedger: [...PIPELINE.state.eventLedger, { type: "npc_met", npcId: String(npcA.id), occurredAt: FIXED_TIME }],
+    } as unknown as GameState;
+    const state = { ...stateWithContact, storyMemory: reconcileStoryMemory({ state: stateWithContact }) } as GameState;
+    const context = toNpcLineContext({
+      blueprint: PIPELINE.blueprint,
+      state,
+      npcId: String(npcB.id),
+      speechAct: "warn",
+      allowedFactIds: [],
+      mayLie: false,
+    });
+    // ownContinuity 只含该 NPC 自身；npcB 未接触 → null（不泄漏 npcA 的接触）
+    expect(context.ownContinuity).toBeNull();
+    expect(JSON.stringify(context)).not.toContain(npcA.name);
+    expect("recentEvents" in context).toBe(false);
+    expect(JSON.stringify(context)).not.toContain("npc_met");
+    // allowedFactIds 为空 → 不含任何事实原文
+    for (const fact of PIPELINE.blueprint.world.facts) {
+      expect(JSON.stringify(context)).not.toContain(fact.text);
+    }
   });
 });

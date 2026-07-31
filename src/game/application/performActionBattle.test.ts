@@ -18,6 +18,7 @@ import {
   battleAction,
 } from "@/game/gameplay/rpg/battle";
 import { reconcileQuests, failQuest, resolveEnding } from "@/game/gameplay/rpg/quests";
+import { reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { performAction, type PerformActionDependencies } from "./performAction";
 import {
@@ -128,7 +129,8 @@ describe("performAction：start_battle 路由", () => {
     // start_battle 后不需 reconcileQuests（没有任务状态变化）
     // 但需要 resolveEnding（幂等，不会有变化）
     const endingResult = resolveEnding(PIPELINE.blueprint, battleResult.state, ruleDeps);
-    const expectedState = endingResult.state;
+    // Phase 11：performAction 在 CAS 前归约 storyMemory，期望 state 须含同构 memory。
+    const expectedState = { ...endingResult.state, storyMemory: reconcileStoryMemory({ state: endingResult.state }) };
 
     repository.setApplyResult(makeApplyResult(record, expectedState));
 

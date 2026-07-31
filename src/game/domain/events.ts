@@ -1,4 +1,5 @@
 import type { EndingId, EnemyId, FactId, GenerationMetadata, ItemId, LocationId, NpcId, QuestId } from "./scenarioBlueprint";
+import type { StoryPacing } from "./storyMemory";
 import type { TownPlanSource } from "./townSnapshot";
 
 // 领域事件：纯数据，时间戳等外部信息由调用方传入（domain 不读取时钟）。
@@ -128,6 +129,21 @@ export type TownPlanGeneratedEvent = {
   readonly occurredAt: string;
 };
 
+/**
+ * Phase 11：场景提交事件——玩家已看见一幕及其安全结构索引的审计事实。
+ * 只携带结构索引（场景 ID、地点、焦点 NPC、已向玩家呈现的已发现事实 ID、节奏标签），
+ * 绝不携带 narration、NPC 台词、choiceToken、actionKey 或 AI provenance。
+ */
+export type NarrativeScenePresentedEvent = {
+  readonly type: "narrative_scene_presented";
+  readonly sceneId: string;
+  readonly locationId: LocationId;
+  readonly focusNpcId: NpcId | null;
+  readonly revealedFactIds: readonly FactId[];
+  readonly pacing: StoryPacing;
+  readonly occurredAt: string;
+};
+
 export type GameEvent =
   | GameInitializedEvent
   | LocationObservedEvent
@@ -144,4 +160,5 @@ export type GameEvent =
   | QuestFailedEvent
   | EndingReachedEvent
   | NarrativeChoiceEvent
-  | TownPlanGeneratedEvent;
+  | TownPlanGeneratedEvent
+  | NarrativeScenePresentedEvent;

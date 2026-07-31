@@ -95,5 +95,9 @@ describe("AdventureDetailsPanel", () => {
     expect(
       screen.getByText("你与陆掌柜交谈。对方以自己的身份和立场回应了你。")
     ).toBeInTheDocument();
+    // Phase 11 Task 7：本章进展里程碑也出现在日志面板。
+    expect(screen.getByText("本章进展")).toBeInTheDocument();
+    expect(screen.getByText("到访青石镇")).toBeInTheDocument();
+    expect(screen.getByText("初会陆掌柜")).toBeInTheDocument();
   });
 });

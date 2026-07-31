@@ -18,6 +18,16 @@ export function AdventureDetailsPanel({ view, panel }: AdventureDetailsPanelProp
           <h3>旅程开端</h3>
           <p>{view.openingNarration}</p>
         </section>
+        {view.storyContinuity.length > 0 ? (
+          <section>
+            <h3>本章进展</h3>
+            <ul className="details-continuity">
+              {view.storyContinuity.map((item, index) => (
+                <li key={`continuity-${index}-${item.text.slice(0, 20)}`}>{item.text}</li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
         <ul className="details-log">
           {view.storyEvents.map((event, index) => (
             <li key={`${index}-${event.text.slice(0, 20)}`}>{event.text}</li>

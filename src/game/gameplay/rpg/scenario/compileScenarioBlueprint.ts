@@ -4,6 +4,7 @@ import type {
   ScenarioBlueprint,
   ScenarioBlueprintCandidate
 } from "@/game/domain";
+import { createEmptyStoryMemory } from "@/game/domain";
 import type {
   ScenarioBlueprintIssue,
   ValidateScenarioBlueprintResult
@@ -117,6 +118,8 @@ export function initializeGameState(blueprint: ScenarioBlueprint): GameState {
     // Town 层：小镇规划按地点懒生成，初始为空。
     towns: [],
     townGeneration: { status: "idle" },
+    // Phase 11：新局初始化 v1 空 storyMemory（可选字段兼容旧存档）。
+    storyMemory: createEmptyStoryMemory(),
     eventLedger: [{ type: "game_initialized", generation }]
   };
 }

@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { asFactId, asLocationId, asNpcId, type GameState, type ScenarioBlueprint } from "@/game/domain";
 import { createGameLogger, type GameLogEntry } from "@/game/logging";
-import type {
-  DirectorSource,
-  SceneScriptSource,
-} from "./runtimeNarrative";
+import { NARRATIVE_CONTRACT_VERSION, type DirectorSource, type SceneScriptSource } from "./runtimeNarrative";
 import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
 
 function buildTestBlueprint(): ScenarioBlueprint {
@@ -101,7 +98,7 @@ describe("orchestrateNarrativeScene fallback", () => {
           category: "service_error",
           diagnostics: {
             traceId: "test-director",
-            contractVersion: "runtime-narrative-v1",
+            contractVersion: NARRATIVE_CONTRACT_VERSION,
             stage: "failed",
             category: "service_error",
           },
@@ -117,7 +114,7 @@ describe("orchestrateNarrativeScene fallback", () => {
           category: "service_error",
           diagnostics: {
             traceId: "test-script",
-            contractVersion: "runtime-narrative-v1",
+            contractVersion: NARRATIVE_CONTRACT_VERSION,
             stage: "failed",
             category: "service_error",
           },
@@ -127,7 +124,7 @@ describe("orchestrateNarrativeScene fallback", () => {
 
     const mockNpcSource = {
       async generate(_request: Parameters<SceneScriptSource["generate"]>[0]) {
-        return { ok: false as const, provenance: "unavailable" as const, category: "service_error" as const, diagnostics: { traceId: "test", contractVersion: "runtime-narrative-v1" as const, stage: "failed" as const } };
+        return { ok: false as const, provenance: "unavailable" as const, category: "service_error" as const, diagnostics: { traceId: "test", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "failed" as const } };
       },
     };
 
@@ -170,7 +167,7 @@ describe("orchestrateNarrativeScene fallback", () => {
             },
             diagnostics: {
               traceId: "test-rejected-proposal-director",
-              contractVersion: "runtime-narrative-v1",
+              contractVersion: NARRATIVE_CONTRACT_VERSION,
               stage: "candidate_received"
             }
           } as never;
@@ -192,5 +189,111 @@ describe("orchestrateNarrativeScene fallback", () => {
       }
     });
     expect(JSON.stringify(entries)).not.toContain("不应进入日志");
+  });
+});
+
+describe("orchestrateNarrativeScene：Phase 11 pacing continuity 告警去重", () => {
+  const blueprint = buildTestBlueprint();
+  const state = buildTestGameState();
+
+  it("同场景内 pacing continuity_violation 至多记录一次（重试不重复告警）", async () => {
+    const entries: GameLogEntry[] = [];
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-continuity-once",
+      blueprint,
+      state,
+      directorSource: {
+        async generate() {
+          return {
+            ok: true,
+            provenance: "generated",
+            plan: {
+              sceneGoal: "推进",
+              tensionLevel: 2,
+              focusNpcId: null,
+              relevantFactIds: [],
+              allowedRevealFactIds: [],
+              suggestedActionKeys: ["x:a", "x:b"],
+              introducedEntities: [],
+              pacing: "climax"
+            },
+            diagnostics: { traceId: "t", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" }
+          } as never;
+        }
+      },
+      sceneScriptSource: { async generate() { throw new Error("not reached"); } },
+      npcLineSource: { async generate() { throw new Error("not reached"); } },
+      logger: createGameLogger({ write: (entry) => entries.push(entry) })
+    });
+
+    expect(result.provenance).toBe("fallback");
+    const continuityWarns = entries.filter(
+      (entry) =>
+        entry.level === "warn" &&
+        entry.event === "runtime_narrative_approval" &&
+        (entry.details as { category?: string }).category === "continuity_violation"
+    );
+    expect(continuityWarns).toHaveLength(1);
+  });
+});
+
+describe("orchestrateNarrativeScene：规则行动文案", () => {
+  const blueprint = buildTestBlueprint();
+  const state = buildTestGameState();
+
+  it("忽略会误导玩家的模型 choice 文案，保存与 actionKey 匹配的规则标签", async () => {
+    const unmetState = {
+      ...state,
+      npcs: [{ npcId: asNpcId("npc_1"), locationId: asLocationId("loc_a"), met: false }],
+    } as GameState;
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-authoritative-choice-copy",
+      blueprint,
+      state: unmetState,
+      directorSource: {
+        async generate() {
+          return {
+            ok: true,
+            provenance: "generated",
+            plan: {
+              sceneGoal: "承接",
+              tensionLevel: 2,
+              focusNpcId: null,
+              relevantFactIds: [],
+              allowedRevealFactIds: [],
+              suggestedActionKeys: ["talk:npc_1", "observe:loc_a"],
+              introducedEntities: [],
+              pacing: "setup",
+            },
+            diagnostics: { traceId: "director", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" },
+          } as never;
+        },
+      },
+      sceneScriptSource: {
+        async generate() {
+          return {
+            ok: true,
+            provenance: "generated",
+            script: {
+              narration: "局势未明。",
+              usedFactIds: [],
+              npcInstruction: null,
+              choices: [
+                { actionKey: "talk:npc_1", label: "离开此地", strategy: "立刻远行" },
+                { actionKey: "observe:loc_a", label: "攻击守卫", strategy: "发动战斗" },
+              ],
+            },
+            diagnostics: { traceId: "writer", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" },
+          } as never;
+        },
+      },
+      npcLineSource: { async generate() { throw new Error("not reached"); } },
+    });
+
+    expect(result.provenance).toBe("generated");
+    expect(result.scene.choices).toEqual([
+      expect.objectContaining({ actionKey: "talk:npc_1", label: "与NPC1交谈" }),
+      expect.objectContaining({ actionKey: "observe:loc_a", label: "观察地点A" }),
+    ]);
   });
 });

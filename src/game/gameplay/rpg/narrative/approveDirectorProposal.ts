@@ -5,6 +5,7 @@ import type {
   ApprovedDirectorPlan,
   NarrativeApprovalResult,
 } from "./types";
+import { deriveContentProgression } from "./contentProgression";
 
 const codePointLength = (value: string) => Array.from(value).length;
 
@@ -34,6 +35,14 @@ export function approveDirectorProposal(
   }
   if (codePointLength(proposal.sceneGoal) < 1 || codePointLength(proposal.sceneGoal) > 200) {
     return { ok: false, category: "schema_violation" };
+  }
+
+  // Phase 11 continuity：director 声明的 pacing 必须属于当前主线阶段允许的集合。
+  // 这是从权威状态派生的硬约束——不从 narrative prose 推断。违反时整体拒绝，
+  // 提案内容不进入返回值；编排层对同场景内的重复 continuity_violation 至多告警一次。
+  const progression = deriveContentProgression({ blueprint, state });
+  if (!progression.allowedPacing.includes(proposal.pacing)) {
+    return { ok: false, category: "continuity_violation" };
   }
 
   // Reference: all IDs must exist in blueprint

@@ -7,6 +7,7 @@ import {
   type GameRepository,
 } from "./server/persistence/gameRepository";
 import { generatePendingNarrativeScene } from "./generatePendingNarrativeScene";
+import { NARRATIVE_CONTRACT_VERSION } from "./runtimeNarrative";
 import { runScenarioPipeline } from "./applicationFixture.testutil";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 
@@ -40,7 +41,7 @@ function unavailableSources() {
           provenance: "unavailable" as const,
           category: "service_error" as const,
           diagnostics: {
-            traceId: "test", contractVersion: "runtime-narrative-v1" as const,
+            traceId: "test", contractVersion: NARRATIVE_CONTRACT_VERSION,
             stage: "failed" as const, category: "service_error" as const,
           },
         };
@@ -78,6 +79,7 @@ describe("generatePendingNarrativeScene", () => {
     const result = await generatePendingNarrativeScene({
       repository: repositoryFor(pendingRecord(), (input) => writes.push(input)),
       newTraceId: () => "task-trace-1",
+      now: () => "2026-07-31T01:02:03.000Z",
       runtimeNarrativeSources: unavailableSources(),
     });
 
@@ -99,10 +101,69 @@ describe("generatePendingNarrativeScene", () => {
     const result = await generatePendingNarrativeScene({
       repository,
       newTraceId: () => "unused",
+      now: () => "2026-07-31T01:02:03.000Z",
       runtimeNarrativeSources: unavailableSources(),
     });
 
     expect(result).toBe("not_pending");
     expect(writes).toBe(0);
+  });
+});
+
+describe("generatePendingNarrativeScene：Phase 11 场景提交事件与记忆原子写入", () => {
+  it("ready 场景应用后：narrative_scene_presented 事件、memory、currentScene 与 cleared pending 同一次写入", async () => {
+    const repository = repositoryFor(pendingRecord());
+    const result = await generatePendingNarrativeScene({
+      repository,
+      newTraceId: () => "phase11-scene",
+      now: () => "2026-07-31T01:02:03.000Z",
+      runtimeNarrativeSources: unavailableSources(),
+    });
+
+    expect(result).toBe("saved");
+    const record = await repository.getCurrentGame();
+    if (!record.ok || record.status !== "active") throw new Error("期望 active 存档");
+    // 提交事件落在 ledger 末尾，且只携带结构索引。
+    const last = record.record.state.eventLedger.at(-1);
+    expect(last?.type).toBe("narrative_scene_presented");
+    if (last?.type === "narrative_scene_presented") {
+      expect(last.sceneId).toBe(record.record.state.narrative.currentScene?.sceneId);
+      expect(last.locationId).toBe(record.record.state.currentLocationId);
+      expect(last.occurredAt).toBe("2026-07-31T01:02:03.000Z");
+      expect(Object.keys(last).sort()).toEqual([
+        "focusNpcId", "locationId", "occurredAt", "pacing", "revealedFactIds", "sceneId", "type"
+      ]);
+    }
+    // memory 与 ledger 同步；场景就绪（currentScene 设置即视图 ready），pending 已清。
+    expect(record.record.state.storyMemory?.reducedThroughEventCount).toBe(record.record.state.eventLedger.length);
+    expect(record.record.state.narrative.currentScene).not.toBeNull();
+    expect(record.record.state.narrative.generation.status).toBe("idle");
+  });
+
+  it("apply 命中 STALE 时：场景事件被丢弃、memory 与旧 state 不变", async () => {
+    const pending = pendingRecord();
+    const repository: GameRepository = {
+      async createInitialGame() { return { ok: true }; },
+      async getCurrentGame() {
+        return { ok: true as const, status: "active" as const, record: pending };
+      },
+      async applyResolvedAction() {
+        return { ok: false as const, code: "STALE_GAME_REVISION" as const };
+      },
+    };
+    const result = await generatePendingNarrativeScene({
+      repository,
+      newTraceId: () => "phase11-stale",
+      now: () => "2026-07-31T01:02:03.000Z",
+      runtimeNarrativeSources: unavailableSources(),
+    });
+
+    expect(result).toBe("stale");
+    const record = await repository.getCurrentGame();
+    if (!record.ok || record.status !== "active") throw new Error("期望 active 存档");
+    // 陈旧写入被整体丢弃：事件未追加、memory 未推进。
+    expect(record.record.state.eventLedger.at(-1)?.type).not.toBe("narrative_scene_presented");
+    expect(record.record.state.storyMemory?.reducedThroughEventCount).toBe(0);
+    expect(record.record.state.narrative.generation.status).toBe("pending");
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { asItemId, asLocationId, asNpcId, asQuestId, type GameState, type NewGameInput } from "@/game/domain";
 import { resolveAction, type PlayerIntent } from "@/game/gameplay/rpg/actions";
 import { reconcileQuests } from "@/game/gameplay/rpg/quests";
+import { reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { performAction, type PerformActionDependencies } from "./performAction";
 import {
@@ -184,7 +185,8 @@ describe("performAction：move + 任务 reconciliation 单次写入（Phase 4 Ta
     expect(repository.applyCalls).toHaveLength(1);
     expect(repository.applyCalls[0].nextState).toEqual({
       ...reconciled.state,
-      townGeneration: { status: "pending", locationId: asLocationId("loc_2"), requestedAt: FIXED_TIME }
+      townGeneration: { status: "pending", locationId: asLocationId("loc_2"), requestedAt: FIXED_TIME },
+      storyMemory: reconcileStoryMemory({ state: reconciled.state })
     });
     const ledger = repository.applyCalls[0].nextState.eventLedger;
     const tailTypes = ledger.slice(record.state.eventLedger.length).map((event) => event.type);
@@ -283,7 +285,10 @@ describe("performAction：take_item + 任务 reconciliation 单次写入（Phase
     if (!result.ok) return;
     // 恰好一次写入：行动事件、完成事件与三阶段解锁事件全在同一份载荷。
     expect(repository.applyCalls).toHaveLength(1);
-    expect(repository.applyCalls[0].nextState).toEqual(reconciled.state);
+    expect(repository.applyCalls[0].nextState).toEqual({
+      ...reconciled.state,
+      storyMemory: reconcileStoryMemory({ state: reconciled.state })
+    });
     const tailTypes = repository.applyCalls[0].nextState.eventLedger
       .slice(readyState.eventLedger.length)
       .map((event) => event.type);
@@ -392,7 +397,10 @@ describe("performAction：dialogue_choice 单次写入与零写入（Phase 7 Tas
     if (!result.ok) return;
     // 恰好一次写入，且尾部只有一个 npc_met（无多余事件/无旁路写入）。
     expect(repository.applyCalls).toHaveLength(1);
-    expect(repository.applyCalls[0].nextState).toEqual(reconciled.state);
+    expect(repository.applyCalls[0].nextState).toEqual({
+      ...reconciled.state,
+      storyMemory: reconcileStoryMemory({ state: reconciled.state })
+    });
     const tailTypes = repository.applyCalls[0].nextState.eventLedger
       .slice(record.state.eventLedger.length)
       .map((event) => event.type);
@@ -459,6 +467,34 @@ describe("performAction：dialogue_choice 单次写入与零写入（Phase 7 Tas
     if (result.code !== "ACTION_REJECTED") return;
     expect(result.feedback.ok).toBe(false);
     expect(repository.applyCalls).toHaveLength(0);
+  });
+});
+
+describe("performAction：Phase 11 剧情记忆与规则事件同一次 CAS", () => {
+  it("investigate 成功后 memory 同步归约：recent 含该事实、cursor 追齐 ledger、不含 AI 文案", async () => {
+    const repository = createFakeGameRepository();
+    const record = buildActiveRecord();
+    repository.setCurrentResult({ ok: true, status: "active", record });
+    const factId = record.blueprint.openingScene.investigableFactIds[0];
+    repository.setApplyResult({ ok: true, record: { ...record, revision: 1 } });
+
+    const result = await performAction(
+      { intent: { type: "investigate", factId }, expectedRevision: 0 },
+      buildPerformDeps(repository)
+    );
+
+    expect(result.ok).toBe(true);
+    expect(repository.applyCalls).toHaveLength(1);
+    const saved = repository.applyCalls[0].nextState;
+    expect(saved.storyMemory?.reducedThroughEventCount).toBe(saved.eventLedger.length);
+    expect(
+      saved.storyMemory?.recent.some((entry) => entry.kind === "fact" && entry.factId === factId)
+    ).toBe(true);
+    // 剧情记忆绝不携带 AI 文案/token/actionKey。
+    const serialized = JSON.stringify(saved.storyMemory);
+    expect(serialized).not.toContain("narration");
+    expect(serialized).not.toContain("choiceToken");
+    expect(serialized).not.toContain("actionKey");
   });
 });
 
