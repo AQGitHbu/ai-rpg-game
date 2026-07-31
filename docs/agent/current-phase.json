@@ -19,11 +19,6 @@
     "docs/superpowers/plans/2026-07-31-mvp-phase-11-story-continuity-memory.md"
   ],
   "acceptanceCommands": [
-    "npm run lint",
-    "npm run typecheck",
-    "npm test",
-    "npm run test:fast",
-    "npm run build",
-    "npm run phase:status"
+    "npm run accept"
   ]
 }
