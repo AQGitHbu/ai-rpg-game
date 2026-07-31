@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { asFactId, asLocationId, asNpcId, type GameState, type NewGameInput, type ScenarioBlueprint } from "@/game/domain";
 import { ensureTownRuntime } from "@/game/gameplay/rpg/town";
-import type { ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
+import { reconcileStoryMemory, type ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { toDirectorContext, toNpcLineContext, toSceneScriptContext, toTownSpatialContext } from "./runtimeNarrativeContexts";
 import { runScenarioPipeline } from "./applicationFixture.testutil";
@@ -289,5 +289,58 @@ describe("runtimeNarrativeContexts 小镇空间语义", () => {
     const line = JSON.stringify(context.townSpatial);
     expect(line).not.toMatch(/\bseed\b/i);
     expect(line).not.toMatch(/footprint|entrance|\bx\b|\by\b/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 11：最小连续性 context（progression、recentContinuity、activeQuestCards、ownContinuity）。
+// ---------------------------------------------------------------------------
+
+describe("runtimeNarrativeContexts Phase 11 连续性", () => {
+  const FIXTURE = wuxiaFixture as unknown as { input: NewGameInput; seed: string };
+  const PIPELINE = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
+  const FIXED_TIME = "2026-07-31T00:00:00.000Z";
+
+  it("director 得到具名里程碑与 active 任务卡，且不含完整 ledger 或原始 ID", () => {
+    const openingLocation = PIPELINE.blueprint.locations[0];
+    const stateWithVisit = {
+      ...PIPELINE.state,
+      eventLedger: [...PIPELINE.state.eventLedger, { type: "location_visited", locationId: PIPELINE.state.currentLocationId, occurredAt: FIXED_TIME }],
+    } as unknown as GameState;
+    const state = { ...stateWithVisit, storyMemory: reconcileStoryMemory({ state: stateWithVisit }) } as GameState;
+    const context = toDirectorContext({ blueprint: PIPELINE.blueprint, state });
+    expect(context.recentContinuity.some((m) => m.text.includes(openingLocation.name))).toBe(true);
+    expect(context.activeQuestCards.length).toBeGreaterThan(0);
+    expect(context.progression.mainStage).toBe(1);
+    expect(context.progression.allowedPacing).toContain("develop");
+    // 不泄漏原始 ledger、原始 ID、对白或事实原文
+    expect(JSON.stringify(context)).not.toContain("eventLedger");
+    expect(JSON.stringify(context.recentContinuity)).not.toContain(String(PIPELINE.state.currentLocationId));
+  });
+
+  it("NPC B 请求排除 NPC A 接触与未公开事实原文", () => {
+    const npcs = PIPELINE.blueprint.npcs;
+    const npcA = npcs[0];
+    const npcB = npcs[1] ?? npcs[0];
+    const stateWithContact = {
+      ...PIPELINE.state,
+      eventLedger: [...PIPELINE.state.eventLedger, { type: "npc_met", npcId: String(npcA.id), occurredAt: FIXED_TIME }],
+    } as unknown as GameState;
+    const state = { ...stateWithContact, storyMemory: reconcileStoryMemory({ state: stateWithContact }) } as GameState;
+    const context = toNpcLineContext({
+      blueprint: PIPELINE.blueprint,
+      state,
+      npcId: String(npcB.id),
+      speechAct: "warn",
+      allowedFactIds: [],
+      mayLie: false,
+    });
+    // ownContinuity 只含该 NPC 自身；npcB 未接触 → null（不泄漏 npcA 的接触）
+    expect(context.ownContinuity).toBeNull();
+    expect(JSON.stringify(context)).not.toContain(npcA.name);
+    // allowedFactIds 为空 → 不含任何事实原文
+    for (const fact of PIPELINE.blueprint.world.facts) {
+      expect(JSON.stringify(context)).not.toContain(fact.text);
+    }
   });
 });

@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { asFactId, asLocationId, asNpcId, type GameState, type ScenarioBlueprint } from "@/game/domain";
 import { createGameLogger, type GameLogEntry } from "@/game/logging";
-import type {
-  DirectorSource,
-  SceneScriptSource,
-} from "./runtimeNarrative";
+import { NARRATIVE_CONTRACT_VERSION, type DirectorSource, type SceneScriptSource } from "./runtimeNarrative";
 import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
 
 function buildTestBlueprint(): ScenarioBlueprint {
@@ -101,7 +98,7 @@ describe("orchestrateNarrativeScene fallback", () => {
           category: "service_error",
           diagnostics: {
             traceId: "test-director",
-            contractVersion: "runtime-narrative-v1",
+            contractVersion: NARRATIVE_CONTRACT_VERSION,
             stage: "failed",
             category: "service_error",
           },
@@ -117,7 +114,7 @@ describe("orchestrateNarrativeScene fallback", () => {
           category: "service_error",
           diagnostics: {
             traceId: "test-script",
-            contractVersion: "runtime-narrative-v1",
+            contractVersion: NARRATIVE_CONTRACT_VERSION,
             stage: "failed",
             category: "service_error",
           },
@@ -127,7 +124,7 @@ describe("orchestrateNarrativeScene fallback", () => {
 
     const mockNpcSource = {
       async generate(_request: Parameters<SceneScriptSource["generate"]>[0]) {
-        return { ok: false as const, provenance: "unavailable" as const, category: "service_error" as const, diagnostics: { traceId: "test", contractVersion: "runtime-narrative-v1" as const, stage: "failed" as const } };
+        return { ok: false as const, provenance: "unavailable" as const, category: "service_error" as const, diagnostics: { traceId: "test", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "failed" as const } };
       },
     };
 
@@ -170,7 +167,7 @@ describe("orchestrateNarrativeScene fallback", () => {
             },
             diagnostics: {
               traceId: "test-rejected-proposal-director",
-              contractVersion: "runtime-narrative-v1",
+              contractVersion: NARRATIVE_CONTRACT_VERSION,
               stage: "candidate_received"
             }
           } as never;
@@ -220,7 +217,7 @@ describe("orchestrateNarrativeScene：Phase 11 pacing continuity 告警去重", 
               introducedEntities: [],
               pacing: "climax"
             },
-            diagnostics: { traceId: "t", contractVersion: "runtime-narrative-v1", stage: "candidate_received" }
+            diagnostics: { traceId: "t", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" }
           } as never;
         }
       },

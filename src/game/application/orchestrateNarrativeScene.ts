@@ -15,13 +15,7 @@ import {
   deriveContentProgression,
 } from "@/game/gameplay/rpg/narrative";
 import { projectAvailableActions } from "@/game/gameplay/rpg/actions";
-import type {
-  DirectorSource,
-  SceneScriptSource,
-  NpcLineSource,
-  DirectorAttempt,
-  SceneScriptAttempt,
-} from "./runtimeNarrative";
+import { NARRATIVE_CONTRACT_VERSION, type DirectorSource, type SceneScriptSource, type NpcLineSource, type DirectorAttempt, type SceneScriptAttempt } from "./runtimeNarrative";
 import {
   toDirectorContext,
   toSceneScriptContext,
@@ -234,7 +228,7 @@ function buildFallbackResult(
 }
 
 function unavailableDirectorAttempt(traceId: string): DirectorAttempt {
-  return { ok: false, provenance: "unavailable", category: "service_error", diagnostics: { traceId, contractVersion: "runtime-narrative-v1", stage: "failed", category: "service_error" } };
+  return { ok: false, provenance: "unavailable", category: "service_error", diagnostics: { traceId, contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "failed", category: "service_error" } };
 }
 
 function calculateTurn(state: GameState): number {

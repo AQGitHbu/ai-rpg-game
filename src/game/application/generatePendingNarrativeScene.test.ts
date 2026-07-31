@@ -7,6 +7,7 @@ import {
   type GameRepository,
 } from "./server/persistence/gameRepository";
 import { generatePendingNarrativeScene } from "./generatePendingNarrativeScene";
+import { NARRATIVE_CONTRACT_VERSION } from "./runtimeNarrative";
 import { runScenarioPipeline } from "./applicationFixture.testutil";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 
@@ -40,7 +41,7 @@ function unavailableSources() {
           provenance: "unavailable" as const,
           category: "service_error" as const,
           diagnostics: {
-            traceId: "test", contractVersion: "runtime-narrative-v1" as const,
+            traceId: "test", contractVersion: NARRATIVE_CONTRACT_VERSION,
             stage: "failed" as const, category: "service_error" as const,
           },
         };

@@ -10,7 +10,7 @@ import type { ApprovedDirectorPlan, ApprovedSceneScript, NpcPerformanceProposal 
 // 契约版本
 // ---------------------------------------------------------------------------
 
-export const NARRATIVE_CONTRACT_VERSION = "runtime-narrative-v1" as const;
+export const NARRATIVE_CONTRACT_VERSION = "runtime-narrative-v2" as const;
 export type NarrativeContractVersion = typeof NARRATIVE_CONTRACT_VERSION;
 
 // ---------------------------------------------------------------------------
