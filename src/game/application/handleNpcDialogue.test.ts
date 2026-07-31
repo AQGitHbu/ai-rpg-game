@@ -134,6 +134,10 @@ describe("handleNpcDialogue", () => {
       npcName: npc?.name,
       npcRole: npc?.role
     });
+    // 负向验收（spec §10 第 10 条）：自由输入不经过 resolveAction，
+    // 不产生 npc_met 事件、不改变 met 状态。
+    expect(saved.npcs).toEqual(record.state.npcs);
+    expect(saved.eventLedger).toEqual(record.state.eventLedger);
   });
 
   it("已有 pending → ACTION_REJECTED，零写入", async () => {
