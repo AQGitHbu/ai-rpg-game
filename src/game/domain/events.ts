@@ -144,6 +144,14 @@ export type NarrativeScenePresentedEvent = {
   readonly occurredAt: string;
 };
 
+/** 蓝图动态化：运行时蓝图扩展落账——记录本次追加的实体 ID，供回放与调试。 */
+export type BlueprintExpandedEvent = {
+  readonly type: "blueprint_expanded";
+  readonly newLocationIds: readonly LocationId[];
+  readonly newNpcIds: readonly NpcId[];
+  readonly occurredAt: string;
+};
+
 export type GameEvent =
   | GameInitializedEvent
   | LocationObservedEvent
@@ -161,4 +169,5 @@ export type GameEvent =
   | EndingReachedEvent
   | NarrativeChoiceEvent
   | TownPlanGeneratedEvent
-  | NarrativeScenePresentedEvent;
+  | NarrativeScenePresentedEvent
+  | BlueprintExpandedEvent;

@@ -287,6 +287,7 @@ function projectStoryEvent(
     // Phase 11：场景提交事件不作为单条日志行重复呈现——其结构索引经
     // storyMemory.recent 由本章进展里程碑（Task 7 projectStoryContinuity）单独投影。
     case "narrative_scene_presented": return null;
+    case "blueprint_expanded": return null;
   }
 }
 

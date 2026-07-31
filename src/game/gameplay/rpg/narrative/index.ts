@@ -22,6 +22,12 @@ export {
 } from "./approveBlueprintExpansion";
 
 export {
+  compileBlueprintExpansion,
+  type CompileBlueprintExpansionInput,
+  type CompileBlueprintExpansionResult,
+} from "./compileBlueprintExpansion";
+
+export {
   approveSceneScript,
   type ApproveSceneScriptInput,
   type ApprovedSceneScript,

@@ -31,6 +31,7 @@ export {
 export {
   compileScenarioBlueprint,
   initializeGameState,
+  buildNpcRuntimeEntry,
   type CompileScenarioBlueprintResult
 } from "./compileScenarioBlueprint";
 export { createFallbackBlueprint, FALLBACK_TEMPLATE_VERSION } from "./createFallbackBlueprint";

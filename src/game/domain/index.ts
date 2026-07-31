@@ -101,7 +101,8 @@ export {
   type EndingReachedEvent,
   type NarrativeChoiceEvent,
   type TownPlanGeneratedEvent,
-  type NarrativeScenePresentedEvent
+  type NarrativeScenePresentedEvent,
+  type BlueprintExpandedEvent
 } from "./events";
 export { paginateSpeechText } from "./speechPagination";
 export {
