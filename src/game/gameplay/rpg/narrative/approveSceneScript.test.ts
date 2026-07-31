@@ -54,6 +54,8 @@ const approvedPlan: ApprovedDirectorPlan = {
   suggestedActionKeys: ["talk:npc_1", "investigate:fact_1"],
   introducedEntities: [],
   pacing: "develop",
+        proposedNewLocations: [],
+        proposedNewNpcs: [],
 };
 
 const validScript: SceneScriptProposal = {

@@ -1,5 +1,5 @@
 import type { GameState, ScenarioBlueprint } from "@/game/domain";
-import type { NarrativeActionCandidate } from "./types";
+import type { NarrativeActionCandidate, ProposedNewLocation, ProposedNewNpc } from "./types";
 import type {
   DirectorProposal,
   ApprovedDirectorPlan,
@@ -123,7 +123,50 @@ export function approveDirectorProposal(
     suggestedActionKeys: [...proposal.suggestedActionKeys] as readonly [string, string],
     introducedEntities: proposal.introducedEntities.map((e) => ({ ...e })),
     pacing: proposal.pacing,
+    proposedNewLocations: rebuildLocationProposals(proposal.proposedNewLocations),
+    proposedNewNpcs: rebuildNpcProposals(proposal.proposedNewNpcs),
   };
 
   return { ok: true, value: approved };
+}
+
+// ---------------------------------------------------------------------------
+// 丢弃式重建：扩展提案数组任一条目非法（非纯字符串字段对象、scale 非法、
+// 数组长度 > 1）→ 整体重建为 []；合法单条目 → 逐字段拷贝重建。
+// 扩展问题绝不使场景失败，只丢弃扩展提案本身。
+// ---------------------------------------------------------------------------
+
+function rebuildLocationProposals(
+  proposals: readonly ProposedNewLocation[] | undefined
+): readonly ProposedNewLocation[] {
+  if (proposals === undefined || proposals.length > 1) return [];
+  if (proposals.length === 0) return [];
+  const entry = proposals[0];
+  if (
+    typeof entry.name !== "string" ||
+    typeof entry.description !== "string" ||
+    typeof entry.connectFromLocationId !== "string" ||
+    typeof entry.reason !== "string" ||
+    (entry.scale !== "scene" && entry.scale !== "town")
+  ) {
+    return [];
+  }
+  return [{ ...entry }];
+}
+
+function rebuildNpcProposals(
+  proposals: readonly ProposedNewNpc[] | undefined
+): readonly ProposedNewNpc[] {
+  if (proposals === undefined || proposals.length > 1) return [];
+  if (proposals.length === 0) return [];
+  const entry = proposals[0];
+  if (
+    typeof entry.name !== "string" ||
+    typeof entry.role !== "string" ||
+    typeof entry.description !== "string" ||
+    typeof entry.locationId !== "string"
+  ) {
+    return [];
+  }
+  return [{ ...entry }];
 }

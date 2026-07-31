@@ -183,7 +183,9 @@ describe("Town 主循环回归：离线全旅程", () => {
         allowedRevealFactIds: [],
         suggestedActionKeys: [`observe:${TOWN_LOCATION_ID}`, `observe:${TOWN_LOCATION_ID}`],
         introducedEntities: [],
-        pacing: "develop"
+        pacing: "develop",
+        proposedNewLocations: [],
+        proposedNewNpcs: []
       }
     });
     expect(sceneContext.townSpatial?.townName.length).toBeGreaterThan(0);
@@ -231,7 +233,9 @@ function createMoveToTownDirector(): DirectorSource {
           allowedRevealFactIds: [],
           suggestedActionKeys: [target.actionKey, alternative.actionKey],
           introducedEntities: [{ kind: "location", id: TOWN_LOCATION_ID }],
-          pacing: "develop"
+          pacing: "develop",
+        proposedNewLocations: [],
+        proposedNewNpcs: []
         },
         diagnostics: {
           traceId: request.traceId,

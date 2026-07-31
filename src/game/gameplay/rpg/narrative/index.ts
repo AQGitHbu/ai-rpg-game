@@ -17,6 +17,11 @@ export {
 } from "./approveDirectorProposal";
 
 export {
+  approveBlueprintExpansion,
+  type ApproveBlueprintExpansionInput,
+} from "./approveBlueprintExpansion";
+
+export {
   approveSceneScript,
   type ApproveSceneScriptInput,
   type ApprovedSceneScript,
@@ -30,6 +35,11 @@ export {
   type NpcPerformanceProposal,
   type NarrativeApprovalCategory,
   type NarrativeApprovalResult,
+  type ProposedNewLocation,
+  type ProposedNewNpc,
+  type ApprovedBlueprintExpansion,
+  type BlueprintExpansionRejection,
+  type BlueprintExpansionDecision,
 } from "./types";
 
 export {

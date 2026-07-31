@@ -11,6 +11,21 @@ export type NarrativeActionCandidate = {
 // Director proposal types
 // ---------------------------------------------------------------------------
 
+export type ProposedNewLocation = {
+  readonly name: string;
+  readonly description: string;
+  readonly scale: "scene" | "town";
+  readonly connectFromLocationId: string;
+  readonly reason: string;
+};
+
+export type ProposedNewNpc = {
+  readonly name: string;
+  readonly role: string;
+  readonly description: string;
+  readonly locationId: string;
+};
+
 export type DirectorProposal = {
   readonly sceneGoal: string;
   readonly tensionLevel: 1 | 2 | 3 | 4 | 5;
@@ -23,9 +38,34 @@ export type DirectorProposal = {
     readonly id: string;
   }[];
   readonly pacing: "setup" | "develop" | "turn" | "climax" | "resolution";
+  readonly proposedNewLocations: readonly ProposedNewLocation[];
+  readonly proposedNewNpcs: readonly ProposedNewNpc[];
 };
 
 export type ApprovedDirectorPlan = DirectorProposal;
+
+// ---------------------------------------------------------------------------
+// Blueprint expansion approval types
+// ---------------------------------------------------------------------------
+
+export type ApprovedBlueprintExpansion = {
+  readonly newLocation: ProposedNewLocation | null;
+  readonly newNpc: ProposedNewNpc | null;
+};
+
+export type BlueprintExpansionRejection =
+  | "none_proposed"
+  | "invalid_payload"
+  | "soft_cap_reached"
+  | "hard_cap_reached"
+  | "endgame_locked"
+  | "pacing_locked"
+  | "connect_not_unlocked"
+  | "town_cap_reached";
+
+export type BlueprintExpansionDecision =
+  | { readonly ok: true; readonly expansion: ApprovedBlueprintExpansion }
+  | { readonly ok: false; readonly reason: BlueprintExpansionRejection };
 
 // ---------------------------------------------------------------------------
 // Scene script proposal types

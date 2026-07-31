@@ -157,6 +157,8 @@ describe("runtimeNarrativeContexts 编剧", () => {
         suggestedActionKeys: ["talk:npc_1", "observe:loc_a"],
         introducedEntities: [],
         pacing: "develop",
+        proposedNewLocations: [],
+        proposedNewNpcs: [],
       },
     });
     expect(context.plan.sceneGoal).toBe("test");
@@ -175,6 +177,8 @@ describe("runtimeNarrativeContexts 编剧", () => {
         suggestedActionKeys: ["talk:npc_1", "observe:loc_a"],
         introducedEntities: [],
         pacing: "develop",
+        proposedNewLocations: [],
+        proposedNewNpcs: [],
       },
     });
     const line = JSON.stringify(context);
@@ -257,6 +261,8 @@ describe("runtimeNarrativeContexts 小镇空间语义", () => {
     suggestedActionKeys: ["observe:loc_2", "observe:loc_2"],
     introducedEntities: [],
     pacing: "develop",
+        proposedNewLocations: [],
+        proposedNewNpcs: [],
   };
 
   it("非 town 地点：toTownSpatialContext 返回 undefined，两个上下文均不注入", () => {

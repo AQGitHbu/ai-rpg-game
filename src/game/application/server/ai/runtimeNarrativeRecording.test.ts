@@ -18,6 +18,8 @@ const plan = {
   suggestedActionKeys: ["observe", "move:loc_2"] as const,
   introducedEntities: [],
   pacing: "develop" as const,
+        proposedNewLocations: [],
+        proposedNewNpcs: [],
 };
 
 const script = {

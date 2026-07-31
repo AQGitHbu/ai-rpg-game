@@ -53,6 +53,8 @@ const FIXTURE_DIRECTOR_PLAN: ApprovedDirectorPlan = {
   suggestedActionKeys: ["__fixture__", "__fixture__"] as unknown as readonly [string, string],
   introducedEntities: [],
   pacing: "develop",
+  proposedNewLocations: [],
+  proposedNewNpcs: [],
 };
 
 const FIXTURE_SCENE_SCRIPT: ApprovedSceneScript = {

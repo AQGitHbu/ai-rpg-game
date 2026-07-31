@@ -14,6 +14,8 @@ export const FALLBACK_DIRECTOR_PLAN: ApprovedDirectorPlan = Object.freeze({
   suggestedActionKeys: Object.freeze([] as unknown as readonly [string, string]),
   introducedEntities: Object.freeze([] as readonly never[]),
   pacing: "setup" as const,
+  proposedNewLocations: Object.freeze([] as readonly never[]),
+  proposedNewNpcs: Object.freeze([] as readonly never[]),
 });
 
 export const FALLBACK_SCENE_SCRIPT: ApprovedSceneScript = Object.freeze({

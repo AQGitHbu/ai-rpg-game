@@ -102,6 +102,8 @@ describe("approveDirectorProposal", () => {
         suggestedActionKeys: ["talk:npc_1", "investigate:fact_1"],
         introducedEntities: [{ kind: "npc", id: "npc_1" }],
         pacing: "develop",
+        proposedNewLocations: [],
+        proposedNewNpcs: [],
       },
       blueprint,
       state,
@@ -125,6 +127,8 @@ describe("approveDirectorProposal", () => {
         suggestedActionKeys: ["talk:npc_1", "investigate:fact_1"],
         introducedEntities: [],
         pacing: "develop",
+        proposedNewLocations: [],
+        proposedNewNpcs: [],
       },
       blueprint,
       state,
@@ -144,6 +148,8 @@ describe("approveDirectorProposal", () => {
         suggestedActionKeys: ["talk:npc_1", "investigate:fact_1"],
         introducedEntities: [],
         pacing: "develop",
+        proposedNewLocations: [],
+        proposedNewNpcs: [],
       },
       blueprint,
       state,
@@ -163,6 +169,8 @@ describe("approveDirectorProposal", () => {
         suggestedActionKeys: ["talk:npc_1", "talk:npc_1"],
         introducedEntities: [],
         pacing: "develop",
+        proposedNewLocations: [],
+        proposedNewNpcs: [],
       },
       blueprint,
       state,
@@ -182,12 +190,100 @@ describe("approveDirectorProposal", () => {
         suggestedActionKeys: ["talk:npc_1", "move:loc_hidden"],
         introducedEntities: [],
         pacing: "develop",
+        proposedNewLocations: [],
+        proposedNewNpcs: [],
       },
       blueprint,
       state,
       candidates,
     });
     expect(result).toMatchObject({ ok: false });
+  });
+
+  it("提案数组长度 > 1 → 审批仍 ok 且对应数组为 []", () => {
+    const result = approveDirectorProposal({
+      proposal: {
+        sceneGoal: "test",
+        tensionLevel: 2,
+        focusNpcId: null,
+        relevantFactIds: [],
+        allowedRevealFactIds: [],
+        suggestedActionKeys: ["talk:npc_1", "investigate:fact_1"],
+        introducedEntities: [],
+        pacing: "develop",
+        proposedNewLocations: [
+          { name: "地点A", description: "描述A", scale: "scene", connectFromLocationId: "loc_a", reason: "理由A" },
+          { name: "地点B", description: "描述B", scale: "scene", connectFromLocationId: "loc_a", reason: "理由B" }
+        ],
+        proposedNewNpcs: [
+          { name: "NPC_A", role: "角色A", description: "描述A", locationId: "loc_a" },
+          { name: "NPC_B", role: "角色B", description: "描述B", locationId: "loc_a" }
+        ],
+      },
+      blueprint,
+      state,
+      candidates,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.proposedNewLocations).toEqual([]);
+      expect(result.value.proposedNewNpcs).toEqual([]);
+    }
+  });
+
+  it("提案条目 scale 非法 → 审批仍 ok 且地点数组为 []", () => {
+    const result = approveDirectorProposal({
+      proposal: {
+        sceneGoal: "test",
+        tensionLevel: 2,
+        focusNpcId: null,
+        relevantFactIds: [],
+        allowedRevealFactIds: [],
+        suggestedActionKeys: ["talk:npc_1", "investigate:fact_1"],
+        introducedEntities: [],
+        pacing: "develop",
+        proposedNewLocations: [
+          { name: "地点", description: "描述", scale: "city" as unknown as "scene", connectFromLocationId: "loc_a", reason: "理由" }
+        ],
+        proposedNewNpcs: [],
+      },
+      blueprint,
+      state,
+      candidates,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.proposedNewLocations).toEqual([]);
+    }
+  });
+
+  it("合法单条目 → 逐字段重建保留（引用不等于输入）", () => {
+    const loc = { name: "废弃货栈", description: "码头边长期无人问津的旧货栈。", scale: "scene" as const, connectFromLocationId: "loc_a", reason: "线人约定在此交接密信。" };
+    const npc = { name: "神秘线人", role: "情报贩子", description: "一个戴着斗笠的神秘人物。", locationId: "loc_a" };
+    const result = approveDirectorProposal({
+      proposal: {
+        sceneGoal: "test",
+        tensionLevel: 2,
+        focusNpcId: null,
+        relevantFactIds: [],
+        allowedRevealFactIds: [],
+        suggestedActionKeys: ["talk:npc_1", "investigate:fact_1"],
+        introducedEntities: [],
+        pacing: "develop",
+        proposedNewLocations: [loc],
+        proposedNewNpcs: [npc],
+      },
+      blueprint,
+      state,
+      candidates,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.proposedNewLocations).toEqual([loc]);
+      expect(result.value.proposedNewLocations[0]).not.toBe(loc);
+      expect(result.value.proposedNewNpcs).toEqual([npc]);
+      expect(result.value.proposedNewNpcs[0]).not.toBe(npc);
+    }
   });
 });
 

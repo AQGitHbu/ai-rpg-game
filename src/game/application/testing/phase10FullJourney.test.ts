@@ -149,6 +149,8 @@ function createCuratedJourneySources(): RuntimeSources {
           // Phase 11：pacing 与当前主线阶段对齐——scenes 1(stage1)、2-4(stage2)、5-6(stage3)。
           // 见 contentProgression 契约；否则 approveDirectorProposal 以 continuity_violation 拒绝。
           pacing: sceneIndex <= 1 ? "develop" : sceneIndex <= 4 ? "turn" : "climax",
+        proposedNewLocations: [],
+        proposedNewNpcs: [],
         },
         diagnostics: {
           traceId: request.traceId,
