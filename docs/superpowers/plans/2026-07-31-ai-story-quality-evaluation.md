@@ -720,6 +720,18 @@ export type LiveScenarioCandidateSourceOptions = Readonly<{
 ```typescript
       const messages = buildMessages(request);
       const extraBody = buildExtraBody?.(request);
+      // attempt 解析：request.traceId 中 -retry 出现次数 + 1（无全局状态，跨场景不泄漏）。
+      // 注意：scenario 的 traceId 没有角色后缀（不同于 director 的 -director 等），
+      // 但重试后缀 -retry 的语义与其他角色一致。
+      const attempt = (() => {
+        let count = 1;
+        let index = request.traceId.indexOf("-retry");
+        while (index !== -1) {
+          count += 1;
+          index = request.traceId.indexOf("-retry", index + 1);
+        }
+        return count;
+      })();
       const capture = (outcome: Readonly<{ rawResponse: string | null; parsedCandidate: Record<string, unknown> | null; failureCategory: ScenarioCandidateFailureCategory | null; latencyMs: number }>) => {
         try {
           options.captureSink?.append({
@@ -1970,6 +1982,7 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       fallbackScenes: 0,
       blueprint: null,
     };
+    const getCalls = createCachedCallsReader(artifactDir);
 
     for (let sceneIndex = 1; sceneIndex <= maxScenes; sceneIndex += 1) {
       // 1. pending 时确保生成并轮询到场景/战斗/结局就绪（带超时）。
@@ -2014,7 +2027,7 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       const scene = record.state.narrative.currentScene;
       if (scene === null) throw new Error("scene vanished before record");
       const stage = deriveContentProgression({ blueprint: record.blueprint, state: record.state }).mainStage;
-      const calls = readCalls(artifactDir);
+      const calls = getCalls();
       const choice = pickNarrativeChoice(record, rand);
       const newEvents = record.state.eventLedger
         .slice(previousLedgerLength)
@@ -2100,6 +2113,28 @@ function readCalls(artifactDir: string): readonly Readonly<Record<string, unknow
   }
 }
 
+/** 创建带缓存的 calls 读取器：避免每次循环全量重读 calls.jsonl（O(n²) 退化）。
+ *  首次调用全量读取，后续只追加读取新增行。 */
+function createCachedCallsReader(artifactDir: string): () => readonly Readonly<Record<string, unknown>>[] {
+  let cached: Readonly<Record<string, unknown>>[] = [];
+  let lastLength = 0;
+  return () => {
+    try {
+      const current = readFileSync(join(artifactDir, "calls.jsonl"), "utf8");
+      const lines = current.trim().split("\n").filter((line) => line !== "");
+      if (lines.length <= lastLength && cached.length > 0) return cached;
+      // 只解析新增行，追加到缓存。
+      for (let index = lastLength; index < lines.length; index += 1) {
+        cached = [...cached, JSON.parse(lines[index]) as Readonly<Record<string, unknown>>];
+      }
+      lastLength = lines.length;
+      return cached;
+    } catch {
+      return cached.length > 0 ? cached : [];
+    }
+  };
+}
+
 /** 假 transport 响应生成器：按 system prompt 首词区分四角色，返回合法 JSON。 */
 export function createFakeAiFetch() {
   return vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -2148,12 +2183,74 @@ export function createFakeAiFetch() {
     } else if (system.startsWith("You are one NPC performer")) {
       content = JSON.stringify({ text: "这条路通向你想找的地方。", usedFactIds: [], emotion: "warm" });
     } else {
-      // 开局蓝图生成（scenario）：返回结构合法但内容为空的最小候选，编译阶段
-      // 会失败 → 走 fallback 开局（离线模式接受；真实模式要求 generated）。
+      // 开局蓝图生成（scenario）：返回明显不合法的 JSON（非对象结构），编译阶段
+      // 必然失败 → 走 fallback 开局（离线模式接受；真实模式要求 generated）。
+      // 注意：不能返回空对象 {} 等"结构合法但内容为空"的候选，因为编译阶段
+      // 可能接受空对象作为合法蓝图，导致离线测试开局不走 fallback。
+      content = '{"invalid":true,"_note":"deliberately invalid for offline testing"}';
+      // 这条注释提醒：如果编译阶段未来对 `{invalid: true}` 也放行，需同步更新此 mock。
+    }
+    return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+}
+
+/** 带驳回恢复的假 transport：首次调用返回非法候选触发审批驳回，第二次恢复合法。
+ *  用于验证审批驳回→重试→fallback 的事件序列是否正确写入 calls.jsonl。 */
+export function createFakeAiFetchWithRejection() {
+  // 按 traceId 跟踪调用次数，首次返回非法、后续恢复合法。
+  const callCount = new Map<string, number>();
+  return vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as {
+      messages?: { role: string; content: string }[];
+    };
+    const system = body.messages?.find((message) => message.role === "system")?.content ?? "";
+    const user = body.messages?.find((message) => message.role === "user")?.content ?? "";
+    // 从 traceId 解析场景级 id（用于计数，仅 director 角色模拟驳回）。
+    const traceIdMatch = /"traceId":"([^"]+)"/.exec(user);
+    const traceKey = traceIdMatch?.[1] ?? "unknown";
+    const count = callCount.get(traceKey) ?? 0;
+    callCount.set(traceKey, count + 1);
+    let content: string;
+    if (system.startsWith("You are the world director") && count === 0) {
+      // 首次调用：返回非法 key（不在候选列表中的 actionKey），触发审批驳回。
       content = JSON.stringify({
-        world: {}, openingScene: {}, player: {},
-        locations: [], npcs: [], quests: [], items: [], enemies: [], endings: [],
+        sceneGoal: "推进",
+        tensionLevel: 3, focusNpcId: null,
+        relevantFactIds: [], allowedRevealFactIds: [],
+        suggestedActionKeys: ["move:invalid_1", "move:invalid_2"],
+        introducedEntities: [], pacing: "setup",
+        proposedNewLocations: [], proposedNewNpcs: [],
       });
+    } else if (system.startsWith("You are the world director")) {
+      // 恢复调用：返回合法候选。
+      const context = JSON.parse(user) as { actionCandidates?: { actionKey: string }[] };
+      const candidates = context.actionCandidates ?? [];
+      const first = candidates[0]?.actionKey ?? "observe:loc_1";
+      const second = candidates.find((candidate) => candidate.actionKey !== first)?.actionKey ?? first;
+      content = JSON.stringify({
+        sceneGoal: "推进", tensionLevel: 3, focusNpcId: null,
+        relevantFactIds: [], allowedRevealFactIds: [],
+        suggestedActionKeys: [first, second],
+        introducedEntities: [], pacing: "setup",
+        proposedNewLocations: [], proposedNewNpcs: [],
+      });
+    } else if (system.startsWith("You are the scene writer")) {
+      const context = JSON.parse(user) as { plan?: { suggestedActionKeys?: string[] } };
+      const keys = context.plan?.suggestedActionKeys ?? ["observe:loc_1", "observe:loc_2"];
+      content = JSON.stringify({
+        narration: "继续前行。", usedFactIds: [], npcInstruction: null,
+        choices: [
+          { actionKey: keys[0], label: "前行", strategy: "s" },
+          { actionKey: keys[1], label: "观察", strategy: "t" },
+        ],
+      });
+    } else if (system.startsWith("You are one NPC performer")) {
+      content = JSON.stringify({ text: "台词。", usedFactIds: [], emotion: "warm" });
+    } else {
+      content = '{"invalid":true}';
     }
     return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
       status: 200,
@@ -2226,6 +2323,44 @@ describe("Story eval journey (offline)", () => {
     expect(blueprint.world.name).toBeTruthy();
     expect(blueprint.quests.some((quest) => quest.kind === "main")).toBe(true);
     expect(blueprint.endings.length).toBeGreaterThan(0);
+  });
+
+  it("审批驳回→重试→恢复的事件序列正确写入 calls.jsonl（role_approval + plan_approved）", async () => {
+    const fetchSpy = createFakeAiFetchWithRejection();
+    vi.spyOn(globalThis, "fetch").mockImplementation(fetchSpy);
+    const artifactDir = join(tmpRoot, "offline-run-rejection");
+    const dbPath = join(tmpRoot, "offline-rejection.sqlite");
+    try {
+      await runStoryEvalJourney({
+        env: {
+          AI_API_BASE_URL: "http://127.0.0.1:9/v1",
+          AI_MODEL: "fake-model",
+          AI_API_KEY: "fake-key",
+          STORY_EVAL_CAPTURE: "1",
+          STORY_EVAL_ARTIFACT_DIR: artifactDir,
+        },
+        dbPath,
+        artifactDir,
+        strategySeed: 7,
+        maxScenes: 2,
+        requireGeneratedOpening: false,
+      });
+    } finally {
+      vi.restoreAllMocks();
+    }
+
+    const callLines = readFileSync(join(artifactDir, "calls.jsonl"), "utf8").trim().split("\n");
+    const roleApprovals = callLines
+      .map((line) => JSON.parse(line))
+      .filter((record) => record.kind === "role_approval");
+    // 至少有一个 role_approval 的 category 不为 null（即审批驳回）。
+    const rejected = roleApprovals.filter((record) => record.category !== null);
+    expect(rejected.length).toBeGreaterThan(0);
+    // 有 plan_approved 记录（恢复后导演计划被批准）。
+    const planApproved = callLines
+      .map((line) => JSON.parse(line))
+      .filter((record) => record.kind === "plan_approved");
+    expect(planApproved.length).toBeGreaterThan(0);
   });
 });
 
@@ -3146,15 +3281,18 @@ export function parseJudgeJson(text) {
   return null;
 }
 
-/** 直连兼容 chat/completions（scripts 目录不跨 @ai-game 边界，直接 fetch）。 */
+/** 直连兼容 chat/completions（scripts 目录不跨 @ai-game 边界，直接 fetch）。
+ *  重试策略：第一次 temperature=0.2（稳定输出），重试时 temperature=0.5（提高输出多样性，
+ *  避免相同参数下模型重复输出 invalid JSON）。 */
 export async function callJudge({ baseUrl, apiKey, model, messages, fetchImpl = fetch, retries = 1 }) {
   let lastError = null;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const temperature = attempt === 0 ? 0.2 : 0.5; // 首次低温度，重试时提高温度增加输出多样性
     try {
       const response = await fetchImpl(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages, temperature: 0.2 }),
+        body: JSON.stringify({ model, messages, temperature }),
       });
       if (!response.ok) throw new Error(`judge_http_${response.status}`);
       const payload = await response.json();
