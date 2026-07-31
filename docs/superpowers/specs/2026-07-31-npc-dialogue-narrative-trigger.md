@@ -1,6 +1,6 @@
 # Spec：NPC 对话驱动的叙事场景触发
 
-> 日期：2026-07-31 ｜ 状态：draft ｜ 关联 Plan：（待编写）
+> 日期：2026-07-31 ｜ 状态：draft ｜ 关联 Plan：`docs/superpowers/plans/2026-07-31-npc-dialogue-narrative-trigger.md`
 
 ## 1. 背景
 
