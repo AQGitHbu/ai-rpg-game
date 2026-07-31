@@ -4,8 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { budgetPolicyOf, relationshipTierOf, storyMemoryOf, type GameState, type PlayerNpcChatState, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
-import { projectRelationshipSummary } from "@/game/gameplay/rpg/actions/relationshipSummary";
-import { projectAvailableActions } from "@/game/gameplay/rpg/actions";
+import { projectAvailableActions, projectRelationshipSummary } from "@/game/gameplay/rpg/actions";
 import { actionKeyOf, deriveContentProgression, type ContentProgression } from "@/game/gameplay/rpg/narrative";
 import type { ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
 import { projectTownLayerView } from "./townRuntimeView";

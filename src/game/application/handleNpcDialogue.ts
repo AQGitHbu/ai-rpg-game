@@ -1,6 +1,5 @@
 import { loadScenarioProfiles, type ScenarioProfiles } from "@/game/gameplay/rpg/scenario";
-import { classifyFreeDialogue, composeNpcCasualReply } from "@/game/gameplay/rpg/actions";
-import { classifyDialogueTone } from "@/game/gameplay/rpg/actions/classifyFreeDialogue";
+import { classifyFreeDialogue, classifyDialogueTone, composeNpcCasualReply } from "@/game/gameplay/rpg/actions";
 import { RELATIONSHIP_CHANGE, clampAffinity, type GameState, type NpcId, type PlayerNpcChatState } from "@/game/domain";
 import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
 import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
