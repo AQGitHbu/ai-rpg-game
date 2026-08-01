@@ -1,10 +1,12 @@
 import "server-only";
 import {
+  BoundedLogQueue,
   JsonlLogSink,
   createLogSink,
   createLogger,
   type LogContext,
-  type Logger
+  type Logger,
+  type LogSink
 } from "@ai-game/logging";
 import type { GameLogDetails, GameLogger } from "./logTypes";
 
@@ -57,18 +59,23 @@ function diagnostic(level: "warn" | "error", event: string): void {
 async function initializeSharedLogger(
   env: Record<string, string | undefined>
 ): Promise<Logger> {
-  let sink;
+  let sink: LogSink;
+  let fallbackSink: JsonlLogSink | undefined;
   try {
     sink = await createLogSink({
       backend: "sqlite",
       sqlitePath: resolveGameLogDatabasePath(env)
     });
+    fallbackSink = new JsonlLogSink(resolveFallbackDirectory(env));
   } catch {
     diagnostic("error", "sqlite_log_sink_initialization_failed");
     sink = new JsonlLogSink(resolveFallbackDirectory(env));
   }
+  const durableSink = fallbackSink === undefined
+    ? sink
+    : new BoundedLogQueue({ delegate: sink, fallbackSink });
   return createLogger({
-    sink,
+    sink: durableSink,
     maxEventBytes: resolveMaxEventBytes(env),
     context: { scope: "system", source: "rpg.server" }
   });
