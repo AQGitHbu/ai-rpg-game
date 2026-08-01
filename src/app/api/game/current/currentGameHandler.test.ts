@@ -43,7 +43,8 @@ const openedEntryPoints: ServerGameEntryPoints[] = [];
 function openEntryPoints(): ServerGameEntryPoints {
   fileCounter += 1;
   const entryPoints = createServerGameEntryPoints({
-    GAME_DB_PATH: join(RUN_ROOT, `case-${fileCounter}.sqlite`)
+    GAME_DB_PATH: join(RUN_ROOT, `case-${fileCounter}.sqlite`),
+    GAME_LOG_DB_PATH: join(RUN_ROOT, `case-${fileCounter}.logs.db`)
   });
   openedEntryPoints.push(entryPoints);
   return entryPoints;

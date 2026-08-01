@@ -19,9 +19,9 @@ describe("createGameLogger", () => {
         event: "runtime_narrative_approval",
         details: {
           traceId: "trace-1",
-          apiKey: "[REDACTED]",
-          nested: { authorization: "[REDACTED]", category: "invalid_json" },
-          list: [{ cookie: "[REDACTED]" }]
+          apiKey: "[redacted]",
+          nested: { authorization: "[redacted]", category: "invalid_json" },
+          list: [{ cookie: "[redacted]" }]
         }
       }
     ]);

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { NewGameInput } from "@/game/domain";
-import { createServerConsoleLogger } from "@/game/logging/serverConsoleLogger";
+import type { GameLogDetails, GameLogger } from "@/game/logging";
+import { createServerLogRuntime } from "@/game/logging/serverConsoleLogger";
 import wuxiaFixture from "../../../../data/fixtures/phase1/wuxia.json";
 import {
   createGame,
@@ -101,6 +102,56 @@ export type ServerGameEntryPointOptions = {
   readonly generationObserver?: (event: ScenarioGenerationEvent) => void;
 };
 
+function stableResultDetails(result: unknown): GameLogDetails {
+  if (result === null || typeof result !== "object") return {};
+  const value = result as Record<string, unknown>;
+  const view = value.view !== null && typeof value.view === "object"
+    ? value.view as Record<string, unknown>
+    : undefined;
+  const gameId = typeof value.gameId === "string"
+    ? value.gameId
+    : typeof view?.gameId === "string" ? view.gameId : undefined;
+  return {
+    ...(typeof value.ok === "boolean" ? { ok: value.ok } : {}),
+    ...(typeof value.status === "string" ? { status: value.status } : {}),
+    ...(typeof value.code === "string" ? { code: value.code } : {}),
+    ...(typeof value.kind === "string" ? { kind: value.kind } : {}),
+    ...(typeof value.source === "string" ? { resultSource: value.source } : {}),
+    ...(gameId === undefined ? {} : { gameId, saveId: gameId })
+  };
+}
+
+async function runLoggedUseCase<T>(
+  logger: GameLogger,
+  operation: string,
+  work: () => Promise<T>
+): Promise<T> {
+  const traceId = randomUUID();
+  const source = `rpg.server.${operation}`;
+  const startedAt = Date.now();
+  logger.info(`${operation}_started`, { traceId, scope: "request", source });
+  try {
+    const result = await work();
+    logger.info(`${operation}_completed`, {
+      traceId,
+      scope: "request",
+      source,
+      durationMs: Date.now() - startedAt,
+      ...stableResultDetails(result)
+    });
+    return result;
+  } catch (error) {
+    logger.error(`${operation}_failed`, {
+      traceId,
+      scope: "request",
+      source,
+      durationMs: Date.now() - startedAt,
+      errorName: error instanceof Error ? error.name : "UnknownError"
+    });
+    throw error;
+  }
+}
+
 /**
  * 装配一套真实入口：env 记录仅经 sqliteClient 的工厂解析 GAME_DB_PATH，
  * 测试注入指向 tmp/ 的记录，生产默认 process.env（本层是唯一允许读取处）。
@@ -109,7 +160,9 @@ export function createServerGameEntryPoints(
   env: Record<string, string | undefined> = process.env,
   options: ServerGameEntryPointOptions = {}
 ): ServerGameEntryPoints {
-  const logger = createServerConsoleLogger();
+  const logRuntime = createServerLogRuntime(env);
+  const { logger } = logRuntime;
+  logger.info("server_runtime_started", { scope: "system", source: "rpg.server" });
   const repository = createSqliteGameRepository({
     clientFactory: createServerSqliteClientFactory(env),
     logError: (operation) => logger.error("sqlite_repository_failure", { operation })
@@ -163,28 +216,65 @@ export function createServerGameEntryPoints(
   return {
     developmentToolsEnabled: env.NODE_ENV === "development",
     // 刻意不透传 command.seed：浏览器/API 无法指定 seed 或 gameId。
-    createGame: (input) => createGame({ input }, dependencies),
+    createGame: (input) => runLoggedUseCase(
+      logger,
+      "create_game",
+      () => createGame({ input }, dependencies)
+    ),
     createOfflineJourneyGame: () => {
       if (env.NODE_ENV !== "development") {
+        logger.warn("offline_journey_create_rejected", {
+          scope: "request",
+          source: "rpg.server.create_offline_journey_game",
+          code: "DEVELOPMENT_TOOLS_DISABLED"
+        });
         return Promise.resolve({ ok: false, code: "DEVELOPMENT_TOOLS_DISABLED" });
       }
-      return createGame({
-        input: PHASE10_JOURNEY_BASELINE.input,
-        seed: PHASE10_JOURNEY_BASELINE.seed,
-      }, offlineJourneyDependencies);
+      return runLoggedUseCase(logger, "create_offline_journey_game", () => createGame({
+          input: PHASE10_JOURNEY_BASELINE.input,
+          seed: PHASE10_JOURNEY_BASELINE.seed,
+        }, offlineJourneyDependencies));
     },
-    getCurrentGame: () => getCurrentGame({ repository }),
-    performAction: (command) => performAction(command, performDeps),
-    handleNpcDialogue: (command) => handleNpcDialogue(command, npcDialogueDeps),
-    ensureNarrativeGeneration: () => narrativeCoordinator.ensure(),
-    ensureTownGeneration: () => townPlanCoordinator.ensure(),
+    getCurrentGame: () => runLoggedUseCase(
+      logger,
+      "get_current_game",
+      () => getCurrentGame({ repository })
+    ),
+    performAction: (command) => runLoggedUseCase(
+      logger,
+      "perform_action",
+      () => performAction(command, performDeps)
+    ),
+    handleNpcDialogue: (command) => runLoggedUseCase(
+      logger,
+      "handle_npc_dialogue",
+      () => handleNpcDialogue(command, npcDialogueDeps)
+    ),
+    ensureNarrativeGeneration: () => runLoggedUseCase(
+      logger,
+      "ensure_narrative_generation",
+      () => narrativeCoordinator.ensure()
+    ),
+    ensureTownGeneration: () => runLoggedUseCase(
+      logger,
+      "ensure_town_generation",
+      () => townPlanCoordinator.ensure()
+    ),
     clearDevelopmentCurrentGame: async () => {
-      if (env.NODE_ENV !== "development") return "disabled";
-      const result = await repository.clearCurrentGame();
-      if (!result.ok) return "unavailable";
-      return result.status;
+      return runLoggedUseCase(logger, "clear_development_current_game", async () => {
+        if (env.NODE_ENV !== "development") return "disabled";
+        const result = await repository.clearCurrentGame();
+        if (!result.ok) return "unavailable";
+        return result.status;
+      });
     },
-    close: () => repository.close()
+    close: async () => {
+      try {
+        await repository.close();
+      } finally {
+        await logRuntime.close();
+      }
+    }
   };
 }
 

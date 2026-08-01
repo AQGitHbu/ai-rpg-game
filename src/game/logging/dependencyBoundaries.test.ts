@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 const SOURCE_ROOT = resolve(process.cwd(), "src");
 const LOGGING_ROOT = resolve(SOURCE_ROOT, "game/logging");
 const SERVER_CONSOLE_LOGGER = "game/logging/serverConsoleLogger.ts";
-const FORBIDDEN_LOGGING_IMPORT = /["'](?:@\/game\/(?:domain|core|gameplay|application)|@\/components|@\/store|@\/app|@ai-game\/)/;
+const FORBIDDEN_LOGGING_IMPORT = /["'](?:@\/game\/(?:domain|core|gameplay|application)|@\/components|@\/store|@\/app|@ai-game\/(?!logging(?:["'\/])))/;
 const DIRECT_CONSOLE = /\bconsole\.(?:log|warn|error)\s*\(/;
 
 function productionFiles(directory: string): string[] {
@@ -22,7 +22,7 @@ function relativeToSource(file: string): string {
 }
 
 describe("logging dependency boundaries", () => {
-  it("logging stays independent from product and shared game layers", () => {
+  it("logging stays independent from product layers and shared packages other than logging", () => {
     const violations = productionFiles(LOGGING_ROOT)
       .filter((file) => FORBIDDEN_LOGGING_IMPORT.test(readFileSync(file, "utf8")))
       .map(relativeToSource);

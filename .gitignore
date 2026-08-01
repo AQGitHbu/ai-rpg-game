@@ -9,6 +9,7 @@ npm-debug.log*
 tsconfig.tsbuildinfo
 next-env.d.ts
 db/
+data/logs.db*
 logs/
 artifacts/
 tmp/

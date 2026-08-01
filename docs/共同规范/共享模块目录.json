@@ -55,6 +55,30 @@
         "产品 prompt、schema 与业务 fallback",
         "重试策略、日志与业务语义"
       ]
+    },
+    {
+      "name": "@ai-game/logging",
+      "status": "shared-local",
+      "version": "0.1.0",
+      "responsibility": [
+        "通用结构化日志 envelope、traceId 与时间戳",
+        "递归脱敏、校验、事件大小限制与有界降级队列",
+        "独立 JSONL/SQLite sink、迁移、查询与保留策略"
+      ],
+      "exports": [
+        "createLogger",
+        "createLogSink",
+        "JsonlLogSink",
+        "SqliteLogSink",
+        "LogDatabase",
+        "runLogRetention",
+        "@ai-game/logging/redaction"
+      ],
+      "nonGoals": [
+        "游戏事件名、玩法状态或产品领域类型",
+        "prompt、玩家输入、模型输出或凭据",
+        "游戏存档、产品持久化或玩家可见日志 UI"
+      ]
     }
   ],
   "plannedPackages": [],

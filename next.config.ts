@@ -8,10 +8,22 @@ const foundationRoot = existsSync(foundationLink) ? realpathSync(foundationLink)
 const workspaceRoot = commonAncestor(projectRoot, foundationRoot);
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["@libsql/client"],
   transpilePackages: ["@ai-game/ui"],
   outputFileTracingRoot: workspaceRoot,
   turbopack: {
     root: workspaceRoot,
+  },
+  webpack(config, { isServer }) {
+    if (isServer) {
+      config.externals = [
+        ...(config.externals ?? []),
+        {
+          "@libsql/client": "commonjs @libsql/client",
+        },
+      ];
+    }
+    return config;
   },
 };
 

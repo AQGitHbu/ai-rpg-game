@@ -49,13 +49,20 @@ const openedEntryPoints: ServerGameEntryPoints[] = [];
 
 /** 打开生产组合根：只注入 env 记录（GAME_DB_PATH → 临时文件），其余全走真实实现。 */
 function openEntryPoints(databasePath: string): ServerGameEntryPoints {
-  const entryPoints = createServerGameEntryPoints({ GAME_DB_PATH: databasePath });
+  const entryPoints = createServerGameEntryPoints({
+    GAME_DB_PATH: databasePath,
+    GAME_LOG_DB_PATH: `${databasePath}.logs.db`
+  });
   openedEntryPoints.push(entryPoints);
   return entryPoints;
 }
 
 function openDevelopmentEntryPoints(databasePath: string): ServerGameEntryPoints {
-  const entryPoints = createServerGameEntryPoints({ GAME_DB_PATH: databasePath, NODE_ENV: "development" });
+  const entryPoints = createServerGameEntryPoints({
+    GAME_DB_PATH: databasePath,
+    GAME_LOG_DB_PATH: `${databasePath}.logs.db`,
+    NODE_ENV: "development"
+  });
   openedEntryPoints.push(entryPoints);
   return entryPoints;
 }

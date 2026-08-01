@@ -80,24 +80,29 @@ const FACADE_DEEP_IMPORTS: Readonly<Record<string, BoundaryPattern>> = Object.fr
 
 /**
  * Phase 1 约束：src/game/** 不引入 @ai-game/* 共享包（共享包仅限 UI 层）。
- * Phase 4B 例外：@ai-game/ai-transport 允许出现在 application/server/ai（见下方专项守卫），
- * 故此处放行 ai-transport，其余 @ai-game/* 在 game/** 内仍一律禁止。
+ * Phase 4B 例外：@ai-game/ai-transport 允许出现在 application/server/ai；
+ * 日志共享化后 @ai-game/logging 只允许出现在 game/logging facade。
  */
 const AI_GAME_PACKAGE_IMPORT: BoundaryPattern = {
   label: "@ai-game/* package import",
-  regex: /["']@ai-game\/(?!ai-transport)/
+  regex: /["']@ai-game\/(?!ai-transport(?:["'\/])|logging(?:["'\/]))/
 };
 
-/** 只用过 @ai-game/ui；Phase 4B 起额外允许 @ai-game/ai-transport（仅 server/ai，见专项守卫）。 */
+/** 允许的共享包仍由各自专项守卫限定目录。 */
 const NEW_AI_GAME_PACKAGE_IMPORT: BoundaryPattern = {
-  label: "new @ai-game/* package import (only @ai-game/ui and @ai-game/ai-transport are allowed)",
-  regex: /["']@ai-game\/(?!ui["']|ai-transport["'])/
+  label: "new @ai-game/* package import (only ui, ai-transport and logging are allowed)",
+  regex: /["']@ai-game\/(?!ui(?:["'\/])|ai-transport(?:["'\/])|logging(?:["'\/]))/
 };
 
 /** Phase 4B：@ai-game/ai-transport 只允许 application/server/ai 导入（其余目录一律禁止）。 */
 const AI_TRANSPORT_IMPORT: BoundaryPattern = {
   label: "@ai-game/ai-transport import (only application/server/ai may import it)",
   regex: /["']@ai-game\/ai-transport/
+};
+
+const SHARED_LOGGING_IMPORT: BoundaryPattern = {
+  label: "@ai-game/logging import (only game/logging may import it)",
+  regex: /["']@ai-game\/logging/
 };
 
 /** 禁止任何指向 SLG 项目的说明符（含相对路径 ../ai-slg-game）。 */
@@ -291,6 +296,11 @@ const rules: readonly BoundaryRule[] = [
     excludePath: /[\\/]application[\\/]server[\\/]ai[\\/]/,
     patterns: [AI_TRANSPORT_IMPORT]
   },
+  {
+    directory: ".",
+    excludePath: /[\\/]game[\\/]logging[\\/]/,
+    patterns: [SHARED_LOGGING_IMPORT]
+  },
   { directory: ".", patterns: [NEW_AI_GAME_PACKAGE_IMPORT, SLG_IMPORT] }
 ];
 
@@ -466,6 +476,16 @@ describe("boundary patterns detect synthetic violations", () => {
     ).toEqual([]);
     // 但专项守卫必须仍然抓得住它。
     expect(findBoundaryViolations(snippet, [AI_TRANSPORT_IMPORT])).toEqual([AI_TRANSPORT_IMPORT.label]);
+  });
+
+  it("@ai-game/logging does not trip blanket rules but is caught by its directory guard", () => {
+    const snippet = `import { createLogger } from "@ai-game/logging";`;
+    expect(
+      findBoundaryViolations(snippet, [AI_GAME_PACKAGE_IMPORT, NEW_AI_GAME_PACKAGE_IMPORT])
+    ).toEqual([]);
+    expect(findBoundaryViolations(snippet, [SHARED_LOGGING_IMPORT])).toEqual([
+      SHARED_LOGGING_IMPORT.label
+    ]);
   });
 
   it("relative data import does not trip the gameplay escape rule", () => {

@@ -47,13 +47,20 @@ function nextDbPath(): string {
 const openedEntryPoints: ServerGameEntryPoints[] = [];
 
 function openEntryPoints(databasePath: string): ServerGameEntryPoints {
-  const entryPoints = createServerGameEntryPoints({ GAME_DB_PATH: databasePath });
+  const entryPoints = createServerGameEntryPoints({
+    GAME_DB_PATH: databasePath,
+    GAME_LOG_DB_PATH: `${databasePath}.logs.db`
+  });
   openedEntryPoints.push(entryPoints);
   return entryPoints;
 }
 
 function openDevelopmentEntryPoints(databasePath: string): ServerGameEntryPoints {
-  const entryPoints = createServerGameEntryPoints({ GAME_DB_PATH: databasePath, NODE_ENV: "development" });
+  const entryPoints = createServerGameEntryPoints({
+    GAME_DB_PATH: databasePath,
+    GAME_LOG_DB_PATH: `${databasePath}.logs.db`,
+    NODE_ENV: "development"
+  });
   openedEntryPoints.push(entryPoints);
   return entryPoints;
 }
