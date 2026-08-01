@@ -6,6 +6,7 @@ import { compileBlueprintExpansion } from "@/game/gameplay/rpg/narrative";
 import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 import { reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
+import type { StoryEvalApprovalEvent } from "./server/ai/storyEvalCapture";
 
 export type GeneratePendingNarrativeSceneDependencies = Readonly<{
   repository: GameRepository;
@@ -18,6 +19,8 @@ export type GeneratePendingNarrativeSceneDependencies = Readonly<{
     npcLineSource: NpcLineSource;
   }>;
   logger?: GameLogger;
+  /** Task 5：审批观察回调——透传给编排层。 */
+  approvalObserver?: (event: StoryEvalApprovalEvent) => void;
 }>;
 
 export type GeneratePendingNarrativeSceneResult =
@@ -68,6 +71,7 @@ export async function generatePendingNarrativeScene(
     state: record.state,
     ...deps.runtimeNarrativeSources,
     logger: deps.logger,
+    approvalObserver: deps.approvalObserver,
   });
   const scene = generated.scene;
   // Phase 11：场景应用时提交一条 narrative_scene_presented 事件——只携带结构索引

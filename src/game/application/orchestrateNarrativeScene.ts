@@ -17,6 +17,7 @@ import {
 } from "@/game/gameplay/rpg/narrative";
 import { projectAvailableActions } from "@/game/gameplay/rpg/actions";
 import { NARRATIVE_CONTRACT_VERSION, type DirectorSource, type SceneScriptSource, type NpcLineSource, type DirectorAttempt, type SceneScriptAttempt } from "./runtimeNarrative";
+import type { StoryEvalApprovalEvent } from "./server/ai/storyEvalCapture";
 import {
   toDirectorContext,
   toSceneScriptContext,
@@ -40,6 +41,8 @@ export type OrchestrateNarrativeSceneInput = {
   readonly sceneScriptSource: SceneScriptSource;
   readonly npcLineSource: NpcLineSource;
   readonly logger?: GameLogger;
+  /** Task 5：审批观察回调——审批结果与已批准导演计划只在本层可见，仅此处可发出。 */
+  readonly approvalObserver?: (event: StoryEvalApprovalEvent) => void;
 };
 
 export type OrchestrateSceneResult = {
@@ -95,7 +98,12 @@ export async function orchestrateNarrativeScene(
     } catch { continue; }
     if (!directorAttempt.ok) continue;
     const approval = approveDirectorProposal({ proposal: directorAttempt.plan, blueprint, state, candidates });
-    if (approval.ok) { plan = approval.value; break; }
+    input.approvalObserver?.({ kind: "role_approval", traceId, role: "director", attempt: attempt + 1, category: approval.ok ? null : approval.category });
+    if (approval.ok) {
+      plan = approval.value;
+      input.approvalObserver?.({ kind: "plan_approved", traceId, attempt: attempt + 1, planSummary: approval.value as unknown as Record<string, unknown> });
+      break;
+    }
     // Phase 11：同场景内 pacing continuity_violation 至多告警一次（重试不重复）。
     if (approval.category === "continuity_violation") {
       if (!continuityViolationLogged) {
@@ -121,6 +129,7 @@ export async function orchestrateNarrativeScene(
     } catch { continue; }
     if (!scriptAttempt.ok) continue;
     const approval = approveSceneScript({ proposal: scriptAttempt.script, plan, blueprint });
+    input.approvalObserver?.({ kind: "role_approval", traceId, role: "writer", attempt: attempt + 1, category: approval.ok ? null : approval.category });
     if (approval.ok) { script = approval.value; break; }
     logger.warn("runtime_narrative_approval", { traceId, role: "writer", category: approval.category });
   }
@@ -150,6 +159,7 @@ export async function orchestrateNarrativeScene(
         npcLineAttempted = true;
         if (!attempt.ok) continue;
         const approved = approveNpcPerformance({ proposal: attempt.performance, allowedFactIds: npcInst.allowedFactIds });
+        input.approvalObserver?.({ kind: "role_approval", traceId, role: "npc", attempt: attemptIndex + 1, category: approved.ok ? null : approved.category });
         if (!approved.ok) continue;
         npcLine = { npcId: npcInst.npcId as NpcId, text: approved.value.text, emotion: approved.value.emotion, usedFactIds: approved.value.usedFactIds as readonly FactId[] };
         npcApproved = true;
@@ -161,6 +171,7 @@ export async function orchestrateNarrativeScene(
 
   // Step 6：组装 NarrativeSceneState
   const expansionDecision = approveBlueprintExpansion({ blueprint, state, plan });
+  input.approvalObserver?.({ kind: "expansion_decision", traceId, decision: expansionDecision });
   const scene: NarrativeSceneState = {
     sceneId: `${traceId}-scene-${Date.now()}`,
     turn: calculateTurn(state),
