@@ -87,7 +87,7 @@ export async function orchestrateNarrativeScene(
   for (let attempt = 0; attempt < MAX_ROLE_ATTEMPTS; attempt += 1) {
     try {
       directorAttempt = await directorSource.generate({
-        traceId: `${traceId}-director${attempt === 0 ? "" : "-retry"}`,
+        traceId: `${traceId}-director${"-retry".repeat(attempt)}`,
         context: attempt === 0
           ? directorContext as unknown as Record<string, unknown>
           : { ...(directorContext as unknown as Record<string, unknown>), retryInstruction: "Previous proposal was rejected. Return a complete proposal using only the exact IDs and action keys supplied." },
@@ -115,7 +115,7 @@ export async function orchestrateNarrativeScene(
   for (let attempt = 0; attempt < MAX_ROLE_ATTEMPTS; attempt += 1) {
     try {
       scriptAttempt = await sceneScriptSource.generate({
-        traceId: `${traceId}-script${attempt === 0 ? "" : "-retry"}`,
+        traceId: `${traceId}-script${"-retry".repeat(attempt)}`,
         context: attempt === 0 ? sceneScriptContext as unknown as Record<string, unknown> : { ...(sceneScriptContext as unknown as Record<string, unknown>), retryInstruction: "Previous output failed approval. Return a complete JSON object with exactly the required fields, two choices, and only supplied IDs." },
       });
     } catch { continue; }
@@ -144,7 +144,7 @@ export async function orchestrateNarrativeScene(
     for (let attemptIndex = 0; attemptIndex < MAX_ROLE_ATTEMPTS; attemptIndex += 1) {
       try {
         const attempt = await npcLineSource.generate({
-          traceId: `${traceId}-npcLine${attemptIndex === 0 ? "" : "-retry"}`,
+          traceId: `${traceId}-npcLine${"-retry".repeat(attemptIndex)}`,
           context: attemptIndex === 0 ? npcLineContext as unknown as Record<string, unknown> : { ...(npcLineContext as unknown as Record<string, unknown>), retryInstruction: "Previous output failed approval. Return one complete JSON object using only the supplied fact cards." },
         });
         npcLineAttempted = true;
