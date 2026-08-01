@@ -39,13 +39,21 @@ S4 评分规则：早期预测与故事级评审使用**独立的 callJudge 调�
 
 抽样：C1 对全部含 NPC 台词的场景逐条评；C2–C4 每幕抽 2 个场景（seed 确定性抽样）。每个 C1 包必须带该 NPC profile/relationship/最近接触；每个 C2 包必须带紧邻前序场景与当时 memory 摘要，不能只交给 judge 孤立场景。幕边界与主线阶段对齐（不用任务事件切分——`quest_completed`/`quest_failed` 事件本身只带 questId，须关联蓝图 quest.kind 才能区分主线/支线，且正常通关不触发 `quest_failed`）：`story.jsonl` 每条场景记录当时的主线阶段序号（驱动侧经 §7 的评估专用 repository 读取 `GameRecord`，用 `deriveContentProgression({ blueprint, state })` 计算——entry points 公开视图不含该数据），同一阶段的场景为一幕；幕数上限即 BudgetPolicy 的 mainActs（long=8），实际幕数少于上限时按实际数评估并在报告中注明。
 
+**C1 证据包要求（身份/关系口径）**：每条 NPC 台词必须附带该 NPC 的姓名、role、description、关系 tier/affinity 与最近接触摘要（`relationshipSummary`，文本形式）及当时 memory 摘要。C1 只评语气、用词、性格、关系阶段是否符合该 NPC 的姓名、role、description、已知事实与最近交互摘要；不同 NPC 应可区分。知识越权已由规则审批硬性保证，不重复评。缺任一字段的 C1 输入不得送评——产物完整性校验（§7）已保证 NPC 场景携带该证据包，judge 侧同样拒绝缺包输入（`C1_EVIDENCE_INCOMPLETE`）。
+
+**C2 证据包要求（前序/memory）**：每个 C2 包必须带紧邻前序场景的原文与当时 memory 摘要，不能只交给 judge 孤立场景；无紧邻前序场景的开局场景不参与 C2 抽样。C2 评该场景与紧邻前序场景及当时结构化记忆无矛盾；无凭空引用的事件、地点或人物关系。
+
 ## 3. 客观指标（确定性计算，零 AI 成本）
 
 - 整局 fallback 率；各角色重试率与 invalid_json 率；审批驳回分类分布。
 - tensionLevel 曲线（完整序列 + 标准差作为平坦度）；pacing 分布与顺序合法性。
-- 每幕事实揭示密度（两种口径：**计划揭示** = `directorPlan.allowedRevealFactIds` 集合；**实际揭示** = `story.jsonl` 具 `factId` 的 `fact_discovered` 事件集合）。报告并列 `planned / actual / overlap / missed`，不以仅有事件类型的记录代替事实 ID；相邻场景 narration 字符 3-gram 重复率；narration/台词长度分布。
-- 实体漏斗：初始及扩展实体的 `introduced → interacted/used → quest/relationship/fact/battle/ending contribution`，按 NPC、地点、物品分列；扩展提议的 approval rate 与 adoption rate 分开，后者只能表示实体已持久化且在故事中首次登场。
-- 选择漏斗：每一对选项的 actionKey、规则状态差异、分支后两场的事件/叙事差异及可见后果；没有成对分支证据的 run 不得为 S8/S9 给出高于 3 分的结论。
+- 每幕事实揭示密度（两种口径：**计划揭示** = `directorPlan.allowedRevealFactIds` 集合；**实际揭示** = `story.jsonl` 具 `factId` 的 `fact_discovered` 事件集合）。报告并列 `planned / actual / overlap / missed`（`factsPerAct`：`plannedFactIds`/`actualFactIds`/`overlapFactIds`/`missedFactIds`），不以仅有事件类型的记录代替事实 ID；相邻场景 narration 字符 3-gram 重复率；narration/台词长度分布。
+- **实体漏斗**（按 NPC、地点、物品分列；`entities.npc/location/item`）：
+  - `introduced`：`directorPlan.introducedEntities` 中该种类实体 ID 的去重集合大小；
+  - `interacted`（interacted/used）：交互事件携带的该种类 `entityId` 去重集合大小——NPC=`npc_met`、地点=`location_observed`/`location_visited`、物品=`item_obtained`；
+  - `contributed`：在含贡献事件（`fact_discovered`/`quest_*`/`battle_*`/`enemy_defeated`/`ending_reached`）的场景行中登场（introduced 或 interacted）的该种类实体去重集合大小。
+  - **扩展实体漏斗**（`entities.expansion`）：`proposed`（`expansion_decision` 提案记录数）→ `approved`（ok=true 数）→ `persisted`（动态铸 ID `loc_dyn_*`/`npc_dyn_*` 在故事数据中可观测的实体数——编译铸 ID 同步于审批，登场即证明已持久化）→ `adopted`（已持久化且实际首次登场的扩展实体数）。adoption rate 与 approval rate 分开，`adopted` 只能统计已持久化且实际首次登场的扩展实体，绝不复用 `approved`；当前产物口径下任何登场即首次登场，`adopted` 与 `persisted` 数值一致，但语义上只统计"实际首次登场"。
+- **选择漏斗**（`choices`，成对分支证据）：`pairedCheckpoints`（两个合法选项且各产出 branch.json 的检查点数）、`stateDifferent`/`eventDifferent`/`narrationDifferent`（状态差异=地点/事实/任务/关系/物品/战斗/ending 的 after 侧比较、分支后两场的事件差异、玩家可读文本差异，只统计实际存在差异的成对检查点——仅 actionKey 不同但状态/事件/文本均相同不得计为后果差异）、`notApplicable`（不足两个合法选项的检查点数，不伪造比较）。没有成对分支证据（`pairedCheckpoints === 0`）的 run 不得为 S8/S9 给出高于 3 分的结论：judge 侧在 `validateStoryLevelResult` 强制 cap 为 3 并注明 `"capped: no paired branch evidence"`，report 相应行标注"（上限约束：无分支证据）"。
 - 场景总数与是否收敛到结局（场景上限内，见 §7）。
 
 ## 4. 人工抽查清单

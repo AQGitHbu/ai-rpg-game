@@ -4,7 +4,7 @@ import { asFactId, asLocationId, asNpcId } from "@/game/domain";
 import type { GameRecord } from "../server/persistence/gameRepository"; // GameRecord 在 gameRepository 定义，domain 不导出
 import type { ScenarioBlueprint } from "@/game/domain";
 import type { GameState } from "@/game/domain";
-import { buildStoryEvalInput, hashStringToSeed, isExploratory, mulberry32, pickNarrativeChoice } from "./storyEvalStrategy";
+import { hashStringToSeed, isExploratory, mulberry32, pickNarrativeChoice, pickObjectiveChoice } from "./storyEvalStrategy";
 
 describe("mulberry32", () => {
   it("同种子产出同一序列，不同种子序列不同", () => {
@@ -161,12 +161,86 @@ describe("pickNarrativeChoice", () => {
   });
 });
 
-describe("buildStoryEvalInput", () => {
-  it("产出合法 long 输入（满足 domain 校验下限）", () => {
-    const { input } = buildStoryEvalInput("long", 1);
-    expect(input.gameLength).toBe("long");
-    expect(input.worldPremise.length).toBeGreaterThanOrEqual(20);
-    expect(input.storyOpening.length).toBeGreaterThanOrEqual(20);
-    expect(input.personalityTags.length).toBeLessThanOrEqual(3);
+describe("pickObjectiveChoice", () => {
+  function objectiveRecord(overrides: Partial<GameState> = {}): GameRecord {
+    const base = makeRecord();
+    const record = {
+      ...base,
+      blueprint: {
+        ...base.blueprint,
+        quests: [
+          {
+            id: "q_main" as never,
+            kind: "main",
+            stage: 1,
+            name: "主线",
+            description: "",
+            objectives: [
+              { kind: "take_item", itemId: "item_key", label: "取得钥匙" },
+              { kind: "talk_to_npc", npcId: "npc_1", label: "询问" },
+            ],
+          },
+          {
+            id: "q_side" as never,
+            kind: "side",
+            name: "支线",
+            description: "",
+            objectives: [{ kind: "visit_location", locationId: "loc_b", label: "造访" }],
+          },
+        ],
+      } as unknown as ScenarioBlueprint,
+      state: {
+        ...base.state,
+        quests: [
+          { questId: "q_main" as never, status: "active", objectives: [{ kind: "take_item", itemId: "item_key", satisfied: false }] },
+          { questId: "q_side" as never, status: "active", objectives: [{ kind: "visit_location", locationId: "loc_b", satisfied: false }] },
+        ],
+        ...overrides,
+      } as unknown as GameState,
+    };
+    return record;
+  }
+
+  it("active 主线任务目标对应的选项最高优先（objective:main_*）", () => {
+    const record = objectiveRecord({
+      narrative: {
+        ...makeRecord().state.narrative,
+        currentScene: {
+          sceneId: "s4",
+          turn: 1,
+          narration: "n",
+          usedFactIds: [],
+          npcLine: null,
+          choices: [
+            { choiceToken: "c1", label: "翻找", actionKey: "observe:loc_a" },
+            { choiceToken: "c2", label: "拿走钥匙", actionKey: "take_item:item_key" },
+          ],
+          source: "generated",
+        },
+      },
+    });
+    expect(pickObjectiveChoice(record, () => 0.99)).toEqual({ index: 1, reason: "objective:main_item" });
+  });
+
+  it("无任务目标命中时降级到探索 talk（objective:talk）", () => {
+    const record = objectiveRecord({
+      quests: [],
+      narrative: {
+        ...makeRecord().state.narrative,
+        currentScene: {
+          sceneId: "s5",
+          turn: 1,
+          narration: "n",
+          usedFactIds: [],
+          npcLine: null,
+          choices: [
+            { choiceToken: "c1", label: "搭话", actionKey: "talk:npc_1" },
+            { choiceToken: "c2", label: "观察", actionKey: "observe:loc_a" },
+          ],
+          source: "generated",
+        },
+      },
+    });
+    expect(pickObjectiveChoice(record, () => 0.99)).toEqual({ index: 0, reason: "objective:talk" });
   });
 });

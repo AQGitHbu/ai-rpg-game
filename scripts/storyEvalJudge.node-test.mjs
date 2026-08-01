@@ -1,14 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  answerKeyForPredictionItems,
   buildEarlyPredictionPrompt,
   buildSceneLevelPrompt,
   buildStoryLevelPrompt,
+  callJudge,
   collectLowScenes,
   main,
   parseJudgeJson,
   sampleScenesPerAct,
   scoreEarlyPrediction,
+  validateSceneLevelResult,
+  validateStoryLevelResult,
 } from "./storyEvalJudge.mjs";
 
 const manifest = {
@@ -136,4 +140,214 @@ test("main 门禁：RUN_REAL_AI_STORY_EVAL_JUDGE 未设置时打印提示并 exi
   });
   assert.equal(code, 1);
   assert.ok(lines.some((line) => line.includes("JUDGE_OPT_IN_REQUIRED")));
+});
+
+// ---------------------------------------------------------------------------
+// Task 13 Step 6：可判定的 judge 输入与输出验证。
+// ---------------------------------------------------------------------------
+
+test("buildSceneLevelPrompt：C1 缺 NPC profile/关系拒绝，C2 缺前序场景拒绝", () => {
+  const scaleText = "# 量表\n版本：v2";
+  const noProfile = {
+    kind: "scene", sceneIndex: 2, mainStage: 1, narration: "n2",
+    npcLine: { text: "你好", emotion: "warm" }, npcProfile: null, relationshipSummary: null,
+  };
+  assert.throws(
+    () => buildSceneLevelPrompt({ scaleText, version: "v2", sampled: [noProfile], dimension: "C1（NPC 声线一致性）", story }),
+    /C1_EVIDENCE_INCOMPLETE/,
+  );
+  const firstScene = { kind: "scene", sceneIndex: 1, mainStage: 1, narration: "n1" };
+  assert.throws(
+    () => buildSceneLevelPrompt({ scaleText, version: "v2", sampled: [firstScene], dimension: "C2（场景衔接连续性）", story }),
+    /C2_EVIDENCE_INCOMPLETE/,
+  );
+});
+
+test("buildSceneLevelPrompt：C1 附身份/关系证据包，C2 附前序与 memory；C3/C4 只含玩家可见文本", () => {
+  const scaleText = "量表";
+  const withProfile = {
+    kind: "scene", sceneIndex: 2, mainStage: 1, narration: "n2",
+    npcLine: { text: "你好", emotion: "warm" },
+    npcProfile: { name: "阿七", role: "剑客", description: "沉默寡言" },
+    relationshipSummary: "tier=ally affinity=30 last=初次相遇",
+    memorySummary: [{ type: "npc_met", npcId: "np_1" }],
+  };
+  const c1 = buildSceneLevelPrompt({ scaleText, version: "v2", sampled: [withProfile], dimension: "C1（NPC 声线一致性）", story });
+  assert.ok(c1.includes("NPC 姓名：阿七"));
+  assert.ok(c1.includes("NPC role：剑客"));
+  assert.ok(c1.includes("NPC description：沉默寡言"));
+  assert.ok(c1.includes("关系与最近接触"));
+  assert.ok(c1.includes("memory 摘要"));
+  const c2 = buildSceneLevelPrompt({
+    scaleText, version: "v2",
+    sampled: [{ kind: "scene", sceneIndex: 2, mainStage: 1, narration: "n2", memorySummary: [] }],
+    dimension: "C2（场景衔接连续性）",
+    story,
+  });
+  assert.ok(c2.includes("紧邻前序场景"));
+  assert.ok(c2.includes("n1")); // 前序场景原文
+  const c3 = buildSceneLevelPrompt({ scaleText, version: "v2", sampled: [{ kind: "scene", sceneIndex: 2, mainStage: 1, narration: "n2" }], dimension: "C3（选项抉择质量）" });
+  assert.ok(c3.includes("n2"));
+  assert.ok(!c3.includes("紧邻前序场景"));
+  assert.ok(!c3.includes("memory 摘要"));
+});
+
+/** 合法的故事级 parsed（8 个应评维度 + 有效证据）；S8/S9 不超 3 时 cap 为无操作。 */
+function validStoryLevelParsed() {
+  const scores = {};
+  for (const [key, sceneIndex] of Object.entries({ S1: 1, S2: 2, S3: 3, S5: 4, S6: 5, S7: 6, S8: 1, S9: 2 })) {
+    scores[key] = { score: 3, evidence: [{ sceneIndex, quote: `n${sceneIndex}` }] };
+  }
+  return { scores };
+}
+
+test("validateStoryLevelResult：分数越界/虚构 sceneIndex/虚构引文/缺维度/缺证据拒绝", () => {
+  assert.equal(validateStoryLevelResult(validStoryLevelParsed(), story, {}), true);
+  const badScore = validStoryLevelParsed();
+  badScore.scores.S2.score = 6;
+  assert.equal(validateStoryLevelResult(badScore, story, {}), false);
+  const badScene = validStoryLevelParsed();
+  badScene.scores.S3.evidence = [{ sceneIndex: 99, quote: "n3" }];
+  assert.equal(validateStoryLevelResult(badScene, story, {}), false);
+  const badQuote = validStoryLevelParsed();
+  badQuote.scores.S5.evidence = [{ sceneIndex: 4, quote: "不存在的原文" }];
+  assert.equal(validateStoryLevelResult(badQuote, story, {}), false);
+  const missingDim = validStoryLevelParsed();
+  delete missingDim.scores.S6;
+  assert.equal(validateStoryLevelResult(missingDim, story, {}), false);
+  const noEvidence = validStoryLevelParsed();
+  noEvidence.scores.S7.evidence = [];
+  assert.equal(validateStoryLevelResult(noEvidence, story, {}), false);
+  assert.equal(validateStoryLevelResult(null, story, {}), false);
+});
+
+test("validateSceneLevelResult：分数越界/虚构 sceneIndex/虚构引文/空结果拒绝", () => {
+  assert.equal(validateSceneLevelResult({ scores: [{ sceneIndex: 1, score: 3, evidence: "n1" }] }, story), true);
+  assert.equal(validateSceneLevelResult({ scores: [{ sceneIndex: 1, score: 6, evidence: "n1" }] }, story), false);
+  assert.equal(validateSceneLevelResult({ scores: [{ sceneIndex: 99, score: 3, evidence: "n1" }] }, story), false);
+  assert.equal(validateSceneLevelResult({ scores: [{ sceneIndex: 1, score: 3, evidence: "胡编" }] }, story), false);
+  assert.equal(validateSceneLevelResult({ scores: [] }, story), false);
+  assert.equal(validateSceneLevelResult(null, story), false);
+});
+
+test("validateStoryLevelResult：无分支证据（pairedCheckpoints=0 或 metrics 缺失）时 S8/S9 cap 为 3 并注明", () => {
+  const parsed = validStoryLevelParsed();
+  parsed.scores.S8 = { score: 5, evidence: [{ sceneIndex: 1, quote: "n1" }] };
+  parsed.scores.S9 = { score: 4, evidence: [{ sceneIndex: 2, quote: "n2" }] };
+  const ok = validateStoryLevelResult(parsed, story, { choices: { pairedCheckpoints: 0 } });
+  assert.equal(ok, true);
+  assert.equal(parsed.scores.S8.score, 3);
+  assert.equal(parsed.scores.S9.score, 3);
+  assert.equal(parsed.scores.S8.capped, true);
+  assert.equal(parsed.scores.S9.capped, true);
+  assert.ok(parsed.scores.S8.evidence.some((item) => item.quote === "capped: no paired branch evidence"));
+  assert.ok(parsed.scores.S9.evidence.some((item) => item.quote === "capped: no paired branch evidence"));
+  // metrics.json 缺失（null）同样视为无分支证据 → cap。
+  const noMetrics = validStoryLevelParsed();
+  noMetrics.scores.S8 = { score: 5, evidence: [{ sceneIndex: 1, quote: "n1" }] };
+  assert.equal(validateStoryLevelResult(noMetrics, story, null), true);
+  assert.equal(noMetrics.scores.S8.score, 3);
+  // 有成对分支证据时不 cap。
+  const withBranches = validStoryLevelParsed();
+  withBranches.scores.S8 = { score: 5, evidence: [{ sceneIndex: 1, quote: "n1" }] };
+  assert.equal(validateStoryLevelResult(withBranches, story, { choices: { pairedCheckpoints: 2 } }), true);
+  assert.equal(withBranches.scores.S8.score, 5);
+});
+
+test("answerKeyForPredictionItems 把结构化 answer key 分组为固定三项并与评分器集成", () => {
+  const grouped = answerKeyForPredictionItems({
+    "ending:ending_1": { exactAliases: ["ending_1", "主线胜利"], directionalAliases: [] },
+    "ending:reached": { exactAliases: ["victory"], directionalAliases: [] },
+    "enemy:enemy_2": { exactAliases: ["enemy_2", "暗影宗主"], directionalAliases: ["暗影"] },
+    "main:3": { exactAliases: ["3"], directionalAliases: [] },
+    "unknown:9": { exactAliases: ["x"], directionalAliases: [] }, // 未知键忽略
+  });
+  assert.deepEqual(Object.keys(grouped), ["结局走向", "boss身份", "关键反转"]);
+  assert.ok(grouped["结局走向"].exactAliases.includes("主线胜利"));
+  assert.ok(grouped["结局走向"].exactAliases.includes("victory"));
+  assert.ok(grouped["boss身份"].directionalAliases.includes("暗影"));
+  assert.ok(grouped["关键反转"].exactAliases.includes("3"));
+  // 集成：分组 key + 高置信精确命中 → S4 = 1（sum = 6 → h = 1）。
+  const s4 = scoreEarlyPrediction([
+    { item: "结局走向", prediction: "主线胜利", confidence: 5 },
+    { item: "boss身份", prediction: "暗影宗主", confidence: 4 },
+    { item: "关键反转", prediction: "3", confidence: 5 },
+  ], grouped);
+  assert.equal(s4.score, 1);
+  assert.equal(s4.hitWeight, 6);
+});
+
+test("scoreEarlyPrediction：item 名与预测值 Unicode/空白规范化；空字符串与 substring 不构成精确命中", () => {
+  const answerKey = {
+    "结局走向": { exactAliases: ["主角 胜利"], directionalAliases: ["胜利"] },
+  };
+  // item 名含空格、预测值含全角空格：规范化后整串相等 → 高置信精确命中 2 分。
+  const spaced = scoreEarlyPrediction([
+    { item: "结局 走向", prediction: "主角　胜利", confidence: 5 },
+  ], answerKey);
+  assert.equal(spaced.matched[0].match, "exact");
+  assert.equal(spaced.hitWeight, 2);
+  // 空字符串/纯空白预测永不计数。
+  const empty = scoreEarlyPrediction([
+    { item: "结局走向", prediction: "   ", confidence: 5 },
+    { item: "结局走向", prediction: "", confidence: 5 },
+  ], answerKey);
+  assert.equal(empty.hitWeight, 0);
+  // 整串不等但包含别名：只算方向命中（0.5），不是精确命中。
+  const partial = scoreEarlyPrediction([
+    { item: "结局走向", prediction: "主角胜利了", confidence: 5 },
+  ], answerKey);
+  assert.equal(partial.matched[0].match, "directional");
+  assert.equal(partial.hitWeight, 0.5);
+});
+
+test("callJudge：解析成功但校验失败 → judge_schema_invalid 且同一 callJudge 重试一次", async () => {
+  const fetchCount = [];
+  const fetchImpl = async () => {
+    fetchCount.push(1);
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"scores":{"S1":{"score":6}},"reasoning":"x"}' } }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const result = await callJudge({ baseUrl: "http://x/v1", apiKey: "k", model: "m", messages: [], fetchImpl, validateParsed: () => false });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "judge_schema_invalid");
+  assert.equal(fetchCount.length, 2); // 首次 + 重试一次
+});
+
+test("callJudge：首次校验失败、重试成功 → ok:true 且恰好两次请求", async () => {
+  let count = 0;
+  const fetchImpl = async () => {
+    count += 1;
+    const content = count === 1
+      ? '{"scores":{}}'
+      : '{"scores":{"S1":{"score":1,"evidence":[]}},"reasoning":"ok"}';
+    return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const result = await callJudge({
+    baseUrl: "http://x/v1", apiKey: "k", model: "m", messages: [],
+    fetchImpl,
+    validateParsed: (parsed) => parsed.scores?.S1 !== undefined,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.parsed.scores.S1.score, 1);
+  assert.equal(count, 2);
+});
+
+test("callJudge：未提供 validateParsed 时解析成功即返回，不额外请求", async () => {
+  let count = 0;
+  const fetchImpl = async () => {
+    count += 1;
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"a":1}' } }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const result = await callJudge({ baseUrl: "http://x/v1", apiKey: "k", model: "m", messages: [], fetchImpl });
+  assert.equal(result.ok, true);
+  assert.equal(count, 1);
 });

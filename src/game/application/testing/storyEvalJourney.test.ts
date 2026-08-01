@@ -1,5 +1,7 @@
 /** @vitest-environment node */
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -7,17 +9,38 @@ import type { GameSessionView } from "../gameSessionView";
 import { createServerGameEntryPoints, type ServerGameEntryPoints } from "../server/compositionRoot";
 import { createSqliteClient } from "../server/persistence/sqliteClient";
 import { createSqliteGameRepository, type SqliteGameRepository } from "../server/persistence/sqliteGameRepository";
+import { asGameId, type GameRecord } from "../server/persistence/gameRepository";
 import { deriveContentProgression } from "@/game/gameplay/rpg/narrative";
-import type { StoryEvalStoryRow } from "./storyEvalArtifacts";
-import { buildStoryEvalInput, hashStringToSeed, mulberry32, pickNarrativeChoice } from "./storyEvalStrategy";
+import { canQueueRuntimeNarrativeScene } from "../runtimeNarrativeEligibility";
+import { relationshipTierOf, storyMemoryOf, type GameEvent, type GameState } from "@/game/domain";
+import { validateStoryEvalArtifacts, type StoryEvalCompleteness, type StoryEvalStoryRow } from "./storyEvalArtifacts";
+import { loadStoryEvalCases, type EarlyPredictionAnswerKey } from "./storyEvalCases";
+import { hashStringToSeed, mulberry32, pickNarrativeChoice, pickObjectiveChoice } from "./storyEvalStrategy";
+import { NARRATIVE_CONTRACT_VERSION } from "../runtimeNarrative";
+import { SCENARIO_CANDIDATE_CONTRACT_VERSION } from "../scenarioGeneration";
 
 // ---------------------------------------------------------------------------
-// 评估旅程本体（spec §7）：经 createServerGameEntryPoints 驱动（唯一能命中
-// §6.2 采集装配点、且与浏览器局同一条服务端路径的方式）。驱动侧另开评估专用
-// 只读 repository（createSqliteGameRepository + 同一 GAME_DB_PATH）读取
+// 评估旅程本体（spec §7 + Task 13）：经 createServerGameEntryPoints 驱动（唯一能
+// 命中 §6.2 采集装配点、且与浏览器局同一条服务端路径的方式）。驱动侧另开评估
+// 专用只读 repository（createSqliteGameRepository + 同一 GAME_DB_PATH）读取
 // actionKey/主线阶段/世界 seed/蓝图快照——不经过客户端投影，不破坏安全红线。
 // 离线模式（默认）：global fetch 被 mock，零网络零计费；真实模式仅在
 // RUN_REAL_AI_STORY_EVAL=1 时启用（由门禁脚本 storyEvalJourney.mjs 注入）。
+//
+// Task 13（v2）：
+// - 输入改按 v2.json case 构造（loadStoryEvalCases 按 caseId 解析），
+//   不再调用固定的 buildStoryEvalInput。
+// - manifest 写入 caseId/strategy/worldSeed/gitCommit/contractVersion/四角色
+//   prompt 版本/AI model/temperature/timeoutMs/answerKey。
+// - story 行写入 memorySummary、当前 NPC profile/relationship/lastInteractionSummary、
+//   newEvents 安全结构（{ type, factId?, entityId?, questId?, endingId? }），
+//   绝不写入 prompt、provider 原文或采集开关外的敏感资料。
+// - 主线阶段检查点（预设 2/4/6）：读取完整记录并关闭该检查点的读连接后，经
+//   repository.createInitialGame 把同一 blueprint/state 写入两个独立测试 SQLite
+//   （新 gameId、revision 从 0 起），两个 entry points 各执行一个当前 choiceToken
+//   并继续生成两场；分支产物写 <parent>/branches/<stage>/<choice>/branch.json。
+//   禁止直接复制正在使用的 SQLite 文件或 WAL 文件。
+// - 完整性校验失败时返回 status "incomplete" + missing（门禁据此非零退出）。
 // ---------------------------------------------------------------------------
 
 const tmpRoot = resolve("tmp", `story-eval-journey-${process.pid}-${Date.now()}`);
@@ -53,6 +76,325 @@ function directorPlanFor(sceneId: string, calls: readonly Readonly<Record<string
   return record !== undefined ? (record.planSummary as Readonly<Record<string, unknown>>) : null;
 }
 
+/** 主线阶段检查点（Task 13 Step 4 预设）：达到这些 stage 时成对分支。 */
+const BRANCH_CHECKPOINT_STAGES = [2, 4, 6] as const;
+
+/** AI 运行参数（与 live 源装配点一致：liveRuntimeNarrativeSources / liveScenarioCandidateSource）。 */
+const AI_TEMPERATURE = 0.2;
+const AI_TIMEOUT_MS = 120_000;
+
+/** 当前 git commit（manifest 可复现性；非 git 环境回退 null）。 */
+function resolveGitCommit(): string | null {
+  try {
+    const output = execSync("git rev-parse HEAD", {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
+    });
+    const commit = output.trim();
+    return commit === "" ? null : commit;
+  } catch {
+    return null;
+  }
+}
+
+/** 把事件账本条目映射为安全结构（只带稳定 ID，绝不带 AI 文案/原始响应）。 */
+function toSafeEvent(event: GameEvent): { type: string; factId?: string; entityId?: string; questId?: string; endingId?: string } {
+  switch (event.type) {
+    case "fact_discovered":
+      return { type: event.type, factId: String(event.factId) };
+    case "npc_met":
+      return { type: event.type, entityId: String(event.npcId) };
+    case "item_obtained":
+      return { type: event.type, entityId: String(event.itemId) };
+    case "location_observed":
+    case "location_visited":
+    case "town_plan_generated":
+      return { type: event.type, entityId: String(event.locationId) };
+    case "battle_started":
+    case "battle_round_resolved":
+    case "battle_resolved":
+    case "enemy_defeated":
+      return { type: event.type, entityId: String(event.enemyId) };
+    case "quest_completed":
+    case "quest_unlocked":
+    case "quest_failed":
+      return { type: event.type, questId: String(event.questId) };
+    case "ending_reached":
+      return { type: event.type, endingId: String(event.endingId) };
+    default:
+      return { type: event.type };
+  }
+}
+
+/** 由蓝图结构与最终规则结果生成 S4 answer key（manifest.answerKey；v2 spec §7）。 */
+function buildStoryEvalAnswerKey(blueprint: GameRecord["blueprint"], endingOutcome: string | null): EarlyPredictionAnswerKey {
+  const key: Record<string, { exactAliases: string[]; directionalAliases: string[] }> = {};
+  for (const ending of blueprint.endings) {
+    key[`ending:${ending.id}`] = { exactAliases: [String(ending.id), ending.name], directionalAliases: [] };
+  }
+  for (const enemy of blueprint.enemies) {
+    key[`enemy:${enemy.id}`] = { exactAliases: [String(enemy.id), enemy.name], directionalAliases: [] };
+  }
+  for (const quest of blueprint.quests) {
+    if (quest.kind === "main") {
+      key[`main:${quest.stage}`] = { exactAliases: [String(quest.stage)], directionalAliases: [] };
+    }
+  }
+  if (endingOutcome !== null) {
+    key["ending:reached"] = { exactAliases: [endingOutcome], directionalAliases: [] };
+  }
+  return key;
+}
+
+/** 当前场景焦点 NPC 的档案快照（id/name/role/description/knownFactIds）。 */
+function npcProfileOf(record: GameRecord, directorPlan: Readonly<Record<string, unknown>> | null) {
+  const focusNpcId = typeof directorPlan?.focusNpcId === "string" ? directorPlan.focusNpcId : null;
+  if (focusNpcId === null) return null;
+  const npc = record.blueprint.npcs.find((entry) => String(entry.id) === String(focusNpcId));
+  if (npc === undefined) return null;
+  return {
+    id: String(npc.id),
+    name: npc.name,
+    role: npc.role,
+    description: (npc as Record<string, unknown>).description ?? null,
+    isCompanion: npc.isCompanion,
+    knownFactIds: npc.knownFactIds.map(String),
+  };
+}
+
+/** 焦点 NPC 的关系摘要：tier/affinity + 最近接触摘要（文本形式）。 */
+function relationshipSummaryOf(record: GameRecord, directorPlan: Readonly<Record<string, unknown>> | null): string | null {
+  const focusNpcId = typeof directorPlan?.focusNpcId === "string" ? directorPlan.focusNpcId : null;
+  if (focusNpcId === null) return null;
+  const npcState = record.state.npcs.find((entry) => String(entry.npcId) === String(focusNpcId));
+  if (npcState === undefined) return null;
+  const affinity = npcState.relationship?.affinity ?? 0;
+  const contact = storyMemoryOf(record.state).npcContacts.find((entry) => String(entry.npcId) === String(focusNpcId));
+  return `tier=${relationshipTierOf({ affinity })} affinity=${affinity} last=${contact?.lastInteractionSummary ?? null}`;
+}
+
+// ---------------------------------------------------------------------------
+// 分支状态快照与差异（Task 13 Step 4）：结构化、可序列化，只含稳定 ID 与状态。
+// ---------------------------------------------------------------------------
+
+type StateFacts = Readonly<{
+  location: { current: string };
+  facts: { discovered: readonly string[] };
+  quests: { statuses: Readonly<Record<string, string>> };
+  relationships: Readonly<Record<string, { met: boolean; affinity: number; tier: string }>>;
+  items: { owned: readonly string[] };
+  battle: { status: string };
+  ending: { endingId: string; outcome: string } | null;
+}>;
+
+function captureStateFacts(state: GameState): StateFacts {
+  return {
+    location: { current: String(state.currentLocationId) },
+    facts: { discovered: state.worldFacts.filter((entry) => entry.discovered).map((entry) => String(entry.factId)) },
+    quests: { statuses: Object.fromEntries(state.quests.map((entry) => [String(entry.questId), entry.status])) },
+    relationships: Object.fromEntries(state.npcs.map((entry) => {
+      const affinity = entry.relationship?.affinity ?? 0;
+      return [String(entry.npcId), { met: entry.met, affinity, tier: relationshipTierOf({ affinity }) }];
+    })),
+    items: { owned: state.inventory.map(String) },
+    battle: { status: state.battle.status },
+    ending: state.ending === null ? null : { endingId: String(state.ending.endingId), outcome: state.ending.outcome },
+  };
+}
+
+function diffStateFacts(before: StateFacts, after: StateFacts) {
+  return {
+    location: { before: before.location.current, after: after.location.current },
+    facts: {
+      before: before.facts.discovered,
+      after: after.facts.discovered,
+      newlyDiscovered: after.facts.discovered.filter((id) => !before.facts.discovered.includes(id)),
+    },
+    quests: {
+      before: before.quests.statuses,
+      after: after.quests.statuses,
+      changed: JSON.stringify(before.quests.statuses) !== JSON.stringify(after.quests.statuses),
+    },
+    relationships: {
+      before: before.relationships,
+      after: after.relationships,
+      changed: JSON.stringify(before.relationships) !== JSON.stringify(after.relationships),
+    },
+    items: {
+      before: before.items.owned,
+      after: after.items.owned,
+      gained: after.items.owned.filter((id) => !before.items.owned.includes(id)),
+    },
+    battle: { before: before.battle.status, after: after.battle.status },
+    ending: { before: before.ending, after: after.ending },
+  };
+}
+
+type StrategyPicker = (record: GameRecord, rand: () => number) => { index: number; reason: string };
+
+/** 分支继续生成两场：返回两场场景的玩家可读 narration。 */
+async function runBranchScenes(
+  forkEntry: ServerGameEntryPoints,
+  forkRepo: SqliteGameRepository,
+  picker: StrategyPicker,
+  rand: () => number,
+): Promise<{ narration: string[] }> {
+  const narration: string[] = [];
+  const refreshView = async (): Promise<GameSessionView> => {
+    const current = await forkEntry.getCurrentGame();
+    if (current.status !== "active") throw new Error("fork view unavailable");
+    return current.view;
+  };
+  let view = await refreshView();
+  for (let step = 0; step < 2; step += 1) {
+    if (view.narrativeGeneration.status === "pending" || view.narrative === null) {
+      if (view.narrativeGeneration.status === "pending") {
+        await forkEntry.ensureNarrativeGeneration();
+        const deadline = Date.now() + 60_000;
+        while (Date.now() < deadline) {
+          view = await refreshView();
+          if (view.narrative !== null || view.battle !== null || view.ending !== null) break;
+          if (view.narrativeGeneration.status !== "pending") break;
+          await sleep(500);
+        }
+      }
+      // 分支场景生成无法继续（动作耗尽/生成失败）：提前停止，产物仍有效。
+      if (view.narrative === null && view.battle === null && view.ending === null) break;
+    }
+    if (view.ending !== null) break;
+    if (view.battle !== null) {
+      while (view.battle !== null) {
+        const result = await forkEntry.performAction({
+          intent: { type: "battle_action", action: "attack" },
+          expectedRevision: view.revision,
+        });
+        if (!result.ok) throw new Error(`branch battle action rejected: ${result.code}`);
+        view = result.view;
+      }
+      continue;
+    }
+    const loaded = await forkRepo.getCurrentGame();
+    if (!loaded.ok || loaded.status !== "active") throw new Error("fork record unavailable");
+    const scene = loaded.record.state.narrative.currentScene;
+    if (scene === null) throw new Error("fork scene vanished");
+    narration.push(scene.npcLine === null ? scene.narration : `${scene.narration}\n${scene.npcLine.text}`);
+    const pick = picker(loaded.record, rand);
+    const result = await forkEntry.performAction({
+      intent: { type: "narrative_choice", choiceToken: scene.choices[pick.index]?.choiceToken ?? "" },
+      expectedRevision: view.revision,
+    });
+    if (!result.ok) throw new Error(`branch scene rejected at ${step + 1}: ${result.code}`);
+    view = result.view;
+  }
+  return { narration };
+}
+
+function sanitizePathPart(value: string): string {
+  return value.replace(/[\\/:*?"<>|]/g, "-");
+}
+
+/** 主线阶段检查点：同一 blueprint/state 分叉两个独立测试 SQLite 各走一个 choiceToken。 */
+async function runCheckpointBranches(args: {
+  env: Record<string, string | undefined>;
+  dbPath: string;
+  artifactDir: string;
+  record: GameRecord;
+  sceneIndex: number;
+  stage: number;
+  strategy: "explore" | "objective";
+  rand: () => number;
+}): Promise<void> {
+  const { env, dbPath, artifactDir, sceneIndex, stage, strategy, rand } = args;
+  // 读取完整记录并关闭该检查点的读连接（分支写库前不持有陈旧读句柄）。
+  const checkpointRead = openEvalRepository(dbPath);
+  let checkpointRecord: GameRecord;
+  try {
+    const loaded = await checkpointRead.getCurrentGame();
+    if (!loaded.ok || loaded.status !== "active") throw new Error("checkpoint record unavailable");
+    checkpointRecord = loaded.record;
+  } finally {
+    await checkpointRead.close();
+  }
+  const scene = checkpointRecord.state.narrative.currentScene;
+  if (scene === null) throw new Error("checkpoint scene vanished");
+  const choices = scene.choices;
+  const stageDir = join(artifactDir, "branches", `stage${stage}`);
+  if (choices.length < 2) {
+    // 没有两个合法选项：记录 not_applicable，不伪造比较。
+    mkdirSync(stageDir, { recursive: true });
+    writeFileSync(join(stageDir, "not_applicable.json"), JSON.stringify({
+      checkpoint: stage,
+      notApplicable: true,
+      parentScene: { sceneIndex, sceneId: scene.sceneId, stage },
+      actionKeys: choices.map((choice) => choice.actionKey),
+      reason: "less_than_two_legal_choices",
+    }, null, 2) + "\n", "utf8");
+    return;
+  }
+  const picker: StrategyPicker = strategy === "objective" ? pickObjectiveChoice : pickNarrativeChoice;
+  for (const choiceIndex of [0, 1] as const) {
+    const choice = choices[choiceIndex];
+    const branchDir = join(stageDir, sanitizePathPart(choice.actionKey));
+    const forkDbPath = join(tmpRoot, `fork-${stage}-${choiceIndex}-${randomUUID().slice(0, 8)}.sqlite`);
+    let forkEntry: ServerGameEntryPoints | null = null;
+    let forkRepo: SqliteGameRepository | null = null;
+    try {
+      forkRepo = openEvalRepository(forkDbPath);
+      const created = await forkRepo.createInitialGame({
+        gameId: asGameId(`fork-${stage}-${choiceIndex}-${randomUUID()}`),
+        blueprint: checkpointRecord.blueprint,
+        state: checkpointRecord.state,
+        createdAt: checkpointRecord.createdAt,
+      });
+      if (!created.ok) throw new Error(`fork createInitialGame failed: ${created.code}`);
+      forkEntry = createServerGameEntryPoints({
+        ...env,
+        GAME_DB_PATH: forkDbPath,
+        STORY_EVAL_ARTIFACT_DIR: branchDir,
+      });
+      const ledgerStart = checkpointRecord.state.eventLedger.length;
+      // 执行当前 choiceToken（两个分支各执其一）。
+      const current = await forkEntry.getCurrentGame();
+      if (current.status !== "active") throw new Error("fork view unavailable");
+      const view = current.view;
+      const forced = await forkEntry.performAction({
+        intent: { type: "narrative_choice", choiceToken: choice.choiceToken },
+        expectedRevision: view.revision,
+      });
+      if (!forced.ok) throw new Error(`branch choice rejected: ${forced.code}`);
+      const { narration } = await runBranchScenes(forkEntry, forkRepo, picker, rand);
+      const finalLoaded = await forkRepo.getCurrentGame();
+      if (!finalLoaded.ok || finalLoaded.status !== "active") throw new Error("fork final record unavailable");
+      const eventsAfter = finalLoaded.record.state.eventLedger
+        .slice(ledgerStart)
+        .map((event) => toSafeEvent(event));
+      const stateDiff = diffStateFacts(
+        captureStateFacts(checkpointRecord.state),
+        captureStateFacts(finalLoaded.record.state),
+      );
+      mkdirSync(branchDir, { recursive: true });
+      writeFileSync(join(branchDir, "branch.json"), JSON.stringify({
+        checkpoint: stage,
+        parentScene: { sceneIndex, sceneId: scene.sceneId, stage },
+        choiceActionKey: choice.actionKey,
+        choiceLabel: choice.label,
+        eventsAfter,
+        stateDiff,
+        narration,
+      }, null, 2) + "\n", "utf8");
+    } finally {
+      await forkEntry?.close();
+      await forkRepo?.close();
+      try {
+        rmSync(forkDbPath, { force: true });
+      } catch {
+        // Windows 句柄延迟：留待 tmpRoot 收尾清扫。
+      }
+    }
+  }
+}
+
 export type StoryEvalJourneyConfig = Readonly<{
   env: Record<string, string | undefined>;
   dbPath: string;
@@ -66,26 +408,29 @@ export type StoryEvalJourneyConfig = Readonly<{
 }>;
 
 export type StoryEvalJourneyResult = Readonly<{
-  status: "converged" | "max_scenes" | "aborted" | "incomplete";
+  status: "converged" | "max_scenes" | "aborted" | "exhausted" | "generation_failed" | "incomplete";
   sceneCount: number;
   fallbackScenes: number;
   openingSource: string;
   endingOutcome: string | null;
-  completeness: Readonly<{ complete: boolean; missing: readonly string[] }>;
+  completeness: StoryEvalCompleteness;
 }>;
 
 export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promise<StoryEvalJourneyResult> {
-  const { env, dbPath, artifactDir, strategySeed, maxScenes, requireGeneratedOpening } = config;
+  const { env, dbPath, artifactDir, strategySeed, maxScenes, requireGeneratedOpening, caseId, strategy } = config;
   const rand = mulberry32(hashStringToSeed(String(strategySeed)));
-  const { input } = buildStoryEvalInput("long", strategySeed);
+  // v2：按 case 构造输入（v2.json 数据事实源）；未知 caseId 直接失败（门禁保证合法）。
+  const storyEvalCase = loadStoryEvalCases().find((item) => item.caseId === caseId);
+  if (storyEvalCase === undefined) throw new Error(`unknown story eval case: ${caseId}`);
+  const input = storyEvalCase.input;
   let entry: ServerGameEntryPoints | null = null;
   let evalRepository: SqliteGameRepository | null = null;
   const storyRows: StoryEvalStoryRow[] = [];
-  let status: StoryEvalJourneyResult["status"] = "max_scenes";
-  let openingSource = "unknown";
+  let status: StoryEvalJourneyResult["status"] = "max_scenes";  let openingSource = "unknown";
   let endingOutcome: string | null = null;
   let fallbackScenes = 0;
   let sceneCount = 0;
+  const branchCheckpointsDone = new Set<number>();
 
   try {
     entry = createServerGameEntryPoints({ ...env, GAME_DB_PATH: dbPath });
@@ -123,24 +468,45 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       sceneCount: 0,
       fallbackScenes: 0,
       blueprint: null,
-      // Task 13 扩展字段：caseId/strategy、gitCommit、NARRATIVE_CONTRACT_VERSION、
+      // Task 13（v2）扩展字段：caseId/strategy、gitCommit、contractVersion、
       // 四角色 prompt 版本、temperature、timeoutMs、answerKey（S4 确定性评分所需，
       // 由蓝图结局/敌人/任务结构与最终规则结果生成）。
+      caseId,
+      strategy,
+      gitCommit: resolveGitCommit(),
+      contractVersion: NARRATIVE_CONTRACT_VERSION,
+      promptVersions: {
+        scenario: SCENARIO_CANDIDATE_CONTRACT_VERSION,
+        director: NARRATIVE_CONTRACT_VERSION,
+        writer: NARRATIVE_CONTRACT_VERSION,
+        npc: NARRATIVE_CONTRACT_VERSION,
+      },
+      temperature: AI_TEMPERATURE,
+      timeoutMs: AI_TIMEOUT_MS,
+      answerKey: null,
     };
     const getCalls = createCachedCallsReader(artifactDir);
 
     for (let sceneIndex = 1; sceneIndex <= maxScenes; sceneIndex += 1) {
-      // 1. pending 时确保生成并轮询到场景/战斗/结局就绪（带超时）。
+      // 1. pending 时确保生成并轮询到场景/战斗/结局就绪（带超时）；
+      //    生成任务结束仍无场景（规则动作耗尽或生成失败）→ 停止旅程。
       if (view.narrativeGeneration.status === "pending" || view.narrative === null) {
-        await entry.ensureNarrativeGeneration();
-        const deadline = Date.now() + 60_000;
-        while (Date.now() < deadline) {
-          view = await getView();
-          if (view.narrative !== null || view.battle !== null || view.ending !== null) break;
-          await sleep(500);
+        if (view.narrativeGeneration.status === "pending") {
+          await entry.ensureNarrativeGeneration();
+          const deadline = Date.now() + 60_000;
+          while (Date.now() < deadline) {
+            view = await getView();
+            if (view.narrative !== null || view.battle !== null || view.ending !== null) break;
+            if (view.narrativeGeneration.status !== "pending") break;
+            await sleep(500);
+          }
         }
         if (view.narrative === null && view.battle === null && view.ending === null) {
-          throw new Error("narrative generation timeout");
+          const terminalRecord = await loadRecord();
+          status = canQueueRuntimeNarrativeScene(terminalRecord.blueprint, terminalRecord.state)
+            ? "generation_failed"
+            : "exhausted";
+          break;
         }
       }
       // 2. 结局：收尾记录。
@@ -148,9 +514,7 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         endingOutcome = view.ending.outcome;
         status = "converged";
         const record = await loadRecord();
-        const tailEvents = record.state.eventLedger
-          .slice(previousLedgerLength)
-          .map((event) => ({ type: event.type }));
+        const tailEvents = record.state.eventLedger.slice(previousLedgerLength).map((event) => toSafeEvent(event));
         storyRows.push({ kind: "ending", sceneIndex, outcome: endingOutcome, newEvents: tailEvents });
         previousLedgerLength = record.state.eventLedger.length;
         break;
@@ -173,10 +537,11 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       if (scene === null) throw new Error("scene vanished before record");
       const stage = deriveContentProgression({ blueprint: record.blueprint, state: record.state }).mainStage;
       const calls = getCalls();
-      const choice = pickNarrativeChoice(record, rand);
+      const directorPlan = directorPlanFor(scene.sceneId, calls);
+      const choice = pickerFor(strategy)(record, rand);
       const newEvents = record.state.eventLedger
         .slice(previousLedgerLength)
-        .map((event) => ({ type: event.type }));
+        .map((event) => toSafeEvent(event));
       storyRows.push({
         kind: "scene",
         sceneIndex,
@@ -185,13 +550,13 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         narration: scene.narration,
         npcLine: scene.npcLine === null ? null : { text: scene.npcLine.text, emotion: scene.npcLine.emotion },
         choices: scene.choices.map((entry) => ({ label: entry.label, actionKey: entry.actionKey })),
-        directorPlan: directorPlanFor(scene.sceneId, calls),
+        directorPlan,
+        memorySummary: storyMemoryOf(record.state).recent,
+        npcProfile: npcProfileOf(record, directorPlan),
+        relationshipSummary: relationshipSummaryOf(record, directorPlan),
         fallback: scene.source === "fallback",
         playerChoice: { index: choice.index, actionKey: scene.choices[choice.index]?.actionKey ?? "", reason: choice.reason },
         newEvents,
-        // Task 13 扩展字段：memorySummary、npcProfile/relationship/lastInteractionSummary、
-        // newEvents 安全结构 { type, factId?, entityId?, questId?, endingId? }、
-        // directorPlan.allowedRevealFactIds、introducedEntities 与扩展实体 ID。
       });
       previousLedgerLength = record.state.eventLedger.length;
       sceneCount += 1;
@@ -199,6 +564,24 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       if (fallbackScenes > sceneCount / 2) {
         status = "aborted";
         break;
+      }
+      // 4b. 主线阶段检查点：stage ∈ {2,4,6} 且未在该 stage 分支过 → 成对分支。
+      if (
+        stage !== null &&
+        (BRANCH_CHECKPOINT_STAGES as readonly number[]).includes(stage) &&
+        !branchCheckpointsDone.has(stage)
+      ) {
+        branchCheckpointsDone.add(stage);
+        await runCheckpointBranches({
+          env,
+          dbPath,
+          artifactDir,
+          record,
+          sceneIndex,
+          stage,
+          strategy,
+          rand,
+        });
       }
       // 5. 执行选择。
       const result = await entry.performAction({
@@ -217,6 +600,7 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
     manifest.status = status;
     manifest.sceneCount = sceneCount;
     manifest.fallbackScenes = fallbackScenes;
+    manifest.answerKey = buildStoryEvalAnswerKey(blueprint, endingOutcome);
     manifest.blueprint = {
       // 世界名称不在蓝图结构内（domain WorldDefinition 无 name），取会话视图
       // 投影的世界显示名（profile label），保证 manifest 蓝图快照可读。
@@ -245,33 +629,26 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
     mkdirSync(artifactDir, { recursive: true });
     writeFileSync(join(artifactDir, "story.jsonl"), storyRows.map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8");
     writeFileSync(join(artifactDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf8");
+
+    // 7. 产物完整性（spec §7）：incomplete 不可进入分析/评审，门禁非零退出。
+    const completeness = validateStoryEvalArtifacts({ calls: getCalls(), story: storyRows, manifest });
+    if (!completeness.complete) status = "incomplete";
+    return {
+      status,
+      sceneCount,
+      fallbackScenes,
+      openingSource,
+      endingOutcome,
+      completeness,
+    };
   } finally {
     await entry?.close();
   }
-  // completeness：产物完整性快照（story.jsonl 有行且未因异常中断即视为 complete；
-  // missing 由 Task 13 按评分所需产物清单扩展）。
-  const missing: string[] = [];
-  if (storyRows.length === 0) missing.push("story");
-  return {
-    status,
-    sceneCount,
-    fallbackScenes,
-    openingSource,
-    endingOutcome,
-    completeness: { complete: missing.length === 0, missing },
-  };
 }
 
-function readCalls(artifactDir: string): readonly Readonly<Record<string, unknown>>[] {
-  try {
-    return readFileSync(join(artifactDir, "calls.jsonl"), "utf8")
-      .trim()
-      .split("\n")
-      .filter((line) => line !== "")
-      .map((line) => JSON.parse(line) as Readonly<Record<string, unknown>>);
-  } catch {
-    return [];
-  }
+/** 策略选择器：explore 保持原探索优先语义；objective 优先推进主线/任务目标动作。 */
+function pickerFor(strategy: "explore" | "objective"): StrategyPicker {
+  return strategy === "objective" ? pickObjectiveChoice : pickNarrativeChoice;
 }
 
 /** 创建带缓存的 calls 读取器：避免每次循环全量重读 calls.jsonl（O(n²) 退化）。
@@ -308,10 +685,35 @@ export function createFakeAiFetch() {
     if (system.startsWith("You are the world director")) {
       const context = JSON.parse(user) as {
         actionCandidates?: { actionKey: string }[];
-        progression?: { allowedPacing?: string[] };
+        progression?: { allowedPacing?: string[]; mainStage?: number };
       };
       const candidates = context.actionCandidates ?? [];
-      const first = candidates[0]?.actionKey ?? "observe:loc_1";
+      // 离线导演确定性策略（镜像真实导演"推进当前目标"的意图）：
+      // 按主线阶段优先 objective 相关候选——第 1 幕先移动解锁主线，事实幕
+      // 优先调查，其余优先 take_item/未接触 NPC 的 talk，最后 move。
+      // 该偏好让离线世界的主线阶段 4/6 可被场景行观测（成对分支测试依赖）。
+      const mainStage = context.progression?.mainStage ?? null;
+      const preference: ((candidate: { actionKey: string }) => boolean)[] = mainStage === 1
+        ? [
+          (candidate) => candidate.actionKey.startsWith("move:"),
+          (candidate) => candidate.actionKey.startsWith("talk:"),
+        ]
+        : mainStage === 3 || mainStage === 7
+          ? [
+            (candidate) => candidate.actionKey.startsWith("investigate:"),
+            (candidate) => candidate.actionKey.startsWith("take_item:"),
+            (candidate) => candidate.actionKey.startsWith("talk:"),
+          ]
+          : [
+            (candidate) => candidate.actionKey.startsWith("take_item:"),
+            (candidate) => candidate.actionKey.startsWith("talk:"),
+            (candidate) => candidate.actionKey.startsWith("move:"),
+          ];
+      const first = preference
+        .map((pick) => candidates.find(pick))
+        .find((candidate) => candidate !== undefined)?.actionKey
+        ?? candidates[0]?.actionKey
+        ?? "observe:loc_1";
       // 防重复 key：approveDirectorProposal 对 keyA === keyB 直接 choice_not_legal，
       // 必须从候选里挑一个与 first 不同的 key；候选不足时退回 first（触发审批驳回→
       // 重试→fallback，与生产行为一致；离线旅程构造保证候选 ≥ 2）。
@@ -434,8 +836,9 @@ describe("Story eval journey (offline)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchSpy);
     const artifactDir = join(tmpRoot, "offline-run");
     const dbPath = join(tmpRoot, "offline.sqlite");
+    let result: Awaited<ReturnType<typeof runStoryEvalJourney>>;
     try {
-      const result = await runStoryEvalJourney({
+      result = await runStoryEvalJourney({
         env: {
           AI_API_BASE_URL: "http://127.0.0.1:9/v1",
           AI_MODEL: "fake-model",
@@ -446,7 +849,7 @@ describe("Story eval journey (offline)", () => {
         dbPath,
         artifactDir,
         strategySeed: 7,
-        caseId: "offline-wuxia-a",
+        caseId: "wuxia-a",
         strategy: "explore",
         maxScenes: 3,
         requireGeneratedOpening: false,
@@ -455,6 +858,7 @@ describe("Story eval journey (offline)", () => {
       expect(result.status).toBe("max_scenes");
       expect(result.sceneCount).toBe(3);
       expect(result.openingSource).toBe("fallback");
+      expect(result.completeness.complete).toBe(true);
     } finally {
       vi.restoreAllMocks();
     }
@@ -469,7 +873,7 @@ describe("Story eval journey (offline)", () => {
     expect(kinds).toContain("plan_approved");
     expect(kinds).toContain("role_approval");
 
-    // story.jsonl：场景行结构完整，导演计划摘要已关联。
+    // story.jsonl：场景行结构完整，导演计划摘要已关联；行携带 v2 证据字段。
     const storyLines = readFileSync(join(artifactDir, "story.jsonl"), "utf8").trim().split("\n");
     expect(storyLines).toHaveLength(3);
     for (const line of storyLines) {
@@ -481,20 +885,149 @@ describe("Story eval journey (offline)", () => {
       expect(row.choices).toHaveLength(2);
       expect(row.directorPlan).toMatchObject({ pacing: expect.any(String), tensionLevel: 3 });
       expect(row.playerChoice).toMatchObject({ index: expect.any(Number), reason: expect.any(String) });
+      expect(String(row.playerChoice?.reason ?? "")).not.toBe("");
       expect(Array.isArray(row.newEvents)).toBe(true);
+      // v2 证据字段：memory 摘要总是数组；NPC 场景才要求 profile/关系摘要。
+      expect(Array.isArray(row.memorySummary)).toBe(true);
+      if (row.npcLine !== null && row.npcLine !== undefined) {
+        expect(row.npcProfile).not.toBeNull();
+        expect(typeof row.relationshipSummary).toBe("string");
+      }
+      // 安全事件：只允许 { type, factId?, entityId?, questId?, endingId? } 字段，
+      // 绝不携带 AI 文案、原始响应或 prompt 内容。
+      for (const event of row.newEvents ?? []) {
+        expect(typeof event.type).toBe("string");
+        for (const key of Object.keys(event)) {
+          expect(["type", "factId", "entityId", "questId", "endingId"]).toContain(key);
+        }
+      }
     }
 
-    // manifest.json：gameId/世界 seed/蓝图快照。
+    // manifest.json：v2 元数据齐全（caseId/strategy/版本/AI 配置/answerKey）。
     const manifest = JSON.parse(readFileSync(join(artifactDir, "manifest.json"), "utf8")) as Record<string, unknown>;
     expect(manifest.gameId).toBeTruthy();
     expect(manifest.worldSeed).toBeTruthy();
     expect(manifest.status).toBe("max_scenes");
     expect(manifest.sceneCount).toBe(3);
+    expect(manifest.caseId).toBe("wuxia-a");
+    expect(manifest.strategy).toBe("explore");
+    expect(manifest.contractVersion).toBe(NARRATIVE_CONTRACT_VERSION);
+    const promptVersions = manifest.promptVersions as Record<string, unknown>;
+    expect(promptVersions.scenario).toBe(SCENARIO_CANDIDATE_CONTRACT_VERSION);
+    for (const role of ["director", "writer", "npc"]) {
+      expect(promptVersions[role]).toBe(NARRATIVE_CONTRACT_VERSION);
+    }
+    expect(manifest.temperature).toBe(0.2);
+    expect(manifest.timeoutMs).toBe(120_000);
+    expect(manifest.answerKey).toMatchObject({ "ending:ending_1": { exactAliases: expect.any(Array) } });
+    expect(manifest.gitCommit === null || typeof manifest.gitCommit === "string").toBe(true);
     const blueprint = manifest.blueprint as { quests: readonly { kind: string }[]; endings: readonly unknown[]; world: { name: string } };
     expect(blueprint.world.name).toBeTruthy();
     expect(blueprint.quests.some((quest) => quest.kind === "main")).toBe(true);
     expect(blueprint.endings.length).toBeGreaterThan(0);
   });
+
+  it("objective 策略记录任务导向选择理由", async () => {
+    const fetchSpy = createFakeAiFetch();
+    vi.spyOn(globalThis, "fetch").mockImplementation(fetchSpy);
+    const artifactDir = join(tmpRoot, "offline-run-objective");
+    const dbPath = join(tmpRoot, "offline-objective.sqlite");
+    try {
+      const result = await runStoryEvalJourney({
+        env: {
+          AI_API_BASE_URL: "http://127.0.0.1:9/v1",
+          AI_MODEL: "fake-model",
+          AI_API_KEY: "fake-key",
+          STORY_EVAL_CAPTURE: "1",
+          STORY_EVAL_ARTIFACT_DIR: artifactDir,
+        },
+        dbPath,
+        artifactDir,
+        strategySeed: 7,
+        caseId: "wuxia-a",
+        strategy: "objective",
+        maxScenes: 3,
+        requireGeneratedOpening: false,
+      });
+      expect(result.completeness.complete).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    const storyLines = readFileSync(join(artifactDir, "story.jsonl"), "utf8").trim().split("\n");
+    expect(storyLines.length).toBeGreaterThan(0);
+    for (const line of storyLines) {
+      const row = JSON.parse(line) as StoryEvalStoryRow;
+      // objective 只产出任务导向理由或 random（同类才用 PRNG）。
+      const reason = row.playerChoice?.reason ?? "";
+      expect(reason.startsWith("objective:") || reason === "random").toBe(true);
+    }
+  });
+
+  it("主线阶段检查点：同一记录分叉两个独立 SQLite，分支 actionKey 不同", async () => {
+    const fetchSpy = createFakeAiFetch();
+    vi.spyOn(globalThis, "fetch").mockImplementation(fetchSpy);
+    const artifactDir = join(tmpRoot, "offline-run-branches");
+    const dbPath = join(tmpRoot, "offline-branches.sqlite");
+    let result: Awaited<ReturnType<typeof runStoryEvalJourney>>;
+    try {
+      result = await runStoryEvalJourney({
+        env: {
+          AI_API_BASE_URL: "http://127.0.0.1:9/v1",
+          AI_MODEL: "fake-model",
+          AI_API_KEY: "fake-key",
+          STORY_EVAL_CAPTURE: "1",
+          STORY_EVAL_ARTIFACT_DIR: artifactDir,
+        },
+        dbPath,
+        artifactDir,
+        strategySeed: 7,
+        caseId: "wuxia-a",
+        strategy: "explore",
+        maxScenes: 16,
+        requireGeneratedOpening: false,
+      });
+      expect(result.completeness.complete).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+    }
+
+    const branchesRoot = join(artifactDir, "branches");
+    const stageDirs = readdirSync(branchesRoot).filter((name) => name.startsWith("stage"));
+    expect(stageDirs.length).toBeGreaterThan(0);
+    // 找到至少一个成对分支（两个 choice 目录且各自有 branch.json）。
+    const paired = stageDirs
+      .map((stageDir) => {
+        const dir = join(branchesRoot, stageDir);
+        const entries = readdirSync(dir).filter((name) => name !== "not_applicable.json");
+        if (entries.length < 2) return null;
+        const branchJsons = entries.map((name) => {
+          const parsed = JSON.parse(readFileSync(join(dir, name, "branch.json"), "utf8")) as {
+            checkpoint: number;
+            parentScene: { sceneIndex: number; sceneId: string; stage: number };
+            choiceActionKey: string;
+            choiceLabel: string;
+            eventsAfter: readonly unknown[];
+            stateDiff: { location: { before: string; after: string } };
+            narration: readonly string[];
+          };
+          return parsed;
+        });
+        return branchJsons.length === 2 ? branchJsons : null;
+      })
+      .filter((branchJsons): branchJsons is NonNullable<typeof branchJsons> => branchJsons !== null);
+    expect(paired.length).toBeGreaterThan(0);
+    const [branchA, branchB] = paired[0];
+    // 成对分支的 actionKey 必须不同。
+    expect(branchA.choiceActionKey).not.toBe(branchB.choiceActionKey);
+    expect(branchA.checkpoint).toBe(branchB.checkpoint);
+    // 分支产物携带 parent scene、事件、状态差异与玩家可读 narration。
+    expect(typeof branchA.parentScene.sceneId).toBe("string");
+    expect(branchA.parentScene.sceneIndex).toBeGreaterThanOrEqual(1);
+    expect(Array.isArray(branchA.eventsAfter)).toBe(true);
+    expect(typeof branchA.stateDiff.location.before).toBe("string");
+    expect(Array.isArray(branchA.narration)).toBe(true);
+    expect(branchA.narration.length).toBeGreaterThan(0);
+  }, 90_000);
 
   it("审批驳回→重试→恢复的事件序列正确写入 calls.jsonl（role_approval + plan_approved）", async () => {
     const fetchSpy = createFakeAiFetchWithRejection();
@@ -513,7 +1046,7 @@ describe("Story eval journey (offline)", () => {
         dbPath,
         artifactDir,
         strategySeed: 7,
-        caseId: "offline-wuxia-a",
+        caseId: "wuxia-a",
         strategy: "explore",
         maxScenes: 2,
         requireGeneratedOpening: false,
@@ -558,6 +1091,9 @@ describe("Story eval journey (real AI, opt-in)", () => {
         modelLabel: process.env.AI_MODEL,
       });
       // requireGeneratedOpening 已在 runStoryEvalJourney 内部校验（开局非 generated 直接失败）。
+      // 完整性失败（incomplete）由断言转成 vitest 非零退出 → 门禁 failed。
+      expect(result.completeness.complete).toBe(true);
+      expect(result.status).not.toBe("incomplete");
       const storyLines = readFileSync(join(artifactDir, "story.jsonl"), "utf8").trim().split("\n");
       expect(storyLines.length).toBeGreaterThan(0);
     },

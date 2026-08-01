@@ -1,11 +1,46 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  loadStoryEvalCases,
   main,
   resolveBaseSeed,
+  resolveCaseId,
   resolveJourneyMode,
   resolveRunCount,
 } from "./storyEvalJourney.mjs";
+
+test("resolveCaseId 缺省 undefined，合法 case 返回 ID，未知 case 返回 null", () => {
+  const cases = loadStoryEvalCases();
+  assert.equal(resolveCaseId([], cases), undefined);
+  assert.equal(resolveCaseId(["--case=wuxia-a"], cases), "wuxia-a");
+  assert.equal(resolveCaseId(["--case=bogus"], cases), null);
+});
+
+test("main 未知 case 打印 INVALID_CASE、不 spawn 且 exit 1", () => {
+  const lines = [];
+  const code = main({
+    argv: ["--mode=record", "--case=bogus"],
+    env: { RUN_REAL_AI_STORY_EVAL: "1" },
+    sources: () => [],
+    log: (line) => lines.push(line),
+    spawn: () => { throw new Error("must not spawn"); },
+  });
+  assert.equal(code, 1);
+  assert.ok(lines.some((line) => line.includes("INVALID_CASE")));
+});
+
+test("main 无 --case 时 --runs 复制被拒绝", () => {
+  const lines = [];
+  const code = main({
+    argv: ["--mode=record", "--runs=2"],
+    env: { RUN_REAL_AI_STORY_EVAL: "1" },
+    sources: () => [],
+    log: (line) => lines.push(line),
+    spawn: () => { throw new Error("must not spawn"); },
+  });
+  assert.equal(code, 1);
+  assert.ok(lines.some((line) => line.includes("REPLICATE_REQUIRES_CASE")));
+});
 
 test("resolveJourneyMode 只接受 record/replay", () => {
   assert.equal(resolveJourneyMode(["--mode=record"]), "record");

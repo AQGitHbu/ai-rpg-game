@@ -12,20 +12,37 @@ const calls = [
   { kind: "role_approval", role: "writer", attempt: 1, category: "schema_violation" },
   { kind: "plan_approved", attempt: 1, planSummary: { tensionLevel: 1, pacing: "setup" } },
   { kind: "plan_approved", attempt: 2, planSummary: { tensionLevel: 5, pacing: "develop" } },
-  { kind: "expansion_decision", decision: { ok: true, expansion: {} } },
+  // 批准的扩展（新地点）：其铸 ID loc_dyn_1 在 story 第 2 幕登场 → persisted/adopted = 1。
+  { kind: "expansion_decision", decision: { ok: true, expansion: { newLocation: { name: "新地点", description: "d", scale: "scene", connectFromLocationId: "loc_1", reason: "r" }, newNpc: null } } },
   { kind: "expansion_decision", decision: { ok: false, reason: "budget_exhausted" } },
 ];
 
 const story = [
-  { kind: "scene", sceneIndex: 1, mainStage: 1, narration: "aaa bbb ccc", newEvents: [{ type: "narrative_choice" }], fallback: false, directorPlan: { allowedRevealFactIds: [] } },
-  { kind: "scene", sceneIndex: 2, mainStage: 2, narration: "aaa bbb ddd", newEvents: [{ type: "fact_discovered" }], fallback: false, directorPlan: { allowedRevealFactIds: ["f1"] } },
+  {
+    kind: "scene", sceneIndex: 1, mainStage: 1, narration: "aaa bbb ccc",
+    newEvents: [{ type: "narrative_choice" }], fallback: false,
+    directorPlan: { allowedRevealFactIds: [], introducedEntities: [{ kind: "location", id: "loc_1" }] },
+  },
+  {
+    kind: "scene", sceneIndex: 2, mainStage: 2, narration: "aaa bbb ddd",
+    newEvents: [
+      { type: "fact_discovered", factId: "f1" },
+      { type: "fact_discovered", factId: "f9" }, // 实际发现但未计划：只进 actual，不进 overlap
+      { type: "npc_met", entityId: "np_1" },
+    ],
+    fallback: false,
+    directorPlan: {
+      allowedRevealFactIds: ["f1", "f2"],
+      introducedEntities: [{ kind: "npc", id: "np_1" }, { kind: "location", id: "loc_dyn_1" }],
+    },
+  },
   { kind: "scene", sceneIndex: 3, mainStage: 2, narration: "xxx yyy zzz", newEvents: [], fallback: true, directorPlan: null },
   { kind: "ending", sceneIndex: 4, outcome: "success", newEvents: [] },
 ];
 
 const manifest = { status: "converged", sceneCount: 3, fallbackScenes: 1 };
 
-test("computeStoryEvalMetrics 计算全部客观指标", () => {
+test("computeStoryEvalMetrics 计算全部客观指标（v2 真实口径）", () => {
   const metrics = computeStoryEvalMetrics({ calls, story, manifest });
   assert.equal(metrics.sceneCount, 3);
   assert.equal(metrics.converged, true);
@@ -40,13 +57,128 @@ test("computeStoryEvalMetrics 计算全部客观指标", () => {
   assert.equal(metrics.tension.stddev, 2);                // [1,5] 总体标准差 = 2
   assert.deepEqual(metrics.pacing.distribution, { setup: 1, develop: 1 });
   assert.equal(metrics.pacing.illegalOrderCount, 0);      // setup→develop 合法
-  assert.deepEqual(metrics.factsPerAct, [{ act: 1, revealed: 0 }, { act: 2, revealed: 1 }]);
+  // 每幕事实揭示：planned = allowedRevealFactIds 集合；actual 只来自 fact_discovered.factId。
+  assert.deepEqual(metrics.factsPerAct, [
+    { act: 1, plannedFactIds: [], actualFactIds: [], overlapFactIds: [], missedFactIds: [] },
+    {
+      act: 2,
+      plannedFactIds: ["f1", "f2"],
+      actualFactIds: ["f1", "f9"],   // f9 实际发现但未计划
+      overlapFactIds: ["f1"],
+      missedFactIds: ["f2"],          // 计划但未实际揭示
+    },
+  ]);
+  // 实体漏斗：introduced → interacted → contribution。
+  assert.deepEqual(metrics.entities.npc, { introduced: 1, interacted: 1, contributed: 1 }); // np_1 在含 fact_discovered 的行登场
+  assert.deepEqual(metrics.entities.location, { introduced: 2, interacted: 0, contributed: 1 }); // loc_1 + loc_dyn_1；loc_dyn_1 在含 fact_discovered 的行登场
+  assert.deepEqual(metrics.entities.item, { introduced: 0, interacted: 0, contributed: 0 });
+  // 扩展漏斗：proposed/approved 按提案数；persisted/adopted 按登场实体数（不复用 approved）。
+  assert.deepEqual(metrics.entities.expansion, { proposed: 2, approved: 1, persisted: 1, adopted: 1 });
+  // 无分支产物时选择漏斗全零。
+  assert.deepEqual(metrics.choices, { pairedCheckpoints: 0, stateDifferent: 0, eventDifferent: 0, narrationDifferent: 0, notApplicable: 0 });
   assert.ok(metrics.trigramRepeat > 0 && metrics.trigramRepeat < 1);
   assert.equal(metrics.narrationLengths.mean > 0, true);
-  assert.equal(metrics.expansions.proposed, 2);
-  assert.equal(metrics.expansions.approved, 1);
-  assert.equal(metrics.expansions.adoptionRate, 0.5);
   assert.equal(metrics.maxScenesHit, false);
+});
+
+test("approved 但未登场的扩展提案：approved=1、adopted=0", () => {
+  const metrics = computeStoryEvalMetrics({
+    calls: [
+      {
+        kind: "expansion_decision",
+        decision: { ok: true, expansion: { newLocation: null, newNpc: { name: "神秘人", role: "npc", description: "d", locationId: "loc_1" } } },
+      },
+    ],
+    story: [
+      { kind: "scene", sceneIndex: 1, mainStage: 1, narration: "n", directorPlan: { allowedRevealFactIds: [], introducedEntities: [] }, newEvents: [] },
+    ],
+    manifest: {},
+  });
+  assert.equal(metrics.entities.expansion.proposed, 1);
+  assert.equal(metrics.entities.expansion.approved, 1);
+  assert.equal(metrics.entities.expansion.persisted, 0); // 动态 ID 不可观测 → 无法确认持久化
+  assert.equal(metrics.entities.expansion.adopted, 0);    // 绝不复用 approved
+});
+
+test("实际发现但未计划的事实只进 actual 不进 overlap", () => {
+  const metrics = computeStoryEvalMetrics({
+    calls: [],
+    story: [
+      {
+        kind: "scene", sceneIndex: 1, mainStage: 3, narration: "n",
+        directorPlan: { allowedRevealFactIds: ["f1"], introducedEntities: [] },
+        newEvents: [{ type: "fact_discovered", factId: "f9" }],
+      },
+    ],
+    manifest: {},
+  });
+  assert.deepEqual(metrics.factsPerAct[0].actualFactIds, ["f9"]);
+  assert.deepEqual(metrics.factsPerAct[0].overlapFactIds, []);
+  assert.deepEqual(metrics.factsPerAct[0].missedFactIds, ["f1"]);
+});
+
+const branchBase = {
+  eventsAfter: [{ type: "npc_met", entityId: "np_1" }],
+  stateDiff: {
+    location: { before: "loc_0", after: "loc_1" },
+    facts: { newlyDiscovered: [] },
+    quests: { after: {} },
+    relationships: { after: {} },
+    items: { gained: [] },
+    battle: { after: "idle" },
+    ending: { after: null },
+  },
+  narration: ["文本 A"],
+};
+
+test("两个 branch 仅 actionKey 不同但状态/事件/文本相同：不得算后果差异", () => {
+  const metrics = computeStoryEvalMetrics({
+    calls: [],
+    story: [],
+    manifest: {},
+    branches: [
+      { checkpoint: 2, choiceActionKey: "move:loc_1", ...branchBase },
+      { checkpoint: 2, choiceActionKey: "move:loc_2", ...branchBase },
+    ],
+  });
+  assert.equal(metrics.choices.pairedCheckpoints, 1);
+  assert.equal(metrics.choices.stateDifferent, 0);
+  assert.equal(metrics.choices.eventDifferent, 0);
+  assert.equal(metrics.choices.narrationDifferent, 0);
+  assert.equal(metrics.choices.notApplicable, 0);
+});
+
+test("成对分支确有状态/事件/文本差异时逐项计入，且 not_applicable 单独计数", () => {
+  const divergedBranch = {
+    checkpoint: 2,
+    choiceActionKey: "investigate:fact_2",
+    eventsAfter: [{ type: "fact_discovered", factId: "f2" }],
+    stateDiff: {
+      location: { before: "loc_0", after: "loc_0" },
+      facts: { newlyDiscovered: ["f2"] },
+      quests: { after: { q1: "active" } },
+      relationships: { after: {} },
+      items: { gained: ["it_9"] },
+      battle: { after: "idle" },
+      ending: { after: null },
+    },
+    narration: ["另一段文本"],
+  };
+  const metrics = computeStoryEvalMetrics({
+    calls: [],
+    story: [],
+    manifest: {},
+    branches: [
+      { checkpoint: 2, choiceActionKey: "move:loc_1", ...branchBase },
+      { checkpoint: 2, choiceActionKey: "investigate:fact_2", ...divergedBranch },
+    ],
+    notApplicable: [{ checkpoint: 4 }],
+  });
+  assert.equal(metrics.choices.pairedCheckpoints, 1);
+  assert.equal(metrics.choices.stateDifferent, 1);
+  assert.equal(metrics.choices.eventDifferent, 1);
+  assert.equal(metrics.choices.narrationDifferent, 1);
+  assert.equal(metrics.choices.notApplicable, 1);
 });
 
 test("pacingRank 顺序合法判定", () => {
@@ -74,6 +206,7 @@ test("main 对给定 runDir 写 metrics.json 并打印摘要", () => {
   assert.ok(files["/run/dir/metrics.json"] !== undefined);
   const written = JSON.parse(files["/run/dir/metrics.json"]);
   assert.equal(written.sceneCount, 3);
+  assert.ok(written.entities.expansion.adopted >= 0);
 });
 
 test("main 无参数时 RUN_DIR_REQUIRED", () => {

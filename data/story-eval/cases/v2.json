@@ -1,0 +1,86 @@
+[
+  {
+    "caseId": "wuxia-a",
+    "input": {
+      "gameType": "wuxia",
+      "characterName": "沈孤鸿",
+      "characterIdentity": "身世成谜的独行者",
+      "personalityTags": ["重义", "谨慎", "好奇"],
+      "worldPremise": "江湖动荡，镖局衰败，各派为一部失传剑谱明争暗斗，庙堂亦暗中插手。",
+      "storyOpening": "雨夜押镖入城，镖车半路被劫，唯一线索是一枚寒山派的青铜令牌。",
+      "narrativeStyle": "concise",
+      "contentIntensity": "normal",
+      "gameLength": "long"
+    }
+  },
+  {
+    "caseId": "wuxia-b",
+    "input": {
+      "gameType": "wuxia",
+      "characterName": "沈孤鸿",
+      "characterIdentity": "身世成谜的独行者",
+      "personalityTags": ["重义", "谨慎", "好奇"],
+      "worldPremise": "魔教残部潜回中原，武林盟主遇刺身亡，各派互相猜忌，边军调动的消息让局势更加紧张。",
+      "storyOpening": "你在山神庙避雨时救下重伤的捕头，他临死前交给你半块血玉，并指向一座地图上不存在的城镇。",
+      "narrativeStyle": "concise",
+      "contentIntensity": "normal",
+      "gameLength": "long"
+    }
+  },
+  {
+    "caseId": "science-fiction-a",
+    "input": {
+      "gameType": "science_fiction",
+      "characterName": "沈孤鸿",
+      "characterIdentity": "身世成谜的独行者",
+      "personalityTags": ["重义", "谨慎", "好奇"],
+      "worldPremise": "殖民舰队抵达陌生星域后跃迁引擎接连失效，船载智能与船员之间的信任正在崩塌。",
+      "storyOpening": "午夜执勤时你收到一段来自失联补给站的求救信号，信号末尾夹带着一段你自己的声音。",
+      "narrativeStyle": "concise",
+      "contentIntensity": "normal",
+      "gameLength": "long"
+    }
+  },
+  {
+    "caseId": "science-fiction-b",
+    "input": {
+      "gameType": "science_fiction",
+      "characterName": "沈孤鸿",
+      "characterIdentity": "身世成谜的独行者",
+      "personalityTags": ["重义", "谨慎", "好奇"],
+      "worldPremise": "火星殖民地宣布独立，地球封锁航道，两台地表采矿机器人的行为开始出现无法解释的偏差。",
+      "storyOpening": "你在反应堆检修口发现一枚不属于本舰的加密芯片，芯片上反复循环着地球总部的密文。",
+      "narrativeStyle": "concise",
+      "contentIntensity": "normal",
+      "gameLength": "long"
+    }
+  },
+  {
+    "caseId": "urban-a",
+    "input": {
+      "gameType": "urban",
+      "characterName": "沈孤鸿",
+      "characterIdentity": "身世成谜的独行者",
+      "personalityTags": ["重义", "谨慎", "好奇"],
+      "worldPremise": "滨海都市接连发生记忆被窃取的案件，一家科技公司被指与案件有关，而你在该公司担任档案管理员。",
+      "storyOpening": "深夜整理档案时你发现一叠封面写着自己名字的文件，里面的内容与你记忆中的经历完全不符。",
+      "narrativeStyle": "concise",
+      "contentIntensity": "normal",
+      "gameLength": "long"
+    }
+  },
+  {
+    "caseId": "urban-b",
+    "input": {
+      "gameType": "urban",
+      "characterName": "沈孤鸿",
+      "characterIdentity": "身世成谜的独行者",
+      "personalityTags": ["重义", "谨慎", "好奇"],
+      "worldPremise": "旧城改造区的地铁工地挖出古墓，灵异事件频发，开发商却坚持按原计划施工。",
+      "storyOpening": "你受雇调查工地附近的噪音投诉，夜巡时听到地下传来节奏均匀的敲击声，恰好每隔七秒一下。",
+      "narrativeStyle": "concise",
+      "contentIntensity": "normal",
+      "gameLength": "long"
+    }
+  }
+]

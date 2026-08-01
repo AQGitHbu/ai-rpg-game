@@ -12,7 +12,7 @@
 
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import {
   defaultAiEnvSources,
@@ -23,6 +23,18 @@ import {
 
 const PREFIX = "[story-eval-journey]";
 const TEST_FILE = "src/game/application/testing/storyEvalJourney.test.ts";
+const CASES_FILE = "data/story-eval/cases/v2.json";
+
+/**
+ * 读取 v2 case 集（与 TS loader 同一数据源）：门禁只消费 caseId 做展开，
+ * 结构校验由 storyEvalCases.ts 在 vitest 侧负责；读取失败视为致命门禁错误。
+ */
+export function loadStoryEvalCases() {
+  const raw = readFileSync(resolve(projectRoot, CASES_FILE), "utf8");
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error("v2 case 集不是数组");
+  return parsed;
+}
 
 export function resolveJourneyMode(argv) {
   const modeArg = argv.find((arg) => arg.startsWith("--mode="));
@@ -129,6 +141,27 @@ export function main({
     return 1;
   }
 
+  // v2 确定性展开（spec §7 / Task 13 Step 3）：每 case 固定生成 explore+objective
+  // 两个 StoryEvalRun；--case 只做试点/定向复测；--runs 仅在 --case 下把同一
+  // case/strategy 对复制 N 次并标记为 replicate，不得当作新 case。
+  const cases = loadStoryEvalCases();
+  const selectedCaseId = resolveCaseId(argv, cases);
+  if (selectedCaseId === null) {
+    log(`${PREFIX} INVALID_CASE`);
+    return 1;
+  }
+  const selectedCases = selectedCaseId === undefined
+    ? cases
+    : cases.filter((item) => item.caseId === selectedCaseId);
+  const runSpecs = selectedCases.flatMap((item) => [
+    { caseId: item.caseId, strategy: "explore" },
+    { caseId: item.caseId, strategy: "objective" },
+  ]);
+  if (runs > 1 && selectedCaseId === undefined) {
+    log(`${PREFIX} REPLICATE_REQUIRES_CASE：--runs 复制仅允许在 --case 内使用`);
+    return 1;
+  }
+
   // sources 注入式：node-test 传函数 () => []（确定性失败），生产默认传候选数组。
   const sourceList = typeof sources === "function" ? sources() : sources;
   const source = sourceList
@@ -143,37 +176,50 @@ export function main({
   mkdirSync(dbRoot, { recursive: true });
   sweepStaleTempDatabases();
   let failed = 0;
-  for (let runIndex = 0; runIndex < runs; runIndex += 1) {
-    // runId 带随机后缀：防并发/同毫秒冲突覆盖同目录产物。
-    const runId = `run-${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}-${randomUUID().slice(0, 8)}`;
-    const artifactDir = resolve(artifactRoot, runId);
-    const databasePath = resolve(dbRoot, `story-eval-run-${runIndex}-${randomUUID()}.sqlite`);
-    if (!isPathInside(artifactRoot, artifactDir)) {
-      log(`${PREFIX} ARTIFACT_PATH_REJECTED`);
-      return 1;
-    }
-    const childEnv = {
-      ...env,
-      RUN_REAL_AI_STORY_EVAL: "1",
-      STORY_EVAL_CAPTURE: "1",
-      STORY_EVAL_ARTIFACT_DIR: artifactDir,
-      STORY_EVAL_SEED: String(baseSeed + runIndex),
-      STORY_EVAL_MAX_SCENES: env.STORY_EVAL_MAX_SCENES ?? "60",
-      GAME_DB_PATH: databasePath,
-    };
-    for (const key of ["AI_API_BASE_URL", "AI_MODEL", "AI_API_KEY"]) {
-      childEnv[key] = aiValues.get(key).decoded;
-    }
-    log(`${PREFIX} record run ${runIndex + 1}/${runs} seed=${baseSeed + runIndex}`);
-    const status = runSpawn(childEnv);
-    if (status !== 0) failed += 1;
-    try {
-      rmSync(databasePath, { force: true });
-    } catch {
-      // Windows 句柄延迟：留待下次 sweep。
+  let replicateTotal = 0;
+  let runIndex = 0;
+  for (const runSpec of runSpecs) {
+    for (let replicate = 0; replicate < runs; replicate += 1) {
+      const isReplicate = replicate > 0;
+      if (isReplicate) replicateTotal += 1;
+      const seed = baseSeed + runIndex;
+      // 每个 run 独立 artifact/db：dir 用展开序号，replicate 同样占唯一序号。
+      const artifactDir = resolve(artifactRoot, `${runSpec.caseId}-${runSpec.strategy}-${runIndex}`);
+      const databasePath = resolve(dbRoot, `story-eval-run-${runIndex}-${randomUUID()}.sqlite`);
+      if (!isPathInside(artifactRoot, artifactDir)) {
+        log(`${PREFIX} ARTIFACT_PATH_REJECTED`);
+        return 1;
+      }
+      const childEnv = {
+        ...env,
+        RUN_REAL_AI_STORY_EVAL: "1",
+        STORY_EVAL_CAPTURE: "1",
+        STORY_EVAL_ARTIFACT_DIR: artifactDir,
+        STORY_EVAL_CASE_ID: runSpec.caseId,
+        STORY_EVAL_STRATEGY: runSpec.strategy,
+        STORY_EVAL_SEED: String(seed),
+        STORY_EVAL_MAX_SCENES: env.STORY_EVAL_MAX_SCENES ?? "60",
+        GAME_DB_PATH: databasePath,
+      };
+      for (const key of ["AI_API_BASE_URL", "AI_MODEL", "AI_API_KEY"]) {
+        childEnv[key] = aiValues.get(key).decoded;
+      }
+      const replicateMark = isReplicate ? ` replicate=${replicate + 1}/${runs}` : "";
+      log(`${PREFIX} record run ${runIndex + 1} case=${runSpec.caseId} strategy=${runSpec.strategy} seed=${seed}${replicateMark}`);
+      const status = runSpawn(childEnv);
+      if (status !== 0) failed += 1;
+      try {
+        rmSync(databasePath, { force: true });
+      } catch {
+        // Windows 句柄延迟：留待下次 sweep。
+      }
+      runIndex += 1;
     }
   }
-  log(`${PREFIX} ${failed === 0 ? "REAL_AI_JOURNEY_OK" : `REAL_AI_JOURNEY_FAILED ${failed}/${runs}`}`);
+  const total = runIndex;
+  const summary = `${failed === 0 ? "REAL_AI_JOURNEY_OK" : `REAL_AI_JOURNEY_FAILED ${failed}/${total}`}` +
+    (replicateTotal > 0 ? ` (含 replicate ${replicateTotal})` : "");
+  log(`${PREFIX} ${summary}`);
   return failed === 0 ? 0 : 1;
 }
 
