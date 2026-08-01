@@ -227,8 +227,9 @@ describe("createLiveScenarioCandidateSource：脱敏与稳定性", () => {
       { ok: false, code: "timeout", retryable: true, latencyMs: 5 },
       { ok: false, code: "timeout", retryable: true, latencyMs: 5 }
     ]);
+    // attempt 从 request.traceId 的 -retry 次数解析（无跨请求计数器）：重试须堆叠 -retry 后缀。
     await source.generate(REQUEST);
-    await source.generate(REQUEST);
+    await source.generate({ ...REQUEST, traceId: "trace-live-0001-retry" });
     expect(events.map((event) => event.attempt)).toEqual([1, 2]);
   });
 
