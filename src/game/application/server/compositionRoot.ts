@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import type { NewGameInput } from "@/game/domain";
 import { createServerConsoleLogger } from "@/game/logging/serverConsoleLogger";
 import wuxiaFixture from "../../../../data/fixtures/phase1/wuxia.json";
@@ -28,6 +29,12 @@ import {
 import { asGameId, type GameId } from "./persistence/gameRepository";
 import { createScenarioCandidateSource } from "./ai/scenarioCandidateSourceFactory";
 import { createRuntimeNarrativeSources } from "./ai/runtimeNarrativeSourceFactory";
+import {
+  createFileStoryEvalSink,
+  createStoryEvalApprovalObserver,
+  type StoryEvalApprovalEvent,
+  type StoryEvalSink,
+} from "./ai/storyEvalCapture";
 import { createTownPlanSource } from "./ai/townPlanSourceFactory";
 import {
   RuntimeNarrativeTaskCoordinator,
@@ -101,6 +108,25 @@ export type ServerGameEntryPointOptions = {
   readonly generationObserver?: (event: ScenarioGenerationEvent) => void;
 };
 
+// ---------------------------------------------------------------------------
+// 评估采集装配（spec §6.2）：仅当 STORY_EVAL_CAPTURE=1 时创建 sink 并注入
+// captureSink/approvalObserver；未设置时全 undefined（零开销、零行为变化）。
+// run-id 沿用 phase10 惯例：<ISO 时间戳>-<pid>（门禁脚本经 STORY_EVAL_ARTIFACT_DIR 覆盖）。
+// ---------------------------------------------------------------------------
+
+export function resolveStoryEvalAssembly(env: Record<string, string | undefined>): Readonly<{
+  captureSink: StoryEvalSink | undefined;
+  approvalObserver: ((event: StoryEvalApprovalEvent) => void) | undefined;
+}> {
+  if (env.STORY_EVAL_CAPTURE !== "1") {
+    return { captureSink: undefined, approvalObserver: undefined };
+  }
+  const artifactDir = env.STORY_EVAL_ARTIFACT_DIR ??
+    resolve("artifacts", "story-eval", `run-${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`);
+  const sink = createFileStoryEvalSink(artifactDir);
+  return { captureSink: sink, approvalObserver: createStoryEvalApprovalObserver(sink) };
+}
+
 /**
  * 装配一套真实入口：env 记录仅经 sqliteClient 的工厂解析 GAME_DB_PATH，
  * 测试注入指向 tmp/ 的记录，生产默认 process.env（本层是唯一允许读取处）。
@@ -109,12 +135,13 @@ export function createServerGameEntryPoints(
   env: Record<string, string | undefined> = process.env,
   options: ServerGameEntryPointOptions = {}
 ): ServerGameEntryPoints {
+  const storyEval = resolveStoryEvalAssembly(env);
   const logger = createServerConsoleLogger();
   const repository = createSqliteGameRepository({
     clientFactory: createServerSqliteClientFactory(env),
     logError: (operation) => logger.error("sqlite_repository_failure", { operation })
   });
-  const runtimeNarrativeSources = createRuntimeNarrativeSources(env, { logger });
+  const runtimeNarrativeSources = createRuntimeNarrativeSources(env, { logger, captureSink: storyEval.captureSink });
   const dependencies: CreateGameDependencies = {
     repository,
     // 生产 provider：UUID 存档 ID、随机 seed、真实时钟（ISO 8601）。
@@ -124,7 +151,7 @@ export function createServerGameEntryPoints(
     // Phase 4B：按 AI 运行时配置装配 source——配置有效走 live，否则 unavailable
     // （玩家稳定走 fallback）。fixture source 绝不按 env 切入生产。
     // traceId 只进 source 请求与脱敏审计；observer 仅接收脱敏阶段事件。
-    scenarioCandidateSource: createScenarioCandidateSource(env, { logger }),
+    scenarioCandidateSource: createScenarioCandidateSource(env, { logger, captureSink: storyEval.captureSink }),
     newTraceId: () => randomUUID(),
     generationObserver: options.generationObserver,
     runtimeNarrativeSources,
@@ -152,7 +179,8 @@ export function createServerGameEntryPoints(
     newTraceId: () => randomUUID(),
     now: () => new Date().toISOString(),
     runtimeNarrativeSources,
-    logger
+    logger,
+    approvalObserver: storyEval.approvalObserver,
   }, logger);
   const townPlanCoordinator = new TownPlanTaskCoordinator({
     repository,
