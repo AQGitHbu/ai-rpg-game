@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { validateNewGameInput, type NewGameInput } from "@/game/domain";
 import wuxiaFixture from "../../../../../data/fixtures/phase1/wuxia.json";
-import type { StoryEvalCallRecord, StoryEvalSink } from "./storyEvalCapture";
+import type { StoryEvalCallRecord, StoryEvalSink } from "../../storyEvalCaptureTypes";
 import { createRuntimeNarrativeSources } from "./runtimeNarrativeSourceFactory";
 import { createScenarioCandidateSource } from "./scenarioCandidateSourceFactory";
 

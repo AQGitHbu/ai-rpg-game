@@ -2,7 +2,7 @@ import { createOpenAiCompatibleTransport } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
 import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
 import { createLiveRuntimeNarrativeSources } from "./liveRuntimeNarrativeSources";
-import type { StoryEvalSink } from "./storyEvalCapture";
+import type { StoryEvalSink } from "../../storyEvalCaptureTypes";
 import { NARRATIVE_CONTRACT_VERSION, type DirectorSource, type NpcLineSource, type SceneScriptSource } from "../../runtimeNarrative";
 
 export function createRuntimeNarrativeSources(env: Record<string, string | undefined>, options: Readonly<{ logger?: GameLogger; captureSink?: StoryEvalSink }> = {}): Readonly<{ directorSource: DirectorSource; sceneScriptSource: SceneScriptSource; npcLineSource: NpcLineSource }> {

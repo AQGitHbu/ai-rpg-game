@@ -2,7 +2,7 @@ import type { AiMessage, AiTransport, AiTransportConfig, AiTransportFailureCode 
 import type { DirectorProposal, NpcPerformanceProposal, SceneScriptProposal } from "@/game/gameplay/rpg/narrative";
 import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
 import { NARRATIVE_CONTRACT_VERSION, type DirectorAttempt, type DirectorRequest, type DirectorSource, type NarrativeFailureCategory, type NpcLineAttempt, type NpcLineRequest, type NpcLineSource, type SceneScriptAttempt, type SceneScriptRequest, type SceneScriptSource } from "../../runtimeNarrative";
-import type { StoryEvalSink } from "./storyEvalCapture";
+import type { StoryEvalSink } from "../../storyEvalCaptureTypes";
 
 export type Role = "director" | "writer" | "npc";
 type Request = DirectorRequest | SceneScriptRequest | NpcLineRequest;

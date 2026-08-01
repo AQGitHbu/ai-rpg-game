@@ -2,12 +2,8 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  createFileStoryEvalSink,
-  createStoryEvalApprovalObserver,
-  type StoryEvalApprovalEvent,
-  type StoryEvalCallRecord,
-} from "./storyEvalCapture";
+import { createFileStoryEvalSink, createStoryEvalApprovalObserver } from "./storyEvalCapture";
+import type { StoryEvalApprovalEvent, StoryEvalCallRecord } from "../../storyEvalCaptureTypes";
 
 const dirs: string[] = [];
 afterEach(() => {

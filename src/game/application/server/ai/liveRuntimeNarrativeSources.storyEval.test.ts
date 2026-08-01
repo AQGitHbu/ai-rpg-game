@@ -1,6 +1,6 @@
 /** @vitest-environment node */
 import { describe, expect, it, vi } from "vitest";
-import type { StoryEvalCallRecord, StoryEvalSink } from "./storyEvalCapture";
+import type { StoryEvalCallRecord, StoryEvalSink } from "../../storyEvalCaptureTypes";
 import { createLiveRuntimeNarrativeSources } from "./liveRuntimeNarrativeSources";
 
 const config = { baseUrl: "http://127.0.0.1:9/v1", apiKey: "k", model: "m" };

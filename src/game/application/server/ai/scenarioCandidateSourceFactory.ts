@@ -11,7 +11,7 @@ import {
 import { buildScenarioPromptMessages } from "./scenarioPrompt";
 import { createStructuredScenarioGenerationAudit } from "./scenarioGenerationAudit";
 import { buildScenarioResponseFormatExtraBody } from "./scenarioResponseFormat";
-import type { StoryEvalSink } from "./storyEvalCapture";
+import type { StoryEvalSink } from "../../storyEvalCaptureTypes";
 
 // ---------------------------------------------------------------------------
 // scenarioCandidateSourceFactory：把 @ai-game/ai-transport 的接入收敛在

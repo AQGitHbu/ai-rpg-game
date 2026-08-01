@@ -6,7 +6,7 @@ import { compileBlueprintExpansion } from "@/game/gameplay/rpg/narrative";
 import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 import { reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
-import type { StoryEvalApprovalEvent } from "./server/ai/storyEvalCapture";
+import type { StoryEvalApprovalEvent } from "./storyEvalCaptureTypes";
 
 export type GeneratePendingNarrativeSceneDependencies = Readonly<{
   repository: GameRepository;

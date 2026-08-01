@@ -17,7 +17,7 @@ import {
 } from "@/game/gameplay/rpg/narrative";
 import { projectAvailableActions } from "@/game/gameplay/rpg/actions";
 import { NARRATIVE_CONTRACT_VERSION, type DirectorSource, type SceneScriptSource, type NpcLineSource, type DirectorAttempt, type SceneScriptAttempt } from "./runtimeNarrative";
-import type { StoryEvalApprovalEvent } from "./server/ai/storyEvalCapture";
+import type { StoryEvalApprovalEvent } from "./storyEvalCaptureTypes";
 import {
   toDirectorContext,
   toSceneScriptContext,

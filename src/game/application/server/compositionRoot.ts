@@ -29,12 +29,8 @@ import {
 import { asGameId, type GameId } from "./persistence/gameRepository";
 import { createScenarioCandidateSource } from "./ai/scenarioCandidateSourceFactory";
 import { createRuntimeNarrativeSources } from "./ai/runtimeNarrativeSourceFactory";
-import {
-  createFileStoryEvalSink,
-  createStoryEvalApprovalObserver,
-  type StoryEvalApprovalEvent,
-  type StoryEvalSink,
-} from "./ai/storyEvalCapture";
+import { createFileStoryEvalSink, createStoryEvalApprovalObserver } from "./ai/storyEvalCapture";
+import type { StoryEvalApprovalEvent, StoryEvalSink } from "../storyEvalCaptureTypes";
 import { createTownPlanSource } from "./ai/townPlanSourceFactory";
 import {
   RuntimeNarrativeTaskCoordinator,

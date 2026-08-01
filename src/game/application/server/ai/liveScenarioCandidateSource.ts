@@ -8,7 +8,7 @@ import {
   type ScenarioGenerationRequest
 } from "../../scenarioGeneration";
 import type { ScenarioGenerationAudit } from "./scenarioGenerationAudit";
-import type { StoryEvalSink } from "./storyEvalCapture";
+import type { StoryEvalSink } from "../../storyEvalCaptureTypes";
 
 // ---------------------------------------------------------------------------
 // liveScenarioCandidateSource：真实 AI 候选来源（spec §3）。

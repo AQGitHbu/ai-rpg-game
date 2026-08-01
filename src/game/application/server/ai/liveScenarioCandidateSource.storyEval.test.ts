@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AiMessage, AiTransport, AiTransportConfig, AiTransportFailureCode } from "@ai-game/ai-transport";
 import type { ValidatedNewGameInput } from "@/game/domain";
-import type { StoryEvalCallRecord, StoryEvalSink } from "./storyEvalCapture";
+import type { StoryEvalCallRecord, StoryEvalSink } from "../../storyEvalCaptureTypes";
 import { createLiveScenarioCandidateSource } from "./liveScenarioCandidateSource";
 
 const config: AiTransportConfig = { baseUrl: "http://127.0.0.1:9/v1", apiKey: "k", model: "m" };

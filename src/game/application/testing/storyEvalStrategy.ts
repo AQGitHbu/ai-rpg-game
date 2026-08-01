@@ -1,11 +1,27 @@
 // ---------------------------------------------------------------------------
 // storyEvalStrategy：评估旅程的确定性选择策略（spec §7）。
-// 只依赖 GameRecord（评估专用 repository 的读取结果），不经过客户端投影，
+// 只依赖评估专用 repository 读取结果的结构化子集（本地 StoryEvalGameRecord，
+// 与真实 GameRecord/GameState 结构兼容），不经过客户端投影，
 // 不触碰 entry points 安全红线。PRNG 为 mulberry32 级别，种子稳定可复现。
 // ---------------------------------------------------------------------------
 
 import type { NewGameInput } from "@/game/domain";
-import type { GameRecord } from "../server/persistence/gameRepository";
+
+/** GameRecord.state 的本地结构化子集：仅含策略实际读取的字段（边界守卫要求
+ *  application 层不 import server 端口实现；真实 GameRecord/GameState 可赋值给本类型）。
+ *  id 字段为 unknown：策略只做 String() 归一比较，不依赖 id 的具体品牌类型。 */
+type StoryEvalGameRecord = Readonly<{
+  state: Readonly<{
+    readonly visitedLocationIds: readonly unknown[];
+    readonly npcs: readonly Readonly<{ readonly npcId: unknown; readonly met: boolean }>[];
+    readonly worldFacts: readonly Readonly<{ readonly factId: unknown; readonly discovered: boolean }>[];
+    readonly narrative: Readonly<{
+      readonly currentScene: Readonly<{
+        readonly choices: readonly { readonly actionKey: string }[];
+      }> | null;
+    }>;
+  }>;
+}>;
 
 /** mulberry32：32 位种子 PRNG，返回 [0,1) 均匀序列。 */
 export function mulberry32(seed: number): () => number {
@@ -39,7 +55,7 @@ function splitAction(actionKey: string): { kind: string; target: string } {
  * 行动是否为探索性：前往未访问地点 / 与未见 NPC 交谈 / 调查未发现事实 /
  * 拾取物品（功能推进）。move/talk/investigate 是否探索取决于 GameRecord 状态。
  */
-export function isExploratory(actionKey: string, record: GameRecord): boolean {
+export function isExploratory(actionKey: string, record: StoryEvalGameRecord): boolean {
   const { kind, target } = splitAction(actionKey);
   if (kind === "take_item") return true;
   if (kind === "investigate") {
@@ -58,7 +74,7 @@ export function isExploratory(actionKey: string, record: GameRecord): boolean {
 
 /** 探索优先选择：唯一探索选项必选；同类掷硬币；无探索随机。返回下标与理由（记入 story.jsonl）。 */
 export function pickNarrativeChoice(
-  record: GameRecord,
+  record: StoryEvalGameRecord,
   rand: () => number,
 ): { index: 0 | 1; reason: "explore" | "random" } {
   const choices = record.state.narrative.currentScene?.choices ?? [];

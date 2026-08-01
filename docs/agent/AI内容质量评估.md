@@ -10,8 +10,12 @@
    角色/尝试序号/完整 prompt/模型原文/解析后候选/延迟。中间层
    `runtimeNarrativeSourceFactory.ts` 与 `scenarioCandidateSourceFactory.ts` 透传。
 2. **编排层审批记录**（`calls.jsonl` 补充）：`OrchestrateNarrativeSceneInput.approvalObserver`
-   可选字段，发出 role_approval / plan_approved / expansion_decision 三类事件（类型定义在
-   `src/game/application/server/ai/storyEvalCapture.ts`）。透传链：compositionRoot →
+   可选字段，发出 role_approval / plan_approved / expansion_decision 三类事件。类型契约
+   （StoryEvalCallRecord / StoryEvalApprovalRecord / StoryEvalRecord / StoryEvalSink /
+   StoryEvalApprovalEvent）在 application 层 `src/game/application/storyEvalCaptureTypes.ts`
+   （零 node:fs，analyze/judge 脚本与采集通道共享的契约来源）；
+   `server/ai/storyEvalCapture.ts` 只保留 `createFileStoryEvalSink` /
+   `createStoryEvalApprovalObserver` 两个 node:fs 实现。透传链：compositionRoot →
    `RuntimeNarrativeTaskCoordinator`（deps 类型即 GeneratePendingNarrativeSceneDependencies）→
    `generatePendingNarrativeScene` → `orchestrateNarrativeScene`。
 3. **驱动侧故事流水**（`story.jsonl`）：`src/game/application/testing/storyEvalJourney.test.ts`

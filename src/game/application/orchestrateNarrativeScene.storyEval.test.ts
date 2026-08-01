@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { asFactId, asLocationId, asNpcId, type GameState, type ScenarioBlueprint } from "@/game/domain";
 import { NARRATIVE_CONTRACT_VERSION, type DirectorSource, type SceneScriptSource, type NpcLineSource } from "./runtimeNarrative";
 import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
-import type { StoryEvalApprovalEvent } from "./server/ai/storyEvalCapture";
+import type { StoryEvalApprovalEvent } from "./storyEvalCaptureTypes";
 
 // 与 orchestrateNarrativeScene.test.ts 相同的构造助手（规格 §11 允许测试内复制）。
 function buildTestBlueprint(): ScenarioBlueprint {
