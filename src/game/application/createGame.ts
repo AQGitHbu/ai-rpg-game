@@ -168,7 +168,7 @@ export async function createGame(
 
   // ── 候选编排：最多两次 source 尝试，每次允许一次机械修复；全部失败走 fallback。
   emit({ stage: "requested" });
-  const request = { input: validatedInput.value, seed, traceId: deps.newTraceId() };
+  const baseRequest = { input: validatedInput.value, seed, traceId: deps.newTraceId() };
   let blueprint: ScenarioBlueprint | null = null;
   let source: GenerationSource = "fallback";
   // 默认值保证 fallback 事件始终有一个稳定、可汇总的脱敏原因。
@@ -176,6 +176,11 @@ export async function createGame(
 
   for (let attemptIndex = 0; attemptIndex < 2 && blueprint === null; attemptIndex += 1) {
     if (attemptIndex === 1) emit({ stage: "retrying" });
+    // 每次尝试唯一可解析的 traceId：第 N 次尝试堆叠 N 个 -retry（评估采集按此解析 attempt）。
+    const request = {
+      ...baseRequest,
+      traceId: `${baseRequest.traceId}${"-retry".repeat(attemptIndex)}`,
+    };
     let attempt: ScenarioCandidateAttempt;
     try {
       attempt = await deps.scenarioCandidateSource.generate(request);
