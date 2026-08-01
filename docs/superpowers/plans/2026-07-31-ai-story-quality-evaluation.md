@@ -2029,7 +2029,10 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       // 1. pending 时确保生成并轮询到场景/战斗/结局就绪（带超时）。
       if (view.narrativeGeneration.status === "pending" || view.narrative === null) {
         await entry.ensureNarrativeGeneration();
-        const deadline = Date.now() + 60_000;
+        // 勘误（试点）：固定 60s 对真实 provider 延迟过短（单次调用最长 120s、一场景至多 3 次），
+        // 旅程会在后台任务完成前退出、测试进程退出掐死飞行中 AI 调用。改为可配
+        // STORY_EVAL_SCENE_WAIT_MS（门禁注入 420000），默认值仍为 60000 供离线 mock。
+        const deadline = Date.now() + resolveSceneWaitMs(env);
         while (Date.now() < deadline) {
           view = await getView();
           if (view.narrative !== null || view.battle !== null || view.ending !== null) break;
@@ -2436,8 +2439,12 @@ describe("Story eval journey (real AI, opt-in)", () => {
       const storyLines = readFileSync(join(artifactDir, "story.jsonl"), "utf8").trim().split("\n");
       expect(storyLines.length).toBeGreaterThan(0);
     },
-    1_800_000,
-  );
+      1_800_000,
+      // 勘误（试点）：固定 30 分钟 vitest 超时会在旅程未收敛时直接掐死测试进程，
+      // manifest 丢失、无法区分"未收敛"与"管线故障"。改为旅程自身总预算
+      // STORY_EVAL_TOTAL_BUDGET_MS（默认 90 分钟）优雅收尾记 time_budget，
+      // vitest 超时 = 预算 + 10 分钟余量（见实现文件）。
+    );
 });
 ```
 

@@ -199,6 +199,8 @@ export function main({
         STORY_EVAL_STRATEGY: runSpec.strategy,
         STORY_EVAL_SEED: String(seed),
         STORY_EVAL_MAX_SCENES: env.STORY_EVAL_MAX_SCENES ?? "60",
+        STORY_EVAL_SCENE_WAIT_MS: env.STORY_EVAL_SCENE_WAIT_MS ?? String(3 * 120_000 + 60_000),
+        STORY_EVAL_TOTAL_BUDGET_MS: env.STORY_EVAL_TOTAL_BUDGET_MS ?? String(90 * 60_000),
         GAME_DB_PATH: databasePath,
       };
       for (const key of ["AI_API_BASE_URL", "AI_MODEL", "AI_API_KEY"]) {

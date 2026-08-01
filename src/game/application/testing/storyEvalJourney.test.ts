@@ -233,12 +233,27 @@ function diffStateFacts(before: StateFacts, after: StateFacts) {
 
 type StrategyPicker = (record: GameRecord, rand: () => number) => { index: number; reason: string };
 
+function resolveSceneWaitMs(env: Record<string, string | undefined>): number {
+  const raw = env.STORY_EVAL_SCENE_WAIT_MS;
+  if (raw === undefined) return 60_000;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 60_000;
+}
+
+function resolveTotalBudgetMs(env: Record<string, string | undefined>): number {
+  const raw = env.STORY_EVAL_TOTAL_BUDGET_MS;
+  if (raw === undefined) return 90 * 60_000;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 60_000 ? parsed : 90 * 60_000;
+}
+
 /** 分支继续生成两场：返回两场场景的玩家可读 narration。 */
 async function runBranchScenes(
   forkEntry: ServerGameEntryPoints,
   forkRepo: SqliteGameRepository,
   picker: StrategyPicker,
   rand: () => number,
+  env: Record<string, string | undefined>,
 ): Promise<{ narration: string[] }> {
   const narration: string[] = [];
   const refreshView = async (): Promise<GameSessionView> => {
@@ -251,7 +266,7 @@ async function runBranchScenes(
     if (view.narrativeGeneration.status === "pending" || view.narrative === null) {
       if (view.narrativeGeneration.status === "pending") {
         await forkEntry.ensureNarrativeGeneration();
-        const deadline = Date.now() + 60_000;
+        const deadline = Date.now() + resolveSceneWaitMs(env);
         while (Date.now() < deadline) {
           view = await refreshView();
           if (view.narrative !== null || view.battle !== null || view.ending !== null) break;
@@ -363,7 +378,7 @@ async function runCheckpointBranches(args: {
         expectedRevision: view.revision,
       });
       if (!forced.ok) throw new Error(`branch choice rejected: ${forced.code}`);
-      const { narration } = await runBranchScenes(forkEntry, forkRepo, picker, rand);
+      const { narration } = await runBranchScenes(forkEntry, forkRepo, picker, rand, env);
       const finalLoaded = await forkRepo.getCurrentGame();
       if (!finalLoaded.ok || finalLoaded.status !== "active") throw new Error("fork final record unavailable");
       const eventsAfter = finalLoaded.record.state.eventLedger
@@ -408,7 +423,7 @@ export type StoryEvalJourneyConfig = Readonly<{
 }>;
 
 export type StoryEvalJourneyResult = Readonly<{
-  status: "converged" | "max_scenes" | "aborted" | "exhausted" | "generation_failed" | "incomplete";
+  status: "converged" | "max_scenes" | "aborted" | "exhausted" | "generation_failed" | "time_budget" | "incomplete";
   sceneCount: number;
   fallbackScenes: number;
   openingSource: string;
@@ -418,6 +433,8 @@ export type StoryEvalJourneyResult = Readonly<{
 
 export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promise<StoryEvalJourneyResult> {
   const { env, dbPath, artifactDir, strategySeed, maxScenes, requireGeneratedOpening, caseId, strategy } = config;
+  const journeyStartedAt = Date.now();
+  const totalBudgetMs = resolveTotalBudgetMs(env);
   const rand = mulberry32(hashStringToSeed(String(strategySeed)));
   // v2：按 case 构造输入（v2.json 数据事实源）；未知 caseId 直接失败（门禁保证合法）。
   const storyEvalCase = loadStoryEvalCases().find((item) => item.caseId === caseId);
@@ -488,12 +505,16 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
     const getCalls = createCachedCallsReader(artifactDir);
 
     for (let sceneIndex = 1; sceneIndex <= maxScenes; sceneIndex += 1) {
+      if (Date.now() - journeyStartedAt >= totalBudgetMs) {
+        status = "time_budget";
+        break;
+      }
       // 1. pending 时确保生成并轮询到场景/战斗/结局就绪（带超时）；
       //    生成任务结束仍无场景（规则动作耗尽或生成失败）→ 停止旅程。
       if (view.narrativeGeneration.status === "pending" || view.narrative === null) {
         if (view.narrativeGeneration.status === "pending") {
           await entry.ensureNarrativeGeneration();
-          const deadline = Date.now() + 60_000;
+          const deadline = Date.now() + resolveSceneWaitMs(env);
           while (Date.now() < deadline) {
             view = await getView();
             if (view.narrative !== null || view.battle !== null || view.ending !== null) break;
@@ -925,7 +946,7 @@ describe("Story eval journey (offline)", () => {
     expect(blueprint.world.name).toBeTruthy();
     expect(blueprint.quests.some((quest) => quest.kind === "main")).toBe(true);
     expect(blueprint.endings.length).toBeGreaterThan(0);
-  });
+  }, 90_000);
 
   it("objective 策略记录任务导向选择理由", async () => {
     const fetchSpy = createFakeAiFetch();
@@ -961,7 +982,7 @@ describe("Story eval journey (offline)", () => {
       const reason = row.playerChoice?.reason ?? "";
       expect(reason.startsWith("objective:") || reason === "random").toBe(true);
     }
-  });
+  }, 90_000);
 
   it("主线阶段检查点：同一记录分叉两个独立 SQLite，分支 actionKey 不同", async () => {
     const fetchSpy = createFakeAiFetch();
@@ -1067,7 +1088,7 @@ describe("Story eval journey (offline)", () => {
       .map((line) => JSON.parse(line))
       .filter((record) => record.kind === "plan_approved");
     expect(planApproved.length).toBeGreaterThan(0);
-  });
+  }, 90_000);
 });
 
 describe("Story eval journey (real AI, opt-in)", () => {
@@ -1097,6 +1118,6 @@ describe("Story eval journey (real AI, opt-in)", () => {
       const storyLines = readFileSync(join(artifactDir, "story.jsonl"), "utf8").trim().split("\n");
       expect(storyLines.length).toBeGreaterThan(0);
     },
-    1_800_000,
+    Number(process.env.STORY_EVAL_TOTAL_BUDGET_MS ?? (90 * 60_000).toString()) + 600_000,
   );
 });

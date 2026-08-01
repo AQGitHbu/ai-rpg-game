@@ -124,7 +124,7 @@ S4 评分规则：早期预测与故事级评审使用**独立的 callJudge 调�
 
 新建 `scripts/storyEvalJourney.mjs`（env 门禁 + spawnSync vitest 子进程，沿用 `scripts/phase11StoryContinuityJourney.mjs` 的门禁模式，配 `storyEvalJourney.node-test.mjs`）与旅程本体 `src/game/application/testing/storyEvalJourney.test.ts`。
 
-- 驱动路径：旅程本体经 `createServerGameEntryPoints`（composition root）驱动——这是唯一能命中 §6.2 装配点、且与浏览器局同一条服务端路径的方式（phase11 旅程测试绕开 composition root 手工构造 deps，本旅程不沿用该内部模式）。entry points 的 ensure 不等待 provider，驱动循环轮询场景直至 ready（带超时）。entry points 刻意不暴露 repository/actionKey/seed/蓝图（安全红线不动、不新增公开 API）：驱动侧另以 `createSqliteGameRepository` + 同一 `GAME_DB_PATH` 打开一个**评估专用 repository**（server-only 测试进程内、只读使用），从 `GameRecord` 读取 actionKey、主线阶段、世界 seed、蓝图、memory、关系和结构化事件，不经过任何客户端投影。
+- 驱动路径：旅程本体经 `createServerGameEntryPoints`（composition root）驱动——这是唯一能命中 §6.2 装配点、且与浏览器局同一条服务端路径的方式（phase11 旅程测试绕开 composition root 手工构造 deps，本旅程不沿用该内部模式）。entry points 的 ensure 不等待 provider，驱动循环轮询场景直至 ready（带超时：单场景等待上限 `STORY_EVAL_SCENE_WAIT_MS`，见 §10；真实运行由门禁脚本注入 420s，覆盖三角色各至多 120s 的最坏情形——60s 固定值在真实延迟下会让旅程在后台任务完成前退出，测试进程退出即掐死飞行中的 AI 调用，pending 永不清理）。entry points 刻意不暴露 repository/actionKey/seed/蓝图（安全红线不动、不新增公开 API）：驱动侧另以 `createSqliteGameRepository` + 同一 `GAME_DB_PATH` 打开一个**评估专用 repository**（server-only 测试进程内、只读使用），从 `GameRecord` 读取 actionKey、主线阶段、世界 seed、蓝图、memory、关系和结构化事件，不经过任何客户端投影。
 - 开关与环境穿透：必须显式 `RUN_REAL_AI_STORY_EVAL=1` 才发真实计费调用；未设置时打印提示 exit 0。门禁脚本向子进程 childEnv 显式传递 `STORY_EVAL_CAPTURE=1`、run 目录、`STORY_EVAL_SEED` 与指向 `tmp/` 临时 SQLite 的 `GAME_DB_PATH`（参照 phase11 传递 artifact 目录的方式）。
 - 单局流程：创建 `gameLength=long` 新局（开局 AI 不可用则本次运行判失败并如实报告，不评 fallback 开局）→ 轮询 ready → 记录 → 按策略提交选择 → 直至结局或场景上限（默认 60：按 8 幕 × 约 6–8 场景/幕 ≈ 48–64 的上界取整，启发式安全阀而非领域预算，`STORY_EVAL_MAX_SCENES` 可配；超限如实记"未收敛"，本身是基线发现）→ 战斗阶段 attack 优先打完（`battle_action` 为独立 intent，与 phase11 现有实践一致）。每局结束先做 artifact completeness 校验；缺 `calls.jsonl`、必要 manifest、S4 answer key 或任一场的评估字段时标为 `incomplete`，不可进入分析或评审。
 - 选择策略（可复现 + 覆盖面）：每个评测 case 至少运行探索优先和目标优先两种策略。对选项对比，驱动在预设的三个主线检查点从同一 ready `GameRecord` 快照复制两个隔离评估库，各执行两个 choiceToken 并继续两场；该成对 branch artifact 是 S8/S9 的唯一反事实证据。行动分类需要 actionKey，而客户端视图刻意不含 actionKey（安全红线），驱动侧经上述评估专用 repository 读取场景状态获得 actionKey——不经过客户端投影，不破坏红线。策略 seed、检查点与每次选择理由记入 `story.jsonl`。
@@ -167,6 +167,8 @@ S4 评分规则：早期预测与故事级评审使用**独立的 callJudge 调�
 | `RUN_REAL_AI_STORY_EVAL` | `1` 时评估旅程脚本才发真实计费调用 |
 | `STORY_EVAL_SEED` | 选择策略与抽样的确定性种子 |
 | `STORY_EVAL_MAX_SCENES` | 单局场景上限（默认 60，安全阀） |
+| `STORY_EVAL_SCENE_WAIT_MS` | 单场景生成等待上限（默认 60000，仅离线 mock 量级；真实 provider 单次调用最长 `timeoutMs=120000`、一场景至多 3 次角色调用，门禁脚本注入 `3*120000+60000`=420000，覆盖最坏情形） |
+| `STORY_EVAL_TOTAL_BUDGET_MS` | 单局旅程总预算（默认 90 分钟，门禁脚本注入同值；超预算时旅程优雅收尾并如实记 `status=time_budget`，产物仍完整可分析——避免被 vitest 测试超时直接掐死导致 manifest 丢失；vitest 超时=预算+10 分钟安全余量） |
 | `RUN_REAL_AI_STORY_EVAL_JUDGE` | `1` 时评审脚本才发真实计费调用 |
 | `STORY_EVAL_JUDGE_MODEL` | 覆盖评审模型（默认 `AI_MODEL`） |
 
