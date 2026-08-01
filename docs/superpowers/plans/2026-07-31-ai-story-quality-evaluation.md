@@ -292,7 +292,8 @@ git commit -m "feat(ai-story-eval): add story eval capture sink module"
 **Interfaces:**
 - Consumes: `StoryEvalSink`（Task 1）
 - Produces: `LiveRuntimeNarrativeSourcesOptions`（原 inline input 类型具名导出）：`{ transport: AiTransport; config: AiTransportConfig; responseFormat?: (role: Role) => Readonly<Record<string, unknown>> | undefined; logger?: GameLogger; captureSink?: StoryEvalSink }`；`Role` 类型导出。每次调用捕获：role、traceId（**归一化场景级 id**，见下）、attempt、完整 messages、rawResponse、repair 后候选、失败类别、latencyMs；未传 `captureSink` 时行为与现状完全一致。
-- **关联键设计**（spec §6.1，Task 1 类型注释同步）：编排层构造的 request.traceId 形态为 `` `<场景id>-<角色后缀>` ``（director→`-director`、writer→`-script`、npc→`-npcLine`），重试追加 `-retry`。source 层**无全局计数器**，从 request.traceId 纯函数解析：`attempt` = `-retry` 出现次数 + 1；`traceId` = 去 `-retry` 与角色后缀后的场景级 id。同一场景同一角色的重试记录共享归一化 traceId、attempt 递增；不同场景互不污染。
+- **关联键设计**（spec §6.1，Task 1 类型注释同步）：编排层构造的 request.traceId 形态为 `` `<场景id>-<角色后缀>` ``（director→`-director`、writer→`-script`、npc→`-npcLine`），每次重试追加一个 `-retry`（第 N 次重试有 N 个 `-retry` 后缀）。source 层**无全局计数器**，从 request.traceId 纯函数解析：`attempt` = `-retry` 出现次数 + 1；`traceId` = 去 `-retry` 与角色后缀后的场景级 id。同一场景同一角色的重试记录共享归一化 traceId、attempt 递增；不同场景互不污染。
+- **⚠️ 前置修复（本任务 Step 3 一并完成）**：现有编排层 `orchestrateNarrativeScene.ts` 的 traceId 构造为 `` `${traceId}-director${attempt === 0 ? "" : "-retry"}` ``——对所有非首次尝试只追加**一个** `-retry`，导致第 2、3 次尝试 traceId 相同、attempt 无法区分。必须改为按尝试次数堆叠：`` `${traceId}-director${"-retry".repeat(attempt)}` ``（director/writer/npc 三处同理）。此修改是关联键契约的前提，不改变日志脱敏、fixture 格式或 journey 契约（traceId 仅在内部诊断与采集通道使用）。Task 5 的 approvalObserver 中 `attempt` 变量直接取循环变量 +1（不再依赖 traceId 解析）。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -383,7 +384,7 @@ describe("createLiveRuntimeNarrativeSources captureSink", () => {
     expect(records.map((record) => record.traceId)).toEqual(["t", "t", "t"]);
   });
 
-  it("同场景重试 attempt 递增，跨场景不泄漏（无全局计数器）", async () => {
+  it("同场景重试 attempt 递增（含 3 次尝试），跨场景不泄漏（无全局计数器）", async () => {
     const records: StoryEvalCallRecord[] = [];
     const sink: StoryEvalSink = { append: (record) => records.push(record as StoryEvalCallRecord) };
     const fetchSpy = okFetch(JSON.stringify({
@@ -396,13 +397,17 @@ describe("createLiveRuntimeNarrativeSources captureSink", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchSpy);
     try {
       const sources = createLiveRuntimeNarrativeSources({ transport: createTransport(), config, captureSink: sink });
-      // 场景 a：首次 + 重试（编排层 traceId 形态：`a-director`、`a-director-retry`）
+      // 场景 a：首次 + 两次重试（编排层 traceId 堆叠：`a-director`、`a-director-retry`、`a-director-retry-retry`）
       await sources.directorSource.generate({
         traceId: "a-director",
         context: { ...contextWithCandidates } as unknown as Record<string, unknown>,
       });
       await sources.directorSource.generate({
         traceId: "a-director-retry",
+        context: { ...contextWithCandidates } as unknown as Record<string, unknown>,
+      });
+      await sources.directorSource.generate({
+        traceId: "a-director-retry-retry",
         context: { ...contextWithCandidates } as unknown as Record<string, unknown>,
       });
       // 场景 b：首次调用 attempt 应回到 1（attempt 从 traceId 解析，非全局计数）
@@ -413,8 +418,8 @@ describe("createLiveRuntimeNarrativeSources captureSink", () => {
     } finally {
       vi.restoreAllMocks();
     }
-    expect(records.map((record) => record.attempt)).toEqual([1, 2, 1]);
-    expect(records.map((record) => record.traceId)).toEqual(["a", "a", "b"]);
+    expect(records.map((record) => record.attempt)).toEqual([1, 2, 3, 1]);
+    expect(records.map((record) => record.traceId)).toEqual(["a", "a", "a", "b"]);
   });
 
   it("解析失败时记录 rawResponse 与 failureCategory，仍走原失败返回", async () => {
@@ -573,18 +578,42 @@ async function run<T extends object, A>(role: Role, request: Request, input: Liv
 
 > 注：`import type { NarrativeFailureCategory }` 已在第 4 行 import 列表内（复用）。文件其余部分（repair/audit/messages/parseObject）不变。
 
+4) **前置修复：`src/game/application/orchestrateNarrativeScene.ts` traceId 堆叠**
+
+现有代码（3 处）：
+```typescript
+traceId: `${traceId}-director${attempt === 0 ? "" : "-retry"}`,
+// ...
+traceId: `${traceId}-script${attempt === 0 ? "" : "-retry"}`,
+// ...
+traceId: `${traceId}-npcLine${attemptIndex === 0 ? "" : "-retry"}`,
+```
+
+替换为（按尝试次数堆叠，使 `attemptOf()` 纯函数可解析）：
+```typescript
+traceId: `${traceId}-director${"-retry".repeat(attempt)}`,
+// ...
+traceId: `${traceId}-script${"-retry".repeat(attempt)}`,
+// ...
+traceId: `${traceId}-npcLine${"-retry".repeat(attemptIndex)}`,
+```
+
+> 注：`"-retry".repeat(0)` 为空串，首次调用行为不变。此修改仅影响内部诊断 traceId 格式，不改变日志脱敏规则、fixture 录制格式或 journey 脚本契约。现有 `orchestrateNarrativeScene.test.ts` 不断言 traceId 具体格式（只断言 provenance/scene 结构），回归不受影响。
+
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `npx vitest run src/game/application/server/ai/liveRuntimeNarrativeSources.storyEval.test.ts`
 Expected: PASS（4 it）
+
+Run: `npx vitest run src/game/application/orchestrateNarrativeScene.test.ts` —— Expected: PASS（traceId 格式变化不影响现有断言）
 
 Run: `npm run typecheck` —— Expected: 无错误
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/game/application/server/ai/liveRuntimeNarrativeSources.ts src/game/application/server/ai/liveRuntimeNarrativeSources.storyEval.test.ts
-git commit -m "feat(ai-story-eval): capture prompt and raw output in live runtime narrative sources"
+git add src/game/application/server/ai/liveRuntimeNarrativeSources.ts src/game/application/server/ai/liveRuntimeNarrativeSources.storyEval.test.ts src/game/application/orchestrateNarrativeScene.ts
+git commit -m "feat(ai-story-eval): capture prompt and raw output in live runtime narrative sources; fix traceId retry stacking"
 ```
 
 ---
@@ -594,6 +623,8 @@ git commit -m "feat(ai-story-eval): capture prompt and raw output in live runtim
 **Files:**
 - Modify: `src/game/application/server/ai/liveScenarioCandidateSource.ts`
 - Test: `src/game/application/server/ai/liveScenarioCandidateSource.storyEval.test.ts`（新建）
+- Modify: `src/game/application/createGame.ts`（把开局第二次候选请求标记为 `-retry`）
+- Test: `src/game/application/createGame.storyEval.test.ts`（新建，断言 source 收到 `traceId` 首次/重试分别为 base/base-retry）
 
 **Interfaces:**
 - Consumes: `StoryEvalSink`（Task 1）
@@ -715,7 +746,23 @@ export type LiveScenarioCandidateSourceOptions = Readonly<{
 }>;
 ```
 
-3) `createLiveScenarioCandidateSource` 内 `generate` 的失败/成功 return 前插入捕获。用以下方式替换 generate 函数体（从 `const messages = buildMessages(request);` 到函数尾）：
+3) `src/game/application/createGame.ts` 的候选循环必须为每次尝试传递唯一可解析的 request：
+
+```typescript
+const baseRequest = { input: validatedInput.value, seed, traceId: deps.newTraceId() };
+for (let attemptIndex = 0; attemptIndex < 2 && blueprint === null; attemptIndex += 1) {
+  const request = {
+    ...baseRequest,
+    traceId: `${baseRequest.traceId}${"-retry".repeat(attemptIndex)}`,
+  };
+  attempt = await deps.scenarioCandidateSource.generate(request);
+  // 其余审批、fallback 与事件逻辑保持不变。
+}
+```
+
+开局 source 的 `attempt` 必须来自该 traceId 的 `-retry` 次数；不得在 source 工厂里维护跨请求计数器。
+
+4) `createLiveScenarioCandidateSource` 内 `generate` 的失败/成功 return 前插入捕获。用以下方式替换 generate 函数体（从 `const messages = buildMessages(request);` 到函数尾）：
 
 ```typescript
       const messages = buildMessages(request);
@@ -818,12 +865,14 @@ export type LiveScenarioCandidateSourceOptions = Readonly<{
 Run: `npx vitest run src/game/application/server/ai/liveScenarioCandidateSource.storyEval.test.ts`
 Expected: PASS（2 it）
 
+Run: `npx vitest run src/game/application/createGame.storyEval.test.ts` —— Expected: PASS（开局 source 的第一次/第二次请求 traceId 可区分）
+
 Run: `npm run typecheck` —— Expected: 无错误
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/game/application/server/ai/liveScenarioCandidateSource.ts src/game/application/server/ai/liveScenarioCandidateSource.storyEval.test.ts
+git add src/game/application/server/ai/liveScenarioCandidateSource.ts src/game/application/server/ai/liveScenarioCandidateSource.storyEval.test.ts src/game/application/createGame.ts src/game/application/createGame.storyEval.test.ts
 git commit -m "feat(ai-story-eval): capture prompt and raw output in live scenario candidate source"
 ```
 
@@ -1245,10 +1294,10 @@ import type { StoryEvalApprovalEvent } from "./server/ai/storyEvalCapture";
 
 ```typescript
     const approval = approveDirectorProposal({ proposal: directorAttempt.plan, blueprint, state, candidates });
-    input.approvalObserver?.({ kind: "role_approval", traceId, role: "director", attempt, category: approval.ok ? null : approval.category });
+    input.approvalObserver?.({ kind: "role_approval", traceId, role: "director", attempt: attempt + 1, category: approval.ok ? null : approval.category });
     if (approval.ok) {
       plan = approval.value;
-      input.approvalObserver?.({ kind: "plan_approved", traceId, attempt, planSummary: approval.value as unknown as Record<string, unknown> });
+      input.approvalObserver?.({ kind: "plan_approved", traceId, attempt: attempt + 1, planSummary: approval.value as unknown as Record<string, unknown> });
       break;
     }
 ```
@@ -1834,8 +1883,8 @@ git commit -m "feat(ai-story-eval): add deterministic choice strategy for eval j
 **Interfaces:**
 - Consumes: `createServerGameEntryPoints`（composition root，Task 6 装配）、`createSqliteGameRepository` + `createSqliteClient`（评估专用只读 repository）、`deriveContentProgression`（`@/game/gameplay/rpg/narrative`，读 `mainStage`）、`pickNarrativeChoice`/`mulberry32`/`hashStringToSeed`/`buildStoryEvalInput`（Task 7）
 - Produces:
-  - `runStoryEvalJourney(config)`（导出）：完整单局驱动。config：`{ env: Record<string,string|undefined>; dbPath: string; artifactDir: string; strategySeed: number; maxScenes: number; requireGeneratedOpening: boolean; modelLabel?: string }`
-  - 返回 `{ status: "converged" | "max_scenes" | "aborted"; sceneCount: number; fallbackScenes: number; openingSource: string; endingOutcome: string | null }`
+  - `runStoryEvalJourney(config)`（导出）：完整单局驱动。config：`{ env: Record<string,string|undefined>; dbPath: string; artifactDir: string; strategySeed: number; maxScenes: number; requireGeneratedOpening: boolean; caseId: string; strategy: "explore" | "objective"; modelLabel?: string }`
+  - 返回 `{ status: "converged" | "max_scenes" | "aborted" | "incomplete"; sceneCount: number; fallbackScenes: number; openingSource: string; endingOutcome: string | null; completeness: { complete: boolean; missing: readonly string[] } }`
   - 产物：`<artifactDir>/calls.jsonl`（sink 写）、`<artifactDir>/story.jsonl`、`<artifactDir>/manifest.json`
   - `createFakeAiFetch()`（导出）：基于 global fetch mock 的假 transport 响应生成器，区分 scenario/director/writer/npc 四种角色
   - 真实模式用例：`it.runIf(process.env.RUN_REAL_AI_STORY_EVAL === "1")`，从 `process.env` 读取配置（门禁脚本注入）
@@ -1855,6 +1904,7 @@ import { createServerGameEntryPoints, type ServerGameEntryPoints } from "../serv
 import { createSqliteClient } from "../server/persistence/sqliteClient";
 import { createSqliteGameRepository, type SqliteGameRepository } from "../server/persistence/sqliteGameRepository";
 import { deriveContentProgression } from "@/game/gameplay/rpg/narrative";
+import type { StoryEvalStoryRow } from "./storyEvalArtifacts";
 import { buildStoryEvalInput, hashStringToSeed, mulberry32, pickNarrativeChoice } from "./storyEvalStrategy";
 
 // ---------------------------------------------------------------------------
@@ -1889,21 +1939,6 @@ function openEvalRepository(dbPath: string): SqliteGameRepository {
   return repository;
 }
 
-type StoryRow = {
-  kind: "scene" | "ending";
-  sceneIndex: number;
-  sceneId?: string;
-  mainStage?: number | null;
-  narration?: string;
-  npcLine?: { text: string; emotion: string } | null;
-  choices?: readonly { label: string; actionKey: string }[];
-  directorPlan?: Readonly<Record<string, unknown>> | null;
-  fallback?: boolean;
-  playerChoice?: { index: number; actionKey: string; reason: string };
-  newEvents?: readonly { type: string }[];
-  outcome?: string | null;
-};
-
 /** 按 sceneId 前缀 traceId 关联 calls.jsonl 中的 plan_approved 记录（spec §6.3）。 */
 function directorPlanFor(sceneId: string, calls: readonly Readonly<Record<string, unknown>>[]): Readonly<Record<string, unknown>> | null {
   const record = calls.find((call) =>
@@ -1921,15 +1956,18 @@ export type StoryEvalJourneyConfig = Readonly<{
   strategySeed: number;
   maxScenes: number;
   requireGeneratedOpening: boolean;
+  caseId: string;
+  strategy: "explore" | "objective";
   modelLabel?: string;
 }>;
 
 export type StoryEvalJourneyResult = Readonly<{
-  status: "converged" | "max_scenes" | "aborted";
+  status: "converged" | "max_scenes" | "aborted" | "incomplete";
   sceneCount: number;
   fallbackScenes: number;
   openingSource: string;
   endingOutcome: string | null;
+  completeness: Readonly<{ complete: boolean; missing: readonly string[] }>;
 }>;
 
 export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promise<StoryEvalJourneyResult> {
@@ -1938,7 +1976,7 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
   const { input } = buildStoryEvalInput("long", strategySeed);
   let entry: ServerGameEntryPoints | null = null;
   let evalRepository: SqliteGameRepository | null = null;
-  const storyRows: StoryRow[] = [];
+  const storyRows: StoryEvalStoryRow[] = [];
   let status: StoryEvalJourneyResult["status"] = "max_scenes";
   let openingSource = "unknown";
   let endingOutcome: string | null = null;
@@ -1981,6 +2019,9 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       sceneCount: 0,
       fallbackScenes: 0,
       blueprint: null,
+      // Task 13 扩展字段：caseId/strategy、gitCommit、NARRATIVE_CONTRACT_VERSION、
+      // 四角色 prompt 版本、temperature、timeoutMs、answerKey（S4 确定性评分所需，
+      // 由蓝图结局/敌人/任务结构与最终规则结果生成）。
     };
     const getCalls = createCachedCallsReader(artifactDir);
 
@@ -2044,6 +2085,9 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         fallback: scene.source === "fallback",
         playerChoice: { index: choice.index, actionKey: scene.choices[choice.index]?.actionKey ?? "", reason: choice.reason },
         newEvents,
+        // Task 13 扩展字段：memorySummary、npcProfile/relationship/lastInteractionSummary、
+        // newEvents 安全结构 { type, factId?, entityId?, questId?, endingId? }、
+        // directorPlan.allowedRevealFactIds、introducedEntities 与扩展实体 ID。
       });
       previousLedgerLength = record.state.eventLedger.length;
       sceneCount += 1;
@@ -2277,6 +2321,8 @@ describe("Story eval journey (offline)", () => {
         dbPath,
         artifactDir,
         strategySeed: 7,
+        caseId: "offline-wuxia-a",
+        strategy: "explore",
         maxScenes: 3,
         requireGeneratedOpening: false,
         modelLabel: "fake-model",
@@ -2302,7 +2348,7 @@ describe("Story eval journey (offline)", () => {
     const storyLines = readFileSync(join(artifactDir, "story.jsonl"), "utf8").trim().split("\n");
     expect(storyLines).toHaveLength(3);
     for (const line of storyLines) {
-      const row = JSON.parse(line) as StoryRow;
+      const row = JSON.parse(line) as StoryEvalStoryRow;
       expect(row.kind).toBe("scene");
       expect(row.narration).toBeTruthy();
       expect(row.mainStage).not.toBeNull(); // 主线 quest 存在时总是数字（deriveContentProgression）
@@ -2342,6 +2388,8 @@ describe("Story eval journey (offline)", () => {
         dbPath,
         artifactDir,
         strategySeed: 7,
+        caseId: "offline-wuxia-a",
+        strategy: "explore",
         maxScenes: 2,
         requireGeneratedOpening: false,
       });
@@ -2378,6 +2426,8 @@ describe("Story eval journey (real AI, opt-in)", () => {
         dbPath,
         artifactDir,
         strategySeed: Number(process.env.STORY_EVAL_SEED ?? "0"),
+        caseId: process.env.STORY_EVAL_CASE_ID ?? "wuxia-a",
+        strategy: process.env.STORY_EVAL_STRATEGY === "objective" ? "objective" : "explore",
         maxScenes: Number(process.env.STORY_EVAL_MAX_SCENES ?? "60"),
         requireGeneratedOpening: true,
         modelLabel: process.env.AI_MODEL ?? null,
@@ -2428,6 +2478,7 @@ git commit -m "feat(ai-story-eval): add full journey driver with story.jsonl and
 **Interfaces:**
 - Consumes: `runStoryEvalJourney` 所在的 vitest 测试文件（Task 8）、`defaultAiEnvSources`/`readAiEnv`/`validateAiEnv`/`projectRoot`（`scripts/aiEnv.mjs`）
 - Produces: 门禁 CLI——`node scripts/storyEvalJourney.mjs --mode=record [--runs N] [--seed <base>]`；`--mode=replay` 跑零网络离线用例；record 模式要求 `RUN_REAL_AI_STORY_EVAL=1`，逐局 spawnSync vitest 子进程，childEnv 注入 `STORY_EVAL_CAPTURE=1`、`STORY_EVAL_ARTIFACT_DIR`、`STORY_EVAL_SEED`、`STORY_EVAL_MAX_SCENES`、`GAME_DB_PATH`（tmp 临时 SQLite）与 AI 三键；`--runs N` 时策略 seed 依次递增。
+- `--case=<caseId>` 只接受 `data/story-eval/cases/v2.json` 中的 caseId；未传时按固定文件顺序运行全部 6 个 case，每个 case 派生 `explore` 与 `objective` 两个策略；`--runs` 只允许作为试点/定向复测的运行次数，不能改变 caseId 或策略映射。
 
 - [ ] **Step 1: 写失败测试（node-test）**
 
@@ -2569,6 +2620,13 @@ export function resolveBaseSeed(argv) {
   if (arg === undefined) return 20260731;
   const value = Number(arg.slice("--seed=".length));
   return Number.isFinite(value) ? value : null;
+}
+
+export function resolveCaseId(argv, cases) {
+  const arg = argv.find((entry) => entry.startsWith("--case="));
+  if (arg === undefined) return undefined;
+  const caseId = arg.slice("--case=".length);
+  return cases.some((item) => item.caseId === caseId) ? caseId : null;
 }
 
 export function isPathInside(parent, candidate) {
@@ -3034,11 +3092,11 @@ git commit -m "feat(ai-story-eval): add offline objective metrics analyzer"
 - Consumes: run 目录（`story.jsonl` + `manifest.json`，**不喂 calls.jsonl**——评审只看玩家视角）、量表文档 `docs/策划文档/AI内容质量评估标准.md`（唯一事实源，脚本只读不内嵌）
 - Produces:
   - `buildEarlyPredictionPrompt({ world, npcs }, story)`——非剧透 manifest + 前 25% 场景（向上取整）
-  - `buildStoryLevelPrompt({ scaleText, version, manifest, story })`——完整 manifest + 全部场景 + S1–S3/S5–S8
+  - `buildStoryLevelPrompt({ scaleText, version, manifest, story })`——完整 manifest + 全部场景 + S1–S3/S5–S9（S4 由确定性匹配器计算，不经 judge 自报）
   - `buildSceneLevelPrompt({ scaleText, version, sampled, dimension })`——C1 全量 / C2–C4 每幕抽 2
   - `sampleScenesPerAct(story, seed, perAct)`——确定性抽样（mulberry32）
   - `parseJudgeJson(text)`——接受 fence 包裹或裸 JSON，非对象返回 null
-  - `callJudge({ baseUrl, apiKey, model, messages, fetchImpl, retries })`——直连 `/chat/completions`，强制 JSON + 一次重试
+  - `callJudge({ baseUrl, apiKey, model, messages, fetchImpl, retries, validateParsed })`——直连 `/chat/completions`，强制 JSON + schema 校验 + 一次重试
   - `main({ argv, env, fs, log, fetchImpl })`（注入式）：门禁 `RUN_REAL_AI_STORY_EVAL_JUDGE=1`；写 `scores.json` + `report.md`（含 §5.4 人工抽查清单）
 
 - [ ] **Step 1: 写失败测试**
@@ -3056,6 +3114,7 @@ import {
   main,
   parseJudgeJson,
   sampleScenesPerAct,
+  scoreEarlyPrediction,
 } from "./storyEvalJudge.mjs";
 
 const manifest = {
@@ -3083,9 +3142,9 @@ test("buildEarlyPredictionPrompt 只含前 25% 场景且排除双结局与任务
   assert.ok(prompt.includes("世界观"));       // 非剧透部分包含
 });
 
-test("buildStoryLevelPrompt 含完整 manifest 与全部场景与 S 维度清单", () => {
+test("buildStoryLevelPrompt 含完整 manifest 与全部场景与 S 维度清单（含 S9）", () => {
   const prompt = buildStoryLevelPrompt({
-    scaleText: "# 量表 v9\nS1 三幕式",
+    scaleText: "# 量表 v9\nS1 三幕式\nS9 游戏性",
     version: "v9",
     manifest,
     story,
@@ -3093,7 +3152,9 @@ test("buildStoryLevelPrompt 含完整 manifest 与全部场景与 S 维度清单
   assert.ok(prompt.includes("n5"));
   assert.ok(prompt.includes("终局"));
   assert.ok(prompt.includes("S1"));
+  assert.ok(prompt.includes("S9"));
   assert.ok(prompt.includes("v9"));
+  assert.ok(prompt.includes("S4 不由你评定"));
 });
 
 test("sampleScenesPerAct 每幕抽 2 且确定性", () => {
@@ -3111,6 +3172,43 @@ test("parseJudgeJson 接受 fence 包裹与裸 JSON，拒绝非对象", () => {
   assert.deepEqual(parseJudgeJson('{"a":1}'), { a: 1 });
   assert.equal(parseJudgeJson("nope"), null);
   assert.equal(parseJudgeJson("[1,2]"), null);
+});
+
+test("scoreEarlyPrediction 按 spec 公式确定性计算 S4", () => {
+  const answerKey = {
+    "结局走向": { exactAliases: ["主角胜利"], directionalAliases: ["胜利"] },
+    "boss身份": { exactAliases: ["暗影宗主"], directionalAliases: ["暗影"] },
+    "关键反转": { exactAliases: ["师父叛变"], directionalAliases: ["叛变"] },
+  };
+  // 全部高置信精确命中：sum = 2+2+2 = 6, h = min(1, 6/6) = 1, S4 = max(1, 5 - round(4*1)) = 1
+  const allHit = scoreEarlyPrediction([
+    { item: "结局走向", prediction: "主角胜利", confidence: 5 },
+    { item: "boss身份", prediction: "暗影宗主", confidence: 4 },
+    { item: "关键反转", prediction: "师父叛变", confidence: 5 },
+  ], answerKey);
+  assert.equal(allHit.score, 1);
+  assert.equal(allHit.hitWeight, 6);
+
+  // 全部未命中：sum = 0, h = 0, S4 = max(1, 5 - 0) = 5
+  const allMiss = scoreEarlyPrediction([
+    { item: "结局走向", prediction: "主角死亡", confidence: 5 },
+    { item: "boss身份", prediction: "路人甲", confidence: 4 },
+    { item: "关键反转", prediction: "无反转", confidence: 3 },
+  ], answerKey);
+  assert.equal(allMiss.score, 5);
+  assert.equal(allMiss.hitWeight, 0);
+
+  // 仅方向命中：sum = 0.5*3 = 1.5, h = min(1, 1.5/6) = 0.25, S4 = max(1, 5 - round(1)) = 4
+  const directional = scoreEarlyPrediction([
+    { item: "结局走向", prediction: "胜利在望", confidence: 2 },
+    { item: "boss身份", prediction: "暗影势力", confidence: 1 },
+    { item: "关键反转", prediction: "有人叛变", confidence: 2 },
+  ], answerKey);
+  assert.equal(directional.score, 4);
+
+  // 无 answerKey 时返回 null
+  const noKey = scoreEarlyPrediction([{ item: "x", prediction: "y", confidence: 3 }], null);
+  assert.equal(noKey.score, null);
 });
 
 test("collectLowScenes 收集 ≤2 分场景与 seed 随机 3 场景", () => {
@@ -3162,7 +3260,7 @@ Expected: FAIL（模块不存在）
 // 输入只有 story.jsonl + manifest.json，绝不喂 calls.jsonl（评审只看玩家视角，
 // 避免被内部计划带偏）。三段评审：
 //   ① 早期预测测试（S4，独立先行，输入隔离：只喂前 25% 场景 + 非剧透 manifest）；
-//   ② 故事级评审（S1–S3、S5–S8，完整 manifest 与全部场景，逐维证据）；
+//   ② 故事级评审（S1–S3、S5–S9，完整 manifest 与全部场景，逐维证据；S4 由确定性匹配器计算）；
 //   ③ 场景级评审（C1 全量、C2–C4 每幕抽 2）。
 // 量表文本唯一事实源：docs/策划文档/AI内容质量评估标准.md（脚本只读，不内嵌）。
 // 输出强制 JSON，本地解析 + 一次重试；仍失败记 null，不编分。
@@ -3244,11 +3342,11 @@ export function buildEarlyPredictionPrompt(nonSpoiler, story) {
   ].join("\n\n");
 }
 
-/** ② 故事级评审：完整 manifest + 全部场景 + S1–S3/S5–S8 量表。 */
+/** ② 故事级评审：完整 manifest + 全部场景 + S1–S3/S5–S9 量表（S4 由 scoreEarlyPrediction 确定性计算）。 */
 export function buildStoryLevelPrompt({ scaleText, version, manifest, story }) {
   const scenes = story.filter((row) => row.kind === "scene").map(sceneToText).join("\n\n");
   return [
-    `你是故事质量评审员。请按以下量表（版本 ${version}）为整局故事打分（S1–S3、S5–S8，1-5 分）。`,
+    `你是故事质量评审员。请按以下量表（版本 ${version}）为整局故事打分（S1–S3、S5–S9，1-5 分；S4 不由你评定）。`,
     "每个分数必须附证据：场景序号 + 原文引文。无证据的分数将重评一次。",
     "只输出 JSON：{\"scores\":{\"S1\":{\"score\":3,\"evidence\":[{\"sceneIndex\":1,\"quote\":\"...\"}]},\"S2\":{...}},\"reasoning\":\"...\"}",
     `量表：\n${scaleText}`,
@@ -3328,11 +3426,47 @@ export function collectLowScenes(scores, story, manifest) {
       low.add(key); // 故事级低分无场景索引：维度名整体列入报告说明
     }
   }
+  if (typeof scores.earlyPrediction?.s4Score === "number" && scores.earlyPrediction.s4Score <= 2) {
+    low.add("S4");
+  }
   const rand = mulberry32(hashStringToSeed(String(manifest?.strategySeed ?? "0")));
   const scenes = story.filter((row) => row.kind === "scene");
   const shuffled = [...scenes].sort(() => rand() - 0.5);
   for (const row of shuffled.slice(0, 3)) low.add(row.sceneIndex);
   return [...low];
+}
+
+/** S4 确定性评分（spec §5.1 公式）：
+ *  预测逐项同 manifest.answerKey 比对：高置信精确命中 2 分、低置信精确命中 1 分、
+ *  仅方向命中 0.5 分、未命中 0 分；总命中率 h = min(1, sum / 6)，
+ *  S4 = max(1, min(5, 5 - round(4h)))。answer key 绝不传入预测 prompt。 */
+export function scoreEarlyPrediction(predictions, answerKey) {
+  if (!Array.isArray(predictions) || !answerKey) return { score: null, hitWeight: 0, matched: [] };
+  const normalize = (value) => String(value ?? "").normalize("NFKC").replace(/\s+/gu, "").toLowerCase();
+  let sum = 0;
+  const matched = [];
+  for (const pred of predictions) {
+    const key = answerKey[pred.item];
+    let match = "miss";
+    let weight = 0;
+    if (key !== undefined) {
+      const prediction = normalize(pred.prediction);
+      const exactAliases = (key.exactAliases ?? []).map(normalize).filter(Boolean);
+      const directionalAliases = (key.directionalAliases ?? []).map(normalize).filter(Boolean);
+      if (prediction !== "" && exactAliases.includes(prediction)) {
+        match = "exact";
+        weight = (pred.confidence ?? 1) >= 4 ? 2 : 1;
+      } else if (prediction !== "" && directionalAliases.some((alias) => prediction.includes(alias))) {
+        match = "directional";
+        weight = 0.5;
+      }
+    }
+    sum += weight;
+    matched.push({ item: pred.item, match, confidence: pred.confidence ?? 1 });
+  }
+  const h = Math.min(1, sum / 6);
+  const score = Math.max(1, Math.min(5, 5 - Math.round(4 * h)));
+  return { score, hitWeight: sum, matched };
 }
 
 function buildReport({ scores, manifest, lowScenes, sampled }) {
@@ -3347,20 +3481,27 @@ function buildReport({ scores, manifest, lowScenes, sampled }) {
     "",
     "## 故事级分数",
     "",
-    "| 维度 | 分数 | 证据 |",
-    "| --- | --- | --- |",
+    "| 维度 | 分数 | 权重 | 证据 |",
+    "| --- | --- | --- | --- |",
   ];
+  const WEIGHTS = { S2: 1.5, S4: 1.5 };
   const storyLevel = scores.storyLevel?.scores ?? {};
-  for (const key of ["S1", "S2", "S3", "S5", "S6", "S7", "S8"]) {
+  for (const key of ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9"]) {
+    const weight = WEIGHTS[key] ?? 1.0;
+    if (key === "S4") {
+      const s4 = scores.earlyPrediction?.s4Score;
+      lines.push(`| S4 | ${s4 ?? "null"} | ${weight} | 确定性匹配器计算（早期预测命中率 h=${scores.earlyPrediction?.hitWeight ?? "?"}/6） |`);
+      continue;
+    }
     const entry = storyLevel[key];
     if (entry === undefined) {
-      lines.push(`| ${key} | null | 评审失败 |`);
+      lines.push(`| ${key} | null | ${weight} | 评审失败 |`);
       continue;
     }
     const evidence = Array.isArray(entry.evidence)
       ? entry.evidence.map((item) => `场景${item.sceneIndex}:${item.quote}`).join("；")
       : "";
-    lines.push(`| ${key} | ${entry.score} | ${evidence} |`);
+    lines.push(`| ${key} | ${entry.score} | ${weight} | ${evidence} |`);
   }
   lines.push("", "## 早期预测测试（S4 依据）", "", `\`\`\`json\n${JSON.stringify(scores.earlyPrediction, null, 2)}\n\`\`\``, "");
   lines.push("## 场景级分数", "", "| 场景 | C1 | C2 | C3 | C4 |", "| --- | --- | --- | --- | --- |");
@@ -3416,7 +3557,7 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
     messages: [{ role: "user", content: buildEarlyPredictionPrompt({ world: manifest.blueprint?.world, npcs: manifest.blueprint?.npcs }, story) }],
     fetchImpl,
   });
-  // ② 故事级（S1–S3、S5–S8）
+  // ② 故事级（S1–S3、S5–S9；S4 由 scoreEarlyPrediction 确定性计算）
   const storyResult = await callJudge({
     baseUrl, apiKey, model,
     messages: [{ role: "user", content: buildStoryLevelPrompt({ scaleText, version, manifest: manifest.blueprint, story }) }],
@@ -3451,7 +3592,11 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
   const scores = {
     scaleVersion: version,
     judgeModel: model,
-    earlyPrediction: predictionResult.ok ? predictionResult.parsed : null,
+    earlyPrediction: (() => {
+      if (!predictionResult.ok) return null;
+      const s4 = scoreEarlyPrediction(predictionResult.parsed?.predictions, manifest.answerKey);
+      return { ...predictionResult.parsed, s4Score: s4.score, hitWeight: s4.hitWeight, matched: s4.matched };
+    })(),
     storyLevel: storyResult.ok ? storyResult.parsed : null,
     sceneLevel: {
       C1: c1Result.ok ? c1Result.parsed : null,
@@ -3496,6 +3641,8 @@ git commit -m "feat(ai-story-eval): add three-phase LLM judge script"
 
 ### Task 12: 量表文档、agent 文档、索引与环境变量示例
 
+> Task 13 的 v2 证据包、实体漏斗、选择漏斗和完整性约束优先于本任务下方的历史模板；执行 Task 12 时最终文档必须逐字对齐当前 Spec，不得把下方缺少证据包字段的旧模板直接落盘。
+
 **Files:**
 - Create: `docs/策划文档/AI内容质量评估标准.md`
 - Create: `docs/agent/AI内容质量评估.md`
@@ -3504,18 +3651,18 @@ git commit -m "feat(ai-story-eval): add three-phase LLM judge script"
 
 **Interfaces:**
 - Consumes: spec §5 量表与 §5.4 抽查清单（唯一事实源）；Task 8–11 的实现事实
-- Produces: 量表文档 v1（judge 脚本运行时读取，版本号行格式 `> 版本：v1` 必须与脚本正则 `/^>\s*版本[:：]\s*(\S+)/m` 匹配）
+- Produces: 量表文档 v2（judge 脚本运行时读取，版本号行格式 `> 版本：v2` 必须与脚本正则 `/^>\s*版本[:：]\s*(\S+)/m` 匹配）
 
 - [ ] **Step 1: 创建量表文档**
 
 创建 `docs/策划文档/AI内容质量评估标准.md`（内容 = spec §5 逐字转录，加版本头）：
 
 ```markdown
-# AI 内容质量评估标准（v1）
+# AI 内容质量评估标准（v2）
 
-> 版本：v1 ｜ 日期：2026-07-31 ｜ 状态：approved（spec：docs/superpowers/specs/2026-07-31-ai-story-quality-evaluation-design.md）
+> 版本：v2 ｜ 日期：2026-07-31 ｜ 状态：approved（spec：docs/superpowers/specs/2026-07-31-ai-story-quality-evaluation-design.md）
 
-本文件是 LLM 评审 prompt 与人工抽查的唯一事实源。量表变更时升版本号（v2…），
+本文件是 LLM 评审 prompt 与人工抽查的唯一事实源。量表变更时升版本号（v3…），
 并同步更新 spec 与评审脚本读取逻辑。
 
 ## 1. 故事级维度（整局一次评分，1–5 分）
@@ -3533,16 +3680,19 @@ git commit -m "feat(ai-story-eval): add three-phase LLM judge script"
 | S6 | 战斗铺垫合理性 | boss 战突兀出现，无动机建立与张力积累 | 有铺垫但张力积累不足或动机牵强 | boss 战前有清晰的动机链与逐幕升级的张力，战斗是剧情必然 |
 | S7 | 结局兑现度 | 结局未回应主线冲突或与玩家行动矛盾 | 回应主线但部分悬念未闭合 | 结局回应主线冲突与主要悬念，与玩家行动逻辑自洽 |
 | S8 | 选择后果感 | 选项选什么后续叙事都一样，选择无痕迹 | 部分选择被承接，部分被无视 | 上一幕的选择在下一幕叙事中被明确承接并体现差异 |
+| S9 | 游戏性与玩家能动性 | 场景只换背景或复述信息，行动不改变可达信息、关系、资源、任务或风险 | 部分场景提供可理解的取舍，但中段常只剩形式选择 | 每幕至少有一种可读的取舍（信息、关系、资源、风险或路线），玩家行动持续改变可见局势并驱动下一幕 |
 
-S4 评分规则：早期预测测试独立于完整评审之前执行（避免上下文污染）。评审模型只读前 25% 场景，
-预测结局走向、boss 身份、关键反转并自报置信度（1–5）；预测命中项越多且置信越高，S4 得分越低
-（全中且置信 5 → S4=1；方向错误或置信 ≤2 → S4≥4，由锚点裁量）。
+S4 评分规则（确定性公式，不由 judge 自报）：早期预测与故事级评审使用独立调用（不共享对话状态）。
+评审模型只读前 25% 场景 + 非剧透 manifest（世界观与 NPC 档案，不含双结局、任务结构与后续场景），
+预测结局走向、boss 身份、关键反转并自报置信度（1–5）。评估器把预测逐项同 manifest.answerKey 比对：
+高置信（≥4）精确命中 2 分、低置信精确命中 1 分、仅方向命中 0.5 分、未命中 0 分；
+总命中率 `h = min(1, sum / 6)`，`S4 = max(1, min(5, 5 - round(4h)))`。answer key 绝不传入预测 prompt。
 
 ## 2. 场景级维度（逐场景/抽样评分，1–5 分）
 
 | # | 维度 | 评分口径与边界 |
 | --- | --- | --- |
-| C1 | NPC 声线一致性 | 只评语气、用词、性格是否符合 manifest 中的 NPC 档案，以及不同 NPC 是否有区分度。知识越权已由规则审批硬性保证，不重复评。 |
+| C1 | NPC 身份、声线与关系一致性 | 只评语气、用词、性格、关系阶段是否符合该 NPC 的姓名、role、description、已知事实与最近交互摘要；不同 NPC 应可区分。知识越权已由规则审批硬性保证，不重复评。 |
 | C2 | 场景衔接连续性 | 与前序场景及结构化记忆无矛盾；无凭空引用的事件、地点或人物关系。 |
 | C3 | 选项抉择质量 | 实际评的是 director 挑选的两个行动是否构成有意义的策略差异。writer 写的 label 会被规则文案替换后才展示、strategy 不进入持久化——玩家看到的选项文字不是 AI 写的；若基线发现选项无聊，改 prompt 无效，需改规则文案或放开 writer 文案（记为发现，不在本 spec 内修）。 |
 | C4 | 文本质量 | 重复感/流水账、辞藻堆砌、与 sceneGoal 的相关度；含文风与世界观一致性。 |
@@ -3571,7 +3721,7 @@ S4 评分规则：早期预测测试独立于完整评审之前执行（避免�
 # AI 内容质量评估（实现事实）
 
 > 对应 spec：docs/superpowers/specs/2026-07-31-ai-story-quality-evaluation-design.md
-> 量表事实源：docs/策划文档/AI内容质量评估标准.md（v1）
+> 量表事实源：docs/策划文档/AI内容质量评估标准.md（v2）
 
 ## 采集通道（三采集点，各取其唯一可见的数据）
 
@@ -3604,15 +3754,15 @@ sink（缺省目录 `artifacts/story-eval/run-<ISO 时间戳>-<pid>`，`STORY_EV
 ## 脚本与命令
 
 - `npm run journey:story-eval`：replay 模式（零网络离线用例）
-- `npm run smoke:ai:story-eval -- --runs 3 --seed <n>`：record 模式（需 `RUN_REAL_AI_STORY_EVAL=1`，逐局递增 seed）
+- `npm run smoke:ai:story-eval -- --case=<caseId> --runs 12 --seed <n>`：record 模式（需 `RUN_REAL_AI_STORY_EVAL=1`，按 v2 case/strategy 矩阵运行；试点只传一个 `--case`）
 - `npm run analyze:story-eval -- <runDir>`：客观指标 → metrics.json
 - `npm run judge:story-eval -- <runDir>`：三段评审（需 `RUN_REAL_AI_STORY_EVAL_JUDGE=1`）→ scores.json + report.md
 
 ## 基线流程
 
-先 1 局 long 试点跑通全管线并人工抽查复核评审可靠性 → 稳定后补 2 局（seed 递增）→
-3 局汇总为基线 v1（`artifacts/story-eval/baseline-v1/report.md`，工作产物）；持久基线回填
-`docs/策划文档/AI内容质量评估标准.md` 的分数表与客观指标摘要。基线是描述性快照，不是及格线。
+先选 1 个固定 case 跑两种策略与成对分支，完成 completeness、analyze、judge 及人工/异模型校准 → 校准通过后完成其余 5 个 case 的两种策略（共 12 条主旅程）→
+汇总为基线 v2（`artifacts/story-eval/baseline-v2/report.md`，工作产物）；持久基线回填
+`docs/策划文档/AI内容质量评估标准.md` 的分数表、客观指标摘要和校准结果。基线是描述性快照，不是及格线。
 
 ## 环境变量（全部可选）
 
@@ -3632,7 +3782,7 @@ STORY_EVAL_MAX_SCENES（默认 60）、RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL
 
 ```markdown
 - [AI内容质量评估](agent/AI内容质量评估.md) - 评估采集通道、产物、脚本命令与基线流程的实现事实
-- [AI内容质量评估标准（策划）](../策划文档/AI内容质量评估标准.md) - 故事级/场景级量表 v1 与客观指标定义
+- [AI内容质量评估标准（策划）](../策划文档/AI内容质量评估标准.md) - 故事级/场景级量表 v2 与客观指标定义
 ```
 
 `.env.example` 末尾追加（全部注释掉、不含默认值）：
@@ -3707,6 +3857,8 @@ git commit -m "chore(ai-story-eval): finalize plan artifacts"   # 仅当存在�
 ### Task 13: 评估有效性修订（v2，必须在真实基线前完成）
 
 > 此任务取代 Task 7–12 中与 v2 spec 冲突的输入、产物、指标、judge 和基线口径；未完成本任务不得将任何分数称为“故事生成质量基线”。
+>
+> 执行顺序：虽然本修订任务附在文档末尾，实际执行时必须在 Task 7–12 的真实基线步骤、Task 12 文档落盘和收尾验收之前完成；Task 7–12 的公共采集基础可先完成，Task 13 再接管其评测数据与 judge 口径。
 
 **Files:**
 - Create: `data/story-eval/cases/v2.json`
@@ -3721,7 +3873,7 @@ git commit -m "chore(ai-story-eval): finalize plan artifacts"   # 仅当存在�
 - Modify: `scripts/storyEvalAnalyze.node-test.mjs`
 - Modify: `scripts/storyEvalJudge.mjs`
 - Modify: `scripts/storyEvalJudge.node-test.mjs`
-- Modify: `docs/策划文档/AI内容质量评估标准.md`（Task 12 创建时直接使用 v2，不创建 v1 再迁移）
+- Modify: `docs/策划文档/AI内容质量评估标准.md`（Task 12 已创建 v2；本任务补充 C1/C2 证据包要求与漏斗定义）
 - Modify: `docs/agent/AI内容质量评估.md`
 
 **Interfaces:**
@@ -3730,13 +3882,35 @@ git commit -m "chore(ai-story-eval): finalize plan artifacts"   # 仅当存在�
 export type StoryEvalCase = Readonly<{
   caseId: string;
   input: NewGameInput; // gameLength 固定为 "long"
+}>;
+
+export type StoryEvalRun = Readonly<{
+  caseId: string;
   strategy: "explore" | "objective";
+}>;
+
+export type StoryEvalStoryRow = Readonly<{
+  kind: "scene" | "ending";
+  sceneIndex: number;
+  sceneId?: string;
+  mainStage?: number | null;
+  narration?: string;
+  npcLine?: { text: string; emotion: string } | null;
+  choices?: readonly { label: string; actionKey: string }[];
+  directorPlan?: Readonly<Record<string, unknown>> | null;
+  memorySummary?: readonly Readonly<Record<string, unknown>>[];
+  npcProfile?: Readonly<Record<string, unknown>> | null;
+  relationshipSummary?: string | null;
+  fallback?: boolean;
+  playerChoice?: { index: number; actionKey: string; reason: string };
+  newEvents?: readonly { type: string; factId?: string; entityId?: string; questId?: string; endingId?: string }[];
+  outcome?: string | null;
 }>;
 
 export type StoryEvalEvidence = Readonly<{
   sceneIndex: number;
-  previousScene: StoryRow | null;
-  currentScene: StoryRow;
+  previousScene: StoryEvalStoryRow | null;
+  currentScene: StoryEvalStoryRow;
   npcProfile: Readonly<Record<string, unknown>> | null;
   relationshipSummary: string | null;
   memorySummary: readonly Readonly<Record<string, unknown>>[];
@@ -3748,17 +3922,24 @@ export type StoryEvalCompleteness = Readonly<{
 }>;
 
 export type EarlyPredictionScore = Readonly<{
-  score: 1 | 2 | 3 | 4 | 5;
+  score: 1 | 2 | 3 | 4 | 5 | null;
   hitWeight: number;
   matched: readonly { item: string; match: "exact" | "directional" | "miss"; confidence: number }[];
 }>;
+
+export type EarlyPredictionAnswerKey = Readonly<Record<string, Readonly<{
+  exactAliases: readonly string[];
+  directionalAliases: readonly string[];
+}>>>;
 ```
 
-`v2.json` 必须定义 6 个固定 case：`wuxia`、`science_fiction`、`urban` 各两个不同的 worldPremise/storyOpening；每个输入满足 `NewGameInput` 校验，使用固定角色、人格、narrativeStyle、contentIntensity 和 `gameLength: "long"`。门禁脚本对每个 case 运行 `explore` 与 `objective`，因此真实基线共 12 条主旅程；`--case=<caseId>` 仅用于试点或定向复测。
+`v2.json` 必须定义 6 个固定 case：`wuxia`、`science_fiction`、`urban` 各两个不同的 worldPremise/storyOpening；每个输入满足 `NewGameInput` 校验，使用固定角色、人格、narrativeStyle、contentIntensity 和 `gameLength: "long"`。门禁脚本对每个 case 生成两个 `StoryEvalRun`（`explore` 与 `objective`），因此真实基线共 12 条主旅程；`--case=<caseId>` 仅用于试点或定向复测，不能改变 case 输入。`resolveCaseId(argv, cases)` 在缺省参数时返回 `undefined`（运行全部 case），未知 case 返回 `null` 并以 `INVALID_CASE` 退出。
 
 - [ ] **Step 1: 写失败测试——case 集、证据与完整性**
 
 `storyEvalCases.test.ts` 断言恰有 6 个唯一 caseId、三种 gameType 各 2 个、全部 `gameLength === "long"` 且输入可通过 `validateNewGameInput`。`storyEvalArtifacts.test.ts` 用手工 artifact 分别断言：缺 `factId` 的 `fact_discovered`、缺 S4 answer key、缺 memory 的 NPC 场景、缺 prompt/contract 版本时 `complete === false`；完整行含 `previousScene`、NPC profile、memory、关系和安全事件 ID 时 `complete === true`。
+
+`storyEvalJourney.node-test.mjs` 追加断言：`resolveCaseId([], cases) === undefined`、合法 `--case=wuxia-a` 返回该 ID、未知 case 返回 `null`；未知 case 的 `main` 打印 `INVALID_CASE`、不 spawn 子进程且返回 1。
 
 - [ ] **Step 2: 运行失败测试**
 
@@ -3768,13 +3949,43 @@ Expected: FAIL（case/complete helpers 不存在）。
 
 - [ ] **Step 3: 实现评测集与证据采集**
 
-实现 `loadStoryEvalCases()`、`resolveStoryEvalCase(caseId)`、`buildStoryEvalEvidence(story, manifest, sceneIndex)`、`validateStoryEvalArtifacts({ calls, story, manifest })`。旅程不再调用固定的 `buildStoryEvalInput("long", seed)`；改为按 case 构造输入，并在 manifest 写入 `caseId`、`strategy`、`worldSeed`、`gitCommit`、`NARRATIVE_CONTRACT_VERSION`、四个角色 prompt 版本、AI model、temperature 与 timeout。
+实现 `loadStoryEvalCases()`、`resolveStoryEvalCase(caseId)`、`buildStoryEvalEvidence(story, manifest, sceneIndex)`、`validateStoryEvalArtifacts({ calls, story, manifest })`。旅程不再调用固定的 `buildStoryEvalInput("long", seed)`；改为按 case 构造输入，并在 manifest 写入 `caseId`、`strategy`、`worldSeed`、`gitCommit`、`NARRATIVE_CONTRACT_VERSION`、四个角色 prompt 版本、AI model、temperature 与 timeout。将 `STORY_EVAL_CASE_ID`、`STORY_EVAL_STRATEGY` 从门禁 childEnv 传入 journey；完整性失败时返回 `status: "incomplete"` 和 missing 字段，并让门禁以非零退出。将 Task 8 中测试文件私有的 `StoryRow` 移入 `storyEvalArtifacts.ts` 导出的 `StoryEvalStoryRow`，旅程、证据构造器、analyze 和 judge 共用同一个类型，禁止 application 模块从测试文件反向 import 类型。
+
+门禁脚本用以下确定性展开规则替换原来的单一 `--runs` 循环：
+
+```javascript
+const selectedCaseId = resolveCaseId(argv, cases);
+if (selectedCaseId === null) {
+  log(`${PREFIX} INVALID_CASE`);
+  return 1;
+}
+const selectedCases = selectedCaseId === undefined
+  ? cases
+  : cases.filter((item) => item.caseId === selectedCaseId);
+const runSpecs = selectedCases.flatMap((item) => [
+  { caseId: item.caseId, strategy: "explore" },
+  { caseId: item.caseId, strategy: "objective" },
+]);
+for (const [runIndex, runSpec] of runSpecs.entries()) {
+  const childEnv = {
+    ...baseChildEnv,
+    STORY_EVAL_CASE_ID: runSpec.caseId,
+    STORY_EVAL_STRATEGY: runSpec.strategy,
+    STORY_EVAL_SEED: String(baseSeed + runIndex),
+    STORY_EVAL_ARTIFACT_DIR: resolve(artifactRoot, `${runSpec.caseId}-${runSpec.strategy}-${runIndex}`),
+  };
+  const status = runSpawn(childEnv);
+  if (status !== 0) failed += 1;
+}
+```
+
+`--runs` 在 v2 默认不参与全量矩阵；指定 `--case` 时可把同一 case/strategy 对复制 N 次，但每次必须递增 seed、使用独立 artifact/db，并在汇总中标记为 replicate，不得把 replicate 当作新的 case。
 
 将每一个 story row 的 `newEvents` 从 `{ type }` 改为安全结构 `{ type, factId?, entityId?, questId?, endingId? }`；同时写入 `memorySummary`、当前 NPC 的 profile/relationship/lastInteractionSummary、`directorPlan.allowedRevealFactIds`、`introducedEntities` 和扩展实体 ID。不得写入 prompt、provider 原文或不在现有评估采集开关允许范围内的敏感资料。
 
 - [ ] **Step 4: 实现双策略与成对选择分支**
 
-在同一个 ready `GameRecord` 的预设第 2、4、6 个主线阶段检查点创建两个独立的**测试专用 SQLite 快照**，分别执行两个当前 choiceToken，并各继续生成两场。每个 branch artifact 记录 parent scene、所选 actionKey、两场后的结构化事件、状态差异（地点/事实/任务/关系/物品/战斗/ending）和玩家可读 narration。若当前没有两个合法选项，记录 `not_applicable`，不伪造比较。
+在同一个 ready `GameRecord` 的预设第 2、4、6 个主线阶段检查点，先读取完整记录并关闭该检查点的读连接；通过 repository 的 `createInitialGame` 将同一 blueprint/state 写入两个**独立测试 SQLite**（新 gameId、revision 从 0 开始），再分别装配两个 entry points 执行两个当前 choiceToken，并各继续生成两场。禁止直接复制正在使用的 SQLite 文件或 WAL 文件。每个 branch 使用独立 `STORY_EVAL_ARTIFACT_DIR=<parent>/branches/<checkpoint>/<choice>`，避免两条 source/approval 流水写入同一个 `calls.jsonl`。每个 branch artifact 记录 parent scene、所选 actionKey、两场后的结构化事件、状态差异（地点/事实/任务/关系/物品/战斗/ending）和玩家可读 narration。若当前没有两个合法选项，记录 `not_applicable`，不伪造比较。
 
 `explore` 保持原探索优先语义；`objective` 优先选择推进主线阶段、取得任务物品、战斗或与任务目标 NPC 交谈的合法动作，同类才使用同一 PRNG。测试须断言两个策略都能记录选择理由，且 branch 的两个 actionKey 不同。
 
@@ -3793,15 +4004,17 @@ entities: {
 choices: { pairedCheckpoints, stateDifferent, eventDifferent, narrationDifferent, notApplicable }
 ```
 
-`expansion.adopted` 只能统计已持久化且实际首次登场的扩展实体，不能复用 `approved`；`factsPerAct.actualFactIds` 只能来自 `fact_discovered.factId`。更新 node-test：同一 proposal 被批准但未登场时 `approved === 1`、`adopted === 0`；一个实际发现但未计划的事实进入 actual 而不进入 overlap；两个 branch 仅 actionKey 不同但状态/事件/文本相同不得算后果差异。
+`expansion.adopted` 只能统计已持久化且实际首次登场的扩展实体，不能复用 `approved`；`factsPerAct.actualFactIds` 只能来自 `fact_discovered.factId`。更新 node-test：同一 proposal 被批准但未登场时 `approved === 1`、`adopted === 0`；一个实际发现但未计划的事实进入 actual 而不进入 overlap；两个 branch 仅 actionKey 不同但状态/事件/文本相同不得算后果差异。所有 branch 完成后关闭 branch entry/repository，再清理其临时数据库。
 
 - [ ] **Step 6: 实现可判定的 judge 输入与输出验证**
 
 修改 `buildSceneLevelPrompt`：C1 为每条台词附该 NPC 的姓名、role、description、relationship tier/summary 和最近接触；C2 为每条抽样场景附紧邻前序场景与 memory；C3/C4 仍只输入玩家可见场景和必要世界资料。不能把 `calls.jsonl` 或原始 prompt 交给 judge。
 
-新增 `validateStoryLevelResult`、`validateSceneLevelResult`、`scoreEarlyPrediction`。前两个校验所有应评维度、整数 1–5、已存在 sceneIndex 和原文子串证据；任何失败使该 call 触发一次重试。`scoreEarlyPrediction(predictions, manifest.answerKey)` 按 v2 spec 的 exact/directional/miss 权重确定性生成 S4；report 的故事级表必须显示 S1–S9（含 S4 分数与匹配证据），不能只打印预测 JSON。
+新增 `validateStoryLevelResult`、`validateSceneLevelResult`、`scoreEarlyPrediction`。前两个校验所有应评维度、整数 1–5、已存在 sceneIndex 和原文子串证据；`callJudge` 的接口增加 `validateParsed?: (parsed: unknown) => boolean`，解析成功但校验失败时抛出 `judge_schema_invalid`，由同一个 `callJudge` 重试一次，而不是先接受不完整 JSON 再在 report 阶段修补。`scoreEarlyPrediction(predictions, manifest.answerKey)` 按 v2 spec 的 exact/directional/miss 权重确定性生成 S4；answer key 使用每个项目的规范答案与别名集合，比较前先做 Unicode/空白规范化，禁止用空字符串或任意单词的 substring 误判精确命中。report 的故事级表必须显示 S1–S9（含 S4 分数与匹配证据），不能只打印预测 JSON。
 
-node-test 至少覆盖：无 NPC profile 的 C1 输入拒绝、C2 没有前序场景拒绝、分数 6 拒绝、虚构 sceneIndex 拒绝、虚构引文拒绝、S4 高置信精确命中为 1、低置信/未命中样例按公式得到相应分数。
+**S8/S9 分数上限约束（spec §5.3）**：`validateStoryLevelResult` 必须检查 run 的 `metrics.json` 中 `choices.pairedCheckpoints`——若为 0（无成对分支证据），S8 和 S9 的分数不得超过 3；超过时强制 cap 为 3 并在 evidence 中注明 `"capped: no paired branch evidence"`。report 中相应行标注"（上限约束：无分支证据）"。
+
+node-test 至少覆盖：无 NPC profile 的 C1 输入拒绝、C2 没有前序场景拒绝、分数 6 拒绝、虚构 sceneIndex 拒绝、虚构引文拒绝、S4 高置信精确命中为 1、低置信/未命中样例按公式得到相应分数、**无分支证据时 S8/S9 cap 为 3**。
 
 - [ ] **Step 7: 通过测试并更新使用说明**
 
@@ -3813,13 +4026,13 @@ Run: `node --test scripts/storyEvalAnalyze.node-test.mjs scripts/storyEvalJudge.
 
 Expected: PASS。
 
-更新量表为 v2：包含 S9、C1 身份/关系口径、C2 前序/memory 证据要求、S4 公式、实体和选择漏斗。更新 agent 文档，明确 `incomplete` 产物不能产生基线分数、12 条主旅程与人工/异模型校准流程。
+量表 v2 已由 Task 12 创建（含 S9、S4 公式）。本步骤补充：C1 身份/关系口径与证据包要求、C2 前序/memory 证据要求、实体漏斗与选择漏斗的完整定义。更新 agent 文档，明确 `incomplete` 产物不能产生基线分数、12 条主旅程与人工/异模型校准流程。
 
 - [ ] **Step 8: 校准与真实基线验收（需用户逐步确认）**
 
 先只运行一个 case 的两种策略和分支：`RUN_REAL_AI_STORY_EVAL=1 npm run smoke:ai:story-eval -- --case=<caseId>`；完整性校验和 analyze 通过后，执行 judge。两位人工评审独立复核固定高/中/低分证据包，并由不同模型系列复评；分歧 >1 分、无证据或 artifact incomplete 时回到本任务修正，不能补录分数。
 
-校准通过后，用户再次确认才执行其余 case。完成 12 条主旅程后按 `caseId × strategy` 配对报告均值、中位数、最差值、空值率和模型配置；报告只说明该评测集与模型配置下的质量，不作无依据的全局结论。
+校准通过后，用户再次确认才执行其余 case。门禁按固定顺序展开 6 × 2 个 `StoryEvalRun`；`--case` 时只展开指定 case，`--runs` 只能在该 case 内重复策略运行，不得让不同 case 共用 seed 或 artifact 目录。完成 12 条主旅程后按 `caseId × strategy` 配对报告均值、中位数、最差值、空值率和模型配置；报告只说明该评测集与模型配置下的质量，不作无依据的全局结论。
 
 - [ ] **Step 9: 提交**
 
