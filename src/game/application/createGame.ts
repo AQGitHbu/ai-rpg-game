@@ -158,9 +158,13 @@ export async function createGame(
   const profile = profiles.gameTypeProfiles[validatedInput.value.gameType];
   const policy = createBudgetPolicy(validatedInput.value.gameLength);
   const seed = command.seed ?? deps.newSeed();
+  const request = { input: validatedInput.value, seed, traceId: deps.newTraceId() };
   const emit = (event: ScenarioGenerationEvent): void => {
     try {
-      deps.generationObserver?.(event);
+      deps.generationObserver?.({
+        ...event,
+        traceId: event.traceId ?? request.traceId
+      });
     } catch {
       // observer 只做诊断：任何异常不得影响创建流程。
     }
@@ -168,7 +172,6 @@ export async function createGame(
 
   // ── 候选编排：最多两次 source 尝试，每次允许一次机械修复；全部失败走 fallback。
   emit({ stage: "requested" });
-  const request = { input: validatedInput.value, seed, traceId: deps.newTraceId() };
   let blueprint: ScenarioBlueprint | null = null;
   let source: GenerationSource = "fallback";
   // 默认值保证 fallback 事件始终有一个稳定、可汇总的脱敏原因。

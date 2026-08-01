@@ -37,11 +37,11 @@ export class TownPlanTaskCoordinator {
         }
         return { ok: true, key: String(record.gameId) };
       },
-      run: () => generatePendingTownPlan(deps),
+      run: (traceId) => generatePendingTownPlan({ ...deps, traceId }),
     });
   }
 
-  ensure(): Promise<TownEnsureResult> {
-    return this.coordinator.ensure();
+  ensure(traceId?: string): Promise<TownEnsureResult> {
+    return this.coordinator.ensure(traceId);
   }
 }

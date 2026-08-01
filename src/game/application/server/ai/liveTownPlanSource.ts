@@ -67,21 +67,21 @@ export function createLiveTownPlanSource(input: LiveTownPlanSourceInput): TownPl
           timeoutMs: 120_000
         });
       } catch {
-        audit(logger, false, "service_error", Date.now() - startedAt);
+        audit(logger, request.traceId, false, "service_error", Date.now() - startedAt);
         return failure("service_error");
       }
       if (!completed.ok) {
         const category = FAILURE_CATEGORY[completed.code];
-        audit(logger, false, category, completed.latencyMs);
+        audit(logger, request.traceId, false, category, completed.latencyMs);
         return failure(category);
       }
       const candidate = parseObject(completed.content);
       if (candidate === null) {
         const category = completed.content.trim() === "" ? "empty_response" : "invalid_json";
-        audit(logger, false, category, completed.latencyMs);
+        audit(logger, request.traceId, false, category, completed.latencyMs);
         return failure(category);
       }
-      audit(logger, true, undefined, completed.latencyMs);
+      audit(logger, request.traceId, true, undefined, completed.latencyMs);
       return {
         ok: true,
         contractVersion: TOWN_PLAN_CONTRACT_VERSION,
@@ -106,11 +106,13 @@ function failure(category: TownPlanFailureCategory): TownPlanAttempt {
 /** 白名单遥测：绝不含 prompt、模型输出、model、URL 或密钥。 */
 function audit(
   logger: GameLogger,
+  traceId: string,
   generated: boolean,
   category: TownPlanFailureCategory | undefined,
   latencyMs: number
 ): void {
   logger.info("town_plan", {
+    traceId,
     generated,
     ...(category === undefined ? {} : { category }),
     latencyMs

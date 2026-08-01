@@ -53,6 +53,7 @@ export type ScenarioGenerationStage =
 /** 编排层向 observer 投递的阶段事件；failed 额外允许 persistence_failure。 */
 export type ScenarioGenerationEvent = Readonly<{
   stage: ScenarioGenerationStage;
+  traceId?: string;
   outcome?: ScenarioGenerationSource;
   category?: ScenarioCandidateFailureCategory | "persistence_failure";
 }>;

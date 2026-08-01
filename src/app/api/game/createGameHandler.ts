@@ -1,5 +1,8 @@
 import type { CreateGameResult, NewGameInput } from "@/game/application";
-import type { ServerGameEntryPoints } from "@/game/application/server/compositionRoot";
+import type {
+  RequestLogContext,
+  ServerGameEntryPoints
+} from "@/game/application/server/compositionRoot";
 
 // ---------------------------------------------------------------------------
 // POST /api/game 的 HTTP adapter（Task 4）：只做参数/响应映射，无业务逻辑。
@@ -35,22 +38,27 @@ const ALLOWED_FIELDS: ReadonlySet<string> = new Set([
 ]);
 const OFFLINE_JOURNEY_PRESET = "phase10-journey-v1";
 
-function json(status: number, body: unknown): Response {
+function json(status: number, body: unknown, context?: RequestLogContext): Response {
+  if (typeof body === "object" && body !== null && !Array.isArray(body)) {
+    const code = (body as Record<string, unknown>).code;
+    if (typeof code === "string") context?.markResultCode(code);
+  }
   return Response.json(body, { status });
 }
 
 export async function handleCreateGameRequest(
   request: Request,
-  entryPoints: Pick<ServerGameEntryPoints, "createGame"> & Partial<Pick<ServerGameEntryPoints, "createOfflineJourneyGame">>
+  entryPoints: Pick<ServerGameEntryPoints, "createGame"> & Partial<Pick<ServerGameEntryPoints, "createOfflineJourneyGame">>,
+  context?: RequestLogContext
 ): Promise<Response> {
   let parsed: unknown;
   try {
     parsed = await request.json();
   } catch {
-    return json(400, { code: "MALFORMED_JSON" });
+    return json(400, { code: "MALFORMED_JSON" }, context);
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return json(400, { code: "MALFORMED_JSON" });
+    return json(400, { code: "MALFORMED_JSON" }, context);
   }
   const record = parsed as Record<string, unknown>;
 
@@ -58,26 +66,26 @@ export async function handleCreateGameRequest(
   // accepts player input, seed, source or state supplied by the browser.
   if (record["developmentPreset"] === OFFLINE_JOURNEY_PRESET && Object.keys(record).length === 1) {
     if (entryPoints.createOfflineJourneyGame === undefined) {
-      return json(403, { code: "DEVELOPMENT_TOOLS_DISABLED" });
+      return json(403, { code: "DEVELOPMENT_TOOLS_DISABLED" }, context);
     }
     let presetResult;
     try {
-      presetResult = await entryPoints.createOfflineJourneyGame();
+      presetResult = await entryPoints.createOfflineJourneyGame(context?.traceId);
     } catch {
-      return json(500, { code: "INTERNAL_ERROR" });
+      return json(500, { code: "INTERNAL_ERROR" }, context);
     }
     if (presetResult.ok) {
-      return json(201, { view: presetResult.view, generationSource: presetResult.source });
+      return json(201, { view: presetResult.view, generationSource: presetResult.source }, context);
     }
     if (presetResult.code === "DEVELOPMENT_TOOLS_DISABLED") {
-      return json(403, { code: presetResult.code });
+      return json(403, { code: presetResult.code }, context);
     }
     // All remaining failures retain the normal creation response mapping.
     switch (presetResult.code) {
-      case "INVALID_INPUT": return json(400, { code: presetResult.code, fieldErrors: presetResult.fieldErrors });
-      case "ACTIVE_GAME_EXISTS": return json(409, { code: presetResult.code });
-      case "GENERATION_INVALID": return json(422, { code: presetResult.code });
-      case "INFRASTRUCTURE_FAILURE": return json(503, { code: presetResult.code });
+      case "INVALID_INPUT": return json(400, { code: presetResult.code, fieldErrors: presetResult.fieldErrors }, context);
+      case "ACTIVE_GAME_EXISTS": return json(409, { code: presetResult.code }, context);
+      case "GENERATION_INVALID": return json(422, { code: presetResult.code }, context);
+      case "INFRASTRUCTURE_FAILURE": return json(503, { code: presetResult.code }, context);
     }
   }
 
@@ -86,7 +94,7 @@ export async function handleCreateGameRequest(
     .filter((key) => !ALLOWED_FIELDS.has(key))
     .sort();
   if (unexpected.length > 0) {
-    return json(400, { code: "UNEXPECTED_FIELDS", fields: unexpected });
+    return json(400, { code: "UNEXPECTED_FIELDS", fields: unexpected }, context);
   }
 
   // 已知字段的 JSON 类型守卫：避免非字符串进入 domain 校验（会抛 TypeError）。
@@ -104,7 +112,7 @@ export async function handleCreateGameRequest(
     invalidTypes.push("personalityTags");
   }
   if (invalidTypes.length > 0) {
-    return json(400, { code: "INVALID_FIELD_TYPES", fields: invalidTypes.sort() });
+    return json(400, { code: "INVALID_FIELD_TYPES", fields: invalidTypes.sort() }, context);
   }
 
   // 缺失字段以空值传入：由 domain 统一给出 REQUIRED/INVALID_ENUM 字段错误，
@@ -123,24 +131,24 @@ export async function handleCreateGameRequest(
 
   let result: CreateGameResult;
   try {
-    result = await entryPoints.createGame(input);
+    result = await entryPoints.createGame(input, context?.traceId);
   } catch {
     // facade 契约外的意外抛错：稳定代码兜底，异常文本绝不外泄。
-    return json(500, { code: "INTERNAL_ERROR" });
+    return json(500, { code: "INTERNAL_ERROR" }, context);
   }
   if (result.ok) {
     // 只回传 read model view + 安全来源字段（"generated" | "fallback"）；
     // gameId 已含在 view 内，seed/blueprint/state/诊断信息不存在。
-    return json(201, { view: result.view, generationSource: result.source });
+    return json(201, { view: result.view, generationSource: result.source }, context);
   }
   switch (result.code) {
     case "INVALID_INPUT":
-      return json(400, { code: result.code, fieldErrors: result.fieldErrors });
+      return json(400, { code: result.code, fieldErrors: result.fieldErrors }, context);
     case "ACTIVE_GAME_EXISTS":
-      return json(409, { code: result.code });
+      return json(409, { code: result.code }, context);
     case "GENERATION_INVALID":
-      return json(422, { code: result.code });
+      return json(422, { code: result.code }, context);
     case "INFRASTRUCTURE_FAILURE":
-      return json(503, { code: result.code });
+      return json(503, { code: result.code }, context);
   }
 }

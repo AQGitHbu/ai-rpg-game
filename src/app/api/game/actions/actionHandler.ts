@@ -7,7 +7,10 @@ import {
   type PerformActionResult,
   type PlayerIntent
 } from "@/game/application";
-import type { ServerGameEntryPoints } from "@/game/application/server/compositionRoot";
+import type {
+  RequestLogContext,
+  ServerGameEntryPoints
+} from "@/game/application/server/compositionRoot";
 
 // ---------------------------------------------------------------------------
 // POST /api/game/actions 的 HTTP adapter（Phase 3 Task 4 + Phase 4 Task 4）。
@@ -29,7 +32,11 @@ import type { ServerGameEntryPoints } from "@/game/application/server/compositio
 //   500 { code: "INTERNAL_ERROR" }             —— facade 契约外抛错兜底
 // ---------------------------------------------------------------------------
 
-function json(status: number, body: unknown): Response {
+function json(status: number, body: unknown, context?: RequestLogContext): Response {
+  if (typeof body === "object" && body !== null && !Array.isArray(body)) {
+    const code = (body as Record<string, unknown>).code;
+    if (typeof code === "string") context?.markResultCode(code);
+  }
   return Response.json(body, { status });
 }
 
@@ -186,16 +193,17 @@ function parseIntent(raw: unknown):
 
 export async function handlePerformActionRequest(
   request: Request,
-  entryPoints: Pick<ServerGameEntryPoints, "performAction">
+  entryPoints: Pick<ServerGameEntryPoints, "performAction">,
+  context?: RequestLogContext
 ): Promise<Response> {
   let parsed: unknown;
   try {
     parsed = await request.json();
   } catch {
-    return json(400, { code: "MALFORMED_JSON" });
+    return json(400, { code: "MALFORMED_JSON" }, context);
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return json(400, { code: "MALFORMED_JSON" });
+    return json(400, { code: "MALFORMED_JSON" }, context);
   }
   const body = parsed as Record<string, unknown>;
 
@@ -204,19 +212,19 @@ export async function handlePerformActionRequest(
     .filter((key) => !ALLOWED_TOP_FIELDS.has(key))
     .sort();
   if (unexpected.length > 0) {
-    return json(400, { code: "UNEXPECTED_FIELDS", fields: unexpected });
+    return json(400, { code: "UNEXPECTED_FIELDS", fields: unexpected }, context);
   }
 
   // 校验 revision。
   const revision = body["revision"];
   if (typeof revision !== "number" || !Number.isInteger(revision) || revision < 0) {
-    return json(400, { code: "INVALID_INTENT", detail: "revision 必须是非负整数" });
+    return json(400, { code: "INVALID_INTENT", detail: "revision 必须是非负整数" }, context);
   }
 
   // 校验 intent。
   const intentResult = parseIntent(body["intent"]);
   if (!intentResult.ok) {
-    return json(400, { code: "INVALID_INTENT", detail: intentResult.detail });
+    return json(400, { code: "INVALID_INTENT", detail: intentResult.detail }, context);
   }
 
   let result: PerformActionResult;
@@ -224,13 +232,13 @@ export async function handlePerformActionRequest(
     result = await entryPoints.performAction({
       intent: intentResult.intent,
       expectedRevision: revision
-    });
+    }, context?.traceId);
   } catch {
-    return json(500, { code: "INTERNAL_ERROR" });
+    return json(500, { code: "INTERNAL_ERROR" }, context);
   }
 
   if (result.ok) {
-    return json(200, { view: result.view, feedback: result.feedback });
+    return json(200, { view: result.view, feedback: result.feedback }, context);
   }
 
   switch (result.code) {
@@ -239,14 +247,14 @@ export async function handlePerformActionRequest(
         code: result.code,
         view: result.view,
         feedback: result.feedback
-      });
+      }, context);
     case "STALE_GAME_REVISION":
-      return json(409, { code: result.code, view: result.view });
+      return json(409, { code: result.code, view: result.view }, context);
     case "NO_ACTIVE_GAME":
-      return json(404, { code: result.code });
+      return json(404, { code: result.code }, context);
     case "CORRUPT_GAME":
-      return json(500, { code: result.code });
+      return json(500, { code: result.code }, context);
     case "INFRASTRUCTURE_FAILURE":
-      return json(503, { code: result.code });
+      return json(503, { code: result.code }, context);
   }
 }

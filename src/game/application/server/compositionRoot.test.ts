@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { createLogSink, SqliteLogSink } from "@ai-game/logging";
 import type { NewGameInput } from "@/game/domain";
 import wuxiaFixture from "../../../../data/fixtures/phase1/wuxia.json";
 import {
@@ -162,6 +163,51 @@ describe("compositionRoot：注入 env 记录接通真实持久化", () => {
     expect(await entryPoints.createOfflineJourneyGame()).toEqual({
       ok: false,
       code: "DEVELOPMENT_TOOLS_DISABLED",
+    });
+  });
+
+  it("HTTP 包装器贯通请求 trace、结果码、状态码和响应头", async () => {
+    const databasePath = nextDbPath();
+    const entryPoints = openEntryPoints(databasePath);
+    const traceId = "client_trace_composition";
+
+    const response = await entryPoints.executeHttpRequest(
+      "GET",
+      "/api/game/test",
+      async (context) => {
+        expect(context.traceId).toBe(traceId);
+        context.markResultCode("INVALID_INPUT");
+        return Response.json({ code: "INVALID_INPUT" }, { status: 400 });
+      },
+      traceId
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("x-request-trace-id")).toBe(traceId);
+    expect(await response.json()).toEqual({ code: "INVALID_INPUT" });
+
+    const generatedTraceResponse = await entryPoints.executeHttpRequest(
+      "GET",
+      "/api/game/test",
+      async () => Response.json({ status: "ok" })
+    );
+    expect(generatedTraceResponse.headers.get("x-request-trace-id")).toMatch(UUID_PATTERN);
+
+    await entryPoints.close();
+    const sink = await createLogSink({
+      backend: "sqlite",
+      sqlitePath: `${databasePath}.logs.db`
+    });
+    const logs = await (sink as SqliteLogSink).queryByTraceId(traceId);
+    await sink.close();
+
+    expect(logs.map((log) => log.event)).toEqual([
+      "http_request_started",
+      "http_request_completed"
+    ]);
+    expect(logs.at(-1)?.data).toMatchObject({
+      httpStatus: 400,
+      resultCode: "INVALID_INPUT"
     });
   });
 });

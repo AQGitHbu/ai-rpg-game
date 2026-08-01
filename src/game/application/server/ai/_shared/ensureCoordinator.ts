@@ -21,7 +21,7 @@ export type BackgroundEnsureConfig = {
   /** 读取当前存档并判定是否有 pending 工作；ok 时给出去重 key。 */
   loadPending(): Promise<EnsurePending>;
   /** 执行 pending 工作；返回 "unavailable" 记 warn，抛错记 error。 */
-  run(): Promise<unknown>;
+  run(traceId?: string): Promise<unknown>;
   /** 结构化日志 event 名（如 runtime_narrative_task / town_plan_task）。 */
   logKey: string;
   logger?: GameLogger;
@@ -38,18 +38,48 @@ export class BackgroundEnsureCoordinator {
     this.logger = config.logger ?? NOOP_GAME_LOGGER;
   }
 
-  async ensure(): Promise<EnsureResult> {
+  async ensure(traceId?: string): Promise<EnsureResult> {
     const pending = await this.config.loadPending();
-    if (!pending.ok) return pending.result;
+    if (!pending.ok) {
+      this.logger.info(this.config.logKey, {
+        traceId,
+        result: pending.result
+      });
+      return pending.result;
+    }
     const { key } = pending;
-    if (this.running.has(key)) return "already_running";
+    if (this.running.has(key)) {
+      this.logger.info(this.config.logKey, {
+        traceId,
+        gameId: key,
+        result: "already_running"
+      });
+      return "already_running";
+    }
+    this.logger.info(this.config.logKey, {
+      traceId,
+      gameId: key,
+      result: "queued"
+    });
+    const startedAt = Date.now();
     const task = Promise.resolve()
-      .then(() => this.config.run())
+      .then(() => this.config.run(traceId))
       .then((result) => {
-        if (result === "unavailable") this.logger.warn(this.config.logKey, { result });
+        const level = result === "unavailable" ? "warn" : "info";
+        this.logger[level](this.config.logKey, {
+          traceId,
+          gameId: key,
+          result: typeof result === "string" ? result : "completed",
+          durationMs: Date.now() - startedAt
+        });
       })
       .catch(() => {
-        this.logger.error(this.config.logKey, { result: "unavailable" });
+        this.logger.error(this.config.logKey, {
+          traceId,
+          gameId: key,
+          result: "unavailable",
+          durationMs: Date.now() - startedAt
+        });
       })
       .finally(() => {
         this.running.delete(key);

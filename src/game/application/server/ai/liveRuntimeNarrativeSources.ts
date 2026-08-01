@@ -22,12 +22,12 @@ async function run<T extends object, A>(role: Role, request: Request, input: { t
   let completed;
   // This provider disables extended reasoning through enable_thinking. Output
   // shape remains prompt-directed and is always locally parsed and approved.
-  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { enable_thinking: false, ...input.responseFormat?.(role) }, temperature: 0.2, timeoutMs: 120_000 }); } catch { audit(logger, role, false, "service_error", Date.now() - startedAt); return failure(request, "service_error") as A; }
-  if (!completed.ok) { audit(logger, role, false, category[completed.code], completed.latencyMs); return failure(request, category[completed.code]) as A; }
+  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { enable_thinking: false, ...input.responseFormat?.(role) }, temperature: 0.2, timeoutMs: 120_000 }); } catch { audit(logger, request.traceId, role, false, "service_error", Date.now() - startedAt); return failure(request, "service_error") as A; }
+  if (!completed.ok) { audit(logger, request.traceId, role, false, category[completed.code], completed.latencyMs); return failure(request, category[completed.code]) as A; }
   const payload = parseObject(completed.content);
-  if (payload === null) { const failureCategory = completed.content.trim() === "" ? "empty_response" : "invalid_json"; audit(logger, role, false, failureCategory, completed.latencyMs); return failure(request, failureCategory) as A; }
+  if (payload === null) { const failureCategory = completed.content.trim() === "" ? "empty_response" : "invalid_json"; audit(logger, request.traceId, role, false, failureCategory, completed.latencyMs); return failure(request, failureCategory) as A; }
   const repaired = repairRuntimeNarrativeReferences(role, payload, request.context);
-  audit(logger, role, true, undefined, completed.latencyMs);
+  audit(logger, request.traceId, role, true, undefined, completed.latencyMs);
   return { ok: true, provenance: "generated", [field]: repaired as T, diagnostics: { traceId: request.traceId, contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" } } as A;
 }
 
@@ -210,8 +210,8 @@ export function repairRuntimeNarrativeReferences(
 }
 
 /** Whitelisted server telemetry: never includes prompt, output, model, URL, player text or credentials. */
-function audit(logger: GameLogger, role: Role, generated: boolean, failureCategory: NarrativeFailureCategory | undefined, latencyMs: number): void {
-  logger.info("runtime_narrative", { role, generated, ...(failureCategory === undefined ? {} : { category: failureCategory }), latencyMs });
+function audit(logger: GameLogger, traceId: string, role: Role, generated: boolean, failureCategory: NarrativeFailureCategory | undefined, latencyMs: number): void {
+  logger.info("runtime_narrative", { traceId, role, generated, ...(failureCategory === undefined ? {} : { category: failureCategory }), latencyMs });
 }
 
 function failure(request: Request, failureCategory: NarrativeFailureCategory) {

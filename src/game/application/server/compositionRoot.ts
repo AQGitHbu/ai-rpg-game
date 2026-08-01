@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { NewGameInput } from "@/game/domain";
 import type { GameLogDetails, GameLogger } from "@/game/logging";
-import { createServerLogRuntime } from "@/game/logging/serverConsoleLogger";
+import {
+  createRequestLogContext,
+  createServerLogRuntime,
+  type RequestLogContext
+} from "@/game/logging/serverConsoleLogger";
 import wuxiaFixture from "../../../../data/fixtures/phase1/wuxia.json";
 import {
   createGame,
@@ -41,6 +45,8 @@ import {
 import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
 import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
 
+export type { RequestLogContext };
+
 type Phase1Fixture = { input: NewGameInput; seed: string };
 const PHASE10_JOURNEY_BASELINE = wuxiaFixture as unknown as Phase1Fixture;
 
@@ -78,21 +84,28 @@ export type ServerGameEntryPoints = {
   /** 由 server composition root 决定，客户端与 API adapter 不读取环境变量。 */
   readonly developmentToolsEnabled: boolean;
   /** 创建当前本地存档：只承载浏览器允许提交的开局资料。 */
-  createGame(input: NewGameInput): Promise<CreateGameResult>;
+  createGame(input: NewGameInput, traceId?: string): Promise<CreateGameResult>;
   /** 开发专用：使用 Phase 10 离线完整旅程的固定开局基线，零 AI 调用。 */
-  createOfflineJourneyGame(): Promise<OfflineJourneyGameResult>;
+  createOfflineJourneyGame(traceId?: string): Promise<OfflineJourneyGameResult>;
   /** 读取当前本地存档的 read model。 */
-  getCurrentGame(): Promise<CurrentGameResult>;
+  getCurrentGame(traceId?: string): Promise<CurrentGameResult>;
   /** 执行玩家行动：纯规则裁决 + 原子续存档。 */
-  performAction(command: PerformActionCommand): Promise<PerformActionResult>;
+  performAction(command: PerformActionCommand, traceId?: string): Promise<PerformActionResult>;
   /** NPC 自由输入：纯规则分类→闲聊回应或排队叙事场景；自身零 AI 调用。 */
-  handleNpcDialogue(command: HandleNpcDialogueCommand): Promise<HandleNpcDialogueResult>;
+  handleNpcDialogue(command: HandleNpcDialogueCommand, traceId?: string): Promise<HandleNpcDialogueResult>;
   /** 快速启动或恢复当前存档的后台叙事生成；绝不等待 provider。 */
-  ensureNarrativeGeneration(): Promise<NarrativeEnsureResult>;
+  ensureNarrativeGeneration(traceId?: string): Promise<NarrativeEnsureResult>;
   /** 快速启动或恢复当前存档的后台小镇规划生成；绝不等待 provider。 */
-  ensureTownGeneration(): Promise<TownEnsureResult>;
+  ensureTownGeneration(traceId?: string): Promise<TownEnsureResult>;
   /** 仅 development composition 可调用；生产环境一律返回 disabled。 */
-  clearDevelopmentCurrentGame(): Promise<"cleared" | "none" | "disabled" | "unavailable">;
+  clearDevelopmentCurrentGame(traceId?: string): Promise<"cleared" | "none" | "disabled" | "unavailable">;
+  /** API adapter 统一使用的请求生命周期与 trace 入口。 */
+  executeHttpRequest(
+    method: string,
+    route: string,
+    handler: (context: RequestLogContext) => Promise<Response>,
+    traceId?: string
+  ): Promise<Response>;
   /** 释放底层 SQLite 客户端：测试清理临时文件 / 进程收尾用；重复调用安全。 */
   close(): Promise<void>;
 };
@@ -111,25 +124,72 @@ function stableResultDetails(result: unknown): GameLogDetails {
   const gameId = typeof value.gameId === "string"
     ? value.gameId
     : typeof view?.gameId === "string" ? view.gameId : undefined;
+  const currentLocation = view?.currentLocation;
+  const currentLocationId = currentLocation !== null && typeof currentLocation === "object" &&
+    typeof (currentLocation as Record<string, unknown>).id === "string"
+    ? (currentLocation as Record<string, unknown>).id as string
+    : undefined;
+  const revision = typeof view?.revision === "number" && Number.isInteger(view.revision)
+    ? view.revision
+    : undefined;
+  const battle = view?.battle;
+  const battleStatus = battle === null ? "idle" : battle !== undefined ? "active" : undefined;
+  const narrativeGeneration = view?.narrativeGeneration;
+  const narrativeGenerationStatus = narrativeGeneration !== null && typeof narrativeGeneration === "object" &&
+    typeof (narrativeGeneration as Record<string, unknown>).status === "string"
+    ? (narrativeGeneration as Record<string, unknown>).status as string
+    : undefined;
+  const townStatus = typeof view?.townStatus === "string" ? view.townStatus : undefined;
+  const activeQuests = Array.isArray(view?.activeQuests) ? view.activeQuests.length : undefined;
+  const storyEvents = Array.isArray(view?.storyEvents) ? view.storyEvents.length : undefined;
   return {
     ...(typeof value.ok === "boolean" ? { ok: value.ok } : {}),
     ...(typeof value.status === "string" ? { status: value.status } : {}),
     ...(typeof value.code === "string" ? { code: value.code } : {}),
     ...(typeof value.kind === "string" ? { kind: value.kind } : {}),
     ...(typeof value.source === "string" ? { resultSource: value.source } : {}),
-    ...(gameId === undefined ? {} : { gameId, saveId: gameId })
+    ...(gameId === undefined ? {} : { gameId, saveId: gameId }),
+    ...(currentLocationId === undefined ? {} : { currentLocationId }),
+    ...(revision === undefined ? {} : { revision }),
+    ...(battleStatus === undefined ? {} : { battleStatus }),
+    ...(narrativeGenerationStatus === undefined ? {} : { narrativeGenerationStatus }),
+    ...(townStatus === undefined ? {} : { townStatus }),
+    ...(activeQuests === undefined ? {} : { activeQuestCount: activeQuests }),
+    ...(storyEvents === undefined ? {} : { storyEventCount: storyEvents })
+  };
+}
+
+function stableIntentDetails(command: PerformActionCommand): GameLogDetails {
+  const intent = command.intent as unknown as Record<string, unknown>;
+  const details: Record<string, unknown> = {
+    intentType: typeof intent.type === "string" ? intent.type : "unknown",
+    expectedRevision: command.expectedRevision
+  };
+  for (const key of ["locationId", "npcId", "factId", "itemId", "enemyId", "action"] as const) {
+    if (typeof intent[key] === "string") details[key] = intent[key];
+  }
+  return details;
+}
+
+function stableNpcDialogueDetails(command: HandleNpcDialogueCommand): GameLogDetails {
+  return {
+    npcId: String(command.npcId),
+    expectedRevision: command.expectedRevision,
+    textLength: command.text.length
   };
 }
 
 async function runLoggedUseCase<T>(
   logger: GameLogger,
   operation: string,
-  work: () => Promise<T>
+  work: () => Promise<T>,
+  extraDetails: GameLogDetails = {},
+  requestedTraceId?: string
 ): Promise<T> {
-  const traceId = randomUUID();
+  const traceId = requestedTraceId ?? randomUUID();
   const source = `rpg.server.${operation}`;
   const startedAt = Date.now();
-  logger.info(`${operation}_started`, { traceId, scope: "request", source });
+  logger.info(`${operation}_started`, { traceId, scope: "request", source, ...extraDetails });
   try {
     const result = await work();
     logger.info(`${operation}_completed`, {
@@ -137,6 +197,7 @@ async function runLoggedUseCase<T>(
       scope: "request",
       source,
       durationMs: Date.now() - startedAt,
+      ...extraDetails,
       ...stableResultDetails(result)
     });
     return result;
@@ -146,6 +207,7 @@ async function runLoggedUseCase<T>(
       scope: "request",
       source,
       durationMs: Date.now() - startedAt,
+      ...extraDetails,
       errorName: error instanceof Error ? error.name : "UnknownError"
     });
     throw error;
@@ -179,7 +241,16 @@ export function createServerGameEntryPoints(
     // traceId 只进 source 请求与脱敏审计；observer 仅接收脱敏阶段事件。
     scenarioCandidateSource: createScenarioCandidateSource(env, { logger }),
     newTraceId: () => randomUUID(),
-    generationObserver: options.generationObserver,
+    generationObserver: options.generationObserver ?? ((event) => {
+      logger.info("scenario_generation_lifecycle", {
+        traceId: event.traceId,
+        scope: "request",
+        source: "rpg.server.create_game",
+        stage: event.stage,
+        ...(event.outcome === undefined ? {} : { outcome: event.outcome }),
+        ...(event.category === undefined ? {} : { category: event.category })
+      });
+    }),
     runtimeNarrativeSources,
   };
   const performDeps: PerformActionDependencies = {
@@ -212,16 +283,66 @@ export function createServerGameEntryPoints(
     newTraceId: () => randomUUID(),
     now: () => new Date().toISOString(),
     townPlanSource: createTownPlanSource(env, { logger }),
+    logger,
   }, logger);
+  const executeHttpRequest = async (
+    method: string,
+    route: string,
+    handler: (context: RequestLogContext) => Promise<Response>,
+    incomingTraceId?: string
+  ): Promise<Response> => {
+    const context = createRequestLogContext({ method, route, traceId: incomingTraceId });
+    const source = `rpg.http.${method.toLowerCase()}.${route}`;
+    logger.info("http_request_started", {
+      traceId: context.traceId,
+      scope: "request",
+      source,
+      method,
+      route
+    });
+    try {
+      const response = await handler(context);
+      logger.info("http_request_completed", {
+        traceId: context.traceId,
+        scope: "request",
+        source,
+        method,
+        route,
+        httpStatus: response.status,
+        resultCode: context.resultCode(),
+        durationMs: Date.now() - context.startedAtMs
+      });
+      const headers = new Headers(response.headers);
+      headers.set("X-Request-Trace-Id", context.traceId);
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers
+      });
+    } catch (error) {
+      logger.error("http_request_failed", {
+        traceId: context.traceId,
+        scope: "request",
+        source,
+        method,
+        route,
+        durationMs: Date.now() - context.startedAtMs,
+        errorName: error instanceof Error ? error.name : "UnknownError"
+      });
+      throw error;
+    }
+  };
   return {
     developmentToolsEnabled: env.NODE_ENV === "development",
     // 刻意不透传 command.seed：浏览器/API 无法指定 seed 或 gameId。
-    createGame: (input) => runLoggedUseCase(
+    createGame: (input, traceId) => runLoggedUseCase(
       logger,
       "create_game",
-      () => createGame({ input }, dependencies)
+      () => createGame({ input }, dependencies),
+      { gameType: input.gameType },
+      traceId
     ),
-    createOfflineJourneyGame: () => {
+    createOfflineJourneyGame: (traceId) => {
       if (env.NODE_ENV !== "development") {
         logger.warn("offline_journey_create_rejected", {
           scope: "request",
@@ -233,41 +354,52 @@ export function createServerGameEntryPoints(
       return runLoggedUseCase(logger, "create_offline_journey_game", () => createGame({
           input: PHASE10_JOURNEY_BASELINE.input,
           seed: PHASE10_JOURNEY_BASELINE.seed,
-        }, offlineJourneyDependencies));
+        }, offlineJourneyDependencies), {}, traceId);
     },
-    getCurrentGame: () => runLoggedUseCase(
+    getCurrentGame: (traceId) => runLoggedUseCase(
       logger,
       "get_current_game",
-      () => getCurrentGame({ repository })
+      () => getCurrentGame({ repository }),
+      {},
+      traceId
     ),
-    performAction: (command) => runLoggedUseCase(
+    performAction: (command, traceId) => runLoggedUseCase(
       logger,
       "perform_action",
-      () => performAction(command, performDeps)
+      () => performAction(command, performDeps),
+      stableIntentDetails(command),
+      traceId
     ),
-    handleNpcDialogue: (command) => runLoggedUseCase(
+    handleNpcDialogue: (command, traceId) => runLoggedUseCase(
       logger,
       "handle_npc_dialogue",
-      () => handleNpcDialogue(command, npcDialogueDeps)
+      () => handleNpcDialogue(command, { ...npcDialogueDeps, traceId, logger }),
+      stableNpcDialogueDetails(command),
+      traceId
     ),
-    ensureNarrativeGeneration: () => runLoggedUseCase(
+    ensureNarrativeGeneration: (traceId) => runLoggedUseCase(
       logger,
       "ensure_narrative_generation",
-      () => narrativeCoordinator.ensure()
+      () => narrativeCoordinator.ensure(traceId),
+      {},
+      traceId
     ),
-    ensureTownGeneration: () => runLoggedUseCase(
+    ensureTownGeneration: (traceId) => runLoggedUseCase(
       logger,
       "ensure_town_generation",
-      () => townPlanCoordinator.ensure()
+      () => townPlanCoordinator.ensure(traceId),
+      {},
+      traceId
     ),
-    clearDevelopmentCurrentGame: async () => {
+    clearDevelopmentCurrentGame: async (traceId) => {
       return runLoggedUseCase(logger, "clear_development_current_game", async () => {
         if (env.NODE_ENV !== "development") return "disabled";
         const result = await repository.clearCurrentGame();
         if (!result.ok) return "unavailable";
         return result.status;
-      });
+      }, {}, traceId);
     },
+    executeHttpRequest,
     close: async () => {
       try {
         await repository.close();

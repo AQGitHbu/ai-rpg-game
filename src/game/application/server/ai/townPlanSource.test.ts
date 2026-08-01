@@ -131,7 +131,9 @@ describe("createLiveTownPlanSource", () => {
     const blob = JSON.stringify(logs);
     expect(blob).not.toContain("sk-should-never-leak");
     expect(blob).not.toContain(CONFIG.baseUrl);
-    expect(blob).not.toContain(REQUEST.traceId);
+    // 允许请求关联 ID 进入诊断，便于把生成失败与同一请求的 HTTP/业务日志串起来；
+    // prompt、密钥、URL 和模型输出仍必须保持脱敏。
+    expect(blob).toContain(REQUEST.traceId);
     expect(blob).toContain("town_plan");
   });
 });

@@ -54,6 +54,10 @@
     "test:town-journey": "vitest run src/game/application/testing/townAiJourney.test.ts",
     "journey:town": "node scripts/townAiJourney.mjs --mode=replay",
     "smoke:ai:town-journey": "node scripts/townAiJourney.mjs --mode=record",
+    "logs:query": "node scripts/logs.mjs query",
+    "logs:retention": "node scripts/logs.mjs retention",
+    "logs:health": "node scripts/logs.mjs health",
+    "test:logs": "node --test scripts/logs.node-test.mjs",
     "handoff:check:docs": "node scripts/checkHandoff.mjs",
     "handoff:check": "node scripts/checkHandoff.mjs --strict-branch",
     "setup": "npm run env:bootstrap && npm run bootstrap:foundation && npm ci && npm run sync:standards && npm run doctor"

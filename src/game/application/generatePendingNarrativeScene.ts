@@ -18,6 +18,7 @@ export type GeneratePendingNarrativeSceneDependencies = Readonly<{
     npcLineSource: NpcLineSource;
   }>;
   logger?: GameLogger;
+  traceId?: string;
 }>;
 
 export type GeneratePendingNarrativeSceneResult =
@@ -62,14 +63,24 @@ export async function generatePendingNarrativeScene(
     return "cleared";
   }
 
+  const traceId = deps.traceId ?? deps.newTraceId();
   const generated = await orchestrateNarrativeScene({
-    traceId: deps.newTraceId(),
+    traceId,
     blueprint: record.blueprint,
     state: record.state,
     ...deps.runtimeNarrativeSources,
     logger: deps.logger,
   });
   const scene = generated.scene;
+  deps.logger?.info("runtime_narrative_generation", {
+    traceId,
+    scope: "request",
+    source: "rpg.application.generate_pending_narrative_scene",
+    gameId: String(record.gameId),
+    sceneId: scene.sceneId,
+    provenance: generated.provenance,
+    expansionApproved: generated.expansionDecision.ok
+  });
   // Phase 11：场景应用时提交一条 narrative_scene_presented 事件——只携带结构索引
   // （场景 ID、当前地点、焦点 NPC、已呈现的已发现事实、节奏标签、注入时间戳），
   // 绝不携带 narration、对白、choiceToken、actionKey 或 AI provenance。

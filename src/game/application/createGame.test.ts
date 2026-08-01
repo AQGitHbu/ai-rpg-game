@@ -423,7 +423,11 @@ describe("createGame：Phase 4A 候选编排", () => {
       "validating",
       "completed"
     ]);
-    expect(events.at(-1)).toEqual({ stage: "completed", outcome: "generated" });
+    expect(events.at(-1)).toEqual({
+      stage: "completed",
+      outcome: "generated",
+      traceId: "trace-test-0001"
+    });
   });
 
   it("repairable 候选 ⇒ 修复后 generated，source 只调用一次", async () => {
@@ -452,7 +456,11 @@ describe("createGame：Phase 4A 候选编排", () => {
       "repairing",
       "completed"
     ]);
-    expect(events.at(-1)).toEqual({ stage: "completed", outcome: "generated" });
+    expect(events.at(-1)).toEqual({
+      stage: "completed",
+      outcome: "generated",
+      traceId: "trace-test-0001"
+    });
   });
 
   it("首次不可修复、第二次合法 ⇒ generated 且 source 调用两次", async () => {
@@ -513,8 +521,16 @@ describe("createGame：Phase 4A 候选编排", () => {
       "falling_back",
       "completed"
     ]);
-    expect(events.at(-2)).toEqual({ stage: "falling_back", category: "timeout" });
-    expect(events.at(-1)).toEqual({ stage: "completed", outcome: "fallback" });
+    expect(events.at(-2)).toEqual({
+      stage: "falling_back",
+      category: "timeout",
+      traceId: "trace-test-0001"
+    });
+    expect(events.at(-1)).toEqual({
+      stage: "completed",
+      outcome: "fallback",
+      traceId: "trace-test-0001"
+    });
   });
 
   it("两次候选引用违规 ⇒ fallback 记录 reference_broken，供脱敏 smoke 汇总", async () => {
@@ -534,7 +550,11 @@ describe("createGame：Phase 4A 候选编排", () => {
 
     expect(result).toMatchObject({ ok: true, source: "fallback" });
     expect(scripted.calls).toHaveLength(2);
-    expect(events.at(-2)).toEqual({ stage: "falling_back", category: "reference_broken" });
+    expect(events.at(-2)).toEqual({
+      stage: "falling_back",
+      category: "reference_broken",
+      traceId: "trace-test-0001"
+    });
   });
 
   it("候选合法但 repository 冲突 ⇒ ACTIVE_GAME_EXISTS + failed(persistence_failure)", async () => {
@@ -551,7 +571,11 @@ describe("createGame：Phase 4A 候选编排", () => {
     );
 
     expect(result).toEqual({ ok: false, code: "ACTIVE_GAME_EXISTS" });
-    expect(events.at(-1)).toEqual({ stage: "failed", category: "persistence_failure" });
+    expect(events.at(-1)).toEqual({
+      stage: "failed",
+      category: "persistence_failure",
+      traceId: "trace-test-0001"
+    });
   });
 
   it("候选合法但 repository 抛错 ⇒ INFRASTRUCTURE_FAILURE + failed(persistence_failure)", async () => {
@@ -580,7 +604,11 @@ describe("createGame：Phase 4A 候选编排", () => {
     );
 
     expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
-    expect(events.at(-1)).toEqual({ stage: "failed", category: "persistence_failure" });
+    expect(events.at(-1)).toEqual({
+      stage: "failed",
+      category: "persistence_failure",
+      traceId: "trace-test-0001"
+    });
   });
 
   it("输入无效 ⇒ source 与 repository 调用均为零，且无任何阶段事件", async () => {

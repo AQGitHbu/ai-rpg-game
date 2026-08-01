@@ -42,11 +42,11 @@ export class RuntimeNarrativeTaskCoordinator {
         }
         return { ok: true, key: String(record.gameId) };
       },
-      run: () => generatePendingNarrativeScene(deps),
+      run: (traceId) => generatePendingNarrativeScene({ ...deps, traceId }),
     });
   }
 
-  ensure(): Promise<NarrativeEnsureResult> {
-    return this.coordinator.ensure();
+  ensure(traceId?: string): Promise<NarrativeEnsureResult> {
+    return this.coordinator.ensure(traceId);
   }
 }

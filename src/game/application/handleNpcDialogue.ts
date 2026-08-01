@@ -1,6 +1,7 @@
 import { loadScenarioProfiles, type ScenarioProfiles } from "@/game/gameplay/rpg/scenario";
 import { classifyFreeDialogue, classifyDialogueTone, composeNpcCasualReply } from "@/game/gameplay/rpg/actions";
 import { RELATIONSHIP_CHANGE, clampAffinity, type GameState, type NpcId, type PlayerNpcChatState } from "@/game/domain";
+import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
 import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
 import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
 import type { ActionFeedbackView } from "./performAction";
@@ -42,6 +43,9 @@ export type HandleNpcDialogueDependencies = {
   /** 场景 profile 配置：缺省加载内置 data/base 配置，测试可注入变体。 */
   readonly profiles?: ScenarioProfiles;
   readonly runtimeNarrativeSources?: Readonly<{ directorSource: DirectorSource; sceneScriptSource: SceneScriptSource; npcLineSource: NpcLineSource }>;
+  /** server-only structured telemetry; text itself is never logged. */
+  readonly logger?: GameLogger;
+  readonly traceId?: string;
 };
 
 export type HandleNpcDialogueResult =
@@ -150,6 +154,8 @@ export async function handleNpcDialogue(
   // Step 5: 纯规则分类。叙事路径要求 AI 可用（非 offline + sources 注入）
   // 且通过排队资格检查；任一不满足则降级为闲聊（spec §4.4，永不报错阻塞）。
   const classification = classifyFreeDialogue(record.blueprint, record.state, command.npcId, command.text);
+  const tone = classifyDialogueTone(command.text);
+  const logger = deps.logger ?? NOOP_GAME_LOGGER;
   const canTriggerNarrative =
     classification === "narrative" &&
     record.state.narrative.mode !== "offline" &&
@@ -166,13 +172,22 @@ export async function handleNpcDialogue(
     if (view === null) {
       return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
     }
+    logger.info("npc_dialogue_decision", {
+      traceId: deps.traceId,
+      scope: "request",
+      source: "rpg.application.handle_npc_dialogue",
+      npcId: String(command.npcId),
+      classification,
+      tone,
+      relationshipDelta: 0,
+      resultKind: "chat"
+    });
     return { ok: true, kind: "chat", npcSpeech, view };
   }
 
   // Step 6: narrative 路径：pending + playerNpcChat 快照一次 CAS 写入。
   // 快照随 pending 变体单次消费，场景 ready 时随类型收窄自动丢弃。
   // Phase 13：在构造 nextState 前计算关系变化。
-  const tone = classifyDialogueTone(command.text);
   const delta =
     tone === "positive" ? RELATIONSHIP_CHANGE.FREE_INPUT_POSITIVE :
     tone === "negative" ? RELATIONSHIP_CHANGE.FREE_INPUT_NEGATIVE :
@@ -189,6 +204,16 @@ export async function handleNpcDialogue(
     npcName: npc.name,
     npcRole: npc.role
   };
+  logger.info("npc_dialogue_decision", {
+    traceId: deps.traceId,
+    scope: "request",
+    source: "rpg.application.handle_npc_dialogue",
+    npcId: String(command.npcId),
+    classification,
+    tone,
+    relationshipDelta: delta,
+    resultKind: "narrative_trigger"
+  });
   const nextState: GameState = {
     ...record.state,
     npcs: replaceInArray(

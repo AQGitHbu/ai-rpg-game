@@ -9,6 +9,7 @@ import {
   type LogSink
 } from "@ai-game/logging";
 import type { GameLogDetails, GameLogger } from "./logTypes";
+export { createRequestLogContext, type RequestLogContext } from "./requestLog";
 
 export const GAME_LOG_DB_PATH_ENV = "GAME_LOG_DB_PATH";
 export const GAME_LOG_FALLBACK_DIR_ENV = "GAME_LOG_FALLBACK_DIR";

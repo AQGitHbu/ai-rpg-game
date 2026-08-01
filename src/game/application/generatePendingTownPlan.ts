@@ -12,6 +12,7 @@ import {
 } from "@/game/gameplay/rpg/town";
 import type { GameRepository } from "./server/persistence/gameRepository";
 import type { TownPlanCandidateSource, TownPlanRequest } from "./townPlanGeneration";
+import type { GameLogger } from "@/game/logging";
 
 // ---------------------------------------------------------------------------
 // Town 层：消费 durable pending 标记的小镇规划生成 use case——镜像
@@ -30,6 +31,8 @@ export type GeneratePendingTownPlanDependencies = Readonly<{
   newTraceId: () => string;
   now: () => string;
   townPlanSource: TownPlanCandidateSource;
+  logger?: GameLogger;
+  traceId?: string;
 }>;
 
 export type GeneratePendingTownPlanResult =
@@ -75,6 +78,7 @@ export async function generatePendingTownPlan(
   const npcs = record.blueprint.npcs
     .filter((npc) => location.npcIds.some((id) => String(id) === String(npc.id)))
     .map((npc) => ({ id: String(npc.id), name: npc.name, role: npc.role }));
+  const traceId = deps.traceId ?? deps.newTraceId();
   const request: TownPlanRequest = {
     locationId,
     locationName: location.name,
@@ -84,21 +88,41 @@ export async function generatePendingTownPlan(
     worldTone: record.blueprint.world.tone,
     worldThemes: record.blueprint.world.themes,
     seed,
-    traceId: deps.newTraceId()
+    traceId
   };
 
   // 有界尝试：source 失败与校验/编译拒绝同等计数；成功即停。
   let plan = baseline;
   let planSource: TownPlanSourceKind = "fallback";
+  let attempts = 0;
+  let lastFailureCategory: string | undefined;
   for (let attempt = 0; attempt < TOWN_PLAN_MAX_ATTEMPTS; attempt += 1) {
+    attempts += 1;
     const generated = await deps.townPlanSource.generate(request);
-    if (!generated.ok) continue;
+    if (!generated.ok) {
+      lastFailureCategory = generated.category;
+      continue;
+    }
     const validated = validateTownPlanCandidate(generated.candidate, { seed, baseline });
-    if (!validated.ok) continue;
+    if (!validated.ok) {
+      lastFailureCategory = validated.reason;
+      continue;
+    }
     plan = validated.plan;
     planSource = "generated";
     break;
   }
+
+  deps.logger?.info("town_plan_generation", {
+    traceId,
+    scope: "request",
+    source: "rpg.application.generate_pending_town_plan",
+    gameId: String(record.gameId),
+    locationId,
+    attempts,
+    planSource,
+    ...(lastFailureCategory === undefined ? {} : { lastFailureCategory })
+  });
 
   const town: TownRuntimeState = {
     locationId: location.id,
