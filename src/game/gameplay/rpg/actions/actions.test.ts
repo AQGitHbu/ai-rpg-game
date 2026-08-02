@@ -349,9 +349,11 @@ describe("resolveAction", () => {
         type: "npc_met",
         npcId: NPC_1,
         occurredAt: FIXED_TIME,
+        interactionKind: "greet",
       });
       const npc = result.state.npcs.find((n) => n.npcId === NPC_1);
       expect(npc?.met).toBe(true);
+      expect(npc?.relationship).toEqual({ affinity: 5 });
       expect(result.state.eventLedger).toHaveLength(2);
     }
   });

@@ -47,7 +47,7 @@ S4 评分规则：早期预测与故事级评审使用**独立的 callJudge 调�
 
 - 整局 fallback 率；各角色重试率与 invalid_json 率；审批驳回分类分布。
 - tensionLevel 曲线（完整序列 + 标准差作为平坦度）；pacing 分布与顺序合法性。
-- 每幕事实揭示密度（两种口径：**计划揭示** = `directorPlan.allowedRevealFactIds` 集合；**实际揭示** = `story.jsonl` 具 `factId` 的 `fact_discovered` 事件集合）。报告并列 `planned / actual / overlap / missed`（`factsPerAct`：`plannedFactIds`/`actualFactIds`/`overlapFactIds`/`missedFactIds`），不以仅有事件类型的记录代替事实 ID；相邻场景 narration 字符 3-gram 重复率；narration/台词长度分布。
+- 每幕事实覆盖分两条链记录：**计划叙事引用** = `directorPlan.allowedRevealFactIds` 集合；**实际叙事引用** = 新产物 `story.jsonl` 的 `usedFactIds + npcUsedFactIds`；**规则调查** = `fact_discovered.factId` 事件集合，另列为 `discoveredFactIds`。报告并列 `planned / actual / overlap / missed / discovered`（`factsPerAct`：`plannedFactIds`/`actualFactIds`/`overlapFactIds`/`missedFactIds`/`discoveredFactIds`）。`allowedRevealFactIds` 只允许已发现事实，不能与 `fact_discovered` 直接做计划→发现的命中率；旧产物缺少使用字段时，分析器为兼容回退到规则发现事件并注明版本差异。相邻场景 narration 字符 3-gram 重复率；narration/台词长度分布。
 - **实体漏斗**（按 NPC、地点、物品分列；`entities.npc/location/item`）：
   - `introduced`：`directorPlan.introducedEntities` 中该种类实体 ID 的去重集合大小；
   - `interacted`（interacted/used）：交互事件携带的该种类 `entityId` 去重集合大小——NPC=`npc_met`、地点=`location_observed`/`location_visited`、物品=`item_obtained`；

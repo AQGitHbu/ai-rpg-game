@@ -13,9 +13,9 @@
   },
   "seed": "phase1-scifi-001",
   "expected": {
-    "templateVersion": "fallback-4",
-    "inputDigest": "c48a00234d562f01",
-    "generationId": "gen-2fec0ce3a68136bf",
+    "templateVersion": "fallback-6",
+    "inputDigest": "83fd918122118cab",
+    "generationId": "gen-89a676cca0673f96",
     "locationIds": ["loc_1", "loc_2", "loc_3", "loc_4", "loc_hidden"],
     "questIds": ["quest_main_1", "quest_main_2", "quest_main_3", "quest_main_4", "quest_main_5", "quest_s1"],
     "endingIds": ["ending_1", "ending_2"],

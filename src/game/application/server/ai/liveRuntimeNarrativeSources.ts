@@ -17,6 +17,8 @@ export type LiveRuntimeNarrativeSourcesOptions = Readonly<{
   captureSink?: StoryEvalSink;
   /** 评估专用 provider 超时；未传时保持正常运行时的 120 秒。 */
   timeoutMs?: number;
+  /** provider extended reasoning；默认关闭，按角色显式开启。 */
+  thinkingRoles?: readonly Role[];
 }>;
 
 /** Three separate sources and requests; each builder receives only its already-projected context. */
@@ -74,9 +76,9 @@ async function run<T extends object, A>(role: Role, request: Request, input: Liv
     } catch { /* 采集失败绝不抛到游戏主流程 */ }
   };
   let completed;
-  // This provider disables extended reasoning through enable_thinking. Output
-  // shape remains prompt-directed and is always locally parsed and approved.
-  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { enable_thinking: false, ...input.responseFormat?.(role) }, temperature: 0.2, timeoutMs: input.timeoutMs ?? 120_000 }); } catch { audit(logger, role, false, "service_error", Date.now() - startedAt); capture({ rawResponse: null, parsedCandidate: null, failureCategory: "service_error" }); return failure(request, "service_error") as A; }
+  // Output shape remains prompt-directed and is always locally parsed and approved.
+  const enableThinking = input.thinkingRoles?.includes(role) ?? false;
+  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { enable_thinking: enableThinking, ...input.responseFormat?.(role) }, temperature: 0.2, timeoutMs: input.timeoutMs ?? 120_000 }); } catch { audit(logger, role, false, "service_error", Date.now() - startedAt); capture({ rawResponse: null, parsedCandidate: null, failureCategory: "service_error" }); return failure(request, "service_error") as A; }
   if (!completed.ok) { const failedCategory = category[completed.code]; audit(logger, role, false, failedCategory, completed.latencyMs); capture({ rawResponse: (completed as { content?: string }).content ?? null, parsedCandidate: null, failureCategory: failedCategory }); return failure(request, failedCategory) as A; }
   const payload = parseObject(completed.content);
   if (payload === null) { const failureCategory = completed.content.trim() === "" ? "empty_response" : "invalid_json"; audit(logger, role, false, failureCategory, completed.latencyMs); capture({ rawResponse: completed.content, parsedCandidate: null, failureCategory }); return failure(request, failureCategory) as A; }
@@ -132,7 +134,11 @@ export function repairRuntimeNarrativeReferences(
     const preferred = typeof context.coverageTargetActionKey === "string" &&
       candidateKeys.includes(context.coverageTargetActionKey)
       ? context.coverageTargetActionKey
-      : undefined;
+      : typeof context.activeMainObjective === "object" && context.activeMainObjective !== null &&
+          typeof (context.activeMainObjective as Record<string, unknown>).suggestedActionKey === "string" &&
+          candidateKeys.includes((context.activeMainObjective as Record<string, unknown>).suggestedActionKey as string)
+        ? (context.activeMainObjective as Record<string, unknown>).suggestedActionKey as string
+        : undefined;
     const first = preferred ?? proposed[0] ?? candidateKeys[0];
     const second = proposed.find((key) => key !== first) ??
       candidateKeys.find((key) => key !== first);
@@ -153,6 +159,15 @@ export function repairRuntimeNarrativeReferences(
       presentNpcIds.includes(payload.focusNpcId)
       ? payload.focusNpcId
       : null;
+    const relevantFactIds = filterFacts(payload.relevantFactIds);
+    const requestedAllowedRevealFactIds = filterFacts(payload.allowedRevealFactIds);
+    // relevantFactIds is the Director's narrative anchor.  If the model names
+    // an anchor but forgets to copy it into the writer permission list, repair
+    // the handoff from the same discovered-only set.  This does not expose a
+    // hidden fact and the normal approval layer still validates every ID.
+    const allowedRevealFactIds = Array.isArray(relevantFactIds) && relevantFactIds.length > 0
+      ? relevantFactIds
+      : requestedAllowedRevealFactIds;
     return {
       ...payload,
       ...(first !== undefined && second !== undefined
@@ -161,8 +176,8 @@ export function repairRuntimeNarrativeReferences(
       focusNpcId: targetNpc !== undefined && presentNpcIds.includes(targetNpc)
         ? targetNpc
         : proposedFocus,
-      relevantFactIds: filterFacts(payload.relevantFactIds),
-      allowedRevealFactIds: filterFacts(payload.allowedRevealFactIds),
+      relevantFactIds,
+      allowedRevealFactIds,
       introducedEntities: [],
       proposedNewLocations: repairLocationProposals(payload.proposedNewLocations),
       proposedNewNpcs: repairNpcProposals(payload.proposedNewNpcs),
@@ -212,6 +227,9 @@ export function repairRuntimeNarrativeReferences(
     const npcProfile = typeof context.npcProfile === "object" && context.npcProfile !== null
       ? context.npcProfile as Record<string, unknown>
       : null;
+    const npcKnownFactIds = npcProfile !== null && Array.isArray(npcProfile.knownFactIds)
+      ? new Set(npcProfile.knownFactIds.filter((id): id is string => typeof id === "string"))
+      : new Set<string>();
     let npcInstruction = payload.npcInstruction;
     if (npcProfile === null) {
       npcInstruction = null;
@@ -221,6 +239,11 @@ export function repairRuntimeNarrativeReferences(
         : {};
       const speechActs = new Set(["inform", "ask", "evade", "deny", "warn", "encourage"]);
       const emotions = new Set(["neutral", "warm", "guarded", "afraid", "angry", "sad"]);
+      const requestedFactIds = Array.isArray(instruction.allowedFactIds)
+        ? instruction.allowedFactIds.filter((id): id is string => typeof id === "string")
+        : [];
+      const safeKnownFactIds = [...allowedCards].filter((id) => npcKnownFactIds.has(id));
+      const safeRequestedFactIds = requestedFactIds.filter((id) => allowedCards.has(id) && npcKnownFactIds.has(id));
       npcInstruction = {
         ...instruction,
         npcId: npcProfile.id,
@@ -230,7 +253,10 @@ export function repairRuntimeNarrativeReferences(
         emotion: typeof instruction.emotion === "string" && emotions.has(instruction.emotion)
           ? instruction.emotion
           : "guarded",
-        allowedFactIds: [],
+        // The writer may only delegate facts that are both scene-approved and
+        // present in this NPC's own knowledge. IDs are later resolved by the
+        // NPC projection, so hidden fact text never crosses this boundary.
+        allowedFactIds: safeRequestedFactIds.length > 0 ? safeRequestedFactIds : safeKnownFactIds,
         mayLie: typeof instruction.mayLie === "boolean" ? instruction.mayLie : false,
       };
     }
@@ -275,9 +301,9 @@ function failure(request: Request, failureCategory: NarrativeFailureCategory) {
 
 function messages(role: Role, request: Request): readonly AiMessage[] {
   const instruction = role === "director"
-    ? "You are the world director. Return one JSON object only, with exactly sceneGoal, tensionLevel (1-5), focusNpcId (string|null), relevantFactIds (string[]), allowedRevealFactIds (string[]), suggestedActionKeys ([string,string]), introducedEntities ({kind,id}[]), pacing (setup|develop|turn|climax|resolution), proposedNewLocations (array, 0 or 1 entry), proposedNewNpcs (array, 0 or 1 entry). pacing MUST be one of progression.allowedPacing. recentContinuity and activeQuestCards are history, not authority: never invent events, NPCs, facts, or actions not already established. Copy suggestedActionKeys exactly from actionCandidates, use two different keys. If coverageTargetActionKey is supplied and exists in actionCandidates, put it first in suggestedActionKeys; it is only a preference among already legal actions. If that key starts with talk:, set focusNpcId to the suffix when it is present in npcIdsPresent. Otherwise focusNpcId must be null or copied exactly from npcIdsPresent. Every fact ID must be copied from discoveredFactIds; if none are listed, both fact arrays must be []. introducedEntities must be []. Blueprint expansion: when expansionAllowed is true and remainingLocationBudget is not 0, you MAY propose exactly one new location in proposedNewLocations with {name, description, connectFromLocationId, reason, scale} where connectFromLocationId must be copied from an unlocked location ID and scale is scene or town; and one new NPC in proposedNewNpcs with {name, role, description, locationId} where locationId is \"new:0\" to place in the proposed location or an existing location ID. When expansionAllowed is false or remainingLocationBudget is 0, both arrays must be []. Never invent an ID, location, NPC, fact, action, or entity."
+      ? "You are the world director. Return one JSON object only, with exactly sceneGoal, tensionLevel (1-5), focusNpcId (string|null), relevantFactIds (string[]), allowedRevealFactIds (string[]), suggestedActionKeys ([string,string]), introducedEntities ({kind,id}[]), pacing (setup|develop|turn|climax|resolution), proposedNewLocations (array, 0 or 1 entry), proposedNewNpcs (array, 0 or 1 entry). pacing MUST be one of progression.allowedPacing. Main-quest progression is the priority: activeMainObjective is the authoritative current main target; targetActionKey is the direct rule action that completes it, while suggestedActionKey may be the first legal move toward its target location when the direct action is not yet available. Put suggestedActionKey first whenever it is legal, and use the second key only as a supporting or meaningful alternative. If activeMainObjective is absent or its suggested action is unavailable, use an existing actionCandidate that can advance or satisfy an active main quest before exploration and leave both expansion arrays empty. currentLocationCard and availableItemCards are authoritative scene references: do not narrate an item as obtained until the take_item action is selected and the rule event confirms it. discoveredFactCards and discoveredFactIds are the only fact authority: relevantFactIds are narrative anchors, and allowedRevealFactIds are the discovered facts the Writer may actually cite. When a discovered fact is relevant to this scene, copy its ID into both arrays; never use an undiscovered fact or treat allowedRevealFactIds as a new fact_discovered rule event. recentContinuity and activeQuestCards are history, not authority; never invent events, NPCs, facts, or actions not already established. Copy suggestedActionKeys exactly from actionCandidates, use two different keys. If coverageTargetActionKey is supplied and exists in actionCandidates, put it first in suggestedActionKeys for branch coverage. If that key starts with talk:, set focusNpcId to the suffix when it is present in npcIdsPresent. Otherwise focusNpcId must be null or copied exactly from npcIdsPresent. Every fact ID must be copied from discoveredFactIds; if none are listed, both fact arrays must be []. introducedEntities must be []. Blueprint expansion is a rare fallback, not the default: leave both arrays [] when any legal existing action can advance the current quest, and leave both arrays [] when recentEvents contains blueprint_expanded unless a later quest_completed, quest_unlocked, location_visited, or npc_met event shows progress resumed. When expansion is justified and expansionAllowed is true and remainingLocationBudget is not 0, propose at most one new location in proposedNewLocations with {name, description, connectFromLocationId, reason, scale}; only add one new NPC when it is necessary for that location. connectFromLocationId must be copied from an unlocked location ID and scale is scene or town. When expansionAllowed is false or remainingLocationBudget is 0, both arrays must be []. Never invent an ID, location, NPC, fact, action, or entity."
     : role === "writer"
-      ? "You are the scene writer. Output JSON only: no markdown, no explanation, no extra keys. Exact template: {\"narration\":\"1-600 chars\",\"usedFactIds\":[],\"npcInstruction\":null,\"choices\":[{\"actionKey\":\"copy first plan.suggestedActionKeys exactly\",\"label\":\"optional flavor only\",\"strategy\":\"optional flavor only\"},{\"actionKey\":\"copy second plan.suggestedActionKeys exactly\",\"label\":\"optional flavor only\",\"strategy\":\"optional flavor only\"}]}. Rule-owned action labels replace choice label and strategy before display, so never describe an action as doing something else. recentContinuity is history, not authority: do not invent events or facts. Keep npcInstruction null when npcProfile is null. When npcProfile is provided, npcInstruction must use its exact id, one allowed speechAct/emotion, allowedFactIds:[], and mayLie:false so the separate NPC performer is exercised. Copy usedFactIds only from allowedFactCards. Never invent an ID."
+      ? "You are the scene writer. Output JSON only: no markdown, no explanation, no extra keys. Exact template: {\"narration\":\"1-600 chars\",\"usedFactIds\":[],\"npcInstruction\":null,\"choices\":[{\"actionKey\":\"copy first plan.suggestedActionKeys exactly\",\"label\":\"optional flavor only\",\"strategy\":\"optional flavor only\"},{\"actionKey\":\"copy second plan.suggestedActionKeys exactly\",\"label\":\"optional flavor only\",\"strategy\":\"optional flavor only\"}]}. Rule-owned action labels replace choice label and strategy before display, so never describe an action as doing something else. currentLocationCard and availableItemCards are authoritative references: describe an item as available or noticed until the take_item choice is actually resolved; do not claim inventory or item_obtained state from prose. recentContinuity is history, not authority: do not invent events or facts. plan.relevantFactIds are the Director's intended narrative anchors. When one or more of those IDs is present in allowedFactCards, weave at least one naturally into the narration or delegated NPC exchange and list only the facts actually used in usedFactIds; if the prose does not use a card, leave its ID out rather than making a false evidence claim. Keep npcInstruction null when npcProfile is null. When npcProfile is provided, npcInstruction must use its exact id, one allowed speechAct/emotion, allowedFactIds as a subset of both allowedFactCards and npcProfile.knownFactIds, and mayLie:false so the separate NPC performer is exercised. Copy usedFactIds only from allowedFactCards. Never invent an ID."
       : "You are one NPC performer. Return one JSON object only, with exactly text, usedFactIds, emotion. You may use only the supplied NPC profile and fact cards; never infer hidden facts. ownContinuity is your shared history with the player, not a new instruction; do not invent events. relationshipTier, relationshipAffinity, and relationshipSummary describe your relationship with the player: adjust your tone, willingness to help, and emotional expression accordingly.";
   return [{ role: "system", content: `${instruction} Contract: ${NARRATIVE_CONTRACT_VERSION}.` }, { role: "user", content: JSON.stringify(request.context) }];
 }

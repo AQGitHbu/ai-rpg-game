@@ -11,6 +11,7 @@ import {
 import { buildScenarioPromptMessages } from "./scenarioPrompt";
 import { createStructuredScenarioGenerationAudit } from "./scenarioGenerationAudit";
 import { buildScenarioResponseFormatExtraBody } from "./scenarioResponseFormat";
+import { resolveAiThinkingRoles } from "./aiThinking";
 import type { StoryEvalSink } from "../../storyEvalCaptureTypes";
 
 // ---------------------------------------------------------------------------
@@ -59,5 +60,6 @@ export function createScenarioCandidateSource(
       buildScenarioResponseFormatExtraBody(runtime.outputFormat, createBudgetPolicy(request.input.gameLength)),
     captureSink: options.captureSink,
     timeoutMs: resolveStoryEvalTimeoutMs(env),
+    enableThinking: resolveAiThinkingRoles(env).includes("scenario"),
   });
 }

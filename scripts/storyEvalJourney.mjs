@@ -63,6 +63,20 @@ export function resolveCaseId(argv, cases) {
   return cases.some((item) => item.caseId === caseId) ? caseId : null;
 }
 
+export function resolveStrategy(argv) {
+  const arg = argv.find((entry) => entry.startsWith("--strategy="));
+  if (arg === undefined) return undefined;
+  const strategy = arg.slice("--strategy=".length);
+  return strategy === "explore" || strategy === "objective" ? strategy : null;
+}
+
+export function resolveBlueprintArtifact(argv) {
+  const arg = argv.find((entry) => entry.startsWith("--blueprint-artifact="));
+  if (arg === undefined) return undefined;
+  const value = arg.slice("--blueprint-artifact=".length).trim();
+  return value.length > 0 && value.length <= 4096 ? value : null;
+}
+
 export function isPathInside(parent, candidate) {
   const rel = relative(resolve(parent), resolve(candidate));
   return rel !== "" && !rel.startsWith("..") && !rel.includes(":");
@@ -76,7 +90,10 @@ export function buildStoryEvalArtifactDir({ artifactRoot, caseId, strategy, runI
 
 export const STORY_EVAL_PROFILE_DEFAULTS = Object.freeze({
   smoke: Object.freeze({ maxScenes: 3, maxRoleAttempts: 1, aiTimeoutMs: 60_000, branchMode: "none", totalBudgetMs: 10 * 60_000 }),
-  regression: Object.freeze({ maxScenes: 12, maxRoleAttempts: 2, aiTimeoutMs: 90_000, branchMode: "sample", totalBudgetMs: 45 * 60_000 }),
+  // fallback-6 的 long 主线需要 13 个 narrative scenes 才能启动终局战斗；
+  // 16 给 battle/ending 收尾留出安全余量，避免 regression 把预算上限误报成
+  // 结局不收敛。baseline 仍保留 60 幕作为跨蓝图安全阀。
+  regression: Object.freeze({ maxScenes: 16, maxRoleAttempts: 2, aiTimeoutMs: 90_000, branchMode: "sample", totalBudgetMs: 45 * 60_000 }),
   baseline: Object.freeze({ maxScenes: 60, maxRoleAttempts: 3, aiTimeoutMs: 120_000, branchMode: "full", totalBudgetMs: 90 * 60_000 }),
 });
 
@@ -106,7 +123,15 @@ export function resolveEvalProfileConfig(env = {}) {
 function spawnJourney(env) {
   return spawnSync(
     process.execPath,
-    ["./node_modules/vitest/vitest.mjs", "run", TEST_FILE],
+    [
+      "./node_modules/vitest/vitest.mjs",
+      "run",
+      TEST_FILE,
+      // 故事旅程会持有临时 SQLite 并等待长耗时 provider 请求；单 fork
+      // 避免 Windows worker 在长 run 收尾时被 tinypool 意外回收。
+      "--pool=forks",
+      "--poolOptions.forks.singleFork",
+    ],
     {
       cwd: projectRoot,
       env,
@@ -172,6 +197,19 @@ export function main({
     log(`${PREFIX} INVALID_SEED`);
     return 1;
   }
+  const selectedStrategy = resolveStrategy(argv);
+  if (selectedStrategy === null) {
+    log(`${PREFIX} INVALID_STRATEGY`);
+    return 1;
+  }
+  const blueprintArtifactArg = resolveBlueprintArtifact(argv);
+  if (blueprintArtifactArg === null) {
+    log(`${PREFIX} INVALID_BLUEPRINT_ARTIFACT`);
+    return 1;
+  }
+  const blueprintArtifact = blueprintArtifactArg === undefined
+    ? env.STORY_EVAL_BLUEPRINT_ARTIFACT
+    : resolve(projectRoot, blueprintArtifactArg);
   if (mode === "replay") {
     log(`${PREFIX} replay: zero-network offline journey`);
     return runSpawn({ ...env, RUN_REAL_AI_STORY_EVAL: "0" });
@@ -198,10 +236,8 @@ export function main({
   const selectedCases = selectedCaseId === undefined
     ? profileConfig.profile === "smoke" ? cases.slice(0, 1) : cases
     : cases.filter((item) => item.caseId === selectedCaseId);
-  const runSpecs = selectedCases.flatMap((item) => [
-    { caseId: item.caseId, strategy: "explore" },
-    { caseId: item.caseId, strategy: "objective" },
-  ]);
+  const strategies = selectedStrategy === undefined ? ["explore", "objective"] : [selectedStrategy];
+  const runSpecs = selectedCases.flatMap((item) => strategies.map((strategy) => ({ caseId: item.caseId, strategy })));
   if (runs > 1 && selectedCaseId === undefined) {
     log(`${PREFIX} REPLICATE_REQUIRES_CASE：--runs 复制仅允许在 --case 内使用`);
     return 1;
@@ -256,6 +292,7 @@ export function main({
         STORY_EVAL_SCENE_WAIT_MS: env.STORY_EVAL_SCENE_WAIT_MS ?? String(3 * profileConfig.maxRoleAttempts * profileConfig.aiTimeoutMs + 60_000),
         STORY_EVAL_TOTAL_BUDGET_MS: String(profileConfig.totalBudgetMs),
         GAME_DB_PATH: databasePath,
+        ...(blueprintArtifact === undefined ? {} : { STORY_EVAL_BLUEPRINT_ARTIFACT: blueprintArtifact }),
       };
       for (const key of ["AI_API_BASE_URL", "AI_MODEL", "AI_API_KEY"]) {
         childEnv[key] = aiValues.get(key).decoded;

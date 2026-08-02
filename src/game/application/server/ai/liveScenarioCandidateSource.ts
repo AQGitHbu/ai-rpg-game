@@ -33,6 +33,8 @@ export type LiveScenarioCandidateSourceOptions = Readonly<{
   captureSink?: StoryEvalSink;
   /** 评估专用 provider 超时；未传时保持正常运行时的 120 秒。 */
   timeoutMs?: number;
+  /** provider extended reasoning；默认关闭，按实验角色显式开启。 */
+  enableThinking?: boolean;
 }>;
 
 const CANDIDATE_ARRAY_FIELDS = [
@@ -99,7 +101,7 @@ export function createLiveScenarioCandidateSource(
       let result;
       try {
         result = await transport.complete(config, messages, {
-          extraBody: { enable_thinking: false, ...(extraBody ?? {}) },
+          extraBody: { enable_thinking: options.enableThinking ?? false, ...(extraBody ?? {}) },
           temperature: 0.2,
           timeoutMs: options.timeoutMs ?? 120_000
         });

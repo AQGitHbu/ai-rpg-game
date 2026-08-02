@@ -81,6 +81,8 @@ describe("createLiveRuntimeNarrativeSources captureSink", () => {
     }
     // traceId 归一化为场景级 id（去角色/重试后缀）——与编排层审批事件共用关联键
     expect(records.map((record) => record.traceId)).toEqual(["t", "t", "t"]);
+    expect(records[0].messages[0].content).toContain("Main-quest progression is the priority");
+    expect(records[0].messages[0].content).toContain("Blueprint expansion is a rare fallback");
   });
 
   it("同场景重试 attempt 递增（含 3 次尝试），跨场景不泄漏（无全局计数器）", async () => {
@@ -178,6 +180,39 @@ describe("createLiveRuntimeNarrativeSources captureSink", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.category).toBe("timeout");
     expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("按 thinkingRoles 只为选中的角色开启 provider extended reasoning", async () => {
+    const calls: unknown[] = [];
+    const complete = vi.fn(async (_config, _messages, options) => {
+      calls.push(options);
+      return { ok: true as const, content: "{}", latencyMs: 1 };
+    });
+    const transport = { complete } as unknown as AiTransport;
+    const sources = createLiveRuntimeNarrativeSources({
+      transport,
+      config,
+      thinkingRoles: ["director", "writer"]
+    });
+
+    await sources.directorSource.generate({
+      traceId: "thinking-director",
+      context: { ...contextWithCandidates } as unknown as Record<string, unknown>
+    });
+    await sources.sceneScriptSource.generate({
+      traceId: "thinking-script",
+      context: { ...contextWithCandidates } as unknown as Record<string, unknown>
+    });
+    await sources.npcLineSource.generate({
+      traceId: "thinking-npcLine",
+      context: { ...contextWithCandidates } as unknown as Record<string, unknown>
+    });
+
+    expect(calls.map((call) => (call as { extraBody: { enable_thinking: boolean } }).extraBody.enable_thinking)).toEqual([
+      true,
+      true,
+      false
+    ]);
   });
 });
 

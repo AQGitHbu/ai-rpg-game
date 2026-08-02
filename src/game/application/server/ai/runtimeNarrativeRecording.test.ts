@@ -50,6 +50,8 @@ describe("runtime narrative record/replay", () => {
     })).toBe(fingerprintNarrativeContext({
       narrative: { sceneId: "run-b", choices: [{ choiceToken: "token-b", label: "A" }] },
     }));
+    expect(fingerprintNarrativeContext({ state: 1, activeMainObjective: { suggestedActionKey: "move:loc_2" } }))
+      .toBe(fingerprintNarrativeContext({ state: 1, activeMainObjective: { suggestedActionKey: "talk:npc_2" } }));
   });
 
   it("records parsed role results and hashes in global order", async () => {

@@ -17,6 +17,15 @@ export type StoryEvalStoryRow = Readonly<{
   npcLine?: { text: string; emotion: string } | null;
   choices?: readonly { label: string; actionKey: string }[];
   directorPlan?: Readonly<Record<string, unknown>> | null;
+  /** 当前主线未满足目标的安全投影，不含任务描述/事实原文。 */
+  activeMainObjective?: Readonly<{
+    questId: string;
+    stage: number;
+    kind: string;
+    targetId: string;
+    targetActionKey: string;
+    suggestedActionKey: string | null;
+  }> | null;
   /** 当时结构化 memory 摘要（storyMemory.recent 条目；AI 文案不入记忆）。 */
   memorySummary?: readonly Readonly<Record<string, unknown>>[];
   /** 当前场景焦点 NPC 的档案快照（id/name/role/description/knownFactIds）。 */
@@ -25,8 +34,20 @@ export type StoryEvalStoryRow = Readonly<{
   relationshipSummary?: string | null;
   fallback?: boolean;
   playerChoice?: { index: number; actionKey: string; reason: string };
-  /** 规则事件的安全结构：只带稳定 ID（factId/entityId/questId/endingId）。 */
+  /**
+   * 进入当前场景前已经发生的规则事件；只带稳定 ID
+   * （factId/entityId/questId/endingId）。
+   */
   newEvents?: readonly { type: string; factId?: string; entityId?: string; questId?: string; endingId?: string }[];
+  /**
+   * 当前场景所选 action 直接产生的规则事件；与 activeMainObjective/玩家选择
+   * 同行，避免把下一幕才读到的 eventLedger 增量错配到当前目标。
+   */
+  actionEvents?: readonly { type: string; factId?: string; entityId?: string; questId?: string; endingId?: string }[];
+  /** 编剧实际声明在场景叙事中使用的已授权事实 ID。 */
+  usedFactIds?: readonly string[];
+  /** NPC 演员实际声明在台词中使用的已授权事实 ID。 */
+  npcUsedFactIds?: readonly string[];
   outcome?: string | null;
 }>;
 
@@ -140,9 +161,11 @@ export function validateStoryEvalArtifacts(input: {
       if (row.relationshipSummary === undefined || row.relationshipSummary === null) push("relationship");
     }
     // 规则事件必须携带其安全 ID（fact_discovered 缺 factId 即不完整）。
-    for (const event of row.newEvents ?? []) {
-      const field = EVENT_ID_FIELDS[event.type];
-      if (field !== undefined && event[field] === undefined) push(`eventId:${event.type}`);
+    for (const events of [row.newEvents ?? [], row.actionEvents ?? []]) {
+      for (const event of events) {
+        const field = EVENT_ID_FIELDS[event.type];
+        if (field !== undefined && event[field] === undefined) push(`eventId:${event.type}`);
+      }
     }
   }
 

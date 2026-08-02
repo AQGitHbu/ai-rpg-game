@@ -35,8 +35,8 @@ import { loadScenarioProfiles, type GameTypeProfile, type ScenarioProfiles } fro
 //     forbiddenTags），因此 7 种类型均安全。
 // ---------------------------------------------------------------------------
 
-/** fallback 模板版本；纳入 inputDigest，模板演进时提升。fallback-4：物品新增展示元数据（category / rarity / level / statLines，仅展示不进结算）。 */
-export const FALLBACK_TEMPLATE_VERSION = "fallback-4";
+/** fallback 模板版本；纳入 inputDigest，模板演进时提升。fallback-6：主线目标与物品/战斗地点形成可导航链。 */
+export const FALLBACK_TEMPLATE_VERSION = "fallback-6";
 
 /** 玩家输入来源标记：出现在世界摘要 / 身份 / 开场 / 主线冲突 / 事实文本中，便于追溯。 */
 const PLAYER_INPUT_MARK = "【玩家输入】";
@@ -770,11 +770,18 @@ function mainQuestId(act: number): string {
   return `quest_main_${act}`;
 }
 
-// 中段幕 objective 轮换：引用既有实体，不引入新 ID。
+// 中长线中段 objective 链：每幕引用一个尚未满足且存在合法行动路径的既有实体目标。
+// 生成型事实只在 openingScene 可调查；若把它们放进后续主线，玩家提前调查后
+// 会在任务解锁固定点迭代中连锁完成。关键物品与终幕战斗则沿 loc_3 → loc_4
+// 形成明确的移动/拾取/交谈/战斗链；长线额外回到开场 NPC，再到终幕 NPC，
+// 避免重复使用已满足的 visit/fact 目标。
 const MID_OBJECTIVES: readonly (readonly { kind: string; [key: string]: string }[])[] = [
-  [{ kind: "visit_location", locationId: "loc_2" }],
   [{ kind: "talk_to_npc", npcId: "npc_2" }],
-  [{ kind: "discover_fact", factId: FACT_GEN_1 }]
+  [{ kind: "visit_location", locationId: "loc_3" }],
+  [{ kind: "obtain_item", itemId: ITEM_KEY }],
+  [{ kind: "talk_to_npc", npcId: "npc_3" }],
+  [{ kind: "talk_to_npc", npcId: "npc_1" }],
+  [{ kind: "talk_to_npc", npcId: "npc_4" }],
 ];
 
 function buildQuests(
@@ -806,13 +813,16 @@ function buildQuests(
         kind: "main", stage: act, id,
         name: template.mainQuests[2].name,
         description: template.mainQuests[2].description,
-        objectives: [{ kind: "defeat_enemy", enemyId: ENEMY_BOSS_ID }],
+        objectives: [
+          { kind: "visit_location", locationId: BOSS_LOCATION_ID },
+          { kind: "defeat_enemy", enemyId: ENEMY_BOSS_ID },
+        ],
         onSuccess: { kind: "reach_ending", endingId: ENDING_IDS[0] },
         onFailure: { kind: "reach_ending", endingId: ENDING_IDS[1] },
         tags: []
       });
     } else {
-      const midIndex = (act - 2) % MID_OBJECTIVES.length;
+      const midIndex = act - 2;
       // 3 幕时保持旧行为：原名、原 objective（talk + obtain）
       const isLegacyMid = mainActs === 3 && act === 2;
       quests.push({

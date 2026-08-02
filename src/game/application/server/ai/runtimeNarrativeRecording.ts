@@ -39,11 +39,39 @@ type RuntimeNarrativeSources = Readonly<{
   npcLineSource: NpcLineSource;
 }>;
 
-// 运行时易变字段：回放时 sceneId / choiceToken 不参与请求指纹。
+// 运行时易变/可重建字段：回放时 sceneId / choiceToken 不参与请求指纹。
+// activeMainObjective、currentLocationCard、availableItemCards 都是由同一份
+// blueprint/state/actionCandidates 派生的提示投影；排除它们可让旧黄金 fixture
+// 在增加路由/物品卡字段后继续回放，同时仍由其原始输入字段检测真实上下文漂移。
 const NARRATIVE_VOLATILE_KEYS = new Set(["sceneId", "choiceToken"]);
+const NARRATIVE_REBUILDABLE_KEYS = new Set([
+  "activeMainObjective",
+  "currentLocationCard",
+  "availableItemCards",
+  "discoveredFactCards",
+]);
 
 export function fingerprintNarrativeContext(context: Record<string, unknown>): string {
-  return fingerprint(context, NARRATIVE_VOLATILE_KEYS);
+  const stableContext = Object.fromEntries(
+    Object.entries(context).filter(([key]) => !NARRATIVE_REBUILDABLE_KEYS.has(key)),
+  );
+  // knownFactIds is permission metadata derived from the same NPC definition;
+  // omit only this new nested field so v1 golden writer calls remain replayable.
+  if (typeof stableContext.npcProfile === "object" && stableContext.npcProfile !== null) {
+    stableContext.npcProfile = Object.fromEntries(
+      Object.entries(stableContext.npcProfile).filter(([key]) => key !== "knownFactIds"),
+    );
+  }
+  // relevantFactIds is copied from the approved Director plan and the
+  // allowedFactCards below remains the Writer's actual permission boundary.
+  // Exclude this additive handoff field so v1 golden writer calls remain
+  // replayable after the context contract gains the explicit intent.
+  if (typeof stableContext.plan === "object" && stableContext.plan !== null) {
+    stableContext.plan = Object.fromEntries(
+      Object.entries(stableContext.plan).filter(([key]) => key !== "relevantFactIds"),
+    );
+  }
+  return fingerprint(stableContext, NARRATIVE_VOLATILE_KEYS);
 }
 
 function recordedResult(

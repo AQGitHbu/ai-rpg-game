@@ -20,6 +20,7 @@ function sceneRow(overrides: Partial<StoryEvalStoryRow> = {}): StoryEvalStoryRow
     sceneIndex: 1,
     sceneId: "scene-1",
     mainStage: 1,
+    activeMainObjective: null,
     narration: "你走进一间昏暗的屋子。",
     npcLine: null,
     choices: [
@@ -127,6 +128,22 @@ describe("validateStoryEvalArtifacts：完整性矩阵", () => {
     const result = validate({});
     expect(result.complete).toBe(true);
     expect(result.missing).toEqual([]);
+  });
+
+  it("接受安全的 activeMainObjective 快照", () => {
+    const result = validate({
+      story: [sceneRow({
+        activeMainObjective: {
+          questId: "q1",
+          stage: 1,
+          kind: "obtain_item",
+          targetId: "item_key",
+          targetActionKey: "take_item:item_key",
+          suggestedActionKey: "move:loc_2",
+        },
+      })],
+    });
+    expect(result.complete).toBe(true);
   });
 
   it("空 calls / 空 story → incomplete", () => {

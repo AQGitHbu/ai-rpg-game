@@ -5,9 +5,10 @@
 // 是每轮调优后的免费第一道体检。
 // 指标定义见 docs/策划文档/AI内容质量评估标准.md §3（与本文件保持一致）。
 // v2 口径（Task 13 Step 5）：
-// - factsPerAct：计划揭示 = directorPlan.allowedRevealFactIds 集合；
-//   实际揭示 = 具 factId 的 fact_discovered 事件集合；并列 planned/actual/
-//   overlap/missed，不以仅有事件类型的记录代替事实 ID。
+// - factsPerAct：计划叙事引用 = directorPlan.allowedRevealFactIds 集合；
+//   实际叙事引用 = scene.usedFactIds + scene.npcUsedFactIds；规则发现另列为
+//   discoveredFactIds。旧产物没有使用字段时，actual 回退为 fact_discovered
+//   事件，保持历史分析可重跑但不影响新产物的语义。
 // - entities：NPC/地点/物品的 introduced → interacted/used → contribution
 //   漏斗；expansion 的 proposed/approved/persisted/adopted 分开，
 //   adopted 只统计已持久化且实际首次登场的扩展实体，绝不复用 approved。
@@ -59,21 +60,32 @@ function trigramRepeatRate(narrations) {
 }
 
 /**
- * 每幕事实揭示（spec §5.3 两种口径）：
- * 计划 = directorPlan.allowedRevealFactIds 集合；实际 = 具 factId 的
- * fact_discovered 事件集合（不以仅有事件类型的记录代替事实 ID）。
+ * 每幕事实覆盖（spec §5.3 两种口径）：
+ * 计划 = directorPlan.allowedRevealFactIds 集合；实际 = 新产物中编剧/NPC
+ * 声明实际使用的事实 ID；规则侧 fact_discovered 单独记录为 discovered。
+ * `allowedRevealFactIds` 只允许已发现事实，因此不能与玩家调查事件直接
+ * 做“计划→发现”对比。
  */
 function factsPerActOf(sceneRows) {
   const byAct = new Map();
   for (const row of sceneRows) {
     if (typeof row.mainStage !== "number") continue;
-    const entry = byAct.get(row.mainStage) ?? { planned: new Set(), actual: new Set() };
+    const entry = byAct.get(row.mainStage) ?? { planned: new Set(), actual: new Set(), discovered: new Set() };
     for (const id of row.directorPlan?.allowedRevealFactIds ?? []) {
       if (typeof id === "string" && id !== "") entry.planned.add(id);
     }
-    for (const event of row.newEvents ?? []) {
+    const hasUsageFields = Array.isArray(row.usedFactIds) || Array.isArray(row.npcUsedFactIds);
+    if (hasUsageFields) {
+      for (const id of [...(row.usedFactIds ?? []), ...(row.npcUsedFactIds ?? [])]) {
+        if (typeof id === "string" && id !== "") entry.actual.add(id);
+      }
+    }
+    for (const event of eventsForObjectiveOutcome(row)) {
       if (event.type === "fact_discovered" && typeof event.factId === "string" && event.factId !== "") {
-        entry.actual.add(event.factId);
+        entry.discovered.add(event.factId);
+        // Old artifacts did not carry usedFactIds; keep their historical
+        // actualFactIds interpretation as a compatibility fallback.
+        if (!hasUsageFields) entry.actual.add(event.factId);
       }
     }
     byAct.set(row.mainStage, entry);
@@ -87,6 +99,7 @@ function factsPerActOf(sceneRows) {
         act,
         plannedFactIds,
         actualFactIds,
+        discoveredFactIds: [...sets.discovered],
         overlapFactIds: plannedFactIds.filter((id) => sets.actual.has(id)),
         missedFactIds: plannedFactIds.filter((id) => !sets.actual.has(id)),
       };
@@ -214,6 +227,100 @@ function choicesOf(branches, notApplicable) {
   };
 }
 
+/**
+ * 主线目标可执行性：把“导演知道目标”与“玩家在当前场景看得到并选择了
+ * 合法动作”拆开统计。suggestedActionKey 允许是通往目标地点的下一跳，
+ * targetActionKey 才是完成目标的直接规则动作；两者不能混为一个命中率。
+ */
+const OBJECTIVE_EVENT = {
+  visit_location: { type: "location_visited", field: "entityId" },
+  talk_to_npc: { type: "npc_met", field: "entityId" },
+  obtain_item: { type: "item_obtained", field: "entityId" },
+  discover_fact: { type: "fact_discovered", field: "factId" },
+  // defeat_enemy 的主线直接 action 是 start_battle；battle_action 不占
+  // narrative scene，因此先用 battle_started 证明“目标动作已命中”，
+  // 再由 enemy_defeated/ending 证明战斗结果。否则最终一幕会被错误记成
+  // targetChosen=1 但 objectiveEventHits=0。
+  defeat_enemy: { type: "battle_started", field: "entityId" },
+};
+const PROGRESS_EVENTS = new Set([
+  "location_visited", "npc_met", "item_obtained", "fact_discovered",
+  "battle_started", "enemy_defeated", "quest_completed", "quest_unlocked",
+]);
+
+/**
+ * 当前 action 的结果优先使用 actionEvents。旧版 artifact 没有该字段，
+ * 仍回退到 newEvents 以保持历史分析兼容；新产物不再把下一幕读到的
+ * eventLedger 增量误当作当前目标的完成事件。
+ */
+function eventsForObjectiveOutcome(row) {
+  return Array.isArray(row.actionEvents) ? row.actionEvents : (row.newEvents ?? []);
+}
+
+function mainlineObjectiveMetrics(sceneRows) {
+  const summarize = (rows) => {
+    const opportunities = rows.length;
+    const suggestedPresented = rows.filter((row) => {
+      const suggested = row.activeMainObjective?.suggestedActionKey;
+      return typeof suggested === "string" && (row.choices ?? []).some((choice) => choice.actionKey === suggested);
+    }).length;
+    const suggestedChosen = rows.filter((row) => {
+      const suggested = row.activeMainObjective?.suggestedActionKey;
+      return typeof suggested === "string" && row.playerChoice?.actionKey === suggested;
+    }).length;
+    const targetPresented = rows.filter((row) => {
+      const target = row.activeMainObjective?.targetActionKey;
+      return typeof target === "string" && (row.choices ?? []).some((choice) => choice.actionKey === target);
+    }).length;
+    const targetChosen = rows.filter((row) => {
+      const target = row.activeMainObjective?.targetActionKey;
+      return typeof target === "string" && row.playerChoice?.actionKey === target;
+    }).length;
+    const objectiveEventHits = rows.filter((row) => {
+      const objective = row.activeMainObjective;
+      const expected = objective === null || objective === undefined
+        ? undefined
+        : OBJECTIVE_EVENT[objective.kind];
+      if (expected === undefined || typeof objective.targetId !== "string") return false;
+      return eventsForObjectiveOutcome(row).some((event) =>
+        event.type === expected.type && event[expected.field] === objective.targetId,
+      );
+    }).length;
+    const progressedScenes = rows.filter((row) =>
+      eventsForObjectiveOutcome(row).some((event) => PROGRESS_EVENTS.has(event.type)),
+    ).length;
+    const rate = (value) => opportunities === 0 ? 0 : value / opportunities;
+    return {
+      opportunities,
+      suggestedPresented,
+      suggestedChosen,
+      targetPresented,
+      targetChosen,
+      objectiveEventHits,
+      progressedScenes,
+      suggestedPresentationRate: rate(suggestedPresented),
+      targetPresentationRate: rate(targetPresented),
+      targetChoiceRate: rate(targetChosen),
+      objectiveEventHitRate: rate(objectiveEventHits),
+      progressedSceneRate: rate(progressedScenes),
+    };
+  };
+  const opportunities = sceneRows.filter((row) =>
+    row.activeMainObjective !== null &&
+    typeof row.activeMainObjective === "object" &&
+    typeof row.activeMainObjective.kind === "string",
+  );
+  return {
+    ...summarize(opportunities),
+    byKind: Object.fromEntries(
+      Object.keys(OBJECTIVE_EVENT).map((kind) => [
+        kind,
+        summarize(opportunities.filter((row) => row.activeMainObjective.kind === kind)),
+      ]),
+    ),
+  };
+}
+
 export function computeStoryEvalMetrics({ calls, story, manifest, branches = [], notApplicable = [] }) {
   const sceneRows = story.filter((row) => row.kind === "scene");
   const endingRow = story.find((row) => row.kind === "ending");
@@ -268,6 +375,8 @@ export function computeStoryEvalMetrics({ calls, story, manifest, branches = [],
     approvalRejections,
     tension: { values: tension, stddev: stddev(tension) },
     pacing,
+    mainlineObjective: mainlineObjectiveMetrics(sceneRows),
+    itemObjective: mainlineObjectiveMetrics(sceneRows.filter((row) => row.activeMainObjective?.kind === "obtain_item")),
     factsPerAct: factsPerActOf(sceneRows),
     entities: {
       ...entityFunnel(sceneRows),

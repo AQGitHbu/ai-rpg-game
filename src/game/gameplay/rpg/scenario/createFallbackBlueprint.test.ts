@@ -196,6 +196,65 @@ describe("createFallbackBlueprint：内容预算与结构", () => {
     expect(sides.length).toBeLessThanOrEqual(2);
   });
 
+  it("medium/long 主线目标逐幕推进且不会重复已满足目标", () => {
+    const expectedChain = [
+      "visit_location:loc_2",
+      "talk_to_npc:npc_2",
+      "visit_location:loc_3",
+      "obtain_item:item_key",
+      "talk_to_npc:npc_3",
+      "talk_to_npc:npc_1",
+      "talk_to_npc:npc_4",
+      "visit_location:loc_4",
+    ];
+
+    for (const gameLength of ["medium", "long"] as const) {
+      const generated = generate({ gameLength }, `objective-chain-${gameLength}`);
+      const policy = policyFor({ gameLength });
+      const mainQuests = generated.quests
+        .filter((entry): entry is Extract<typeof entry, { kind: "main" }> => entry.kind === "main")
+        .sort((left, right) => left.stage - right.stage);
+      const signatures = mainQuests.map((quest) => {
+        const objective = quest.objectives[0];
+        switch (objective.kind) {
+          case "visit_location": return `${objective.kind}:${objective.locationId}`;
+          case "talk_to_npc": return `${objective.kind}:${objective.npcId}`;
+          case "obtain_item": return `${objective.kind}:${objective.itemId}`;
+          case "discover_fact": return `${objective.kind}:${objective.factId}`;
+          case "defeat_enemy": return `${objective.kind}:${objective.enemyId}`;
+        }
+      });
+
+      const expected = gameLength === "medium"
+        ? [
+          "visit_location:loc_2",
+          "talk_to_npc:npc_2",
+          "visit_location:loc_3",
+          "obtain_item:item_key",
+          "visit_location:loc_4",
+        ]
+        : expectedChain;
+      expect(signatures).toEqual(expected.slice(0, policy.mainActs));
+      expect(new Set(signatures).size).toBe(signatures.length);
+      const finalQuest = mainQuests.at(-1);
+      expect(finalQuest?.objectives.map((objective) => {
+        switch (objective.kind) {
+          case "visit_location": return `${objective.kind}:${objective.locationId}`;
+          case "defeat_enemy": return `${objective.kind}:${objective.enemyId}`;
+          default: return objective.kind;
+        }
+      })).toEqual(["visit_location:loc_4", "defeat_enemy:enemy_boss"]);
+      expect(mainQuests.flatMap((quest) => quest.objectives).some((objective) =>
+        objective.kind === "discover_fact" && ["fact_gen_1", "fact_gen_2"].includes(objective.factId)
+      )).toBe(false);
+      const validation = validateScenarioBlueprintCandidate(generated, {
+        profile: PROFILES.gameTypeProfiles[generated.gameType],
+        policy,
+      });
+      expect(validation.ok ? [] : validation.issues).toEqual([]);
+    }
+  });
+
   it("3 类普通敌人 + 1 名 Boss，数值全部在 Phase 1 范围内", () => {
     expect(candidate.enemies.filter((entry) => entry.tier === "normal")).toHaveLength(3);
     expect(candidate.enemies.filter((entry) => entry.tier === "boss")).toHaveLength(1);

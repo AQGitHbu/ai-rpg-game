@@ -40,12 +40,21 @@ function ending(endingId: string): QuestOutcomeCandidate {
 type QuestOverrides = Partial<QuestDefinitionCandidate> & { id: string };
 
 function mainQuest(stage: number, overrides: QuestOverrides): QuestDefinitionCandidate {
+  const defaultObjective = stage === 1
+    ? { kind: "visit_location" as const, locationId: "loc_a" }
+    : stage === 2
+      ? { kind: "talk_to_npc" as const, npcId: "npc_a" }
+      : stage === 3
+        ? { kind: "obtain_item" as const, itemId: "item_a" }
+        : stage === 4
+          ? { kind: "discover_fact" as const, factId: "fact_a" }
+          : { kind: "visit_location" as const, locationId: "loc_b" };
   return {
     kind: "main",
     stage,
     name: `主线任务 ${overrides.id}`,
     description: "测试描述",
-    objectives: [{ kind: "visit_location", locationId: "loc_a" }],
+    objectives: [defaultObjective],
     onSuccess: CLOSED,
     onFailure: CLOSED,
     tags: [],
@@ -390,6 +399,21 @@ describe("validateQuestGraph：可变主线幕数", () => {
     quests[0] = mainQuest(1, { id: "m1", onSuccess: unlock("m2", "m2b") });
     const issues = issuesOf(quests, makeEndings(), KNOWN_ENTITIES, BUDGET_5);
     expect(issues).toContainEqual({ path: "quests", code: "MAIN_STAGE_OVERBUDGET", params: { stage: 2, count: 2 } });
+  });
+
+  it("主线重复 kind+target → REPEATED_MAIN_OBJECTIVE", () => {
+    const quests = make5ActQuests();
+    quests[1] = mainQuest(2, {
+      id: "m2",
+      objectives: [{ kind: "visit_location", locationId: "loc_a" }],
+      onSuccess: unlock("m3"),
+    });
+    const issues = issuesOf(quests, makeEndings(), KNOWN_ENTITIES, BUDGET_5);
+    expect(issues).toContainEqual({
+      path: "quests[1].objectives[0]",
+      code: "REPEATED_MAIN_OBJECTIVE",
+      params: { stage: 2, previousStage: 1, signature: "visit_location:loc_a" },
+    });
   });
 });
 

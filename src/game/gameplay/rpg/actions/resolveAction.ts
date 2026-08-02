@@ -148,17 +148,25 @@ export function resolveAction(
     }
 
     case "talk": {
+      const currentRelationship = state.npcs.find(
+        (n) => n.npcId === intent.npcId,
+      )?.relationship ?? { affinity: 0 };
+      const newAffinity = clampAffinity(
+        currentRelationship.affinity + RELATIONSHIP_CHANGE.GREET_FIRST_MEET,
+      );
       const event: GameEvent = {
         type: "npc_met",
         npcId: intent.npcId,
         occurredAt,
+        // 普通 talk 与 greet 对话选择都表示首次结识，不能绕过 Phase 13 记忆。
+        interactionKind: "greet",
       };
       const newState: GameState = {
         ...state,
         npcs: replaceInArray(
           state.npcs,
           (n) => n.npcId === intent.npcId,
-          (n) => ({ ...n, met: true }),
+          (n) => ({ ...n, met: true, relationship: { affinity: newAffinity } }),
         ),
         eventLedger: [...state.eventLedger, event],
       };

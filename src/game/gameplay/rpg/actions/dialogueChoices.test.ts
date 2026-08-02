@@ -490,7 +490,7 @@ describe("resolveAction: dialogue_choice", () => {
     const result = resolveAction(bp, st, { type: "talk", npcId: NPC_1 }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.events[0]).toEqual({ type: "npc_met", npcId: NPC_1, occurredAt: FIXED_TIME });
+      expect(result.events[0]).toEqual({ type: "npc_met", npcId: NPC_1, occurredAt: FIXED_TIME, interactionKind: "greet" });
       expect(result.feedback.message).toBe("你与NPC1交谈，初次见面。");
     }
   });

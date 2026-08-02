@@ -7,17 +7,29 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { GameSessionView } from "../gameSessionView";
 import { createServerGameEntryPoints, type ServerGameEntryPoints } from "../server/compositionRoot";
+import { toDirectorContext } from "../runtimeNarrativeContexts";
 import { createSqliteClient } from "../server/persistence/sqliteClient";
 import { createSqliteGameRepository, type SqliteGameRepository } from "../server/persistence/sqliteGameRepository";
 import { asGameId, type GameRecord } from "../server/persistence/gameRepository";
 import { deriveContentProgression } from "@/game/gameplay/rpg/narrative";
 import { canQueueRuntimeNarrativeScene } from "../runtimeNarrativeEligibility";
-import { relationshipTierOf, storyMemoryOf, type GameEvent, type GameState } from "@/game/domain";
+import {
+  relationshipTierOf,
+  storyMemoryOf,
+  type GameEvent,
+  type GameState,
+  type ScenarioBlueprintCandidate,
+} from "@/game/domain";
 import { validateStoryEvalArtifacts, type StoryEvalCompleteness, type StoryEvalStoryRow } from "./storyEvalArtifacts";
 import { loadStoryEvalCases, type EarlyPredictionAnswerKey } from "./storyEvalCases";
 import { hashStringToSeed, mulberry32, pickNarrativeChoice, pickObjectiveChoice } from "./storyEvalStrategy";
 import { NARRATIVE_CONTRACT_VERSION } from "../runtimeNarrative";
-import { SCENARIO_CANDIDATE_CONTRACT_VERSION } from "../scenarioGeneration";
+import {
+  SCENARIO_CANDIDATE_CONTRACT_VERSION,
+  type ScenarioCandidateAttempt,
+  type ScenarioCandidateSource,
+} from "../scenarioGeneration";
+import { resolveAiThinkingRoles } from "../server/ai/aiThinking";
 
 // ---------------------------------------------------------------------------
 // 评估旅程本体（spec §7 + Task 13）：经 createServerGameEntryPoints 驱动（唯一能
@@ -64,6 +76,60 @@ function openEvalRepository(dbPath: string): SqliteGameRepository {
   });
   openRepositories.push(repository);
   return repository;
+}
+
+/**
+ * 受控 A/B：从既有 calls.jsonl 读取 scenario 的 parsedCandidate，固定开局蓝图，
+ * 只比较后续 runtime narrative roles。该路径仅由 STORY_EVAL_CAPTURE=1 的评测进程
+ * 注入，候选仍会经过 createGame 的既有 validate/compile，绝不绕过业务校验。
+ */
+function createCapturedBlueprintSource(env: Record<string, string | undefined>): ScenarioCandidateSource | undefined {
+  const artifactPath = env.STORY_EVAL_BLUEPRINT_ARTIFACT;
+  if (artifactPath === undefined || artifactPath.trim() === "") return undefined;
+  let lines: readonly string[];
+  try {
+    lines = readFileSync(artifactPath, "utf8").split(/\r?\n/).filter((line) => line.trim() !== "");
+  } catch {
+    throw new Error("captured blueprint artifact unreadable");
+  }
+  for (const line of lines) {
+    let record: unknown;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isRecord(record) || record.kind !== "ai_call" || record.role !== "scenario") continue;
+    const candidate = record.parsedCandidate;
+    if (!hasCapturedCandidateShape(candidate)) continue;
+    return {
+      async generate(): Promise<ScenarioCandidateAttempt> {
+        return {
+          ok: true,
+          contractVersion: SCENARIO_CANDIDATE_CONTRACT_VERSION,
+          origin: "fixture",
+          candidate: candidate as ScenarioBlueprintCandidate,
+          diagnostics: ["STORY_EVAL_CAPTURED_BLUEPRINT"],
+        };
+      },
+    };
+  }
+  throw new Error("captured blueprint candidate missing");
+}
+
+function hasCapturedCandidateShape(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  for (const field of ["locations", "npcs", "quests", "items", "enemies", "endings"] as const) {
+    if (!Array.isArray(value[field])) return false;
+  }
+  for (const field of ["world", "player", "openingScene"] as const) {
+    if (!isRecord(value[field])) return false;
+  }
+  return true;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** 按 sceneId 前缀 traceId 关联 calls.jsonl 中的 plan_approved 记录（spec §6.3）。 */
@@ -495,7 +561,11 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
   const branchCheckpointsDone = new Set<number>();
 
   try {
-    entry = createServerGameEntryPoints({ ...env, GAME_DB_PATH: dbPath });
+    const capturedBlueprintSource = createCapturedBlueprintSource(env);
+    entry = createServerGameEntryPoints(
+      { ...env, GAME_DB_PATH: dbPath },
+      { scenarioCandidateSourceOverride: capturedBlueprintSource },
+    );
     evalRepository = openEvalRepository(dbPath);
 
     const openingStartedAt = performance.now();
@@ -540,6 +610,7 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       strategy,
       profile,
       branchMode,
+      blueprintSource: capturedBlueprintSource === undefined ? "live" : "captured_artifact",
       gitCommit: resolveGitCommit(),
       contractVersion: NARRATIVE_CONTRACT_VERSION,
       promptVersions: {
@@ -549,6 +620,7 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         npc: NARRATIVE_CONTRACT_VERSION,
       },
       temperature: AI_TEMPERATURE,
+      thinkingRoles: resolveAiThinkingRoles(env),
       timeoutMs: resolveStoryEvalTimeoutMs(env),
       maxRoleAttempts: resolveStoryEvalMaxRoleAttempts(env),
       answerKey: null,
@@ -614,12 +686,14 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       const scene = record.state.narrative.currentScene;
       if (scene === null) throw new Error("scene vanished before record");
       const stage = deriveContentProgression({ blueprint: record.blueprint, state: record.state }).mainStage;
+      const activeMainObjective = toDirectorContext({ blueprint: record.blueprint, state: record.state }).activeMainObjective;
       const calls = getCalls();
       const directorPlan = directorPlanFor(scene.sceneId, calls);
       const choice = pickerFor(strategy)(record, rand);
       const newEvents = record.state.eventLedger
         .slice(previousLedgerLength)
         .map((event) => toSafeEvent(event));
+      const storyRowIndex = storyRows.length;
       storyRows.push({
         kind: "scene",
         sceneIndex,
@@ -627,8 +701,11 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         mainStage: stage,
         narration: scene.narration,
         npcLine: scene.npcLine === null ? null : { text: scene.npcLine.text, emotion: scene.npcLine.emotion },
+        usedFactIds: scene.usedFactIds.map(String),
+        npcUsedFactIds: scene.npcLine === null ? [] : scene.npcLine.usedFactIds.map(String),
         choices: scene.choices.map((entry) => ({ label: entry.label, actionKey: entry.actionKey })),
         directorPlan,
+        activeMainObjective,
         memorySummary: storyMemoryOf(record.state).recent,
         npcProfile: npcProfileOf(record, directorPlan),
         relationshipSummary: relationshipSummaryOf(record, directorPlan),
@@ -674,6 +751,14 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         });
       timings.playerActionMs += performance.now() - actionStartedAt;
       if (!result.ok) throw new Error(`narrative choice rejected at ${sceneIndex}: ${result.code}`);
+      const actionRecord = await loadRecord();
+      const actionEvents = actionRecord.state.eventLedger
+        .slice(previousLedgerLength)
+        .map((event) => toSafeEvent(event));
+      const storyRow = storyRows[storyRowIndex];
+      if (storyRow?.kind === "scene") {
+        storyRows[storyRowIndex] = { ...storyRow, actionEvents };
+      }
       view = result.view;
     }
 
@@ -976,6 +1061,7 @@ describe("Story eval journey (offline)", () => {
       expect(row.playerChoice).toMatchObject({ index: expect.any(Number), reason: expect.any(String) });
       expect(String(row.playerChoice?.reason ?? "")).not.toBe("");
       expect(Array.isArray(row.newEvents)).toBe(true);
+      expect(Array.isArray(row.actionEvents)).toBe(true);
       // v2 证据字段：memory 摘要总是数组；NPC 场景才要求 profile/关系摘要。
       expect(Array.isArray(row.memorySummary)).toBe(true);
       if (row.npcLine !== null && row.npcLine !== undefined) {
@@ -985,6 +1071,12 @@ describe("Story eval journey (offline)", () => {
       // 安全事件：只允许 { type, factId?, entityId?, questId?, endingId? } 字段，
       // 绝不携带 AI 文案、原始响应或 prompt 内容。
       for (const event of row.newEvents ?? []) {
+        expect(typeof event.type).toBe("string");
+        for (const key of Object.keys(event)) {
+          expect(["type", "factId", "entityId", "questId", "endingId"]).toContain(key);
+        }
+      }
+      for (const event of row.actionEvents ?? []) {
         expect(typeof event.type).toBe("string");
         for (const key of Object.keys(event)) {
           expect(["type", "factId", "entityId", "questId", "endingId"]).toContain(key);
@@ -1010,6 +1102,7 @@ describe("Story eval journey (offline)", () => {
       expect(promptVersions[role]).toBe(NARRATIVE_CONTRACT_VERSION);
     }
     expect(manifest.temperature).toBe(0.2);
+    expect(manifest.thinkingRoles).toEqual([]);
     expect(manifest.timeoutMs).toBe(120_000);
     const timings = manifest.timings as Record<string, unknown>;
     expect(typeof timings.startedAt).toBe("string");

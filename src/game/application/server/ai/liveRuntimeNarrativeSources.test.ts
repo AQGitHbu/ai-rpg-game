@@ -22,8 +22,45 @@ describe("runtime narrative mechanical reference repair", () => {
     expect(repaired.suggestedActionKeys).toEqual(["talk:npc_1", "move:loc_2"]);
     expect(repaired.focusNpcId).toBe("npc_1");
     expect(repaired.relevantFactIds).toEqual(["fact_known"]);
-    expect(repaired.allowedRevealFactIds).toEqual([]);
+    // relevantFactIds 是导演的叙事锚点；修复器把它交给编剧作为同一组
+    // discovered-only 的允许事实，避免角色交接时丢失事实意图。
+    expect(repaired.allowedRevealFactIds).toEqual(["fact_known"]);
     expect(repaired.introducedEntities).toEqual([]);
+  });
+
+  it("active main objective 在合法时优先于导演随意选择", () => {
+    const repaired = repairRuntimeNarrativeReferences("director", {
+      sceneGoal: "推进主线",
+      suggestedActionKeys: ["observe:loc_1", "talk:npc_1"],
+      focusNpcId: null,
+      relevantFactIds: [],
+      allowedRevealFactIds: [],
+      introducedEntities: [],
+    }, {
+      activeMainObjective: { questId: "q2", stage: 2, kind: "talk_to_npc", targetId: "npc_1", suggestedActionKey: "talk:npc_1" },
+      actionCandidates: [
+        { actionKey: "observe:loc_1" },
+        { actionKey: "talk:npc_1" },
+      ],
+      npcIdsPresent: ["npc_1"],
+      discoveredFactIds: [],
+    });
+    expect(repaired.suggestedActionKeys).toEqual(["talk:npc_1", "observe:loc_1"]);
+    expect(repaired.focusNpcId).toBe("npc_1");
+  });
+
+  it("relevant facts 只从 discovered fact ids 补入 writer permission", () => {
+    const repaired = repairRuntimeNarrativeReferences("director", {
+      relevantFactIds: ["fact_known", "fact_hidden"],
+      allowedRevealFactIds: [],
+      suggestedActionKeys: ["move:loc_2", "talk:npc_1"],
+    }, {
+      actionCandidates: [{ actionKey: "move:loc_2" }, { actionKey: "talk:npc_1" }],
+      npcIdsPresent: ["npc_1"],
+      discoveredFactIds: ["fact_known"],
+    });
+    expect(repaired.relevantFactIds).toEqual(["fact_known"]);
+    expect(repaired.allowedRevealFactIds).toEqual(["fact_known"]);
   });
 
   it("pins writer choice/NPC references but retains authored prose", () => {
@@ -43,7 +80,7 @@ describe("runtime narrative mechanical reference repair", () => {
       ],
     }, {
       plan: { suggestedActionKeys: ["talk:npc_1", "move:loc_2"] },
-      npcProfile: { id: "npc_1" },
+      npcProfile: { id: "npc_1", knownFactIds: ["fact_allowed"] },
       allowedFactCards: [{ id: "fact_allowed" }],
     });
     expect(repaired.narration).toBe("模型写出的原始场景文字");
@@ -56,7 +93,7 @@ describe("runtime narrative mechanical reference repair", () => {
       npcId: "npc_1",
       speechAct: "warn",
       emotion: "guarded",
-      allowedFactIds: [],
+      allowedFactIds: ["fact_allowed"],
       mayLie: false,
     });
   });

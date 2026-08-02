@@ -213,7 +213,7 @@ State whether remaining time is provider latency, retries/timeouts, branch gener
 | Profile | Default scenes | Attempts | AI timeout | Branch checkpoints | Purpose |
 | --- | ---: | ---: | ---: | --- | --- |
 | `smoke` | 3 | 1 | 60s | none | PR/linkage check; no quality conclusion |
-| `regression` | 12 | 2 | 90s | stage 2 only | prompt/code trend comparison |
+| `regression` | 16 | 2 | 90s | stage 2 only | prompt/code trend comparison; leaves room for long-mainline ending convergence |
 | `baseline` | 60 | 3 | 120s | stages 2/4/6 | formal quality evaluation |
 
 - [ ] **Step 1: Add profile parsing tests**

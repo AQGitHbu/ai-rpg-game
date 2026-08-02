@@ -57,13 +57,15 @@ test("computeStoryEvalMetrics 计算全部客观指标（v2 真实口径）", ()
   assert.equal(metrics.tension.stddev, 2);                // [1,5] 总体标准差 = 2
   assert.deepEqual(metrics.pacing.distribution, { setup: 1, develop: 1 });
   assert.equal(metrics.pacing.illegalOrderCount, 0);      // setup→develop 合法
-  // 每幕事实揭示：planned = allowedRevealFactIds 集合；actual 只来自 fact_discovered.factId。
+  // 每幕事实覆盖：旧 artifact 无 usedFactIds，actual 兼容回退到 fact_discovered；
+  // 新口径另列 discoveredFactIds。
   assert.deepEqual(metrics.factsPerAct, [
-    { act: 1, plannedFactIds: [], actualFactIds: [], overlapFactIds: [], missedFactIds: [] },
+    { act: 1, plannedFactIds: [], actualFactIds: [], discoveredFactIds: [], overlapFactIds: [], missedFactIds: [] },
     {
       act: 2,
       plannedFactIds: ["f1", "f2"],
       actualFactIds: ["f1", "f9"],   // f9 实际发现但未计划
+      discoveredFactIds: ["f1", "f9"],
       overlapFactIds: ["f1"],
       missedFactIds: ["f2"],          // 计划但未实际揭示
     },
@@ -79,6 +81,94 @@ test("computeStoryEvalMetrics 计算全部客观指标（v2 真实口径）", ()
   assert.ok(metrics.trigramRepeat > 0 && metrics.trigramRepeat < 1);
   assert.equal(metrics.narrationLengths.mean > 0, true);
   assert.equal(metrics.maxScenesHit, false);
+});
+
+test("mainlineObjective 区分下一跳呈现、直接目标命中与物品规则事件", () => {
+  const metrics = computeStoryEvalMetrics({
+    calls: [],
+    story: [
+      {
+        kind: "scene", sceneIndex: 1, mainStage: 1, narration: "一",
+        activeMainObjective: {
+          questId: "q1", stage: 1, kind: "visit_location", targetId: "loc_2",
+          targetActionKey: "move:loc_2", suggestedActionKey: "move:loc_2",
+        },
+        choices: [{ label: "去镇上", actionKey: "move:loc_2" }],
+        playerChoice: { index: 0, actionKey: "move:loc_2", reason: "objective" },
+        newEvents: [],
+      },
+      {
+        kind: "scene", sceneIndex: 2, mainStage: 2, narration: "二",
+        activeMainObjective: {
+          questId: "q2", stage: 2, kind: "obtain_item", targetId: "item_key",
+          targetActionKey: "take_item:item_key", suggestedActionKey: "move:loc_3",
+        },
+        choices: [{ label: "去取物品", actionKey: "move:loc_3" }],
+        playerChoice: { index: 0, actionKey: "move:loc_3", reason: "objective" },
+        newEvents: [{ type: "location_visited", entityId: "loc_3" }],
+      },
+      {
+        kind: "scene", sceneIndex: 3, mainStage: 2, narration: "三",
+        activeMainObjective: {
+          questId: "q2", stage: 2, kind: "obtain_item", targetId: "item_key",
+          targetActionKey: "take_item:item_key", suggestedActionKey: "take_item:item_key",
+        },
+        choices: [{ label: "拾取", actionKey: "take_item:item_key" }],
+        playerChoice: { index: 0, actionKey: "take_item:item_key", reason: "objective" },
+        newEvents: [{ type: "item_obtained", entityId: "item_key" }],
+      },
+    ],
+    manifest: {},
+  });
+  assert.equal(metrics.mainlineObjective.opportunities, 3);
+  assert.equal(metrics.mainlineObjective.suggestedPresented, 3);
+  assert.equal(metrics.mainlineObjective.targetChosen, 2);
+  assert.equal(metrics.mainlineObjective.objectiveEventHits, 1);
+  assert.equal(metrics.itemObjective.opportunities, 2);
+  assert.equal(metrics.itemObjective.suggestedChosen, 2);
+  assert.equal(metrics.itemObjective.objectiveEventHits, 1);
+});
+
+test("mainlineObjective 优先使用当前选择产生的 actionEvents", () => {
+  const metrics = computeStoryEvalMetrics({
+    calls: [],
+    story: [{
+      kind: "scene", sceneIndex: 1, mainStage: 1, narration: "一",
+      activeMainObjective: {
+        questId: "q1", stage: 1, kind: "visit_location", targetId: "loc_2",
+        targetActionKey: "move:loc_2", suggestedActionKey: "move:loc_2",
+      },
+      choices: [{ label: "去", actionKey: "move:loc_2" }],
+      playerChoice: { index: 0, actionKey: "move:loc_2", reason: "objective" },
+      // newEvents 是旧产物的兼容字段；新产物的目标结果看 actionEvents。
+      newEvents: [{ type: "narrative_scene_presented" }],
+      actionEvents: [{ type: "location_visited", entityId: "loc_2" }],
+    }],
+    manifest: {},
+  });
+  assert.equal(metrics.mainlineObjective.objectiveEventHits, 1);
+  assert.equal(metrics.mainlineObjective.progressedScenes, 1);
+});
+
+test("defeat_enemy 以 start_battle 的直接规则事件计入，胜负另由 ending 证明", () => {
+  const metrics = computeStoryEvalMetrics({
+    calls: [],
+    story: [{
+      kind: "scene", sceneIndex: 1, mainStage: 8, narration: "决战",
+      activeMainObjective: {
+        questId: "q8", stage: 8, kind: "defeat_enemy", targetId: "enemy_boss",
+        targetActionKey: "start_battle:enemy_boss", suggestedActionKey: "start_battle:enemy_boss",
+      },
+      choices: [{ label: "迎战", actionKey: "start_battle:enemy_boss" }],
+      playerChoice: { index: 0, actionKey: "start_battle:enemy_boss", reason: "objective:main_battle" },
+      actionEvents: [{ type: "battle_started", entityId: "enemy_boss" }],
+    }, { kind: "ending", sceneIndex: 3, outcome: "win" }],
+    manifest: { status: "converged" },
+  });
+  assert.equal(metrics.mainlineObjective.targetChosen, 1);
+  assert.equal(metrics.mainlineObjective.objectiveEventHits, 1);
+  assert.equal(metrics.mainlineObjective.progressedScenes, 1);
+  assert.equal(metrics.mainlineObjective.byKind.defeat_enemy.objectiveEventHits, 1);
 });
 
 test("approved 但未登场的扩展提案：approved=1、adopted=0", () => {
@@ -113,8 +203,31 @@ test("实际发现但未计划的事实只进 actual 不进 overlap", () => {
     manifest: {},
   });
   assert.deepEqual(metrics.factsPerAct[0].actualFactIds, ["f9"]);
+  assert.deepEqual(metrics.factsPerAct[0].discoveredFactIds, ["f9"]);
   assert.deepEqual(metrics.factsPerAct[0].overlapFactIds, []);
   assert.deepEqual(metrics.factsPerAct[0].missedFactIds, ["f1"]);
+});
+
+test("新产物把叙事使用与规则调查分开统计", () => {
+  const metrics = computeStoryEvalMetrics({
+    calls: [],
+    story: [{
+      kind: "scene", sceneIndex: 1, mainStage: 2, narration: "n",
+      directorPlan: { allowedRevealFactIds: ["f1", "f2"], introducedEntities: [] },
+      usedFactIds: ["f1"],
+      npcUsedFactIds: ["f2"],
+      actionEvents: [{ type: "fact_discovered", factId: "f9" }],
+    }],
+    manifest: {},
+  });
+  assert.deepEqual(metrics.factsPerAct[0], {
+    act: 2,
+    plannedFactIds: ["f1", "f2"],
+    actualFactIds: ["f1", "f2"],
+    discoveredFactIds: ["f9"],
+    overlapFactIds: ["f1", "f2"],
+    missedFactIds: [],
+  });
 });
 
 const branchBase = {

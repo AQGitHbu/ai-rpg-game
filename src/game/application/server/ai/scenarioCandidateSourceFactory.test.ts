@@ -103,4 +103,14 @@ describe("createScenarioCandidateSource：extraBody 按格式装配", () => {
     expect(options.extraBody.response_format.json_schema.name).toBe("scenario_blueprint_candidate");
     expect(options.extraBody.response_format.json_schema.strict).toBe(true);
   });
+
+  it("AI_THINKING_ROLES=scenario ⇒ 只为开局蓝图开启思考", async () => {
+    const { calls, transport } = fakeTransport();
+    const source = createScenarioCandidateSource(
+      { ...VALID_ENV, AI_THINKING_ROLES: "scenario" },
+      { transportFactory: () => transport as never }
+    );
+    await source.generate(REQUEST);
+    expect((calls[0][2] as { extraBody: { enable_thinking: boolean } }).extraBody.enable_thinking).toBe(true);
+  });
 });

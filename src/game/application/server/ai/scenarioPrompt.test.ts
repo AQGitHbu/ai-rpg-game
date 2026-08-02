@@ -81,6 +81,39 @@ describe("buildScenarioPromptMessages", () => {
     expect(joined).toContain(String(createBudgetPolicy("open").opening.townLocationsMax));
   });
 
+  it("明确锁定任务目标枚举，避免模型把 obtain_item 改写成自然语言同义词", () => {
+    const messages = buildScenarioPromptMessages(buildRequest(), PROFILES);
+    const joined = messages.map((message) => message.content).join("\n");
+    expect(joined).toContain("objective.kind 只能是 visit_location、talk_to_npc、obtain_item、discover_fact、defeat_enemy");
+    expect(joined).toContain("禁止写 collect_item");
+  });
+
+  it("要求中长线主线目标逐幕推进，且契约模板不重复目标", () => {
+    const base = buildRequest();
+    const longRequest: ScenarioGenerationRequest = {
+      ...base,
+      input: { ...base.input, gameLength: "long" },
+    };
+    const messages = buildScenarioPromptMessages(longRequest, PROFILES);
+    const joined = messages.map((message) => message.content).join("\n");
+    expect(joined).toContain("不得重复前面主线幕的同一 objective kind+target");
+    expect(joined).toContain("不得让新解锁任务的目标在解锁前已满足");
+    expect(joined).toContain('"kind":"talk_to_npc","npcId":"npc_2"');
+    expect(joined).toContain('"kind":"obtain_item","itemId":"item_key"');
+    expect(joined).toContain('"kind":"talk_to_npc","npcId":"npc_1"');
+    expect(joined).toContain('"kind":"talk_to_npc","npcId":"npc_4"');
+    expect(joined).toContain('"kind":"defeat_enemy","enemyId":"enemy_boss"');
+  });
+
+  it("明确锁定物品展示元数据枚举与边界", () => {
+    const messages = buildScenarioPromptMessages(buildRequest(), PROFILES);
+    const joined = messages.map((message) => message.content).join("\n");
+    expect(joined).toContain("category 只能是 equipment、consumable、material、quest");
+    expect(joined).toContain("rarity 只能是 common、fine、rare、epic");
+    expect(joined).toContain("level 必须是 1~99 的整数");
+    expect(joined).toContain("statLines 最多 6 条");
+  });
+
   it("嵌入由同一输入与 seed 派生的完整有效候选样例，作为模型必须遵守的 JSON 契约", () => {
     const request = buildRequest();
     const messages = buildScenarioPromptMessages(request, PROFILES);

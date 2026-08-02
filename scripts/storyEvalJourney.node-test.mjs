@@ -8,6 +8,8 @@ import {
   resolveEvalProfileConfig,
   resolveBaseSeed,
   resolveCaseId,
+  resolveStrategy,
+  resolveBlueprintArtifact,
   resolveJourneyMode,
   resolveRunCount,
 } from "./storyEvalJourney.mjs";
@@ -18,7 +20,7 @@ test("三种 profile 解析为明确的场景/重试/超时/分支配置", () =>
     profile: "smoke", maxScenes: 3, maxRoleAttempts: 1, aiTimeoutMs: 60_000, branchMode: "none", totalBudgetMs: 10 * 60_000,
   });
   assert.deepEqual(resolveEvalProfileConfig({ STORY_EVAL_PROFILE: "regression" }), {
-    profile: "regression", maxScenes: 12, maxRoleAttempts: 2, aiTimeoutMs: 90_000, branchMode: "sample", totalBudgetMs: 45 * 60_000,
+    profile: "regression", maxScenes: 16, maxRoleAttempts: 2, aiTimeoutMs: 90_000, branchMode: "sample", totalBudgetMs: 45 * 60_000,
   });
   assert.deepEqual(resolveEvalProfileConfig({ STORY_EVAL_PROFILE: "baseline" }), {
     profile: "baseline", maxScenes: 60, maxRoleAttempts: 3, aiTimeoutMs: 120_000, branchMode: "full", totalBudgetMs: 90 * 60_000,
@@ -46,6 +48,19 @@ test("resolveCaseId 缺省 undefined，合法 case 返回 ID，未知 case 返�
   assert.equal(resolveCaseId([], cases), undefined);
   assert.equal(resolveCaseId(["--case=wuxia-a"], cases), "wuxia-a");
   assert.equal(resolveCaseId(["--case=bogus"], cases), null);
+});
+
+test("resolveStrategy 缺省 undefined，只接受 explore/objective", () => {
+  assert.equal(resolveStrategy([]), undefined);
+  assert.equal(resolveStrategy(["--strategy=explore"]), "explore");
+  assert.equal(resolveStrategy(["--strategy=objective"]), "objective");
+  assert.equal(resolveStrategy(["--strategy=bogus"]), null);
+});
+
+test("resolveBlueprintArtifact 缺省 undefined，拒绝空值并保留合法路径", () => {
+  assert.equal(resolveBlueprintArtifact([]), undefined);
+  assert.equal(resolveBlueprintArtifact(["--blueprint-artifact="]), null);
+  assert.equal(resolveBlueprintArtifact(["--blueprint-artifact=artifacts/run/calls.jsonl"]), "artifacts/run/calls.jsonl");
 });
 
 test("main 未知 case 打印 INVALID_CASE、不 spawn 且 exit 1", () => {

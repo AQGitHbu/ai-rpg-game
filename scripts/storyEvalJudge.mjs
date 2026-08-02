@@ -80,6 +80,9 @@ function sceneToText(row) {
   if (Array.isArray(row.newEvents) && row.newEvents.length > 0) {
     parts.push(`事件：${row.newEvents.map((event) => event.type).join(", ")}`);
   }
+  if (Array.isArray(row.actionEvents) && row.actionEvents.length > 0) {
+    parts.push(`选择后规则事件：${row.actionEvents.map((event) => event.type).join(", ")}`);
+  }
   return parts.join("\n");
 }
 

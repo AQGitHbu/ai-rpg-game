@@ -102,6 +102,8 @@ export type ServerGameEntryPoints = {
 /** 仅供 server 侧 smoke/结构化日志观察生成阶段，绝不由浏览器或 API 提供。 */
 export type ServerGameEntryPointOptions = {
   readonly generationObserver?: (event: ScenarioGenerationEvent) => void;
+  /** 仅 story-eval capture 可注入，用于固定蓝图做运行时 A/B 对照。 */
+  readonly scenarioCandidateSourceOverride?: ScenarioCandidateSource;
 };
 
 // ---------------------------------------------------------------------------
@@ -145,6 +147,9 @@ export function createServerGameEntryPoints(
     logError: (operation) => logger.error("sqlite_repository_failure", { operation })
   });
   const runtimeNarrativeSources = createRuntimeNarrativeSources(env, { logger, captureSink: storyEval.captureSink });
+  const scenarioCandidateSource = env.STORY_EVAL_CAPTURE === "1" && options.scenarioCandidateSourceOverride !== undefined
+    ? options.scenarioCandidateSourceOverride
+    : createScenarioCandidateSource(env, { logger, captureSink: storyEval.captureSink });
   const dependencies: CreateGameDependencies = {
     repository,
     // 生产 provider：UUID 存档 ID、随机 seed、真实时钟（ISO 8601）。
@@ -154,7 +159,7 @@ export function createServerGameEntryPoints(
     // Phase 4B：按 AI 运行时配置装配 source——配置有效走 live，否则 unavailable
     // （玩家稳定走 fallback）。fixture source 绝不按 env 切入生产。
     // traceId 只进 source 请求与脱敏审计；observer 仅接收脱敏阶段事件。
-    scenarioCandidateSource: createScenarioCandidateSource(env, { logger, captureSink: storyEval.captureSink }),
+    scenarioCandidateSource,
     newTraceId: () => randomUUID(),
     generationObserver: options.generationObserver,
     runtimeNarrativeSources,

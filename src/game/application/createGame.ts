@@ -61,6 +61,7 @@ function classifyValidationFailure(
     case "MISSING_MAIN_STAGE":
     case "LOOP_WITHOUT_CLOSURE":
     case "UNREACHABLE_ENDING":
+    case "REPEATED_MAIN_OBJECTIVE":
       return "unreachable_ending";
     case "GAME_TYPE_MISMATCH":
     case "FORBIDDEN_TAG":

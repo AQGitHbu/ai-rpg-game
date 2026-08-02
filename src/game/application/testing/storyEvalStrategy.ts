@@ -8,6 +8,9 @@
 // 选择理由（记入 story.jsonl 的 playerChoice.reason）。
 // ---------------------------------------------------------------------------
 
+import { toDirectorContext } from "../runtimeNarrativeContexts";
+import type { GameState, ScenarioBlueprint } from "@/game/domain";
+
 /** GameRecord 的本地结构化子集：仅含策略实际读取的字段（边界守卫要求
  *  application 层不 import server 端口实现；真实 GameRecord/GameState 可赋值给本类型）。
  *  id 字段为 unknown：策略只做 String() 归一比较，不依赖 id 的具体品牌类型。 */
@@ -31,6 +34,7 @@ type StoryEvalGameRecord = Readonly<{
     readonly inventory: readonly unknown[];
     readonly currentLocationId: unknown;
     readonly visitedLocationIds: readonly unknown[];
+    readonly defeatedEnemyIds?: readonly unknown[];
     readonly npcs: readonly Readonly<{ readonly npcId: unknown; readonly met: boolean }>[];
     readonly worldFacts: readonly Readonly<{ readonly factId: unknown; readonly discovered: boolean }>[];
     readonly narrative: Readonly<{
@@ -114,6 +118,66 @@ export function pickNarrativeChoice(
 
 type ObjectivePreference = Readonly<{ tier: number; reason: string }>;
 
+type ActiveObjectiveProjection = Readonly<{
+  kind: string;
+  targetId: string;
+  targetActionKey: string;
+  suggestedActionKey: string | null;
+}>;
+
+function objectiveTargetOf(objective: Readonly<{ kind: string; locationId?: unknown; npcId?: unknown; itemId?: unknown; factId?: unknown; enemyId?: unknown }>): string {
+  const target = objective.locationId ?? objective.npcId ?? objective.itemId ?? objective.factId ?? objective.enemyId;
+  return String(target);
+}
+
+function objectiveActionOf(objective: Readonly<{ kind: string; locationId?: unknown; npcId?: unknown; itemId?: unknown; factId?: unknown; enemyId?: unknown }>): string {
+  return `${objective.kind === "obtain_item" ? "take_item" : objective.kind === "talk_to_npc" ? "talk" : objective.kind === "visit_location" ? "move" : objective.kind === "discover_fact" ? "investigate" : "start_battle"}:${objectiveTargetOf(objective)}`;
+}
+
+function objectiveSatisfiedByState(
+  objective: Readonly<{ kind: string; locationId?: unknown; npcId?: unknown; itemId?: unknown; factId?: unknown; enemyId?: unknown }>,
+  record: StoryEvalGameRecord,
+): boolean {
+  const target = objectiveTargetOf(objective);
+  switch (objective.kind) {
+    case "visit_location": return record.state.visitedLocationIds.some((id) => String(id) === target);
+    case "talk_to_npc": return record.state.npcs.some((npc) => String(npc.npcId) === target && npc.met);
+    case "obtain_item": return record.state.inventory.some((id) => String(id) === target);
+    case "discover_fact": return record.state.worldFacts.some((fact) => String(fact.factId) === target && fact.discovered);
+    case "defeat_enemy": return (record.state.defeatedEnemyIds ?? []).some((id) => String(id) === target);
+    default: return false;
+  }
+}
+
+/**
+ * 复用运行时导演上下文的路线投影，但由评估侧再次确认“当前未满足的
+ * objective”，避免把同一主线中尚未轮到的未来 objective 当成当前目标。
+ * 这里只影响评估旅程的选择器，不写入真实游戏状态。
+ */
+function activeMainObjectiveOf(record: StoryEvalGameRecord): ActiveObjectiveProjection | null {
+  const activeQuestIds = new Set(
+    record.state.quests.filter((quest) => quest.status === "active").map((quest) => String(quest.questId)),
+  );
+  const activeMainQuest = record.blueprint.quests.find(
+    (quest) => quest.kind === "main" && activeQuestIds.has(String(quest.id)),
+  );
+  const objective = activeMainQuest?.objectives.find((entry) => !objectiveSatisfiedByState(entry, record));
+  if (objective === undefined) return null;
+  const targetActionKey = objectiveActionOf(objective);
+  const projected = toDirectorContext({
+    blueprint: record.blueprint as unknown as ScenarioBlueprint,
+    state: record.state as unknown as GameState,
+  }).activeMainObjective;
+  return {
+    kind: objective.kind,
+    targetId: objectiveTargetOf(objective),
+    targetActionKey,
+    suggestedActionKey: projected?.kind === objective.kind && projected.targetId === objectiveTargetOf(objective)
+      ? projected.suggestedActionKey
+      : targetActionKey,
+  };
+}
+
 /** 某任务的 objective 目标集合（按 kind 归一为字符串 ID 集合）。 */
 function objectiveTargetsOf(
   objectives: readonly Readonly<{ readonly kind: string; readonly locationId?: unknown; readonly npcId?: unknown; readonly itemId?: unknown; readonly factId?: unknown; readonly enemyId?: unknown }>[],
@@ -134,11 +198,35 @@ function objectivePreferenceOf(actionKey: string, record: StoryEvalGameRecord): 
   const activeQuestIds = record.state.quests
     .filter((quest) => quest.status === "active")
     .map((quest) => String(quest.questId));
+  const activeMainObjective = activeMainObjectiveOf(record);
+  const mainObjectiveActionKeys = new Set(
+    activeMainObjective === null
+      ? []
+      : [activeMainObjective.targetActionKey, activeMainObjective.suggestedActionKey]
+        .filter((key): key is string => typeof key === "string"),
+  );
+  if (mainObjectiveActionKeys.has(actionKey)) {
+    if (actionKey === activeMainObjective?.targetActionKey) {
+      const reasonByKind: Readonly<Record<string, string>> = {
+        take_item: "objective:main_item",
+        talk: "objective:main_npc",
+        move: "objective:main_location",
+        investigate: "objective:main_fact",
+        start_battle: "objective:main_battle",
+      };
+      return { tier: 1, reason: reasonByKind[kind] ?? "objective:main" };
+    }
+    return { tier: 1, reason: "objective:main_route" };
+  }
   // 当前 active 主线任务：推进它即推进主线阶段（mainStage）。
   const activeMainQuest = record.blueprint.quests.find(
     (quest) => quest.kind === "main" && activeQuestIds.includes(String(quest.id)),
   );
-  const mainTargets = activeMainQuest === undefined ? [] : objectiveTargetsOf(activeMainQuest.objectives, kind);
+  const mainTargets = activeMainObjective !== null && activeMainObjective.kind === kind
+    ? [activeMainObjective.targetId]
+    : activeMainQuest === undefined || activeMainObjective !== null
+      ? []
+      : objectiveTargetsOf(activeMainQuest.objectives, kind);
   const activeQuestTargets = record.blueprint.quests
     .filter((quest) => activeQuestIds.includes(String(quest.id)))
     .flatMap((quest) => objectiveTargetsOf(quest.objectives, kind));
