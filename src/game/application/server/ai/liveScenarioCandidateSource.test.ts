@@ -272,7 +272,7 @@ describe("Task 9：buildExtraBody 按请求透传", () => {
     };
   }
 
-  it("提供 buildExtraBody 时按请求构建并并入 enable_thinking + 低温 + 长超时", async () => {
+  it("提供 buildExtraBody 时按请求构建并并入 enable_thinking + 低温 + 评估超时", async () => {
     const { transport, calls } = recordingTransport();
     const { audit } = spyAudit();
     const source = createLiveScenarioCandidateSource({
@@ -280,14 +280,15 @@ describe("Task 9：buildExtraBody 按请求透传", () => {
       config: CONFIG,
       buildMessages: () => [{ role: "user", content: "x" }],
       audit,
-      buildExtraBody: () => ({ response_format: { type: "json_object" } })
+      buildExtraBody: () => ({ response_format: { type: "json_object" } }),
+      timeoutMs: 60_000,
     });
     await source.generate(REQUEST);
     expect(calls).toHaveLength(1);
     expect(calls[0][2]).toEqual({
       extraBody: { enable_thinking: false, response_format: { type: "json_object" } },
       temperature: 0.2,
-      timeoutMs: 120_000
+      timeoutMs: 60_000
     });
   });
 

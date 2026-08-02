@@ -145,6 +145,32 @@ describe("orchestrateNarrativeScene fallback", () => {
     expect(directorCalls).toBe(3);
   });
 
+  it("评估模式可把 director 重试限制为一次", async () => {
+    let directorCalls = 0;
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-eval-attempt-limit",
+      blueprint,
+      state,
+      maxRoleAttempts: 1,
+      directorSource: {
+        async generate() {
+          directorCalls += 1;
+          return {
+            ok: false as const,
+            provenance: "unavailable" as const,
+            category: "service_error" as const,
+            diagnostics: { traceId: "test", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "failed" as const, category: "service_error" as const },
+          };
+        },
+      },
+      sceneScriptSource: { async generate() { throw new Error("not reached"); } },
+      npcLineSource: { async generate() { throw new Error("not reached"); } },
+    });
+
+    expect(result.provenance).toBe("fallback");
+    expect(directorCalls).toBe(1);
+  });
+
   it("记录被规则拒绝的 director 提案，但不写入提案内容", async () => {
     const entries: GameLogEntry[] = [];
     const result = await orchestrateNarrativeScene({

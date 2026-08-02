@@ -82,6 +82,37 @@ const BRANCH_CHECKPOINT_STAGES = [2, 4, 6] as const;
 /** AI 运行参数（与 live 源装配点一致：liveRuntimeNarrativeSources / liveScenarioCandidateSource）。 */
 const AI_TEMPERATURE = 0.2;
 const AI_TIMEOUT_MS = 120_000;
+type StoryEvalProfile = "smoke" | "regression" | "baseline";
+
+const PROFILE_DEFAULTS: Readonly<Record<StoryEvalProfile, Readonly<{ maxRoleAttempts: number; timeoutMs: number; branchMode: "none" | "sample" | "full" }>>> = {
+  smoke: { maxRoleAttempts: 1, timeoutMs: 60_000, branchMode: "none" },
+  regression: { maxRoleAttempts: 2, timeoutMs: 90_000, branchMode: "sample" },
+  baseline: { maxRoleAttempts: 3, timeoutMs: AI_TIMEOUT_MS, branchMode: "full" },
+};
+
+function resolveStoryEvalProfile(env: Record<string, string | undefined>): StoryEvalProfile {
+  const value = env.STORY_EVAL_PROFILE;
+  return value === "smoke" || value === "regression" || value === "baseline" ? value : "baseline";
+}
+
+function resolveStoryEvalBranchCheckpoints(env: Record<string, string | undefined>): readonly number[] {
+  const mode = env.STORY_EVAL_BRANCH_MODE ?? PROFILE_DEFAULTS[resolveStoryEvalProfile(env)].branchMode;
+  if (mode === "none") return [];
+  if (mode === "sample") return [BRANCH_CHECKPOINT_STAGES[0]];
+  return BRANCH_CHECKPOINT_STAGES;
+}
+
+function resolveStoryEvalMaxRoleAttempts(env: Record<string, string | undefined>): number {
+  const defaults = PROFILE_DEFAULTS[resolveStoryEvalProfile(env)];
+  const value = Number(env.STORY_EVAL_MAX_ROLE_ATTEMPTS ?? defaults.maxRoleAttempts);
+  return Number.isInteger(value) && value >= 1 && value <= 3 ? value : 3;
+}
+
+function resolveStoryEvalTimeoutMs(env: Record<string, string | undefined>): number {
+  const defaults = PROFILE_DEFAULTS[resolveStoryEvalProfile(env)];
+  const value = Number(env.STORY_EVAL_AI_TIMEOUT_MS ?? defaults.timeoutMs);
+  return Number.isInteger(value) && value >= 1_000 && value <= AI_TIMEOUT_MS ? value : AI_TIMEOUT_MS;
+}
 
 /** 当前 git commit（manifest 可复现性；非 git 环境回退 null）。 */
 function resolveGitCommit(): string | null {
@@ -433,7 +464,21 @@ export type StoryEvalJourneyResult = Readonly<{
 
 export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promise<StoryEvalJourneyResult> {
   const { env, dbPath, artifactDir, strategySeed, maxScenes, requireGeneratedOpening, caseId, strategy } = config;
+  const profile = resolveStoryEvalProfile(env);
+  const branchMode = env.STORY_EVAL_BRANCH_MODE ?? PROFILE_DEFAULTS[profile].branchMode;
+  const branchCheckpointStages = resolveStoryEvalBranchCheckpoints(env);
   const journeyStartedAt = Date.now();
+  const timingStartedAt = performance.now();
+  const timings = {
+    startedAt: new Date(journeyStartedAt).toISOString(),
+    openingMs: 0,
+    narrativeWaitMs: 0,
+    branchMs: 0,
+    playerActionMs: 0,
+    finalizationMs: 0,
+    totalMs: 0,
+    finishedAt: null as string | null,
+  };
   const totalBudgetMs = resolveTotalBudgetMs(env);
   const rand = mulberry32(hashStringToSeed(String(strategySeed)));
   // v2：按 case 构造输入（v2.json 数据事实源）；未知 caseId 直接失败（门禁保证合法）。
@@ -453,7 +498,9 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
     entry = createServerGameEntryPoints({ ...env, GAME_DB_PATH: dbPath });
     evalRepository = openEvalRepository(dbPath);
 
+    const openingStartedAt = performance.now();
     const created = await entry.createGame(input);
+    timings.openingMs = performance.now() - openingStartedAt;
     if (!created.ok) throw new Error(`createGame failed: ${created.code}`);
     // requireGeneratedOpening：真实模式要求开局由 AI 生成（离线 fetch-mock 走
     // fallback 开局可接受）；不满足直接失败，避免把非生成开局误记成生成。
@@ -484,12 +531,15 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       status,
       sceneCount: 0,
       fallbackScenes: 0,
+      maxScenes,
       blueprint: null,
       // Task 13（v2）扩展字段：caseId/strategy、gitCommit、contractVersion、
       // 四角色 prompt 版本、temperature、timeoutMs、answerKey（S4 确定性评分所需，
       // 由蓝图结局/敌人/任务结构与最终规则结果生成）。
       caseId,
       strategy,
+      profile,
+      branchMode,
       gitCommit: resolveGitCommit(),
       contractVersion: NARRATIVE_CONTRACT_VERSION,
       promptVersions: {
@@ -499,8 +549,10 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         npc: NARRATIVE_CONTRACT_VERSION,
       },
       temperature: AI_TEMPERATURE,
-      timeoutMs: AI_TIMEOUT_MS,
+      timeoutMs: resolveStoryEvalTimeoutMs(env),
+      maxRoleAttempts: resolveStoryEvalMaxRoleAttempts(env),
       answerKey: null,
+      timings,
     };
     const getCalls = createCachedCallsReader(artifactDir);
 
@@ -513,13 +565,18 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       //    生成任务结束仍无场景（规则动作耗尽或生成失败）→ 停止旅程。
       if (view.narrativeGeneration.status === "pending" || view.narrative === null) {
         if (view.narrativeGeneration.status === "pending") {
-          await entry.ensureNarrativeGeneration();
-          const deadline = Date.now() + resolveSceneWaitMs(env);
-          while (Date.now() < deadline) {
-            view = await getView();
-            if (view.narrative !== null || view.battle !== null || view.ending !== null) break;
-            if (view.narrativeGeneration.status !== "pending") break;
-            await sleep(500);
+          const waitStartedAt = performance.now();
+          try {
+            await entry.ensureNarrativeGeneration();
+            const deadline = Date.now() + resolveSceneWaitMs(env);
+            while (Date.now() < deadline) {
+              view = await getView();
+              if (view.narrative !== null || view.battle !== null || view.ending !== null) break;
+              if (view.narrativeGeneration.status !== "pending") break;
+              await sleep(500);
+            }
+          } finally {
+            timings.narrativeWaitMs += performance.now() - waitStartedAt;
           }
         }
         if (view.narrative === null && view.battle === null && view.ending === null) {
@@ -589,31 +646,39 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       // 4b. 主线阶段检查点：stage ∈ {2,4,6} 且未在该 stage 分支过 → 成对分支。
       if (
         stage !== null &&
-        (BRANCH_CHECKPOINT_STAGES as readonly number[]).includes(stage) &&
+        branchCheckpointStages.includes(stage) &&
         !branchCheckpointsDone.has(stage)
       ) {
         branchCheckpointsDone.add(stage);
-        await runCheckpointBranches({
-          env,
-          dbPath,
-          artifactDir,
-          record,
-          sceneIndex,
-          stage,
-          strategy,
-          rand,
-        });
+        const branchStartedAt = performance.now();
+        try {
+          await runCheckpointBranches({
+            env,
+            dbPath,
+            artifactDir,
+            record,
+            sceneIndex,
+            stage,
+            strategy,
+            rand,
+          });
+        } finally {
+          timings.branchMs += performance.now() - branchStartedAt;
+        }
       }
       // 5. 执行选择。
+      const actionStartedAt = performance.now();
       const result = await entry.performAction({
-        intent: { type: "narrative_choice", choiceToken: scene.choices[choice.index]?.choiceToken ?? "" },
-        expectedRevision: view.revision,
-      });
+          intent: { type: "narrative_choice", choiceToken: scene.choices[choice.index]?.choiceToken ?? "" },
+          expectedRevision: view.revision,
+        });
+      timings.playerActionMs += performance.now() - actionStartedAt;
       if (!result.ok) throw new Error(`narrative choice rejected at ${sceneIndex}: ${result.code}`);
       view = result.view;
     }
 
     // 6. 收尾产物：manifest.json 与 story.jsonl。
+    const finalizationStartedAt = performance.now();
     const finalRecord = await loadRecord();
     const blueprint = finalRecord.blueprint;
     manifest.gameId = String(finalRecord.gameId);
@@ -647,6 +712,9 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         description: ending.description,
       })),
     };
+    timings.finalizationMs = performance.now() - finalizationStartedAt;
+    timings.totalMs = performance.now() - timingStartedAt;
+    timings.finishedAt = new Date().toISOString();
     mkdirSync(artifactDir, { recursive: true });
     writeFileSync(join(artifactDir, "story.jsonl"), storyRows.map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8");
     writeFileSync(join(artifactDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf8");
@@ -932,6 +1000,9 @@ describe("Story eval journey (offline)", () => {
     expect(manifest.sceneCount).toBe(3);
     expect(manifest.caseId).toBe("wuxia-a");
     expect(manifest.strategy).toBe("explore");
+    expect(manifest.profile).toBe("baseline");
+    expect(manifest.branchMode).toBe("full");
+    expect(manifest.maxScenes).toBe(3);
     expect(manifest.contractVersion).toBe(NARRATIVE_CONTRACT_VERSION);
     const promptVersions = manifest.promptVersions as Record<string, unknown>;
     expect(promptVersions.scenario).toBe(SCENARIO_CANDIDATE_CONTRACT_VERSION);
@@ -940,6 +1011,13 @@ describe("Story eval journey (offline)", () => {
     }
     expect(manifest.temperature).toBe(0.2);
     expect(manifest.timeoutMs).toBe(120_000);
+    const timings = manifest.timings as Record<string, unknown>;
+    expect(typeof timings.startedAt).toBe("string");
+    expect(typeof timings.finishedAt).toBe("string");
+    for (const key of ["openingMs", "narrativeWaitMs", "branchMs", "playerActionMs", "finalizationMs", "totalMs"]) {
+      expect(typeof timings[key]).toBe("number");
+      expect(Number(timings[key])).toBeGreaterThanOrEqual(0);
+    }
     expect(manifest.answerKey).toMatchObject({ "ending:ending_1": { exactAliases: expect.any(Array) } });
     expect(manifest.gitCommit === null || typeof manifest.gitCommit === "string").toBe(true);
     const blueprint = manifest.blueprint as { quests: readonly { kind: string }[]; endings: readonly unknown[]; world: { name: string } };

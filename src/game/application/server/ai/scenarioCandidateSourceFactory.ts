@@ -32,6 +32,12 @@ export type ScenarioCandidateSourceFactoryOptions = Readonly<{
   captureSink?: StoryEvalSink;
 }>;
 
+function resolveStoryEvalTimeoutMs(env: Record<string, string | undefined>): number | undefined {
+  if (env.STORY_EVAL_CAPTURE !== "1") return undefined;
+  const value = Number(env.STORY_EVAL_AI_TIMEOUT_MS);
+  return Number.isInteger(value) && value >= 1_000 && value <= 120_000 ? value : undefined;
+}
+
 /** 依 AI 运行时配置装配候选来源；env 由 composition root 注入，本工厂不读 process.env。 */
 export function createScenarioCandidateSource(
   env: Record<string, string | undefined>,
@@ -52,5 +58,6 @@ export function createScenarioCandidateSource(
     buildExtraBody: (request) =>
       buildScenarioResponseFormatExtraBody(runtime.outputFormat, createBudgetPolicy(request.input.gameLength)),
     captureSink: options.captureSink,
+    timeoutMs: resolveStoryEvalTimeoutMs(env),
   });
 }

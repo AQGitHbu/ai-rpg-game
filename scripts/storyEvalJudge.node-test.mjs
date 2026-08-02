@@ -230,6 +230,27 @@ test("validateSceneLevelResult：分数越界/虚构 sceneIndex/虚构引文/空
   assert.equal(validateSceneLevelResult(null, story), false);
 });
 
+test("validateSceneLevelResult：C1/C2 证据允许引用各自证据包，而非只限当前场景", () => {
+  const c1Story = story.map((row) => row.sceneIndex === 2
+    ? {
+        ...row,
+        npcProfile: { name: "阿七", role: "剑客", description: "沉默寡言" },
+        relationshipSummary: "tier=ally affinity=30 last=初次相遇",
+        memorySummary: [],
+        npcLine: { text: "你好", emotion: "warm" },
+      }
+    : row);
+  assert.equal(
+    validateSceneLevelResult({ scores: [{ sceneIndex: 2, score: 3, evidence: "沉默寡言" }] }, c1Story, "C1（NPC 声线一致性）"),
+    true,
+  );
+  assert.equal(
+    validateSceneLevelResult({ scores: [{ sceneIndex: 2, score: 3, evidence: "n1" }] }, story, "C2（场景衔接连续性）"),
+    true,
+  );
+  assert.equal(validateSceneLevelResult({ scores: [{ sceneIndex: 2, score: 3, evidence: "n1" }] }, story), false);
+});
+
 test("validateStoryLevelResult：无分支证据（pairedCheckpoints=0 或 metrics 缺失）时 S8/S9 cap 为 3 并注明", () => {
   const parsed = validStoryLevelParsed();
   parsed.scores.S8 = { score: 5, evidence: [{ sceneIndex: 1, quote: "n1" }] };
@@ -350,4 +371,15 @@ test("callJudge：未提供 validateParsed 时解析成功即返回，不额外�
   const result = await callJudge({ baseUrl: "http://x/v1", apiKey: "k", model: "m", messages: [], fetchImpl });
   assert.equal(result.ok, true);
   assert.equal(count, 1);
+});
+
+test("callJudge：provider 不响应时按 timeoutMs 结束并返回稳定错误", async () => {
+  const fetchImpl = async (_url, options) => await new Promise((_, reject) => {
+    options.signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+  });
+  const result = await callJudge({
+    baseUrl: "http://x/v1", apiKey: "k", model: "m", messages: [], fetchImpl, retries: 0, timeoutMs: 5,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "judge_timeout");
 });

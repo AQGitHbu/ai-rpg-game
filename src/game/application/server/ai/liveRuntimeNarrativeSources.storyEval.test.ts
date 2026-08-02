@@ -1,5 +1,6 @@
 /** @vitest-environment node */
 import { describe, expect, it, vi } from "vitest";
+import type { AiTransport } from "@ai-game/ai-transport";
 import type { StoryEvalCallRecord, StoryEvalSink } from "../../storyEvalCaptureTypes";
 import { createLiveRuntimeNarrativeSources } from "./liveRuntimeNarrativeSources";
 
@@ -161,6 +162,22 @@ describe("createLiveRuntimeNarrativeSources captureSink", () => {
     } finally {
       vi.restoreAllMocks();
     }
+  });
+
+  it("评估 timeoutMs 会透传到 transport，并在短超时后返回 timeout", async () => {
+    const complete = vi.fn(async (_config, _messages, options) => {
+      expect(options?.timeoutMs).toBe(10);
+      return { ok: false as const, code: "timeout" as const, retryable: true, latencyMs: 10 };
+    });
+    const transport = { complete } as unknown as AiTransport;
+    const sources = createLiveRuntimeNarrativeSources({ transport, config, timeoutMs: 10 });
+    const result = await sources.directorSource.generate({
+      traceId: "t-timeout",
+      context: { ...contextWithCandidates } as unknown as Record<string, unknown>,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.category).toBe("timeout");
+    expect(complete).toHaveBeenCalledTimes(1);
   });
 });
 

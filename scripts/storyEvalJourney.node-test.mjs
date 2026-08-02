@@ -2,12 +2,44 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   loadStoryEvalCases,
+  buildStoryEvalArtifactDir,
   main,
+  resolveEvalProfile,
+  resolveEvalProfileConfig,
   resolveBaseSeed,
   resolveCaseId,
   resolveJourneyMode,
   resolveRunCount,
 } from "./storyEvalJourney.mjs";
+
+test("三种 profile 解析为明确的场景/重试/超时/分支配置", () => {
+  assert.equal(resolveEvalProfile({}), "baseline");
+  assert.deepEqual(resolveEvalProfileConfig({ STORY_EVAL_PROFILE: "smoke" }), {
+    profile: "smoke", maxScenes: 3, maxRoleAttempts: 1, aiTimeoutMs: 60_000, branchMode: "none", totalBudgetMs: 10 * 60_000,
+  });
+  assert.deepEqual(resolveEvalProfileConfig({ STORY_EVAL_PROFILE: "regression" }), {
+    profile: "regression", maxScenes: 12, maxRoleAttempts: 2, aiTimeoutMs: 90_000, branchMode: "sample", totalBudgetMs: 45 * 60_000,
+  });
+  assert.deepEqual(resolveEvalProfileConfig({ STORY_EVAL_PROFILE: "baseline" }), {
+    profile: "baseline", maxScenes: 60, maxRoleAttempts: 3, aiTimeoutMs: 120_000, branchMode: "full", totalBudgetMs: 90 * 60_000,
+  });
+  assert.equal(resolveEvalProfile({ STORY_EVAL_PROFILE: "unknown" }), null);
+  assert.equal(resolveEvalProfileConfig({ STORY_EVAL_PROFILE: "smoke", STORY_EVAL_BRANCH_MODE: "bad" }), null);
+});
+
+test("buildStoryEvalArtifactDir 每次生成唯一目录，避免 calls.jsonl 跨 run 追加", () => {
+  const options = {
+    artifactRoot: "artifacts/story-eval",
+    caseId: "wuxia-a",
+    strategy: "explore",
+    runIndex: 0,
+  };
+  const first = buildStoryEvalArtifactDir(options);
+  const second = buildStoryEvalArtifactDir(options);
+  assert.notEqual(first, second);
+  assert.match(first, /wuxia-a-explore-0-/);
+  assert.match(second, /wuxia-a-explore-0-/);
+});
 
 test("resolveCaseId 缺省 undefined，合法 case 返回 ID，未知 case 返回 null", () => {
   const cases = loadStoryEvalCases();
@@ -99,6 +131,19 @@ test("main record 模式缺 AI 凭据时 AI_ENV_INVALID", () => {
   });
   assert.equal(code, 1);
   assert.ok(lines.some((line) => line.includes("AI_ENV_INVALID")));
+});
+
+test("main record 模式未知 profile 打印 INVALID_PROFILE 且不读取凭据", () => {
+  const lines = [];
+  const code = main({
+    argv: ["--mode=record"],
+    env: { RUN_REAL_AI_STORY_EVAL: "1", STORY_EVAL_PROFILE: "unknown" },
+    sources: () => { throw new Error("must not read"); },
+    log: (line) => lines.push(line),
+    spawn: () => { throw new Error("must not spawn"); },
+  });
+  assert.equal(code, 1);
+  assert.ok(lines.some((line) => line.includes("INVALID_PROFILE")));
 });
 
 test("main replay 模式 spawn 抛错时 SPAWN_FAILED 并 exit 1", () => {

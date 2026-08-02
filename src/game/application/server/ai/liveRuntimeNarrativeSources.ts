@@ -15,6 +15,8 @@ export type LiveRuntimeNarrativeSourcesOptions = Readonly<{
   logger?: GameLogger;
   /** Task 2：评估采集回调——prompt 与模型原文只在本模块内部可见，仅此处可捕获。 */
   captureSink?: StoryEvalSink;
+  /** 评估专用 provider 超时；未传时保持正常运行时的 120 秒。 */
+  timeoutMs?: number;
 }>;
 
 /** Three separate sources and requests; each builder receives only its already-projected context. */
@@ -74,7 +76,7 @@ async function run<T extends object, A>(role: Role, request: Request, input: Liv
   let completed;
   // This provider disables extended reasoning through enable_thinking. Output
   // shape remains prompt-directed and is always locally parsed and approved.
-  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { enable_thinking: false, ...input.responseFormat?.(role) }, temperature: 0.2, timeoutMs: 120_000 }); } catch { audit(logger, role, false, "service_error", Date.now() - startedAt); capture({ rawResponse: null, parsedCandidate: null, failureCategory: "service_error" }); return failure(request, "service_error") as A; }
+  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { enable_thinking: false, ...input.responseFormat?.(role) }, temperature: 0.2, timeoutMs: input.timeoutMs ?? 120_000 }); } catch { audit(logger, role, false, "service_error", Date.now() - startedAt); capture({ rawResponse: null, parsedCandidate: null, failureCategory: "service_error" }); return failure(request, "service_error") as A; }
   if (!completed.ok) { const failedCategory = category[completed.code]; audit(logger, role, false, failedCategory, completed.latencyMs); capture({ rawResponse: (completed as { content?: string }).content ?? null, parsedCandidate: null, failureCategory: failedCategory }); return failure(request, failedCategory) as A; }
   const payload = parseObject(completed.content);
   if (payload === null) { const failureCategory = completed.content.trim() === "" ? "empty_response" : "invalid_json"; audit(logger, role, false, failureCategory, completed.latencyMs); capture({ rawResponse: completed.content, parsedCandidate: null, failureCategory }); return failure(request, failureCategory) as A; }

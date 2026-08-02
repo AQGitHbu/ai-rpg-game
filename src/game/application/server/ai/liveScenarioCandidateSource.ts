@@ -31,6 +31,8 @@ export type LiveScenarioCandidateSourceOptions = Readonly<{
   buildExtraBody?: (request: ScenarioGenerationRequest) => Readonly<Record<string, unknown>> | undefined;
   /** Task 3：评估采集回调——prompt 与模型原文只在本模块内部可见，仅此处可捕获。 */
   captureSink?: StoryEvalSink;
+  /** 评估专用 provider 超时；未传时保持正常运行时的 120 秒。 */
+  timeoutMs?: number;
 }>;
 
 const CANDIDATE_ARRAY_FIELDS = [
@@ -99,7 +101,7 @@ export function createLiveScenarioCandidateSource(
         result = await transport.complete(config, messages, {
           extraBody: { enable_thinking: false, ...(extraBody ?? {}) },
           temperature: 0.2,
-          timeoutMs: 120_000
+          timeoutMs: options.timeoutMs ?? 120_000
         });
       } catch {
         // transport 意外抛错：不泄漏 message，映射稳定 service_error。

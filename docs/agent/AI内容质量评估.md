@@ -31,7 +31,7 @@ sink（缺省目录 `artifacts/story-eval/run-<ISO 时间戳>-<pid>`，`STORY_EV
 | --- | --- | --- |
 | calls.jsonl | source 捕获 + 审批回调 | ai_call / role_approval / plan_approved / expansion_decision |
 | story.jsonl | 旅程驱动 | 场景序号/主线阶段/narration/NPC 台词/最终选项文案/导演计划摘要（allowedRevealFactIds/introducedEntities/扩展提议）/fallback/玩家选择与策略理由/安全规则事件（factId/entityId/questId/endingId）/memory 摘要/焦点 NPC profile/关系摘要 |
-| manifest.json | 旅程驱动 | gameId/世界 seed/策略 seed/gameLength/模型/temperature/timeoutMs/caseId/strategy/gitCommit/prompt 与契约版本/S4 answerKey/开局蓝图快照 |
+| manifest.json | 旅程驱动 | gameId/世界 seed/策略 seed/gameLength/模型/profile/branchMode/maxScenes/temperature/timeoutMs/maxRoleAttempts/caseId/strategy/gitCommit/prompt 与契约版本/S4 answerKey/开局蓝图快照/开局、叙事等待、分支、玩家行动、收尾、总耗时 timings |
 | branches/stageN/&lt;choice&gt;/branch.json | 旅程驱动 | 成对分支证据：parent scene、所选 actionKey、两场后结构化事件、状态差异、玩家可读 narration；不足两个合法选项时写 not_applicable.json |
 | metrics.json | analyze 脚本 | §3 全部客观指标（含 factsPerAct 双口径、实体/扩展漏斗、选择漏斗） |
 | scores.json + report.md | judge 脚本 | 结构化分数 + 证据 + 人工抽查清单 |
@@ -44,14 +44,19 @@ sink（缺省目录 `artifacts/story-eval/run-<ISO 时间戳>-<pid>`，`STORY_EV
 ## 脚本与命令
 
 - `npm run journey:story-eval`：replay 模式（零网络离线用例）
-- `npm run smoke:ai:story-eval -- --case=<caseId> --runs 12 --seed <n>`：record 模式（需 `RUN_REAL_AI_STORY_EVAL=1`；缺省按 v2 case 集展开 6 case × 2 策略 = **12 条主旅程**，试点只传一个 `--case`；`--runs` 只能在 `--case` 内复制并标记 replicate，不得当作新 case）
+- `STORY_EVAL_PROFILE=smoke|regression|baseline npm run smoke:ai:story-eval -- --case=<caseId>`：record 模式；profile 只控制评估运行参数，未设置时默认为 `baseline`。
+- `smoke`：3 场景、1 次角色尝试、60 秒 timeout、不做分支，适合 PR 链路检查；不产生正式质量结论。
+- `regression`：12 场景、2 次角色尝试、90 秒 timeout，只做 stage 2 分支，适合 prompt/代码趋势比较。
+- `baseline`：60 场景、3 次角色尝试、120 秒 timeout，完整执行 stage 2/4/6 分支，适合正式质量评估。profile 的单项环境变量可覆盖默认值。
 - `npm run analyze:story-eval -- <runDir>`：客观指标 → metrics.json（含实体/选择漏斗）
 - `npm run judge:story-eval -- <runDir>`：三段评审（需 `RUN_REAL_AI_STORY_EVAL_JUDGE=1`）→ scores.json + report.md
 
 Task 13 接线状态：record 模式已按 v2 case/strategy 确定性展开，childEnv 注入
 `STORY_EVAL_CASE_ID`/`STORY_EVAL_STRATEGY`/递增 seed/独立 artifact 与 db；未知 case 以
 `INVALID_CASE` 退出；judge 侧 C1/C2 证据包由 story 行自带（NPC profile/关系摘要/memory/前序场景），
-绝不把 `calls.jsonl` 或原始 prompt 交给 judge；S8/S9 在无成对分支证据时强制 cap 为 3。
+绝不把 `calls.jsonl` 或原始 prompt 交给 judge；S8/S9 在无成对分支证据时强制 cap 为 3。评估模式可
+独立降低角色尝试次数和 scenario/runtime provider 超时；Judge 每次请求有超时和稳定的
+`judge_timeout` 失败码，C1–C4 并行发起以消除场景级串行等待。
 
 ## 基线流程（12 条主旅程 + 人工/异模型校准）
 
@@ -70,9 +75,13 @@ Task 13 接线状态：record 模式已按 v2 case/strategy 确定性展开，ch
 
 STORY_EVAL_CAPTURE（服务端装配开关，浏览器手玩采集需在启动 dev server 的 shell 中临时设置）、
 STORY_EVAL_ARTIFACT_DIR（门禁脚本注入）、RUN_REAL_AI_STORY_EVAL、STORY_EVAL_SEED、
-STORY_EVAL_MAX_SCENES（默认 60）、RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_MODEL。
+STORY_EVAL_PROFILE（smoke/regression/baseline，默认 baseline）、STORY_EVAL_MAX_SCENES、
+STORY_EVAL_MAX_ROLE_ATTEMPTS、STORY_EVAL_AI_TIMEOUT_MS、STORY_EVAL_BRANCH_MODE（none/sample/full）、
+RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_MODEL、STORY_EVAL_JUDGE_TIMEOUT_MS（默认 120000）。
 
 ## 已知发现（基线阶段只记录不修）
 
 - writer 选项文案被规则文案替换后才展示：若 C3 基线分低，改 prompt 无效，需改规则文案或放开 writer 文案。
 - 同模型评审自身产物存在自我偏袒风险：由人工抽查校准；偏袒明显时设 STORY_EVAL_JUDGE_MODEL 为独立模型。
+- 短测的实际瓶颈在 provider 请求：本次 3 场景 explore 总耗时约 118 秒、objective 约 181 秒，
+  本地收尾/动作开销均不足 1 秒；objective 中 director 约 110 秒，是总耗时约 61%。

@@ -159,7 +159,7 @@ export function buildSceneLevelPrompt({ scaleText, version, sampled, dimension, 
   });
   return [
     `你是故事质量评审员。请按量表（版本 ${version}）为以下场景评 ${dimension} 维度（1-5 分），逐场景给出分数与一句证据。`,
-    "证据必须引用场景原文。只输出 JSON：{\"scores\":[{\"sceneIndex\":1,\"score\":3,\"evidence\":\"...\"}],\"reasoning\":\"...\"}",
+    "证据必须引用对应证据包中的原文。只输出 JSON：{\"scores\":[{\"sceneIndex\":1,\"score\":3,\"evidence\":\"...\"}],\"reasoning\":\"...\"}",
     `量表：\n${scaleText}`,
     `场景：\n${blocks.join("\n\n")}`,
   ].join("\n\n");
@@ -182,15 +182,18 @@ export function parseJudgeJson(text) {
  *  重试策略：第一次 temperature=0.2（稳定输出），重试时 temperature=0.5（提高输出多样性，
  *  避免相同参数下模型重复输出 invalid JSON）。解析成功但 validateParsed 校验失败时
  *  抛出 judge_schema_invalid，由本函数重试一次（不在 report 阶段修补）。 */
-export async function callJudge({ baseUrl, apiKey, model, messages, fetchImpl = fetch, retries = 1, validateParsed }) {
+export async function callJudge({ baseUrl, apiKey, model, messages, fetchImpl = fetch, retries = 1, timeoutMs = 120_000, validateParsed }) {
   let lastError = null;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     const temperature = attempt === 0 ? 0.2 : 0.5; // 首次低温度，重试时提高温度增加输出多样性
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetchImpl(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({ model, messages, temperature }),
+        signal: controller.signal,
       });
       if (!response.ok) throw new Error(`judge_http_${response.status}`);
       const payload = await response.json();
@@ -205,7 +208,9 @@ export async function callJudge({ baseUrl, apiKey, model, messages, fetchImpl = 
       }
       throw new Error("judge_invalid_json");
     } catch (error) {
-      lastError = error;
+      lastError = controller.signal.aborted ? new Error("judge_timeout") : error;
+    } finally {
+      clearTimeout(timeoutHandle);
     }
   }
   return { ok: false, error: String(lastError?.message ?? "judge_failed") };
@@ -367,7 +372,13 @@ export function validateStoryLevelResult(parsed, story, metrics) {
 
 /** 场景级结果校验：非空 scores 数组、每个分数整数 1–5、sceneIndex 存在、
  *  证据是相应场景原文子串。校验失败返回 false（callJudge 重试一次）。 */
-export function validateSceneLevelResult(parsed, story) {
+function sceneLevelEvidenceText(row, story, dimension) {
+  if (dimension.startsWith("C1")) return c1EvidenceBlock(row);
+  if (dimension.startsWith("C2")) return c2EvidenceBlock(row, story);
+  return sceneToText(row);
+}
+
+export function validateSceneLevelResult(parsed, story, dimension = "C3") {
   if (parsed === null || typeof parsed !== "object") return false;
   const scores = parsed.scores;
   if (!Array.isArray(scores) || scores.length === 0) return false;
@@ -376,7 +387,7 @@ export function validateSceneLevelResult(parsed, story) {
     if (!isIntScore(entry.score)) return false;
     const row = sceneRowAt(story, entry.sceneIndex);
     if (row === null) return false;
-    if (typeof entry.evidence !== "string" || !sceneToText(row).includes(entry.evidence)) return false;
+    if (typeof entry.evidence !== "string" || !sceneLevelEvidenceText(row, story, dimension).includes(entry.evidence)) return false;
   }
   return true;
 }
@@ -470,6 +481,10 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
   const story = readLines(fs, join("story.jsonl"));
   const manifest = JSON.parse(fs.readFileSync(join("manifest.json"), "utf8"));
   const metrics = readMetrics(fs, join);
+  const judgeTimeoutMs = (() => {
+    const value = Number(env.STORY_EVAL_JUDGE_TIMEOUT_MS ?? 120_000);
+    return Number.isInteger(value) && value >= 1_000 && value <= 120_000 ? value : 120_000;
+  })();
 
   // ① 早期预测（S4）：answer key 分组为固定三项后确定性打分；绝不传入预测 prompt。
   const rawAnswerKey = manifest.answerKey;
@@ -481,12 +496,14 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
     baseUrl, apiKey, model,
     messages: [{ role: "user", content: buildEarlyPredictionPrompt({ world: manifest.blueprint?.world, npcs: manifest.blueprint?.npcs }, story) }],
     fetchImpl,
+    timeoutMs: judgeTimeoutMs,
   });
   // ② 故事级（S1–S3、S5–S9；S4 由 scoreEarlyPrediction 确定性计算）。
   const storyResult = await callJudge({
     baseUrl, apiKey, model,
     messages: [{ role: "user", content: buildStoryLevelPrompt({ scaleText, version, manifest: manifest.blueprint, story }) }],
     fetchImpl,
+    timeoutMs: judgeTimeoutMs,
     validateParsed: (parsed) => validateStoryLevelResult(parsed, story, metrics),
   });
   // ③ 场景级（C1 全量、C2–C4 每幕抽 2）。
@@ -494,32 +511,42 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
   const sampledAll = sampleScenesPerAct(story, Number(manifest.strategySeed ?? "0"), 2);
   // C2 只抽有紧邻前序场景的场景（开局场景无前序，不参与 C2）。
   const sampledC2 = sampledAll.filter((row) => story.some((entry) => entry.sceneIndex === row.sceneIndex - 1));
-  const c1Result = scenesWithNpc.length > 0
-    ? await callJudge({
+  const c1Promise = scenesWithNpc.length > 0
+    ? callJudge({
         baseUrl, apiKey, model,
         messages: [{ role: "user", content: buildSceneLevelPrompt({ scaleText, version, sampled: scenesWithNpc, dimension: "C1（NPC 声线一致性）", story }) }],
         fetchImpl,
-        validateParsed: (parsed) => validateSceneLevelResult(parsed, story),
+        timeoutMs: judgeTimeoutMs,
+        validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C1（NPC 声线一致性）"),
       })
     : { ok: true, parsed: { scores: [], reasoning: "no npc lines" } };
-  const c2Result = await callJudge({
+  const c2Promise = callJudge({
     baseUrl, apiKey, model,
     messages: [{ role: "user", content: buildSceneLevelPrompt({ scaleText, version, sampled: sampledC2, dimension: "C2（场景衔接连续性）", story }) }],
     fetchImpl,
-    validateParsed: (parsed) => validateSceneLevelResult(parsed, story),
+    timeoutMs: judgeTimeoutMs,
+    validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C2（场景衔接连续性）"),
   });
-  const c3Result = await callJudge({
+  const c3Promise = callJudge({
     baseUrl, apiKey, model,
     messages: [{ role: "user", content: buildSceneLevelPrompt({ scaleText, version, sampled: sampledAll, dimension: "C3（选项抉择质量）" }) }],
     fetchImpl,
-    validateParsed: (parsed) => validateSceneLevelResult(parsed, story),
+    timeoutMs: judgeTimeoutMs,
+    validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C3（选项抉择质量）"),
   });
-  const c4Result = await callJudge({
+  const c4Promise = callJudge({
     baseUrl, apiKey, model,
     messages: [{ role: "user", content: buildSceneLevelPrompt({ scaleText, version, sampled: sampledAll, dimension: "C4（文本质量）" }) }],
     fetchImpl,
-    validateParsed: (parsed) => validateSceneLevelResult(parsed, story),
+    timeoutMs: judgeTimeoutMs,
+    validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C4（文本质量）"),
   });
+  const [c1Result, c2Result, c3Result, c4Result] = await Promise.all([
+    c1Promise,
+    c2Promise,
+    c3Promise,
+    c4Promise,
+  ]);
 
   const scores = {
     scaleVersion: version,

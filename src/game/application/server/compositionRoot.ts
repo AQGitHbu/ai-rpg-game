@@ -123,6 +123,12 @@ export function resolveStoryEvalAssembly(env: Record<string, string | undefined>
   return { captureSink: sink, approvalObserver: createStoryEvalApprovalObserver(sink) };
 }
 
+function resolveStoryEvalMaxRoleAttempts(env: Record<string, string | undefined>): number | undefined {
+  if (env.STORY_EVAL_CAPTURE !== "1") return undefined;
+  const value = Number(env.STORY_EVAL_MAX_ROLE_ATTEMPTS);
+  return Number.isInteger(value) && value >= 1 && value <= 3 ? value : undefined;
+}
+
 /**
  * 装配一套真实入口：env 记录仅经 sqliteClient 的工厂解析 GAME_DB_PATH，
  * 测试注入指向 tmp/ 的记录，生产默认 process.env（本层是唯一允许读取处）。
@@ -132,6 +138,7 @@ export function createServerGameEntryPoints(
   options: ServerGameEntryPointOptions = {}
 ): ServerGameEntryPoints {
   const storyEval = resolveStoryEvalAssembly(env);
+  const storyEvalMaxRoleAttempts = resolveStoryEvalMaxRoleAttempts(env);
   const logger = createServerConsoleLogger();
   const repository = createSqliteGameRepository({
     clientFactory: createServerSqliteClientFactory(env),
@@ -177,6 +184,7 @@ export function createServerGameEntryPoints(
     runtimeNarrativeSources,
     logger,
     approvalObserver: storyEval.approvalObserver,
+    maxRoleAttempts: storyEvalMaxRoleAttempts,
   }, logger);
   const townPlanCoordinator = new TownPlanTaskCoordinator({
     repository,

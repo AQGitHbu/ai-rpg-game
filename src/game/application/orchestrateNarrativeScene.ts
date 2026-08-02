@@ -29,6 +29,12 @@ import {
 
 const MAX_ROLE_ATTEMPTS = 3;
 
+function resolveRoleAttemptLimit(value: number | undefined): number {
+  return Number.isInteger(value) && value !== undefined && value >= 1 && value <= MAX_ROLE_ATTEMPTS
+    ? value
+    : MAX_ROLE_ATTEMPTS;
+}
+
 // ---------------------------------------------------------------------------
 // 输入 / 输出
 // ---------------------------------------------------------------------------
@@ -43,6 +49,8 @@ export type OrchestrateNarrativeSceneInput = {
   readonly logger?: GameLogger;
   /** Task 5：审批观察回调——审批结果与已批准导演计划只在本层可见，仅此处可发出。 */
   readonly approvalObserver?: (event: StoryEvalApprovalEvent) => void;
+  /** 评估专用重试上限；未传时保持正常运行时的三次尝试。 */
+  readonly maxRoleAttempts?: number;
 };
 
 export type OrchestrateSceneResult = {
@@ -70,6 +78,7 @@ export async function orchestrateNarrativeScene(
 ): Promise<OrchestrateSceneResult> {
   const { traceId, blueprint, state, directorSource, sceneScriptSource, npcLineSource } = input;
   const logger = input.logger ?? NOOP_GAME_LOGGER;
+  const maxRoleAttempts = resolveRoleAttemptLimit(input.maxRoleAttempts);
 
   // 构建 action candidates
   const availableActions = projectAvailableActions(blueprint, state);
@@ -87,7 +96,7 @@ export async function orchestrateNarrativeScene(
   let directorAttempt: DirectorAttempt = unavailableDirectorAttempt(traceId);
   let plan: ApprovedDirectorPlan | undefined;
   let continuityViolationLogged = false;
-  for (let attempt = 0; attempt < MAX_ROLE_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < maxRoleAttempts; attempt += 1) {
     try {
       directorAttempt = await directorSource.generate({
         traceId: `${traceId}-director${"-retry".repeat(attempt)}`,
@@ -120,7 +129,7 @@ export async function orchestrateNarrativeScene(
   const sceneScriptContext = toSceneScriptContext({ blueprint, state, plan });
   let scriptAttempt: SceneScriptAttempt | null = null;
   let script: ApprovedSceneScript | undefined;
-  for (let attempt = 0; attempt < MAX_ROLE_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < maxRoleAttempts; attempt += 1) {
     try {
       scriptAttempt = await sceneScriptSource.generate({
         traceId: `${traceId}-script${"-retry".repeat(attempt)}`,
@@ -150,7 +159,7 @@ export async function orchestrateNarrativeScene(
       mayLie: npcInst.mayLie,
     });
 
-    for (let attemptIndex = 0; attemptIndex < MAX_ROLE_ATTEMPTS; attemptIndex += 1) {
+    for (let attemptIndex = 0; attemptIndex < maxRoleAttempts; attemptIndex += 1) {
       try {
         const attempt = await npcLineSource.generate({
           traceId: `${traceId}-npcLine${"-retry".repeat(attemptIndex)}`,

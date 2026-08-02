@@ -68,6 +68,41 @@ export function isPathInside(parent, candidate) {
   return rel !== "" && !rel.startsWith("..") && !rel.includes(":");
 }
 
+/** 每次 record run 使用全新目录，避免 calls.jsonl 追加污染历史 run。 */
+export function buildStoryEvalArtifactDir({ artifactRoot, caseId, strategy, runIndex }) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return resolve(artifactRoot, `${caseId}-${strategy}-${runIndex}-${stamp}-${randomUUID().slice(0, 8)}`);
+}
+
+export const STORY_EVAL_PROFILE_DEFAULTS = Object.freeze({
+  smoke: Object.freeze({ maxScenes: 3, maxRoleAttempts: 1, aiTimeoutMs: 60_000, branchMode: "none", totalBudgetMs: 10 * 60_000 }),
+  regression: Object.freeze({ maxScenes: 12, maxRoleAttempts: 2, aiTimeoutMs: 90_000, branchMode: "sample", totalBudgetMs: 45 * 60_000 }),
+  baseline: Object.freeze({ maxScenes: 60, maxRoleAttempts: 3, aiTimeoutMs: 120_000, branchMode: "full", totalBudgetMs: 90 * 60_000 }),
+});
+
+const STORY_EVAL_BRANCH_MODES = new Set(["none", "sample", "full"]);
+
+export function resolveEvalProfile(env = {}) {
+  const profile = env.STORY_EVAL_PROFILE ?? "baseline";
+  return Object.hasOwn(STORY_EVAL_PROFILE_DEFAULTS, profile) ? profile : null;
+}
+
+export function resolveEvalProfileConfig(env = {}) {
+  const profile = resolveEvalProfile(env);
+  if (profile === null) return null;
+  const defaults = STORY_EVAL_PROFILE_DEFAULTS[profile];
+  const branchMode = env.STORY_EVAL_BRANCH_MODE ?? defaults.branchMode;
+  if (!STORY_EVAL_BRANCH_MODES.has(branchMode)) return null;
+  return {
+    profile,
+    maxScenes: resolveEvalInt(env, "STORY_EVAL_MAX_SCENES", defaults.maxScenes, 1, 60),
+    maxRoleAttempts: resolveEvalInt(env, "STORY_EVAL_MAX_ROLE_ATTEMPTS", defaults.maxRoleAttempts, 1, 3),
+    aiTimeoutMs: resolveEvalInt(env, "STORY_EVAL_AI_TIMEOUT_MS", defaults.aiTimeoutMs, 1_000, 120_000),
+    branchMode,
+    totalBudgetMs: resolveEvalInt(env, "STORY_EVAL_TOTAL_BUDGET_MS", defaults.totalBudgetMs, 60_000, 6 * 60 * 60_000),
+  };
+}
+
 function spawnJourney(env) {
   return spawnSync(
     process.execPath,
@@ -79,6 +114,11 @@ function spawnJourney(env) {
       windowsHide: true,
     },
   ).status ?? 1;
+}
+
+function resolveEvalInt(env, key, fallback, min, max) {
+  const value = Number(env[key] ?? fallback);
+  return Number.isInteger(value) && value >= min && value <= max ? value : fallback;
 }
 
 /** 清扫上次运行因 Windows 句柄延迟而遗留的临时库（与 phase4b smoke 同一约定）。 */
@@ -140,6 +180,11 @@ export function main({
     log(`${PREFIX} REAL_AI_OPT_IN_REQUIRED：真实 AI 评估需显式设置 RUN_REAL_AI_STORY_EVAL=1`);
     return 1;
   }
+  const profileConfig = resolveEvalProfileConfig(env);
+  if (profileConfig === null) {
+    log(`${PREFIX} INVALID_PROFILE：STORY_EVAL_PROFILE 必须是 smoke、regression 或 baseline，分支模式必须是 none、sample 或 full`);
+    return 1;
+  }
 
   // v2 确定性展开（spec §7 / Task 13 Step 3）：每 case 固定生成 explore+objective
   // 两个 StoryEvalRun；--case 只做试点/定向复测；--runs 仅在 --case 下把同一
@@ -151,7 +196,7 @@ export function main({
     return 1;
   }
   const selectedCases = selectedCaseId === undefined
-    ? cases
+    ? profileConfig.profile === "smoke" ? cases.slice(0, 1) : cases
     : cases.filter((item) => item.caseId === selectedCaseId);
   const runSpecs = selectedCases.flatMap((item) => [
     { caseId: item.caseId, strategy: "explore" },
@@ -184,7 +229,12 @@ export function main({
       if (isReplicate) replicateTotal += 1;
       const seed = baseSeed + runIndex;
       // 每个 run 独立 artifact/db：dir 用展开序号，replicate 同样占唯一序号。
-      const artifactDir = resolve(artifactRoot, `${runSpec.caseId}-${runSpec.strategy}-${runIndex}`);
+      const artifactDir = buildStoryEvalArtifactDir({
+        artifactRoot,
+        caseId: runSpec.caseId,
+        strategy: runSpec.strategy,
+        runIndex,
+      });
       const databasePath = resolve(dbRoot, `story-eval-run-${runIndex}-${randomUUID()}.sqlite`);
       if (!isPathInside(artifactRoot, artifactDir)) {
         log(`${PREFIX} ARTIFACT_PATH_REJECTED`);
@@ -198,9 +248,13 @@ export function main({
         STORY_EVAL_CASE_ID: runSpec.caseId,
         STORY_EVAL_STRATEGY: runSpec.strategy,
         STORY_EVAL_SEED: String(seed),
-        STORY_EVAL_MAX_SCENES: env.STORY_EVAL_MAX_SCENES ?? "60",
-        STORY_EVAL_SCENE_WAIT_MS: env.STORY_EVAL_SCENE_WAIT_MS ?? String(3 * 120_000 + 60_000),
-        STORY_EVAL_TOTAL_BUDGET_MS: env.STORY_EVAL_TOTAL_BUDGET_MS ?? String(90 * 60_000),
+        STORY_EVAL_PROFILE: profileConfig.profile,
+        STORY_EVAL_MAX_SCENES: String(profileConfig.maxScenes),
+        STORY_EVAL_MAX_ROLE_ATTEMPTS: String(profileConfig.maxRoleAttempts),
+        STORY_EVAL_AI_TIMEOUT_MS: String(profileConfig.aiTimeoutMs),
+        STORY_EVAL_BRANCH_MODE: profileConfig.branchMode,
+        STORY_EVAL_SCENE_WAIT_MS: env.STORY_EVAL_SCENE_WAIT_MS ?? String(3 * profileConfig.maxRoleAttempts * profileConfig.aiTimeoutMs + 60_000),
+        STORY_EVAL_TOTAL_BUDGET_MS: String(profileConfig.totalBudgetMs),
         GAME_DB_PATH: databasePath,
       };
       for (const key of ["AI_API_BASE_URL", "AI_MODEL", "AI_API_KEY"]) {

@@ -21,6 +21,8 @@ export type GeneratePendingNarrativeSceneDependencies = Readonly<{
   logger?: GameLogger;
   /** Task 5：审批观察回调——透传给编排层。 */
   approvalObserver?: (event: StoryEvalApprovalEvent) => void;
+  /** 评估专用重试上限；未传时保持正常运行时的三次尝试。 */
+  maxRoleAttempts?: number;
 }>;
 
 export type GeneratePendingNarrativeSceneResult =
@@ -72,6 +74,7 @@ export async function generatePendingNarrativeScene(
     ...deps.runtimeNarrativeSources,
     logger: deps.logger,
     approvalObserver: deps.approvalObserver,
+    maxRoleAttempts: deps.maxRoleAttempts,
   });
   const scene = generated.scene;
   // Phase 11：场景应用时提交一条 narrative_scene_presented 事件——只携带结构索引
