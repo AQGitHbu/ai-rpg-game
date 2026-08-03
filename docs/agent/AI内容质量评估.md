@@ -232,7 +232,9 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - 真实 `xianxia-a` objective baseline（修复前 pacing 约束的代码版本）为 `artifacts/story-eval/xianxia-a-objective-0-2026-08-03T07-35-03-775Z-2e3fc108`：22 幕、`status=converged`、`fallbackRate=0`、主线目标与规则推进 `22/22`，generated facts 叙事/调查覆盖均为 `1.00`，3 组分支检查点均有状态/事件/叙事差异；但节奏为 `setup=1/develop=20/climax=1`，没有 `turn`，所以会被门禁判为 `PACING_ARC_INCOMPLETE`。这证明“结局收敛”不能替代中段转折，且该缺口跨出武侠题材。
 - 同一题材的 regression 请求 `artifacts/story-eval/xianxia-a-objective-0-2026-08-03T07-20-14-891Z-17492a42` 受 provider 瞬时 `rate_limited/service_error/empty_response/invalid_json` 影响，18 幕中 3 幕 fallback、`status=max_scenes`；它没有暴露主线或事实契约错误，说明 regression 预算仍应与 provider 稳定性分开记录，不能把一次服务波动当成玩法结构结论。
 - `deriveContentProgression` 现读取结构化剧情记忆：长蓝图中段已产生至少两场叙事且近期尚无 `turn` 时，下一场只允许 `turn`；已有转折后恢复 `develop/turn`。三幕短蓝图与旧存档保持原有安全集合。Phase 10/11 黄金 fixture 的零网络回放仍通过，说明该约束不会破坏既有短旅程回放。
-- 该修复尚未重新采集 xianxia 的真实 post-fix artifact；在此之前只能说“实现约束已被离线测试锁住”，不能宣称跨题材 release 通过。下一步先用同一 captured blueprint 重跑 xianxia regression，确认 `turnStages`、结局和 fallback，再决定是否扩展七题材 baseline matrix。
+- 修复后的真实 xianxia regression 为 `artifacts/story-eval/xianxia-a-objective-0-2026-08-03T08-15-49-900Z-fae353c4`（git `2e329e0`）：18 幕、`status=max_scenes`、fallback `5/18=27.8%`，`trueDeadEnds=0`、`recoveryLoops=0`。节奏约束确实生效：`setup=1/develop=13/turn=3`、`turnStages=[2,3]`、`stageWindowViolations=0`；但 provider 的 `service_error/rate_limited/timeout/invalid_json` 使旅程没有进入 climax/ending，主线只完成到 stage 4，故仍不能宣称跨题材 release 通过。
+- 本次 post-fix 结果把问题边界收窄为两层：中段转折不再依赖模型自觉，剩余阻断项是 provider 可靠性与长旅程在失败预算下的收敛；下一步应先做同一蓝图的可靠性重跑/重试预算实验，再决定是否扩展七题材 baseline matrix。
+- 对该单 run 运行 `node scripts/storyEvalQualityGate.mjs` 的稳定失败码为 `OBJECTIVE_NOT_CONVERGED, MAINLINE_PROGRESS_INCOMPLETE, FALLBACK_RATE_HIGH, PACING_ARC_INCOMPLETE`；这是一条有效的负证据，不应与通过的武侠 paired pilot 混合平均。
 
 ### 下一轮优化顺序
 
