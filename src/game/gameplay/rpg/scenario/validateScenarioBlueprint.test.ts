@@ -206,7 +206,10 @@ describe("validateScenarioBlueprintCandidate：生成事实可达性", () => {
       profile: TEST_PROFILE,
       policy: createBudgetPolicy("medium"),
     });
-    expect(result.ok ? [] : codesOf(result.issues)).toContain("MAINLINE_GENERATED_FACT_MISSING");
+    expect(result.ok ? [] : result.issues).toContainEqual(expect.objectContaining({
+      code: "MAINLINE_GENERATED_FACT_MISSING",
+      params: { factId: "fact_b" },
+    }));
   });
 });
 

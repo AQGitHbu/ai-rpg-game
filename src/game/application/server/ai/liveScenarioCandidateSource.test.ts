@@ -144,6 +144,13 @@ describe("createLiveScenarioCandidateSource：成功路径", () => {
     expect(attempt).toMatchObject({ ok: true, origin: "live" });
   });
 
+  it("CRLF 单一 fence 也能解析，避免 provider 换行格式造成误 fallback", async () => {
+    const fenced = "```json\r\n" + JSON.stringify(MINIMAL_CANDIDATE) + "\r\n```";
+    const { source } = makeSource([okResult(fenced)]);
+    const attempt = await source.generate(REQUEST);
+    expect(attempt).toMatchObject({ ok: true, origin: "live" });
+  });
+
   it("透传 prompt builder 产出的 messages 给 transport", async () => {
     const built: AiMessage[] = [
       { role: "system", content: "rules" },

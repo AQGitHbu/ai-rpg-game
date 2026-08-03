@@ -246,9 +246,10 @@ describe("createFallbackBlueprint：内容预算与结构", () => {
           default: return objective.kind;
         }
       })).toEqual(["visit_location:loc_4", "defeat_enemy:enemy_boss"]);
-      expect(mainQuests.flatMap((quest) => quest.objectives).some((objective) =>
-        objective.kind === "discover_fact" && ["fact_gen_1", "fact_gen_2"].includes(objective.factId)
-      )).toBe(true);
+      const generatedFactObjectives = mainQuests.flatMap((quest) => quest.objectives)
+        .filter((objective): objective is Extract<typeof objective, { kind: "discover_fact" }> => objective.kind === "discover_fact")
+        .map((objective) => objective.factId);
+      expect(generatedFactObjectives).toEqual(expect.arrayContaining(["fact_gen_1", "fact_gen_2"]));
       const validation = validateScenarioBlueprintCandidate(generated, {
         profile: PROFILES.gameTypeProfiles[generated.gameType],
         policy,

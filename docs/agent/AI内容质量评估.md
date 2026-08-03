@@ -203,14 +203,28 @@ RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_MODEL、STORY_EVAL_JUDGE_TIMEOUT
 
 在修复前 artifact 上运行 pilot gate 的失败码为：`OBJECTIVE_NOT_CONVERGED`（含上述边界误报）、`FALLBACK_RATE_HIGH`（explore 6.25% 超过 5%）、`PACING_ARC_INCOMPLETE`（没有 ending resolution evidence）、`GENERATED_FACT_COVERAGE_LOW`（generated used/discovered 均 0.50，目标分别为 0.70/0.50，前者不足）。这轮没有 true dead end 或 recovery loop；因此下一步应先重跑修复后的 pair，再针对 fallback、结局收敛和 generated fact 叙事覆盖继续优化，暂不进入七题材 release matrix。
 
+### 战斗收尾与事实主线修复后的验证（2026-08-03）
+
+- 用同一 captured blueprint 重跑 objective，修复后的 artifact 为 `artifacts/story-eval/wuxia-a-objective-0-2026-08-03T04-15-46-704Z-56ae92fd`：`status=converged`、16 幕、`fallbackRate=0`，ending 行为 `ending_1/沉冤得雪/success`；`hasResolutionEvidence=true`，无 true dead end/recovery loop。它证明战斗启动发生在最后一个叙事幕时，评测器仍能在同一幕记录 battle 与 ending，而不是误报 `max_scenes`。
+- 该 pair（与同 seed 的 explore artifact 合并）pilot gate 目前只剩 `FALLBACK_RATE_HIGH` 与 `GENERATED_FACT_COVERAGE_LOW`：explore 的 fallback 为 `1/16`，生成事实使用/发现覆盖为 `1/2`、`1/2`。objective 的主线推进和结局收敛已不再是阻断项。
+- 事实契约已进一步收紧：medium/long 蓝图必须为每条 `source=generated` 事实配置主线 `discover_fact` objective；fallback-7 的第 2 幕现在依次调查 `fact_gen_1` 与 `fact_gen_2`，regression profile 上限从 16 调整为 18 以容纳额外调查与终局收尾。相关场景校验、fallback、prompt、runner node tests 与 typecheck 已通过。
+
 ### Thinking 结论
 
 thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `AI_THINKING_ROLES=director`；但它不能补上缺失的目标路线、物品卡、规则事件或角色权限边界。已有多 seed A/B 只显示阶段推进/张力弧的信号，未稳定改善事实召回、物品功能、分支证据或 ending convergence。因此 production 默认仍关闭 thinking；下一次 A/B 必须固定同一 blueprint/world seed，并比较 fallback、目标命中、`actionEvents`、事实召回、分支和结局，而不是只比较 prose 或 tension。
 
+### 生成级 paired regression 复测（2026-08-03，修复后）
+
+本轮先用真实 provider 请求记录 objective 旅程，再复用该旅程的蓝图快照记录 explore 旅程，保证两条旅程只比较选择策略而不是比较两个随机蓝图。首次 explore 开局暴露 provider 返回的 CRLF fenced JSON 被严格解析器拒绝的问题；`extractFencedJson` 已改为接受 CRLF 与 fence 行水平空白，并增加了回归测试。
+
+- objective：`artifacts/story-eval/wuxia-a-objective-1-2026-08-03T04-57-41-101Z-6ea2ec62`，17 幕、`status=converged`、`ending_1/沉冤得雪/success`、`fallbackRate=0`。主线建议/选择/推进为 `17/17/17`，目标动作呈现/选择/事件命中为 `10/10/10`；两条 generated facts 均实际叙事使用并由规则调查发现（使用/调查覆盖 `1.00/1.00`）。节奏为 `setup=1/develop=13/turn=2/climax=1`，无阶段窗口违规；分支检查点状态、事件、叙事均有差异且未重新收敛。
+- explore：`artifacts/story-eval/wuxia-a-explore-0-2026-08-03T05-13-52-605Z-a925d36c`，10 幕、`status=generation_failed`、`fallbackRate=0`，随机探索在达到结局前停止；它没有真死局或恢复循环，且 generated facts 使用/调查覆盖仍为 `1.00/1.00`。这说明当前随机探索的“可玩性”证据还不足以宣称自由探索收敛，但不是 fallback 或事实锚点失败。
+- 对上述同一 `pairId=wuxia-a-20260803-1` 运行 `node scripts/storyEvalQualityGate.mjs ...`，结果为 `GENERATION_GRADE_OK`。本轮可归因收益是：真实蓝图满足每条 generated fact 的主线调查锚点，objective 可靠收敛，分支后果可观测，且 provider 的 CRLF JSON 不再触发开局 fallback。
+
 ### 下一轮优化顺序
 
 1. 先按“叙事引用”和“规则调查”两条事实链复测：`usedFactIds/npcUsedFactIds` 统计编剧/NPC 是否实际引用，`actionEvents.fact_discovered` 统计玩家是否执行调查；不再把二者直接相除。
-2. 用 `regression` 16 幕先确认固定 long 蓝图的 stage 8、boss、ending convergence；再用 `baseline` 60 幕或多蓝图长测确认跨结构稳定性。
+2. 用 `regression` 18 幕先确认固定 long 蓝图的 stage 8、boss、ending convergence；再用 `baseline` 60 幕或多蓝图长测确认跨结构稳定性。
 3. 保持 `actionEvents` 与目标快照配对，继续监控 writer schema retry、pacing illegal order 和 NPC contribution。
 4. 完成上述结构修复的多 seed A/B 后，再决定是否把 director thinking 提升为 dev/staging 默认；不提前改 production 默认。
 

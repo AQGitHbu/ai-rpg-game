@@ -867,7 +867,11 @@ function buildQuests(
       const objectives = (isLegacyMid
         ? [{ ...firstObjective }, { kind: "obtain_item", itemId: ITEM_KEY }]
         : act === 2 && mainActs >= 5
-          ? [{ ...firstObjective }, { kind: "discover_fact", factId: FACT_GEN_1 }]
+          ? [
+              { ...firstObjective },
+              { kind: "discover_fact", factId: FACT_GEN_1 },
+              { kind: "discover_fact", factId: FACT_GEN_2 },
+            ]
           : MID_OBJECTIVES[midIndex]) as QuestDefinitionCandidate["objectives"];
       quests.push({
         kind: "main", stage: act, id,

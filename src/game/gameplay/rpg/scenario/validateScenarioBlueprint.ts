@@ -131,8 +131,8 @@ export function validateScenarioBlueprintCandidate(
 /**
  * Generated facts are only useful when the rules or a known NPC can surface
  * them. Keep player-input facts permissive, but reject generated orphan facts
- * and require medium/long mainlines to carry at least one generated fact
- * discovery objective.
+ * and require medium/long mainlines to carry every generated fact as a
+ * discover_fact objective.
  */
 function validateGeneratedFactAnchors(
   issues: ScenarioBlueprintIssue[],
@@ -164,14 +164,22 @@ function validateGeneratedFactAnchors(
     }
   }
 
-  const hasMainlineGeneratedFact = candidate.quests.some((quest) =>
-    quest.kind === "main" && (quest.objectives ?? []).some((objective) =>
-      objective.kind === "discover_fact" &&
-      candidate.world.facts.some((fact) => fact.id === objective.factId && fact.source === "generated")
-    )
+  const generatedFactIds = candidate.world.facts
+    .filter((fact) => fact.source === "generated")
+    .map((fact) => fact.id);
+  const mainlineGeneratedFactIds = new Set(
+    candidate.quests
+      .filter((quest) => quest.kind === "main")
+      .flatMap((quest) => quest.objectives ?? [])
+      .filter((objective): objective is Extract<typeof objective, { kind: "discover_fact" }> => objective.kind === "discover_fact")
+      .map((objective) => objective.factId)
   );
-  if (policy.mainActs >= 5 && !hasMainlineGeneratedFact) {
-    issues.push({ path: "quests", code: "MAINLINE_GENERATED_FACT_MISSING", params: {} });
+  if (policy.mainActs >= 5) {
+    for (const factId of generatedFactIds) {
+      if (!mainlineGeneratedFactIds.has(factId)) {
+        issues.push({ path: "quests", code: "MAINLINE_GENERATED_FACT_MISSING", params: { factId } });
+      }
+    }
   }
 }
 

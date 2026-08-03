@@ -812,6 +812,9 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         storyRows[storyRowIndex] = { ...storyRow, actionEvents };
       }
       view = result.view;
+      // narrative choice 可能刚刚启动战斗；战斗本身不占叙事幕预算，
+      // 让下一轮在同一 sceneIndex 消化 battle/ending，避免最后一幕误报 max_scenes。
+      if (view.battle !== null) sceneIndex -= 1;
     }
 
     // 6. 收尾产物：manifest.json 与 story.jsonl。

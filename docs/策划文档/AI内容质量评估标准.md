@@ -48,7 +48,7 @@ S4 评分规则：早期预测与故事级评审使用**独立的 callJudge 调�
 - 整局 fallback 率；各角色重试率与 invalid_json 率；审批驳回分类分布。
 - tensionLevel 曲线（完整序列 + 标准差作为平坦度）；pacing 分布与顺序合法性，并按 `mainStage` 报告 `stageWindowViolations`、`turnStages`、`hasSetup`、`hasClimax` 与结局标题/描述/结果组成的 `hasResolutionEvidence`。全局 `illegalOrderCount` 继续保留作兼容指标，但跨主线阶段的合法重置不计为窗口违规。
 - 每幕事实覆盖分两条链记录：**计划叙事引用** = `directorPlan.allowedRevealFactIds` 集合；**实际叙事引用** = 新产物 `story.jsonl` 的 `usedFactIds + npcUsedFactIds`；**规则调查** = `fact_discovered.factId` 事件集合，另列为 `discoveredFactIds`。报告并列 `planned / actual / new / repeated / overlap / missed / discovered`（`factsPerAct`：`plannedFactIds`/`actualFactIds`/`newFactIds`/`repeatedFactIds`/`overlapFactIds`/`missedFactIds`/`discoveredFactIds`），并在 `facts` 报告蓝图事实宇宙的实际引用/调查覆盖率。`allowedRevealFactIds` 只允许已发现事实，不能与 `fact_discovered` 直接做计划→发现的命中率；旧产物缺少使用字段时，分析器为兼容回退到规则发现事件并注明版本差异。相邻场景 narration 字符 3-gram 重复率；narration/台词长度分布。
-- 生成事实另列 `generatedUniverseFactIds`、`generatedUsedFactIds`、`generatedDiscoveredFactIds` 与两种 coverage rate；`player_input` 事实不得抬高生成事实覆盖。蓝图校验要求每条 `source=generated` 事实至少有 opening 调查、NPC 已知、`discover_fact` objective 或结局事实要求之一作为规则锚点，并要求 medium/long 主线至少包含一个指向生成事实的 `discover_fact` objective。
+- 生成事实另列 `generatedUniverseFactIds`、`generatedUsedFactIds`、`generatedDiscoveredFactIds` 与两种 coverage rate；`player_input` 事实不得抬高生成事实覆盖。蓝图校验要求每条 `source=generated` 事实至少有 opening 调查、NPC 已知、`discover_fact` objective 或结局事实要求之一作为规则锚点，并要求 medium/long 主线为每条生成事实配置一个 `discover_fact` objective。
 - **实体漏斗**（按 NPC、地点、物品分列；`entities.npc/location/item`）：
   - `introduced`：`directorPlan.introducedEntities` 中该种类实体 ID 的去重集合大小；
   - `interacted`（interacted/used）：交互事件携带的该种类 `entityId` 去重集合大小——NPC=`npc_met`、地点=`location_observed`/`location_visited`、物品=`item_obtained`；

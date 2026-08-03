@@ -25,7 +25,7 @@ The pilot gate uses three paired `wuxia-a` regression replicates; the release ga
 - Objective convergence: 100% within the configured scene limit; mainline `suggestedPresentationRate=1`, `suggestedChosenRate=1`, `progressedSceneRate=1`.
 - Explore playability: `trueDeadEnds=0`, `recoveryLoops=0`; baseline explore convergence at least 80%.
 - Reliability: final role failures 0; aggregate fallback rate at most 5%; invalid JSON may retry but must recover within profile attempts.
-- Facts: every generated fact has a rule discovery anchor; each long blueprint has at least one mainline `discover_fact`; paired-run generated-fact narration coverage at least 70% and discovery coverage at least 50%.
+- Facts: every generated fact has a rule discovery anchor and a medium/long mainline `discover_fact` objective; paired-run generated-fact narration coverage at least 70% and discovery coverage at least 50%.
 - Branches: long baseline has paired evidence at stages 2/4/6; at least two checkpoints retain a state or event difference through the two-scene branch horizon; no more than one checkpoint fully reconverges.
 - Pacing/ending: no stage-window violation, at least one setup, one middle-act turn, one climax, and one visible ending title/description/outcome; judge S1/S3/S7/S8/S9 and C1–C4 must each be at least 3 when judge output is available.
 - Coverage corpus: all seven supported `gameType` values appear in the case set before a release claim.
@@ -346,7 +346,7 @@ Commit: `git add src/game/application/testing scripts/storyEvalAnalyze.mjs scrip
 **Interfaces:**
 - Adds issue codes `UNANCHORED_GENERATED_FACT` and `MAINLINE_GENERATED_FACT_MISSING`.
 - A generated fact is anchored when referenced by `openingScene.investigableFactIds`, an NPC `knownFactIds`, a `discover_fact` quest objective, or a `fact_discovered` ending requirement.
-- Medium/long blueprints must include at least one main quest `discover_fact` objective targeting a generated fact.
+- Medium/long blueprints must include one main quest `discover_fact` objective for every generated fact.
 - Analyzer adds `generatedUniverseFactIds`, `generatedUsedFactIds`, `generatedDiscoveredFactIds`, `generatedUsedCoverageRate`, and `generatedDiscoveredCoverageRate` under `facts`.
 
 - [x] **Step 1: Add failing validator tests**
@@ -430,7 +430,7 @@ Add these exact prompt requirements:
 
 ```ts
 "每条 source=generated 的事实必须至少出现在 openingScene.investigableFactIds、某个 NPC.knownFactIds、discover_fact objective 或 fact_discovered ending requirement 之一；禁止生成永远无法发现或无人知道的孤儿事实。",
-"medium/long 主线必须至少有一幕使用 discover_fact，且目标是 source=generated 的事实；该事实应在后续 NPC、战斗动机或结局描述中被回收。",
+"medium/long 主线必须让每一条 source=generated 的事实都由主线 discover_fact objective 直接发现；每条事实还应在后续 NPC、战斗动机或结局描述中被回收。",
 ```
 
 Assert both sentences appear in `scenarioPrompt.test.ts`. Confirm `createFallbackBlueprint` already meets the rule; if a profile variant does not, place `fact_gen_1` in the first available middle main stage and preserve unique `kind+target` objectives.

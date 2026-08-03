@@ -217,7 +217,10 @@ function parseCandidate(content: string): ParseResult {
 /** 提取单一 ```json fence 的内容；非 fence 返回 undefined。 */
 function extractFencedJson(text: string): string | undefined {
   if (!text.startsWith("```")) return undefined;
-  const match = /^```(?:json)?\s*\n([\s\S]*?)\n?```$/.exec(text);
+  // Provider responses may normalize the fence with CRLF even when the JSON
+  // body itself is valid. Keep the single-fence boundary strict, but accept
+  // either newline convention and harmless trailing horizontal whitespace.
+  const match = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```$/.exec(text);
   return match ? match[1] : undefined;
 }
 

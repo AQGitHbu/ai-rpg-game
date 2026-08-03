@@ -63,7 +63,7 @@ export function buildScenarioPromptMessages(
     "objective.kind 只能是 visit_location、talk_to_npc、obtain_item、discover_fact、defeat_enemy；获取物品必须使用 obtain_item 搭配 itemId，禁止写 collect_item 或其他同义词。",
     "主线每一幕必须推动新的可验证目标；不得重复前面主线幕的同一 objective kind+target；不得让新解锁任务的目标在解锁前已满足。",
     "每条 source=generated 的事实必须至少出现在 openingScene.investigableFactIds、某个 NPC.knownFactIds、discover_fact objective 或 fact_discovered ending requirement 之一；禁止生成永远无法发现或无人知道的孤儿事实。",
-    "medium/long 主线必须至少有一幕使用 discover_fact，且目标是 source=generated 的事实；该事实应在后续 NPC、战斗动机或结局描述中被回收。",
+    "medium/long 主线必须让每一条 source=generated 的事实都由主线 discover_fact objective 直接发现；每条事实还应在后续 NPC、战斗动机或结局描述中被回收。",
     "# 物品展示元数据（若提供必须逐字合法）",
     "category 只能是 equipment、consumable、material、quest；rarity 只能是 common、fine、rare、epic；level 必须是 1~99 的整数；statLines 最多 6 条且每条都要有非空 label/value。禁止使用 legendary 等其他稀有度。",
     "# 结局可达性要求",

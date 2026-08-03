@@ -109,9 +109,9 @@ export function buildPairedRunSpecs(cases, strategies, runs, baseSeed) {
 export const STORY_EVAL_PROFILE_DEFAULTS = Object.freeze({
   smoke: Object.freeze({ maxScenes: 3, maxRoleAttempts: 1, aiTimeoutMs: 60_000, branchMode: "none", totalBudgetMs: 10 * 60_000 }),
   // fallback-7 的 long 主线需要 13 个 narrative scenes 才能启动终局战斗；
-  // 16 给 battle/ending 收尾留出安全余量，避免 regression 把预算上限误报成
-  // 结局不收敛。baseline 仍保留 60 幕作为跨蓝图安全阀。
-  regression: Object.freeze({ maxScenes: 16, maxRoleAttempts: 2, aiTimeoutMs: 90_000, branchMode: "sample", totalBudgetMs: 45 * 60_000 }),
+  // 生成事实全覆盖会再增加一条调查动作，18 给 battle/ending 收尾留出余量，
+  // 避免 regression 把正常终局误报成不收敛。baseline 仍保留 60 幕作为跨蓝图安全阀。
+  regression: Object.freeze({ maxScenes: 18, maxRoleAttempts: 2, aiTimeoutMs: 90_000, branchMode: "sample", totalBudgetMs: 45 * 60_000 }),
   baseline: Object.freeze({ maxScenes: 60, maxRoleAttempts: 3, aiTimeoutMs: 120_000, branchMode: "full", totalBudgetMs: 90 * 60_000 }),
 });
 
