@@ -86,8 +86,6 @@ function buildTestGameState(): GameState {
 function createMockSources() {
   const directorSource: DirectorSource = {
     async generate(request) {
-      const context = request.context as { actionCandidates?: { actionKey: string }[] };
-      const candidates = context.actionCandidates ?? [];
       return {
         ok: true,
         provenance: "generated",
@@ -183,7 +181,7 @@ describe("orchestrateNarrativeScene approvalObserver", () => {
 
   it("审批驳回时发出带 category 的 role_approval 事件", async () => {
     const events: StoryEvalApprovalEvent[] = [];
-    const { directorSource, sceneScriptSource, npcLineSource } = createMockSources();
+    const { sceneScriptSource, npcLineSource } = createMockSources();
     const rejectingDirector: DirectorSource = {
       async generate(request) {
         return {
@@ -223,5 +221,33 @@ describe("orchestrateNarrativeScene approvalObserver", () => {
     }
     // 驳回后没有 plan_approved
     expect(events.some((event) => event.kind === "plan_approved")).toBe(false);
+  });
+
+  it("编剧/演员失败时 fallback 仍优先保留已批准导演计划的主线行动", async () => {
+    const sources = createMockSources();
+    const result = await orchestrateNarrativeScene({
+      traceId: "t-fallback-plan-order",
+      blueprint: buildTestBlueprint(),
+      state: buildTestGameState(),
+      directorSource: sources.directorSource,
+      sceneScriptSource: {
+        async generate() {
+          return {
+            ok: false as const,
+            provenance: "unavailable" as const,
+            category: "service_error" as const,
+            diagnostics: { traceId: "script", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "failed" as const },
+          };
+        },
+      },
+      npcLineSource: sources.npcLineSource,
+      maxRoleAttempts: 1,
+    });
+
+    expect(result.provenance).toBe("fallback");
+    expect(result.scene.choices.map((choice) => choice.actionKey)).toEqual([
+      "talk:npc_1",
+      "observe:loc_a",
+    ]);
   });
 });

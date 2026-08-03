@@ -207,7 +207,7 @@ export async function callJudge({ baseUrl, apiKey, model, messages, fetchImpl = 
         if (validateParsed !== undefined && !validateParsed(parsed)) {
           throw new Error("judge_schema_invalid");
         }
-        return { ok: true, parsed };
+        return { ok: true, parsed, attempts: attempt + 1 };
       }
       throw new Error("judge_invalid_json");
     } catch (error) {
@@ -216,7 +216,7 @@ export async function callJudge({ baseUrl, apiKey, model, messages, fetchImpl = 
       clearTimeout(timeoutHandle);
     }
   }
-  return { ok: false, error: String(lastError?.message ?? "judge_failed") };
+  return { ok: false, error: String(lastError?.message ?? "judge_failed"), attempts: retries + 1 };
 }
 
 function readLines(fs, path) {
@@ -450,7 +450,9 @@ function buildReport({ scores, manifest, lowScenes, sampled }) {
   }
   lines.push("", "## 人工抽查清单", "", "以下场景需人工复核评审模型判断（检查要点：声线、连续性、选项差异、证据引文）：", "");
   for (const index of lowScenes) lines.push(`- 场景 ${index}`);
-  lines.push("", "## 评审失败维度", "", scores.failures.length === 0 ? "无" : scores.failures.map((name) => `- ${name}`).join("\n"));
+  lines.push("", "## 评审失败维度", "", scores.failures.length === 0
+    ? "无"
+    : scores.failures.map((name) => `- ${name}: ${scores.errors?.[name] ?? "unknown"}`).join("\n"));
   return lines.join("\n") + "\n";
 }
 
@@ -495,20 +497,23 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
     rawAnswerKey === null || typeof rawAnswerKey !== "object"
       ? null
       : answerKeyForPredictionItems(rawAnswerKey);
-  const predictionResult = await callJudge({
-    baseUrl, apiKey, model,
-    messages: [{ role: "user", content: buildEarlyPredictionPrompt({ world: manifest.blueprint?.world, npcs: manifest.blueprint?.npcs }, story) }],
-    fetchImpl,
-    timeoutMs: judgeTimeoutMs,
-  });
-  // ② 故事级（S1–S3、S5–S9；S4 由 scoreEarlyPrediction 确定性计算）。
-  const storyResult = await callJudge({
-    baseUrl, apiKey, model,
-    messages: [{ role: "user", content: buildStoryLevelPrompt({ scaleText, version, manifest: manifest.blueprint, story }) }],
-    fetchImpl,
-    timeoutMs: judgeTimeoutMs,
-    validateParsed: (parsed) => validateStoryLevelResult(parsed, story, metrics),
-  });
+  // ①/② 互不依赖：并发发送可把 provider 延迟从两个串行窗口压缩为一个，
+  // 同时保留 S4 的输入隔离与故事级完整设定边界。
+  const [predictionResult, storyResult] = await Promise.all([
+    callJudge({
+      baseUrl, apiKey, model,
+      messages: [{ role: "user", content: buildEarlyPredictionPrompt({ world: manifest.blueprint?.world, npcs: manifest.blueprint?.npcs }, story) }],
+      fetchImpl,
+      timeoutMs: judgeTimeoutMs,
+    }),
+    callJudge({
+      baseUrl, apiKey, model,
+      messages: [{ role: "user", content: buildStoryLevelPrompt({ scaleText, version, manifest: manifest.blueprint, story }) }],
+      fetchImpl,
+      timeoutMs: judgeTimeoutMs,
+      validateParsed: (parsed) => validateStoryLevelResult(parsed, story, metrics),
+    }),
+  ]);
   // ③ 场景级（C1 全量、C2–C4 每幕抽 2）。
   const scenesWithNpc = story.filter((row) => row.kind === "scene" && row.npcLine?.text !== undefined);
   const sampledAll = sampleScenesPerAct(story, Number(manifest.strategySeed ?? "0"), 2);
@@ -565,6 +570,14 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
       C2: c2Result.ok ? c2Result.parsed : null,
       C3: c3Result.ok ? c3Result.parsed : null,
       C4: c4Result.ok ? c4Result.parsed : null,
+    },
+    errors: {
+      early_prediction: predictionResult.ok ? null : predictionResult.error,
+      story_level: storyResult.ok ? null : storyResult.error,
+      C1: c1Result.ok ? null : c1Result.error,
+      C2: c2Result.ok ? null : c2Result.error,
+      C3: c3Result.ok ? null : c3Result.error,
+      C4: c4Result.ok ? null : c4Result.error,
     },
     failures: [
       ...(predictionResult.ok ? [] : ["early_prediction"]),

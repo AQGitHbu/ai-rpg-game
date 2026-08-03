@@ -105,9 +105,55 @@ describe("isExploratory", () => {
     expect(isExploratory("talk:npc_1", record)).toBe(false);
     expect(isExploratory("investigate:fact_1", record)).toBe(false);
   });
+
+  it("不会把尚未解锁的主线目标当作探索动作提前完成", () => {
+    const record = makeRecord({
+      quests: [{ questId: "main-1", status: "active" } as never, { questId: "main-2", status: "locked" } as never],
+    });
+    const blueprint = {
+      ...record.blueprint,
+      quests: [{
+        id: "main-1", kind: "main", objectives: [{ kind: "visit_location", locationId: "loc_a" }],
+      }, {
+        id: "main-2", kind: "main", objectives: [{ kind: "obtain_item", itemId: "item_key" }],
+      }],
+    } as never;
+    const futureObjectiveRecord = { ...record, blueprint } as never;
+    expect(isExploratory("take_item:item_key", futureObjectiveRecord)).toBe(false);
+  });
 });
 
 describe("pickNarrativeChoice", () => {
+  it("两个选项都非探索时仍避开尚未解锁的主线目标", () => {
+    const base = makeRecord({
+      quests: [{ questId: "main-1", status: "active" } as never, { questId: "main-2", status: "locked" } as never],
+      narrative: {
+        currentScene: {
+          sceneId: "s-safe",
+          turn: 1,
+          narration: "n",
+          usedFactIds: [],
+          npcLine: null,
+          choices: [
+            { choiceToken: "c1", label: "提前拿取", actionKey: "take_item:item_key" },
+            { choiceToken: "c2", label: "观察", actionKey: "observe:loc_a" },
+          ],
+          source: "generated",
+        },
+        generation: { status: "idle" },
+        mode: "ai",
+      },
+    });
+    const record = {
+      ...base,
+      blueprint: {
+        ...base.blueprint,
+        quests: [{ id: "main-1", kind: "main", objectives: [] }, { id: "main-2", kind: "main", objectives: [{ kind: "obtain_item", itemId: "item_key" }] }],
+      },
+    } as never;
+    expect(pickNarrativeChoice(record, () => 0)).toEqual({ index: 1, reason: "random" });
+  });
+
   it("恰好一个探索选项时必选它", () => {
     const record = makeRecord();
     const pick = pickNarrativeChoice(record, () => 0.99);

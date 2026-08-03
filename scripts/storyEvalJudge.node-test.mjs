@@ -334,6 +334,7 @@ test("callJudge：解析成功但校验失败 → judge_schema_invalid 且同一
   const result = await callJudge({ baseUrl: "http://x/v1", apiKey: "k", model: "m", messages: [], fetchImpl, validateParsed: () => false });
   assert.equal(result.ok, false);
   assert.equal(result.error, "judge_schema_invalid");
+  assert.equal(result.attempts, 2);
   assert.equal(fetchCount.length, 2); // 首次 + 重试一次
 });
 
@@ -382,4 +383,5 @@ test("callJudge：provider 不响应时按 timeoutMs 结束并返回稳定错误
   });
   assert.equal(result.ok, false);
   assert.equal(result.error, "judge_timeout");
+  assert.equal(result.attempts, 1);
 });

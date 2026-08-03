@@ -142,7 +142,20 @@ export async function orchestrateNarrativeScene(
       logger.warn("runtime_narrative_approval", { traceId, role: "director", category: approval.category });
     }
   }
-  if (plan === undefined) return buildFallbackResult(traceId, directorAttempt, null, false, candidates, state, fallbackPacing);
+  if (plan === undefined) {
+    const objective = directorContext.activeMainObjective;
+    return buildFallbackResult(
+      traceId,
+      directorAttempt,
+      null,
+      false,
+      candidates,
+      state,
+      fallbackPacing,
+      undefined,
+      [objective?.suggestedActionKey, objective?.targetActionKey].filter((key): key is string => typeof key === "string"),
+    );
+  }
 
   // Step 3：投影编剧上下文 → 调用编剧 source
   const sceneScriptContext = toSceneScriptContext({ blueprint, state, plan });
@@ -181,7 +194,7 @@ export async function orchestrateNarrativeScene(
     if (approval.ok) { script = approval.value; break; }
     logger.warn("runtime_narrative_approval", { traceId, role: "writer", category: approval.category });
   }
-  if (script === undefined || scriptAttempt === null) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false, candidates, state, fallbackPacing);
+  if (script === undefined || scriptAttempt === null) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false, candidates, state, fallbackPacing, plan);
 
   // Step 5：演员只能收到该 NPC 获批准的事实卡；其输出也必须复核。
   let npcLineAttempted = false;
@@ -224,7 +237,7 @@ export async function orchestrateNarrativeScene(
       } catch { /* bounded same-role retry, then full fallback */ }
     }
   }
-  if (!npcApproved) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, npcLineAttempted, candidates, state, fallbackPacing);
+  if (!npcApproved) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, npcLineAttempted, candidates, state, fallbackPacing, plan);
 
   // Step 6：组装 NarrativeSceneState
   const expansionDecision = approveBlueprintExpansion({ blueprint, state, plan });
@@ -275,8 +288,26 @@ function buildFallbackResult(
   npcLineAttempted: boolean,
   candidates: readonly NarrativeActionCandidate[],
   state: GameState,
-  pacing: StoryPacing
+  pacing: StoryPacing,
+  approvedPlan: ApprovedDirectorPlan | undefined,
+  preferredActionKeys: readonly string[] = [],
 ): OrchestrateSceneResult {
+  // 当导演计划已通过、但编剧或演员失败时，仍保留计划中的合法行动顺序。
+  // 旧逻辑直接取 candidates 前两项，可能把主线目标挤出 fallback 选项，
+  // 造成一次 provider 故障就变成“看/闲聊”而不是继续推进主线。
+  const candidateByKey = new Map(candidates.map((candidate) => [candidate.actionKey, candidate]));
+  const orderedCandidates: NarrativeActionCandidate[] = [];
+  for (const actionKey of approvedPlan?.suggestedActionKeys ?? preferredActionKeys) {
+    const candidate = candidateByKey.get(actionKey);
+    if (candidate !== undefined && !orderedCandidates.some((entry) => entry.actionKey === candidate.actionKey)) {
+      orderedCandidates.push(candidate);
+    }
+  }
+  for (const candidate of candidates) {
+    if (!orderedCandidates.some((entry) => entry.actionKey === candidate.actionKey)) orderedCandidates.push(candidate);
+    if (orderedCandidates.length >= 2) break;
+  }
+  const fallbackCandidates = orderedCandidates.length >= 2 ? orderedCandidates : candidates;
   const fallbackScene: NarrativeSceneState = {
     sceneId: `${traceId}-fallback-${Date.now()}`,
     turn: calculateTurn(state),
@@ -286,13 +317,13 @@ function buildFallbackResult(
     choices: [
       {
         choiceToken: `${traceId}-fallback:a`,
-        label: candidates[0]?.publicLabel ?? FALLBACK_SCENE_SCRIPT.choices[0].label,
-        actionKey: candidates[0]?.actionKey ?? FALLBACK_SCENE_SCRIPT.choices[0].actionKey,
+        label: fallbackCandidates[0]?.publicLabel ?? FALLBACK_SCENE_SCRIPT.choices[0].label,
+        actionKey: fallbackCandidates[0]?.actionKey ?? FALLBACK_SCENE_SCRIPT.choices[0].actionKey,
       },
       {
         choiceToken: `${traceId}-fallback:b`,
-        label: candidates[1]?.publicLabel ?? FALLBACK_SCENE_SCRIPT.choices[1].label,
-        actionKey: candidates[1]?.actionKey ?? FALLBACK_SCENE_SCRIPT.choices[1].actionKey,
+        label: fallbackCandidates[1]?.publicLabel ?? FALLBACK_SCENE_SCRIPT.choices[1].label,
+        actionKey: fallbackCandidates[1]?.actionKey ?? FALLBACK_SCENE_SCRIPT.choices[1].actionKey,
       },
     ],
     source: "fallback",

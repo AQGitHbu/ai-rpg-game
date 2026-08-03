@@ -288,3 +288,19 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 同一 captured blueprint、strategy seed `20260801`、`objective`、`AI_THINKING_ROLES=`、`branchMode=none` 的 no-thinking 回归使用 `maxScenes=16` 后，产物为 `artifacts/story-eval/wuxia-a-objective-0-2026-08-02T15-51-24-935Z-c88065e9`：13 个场景后 `status=converged`，`fallbackRate=0`，导演/编剧/NPC 均无 retry、invalid JSON 或 failure；物品 `item_obtained=1/1`，事实叙事引用在 8 个 act 均覆盖 `fact_identity/fact_premise`，最终战斗启动并进入结局。
 
 分析器同时修正了终局目标口径：`defeat_enemy` 的直接 narrative action 是 `start_battle`，所以 `battle_started` 计入目标动作命中；战斗胜负仍由 `enemy_defeated` 与 ending 证据证明。修正后主线直接目标呈现/选择 `8/13`、目标事件命中 `8/13`、规则推进幕 `13/13`；这不等价于 prose 质量满分，`pacing.illegalOrderCount=2` 仍是后续叙事结构优化项。回归上限已从 12 调整为 16，避免将原本需要第 13 幕的正常终局误报为不收敛。
+
+### 生成级 blocker 修复与仙侠 pair 复测（2026-08-04）
+
+- runtime fallback 现在优先使用已批准导演计划的两个合法 `suggestedActionKeys`；若导演本身失败，则从结构化 `activeMainObjective` 的 suggested/target action 选取候选。这样 writer/NPC 或 provider 故障不会把主线行动替换成任意前两项观察/闲聊动作。新增 `orchestrateNarrativeScene.storyEval.test.ts` 回归覆盖。
+- explore 评估策略不再把尚未解锁的 main quest objective 视为探索动作；当两个选项都不是探索动作时，也会避开未来主线目标，防止状态事实提前满足后由 `reconcileQuests` fixed-point 级联跳过中间幕。`storyEvalStrategy.test.ts` 新增两条保护测试。
+- judge 的 early prediction 与 story-level 请求现已并发；`callJudge` 返回 attempts，`scores.json/report.md` 额外记录 `judge_timeout`、`judge_schema_invalid`、`judge_http_*` 等具体错误，不再只写维度名。严格 schema/引文校验与 null 语义保持不变。
+
+本轮用 provider 更新后的 `.env.local` 做真实仙侠 pair（`profile=baseline`、角色超时 120s、完整三检查点）：
+
+- objective：`artifacts/story-eval/xianxia-a-objective-1-2026-08-03T16-06-06-330Z-cf2e5b39`，17 场景 `converged`，fallback `0`，主线机会/建议呈现/建议选择/规则推进 `17/17/17/17`；三个 paired checkpoints，状态差异 2、事件差异 3，无真死局/恢复循环；生成事实叙事/调查覆盖 `1.00/1.00`，setup/turn/climax/结局证据齐全。
+- explore：`artifacts/story-eval/xianxia-a-explore-0-2026-08-03T16-32-07-800Z-e03a076f`（复用同一 captured blueprint），14 场景 `converged`，fallback `0`，无真死局/恢复循环；主线机会/建议呈现/建议选择/规则推进 `14/14/11/13`，阶段序列为 `1→2→3→4→5→7→8`，仍有一次未来 NPC 目标被提前满足导致 stage6 缺失，且只有 2 个 paired checkpoints。该 artifact 生成于“安全选项优先”最后一条策略保护加入之前，不能视为该保护的最终验证。
+- 两个 run 的 judge 都写出了 `scores.json`，但仍未形成完整证据：explore 为 `story_level=judge_schema_invalid,C2=judge_timeout,C3=judge_timeout,C4=judge_schema_invalid`；objective 为 `story_level=judge_timeout,C2=judge_timeout,C3=judge_schema_invalid`。C1（两局）与 objective C4 已成功返回，错误类别已可审计。pair gate（非 `--release`）仅剩 `JUDGE_EVIDENCE_INCOMPLETE,JUDGE_S1_LOW,JUDGE_S3_LOW,JUDGE_S7_LOW,JUDGE_S8_LOW,JUDGE_S9_LOW,JUDGE_C4_LOW`，说明客观结构门槛已通过，剩余是 judge transport/protocol 与 explore 阶段保护。
+
+最新安全选项策略的 bounded explore 复测已完成并确认 stage6 不再跳过；下一步应先固定可用的 judge 并发/超时配置，再补跑七题材 release matrix。此前 2026-08-03 的七题材 matrix 仍是旧代码证据，不能覆盖本节修复。
+
+补充复测（同日）：`artifacts/story-eval/xianxia-a-explore-0-2026-08-03T16-58-16-757Z-e5522161` 使用最新策略保护、同一 captured blueprint、`profile=regression`（18 场景上限、sample 分支）。它按 `stage 1→2→3→4→5→6→7` 连续推进到上限，`status=max_scenes`、fallback `0`、`trueDeadEnds=0`、`recoveryLoops=0`；主线机会/建议呈现/建议选择/规则推进 `18/18/14/16`。这证明“避免未来目标提前完成”修复了 stage6 跳过问题，但 explore 的 bounded 18 幕收敛仍需更长预算或更稳定 provider 才能证明。

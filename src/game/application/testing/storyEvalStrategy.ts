@@ -73,11 +73,42 @@ function splitAction(actionKey: string): { kind: string; target: string } {
   return { kind: actionKey.slice(0, separator), target: actionKey.slice(separator + 1) };
 }
 
+function actionKeyForObjective(objective: Readonly<{
+  readonly kind: string;
+  readonly locationId?: unknown;
+  readonly npcId?: unknown;
+  readonly itemId?: unknown;
+  readonly factId?: unknown;
+  readonly enemyId?: unknown;
+}>): string {
+  const target = objective.locationId ?? objective.npcId ?? objective.itemId ?? objective.factId ?? objective.enemyId;
+  const prefix = objective.kind === "obtain_item"
+    ? "take_item"
+    : objective.kind === "talk_to_npc"
+      ? "talk"
+      : objective.kind === "visit_location"
+        ? "move"
+        : objective.kind === "discover_fact"
+          ? "investigate"
+          : "start_battle";
+  return `${prefix}:${String(target)}`;
+}
+
+/** 探索不应提前完成尚未解锁的主线幕，否则 fixed-point reconciliation 会在
+ * 解锁时瞬间级联完成多幕，玩家看不到中间的导演/分支流程。 */
+function lockedMainObjectiveActionKeys(record: StoryEvalGameRecord): ReadonlySet<string> {
+  const statusById = new Map(record.state.quests.map((quest) => [String(quest.questId), quest.status]));
+  return new Set(record.blueprint.quests
+    .filter((quest) => quest.kind === "main" && statusById.get(String(quest.id)) === "locked")
+    .flatMap((quest) => quest.objectives.map(actionKeyForObjective)));
+}
+
 /**
  * 行动是否为探索性：前往未访问地点 / 与未见 NPC 交谈 / 调查未发现事实 /
  * 拾取物品（功能推进）。move/talk/investigate 是否探索取决于 GameRecord 状态。
  */
 export function isExploratory(actionKey: string, record: StoryEvalGameRecord): boolean {
+  if (lockedMainObjectiveActionKeys(record).has(actionKey)) return false;
   const { kind, target } = splitAction(actionKey);
   if (kind === "take_item") return true;
   if (kind === "investigate") {
@@ -101,6 +132,16 @@ export function pickNarrativeChoice(
 ): { index: 0 | 1; reason: "explore" | "random" } {
   const choices = record.state.narrative.currentScene?.choices ?? [];
   if (choices.length !== 2) return { index: 0, reason: "random" };
+  const lockedObjectives = lockedMainObjectiveActionKeys(record);
+  const safeIndexes = choices
+    .map((choice, index) => (lockedObjectives.has(choice.actionKey) ? -1 : index))
+    .filter((index): index is 0 | 1 => index === 0 || index === 1);
+  // 即使两个选项都不是“探索动作”，也不让随机选择提前完成尚未解锁
+  // 的主线目标；否则后续 unlock 会 fixed-point 级联跳过中间幕。
+  if (safeIndexes.length === 1) {
+    const index = safeIndexes[0];
+    return { index, reason: isExploratory(choices[index].actionKey, record) ? "explore" : "random" };
+  }
   const exploreIndexes = choices
     .map((choice, index) => (isExploratory(choice.actionKey, record) ? index : -1))
     .filter((index): index is 0 | 1 => index === 0 || index === 1);
