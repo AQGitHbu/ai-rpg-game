@@ -145,6 +145,31 @@ describe("createLiveRuntimeNarrativeSources captureSink", () => {
     expect(records[0].failureCategory).toBe("invalid_json");
   });
 
+  it("fenced JSON 的字段引号被 provider 多转义一层时仍可恢复解析", async () => {
+    const records: StoryEvalCallRecord[] = [];
+    const sink: StoryEvalSink = { append: (record) => records.push(record as StoryEvalCallRecord) };
+    const malformed = "```json\n{\"narration\":\"前路已明。\",\\\"usedFactIds\\\":[\\\"fact_identity\\\"],\\\"npcInstruction\\\":null,\\\"choices\\\":[{\\\"actionKey\\\":\\\"observe:loc_a\\\",\\\"label\\\":\\\"观察\\\",\\\"strategy\\\":\\\"调查\\\"},{\\\"actionKey\\\":\\\"move:loc_b\\\",\\\"label\\\":\\\"前往\\\",\\\"strategy\\\":\\\"推进\\\"}]}\n```";
+    vi.spyOn(globalThis, "fetch").mockImplementation(okFetch(malformed));
+    try {
+      const sources = createLiveRuntimeNarrativeSources({ transport: await createTransport(), config, captureSink: sink });
+      const result = await sources.sceneScriptSource.generate({
+        traceId: "t-escaped-writer",
+        context: {
+          plan: { suggestedActionKeys: ["observe:loc_a", "move:loc_b"] },
+          actionCandidates: contextWithCandidates.actionCandidates,
+          allowedFactCards: [{ id: "fact_identity", text: "身份", source: "player_input" }],
+          npcProfile: null,
+        } as unknown as Record<string, unknown>,
+      });
+      expect(result.ok).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(records).toHaveLength(1);
+    expect(records[0].failureCategory).toBeNull();
+    expect(records[0].parsedCandidate).toMatchObject({ usedFactIds: ["fact_identity"] });
+  });
+
   it("未传 captureSink 时行为与现状一致（不抛错、正常返回）", async () => {
     const fetchSpy = okFetch(JSON.stringify({
       sceneGoal: "g", tensionLevel: 2, focusNpcId: null,

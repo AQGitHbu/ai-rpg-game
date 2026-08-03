@@ -313,10 +313,13 @@ function parseObject(content: string): Record<string, unknown> | null {
   const fenced = /^```(?:json)?\s*\n?([\s\S]*?)\s*```$/i.exec(trimmed)?.[1];
   const candidates = [trimmed, fenced].filter((value): value is string => value !== undefined);
   for (const text of candidates) {
-    try {
-      const parsed: unknown = JSON.parse(text);
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
-    } catch { /* local approval reports stable invalid_json; never expose model text */ }
+    for (const candidate of [text, text.includes("\\\"") ? text.replaceAll("\\\"", "\"") : undefined]) {
+      if (candidate === undefined) continue;
+      try {
+        const parsed: unknown = JSON.parse(candidate);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+      } catch { /* local approval reports stable invalid_json; never expose model text */ }
+    }
   }
   return null;
 }

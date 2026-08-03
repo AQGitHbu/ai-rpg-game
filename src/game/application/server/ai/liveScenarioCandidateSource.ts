@@ -205,8 +205,17 @@ function parseCandidate(content: string): ParseResult {
   try {
     payload = JSON.parse(jsonText);
   } catch {
-    // 绝不把模型原文放进诊断，仅保留稳定代码。
-    return { ok: false, category: "invalid_json", diagnostics: ["LIVE_INVALID_JSON"] };
+    // 某些 provider 会在 fenced JSON 内额外转义字段引号；只对这个明确的
+    // 可恢复形态再尝试一次，仍不从 prose 贪婪抽取对象。
+    try {
+      payload = jsonText.includes("\\\"") ? JSON.parse(jsonText.replaceAll("\\\"", "\"")) : undefined;
+    } catch {
+      payload = undefined;
+    }
+    if (payload === undefined) {
+      // 绝不把模型原文放进诊断，仅保留稳定代码。
+      return { ok: false, category: "invalid_json", diagnostics: ["LIVE_INVALID_JSON"] };
+    }
   }
   if (!hasCandidateShape(payload)) {
     return { ok: false, category: "schema_violation", diagnostics: ["LIVE_SCHEMA_VIOLATION"] };

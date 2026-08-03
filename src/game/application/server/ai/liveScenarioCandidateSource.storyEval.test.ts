@@ -77,4 +77,18 @@ describe("createLiveScenarioCandidateSource captureSink", () => {
     expect(records[0].parsedCandidate).toBeNull();
     expect(records[0].failureCategory).toBe("invalid_json");
   });
+
+  it("fenced scenario JSON 的字段引号被多转义一层时仍可恢复", async () => {
+    const records: StoryEvalCallRecord[] = [];
+    const malformed = "```json\n{\"world\":{\"name\":\"W\",\"summary\":\"S\",\"tone\":\"dark\",\"themes\":[\"t\"]},\\\"openingScene\\\":{},\\\"player\\\":{},\\\"locations\\\":[],\\\"npcs\\\":[],\\\"quests\\\":[],\\\"items\\\":[],\\\"enemies\\\":[],\\\"endings\\\":[]}\n```";
+    const { source, fetchSpy } = await buildSource(records, malformed);
+    try {
+      const result = await source.generate(request);
+      expect(result.ok).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+    expect(records[0].failureCategory).toBeNull();
+    expect(records[0].parsedCandidate).not.toBeNull();
+  });
 });
