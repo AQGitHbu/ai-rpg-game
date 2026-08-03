@@ -3,6 +3,7 @@ import {
   asEndingId,
   asLocationId,
   asQuestId,
+  createBudgetPolicy,
   type GameState,
   type QuestId,
   type ScenarioBlueprint
@@ -36,6 +37,17 @@ function buildBlueprint(): ScenarioBlueprint {
     player: { name: "P", identity: "H", startingItemIds: [], baseStats: { hp: 20, attack: 5, defense: 3 } },
     openingScene: { locationId: asLocationId("loc_a"), narration: "", suggestedActions: [], presentNpcIds: [], investigableFactIds: [] }
   } as unknown as ScenarioBlueprint;
+}
+
+function buildLongBlueprint(): ScenarioBlueprint {
+  return {
+    ...blueprint,
+    budgetPolicy: createBudgetPolicy("medium"),
+    quests: [
+      ...blueprint.quests,
+      { id: asQuestId("m4"), name: "主线四", description: "", objectives: [], onSuccess: { kind: "reach_ending", endingId: asEndingId("e1") }, onFailure: { kind: "closed" }, kind: "main", stage: 4 }
+    ]
+  } as ScenarioBlueprint;
 }
 
 type QuestStatus = GameState["quests"][number]["status"];
@@ -88,6 +100,41 @@ describe("deriveContentProgression：主线阶段派生 allowed pacing", () => {
     const progression = deriveContentProgression({ blueprint, state: states[stage - 1] });
     expect(progression.mainStage).toBe(stage);
     expect(progression.allowedPacing).toEqual(allowedPacing);
+  });
+
+  it("中段连续两幕仍未出现 turn 时，下一场强制转折", () => {
+    const state = {
+      ...stateWith([[M1, "completed"], [M2, "active"], [M3, "locked"], [S1, "locked"]]),
+      storyMemory: {
+        version: 1 as const,
+        reducedThroughEventCount: 2,
+        recent: [
+          { kind: "scene" as const, sceneId: "scene-1", locationId: asLocationId("loc_a"), focusNpcId: null, pacing: "setup" as const, turn: 1 },
+          { kind: "scene" as const, sceneId: "scene-2", locationId: asLocationId("loc_a"), focusNpcId: null, pacing: "develop" as const, turn: 2 }
+        ],
+        npcContacts: []
+      }
+    } as GameState;
+    const progression = deriveContentProgression({ blueprint: buildLongBlueprint(), state });
+    expect(progression.allowedPacing).toEqual(["turn"]);
+  });
+
+  it("已有 turn 后恢复中段 develop/turn 选择，不重复锁死转折", () => {
+    const state = {
+      ...stateWith([[M1, "completed"], [M2, "active"], [M3, "locked"], [S1, "locked"]]),
+      storyMemory: {
+        version: 1 as const,
+        reducedThroughEventCount: 3,
+        recent: [
+          { kind: "scene" as const, sceneId: "scene-1", locationId: asLocationId("loc_a"), focusNpcId: null, pacing: "setup" as const, turn: 1 },
+          { kind: "scene" as const, sceneId: "scene-2", locationId: asLocationId("loc_a"), focusNpcId: null, pacing: "turn" as const, turn: 2 },
+          { kind: "scene" as const, sceneId: "scene-3", locationId: asLocationId("loc_a"), focusNpcId: null, pacing: "develop" as const, turn: 3 }
+        ],
+        npcContacts: []
+      }
+    } as GameState;
+    const progression = deriveContentProgression({ blueprint, state });
+    expect(progression.allowedPacing).toEqual(["develop", "turn"]);
   });
 
   it("activeQuestIds 只含当前 active 任务，顺序沿用蓝图", () => {

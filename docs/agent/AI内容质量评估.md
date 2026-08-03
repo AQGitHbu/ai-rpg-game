@@ -227,6 +227,13 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 
 修复后使用同一 captured blueprint 重跑真实 explore：`artifacts/story-eval/wuxia-a-explore-0-2026-08-03T06-13-48-158Z-1050839c`，13 幕、`status=converged`、`fallbackRate=0`、`trueDeadEnds=0`、`recoveryLoops=0`。`hasResolutionEvidence=true`、`stageWindowViolations=0`，generated facts 使用/调查覆盖均为 `1.00`；paired checkpoint 的 state/event/narration 三类差异均成立。与 objective artifact 一起重跑 pilot gate，结果仍为 `GENERATION_GRADE_OK`。这才是 continuation 修复后的有效 explore 证据；七题材 release matrix 仍未执行。
 
+### 中段转折约束与跨题材复测（2026-08-03）
+
+- 真实 `xianxia-a` objective baseline（修复前 pacing 约束的代码版本）为 `artifacts/story-eval/xianxia-a-objective-0-2026-08-03T07-35-03-775Z-2e3fc108`：22 幕、`status=converged`、`fallbackRate=0`、主线目标与规则推进 `22/22`，generated facts 叙事/调查覆盖均为 `1.00`，3 组分支检查点均有状态/事件/叙事差异；但节奏为 `setup=1/develop=20/climax=1`，没有 `turn`，所以会被门禁判为 `PACING_ARC_INCOMPLETE`。这证明“结局收敛”不能替代中段转折，且该缺口跨出武侠题材。
+- 同一题材的 regression 请求 `artifacts/story-eval/xianxia-a-objective-0-2026-08-03T07-20-14-891Z-17492a42` 受 provider 瞬时 `rate_limited/service_error/empty_response/invalid_json` 影响，18 幕中 3 幕 fallback、`status=max_scenes`；它没有暴露主线或事实契约错误，说明 regression 预算仍应与 provider 稳定性分开记录，不能把一次服务波动当成玩法结构结论。
+- `deriveContentProgression` 现读取结构化剧情记忆：长蓝图中段已产生至少两场叙事且近期尚无 `turn` 时，下一场只允许 `turn`；已有转折后恢复 `develop/turn`。三幕短蓝图与旧存档保持原有安全集合。Phase 10/11 黄金 fixture 的零网络回放仍通过，说明该约束不会破坏既有短旅程回放。
+- 该修复尚未重新采集 xianxia 的真实 post-fix artifact；在此之前只能说“实现约束已被离线测试锁住”，不能宣称跨题材 release 通过。下一步先用同一 captured blueprint 重跑 xianxia regression，确认 `turnStages`、结局和 fallback，再决定是否扩展七题材 baseline matrix。
+
 ### 下一轮优化顺序
 
 1. 先按“叙事引用”和“规则调查”两条事实链复测：`usedFactIds/npcUsedFactIds` 统计编剧/NPC 是否实际引用，`actionEvents.fact_discovered` 统计玩家是否执行调查；不再把二者直接相除。
