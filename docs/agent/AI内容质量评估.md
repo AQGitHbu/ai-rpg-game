@@ -218,8 +218,12 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 本轮先用真实 provider 请求记录 objective 旅程，再复用该旅程的蓝图快照记录 explore 旅程，保证两条旅程只比较选择策略而不是比较两个随机蓝图。首次 explore 开局暴露 provider 返回的 CRLF fenced JSON 被严格解析器拒绝的问题；`extractFencedJson` 已改为接受 CRLF 与 fence 行水平空白，并增加了回归测试。
 
 - objective：`artifacts/story-eval/wuxia-a-objective-1-2026-08-03T04-57-41-101Z-6ea2ec62`，17 幕、`status=converged`、`ending_1/沉冤得雪/success`、`fallbackRate=0`。主线建议/选择/推进为 `17/17/17`，目标动作呈现/选择/事件命中为 `10/10/10`；两条 generated facts 均实际叙事使用并由规则调查发现（使用/调查覆盖 `1.00/1.00`）。节奏为 `setup=1/develop=13/turn=2/climax=1`，无阶段窗口违规；分支检查点状态、事件、叙事均有差异且未重新收敛。
-- explore：`artifacts/story-eval/wuxia-a-explore-0-2026-08-03T05-13-52-605Z-a925d36c`，10 幕、`status=generation_failed`、`fallbackRate=0`，随机探索在达到结局前停止；它没有真死局或恢复循环，且 generated facts 使用/调查覆盖仍为 `1.00/1.00`。这说明当前随机探索的“可玩性”证据还不足以宣称自由探索收敛，但不是 fallback 或事实锚点失败。
+- explore：`artifacts/story-eval/wuxia-a-explore-0-2026-08-03T05-13-52-605Z-a925d36c`，10 幕、`status=generation_failed`、`fallbackRate=0`，随机探索在达到结局前停止；它没有真死局或恢复循环，且 generated facts 使用/调查覆盖仍为 `1.00/1.00`。复盘发现这不是随机选择或 provider fallback：评估器的 single-legal-action continuation bridge 执行直接规则行动后，若重新出现两个以上合法行动，`performAction` 原先不会为直接行动排队下一幕，导致空 narrative 被误报为 generation_failed。
 - 对上述同一 `pairId=wuxia-a-20260803-1` 运行 `node scripts/storyEvalQualityGate.mjs ...`，结果为 `GENERATION_GRADE_OK`。本轮可归因收益是：真实蓝图满足每条 generated fact 的主线调查锚点，objective 可靠收敛，分支后果可观测，且 provider 的 CRLF JSON 不再触发开局 fallback。
+
+### continuation bridge 后续场景修复（2026-08-03）
+
+`performAction` 现对 AI 模式下所有成功规则行动统一使用同一 narrative queue 边界：只要结算后仍有至少两个合法行动，就持久化 `narrative.generation=pending`，不仅限于 `narrative_choice/dialogue_choice`。这样评估器的直接 `move/talk/investigate/observe/take_item` bridge 不会把游戏留在“可继续但没有场景”的空状态。新增 direct-action pending 回归测试；应用套件 65 个文件、509 项测试通过。此前真实 explore artifact 是修复前产物，不能用来判断修复后的 explore 收敛率，需在后续 baseline 中重新采集。
 
 ### 下一轮优化顺序
 

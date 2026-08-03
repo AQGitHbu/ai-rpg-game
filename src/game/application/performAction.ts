@@ -375,13 +375,14 @@ export async function performAction(
     };
   }
 
-  // A narrative choice commits its deterministic rule result immediately.
-  // Scene generation is a recoverable server-side job and must not make the
-  // player request wait for the provider.
-  // dialogue_choice（greet 首遇 / ask_main_quest）与 narrative_choice 共用同一
-  // 排队条件：对话是叙事场景的入口之一，复用 CAS + ensure 轮询恢复链路。
+  // A deterministic action commits its rule result immediately. Scene
+  // generation is a recoverable server-side job and must not make the player
+  // request wait for the provider. Narrative choices, dialogue choices, and
+  // direct rule intents all share the same queue boundary: after a successful
+  // action, an AI-mode game with at least two legal actions must expose the
+  // next narrative scene. This also keeps server-side continuation bridges
+  // from leaving a playable state with an empty narrative view.
   if (
-    (command.intent.type === "narrative_choice" || command.intent.type === "dialogue_choice") &&
     record.state.narrative.mode !== "offline" &&
     deps.runtimeNarrativeSources !== undefined &&
     canQueueRuntimeNarrativeScene(record.blueprint, nextState)

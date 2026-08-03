@@ -501,6 +501,27 @@ describe("performAction：dialogue_choice 触发 pending（NPC 对话驱动叙�
     return state;
   }
 
+  it("直接规则行动在 AI 模式且仍有两个合法行动时也排队下一幕", async () => {
+    const repository = createFakeGameRepository();
+    const record = buildActiveRecord();
+    repository.setCurrentResult({ ok: true, status: "active", record });
+    repository.setApplyResult({ ok: true, record: { ...record, revision: 1 } });
+
+    const result = await performAction(
+      {
+        intent: { type: "observe", locationId: record.state.currentLocationId },
+        expectedRevision: 0
+      },
+      buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
+    );
+
+    expect(result.ok).toBe(true);
+    expect(repository.applyCalls).toHaveLength(1);
+    const saved = repository.applyCalls[0].nextState;
+    expect(saved.narrative.generation.status).toBe("pending");
+    expect(saved.narrative.currentScene).toBeNull();
+  });
+
   it("ask_main_quest 且 canQueueRuntimeNarrativeScene → 排队 pending", async () => {
     const repository = createFakeGameRepository();
     const readyState = buildAskMainQuestReadyState();
