@@ -42,7 +42,7 @@ function buildBlueprint(): ScenarioBlueprint {
 function buildLongBlueprint(): ScenarioBlueprint {
   return {
     ...blueprint,
-    budgetPolicy: createBudgetPolicy("medium"),
+    budgetPolicy: createBudgetPolicy("long"),
     quests: [
       ...blueprint.quests,
       { id: asQuestId("m4"), name: "主线四", description: "", objectives: [], onSuccess: { kind: "reach_ending", endingId: asEndingId("e1") }, onFailure: { kind: "closed" }, kind: "main", stage: 4 }

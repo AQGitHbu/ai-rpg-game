@@ -80,7 +80,7 @@ function allowedPacingFor(
     if (activeMain >= finalAct) return ["climax"];
     const recentScenes = storyMemoryOf(state).recent.filter((entry) => entry.kind === "scene");
     if (activeMain === 1) {
-      if (blueprint.budgetPolicy !== undefined && recentScenes.length === 0) return ["setup"];
+      if (blueprint.budgetPolicy?.gameLength === "long" && recentScenes.length === 0) return ["setup"];
       return ["setup", "develop"];
     }
     const hasRecentTurn = recentScenes.some((entry) => entry.pacing === "turn");
