@@ -82,5 +82,65 @@
       "contentIntensity": "normal",
       "gameLength": "long"
     }
+  },
+  {
+    "caseId": "xianxia-a",
+    "input": {
+      "gameType": "xianxia",
+      "gameLength": "long",
+      "characterName": "陆归尘",
+      "characterIdentity": "被逐出宗门的外门弟子",
+      "characterProfile": "灵根受损，却记得一段被抹去的山门往事。",
+      "personalityTags": ["克制", "执着"],
+      "worldPremise": "宗门灵脉正在枯竭，各峰却把灾变归咎于失踪的镇山法宝。",
+      "storyOpening": "陆归尘在废弃渡劫台醒来，掌心多了一枚不属于自己的宗门印。",
+      "narrativeStyle": "novel",
+      "contentIntensity": "normal"
+    }
+  },
+  {
+    "caseId": "fantasy-a",
+    "input": {
+      "gameType": "fantasy",
+      "gameLength": "long",
+      "characterName": "萝赛塔·晨风",
+      "characterIdentity": "失去封地的年轻骑士",
+      "characterProfile": "曾负责守卫王国北境，如今背负一场败战的责任。",
+      "personalityTags": ["守信", "多疑"],
+      "worldPremise": "古代盟约失效，王国、教会与边境异族争夺一座重新苏醒的遗迹。",
+      "storyOpening": "萝赛塔收到一封盖着已灭亡家族纹章的求援信。",
+      "narrativeStyle": "novel",
+      "contentIntensity": "normal"
+    }
+  },
+  {
+    "caseId": "alternate-history-a",
+    "input": {
+      "gameType": "alternate_history",
+      "gameLength": "long",
+      "characterName": "谢明远",
+      "characterIdentity": "奉命查账的年轻御史",
+      "characterProfile": "出身寒门，熟悉盐路与边军粮饷。",
+      "personalityTags": ["审慎", "刚直"],
+      "worldPremise": "新法推行三年，边镇军粮却在朝廷账册中凭空消失。",
+      "storyOpening": "谢明远抵达云中郡当夜，负责接应他的驿丞死在封存粮仓前。",
+      "narrativeStyle": "novel",
+      "contentIntensity": "normal"
+    }
+  },
+  {
+    "caseId": "post-apocalypse-a",
+    "input": {
+      "gameType": "post_apocalypse",
+      "gameLength": "long",
+      "characterName": "七号",
+      "characterIdentity": "负责寻找净水设备的拾荒者",
+      "characterProfile": "来自水塔镇，熟悉旧世界地下管网。",
+      "personalityTags": ["务实", "护短"],
+      "worldPremise": "旱季提前到来，三个聚落为最后一座净水站的控制权互相封锁道路。",
+      "storyOpening": "七号从废弃泵站带回一张地图，却发现水塔镇的储水罐被人投毒。",
+      "narrativeStyle": "novel",
+      "contentIntensity": "normal"
+    }
   }
 ]

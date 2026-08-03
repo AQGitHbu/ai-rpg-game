@@ -98,6 +98,8 @@ describe("buildScenarioPromptMessages", () => {
     const joined = messages.map((message) => message.content).join("\n");
     expect(joined).toContain("不得重复前面主线幕的同一 objective kind+target");
     expect(joined).toContain("不得让新解锁任务的目标在解锁前已满足");
+    expect(joined).toContain("每条 source=generated 的事实必须至少出现在 openingScene.investigableFactIds、某个 NPC.knownFactIds、discover_fact objective 或 fact_discovered ending requirement 之一");
+    expect(joined).toContain("medium/long 主线必须至少有一幕使用 discover_fact，且目标是 source=generated 的事实");
     expect(joined).toContain('"kind":"talk_to_npc","npcId":"npc_2"');
     expect(joined).toContain('"kind":"obtain_item","itemId":"item_key"');
     expect(joined).toContain('"kind":"talk_to_npc","npcId":"npc_1"');

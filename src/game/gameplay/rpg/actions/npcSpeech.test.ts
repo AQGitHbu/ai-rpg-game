@@ -60,7 +60,7 @@ function buildBlueprint(): ScenarioBlueprint {
       facts: [
         { id: "fact_known", text: "已知事实。", source: "player_input" },
         { id: "fact_investigable", text: "可调查事实。", source: "generated" },
-        { id: "fact_other", text: "其他事实。", source: "generated" },
+        { id: "fact_other", text: "其他事实。", source: "player_input" },
       ],
       tags: ["测试"],
     },

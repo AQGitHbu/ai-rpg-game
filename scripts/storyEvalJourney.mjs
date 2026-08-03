@@ -88,6 +88,24 @@ export function buildStoryEvalArtifactDir({ artifactRoot, caseId, strategy, runI
   return resolve(artifactRoot, `${caseId}-${strategy}-${runIndex}-${stamp}-${randomUUID().slice(0, 8)}`);
 }
 
+/**
+ * 展开可比的成对旅程：同一 case/replicate 只生成一个 seed，explore 与
+ * objective 依次消费同一份 captured blueprint。这样策略差异不会被不同的
+ * 开局蓝图或 seed 混淆。
+ */
+export function buildPairedRunSpecs(cases, strategies, runs, baseSeed) {
+  return cases.flatMap((entry) => Array.from({ length: runs }, (_, replicate) => {
+    const seed = baseSeed + replicate;
+    return {
+      pairId: `${entry.caseId}-${seed}-${replicate + 1}`,
+      caseId: entry.caseId,
+      replicate,
+      seed,
+      strategies: [...strategies],
+    };
+  }));
+}
+
 export const STORY_EVAL_PROFILE_DEFAULTS = Object.freeze({
   smoke: Object.freeze({ maxScenes: 3, maxRoleAttempts: 1, aiTimeoutMs: 60_000, branchMode: "none", totalBudgetMs: 10 * 60_000 }),
   // fallback-7 的 long 主线需要 13 个 narrative scenes 才能启动终局战斗；
@@ -237,7 +255,7 @@ export function main({
     ? profileConfig.profile === "smoke" ? cases.slice(0, 1) : cases
     : cases.filter((item) => item.caseId === selectedCaseId);
   const strategies = selectedStrategy === undefined ? ["explore", "objective"] : [selectedStrategy];
-  const runSpecs = selectedCases.flatMap((item) => strategies.map((strategy) => ({ caseId: item.caseId, strategy })));
+  const runSpecs = buildPairedRunSpecs(selectedCases, strategies, runs, baseSeed);
   if (runs > 1 && selectedCaseId === undefined) {
     log(`${PREFIX} REPLICATE_REQUIRES_CASE：--runs 复制仅允许在 --case 内使用`);
     return 1;
@@ -259,16 +277,16 @@ export function main({
   let failed = 0;
   let replicateTotal = 0;
   let runIndex = 0;
-  for (const runSpec of runSpecs) {
-    for (let replicate = 0; replicate < runs; replicate += 1) {
-      const isReplicate = replicate > 0;
+  for (const pair of runSpecs) {
+    let pairedBlueprintArtifact = blueprintArtifact;
+    for (const strategy of pair.strategies) {
+      const isReplicate = pair.replicate > 0;
       if (isReplicate) replicateTotal += 1;
-      const seed = baseSeed + runIndex;
-      // 每个 run 独立 artifact/db：dir 用展开序号，replicate 同样占唯一序号。
+      // 每个 run 独立 artifact/db；pair 内只共享蓝图，不共享数据库状态。
       const artifactDir = buildStoryEvalArtifactDir({
         artifactRoot,
-        caseId: runSpec.caseId,
-        strategy: runSpec.strategy,
+        caseId: pair.caseId,
+        strategy,
         runIndex,
       });
       const databasePath = resolve(dbRoot, `story-eval-run-${runIndex}-${randomUUID()}.sqlite`);
@@ -281,9 +299,10 @@ export function main({
         RUN_REAL_AI_STORY_EVAL: "1",
         STORY_EVAL_CAPTURE: "1",
         STORY_EVAL_ARTIFACT_DIR: artifactDir,
-        STORY_EVAL_CASE_ID: runSpec.caseId,
-        STORY_EVAL_STRATEGY: runSpec.strategy,
-        STORY_EVAL_SEED: String(seed),
+        STORY_EVAL_CASE_ID: pair.caseId,
+        STORY_EVAL_STRATEGY: strategy,
+        STORY_EVAL_SEED: String(pair.seed),
+        STORY_EVAL_PAIR_ID: pair.pairId,
         STORY_EVAL_PROFILE: profileConfig.profile,
         STORY_EVAL_MAX_SCENES: String(profileConfig.maxScenes),
         STORY_EVAL_MAX_ROLE_ATTEMPTS: String(profileConfig.maxRoleAttempts),
@@ -292,15 +311,20 @@ export function main({
         STORY_EVAL_SCENE_WAIT_MS: env.STORY_EVAL_SCENE_WAIT_MS ?? String(3 * profileConfig.maxRoleAttempts * profileConfig.aiTimeoutMs + 60_000),
         STORY_EVAL_TOTAL_BUDGET_MS: String(profileConfig.totalBudgetMs),
         GAME_DB_PATH: databasePath,
-        ...(blueprintArtifact === undefined ? {} : { STORY_EVAL_BLUEPRINT_ARTIFACT: blueprintArtifact }),
+        ...(pairedBlueprintArtifact === undefined ? {} : { STORY_EVAL_BLUEPRINT_ARTIFACT: pairedBlueprintArtifact }),
       };
       for (const key of ["AI_API_BASE_URL", "AI_MODEL", "AI_API_KEY"]) {
         childEnv[key] = aiValues.get(key).decoded;
       }
-      const replicateMark = isReplicate ? ` replicate=${replicate + 1}/${runs}` : "";
-      log(`${PREFIX} record run ${runIndex + 1} case=${runSpec.caseId} strategy=${runSpec.strategy} seed=${seed}${replicateMark}`);
+      const replicateMark = isReplicate ? ` replicate=${pair.replicate + 1}/${runs}` : "";
+      const sourceMark = pairedBlueprintArtifact === undefined ? " live-blueprint" : " captured-blueprint";
+      log(`${PREFIX} record run ${runIndex + 1} pair=${pair.pairId} case=${pair.caseId} strategy=${strategy} seed=${pair.seed}${replicateMark}${sourceMark}`);
       const status = runSpawn(childEnv);
       if (status !== 0) failed += 1;
+      if (status === 0 && pairedBlueprintArtifact === undefined) {
+        const callsPath = resolve(artifactDir, "calls.jsonl");
+        if (existsSync(callsPath)) pairedBlueprintArtifact = callsPath;
+      }
       try {
         rmSync(databasePath, { force: true });
       } catch {

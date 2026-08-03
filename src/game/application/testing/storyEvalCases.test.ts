@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // storyEvalCases.test.ts：v2 评测集契约（Task 13 Step 1）。
-// 断言：恰 6 个唯一 caseId、三种题材各 2 个、全部 gameLength=long、
+// 断言：恰 10 个唯一 caseId、支持的七种题材全部覆盖、全部 gameLength=long、
 // 输入全部通过 domain 校验、固定角色/人格/文风/强度跨 case 一致、
 // 同题材两 case 前提与开端不同、resolveStoryEvalCase 三态语义。
 // ---------------------------------------------------------------------------
@@ -18,10 +18,17 @@ const FIXED_FIELDS = {
 } as const;
 
 describe("story eval case set (v2)", () => {
-  it("恰有 6 个唯一 caseId", () => {
+  it("恰有 10 个唯一 caseId", () => {
     const cases = loadStoryEvalCases();
-    expect(cases).toHaveLength(6);
-    expect(new Set(cases.map((item) => item.caseId)).size).toBe(6);
+    expect(cases).toHaveLength(10);
+    expect(new Set(cases.map((item) => item.caseId)).size).toBe(10);
+  });
+
+  it("覆盖七种受支持 gameType，release matrix 不缺题材", () => {
+    const cases = loadStoryEvalCases();
+    expect([...new Set(cases.map((item) => item.input.gameType))].sort()).toEqual([
+      "alternate_history", "fantasy", "post_apocalypse", "science_fiction", "urban", "wuxia", "xianxia",
+    ]);
   });
 
   it("三种题材（wuxia/science_fiction/urban）各 2 个 case", () => {
@@ -39,14 +46,21 @@ describe("story eval case set (v2)", () => {
     }
   });
 
-  it("固定角色/人格/narrativeStyle/contentIntensity 跨 case 一致", () => {
+  it("既有六条 case 保持固定评测控制字段，新题材输入字段均非空", () => {
     const cases = loadStoryEvalCases();
     for (const item of cases) {
-      expect(item.input.characterName).toBe(FIXED_FIELDS.characterName);
-      expect(item.input.characterIdentity).toBe(FIXED_FIELDS.characterIdentity);
-      expect(item.input.personalityTags).toEqual(FIXED_FIELDS.personalityTags);
-      expect(item.input.narrativeStyle).toBe(FIXED_FIELDS.narrativeStyle);
-      expect(item.input.contentIntensity).toBe(FIXED_FIELDS.contentIntensity);
+      for (const field of ["characterName", "characterIdentity", "worldPremise", "storyOpening", "narrativeStyle", "contentIntensity"]) {
+        const value = item.input[field as keyof typeof item.input];
+        expect(String(value), `${item.caseId}.${field}`).not.toBe("");
+      }
+      expect(item.input.personalityTags.length, `${item.caseId}.personalityTags`).toBeGreaterThan(0);
+      if (["wuxia-a", "wuxia-b", "science-fiction-a", "science-fiction-b", "urban-a", "urban-b"].includes(item.caseId)) {
+        expect(item.input.characterName).toBe(FIXED_FIELDS.characterName);
+        expect(item.input.characterIdentity).toBe(FIXED_FIELDS.characterIdentity);
+        expect(item.input.personalityTags).toEqual(FIXED_FIELDS.personalityTags);
+        expect(item.input.narrativeStyle).toBe(FIXED_FIELDS.narrativeStyle);
+        expect(item.input.contentIntensity).toBe(FIXED_FIELDS.contentIntensity);
+      }
     }
   });
 

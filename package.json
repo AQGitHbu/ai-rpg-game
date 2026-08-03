@@ -57,6 +57,7 @@
     "smoke:ai:story-eval": "node scripts/storyEvalJourney.mjs --mode=record",
     "test:story-eval-analyze": "node --test scripts/storyEvalAnalyze.node-test.mjs",
     "analyze:story-eval": "node scripts/storyEvalAnalyze.mjs",
+    "gate:story-eval": "node scripts/storyEvalQualityGate.mjs",
     "test:story-eval-judge": "node --test scripts/storyEvalJudge.node-test.mjs",
     "judge:story-eval": "node scripts/storyEvalJudge.mjs",
     "test:town-journey": "vitest run src/game/application/testing/townAiJourney.test.ts",

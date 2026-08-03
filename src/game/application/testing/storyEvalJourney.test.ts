@@ -30,6 +30,7 @@ import {
   type ScenarioCandidateSource,
 } from "../scenarioGeneration";
 import { resolveAiThinkingRoles } from "../server/ai/aiThinking";
+import { projectStoryEvalContinuation } from "./storyEvalContinuation";
 
 // ---------------------------------------------------------------------------
 // 评估旅程本体（spec §7 + Task 13）：经 createServerGameEntryPoints 驱动（唯一能
@@ -520,7 +521,7 @@ export type StoryEvalJourneyConfig = Readonly<{
 }>;
 
 export type StoryEvalJourneyResult = Readonly<{
-  status: "converged" | "max_scenes" | "aborted" | "exhausted" | "generation_failed" | "time_budget" | "incomplete";
+  status: "converged" | "max_scenes" | "aborted" | "exhausted" | "generation_failed" | "recovery_loop" | "time_budget" | "incomplete";
   sceneCount: number;
   fallbackScenes: number;
   openingSource: string;
@@ -554,11 +555,15 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
   let entry: ServerGameEntryPoints | null = null;
   let evalRepository: SqliteGameRepository | null = null;
   const storyRows: StoryEvalStoryRow[] = [];
-  let status: StoryEvalJourneyResult["status"] = "max_scenes";  let openingSource = "unknown";
+  let status: StoryEvalJourneyResult["status"] = "max_scenes";
+  let openingSource = "unknown";
   let endingOutcome: string | null = null;
   let fallbackScenes = 0;
   let sceneCount = 0;
   const branchCheckpointsDone = new Set<number>();
+  const continuationBridges: Readonly<Record<string, unknown>>[] = [];
+  let trueDeadEnds = 0;
+  let recoveryLoops = 0;
 
   try {
     const capturedBlueprintSource = createCapturedBlueprintSource(env);
@@ -608,9 +613,13 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       // 由蓝图结局/敌人/任务结构与最终规则结果生成）。
       caseId,
       strategy,
+      gameType: storyEvalCase.input.gameType,
+      pairingVersion: env.STORY_EVAL_PAIR_ID === undefined ? null : "paired-v1",
+      pairId: env.STORY_EVAL_PAIR_ID ?? null,
       profile,
       branchMode,
       blueprintSource: capturedBlueprintSource === undefined ? "live" : "captured_artifact",
+      blueprintPairSource: capturedBlueprintSource === undefined ? "live" : "paired_capture",
       gitCommit: resolveGitCommit(),
       contractVersion: NARRATIVE_CONTRACT_VERSION,
       promptVersions: {
@@ -624,6 +633,9 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       timeoutMs: resolveStoryEvalTimeoutMs(env),
       maxRoleAttempts: resolveStoryEvalMaxRoleAttempts(env),
       answerKey: null,
+      continuationBridges,
+      trueDeadEnds,
+      recoveryLoops,
       timings,
     };
     const getCalls = createCachedCallsReader(artifactDir);
@@ -653,9 +665,38 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         }
         if (view.narrative === null && view.battle === null && view.ending === null) {
           const terminalRecord = await loadRecord();
-          status = canQueueRuntimeNarrativeScene(terminalRecord.blueprint, terminalRecord.state)
-            ? "generation_failed"
-            : "exhausted";
+          const continuation = projectStoryEvalContinuation(terminalRecord.blueprint, terminalRecord.state);
+          if (continuation !== null) {
+            if (continuationBridges.length >= maxScenes * 2) {
+              recoveryLoops += 1;
+              status = "recovery_loop";
+              break;
+            }
+            const before = terminalRecord.state.eventLedger.length;
+            const result = await entry.performAction({
+              intent: continuation.intent,
+              expectedRevision: view.revision,
+            });
+            if (!result.ok) throw new Error(`continuation action rejected: ${result.code}`);
+            const afterRecord = await loadRecord();
+            continuationBridges.push({
+              actionKey: continuation.actionKey,
+              label: continuation.label,
+              reason: continuation.reason,
+              mainStage: deriveContentProgression({ blueprint: afterRecord.blueprint, state: afterRecord.state }).mainStage,
+              events: afterRecord.state.eventLedger.slice(before).map((event) => toSafeEvent(event)),
+            });
+            view = result.view;
+            // 规则续行不占叙事场景预算；下一轮继续等待/记录同一 sceneIndex。
+            sceneIndex -= 1;
+            continue;
+          }
+          if (canQueueRuntimeNarrativeScene(terminalRecord.blueprint, terminalRecord.state)) {
+            status = "generation_failed";
+          } else {
+            trueDeadEnds += 1;
+            status = "exhausted";
+          }
           break;
         }
       }
@@ -779,6 +820,8 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
     manifest.status = status;
     manifest.sceneCount = sceneCount;
     manifest.fallbackScenes = fallbackScenes;
+    manifest.trueDeadEnds = trueDeadEnds;
+    manifest.recoveryLoops = recoveryLoops;
     manifest.answerKey = buildStoryEvalAnswerKey(blueprint, endingOutcome);
     manifest.blueprint = {
       // 世界名称不在蓝图结构内（domain WorldDefinition 无 name），取会话视图

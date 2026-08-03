@@ -68,6 +68,9 @@ export type ScenarioBlueprintIssueCode =
   | "INVALID_LOCATION_SCALE"
   | "TOWN_LOCATION_OVERBUDGET"
   | "REPEATED_MAIN_QUEST_DESCRIPTION"
+  | "REPEATED_MAIN_QUEST_DESCRIPTION_FRAGMENT"
+  | "UNANCHORED_GENERATED_FACT"
+  | "MAINLINE_GENERATED_FACT_MISSING"
   | "OUT_OF_RANGE";
 
 export type ScenarioBlueprintIssue = {
@@ -103,6 +106,7 @@ export function validateScenarioBlueprintCandidate(
   validateBudgetCounts(issues, candidate, context.policy);
   validateGlobalIdUniqueness(issues, candidate);
   validateReferences(issues, candidate);
+  validateGeneratedFactAnchors(issues, candidate, context.policy);
   validateAvailableItems(issues, candidate);
   validateOpeningScene(issues, candidate);
   // 任务 objective/outcome 引用、主线阶段、支线/结局预算与可达性全部委托任务图校验。
@@ -122,6 +126,53 @@ export function validateScenarioBlueprintCandidate(
 
   if (issues.length > 0) return { ok: false, issues };
   return { ok: true, validated: candidate as ValidatedScenarioBlueprintCandidate };
+}
+
+/**
+ * Generated facts are only useful when the rules or a known NPC can surface
+ * them. Keep player-input facts permissive, but reject generated orphan facts
+ * and require medium/long mainlines to carry at least one generated fact
+ * discovery objective.
+ */
+function validateGeneratedFactAnchors(
+  issues: ScenarioBlueprintIssue[],
+  candidate: ScenarioBlueprintCandidate,
+  policy: BudgetPolicy,
+): void {
+  const anchored = new Set<string>(candidate.openingScene.investigableFactIds ?? []);
+  for (const npc of candidate.npcs) {
+    for (const factId of npc.knownFactIds ?? []) anchored.add(factId);
+  }
+  for (const quest of candidate.quests) {
+    for (const objective of quest.objectives ?? []) {
+      if (objective.kind === "discover_fact") anchored.add(objective.factId);
+    }
+  }
+  for (const ending of candidate.endings) {
+    for (const requirement of ending.requirements ?? []) {
+      if (requirement.kind === "fact_discovered") anchored.add(requirement.factId);
+    }
+  }
+
+  for (const [index, fact] of candidate.world.facts.entries()) {
+    if (fact.source === "generated" && !anchored.has(fact.id)) {
+      issues.push({
+        path: `world.facts[${index}]`,
+        code: "UNANCHORED_GENERATED_FACT",
+        params: { factId: fact.id },
+      });
+    }
+  }
+
+  const hasMainlineGeneratedFact = candidate.quests.some((quest) =>
+    quest.kind === "main" && (quest.objectives ?? []).some((objective) =>
+      objective.kind === "discover_fact" &&
+      candidate.world.facts.some((fact) => fact.id === objective.factId && fact.source === "generated")
+    )
+  );
+  if (policy.mainActs >= 5 && !hasMainlineGeneratedFact) {
+    issues.push({ path: "quests", code: "MAINLINE_GENERATED_FACT_MISSING", params: {} });
+  }
 }
 
 /**
@@ -151,6 +202,33 @@ function validateMainQuestDescriptionDensity(
       }
       firstByDescription.set(description, quest.stage);
     });
+
+  const firstByFragment = new Map<string, number>();
+  candidate.quests
+    .filter((quest) => quest.kind === "main")
+    .forEach((quest) => {
+      for (const fragment of meaningfulDescriptionFragments(quest.description)) {
+        const firstStage = firstByFragment.get(fragment);
+        if (firstStage !== undefined && firstStage !== quest.stage) {
+          const index = candidate.quests.findIndex((entry) => entry.id === quest.id);
+          issues.push({
+            path: `quests[${index}].description`,
+            code: "REPEATED_MAIN_QUEST_DESCRIPTION_FRAGMENT",
+            params: { firstStage, stage: quest.stage, fragment },
+          });
+        } else if (firstStage === undefined) {
+          firstByFragment.set(fragment, quest.stage);
+        }
+      }
+    });
+}
+
+function meaningfulDescriptionFragments(value: string): readonly string[] {
+  return [...new Set(value
+    .replace(/^第\s*\d+\s*幕[：:]?/, "")
+    .split(/[。！？!?；;]/)
+    .map((part) => part.replace(/\s+/g, "").trim())
+    .filter((part) => Array.from(part).length >= 8))];
 }
 
 // ---------------------------------------------------------------------------

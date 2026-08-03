@@ -57,6 +57,11 @@ test("computeStoryEvalMetrics 计算全部客观指标（v2 真实口径）", ()
   assert.equal(metrics.tension.stddev, 2);                // [1,5] 总体标准差 = 2
   assert.deepEqual(metrics.pacing.distribution, { setup: 1, develop: 1 });
   assert.equal(metrics.pacing.illegalOrderCount, 0);      // setup→develop 合法
+  assert.equal(metrics.pacing.stageWindowViolations, 0);
+  assert.deepEqual(metrics.pacing.turnStages, []);
+  assert.equal(metrics.pacing.hasSetup, false);
+  assert.equal(metrics.pacing.hasClimax, false);
+  assert.equal(metrics.pacing.hasResolutionEvidence, false);
   // 每幕事实覆盖：旧 artifact 无 usedFactIds，actual 兼容回退到 fact_discovered；
   // 新口径另列 discoveredFactIds。
   assert.deepEqual(metrics.factsPerAct, [
@@ -80,9 +85,44 @@ test("computeStoryEvalMetrics 计算全部客观指标（v2 真实口径）", ()
   assert.deepEqual(metrics.entities.expansion, { proposed: 2, approved: 1, persisted: 1, adopted: 1 });
   // 无分支产物时选择漏斗全零。
   assert.deepEqual(metrics.choices, { pairedCheckpoints: 0, stateDifferent: 0, eventDifferent: 0, narrationDifferent: 0, reconvergedCheckpoints: 0, notApplicable: 0 });
+  assert.deepEqual(metrics.continuation, { bridges: 0, trueDeadEnds: 0, recoveryLoops: 0 });
   assert.ok(metrics.trigramRepeat > 0 && metrics.trigramRepeat < 1);
   assert.equal(metrics.narrationLengths.mean > 0, true);
   assert.equal(metrics.maxScenesHit, false);
+});
+
+test("stage-aware pacing 按主线阶段允许 turn 后切换下一幕 develop", () => {
+  const scene = (sceneIndex, mainStage, pacing) => ({
+    kind: "scene", sceneIndex, mainStage, narration: `场景 ${sceneIndex}`,
+    directorPlan: { pacing, allowedRevealFactIds: [], introducedEntities: [] },
+  });
+  const metrics = computeStoryEvalMetrics({
+    calls: [],
+    story: [
+      scene(1, 1, "setup"),
+      scene(2, 3, "turn"),
+      scene(3, 4, "develop"),
+      scene(4, 8, "climax"),
+      { kind: "ending", sceneIndex: 5, endingName: "终局", endingDescription: "冲突得到回应", outcome: "success" },
+    ],
+    manifest: {},
+  });
+  assert.equal(metrics.pacing.stageWindowViolations, 0);
+  assert.deepEqual(metrics.pacing.turnStages, [3]);
+  assert.equal(metrics.pacing.hasResolutionEvidence, true);
+});
+
+test("continuation 指标区分规则续行、真死局与恢复循环", () => {
+  const metrics = computeStoryEvalMetrics({
+    calls: [],
+    story: [{ kind: "scene", sceneIndex: 1, narration: "一", fallback: false }],
+    manifest: {
+      continuationBridges: [{ actionKey: "move:loc_2" }],
+      trueDeadEnds: 0,
+      recoveryLoops: 1,
+    },
+  });
+  assert.deepEqual(metrics.continuation, { bridges: 1, trueDeadEnds: 0, recoveryLoops: 1 });
 });
 
 test("mainlineObjective 区分下一跳呈现、直接目标命中与物品规则事件", () => {
@@ -313,6 +353,32 @@ test("重复引用事实不会被误报为新覆盖，none_proposed 不计扩展
   assert.deepEqual(metrics.factsPerAct[0].repeatedFactIds, ["f1"]);
   assert.equal(metrics.facts.usedCoverageRate, 0.5);
   assert.equal(metrics.entities.expansion.proposed, 0);
+});
+
+test("事实覆盖单列 generated 来源，不让 player_input 事实抬高生成事实覆盖", () => {
+  const metrics = computeStoryEvalMetrics({
+    calls: [],
+    story: [{
+      kind: "scene", sceneIndex: 1, mainStage: 1, narration: "一",
+      usedFactIds: ["fact_player", "fact_gen_used"],
+      npcUsedFactIds: [],
+      actionEvents: [{ type: "fact_discovered", factId: "fact_player" }],
+    }],
+    manifest: {
+      blueprint: {
+        facts: [
+          { id: "fact_player", source: "player_input" },
+          { id: "fact_gen_used", source: "generated" },
+          { id: "fact_gen_missed", source: "generated" },
+        ],
+      },
+    },
+  });
+  assert.deepEqual(metrics.facts.generatedUniverseFactIds, ["fact_gen_used", "fact_gen_missed"]);
+  assert.deepEqual(metrics.facts.generatedUsedFactIds, ["fact_gen_used"]);
+  assert.deepEqual(metrics.facts.generatedDiscoveredFactIds, []);
+  assert.equal(metrics.facts.generatedUsedCoverageRate, 0.5);
+  assert.equal(metrics.facts.generatedDiscoveredCoverageRate, 0);
 });
 
 test("pacingRank 顺序合法判定", () => {

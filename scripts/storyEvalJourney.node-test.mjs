@@ -1,8 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   loadStoryEvalCases,
   buildStoryEvalArtifactDir,
+  buildPairedRunSpecs,
   main,
   resolveEvalProfile,
   resolveEvalProfileConfig,
@@ -13,6 +17,13 @@ import {
   resolveJourneyMode,
   resolveRunCount,
 } from "./storyEvalJourney.mjs";
+
+test("buildPairedRunSpecs 为同一 case 的策略复用 seed 与 pairId", () => {
+  assert.deepEqual(buildPairedRunSpecs([{ caseId: "wuxia-a" }], ["explore", "objective"], 2, 77), [
+    { pairId: "wuxia-a-77-1", caseId: "wuxia-a", replicate: 0, seed: 77, strategies: ["explore", "objective"] },
+    { pairId: "wuxia-a-78-2", caseId: "wuxia-a", replicate: 1, seed: 78, strategies: ["explore", "objective"] },
+  ]);
+});
 
 test("三种 profile 解析为明确的场景/重试/超时/分支配置", () => {
   assert.equal(resolveEvalProfile({}), "baseline");
@@ -159,6 +170,42 @@ test("main record 模式未知 profile 打印 INVALID_PROFILE 且不读取凭据
   });
   assert.equal(code, 1);
   assert.ok(lines.some((line) => line.includes("INVALID_PROFILE")));
+});
+
+test("main record 成对运行：第二策略捕获第一策略的蓝图并复用 seed", () => {
+  const envDir = mkdtempSync(join(tmpdir(), "story-eval-env-"));
+  const envPath = join(envDir, ".env.local");
+  writeFileSync(envPath, [
+    "AI_API_BASE_URL=https://example.invalid/v1",
+    "AI_MODEL=test-model",
+    "AI_API_KEY=test-key",
+  ].join("\n"), "utf8");
+  const spawned = [];
+  try {
+    const code = main({
+      argv: ["--mode=record", "--case=wuxia-a", "--runs=1", "--seed=77"],
+      env: { RUN_REAL_AI_STORY_EVAL: "1", STORY_EVAL_PROFILE: "regression" },
+      sources: [envPath],
+      log: () => {},
+      spawn: (childEnv) => {
+        spawned.push(childEnv);
+        if (childEnv.STORY_EVAL_STRATEGY === "explore") {
+          mkdirSync(childEnv.STORY_EVAL_ARTIFACT_DIR, { recursive: true });
+          writeFileSync(join(childEnv.STORY_EVAL_ARTIFACT_DIR, "calls.jsonl"), "{}\n", "utf8");
+        }
+        return 0;
+      },
+    });
+    assert.equal(code, 0);
+    assert.equal(spawned.length, 2);
+    assert.equal(spawned[0].STORY_EVAL_SEED, "77");
+    assert.equal(spawned[1].STORY_EVAL_SEED, "77");
+    assert.equal(spawned[0].STORY_EVAL_PAIR_ID, spawned[1].STORY_EVAL_PAIR_ID);
+    assert.equal(spawned[0].STORY_EVAL_BLUEPRINT_ARTIFACT, undefined);
+    assert.equal(spawned[1].STORY_EVAL_BLUEPRINT_ARTIFACT, join(spawned[0].STORY_EVAL_ARTIFACT_DIR, "calls.jsonl"));
+  } finally {
+    rmSync(envDir, { recursive: true, force: true });
+  }
 });
 
 test("main replay 模式 spawn 抛错时 SPAWN_FAILED 并 exit 1", () => {

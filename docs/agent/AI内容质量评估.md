@@ -188,7 +188,16 @@ RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_MODEL、STORY_EVAL_JUDGE_TIMEOUT
 - `explore`：`artifacts/story-eval/wuxia-a-explore-0-2026-08-02T17-37-50-954Z-9ab61d12`。11 幕、`status=exhausted`、`fallbackRate=0`，未到结局；主线目标呈现/选择/事件命中为 `4/2/2`（总机会 11），NPC 贡献 `1/3`，物品贡献 `0`，事实实际叙事覆盖 `4/5`、规则调查 `3/5`。有 1 组有效成对分支，状态/事件/叙事均不同但未重新收敛。该策略仍会在合法探索选择下停滞，不能宣称 explore 已完成收敛修复。
 - `objective`：`artifacts/story-eval/wuxia-a-objective-1-2026-08-02T17-45-08-475Z-166c0601`。13 幕、`status=converged`，结局行记录 `ending_1/沉冤得雪/success`，`fallbackRate=0`；主线下一跳呈现/选择为 `13/13`，直接目标呈现/选择与事件命中为 `8/8/8`，规则推进 `13/13`；NPC `4/4`、地点 `3/4`、物品 `1/1` 均有贡献；分支同样为 `1` 组且三类差异均成立。
 - 主要残留：objective 的事实蓝图为 4 条，实际叙事只使用 `fact_identity/fact_premise`（使用覆盖 `2/4=0.50`），规则调查为 `0/4`；生成蓝图中第 2–7 幕仍共享“深入铁剑山庄求证并取回关键信物”的重复尾句，说明仅做整句去重不足以保证语义覆盖。objective 的 pacing 为 `setup=1/develop=10/turn=1/climax=1`，分析器记录 1 次顺序回退（turn 后回到 develop），需区分跨幕合法重置与真正结构退化。
+- 随后的结构门禁已补上两层：候选校验会按去掉幕号后的长语义片段拒绝重复主线描述（`REPEATED_MAIN_QUEST_DESCRIPTION_FRAGMENT`），分析器则按 `mainStage` 计算 `stageWindowViolations/turnStages/hasSetup/hasClimax/hasResolutionEvidence`。因此 `turn → next-stage develop` 不再被全局顺序指标误判，但同一主线阶段内的非法回退仍会暴露。
 - 这次复测确认本批修复的可归因收益是：目标映射在 objective 策略中保持 `13/13` 推进并稳定到达结局；NPC 演员获得本幕目标/角色描述后贡献达到 `4/4`；两条旅程均 `fallbackRate=0`，新的状态—prose 审批未产生越权结果。它没有证明自由探索收敛、事实覆盖或三幕结构已达标；下一轮应优先处理探索停滞与事实进入实际叙事/调查的路径，并在 pacing 指标中按主线幕切分顺序。
+
+### 评测器修复（2026-08-03，生成级计划 Task 1–2）
+
+- `storyEvalJourney.mjs` 现在按 `case × replicate` 建立 paired run：两种策略共享同一 `seed`、`pairId` 与首个策略产生的 `calls.jsonl` 蓝图快照；第二条旅程不再被另一份随机开局混淆。manifest 追加 `pairingVersion/pairId/gameType/blueprintPairSource`，paired 产物缺少这些字段时会被完整性校验拒绝。
+- 评测驱动器遇到规则层只剩一个合法的非战斗行动时，会执行一次带稳定 `actionKey` 的 `single_legal_action` continuation bridge；该规则动作不占叙事幕数，也不伪造第二个 AI 选项。只有零合法行动才计入 `trueDeadEnds`，重复续行超过上限才计入 `recoveryLoops`。分析器将三者单列为 `metrics.continuation`。
+- 因此此前 explore 的 `status=exhausted` 不能直接当作真实死局：需要用新 runner 重新采集，查看 `trueDeadEnds/recoveryLoops` 后再判断是探索策略停滞还是蓝图/规则不可玩。当前离线门禁、续行测试与 TypeScript 检查已通过；新 paired runner 已发起一次计费 regression，但该次在 explore 第 5 幕因 3/5 场景使用 fallback（director/writer 多次 `service_error`）触发 `status=aborted`，Vitest worker 随后异常退出，未形成可比的 objective artifact，因此这次不计入通过证据。
+
+本次失败产物为 `artifacts/story-eval/wuxia-a-explore-0-2026-08-03T02-57-50-741Z-92535b7d`：`fallbackRate=0.600`、`trueDeadEnds=0`、`recoveryLoops=0`。这说明新评测器已经能把“服务错误导致的 fallback 过半”单独暴露出来，不能用续行桥接或文本质量掩盖。下一次真实回归必须先解决 provider/service_error 的稳定性或明确重试预算，再重新完成同一 pair；在此之前不能声称生成级真实门禁通过。
 
 ### Thinking 结论
 
@@ -200,6 +209,10 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 2. 用 `regression` 16 幕先确认固定 long 蓝图的 stage 8、boss、ending convergence；再用 `baseline` 60 幕或多蓝图长测确认跨结构稳定性。
 3. 保持 `actionEvents` 与目标快照配对，继续监控 writer schema retry、pacing illegal order 和 NPC contribution。
 4. 完成上述结构修复的多 seed A/B 后，再决定是否把 director thinking 提升为 dev/staging 默认；不提前改 production 默认。
+
+### 生成级门禁与题材矩阵（2026-08-03）
+
+已加入 `scripts/storyEvalQualityGate.mjs` / `npm run gate:story-eval`。它只消费 `manifest.json + metrics.json + 可选 scores.json`，按 `pairId` 聚合事实和分支，不把独立蓝图混作 A/B；缺 pairing、continuation、generated-fact 或 pacing 字段直接报 `EVIDENCE_INCOMPLETE`。默认 pilot 门禁要求 objective 收敛、主线推进、零真死局/恢复循环、fallback≤5%、事实覆盖、分支后果与阶段节奏；`--release` 再要求七种 gameType 全覆盖和 judge 证据。当前 gate 已有 pass/fail/coverage 缺失的离线测试，尚未把旧真实 artifact 伪装成新证据。
 
 ## 事实覆盖口径修正（2026-08-02）
 

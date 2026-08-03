@@ -248,7 +248,7 @@ describe("createFallbackBlueprint：内容预算与结构", () => {
       })).toEqual(["visit_location:loc_4", "defeat_enemy:enemy_boss"]);
       expect(mainQuests.flatMap((quest) => quest.objectives).some((objective) =>
         objective.kind === "discover_fact" && ["fact_gen_1", "fact_gen_2"].includes(objective.factId)
-      )).toBe(false);
+      )).toBe(true);
       const validation = validateScenarioBlueprintCandidate(generated, {
         profile: PROFILES.gameTypeProfiles[generated.gameType],
         policy,

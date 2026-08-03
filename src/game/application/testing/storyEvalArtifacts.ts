@@ -142,6 +142,12 @@ export function validateStoryEvalArtifacts(input: {
     if (typeof manifest.contractVersion !== "string" || manifest.contractVersion.length === 0) {
       push("contractVersion");
     }
+    if (manifest.pairingVersion === "paired-v1") {
+      if (typeof manifest.pairId !== "string" || manifest.pairId.trim() === "") push("pairId");
+      if (typeof manifest.caseId !== "string" || manifest.caseId.trim() === "") push("caseId");
+      if (typeof manifest.gameType !== "string" || manifest.gameType.trim() === "") push("gameType");
+      if (typeof manifest.strategySeed !== "number" || !Number.isFinite(manifest.strategySeed)) push("strategySeed");
+    }
     const versions = manifest.promptVersions;
     if (versions === null || typeof versions !== "object") {
       push("promptVersions");

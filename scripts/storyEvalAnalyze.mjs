@@ -24,6 +24,45 @@ export function pacingRank(pacing) {
   return PACING_ORDER.indexOf(pacing);
 }
 
+function stageAwarePacing(sceneRows, endingRow, manifest) {
+  const turnStages = [];
+  let stageWindowViolations = 0;
+  let hasSetup = false;
+  let hasClimax = false;
+  const manifestStages = (manifest?.blueprint?.quests ?? [])
+    .filter((quest) => quest?.kind === "main" && Number.isInteger(quest.stage))
+    .map((quest) => quest.stage);
+  const observedStages = sceneRows
+    .map((row) => row.mainStage)
+    .filter((stage) => Number.isInteger(stage));
+  const finalStage = Math.max(...(manifestStages.length > 0 ? manifestStages : observedStages), 0);
+  for (const row of sceneRows) {
+    const pacing = row.directorPlan?.pacing;
+    const stage = row.mainStage;
+    if (pacing === "setup") hasSetup = true;
+    if (pacing === "turn" && Number.isInteger(stage) && !turnStages.includes(stage)) turnStages.push(stage);
+    if (pacing === "climax") hasClimax = true;
+    const allowed = stage === finalStage
+      ? ["climax"]
+      : stage === 1
+        ? ["setup", "develop"]
+        : ["develop", "turn"];
+    if (typeof pacing === "string" && Number.isInteger(stage) && !allowed.includes(pacing)) {
+      stageWindowViolations += 1;
+    }
+  }
+  return {
+    stageWindowViolations,
+    turnStages,
+    hasSetup,
+    hasClimax,
+    hasResolutionEvidence: endingRow !== undefined &&
+      typeof endingRow.endingName === "string" && endingRow.endingName.trim() !== "" &&
+      typeof endingRow.endingDescription === "string" && endingRow.endingDescription.trim() !== "" &&
+      typeof endingRow.outcome === "string" && endingRow.outcome.trim() !== "",
+  };
+}
+
 function mean(values) {
   if (values.length === 0) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -261,12 +300,23 @@ function factCoverageOf(sceneRows, manifest) {
   const facts = Array.isArray(manifest?.blueprint?.facts) ? manifest.blueprint.facts : [];
   const universe = facts.flatMap((fact) => typeof fact?.id === "string" && fact.id !== "" ? [fact.id] : []);
   const rate = (value) => universe.length === 0 ? 0 : value / universe.length;
+  const generatedUniverseFactIds = facts
+    .filter((fact) => fact?.source === "generated" && typeof fact.id === "string" && fact.id !== "")
+    .map((fact) => fact.id);
+  const generatedUsedFactIds = generatedUniverseFactIds.filter((id) => used.has(id));
+  const generatedDiscoveredFactIds = generatedUniverseFactIds.filter((id) => discovered.has(id));
+  const generatedRate = (value) => generatedUniverseFactIds.length === 0 ? 1 : value / generatedUniverseFactIds.length;
   return {
     universeFactIds: universe,
     usedFactIds: [...used],
     discoveredFactIds: [...discovered],
     usedCoverageRate: rate(universe.filter((id) => used.has(id)).length),
     discoveredCoverageRate: rate(universe.filter((id) => discovered.has(id)).length),
+    generatedUniverseFactIds,
+    generatedUsedFactIds,
+    generatedDiscoveredFactIds,
+    generatedUsedCoverageRate: generatedRate(generatedUsedFactIds.length),
+    generatedDiscoveredCoverageRate: generatedRate(generatedDiscoveredFactIds.length),
   };
 }
 
@@ -417,7 +467,7 @@ export function computeStoryEvalMetrics({ calls, story, manifest, branches = [],
     perRole,
     approvalRejections,
     tension: { values: tension, stddev: stddev(tension) },
-    pacing,
+    pacing: { ...pacing, ...stageAwarePacing(sceneRows, endingRow, manifest) },
     mainlineObjective: mainlineObjectiveMetrics(sceneRows),
     itemObjective: mainlineObjectiveMetrics(sceneRows.filter((row) => row.activeMainObjective?.kind === "obtain_item")),
     factsPerAct: factsPerActOf(sceneRows),
@@ -427,6 +477,11 @@ export function computeStoryEvalMetrics({ calls, story, manifest, branches = [],
       expansion: expansionFunnel(calls, sceneRows),
     },
     choices: choicesOf(branches, notApplicable),
+    continuation: {
+      bridges: Number(manifest?.continuationBridges?.length ?? 0),
+      trueDeadEnds: Number(manifest?.trueDeadEnds ?? 0),
+      recoveryLoops: Number(manifest?.recoveryLoops ?? 0),
+    },
     trigramRepeat: trigramRepeatRate(sceneRows.map((row) => row.narration ?? "")),
     narrationLengths: {
       min: narrationLengths.length === 0 ? 0 : Math.min(...narrationLengths),

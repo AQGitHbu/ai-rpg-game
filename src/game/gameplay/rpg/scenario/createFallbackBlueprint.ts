@@ -771,8 +771,9 @@ function mainQuestId(act: number): string {
 }
 
 // 中长线中段 objective 链：每幕引用一个尚未满足且存在合法行动路径的既有实体目标。
-// 生成型事实只在 openingScene 可调查；若把它们放进后续主线，玩家提前调查后
-// 会在任务解锁固定点迭代中连锁完成。关键物品与终幕战斗则沿 loc_3 → loc_4
+// medium/long 的第二幕额外要求调查一个生成事实；该事实仍只在 openingScene
+// 可调查，玩家需要沿规则路线回到开场地点，避免把“事实存在”误当作自动完成。
+// 关键物品与终幕战斗则沿 loc_3 → loc_4
 // 形成明确的移动/拾取/交谈/战斗链；长线额外回到开场 NPC，再到终幕 NPC，
 // 避免重复使用已满足的 visit/fact 目标。
 const MID_OBJECTIVES: readonly (readonly { kind: string; [key: string]: string }[])[] = [
@@ -813,7 +814,9 @@ function mainStageDescription(
   objective: { readonly kind: string; readonly [key: string]: string },
   template: TypeTemplate,
 ): string {
-  return `第 ${act} 幕：${mainObjectiveLabel(objective, template)}。${template.mainQuests[1].description}`;
+  // 每幕只保留当前目标与其语义结果，避免把模板中段描述作为固定尾句
+  // 复制到所有阶段；这也是生成候选语义去重闸门的最低可解释基线。
+  return `第 ${act} 幕：${mainObjectiveLabel(objective, template)}。`;
 }
 
 function buildQuests(
@@ -863,7 +866,9 @@ function buildQuests(
       if (firstObjective === undefined) throw new Error(`fallback objective missing for act ${act}`);
       const objectives = (isLegacyMid
         ? [{ ...firstObjective }, { kind: "obtain_item", itemId: ITEM_KEY }]
-        : MID_OBJECTIVES[midIndex]) as QuestDefinitionCandidate["objectives"];
+        : act === 2 && mainActs >= 5
+          ? [{ ...firstObjective }, { kind: "discover_fact", factId: FACT_GEN_1 }]
+          : MID_OBJECTIVES[midIndex]) as QuestDefinitionCandidate["objectives"];
       quests.push({
         kind: "main", stage: act, id,
         name: isLegacyMid ? template.mainQuests[1].name : `第 ${act} 章·${template.mainQuests[1].name}`,

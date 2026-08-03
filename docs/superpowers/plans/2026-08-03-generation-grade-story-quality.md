@@ -46,7 +46,7 @@ The pilot gate uses three paired `wuxia-a` regression replicates; the release ga
 - Produces manifest fields `pairingVersion`, `pairId`, `blueprintPairSource`, `gameType`, and `strategySeed`.
 - The first strategy writes a normal live `calls.jsonl`; the second receives that exact path through `STORY_EVAL_BLUEPRINT_ARTIFACT`.
 
-- [ ] **Step 1: Add failing runner tests for blueprint and seed pairing**
+- [x] **Step 1: Add failing runner tests for blueprint and seed pairing**
 
 ```js
 test("explore/objective pair reuses the first run candidate and the same seed", () => {
@@ -81,13 +81,13 @@ test("explore/objective pair reuses the first run candidate and the same seed", 
 
 Import `mkdtempSync`, `writeFileSync`, and `rmSync` from `node:fs`, `tmpdir` from `node:os`, and `join` from `node:path` in the test file.
 
-- [ ] **Step 2: Run the script tests and verify the new assertion fails**
+- [x] **Step 2: Run the script tests and verify the new assertion fails**
 
 Run: `node --test scripts/storyEvalJourney.node-test.mjs`
 
 Expected: FAIL because the current runner increments the seed and starts both strategies from independent live blueprints.
 
-- [ ] **Step 3: Build paired run specs and inject the captured scenario into the second run**
+- [x] **Step 3: Build paired run specs and inject the captured scenario into the second run**
 
 ```js
 export function buildPairedRunSpecs(cases, strategies, runs, baseSeed) {
@@ -135,7 +135,7 @@ for (const pair of buildPairedRunSpecs(selectedCases, strategies, runs, baseSeed
 }
 ```
 
-- [ ] **Step 4: Persist and validate pair metadata**
+- [x] **Step 4: Persist and validate pair metadata**
 
 ```ts
 const manifest: Record<string, unknown> = {
@@ -150,7 +150,7 @@ const manifest: Record<string, unknown> = {
 
 When `manifest.pairingVersion === "paired-v1"`, completeness requires a non-empty `pairId`, `gameType`, and `strategySeed`. Legacy artifacts without `pairingVersion` remain readable, but the generation-grade gate rejects them as `EVIDENCE_INCOMPLETE`.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 Run: `node --test scripts/storyEvalJourney.node-test.mjs`
 
@@ -177,7 +177,7 @@ Commit: `git commit -am "fix(story-eval): pair strategies on one blueprint"`
 - `StoryEvalContinuation` contains one existing `PlayerIntent`, its stable `actionKey`, public label, and reason `single_legal_action`.
 - Manifest adds `continuationBridges`, `trueDeadEnds`, and `recoveryLoops`.
 
-- [ ] **Step 1: Add failing tests for one-action recovery and zero-action dead ends**
+- [x] **Step 1: Add failing tests for one-action recovery and zero-action dead ends**
 
 ```ts
 const PIPELINE = runScenarioPipeline({
@@ -228,13 +228,13 @@ it("returns null when no rule action remains", () => {
 
 Import `GameState` from `@/game/domain` and `runScenarioPipeline` from `../applicationFixture.testutil`.
 
-- [ ] **Step 2: Run the continuation tests and verify they fail**
+- [x] **Step 2: Run the continuation tests and verify they fail**
 
 Run: `npx vitest run src/game/application/testing/storyEvalContinuation.test.ts`
 
 Expected: FAIL because `projectStoryEvalContinuation` does not exist.
 
-- [ ] **Step 3: Implement the pure continuation projection**
+- [x] **Step 3: Implement the pure continuation projection**
 
 ```ts
 import type { GameState, ScenarioBlueprint } from "@/game/domain";
@@ -260,7 +260,7 @@ export function projectStoryEvalContinuation(
 }
 ```
 
-- [ ] **Step 4: Refactor the journey loop so bridge actions do not consume narrative scene budget**
+- [x] **Step 4: Refactor the journey loop so bridge actions do not consume narrative scene budget**
 
 ```ts
 const continuationBridges: Record<string, unknown>[] = [];
@@ -304,7 +304,7 @@ manifest.recoveryLoops = recoveryLoops;
 
 Extend `StoryEvalJourneyResult.status` with `"recovery_loop"` so the bounded bridge failure is represented explicitly rather than cast through an unrelated status.
 
-- [ ] **Step 5: Add analyzer output and regression assertions**
+- [x] **Step 5: Add analyzer output and regression assertions**
 
 ```js
 const continuation = {
@@ -316,7 +316,7 @@ const continuation = {
 
 Assert that a synthetic one-action bridge produces `bridges=1`, `trueDeadEnds=0`, and does not increase `sceneCount`.
 
-- [ ] **Step 6: Run focused and application tests, then commit**
+- [x] **Step 6: Run focused and application tests, then commit**
 
 Run: `npx vitest run src/game/application/testing/storyEvalContinuation.test.ts src/game/application/testing/storyEvalJourney.test.ts`
 
@@ -349,7 +349,7 @@ Commit: `git add src/game/application/testing scripts/storyEvalAnalyze.mjs scrip
 - Medium/long blueprints must include at least one main quest `discover_fact` objective targeting a generated fact.
 - Analyzer adds `generatedUniverseFactIds`, `generatedUsedFactIds`, `generatedDiscoveredFactIds`, `generatedUsedCoverageRate`, and `generatedDiscoveredCoverageRate` under `facts`.
 
-- [ ] **Step 1: Add failing validator tests**
+- [x] **Step 1: Add failing validator tests**
 
 ```ts
 it("rejects a generated fact that no rule path or NPC can reach", () => {
@@ -376,13 +376,13 @@ it("requires a generated fact on the medium/long mainline", () => {
 
 Import `createBudgetPolicy` from `@/game/domain`; reuse the existing `draft`, `issuesOf`, and `codesOf` helpers in this test file.
 
-- [ ] **Step 2: Run scenario tests and verify they fail**
+- [x] **Step 2: Run scenario tests and verify they fail**
 
 Run: `npx vitest run src/game/gameplay/rpg/scenario/validateScenarioBlueprint.test.ts`
 
 Expected: FAIL because the new issue codes and fact anchor analysis do not exist.
 
-- [ ] **Step 3: Implement fact-anchor validation**
+- [x] **Step 3: Implement fact-anchor validation**
 
 ```ts
 function validateGeneratedFactAnchors(
@@ -424,7 +424,7 @@ function validateGeneratedFactAnchors(
 
 Call this function after reference validation and before quest-graph validation.
 
-- [ ] **Step 4: Strengthen the scenario prompt and fallback contract**
+- [x] **Step 4: Strengthen the scenario prompt and fallback contract**
 
 Add these exact prompt requirements:
 
@@ -435,7 +435,7 @@ Add these exact prompt requirements:
 
 Assert both sentences appear in `scenarioPrompt.test.ts`. Confirm `createFallbackBlueprint` already meets the rule; if a profile variant does not, place `fact_gen_1` in the first available middle main stage and preserve unique `kind+target` objectives.
 
-- [ ] **Step 5: Report generated-only coverage separately from player-input facts**
+- [x] **Step 5: Report generated-only coverage separately from player-input facts**
 
 ```js
 const generatedUniverseFactIds = (manifest.blueprint?.facts ?? [])
@@ -456,7 +456,7 @@ facts.generatedDiscoveredCoverageRate = generatedUniverseFactIds.length === 0
 
 Add analyzer tests proving player-input facts do not inflate generated-fact coverage.
 
-- [ ] **Step 6: Run scenario, fixture, analyzer, and type tests, then commit**
+- [x] **Step 6: Run scenario, fixture, analyzer, and type tests, then commit**
 
 Run: `npx vitest run src/game/gameplay/rpg/scenario/validateScenarioBlueprint.test.ts src/game/gameplay/rpg/scenario/createFallbackBlueprint.test.ts src/game/application/server/ai/scenarioPrompt.test.ts`
 
@@ -486,7 +486,7 @@ Commit: `git add src/game/gameplay/rpg/scenario src/game/application/server/ai/s
 - Adds `REPEATED_MAIN_QUEST_DESCRIPTION_FRAGMENT` for repeated meaningful clauses of eight or more code points.
 - Adds `pacing.stageWindowViolations`, `turnStages`, `hasSetup`, `hasClimax`, and `hasResolutionEvidence` without removing `illegalOrderCount`.
 
-- [ ] **Step 1: Add failing tests for repeated suffixes and stage-aware pacing**
+- [x] **Step 1: Add failing tests for repeated suffixes and stage-aware pacing**
 
 ```ts
 it("rejects a repeated semantic suffix even when the stage prefix differs", () => {
@@ -524,7 +524,7 @@ test("stage-aware pacing accepts a middle turn followed by next-stage develop", 
 });
 ```
 
-- [ ] **Step 2: Run focused tests and verify they fail**
+- [x] **Step 2: Run focused tests and verify they fail**
 
 Run: `npx vitest run src/game/gameplay/rpg/scenario/validateScenarioBlueprint.test.ts`
 
@@ -532,7 +532,7 @@ Run: `node --test scripts/storyEvalAnalyze.node-test.mjs`
 
 Expected: FAIL on the repeated suffix and missing stage-aware metrics.
 
-- [ ] **Step 3: Detect repeated meaningful description fragments**
+- [x] **Step 3: Detect repeated meaningful description fragments**
 
 ```ts
 function meaningfulDescriptionFragments(value: string): readonly string[] {
@@ -546,7 +546,7 @@ function meaningfulDescriptionFragments(value: string): readonly string[] {
 
 Track the first stage for each fragment and emit `REPEATED_MAIN_QUEST_DESCRIPTION_FRAGMENT` for later stages. Do not reject short connective phrases.
 
-- [ ] **Step 4: Compute stage-window pacing and ending evidence from story rows**
+- [x] **Step 4: Compute stage-window pacing and ending evidence from story rows**
 
 ```js
 function stageAwarePacing(sceneRows, endingRow, finalStage) {
@@ -584,7 +584,7 @@ function stageAwarePacing(sceneRows, endingRow, finalStage) {
 
 Derive `finalStage` from manifest main quests when available, otherwise use the maximum numeric `mainStage` in story rows.
 
-- [ ] **Step 5: Run focused and full analyzer/gameplay tests, then commit**
+- [x] **Step 5: Run focused and full analyzer/gameplay tests, then commit**
 
 Run: `node --test scripts/storyEvalAnalyze.node-test.mjs`
 
@@ -614,7 +614,7 @@ Commit: `git add scripts/storyEvalAnalyze* src/game/gameplay/rpg/scenario/valida
 - CLI: `node scripts/storyEvalQualityGate.mjs <run-dir>...`; exit 0 only when all hard gates pass.
 - Package script: `"gate:story-eval": "node scripts/storyEvalQualityGate.mjs"`.
 
-- [ ] **Step 1: Add failing gate tests for pass, quality failure, and insufficient coverage**
+- [x] **Step 1: Add failing gate tests for pass, quality failure, and insufficient coverage**
 
 ```js
 function run({ strategy, converged = true, generatedFactCoverage = 0.8 } = {}) {
@@ -664,13 +664,13 @@ test("release mode requires all seven supported game types", () => {
 });
 ```
 
-- [ ] **Step 2: Run the gate tests and verify they fail**
+- [x] **Step 2: Run the gate tests and verify they fail**
 
 Run: `node --test scripts/storyEvalQualityGate.node-test.mjs`
 
 Expected: FAIL because the gate module does not exist.
 
-- [ ] **Step 3: Implement exact hard-gate evaluation**
+- [x] **Step 3: Implement exact hard-gate evaluation**
 
 ```js
 export const GENERATION_GRADE_THRESHOLDS = Object.freeze({
@@ -800,7 +800,7 @@ Import `* as realFs` from `node:fs` and `resolve` from `node:path`; execute `pro
 
 Aggregate paired branch and fact coverage by `pairId`; do not compare independent blueprints. Treat missing fields in legacy artifacts as `EVIDENCE_INCOMPLETE`, not as zero-quality content.
 
-- [ ] **Step 4: Expand the case corpus to all supported game types**
+- [x] **Step 4: Expand the case corpus to all supported game types**
 
 Add one long case each for the four missing values with valid non-empty player inputs and distinct premises:
 
@@ -815,7 +815,7 @@ Add one long case each for the four missing values with valid non-empty player i
 
 Merge these entries into the existing array and extend `storyEvalCases.test.ts` to assert the exact seven-value game-type set.
 
-- [ ] **Step 5: Run the local gate suite and all deterministic quality tests**
+- [x] **Step 5: Run the local gate suite and all deterministic quality tests**
 
 Run: `node --test scripts/storyEvalQualityGate.node-test.mjs scripts/storyEvalAnalyze.node-test.mjs scripts/storyEvalJourney.node-test.mjs`
 
@@ -825,7 +825,7 @@ Run: `npm run typecheck`
 
 Expected: all pass; release-mode synthetic coverage contains all seven game types.
 
-- [ ] **Step 6: Run the paid pilot, judge, and generation-grade gate**
+- [x] **Step 6: Run the paid pilot, judge, and generation-grade gate**
 
 Run:
 
