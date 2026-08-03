@@ -253,6 +253,15 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 
 已加入 `scripts/storyEvalQualityGate.mjs` / `npm run gate:story-eval`。它只消费 `manifest.json + metrics.json + 可选 scores.json`，按 `pairId` 聚合事实和分支，不把独立蓝图混作 A/B；缺 pairing、continuation、generated-fact 或 pacing 字段直接报 `EVIDENCE_INCOMPLETE`。默认 pilot 门禁要求 objective 收敛、主线推进、零真死局/恢复循环、fallback≤5%、事实覆盖、分支后果与阶段节奏；`--release` 再要求七种 gameType 全覆盖和 judge 证据。当前 gate 已有 pass/fail/coverage 缺失的离线测试，尚未把旧真实 artifact 伪装成新证据。
 
+### provider 更新后的仙侠回归与七题材矩阵（2026-08-03）
+
+- 当前真实 provider 配置为 `AI_API_BASE_URL=http://api.aqliang.site:3100/v1`、`AI_MODEL=ai-slg-game-model`；密钥只从 `.env.local` 注入，未写入产物或日志。
+- 仙侠 objective regression：`artifacts/story-eval/xianxia-a-objective-0-2026-08-03T09-31-39-354Z-c928087f`（`profile=regression`）17 幕 `status=converged`、`fallbackRate=0`，主线/目标事件/规则推进 `17/17/17`，generated fact 使用/调查 `1.00/1.00`，`setup=1/develop=11/turn=4/climax=1`，无真死局/恢复循环；单 run `storyEvalQualityGate` 输出 `GENERATION_GRADE_OK`。这是 provider 更新后确认结构修复有效的正式仙侠证据。
+- 随后执行 bounded release matrix：保持 `profile=baseline`，明确覆盖 `maxScenes=18`、`maxRoleAttempts=2`、`AI_TIMEOUT=90s`、`branchMode=sample`，以免 provider 长等待阻塞矩阵；因此它不是 60 幕 baseline 长测，不能把通过的 objective 收敛外推为长程稳定性。
+- 矩阵实际得到 16 个合法 manifest（8 个 case/strategy 对）：objective 7/8 收敛（wuxia-a/b、science-fiction-a/b、urban-a/b、xianxia-a），fantasy objective 为 `generation_failed`（9 幕、fallback `1/9`）；explore 仅 2/8 收敛，Wuxia-a 的 fallback `1/16`，其余主要在 18 幕上限前未完成 climax/resolution。所有合法 run 的 `trueDeadEnds=0`、`recoveryLoops=0`、generated fact 发现链在 objective 中为 `1.00/1.00`，但 explore 有事实叙事覆盖不足（如 urban-b `0/2`）。每个 pair 只有 1 个 sample checkpoint，低于 release 要求的 3 个 checkpoint/2 个 durable consequence。
+- alternate-history 与 post-apocalypse 在 scenario 首幕连续 `schema_violation`/`timeout`，fallback opening 触发 `opening was not AI-generated`，没有合法 manifest；这两个题材不能用 fallback 伪造覆盖。一次 xianxia objective 的真实 judge 仅 early prediction 成功，story/C1–C4 均因 provider/协议响应失败，写入 `scores.json` 但不具备完整 judge 证据。
+- 对上述 16 个合法 run 执行 `node scripts/storyEvalQualityGate.mjs --release ...`，结果为 `GENERATION_GRADE_FAILED OBJECTIVE_NOT_CONVERGED,MAINLINE_PROGRESS_INCOMPLETE,EXPLORE_CONVERGENCE_LOW,FALLBACK_RATE_HIGH,PACING_ARC_INCOMPLETE,GENERATED_FACT_COVERAGE_LOW,BRANCH_DURABILITY_LOW,JUDGE_EVIDENCE_INCOMPLETE,GAME_TYPE_COVERAGE_INCOMPLETE`。当前 release blocker 已从 pacing 约束缺失收窄为：provider/schema 稳定性、探索策略在 bounded 长度内的收敛、全分支证据、alternate-history/post-apocalypse blueprint 生成，以及 judge 协议可靠性。
+
 ## 事实覆盖口径修正（2026-08-02）
 
 复核发现，旧报告把 `directorPlan.allowedRevealFactIds`（编剧可引用的已发现事实许可）与 `fact_discovered`（玩家执行 `investigate` 后产生的规则事件）当成同一条“计划→实际揭示”链，因而“`fact_identity/fact_premise` 未实际揭示”的结论不成立。`allowedRevealFactIds` 按审批规则本来就不能包含未发现事实，也不会触发调查事件。
