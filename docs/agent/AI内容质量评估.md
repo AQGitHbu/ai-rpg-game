@@ -236,6 +236,8 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - 本次 post-fix 结果把问题边界收窄为两层：中段转折不再依赖模型自觉，剩余阻断项是 provider 可靠性与长旅程在失败预算下的收敛；下一步应先做同一蓝图的可靠性重跑/重试预算实验，再决定是否扩展七题材 baseline matrix。
 - 对该单 run 运行 `node scripts/storyEvalQualityGate.mjs` 的稳定失败码为 `OBJECTIVE_NOT_CONVERGED, MAINLINE_PROGRESS_INCOMPLETE, FALLBACK_RATE_HIGH, PACING_ARC_INCOMPLETE`；这是一条有效的负证据，不应与通过的武侠 paired pilot 混合平均。
 - 同一 captured blueprint 的 post-fix `baseline` 对照为 `artifacts/story-eval/xianxia-a-objective-0-2026-08-03T08-39-42-794Z-52e9dfd5`（git `46d1b23`）：首幕后即 `status=aborted`，writer 依次出现 `rate_limited → invalid_json → invalid_json`，`fallbackRate=1.00`。高 retry 预算没有把 provider 输出异常转化为可玩的长旅程，故当前 release blocker 明确是 provider/协议可靠性。
+- `f619cf3` 增加了严格范围内的 escaped fenced JSON 恢复（runtime writer/NPC/director 与 scenario parser），并用真实 rawResponse 形状补了离线测试。随后真实 regression `artifacts/story-eval/xianxia-a-objective-0-2026-08-03T08-43-53-846Z-e4b0f85d` 的 `invalid_json` 已降为 0、fallback 降至 `2/18=11.1%`，但仍 `status=max_scenes`、未到 climax/ending；节奏已有 `turnStages=[2,3,6]`，说明协议修复有效但 provider timeout/rate limit 仍阻断长程收敛。
+- 新增的 setup 约束（新长蓝图空 story memory 第一场只允许 `setup`）尚未有真实 post-fix artifact；它目前只由纯函数测试证明，不能把离线约束当成跨题材实测通过。
 
 ### 下一轮优化顺序
 

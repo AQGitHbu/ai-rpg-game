@@ -62,7 +62,8 @@ export function deriveContentProgression({
       activeMainStage,
       hasCompletedMain,
       finalMainActOf(blueprint),
-      state
+      state,
+      blueprint
     ),
     activeQuestIds
   };
@@ -72,12 +73,16 @@ function allowedPacingFor(
   activeMain: number | null,
   hasCompletedMain: boolean,
   finalAct: number,
-  state: Pick<GameState, "storyMemory">
+  state: Pick<GameState, "storyMemory">,
+  blueprint: Pick<ScenarioBlueprint, "budgetPolicy">
 ): readonly StoryPacing[] {
   if (activeMain !== null) {
     if (activeMain >= finalAct) return ["climax"];
-    if (activeMain === 1) return ["setup", "develop"];
     const recentScenes = storyMemoryOf(state).recent.filter((entry) => entry.kind === "scene");
+    if (activeMain === 1) {
+      if (blueprint.budgetPolicy !== undefined && recentScenes.length === 0) return ["setup"];
+      return ["setup", "develop"];
+    }
     const hasRecentTurn = recentScenes.some((entry) => entry.pacing === "turn");
     // 三幕以内的短 fixture 没有独立中段空间；长蓝图才强制留出一次转折。
     if (finalAct >= 4 && recentScenes.length >= 2 && !hasRecentTurn) return ["turn"];

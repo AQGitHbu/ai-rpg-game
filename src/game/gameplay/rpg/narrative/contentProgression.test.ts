@@ -119,6 +119,15 @@ describe("deriveContentProgression：主线阶段派生 allowed pacing", () => {
     expect(progression.allowedPacing).toEqual(["turn"]);
   });
 
+  it("新长蓝图的空 story memory 第一场只允许 setup", () => {
+    const state = {
+      ...stateWith([[M1, "active"], [M2, "locked"], [M3, "locked"], [S1, "locked"]]),
+      storyMemory: { version: 1 as const, reducedThroughEventCount: 0, recent: [], npcContacts: [] }
+    } as GameState;
+    const progression = deriveContentProgression({ blueprint: buildLongBlueprint(), state });
+    expect(progression.allowedPacing).toEqual(["setup"]);
+  });
+
   it("已有 turn 后恢复中段 develop/turn 选择，不重复锁死转折", () => {
     const state = {
       ...stateWith([[M1, "completed"], [M2, "active"], [M3, "locked"], [S1, "locked"]]),
