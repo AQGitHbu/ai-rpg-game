@@ -240,6 +240,7 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - `f619cf3` 增加了严格范围内的 escaped fenced JSON 恢复（runtime writer/NPC/director 与 scenario parser），并用真实 rawResponse 形状补了离线测试。随后真实 regression `artifacts/story-eval/xianxia-a-objective-0-2026-08-03T08-43-53-846Z-e4b0f85d` 的 `invalid_json` 已降为 0、fallback 降至 `2/18=11.1%`，但仍 `status=max_scenes`、未到 climax/ending；节奏已有 `turnStages=[2,3,6]`，说明协议修复有效但 provider timeout/rate limit 仍阻断长程收敛。
 - 新增的 setup 约束（新长蓝图空 story memory 第一场只允许 `setup`）目前由纯函数测试证明；随后真实尝试 `artifacts/story-eval/xianxia-a-objective-0-2026-08-03T09-02-14-214Z-bfb5a848` 在首幕即遇到 `director rate_limited + service_error` 而 `aborted`，所以仍没有可用于验证完整 pacing 弧的 post-fix 样本，不能把离线约束当成跨题材实测通过。
 - 当前提交 `97e22ff` 后补做了同一 xianxia objective smoke（均为 3 幕、无分支，不能作正式质量结论）：`artifacts/story-eval/xianxia-a-objective-0-2026-08-03T09-09-09-081Z-0eb91573` 使用 1 次角色尝试，蓝图生成成功但第 3 幕导演两次约 34 秒 `service_error`，`fallbackRate=2/3=66.7%`；将 `STORY_EVAL_MAX_ROLE_ATTEMPTS` 提到 2 后，`artifacts/story-eval/xianxia-a-objective-0-2026-08-03T09-12-37-179Z-f00b46b0` 完成 3 幕且导演失败降为 `0`，但编剧仍有 `3/5` 次失败、`fallbackRate=1/3=33.3%`。这说明角色级重试确实能恢复部分瞬时故障，却仍远高于生成级门禁 `5%`，下一步应做 provider 可靠性/退避实验，而不是继续放宽结构门槛。
+- `75a6211` 接入 `STORY_EVAL_RETRY_BACKOFF_MS=1000` 的指数退避后，用同一 captured blueprint 做了隔离复测：`artifacts/story-eval/xianxia-a-objective-0-2026-08-03T09-24-34-181Z-20fd82a6` 的 manifest 已记录退避参数，但首幕仍出现 director `1/2`、writer `2/2` `service_error`，`status=aborted`、`fallbackRate=1.00`。退避逻辑接线正确，却未在该 provider 状态下恢复可玩场景；当前 release blocker 是端点/模型服务稳定性，不能靠增加 pacing 约束或继续提高文案重试来掩盖。
 
 ### 下一轮优化顺序
 
