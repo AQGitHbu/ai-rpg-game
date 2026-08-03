@@ -199,6 +199,10 @@ RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_MODEL、STORY_EVAL_JUDGE_TIMEOUT
 
 本次失败产物为 `artifacts/story-eval/wuxia-a-explore-0-2026-08-03T02-57-50-741Z-92535b7d`：`fallbackRate=0.600`、`trueDeadEnds=0`、`recoveryLoops=0`。这说明新评测器已经能把“服务错误导致的 fallback 过半”单独暴露出来，不能用续行桥接或文本质量掩盖。下一次真实回归必须先解决 provider/service_error 的稳定性或明确重试预算，再重新完成同一 pair；在此之前不能声称生成级真实门禁通过。
 
+随后使用 `seed=20260803` 重跑同一 `wuxia-a` paired regression，runner 输出 `REAL_AI_JOURNEY_OK`。explore 与 objective 都完成 16 幕；explore 为 `fallbackRate=0.0625`，objective 为 `0`。objective 在第 16 幕已经选择并执行 `start_battle:enemy_boss`，但旧版评测循环把战斗后的 ending 检查推到了 `maxScenes` 之外，产生了一个评测器误报；现已修复为战斗动作回到同一叙事幕检查结局，focused journey 与 typecheck 均通过。该次真实 artifact 是修复前产物，不能直接当作修复后的收敛证据，仍需后续重跑确认。
+
+在修复前 artifact 上运行 pilot gate 的失败码为：`OBJECTIVE_NOT_CONVERGED`（含上述边界误报）、`FALLBACK_RATE_HIGH`（explore 6.25% 超过 5%）、`PACING_ARC_INCOMPLETE`（没有 ending resolution evidence）、`GENERATED_FACT_COVERAGE_LOW`（generated used/discovered 均 0.50，目标分别为 0.70/0.50，前者不足）。这轮没有 true dead end 或 recovery loop；因此下一步应先重跑修复后的 pair，再针对 fallback、结局收敛和 generated fact 叙事覆盖继续优化，暂不进入七题材 release matrix。
+
 ### Thinking 结论
 
 thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `AI_THINKING_ROLES=director`；但它不能补上缺失的目标路线、物品卡、规则事件或角色权限边界。已有多 seed A/B 只显示阶段推进/张力弧的信号，未稳定改善事实召回、物品功能、分支证据或 ending convergence。因此 production 默认仍关闭 thinking；下一次 A/B 必须固定同一 blueprint/world seed，并比较 fallback、目标命中、`actionEvents`、事实召回、分支和结局，而不是只比较 prose 或 tension。

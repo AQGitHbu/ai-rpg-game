@@ -728,6 +728,9 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
           if (!result.ok) throw new Error(`battle action rejected: ${result.code}`);
           view = result.view;
         }
+        // 战斗动作不占叙事场景预算；若战斗在最后一幕启动，回到同一
+        // sceneIndex 检查 ending，避免把已经完成的结局误报为 max_scenes。
+        sceneIndex -= 1;
         continue;
       }
       // 4. 场景就绪：记录 story 行。
