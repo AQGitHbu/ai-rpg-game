@@ -262,6 +262,21 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - alternate-history 与 post-apocalypse 在 scenario 首幕连续 `schema_violation`/`timeout`，fallback opening 触发 `opening was not AI-generated`，没有合法 manifest；这两个题材不能用 fallback 伪造覆盖。一次 xianxia objective 的真实 judge 仅 early prediction 成功，story/C1–C4 均因 provider/协议响应失败，写入 `scores.json` 但不具备完整 judge 证据。
 - 对上述 16 个合法 run 执行 `node scripts/storyEvalQualityGate.mjs --release ...`，结果为 `GENERATION_GRADE_FAILED OBJECTIVE_NOT_CONVERGED,MAINLINE_PROGRESS_INCOMPLETE,EXPLORE_CONVERGENCE_LOW,FALLBACK_RATE_HIGH,PACING_ARC_INCOMPLETE,GENERATED_FACT_COVERAGE_LOW,BRANCH_DURABILITY_LOW,JUDGE_EVIDENCE_INCOMPLETE,GAME_TYPE_COVERAGE_INCOMPLETE`。当前 release blocker 已从 pacing 约束缺失收窄为：provider/schema 稳定性、探索策略在 bounded 长度内的收敛、全分支证据、alternate-history/post-apocalypse blueprint 生成，以及 judge 协议可靠性。
 
+### 七题材 baseline 并行 release matrix（2026-08-03，provider 更新后）
+
+本轮按题材并行启动 7 个 worker，题材内仍按 case 顺序执行 paired `explore → objective`；配置为 `profile=baseline`（`maxScenes=60`、`branchMode=full`、`maxRoleAttempts=3`、`AI_TIMEOUT=120s`）、`AI_THINKING_ROLES=`、`STORY_EVAL_RETRY_BACKOFF_MS=1000`。覆盖 10 个 case、计划 20 个 run；19 个写出合法 manifest，唯一缺失的是 `urban-a` explore 的 Vitest `Worker exited unexpectedly`。因此完整 paired evidence 为 9 对，`urban-a` objective 虽收敛但因没有 captured blueprint 只能算 singleton。
+
+- 19/19 合法 run 均 `status=converged`，场景数 14–30；18/19 `fallbackRate=0`，唯一例外是 `science-fiction-a` objective 的 `1/17=5.88%`。所有 run 的 `trueDeadEnds=0`、`recoveryLoops=0`；生成事实叙事/调查覆盖与 pacing 字段均满足门禁，没有再出现事实覆盖或 pacing 阻断。
+- 10 个 objective run 全部收敛；但 `science-fiction-a` objective 主线机会为 `16/16/17`（最后一幕目标推进证据少 1），触发 `MAINLINE_PROGRESS_INCOMPLETE`。其余 objective 主线推进均为 `17/17/17`。
+- objective run 均产生 3 个 paired checkpoints，状态/事件差异达到 2–3 组；explore run 只有 1–2 个 checkpoint、durable state/event 差异最多 1 组。因此 release 级 `minCheckpoints=3`、`minDurableCheckpoints=2` 在 explore 上不满足，触发 `BRANCH_DURABILITY_LOW`。这表明“objective 可收敛”已稳定，但自由探索仍未提供生成级后果证据。
+- 19 个 run 均执行了 judge 并写出 `scores.json`，但 19/19 的 judge 都有非空失败：`story_level=17`、`C1=16`、`C2=19`、`C3=19`、`C4=18`（另有 `early_prediction=1`）。大多数 story-level/C 维度为 provider 返回不完整协议后的 null，而不是游戏逻辑已被证明低分；门禁仍必须按缺失证据处理，不能将 null 当成通过。
+
+对这 19 个 run 执行 `node scripts/storyEvalQualityGate.mjs --release ...` 的最终输出为：
+
+`GENERATION_GRADE_FAILED MAINLINE_PROGRESS_INCOMPLETE,FALLBACK_RATE_HIGH,BRANCH_DURABILITY_LOW,JUDGE_EVIDENCE_INCOMPLETE,JUDGE_S1_LOW,JUDGE_S3_LOW,JUDGE_S7_LOW,JUDGE_S8_LOW,JUDGE_S9_LOW,JUDGE_C4_LOW`
+
+本轮结论：七题材 blueprint 生成、objective 目标流、事实覆盖、结局收敛和零真死局已达到可继续优化的生成级基础；尚不能宣称 release 通过。下一优先级是（1）让 explore 在至少 3 个 checkpoint 上形成 durable 后果；（2）修复 `science-fiction-a` 的最后目标推进/边界统计；（3）解决 judge 的 story/C 分层响应协议，使 19 个 run 能产生完整可审计评分；（4）单独复跑 urban-a explore，消除并发 worker exit 后再形成完整 paired matrix。
+
 ## 事实覆盖口径修正（2026-08-02）
 
 复核发现，旧报告把 `directorPlan.allowedRevealFactIds`（编剧可引用的已发现事实许可）与 `fact_discovered`（玩家执行 `investigate` 后产生的规则事件）当成同一条“计划→实际揭示”链，因而“`fact_identity/fact_premise` 未实际揭示”的结论不成立。`allowedRevealFactIds` 按审批规则本来就不能包含未发现事实，也不会触发调查事件。
