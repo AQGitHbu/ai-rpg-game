@@ -35,8 +35,8 @@ import { loadScenarioProfiles, type GameTypeProfile, type ScenarioProfiles } fro
 //     forbiddenTags），因此 7 种类型均安全。
 // ---------------------------------------------------------------------------
 
-/** fallback 模板版本；纳入 inputDigest，模板演进时提升。fallback-6：主线目标与物品/战斗地点形成可导航链。 */
-export const FALLBACK_TEMPLATE_VERSION = "fallback-6";
+/** fallback 模板版本；纳入 inputDigest，模板演进时提升。fallback-7：主线阶段描述与 objective 保持一一对应。 */
+export const FALLBACK_TEMPLATE_VERSION = "fallback-7";
 
 /** 玩家输入来源标记：出现在世界摘要 / 身份 / 开场 / 主线冲突 / 事实文本中，便于追溯。 */
 const PLAYER_INPUT_MARK = "【玩家输入】";
@@ -784,6 +784,38 @@ const MID_OBJECTIVES: readonly (readonly { kind: string; [key: string]: string }
   [{ kind: "talk_to_npc", npcId: "npc_4" }],
 ];
 
+function mainObjectiveLabel(
+  objective: { readonly kind: string; readonly [key: string]: string },
+  template: TypeTemplate,
+): string {
+  switch (objective.kind) {
+    case "talk_to_npc": {
+      const index = Number(objective.npcId.replace("npc_", "")) - 1;
+      return `与${template.npcs[index]?.name ?? objective.npcId}交谈，取得新的线索`;
+    }
+    case "visit_location": {
+      const index = Number(objective.locationId.replace("loc_", "")) - 1;
+      return `前往${template.locations[index]?.name ?? objective.locationId}查探现场`;
+    }
+    case "obtain_item":
+      return `取回${template.items[1].name}，确认案件的关键物证`;
+    case "discover_fact":
+      return "调查现场，确认尚未揭开的事实";
+    case "defeat_enemy":
+      return `击败${template.bossEnemy}，结束当前冲突`;
+    default:
+      return "完成当前阶段的推进目标";
+  }
+}
+
+function mainStageDescription(
+  act: number,
+  objective: { readonly kind: string; readonly [key: string]: string },
+  template: TypeTemplate,
+): string {
+  return `第 ${act} 幕：${mainObjectiveLabel(objective, template)}。${template.mainQuests[1].description}`;
+}
+
 function buildQuests(
   input: ValidatedNewGameInput,
   template: TypeTemplate,
@@ -802,7 +834,7 @@ function buildQuests(
       quests.push({
         kind: "main", stage: act, id,
         name: template.mainQuests[0].name,
-        description: `${input.characterName}${template.mainQuests[0].description}线索指向：${PLAYER_INPUT_MARK}${input.worldPremise}`,
+        description: `第 ${act} 幕：${input.characterName}${template.mainQuests[0].description}线索指向：${PLAYER_INPUT_MARK}${input.worldPremise}`,
         objectives: [{ kind: "visit_location", locationId: "loc_2" }],
         onSuccess: { kind: "unlock_quests", questIds: [mainQuestId(2), ...sideIds] },
         onFailure: { kind: "closed" },
@@ -812,7 +844,7 @@ function buildQuests(
       quests.push({
         kind: "main", stage: act, id,
         name: template.mainQuests[2].name,
-        description: template.mainQuests[2].description,
+        description: `第 ${act} 幕：${template.mainQuests[2].description}`,
         objectives: [
           { kind: "visit_location", locationId: BOSS_LOCATION_ID },
           { kind: "defeat_enemy", enemyId: ENEMY_BOSS_ID },
@@ -823,15 +855,20 @@ function buildQuests(
       });
     } else {
       const midIndex = act - 2;
-      // 3 幕时保持旧行为：原名、原 objective（talk + obtain）
+      // 3 幕时保持旧 objective（talk + obtain），但描述仍明确标出本幕目标。
       const isLegacyMid = mainActs === 3 && act === 2;
+      const firstObjective = isLegacyMid
+        ? ({ kind: "talk_to_npc", npcId: "npc_3" } as const)
+        : MID_OBJECTIVES[midIndex]?.[0];
+      if (firstObjective === undefined) throw new Error(`fallback objective missing for act ${act}`);
+      const objectives = (isLegacyMid
+        ? [{ ...firstObjective }, { kind: "obtain_item", itemId: ITEM_KEY }]
+        : MID_OBJECTIVES[midIndex]) as QuestDefinitionCandidate["objectives"];
       quests.push({
         kind: "main", stage: act, id,
         name: isLegacyMid ? template.mainQuests[1].name : `第 ${act} 章·${template.mainQuests[1].name}`,
-        description: template.mainQuests[1].description,
-        objectives: isLegacyMid
-          ? [{ kind: "talk_to_npc", npcId: "npc_3" }, { kind: "obtain_item", itemId: ITEM_KEY }]
-          : MID_OBJECTIVES[midIndex] as QuestDefinitionCandidate["objectives"],
+        description: mainStageDescription(act, firstObjective, template),
+        objectives,
         onSuccess: { kind: "unlock_quests", questIds: [nextId as string] },
         onFailure: { kind: "closed" },
         tags: []

@@ -47,13 +47,13 @@ S4 评分规则：早期预测与故事级评审使用**独立的 callJudge 调�
 
 - 整局 fallback 率；各角色重试率与 invalid_json 率；审批驳回分类分布。
 - tensionLevel 曲线（完整序列 + 标准差作为平坦度）；pacing 分布与顺序合法性。
-- 每幕事实覆盖分两条链记录：**计划叙事引用** = `directorPlan.allowedRevealFactIds` 集合；**实际叙事引用** = 新产物 `story.jsonl` 的 `usedFactIds + npcUsedFactIds`；**规则调查** = `fact_discovered.factId` 事件集合，另列为 `discoveredFactIds`。报告并列 `planned / actual / overlap / missed / discovered`（`factsPerAct`：`plannedFactIds`/`actualFactIds`/`overlapFactIds`/`missedFactIds`/`discoveredFactIds`）。`allowedRevealFactIds` 只允许已发现事实，不能与 `fact_discovered` 直接做计划→发现的命中率；旧产物缺少使用字段时，分析器为兼容回退到规则发现事件并注明版本差异。相邻场景 narration 字符 3-gram 重复率；narration/台词长度分布。
+- 每幕事实覆盖分两条链记录：**计划叙事引用** = `directorPlan.allowedRevealFactIds` 集合；**实际叙事引用** = 新产物 `story.jsonl` 的 `usedFactIds + npcUsedFactIds`；**规则调查** = `fact_discovered.factId` 事件集合，另列为 `discoveredFactIds`。报告并列 `planned / actual / new / repeated / overlap / missed / discovered`（`factsPerAct`：`plannedFactIds`/`actualFactIds`/`newFactIds`/`repeatedFactIds`/`overlapFactIds`/`missedFactIds`/`discoveredFactIds`），并在 `facts` 报告蓝图事实宇宙的实际引用/调查覆盖率。`allowedRevealFactIds` 只允许已发现事实，不能与 `fact_discovered` 直接做计划→发现的命中率；旧产物缺少使用字段时，分析器为兼容回退到规则发现事件并注明版本差异。相邻场景 narration 字符 3-gram 重复率；narration/台词长度分布。
 - **实体漏斗**（按 NPC、地点、物品分列；`entities.npc/location/item`）：
   - `introduced`：`directorPlan.introducedEntities` 中该种类实体 ID 的去重集合大小；
   - `interacted`（interacted/used）：交互事件携带的该种类 `entityId` 去重集合大小——NPC=`npc_met`、地点=`location_observed`/`location_visited`、物品=`item_obtained`；
   - `contributed`：在含贡献事件（`fact_discovered`/`quest_*`/`battle_*`/`enemy_defeated`/`ending_reached`）的场景行中登场（introduced 或 interacted）的该种类实体去重集合大小。
   - **扩展实体漏斗**（`entities.expansion`）：`proposed`（`expansion_decision` 提案记录数）→ `approved`（ok=true 数）→ `persisted`（动态铸 ID `loc_dyn_*`/`npc_dyn_*` 在故事数据中可观测的实体数——编译铸 ID 同步于审批，登场即证明已持久化）→ `adopted`（已持久化且实际首次登场的扩展实体数）。adoption rate 与 approval rate 分开，`adopted` 只能统计已持久化且实际首次登场的扩展实体，绝不复用 `approved`；当前产物口径下任何登场即首次登场，`adopted` 与 `persisted` 数值一致，但语义上只统计"实际首次登场"。
-- **选择漏斗**（`choices`，成对分支证据）：`pairedCheckpoints`（两个合法选项且各产出 branch.json 的检查点数）、`stateDifferent`/`eventDifferent`/`narrationDifferent`（状态差异=地点/事实/任务/关系/物品/战斗/ending 的 after 侧比较、分支后两场的事件差异、玩家可读文本差异，只统计实际存在差异的成对检查点——仅 actionKey 不同但状态/事件/文本均相同不得计为后果差异）、`notApplicable`（不足两个合法选项的检查点数，不伪造比较）。没有成对分支证据（`pairedCheckpoints === 0`）的 run 不得为 S8/S9 给出高于 3 分的结论：judge 侧在 `validateStoryLevelResult` 强制 cap 为 3 并注明 `"capped: no paired branch evidence"`，report 相应行标注"（上限约束：无分支证据）"。
+- **选择漏斗**（`choices`，成对分支证据）：`pairedCheckpoints`（两个合法选项且各产出 branch.json 的检查点数）、`stateDifferent`/`eventDifferent`/`narrationDifferent`（状态差异=地点/事实/任务/关系/物品/战斗/ending 的 after 侧比较、分支后两场的事件差异、玩家可读文本差异，只统计实际存在差异的成对检查点——仅 actionKey 不同但状态/事件/文本均相同不得计为后果差异）、`reconvergedCheckpoints`（固定分支窗口内三类证据均重新相同的检查点数）、`notApplicable`（不足两个合法选项的检查点数，不伪造比较）。没有成对分支证据（`pairedCheckpoints === 0`）的 run 不得为 S8/S9 给出高于 3 分的结论：judge 侧在 `validateStoryLevelResult` 强制 cap 为 3 并注明 `"capped: no paired branch evidence"`，report 相应行标注"（上限约束：无分支证据）"。
 - 场景总数与是否收敛到结局（场景上限内，见 §7）。
 
 ## 4. 人工抽查清单

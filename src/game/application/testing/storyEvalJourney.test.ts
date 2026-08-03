@@ -665,7 +665,15 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         status = "converged";
         const record = await loadRecord();
         const tailEvents = record.state.eventLedger.slice(previousLedgerLength).map((event) => toSafeEvent(event));
-        storyRows.push({ kind: "ending", sceneIndex, outcome: endingOutcome, newEvents: tailEvents });
+        storyRows.push({
+          kind: "ending",
+          sceneIndex,
+          endingId: String(record.state.ending?.endingId ?? ""),
+          endingName: view.ending.name,
+          endingDescription: view.ending.description,
+          outcome: endingOutcome,
+          newEvents: tailEvents,
+        });
         previousLedgerLength = record.state.eventLedger.length;
         break;
       }
@@ -776,6 +784,21 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       // 世界名称不在蓝图结构内（domain WorldDefinition 无 name），取会话视图
       // 投影的世界显示名（profile label），保证 manifest 蓝图快照可读。
       world: { name: view.world.name, summary: blueprint.world.summary, tone: blueprint.world.tone, themes: blueprint.world.themes },
+      facts: blueprint.world.facts.map((fact) => ({
+        id: String(fact.id),
+        text: fact.text,
+        source: fact.source,
+      })),
+      locations: blueprint.locations.map((location) => ({
+        id: String(location.id),
+        name: location.name,
+        description: location.description,
+        kind: location.kind,
+        connectedLocationIds: location.connectedLocationIds.map(String),
+        npcIds: location.npcIds.map(String),
+        availableItemIds: location.availableItemIds.map(String),
+        scale: location.scale ?? "scene",
+      })),
       npcs: blueprint.npcs.map((npc) => ({
         id: String(npc.id),
         name: npc.name,
@@ -784,12 +807,29 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         isCompanion: npc.isCompanion,
         knownFactIds: npc.knownFactIds.map(String),
       })),
+      items: blueprint.items.map((item) => ({
+        id: String(item.id),
+        name: item.name,
+        description: item.description,
+        kind: item.kind,
+        category: item.category ?? null,
+        rarity: item.rarity ?? null,
+      })),
+      enemies: blueprint.enemies.map((enemy) => ({
+        id: String(enemy.id),
+        name: enemy.name,
+        tier: enemy.tier,
+        locationId: String(enemy.locationId),
+      })),
       quests: blueprint.quests.map((quest) => ({
         id: String(quest.id),
         name: quest.name,
         kind: quest.kind,
         stage: quest.kind === "main" ? quest.stage : null,
         description: quest.description,
+        objectives: quest.objectives,
+        onSuccess: quest.onSuccess,
+        onFailure: quest.onFailure,
       })),
       endings: blueprint.endings.map((ending) => ({
         id: String(ending.id),
@@ -1113,8 +1153,20 @@ describe("Story eval journey (offline)", () => {
     }
     expect(manifest.answerKey).toMatchObject({ "ending:ending_1": { exactAliases: expect.any(Array) } });
     expect(manifest.gitCommit === null || typeof manifest.gitCommit === "string").toBe(true);
-    const blueprint = manifest.blueprint as { quests: readonly { kind: string }[]; endings: readonly unknown[]; world: { name: string } };
+    const blueprint = manifest.blueprint as {
+      quests: readonly { kind: string }[];
+      endings: readonly unknown[];
+      facts: readonly { id: string; source: string }[];
+      locations: readonly { id: string; name: string }[];
+      items: readonly { id: string }[];
+      enemies: readonly { id: string }[];
+      world: { name: string };
+    };
     expect(blueprint.world.name).toBeTruthy();
+    expect(blueprint.facts.length).toBeGreaterThan(0);
+    expect(blueprint.locations.length).toBeGreaterThan(0);
+    expect(blueprint.items.length).toBeGreaterThan(0);
+    expect(blueprint.enemies.length).toBeGreaterThan(0);
     expect(blueprint.quests.some((quest) => quest.kind === "main")).toBe(true);
     expect(blueprint.endings.length).toBeGreaterThan(0);
   }, 90_000);

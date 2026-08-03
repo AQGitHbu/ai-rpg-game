@@ -150,6 +150,17 @@ describe("validateStoryEvalArtifacts：完整性矩阵", () => {
     expect(validate({ calls: [] }).missing).toContain("calls");
     expect(validate({ story: [] }).missing).toContain("story");
   });
+
+  it("结局行缺少玩家可见标题或描述 → incomplete", () => {
+    const result = validate({
+      story: [
+        sceneRow(),
+        { kind: "ending", sceneIndex: 2, outcome: "success" },
+      ],
+    });
+    expect(result.complete).toBe(false);
+    expect(result.missing).toEqual(expect.arrayContaining(["endingName", "endingDescription"]));
+  });
 });
 
 describe("buildStoryEvalEvidence：证据包装配", () => {

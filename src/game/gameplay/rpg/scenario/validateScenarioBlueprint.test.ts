@@ -163,6 +163,24 @@ describe("validateScenarioBlueprintCandidate：内容预算", () => {
   });
 });
 
+describe("validateScenarioBlueprintCandidate：主线语义密度", () => {
+  it("拒绝多个主线阶段复用同一非空描述", () => {
+    const candidate = draft();
+    candidate.quests[1].description = candidate.quests[0].description;
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "quests[1].description",
+      code: "REPEATED_MAIN_QUEST_DESCRIPTION",
+      params: { firstStage: 1, stage: 2 },
+    });
+  });
+
+  it("允许空描述继续由既有必填/图校验处理", () => {
+    const candidate = draft();
+    candidate.quests[1].description = "";
+    expect(codesOf(issuesOf(candidate))).not.toContain("REPEATED_MAIN_QUEST_DESCRIPTION");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 3. 全局 ID 唯一
 // ---------------------------------------------------------------------------

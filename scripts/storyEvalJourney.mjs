@@ -90,7 +90,7 @@ export function buildStoryEvalArtifactDir({ artifactRoot, caseId, strategy, runI
 
 export const STORY_EVAL_PROFILE_DEFAULTS = Object.freeze({
   smoke: Object.freeze({ maxScenes: 3, maxRoleAttempts: 1, aiTimeoutMs: 60_000, branchMode: "none", totalBudgetMs: 10 * 60_000 }),
-  // fallback-6 的 long 主线需要 13 个 narrative scenes 才能启动终局战斗；
+  // fallback-7 的 long 主线需要 13 个 narrative scenes 才能启动终局战斗；
   // 16 给 battle/ending 收尾留出安全余量，避免 regression 把预算上限误报成
   // 结局不收敛。baseline 仍保留 60 幕作为跨蓝图安全阀。
   regression: Object.freeze({ maxScenes: 16, maxRoleAttempts: 2, aiTimeoutMs: 90_000, branchMode: "sample", totalBudgetMs: 45 * 60_000 }),

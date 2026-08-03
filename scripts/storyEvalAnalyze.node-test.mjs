@@ -60,11 +60,13 @@ test("computeStoryEvalMetrics 计算全部客观指标（v2 真实口径）", ()
   // 每幕事实覆盖：旧 artifact 无 usedFactIds，actual 兼容回退到 fact_discovered；
   // 新口径另列 discoveredFactIds。
   assert.deepEqual(metrics.factsPerAct, [
-    { act: 1, plannedFactIds: [], actualFactIds: [], discoveredFactIds: [], overlapFactIds: [], missedFactIds: [] },
+    { act: 1, plannedFactIds: [], actualFactIds: [], newFactIds: [], repeatedFactIds: [], discoveredFactIds: [], overlapFactIds: [], missedFactIds: [] },
     {
       act: 2,
       plannedFactIds: ["f1", "f2"],
       actualFactIds: ["f1", "f9"],   // f9 实际发现但未计划
+      newFactIds: ["f1", "f9"],
+      repeatedFactIds: [],
       discoveredFactIds: ["f1", "f9"],
       overlapFactIds: ["f1"],
       missedFactIds: ["f2"],          // 计划但未实际揭示
@@ -77,7 +79,7 @@ test("computeStoryEvalMetrics 计算全部客观指标（v2 真实口径）", ()
   // 扩展漏斗：proposed/approved 按提案数；persisted/adopted 按登场实体数（不复用 approved）。
   assert.deepEqual(metrics.entities.expansion, { proposed: 2, approved: 1, persisted: 1, adopted: 1 });
   // 无分支产物时选择漏斗全零。
-  assert.deepEqual(metrics.choices, { pairedCheckpoints: 0, stateDifferent: 0, eventDifferent: 0, narrationDifferent: 0, notApplicable: 0 });
+  assert.deepEqual(metrics.choices, { pairedCheckpoints: 0, stateDifferent: 0, eventDifferent: 0, narrationDifferent: 0, reconvergedCheckpoints: 0, notApplicable: 0 });
   assert.ok(metrics.trigramRepeat > 0 && metrics.trigramRepeat < 1);
   assert.equal(metrics.narrationLengths.mean > 0, true);
   assert.equal(metrics.maxScenesHit, false);
@@ -224,6 +226,8 @@ test("新产物把叙事使用与规则调查分开统计", () => {
     act: 2,
     plannedFactIds: ["f1", "f2"],
     actualFactIds: ["f1", "f2"],
+    newFactIds: ["f1", "f2"],
+    repeatedFactIds: [],
     discoveredFactIds: ["f9"],
     overlapFactIds: ["f1", "f2"],
     missedFactIds: [],
@@ -258,6 +262,7 @@ test("两个 branch 仅 actionKey 不同但状态/事件/文本相同：不得�
   assert.equal(metrics.choices.stateDifferent, 0);
   assert.equal(metrics.choices.eventDifferent, 0);
   assert.equal(metrics.choices.narrationDifferent, 0);
+  assert.equal(metrics.choices.reconvergedCheckpoints, 1);
   assert.equal(metrics.choices.notApplicable, 0);
 });
 
@@ -291,7 +296,23 @@ test("成对分支确有状态/事件/文本差异时逐项计入，且 not_appl
   assert.equal(metrics.choices.stateDifferent, 1);
   assert.equal(metrics.choices.eventDifferent, 1);
   assert.equal(metrics.choices.narrationDifferent, 1);
+  assert.equal(metrics.choices.reconvergedCheckpoints, 0);
   assert.equal(metrics.choices.notApplicable, 1);
+});
+
+test("重复引用事实不会被误报为新覆盖，none_proposed 不计扩展提案", () => {
+  const metrics = computeStoryEvalMetrics({
+    calls: [{ kind: "expansion_decision", decision: { ok: false, reason: "none_proposed" } }],
+    story: [
+      { kind: "scene", sceneIndex: 1, mainStage: 1, narration: "一", usedFactIds: ["f1"], npcUsedFactIds: [], actionEvents: [] },
+      { kind: "scene", sceneIndex: 2, mainStage: 1, narration: "二", usedFactIds: ["f1"], npcUsedFactIds: [], actionEvents: [] },
+    ],
+    manifest: { blueprint: { facts: [{ id: "f1" }, { id: "f2" }] } },
+  });
+  assert.deepEqual(metrics.factsPerAct[0].newFactIds, ["f1"]);
+  assert.deepEqual(metrics.factsPerAct[0].repeatedFactIds, ["f1"]);
+  assert.equal(metrics.facts.usedCoverageRate, 0.5);
+  assert.equal(metrics.entities.expansion.proposed, 0);
 });
 
 test("pacingRank 顺序合法判定", () => {

@@ -540,10 +540,18 @@ export function toSceneScriptContext(input: SceneScriptContextInput): SceneScrip
 
 export type NpcLineContext = {
   readonly npcDefinition: Record<string, unknown>;
+  /** 当前场景的规则目标，帮助演员把台词服务于推进而非泛泛聊天。 */
+  readonly sceneGoal: string;
+  /** 玩家公开身份；不包含原始输入或隐藏记忆。 */
+  readonly playerName: string;
+  /** 演员所在地点的安全语义卡。 */
+  readonly currentLocationCard: RuntimeLocationCard;
   readonly factCards: readonly Record<string, unknown>[];
   /** Phase 11：该 NPC 自身连续性（最后接触回合与地点名），不含对白或关系数值。 */
   readonly ownContinuity: { readonly lastContactTurn: number; readonly lastLocationName: string } | null;
   readonly speechAct: string;
+  /** 编剧请求的情绪；演员只能在此意图内表现，输出仍由审批层复核。 */
+  readonly requestedEmotion: string;
   readonly mayLie: boolean;
   // Phase 13：NPC 关系值（好感度档位、数值、交互摘要），供演员调整台词语气与态度。
   readonly relationshipTier: string;
@@ -556,6 +564,8 @@ export type NpcLineContextInput = {
   readonly state: GameState;
   readonly npcId: string;
   readonly speechAct: string;
+  readonly sceneGoal?: string;
+  readonly requestedEmotion?: string;
   readonly allowedFactIds: readonly string[];
   readonly mayLie: boolean;
 };
@@ -584,13 +594,18 @@ export function toNpcLineContext(input: NpcLineContextInput): NpcLineContext {
           id: String(npcDef.id),
           name: npcDef.name,
           role: npcDef.role,
+          description: npcDef.description ?? "",
           // Deliberately omit the NPC's full known-fact list.  The performer
           // receives only the fact cards approved for this exact line.
         }
       : { id: npcId, name: "???", role: "unknown" },
+    sceneGoal: input.sceneGoal ?? "推进当前场景目标",
+    playerName: blueprint.player.name,
+    currentLocationCard: currentLocationCardOf(blueprint, state),
     factCards,
     ownContinuity: projectOwnContinuity(state, blueprint, npcId),
     speechAct: input.speechAct,
+    requestedEmotion: input.requestedEmotion ?? "neutral",
     mayLie: input.mayLie,
     // Phase 13：
     relationshipTier: tier,

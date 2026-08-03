@@ -149,9 +149,9 @@ RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_MODEL、STORY_EVAL_JUDGE_TIMEOUT
 
 | 角色/边界 | 已定位的结构缺陷 | 为什么会导致正常推进出问题 | 当前修复 |
 | --- | --- | --- | --- |
-| Director | 原先只看动作候选和摘要，不知道当前主线的直接目标、到目标地点的下一跳、当前地点卡和可取得物品卡；fallback 蓝图还存在重复 objective。 | 模型会选择“合法但不推进当前任务”的 talk/move/investigate；任务固定点又可能把解锁时已满足的目标连锁完成，表现为跳幕、重复、停滞。 | fallback 升为 `fallback-6`；上下文加入 `activeMainObjective/currentLocationCard/availableItemCards`；合法下一跳由规则图计算；目标 action 机械置首，扩展改为稀有回退。 |
-| Writer | 原先缺少权威的地点/物品卡，容易用 prose 暗示物品已获得；NPC 事实授权没有同时约束 `allowedFactCards` 与 NPC 自己的 `knownFactIds`。 | 选项 key 虽合法，文案却可能与规则事实冲突；NPC 要么越权知道事实，要么被错误清空授权事实而失去功能。 | 编剧只复制导演批准的 action key；地点/物品卡作为权威输入；不允许文案声称 `item_obtained`；事实授权取两集合交集，空请求回退到安全已知子集。 |
-| NPC / 行动边界 | NPC 的最小权限本身基本正确，但普通 `talk` 曾绕过 Phase 13 关系/记忆写入；编剧到 NPC 的授权链断开。 | 选择对话后 NPC 关系不变化，连续性读不到“初次见面”；同一角色的可说事实不稳定。 | 普通 `talk` 统一写入 `npc_met + greet` 关系事件；NPC 只收到编剧明确交给它且自己已知的 fact cards。 |
+| Director | 原先只看动作候选和摘要，不知道当前主线的直接目标、到目标地点的下一跳、当前地点卡和可取得物品卡；fallback 蓝图还存在重复 objective/阶段描述。 | 模型会选择“合法但不推进当前任务”的 talk/move/investigate；任务固定点又可能把解锁时已满足的目标连锁完成，表现为跳幕、重复、停滞。 | fallback 升为 `fallback-7`；上下文加入 `activeMainObjective/currentLocationCard/availableItemCards`；合法下一跳由规则图计算；目标 action 机械置首；主线重复描述候选直接拒绝，扩展改为稀有回退。 |
+| Writer | 原先缺少权威的地点/物品卡，容易用 prose 暗示物品已获得；NPC 事实授权没有同时约束 `allowedFactCards` 与 NPC 自己的 `knownFactIds`。 | 选项 key 虽合法，文案却可能与规则事实冲突；NPC 要么越权知道事实，要么被错误清空授权事实而失去功能。 | 编剧只复制导演批准的 action key；地点/物品卡作为权威输入；审批层对未执行 `take_item` 的物品占有句返回 `state_prose_mismatch`；事实授权取两集合交集，空请求回退到安全已知子集。 |
+| NPC / 行动边界 | NPC 的最小权限本身基本正确，但普通 `talk` 曾绕过 Phase 13 关系/记忆写入；编剧到 NPC 的授权链断开，演员也缺少本幕目标和角色描述。 | 选择对话后 NPC 关系不变化，连续性读不到“初次见面”；同一角色的可说事实不稳定，台词容易变成泛泛警告。 | 普通 `talk` 统一写入 `npc_met + greet` 关系事件；NPC 只收到编剧明确交给它且自己已知的 fact cards，并追加 sceneGoal/playerName/currentLocationCard/description/requestedEmotion；演员同样拒绝提前宣称物品已取得。 |
 | Item / 规则层 | 物品不是 AI 自由生成内容，只有预编译蓝图中的 `take_item`；系统本身没有 `use_item`、交易、装备效果或随机掉落。 | 旧链路没有稳定到达 `loc_3`/`take_item`，看起来像“没有物品”；若只改 prompt，仍不能让 prose 写背包。 | 主线链明确经过 `visit loc_3 → take item_key`，导演/编剧看到可取得物品卡；真实回归用 `actionEvents` 证明 `item_obtained`。未实现能力继续保持拒绝/不宣称。 |
 
 正常推进的故障边界是：`Director plan → Writer choices → narrative choice → resolver → quest reconciliation`。之前只有最后两层是规则可靠的，前面缺少“当前目标到合法 action”的投影，所以“合法”不等于“可推进”。这比是否开启 thinking 更直接。
@@ -173,6 +173,22 @@ RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_MODEL、STORY_EVAL_JUDGE_TIMEOUT
 - 张力标准差 `0.640`，节奏 `setup=1/develop=8/turn=3`，仍有 `illegalOrderCount=2`；这是叙事结构优化问题，不是规则推进问题。
 
 本次新增 `story.jsonl.actionEvents`，专门记录当前场景所选 action 产生的安全规则事件；旧 artifact 仍回退使用 `newEvents`。这修正了此前真实跑测中明明发生 `item_obtained` 却统计为 0 的评估器错位。
+
+## 修复批次（2026-08-03）
+
+- NPC 交接上下文现在显式携带 `sceneGoal`、`playerName`、当前地点卡、NPC `description` 与 Writer 请求的 `requestedEmotion`；演员提示词要求按本幕目标和关系状态回应，避免只有泛化角色名/警告。
+- 编剧与 NPC 审批均检查未执行 `take_item` 时的物品占有句，返回 `state_prose_mismatch` 并触发有界重试/fallback；否定句（“尚未拾起”）仍允许。
+- 主线蓝图新增 `REPEATED_MAIN_QUEST_DESCRIPTION` 语义闸门；fallback 升为 `fallback-7`，每幕描述指向具体地点、NPC 或物品目标。
+- 评估器新增事实的 `newFactIds/repeatedFactIds`、蓝图事实宇宙覆盖率、`none_proposed` 排除，以及固定分支窗口的 `reconvergedCheckpoints`；manifest 同步保存事实、地点、物品、敌人、目标明细，结局行保存玩家可见标题/描述。
+
+### 修复后真实 regression 复测（2026-08-03）
+
+使用 `.env.local` 发起真实 provider 请求，`case=wuxia-a`、`profile=regression`、`AI_THINKING_ROLES=`，同一命令分别记录 `explore` 与 `objective` 两条旅程；runner 最终输出 `REAL_AI_JOURNEY_OK`。
+
+- `explore`：`artifacts/story-eval/wuxia-a-explore-0-2026-08-02T17-37-50-954Z-9ab61d12`。11 幕、`status=exhausted`、`fallbackRate=0`，未到结局；主线目标呈现/选择/事件命中为 `4/2/2`（总机会 11），NPC 贡献 `1/3`，物品贡献 `0`，事实实际叙事覆盖 `4/5`、规则调查 `3/5`。有 1 组有效成对分支，状态/事件/叙事均不同但未重新收敛。该策略仍会在合法探索选择下停滞，不能宣称 explore 已完成收敛修复。
+- `objective`：`artifacts/story-eval/wuxia-a-objective-1-2026-08-02T17-45-08-475Z-166c0601`。13 幕、`status=converged`，结局行记录 `ending_1/沉冤得雪/success`，`fallbackRate=0`；主线下一跳呈现/选择为 `13/13`，直接目标呈现/选择与事件命中为 `8/8/8`，规则推进 `13/13`；NPC `4/4`、地点 `3/4`、物品 `1/1` 均有贡献；分支同样为 `1` 组且三类差异均成立。
+- 主要残留：objective 的事实蓝图为 4 条，实际叙事只使用 `fact_identity/fact_premise`（使用覆盖 `2/4=0.50`），规则调查为 `0/4`；生成蓝图中第 2–7 幕仍共享“深入铁剑山庄求证并取回关键信物”的重复尾句，说明仅做整句去重不足以保证语义覆盖。objective 的 pacing 为 `setup=1/develop=10/turn=1/climax=1`，分析器记录 1 次顺序回退（turn 后回到 develop），需区分跨幕合法重置与真正结构退化。
+- 这次复测确认本批修复的可归因收益是：目标映射在 objective 策略中保持 `13/13` 推进并稳定到达结局；NPC 演员获得本幕目标/角色描述后贡献达到 `4/4`；两条旅程均 `fallbackRate=0`，新的状态—prose 审批未产生越权结果。它没有证明自由探索收敛、事实覆盖或三幕结构已达标；下一轮应优先处理探索停滞与事实进入实际叙事/调查的路径，并在 pacing 指标中按主线幕切分顺序。
 
 ### Thinking 结论
 

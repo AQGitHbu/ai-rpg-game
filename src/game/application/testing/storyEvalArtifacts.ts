@@ -48,6 +48,10 @@ export type StoryEvalStoryRow = Readonly<{
   usedFactIds?: readonly string[];
   /** NPC 演员实际声明在台词中使用的已授权事实 ID。 */
   npcUsedFactIds?: readonly string[];
+  /** 结局行的稳定 ID 与玩家可见标题/描述；用于区分“收敛”与“可解释收敛”。 */
+  endingId?: string;
+  endingName?: string;
+  endingDescription?: string;
   outcome?: string | null;
 }>;
 
@@ -149,16 +153,22 @@ export function validateStoryEvalArtifacts(input: {
   }
 
   for (const row of input.story) {
-    if (row.kind !== "scene") continue;
-    // 场景衔接证据：sceneIndex > 1 的场景必须有紧邻前序行（C2 前提）。
-    if (row.sceneIndex > 1 && !input.story.some((entry) => entry.sceneIndex === row.sceneIndex - 1)) {
-      push("previousScene");
+    if (row.kind === "ending") {
+      if (typeof row.outcome !== "string" || row.outcome.trim() === "") push("endingOutcome");
+      if (typeof row.endingName !== "string" || row.endingName.trim() === "") push("endingName");
+      if (typeof row.endingDescription !== "string" || row.endingDescription.trim() === "") push("endingDescription");
     }
-    // NPC 场景必须携带 C1 证据包：memory / profile / 关系摘要。
-    if (row.npcLine !== undefined && row.npcLine !== null) {
-      if (row.memorySummary === undefined || row.memorySummary === null) push("memory");
-      if (row.npcProfile === undefined || row.npcProfile === null) push("npcProfile");
-      if (row.relationshipSummary === undefined || row.relationshipSummary === null) push("relationship");
+    if (row.kind === "scene") {
+      // 场景衔接证据：sceneIndex > 1 的场景必须有紧邻前序行（C2 前提）。
+      if (row.sceneIndex > 1 && !input.story.some((entry) => entry.sceneIndex === row.sceneIndex - 1)) {
+        push("previousScene");
+      }
+      // NPC 场景必须携带 C1 证据包：memory / profile / 关系摘要。
+      if (row.npcLine !== undefined && row.npcLine !== null) {
+        if (row.memorySummary === undefined || row.memorySummary === null) push("memory");
+        if (row.npcProfile === undefined || row.npcProfile === null) push("npcProfile");
+        if (row.relationshipSummary === undefined || row.relationshipSummary === null) push("relationship");
+      }
     }
     // 规则事件必须携带其安全 ID（fact_discovered 缺 factId 即不完整）。
     for (const events of [row.newEvents ?? [], row.actionEvents ?? []]) {

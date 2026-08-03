@@ -25,7 +25,7 @@ function buildTestBlueprint(): ScenarioBlueprint {
       { id: asLocationId("loc_a"), name: "地点A", description: "", kind: "public", connectedLocationIds: [] },
     ],
     npcs: [
-      { id: asNpcId("npc_1"), name: "NPC1", role: "村民", locationId: asLocationId("loc_a"), knownFactIds: [asFactId("fact_1")] },
+      { id: asNpcId("npc_1"), name: "NPC1", role: "村民", description: "守着渡口、对外来者保持警惕的村民。", locationId: asLocationId("loc_a"), knownFactIds: [asFactId("fact_1")] },
     ],
     quests: [],
     enemies: [],
@@ -322,5 +322,75 @@ describe("orchestrateNarrativeScene：规则行动文案", () => {
       expect.objectContaining({ actionKey: "talk:npc_1", label: "与NPC1交谈" }),
       expect.objectContaining({ actionKey: "observe:loc_a", label: "观察地点A" }),
     ]);
+  });
+});
+
+describe("orchestrateNarrativeScene：NPC 角色交接", () => {
+  it("把编剧的场景目标与情绪交给演员，并保留角色语义档案", async () => {
+    const blueprint = buildTestBlueprint();
+    const state = { ...buildTestGameState(), npcs: [{ npcId: asNpcId("npc_1"), locationId: asLocationId("loc_a"), met: false }] } as GameState;
+    let receivedContext: Record<string, unknown> | undefined;
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-npc-handoff",
+      blueprint,
+      state,
+      directorSource: {
+        async generate() {
+          return {
+            ok: true,
+            provenance: "generated",
+            plan: {
+              sceneGoal: "让守门人透露渡口异常",
+              tensionLevel: 3,
+              focusNpcId: "npc_1",
+              relevantFactIds: ["fact_1"],
+              allowedRevealFactIds: ["fact_1"],
+              suggestedActionKeys: ["talk:npc_1", "observe:loc_a"],
+              introducedEntities: [],
+              pacing: "develop",
+            },
+            diagnostics: { traceId: "director", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" },
+          } as never;
+        },
+      },
+      sceneScriptSource: {
+        async generate() {
+          return {
+            ok: true,
+            provenance: "generated",
+            script: {
+              narration: "守门人盯着你的来意。",
+              usedFactIds: [],
+              npcInstruction: { npcId: "npc_1", speechAct: "warn", emotion: "afraid", allowedFactIds: ["fact_1"], mayLie: false },
+              choices: [
+                { actionKey: "talk:npc_1", label: "交谈", strategy: "试探" },
+                { actionKey: "observe:loc_a", label: "观察", strategy: "寻找痕迹" },
+              ],
+            },
+            diagnostics: { traceId: "writer", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" },
+          } as never;
+        },
+      },
+      npcLineSource: {
+        async generate(request) {
+          receivedContext = request.context;
+          return {
+            ok: true,
+            provenance: "generated",
+            performance: { text: "别靠近渡口。", emotion: "afraid", usedFactIds: [] },
+            diagnostics: { traceId: "npc", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" },
+          } as never;
+        },
+      },
+    });
+
+    expect(result.provenance).toBe("generated");
+    expect(receivedContext).toMatchObject({
+      sceneGoal: "让守门人透露渡口异常",
+      requestedEmotion: "afraid",
+      playerName: "Player",
+      currentLocationCard: { id: "loc_a", name: "地点A" },
+      npcDefinition: { id: "npc_1", description: "守着渡口、对外来者保持警惕的村民。" },
+    });
   });
 });

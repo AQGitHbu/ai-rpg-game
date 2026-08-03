@@ -40,8 +40,8 @@ type RuntimeNarrativeSources = Readonly<{
 }>;
 
 // 运行时易变/可重建字段：回放时 sceneId / choiceToken 不参与请求指纹。
-// activeMainObjective、currentLocationCard、availableItemCards 都是由同一份
-// blueprint/state/actionCandidates 派生的提示投影；排除它们可让旧黄金 fixture
+// activeMainObjective、currentLocationCard、availableItemCards、coverageTargetActionKey
+// 都是由同一份 blueprint/state/actionCandidates 派生的提示投影；排除它们可让旧黄金 fixture
 // 在增加路由/物品卡字段后继续回放，同时仍由其原始输入字段检测真实上下文漂移。
 const NARRATIVE_VOLATILE_KEYS = new Set(["sceneId", "choiceToken"]);
 const NARRATIVE_REBUILDABLE_KEYS = new Set([
@@ -49,6 +49,7 @@ const NARRATIVE_REBUILDABLE_KEYS = new Set([
   "currentLocationCard",
   "availableItemCards",
   "discoveredFactCards",
+  "coverageTargetActionKey",
 ]);
 
 export function fingerprintNarrativeContext(context: Record<string, unknown>): string {
@@ -60,6 +61,17 @@ export function fingerprintNarrativeContext(context: Record<string, unknown>): s
   if (typeof stableContext.npcProfile === "object" && stableContext.npcProfile !== null) {
     stableContext.npcProfile = Object.fromEntries(
       Object.entries(stableContext.npcProfile).filter(([key]) => key !== "knownFactIds"),
+    );
+  }
+  // NPC handoff fields are additive presentation guidance.  They are derived
+  // from the already fingerprinted state/plan and are intentionally omitted
+  // so historical v1 replay calls remain consumable after the handoff grows.
+  delete stableContext.sceneGoal;
+  delete stableContext.playerName;
+  delete stableContext.requestedEmotion;
+  if (typeof stableContext.npcDefinition === "object" && stableContext.npcDefinition !== null) {
+    stableContext.npcDefinition = Object.fromEntries(
+      Object.entries(stableContext.npcDefinition).filter(([key]) => key !== "description"),
     );
   }
   // relevantFactIds is copied from the approved Director plan and the
@@ -149,11 +161,14 @@ export function createReplayRuntimeNarrativeSources(
   ): RuntimeNarrativeRecordedCall {
     const requestFingerprint = fingerprintNarrativeContext(request.context);
     return cursor.consume(
-      (call) =>
+      (call) => {
+        const matches =
         call.fixtureVersion === RUNTIME_NARRATIVE_FIXTURE_VERSION &&
         call.contractVersion === NARRATIVE_CONTRACT_VERSION &&
         call.role === role &&
-        call.requestFingerprint === requestFingerprint,
+        call.requestFingerprint === requestFingerprint;
+        return matches;
+      },
     );
   }
 

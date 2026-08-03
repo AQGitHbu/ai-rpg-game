@@ -68,16 +68,25 @@ function trigramRepeatRate(narrations) {
  */
 function factsPerActOf(sceneRows) {
   const byAct = new Map();
+  const seenActualFacts = new Set();
+  const registerActualFact = (entry, id) => {
+    if (seenActualFacts.has(id)) entry.repeated.add(id);
+    else entry.newlyUsed.add(id);
+    seenActualFacts.add(id);
+    entry.actual.add(id);
+  };
   for (const row of sceneRows) {
     if (typeof row.mainStage !== "number") continue;
-    const entry = byAct.get(row.mainStage) ?? { planned: new Set(), actual: new Set(), discovered: new Set() };
+    const entry = byAct.get(row.mainStage) ?? {
+      planned: new Set(), actual: new Set(), discovered: new Set(), newlyUsed: new Set(), repeated: new Set(),
+    };
     for (const id of row.directorPlan?.allowedRevealFactIds ?? []) {
       if (typeof id === "string" && id !== "") entry.planned.add(id);
     }
     const hasUsageFields = Array.isArray(row.usedFactIds) || Array.isArray(row.npcUsedFactIds);
     if (hasUsageFields) {
       for (const id of [...(row.usedFactIds ?? []), ...(row.npcUsedFactIds ?? [])]) {
-        if (typeof id === "string" && id !== "") entry.actual.add(id);
+        if (typeof id === "string" && id !== "") registerActualFact(entry, id);
       }
     }
     for (const event of eventsForObjectiveOutcome(row)) {
@@ -85,7 +94,7 @@ function factsPerActOf(sceneRows) {
         entry.discovered.add(event.factId);
         // Old artifacts did not carry usedFactIds; keep their historical
         // actualFactIds interpretation as a compatibility fallback.
-        if (!hasUsageFields) entry.actual.add(event.factId);
+        if (!hasUsageFields) registerActualFact(entry, event.factId);
       }
     }
     byAct.set(row.mainStage, entry);
@@ -99,6 +108,8 @@ function factsPerActOf(sceneRows) {
         act,
         plannedFactIds,
         actualFactIds,
+        newFactIds: [...sets.newlyUsed],
+        repeatedFactIds: [...sets.repeated],
         discoveredFactIds: [...sets.discovered],
         overlapFactIds: plannedFactIds.filter((id) => sets.actual.has(id)),
         missedFactIds: plannedFactIds.filter((id) => !sets.actual.has(id)),
@@ -145,7 +156,7 @@ function entityFunnel(sceneRows) {
         rowEntities[entry.kind].add(entry.id);
       }
     }
-    for (const event of row.newEvents ?? []) {
+    for (const event of eventsForObjectiveOutcome(row)) {
       for (const kind of Object.keys(KIND_INTERACTION_EVENTS)) {
         if (KIND_INTERACTION_EVENTS[kind].includes(event.type) && typeof event.entityId === "string" && event.entityId !== "") {
           interacted[kind].add(event.entityId);
@@ -153,7 +164,7 @@ function entityFunnel(sceneRows) {
         }
       }
     }
-    if ((row.newEvents ?? []).some((event) => CONTRIBUTION_EVENTS.has(event.type))) {
+    if (eventsForObjectiveOutcome(row).some((event) => CONTRIBUTION_EVENTS.has(event.type))) {
       for (const kind of ["npc", "location", "item"]) {
         for (const id of rowEntities[kind]) contributed[kind].add(id);
       }
@@ -178,17 +189,20 @@ function entityFunnel(sceneRows) {
 function expansionFunnel(calls, sceneRows) {
   const decisions = calls.filter((call) => call.kind === "expansion_decision");
   const approved = decisions.filter((call) => call.decision?.ok === true).length;
+  // `none_proposed` is the normal no-op decision emitted for every scene; it
+  // is evidence that expansion was considered, not that a proposal existed.
+  const proposed = decisions.filter((call) => call.decision?.reason !== "none_proposed").length;
   const dynamicIds = new Set();
   for (const row of sceneRows) {
     for (const entry of row.directorPlan?.introducedEntities ?? []) {
       if (typeof entry.id === "string" && DYNAMIC_ENTITY_ID.test(entry.id)) dynamicIds.add(entry.id);
     }
-    for (const event of row.newEvents ?? []) {
+    for (const event of eventsForObjectiveOutcome(row)) {
       if (typeof event.entityId === "string" && DYNAMIC_ENTITY_ID.test(event.entityId)) dynamicIds.add(event.entityId);
     }
   }
   const persisted = dynamicIds.size;
-  return { proposed: decisions.length, approved, persisted, adopted: persisted };
+  return { proposed, approved, persisted, adopted: persisted };
 }
 
 /** 分支 outcome 快照：只取 after 侧可观察状态，用于成对比较后果差异。 */
@@ -223,7 +237,36 @@ function choicesOf(branches, notApplicable) {
     stateDifferent: differs(branchOutcomeOf),
     eventDifferent: differs((branch) => JSON.stringify(branch.eventsAfter ?? [])),
     narrationDifferent: differs((branch) => JSON.stringify(branch.narration ?? [])),
+    reconvergedCheckpoints: paired.filter(([a, b]) =>
+      branchOutcomeOf(a) === branchOutcomeOf(b) &&
+      JSON.stringify(a.eventsAfter ?? []) === JSON.stringify(b.eventsAfter ?? []) &&
+      JSON.stringify(a.narration ?? []) === JSON.stringify(b.narration ?? [])
+    ).length,
     notApplicable: notApplicable.length,
+  };
+}
+
+/** 全局事实覆盖：分幕事实集合之外，报告蓝图事实宇宙中真正被使用/发现的部分。 */
+function factCoverageOf(sceneRows, manifest) {
+  const used = new Set();
+  const discovered = new Set();
+  for (const row of sceneRows) {
+    for (const id of [...(row.usedFactIds ?? []), ...(row.npcUsedFactIds ?? [])]) {
+      if (typeof id === "string" && id !== "") used.add(id);
+    }
+    for (const event of eventsForObjectiveOutcome(row)) {
+      if (event.type === "fact_discovered" && typeof event.factId === "string" && event.factId !== "") discovered.add(event.factId);
+    }
+  }
+  const facts = Array.isArray(manifest?.blueprint?.facts) ? manifest.blueprint.facts : [];
+  const universe = facts.flatMap((fact) => typeof fact?.id === "string" && fact.id !== "" ? [fact.id] : []);
+  const rate = (value) => universe.length === 0 ? 0 : value / universe.length;
+  return {
+    universeFactIds: universe,
+    usedFactIds: [...used],
+    discoveredFactIds: [...discovered],
+    usedCoverageRate: rate(universe.filter((id) => used.has(id)).length),
+    discoveredCoverageRate: rate(universe.filter((id) => discovered.has(id)).length),
   };
 }
 
@@ -378,6 +421,7 @@ export function computeStoryEvalMetrics({ calls, story, manifest, branches = [],
     mainlineObjective: mainlineObjectiveMetrics(sceneRows),
     itemObjective: mainlineObjectiveMetrics(sceneRows.filter((row) => row.activeMainObjective?.kind === "obtain_item")),
     factsPerAct: factsPerActOf(sceneRows),
+    facts: factCoverageOf(sceneRows, manifest),
     entities: {
       ...entityFunnel(sceneRows),
       expansion: expansionFunnel(calls, sceneRows),

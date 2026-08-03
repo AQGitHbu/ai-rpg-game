@@ -236,6 +236,8 @@ describe("createFallbackBlueprint：内容预算与结构", () => {
         : expectedChain;
       expect(signatures).toEqual(expected.slice(0, policy.mainActs));
       expect(new Set(signatures).size).toBe(signatures.length);
+      expect(new Set(mainQuests.map((quest) => quest.description)).size).toBe(mainQuests.length);
+      for (const quest of mainQuests) expect(quest.description.trim()).toContain(String(quest.stage));
       const finalQuest = mainQuests.at(-1);
       expect(finalQuest?.objectives.map((objective) => {
         switch (objective.kind) {

@@ -29,7 +29,7 @@ function buildTestBlueprint(): ScenarioBlueprint {
       { id: asLocationId("loc_a"), name: "地点A", description: "", kind: "public", connectedLocationIds: [] },
     ],
     npcs: [
-      { id: asNpcId("npc_1"), name: "NPC1", role: "村民", locationId: asLocationId("loc_a"), knownFactIds: [asFactId("fact_1")] },
+      { id: asNpcId("npc_1"), name: "NPC1", role: "村民", description: "守着渡口、对外来者保持警惕的村民。", locationId: asLocationId("loc_a"), knownFactIds: [asFactId("fact_1")] },
     ],
     quests: [],
     enemies: [],
@@ -390,12 +390,19 @@ describe("runtimeNarrativeContexts 演员", () => {
       state,
       npcId: "npc_1",
       speechAct: "inform",
+      sceneGoal: "查明渡口传闻",
+      requestedEmotion: "afraid",
       allowedFactIds: ["fact_1"],
       mayLie: false,
     });
     const npcDef = context.npcDefinition as Record<string, unknown>;
     expect(npcDef.id).toBe("npc_1");
     expect(npcDef.name).toBe("NPC1");
+    expect(npcDef.description).toContain("渡口");
+    expect(context.playerName).toBe("Player");
+    expect(context.sceneGoal).toBe("查明渡口传闻");
+    expect(context.requestedEmotion).toBe("afraid");
+    expect(context.currentLocationCard).toMatchObject({ id: "loc_a", name: "地点A" });
   });
 
   it("toNpcLineContext 包含事实卡片", () => {

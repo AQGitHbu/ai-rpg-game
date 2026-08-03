@@ -108,6 +108,7 @@ export type NarrativeApprovalCategory =
   | "reference_broken"
   | "knowledge_scope_violation"
   | "choice_not_legal"
+  | "state_prose_mismatch"
   | "continuity_violation";
 
 export type NarrativeApprovalResult<T> =

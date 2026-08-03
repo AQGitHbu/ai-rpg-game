@@ -127,6 +127,15 @@ export async function orchestrateNarrativeScene(
 
   // Step 3：投影编剧上下文 → 调用编剧 source
   const sceneScriptContext = toSceneScriptContext({ blueprint, state, plan });
+  const currentLocation = blueprint.locations.find((location) => String(location.id) === String(state.currentLocationId));
+  const inventory = new Set((state.inventory ?? []).map(String));
+  const unresolvedItemNames = currentLocation === undefined
+    ? []
+    : (currentLocation.availableItemIds ?? []).flatMap((itemId) => {
+        if (inventory.has(String(itemId))) return [];
+        const item = blueprint.items.find((entry) => String(entry.id) === String(itemId));
+        return item === undefined ? [] : [item.name];
+      });
   let scriptAttempt: SceneScriptAttempt | null = null;
   let script: ApprovedSceneScript | undefined;
   for (let attempt = 0; attempt < maxRoleAttempts; attempt += 1) {
@@ -137,7 +146,12 @@ export async function orchestrateNarrativeScene(
       });
     } catch { continue; }
     if (!scriptAttempt.ok) continue;
-    const approval = approveSceneScript({ proposal: scriptAttempt.script, plan, blueprint });
+    const approval = approveSceneScript({
+      proposal: scriptAttempt.script,
+      plan,
+      blueprint,
+      unresolvedItemNames,
+    });
     input.approvalObserver?.({ kind: "role_approval", traceId, role: "writer", attempt: attempt + 1, category: approval.ok ? null : approval.category });
     if (approval.ok) { script = approval.value; break; }
     logger.warn("runtime_narrative_approval", { traceId, role: "writer", category: approval.category });
@@ -155,6 +169,8 @@ export async function orchestrateNarrativeScene(
       state,
       npcId: npcInst.npcId,
       speechAct: npcInst.speechAct,
+      sceneGoal: plan.sceneGoal,
+      requestedEmotion: npcInst.emotion,
       allowedFactIds: npcInst.allowedFactIds,
       mayLie: npcInst.mayLie,
     });
@@ -167,7 +183,11 @@ export async function orchestrateNarrativeScene(
         });
         npcLineAttempted = true;
         if (!attempt.ok) continue;
-        const approved = approveNpcPerformance({ proposal: attempt.performance, allowedFactIds: npcInst.allowedFactIds });
+        const approved = approveNpcPerformance({
+          proposal: attempt.performance,
+          allowedFactIds: npcInst.allowedFactIds,
+          unresolvedItemNames,
+        });
         input.approvalObserver?.({ kind: "role_approval", traceId, role: "npc", attempt: attemptIndex + 1, category: approved.ok ? null : approved.category });
         if (!approved.ok) continue;
         npcLine = { npcId: npcInst.npcId as NpcId, text: approved.value.text, emotion: approved.value.emotion, usedFactIds: approved.value.usedFactIds as readonly FactId[] };

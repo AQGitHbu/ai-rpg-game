@@ -67,6 +67,7 @@ export type ScenarioBlueprintIssueCode =
   | "INVALID_ITEM_PRESENTATION"
   | "INVALID_LOCATION_SCALE"
   | "TOWN_LOCATION_OVERBUDGET"
+  | "REPEATED_MAIN_QUEST_DESCRIPTION"
   | "OUT_OF_RANGE";
 
 export type ScenarioBlueprintIssue = {
@@ -117,9 +118,39 @@ export function validateScenarioBlueprintCandidate(
   validateForbiddenTags(issues, candidate, context.profile);
   validateItemPresentationMetadata(issues, candidate);
   validateLocationScales(issues, candidate, context.policy);
+  validateMainQuestDescriptionDensity(issues, candidate);
 
   if (issues.length > 0) return { ok: false, issues };
   return { ok: true, validated: candidate as ValidatedScenarioBlueprintCandidate };
+}
+
+/**
+ * 主线阶段是玩家理解推进的最小语义单位。完全复用同一段非空描述会让
+ * 不同 objective 看起来像同一幕，尤其会掩盖 AI 候选把阶段目标复制粘贴的
+ * 情况。只比较规范化后的完整描述，保留空描述的旧候选兼容性。
+ */
+function validateMainQuestDescriptionDensity(
+  issues: ScenarioBlueprintIssue[],
+  candidate: ScenarioBlueprintCandidate,
+): void {
+  const firstByDescription = new Map<string, number>();
+  candidate.quests
+    .filter((quest) => quest.kind === "main")
+    .forEach((quest) => {
+      const description = quest.description.trim();
+      if (description === "") return;
+      const firstStage = firstByDescription.get(description);
+      if (firstStage !== undefined) {
+        const index = candidate.quests.findIndex((entry) => entry.id === quest.id);
+        issues.push({
+          path: `quests[${index}].description`,
+          code: "REPEATED_MAIN_QUEST_DESCRIPTION",
+          params: { firstStage, stage: quest.stage },
+        });
+        return;
+      }
+      firstByDescription.set(description, quest.stage);
+    });
 }
 
 // ---------------------------------------------------------------------------
