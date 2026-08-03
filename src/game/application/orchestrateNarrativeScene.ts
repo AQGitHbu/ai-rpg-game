@@ -35,6 +35,16 @@ function resolveRoleAttemptLimit(value: number | undefined): number {
     : MAX_ROLE_ATTEMPTS;
 }
 
+function resolveRetryBackoffMs(value: number | undefined): number {
+  return Number.isInteger(value) && value !== undefined && value >= 0 && value <= 5_000 ? value : 0;
+}
+
+async function waitBeforeRoleRetry(backoffMs: number, attemptIndex: number, maxAttempts: number): Promise<void> {
+  if (backoffMs === 0 || attemptIndex >= maxAttempts - 1) return;
+  const delayMs = Math.min(backoffMs * (2 ** attemptIndex), 5_000);
+  await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+}
+
 // ---------------------------------------------------------------------------
 // 输入 / 输出
 // ---------------------------------------------------------------------------
@@ -51,6 +61,8 @@ export type OrchestrateNarrativeSceneInput = {
   readonly approvalObserver?: (event: StoryEvalApprovalEvent) => void;
   /** 评估专用重试上限；未传时保持正常运行时的三次尝试。 */
   readonly maxRoleAttempts?: number;
+  /** 评估专用 provider 失败退避；未传时保持正常运行时零额外等待。 */
+  readonly retryBackoffMs?: number;
 };
 
 export type OrchestrateSceneResult = {
@@ -79,6 +91,7 @@ export async function orchestrateNarrativeScene(
   const { traceId, blueprint, state, directorSource, sceneScriptSource, npcLineSource } = input;
   const logger = input.logger ?? NOOP_GAME_LOGGER;
   const maxRoleAttempts = resolveRoleAttemptLimit(input.maxRoleAttempts);
+  const retryBackoffMs = resolveRetryBackoffMs(input.retryBackoffMs);
 
   // 构建 action candidates
   const availableActions = projectAvailableActions(blueprint, state);
@@ -104,8 +117,14 @@ export async function orchestrateNarrativeScene(
           ? directorContext as unknown as Record<string, unknown>
           : { ...(directorContext as unknown as Record<string, unknown>), retryInstruction: "Previous proposal was rejected. Return a complete proposal using only the exact IDs and action keys supplied." },
       });
-    } catch { continue; }
-    if (!directorAttempt.ok) continue;
+    } catch {
+      await waitBeforeRoleRetry(retryBackoffMs, attempt, maxRoleAttempts);
+      continue;
+    }
+    if (!directorAttempt.ok) {
+      await waitBeforeRoleRetry(retryBackoffMs, attempt, maxRoleAttempts);
+      continue;
+    }
     const approval = approveDirectorProposal({ proposal: directorAttempt.plan, blueprint, state, candidates });
     input.approvalObserver?.({ kind: "role_approval", traceId, role: "director", attempt: attempt + 1, category: approval.ok ? null : approval.category });
     if (approval.ok) {
@@ -144,8 +163,14 @@ export async function orchestrateNarrativeScene(
         traceId: `${traceId}-script${"-retry".repeat(attempt)}`,
         context: attempt === 0 ? sceneScriptContext as unknown as Record<string, unknown> : { ...(sceneScriptContext as unknown as Record<string, unknown>), retryInstruction: "Previous output failed approval. Return a complete JSON object with exactly the required fields, two choices, and only supplied IDs." },
       });
-    } catch { continue; }
-    if (!scriptAttempt.ok) continue;
+    } catch {
+      await waitBeforeRoleRetry(retryBackoffMs, attempt, maxRoleAttempts);
+      continue;
+    }
+    if (!scriptAttempt.ok) {
+      await waitBeforeRoleRetry(retryBackoffMs, attempt, maxRoleAttempts);
+      continue;
+    }
     const approval = approveSceneScript({
       proposal: scriptAttempt.script,
       plan,
@@ -182,7 +207,10 @@ export async function orchestrateNarrativeScene(
           context: attemptIndex === 0 ? npcLineContext as unknown as Record<string, unknown> : { ...(npcLineContext as unknown as Record<string, unknown>), retryInstruction: "Previous output failed approval. Return one complete JSON object using only the supplied fact cards." },
         });
         npcLineAttempted = true;
-        if (!attempt.ok) continue;
+        if (!attempt.ok) {
+          await waitBeforeRoleRetry(retryBackoffMs, attemptIndex, maxRoleAttempts);
+          continue;
+        }
         const approved = approveNpcPerformance({
           proposal: attempt.performance,
           allowedFactIds: npcInst.allowedFactIds,

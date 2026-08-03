@@ -175,6 +175,11 @@ function resolveStoryEvalMaxRoleAttempts(env: Record<string, string | undefined>
   return Number.isInteger(value) && value >= 1 && value <= 3 ? value : 3;
 }
 
+function resolveStoryEvalRetryBackoffMs(env: Record<string, string | undefined>): number {
+  const value = Number(env.STORY_EVAL_RETRY_BACKOFF_MS ?? "1000");
+  return Number.isInteger(value) && value >= 0 && value <= 5_000 ? value : 1_000;
+}
+
 function resolveStoryEvalTimeoutMs(env: Record<string, string | undefined>): number {
   const defaults = PROFILE_DEFAULTS[resolveStoryEvalProfile(env)];
   const value = Number(env.STORY_EVAL_AI_TIMEOUT_MS ?? defaults.timeoutMs);
@@ -632,6 +637,7 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       thinkingRoles: resolveAiThinkingRoles(env),
       timeoutMs: resolveStoryEvalTimeoutMs(env),
       maxRoleAttempts: resolveStoryEvalMaxRoleAttempts(env),
+      retryBackoffMs: resolveStoryEvalRetryBackoffMs(env),
       answerKey: null,
       continuationBridges,
       trueDeadEnds,
