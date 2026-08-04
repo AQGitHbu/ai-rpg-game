@@ -102,7 +102,6 @@ export function createLiveScenarioCandidateSource(
       try {
         result = await transport.complete(config, messages, {
           extraBody: {
-            enable_thinking: options.enableThinking ?? false,
             chat_template_kwargs: { enable_thinking: options.enableThinking ?? false },
             ...(extraBody ?? {}),
           },

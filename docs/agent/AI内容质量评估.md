@@ -97,7 +97,7 @@ RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_TIMEOUT_MS（默认 120000；jud
 - follow-up smoke 的两个策略均生成完整 artifact；explore `fallbackRate=0`，objective `fallbackRate=0.333`。两者均为 3 幕 `max_scenes` 校准样本，不得替代 60 幕 baseline。
 - 物品展示元数据出现新的契约漂移：真实产物中 `items[2].rarity=legendary` 使候选在最终校验失败；修复后由 application 层仅删除非法可选展示字段，保留物品 ID、名称和规则语义，并在 scenario prompt 中同步声明 category/rarity/level/statLines 的闭集合与边界。
 - 物品修复后的 smoke 产物为 `artifacts/story-eval/wuxia-a-explore-0-2026-08-02T05-48-44-810Z-ee367cd3` 与 `artifacts/story-eval/wuxia-a-objective-1-2026-08-02T05-51-11-164Z-05d241cc`：两者均完整、`max_scenes=3`、`fallbackRate=0`；objective 发生 1 次 scenario 重试后恢复。两者张力均为 `2,2,2`，无成对分支证据；objective 仍漏掉计划的 `fact_identity`/`fact_premise` 揭示，因此不能据此宣称故事质量已改善或形成正式基线。
-- 代码原先对 scenario、director、writer、npc 统一发送 `enable_thinking:false`。现已增加默认关闭的 `AI_THINKING_ROLES` 角色级实验开关；`director,writer` treatment 的配置会写入 manifest，但不会写入原始环境值、prompt 或模型响应。
+- 代码原先对 scenario、director、writer、npc 统一发送关闭 thinking 的参数。现已增加默认关闭的 `AI_THINKING_ROLES` 角色级实验开关；`director,writer` treatment 的配置会写入 manifest，但不会写入原始环境值、prompt 或模型响应。
 - 思考 A/B 的完整 treatment 为 `artifacts/story-eval/wuxia-a-explore-0-2026-08-02T06-59-27-681Z-3816d4f6` 与 `artifacts/story-eval/wuxia-a-objective-1-2026-08-02T07-02-35-585Z-73f414d8`：两者均完整、`fallbackRate=0`；explore 张力仍为 `2,2,2`，objective 为 `1,2,2`。与 no-thinking 控制相比没有稳定、可归因的故事质量提升，且无 paired branch evidence；当前结论是“思考可能是次要增益，尚不足以改默认”，下一步应在 12 幕 regression 中验证。
 - 12 幕 regression 的导演单角色对照进一步显示一个“结构信号”，但还不能算因果结论：`AI_THINKING_ROLES=director` 的 explore 产物 `artifacts/story-eval/wuxia-a-explore-0-2026-08-02T08-14-42-180Z-4248d344` 为 `fallbackRate=0`、张力 `1,2,2,2,2,2,1,2,5,5,4,4`、`tensionStddev=1.374`，节奏分布为 `setup=4/develop=4/climax=4`；no-thinking 对照 `artifacts/story-eval/wuxia-a-explore-0-2026-08-02T08-31-18-044Z-608e80e7` 同为 12 幕且 `fallbackRate=0`，但张力 `2,2,3,3,2,2,2,3,3,3,2,3`、`tensionStddev=0.500`，节奏主要落在 `develop=8`。这说明导演思考可能帮助形成更明显的后段升级，但两次开局由真实模型独立生成、world seed 不同，不能视为严格同剧本 A/B。
 - 该长测也暴露质量的其他瓶颈：导演思考样本仍漏 `fact_premise`/`fact_identity`，没有 paired branch evidence，物品贡献仍为 0；no-thinking 对照反而有 1 个成对选择且状态/事件/叙事均不同，并有 3 个 NPC 贡献。因此不能把张力方差的改善等同于整体故事质量改善。导演样本总耗时约 9.17 分钟，对照约 12.47 分钟；对照出现 1 次 director retry/failure，说明 provider 随机性仍然显著。
@@ -293,8 +293,8 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - runtime fallback 现在优先使用已批准导演计划的两个合法 `suggestedActionKeys`；若导演本身失败，则从结构化 `activeMainObjective` 的 suggested/target action 选取候选。这样 writer/NPC 或 provider 故障不会把主线行动替换成任意前两项观察/闲聊动作。新增 `orchestrateNarrativeScene.storyEval.test.ts` 回归覆盖。
 - explore 评估策略不再把尚未解锁的 main quest objective 视为探索动作；当两个选项都不是探索动作时，也会避开未来主线目标，防止状态事实提前满足后由 `reconcileQuests` fixed-point 级联跳过中间幕。`storyEvalStrategy.test.ts` 新增两条保护测试。
 - judge 的 early prediction 与 story-level 请求现已并发；`callJudge` 返回 attempts，`scores.json/report.md` 额外记录 `judge_timeout`、`judge_schema_invalid`、`judge_http_*` 等具体错误，不再只写维度名。严格 schema/引文校验与 null 语义保持不变。
-- judge 请求显式发送 `enable_thinking=false` 与 `chat_template_kwargs.enable_thinking=false`；后者是当前 Qwen3/SGLang provider 真正关闭思考的参数，避免评审 prompt 把 120 秒预算消耗在不可审计的隐藏推理上。
-- scenario、director、writer、NPC 与 town plan 的真实请求也同时发送这两个 thinking 开关；对应的离线 transport/source 回归已更新，避免游戏生成链与 judge 使用不同的 provider 语义。
+- judge 请求只发送 `chat_template_kwargs: { enable_thinking: false }`；这是当前 Qwen3/SGLang provider 的兼容参数。实测同时发送顶层 `enable_thinking=false` 会让小请求进入 30 秒超时，而 nested-only 请求会快速返回（当前 provider 仍可能暂时 503）。
+- scenario、director、writer、NPC 与 town plan 的真实请求也统一使用 nested-only thinking 开关；对应的离线 transport/source 回归已更新，避免游戏生成链与 judge 使用不同的 provider 语义。
 
 本轮用 provider 更新后的 `.env.local` 做真实仙侠 pair（`profile=baseline`、角色超时 120s、完整三检查点）：
 
@@ -308,7 +308,7 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 
 ### Judge provider 兼容性复测（2026-08-04）
 
-- 对 `ai-slg-game-model` 做单请求健康检查时，小 prompt 返回 200，但同一仙侠故事级 prompt（约 18.9k 字符、约 9.3k input tokens）耗时约 229 秒，产生约 20.9k reasoning tokens 后才返回正文；在规定的 120 秒 judge 单请求预算内，story-level/C 维度因此出现 timeout。顶层 `enable_thinking=false` 不足以约束该 provider；补充 `chat_template_kwargs: { enable_thinking: false }` 与 Qwen3/SGLang 兼容，但复杂评审仍会长推理。
+- 对 `ai-slg-game-model` 做单请求健康检查时，小 prompt 返回 200，但同一仙侠故事级 prompt（约 18.9k 字符、约 9.3k input tokens）耗时约 229 秒，产生约 20.9k reasoning tokens 后才返回正文；在规定的 120 秒 judge 单请求预算内，story-level/C 维度因此出现 timeout。顶层 `enable_thinking=false` 单独不足以约束该 provider；当前实现改为只发送 `chat_template_kwargs: { enable_thinking: false }`，复杂评审仍需按 timeout/服务状态审计。
 - 评估与评审请求均固定使用 `.env.local` 中配置的 `AI_MODEL`（当前为 `ai-slg-game-model`）；本轮曾尝试的配置外模型 A/B 不属于有效证据，已撤销模型覆盖能力，不再纳入门禁或回归结论。
 - 在当前配置模型上，评审 prompt 的 evidence 约束已改为“从对应场景连续复制 8–40 字原文，禁止改写/省略号”；复杂故事级评审仍可能因长推理超过 120 秒而缺少证据，因此下一步应继续优化同模型下的请求规模、超时与退避，而不是切换模型。
 - 2026-08-04 的新 baseline explore 在约 11 幕处因 `ai-slg-game-model` director 多次 timeout/service_error 被停止；该目录只有 `calls.jsonl`、没有合法 manifest，不能进入 gate。它证明在 runtime 接入 nested thinking 开关前，长旅程仍会被 provider reasoning/服务错误拖住；修复后必须用 captured blueprint 做 bounded regression 验证，再决定是否重启 60 幕 baseline。

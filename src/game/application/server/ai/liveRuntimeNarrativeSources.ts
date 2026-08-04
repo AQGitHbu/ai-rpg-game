@@ -81,7 +81,6 @@ async function run<T extends object, A>(role: Role, request: Request, input: Liv
   try {
     completed = await input.transport.complete(input.config, messages(role, request), {
       extraBody: {
-        enable_thinking: enableThinking,
         chat_template_kwargs: { enable_thinking: enableThinking },
         ...input.responseFormat?.(role),
       },

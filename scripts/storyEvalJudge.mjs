@@ -201,7 +201,6 @@ export async function callJudge({ baseUrl, apiKey, model, messages, fetchImpl = 
           model,
           messages,
           temperature,
-          enable_thinking: false,
           chat_template_kwargs: { enable_thinking: false },
         }),
         signal: controller.signal,

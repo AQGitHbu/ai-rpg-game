@@ -374,7 +374,6 @@ test("callJudge：未提供 validateParsed 时解析成功即返回，不额外�
   const result = await callJudge({ baseUrl: "http://x/v1", apiKey: "k", model: "m", messages: [], fetchImpl });
   assert.equal(result.ok, true);
   assert.equal(count, 1);
-  assert.equal(requestBody.enable_thinking, false);
   assert.deepEqual(requestBody.chat_template_kwargs, { enable_thinking: false });
 });
 

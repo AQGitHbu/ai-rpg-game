@@ -279,7 +279,7 @@ describe("Task 9：buildExtraBody 按请求透传", () => {
     };
   }
 
-  it("提供 buildExtraBody 时按请求构建并并入 enable_thinking + 低温 + 评估超时", async () => {
+  it("提供 buildExtraBody 时按请求构建并并入 nested thinking + 低温 + 评估超时", async () => {
     const { transport, calls } = recordingTransport();
     const { audit } = spyAudit();
     const source = createLiveScenarioCandidateSource({
@@ -293,13 +293,13 @@ describe("Task 9：buildExtraBody 按请求透传", () => {
     await source.generate(REQUEST);
     expect(calls).toHaveLength(1);
     expect(calls[0][2]).toEqual({
-      extraBody: { enable_thinking: false, chat_template_kwargs: { enable_thinking: false }, response_format: { type: "json_object" } },
+      extraBody: { chat_template_kwargs: { enable_thinking: false }, response_format: { type: "json_object" } },
       temperature: 0.2,
       timeoutMs: 60_000
     });
   });
 
-  it("未提供 buildExtraBody 时仍发送 enable_thinking + 低温 + 长超时", async () => {
+  it("未提供 buildExtraBody 时仍发送 nested thinking + 低温 + 长超时", async () => {
     const { transport, calls } = recordingTransport();
     const { audit } = spyAudit();
     const source = createLiveScenarioCandidateSource({
@@ -311,7 +311,7 @@ describe("Task 9：buildExtraBody 按请求透传", () => {
     await source.generate(REQUEST);
     expect(calls).toHaveLength(1);
     expect(calls[0][2]).toEqual({
-      extraBody: { enable_thinking: false, chat_template_kwargs: { enable_thinking: false } },
+      extraBody: { chat_template_kwargs: { enable_thinking: false } },
       temperature: 0.2,
       timeoutMs: 120_000
     });

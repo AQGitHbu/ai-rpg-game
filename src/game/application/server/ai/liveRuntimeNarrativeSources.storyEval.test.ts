@@ -233,11 +233,6 @@ describe("createLiveRuntimeNarrativeSources captureSink", () => {
       context: { ...contextWithCandidates } as unknown as Record<string, unknown>
     });
 
-    expect(calls.map((call) => (call as { extraBody: { enable_thinking: boolean } }).extraBody.enable_thinking)).toEqual([
-      true,
-      true,
-      false
-    ]);
     expect(calls.map((call) => (call as { extraBody: { chat_template_kwargs: { enable_thinking: boolean } } }).extraBody.chat_template_kwargs.enable_thinking)).toEqual([
       true,
       true,
