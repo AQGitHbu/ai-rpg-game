@@ -457,7 +457,7 @@ describe("projectAvailableActions", () => {
     const investigateActions = actions.filter((a) => a.type === "investigate");
     expect(investigateActions).toHaveLength(1);
     expect(investigateActions[0].factId).toBe(FACT_INVESTIGABLE);
-    expect(investigateActions[0].label).toBe("调查：可调查事实。");
+    expect(investigateActions[0].label).toBe("调查第1条线索");
   });
 
   it("多个可调查事实的行动标签保持可区分", () => {

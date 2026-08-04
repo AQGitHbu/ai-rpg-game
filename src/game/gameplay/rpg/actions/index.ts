@@ -58,14 +58,12 @@ export type AvailableAction =
 /**
  * Investigable facts used to share the generic label "调查线索", which made
  * two legal choices look identical in the player-facing scene and in quality
- * review. The fact is already explicitly marked investigable, so a short
- * preview is safe to expose; keep the full text behind the resolved fact.
+ * review. Do not expose fact text before the investigate action resolves it;
+ * stable ordinal labels preserve the knowledge boundary while distinguishing
+ * the available choices.
  */
-function investigationLabel(factText: string): string {
-  const compact = factText.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
-  const preview = Array.from(compact).slice(0, 20).join("");
-  const hasMore = Array.from(compact).length > Array.from(preview).length;
-  return preview === "" ? "调查线索" : `调查：${preview}${hasMore ? "…" : ""}`;
+function investigationLabel(index: number): string {
+  return `调查第${index + 1}条线索`;
 }
 
 /** 检查事件账本中是否已有特定地点的观察事件。 */
@@ -110,13 +108,13 @@ export function projectAvailableActions(
 
   // investigate：当前场景可调查且尚未发现的事实（只有 opening 地点携带可调查列表）
   if (state.currentLocationId === blueprint.openingScene.locationId) {
-    for (const factId of blueprint.openingScene.investigableFactIds) {
+    for (const [index, factId] of blueprint.openingScene.investigableFactIds.entries()) {
       const factState = state.worldFacts.find((f) => f.factId === factId);
       if (factState !== undefined && !factState.discovered) {
         actions.push({
           type: "investigate",
           factId,
-          label: investigationLabel(blueprint.world.facts.find((fact) => fact.id === factId)?.text ?? ""),
+          label: investigationLabel(index),
         });
       }
     }
