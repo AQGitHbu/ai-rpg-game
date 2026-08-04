@@ -402,3 +402,17 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 额外的 `wuxia-b` 压力样本暴露了一个比文本重复更严重的玩法问题：蓝图把主线目标指向静态 `hidden` 地点，初始 `unlockedLocationIds` 永远不包含该地点，导演只能在相邻地点和终局动作间循环，60 幕后仍为 `time_budget`。现已在 `validateScenarioBlueprintCandidate` 增加 `HIDDEN_LOCATION_OBJECTIVE_UNREACHABLE` 校验，覆盖访问隐藏地点以及隐藏地点上的 NPC、物品、敌人目标；候选会在生成阶段拒绝并触发有界 retry/fallback。新增回归测试已通过，避免把这种不可达蓝图误判成 AI 选择或 pacing 问题。
 
 同一矩阵的 judge 抽查还发现 `investigate` 行动默认都显示为“调查线索”，多个事实因此在玩家选择和评审证据中看起来是重复选项。行动投影现在使用不泄漏事实正文的稳定序号（“调查第 1 条线索”），完整事实仍要执行调查后才进入已发现事实卡；相关行动回归测试与 TypeScript/ESLint 已通过。该修复只改变可读性和选择区分度，不改变事实发现规则。
+
+### 七题材 release judge 完整结果（2026-08-05）
+
+14 个代表性 run 的 judge 均已用 `ai-slg-game-model`、`STORY_EVAL_JUDGE_TIMEOUT_MS=300000` 完成请求并写出 `scores.json`；没有把配置外模型、超时或 schema 缺失当作零成本通过。最终命令：
+
+`node scripts/storyEvalQualityGate.mjs --release <14 个代表性 artifact 目录>`
+
+结果为：
+
+`GENERATION_GRADE_FAILED JUDGE_C3_LOW,JUDGE_C2_LOW,JUDGE_C4_LOW,JUDGE_C1_LOW,JUDGE_EVIDENCE_INCOMPLETE,JUDGE_S1_LOW,JUDGE_S3_LOW,JUDGE_S8_LOW,JUDGE_S7_LOW,JUDGE_S9_LOW`
+
+这次失败的边界很清楚：14/14 run 的运行结构仍为 `converged`、fallback `0`、无真死局/恢复循环，主线/事实/节奏/结局/三处分支证据均满足；阻断来自玩家可见的选择策略差异、跨幕 handoff/重复叙事、NPC 一致性与 judge story-level 协议证据。具体负证据包括：仙侠 explore 的 C2 最低 1、都市 explore 的 C3 最低 1、武侠 objective 的 C3 最低 1；科幻 explore、都市 objective、架空历史 explore、末日 explore 的 story-level 分组分别出现 C2/story-level 缺证据。不能把这轮标成 release 通过。
+
+本轮之后新增的两项修复（隐藏地点目标拒绝、调查行动序号化）尚未重新采集这 7 组真实旅程，因此下一步不是重跑旧 judge，而是用同一 captured blueprint 以相同 300 秒预算重跑受影响的代表性 pair，确认 C2/C3/C4 是否改善，再决定是否重新启动全 7 题材 release matrix。
