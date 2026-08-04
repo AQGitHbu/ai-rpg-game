@@ -428,3 +428,10 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 同一 `ai-slg-game-model` 的新 judge 已完成四个 artifact。可归因改善是：仙侠 explore 的 C3 最低分由旧 matrix 的 `2` 提升到 `4`，都市 explore 的 C3 最低分由 `1` 提升到 `3`；这验证了选项区分修复有效。残留仍是内容级问题：仙侠 explore C2/C4 最低 `2`，objective C2/C3/C4 最低 `2`；都市 explore C2 最低 `1`，objective story-level 缺证据且 C2 最低 `1`。四个新 artifact 的 judge gate 输出 `JUDGE_S8_LOW,JUDGE_S9_LOW,JUDGE_C2_LOW,JUDGE_C4_LOW,JUDGE_C3_LOW,JUDGE_EVIDENCE_INCOMPLETE,JUDGE_S1_LOW,JUDGE_S3_LOW,JUDGE_S7_LOW`，所以尚未达到生成级 release。
 
 下一步应集中在 C2/C4 的“NPC 线索→下一行动 handoff”和中段具体后果，而不是继续增加重试或放宽评审门槛；同时保留隐藏地点不可达校验，避免结构性死循环重新进入真实矩阵。
+
+### 结构化上一幕 handoff 复测（2026-08-05）
+
+- runtime 上下文现在从 `narrative_scene_presented` 与同场景 `narrative_choice` 投影 `previousScene` 卡片，只保留上一幕地点、焦点 NPC、节奏和玩家行动键，不把 AI 原文写入事件或 memory；director、writer、NPC 三个角色都收到该结构化卡片。NPC 额外被约束为角色口吻，不得以全知旁白复述玩家到达或地点前提，线索必须落到角色已知事实与当前地点。
+- 同一 `ai-slg-game-model`、同一 seed/captured blueprint、`maxRoleAttempts=3`、`branchMode=sample`、300 秒预算重新跑都市 pair：explore `artifacts/story-eval/urban-b-explore-0-2026-08-04T20-16-26-348Z-dea133cc`（18 幕触及上限、`fallback=0`），objective `artifacts/story-eval/urban-b-objective-1-2026-08-04T20-42-48-060Z-f4d1277a`（17 幕 `converged`、`fallback=0`）；runner 为 `REAL_AI_JOURNEY_OK`，两份 judge 也均 `failures=none`。
+- 真实 C2 抽查由上一轮都市 explore/objective 的最低 `1/1` 提升为 `3/3`；新 pair 的 C1/C2/C3/C4 最低分分别为 explore `5/3/3/2`、objective `1/3/3/3`。explore 仍因达到 18 幕上限缺少完整 S7，objective 的 C1 仍有角色口吻离群样本，因此总体 gate 仍失败（`JUDGE_S7_LOW,JUDGE_C4_LOW,JUDGE_C1_LOW`），不能宣称 release 通过。
+- 这轮证据支持 handoff 结构化投影有效，但也暴露出下一项生成质量工作：NPC 线必须更稳定地体现 profile/地点而非只给正确下一行动；explore 需要在 bounded scene 数内更早收束高潮。300 秒评估上限保持为永久配置，不能通过缩短预算掩盖这些内容问题。

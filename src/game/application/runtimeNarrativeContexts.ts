@@ -20,6 +20,40 @@ const WRITER_CONTINUITY_LIMIT = 6;
 
 type ContinuityMilestone = { readonly text: string };
 
+/** 上一幕的结构化 handoff 卡：不含 AI 原文，只保留地点/NPC/节奏/玩家行动。 */
+export type PreviousSceneCard = {
+  readonly sceneId: string;
+  readonly locationId: string;
+  readonly locationName: string;
+  readonly focusNpcId: string | null;
+  readonly focusNpcName: string | null;
+  readonly pacing: string;
+  readonly playerActionKey: string | null;
+};
+
+function previousSceneCardOf(
+  blueprint: ScenarioBlueprint,
+  state: GameState,
+): PreviousSceneCard | null {
+  const previousScene = [...state.eventLedger]
+    .reverse()
+    .find((event) => event.type === "narrative_scene_presented");
+  if (previousScene === undefined || previousScene.type !== "narrative_scene_presented") return null;
+  const previousChoice = [...state.eventLedger]
+    .reverse()
+    .find((event) => event.type === "narrative_choice" && event.sceneId === previousScene.sceneId);
+  const focusNpcId = previousScene.focusNpcId === null ? null : String(previousScene.focusNpcId);
+  return {
+    sceneId: previousScene.sceneId,
+    locationId: String(previousScene.locationId),
+    locationName: locationNameOf(blueprint, String(previousScene.locationId)),
+    focusNpcId,
+    focusNpcName: focusNpcId === null ? null : npcNameOf(blueprint, focusNpcId),
+    pacing: previousScene.pacing,
+    playerActionKey: previousChoice?.type === "narrative_choice" ? previousChoice.actionKey : null,
+  };
+}
+
 function locationNameOf(blueprint: ScenarioBlueprint, locationId: string): string {
   return blueprint.locations.find((entry) => String(entry.id) === locationId)?.name ?? "未知地点";
 }
@@ -352,6 +386,7 @@ export type DirectorContext = {
   /** 已发现事实的文本卡；与 discoveredFactIds 同源，不包含隐藏事实。 */
   readonly discoveredFactCards: readonly RuntimeFactCard[];
   readonly narrative: { readonly currentScene: GameState["narrative"]["currentScene"] };
+  readonly previousScene: PreviousSceneCard | null;
   readonly recentEvents: readonly string[];
   readonly npcIdsPresent: readonly string[];
   readonly actionCandidates: readonly { actionKey: string; kind: string; label: string }[];
@@ -434,6 +469,7 @@ export function toDirectorContext(input: DirectorContextInput): DirectorContext 
     discoveredFactIds,
     discoveredFactCards,
     narrative: { currentScene: state.narrative.currentScene },
+    previousScene: previousSceneCardOf(blueprint, state),
     recentEvents,
     npcIdsPresent,
     actionCandidates,
@@ -464,6 +500,7 @@ export type SceneScriptContext = {
   readonly npcProfile: Record<string, unknown> | null;
   readonly allowedFactCards: readonly Record<string, unknown>[];
   readonly narrative: { readonly currentScene: GameState["narrative"]["currentScene"] };
+  readonly previousScene: PreviousSceneCard | null;
   readonly actionCandidates: readonly { actionKey: string; kind: string; label: string }[];
   /** Phase 11：当前主线内容推进与最近 6 条里程碑安全文本。 */
   readonly progression: ContentProgression;
@@ -528,6 +565,7 @@ export function toSceneScriptContext(input: SceneScriptContextInput): SceneScrip
     npcProfile,
     allowedFactCards,
     narrative: { currentScene: state.narrative.currentScene },
+    previousScene: previousSceneCardOf(blueprint, state),
     actionCandidates,
     progression: deriveContentProgression({ blueprint, state }),
     recentContinuity: projectRecentContinuity(state, blueprint, WRITER_CONTINUITY_LIMIT),
@@ -549,6 +587,7 @@ export type NpcLineContext = {
   readonly playerName: string;
   /** 演员所在地点的安全语义卡。 */
   readonly currentLocationCard: RuntimeLocationCard;
+  readonly previousScene: PreviousSceneCard | null;
   readonly factCards: readonly Record<string, unknown>[];
   /** Phase 11：该 NPC 自身连续性（最后接触回合与地点名），不含对白或关系数值。 */
   readonly ownContinuity: { readonly lastContactTurn: number; readonly lastLocationName: string } | null;
@@ -605,6 +644,7 @@ export function toNpcLineContext(input: NpcLineContextInput): NpcLineContext {
     sceneGoal: input.sceneGoal ?? "推进当前场景目标",
     playerName: blueprint.player.name,
     currentLocationCard: currentLocationCardOf(blueprint, state),
+    previousScene: previousSceneCardOf(blueprint, state),
     factCards,
     ownContinuity: projectOwnContinuity(state, blueprint, npcId),
     speechAct: input.speechAct,

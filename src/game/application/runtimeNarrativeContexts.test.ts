@@ -163,10 +163,17 @@ describe("runtimeNarrativeContexts 导演", () => {
           type: "narrative_scene_presented",
           sceneId: "scene-1",
           locationId: asLocationId("loc_a"),
-          focusNpcId: null,
+          focusNpcId: asNpcId("npc_1"),
           revealedFactIds: [],
           pacing: "develop",
           occurredAt: "2026-07-31T00:00:00.000Z"
+        },
+        {
+          type: "narrative_choice",
+          choiceToken: "choice-1",
+          actionKey: "talk:npc_1",
+          sceneId: "scene-1",
+          occurredAt: "2026-07-31T00:00:01.000Z"
         },
         { type: "npc_met", npcId: asNpcId("npc_1"), occurredAt: "2026-07-31T00:00:00.000Z" }
       ]
@@ -175,6 +182,15 @@ describe("runtimeNarrativeContexts 导演", () => {
     expect(context.recentEvents).not.toContain("narrative_scene_presented");
     expect(context.recentEvents).toContain("npc_met");
     expect(context.recentEvents).toContain("location_visited");
+    expect(context.previousScene).toEqual({
+      sceneId: "scene-1",
+      locationId: "loc_a",
+      locationName: "地点A",
+      focusNpcId: "npc_1",
+      focusNpcName: "NPC1",
+      pacing: "develop",
+      playerActionKey: "talk:npc_1",
+    });
   });
 
   it("obtain_item 目标不在当前地点时投影合法下一跳，抵达后切换为拾取行动", () => {

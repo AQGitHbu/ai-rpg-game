@@ -92,6 +92,7 @@ describe("createLiveRuntimeNarrativeSources captureSink", () => {
     expect(records[1].messages[0].content).toContain("unforeshadowed boss");
     expect(records[2].messages[0].content).toContain("next concrete action or destination");
     expect(records[2].messages[0].content).toContain("Simplified Chinese");
+    expect(records[2].messages[0].content).toContain("not as an omniscient narrator");
   });
 
   it("同场景重试 attempt 递增（含 3 次尝试），跨场景不泄漏（无全局计数器）", async () => {
