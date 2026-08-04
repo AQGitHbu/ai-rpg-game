@@ -302,7 +302,7 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - explore：`artifacts/story-eval/xianxia-a-explore-0-2026-08-03T16-32-07-800Z-e03a076f`（复用同一 captured blueprint），14 场景 `converged`，fallback `0`，无真死局/恢复循环；主线机会/建议呈现/建议选择/规则推进 `14/14/11/13`，阶段序列为 `1→2→3→4→5→7→8`，仍有一次未来 NPC 目标被提前满足导致 stage6 缺失，且只有 2 个 paired checkpoints。该 artifact 生成于“安全选项优先”最后一条策略保护加入之前，不能视为该保护的最终验证。
 - 两个 run 的 judge 都写出了 `scores.json`，但仍未形成完整证据：explore 为 `story_level=judge_schema_invalid,C2=judge_timeout,C3=judge_timeout,C4=judge_schema_invalid`；objective 为 `story_level=judge_timeout,C2=judge_timeout,C3=judge_schema_invalid`。C1（两局）与 objective C4 已成功返回，错误类别已可审计。pair gate（非 `--release`）仅剩 `JUDGE_EVIDENCE_INCOMPLETE,JUDGE_S1_LOW,JUDGE_S3_LOW,JUDGE_S7_LOW,JUDGE_S8_LOW,JUDGE_S9_LOW,JUDGE_C4_LOW`，说明客观结构门槛已通过，剩余是 judge transport/protocol 与 explore 阶段保护。
 
-最新安全选项策略的 bounded explore 复测已完成并确认 stage6 不再跳过；下一步应先固定可用的 judge 并发/超时配置，再补跑七题材 release matrix。此前 2026-08-03 的七题材 matrix 仍是旧代码证据，不能覆盖本节修复。
+最新安全选项策略的 bounded explore 复测已完成并确认 stage6 不再跳过；七题材 release matrix 仍需等配置模型服务恢复并完成有效 artifact 后再跑。此前 2026-08-03 的七题材 matrix 仍是旧代码证据，不能覆盖本节修复。
 
 补充复测（同日）：`artifacts/story-eval/xianxia-a-explore-0-2026-08-03T16-58-16-757Z-e5522161` 使用最新策略保护、同一 captured blueprint、`profile=regression`（18 场景上限、sample 分支）。它按 `stage 1→2→3→4→5→6→7` 连续推进到上限，`status=max_scenes`、fallback `0`、`trueDeadEnds=0`、`recoveryLoops=0`；主线机会/建议呈现/建议选择/规则推进 `18/18/14/16`。这证明“避免未来目标提前完成”修复了 stage6 跳过问题，但 explore 的 bounded 18 幕收敛仍需更长预算或更稳定 provider 才能证明。
 
@@ -313,3 +313,4 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - 在当前配置模型上，评审 prompt 的 evidence 约束已改为“从对应场景连续复制 8–40 字原文，禁止改写/省略号”；复杂故事级评审仍可能因长推理超过 120 秒而缺少证据，因此下一步应继续优化同模型下的请求规模、超时与退避，而不是切换模型。
 - 2026-08-04 的新 baseline explore 在约 11 幕处因 `ai-slg-game-model` director 多次 timeout/service_error 被停止；该目录只有 `calls.jsonl`、没有合法 manifest，不能进入 gate。它证明在 runtime 接入 nested thinking 开关前，长旅程仍会被 provider reasoning/服务错误拖住；修复后必须用 captured blueprint 做 bounded regression 验证，再决定是否重启 60 幕 baseline。
 - 接入 nested thinking 开关后的 bounded explore `artifacts/story-eval/xianxia-a-explore-0-2026-08-04T02-13-36-310Z-8391a253` 首段 director 延迟约 4–45 秒，writer/NPC 多数为秒级，但仍出现 writer `service_error`，随后 Vitest worker exited unexpectedly，未写出合法 manifest。该结果说明参数修复降低了单请求长 reasoning，却还没有解决 provider 偶发错误与 Windows 长测 worker 稳定性；不能进入 release matrix 统计。
+- 2026-08-04 协议对照只使用 `.env.local` 的 `ai-slg-game-model`：`chat_template_kwargs` nested-only 小请求在约 275ms 返回 HTTP 503；同时发送顶层 `enable_thinking=false` 与 nested 参数则在 30s 内无响应。实现已移除顶层字段，统一 nested-only；两次真实 3 幕 objective smoke（profile smoke 默认 120s）均在 scenario 首请求/重试各自 timeout，产物 `artifacts/story-eval/xianxia-a-objective-0-2026-08-04T03-00-33-411Z-f8409a18` 只有 `calls.jsonl`，没有合法 manifest，因此不进入质量 gate。该结果是当前配置模型/provider 状态证据，不是游戏质量通过或失败结论。
