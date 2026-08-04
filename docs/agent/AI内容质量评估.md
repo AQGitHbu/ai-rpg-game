@@ -370,3 +370,15 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - 本轮非 release gate 只剩 `BRANCH_DURABILITY_LOW`，因为明确使用 `branchMode=none` 隔离主线/连续性；不能把它宣称为分支后果证据。下一步需在同一 300 秒预算下跑 branch sample/full，再进入七题材矩阵。
 - objective judge 使用同一 `ai-slg-game-model`、300 秒、并发 2：C1/C2/C3/C4 均返回，C2 大多数为 5，但终局场景因反派铺垫不足为 2；story-level S1/S2/S3/S5 仍因 `judge_schema_invalid` 缺失。explore judge 的 story-level S1–S5 返回有效（4/4/4/4），但 C2 出现协议失败；C4 抽样暴露一处英文片段和中段复述。null/协议失败继续按缺证据处理，不能当通过。
 - 针对真实抽查新增 writer/NPC 简体中文约束、climax 必须引用已建立线索且禁止无铺垫反派的约束，并加入 prompt 回归断言；不改变规则审批或 fallback 语义。
+
+### 仙侠 branch sample paired regression（2026-08-04）
+
+- 在同一 captured blueprint、seed `20260804`、`ai-slg-game-model`、300 秒评估预算下完成 `branchMode=sample` paired run：explore `artifacts/story-eval/xianxia-a-explore-0-2026-08-04T12-38-51-433Z-a120eca6`（18 幕、`status=max_scenes`、`fallback=0`），objective `artifacts/story-eval/xianxia-a-objective-0-2026-08-04T12-59-07-391Z-dc6887db`（17 幕、`status=converged`、`fallback=0`）。
+- 两个 run 均在 stage 2 生成两个合法分支 artifact；每个 run 形成 1 个 paired checkpoint，state/event/narration 差异均为 1，`trueDeadEnds=0`、`recoveryLoops=0`。非 release paired gate 输出 `GENERATION_GRADE_OK`。
+- 这证明分支 fork、状态差异和事件差异链路已真实跑通；但 explore 在 18 幕上限未完成 climax，且只有 1 个 checkpoint，不能外推 release 级 durable consequence。下一步是 `branchMode=full`（stage 2/4/6 三检查点），通过后再启动七题材 release matrix。
+
+### 仙侠 branch full paired regression（2026-08-04）
+
+- 在同一 captured blueprint、seed `20260804`、`ai-slg-game-model`、300 秒评估预算下完成 `branchMode=full` paired run：explore `artifacts/story-eval/xianxia-a-explore-0-2026-08-04T13-19-44-998Z-5a4520e7`（18 幕、`status=max_scenes`、`fallback=0`），objective `artifacts/story-eval/xianxia-a-objective-0-2026-08-04T13-54-04-931Z-a1cee52b`（17 幕、`status=converged`、`fallback=0`）。
+- 两个 run 均生成 stage 2/4/6 共 6 个合法 branch artifact，3 个 paired checkpoints；state 差异为 2，event/narration 差异均为 3，`trueDeadEnds=0`、`recoveryLoops=0`。objective pacing 含 `setup/develop/turn/climax/resolution`；paired pilot gate 输出 `GENERATION_GRADE_OK`。
+- full 分支证据已满足 release 的 durable checkpoint 数量要求；剩余 release blocker 是 bounded explore 终局收敛与各题材 judge 完整性。下一步启动七题材（10 cases）baseline/full matrix。
