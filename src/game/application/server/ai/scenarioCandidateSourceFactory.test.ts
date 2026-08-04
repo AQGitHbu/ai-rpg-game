@@ -78,7 +78,7 @@ describe("createScenarioCandidateSource：extraBody 按格式装配", () => {
     await source.generate(REQUEST);
     expect(calls).toHaveLength(1);
     expect(calls[0][2]).toEqual({
-      extraBody: { enable_thinking: false, ...(expected ?? {}) },
+      extraBody: { enable_thinking: false, chat_template_kwargs: { enable_thinking: false }, ...(expected ?? {}) },
       temperature: 0.2,
       timeoutMs: 120_000
     });
@@ -111,6 +111,7 @@ describe("createScenarioCandidateSource：extraBody 按格式装配", () => {
       { transportFactory: () => transport as never }
     );
     await source.generate(REQUEST);
-    expect((calls[0][2] as { extraBody: { enable_thinking: boolean } }).extraBody.enable_thinking).toBe(true);
+    expect((calls[0][2] as { extraBody: { enable_thinking: boolean; chat_template_kwargs: { enable_thinking: boolean } } }).extraBody.enable_thinking).toBe(true);
+    expect((calls[0][2] as { extraBody: { chat_template_kwargs: { enable_thinking: boolean } } }).extraBody.chat_template_kwargs.enable_thinking).toBe(true);
   });
 });

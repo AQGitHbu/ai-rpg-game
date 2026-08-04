@@ -238,6 +238,11 @@ describe("createLiveRuntimeNarrativeSources captureSink", () => {
       true,
       false
     ]);
+    expect(calls.map((call) => (call as { extraBody: { chat_template_kwargs: { enable_thinking: boolean } } }).extraBody.chat_template_kwargs.enable_thinking)).toEqual([
+      true,
+      true,
+      false
+    ]);
   });
 });
 

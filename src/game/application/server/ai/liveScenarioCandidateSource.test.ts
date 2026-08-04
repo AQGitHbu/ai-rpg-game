@@ -293,7 +293,7 @@ describe("Task 9：buildExtraBody 按请求透传", () => {
     await source.generate(REQUEST);
     expect(calls).toHaveLength(1);
     expect(calls[0][2]).toEqual({
-      extraBody: { enable_thinking: false, response_format: { type: "json_object" } },
+      extraBody: { enable_thinking: false, chat_template_kwargs: { enable_thinking: false }, response_format: { type: "json_object" } },
       temperature: 0.2,
       timeoutMs: 60_000
     });
@@ -311,7 +311,7 @@ describe("Task 9：buildExtraBody 按请求透传", () => {
     await source.generate(REQUEST);
     expect(calls).toHaveLength(1);
     expect(calls[0][2]).toEqual({
-      extraBody: { enable_thinking: false },
+      extraBody: { enable_thinking: false, chat_template_kwargs: { enable_thinking: false } },
       temperature: 0.2,
       timeoutMs: 120_000
     });

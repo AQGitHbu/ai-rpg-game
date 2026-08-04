@@ -62,7 +62,7 @@ export function createLiveTownPlanSource(input: LiveTownPlanSourceInput): TownPl
       try {
         // 与 runtime narrative 相同的 provider 约定：关闭扩展思考，低温采样。
         completed = await input.transport.complete(input.config, buildTownPlanPromptMessages(request), {
-          extraBody: { enable_thinking: false },
+          extraBody: { enable_thinking: false, chat_template_kwargs: { enable_thinking: false } },
           temperature: 0.2,
           timeoutMs: 120_000
         });
