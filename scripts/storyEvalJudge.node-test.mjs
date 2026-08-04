@@ -362,8 +362,10 @@ test("callJudge：首次校验失败、重试成功 → ok:true 且恰好两次�
 
 test("callJudge：未提供 validateParsed 时解析成功即返回，不额外请求", async () => {
   let count = 0;
-  const fetchImpl = async () => {
+  let requestBody;
+  const fetchImpl = async (_url, options) => {
     count += 1;
+    requestBody = JSON.parse(options.body);
     return new Response(JSON.stringify({ choices: [{ message: { content: '{"a":1}' } }] }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -372,6 +374,8 @@ test("callJudge：未提供 validateParsed 时解析成功即返回，不额外�
   const result = await callJudge({ baseUrl: "http://x/v1", apiKey: "k", model: "m", messages: [], fetchImpl });
   assert.equal(result.ok, true);
   assert.equal(count, 1);
+  assert.equal(requestBody.enable_thinking, false);
+  assert.deepEqual(requestBody.chat_template_kwargs, { enable_thinking: false });
 });
 
 test("callJudge：provider 不响应时按 timeoutMs 结束并返回稳定错误", async () => {

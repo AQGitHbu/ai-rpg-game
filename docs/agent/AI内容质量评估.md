@@ -294,6 +294,7 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - runtime fallback 现在优先使用已批准导演计划的两个合法 `suggestedActionKeys`；若导演本身失败，则从结构化 `activeMainObjective` 的 suggested/target action 选取候选。这样 writer/NPC 或 provider 故障不会把主线行动替换成任意前两项观察/闲聊动作。新增 `orchestrateNarrativeScene.storyEval.test.ts` 回归覆盖。
 - explore 评估策略不再把尚未解锁的 main quest objective 视为探索动作；当两个选项都不是探索动作时，也会避开未来主线目标，防止状态事实提前满足后由 `reconcileQuests` fixed-point 级联跳过中间幕。`storyEvalStrategy.test.ts` 新增两条保护测试。
 - judge 的 early prediction 与 story-level 请求现已并发；`callJudge` 返回 attempts，`scores.json/report.md` 额外记录 `judge_timeout`、`judge_schema_invalid`、`judge_http_*` 等具体错误，不再只写维度名。严格 schema/引文校验与 null 语义保持不变。
+- judge 请求显式发送 `enable_thinking=false` 与 `chat_template_kwargs.enable_thinking=false`；后者是当前 Qwen3/SGLang provider 真正关闭思考的参数，避免评审 prompt 把 120 秒预算消耗在不可审计的隐藏推理上。
 
 本轮用 provider 更新后的 `.env.local` 做真实仙侠 pair（`profile=baseline`、角色超时 120s、完整三检查点）：
 
@@ -304,3 +305,9 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 最新安全选项策略的 bounded explore 复测已完成并确认 stage6 不再跳过；下一步应先固定可用的 judge 并发/超时配置，再补跑七题材 release matrix。此前 2026-08-03 的七题材 matrix 仍是旧代码证据，不能覆盖本节修复。
 
 补充复测（同日）：`artifacts/story-eval/xianxia-a-explore-0-2026-08-03T16-58-16-757Z-e5522161` 使用最新策略保护、同一 captured blueprint、`profile=regression`（18 场景上限、sample 分支）。它按 `stage 1→2→3→4→5→6→7` 连续推进到上限，`status=max_scenes`、fallback `0`、`trueDeadEnds=0`、`recoveryLoops=0`；主线机会/建议呈现/建议选择/规则推进 `18/18/14/16`。这证明“避免未来目标提前完成”修复了 stage6 跳过问题，但 explore 的 bounded 18 幕收敛仍需更长预算或更稳定 provider 才能证明。
+
+### Judge provider 兼容性复测（2026-08-04）
+
+- 对 `ai-slg-game-model` 做单请求健康检查时，小 prompt 返回 200，但同一仙侠故事级 prompt（约 18.9k 字符、约 9.3k input tokens）耗时约 229 秒，产生约 20.9k reasoning tokens 后才返回正文；在规定的 120 秒 judge 单请求预算内，story-level/C 维度因此出现 timeout。顶层 `enable_thinking=false` 不足以约束该 provider；补充 `chat_template_kwargs: { enable_thinking: false }` 与 Qwen3/SGLang 兼容，但复杂评审仍会长推理。
+- provider 暴露的 `gemini-3.1-flash-lite-preview` 小请求无 reasoning tokens。将它作为**独立 judge 模型**（不改变游戏生成模型），并把评审 prompt 的 evidence 约束改为“从对应场景连续复制 8–40 字原文，禁止改写/省略号”后，仙侠 objective artifact 的 early prediction、story-level、C1–C4 全部返回且严格引文校验通过；judge 运行约 20 秒，`scores.failures=[]`。
+- 该完整 judge 结果的单 run gate 为：`GENERATION_GRADE_FAILED JUDGE_S1_LOW,JUDGE_S7_LOW,JUDGE_S8_LOW,JUDGE_S9_LOW,JUDGE_C3_LOW`。这次不再是评审 transport/protocol 缺证据，而是暴露出真实质量短板：三幕递进、结局兑现、选择后果/能动性，以及选项策略差异。下一步应固定 `STORY_EVAL_JUDGE_MODEL=gemini-3.1-flash-lite-preview`，再重跑最新代码的仙侠 pair 与七题材 release matrix。

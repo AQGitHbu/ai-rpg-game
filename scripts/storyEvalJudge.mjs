@@ -111,7 +111,7 @@ export function buildStoryLevelPrompt({ scaleText, version, manifest, story }) {
   const scenes = story.filter((row) => row.kind === "scene").map(sceneToText).join("\n\n");
   return [
     `你是故事质量评审员。请按以下量表（版本 ${version}）为整局故事打分（S1–S3、S5–S9，1-5 分；S4 不由你评定）。`,
-    "每个分数必须附证据：场景序号 + 原文引文。无证据的分数将重评一次。",
+    "每个分数必须附证据：场景序号 + 从对应场景文本连续复制的原文引文（建议 8-40 个字）；禁止总结、改写、使用省略号或虚构引文。无证据的分数将重评一次。",
     "只输出 JSON：{\"scores\":{\"S1\":{\"score\":3,\"evidence\":[{\"sceneIndex\":1,\"quote\":\"...\"}]},\"S2\":{...}},\"reasoning\":\"...\"}",
     `量表：\n${scaleText}`,
     `完整设定（含结局与任务结构）：${JSON.stringify(manifest)}`,
@@ -162,7 +162,7 @@ export function buildSceneLevelPrompt({ scaleText, version, sampled, dimension, 
   });
   return [
     `你是故事质量评审员。请按量表（版本 ${version}）为以下场景评 ${dimension} 维度（1-5 分），逐场景给出分数与一句证据。`,
-    "证据必须引用对应证据包中的原文。只输出 JSON：{\"scores\":[{\"sceneIndex\":1,\"score\":3,\"evidence\":\"...\"}],\"reasoning\":\"...\"}",
+    "evidence 必须从对应证据包的场景文本连续复制原文（建议 8-40 个字）；禁止总结、改写、使用省略号或虚构引文。只输出 JSON：{\"scores\":[{\"sceneIndex\":1,\"score\":3,\"evidence\":\"原文连续片段\"}],\"reasoning\":\"...\"}",
     `量表：\n${scaleText}`,
     `场景：\n${blocks.join("\n\n")}`,
   ].join("\n\n");
@@ -195,7 +195,15 @@ export async function callJudge({ baseUrl, apiKey, model, messages, fetchImpl = 
       const response = await fetchImpl(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages, temperature }),
+        // Judge 不是叙事角色：关闭 provider thinking，避免大故事级 prompt 把
+        // 120 秒预算耗在不可审计的隐藏推理上。运行时角色请求也采用同一约定。
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature,
+          enable_thinking: false,
+          chat_template_kwargs: { enable_thinking: false },
+        }),
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`judge_http_${response.status}`);
