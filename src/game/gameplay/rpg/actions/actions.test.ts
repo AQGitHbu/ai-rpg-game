@@ -457,6 +457,19 @@ describe("projectAvailableActions", () => {
     const investigateActions = actions.filter((a) => a.type === "investigate");
     expect(investigateActions).toHaveLength(1);
     expect(investigateActions[0].factId).toBe(FACT_INVESTIGABLE);
+    expect(investigateActions[0].label).toBe("调查：可调查事实。");
+  });
+
+  it("多个可调查事实的行动标签保持可区分", () => {
+    const bp = buildBlueprint();
+    const openingScene = {
+      ...bp.openingScene,
+      investigableFactIds: [FACT_INVESTIGABLE, FACT_OTHER],
+    };
+    const withTwoFacts = { ...bp, openingScene } as ScenarioBlueprint;
+    const actions = projectAvailableActions(withTwoFacts, buildInitialState());
+    const labels = actions.filter((a) => a.type === "investigate").map((a) => a.label);
+    expect(new Set(labels).size).toBe(labels.length);
   });
 
   it("已观察过的地点不投影 observe 行动", () => {
