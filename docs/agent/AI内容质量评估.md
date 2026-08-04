@@ -416,3 +416,15 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 这次失败的边界很清楚：14/14 run 的运行结构仍为 `converged`、fallback `0`、无真死局/恢复循环，主线/事实/节奏/结局/三处分支证据均满足；阻断来自玩家可见的选择策略差异、跨幕 handoff/重复叙事、NPC 一致性与 judge story-level 协议证据。具体负证据包括：仙侠 explore 的 C2 最低 1、都市 explore 的 C3 最低 1、武侠 objective 的 C3 最低 1；科幻 explore、都市 objective、架空历史 explore、末日 explore 的 story-level 分组分别出现 C2/story-level 缺证据。不能把这轮标成 release 通过。
 
 本轮之后新增的两项修复（隐藏地点目标拒绝、调查行动序号化）尚未重新采集这 7 组真实旅程，因此下一步不是重跑旧 judge，而是用同一 captured blueprint 以相同 300 秒预算重跑受影响的代表性 pair，确认 C2/C3/C4 是否改善，再决定是否重新启动全 7 题材 release matrix。
+
+### 修复后代表性 pair 复测（2026-08-05）
+
+为验证上述修复而重新发起的真实请求仍只使用 `ai-slg-game-model`、`maxRoleAttempts=3`、300 秒超时和 `branchMode=full`，并行完成仙侠与都市各一组 paired journey；两组 runner 均输出 `REAL_AI_JOURNEY_OK`。
+
+- 仙侠：explore `artifacts/story-eval/xianxia-a-explore-0-2026-08-04T18-43-03-296Z-931068c9`，18 幕、`fallback=0`、无真死局/恢复循环，因 18 幕上限未到 climax/resolution；objective `artifacts/story-eval/xianxia-a-objective-1-2026-08-04T19-14-42-063Z-21d723e3`，17 幕 `converged`、`fallback=0`，三处 paired checkpoint 的 state/event/narration 差异为 `2/3/3`。
+- 都市：explore `artifacts/story-eval/urban-b-explore-0-2026-08-04T18-43-03-295Z-245c18b6`、objective `artifacts/story-eval/urban-b-objective-1-2026-08-04T19-15-37-904Z-e18cf361` 均为 17 幕 `converged`、`fallback=0`，无真死局/恢复循环，三处 paired checkpoint 差异为 `2/3/3`。
+- 新 artifact 的每幕两条选项没有同场重复标签；`investigate` 已显示为“调查第 N 条线索”，且运行时上下文测试确认没有泄漏事实正文。
+
+同一 `ai-slg-game-model` 的新 judge 已完成四个 artifact。可归因改善是：仙侠 explore 的 C3 最低分由旧 matrix 的 `2` 提升到 `4`，都市 explore 的 C3 最低分由 `1` 提升到 `3`；这验证了选项区分修复有效。残留仍是内容级问题：仙侠 explore C2/C4 最低 `2`，objective C2/C3/C4 最低 `2`；都市 explore C2 最低 `1`，objective story-level 缺证据且 C2 最低 `1`。四个新 artifact 的 judge gate 输出 `JUDGE_S8_LOW,JUDGE_S9_LOW,JUDGE_C2_LOW,JUDGE_C4_LOW,JUDGE_C3_LOW,JUDGE_EVIDENCE_INCOMPLETE,JUDGE_S1_LOW,JUDGE_S3_LOW,JUDGE_S7_LOW`，所以尚未达到生成级 release。
+
+下一步应集中在 C2/C4 的“NPC 线索→下一行动 handoff”和中段具体后果，而不是继续增加重试或放宽评审门槛；同时保留隐藏地点不可达校验，避免结构性死循环重新进入真实矩阵。
