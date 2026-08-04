@@ -9,7 +9,7 @@ import { resolveAiThinkingRoles } from "./aiThinking";
 function resolveStoryEvalTimeoutMs(env: Record<string, string | undefined>): number | undefined {
   if (env.STORY_EVAL_CAPTURE !== "1") return undefined;
   const value = Number(env.STORY_EVAL_AI_TIMEOUT_MS);
-  return Number.isInteger(value) && value >= 1_000 && value <= 120_000 ? value : undefined;
+  return Number.isInteger(value) && value >= 1_000 && value <= 300_000 ? value : undefined;
 }
 
 export function createRuntimeNarrativeSources(env: Record<string, string | undefined>, options: Readonly<{ logger?: GameLogger; captureSink?: StoryEvalSink }> = {}): Readonly<{ directorSource: DirectorSource; sceneScriptSource: SceneScriptSource; npcLineSource: NpcLineSource }> {

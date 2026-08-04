@@ -148,12 +148,13 @@ const BRANCH_CHECKPOINT_STAGES = [2, 4, 6] as const;
 
 /** AI 运行参数（与 live 源装配点一致：liveRuntimeNarrativeSources / liveScenarioCandidateSource）。 */
 const AI_TEMPERATURE = 0.2;
-const AI_TIMEOUT_MS = 120_000;
+const AI_TIMEOUT_MS = 300_000;
+const MAX_AI_TIMEOUT_MS = 300_000;
 type StoryEvalProfile = "smoke" | "regression" | "baseline";
 
 const PROFILE_DEFAULTS: Readonly<Record<StoryEvalProfile, Readonly<{ maxRoleAttempts: number; timeoutMs: number; branchMode: "none" | "sample" | "full" }>>> = {
-  smoke: { maxRoleAttempts: 1, timeoutMs: 120_000, branchMode: "none" },
-  regression: { maxRoleAttempts: 3, timeoutMs: 120_000, branchMode: "sample" },
+  smoke: { maxRoleAttempts: 1, timeoutMs: 300_000, branchMode: "none" },
+  regression: { maxRoleAttempts: 3, timeoutMs: 300_000, branchMode: "sample" },
   baseline: { maxRoleAttempts: 3, timeoutMs: AI_TIMEOUT_MS, branchMode: "full" },
 };
 
@@ -183,7 +184,7 @@ function resolveStoryEvalRetryBackoffMs(env: Record<string, string | undefined>)
 function resolveStoryEvalTimeoutMs(env: Record<string, string | undefined>): number {
   const defaults = PROFILE_DEFAULTS[resolveStoryEvalProfile(env)];
   const value = Number(env.STORY_EVAL_AI_TIMEOUT_MS ?? defaults.timeoutMs);
-  return Number.isInteger(value) && value >= 1_000 && value <= AI_TIMEOUT_MS ? value : AI_TIMEOUT_MS;
+  return Number.isInteger(value) && value >= 1_000 && value <= MAX_AI_TIMEOUT_MS ? value : AI_TIMEOUT_MS;
 }
 
 /** 当前 git commit（manifest 可复现性；非 git 环境回退 null）。 */
@@ -1198,7 +1199,7 @@ describe("Story eval journey (offline)", () => {
     }
     expect(manifest.temperature).toBe(0.2);
     expect(manifest.thinkingRoles).toEqual([]);
-    expect(manifest.timeoutMs).toBe(120_000);
+    expect(manifest.timeoutMs).toBe(300_000);
     const timings = manifest.timings as Record<string, unknown>;
     expect(typeof timings.startedAt).toBe("string");
     expect(typeof timings.finishedAt).toBe("string");

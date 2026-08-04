@@ -362,3 +362,11 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - 随后在 runtime 连续性投影中保留“上一幕与具名 NPC 交涉”，并要求 director 在换地点/换 NPC 时显式写出 handoff；NPC performer 也必须把新线索落到可执行的下一地点/行动。真实短回归 `artifacts/story-eval/xianxia-a-explore-0-2026-08-04T10-32-09-188Z-06c81be6`（6 幕、`fallback=0`）的第 4 幕已明确承接坊市散修线程并给出“前往青云外门”的行动，C2 judge 为 `4`。随后同配置模型再次短回归 `artifacts/story-eval/xianxia-a-explore-0-2026-08-04T10-40-48-731Z-15892ea3` 仍为 6 幕、`fallback=0`，文本中的告示、戒律墨榜、墙体裂隙等具体物证替代了泛化的“压低斗笠/气氛凝重”开场。
 
 下一步应在 bounded concurrency 下重跑失败维度，比较 prompt 缩短前后的协议成功率；不要以放宽 schema 校验、把 null 当通过或切换配置外模型来“修复” release gate。
+
+### 300 秒评估预算与全量仙侠 paired regression（2026-08-04）
+
+- 真实 provider 已观测到单次长请求约 2–3 分钟；story-eval 的三个 profile 默认 `STORY_EVAL_AI_TIMEOUT_MS=300000`，解析上限永久固定为 300 秒。正常游戏运行时的默认 transport 超时仍为 120 秒；只有采集评估注入 300 秒预算，避免把评估请求误判成 fallback。
+- 使用同一 captured blueprint、同一 seed `20260804`、`AI_MODEL=ai-slg-game-model`、`maxScenes=18`、`maxRoleAttempts=3`、`branchMode=none` 完成新的 paired regression：explore 为 `artifacts/story-eval/xianxia-a-explore-0-2026-08-04T11-35-40-078Z-01a9e5f1`，18 幕、`fallback=0`、`status=max_scenes`；objective 为 `artifacts/story-eval/xianxia-a-objective-0-2026-08-04T11-54-27-448Z-d8b14512`，17 幕、`fallback=0`、`status=converged`。objective 具备 `setup/develop/turn/climax/resolution`，主线规则推进率 `1.00`，generated fact 使用覆盖 `1.00`；explore 的 `trigramRepeat=0.018`，objective 为 `0.028`。
+- 本轮非 release gate 只剩 `BRANCH_DURABILITY_LOW`，因为明确使用 `branchMode=none` 隔离主线/连续性；不能把它宣称为分支后果证据。下一步需在同一 300 秒预算下跑 branch sample/full，再进入七题材矩阵。
+- objective judge 使用同一 `ai-slg-game-model`、300 秒、并发 2：C1/C2/C3/C4 均返回，C2 大多数为 5，但终局场景因反派铺垫不足为 2；story-level S1/S2/S3/S5 仍因 `judge_schema_invalid` 缺失。explore judge 的 story-level S1–S5 返回有效（4/4/4/4），但 C2 出现协议失败；C4 抽样暴露一处英文片段和中段复述。null/协议失败继续按缺证据处理，不能当通过。
+- 针对真实抽查新增 writer/NPC 简体中文约束、climax 必须引用已建立线索且禁止无铺垫反派的约束，并加入 prompt 回归断言；不改变规则审批或 fallback 语义。

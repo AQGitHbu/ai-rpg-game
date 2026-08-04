@@ -28,13 +28,16 @@ test("buildPairedRunSpecs 为同一 case 的策略复用 seed 与 pairId", () =>
 test("三种 profile 解析为明确的场景/重试/超时/分支配置", () => {
   assert.equal(resolveEvalProfile({}), "baseline");
   assert.deepEqual(resolveEvalProfileConfig({ STORY_EVAL_PROFILE: "smoke" }), {
-    profile: "smoke", maxScenes: 3, maxRoleAttempts: 1, aiTimeoutMs: 120_000, branchMode: "none", totalBudgetMs: 10 * 60_000,
+    profile: "smoke", maxScenes: 3, maxRoleAttempts: 1, aiTimeoutMs: 300_000, branchMode: "none", totalBudgetMs: 10 * 60_000,
   });
   assert.deepEqual(resolveEvalProfileConfig({ STORY_EVAL_PROFILE: "regression" }), {
-    profile: "regression", maxScenes: 18, maxRoleAttempts: 3, aiTimeoutMs: 120_000, branchMode: "sample", totalBudgetMs: 45 * 60_000,
+    profile: "regression", maxScenes: 18, maxRoleAttempts: 3, aiTimeoutMs: 300_000, branchMode: "sample", totalBudgetMs: 45 * 60_000,
   });
   assert.deepEqual(resolveEvalProfileConfig({ STORY_EVAL_PROFILE: "baseline" }), {
-    profile: "baseline", maxScenes: 60, maxRoleAttempts: 3, aiTimeoutMs: 120_000, branchMode: "full", totalBudgetMs: 90 * 60_000,
+    profile: "baseline", maxScenes: 60, maxRoleAttempts: 3, aiTimeoutMs: 300_000, branchMode: "full", totalBudgetMs: 90 * 60_000,
+  });
+  assert.deepEqual(resolveEvalProfileConfig({ STORY_EVAL_PROFILE: "regression", STORY_EVAL_AI_TIMEOUT_MS: "180000" }), {
+    profile: "regression", maxScenes: 18, maxRoleAttempts: 3, aiTimeoutMs: 180_000, branchMode: "sample", totalBudgetMs: 45 * 60_000,
   });
   assert.equal(resolveEvalProfile({ STORY_EVAL_PROFILE: "unknown" }), null);
   assert.equal(resolveEvalProfileConfig({ STORY_EVAL_PROFILE: "smoke", STORY_EVAL_BRANCH_MODE: "bad" }), null);

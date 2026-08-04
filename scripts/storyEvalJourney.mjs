@@ -109,14 +109,14 @@ export function buildPairedRunSpecs(cases, strategies, runs, baseSeed) {
 export const STORY_EVAL_PROFILE_DEFAULTS = Object.freeze({
   // ai-slg-game-model 的蓝图请求偶尔会接近一分钟；smoke 也必须给完整
   // 的单请求预算，否则 provider 尚未返回就被误记成 fallback。
-  smoke: Object.freeze({ maxScenes: 3, maxRoleAttempts: 1, aiTimeoutMs: 120_000, branchMode: "none", totalBudgetMs: 10 * 60_000 }),
+  smoke: Object.freeze({ maxScenes: 3, maxRoleAttempts: 1, aiTimeoutMs: 300_000, branchMode: "none", totalBudgetMs: 10 * 60_000 }),
   // fallback-7 的 long 主线需要 13 个 narrative scenes 才能启动终局战斗；
   // 生成事实全覆盖会再增加一条调查动作，18 给 battle/ending 收尾留出余量，
   // 避免 regression 把正常终局误报成不收敛。baseline 仍保留 60 幕作为跨蓝图安全阀。
   // 同一配置 provider 的短暂 service_error/rate-limit 在 long 旅程中并不罕见；
   // 第三次同角色重试可显著降低把一幕降级为 fallback 的概率，且仍受总预算约束。
-  regression: Object.freeze({ maxScenes: 18, maxRoleAttempts: 3, aiTimeoutMs: 120_000, branchMode: "sample", totalBudgetMs: 45 * 60_000 }),
-  baseline: Object.freeze({ maxScenes: 60, maxRoleAttempts: 3, aiTimeoutMs: 120_000, branchMode: "full", totalBudgetMs: 90 * 60_000 }),
+  regression: Object.freeze({ maxScenes: 18, maxRoleAttempts: 3, aiTimeoutMs: 300_000, branchMode: "sample", totalBudgetMs: 45 * 60_000 }),
+  baseline: Object.freeze({ maxScenes: 60, maxRoleAttempts: 3, aiTimeoutMs: 300_000, branchMode: "full", totalBudgetMs: 90 * 60_000 }),
 });
 
 const STORY_EVAL_BRANCH_MODES = new Set(["none", "sample", "full"]);
@@ -136,7 +136,10 @@ export function resolveEvalProfileConfig(env = {}) {
     profile,
     maxScenes: resolveEvalInt(env, "STORY_EVAL_MAX_SCENES", defaults.maxScenes, 1, 60),
     maxRoleAttempts: resolveEvalInt(env, "STORY_EVAL_MAX_ROLE_ATTEMPTS", defaults.maxRoleAttempts, 1, 3),
-    aiTimeoutMs: resolveEvalInt(env, "STORY_EVAL_AI_TIMEOUT_MS", defaults.aiTimeoutMs, 1_000, 120_000),
+    // ai-slg-game-model occasionally takes 2–3 minutes for long-context
+    // director/writer calls; captured runs must be able to wait for that
+    // response instead of converting it into a false fallback.
+    aiTimeoutMs: resolveEvalInt(env, "STORY_EVAL_AI_TIMEOUT_MS", defaults.aiTimeoutMs, 1_000, 300_000),
     branchMode,
     totalBudgetMs: resolveEvalInt(env, "STORY_EVAL_TOTAL_BUDGET_MS", defaults.totalBudgetMs, 60_000, 6 * 60 * 60_000),
   };
