@@ -121,6 +121,17 @@ describe("isExploratory", () => {
     const futureObjectiveRecord = { ...record, blueprint } as never;
     expect(isExploratory("take_item:item_key", futureObjectiveRecord)).toBe(false);
   });
+
+  it("当前主线路由可覆盖同 actionKey 的未来目标锁定", () => {
+    const record = makeRecord({
+      quests: [{ questId: "main-1", status: "active" } as never, { questId: "main-2", status: "locked" } as never],
+    });
+    const blueprint = {
+      ...record.blueprint,
+      quests: [{ id: "main-1", kind: "main", objectives: [] }, { id: "main-2", kind: "main", objectives: [{ kind: "visit_location", locationId: "loc_b" }] }],
+    } as never;
+    expect(isExploratory("move:loc_b", { ...record, blueprint } as never, new Set(["move:loc_b"]))).toBe(true);
+  });
 });
 
 describe("pickNarrativeChoice", () => {
@@ -204,6 +215,36 @@ describe("pickNarrativeChoice", () => {
       },
     } as never);
     expect(pickNarrativeChoice(record, () => 0.2)).toEqual({ index: 0, reason: "random" });
+  });
+
+  it("无探索选项但存在当前主线目标时优先推进主线", () => {
+    const base = makeRecord({
+      quests: [{ questId: "q-main", status: "active" } as never],
+      narrative: {
+        currentScene: {
+          sceneId: "s-mainline-recovery",
+          turn: 1,
+          narration: "n",
+          usedFactIds: [],
+          npcLine: null,
+          choices: [
+            { choiceToken: "c1", label: "挑战首领", actionKey: "start_battle:enemy_1" },
+            { choiceToken: "c2", label: "观察", actionKey: "observe:loc_a" },
+          ],
+          source: "generated",
+        },
+        generation: { status: "idle" },
+        mode: "ai",
+      },
+    });
+    const record = {
+      ...base,
+      blueprint: {
+        ...base.blueprint,
+        quests: [{ id: "q-main", kind: "main", objectives: [{ kind: "defeat_enemy", enemyId: "enemy_1" }] }],
+      },
+    } as never;
+    expect(pickNarrativeChoice(record, () => 0.99)).toEqual({ index: 0, reason: "mainline:recovery" });
   });
 });
 

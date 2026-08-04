@@ -107,8 +107,12 @@ function lockedMainObjectiveActionKeys(record: StoryEvalGameRecord): ReadonlySet
  * 行动是否为探索性：前往未访问地点 / 与未见 NPC 交谈 / 调查未发现事实 /
  * 拾取物品（功能推进）。move/talk/investigate 是否探索取决于 GameRecord 状态。
  */
-export function isExploratory(actionKey: string, record: StoryEvalGameRecord): boolean {
-  if (lockedMainObjectiveActionKeys(record).has(actionKey)) return false;
+export function isExploratory(
+  actionKey: string,
+  record: StoryEvalGameRecord,
+  allowedMainlineActionKeys: ReadonlySet<string> = new Set(),
+): boolean {
+  if (lockedMainObjectiveActionKeys(record).has(actionKey) && !allowedMainlineActionKeys.has(actionKey)) return false;
   const { kind, target } = splitAction(actionKey);
   if (kind === "take_item") return true;
   if (kind === "investigate") {
@@ -125,16 +129,25 @@ export function isExploratory(actionKey: string, record: StoryEvalGameRecord): b
   return false;
 }
 
-/** 探索优先选择：唯一探索选项必选；同类掷硬币；无探索随机。返回下标与理由（记入 story.jsonl）。 */
+/** 探索优先选择：唯一探索选项必选；同类掷硬币；无探索时优先沿当前主线
+ * 的合法目标/路由动作，避免已探索区域之间随机往返导致主线饥饿；没有
+ * 可用主线动作才随机。返回下标与理由（记入 story.jsonl）。 */
 export function pickNarrativeChoice(
   record: StoryEvalGameRecord,
   rand: () => number,
-): { index: 0 | 1; reason: "explore" | "random" } {
+): { index: 0 | 1; reason: "explore" | "random" | "mainline:recovery" } {
   const choices = record.state.narrative.currentScene?.choices ?? [];
   if (choices.length !== 2) return { index: 0, reason: "random" };
+  const activeMainObjective = activeMainObjectiveOf(record);
+  const mainlineActionKeys = new Set(
+    [activeMainObjective?.suggestedActionKey, activeMainObjective?.targetActionKey]
+      .filter((key): key is string => typeof key === "string"),
+  );
   const lockedObjectives = lockedMainObjectiveActionKeys(record);
   const safeIndexes = choices
-    .map((choice, index) => (lockedObjectives.has(choice.actionKey) ? -1 : index))
+    .map((choice, index) => (
+      lockedObjectives.has(choice.actionKey) && !mainlineActionKeys.has(choice.actionKey) ? -1 : index
+    ))
     .filter((index): index is 0 | 1 => index === 0 || index === 1);
   // 即使两个选项都不是“探索动作”，也不让随机选择提前完成尚未解锁
   // 的主线目标；否则后续 unlock 会 fixed-point 级联跳过中间幕。
@@ -143,10 +156,17 @@ export function pickNarrativeChoice(
     return { index, reason: isExploratory(choices[index].actionKey, record) ? "explore" : "random" };
   }
   const exploreIndexes = choices
-    .map((choice, index) => (isExploratory(choice.actionKey, record) ? index : -1))
+    .map((choice, index) => (isExploratory(choice.actionKey, record, mainlineActionKeys) ? index : -1))
     .filter((index): index is 0 | 1 => index === 0 || index === 1);
   if (exploreIndexes.length === 1) return { index: exploreIndexes[0], reason: "explore" };
   if (exploreIndexes.length === 2) return { index: rand() < 0.5 ? 0 : 1, reason: "explore" };
+  const mainlineIndexes = choices
+    .map((choice, index) => (mainlineActionKeys.has(choice.actionKey) ? index : -1))
+    .filter((index): index is 0 | 1 => index === 0 || index === 1);
+  if (mainlineIndexes.length > 0) {
+    const suggestedIndex = mainlineIndexes.find((index) => choices[index].actionKey === activeMainObjective?.suggestedActionKey);
+    return { index: suggestedIndex ?? mainlineIndexes[0], reason: "mainline:recovery" };
+  }
   return { index: rand() < 0.5 ? 0 : 1, reason: "random" };
 }
 

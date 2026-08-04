@@ -322,3 +322,10 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - 将同角色尝试临时提升到 3 次后，A/B artifact `artifacts/story-eval/xianxia-a-objective-0-2026-08-04T04-14-14-657Z-c8d81744` 仍使用 `ai-slg-game-model`，14 幕 `converged`、结局证据完整、事实生成覆盖 `1.00/1.00`，fallback 降至 `1/14=7.1%`；唯一 fallback 是 writer 三次连续 `service_error`。这验证第 3 次重试有效但尚未达到生成级阈值 `≤5%`，不能进入七题材 release matrix。
 - 基于该证据，regression profile 默认角色尝试上限由 2 调整为 3，并同步 node/TS profile 回归测试；这只是可靠性修复，不放宽质量门槛。新的正式 pair 仍需在默认配置下复测并满足零（14 幕时）fallback、explore 终局收敛、分支后果与完整 judge 证据后，才可启动 release matrix。
 - 同一模型 judge 已完成 objective/explore 抽查：objective 的 C4 在 fallback 幕为 1 分，S1/S2/S3/S5/S8/S9 多为 2 分；explore judge 的 story-level/C2 因 provider 响应失败缺证据。说明当前阻断同时来自 provider 可靠性与游戏的因果/分支结构，不能只靠文案润色或把 judge 缺失当通过。
+
+### Explore 主线饥饿修复后的复测（2026-08-04）
+
+- `artifacts/story-eval/xianxia-a-explore-0-2026-08-04T04-31-42-358Z-4e6357b9` 用 30 幕上限复现了结构问题：0 fallback、0 真死局/恢复循环，但在 stage 7 因无探索选项时随机往返已访问地点，30 幕仍未到终局；这不是 provider 失败，而是评估选择器把主线饥饿误当作自由探索。
+- 选择器随后增加两条约束：无探索选项时优先当前主线合法目标/路由；未来锁定 quest 的 actionKey 若同时是当前 active objective 的路由，不再屏蔽该路线。离线策略测试 13/13 通过。
+- 修复后真实 artifact `artifacts/story-eval/xianxia-a-explore-0-2026-08-04T05-19-57-819Z-49ac6249`（提交前工作树、默认 3 次角色重试）15 幕 `status=converged`、0 fallback；主线规则推进 `15/15`，目标事件命中 `10/15`，`start_battle:enemy_boss` 与 ending 同幕记录，生成事实使用/调查均 `1.00`，无真死局/恢复循环。pacing 已有 `setup→develop→turn→climax→resolution`，stage window 无违规；分支样本仍只有 1 个 checkpoint，不能外推 release 级后果覆盖。
+- 将该 explore 与同 seed objective A/B 运行 gate 后只剩 `FALLBACK_RATE_HIGH`，说明 explore 收敛阻断已修复；下一步应在默认 3 次重试下重跑 objective，取得 `fallbackRate=0` 的同 pair，再补完整 judge 证据，之后才有资格启动七题材 matrix。
