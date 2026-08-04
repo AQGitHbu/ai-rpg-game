@@ -336,7 +336,7 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 本轮严格从 `.env.local` 读取 `AI_MODEL=ai-slg-game-model`，7 个题材并行执行 `profile=baseline`（`branchMode=full`、`maxRoleAttempts=3`、`AI_TIMEOUT=120s`、`STORY_EVAL_RETRY_BACKOFF_MS=1000`），每个 case 先 explore 再 objective；没有调用配置外模型。
 
 - 14/14 run 均写出合法 manifest，均为 `status=converged`、`fallbackRate=0`；explore 为 17–19 场景，objective 均为 17 场景。
-- 14/14 的主线 suggested action 均呈现、均被选择、规则推进率均为 `1.00`；generated fact 叙事/规则发现覆盖均为 `2/2`（`1.00/1.00`）；无 `trueDeadEnds`、无 `recoveryLoops`；每个 run 均具备 `setup/develop/turn/climax/resolution` 证据与 3 个 paired checkpoints，state/event/narration 差异均成立，未重新收敛。
+- 14/14 的主线 suggested action 均呈现、均被选择、规则推进率均为 `1.00`；generated fact 叙事/规则发现覆盖均为 `2/2`（`1.00/1.00`）；无 `trueDeadEnds`、无 `recoveryLoops`；每个 run 均具备 `setup/develop/turn/climax/resolution` 证据与 3 个 paired checkpoints，event/narration 差异均为 3/3，state 差异为 1–3/3（门禁按 `max(state,event)≥2` 通过），未重新收敛。
 - objective 旅程均到达最终战斗与 ending 行；explore 也均到达结局，说明主线饥饿修复在七题材上没有再出现 stage7 随机往返不收敛。`targetActionKey` 只在直接目标可用时命中，长线机会中仍有路由场景，因此 `targetPresentationRate` 低于 1 不等同于主线停滞。
 
 第一次对 14 个 run 执行 `node scripts/storyEvalQualityGate.mjs --release ...` 时，纯运行/结构证据已满足，唯一失败为 `JUDGE_EVIDENCE_INCOMPLETE`。随后所有 run 都使用同一 `ai-slg-game-model` 生成了 `scores.json`，但完整 release gate 仍未通过，当前输出为：
