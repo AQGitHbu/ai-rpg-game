@@ -172,7 +172,7 @@ test("main record 模式未知 profile 打印 INVALID_PROFILE 且不读取凭据
   assert.ok(lines.some((line) => line.includes("INVALID_PROFILE")));
 });
 
-test("main record 成对运行：第二策略捕获第一策略的蓝图并复用 seed，且可覆盖评估模型", () => {
+test("main record 成对运行：第二策略捕获第一策略的蓝图并复用 seed", () => {
   const envDir = mkdtempSync(join(tmpdir(), "story-eval-env-"));
   const envPath = join(envDir, ".env.local");
   writeFileSync(envPath, [
@@ -184,7 +184,7 @@ test("main record 成对运行：第二策略捕获第一策略的蓝图并复�
   try {
     const code = main({
       argv: ["--mode=record", "--case=wuxia-a", "--runs=1", "--seed=77"],
-      env: { RUN_REAL_AI_STORY_EVAL: "1", STORY_EVAL_PROFILE: "regression", STORY_EVAL_AI_MODEL: "judge-model" },
+      env: { RUN_REAL_AI_STORY_EVAL: "1", STORY_EVAL_PROFILE: "regression", AI_MODEL: "unapproved-model" },
       sources: [envPath],
       log: () => {},
       spawn: (childEnv) => {
@@ -200,8 +200,8 @@ test("main record 成对运行：第二策略捕获第一策略的蓝图并复�
     assert.equal(spawned.length, 2);
     assert.equal(spawned[0].STORY_EVAL_SEED, "77");
     assert.equal(spawned[1].STORY_EVAL_SEED, "77");
-    assert.equal(spawned[0].AI_MODEL, "judge-model");
-    assert.equal(spawned[1].AI_MODEL, "judge-model");
+    assert.equal(spawned[0].AI_MODEL, "test-model");
+    assert.equal(spawned[1].AI_MODEL, "test-model");
     assert.equal(spawned[0].STORY_EVAL_PAIR_ID, spawned[1].STORY_EVAL_PAIR_ID);
     assert.equal(spawned[0].STORY_EVAL_BLUEPRINT_ARTIFACT, undefined);
     assert.equal(spawned[1].STORY_EVAL_BLUEPRINT_ARTIFACT, join(spawned[0].STORY_EVAL_ARTIFACT_DIR, "calls.jsonl"));

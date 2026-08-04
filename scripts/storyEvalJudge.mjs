@@ -14,8 +14,8 @@
 // C3/C4 仍只输入玩家可见场景。
 // S8/S9 上限约束（spec §5.3）：metrics.json 的 choices.pairedCheckpoints 为 0
 // （无成对分支证据）时 S8/S9 强制 cap 为 3 并注明 "capped: no paired branch evidence"。
-// 门禁：RUN_REAL_AI_STORY_EVAL_JUDGE=1 才调用；模型默认 AI_MODEL，
-// STORY_EVAL_JUDGE_MODEL 可覆盖；复用 AI_API_BASE_URL/AI_API_KEY。
+// 门禁：RUN_REAL_AI_STORY_EVAL_JUDGE=1 才调用；评审模型严格复用 AI_MODEL，
+// 不接受评估专用的模型覆盖；复用 AI_API_BASE_URL/AI_API_KEY。
 // ---------------------------------------------------------------------------
 
 import { resolve } from "node:path";
@@ -98,7 +98,7 @@ export function buildEarlyPredictionPrompt(nonSpoiler, story) {
   const firstQuarter = scenes.slice(0, quarter).map(sceneToText).join("\n\n");
   return [
     "你是故事质量评审员。以下是开局部分（仅前 25% 场景）与世界观/NPC 档案（不含结局、任务结构与后续内容）。",
-    "请按固定三项预测：1) 结局走向；2) boss身份；3) 关键反转。每项给出置信度（1-5）。",
+    "请按固定三项预测：1) 结局走向；2) boss身份；3) 关键反转。每项给出置信度（1-5）。先完成判断，不要展开思维过程；reasoning 最多 40 字。",
     "只输出 JSON：{\"predictions\":[{\"item\":\"结局走向\",\"prediction\":\"...\",\"confidence\":1}],\"reasoning\":\"...\"}",
     `世界观：${JSON.stringify(nonSpoiler.world)}`,
     `NPC 档案：${JSON.stringify(nonSpoiler.npcs)}`,
@@ -112,7 +112,7 @@ export function buildStoryLevelPrompt({ scaleText, version, manifest, story }) {
   return [
     `你是故事质量评审员。请按以下量表（版本 ${version}）为整局故事打分（S1–S3、S5–S9，1-5 分；S4 不由你评定）。`,
     "每个分数必须附证据：场景序号 + 从对应场景文本连续复制的原文引文（建议 8-40 个字）；禁止总结、改写、使用省略号或虚构引文。无证据的分数将重评一次。",
-    "只输出 JSON：{\"scores\":{\"S1\":{\"score\":3,\"evidence\":[{\"sceneIndex\":1,\"quote\":\"...\"}]},\"S2\":{...}},\"reasoning\":\"...\"}",
+    "先完成判断，不要展开思维过程；reasoning 最多 80 字。只输出 JSON：{\"scores\":{\"S1\":{\"score\":3,\"evidence\":[{\"sceneIndex\":1,\"quote\":\"...\"}]},\"S2\":{...}},\"reasoning\":\"...\"}",
     `量表：\n${scaleText}`,
     `完整设定（含结局与任务结构）：${JSON.stringify(manifest)}`,
     `完整故事：\n${scenes}`,
@@ -162,7 +162,7 @@ export function buildSceneLevelPrompt({ scaleText, version, sampled, dimension, 
   });
   return [
     `你是故事质量评审员。请按量表（版本 ${version}）为以下场景评 ${dimension} 维度（1-5 分），逐场景给出分数与一句证据。`,
-    "evidence 必须从对应证据包的场景文本连续复制原文（建议 8-40 个字）；禁止总结、改写、使用省略号或虚构引文。只输出 JSON：{\"scores\":[{\"sceneIndex\":1,\"score\":3,\"evidence\":\"原文连续片段\"}],\"reasoning\":\"...\"}",
+    "先完成判断，不要展开思维过程；reasoning 最多 40 字。evidence 必须从对应证据包的场景文本连续复制原文（建议 8-40 个字）；禁止总结、改写、使用省略号或虚构引文。只输出 JSON：{\"scores\":[{\"sceneIndex\":1,\"score\":3,\"evidence\":\"原文连续片段\"}],\"reasoning\":\"...\"}",
     `量表：\n${scaleText}`,
     `场景：\n${blocks.join("\n\n")}`,
   ].join("\n\n");
@@ -476,7 +476,7 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
   }
   const baseUrl = env.AI_API_BASE_URL;
   const apiKey = env.AI_API_KEY;
-  const model = env.STORY_EVAL_JUDGE_MODEL ?? env.AI_MODEL;
+  const model = env.AI_MODEL;
   if (baseUrl === undefined || apiKey === undefined || model === undefined) {
     log("[story-eval-judge] JUDGE_AI_ENV_INVALID");
     return 1;

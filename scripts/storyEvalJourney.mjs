@@ -6,8 +6,6 @@
 //   （aiEnv.mjs），逐局 spawnSync vitest 子进程，childEnv 显式注入
 //   STORY_EVAL_CAPTURE=1、STORY_EVAL_ARTIFACT_DIR、STORY_EVAL_SEED、
 //   STORY_EVAL_MAX_SCENES、GAME_DB_PATH（tmp 临时 SQLite）与 AI 三键。
-// - STORY_EVAL_AI_MODEL 可在评估子进程内显式覆盖 .env.local 的 AI_MODEL，
-//   仅用于 provider/model A/B；缺省仍使用可用 env source 的 AI_MODEL。
 // - --runs N：策略 seed 依次递增，每局独立 run-id 与独立临时库（结束即清）。
 // 真实计费调用一律显式 env 开关；stdout 绝不打印凭据。
 // ---------------------------------------------------------------------------
@@ -315,10 +313,9 @@ export function main({
         GAME_DB_PATH: databasePath,
         ...(pairedBlueprintArtifact === undefined ? {} : { STORY_EVAL_BLUEPRINT_ARTIFACT: pairedBlueprintArtifact }),
       };
-      childEnv.AI_API_BASE_URL = aiValues.get("AI_API_BASE_URL").decoded;
-      childEnv.AI_API_KEY = aiValues.get("AI_API_KEY").decoded;
-      const modelOverride = typeof env.STORY_EVAL_AI_MODEL === "string" ? env.STORY_EVAL_AI_MODEL.trim() : "";
-      childEnv.AI_MODEL = modelOverride.length > 0 ? modelOverride : aiValues.get("AI_MODEL").decoded;
+      for (const key of ["AI_API_BASE_URL", "AI_MODEL", "AI_API_KEY"]) {
+        childEnv[key] = aiValues.get(key).decoded;
+      }
       const replicateMark = isReplicate ? ` replicate=${pair.replicate + 1}/${runs}` : "";
       const sourceMark = pairedBlueprintArtifact === undefined ? " live-blueprint" : " captured-blueprint";
       log(`${PREFIX} record run ${runIndex + 1} pair=${pair.pairId} case=${pair.caseId} strategy=${strategy} seed=${pair.seed}${replicateMark}${sourceMark}`);

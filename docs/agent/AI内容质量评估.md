@@ -60,12 +60,11 @@ Task 13 接线状态：record 模式已按 v2 case/strategy 确定性展开，ch
 独立降低角色尝试次数和 scenario/runtime provider 超时；Judge 每次请求有超时和稳定的
 `judge_timeout` 失败码，C1–C4 并行发起以消除场景级串行等待。
 
-## 基线流程（12 条主旅程 + 人工/异模型校准）
+## 基线流程（12 条主旅程 + 人工校准）
 
 1. **试点（1 个 case）**：完整执行两种策略与三个成对分支（主线阶段检查点 2/4/6）→
    completeness 通过 → analyze → judge → **两位人工评审独立复核固定高/中/低分证据包**
-   （spec §5.4：所有任一维度 ≤2 分的场景 + 每局 seed 随机 3 个场景），并用**不同模型系列**
-   复评同一份 story/manifest（`STORY_EVAL_JUDGE_MODEL`）。分歧 >1 分、无证据或 artifact
+   （spec §5.4：所有任一维度 ≤2 分的场景 + 每局 seed 随机 3 个场景）。分歧 >1 分、无证据或 artifact
    incomplete 时回到实现侧修正，不能补录分数；量表变化则升版本（v3…）。
 2. **补齐（其余 5 个 case）**：完成 12 条主旅程 → 按 `caseId × strategy` 配对报告均值/中位数/
    最差值/空值率与模型配置，并汇总客观指标为**基线 v2**
@@ -80,15 +79,14 @@ STORY_EVAL_ARTIFACT_DIR（门禁脚本注入）、RUN_REAL_AI_STORY_EVAL、STORY
 STORY_EVAL_PROFILE（smoke/regression/baseline，默认 baseline）、STORY_EVAL_MAX_SCENES、
 STORY_EVAL_MAX_ROLE_ATTEMPTS、STORY_EVAL_RETRY_BACKOFF_MS（0~5000ms，指数退避，默认 1000ms）、
 STORY_EVAL_AI_TIMEOUT_MS、STORY_EVAL_BRANCH_MODE（none/sample/full）、
-STORY_EVAL_AI_MODEL（仅评估子进程覆盖 `.env.local` 的生成模型，用于 provider/model A/B）、
 STORY_EVAL_BLUEPRINT_ARTIFACT（可选，受控 A/B 重放 scenario 候选的 calls.jsonl 路径）、
 AI_THINKING_ROLES（可选 `scenario,director,writer,npc`，默认空值/关闭；仅用于实验，manifest 记录归一化角色列表）、
-RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_MODEL、STORY_EVAL_JUDGE_TIMEOUT_MS（默认 120000）。
+RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_TIMEOUT_MS（默认 120000；judge 强制使用 `.env.local` 的 `AI_MODEL`）。
 
 ## 已知发现（基线阶段只记录不修）
 
 - writer 选项文案被规则文案替换后才展示：若 C3 基线分低，改 prompt 无效，需改规则文案或放开 writer 文案。
-- 同模型评审自身产物存在自我偏袒风险：由人工抽查校准；偏袒明显时设 STORY_EVAL_JUDGE_MODEL 为独立模型。
+- 同模型评审自身产物存在自我偏袒风险：由人工抽查校准；评估与评审均固定使用 `.env.local` 的 `AI_MODEL`，不允许通过环境变量切换到配置外模型。
 - 短测的实际瓶颈在 provider 请求：本次 3 场景 explore 总耗时约 118 秒、objective 约 181 秒，
   本地收尾/动作开销均不足 1 秒；objective 中 director 约 110 秒，是总耗时约 61%。
 
@@ -311,8 +309,7 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 ### Judge provider 兼容性复测（2026-08-04）
 
 - 对 `ai-slg-game-model` 做单请求健康检查时，小 prompt 返回 200，但同一仙侠故事级 prompt（约 18.9k 字符、约 9.3k input tokens）耗时约 229 秒，产生约 20.9k reasoning tokens 后才返回正文；在规定的 120 秒 judge 单请求预算内，story-level/C 维度因此出现 timeout。顶层 `enable_thinking=false` 不足以约束该 provider；补充 `chat_template_kwargs: { enable_thinking: false }` 与 Qwen3/SGLang 兼容，但复杂评审仍会长推理。
-- provider 暴露的 `gemini-3.1-flash-lite-preview` 小请求无 reasoning tokens。将它作为**独立 judge 模型**（不改变游戏生成模型），并把评审 prompt 的 evidence 约束改为“从对应场景连续复制 8–40 字原文，禁止改写/省略号”后，仙侠 objective artifact 的 early prediction、story-level、C1–C4 全部返回且严格引文校验通过；judge 运行约 20 秒，`scores.failures=[]`。
-- 该完整 judge 结果的单 run gate 为：`GENERATION_GRADE_FAILED JUDGE_S1_LOW,JUDGE_S7_LOW,JUDGE_S8_LOW,JUDGE_S9_LOW,JUDGE_C3_LOW`。这次不再是评审 transport/protocol 缺证据，而是暴露出真实质量短板：三幕递进、结局兑现、选择后果/能动性，以及选项策略差异。下一步应固定 `STORY_EVAL_JUDGE_MODEL=gemini-3.1-flash-lite-preview`，再重跑最新代码的仙侠 pair 与七题材 release matrix。
+- 评估与评审请求均固定使用 `.env.local` 中配置的 `AI_MODEL`（当前为 `ai-slg-game-model`）；本轮曾尝试的配置外模型 A/B 不属于有效证据，已撤销模型覆盖能力，不再纳入门禁或回归结论。
+- 在当前配置模型上，评审 prompt 的 evidence 约束已改为“从对应场景连续复制 8–40 字原文，禁止改写/省略号”；复杂故事级评审仍可能因长推理超过 120 秒而缺少证据，因此下一步应继续优化同模型下的请求规模、超时与退避，而不是切换模型。
 - 2026-08-04 的新 baseline explore 在约 11 幕处因 `ai-slg-game-model` director 多次 timeout/service_error 被停止；该目录只有 `calls.jsonl`、没有合法 manifest，不能进入 gate。它证明在 runtime 接入 nested thinking 开关前，长旅程仍会被 provider reasoning/服务错误拖住；修复后必须用 captured blueprint 做 bounded regression 验证，再决定是否重启 60 幕 baseline。
 - 接入 nested thinking 开关后的 bounded explore `artifacts/story-eval/xianxia-a-explore-0-2026-08-04T02-13-36-310Z-8391a253` 首段 director 延迟约 4–45 秒，writer/NPC 多数为秒级，但仍出现 writer `service_error`，随后 Vitest worker exited unexpectedly，未写出合法 manifest。该结果说明参数修复降低了单请求长 reasoning，却还没有解决 provider 偶发错误与 Windows 长测 worker 稳定性；不能进入 release matrix 统计。
-- 用 `STORY_EVAL_AI_MODEL=gemini-3.1-flash-lite-preview` 的 3 幕 smoke 产物 `artifacts/story-eval/xianxia-a-objective-0-2026-08-04T02-22-45-288Z-34b9a473` 在 38 秒内完成，3/3 director、3/3 writer、2/2 NPC 请求成功，fallback=0；但 18 幕 objective regression `artifacts/story-eval/xianxia-a-objective-0-2026-08-04T02-25-41-503Z-297c49a6` 在 7 幕后因连续 `rate_limited` aborted。模型覆盖能力已接通，但必须先按 provider 配额配置并发/退避，才能把该模型用于全量 matrix。
