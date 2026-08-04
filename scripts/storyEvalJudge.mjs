@@ -21,6 +21,10 @@
 import { resolve } from "node:path";
 
 const SCALE_DOC = resolve(import.meta.dirname ?? process.cwd(), "..", "docs", "策划文档", "AI内容质量评估标准.md");
+// 真实 provider 的大故事评审 prompt 可能需要 2–3 分钟；120s 会把仍在生成的
+// 合法响应误判为 timeout。保留可配置项，但把默认/上限提升到 5 分钟。
+export const JUDGE_TIMEOUT_DEFAULT_MS = 300_000;
+export const JUDGE_TIMEOUT_MAX_MS = 300_000;
 
 /** 故事级评审维度（S4 由确定性匹配器计算，judge 不评）。 */
 const STORY_DIMENSIONS = ["S1", "S2", "S3", "S5", "S6", "S7", "S8", "S9"];
@@ -86,6 +90,15 @@ function sceneToText(row) {
   return parts.join("\n");
 }
 
+/** 结局行是玩家最终看到的兑现证据，故事级评审必须能看到它；早期预测仍不携带结局。 */
+function endingToText(row) {
+  return [
+    `结局（场景 ${row.sceneIndex ?? "?"}）：${row.endingName ?? row.endingId ?? "unknown"}`,
+    `结果：${row.outcome ?? "unknown"}`,
+    row.endingDescription ?? "",
+  ].filter((part) => part !== "").join("\n");
+}
+
 /** 场景行查找：只接受 kind === "scene" 的行（证据引文必须指向真实场景）。 */
 function sceneRowAt(story, sceneIndex) {
   return story.find((row) => row.kind === "scene" && row.sceneIndex === sceneIndex) ?? null;
@@ -109,13 +122,15 @@ export function buildEarlyPredictionPrompt(nonSpoiler, story) {
 /** ② 故事级评审：完整 manifest + 全部场景 + S1–S3/S5–S9 量表（S4 由 scoreEarlyPrediction 确定性计算）。 */
 export function buildStoryLevelPrompt({ scaleText, version, manifest, story }) {
   const scenes = story.filter((row) => row.kind === "scene").map(sceneToText).join("\n\n");
+  const endings = story.filter((row) => row.kind === "ending").map(endingToText).join("\n\n");
+  const storyText = [scenes, endings].filter((text) => text !== "").join("\n\n");
   return [
     `你是故事质量评审员。请按以下量表（版本 ${version}）为整局故事打分（S1–S3、S5–S9，1-5 分；S4 不由你评定）。`,
     "每个分数必须附证据：场景序号 + 从对应场景文本连续复制的原文引文（建议 8-40 个字）；禁止总结、改写、使用省略号或虚构引文。无证据的分数将重评一次。",
     "先完成判断，不要展开思维过程；reasoning 最多 80 字。只输出 JSON：{\"scores\":{\"S1\":{\"score\":3,\"evidence\":[{\"sceneIndex\":1,\"quote\":\"...\"}]},\"S2\":{...}},\"reasoning\":\"...\"}",
     `量表：\n${scaleText}`,
     `完整设定（含结局与任务结构）：${JSON.stringify(manifest)}`,
-    `完整故事：\n${scenes}`,
+    `完整故事（含结局兑现）：\n${storyText}`,
   ].join("\n\n");
 }
 
@@ -185,7 +200,7 @@ export function parseJudgeJson(text) {
  *  重试策略：第一次 temperature=0.2（稳定输出），重试时 temperature=0.5（提高输出多样性，
  *  避免相同参数下模型重复输出 invalid JSON）。解析成功但 validateParsed 校验失败时
  *  抛出 judge_schema_invalid，由本函数重试一次（不在 report 阶段修补）。 */
-export async function callJudge({ baseUrl, apiKey, model, messages, fetchImpl = fetch, retries = 1, timeoutMs = 120_000, validateParsed }) {
+export async function callJudge({ baseUrl, apiKey, model, messages, fetchImpl = fetch, retries = 1, timeoutMs = JUDGE_TIMEOUT_DEFAULT_MS, validateParsed }) {
   let lastError = null;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     const temperature = attempt === 0 ? 0.2 : 0.5; // 首次低温度，重试时提高温度增加输出多样性
@@ -494,8 +509,8 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
   const manifest = JSON.parse(fs.readFileSync(join("manifest.json"), "utf8"));
   const metrics = readMetrics(fs, join);
   const judgeTimeoutMs = (() => {
-    const value = Number(env.STORY_EVAL_JUDGE_TIMEOUT_MS ?? 120_000);
-    return Number.isInteger(value) && value >= 1_000 && value <= 120_000 ? value : 120_000;
+    const value = Number(env.STORY_EVAL_JUDGE_TIMEOUT_MS ?? JUDGE_TIMEOUT_DEFAULT_MS);
+    return Number.isInteger(value) && value >= 1_000 && value <= JUDGE_TIMEOUT_MAX_MS ? value : JUDGE_TIMEOUT_DEFAULT_MS;
   })();
 
   // ① 早期预测（S4）：answer key 分组为固定三项后确定性打分；绝不传入预测 prompt。

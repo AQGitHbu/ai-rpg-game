@@ -7,6 +7,8 @@ import {
   buildStoryLevelPrompt,
   callJudge,
   collectLowScenes,
+  JUDGE_TIMEOUT_DEFAULT_MS,
+  JUDGE_TIMEOUT_MAX_MS,
   main,
   parseJudgeJson,
   sampleScenesPerAct,
@@ -14,6 +16,11 @@ import {
   validateSceneLevelResult,
   validateStoryLevelResult,
 } from "./storyEvalJudge.mjs";
+
+test("judge timeout 默认值覆盖真实 provider 的大 prompt 延迟", () => {
+  assert.equal(JUDGE_TIMEOUT_DEFAULT_MS, 300_000);
+  assert.equal(JUDGE_TIMEOUT_MAX_MS, 300_000);
+});
 
 const manifest = {
   world: { name: "W", summary: "S", tone: "dark", themes: ["t"] },
@@ -41,11 +48,12 @@ test("buildEarlyPredictionPrompt 只含前 25% 场景且排除双结局与任务
 });
 
 test("buildStoryLevelPrompt 含完整 manifest 与全部场景与 S 维度清单（含 S9）", () => {
+  const storyWithEnding = [...story, { kind: "ending", sceneIndex: 6, endingId: "e1", endingName: "终局兑现", endingDescription: "主线冲突得到解决。", outcome: "success" }];
   const prompt = buildStoryLevelPrompt({
     scaleText: "# 量表 v9\nS1 三幕式\nS9 游戏性",
     version: "v9",
     manifest,
-    story,
+    story: storyWithEnding,
   });
   assert.ok(prompt.includes("n5"));
   assert.ok(prompt.includes("终局"));
@@ -53,6 +61,8 @@ test("buildStoryLevelPrompt 含完整 manifest 与全部场景与 S 维度清单
   assert.ok(prompt.includes("S9"));
   assert.ok(prompt.includes("v9"));
   assert.ok(prompt.includes("S4 不由你评定"));
+  assert.ok(prompt.includes("终局兑现"));
+  assert.ok(prompt.includes("含结局兑现"));
 });
 
 test("sampleScenesPerAct 每幕抽 2 且确定性", () => {

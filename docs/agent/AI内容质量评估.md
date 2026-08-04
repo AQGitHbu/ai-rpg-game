@@ -81,7 +81,7 @@ STORY_EVAL_MAX_ROLE_ATTEMPTS、STORY_EVAL_RETRY_BACKOFF_MS（0~5000ms，指数�
 STORY_EVAL_AI_TIMEOUT_MS、STORY_EVAL_BRANCH_MODE（none/sample/full）、
 STORY_EVAL_BLUEPRINT_ARTIFACT（可选，受控 A/B 重放 scenario 候选的 calls.jsonl 路径）、
 AI_THINKING_ROLES（可选 `scenario,director,writer,npc`，默认空值/关闭；仅用于实验，manifest 记录归一化角色列表）、
-RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_TIMEOUT_MS（默认 120000；judge 强制使用 `.env.local` 的 `AI_MODEL`）。
+RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_TIMEOUT_MS（默认 300000、上限 300000；真实大 prompt 可持续 2–3 分钟；judge 强制使用 `.env.local` 的 `AI_MODEL`）。
 
 ## 已知发现（基线阶段只记录不修）
 
@@ -330,3 +330,25 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - 修复后真实 artifact `artifacts/story-eval/xianxia-a-explore-0-2026-08-04T05-19-57-819Z-49ac6249`（提交前工作树、默认 3 次角色重试）15 幕 `status=converged`、0 fallback；主线规则推进 `15/15`，目标事件命中 `10/15`，`start_battle:enemy_boss` 与 ending 同幕记录，生成事实使用/调查均 `1.00`，无真死局/恢复循环。pacing 已有 `setup→develop→turn→climax→resolution`，stage window 无违规；分支样本仍只有 1 个 checkpoint，不能外推 release 级后果覆盖。
 - 将该 explore 与同 seed objective A/B 运行 gate 后只剩 `FALLBACK_RATE_HIGH`，说明 explore 收敛阻断已修复；下一步应在默认 3 次重试下重跑 objective，取得 `fallbackRate=0` 的同 pair，再补完整 judge 证据，之后才有资格启动七题材 matrix。
 - 随后默认 3 次重试下的 objective artifact `artifacts/story-eval/xianxia-a-objective-0-2026-08-04T05-57-29-272Z-4afad1d0` 完成 14 幕 `converged`、0 fallback；主线推进/规则事件/事实使用与调查均完整，结局和 pacing 证据齐全。与上述 explore artifact 配对执行 `node scripts/storyEvalQualityGate.mjs` 已输出 `GENERATION_GRADE_OK`。这是当前提交后的有效仙侠 pilot，不等于七题材 release：它仍只有 1 个 sample branch checkpoint，judge 证据也尚未补齐。
+
+### 配置模型恢复后的七题材并行 baseline matrix（2026-08-04）
+
+本轮严格从 `.env.local` 读取 `AI_MODEL=ai-slg-game-model`，7 个题材并行执行 `profile=baseline`（`branchMode=full`、`maxRoleAttempts=3`、`AI_TIMEOUT=120s`、`STORY_EVAL_RETRY_BACKOFF_MS=1000`），每个 case 先 explore 再 objective；没有调用配置外模型。
+
+- 14/14 run 均写出合法 manifest，均为 `status=converged`、`fallbackRate=0`；explore 为 17–19 场景，objective 均为 17 场景。
+- 14/14 的主线 suggested action 均呈现、均被选择、规则推进率均为 `1.00`；generated fact 叙事/规则发现覆盖均为 `2/2`（`1.00/1.00`）；无 `trueDeadEnds`、无 `recoveryLoops`；每个 run 均具备 `setup/develop/turn/climax/resolution` 证据与 3 个 paired checkpoints，state/event/narration 差异均成立，未重新收敛。
+- objective 旅程均到达最终战斗与 ending 行；explore 也均到达结局，说明主线饥饿修复在七题材上没有再出现 stage7 随机往返不收敛。`targetActionKey` 只在直接目标可用时命中，长线机会中仍有路由场景，因此 `targetPresentationRate` 低于 1 不等同于主线停滞。
+
+第一次对 14 个 run 执行 `node scripts/storyEvalQualityGate.mjs --release ...` 时，纯运行/结构证据已满足，唯一失败为 `JUDGE_EVIDENCE_INCOMPLETE`。随后所有 run 都使用同一 `ai-slg-game-model` 生成了 `scores.json`，但完整 release gate 仍未通过，当前输出为：
+
+`GENERATION_GRADE_FAILED JUDGE_EVIDENCE_INCOMPLETE,JUDGE_S1_LOW,JUDGE_S3_LOW,JUDGE_S7_LOW,JUDGE_S8_LOW,JUDGE_S9_LOW,JUDGE_C4_LOW,JUDGE_C2_LOW,JUDGE_C3_LOW`
+
+其中 S1/S3/S7/S8/S9 的一部分是 story-level 响应缺失/校验失败被门禁按 0 处理，并不代表已得到对应低分；C2/C3/C4 包含真实返回的低分样本，需人工复核，不能把 judge 缺失与游戏逻辑缺陷混为一谈。
+
+### Judge 长 prompt 超时与结局证据修复（2026-08-04）
+
+- 实际 provider 观测到约 9,271 input / 21,354 output tokens 的评审请求耗时约 3m02s，另有约 8,822 / 14,654 tokens 的请求耗时约 2m13s。`STORY_EVAL_JUDGE_TIMEOUT_MS` 默认值与上限已由 120s 提升至 300s，并增加 node 回归断言；这只扩展等待预算，不改变模型或门槛。
+- judge 的 story-level prompt 原先只发送 scene 行，未发送最终 `ending` 行，导致真实已有 `ending_reached` 的旅程被错误评为“无结局”。现在完整故事输入显式附带“结局兑现”块，并由回归测试覆盖。
+- 使用 300s 且保持 `ai-slg-game-model` 重跑后，部分 story/C 维度从 timeout 恢复（例如 post-apocalypse/science-fiction objective 的完整响应），但部分题材仍有 `judge_schema_invalid`、`judge_invalid_json` 或 `judge_http_429`。因此 release 目前被 judge 协议证据阻断，而不是被运行收敛、事实覆盖、pacing、分支后果或真死局阻断。
+
+下一步应优先缩短 judge story/C prompt 或拆分维度、保留 300s 长响应预算并加 bounded concurrency；不要以放宽 schema 校验、把 null 当通过或切换配置外模型来“修复” release gate。
