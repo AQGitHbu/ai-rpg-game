@@ -11,7 +11,9 @@ import {
   JUDGE_TIMEOUT_MAX_MS,
   main,
   parseJudgeJson,
+  runWithConcurrency,
   sampleScenesPerAct,
+  selectScaleText,
   scoreEarlyPrediction,
   validateSceneLevelResult,
   validateStoryLevelResult,
@@ -20,6 +22,36 @@ import {
 test("judge timeout 默认值覆盖真实 provider 的大 prompt 延迟", () => {
   assert.equal(JUDGE_TIMEOUT_DEFAULT_MS, 300_000);
   assert.equal(JUDGE_TIMEOUT_MAX_MS, 300_000);
+});
+
+test("judge 大 prompt 使用按维度量表与 bounded concurrency", async () => {
+  const scale = [
+    "# scale",
+    "| # | 维度 | 1 分锚点 | 3 分锚点 | 5 分锚点 |",
+    "| --- | --- | --- | --- | --- |",
+    "| S1 | structure | low | mid | high |",
+    "| S2 | tension | low | mid | high |",
+    "| C1 | npc | low | mid | high |",
+  ].join("\n");
+  const selected = selectScaleText(scale, ["S1", "C1"]);
+  assert.ok(selected.includes("S1"));
+  assert.ok(selected.includes("C1"));
+  assert.ok(!selected.includes("S2"));
+
+  let active = 0;
+  let maxActive = 0;
+  const result = await runWithConcurrency(
+    Array.from({ length: 4 }, (_, index) => async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      active -= 1;
+      return index;
+    }),
+    2,
+  );
+  assert.deepEqual(result, [0, 1, 2, 3]);
+  assert.equal(maxActive, 2);
 });
 
 const manifest = {
@@ -229,6 +261,19 @@ test("validateStoryLevelResult：分数越界/虚构 sceneIndex/虚构引文/缺
   noEvidence.scores.S7.evidence = [];
   assert.equal(validateStoryLevelResult(noEvidence, story, {}), false);
   assert.equal(validateStoryLevelResult(null, story, {}), false);
+});
+
+test("validateStoryLevelResult：S7 可引用最终 ending 行", () => {
+  const storyWithEnding = [...story, { kind: "ending", sceneIndex: 6, endingId: "e1", endingName: "终局兑现", endingDescription: "主线冲突得到解决。", outcome: "success" }];
+  const parsed = {
+    scores: {
+      S6: { score: 3, evidence: [{ sceneIndex: 5, quote: "n5" }] },
+      S7: { score: 4, evidence: [{ sceneIndex: 6, quote: "主线冲突得到解决" }] },
+      S8: { score: 3, evidence: [{ sceneIndex: 1, quote: "n1" }] },
+      S9: { score: 3, evidence: [{ sceneIndex: 2, quote: "n2" }] },
+    },
+  };
+  assert.equal(validateStoryLevelResult(parsed, storyWithEnding, { choices: { pairedCheckpoints: 2 } }, ["S6", "S7", "S8", "S9"]), true);
 });
 
 test("validateSceneLevelResult：分数越界/虚构 sceneIndex/虚构引文/空结果拒绝", () => {

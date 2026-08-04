@@ -83,6 +83,9 @@ describe("createLiveRuntimeNarrativeSources captureSink", () => {
     expect(records.map((record) => record.traceId)).toEqual(["t", "t", "t"]);
     expect(records[0].messages[0].content).toContain("Main-quest progression is the priority");
     expect(records[0].messages[0].content).toContain("Blueprint expansion is a rare fallback");
+    expect(records[0].messages[0].content).toContain("concrete new consequence");
+    expect(records[1].messages[0].content).toContain("do not copy or paraphrase");
+    expect(records[1].messages[0].content).toContain("immediate consequence");
   });
 
   it("同场景重试 attempt 递增（含 3 次尝试），跨场景不泄漏（无全局计数器）", async () => {

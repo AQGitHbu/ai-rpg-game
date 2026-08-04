@@ -25,12 +25,48 @@ const SCALE_DOC = resolve(import.meta.dirname ?? process.cwd(), "..", "docs", "�
 // 合法响应误判为 timeout。保留可配置项，但把默认/上限提升到 5 分钟。
 export const JUDGE_TIMEOUT_DEFAULT_MS = 300_000;
 export const JUDGE_TIMEOUT_MAX_MS = 300_000;
+export const JUDGE_CONCURRENCY_DEFAULT = 2;
+export const JUDGE_CONCURRENCY_MAX = 4;
 
 /** 故事级评审维度（S4 由确定性匹配器计算，judge 不评）。 */
 const STORY_DIMENSIONS = ["S1", "S2", "S3", "S5", "S6", "S7", "S8", "S9"];
+export const STORY_DIMENSION_GROUPS = Object.freeze([
+  Object.freeze(["S1", "S2", "S3", "S5"]),
+  Object.freeze(["S6", "S7", "S8", "S9"]),
+]);
 
 /** S8/S9 上限证据注记（spec §5.3）。 */
 const CAP_EVIDENCE_NOTE = "capped: no paired branch evidence";
+
+/** 只把当前评审所需的量表行发给模型，避免每个大 prompt 重复完整标准文档。 */
+export function selectScaleText(scaleText, dimensions) {
+  const lines = String(scaleText ?? "").split(/\r?\n/);
+  const wanted = new Set(dimensions);
+  const tableStart = lines.findIndex((line) => line.startsWith("| # |"));
+  if (tableStart < 0) return String(scaleText ?? "");
+  const prefix = lines.slice(0, tableStart + 2);
+  const rows = lines.filter((line) => {
+    const match = /^\|\s*(S\d+|C\d+)\s*\|/.exec(line);
+    return match !== null && wanted.has(match[1]);
+  });
+  return [...prefix, ...rows].join("\n");
+}
+
+/** 对同一 run 的评审请求做 bounded concurrency，降低 provider 429/大 prompt 互相拖慢。 */
+export async function runWithConcurrency(tasks, limit) {
+  const results = new Array(tasks.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < tasks.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await tasks[index]();
+    }
+  };
+  const workerCount = Math.min(Math.max(1, limit), tasks.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
 
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -104,6 +140,12 @@ function sceneRowAt(story, sceneIndex) {
   return story.find((row) => row.kind === "scene" && row.sceneIndex === sceneIndex) ?? null;
 }
 
+function storyEvidenceText(story, sceneIndex) {
+  const rows = story.filter((row) => row.sceneIndex === sceneIndex && (row.kind === "scene" || row.kind === "ending"));
+  if (rows.length === 0) return null;
+  return rows.map((row) => row.kind === "ending" ? endingToText(row) : sceneToText(row)).join("\n");
+}
+
 /** ① 早期预测测试：非剧透 manifest + 前 25% 场景（向上取整）。 */
 export function buildEarlyPredictionPrompt(nonSpoiler, story) {
   const scenes = story.filter((row) => row.kind === "scene");
@@ -120,15 +162,17 @@ export function buildEarlyPredictionPrompt(nonSpoiler, story) {
 }
 
 /** ② 故事级评审：完整 manifest + 全部场景 + S1–S3/S5–S9 量表（S4 由 scoreEarlyPrediction 确定性计算）。 */
-export function buildStoryLevelPrompt({ scaleText, version, manifest, story }) {
+export function buildStoryLevelPrompt({ scaleText, version, manifest, story, dimensions = STORY_DIMENSIONS }) {
   const scenes = story.filter((row) => row.kind === "scene").map(sceneToText).join("\n\n");
   const endings = story.filter((row) => row.kind === "ending").map(endingToText).join("\n\n");
   const storyText = [scenes, endings].filter((text) => text !== "").join("\n\n");
+  const dimensionText = dimensions.join("、");
+  const schema = dimensions.map((key) => `"${key}":{"score":3,"evidence":[{"sceneIndex":1,"quote":"..."}]}`).join(",");
   return [
-    `你是故事质量评审员。请按以下量表（版本 ${version}）为整局故事打分（S1–S3、S5–S9，1-5 分；S4 不由你评定）。`,
+    `你是故事质量评审员。请按以下量表（版本 ${version}）为整局故事打分（${dimensionText}，1-5 分；S4 不由你评定）。`,
     "每个分数必须附证据：场景序号 + 从对应场景文本连续复制的原文引文（建议 8-40 个字）；禁止总结、改写、使用省略号或虚构引文。无证据的分数将重评一次。",
-    "先完成判断，不要展开思维过程；reasoning 最多 80 字。只输出 JSON：{\"scores\":{\"S1\":{\"score\":3,\"evidence\":[{\"sceneIndex\":1,\"quote\":\"...\"}]},\"S2\":{...}},\"reasoning\":\"...\"}",
-    `量表：\n${scaleText}`,
+    `先完成判断，不要展开思维过程；reasoning 最多 40 字。只输出 JSON：{"scores":{${schema}},"reasoning":"..."}`,
+    `量表：\n${selectScaleText(scaleText, dimensions)}`,
     `完整设定（含结局与任务结构）：${JSON.stringify(manifest)}`,
     `完整故事（含结局兑现）：\n${storyText}`,
   ].join("\n\n");
@@ -178,7 +222,7 @@ export function buildSceneLevelPrompt({ scaleText, version, sampled, dimension, 
   return [
     `你是故事质量评审员。请按量表（版本 ${version}）为以下场景评 ${dimension} 维度（1-5 分），逐场景给出分数与一句证据。`,
     "先完成判断，不要展开思维过程；reasoning 最多 40 字。evidence 必须从对应证据包的场景文本连续复制原文（建议 8-40 个字）；禁止总结、改写、使用省略号或虚构引文。只输出 JSON：{\"scores\":[{\"sceneIndex\":1,\"score\":3,\"evidence\":\"原文连续片段\"}],\"reasoning\":\"...\"}",
-    `量表：\n${scaleText}`,
+    `量表：\n${selectScaleText(scaleText, [dimension.slice(0, 2)])}`,
     `场景：\n${blocks.join("\n\n")}`,
   ].join("\n\n");
 }
@@ -374,11 +418,11 @@ export function applyStoryLevelS8S9Cap(scores, metrics) {
 /** 故事级结果校验：所有应评维度齐全（S1–S3、S5–S9）、整数 1–5、sceneIndex 存在、
  *  引文是相应场景原文子串；通过后就地执行 S8/S9 上限规范化。校验失败返回 false
  *  （callJudge 据此抛出 judge_schema_invalid 并重试一次）。 */
-export function validateStoryLevelResult(parsed, story, metrics) {
+export function validateStoryLevelResult(parsed, story, metrics, dimensions = STORY_DIMENSIONS) {
   if (parsed === null || typeof parsed !== "object") return false;
   const scores = parsed.scores;
   if (scores === null || typeof scores !== "object" || Array.isArray(scores)) return false;
-  for (const key of STORY_DIMENSIONS) {
+  for (const key of dimensions) {
     const entry = scores[key];
     if (entry === null || typeof entry !== "object") return false;
     if (!isIntScore(entry.score)) return false;
@@ -386,9 +430,9 @@ export function validateStoryLevelResult(parsed, story, metrics) {
     if (!Array.isArray(evidence) || evidence.length === 0) return false;
     for (const item of evidence) {
       if (item === null || typeof item !== "object") return false;
-      const row = sceneRowAt(story, item.sceneIndex);
-      if (row === null) return false;
-      if (typeof item.quote !== "string" || !sceneToText(row).includes(item.quote)) return false;
+      if (typeof item.quote !== "string") return false;
+      const evidenceText = storyEvidenceText(story, item.sceneIndex);
+      if (evidenceText === null || !evidenceText.includes(item.quote)) return false;
     }
   }
   applyStoryLevelS8S9Cap(scores, metrics);
@@ -512,6 +556,10 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
     const value = Number(env.STORY_EVAL_JUDGE_TIMEOUT_MS ?? JUDGE_TIMEOUT_DEFAULT_MS);
     return Number.isInteger(value) && value >= 1_000 && value <= JUDGE_TIMEOUT_MAX_MS ? value : JUDGE_TIMEOUT_DEFAULT_MS;
   })();
+  const judgeConcurrency = (() => {
+    const value = Number(env.STORY_EVAL_JUDGE_CONCURRENCY ?? JUDGE_CONCURRENCY_DEFAULT);
+    return Number.isInteger(value) && value >= 1 && value <= JUDGE_CONCURRENCY_MAX ? value : JUDGE_CONCURRENCY_DEFAULT;
+  })();
 
   // ① 早期预测（S4）：answer key 分组为固定三项后确定性打分；绝不传入预测 prompt。
   const rawAnswerKey = manifest.answerKey;
@@ -519,74 +567,88 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
     rawAnswerKey === null || typeof rawAnswerKey !== "object"
       ? null
       : answerKeyForPredictionItems(rawAnswerKey);
-  // ①/② 互不依赖：并发发送可把 provider 延迟从两个串行窗口压缩为一个，
-  // 同时保留 S4 的输入隔离与故事级完整设定边界。
-  const [predictionResult, storyResult] = await Promise.all([
-    callJudge({
+  // ①/② 互不依赖；故事级维度拆成两组，避免单个大 prompt 同时生成 8 组证据。
+  const storyTasks = STORY_DIMENSION_GROUPS.map((dimensions) => () => callJudge({
+    baseUrl, apiKey, model,
+    messages: [{ role: "user", content: buildStoryLevelPrompt({ scaleText, version, manifest: manifest.blueprint, story, dimensions }) }],
+    fetchImpl,
+    timeoutMs: judgeTimeoutMs,
+    validateParsed: (parsed) => validateStoryLevelResult(parsed, story, metrics, dimensions),
+  }));
+  const [predictionResult, ...storyResults] = await runWithConcurrency([
+    () => callJudge({
       baseUrl, apiKey, model,
       messages: [{ role: "user", content: buildEarlyPredictionPrompt({ world: manifest.blueprint?.world, npcs: manifest.blueprint?.npcs }, story) }],
       fetchImpl,
       timeoutMs: judgeTimeoutMs,
     }),
-    callJudge({
-      baseUrl, apiKey, model,
-      messages: [{ role: "user", content: buildStoryLevelPrompt({ scaleText, version, manifest: manifest.blueprint, story }) }],
-      fetchImpl,
-      timeoutMs: judgeTimeoutMs,
-      validateParsed: (parsed) => validateStoryLevelResult(parsed, story, metrics),
-    }),
-  ]);
+    ...storyTasks,
+  ], judgeConcurrency);
+  const mergedStoryScores = Object.assign({}, ...storyResults
+    .filter((result) => result.ok && result.parsed?.scores !== undefined)
+    .map((result) => result.parsed.scores));
+  const storyResult = {
+    ok: storyResults.every((result) => result.ok),
+    parsed: Object.keys(mergedStoryScores).length === 0
+      ? null
+      : { scores: mergedStoryScores, reasoning: storyResults.map((result) => result.parsed?.reasoning).filter(Boolean).join(" ") },
+    error: storyResults.every((result) => result.ok)
+      ? null
+      : storyResults.map((result, index) => result.ok ? null : `${STORY_DIMENSION_GROUPS[index].join("/")}:${result.error}`).filter(Boolean).join(";"),
+  };
   // ③ 场景级（C1 全量、C2–C4 每幕抽 2）。
   const scenesWithNpc = story.filter((row) => row.kind === "scene" && row.npcLine?.text !== undefined);
   const sampledAll = sampleScenesPerAct(story, Number(manifest.strategySeed ?? "0"), 2);
   // C2 只抽有紧邻前序场景的场景（开局场景无前序，不参与 C2）。
   const sampledC2 = sampledAll.filter((row) => story.some((entry) => entry.sceneIndex === row.sceneIndex - 1));
-  const c1Promise = scenesWithNpc.length > 0
-    ? callJudge({
+  const c1Task = scenesWithNpc.length > 0
+    ? () => callJudge({
         baseUrl, apiKey, model,
         messages: [{ role: "user", content: buildSceneLevelPrompt({ scaleText, version, sampled: scenesWithNpc, dimension: "C1（NPC 声线一致性）", story }) }],
         fetchImpl,
         timeoutMs: judgeTimeoutMs,
         validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C1（NPC 声线一致性）"),
       })
-    : { ok: true, parsed: { scores: [], reasoning: "no npc lines" } };
-  const c2Promise = callJudge({
+    : async () => ({ ok: true, parsed: { scores: [], reasoning: "no npc lines" } });
+  const c2Task = () => callJudge({
     baseUrl, apiKey, model,
     messages: [{ role: "user", content: buildSceneLevelPrompt({ scaleText, version, sampled: sampledC2, dimension: "C2（场景衔接连续性）", story }) }],
     fetchImpl,
     timeoutMs: judgeTimeoutMs,
     validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C2（场景衔接连续性）"),
   });
-  const c3Promise = callJudge({
+  const c3Task = () => callJudge({
     baseUrl, apiKey, model,
     messages: [{ role: "user", content: buildSceneLevelPrompt({ scaleText, version, sampled: sampledAll, dimension: "C3（选项抉择质量）" }) }],
     fetchImpl,
     timeoutMs: judgeTimeoutMs,
     validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C3（选项抉择质量）"),
   });
-  const c4Promise = callJudge({
+  const c4Task = () => callJudge({
     baseUrl, apiKey, model,
     messages: [{ role: "user", content: buildSceneLevelPrompt({ scaleText, version, sampled: sampledAll, dimension: "C4（文本质量）" }) }],
     fetchImpl,
     timeoutMs: judgeTimeoutMs,
     validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C4（文本质量）"),
   });
-  const [c1Result, c2Result, c3Result, c4Result] = await Promise.all([
-    c1Promise,
-    c2Promise,
-    c3Promise,
-    c4Promise,
-  ]);
+  const [c1Result, c2Result, c3Result, c4Result] = await runWithConcurrency([
+    c1Task,
+    c2Task,
+    c3Task,
+    c4Task,
+  ], judgeConcurrency);
 
   const scores = {
     scaleVersion: version,
     judgeModel: model,
+    judgeTimeoutMs,
+    judgeConcurrency,
     earlyPrediction: (() => {
       if (!predictionResult.ok) return null;
       const s4 = scoreEarlyPrediction(predictionResult.parsed?.predictions, predictionItemKey);
       return { ...predictionResult.parsed, s4Score: s4.score, hitWeight: s4.hitWeight, matched: s4.matched };
     })(),
-    storyLevel: storyResult.ok ? storyResult.parsed : null,
+    storyLevel: storyResult.parsed,
     sceneLevel: {
       C1: c1Result.ok ? c1Result.parsed : null,
       C2: c2Result.ok ? c2Result.parsed : null,

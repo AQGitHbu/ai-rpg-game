@@ -81,7 +81,8 @@ STORY_EVAL_MAX_ROLE_ATTEMPTS、STORY_EVAL_RETRY_BACKOFF_MS（0~5000ms，指数�
 STORY_EVAL_AI_TIMEOUT_MS、STORY_EVAL_BRANCH_MODE（none/sample/full）、
 STORY_EVAL_BLUEPRINT_ARTIFACT（可选，受控 A/B 重放 scenario 候选的 calls.jsonl 路径）、
 AI_THINKING_ROLES（可选 `scenario,director,writer,npc`，默认空值/关闭；仅用于实验，manifest 记录归一化角色列表）、
-RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_TIMEOUT_MS（默认 300000、上限 300000；真实大 prompt 可持续 2–3 分钟；judge 强制使用 `.env.local` 的 `AI_MODEL`）。
+RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_TIMEOUT_MS（默认 300000、上限 300000；真实大 prompt 可持续 2–3 分钟）、
+STORY_EVAL_JUDGE_CONCURRENCY（每个 run 的 judge 并发数，默认 2、上限 4；scores 记录实际值；judge 强制使用 `.env.local` 的 `AI_MODEL`）。
 
 ## 已知发现（基线阶段只记录不修）
 
@@ -350,5 +351,13 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - 实际 provider 观测到约 9,271 input / 21,354 output tokens 的评审请求耗时约 3m02s，另有约 8,822 / 14,654 tokens 的请求耗时约 2m13s。`STORY_EVAL_JUDGE_TIMEOUT_MS` 默认值与上限已由 120s 提升至 300s，并增加 node 回归断言；这只扩展等待预算，不改变模型或门槛。
 - judge 的 story-level prompt 原先只发送 scene 行，未发送最终 `ending` 行，导致真实已有 `ending_reached` 的旅程被错误评为“无结局”。现在完整故事输入显式附带“结局兑现”块，并由回归测试覆盖。
 - 使用 300s 且保持 `ai-slg-game-model` 重跑后，部分 story/C 维度从 timeout 恢复（例如 post-apocalypse/science-fiction objective 的完整响应），但部分题材仍有 `judge_schema_invalid`、`judge_invalid_json` 或 `judge_http_429`。因此 release 目前被 judge 协议证据阻断，而不是被运行收敛、事实覆盖、pacing、分支后果或真死局阻断。
+- 当前实现进一步将 story/C 请求的量表裁剪为本次评审所需维度，story-level 再拆为 `S1/S2/S3/S5` 与 `S6/S7/S8/S9` 两个可审计结果，并将单个 run 的 judge 并发限制为默认 2（`STORY_EVAL_JUDGE_CONCURRENCY` 可在 1–4 内调整）；`scores.json` 记录 timeout/concurrency，便于比较 429 与 schema 失败是否随并发变化。
 
-下一步应优先缩短 judge story/C prompt 或拆分维度、保留 300s 长响应预算并加 bounded concurrency；不要以放宽 schema 校验、把 null 当通过或切换配置外模型来“修复” release gate。
+### 探索路线重复叙事约束（2026-08-04，提交前工作树）
+
+- 真实仙侠 explore 的完整 judge 已成功返回，但质量门实际指出 `S3/C2/C4` 偏低：同一条“灵脉枯竭—镇山法宝失踪—封印松动”前提在连续回城/转场幕中反复复述，转场只说“再去某地”，没有新增证据、决定、关系变化或威胁。这是生成内容问题，不是 provider 或 judge 缺失证据。
+- 因此 runtime 的 director/writer system prompt 增加了明确的新鲜度契约：`recentContinuity` 与 `narrative.currentScene` 只能作为历史；重复事实必须服务于一个新的即时后果，不能再次做场景目标或开场 recap；导演优先选择当前主线合法目标，避免只为回访已覆盖地点而产生 recovery move。新增 story-eval source 回归断言覆盖该提示契约，未改变事实权限、规则审批或 fallback 语义。
+- 下一步必须用同一 captured blueprint 重新跑 xianxia explore/objective，并用同一 `ai-slg-game-model` judge 对比 `S3/C2/C4` 与重复率；若重复率仍高，应继续改为结构化“已使用叙事锚点/待推进后果”上下文，而不是放宽 judge 门槛。
+- 已完成一份可审计的 bounded 对照：`artifacts/story-eval/xianxia-a-explore-0-2026-08-04T10-11-03-511Z-1d3464aa`（同一 captured blueprint、`branchMode=none`、12 幕、`fallback=0`、`status=max_scenes`）。它不能证明结局收敛，但可用于文本隔离比较：`trigramRepeat=0.026`，旧完整 explore 为 `0.074`；新文本连续加入水路图、封印裂纹、测灵罗盘、纸条等具体后果，未再出现连续纯 recap。使用同一 `ai-slg-game-model`、300s、并发 2 的 judge 已成功返回 C1–C4；C4 最低/均值为 `4/4.00`，C3 为 `3/3.63`。story-level 的 `S1/S2/S3/S5` 组协议失败，`S6/S7` 在无结局的 12 幕截断样本上为 1，不能把这两项当作完整故事质量结论；C2 有一个真实低分场景 4，后续应针对“NPC 信息→移动选择”的衔接继续优化。
+
+下一步应在 bounded concurrency 下重跑失败维度，比较 prompt 缩短前后的协议成功率；不要以放宽 schema 校验、把 null 当通过或切换配置外模型来“修复” release gate。
