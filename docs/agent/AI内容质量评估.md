@@ -80,6 +80,7 @@ STORY_EVAL_ARTIFACT_DIR（门禁脚本注入）、RUN_REAL_AI_STORY_EVAL、STORY
 STORY_EVAL_PROFILE（smoke/regression/baseline，默认 baseline）、STORY_EVAL_MAX_SCENES、
 STORY_EVAL_MAX_ROLE_ATTEMPTS、STORY_EVAL_RETRY_BACKOFF_MS（0~5000ms，指数退避，默认 1000ms）、
 STORY_EVAL_AI_TIMEOUT_MS、STORY_EVAL_BRANCH_MODE（none/sample/full）、
+STORY_EVAL_AI_MODEL（仅评估子进程覆盖 `.env.local` 的生成模型，用于 provider/model A/B）、
 STORY_EVAL_BLUEPRINT_ARTIFACT（可选，受控 A/B 重放 scenario 候选的 calls.jsonl 路径）、
 AI_THINKING_ROLES（可选 `scenario,director,writer,npc`，默认空值/关闭；仅用于实验，manifest 记录归一化角色列表）、
 RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_MODEL、STORY_EVAL_JUDGE_TIMEOUT_MS（默认 120000）。
@@ -314,3 +315,4 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - 该完整 judge 结果的单 run gate 为：`GENERATION_GRADE_FAILED JUDGE_S1_LOW,JUDGE_S7_LOW,JUDGE_S8_LOW,JUDGE_S9_LOW,JUDGE_C3_LOW`。这次不再是评审 transport/protocol 缺证据，而是暴露出真实质量短板：三幕递进、结局兑现、选择后果/能动性，以及选项策略差异。下一步应固定 `STORY_EVAL_JUDGE_MODEL=gemini-3.1-flash-lite-preview`，再重跑最新代码的仙侠 pair 与七题材 release matrix。
 - 2026-08-04 的新 baseline explore 在约 11 幕处因 `ai-slg-game-model` director 多次 timeout/service_error 被停止；该目录只有 `calls.jsonl`、没有合法 manifest，不能进入 gate。它证明在 runtime 接入 nested thinking 开关前，长旅程仍会被 provider reasoning/服务错误拖住；修复后必须用 captured blueprint 做 bounded regression 验证，再决定是否重启 60 幕 baseline。
 - 接入 nested thinking 开关后的 bounded explore `artifacts/story-eval/xianxia-a-explore-0-2026-08-04T02-13-36-310Z-8391a253` 首段 director 延迟约 4–45 秒，writer/NPC 多数为秒级，但仍出现 writer `service_error`，随后 Vitest worker exited unexpectedly，未写出合法 manifest。该结果说明参数修复降低了单请求长 reasoning，却还没有解决 provider 偶发错误与 Windows 长测 worker 稳定性；不能进入 release matrix 统计。
+- 用 `STORY_EVAL_AI_MODEL=gemini-3.1-flash-lite-preview` 的 3 幕 smoke 产物 `artifacts/story-eval/xianxia-a-objective-0-2026-08-04T02-22-45-288Z-34b9a473` 在 38 秒内完成，3/3 director、3/3 writer、2/2 NPC 请求成功，fallback=0；但 18 幕 objective regression `artifacts/story-eval/xianxia-a-objective-0-2026-08-04T02-25-41-503Z-297c49a6` 在 7 幕后因连续 `rate_limited` aborted。模型覆盖能力已接通，但必须先按 provider 配额配置并发/退避，才能把该模型用于全量 matrix。
