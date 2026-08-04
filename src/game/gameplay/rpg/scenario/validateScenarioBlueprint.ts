@@ -63,6 +63,7 @@ export type ScenarioBlueprintIssueCode =
   | "OPENING_NPC_NOT_AT_LOCATION"
   | "OPENING_SCENE_NO_INVESTIGABLE_FACTS"
   | "DUPLICATE_INVESTIGABLE_FACT"
+  | "HIDDEN_LOCATION_OBJECTIVE_UNREACHABLE"
   | "FORBIDDEN_TAG"
   | "INVALID_ITEM_PRESENTATION"
   | "INVALID_LOCATION_SCALE"
@@ -109,6 +110,7 @@ export function validateScenarioBlueprintCandidate(
   validateGeneratedFactAnchors(issues, candidate, context.policy);
   validateAvailableItems(issues, candidate);
   validateOpeningScene(issues, candidate);
+  validateHiddenLocationObjectives(issues, candidate);
   // 任务 objective/outcome 引用、主线阶段、支线/结局预算与可达性全部委托任务图校验。
   issues.push(
     ...validateQuestGraph({
@@ -126,6 +128,58 @@ export function validateScenarioBlueprintCandidate(
 
   if (issues.length > 0) return { ok: false, issues };
   return { ok: true, validated: candidate as ValidatedScenarioBlueprintCandidate };
+}
+
+/**
+ * 静态蓝图中的 hidden 地点不会进入初始 unlockedLocationIds，且当前规则
+ * 没有“发现地点”以外的解锁事件。任务若直接要求访问隐藏地点，或要求在
+ * 隐藏地点上的 NPC/物品/敌人上完成目标，就会形成不可执行的主线死循环：
+ * Director 只能反复给出相邻地点，玩家永远无法满足 objective。拒绝这类
+ * 候选，让 scenario retry/fallback 选择一条规则可达的主线。
+ */
+function validateHiddenLocationObjectives(
+  issues: ScenarioBlueprintIssue[],
+  candidate: ScenarioBlueprintCandidate,
+): void {
+  const hiddenLocationIds = new Set(
+    candidate.locations.filter((location) => location.kind === "hidden").map((location) => location.id),
+  );
+  if (hiddenLocationIds.size === 0) return;
+
+  const locationOfNpc = new Map(candidate.npcs.map((npc) => [npc.id, npc.locationId]));
+  const locationOfItem = new Map(
+    candidate.locations.flatMap((location) => location.availableItemIds.map((itemId) => [itemId, location.id] as const)),
+  );
+  const locationOfEnemy = new Map(candidate.enemies.map((enemy) => [enemy.id, enemy.locationId]));
+
+  candidate.quests.forEach((quest, questIndex) => {
+    quest.objectives.forEach((objective, objectiveIndex) => {
+      const targetLocationId = objective.kind === "visit_location"
+        ? objective.locationId
+        : objective.kind === "talk_to_npc"
+          ? locationOfNpc.get(objective.npcId)
+          : objective.kind === "obtain_item"
+            ? locationOfItem.get(objective.itemId)
+            : objective.kind === "defeat_enemy"
+              ? locationOfEnemy.get(objective.enemyId)
+              : undefined;
+      if (targetLocationId === undefined || !hiddenLocationIds.has(targetLocationId)) return;
+      const targetId = objective.kind === "visit_location"
+        ? objective.locationId
+        : objective.kind === "talk_to_npc"
+          ? objective.npcId
+          : objective.kind === "obtain_item"
+            ? objective.itemId
+            : objective.kind === "defeat_enemy"
+              ? objective.enemyId
+              : targetLocationId;
+      issues.push({
+        path: `quests[${questIndex}].objectives[${objectiveIndex}]`,
+        code: "HIDDEN_LOCATION_OBJECTIVE_UNREACHABLE",
+        params: { kind: objective.kind, targetId, locationId: targetLocationId },
+      });
+    });
+  });
 }
 
 /**

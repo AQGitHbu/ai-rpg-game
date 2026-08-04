@@ -382,3 +382,21 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - 在同一 captured blueprint、seed `20260804`、`ai-slg-game-model`、300 秒评估预算下完成 `branchMode=full` paired run：explore `artifacts/story-eval/xianxia-a-explore-0-2026-08-04T13-19-44-998Z-5a4520e7`（18 幕、`status=max_scenes`、`fallback=0`），objective `artifacts/story-eval/xianxia-a-objective-0-2026-08-04T13-54-04-931Z-a1cee52b`（17 幕、`status=converged`、`fallback=0`）。
 - 两个 run 均生成 stage 2/4/6 共 6 个合法 branch artifact，3 个 paired checkpoints；state 差异为 2，event/narration 差异均为 3，`trueDeadEnds=0`、`recoveryLoops=0`。objective pacing 含 `setup/develop/turn/climax/resolution`；paired pilot gate 输出 `GENERATION_GRADE_OK`。
 - full 分支证据已满足 release 的 durable checkpoint 数量要求；剩余 release blocker 是 bounded explore 终局收敛与各题材 judge 完整性。下一步启动七题材（10 cases）baseline/full matrix。
+
+### 七题材 release matrix（2026-08-04，300 秒评估预算）
+
+本轮按 7 个题材各取一组代表性 case，真实请求与 judge 均严格使用 `.env.local` 的 `AI_MODEL=ai-slg-game-model`；评估请求超时与解析上限永久为 300 秒，`branchMode=full`、`maxRoleAttempts=3`。10-case 初始并发启动曾出现 Vitest worker 异常退出与 provider 限流，因此以下 7 组只纳入低并发重跑后完整写出 manifest 的 artifact，不把并发污染混入质量结论。
+
+| 题材 | explore / objective | 运行证据 |
+| --- | --- | --- |
+| 武侠 | `wuxia-a` | 19 / 17 幕，均 converged、fallback 0、无真死局/恢复循环 |
+| 仙侠 | `xianxia-a` | 18 / 17 幕，均 converged、fallback 0、无真死局/恢复循环 |
+| 奇幻 | `fantasy-a` | 17 / 17 幕，均 converged、fallback 0；objective 使用低并发替换 artifact |
+| 科幻 | `science-fiction-a` | 17 / 17 幕，均 converged、fallback 0；explore 使用低并发替换 artifact |
+| 都市 | `urban-b` | 17 / 17 幕，均 converged、fallback 0、无真死局/恢复循环 |
+| 架空历史 | `alternate-history-a` | 18 / 17 幕，均 converged、fallback 0、无真死局/恢复循环 |
+| 末日 | `post-apocalypse-a` | 18 / 17 幕，均 converged、fallback 0；objective 使用低并发替换 artifact |
+
+对应路径保留在 `artifacts/story-eval/` 的 case 目录中。结构门禁在 14 个代表性 run 上均通过：主线推进、事实覆盖、`setup/develop/turn/climax/resolution` 节奏证据、三处 paired checkpoint 的状态/事件/叙事差异以及结局行均存在，`trigramRepeat` 约为 0.016–0.025。首次 release gate 的唯一失败为 `JUDGE_EVIDENCE_INCOMPLETE`；judge 证据收齐后仍须按真实 S/C 分数审计，协议缺失不能按通过处理。
+
+额外的 `wuxia-b` 压力样本暴露了一个比文本重复更严重的玩法问题：蓝图把主线目标指向静态 `hidden` 地点，初始 `unlockedLocationIds` 永远不包含该地点，导演只能在相邻地点和终局动作间循环，60 幕后仍为 `time_budget`。现已在 `validateScenarioBlueprintCandidate` 增加 `HIDDEN_LOCATION_OBJECTIVE_UNREACHABLE` 校验，覆盖访问隐藏地点以及隐藏地点上的 NPC、物品、敌人目标；候选会在生成阶段拒绝并触发有界 retry/fallback。新增回归测试已通过，避免把这种不可达蓝图误判成 AI 选择或 pacing 问题。

@@ -552,6 +552,16 @@ describe("validateScenarioBlueprintCandidate：任务图问题并入", () => {
     });
   });
 
+  it("objective 指向静态隐藏地点时拒绝不可达目标", () => {
+    const candidate = draft();
+    candidate.locations[1].kind = "hidden";
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "quests[0].objectives[0]",
+      code: "HIDDEN_LOCATION_OBJECTIVE_UNREACHABLE",
+      params: { kind: "visit_location", targetId: "loc_b", locationId: "loc_b" }
+    });
+  });
+
   it("缺少主线阶段时并入 MISSING_MAIN_STAGE", () => {
     const candidate = draft();
     candidate.quests.splice(2, 1);
