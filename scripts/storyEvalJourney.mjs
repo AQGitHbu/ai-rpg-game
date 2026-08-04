@@ -113,7 +113,9 @@ export const STORY_EVAL_PROFILE_DEFAULTS = Object.freeze({
   // fallback-7 的 long 主线需要 13 个 narrative scenes 才能启动终局战斗；
   // 生成事实全覆盖会再增加一条调查动作，18 给 battle/ending 收尾留出余量，
   // 避免 regression 把正常终局误报成不收敛。baseline 仍保留 60 幕作为跨蓝图安全阀。
-  regression: Object.freeze({ maxScenes: 18, maxRoleAttempts: 2, aiTimeoutMs: 120_000, branchMode: "sample", totalBudgetMs: 45 * 60_000 }),
+  // 同一配置 provider 的短暂 service_error/rate-limit 在 long 旅程中并不罕见；
+  // 第三次同角色重试可显著降低把一幕降级为 fallback 的概率，且仍受总预算约束。
+  regression: Object.freeze({ maxScenes: 18, maxRoleAttempts: 3, aiTimeoutMs: 120_000, branchMode: "sample", totalBudgetMs: 45 * 60_000 }),
   baseline: Object.freeze({ maxScenes: 60, maxRoleAttempts: 3, aiTimeoutMs: 120_000, branchMode: "full", totalBudgetMs: 90 * 60_000 }),
 });
 

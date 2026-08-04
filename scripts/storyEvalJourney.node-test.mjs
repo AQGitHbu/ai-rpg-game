@@ -31,7 +31,7 @@ test("三种 profile 解析为明确的场景/重试/超时/分支配置", () =>
     profile: "smoke", maxScenes: 3, maxRoleAttempts: 1, aiTimeoutMs: 120_000, branchMode: "none", totalBudgetMs: 10 * 60_000,
   });
   assert.deepEqual(resolveEvalProfileConfig({ STORY_EVAL_PROFILE: "regression" }), {
-    profile: "regression", maxScenes: 18, maxRoleAttempts: 2, aiTimeoutMs: 120_000, branchMode: "sample", totalBudgetMs: 45 * 60_000,
+    profile: "regression", maxScenes: 18, maxRoleAttempts: 3, aiTimeoutMs: 120_000, branchMode: "sample", totalBudgetMs: 45 * 60_000,
   });
   assert.deepEqual(resolveEvalProfileConfig({ STORY_EVAL_PROFILE: "baseline" }), {
     profile: "baseline", maxScenes: 60, maxRoleAttempts: 3, aiTimeoutMs: 120_000, branchMode: "full", totalBudgetMs: 90 * 60_000,
