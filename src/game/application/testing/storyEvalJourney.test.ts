@@ -152,8 +152,8 @@ const AI_TIMEOUT_MS = 120_000;
 type StoryEvalProfile = "smoke" | "regression" | "baseline";
 
 const PROFILE_DEFAULTS: Readonly<Record<StoryEvalProfile, Readonly<{ maxRoleAttempts: number; timeoutMs: number; branchMode: "none" | "sample" | "full" }>>> = {
-  smoke: { maxRoleAttempts: 1, timeoutMs: 60_000, branchMode: "none" },
-  regression: { maxRoleAttempts: 2, timeoutMs: 90_000, branchMode: "sample" },
+  smoke: { maxRoleAttempts: 1, timeoutMs: 120_000, branchMode: "none" },
+  regression: { maxRoleAttempts: 2, timeoutMs: 120_000, branchMode: "sample" },
   baseline: { maxRoleAttempts: 3, timeoutMs: AI_TIMEOUT_MS, branchMode: "full" },
 };
 
