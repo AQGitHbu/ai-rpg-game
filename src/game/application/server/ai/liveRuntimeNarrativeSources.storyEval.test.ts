@@ -84,8 +84,11 @@ describe("createLiveRuntimeNarrativeSources captureSink", () => {
     expect(records[0].messages[0].content).toContain("Main-quest progression is the priority");
     expect(records[0].messages[0].content).toContain("Blueprint expansion is a rare fallback");
     expect(records[0].messages[0].content).toContain("concrete new consequence");
+    expect(records[0].messages[0].content).toContain("continue that thread");
     expect(records[1].messages[0].content).toContain("do not copy or paraphrase");
     expect(records[1].messages[0].content).toContain("immediate consequence");
+    expect(records[1].messages[0].content).toContain("Avoid stock openings");
+    expect(records[2].messages[0].content).toContain("next concrete action or destination");
   });
 
   it("同场景重试 attempt 递增（含 3 次尝试），跨场景不泄漏（无全局计数器）", async () => {

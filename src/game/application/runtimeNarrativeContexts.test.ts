@@ -573,6 +573,28 @@ describe("runtimeNarrativeContexts Phase 11 连续性", () => {
     expect(toSceneScriptContext({ blueprint: PIPELINE.blueprint, state, plan }).recentContinuity).toHaveLength(6);
   });
 
+  it("连续性里程碑保留上一幕焦点 NPC，供下一幕承接对话线程", () => {
+    const npc = PIPELINE.blueprint.npcs[0];
+    const state = {
+      ...PIPELINE.state,
+      storyMemory: {
+        version: 1 as const,
+        reducedThroughEventCount: 1,
+        recent: [{
+          kind: "scene" as const,
+          sceneId: "scene-with-npc",
+          locationId: PIPELINE.state.currentLocationId,
+          focusNpcId: npc.id,
+          pacing: "develop" as const,
+          turn: 1,
+        }],
+        npcContacts: [],
+      },
+    } as GameState;
+    const continuity = toDirectorContext({ blueprint: PIPELINE.blueprint, state }).recentContinuity;
+    expect(continuity).toEqual([{ text: `上一幕与${npc.name}交涉` }]);
+  });
+
   it("writer 的 NPC profile 不泄漏其未发现的已知事实", () => {
     const hiddenFact = PIPELINE.blueprint.world.facts.find((entry) =>
       !PIPELINE.state.worldFacts.some((stateFact) => stateFact.factId === entry.id && stateFact.discovered),

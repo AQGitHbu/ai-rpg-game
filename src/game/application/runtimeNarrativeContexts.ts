@@ -249,7 +249,10 @@ function continuityMilestoneText(
     case "item": return `取得${itemNameOf(blueprint, entry.itemId)}`;
     case "battle":
       return `${entry.outcome === "victory" ? "战胜" : entry.outcome === "defeat" ? "败于" : "撤离"}${enemyNameOf(blueprint, entry.enemyId)}`;
-    case "scene": return "新的一幕展开";
+    case "scene":
+      return entry.focusNpcId === null
+        ? "上一幕展开"
+        : `上一幕与${npcNameOf(blueprint, entry.focusNpcId)}交涉`;
   }
 }
 
