@@ -11,6 +11,7 @@ export type StoryEvalPendingScene = Readonly<{
   ledgerLengthBeforeAction: number;
   choiceToken: string;
   choiceIndex: number;
+  actionCommitted?: boolean;
 }>;
 
 export type StoryEvalProgress = Readonly<{

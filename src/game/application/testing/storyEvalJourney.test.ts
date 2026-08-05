@@ -1,7 +1,7 @@
 /** @vitest-environment node */
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -31,6 +31,17 @@ import {
 } from "../scenarioGeneration";
 import { resolveAiThinkingRoles } from "../server/ai/aiThinking";
 import { projectStoryEvalContinuation } from "./storyEvalContinuation";
+import {
+  assertResumableFingerprint,
+  readStoryEvalPartialRows,
+  readStoryEvalProgress,
+  storyEvalCheckpointPaths,
+  writeStoryEvalPartialRowsAtomic,
+  writeStoryEvalProgressAtomic,
+  type StoryEvalPendingScene,
+  type StoryEvalProgress,
+  type StoryEvalRunFingerprint,
+} from "./storyEvalCheckpoint";
 
 // ---------------------------------------------------------------------------
 // 评估旅程本体（spec §7 + Task 13）：经 createServerGameEntryPoints 驱动（唯一能
@@ -200,6 +211,31 @@ function resolveGitCommit(): string | null {
   } catch {
     return null;
   }
+}
+
+function storyEvalFingerprint(input: {
+  caseId: string;
+  strategy: "explore" | "objective";
+  strategySeed: number;
+  maxScenes: number;
+  profile: StoryEvalProfile;
+  branchMode: string;
+  model: string | null;
+  timeoutMs: number;
+}): StoryEvalRunFingerprint {
+  return {
+    caseId: input.caseId,
+    strategy: input.strategy,
+    strategySeed: input.strategySeed,
+    maxScenes: input.maxScenes,
+    profile: input.profile,
+    branchMode: input.branchMode,
+    model: input.model,
+    gitCommit: resolveGitCommit(),
+    scenarioContractVersion: SCENARIO_CANDIDATE_CONTRACT_VERSION,
+    narrativeContractVersion: NARRATIVE_CONTRACT_VERSION,
+    timeoutMs: input.timeoutMs,
+  };
 }
 
 /** 把事件账本条目映射为安全结构（只带稳定 ID，绝不带 AI 文案/原始响应）。 */
@@ -539,6 +575,23 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
   const { env, dbPath, artifactDir, strategySeed, maxScenes, requireGeneratedOpening, caseId, strategy } = config;
   const profile = resolveStoryEvalProfile(env);
   const branchMode = env.STORY_EVAL_BRANCH_MODE ?? PROFILE_DEFAULTS[profile].branchMode;
+  const resumeRequested = env.STORY_EVAL_RESUME === "1";
+  const checkpointPaths = storyEvalCheckpointPaths(artifactDir);
+  const fingerprint = storyEvalFingerprint({
+    caseId,
+    strategy,
+    strategySeed,
+    maxScenes,
+    profile,
+    branchMode,
+    model: config.modelLabel ?? env.AI_MODEL ?? null,
+    timeoutMs: resolveStoryEvalTimeoutMs(env),
+  });
+  const savedProgress = resumeRequested ? readStoryEvalProgress(checkpointPaths.progress) : null;
+  if (resumeRequested && savedProgress === null) {
+    throw new Error(`story-eval resume checkpoint missing or invalid: ${checkpointPaths.progress}`);
+  }
+  if (savedProgress !== null) assertResumableFingerprint(fingerprint, savedProgress.fingerprint);
   const branchCheckpointStages = resolveStoryEvalBranchCheckpoints(env);
   const journeyStartedAt = Date.now();
   const timingStartedAt = performance.now();
@@ -560,16 +613,41 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
   const input = storyEvalCase.input;
   let entry: ServerGameEntryPoints | null = null;
   let evalRepository: SqliteGameRepository | null = null;
-  const storyRows: StoryEvalStoryRow[] = [];
+  const storyRows: StoryEvalStoryRow[] = resumeRequested ? [...readStoryEvalPartialRows(checkpointPaths.partialStory)] : [];
   let status: StoryEvalJourneyResult["status"] = "max_scenes";
-  let openingSource = "unknown";
-  let endingOutcome: string | null = null;
-  let fallbackScenes = 0;
-  let sceneCount = 0;
-  const branchCheckpointsDone = new Set<number>();
-  const continuationBridges: Readonly<Record<string, unknown>>[] = [];
+  let openingSource = savedProgress?.openingSource ?? "unknown";
+  let endingOutcome: string | null = savedProgress?.endingOutcome ?? null;
+  let fallbackScenes = savedProgress?.fallbackScenes ?? 0;
+  let sceneCount = savedProgress?.sceneCount ?? storyRows.filter((row) => row.kind === "scene").length;
+  const branchCheckpointsDone = new Set<number>(savedProgress?.branchCheckpointsDone ?? []);
+  const continuationBridges: Readonly<Record<string, unknown>>[] = [...(savedProgress?.continuationBridges ?? [])];
   let trueDeadEnds = 0;
   let recoveryLoops = 0;
+  let previousLedgerLength = savedProgress?.previousLedgerLength ?? 0;
+  let pendingScene: StoryEvalPendingScene | null = savedProgress?.pendingScene ?? null;
+  let nextSceneIndex = savedProgress?.nextSceneIndex ?? 1;
+  let manifest: Record<string, unknown> | null = null;
+  let checkpointLastError: { sceneIndex: number; message: string } | null = savedProgress?.lastError ?? null;
+  const saveCheckpoint = (checkpointStatus: StoryEvalProgress["status"] = "running") => {
+    const progress: StoryEvalProgress = {
+      checkpointVersion: 1,
+      status: checkpointStatus,
+      fingerprint,
+      nextSceneIndex,
+      sceneCount,
+      fallbackScenes,
+      openingSource,
+      endingOutcome,
+      previousLedgerLength,
+      branchCheckpointsDone: [...branchCheckpointsDone].sort((left, right) => left - right),
+      continuationBridges,
+      pendingScene,
+      lastError: checkpointLastError,
+      updatedAt: new Date().toISOString(),
+    };
+    writeStoryEvalPartialRowsAtomic(checkpointPaths.partialStory, storyRows);
+    writeStoryEvalProgressAtomic(checkpointPaths.progress, progress);
+  };
 
   try {
     const capturedBlueprintSource = createCapturedBlueprintSource(env);
@@ -578,17 +656,6 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       { scenarioCandidateSourceOverride: capturedBlueprintSource },
     );
     evalRepository = openEvalRepository(dbPath);
-
-    const openingStartedAt = performance.now();
-    const created = await entry.createGame(input);
-    timings.openingMs = performance.now() - openingStartedAt;
-    if (!created.ok) throw new Error(`createGame failed: ${created.code}`);
-    // requireGeneratedOpening：真实模式要求开局由 AI 生成（离线 fetch-mock 走
-    // fallback 开局可接受）；不满足直接失败，避免把非生成开局误记成生成。
-    if (requireGeneratedOpening && created.source !== "generated") {
-      throw new Error(`opening was not AI-generated: ${created.source}`);
-    }
-    openingSource = created.source;
 
     const loadRecord = async () => {
       const loaded = await evalRepository!.getCurrentGame();
@@ -601,53 +668,111 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       return current.view;
     };
 
-    let view = await getView();
-    let previousLedgerLength = (await loadRecord()).state.eventLedger.length;
-    const manifest: Record<string, unknown> = {
-      gameId: null,
-      worldSeed: null,
-      strategySeed,
-      gameLength: "long",
-      model: config.modelLabel ?? null,
-      status,
-      sceneCount: 0,
-      fallbackScenes: 0,
-      maxScenes,
-      blueprint: null,
-      // Task 13（v2）扩展字段：caseId/strategy、gitCommit、contractVersion、
-      // 四角色 prompt 版本、temperature、timeoutMs、answerKey（S4 确定性评分所需，
-      // 由蓝图结局/敌人/任务结构与最终规则结果生成）。
-      caseId,
-      strategy,
-      gameType: storyEvalCase.input.gameType,
-      pairingVersion: env.STORY_EVAL_PAIR_ID === undefined ? null : "paired-v1",
-      pairId: env.STORY_EVAL_PAIR_ID ?? null,
-      profile,
-      branchMode,
-      blueprintSource: capturedBlueprintSource === undefined ? "live" : "captured_artifact",
-      blueprintPairSource: capturedBlueprintSource === undefined ? "live" : "paired_capture",
-      gitCommit: resolveGitCommit(),
-      contractVersion: NARRATIVE_CONTRACT_VERSION,
-      promptVersions: {
-        scenario: SCENARIO_CANDIDATE_CONTRACT_VERSION,
-        director: NARRATIVE_CONTRACT_VERSION,
-        writer: NARRATIVE_CONTRACT_VERSION,
-        npc: NARRATIVE_CONTRACT_VERSION,
-      },
-      temperature: AI_TEMPERATURE,
-      thinkingRoles: resolveAiThinkingRoles(env),
-      timeoutMs: resolveStoryEvalTimeoutMs(env),
-      maxRoleAttempts: resolveStoryEvalMaxRoleAttempts(env),
-      retryBackoffMs: resolveStoryEvalRetryBackoffMs(env),
-      answerKey: null,
-      continuationBridges,
-      trueDeadEnds,
-      recoveryLoops,
-      timings,
-    };
-    const getCalls = createCachedCallsReader(artifactDir);
+    let view: GameSessionView;
+    if (resumeRequested) {
+      const resumed = await entry.getCurrentGame();
+      if (resumed.status !== "active") throw new Error("resume game record unavailable");
+      view = resumed.view;
+      if (existsSync(join(artifactDir, "manifest.json"))) {
+        try {
+          const existingManifest: unknown = JSON.parse(readFileSync(join(artifactDir, "manifest.json"), "utf8"));
+          if (isRecord(existingManifest)) manifest = existingManifest;
+        } catch {
+          throw new Error("resume manifest is invalid");
+        }
+      }
+    } else {
+      const openingStartedAt = performance.now();
+      const created = await entry.createGame(input);
+      timings.openingMs = performance.now() - openingStartedAt;
+      if (!created.ok) throw new Error(`createGame failed: ${created.code}`);
+      // requireGeneratedOpening：真实模式要求开局由 AI 生成（离线 fetch-mock 走
+      // fallback 开局可接受）；不满足直接失败，避免把非生成开局误记成生成。
+      if (requireGeneratedOpening && created.source !== "generated") {
+        throw new Error(`opening was not AI-generated: ${created.source}`);
+      }
+      openingSource = created.source;
+      view = await getView();
+      previousLedgerLength = (await loadRecord()).state.eventLedger.length;
+    }
 
-    for (let sceneIndex = 1; sceneIndex <= maxScenes; sceneIndex += 1) {
+    if (manifest === null) {
+      manifest = {
+        gameId: null,
+        worldSeed: null,
+        strategySeed,
+        gameLength: "long",
+        model: config.modelLabel ?? null,
+        status,
+        sceneCount: 0,
+        fallbackScenes: 0,
+        maxScenes,
+        blueprint: null,
+        // Task 13（v2）扩展字段：caseId/strategy、gitCommit、contractVersion、
+        // 四角色 prompt 版本、temperature、timeoutMs、answerKey（S4 确定性评分所需，
+        // 由蓝图结局/敌人/任务结构与最终规则结果生成）。
+        caseId,
+        strategy,
+        gameType: storyEvalCase.input.gameType,
+        pairingVersion: env.STORY_EVAL_PAIR_ID === undefined ? null : "paired-v1",
+        pairId: env.STORY_EVAL_PAIR_ID ?? null,
+        profile,
+        branchMode,
+        blueprintSource: capturedBlueprintSource === undefined ? "live" : "captured_artifact",
+        blueprintPairSource: capturedBlueprintSource === undefined ? "live" : "paired_capture",
+        gitCommit: resolveGitCommit(),
+        contractVersion: NARRATIVE_CONTRACT_VERSION,
+        promptVersions: {
+          scenario: SCENARIO_CANDIDATE_CONTRACT_VERSION,
+          director: NARRATIVE_CONTRACT_VERSION,
+          writer: NARRATIVE_CONTRACT_VERSION,
+          npc: NARRATIVE_CONTRACT_VERSION,
+        },
+        temperature: AI_TEMPERATURE,
+        thinkingRoles: resolveAiThinkingRoles(env),
+        timeoutMs: resolveStoryEvalTimeoutMs(env),
+        maxRoleAttempts: resolveStoryEvalMaxRoleAttempts(env),
+        retryBackoffMs: resolveStoryEvalRetryBackoffMs(env),
+        answerKey: null,
+        continuationBridges,
+        trueDeadEnds,
+        recoveryLoops,
+        timings,
+        resumeFingerprint: fingerprint,
+      };
+    }
+
+    if (!resumeRequested) saveCheckpoint();
+    const getCalls = createCachedCallsReader(artifactDir);
+    const upsertStoryRow = (row: StoryEvalStoryRow): void => {
+      const key = row.kind === "scene" ? row.sceneId ?? String(row.sceneIndex) : `ending:${row.sceneIndex}`;
+      const existingIndex = storyRows.findIndex((entry) => (entry.kind === "scene" ? entry.sceneId ?? String(entry.sceneIndex) : `ending:${entry.sceneIndex}`) === key);
+      if (existingIndex < 0) storyRows.push(row);
+      else storyRows[existingIndex] = row;
+      storyRows.sort((left, right) => left.sceneIndex - right.sceneIndex);
+    };
+
+    // 若进程在规则 action 已提交、但 partial row 尚未落盘的窗口退出，
+    // 先用保存的 ledger 长度补齐这一幕，再从下一幕继续。
+    if (pendingScene?.actionCommitted === true) {
+      const resumedRecord = await loadRecord();
+      const completedRow = {
+        ...pendingScene.row,
+        actionEvents: resumedRecord.state.eventLedger
+          .slice(pendingScene.ledgerLengthBeforeAction)
+          .map((event) => toSafeEvent(event)),
+      } satisfies StoryEvalStoryRow;
+      upsertStoryRow(completedRow);
+      previousLedgerLength = resumedRecord.state.eventLedger.length;
+      sceneCount = Math.max(sceneCount, pendingScene.row.sceneIndex);
+      if (completedRow.fallback === true) fallbackScenes += 1;
+      nextSceneIndex = pendingScene.row.sceneIndex + 1;
+      pendingScene = null;
+      saveCheckpoint();
+    }
+
+    for (let sceneIndex = nextSceneIndex; sceneIndex <= maxScenes; sceneIndex += 1) {
+      nextSceneIndex = sceneIndex;
       if (Date.now() - journeyStartedAt >= totalBudgetMs) {
         status = "time_budget";
         break;
@@ -713,7 +838,7 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         status = "converged";
         const record = await loadRecord();
         const tailEvents = record.state.eventLedger.slice(previousLedgerLength).map((event) => toSafeEvent(event));
-        storyRows.push({
+        upsertStoryRow({
           kind: "ending",
           sceneIndex,
           endingId: String(record.state.ending?.endingId ?? ""),
@@ -723,6 +848,8 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
           newEvents: tailEvents,
         });
         previousLedgerLength = record.state.eventLedger.length;
+        nextSceneIndex = sceneIndex + 1;
+        saveCheckpoint("completed");
         break;
       }
       // 3. 战斗：attack 优先打完（battle_action 为独立 intent，不占场景序号）。
@@ -748,12 +875,14 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       const activeMainObjective = toDirectorContext({ blueprint: record.blueprint, state: record.state }).activeMainObjective;
       const calls = getCalls();
       const directorPlan = directorPlanFor(scene.sceneId, calls);
-      const choice = pickerFor(strategy)(record, rand);
+      const resumedPending = pendingScene?.row.sceneId === scene.sceneId ? pendingScene : null;
+      const choice = resumedPending === null
+        ? pickerFor(strategy)(record, rand)
+        : { index: resumedPending.choiceIndex, reason: "resume_pending_choice" };
       const newEvents = record.state.eventLedger
         .slice(previousLedgerLength)
         .map((event) => toSafeEvent(event));
-      const storyRowIndex = storyRows.length;
-      storyRows.push({
+      const storyRow: StoryEvalStoryRow = resumedPending?.row ?? {
         kind: "scene",
         sceneIndex,
         sceneId: scene.sceneId,
@@ -771,23 +900,27 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
         fallback: scene.source === "fallback",
         playerChoice: { index: choice.index, actionKey: scene.choices[choice.index]?.actionKey ?? "", reason: choice.reason },
         newEvents,
-      });
-      previousLedgerLength = record.state.eventLedger.length;
-      sceneCount += 1;
-      if (scene.source === "fallback") fallbackScenes += 1;
-      if (fallbackScenes > sceneCount / 2) {
-        status = "aborted";
-        break;
-      }
+      };
+      pendingScene = resumedPending ?? {
+        row: storyRow,
+        ledgerLengthBeforeAction: previousLedgerLength,
+        choiceToken: scene.choices[choice.index]?.choiceToken ?? "",
+        choiceIndex: choice.index,
+      };
+      saveCheckpoint();
       // 4b. 主线阶段检查点：stage ∈ {2,4,6} 且未在该 stage 分支过 → 成对分支。
       if (
         stage !== null &&
         branchCheckpointStages.includes(stage) &&
         !branchCheckpointsDone.has(stage)
       ) {
-        branchCheckpointsDone.add(stage);
         const branchStartedAt = performance.now();
         try {
+          const stageDir = join(artifactDir, "branches", `stage${stage}`);
+          const branchComplete = existsSync(join(stageDir, "not_applicable.json")) || (
+            existsSync(stageDir) && readdirSync(stageDir, { withFileTypes: true }).some((entry) => entry.isDirectory() && existsSync(join(stageDir, entry.name, "branch.json")))
+          );
+          if (!branchComplete) {
           await runCheckpointBranches({
             env,
             dbPath,
@@ -798,6 +931,9 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
             strategy,
             rand,
           });
+          }
+          branchCheckpointsDone.add(stage);
+          saveCheckpoint();
         } finally {
           timings.branchMs += performance.now() - branchStartedAt;
         }
@@ -805,23 +941,38 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       // 5. 执行选择。
       const actionStartedAt = performance.now();
       const result = await entry.performAction({
-          intent: { type: "narrative_choice", choiceToken: scene.choices[choice.index]?.choiceToken ?? "" },
+          intent: { type: "narrative_choice", choiceToken: pendingScene.choiceToken },
           expectedRevision: view.revision,
         });
       timings.playerActionMs += performance.now() - actionStartedAt;
       if (!result.ok) throw new Error(`narrative choice rejected at ${sceneIndex}: ${result.code}`);
       const actionRecord = await loadRecord();
       const actionEvents = actionRecord.state.eventLedger
-        .slice(previousLedgerLength)
+        .slice(pendingScene.ledgerLengthBeforeAction)
         .map((event) => toSafeEvent(event));
-      const storyRow = storyRows[storyRowIndex];
-      if (storyRow?.kind === "scene") {
-        storyRows[storyRowIndex] = { ...storyRow, actionEvents };
-      }
+      pendingScene = { ...pendingScene, actionCommitted: true };
+      saveCheckpoint();
+      upsertStoryRow({ ...pendingScene.row, actionEvents });
+      previousLedgerLength = actionRecord.state.eventLedger.length;
+      sceneCount += 1;
+      if (scene.source === "fallback") fallbackScenes += 1;
+      pendingScene = null;
       view = result.view;
       // narrative choice 可能刚刚启动战斗；战斗本身不占叙事幕预算，
       // 让下一轮在同一 sceneIndex 消化 battle/ending，避免最后一幕误报 max_scenes。
-      if (view.battle !== null) sceneIndex -= 1;
+      if (view.battle !== null) {
+        nextSceneIndex = sceneIndex;
+        saveCheckpoint();
+        sceneIndex -= 1;
+      } else {
+        nextSceneIndex = sceneIndex + 1;
+        saveCheckpoint();
+      }
+      if (fallbackScenes > sceneCount / 2) {
+        status = "aborted";
+        saveCheckpoint("failed");
+        break;
+      }
     }
 
     // 6. 收尾产物：manifest.json 与 story.jsonl。
@@ -903,6 +1054,7 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
     // 7. 产物完整性（spec §7）：incomplete 不可进入分析/评审，门禁非零退出。
     const completeness = validateStoryEvalArtifacts({ calls: getCalls(), story: storyRows, manifest });
     if (!completeness.complete) status = "incomplete";
+    saveCheckpoint(status === "incomplete" ? "failed" : "completed");
     return {
       status,
       sceneCount,
@@ -911,6 +1063,17 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       endingOutcome,
       completeness,
     };
+  } catch (error) {
+    checkpointLastError = {
+      sceneIndex: nextSceneIndex,
+      message: error instanceof Error ? error.message : String(error),
+    };
+    try {
+      saveCheckpoint("failed");
+    } catch {
+      // 保留原始 journey 错误；checkpoint 写入失败不能掩盖 provider/规则错误。
+    }
+    throw error;
   } finally {
     await entry?.close();
   }

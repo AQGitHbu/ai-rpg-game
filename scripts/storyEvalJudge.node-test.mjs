@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   answerKeyForPredictionItems,
   buildEarlyPredictionPrompt,
@@ -182,6 +185,43 @@ test("main 门禁：RUN_REAL_AI_STORY_EVAL_JUDGE 未设置时打印提示并 exi
   });
   assert.equal(code, 1);
   assert.ok(lines.some((line) => line.includes("JUDGE_OPT_IN_REQUIRED")));
+});
+
+test("judge --resume 复用成功维度缓存，不重复请求 provider", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "story-eval-judge-cache-"));
+  const storyRows = [...story, { kind: "ending", sceneIndex: 6, endingId: "e1", endingName: "终局", endingDescription: "兑现", outcome: "success" }];
+  const runManifest = {
+    gameId: "g1", worldSeed: 1, strategySeed: 7, status: "converged", sceneCount: 6,
+    blueprint: manifest, answerKey: {}, model: "ai-slg-game-model",
+  };
+  writeFileSync(join(runDir, "story.jsonl"), `${storyRows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+  writeFileSync(join(runDir, "manifest.json"), `${JSON.stringify(runManifest)}\n`);
+  let calls = 0;
+  const fetchImpl = async (_url, options) => {
+    const prompt = JSON.parse(options.body).messages[0].content;
+    calls += 1;
+    if (prompt.includes("固定三项预测")) return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ predictions: [], reasoning: "ok" }) } }] }) };
+    if (prompt.includes("整局故事")) {
+      const keys = prompt.includes("S1、S2、S3、S5") ? ["S1", "S2", "S3", "S5"] : ["S6", "S7", "S8", "S9"];
+      const scores = Object.fromEntries(keys.map((key) => [key, { score: 3, evidence: [{ sceneIndex: 1, quote: "n1" }] }]));
+      return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ scores }) } }] }) };
+    }
+    const indexes = prompt.includes("C2（") ? [2, 4, 6] : [1, 2, 3, 4, 5, 6];
+    const scores = indexes.map((index) => ({ sceneIndex: index, score: 3, evidence: `n${index}` }));
+    return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ scores }) } }] }) };
+  };
+  const base = { argv: [runDir], env: { RUN_REAL_AI_STORY_EVAL_JUDGE: "1", AI_API_BASE_URL: "https://example.invalid", AI_API_KEY: "key", AI_MODEL: "ai-slg-game-model" }, fetchImpl, fs: await import("node:fs"), log: () => {} };
+  try {
+    assert.equal(await main(base), 0);
+    const firstCalls = calls;
+    assert.ok(firstCalls >= 5);
+    calls = 0;
+    assert.equal(await main({ ...base, argv: [runDir, "--resume"] }), 0);
+    assert.equal(calls, 0);
+    assert.ok(readFileSync(join(runDir, "judge-cache", "C4.json"), "utf8").includes("inputHash"));
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------

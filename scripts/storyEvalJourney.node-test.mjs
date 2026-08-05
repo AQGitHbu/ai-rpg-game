@@ -16,6 +16,10 @@ import {
   resolveBlueprintArtifact,
   resolveJourneyMode,
   resolveRunCount,
+  resolveResumeArtifact,
+  resolveMatrixReuse,
+  buildStoryEvalMatrixFingerprint,
+  findReusableStoryEvalArtifact,
 } from "./storyEvalJourney.mjs";
 
 test("buildPairedRunSpecs 为同一 case 的策略复用 seed 与 pairId", () => {
@@ -75,6 +79,33 @@ test("resolveBlueprintArtifact 缺省 undefined，拒绝空值并保留合法路
   assert.equal(resolveBlueprintArtifact([]), undefined);
   assert.equal(resolveBlueprintArtifact(["--blueprint-artifact="]), null);
   assert.equal(resolveBlueprintArtifact(["--blueprint-artifact=artifacts/run/calls.jsonl"]), "artifacts/run/calls.jsonl");
+});
+
+test("matrix fingerprint 与复用只接受同 seed/profile/model 的 terminal artifact", () => {
+  const root = mkdtempSync(join(tmpdir(), "story-eval-matrix-"));
+  const artifactDir = join(root, "done");
+  mkdirSync(artifactDir, { recursive: true });
+  const fingerprint = buildStoryEvalMatrixFingerprint({
+    caseId: "wuxia-a", strategy: "explore", seed: 77,
+    profileConfig: { profile: "regression", maxScenes: 18, maxRoleAttempts: 3, aiTimeoutMs: 300000, branchMode: "sample" },
+    model: "ai-slg-game-model", gitCommit: "abc",
+  });
+  writeFileSync(join(artifactDir, "calls.jsonl"), "{}\n");
+  writeFileSync(join(artifactDir, "manifest.json"), JSON.stringify({ ...fingerprint, status: "converged" }));
+  try {
+    assert.equal(findReusableStoryEvalArtifact({ artifactRoot: root, fingerprint })?.artifactDir, artifactDir);
+    assert.equal(findReusableStoryEvalArtifact({ artifactRoot: root, fingerprint: { ...fingerprint, strategySeed: 78 } }), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("续跑/矩阵开关只由显式参数或 env 开启", () => {
+  assert.equal(resolveResumeArtifact(["--resume=artifacts/story-eval/run"]), "artifacts/story-eval/run");
+  assert.equal(resolveResumeArtifact([], { STORY_EVAL_RESUME_DIR: "run" }), "run");
+  assert.equal(resolveMatrixReuse([], {}), false);
+  assert.equal(resolveMatrixReuse(["--reuse-completed"], {}), true);
+  assert.equal(resolveMatrixReuse(["--reuse-completed", "--force-rerun"], {}), false);
 });
 
 test("main 未知 case 打印 INVALID_CASE、不 spawn 且 exit 1", () => {

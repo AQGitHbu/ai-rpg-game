@@ -5,14 +5,15 @@
 // - --mode=record：要求 RUN_REAL_AI_STORY_EVAL=1 才发真实计费调用；校验 AI 凭据
 //   （aiEnv.mjs），逐局 spawnSync vitest 子进程，childEnv 显式注入
 //   STORY_EVAL_CAPTURE=1、STORY_EVAL_ARTIFACT_DIR、STORY_EVAL_SEED、
-//   STORY_EVAL_MAX_SCENES、GAME_DB_PATH（tmp 临时 SQLite）与 AI 三键。
-// - --runs N：策略 seed 依次递增，每局独立 run-id 与独立临时库（结束即清）。
+//   STORY_EVAL_MAX_SCENES、GAME_DB_PATH（artifact/checkpoint.sqlite）与 AI 三键。
+// - --runs N：策略 seed 依次递增，每局独立 run-id 与持久 checkpoint；失败可用
+//   --resume=<artifactDir> 从最后安全场景继续，父进程不会删除 SQLite。
 // 真实计费调用一律显式 env 开关；stdout 绝不打印凭据。
 // ---------------------------------------------------------------------------
 
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import {
   defaultAiEnvSources,
@@ -77,9 +78,84 @@ export function resolveBlueprintArtifact(argv) {
   return value.length > 0 && value.length <= 4096 ? value : null;
 }
 
+/** 显式续跑某个 artifact；路径必须是完整 run 目录，而不是 calls.jsonl。 */
+export function resolveResumeArtifact(argv, env = {}) {
+  const arg = argv.find((entry) => entry.startsWith("--resume="));
+  const value = arg === undefined ? env.STORY_EVAL_RESUME_DIR : arg.slice("--resume=".length);
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= 4096 ? trimmed : null;
+}
+
+/** 矩阵复用是显式 opt-in，避免旧 artifact 意外改变既有 release 语义。 */
+export function resolveMatrixReuse(argv, env = {}) {
+  if (argv.includes("--force-rerun") || env.STORY_EVAL_REUSE_COMPLETED === "0") return false;
+  return argv.includes("--reuse-completed") || env.STORY_EVAL_REUSE_COMPLETED === "1";
+}
+
 export function isPathInside(parent, candidate) {
   const rel = relative(resolve(parent), resolve(candidate));
   return rel !== "" && !rel.startsWith("..") && !rel.includes(":");
+}
+
+export function buildStoryEvalMatrixFingerprint({ caseId, strategy, seed, profileConfig, model, gitCommit }) {
+  return Object.freeze({
+    caseId,
+    strategy,
+    strategySeed: seed,
+    profile: profileConfig.profile,
+    maxScenes: profileConfig.maxScenes,
+    maxRoleAttempts: profileConfig.maxRoleAttempts,
+    aiTimeoutMs: profileConfig.aiTimeoutMs,
+    branchMode: profileConfig.branchMode,
+    model: model ?? null,
+    gitCommit: gitCommit ?? null,
+  });
+}
+
+function readJsonFile(path) {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function matrixFingerprintMatches(manifest, fingerprint) {
+  const candidate = manifest?.resumeFingerprint && typeof manifest.resumeFingerprint === "object"
+    ? manifest.resumeFingerprint
+    : manifest;
+  return Object.entries(fingerprint).every(([key, value]) => candidate?.[key] === value);
+}
+
+function isTerminalArtifact(manifest, artifactDir) {
+  const terminal = new Set(["converged", "max_scenes", "aborted", "exhausted", "generation_failed", "recovery_loop", "time_budget", "incomplete"]);
+  return terminal.has(manifest?.status) && existsSync(resolve(artifactDir, "manifest.json")) && existsSync(resolve(artifactDir, "calls.jsonl"));
+}
+
+/** 在同一矩阵 fingerprint 下复用已完成 slot，返回最新目录。 */
+export function findReusableStoryEvalArtifact({ artifactRoot, fingerprint }) {
+  let entries;
+  try {
+    entries = readdirSync(artifactRoot, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const candidates = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => resolve(artifactRoot, entry.name))
+    .map((artifactDir) => ({ artifactDir, manifest: readJsonFile(resolve(artifactDir, "manifest.json")) }))
+    .filter(({ artifactDir, manifest }) => matrixFingerprintMatches(manifest, fingerprint) && isTerminalArtifact(manifest, artifactDir))
+    .sort((left, right) => String(right.manifest?.finishedAt ?? right.manifest?.updatedAt ?? "").localeCompare(String(left.manifest?.finishedAt ?? left.manifest?.updatedAt ?? "")));
+  return candidates[0] ?? null;
+}
+
+function writeMatrixStateAtomic(path, state) {
+  mkdirSync(resolve(path, ".."), { recursive: true });
+  const temporary = `${path}.tmp-${randomUUID()}`;
+  writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  renameSync(temporary, path);
 }
 
 /** 每次 record run 使用全新目录，避免 calls.jsonl 追加污染历史 run。 */
@@ -217,7 +293,7 @@ export function main({
     log(`${PREFIX} INVALID_RUNS`);
     return 1;
   }
-  const baseSeed = resolveBaseSeed(argv);
+  let baseSeed = resolveBaseSeed(argv);
   if (baseSeed === null) {
     log(`${PREFIX} INVALID_SEED`);
     return 1;
@@ -235,6 +311,11 @@ export function main({
   const blueprintArtifact = blueprintArtifactArg === undefined
     ? env.STORY_EVAL_BLUEPRINT_ARTIFACT
     : resolve(projectRoot, blueprintArtifactArg);
+  const resumeArtifactArg = resolveResumeArtifact(argv, env);
+  if (resumeArtifactArg === null) {
+    log(`${PREFIX} INVALID_RESUME_ARTIFACT`);
+    return 1;
+  }
   if (mode === "replay") {
     log(`${PREFIX} replay: zero-network offline journey`);
     return runSpawn({ ...env, RUN_REAL_AI_STORY_EVAL: "0" });
@@ -253,15 +334,37 @@ export function main({
   // 两个 StoryEvalRun；--case 只做试点/定向复测；--runs 仅在 --case 下把同一
   // case/strategy 对复制 N 次并标记为 replicate，不得当作新 case。
   const cases = loadStoryEvalCases();
-  const selectedCaseId = resolveCaseId(argv, cases);
+  let selectedCaseId = resolveCaseId(argv, cases);
   if (selectedCaseId === null) {
     log(`${PREFIX} INVALID_CASE`);
     return 1;
   }
+  const resumeArtifactDir = resumeArtifactArg === undefined ? undefined : resolve(projectRoot, resumeArtifactArg);
+  if (resumeArtifactDir !== undefined && !isPathInside(resolve(projectRoot, "artifacts", "story-eval"), resumeArtifactDir)) {
+    log(`${PREFIX} RESUME_PATH_REJECTED`);
+    return 1;
+  }
+  const resumeManifest = resumeArtifactDir === undefined ? null : readJsonFile(resolve(resumeArtifactDir, "manifest.json"));
+  const resumeProgress = resumeArtifactDir === undefined ? null : readJsonFile(resolve(resumeArtifactDir, "progress.json"));
+  const resumeIdentity = resumeManifest ?? (resumeProgress?.fingerprint && typeof resumeProgress.fingerprint === "object" ? resumeProgress.fingerprint : null);
+  if (resumeArtifactDir !== undefined && (resumeIdentity === null || typeof resumeIdentity.caseId !== "string" || !["explore", "objective"].includes(resumeIdentity.strategy))) {
+    log(`${PREFIX} RESUME_MANIFEST_INVALID`);
+    return 1;
+  }
+  if (resumeIdentity !== null && selectedCaseId === undefined) selectedCaseId = resumeIdentity.caseId;
+  if (resumeIdentity !== null && argv.find((entry) => entry.startsWith("--seed=")) === undefined && Number.isFinite(Number(resumeIdentity.strategySeed))) {
+    baseSeed = Number(resumeIdentity.strategySeed);
+  }
   const selectedCases = selectedCaseId === undefined
     ? profileConfig.profile === "smoke" ? cases.slice(0, 1) : cases
     : cases.filter((item) => item.caseId === selectedCaseId);
-  const strategies = selectedStrategy === undefined ? ["explore", "objective"] : [selectedStrategy];
+  const strategies = resumeIdentity !== null
+    ? [resumeIdentity.strategy]
+    : selectedStrategy === undefined ? ["explore", "objective"] : [selectedStrategy];
+  if (resumeIdentity !== null && selectedStrategy !== undefined && selectedStrategy !== resumeIdentity.strategy) {
+    log(`${PREFIX} RESUME_STRATEGY_MISMATCH`);
+    return 1;
+  }
   const runSpecs = buildPairedRunSpecs(selectedCases, strategies, runs, baseSeed);
   if (runs > 1 && selectedCaseId === undefined) {
     log(`${PREFIX} REPLICATE_REQUIRES_CASE：--runs 复制仅允许在 --case 内使用`);
@@ -281,6 +384,19 @@ export function main({
   const dbRoot = resolve(projectRoot, "tmp");
   mkdirSync(dbRoot, { recursive: true });
   sweepStaleTempDatabases();
+  mkdirSync(artifactRoot, { recursive: true });
+  const matrixReuse = resolveMatrixReuse(argv, env) && resumeArtifactDir === undefined;
+  const matrixStatePath = resolve(artifactRoot, "matrix-state.json");
+  const matrixState = readJsonFile(matrixStatePath) ?? { version: 1, slots: {} };
+  if (!matrixState.slots || typeof matrixState.slots !== "object") matrixState.slots = {};
+  const gitCommit = (() => {
+    try {
+      const result = spawnSync("git", ["rev-parse", "HEAD"], { cwd: projectRoot, encoding: "utf8", windowsHide: true });
+      return result.status === 0 ? result.stdout.trim() : null;
+    } catch {
+      return null;
+    }
+  })();
   let failed = 0;
   let replicateTotal = 0;
   let runIndex = 0;
@@ -289,14 +405,39 @@ export function main({
     for (const strategy of pair.strategies) {
       const isReplicate = pair.replicate > 0;
       if (isReplicate) replicateTotal += 1;
-      // 每个 run 独立 artifact/db；pair 内只共享蓝图，不共享数据库状态。
-      const artifactDir = buildStoryEvalArtifactDir({
+      const fingerprint = buildStoryEvalMatrixFingerprint({
+        caseId: pair.caseId,
+        strategy,
+        seed: pair.seed,
+        profileConfig,
+        model: aiValues.get("AI_MODEL")?.decoded ?? null,
+        gitCommit,
+      });
+      const reusable = matrixReuse ? findReusableStoryEvalArtifact({ artifactRoot, fingerprint }) : null;
+      if (reusable !== null) {
+        const reusedCalls = resolve(reusable.artifactDir, "calls.jsonl");
+        if (strategy === "explore" && existsSync(reusedCalls)) pairedBlueprintArtifact = reusedCalls;
+        matrixState.slots[`${pair.pairId}:${strategy}`] = {
+          fingerprint,
+          artifactDir: reusable.artifactDir,
+          status: reusable.manifest.status,
+          reusedAt: new Date().toISOString(),
+        };
+        writeMatrixStateAtomic(matrixStatePath, matrixState);
+        log(`${PREFIX} REUSED artifact=${reusable.artifactDir} pair=${pair.pairId} strategy=${strategy}`);
+        runIndex += 1;
+        continue;
+      }
+      // 每个 fresh run 使用 artifact 内持久 checkpoint.sqlite；失败后可直接以
+      // --resume=<artifactDir> 重启，不再因父进程收尾而丢失数据库状态。
+      const artifactDir = resumeArtifactDir ?? buildStoryEvalArtifactDir({
         artifactRoot,
         caseId: pair.caseId,
         strategy,
         runIndex,
       });
-      const databasePath = resolve(dbRoot, `story-eval-run-${runIndex}-${randomUUID()}.sqlite`);
+      const databasePath = resolve(artifactDir, "checkpoint.sqlite");
+      mkdirSync(artifactDir, { recursive: true });
       if (!isPathInside(artifactRoot, artifactDir)) {
         log(`${PREFIX} ARTIFACT_PATH_REJECTED`);
         return 1;
@@ -317,6 +458,7 @@ export function main({
         STORY_EVAL_BRANCH_MODE: profileConfig.branchMode,
         STORY_EVAL_SCENE_WAIT_MS: env.STORY_EVAL_SCENE_WAIT_MS ?? String(3 * profileConfig.maxRoleAttempts * profileConfig.aiTimeoutMs + 60_000),
         STORY_EVAL_TOTAL_BUDGET_MS: String(profileConfig.totalBudgetMs),
+        STORY_EVAL_RESUME: resumeArtifactDir === undefined ? "0" : "1",
         GAME_DB_PATH: databasePath,
         ...(pairedBlueprintArtifact === undefined ? {} : { STORY_EVAL_BLUEPRINT_ARTIFACT: pairedBlueprintArtifact }),
       };
@@ -328,17 +470,23 @@ export function main({
       log(`${PREFIX} record run ${runIndex + 1} pair=${pair.pairId} case=${pair.caseId} strategy=${strategy} seed=${pair.seed}${replicateMark}${sourceMark}`);
       const status = runSpawn(childEnv);
       if (status !== 0) failed += 1;
+      matrixState.slots[`${pair.pairId}:${strategy}`] = {
+        fingerprint,
+        artifactDir,
+        status: status === 0 ? "completed" : "failed",
+        updatedAt: new Date().toISOString(),
+      };
+      writeMatrixStateAtomic(matrixStatePath, matrixState);
       if (status === 0 && pairedBlueprintArtifact === undefined) {
         const callsPath = resolve(artifactDir, "calls.jsonl");
         if (existsSync(callsPath)) pairedBlueprintArtifact = callsPath;
       }
-      try {
-        rmSync(databasePath, { force: true });
-      } catch {
-        // Windows 句柄延迟：留待下次 sweep。
-      }
+      if (status !== 0) log(`${PREFIX} RESUMABLE_FAILURE artifact=${artifactDir} (use --resume=${artifactDir})`);
       runIndex += 1;
+      // 一个显式 resume 只允许修复一个 slot；避免误把同一 SQLite 用于 pair 的另一策略。
+      if (resumeArtifactDir !== undefined) break;
     }
+    if (resumeArtifactDir !== undefined) break;
   }
   const total = runIndex;
   const summary = `${failed === 0 ? "REAL_AI_JOURNEY_OK" : `REAL_AI_JOURNEY_FAILED ${failed}/${total}`}` +

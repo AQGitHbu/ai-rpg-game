@@ -18,6 +18,7 @@
 // 不接受评估专用的模型覆盖；复用 AI_API_BASE_URL/AI_API_KEY。
 // ---------------------------------------------------------------------------
 
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 
 const SCALE_DOC = resolve(import.meta.dirname ?? process.cwd(), "..", "docs", "策划文档", "AI内容质量评估标准.md");
@@ -27,6 +28,7 @@ export const JUDGE_TIMEOUT_DEFAULT_MS = 300_000;
 export const JUDGE_TIMEOUT_MAX_MS = 300_000;
 export const JUDGE_CONCURRENCY_DEFAULT = 2;
 export const JUDGE_CONCURRENCY_MAX = 4;
+export const JUDGE_CACHE_VERSION = 1;
 
 /** 故事级评审维度（S4 由确定性匹配器计算，judge 不评）。 */
 const STORY_DIMENSIONS = ["S1", "S2", "S3", "S5", "S6", "S7", "S8", "S9"];
@@ -34,6 +36,57 @@ export const STORY_DIMENSION_GROUPS = Object.freeze([
   Object.freeze(["S1", "S2", "S3", "S5"]),
   Object.freeze(["S6", "S7", "S8", "S9"]),
 ]);
+
+export function resolveJudgeResume(argv = [], env = {}) {
+  return argv.includes("--resume") || env.STORY_EVAL_JUDGE_RESUME === "1";
+}
+
+export function resolveJudgeOnly(argv = []) {
+  const arg = argv.find((entry) => entry.startsWith("--only="));
+  if (arg === undefined) return null;
+  const values = arg.slice("--only=".length).split(",").map((value) => value.trim()).filter(Boolean);
+  const aliases = new Map([
+    ["early_prediction", "early_prediction"],
+    ["S4", "early_prediction"],
+    ["S1-S3-S5", "story:S1-S3-S5"],
+    ["S1-S2-S3-S5", "story:S1-S2-S3-S5"],
+    ["S6-S9", "story:S6-S9"],
+    ["S6-S7-S8-S9", "story:S6-S7-S8-S9"],
+    ["C1", "C1"], ["C2", "C2"], ["C3", "C3"], ["C4", "C4"],
+  ]);
+  const normalized = values.map((value) => aliases.get(value) ?? value);
+  return normalized.length > 0 ? new Set(normalized) : null;
+}
+
+function stableDigest(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function judgeCachePath(runDir, key) {
+  const safe = key.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return `${runDir.replace(/[\\/]+$/, "")}/judge-cache/${safe}.json`;
+}
+
+function readJudgeCache(fs, path, { key, inputHash, model }) {
+  try {
+    const cached = JSON.parse(fs.readFileSync(path, "utf8"));
+    if (cached?.cacheVersion !== JUDGE_CACHE_VERSION || cached.key !== key || cached.inputHash !== inputHash || cached.model !== model || cached.ok !== true) return null;
+    return { ok: true, parsed: cached.parsed, attempts: 0, cached: true };
+  } catch {
+    return null;
+  }
+}
+
+function writeJudgeCache(fs, path, record) {
+  fs.mkdirSync(path.replace(/[\\/][^\\/]+$/, ""), { recursive: true });
+  const temporary = `${path}.tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  fs.writeFileSync(temporary, `${JSON.stringify({ cacheVersion: JUDGE_CACHE_VERSION, ...record, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
+  fs.renameSync(temporary, path);
+}
+
+export function buildJudgeCacheInput({ key, prompt, model, version, timeoutMs, scaleText }) {
+  return stableDigest({ cacheVersion: JUDGE_CACHE_VERSION, key, prompt, model, version, timeoutMs, scaleText });
+}
 
 /** S8/S9 上限证据注记（spec §5.3）。 */
 const CAP_EVIDENCE_NOTE = "capped: no paired branch evidence";
@@ -560,6 +613,34 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
     const value = Number(env.STORY_EVAL_JUDGE_CONCURRENCY ?? JUDGE_CONCURRENCY_DEFAULT);
     return Number.isInteger(value) && value >= 1 && value <= JUDGE_CONCURRENCY_MAX ? value : JUDGE_CONCURRENCY_DEFAULT;
   })();
+  const judgeResume = resolveJudgeResume(argv, env);
+  const judgeOnly = resolveJudgeOnly(argv);
+  const judgeCacheIndex = {};
+  const runCachedJudge = ({ key, prompt, task }) => async () => {
+    const inputHash = buildJudgeCacheInput({ key, prompt, model, version, timeoutMs: judgeTimeoutMs, scaleText });
+    const cachePath = judgeCachePath(runDir, key);
+    if (judgeResume) {
+      const cached = readJudgeCache(fs, cachePath, { key, inputHash, model });
+      if (cached !== null) {
+        judgeCacheIndex[key] = { inputHash, status: "reused", cachedAt: new Date().toISOString() };
+        return cached;
+      }
+    }
+    if (judgeOnly !== null && !judgeOnly.has(key)) {
+      judgeCacheIndex[key] = { inputHash, status: "not_selected" };
+      return { ok: false, error: "judge_dimension_not_selected", attempts: 0 };
+    }
+    const result = await task();
+    // 只缓存经过 schema/evidence 校验的成功结果；失败节点下次必须重试，
+    // 避免把一次 provider 短暂错误永久固化为 null。
+    if (result.ok) {
+      writeJudgeCache(fs, cachePath, { key, inputHash, model, ok: true, parsed: result.parsed });
+      judgeCacheIndex[key] = { inputHash, status: "written" };
+    } else {
+      judgeCacheIndex[key] = { inputHash, status: "failed", error: result.error };
+    }
+    return result;
+  };
 
   // ① 早期预测（S4）：answer key 分组为固定三项后确定性打分；绝不传入预测 prompt。
   const rawAnswerKey = manifest.answerKey;
@@ -568,20 +649,34 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
       ? null
       : answerKeyForPredictionItems(rawAnswerKey);
   // ①/② 互不依赖；故事级维度拆成两组，避免单个大 prompt 同时生成 8 组证据。
-  const storyTasks = STORY_DIMENSION_GROUPS.map((dimensions) => () => callJudge({
-    baseUrl, apiKey, model,
-    messages: [{ role: "user", content: buildStoryLevelPrompt({ scaleText, version, manifest: manifest.blueprint, story, dimensions }) }],
-    fetchImpl,
-    timeoutMs: judgeTimeoutMs,
-    validateParsed: (parsed) => validateStoryLevelResult(parsed, story, metrics, dimensions),
-  }));
-  const [predictionResult, ...storyResults] = await runWithConcurrency([
-    () => callJudge({
+  const storyTasks = STORY_DIMENSION_GROUPS.map((dimensions) => {
+    const key = `story:${dimensions.join("-")}`;
+    const prompt = buildStoryLevelPrompt({ scaleText, version, manifest: manifest.blueprint, story, dimensions });
+    return runCachedJudge({
+      key,
+      prompt,
+      task: () => callJudge({
+        baseUrl, apiKey, model,
+        messages: [{ role: "user", content: prompt }],
+        fetchImpl,
+        timeoutMs: judgeTimeoutMs,
+        validateParsed: (parsed) => validateStoryLevelResult(parsed, story, metrics, dimensions),
+      }),
+    });
+  });
+  const predictionPrompt = buildEarlyPredictionPrompt({ world: manifest.blueprint?.world, npcs: manifest.blueprint?.npcs }, story);
+  const predictionTask = runCachedJudge({
+    key: "early_prediction",
+    prompt: predictionPrompt,
+    task: () => callJudge({
       baseUrl, apiKey, model,
-      messages: [{ role: "user", content: buildEarlyPredictionPrompt({ world: manifest.blueprint?.world, npcs: manifest.blueprint?.npcs }, story) }],
+      messages: [{ role: "user", content: predictionPrompt }],
       fetchImpl,
       timeoutMs: judgeTimeoutMs,
     }),
+  });
+  const [predictionResult, ...storyResults] = await runWithConcurrency([
+    predictionTask,
     ...storyTasks,
   ], judgeConcurrency);
   const mergedStoryScores = Object.assign({}, ...storyResults
@@ -601,35 +696,51 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
   const sampledAll = sampleScenesPerAct(story, Number(manifest.strategySeed ?? "0"), 2);
   // C2 只抽有紧邻前序场景的场景（开局场景无前序，不参与 C2）。
   const sampledC2 = sampledAll.filter((row) => story.some((entry) => entry.sceneIndex === row.sceneIndex - 1));
-  const c1Task = scenesWithNpc.length > 0
-    ? () => callJudge({
-        baseUrl, apiKey, model,
-        messages: [{ role: "user", content: buildSceneLevelPrompt({ scaleText, version, sampled: scenesWithNpc, dimension: "C1（NPC 声线一致性）", story }) }],
-        fetchImpl,
-        timeoutMs: judgeTimeoutMs,
-        validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C1（NPC 声线一致性）"),
-      })
-    : async () => ({ ok: true, parsed: { scores: [], reasoning: "no npc lines" } });
-  const c2Task = () => callJudge({
-    baseUrl, apiKey, model,
-    messages: [{ role: "user", content: buildSceneLevelPrompt({ scaleText, version, sampled: sampledC2, dimension: "C2（场景衔接连续性）", story }) }],
-    fetchImpl,
-    timeoutMs: judgeTimeoutMs,
-    validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C2（场景衔接连续性）"),
+  const c1Prompt = scenesWithNpc.length > 0
+    ? buildSceneLevelPrompt({ scaleText, version, sampled: scenesWithNpc, dimension: "C1（NPC 声线一致性）", story })
+    : "no npc lines";
+  const c1Task = runCachedJudge({
+    key: "C1",
+    prompt: c1Prompt,
+    task: scenesWithNpc.length > 0
+      ? () => callJudge({
+          baseUrl, apiKey, model,
+          messages: [{ role: "user", content: c1Prompt }],
+          fetchImpl,
+          timeoutMs: judgeTimeoutMs,
+          validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C1（NPC 声线一致性）"),
+        })
+      : async () => ({ ok: true, parsed: { scores: [], reasoning: "no npc lines" } }),
   });
-  const c3Task = () => callJudge({
-    baseUrl, apiKey, model,
-    messages: [{ role: "user", content: buildSceneLevelPrompt({ scaleText, version, sampled: sampledAll, dimension: "C3（选项抉择质量）" }) }],
-    fetchImpl,
-    timeoutMs: judgeTimeoutMs,
-    validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C3（选项抉择质量）"),
+  const c2Prompt = buildSceneLevelPrompt({ scaleText, version, sampled: sampledC2, dimension: "C2（场景衔接连续性）", story });
+  const c2Task = runCachedJudge({
+    key: "C2", prompt: c2Prompt,
+    task: () => callJudge({
+      baseUrl, apiKey, model,
+      messages: [{ role: "user", content: c2Prompt }],
+      fetchImpl, timeoutMs: judgeTimeoutMs,
+      validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C2（场景衔接连续性）"),
+    }),
   });
-  const c4Task = () => callJudge({
-    baseUrl, apiKey, model,
-    messages: [{ role: "user", content: buildSceneLevelPrompt({ scaleText, version, sampled: sampledAll, dimension: "C4（文本质量）" }) }],
-    fetchImpl,
-    timeoutMs: judgeTimeoutMs,
-    validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C4（文本质量）"),
+  const c3Prompt = buildSceneLevelPrompt({ scaleText, version, sampled: sampledAll, dimension: "C3（选项抉择质量）" });
+  const c3Task = runCachedJudge({
+    key: "C3", prompt: c3Prompt,
+    task: () => callJudge({
+      baseUrl, apiKey, model,
+      messages: [{ role: "user", content: c3Prompt }],
+      fetchImpl, timeoutMs: judgeTimeoutMs,
+      validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C3（选项抉择质量）"),
+    }),
+  });
+  const c4Prompt = buildSceneLevelPrompt({ scaleText, version, sampled: sampledAll, dimension: "C4（文本质量）" });
+  const c4Task = runCachedJudge({
+    key: "C4", prompt: c4Prompt,
+    task: () => callJudge({
+      baseUrl, apiKey, model,
+      messages: [{ role: "user", content: c4Prompt }],
+      fetchImpl, timeoutMs: judgeTimeoutMs,
+      validateParsed: (parsed) => validateSceneLevelResult(parsed, story, "C4（文本质量）"),
+    }),
   });
   const [c1Result, c2Result, c3Result, c4Result] = await runWithConcurrency([
     c1Task,
@@ -674,6 +785,11 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
   };
   const lowScenes = collectLowScenes(scores, story, manifest);
   const report = buildReport({ scores, manifest, lowScenes, sampled: sampledAll });
+  fs.mkdirSync(join("judge-cache"), { recursive: true });
+  const indexPath = join("judge-cache", "index.json");
+  const indexTemporary = `${indexPath}.tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  fs.writeFileSync(indexTemporary, `${JSON.stringify({ cacheVersion: JUDGE_CACHE_VERSION, model, scaleVersion: version, timeoutMs: judgeTimeoutMs, dimensions: judgeCacheIndex, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
+  fs.renameSync(indexTemporary, indexPath);
   fs.writeFileSync(join("scores.json"), JSON.stringify(scores, null, 2) + "\n", "utf8");
   fs.writeFileSync(join("report.md"), report, "utf8");
   log(`[story-eval-judge] version=${version} model=${model} failures=${scores.failures.length === 0 ? "none" : scores.failures.join(",")}`);

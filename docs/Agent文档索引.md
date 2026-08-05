@@ -28,7 +28,7 @@
 | AI 环境 | `agent/AI环境.md` | `.env.example` | 独立环境契约已建立；Phase 4B/4C 已实现开局 AI；Phase 10 已复用同一 transport/config，以 prompt-only JSON 运行 director / writer / npc 三个独立请求，并以 `RUN_REAL_AI_JOURNEY=1` 门禁完整真实认证；`GAME_DB_PATH` 仍为 server-only |
 | 小镇程序化生成 | `agent/小镇程序化生成.md`、`agent/小镇生成Demo记录.md` | `设想/AI驱动RPG_大地图-小镇地图-场景与小镇生成方案_v0.1.md` | 确定性生成器 + /town-demo SVG 演示 + 生成质量修复 + AI 俯视贴图试验（spike）已实现；town 层已接入游戏主循环（S1–S8，2026-07-31）：地点分级、懒生成（离线同步/AI ensure）、plan+seed 存档与 read model 重建、`town-plan-v1` AI 契约、语义句子入叙事上下文；正式生图管线未实现 |
 | 日志与追踪 | `agent/日志与追踪.md` | — | RPG 内部结构化日志 facade 已实现：composition root 注入、递归脱敏、server sink 唯一 console 边界、AI/SQLite/后台任务已迁移（2026-07-31）；暂不共享 |
-| AI 内容质量评估 | `agent/AI内容质量评估.md` | `策划文档/AI内容质量评估标准.md` | Task 8–11 已实现（2026-08-01）：三采集点采集通道（STORY_EVAL_CAPTURE 装配）、长故事评估旅程、离线 analyze 与三段 judge 脚本；量表 v2 与实现事实文档已落盘；v2 case/strategy 矩阵接线由 Task 13 完成 |
+| AI 内容质量评估 | `agent/AI内容质量评估.md` | `策划文档/AI内容质量评估标准.md` | Task 8–11 已实现（2026-08-01）：三采集点采集通道（STORY_EVAL_CAPTURE 装配）、长故事评估旅程、离线 analyze 与三段 judge 脚本；量表 v2 与实现事实文档已落盘；v2 case/strategy 矩阵接线由 Task 13 完成；2026-08-05 增加 matrix/scene checkpoint、judge 增量缓存与分层验证入口 |
 
 ## 维护规则
 

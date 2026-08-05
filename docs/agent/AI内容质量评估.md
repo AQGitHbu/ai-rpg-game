@@ -436,3 +436,14 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - 真实 C2 抽查由上一轮都市 explore/objective 的最低 `1/1` 提升为 `3/3`；新 pair 的 C1/C2/C3/C4 最低分分别为 explore `5/3/3/2`、objective `1/3/3/3`。explore 仍因达到 18 幕上限缺少完整 S7，objective 的 C1 仍有角色口吻离群样本，因此总体 gate 仍失败（`JUDGE_S7_LOW,JUDGE_C4_LOW,JUDGE_C1_LOW`），不能宣称 release 通过。
 - 上述 pair 的真实分数是在 `previousScene` 结构化交接指令下取得的；本轮随后又加严了 NPC 的“角色口吻/当前地点/已知事实”约束，因此该最后一条 prompt 约束尚未被这两份 artifact 的真实 judge 单独验证。
 - 这轮证据支持 handoff 结构化投影有效，但也暴露出下一项生成质量工作：NPC 线必须更稳定地体现 profile/地点而非只给正确下一行动；explore 需要在 bounded scene 数内更早收束高潮。300 秒评估上限保持为永久配置，不能通过缩短预算掩盖这些内容问题。
+
+### 评估断点续跑与分层验证（2026-08-05）
+
+为避免一次 provider 异常导致数小时评估全部作废，采集器现在采用三层持久化：
+
+- 每个 run 的 `checkpoint.sqlite`、`progress.json`、`story.partial.jsonl` 都写入同一 artifact 目录；场景在“行动前 pending checkpoint”和“规则事件提交后 completed checkpoint”两个边界保存。失败后用 `node scripts/storyEvalJourney.mjs --mode=record --resume=<artifactDir> --case=<caseId>` 从最后一个安全场景继续，fingerprint 不匹配会 fail-closed。
+- 矩阵调度器支持 `--reuse-completed`，按 case/strategy/seed/profile/maxScenes/重试/分支模式/model/git fingerprint 复用已有 terminal artifact，并写入 `artifacts/story-eval/matrix-state.json`。`--force-rerun` 可显式关闭复用；默认不改变旧命令行为。
+- judge 支持 `--resume` 与 `--only=S1-S2-S3-S5,S6-S7-S8-S9,C2`。成功的 early prediction、story group、C1–C4 分别落在 `judge-cache/*.json`，`judge-cache/index.json` 记录每个维度的 digest/status；输入 prompt、量表版本、timeout、model 任一变化都会使缓存失效；失败维度不缓存，下一次只重试失败/未选中的维度。
+- 分层入口为 `node scripts/storyEvalVerify.mjs --layer=offline|smoke|regression|release`，offline 永远零网络；其余层仍要求 `RUN_REAL_AI_STORY_EVAL=1`，release 另外要求 `RUN_REAL_AI_STORY_EVAL_JUDGE=1`。脚本不覆盖模型，真实请求继续严格读取配置的 `ai-slg-game-model`。
+
+推荐恢复顺序：先 `--resume` 修复失败 run，再 `judge --resume --only=<失败维度>` 补齐评审，最后用 `--reuse-completed` 重跑矩阵。这样已完成的场景、run 和 judge 维度都不会因单点故障重复计费。
