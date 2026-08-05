@@ -76,7 +76,8 @@ export {
   type EndingTone,
   type SceneDefinitionCandidate,
   type GeneratedPlayerDefinitionCandidate,
-  type GenerationMetadata
+  type GenerationMetadata,
+  type ProposedEnding
 } from "./scenarioBlueprint";
 export {
   resolveItemPresentation,
@@ -134,6 +135,8 @@ export {
   type NarrativeNpcLineState,
   type NarrativeEmotion,
   type NarrativeGenerationState,
+  type NarrativeTriggerContext,
+  type NpcDialogueInScene,
   type PlayerNpcChatState,
   NARRATIVE_EMOTIONS
 } from "./narrative";

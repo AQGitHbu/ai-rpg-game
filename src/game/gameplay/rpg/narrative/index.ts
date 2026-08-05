@@ -38,6 +38,7 @@ export { approveNpcPerformance } from "./approveNpcPerformance";
 
 export {
   type NarrativeActionCandidate,
+  type NpcInstruction,
   type NpcPerformanceProposal,
   type NarrativeApprovalCategory,
   type NarrativeApprovalResult,

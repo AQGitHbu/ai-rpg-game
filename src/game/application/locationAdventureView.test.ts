@@ -6,6 +6,7 @@ import {
   asQuestId,
   type GameState,
   type LocationId,
+  type NarrativeSceneState,
   type NewGameInput,
   type QuestId
 } from "@/game/domain";
@@ -197,8 +198,8 @@ describe("projectLocationAdventureView：地点场景互动", () => {
 });
 
 describe("projectLocationAdventureView：安全对话", () => {
-  it("只投影当前地点 NPC；未结识且被主线 talk 目标指向 ⇒ ask_main_quest 可写", () => {
-    // 当前 loc_3，npc_3 在场未结识，quest_m2（talk npc_3）active ⇒ ask_main_quest。
+  it("只投影当前地点 NPC；Phase 14 后无 currentScene 时 choices 为空、freeInputEnabled=true", () => {
+    // 当前 loc_3，npc_3 在场未结识；Phase 14 废除规则投影后 choices 来自 currentScene。
     const state = withQuestStatuses(
       { ...PIPELINE.state, currentLocationId: asLocationId("loc_3") },
       new Map<QuestId, GameState["quests"][number]["status"]>([[asQuestId("quest_main_2"), "active"]])
@@ -210,38 +211,17 @@ describe("projectLocationAdventureView：安全对话", () => {
     const npc = blueprint.npcs.find((n) => n.id === asNpcId("npc_3"));
     expect(dialogue.name).toBe(npc?.name);
     expect(dialogue.role).toBe(npc?.role);
-    const writable = dialogue.choices.filter((c) => c.kind !== "review_clue");
-    expect(writable).toEqual([
-      {
-        kind: "ask_main_quest",
-        choiceId: "npc_3:ask_main_quest",
-        label: "询问当前线索",
-        mutatesState: true
-      }
-    ]);
-    // 本地只读回顾线索 choice 恒在。
-    expect(dialogue.choices).toContainEqual({
-      kind: "review_clue",
-      label: "回顾已知线索",
-      mutatesState: false
-    });
+    // 无 currentScene ⇒ 无情境选项；自由输入恒可用（非只读）；reviewClues 恒为已发现事实文本。
+    expect(dialogue.choices).toEqual([]);
+    expect(dialogue.freeInputEnabled).toBe(true);
   });
 
-  it("未被任务指向的未结识 NPC ⇒ greet 可写；reviewClues 只等于已发现事实文本", () => {
-    // 开场地点 loc_1，npc_1 在场未结识，无 talk 目标 ⇒ greet。
+  it("未被任务指向的未结识 NPC；Phase 14 后无 currentScene 时 choices 为空", () => {
+    // 开场地点 loc_1，npc_1 在场未结识；Phase 14 后无规则投影，choices 来自 currentScene。
     const view = project(PIPELINE.state);
     const dialogue = view.dialogues.find((d) => d.npcId === "npc_1");
     expect(dialogue).toBeDefined();
-    const writable = dialogue!.choices.filter((c) => c.kind !== "review_clue");
-    expect(writable).toEqual([
-      {
-        kind: "greet",
-        choiceId: "npc_1:greet",
-        label: writable[0]?.label,
-        mutatesState: true
-      }
-    ]);
-    expect(writable[0]?.label).toContain("初次交谈");
+    expect(dialogue!.choices).toEqual([]);
     // reviewClues = 当前已发现事实文本（初始只有 player_input 事实）。
     const discoveredTexts = PIPELINE.state.worldFacts
       .filter((f) => f.discovered)
@@ -304,7 +284,7 @@ describe("projectLocationAdventureView：对白分页投影", () => {
 describe("projectLocationAdventureView：结局 / 战斗只读投影", () => {
   const npcLocation = (id: LocationId) => ({ ...PIPELINE.state, currentLocationId: id });
 
-  it("active battle：仍投影地图/地点，但 interactions 为空、对话无可写 choice", () => {
+  it("active battle：仍投影地图/地点，但 interactions 为空、对话 choices 为空", () => {
     const boss = blueprint.enemies.find((e) => e.tier === "boss");
     const state: GameState = {
       ...npcLocation(asLocationId("loc_3")),
@@ -315,11 +295,13 @@ describe("projectLocationAdventureView：结局 / 战斗只读投影", () => {
     expect(view.worldMap.nodes.length).toBeGreaterThan(0);
     expect(view.locationScene.interactions).toEqual([]);
     for (const dialogue of view.dialogues) {
-      expect(dialogue.choices.every((c) => c.mutatesState === false)).toBe(true);
+      // Phase 14：read-only 投影下 choices 恒为空、freeInputEnabled=false。
+      expect(dialogue.choices).toEqual([]);
+      expect(dialogue.freeInputEnabled).toBe(false);
     }
   });
 
-  it("结局后：仍投影地图/地点，interactions 为空、对话无可写 choice", () => {
+  it("结局后：仍投影地图/地点，interactions 为空、对话 choices 为空", () => {
     const state: GameState = {
       ...npcLocation(asLocationId("loc_3")),
       ending: { endingId: blueprint.endings[0].id, outcome: "success" }
@@ -327,7 +309,8 @@ describe("projectLocationAdventureView：结局 / 战斗只读投影", () => {
     const view = project(state);
     expect(view.locationScene.interactions).toEqual([]);
     for (const dialogue of view.dialogues) {
-      expect(dialogue.choices.every((c) => c.mutatesState === false)).toBe(true);
+      expect(dialogue.choices).toEqual([]);
+      expect(dialogue.freeInputEnabled).toBe(false);
     }
   });
 });
@@ -399,5 +382,47 @@ describe("projectLocationAdventureView：town 层三态", () => {
   it("ready 投影确定性：同状态两次投影深度相等", () => {
     const state = readyTownState();
     expect(project(state)).toEqual(project(state));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 14 Task 5：NPC 对话层统一——choices 从 currentScene 读取，无规则投影。
+// ---------------------------------------------------------------------------
+
+describe("Phase 14 NPC 对话层统一", () => {
+  it("无 currentScene 时返回空 choices", () => {
+    const state: GameState = {
+      ...PIPELINE.state,
+      narrative: { ...PIPELINE.state.narrative, currentScene: null }
+    };
+    const view = project(state);
+    expect(view.dialogues.length).toBeGreaterThan(0);
+    const npc = view.dialogues[0];
+    expect(npc.choices).toEqual([]);
+  });
+
+  it("有 currentScene 时从 scene.choices 读取情境选项", () => {
+    const scene: NarrativeSceneState = {
+      sceneId: "scene_1",
+      turn: 1,
+      narration: "test",
+      usedFactIds: [],
+      npcLine: null,
+      choices: [
+        { choiceToken: "tok_1", label: "选项A", actionKey: "observe" },
+        { choiceToken: "tok_2", label: "选项B", actionKey: "investigate" }
+      ],
+      source: "generated",
+      npcDialogues: [{ npcId: asNpcId("npc_1"), npcName: "老者", npcRole: "elder", speechPages: ["你好"] }]
+    };
+    const state: GameState = {
+      ...PIPELINE.state,
+      narrative: { ...PIPELINE.state.narrative, currentScene: scene }
+    };
+    const view = project(state);
+    const npc = view.dialogues.find((d) => d.npcId === "npc_1");
+    expect(npc).toBeDefined();
+    expect(npc!.choices.length).toBe(2);
+    expect(npc!.choices[0].label).toBe("选项A");
   });
 });

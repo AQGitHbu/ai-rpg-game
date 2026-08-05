@@ -226,7 +226,13 @@ export async function handleNpcDialogue(
     ),
     narrative: {
       currentScene: null,
-      generation: { status: "pending", requestedAt: deps.now(), playerNpcChat },
+      generation: {
+        status: "pending",
+        requestedAt: deps.now(),
+        // Phase 14：携带触发上下文，让导演知道场景是为何触发的。
+        triggerContext: { kind: "free_input", npcId: command.npcId, playerText: command.text },
+        playerNpcChat,
+      },
       mode: "ai"
     }
   };

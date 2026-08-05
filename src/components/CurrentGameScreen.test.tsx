@@ -113,8 +113,8 @@ describe("CurrentGameScreen", () => {
 
     // 对白面板打开，展示赵五第一页对白。
     expect(screen.getByText(/捕头赵五按着刀柄扫了你一眼/)).toBeInTheDocument();
-    // Phase 14：仅投影只读 review_clue，无 greet 写状态 choice。
-    expect(screen.getByRole("button", { name: "1. 回顾已知线索" })).toBeInTheDocument();
+    // Phase 14：choices 来自 currentScene（fixture 无场景 → 空）；reviewClues 独立按钮。
+    expect(screen.getByRole("button", { name: "回顾已知线索" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /与捕头赵五初次交谈/ })).toBeNull();
     // 打开对白面板是纯本地导航：只有初始 GET current 一次 fetch。
     expect(fetchMock).toHaveBeenCalledTimes(1);

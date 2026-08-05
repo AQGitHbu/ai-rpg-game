@@ -111,6 +111,13 @@ export type NarrativeSceneView = {
     { readonly label: string; readonly choiceToken: string },
     { readonly label: string; readonly choiceToken: string },
   ];
+  /** Phase 14：场景内多 NPC 对白（含焦点 NPC）；缺失时为空数组。 */
+  readonly npcDialogues: readonly {
+    readonly npcId: string;
+    readonly npcName: string;
+    readonly npcRole: string;
+    readonly speechPages: readonly string[];
+  }[];
 } | null;
 
 /** Pending is deliberately a tiny public state: the UI may wait, not inspect work. */
@@ -355,6 +362,13 @@ function projectNarrativeSceneView(
       label: choice.label,
       choiceToken: choice.choiceToken,
     })) as NarrativeSceneView extends { choices: infer C } ? C : never,
+    // Phase 14：场景内多 NPC 对白——只透出展示字段，不含 FactId 等内部 ID。
+    npcDialogues: (scene.npcDialogues ?? []).map((d) => ({
+      npcId: String(d.npcId),
+      npcName: d.npcName,
+      npcRole: d.npcRole,
+      speechPages: d.speechPages,
+    })),
   };
 }
 

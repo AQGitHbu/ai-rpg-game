@@ -43,8 +43,10 @@ const QINGSHI_LOCATION_SCENE: LocationSceneView = {
   ]
 };
 
-/** Phase 7/14：青石镇在场 NPC 对话——Phase 14 废除 dialogue_choice 后，
- *  所有 NPC 仅投影只读 review_clue；NPC 交互改由 talk intent 触发（availableActions）。 */
+/** Phase 7/14：青石镇在场 NPC 对话——Phase 14 后 choices 与 speechPages 均来自
+ *  currentScene；fixture 模拟"无 currentScene"状态，故 choices=[]。
+ *  freeInputEnabled=true：自由输入是触发首场景生成的入口，非只读状态下恒为 true。
+ *  reviewClues 恒为已发现事实文本，UI 自行决定何时展开。 */
 const QINGSHI_DIALOGUES: readonly NpcDialogueView[] = [
   {
     npcId: "npc_lu",
@@ -52,7 +54,8 @@ const QINGSHI_DIALOGUES: readonly NpcDialogueView[] = [
     role: "客栈掌柜",
     slot: "left",
     speechPages: ["陆掌柜擦着酒碗抬起头。又见面了，若有新的发现，随时可以来找我。"],
-    choices: [{ kind: "review_clue", label: "回顾已知线索", mutatesState: false }],
+    choices: [],
+    freeInputEnabled: true,
     reviewClues: ["【玩家输入】沈青崖自述身份：落魄镖师"]
   },
   {
@@ -64,7 +67,8 @@ const QINGSHI_DIALOGUES: readonly NpcDialogueView[] = [
       "捕头赵五按着刀柄扫了你一眼。初次见面，我是捕头赵五，官府捕头。",
       "最近镖局灭门案闹得人心惶惶——你愿意帮官府查明真相吗？"
     ],
-    choices: [{ kind: "review_clue", label: "回顾已知线索", mutatesState: false }],
+    choices: [],
+    freeInputEnabled: true,
     reviewClues: ["【玩家输入】沈青崖自述身份：落魄镖师"]
   }
 ];
@@ -245,7 +249,8 @@ export function buildMovedSessionViewFixture(): GameSessionView {
         role: "老兵",
         slot: "center",
         speechPages: ["巡道老兵拄着长枪打量你。初次见面，我是巡道老兵，老兵。"],
-        choices: [{ kind: "review_clue", label: "回顾已知线索", mutatesState: false }],
+        choices: [],
+        freeInputEnabled: true,
         reviewClues: ["【玩家输入】沈青崖自述身份：落魄镖师"]
       }
     ] satisfies readonly NpcDialogueView[]
@@ -310,15 +315,12 @@ export function buildSuccessEndingSessionViewFixture(): GameSessionView {
       description: "刺客伏诛，灭门真相终于大白于天下。",
       outcome: "success"
     },
-    // Phase 7：结局后仍投影只读地图/场景，互动为空、对话仅剩只读回顾。
+    // Phase 7：结局后仍投影只读地图/场景，互动为空、对话 choices 已为空。
     locationScene: {
       ...QINGSHI_LOCATION_SCENE,
       interactions: []
     } satisfies LocationSceneView,
-    dialogues: QINGSHI_DIALOGUES.map((dialogue) => ({
-      ...dialogue,
-      choices: dialogue.choices.filter((choice) => !choice.mutatesState)
-    })) satisfies readonly NpcDialogueView[]
+    dialogues: QINGSHI_DIALOGUES
   } as unknown as GameSessionView;
 }
 
@@ -341,9 +343,6 @@ export function buildFailureEndingSessionViewFixture(): GameSessionView {
       ...QINGSHI_LOCATION_SCENE,
       interactions: []
     } satisfies LocationSceneView,
-    dialogues: QINGSHI_DIALOGUES.map((dialogue) => ({
-      ...dialogue,
-      choices: dialogue.choices.filter((choice) => !choice.mutatesState)
-    })) satisfies readonly NpcDialogueView[]
+    dialogues: QINGSHI_DIALOGUES
   } as unknown as GameSessionView;
 }

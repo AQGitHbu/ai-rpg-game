@@ -17,11 +17,11 @@ import { projectTownLayerView, type TownLayerView } from "./townRuntimeView";
 //     中性文案且不携带 locationId，绝不泄漏隐藏地点真实名称/描述。
 //   - 场景互动只来自 projectAvailableActions 的 observe/investigate/take_item/
 //     start_battle；talk 归对话、move 归世界地图。
-//   - 对话只投影 state.npcs 中位于当前地点的 NPC；Phase 14 废除
-//     dialogue_choice 后不再投影写状态 choices，仅保留只读本地 review_clue；
-//     reviewClues 只含已发现事实文本。NPC 交互改由 talk intent 触发。
+//   - 对话只投影 state.npcs 中位于当前地点的 NPC；Phase 14 后 choices 与
+//     speechPages 均来自 currentScene（无场景时 choices=[]、speechPages 回退
+//     composeNpcSpeech）；reviewClues 恒为已发现事实文本，独立于 choices。
 //   - active battle 或结局后仍投影只读地图/地点资料，但 interactions 为空、
-//     对话不投影任何可写 choice（仅保留只读 review_clue）。
+//     对话 choices 为空、freeInputEnabled=false（reviewClues 仍可展开）。
 // ---------------------------------------------------------------------------
 
 /** 场景槽位：确定性分配的四个展示位。 */
@@ -69,18 +69,29 @@ export type LocationSceneView = {
   readonly interactions: readonly SceneInteractionView[];
 };
 
-export type DialogueChoiceView =
-  | { readonly kind: "greet" | "ask_main_quest"; readonly choiceId: string; readonly label: string; readonly mutatesState: true }
-  | { readonly kind: "review_clue"; readonly label: "回顾已知线索"; readonly mutatesState: false };
+/**
+ * Phase 14：对话情境选项——直接来自 currentScene.choices 的安全投影。
+ * 不再使用规则投影（greet/ask_main_quest/review_clue）。
+ */
+export type DialogueChoiceView = {
+  readonly choiceToken: string;
+  readonly label: string;
+  /** Phase 14: 选项展示提示（如"将引入新 NPC"）；可缺失。 */
+  readonly hint?: string;
+};
 
 export type NpcDialogueView = {
   readonly npcId: string;
   readonly name: string;
   readonly role: string;
   readonly slot: SceneSlot;
-  /** 确定性对白分页：composeNpcSpeech 产出按每页字符预算切页，顺序拼接无损。 */
+  /** 确定性对白分页：currentScene.npcDialogues 优先；缺失时回退 composeNpcSpeech。 */
   readonly speechPages: readonly string[];
+  /** Phase 14：情境选项——来自 currentScene.choices（read-only 或不在场则为空）。 */
   readonly choices: readonly DialogueChoiceView[];
+  /** Phase 14：是否允许自由输入——非只读且在场时为 true。 */
+  readonly freeInputEnabled: boolean;
+  /** 已发现事实文本：UI 用于本地只读回顾。 */
   readonly reviewClues: readonly string[];
 };
 
@@ -248,9 +259,13 @@ function collectDiscoveredFactTexts(blueprint: ScenarioBlueprint, state: GameSta
 export const SPEECH_PAGE_CHAR_BUDGET = 48;
 
 /**
- * 安全对话：只投影当前地点在场 NPC（已结识者仍作为对话对象出现）。
- * Phase 14 废除 dialogue_choice 后不再投影写状态 choices，仅保留只读 review_clue。
- * readOnly（active battle 或结局）时同样仅保留只读 review_clue。
+ * Phase 14：安全对话投影——choices 与 speechPages 都从 currentScene 读取。
+ * - currentScene 为 null（pending / idle / fallback）→ choices 为空、speechPages 回退 composeNpcSpeech。
+ * - 在场但不在 scene.npcDialogues 中的 NPC → choices 为空。
+ * - readOnly（active battle 或结局）→ choices 为空、freeInputEnabled=false。
+ * - freeInputEnabled 在非只读状态下恒为 true：自由输入是触发首场景生成的入口，
+ *   不能依赖 currentScene 存在（否则无场景时玩家无法触发场景生成，形成死锁）。
+ * - reviewClues 恒为已发现事实文本，UI 自行决定何时展开。
  */
 function projectDialogues(
   blueprint: ScenarioBlueprint,
@@ -259,12 +274,12 @@ function projectDialogues(
 ): readonly NpcDialogueView[] {
   const currentId = String(state.currentLocationId);
   const npcById = new Map(blueprint.npcs.map((npc) => [String(npc.id), npc]));
+  const scene = state.narrative.currentScene;
+  // NarrativeSceneState 无 presentNpcIds 字段；从 npcDialogues 派生在场 IDs。
+  const inSceneNpcIds: ReadonlySet<string> = new Set(
+    (scene?.npcDialogues ?? []).map((d) => String(d.npcId))
+  );
   const reviewClues = collectDiscoveredFactTexts(blueprint, state);
-  const reviewChoice: DialogueChoiceView = {
-    kind: "review_clue",
-    label: "回顾已知线索",
-    mutatesState: false
-  };
 
   const dialogues: NpcDialogueView[] = [];
   for (const npcState of state.npcs) {
@@ -273,17 +288,35 @@ function projectDialogues(
     if (npc === undefined) {
       throw new Error("对话投影失败：在场 NPC 引用在蓝图中不存在");
     }
-    // Phase 14：dialogue_choice 废除后不再投影写状态 choices。
+    const sceneHasThisNpc = inSceneNpcIds.has(String(npcState.npcId));
+
+    // 从 currentScene.npcDialogues 读取该 NPC 的对白分页；缺失则回退 composeNpcSpeech。
+    const sceneDialogue = scene?.npcDialogues?.find((d) => String(d.npcId) === String(npcState.npcId));
+    const speechPages = sceneDialogue !== undefined
+      ? sceneDialogue.speechPages
+      : paginateSpeechText(
+        composeNpcSpeech(blueprint, state, npcState.npcId),
+        SPEECH_PAGE_CHAR_BUDGET
+      );
+
+    // 从 currentScene.choices 读取情境选项；read-only 或不在场则为空。
+    const choices: readonly DialogueChoiceView[] = (readOnly || !sceneHasThisNpc)
+      ? []
+      : (scene?.choices ?? []).map((c) => ({
+        choiceToken: c.choiceToken,
+        label: c.label,
+        ...(c.hint !== undefined ? { hint: c.hint } : {})
+      }));
+
     dialogues.push({
       npcId: String(npcState.npcId),
       name: npc.name,
       role: npc.role,
       slot: slotForId(String(npcState.npcId)),
-      speechPages: paginateSpeechText(
-        composeNpcSpeech(blueprint, state, npcState.npcId),
-        SPEECH_PAGE_CHAR_BUDGET
-      ),
-      choices: [reviewChoice],
+      speechPages,
+      choices,
+      // 自由输入是触发首场景的入口，不能依赖 currentScene 存在。
+      freeInputEnabled: !readOnly,
       reviewClues
     });
   }

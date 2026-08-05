@@ -60,6 +60,7 @@ describe("AdventureGameShell", () => {
           { label: "推门进入客栈", choiceToken: "scene:a" },
           { label: "先查看告示", choiceToken: "scene:b" },
         ] as const,
+        npcDialogues: [],
       },
     };
     const user = userEvent.setup();

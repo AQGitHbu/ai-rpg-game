@@ -166,39 +166,6 @@ export function AdventureGameShell({
     }
   }
 
-  /**
-   * NPC 对话选择处理：Phase 14 废除 dialogue_choice 后，talk 成为唯一 NPC 交互触发器。
-   * onChoice 回调当前不会从面板触发（无写状态 choices 投影），但保留以策安全。
-   */
-  async function handleDialogueChoice(npcId: string, _choiceId: string): Promise<void> {
-    setFeedback({ phase: "submitting" });
-    onBusyChange(true);
-
-    const outcome = await postGameAction({
-      intent: { type: "talk", npcId },
-      revision: view.revision
-    });
-
-    onBusyChange(false);
-    switch (outcome.kind) {
-      case "success":
-        setFeedback({ phase: "idle" });
-        pushToast(outcome.message);
-        onViewChange(outcome.view);
-        return;
-      case "rejected":
-        setFeedback({ phase: "rejected", message: outcome.message });
-        return;
-      case "stale":
-        setFeedback({ phase: "idle" });
-        setDialogueNpcId(null);
-        onStaleRevision();
-        return;
-      case "error":
-        setFeedback({ phase: "error", message: outcome.message });
-    }
-  }
-
   async function handleNarrativeChoice(choiceToken: string): Promise<void> {
     setFeedback({ phase: "submitting" }); onBusyChange(true);
     const outcome = await postGameAction({ intent: { type: "narrative_choice", choiceToken }, revision: view.revision });
@@ -207,6 +174,16 @@ export function AdventureGameShell({
     if (outcome.kind === "rejected") { setFeedback({ phase: "rejected", message: outcome.message }); return; }
     if (outcome.kind === "stale") { setFeedback({ phase: "idle" }); onStaleRevision(); return; }
     setFeedback({ phase: "error", message: outcome.message });
+  }
+
+  /**
+   * Phase 14：对话面板情境选项提交——choiceToken 来自 currentScene.choices，
+   * 提交 narrative_choice intent（与场景面板共用同一通路）。提交后关闭对话覆盖层，
+   * 让随后的 pending / 新场景视图接管主区域。
+   */
+  function handleDialogueChoiceFromPanel(choiceToken: string): void {
+    setDialogueNpcId(null);
+    void handleNarrativeChoice(choiceToken);
   }
 
   /**
@@ -322,7 +299,7 @@ export function AdventureGameShell({
             dialogue={activeDialogue}
             gameType={view.world.gameType}
             busy={shellBusy}
-            onChoice={(npcId, choiceId) => void handleDialogueChoice(npcId, choiceId)}
+            onChoice={handleDialogueChoiceFromPanel}
             onFreeInput={handleFreeDialogue}
             freeInputBusy={shellBusy}
           />

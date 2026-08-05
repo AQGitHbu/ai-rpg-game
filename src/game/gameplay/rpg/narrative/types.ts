@@ -1,4 +1,4 @@
-import type { NarrativeEmotion } from "@/game/domain";
+import type { NarrativeEmotion, ProposedEnding } from "@/game/domain";
 
 /** Stable mapping from AvailableAction to a unique key, used by AI proposals. */
 export type NarrativeActionCandidate = {
@@ -40,6 +40,8 @@ export type DirectorProposal = {
   readonly pacing: "setup" | "develop" | "turn" | "climax" | "resolution";
   readonly proposedNewLocations: readonly ProposedNewLocation[];
   readonly proposedNewNpcs: readonly ProposedNewNpc[];
+  /** Phase 14: 结局提议（达阈值时导演可提议）。 */
+  readonly proposedEnding?: ProposedEnding;
 };
 
 export type ApprovedDirectorPlan = DirectorProposal;
@@ -71,16 +73,21 @@ export type BlueprintExpansionDecision =
 // Scene script proposal types
 // ---------------------------------------------------------------------------
 
+/** Phase 14: NPC 对白指令——焦点 NPC 与附加 NPC 共用同一形状。 */
+export type NpcInstruction = {
+  readonly npcId: string;
+  readonly speechAct: "inform" | "ask" | "evade" | "deny" | "warn" | "encourage";
+  readonly emotion: NarrativeEmotion;
+  readonly allowedFactIds: readonly string[];
+  readonly mayLie: boolean;
+};
+
 export type SceneScriptProposal = {
   readonly narration: string;
   readonly usedFactIds: readonly string[];
-  readonly npcInstruction: {
-    readonly npcId: string;
-    readonly speechAct: "inform" | "ask" | "evade" | "deny" | "warn" | "encourage";
-    readonly emotion: NarrativeEmotion;
-    readonly allowedFactIds: readonly string[];
-    readonly mayLie: boolean;
-  } | null;
+  readonly npcInstruction: NpcInstruction | null;
+  /** Phase 14: 多 NPC 对白指令——焦点 NPC 之外的在场 NPC 演员指令。 */
+  readonly additionalNpcInstructions?: readonly NpcInstruction[];
   readonly choices: readonly [
     { readonly actionKey: string; readonly label: string; readonly strategy: string },
     { readonly actionKey: string; readonly label: string; readonly strategy: string },

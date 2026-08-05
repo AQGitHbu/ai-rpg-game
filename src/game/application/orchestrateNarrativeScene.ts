@@ -4,9 +4,10 @@
 // 只返回结构化结果，不写入 repository。
 // ---------------------------------------------------------------------------
 
-import type { GameState, ScenarioBlueprint, NarrativeSceneState, NpcId, FactId, StoryPacing } from "@/game/domain";
+import type { GameState, ScenarioBlueprint, NarrativeSceneState, NpcDialogueInScene, NpcId, FactId, StoryPacing } from "@/game/domain";
+import { paginateSpeechText } from "@/game/domain";
 import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
-import type { NarrativeActionCandidate, ApprovedDirectorPlan, ApprovedSceneScript, BlueprintExpansionDecision } from "@/game/gameplay/rpg/narrative";
+import type { NarrativeActionCandidate, NpcInstruction, ApprovedDirectorPlan, ApprovedSceneScript, BlueprintExpansionDecision } from "@/game/gameplay/rpg/narrative";
 import {
   approveDirectorProposal,
   approveSceneScript,
@@ -22,10 +23,12 @@ import {
   toDirectorContext,
   toSceneScriptContext,
   toNpcLineContext,
+  type NpcLineContext,
 } from "./runtimeNarrativeContexts";
 import {
   FALLBACK_SCENE_SCRIPT,
 } from "./internal/runtimeNarrativeFallbacks";
+import { SPEECH_PAGE_CHAR_BUDGET } from "./locationAdventureView";
 
 const MAX_ROLE_ATTEMPTS = 3;
 
@@ -43,6 +46,133 @@ async function waitBeforeRoleRetry(backoffMs: number, attemptIndex: number, maxA
   if (backoffMs === 0 || attemptIndex >= maxAttempts - 1) return;
   const delayMs = Math.min(backoffMs * (2 ** attemptIndex), 5_000);
   await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+}
+
+/**
+ * Phase 14：调用演员 source 并按 maxRoleAttempts 重试，返回批准后的对白文本。
+ * 复用焦点 NPC 的审批路径与重试退避策略；失败返回 null（不阻塞场景组装）。
+ * 仅用于非焦点 NPC 的对白生成——焦点 NPC 的对白仍走原有路径以保留 npcLine 结构。
+ */
+async function generateNpcLineTextWithRetry(args: {
+  readonly traceId: string;
+  readonly npcLineSource: NpcLineSource;
+  readonly npcLineContext: NpcLineContext;
+  readonly allowedFactIds: readonly string[];
+  readonly unresolvedItemNames: readonly string[];
+  readonly maxRoleAttempts: number;
+  readonly retryBackoffMs: number;
+  readonly approvalObserver?: (event: StoryEvalApprovalEvent) => void;
+}): Promise<string | null> {
+  for (let attemptIndex = 0; attemptIndex < args.maxRoleAttempts; attemptIndex += 1) {
+    try {
+      const attempt = await args.npcLineSource.generate({
+        traceId: `${args.traceId}${"-retry".repeat(attemptIndex)}`,
+        context: attemptIndex === 0
+          ? args.npcLineContext as unknown as Record<string, unknown>
+          : { ...(args.npcLineContext as unknown as Record<string, unknown>), retryInstruction: "Previous output failed approval. Return one complete JSON object using only the supplied fact cards." },
+      });
+      if (!attempt.ok) {
+        await waitBeforeRoleRetry(args.retryBackoffMs, attemptIndex, args.maxRoleAttempts);
+        continue;
+      }
+      const approved = approveNpcPerformance({
+        proposal: attempt.performance,
+        allowedFactIds: args.allowedFactIds,
+        unresolvedItemNames: args.unresolvedItemNames,
+      });
+      args.approvalObserver?.({ kind: "role_approval", traceId: args.traceId, role: "npc", attempt: attemptIndex + 1, category: approved.ok ? null : approved.category });
+      if (!approved.ok) continue;
+      return approved.value.text;
+    } catch { /* bounded same-role retry */ }
+  }
+  return null;
+}
+
+/**
+ * Phase 14：收集场景内所有在场 NPC 的对白分页。
+ * - 焦点 NPC（script.npcInstruction.npcId）：复用已批准的 npcLine.text 分页。
+ * - 非焦点 NPC：若 additionalNpcInstructions 含其指令，调用演员生成；否则仅记录在场（speechPages=[]）。
+ * 在场 NPC 列表来自 state.npcs 中位于当前地点的 NPC，与 projectDialogues 口径一致。
+ */
+async function collectNpcDialogues(args: {
+  readonly blueprint: ScenarioBlueprint;
+  readonly state: GameState;
+  readonly script: ApprovedSceneScript;
+  readonly npcLine: NarrativeSceneState["npcLine"];
+  readonly npcLineSource: NpcLineSource;
+  readonly plan: ApprovedDirectorPlan;
+  readonly traceId: string;
+  readonly unresolvedItemNames: readonly string[];
+  readonly maxRoleAttempts: number;
+  readonly retryBackoffMs: number;
+  readonly approvalObserver?: (event: StoryEvalApprovalEvent) => void;
+  readonly onNpcLineAttempted: () => void;
+}): Promise<readonly NpcDialogueInScene[]> {
+  const presentNpcIds = args.state.npcs
+    .filter((n) => String(n.locationId) === String(args.state.currentLocationId))
+    .map((n) => n.npcId);
+  const focusNpcId = args.script.npcInstruction?.npcId ?? null;
+  const dialogues: NpcDialogueInScene[] = [];
+
+  for (const npcId of presentNpcIds) {
+    const npc = args.blueprint.npcs.find((n) => String(n.id) === String(npcId));
+    if (npc === undefined) continue;
+    const isFocusNpc = focusNpcId !== null && String(focusNpcId) === String(npcId);
+
+    // 焦点 NPC：复用已批准的 npcLine（可能为 null 当 npcInstruction 为 null）
+    if (isFocusNpc && args.npcLine !== null) {
+      dialogues.push({
+        npcId,
+        npcName: npc.name,
+        npcRole: npc.role,
+        speechPages: paginateSpeechText(args.npcLine.text, SPEECH_PAGE_CHAR_BUDGET),
+      });
+      continue;
+    }
+
+    // 非焦点 NPC：查找 additionalNpcInstructions；缺失则仅记录在场
+    const instruction: NpcInstruction | undefined = args.script.additionalNpcInstructions
+      ?.find((i) => String(i.npcId) === String(npcId));
+    if (instruction === undefined) {
+      dialogues.push({
+        npcId,
+        npcName: npc.name,
+        npcRole: npc.role,
+        speechPages: [],
+      });
+      continue;
+    }
+
+    const npcLineContext = toNpcLineContext({
+      blueprint: args.blueprint,
+      state: args.state,
+      npcId: String(npcId),
+      speechAct: instruction.speechAct,
+      sceneGoal: args.plan.sceneGoal,
+      suggestedActionKeys: args.plan.suggestedActionKeys,
+      requestedEmotion: instruction.emotion,
+      allowedFactIds: instruction.allowedFactIds,
+      mayLie: instruction.mayLie,
+    });
+    args.onNpcLineAttempted();
+    const text = await generateNpcLineTextWithRetry({
+      traceId: `${args.traceId}-npcLine-${String(npcId)}`,
+      npcLineSource: args.npcLineSource,
+      npcLineContext,
+      allowedFactIds: instruction.allowedFactIds,
+      unresolvedItemNames: args.unresolvedItemNames,
+      maxRoleAttempts: args.maxRoleAttempts,
+      retryBackoffMs: args.retryBackoffMs,
+      approvalObserver: args.approvalObserver,
+    });
+    dialogues.push({
+      npcId,
+      npcName: npc.name,
+      npcRole: npc.role,
+      speechPages: text !== null ? paginateSpeechText(text, SPEECH_PAGE_CHAR_BUDGET) : [],
+    });
+  }
+  return dialogues;
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +370,24 @@ export async function orchestrateNarrativeScene(
   }
   if (!npcApproved) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, npcLineAttempted, candidates, state, fallbackPacing, plan);
 
+  // Phase 14：为场景内每个在场 NPC 收集对白分页——焦点 NPC 复用已批准的 npcLine，
+  // 非焦点 NPC 在编剧提供 additionalNpcInstructions 时单独调用演员；无指令的在场
+  // NPC 仅记录为在场（speechPages 为空）。失败不阻塞场景组装（speechPages 为空）。
+  const npcDialogues = await collectNpcDialogues({
+    blueprint,
+    state,
+    script,
+    npcLine,
+    npcLineSource,
+    plan,
+    traceId,
+    unresolvedItemNames,
+    maxRoleAttempts,
+    retryBackoffMs,
+    approvalObserver: input.approvalObserver,
+    onNpcLineAttempted: () => { npcLineAttempted = true; },
+  });
+
   // Step 6：组装 NarrativeSceneState
   const expansionDecision = approveBlueprintExpansion({ blueprint, state, plan });
   input.approvalObserver?.({ kind: "expansion_decision", traceId, decision: expansionDecision });
@@ -262,6 +410,7 @@ export async function orchestrateNarrativeScene(
       };
     }) as unknown as NarrativeSceneState["choices"],
     source: "generated",
+    npcDialogues,
   };
 
   return {

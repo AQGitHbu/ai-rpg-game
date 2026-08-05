@@ -14,7 +14,8 @@ export type FreeInputResult =
 type NpcDialoguePanelProps = {
   readonly dialogue: NpcDialogueView;
   readonly gameType: GameTypeId;
-  readonly onChoice: (npcId: string, choiceId: string) => void;
+  /** Phase 14：情境选项提交——choiceToken 来自 currentScene.choices。 */
+  readonly onChoice: (choiceToken: string) => void;
   readonly busy: boolean;
   /** 自由输入提交：父组件负责 fetch，返回结果决定面板行为。 */
   readonly onFreeInput: (npcId: string, text: string) => Promise<FreeInputResult>;
@@ -39,9 +40,13 @@ function PagerArrowIcon({ direction }: { readonly direction: "prev" | "next" }) 
 }
 
 /**
- * 场景化 NPC 对话面板：左侧立绘+名字，右侧分页对白（单页时不显示翻页），
- * 底部编号选项 + 自由输入框。自由输入经 onFreeInput 回调由父组件提交端点：
- * 闲聊结果就地显示 NPC 回应；叙事触发时父组件已切换全局 view，面板不设本地回应。
+ * Phase 14 场景化 NPC 对话面板：左侧立绘+名字，右侧分页对白（单页时不显示翻页），
+ * 底部编号情境选项 + 独立"回顾已知线索"按钮 + 自由输入框。
+ * - choices 与 speechPages 均来自 view.npcDialogues（即 currentScene）。
+ * - reviewClues 不再混入 choices，改为独立按钮（始终可点，纯本地展开）。
+ * - freeInputEnabled=false 时禁用自由输入框；reviewClues 与 choices 不受影响。
+ * 自由输入经 onFreeInput 回调由父组件提交端点：闲聊结果就地显示 NPC 回应；
+ * 叙事触发时父组件已切换全局 view，面板不设本地回应。
  */
 export function NpcDialoguePanel({
   dialogue,
@@ -59,8 +64,11 @@ export function NpcDialoguePanel({
   const pages = dialogue.speechPages;
   const pageCount = pages.length;
   const safeIndex = Math.min(pageIndex, Math.max(pageCount - 1, 0));
+  const hasReviewClues = dialogue.reviewClues.length > 0;
+  const freeInputDisabled = !dialogue.freeInputEnabled || freeInputBusy;
 
   const handleSend = async () => {
+    if (!dialogue.freeInputEnabled) return;
     const text = draft.trim();
     if (text === "") return;
     const result = await onFreeInput(dialogue.npcId, text);
@@ -115,35 +123,33 @@ export function NpcDialoguePanel({
       </div>
 
       <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
-        {dialogue.choices.map((choice, index) => {
-          const numberedLabel = `${index + 1}. ${choice.label}`;
-          if (choice.kind === "review_clue") {
-            return (
-              <button
-                key="review_clue"
-                type="button"
-                onClick={() => setCluesExpanded((expanded) => !expanded)}
-                aria-expanded={cluesExpanded}
-              >
-                {numberedLabel}
-              </button>
-            );
-          }
-          return (
-            <button
-              key={choice.choiceId}
-              type="button"
-              disabled={busy}
-              onClick={() => onChoice(dialogue.npcId, choice.choiceId)}
-            >
-              {numberedLabel}
-            </button>
-          );
-        })}
+        {dialogue.choices.map((choice, index) => (
+          <button
+            key={choice.choiceToken}
+            type="button"
+            disabled={busy}
+            onClick={() => onChoice(choice.choiceToken)}
+          >
+            {`${index + 1}. ${choice.label}`}
+          </button>
+        ))}
       </div>
 
-      {cluesExpanded && dialogue.reviewClues.length > 0 ? (
-        <ul className="npc-dialogue-clues" aria-label="已知线索">
+      {hasReviewClues ? (
+        <div className="npc-dialogue-review-toggle">
+          <button
+            type="button"
+            aria-expanded={cluesExpanded}
+            aria-controls="npc-dialogue-clues"
+            onClick={() => setCluesExpanded((expanded) => !expanded)}
+          >
+            回顾已知线索
+          </button>
+        </div>
+      ) : null}
+
+      {cluesExpanded && hasReviewClues ? (
+        <ul id="npc-dialogue-clues" className="npc-dialogue-clues" aria-label="已知线索">
           {dialogue.reviewClues.map((clue) => (
             <li key={clue}>{clue}</li>
           ))}
@@ -162,10 +168,10 @@ export function NpcDialoguePanel({
           value={draft}
           placeholder="请输入你的话..."
           aria-label="自由输入"
-          disabled={freeInputBusy}
+          disabled={freeInputDisabled}
           onChange={(event) => setDraft(event.target.value)}
         />
-        <button type="submit" disabled={freeInputBusy}>发送</button>
+        <button type="submit" disabled={freeInputDisabled}>发送</button>
       </form>
     </div>
   );

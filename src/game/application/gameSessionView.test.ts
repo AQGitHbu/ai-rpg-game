@@ -308,7 +308,7 @@ describe("projectGameSessionView：地图 / 地点场景 / 对话 read model（P
     expect(view.locationScene.backdrop).toBe("location_backdrop");
   });
 
-  it("dialogues 为当前地点在场 NPC 投影，含只读 review_clue choice", () => {
+  it("dialogues 为当前地点在场 NPC 投影；Phase 14 无 currentScene 时 choices 为空、reviewClues 含已发现事实", () => {
     const view = project(PIPELINE.state, 0);
     const presentNpcIds = new Set(
       PIPELINE.state.npcs
@@ -318,11 +318,10 @@ describe("projectGameSessionView：地图 / 地点场景 / 对话 read model（P
     expect(view.dialogues.length).toBe(presentNpcIds.size);
     for (const dialogue of view.dialogues) {
       expect(presentNpcIds.has(dialogue.npcId)).toBe(true);
-      expect(dialogue.choices).toContainEqual({
-        kind: "review_clue",
-        label: "回顾已知线索",
-        mutatesState: false
-      });
+      // Phase 14：无 currentScene ⇒ choices 为空；自由输入恒可用（非只读）；reviewClues 恒为已发现事实文本。
+      expect(dialogue.choices).toEqual([]);
+      expect(dialogue.freeInputEnabled).toBe(true);
+      expect(dialogue.reviewClues.length).toBeGreaterThan(0);
     }
   });
 });
