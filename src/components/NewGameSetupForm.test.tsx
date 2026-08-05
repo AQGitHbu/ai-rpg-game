@@ -35,12 +35,15 @@ afterEach(() => {
 
 async function fillValidForm(user: UserEvent) {
   await user.click(screen.getByRole("radio", { name: /科幻/ }));
+  // 选择类型会整体预填示例内容，此处先清空再输入，模拟玩家按自己意图编辑。
+  await user.clear(screen.getByLabelText("角色名字"));
   await user.type(screen.getByLabelText("角色名字"), "林渡");
+  await user.clear(screen.getByLabelText("身份 / 职业"));
   await user.type(screen.getByLabelText("身份 / 职业"), "失踪航站的维修员");
-  await user.click(screen.getByLabelText("世界观背景"));
-  await user.paste("人类城市依靠一座不断删除居民记忆的轨道电梯维持能源。");
-  await user.click(screen.getByLabelText("故事开端"));
-  await user.paste("我在停运十年的站台收到了一张写着自己名字的返程票。");
+  await user.clear(screen.getByLabelText("世界观背景"));
+  await user.type(screen.getByLabelText("世界观背景"), "人类城市依靠一座不断删除居民记忆的轨道电梯维持能源。");
+  await user.clear(screen.getByLabelText("故事开端"));
+  await user.type(screen.getByLabelText("故事开端"), "我在停运十年的站台收到了一张写着自己名字的返程票。");
 }
 
 describe("NewGameSetupForm", () => {
@@ -50,6 +53,68 @@ describe("NewGameSetupForm", () => {
     for (const label of ["武侠", "仙侠", "奇幻", "科幻", "都市", "历史架空", "末日"]) {
       expect(screen.getByRole("radio", { name: new RegExp(`^${label}`) })).toBeInTheDocument();
     }
+  });
+
+  it("初始默认预填武侠示例，叙事风格为小说化、游戏时长为短篇", () => {
+    stubFetch(async () => jsonResponse(200, {}));
+    render(<NewGameSetupForm />);
+
+    expect(screen.getByRole("radio", { name: /^武侠/ })).toBeChecked();
+    expect(screen.getByLabelText("角色名字")).toHaveValue("沈青崖");
+    expect(screen.getByLabelText("身份 / 职业")).toHaveValue("落魄镖师");
+    expect(screen.getByLabelText("角色基础信息")).toHaveValue(
+      "青崖镖局独子，镖局一夜覆灭后流落江湖，靠押送散货为生。"
+    );
+    expect(screen.getByLabelText("世界观背景")).toHaveValue(
+      "镖局一夜覆灭，江湖各派暗流涌动，真凶身份成谜，官府与门派各怀心思。"
+    );
+    expect(screen.getByLabelText("故事开端")).toHaveValue(
+      "暮色四合，主角背着旧刀走进青石镇，镇口贴着一张字迹潦草的缉凶告示。"
+    );
+    expect(screen.getByLabelText("叙事风格")).toHaveValue("novel");
+    expect(screen.getByLabelText("游戏时长")).toHaveValue("short");
+  });
+
+  it("切换游戏类型后，主角与世界开端字段整体替换为对应示例", async () => {
+    stubFetch(async () => jsonResponse(200, {}));
+    const user = userEvent.setup();
+    render(<NewGameSetupForm />);
+
+    await user.click(screen.getByRole("radio", { name: /科幻/ }));
+
+    expect(screen.getByRole("radio", { name: /科幻/ })).toBeChecked();
+    expect(screen.getByLabelText("角色名字")).toHaveValue("林渡");
+    expect(screen.getByLabelText("身份 / 职业")).toHaveValue("失踪航站的维修员");
+    expect(screen.getByLabelText("角色基础信息")).toHaveValue(
+      "曾是环带航站的高级维修员，事故后身份记录被清除，熟悉每一段走私航道的暗门。"
+    );
+    expect(screen.getByLabelText("世界观背景")).toHaveValue(
+      "人类城市依靠一座不断删除居民记忆的轨道电梯维持能源。"
+    );
+    expect(screen.getByLabelText("故事开端")).toHaveValue(
+      "我在停运十年的站台收到了一张写着自己名字的返程票。"
+    );
+  });
+
+  it("切换游戏类型会覆盖玩家已手动编辑的字段", async () => {
+    stubFetch(async () => jsonResponse(200, {}));
+    const user = userEvent.setup();
+    render(<NewGameSetupForm />);
+
+    await user.clear(screen.getByLabelText("角色名字"));
+    await user.type(screen.getByLabelText("角色名字"), "自改名字");
+    await user.clear(screen.getByLabelText("世界观背景"));
+    await user.type(screen.getByLabelText("世界观背景"), "玩家自编的世界观背景示例内容。");
+    await user.click(screen.getByRole("radio", { name: /末日/ }));
+
+    expect(screen.getByLabelText("角色名字")).toHaveValue("周临");
+    expect(screen.getByLabelText("身份 / 职业")).toHaveValue("废土补给车队司机");
+    expect(screen.getByLabelText("世界观背景")).toHaveValue(
+      "大灾变后地表被灰烬与辐射覆盖，幸存者聚居于破败城邦，净水与燃料成为硬通货。"
+    );
+    expect(screen.getByLabelText("故事开端")).toHaveValue(
+      "主角开车驶入空荡的旧城寻找燃料，电台里突然传来一段重复了三十年的求救信号。"
+    );
   });
 
   it("渲染本身不发起任何网络请求", () => {
@@ -194,12 +259,8 @@ describe("NewGameSetupForm", () => {
     const user = userEvent.setup();
     render(<NewGameSetupForm />);
 
-    // 只填其余字段，角色名字留空。
-    await user.type(screen.getByLabelText("身份 / 职业"), "失踪航站的维修员");
-    await user.click(screen.getByLabelText("世界观背景"));
-    await user.paste("人类城市依靠一座不断删除居民记忆的轨道电梯维持能源。");
-    await user.click(screen.getByLabelText("故事开端"));
-    await user.paste("我在停运十年的站台收到了一张写着自己名字的返程票。");
+    // 默认示例已填好其余字段，清空角色名字以触发必填错误。
+    await user.clear(screen.getByLabelText("角色名字"));
     await user.click(screen.getByRole("button", { name: "确认开局资料" }));
 
     expect(fetchMock).not.toHaveBeenCalled();

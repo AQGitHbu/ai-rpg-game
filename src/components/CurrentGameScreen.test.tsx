@@ -34,12 +34,15 @@ const FALLBACK_NOTICE = "已使用稳定模板完成开局，仍可完整游玩�
 
 async function fillAndSubmitSetupForm(user: UserEvent) {
   await screen.findByText("选择游戏类型");
+  // 默认类型已预填武侠示例，先清空再输入，模拟玩家按自己意图编辑。
+  await user.clear(screen.getByLabelText("角色名字"));
   await user.type(screen.getByLabelText("角色名字"), "沈青崖");
+  await user.clear(screen.getByLabelText("身份 / 职业"));
   await user.type(screen.getByLabelText("身份 / 职业"), "落魄镖师");
-  await user.click(screen.getByLabelText("世界观背景"));
-  await user.paste("镖局一夜覆灭，江湖各派暗流涌动，真凶身份成谜。");
-  await user.click(screen.getByLabelText("故事开端"));
-  await user.paste("暮色四合，主角背着旧刀走进青石镇，镇口贴着缉凶告示。");
+  await user.clear(screen.getByLabelText("世界观背景"));
+  await user.type(screen.getByLabelText("世界观背景"), "镖局一夜覆灭，江湖各派暗流涌动，真凶身份成谜。");
+  await user.clear(screen.getByLabelText("故事开端"));
+  await user.type(screen.getByLabelText("故事开端"), "暮色四合，主角背着旧刀走进青石镇，镇口贴着缉凶告示。");
   await user.click(screen.getByRole("button", { name: "确认开局资料" }));
 }
 

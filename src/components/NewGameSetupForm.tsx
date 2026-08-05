@@ -25,7 +25,79 @@ const GAME_TYPES = [
   { id: "urban", label: "都市", hint: "当代城市与组织冲突" },
   { id: "alternate_history", label: "历史架空", hint: "类历史制度与权谋" },
   { id: "post_apocalypse", label: "末日", hint: "灾变、废土与生存" },
-] as const;
+] as const satisfies readonly {
+  id: NewGameInput["gameType"];
+  label: string;
+  hint: string;
+}[];
+
+/**
+ * 每个游戏类型配套的示例开局：选择类型时整体预填"02 / 主角"与"03 / 世界与开端"，
+ * 玩家可随时点击修改，提交以实际编辑内容为准。文本长度满足表单校验规则。
+ */
+type GameTypePreset = {
+  characterName: string;
+  characterIdentity: string;
+  characterProfile: string;
+  worldPremise: string;
+  storyOpening: string;
+};
+
+const GAME_TYPE_PRESETS: Record<NewGameInput["gameType"], GameTypePreset> = {
+  wuxia: {
+    characterName: "沈青崖",
+    characterIdentity: "落魄镖师",
+    characterProfile: "青崖镖局独子，镖局一夜覆灭后流落江湖，靠押送散货为生。",
+    worldPremise: "镖局一夜覆灭，江湖各派暗流涌动，真凶身份成谜，官府与门派各怀心思。",
+    storyOpening: "暮色四合，主角背着旧刀走进青石镇，镇口贴着一张字迹潦草的缉凶告示。"
+  },
+  xianxia: {
+    characterName: "云澈",
+    characterIdentity: "被逐出山门的记名弟子",
+    characterProfile: "曾是天枢宗记名弟子，因偷学禁术被逐出山门，身负一缕残缺的先天剑气，性情孤僻。",
+    worldPremise: "灵气潮汐百年一衰，修仙界各大宗门为争夺最后的飞升机缘明争暗斗，上古遗迹陆续苏醒。",
+    storyOpening: "主角在荒山破庙醒来，掌心多出一道燃烧的符文，而追杀他的宗门执法长老已踏剑而至。"
+  },
+  fantasy: {
+    characterName: "凯尔",
+    characterIdentity: "边陲村落的见习猎魔人",
+    characterProfile: "自幼在边陲村落长大，只会几手粗浅的剑术，祖父留下的旧银钉与兽皮书是仅有的家当。",
+    worldPremise: "王国边境的魔法潮汐正在崩解，古遗迹中苏醒的异族越过灰烬山脉，法师塔与王室互相猜忌。",
+    storyOpening: "守夜时，主角看见村外麦田一夜之间枯萎成灰，田中央立着一根刻满符文的黑色石柱。"
+  },
+  science_fiction: {
+    characterName: "林渡",
+    characterIdentity: "失踪航站的维修员",
+    characterProfile: "曾是环带航站的高级维修员，事故后身份记录被清除，熟悉每一段走私航道的暗门。",
+    worldPremise: "人类城市依靠一座不断删除居民记忆的轨道电梯维持能源。",
+    storyOpening: "我在停运十年的站台收到了一张写着自己名字的返程票。"
+  },
+  urban: {
+    characterName: "林之遥",
+    characterIdentity: "财经记者",
+    characterProfile: "跑了五年财经口，写过两篇让上市公司股价跳水的深度报道。",
+    worldPremise: "滨江金融城连环并购案背后，一笔离奇消失的资金牵动着各方神经。",
+    storyOpening: "深夜的编辑部只剩一盏灯，主角收到一封匿名邮件，附件是半份审计底稿。"
+  },
+  alternate_history: {
+    characterName: "顾明远",
+    characterIdentity: "大理寺书吏",
+    characterProfile: "寒门出身的大理寺书吏，精通律令条文，因整理卷宗无意间发现一桩牵连朝堂的旧案。",
+    worldPremise: "朝廷与藩王剑拔弩张，漕运税银连年短缺，一封密奏牵出盘踞朝野数十年的权贵网。",
+    storyOpening: "主角在誊抄卷宗时发现一张夹在旧档里的名册，上面的名字竟牵涉当朝首辅。"
+  },
+  post_apocalypse: {
+    characterName: "周临",
+    characterIdentity: "废土补给车队司机",
+    characterProfile: "灾变后在废土长大，驾驶技术娴熟，熟悉每条辐射区的安全路线，靠运送补给为生。",
+    worldPremise: "大灾变后地表被灰烬与辐射覆盖，幸存者聚居于破败城邦，净水与燃料成为硬通货。",
+    storyOpening: "主角开车驶入空荡的旧城寻找燃料，电台里突然传来一段重复了三十年的求救信号。"
+  }
+};
+
+/** 首次渲染与默认展示使用的游戏类型；其预设会预填主角与世界开端字段。 */
+const DEFAULT_GAME_TYPE = "wuxia" as const;
+const DEFAULT_PRESET = GAME_TYPE_PRESETS[DEFAULT_GAME_TYPE];
 
 type FieldErrorMap = Partial<Record<keyof NewGameInput, string>>;
 
@@ -80,16 +152,16 @@ type NewGameSetupFormProps = {
 };
 
 export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGameSetupFormProps = {}) {
-  const [gameType, setGameType] = useState<(typeof GAME_TYPES)[number]["id"]>("wuxia");
-  const [characterName, setCharacterName] = useState("");
-  const [characterIdentity, setCharacterIdentity] = useState("");
-  const [characterProfile, setCharacterProfile] = useState("");
-  const [worldPremise, setWorldPremise] = useState("");
-  const [storyOpening, setStoryOpening] = useState("");
+  const [gameType, setGameType] = useState<(typeof GAME_TYPES)[number]["id"]>(DEFAULT_GAME_TYPE);
+  const [characterName, setCharacterName] = useState(DEFAULT_PRESET.characterName);
+  const [characterIdentity, setCharacterIdentity] = useState(DEFAULT_PRESET.characterIdentity);
+  const [characterProfile, setCharacterProfile] = useState(DEFAULT_PRESET.characterProfile);
+  const [worldPremise, setWorldPremise] = useState(DEFAULT_PRESET.worldPremise);
+  const [storyOpening, setStoryOpening] = useState(DEFAULT_PRESET.storyOpening);
   const [narrativeStyle, setNarrativeStyle] =
-    useState<NewGameInput["narrativeStyle"]>("cinematic");
+    useState<NewGameInput["narrativeStyle"]>("novel");
   const [gameLength, setGameLength] =
-    useState<NewGameInput["gameLength"]>("open");
+    useState<NewGameInput["gameLength"]>("short");
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -111,6 +183,17 @@ export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGam
         {message}
       </span>
     );
+  }
+
+  /** 切换游戏类型时整体替换主角与世界开端字段为对应示例（覆盖玩家已编辑内容）。 */
+  function handleGameTypeChange(id: (typeof GAME_TYPES)[number]["id"]) {
+    const preset = GAME_TYPE_PRESETS[id];
+    setGameType(id);
+    setCharacterName(preset.characterName);
+    setCharacterIdentity(preset.characterIdentity);
+    setCharacterProfile(preset.characterProfile);
+    setWorldPremise(preset.worldPremise);
+    setStoryOpening(preset.storyOpening);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -252,7 +335,7 @@ export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGam
                 name="gameType"
                 value={type.id}
                 checked={gameType === type.id}
-                onChange={() => setGameType(type.id)}
+                onChange={() => handleGameTypeChange(type.id)}
               />
               <strong>{type.label}</strong>
               <span>{type.hint}</span>
