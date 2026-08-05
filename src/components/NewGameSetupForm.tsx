@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties, type FormEvent } from "react";
+import Image from "next/image";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import {
   validateNewGameInput,
@@ -103,6 +104,17 @@ const GAME_TYPE_PRESETS: Record<NewGameInput["gameType"], GameTypePreset> = {
 /** 首次渲染与默认展示使用的游戏类型；其预设会预填主角与世界开端字段。 */
 const DEFAULT_GAME_TYPE = "wuxia" as const;
 const DEFAULT_PRESET = GAME_TYPE_PRESETS[DEFAULT_GAME_TYPE];
+
+/** 每个题材对应的本地背景图路径（游戏开始配置页的题材选择卡片用）。 */
+const GAME_TYPE_BACKGROUNDS: Record<NewGameInput["gameType"], string> = {
+  wuxia: "/assets/genres/wuxia.jpg",
+  xianxia: "/assets/genres/xianxia.jpg",
+  fantasy: "/assets/genres/fantasy.jpg",
+  science_fiction: "/assets/genres/science_fiction.jpg",
+  urban: "/assets/genres/urban.jpg",
+  alternate_history: "/assets/genres/alternate_history.jpg",
+  post_apocalypse: "/assets/genres/post_apocalypse.jpg"
+};
 
 type SegmentOption<T extends string> = { value: T; label: string; hint: string };
 
@@ -427,7 +439,7 @@ export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGam
                   onChange={() => handleGameTypeChange(type.id)}
                 />
                 <span className="game-type-card--visual" aria-hidden="true">
-                  <AdventureVisual gameType={type.id} kind="map_node" label={`${type.label}世界`} decorative />
+                  <Image src={GAME_TYPE_BACKGROUNDS[type.id]} alt="" fill sizes="220px" priority={type.id === DEFAULT_GAME_TYPE} />
                 </span>
                 <strong>{type.label}</strong>
                 <span>{type.hint}</span>
