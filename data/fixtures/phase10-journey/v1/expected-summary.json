@@ -3,7 +3,7 @@
   "mode": "record",
   "outcome": "success",
   "turns": 17,
-  "aiCalls": 16,
+  "aiCalls": 13,
   "maxTurns": 20,
   "maxAiCalls": 40,
   "reloadConsistent": true,
@@ -11,7 +11,7 @@
   "mandatoryFallbacks": 0,
   "coverage": {
     "narrativeChoices": 6,
-    "generatedNpcLines": 2,
+    "generatedNpcLines": 1,
     "firstVisitedLocations": 3,
     "firstMetNpcs": 1,
     "obtainedItems": 1,

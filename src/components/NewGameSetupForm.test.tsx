@@ -173,7 +173,32 @@ describe("NewGameSetupForm", () => {
 
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(view, "fallback"));
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
-      developmentPreset: "phase10-journey-v1"
+      developmentPreset: "phase10-journey-v1",
+      caseId: "wuxia-a",
+    });
+  });
+
+  it("开发环境渲染 7 题材下拉，默认武侠；选择后提交携带所选 caseId", async () => {
+    const view = buildSessionViewFixture();
+    const fetchMock = stubFetch(async () => jsonResponse(201, { view, generationSource: "fallback" }));
+    const onCreated = vi.fn();
+    const user = userEvent.setup();
+    render(<NewGameSetupForm developmentTools onCreated={onCreated} />);
+
+    const select = screen.getByLabelText("离线题材");
+    expect(select).toBeInTheDocument();
+    expect(select).toHaveValue("wuxia-a");
+    for (const label of ["武侠", "仙侠", "奇幻", "科幻", "都市", "架空历史", "末日"]) {
+      expect(screen.getByRole("option", { name: label })).toBeInTheDocument();
+    }
+
+    await user.selectOptions(select, "post-apocalypse-a");
+    await user.click(screen.getByRole("button", { name: "使用已有数据开始" }));
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(view, "fallback"));
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      developmentPreset: "phase10-journey-v1",
+      caseId: "post-apocalypse-a",
     });
   });
 

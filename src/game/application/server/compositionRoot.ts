@@ -37,6 +37,7 @@ import { createRuntimeNarrativeSources } from "./ai/runtimeNarrativeSourceFactor
 import { createFileStoryEvalSink, createStoryEvalApprovalObserver } from "./ai/storyEvalCapture";
 import type { StoryEvalApprovalEvent, StoryEvalSink } from "../storyEvalCaptureTypes";
 import { createTownPlanSource } from "./ai/townPlanSourceFactory";
+import { resolveOfflineBaseline } from "./offlineBaselines";
 import {
   RuntimeNarrativeTaskCoordinator,
   type NarrativeEnsureResult,
@@ -73,6 +74,8 @@ export type OfflineJourneyGameResult = CreateGameResult | {
   readonly code: "DEVELOPMENT_TOOLS_DISABLED";
 };
 
+export { OFFLINE_CASE_IDS } from "./offlineBaselines";
+
 // ---------------------------------------------------------------------------
 // production composition root（Task 3）：server-only 层唯一的真实依赖装配点。
 // 只有这里把真实 SQLite repository（经 sqliteClient 的 env 配置助手解析路径）、
@@ -88,8 +91,8 @@ export type ServerGameEntryPoints = {
   readonly developmentToolsEnabled: boolean;
   /** 创建当前本地存档：只承载浏览器允许提交的开局资料。 */
   createGame(input: NewGameInput, traceId?: string): Promise<CreateGameResult>;
-  /** 开发专用：使用 Phase 10 离线完整旅程的固定开局基线，零 AI 调用。 */
-  createOfflineJourneyGame(traceId?: string): Promise<OfflineJourneyGameResult>;
+  /** 开发专用：使用离线基线开局（缺省 Phase 10 电视剧基线；caseId 经 offlineBaselines 解析），零 AI。 */
+  createOfflineJourneyGame(caseId?: string, traceId?: string): Promise<OfflineJourneyGameResult>;
   /** 读取当前本地存档的 read model。 */
   getCurrentGame(traceId?: string): Promise<CurrentGameResult>;
   /** 执行玩家行动：纯规则裁决 + 原子续存档。 */
@@ -387,19 +390,31 @@ export function createServerGameEntryPoints(
       { gameType: input.gameType },
       traceId
     ),
-    createOfflineJourneyGame: (traceId) => {
+    createOfflineJourneyGame: (caseId, traceId) => {
       if (env.NODE_ENV !== "development") {
         logger.warn("offline_journey_create_rejected", {
           scope: "request",
           source: "rpg.server.create_offline_journey_game",
-          code: "DEVELOPMENT_TOOLS_DISABLED"
+          code: "DEVELOPMENT_TOOLS_DISABLED",
         });
         return Promise.resolve({ ok: false, code: "DEVELOPMENT_TOOLS_DISABLED" });
       }
+      const baseline = caseId === undefined
+        ? PHASE10_JOURNEY_BASELINE
+        : resolveOfflineBaseline(caseId);
+      // handler 已在白名单拦截未知 caseId；此处防御漂移，返回稳定 INVALID_INPUT。
+      if (baseline === null) {
+        logger.warn("offline_journey_unknown_case", {
+          scope: "request",
+          source: "rpg.server.create_offline_journey_game",
+          caseId,
+        });
+        return Promise.resolve({ ok: false, code: "INVALID_INPUT", fieldErrors: [] });
+      }
       return runLoggedUseCase(logger, "create_offline_journey_game", () => createGame({
-          input: PHASE10_JOURNEY_BASELINE.input,
-          seed: PHASE10_JOURNEY_BASELINE.seed,
-        }, offlineJourneyDependencies), {}, traceId);
+        input: baseline.input,
+        seed: baseline.seed,
+      }, offlineJourneyDependencies), {}, traceId);
     },
     getCurrentGame: (traceId) => runLoggedUseCase(
       logger,

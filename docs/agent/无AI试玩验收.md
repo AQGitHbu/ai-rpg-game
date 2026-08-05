@@ -35,3 +35,7 @@ npm run phase:status
 ```
 
 完整 UI 测试需要 foundation 本地依赖可用：在 `../ai-game-foundation` 运行一次 `npm ci`（只安装其 lockfile 锁定的忽略依赖，不修改 package/source）。这是 `file:` 本地包在 Vitest 真实路径解析 React peer dependency 的运行时前置条件。
+
+## 最近维护
+
+- 2026-08-04：开发环境「使用已有数据开始」扩展为 7 题材下拉；按 caseId 复用 data/story-eval/cases/v2.json 输入 + 派生 seed 创建 offline 存档（确定性 fallback 蓝图 + runtimeNarrativeMode:"offline"，零 AI）。新增 src/game/application/server/offlineBaselines.ts（题材→caseId 白名单 + seed 派生）与 7 题材零 AI 规则通关回归 src/game/application/testing/offlineGenreJourney.test.ts。
