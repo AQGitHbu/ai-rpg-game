@@ -2,7 +2,9 @@ import { NARRATIVE_EMOTIONS, type ScenarioBlueprint } from "@/game/domain";
 import type {
   ApprovedDirectorPlan,
   ApprovedSceneScript,
+  NarrativeApprovalCategory,
   NarrativeApprovalResult,
+  NpcInstruction,
   SceneScriptProposal,
 } from "./types";
 
@@ -50,6 +52,35 @@ export function claimsUnresolvedItem(narration: string, itemNames: readonly stri
   });
 }
 
+/**
+ * 校验单条 NPC 对白指令的公共约束：speechAct/emotion 合法、NPC 存在于蓝图、
+ * allowedFactIds 同时为该 NPC 已知事实与本场允许揭示事实的子集。
+ * 焦点 NPC 与附加 NPC 共用此校验；通过返回 null，违反返回对应拒绝类别。
+ */
+function validateNpcInstruction(args: {
+  readonly instruction: NpcInstruction;
+  readonly blueprint: ScenarioBlueprint;
+  readonly sceneAllowedRevealSet: Set<string>;
+}): NarrativeApprovalCategory | null {
+  if (!VALID_SPEECH_ACTS.has(args.instruction.speechAct)) {
+    return "schema_violation";
+  }
+  if (!VALID_EMOTIONS.has(args.instruction.emotion)) {
+    return "schema_violation";
+  }
+  const npcDef = args.blueprint.npcs.find((n) => String(n.id) === args.instruction.npcId);
+  if (npcDef === undefined) {
+    return "reference_broken";
+  }
+  const knownSet = new Set(npcDef.knownFactIds.map((id) => String(id)));
+  for (const factId of args.instruction.allowedFactIds) {
+    if (!knownSet.has(factId) || !args.sceneAllowedRevealSet.has(factId)) {
+      return "knowledge_scope_violation";
+    }
+  }
+  return null;
+}
+
 export function approveSceneScript(
   input: ApproveSceneScriptInput
 ): NarrativeApprovalResult<ApprovedSceneScript> {
@@ -77,31 +108,31 @@ export function approveSceneScript(
   if (proposal.npcInstruction !== null) {
     const npcInst = proposal.npcInstruction;
 
-    // NPC ID must match plan focusNpcId when plan specifies one
+    // 焦点 NPC ID 必须匹配 plan.focusNpcId（plan 声明焦点时）
     if (plan.focusNpcId !== null && npcInst.npcId !== plan.focusNpcId) {
       return { ok: false, category: "reference_broken" };
     }
 
-    // speechAct must be valid
-    if (!VALID_SPEECH_ACTS.has(npcInst.speechAct)) {
-      return { ok: false, category: "schema_violation" };
+    const npcRejection = validateNpcInstruction({
+      instruction: npcInst,
+      blueprint,
+      sceneAllowedRevealSet: allowedRevealSet,
+    });
+    if (npcRejection !== null) {
+      return { ok: false, category: npcRejection };
     }
+  }
 
-    // emotion must be valid
-    if (!VALID_EMOTIONS.has(npcInst.emotion)) {
-      return { ok: false, category: "schema_violation" };
-    }
-
-    // NPC allowedFactIds must be subset of NPC knownFactIds
-    const npcDef = blueprint.npcs.find((n) => String(n.id) === npcInst.npcId);
-    if (npcDef === undefined) {
-      return { ok: false, category: "reference_broken" };
-    }
-    const knownSet = new Set(npcDef.knownFactIds.map((id) => String(id)));
-    const sceneAllowedSet = new Set(plan.allowedRevealFactIds);
-    for (const factId of npcInst.allowedFactIds) {
-      if (!knownSet.has(factId) || !sceneAllowedSet.has(factId)) {
-        return { ok: false, category: "knowledge_scope_violation" };
+  // Phase 14：附加 NPC 指令校验——与焦点 NPC 共用公共约束（不含焦点匹配）。
+  if (proposal.additionalNpcInstructions !== undefined) {
+    for (const additionalInst of proposal.additionalNpcInstructions) {
+      const additionalRejection = validateNpcInstruction({
+        instruction: additionalInst,
+        blueprint,
+        sceneAllowedRevealSet: allowedRevealSet,
+      });
+      if (additionalRejection !== null) {
+        return { ok: false, category: additionalRejection };
       }
     }
   }
@@ -147,6 +178,17 @@ export function approveSceneScript(
           mayLie: proposal.npcInstruction.mayLie,
         }
       : null,
+    // Phase 14：透传附加 NPC 指令——未提供时保持 undefined（与类型可选语义一致），
+    // 供 collectNpcDialogues 为非焦点 NPC 走重试生成路径。
+    additionalNpcInstructions: proposal.additionalNpcInstructions !== undefined
+      ? proposal.additionalNpcInstructions.map((inst) => ({
+          npcId: inst.npcId,
+          speechAct: inst.speechAct,
+          emotion: inst.emotion,
+          allowedFactIds: [...inst.allowedFactIds],
+          mayLie: inst.mayLie,
+        }))
+      : undefined,
     choices: [
       {
         actionKey: choiceA.actionKey,

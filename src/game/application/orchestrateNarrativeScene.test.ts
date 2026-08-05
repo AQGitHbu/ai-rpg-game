@@ -506,17 +506,11 @@ describe("orchestrateNarrativeScene：Phase 14 collectNpcDialogues 三路径", (
     expect(focus!.speechPages.join("")).toBe("别靠近渡口。");
   });
 
-  // 注意：本测试断言当前真实行为。approveSceneScript 在构造批准脚本时未拷贝
-  // additionalNpcInstructions（见 approveSceneScript.ts 的 approved 构造分支），
-  // 因此 collectNpcDialogues 中“附加 NPC 走 generateNpcLineTextWithRetry”的路径
-  // 端到端不可达：附加指令被丢弃，附加 NPC 退化为“无指令”分支（speechPages 为空）。
-  // 待 approveSceneScript 透传 additionalNpcInstructions 后，本测试需改为断言
-  // 附加 NPC 走重试生成路径且 speechPages 来自生成文本。
-  it("附加 NPC 指令因 approveSceneScript 未透传而丢失——当前退化为无指令记录", async () => {
+  it("附加 NPC 走重试生成路径，speechPages 来自演员生成文本", async () => {
     const { blueprint, state } = buildCollectNpcDialoguesFixtures(["npc_1", "npc_2"]);
     const generateCalls: string[] = [];
     const result = await orchestrateNarrativeScene({
-      traceId: "test-collect-additional-dropped",
+      traceId: "test-collect-additional-generated",
       blueprint,
       state,
       directorSource: buildDirectorSource(),
@@ -545,11 +539,13 @@ describe("orchestrateNarrativeScene：Phase 14 collectNpcDialogues 三路径", (
     });
 
     expect(result.provenance).toBe("generated");
-    // 附加 NPC 指令被批准阶段丢弃 → collectNpcDialogues 视为无指令 → 不调用演员。
-    expect(generateCalls).toEqual(["npc_1"]);
+    // 焦点 npc_1 在主流程被调用一次；附加 npc_2 经 approveSceneScript 透传后，
+    // 在 collectNpcDialogues 中走 generateNpcLineTextWithRetry 重试生成路径。
+    expect(generateCalls).toEqual(["npc_1", "npc_2"]);
     const additional = result.scene.npcDialogues?.find((d) => String(d.npcId) === "npc_2");
     expect(additional).toBeDefined();
-    expect(additional!.speechPages).toEqual([]);
+    // 分页拼接还原演员生成文本（paginateSpeechText 契约：页序拼接 === trim 后原文）。
+    expect(additional!.speechPages.join("")).toBe("别靠近渡口。");
   });
 
   it("无指令的在场 NPC 仅记录为在场（speechPages 为空），不调用演员 source", async () => {

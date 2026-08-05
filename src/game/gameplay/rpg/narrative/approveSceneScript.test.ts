@@ -195,4 +195,47 @@ describe("approveSceneScript", () => {
     });
     expect(result).toMatchObject({ ok: false, category: "knowledge_scope_violation" });
   });
+
+  // Phase 14 Task 5 fix round 2：approveSceneScript 须透传 additionalNpcInstructions，
+  // 否则 collectNpcDialogues 的附加 NPC 重试生成路径端到端不可达。下方两用例覆盖透传与校验。
+  const twoNpcBlueprint: ScenarioBlueprint = {
+    ...buildTestBlueprint(),
+    npcs: [
+      { id: asNpcId("npc_1"), name: "NPC1", role: "村民", locationId: asLocationId("loc_a"), knownFactIds: [asFactId("fact_1")] },
+      { id: asNpcId("npc_2"), name: "NPC2", role: "商人", locationId: asLocationId("loc_a"), knownFactIds: [asFactId("fact_1")] },
+    ],
+  } as unknown as ScenarioBlueprint;
+
+  it("透传有效的 additionalNpcInstructions 到批准脚本", () => {
+    const result = approveSceneScript({
+      proposal: {
+        ...validScript,
+        additionalNpcInstructions: [
+          { npcId: "npc_2", speechAct: "inform", emotion: "neutral", allowedFactIds: ["fact_1"], mayLie: false },
+        ],
+      },
+      plan: approvedPlan,
+      blueprint: twoNpcBlueprint,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.additionalNpcInstructions).toEqual([
+        { npcId: "npc_2", speechAct: "inform", emotion: "neutral", allowedFactIds: ["fact_1"], mayLie: false },
+      ]);
+    }
+  });
+
+  it("拒绝 additionalNpcInstructions 中 allowedFactId 不在该 NPC 已知事实（knowledge_scope_violation）", () => {
+    const result = approveSceneScript({
+      proposal: {
+        ...validScript,
+        additionalNpcInstructions: [
+          { npcId: "npc_2", speechAct: "inform", emotion: "neutral", allowedFactIds: ["fact_secret"], mayLie: false },
+        ],
+      },
+      plan: approvedPlan,
+      blueprint: twoNpcBlueprint,
+    });
+    expect(result).toMatchObject({ ok: false, category: "knowledge_scope_violation" });
+  });
 });
