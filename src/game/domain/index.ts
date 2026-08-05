@@ -73,6 +73,7 @@ export {
   type ItemDefinitionCandidate,
   type EndingDefinitionCandidate,
   type EndingRequirementCandidate,
+  type EndingTone,
   type SceneDefinitionCandidate,
   type GeneratedPlayerDefinitionCandidate,
   type GenerationMetadata

@@ -46,7 +46,7 @@ const CANDIDATE_ARRAY_FIELDS = [
   "endings"
 ] as const;
 
-const CANDIDATE_OBJECT_FIELDS = ["world", "openingScene", "player"] as const;
+const CANDIDATE_OBJECT_FIELDS = ["world", "openingScene", "player", "startAnchor", "endingDirection"] as const;
 
 /** transport 失败码 → 既有失败类别的稳定映射（不新增类别）。 */
 const TRANSPORT_CATEGORY: Readonly<Record<AiTransportFailureCode, ScenarioCandidateFailureCategory>> = {

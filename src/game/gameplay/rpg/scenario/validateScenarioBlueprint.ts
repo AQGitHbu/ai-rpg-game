@@ -72,7 +72,16 @@ export type ScenarioBlueprintIssueCode =
   | "REPEATED_MAIN_QUEST_DESCRIPTION_FRAGMENT"
   | "UNANCHORED_GENERATED_FACT"
   | "MAINLINE_GENERATED_FACT_MISSING"
-  | "OUT_OF_RANGE";
+  | "OUT_OF_RANGE"
+  | "MISSING_START_ANCHOR"
+  | "INVALID_START_ANCHOR"
+  | "START_ANCHOR_LOCATION_MISSING"
+  | "START_ANCHOR_NPC_MISSING"
+  | "START_ANCHOR_QUEST_MISSING"
+  | "MISSING_ENDING_DIRECTION"
+  | "INVALID_ENDING_DIRECTION"
+  | "MISSING_PROLOGUE"
+  | "INVALID_PROLOGUE";
 
 export type ScenarioBlueprintIssue = {
   path: string;
@@ -82,8 +91,10 @@ export type ScenarioBlueprintIssue = {
 
 /** 校验上下文：profile 与 policy 由调用方（application 层）注入。 */
 export type ScenarioValidationContext = {
-  profile: GameTypeProfile;
-  policy: BudgetPolicy;
+  readonly profile: GameTypeProfile;
+  readonly policy: BudgetPolicy;
+  /** Phase 14: 校验阶段——"opening"（开局，起始锚点收窄）或 "runtime_expansion"（运行时扩展，放宽约束）。缺省为 "opening"。 */
+  readonly phase?: "opening" | "runtime_expansion";
 };
 
 declare const validatedScenarioBlueprintCandidateBrand: unique symbol;
@@ -102,22 +113,34 @@ export function validateScenarioBlueprintCandidate(
   context: ScenarioValidationContext
 ): ValidateScenarioBlueprintResult {
   const issues: ScenarioBlueprintIssue[] = [];
+  const phase = context.phase ?? "opening";
 
   validateSchemaBasics(issues, candidate, context.profile, context.policy);
-  validateBudgetCounts(issues, candidate, context.policy);
+  validateBudgetCounts(issues, candidate, context.policy, phase);
   validateGlobalIdUniqueness(issues, candidate);
   validateReferences(issues, candidate);
-  validateGeneratedFactAnchors(issues, candidate, context.policy);
+  validateGeneratedFactAnchors(issues, candidate, context.policy, phase);
   validateAvailableItems(issues, candidate);
   validateOpeningScene(issues, candidate);
   validateHiddenLocationObjectives(issues, candidate);
+  // Phase 14 新增校验
+  validateStartAnchor(issues, candidate);
+  validateEndingDirection(issues, candidate);
+  if (phase === "opening") {
+    validatePrologue(issues, candidate);
+  }
   // 任务 objective/outcome 引用、主线阶段、支线/结局预算与可达性全部委托任务图校验。
+  // Phase 14：opening 阶段放宽为起始锚点预算（1 幕 / 0 支线 / 0 结局）；
+  // runtime_expansion 阶段恢复完整主线预算并允许运行时结局（endings = policy.opening.endings）。
+  const questGraphBudget = phase === "opening"
+    ? { mainActs: 1, sideQuestsMax: 0, endings: 0 }
+    : { mainActs: context.policy.mainActs, sideQuestsMax: context.policy.opening.sideQuestsMax, endings: context.policy.opening.endings };
   issues.push(
     ...validateQuestGraph({
       quests: candidate.quests,
       endings: candidate.endings,
       knownEntityIds: collectKnownEntityIds(candidate),
-      budget: { mainActs: context.policy.mainActs, sideQuestsMax: context.policy.opening.sideQuestsMax, endings: context.policy.opening.endings }
+      budget: questGraphBudget
     })
   );
   validateNumericRanges(issues, candidate);
@@ -188,10 +211,12 @@ function validateHiddenLocationObjectives(
  * and require medium/long mainlines to carry every generated fact as a
  * discover_fact objective.
  */
+/** Phase 14：opening 阶段跳过 MAINLINE_GENERATED_FACT_MISSING（起始锚点不含完整主线链）。 */
 function validateGeneratedFactAnchors(
   issues: ScenarioBlueprintIssue[],
   candidate: ScenarioBlueprintCandidate,
   policy: BudgetPolicy,
+  phase: "opening" | "runtime_expansion"
 ): void {
   const anchored = new Set<string>(candidate.openingScene.investigableFactIds ?? []);
   for (const npc of candidate.npcs) {
@@ -217,6 +242,9 @@ function validateGeneratedFactAnchors(
       });
     }
   }
+
+  // Phase 14：opening 阶段不要求主线 discover_fact（起始锚点仅 stage 1）。
+  if (phase === "opening") return;
 
   const generatedFactIds = candidate.world.facts
     .filter((fact) => fact.source === "generated")
@@ -305,11 +333,14 @@ function validateSchemaBasics(
   profile: GameTypeProfile,
   policy: BudgetPolicy
 ): void {
-  if (candidate.schemaVersion !== 1) {
+  // Phase 14：接受 schemaVersion 1（旧存档）与 2（Phase 14 起始锚点+序幕+结局方向）。
+  // 候选来自 JSON，schemaVersion 字面量类型为 2 但运行时可能是任意值，需以 number 比较。
+  const schemaVersion = candidate.schemaVersion as number;
+  if (schemaVersion !== 1 && schemaVersion !== 2) {
     issues.push({
       path: "schemaVersion",
       code: "INVALID_SCHEMA_VERSION",
-      params: { expected: 1, actual: String(candidate.schemaVersion) }
+      params: { expected: 1, actual: String(schemaVersion) }
     });
   }
   for (const field of REQUIRED_TEXT_FIELDS) {
@@ -336,17 +367,21 @@ function validateSchemaBasics(
 // 2. 内容预算数量（主线阶段数、支线数、结局数由 questGraph 检查）
 // ---------------------------------------------------------------------------
 
+/** Phase 14：opening 阶段放宽 location/NPC 下限至 1（起始锚点仅含单地点/单 NPC）。 */
 function validateBudgetCounts(
   issues: ScenarioBlueprintIssue[],
   candidate: ScenarioBlueprintCandidate,
-  policy: BudgetPolicy
+  policy: BudgetPolicy,
+  phase: "opening" | "runtime_expansion"
 ): void {
+  const mainLocationsMin = phase === "opening" ? 1 : policy.opening.mainLocationsMin;
+  const coreNpcsMin = phase === "opening" ? 1 : policy.opening.coreNpcsMin;
   const mainCount = candidate.locations.filter((entry) => entry.kind === "main").length;
-  if (mainCount < policy.opening.mainLocationsMin || mainCount > policy.opening.mainLocationsMax) {
+  if (mainCount < mainLocationsMin || mainCount > policy.opening.mainLocationsMax) {
     issues.push({
       path: "locations",
       code: "MAIN_LOCATION_COUNT_OUT_OF_RANGE",
-      params: { min: policy.opening.mainLocationsMin, max: policy.opening.mainLocationsMax, actual: mainCount }
+      params: { min: mainLocationsMin, max: policy.opening.mainLocationsMax, actual: mainCount }
     });
   }
   const hiddenCount = candidate.locations.filter((entry) => entry.kind === "hidden").length;
@@ -358,11 +393,11 @@ function validateBudgetCounts(
     });
   }
   const npcCount = candidate.npcs.length;
-  if (npcCount < policy.opening.coreNpcsMin || npcCount > policy.opening.coreNpcsMax) {
+  if (npcCount < coreNpcsMin || npcCount > policy.opening.coreNpcsMax) {
     issues.push({
       path: "npcs",
       code: "CORE_NPC_COUNT_OUT_OF_RANGE",
-      params: { min: policy.opening.coreNpcsMin, max: policy.opening.coreNpcsMax, actual: npcCount }
+      params: { min: coreNpcsMin, max: policy.opening.coreNpcsMax, actual: npcCount }
     });
   }
   const companionCount = candidate.npcs.filter((entry) => entry.isCompanion === true).length;
@@ -589,6 +624,76 @@ function validateOpeningScene(
       seenInvestigable.set(factId, index);
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// 5a. Phase 14：起始锚点 / 结局方向 / 序幕
+// ---------------------------------------------------------------------------
+
+/** Phase 14：校验起始锚点完整性——字段非空且引用的 location/npc/quest 存在。 */
+function validateStartAnchor(
+  issues: ScenarioBlueprintIssue[],
+  candidate: ScenarioBlueprintCandidate
+): void {
+  const anchor = candidate.startAnchor;
+  if (anchor === undefined || anchor === null) {
+    issues.push({ path: "startAnchor", code: "MISSING_START_ANCHOR", params: {} });
+    return;
+  }
+  if (!anchor.locationId || !anchor.npcId || !anchor.startQuestId) {
+    issues.push({ path: "startAnchor", code: "INVALID_START_ANCHOR", params: {} });
+  }
+  if (!candidate.locations.some((l) => l.id === anchor.locationId)) {
+    issues.push({
+      path: "startAnchor.locationId",
+      code: "START_ANCHOR_LOCATION_MISSING",
+      params: { locationId: anchor.locationId }
+    });
+  }
+  if (!candidate.npcs.some((n) => n.id === anchor.npcId)) {
+    issues.push({
+      path: "startAnchor.npcId",
+      code: "START_ANCHOR_NPC_MISSING",
+      params: { npcId: anchor.npcId }
+    });
+  }
+  if (!candidate.quests.some((q) => q.id === anchor.startQuestId)) {
+    issues.push({
+      path: "startAnchor.startQuestId",
+      code: "START_ANCHOR_QUEST_MISSING",
+      params: { questId: anchor.startQuestId }
+    });
+  }
+}
+
+/** Phase 14：校验结局方向骨架——theme 非空、possibleTones 非空、lockedAt ≥ 1。 */
+function validateEndingDirection(
+  issues: ScenarioBlueprintIssue[],
+  candidate: ScenarioBlueprintCandidate
+): void {
+  const dir = candidate.endingDirection;
+  if (dir === undefined || dir === null) {
+    issues.push({ path: "endingDirection", code: "MISSING_ENDING_DIRECTION", params: {} });
+    return;
+  }
+  if (!dir.theme || dir.possibleTones.length === 0 || dir.lockedAt < 1) {
+    issues.push({ path: "endingDirection", code: "INVALID_ENDING_DIRECTION", params: {} });
+  }
+}
+
+/** Phase 14：开局校验序幕必产——openingScene.prologue 含非空 text 与合法 tone。 */
+function validatePrologue(
+  issues: ScenarioBlueprintIssue[],
+  candidate: ScenarioBlueprintCandidate
+): void {
+  const prologue = candidate.openingScene.prologue;
+  if (prologue === undefined || prologue === null) {
+    issues.push({ path: "openingScene.prologue", code: "MISSING_PROLOGUE", params: {} });
+    return;
+  }
+  if (!prologue.text || !prologue.tone) {
+    issues.push({ path: "openingScene.prologue", code: "INVALID_PROLOGUE", params: {} });
+  }
 }
 
 // ---------------------------------------------------------------------------

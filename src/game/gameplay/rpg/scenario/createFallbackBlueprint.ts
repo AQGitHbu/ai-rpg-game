@@ -1,16 +1,14 @@
 import {
   createBudgetPolicy,
   type GameTypeId,
-  type EnemyTemplateCandidate,
+  type EndingTone,
   type ItemCategory,
-  type ItemDefinitionCandidate,
   type ItemRarity,
   type ItemStatLine,
   type LocationDefinitionCandidate,
   type NpcDefinitionCandidate,
   type QuestDefinitionCandidate,
   type ScenarioBlueprintCandidate,
-  type StatBlock,
   type ValidatedNewGameInput,
   type WorldFactCandidate
 } from "@/game/domain";
@@ -35,8 +33,8 @@ import { loadScenarioProfiles, type GameTypeProfile, type ScenarioProfiles } fro
 //     forbiddenTags），因此 7 种类型均安全。
 // ---------------------------------------------------------------------------
 
-/** fallback 模板版本；纳入 inputDigest，模板演进时提升。fallback-7：主线阶段描述与 objective 保持一一对应。 */
-export const FALLBACK_TEMPLATE_VERSION = "fallback-7";
+/** fallback 模板版本；纳入 inputDigest，模板演进时提升。fallback-8：Phase 14 开局收窄——仅起始锚点+序幕+结局方向。 */
+export const FALLBACK_TEMPLATE_VERSION = "fallback-8";
 
 /** 玩家输入来源标记：出现在世界摘要 / 身份 / 开场 / 主线冲突 / 事实文本中，便于追溯。 */
 const PLAYER_INPUT_MARK = "【玩家输入】";
@@ -516,23 +514,19 @@ export function createFallbackBlueprint(
   const generationId = `gen-${hashHex(`${inputDigest}|${seed}`)}`;
   const policy = createBudgetPolicy(input.gameLength);
 
-  // 全部随机选择均来自 seed（不掺入 input），保证”随机源只来自 seed”。
-  const rng = mulberry32(fnv1a(seed, 0x811c9dc5));
-  const npcCount = policy.opening.coreNpcsMin + randInt(rng, 3); // 4–6
-  const sideQuestCount = 1 + randInt(rng, policy.opening.sideQuestsMax); // 1–2
-
+  // Phase 14 开局收窄：仅生成起始锚点（1 地点 + 1 NPC + 1 任务）+ 序幕 + 结局方向。
+  // 其余内容（更多地点/NPC/任务/物品/敌人/结局）由运行时 AI 导演懒生成。
   const world = buildWorld(input, template, profile);
-  const locations = buildLocations(template, profile, npcCount);
-  const npcs = buildNpcs(template, profile, npcCount);
-  const items = buildItems(template, profile);
-  const enemies = buildEnemies(template, profile);
-  const quests = buildQuests(input, template, profile, sideQuestCount, policy.mainActs);
-  const endings = buildEndings(template, policy.mainActs);
+  const startLocation = buildStartLocation(template, profile);
+  const startNpc = buildStartNpc(template, profile);
+  const startQuest = buildStartQuest(input, template, profile);
   const player = buildPlayer(input, template);
-  const openingScene = buildOpeningScene(input, template);
+  const openingScene = buildOpeningScene(input, template, input.gameType);
+  const startAnchor = buildStartAnchor();
+  const endingDirection = buildEndingDirection(template, policy.mainActs);
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generationId,
     seed,
     templateVersion: FALLBACK_TEMPLATE_VERSION,
@@ -540,12 +534,14 @@ export function createFallbackBlueprint(
     inputDigest,
     world,
     player,
-    locations,
-    npcs,
-    quests,
-    enemies,
-    items,
-    endings,
+    startAnchor,
+    endingDirection,
+    locations: [startLocation],
+    npcs: [startNpc],
+    quests: [startQuest],
+    enemies: [],
+    items: [],
+    endings: [],
     openingScene,
     budgetPolicy: policy
   };
@@ -617,310 +613,95 @@ function buildWorld(
   };
 }
 
-const LOCATION_IDS = ["loc_1", "loc_2", "loc_3", "loc_4", "loc_hidden"] as const;
+// Phase 14：起始锚点固定 ID——开局仅 1 地点 / 1 NPC / 1 任务。
+const START_LOCATION_ID = "loc_1";
+const START_NPC_ID = "npc_1";
+const START_QUEST_ID = "quest_main_1";
 
-// Town 层：固定把第二个主要地点标为 town（各题材模板 index 1 均为集市/商埠
-// 型聚落，且是主线一阶段的 visit 目标），保证离线旅程确定性覆盖三层。
-const TOWN_LOCATION_ID = LOCATION_IDS[1];
+/** 题材 → 序幕基调映射：序幕 tone 影响 visual 风格，由模板基调派生。 */
+const PROLOGUE_TONES: Readonly<Record<GameTypeId, "serious" | "epic" | "mysterious">> = {
+  wuxia: "serious",
+  science_fiction: "mysterious",
+  urban: "serious",
+  xianxia: "mysterious",
+  fantasy: "epic",
+  alternate_history: "serious",
+  post_apocalypse: "serious"
+};
 
-// 主线关键物品落位：与二阶段 talk_to_npc 目标 npc_3 同在 loc_3（主要地点开局
-// 即解锁且互相连通，对二阶段一定可达；隐藏地点开局锁定，不可用作落位）。
-const KEY_ITEM_LOCATION_ID = LOCATION_IDS[2];
-
-/** NPC 落位：按索引映射到主要地点，隐藏地点不驻留 NPC。 */
-function npcLocationId(npcIndex: number): string {
-  const mainSlots = [LOCATION_IDS[0], LOCATION_IDS[1], LOCATION_IDS[2], LOCATION_IDS[3]];
-  return mainSlots[npcIndex % mainSlots.length];
-}
-
-function buildLocations(
+/** Phase 14：开局起始地点——仅 1 个主要地点，无连接、无可用物品。 */
+function buildStartLocation(
   template: TypeTemplate,
-  profile: GameTypeProfile,
-  npcCount: number
-): LocationDefinitionCandidate[] {
-  const connections: readonly string[][] = [
-    ["loc_2"],
-    ["loc_1", "loc_3"],
-    ["loc_2", "loc_4"],
-    ["loc_3", "loc_hidden"],
-    ["loc_4"]
-  ];
-  return LOCATION_IDS.map((id, index) => {
-    const npcIdsHere: string[] = [];
-    for (let n = 0; n < npcCount; n += 1) {
-      if (npcLocationId(n) === id) npcIdsHere.push(`npc_${n + 1}`);
-    }
-    return {
-      id,
-      name: template.locations[index].name,
-      description: template.locations[index].description,
-      kind: index === 4 ? ("hidden" as const) : ("main" as const),
-      ...(id === TOWN_LOCATION_ID ? { scale: "town" as const } : {}),
-      connectedLocationIds: connections[index],
-      npcIds: npcIdsHere,
-      // 初始物品（ITEM_START）不列为可取得物品；关键物品只落在唯一地点。
-      availableItemIds: id === KEY_ITEM_LOCATION_ID ? [ITEM_KEY] : [],
-      tags: [pickTag(profile, index)]
-    };
-  });
-}
-
-function buildNpcs(
-  template: TypeTemplate,
-  profile: GameTypeProfile,
-  npcCount: number
-): NpcDefinitionCandidate[] {
-  const npcs: NpcDefinitionCandidate[] = [];
-  for (let i = 0; i < npcCount; i += 1) {
-    const source = template.npcs[i];
-    // 至多一名同伴（配额 companionsMax=1）：固定第 4 名为同伴。
-    const isCompanion = i === 3;
-    const knownFactIds = i === 0 ? [FACT_IDENTITY] : i === 2 ? [FACT_GEN_1] : [];
-    npcs.push({
-      id: `npc_${i + 1}`,
-      name: source.name,
-      role: source.role,
-      description: source.description,
-      locationId: npcLocationId(i),
-      isCompanion,
-      knownFactIds,
-      tags: [pickTag(profile, i)]
-    });
-  }
-  return npcs;
-}
-
-const ITEM_START = "item_start";
-const ITEM_KEY = "item_key";
-
-function buildItems(template: TypeTemplate, profile: GameTypeProfile): ItemDefinitionCandidate[] {
-  return [
-    {
-      id: ITEM_START,
-      ...toItemCandidateFields(template.items[0]),
-      tags: [pickTag(profile, 2)]
-    },
-    {
-      id: ITEM_KEY,
-      ...toItemCandidateFields(template.items[1]),
-      tags: []
-    }
-  ];
-}
-
-/** 模板物品文本 → 候选字段：可选展示字段缺省时不写入键，保持序列化稳定。 */
-function toItemCandidateFields(item: ItemText): Omit<ItemDefinitionCandidate, "id" | "tags"> {
+  profile: GameTypeProfile
+): LocationDefinitionCandidate {
   return {
-    name: item.name,
-    description: item.description,
-    kind: item.kind,
-    category: item.category,
-    rarity: item.rarity,
-    ...(item.level !== undefined ? { level: item.level } : {}),
-    ...(item.statLines !== undefined ? { statLines: item.statLines } : {})
+    id: START_LOCATION_ID,
+    name: template.locations[0].name,
+    description: template.locations[0].description,
+    kind: "main",
+    connectedLocationIds: [],
+    npcIds: [START_NPC_ID],
+    availableItemIds: [],
+    tags: [pickTag(profile, 0)]
   };
 }
 
-const ENEMY_NORMAL_IDS = ["enemy_normal_1", "enemy_normal_2", "enemy_normal_3"] as const;
-const ENEMY_BOSS_ID = "enemy_boss";
-
-// 数值只取模板常量表；绝不解析玩家自由文本，落在 PHASE1_NUMERIC_RANGES 内。
-const NORMAL_ENEMY_STATS: readonly StatBlock[] = [
-  { hp: 24, attack: 5, defense: 2 },
-  { hp: 30, attack: 6, defense: 3 },
-  { hp: 36, attack: 7, defense: 4 }
-];
-// Phase 6：boss 数值调整为在玩家初始数值下存在有限 attack 胜利序列。
-// 玩家 attack=6, defense=4；boss hp=20, attack=5, defense=2：
-// 玩家每回合造成 max(1,6-2)=4 伤害，5 回合击杀；boss 每回合造成 max(1,5-4)=1 伤害，
-// 4 回合反击共 4 伤害，玩家剩余 26 HP。满足有限胜利序列。
-const BOSS_ENEMY_STATS: StatBlock = { hp: 20, attack: 5, defense: 2 };
-
-// Phase 6：敌人预置地点。boss 放在 loc_4（stage 2 后由现有连通图可达）。
-// 普通敌人分配到前三个主要地点，有落位但绝不自动暴露为 battle 行动。
-const ENEMY_LOCATION_IDS: readonly string[] = [LOCATION_IDS[0], LOCATION_IDS[1], LOCATION_IDS[2]];
-const BOSS_LOCATION_ID = LOCATION_IDS[3];
-
-function buildEnemies(template: TypeTemplate, profile: GameTypeProfile): EnemyTemplateCandidate[] {
-  const normals: EnemyTemplateCandidate[] = ENEMY_NORMAL_IDS.map((id, index) => ({
-    id,
-    name: template.normalEnemies[index],
-    tier: "normal" as const,
-    stats: { ...NORMAL_ENEMY_STATS[index] },
-    locationId: ENEMY_LOCATION_IDS[index],
-    tags: [pickTag(profile, index + 3)]
-  }));
-  return [
-    ...normals,
-    {
-      id: ENEMY_BOSS_ID,
-      name: template.bossEnemy,
-      tier: "boss" as const,
-      stats: { ...BOSS_ENEMY_STATS },
-      locationId: BOSS_LOCATION_ID,
-      tags: []
-    }
-  ];
-}
-
-const QUEST_SIDE_IDS = ["quest_s1", "quest_s2"] as const;
-const ENDING_IDS = ["ending_1", "ending_2"] as const;
-
-function mainQuestId(act: number): string {
-  return `quest_main_${act}`;
-}
-
-// 中长线中段 objective 链：每幕引用一个尚未满足且存在合法行动路径的既有实体目标。
-// medium/long 的第二幕额外要求调查一个生成事实；该事实仍只在 openingScene
-// 可调查，玩家需要沿规则路线回到开场地点，避免把“事实存在”误当作自动完成。
-// 关键物品与终幕战斗则沿 loc_3 → loc_4
-// 形成明确的移动/拾取/交谈/战斗链；长线额外回到开场 NPC，再到终幕 NPC，
-// 避免重复使用已满足的 visit/fact 目标。
-const MID_OBJECTIVES: readonly (readonly { kind: string; [key: string]: string }[])[] = [
-  [{ kind: "talk_to_npc", npcId: "npc_2" }],
-  [{ kind: "visit_location", locationId: "loc_3" }],
-  [{ kind: "obtain_item", itemId: ITEM_KEY }],
-  [{ kind: "talk_to_npc", npcId: "npc_3" }],
-  [{ kind: "talk_to_npc", npcId: "npc_1" }],
-  [{ kind: "talk_to_npc", npcId: "npc_4" }],
-];
-
-function mainObjectiveLabel(
-  objective: { readonly kind: string; readonly [key: string]: string },
+/** Phase 14：开局起始 NPC——仅 1 个，驻留在起始地点，知晓玩家身份事实。 */
+function buildStartNpc(
   template: TypeTemplate,
-): string {
-  switch (objective.kind) {
-    case "talk_to_npc": {
-      const index = Number(objective.npcId.replace("npc_", "")) - 1;
-      return `与${template.npcs[index]?.name ?? objective.npcId}交谈，取得新的线索`;
-    }
-    case "visit_location": {
-      const index = Number(objective.locationId.replace("loc_", "")) - 1;
-      return `前往${template.locations[index]?.name ?? objective.locationId}查探现场`;
-    }
-    case "obtain_item":
-      return `取回${template.items[1].name}，确认案件的关键物证`;
-    case "discover_fact":
-      return "调查现场，确认尚未揭开的事实";
-    case "defeat_enemy":
-      return `击败${template.bossEnemy}，结束当前冲突`;
-    default:
-      return "完成当前阶段的推进目标";
-  }
+  profile: GameTypeProfile
+): NpcDefinitionCandidate {
+  return {
+    id: START_NPC_ID,
+    name: template.npcs[0].name,
+    role: template.npcs[0].role,
+    description: template.npcs[0].description,
+    locationId: START_LOCATION_ID,
+    isCompanion: false,
+    knownFactIds: [FACT_IDENTITY],
+    tags: [pickTag(profile, 0)]
+  };
 }
 
-function mainStageDescription(
-  act: number,
-  objective: { readonly kind: string; readonly [key: string]: string },
-  template: TypeTemplate,
-): string {
-  // 每幕只保留当前目标与其语义结果，避免把模板中段描述作为固定尾句
-  // 复制到所有阶段；这也是生成候选语义去重闸门的最低可解释基线。
-  return `第 ${act} 幕：${mainObjectiveLabel(objective, template)}。`;
-}
-
-function buildQuests(
+/** Phase 14：开局起始任务——仅 stage 1，目标为与起始 NPC 交谈，直接关闭。 */
+function buildStartQuest(
   input: ValidatedNewGameInput,
   template: TypeTemplate,
-  profile: GameTypeProfile,
-  sideQuestCount: number,
-  mainActs: number
-): QuestDefinitionCandidate[] {
-  const sideIds = QUEST_SIDE_IDS.slice(0, sideQuestCount);
-  const quests: QuestDefinitionCandidate[] = [];
-
-  for (let act = 1; act <= mainActs; act++) {
-    const id = mainQuestId(act);
-    const nextId = act < mainActs ? mainQuestId(act + 1) : null;
-
-    if (act === 1) {
-      quests.push({
-        kind: "main", stage: act, id,
-        name: template.mainQuests[0].name,
-        description: `第 ${act} 幕：${input.characterName}${template.mainQuests[0].description}线索指向：${PLAYER_INPUT_MARK}${input.worldPremise}`,
-        objectives: [{ kind: "visit_location", locationId: "loc_2" }],
-        onSuccess: { kind: "unlock_quests", questIds: [mainQuestId(2), ...sideIds] },
-        onFailure: { kind: "closed" },
-        tags: [pickTag(profile, 0)]
-      });
-    } else if (act === mainActs) {
-      quests.push({
-        kind: "main", stage: act, id,
-        name: template.mainQuests[2].name,
-        description: `第 ${act} 幕：${template.mainQuests[2].description}`,
-        objectives: [
-          { kind: "visit_location", locationId: BOSS_LOCATION_ID },
-          { kind: "defeat_enemy", enemyId: ENEMY_BOSS_ID },
-        ],
-        onSuccess: { kind: "reach_ending", endingId: ENDING_IDS[0] },
-        onFailure: { kind: "reach_ending", endingId: ENDING_IDS[1] },
-        tags: []
-      });
-    } else {
-      const midIndex = act - 2;
-      // 3 幕时保持旧 objective（talk + obtain），但描述仍明确标出本幕目标。
-      const isLegacyMid = mainActs === 3 && act === 2;
-      const firstObjective = isLegacyMid
-        ? ({ kind: "talk_to_npc", npcId: "npc_3" } as const)
-        : MID_OBJECTIVES[midIndex]?.[0];
-      if (firstObjective === undefined) throw new Error(`fallback objective missing for act ${act}`);
-      const objectives = (isLegacyMid
-        ? [{ ...firstObjective }, { kind: "obtain_item", itemId: ITEM_KEY }]
-        : act === 2 && mainActs >= 5
-          ? [
-              { ...firstObjective },
-              { kind: "discover_fact", factId: FACT_GEN_1 },
-              { kind: "discover_fact", factId: FACT_GEN_2 },
-            ]
-          : MID_OBJECTIVES[midIndex]) as QuestDefinitionCandidate["objectives"];
-      quests.push({
-        kind: "main", stage: act, id,
-        name: isLegacyMid ? template.mainQuests[1].name : `第 ${act} 章·${template.mainQuests[1].name}`,
-        description: mainStageDescription(act, firstObjective, template),
-        objectives,
-        onSuccess: { kind: "unlock_quests", questIds: [nextId as string] },
-        onFailure: { kind: "closed" },
-        tags: []
-      });
-    }
-  }
-
-  // 支线：objective 引用真实实体；outcome 直接关闭，不影响主线可达性。
-  const sideObjectives: QuestDefinitionCandidate["objectives"][] = [
-    [{ kind: "discover_fact", factId: FACT_GEN_1 }],
-    [{ kind: "visit_location", locationId: "loc_4" }]
-  ];
-  sideIds.forEach((id, index) => {
-    quests.push({
-      kind: "side",
-      id,
-      name: template.sideQuests[index].name,
-      description: template.sideQuests[index].description,
-      objectives: sideObjectives[index],
-      onSuccess: { kind: "closed" },
-      onFailure: { kind: "closed" },
-      tags: []
-    });
-  });
-  return quests;
+  profile: GameTypeProfile
+): QuestDefinitionCandidate {
+  return {
+    kind: "main",
+    stage: 1,
+    id: START_QUEST_ID,
+    name: template.mainQuests[0].name,
+    description: `第 1 幕：${input.characterName}${template.mainQuests[0].description}线索指向：${PLAYER_INPUT_MARK}${input.worldPremise}`,
+    objectives: [{ kind: "talk_to_npc", npcId: START_NPC_ID }],
+    onSuccess: { kind: "closed" },
+    onFailure: { kind: "closed" },
+    tags: [pickTag(profile, 0)]
+  };
 }
 
-function buildEndings(template: TypeTemplate, mainActs: number): ScenarioBlueprintCandidate["endings"] {
-  const finalQuestId = mainQuestId(mainActs);
-  return [
-    {
-      id: ENDING_IDS[0],
-      name: template.endings[0].name,
-      description: template.endings[0].description,
-      requirements: [{ kind: "quest_completed", questId: finalQuestId }]
-    },
-    {
-      id: ENDING_IDS[1],
-      name: template.endings[1].name,
-      description: template.endings[1].description,
-      requirements: [{ kind: "quest_failed", questId: finalQuestId }]
-    }
-  ];
+/** Phase 14：起始锚点——指向起始地点 / NPC / 任务，运行时只读。 */
+function buildStartAnchor(): ScenarioBlueprintCandidate["startAnchor"] {
+  return {
+    locationId: START_LOCATION_ID,
+    npcId: START_NPC_ID,
+    startQuestId: START_QUEST_ID
+  };
+}
+
+/** Phase 14：结局方向骨架——题材主题 + 全部可能基调，锁定于最终幕。 */
+function buildEndingDirection(
+  template: TypeTemplate,
+  mainActs: number
+): ScenarioBlueprintCandidate["endingDirection"] {
+  const allTones: readonly EndingTone[] = ["triumph", "tragedy", "bittersweet", "ambiguous"];
+  return {
+    theme: template.themes[0],
+    possibleTones: [...allTones],
+    lockedAt: mainActs
+  };
 }
 
 function buildPlayer(
@@ -933,25 +714,33 @@ function buildPlayer(
     identity: input.characterIdentity,
     // 身份解释来自玩家输入并带来源标记；不采信文本中的数值/神器/功绩宣称。
     backgroundSummary: `${PLAYER_INPUT_MARK}身为${input.characterIdentity}，${input.characterName}${profileText}${template.openingFlavor}`,
-    startingLocationId: "loc_1",
-    startingItemIds: [ITEM_START],
+    startingLocationId: START_LOCATION_ID,
+    // Phase 14：开局无物品——起始物品由运行时 AI 导演懒生成。
+    startingItemIds: [],
     // 基础数值恒取模板表，与自由文本无关。
     baseStats: { hp: 30, attack: 6, defense: 4 }
   };
 }
 
+/** Phase 14：开场场景含序幕（黑底白字开场），tone 由题材派生。 */
 function buildOpeningScene(
   input: ValidatedNewGameInput,
-  template: TypeTemplate
+  template: TypeTemplate,
+  gameType: GameTypeId
 ): ScenarioBlueprintCandidate["openingScene"] {
   return {
     id: "scene_opening",
-    locationId: "loc_1",
+    locationId: START_LOCATION_ID,
     // 开场叙事嵌入玩家的故事开端并带来源标记。
     narration: `${PLAYER_INPUT_MARK}${input.storyOpening}${template.openingFlavor}`,
-    presentNpcIds: ["npc_1"],
+    presentNpcIds: [START_NPC_ID],
     suggestedActions: [...template.sceneActions],
     // 开场可调查事实：选择生成型事实（非玩家输入宣称），玩家需主动调查才能发现。
-    investigableFactIds: [FACT_GEN_1, FACT_GEN_2]
+    investigableFactIds: [FACT_GEN_1, FACT_GEN_2],
+    // Phase 14：序幕正文——结合世界前提与题材风格，一次性生成；玩家输入带来源标记。
+    prologue: {
+      text: `${PLAYER_INPUT_MARK}${input.worldPremise}${template.worldFlavor}`,
+      tone: PROLOGUE_TONES[gameType]
+    }
   };
 }

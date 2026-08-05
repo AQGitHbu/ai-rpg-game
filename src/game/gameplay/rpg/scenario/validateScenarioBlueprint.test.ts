@@ -23,8 +23,9 @@ function draft(): Draft {
   return makeValidCandidate() as unknown as Draft;
 }
 
+/** Phase 14：默认用 runtime_expansion 阶段校验，使多幕/多结局的 fixture 通过。 */
 function validate(candidate: ScenarioBlueprintCandidate) {
-  return validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY });
+  return validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY, phase: "runtime_expansion" });
 }
 
 function issuesOf(candidate: Draft | ScenarioBlueprintCandidate): readonly ScenarioBlueprintIssue[] {
@@ -68,13 +69,13 @@ describe("validateScenarioBlueprintCandidate：合法候选", () => {
 // ---------------------------------------------------------------------------
 
 describe("validateScenarioBlueprintCandidate：schema 基础", () => {
-  it("schemaVersion 不是 1 时拒绝", () => {
+  it("schemaVersion 不是 1 或 2 时拒绝", () => {
     const candidate = draft();
-    (candidate as { schemaVersion: number }).schemaVersion = 2;
+    (candidate as { schemaVersion: number }).schemaVersion = 3;
     expect(issuesOf(candidate)).toContainEqual({
       path: "schemaVersion",
       code: "INVALID_SCHEMA_VERSION",
-      params: { expected: 1, actual: "2" }
+      params: { expected: 1, actual: "3" }
     });
   });
 
@@ -205,6 +206,7 @@ describe("validateScenarioBlueprintCandidate：生成事实可达性", () => {
     const result = validateScenarioBlueprintCandidate(candidate as ScenarioBlueprintCandidate, {
       profile: TEST_PROFILE,
       policy: createBudgetPolicy("medium"),
+      phase: "runtime_expansion",
     });
     expect(result.ok ? [] : result.issues).toContainEqual(expect.objectContaining({
       code: "MAINLINE_GENERATED_FACT_MISSING",
@@ -788,7 +790,7 @@ describe("validateScenarioBlueprintCandidate：地点层级", () => {
 describe("validateScenarioBlueprintCandidate：collect-all", () => {
   it("多处问题一次全部报告", () => {
     const candidate = draft();
-    (candidate as { schemaVersion: number }).schemaVersion = 2;
+    (candidate as { schemaVersion: number }).schemaVersion = 3;
     candidate.gameType = "fantasy";
     candidate.enemies[0].stats.hp = 0;
     candidate.npcs[0].tags.push("科技");

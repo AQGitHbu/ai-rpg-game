@@ -12,8 +12,9 @@ import { compileScenarioBlueprint, initializeGameState } from "./compileScenario
 import { validateScenarioBlueprintCandidate } from "./validateScenarioBlueprint";
 import { TEST_POLICY, TEST_PROFILE, makeValidCandidate } from "./scenarioBlueprintFixture.testutil";
 
+/** Phase 14：默认用 runtime_expansion 阶段校验，使多幕/多结局的 fixture 通过。 */
 function compileValid(candidate: ScenarioBlueprintCandidate = makeValidCandidate()): ScenarioBlueprint {
-  const validation = validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY });
+  const validation = validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY, phase: "runtime_expansion" });
   const compiled = compileScenarioBlueprint(validation);
   if (!compiled.ok) throw new Error("fixture 应当编译成功");
   return compiled.blueprint;

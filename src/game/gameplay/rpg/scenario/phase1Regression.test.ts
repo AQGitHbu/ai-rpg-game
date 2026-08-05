@@ -113,15 +113,12 @@ describe("Phase 1 回归点 1：三类 fixture 原始输入通过完整 validato
   }
 });
 
-describe("Phase 1 回归点 2：每种任务图恰有两个可达结局", () => {
+describe("Phase 14 回归点 2：开局无结局（运行时懒生成）", () => {
   for (const [name, fixture] of Object.entries(FIXTURES)) {
-    it(`${name}：analyzeQuestReachability 报告全部 2 个结局可达且无未闭合环`, () => {
+    it(`${name}：analyzeQuestReachability 报告 0 个结局且无未闭合环`, () => {
       const { candidate } = runPhase1Pipeline(fixture.input, fixture.seed);
       const analysis = analyzeQuestReachability(candidate.quests, candidate.endings);
-      expect(analysis.reachableEndingIds).toHaveLength(2);
-      expect([...analysis.reachableEndingIds].sort()).toEqual(
-        candidate.endings.map((ending) => ending.id).sort()
-      );
+      expect(analysis.reachableEndingIds).toHaveLength(0);
       expect(analysis.loopsWithoutClosure).toEqual([]);
     });
   }
@@ -152,16 +149,14 @@ describe("Phase 1 回归点 4：改变 seed 改变生成 ID，但内容预算不
       expect(reseeded.candidate.inputDigest).not.toBe(base.candidate.inputDigest);
       for (const run of [base, reseeded]) {
         expect(run.candidate.budgetPolicy).toEqual(policy);
-        expect(run.candidate.locations.filter((entry) => entry.kind === "main")).toHaveLength(4);
-        expect(run.candidate.locations.filter((entry) => entry.kind === "hidden")).toHaveLength(1);
-        expect(run.candidate.quests.filter((entry) => entry.kind === "main")).toHaveLength(policy.mainActs);
-        expect(run.candidate.endings).toHaveLength(2);
-        expect(run.candidate.enemies.filter((entry) => entry.tier === "normal")).toHaveLength(3);
-        expect(run.candidate.enemies.filter((entry) => entry.tier === "boss")).toHaveLength(1);
-        expect(run.candidate.npcs.length).toBeGreaterThanOrEqual(policy.opening.coreNpcsMin);
-        expect(run.candidate.npcs.length).toBeLessThanOrEqual(policy.opening.coreNpcsMax);
-        expect(run.candidate.quests.filter((entry) => entry.kind === "side").length)
-          .toBeLessThanOrEqual(policy.opening.sideQuestsMax);
+        // Phase 14 开局收窄：1 地点 / 1 NPC / 1 主线 / 0 结局 / 0 敌人。
+        expect(run.candidate.locations.filter((entry) => entry.kind === "main")).toHaveLength(1);
+        expect(run.candidate.locations.filter((entry) => entry.kind === "hidden")).toHaveLength(0);
+        expect(run.candidate.quests.filter((entry) => entry.kind === "main")).toHaveLength(1);
+        expect(run.candidate.endings).toHaveLength(0);
+        expect(run.candidate.enemies).toHaveLength(0);
+        expect(run.candidate.npcs).toHaveLength(1);
+        expect(run.candidate.quests.filter((entry) => entry.kind === "side").length).toBe(0);
       }
     });
   }

@@ -28,12 +28,22 @@ export const TEST_POLICY = createBudgetPolicy("short");
 
 export function makeValidCandidate(): ScenarioBlueprintCandidate {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generationId: "gen_0001",
     seed: "seed-1",
     templateVersion: "tpl-1",
     gameType: "wuxia",
     inputDigest: "digest-1",
+    startAnchor: {
+      locationId: "loc_a",
+      npcId: "npc_a",
+      startQuestId: "m1"
+    },
+    endingDirection: {
+      theme: "复仇与救赎",
+      possibleTones: ["triumph", "tragedy", "bittersweet"],
+      lockedAt: 3
+    },
     world: {
       summary: "镖局覆灭之后，江湖各派暗流涌动。",
       tone: "苍凉",
@@ -249,7 +259,11 @@ export function makeValidCandidate(): ScenarioBlueprintCandidate {
       narration: "暮色里的青崖镇一片死寂，老掌柜提着灯笼迎面走来。",
       presentNpcIds: ["npc_a"],
       suggestedActions: ["向老掌柜打听旧案", "查看镖局废墟"],
-      investigableFactIds: ["fact_b"]
+      investigableFactIds: ["fact_b"],
+      prologue: {
+        text: "青崖镖局一夜覆灭，江湖再起波澜。",
+        tone: "serious"
+      }
     },
     budgetPolicy: TEST_POLICY
   };

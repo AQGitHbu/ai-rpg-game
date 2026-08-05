@@ -8,8 +8,8 @@ import type { ScenarioBlueprintCandidate } from "@/game/domain";
 // 候选永远不能绕过既有 validateScenarioBlueprintCandidate/compileScenarioBlueprint。
 // ---------------------------------------------------------------------------
 
-/** 当前候选契约版本；蓝图动态化升至 scenario-dynamic-v2（budgetPolicy 取代 contentBudget）。 */
-export const SCENARIO_CANDIDATE_CONTRACT_VERSION = "scenario-dynamic-v2" as const;
+/** 当前候选契约版本；Phase 14 开局收窄升至 scenario-dynamic-v3（起始锚点+序幕+结局方向）。 */
+export const SCENARIO_CANDIDATE_CONTRACT_VERSION = "scenario-dynamic-v3" as const;
 export type ScenarioCandidateContractVersion = typeof SCENARIO_CANDIDATE_CONTRACT_VERSION;
 
 /** 创建结果暴露给 API/UI 的唯一安全来源区分（spec §5）。 */
