@@ -447,3 +447,9 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 - 分层入口为 `node scripts/storyEvalVerify.mjs --layer=offline|smoke|regression|release`，offline 永远零网络；其余层仍要求 `RUN_REAL_AI_STORY_EVAL=1`，release 另外要求 `RUN_REAL_AI_STORY_EVAL_JUDGE=1`。脚本不覆盖模型，真实请求继续严格读取配置的 `ai-slg-game-model`。
 
 推荐恢复顺序：先 `--resume` 修复失败 run，再 `judge --resume --only=<失败维度>` 补齐评审，最后用 `--reuse-completed` 重跑矩阵。这样已完成的场景、run 和 judge 维度都不会因单点故障重复计费。
+
+### NPC 下一行动 handoff 加固（2026-08-05，离线实现）
+
+在真实回归前又补了一层结构约束：NPC 演员上下文新增 `nextActionCandidates` 与 `recommendedNextActionKey`，它们只来自“导演批准动作”与“规则层当前合法动作”的交集；NPC 给出线索时可以明确锚定下一地点/行动，不再只能从模糊 `sceneGoal` 猜测。审批层同时要求 NPC 事实卡既属于 NPC 的 `knownFactIds`，也属于本幕导演授权的 `allowedRevealFactIds`，防止角色虽知道事实但本幕越权使用。
+
+对应的 runtime context、AI source、编排审批和 narrative approval 回归已通过；尚未进行真实 AI 验证，下一次 urban/xianxia regression 应重点观察 C1、C2 是否改善且没有引入 knowledge-scope fallback。

@@ -435,6 +435,23 @@ describe("runtimeNarrativeContexts 演员", () => {
     expect(card.id).toBe("fact_1");
   });
 
+  it("toNpcLineContext 只投影导演批准且规则合法的下一步动作", () => {
+    const { blueprint: routeBlueprint, state: routeState } = buildItemRouteFixture();
+    const context = toNpcLineContext({
+      blueprint: routeBlueprint,
+      state: routeState,
+      npcId: "npc_1",
+      speechAct: "inform",
+      suggestedActionKeys: ["move:loc_c", "move:loc_hidden"],
+      allowedFactIds: [],
+      mayLie: false,
+    });
+    expect(context.nextActionCandidates).toEqual([
+      { actionKey: "move:loc_c", kind: "move", label: expect.any(String) },
+    ]);
+    expect(context.recommendedNextActionKey).toBe("move:loc_c");
+  });
+
   it("toNpcLineContext 不含 AI prompt 原文", () => {
     const context = toNpcLineContext({
       blueprint,

@@ -98,8 +98,9 @@ export function approveSceneScript(
       return { ok: false, category: "reference_broken" };
     }
     const knownSet = new Set(npcDef.knownFactIds.map((id) => String(id)));
+    const sceneAllowedSet = new Set(plan.allowedRevealFactIds);
     for (const factId of npcInst.allowedFactIds) {
-      if (!knownSet.has(factId)) {
+      if (!knownSet.has(factId) || !sceneAllowedSet.has(factId)) {
         return { ok: false, category: "knowledge_scope_violation" };
       }
     }

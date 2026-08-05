@@ -208,6 +208,7 @@ export async function orchestrateNarrativeScene(
       npcId: npcInst.npcId,
       speechAct: npcInst.speechAct,
       sceneGoal: plan.sceneGoal,
+      suggestedActionKeys: plan.suggestedActionKeys,
       requestedEmotion: npcInst.emotion,
       allowedFactIds: npcInst.allowedFactIds,
       mayLie: npcInst.mayLie,

@@ -583,6 +583,10 @@ export type NpcLineContext = {
   readonly npcDefinition: Record<string, unknown>;
   /** 当前场景的规则目标，帮助演员把台词服务于推进而非泛泛聊天。 */
   readonly sceneGoal: string;
+  /** 本幕已获导演批准、且规则层确认合法的下一步动作；只提供安全标签。 */
+  readonly nextActionCandidates: readonly { actionKey: string; kind: string; label: string }[];
+  /** 若存在，表示导演希望 NPC 帮玩家理解的首选行动。 */
+  readonly recommendedNextActionKey: string | null;
   /** 玩家公开身份；不包含原始输入或隐藏记忆。 */
   readonly playerName: string;
   /** 演员所在地点的安全语义卡。 */
@@ -607,6 +611,8 @@ export type NpcLineContextInput = {
   readonly npcId: string;
   readonly speechAct: string;
   readonly sceneGoal?: string;
+  /** 导演已批准的两个候选；仅与规则层投影的合法动作取交集。 */
+  readonly suggestedActionKeys?: readonly string[];
   readonly requestedEmotion?: string;
   readonly allowedFactIds: readonly string[];
   readonly mayLie: boolean;
@@ -623,6 +629,15 @@ export function toNpcLineContext(input: NpcLineContextInput): NpcLineContext {
       if (def === undefined) return { id: factId, text: "???", source: "unknown" };
       return { id: String(def.id), text: def.text, source: def.source };
     });
+
+  const suggestedKeys = new Set(input.suggestedActionKeys ?? []);
+  const legalActions = projectAvailableActions(blueprint, state).map((action) => ({
+    actionKey: actionKeyOf(action),
+    kind: action.type,
+    label: action.label,
+  }));
+  const nextActionCandidates = legalActions.filter((action) => suggestedKeys.has(action.actionKey));
+  const recommendedNextActionKey = nextActionCandidates[0]?.actionKey ?? null;
 
   // Phase 13：读取关系值
   const npcState = state.npcs.find((n) => String(n.npcId) === npcId);
@@ -642,6 +657,8 @@ export function toNpcLineContext(input: NpcLineContextInput): NpcLineContext {
         }
       : { id: npcId, name: "???", role: "unknown" },
     sceneGoal: input.sceneGoal ?? "推进当前场景目标",
+    nextActionCandidates,
+    recommendedNextActionKey,
     playerName: blueprint.player.name,
     currentLocationCard: currentLocationCardOf(blueprint, state),
     previousScene: previousSceneCardOf(blueprint, state),

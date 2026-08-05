@@ -101,6 +101,15 @@ describe("approveSceneScript", () => {
     expect(result).toMatchObject({ ok: false, category: "knowledge_scope_violation" });
   });
 
+  it("rejects NPC fact cards that are known but not authorized for this scene", () => {
+    const result = approveSceneScript({
+      proposal: { ...validScript, usedFactIds: [] },
+      plan: { ...approvedPlan, relevantFactIds: [], allowedRevealFactIds: [] },
+      blueprint,
+    });
+    expect(result).toMatchObject({ ok: false, category: "knowledge_scope_violation" });
+  });
+
   it("rejects choices with action keys not matching approved plan", () => {
     const result = approveSceneScript({
       proposal: {

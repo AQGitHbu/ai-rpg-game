@@ -90,6 +90,7 @@ describe("createLiveRuntimeNarrativeSources captureSink", () => {
     expect(records[1].messages[0].content).toContain("Avoid stock openings");
     expect(records[1].messages[0].content).toContain("Simplified Chinese");
     expect(records[1].messages[0].content).toContain("unforeshadowed boss");
+    expect(records[2].messages[0].content).toContain("nextActionCandidates");
     expect(records[2].messages[0].content).toContain("next concrete action or destination");
     expect(records[2].messages[0].content).toContain("Simplified Chinese");
     expect(records[2].messages[0].content).toContain("not as an omniscient narrator");
