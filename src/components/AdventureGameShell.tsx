@@ -166,12 +166,16 @@ export function AdventureGameShell({
     }
   }
 
-  async function handleDialogueChoice(npcId: string, choiceId: string): Promise<void> {
+  /**
+   * NPC 对话选择处理：Phase 14 废除 dialogue_choice 后，talk 成为唯一 NPC 交互触发器。
+   * onChoice 回调当前不会从面板触发（无写状态 choices 投影），但保留以策安全。
+   */
+  async function handleDialogueChoice(npcId: string, _choiceId: string): Promise<void> {
     setFeedback({ phase: "submitting" });
     onBusyChange(true);
 
     const outcome = await postGameAction({
-      intent: { type: "dialogue_choice", npcId, choiceId },
+      intent: { type: "talk", npcId },
       revision: view.revision
     });
 

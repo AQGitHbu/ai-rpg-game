@@ -93,22 +93,6 @@ describe("NpcDialoguePanel：右侧对白分页", () => {
 });
 
 describe("NpcDialoguePanel：底部选项", () => {
-  it("选项按编号渲染，greet 选择提交精确的 dialogue_choice payload", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    const onChoice = vi.fn();
-    const user = userEvent.setup();
-
-    render(
-      <NpcDialoguePanel dialogue={ZHAO()} gameType="wuxia" onChoice={onChoice} onFreeInput={vi.fn()} busy={false} />
-    );
-
-    await user.click(screen.getByRole("button", { name: "1. 与捕头赵五初次交谈" }));
-
-    expect(onChoice).toHaveBeenCalledWith("npc_zhao", "npc_zhao:greet");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it("review_clue 点击只展开线索文本，零 fetch", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -126,14 +110,13 @@ describe("NpcDialoguePanel：底部选项", () => {
     expect(onChoice).not.toHaveBeenCalled();
   });
 
-  it("busy 时写状态 choice 禁用，review_clue 仍可用", () => {
+  it("Phase 14 废除 dialogue_choice 后仅投影 review_clue：busy 时仍可用", () => {
     vi.stubGlobal("fetch", vi.fn());
     render(
       <NpcDialoguePanel dialogue={ZHAO()} gameType="wuxia" onChoice={vi.fn()} onFreeInput={vi.fn()} busy />
     );
 
-    expect(screen.getByRole("button", { name: "1. 与捕头赵五初次交谈" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "2. 回顾已知线索" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "1. 回顾已知线索" })).not.toBeDisabled();
   });
 });
 

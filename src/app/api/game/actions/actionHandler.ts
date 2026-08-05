@@ -52,7 +52,6 @@ const ALLOWED_INTENT_FIELDS: ReadonlySet<string> = new Set([
   "itemId",
   "enemyId",
   "action",
-  "choiceId",
   "choiceToken"
 ]);
 
@@ -65,7 +64,7 @@ const VALID_INTENT_TYPES: ReadonlySet<string> = new Set([
   "start_battle",
   "battle_action",
   "narrative_choice",
-  "dialogue_choice"
+  "ack_prologue"
 ]);
 
 /** battle_action 允许的 action 值。 */
@@ -80,8 +79,8 @@ const INTENT_TARGET_FIELD: Readonly<Record<string, readonly string[]>> = {
   take_item: ["itemId"],
   start_battle: ["enemyId"],
   battle_action: ["action"],
-  dialogue_choice: ["npcId", "choiceId"],
-  narrative_choice: ["choiceToken"]
+  narrative_choice: ["choiceToken"],
+  ack_prologue: []
 };
 
 /** 从原始 JSON 构造 PlayerIntent；校验失败返回错误详情。 */
@@ -103,7 +102,7 @@ function parseIntent(raw: unknown):
 
   const type = obj["type"];
   if (typeof type !== "string" || !VALID_INTENT_TYPES.has(type)) {
-    return { ok: false, detail: "intent.type 必须是 observe/talk/investigate/move/take_item/start_battle/battle_action/dialogue_choice 之一" };
+    return { ok: false, detail: "intent.type 必须是 observe/talk/investigate/move/take_item/start_battle/battle_action/narrative_choice/ack_prologue 之一" };
   }
 
   // 除 type + 本类型目标字段外，携带其他目标字段（如 take_item 附带 locationId）一律拒收。
@@ -168,16 +167,9 @@ function parseIntent(raw: unknown):
         intent: { type: "battle_action", action: action as "attack" | "guard" | "withdraw" }
       };
     }
-    case "dialogue_choice": {
-      const npcId = obj["npcId"];
-      const choiceId = obj["choiceId"];
-      if (typeof npcId !== "string" || npcId.length === 0) {
-        return { ok: false, detail: "dialogue_choice 需要 npcId 字符串" };
-      }
-      if (typeof choiceId !== "string" || choiceId.length === 0) {
-        return { ok: false, detail: "dialogue_choice 需要 choiceId 字符串" };
-      }
-      return { ok: true, intent: { type: "dialogue_choice", npcId: asNpcId(npcId), choiceId } };
+    case "ack_prologue": {
+      // Phase 14：幂等标记 intent，无参数。
+      return { ok: true, intent: { type: "ack_prologue" } };
     }
     case "narrative_choice": {
       const choiceToken = obj["choiceToken"];

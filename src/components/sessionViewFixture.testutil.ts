@@ -43,7 +43,8 @@ const QINGSHI_LOCATION_SCENE: LocationSceneView = {
   ]
 };
 
-/** Phase 7：青石镇在场 NPC 对话——陆掌柜已结识（只剩只读回顾），赵五可初次交谈。 */
+/** Phase 7/14：青石镇在场 NPC 对话——Phase 14 废除 dialogue_choice 后，
+ *  所有 NPC 仅投影只读 review_clue；NPC 交互改由 talk intent 触发（availableActions）。 */
 const QINGSHI_DIALOGUES: readonly NpcDialogueView[] = [
   {
     npcId: "npc_lu",
@@ -63,10 +64,7 @@ const QINGSHI_DIALOGUES: readonly NpcDialogueView[] = [
       "捕头赵五按着刀柄扫了你一眼。初次见面，我是捕头赵五，官府捕头。",
       "最近镖局灭门案闹得人心惶惶——你愿意帮官府查明真相吗？"
     ],
-    choices: [
-      { kind: "greet", choiceId: "npc_zhao:greet", label: "与捕头赵五初次交谈", mutatesState: true },
-      { kind: "review_clue", label: "回顾已知线索", mutatesState: false }
-    ],
+    choices: [{ kind: "review_clue", label: "回顾已知线索", mutatesState: false }],
     reviewClues: ["【玩家输入】沈青崖自述身份：落魄镖师"]
   }
 ];
@@ -247,10 +245,7 @@ export function buildMovedSessionViewFixture(): GameSessionView {
         role: "老兵",
         slot: "center",
         speechPages: ["巡道老兵拄着长枪打量你。初次见面，我是巡道老兵，老兵。"],
-        choices: [
-          { kind: "greet", choiceId: "npc_laobing:greet", label: "与巡道老兵初次交谈", mutatesState: true },
-          { kind: "review_clue", label: "回顾已知线索", mutatesState: false }
-        ],
+        choices: [{ kind: "review_clue", label: "回顾已知线索", mutatesState: false }],
         reviewClues: ["【玩家输入】沈青崖自述身份：落魄镖师"]
       }
     ] satisfies readonly NpcDialogueView[]

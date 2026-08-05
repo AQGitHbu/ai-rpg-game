@@ -2,7 +2,6 @@ import { loadScenarioProfiles, type ScenarioProfiles } from "@/game/gameplay/rpg
 import {
   resolveAction,
   projectAvailableActions,
-  parseDialogueChoiceKind,
   type PlayerIntent,
   type ResolveActionDependencies,
 } from "@/game/gameplay/rpg/actions";
@@ -377,29 +376,41 @@ export async function performAction(
 
   // A deterministic action commits its rule result immediately. Scene
   // generation is a recoverable server-side job and must not make the player
-  // request wait for the provider. Narrative choices, dialogue choices, and
-  // direct rule intents all share the same queue boundary: after a successful
-  // action, an AI-mode game with at least two legal actions must expose the
-  // next narrative scene. This also keeps server-side continuation bridges
-  // from leaving a playable state with an empty narrative view.
+  // request wait for the provider. Narrative choices, talk (first meeting),
+  // and direct rule intents all share the same queue boundary: after a
+  // successful action, an AI-mode game with at least two legal actions must
+  // expose the next narrative scene. This also keeps server-side continuation
+  // bridges from leaving a playable state with an empty narrative view.
   if (
     record.state.narrative.mode !== "offline" &&
     deps.runtimeNarrativeSources !== undefined &&
     canQueueRuntimeNarrativeScene(record.blueprint, nextState)
   ) {
     const intent = command.intent;
-    // 防御性守卫：greet 只应在首次结识时触发场景。正常路径下已结识 NPC 不会
-    // 投影 greet 选项且 validateIntent 会拒绝伪造 choiceId，此处防止上游契约
-    // 变化时误触发。必须用 record.state（resolveAction 前）判断——resolveAction
-    // 对所有 dialogue_choice 都会设置 met: true，nextState 中恒为 true。
-    const isRepeatGreet =
-      intent.type === "dialogue_choice" &&
-      parseDialogueChoiceKind(intent.npcId, intent.choiceId) === "greet" &&
+    // Phase 14：talk intent 的首遇判断——已结识 NPC 的重复 talk 不排队场景。
+    // 必须用 record.state（resolveAction 前）判断——resolveAction 对 talk 会
+    // 设置 met: true，nextState 中恒为 true。ack_prologue 跳过排队（纯幂等标记）。
+    const isRepeatTalk =
+      intent.type === "talk" &&
       (record.state.npcs.find((npc) => npc.npcId === intent.npcId)?.met ?? true);
-    if (!isRepeatGreet) {
+    const shouldQueue = intent.type !== "ack_prologue" && !isRepeatTalk;
+    if (shouldQueue) {
       nextState = {
         ...nextState,
-        narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() }, mode: "ai" },
+        narrative: {
+          currentScene: null,
+          generation: {
+            status: "pending",
+            requestedAt: deps.now(),
+            // Phase 14：携带触发上下文，让导演知道场景是为何触发的。
+            triggerContext: intent.type === "talk"
+              ? { kind: "talk", npcId: intent.npcId, isFirstMeeting: !isRepeatTalk }
+              : intent.type === "narrative_choice"
+                ? { kind: "narrative_choice_followup", previousChoiceActionKey: intent.choiceToken }
+                : undefined,
+          },
+          mode: nextState.narrative.mode,
+        },
       };
     }
   }

@@ -6,7 +6,7 @@ import type { EnemyId, GameState, ScenarioBlueprint, FactId, ItemId, LocationId,
 // application 不能 deep import actions 内部文件。
 // ---------------------------------------------------------------------------
 
-export type { PlayerIntent } from "./intents";
+export type { PlayerIntent, AckPrologueIntent } from "./intents";
 export {
   validateIntent,
   type ValidateIntentResult,
@@ -18,16 +18,6 @@ export {
   type ResolveActionDependencies,
   type ActionFeedback,
 } from "./resolveAction";
-// Phase 7：封闭的 NPC 对话选择规则。
-export {
-  DIALOGUE_CHOICE_KINDS,
-  makeDialogueChoiceId,
-  parseDialogueChoiceKind,
-  projectDialogueChoices,
-  type DialogueChoice,
-  type DialogueChoiceIntent,
-  type DialogueChoiceKind,
-} from "./dialogueChoices";
 // 对话布局重构：确定性 NPC 对白组合。
 export { composeNpcSpeech } from "./npcSpeech";
 // NPC 自由输入：纯规则分类器（零 AI）。

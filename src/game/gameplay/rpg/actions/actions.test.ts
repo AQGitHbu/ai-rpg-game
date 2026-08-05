@@ -56,12 +56,24 @@ const ITEM_UNPLACED = asItemId("item_4");
 
 function buildBlueprint(): ScenarioBlueprint {
   const candidate: ScenarioBlueprintCandidate = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generationId: "gen-0001",
     seed: "seed-1",
     templateVersion: "tpl-1",
     gameType: "wuxia",
     inputDigest: "digest-abc",
+    // Phase 14: 起始锚点（开局生成，运行时只读）。
+    startAnchor: {
+      locationId: "loc_a",
+      npcId: "npc_1",
+      startQuestId: "q1",
+    },
+    // Phase 14: 结局方向骨架（开局生成，运行时具体化）。
+    endingDirection: {
+      theme: "测试主题",
+      possibleTones: ["triumph", "tragedy"],
+      lockedAt: 3,
+    },
     world: {
       summary: "测试世界。",
       tone: "测试",
@@ -118,11 +130,17 @@ function buildBlueprint(): ScenarioBlueprint {
       presentNpcIds: ["npc_1"],
       suggestedActions: ["观察周围", "与NPC1交谈"],
       investigableFactIds: ["fact_investigable"],
+      // Phase 14: 序幕（黑底白字开场）。
+      prologue: {
+        text: "测试序幕。",
+        tone: "serious",
+      },
     },
     budgetPolicy: TEST_POLICY,
   };
+  // Phase 14: 用 runtime_expansion 阶段校验，使多幕/多结局的 fixture 通过。
   const compiled = compileScenarioBlueprint(
-    validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY })
+    validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY, phase: "runtime_expansion" })
   );
   if (!compiled.ok) {
     throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
@@ -159,6 +177,9 @@ function buildInitialState(): GameState {
     narrative: { currentScene: null, generation: { status: "idle" }, mode: "ai" },
     towns: [],
     townGeneration: { status: "idle" },
+    // Phase 14: 序幕未播放 + 主线幕数追踪。
+    prologueShown: false,
+    mainStoryProgress: { currentAct: 1, endingProposed: false },
     eventLedger: [{ type: "game_initialized", generation: GEN }],
   };
 }
@@ -869,59 +890,66 @@ describe("resolveAction: take_item", () => {
 });
 
 // ---------------------------------------------------------------------------
-// dialogue_choice（Phase 13 Task 3）：resolveAction 关系变化
+// Phase 14：dialogue_choice 废除 + talk 升级为唯一 NPC 交互入口 + ack_prologue
 // ---------------------------------------------------------------------------
 
-describe("resolveAction dialogue_choice 关系变化", () => {
-  it("greet（首次结识）→ 好感度 +5", () => {
+describe("Phase 14 dialogue_choice 废除 + ack_prologue 新增", () => {
+  it("dialogue_choice intent 不再被 resolveAction 接受（INTENT_NOT_ROUTED）", () => {
     const bp = buildBlueprint();
     const st = buildInitialState();
-    const result = resolveAction(bp, st, {
-      type: "dialogue_choice", npcId: NPC_1, choiceId: "npc_1:greet",
-    } as never, deps);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      const npc = result.state.npcs.find((n) => n.npcId === NPC_1);
-      expect(npc?.relationship?.affinity).toBe(5);
+    // Phase 14 起 dialogue_choice 不再属于 PlayerIntent；用 as unknown 强转以
+    // 模拟伪造/旧客户端载荷，验证 resolver 稳定拒绝而不是误路由到 npc_met。
+    const intent = {
+      type: "dialogue_choice",
+      npcId: NPC_1,
+      choiceId: "npc_1:greet",
+    } as unknown as PlayerIntent;
+    const result = resolveAction(bp, st, intent, deps);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("INTENT_NOT_ROUTED");
     }
   });
 
-  it("ask_main_quest → 好感度 +10", () => {
-    const bp = buildBlueprint();
-    const st = buildActiveTalkTargetState(bp);
-    const result = resolveAction(bp, st, {
-      type: "dialogue_choice", npcId: NPC_2, choiceId: "npc_2:ask_main_quest",
-    } as never, deps);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      const npc = result.state.npcs.find((n) => n.npcId === NPC_2);
-      expect(npc?.relationship?.affinity).toBe(10);
-    }
-  });
-
-  it("npc_met 事件携带 interactionKind greet", () => {
+  it("talk intent 首遇写 npc_met 事件并标记 met=true", () => {
     const bp = buildBlueprint();
     const st = buildInitialState();
-    const result = resolveAction(bp, st, {
-      type: "dialogue_choice", npcId: NPC_1, choiceId: "npc_1:greet",
-    } as never, deps);
+    const result = resolveAction(bp, st, { type: "talk", npcId: NPC_1 }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      const event = result.events.find((e) => e.type === "npc_met");
-      expect(event?.interactionKind).toBe("greet");
+      expect(result.state.npcs[0]?.met).toBe(true);
+      expect(result.events.some((e) => e.type === "npc_met")).toBe(true);
     }
   });
 
-  it("npc_met 事件携带 interactionKind ask_main_quest", () => {
+  it("ack_prologue 幂等：置 prologueShown=true，零事件，零 NPC 变更", () => {
     const bp = buildBlueprint();
-    const st = buildActiveTalkTargetState(bp);
-    const result = resolveAction(bp, st, {
-      type: "dialogue_choice", npcId: NPC_2, choiceId: "npc_2:ask_main_quest",
-    } as never, deps);
+    const st = buildInitialState();
+    const snapshot = JSON.stringify(st);
+    const result = resolveAction(bp, st, { type: "ack_prologue" }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      const event = result.events.find((e) => e.type === "npc_met");
-      expect(event?.interactionKind).toBe("ask_main_quest");
+      expect(result.state.prologueShown).toBe(true);
+      expect(result.events).toEqual([]);
+      // 幂等：除 prologueShown 外其余状态不变。
+      expect(result.state.npcs).toEqual(st.npcs);
+      expect(result.state.eventLedger).toEqual(st.eventLedger);
+    }
+    // 不修改输入
+    expect(JSON.stringify(st)).toBe(snapshot);
+  });
+
+  it("ack_prologue 重复调用仍幂等：prologueShown 已 true 时不变化", () => {
+    const bp = buildBlueprint();
+    const st = buildInitialState();
+    const first = resolveAction(bp, st, { type: "ack_prologue" }, deps);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const second = resolveAction(bp, first.state, { type: "ack_prologue" }, deps);
+    expect(second.ok).toBe(true);
+    if (second.ok) {
+      expect(second.state.prologueShown).toBe(true);
+      expect(second.events).toEqual([]);
     }
   });
 });

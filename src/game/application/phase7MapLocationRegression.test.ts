@@ -7,7 +7,6 @@ import {
   type GameTypeId,
   type NewGameInput
 } from "@/game/domain";
-import { projectDialogueChoices } from "@/game/gameplay/rpg/actions";
 import scienceFictionFixture from "../../../data/fixtures/phase1/science_fiction.json";
 import urbanFixture from "../../../data/fixtures/phase1/urban.json";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
@@ -79,7 +78,7 @@ function createDependencies(repository: GameRepository, gameId: string): CreateG
 }
 
 describe.each(CASES)("Phase 7 地图地点回归（$gameType）", ({ gameType, fixture }) => {
-  it("create → observe → dialogue_choice → move → reload：revision 递增、view 安全", async () => {
+  it("create → observe → talk → move → reload：revision 递增、view 安全", async () => {
     const baseline = runScenarioPipeline(fixture.input, fixture.seed);
     const databasePath = join(RUN_ROOT, `journey-${gameType}.sqlite`);
     const repo = openRepository(databasePath);
@@ -107,30 +106,22 @@ describe.each(CASES)("Phase 7 地图地点回归（$gameType）", ({ gameType, f
     expect(observed.view.revision).toBe(1);
     expect(observed.feedback.ok).toBe(true);
 
-    // 3) dialogue_choice: find first NPC with available choices
+    // 3) talk: find first NPC at current location that hasn't been met yet
     const state1 = await repo.getCurrentGame();
     expect(state1.ok).toBe(true);
     if (!state1.ok || state1.status !== "active") return;
 
-    const npcWithChoice = state1.record.state.npcs.find((npcState) => {
-      const choices = projectDialogueChoices(
-        baseline.blueprint, state1.record.state, npcState.npcId
-      );
-      return choices.length > 0;
-    });
+    const npcWithChoice = state1.record.state.npcs.find((npcState) =>
+      npcState.locationId === state1.record.state.currentLocationId && !npcState.met
+    );
 
     let revisionAfterDialogue = 1;
     if (npcWithChoice !== undefined) {
-      const choices = projectDialogueChoices(
-        baseline.blueprint, state1.record.state, npcWithChoice.npcId
-      );
-      const firstChoice = choices[0]!;
       const dialogueResult = await performAction(
         {
           intent: {
-            type: "dialogue_choice",
-            npcId: npcWithChoice.npcId,
-            choiceId: firstChoice.choiceId
+            type: "talk",
+            npcId: npcWithChoice.npcId
           },
           expectedRevision: 1
         },

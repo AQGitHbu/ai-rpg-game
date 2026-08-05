@@ -102,38 +102,22 @@ describe("CurrentGameScreen", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("NPC 对话：greet 提交 dialogue_choice payload，成功后更新 view", async () => {
+  it("NPC 对话：点击 NPC 打开对白面板，仅展示只读回顾（Phase 14 废除写状态 choice）", async () => {
     const view = buildSessionViewFixture();
-    const greetedView = {
-      ...view,
-      revision: 1,
-      dialogues: view.dialogues.map((d) =>
-        d.npcId === "npc_zhao"
-          ? { ...d, choices: d.choices.filter((c) => c.kind !== "greet") }
-          : d
-      )
-    };
-    let submittedBody: unknown;
-    stubFetch(async (input, init?) => {
-      if (input === "/api/game/current") return jsonResponse(200, { status: "active", view });
-      submittedBody = JSON.parse(String(init?.body));
-      return jsonResponse(200, {
-        view: greetedView,
-        feedback: { ok: true, message: "你与捕头赵五交谈。" }
-      });
-    });
+    const fetchMock = stubFetch(async () => jsonResponse(200, { status: "active", view }));
     const user = userEvent.setup();
     render(<CurrentGameScreen />);
 
     await user.click(await screen.findByRole("button", { name: "进入青石镇" }));
     await user.click(screen.getByRole("button", { name: "捕头赵五，官府捕头" }));
-    await user.click(screen.getByRole("button", { name: "1. 与捕头赵五初次交谈" }));
 
-    expect(submittedBody).toEqual({
-      intent: { type: "dialogue_choice", npcId: "npc_zhao", choiceId: "npc_zhao:greet" },
-      revision: 0
-    });
-    expect(await screen.findByText("你与捕头赵五交谈。")).toBeInTheDocument();
+    // 对白面板打开，展示赵五第一页对白。
+    expect(screen.getByText(/捕头赵五按着刀柄扫了你一眼/)).toBeInTheDocument();
+    // Phase 14：仅投影只读 review_clue，无 greet 写状态 choice。
+    expect(screen.getByRole("button", { name: "1. 回顾已知线索" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /与捕头赵五初次交谈/ })).toBeNull();
+    // 打开对白面板是纯本地导航：只有初始 GET current 一次 fetch。
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("developmentTools=true：确认后只请求开发清档接口并回到新开局表单", async () => {

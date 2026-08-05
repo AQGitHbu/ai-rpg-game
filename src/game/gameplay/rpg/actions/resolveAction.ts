@@ -1,7 +1,6 @@
 import type { GameEvent, GameState, ScenarioBlueprint } from "@/game/domain";
 import { RELATIONSHIP_CHANGE, clampAffinity } from "@/game/domain";
 import type { PlayerIntent } from "./intents";
-import { parseDialogueChoiceKind } from "./dialogueChoices";
 import {
   validateIntent,
   type ValidateIntentResult,
@@ -96,10 +95,6 @@ function rejectionFeedback(
       return { message: "这里没有这件物品。" };
     case "ITEM_ALREADY_OWNED":
       return { message: `你已经持有${itemName(blueprint, result.params.itemId)}了。` };
-    case "INVALID_DIALOGUE_CHOICE":
-      return { message: "无效的对话选择。" };
-    case "DIALOGUE_CHOICE_UNAVAILABLE":
-      return { message: "该对话选择当前不可用。" };
     case "INTENT_NOT_ROUTED":
       return { message: "此行动类型应由战斗系统处理。" };
   }
@@ -244,56 +239,18 @@ export function resolveAction(
         feedback: { message: `你取得了${itemName(blueprint, intent.itemId)}。` },
       };
     }
-    case "dialogue_choice": {
-      // 校验已保证 choiceId 封闭合法且当前可用；成功效果与 talk 完全一致：
-      // 只把对应 NPC 的 met 置为 true、追加一个 npc_met 事件；仅文案随 kind 不同。
-      const kind = parseDialogueChoiceKind(intent.npcId, intent.choiceId);
-
-      // Phase 13：计算关系变化量
-      const delta =
-        kind === "ask_main_quest"
-          ? RELATIONSHIP_CHANGE.ASK_MAIN_QUEST_COMPLETE
-          : RELATIONSHIP_CHANGE.GREET_FIRST_MEET;
-
-      const currentRelationship = state.npcs.find(
-        (n) => n.npcId === intent.npcId,
-      )?.relationship ?? { affinity: 0 };
-      const newAffinity = clampAffinity(currentRelationship.affinity + delta);
-
-      const event: GameEvent = {
-        type: "npc_met",
-        npcId: intent.npcId,
-        occurredAt,
-        // Phase 13：携带交互类型供 reducer 推导摘要
-        interactionKind: kind === "ask_main_quest" ? "ask_main_quest" : "greet",
-      };
-      const newState: GameState = {
-        ...state,
-        npcs: replaceInArray(
-          state.npcs,
-          (n) => n.npcId === intent.npcId,
-          (n) => ({
-            ...n,
-            met: true,
-            // Phase 13：写入关系值（首次结识时设置初始值）
-            relationship: { affinity: newAffinity },
-          }),
-        ),
-        eventLedger: [...state.eventLedger, event],
-      };
+    case "ack_prologue": {
+      // Phase 14：幂等标记——置 prologueShown=true，零事件，零 NPC 变更。
+      // 重复调用安全：prologueShown 已 true 时无副作用。
       return {
         ok: true,
-        state: newState,
-        events: [event],
-        feedback: {
-          message:
-            kind === "ask_main_quest"
-              ? `你向${npcName(blueprint, intent.npcId)}询问当前线索。`
-              : `你与${npcName(blueprint, intent.npcId)}交谈，初次见面。`,
-        },
+        state: { ...state, prologueShown: true },
+        events: [],
+        feedback: { message: "" },
       };
     }
-    // Phase 6：战斗 intent 由 application 路由到 battle facade，不应进入 actions facade。
+    // Phase 14：dialogue_choice 已废除。validateIntent 已稳定拒绝为 INTENT_NOT_ROUTED，
+    // 此 default 防御性兜底：伪造载荷若绕过校验也不会误路由到 npc_met。
     case "start_battle":
     case "battle_action":
     case "narrative_choice":

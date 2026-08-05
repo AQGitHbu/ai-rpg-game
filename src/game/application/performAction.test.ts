@@ -368,19 +368,18 @@ describe("performAction：take_item + 任务 reconciliation 单次写入（Phase
   });
 });
 
-describe("performAction：dialogue_choice 单次写入与零写入（Phase 7 Task 2）", () => {
+describe("performAction：talk 单次写入与零写入（Phase 14：dialogue_choice 废除后 talk 升级）", () => {
   const ruleDeps = { now: () => FIXED_TIME };
 
-  it("成功对话：恰好一次 CAS，尾部恰好一个 npc_met 事件", async () => {
+  it("成功对话：恰好一次 CAS，尾部 npc_met + quest_completed 事件", async () => {
     const repository = createFakeGameRepository();
     const record = buildActiveRecord();
     repository.setCurrentResult({ ok: true, status: "active", record });
 
-    // 开局无 npc_1 的 talk_to_npc 目标（quest_m1 是 visit_location）→ greet 可用。
+    // Phase 14：talk 是唯一 NPC 交互触发器，首遇写 npc_met。
     const intent: PlayerIntent = {
-      type: "dialogue_choice",
-      npcId: asNpcId("npc_1"),
-      choiceId: "npc_1:greet"
+      type: "talk",
+      npcId: asNpcId("npc_1")
     };
     // 独立复跑 actions + quests facade 得到期望的最终 state。
     const resolved = resolveAction(record.blueprint, record.state, intent, ruleDeps);
@@ -399,7 +398,7 @@ describe("performAction：dialogue_choice 单次写入与零写入（Phase 7 Tas
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    // 恰好一次写入，且尾部只有一个 npc_met（无多余事件/无旁路写入）。
+    // 恰好一次写入，尾部 npc_met（talk）+ quest_completed（reconcileQuests）。
     expect(repository.applyCalls).toHaveLength(1);
     expect(repository.applyCalls[0].nextState).toEqual({
       ...reconciled.state,
@@ -408,12 +407,12 @@ describe("performAction：dialogue_choice 单次写入与零写入（Phase 7 Tas
     const tailTypes = repository.applyCalls[0].nextState.eventLedger
       .slice(record.state.eventLedger.length)
       .map((event) => event.type);
-    expect(tailTypes).toEqual(["npc_met"]);
+    expect(tailTypes).toEqual(["npc_met", "quest_completed"]);
     expect(result.feedback.ok).toBe(true);
     expect(result.feedback.message).toBeTruthy();
   });
 
-  it("伪造 choiceId 被拒 ⇒ ACTION_REJECTED 且零 CAS", async () => {
+  it("Phase 14：dialogue_choice 伪造载荷被拒 ⇒ ACTION_REJECTED 且零 CAS", async () => {
     const repository = createFakeGameRepository();
     const record = buildActiveRecord();
     repository.setCurrentResult({ ok: true, status: "active", record });
@@ -424,7 +423,7 @@ describe("performAction：dialogue_choice 单次写入与零写入（Phase 7 Tas
           type: "dialogue_choice",
           npcId: asNpcId("npc_1"),
           choiceId: "npc_1:steal_items"
-        },
+        } as unknown as PlayerIntent,
         expectedRevision: 0
       },
       buildPerformDeps(repository)
@@ -438,7 +437,7 @@ describe("performAction：dialogue_choice 单次写入与零写入（Phase 7 Tas
     expect(repository.applyCalls).toHaveLength(0);
   });
 
-  it("过期 choice（NPC 已结识）被拒 ⇒ ACTION_REJECTED 且零 CAS", async () => {
+  it("过期 talk（NPC 已结识）被拒 ⇒ ACTION_REJECTED 且零 CAS", async () => {
     const repository = createFakeGameRepository();
     const record = buildActiveRecord();
     const metState = {
@@ -456,9 +455,8 @@ describe("performAction：dialogue_choice 单次写入与零写入（Phase 7 Tas
     const result = await performAction(
       {
         intent: {
-          type: "dialogue_choice",
-          npcId: asNpcId("npc_1"),
-          choiceId: "npc_1:greet"
+          type: "talk",
+          npcId: asNpcId("npc_1")
         },
         expectedRevision: 0
       },
@@ -474,7 +472,7 @@ describe("performAction：dialogue_choice 单次写入与零写入（Phase 7 Tas
   });
 });
 
-describe("performAction：dialogue_choice 触发 pending（NPC 对话驱动叙事场景）", () => {
+describe("performAction：talk 触发 pending（NPC 对话驱动叙事场景）", () => {
   const ruleDeps = { now: () => FIXED_TIME };
 
   /** performAction 不会调用这些 source，仅作为已装配运行时叙事的标记。 */
@@ -522,7 +520,7 @@ describe("performAction：dialogue_choice 触发 pending（NPC 对话驱动叙�
     expect(saved.narrative.currentScene).toBeNull();
   });
 
-  it("ask_main_quest 且 canQueueRuntimeNarrativeScene → 排队 pending", async () => {
+  it("talk（首遇主线 NPC）且 canQueueRuntimeNarrativeScene → 排队 pending", async () => {
     const repository = createFakeGameRepository();
     const readyState = buildAskMainQuestReadyState();
     const record = { ...buildActiveRecord(), state: readyState, revision: 2 };
@@ -531,7 +529,7 @@ describe("performAction：dialogue_choice 触发 pending（NPC 对话驱动叙�
 
     const result = await performAction(
       {
-        intent: { type: "dialogue_choice", npcId: asNpcId("npc_3"), choiceId: "npc_3:ask_main_quest" },
+        intent: { type: "talk", npcId: asNpcId("npc_3") },
         expectedRevision: 2
       },
       buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
@@ -546,7 +544,7 @@ describe("performAction：dialogue_choice 触发 pending（NPC 对话驱动叙�
     expect(saved.narrative.currentScene).toBeNull();
   });
 
-  it("greet（首次）且 canQueueRuntimeNarrativeScene → 排队 pending", async () => {
+  it("talk（首次）且 canQueueRuntimeNarrativeScene → 排队 pending", async () => {
     const repository = createFakeGameRepository();
     const record = buildActiveRecord();
     repository.setCurrentResult({ ok: true, status: "active", record });
@@ -554,7 +552,7 @@ describe("performAction：dialogue_choice 触发 pending（NPC 对话驱动叙�
 
     const result = await performAction(
       {
-        intent: { type: "dialogue_choice", npcId: asNpcId("npc_1"), choiceId: "npc_1:greet" },
+        intent: { type: "talk", npcId: asNpcId("npc_1") },
         expectedRevision: 0
       },
       buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
@@ -571,11 +569,11 @@ describe("performAction：dialogue_choice 触发 pending（NPC 对话驱动叙�
     expect(tailTypes).toContain("npc_met");
   });
 
-  it("greet（首次）但 canQueueRuntimeNarrativeScene 为 false → 不排队，规则结果仍写入", async () => {
+  it("talk（首次）但 canQueueRuntimeNarrativeScene 为 false → 不排队，规则结果仍写入", async () => {
     const repository = createFakeGameRepository();
     const record = buildActiveRecord();
     // 构造“合法行动 < 2”的局面：已观察开场地点、所有事实已发现、
-    // 同地点其他 NPC 已结识，greet 后只剩 move 一个合法行动。
+    // 同地点其他 NPC 已结识，talk 后只剩 move 一个合法行动。
     const sparseState: GameState = {
       ...record.state,
       worldFacts: record.state.worldFacts.map((fact) => ({ ...fact, discovered: true })),
@@ -590,10 +588,10 @@ describe("performAction：dialogue_choice 触发 pending（NPC 对话驱动叙�
     repository.setCurrentResult({ ok: true, status: "active", record: { ...record, state: sparseState } });
     repository.setApplyResult({ ok: true, record: { ...record, revision: 1 } });
 
-    // 前置断言：greet 解决后的状态确实不满足排队条件（fixture 变化时快速暴露）。
+    // 前置断言：talk 解决后的状态确实不满足排队条件（fixture 变化时快速暴露）。
     const resolved = resolveAction(
       record.blueprint, sparseState,
-      { type: "dialogue_choice", npcId: asNpcId("npc_1"), choiceId: "npc_1:greet" },
+      { type: "talk", npcId: asNpcId("npc_1") },
       ruleDeps
     );
     expect(resolved.ok).toBe(true);
@@ -602,7 +600,7 @@ describe("performAction：dialogue_choice 触发 pending（NPC 对话驱动叙�
 
     const result = await performAction(
       {
-        intent: { type: "dialogue_choice", npcId: asNpcId("npc_1"), choiceId: "npc_1:greet" },
+        intent: { type: "talk", npcId: asNpcId("npc_1") },
         expectedRevision: 0
       },
       buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
@@ -633,7 +631,7 @@ describe("performAction：dialogue_choice 触发 pending（NPC 对话驱动叙�
 
     const result = await performAction(
       {
-        intent: { type: "dialogue_choice", npcId: asNpcId("npc_1"), choiceId: "npc_1:greet" },
+        intent: { type: "talk", npcId: asNpcId("npc_1") },
         expectedRevision: 0
       },
       buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })

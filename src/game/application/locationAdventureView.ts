@@ -2,9 +2,7 @@ import type { GameState, LocationScale, ScenarioBlueprint } from "@/game/domain"
 import { locationScaleOf, paginateSpeechText } from "@/game/domain";
 import {
   composeNpcSpeech,
-  projectDialogueChoices,
-  type AvailableAction,
-  type DialogueChoice
+  type AvailableAction
 } from "@/game/gameplay/rpg/actions";
 import { projectTownLayerView, type TownLayerView } from "./townRuntimeView";
 
@@ -19,9 +17,9 @@ import { projectTownLayerView, type TownLayerView } from "./townRuntimeView";
 //     中性文案且不携带 locationId，绝不泄漏隐藏地点真实名称/描述。
 //   - 场景互动只来自 projectAvailableActions 的 observe/investigate/take_item/
 //     start_battle；talk 归对话、move 归世界地图。
-//   - 对话只投影 state.npcs 中位于当前地点的 NPC；写状态 choices 来自 Task 2 的
-//     projectDialogueChoices，另加只读本地 review_clue；reviewClues 只含已发现
-//     事实文本。
+//   - 对话只投影 state.npcs 中位于当前地点的 NPC；Phase 14 废除
+//     dialogue_choice 后不再投影写状态 choices，仅保留只读本地 review_clue；
+//     reviewClues 只含已发现事实文本。NPC 交互改由 talk intent 触发。
 //   - active battle 或结局后仍投影只读地图/地点资料，但 interactions 为空、
 //     对话不投影任何可写 choice（仅保留只读 review_clue）。
 // ---------------------------------------------------------------------------
@@ -246,17 +244,13 @@ function collectDiscoveredFactTexts(blueprint: ScenarioBlueprint, state: GameSta
     .filter((text): text is string => text !== undefined);
 }
 
-/** Task 2 的写状态 choice 映射为可写对话选项。 */
-function toWritableChoiceView(choice: DialogueChoice): DialogueChoiceView {
-  return { kind: choice.kind, choiceId: choice.choiceId, label: choice.label, mutatesState: true };
-}
-
 /** 对白每页字符预算：纯展示策略常量，UI 不得自行重新分页。 */
 export const SPEECH_PAGE_CHAR_BUDGET = 48;
 
 /**
  * 安全对话：只投影当前地点在场 NPC（已结识者仍作为对话对象出现）。
- * readOnly（active battle 或结局）时不投影任何可写 choice，仅保留只读 review_clue。
+ * Phase 14 废除 dialogue_choice 后不再投影写状态 choices，仅保留只读 review_clue。
+ * readOnly（active battle 或结局）时同样仅保留只读 review_clue。
  */
 function projectDialogues(
   blueprint: ScenarioBlueprint,
@@ -279,9 +273,7 @@ function projectDialogues(
     if (npc === undefined) {
       throw new Error("对话投影失败：在场 NPC 引用在蓝图中不存在");
     }
-    const writableChoices = readOnly
-      ? []
-      : projectDialogueChoices(blueprint, state, npcState.npcId).map(toWritableChoiceView);
+    // Phase 14：dialogue_choice 废除后不再投影写状态 choices。
     dialogues.push({
       npcId: String(npcState.npcId),
       name: npc.name,
@@ -291,7 +283,7 @@ function projectDialogues(
         composeNpcSpeech(blueprint, state, npcState.npcId),
         SPEECH_PAGE_CHAR_BUDGET
       ),
-      choices: [...writableChoices, reviewChoice],
+      choices: [reviewChoice],
       reviewClues
     });
   }
