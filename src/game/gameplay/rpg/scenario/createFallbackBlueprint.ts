@@ -691,7 +691,9 @@ function buildStartAnchor(): ScenarioBlueprintCandidate["startAnchor"] {
   };
 }
 
-/** Phase 14：结局方向骨架——题材主题 + 全部可能基调，锁定于最终幕。 */
+/** Phase 14：结局方向骨架——题材主题 + 全部可能基调。lockedAt 取主线幕数过半值
+ *  （Math.ceil(mainActs / 2)），符合 spec 结局推演机制"主线推进到关键节点（过半）"，
+ *  与 sqliteGameRepository.withEndingDirectionDefault 迁移路径保持一致。 */
 function buildEndingDirection(
   template: TypeTemplate,
   mainActs: number
@@ -700,7 +702,7 @@ function buildEndingDirection(
   return {
     theme: template.themes[0],
     possibleTones: [...allTones],
-    lockedAt: mainActs
+    lockedAt: Math.ceil(mainActs / 2)
   };
 }
 

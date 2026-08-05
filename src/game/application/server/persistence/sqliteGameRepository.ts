@@ -541,10 +541,17 @@ export function createSqliteGameRepository(
 
         const record: GameRecord = {
           gameId: asGameId(row["game_id"] as string),
-          // 与 interpretGameRow 同样补旧档蓝图的 availableItemIds 和 enemy locationId 默认值，
+          // 与 interpretGameRow 同样补旧档默认值：blueprint 链 availableItems → enemyLocationId
+          // → startAnchor → endingDirection；state 链 narrative → town → prologue → mainStoryProgress。
           // 避免类型契约缺口。
-          blueprint: withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint)) as unknown as ScenarioBlueprint,
-          state: withTownDefaults(withNarrativeDefault(state)) as unknown as GameState,
+          blueprint: withEndingDirectionDefault(
+            withStartAnchorDefault(
+              withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint)),
+            ),
+          ) as unknown as ScenarioBlueprint,
+          state: withMainStoryProgressDefault(
+            withPrologueDefault(withTownDefaults(withNarrativeDefault(state))),
+          ) as unknown as GameState,
           revision: row["revision"] as number,
           createdAt: row["created_at"] as string
         };
@@ -618,8 +625,15 @@ export function createSqliteGameRepository(
 
         const record: GameRecord = {
           gameId: asGameId(row["game_id"] as string),
-          blueprint: withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint)) as unknown as ScenarioBlueprint,
-          state: withTownDefaults(withNarrativeDefault(state)) as unknown as GameState,
+          // 与 interpretGameRow 同样补旧档默认值（含 Phase 14 startAnchor/endingDirection/prologue/mainStoryProgress）。
+          blueprint: withEndingDirectionDefault(
+            withStartAnchorDefault(
+              withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint)),
+            ),
+          ) as unknown as ScenarioBlueprint,
+          state: withMainStoryProgressDefault(
+            withPrologueDefault(withTownDefaults(withNarrativeDefault(state))),
+          ) as unknown as GameState,
           revision: row["revision"] as number,
           createdAt: row["created_at"] as string
         };
