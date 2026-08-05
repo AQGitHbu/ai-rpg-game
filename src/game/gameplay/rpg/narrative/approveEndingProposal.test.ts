@@ -173,6 +173,7 @@ describe("approveEndingProposal", () => {
       blueprint,
       state,
       proposed: undefined,
+      currentAct: LOCKED_AT,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("none_proposed");
@@ -185,6 +186,7 @@ describe("approveEndingProposal", () => {
       blueprint,
       state,
       proposed: { ...VALID_PROPOSED_ENDING, name: "" },
+      currentAct: LOCKED_AT,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("invalid_payload");
@@ -197,6 +199,7 @@ describe("approveEndingProposal", () => {
       blueprint,
       state,
       proposed: { ...VALID_PROPOSED_ENDING, tone: "unknown" as EndingTone },
+      currentAct: LOCKED_AT,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("invalid_payload");
@@ -209,6 +212,7 @@ describe("approveEndingProposal", () => {
       blueprint,
       state,
       proposed: { ...VALID_PROPOSED_ENDING, requirements: "not-an-array" as unknown as readonly EndingRequirement[] },
+      currentAct: LOCKED_AT,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("invalid_payload");
@@ -221,6 +225,7 @@ describe("approveEndingProposal", () => {
       blueprint,
       state,
       proposed: VALID_PROPOSED_ENDING,
+      currentAct: 2,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("not_locked");
@@ -233,6 +238,7 @@ describe("approveEndingProposal", () => {
       blueprint,
       state,
       proposed: VALID_PROPOSED_ENDING,
+      currentAct: LOCKED_AT,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("already_proposed");
@@ -245,6 +251,7 @@ describe("approveEndingProposal", () => {
       blueprint,
       state,
       proposed: { ...VALID_PROPOSED_ENDING, tone: "tragedy" },
+      currentAct: LOCKED_AT,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("tone_mismatch");
@@ -260,6 +267,7 @@ describe("approveEndingProposal", () => {
         ...VALID_PROPOSED_ENDING,
         requirements: [{ kind: "quest_completed", questId: asQuestId("q_not_exist") }],
       },
+      currentAct: LOCKED_AT,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("requirements_invalid");
@@ -280,6 +288,7 @@ describe("approveEndingProposal", () => {
         ...VALID_PROPOSED_ENDING,
         requirements: [{ kind: "quest_completed", questId: asQuestId("q_main_1") }],
       },
+      currentAct: LOCKED_AT,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("requirements_unsatisfiable");
@@ -292,6 +301,7 @@ describe("approveEndingProposal", () => {
       blueprint,
       state,
       proposed: VALID_PROPOSED_ENDING,
+      currentAct: LOCKED_AT,
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -324,10 +334,31 @@ describe("approveEndingProposal", () => {
       blueprint: blueprintWithExistingEnding,
       state,
       proposed: VALID_PROPOSED_ENDING,
+      currentAct: LOCKED_AT,
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(String(result.approvedEnding.id)).toBe("ending_dyn_4");
+    }
+  });
+
+  // Fix Round 1 回归：persisted state.mainStoryProgress.currentAct 在 performAction
+  // 写回前可能滞后（如初始值 0）。旧实现读 persisted 值会使 not_locked 闸门恒为拒绝，
+  // 结局审批在生产中永不通过。新签名改用调用方派生传入的 currentAct——此处 persisted=0
+  // 但派生 currentAct=2 >= lockedAt=2，应通过 not_locked 并最终批准。
+  it("not_locked 闸门使用传入的派生 currentAct 而非 persisted 值——stale persisted 不影响判定", () => {
+    const blueprint = buildBlueprint();
+    const state = buildState({ currentAct: 0 });
+    const result = approveEndingProposal({
+      blueprint,
+      state,
+      proposed: VALID_PROPOSED_ENDING,
+      currentAct: LOCKED_AT,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      // 明确断言：不应是 not_locked（证明未读 stale persisted currentAct=0）
+      expect(result.reason).not.toBe("not_locked");
     }
   });
 });

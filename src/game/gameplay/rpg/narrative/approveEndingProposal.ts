@@ -36,6 +36,15 @@ export type ApproveEndingProposalInput = {
   readonly state: GameState;
   /** AI 提议的结局；orchestrateNarrativeScene 在导演未提议时传 undefined。 */
   readonly proposed: ProposedEnding | undefined;
+  /**
+   * 主线当前幕数（派生值，由调用方经 reconcileMainStoryProgress 从 state.quests
+   * 派生后传入）。Fix Round 1：not_locked 闸门改用此派生值，不再读 persisted
+   * state.mainStoryProgress.currentAct——后者仅在 performAction 中写回，在
+   * orchestrateNarrativeScene 阶段可能仍为初始值（如 0），会导致闸门恒为 not_locked
+   * 拒绝、结局审批在生产中永不通过。state 入参仍保留供 already_proposed 闸门读取
+   * state.mainStoryProgress.endingProposed。
+   */
+  readonly currentAct: number;
 };
 
 const VALID_TONES: ReadonlySet<EndingTone> = new Set<EndingTone>([
@@ -56,7 +65,7 @@ const codePointLength = (value: string) => Array.from(value).length;
 export function approveEndingProposal(
   input: ApproveEndingProposalInput,
 ): EndingApprovalDecision {
-  const { blueprint, state, proposed } = input;
+  const { blueprint, state, proposed, currentAct } = input;
 
   // 1. none_proposed：未提议
   if (proposed === undefined || proposed === null) {
@@ -68,9 +77,12 @@ export function approveEndingProposal(
     return { ok: false, reason: "invalid_payload" };
   }
 
-  // 3. not_locked：未达 endingDirection.lockedAt 阈值
+  // 3. not_locked：未达 endingDirection.lockedAt 阈值。Fix Round 1：使用调用方
+  //    派生传入的 currentAct（来自 reconcileMainStoryProgress 对 state.quests 的
+  //    计数），不读 persisted state.mainStoryProgress.currentAct——后者在
+  //    performAction 写回前可能滞后（如初始值 0），会使闸门恒为拒绝。
   const lockedAt = blueprint.endingDirection.lockedAt;
-  if (state.mainStoryProgress.currentAct < lockedAt) {
+  if (currentAct < lockedAt) {
     return { ok: false, reason: "not_locked" };
   }
 

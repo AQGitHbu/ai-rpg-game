@@ -58,10 +58,13 @@ function computeEndingDecision(
   if (blueprint.endingDirection === undefined || state.mainStoryProgress === undefined) {
     return undefined;
   }
-  const { shouldProposeEnding } = reconcileMainStoryProgress(blueprint, state, NOOP_QUEST_DEPS);
+  // Fix Round 1：取 reconcileMainStoryProgress 派生的 currentAct（基于 state.quests
+  // 计数）传入闸门，而非让闸门读 persisted state.mainStoryProgress.currentAct
+  // ——后者在 performAction 写回前可能滞后，会使 not_locked 闸门恒为拒绝。
+  const { currentAct, shouldProposeEnding } = reconcileMainStoryProgress(blueprint, state, NOOP_QUEST_DEPS);
   if (!shouldProposeEnding) return undefined;
   if (plan.proposedEnding === undefined) return undefined;
-  return approveEndingProposal({ blueprint, state, proposed: plan.proposedEnding });
+  return approveEndingProposal({ blueprint, state, proposed: plan.proposedEnding, currentAct });
 }
 
 function resolveRoleAttemptLimit(value: number | undefined): number {
