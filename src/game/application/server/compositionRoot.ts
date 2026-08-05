@@ -74,6 +74,8 @@ export type OfflineJourneyGameResult = CreateGameResult | {
   readonly code: "DEVELOPMENT_TOOLS_DISABLED";
 };
 
+export { OFFLINE_CASE_IDS } from "./offlineBaselines";
+
 // ---------------------------------------------------------------------------
 // production composition root（Task 3）：server-only 层唯一的真实依赖装配点。
 // 只有这里把真实 SQLite repository（经 sqliteClient 的 env 配置助手解析路径）、

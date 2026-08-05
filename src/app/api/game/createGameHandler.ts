@@ -1,7 +1,8 @@
 import type { CreateGameResult, NewGameInput } from "@/game/application";
-import type {
-  RequestLogContext,
-  ServerGameEntryPoints
+import {
+  OFFLINE_CASE_IDS,
+  type RequestLogContext,
+  type ServerGameEntryPoints
 } from "@/game/application/server/compositionRoot";
 
 // ---------------------------------------------------------------------------
@@ -64,13 +65,26 @@ export async function handleCreateGameRequest(
 
   // Development preset is an exclusive, server-recognised marker. It never
   // accepts player input, seed, source or state supplied by the browser.
-  if (record["developmentPreset"] === OFFLINE_JOURNEY_PRESET && Object.keys(record).length === 1) {
+  if (record["developmentPreset"] === OFFLINE_JOURNEY_PRESET) {
+    const extraKeys = Object.keys(record).filter((key) => key !== "developmentPreset");
+    const unexpected = extraKeys.filter((key) => key !== "caseId");
+    if (unexpected.length > 0) {
+      return json(400, { code: "UNEXPECTED_FIELDS", fields: unexpected.sort() }, context);
+    }
+    const rawCaseId = record["caseId"];
+    if (rawCaseId !== undefined && typeof rawCaseId !== "string") {
+      return json(400, { code: "INVALID_FIELD_TYPES", fields: ["caseId"] }, context);
+    }
+    const caseId = rawCaseId as string | undefined;
+    if (caseId !== undefined && !OFFLINE_CASE_IDS.includes(caseId)) {
+      return json(400, { code: "UNEXPECTED_FIELDS", fields: ["caseId"] }, context);
+    }
     if (entryPoints.createOfflineJourneyGame === undefined) {
       return json(403, { code: "DEVELOPMENT_TOOLS_DISABLED" }, context);
     }
     let presetResult;
     try {
-      presetResult = await entryPoints.createOfflineJourneyGame(context?.traceId);
+      presetResult = await entryPoints.createOfflineJourneyGame(caseId, context?.traceId);
     } catch {
       return json(500, { code: "INTERNAL_ERROR" }, context);
     }
