@@ -205,9 +205,8 @@ it("createOfflineJourneyGame(caseId) 用 v2.json 题材基线创建 offline 存�
   if (!created.ok) return;
   expect(created.source).toBe("fallback");
   expect(created.view.world.gameType).toBe("xianxia");
-  if (created.view.narrativeGeneration && "status" in created.view.narrativeGeneration) {
-    // offline 模式：narrative.mode 为 offline（view 不含该字段，读存档验证）
-  }
+  expect(created.view.narrative).toBeNull();
+  expect(created.view.narrativeGeneration).toEqual({ status: "ready" });
 });
 
 it("createOfflineJourneyGame(caseId) 未知 caseId 返回 INVALID_INPUT", async () => {
@@ -425,7 +424,7 @@ git commit -m "feat(api): POST /api/game 开发 preset 允许伴随白名单 cas
 
 在 `src/components/NewGameSetupForm.test.tsx`：
 
-1a. 现有「开发环境可使用已有离线旅程数据开始」测试的 body 断言（约 61-73 行，原 `toEqual({ developmentPreset: "phase10-journey-v1" })`）改为：
+1a. 现有「开发环境可使用已有离线旅程数据开始」测试（`NewGameSetupForm.test.tsx:126-139`）的 body 断言（第 136-138 行，原 `toEqual({ developmentPreset: "phase10-journey-v1" })`）改为：
 
 ```ts
 expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
@@ -537,29 +536,28 @@ git commit -m "feat(ui): 开发开局加 7 题材下拉，提交携带 caseId"
 - Create: `src/game/application/testing/offlineGenreJourney.test.ts`（7 题材各一，fallback 蓝图 + offline mode 走到结局）
 
 **Interfaces:**
-- Consumes: `resolveOfflineBaseline`/`OFFLINE_CASE_IDS`（Task 1）；`createGame`/`performAction`/`getCurrentGame`；`PlayerIntent` from `@/game/gameplay/rpg/actions`。
+- Consumes: `resolveOfflineBaseline`/`OFFLINE_CASE_IDS`（Task 1）；`createGame`/`performAction`；`QuestDefinition`/`QuestObjective`/`ScenarioBlueprint`/`asLocationId` from `@/game/domain`；`PlayerIntent` from `@/game/gameplay/rpg/actions`。
 - Produces: 证明 7 条 fallback 蓝图在 `runtimeNarrativeMode:"offline"` + 无 `runtimeNarrativeSources` 下可规则循环到成功结局、零 fetch。
 
-**机器可读事实（Task 5 依据）**：`createBudgetPolicy("long").mainActs === 8`；fallback 蓝图 `kind:"main"` quest 的 `stage` 从 1 递增到 `mainActs`；每个 objective 的 target ID 可在蓝图 `npcs/items/facts/enemies/locations` 中定位其所在 `locationId`；终幕 active 后 `start_battle` + `battle_action:"attack"` 直到 boss 死亡触发成功结局。
+**机器可读事实（Task 5 依据）**：`createBudgetPolicy("long").mainActs === 8`；fallback 蓝图 `kind:"main"` quest 的 `stage` 从 1 递增到 `mainActs`；每个 objective 的 target ID 可在蓝图 `npcs/items/facts/enemies/locations` 中定位其所在 `locationId`（`discover_fact` 的事实只在 `openingScene.investigableFactIds`，调查地点固定为 `openingScene.locationId`）；终幕 active 后 `start_battle` + `battle_action:"attack"` 直到 boss 死亡触发成功结局。
 
-### Step 1: 写失败测试（offlineGenreJourney.test.ts）
+- [ ] **Step 1: 写失败测试（offlineGenreJourney.test.ts 最终版）**
 
-参考 `phase4cOfflineJourneyRegression.test.ts` 的 openRepository/afterAll/performDeps 结构，新建测试文件：
+参考 `phase4cOfflineJourneyRegression.test.ts` 的 tmp/ 策略与 openRepository/afterAll 结构（`loadActiveRecord` helper 从 phase4c 原样复制），新建测试文件：
 
 ```ts
 /** @vitest-environment node */
-import { describe, expect, it } from "vitest";
-import { OFFLINE_CASE_IDS } from "../server/offlineBaselines";
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { OFFLINE_CASE_IDS, resolveOfflineBaseline } from "../server/offlineBaselines";
 import { createGame } from "../createGame";
-import { getCurrentGame } from "../getCurrentGame";
 import { performAction } from "../performAction";
 import { createUnavailableTestScenarioSource } from "../applicationFixture.testutil";
 import { buildEndToEndRuleJourney, findBossEnemy, performRuleSequence } from "./offlineGenreJourney";
-import { asGameId } from "../server/persistence/gameRepository";
+import { asGameId, type GameRecord, type GameRepository } from "../server/persistence/gameRepository";
 import { createSqliteClient } from "../server/persistence/sqliteClient";
 import { createSqliteGameRepository, type SqliteGameRepository } from "../server/persistence/sqliteGameRepository";
-import { resolve, join } from "node:path";
-import { mkdirSync, readdirSync, rmSync } from "node:fs";
 
 // —— tmp/ 暂存策略与 phase4c 相同 ——
 const TMP_ROOT = resolve("tmp");
@@ -586,6 +584,15 @@ function openRepository(name: string): SqliteGameRepository {
   return repo;
 }
 
+/** 从端口读回 active 记录（从 phase4c 复制）。 */
+async function loadActiveRecord(repository: GameRepository): Promise<GameRecord> {
+  const loaded = await repository.getCurrentGame();
+  if (!loaded.ok || loaded.status !== "active") {
+    throw new Error(`期望 active 存档，实际：${JSON.stringify(loaded)}`);
+  }
+  return loaded.record;
+}
+
 function offlineDeps(repo: SqliteGameRepository) {
   return {
     repository: repo,
@@ -598,10 +605,14 @@ function offlineDeps(repo: SqliteGameRepository) {
   };
 }
 
+function actionDeps(repo: SqliteGameRepository) {
+  return { repository: repo, now: () => "2026-08-04T00:00:00.000Z" };
+}
+
 describe("offlineGenreJourney：7 题材 fallback 蓝图零 AI 规则通关", () => {
   for (const caseId of OFFLINE_CASE_IDS) {
-    it(`${caseId}：fallback 蓝图 + offline → 规则行动 → 成功结局，零 fetch`, async () => {
-      const baseline = require("../server/offlineBaselines").resolveOfflineBaseline(caseId);
+    it(`${caseId}：fallback + offline → 规则行动 → 成功结局，零 fetch`, async () => {
+      const baseline = resolveOfflineBaseline(caseId);
       expect(baseline).not.toBeNull();
       if (baseline === null) return;
       const writer = openRepository(caseId);
@@ -609,41 +620,40 @@ describe("offlineGenreJourney：7 题材 fallback 蓝图零 AI 规则通关", ()
         throw new Error("zero-network expected");
       });
       try {
-        const created = await createGame({ input: baseline.input, seed: baseline.seed }, offlineDeps(writer));
+        const created = await createGame(
+          { input: baseline.input, seed: baseline.seed },
+          offlineDeps(writer),
+        );
         expect(created.ok).toBe(true);
         if (!created.ok) return;
         expect(created.source).toBe("fallback");
 
-        const read = await getCurrentGame({ repository: writer });
-        expect(read.status).toBe("active");
-        if (read.status !== "active") return;
-        const blueprint = await (async () => {
-          const check = await (writer as unknown as { getCurrentGame: () => Promise<{ ok: boolean; status: string; record: { blueprint: unknown } }> }).getCurrentGame();
-          return check.record.blueprint;
-        })();
-        const boss = findBossEnemy(blueprint as never);
-        const journey = buildEndToEndRuleJourney(blueprint as never, boss.locationId);
-        let revision = read.view.revision;
+        const record = await loadActiveRecord(writer);
+        const boss = findBossEnemy(record.blueprint);
+        const journey = buildEndToEndRuleJourney(record.blueprint, boss.locationId);
+        let revision = 0;
         revision = await performRuleSequence(writer, journey.intents, revision);
-        const battleResult = await performAction(
+
+        const started = await performAction(
           { intent: { type: "start_battle", enemyId: boss.id }, expectedRevision: revision },
-          { repository: writer, now: () => "2026-08-04T00:00:00.000Z" },
+          actionDeps(writer),
         );
-        expect(battleResult.ok).toBe(true);
-        if (!battleResult.ok) return;
-        revision = battleResult.view.revision;
+        expect(started.ok).toBe(true);
+        if (!started.ok) return;
+
+        let view = started.view;
         let guard = 0;
-        while (battleResult.view.battle !== null && guard < 200) {
+        while (view.battle !== null && view.ending === null && guard < 200) {
           guard += 1;
           const attack = await performAction(
-            { intent: { type: "battle_action", action: "attack" as const }, expectedRevision: revision },
-            { repository: writer, now: () => "2026-08-04T00:00:00.000Z" },
+            { intent: { type: "battle_action", action: "attack" }, expectedRevision: view.revision },
+            actionDeps(writer),
           );
           if (!attack.ok) throw new Error("attack 应当成功");
-          revision = attack.view.revision;
-          if (attack.view.ending !== null) break;
+          view = attack.view;
         }
-        expect(battleResult.view.ending ?? null).not.toBeNull();
+        expect(view.ending).not.toBeNull();
+        if (view.ending !== null) expect(view.ending.outcome).toBe("success");
         expect(fetchSpy).not.toHaveBeenCalled();
       } finally {
         fetchSpy.mockRestore();
@@ -653,140 +663,178 @@ describe("offlineGenreJourney：7 题材 fallback 蓝图零 AI 规则通关", ()
 });
 ```
 
-注：上方测试内联读存档取 blueprint；`vi` 需 `import { vi } from "vitest"`。若内联 `getCurrentGame` 类型不便，可为 repository 增加 `loadActiveRecord`（reference phase4c 的 `loadActiveRecord`）。
+- [ ] **Step 2: 运行测试确认失败**
 
-### Step 2: 实现 harness（offlineGenreJourney.ts）
+Run: `Set-Location F:\AI2\ai-rpg-game; npx vitest run src/game/application/testing/offlineGenreJourney.test.ts`
+Expected: FAIL（`Cannot find module './offlineGenreJourney'`：harness 尚未实现）
 
-借鉴 `phase4cOfflineJourneyRegression.test.ts` 的 `movePath`/`appendTravel`/`performSequence`/`findBossEnemy`，泛化 `buildStage3ReadyJourney` 覆盖全部 main stage（`mainActs` 而非写死 3），并补 `discover_fact`/`defeat_enemy` 目标映射。
+- [ ] **Step 3: 实现 harness（offlineGenreJourney.ts）**
+
+借鉴 phase4c 的 `movePath`/`appendTravel`/`performSequence`/`findBossEnemy`，泛化 `buildStage3ReadyJourney` 覆盖全部 main stage（`mainActs` 而非写死 3），并补 `discover_fact`/`defeat_enemy` 目标映射。**注意**：`investigableFactIds` 只存在于 `openingScene`（`LocationDefinition` 无此字段），`discover_fact` 的目标地点必须是 `openingScene.locationId`（`validateIntent.ts:105-107` 要求当前地点等于开场地点才可调查）。
 
 ```ts
-import type { ScenarioBlueprint, PlayerIntent } from "@/game/domain";
-// 说明：PlayerIntent 实际来自 @/game/gameplay/rpg/actions；此处用 domain 类型别名保持一致（以 phase4c 的实际导入为准）。
+import type { QuestDefinition, QuestObjective, ScenarioBlueprint } from "@/game/domain";
+import { asLocationId } from "@/game/domain";
+import type { PlayerIntent } from "@/game/gameplay/rpg/actions";
+import { performAction } from "../performAction";
+import type { GameRepository } from "../server/persistence/gameRepository";
 
-type QuestLike = { kind: string; stage: number | null; objectives: readonly { kind: string; npcId?: string; itemId?: string; factId?: string; enemyId?: string; locationId?: string }[] };
+const FIXED_ACTION_TIME = "2026-08-04T00:00:00.000Z";
 
-/** 由蓝图定位实体所在 locationId（item 用 availableItemIds 反查、fact 用 investigableFactIds 反查）。 */
-function entityLocation(blueprint: ScenarioBlueprint, kind: "npc" | "item" | "fact" | "enemy", id: string): string {
-  if (kind === "npc") {
-    const npc = blueprint.npcs.find((n) => n.id === id);
-    if (npc) return npc.locationId;
-  }
-  for (const loc of blueprint.locations) {
-    if (kind === "item" && loc.availableItemIds?.includes(id)) return loc.id;
-    if (kind === "fact" && loc.investigableFactIds?.includes(id)) return loc.id;
-  }
-  if (kind === "enemy") {
-    const enemy = blueprint.enemies.find((e) => e.id === id);
-    if (enemy) return enemy.locationId;
-  }
-  throw new Error(`无法定位 ${kind}:${id} 的所在地点`);
+function isMainQuest(quest: QuestDefinition): quest is Extract<QuestDefinition, { kind: "main" }> {
+  return quest.kind === "main";
 }
 
-/** 旅行辅助：把路径每一步转成 move intent（依赖当前起点）。 */
-function appendTravel(blueprint: ScenarioBlueprint, intents: PlayerIntent[], fromId: string, toId: string): string {
-  // BFS 求出 fromId→toId 的最短路径（实现同 phase4c movePath），
-  // 每一步 push { type: "move", locationId }，返回终点。
-  return /* … */ "";
+/** 蓝图连通图上的最短移动路径（BFS；不含起点、含终点）。不可达 ⇒ 抛错。 */
+function movePath(blueprint: ScenarioBlueprint, fromId: string, toId: string): readonly string[] {
+  if (fromId === toId) return [];
+  const previous = new Map<string, string>();
+  const visited = new Set<string>([fromId]);
+  const queue: string[] = [fromId];
+  for (let head = 0; head < queue.length; head += 1) {
+    const current = queue[head];
+    const location = blueprint.locations.find((entry) => entry.id === current);
+    if (location === undefined) throw new Error(`蓝图缺少地点：${current}`);
+    for (const next of location.connectedLocationIds) {
+      if (visited.has(next)) continue;
+      visited.add(next);
+      previous.set(next, current);
+      if (next === toId) {
+        const path: string[] = [];
+        let cursor: string = toId;
+        while (cursor !== fromId) {
+          path.unshift(cursor);
+          const step = previous.get(cursor);
+          if (step === undefined) throw new Error(`路径回溯失败：${fromId} → ${toId}`);
+          cursor = step;
+        }
+        return path;
+      }
+      queue.push(next);
+    }
+  }
+  throw new Error(`蓝图地点不连通：${fromId} → ${toId}`);
+}
+
+/** 把途中每一步转成 move intent，返回终点。 */
+function appendTravel(
+  blueprint: ScenarioBlueprint,
+  intents: PlayerIntent[],
+  fromId: string,
+  toId: string,
+): string {
+  for (const step of movePath(blueprint, fromId, toId)) {
+    intents.push({ type: "move", locationId: asLocationId(step) } as PlayerIntent);
+  }
+  return toId;
+}
+
+/**
+ * 由蓝图定位 objective 目标所在 locationId；找不到即缺陷蓝图，抛错中止。
+ * fact 只在 openingScene 可调查，目标地点固定为 openingScene.locationId。
+ */
+function objectiveTargetLocation(blueprint: ScenarioBlueprint, objective: QuestObjective): string {
+  switch (objective.kind) {
+    case "visit_location":
+      return objective.locationId;
+    case "talk_to_npc": {
+      const npc = blueprint.npcs.find((entry) => entry.id === objective.npcId);
+      if (npc === undefined) throw new Error(`蓝图缺少 NPC：${objective.npcId}`);
+      return npc.locationId;
+    }
+    case "obtain_item": {
+      const stocked = blueprint.locations.find((entry) =>
+        entry.availableItemIds.includes(objective.itemId)
+      );
+      if (stocked === undefined) throw new Error(`没有地点预置物品：${objective.itemId}`);
+      return stocked.id;
+    }
+    case "discover_fact":
+      if (!blueprint.openingScene.investigableFactIds.includes(objective.factId)) {
+        throw new Error(`开场场景不可调查的事实：${objective.factId}`);
+      }
+      return blueprint.openingScene.locationId;
+    case "defeat_enemy": {
+      const enemy = blueprint.enemies.find((entry) => entry.id === objective.enemyId);
+      if (enemy === undefined) throw new Error(`蓝图缺少敌人：${objective.enemyId}`);
+      return enemy.locationId;
+    }
+    default:
+      throw new Error(`未知 objective kind：${objective.kind}`);
+  }
 }
 
 /**
  * 泛化全主线：stage 1..mainActs-1 的 objectives 逐类映射为 intent，
  * 推到最后一幕 active 并抵达 boss 所在地点。若缺陷蓝图缺目标 throw。
+ * （fallback 主线的 defeat_enemy 只出现在终幕，由测试在旅程外驱动战斗；
+ * 若未来中幕出现该目标，映射的 start_battle 会在 performRuleSequence 内直接结算。）
  */
 export function buildEndToEndRuleJourney(blueprint: ScenarioBlueprint, bossLocationId: string): {
   intents: readonly PlayerIntent[];
   endLocationId: string;
 } {
-  const mainQuests = blueprint.quests.filter((q) => q.kind === "main")
-    .sort((a, b) => (a.stage ?? 0) - (b.stage ?? 0)) as readonly QuestLike[];
+  const mainQuests = blueprint.quests.filter(isMainQuest)
+    .sort((a, b) => a.stage - b.stage);
   const mainActs = mainQuests.length;
   const intents: PlayerIntent[] = [];
-  let at = blueprint.player.startingLocationId;
+  let at: string = blueprint.player.startingLocationId;
   for (let stage = 1; stage < mainActs; stage += 1) {
     const quest = mainQuests[stage - 1];
-    for (const obj of quest.objectives) {
-      let target = obj.locationId;
-      if (obj.npcId) target = entityLocation(blueprint, "npc", obj.npcId);
-      else if (obj.itemId) target = entityLocation(blueprint, "item", obj.itemId);
-      else if (obj.factId) target = entityLocation(blueprint, "fact", obj.factId);
-      else if (obj.enemyId) target = entityLocation(blueprint, "enemy", obj.enemyId);
+    for (const objective of quest.objectives) {
+      const target = objectiveTargetLocation(blueprint, objective);
       if (target !== at) at = appendTravel(blueprint, intents, at, target);
-      if (obj.npcId) intents.push({ type: "talk", npcId: obj.npcId } as PlayerIntent);
-      else if (obj.itemId) intents.push({ type: "take_item", itemId: obj.itemId } as PlayerIntent);
-      else if (obj.factId) intents.push({ type: "investigate", factId: obj.factId } as PlayerIntent);
-      else if (obj.enemyId) intents.push({ type: "start_battle", enemyId: obj.enemyId } as PlayerIntent);
+      switch (objective.kind) {
+        case "visit_location":
+          break;
+        case "talk_to_npc":
+          intents.push({ type: "talk", npcId: objective.npcId } as PlayerIntent);
+          break;
+        case "obtain_item":
+          intents.push({ type: "take_item", itemId: objective.itemId } as PlayerIntent);
+          break;
+        case "discover_fact":
+          intents.push({ type: "investigate", factId: objective.factId } as PlayerIntent);
+          break;
+        case "defeat_enemy":
+          intents.push({ type: "start_battle", enemyId: objective.enemyId } as PlayerIntent);
+          break;
+      }
     }
   }
   if (at !== bossLocationId) at = appendTravel(blueprint, intents, at, bossLocationId);
   return { intents, endLocationId: at };
 }
-```
 
-**实现提示（消除占位符）**：`appendTravel` 中标注 `/* … */` 处即 phase4c 的 `movePath`（BFS 最短路径）——直接从 `phase4cOfflineJourneyRegression.test.ts` 复制 `movePath` 与 `appendTravel` 的完整实现（它们已通用，不假设 stage 数）。`findBossEnemy` 与 `performRuleSequence`（= phase4c `perfromSequence`，逐 intent `performAction` 后返回最新 revision）同样照搬。`PlayerIntent` 从 `@/game/gameplay/rpg/actions` 导入（Phase4c 第 12 行即 `import { type PlayerIntent } from "@/game/gameplay/rpg/actions"`）。
+/** 从蓝图找到 boss 敌人完整定义。 */
+export function findBossEnemy(blueprint: ScenarioBlueprint): ScenarioBlueprint["enemies"][number] {
+  const boss = blueprint.enemies.find((entry) => entry.tier === "boss");
+  if (boss === undefined) throw new Error("蓝图缺少 boss 敌人");
+  return boss;
+}
 
-### Step 3: 运行并固化为简洁测试
-
-- [ ] **3a. 先只跑 harness 编译**
-
-Run: `Set-Location F:\AI2\ai-rpg-game; npx tsc --noEmit`（或 `npm run typecheck`）
-Expected: FAIL 到通过（补齐 `resolveOfflineBaseline` 导入、`vi` import、repository 取 blueprint 的类型收窄）
-
-- [ ] **3b. 用更简洁的最终版测试替换 Step 1 草稿**（避免 Step 1 内联 journey/battle 的翻转瑕疵 —— battle 循环应基于**最新 view** 判断）：
-
-将 Step 1 的 `it(...)` 主体替换为：
-
-```ts
-it(`${caseId}：fallback + offline → 规则行动 → 成功结局，零 fetch`, async () => {
-  const baseline = resolveOfflineBaseline(caseId);
-  expect(baseline).not.toBeNull();
-  if (baseline === null) return;
-  const writer = openRepository(caseId);
-  const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => {
-    throw new Error("zero-network expected");
-  });
-  try {
-    const created = await createGame(
-      { input: baseline.input, seed: baseline.seed },
-      offlineDeps(writer),
+/** 依次执行必须成功的行动（= phase4c performSequence 泛化），返回最新 revision。 */
+export async function performRuleSequence(
+  repository: GameRepository,
+  intents: readonly PlayerIntent[],
+  startRevision: number,
+): Promise<number> {
+  let revision = startRevision;
+  for (const intent of intents) {
+    const result = await performAction(
+      { intent, expectedRevision: revision },
+      { repository, now: () => FIXED_ACTION_TIME },
     );
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    expect(created.source).toBe("fallback");
-
-    const record = await loadActiveRecord(writer); // 从 phase4c 复制此 helper
-    const boss = findBossEnemy(record.blueprint);
-    const journey = buildEndToEndRuleJourney(record.blueprint, boss.locationId);
-    let revision = 0;
-    revision = await performRuleSequence(writer, journey.intents, revision);
-
-    const started = await performAction(
-      { intent: { type: "start_battle", enemyId: boss.id }, expectedRevision: revision },
-      actionDeps(writer),
-    );
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-
-    let view = started.view; // 最新 view，用于循环判断
-    let guard = 0;
-    while (view.battle !== null && view.ending === null && guard < 200) {
-      guard += 1;
-      const attack = await performAction(
-        { intent: { type: "battle_action", action: "attack" }, expectedRevision: view.revision },
-        actionDeps(writer),
-      );
-      if (!attack.ok) throw new Error("attack 应当成功");
-      view = attack.view;
+    if (!result.ok) {
+      throw new Error(`前置行动应当成功：${JSON.stringify(intent)} → ${JSON.stringify(result)}`);
     }
-    expect(view.ending).not.toBeNull();
-    if (view.ending !== null) expect(view.ending.outcome).toBe("success");
-    expect(fetchSpy).not.toHaveBeenCalled();
-  } finally {
-    fetchSpy.mockRestore();
+    revision = result.view.revision;
   }
-}, 60_000);
+  return revision;
+}
 ```
 
-其中 `actionDeps(repo)` 返回 `{ repository: repo, now: () => "2026-08-04T00:00:00.000Z" }`；`loadActiveRecord`/`findBossEnemy` 从 phase4c 复制。
+注：`QuestObjective`/`QuestDefinition` 为 `@/game/domain` 导出的已编译蓝图封闭 union，`kind` 收窄后各目标字段类型精确（无需 `as never` 或宽松的 `QuestLike` 别名）；`isMainQuest` 用显式类型谓词避免 `filter` 不窄化 union 的类型报错。
 
 - [ ] **Step 4: 运行 7 题材回归确认通过**
 
@@ -844,6 +892,6 @@ git commit -m "docs: 登记离线 7 题材开局实现事实"
 ## Self-Review 结论
 
 - **Spec 覆盖**：§6.1 前端下拉 → Task 4；§6.2 API caseId → Task 3；§6.3 offlineBaselines → Task 1；§6.4 compositionRoot → Task 2；§5 映射/白名单 → Task 1；§9 测试 → Task 1-5；§8 通关证据 → Task 5；§12 文档 → Task 6。§6.5 复用 offline 链路由实现沿用、无新代码。
-- **占位符**：Task 5 的 BFS/helper 明确指示复制 phase4c 完整实现（非待办）；其余步骤含具体代码。
-- **类型一致**：`createOfflineJourneyGame(caseId?, traceId?)` 在 Task 2 定义、Task 3 调用一致；`resolveOfflineBaseline`/`OFFLINE_CASE_IDS` 在 Task 1 定义、Task 2/3/5 消费一致。⚠️ 唯一需注意：Task 2 Step 1 测试引用了 `created.view.world.gameType`（存在）与 `created.source`（CreateGameResult 有 source 字段），已核对。
+- **占位符**：无——Task 5 的 `movePath`/`objectiveTargetLocation`/`buildEndToEndRuleJourney`/`performRuleSequence` 均为完整实现，测试直接采用最终版。
+- **类型一致**：`createOfflineJourneyGame(caseId?, traceId?)` 在 Task 2 定义、Task 3 调用一致；`resolveOfflineBaseline`/`OFFLINE_CASE_IDS` 在 Task 1 定义、Task 2/3/5 消费一致。`discover_fact` 目标地点统一解析为 `openingScene.locationId`（`LocationDefinition` 无 `investigableFactIds` 字段，Task 5 已按此修正）。
 
