@@ -55,6 +55,17 @@ export type AvailableAction =
   | { readonly type: "start_battle"; readonly enemyId: EnemyId; readonly label: string }
   | { readonly type: "battle_action"; readonly action: "attack" | "guard" | "withdraw"; readonly label: string };
 
+/**
+ * Investigable facts used to share the generic label "调查线索", which made
+ * two legal choices look identical in the player-facing scene and in quality
+ * review. Do not expose fact text before the investigate action resolves it;
+ * stable ordinal labels preserve the knowledge boundary while distinguishing
+ * the available choices.
+ */
+function investigationLabel(index: number): string {
+  return `调查第${index + 1}条线索`;
+}
+
 /** 检查事件账本中是否已有特定地点的观察事件。 */
 function hasObservedLocation(state: GameState, locationId: LocationId): boolean {
   return state.eventLedger.some(
@@ -97,13 +108,13 @@ export function projectAvailableActions(
 
   // investigate：当前场景可调查且尚未发现的事实（只有 opening 地点携带可调查列表）
   if (state.currentLocationId === blueprint.openingScene.locationId) {
-    for (const factId of blueprint.openingScene.investigableFactIds) {
+    for (const [index, factId] of blueprint.openingScene.investigableFactIds.entries()) {
       const factState = state.worldFacts.find((f) => f.factId === factId);
       if (factState !== undefined && !factState.discovered) {
         actions.push({
           type: "investigate",
           factId,
-          label: `调查线索`,
+          label: investigationLabel(index),
         });
       }
     }

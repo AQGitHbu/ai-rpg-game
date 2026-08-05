@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ScenarioBlueprintCandidate } from "@/game/domain";
+import { createBudgetPolicy, type ScenarioBlueprintCandidate } from "@/game/domain";
 import {
   PHASE1_NUMERIC_RANGES,
   validateScenarioBlueprintCandidate,
@@ -160,6 +160,56 @@ describe("validateScenarioBlueprintCandidate：内容预算", () => {
       code: "COMPANION_OVERBUDGET",
       params: { max: 1, actual: 2 }
     });
+  });
+});
+
+describe("validateScenarioBlueprintCandidate：主线语义密度", () => {
+  it("拒绝多个主线阶段复用同一非空描述", () => {
+    const candidate = draft();
+    candidate.quests[1].description = candidate.quests[0].description;
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "quests[1].description",
+      code: "REPEATED_MAIN_QUEST_DESCRIPTION",
+      params: { firstStage: 1, stage: 2 },
+    });
+  });
+
+  it("允许空描述继续由既有必填/图校验处理", () => {
+    const candidate = draft();
+    candidate.quests[1].description = "";
+    expect(codesOf(issuesOf(candidate))).not.toContain("REPEATED_MAIN_QUEST_DESCRIPTION");
+  });
+
+  it("拒绝只改变幕号、仍重复语义尾句的主线描述", () => {
+    const candidate = draft();
+    candidate.quests.filter((quest) => quest.kind === "main").slice(1, 4).forEach((quest) => {
+      quest.description = `第 ${quest.stage} 幕：完成当前目标。深入山庄求证并取回关键信物。`;
+    });
+    expect(codesOf(issuesOf(candidate))).toContain("REPEATED_MAIN_QUEST_DESCRIPTION_FRAGMENT");
+  });
+});
+
+describe("validateScenarioBlueprintCandidate：生成事实可达性", () => {
+  it("拒绝没有规则锚点或已知 NPC 的生成事实", () => {
+    const candidate = draft();
+    candidate.world.facts.push({ id: "fact_orphan", text: "无人可知的真相", source: "generated" });
+    expect(issuesOf(candidate)).toContainEqual(expect.objectContaining({
+      code: "UNANCHORED_GENERATED_FACT",
+      params: { factId: "fact_orphan" },
+    }));
+  });
+
+  it("中长线必须把生成事实放进至少一个主线 discover_fact 目标", () => {
+    const candidate = draft();
+    candidate.budgetPolicy = createBudgetPolicy("medium");
+    const result = validateScenarioBlueprintCandidate(candidate as ScenarioBlueprintCandidate, {
+      profile: TEST_PROFILE,
+      policy: createBudgetPolicy("medium"),
+    });
+    expect(result.ok ? [] : result.issues).toContainEqual(expect.objectContaining({
+      code: "MAINLINE_GENERATED_FACT_MISSING",
+      params: { factId: "fact_b" },
+    }));
   });
 });
 
@@ -499,6 +549,16 @@ describe("validateScenarioBlueprintCandidate：任务图问题并入", () => {
       path: "quests[3].objectives[0]",
       code: "UNKNOWN_OBJECTIVE_TARGET",
       params: { kind: "discover_fact", targetId: "ghost" }
+    });
+  });
+
+  it("objective 指向静态隐藏地点时拒绝不可达目标", () => {
+    const candidate = draft();
+    candidate.locations[1].kind = "hidden";
+    expect(issuesOf(candidate)).toContainEqual({
+      path: "quests[0].objectives[0]",
+      code: "HIDDEN_LOCATION_OBJECTIVE_UNREACHABLE",
+      params: { kind: "visit_location", targetId: "loc_b", locationId: "loc_b" }
     });
   });
 

@@ -36,7 +36,8 @@ export type QuestGraphIssueCode =
   | "ENDING_COUNT_MISMATCH"
   | "INVALID_MAIN_STAGE"
   | "MAIN_STAGE_OVERBUDGET"
-  | "SIDE_QUEST_OVERBUDGET";
+  | "SIDE_QUEST_OVERBUDGET"
+  | "REPEATED_MAIN_OBJECTIVE";
 
 export type QuestGraphIssue = {
   path: string;
@@ -174,6 +175,7 @@ export function validateQuestGraph(input: QuestGraphInput): readonly QuestGraphI
     });
   });
 
+  validateMainObjectiveProgression(issues, quests);
   validateStructure(issues, quests, endings, budget);
   validateReachability(issues, quests, endings);
   return issues;
@@ -237,6 +239,56 @@ function validateOutcome(
     return;
   }
   issues.push({ path, code: "INVALID_OUTCOME", params: { questId: quest.id } });
+}
+
+/**
+ * State-backed objectives are monotonic facts: once a location is visited,
+ * NPC met, item obtained, fact discovered, or enemy defeated, the same target
+ * cannot become a meaningful new gate for a later unlocked main quest. Reject
+ * duplicate kind+target signatures so a generated blueprint cannot skip whole
+ * acts through reconciliation's fixed-point loop.
+ */
+function validateMainObjectiveProgression(
+  issues: QuestGraphIssue[],
+  quests: readonly QuestDefinitionCandidate[],
+): void {
+  const seen = new Map<string, { readonly stage: number; readonly path: string }>();
+  quests
+    .map((quest, index) => ({ quest, index }))
+    .filter((entry): entry is { readonly quest: Extract<QuestDefinitionCandidate, { readonly kind: "main" }>; readonly index: number } => entry.quest.kind === "main")
+    .sort((left, right) => left.quest.stage - right.quest.stage)
+    .forEach(({ quest, index }) => {
+      quest.objectives.forEach((objective, objectiveIndex) => {
+        const signature = mainObjectiveSignature(objective);
+        const previous = seen.get(signature);
+        if (previous !== undefined) {
+          issues.push({
+            path: `quests[${index}].objectives[${objectiveIndex}]`,
+            code: "REPEATED_MAIN_OBJECTIVE",
+            params: {
+              stage: quest.stage,
+              previousStage: previous.stage,
+              signature,
+            },
+          });
+          return;
+        }
+        seen.set(signature, {
+          stage: quest.stage,
+          path: `quests[${index}].objectives[${objectiveIndex}]`,
+        });
+      });
+    });
+}
+
+function mainObjectiveSignature(objective: QuestDefinitionCandidate["objectives"][number]): string {
+  switch (objective.kind) {
+    case "visit_location": return `${objective.kind}:${objective.locationId}`;
+    case "talk_to_npc": return `${objective.kind}:${objective.npcId}`;
+    case "obtain_item": return `${objective.kind}:${objective.itemId}`;
+    case "discover_fact": return `${objective.kind}:${objective.factId}`;
+    case "defeat_enemy": return `${objective.kind}:${objective.enemyId}`;
+  }
 }
 
 /** 初始节点唯一性、主线阶段/支线预算与结局数量。 */

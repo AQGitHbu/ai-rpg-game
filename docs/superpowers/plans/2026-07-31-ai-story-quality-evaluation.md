@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - 规格唯一事实源：`docs/superpowers/specs/2026-07-31-ai-story-quality-evaluation-design.md`（approved，2026-08-01 评审修订）。任务实现与之冲突时以 spec 为准并报告。
-- 环境变量全部可选，未设置零影响：`STORY_EVAL_CAPTURE`、`STORY_EVAL_ARTIFACT_DIR`（门禁脚本专用，composition root 缺省派生 `<ISO时间戳>-<pid>`）、`RUN_REAL_AI_STORY_EVAL`、`STORY_EVAL_SEED`、`STORY_EVAL_MAX_SCENES`（默认 60）、`RUN_REAL_AI_STORY_EVAL_JUDGE`、`STORY_EVAL_JUDGE_MODEL`。
+- 环境变量全部可选，未设置零影响：`STORY_EVAL_CAPTURE`、`STORY_EVAL_ARTIFACT_DIR`（门禁脚本专用，composition root 缺省派生 `<ISO时间戳>-<pid>`）、`RUN_REAL_AI_STORY_EVAL`、`STORY_EVAL_SEED`、`STORY_EVAL_MAX_SCENES`（默认 60）、`RUN_REAL_AI_STORY_EVAL_JUDGE`。生成与评审均严格复用配置的 `AI_MODEL`，不接受模型覆盖。
 - 安全红线：不改日志脱敏、fixture 录制格式、审批红线、journey 契约；`artifacts/` 与 `tmp/` 已在 .gitignore，产物永不进 git；`AI_API_KEY` 等凭据永不落盘；真实计费调用必须显式 env 开关；采集失败静默降级，绝不抛错到游戏主流程。
 - 不修改 `@ai-game/*` foundation package（含 `.foundation/packages/ai-transport`）；不修改现有 npm 脚本的既有行为。
 - TDD：每个任务先写失败测试再实现；每个任务结束跑该任务测试 + `npm run typecheck`；涉及 composition 链的任务追加跑 `npm run test:phase10-journey`（回归：`STORY_EVAL_CAPTURE` 未设置时行为不变）。
@@ -2029,7 +2029,10 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
       // 1. pending 时确保生成并轮询到场景/战斗/结局就绪（带超时）。
       if (view.narrativeGeneration.status === "pending" || view.narrative === null) {
         await entry.ensureNarrativeGeneration();
-        const deadline = Date.now() + 60_000;
+        // 勘误（试点）：固定 60s 对真实 provider 延迟过短（单次调用最长 120s、一场景至多 3 次），
+        // 旅程会在后台任务完成前退出、测试进程退出掐死飞行中 AI 调用。改为可配
+        // STORY_EVAL_SCENE_WAIT_MS（门禁注入 420000），默认值仍为 60000 供离线 mock。
+        const deadline = Date.now() + resolveSceneWaitMs(env);
         while (Date.now() < deadline) {
           view = await getView();
           if (view.narrative !== null || view.battle !== null || view.ending !== null) break;
@@ -2436,8 +2439,12 @@ describe("Story eval journey (real AI, opt-in)", () => {
       const storyLines = readFileSync(join(artifactDir, "story.jsonl"), "utf8").trim().split("\n");
       expect(storyLines.length).toBeGreaterThan(0);
     },
-    1_800_000,
-  );
+      1_800_000,
+      // 勘误（试点）：固定 30 分钟 vitest 超时会在旅程未收敛时直接掐死测试进程，
+      // manifest 丢失、无法区分"未收敛"与"管线故障"。改为旅程自身总预算
+      // STORY_EVAL_TOTAL_BUDGET_MS（默认 90 分钟）优雅收尾记 time_budget，
+      // vitest 超时 = 预算 + 10 分钟余量（见实现文件）。
+    );
 });
 ```
 
@@ -3265,7 +3272,7 @@ Expected: FAIL（模块不存在）
 // 量表文本唯一事实源：docs/策划文档/AI内容质量评估标准.md（脚本只读，不内嵌）。
 // 输出强制 JSON，本地解析 + 一次重试；仍失败记 null，不编分。
 // 门禁：RUN_REAL_AI_STORY_EVAL_JUDGE=1 才调用；模型默认 AI_MODEL，
-// STORY_EVAL_JUDGE_MODEL 可覆盖；复用 AI_API_BASE_URL/AI_API_KEY。
+// 评审严格复用 AI_MODEL；复用 AI_API_BASE_URL/AI_API_KEY。
 // ---------------------------------------------------------------------------
 
 import { resolve } from "node:path";
@@ -3533,7 +3540,7 @@ export async function main({ argv, env, fs, log, fetchImpl = fetch }) {
   }
   const baseUrl = env.AI_API_BASE_URL;
   const apiKey = env.AI_API_KEY;
-  const model = env.STORY_EVAL_JUDGE_MODEL ?? env.AI_MODEL;
+  const model = env.AI_MODEL;
   if (baseUrl === undefined || apiKey === undefined || model === undefined) {
     log("[story-eval-judge] JUDGE_AI_ENV_INVALID");
     return 1;
@@ -3760,7 +3767,7 @@ sink（缺省目录 `artifacts/story-eval/run-<ISO 时间戳>-<pid>`，`STORY_EV
 
 ## 基线流程
 
-先选 1 个固定 case 跑两种策略与成对分支，完成 completeness、analyze、judge 及人工/异模型校准 → 校准通过后完成其余 5 个 case 的两种策略（共 12 条主旅程）→
+先选 1 个固定 case 跑两种策略与成对分支，完成 completeness、analyze、judge 及人工校准 → 校准通过后完成其余 5 个 case 的两种策略（共 12 条主旅程）→
 汇总为基线 v2（`artifacts/story-eval/baseline-v2/report.md`，工作产物）；持久基线回填
 `docs/策划文档/AI内容质量评估标准.md` 的分数表、客观指标摘要和校准结果。基线是描述性快照，不是及格线。
 
@@ -3768,12 +3775,12 @@ sink（缺省目录 `artifacts/story-eval/run-<ISO 时间戳>-<pid>`，`STORY_EV
 
 STORY_EVAL_CAPTURE（服务端装配开关，浏览器手玩采集需在启动 dev server 的 shell 中临时设置）、
 STORY_EVAL_ARTIFACT_DIR（门禁脚本注入）、RUN_REAL_AI_STORY_EVAL、STORY_EVAL_SEED、
-STORY_EVAL_MAX_SCENES（默认 60）、RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL_JUDGE_MODEL。
+STORY_EVAL_MAX_SCENES（默认 60）、RUN_REAL_AI_STORY_EVAL_JUDGE；评审严格复用 AI_MODEL。
 
 ## 已知发现（基线阶段只记录不修）
 
 - writer 选项文案被规则文案替换后才展示：若 C3 基线分低，改 prompt 无效，需改规则文案或放开 writer 文案。
-- 同模型评审自身产物存在自我偏袒风险：由人工抽查校准；偏袒明显时设 STORY_EVAL_JUDGE_MODEL 为独立模型。
+- 同模型评审自身产物存在自我偏袒风险：由人工抽查校准；评审固定使用配置模型，不切换模型。
 ```
 
 - [ ] **Step 3: 更新文档索引与环境变量示例**
@@ -3801,7 +3808,7 @@ STORY_EVAL_MAX_SCENES（默认 60）、RUN_REAL_AI_STORY_EVAL_JUDGE、STORY_EVAL
 # STORY_EVAL_SEED=20260731
 # STORY_EVAL_MAX_SCENES=60
 # RUN_REAL_AI_STORY_EVAL_JUDGE=1
-# STORY_EVAL_JUDGE_MODEL=ai-model-name
+# 评审复用 AI_MODEL，不配置独立模型名
 ```
 
 - [ ] **Step 4: 验证**
@@ -4026,11 +4033,11 @@ Run: `node --test scripts/storyEvalAnalyze.node-test.mjs scripts/storyEvalJudge.
 
 Expected: PASS。
 
-量表 v2 已由 Task 12 创建（含 S9、S4 公式）。本步骤补充：C1 身份/关系口径与证据包要求、C2 前序/memory 证据要求、实体漏斗与选择漏斗的完整定义。更新 agent 文档，明确 `incomplete` 产物不能产生基线分数、12 条主旅程与人工/异模型校准流程。
+量表 v2 已由 Task 12 创建（含 S9、S4 公式）。本步骤补充：C1 身份/关系口径与证据包要求、C2 前序/memory 证据要求、实体漏斗与选择漏斗的完整定义。更新 agent 文档，明确 `incomplete` 产物不能产生基线分数、12 条主旅程与人工校准流程。
 
 - [ ] **Step 8: 校准与真实基线验收（需用户逐步确认）**
 
-先只运行一个 case 的两种策略和分支：`RUN_REAL_AI_STORY_EVAL=1 npm run smoke:ai:story-eval -- --case=<caseId>`；完整性校验和 analyze 通过后，执行 judge。两位人工评审独立复核固定高/中/低分证据包，并由不同模型系列复评；分歧 >1 分、无证据或 artifact incomplete 时回到本任务修正，不能补录分数。
+先只运行一个 case 的两种策略和分支：`RUN_REAL_AI_STORY_EVAL=1 npm run smoke:ai:story-eval -- --case=<caseId>`；完整性校验和 analyze 通过后，执行 judge。两位人工评审独立复核固定高/中/低分证据包；分歧 >1 分、无证据或 artifact incomplete 时回到本任务修正，不能补录分数。
 
 校准通过后，用户再次确认才执行其余 case。门禁按固定顺序展开 6 × 2 个 `StoryEvalRun`；`--case` 时只展开指定 case，`--runs` 只能在该 case 内重复策略运行，不得让不同 case 共用 seed 或 artifact 目录。完成 12 条主旅程后按 `caseId × strategy` 配对报告均值、中位数、最差值、空值率和模型配置；报告只说明该评测集与模型配置下的质量，不作无依据的全局结论。
 

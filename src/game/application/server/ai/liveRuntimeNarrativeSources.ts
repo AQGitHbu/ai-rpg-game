@@ -2,13 +2,27 @@ import type { AiMessage, AiTransport, AiTransportConfig, AiTransportFailureCode 
 import type { DirectorProposal, NpcPerformanceProposal, SceneScriptProposal } from "@/game/gameplay/rpg/narrative";
 import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
 import { NARRATIVE_CONTRACT_VERSION, type DirectorAttempt, type DirectorRequest, type DirectorSource, type NarrativeFailureCategory, type NpcLineAttempt, type NpcLineRequest, type NpcLineSource, type SceneScriptAttempt, type SceneScriptRequest, type SceneScriptSource } from "../../runtimeNarrative";
+import type { StoryEvalSink } from "../../storyEvalCaptureTypes";
 
-type Role = "director" | "writer" | "npc";
+export type Role = "director" | "writer" | "npc";
 type Request = DirectorRequest | SceneScriptRequest | NpcLineRequest;
 const category: Record<AiTransportFailureCode, NarrativeFailureCategory> = { timeout: "timeout", rate_limited: "rate_limited", empty_response: "empty_response", service_error: "service_error", network_error: "service_error", http_error: "service_error", invalid_response: "service_error", aborted: "service_error", invalid_config: "service_error" };
 
+export type LiveRuntimeNarrativeSourcesOptions = Readonly<{
+  transport: AiTransport;
+  config: AiTransportConfig;
+  responseFormat?: (role: Role) => Readonly<Record<string, unknown>> | undefined;
+  logger?: GameLogger;
+  /** Task 2：评估采集回调——prompt 与模型原文只在本模块内部可见，仅此处可捕获。 */
+  captureSink?: StoryEvalSink;
+  /** 评估专用 provider 超时；未传时保持正常运行时的 120 秒。 */
+  timeoutMs?: number;
+  /** provider extended reasoning；默认关闭，按角色显式开启。 */
+  thinkingRoles?: readonly Role[];
+}>;
+
 /** Three separate sources and requests; each builder receives only its already-projected context. */
-export function createLiveRuntimeNarrativeSources(input: Readonly<{ transport: AiTransport; config: AiTransportConfig; responseFormat?: (role: Role) => Readonly<Record<string, unknown>> | undefined; logger?: GameLogger }>): Readonly<{ directorSource: DirectorSource; sceneScriptSource: SceneScriptSource; npcLineSource: NpcLineSource }> {
+export function createLiveRuntimeNarrativeSources(input: LiveRuntimeNarrativeSourcesOptions): Readonly<{ directorSource: DirectorSource; sceneScriptSource: SceneScriptSource; npcLineSource: NpcLineSource }> {
   return {
     directorSource: { generate: async (request) => run<DirectorProposal, DirectorAttempt>("director", request, input, "plan") },
     sceneScriptSource: { generate: async (request) => run<SceneScriptProposal, SceneScriptAttempt>("writer", request, input, "script") },
@@ -16,18 +30,70 @@ export function createLiveRuntimeNarrativeSources(input: Readonly<{ transport: A
   };
 }
 
-async function run<T extends object, A>(role: Role, request: Request, input: { transport: AiTransport; config: AiTransportConfig; responseFormat?: (role: Role) => Readonly<Record<string, unknown>> | undefined; logger?: GameLogger }, field: "plan" | "script" | "performance"): Promise<A> {
+/** 编排层构造的 request.traceId 角色后缀（orchestrateNarrativeScene）：writer 用 -script、npc 用 -npcLine。 */
+const TRACE_ROLE_SUFFIX: Readonly<Record<Role, string>> = {
+  director: "-director",
+  writer: "-script",
+  npc: "-npcLine",
+};
+
+/** 归一化为场景级 traceId：去掉 -retry 与角色后缀——与编排层审批事件共用关联键（spec §6.1）。 */
+function sceneTraceIdOf(role: Role, requestTraceId: string): string {
+  let id = requestTraceId;
+  while (id.endsWith("-retry")) id = id.slice(0, -"-retry".length);
+  if (id.endsWith(TRACE_ROLE_SUFFIX[role])) id = id.slice(0, -TRACE_ROLE_SUFFIX[role].length);
+  return id;
+}
+
+/** 同场景同角色 1-based 尝试序号：request.traceId 中 -retry 出现次数 + 1（无全局状态，跨场景不泄漏）。 */
+function attemptOf(requestTraceId: string): number {
+  let count = 1;
+  let index = requestTraceId.indexOf("-retry");
+  while (index !== -1) {
+    count += 1;
+    index = requestTraceId.indexOf("-retry", index + 1);
+  }
+  return count;
+}
+
+async function run<T extends object, A>(role: Role, request: Request, input: LiveRuntimeNarrativeSourcesOptions, field: "plan" | "script" | "performance"): Promise<A> {
   const startedAt = Date.now();
   const logger = input.logger ?? NOOP_GAME_LOGGER;
+  const attempt = attemptOf(request.traceId);
+  const capture = (outcome: Readonly<{ rawResponse: string | null; parsedCandidate: Record<string, unknown> | null; failureCategory: NarrativeFailureCategory | null }>) => {
+    try {
+      input.captureSink?.append({
+        kind: "ai_call",
+        role,
+        traceId: sceneTraceIdOf(role, request.traceId),
+        attempt,
+        messages: messages(role, request),
+        rawResponse: outcome.rawResponse,
+        parsedCandidate: outcome.parsedCandidate,
+        failureCategory: outcome.failureCategory,
+        latencyMs: Date.now() - startedAt,
+      });
+    } catch { /* 采集失败绝不抛到游戏主流程 */ }
+  };
   let completed;
-  // This provider disables extended reasoning through enable_thinking. Output
-  // shape remains prompt-directed and is always locally parsed and approved.
-  try { completed = await input.transport.complete(input.config, messages(role, request), { extraBody: { enable_thinking: false, ...input.responseFormat?.(role) }, temperature: 0.2, timeoutMs: 120_000 }); } catch { audit(logger, request.traceId, role, false, "service_error", Date.now() - startedAt); return failure(request, "service_error") as A; }
-  if (!completed.ok) { audit(logger, request.traceId, role, false, category[completed.code], completed.latencyMs); return failure(request, category[completed.code]) as A; }
+  // Output shape remains prompt-directed and is always locally parsed and approved.
+  const enableThinking = input.thinkingRoles?.includes(role) ?? false;
+  try {
+    completed = await input.transport.complete(input.config, messages(role, request), {
+      extraBody: {
+        chat_template_kwargs: { enable_thinking: enableThinking },
+        ...input.responseFormat?.(role),
+      },
+      temperature: 0.2,
+      timeoutMs: input.timeoutMs ?? 120_000,
+    });
+  } catch { audit(logger, request.traceId, role, false, "service_error", Date.now() - startedAt); capture({ rawResponse: null, parsedCandidate: null, failureCategory: "service_error" }); return failure(request, "service_error") as A; }
+  if (!completed.ok) { const failedCategory = category[completed.code]; audit(logger, request.traceId, role, false, failedCategory, completed.latencyMs); capture({ rawResponse: (completed as { content?: string }).content ?? null, parsedCandidate: null, failureCategory: failedCategory }); return failure(request, failedCategory) as A; }
   const payload = parseObject(completed.content);
-  if (payload === null) { const failureCategory = completed.content.trim() === "" ? "empty_response" : "invalid_json"; audit(logger, request.traceId, role, false, failureCategory, completed.latencyMs); return failure(request, failureCategory) as A; }
+  if (payload === null) { const failureCategory = completed.content.trim() === "" ? "empty_response" : "invalid_json"; audit(logger, request.traceId, role, false, failureCategory, completed.latencyMs); capture({ rawResponse: completed.content, parsedCandidate: null, failureCategory }); return failure(request, failureCategory) as A; }
   const repaired = repairRuntimeNarrativeReferences(role, payload, request.context);
   audit(logger, request.traceId, role, true, undefined, completed.latencyMs);
+  capture({ rawResponse: completed.content, parsedCandidate: repaired, failureCategory: null });
   return { ok: true, provenance: "generated", [field]: repaired as T, diagnostics: { traceId: request.traceId, contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" } } as A;
 }
 
@@ -77,7 +143,11 @@ export function repairRuntimeNarrativeReferences(
     const preferred = typeof context.coverageTargetActionKey === "string" &&
       candidateKeys.includes(context.coverageTargetActionKey)
       ? context.coverageTargetActionKey
-      : undefined;
+      : typeof context.activeMainObjective === "object" && context.activeMainObjective !== null &&
+          typeof (context.activeMainObjective as Record<string, unknown>).suggestedActionKey === "string" &&
+          candidateKeys.includes((context.activeMainObjective as Record<string, unknown>).suggestedActionKey as string)
+        ? (context.activeMainObjective as Record<string, unknown>).suggestedActionKey as string
+        : undefined;
     const first = preferred ?? proposed[0] ?? candidateKeys[0];
     const second = proposed.find((key) => key !== first) ??
       candidateKeys.find((key) => key !== first);
@@ -98,6 +168,15 @@ export function repairRuntimeNarrativeReferences(
       presentNpcIds.includes(payload.focusNpcId)
       ? payload.focusNpcId
       : null;
+    const relevantFactIds = filterFacts(payload.relevantFactIds);
+    const requestedAllowedRevealFactIds = filterFacts(payload.allowedRevealFactIds);
+    // relevantFactIds is the Director's narrative anchor.  If the model names
+    // an anchor but forgets to copy it into the writer permission list, repair
+    // the handoff from the same discovered-only set.  This does not expose a
+    // hidden fact and the normal approval layer still validates every ID.
+    const allowedRevealFactIds = Array.isArray(relevantFactIds) && relevantFactIds.length > 0
+      ? relevantFactIds
+      : requestedAllowedRevealFactIds;
     return {
       ...payload,
       ...(first !== undefined && second !== undefined
@@ -106,8 +185,8 @@ export function repairRuntimeNarrativeReferences(
       focusNpcId: targetNpc !== undefined && presentNpcIds.includes(targetNpc)
         ? targetNpc
         : proposedFocus,
-      relevantFactIds: filterFacts(payload.relevantFactIds),
-      allowedRevealFactIds: filterFacts(payload.allowedRevealFactIds),
+      relevantFactIds,
+      allowedRevealFactIds,
       introducedEntities: [],
       proposedNewLocations: repairLocationProposals(payload.proposedNewLocations),
       proposedNewNpcs: repairNpcProposals(payload.proposedNewNpcs),
@@ -157,6 +236,9 @@ export function repairRuntimeNarrativeReferences(
     const npcProfile = typeof context.npcProfile === "object" && context.npcProfile !== null
       ? context.npcProfile as Record<string, unknown>
       : null;
+    const npcKnownFactIds = npcProfile !== null && Array.isArray(npcProfile.knownFactIds)
+      ? new Set(npcProfile.knownFactIds.filter((id): id is string => typeof id === "string"))
+      : new Set<string>();
     let npcInstruction = payload.npcInstruction;
     if (npcProfile === null) {
       npcInstruction = null;
@@ -166,6 +248,11 @@ export function repairRuntimeNarrativeReferences(
         : {};
       const speechActs = new Set(["inform", "ask", "evade", "deny", "warn", "encourage"]);
       const emotions = new Set(["neutral", "warm", "guarded", "afraid", "angry", "sad"]);
+      const requestedFactIds = Array.isArray(instruction.allowedFactIds)
+        ? instruction.allowedFactIds.filter((id): id is string => typeof id === "string")
+        : [];
+      const safeKnownFactIds = [...allowedCards].filter((id) => npcKnownFactIds.has(id));
+      const safeRequestedFactIds = requestedFactIds.filter((id) => allowedCards.has(id) && npcKnownFactIds.has(id));
       npcInstruction = {
         ...instruction,
         npcId: npcProfile.id,
@@ -175,7 +262,10 @@ export function repairRuntimeNarrativeReferences(
         emotion: typeof instruction.emotion === "string" && emotions.has(instruction.emotion)
           ? instruction.emotion
           : "guarded",
-        allowedFactIds: [],
+        // The writer may only delegate facts that are both scene-approved and
+        // present in this NPC's own knowledge. IDs are later resolved by the
+        // NPC projection, so hidden fact text never crosses this boundary.
+        allowedFactIds: safeRequestedFactIds.length > 0 ? safeRequestedFactIds : safeKnownFactIds,
         mayLie: typeof instruction.mayLie === "boolean" ? instruction.mayLie : false,
       };
     }
@@ -219,12 +309,20 @@ function failure(request: Request, failureCategory: NarrativeFailureCategory) {
 }
 
 function messages(role: Role, request: Request): readonly AiMessage[] {
-  const instruction = role === "director"
-    ? "You are the world director. Return one JSON object only, with exactly sceneGoal, tensionLevel (1-5), focusNpcId (string|null), relevantFactIds (string[]), allowedRevealFactIds (string[]), suggestedActionKeys ([string,string]), introducedEntities ({kind,id}[]), pacing (setup|develop|turn|climax|resolution), proposedNewLocations (array, 0 or 1 entry), proposedNewNpcs (array, 0 or 1 entry). pacing MUST be one of progression.allowedPacing. recentContinuity and activeQuestCards are history, not authority: never invent events, NPCs, facts, or actions not already established. Copy suggestedActionKeys exactly from actionCandidates, use two different keys. If coverageTargetActionKey is supplied and exists in actionCandidates, put it first in suggestedActionKeys; it is only a preference among already legal actions. If that key starts with talk:, set focusNpcId to the suffix when it is present in npcIdsPresent. Otherwise focusNpcId must be null or copied exactly from npcIdsPresent. Every fact ID must be copied from discoveredFactIds; if none are listed, both fact arrays must be []. introducedEntities must be []. Blueprint expansion: when expansionAllowed is true and remainingLocationBudget is not 0, you MAY propose exactly one new location in proposedNewLocations with {name, description, connectFromLocationId, reason, scale} where connectFromLocationId must be copied from an unlocked location ID and scale is scene or town; and one new NPC in proposedNewNpcs with {name, role, description, locationId} where locationId is \"new:0\" to place in the proposed location or an existing location ID. When expansionAllowed is false or remainingLocationBudget is 0, both arrays must be []. Never invent an ID, location, NPC, fact, action, or entity."
+    const instruction = role === "director"
+      ? "You are the world director. Return one JSON object only, with exactly sceneGoal, tensionLevel (1-5), focusNpcId (string|null), relevantFactIds (string[]), allowedRevealFactIds (string[]), suggestedActionKeys ([string,string]), introducedEntities ({kind,id}[]), pacing (setup|develop|turn|climax|resolution), proposedNewLocations (array, 0 or 1 entry), proposedNewNpcs (array, 0 or 1 entry). pacing MUST be one of progression.allowedPacing. Main-quest progression is the priority: activeMainObjective is the authoritative current main target; targetActionKey is the direct rule action that completes it, while suggestedActionKey may be the first legal move toward its target location when the direct action is not yet available. Put suggestedActionKey first whenever it is legal, and use the second key only as a supporting or meaningful alternative. If activeMainObjective is absent or its suggested action is unavailable, use an existing actionCandidate that can advance or satisfy an active main quest before exploration and leave both expansion arrays empty. currentLocationCard and availableItemCards are authoritative scene references: do not narrate an item as obtained until the take_item action is selected and the rule event confirms it. discoveredFactCards and discoveredFactIds are the only fact authority: relevantFactIds are narrative anchors, and allowedRevealFactIds are the discovered facts the Writer may actually cite. When a discovered fact is relevant to this scene, copy its ID into both arrays; never use an undiscovered fact or treat allowedRevealFactIds as a new fact_discovered rule event. recentContinuity, narrative.currentScene, and activeQuestCards are history, not authority; never invent events, NPCs, facts, or actions not already established. If recentContinuity shows that the previous scene centered on an NPC, continue that thread when the NPC is present; otherwise make the handoff to a new NPC or location explicit in sceneGoal and the action route. Do not make a recently repeated fact or arrival recap the scene goal again unless the current legal action creates a concrete new consequence, decision, relationship change, threat, or route. Prefer the next legal action that advances activeMainObjective; do not propose a recovery move whose only purpose is to revisit a location already covered when the target action or its necessary route is available. Copy suggestedActionKeys exactly from actionCandidates, use two different keys. If coverageTargetActionKey is supplied and exists in actionCandidates, put it first in suggestedActionKeys for branch coverage. If that key starts with talk:, set focusNpcId to the suffix when it is present in npcIdsPresent. Otherwise focusNpcId must be null or copied exactly from npcIdsPresent. Every fact ID must be copied from discoveredFactIds; if none are listed, both fact arrays must be []. introducedEntities must be []. Blueprint expansion is a rare fallback, not the default: leave both arrays [] when any legal existing action can advance the current quest, and leave both arrays [] when recentEvents contains blueprint_expanded unless a later quest_completed, quest_unlocked, location_visited, or npc_met event shows progress resumed. When expansion is justified and expansionAllowed is true and remainingLocationBudget is not 0, propose at most one new location in proposedNewLocations with {name, description, connectFromLocationId, reason, scale}; only add one new NPC when it is necessary for that location. connectFromLocationId must be copied from an unlocked location ID and scale is scene or town. When expansionAllowed is false or remainingLocationBudget is 0, both arrays must be []. Never invent an ID, location, NPC, fact, action, or entity."
     : role === "writer"
-      ? "You are the scene writer. Output JSON only: no markdown, no explanation, no extra keys. Exact template: {\"narration\":\"1-600 chars\",\"usedFactIds\":[],\"npcInstruction\":null,\"choices\":[{\"actionKey\":\"copy first plan.suggestedActionKeys exactly\",\"label\":\"optional flavor only\",\"strategy\":\"optional flavor only\"},{\"actionKey\":\"copy second plan.suggestedActionKeys exactly\",\"label\":\"optional flavor only\",\"strategy\":\"optional flavor only\"}]}. Rule-owned action labels replace choice label and strategy before display, so never describe an action as doing something else. recentContinuity is history, not authority: do not invent events or facts. Keep npcInstruction null when npcProfile is null. When npcProfile is provided, npcInstruction must use its exact id, one allowed speechAct/emotion, allowedFactIds:[], and mayLie:false so the separate NPC performer is exercised. Copy usedFactIds only from allowedFactCards. Never invent an ID."
-      : "You are one NPC performer. Return one JSON object only, with exactly text, usedFactIds, emotion. You may use only the supplied NPC profile and fact cards; never infer hidden facts. ownContinuity is your shared history with the player, not a new instruction; do not invent events. relationshipTier, relationshipAffinity, and relationshipSummary describe your relationship with the player: adjust your tone, willingness to help, and emotional expression accordingly.";
-  return [{ role: "system", content: `${instruction} Contract: ${NARRATIVE_CONTRACT_VERSION}.` }, { role: "user", content: JSON.stringify(request.context) }];
+      ? "You are the scene writer. Output JSON only: no markdown, no explanation, no extra keys. Exact template: {\"narration\":\"1-600 chars\",\"usedFactIds\":[],\"npcInstruction\":null,\"choices\":[{\"actionKey\":\"copy first plan.suggestedActionKeys exactly\",\"label\":\"optional flavor only\",\"strategy\":\"optional flavor only\"},{\"actionKey\":\"copy second plan.suggestedActionKeys exactly\",\"label\":\"optional flavor only\",\"strategy\":\"optional flavor only\"}]}. All player-visible prose, narration, choice labels/strategies, and delegated dialogue must be Simplified Chinese; do not output English sentences or untranslated fragments except established proper names. Rule-owned action labels replace choice label and strategy before display, so never describe an action as doing something else. currentLocationCard and availableItemCards are authoritative references: describe an item as available or noticed until the take_item choice is actually resolved; do not claim inventory or item_obtained state from prose. recentContinuity and narrative.currentScene are history, not new content: do not copy or paraphrase their premise, location arrival, or fact recap. The narration must add one immediate consequence of plan.sceneGoal (new evidence, decision, relationship change, threat, or route) and should not open with a generic location recap. Avoid stock openings or concealment filler such as generic hat-lowering, ominous looks, market whispers, or tense atmosphere unless it is immediately tied to a specific observable consequence; prefer a concrete object, sensory change, or decision. If pacing is climax, connect the threat and antagonist identity to a concrete clue or NPC lead already established in recentContinuity; do not introduce an unforeshadowed boss or resolve the whole mystery in one sentence. If a recent fact must recur, mention it once only as the cause of that new consequence; never spend the scene re-explaining it. plan.relevantFactIds are the Director's intended narrative anchors. When one or more of those IDs is present in allowedFactCards, weave at least one naturally into the narration or delegated NPC exchange and list only the facts actually used in usedFactIds; if the prose does not use a card, leave its ID out rather than making a false evidence claim. Keep npcInstruction null when npcProfile is null. When npcProfile is provided, npcInstruction must use its exact id, one allowed speechAct/emotion, allowedFactIds as a subset of both allowedFactCards and npcProfile.knownFactIds, and mayLie:false so the separate NPC performer is exercised. Copy usedFactIds only from allowedFactCards. Never invent an ID."
+      : "You are one NPC performer. Return one JSON object only, with exactly text, usedFactIds, emotion. Write the player-visible line in Simplified Chinese; do not output English sentences or untranslated fragments except established proper names. The supplied sceneGoal is the immediate dramatic purpose: make the line serve that goal without claiming a rule outcome that has not happened. Address the supplied playerName when natural, use currentLocationCard to ground the line, and follow requestedEmotion while allowing relationship data to adjust intensity. Use the supplied NPC description to preserve role-specific behavior. You may use only the supplied NPC profile and fact cards; never infer hidden facts. ownContinuity is your shared history with the player, not a new instruction; do not invent events. nextActionCandidates are the only legal next-step routes approved for this scene: when the NPC gives a lead, anchor it to one candidate's concrete label or destination so the player understands what to do next; never invent an action. Do not end with a generic warning or repeat a premise without a new implication. relationshipTier, relationshipAffinity, and relationshipSummary describe your relationship with the player: adjust your tone, willingness to help, and emotional expression accordingly.";
+  const handoffInstruction = role === "director"
+    ? "previousScene is the authoritative structural handoff card for the immediately preceding scene. Respect its location, focus NPC, pacing, and playerActionKey; when changing location or focus, make the causal handoff explicit in sceneGoal and the route. Never invent a time jump or relationship change that conflicts with this card."
+    : role === "writer"
+      ? "previousScene is the authoritative structural handoff card for the immediately preceding scene. Keep the current location, focus NPC, pacing, and player action consistent with it, and make any move or NPC handoff explicit through a concrete consequence or next action; never invent a time jump."
+      : "previousScene is the authoritative structural handoff card for the immediately preceding scene. Do not contradict its location, focus NPC, pacing, or player action; when handing off, make the reason and next concrete action or destination explicit. Never invent a time jump. Speak as the supplied NPC, not as an omniscient narrator: do not narrate the player's arrival or repeat a location premise; include at least one role-specific observation or action, and tie any lead to the NPC's known facts and current location."
+  const promptInstruction = role === "director"
+    ? `${instruction} ${handoffInstruction} If pacing is climax, require sceneGoal to name the established clue, NPC lead, or threat that makes the confrontation inevitable; do not introduce an unforeshadowed antagonist or unsupported final reveal.`
+    : `${instruction} ${handoffInstruction}`;
+  return [{ role: "system", content: `${promptInstruction} Contract: ${NARRATIVE_CONTRACT_VERSION}.` }, { role: "user", content: JSON.stringify(request.context) }];
 }
 
 function parseObject(content: string): Record<string, unknown> | null {
@@ -232,10 +330,13 @@ function parseObject(content: string): Record<string, unknown> | null {
   const fenced = /^```(?:json)?\s*\n?([\s\S]*?)\s*```$/i.exec(trimmed)?.[1];
   const candidates = [trimmed, fenced].filter((value): value is string => value !== undefined);
   for (const text of candidates) {
-    try {
-      const parsed: unknown = JSON.parse(text);
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
-    } catch { /* local approval reports stable invalid_json; never expose model text */ }
+    for (const candidate of [text, text.includes("\\\"") ? text.replaceAll("\\\"", "\"") : undefined]) {
+      if (candidate === undefined) continue;
+      try {
+        const parsed: unknown = JSON.parse(candidate);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+      } catch { /* local approval reports stable invalid_json; never expose model text */ }
+    }
   }
   return null;
 }

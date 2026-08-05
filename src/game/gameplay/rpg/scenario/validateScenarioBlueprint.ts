@@ -63,10 +63,15 @@ export type ScenarioBlueprintIssueCode =
   | "OPENING_NPC_NOT_AT_LOCATION"
   | "OPENING_SCENE_NO_INVESTIGABLE_FACTS"
   | "DUPLICATE_INVESTIGABLE_FACT"
+  | "HIDDEN_LOCATION_OBJECTIVE_UNREACHABLE"
   | "FORBIDDEN_TAG"
   | "INVALID_ITEM_PRESENTATION"
   | "INVALID_LOCATION_SCALE"
   | "TOWN_LOCATION_OVERBUDGET"
+  | "REPEATED_MAIN_QUEST_DESCRIPTION"
+  | "REPEATED_MAIN_QUEST_DESCRIPTION_FRAGMENT"
+  | "UNANCHORED_GENERATED_FACT"
+  | "MAINLINE_GENERATED_FACT_MISSING"
   | "OUT_OF_RANGE";
 
 export type ScenarioBlueprintIssue = {
@@ -102,8 +107,10 @@ export function validateScenarioBlueprintCandidate(
   validateBudgetCounts(issues, candidate, context.policy);
   validateGlobalIdUniqueness(issues, candidate);
   validateReferences(issues, candidate);
+  validateGeneratedFactAnchors(issues, candidate, context.policy);
   validateAvailableItems(issues, candidate);
   validateOpeningScene(issues, candidate);
+  validateHiddenLocationObjectives(issues, candidate);
   // 任务 objective/outcome 引用、主线阶段、支线/结局预算与可达性全部委托任务图校验。
   issues.push(
     ...validateQuestGraph({
@@ -117,9 +124,173 @@ export function validateScenarioBlueprintCandidate(
   validateForbiddenTags(issues, candidate, context.profile);
   validateItemPresentationMetadata(issues, candidate);
   validateLocationScales(issues, candidate, context.policy);
+  validateMainQuestDescriptionDensity(issues, candidate);
 
   if (issues.length > 0) return { ok: false, issues };
   return { ok: true, validated: candidate as ValidatedScenarioBlueprintCandidate };
+}
+
+/**
+ * 静态蓝图中的 hidden 地点不会进入初始 unlockedLocationIds，且当前规则
+ * 没有“发现地点”以外的解锁事件。任务若直接要求访问隐藏地点，或要求在
+ * 隐藏地点上的 NPC/物品/敌人上完成目标，就会形成不可执行的主线死循环：
+ * Director 只能反复给出相邻地点，玩家永远无法满足 objective。拒绝这类
+ * 候选，让 scenario retry/fallback 选择一条规则可达的主线。
+ */
+function validateHiddenLocationObjectives(
+  issues: ScenarioBlueprintIssue[],
+  candidate: ScenarioBlueprintCandidate,
+): void {
+  const hiddenLocationIds = new Set(
+    candidate.locations.filter((location) => location.kind === "hidden").map((location) => location.id),
+  );
+  if (hiddenLocationIds.size === 0) return;
+
+  const locationOfNpc = new Map(candidate.npcs.map((npc) => [npc.id, npc.locationId]));
+  const locationOfItem = new Map(
+    candidate.locations.flatMap((location) => location.availableItemIds.map((itemId) => [itemId, location.id] as const)),
+  );
+  const locationOfEnemy = new Map(candidate.enemies.map((enemy) => [enemy.id, enemy.locationId]));
+
+  candidate.quests.forEach((quest, questIndex) => {
+    quest.objectives.forEach((objective, objectiveIndex) => {
+      const targetLocationId = objective.kind === "visit_location"
+        ? objective.locationId
+        : objective.kind === "talk_to_npc"
+          ? locationOfNpc.get(objective.npcId)
+          : objective.kind === "obtain_item"
+            ? locationOfItem.get(objective.itemId)
+            : objective.kind === "defeat_enemy"
+              ? locationOfEnemy.get(objective.enemyId)
+              : undefined;
+      if (targetLocationId === undefined || !hiddenLocationIds.has(targetLocationId)) return;
+      const targetId = objective.kind === "visit_location"
+        ? objective.locationId
+        : objective.kind === "talk_to_npc"
+          ? objective.npcId
+          : objective.kind === "obtain_item"
+            ? objective.itemId
+            : objective.kind === "defeat_enemy"
+              ? objective.enemyId
+              : targetLocationId;
+      issues.push({
+        path: `quests[${questIndex}].objectives[${objectiveIndex}]`,
+        code: "HIDDEN_LOCATION_OBJECTIVE_UNREACHABLE",
+        params: { kind: objective.kind, targetId, locationId: targetLocationId },
+      });
+    });
+  });
+}
+
+/**
+ * Generated facts are only useful when the rules or a known NPC can surface
+ * them. Keep player-input facts permissive, but reject generated orphan facts
+ * and require medium/long mainlines to carry every generated fact as a
+ * discover_fact objective.
+ */
+function validateGeneratedFactAnchors(
+  issues: ScenarioBlueprintIssue[],
+  candidate: ScenarioBlueprintCandidate,
+  policy: BudgetPolicy,
+): void {
+  const anchored = new Set<string>(candidate.openingScene.investigableFactIds ?? []);
+  for (const npc of candidate.npcs) {
+    for (const factId of npc.knownFactIds ?? []) anchored.add(factId);
+  }
+  for (const quest of candidate.quests) {
+    for (const objective of quest.objectives ?? []) {
+      if (objective.kind === "discover_fact") anchored.add(objective.factId);
+    }
+  }
+  for (const ending of candidate.endings) {
+    for (const requirement of ending.requirements ?? []) {
+      if (requirement.kind === "fact_discovered") anchored.add(requirement.factId);
+    }
+  }
+
+  for (const [index, fact] of candidate.world.facts.entries()) {
+    if (fact.source === "generated" && !anchored.has(fact.id)) {
+      issues.push({
+        path: `world.facts[${index}]`,
+        code: "UNANCHORED_GENERATED_FACT",
+        params: { factId: fact.id },
+      });
+    }
+  }
+
+  const generatedFactIds = candidate.world.facts
+    .filter((fact) => fact.source === "generated")
+    .map((fact) => fact.id);
+  const mainlineGeneratedFactIds = new Set(
+    candidate.quests
+      .filter((quest) => quest.kind === "main")
+      .flatMap((quest) => quest.objectives ?? [])
+      .filter((objective): objective is Extract<typeof objective, { kind: "discover_fact" }> => objective.kind === "discover_fact")
+      .map((objective) => objective.factId)
+  );
+  if (policy.mainActs >= 5) {
+    for (const factId of generatedFactIds) {
+      if (!mainlineGeneratedFactIds.has(factId)) {
+        issues.push({ path: "quests", code: "MAINLINE_GENERATED_FACT_MISSING", params: { factId } });
+      }
+    }
+  }
+}
+
+/**
+ * 主线阶段是玩家理解推进的最小语义单位。完全复用同一段非空描述会让
+ * 不同 objective 看起来像同一幕，尤其会掩盖 AI 候选把阶段目标复制粘贴的
+ * 情况。只比较规范化后的完整描述，保留空描述的旧候选兼容性。
+ */
+function validateMainQuestDescriptionDensity(
+  issues: ScenarioBlueprintIssue[],
+  candidate: ScenarioBlueprintCandidate,
+): void {
+  const firstByDescription = new Map<string, number>();
+  candidate.quests
+    .filter((quest) => quest.kind === "main")
+    .forEach((quest) => {
+      const description = quest.description.trim();
+      if (description === "") return;
+      const firstStage = firstByDescription.get(description);
+      if (firstStage !== undefined) {
+        const index = candidate.quests.findIndex((entry) => entry.id === quest.id);
+        issues.push({
+          path: `quests[${index}].description`,
+          code: "REPEATED_MAIN_QUEST_DESCRIPTION",
+          params: { firstStage, stage: quest.stage },
+        });
+        return;
+      }
+      firstByDescription.set(description, quest.stage);
+    });
+
+  const firstByFragment = new Map<string, number>();
+  candidate.quests
+    .filter((quest) => quest.kind === "main")
+    .forEach((quest) => {
+      for (const fragment of meaningfulDescriptionFragments(quest.description)) {
+        const firstStage = firstByFragment.get(fragment);
+        if (firstStage !== undefined && firstStage !== quest.stage) {
+          const index = candidate.quests.findIndex((entry) => entry.id === quest.id);
+          issues.push({
+            path: `quests[${index}].description`,
+            code: "REPEATED_MAIN_QUEST_DESCRIPTION_FRAGMENT",
+            params: { firstStage, stage: quest.stage, fragment },
+          });
+        } else if (firstStage === undefined) {
+          firstByFragment.set(fragment, quest.stage);
+        }
+      }
+    });
+}
+
+function meaningfulDescriptionFragments(value: string): readonly string[] {
+  return [...new Set(value
+    .replace(/^第\s*\d+\s*幕[：:]?/, "")
+    .split(/[。！？!?；;]/)
+    .map((part) => part.replace(/\s+/g, "").trim())
+    .filter((part) => Array.from(part).length >= 8))];
 }
 
 // ---------------------------------------------------------------------------

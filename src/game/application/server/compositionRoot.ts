@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import type { NewGameInput } from "@/game/domain";
 import type { GameLogDetails, GameLogger } from "@/game/logging";
 import {
@@ -33,6 +34,8 @@ import {
 import { asGameId, type GameId } from "./persistence/gameRepository";
 import { createScenarioCandidateSource } from "./ai/scenarioCandidateSourceFactory";
 import { createRuntimeNarrativeSources } from "./ai/runtimeNarrativeSourceFactory";
+import { createFileStoryEvalSink, createStoryEvalApprovalObserver } from "./ai/storyEvalCapture";
+import type { StoryEvalApprovalEvent, StoryEvalSink } from "../storyEvalCaptureTypes";
 import { createTownPlanSource } from "./ai/townPlanSourceFactory";
 import {
   RuntimeNarrativeTaskCoordinator,
@@ -113,6 +116,8 @@ export type ServerGameEntryPoints = {
 /** 仅供 server 侧 smoke/结构化日志观察生成阶段，绝不由浏览器或 API 提供。 */
 export type ServerGameEntryPointOptions = {
   readonly generationObserver?: (event: ScenarioGenerationEvent) => void;
+  /** 仅 story-eval capture 可注入，用于固定蓝图做运行时 A/B 对照。 */
+  readonly scenarioCandidateSourceOverride?: ScenarioCandidateSource;
 };
 
 function stableResultDetails(result: unknown): GameLogDetails {
@@ -214,6 +219,37 @@ async function runLoggedUseCase<T>(
   }
 }
 
+// ---------------------------------------------------------------------------
+// 评估采集装配（spec §6.2）：仅当 STORY_EVAL_CAPTURE=1 时创建 sink 并注入
+// captureSink/approvalObserver；未设置时全 undefined（零开销、零行为变化）。
+// run-id 沿用 phase10 惯例：<ISO 时间戳>-<pid>（门禁脚本经 STORY_EVAL_ARTIFACT_DIR 覆盖）。
+// ---------------------------------------------------------------------------
+
+export function resolveStoryEvalAssembly(env: Record<string, string | undefined>): Readonly<{
+  captureSink: StoryEvalSink | undefined;
+  approvalObserver: ((event: StoryEvalApprovalEvent) => void) | undefined;
+}> {
+  if (env.STORY_EVAL_CAPTURE !== "1") {
+    return { captureSink: undefined, approvalObserver: undefined };
+  }
+  const artifactDir = env.STORY_EVAL_ARTIFACT_DIR ??
+    resolve("artifacts", "story-eval", `run-${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`);
+  const sink = createFileStoryEvalSink(artifactDir);
+  return { captureSink: sink, approvalObserver: createStoryEvalApprovalObserver(sink) };
+}
+
+function resolveStoryEvalMaxRoleAttempts(env: Record<string, string | undefined>): number | undefined {
+  if (env.STORY_EVAL_CAPTURE !== "1") return undefined;
+  const value = Number(env.STORY_EVAL_MAX_ROLE_ATTEMPTS);
+  return Number.isInteger(value) && value >= 1 && value <= 3 ? value : undefined;
+}
+
+function resolveStoryEvalRetryBackoffMs(env: Record<string, string | undefined>): number | undefined {
+  if (env.STORY_EVAL_CAPTURE !== "1") return undefined;
+  const value = Number(env.STORY_EVAL_RETRY_BACKOFF_MS ?? "1000");
+  return Number.isInteger(value) && value >= 0 && value <= 5_000 ? value : 1_000;
+}
+
 /**
  * 装配一套真实入口：env 记录仅经 sqliteClient 的工厂解析 GAME_DB_PATH，
  * 测试注入指向 tmp/ 的记录，生产默认 process.env（本层是唯一允许读取处）。
@@ -225,11 +261,17 @@ export function createServerGameEntryPoints(
   const logRuntime = createServerLogRuntime(env);
   const { logger } = logRuntime;
   logger.info("server_runtime_started", { scope: "system", source: "rpg.server" });
+  const storyEval = resolveStoryEvalAssembly(env);
+  const storyEvalMaxRoleAttempts = resolveStoryEvalMaxRoleAttempts(env);
+  const storyEvalRetryBackoffMs = resolveStoryEvalRetryBackoffMs(env);
   const repository = createSqliteGameRepository({
     clientFactory: createServerSqliteClientFactory(env),
     logError: (operation) => logger.error("sqlite_repository_failure", { operation })
   });
-  const runtimeNarrativeSources = createRuntimeNarrativeSources(env, { logger });
+  const runtimeNarrativeSources = createRuntimeNarrativeSources(env, { logger, captureSink: storyEval.captureSink });
+  const scenarioCandidateSource = env.STORY_EVAL_CAPTURE === "1" && options.scenarioCandidateSourceOverride !== undefined
+    ? options.scenarioCandidateSourceOverride
+    : createScenarioCandidateSource(env, { logger, captureSink: storyEval.captureSink });
   const dependencies: CreateGameDependencies = {
     repository,
     // 生产 provider：UUID 存档 ID、随机 seed、真实时钟（ISO 8601）。
@@ -239,7 +281,7 @@ export function createServerGameEntryPoints(
     // Phase 4B：按 AI 运行时配置装配 source——配置有效走 live，否则 unavailable
     // （玩家稳定走 fallback）。fixture source 绝不按 env 切入生产。
     // traceId 只进 source 请求与脱敏审计；observer 仅接收脱敏阶段事件。
-    scenarioCandidateSource: createScenarioCandidateSource(env, { logger }),
+    scenarioCandidateSource,
     newTraceId: () => randomUUID(),
     generationObserver: options.generationObserver ?? ((event) => {
       logger.info("scenario_generation_lifecycle", {
@@ -276,7 +318,10 @@ export function createServerGameEntryPoints(
     newTraceId: () => randomUUID(),
     now: () => new Date().toISOString(),
     runtimeNarrativeSources,
-    logger
+    logger,
+    approvalObserver: storyEval.approvalObserver,
+    maxRoleAttempts: storyEvalMaxRoleAttempts,
+    retryBackoffMs: storyEvalRetryBackoffMs,
   }, logger);
   const townPlanCoordinator = new TownPlanTaskCoordinator({
     repository,

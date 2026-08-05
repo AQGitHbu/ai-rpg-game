@@ -69,7 +69,7 @@ describe("createScenarioCandidateSource：extraBody 按格式装配", () => {
     [undefined, undefined],
     ["prompt_only", undefined],
     ["json_object", { response_format: { type: "json_object" } }]
-  ] as const)("AI_OUTPUT_FORMAT=%s ⇒ extraBody 并入 enable_thinking + 低温 + 长超时", async (format, expected) => {
+  ] as const)("AI_OUTPUT_FORMAT=%s ⇒ extraBody 并入 nested thinking + 低温 + 长超时", async (format, expected) => {
     const { calls, transport } = fakeTransport();
     const source = createScenarioCandidateSource(
       { ...VALID_ENV, AI_OUTPUT_FORMAT: format },
@@ -78,7 +78,7 @@ describe("createScenarioCandidateSource：extraBody 按格式装配", () => {
     await source.generate(REQUEST);
     expect(calls).toHaveLength(1);
     expect(calls[0][2]).toEqual({
-      extraBody: { enable_thinking: false, ...(expected ?? {}) },
+      extraBody: { chat_template_kwargs: { enable_thinking: false }, ...(expected ?? {}) },
       temperature: 0.2,
       timeoutMs: 120_000
     });
@@ -102,5 +102,15 @@ describe("createScenarioCandidateSource：extraBody 按格式装配", () => {
     expect(options.extraBody.response_format.type).toBe("json_schema");
     expect(options.extraBody.response_format.json_schema.name).toBe("scenario_blueprint_candidate");
     expect(options.extraBody.response_format.json_schema.strict).toBe(true);
+  });
+
+  it("AI_THINKING_ROLES=scenario ⇒ 只为开局蓝图开启思考", async () => {
+    const { calls, transport } = fakeTransport();
+    const source = createScenarioCandidateSource(
+      { ...VALID_ENV, AI_THINKING_ROLES: "scenario" },
+      { transportFactory: () => transport as never }
+    );
+    await source.generate(REQUEST);
+    expect((calls[0][2] as { extraBody: { chat_template_kwargs: { enable_thinking: boolean } } }).extraBody.chat_template_kwargs.enable_thinking).toBe(true);
   });
 });

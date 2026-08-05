@@ -35,8 +35,8 @@ import { loadScenarioProfiles, type GameTypeProfile, type ScenarioProfiles } fro
 //     forbiddenTags），因此 7 种类型均安全。
 // ---------------------------------------------------------------------------
 
-/** fallback 模板版本；纳入 inputDigest，模板演进时提升。fallback-4：物品新增展示元数据（category / rarity / level / statLines，仅展示不进结算）。 */
-export const FALLBACK_TEMPLATE_VERSION = "fallback-4";
+/** fallback 模板版本；纳入 inputDigest，模板演进时提升。fallback-7：主线阶段描述与 objective 保持一一对应。 */
+export const FALLBACK_TEMPLATE_VERSION = "fallback-7";
 
 /** 玩家输入来源标记：出现在世界摘要 / 身份 / 开场 / 主线冲突 / 事实文本中，便于追溯。 */
 const PLAYER_INPUT_MARK = "【玩家输入】";
@@ -770,12 +770,54 @@ function mainQuestId(act: number): string {
   return `quest_main_${act}`;
 }
 
-// 中段幕 objective 轮换：引用既有实体，不引入新 ID。
+// 中长线中段 objective 链：每幕引用一个尚未满足且存在合法行动路径的既有实体目标。
+// medium/long 的第二幕额外要求调查一个生成事实；该事实仍只在 openingScene
+// 可调查，玩家需要沿规则路线回到开场地点，避免把“事实存在”误当作自动完成。
+// 关键物品与终幕战斗则沿 loc_3 → loc_4
+// 形成明确的移动/拾取/交谈/战斗链；长线额外回到开场 NPC，再到终幕 NPC，
+// 避免重复使用已满足的 visit/fact 目标。
 const MID_OBJECTIVES: readonly (readonly { kind: string; [key: string]: string }[])[] = [
-  [{ kind: "visit_location", locationId: "loc_2" }],
   [{ kind: "talk_to_npc", npcId: "npc_2" }],
-  [{ kind: "discover_fact", factId: FACT_GEN_1 }]
+  [{ kind: "visit_location", locationId: "loc_3" }],
+  [{ kind: "obtain_item", itemId: ITEM_KEY }],
+  [{ kind: "talk_to_npc", npcId: "npc_3" }],
+  [{ kind: "talk_to_npc", npcId: "npc_1" }],
+  [{ kind: "talk_to_npc", npcId: "npc_4" }],
 ];
+
+function mainObjectiveLabel(
+  objective: { readonly kind: string; readonly [key: string]: string },
+  template: TypeTemplate,
+): string {
+  switch (objective.kind) {
+    case "talk_to_npc": {
+      const index = Number(objective.npcId.replace("npc_", "")) - 1;
+      return `与${template.npcs[index]?.name ?? objective.npcId}交谈，取得新的线索`;
+    }
+    case "visit_location": {
+      const index = Number(objective.locationId.replace("loc_", "")) - 1;
+      return `前往${template.locations[index]?.name ?? objective.locationId}查探现场`;
+    }
+    case "obtain_item":
+      return `取回${template.items[1].name}，确认案件的关键物证`;
+    case "discover_fact":
+      return "调查现场，确认尚未揭开的事实";
+    case "defeat_enemy":
+      return `击败${template.bossEnemy}，结束当前冲突`;
+    default:
+      return "完成当前阶段的推进目标";
+  }
+}
+
+function mainStageDescription(
+  act: number,
+  objective: { readonly kind: string; readonly [key: string]: string },
+  template: TypeTemplate,
+): string {
+  // 每幕只保留当前目标与其语义结果，避免把模板中段描述作为固定尾句
+  // 复制到所有阶段；这也是生成候选语义去重闸门的最低可解释基线。
+  return `第 ${act} 幕：${mainObjectiveLabel(objective, template)}。`;
+}
 
 function buildQuests(
   input: ValidatedNewGameInput,
@@ -795,7 +837,7 @@ function buildQuests(
       quests.push({
         kind: "main", stage: act, id,
         name: template.mainQuests[0].name,
-        description: `${input.characterName}${template.mainQuests[0].description}线索指向：${PLAYER_INPUT_MARK}${input.worldPremise}`,
+        description: `第 ${act} 幕：${input.characterName}${template.mainQuests[0].description}线索指向：${PLAYER_INPUT_MARK}${input.worldPremise}`,
         objectives: [{ kind: "visit_location", locationId: "loc_2" }],
         onSuccess: { kind: "unlock_quests", questIds: [mainQuestId(2), ...sideIds] },
         onFailure: { kind: "closed" },
@@ -805,23 +847,37 @@ function buildQuests(
       quests.push({
         kind: "main", stage: act, id,
         name: template.mainQuests[2].name,
-        description: template.mainQuests[2].description,
-        objectives: [{ kind: "defeat_enemy", enemyId: ENEMY_BOSS_ID }],
+        description: `第 ${act} 幕：${template.mainQuests[2].description}`,
+        objectives: [
+          { kind: "visit_location", locationId: BOSS_LOCATION_ID },
+          { kind: "defeat_enemy", enemyId: ENEMY_BOSS_ID },
+        ],
         onSuccess: { kind: "reach_ending", endingId: ENDING_IDS[0] },
         onFailure: { kind: "reach_ending", endingId: ENDING_IDS[1] },
         tags: []
       });
     } else {
-      const midIndex = (act - 2) % MID_OBJECTIVES.length;
-      // 3 幕时保持旧行为：原名、原 objective（talk + obtain）
+      const midIndex = act - 2;
+      // 3 幕时保持旧 objective（talk + obtain），但描述仍明确标出本幕目标。
       const isLegacyMid = mainActs === 3 && act === 2;
+      const firstObjective = isLegacyMid
+        ? ({ kind: "talk_to_npc", npcId: "npc_3" } as const)
+        : MID_OBJECTIVES[midIndex]?.[0];
+      if (firstObjective === undefined) throw new Error(`fallback objective missing for act ${act}`);
+      const objectives = (isLegacyMid
+        ? [{ ...firstObjective }, { kind: "obtain_item", itemId: ITEM_KEY }]
+        : act === 2 && mainActs >= 5
+          ? [
+              { ...firstObjective },
+              { kind: "discover_fact", factId: FACT_GEN_1 },
+              { kind: "discover_fact", factId: FACT_GEN_2 },
+            ]
+          : MID_OBJECTIVES[midIndex]) as QuestDefinitionCandidate["objectives"];
       quests.push({
         kind: "main", stage: act, id,
         name: isLegacyMid ? template.mainQuests[1].name : `第 ${act} 章·${template.mainQuests[1].name}`,
-        description: template.mainQuests[1].description,
-        objectives: isLegacyMid
-          ? [{ kind: "talk_to_npc", npcId: "npc_3" }, { kind: "obtain_item", itemId: ITEM_KEY }]
-          : MID_OBJECTIVES[midIndex] as QuestDefinitionCandidate["objectives"],
+        description: mainStageDescription(act, firstObjective, template),
+        objectives,
         onSuccess: { kind: "unlock_quests", questIds: [nextId as string] },
         onFailure: { kind: "closed" },
         tags: []

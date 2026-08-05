@@ -69,7 +69,7 @@ function buildBlueprint(): ScenarioBlueprint {
       facts: [
         { id: "fact_known", text: "已知事实。", source: "player_input" },
         { id: "fact_investigable", text: "可调查事实。", source: "generated" },
-        { id: "fact_other", text: "其他事实。", source: "generated" },
+        { id: "fact_other", text: "其他事实。", source: "player_input" },
       ],
       tags: ["测试"],
     },
@@ -349,9 +349,11 @@ describe("resolveAction", () => {
         type: "npc_met",
         npcId: NPC_1,
         occurredAt: FIXED_TIME,
+        interactionKind: "greet",
       });
       const npc = result.state.npcs.find((n) => n.npcId === NPC_1);
       expect(npc?.met).toBe(true);
+      expect(npc?.relationship).toEqual({ affinity: 5 });
       expect(result.state.eventLedger).toHaveLength(2);
     }
   });
@@ -455,6 +457,19 @@ describe("projectAvailableActions", () => {
     const investigateActions = actions.filter((a) => a.type === "investigate");
     expect(investigateActions).toHaveLength(1);
     expect(investigateActions[0].factId).toBe(FACT_INVESTIGABLE);
+    expect(investigateActions[0].label).toBe("调查第1条线索");
+  });
+
+  it("多个可调查事实的行动标签保持可区分", () => {
+    const bp = buildBlueprint();
+    const openingScene = {
+      ...bp.openingScene,
+      investigableFactIds: [FACT_INVESTIGABLE, FACT_OTHER],
+    };
+    const withTwoFacts = { ...bp, openingScene } as ScenarioBlueprint;
+    const actions = projectAvailableActions(withTwoFacts, buildInitialState());
+    const labels = actions.filter((a) => a.type === "investigate").map((a) => a.label);
+    expect(new Set(labels).size).toBe(labels.length);
   });
 
   it("已观察过的地点不投影 observe 行动", () => {

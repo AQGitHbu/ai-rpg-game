@@ -67,6 +67,91 @@ describe("repairScenarioCandidate", () => {
     expect(repaired?.npcs).toHaveLength(6);
   });
 
+  it("非法物品展示稀有度只删除可选字段并保留物品本体", () => {
+    const candidate = buildValidCandidate() as MutableCandidate;
+    const sourceItem = candidate.items[1];
+    candidate.items = [
+      ...candidate.items,
+      {
+        ...sourceItem,
+        id: "item_display_invalid",
+        rarity: "legendary"
+      } as unknown as (typeof candidate.items)[number]
+    ];
+
+    const repaired = repairScenarioCandidate(candidate, { policy: REPAIR_POLICY });
+    const repairedItem = repaired?.items.find((item) => item.id === "item_display_invalid");
+
+    expect(repairedItem).toMatchObject({ id: "item_display_invalid", name: sourceItem.name });
+    expect(repairedItem?.rarity).toBeUndefined();
+  });
+
+  it("超预算尾部 NPC 被主线引用时，移除安全冗余 NPC 而保留引用 NPC", () => {
+    const candidate = buildValidCandidate() as MutableCandidate;
+    candidate.npcs = [
+      ...candidate.npcs,
+      {
+        id: "npc_7",
+        name: "主线遗客",
+        role: "关键线人",
+        description: "主线任务必须找到的线人。",
+        locationId: "loc_2",
+        isCompanion: false,
+        knownFactIds: [],
+        tags: []
+      }
+    ];
+    candidate.locations = candidate.locations.map((location) => {
+      const npcIds = location.npcIds.filter((id) => id !== "npc_6");
+      return location.id === "loc_2"
+        ? { ...location, npcIds: [...npcIds, "npc_7"] }
+        : { ...location, npcIds };
+    });
+    candidate.quests = candidate.quests.map((quest) =>
+      quest.kind === "main"
+        ? {
+            ...quest,
+            objectives: quest.objectives.map((objective) =>
+              objective.kind === "talk_to_npc"
+                ? { ...objective, npcId: "npc_7" }
+                : objective
+            )
+          }
+        : quest
+    );
+
+    const repaired = repairScenarioCandidate(candidate, { policy: REPAIR_POLICY });
+
+    expect(repaired).not.toBeNull();
+    expect(repaired?.npcs).toHaveLength(6);
+    expect(repaired?.npcs.some((npc) => npc.id === "npc_7")).toBe(true);
+    expect(repaired?.npcs.some((npc) => npc.id === "npc_6")).toBe(false);
+  });
+
+  it("超预算 NPC 全部被引用时仍拒绝机械修复", () => {
+    const candidate = buildValidCandidate() as MutableCandidate;
+    candidate.npcs = [
+      ...candidate.npcs,
+      {
+        id: "npc_7",
+        name: "被引用遗客",
+        role: "关键线人",
+        description: "被地点引用的关键线人。",
+        locationId: "loc_2",
+        isCompanion: false,
+        knownFactIds: [],
+        tags: []
+      }
+    ];
+    candidate.locations = candidate.locations.map((location) =>
+      location.id === "loc_2"
+        ? { ...location, npcIds: [...location.npcIds, "npc_7"] }
+        : location
+    );
+
+    expect(repairScenarioCandidate(candidate, { policy: REPAIR_POLICY })).toBeNull();
+  });
+
   it("trim 字符串字段后仍需通过完整校验", () => {
     const candidate = buildValidCandidate() as MutableCandidate;
     candidate.generationId = `  ${candidate.generationId}  `;

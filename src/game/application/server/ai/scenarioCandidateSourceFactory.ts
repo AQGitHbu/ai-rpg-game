@@ -11,6 +11,8 @@ import {
 import { buildScenarioPromptMessages } from "./scenarioPrompt";
 import { createStructuredScenarioGenerationAudit } from "./scenarioGenerationAudit";
 import { buildScenarioResponseFormatExtraBody } from "./scenarioResponseFormat";
+import { resolveAiThinkingRoles } from "./aiThinking";
+import type { StoryEvalSink } from "../../storyEvalCaptureTypes";
 
 // ---------------------------------------------------------------------------
 // scenarioCandidateSourceFactory：把 @ai-game/ai-transport 的接入收敛在
@@ -28,7 +30,14 @@ import { buildScenarioResponseFormatExtraBody } from "./scenarioResponseFormat";
 export type ScenarioCandidateSourceFactoryOptions = Readonly<{
   transportFactory?: () => AiTransport;
   logger?: GameLogger;
+  captureSink?: StoryEvalSink;
 }>;
+
+function resolveStoryEvalTimeoutMs(env: Record<string, string | undefined>): number | undefined {
+  if (env.STORY_EVAL_CAPTURE !== "1") return undefined;
+  const value = Number(env.STORY_EVAL_AI_TIMEOUT_MS);
+  return Number.isInteger(value) && value >= 1_000 && value <= 300_000 ? value : undefined;
+}
 
 /** 依 AI 运行时配置装配候选来源；env 由 composition root 注入，本工厂不读 process.env。 */
 export function createScenarioCandidateSource(
@@ -48,6 +57,9 @@ export function createScenarioCandidateSource(
     audit: createStructuredScenarioGenerationAudit({ logger: options.logger }),
     // Task 9：按请求的 gameLength 动态构建 response_format。
     buildExtraBody: (request) =>
-      buildScenarioResponseFormatExtraBody(runtime.outputFormat, createBudgetPolicy(request.input.gameLength))
+      buildScenarioResponseFormatExtraBody(runtime.outputFormat, createBudgetPolicy(request.input.gameLength)),
+    captureSink: options.captureSink,
+    timeoutMs: resolveStoryEvalTimeoutMs(env),
+    enableThinking: resolveAiThinkingRoles(env).includes("scenario"),
   });
 }

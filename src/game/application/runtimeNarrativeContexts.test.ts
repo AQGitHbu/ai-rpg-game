@@ -29,7 +29,7 @@ function buildTestBlueprint(): ScenarioBlueprint {
       { id: asLocationId("loc_a"), name: "地点A", description: "", kind: "public", connectedLocationIds: [] },
     ],
     npcs: [
-      { id: asNpcId("npc_1"), name: "NPC1", role: "村民", locationId: asLocationId("loc_a"), knownFactIds: [asFactId("fact_1")] },
+      { id: asNpcId("npc_1"), name: "NPC1", role: "村民", description: "守着渡口、对外来者保持警惕的村民。", locationId: asLocationId("loc_a"), knownFactIds: [asFactId("fact_1")] },
     ],
     quests: [],
     enemies: [],
@@ -91,6 +91,33 @@ function buildTestGameState(): GameState {
   } as unknown as GameState;
 }
 
+function buildItemRouteFixture(): { blueprint: ScenarioBlueprint; state: GameState } {
+  const baseBlueprint = buildTestBlueprint();
+  const blueprint = {
+    ...baseBlueprint,
+    locations: [
+      { id: asLocationId("loc_a"), name: "地点A", description: "起点", kind: "main", connectedLocationIds: [asLocationId("loc_b")], npcIds: [asNpcId("npc_1")], availableItemIds: [] },
+      { id: asLocationId("loc_b"), name: "地点B", description: "中转", kind: "main", connectedLocationIds: [asLocationId("loc_a"), asLocationId("loc_c")], npcIds: [], availableItemIds: [] },
+      { id: asLocationId("loc_c"), name: "地点C", description: "物品所在处", kind: "main", connectedLocationIds: [asLocationId("loc_b")], npcIds: [], availableItemIds: ["item_key"] },
+    ],
+    items: [{ id: "item_key", name: "关键物品", description: "主线信物", kind: "key", category: "quest", rarity: "rare", tags: [] }],
+    quests: [{
+      kind: "main", stage: 2, id: "quest_main_2", name: "取得信物", description: "取得关键物品。",
+      objectives: [{ kind: "obtain_item", itemId: "item_key" }],
+      onSuccess: { kind: "reach_ending", endingId: "ending_1" },
+      onFailure: { kind: "reach_ending", endingId: "ending_2" }, tags: []
+    }],
+  } as unknown as ScenarioBlueprint;
+  const state = {
+    ...buildTestGameState(),
+    currentLocationId: asLocationId("loc_b"),
+    unlockedLocationIds: [asLocationId("loc_a"), asLocationId("loc_b"), asLocationId("loc_c")],
+    visitedLocationIds: [asLocationId("loc_a"), asLocationId("loc_b")],
+    quests: [{ questId: "quest_main_2", status: "active" }],
+  } as unknown as GameState;
+  return { blueprint, state };
+}
+
 describe("runtimeNarrativeContexts 导演", () => {
   const blueprint = buildTestBlueprint();
   const state = buildTestGameState();
@@ -110,6 +137,15 @@ describe("runtimeNarrativeContexts 导演", () => {
     expect(context.discoveredFactIds).toContain("fact_1");
   });
 
+  it("toDirectorContext 只提供已发现事实卡片", () => {
+    const context = toDirectorContext({ blueprint, state });
+    expect(context.discoveredFactCards).toEqual([
+      { id: "fact_1", text: "公开事实1", source: "player_input" },
+    ]);
+    expect(JSON.stringify(context.discoveredFactCards)).not.toContain("未发现事实");
+    expect(JSON.stringify(context.discoveredFactCards)).not.toContain("秘密事实");
+  });
+
   it("toDirectorContext 的 event ledger 不含 AI prompt 原文", () => {
     const context = toDirectorContext({ blueprint, state });
     const line = JSON.stringify(context);
@@ -127,10 +163,17 @@ describe("runtimeNarrativeContexts 导演", () => {
           type: "narrative_scene_presented",
           sceneId: "scene-1",
           locationId: asLocationId("loc_a"),
-          focusNpcId: null,
+          focusNpcId: asNpcId("npc_1"),
           revealedFactIds: [],
           pacing: "develop",
           occurredAt: "2026-07-31T00:00:00.000Z"
+        },
+        {
+          type: "narrative_choice",
+          choiceToken: "choice-1",
+          actionKey: "talk:npc_1",
+          sceneId: "scene-1",
+          occurredAt: "2026-07-31T00:00:01.000Z"
         },
         { type: "npc_met", npcId: asNpcId("npc_1"), occurredAt: "2026-07-31T00:00:00.000Z" }
       ]
@@ -139,6 +182,36 @@ describe("runtimeNarrativeContexts 导演", () => {
     expect(context.recentEvents).not.toContain("narrative_scene_presented");
     expect(context.recentEvents).toContain("npc_met");
     expect(context.recentEvents).toContain("location_visited");
+    expect(context.previousScene).toEqual({
+      sceneId: "scene-1",
+      locationId: "loc_a",
+      locationName: "地点A",
+      focusNpcId: "npc_1",
+      focusNpcName: "NPC1",
+      pacing: "develop",
+      playerActionKey: "talk:npc_1",
+    });
+  });
+
+  it("obtain_item 目标不在当前地点时投影合法下一跳，抵达后切换为拾取行动", () => {
+    const fixture = buildItemRouteFixture();
+    const routeContext = toDirectorContext(fixture);
+    expect(routeContext.activeMainObjective).toMatchObject({
+      kind: "obtain_item",
+      targetId: "item_key",
+      targetActionKey: "take_item:item_key",
+      suggestedActionKey: "move:loc_c",
+    });
+    expect(routeContext.availableItemCards).toEqual([]);
+
+    const atItemLocation = toDirectorContext({
+      blueprint: fixture.blueprint,
+      state: { ...fixture.state, currentLocationId: asLocationId("loc_c") } as GameState,
+    });
+    expect(atItemLocation.activeMainObjective?.suggestedActionKey).toBe("take_item:item_key");
+    expect(atItemLocation.availableItemCards).toEqual([
+      expect.objectContaining({ id: "item_key", name: "关键物品" }),
+    ]);
   });
 });
 
@@ -272,6 +345,32 @@ describe("runtimeNarrativeContexts 编剧", () => {
       },
     });
     expect(context.plan.sceneGoal).toBe("test");
+    expect(context.plan.relevantFactIds).toEqual(["fact_1"]);
+  });
+
+  it("toSceneScriptContext 提供地点、物品卡和 NPC 已知事实 ID", () => {
+    const fixture = buildItemRouteFixture();
+    const context = toSceneScriptContext({
+      blueprint: fixture.blueprint,
+      state: { ...fixture.state, currentLocationId: asLocationId("loc_c") } as GameState,
+      plan: {
+        sceneGoal: "取得关键物品",
+        tensionLevel: 2,
+        focusNpcId: "npc_1",
+        relevantFactIds: [],
+        allowedRevealFactIds: [],
+        suggestedActionKeys: ["take_item:item_key", "move:loc_b"],
+        introducedEntities: [],
+        pacing: "develop",
+        proposedNewLocations: [],
+        proposedNewNpcs: [],
+      },
+    });
+    expect(context.currentLocationCard).toMatchObject({ id: "loc_c", name: "地点C" });
+    expect(context.availableItemCards).toEqual([
+      expect.objectContaining({ id: "item_key", name: "关键物品" }),
+    ]);
+    expect((context.npcProfile as Record<string, unknown>)?.knownFactIds).toEqual(["fact_1"]);
   });
 
   it("toSceneScriptContext 不含 AI prompt 原文", () => {
@@ -307,12 +406,19 @@ describe("runtimeNarrativeContexts 演员", () => {
       state,
       npcId: "npc_1",
       speechAct: "inform",
+      sceneGoal: "查明渡口传闻",
+      requestedEmotion: "afraid",
       allowedFactIds: ["fact_1"],
       mayLie: false,
     });
     const npcDef = context.npcDefinition as Record<string, unknown>;
     expect(npcDef.id).toBe("npc_1");
     expect(npcDef.name).toBe("NPC1");
+    expect(npcDef.description).toContain("渡口");
+    expect(context.playerName).toBe("Player");
+    expect(context.sceneGoal).toBe("查明渡口传闻");
+    expect(context.requestedEmotion).toBe("afraid");
+    expect(context.currentLocationCard).toMatchObject({ id: "loc_a", name: "地点A" });
   });
 
   it("toNpcLineContext 包含事实卡片", () => {
@@ -327,6 +433,23 @@ describe("runtimeNarrativeContexts 演员", () => {
     expect(context.factCards).toHaveLength(1);
     const card = context.factCards[0] as Record<string, unknown>;
     expect(card.id).toBe("fact_1");
+  });
+
+  it("toNpcLineContext 只投影导演批准且规则合法的下一步动作", () => {
+    const { blueprint: routeBlueprint, state: routeState } = buildItemRouteFixture();
+    const context = toNpcLineContext({
+      blueprint: routeBlueprint,
+      state: routeState,
+      npcId: "npc_1",
+      speechAct: "inform",
+      suggestedActionKeys: ["move:loc_c", "move:loc_hidden"],
+      allowedFactIds: [],
+      mayLie: false,
+    });
+    expect(context.nextActionCandidates).toEqual([
+      { actionKey: "move:loc_c", kind: "move", label: expect.any(String) },
+    ]);
+    expect(context.recommendedNextActionKey).toBe("move:loc_c");
   });
 
   it("toNpcLineContext 不含 AI prompt 原文", () => {
@@ -446,6 +569,17 @@ describe("runtimeNarrativeContexts Phase 11 连续性", () => {
   const PIPELINE = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
   const FIXED_TIME = "2026-07-31T00:00:00.000Z";
 
+  it("director 暴露当前主线未满足目标及其合法 action 映射", () => {
+    const context = toDirectorContext({ blueprint: PIPELINE.blueprint, state: PIPELINE.state });
+    expect(context.activeMainObjective).toMatchObject({
+      questId: "quest_main_1",
+      stage: 1,
+      kind: "visit_location",
+      targetId: "loc_2",
+      suggestedActionKey: "move:loc_2",
+    });
+  });
+
   it("director 保留完整 12 条连续性，而 writer 只接收最近 6 条", () => {
     const recent: readonly StoryMemoryEntry[] = Array.from({ length: 13 }, (_, turn) => ({
       kind: "location" as const,
@@ -470,6 +604,28 @@ describe("runtimeNarrativeContexts Phase 11 连续性", () => {
     };
     expect(toDirectorContext({ blueprint: PIPELINE.blueprint, state }).recentContinuity).toHaveLength(12);
     expect(toSceneScriptContext({ blueprint: PIPELINE.blueprint, state, plan }).recentContinuity).toHaveLength(6);
+  });
+
+  it("连续性里程碑保留上一幕焦点 NPC，供下一幕承接对话线程", () => {
+    const npc = PIPELINE.blueprint.npcs[0];
+    const state = {
+      ...PIPELINE.state,
+      storyMemory: {
+        version: 1 as const,
+        reducedThroughEventCount: 1,
+        recent: [{
+          kind: "scene" as const,
+          sceneId: "scene-with-npc",
+          locationId: PIPELINE.state.currentLocationId,
+          focusNpcId: npc.id,
+          pacing: "develop" as const,
+          turn: 1,
+        }],
+        npcContacts: [],
+      },
+    } as GameState;
+    const continuity = toDirectorContext({ blueprint: PIPELINE.blueprint, state }).recentContinuity;
+    expect(continuity).toEqual([{ text: `上一幕与${npc.name}交涉` }]);
   });
 
   it("writer 的 NPC profile 不泄漏其未发现的已知事实", () => {
@@ -497,7 +653,10 @@ describe("runtimeNarrativeContexts Phase 11 连续性", () => {
       },
     });
     expect(JSON.stringify(context)).not.toContain(hiddenFact.text);
-    expect(JSON.stringify(context.npcProfile)).not.toContain("knownFact");
+    expect((context.npcProfile as Record<string, unknown>)?.knownFactIds).toEqual(
+      expect.arrayContaining([String(hiddenFact.id)]),
+    );
+    expect(JSON.stringify(context.npcProfile)).not.toContain(hiddenFact.text);
   });
 
   it("已发现线索以文本承接，未发现线索绝不投影", () => {

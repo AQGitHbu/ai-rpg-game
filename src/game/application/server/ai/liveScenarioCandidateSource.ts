@@ -8,6 +8,7 @@ import {
   type ScenarioGenerationRequest
 } from "../../scenarioGeneration";
 import type { ScenarioGenerationAudit } from "./scenarioGenerationAudit";
+import type { StoryEvalSink } from "../../storyEvalCaptureTypes";
 
 // ---------------------------------------------------------------------------
 // liveScenarioCandidateSource：真实 AI 候选来源（spec §3）。
@@ -17,7 +18,7 @@ import type { ScenarioGenerationAudit } from "./scenarioGenerationAudit";
 // - 先做与 fixture source 同级的 root-shape 检查，再返回 live attempt；
 // - transport 失败映射到既有 11 个 ScenarioCandidateFailureCategory（不新增）；
 // - 诊断只含稳定代码，绝不含 prompt、玩家原文、模型原始响应或密钥；
-// - 成功/失败都写 audit（脱敏），每次 generate 递增 attempt 序号。
+// - 成功/失败都写 audit（脱敏）；attempt 从 request.traceId 的 -retry 次数解析（无跨请求计数器）。
 // 本文件不 import repository/persistence（由目录边界守卫保证）。
 // ---------------------------------------------------------------------------
 
@@ -28,6 +29,12 @@ export type LiveScenarioCandidateSourceOptions = Readonly<{
   audit: ScenarioGenerationAudit;
   /** Task 9：按请求构建结构化输出 extraBody（response_format）；undefined = 不发送。 */
   buildExtraBody?: (request: ScenarioGenerationRequest) => Readonly<Record<string, unknown>> | undefined;
+  /** Task 3：评估采集回调——prompt 与模型原文只在本模块内部可见，仅此处可捕获。 */
+  captureSink?: StoryEvalSink;
+  /** 评估专用 provider 超时；未传时保持正常运行时的 120 秒。 */
+  timeoutMs?: number;
+  /** provider extended reasoning；默认关闭，按实验角色显式开启。 */
+  enableThinking?: boolean;
 }>;
 
 const CANDIDATE_ARRAY_FIELDS = [
@@ -58,21 +65,48 @@ export function createLiveScenarioCandidateSource(
   options: LiveScenarioCandidateSourceOptions
 ): ScenarioCandidateSource {
   const { transport, config, buildMessages, audit, buildExtraBody } = options;
-  let attempts = 0;
 
   return {
     async generate(request) {
-      attempts += 1;
-      const attempt = attempts;
       const messages = buildMessages(request);
       const extraBody = buildExtraBody?.(request);
+      // attempt 解析：request.traceId 中 -retry 出现次数 + 1（无全局状态，跨场景不泄漏）。
+      // 注意：scenario 的 traceId 没有角色后缀（不同于 director 的 -director 等），
+      // 但重试后缀 -retry 的语义与其他角色一致。
+      const attempt = (() => {
+        let count = 1;
+        let index = request.traceId.indexOf("-retry");
+        while (index !== -1) {
+          count += 1;
+          index = request.traceId.indexOf("-retry", index + 1);
+        }
+        return count;
+      })();
+      const capture = (outcome: Readonly<{ rawResponse: string | null; parsedCandidate: Record<string, unknown> | null; failureCategory: ScenarioCandidateFailureCategory | null; latencyMs: number }>) => {
+        try {
+          options.captureSink?.append({
+            kind: "ai_call",
+            role: "scenario",
+            traceId: request.traceId,
+            attempt,
+            messages,
+            rawResponse: outcome.rawResponse,
+            parsedCandidate: outcome.parsedCandidate,
+            failureCategory: outcome.failureCategory,
+            latencyMs: outcome.latencyMs,
+          });
+        } catch { /* 采集失败绝不抛到游戏主流程 */ }
+      };
 
       let result;
       try {
         result = await transport.complete(config, messages, {
-          extraBody: { enable_thinking: false, ...(extraBody ?? {}) },
+          extraBody: {
+            chat_template_kwargs: { enable_thinking: options.enableThinking ?? false },
+            ...(extraBody ?? {}),
+          },
           temperature: 0.2,
-          timeoutMs: 120_000
+          timeoutMs: options.timeoutMs ?? 120_000
         });
       } catch {
         // transport 意外抛错：不泄漏 message，映射稳定 service_error。
@@ -83,6 +117,7 @@ export function createLiveScenarioCandidateSource(
           category: "service_error",
           latencyMs: 0
         });
+        capture({ rawResponse: null, parsedCandidate: null, failureCategory: "service_error", latencyMs: 0 });
         return liveFailure("service_error", ["LIVE_TRANSPORT_THROW"]);
       }
 
@@ -96,6 +131,7 @@ export function createLiveScenarioCandidateSource(
           transportCode: result.code,
           latencyMs: result.latencyMs
         });
+        capture({ rawResponse: (result as { content?: string }).content ?? null, parsedCandidate: null, failureCategory: category, latencyMs: result.latencyMs });
         return liveFailure(category, [`LIVE_TRANSPORT_${result.code.toUpperCase()}`]);
       }
 
@@ -109,6 +145,7 @@ export function createLiveScenarioCandidateSource(
           latencyMs: result.latencyMs,
           usage: result.usage
         });
+        capture({ rawResponse: result.content, parsedCandidate: null, failureCategory: parsed.category, latencyMs: result.latencyMs });
         return liveFailure(parsed.category, parsed.diagnostics);
       }
 
@@ -119,6 +156,7 @@ export function createLiveScenarioCandidateSource(
         latencyMs: result.latencyMs,
         usage: result.usage
       });
+      capture({ rawResponse: result.content, parsedCandidate: parsed.candidate, failureCategory: null, latencyMs: result.latencyMs });
       return {
         ok: true,
         contractVersion: SCENARIO_CANDIDATE_CONTRACT_VERSION,
@@ -170,8 +208,17 @@ function parseCandidate(content: string): ParseResult {
   try {
     payload = JSON.parse(jsonText);
   } catch {
-    // 绝不把模型原文放进诊断，仅保留稳定代码。
-    return { ok: false, category: "invalid_json", diagnostics: ["LIVE_INVALID_JSON"] };
+    // 某些 provider 会在 fenced JSON 内额外转义字段引号；只对这个明确的
+    // 可恢复形态再尝试一次，仍不从 prose 贪婪抽取对象。
+    try {
+      payload = jsonText.includes("\\\"") ? JSON.parse(jsonText.replaceAll("\\\"", "\"")) : undefined;
+    } catch {
+      payload = undefined;
+    }
+    if (payload === undefined) {
+      // 绝不把模型原文放进诊断，仅保留稳定代码。
+      return { ok: false, category: "invalid_json", diagnostics: ["LIVE_INVALID_JSON"] };
+    }
   }
   if (!hasCandidateShape(payload)) {
     return { ok: false, category: "schema_violation", diagnostics: ["LIVE_SCHEMA_VIOLATION"] };
@@ -182,7 +229,10 @@ function parseCandidate(content: string): ParseResult {
 /** 提取单一 ```json fence 的内容；非 fence 返回 undefined。 */
 function extractFencedJson(text: string): string | undefined {
   if (!text.startsWith("```")) return undefined;
-  const match = /^```(?:json)?\s*\n([\s\S]*?)\n?```$/.exec(text);
+  // Provider responses may normalize the fence with CRLF even when the JSON
+  // body itself is valid. Keep the single-fence boundary strict, but accept
+  // either newline convention and harmless trailing horizontal whitespace.
+  const match = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```$/.exec(text);
   return match ? match[1] : undefined;
 }
 

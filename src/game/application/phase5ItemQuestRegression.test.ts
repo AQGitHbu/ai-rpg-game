@@ -188,7 +188,7 @@ describe.each(CASES)("Phase 5 物品取得回归（$gameType）", ({ gameType, f
     expect(taken.feedback).toEqual({ ok: true, message: `你取得了${keyItem.name}。` });
 
     // 3) 取得后的视图：物品从地点消失、背包收录恰好一份、take 行动不再提供；
-    //    stage 2 退出 active 列表，stage 3 进入且 defeat_enemy 标记为未支持。
+    //    stage 2 退出 active 列表，stage 3 进入；终幕先要求到访决战地点，再允许战斗。
     expect(taken.view.obtainableItems).toEqual([]);
     expect(taken.view.availableActions.filter((action) => action.type === "take_item")).toEqual([]);
     // 背包已升级为富视图：此处只验证“恰好收录一份”与名称/描述，展示元数据
@@ -202,7 +202,12 @@ describe.each(CASES)("Phase 5 物品取得回归（$gameType）", ({ gameType, f
     expect(activeNames).not.toContain(stage2.name);
     expect(activeNames).toContain(stage3.name);
     const stage3View = taken.view.activeQuests.find((quest) => quest.name === stage3.name);
+    const finalObjective = stage3.objectives[0];
+    const finalLocationName = finalObjective.kind === "visit_location"
+      ? baseline.blueprint.locations.find((location) => location.id === finalObjective.locationId)?.name ?? "目标地点"
+      : "目标地点";
     expect(stage3View?.objectives).toEqual([
+      { label: `到访${finalLocationName}`, completed: false, supported: true },
       { label: "战胜强敌", completed: false, supported: true }
     ]);
     await writer.close();

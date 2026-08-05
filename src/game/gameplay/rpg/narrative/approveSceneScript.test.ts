@@ -101,6 +101,15 @@ describe("approveSceneScript", () => {
     expect(result).toMatchObject({ ok: false, category: "knowledge_scope_violation" });
   });
 
+  it("rejects NPC fact cards that are known but not authorized for this scene", () => {
+    const result = approveSceneScript({
+      proposal: { ...validScript, usedFactIds: [] },
+      plan: { ...approvedPlan, relevantFactIds: [], allowedRevealFactIds: [] },
+      blueprint,
+    });
+    expect(result).toMatchObject({ ok: false, category: "knowledge_scope_violation" });
+  });
+
   it("rejects choices with action keys not matching approved plan", () => {
     const result = approveSceneScript({
       proposal: {
@@ -138,6 +147,26 @@ describe("approveSceneScript", () => {
       blueprint,
     });
     expect(result).toMatchObject({ ok: false, category: "schema_violation" });
+  });
+
+  it("rejects narration that claims an available item before take_item resolves it", () => {
+    const result = approveSceneScript({
+      proposal: { ...validScript, narration: "你拾起了镖局信物，沉甸甸的重量压在掌心。" },
+      plan: approvedPlan,
+      blueprint,
+      unresolvedItemNames: ["镖局信物"],
+    });
+    expect(result).toMatchObject({ ok: false, category: "state_prose_mismatch" });
+  });
+
+  it("允许明确说明物品尚未取得", () => {
+    const result = approveSceneScript({
+      proposal: { ...validScript, narration: "镖局信物仍在桌上，尚未被拾起。" },
+      plan: approvedPlan,
+      blueprint,
+      unresolvedItemNames: ["镖局信物"],
+    });
+    expect(result.ok).toBe(true);
   });
 
   it("rejects choice label longer than 40 code points", () => {

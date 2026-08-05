@@ -6,6 +6,7 @@ import { compileBlueprintExpansion } from "@/game/gameplay/rpg/narrative";
 import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 import { reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
+import type { StoryEvalApprovalEvent } from "./storyEvalCaptureTypes";
 
 export type GeneratePendingNarrativeSceneDependencies = Readonly<{
   repository: GameRepository;
@@ -19,6 +20,12 @@ export type GeneratePendingNarrativeSceneDependencies = Readonly<{
   }>;
   logger?: GameLogger;
   traceId?: string;
+  /** Task 5：审批观察回调——透传给编排层。 */
+  approvalObserver?: (event: StoryEvalApprovalEvent) => void;
+  /** 评估专用重试上限；未传时保持正常运行时的三次尝试。 */
+  maxRoleAttempts?: number;
+  /** 评估专用 provider 失败退避；未传时保持正常运行时零额外等待。 */
+  retryBackoffMs?: number;
 }>;
 
 export type GeneratePendingNarrativeSceneResult =
@@ -70,6 +77,9 @@ export async function generatePendingNarrativeScene(
     state: record.state,
     ...deps.runtimeNarrativeSources,
     logger: deps.logger,
+    approvalObserver: deps.approvalObserver,
+    maxRoleAttempts: deps.maxRoleAttempts,
+    retryBackoffMs: deps.retryBackoffMs,
   });
   const scene = generated.scene;
   deps.logger?.info("runtime_narrative_generation", {
