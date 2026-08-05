@@ -36,6 +36,17 @@ const GAME_TYPES = [
   hint: string;
 }[];
 
+/** 离线开局题材下拉：展示项与 server 白名单一致；server 才是安全边界。 */
+const OFFLINE_GENRES: readonly { readonly label: string; readonly caseId: string }[] = [
+  { label: "武侠", caseId: "wuxia-a" },
+  { label: "仙侠", caseId: "xianxia-a" },
+  { label: "奇幻", caseId: "fantasy-a" },
+  { label: "科幻", caseId: "science-fiction-a" },
+  { label: "都市", caseId: "urban-a" },
+  { label: "架空历史", caseId: "alternate-history-a" },
+  { label: "末日", caseId: "post-apocalypse-a" },
+];
+
 /**
  * 每个游戏类型配套的示例开局：选择类型时整体预填"02 / 主角"与"03 / 世界与开端"，
  * 玩家可随时点击修改，提交以实际编辑内容为准。文本长度满足表单校验规则。
@@ -200,6 +211,7 @@ export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGam
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({});
+  const [offlineCaseId, setOfflineCaseId] = useState<string>("wuxia-a");
   const selectedType = GAME_TYPES.find((type) => type.id === gameType)!;
   // 当前题材的主题色，用于整套页面的配色切换。
   const theme = ADVENTURE_THEMES[gameType];
@@ -321,7 +333,7 @@ export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGam
       const response = await fetch("/api/game", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ developmentPreset: "phase10-journey-v1" })
+        body: JSON.stringify({ developmentPreset: "phase10-journey-v1", caseId: offlineCaseId })
       });
       const body = (await response.json().catch(() => null)) as CreateGameApiBody | null;
       const generationSource = parseGenerationSource(body?.generationSource);
@@ -391,6 +403,21 @@ export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGam
             <p className="stage-dev-tools--desc">
               载入 Phase 10 离线完整旅程使用的固定开局数据；不调用开局 AI 或运行时 AI。
             </p>
+            <label className="offline-genre-select">
+              <span>题材</span>
+              <select
+                name="offlineGenre"
+                aria-label="离线题材"
+                value={offlineCaseId}
+                onChange={(event) => setOfflineCaseId(event.target.value)}
+              >
+                {OFFLINE_GENRES.map((genre) => (
+                  <option key={genre.caseId} value={genre.caseId}>
+                    {genre.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <InlineButton type="button" disabled={submitting} onClick={() => void handleOfflineJourneyStart()}>
               使用已有数据开始
             </InlineButton>
