@@ -48,6 +48,8 @@ export function resolveJudgeOnly(argv = []) {
   const aliases = new Map([
     ["early_prediction", "early_prediction"],
     ["S4", "early_prediction"],
+    ["S1", "story:S1-S2-S3-S5"], ["S2", "story:S1-S2-S3-S5"], ["S3", "story:S1-S2-S3-S5"], ["S5", "story:S1-S2-S3-S5"],
+    ["S6", "story:S6-S7-S8-S9"], ["S7", "story:S6-S7-S8-S9"], ["S8", "story:S6-S7-S8-S9"], ["S9", "story:S6-S7-S8-S9"],
     ["S1-S3-S5", "story:S1-S3-S5"],
     ["S1-S2-S3-S5", "story:S1-S2-S3-S5"],
     ["S6-S9", "story:S6-S9"],

@@ -9,6 +9,8 @@ import {
   buildSceneLevelPrompt,
   buildStoryLevelPrompt,
   callJudge,
+  resolveJudgeOnly,
+  resolveJudgeResume,
   collectLowScenes,
   JUDGE_TIMEOUT_DEFAULT_MS,
   JUDGE_TIMEOUT_MAX_MS,
@@ -25,6 +27,12 @@ import {
 test("judge timeout 默认值覆盖真实 provider 的大 prompt 延迟", () => {
   assert.equal(JUDGE_TIMEOUT_DEFAULT_MS, 300_000);
   assert.equal(JUDGE_TIMEOUT_MAX_MS, 300_000);
+});
+
+test("judge 增量选择可按单个 S/C 维度映射到对应缓存片段", () => {
+  assert.deepEqual([...resolveJudgeOnly(["--only=S1,C2"])].sort(), ["C2", "story:S1-S2-S3-S5"]);
+  assert.equal(resolveJudgeResume(["--resume"], {}), true);
+  assert.equal(resolveJudgeResume([], {}), false);
 });
 
 test("judge 大 prompt 使用按维度量表与 bounded concurrency", async () => {
