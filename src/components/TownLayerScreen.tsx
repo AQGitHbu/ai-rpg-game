@@ -23,10 +23,19 @@ type TownLayerScreenProps = {
 
 export function TownLayerScreen({ town, busy, onEnterBuilding, onReturnMap }: TownLayerScreenProps) {
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
+  // Phase 14：可进入的剧情建筑 ID 集合——传给 TownMapSvg 以渲染未探索占位。
+  const interactiveBuildingIds = new Set(town.interactiveBuildings.map((entry) => entry.buildingId));
   const selectedInteractive =
     selectedBuildingId === null
       ? null
       : town.interactiveBuildings.find((entry) => entry.buildingId === selectedBuildingId) ?? null;
+  // Phase 14：选中了未探索的剧情建筑（storyRequired 但被入口过滤排除）。
+  const selectedUnexplored =
+    selectedBuildingId !== null &&
+    selectedInteractive === null &&
+    town.snapshot.buildings.some(
+      (entry) => entry.buildingId === selectedBuildingId && entry.storyRequired
+    );
 
   return (
     <section className="town-layer-viewport" aria-label={`小镇：${town.townName}`}>
@@ -43,6 +52,7 @@ export function TownLayerScreen({ town, busy, onEnterBuilding, onReturnMap }: To
           selectedBuildingId={selectedBuildingId}
           onSelectBuilding={setSelectedBuildingId}
           showAiBuildingArt
+          interactiveBuildingIds={interactiveBuildingIds}
         />
 
         <aside className="town-layer-side">
@@ -56,6 +66,8 @@ export function TownLayerScreen({ town, busy, onEnterBuilding, onReturnMap }: To
                 进入{selectedInteractive.displayName}
               </InlineButton>
             </div>
+          ) : selectedUnexplored ? (
+            <p className="town-layer-hint" role="status">未探索</p>
           ) : (
             <p className="town-layer-hint">点击地图上高亮的剧情建筑，进入其中的场景与对话。</p>
           )}

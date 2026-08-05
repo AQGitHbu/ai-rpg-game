@@ -347,7 +347,8 @@ export function projectLocationAdventureView(
     const entry = state.towns.find((item) => String(item.locationId) === currentId);
     if (entry !== undefined) {
       townStatus = "ready";
-      town = projectTownLayerView(blueprint, entry);
+      // Phase 14：传 state 以应用小镇入口过滤（已结识 / talk 目标）。
+      town = projectTownLayerView(blueprint, entry, state);
     } else if (
       state.townGeneration.status === "pending" &&
       String(state.townGeneration.locationId) === currentId

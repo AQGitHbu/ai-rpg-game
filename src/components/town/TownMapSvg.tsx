@@ -42,6 +42,12 @@ type TownMapSvgProps = {
   showPlotBorders?: boolean;
   showRoadNodes?: boolean;
   showAiBuildingArt?: boolean;
+  /**
+   * Phase 14：可进入的剧情建筑 ID 集合。未提供时所有 storyRequired 建筑视为可进入
+   * （向后兼容旧调用方）；提供时，storyRequired 且不在集合中的建筑渲染为「未探索」
+   * 占位灰块——无 role=button、无点击、无贴图，避免泄漏未结识 NPC 信息。
+   */
+  interactiveBuildingIds?: ReadonlySet<string>;
 };
 
 export function TownMapSvg({
@@ -50,11 +56,22 @@ export function TownMapSvg({
   onSelectBuilding,
   showPlotBorders = false,
   showRoadNodes = false,
-  showAiBuildingArt = false
+  showAiBuildingArt = false,
+  interactiveBuildingIds
 }: TownMapSvgProps) {
   const { grid } = snapshot;
   const viewWidth = grid.width * TILE_SIZE;
   const viewHeight = grid.height * TILE_SIZE;
+
+  /** Phase 14：storyRequired 但不在可进入集合中的建筑渲染为「未探索」占位。 */
+  function isUnexploredPlaceholder(building: {
+    readonly buildingId: string;
+    readonly storyRequired: boolean;
+  }): boolean {
+    if (!building.storyRequired) return false;
+    if (interactiveBuildingIds === undefined) return false;
+    return !interactiveBuildingIds.has(building.buildingId);
+  }
 
   function handleBuildingClick(event: MouseEvent, buildingId: string) {
     // 阻止冒泡到 svg 的空白点击处理，避免选中后立刻被置空。
@@ -99,18 +116,20 @@ export function TownMapSvg({
 
       {showAiBuildingArt && (
         <g data-building-art>
-          {snapshot.buildings.map((building) => (
-            <image
-              key={`art-${building.buildingId}`}
-              href={`/assets/town-experiment/${building.buildingType}.jpg`}
-              x={building.footprint.x * TILE_SIZE}
-              y={building.footprint.y * TILE_SIZE}
-              width={building.footprint.width * TILE_SIZE}
-              height={building.footprint.height * TILE_SIZE}
-              preserveAspectRatio="xMidYMid slice"
-              pointerEvents="none"
-            />
-          ))}
+          {snapshot.buildings
+            .filter((building) => !isUnexploredPlaceholder(building))
+            .map((building) => (
+              <image
+                key={`art-${building.buildingId}`}
+                href={`/assets/town-experiment/${building.buildingType}.jpg`}
+                x={building.footprint.x * TILE_SIZE}
+                y={building.footprint.y * TILE_SIZE}
+                width={building.footprint.width * TILE_SIZE}
+                height={building.footprint.height * TILE_SIZE}
+                preserveAspectRatio="xMidYMid slice"
+                pointerEvents="none"
+              />
+            ))}
         </g>
       )}
 
@@ -151,6 +170,25 @@ export function TownMapSvg({
       )}
 
       {snapshot.buildings.map((building) => {
+        // Phase 14：未探索的剧情建筑渲染为灰色占位——无 role=button、不可点击、
+        // 不展示真实名称/贴图，避免泄漏未结识 NPC 的身份信息。
+        if (isUnexploredPlaceholder(building)) {
+          const selected = building.buildingId === selectedBuildingId;
+          const classes = ["town-demo-building", "town-demo-building--unexplored"];
+          if (selected) classes.push("town-demo-building--selected");
+          return (
+            <rect
+              key={building.buildingId}
+              className={classes.join(" ")}
+              aria-label="未探索"
+              x={building.footprint.x * TILE_SIZE}
+              y={building.footprint.y * TILE_SIZE}
+              width={building.footprint.width * TILE_SIZE}
+              height={building.footprint.height * TILE_SIZE}
+              pointerEvents="none"
+            />
+          );
+        }
         const selected = building.buildingId === selectedBuildingId;
         const classes = ["town-demo-building"];
         if (building.storyRequired) classes.push("town-demo-building--story");

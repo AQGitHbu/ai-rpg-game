@@ -360,7 +360,9 @@ export function toTownSpatialContext(
     (entry) => String(entry.locationId) === String(state.currentLocationId)
   );
   if (town === undefined) return undefined;
-  const view = projectTownLayerView(blueprint, town);
+  // Phase 14：projectTownLayerView 新增 state 参数（入口过滤对 semanticView 无影响，
+  // 但签名要求传入；semanticView 只依赖 snapshot + 镇名，与 interactiveBuildings 无关）。
+  const view = projectTownLayerView(blueprint, town, state);
   return {
     townName: view.semanticView.townName,
     sentences: view.semanticView.sentences,
