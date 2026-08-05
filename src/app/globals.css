@@ -2140,3 +2140,40 @@ label.town-demo-toggle {
 .stage-dev-tools .inline-button {
   justify-self: start;
 }
+
+/* Phase 14 Task 6：黑底白字序幕开场样式 */
+.prologue-screen {
+  position: fixed;
+  inset: 0;
+  background-color: #000;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  cursor: pointer;
+  z-index: 9999;
+  animation: prologue-fade-in 800ms ease-out;
+}
+
+.prologue-content {
+  max-width: 640px;
+  text-align: center;
+}
+
+.prologue-text {
+  font-size: 1.25rem;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.prologue-hint {
+  margin-top: 2rem;
+  opacity: 0.6;
+  font-size: 0.9rem;
+}
+
+@keyframes prologue-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

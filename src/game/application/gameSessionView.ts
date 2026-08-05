@@ -8,6 +8,7 @@ import {
   type ItemIconKey,
   type ItemRarity,
   type ItemStatLine,
+  type PrologueDefinition,
   type QuestObjective,
   type ScenarioBlueprint,
   type StoryMemoryEntry
@@ -158,6 +159,10 @@ export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly narrative: NarrativeSceneView;
   /** Phase 10：场景后台生成状态；无内部 task / provider 信息。 */
   readonly narrativeGeneration: NarrativeGenerationView;
+  /** Phase 14：序幕已播放标记（开局 false，ack_prologue 后 true）。 */
+  readonly prologueShown: boolean;
+  /** Phase 14：开场场景的序幕定义（来自 blueprint.openingScene.prologue）。 */
+  readonly openingScene: { readonly prologue?: PrologueDefinition };
 };
 
 /** 输入与 opening 投影完全一致：调用方无需区分两个 read model 的装配来源。 */
@@ -478,5 +483,8 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
     // Phase 10：AI 导演叙事场景视图——不泄漏 sceneId/turn/usedFactIds 等内部细节。
     narrative: projectNarrativeSceneView(state),
     narrativeGeneration: projectNarrativeGenerationView(state),
+    // Phase 14：序幕播放标记与开场序幕定义——UI 依据此判断是否显示黑底白字开场。
+    prologueShown: state.prologueShown,
+    openingScene: { prologue: blueprint.openingScene.prologue },
   };
 }

@@ -7,6 +7,7 @@ import { NewGameSetupForm } from "./NewGameSetupForm";
 import { AdventureGameShell } from "./AdventureGameShell";
 import { BattlePanel } from "./BattlePanel";
 import { EndingPanel } from "./EndingPanel";
+import { PrologueScreen } from "./PrologueScreen";
 
 // ---------------------------------------------------------------------------
 // 根页面客户端协调器（Phase 2–5 + Phase 6）：挂载时读取 GET /api/game/current。
@@ -163,6 +164,26 @@ export function CurrentGameScreen() {
     }
   }
 
+  /** Phase 14：标记序幕已播放（CAS 幂等）。成功后用返回的 view 切换到正常游戏 UI。 */
+  async function markPrologueShown(revision: number): Promise<void> {
+    try {
+      const response = await fetch("/api/game/prologue/ack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ revision }),
+      });
+      const body = (await response.json().catch(() => null)) as { view?: GameSessionView } | null;
+      if (response.ok && body?.view) {
+        setState({ phase: "active", view: body.view, createdWithFallback: false });
+        return;
+      }
+      // 版本冲突或其它错误：重新读取当前存档以恢复一致状态。
+      await loadCurrentGame();
+    } catch {
+      // 网络异常：保留当前视图（序幕停留），下次操作可自然恢复。
+    }
+  }
+
   const developmentControl = developmentTools ? (
     <Panel className="setup-result" compact>
       <Tag variant="warning">开发工具</Tag>
@@ -184,6 +205,16 @@ export function CurrentGameScreen() {
   if (state.phase === "active") {
     const hasEnding = state.view.ending !== null;
     const hasBattle = state.view.battle !== null;
+    // Phase 14：序幕未播放且有序幕定义时，优先显示黑底白字开场。
+    const prologue = state.view.openingScene?.prologue;
+    if (!state.view.prologueShown && prologue) {
+      return (
+        <PrologueScreen
+          prologue={prologue}
+          onComplete={() => void markPrologueShown(state.view.revision)}
+        />
+      );
+    }
 
     return (
       <div className="game-screen">

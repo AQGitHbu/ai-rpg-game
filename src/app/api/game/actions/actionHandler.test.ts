@@ -49,7 +49,10 @@ const STUB_VIEW: GameSessionView = {
   townStatus: "none",
   // Phase 10：叙事场景视图。
   narrative: null,
-  narrativeGeneration: { status: "ready" }
+  narrativeGeneration: { status: "ready" },
+  // Phase 14：序幕标记与开场序幕定义（HTTP 映射不读内容）。
+  prologueShown: true,
+  openingScene: {}
 };
 
 const STUB_FEEDBACK: ActionFeedbackView = { ok: true, message: "你观察了地点A。" };

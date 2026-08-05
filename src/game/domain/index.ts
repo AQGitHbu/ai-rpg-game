@@ -77,7 +77,8 @@ export {
   type SceneDefinitionCandidate,
   type GeneratedPlayerDefinitionCandidate,
   type GenerationMetadata,
-  type ProposedEnding
+  type ProposedEnding,
+  type PrologueDefinition
 } from "./scenarioBlueprint";
 export {
   resolveItemPresentation,
