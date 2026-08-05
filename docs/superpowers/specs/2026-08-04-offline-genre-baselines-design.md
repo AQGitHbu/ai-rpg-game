@@ -88,7 +88,7 @@
 
 - **开局可行性**：fallback 蓝图必经 `validateScenarioBlueprintCandidate` + `compileScenarioBlueprint`；若某题材 fallback 编译失败 → `GENERATION_INVALID`，游戏不会带残缺数据启动。现有测试已证 7 个 gameType 的 fallback 候选全部通过结构校验（`createFallbackBlueprint.test.ts`：「全部 7 种类型的候选通过结构校验」）。
 - **结局可达性**：`validateScenarioBlueprintCandidate` 校验 `UNREACHABLE_ENDING`/`LOOP_WITHOUT_CLOSURE`/`HIDDEN_LOCATION_OBJECTIVE_UNREACHABLE`；`analyzeQuestReachability` 断言每个任务图恰有 2 个可达结局。
-- **通关证据现状核实**：`phase10FullJourney` / `runtimeNarrativeJourney` 是 **AI 叙事模式**旅程——注入 `runtimeNarrativeSources`、以 `narrative_choice` 意图驱动（`aiCalls` 计数），其「零调用」指回放录制时零**网络**调用，并非零 AI 的规则循环通关。因此**不存在**「wuxia 零 AI 规则通关已被既有测试证明」的现成证据；全部 7 条基线的规则驱动通关证据统一由本次新增回归测试一次性提供（见 §9）。
+- **通关证据现状核实**：`phase10FullJourney` / `runtimeNarrativeJourney` 是 **AI 叙事模式**旅程——注入 `runtimeNarrativeSources`、以 `narrative_choice` 意图驱动（`aiCalls` 计数），其「零调用」指回放录制时零**网络**调用，并非零 AI 的规则循环通关。而 `phase4cOfflineJourneyRegression.test.ts` 是现成的**零运行时 AI 规则循环 harness**（performDeps 无 `runtimeNarrativeSources`；蓝图驱动 BFS 路径 + objective→intent 映射，走通 wuxia/sci-fi/urban 到结局，但用 phase4c generated 蓝图、gameLength short、未用 `runtimeNarrativeMode:"offline"`）。本次 Task 5 借鉴并泛化该 harness（`buildEndToEndRuleJourney` 覆盖全部 mainActs、补 `discover_fact`/`defeat_enemy` 映射、`runtimeNarrativeMode:"offline"`）提供全部 7 条基线的规则驱动通关证据（见 §9）。
 - **offline 通关**：offline 下玩家靠纯规则行动（move/talk/investigate/take_item/battle）推进任务图，最终任务完成→结局_1、失败→结局_2。现有 wuxia 的 town 层已验证规则行动在 offline 下可用（`townMainLoopRegression`「离线全旅程」），但未贯通到结局；本次新增回归测试补齐 7 条端到端证据。
 
 ## 9. 测试
@@ -96,7 +96,7 @@
 - **`offlineBaselines` 单元**：caseId→input+seed 解析正确、seed 确定性、未知 caseId→null、白名单恰好 7 个。
 - **`createGameHandler`**：白名单 caseId 通过并传给 use case；未知 caseId→400；缺失 caseId→legacy 路径；非 dev→403。
 - **compositionRoot**：各 caseId 产出的 input 经 `createGame(offlineDeps)` 成功创建存档（`source:"fallback"`、`narrative.mode:"offline"`）；非 dev 拒绝。
-- **新增 7 题材零 AI 规则通关回归（新 harness，不复用 narrative_choice harness）**：对 7 条离线基线各驱动 `createGame(offlineDeps)` + `performAction` 规则循环到结局，断言到达 ending、零 `fetch`。**注意**：不能直接复用 `phase10FullJourney`/`runtimeNarrativeJourney` 的 harness——它们是 AI 模式、以 `narrative_choice` 意图驱动；offline 模式无叙事场景，须新建 harness：每轮从 `view.availableActions` 中按目标导向选择器（类似 `storyEvalJourney` 的 `pickerFor("objective")`）选规则行动（优先推进 active main quest 的行动：take_item/talk/investigate/目标地点 move/battle，否则取合法兜底行动），带回合上限与失败断言；deps 的 `runtimeNarrativeSources` 置 `undefined`（顺带验证 performAction 闸门在 offline 下不排队叙事场景，即 §3 断言）。
+- **新增 7 题材零 AI 规则通关回归（借鉴泛化 phase4c harness，不复用 narrative_choice harness）**：对 7 条离线基线各驱动 `createGame(offlineDeps)` + `performAction` 规则循环到结局，断言到达 ending、零 `fetch`。**注意**：不能直接复用 `phase10FullJourney`/`runtimeNarrativeJourney` 的 harness——它们是 AI 模式、以 `narrative_choice` 意图驱动；offline 模式无叙事场景，故 harness 借鉴泛化自 `phase4cOfflineJourneyRegression.test.ts`（蓝图驱动 BFS 路径 + objective→intent 映射 + battle 推导，非 availableActions 选择器），对 7 条离线基线各驱动 `createGame(offlineDeps)` + `performAction` 规则循环到结局，断言到达 ending、零 `fetch`；deps 的 `runtimeNarrativeSources` 置 `undefined`（顺带验证 performAction 闸门在 offline 下不排队叙事场景，即 §3 断言）。
 - **`NewGameSetupForm` UI**：dev 下渲染 7 选项、prod 下隐藏、点击发送正确 caseId；现有「请求不含玩家输入」断言保持（caseId 非 player input）。
 
 ## 10. 边界与失败处理
