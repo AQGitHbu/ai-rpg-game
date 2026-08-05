@@ -166,6 +166,25 @@ describe("compositionRoot：注入 env 记录接通真实持久化", () => {
     });
   });
 
+  it("createOfflineJourneyGame(caseId) 用 v2.json 题材基线创建 offline 存档", async () => {
+    const entryPoints = openDevelopmentEntryPoints(nextDbPath());
+    const created = await entryPoints.createOfflineJourneyGame("xianxia-a");
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.source).toBe("fallback");
+    expect(created.view.world.gameType).toBe("xianxia");
+    expect(created.view.narrative).toBeNull();
+    expect(created.view.narrativeGeneration).toEqual({ status: "ready" });
+  });
+
+  it("createOfflineJourneyGame(caseId) 未知 caseId 返回 INVALID_INPUT", async () => {
+    const entryPoints = openDevelopmentEntryPoints(nextDbPath());
+    const created = await entryPoints.createOfflineJourneyGame("nope");
+    expect(created.ok).toBe(false);
+    if (created.ok) return;
+    expect(created.code).toBe("INVALID_INPUT");
+  });
+
   it("HTTP 包装器贯通请求 trace、结果码、状态码和响应头", async () => {
     const databasePath = nextDbPath();
     const entryPoints = openEntryPoints(databasePath);
