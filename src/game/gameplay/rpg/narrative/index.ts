@@ -22,6 +22,18 @@ export {
 } from "./approveBlueprintExpansion";
 
 export {
+  approveEndingProposal,
+  type ApproveEndingProposalInput,
+  type EndingApprovalDecision,
+  type EndingApprovalRejection,
+} from "./approveEndingProposal";
+
+export {
+  applyEndingToBlueprint,
+  type ApplyEndingToBlueprintInput,
+} from "./applyEndingToBlueprint";
+
+export {
   compileBlueprintExpansion,
   type CompileBlueprintExpansionInput,
   type CompileBlueprintExpansionResult,

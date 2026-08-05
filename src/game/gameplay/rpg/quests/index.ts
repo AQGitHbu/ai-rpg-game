@@ -19,3 +19,8 @@ export {
   type ResolveEndingDependencies,
   type ResolveEndingResult,
 } from "./resolveEnding";
+
+export {
+  reconcileMainStoryProgress,
+  type ReconcileMainStoryProgressResult,
+} from "./storyProgression";

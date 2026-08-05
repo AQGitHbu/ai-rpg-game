@@ -3,10 +3,10 @@
 // 每个函数将 domain state → 纯净 context JSON（绝不含 AI prompt 原文、密钥）。
 // ---------------------------------------------------------------------------
 
-import { budgetPolicyOf, relationshipTierOf, storyMemoryOf, type GameState, type PlayerNpcChatState, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
+import { budgetPolicyOf, relationshipTierOf, storyMemoryOf, type EndingTone, type GameState, type PlayerNpcChatState, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
 import { projectAvailableActions, projectRelationshipSummary } from "@/game/gameplay/rpg/actions";
 import { actionKeyOf, deriveContentProgression, type ContentProgression } from "@/game/gameplay/rpg/narrative";
-import { isQuestObjectiveSatisfied } from "@/game/gameplay/rpg/quests";
+import { isQuestObjectiveSatisfied, reconcileMainStoryProgress } from "@/game/gameplay/rpg/quests";
 import type { ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
 import { projectTownLayerView } from "./townRuntimeView";
 
@@ -406,6 +406,10 @@ export type DirectorContext = {
   readonly expansionAllowed: boolean;
   /** locationsSoftMax - 当前地点总数；open 档为 null；下限 0。 */
   readonly remainingLocationBudget: number | null;
+  /** Phase 14：主线进度达 endingDirection.lockedAt 且未提议过结局时为 true，导演可提议结局。 */
+  readonly endingProposalAllowed: boolean;
+  /** Phase 14：结局方向骨架（主题与允许基调），供导演在 endingProposalAllowed 时对齐。 */
+  readonly endingDirection: { readonly theme: string; readonly possibleTones: readonly EndingTone[] };
   /** NPC 自由输入触发时的上下文线索：导演独立判断是否采纳，不强制。 */
   readonly playerNpcChat?: PlayerNpcChatState;
 };
@@ -464,6 +468,21 @@ export function toDirectorContext(input: DirectorContextInput): DirectorContext 
       ? state.narrative.generation.playerNpcChat
       : undefined;
 
+  // Phase 14：主线进度达 endingDirection.lockedAt 且未提议过结局 → 允许导演提议结局。
+  // deps.now 未在统计逻辑中读取（纯计数），传确定性空串占位即可。
+  // 防御性守卫：旧测试 fixture 或迁移期 state 可能缺 mainStoryProgress/endingDirection，
+  // 此时降级为 endingProposalAllowed=false（不提议结局），避免运行时崩溃。
+  const hasEndingProgress = state.mainStoryProgress !== undefined && blueprint.endingDirection !== undefined;
+  const endingProposalAllowed = hasEndingProgress
+    ? reconcileMainStoryProgress(blueprint, state, { now: () => "" }).shouldProposeEnding
+    : false;
+  const endingDirection = blueprint.endingDirection !== undefined
+    ? {
+        theme: blueprint.endingDirection.theme,
+        possibleTones: blueprint.endingDirection.possibleTones,
+      }
+    : { theme: "", possibleTones: [] as readonly EndingTone[] };
+
   const context: DirectorContext = {
     currentLocationId: String(state.currentLocationId),
     currentLocationCard: currentLocationCardOf(blueprint, state),
@@ -481,6 +500,8 @@ export function toDirectorContext(input: DirectorContextInput): DirectorContext 
     recentContinuity: projectRecentContinuity(state, blueprint, DIRECTOR_CONTINUITY_LIMIT),
     expansionAllowed,
     remainingLocationBudget,
+    endingProposalAllowed,
+    endingDirection,
     ...(townSpatial !== undefined ? { townSpatial } : {}),
     ...(playerNpcChat !== undefined ? { playerNpcChat } : {}),
   };

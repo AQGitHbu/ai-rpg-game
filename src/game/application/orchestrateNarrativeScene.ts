@@ -7,15 +7,17 @@
 import type { GameState, ScenarioBlueprint, NarrativeSceneState, NpcDialogueInScene, NpcId, FactId, StoryPacing } from "@/game/domain";
 import { paginateSpeechText } from "@/game/domain";
 import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
-import type { NarrativeActionCandidate, NpcInstruction, ApprovedDirectorPlan, ApprovedSceneScript, BlueprintExpansionDecision } from "@/game/gameplay/rpg/narrative";
+import type { NarrativeActionCandidate, NpcInstruction, ApprovedDirectorPlan, ApprovedSceneScript, BlueprintExpansionDecision, EndingApprovalDecision } from "@/game/gameplay/rpg/narrative";
 import {
   approveDirectorProposal,
   approveSceneScript,
   approveNpcPerformance,
   approveBlueprintExpansion,
+  approveEndingProposal,
   actionKeyOf,
   deriveContentProgression,
 } from "@/game/gameplay/rpg/narrative";
+import { reconcileMainStoryProgress, type ReconcileQuestsDependencies } from "@/game/gameplay/rpg/quests";
 import { projectAvailableActions } from "@/game/gameplay/rpg/actions";
 import { NARRATIVE_CONTRACT_VERSION, type DirectorSource, type SceneScriptSource, type NpcLineSource, type DirectorAttempt, type SceneScriptAttempt } from "./runtimeNarrative";
 import type { StoryEvalApprovalEvent } from "./storyEvalCaptureTypes";
@@ -31,6 +33,36 @@ import {
 import { SPEECH_PAGE_CHAR_BUDGET } from "./locationAdventureView";
 
 const MAX_ROLE_ATTEMPTS = 3;
+
+/**
+ * Phase 14：reconcileMainStoryProgress 的 deps 占位。该函数当前统计逻辑不读
+ * now()（仅基于 blueprint.quests 与 state.quests 的纯交集计数），故此处传入
+ * 确定性空字符串即可；保留参数仅为与 spec 签名对齐。
+ */
+const NOOP_QUEST_DEPS: ReconcileQuestsDependencies = { now: () => "" };
+
+/**
+ * Phase 14：达阈值且导演提议结局时跑 8 步闸门；否则返回 undefined。
+ * 纯只读——绝不修改 state/blueprint，仅返回审批决定供调用方落库。
+ *
+ * 防御性守卫：旧测试 fixture 或迁移期 state 可能缺 mainStoryProgress/
+ * endingDirection（Phase 14 才引入的字段），此时降级为不提议结局
+ * （返回 undefined），避免运行时崩溃。与 runtimeNarrativeContexts 的
+ * hasEndingProgress 守卫口径一致。
+ */
+function computeEndingDecision(
+  blueprint: ScenarioBlueprint,
+  state: GameState,
+  plan: ApprovedDirectorPlan,
+): EndingApprovalDecision | undefined {
+  if (blueprint.endingDirection === undefined || state.mainStoryProgress === undefined) {
+    return undefined;
+  }
+  const { shouldProposeEnding } = reconcileMainStoryProgress(blueprint, state, NOOP_QUEST_DEPS);
+  if (!shouldProposeEnding) return undefined;
+  if (plan.proposedEnding === undefined) return undefined;
+  return approveEndingProposal({ blueprint, state, proposed: plan.proposedEnding });
+}
 
 function resolveRoleAttemptLimit(value: number | undefined): number {
   return Number.isInteger(value) && value !== undefined && value >= 1 && value <= MAX_ROLE_ATTEMPTS
@@ -204,6 +236,13 @@ export type OrchestrateSceneResult = {
   readonly focusNpcId: NpcId | null;
   /** 蓝图动态化：本幕扩展提案的纯语义审批结果；fallback 固定 none_proposed。 */
   readonly expansionDecision: BlueprintExpansionDecision;
+  /**
+   * Phase 14：结局推演闸门审批结果。仅当主线进度达阈值且导演提议了结局时计算；
+   * fallback 场景与未达阈值/未提议场景为 undefined。本层只读计算，不修改
+   * state/blueprint——blueprint 扩展与 mainStoryProgress.endingProposed 写回
+   * 由调用方（generatePendingNarrativeScene）经 CAS 落库。
+   */
+  readonly endingDecision?: EndingApprovalDecision;
   readonly diagnostics: {
     readonly director: DirectorAttempt;
     readonly script: SceneScriptAttempt | null;
@@ -391,6 +430,8 @@ export async function orchestrateNarrativeScene(
   // Step 6：组装 NarrativeSceneState
   const expansionDecision = approveBlueprintExpansion({ blueprint, state, plan });
   input.approvalObserver?.({ kind: "expansion_decision", traceId, decision: expansionDecision });
+  // Phase 14：主线进度达阈值且导演提议结局时跑 8 步闸门（只读，不修改 state/blueprint）。
+  const endingDecision = computeEndingDecision(blueprint, state, plan);
   const scene: NarrativeSceneState = {
     sceneId: `${traceId}-scene-${Date.now()}`,
     turn: calculateTurn(state),
@@ -419,6 +460,7 @@ export async function orchestrateNarrativeScene(
     pacing: plan.pacing,
     focusNpcId: plan.focusNpcId as NpcId | null,
     expansionDecision,
+    ...(endingDecision !== undefined ? { endingDecision } : {}),
     diagnostics: {
       director: directorAttempt,
       script: scriptAttempt,

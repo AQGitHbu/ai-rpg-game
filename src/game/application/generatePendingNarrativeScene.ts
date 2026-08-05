@@ -1,8 +1,8 @@
 import type { GameRepository } from "./server/persistence/gameRepository";
 import type { GameLogger } from "@/game/logging";
-import type { GameState } from "@/game/domain";
+import type { GameState, ScenarioBlueprint } from "@/game/domain";
 import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
-import { compileBlueprintExpansion } from "@/game/gameplay/rpg/narrative";
+import { applyEndingToBlueprint, compileBlueprintExpansion } from "@/game/gameplay/rpg/narrative";
 import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 import { reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
@@ -120,21 +120,49 @@ export async function generatePendingNarrativeScene(
     storyMemory: reconcileStoryMemory({ state: nextState })
   };
   // 蓝图动态化：审批通过的扩展与场景同一次 CAS 落库；否则仅写场景。
-  const saved = generated.expansionDecision.ok
+  // Phase 14：审批通过的结局也并入同一次 CAS——blueprint.endings 追加
+  // approvedEnding，state.mainStoryProgress.endingProposed 置 true。扩展与
+  // 结局可能同时发生，统一构造 nextBlueprint + finalState 后走 applyBlueprintExpansion。
+  const expansionApproved = generated.expansionDecision.ok;
+  const endingApproved = generated.endingDecision?.ok === true;
+  let nextBlueprint: ScenarioBlueprint = record.blueprint;
+  let finalState: GameState = nextState;
+  if (expansionApproved) {
+    const compiled = compileBlueprintExpansion({
+      blueprint: record.blueprint,
+      state: nextState,
+      expansion: generated.expansionDecision.expansion,
+      occurredAt: deps.now(),
+    });
+    nextBlueprint = compiled.nextBlueprint;
+    finalState = compiled.nextState;
+  }
+  if (endingApproved) {
+    // approvedEnding.id 已在 orchestrateNarrativeScene 基于 record.blueprint.endings 铸造；
+    // 扩展不修改 endings[]，故 id 在扩展后的 nextBlueprint 上仍唯一。
+    nextBlueprint = applyEndingToBlueprint({
+      blueprint: nextBlueprint,
+      approvedEnding: generated.endingDecision.approvedEnding,
+    });
+    finalState = {
+      ...finalState,
+      mainStoryProgress: {
+        ...finalState.mainStoryProgress,
+        endingProposed: true,
+      },
+    };
+  }
+  const saved = (expansionApproved || endingApproved)
     ? await deps.repository.applyBlueprintExpansion({
         gameId: record.gameId,
         expectedRevision: record.revision,
-        ...compileBlueprintExpansion({
-          blueprint: record.blueprint,
-          state: nextState,
-          expansion: generated.expansionDecision.expansion,
-          occurredAt: deps.now(),
-        }),
+        nextBlueprint,
+        nextState: finalState,
       })
     : await deps.repository.applyResolvedAction({
         gameId: record.gameId,
         expectedRevision: record.revision,
-        nextState,
+        nextState: finalState,
       });
   if (!saved.ok) return saved.code === "STALE_GAME_REVISION" ? "stale" : "unavailable";
   return "saved";

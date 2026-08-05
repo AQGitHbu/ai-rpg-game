@@ -319,10 +319,21 @@ function messages(role: Role, request: Request): readonly AiMessage[] {
     : role === "writer"
       ? "previousScene is the authoritative structural handoff card for the immediately preceding scene. Keep the current location, focus NPC, pacing, and player action consistent with it, and make any move or NPC handoff explicit through a concrete consequence or next action; never invent a time jump."
       : "previousScene is the authoritative structural handoff card for the immediately preceding scene. Do not contradict its location, focus NPC, pacing, or player action; when handing off, make the reason and next concrete action or destination explicit. Never invent a time jump. Speak as the supplied NPC, not as an omniscient narrator: do not narrate the player's arrival or repeat a location premise; include at least one role-specific observation or action, and tie any lead to the NPC's known facts and current location."
+  // Phase 14：达 endingDirection.lockedAt 阈值时允许导演提议结局。导演输出
+  // 新增可选字段 proposedEnding；闸门（approveEndingProposal）会再次校验
+  // tone/requirements 合法性，prompt 只负责让导演知道结构。
+  const endingProposalInstruction = role === "director" && isEndingProposalAllowed(request.context)
+    ? " endingProposalAllowed is true: the main story has reached its act threshold and you MAY propose a concrete ending aligned with endingDirection.theme. If you propose one, add a top-level proposedEnding field with shape {name, description, tone, requirements, reason}. name: 2-20 Simplified Chinese chars (ending title). description: 10-200 chars (ending prose). tone: MUST be one of endingDirection.possibleTones. requirements: array of {kind, questId|factId} where kind is quest_completed, quest_failed, or fact_discovered; copy questId from activeQuestCards or completed main quest ids in recentContinuity, and factId from discoveredFactIds; an empty array is allowed. reason: 10-200 chars explaining why this ending fits the theme and current state. If no ending fits this scene, omit proposedEnding or set it to null. The approval gate independently validates tone and references, so never invent quest or fact IDs."
+    : "";
   const promptInstruction = role === "director"
-    ? `${instruction} ${handoffInstruction} If pacing is climax, require sceneGoal to name the established clue, NPC lead, or threat that makes the confrontation inevitable; do not introduce an unforeshadowed antagonist or unsupported final reveal.`
+    ? `${instruction} ${handoffInstruction} If pacing is climax, require sceneGoal to name the established clue, NPC lead, or threat that makes the confrontation inevitable; do not introduce an unforeshadowed antagonist or unsupported final reveal.${endingProposalInstruction}`
     : `${instruction} ${handoffInstruction}`;
   return [{ role: "system", content: `${promptInstruction} Contract: ${NARRATIVE_CONTRACT_VERSION}.` }, { role: "user", content: JSON.stringify(request.context) }];
+}
+
+/** Phase 14：从导演 context 安全读取 endingProposalAllowed 标志。 */
+function isEndingProposalAllowed(context: Record<string, unknown>): boolean {
+  return context.endingProposalAllowed === true;
 }
 
 function parseObject(content: string): Record<string, unknown> | null {
