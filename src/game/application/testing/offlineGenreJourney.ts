@@ -2,7 +2,7 @@ import type { QuestDefinition, QuestObjective, ScenarioBlueprint } from "@/game/
 import { asLocationId } from "@/game/domain";
 import type { PlayerIntent } from "@/game/gameplay/rpg/actions";
 import { performAction } from "../performAction";
-import type { GameRepository } from "../server/persistence/gameRepository";
+import type { GameRepository } from "@/game/application";
 
 const FIXED_ACTION_TIME = "2026-08-04T00:00:00.000Z";
 
