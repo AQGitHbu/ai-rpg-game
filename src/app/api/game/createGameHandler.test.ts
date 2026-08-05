@@ -115,6 +115,16 @@ describe("handleCreateGameRequest：合法开局资料", () => {
     expect(await current.json()).toEqual({ status: "active", view: body.view });
   });
 
+  it("浏览器提交 gameLength 时长字段 ⇒ 201（属于开局资料允许字段）", async () => {
+    const databasePath = nextDbPath();
+    const entryPoints = openEntryPoints(databasePath);
+    const withLength = { ...FIXTURE.input, gameLength: "long" };
+    const response = await handleCreateGameRequest(postJson(withLength), entryPoints);
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.view.world.gameType).toBe("wuxia");
+  });
+
   it("响应绝不携带 seed/blueprint/state/inputDigest 等内部信息", async () => {
     const entryPoints = openEntryPoints(nextDbPath());
     const response = await handleCreateGameRequest(postJson(FIXTURE.input), entryPoints);

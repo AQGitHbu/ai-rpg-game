@@ -34,7 +34,8 @@ const REQUIRED_STRING_FIELDS = [
 const ALLOWED_FIELDS: ReadonlySet<string> = new Set([
   ...REQUIRED_STRING_FIELDS,
   "characterProfile",
-  "personalityTags"
+  "personalityTags",
+  "gameLength"
 ]);
 const OFFLINE_JOURNEY_PRESET = "phase10-journey-v1";
 
@@ -107,6 +108,9 @@ export async function handleCreateGameRequest(
   if (record.characterProfile !== undefined && typeof record.characterProfile !== "string") {
     invalidTypes.push("characterProfile");
   }
+  if (record.gameLength !== undefined && typeof record.gameLength !== "string") {
+    invalidTypes.push("gameLength");
+  }
   const tags = record.personalityTags;
   if (tags !== undefined && !(Array.isArray(tags) && tags.every((t) => typeof t === "string"))) {
     invalidTypes.push("personalityTags");
@@ -126,7 +130,8 @@ export async function handleCreateGameRequest(
     worldPremise: (record.worldPremise ?? "") as string,
     storyOpening: (record.storyOpening ?? "") as string,
     narrativeStyle: (record.narrativeStyle ?? "") as NewGameInput["narrativeStyle"],
-    contentIntensity: (record.contentIntensity ?? "") as NewGameInput["contentIntensity"]
+    contentIntensity: (record.contentIntensity ?? "") as NewGameInput["contentIntensity"],
+    gameLength: record.gameLength as NewGameInput["gameLength"]
   };
 
   let result: CreateGameResult;
