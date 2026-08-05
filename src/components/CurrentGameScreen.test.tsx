@@ -33,7 +33,7 @@ function stubFetch(implementation: (input: unknown, init?: RequestInit) => Promi
 const FALLBACK_NOTICE = "已使用稳定模板完成开局，仍可完整游玩。";
 
 async function fillAndSubmitSetupForm(user: UserEvent) {
-  await screen.findByText("选择游戏类型");
+  await screen.findByText("选择世界");
   // 默认类型已预填武侠示例，先清空再输入，模拟玩家按自己意图编辑。
   await user.clear(screen.getByLabelText("角色名字"));
   await user.type(screen.getByLabelText("角色名字"), "沈青崖");
@@ -43,7 +43,7 @@ async function fillAndSubmitSetupForm(user: UserEvent) {
   await user.type(screen.getByLabelText("世界观背景"), "镖局一夜覆灭，江湖各派暗流涌动，真凶身份成谜。");
   await user.clear(screen.getByLabelText("故事开端"));
   await user.type(screen.getByLabelText("故事开端"), "暮色四合，主角背着旧刀走进青石镇，镇口贴着缉凶告示。");
-  await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+  await user.click(screen.getByRole("button", { name: "踏上旅程" }));
 }
 
 afterEach(() => {
@@ -61,7 +61,7 @@ describe("CurrentGameScreen", () => {
     const fetchMock = stubFetch(async () => jsonResponse(200, { status: "none" }));
     render(<CurrentGameScreen />);
 
-    expect(await screen.findByText("选择游戏类型")).toBeInTheDocument();
+    expect(await screen.findByText("选择世界")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]![0]).toBe("/api/game/current");
   });
@@ -74,7 +74,7 @@ describe("CurrentGameScreen", () => {
     expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "前往城外官道" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "打开角色面板" })).toBeInTheDocument();
-    expect(screen.queryByText("选择游戏类型")).toBeNull();
+    expect(screen.queryByText("选择世界")).toBeNull();
   });
 
   it("非战斗 active 会话渲染地图 HUD", async () => {
@@ -149,7 +149,7 @@ describe("CurrentGameScreen", () => {
 
     await user.click(await screen.findByRole("button", { name: "开发工具" }));
     await user.click(await screen.findByRole("button", { name: "清除本地试玩存档" }));
-    expect(await screen.findByText("选择游戏类型")).toBeInTheDocument();
+    expect(await screen.findByText("选择世界")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/game/dev/current", { method: "DELETE" });
   });
 
@@ -181,7 +181,7 @@ describe("CurrentGameScreen", () => {
     render(<CurrentGameScreen />);
 
     expect(await screen.findByText(/未能读取当前存档/)).toBeInTheDocument();
-    expect(screen.queryByText("选择游戏类型")).toBeNull();
+    expect(screen.queryByText("选择世界")).toBeNull();
   });
 
   it("完整闭环：none → 填表创建成功 → 无需刷新直接看到开场视图，只访问本地 API", async () => {
@@ -197,7 +197,7 @@ describe("CurrentGameScreen", () => {
     await fillAndSubmitSetupForm(user);
 
     expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
-    expect(screen.queryByText("选择游戏类型")).toBeNull();
+    expect(screen.queryByText("选择世界")).toBeNull();
     expect(screen.queryByText(FALLBACK_NOTICE)).toBeNull();
     for (const call of fetchMock.mock.calls) {
       expect(String(call[0])).toMatch(/^\/api\/game(\/current)?$/);
