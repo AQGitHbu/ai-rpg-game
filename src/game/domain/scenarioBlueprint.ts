@@ -202,6 +202,48 @@ type EndingDefinitionOf<I extends IdSet> = {
   readonly requirements: readonly EndingRequirementOf<I>[];
 };
 
+// === Phase 14：结局方向与序幕 ===
+
+/** 结局基调：影响结局文案与视觉风格。 */
+export type EndingTone = "triumph" | "tragedy" | "bittersweet" | "ambiguous";
+
+/** 序幕定义：黑底白字开场，开局一次性生成。 */
+export type PrologueDefinition = {
+  /** 序幕正文，如"南宋覆灭五十余年..." */
+  readonly text: string;
+  /** 影响视觉风格（字体动画速度等）。 */
+  readonly tone: "serious" | "epic" | "mysterious";
+  /** 可选自动播放时长（毫秒）；缺省由玩家点击跳过。 */
+  readonly durationMs?: number;
+};
+
+/** 结局方向骨架：开局生成，运行时由 AI 导演具体化。 */
+type EndingDirectionOf<I extends IdSet> = {
+  /** 结局主题方向，如"反元抉择"。 */
+  readonly theme: string;
+  /** 可能的基调集合，AI 提议的结局必须从中选择。 */
+  readonly possibleTones: readonly EndingTone[];
+  /** 主线幕数阈值，达此阈值后 AI 可提议具体化结局。 */
+  readonly lockedAt: number;
+};
+
+/** 起始锚点：开局生成，运行时只读。 */
+type StartAnchorOf<I extends IdSet> = {
+  readonly locationId: I["location"];
+  readonly npcId: I["npc"];
+  readonly startQuestId: I["quest"];
+};
+
+/** 运行时 AI 提议的结局（经闸门审批后转为 EndingDefinition）。 */
+export type ProposedEnding = {
+  readonly name: string;
+  readonly description: string;
+  readonly tone: EndingTone;
+  readonly requirements: readonly EndingRequirement[];
+  /** AI 解释为何此结局合适（审计用）。 */
+  readonly reason: string;
+};
+
 type SceneDefinitionOf<I extends IdSet> = {
   readonly id: I["scene"];
   readonly locationId: I["location"];
@@ -210,6 +252,8 @@ type SceneDefinitionOf<I extends IdSet> = {
   readonly suggestedActions: readonly string[];
   /** Phase 3: 当前场景中可调查的世界事实 ID（opening scene 至少一个）。 */
   readonly investigableFactIds: readonly I["fact"][];
+  /** Phase 14: 序幕（黑底白字开场），仅 openingScene 使用。 */
+  readonly prologue?: PrologueDefinition;
 };
 
 type GeneratedPlayerDefinitionOf<I extends IdSet> = {
@@ -226,7 +270,7 @@ type GeneratedPlayerDefinitionOf<I extends IdSet> = {
 // ---------------------------------------------------------------------------
 
 type ScenarioBlueprintShapeOf<I extends IdSet> = {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;  // Phase 14: 从 1 升到 2
   readonly generationId: I["generation"];
   readonly seed: string;
   readonly templateVersion: string;
@@ -234,6 +278,10 @@ type ScenarioBlueprintShapeOf<I extends IdSet> = {
   readonly inputDigest: string;
   readonly world: WorldDefinitionOf<I>;
   readonly player: GeneratedPlayerDefinitionOf<I>;
+  /** Phase 14: 起始锚点（开局生成，运行时只读）。 */
+  readonly startAnchor: StartAnchorOf<I>;
+  /** Phase 14: 结局方向骨架（开局生成，运行时具体化）。 */
+  readonly endingDirection: EndingDirectionOf<I>;
   readonly locations: readonly LocationDefinitionOf<I>[];
   readonly npcs: readonly NpcDefinitionOf<I>[];
   readonly quests: readonly QuestDefinitionOf<I>[];
@@ -284,6 +332,12 @@ export type EndingDefinitionCandidate = EndingDefinitionOf<CandidateIds>;
 export type EndingRequirementCandidate = EndingRequirementOf<CandidateIds>;
 export type SceneDefinitionCandidate = SceneDefinitionOf<CandidateIds>;
 export type GeneratedPlayerDefinitionCandidate = GeneratedPlayerDefinitionOf<CandidateIds>;
+
+// Phase 14 新增别名
+export type EndingDirection = EndingDirectionOf<CompiledIds>;
+export type StartAnchor = StartAnchorOf<CompiledIds>;
+export type EndingDirectionCandidate = EndingDirectionOf<CandidateIds>;
+export type StartAnchorCandidate = StartAnchorOf<CandidateIds>;
 
 // ---------------------------------------------------------------------------
 // 生成元数据：初始事件账本与 GameState 复用。

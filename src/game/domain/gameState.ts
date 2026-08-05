@@ -114,6 +114,13 @@ export type GameState = {
    * 由纯 reducer 从 eventLedger 归约，AI 文案不入记忆。
    */
   readonly storyMemory?: StoryMemoryState;
+  /** Phase 14: 序幕已播放标记（开局 false，播放后 true）。 */
+  readonly prologueShown: boolean;
+  /** Phase 14: 主线幕数追踪（结局推演用）。 */
+  readonly mainStoryProgress: {
+    readonly currentAct: number;
+    readonly endingProposed: boolean;
+  };
   /** 追加式事件账本：初始条目必须是 game_initialized。 */
   readonly eventLedger: readonly GameEvent[];
 };
