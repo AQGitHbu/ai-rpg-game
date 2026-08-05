@@ -51,7 +51,11 @@ type ThemeSpec = {
   readonly motif: string;
 };
 
-const THEMES: Record<AdventureVisualVariant, ThemeSpec> = {
+/**
+ * 题材→五色主题的只读映射，同时供视觉组件与本仓库内其他 UI（如新开局页面的
+ * 类型选择主题切换）使用。sky/ground 为面、fill 为主体、line 为线条、accent 为点缀。
+ */
+export const ADVENTURE_THEMES: Readonly<Record<AdventureVisualVariant, ThemeSpec>> = {
   wuxia: {
     sky: "#2b2a26",
     ground: "#3d3a30",
@@ -257,7 +261,7 @@ type AdventureVisualProps = {
 
 export function AdventureVisual({ gameType, kind, label, decorative = false }: AdventureVisualProps) {
   const variant = resolveAdventureVisualVariant(gameType, kind);
-  const theme = THEMES[variant];
+  const theme = ADVENTURE_THEMES[variant];
   // 类别兜底与 resolve 同口径：非法 kind 用通用节点形状，绝不抛错。
   const shape = isVisualKind(kind) ? KIND_SHAPES[kind] : KIND_SHAPES.map_node;
   const accessibilityProps = decorative

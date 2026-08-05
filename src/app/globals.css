@@ -202,10 +202,6 @@ select:focus,
   box-shadow: 0 0 0 3px rgb(215 185 111 / 13%);
 }
 
-.narrative-style {
-  width: min(300px, 100%);
-}
-
 .new-game-actions {
   display: flex;
   align-items: center;
@@ -1827,3 +1823,312 @@ label.town-demo-toggle {
   }
 }
 
+
+/* ==========================================================================
+   新开局界面重构（单页双栏）：预览舞台 + 编辑区
+   主题色由 NewGameSetupForm 依据所选游戏类型通过内联 CSS 变量注入：
+   --stage-fill / --stage-line / --stage-accent 分别对应题材 fill/line/accent。
+   ========================================================================== */
+
+.new-game-form--split {
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  align-items: start;
+  gap: 24px;
+}
+
+.setup-stage {
+  position: sticky;
+  top: 24px;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 18px;
+  background: var(--game-surface-raised);
+  box-shadow: var(--game-shadow-modal);
+  backdrop-filter: blur(14px);
+}
+
+.setup-stage--banner {
+  display: grid;
+  background: color-mix(in srgb, var(--stage-fill) 34%, #10150f);
+  border-bottom: 1px solid color-mix(in srgb, var(--stage-line) 28%, transparent);
+}
+
+.setup-stage--banner svg {
+  width: 100%;
+  height: 132px;
+  border-radius: 0;
+}
+
+.setup-stage--body {
+  display: grid;
+  gap: 18px;
+  padding: 22px 24px 26px;
+}
+
+.character-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 16px;
+}
+
+.character-card--portrait {
+  width: 84px;
+  height: 84px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--stage-line) 45%, transparent);
+  background: color-mix(in srgb, var(--stage-fill) 26%, #11160f);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 3%);
+}
+
+.character-card--portrait svg {
+  width: 100%;
+  height: 100%;
+}
+
+.character-card--info h3 {
+  margin: 0;
+  font-family: Georgia, "STSong", serif;
+  font-size: 1.7rem;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--game-text-primary);
+}
+
+.character-card--identity {
+  margin: 6px 0 0;
+  /* accent 混白提亮：暗 accent 题材（如历史架空 #a83c32）在深背景上保证可读。 */
+  color: color-mix(in srgb, var(--stage-accent) 55%, #f3ead5);
+  font-size: 0.92rem;
+}
+
+.stage-block {
+  display: grid;
+  gap: 6px;
+  padding-top: 14px;
+  border-top: 1px dashed color-mix(in srgb, var(--game-surface-border) 70%, transparent);
+}
+
+.stage-block--label {
+  margin: 0;
+  color: color-mix(in srgb, var(--stage-accent) 55%, #f3ead5);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.stage-block--body {
+  margin: 0;
+  color: var(--game-text-muted);
+  font-size: 0.95rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.stage-block--quote {
+  font-family: Georgia, "STSong", serif;
+  font-style: italic;
+  color: var(--game-text-primary);
+}
+
+.stage-block--meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px dashed color-mix(in srgb, var(--game-surface-border) 70%, transparent);
+  color: var(--game-text-muted);
+  font-size: 0.8rem;
+}
+
+.setup-editor {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.game-type-card {
+  position: relative;
+  grid-template-columns: 1fr;
+  min-height: 118px;
+}
+
+.game-type-card--visual {
+  display: grid;
+  width: 100%;
+  height: 62px;
+  border-radius: 9px;
+  overflow: hidden;
+  margin-bottom: 2px;
+  background: color-mix(in srgb, var(--game-surface-bg) 70%, transparent);
+}
+
+.game-type-card--visual svg {
+  width: 100%;
+  height: 100%;
+}
+
+.game-type-card--selected {
+  border-color: var(--game-accent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--stage-accent) 18%, transparent), var(--game-accent-soft));
+}
+
+.game-type-card--selected .game-type-card--visual {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--stage-line) 40%, transparent);
+}
+
+.setup-editor input,
+.setup-editor textarea {
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgb(8 13 9 / 85%), rgb(4 8 5 / 88%));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%);
+}
+
+/* 靠后的单类选择器自然覆盖 .inline-button--default/--md（同文件同特异性，后者胜出），无需 !important。
+   背景将题材 accent 混白提亮，保证暗 accent 题材（历史架空/武侠）下深字按钮仍可读。 */
+.journey-button {
+  position: relative;
+  min-width: 180px;
+  padding: 14px 28px;
+  font-size: 1.05rem;
+  letter-spacing: 0.06em;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--stage-accent) 68%, #fff), color-mix(in srgb, var(--stage-accent) 52%, #fff));
+  color: #16110a;
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--stage-accent) 32%, transparent);
+}
+
+.journey-button::after {
+  content: "\2192";
+  margin-left: 10px;
+  transition: transform 150ms ease;
+}
+
+.journey-button:hover::after {
+  transform: translateX(4px);
+}
+
+.journey-button:disabled {
+  filter: grayscale(0.5);
+}
+
+@media (max-width: 900px) {
+  .new-game-form--split {
+    grid-template-columns: 1fr;
+  }
+
+  .setup-stage {
+    position: static;
+  }
+
+  .setup-stage--banner svg {
+    height: 96px;
+  }
+
+  .setup-stage--body {
+    padding: 18px 20px 20px;
+  }
+}
+
+/* ---- 叙事风格 / 游戏时长：分段选项 ---- */
+.segment-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.segment-group {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.segment-group--legend {
+  padding: 0;
+  color: var(--game-text-muted);
+  font-size: 0.9rem;
+}
+
+.segment-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.segment-option {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  min-height: 66px;
+  padding: 11px 13px;
+  border: 1px solid #405044;
+  border-radius: 12px;
+  background: rgb(7 12 9 / 34%);
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.segment-option:hover {
+  transform: translateY(-1px);
+  border-color: #809074;
+}
+
+.segment-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segment-option strong {
+  color: var(--game-text-primary);
+  font-size: 0.95rem;
+}
+
+.segment-option span {
+  color: var(--game-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.segment-option--selected {
+  border-color: var(--game-accent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--stage-accent) 16%, transparent), var(--game-accent-soft));
+}
+
+.segment-option:focus-within {
+  border-color: var(--game-accent);
+  box-shadow: 0 0 0 3px rgb(215 185 111 / 13%);
+}
+
+/* ---- 舞台内开发开局面板 ---- */
+/* 开发开局：舞台内独立模块，位于"你的角色"版块下方 */
+.stage-dev-tools {
+  display: grid;
+  gap: 10px;
+  padding: 20px 24px 24px;
+  border-top: 1px solid color-mix(in srgb, var(--game-surface-border) 65%, transparent);
+  background: rgb(7 12 9 / 30%);
+}
+
+.stage-dev-tools--title {
+  margin: 0;
+  color: var(--game-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.stage-dev-tools--desc {
+  margin: 0;
+  color: var(--game-text-muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.stage-dev-tools .inline-button {
+  justify-self: start;
+}

@@ -71,8 +71,47 @@ describe("NewGameSetupForm", () => {
     expect(screen.getByLabelText("故事开端")).toHaveValue(
       "暮色四合，主角背着旧刀走进青石镇，镇口贴着一张字迹潦草的缉凶告示。"
     );
-    expect(screen.getByLabelText("叙事风格")).toHaveValue("novel");
-    expect(screen.getByLabelText("游戏时长")).toHaveValue("short");
+    expect(screen.getByRole("radio", { name: /小说化/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /短篇/ })).toBeChecked();
+  });
+
+  it("切换叙事风格与游戏时长分段选项后选中态更新，且提交携带所选值", async () => {
+    const view = buildSessionViewFixture();
+    const pending = deferred<FakeResponse>();
+    const fetchMock = stubFetch(() => pending.promise);
+    const onCreated = vi.fn();
+    const user = userEvent.setup();
+    render(<NewGameSetupForm onCreated={onCreated} />);
+
+    expect(screen.getByRole("radio", { name: /小说化/ })).toBeChecked();
+    await user.click(screen.getByRole("radio", { name: /电影化/ }));
+    expect(screen.getByRole("radio", { name: /电影化/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /小说化/ })).not.toBeChecked();
+
+    await user.click(screen.getByRole("radio", { name: /长篇/ }));
+    expect(screen.getByRole("radio", { name: /长篇/ })).toBeChecked();
+
+    await fillValidForm(user);
+    await user.click(screen.getByRole("button", { name: "踏上旅程" }));
+
+    pending.resolve(jsonResponse(201, { view, generationSource: "generated" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(view, "generated"));
+    const payload = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+    expect(payload.narrativeStyle).toBe("cinematic");
+    expect(payload.gameLength).toBe("long");
+  });
+
+  it("所选游戏类型向表单注入对应题材的主题色 CSS 变量", async () => {
+    stubFetch(async () => jsonResponse(200, {}));
+    const user = userEvent.setup();
+    const { container } = render(<NewGameSetupForm />);
+
+    const form = container.querySelector("form.new-game-form") as HTMLFormElement;
+    // 默认武侠主题：#c4675f。
+    expect(form.style.getPropertyValue("--stage-accent")).toBe("#c4675f");
+
+    await user.click(screen.getByRole("radio", { name: /科幻/ }));
+    expect(form.style.getPropertyValue("--stage-accent")).toBe("#ff8a5c");
   });
 
   it("切换游戏类型后，主角与世界开端字段整体替换为对应示例", async () => {
@@ -153,11 +192,11 @@ describe("NewGameSetupForm", () => {
     render(<NewGameSetupForm onCreated={onCreated} />);
 
     await fillValidForm(user);
-    await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+    await user.click(screen.getByRole("button", { name: "踏上旅程" }));
 
     // loading：aria-live 等待态 + 提交按钮与类型 fieldset 禁用。
     expect(screen.getByRole("status")).toHaveTextContent("正在生成世界，请稍候……");
-    expect(screen.getByRole("button", { name: "确认开局资料" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "踏上旅程" })).toBeDisabled();
     expect(screen.getByRole("radio", { name: /科幻/ })).toBeDisabled();
 
     pending.resolve(jsonResponse(201, { view, generationSource: "generated" }));
@@ -196,7 +235,7 @@ describe("NewGameSetupForm", () => {
     render(<NewGameSetupForm onCreated={vi.fn()} />);
 
     await fillValidForm(user);
-    const submit = screen.getByRole("button", { name: "确认开局资料" });
+    const submit = screen.getByRole("button", { name: "踏上旅程" });
     await user.click(submit);
     await user.click(submit);
     await user.click(submit);
@@ -204,7 +243,7 @@ describe("NewGameSetupForm", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     pending.resolve(jsonResponse(201, { view: buildSessionViewFixture(), generationSource: "generated" }));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "确认开局资料" })).toBeEnabled()
+      expect(screen.getByRole("button", { name: "踏上旅程" })).toBeEnabled()
     );
   });
 
@@ -216,7 +255,7 @@ describe("NewGameSetupForm", () => {
     render(<NewGameSetupForm onCreated={onCreated} />);
 
     await fillValidForm(user);
-    await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+    await user.click(screen.getByRole("button", { name: "踏上旅程" }));
 
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(view, "fallback"));
   });
@@ -228,13 +267,13 @@ describe("NewGameSetupForm", () => {
     render(<NewGameSetupForm onCreated={onCreated} />);
 
     await fillValidForm(user);
-    await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+    await user.click(screen.getByRole("button", { name: "踏上旅程" }));
 
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent("创建开局失败")
     );
     expect(onCreated).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "确认开局资料" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "踏上旅程" })).toBeEnabled();
   });
 
   it("201 但 generationSource 未知：同样失败，绝不默认按 generated 处理", async () => {
@@ -246,7 +285,7 @@ describe("NewGameSetupForm", () => {
     render(<NewGameSetupForm onCreated={onCreated} />);
 
     await fillValidForm(user);
-    await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+    await user.click(screen.getByRole("button", { name: "踏上旅程" }));
 
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent("创建开局失败")
@@ -261,7 +300,7 @@ describe("NewGameSetupForm", () => {
 
     // 默认示例已填好其余字段，清空角色名字以触发必填错误。
     await user.clear(screen.getByLabelText("角色名字"));
-    await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+    await user.click(screen.getByRole("button", { name: "踏上旅程" }));
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent("请修正表单中标出的问题");
@@ -282,7 +321,7 @@ describe("NewGameSetupForm", () => {
     render(<NewGameSetupForm />);
 
     await fillValidForm(user);
-    await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+    await user.click(screen.getByRole("button", { name: "踏上旅程" }));
 
     await waitFor(() =>
       expect(screen.getByText("最多允许 500 个字符（当前 600 个）。")).toBeInTheDocument()
@@ -296,13 +335,13 @@ describe("NewGameSetupForm", () => {
     render(<NewGameSetupForm />);
 
     await fillValidForm(user);
-    await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+    await user.click(screen.getByRole("button", { name: "踏上旅程" }));
 
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent("已存在进行中的存档")
     );
     // 失败后允许再次提交。
-    expect(screen.getByRole("button", { name: "确认开局资料" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "踏上旅程" })).toBeEnabled();
   });
 
   it("INFRASTRUCTURE_FAILURE：提示数据库暂不可用", async () => {
@@ -311,7 +350,7 @@ describe("NewGameSetupForm", () => {
     render(<NewGameSetupForm />);
 
     await fillValidForm(user);
-    await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+    await user.click(screen.getByRole("button", { name: "踏上旅程" }));
 
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent("本地存档数据库暂时不可用")
@@ -326,9 +365,9 @@ describe("NewGameSetupForm", () => {
     render(<NewGameSetupForm />);
 
     await fillValidForm(user);
-    await user.click(screen.getByRole("button", { name: "确认开局资料" }));
+    await user.click(screen.getByRole("button", { name: "踏上旅程" }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("网络异常"));
-    expect(screen.getByRole("button", { name: "确认开局资料" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "踏上旅程" })).toBeEnabled();
   });
 });

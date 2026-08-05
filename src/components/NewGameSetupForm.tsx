@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, type CSSProperties, type FormEvent } from "react";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import {
   validateNewGameInput,
@@ -9,12 +9,17 @@ import {
   type GameSessionView,
   type GenerationSource
 } from "@/game/application";
+import { AdventureVisual, ADVENTURE_THEMES } from "./adventureVisuals";
 
 // ---------------------------------------------------------------------------
-// 新开局表单（Task 4）：受控表单，提交时真实调用 POST /api/game。
+// 新开局表单（Task 4 + 界面重构）：受控表单，提交时真实调用 POST /api/game。
 // 客户端先用 application facade 转发的 validateNewGameInput 预校验（server 会重新校验），
 // 通过后只提交 NewGameInput 允许的字段——seed/gameId/生成来源无从伪造。
 // loading 期间禁用提交防止重复请求，状态经 aria-live 区域反馈。
+//
+// 单页双栏重构：左侧"预览舞台"实时呈现当前开局（角色卡 + 世界 + 开端），
+// 右侧为编辑区。选中游戏类型时整套页面配色随该题材的 ADVENTURE_THEMES 切换，
+// 玩家在点选瞬间即进入对应世界。纯呈现层改动，不触碰任何表单逻辑或校验规则。
 // ---------------------------------------------------------------------------
 
 const GAME_TYPES = [
@@ -99,6 +104,35 @@ const GAME_TYPE_PRESETS: Record<NewGameInput["gameType"], GameTypePreset> = {
 const DEFAULT_GAME_TYPE = "wuxia" as const;
 const DEFAULT_PRESET = GAME_TYPE_PRESETS[DEFAULT_GAME_TYPE];
 
+type SegmentOption<T extends string> = { value: T; label: string; hint: string };
+
+/** 表单内两个枚举字段的收窄类型：NewGameInput 中 gameLength 可选，剔除 undefined。 */
+type NarrativeStyleValue = NonNullable<NewGameInput["narrativeStyle"]>;
+type GameLengthValue = NonNullable<NewGameInput["gameLength"]>;
+
+/** 叙事风格分段选项：并排平铺，替代下拉框。 */
+const NARRATIVE_STYLE_OPTIONS: readonly SegmentOption<NarrativeStyleValue>[] = [
+  { value: "concise", label: "简洁", hint: "短句直给" },
+  { value: "novel", label: "小说化", hint: "铺陈细腻" },
+  { value: "cinematic", label: "电影化", hint: "画面感强" }
+] as const satisfies readonly SegmentOption<NarrativeStyleValue>[];
+
+/** 游戏时长分段选项：并排平铺，替代下拉框。 */
+const GAME_LENGTH_OPTIONS: readonly SegmentOption<GameLengthValue>[] = [
+  { value: "short", label: "短篇", hint: "一个完整篇章" },
+  { value: "medium", label: "中篇", hint: "多幕推进" },
+  { value: "long", label: "长篇", hint: "绵长史诗" },
+  { value: "open", label: "不限", hint: "随剧情推演" }
+] as const satisfies readonly SegmentOption<GameLengthValue>[];
+
+/** 通过受控枚举查找 option，返回 null 表示不存在（防御性收窄，替代 unchecked cast）。 */
+function findSegmentOption<T extends string>(
+  options: readonly SegmentOption<T>[],
+  value: string
+): SegmentOption<T> | null {
+  return options.find((option) => option.value === value) ?? null;
+}
+
 type FieldErrorMap = Partial<Record<keyof NewGameInput, string>>;
 
 /** 域错误码 → 可显示文案：params 为稳定可显示参数。 */
@@ -159,14 +193,21 @@ export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGam
   const [worldPremise, setWorldPremise] = useState(DEFAULT_PRESET.worldPremise);
   const [storyOpening, setStoryOpening] = useState(DEFAULT_PRESET.storyOpening);
   const [narrativeStyle, setNarrativeStyle] =
-    useState<NewGameInput["narrativeStyle"]>("novel");
+    useState<NarrativeStyleValue>("novel");
   const [gameLength, setGameLength] =
-    useState<NewGameInput["gameLength"]>("short");
+    useState<GameLengthValue>("short");
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({});
   const selectedType = GAME_TYPES.find((type) => type.id === gameType)!;
+  // 当前题材的主题色，用于整套页面的配色切换。
+  const theme = ADVENTURE_THEMES[gameType];
+  const themeStyle = {
+    "--stage-fill": theme.fill,
+    "--stage-line": theme.line,
+    "--stage-accent": theme.accent
+  } as CSSProperties;
 
   /** 内联错误的可访问性接线：aria-invalid + aria-describedby 指向错误文本。 */
   function fieldErrorProps(field: keyof NewGameInput) {
@@ -302,177 +343,252 @@ export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGam
   }
 
   return (
-    <form className="new-game-form" noValidate onSubmit={handleSubmit}>
-      {developmentTools ? (
-        <Panel eyebrow="开发开局" title="使用已有数据开始" compact>
-          <p>载入 Phase 10 离线完整旅程使用的固定开局数据；不调用开局 AI 或运行时 AI。</p>
-          <InlineButton type="button" disabled={submitting} onClick={() => void handleOfflineJourneyStart()}>
-            使用已有数据开始
-          </InlineButton>
-        </Panel>
-      ) : null}
-      <Panel
-        eyebrow="01 / 世界范围"
-        header={(
-          <div className="panel-heading">
-            <div>
-              <h2>选择游戏类型</h2>
-              <p>类型限制世界生成不能跑题，并绑定对应的 AI 绘图风格。</p>
+    <form className="new-game-form new-game-form--split" noValidate onSubmit={handleSubmit} style={themeStyle}>
+      {/* 左侧：预览舞台，实时呈现当前开局全貌 */}
+      <aside className="setup-stage" aria-label="开局预览">
+        <div className="setup-stage--banner" aria-hidden="true">
+          <AdventureVisual gameType={gameType} kind="location_backdrop" label={`${selectedType.label}世界背景`} decorative />
+        </div>
+
+        <div className="setup-stage--body">
+          <p className="eyebrow">你的角色</p>
+
+          <div className="character-card">
+            <div className="character-card--portrait" aria-hidden="true">
+              <AdventureVisual gameType={gameType} kind="npc" label="角色形象" decorative />
             </div>
+            <div className="character-card--info">
+              <h3>{characterName || "无名者"}</h3>
+              <p className="character-card--identity">{characterIdentity || "身份未定"}</p>
+            </div>
+          </div>
+
+          <div className="stage-block">
+            <p className="stage-block--label">角色基础信息</p>
+            <p className="stage-block--body">{characterProfile || "还没有角色基础信息。"}</p>
+          </div>
+
+          <div className="stage-block">
+            <p className="stage-block--label">世界观背景</p>
+            <p className="stage-block--body">{worldPremise || "还没有世界观背景。"}</p>
+          </div>
+
+          <div className="stage-block">
+            <p className="stage-block--label">故事开端</p>
+            <p className="stage-block--body stage-block--quote">{storyOpening || "还没有故事开端。"}</p>
+          </div>
+
+          <div className="stage-block--meta">
             <Tag variant="accent">{selectedType.label}</Tag>
-          </div>
-        )}
-      >
-        <fieldset className="game-type-grid" disabled={submitting}>
-          <legend className="sr-only">游戏类型</legend>
-          {GAME_TYPES.map((type) => (
-            <label
-              key={type.id}
-              className={`game-type-card${gameType === type.id ? " game-type-card--selected" : ""}`}
-            >
-              <input
-                type="radio"
-                name="gameType"
-                value={type.id}
-                checked={gameType === type.id}
-                onChange={() => handleGameTypeChange(type.id)}
-              />
-              <strong>{type.label}</strong>
-              <span>{type.hint}</span>
-            </label>
-          ))}
-        </fieldset>
-      </Panel>
-
-      <Panel eyebrow="02 / 主角" title="你将以谁的身份进入故事？">
-        <div className="form-grid form-grid--two">
-          {/* 错误文本放在 label 外（aria-describedby 关联），避免污染可访问名称。 */}
-          <div className="form-field">
-            <label>
-              <span>角色名字</span>
-              <input
-                name="characterName"
-                value={characterName}
-                onChange={(event) => setCharacterName(event.target.value)}
-                maxLength={20}
-                placeholder="例如：沈砚"
-                {...fieldErrorProps("characterName")}
-              />
-            </label>
-            {renderFieldError("characterName")}
-          </div>
-          <div className="form-field">
-            <label>
-              <span>身份 / 职业</span>
-              <input
-                name="characterIdentity"
-                value={characterIdentity}
-                onChange={(event) => setCharacterIdentity(event.target.value)}
-                maxLength={80}
-                placeholder="例如：被逐出师门的机关师"
-                {...fieldErrorProps("characterIdentity")}
-              />
-            </label>
-            {renderFieldError("characterIdentity")}
+            <span>{findSegmentOption(NARRATIVE_STYLE_OPTIONS, narrativeStyle)?.label ?? narrativeStyle}</span>
+            <span>{findSegmentOption(GAME_LENGTH_OPTIONS, gameLength)?.label ?? gameLength}</span>
           </div>
         </div>
-        <div className="form-field">
-          <label>
-            <span>角色基础信息</span>
-            <textarea
-              name="characterProfile"
-              value={characterProfile}
-              onChange={(event) => setCharacterProfile(event.target.value)}
-              maxLength={300}
-              rows={3}
-              placeholder="经历、性格、能力倾向或重要关系；这里的描述不会直接授予规则数值。"
-              {...fieldErrorProps("characterProfile")}
-            />
-          </label>
-          {renderFieldError("characterProfile")}
-        </div>
-      </Panel>
 
-      <Panel eyebrow="03 / 世界与开端" title="告诉系统，你想从怎样的局势开始">
-        <div className="form-field">
-          <label>
-            <span>世界观背景</span>
-            <textarea
-              name="worldPremise"
-              value={worldPremise}
-              onChange={(event) => setWorldPremise(event.target.value)}
-              maxLength={500}
-              rows={5}
-              placeholder="例如：七座浮空城以交易记忆维持运转，地面已经被遗忘了三百年……"
-              {...fieldErrorProps("worldPremise")}
-            />
-          </label>
-          {renderFieldError("worldPremise")}
-        </div>
-        <div className="form-field">
-          <label>
-            <span>故事开端</span>
-            <textarea
-              name="storyOpening"
-              value={storyOpening}
-              onChange={(event) => setStoryOpening(event.target.value)}
-              maxLength={300}
-              rows={4}
-              placeholder="例如：我收到一封来自失踪妹妹、却署着三年前日期的信……"
-              {...fieldErrorProps("storyOpening")}
-            />
-          </label>
-          {renderFieldError("storyOpening")}
-        </div>
-        <label className="narrative-style">
-          <span>叙事风格</span>
-          <select
-            name="narrativeStyle"
-            value={narrativeStyle}
-            onChange={(event) =>
-              setNarrativeStyle(event.target.value as NewGameInput["narrativeStyle"])
-            }
-          >
-            <option value="concise">简洁</option>
-            <option value="novel">小说化</option>
-            <option value="cinematic">电影化</option>
-          </select>
-        </label>
-        <label className="game-length">
-          <span>游戏时长</span>
-          <select
-            name="gameLength"
-            value={gameLength}
-            onChange={(event) =>
-              setGameLength(event.target.value as NewGameInput["gameLength"])
-            }
-          >
-            <option value="open">不限（随剧情推演）</option>
-            <option value="short">短篇</option>
-            <option value="medium">中篇</option>
-            <option value="long">长篇</option>
-          </select>
-        </label>
-      </Panel>
+        {developmentTools ? (
+          <section className="stage-dev-tools" aria-label="开发开局">
+            <p className="stage-dev-tools--title">开发开局</p>
+            <p className="stage-dev-tools--desc">
+              载入 Phase 10 离线完整旅程使用的固定开局数据；不调用开局 AI 或运行时 AI。
+            </p>
+            <InlineButton type="button" disabled={submitting} onClick={() => void handleOfflineJourneyStart()}>
+              使用已有数据开始
+            </InlineButton>
+          </section>
+        ) : null}
+      </aside>
 
-      <div className="new-game-actions">
-        <p>提交后将在本地生成开局并保存为当前存档；本阶段不调用 AI。</p>
-        <InlineButton type="submit" size="md" disabled={submitting}>
-          确认开局资料
-        </InlineButton>
-      </div>
-
-      {/* aria-live 状态区域：常驻挂载，loading/成功变化会被读屏播报。 */}
-      <p role="status" aria-live="polite" className="form-status">
-        {statusMessage}
-      </p>
-
-      {errorMessage ? (
-        <Panel className="setup-result" compact>
-          <Tag variant="danger">提交未完成</Tag>
-          <p role="alert">{errorMessage}</p>
+      {/* 右侧：编辑区 */}
+      <div className="setup-editor">
+        <Panel
+          eyebrow="其一 · 择世"
+          header={(
+            <div className="panel-heading">
+              <div>
+                <h2>选择世界</h2>
+                <p>类型限制世界生成不能跑题，并绑定对应的 AI 绘图风格与界面主题。</p>
+              </div>
+              <Tag variant="accent">{selectedType.label}</Tag>
+            </div>
+          )}
+        >
+          <fieldset className="game-type-grid" disabled={submitting}>
+            <legend className="sr-only">游戏类型</legend>
+            {GAME_TYPES.map((type) => (
+              <label
+                key={type.id}
+                className={`game-type-card${gameType === type.id ? " game-type-card--selected" : ""}`}
+              >
+                <input
+                  type="radio"
+                  name="gameType"
+                  value={type.id}
+                  checked={gameType === type.id}
+                  onChange={() => handleGameTypeChange(type.id)}
+                />
+                <span className="game-type-card--visual" aria-hidden="true">
+                  <AdventureVisual gameType={type.id} kind="map_node" label={`${type.label}世界`} decorative />
+                </span>
+                <strong>{type.label}</strong>
+                <span>{type.hint}</span>
+              </label>
+            ))}
+          </fieldset>
         </Panel>
-      ) : null}
+
+        <Panel eyebrow="其二 · 立人" title="你将以谁的身份进入故事？">
+          <div className="form-grid form-grid--two">
+            {/* 错误文本放在 label 外（aria-describedby 关联），避免污染可访问名称。 */}
+            <div className="form-field">
+              <label>
+                <span>角色名字</span>
+                <input
+                  name="characterName"
+                  value={characterName}
+                  onChange={(event) => setCharacterName(event.target.value)}
+                  maxLength={20}
+                  placeholder="例如：沈砚"
+                  {...fieldErrorProps("characterName")}
+                />
+              </label>
+              {renderFieldError("characterName")}
+            </div>
+            <div className="form-field">
+              <label>
+                <span>身份 / 职业</span>
+                <input
+                  name="characterIdentity"
+                  value={characterIdentity}
+                  onChange={(event) => setCharacterIdentity(event.target.value)}
+                  maxLength={80}
+                  placeholder="例如：被逐出师门的机关师"
+                  {...fieldErrorProps("characterIdentity")}
+                />
+              </label>
+              {renderFieldError("characterIdentity")}
+            </div>
+          </div>
+          <div className="form-field">
+            <label>
+              <span>角色基础信息</span>
+              <textarea
+                name="characterProfile"
+                value={characterProfile}
+                onChange={(event) => setCharacterProfile(event.target.value)}
+                maxLength={300}
+                rows={3}
+                placeholder="经历、性格、能力倾向或重要关系；这里的描述不会直接授予规则数值。"
+                {...fieldErrorProps("characterProfile")}
+              />
+            </label>
+            {renderFieldError("characterProfile")}
+          </div>
+        </Panel>
+
+        <Panel eyebrow="其三 · 起势" title="告诉系统，你想从怎样的局势开始">
+          <div className="form-field">
+            <label>
+              <span>世界观背景</span>
+              <textarea
+                name="worldPremise"
+                value={worldPremise}
+                onChange={(event) => setWorldPremise(event.target.value)}
+                maxLength={500}
+                rows={5}
+                placeholder="例如：七座浮空城以交易记忆维持运转，地面已经被遗忘了三百年……"
+                {...fieldErrorProps("worldPremise")}
+              />
+            </label>
+            {renderFieldError("worldPremise")}
+          </div>
+          <div className="form-field">
+            <label>
+              <span>故事开端</span>
+              <textarea
+                name="storyOpening"
+                value={storyOpening}
+                onChange={(event) => setStoryOpening(event.target.value)}
+                maxLength={300}
+                rows={4}
+                placeholder="例如：我收到一封来自失踪妹妹、却署着三年前日期的信……"
+                {...fieldErrorProps("storyOpening")}
+              />
+            </label>
+            {renderFieldError("storyOpening")}
+          </div>
+
+          <div className="segment-grid">
+            <fieldset className="segment-group">
+              <legend className="segment-group--legend">叙事风格</legend>
+              <div className="segment-row">
+                {NARRATIVE_STYLE_OPTIONS.map((option) => (
+                  <label
+                    key={option.value}
+                    className={`segment-option${narrativeStyle === option.value ? " segment-option--selected" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name="narrativeStyle"
+                      value={option.value}
+                      checked={narrativeStyle === option.value}
+                      onChange={(event) => {
+                        const matched = findSegmentOption(NARRATIVE_STYLE_OPTIONS, event.target.value);
+                        if (matched !== null) setNarrativeStyle(matched.value);
+                      }}
+                    />
+                    <strong>{option.label}</strong>
+                    <span>{option.hint}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="segment-group">
+              <legend className="segment-group--legend">游戏时长</legend>
+              <div className="segment-row">
+                {GAME_LENGTH_OPTIONS.map((option) => (
+                  <label
+                    key={option.value}
+                    className={`segment-option${gameLength === option.value ? " segment-option--selected" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name="gameLength"
+                      value={option.value}
+                      checked={gameLength === option.value}
+                      onChange={(event) => {
+                        const matched = findSegmentOption(GAME_LENGTH_OPTIONS, event.target.value);
+                        if (matched !== null) setGameLength(matched.value);
+                      }}
+                    />
+                    <strong>{option.label}</strong>
+                    <span>{option.hint}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          </div>
+        </Panel>
+
+        <div className="new-game-actions">
+          <p>提交后将在本地生成开局并保存为当前存档；本阶段不调用 AI。</p>
+          <InlineButton type="submit" size="md" disabled={submitting} className="journey-button">
+            踏上旅程
+          </InlineButton>
+        </div>
+
+        {/* aria-live 状态区域：role="status" 隐含 aria-live="polite"，常驻挂载以便播报变化。 */}
+        <p role="status" className="form-status">
+          {statusMessage}
+        </p>
+
+        {errorMessage ? (
+          <Panel className="setup-result" compact>
+            <Tag variant="danger">提交未完成</Tag>
+            <p role="alert">{errorMessage}</p>
+          </Panel>
+        ) : null}
+      </div>
     </form>
   );
 }
