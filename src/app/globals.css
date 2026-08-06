@@ -1051,6 +1051,44 @@ body:has(.adventure-game-shell) {
   color: var(--game-text-muted);
 }
 
+.narrative-generation-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.narrative-generation-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 68%);
+}
+
+.narrative-generation-modal-content {
+  position: relative;
+  z-index: 1;
+  width: min(90vw, 560px);
+  padding: 28px 32px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 16px;
+  background: var(--game-surface-raised);
+  box-shadow: var(--game-shadow-modal);
+  text-align: center;
+}
+
+.narrative-generation-modal-content h2,
+.narrative-generation-modal-content p {
+  margin: 0;
+}
+
+.narrative-generation-modal-content p {
+  margin-top: 12px;
+  color: var(--game-text-muted);
+  line-height: 1.7;
+}
+
 .development-tools-hint {
   margin: 8px 0 16px;
   color: var(--game-text-muted);

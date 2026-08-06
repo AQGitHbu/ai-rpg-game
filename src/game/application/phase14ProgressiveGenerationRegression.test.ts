@@ -249,7 +249,9 @@ describe("Phase 14 渐进式生成与剧情推演", () => {
   it("序幕播放后 prologueShown=true（ack_prologue intent 幂等）", async () => {
     const fixture = wuxiaFixture as unknown as { input: NewGameInput; seed: string };
     const repo = createInMemoryGameRepository();
-    const deps2 = createTestDependencies(repo);
+    const deps2 = createTestDependencies(repo, {
+      runtimeNarrativeSources: mockRuntimeNarrativeSources
+    });
     const created = await createGame(
       { input: { ...fixture.input, gameLength: "short" }, seed: fixture.seed },
       deps2
@@ -257,6 +259,7 @@ describe("Phase 14 渐进式生成与剧情推演", () => {
     expect(created.ok).toBe(true);
     if (!created.ok) return;
     expect(created.view.prologueShown).toBe(false);
+    expect(created.view.narrativeGeneration.status).toBe("pending");
 
     // 第一次 ack_prologue：标记为已播放
     const ack1 = await performAction(

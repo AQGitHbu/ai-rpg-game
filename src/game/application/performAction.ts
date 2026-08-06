@@ -362,7 +362,12 @@ export async function performAction(
   // A pending scene is a durable job boundary. Do not allow a client to
   // advance the deterministic world a second time while the next narrative
   // projection is still being produced (including after a process restart).
-  if (record.state.narrative.generation.status === "pending") {
+  // ack_prologue 只标记一次性开场状态，不推进规则世界，也不依赖下一幕
+  // 场景；即使开局叙事正在后台生成，也必须允许玩家离开序幕。
+  if (
+    command.intent.type !== "ack_prologue" &&
+    record.state.narrative.generation.status === "pending"
+  ) {
     const view = projectCurrentView();
     if (view === null) {
       return { ok: false, code: "INFRASTRUCTURE_FAILURE" };

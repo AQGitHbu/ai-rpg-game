@@ -12,6 +12,7 @@ import { LocationSceneScreen } from "./LocationSceneScreen";
 import { TownLayerScreen } from "./TownLayerScreen";
 import { NpcDialoguePanel, type FreeInputResult } from "./NpcDialoguePanel";
 import { ToastContainer, type ToastMessage } from "./ToastNotification";
+import { NarrativeGenerationModal } from "./NarrativeGenerationModal";
 
 type AdventureGameShellProps = {
   readonly view: GameSessionView;
@@ -177,11 +178,10 @@ export function AdventureGameShell({
 
   /**
    * Phase 14：对话面板情境选项提交——choiceToken 来自 currentScene.choices，
-   * 提交 narrative_choice intent（与场景面板共用同一通路）。提交后关闭对话覆盖层，
-   * 让随后的 pending / 新场景视图接管主区域。
+   * 提交 narrative_choice intent（与场景面板共用同一通路）。pending 期间保留对话覆盖层，
+   * 由生成模态覆盖当前界面，直到 API 返回新的场景。
    */
   function handleDialogueChoiceFromPanel(choiceToken: string): void {
-    setDialogueNpcId(null);
     void handleNarrativeChoice(choiceToken);
   }
 
@@ -264,11 +264,6 @@ export function AdventureGameShell({
             onReturnMap={() => setScreen("map")}
           />
         )
-      ) : narrativePending && view.battle === null && view.ending === null ? (
-        <Panel className="narrative-scene-panel narrative-pending-panel" aria-label="正在生成剧情">
-          <p role="status" aria-live="polite">正在编排下一幕…</p>
-          <p>世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。</p>
-        </Panel>
       ) : (
         <LocationSceneScreen
           view={view}
@@ -307,6 +302,10 @@ export function AdventureGameShell({
             清除本地试玩存档
           </InlineButton>
         </AdventureOverlay>
+      ) : null}
+
+      {narrativePending && view.battle === null && view.ending === null ? (
+        <NarrativeGenerationModal />
       ) : null}
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />

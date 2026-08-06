@@ -73,7 +73,7 @@ export function NpcDialoguePanel({
     if (text === "") return;
     const result = await onFreeInput(dialogue.npcId, text);
     setDraft("");
-    // narrative_trigger 时父组件已 onViewChange，对话面板即将被 pending 面板覆盖，
+    // narrative_trigger 时父组件已 onViewChange，生成模态会覆盖仍保留的对话面板，
     // 不设本地回应，避免闪现无意义文本。
     if (result.kind === "chat") {
       setLocalReply(result.npcSpeech);

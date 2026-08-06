@@ -77,6 +77,84 @@ describe("CurrentGameScreen", () => {
     expect(screen.queryByText("选择世界")).toBeNull();
   });
 
+  it("叙事 pending 时仍可完成序幕 ack，不把 202 轮询当作 ack 结果", async () => {
+    const base = buildSessionViewFixture();
+    const pendingView = {
+      ...base,
+      narrativeGeneration: { status: "pending" as const },
+      prologueShown: false,
+      openingScene: { prologue: { text: "序幕测试", tone: "serious" as const } }
+    };
+    const readyView = {
+      ...pendingView,
+      revision: pendingView.revision + 1,
+      narrativeGeneration: { status: "ready" as const },
+      prologueShown: true
+    };
+    let ackBody: unknown;
+    const fetchMock = stubFetch(async (input, init) => {
+      if (input === "/api/game/current") return jsonResponse(200, { status: "active", view: pendingView });
+      if (input === "/api/game/narrative/ensure") return jsonResponse(202, { status: "pending" });
+      if (input === "/api/game/prologue/ack") {
+        ackBody = JSON.parse(String(init?.body));
+        return jsonResponse(200, { view: readyView, feedback: { ok: true, message: "序幕已完成。" } });
+      }
+      throw new Error(`unexpected fetch: ${String(input)}`);
+    });
+    const user = userEvent.setup();
+    render(<CurrentGameScreen />);
+
+    const prologue = await screen.findByRole("dialog", { name: "游戏序幕" });
+    await user.click(prologue);
+    await user.click(prologue);
+
+    expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
+    expect(ackBody).toEqual({ revision: pendingView.revision });
+    expect(fetchMock.mock.calls.some(([input]) => input === "/api/game/prologue/ack")).toBe(true);
+  });
+
+  it("ack 返回 200 + ACTION_REJECTED 时重新读取存档，而不是原地吞掉失败", async () => {
+    const base = buildSessionViewFixture();
+    const pendingView = {
+      ...base,
+      narrativeGeneration: { status: "pending" as const },
+      prologueShown: false,
+      openingScene: { prologue: { text: "序幕测试", tone: "serious" as const } }
+    };
+    const readyView = {
+      ...pendingView,
+      revision: pendingView.revision + 1,
+      narrativeGeneration: { status: "ready" as const },
+      prologueShown: true
+    };
+    let currentCalls = 0;
+    const fetchMock = stubFetch(async (input) => {
+      if (input === "/api/game/current") {
+        currentCalls += 1;
+        return jsonResponse(200, { status: "active", view: currentCalls < 3 ? pendingView : readyView });
+      }
+      if (input === "/api/game/narrative/ensure") return jsonResponse(202, { status: "pending" });
+      if (input === "/api/game/prologue/ack") {
+        return jsonResponse(200, {
+          code: "ACTION_REJECTED",
+          view: pendingView,
+          feedback: { ok: false, message: "正在编排下一幕，请稍候。" }
+        });
+      }
+      throw new Error(`unexpected fetch: ${String(input)}`);
+    });
+    const user = userEvent.setup();
+    render(<CurrentGameScreen />);
+
+    const prologue = await screen.findByRole("dialog", { name: "游戏序幕" });
+    await user.click(prologue);
+    await user.click(prologue);
+
+    expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
+    expect(currentCalls).toBeGreaterThanOrEqual(2);
+    expect(fetchMock.mock.calls.some(([input]) => input === "/api/game/prologue/ack")).toBe(true);
+  });
+
   it("非战斗 active 会话渲染地图 HUD", async () => {
     stubFetch(async () => jsonResponse(200, { status: "active", view: buildSessionViewFixture() }));
     render(<CurrentGameScreen />);

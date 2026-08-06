@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Phase 14 序幕开场组件的 props：与 PrologueDefinition 结构一致。 */
 interface PrologueScreenProps {
@@ -37,7 +37,7 @@ export function PrologueScreen({ prologue, onComplete }: PrologueScreenProps) {
   }, [prologue.text, prologue.tone]);
 
   /** 点击/按键跳过：未完成时先显示全文，已完成时触发 onComplete（仅一次）。 */
-  const handleSkip = () => {
+  const handleSkip = useCallback(() => {
     if (!isComplete) {
       setDisplayedText(prologue.text);
       setIsComplete(true);
@@ -46,9 +46,10 @@ export function PrologueScreen({ prologue, onComplete }: PrologueScreenProps) {
     if (submittedRef.current) return;
     submittedRef.current = true;
     onComplete();
-  };
+  }, [isComplete, onComplete, prologue.text]);
 
-  // 白名单键跳过：依赖 isComplete 以绑定最新的 handleSkip 闭包。
+  // 白名单键跳过：依赖 handleSkip 以绑定最新的 isComplete/onComplete 闭包，
+  // 避免父组件轮询重渲染后键盘仍提交旧 revision。
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       if (!SKIP_KEYS.has(event.key)) return;
@@ -57,7 +58,7 @@ export function PrologueScreen({ prologue, onComplete }: PrologueScreenProps) {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [isComplete]);
+  }, [handleSkip]);
 
   return (
     <div

@@ -34,6 +34,7 @@ type ScreenState =
 type CurrentGameApiBody = {
   status?: string;
   view?: GameSessionView;
+  code?: string;
   reason?: string;
   developmentTools?: boolean;
 };
@@ -172,8 +173,11 @@ export function CurrentGameScreen() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ revision }),
       });
-      const body = (await response.json().catch(() => null)) as { view?: GameSessionView } | null;
-      if (response.ok && body?.view) {
+      const body = (await response.json().catch(() => null)) as { code?: string; view?: GameSessionView } | null;
+      // /api/game/prologue/ack 与旧 action adapter 一样可能用 200 返回
+      // ACTION_REJECTED + 当前 view；不能把它误判为 ack 成功，否则黑屏会
+      // 原地保留且玩家看不到失败原因。只有无 code 的成功响应才切换视图。
+      if (response.ok && body?.code === undefined && body?.view) {
         setState({ phase: "active", view: body.view, createdWithFallback: false });
         return;
       }

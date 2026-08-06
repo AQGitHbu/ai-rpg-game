@@ -47,6 +47,86 @@ describe("AdventureGameShell", () => {
     expect(screen.getByRole("button", { name: "背包" })).toBeInTheDocument();
   });
 
+  it("场景生成 pending 时保留当前地图/场景，并在 ready 后解除模态", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const base = buildSessionViewFixture();
+    const pendingView = {
+      ...base,
+      narrativeGeneration: { status: "pending" as const }
+    };
+    const readyView = {
+      ...base,
+      narrativeGeneration: { status: "ready" as const }
+    };
+    const user = userEvent.setup();
+    const { rerender, props } = renderShell({ view: pendingView });
+
+    expect(screen.getByRole("dialog", { name: "正在准备场景" })).toBeInTheDocument();
+    expect(screen.getByText("世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。"))
+      .toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "进入青石镇" }));
+
+    expect(screen.getByRole("region", { name: "地点场景：青石镇" })).toBeInTheDocument();
+    expect(screen.getByText("镇口贴着一张字迹潦草的缉凶告示。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "陆掌柜，客栈掌柜" })).toBeInTheDocument();
+
+    rerender(<AdventureGameShell {...props} view={readyView} />);
+
+    expect(screen.queryByRole("dialog", { name: "正在准备场景" })).toBeNull();
+    expect(screen.getByRole("region", { name: "地点场景：青石镇" })).toBeInTheDocument();
+  });
+
+  it("叙事选项提交 pending 时保留当前 NPC 对话弹层", async () => {
+    const base = buildSessionViewFixture();
+    const readyView = {
+      ...base,
+      narrativeGeneration: { status: "ready" as const },
+      dialogues: base.dialogues.map((dialogue, index) =>
+        index === 0
+          ? {
+              ...dialogue,
+              choices: [{ label: "查问后院", choiceToken: "choice:backyard" }]
+            }
+          : dialogue
+      )
+    };
+    const pendingView = {
+      ...readyView,
+      revision: readyView.revision + 1,
+      narrativeGeneration: { status: "pending" as const }
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          view: pendingView,
+          feedback: { ok: true, message: "选择已记录。" }
+        })
+      )
+    );
+    const onViewChange = vi.fn();
+    const user = userEvent.setup();
+    const { rerender, props } = renderShell({ view: readyView, onViewChange });
+
+    await user.click(screen.getByRole("button", { name: "进入青石镇" }));
+    await user.click(screen.getByRole("button", { name: "陆掌柜，客栈掌柜" }));
+    await user.click(screen.getByRole("button", { name: "1. 查问后院" }));
+
+    await waitFor(() => expect(onViewChange).toHaveBeenCalledWith(pendingView));
+    rerender(<AdventureGameShell {...props} view={pendingView} />);
+
+    expect(screen.getByRole("dialog", { name: "与陆掌柜对话" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "正在准备场景" })).toBeInTheDocument();
+    expect(screen.getByText("世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。"))
+      .toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.getByRole("dialog", { name: "与陆掌柜对话" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "正在准备场景" })).toBeInTheDocument();
+  });
+
   it("已生成 AI 剧情仍以地图为入口；进入地点后才显示场景（含 NPC 热点）", async () => {
     vi.stubGlobal("fetch", vi.fn());
     const base = buildSessionViewFixture();

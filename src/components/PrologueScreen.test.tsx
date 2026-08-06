@@ -32,4 +32,46 @@ describe("PrologueScreen", () => {
     fireEvent.click(screen.getByRole("dialog"));
     expect(onComplete).toHaveBeenCalled();
   });
+
+  test.each([
+    ["Enter", "Enter"],
+    ["Space", " "],
+    ["Escape", "Escape"]
+  ])("完成后按 %s 触发 onComplete", (_label, key) => {
+    const onComplete = vi.fn();
+    render(
+      <PrologueScreen
+        prologue={{ text: "测试", tone: "serious" }}
+        onComplete={onComplete}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("dialog"));
+    fireEvent.keyDown(window, { key });
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  test("父组件轮询重渲染后，键盘继续使用最新 onComplete", () => {
+    const firstOnComplete = vi.fn();
+    const latestOnComplete = vi.fn();
+    const { rerender } = render(
+      <PrologueScreen
+        prologue={{ text: "测试", tone: "serious" }}
+        onComplete={firstOnComplete}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("dialog"));
+    rerender(
+      <PrologueScreen
+        prologue={{ text: "测试", tone: "serious" }}
+        onComplete={latestOnComplete}
+      />
+    );
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(firstOnComplete).not.toHaveBeenCalled();
+    expect(latestOnComplete).toHaveBeenCalledTimes(1);
+  });
 });
