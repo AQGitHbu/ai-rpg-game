@@ -333,7 +333,7 @@ async function runJourney(
   const deps = actionDeps(repository, sources);
 
   for (let index = 0; index < 6; index += 1) {
-    const choice = view.narrative?.choices[0];
+    const choice = view.narrative?.choices?.[0];
     if (choice === undefined) throw new Error("guided narrative choice unavailable");
     const result = await performAction({
       intent: { type: "narrative_choice", choiceToken: choice.choiceToken },

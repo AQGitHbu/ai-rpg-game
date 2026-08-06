@@ -114,10 +114,11 @@ export type NarrativeSceneView = {
   readonly npcLine: { readonly text: string; readonly emotion: string } | null;
   /** 选中预生成对白分支后显示的安全后续行动提示。 */
   readonly nextEventHint?: string;
-  readonly choices: readonly [
-    { readonly label: string; readonly choiceToken: string },
-    { readonly label: string; readonly choiceToken: string },
-  ];
+  /** 场景选项；followup 播放 + 后台生成时为 null（选项区被“准备中”提示替换）。 */
+  readonly choices: readonly {
+    readonly label: string;
+    readonly choiceToken: string;
+  }[] | null;
   /** Phase 14：场景内多 NPC 对白（含焦点 NPC）；缺失时为空数组。 */
   readonly npcDialogues: readonly {
     readonly npcId: string;
@@ -366,6 +367,7 @@ function projectNarrativeSceneView(
 ): NarrativeSceneView {
   const scene = state.narrative.currentScene;
   if (scene === null) return null;
+  const isPending = state.narrative.generation.status === "pending";
   return {
     narration: scene.narration,
     ...(scene.event !== undefined ? { eventKind: scene.event.kind } : {}),
@@ -374,13 +376,13 @@ function projectNarrativeSceneView(
       text: scene.npcLine.text,
       emotion: scene.npcLine.emotion,
     },
-    choices: scene.choices.map((choice, index) => ({
+    // followup 播放 + 后台生成时，选项区被“准备中”提示替换，不投影 choices
+    choices: isPending ? null : scene.choices.map((choice, index) => ({
       label: scene.event?.kind === "dialogue"
         ? PLAYER_DIALOGUE_RESPONSE_LABELS[index]
         : choice.label,
       choiceToken: choice.choiceToken,
-    })) as NarrativeSceneView extends { choices: infer C } ? C : never,
-    // Phase 14：场景内多 NPC 对白——只透出展示字段，不含 FactId 等内部 ID。
+    })),
     npcDialogues: (scene.npcDialogues ?? []).map((d) => ({
       npcId: String(d.npcId),
       npcName: d.npcName,
