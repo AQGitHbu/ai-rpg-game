@@ -2,10 +2,18 @@
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { OFFLINE_CASE_IDS, resolveOfflineBaseline } from "../server/offlineBaselines";
-import { createGame } from "../createGame";
+import { type ScenarioBlueprint } from "@/game/domain";
+import {
+  compileScenarioBlueprint,
+  initializeGameState,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import { performAction } from "../performAction";
-import { createUnavailableTestScenarioSource } from "../applicationFixture.testutil";
 import { buildEndToEndRuleJourney, findBossEnemy, performRuleSequence } from "./offlineGenreJourney";
 import { asGameId, type GameRecord, type GameRepository } from "../server/persistence/gameRepository";
 import { createSqliteClient } from "../server/persistence/sqliteClient";
@@ -45,42 +53,55 @@ async function loadActiveRecord(repository: GameRepository): Promise<GameRecord>
   return loaded.record;
 }
 
-function offlineDeps(repo: SqliteGameRepository) {
-  return {
-    repository: repo,
-    newGameId: () => asGameId(`genre-${Math.random().toString(36).slice(2)}`),
-    newSeed: () => "seed-unused",
-    newTraceId: () => "genre-journey",
-    now: () => "2026-08-04T00:00:00.000Z",
-    scenarioCandidateSource: createUnavailableTestScenarioSource(),
-    runtimeNarrativeMode: "offline" as const,
-  };
+// Phase 14 开局收窄后 fallback 蓝图只有起始锚点（无 boss/完整旅程）。
+// 本测试保留"offline 零 AI 规则通关"覆盖：以 makeValidCandidate 编译完整
+// 蓝图（含 boss enemy_b 与 3 幕主线），offline 模式直接写入真实 SQLite 存档。
+function compileRuntimeBlueprint(): ScenarioBlueprint {
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(makeValidCandidate(), {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
 }
+
+const RUNTIME_BLUEPRINT = compileRuntimeBlueprint();
+const BASE_STATE = initializeGameState(RUNTIME_BLUEPRINT);
+const PIPELINE = {
+  blueprint: RUNTIME_BLUEPRINT,
+  state: { ...BASE_STATE, narrative: { ...BASE_STATE.narrative, mode: "offline" as const } }
+};
 
 function actionDeps(repo: SqliteGameRepository) {
   return { repository: repo, now: () => "2026-08-04T00:00:00.000Z" };
 }
 
-describe("offlineGenreJourney：7 题材 fallback 蓝图零 AI 规则通关", () => {
-  for (const caseId of OFFLINE_CASE_IDS) {
-    it(`${caseId}：fallback + offline → 规则行动 → 成功结局，零 fetch`, async () => {
-      const baseline = resolveOfflineBaseline(caseId);
-      expect(baseline).not.toBeNull();
-      if (baseline === null) return;
-      const writer = openRepository(caseId);
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => {
-        throw new Error("zero-network expected");
-      });
-      try {
-        const created = await createGame(
-          { input: baseline.input, seed: baseline.seed },
-          offlineDeps(writer),
-        );
-        expect(created.ok).toBe(true);
-        if (!created.ok) return;
-        expect(created.source).toBe("fallback");
+/** 用真实 adapter 写入 offline 模式完整蓝图存档。 */
+async function seedGame(repository: SqliteGameRepository, gameId: string): Promise<void> {
+  const created = await repository.createInitialGame({
+    gameId: asGameId(gameId),
+    blueprint: PIPELINE.blueprint,
+    state: PIPELINE.state,
+    createdAt: "2026-08-04T00:00:00.000Z",
+  });
+  expect(created).toEqual({ ok: true });
+}
 
-        const record = await loadActiveRecord(writer);
+describe("offlineGenreJourney：完整蓝图 + offline 零 AI 规则通关", () => {
+  it("wuxia：offline → 规则行动 → 成功结局，零 fetch", async () => {
+    const writer = openRepository("wuxia");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => {
+      throw new Error("zero-network expected");
+    });
+    try {
+      await seedGame(writer, "genre-wuxia");
+
+      const record = await loadActiveRecord(writer);
         const boss = findBossEnemy(record.blueprint);
         const journey = buildEndToEndRuleJourney(record.blueprint, boss.locationId);
         let revision = 0;
@@ -110,6 +131,5 @@ describe("offlineGenreJourney：7 题材 fallback 蓝图零 AI 规则通关", ()
       } finally {
         fetchSpy.mockRestore();
       }
-    }, 60_000);
-  }
+  });
 });
