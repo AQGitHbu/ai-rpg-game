@@ -11,7 +11,7 @@ import { WorldMapScreen } from "./WorldMapScreen";
 import { LocationSceneScreen } from "./LocationSceneScreen";
 import { TownLayerScreen } from "./TownLayerScreen";
 import { NpcDialoguePanel, type FreeInputResult } from "./NpcDialoguePanel";
-import { NarrativeScenePanel } from "./NarrativeScenePanel";
+import { TravelNarrationScreen } from "./TravelNarrationScreen";
 import { ToastContainer, type ToastMessage } from "./ToastNotification";
 import { NarrativeGenerationModal } from "./NarrativeGenerationModal";
 
@@ -85,8 +85,7 @@ export function AdventureGameShell({
   // Treat their absence as ready so a compatible client can still render them.
   const narrativePending = view.narrativeGeneration?.status === "pending";
   const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
-  // 原子世界事件（非对白剧情事件）的稳定展示键：以 narration 作键，允许玩家主动关闭。
-  const [dismissedNarrativeEvent, setDismissedNarrativeEvent] = useState<string | null>(null);
+  const [dismissedTravelNarration, setDismissedTravelNarration] = useState(false);
   const [devToolsOpen, setDevToolsOpen] = useState(false);
   const triggerRef = useRef<HTMLElement | null>(null);
   const devToolsTriggerRef = useRef<HTMLElement | null>(null);
@@ -97,15 +96,17 @@ export function AdventureGameShell({
   const selectedDialogue = dialogueNpcId !== null
     ? view.dialogues.find((d) => d.npcId === dialogueNpcId) ?? null
     : null;
-  const atomicWorldEventReady = !narrativePending
-    && view.narrative?.eventKind !== undefined
-    && view.narrative.eventKind !== "dialogue";
-  const narrativeEventKey = atomicWorldEventReady && view.narrative !== null
-    ? view.narrative.narration
-    : null;
-  // 剧情事件弹层可见性由当前事件的 narration 键控制；玩家关闭后，事件内容不变则不重现。
-  const showNarrativeEvent = narrativeEventKey !== null && dismissedNarrativeEvent !== narrativeEventKey;
-  const activeDialogue = narrativePending || atomicWorldEventReady ? null : selectedDialogue;
+
+  // 旅行事件：全屏旁白；对白事件：对话面板；轻量事件已由 LocationSceneScreen 内嵌 SceneNarrationBar 处理。
+  const narrativeEventKind = view.narrative?.eventKind;
+  const isTravelEvent = narrativeEventKind === "travel";
+  // 对话面板在以下条件可见：
+  // - 玩家选中了 NPC 且当前是对白场景或无场景（首次交谈）
+  // - 非 travel 事件
+  const isDialogueScreen = narrativeEventKind === undefined || narrativeEventKind === "dialogue";
+  const activeDialogue = !isTravelEvent && isDialogueScreen ? selectedDialogue : null;
+  // 仅有 pending 且无可读场景时才显示全屏生成模态；followup 播放期间保留对话面板。
+  const showGenerationModal = narrativePending && view.narrative === null && view.battle === null && view.ending === null;
 
   function openDetails(panel: DetailsPanel): void {
     triggerRef.current = document.activeElement as HTMLElement;
@@ -186,9 +187,12 @@ export function AdventureGameShell({
     onBusyChange(false);
     if (outcome.kind === "success") {
       setFeedback({ phase: "idle" });
-      setDialogueNpcId(null);
       pushToast(outcome.message);
       onViewChange(outcome.view);
+      // followup 消费后 currentScene 非空：保留对话面板供玩家阅读。
+      if (outcome.view.narrative === null) {
+        setDialogueNpcId(null);
+      }
       return;
     }
     if (outcome.kind === "rejected") { setFeedback({ phase: "rejected", message: outcome.message }); return; }
@@ -314,15 +318,11 @@ export function AdventureGameShell({
         </AdventureOverlay>
       ) : null}
 
-      {showNarrativeEvent && view.narrative !== null ? (
-        <AdventureOverlay title="剧情事件" onClose={() => { setDismissedNarrativeEvent(narrativeEventKey); setScreen("scene"); }} returnFocusRef={triggerRef}>
-          <NarrativeScenePanel
-            scene={view.narrative}
-            busy={shellBusy}
-            onChoose={handleDialogueChoiceFromPanel}
-            onReturnMap={() => { setDismissedNarrativeEvent(narrativeEventKey); setScreen("map"); }}
-          />
-        </AdventureOverlay>
+      {isTravelEvent && view.narrative !== null && !dismissedTravelNarration ? (
+        <TravelNarrationScreen
+          narration={view.narrative.narration}
+          onComplete={() => { setDialogueNpcId(null); setScreen("scene"); setDismissedTravelNarration(true); }}
+        />
       ) : null}
 
       {devToolsOpen ? (
@@ -336,7 +336,7 @@ export function AdventureGameShell({
         </AdventureOverlay>
       ) : null}
 
-      {narrativePending && view.battle === null && view.ending === null ? (
+      {showGenerationModal ? (
         <NarrativeGenerationModal
           progress={view.narrativeGeneration?.progress}
           unavailable={narrativeGenerationUnavailable}

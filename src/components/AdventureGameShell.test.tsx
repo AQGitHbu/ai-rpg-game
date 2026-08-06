@@ -82,7 +82,7 @@ describe("AdventureGameShell", () => {
     expect(screen.getByRole("region", { name: "地点场景：青石镇" })).toBeInTheDocument();
   });
 
-  it("剧情事件弹层可通过右上角关闭按钮主动关闭，新事件到来后重现", async () => {
+  it("轻量事件旁白条可通过关闭按钮主动关闭", async () => {
     vi.stubGlobal("fetch", vi.fn());
     const base = buildSessionViewFixture();
     const worldEventView = {
@@ -102,35 +102,22 @@ describe("AdventureGameShell", () => {
     const user = userEvent.setup();
     const { rerender, props } = renderShell({ view: worldEventView });
 
-    // 初始：剧情事件弹层可见。
-    expect(screen.getByRole("dialog", { name: "剧情事件" })).toBeInTheDocument();
+    // 进入场景层才能看到 SceneNarrationBar。
+    await user.click(screen.getByRole("button", { name: "进入青石镇" }));
+
+    // 初始：旁白条可见。
     expect(screen.getByText("雨夜，客栈大门被人一脚踹开，一名蒙面人闯了进来。")).toBeInTheDocument();
 
-    // 点击右上角关闭（×）后弹层消失。
-    await user.click(screen.getByRole("button", { name: "关闭剧情事件" }));
-    expect(screen.queryByRole("dialog", { name: "剧情事件" })).toBeNull();
+    // 点击关闭按钮后旁白条消失。
+    await user.click(screen.getByRole("button", { name: "关闭旁白" }));
+    expect(screen.queryByText("雨夜，客栈大门被人一脚踹开，一名蒙面人闯了进来。")).toBeNull();
 
-    // 同一事件视图下重新渲染仍保持关闭，不因状态重置而重现。
+    // 同一事件视图下重新渲染仍保持关闭。
     rerender(<AdventureGameShell {...props} view={worldEventView} />);
-    expect(screen.queryByRole("dialog", { name: "剧情事件" })).toBeNull();
-
-    // 新事件（narration 变化）到来时弹层重新出现。
-    const nextWorldEventView = {
-      ...worldEventView,
-      narrative: {
-        ...worldEventView.narrative,
-        narration: "蒙面人摘下面罩，露出你的故友脸庞。",
-        choices: [
-          { label: "叙旧", choiceToken: "event:c" },
-          { label: "戒备", choiceToken: "event:d" },
-        ] as const,
-      },
-    };
-    rerender(<AdventureGameShell {...props} view={nextWorldEventView} />);
-    expect(screen.getByRole("dialog", { name: "剧情事件" })).toBeInTheDocument();
+    expect(screen.queryByText("雨夜，客栈大门被人一脚踹开，一名蒙面人闯了进来。")).toBeNull();
   });
 
-  it("剧情事件弹层的返回地图按钮可主动关闭弹层并回到地图", async () => {
+  it("旅行事件全屏旁白点击后完成并进入场景", async () => {
     vi.stubGlobal("fetch", vi.fn());
     const base = buildSessionViewFixture();
     const worldEventView = {
@@ -150,10 +137,13 @@ describe("AdventureGameShell", () => {
     const user = userEvent.setup();
     renderShell({ view: worldEventView });
 
-    expect(screen.getByRole("dialog", { name: "剧情事件" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "返回地图" }));
-    expect(screen.queryByRole("dialog", { name: "剧情事件" })).toBeNull();
+    // 旅行事件全屏旁白可见。
+    expect(screen.getByRole("dialog", { name: "旅行旁白" })).toBeInTheDocument();
+    // 第一次点击跳过逐字动画。
+    await user.click(screen.getByRole("dialog", { name: "旅行旁白" }));
+    // 第二次点击完成旁白。
+    await user.click(screen.getByRole("dialog", { name: "旅行旁白" }));
+    expect(screen.queryByRole("dialog", { name: "旅行旁白" })).toBeNull();
   });
 
   it("叙事选项提交 pending 时独占场景，不与上一幕 NPC 对话叠加", async () => {
