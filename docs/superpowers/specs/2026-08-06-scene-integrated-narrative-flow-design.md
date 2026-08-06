@@ -31,7 +31,7 @@ Phase 14 已实现渐进式生成与剧情推演的核心机制（序幕、预�
 | followup 播放期间生成下一幕 | 是，后台 pending | 实现无缝循环 |
 | followup 播放期间显示模态 | 否，对话面板内显示"准备中"提示 | 不阻塞阅读 |
 | NarrativeScenePanel | 废弃主流程使用，保留文件 | 避免破坏现有测试 |
-| choices 类型 | 改为可空（`readonly [...] | null`） | followup 场景可能无选项 |
+| choices 类型 | 改为可空（`readonly [...] | null`） | 视图侧需表达"无可展示选项"（followup 播放中被"准备中"替换、非对话事件无对白选项；domain 仍为固定二元组） |
 
 ## 架构概览
 
@@ -90,6 +90,7 @@ Phase 14 已实现渐进式生成与剧情推演的核心机制（序幕、预�
 - **内容**：显示 `view.narrative.narration`（AI 生成的旁白文本）
 - **动画**：淡入
 - **交互**：旁白条显示期间场景热点仍可点击（不阻塞探索）
+- **互动可用性（需配套调整）**：当前 `locationAdventureView.ts` 的 `atomicEventActive = currentScene !== null || generation pending` 会把 `locationScene.interactions` 置空，导致轻量事件场景下热点层为空、与"热点仍可点击"矛盾。本阶段需放宽该抑制：仅当 `generation.status === "pending"`（无可读场景）或当前场景为 `travel` / `battle`（全屏/战斗呈现）时置空 `interactions`；`observe` / `investigate` / `item` 等轻量事件场景保留 `interactions`（dialogue 场景由对话弹层覆盖，保留互动不影响画面）。
 - **关闭**：手动点击关闭按钮
 - **视觉**：半透明深色背景 + 米色文字（与整体主题一致）
 
@@ -225,25 +226,37 @@ preparingNextScene: !readOnly
 - `narrativeEventKey` 变量
 - `dismissedNarrativeEvent` 状态
 - `showNarrativeEvent` 变量
-- `activeDialogue` 中 `!atomicWorldEventReady` 条件（简化为 `narrativePending ? null : selectedDialogue`）
+- `activeDialogue` 的 `!atomicWorldEventReady` 条件改写为：`const activeDialogue = (narrativePending && view.narrative === null) || (view.narrative !== null && view.narrative.eventKind !== "dialogue") ? null : selectedDialogue;`。**注意不能简化为 `narrativePending ? null : selectedDialogue`**：followup 播放期间 `generation.status === "pending"`（移除 `!dialogueFollowupConsumed` 后），但 `currentScene` 仍保留 followup 场景（kind=dialogue），此时必须保持对话面板打开以展示"正在准备下一幕…"；只有「pending 且无可读场景」或「当前为非对话事件（由 SceneNarrationBar / TravelNarrationScreen 呈现）」时才关闭。
 - `showNarrativeEvent && view.narrative !== null` 的 `AdventureOverlay` + `NarrativeScenePanel` 整段 JSX
 
 ### 4. NarrativeSceneView 和 choices 类型调整
 
-#### 4.1 NarrativeSceneView 新增 eventKind 投影
+#### 4.1 NarrativeSceneView 保留已存在的 eventKind 投影
+
+`eventKind` 已在 `gameSessionView.ts` 的 `NarrativeSceneView` 中定义并投影（`gameSessionView.ts:113` / `:371`，已被 `AdventureGameShell.atomicWorldEventReady` 消费），本阶段直接保留、无需新增。调整后的类型如下（已合并 4.2 的 choices 可空，并保留现有 `nextEventHint`、`npcDialogues` 字段；`NarrativeSceneState.choices` 仍为固定二元组，仅视图侧可空）：
 
 ```typescript
 export type NarrativeSceneView = {
   readonly narration: string;
   readonly npcLine: { readonly text: string; readonly emotion: string } | null;
+  readonly nextEventHint?: string;
   readonly choices: readonly { readonly label: string; readonly choiceToken: string }[] | null;
-  readonly eventKind?: NarrativeEventKind;  // 新增
+  readonly eventKind?: NarrativeEventKind;  // 已存在，保留
+  readonly npcDialogues: readonly {
+    readonly npcId: string;
+    readonly npcName: string;
+    readonly npcRole: string;
+    readonly speechPages: readonly string[];
+  }[];
 } | null;
 ```
 
 #### 4.2 choices 改为可空
 
-followup 场景可能没有选项（过渡内容）。`NarrativeSceneView.choices` 从 `readonly [Choice, Choice]` 改为 `readonly Choice[] | null`。`NpcDialogueView.choices` 投影在 `choices === null` 时返回空数组。
+现状核实：followup 场景由 `createPreGeneratedDialogueScene`（`performAction.ts:593-607`）**恒**生成 2 个 `dialogue_response` 选项，并非"可能没有选项"。但新设计中 followup 的选项区被 `preparingNextScene` 的"正在准备下一幕…"替换，非对话事件（如 `travel`）无可展示的对白选项，故 `NarrativeSceneView.choices` 需可空以表达"无可展示选项"：
+
+- `NarrativeSceneView.choices` 从 `readonly [Choice, Choice]` 改为 `readonly Choice[] | null`（domain 的 `NarrativeSceneState.choices` 保持固定二元组不变，仅视图侧可空）。
+- 投影侧必须同时处理空值（否则崩溃）：`projectNarrativeSceneView`（`gameSessionView.ts:377`）当前直接 `scene.choices.map(...)`，需在 `scene.choices === null` 时输出 `choices: null`；`NpcDialogueView.choices` 在 `choices === null` 时返回空数组（`locationAdventureView.ts` 现有 `scene?.choices ?? []` 已天然空值安全）。
 
 ## 组件变更汇总
 
@@ -263,7 +276,7 @@ followup 场景可能没有选项（过渡内容）。`NarrativeSceneView.choice
 | `NpcDialoguePanel.tsx` | `preparingNextScene` 时显示"准备中"提示 |
 | `CurrentGameScreen.tsx` | 无需修改（轮询条件已由 `narrativeGeneration.status` 驱动） |
 | `gameSessionView.ts` | `projectNarrativeGenerationView` 调整；`projectNarrativeSceneView` 投影 `eventKind` 和可空 `choices` |
-| `locationAdventureView.ts` | `NpcDialogueView` 新增 `preparingNextScene` 字段 |
+| `locationAdventureView.ts` | `NpcDialogueView` 新增 `preparingNextScene` 字段；放宽 `atomicEventActive` 对 `locationScene.interactions` 的抑制（轻量事件场景保留互动，见 §1.1） |
 | `performAction.ts` | `shouldQueue` 移除 `!dialogueFollowupConsumed`；保留 followup `currentScene` |
 
 ### 废弃
