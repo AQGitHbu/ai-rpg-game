@@ -7,7 +7,7 @@ import {
   asQuestId,
   asEndingId,
   type GameState,
-  type NewGameInput,
+  type ScenarioBlueprint,
 } from "@/game/domain";
 import {
   resolveAction,
@@ -17,13 +17,21 @@ import {
   startBattle,
   battleAction,
 } from "@/game/gameplay/rpg/battle";
-import { reconcileQuests, failQuest, resolveEnding } from "@/game/gameplay/rpg/quests";
+import { reconcileMainStoryProgress, reconcileQuests, failQuest, resolveEnding } from "@/game/gameplay/rpg/quests";
 import { reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
-import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
+import {
+  compileScenarioBlueprint,
+  initializeGameState,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import { performAction, type PerformActionDependencies } from "./performAction";
 import {
   createFakeGameRepository,
-  runScenarioPipeline,
   TEST_CREATED_AT,
   TEST_GAME_ID
 } from "./applicationFixture.testutil";
@@ -45,9 +53,24 @@ import {
 // - 结局后所有 action 安全拒绝
 // ---------------------------------------------------------------------------
 
-type Phase1Fixture = { input: NewGameInput; seed: string };
-const FIXTURE = wuxiaFixture as unknown as Phase1Fixture;
-const PIPELINE = runScenarioPipeline({ ...FIXTURE.input, gameLength: "short" }, FIXTURE.seed);
+// Phase 14 开局收窄后 fallback 蓝图只有起始锚点；战斗路由契约测试需要
+// 完整的 3 幕蓝图（含 boss 敌人与结局），以 makeValidCandidate 为基座编译。
+function compileRuntimeBlueprint(): ScenarioBlueprint {
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(makeValidCandidate(), {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
+}
+
+const RUNTIME_BLUEPRINT = compileRuntimeBlueprint();
+const PIPELINE = { blueprint: RUNTIME_BLUEPRINT, state: initializeGameState(RUNTIME_BLUEPRINT) };
 
 const FIXED_TIME = "2026-07-27T10:00:00.000Z";
 const ruleDeps = { now: () => FIXED_TIME };
@@ -55,11 +78,11 @@ const ruleDeps = { now: () => FIXED_TIME };
 /** 前进到 stage 3 active 且玩家在 boss 地点（loc_4）的状态。 */
 function buildStage3BossReadyState(): GameState {
   const intents: readonly PlayerIntent[] = [
-    { type: "move", locationId: asLocationId("loc_2") },
-    { type: "move", locationId: asLocationId("loc_3") },
-    { type: "talk", npcId: asNpcId("npc_3") },
-    { type: "take_item", itemId: asItemId("item_key") },
-    { type: "move", locationId: asLocationId("loc_4") },
+    { type: "move", locationId: asLocationId("loc_b") },
+    { type: "move", locationId: asLocationId("loc_c") },
+    { type: "talk", npcId: asNpcId("npc_c") },
+    { type: "take_item", itemId: asItemId("item_b") },
+    { type: "move", locationId: asLocationId("loc_d") },
   ];
   let state = PIPELINE.state;
   for (const intent of intents) {
@@ -68,7 +91,7 @@ function buildStage3BossReadyState(): GameState {
     state = reconcileQuests(PIPELINE.blueprint, resolved.state, ruleDeps).state;
   }
   // 确认 stage 3 active
-  const m3Status = state.quests.find((q) => q.questId === asQuestId("quest_main_3"))?.status;
+  const m3Status = state.quests.find((q) => q.questId === asQuestId("m3"))?.status;
   if (m3Status !== "active") throw new Error(`前置应当 stage 3 active，实际：${m3Status}`);
   return state;
 }
@@ -76,7 +99,7 @@ function buildStage3BossReadyState(): GameState {
 /** 构造已开始战斗的状态（battle active，round 1）。 */
 function buildBattleActiveState(): GameState {
   const state = buildStage3BossReadyState();
-  const result = startBattle(PIPELINE.blueprint, state, asEnemyId("enemy_boss"), ruleDeps);
+  const result = startBattle(PIPELINE.blueprint, state, asEnemyId("enemy_b"), ruleDeps);
   if (!result.ok) throw new Error("前置 startBattle 应当成功");
   return result.state;
 }
@@ -110,7 +133,7 @@ function makeApplyResult(record: GameRecord, nextState: GameState): ApplyResolve
   };
 }
 
-const ENEMY_BOSS = asEnemyId("enemy_boss");
+const ENEMY_BOSS = asEnemyId("enemy_b");
 
 // ===========================================================================
 // start_battle 路由
@@ -129,8 +152,15 @@ describe("performAction：start_battle 路由", () => {
     // start_battle 后不需 reconcileQuests（没有任务状态变化）
     // 但需要 resolveEnding（幂等，不会有变化）
     const endingResult = resolveEnding(PIPELINE.blueprint, battleResult.state, ruleDeps);
-    // Phase 11：performAction 在 CAS 前归约 storyMemory，期望 state 须含同构 memory。
-    const expectedState = { ...endingResult.state, storyMemory: reconcileStoryMemory({ state: endingResult.state }) };
+    // performAction 在 reconciliation 后派生写回 currentAct（Phase 14 spec §405），
+    // 独立复跑同步对齐，保证载荷比较与真实写入一致。
+    const derived = reconcileMainStoryProgress(PIPELINE.blueprint, endingResult.state, ruleDeps);
+    const expectedState = {
+      ...endingResult.state,
+      mainStoryProgress: { ...endingResult.state.mainStoryProgress, currentAct: derived.currentAct },
+      // Phase 11：performAction 在 CAS 前归约 storyMemory，期望 state 须含同构 memory。
+      storyMemory: reconcileStoryMemory({ state: endingResult.state })
+    };
 
     repository.setApplyResult(makeApplyResult(record, expectedState));
 
@@ -164,7 +194,7 @@ describe("performAction：start_battle 路由", () => {
     const repository = createFakeGameRepository();
     const readyState = buildStage3BossReadyState();
     // 玩家不在 boss 地点
-    const awayState = { ...readyState, currentLocationId: asLocationId("loc_3") };
+    const awayState = { ...readyState, currentLocationId: asLocationId("loc_c") };
     const record = buildActiveRecord(awayState);
     repository.setCurrentResult({ ok: true, status: "active", record });
 
@@ -188,7 +218,7 @@ describe("performAction：战斗中的 intent 隔离", () => {
     repository.setCurrentResult({ ok: true, status: "active", record });
 
     const result = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_3") }, expectedRevision: record.revision },
+      { intent: { type: "move", locationId: asLocationId("loc_c") }, expectedRevision: record.revision },
       buildPerformDeps(repository)
     );
 
@@ -199,7 +229,7 @@ describe("performAction：战斗中的 intent 隔离", () => {
     expect(result.feedback.message).toContain("战斗进行中");
     expect(repository.applyCalls).toHaveLength(0);
     expect(record.state.battle.status).toBe("active");
-    expect(record.state.currentLocationId).toBe(asLocationId("loc_4"));
+    expect(record.state.currentLocationId).toBe(asLocationId("loc_d"));
   });
 });
 
@@ -277,12 +307,12 @@ describe("performAction：battle_action 胜利路径", () => {
     expect(tailTypes).toContain("ending_reached");
     // ending state
     expect(lastCall.nextState.ending).toEqual({
-      endingId: asEndingId("ending_1"),
+      endingId: asEndingId("e1"),
       outcome: "success",
     });
     // stage 3 completed
     const m3Status = lastCall.nextState.quests.find(
-      (q) => q.questId === asQuestId("quest_main_3")
+      (q) => q.questId === asQuestId("m3")
     )?.status;
     expect(m3Status).toBe("completed");
   });
@@ -304,7 +334,7 @@ describe("performAction：battle_action 撤退失败路径", () => {
     if (!withdrawResult.ok) throw new Error("withdraw 应当成功");
     let expectedState = withdrawResult.state;
     // failQuest stage 3
-    const failResult = failQuest(PIPELINE.blueprint, expectedState, asQuestId("quest_main_3"), ruleDeps);
+    const failResult = failQuest(PIPELINE.blueprint, expectedState, asQuestId("m3"), ruleDeps);
     if (!failResult.ok) throw new Error("failQuest 应当成功");
     expectedState = failResult.state;
     // resolveEnding → e2 failure ending
@@ -330,12 +360,12 @@ describe("performAction：battle_action 撤退失败路径", () => {
     expect(tailTypes).toContain("ending_reached");
     // ending state
     expect(repository.applyCalls[0].nextState.ending).toEqual({
-      endingId: asEndingId("ending_2"),
+      endingId: asEndingId("e2"),
       outcome: "failure",
     });
     // stage 3 failed
     const m3Status = repository.applyCalls[0].nextState.quests.find(
-      (q) => q.questId === asQuestId("quest_main_3")
+      (q) => q.questId === asQuestId("m3")
     )?.status;
     expect(m3Status).toBe("failed");
   });
@@ -373,7 +403,7 @@ describe("performAction：结局后安全拒绝", () => {
     const repository = createFakeGameRepository();
     const endedState: GameState = {
       ...buildStage3BossReadyState(),
-      ending: { endingId: asEndingId("ending_1"), outcome: "success" },
+      ending: { endingId: asEndingId("e1"), outcome: "success" },
     };
     const record = buildActiveRecord(endedState);
     repository.setCurrentResult({ ok: true, status: "active", record });
@@ -394,7 +424,7 @@ describe("performAction：结局后安全拒绝", () => {
     const repository = createFakeGameRepository();
     const endedState: GameState = {
       ...buildStage3BossReadyState(),
-      ending: { endingId: asEndingId("ending_1"), outcome: "success" },
+      ending: { endingId: asEndingId("e1"), outcome: "success" },
     };
     const record = buildActiveRecord(endedState);
     repository.setCurrentResult({ ok: true, status: "active", record });
