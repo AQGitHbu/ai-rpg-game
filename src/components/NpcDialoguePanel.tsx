@@ -128,7 +128,11 @@ export function NpcDialoguePanel({
       </div>
 
       <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
-        {dialogue.choices.map((choice, index) => (
+        {dialogue.preparingNextScene ? (
+          <p className="npc-dialogue-preparing" role="status" aria-live="polite">
+            正在准备下一幕…
+          </p>
+        ) : dialogue.choices.map((choice, index) => (
           <button
             key={choice.choiceToken}
             type="button"
