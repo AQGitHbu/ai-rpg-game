@@ -82,6 +82,80 @@ describe("AdventureGameShell", () => {
     expect(screen.getByRole("region", { name: "地点场景：青石镇" })).toBeInTheDocument();
   });
 
+  it("剧情事件弹层可通过右上角关闭按钮主动关闭，新事件到来后重现", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const base = buildSessionViewFixture();
+    const worldEventView = {
+      ...base,
+      narrativeGeneration: { status: "ready" as const },
+      narrative: {
+        narration: "雨夜，客栈大门被人一脚踹开，一名蒙面人闯了进来。",
+        npcLine: null,
+        eventKind: "observe" as const,
+        choices: [
+          { label: "上前盘问", choiceToken: "event:a" },
+          { label: "按兵不动", choiceToken: "event:b" },
+        ] as const,
+        npcDialogues: [],
+      },
+    };
+    const user = userEvent.setup();
+    const { rerender, props } = renderShell({ view: worldEventView });
+
+    // 初始：剧情事件弹层可见。
+    expect(screen.getByRole("dialog", { name: "剧情事件" })).toBeInTheDocument();
+    expect(screen.getByText("雨夜，客栈大门被人一脚踹开，一名蒙面人闯了进来。")).toBeInTheDocument();
+
+    // 点击右上角关闭（×）后弹层消失。
+    await user.click(screen.getByRole("button", { name: "关闭剧情事件" }));
+    expect(screen.queryByRole("dialog", { name: "剧情事件" })).toBeNull();
+
+    // 同一事件视图下重新渲染仍保持关闭，不因状态重置而重现。
+    rerender(<AdventureGameShell {...props} view={worldEventView} />);
+    expect(screen.queryByRole("dialog", { name: "剧情事件" })).toBeNull();
+
+    // 新事件（narration 变化）到来时弹层重新出现。
+    const nextWorldEventView = {
+      ...worldEventView,
+      narrative: {
+        ...worldEventView.narrative,
+        narration: "蒙面人摘下面罩，露出你的故友脸庞。",
+        choices: [
+          { label: "叙旧", choiceToken: "event:c" },
+          { label: "戒备", choiceToken: "event:d" },
+        ] as const,
+      },
+    };
+    rerender(<AdventureGameShell {...props} view={nextWorldEventView} />);
+    expect(screen.getByRole("dialog", { name: "剧情事件" })).toBeInTheDocument();
+  });
+
+  it("剧情事件弹层的返回地图按钮可主动关闭弹层并回到地图", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const base = buildSessionViewFixture();
+    const worldEventView = {
+      ...base,
+      narrativeGeneration: { status: "ready" as const },
+      narrative: {
+        narration: "驿道尽头浮现一支火把队伍。",
+        npcLine: null,
+        eventKind: "travel" as const,
+        choices: [
+          { label: "迎上前去", choiceToken: "event:a" },
+          { label: "隐入道旁", choiceToken: "event:b" },
+        ] as const,
+        npcDialogues: [],
+      },
+    };
+    const user = userEvent.setup();
+    renderShell({ view: worldEventView });
+
+    expect(screen.getByRole("dialog", { name: "剧情事件" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "返回地图" }));
+    expect(screen.queryByRole("dialog", { name: "剧情事件" })).toBeNull();
+  });
+
   it("叙事选项提交 pending 时独占场景，不与上一幕 NPC 对话叠加", async () => {
     const base = buildSessionViewFixture();
     const readyView = {

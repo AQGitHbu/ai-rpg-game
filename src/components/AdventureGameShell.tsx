@@ -85,6 +85,8 @@ export function AdventureGameShell({
   // Treat their absence as ready so a compatible client can still render them.
   const narrativePending = view.narrativeGeneration?.status === "pending";
   const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
+  // 原子世界事件（非对白剧情事件）的稳定展示键：以 narration 作键，允许玩家主动关闭。
+  const [dismissedNarrativeEvent, setDismissedNarrativeEvent] = useState<string | null>(null);
   const [devToolsOpen, setDevToolsOpen] = useState(false);
   const triggerRef = useRef<HTMLElement | null>(null);
   const devToolsTriggerRef = useRef<HTMLElement | null>(null);
@@ -98,6 +100,11 @@ export function AdventureGameShell({
   const atomicWorldEventReady = !narrativePending
     && view.narrative?.eventKind !== undefined
     && view.narrative.eventKind !== "dialogue";
+  const narrativeEventKey = atomicWorldEventReady && view.narrative !== null
+    ? view.narrative.narration
+    : null;
+  // 剧情事件弹层可见性由当前事件的 narration 键控制；玩家关闭后，事件内容不变则不重现。
+  const showNarrativeEvent = narrativeEventKey !== null && dismissedNarrativeEvent !== narrativeEventKey;
   const activeDialogue = narrativePending || atomicWorldEventReady ? null : selectedDialogue;
 
   function openDetails(panel: DetailsPanel): void {
@@ -307,13 +314,13 @@ export function AdventureGameShell({
         </AdventureOverlay>
       ) : null}
 
-      {view.narrative !== null && view.narrative.eventKind !== undefined && view.narrative.eventKind !== "dialogue" && !narrativePending ? (
-        <AdventureOverlay title="剧情事件" onClose={() => setScreen("scene")} returnFocusRef={triggerRef}>
+      {showNarrativeEvent && view.narrative !== null ? (
+        <AdventureOverlay title="剧情事件" onClose={() => { setDismissedNarrativeEvent(narrativeEventKey); setScreen("scene"); }} returnFocusRef={triggerRef}>
           <NarrativeScenePanel
             scene={view.narrative}
             busy={shellBusy}
             onChoose={handleDialogueChoiceFromPanel}
-            onReturnMap={() => setScreen("map")}
+            onReturnMap={() => { setDismissedNarrativeEvent(narrativeEventKey); setScreen("map"); }}
           />
         </AdventureOverlay>
       ) : null}
