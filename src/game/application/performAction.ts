@@ -474,12 +474,15 @@ export async function performAction(
     const isRepeatTalk =
       intent.type === "talk" &&
       (record.state.npcs.find((npc) => npc.npcId === intent.npcId)?.met ?? true);
-    const shouldQueue = intent.type !== "ack_prologue" && !isRepeatTalk && !dialogueFollowupConsumed;
+    const shouldQueue = intent.type !== "ack_prologue" && !isRepeatTalk;
     if (shouldQueue) {
       nextState = {
         ...nextState,
         narrative: {
-          currentScene: null,
+          // followup 播放期间保留 currentScene 供玩家阅读；非 followup 路径照旧清除。
+          currentScene: dialogueFollowupConsumed
+            ? nextState.narrative.currentScene
+            : null,
           generation: {
             status: "pending",
             requestedAt: deps.now(),
