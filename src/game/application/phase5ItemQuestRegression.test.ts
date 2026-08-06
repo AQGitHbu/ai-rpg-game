@@ -4,19 +4,22 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   asLocationId,
-  type GameTypeId,
-  type NewGameInput,
   type QuestDefinition,
   type ScenarioBlueprint
 } from "@/game/domain";
-import { loadScenarioProfiles } from "@/game/gameplay/rpg/scenario";
-import scienceFictionFixture from "../../../data/fixtures/phase1/science_fiction.json";
-import urbanFixture from "../../../data/fixtures/phase1/urban.json";
-import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
-import { createGame, type CreateGameDependencies } from "./createGame";
+import {
+  compileScenarioBlueprint,
+  initializeGameState,
+  loadScenarioProfiles,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import { getCurrentGame } from "./getCurrentGame";
 import { performAction } from "./performAction";
-import { runScenarioPipeline, createUnavailableTestScenarioSource, TEST_TRACE_ID } from "./applicationFixture.testutil";
 import { asGameId, type GameRecord, type GameRepository } from "./server/persistence/gameRepository";
 import { createSqliteClient } from "./server/persistence/sqliteClient";
 import {
@@ -36,13 +39,26 @@ import {
 // 全程真实临时 SQLite，路径显式注入，绝不读 env。
 // ---------------------------------------------------------------------------
 
-type Phase1Fixture = { input: NewGameInput; seed: string };
+// Phase 14 开局收窄后 createGame 只产出 1 幕起始锚点蓝图；本文件的完整取得
+// 旅程（move loc_b 完成 stage 1 → loc_c 交谈 → 取得 item_b → stage 2 完成/
+// stage 3 解锁）需要"运行时扩展后"的完整蓝图。以 makeValidCandidate 为基座
+// 编译（wuxia 题材），直接写入真实 SQLite 存档后走 performAction 真实管线。
+function compileRuntimeBlueprint(): ScenarioBlueprint {
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(makeValidCandidate(), {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
+}
 
-const CASES: readonly { gameType: GameTypeId; fixture: Phase1Fixture }[] = [
-  { gameType: "wuxia", fixture: { ...(wuxiaFixture as unknown as Phase1Fixture), input: { ...(wuxiaFixture as unknown as Phase1Fixture).input, gameLength: "short" } } },
-  { gameType: "science_fiction", fixture: { ...(scienceFictionFixture as unknown as Phase1Fixture), input: { ...(scienceFictionFixture as unknown as Phase1Fixture).input, gameLength: "short" } } },
-  { gameType: "urban", fixture: { ...(urbanFixture as unknown as Phase1Fixture), input: { ...(urbanFixture as unknown as Phase1Fixture).input, gameLength: "short" } } }
-];
+const RUNTIME_BLUEPRINT = compileRuntimeBlueprint();
+const PIPELINE = { blueprint: RUNTIME_BLUEPRINT, state: initializeGameState(RUNTIME_BLUEPRINT) };
 
 const PROFILES = loadScenarioProfiles();
 const FIXED_CREATED_AT = "2026-07-27T00:00:00.000Z";
@@ -95,15 +111,15 @@ afterAll(async () => {
   }
 });
 
-function createDependencies(repository: GameRepository, gameId: string): CreateGameDependencies {
-  return {
-    repository,
-    newGameId: () => asGameId(gameId),
-    newSeed: () => "seed-unused",
-    now: () => FIXED_CREATED_AT,
-    scenarioCandidateSource: createUnavailableTestScenarioSource(),
-    newTraceId: () => TEST_TRACE_ID
-  };
+/** 用真实 adapter 写入完整蓝图存档（loc_a 开场，m1 active）。 */
+async function seedGame(repository: SqliteGameRepository, gameId: string): Promise<void> {
+  const created = await repository.createInitialGame({
+    gameId: asGameId(gameId),
+    blueprint: PIPELINE.blueprint,
+    state: PIPELINE.state,
+    createdAt: FIXED_CREATED_AT
+  });
+  expect(created).toEqual({ ok: true });
 }
 
 /** 从端口读回 active 记录：非 active 一律视为断言失败。 */
@@ -122,10 +138,10 @@ function mainQuestOfStage(blueprint: ScenarioBlueprint, stage: 1 | 2 | 3): Quest
   return quest;
 }
 
-describe.each(CASES)("Phase 5 物品取得回归（$gameType）", ({ gameType, fixture }) => {
+describe("Phase 5 物品取得回归（wuxia）", () => {
   it("创建 → stage 1 → 前往 key 地点 → 交谈 → 取得 key → stage 2 完成/stage 3 解锁 → reload", async () => {
-    // 独立复跑管线：同输入 + seed 的确定性蓝图，作为期望基准。
-    const baseline = runScenarioPipeline(fixture.input, fixture.seed);
+    // 独立复跑管线：makeValidCandidate 完整蓝图的确定性结果，作为期望基准。
+    const baseline = PIPELINE;
     const stage1 = mainQuestOfStage(baseline.blueprint, 1);
     const stage2 = mainQuestOfStage(baseline.blueprint, 2);
     const stage3 = mainQuestOfStage(baseline.blueprint, 3);
@@ -147,28 +163,25 @@ describe.each(CASES)("Phase 5 物品取得回归（$gameType）", ({ gameType, f
     expect(stockedLocations).toHaveLength(1);
     const keyLocation = stockedLocations[0];
     expect(keyLocation.availableItemIds).toEqual([obtainObjective.itemId]);
-    expect(keyLocation.id).toBe(asLocationId("loc_3"));
+    expect(keyLocation.id).toBe(asLocationId("loc_c"));
 
-    const databasePath = join(RUN_ROOT, `item-journey-${gameType}.sqlite`);
+    const databasePath = join(RUN_ROOT, "item-journey-wuxia.sqlite");
     const writer = openRepository(databasePath);
 
-    // 1) create：开场视图属于正确类型，key 物品 ID 不泄漏（名称可能与玩家
-    // 输入文本天然重合——如 urban 的 storyOpening 提及审计底稿——故只锁 ID）。
-    const created = await createGame(
-      { input: fixture.input, seed: fixture.seed },
-      createDependencies(writer, `game-phase5-${gameType}`)
-    );
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    expect(created.view.world.gameType).toBe(gameType);
-    expect(created.view.world.name).toBe(PROFILES.gameTypeProfiles[gameType].label);
+    // 1) 建档：开场视图属于正确类型，key 物品 ID 不泄漏。
+    await seedGame(writer, "game-phase5-wuxia");
+    const created = await getCurrentGame({ repository: writer });
+    expect(created.status).toBe("active");
+    if (created.status !== "active") return;
+    expect(created.view.world.gameType).toBe("wuxia");
+    expect(created.view.world.name).toBe(PROFILES.gameTypeProfiles.wuxia.label);
     expect(JSON.stringify(created.view).includes(obtainObjective.itemId)).toBe(false);
 
     // 2) Phase 4 序列 + Phase 5 取得：移动完成 stage 1、抵达 key 地点、
     //    与目标 NPC 交谈（talk objective），最后一步取得 key。
     const deps = { repository: writer, now: () => FIXED_ACTION_TIME };
     const journey = [
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
       { intent: { type: "move", locationId: keyLocation.id }, expectedRevision: 1 },
       { intent: { type: "talk", npcId: talkObjective.npcId }, expectedRevision: 2 }
     ] as const;
@@ -202,12 +215,8 @@ describe.each(CASES)("Phase 5 物品取得回归（$gameType）", ({ gameType, f
     expect(activeNames).not.toContain(stage2.name);
     expect(activeNames).toContain(stage3.name);
     const stage3View = taken.view.activeQuests.find((quest) => quest.name === stage3.name);
-    const finalObjective = stage3.objectives[0];
-    const finalLocationName = finalObjective.kind === "visit_location"
-      ? baseline.blueprint.locations.find((location) => location.id === finalObjective.locationId)?.name ?? "目标地点"
-      : "目标地点";
+    // makeValidCandidate 的 stage 3（m3）只有"战胜强敌"一个 objective。
     expect(stage3View?.objectives).toEqual([
-      { label: `到访${finalLocationName}`, completed: false, supported: true },
       { label: "战胜强敌", completed: false, supported: true }
     ]);
     await writer.close();

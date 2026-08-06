@@ -4,20 +4,23 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   asLocationId,
-  type GameTypeId,
-  type NewGameInput,
   type QuestDefinition,
   type ScenarioBlueprint
 } from "@/game/domain";
-import { loadScenarioProfiles } from "@/game/gameplay/rpg/scenario";
-import scienceFictionFixture from "../../../data/fixtures/phase1/science_fiction.json";
-import urbanFixture from "../../../data/fixtures/phase1/urban.json";
-import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
-import { createGame, type CreateGameDependencies } from "./createGame";
+import {
+  compileScenarioBlueprint,
+  initializeGameState,
+  loadScenarioProfiles,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import { getCurrentGame } from "./getCurrentGame";
 import { performAction } from "./performAction";
 import type { GameSessionView } from "./gameSessionView";
-import { runScenarioPipeline, createUnavailableTestScenarioSource, TEST_TRACE_ID } from "./applicationFixture.testutil";
 import { asGameId, type GameRecord, type GameRepository } from "./server/persistence/gameRepository";
 import { createSqliteClient } from "./server/persistence/sqliteClient";
 import {
@@ -36,13 +39,26 @@ import {
 // 全程真实临时 SQLite，路径显式注入，绝不读 env。
 // ---------------------------------------------------------------------------
 
-type Phase1Fixture = { input: NewGameInput; seed: string };
+// Phase 14 开局收窄后 createGame 只产出 1 幕起始锚点蓝图；本文件的完整探索
+// 旅程（move loc_b 完成 stage 1 → stage 2 解锁 → reload）需要"运行时扩展后"
+// 的完整蓝图。以 makeValidCandidate 为基座编译（wuxia 题材），直接写入真实
+// SQLite 存档后走 performAction 真实管线。
+function compileRuntimeBlueprint(): ScenarioBlueprint {
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(makeValidCandidate(), {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
+}
 
-const CASES: readonly { gameType: GameTypeId; fixture: Phase1Fixture }[] = [
-  { gameType: "wuxia", fixture: { ...(wuxiaFixture as unknown as Phase1Fixture), input: { ...(wuxiaFixture as unknown as Phase1Fixture).input, gameLength: "short" } } },
-  { gameType: "science_fiction", fixture: { ...(scienceFictionFixture as unknown as Phase1Fixture), input: { ...(scienceFictionFixture as unknown as Phase1Fixture).input, gameLength: "short" } } },
-  { gameType: "urban", fixture: { ...(urbanFixture as unknown as Phase1Fixture), input: { ...(urbanFixture as unknown as Phase1Fixture).input, gameLength: "short" } } }
-];
+const RUNTIME_BLUEPRINT = compileRuntimeBlueprint();
+const PIPELINE = { blueprint: RUNTIME_BLUEPRINT, state: initializeGameState(RUNTIME_BLUEPRINT) };
 
 const PROFILES = loadScenarioProfiles();
 const FIXED_CREATED_AT = "2026-07-27T00:00:00.000Z";
@@ -95,15 +111,15 @@ afterAll(async () => {
   }
 });
 
-function createDependencies(repository: GameRepository, gameId: string): CreateGameDependencies {
-  return {
-    repository,
-    newGameId: () => asGameId(gameId),
-    newSeed: () => "seed-unused",
-    now: () => FIXED_CREATED_AT,
-    scenarioCandidateSource: createUnavailableTestScenarioSource(),
-    newTraceId: () => TEST_TRACE_ID
-  };
+/** 用真实 adapter 写入完整蓝图存档（loc_a 开场，m1 active）。 */
+async function seedGame(repository: SqliteGameRepository, gameId: string): Promise<void> {
+  const created = await repository.createInitialGame({
+    gameId: asGameId(gameId),
+    blueprint: PIPELINE.blueprint,
+    state: PIPELINE.state,
+    createdAt: FIXED_CREATED_AT
+  });
+  expect(created).toEqual({ ok: true });
 }
 
 /** 从端口读回 active 记录：非 active 一律视为断言失败。 */
@@ -122,32 +138,31 @@ function mainQuestOfStage(blueprint: ScenarioBlueprint, stage: 1 | 2 | 3): Quest
   return quest;
 }
 
-describe.each(CASES)("Phase 4 探索回归（$gameType）", ({ gameType, fixture }) => {
-  it("create → move → stage 1 完成 → stage 2 解锁 → reload，类型内容与预算不变", async () => {
-    // 独立复跑管线：同输入 + seed 的确定性蓝图，作为类型一致性的期望基准。
-    const baseline = runScenarioPipeline(fixture.input, fixture.seed);
-    const stage1 = mainQuestOfStage(baseline.blueprint, 1);
-    const stage2 = mainQuestOfStage(baseline.blueprint, 2);
-    const loc2 = baseline.blueprint.locations.find((entry) => entry.id === asLocationId("loc_2"));
-    if (loc2 === undefined) throw new Error("蓝图缺少 loc_2");
+describe("Phase 4 探索回归（wuxia）", () => {
+  // 独立复跑管线：makeValidCandidate 完整蓝图的确定性结果，作为期望基准。
+  const baseline = PIPELINE;
+  const stage1 = mainQuestOfStage(baseline.blueprint, 1);
+  const stage2 = mainQuestOfStage(baseline.blueprint, 2);
 
-    const databasePath = join(RUN_ROOT, `journey-${gameType}.sqlite`);
+  it("create → move → stage 1 完成 → stage 2 解锁 → reload，类型内容与预算不变", async () => {
+    const loc2 = baseline.blueprint.locations.find((entry) => entry.id === asLocationId("loc_b"));
+    if (loc2 === undefined) throw new Error("蓝图缺少 loc_b");
+
+    const databasePath = join(RUN_ROOT, "journey-wuxia.sqlite");
     const writer = openRepository(databasePath);
 
-    // 1) create：开场视图属于正确类型，stage 1 是唯一 active 任务。
-    const created = await createGame(
-      { input: fixture.input, seed: fixture.seed },
-      createDependencies(writer, `game-phase4-${gameType}`)
-    );
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    expect(created.view.world.gameType).toBe(gameType);
-    expect(created.view.world.name).toBe(PROFILES.gameTypeProfiles[gameType].label);
+    // 1) 建档：开场视图属于正确类型，stage 1 是唯一 active 任务。
+    await seedGame(writer, "game-phase4-wuxia");
+    const created = await getCurrentGame({ repository: writer });
+    expect(created.status).toBe("active");
+    if (created.status !== "active") return;
+    expect(created.view.world.gameType).toBe("wuxia");
+    expect(created.view.world.name).toBe(PROFILES.gameTypeProfiles.wuxia.label);
     expect(created.view.activeQuests.map((quest) => quest.name)).toEqual([stage1.name]);
 
-    // 2) move loc_1 → loc_2：stage 1 的 visit_location objective 由此满足。
+    // 2) move loc_a → loc_b：stage 1 的 visit_location objective 由此满足。
     const moved = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
       { repository: writer, now: () => FIXED_ACTION_TIME }
     );
     expect(moved.ok).toBe(true);
@@ -214,19 +229,12 @@ describe.each(CASES)("Phase 4 探索回归（$gameType）", ({ gameType, fixture
   });
 
   it("stage 2 不能被跳过：obtain_item objective 未满足前任务保持 active", async () => {
-    const baseline = runScenarioPipeline(fixture.input, fixture.seed);
-    const stage2 = mainQuestOfStage(baseline.blueprint, 2);
     // 前提确认：stage 2 含 obtain_item objective（Phase 5 已支持，但未取得前不满足）。
     expect(stage2.objectives.some((objective) => objective.kind === "obtain_item")).toBe(true);
 
-    const databasePath = join(RUN_ROOT, `no-skip-${gameType}.sqlite`);
+    const databasePath = join(RUN_ROOT, "no-skip-wuxia.sqlite");
     const repository = openRepository(databasePath);
-    const created = await createGame(
-      { input: fixture.input, seed: fixture.seed },
-      createDependencies(repository, `game-phase4-noskip-${gameType}`)
-    );
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
+    await seedGame(repository, "game-phase4-noskip-wuxia");
 
     // 解锁 stage 2 后只做交谈：移动到 npc_3 所在的 loc_3 并与其交谈，
     // 满足 talk_to_npc objective——但 obtain_item 尚未满足（未拾取），任务必须
@@ -239,8 +247,8 @@ describe.each(CASES)("Phase 4 探索回归（$gameType）", ({ gameType, fixture
     }
     const deps = { repository, now: () => FIXED_ACTION_TIME };
     const journey = [
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
-      { intent: { type: "move", locationId: asLocationId("loc_3") }, expectedRevision: 1 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_c") }, expectedRevision: 1 },
       { intent: { type: "talk", npcId: talkObjective.npcId }, expectedRevision: 2 }
     ] as const;
     let lastView: GameSessionView | undefined;
