@@ -38,7 +38,11 @@ const deps = { now: () => FIXED_TIME };
 
 function compileFrom(candidate: ScenarioBlueprintCandidate): ScenarioBlueprint {
   const compiled = compileScenarioBlueprint(
-    validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY })
+    validateScenarioBlueprintCandidate(candidate, {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
   );
   if (!compiled.ok) {
     throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
@@ -360,7 +364,11 @@ describe("非法/不可达蓝图仍被 Phase 1 图校验拒绝（quests 模块�
     const candidate = withQuest(makeValidCandidate(), "m1", {
       onSuccess: { kind: "unlock_quests", questIds: ["m2", "s1", "ghost"] }
     });
-    const validation = validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY });
+    const validation = validateScenarioBlueprintCandidate(candidate, {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    });
     expect(validation.ok).toBe(false);
     if (!validation.ok) {
       expect(validation.issues.map((issue) => issue.code)).toContain("DANGLING_QUEST_REF");
@@ -372,7 +380,11 @@ describe("非法/不可达蓝图仍被 Phase 1 图校验拒绝（quests 模块�
     const candidate = withQuest(makeValidCandidate(), "m2", {
       onSuccess: { kind: "closed" }
     });
-    const validation = validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY });
+    const validation = validateScenarioBlueprintCandidate(candidate, {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    });
     expect(validation.ok).toBe(false);
     if (!validation.ok) {
       expect(validation.issues.map((issue) => issue.code)).toContain("UNREACHABLE_ENDING");
