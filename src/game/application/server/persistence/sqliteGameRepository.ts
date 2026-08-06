@@ -233,7 +233,7 @@ function withEndingDirectionDefault(blueprint: JsonObject): JsonObject {
     ...blueprint,
     endingDirection: {
       theme,
-      possibleTones: ["triumph", "tragedy", "bittersweet"],
+      possibleTones: ["triumph", "tragedy", "bittersweet", "ambiguous"],
       lockedAt: Math.ceil(mainActs / 2),
     },
   };
@@ -247,12 +247,28 @@ function withPrologueDefault(state: JsonObject): JsonObject {
 }
 
 // Phase 14：旧存档 state 无 mainStoryProgress 字段时补默认值。
-// currentAct 根据已完成的 quest_completed 事件数量推导；endingProposed 恒为 false。
-function withMainStoryProgressDefault(state: JsonObject): JsonObject {
+// currentAct 根据 eventLedger 中已完成的主线任务数量推导（与 reconcileMainStoryProgress
+// 语义一致：仅统计 blueprint.quests.kind==="main" 的 questId）；endingProposed 恒为 false。
+function withMainStoryProgressDefault(
+  state: JsonObject,
+  blueprint: JsonObject,
+): JsonObject {
   if (state["mainStoryProgress"] !== undefined) return state;
+  const mainQuestIds = new Set<string>();
+  const quests = blueprint["quests"];
+  if (Array.isArray(quests)) {
+    for (const q of quests) {
+      if (isPlainObject(q) && q["kind"] === "main" && typeof q["id"] === "string") {
+        mainQuestIds.add(q["id"]);
+      }
+    }
+  }
   const eventLedger = (state["eventLedger"] as readonly JsonObject[] | undefined) ?? [];
   const completedMainQuests = eventLedger.filter(
-    (e) => e["type"] === "quest_completed",
+    (e) =>
+      e["type"] === "quest_completed" &&
+      typeof e["questId"] === "string" &&
+      mainQuestIds.has(e["questId"]),
   ).length;
   return {
     ...state,
@@ -261,6 +277,28 @@ function withMainStoryProgressDefault(state: JsonObject): JsonObject {
       endingProposed: false,
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// 单一迁移出口：所有读取路径共用同一组 with*Default 链。
+//   - migrateBlueprint：availableItems → enemyLocationId → startAnchor → endingDirection
+//   - migrateStateOrNull：visited（可能失败）→ narrative → town → phase14 → phase6
+// 集中管理后新增字段的迁移只需在此文件修改一次，避免 interpretGameRow 与
+// applyResolvedAction/applyBlueprintExpansion 三处漂移（fc71150 正是此类漏改修复）。
+// ---------------------------------------------------------------------------
+
+function migrateBlueprint(blueprint: JsonObject): JsonObject {
+  return withEndingDirectionDefault(
+    withStartAnchorDefault(withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint))),
+  );
+}
+
+function migrateStateOrNull(state: JsonObject, blueprint: JsonObject): JsonObject | null {
+  const visited = withVisitedLocationDefault(state);
+  if (visited === null) return null;
+  const narrative = withTownDefaults(withNarrativeDefault(visited));
+  const phase14 = withMainStoryProgressDefault(withPrologueDefault(narrative), blueprint);
+  return withPhase6StateDefaults(phase14);
 }
 
 // 单行 → 结构化结果：只做端口要求的版本 / generationId 校验与形状检查，
@@ -309,21 +347,12 @@ export function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRe
   if (stateGenerationId !== blueprintGenerationId) {
     return corrupt("GENERATION_MISMATCH");
   }
-  const visitedState = withVisitedLocationDefault(state);
-  if (visitedState === null) {
+  // 单一迁移出口：blueprint 链 + state 链集中管理（见 migrateBlueprint/migrateStateOrNull）。
+  const migratedState = migrateStateOrNull(state, blueprint);
+  if (migratedState === null) {
     return corrupt("UNPARSEABLE_RECORD");
   }
-  // Phase 14：在链中追加 startAnchor/endingDirection/prologue/mainStoryProgress。
-  // state 链：visited → narrative → phase14(prologue+mainStory) → phase6；
-  // blueprint 链：availableItems → enemyLocationId → startAnchor → endingDirection。
-  const narrativeState = withTownDefaults(withNarrativeDefault(visitedState));
-  const phase14State = withMainStoryProgressDefault(withPrologueDefault(narrativeState));
-  const phase6State = withPhase6StateDefaults(phase14State);
-  const migratedBlueprint = withEndingDirectionDefault(
-    withStartAnchorDefault(
-      withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint)),
-    ),
-  );
+  const migratedBlueprint = migrateBlueprint(blueprint);
 
   return {
     ok: true,
@@ -332,7 +361,7 @@ export function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRe
       gameId: asGameId(gameId),
       // 通过全部防御性检查后按端口契约还原类型；深度结构由写入侧的编译器保证。
       blueprint: migratedBlueprint as unknown as ScenarioBlueprint,
-      state: phase6State as unknown as GameState,
+      state: migratedState as unknown as GameState,
       revision,
       createdAt
     }
@@ -539,19 +568,13 @@ export function createSqliteGameRepository(
           return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         }
 
+        const migratedBlueprint = migrateBlueprint(blueprint);
+        const migratedState = migrateStateOrNull(state, migratedBlueprint) ?? state;
         const record: GameRecord = {
           gameId: asGameId(row["game_id"] as string),
-          // 与 interpretGameRow 同样补旧档默认值：blueprint 链 availableItems → enemyLocationId
-          // → startAnchor → endingDirection；state 链 narrative → town → prologue → mainStoryProgress。
-          // 避免类型契约缺口。
-          blueprint: withEndingDirectionDefault(
-            withStartAnchorDefault(
-              withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint)),
-            ),
-          ) as unknown as ScenarioBlueprint,
-          state: withMainStoryProgressDefault(
-            withPrologueDefault(withTownDefaults(withNarrativeDefault(state))),
-          ) as unknown as GameState,
+          // 单一迁移出口：与 interpretGameRow 完全一致的链路（见 migrateBlueprint/migrateStateOrNull）。
+          blueprint: migratedBlueprint as unknown as ScenarioBlueprint,
+          state: migratedState as unknown as GameState,
           revision: row["revision"] as number,
           createdAt: row["created_at"] as string
         };
@@ -623,17 +646,13 @@ export function createSqliteGameRepository(
           return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         }
 
+        const migratedBlueprint = migrateBlueprint(blueprint);
+        const migratedState = migrateStateOrNull(state, migratedBlueprint) ?? state;
         const record: GameRecord = {
           gameId: asGameId(row["game_id"] as string),
-          // 与 interpretGameRow 同样补旧档默认值（含 Phase 14 startAnchor/endingDirection/prologue/mainStoryProgress）。
-          blueprint: withEndingDirectionDefault(
-            withStartAnchorDefault(
-              withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint)),
-            ),
-          ) as unknown as ScenarioBlueprint,
-          state: withMainStoryProgressDefault(
-            withPrologueDefault(withTownDefaults(withNarrativeDefault(state))),
-          ) as unknown as GameState,
+          // 单一迁移出口：与 interpretGameRow 完全一致的链路（见 migrateBlueprint/migrateStateOrNull）。
+          blueprint: migratedBlueprint as unknown as ScenarioBlueprint,
+          state: migratedState as unknown as GameState,
           revision: row["revision"] as number,
           createdAt: row["created_at"] as string
         };

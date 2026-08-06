@@ -11,6 +11,7 @@ import { findAvailableActionByKey, reconcileStoryMemory } from "@/game/gameplay/
 import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
 import {
   reconcileQuests,
+  reconcileMainStoryProgress,
   failQuest,
   resolveEnding,
 } from "@/game/gameplay/rpg/quests";
@@ -421,6 +422,23 @@ export async function performAction(
   nextState = {
     ...nextState,
     storyMemory: reconcileStoryMemory({ state: nextState })
+  };
+
+  // Phase 14：同步写回派生的 currentAct，使持久化缓存与实际 state.quests 对齐
+  // （spec §405 要求每次 reconcileQuests 后由 performAction 显式写回）。
+  // 闸门读者（approveEndingProposal）依然只读派生值，避免隐式写回依赖；
+  // 写回只维护缓存新鲜度，让旧档迁移/外部工具读 mainStoryProgress 时拿到准确数据。
+  const mainStoryProgress = reconcileMainStoryProgress(
+    record.blueprint,
+    nextState,
+    questDeps,
+  );
+  nextState = {
+    ...nextState,
+    mainStoryProgress: {
+      ...nextState.mainStoryProgress,
+      currentAct: mainStoryProgress.currentAct,
+    },
   };
 
   // Step 5: 最终 state → 原子 compare-and-swap 写入（唯一一次写入）。

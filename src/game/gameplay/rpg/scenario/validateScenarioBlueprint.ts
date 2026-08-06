@@ -340,7 +340,7 @@ function validateSchemaBasics(
     issues.push({
       path: "schemaVersion",
       code: "INVALID_SCHEMA_VERSION",
-      params: { expected: 1, actual: String(schemaVersion) }
+      params: { expected: "1|2", actual: String(schemaVersion) }
     });
   }
   for (const field of REQUIRED_TEXT_FIELDS) {
@@ -642,6 +642,8 @@ function validateStartAnchor(
   }
   if (!anchor.locationId || !anchor.npcId || !anchor.startQuestId) {
     issues.push({ path: "startAnchor", code: "INVALID_START_ANCHOR", params: {} });
+    // 字段缺失时引用检查无意义：直接返回避免误报 LOCATION/NPC/QUEST_MISSING。
+    return;
   }
   if (!candidate.locations.some((l) => l.id === anchor.locationId)) {
     issues.push({
@@ -676,12 +678,20 @@ function validateEndingDirection(
     issues.push({ path: "endingDirection", code: "MISSING_ENDING_DIRECTION", params: {} });
     return;
   }
-  if (!dir.theme || dir.possibleTones.length === 0 || dir.lockedAt < 1) {
+  if (
+    !dir.theme ||
+    !Array.isArray(dir.possibleTones) ||
+    dir.possibleTones.length === 0 ||
+    typeof dir.lockedAt !== "number" ||
+    dir.lockedAt < 1
+  ) {
     issues.push({ path: "endingDirection", code: "INVALID_ENDING_DIRECTION", params: {} });
   }
 }
 
 /** Phase 14：开局校验序幕必产——openingScene.prologue 含非空 text 与合法 tone。 */
+const PROLOGUE_TONES: ReadonlySet<string> = new Set(["serious", "epic", "mysterious"]);
+
 function validatePrologue(
   issues: ScenarioBlueprintIssue[],
   candidate: ScenarioBlueprintCandidate
@@ -691,7 +701,11 @@ function validatePrologue(
     issues.push({ path: "openingScene.prologue", code: "MISSING_PROLOGUE", params: {} });
     return;
   }
-  if (!prologue.text || !prologue.tone) {
+  if (
+    !prologue.text ||
+    typeof prologue.tone !== "string" ||
+    !PROLOGUE_TONES.has(prologue.tone)
+  ) {
     issues.push({ path: "openingScene.prologue", code: "INVALID_PROLOGUE", params: {} });
   }
 }

@@ -45,7 +45,8 @@ type TownMapSvgProps = {
   /**
    * Phase 14：可进入的剧情建筑 ID 集合。未提供时所有 storyRequired 建筑视为可进入
    * （向后兼容旧调用方）；提供时，storyRequired 且不在集合中的建筑渲染为「未探索」
-   * 占位灰块——无 role=button、无点击、无贴图，避免泄漏未结识 NPC 信息。
+   * 占位灰块——无贴图、不展示真实名称，避免泄漏未结识 NPC 信息；仍可聚焦/选中
+   * 以便玩家在侧栏看到引导提示（aria-disabled="true" 阻止进入）。
    */
   interactiveBuildingIds?: ReadonlySet<string>;
 };
@@ -170,8 +171,8 @@ export function TownMapSvg({
       )}
 
       {snapshot.buildings.map((building) => {
-        // Phase 14：未探索的剧情建筑渲染为灰色占位——无 role=button、不可点击、
-        // 不展示真实名称/贴图，避免泄漏未结识 NPC 的身份信息。
+        // Phase 14：未探索的剧情建筑渲染为灰色占位——可聚焦/选中（便于侧栏引导），
+        // 但不展示真实名称/贴图，避免泄漏未结识 NPC 的身份信息。
         if (isUnexploredPlaceholder(building)) {
           const selected = building.buildingId === selectedBuildingId;
           const classes = ["town-demo-building", "town-demo-building--unexplored"];
@@ -180,12 +181,17 @@ export function TownMapSvg({
             <rect
               key={building.buildingId}
               className={classes.join(" ")}
+              role="button"
+              tabIndex={0}
               aria-label="未探索"
+              aria-pressed={selected}
+              aria-disabled="true"
               x={building.footprint.x * TILE_SIZE}
               y={building.footprint.y * TILE_SIZE}
               width={building.footprint.width * TILE_SIZE}
               height={building.footprint.height * TILE_SIZE}
-              pointerEvents="none"
+              onClick={(event) => handleBuildingClick(event, building.buildingId)}
+              onKeyDown={(event) => handleBuildingKeyDown(event, building.buildingId)}
             />
           );
         }

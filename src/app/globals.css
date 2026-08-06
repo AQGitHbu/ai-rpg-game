@@ -1711,6 +1711,18 @@ label.town-demo-toggle {
   stroke: #d9a441;
 }
 
+.town-demo-building--unexplored {
+  fill: #4a4a4a;
+  stroke: #6a6a6a;
+  opacity: 0.6;
+}
+
+.town-demo-building--unexplored:hover,
+.town-demo-building--unexplored:focus-visible {
+  stroke: #9a9a9a;
+  opacity: 0.85;
+}
+
 .town-demo-building--selected {
   stroke: #f3ead5;
   stroke-width: 2.5;

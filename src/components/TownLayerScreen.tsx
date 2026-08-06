@@ -67,7 +67,9 @@ export function TownLayerScreen({ town, busy, onEnterBuilding, onReturnMap }: To
               </InlineButton>
             </div>
           ) : selectedUnexplored ? (
-            <p className="town-layer-hint" role="status">未探索</p>
+            <p className="town-layer-hint" role="status">
+              这座建筑尚未探索。结识更多居民或推进主线任务后，它才会开放。
+            </p>
           ) : (
             <p className="town-layer-hint">点击地图上高亮的剧情建筑，进入其中的场景与对话。</p>
           )}

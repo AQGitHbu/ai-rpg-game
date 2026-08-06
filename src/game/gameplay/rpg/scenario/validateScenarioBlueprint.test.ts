@@ -75,7 +75,7 @@ describe("validateScenarioBlueprintCandidate：schema 基础", () => {
     expect(issuesOf(candidate)).toContainEqual({
       path: "schemaVersion",
       code: "INVALID_SCHEMA_VERSION",
-      params: { expected: 1, actual: "3" }
+      params: { expected: "1|2", actual: "3" }
     });
   });
 
