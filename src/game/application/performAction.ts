@@ -16,7 +16,7 @@ import {
   resolveEnding,
 } from "@/game/gameplay/rpg/quests";
 import { finalMainActOf } from "@/game/domain";
-import type { GameState, QuestId, EnemyId, ScenarioBlueprint } from "@/game/domain";
+import type { GameState, NarrativeTriggerContext, NpcId, QuestId, EnemyId, ScenarioBlueprint } from "@/game/domain";
 import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
 import type { GameRepository } from "./server/persistence/gameRepository";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
@@ -171,6 +171,16 @@ export async function performAction(
   const battleDeps = { now: deps.now };
   const questDeps = { now: deps.now };
   let resolved: ResolvedAction;
+  let dialogueResponse: Readonly<{
+    readonly triggerContext: Extract<NarrativeTriggerContext, { readonly kind: "dialogue_response" }>;
+    readonly playerNpcChat: {
+      readonly npcId: NpcId;
+      readonly playerText: string;
+      readonly npcName: string;
+      readonly npcRole: string;
+    };
+  }> | null = null;
+  let narrativeChoiceTriggerContext: Extract<NarrativeTriggerContext, { readonly kind: "talk" }> | undefined;
 
   try {
     if (command.intent.type === "narrative_choice") {
@@ -182,9 +192,53 @@ export async function performAction(
         if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "该剧情选项已失效。" } };
       }
-      const available = projectAvailableActions(record.blueprint, record.state);
-      const resolvedIntent = findAvailableActionByKey(available, choice.actionKey);
-      if (resolvedIntent === null) {
+      const isDialogueResponse = choice.choiceKind === "dialogue_response" || choice.dialogueIntent !== undefined;
+      const dialogueNpcId = scene.event?.kind === "dialogue"
+        ? scene.event.focusNpcId
+        : scene.npcLine?.npcId ?? scene.npcDialogues?.find((entry) => entry.speechPages.length > 0)?.npcId;
+      const dialogueNpc = dialogueNpcId === undefined
+        ? undefined
+        : record.blueprint.npcs.find((npc) => String(npc.id) === String(dialogueNpcId));
+      if (isDialogueResponse) {
+        if (dialogueNpcId === undefined || dialogueNpc === undefined || choice.dialogueIntent === undefined) {
+          const view = projectCurrentView();
+          if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+          return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "该对白回应已失效。" } };
+        }
+        const triggerContext = {
+          kind: "dialogue_response" as const,
+          npcId: dialogueNpcId,
+          dialogueIntent: choice.dialogueIntent,
+          playerText: choice.label,
+        };
+        dialogueResponse = {
+          triggerContext,
+          playerNpcChat: {
+            npcId: dialogueNpcId,
+            playerText: choice.label,
+            npcName: dialogueNpc.name,
+            npcRole: dialogueNpc.role,
+          },
+        };
+        resolved = {
+          state: {
+            ...record.state,
+            narrative: { ...record.state.narrative, currentScene: null, generation: { status: "idle" } },
+            eventLedger: [...record.state.eventLedger, {
+              type: "narrative_dialogue_choice",
+              choiceToken: choice.choiceToken,
+              dialogueIntent: choice.dialogueIntent,
+              npcId: dialogueNpcId,
+              sceneId: scene.sceneId,
+              occurredAt: deps.now(),
+            }],
+          },
+          feedbackMessage: "你的回应传达给了对方。",
+        };
+      } else {
+        const available = projectAvailableActions(record.blueprint, record.state);
+        const resolvedIntent = findAvailableActionByKey(available, choice.actionKey);
+        if (resolvedIntent === null) {
         const view = projectCurrentView();
         if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "该剧情选项已不再合法。" } };
@@ -223,6 +277,13 @@ export async function performAction(
         }
         choiceState = reconcileQuests(record.blueprint, result.state, questDeps).state;
         choiceFeedback = result.feedback.message;
+        if (resolvedIntent.type === "talk") {
+          narrativeChoiceTriggerContext = {
+            kind: "talk",
+            npcId: resolvedIntent.npcId,
+            isFirstMeeting: !(record.state.npcs.find((npc) => npc.npcId === resolvedIntent.npcId)?.met ?? true),
+          };
+        }
       }
       resolved = {
         state: {
@@ -232,6 +293,7 @@ export async function performAction(
         },
         feedbackMessage: choiceFeedback,
       };
+      }
     } else switch (command.intent.type) {
       case "start_battle": {
         const result = startBattle(
@@ -412,8 +474,9 @@ export async function performAction(
             triggerContext: intent.type === "talk"
               ? { kind: "talk", npcId: intent.npcId, isFirstMeeting: !isRepeatTalk }
               : intent.type === "narrative_choice"
-                ? { kind: "narrative_choice_followup", previousChoiceActionKey: intent.choiceToken }
+                ? dialogueResponse?.triggerContext ?? narrativeChoiceTriggerContext ?? { kind: "narrative_choice_followup", previousChoiceActionKey: intent.choiceToken }
                 : undefined,
+            ...(dialogueResponse !== null ? { playerNpcChat: dialogueResponse.playerNpcChat } : {}),
           },
           mode: nextState.narrative.mode,
         },

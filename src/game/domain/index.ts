@@ -103,6 +103,7 @@ export {
   type QuestFailedEvent,
   type EndingReachedEvent,
   type NarrativeChoiceEvent,
+  type NarrativeDialogueChoiceEvent,
   type TownPlanGeneratedEvent,
   type NarrativeScenePresentedEvent,
   type BlueprintExpandedEvent
@@ -133,6 +134,8 @@ export {
   type NarrativeMode,
   type NarrativeSceneState,
   type NarrativeChoiceState,
+  type NarrativeEventKind,
+  type NarrativeEventState,
   type NarrativeNpcLineState,
   type NarrativeEmotion,
   type NarrativeGenerationState,

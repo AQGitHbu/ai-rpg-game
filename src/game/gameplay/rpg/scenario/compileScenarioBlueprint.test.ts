@@ -153,6 +153,7 @@ describe("initializeGameState", () => {
         { questId: "s1", status: "locked" }
       ],
       inventory: ["item_a"],
+      prologueShown: false,
       worldFacts: [
         { factId: "fact_a", discovered: true },
         { factId: "fact_b", discovered: false }
@@ -164,6 +165,7 @@ describe("initializeGameState", () => {
       towns: [],
       townGeneration: { status: "idle" },
       storyMemory: createEmptyStoryMemory(),
+      mainStoryProgress: { currentAct: 1, endingProposed: false },
       eventLedger: [{ type: "game_initialized", generation }]
     });
   });

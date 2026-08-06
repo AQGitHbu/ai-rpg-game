@@ -102,14 +102,15 @@ export function validateIntent(
       if (fact === undefined) {
         return { ok: false, code: "UNKNOWN_FACT", params: { factId: intent.factId } };
       }
-      // 事实必须在当前场景的可调查事实列表中；目前只有 opening 场景携带
-      // 可调查列表，离开开场地点后不得泄漏到其他地点。
+      // 开场事实由 openingScene 授权；运行时懒生成事实由其 state.locationId
+      // 授权。两者都必须绑定当前地点。
       const atOpeningLocation = state.currentLocationId === blueprint.openingScene.locationId;
       const investigableIds = blueprint.openingScene.investigableFactIds;
-      if (!atOpeningLocation || !investigableIds.includes(intent.factId)) {
+      const factState = state.worldFacts.find((f) => f.factId === intent.factId);
+      const isRuntimeFactAtLocation = factState?.locationId === state.currentLocationId;
+      if ((!atOpeningLocation || !investigableIds.includes(intent.factId)) && !isRuntimeFactAtLocation) {
         return { ok: false, code: "FACT_NOT_INVESTIGABLE", params: { factId: intent.factId } };
       }
-      const factState = state.worldFacts.find((f) => f.factId === intent.factId);
       if (factState?.discovered === true) {
         return { ok: false, code: "FACT_ALREADY_DISCOVERED", params: { factId: intent.factId } };
       }

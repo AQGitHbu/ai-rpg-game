@@ -77,7 +77,7 @@ describe("AdventureGameShell", () => {
     expect(screen.getByRole("region", { name: "地点场景：青石镇" })).toBeInTheDocument();
   });
 
-  it("叙事选项提交 pending 时保留当前 NPC 对话弹层", async () => {
+  it("叙事选项提交 pending 时独占场景，不与上一幕 NPC 对话叠加", async () => {
     const base = buildSessionViewFixture();
     const readyView = {
       ...base,
@@ -116,14 +116,14 @@ describe("AdventureGameShell", () => {
     await waitFor(() => expect(onViewChange).toHaveBeenCalledWith(pendingView));
     rerender(<AdventureGameShell {...props} view={pendingView} />);
 
-    expect(screen.getByRole("dialog", { name: "与陆掌柜对话" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "与陆掌柜对话" })).toBeNull();
     expect(screen.getByRole("dialog", { name: "正在准备场景" })).toBeInTheDocument();
     expect(screen.getByText("世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。"))
       .toBeInTheDocument();
 
     await user.keyboard("{Escape}");
 
-    expect(screen.getByRole("dialog", { name: "与陆掌柜对话" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "与陆掌柜对话" })).toBeNull();
     expect(screen.getByRole("dialog", { name: "正在准备场景" })).toBeInTheDocument();
   });
 

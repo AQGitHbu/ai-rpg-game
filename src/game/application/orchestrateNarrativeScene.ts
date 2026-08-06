@@ -4,7 +4,7 @@
 // 只返回结构化结果，不写入 repository。
 // ---------------------------------------------------------------------------
 
-import type { GameState, ScenarioBlueprint, NarrativeSceneState, NpcDialogueInScene, NpcId, FactId, StoryPacing } from "@/game/domain";
+import { asEnemyId, asFactId, asItemId, asLocationId, asNpcId, type GameState, type ScenarioBlueprint, type NarrativeEventKind, type NarrativeEventState, type NarrativeSceneState, type NpcDialogueInScene, type NpcId, type FactId, type StoryPacing } from "@/game/domain";
 import { paginateSpeechText } from "@/game/domain";
 import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
 import type { NarrativeActionCandidate, NpcInstruction, ApprovedDirectorPlan, ApprovedSceneScript, BlueprintExpansionDecision, EndingApprovalDecision } from "@/game/gameplay/rpg/narrative";
@@ -329,6 +329,23 @@ export async function orchestrateNarrativeScene(
     );
   }
 
+  // 将导演的旧 action 计划收敛为一个原子事件。开局/交谈触发优先锁定
+  // 当前 NPC；只有没有对话触发时，才从第一条合法行动推导世界事件。
+  let event = resolveNarrativeEvent(plan, state, candidates);
+  if (event?.kind === "dialogue" && (plan.focusNpcId === null || plan.eventKind === undefined)) {
+    plan = {
+      ...plan,
+      eventKind: "dialogue",
+      eventTargetId: String(event.focusNpcId),
+      focusNpcId: event.focusNpcId,
+    };
+    event = resolveNarrativeEvent(plan, state, candidates);
+  }
+  if (event !== undefined && plan.eventTargetId === undefined && isRuntimeEventTarget(event)) {
+    plan = { ...plan, eventTargetId: runtimeTargetIdOf(event) };
+    event = resolveNarrativeEvent(plan, state, candidates);
+  }
+
   // Step 3：投影编剧上下文 → 调用编剧 source
   const sceneScriptContext = toSceneScriptContext({ blueprint, state, plan });
   const currentLocation = blueprint.locations.find((location) => String(location.id) === String(state.currentLocationId));
@@ -361,6 +378,8 @@ export async function orchestrateNarrativeScene(
       plan,
       blueprint,
       unresolvedItemNames,
+      eventKind: event?.kind,
+      ...(plan.eventTargetId !== undefined ? { eventTargetId: plan.eventTargetId } : {}),
     });
     input.approvalObserver?.({ kind: "role_approval", traceId, role: "writer", attempt: attempt + 1, category: approval.ok ? null : approval.category });
     if (approval.ok) { script = approval.value; break; }
@@ -441,7 +460,27 @@ export async function orchestrateNarrativeScene(
     narration: script.narration,
     usedFactIds: script.usedFactIds as unknown as NarrativeSceneState["usedFactIds"],
     npcLine,
+    ...(event !== undefined ? { event } : {}),
     choices: script.choices.map((choice, index) => {
+      if (event?.kind === "dialogue") {
+        return {
+          choiceToken: `${traceId}-choice:${index}`,
+          label: choice.label,
+          choiceKind: "dialogue_response" as const,
+          dialogueIntent: choice.dialogueIntent ?? `dialogue_response_${index + 1}`,
+          // Narrative choices retain one opaque server-side string for the
+          // persisted token lookup; it is never passed to rule resolvers.
+          actionKey: `dialogue:${traceId}:${index}`,
+        };
+      }
+      const eventActionKey = event !== undefined ? actionKeyForEvent(event) : undefined;
+      if (eventActionKey !== undefined && choice.actionKey === eventActionKey) {
+        return {
+          choiceToken: `${traceId}-choice:${index}`,
+          label: choice.label,
+          actionKey: eventActionKey,
+        };
+      }
       // AI may phrase a choice attractively, but only the rule candidate knows
       // what its actionKey actually does. Persisting that candidate label keeps
       // a move from being presented as an observe (and vice versa).
@@ -461,7 +500,7 @@ export async function orchestrateNarrativeScene(
     scene,
     provenance: scriptAttempt.provenance === "fixture" ? "fixture" : "generated",
     pacing: plan.pacing,
-    focusNpcId: plan.focusNpcId as NpcId | null,
+    focusNpcId: event?.kind === "dialogue" ? event.focusNpcId : plan.focusNpcId as NpcId | null,
     expansionDecision,
     ...(endingDecision !== undefined ? { endingDecision } : {}),
     diagnostics: {
@@ -509,16 +548,33 @@ function buildFallbackResult(
     narration: FALLBACK_SCENE_SCRIPT.narration,
     usedFactIds: [] as unknown as NarrativeSceneState["usedFactIds"],
     npcLine: null,
+    ...(resolveNarrativeEvent(approvedPlan, state, candidates) !== undefined
+      ? { event: resolveNarrativeEvent(approvedPlan, state, candidates) }
+      : {}),
     choices: [
       {
         choiceToken: `${traceId}-fallback:a`,
-        label: fallbackCandidates[0]?.publicLabel ?? FALLBACK_SCENE_SCRIPT.choices[0].label,
-        actionKey: fallbackCandidates[0]?.actionKey ?? FALLBACK_SCENE_SCRIPT.choices[0].actionKey,
+        label: resolveNarrativeEvent(approvedPlan, state, candidates)?.kind === "dialogue"
+          ? "询问目前发生了什么状况"
+          : fallbackCandidates[0]?.publicLabel ?? FALLBACK_SCENE_SCRIPT.choices[0].label,
+        ...(resolveNarrativeEvent(approvedPlan, state, candidates)?.kind === "dialogue"
+          ? { choiceKind: "dialogue_response" as const, dialogueIntent: "ask_current_situation" }
+          : {}),
+        actionKey: resolveNarrativeEvent(approvedPlan, state, candidates)?.kind === "dialogue"
+          ? `dialogue:${traceId}:fallback:a`
+          : fallbackCandidates[0]?.actionKey ?? FALLBACK_SCENE_SCRIPT.choices[0].actionKey,
       },
       {
         choiceToken: `${traceId}-fallback:b`,
-        label: fallbackCandidates[1]?.publicLabel ?? FALLBACK_SCENE_SCRIPT.choices[1].label,
-        actionKey: fallbackCandidates[1]?.actionKey ?? FALLBACK_SCENE_SCRIPT.choices[1].actionKey,
+        label: resolveNarrativeEvent(approvedPlan, state, candidates)?.kind === "dialogue"
+          ? "追问太空站刚维修为何又出故障"
+          : fallbackCandidates[1]?.publicLabel ?? FALLBACK_SCENE_SCRIPT.choices[1].label,
+        ...(resolveNarrativeEvent(approvedPlan, state, candidates)?.kind === "dialogue"
+          ? { choiceKind: "dialogue_response" as const, dialogueIntent: "challenge_recent_repair" }
+          : {}),
+        actionKey: resolveNarrativeEvent(approvedPlan, state, candidates)?.kind === "dialogue"
+          ? `dialogue:${traceId}:fallback:b`
+          : fallbackCandidates[1]?.actionKey ?? FALLBACK_SCENE_SCRIPT.choices[1].actionKey,
       },
     ],
     source: "fallback",
@@ -536,6 +592,107 @@ function buildFallbackResult(
       npcLineAttempted,
     },
   };
+}
+
+function resolveNarrativeEvent(
+  plan: ApprovedDirectorPlan | undefined,
+  state: GameState,
+  candidates: readonly NarrativeActionCandidate[],
+): NarrativeEventState | undefined {
+  const trigger = state.narrative.generation.status === "pending"
+    ? state.narrative.generation.triggerContext
+    : undefined;
+  const triggerNpcId = trigger !== undefined &&
+    (trigger.kind === "initial_opening" || trigger.kind === "talk" || trigger.kind === "free_input" || trigger.kind === "dialogue_response")
+    ? trigger.npcId
+    : undefined;
+  const selectedActionKey = plan?.suggestedActionKeys[0] ?? candidates[0]?.actionKey;
+  const inferredKind = actionKindOf(selectedActionKey);
+  const kind: NarrativeEventKind | undefined = plan?.eventKind ?? (
+    trigger !== undefined &&
+    (trigger.kind === "initial_opening" || trigger.kind === "talk" || trigger.kind === "free_input")
+      ? "dialogue"
+      : inferredKind === "dialogue" ? undefined : inferredKind
+  );
+  if (kind === undefined) return undefined;
+
+  switch (kind) {
+    case "dialogue": {
+      const npcId = plan?.focusNpcId !== undefined && plan.focusNpcId !== null
+        ? asNpcId(plan.focusNpcId)
+        : triggerNpcId;
+      if (npcId === null || npcId === undefined) return undefined;
+      const present = state.npcs.some((npc) => String(npc.npcId) === String(npcId) && String(npc.locationId) === String(state.currentLocationId));
+      return present ? { kind, focusNpcId: npcId } : undefined;
+    }
+    case "investigate": {
+      const factId = plan?.eventTargetId ?? targetFromAction(candidates, "investigate:", plan?.suggestedActionKeys[0]) ??
+        (plan?.proposedNewFacts?.length === 1 ? "runtime:new_fact" : undefined);
+      return factId === undefined ? undefined : { kind, factId: asFactId(factId) };
+    }
+    case "item": {
+      const itemId = plan?.eventTargetId ?? targetFromAction(candidates, "take_item:", plan?.suggestedActionKeys[0]) ??
+        (plan?.proposedNewItems?.length === 1 ? "runtime:new_item" : undefined);
+      return itemId === undefined ? undefined : { kind, itemId: asItemId(itemId) };
+    }
+    case "battle": {
+      const enemyId = plan?.eventTargetId ?? targetFromAction(candidates, "start_battle:", plan?.suggestedActionKeys[0]) ??
+        (plan?.proposedNewEnemies?.length === 1 ? "runtime:new_enemy" : undefined);
+      return enemyId === undefined ? undefined : { kind, enemyId: asEnemyId(enemyId) };
+    }
+    case "travel": {
+      const locationId = plan?.eventTargetId ?? targetFromAction(candidates, "move:", plan?.suggestedActionKeys[0]);
+      return locationId === undefined ? undefined : { kind, locationId: asLocationId(locationId) };
+    }
+    case "observe": {
+      const locationId = plan?.eventTargetId ?? targetFromAction(candidates, "observe:", plan?.suggestedActionKeys[0]);
+      return locationId === undefined ? undefined : { kind, locationId: asLocationId(locationId) };
+    }
+  }
+}
+
+function actionKindOf(actionKey: string | undefined): NarrativeEventKind | undefined {
+  if (actionKey === undefined) return undefined;
+  if (actionKey.startsWith("investigate:")) return "investigate";
+  if (actionKey.startsWith("take_item:")) return "item";
+  if (actionKey.startsWith("start_battle:")) return "battle";
+  if (actionKey.startsWith("move:")) return "travel";
+  if (actionKey.startsWith("observe:")) return "observe";
+  if (actionKey.startsWith("talk:")) return "dialogue";
+  return undefined;
+}
+
+function targetFromAction(candidates: readonly NarrativeActionCandidate[], prefix: string, preferredActionKey?: string): string | undefined {
+  const key = preferredActionKey?.startsWith(prefix)
+    ? preferredActionKey
+    : candidates.find((candidate) => candidate.actionKey.startsWith(prefix))?.actionKey;
+  return key?.slice(prefix.length);
+}
+
+function isRuntimeEventTarget(event: NarrativeEventState): boolean {
+  return event.kind === "investigate" && String(event.factId) === "runtime:new_fact" ||
+    event.kind === "item" && String(event.itemId) === "runtime:new_item" ||
+    event.kind === "battle" && String(event.enemyId) === "runtime:new_enemy";
+}
+
+function runtimeTargetIdOf(event: NarrativeEventState): string {
+  switch (event.kind) {
+    case "investigate": return String(event.factId);
+    case "item": return String(event.itemId);
+    case "battle": return String(event.enemyId);
+    default: return "";
+  }
+}
+
+function actionKeyForEvent(event: NarrativeEventState): string | undefined {
+  switch (event.kind) {
+    case "investigate": return `investigate:${String(event.factId)}`;
+    case "item": return `take_item:${String(event.itemId)}`;
+    case "battle": return `start_battle:${String(event.enemyId)}`;
+    case "travel": return `move:${String(event.locationId)}`;
+    case "observe": return `observe:${String(event.locationId)}`;
+    case "dialogue": return undefined;
+  }
 }
 
 function unavailableDirectorAttempt(traceId: string): DirectorAttempt {

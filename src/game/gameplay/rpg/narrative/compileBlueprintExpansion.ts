@@ -1,4 +1,7 @@
 import {
+  asEnemyId,
+  asFactId,
+  asItemId,
   asLocationId,
   asNpcId,
   type GameState,
@@ -24,6 +27,9 @@ export type CompileBlueprintExpansionInput = {
 export type CompileBlueprintExpansionResult = {
   readonly nextBlueprint: ScenarioBlueprint;
   readonly nextState: GameState;
+  readonly newFactId: import("@/game/domain").FactId | null;
+  readonly newItemId: import("@/game/domain").ItemId | null;
+  readonly newEnemyId: import("@/game/domain").EnemyId | null;
 };
 
 export function compileBlueprintExpansion(
@@ -33,6 +39,9 @@ export function compileBlueprintExpansion(
 
   const newLocationIds: LocationId[] = [];
   const newNpcIds: NpcId[] = [];
+  const newFactIds: string[] = [];
+  const newItemIds: string[] = [];
+  const newEnemyIds: string[] = [];
 
   // 铸造新地点 ID
   let newLocationId: LocationId | null = null;
@@ -89,10 +98,45 @@ export function compileBlueprintExpansion(
     ? [...blueprint.npcs, newNpcDef]
     : [...blueprint.npcs];
 
+  const newFactId = expansion.newFact !== undefined && expansion.newFact !== null
+    ? asFactId(mintResourceId(blueprint.world.facts.map((fact) => String(fact.id)), "fact_dyn"))
+    : null;
+  if (newFactId !== null) newFactIds.push(String(newFactId));
+  const newItemId = expansion.newItem !== undefined && expansion.newItem !== null
+    ? asItemId(mintResourceId(blueprint.items.map((item) => String(item.id)), "item_dyn"))
+    : null;
+  if (newItemId !== null) newItemIds.push(String(newItemId));
+  const newEnemyId = expansion.newEnemy !== undefined && expansion.newEnemy !== null
+    ? asEnemyId(mintResourceId(blueprint.enemies.map((enemy) => String(enemy.id)), "enemy_dyn"))
+    : null;
+  if (newEnemyId !== null) newEnemyIds.push(String(newEnemyId));
+
+  const nextLocationsWithItems = nextBlueprintLocations.map((location) => {
+    if (newItemId !== null && String(location.id) === String(state.currentLocationId)) {
+      return { ...location, availableItemIds: [...location.availableItemIds, newItemId] };
+    }
+    return location;
+  });
+  const nextWorld = newFactId !== null && expansion.newFact !== undefined && expansion.newFact !== null
+    ? {
+        ...blueprint.world,
+        facts: [...blueprint.world.facts, { id: newFactId, text: expansion.newFact.text, source: "generated" as const }]
+      }
+    : blueprint.world;
+  const nextItems = newItemId !== null && expansion.newItem !== undefined && expansion.newItem !== null
+    ? [...blueprint.items, { id: newItemId, name: expansion.newItem.name, description: expansion.newItem.description, kind: expansion.newItem.kind, tags: [...expansion.newItem.tags] }]
+    : [...blueprint.items];
+  const nextEnemies = newEnemyId !== null && expansion.newEnemy !== undefined && expansion.newEnemy !== null
+    ? [...blueprint.enemies, { id: newEnemyId, name: expansion.newEnemy.name, tier: expansion.newEnemy.tier, stats: { ...expansion.newEnemy.stats }, locationId: asLocationId(expansion.newEnemy.locationId), tags: [] }]
+    : [...blueprint.enemies];
+
   const nextBlueprint: ScenarioBlueprint = {
     ...blueprint,
-    locations: nextBlueprintLocations,
-    npcs: nextBlueprintNpcs
+    world: nextWorld,
+    locations: nextLocationsWithItems,
+    npcs: nextBlueprintNpcs,
+    items: nextItems,
+    enemies: nextEnemies,
   } as ScenarioBlueprint;
 
   // 构造新状态
@@ -102,23 +146,30 @@ export function compileBlueprintExpansion(
   const nextNpcs = newNpcDef !== null
     ? [...state.npcs, buildNpcRuntimeEntry(newNpcDef)]
     : [...state.npcs];
+  const nextWorldFacts = newFactId !== null
+    ? [...state.worldFacts, { factId: newFactId, discovered: false, locationId: state.currentLocationId }]
+    : [...state.worldFacts];
 
   const nextState: GameState = {
     ...state,
     unlockedLocationIds: nextUnlocked,
     npcs: nextNpcs,
+    worldFacts: nextWorldFacts,
     eventLedger: [
       ...state.eventLedger,
       {
         type: "blueprint_expanded" as const,
         newLocationIds,
         newNpcIds,
+        ...(newFactIds.length > 0 ? { newFactIds: newFactIds.map(asFactId) } : {}),
+        ...(newItemIds.length > 0 ? { newItemIds: newItemIds.map(asItemId) } : {}),
+        ...(newEnemyIds.length > 0 ? { newEnemyIds: newEnemyIds.map(asEnemyId) } : {}),
         occurredAt
       }
     ]
   } as GameState;
 
-  return { nextBlueprint, nextState };
+  return { nextBlueprint, nextState, newFactId, newItemId, newEnemyId };
 }
 
 function mintLocationId(blueprint: ScenarioBlueprint): LocationId {
@@ -143,4 +194,13 @@ function mintNpcId(blueprint: ScenarioBlueprint): NpcId {
     }
   }
   return asNpcId(`npc_dyn_${max + 1}`);
+}
+
+function mintResourceId(existingIds: readonly string[], prefix: "fact_dyn" | "item_dyn" | "enemy_dyn"): string {
+  let max = 0;
+  for (const id of existingIds) {
+    const match = new RegExp(`^${prefix}_(\\d+)$`).exec(id);
+    if (match !== null) max = Math.max(max, Number.parseInt(match[1], 10));
+  }
+  return `${prefix}_${max + 1}`;
 }

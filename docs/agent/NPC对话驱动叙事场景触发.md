@@ -2,13 +2,14 @@
 
 ## 系统定位
 
-让 NPC 对话成为叙事场景的入口之一：固定选项（`greet` 首遇 / `ask_main_quest`）与玩家自由输入都能触发既有的 pending + 三角色（导演/编剧/NPC 演员）场景生成流水线。玩家自由输入由服务端**纯规则分类器**（零 AI、零 IO、零随机）判定：触发叙事场景，或返回确定性闲聊回应。自由输入不经过 `resolveAction`、不产生任何规则事件（如 `npc_met`），闲聊路径零状态写入。
+让 NPC 对话成为叙事场景的入口之一：首次交谈、对白回应与玩家自由输入都能触发 pending + 三角色（导演/编剧/NPC 演员）场景生成流水线。对白回应不是规则行动，而是带 `dialogueIntent` 和玩家自然语言的下一轮 NPC 对话输入；玩家自由输入仍由服务端纯规则分类器判定叙事触发或确定性闲聊。
 
 ## 当前规则摘要
 
 ### 固定选项排队（performAction）
 
-- `dialogue_choice` 与 `narrative_choice` 共用同一排队条件：`narrative.mode !== "offline"`、装配了 `runtimeNarrativeSources`、且 `canQueueRuntimeNarrativeScene`（无结局、战斗非 active、合法行动 ≥2）为真时，行动成功后把 `narrative.generation` 置为 `pending`。
+- 首次 `talk` 与 `narrative_choice` 的对白回应共用排队条件：`narrative.mode !== "offline"`、装配了 `runtimeNarrativeSources`、且 `canQueueRuntimeNarrativeScene`（无结局、战斗非 active、合法行动 ≥2）为真时，行动成功后把 `narrative.generation` 置为 `pending`。
+- 当前 scene 的 `choiceKind === "dialogue_response"` 或存在 `dialogueIntent` 时，`performAction` 只写入 `narrative_dialogue_choice`，不调用 `resolveAction`，并把选项 label 作为 `playerText` 传给下一次导演/NPC 上下文。
 - 防御性守卫：`greet` 只在首次结识时排队。重复 greet 判断必须用 `record.state`（`resolveAction` 之前）的 `met` 字段——`resolveAction` 对所有 `dialogue_choice` 都会设置 `met: true`。
 
 ### 自由输入分类（classifyFreeDialogue，spec §4.2）
@@ -31,7 +32,7 @@
 
 ### playerNpcChat 生命周期（单次消费）
 
-- `narrative.generation` 的 `pending` 变体携带可选 `playerNpcChat` 快照：`{ npcId, playerText, npcName, npcRole }`（`src/game/domain/narrative.ts`）。仅自由输入触发时写入；固定选项排队不带快照。
+- `narrative.generation` 的 `pending` 变体携带可选 `playerNpcChat` 快照：`{ npcId, playerText, npcName, npcRole }`（`src/game/domain/narrative.ts`）。对白回应与自由输入触发时写入；首次 talk 不带快照。
 - `toDirectorContext` 仅在 `generation.status === "pending"` 时把快照投影给导演（`DirectorContext.playerNpcChat` 可选字段），编剧与 NPC 演员不直接接收。
 - 场景 ready（或 fallback）时 `generation` 收窄为 `idle`/`ready` 变体，快照随类型自动丢弃——无需显式清除代码，由 Task 1 的类型设计保证。
 - 快照绝不写入 eventLedger、不进入 storyMemory、不持久化到场景之外。
@@ -50,7 +51,7 @@
 
 ## 当前实现现状
 
-已实现（2026-07-31，分支 `codex/npc-dialogue-narrative-trigger`）：domain 类型扩展、纯规则分类器、闲聊回应生成器、`performAction` dialogue_choice 排队、`handleNpcDialogue` use case、composition root 装配 + HTTP adapter、`DirectorContext.playerNpcChat` 投影、场景 ready 后快照不残留回归、UI 自由输入接线。不含：自由输入意图解析 AI、闲聊记忆、NPC 关系数值。
+已实现（2026-08-06，Phase 14）：domain 类型扩展、纯规则分类器、对白回应事件模型、`performAction` dialogue_response 排队、`DirectorContext.playerNpcChat` 投影、场景 ready 后快照不残留回归、UI 自由输入接线。不含：自由输入意图解析 AI、闲聊记忆、NPC 关系数值。
 
 ## 主要文件
 

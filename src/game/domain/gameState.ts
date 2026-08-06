@@ -42,6 +42,8 @@ export type QuestRuntimeState = {
 export type WorldFactState = {
   readonly factId: FactId;
   readonly discovered: boolean;
+  /** 运行时懒生成事实的地点范围；旧事实缺省时仍由 openingScene 约束。 */
+  readonly locationId?: LocationId;
 };
 
 // Phase 6：轻量战斗运行时状态。idle = 无战斗；active = 战斗中；

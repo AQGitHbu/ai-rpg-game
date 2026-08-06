@@ -257,7 +257,18 @@ export async function createGame(
     // coordinator later produces the scene and CAS-saves it from this marker.
     state = {
       ...state,
-      narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() }, mode: "ai" },
+      narrative: {
+        currentScene: null,
+        generation: {
+          status: "pending",
+          requestedAt: deps.now(),
+          triggerContext: {
+            kind: "initial_opening",
+            npcId: blueprint.startAnchor.npcId,
+          }
+        },
+        mode: "ai"
+      },
     };
   }
   const gameId = deps.newGameId();

@@ -1,4 +1,4 @@
-import { NARRATIVE_EMOTIONS, type ScenarioBlueprint } from "@/game/domain";
+import { NARRATIVE_EMOTIONS, type NarrativeEventKind, type ScenarioBlueprint } from "@/game/domain";
 import type {
   ApprovedDirectorPlan,
   ApprovedSceneScript,
@@ -24,6 +24,9 @@ export type ApproveSceneScriptInput = {
   readonly blueprint: ScenarioBlueprint;
   /** 当前地点尚未取得的物品名称；仅用于阻止叙事提前写入规则结果。 */
   readonly unresolvedItemNames?: readonly string[];
+  /** 编排层依据触发上下文推导的当前原子事件。 */
+  readonly eventKind?: NarrativeEventKind;
+  readonly eventTargetId?: string;
 };
 
 const ITEM_CLAIM_VERBS = [
@@ -137,16 +140,24 @@ export function approveSceneScript(
     }
   }
 
-  // Choice validation: exactly 2 choices matching plan suggestedActionKeys
+  // Choice validation: dialogue responses are semantic player replies; world
+  // choices remain bound to the two rule-approved action candidates.
   if (proposal.choices.length !== 2) {
     return { ok: false, category: "schema_violation" };
   }
   const [choiceA, choiceB] = proposal.choices;
+  const isDialogue = input.eventKind === "dialogue" || plan.eventKind === "dialogue";
   const planKeys = new Set(plan.suggestedActionKeys);
+  const dynamicEventActionKey = input.eventTargetId !== undefined && input.eventTargetId.startsWith("runtime:")
+    ? `${input.eventKind === "item" ? "take_item" : input.eventKind === "battle" ? "start_battle" : "investigate"}:${input.eventTargetId}`
+    : undefined;
 
-  // Both choice actionKeys must be in the plan's approved set
-  if (!planKeys.has(choiceA.actionKey) || !planKeys.has(choiceB.actionKey)) {
+  if (!isDialogue && (!planKeys.has(choiceA.actionKey) && choiceA.actionKey !== dynamicEventActionKey ||
+    !planKeys.has(choiceB.actionKey) && choiceB.actionKey !== dynamicEventActionKey)) {
     return { ok: false, category: "choice_not_legal" };
+  }
+  if (isDialogue && (choiceA.label === choiceB.label || choiceA.dialogueIntent === choiceB.dialogueIntent)) {
+    return { ok: false, category: "schema_violation" };
   }
 
   // Labels must be 1-40 code points
@@ -194,11 +205,15 @@ export function approveSceneScript(
         actionKey: choiceA.actionKey,
         label: choiceA.label,
         strategy: choiceA.strategy,
+        ...(choiceA.choiceKind !== undefined ? { choiceKind: choiceA.choiceKind } : {}),
+        ...(choiceA.dialogueIntent !== undefined ? { dialogueIntent: choiceA.dialogueIntent } : {}),
       },
       {
         actionKey: choiceB.actionKey,
         label: choiceB.label,
         strategy: choiceB.strategy,
+        ...(choiceB.choiceKind !== undefined ? { choiceKind: choiceB.choiceKind } : {}),
+        ...(choiceB.dialogueIntent !== undefined ? { dialogueIntent: choiceB.dialogueIntent } : {}),
       },
     ],
   };

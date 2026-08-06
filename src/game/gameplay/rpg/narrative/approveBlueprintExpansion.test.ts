@@ -7,7 +7,7 @@ import {
   type ScenarioBlueprint,
   type GameState
 } from "@/game/domain";
-import type { ApprovedDirectorPlan, ProposedNewLocation, ProposedNewNpc } from "./types";
+import type { ApprovedDirectorPlan, ProposedNewEnemy, ProposedNewFact, ProposedNewItem, ProposedNewLocation, ProposedNewNpc } from "./types";
 import { approveBlueprintExpansion } from "./approveBlueprintExpansion";
 
 // ---------------------------------------------------------------------------
@@ -173,6 +173,10 @@ function buildState(opts?: {
 function buildPlan(overrides?: {
   proposedNewLocations?: readonly ProposedNewLocation[];
   proposedNewNpcs?: readonly ProposedNewNpc[];
+  proposedNewFacts?: readonly ProposedNewFact[];
+  proposedNewItems?: readonly ProposedNewItem[];
+  proposedNewEnemies?: readonly ProposedNewEnemy[];
+  eventKind?: ApprovedDirectorPlan["eventKind"];
   pacing?: ApprovedDirectorPlan["pacing"];
 }): ApprovedDirectorPlan {
   return {
@@ -185,7 +189,11 @@ function buildPlan(overrides?: {
     introducedEntities: [],
     pacing: overrides?.pacing ?? "develop",
     proposedNewLocations: overrides?.proposedNewLocations ?? [],
-    proposedNewNpcs: overrides?.proposedNewNpcs ?? []
+    proposedNewNpcs: overrides?.proposedNewNpcs ?? [],
+    proposedNewFacts: overrides?.proposedNewFacts ?? [],
+    proposedNewItems: overrides?.proposedNewItems ?? [],
+    proposedNewEnemies: overrides?.proposedNewEnemies ?? [],
+    ...(overrides?.eventKind !== undefined ? { eventKind: overrides.eventKind, eventTargetId: `runtime:new_${overrides.eventKind === "investigate" ? "fact" : overrides.eventKind === "item" ? "item" : "enemy"}` } : {})
   };
 }
 
@@ -407,5 +415,66 @@ describe("approveBlueprintExpansion 闸门顺序", () => {
       expect(decision.expansion.newLocation).toEqual(validLocation);
       expect(decision.expansion.newNpc).toEqual(npcAtNew);
     }
+  });
+
+  it("调查事件可审批一个懒生成事实，并拒绝同场多个资源", () => {
+    const fact: ProposedNewFact = {
+      text: "维修记录里藏着一段被删去的时间戳。",
+      locationId: "loc_1",
+      reason: "玩家调查设备残留信息。"
+    };
+    const item: ProposedNewItem = {
+      name: "加密维修卡",
+      description: "一张刻着维修权限的薄卡。",
+      kind: "key",
+      tags: ["station"],
+      locationId: "loc_1"
+    };
+    const valid = approveBlueprintExpansion({
+      blueprint: buildBlueprint(),
+      state: buildState(),
+      plan: buildPlan({ eventKind: "investigate", proposedNewFacts: [fact] })
+    });
+    expect(valid).toMatchObject({ ok: true, expansion: { newFact: fact, newItem: null, newEnemy: null } });
+    if (valid.ok) expect(valid.expansion.newFact).not.toBe(fact);
+
+    const rejected = approveBlueprintExpansion({
+      blueprint: buildBlueprint(),
+      state: buildState(),
+      plan: buildPlan({ eventKind: "investigate", proposedNewFacts: [fact], proposedNewItems: [item] })
+    });
+    expect(rejected).toEqual({ ok: false, reason: "invalid_payload" });
+  });
+
+  it("物品和战斗懒资源必须绑定各自的原子事件与当前地点", () => {
+    const item: ProposedNewItem = {
+      name: "加密维修卡",
+      description: "一张刻着维修权限的薄卡。",
+      kind: "key",
+      tags: [],
+      locationId: "loc_1"
+    };
+    const enemy: ProposedNewEnemy = {
+      name: "失控维修无人机",
+      tier: "normal",
+      stats: { hp: 12, attack: 4, defense: 2 },
+      locationId: "loc_1",
+      reason: "故障设施触发防御单位。"
+    };
+    expect(approveBlueprintExpansion({
+      blueprint: buildBlueprint(),
+      state: buildState(),
+      plan: buildPlan({ eventKind: "item", proposedNewItems: [item] })
+    })).toMatchObject({ ok: true, expansion: { newItem: item } });
+    expect(approveBlueprintExpansion({
+      blueprint: buildBlueprint(),
+      state: buildState(),
+      plan: buildPlan({ eventKind: "battle", proposedNewEnemies: [enemy] })
+    })).toMatchObject({ ok: true, expansion: { newEnemy: enemy } });
+    expect(approveBlueprintExpansion({
+      blueprint: buildBlueprint(),
+      state: buildState(),
+      plan: buildPlan({ eventKind: "battle", proposedNewEnemies: [{ ...enemy, locationId: "loc_2" }] })
+    })).toEqual({ ok: false, reason: "invalid_payload" });
   });
 });

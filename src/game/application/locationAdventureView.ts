@@ -275,6 +275,7 @@ function projectDialogues(
   const currentId = String(state.currentLocationId);
   const npcById = new Map(blueprint.npcs.map((npc) => [String(npc.id), npc]));
   const scene = state.narrative.currentScene;
+  const focusNpcId = scene?.event?.kind === "dialogue" ? String(scene.event.focusNpcId) : undefined;
   // NarrativeSceneState 无 presentNpcIds 字段；从 npcDialogues 派生在场 IDs。
   const inSceneNpcIds: ReadonlySet<string> = new Set(
     (scene?.npcDialogues ?? []).map((d) => String(d.npcId))
@@ -284,6 +285,7 @@ function projectDialogues(
   const dialogues: NpcDialogueView[] = [];
   for (const npcState of state.npcs) {
     if (String(npcState.locationId) !== currentId) continue;
+    if (focusNpcId !== undefined && String(npcState.npcId) !== focusNpcId) continue;
     const npc = npcById.get(String(npcState.npcId));
     if (npc === undefined) {
       throw new Error("对话投影失败：在场 NPC 引用在蓝图中不存在");
@@ -300,7 +302,7 @@ function projectDialogues(
       );
 
     // 从 currentScene.choices 读取情境选项；read-only 或不在场则为空。
-    const choices: readonly DialogueChoiceView[] = (readOnly || !sceneHasThisNpc)
+    const choices: readonly DialogueChoiceView[] = (readOnly || !sceneHasThisNpc || (scene?.event !== undefined && scene.event.kind !== "dialogue"))
       ? []
       : (scene?.choices ?? []).map((c) => ({
         choiceToken: c.choiceToken,
@@ -316,7 +318,7 @@ function projectDialogues(
       speechPages,
       choices,
       // 自由输入是触发首场景的入口，不能依赖 currentScene 存在。
-      freeInputEnabled: !readOnly,
+      freeInputEnabled: !readOnly && (scene === null || scene.event?.kind === "dialogue"),
       reviewClues
     });
   }
@@ -336,6 +338,7 @@ export function projectLocationAdventureView(
   }
   // 结局或 active battle：只读投影——互动为空、对话无可写 choice。
   const readOnly = state.ending !== null || state.battle.status === "active";
+  const atomicEventActive = state.narrative.currentScene !== null || state.narrative.generation.status === "pending";
 
   // Town 层三态：ready（towns 已有条目 → 重建快照投影）/ pending（AI 生成中）
   // / none（非 town 地点，或 town 地点尚未进入过 → 按普通场景渲染）。
@@ -364,7 +367,7 @@ export function projectLocationAdventureView(
       description: currentLocation.description,
       backdrop: "location_backdrop",
       scale,
-      interactions: readOnly ? [] : projectSceneInteractions(availableActions)
+      interactions: readOnly || atomicEventActive ? [] : projectSceneInteractions(availableActions)
     },
     dialogues: projectDialogues(blueprint, state, readOnly),
     townStatus,

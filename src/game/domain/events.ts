@@ -124,6 +124,16 @@ export type NarrativeChoiceEvent = {
   readonly occurredAt: string;
 };
 
+/** 玩家在 NPC 对话场景中选择的回应；不直接触发规则行动。 */
+export type NarrativeDialogueChoiceEvent = {
+  readonly type: "narrative_dialogue_choice";
+  readonly choiceToken: string;
+  readonly dialogueIntent: string;
+  readonly npcId: NpcId;
+  readonly sceneId: string;
+  readonly occurredAt: string;
+};
+
 /** Town 层：小镇规划生成完成——离线同步写入或 AI ensure 写回时追加。 */
 export type TownPlanGeneratedEvent = {
   readonly type: "town_plan_generated";
@@ -152,6 +162,9 @@ export type BlueprintExpandedEvent = {
   readonly type: "blueprint_expanded";
   readonly newLocationIds: readonly LocationId[];
   readonly newNpcIds: readonly NpcId[];
+  readonly newFactIds?: readonly FactId[];
+  readonly newItemIds?: readonly ItemId[];
+  readonly newEnemyIds?: readonly EnemyId[];
   readonly occurredAt: string;
 };
 
@@ -171,6 +184,7 @@ export type GameEvent =
   | QuestFailedEvent
   | EndingReachedEvent
   | NarrativeChoiceEvent
+  | NarrativeDialogueChoiceEvent
   | TownPlanGeneratedEvent
   | NarrativeScenePresentedEvent
   | BlueprintExpandedEvent;

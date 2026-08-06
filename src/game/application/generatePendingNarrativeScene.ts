@@ -81,7 +81,7 @@ export async function generatePendingNarrativeScene(
     maxRoleAttempts: deps.maxRoleAttempts,
     retryBackoffMs: deps.retryBackoffMs,
   });
-  const scene = generated.scene;
+  let scene = generated.scene;
   deps.logger?.info("runtime_narrative_generation", {
     traceId,
     scope: "request",
@@ -136,6 +136,11 @@ export async function generatePendingNarrativeScene(
     });
     nextBlueprint = compiled.nextBlueprint;
     finalState = compiled.nextState;
+    scene = remapExpandedScene(scene, compiled);
+    finalState = {
+      ...finalState,
+      narrative: { ...finalState.narrative, currentScene: scene },
+    };
   }
   if (endingApproved) {
     // approvedEnding.id 已在 orchestrateNarrativeScene 基于 record.blueprint.endings 铸造；
@@ -166,4 +171,33 @@ export async function generatePendingNarrativeScene(
       });
   if (!saved.ok) return saved.code === "STALE_GAME_REVISION" ? "stale" : "unavailable";
   return "saved";
+}
+
+function remapExpandedScene(
+  scene: GameState["narrative"]["currentScene"],
+  compiled: ReturnType<typeof compileBlueprintExpansion>,
+): NonNullable<GameState["narrative"]["currentScene"]> {
+  if (scene === null || scene.event === undefined) return scene as NonNullable<GameState["narrative"]["currentScene"]>;
+  const event = scene.event;
+  const resolvedEvent = event.kind === "investigate" && compiled.newFactId !== null && String(event.factId) === "runtime:new_fact"
+    ? { ...event, factId: compiled.newFactId }
+    : event.kind === "item" && compiled.newItemId !== null && String(event.itemId) === "runtime:new_item"
+      ? { ...event, itemId: compiled.newItemId }
+      : event.kind === "battle" && compiled.newEnemyId !== null && String(event.enemyId) === "runtime:new_enemy"
+        ? { ...event, enemyId: compiled.newEnemyId }
+        : event;
+  const replacement = event.kind === "investigate" && compiled.newFactId !== null
+    ? { from: "investigate:runtime:new_fact", to: `investigate:${String(compiled.newFactId)}` }
+    : event.kind === "item" && compiled.newItemId !== null
+      ? { from: "take_item:runtime:new_item", to: `take_item:${String(compiled.newItemId)}` }
+      : event.kind === "battle" && compiled.newEnemyId !== null
+        ? { from: "start_battle:runtime:new_enemy", to: `start_battle:${String(compiled.newEnemyId)}` }
+        : null;
+  return {
+    ...scene,
+    event: resolvedEvent,
+    choices: scene.choices.map((choice) => replacement !== null && choice.actionKey === replacement.from
+      ? { ...choice, actionKey: replacement.to }
+      : choice) as unknown as typeof scene.choices,
+  };
 }

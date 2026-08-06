@@ -719,6 +719,77 @@ describe("performAction：talk 触发 pending（NPC 对话驱动叙事场景）"
     expect(repository.applyCalls).toHaveLength(1);
     expect(repository.applyCalls[0].nextState.narrative.generation.status).not.toBe("pending");
   });
+
+  it("对白回应不是规则 action：写入对白事件并携带玩家原话触发下一幕", async () => {
+    const repository = createFakeGameRepository();
+    const base = buildActiveRecord();
+    const dialogueScene = {
+      sceneId: "scene-dialogue",
+      turn: 0,
+      narration: "站务调度员抬头看向你。",
+      usedFactIds: [],
+      npcLine: null,
+      npcDialogues: [],
+      event: { kind: "dialogue", focusNpcId: asNpcId("npc_a") },
+      choices: [
+        {
+          choiceToken: "choice-ask",
+          label: "询问一下目前发生什么状况了",
+          choiceKind: "dialogue_response",
+          dialogueIntent: "ask_current_situation",
+          actionKey: "dialogue:scene:0"
+        },
+        {
+          choiceToken: "choice-repair",
+          label: "太空站刚维修，怎么又坏了",
+          choiceKind: "dialogue_response",
+          dialogueIntent: "challenge_recent_repair",
+          actionKey: "dialogue:scene:1"
+        }
+      ],
+      source: "generated"
+    } as unknown as NonNullable<GameState["narrative"]["currentScene"]>;
+    const record: GameRecord = {
+      ...base,
+      state: {
+        ...base.state,
+        narrative: { currentScene: dialogueScene, generation: { status: "idle" }, mode: "ai" }
+      }
+    };
+    repository.setCurrentResult({ ok: true, status: "active", record });
+    repository.setApplyResult({ ok: true, record: { ...record, revision: 1 } });
+
+    const result = await performAction(
+      { intent: { type: "narrative_choice", choiceToken: "choice-ask" }, expectedRevision: 0 },
+      buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
+    );
+
+    expect(result.ok).toBe(true);
+    expect(repository.applyCalls).toHaveLength(1);
+    const saved = repository.applyCalls[0].nextState;
+    expect(saved.narrative.currentScene).toBeNull();
+    expect(saved.narrative.generation).toMatchObject({
+      status: "pending",
+      triggerContext: {
+        kind: "dialogue_response",
+        npcId: asNpcId("npc_a"),
+        dialogueIntent: "ask_current_situation",
+        playerText: "询问一下目前发生什么状况了"
+      },
+      playerNpcChat: {
+        npcId: asNpcId("npc_a"),
+        playerText: "询问一下目前发生什么状况了"
+      }
+    });
+    expect(saved.eventLedger.at(-1)).toMatchObject({
+      type: "narrative_dialogue_choice",
+      choiceToken: "choice-ask",
+      dialogueIntent: "ask_current_situation",
+      npcId: asNpcId("npc_a"),
+      sceneId: "scene-dialogue"
+    });
+    expect(saved.eventLedger.some((event) => event.type === "narrative_choice")).toBe(false);
+  });
 });
 
 describe("performAction：Phase 11 剧情记忆与规则事件同一次 CAS", () => {

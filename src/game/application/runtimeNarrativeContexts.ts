@@ -3,7 +3,7 @@
 // 每个函数将 domain state → 纯净 context JSON（绝不含 AI prompt 原文、密钥）。
 // ---------------------------------------------------------------------------
 
-import { budgetPolicyOf, relationshipTierOf, storyMemoryOf, type EndingTone, type GameState, type PlayerNpcChatState, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
+import { budgetPolicyOf, relationshipTierOf, storyMemoryOf, type EndingTone, type GameState, type NarrativeTriggerContext, type PlayerNpcChatState, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
 import { projectAvailableActions, projectRelationshipSummary } from "@/game/gameplay/rpg/actions";
 import { actionKeyOf, deriveContentProgression, type ContentProgression } from "@/game/gameplay/rpg/narrative";
 import { isQuestObjectiveSatisfied, reconcileMainStoryProgress } from "@/game/gameplay/rpg/quests";
@@ -412,6 +412,8 @@ export type DirectorContext = {
   readonly endingDirection: { readonly theme: string; readonly possibleTones: readonly EndingTone[] };
   /** NPC 自由输入触发时的上下文线索：导演独立判断是否采纳，不强制。 */
   readonly playerNpcChat?: PlayerNpcChatState;
+  /** 当前生成只服务于这一触发，不再由导演把全部合法动作拼成一幕。 */
+  readonly triggerContext?: NarrativeTriggerContext;
 };
 
 export type DirectorContextInput = {
@@ -504,6 +506,9 @@ export function toDirectorContext(input: DirectorContextInput): DirectorContext 
     endingDirection,
     ...(townSpatial !== undefined ? { townSpatial } : {}),
     ...(playerNpcChat !== undefined ? { playerNpcChat } : {}),
+    ...(state.narrative.generation.status === "pending" && state.narrative.generation.triggerContext !== undefined
+      ? { triggerContext: state.narrative.generation.triggerContext }
+      : {}),
   };
 
   return context;
@@ -583,6 +588,7 @@ export function toSceneScriptContext(input: SceneScriptContextInput): SceneScrip
       relevantFactIds: plan.relevantFactIds,
       allowedRevealFactIds: plan.allowedRevealFactIds,
       suggestedActionKeys: plan.suggestedActionKeys,
+      ...(plan.eventKind !== undefined ? { eventKind: plan.eventKind } : {}),
       pacing: plan.pacing,
     },
     npcProfile,
@@ -626,6 +632,8 @@ export type NpcLineContext = {
   readonly relationshipTier: string;
   readonly relationshipAffinity: number;
   readonly relationshipSummary: string;
+  /** 玩家本轮真正说的话；NPC 演员只能看到当前被寻址的这一轮输入。 */
+  readonly playerMessage?: string;
 };
 
 export type NpcLineContextInput = {
@@ -667,6 +675,10 @@ export function toNpcLineContext(input: NpcLineContextInput): NpcLineContext {
   const relationship = npcState?.relationship ?? { affinity: 0 };
   const tier = relationshipTierOf(relationship);
   const summary = projectRelationshipSummary(state, blueprint, npcId);
+  const playerMessage = state.narrative.generation.status === "pending" &&
+    state.narrative.generation.playerNpcChat?.npcId === npcId
+    ? state.narrative.generation.playerNpcChat.playerText
+    : undefined;
 
   const context: NpcLineContext = {
     npcDefinition: npcDef !== undefined
@@ -694,6 +706,7 @@ export function toNpcLineContext(input: NpcLineContextInput): NpcLineContext {
     relationshipTier: tier,
     relationshipAffinity: relationship.affinity,
     relationshipSummary: summary,
+    ...(playerMessage !== undefined ? { playerMessage } : {}),
   };
   return context;
 }

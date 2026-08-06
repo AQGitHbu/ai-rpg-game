@@ -3,6 +3,8 @@ import {
   asLocationId,
   asNpcId,
   asFactId,
+  asItemId,
+  asEnemyId,
   createBudgetPolicy,
   type ScenarioBlueprint,
   type GameState,
@@ -308,5 +310,71 @@ describe("compileBlueprintExpansion", () => {
     expect(nextBlueprint.locations.every((l) => !String(l.id).startsWith("loc_dyn_"))).toBe(true);
     const event = nextState.eventLedger[nextState.eventLedger.length - 1] as unknown as { newLocationIds: readonly LocationId[] };
     expect(event.newLocationIds).toEqual([]);
+  });
+
+  it("事件级懒资源：事实、物品、敌人各自铸造 ID 并写入正确规则容器", () => {
+    const factResult = compileBlueprintExpansion({
+      blueprint: buildBlueprint(),
+      state: buildState(),
+      expansion: {
+        newLocation: null,
+        newNpc: null,
+        newFact: { text: "维修记录里藏着一段被删去的时间戳。", locationId: "loc_1", reason: "调查需要一个可发现的事实。" }
+      },
+      occurredAt: OCCURRED_AT
+    });
+    expect(factResult.newFactId).toBe(asFactId("fact_dyn_1"));
+    expect(factResult.nextBlueprint.world.facts.at(-1)).toEqual({
+      id: asFactId("fact_dyn_1"),
+      text: "维修记录里藏着一段被删去的时间戳。",
+      source: "generated"
+    });
+    expect(factResult.nextState.worldFacts.at(-1)).toEqual({
+      factId: asFactId("fact_dyn_1"),
+      discovered: false,
+      locationId: asLocationId("loc_1")
+    });
+
+    const itemResult = compileBlueprintExpansion({
+      blueprint: buildBlueprint(),
+      state: buildState(),
+      expansion: {
+        newLocation: null,
+        newNpc: null,
+        newItem: { name: "加密维修卡", description: "一张刻着维修权限的薄卡。", kind: "key", tags: ["station"] , locationId: "loc_1" }
+      },
+      occurredAt: OCCURRED_AT
+    });
+    expect(itemResult.newItemId).toBe(asItemId("item_dyn_1"));
+    expect(itemResult.nextBlueprint.items.at(-1)).toMatchObject({ id: asItemId("item_dyn_1"), name: "加密维修卡" });
+    expect(itemResult.nextBlueprint.locations.find((location) => String(location.id) === "loc_1")?.availableItemIds)
+      .toContain(asItemId("item_dyn_1"));
+
+    const enemyResult = compileBlueprintExpansion({
+      blueprint: buildBlueprint(),
+      state: buildState(),
+      expansion: {
+        newLocation: null,
+        newNpc: null,
+        newEnemy: {
+          name: "失控维修无人机",
+          tier: "normal",
+          stats: { hp: 12, attack: 4, defense: 2 },
+          locationId: "loc_1",
+          reason: "故障设施触发防御单位。"
+        }
+      },
+      occurredAt: OCCURRED_AT
+    });
+    expect(enemyResult.newEnemyId).toBe(asEnemyId("enemy_dyn_1"));
+    expect(enemyResult.nextBlueprint.enemies.at(-1)).toMatchObject({
+      id: asEnemyId("enemy_dyn_1"),
+      locationId: asLocationId("loc_1"),
+      stats: { hp: 12, attack: 4, defense: 2 }
+    });
+    expect(enemyResult.nextState.eventLedger.at(-1)).toMatchObject({
+      type: "blueprint_expanded",
+      newEnemyIds: [asEnemyId("enemy_dyn_1")]
+    });
   });
 });

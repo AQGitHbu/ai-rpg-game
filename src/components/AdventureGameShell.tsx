@@ -11,6 +11,7 @@ import { WorldMapScreen } from "./WorldMapScreen";
 import { LocationSceneScreen } from "./LocationSceneScreen";
 import { TownLayerScreen } from "./TownLayerScreen";
 import { NpcDialoguePanel, type FreeInputResult } from "./NpcDialoguePanel";
+import { NarrativeScenePanel } from "./NarrativeScenePanel";
 import { ToastContainer, type ToastMessage } from "./ToastNotification";
 import { NarrativeGenerationModal } from "./NarrativeGenerationModal";
 
@@ -82,6 +83,7 @@ export function AdventureGameShell({
   // Treat their absence as ready so a compatible client can still render them.
   const narrativePending = view.narrativeGeneration?.status === "pending";
   const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
+  const [dismissedNarrativeDialogue, setDismissedNarrativeDialogue] = useState<string | null>(null);
   const [devToolsOpen, setDevToolsOpen] = useState(false);
   const triggerRef = useRef<HTMLElement | null>(null);
   const devToolsTriggerRef = useRef<HTMLElement | null>(null);
@@ -89,9 +91,25 @@ export function AdventureGameShell({
   const isSubmitting = feedback.phase === "submitting";
   const shellBusy = busy || isSubmitting;
 
-  const activeDialogue = dialogueNpcId !== null
+  // 原子对白事件就绪后在投影层直接给出焦点 NPC，避免 effect 内同步 setState
+  // 造成级联渲染；narration 作为当前事件的稳定展示键，允许玩家主动关闭。
+  const narrativeDialogueKey = !narrativePending && view.narrative?.eventKind === "dialogue"
+    ? view.narrative.narration
+    : null;
+  const autoDialogueNpcId = narrativeDialogueKey !== null && dismissedNarrativeDialogue !== narrativeDialogueKey
+    ? view.dialogues[0]?.npcId ?? null
+    : null;
+  const selectedDialogue = dialogueNpcId !== null
     ? view.dialogues.find((d) => d.npcId === dialogueNpcId) ?? null
     : null;
+  const atomicWorldEventReady = !narrativePending
+    && view.narrative?.eventKind !== undefined
+    && view.narrative.eventKind !== "dialogue";
+  const activeDialogue = narrativePending || atomicWorldEventReady
+    ? null
+    : selectedDialogue ?? (autoDialogueNpcId === null
+      ? null
+      : view.dialogues.find((d) => d.npcId === autoDialogueNpcId) ?? null);
 
   function openDetails(panel: DetailsPanel): void {
     triggerRef.current = document.activeElement as HTMLElement;
@@ -101,6 +119,9 @@ export function AdventureGameShell({
   function closeOverlay(): void {
     setDetailsPanel(null);
     setDialogueNpcId(null);
+    if (narrativeDialogueKey !== null && activeDialogue !== null) {
+      setDismissedNarrativeDialogue(narrativeDialogueKey);
+    }
   }
 
   async function handleMove(locationId: string): Promise<void> {
@@ -289,6 +310,17 @@ export function AdventureGameShell({
             onChoice={handleDialogueChoiceFromPanel}
             onFreeInput={handleFreeDialogue}
             freeInputBusy={shellBusy}
+          />
+        </AdventureOverlay>
+      ) : null}
+
+      {view.narrative !== null && view.narrative.eventKind !== undefined && view.narrative.eventKind !== "dialogue" && !narrativePending ? (
+        <AdventureOverlay title="剧情事件" onClose={() => setScreen("scene")} returnFocusRef={triggerRef}>
+          <NarrativeScenePanel
+            scene={view.narrative}
+            busy={shellBusy}
+            onChoose={handleDialogueChoiceFromPanel}
+            onReturnMap={() => setScreen("map")}
           />
         </AdventureOverlay>
       ) : null}

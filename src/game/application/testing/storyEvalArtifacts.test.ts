@@ -62,12 +62,12 @@ function completeManifest(overrides: Record<string, unknown> = {}): Record<strin
     strategy: "explore",
     status: "converged",
     answerKey: { ending: { exactAliases: ["归隐"], directionalAliases: ["江湖"] } },
-    contractVersion: "runtime-narrative-v2",
+    contractVersion: "runtime-narrative-v3",
     promptVersions: {
       scenario: "scenario-dynamic-v2",
-      director: "runtime-narrative-v2",
-      writer: "runtime-narrative-v2",
-      npc: "runtime-narrative-v2",
+      director: "runtime-narrative-v3",
+      writer: "runtime-narrative-v3",
+      npc: "runtime-narrative-v3",
     },
     ...overrides,
   };

@@ -107,6 +107,8 @@ export type StoryEventView = {
 /** Phase 10：叙事场景安全视图——AI 导演产出的运行时叙事场景与两个固定选项。 */
 export type NarrativeSceneView = {
   readonly narration: string;
+  /** 当前唯一原子事件；旧场景缺失时客户端按 legacy 兼容。 */
+  readonly eventKind?: import("@/game/domain").NarrativeEventKind;
   readonly npcLine: { readonly text: string; readonly emotion: string } | null;
   readonly choices: readonly [
     { readonly label: string; readonly choiceToken: string },
@@ -295,6 +297,7 @@ function projectStoryEvent(
     case "quest_failed": return { text: `任务「${quest(event.questId)}」失败，后果已被记录。` };
     case "ending_reached": return { text: `你抵达结局「${endings.get(event.endingId)?.name ?? "终章"}」。` };
     case "narrative_choice": return { text: "你做出了抉择，故事在你脚边展开。" };
+    case "narrative_dialogue_choice": return { text: "你的回应让对话继续向更深处展开。" };
     case "town_plan_generated": return { text: `${location(event.locationId)}的市井轮廓在你眼前展开。` };
     // Phase 11：场景提交事件不作为单条日志行重复呈现——其结构索引经
     // storyMemory.recent 由本章进展里程碑（Task 7 projectStoryContinuity）单独投影。
@@ -359,6 +362,7 @@ function projectNarrativeSceneView(
   if (scene === null) return null;
   return {
     narration: scene.narration,
+    ...(scene.event !== undefined ? { eventKind: scene.event.kind } : {}),
     npcLine: scene.npcLine === null ? null : {
       text: scene.npcLine.text,
       emotion: scene.npcLine.emotion,

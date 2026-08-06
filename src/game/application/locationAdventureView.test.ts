@@ -458,4 +458,44 @@ describe("Phase 14 NPC 对话层统一", () => {
     expect(npc!.choices.length).toBe(2);
     expect(npc!.choices[0].label).toBe("选项A");
   });
+
+  it("原子事件独占展示：对白只显示焦点 NPC，世界事件不同时投影 NPC 选项", () => {
+    const dialogueScene: NarrativeSceneState = {
+      sceneId: "scene_dialogue",
+      turn: 1,
+      narration: "调度员看向你。",
+      usedFactIds: [],
+      npcLine: null,
+      event: { kind: "dialogue", focusNpcId: asNpcId("npc_a") },
+      choices: [
+        { choiceToken: "dialogue_a", label: "询问目前发生了什么", choiceKind: "dialogue_response", dialogueIntent: "ask", actionKey: "dialogue:0" },
+        { choiceToken: "dialogue_b", label: "追问维修故障", choiceKind: "dialogue_response", dialogueIntent: "challenge", actionKey: "dialogue:1" }
+      ],
+      source: "generated",
+      npcDialogues: [
+        { npcId: asNpcId("npc_a"), npcName: "老者", npcRole: "elder", speechPages: ["你好"] },
+        { npcId: asNpcId("npc_b"), npcName: "守卫", npcRole: "guard", speechPages: ["站住"] }
+      ]
+    };
+    const dialogueView = project({ ...PIPELINE.state, narrative: { ...PIPELINE.state.narrative, currentScene: dialogueScene } });
+    expect(dialogueView.locationScene.interactions).toEqual([]);
+    expect(dialogueView.dialogues.map((entry) => entry.npcId)).toEqual(["npc_a"]);
+    expect(dialogueView.dialogues[0].choices.map((choice) => choice.label)).toEqual([
+      "询问目前发生了什么",
+      "追问维修故障"
+    ]);
+
+    const worldScene: NarrativeSceneState = {
+      ...dialogueScene,
+      sceneId: "scene_investigate",
+      event: { kind: "investigate", factId: PIPELINE.blueprint.openingScene.investigableFactIds[0] },
+      choices: [
+        { choiceToken: "investigate", label: "查看维修痕迹", actionKey: `investigate:${String(PIPELINE.blueprint.openingScene.investigableFactIds[0])}` },
+        { choiceToken: "observe", label: "观察现场", actionKey: `observe:${String(PIPELINE.state.currentLocationId)}` }
+      ]
+    };
+    const worldView = project({ ...PIPELINE.state, narrative: { ...PIPELINE.state.narrative, currentScene: worldScene } });
+    expect(worldView.locationScene.interactions).toEqual([]);
+    expect(worldView.dialogues.every((entry) => entry.choices.length === 0)).toBe(true);
+  });
 });
