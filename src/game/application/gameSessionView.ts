@@ -392,9 +392,7 @@ function projectNarrativeSceneView(
 
 function projectNarrativeGenerationView(state: GameState): NarrativeGenerationView {
   return {
-    status: state.narrative.currentScene !== null
-      ? "ready"
-      : state.narrative.generation.status === "pending" ? "pending" : "ready",
+    status: state.narrative.generation.status === "pending" ? "pending" : "ready",
   };
 }
 
