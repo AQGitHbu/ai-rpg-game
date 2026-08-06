@@ -95,6 +95,8 @@ export type NpcDialogueView = {
   readonly freeInputEnabled: boolean;
   /** 已发现事实文本：UI 用于本地只读回顾。 */
   readonly reviewClues: readonly string[];
+  /** followup 播放 + 后台生成中：选项区替换为“准备中”提示。 */
+  readonly preparingNextScene: boolean;
 };
 
 /**
@@ -332,7 +334,12 @@ function projectDialogues(
       choices,
       // 自由输入是触发首场景的入口，不能依赖 currentScene 存在。
       freeInputEnabled: !readOnly && (scene === null || scene.event?.kind === "dialogue"),
-      reviewClues
+      reviewClues,
+      // followup 播放 + 后台生成中：选项区替换为“准备中”提示
+      preparingNextScene: !readOnly
+        && scene !== null
+        && scene.event?.kind === "dialogue"
+        && state.narrative.generation.status === "pending",
     });
   }
   return dialogues;

@@ -56,7 +56,8 @@ const QINGSHI_DIALOGUES: readonly NpcDialogueView[] = [
     speechPages: ["陆掌柜擦着酒碗抬起头。又见面了，若有新的发现，随时可以来找我。"],
     choices: [],
     freeInputEnabled: true,
-    reviewClues: ["【玩家输入】沈青崖自述身份：落魄镖师"]
+    reviewClues: ["【玩家输入】沈青崖自述身份：落魄镖师"],
+    preparingNextScene: false
   },
   {
     npcId: "npc_zhao",
@@ -69,7 +70,8 @@ const QINGSHI_DIALOGUES: readonly NpcDialogueView[] = [
     ],
     choices: [],
     freeInputEnabled: true,
-    reviewClues: ["【玩家输入】沈青崖自述身份：落魄镖师"]
+    reviewClues: ["【玩家输入】沈青崖自述身份：落魄镖师"],
+    preparingNextScene: false
   }
 ];
 
@@ -251,7 +253,8 @@ export function buildMovedSessionViewFixture(): GameSessionView {
         speechPages: ["巡道老兵拄着长枪打量你。初次见面，我是巡道老兵，老兵。"],
         choices: [],
         freeInputEnabled: true,
-        reviewClues: ["【玩家输入】沈青崖自述身份：落魄镖师"]
+        reviewClues: ["【玩家输入】沈青崖自述身份：落魄镖师"],
+        preparingNextScene: false
       }
     ] satisfies readonly NpcDialogueView[]
   } as unknown as GameSessionView;

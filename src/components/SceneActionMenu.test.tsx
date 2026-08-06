@@ -37,7 +37,8 @@ const NPC: NpcDialogueView = {
   speechPages: ["陆掌柜擦着酒碗抬起头。"],
   choices: [],
   freeInputEnabled: false,
-  reviewClues: []
+  reviewClues: [],
+  preparingNextScene: false
 };
 
 describe("SceneActionMenu", () => {
