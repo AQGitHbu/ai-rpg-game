@@ -2227,3 +2227,91 @@ label.town-demo-toggle {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* 场景旁白条——轻量事件（observe/investigate/item）的 AI 旁白 */
+.scene-narration-bar {
+  position: relative;
+  margin: 8px 0;
+  padding: 12px 36px 12px 16px;
+  background: rgba(17, 22, 18, 0.85);
+  border-left: 3px solid var(--game-accent);
+  border-radius: 4px;
+  animation: scene-narration-fade-in 0.4s ease-out;
+}
+
+.scene-narration-bar-text {
+  margin: 0;
+  line-height: 1.8;
+  color: var(--game-text-primary);
+  font-size: 0.92rem;
+}
+
+.scene-narration-bar-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--game-text-muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.scene-narration-bar-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--game-text-primary);
+}
+
+@keyframes scene-narration-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 旅行事件全屏旁白——复用序幕视觉风格 */
+.travel-narration-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  cursor: pointer;
+}
+
+.travel-narration-content {
+  max-width: 640px;
+  padding: 0 32px;
+  text-align: center;
+}
+
+.travel-narration-text {
+  margin: 0;
+  color: #f3ead5;
+  font-size: 1.1rem;
+  line-height: 2;
+  letter-spacing: 0.04em;
+  min-height: 4em;
+}
+
+.travel-narration-hint {
+  margin-top: 24px;
+  color: rgba(243, 234, 213, 0.5);
+  font-size: 0.82rem;
+}
+
+/* NPC 对话面板"准备中"提示 */
+.npc-dialogue-preparing {
+  margin: 8px 0;
+  padding: 12px 16px;
+  color: var(--game-text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+  background: rgba(215, 185, 111, 0.08);
+  border-radius: 4px;
+  animation: scene-narration-fade-in 0.4s ease-out;
+}
