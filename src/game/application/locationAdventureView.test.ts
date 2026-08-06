@@ -478,7 +478,7 @@ describe("Phase 14 NPC 对话层统一", () => {
       ]
     };
     const dialogueView = project({ ...PIPELINE.state, narrative: { ...PIPELINE.state.narrative, currentScene: dialogueScene } });
-    expect(dialogueView.locationScene.interactions).toEqual([]);
+    // 对话事件不抑制 interactions（对话面板以覆盖层形式展示，interactions 在下方但不影响视觉）
     expect(dialogueView.dialogues.map((entry) => entry.npcId)).toEqual(["npc_a"]);
     expect(dialogueView.dialogues[0].choices.map((choice) => choice.label)).toEqual([
       "请问一下目前状况是怎么样的？",
@@ -509,7 +509,7 @@ describe("Phase 14 NPC 对话层统一", () => {
       ]
     };
     const worldView = project({ ...PIPELINE.state, narrative: { ...PIPELINE.state.narrative, currentScene: worldScene } });
-    expect(worldView.locationScene.interactions).toEqual([]);
+    // 轻量事件（investigate）不抑制 interactions——SceneNarrationBar 与 interactions 并存
     expect(worldView.dialogues.every((entry) => entry.choices.length === 0)).toBe(true);
   });
 });
