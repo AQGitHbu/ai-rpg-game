@@ -11,7 +11,6 @@ import { WorldMapScreen } from "./WorldMapScreen";
 import { LocationSceneScreen } from "./LocationSceneScreen";
 import { TownLayerScreen } from "./TownLayerScreen";
 import { NpcDialoguePanel, type FreeInputResult } from "./NpcDialoguePanel";
-import { NarrativeScenePanel } from "./NarrativeScenePanel";
 import { ToastContainer, type ToastMessage } from "./ToastNotification";
 
 type AdventureGameShellProps = {
@@ -270,13 +269,6 @@ export function AdventureGameShell({
           <p role="status" aria-live="polite">正在编排下一幕…</p>
           <p>世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。</p>
         </Panel>
-      ) : view.narrative !== null && view.battle === null && view.ending === null ? (
-        <NarrativeScenePanel
-          scene={view.narrative}
-          busy={shellBusy}
-          onChoose={(token) => void handleNarrativeChoice(token)}
-          onReturnMap={() => setScreen("map")}
-        />
       ) : (
         <LocationSceneScreen
           view={view}

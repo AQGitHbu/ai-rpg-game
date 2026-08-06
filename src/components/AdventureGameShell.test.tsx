@@ -47,9 +47,11 @@ describe("AdventureGameShell", () => {
     expect(screen.getByRole("button", { name: "背包" })).toBeInTheDocument();
   });
 
-  it("已生成 AI 剧情仍以地图为入口；进入地点后才显示剧情", async () => {
+  it("已生成 AI 剧情仍以地图为入口；进入地点后才显示场景（含 NPC 热点）", async () => {
     vi.stubGlobal("fetch", vi.fn());
     const base = buildSessionViewFixture();
+    // 模拟 Phase 14 后已经完成 AI 场景生成：narrative.currentScene 已就绪，
+    // 但玩家必须先点"进入"才能离开地图层进入 LocationSceneScreen。
     const view = {
       ...base,
       narrativeGeneration: { status: "ready" as const },
@@ -67,12 +69,18 @@ describe("AdventureGameShell", () => {
     renderShell({ view });
 
     expect(screen.getByRole("button", { name: "进入青石镇" })).toBeVisible();
-    expect(screen.queryByText("客栈的灯火在雨幕里摇曳。")).toBeNull();
+    expect(screen.queryByText("镇口贴着一张字迹潦草的缉凶告示。")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "进入青石镇" }));
-    expect(screen.getByText("客栈的灯火在雨幕里摇曳。")).toBeVisible();
+    // 地点场景层是 LocationSceneScreen：场景描述作为 caption 出现；
+    // AI 剧情已就绪，但场景本身（背景图 / 互动 / NPC 热点）才是玩家首先看到的内容。
+    expect(screen.getByText("镇口贴着一张字迹潦草的缉凶告示。")).toBeVisible();
+    expect(screen.getByRole("button", { name: /陆掌柜.*客栈掌柜/ })).toBeVisible();
+    // 场景返回地图使用 SceneActionMenu 中的"地图"按钮（不再走 NarrativeScenePanel）。
+    expect(screen.queryByRole("button", { name: "返回地图" })).toBeNull();
+    expect(screen.getByRole("button", { name: "地图" })).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "返回地图" }));
+    await user.click(screen.getByRole("button", { name: "地图" }));
     expect(screen.getByRole("button", { name: "进入青石镇" })).toBeVisible();
   });
 
