@@ -1,14 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { asItemId, asLocationId, asNpcId, asQuestId, type GameState, type NewGameInput } from "@/game/domain";
+import {
+  asItemId,
+  asLocationId,
+  asNpcId,
+  asQuestId,
+  type GameState,
+  type ScenarioBlueprint
+} from "@/game/domain";
 import { resolveAction, type PlayerIntent } from "@/game/gameplay/rpg/actions";
-import { reconcileQuests } from "@/game/gameplay/rpg/quests";
+import { reconcileMainStoryProgress, reconcileQuests } from "@/game/gameplay/rpg/quests";
 import { reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
-import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
+import { initializeGameState } from "@/game/gameplay/rpg/scenario";
+import { makeValidCandidate } from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import { performAction, type PerformActionDependencies } from "./performAction";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 import {
   createFakeGameRepository,
-  runScenarioPipeline,
   TEST_CREATED_AT,
   TEST_GAME_ID
 } from "./applicationFixture.testutil";
@@ -24,11 +31,71 @@ import {
 // 无存档/损坏/基础设施失败映射稳定结果；注入时钟可重复；不泄漏 SQL/state/seed。
 // ---------------------------------------------------------------------------
 
-type Phase1Fixture = { input: NewGameInput; seed: string };
-const FIXTURE = wuxiaFixture as unknown as Phase1Fixture;
-const PIPELINE = runScenarioPipeline({ ...FIXTURE.input, gameLength: "short" }, FIXTURE.seed);
+// Phase 14 开局收窄后，fallback 蓝图仅含起始锚点（loc_1/npc_1/quest_main_1）。
+// 本文件的契约测试需要"运行时扩展后"的完整蓝图：以 makeValidCandidate 为基座
+// 恢复测试引用的预存实体（town 地点 loc_2、后继地点 loc_3、npc_3、item_key、
+// 任务链），并让 move 到 loc_2 能完成 visit_location 前置阶段。
+const PIPELINE = buildRuntimePipeline();
 
 const FIXED_TIME = "2026-07-27T10:00:00.000Z";
+
+/**
+ * 构造"运行时扩展后"的完整蓝图与初始状态。
+ *
+ * Phase 14 的 fallback 开局蓝图只有起始锚点；本文件的契约测试（move 到
+ * loc_2、take item_key、talk npc_3、town 层懒生成等）依赖旧版完整预存数据，
+ * 因此以 makeValidCandidate 为基座恢复多地点/NPC/物品并定制任务链：
+ *   - m1（主线 1）：与开场 NPC 交谈（talk npc_1 → 完成）；
+ *   - quest_visit（side，初始 active）：访问 loc_2 → 解锁 m2；
+ *   - m2（主线 2）：talk npc_3 + 取得 item_key → 解锁 m3；
+ *   - m3（主线 3）：击败最终敌人。
+ * loc_2 标记为 scale="town"，供 town 层懒生成测试使用。
+ */
+function buildRuntimePipeline(): { blueprint: ScenarioBlueprint; state: GameState } {
+  const candidate = makeValidCandidate();
+  const blueprint = {
+    ...candidate,
+    locations: candidate.locations.map((location) =>
+      location.id === "loc_b" ? { ...location, scale: "town" } : location
+    ),
+    quests: [
+      {
+        kind: "main",
+        stage: 1,
+        id: "m1",
+        name: "旧案重启",
+        description: "向老掌柜打听灭门案线索。",
+        objectives: [{ kind: "talk_to_npc", npcId: "npc_a" }],
+        onSuccess: { kind: "closed" },
+        onFailure: { kind: "closed" },
+        tags: []
+      },
+      {
+        kind: "side",
+        id: "quest_visit",
+        name: "前往渡口",
+        description: "前往渡口集市打探灭门案线索。",
+        objectives: [{ kind: "visit_location", locationId: "loc_b" }],
+        onSuccess: { kind: "unlock_quests", questIds: ["m2"] },
+        onFailure: { kind: "closed" },
+        tags: []
+      },
+      ...candidate.quests.filter((quest) => quest.id !== "m1")
+    ]
+  } as unknown as ScenarioBlueprint;
+  const base = initializeGameState(blueprint);
+  return {
+    blueprint,
+    state: {
+      ...base,
+      // quest_visit 是 side 任务，initializeGameState 默认置 locked；
+      // move 到 loc_2 的 visit_location 前置阶段需要它初始 active。
+      quests: base.quests.map((quest) =>
+        quest.questId === "quest_visit" ? { ...quest, status: "active" } : quest
+      )
+    }
+  };
+}
 
 function buildActiveRecord(): GameRecord {
   return {
@@ -158,7 +225,7 @@ describe("performAction：move + 任务 reconciliation 单次写入（Phase 4 Ta
     repository.setCurrentResult({ ok: true, status: "active", record });
 
     // 独立复跑 actions + quests facade 得到期望的最终 state。
-    const moveIntent = { type: "move" as const, locationId: asLocationId("loc_2") };
+    const moveIntent = { type: "move" as const, locationId: asLocationId("loc_b") };
     const resolved = resolveAction(record.blueprint, record.state, moveIntent, {
       now: () => FIXED_TIME
     });
@@ -168,10 +235,21 @@ describe("performAction：move + 任务 reconciliation 单次写入（Phase 4 Ta
       now: () => FIXED_TIME
     });
     expect(reconciled.events.length).toBeGreaterThan(0);
+    // performAction 在 reconciliation 后派生写回 currentAct（Phase 14 spec §405），
+    // 独立复跑同步对齐该行为，保证载荷比较与真实写入一致。
+    const expectedState = {
+      ...reconciled.state,
+      mainStoryProgress: {
+        ...reconciled.state.mainStoryProgress,
+        currentAct: reconcileMainStoryProgress(record.blueprint, reconciled.state, {
+          now: () => FIXED_TIME
+        }).currentAct
+      }
+    };
 
     repository.setApplyResult({
       ok: true,
-      record: { ...record, state: reconciled.state, revision: 1 }
+      record: { ...record, state: expectedState, revision: 1 }
     });
 
     const result = await performAction(
@@ -181,13 +259,13 @@ describe("performAction：move + 任务 reconciliation 单次写入（Phase 4 Ta
 
     expect(result.ok).toBe(true);
     // 恰好一次写入，且载荷已含任务事件与状态迁移（无第二次写入、无旁路）。
-    // Town 层：loc_2 为 town 地点且存档为 ai 模式，performAction 在同一次写入中
+    // Town 层：loc_b 为 town 地点且存档为 ai 模式，performAction 在同一次写入中
     // 附加 pending 标记（Step 4.5 懒生成，见 town 层懒生成 describe）。
     expect(repository.applyCalls).toHaveLength(1);
     expect(repository.applyCalls[0].nextState).toEqual({
-      ...reconciled.state,
-      townGeneration: { status: "pending", locationId: asLocationId("loc_2"), requestedAt: FIXED_TIME },
-      storyMemory: reconcileStoryMemory({ state: reconciled.state })
+      ...expectedState,
+      townGeneration: { status: "pending", locationId: asLocationId("loc_b"), requestedAt: FIXED_TIME },
+      storyMemory: reconcileStoryMemory({ state: expectedState })
     });
     const ledger = repository.applyCalls[0].nextState.eventLedger;
     const tailTypes = ledger.slice(record.state.eventLedger.length).map((event) => event.type);
@@ -208,7 +286,7 @@ describe("performAction：move + 任务 reconciliation 单次写入（Phase 4 Ta
     });
 
     const result = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
       buildPerformDeps(repository)
     );
 
@@ -232,7 +310,7 @@ describe("performAction：move + 任务 reconciliation 单次写入（Phase 4 Ta
     });
 
     const result = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
       buildPerformDeps(repository)
     );
 
@@ -244,12 +322,12 @@ describe("performAction：move + 任务 reconciliation 单次写入（Phase 4 Ta
 describe("performAction：take_item + 任务 reconciliation 单次写入（Phase 5 Task 3）", () => {
   const ruleDeps = { now: () => FIXED_TIME };
 
-  /** 走真实规则管线推进到 stage-2 就绪：loc_2 → loc_3 → talk npc_3（未取物品）。 */
+  /** 走真实规则管线推进到 stage-2 就绪：loc_b → loc_c → talk npc_c（未取物品）。 */
   function buildStageTwoReadyState(): GameState {
     const intents: readonly PlayerIntent[] = [
-      { type: "move", locationId: asLocationId("loc_2") },
-      { type: "move", locationId: asLocationId("loc_3") },
-      { type: "talk", npcId: asNpcId("npc_3") }
+      { type: "move", locationId: asLocationId("loc_b") },
+      { type: "move", locationId: asLocationId("loc_c") },
+      { type: "talk", npcId: asNpcId("npc_c") }
     ];
     let state = PIPELINE.state;
     for (const intent of intents) {
@@ -267,7 +345,7 @@ describe("performAction：take_item + 任务 reconciliation 单次写入（Phase
     repository.setCurrentResult({ ok: true, status: "active", record });
 
     // 独立复跑 actions + quests facade 得到期望的最终 state。
-    const takeIntent: PlayerIntent = { type: "take_item", itemId: asItemId("item_key") };
+    const takeIntent: PlayerIntent = { type: "take_item", itemId: asItemId("item_b") };
     const resolved = resolveAction(record.blueprint, readyState, takeIntent, ruleDeps);
     expect(resolved.ok).toBe(true);
     if (!resolved.ok) return;
@@ -297,12 +375,12 @@ describe("performAction：take_item + 任务 reconciliation 单次写入（Phase
     const statusById = new Map(
       repository.applyCalls[0].nextState.quests.map((quest) => [quest.questId, quest.status])
     );
-    expect(statusById.get(asQuestId("quest_main_2"))).toBe("completed");
-    expect(statusById.get(asQuestId("quest_main_3"))).toBe("active");
+    expect(statusById.get(asQuestId("m2"))).toBe("completed");
+    expect(statusById.get(asQuestId("m3"))).toBe("active");
     // 已保存 state 投影的 view：背包收录 key 物品，可取得列表清空。
     expect(result.view.revision).toBe(4);
     expect(result.view.obtainableItems).toEqual([]);
-    const keyItem = PIPELINE.blueprint.items.find((item) => item.id === asItemId("item_key"));
+    const keyItem = PIPELINE.blueprint.items.find((item) => item.id === asItemId("item_b"));
     // 背包已升级为富视图：附带展示元数据（契约详见 gameSessionView.test）。
     expect(result.view.inventoryItems).toContainEqual(
       expect.objectContaining({
@@ -319,7 +397,7 @@ describe("performAction：take_item + 任务 reconciliation 单次写入（Phase
     const readyState = buildStageTwoReadyState();
     const ownedState = {
       ...readyState,
-      inventory: [...readyState.inventory, asItemId("item_key")]
+      inventory: [...readyState.inventory, asItemId("item_b")]
     };
     repository.setCurrentResult({
       ok: true,
@@ -328,7 +406,7 @@ describe("performAction：take_item + 任务 reconciliation 单次写入（Phase
     });
 
     const result = await performAction(
-      { intent: { type: "take_item", itemId: asItemId("item_key") }, expectedRevision: 3 },
+      { intent: { type: "take_item", itemId: asItemId("item_b") }, expectedRevision: 3 },
       buildPerformDeps(repository)
     );
 
@@ -360,7 +438,7 @@ describe("performAction：take_item + 任务 reconciliation 单次写入（Phase
     };
 
     const result = await performAction(
-      { intent: { type: "take_item", itemId: asItemId("item_key") }, expectedRevision: 3 },
+      { intent: { type: "take_item", itemId: asItemId("item_b") }, expectedRevision: 3 },
       { repository: throwingRepository, now: () => FIXED_TIME }
     );
 
@@ -379,7 +457,7 @@ describe("performAction：talk 单次写入与零写入（Phase 14：dialogue_ch
     // Phase 14：talk 是唯一 NPC 交互触发器，首遇写 npc_met。
     const intent: PlayerIntent = {
       type: "talk",
-      npcId: asNpcId("npc_1")
+      npcId: asNpcId("npc_a")
     };
     // 独立复跑 actions + quests facade 得到期望的最终 state。
     const resolved = resolveAction(record.blueprint, record.state, intent, ruleDeps);
@@ -421,8 +499,8 @@ describe("performAction：talk 单次写入与零写入（Phase 14：dialogue_ch
       {
         intent: {
           type: "dialogue_choice",
-          npcId: asNpcId("npc_1"),
-          choiceId: "npc_1:steal_items"
+          npcId: asNpcId("npc_a"),
+          choiceId: "npc_a:steal_items"
         } as unknown as PlayerIntent,
         expectedRevision: 0
       },
@@ -443,7 +521,7 @@ describe("performAction：talk 单次写入与零写入（Phase 14：dialogue_ch
     const metState = {
       ...record.state,
       npcs: record.state.npcs.map((npc) =>
-        npc.npcId === asNpcId("npc_1") ? { ...npc, met: true } : npc
+        npc.npcId === asNpcId("npc_a") ? { ...npc, met: true } : npc
       )
     };
     repository.setCurrentResult({
@@ -456,7 +534,7 @@ describe("performAction：talk 单次写入与零写入（Phase 14：dialogue_ch
       {
         intent: {
           type: "talk",
-          npcId: asNpcId("npc_1")
+          npcId: asNpcId("npc_a")
         },
         expectedRevision: 0
       },
@@ -484,11 +562,11 @@ describe("performAction：talk 触发 pending（NPC 对话驱动叙事场景）"
     } as unknown as NonNullable<PerformActionDependencies["runtimeNarrativeSources"]>;
   }
 
-  /** 真实规则管线推进到 loc_3：npc_3 未结识且有 active 主线 talk_to_npc 目标。 */
+  /** 真实规则管线推进到 loc_c：npc_c 未结识且有 active 主线 talk_to_npc 目标。 */
   function buildAskMainQuestReadyState(): GameState {
     const intents: readonly PlayerIntent[] = [
-      { type: "move", locationId: asLocationId("loc_2") },
-      { type: "move", locationId: asLocationId("loc_3") },
+      { type: "move", locationId: asLocationId("loc_b") },
+      { type: "move", locationId: asLocationId("loc_c") },
     ];
     let state = PIPELINE.state;
     for (const intent of intents) {
@@ -529,7 +607,7 @@ describe("performAction：talk 触发 pending（NPC 对话驱动叙事场景）"
 
     const result = await performAction(
       {
-        intent: { type: "talk", npcId: asNpcId("npc_3") },
+        intent: { type: "talk", npcId: asNpcId("npc_c") },
         expectedRevision: 2
       },
       buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
@@ -552,7 +630,7 @@ describe("performAction：talk 触发 pending（NPC 对话驱动叙事场景）"
 
     const result = await performAction(
       {
-        intent: { type: "talk", npcId: asNpcId("npc_1") },
+        intent: { type: "talk", npcId: asNpcId("npc_a") },
         expectedRevision: 0
       },
       buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
@@ -578,7 +656,7 @@ describe("performAction：talk 触发 pending（NPC 对话驱动叙事场景）"
       ...record.state,
       worldFacts: record.state.worldFacts.map((fact) => ({ ...fact, discovered: true })),
       npcs: record.state.npcs.map((npc) =>
-        npc.npcId === asNpcId("npc_1") ? npc : { ...npc, met: true }
+        npc.npcId === asNpcId("npc_a") ? npc : { ...npc, met: true }
       ),
       eventLedger: [
         ...record.state.eventLedger,
@@ -591,7 +669,7 @@ describe("performAction：talk 触发 pending（NPC 对话驱动叙事场景）"
     // 前置断言：talk 解决后的状态确实不满足排队条件（fixture 变化时快速暴露）。
     const resolved = resolveAction(
       record.blueprint, sparseState,
-      { type: "talk", npcId: asNpcId("npc_1") },
+      { type: "talk", npcId: asNpcId("npc_a") },
       ruleDeps
     );
     expect(resolved.ok).toBe(true);
@@ -600,7 +678,7 @@ describe("performAction：talk 触发 pending（NPC 对话驱动叙事场景）"
 
     const result = await performAction(
       {
-        intent: { type: "talk", npcId: asNpcId("npc_1") },
+        intent: { type: "talk", npcId: asNpcId("npc_a") },
         expectedRevision: 0
       },
       buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
@@ -631,7 +709,7 @@ describe("performAction：talk 触发 pending（NPC 对话驱动叙事场景）"
 
     const result = await performAction(
       {
-        intent: { type: "talk", npcId: asNpcId("npc_1") },
+        intent: { type: "talk", npcId: asNpcId("npc_a") },
         expectedRevision: 0
       },
       buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
@@ -862,11 +940,11 @@ describe("performAction：不泄漏敏感信息", () => {
 // ---------------------------------------------------------------------------
 // Town 主循环 S4：抵达 scale="town" 地点时的懒生成。离线存档同步派生，
 // AI 存档只置 pending；非 town 地点与已生成地点均零变更。
-// fallback 蓝图的 loc_2 固定为 town 地点且与开场 loc_1 相邻。
+// 运行时扩展蓝图的 loc_b（原 loc_2）固定为 town 地点且与开场 loc_a 相邻。
 // ---------------------------------------------------------------------------
 
 describe("performAction：town 层懒生成", () => {
-  const TOWN_ID = asLocationId("loc_2");
+  const TOWN_ID = asLocationId("loc_b");
 
   function buildRecordWithMode(mode: "offline" | "ai"): GameRecord {
     const base = buildActiveRecord();
@@ -896,9 +974,9 @@ describe("performAction：town 层懒生成", () => {
     const next = await performMoveToTown(buildRecordWithMode("offline"));
 
     expect(next.towns).toHaveLength(1);
-    expect(String(next.towns[0].locationId)).toBe("loc_2");
+    expect(String(next.towns[0].locationId)).toBe("loc_b");
     expect(next.towns[0].planSource).toBe("offline");
-    expect(next.towns[0].seed).toBe(`${PIPELINE.blueprint.seed}#town#loc_2`);
+    expect(next.towns[0].seed).toBe(`${PIPELINE.blueprint.seed}#town#loc_b`);
     expect(next.townGeneration).toEqual({ status: "idle" });
     const townEvents = next.eventLedger.filter((event) => event.type === "town_plan_generated");
     expect(townEvents).toHaveLength(1);
