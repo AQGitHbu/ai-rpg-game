@@ -88,4 +88,50 @@ describe("RuntimeNarrativeTaskCoordinator", () => {
     expect(record.state.narrative.generation).toEqual({ status: "idle" });
     expect(await coordinator.ensure()).toBe("not_pending");
   });
+
+  it("STALE_GAME_REVISION 会在同一后台任务内最多重试两次，避免一次冲突永久丢任务", async () => {
+    const record = pendingRecord();
+    let applyAttempts = 0;
+    const completed = deferred();
+    const unavailable = () => ({
+      async generate() {
+        return {
+          ok: false as const,
+          provenance: "unavailable" as const,
+          category: "service_error" as const,
+          diagnostics: {
+            traceId: "test", contractVersion: NARRATIVE_CONTRACT_VERSION,
+            stage: "failed" as const, category: "service_error" as const,
+          },
+        };
+      },
+    });
+    const repository: GameRepository = {
+      async createInitialGame() { return { ok: true }; },
+      async getCurrentGame() { return { ok: true as const, status: "active" as const, record }; },
+      async applyResolvedAction() {
+        applyAttempts += 1;
+        if (applyAttempts === 3) completed.resolve();
+        return { ok: false as const, code: "STALE_GAME_REVISION" as const };
+      },
+      async applyBlueprintExpansion() {
+        return { ok: false as const, code: "STALE_GAME_REVISION" as const };
+      },
+    };
+    const coordinator = new RuntimeNarrativeTaskCoordinator({
+      repository,
+      newTraceId: () => "stale-coordinator",
+      now: () => "2026-07-31T01:02:03.000Z",
+      runtimeNarrativeSources: {
+        directorSource: unavailable(),
+        sceneScriptSource: unavailable(),
+        npcLineSource: unavailable(),
+      },
+    });
+
+    expect(await coordinator.ensure()).toBe("queued");
+    await completed.promise;
+    expect(applyAttempts).toBe(3);
+    expect(record.state.narrative.generation.status).toBe("pending");
+  });
 });

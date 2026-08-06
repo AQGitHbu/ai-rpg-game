@@ -4,7 +4,7 @@
 // 只返回结构化结果，不写入 repository。
 // ---------------------------------------------------------------------------
 
-import { asEnemyId, asFactId, asItemId, asLocationId, asNpcId, type GameState, type ScenarioBlueprint, type NarrativeEventKind, type NarrativeEventState, type NarrativeSceneState, type NpcDialogueInScene, type NpcId, type FactId, type StoryPacing } from "@/game/domain";
+import { asEnemyId, asFactId, asItemId, asLocationId, asNpcId, PLAYER_DIALOGUE_RESPONSE_LABELS, type GameState, type ScenarioBlueprint, type NarrativeEventKind, type NarrativeEventState, type NarrativeSceneState, type NarrativeDialogueFollowupState, type NpcDialogueInScene, type NpcId, type FactId, type StoryPacing } from "@/game/domain";
 import { paginateSpeechText } from "@/game/domain";
 import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
 import type { NarrativeActionCandidate, NpcInstruction, ApprovedDirectorPlan, ApprovedSceneScript, BlueprintExpansionDecision, EndingApprovalDecision } from "@/game/gameplay/rpg/narrative";
@@ -18,8 +18,8 @@ import {
   deriveContentProgression,
 } from "@/game/gameplay/rpg/narrative";
 import { reconcileMainStoryProgress, type ReconcileQuestsDependencies } from "@/game/gameplay/rpg/quests";
-import { projectAvailableActions } from "@/game/gameplay/rpg/actions";
-import { NARRATIVE_CONTRACT_VERSION, type DirectorSource, type SceneScriptSource, type NpcLineSource, type DirectorAttempt, type SceneScriptAttempt } from "./runtimeNarrative";
+import { composeNpcSpeech, projectAvailableActions } from "@/game/gameplay/rpg/actions";
+import { NARRATIVE_CONTRACT_VERSION, type DirectorSource, type SceneScriptSource, type NpcLineSource, type DirectorAttempt, type SceneScriptAttempt, type NarrativeGenerationProgress, type NarrativeRoleStage } from "./runtimeNarrative";
 import type { StoryEvalApprovalEvent } from "./storyEvalCaptureTypes";
 import {
   toDirectorContext,
@@ -33,6 +33,12 @@ import {
 import { SPEECH_PAGE_CHAR_BUDGET } from "./locationAdventureView";
 
 const MAX_ROLE_ATTEMPTS = 3;
+/**
+ * Normal runtime calls keep the 120s provider ceiling.  The first scene is a
+ * special UX path: if the provider cannot answer promptly, the deterministic
+ * fallback is already a valid atomic scene and should unblock the player.
+ */
+const FAST_FIRST_SCENE_TIMEOUT_MS = 30_000;
 
 /**
  * Phase 14：reconcileMainStoryProgress 的 deps 占位。该函数当前统计逻辑不读
@@ -96,6 +102,7 @@ async function generateNpcLineTextWithRetry(args: {
   readonly unresolvedItemNames: readonly string[];
   readonly maxRoleAttempts: number;
   readonly retryBackoffMs: number;
+  readonly timeoutMs?: number;
   readonly approvalObserver?: (event: StoryEvalApprovalEvent) => void;
 }): Promise<string | null> {
   for (let attemptIndex = 0; attemptIndex < args.maxRoleAttempts; attemptIndex += 1) {
@@ -105,6 +112,7 @@ async function generateNpcLineTextWithRetry(args: {
         context: attemptIndex === 0
           ? args.npcLineContext as unknown as Record<string, unknown>
           : { ...(args.npcLineContext as unknown as Record<string, unknown>), retryInstruction: "Previous output failed approval. Return one complete JSON object using only the supplied fact cards." },
+        ...(args.timeoutMs === undefined ? {} : { timeoutMs: args.timeoutMs }),
       });
       if (!attempt.ok) {
         await waitBeforeRoleRetry(args.retryBackoffMs, attemptIndex, args.maxRoleAttempts);
@@ -140,6 +148,7 @@ async function collectNpcDialogues(args: {
   readonly unresolvedItemNames: readonly string[];
   readonly maxRoleAttempts: number;
   readonly retryBackoffMs: number;
+  readonly timeoutMs?: number;
   readonly approvalObserver?: (event: StoryEvalApprovalEvent) => void;
   readonly onNpcLineAttempted: () => void;
 }): Promise<readonly NpcDialogueInScene[]> {
@@ -198,6 +207,7 @@ async function collectNpcDialogues(args: {
       unresolvedItemNames: args.unresolvedItemNames,
       maxRoleAttempts: args.maxRoleAttempts,
       retryBackoffMs: args.retryBackoffMs,
+      timeoutMs: args.timeoutMs,
       approvalObserver: args.approvalObserver,
     });
     dialogues.push({
@@ -228,6 +238,10 @@ export type OrchestrateNarrativeSceneInput = {
   readonly maxRoleAttempts?: number;
   /** 评估专用 provider 失败退避；未传时保持正常运行时零额外等待。 */
   readonly retryBackoffMs?: number;
+  /** 生产开局快速路径：初始场景只做一次角色尝试，失败立即 fallback。 */
+  readonly fastFirstScene?: boolean;
+  /** 仅报告脱敏的角色阶段进度，不暴露 provider 或提示词细节。 */
+  readonly progressObserver?: (progress: NarrativeGenerationProgress) => void;
 };
 
 export type OrchestrateSceneResult = {
@@ -262,8 +276,25 @@ export async function orchestrateNarrativeScene(
 ): Promise<OrchestrateSceneResult> {
   const { traceId, blueprint, state, directorSource, sceneScriptSource, npcLineSource } = input;
   const logger = input.logger ?? NOOP_GAME_LOGGER;
-  const maxRoleAttempts = resolveRoleAttemptLimit(input.maxRoleAttempts);
+  const initialOpening = state.narrative.generation.status === "pending" &&
+    state.narrative.generation.triggerContext?.kind === "initial_opening";
+  const maxRoleAttempts = input.fastFirstScene && initialOpening
+    ? 1
+    : resolveRoleAttemptLimit(input.maxRoleAttempts);
   const retryBackoffMs = resolveRetryBackoffMs(input.retryBackoffMs);
+  const roleTimeoutMs = input.fastFirstScene && initialOpening
+    ? FAST_FIRST_SCENE_TIMEOUT_MS
+    : undefined;
+  const completedRoleStages = new Set<NarrativeRoleStage>();
+  function reportProgress(role: NarrativeRoleStage, attempt: number, stageCompleted = false): void {
+    if (stageCompleted) completedRoleStages.add(role);
+    input.progressObserver?.({
+      completedCalls: completedRoleStages.size,
+      totalCalls: 3,
+      currentRole: role,
+      attempt,
+    });
+  }
 
   // 构建 action candidates
   const availableActions = projectAvailableActions(blueprint, state);
@@ -282,12 +313,14 @@ export async function orchestrateNarrativeScene(
   let plan: ApprovedDirectorPlan | undefined;
   let continuityViolationLogged = false;
   for (let attempt = 0; attempt < maxRoleAttempts; attempt += 1) {
+    reportProgress("director", attempt + 1);
     try {
       directorAttempt = await directorSource.generate({
         traceId: `${traceId}-director${"-retry".repeat(attempt)}`,
         context: attempt === 0
           ? directorContext as unknown as Record<string, unknown>
           : { ...(directorContext as unknown as Record<string, unknown>), retryInstruction: "Previous proposal was rejected. Return a complete proposal using only the exact IDs and action keys supplied." },
+        ...(roleTimeoutMs === undefined ? {} : { timeoutMs: roleTimeoutMs }),
       });
     } catch {
       await waitBeforeRoleRetry(retryBackoffMs, attempt, maxRoleAttempts);
@@ -300,6 +333,7 @@ export async function orchestrateNarrativeScene(
     const approval = approveDirectorProposal({ proposal: directorAttempt.plan, blueprint, state, candidates });
     input.approvalObserver?.({ kind: "role_approval", traceId, role: "director", attempt: attempt + 1, category: approval.ok ? null : approval.category });
     if (approval.ok) {
+      reportProgress("director", attempt + 1, true);
       plan = approval.value;
       input.approvalObserver?.({ kind: "plan_approved", traceId, attempt: attempt + 1, planSummary: approval.value as unknown as Record<string, unknown> });
       break;
@@ -323,6 +357,7 @@ export async function orchestrateNarrativeScene(
       false,
       candidates,
       state,
+      blueprint,
       fallbackPacing,
       undefined,
       [objective?.suggestedActionKey, objective?.targetActionKey].filter((key): key is string => typeof key === "string"),
@@ -360,10 +395,12 @@ export async function orchestrateNarrativeScene(
   let scriptAttempt: SceneScriptAttempt | null = null;
   let script: ApprovedSceneScript | undefined;
   for (let attempt = 0; attempt < maxRoleAttempts; attempt += 1) {
+    reportProgress("writer", attempt + 1);
     try {
       scriptAttempt = await sceneScriptSource.generate({
         traceId: `${traceId}-script${"-retry".repeat(attempt)}`,
         context: attempt === 0 ? sceneScriptContext as unknown as Record<string, unknown> : { ...(sceneScriptContext as unknown as Record<string, unknown>), retryInstruction: "Previous output failed approval. Return a complete JSON object with exactly the required fields, two choices, and only supplied IDs." },
+        ...(roleTimeoutMs === undefined ? {} : { timeoutMs: roleTimeoutMs }),
       });
     } catch {
       await waitBeforeRoleRetry(retryBackoffMs, attempt, maxRoleAttempts);
@@ -382,10 +419,14 @@ export async function orchestrateNarrativeScene(
       ...(plan.eventTargetId !== undefined ? { eventTargetId: plan.eventTargetId } : {}),
     });
     input.approvalObserver?.({ kind: "role_approval", traceId, role: "writer", attempt: attempt + 1, category: approval.ok ? null : approval.category });
-    if (approval.ok) { script = approval.value; break; }
+    if (approval.ok) {
+      reportProgress("writer", attempt + 1, true);
+      script = approval.value;
+      break;
+    }
     logger.warn("runtime_narrative_approval", { traceId, role: "writer", category: approval.category });
   }
-  if (script === undefined || scriptAttempt === null) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false, candidates, state, fallbackPacing, plan);
+  if (script === undefined || scriptAttempt === null) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, false, candidates, state, blueprint, fallbackPacing, plan);
 
   // Step 5：演员只能收到该 NPC 获批准的事实卡；其输出也必须复核。
   let npcLineAttempted = false;
@@ -406,10 +447,12 @@ export async function orchestrateNarrativeScene(
     });
 
     for (let attemptIndex = 0; attemptIndex < maxRoleAttempts; attemptIndex += 1) {
+      reportProgress("npc", attemptIndex + 1);
       try {
         const attempt = await npcLineSource.generate({
           traceId: `${traceId}-npcLine${"-retry".repeat(attemptIndex)}`,
           context: attemptIndex === 0 ? npcLineContext as unknown as Record<string, unknown> : { ...(npcLineContext as unknown as Record<string, unknown>), retryInstruction: "Previous output failed approval. Return one complete JSON object using only the supplied fact cards." },
+          ...(roleTimeoutMs === undefined ? {} : { timeoutMs: roleTimeoutMs }),
         });
         npcLineAttempted = true;
         if (!attempt.ok) {
@@ -423,13 +466,14 @@ export async function orchestrateNarrativeScene(
         });
         input.approvalObserver?.({ kind: "role_approval", traceId, role: "npc", attempt: attemptIndex + 1, category: approved.ok ? null : approved.category });
         if (!approved.ok) continue;
+        reportProgress("npc", attemptIndex + 1, true);
         npcLine = { npcId: npcInst.npcId as NpcId, text: approved.value.text, emotion: approved.value.emotion, usedFactIds: approved.value.usedFactIds as readonly FactId[] };
         npcApproved = true;
         break;
       } catch { /* bounded same-role retry, then full fallback */ }
     }
   }
-  if (!npcApproved) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, npcLineAttempted, candidates, state, fallbackPacing, plan);
+  if (!npcApproved) return buildFallbackResult(traceId, directorAttempt, scriptAttempt, npcLineAttempted, candidates, state, blueprint, fallbackPacing, plan);
 
   // Phase 14：为场景内每个在场 NPC 收集对白分页——焦点 NPC 复用已批准的 npcLine，
   // 非焦点 NPC 在编剧提供 additionalNpcInstructions 时单独调用演员；无指令的在场
@@ -445,6 +489,7 @@ export async function orchestrateNarrativeScene(
     unresolvedItemNames,
     maxRoleAttempts,
     retryBackoffMs,
+    timeoutMs: roleTimeoutMs,
     approvalObserver: input.approvalObserver,
     onNpcLineAttempted: () => { npcLineAttempted = true; },
   });
@@ -465,7 +510,7 @@ export async function orchestrateNarrativeScene(
       if (event?.kind === "dialogue") {
         return {
           choiceToken: `${traceId}-choice:${index}`,
-          label: choice.label,
+          label: PLAYER_DIALOGUE_RESPONSE_LABELS[index],
           choiceKind: "dialogue_response" as const,
           dialogueIntent: choice.dialogueIntent ?? `dialogue_response_${index + 1}`,
           // Narrative choices retain one opaque server-side string for the
@@ -496,8 +541,19 @@ export async function orchestrateNarrativeScene(
     npcDialogues,
   };
 
+  const dialogueFollowups = event?.kind === "dialogue"
+    ? buildPreGeneratedDialogueFollowups({
+        blueprint,
+        state,
+        focusNpcId: event.focusNpcId,
+        choices: scene.choices,
+        candidates,
+        currentNpcLine: npcLine,
+      })
+    : undefined;
+
   return {
-    scene,
+    scene: dialogueFollowups === undefined ? scene : { ...scene, dialogueFollowups },
     provenance: scriptAttempt.provenance === "fixture" ? "fixture" : "generated",
     pacing: plan.pacing,
     focusNpcId: event?.kind === "dialogue" ? event.focusNpcId : plan.focusNpcId as NpcId | null,
@@ -515,6 +571,33 @@ export async function orchestrateNarrativeScene(
 // Fallback
 // ---------------------------------------------------------------------------
 
+export function createDeterministicNarrativeFallback(input: {
+  readonly traceId: string;
+  readonly blueprint: ScenarioBlueprint;
+  readonly state: GameState;
+  readonly preferredActionKeys?: readonly string[];
+}): OrchestrateSceneResult {
+  const availableActions = projectAvailableActions(input.blueprint, input.state);
+  const candidates: NarrativeActionCandidate[] = availableActions.map((action) => ({
+    actionKey: actionKeyOf(action),
+    kind: action.type,
+    publicLabel: action.label,
+  }));
+  const pacing = deriveContentProgression({ blueprint: input.blueprint, state: input.state }).allowedPacing.at(-1) ?? "setup";
+  return buildFallbackResult(
+    input.traceId,
+    unavailableDirectorAttempt(input.traceId),
+    null,
+    false,
+    candidates,
+    input.state,
+    input.blueprint,
+    pacing,
+    undefined,
+    input.preferredActionKeys,
+  );
+}
+
 function buildFallbackResult(
   traceId: string,
   directorAttempt: DirectorAttempt,
@@ -522,6 +605,7 @@ function buildFallbackResult(
   npcLineAttempted: boolean,
   candidates: readonly NarrativeActionCandidate[],
   state: GameState,
+  blueprint: ScenarioBlueprint,
   pacing: StoryPacing,
   approvedPlan: ApprovedDirectorPlan | undefined,
   preferredActionKeys: readonly string[] = [],
@@ -542,49 +626,74 @@ function buildFallbackResult(
     if (orderedCandidates.length >= 2) break;
   }
   const fallbackCandidates = orderedCandidates.length >= 2 ? orderedCandidates : candidates;
+  const fallbackEvent = resolveNarrativeEvent(approvedPlan, state, candidates);
+  const fallbackNpc = fallbackEvent?.kind === "dialogue"
+    ? blueprint.npcs.find((npc) => String(npc.id) === String(fallbackEvent.focusNpcId))
+    : undefined;
+  const fallbackNpcDialogues = fallbackEvent?.kind === "dialogue" && fallbackNpc !== undefined
+    ? [{
+        npcId: fallbackEvent.focusNpcId,
+        npcName: fallbackNpc.name,
+        npcRole: fallbackNpc.role,
+        speechPages: paginateSpeechText(
+          composeNpcSpeech(blueprint, state, fallbackEvent.focusNpcId),
+          SPEECH_PAGE_CHAR_BUDGET,
+        ),
+      }]
+    : undefined;
   const fallbackScene: NarrativeSceneState = {
     sceneId: `${traceId}-fallback-${Date.now()}`,
     turn: calculateTurn(state),
     narration: FALLBACK_SCENE_SCRIPT.narration,
     usedFactIds: [] as unknown as NarrativeSceneState["usedFactIds"],
     npcLine: null,
-    ...(resolveNarrativeEvent(approvedPlan, state, candidates) !== undefined
-      ? { event: resolveNarrativeEvent(approvedPlan, state, candidates) }
-      : {}),
+    ...(fallbackEvent !== undefined ? { event: fallbackEvent } : {}),
     choices: [
       {
         choiceToken: `${traceId}-fallback:a`,
-        label: resolveNarrativeEvent(approvedPlan, state, candidates)?.kind === "dialogue"
-          ? "询问目前发生了什么状况"
+        label: fallbackEvent?.kind === "dialogue"
+          ? PLAYER_DIALOGUE_RESPONSE_LABELS[0]
           : fallbackCandidates[0]?.publicLabel ?? FALLBACK_SCENE_SCRIPT.choices[0].label,
-        ...(resolveNarrativeEvent(approvedPlan, state, candidates)?.kind === "dialogue"
+        ...(fallbackEvent?.kind === "dialogue"
           ? { choiceKind: "dialogue_response" as const, dialogueIntent: "ask_current_situation" }
           : {}),
-        actionKey: resolveNarrativeEvent(approvedPlan, state, candidates)?.kind === "dialogue"
+        actionKey: fallbackEvent?.kind === "dialogue"
           ? `dialogue:${traceId}:fallback:a`
           : fallbackCandidates[0]?.actionKey ?? FALLBACK_SCENE_SCRIPT.choices[0].actionKey,
       },
       {
         choiceToken: `${traceId}-fallback:b`,
-        label: resolveNarrativeEvent(approvedPlan, state, candidates)?.kind === "dialogue"
-          ? "追问太空站刚维修为何又出故障"
+        label: fallbackEvent?.kind === "dialogue"
+          ? PLAYER_DIALOGUE_RESPONSE_LABELS[1]
           : fallbackCandidates[1]?.publicLabel ?? FALLBACK_SCENE_SCRIPT.choices[1].label,
-        ...(resolveNarrativeEvent(approvedPlan, state, candidates)?.kind === "dialogue"
+        ...(fallbackEvent?.kind === "dialogue"
           ? { choiceKind: "dialogue_response" as const, dialogueIntent: "challenge_recent_repair" }
           : {}),
-        actionKey: resolveNarrativeEvent(approvedPlan, state, candidates)?.kind === "dialogue"
+        actionKey: fallbackEvent?.kind === "dialogue"
           ? `dialogue:${traceId}:fallback:b`
           : fallbackCandidates[1]?.actionKey ?? FALLBACK_SCENE_SCRIPT.choices[1].actionKey,
       },
     ],
     source: "fallback",
+    ...(fallbackNpcDialogues !== undefined ? { npcDialogues: fallbackNpcDialogues } : {}),
   };
 
+  const dialogueFollowups = fallbackEvent?.kind === "dialogue"
+    ? buildPreGeneratedDialogueFollowups({
+        blueprint,
+        state,
+        focusNpcId: fallbackEvent.focusNpcId,
+        choices: fallbackScene.choices,
+        candidates,
+        currentNpcLine: null,
+      })
+    : undefined;
+
   return {
-    scene: fallbackScene,
+    scene: dialogueFollowups === undefined ? fallbackScene : { ...fallbackScene, dialogueFollowups },
     provenance: "fallback",
     pacing,
-    focusNpcId: null,
+    focusNpcId: fallbackEvent?.kind === "dialogue" ? fallbackEvent.focusNpcId : null,
     expansionDecision: { ok: false, reason: "none_proposed" },
     diagnostics: {
       director: directorAttempt,
@@ -592,6 +701,52 @@ function buildFallbackResult(
       npcLineAttempted,
     },
   };
+}
+
+/**
+ * Dialogue choices are a small local branch point.  Prepare both immediate
+ * NPC replies while the current scene is being assembled so selecting one
+ * never turns a conversational response into a world-event generation wait.
+ * The hint only names an already legal public action; it is not a hidden
+ * future event or a rules mutation.
+ */
+function buildPreGeneratedDialogueFollowups(args: {
+  readonly blueprint: ScenarioBlueprint;
+  readonly state: GameState;
+  readonly focusNpcId: NpcId;
+  readonly choices: NarrativeSceneState["choices"];
+  readonly candidates: readonly NarrativeActionCandidate[];
+  readonly currentNpcLine: NarrativeSceneState["npcLine"];
+}): readonly [NarrativeDialogueFollowupState, NarrativeDialogueFollowupState] | undefined {
+  const npc = args.blueprint.npcs.find((entry) => String(entry.id) === String(args.focusNpcId));
+  if (npc === undefined) return undefined;
+  const discoveredFact = args.state.worldFacts
+    .filter((fact) => fact.discovered)
+    .map((fact) => args.blueprint.world.facts.find((entry) => String(entry.id) === String(fact.factId)))
+    .find((fact) => fact !== undefined);
+  const clue = discoveredFact?.text ?? "眼前的线索还不完整";
+  const nextWorldAction = args.candidates.find((candidate) => !candidate.actionKey.startsWith("talk:"));
+  const nextEventHint = nextWorldAction === undefined
+    ? "这段对话暂告一段落，接下来可以继续寻找线索。"
+    : `这段对话暂告一段落，接下来可以${nextWorldAction.publicLabel}。`;
+  const emotion = args.currentNpcLine?.emotion ?? "neutral";
+  const usedFactIds = args.currentNpcLine?.usedFactIds ?? [];
+  const makeFollowup = (index: 0 | 1): NarrativeDialogueFollowupState => ({
+    dialogueIntent: args.choices[index].dialogueIntent ?? `dialogue_response_${index + 1}`,
+    narration: index === 0
+      ? `你请${npc.name}说明目前的状况，对方斟酌片刻后压低了声音。`
+      : `你继续追问事情的缘由，${npc.name}的神色变得凝重起来。`,
+    npcLine: {
+      npcId: args.focusNpcId,
+      text: index === 0
+        ? `${npc.name}说道：“目前的状况和${clue}有关，但还有几处细节没有查清。”`
+        : `${npc.name}回答道：“事情的缘由要从${clue}说起，真正的关键还在后面。”`,
+      emotion,
+      usedFactIds,
+    },
+    nextEventHint,
+  });
+  return [makeFollowup(0), makeFollowup(1)];
 }
 
 function resolveNarrativeEvent(

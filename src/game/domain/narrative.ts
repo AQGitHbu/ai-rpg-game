@@ -5,6 +5,12 @@ export const NARRATIVE_EMOTIONS = [
 ] as const;
 export type NarrativeEmotion = (typeof NARRATIVE_EMOTIONS)[number];
 
+/** Dialogue response copy is player speech, not a system/action description. */
+export const PLAYER_DIALOGUE_RESPONSE_LABELS = [
+  "请问一下目前状况是怎么样的？",
+  "是否可以告诉我事情的缘由？",
+] as const;
+
 export type NarrativeChoiceState = {
   readonly choiceToken: string;
   readonly label: string;
@@ -43,6 +49,14 @@ export type NarrativeNpcLineState = {
   readonly usedFactIds: readonly FactId[];
 };
 
+/** Pre-generated branch consumed immediately by a dialogue response choice. */
+export type NarrativeDialogueFollowupState = {
+  readonly dialogueIntent: string;
+  readonly narration: string;
+  readonly npcLine: NarrativeNpcLineState;
+  readonly nextEventHint?: string;
+};
+
 /** Phase 14: 场景生成的触发上下文，让导演知道场景是为何触发的。 */
 export type NarrativeTriggerContext =
   | { readonly kind: "initial_opening"; readonly npcId: NpcId }
@@ -73,6 +87,10 @@ export type NarrativeSceneState = {
   readonly event?: NarrativeEventState;
   /** Phase 14: 场景内多 NPC 对白（含焦点 NPC）。 */
   readonly npcDialogues?: readonly NpcDialogueInScene[];
+  /** Pre-generated dialogue branches; intentionally server-only in read models. */
+  readonly dialogueFollowups?: readonly [NarrativeDialogueFollowupState, NarrativeDialogueFollowupState];
+  /** Safe hint shown only after a pre-generated branch is selected. */
+  readonly nextEventHint?: string;
 };
 
 // 玩家自由输入触发叙事场景时的上下文快照：随 pending 变体单次消费，

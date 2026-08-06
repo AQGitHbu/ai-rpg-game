@@ -48,6 +48,7 @@ import {
 } from "./ai/townPlanTaskCoordinator";
 import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
 import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
+import type { NarrativeGenerationProgress } from "../runtimeNarrative";
 
 export type { RequestLogContext };
 
@@ -177,6 +178,22 @@ function stableIntentDetails(command: PerformActionCommand): GameLogDetails {
     if (typeof intent[key] === "string") details[key] = intent[key];
   }
   return details;
+}
+
+function addNarrativeProgress(
+  result: CurrentGameResult,
+  progressByGameId: ReadonlyMap<string, NarrativeGenerationProgress>,
+): CurrentGameResult {
+  if (result.status !== "active" || result.view.narrativeGeneration.status !== "pending") return result;
+  const progress = progressByGameId.get(String(result.view.gameId));
+  if (progress === undefined) return result;
+  return {
+    ...result,
+    view: {
+      ...result.view,
+      narrativeGeneration: { ...result.view.narrativeGeneration, progress },
+    },
+  };
 }
 
 function stableNpcDialogueDetails(command: HandleNpcDialogueCommand): GameLogDetails {
@@ -316,6 +333,20 @@ export function createServerGameEntryPoints(
     scenarioCandidateSource: createOfflineJourneyScenarioSource(),
     runtimeNarrativeMode: "offline",
   };
+  // 进度只存在当前 server process 内，不写入游戏存档，避免 UI 进度更新
+  // 与游戏状态 CAS 互相竞争；刷新后由新的 ensure 任务重新报告阶段。
+  const narrativeProgressByGameId = new Map<string, NarrativeGenerationProgress>();
+  const narrativeProgressObserver = (event: {
+    readonly gameId: string;
+    readonly status: "running" | "terminal";
+    readonly progress?: NarrativeGenerationProgress;
+  }): void => {
+    if (event.status === "running" && event.progress !== undefined) {
+      narrativeProgressByGameId.set(event.gameId, event.progress);
+    } else {
+      narrativeProgressByGameId.delete(event.gameId);
+    }
+  };
   const narrativeCoordinator = new RuntimeNarrativeTaskCoordinator({
     repository,
     newTraceId: () => randomUUID(),
@@ -325,6 +356,8 @@ export function createServerGameEntryPoints(
     approvalObserver: storyEval.approvalObserver,
     maxRoleAttempts: storyEvalMaxRoleAttempts,
     retryBackoffMs: storyEvalRetryBackoffMs,
+    fastFirstScene: env.STORY_EVAL_CAPTURE !== "1",
+    progressObserver: narrativeProgressObserver,
   }, logger);
   const townPlanCoordinator = new TownPlanTaskCoordinator({
     repository,
@@ -419,7 +452,7 @@ export function createServerGameEntryPoints(
     getCurrentGame: (traceId) => runLoggedUseCase(
       logger,
       "get_current_game",
-      () => getCurrentGame({ repository }),
+      async () => addNarrativeProgress(await getCurrentGame({ repository }), narrativeProgressByGameId),
       {},
       traceId
     ),

@@ -8,6 +8,8 @@ import {
   type EnsureResult,
 } from "./_shared/ensureCoordinator";
 
+const MAX_STALE_REVISION_RETRIES = 2;
+
 export type NarrativeEnsureResult = EnsureResult;
 
 /**
@@ -42,7 +44,19 @@ export class RuntimeNarrativeTaskCoordinator {
         }
         return { ok: true, key: String(record.gameId) };
       },
-      run: (traceId) => generatePendingNarrativeScene({ ...deps, traceId }),
+      run: async (traceId) => {
+        let result: Awaited<ReturnType<typeof generatePendingNarrativeScene>> = "stale";
+        for (let retry = 0; retry <= MAX_STALE_REVISION_RETRIES; retry += 1) {
+          result = await generatePendingNarrativeScene({
+            ...deps,
+            traceId: retry === 0
+              ? traceId
+              : `${traceId ?? deps.newTraceId()}-stale-retry-${retry}`,
+          });
+          if (result !== "stale") return result;
+        }
+        return result;
+      },
     });
   }
 

@@ -774,11 +774,11 @@ describe("performAction：talk 触发 pending（NPC 对话驱动叙事场景）"
         kind: "dialogue_response",
         npcId: asNpcId("npc_a"),
         dialogueIntent: "ask_current_situation",
-        playerText: "询问一下目前发生什么状况了"
+        playerText: "请问一下目前状况是怎么样的？"
       },
       playerNpcChat: {
         npcId: asNpcId("npc_a"),
-        playerText: "询问一下目前发生什么状况了"
+        playerText: "请问一下目前状况是怎么样的？"
       }
     });
     expect(saved.eventLedger.at(-1)).toMatchObject({
@@ -789,6 +789,63 @@ describe("performAction：talk 触发 pending（NPC 对话驱动叙事场景）"
       sceneId: "scene-dialogue"
     });
     expect(saved.eventLedger.some((event) => event.type === "narrative_choice")).toBe(false);
+  });
+
+  it("有预生成对白分支时：选择立即显示下一句对白，不重新进入 pending", async () => {
+    const repository = createFakeGameRepository();
+    const base = buildActiveRecord();
+    const dialogueScene = {
+      sceneId: "scene-dialogue-prebuilt",
+      turn: 0,
+      narration: "站务调度员抬头看向你。",
+      usedFactIds: [],
+      npcLine: null,
+      npcDialogues: [],
+      event: { kind: "dialogue", focusNpcId: asNpcId("npc_a") },
+      choices: [
+        { choiceToken: "choice-ask", label: "旧文案", choiceKind: "dialogue_response", dialogueIntent: "ask_current_situation", actionKey: "dialogue:scene:0" },
+        { choiceToken: "choice-reason", label: "旧文案", choiceKind: "dialogue_response", dialogueIntent: "challenge_recent_repair", actionKey: "dialogue:scene:1" }
+      ],
+      dialogueFollowups: [
+        {
+          dialogueIntent: "ask_current_situation",
+          narration: "你追问目前状况，站务调度员压低声音回答。",
+          npcLine: { npcId: asNpcId("npc_a"), text: "目前故障和昨夜的异常记录有关。", emotion: "guarded", usedFactIds: [] },
+          nextEventHint: "接下来可以调查报表。"
+        },
+        {
+          dialogueIntent: "challenge_recent_repair",
+          narration: "你追问事情缘由，站务调度员神色凝重。",
+          npcLine: { npcId: asNpcId("npc_a"), text: "事情还要从那份维修记录说起。", emotion: "guarded", usedFactIds: [] },
+          nextEventHint: "接下来可以寻找其他线索。"
+        }
+      ],
+      source: "generated"
+    } as unknown as NonNullable<GameState["narrative"]["currentScene"]>;
+    const record: GameRecord = {
+      ...base,
+      state: { ...base.state, narrative: { currentScene: dialogueScene, generation: { status: "idle" }, mode: "ai" } }
+    };
+    repository.setCurrentResult({ ok: true, status: "active", record });
+    repository.setApplyResult({ ok: true, record: { ...record, revision: 1 } });
+
+    const result = await performAction(
+      { intent: { type: "narrative_choice", choiceToken: "choice-ask" }, expectedRevision: 0 },
+      buildPerformDeps(repository, { runtimeNarrativeSources: fakeNarrativeSources() })
+    );
+
+    expect(result.ok).toBe(true);
+    const saved = repository.applyCalls[0].nextState;
+    expect(saved.narrative.generation).toEqual({ status: "idle" });
+    expect(saved.narrative.currentScene?.narration).toBe("你追问目前状况，站务调度员压低声音回答。");
+    expect(saved.narrative.currentScene?.npcLine?.text).toBe("目前故障和昨夜的异常记录有关。");
+    expect(saved.narrative.currentScene?.nextEventHint).toBe("接下来可以调查报表。");
+    expect(saved.narrative.currentScene?.choices.map((choice) => choice.label)).toEqual([
+      "请问一下目前状况是怎么样的？",
+      "是否可以告诉我事情的缘由？",
+    ]);
+    expect(saved.narrative.generation.status).not.toBe("pending");
+    expect(saved.eventLedger.at(-1)).toMatchObject({ type: "narrative_dialogue_choice" });
   });
 });
 

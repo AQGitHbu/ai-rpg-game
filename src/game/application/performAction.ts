@@ -15,9 +15,10 @@ import {
   failQuest,
   resolveEnding,
 } from "@/game/gameplay/rpg/quests";
-import { finalMainActOf } from "@/game/domain";
-import type { GameState, NarrativeTriggerContext, NpcId, QuestId, EnemyId, ScenarioBlueprint } from "@/game/domain";
+import { finalMainActOf, paginateSpeechText, PLAYER_DIALOGUE_RESPONSE_LABELS } from "@/game/domain";
+import type { GameState, NarrativeSceneState, NarrativeTriggerContext, NpcId, QuestId, EnemyId, ScenarioBlueprint } from "@/game/domain";
 import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
+import { SPEECH_PAGE_CHAR_BUDGET } from "./locationAdventureView";
 import type { GameRepository } from "./server/persistence/gameRepository";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 
@@ -180,6 +181,7 @@ export async function performAction(
       readonly npcRole: string;
     };
   }> | null = null;
+  let dialogueFollowupConsumed = false;
   let narrativeChoiceTriggerContext: Extract<NarrativeTriggerContext, { readonly kind: "talk" }> | undefined;
 
   try {
@@ -205,17 +207,28 @@ export async function performAction(
           if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
           return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "该对白回应已失效。" } };
         }
+        const choiceIndex = scene.choices.indexOf(choice);
+        const playerText = choiceIndex === 0
+          ? PLAYER_DIALOGUE_RESPONSE_LABELS[0]
+          : PLAYER_DIALOGUE_RESPONSE_LABELS[1];
+        const preGeneratedFollowup = scene.dialogueFollowups?.find(
+          (followup) => followup.dialogueIntent === choice.dialogueIntent
+        );
+        const followupScene = preGeneratedFollowup === undefined
+          ? null
+          : createPreGeneratedDialogueScene(record.blueprint, scene, preGeneratedFollowup);
+        if (followupScene !== null) dialogueFollowupConsumed = true;
         const triggerContext = {
           kind: "dialogue_response" as const,
           npcId: dialogueNpcId,
           dialogueIntent: choice.dialogueIntent,
-          playerText: choice.label,
+          playerText,
         };
         dialogueResponse = {
           triggerContext,
           playerNpcChat: {
             npcId: dialogueNpcId,
-            playerText: choice.label,
+            playerText,
             npcName: dialogueNpc.name,
             npcRole: dialogueNpc.role,
           },
@@ -223,7 +236,7 @@ export async function performAction(
         resolved = {
           state: {
             ...record.state,
-            narrative: { ...record.state.narrative, currentScene: null, generation: { status: "idle" } },
+            narrative: { ...record.state.narrative, currentScene: followupScene, generation: { status: "idle" } },
             eventLedger: [...record.state.eventLedger, {
               type: "narrative_dialogue_choice",
               choiceToken: choice.choiceToken,
@@ -461,7 +474,7 @@ export async function performAction(
     const isRepeatTalk =
       intent.type === "talk" &&
       (record.state.npcs.find((npc) => npc.npcId === intent.npcId)?.met ?? true);
-    const shouldQueue = intent.type !== "ack_prologue" && !isRepeatTalk;
+    const shouldQueue = intent.type !== "ack_prologue" && !isRepeatTalk && !dialogueFollowupConsumed;
     if (shouldQueue) {
       nextState = {
         ...nextState,
@@ -566,4 +579,39 @@ function findStage3QuestForEnemy(
     q.objectives.some((obj) => obj.kind === "defeat_enemy" && obj.enemyId === enemyId)
   );
   return quest?.id;
+}
+
+function createPreGeneratedDialogueScene(
+  blueprint: ScenarioBlueprint,
+  scene: NonNullable<GameState["narrative"]["currentScene"]>,
+  followup: NonNullable<NonNullable<GameState["narrative"]["currentScene"]>["dialogueFollowups"]>[number],
+): NonNullable<GameState["narrative"]["currentScene"]> | null {
+  if (scene.event?.kind !== "dialogue") return null;
+  const npc = blueprint.npcs.find((entry) => String(entry.id) === String(followup.npcLine.npcId));
+  if (npc === undefined) return null;
+  const sceneId = `${scene.sceneId}-dialogue-${followup.dialogueIntent}`;
+  const choices = [0, 1].map((index) => ({
+    choiceToken: `${sceneId}:choice:${index}`,
+    label: PLAYER_DIALOGUE_RESPONSE_LABELS[index as 0 | 1],
+    choiceKind: "dialogue_response" as const,
+    dialogueIntent: scene.choices[index as 0 | 1].dialogueIntent ?? `dialogue_response_${index + 1}`,
+    actionKey: `dialogue:${sceneId}:${index}`,
+  })) as unknown as NarrativeSceneState["choices"];
+  return {
+    sceneId,
+    turn: scene.turn + 1,
+    narration: followup.narration,
+    usedFactIds: followup.npcLine.usedFactIds,
+    npcLine: followup.npcLine,
+    event: scene.event,
+    choices,
+    source: scene.source,
+    npcDialogues: [{
+      npcId: followup.npcLine.npcId,
+      npcName: npc.name,
+      npcRole: npc.role,
+      speechPages: paginateSpeechText(followup.npcLine.text, SPEECH_PAGE_CHAR_BUDGET),
+    }],
+    nextEventHint: followup.nextEventHint,
+  };
 }

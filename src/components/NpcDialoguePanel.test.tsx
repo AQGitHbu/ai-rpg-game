@@ -161,6 +161,22 @@ describe("NpcDialoguePanel：底部选项", () => {
     expect(screen.getByRole("button", { name: "1. 选项A" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "回顾已知线索" })).toBeEnabled();
   });
+
+  it("对白分支消费后显示下一原子事件提示", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const dialogue: NpcDialogueView = {
+      ...ZHAO(),
+      nextEventHint: "这段对话暂告一段落，接下来可以调查报表。",
+      choices: [{ choiceToken: "tok_a", label: "请问一下目前状况是怎么样的？" }],
+      freeInputEnabled: true
+    };
+
+    render(
+      <NpcDialoguePanel dialogue={dialogue} gameType="wuxia" onChoice={vi.fn()} onFreeInput={vi.fn()} busy={false} />
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("接下来可以调查报表");
+  });
 });
 
 describe("NpcDialoguePanel：自由输入", () => {

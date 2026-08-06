@@ -141,8 +141,10 @@ export {
   type NarrativeGenerationState,
   type NarrativeTriggerContext,
   type NpcDialogueInScene,
+  type NarrativeDialogueFollowupState,
   type PlayerNpcChatState,
-  NARRATIVE_EMOTIONS
+  NARRATIVE_EMOTIONS,
+  PLAYER_DIALOGUE_RESPONSE_LABELS
 } from "./narrative";
 export {
   STORY_MEMORY_VERSION,

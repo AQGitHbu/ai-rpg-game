@@ -119,6 +119,11 @@ export function NpcDialoguePanel({
               {localReply}
             </p>
           ) : null}
+          {dialogue.nextEventHint !== undefined ? (
+            <p className="npc-dialogue-next-event" role="status" aria-live="polite">
+              {dialogue.nextEventHint}
+            </p>
+          ) : null}
         </div>
       </div>
 

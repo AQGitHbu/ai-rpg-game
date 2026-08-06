@@ -85,7 +85,7 @@ async function run<T extends object, A>(role: Role, request: Request, input: Liv
         ...input.responseFormat?.(role),
       },
       temperature: 0.2,
-      timeoutMs: input.timeoutMs ?? 120_000,
+      timeoutMs: request.timeoutMs ?? input.timeoutMs ?? 120_000,
     });
   } catch { audit(logger, request.traceId, role, false, "service_error", Date.now() - startedAt); capture({ rawResponse: null, parsedCandidate: null, failureCategory: "service_error" }); return failure(request, "service_error") as A; }
   if (!completed.ok) { const failedCategory = category[completed.code]; audit(logger, request.traceId, role, false, failedCategory, completed.latencyMs); capture({ rawResponse: (completed as { content?: string }).content ?? null, parsedCandidate: null, failureCategory: failedCategory }); return failure(request, failedCategory) as A; }

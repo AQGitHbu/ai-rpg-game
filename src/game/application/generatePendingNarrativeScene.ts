@@ -1,9 +1,13 @@
-import type { GameRepository } from "./server/persistence/gameRepository";
+import type { GameRecord, GameRepository } from "./server/persistence/gameRepository";
 import type { GameLogger } from "@/game/logging";
 import type { GameState, ScenarioBlueprint } from "@/game/domain";
-import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
+import type { DirectorSource, NpcLineSource, SceneScriptSource, NarrativeGenerationProgress } from "./runtimeNarrative";
 import { applyEndingToBlueprint, compileBlueprintExpansion } from "@/game/gameplay/rpg/narrative";
-import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
+import {
+  createDeterministicNarrativeFallback,
+  orchestrateNarrativeScene,
+  type OrchestrateSceneResult,
+} from "./orchestrateNarrativeScene";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 import { reconcileStoryMemory } from "@/game/gameplay/rpg/narrative";
 import type { StoryEvalApprovalEvent } from "./storyEvalCaptureTypes";
@@ -26,6 +30,17 @@ export type GeneratePendingNarrativeSceneDependencies = Readonly<{
   maxRoleAttempts?: number;
   /** 评估专用 provider 失败退避；未传时保持正常运行时零额外等待。 */
   retryBackoffMs?: number;
+  /** 生产开局快速路径：初始场景只做一次角色尝试，失败立即使用 fallback。 */
+  fastFirstScene?: boolean;
+  /** 仅供 server composition root 维护进程内的脱敏生成进度。 */
+  progressObserver?: (event: NarrativeProgressEvent) => void;
+}>;
+
+export type NarrativeProgressEvent = Readonly<{
+  gameId: string;
+  status: "running" | "terminal";
+  progress?: NarrativeGenerationProgress;
+  result?: GeneratePendingNarrativeSceneResult;
 }>;
 
 export type GeneratePendingNarrativeSceneResult =
@@ -53,6 +68,11 @@ export async function generatePendingNarrativeScene(
   ) {
     return "not_pending";
   }
+  const gameId = String(record.gameId);
+  const finish = (result: GeneratePendingNarrativeSceneResult): GeneratePendingNarrativeSceneResult => {
+    deps.progressObserver?.({ gameId, status: "terminal", result });
+    return result;
+  };
 
   // An older save or a concurrently evolved ruleset may leave a pending
   // marker after fewer than two actions remain. Clear only the marker; never
@@ -66,21 +86,41 @@ export async function generatePendingNarrativeScene(
         narrative: { ...record.state.narrative, currentScene: null, generation: { status: "idle" } },
       },
     });
-    if (!cleared.ok) return cleared.code === "STALE_GAME_REVISION" ? "stale" : "unavailable";
-    return "cleared";
+    if (!cleared.ok) return finish(cleared.code === "STALE_GAME_REVISION" ? "stale" : "unavailable");
+    return finish("cleared");
   }
 
   const traceId = deps.traceId ?? deps.newTraceId();
-  const generated = await orchestrateNarrativeScene({
-    traceId,
-    blueprint: record.blueprint,
-    state: record.state,
-    ...deps.runtimeNarrativeSources,
-    logger: deps.logger,
-    approvalObserver: deps.approvalObserver,
-    maxRoleAttempts: deps.maxRoleAttempts,
-    retryBackoffMs: deps.retryBackoffMs,
-  });
+  let generated;
+  try {
+    generated = await orchestrateNarrativeScene({
+      traceId,
+      blueprint: record.blueprint,
+      state: record.state,
+      ...deps.runtimeNarrativeSources,
+      logger: deps.logger,
+      approvalObserver: deps.approvalObserver,
+      maxRoleAttempts: deps.maxRoleAttempts,
+      retryBackoffMs: deps.retryBackoffMs,
+      fastFirstScene: deps.fastFirstScene,
+      progressObserver: (progress) => deps.progressObserver?.({ gameId, status: "running", progress }),
+    });
+  } catch {
+    // Provider adapters and legacy saves must not leave the durable pending
+    // marker behind. A deterministic scene is still actionable and lets the
+    // player continue while the failure remains visible in server logs.
+    deps.logger?.error("runtime_narrative_orchestration_failed", {
+      traceId,
+      scope: "request",
+      source: "rpg.application.generate_pending_narrative_scene",
+      gameId: String(record.gameId),
+    });
+    generated = createDeterministicNarrativeFallback({
+      traceId,
+      blueprint: record.blueprint,
+      state: record.state,
+    });
+  }
   let scene = generated.scene;
   deps.logger?.info("runtime_narrative_generation", {
     traceId,
@@ -142,7 +182,7 @@ export async function generatePendingNarrativeScene(
       narrative: { ...finalState.narrative, currentScene: scene },
     };
   }
-  if (endingApproved) {
+  if (generated.endingDecision?.ok === true) {
     // approvedEnding.id 已在 orchestrateNarrativeScene 基于 record.blueprint.endings 铸造；
     // 扩展不修改 endings[]，故 id 在扩展后的 nextBlueprint 上仍唯一。
     nextBlueprint = applyEndingToBlueprint({
@@ -169,8 +209,81 @@ export async function generatePendingNarrativeScene(
         expectedRevision: record.revision,
         nextState: finalState,
       });
-  if (!saved.ok) return saved.code === "STALE_GAME_REVISION" ? "stale" : "unavailable";
-  return "saved";
+  if (!saved.ok) {
+    if (saved.code === "STALE_GAME_REVISION" && !expansionApproved && !endingApproved) {
+      const rebased = await rebaseAfterPrologueAck({ deps, original: record, generated, scene });
+      if (rebased === "saved") return finish("saved");
+      if (rebased === "unavailable") return finish("unavailable");
+    }
+    return finish(saved.code === "STALE_GAME_REVISION" ? "stale" : "unavailable");
+  }
+  return finish("saved");
+}
+
+/**
+ * The prologue acknowledgement is a legitimate concurrent write: it changes
+ * only `prologueShown` and does not change the gameplay facts used to compose
+ * the first scene.  Reuse the already completed role calls against that
+ * latest revision instead of throwing the scene away and making the player
+ * wait for another provider round.
+ */
+async function rebaseAfterPrologueAck(args: {
+  readonly deps: GeneratePendingNarrativeSceneDependencies;
+  readonly original: GameRecord;
+  readonly generated: OrchestrateSceneResult;
+  readonly scene: NonNullable<GameState["narrative"]["currentScene"]>;
+}): Promise<"saved" | "not_applicable" | "stale" | "unavailable"> {
+  const loaded = await args.deps.repository.getCurrentGame();
+  if (!loaded.ok || loaded.status !== "active") return "unavailable";
+  const latest = loaded.record;
+  if (
+    latest.state.narrative.generation.status !== "pending" ||
+    latest.state.narrative.currentScene !== null ||
+    latest.state.ending !== null ||
+    latest.state.battle.status === "active" ||
+    String(latest.state.currentLocationId) !== String(args.original.state.currentLocationId) ||
+    args.original.state.prologueShown ||
+    !latest.state.prologueShown ||
+    !sameStateExceptPrologue(args.original.state, latest.state)
+  ) {
+    return "not_applicable";
+  }
+
+  const presentedEvent = {
+    type: "narrative_scene_presented" as const,
+    sceneId: args.scene.sceneId,
+    locationId: latest.state.currentLocationId,
+    focusNpcId: args.generated.focusNpcId,
+    revealedFactIds: args.scene.usedFactIds,
+    pacing: args.generated.pacing,
+    occurredAt: args.deps.now(),
+  };
+  const nextState: GameState = {
+    ...latest.state,
+    eventLedger: [...latest.state.eventLedger, presentedEvent],
+    narrative: {
+      currentScene: args.scene,
+      generation: { status: "idle" },
+      mode: latest.state.narrative.mode,
+    },
+  };
+  const finalState = {
+    ...nextState,
+    storyMemory: reconcileStoryMemory({ state: nextState }),
+  };
+  const saved = await args.deps.repository.applyResolvedAction({
+    gameId: latest.gameId,
+    expectedRevision: latest.revision,
+    nextState: finalState,
+  });
+  if (saved.ok) return "saved";
+  return saved.code === "STALE_GAME_REVISION" ? "stale" : "unavailable";
+}
+
+function sameStateExceptPrologue(a: GameState, b: GameState): boolean {
+  const { prologueShown: _a, ...withoutPrologueA } = a;
+  const { prologueShown: _b, ...withoutPrologueB } = b;
+  return JSON.stringify(withoutPrologueA) === JSON.stringify(withoutPrologueB);
 }
 
 function remapExpandedScene(

@@ -23,6 +23,7 @@ type AdventureGameShellProps = {
   readonly onStaleRevision: () => void;
   readonly developmentTools: boolean;
   readonly onClearDevelopmentSave: () => Promise<void>;
+  readonly narrativeGenerationUnavailable?: boolean;
 };
 
 type AdventureScreen = "map" | "town" | "scene";
@@ -58,7 +59,8 @@ export function AdventureGameShell({
   onViewChange,
   onStaleRevision,
   developmentTools,
-  onClearDevelopmentSave
+  onClearDevelopmentSave,
+  narrativeGenerationUnavailable = false
 }: AdventureGameShellProps) {
   const [screen, setScreen] = useState<AdventureScreen>("map");
   const [detailsPanel, setDetailsPanel] = useState<DetailsPanel | null>(null);
@@ -83,7 +85,6 @@ export function AdventureGameShell({
   // Treat their absence as ready so a compatible client can still render them.
   const narrativePending = view.narrativeGeneration?.status === "pending";
   const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
-  const [dismissedNarrativeDialogue, setDismissedNarrativeDialogue] = useState<string | null>(null);
   const [devToolsOpen, setDevToolsOpen] = useState(false);
   const triggerRef = useRef<HTMLElement | null>(null);
   const devToolsTriggerRef = useRef<HTMLElement | null>(null);
@@ -91,25 +92,13 @@ export function AdventureGameShell({
   const isSubmitting = feedback.phase === "submitting";
   const shellBusy = busy || isSubmitting;
 
-  // 原子对白事件就绪后在投影层直接给出焦点 NPC，避免 effect 内同步 setState
-  // 造成级联渲染；narration 作为当前事件的稳定展示键，允许玩家主动关闭。
-  const narrativeDialogueKey = !narrativePending && view.narrative?.eventKind === "dialogue"
-    ? view.narrative.narration
-    : null;
-  const autoDialogueNpcId = narrativeDialogueKey !== null && dismissedNarrativeDialogue !== narrativeDialogueKey
-    ? view.dialogues[0]?.npcId ?? null
-    : null;
   const selectedDialogue = dialogueNpcId !== null
     ? view.dialogues.find((d) => d.npcId === dialogueNpcId) ?? null
     : null;
   const atomicWorldEventReady = !narrativePending
     && view.narrative?.eventKind !== undefined
     && view.narrative.eventKind !== "dialogue";
-  const activeDialogue = narrativePending || atomicWorldEventReady
-    ? null
-    : selectedDialogue ?? (autoDialogueNpcId === null
-      ? null
-      : view.dialogues.find((d) => d.npcId === autoDialogueNpcId) ?? null);
+  const activeDialogue = narrativePending || atomicWorldEventReady ? null : selectedDialogue;
 
   function openDetails(panel: DetailsPanel): void {
     triggerRef.current = document.activeElement as HTMLElement;
@@ -119,9 +108,6 @@ export function AdventureGameShell({
   function closeOverlay(): void {
     setDetailsPanel(null);
     setDialogueNpcId(null);
-    if (narrativeDialogueKey !== null && activeDialogue !== null) {
-      setDismissedNarrativeDialogue(narrativeDialogueKey);
-    }
   }
 
   async function handleMove(locationId: string): Promise<void> {
@@ -191,7 +177,13 @@ export function AdventureGameShell({
     setFeedback({ phase: "submitting" }); onBusyChange(true);
     const outcome = await postGameAction({ intent: { type: "narrative_choice", choiceToken }, revision: view.revision });
     onBusyChange(false);
-    if (outcome.kind === "success") { setFeedback({ phase: "idle" }); pushToast(outcome.message); onViewChange(outcome.view); return; }
+    if (outcome.kind === "success") {
+      setFeedback({ phase: "idle" });
+      setDialogueNpcId(null);
+      pushToast(outcome.message);
+      onViewChange(outcome.view);
+      return;
+    }
     if (outcome.kind === "rejected") { setFeedback({ phase: "rejected", message: outcome.message }); return; }
     if (outcome.kind === "stale") { setFeedback({ phase: "idle" }); onStaleRevision(); return; }
     setFeedback({ phase: "error", message: outcome.message });
@@ -229,6 +221,7 @@ export function AdventureGameShell({
       }
       if (body?.kind === "narrative_trigger" && body.view !== undefined) {
         setFeedback({ phase: "idle" });
+        setDialogueNpcId(null);
         onViewChange(body.view);
         return { kind: "narrative_trigger" };
       }
@@ -337,7 +330,10 @@ export function AdventureGameShell({
       ) : null}
 
       {narrativePending && view.battle === null && view.ending === null ? (
-        <NarrativeGenerationModal />
+        <NarrativeGenerationModal
+          progress={view.narrativeGeneration?.progress}
+          unavailable={narrativeGenerationUnavailable}
+        />
       ) : null}
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />

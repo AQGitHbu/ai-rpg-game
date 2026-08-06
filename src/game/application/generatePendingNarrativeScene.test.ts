@@ -96,6 +96,29 @@ describe("generatePendingNarrativeScene", () => {
     expect(writes[0]?.nextState.narrative.currentScene?.source).toBe("fallback");
   });
 
+  it("编排阶段抛出异常时也保存 fallback，避免 pending 无限重试", async () => {
+    const writes: ApplyResolvedActionInput[] = [];
+    const result = await generatePendingNarrativeScene({
+      repository: repositoryFor(pendingRecord(), (input) => writes.push(input)),
+      newTraceId: () => "task-trace-throws",
+      now: () => "2026-07-31T01:02:03.000Z",
+      runtimeNarrativeSources: {
+        directorSource: {
+          async generate() {
+            throw new Error("provider adapter crashed");
+          },
+        },
+        sceneScriptSource: { async generate() { throw new Error("not reached"); } },
+        npcLineSource: { async generate() { throw new Error("not reached"); } },
+      },
+    });
+
+    expect(result).toBe("saved");
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.nextState.narrative.generation).toEqual({ status: "idle" });
+    expect(writes[0]?.nextState.narrative.currentScene?.source).toBe("fallback");
+  });
+
   it("不是 pending 时零调用 AI、零写入，允许恢复端点安全重复调用", async () => {
     const record = pendingRecord();
     const readyState: GameState = {
@@ -174,6 +197,51 @@ describe("generatePendingNarrativeScene：Phase 11 场景提交事件与记忆�
     expect(record.record.state.eventLedger.at(-1)?.type).not.toBe("narrative_scene_presented");
     expect(record.record.state.storyMemory?.reducedThroughEventCount).toBe(0);
     expect(record.record.state.narrative.generation.status).toBe("pending");
+  });
+
+  it("序幕 ack 造成 revision 过期时：复用已完成场景并基于最新 revision 落库", async () => {
+    const original = pendingRecord();
+    let current = original;
+    let applyCount = 0;
+    const expectedRevisions: number[] = [];
+    const repository: GameRepository = {
+      async createInitialGame() { return { ok: true }; },
+      async getCurrentGame() {
+        return { ok: true as const, status: "active" as const, record: current };
+      },
+      async applyResolvedAction(input) {
+        applyCount += 1;
+        expectedRevisions.push(input.expectedRevision);
+        if (applyCount === 1) {
+          // The prologue acknowledgement commits while the provider work is
+          // in flight; the generated scene itself has not been consumed.
+          current = {
+            ...current,
+            revision: 5,
+            state: { ...current.state, prologueShown: true },
+          };
+          return { ok: false as const, code: "STALE_GAME_REVISION" as const };
+        }
+        current = { ...current, revision: 6, state: input.nextState };
+        return { ok: true as const, record: current };
+      },
+      async applyBlueprintExpansion() {
+        return { ok: false as const, code: "STALE_GAME_REVISION" as const };
+      },
+    };
+
+    const result = await generatePendingNarrativeScene({
+      repository,
+      newTraceId: () => "phase14-rebase",
+      now: () => "2026-07-31T01:02:03.000Z",
+      runtimeNarrativeSources: unavailableSources(),
+    });
+
+    expect(result).toBe("saved");
+    expect(expectedRevisions).toEqual([4, 5]);
+    expect(current.state.prologueShown).toBe(true);
+    expect(current.state.narrative.currentScene?.source).toBe("fallback");
+    expect(current.state.narrative.generation).toEqual({ status: "idle" });
   });
 });
 

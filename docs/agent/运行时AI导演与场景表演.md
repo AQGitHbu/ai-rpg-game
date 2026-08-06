@@ -22,19 +22,26 @@ Phase 10 建立第一条真实运行时 AI 剧情闭环；Phase 14 将其收敛�
 - `NarrativeSceneState.event` 只允许一个原子事件：dialogue 绑定一个焦点 NPC；investigate/item/battle 分别绑定一个事实、物品或敌人；travel/observe 绑定一个地点。
 - 对白事件的两个选项必须是不同的 `dialogueIntent` 与自然语言回应（例如询问状况、质疑维修），不再伪装成“调查第几条线索”等规则行动；世界事件选项仍必须映射合法 `AvailableAction`。
 - 规则 resolver、quest reconciliation、battle、ending 和 SQLite CAS 继续独占正式状态写入。
-- 每个角色最多三次有界尝试；只重试当前失败角色，不重跑已经批准的上游角色。耗尽后整场使用确定性 fallback，不拼接部分 AI 输出。
+- 每个角色最多三次有界尝试；只重试当前失败角色，不重跑已经批准的上游角色。正常生产局的初始开场启用快速路径，每个角色只尝试一次且单次 provider 上限为 30 秒，失败立即使用确定性 fallback；后续场景和 story-eval 保留最多三次尝试与 120 秒单次上限。耗尽后整场使用确定性 fallback，不拼接部分 AI 输出。
 - active battle、ending 或合法非战斗行动少于两个时，不生成普通 narrative scene。
 - 场景生成中“新人物/地点/道具”表示首次向玩家引入蓝图已有实体。导演可额外提议新地点/NPC，或为当前原子调查/物品/战斗事件懒提议一个事实、物品或敌人；均经 `approveBlueprintExpansion` 闸门审批后由 `compileBlueprintExpansion` 铸 ID 并以 CAS 追加进蓝图。每场最多一种新资源。
 - 不做自由输入、意图解析 AI、streaming、AI 图片、语音或视觉描述生成。
+- 对白场景在本次原子场景生成时同步准备两个确定性对白后续分支；它们不是额外 provider 请求，也不向客户端暴露内部 action key。玩家选择后先立即显示对应 NPC 回复与下一行动提示，下一次对白选择才重新进入三角色原子场景生成。
 - 美术只保留后续 `VisualAssetPort` 的设计方向；本阶段不创建未使用 production port，继续使用本地 SVG。
 
 ## 已实现的运行时约束
 
-- 三个角色使用独立真实请求，均关闭 provider 思考模式，单次 timeout 为 120 秒。
+- 三个角色使用独立真实请求，均关闭 provider 思考模式；普通场景单次 timeout 为 120 秒，初始开场快速路径覆盖为 30 秒，避免三角色串行失败时等待约 6 分钟。
 - provider 不支持 guided grammar（缺少 `xgrammar`），因此使用 prompt-only JSON、严格本地解析和审批。
 - source 在审批前只做机械归一化：action key、NPC ID、fact ID 从最小上下文复制；writer/NPC 的枚举和长度收敛到领域 schema；不修改场景叙述、NPC 正文、选项策略或任何规则结果。
-- `narrative_choice` 的对白回应只写入 `narrative_dialogue_choice` 并排队下一次 `dialogue_response`；世界选项才解出既有规则 action。战斗仍必须进入正式 battle facade，AI 不能直接决定胜负。
-- provider 延迟不会阻塞创建或 choice 请求。pending 场景经 `POST /api/game/narrative/ensure` 触发，客户端每 750ms 读取 current-game；进程重启后同一 pending 标记可恢复。进程内 coordinator 只负责单飞，不承担可靠队列语义。
+- `narrative_choice` 的对白回应优先消费场景内预生成分支；没有预生成分支时才写入 `narrative_dialogue_choice` 并排队下一次 `dialogue_response`。世界选项才解出既有规则 action。战斗仍必须进入正式 battle facade，AI 不能直接决定胜负。
+- provider 延迟不会阻塞创建或 choice 请求。pending 场景经 `POST /api/game/narrative/ensure` 触发，客户端每 750ms 读取 current-game，并每 10 秒重新 ensure 一次以恢复异常退出的后台任务；进程重启后同一 pending 标记可恢复。进程内 coordinator 负责单飞，并对 stale revision 做最多两次有界重试。
+- 生成 UI 可显示脱敏的角色阶段进度（已批准完成的不同角色阶段 / 3、当前角色、当前角色的尝试次数）；同一导演重试不会把完成数重复累加。该进度只存在 server process 内，不写入 GameState，不参与 CAS。
+
+## 最近维护
+
+- 2026-08-06：修复运行时叙事任务异常退出后长期保持 `pending` 的问题。编排边界现在将未预期异常收敛为确定性 fallback，并与 `narrative_scene_presented`、memory 归约一起通过 CAS 写入 `currentScene` 与 `generation: idle`；只有持久化本身失败才返回 `unavailable`。初始开场增加 30 秒单次 provider 上限，避免三个角色各等 120 秒导致 5–6 分钟无反馈。序幕 ack 与后台生成并发时，生成器会在仅 `prologueShown` 改变的最新 revision 上安全重基准；其它 stale 由 coordinator 最多重试两次。客户端每 10 秒重新 ensure，连续基础设施失败才停止并提示刷新。pending UI 展示角色阶段进度；fallback 对话绑定当前触发 NPC，并始终提供两个 `dialogue_response` 选项。
+- 2026-08-06：修复角色进度按“响应次数”累计导致“导演第 3 次尝试却显示 2/3”的语义错误；现在只有 director/writer/npc 各自审批完成后才分别计入 1 个阶段。对白场景同步预生成两个 NPC 回复，选择后即时显示连续对白与安全的下一行动提示；后续选择才进入 pending，避免对白回应被错误替换成无关“剧情事件”。
 
 ## 小镇空间语义上下文（townSpatial）
 
@@ -60,9 +67,9 @@ createGame 初始化规则状态 + narrative pending 一次写入
 → NarrativeSceneState 以 CAS 写入 ready
 
 narrative_choice(choiceToken, revision)
-→ 对白回应写入 dialogueIntent + 玩家自然语言，或世界选项解析为合法 AvailableAction
+→ 对白回应先消费预生成 NPC 分支；无预生成分支时写入 dialogueIntent + 玩家自然语言，世界选项解析为合法 AvailableAction
 → 既有规则裁决 / quest / ending
-→ 规则结果与下一场景 pending 一次 CAS 写入并立即返回
+→ 预生成分支以 idle + 下一句对白一次 CAS 写入；需要新场景时才以 pending 一次 CAS 写入并立即返回
 → director 只选一个原子事件 → writer 生成该事件内容 → npc 只回答当前玩家输入
 → 场景以 CAS 写入 ready → 视图只展示该事件对应的 NPC/调查/物品/战斗内容
 ```
@@ -82,8 +89,8 @@ narrative_choice(choiceToken, revision)
 - 不把完整 blueprint、GameState 或 GameRecord 作为通用 AI 上下文。
 - NPC prompt builder 只能接受 `NpcPerformanceRequest`，不能接受 blueprint/state 后再“自行过滤”。
 - AI 输出先经过 pure approval，再构造新的批准对象；不能把 AI 原对象直接持久化。
-- CAS 冲突时丢弃已生成内容，不重复调用 AI。
-- pending 时 application 拒绝行动；少于两个合法世界行动时清除 pending，不让 AI 或 fallback 伪造行动选项；对白事件的两个回应由 writer 生成并经对白语义审批。
+- CAS 冲突时默认丢弃已生成内容；仅序幕 ack 这种只改变 `prologueShown` 的安全并发写入允许在最新 revision 上复用已生成内容，其它 stale 不重复调用 AI而由后台 coordinator 有界重试。
+- pending 时 application 拒绝行动；少于两个合法世界行动时清除 pending，不让 AI 或 fallback 伪造行动选项；对白事件的两个玩家口吻回应由 writer 生成，并在场景生成时同步准备两条确定性 NPC 回复。
 - `NarrativeRuntimeState.mode` 由服务端保存：正常局为 `ai`；开发环境“使用已有数据开始”创建 `offline` 局，固定使用 Phase 10 完整旅程的输入/seed，既不调用开局 AI，也不排队运行时 AI。该模式只用于开发现有地图、地点和 NPC UI，不是玩家可配置的 AI 开关。
 - 场景内人物、地点、道具首次登场仅能引用既有蓝图 ID；运行时蓝图扩展（新地点/NPC/事实/物品/敌人）经独立闸门审批后追加，见 `docs/agent/蓝图动态化.md`。
 - 真实 smoke 是否执行必须按事实记录，不能把 fixture 通过写成真实调用成功。

@@ -469,7 +469,7 @@ describe("Phase 14 NPC 对话层统一", () => {
       event: { kind: "dialogue", focusNpcId: asNpcId("npc_a") },
       choices: [
         { choiceToken: "dialogue_a", label: "询问目前发生了什么", choiceKind: "dialogue_response", dialogueIntent: "ask", actionKey: "dialogue:0" },
-        { choiceToken: "dialogue_b", label: "追问维修故障", choiceKind: "dialogue_response", dialogueIntent: "challenge", actionKey: "dialogue:1" }
+        { choiceToken: "dialogue_b", label: "是否可以告诉我事情的缘由？", choiceKind: "dialogue_response", dialogueIntent: "challenge", actionKey: "dialogue:1" }
       ],
       source: "generated",
       npcDialogues: [
@@ -481,8 +481,22 @@ describe("Phase 14 NPC 对话层统一", () => {
     expect(dialogueView.locationScene.interactions).toEqual([]);
     expect(dialogueView.dialogues.map((entry) => entry.npcId)).toEqual(["npc_a"]);
     expect(dialogueView.dialogues[0].choices.map((choice) => choice.label)).toEqual([
-      "询问目前发生了什么",
-      "追问维修故障"
+      "请问一下目前状况是怎么样的？",
+      "是否可以告诉我事情的缘由？"
+    ]);
+
+    const legacyDialogueScene: NarrativeSceneState = {
+      ...dialogueScene,
+      npcDialogues: undefined,
+    };
+    const legacyDialogueView = project({
+      ...PIPELINE.state,
+      narrative: { ...PIPELINE.state.narrative, currentScene: legacyDialogueScene },
+    });
+    expect(legacyDialogueView.dialogues.map((entry) => entry.npcId)).toEqual(["npc_a"]);
+    expect(legacyDialogueView.dialogues[0].choices.map((choice) => choice.label)).toEqual([
+      "请问一下目前状况是怎么样的？",
+      "是否可以告诉我事情的缘由？"
     ]);
 
     const worldScene: NarrativeSceneState = {

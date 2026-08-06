@@ -1,4 +1,4 @@
-import type { GameState, LocationScale, ScenarioBlueprint } from "@/game/domain";
+import { PLAYER_DIALOGUE_RESPONSE_LABELS, type GameState, type LocationScale, type ScenarioBlueprint } from "@/game/domain";
 import { locationScaleOf, paginateSpeechText } from "@/game/domain";
 import {
   composeNpcSpeech,
@@ -87,6 +87,8 @@ export type NpcDialogueView = {
   readonly slot: SceneSlot;
   /** 确定性对白分页：currentScene.npcDialogues 优先；缺失时回退 composeNpcSpeech。 */
   readonly speechPages: readonly string[];
+  /** 选中预生成对白分支后显示的下一原子事件提示。 */
+  readonly nextEventHint?: string;
   /** Phase 14：情境选项——来自 currentScene.choices（read-only 或不在场则为空）。 */
   readonly choices: readonly DialogueChoiceView[];
   /** Phase 14：是否允许自由输入——非只读且在场时为 true。 */
@@ -290,7 +292,13 @@ function projectDialogues(
     if (npc === undefined) {
       throw new Error("对话投影失败：在场 NPC 引用在蓝图中不存在");
     }
-    const sceneHasThisNpc = inSceneNpcIds.has(String(npcState.npcId));
+    // 兼容旧 fallback/旧存档：dialogue event 已明确锁定焦点 NPC 时，
+    // 即使 npcDialogues 尚未写入，也必须保留场景 choices，不能让对话面板变成空壳。
+    const sceneHasThisNpc = inSceneNpcIds.has(String(npcState.npcId)) || (
+      focusNpcId !== undefined &&
+      String(npcState.npcId) === focusNpcId &&
+      scene?.event?.kind === "dialogue"
+    );
 
     // 从 currentScene.npcDialogues 读取该 NPC 的对白分页；缺失则回退 composeNpcSpeech。
     const sceneDialogue = scene?.npcDialogues?.find((d) => String(d.npcId) === String(npcState.npcId));
@@ -304,9 +312,11 @@ function projectDialogues(
     // 从 currentScene.choices 读取情境选项；read-only 或不在场则为空。
     const choices: readonly DialogueChoiceView[] = (readOnly || !sceneHasThisNpc || (scene?.event !== undefined && scene.event.kind !== "dialogue"))
       ? []
-      : (scene?.choices ?? []).map((c) => ({
+      : (scene?.choices ?? []).map((c, index) => ({
         choiceToken: c.choiceToken,
-        label: c.label,
+        label: scene?.event?.kind === "dialogue"
+          ? PLAYER_DIALOGUE_RESPONSE_LABELS[index]
+          : c.label,
         ...(c.hint !== undefined ? { hint: c.hint } : {})
       }));
 
@@ -316,6 +326,9 @@ function projectDialogues(
       role: npc.role,
       slot: slotForId(String(npcState.npcId)),
       speechPages,
+      ...(scene?.nextEventHint !== undefined && scene?.event?.kind === "dialogue"
+        ? { nextEventHint: scene.nextEventHint }
+        : {}),
       choices,
       // 自由输入是触发首场景的入口，不能依赖 currentScene 存在。
       freeInputEnabled: !readOnly && (scene === null || scene.event?.kind === "dialogue"),

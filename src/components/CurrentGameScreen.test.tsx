@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent, { type UserEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CurrentGameScreen } from "./CurrentGameScreen";
@@ -111,6 +111,65 @@ describe("CurrentGameScreen", () => {
     expect(await screen.findByRole("button", { name: "进入青石镇" })).toBeInTheDocument();
     expect(ackBody).toEqual({ revision: pendingView.revision });
     expect(fetchMock.mock.calls.some(([input]) => input === "/api/game/prologue/ack")).toBe(true);
+  });
+
+  it("叙事 pending 期间不高频重复 ensure，后续主要轮询 current", async () => {
+    const view = {
+      ...buildSessionViewFixture(),
+      narrativeGeneration: { status: "pending" as const },
+    };
+    const fetchMock = stubFetch(async (input) => {
+      if (input === "/api/game/current") return jsonResponse(200, { status: "active", view });
+      if (input === "/api/game/narrative/ensure") return jsonResponse(202, { status: "pending" });
+      throw new Error(`unexpected fetch: ${String(input)}`);
+    });
+    vi.useFakeTimers();
+    try {
+      render(<CurrentGameScreen />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(fetchMock.mock.calls.filter(([input]) => input === "/api/game/narrative/ensure")).toHaveLength(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_600);
+      });
+
+      expect(fetchMock.mock.calls.filter(([input]) => input === "/api/game/narrative/ensure")).toHaveLength(1);
+      expect(fetchMock.mock.calls.filter(([input]) => input === "/api/game/current").length).toBeGreaterThan(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("后台任务可能异常退出时，ensure 每 10 秒重新触发一次恢复", async () => {
+    const view = {
+      ...buildSessionViewFixture(),
+      narrativeGeneration: { status: "pending" as const },
+    };
+    const fetchMock = stubFetch(async (input) => {
+      if (input === "/api/game/current") return jsonResponse(200, { status: "active", view });
+      if (input === "/api/game/narrative/ensure") return jsonResponse(202, { status: "pending" });
+      throw new Error(`unexpected fetch: ${String(input)}`);
+    });
+    vi.useFakeTimers();
+    try {
+      render(<CurrentGameScreen />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_500);
+      });
+      expect(fetchMock.mock.calls.filter(([input]) => input === "/api/game/narrative/ensure").length)
+        .toBeGreaterThanOrEqual(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("ack 返回 200 + ACTION_REJECTED 时重新读取存档，而不是原地吞掉失败", async () => {

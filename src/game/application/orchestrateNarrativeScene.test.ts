@@ -103,7 +103,7 @@ describe("orchestrateNarrativeScene fallback", () => {
             stage: "failed",
             category: "service_error",
           },
-        };
+        } as never;
       },
     };
 
@@ -145,6 +145,54 @@ describe("orchestrateNarrativeScene fallback", () => {
     expect(directorCalls).toBe(3);
   });
 
+  it("开局对白 fallback 保留焦点 NPC 与两个对白选项", async () => {
+    const dialogueState: GameState = {
+      ...state,
+      narrative: {
+        ...state.narrative,
+        generation: {
+          status: "pending",
+          requestedAt: "2026-08-06T00:00:00.000Z",
+          triggerContext: { kind: "initial_opening", npcId: asNpcId("npc_1") },
+        },
+      },
+    };
+    const unavailable = {
+      async generate() {
+        return {
+          ok: false as const,
+          provenance: "unavailable" as const,
+          category: "service_error" as const,
+          diagnostics: {
+            traceId: "test",
+            contractVersion: NARRATIVE_CONTRACT_VERSION,
+            stage: "failed" as const,
+            category: "service_error" as const,
+          },
+        };
+      },
+    };
+
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-dialogue-fallback",
+      blueprint,
+      state: dialogueState,
+      directorSource: unavailable,
+      sceneScriptSource: unavailable,
+      npcLineSource: unavailable,
+      maxRoleAttempts: 1,
+    });
+
+    expect(result.scene.event).toEqual({ kind: "dialogue", focusNpcId: asNpcId("npc_1") });
+    expect(result.scene.npcDialogues?.map((dialogue) => String(dialogue.npcId))).toEqual(["npc_1"]);
+    expect(result.scene.choices.map((choice) => choice.label)).toEqual([
+      "请问一下目前状况是怎么样的？",
+      "是否可以告诉我事情的缘由？",
+    ]);
+    expect(result.scene.choices.every((choice) => choice.choiceKind === "dialogue_response")).toBe(true);
+    expect(result.scene.dialogueFollowups).toHaveLength(2);
+  });
+
   it("评估模式可把 director 重试限制为一次", async () => {
     let directorCalls = 0;
     const result = await orchestrateNarrativeScene({
@@ -169,6 +217,138 @@ describe("orchestrateNarrativeScene fallback", () => {
 
     expect(result.provenance).toBe("fallback");
     expect(directorCalls).toBe(1);
+  });
+
+  it("生产开局快速路径只尝试一次 director，避免同一 schema 错误拖延数分钟", async () => {
+    let directorCalls = 0;
+    let directorTimeoutMs: number | undefined;
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-fast-opening",
+      blueprint,
+      state: {
+        ...state,
+        narrative: {
+          ...state.narrative,
+          generation: {
+            status: "pending",
+            requestedAt: "2026-08-06T00:00:00.000Z",
+            triggerContext: { kind: "initial_opening", npcId: asNpcId("npc_1") },
+          },
+        },
+      },
+      fastFirstScene: true,
+      directorSource: {
+        async generate(request) {
+          directorCalls += 1;
+          directorTimeoutMs = request.timeoutMs;
+          return {
+            ok: true as const,
+            provenance: "generated" as const,
+            plan: {
+              sceneGoal: "invalid plan",
+              tensionLevel: 0,
+              focusNpcId: null,
+              relevantFactIds: [],
+              allowedRevealFactIds: [],
+              suggestedActionKeys: ["invalid:first", "invalid:second"],
+              introducedEntities: [],
+              pacing: "setup",
+            },
+            diagnostics: { traceId: "test", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" as const },
+          } as never;
+        },
+      },
+      sceneScriptSource: { async generate() { throw new Error("not reached"); } },
+      npcLineSource: { async generate() { throw new Error("not reached"); } },
+    });
+
+    expect(result.provenance).toBe("fallback");
+    expect(directorCalls).toBe(1);
+    expect(directorTimeoutMs).toBe(30_000);
+  });
+
+  it("报告脱敏的角色阶段进度，UI 可区分当前尝试与已完成阶段", async () => {
+    const progress: Array<{ completedCalls: number; totalCalls: 3; currentRole: string; attempt: number }> = [];
+    const unavailable = {
+      async generate() {
+        return {
+          ok: false as const,
+          provenance: "unavailable" as const,
+          category: "service_error" as const,
+          diagnostics: { traceId: "progress", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "failed" as const, category: "service_error" as const },
+        };
+      },
+    };
+
+    await orchestrateNarrativeScene({
+      traceId: "progress-test",
+      blueprint,
+      state: {
+        ...state,
+        narrative: {
+          ...state.narrative,
+          generation: {
+            status: "pending",
+            requestedAt: "2026-08-06T00:00:00.000Z",
+            triggerContext: { kind: "initial_opening", npcId: asNpcId("npc_1") },
+          },
+        },
+      },
+      fastFirstScene: true,
+      directorSource: unavailable,
+      sceneScriptSource: unavailable,
+      npcLineSource: unavailable,
+      progressObserver: (event) => progress.push(event),
+    });
+
+    expect(progress[0]).toEqual({ completedCalls: 0, totalCalls: 3, currentRole: "director", attempt: 1 });
+  });
+
+  it("director 重试不会把同一角色的多次成功响应累计成已完成阶段", async () => {
+    const progress: Array<{ completedCalls: number; totalCalls: 3; currentRole: string; attempt: number }> = [];
+    const rejectedDirector = {
+      async generate() {
+        return {
+          ok: true as const,
+          provenance: "generated" as const,
+          plan: {
+            sceneGoal: "无效提案",
+            tensionLevel: 1 as const,
+            focusNpcId: null,
+            relevantFactIds: [],
+            allowedRevealFactIds: [],
+            suggestedActionKeys: ["invalid:a", "invalid:b"] as const,
+            introducedEntities: [],
+            proposedNewLocations: [],
+            proposedNewNpcs: [],
+            pacing: "setup" as const,
+          },
+          diagnostics: { traceId: "retry", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" as const },
+        };
+      },
+    };
+    const unavailable = {
+      async generate() {
+        throw new Error("not reached");
+      },
+    };
+
+    await orchestrateNarrativeScene({
+      traceId: "progress-retry",
+      blueprint,
+      state,
+      directorSource: rejectedDirector,
+      sceneScriptSource: unavailable,
+      npcLineSource: unavailable,
+      progressObserver: (event) => progress.push(event),
+    });
+
+    expect(progress.filter((event) => event.currentRole === "director").at(-1)).toEqual({
+      completedCalls: 0,
+      totalCalls: 3,
+      currentRole: "director",
+      attempt: 3,
+    });
   });
 
   it("记录被规则拒绝的 director 提案，但不写入提案内容", async () => {

@@ -44,6 +44,23 @@ export type NarrativeDiagnostics = Readonly<{
   category?: NarrativeFailureCategory;
 }>;
 
+/**
+ * The three user-visible roles involved in one narrative scene.  This is an
+ * internal progress contract: it deliberately contains no provider names,
+ * prompts, or raw model output.
+ */
+export const NARRATIVE_ROLE_STAGES = ["director", "writer", "npc"] as const;
+export type NarrativeRoleStage = (typeof NARRATIVE_ROLE_STAGES)[number];
+
+export type NarrativeGenerationProgress = Readonly<{
+  /** Number of distinct role stages whose final response passed approval. */
+  completedCalls: number;
+  /** The normal scene pipeline has three role stages. */
+  totalCalls: 3;
+  currentRole: NarrativeRoleStage;
+  attempt: number;
+}>;
+
 // ---------------------------------------------------------------------------
 // 导演角色
 // ---------------------------------------------------------------------------
@@ -51,6 +68,8 @@ export type NarrativeDiagnostics = Readonly<{
 export type DirectorRequest = Readonly<{
   traceId: string;
   context: Record<string, unknown>;
+  /** 单次请求上限；开局快速路径可覆盖 live source 的默认值。 */
+  timeoutMs?: number;
 }>;
 
 export type DirectorAttempt =
@@ -78,6 +97,7 @@ export type DirectorSource = {
 export type SceneScriptRequest = Readonly<{
   traceId: string;
   context: Record<string, unknown>;
+  timeoutMs?: number;
 }>;
 
 export type SceneScriptAttempt =
@@ -105,6 +125,7 @@ export type SceneScriptSource = {
 export type NpcLineRequest = Readonly<{
   traceId: string;
   context: Record<string, unknown>;
+  timeoutMs?: number;
 }>;
 
 export type NpcLineAttempt =

@@ -11,13 +11,15 @@ import {
   type PrologueDefinition,
   type QuestObjective,
   type ScenarioBlueprint,
-  type StoryMemoryEntry
+  type StoryMemoryEntry,
+  PLAYER_DIALOGUE_RESPONSE_LABELS
 } from "@/game/domain";
 import {
   projectAvailableActions,
   type AvailableAction
 } from "@/game/gameplay/rpg/actions";
 import { isQuestObjectiveSatisfied } from "@/game/gameplay/rpg/quests";
+import type { NarrativeGenerationProgress } from "./runtimeNarrative";
 import {
   projectOpeningGameView,
   type AvailableActionView,
@@ -110,6 +112,8 @@ export type NarrativeSceneView = {
   /** 当前唯一原子事件；旧场景缺失时客户端按 legacy 兼容。 */
   readonly eventKind?: import("@/game/domain").NarrativeEventKind;
   readonly npcLine: { readonly text: string; readonly emotion: string } | null;
+  /** 选中预生成对白分支后显示的安全后续行动提示。 */
+  readonly nextEventHint?: string;
   readonly choices: readonly [
     { readonly label: string; readonly choiceToken: string },
     { readonly label: string; readonly choiceToken: string },
@@ -126,6 +130,8 @@ export type NarrativeSceneView = {
 /** Pending is deliberately a tiny public state: the UI may wait, not inspect work. */
 export type NarrativeGenerationView = {
   readonly status: "ready" | "pending";
+  /** 进程内后台任务的脱敏阶段进度；刷新或任务结束时可以缺省。 */
+  readonly progress?: NarrativeGenerationProgress;
 };
 
 export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
@@ -363,12 +369,15 @@ function projectNarrativeSceneView(
   return {
     narration: scene.narration,
     ...(scene.event !== undefined ? { eventKind: scene.event.kind } : {}),
+    ...(scene.nextEventHint === undefined ? {} : { nextEventHint: scene.nextEventHint }),
     npcLine: scene.npcLine === null ? null : {
       text: scene.npcLine.text,
       emotion: scene.npcLine.emotion,
     },
-    choices: scene.choices.map((choice) => ({
-      label: choice.label,
+    choices: scene.choices.map((choice, index) => ({
+      label: scene.event?.kind === "dialogue"
+        ? PLAYER_DIALOGUE_RESPONSE_LABELS[index]
+        : choice.label,
       choiceToken: choice.choiceToken,
     })) as NarrativeSceneView extends { choices: infer C } ? C : never,
     // Phase 14：场景内多 NPC 对白——只透出展示字段，不含 FactId 等内部 ID。
