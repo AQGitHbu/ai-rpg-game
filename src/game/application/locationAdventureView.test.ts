@@ -7,14 +7,22 @@ import {
   type GameState,
   type LocationId,
   type NarrativeSceneState,
-  type NewGameInput,
-  type QuestId
+  type QuestId,
+  type ScenarioBlueprint
 } from "@/game/domain";
 import { composeNpcSpeech, projectAvailableActions } from "@/game/gameplay/rpg/actions";
+import {
+  compileScenarioBlueprint,
+  initializeGameState,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import { ensureTownRuntime } from "@/game/gameplay/rpg/town";
-import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
 import { projectLocationAdventureView, SPEECH_PAGE_CHAR_BUDGET } from "./locationAdventureView";
-import { runScenarioPipeline } from "./applicationFixture.testutil";
 
 // ---------------------------------------------------------------------------
 // Phase 7 Task 3：地图 / 地点场景 / 安全对话 read model 的纯投影契约测试。
@@ -23,9 +31,34 @@ import { runScenarioPipeline } from "./applicationFixture.testutil";
 // 可用 action；对话只投影当前地点 NPC，slot 稳定，reviewClues 只含已发现事实。
 // ---------------------------------------------------------------------------
 
-type Phase1Fixture = { input: NewGameInput; seed: string };
-const FIXTURE = wuxiaFixture as unknown as Phase1Fixture;
-const PIPELINE = runScenarioPipeline({ ...FIXTURE.input, gameLength: "short" }, FIXTURE.seed);
+// Phase 14 开局收窄后 fallback 蓝图只有起始锚点（无 town/后继地点/boss/结局）。
+// 本文件的投影契约测试依赖"运行时扩展后"的完整蓝图，以 makeValidCandidate 为
+// 基座编译，并把 loc_b 标记为 town 供 town 层三态测试使用。
+function compileRuntimeBlueprint(): ScenarioBlueprint {
+  const candidate = makeValidCandidate();
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(
+      {
+        ...candidate,
+        locations: candidate.locations.map((location) =>
+          location.id === "loc_b" ? { ...location, scale: "town" } : location
+        )
+      },
+      {
+        profile: TEST_PROFILE,
+        policy: TEST_POLICY,
+        phase: "runtime_expansion"
+      }
+    )
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
+}
+
+const RUNTIME_BLUEPRINT = compileRuntimeBlueprint();
+const PIPELINE = { blueprint: RUNTIME_BLUEPRINT, state: initializeGameState(RUNTIME_BLUEPRINT) };
 const { blueprint } = PIPELINE;
 
 const SLOTS = ["left", "center", "right", "foreground"] as const;
@@ -69,8 +102,8 @@ describe("projectLocationAdventureView：世界地图封闭可见范围", () => 
   // 任何 active visit 目标 ⇒ 完全不出现。
   const state: GameState = {
     ...PIPELINE.state,
-    currentLocationId: asLocationId("loc_3"),
-    unlockedLocationIds: [asLocationId("loc_3"), asLocationId("loc_4"), asLocationId("loc_1")]
+    currentLocationId: asLocationId("loc_c"),
+    unlockedLocationIds: [asLocationId("loc_c"), asLocationId("loc_d"), asLocationId("loc_a")]
   };
 
   it("节点顺序固定为 current、travelable、known、locked", () => {
@@ -88,22 +121,22 @@ describe("projectLocationAdventureView：世界地图封闭可见范围", () => 
     const [current, travelable, known, locked] = view.worldMap.nodes;
     expect(current).toMatchObject({
       state: "current",
-      locationId: "loc_3",
-      name: locationName("loc_3"),
+      locationId: "loc_c",
+      name: locationName("loc_c"),
       visual: "map_node"
     });
     expect(current).toHaveProperty("position");
     expect(travelable).toMatchObject({
       state: "travelable",
-      locationId: "loc_4",
-      name: locationName("loc_4"),
+      locationId: "loc_d",
+      name: locationName("loc_d"),
       visual: "map_node"
     });
     expect(travelable).toHaveProperty("position");
     expect(known).toMatchObject({
       state: "known",
-      locationId: "loc_1",
-      name: locationName("loc_1"),
+      locationId: "loc_a",
+      name: locationName("loc_a"),
       hint: "需从相邻地点前往",
       visual: "map_node"
     });
@@ -122,7 +155,7 @@ describe("projectLocationAdventureView：世界地图封闭可见范围", () => 
   it("零泄漏：locked 目标真实名称、隐藏地点名称、seed、inputDigest 都不出现在 JSON", () => {
     const json = JSON.stringify(project(state));
     // locked 目标是 loc_2（渡口集市）——真实名不得泄漏。
-    expect(json.includes(locationName("loc_2"))).toBe(false);
+    expect(json.includes(locationName("loc_b"))).toBe(false);
     for (const hidden of blueprint.locations.filter((entry) => entry.kind === "hidden")) {
       expect(json.includes(hidden.name), `hidden=${hidden.name}`).toBe(false);
     }
@@ -149,7 +182,7 @@ describe("projectLocationAdventureView：地点场景互动", () => {
     // 开场地点：observe 当前地点 + investigate 开场可调查事实。
     const observe = actions.find((a) => a.type === "observe");
     if (observe?.type !== "observe") throw new Error("开场地点应可 observe");
-    expect(view.locationScene.title).toBe(locationName("loc_1"));
+    expect(view.locationScene.title).toBe(locationName("loc_a"));
     expect(view.locationScene.backdrop).toBe("location_backdrop");
     expect(view.locationScene.interactions).toContainEqual({
       kind: "observe",
@@ -172,28 +205,28 @@ describe("projectLocationAdventureView：地点场景互动", () => {
     // 当前 loc_3：availableItemIds=[item_key]，背包未持有 ⇒ take_item 可用。
     const atKeyLocation: GameState = {
       ...PIPELINE.state,
-      currentLocationId: asLocationId("loc_3")
+      currentLocationId: asLocationId("loc_c")
     };
     const view = project(atKeyLocation);
     const take = view.locationScene.interactions.find((i) => i.kind === "take_item");
     expect(take).toBeDefined();
     if (take?.kind !== "take_item") throw new Error("loc_3 应可拾取 item_key");
-    expect(take.itemId).toBe("item_key");
-    expect(take.slot).toBe(expectedSlot("item_key"));
+    expect(take.itemId).toBe("item_b");
+    expect(take.slot).toBe(expectedSlot("item_b"));
   });
 
   it("start_battle 互动带确定性槽位（boss 地点 + stage3 active）", () => {
     // 当前 loc_4（boss 所在地），quest_m3（defeat enemy_boss）设为 active。
     const atBoss = withQuestStatuses(
-      { ...PIPELINE.state, currentLocationId: asLocationId("loc_4") },
-      new Map<QuestId, GameState["quests"][number]["status"]>([[asQuestId("quest_main_3"), "active"]])
+      { ...PIPELINE.state, currentLocationId: asLocationId("loc_d") },
+      new Map<QuestId, GameState["quests"][number]["status"]>([[asQuestId("m3"), "active"]])
     );
     const view = project(atBoss);
     const battle = view.locationScene.interactions.find((i) => i.kind === "start_battle");
     expect(battle).toBeDefined();
     if (battle?.kind !== "start_battle") throw new Error("loc_4 应可发起 boss 战");
-    expect(battle.enemyId).toBe("enemy_boss");
-    expect(battle.slot).toBe(expectedSlot(String(asEnemyId("enemy_boss"))));
+    expect(battle.enemyId).toBe("enemy_b");
+    expect(battle.slot).toBe(expectedSlot(String(asEnemyId("enemy_b"))));
   });
 });
 
@@ -201,14 +234,14 @@ describe("projectLocationAdventureView：安全对话", () => {
   it("只投影当前地点 NPC；Phase 14 后无 currentScene 时 choices 为空、freeInputEnabled=true", () => {
     // 当前 loc_3，npc_3 在场未结识；Phase 14 废除规则投影后 choices 来自 currentScene。
     const state = withQuestStatuses(
-      { ...PIPELINE.state, currentLocationId: asLocationId("loc_3") },
-      new Map<QuestId, GameState["quests"][number]["status"]>([[asQuestId("quest_main_2"), "active"]])
+      { ...PIPELINE.state, currentLocationId: asLocationId("loc_c") },
+      new Map<QuestId, GameState["quests"][number]["status"]>([[asQuestId("m2"), "active"]])
     );
     const view = project(state);
     expect(view.dialogues).toHaveLength(1);
     const dialogue = view.dialogues[0];
-    expect(dialogue.npcId).toBe("npc_3");
-    const npc = blueprint.npcs.find((n) => n.id === asNpcId("npc_3"));
+    expect(dialogue.npcId).toBe("npc_c");
+    const npc = blueprint.npcs.find((n) => n.id === asNpcId("npc_c"));
     expect(dialogue.name).toBe(npc?.name);
     expect(dialogue.role).toBe(npc?.role);
     // 无 currentScene ⇒ 无情境选项；自由输入恒可用（非只读）；reviewClues 恒为已发现事实文本。
@@ -219,7 +252,7 @@ describe("projectLocationAdventureView：安全对话", () => {
   it("未被任务指向的未结识 NPC；Phase 14 后无 currentScene 时 choices 为空", () => {
     // 开场地点 loc_1，npc_1 在场未结识；Phase 14 后无规则投影，choices 来自 currentScene。
     const view = project(PIPELINE.state);
-    const dialogue = view.dialogues.find((d) => d.npcId === "npc_1");
+    const dialogue = view.dialogues.find((d) => d.npcId === "npc_a");
     expect(dialogue).toBeDefined();
     expect(dialogue!.choices).toEqual([]);
     // reviewClues = 当前已发现事实文本（初始只有 player_input 事实）。
@@ -231,7 +264,7 @@ describe("projectLocationAdventureView：安全对话", () => {
   });
 
   it("NPC slot 对同一 ID 在两次投影中一致（确定性）", () => {
-    const state: GameState = { ...PIPELINE.state, currentLocationId: asLocationId("loc_3") };
+    const state: GameState = { ...PIPELINE.state, currentLocationId: asLocationId("loc_c") };
     const first = project(state).dialogues;
     const second = project(state).dialogues;
     expect(first.length).toBeGreaterThan(0);
@@ -246,10 +279,10 @@ describe("projectLocationAdventureView：安全对话", () => {
 describe("projectLocationAdventureView：对白分页投影", () => {
   it("speechPages 非空，顺序拼接 === composeNpcSpeech 产出，每页不超预算", () => {
     const view = project(PIPELINE.state);
-    const dialogue = view.dialogues.find((d) => d.npcId === "npc_1");
+    const dialogue = view.dialogues.find((d) => d.npcId === "npc_a");
     expect(dialogue).toBeDefined();
     expect(dialogue!.speechPages.length).toBeGreaterThan(0);
-    const speech = composeNpcSpeech(blueprint, PIPELINE.state, asNpcId("npc_1"));
+    const speech = composeNpcSpeech(blueprint, PIPELINE.state, asNpcId("npc_a"));
     expect(speech).not.toBe("");
     expect(dialogue!.speechPages.join("")).toBe(speech);
     for (const page of dialogue!.speechPages) {
@@ -270,8 +303,8 @@ describe("projectLocationAdventureView：对白分页投影", () => {
   it("只读投影（active battle）下对白仍存在，供回顾展示", () => {
     const state: GameState = {
       ...PIPELINE.state,
-      currentLocationId: asLocationId("loc_3"),
-      battle: { status: "active", enemyId: asEnemyId("enemy_boss"), playerHp: 20, enemyHp: 10, round: 1 }
+      currentLocationId: asLocationId("loc_c"),
+      battle: { status: "active", enemyId: asEnemyId("enemy_b"), playerHp: 20, enemyHp: 10, round: 1 }
     };
     const view = project(state);
     expect(view.dialogues.length).toBeGreaterThan(0);
@@ -287,8 +320,8 @@ describe("projectLocationAdventureView：结局 / 战斗只读投影", () => {
   it("active battle：仍投影地图/地点，但 interactions 为空、对话 choices 为空", () => {
     const boss = blueprint.enemies.find((e) => e.tier === "boss");
     const state: GameState = {
-      ...npcLocation(asLocationId("loc_3")),
-      battle: { status: "active", enemyId: asEnemyId("enemy_boss"), playerHp: 20, enemyHp: 10, round: 1 }
+      ...npcLocation(asLocationId("loc_c")),
+      battle: { status: "active", enemyId: asEnemyId("enemy_b"), playerHp: 20, enemyHp: 10, round: 1 }
     };
     if (boss === undefined) throw new Error("fixture 应含 boss");
     const view = project(state);
@@ -303,7 +336,7 @@ describe("projectLocationAdventureView：结局 / 战斗只读投影", () => {
 
   it("结局后：仍投影地图/地点，interactions 为空、对话 choices 为空", () => {
     const state: GameState = {
-      ...npcLocation(asLocationId("loc_3")),
+      ...npcLocation(asLocationId("loc_c")),
       ending: { endingId: blueprint.endings[0].id, outcome: "success" }
     };
     const view = project(state);
@@ -321,7 +354,7 @@ describe("projectLocationAdventureView：结局 / 战斗只读投影", () => {
 // ---------------------------------------------------------------------------
 
 describe("projectLocationAdventureView：town 层三态", () => {
-  const TOWN_ID = asLocationId("loc_2");
+  const TOWN_ID = asLocationId("loc_b");
   const FIXED_TIME = "2026-07-27T12:00:00.000Z";
 
   function stateAt(locationId: LocationId): GameState {
@@ -331,13 +364,13 @@ describe("projectLocationAdventureView：town 层三态", () => {
   /** 经 ensureTownRuntime 离线路径派生 towns 条目（与 performAction 写入一致）。 */
   function readyTownState(): GameState {
     const base = stateAt(TOWN_ID);
-    const entry = ensureTownRuntime(blueprint, base, "loc_2", "offline", FIXED_TIME);
+    const entry = ensureTownRuntime(blueprint, base, "loc_b", "offline", FIXED_TIME);
     if (entry.kind !== "generated") throw new Error("loc_2 应为 town 地点");
     return { ...base, towns: [entry.town] };
   }
 
   it("非 town 地点：townStatus 为 none、无 town 视图、scale 为 scene", () => {
-    const view = project(stateAt(asLocationId("loc_1")));
+    const view = project(stateAt(asLocationId("loc_a")));
     expect(view.townStatus).toBe("none");
     expect(view.town).toBeUndefined();
     expect(view.locationScene.scale).toBe("scene");
@@ -362,7 +395,7 @@ describe("projectLocationAdventureView：town 层三态", () => {
 
   it("其他地点的 pending 不影响当前地点的三态判定", () => {
     const state: GameState = {
-      ...stateAt(asLocationId("loc_1")),
+      ...stateAt(asLocationId("loc_a")),
       townGeneration: { status: "pending", locationId: TOWN_ID, requestedAt: FIXED_TIME }
     };
     const view = project(state);
@@ -373,7 +406,7 @@ describe("projectLocationAdventureView：town 层三态", () => {
     const view = project(readyTownState());
     expect(view.townStatus).toBe("ready");
     expect(view.town).toBeDefined();
-    expect(view.town?.locationId).toBe("loc_2");
+    expect(view.town?.locationId).toBe("loc_b");
     expect(view.town?.planSource).toBe("offline");
     expect(view.town?.snapshot.buildings.length).toBeGreaterThan(0);
     expect(view.town?.semanticView.sentences.length).toBeGreaterThan(0);
@@ -413,14 +446,14 @@ describe("Phase 14 NPC 对话层统一", () => {
         { choiceToken: "tok_2", label: "选项B", actionKey: "investigate" }
       ],
       source: "generated",
-      npcDialogues: [{ npcId: asNpcId("npc_1"), npcName: "老者", npcRole: "elder", speechPages: ["你好"] }]
+      npcDialogues: [{ npcId: asNpcId("npc_a"), npcName: "老者", npcRole: "elder", speechPages: ["你好"] }]
     };
     const state: GameState = {
       ...PIPELINE.state,
       narrative: { ...PIPELINE.state.narrative, currentScene: scene }
     };
     const view = project(state);
-    const npc = view.dialogues.find((d) => d.npcId === "npc_1");
+    const npc = view.dialogues.find((d) => d.npcId === "npc_a");
     expect(npc).toBeDefined();
     expect(npc!.choices.length).toBe(2);
     expect(npc!.choices[0].label).toBe("选项A");
