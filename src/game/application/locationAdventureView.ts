@@ -358,7 +358,14 @@ export function projectLocationAdventureView(
   }
   // 结局或 active battle：只读投影——互动为空、对话无可写 choice。
   const readOnly = state.ending !== null || state.battle.status === "active";
-  const atomicEventActive = state.narrative.currentScene !== null || state.narrative.generation.status === "pending";
+  // 仅 pending（无可读场景）或全屏/战斗事件场景才抑制 interactions；
+  // 轻量事件（observe/investigate/item）和对话事件保留热点。
+  const suppressInteractions = readOnly
+    || state.narrative.generation.status === "pending"
+    || (state.narrative.currentScene !== null
+      && state.narrative.currentScene.event !== undefined
+      && (state.narrative.currentScene.event.kind === "travel"
+        || state.narrative.currentScene.event.kind === "battle"));
 
   // Town 层三态：ready（towns 已有条目 → 重建快照投影）/ pending（AI 生成中）
   // / none（非 town 地点，或 town 地点尚未进入过 → 按普通场景渲染）。
@@ -387,7 +394,7 @@ export function projectLocationAdventureView(
       description: currentLocation.description,
       backdrop: "location_backdrop",
       scale,
-      interactions: readOnly || atomicEventActive ? [] : projectSceneInteractions(availableActions)
+      interactions: suppressInteractions ? [] : projectSceneInteractions(availableActions)
     },
     dialogues: projectDialogues(blueprint, state, readOnly),
     townStatus,
