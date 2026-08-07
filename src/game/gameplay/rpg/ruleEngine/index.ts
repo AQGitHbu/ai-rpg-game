@@ -43,6 +43,23 @@ export function ruleEngine(
     return { ok: false, code: "INTENT_NOT_ROUTED", feedback: resolved.feedback };
   }
 
+  // blocked 状态：不推进任务/结局/张力，直接返回
+  if (resolved.status === "blocked") {
+    const resolvedEvent: ResolvedEvent = {
+      actionId,
+      status: "blocked",
+      eventKind: eventKindForAction(action),
+      stateChanges: [],
+      facts: [],
+      costs: [],
+      rewards: [],
+      triggeredEvents: [],
+      rejectedEffects: [{ description: "被战斗阻止", reason: "battle_active" }],
+      stateVersion: resolved.nextWorldState.eventLedger.length,
+    };
+    return { ok: true, nextWorldState: resolved.nextWorldState, nextStoryState: storyState, resolvedEvent };
+  }
+
   const quests = reconcileQuests(resolved.nextWorldState, deps);
   const ending = resolveEnding(quests.nextWorldState, storyState, deps);
   const allEvents = [...resolved.events, ...quests.events, ...ending.events];
@@ -50,9 +67,9 @@ export function ruleEngine(
 
   const resolvedEvent: ResolvedEvent = {
     actionId,
-    status: "success",
+    status: resolved.status,  // 透传 resolveByType 的 status
     eventKind: eventKindForAction(action),
-    stateChanges: [],
+    stateChanges: resolved.stateChanges,  // 透传审计清单
     facts: [],
     costs: [],
     rewards: [],
