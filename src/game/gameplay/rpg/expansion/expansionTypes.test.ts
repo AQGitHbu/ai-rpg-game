@@ -48,6 +48,7 @@ describe("ExpansionTypes", () => {
       triggered: false,
       reason: "no_trigger",
       approved: null,
+      nextBudget: null,
       reEvaluatedResult: null,
       rejectedProposals: [],
     };

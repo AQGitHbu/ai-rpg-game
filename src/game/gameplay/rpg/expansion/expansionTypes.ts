@@ -1,4 +1,5 @@
 import type { LocationEntry, NpcEntry, ItemEntry, EnemyEntry, WorldFactEntry } from "@/game/domain/worldState";
+import type { StoryBudget } from "@/game/domain/storyBudget";
 import type { RuleEngineResult } from "@/game/gameplay/rpg/ruleEngine";
 
 /** 扩展提案——AI 返回的原始提案，待审批 */
@@ -78,6 +79,7 @@ export type ExpansionResult = {
   readonly triggered: boolean;
   readonly reason: ExpansionTriggerReason | "no_trigger";
   readonly approved: ApprovedExpansion | null;
+  readonly nextBudget: StoryBudget | null;
   readonly reEvaluatedResult: RuleEngineResult | null;
   readonly rejectedProposals: readonly { readonly proposal: ExpansionProposal; readonly reason: ExpansionRejection }[];
 };

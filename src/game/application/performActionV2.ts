@@ -12,7 +12,6 @@ import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intent
 import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
 import { runExpansionProposer } from "@/game/gameplay/rpg/expansion";
 import { applyApprovedExpansion } from "@/game/gameplay/rpg/expansion/applyExpansion";
-import { consumeExpansion, type StoryBudget } from "@/game/domain/storyBudget";
 
 export type PerformActionV2Command = {
   readonly gameId: GameId;
@@ -95,8 +94,7 @@ export async function performActionV2(
       } else {
         // 重演算仍失败：提交已扩展实体（供下一回合使用），但行动本身被拒绝
         const expandedWs = applyApprovedExpansion(record.worldState, expansion.approved, deps.now());
-        const budgetAfter = consumeBudgetFromExpansion(record.storyState.budget, expansion.approved.budgetConsumed);
-        const expandedSs: StoryState = { ...record.storyState, budget: budgetAfter };
+        const expandedSs: StoryState = { ...record.storyState, budget: expansion.nextBudget ?? record.storyState.budget };
         await commitState(deps.repository, {
           gameId: command.gameId,
           expectedRevision: record.revision,
@@ -129,15 +127,4 @@ export async function performActionV2(
     resolvedEvent: engineResult.resolvedEvent,
     feedback: "Action performed",
   };
-}
-
-function consumeBudgetFromExpansion(
-  budget: StoryBudget,
-  consumed: { readonly locations: number; readonly npcs: number; readonly items: number; readonly enemies: number; readonly facts: number },
-): StoryBudget {
-  let result = budget;
-  for (let i = 0; i < consumed.locations; i++) result = consumeExpansion(result, "locations");
-  for (let i = 0; i < consumed.npcs; i++) result = consumeExpansion(result, "npcs");
-  for (let i = 0; i < consumed.facts; i++) result = consumeExpansion(result, "events");
-  return result;
 }

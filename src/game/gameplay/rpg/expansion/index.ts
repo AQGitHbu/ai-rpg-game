@@ -26,6 +26,7 @@ export async function runExpansionProposer(
       triggered: false,
       reason: "no_trigger",
       approved: null,
+      nextBudget: null,
       reEvaluatedResult: null,
       rejectedProposals: [],
     };
@@ -57,6 +58,7 @@ export async function runExpansionProposer(
       triggered: true,
       reason: trigger.reason,
       approved: null,
+      nextBudget: null,
       reEvaluatedResult: null,
       rejectedProposals: approval.rejected,
     };
@@ -75,6 +77,7 @@ export async function runExpansionProposer(
     triggered: true,
     reason: trigger.reason,
     approved: approval.approved,
+    nextBudget: approval.nextBudget,
     reEvaluatedResult,
     rejectedProposals: approval.rejected,
   };
