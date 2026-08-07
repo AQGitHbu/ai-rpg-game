@@ -8,7 +8,8 @@ export type ValidationCode =
   | "UNKNOWN_NPC" | "NPC_NOT_PRESENT" | "NPC_ALREADY_MET"
   | "UNKNOWN_FACT" | "FACT_NOT_INVESTIGABLE" | "FACT_ALREADY_DISCOVERED"
   | "UNKNOWN_ITEM" | "ITEM_NOT_AVAILABLE_HERE" | "ITEM_ALREADY_OWNED"
-  | "UNKNOWN_ENEMY" | "BATTLE_NOT_AVAILABLE" | "INTENT_NOT_ROUTED";
+  | "UNKNOWN_ENEMY" | "ENEMY_NOT_AT_LOCATION" | "BATTLE_ALREADY_ACTIVE"
+  | "ENEMY_ALREADY_DEFEATED" | "NO_ACTIVE_BATTLE" | "INTENT_NOT_ROUTED";
 
 export type ValidateResult =
   | { readonly ok: true }
@@ -45,14 +46,23 @@ export function validateAction(ws: WorldState, action: Action): ValidateResult {
       if (loc !== undefined && !loc.availableItemIds.includes(action.itemId)) return { ok: false, code: "ITEM_NOT_AVAILABLE_HERE", params: {} };
       return { ok: true };
     }
+    case "attack": {
+      const enemy = ws.enemies.find((e) => e.id === action.enemyId);
+      if (enemy === undefined) return { ok: false, code: "UNKNOWN_ENEMY", params: { enemyId: String(action.enemyId) } };
+      if (ws.battle.status !== "idle") return { ok: false, code: "BATTLE_ALREADY_ACTIVE", params: {} };
+      if (ws.currentLocationId !== enemy.locationId) return { ok: false, code: "ENEMY_NOT_AT_LOCATION", params: {} };
+      if (ws.defeatedEnemyIds.includes(action.enemyId)) return { ok: false, code: "ENEMY_ALREADY_DEFEATED", params: {} };
+      return { ok: true };
+    }
+    case "battle_action": {
+      if (ws.battle.status !== "active") return { ok: false, code: "NO_ACTIVE_BATTLE", params: {} };
+      return { ok: true };
+    }
     case "ack_prologue":
     case "explore":
     case "rest":
     case "freeform":
       return { ok: true };
-    case "attack":
-    case "battle_action":
-      return { ok: false, code: "BATTLE_NOT_AVAILABLE", params: {} };
     default:
       return { ok: false, code: "INTENT_NOT_ROUTED", params: {} };
   }
