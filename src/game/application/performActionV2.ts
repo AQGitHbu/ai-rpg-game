@@ -42,13 +42,15 @@ export async function performActionV2(
     return { ok: false, code: "STALE_GAME_REVISION", feedback: "Stale revision" };
   }
 
-  // Build intent context from current WorldState for free_text conversion
-  const intentCtx = buildIntentContext(record.worldState);
+  // Build intent context only for free_text (fixed_choice doesn't need it)
+  const freeTextDeps = command.interaction.kind === "free_text"
+    ? { intentContext: buildIntentContext(record.worldState), intentParserSource: deps.intentParserSource }
+    : undefined;
 
   const converted = await convertInteraction(
     command.interaction,
     command.choiceMap,
-    { intentContext: intentCtx, intentParserSource: deps.intentParserSource },
+    freeTextDeps,
   );
   if (!converted.ok) {
     return { ok: false, code: "UNKNOWN_CHOICE", feedback: "Conversion failed" };
