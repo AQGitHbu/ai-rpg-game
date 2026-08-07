@@ -15,6 +15,7 @@ import { projectGameSessionView } from "../gameSessionViewV2";
 import { createFixtureExpansionSource } from "../server/ai/expansionSource";
 import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
 import { createV2WorldGenerationSource, createV2SceneSource } from "../server/ai/v2SourceFactory";
+import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { generatePendingSceneV2 } from "../generatePendingSceneV2";
 import { handleNpcDialogueV2 } from "../handleNpcDialogueV2";
 import { commitState } from "../stateCommit";
@@ -72,6 +73,8 @@ export function createServerGameV2EntryPoints(
     logError: (operation) => logger.error("sqlite_repository_v2_failure", { operation }),
   });
   const now = () => new Date().toISOString();
+  const aiConfig = parseAiRuntimeConfig(env);
+  const aiEnabled = aiConfig.status === "available";
   const source = createV2WorldGenerationSource(env, logger);
   const expansionSource = createFixtureExpansionSource();
   const sceneSource = createV2SceneSource(env, logger);
@@ -127,7 +130,7 @@ export function createServerGameV2EntryPoints(
       const gameId = asGameId(randomUUID());
       const result = await createGameV2(
         { gameId, gameType: input.gameType, gameLength: input.gameLength, seed: randomUUID() },
-        { repository, source, now },
+        { repository, source, now, aiEnabled },
       );
       if (result.ok) return { ok: true, revision: result.revision };
       return { ok: false, code: result.code };

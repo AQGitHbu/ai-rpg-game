@@ -38,6 +38,8 @@ export type CreateGameV2Deps = {
   readonly repository: GameRepositoryV2;
   readonly source: WorldGenerationSource;
   readonly now: () => string;
+  /** Whether AI config is available (determines narrative.mode) */
+  readonly aiEnabled?: boolean;
 };
 
 export async function createGameV2(
@@ -124,10 +126,13 @@ export async function createGameV2(
 
   // Set narrative to pending so the first scene (prologue) gets generated
   // by the ensure polling mechanism (spec §9.1: 生成序幕场景)
+  // Also set narrative.mode to "ai" when AI config is available
+  const narrativeMode = deps.aiEnabled ? "ai" : "offline";
   const storyStateWithPending: StoryState = {
     ...storyState,
     narrative: {
       ...storyState.narrative,
+      mode: narrativeMode,
       generation: {
         status: "pending",
         requestedAt: deps.now(),
