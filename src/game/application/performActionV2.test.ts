@@ -5,6 +5,7 @@ import { asGameId } from "./server/persistence/gameRepository";
 import { createInitialWorldState, appendLocation, appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { createFixtureIntentParserSource } from "./server/ai/intentParserSource";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
@@ -104,5 +105,67 @@ describe("performActionV2", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("UNKNOWN_CHOICE");
+  });
+});
+
+describe("performActionV2 free_text integration", () => {
+  const loc1: LocationEntry = {
+    id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
+    connectedLocationIds: [asLocationId("loc_2")], npcIds: [asNpcId("npc_1")], availableItemIds: [], tags: [],
+  };
+  const loc2: LocationEntry = {
+    id: asLocationId("loc_2"), name: "街道", description: "t", kind: "main",
+    connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
+  };
+  const npc1: NpcEntry = {
+    id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
+    locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+    memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+  };
+
+  function buildWorldState(): WorldState {
+    const base = createInitialWorldState({
+      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: loc1,
+      startingItemIds: [],
+    });
+    return { ...appendNpc(appendLocation(base, loc2), npc1), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
+  }
+
+  it("converts free text to talk and commits", async () => {
+    const ws = buildWorldState();
+    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
+    const repo = createInMemoryRepoWithRecord(ws, ss);
+    const source = createFixtureIntentParserSource();
+
+    const result = await performActionV2(
+      { gameId: asGameId("g1"), actionId: "act_1", interaction: { kind: "free_text", text: "和老板聊聊" }, expectedRevision: 0, choiceMap: new Map() },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: source },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.revision).toBe(1);
+      expect(result.resolvedEvent.status).toBe("success");
+    }
+  });
+
+  it("converts unclassifiable text to freeform, worldState unchanged", async () => {
+    const ws = buildWorldState();
+    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
+    const repo = createInMemoryRepoWithRecord(ws, ss);
+    const source = createFixtureIntentParserSource();
+
+    const result = await performActionV2(
+      { gameId: asGameId("g1"), actionId: "act_1", interaction: { kind: "free_text", text: "我的武功升到一百级" }, expectedRevision: 0, choiceMap: new Map() },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: source },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.resolvedEvent.status).toBe("success");
+      expect(result.resolvedEvent.stateChanges).toEqual([]);
+    }
   });
 });

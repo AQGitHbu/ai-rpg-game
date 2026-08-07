@@ -7,6 +7,8 @@ import type { StoryState } from "@/game/domain/storyState";
 import { convertInteraction, type ActionChoiceMap } from "./actionConverter";
 import { ruleEngine } from "@/game/gameplay/rpg/ruleEngine";
 import { commitState } from "./stateCommit";
+import { buildIntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
+import type { IntentParserSource } from "./server/ai/intentParserSource";
 
 export type PerformActionV2Command = {
   readonly gameId: GameId;
@@ -18,11 +20,12 @@ export type PerformActionV2Command = {
 
 export type PerformActionV2Result =
   | { readonly ok: true; readonly revision: number; readonly resolvedEvent: ResolvedEvent; readonly feedback: string }
-  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "UNKNOWN_CHOICE" | "FREE_TEXT_NOT_SUPPORTED" | "ACTION_REJECTED" | "INFRASTRUCTURE_FAILURE"; readonly feedback: string };
+  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "UNKNOWN_CHOICE" | "ACTION_REJECTED" | "INFRASTRUCTURE_FAILURE"; readonly feedback: string };
 
 export type PerformActionV2Deps = {
   readonly repository: GameRepositoryV2;
   readonly now: () => string;
+  readonly intentParserSource?: IntentParserSource;
 };
 
 export async function performActionV2(
@@ -39,9 +42,16 @@ export async function performActionV2(
     return { ok: false, code: "STALE_GAME_REVISION", feedback: "Stale revision" };
   }
 
-  const converted = convertInteraction(command.interaction, command.choiceMap);
+  // Build intent context from current WorldState for free_text conversion
+  const intentCtx = buildIntentContext(record.worldState);
+
+  const converted = await convertInteraction(
+    command.interaction,
+    command.choiceMap,
+    { intentContext: intentCtx, intentParserSource: deps.intentParserSource },
+  );
   if (!converted.ok) {
-    return { ok: false, code: converted.reason === "unknown_choice" ? "UNKNOWN_CHOICE" : "FREE_TEXT_NOT_SUPPORTED", feedback: "Conversion failed" };
+    return { ok: false, code: "UNKNOWN_CHOICE", feedback: "Conversion failed" };
   }
 
   const engineResult = ruleEngine(record.worldState, record.storyState, converted.action, command.actionId, { now: deps.now });
