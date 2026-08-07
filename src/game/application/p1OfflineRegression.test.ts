@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { createGameV2, createFixtureWorldSource } from "./createGameV2";
 import { performActionV2 } from "./performActionV2";
 import { projectGameSessionView } from "./gameSessionViewV2";
+import { generatePendingSceneV2 } from "./generatePendingSceneV2";
+import { createDeterministicSceneSource } from "./deterministicSceneSource";
 import type { GameRepositoryV2, GameRecordV2 } from "./server/persistence/gameRepositoryV2";
 import { asGameId } from "./server/persistence/gameRepository";
 import type { Action } from "@/game/domain/action";
@@ -52,6 +54,14 @@ describe("P1 offline regression: full createGame -> performAction -> view cycle"
     expect(createResult.ok).toBe(true);
     if (!createResult.ok) return;
 
+    // 1b. Generate the initial pending scene (prologue)
+    const sceneResult = await generatePendingSceneV2({
+      repository: repo,
+      sceneSource: createDeterministicSceneSource(),
+      now,
+    });
+    expect(sceneResult).toBe("saved");
+
     // 2. Project initial view
     const initialRecord = getRecord()!;
     const initialView = projectGameSessionView(initialRecord.worldState, initialRecord.storyState, initialRecord.revision);
@@ -65,7 +75,7 @@ describe("P1 offline regression: full createGame -> performAction -> view cycle"
     const talkAction: Action = { type: "talk", npcId: asNpcId("npc_innkeeper") };
     const choiceMap = new Map([["tok_talk_innkeeper", talkAction]]);
     const actionResult = await performActionV2(
-      { gameId, actionId: "act_1", interaction: { kind: "fixed_choice", choiceToken: "tok_talk_innkeeper" }, expectedRevision: 0, choiceMap },
+      { gameId, actionId: "act_1", interaction: { kind: "fixed_choice", choiceToken: "tok_talk_innkeeper" }, expectedRevision: 1, choiceMap },
       { repository: repo, now },
     );
     expect(actionResult.ok).toBe(true);
@@ -76,7 +86,7 @@ describe("P1 offline regression: full createGame -> performAction -> view cycle"
     // 4. Project view after action
     const updatedRecord = getRecord()!;
     const updatedView = projectGameSessionView(updatedRecord.worldState, updatedRecord.storyState, updatedRecord.revision);
-    expect(updatedView.revision).toBe(2); // 1 for action commit + 1 for narrative pending
+    expect(updatedView.revision).toBe(3); // 0 initial + 1 scene writeback + 1 action commit + 1 narrative pending
     expect(updatedView.availableNpcs[0]?.met).toBe(true);
     expect(updatedView.story.tension).toBe(33); // 30 + 3 (npc_met)
   });
