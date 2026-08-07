@@ -14,6 +14,13 @@ import { performActionV2 } from "../performActionV2";
 import { projectGameSessionView } from "../gameSessionViewV2";
 import { createFixtureExpansionSource } from "../server/ai/expansionSource";
 import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
+import { createDeterministicSceneSource } from "../deterministicSceneSource";
+import { generatePendingSceneV2 } from "../generatePendingSceneV2";
+import { handleNpcDialogueV2 } from "../handleNpcDialogueV2";
+import { commitState } from "../stateCommit";
+import type { SceneSource } from "../sceneSource";
+import type { StoryState } from "@/game/domain/storyState";
+import type { NpcId } from "@/game/domain/scenarioBlueprint";
 import type { Interaction, Action } from "@/game/domain/action";
 import type { ActionChoiceMap } from "../actionConverter";
 import type { GameSessionViewV2 } from "../gameSessionViewV2";
@@ -41,6 +48,9 @@ export type ServerGameV2EntryPoints = {
     choiceMap: ActionChoiceMap;
   }, traceId?: string): Promise<{ ok: boolean; revision?: number; feedback?: string; code?: string }>;
   getCurrentGameV2(traceId?: string): Promise<{ ok: boolean; status: string; view?: GameSessionViewV2; revision?: number }>;
+  ensureNarrativeSceneV2(traceId?: string): Promise<{ ok: boolean; result?: string }>;
+  ackPrologueV2(traceId?: string): Promise<{ ok: boolean; revision?: number; code?: string }>;
+  handleNpcDialogueV2(command: { npcId: NpcId; text: string; expectedRevision: number }, traceId?: string): Promise<{ ok: boolean; kind?: string; npcSpeech?: string; revision?: number; code?: string }>;
   executeHttpRequest(
     method: string,
     route: string,
@@ -62,6 +72,7 @@ export function createServerGameV2EntryPoints(
   const now = () => new Date().toISOString();
   const source = createFixtureWorldSource();
   const expansionSource = createFixtureExpansionSource();
+  const sceneSource = createDeterministicSceneSource();
 
   const executeHttpRequest = async (
     method: string,
@@ -136,6 +147,30 @@ export function createServerGameV2EntryPoints(
       if (current.status === "corrupt") return { ok: false, status: "corrupt" };
       const view = projectGameSessionView(current.record.worldState, current.record.storyState, current.record.revision);
       return { ok: true, status: "active", view, revision: current.record.revision };
+    },
+    ensureNarrativeSceneV2: async (_traceId) => {
+      const result = await generatePendingSceneV2({ repository, sceneSource, now });
+      return { ok: result === "saved", result };
+    },
+    ackPrologueV2: async (_traceId) => {
+      const current = await repository.getCurrentGame();
+      if (!current.ok || current.status !== "active") return { ok: false, code: "NO_ACTIVE_GAME" };
+      const nextStoryState: StoryState = { ...current.record.storyState, prologueShown: true };
+      const commit = await commitState(repository, {
+        gameId: current.record.gameId,
+        expectedRevision: current.record.revision,
+        nextWorldState: current.record.worldState,
+        nextStoryState,
+      });
+      if (!commit.ok) return { ok: false, code: commit.code };
+      return { ok: true, revision: commit.record.revision };
+    },
+    handleNpcDialogueV2: async (command, _traceId) => {
+      const result = await handleNpcDialogueV2(command, { repository, now });
+      if (result.ok) {
+        return { ok: true, kind: result.kind, npcSpeech: result.kind === "chat" ? result.npcSpeech : undefined, revision: result.revision };
+      }
+      return { ok: false, code: result.code };
     },
     executeHttpRequest,
     close: async () => {

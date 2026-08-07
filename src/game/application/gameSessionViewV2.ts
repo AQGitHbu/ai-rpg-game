@@ -1,6 +1,6 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
-import type { LocationId, NpcId } from "@/game/domain/scenarioBlueprint";
+import type { LocationId, NpcId, EnemyId } from "@/game/domain/scenarioBlueprint";
 
 export type GameSessionViewV2 = {
   readonly revision: number;
@@ -19,7 +19,14 @@ export type GameSessionViewV2 = {
   readonly narrative: {
     readonly mode: string;
     readonly hasScene: boolean;
+    readonly narration?: string;
+    readonly choices?: readonly { readonly choiceToken: string; readonly label: string; readonly actionKey: string }[];
+    readonly npcLine?: { readonly npcId: string; readonly text: string; readonly emotion: string } | null;
   };
+  readonly narrativeGeneration?: { readonly status: string };
+  readonly battle: { readonly enemyName: string; readonly playerHp: number; readonly enemyHp: number; readonly round: number } | null;
+  readonly quests: readonly { readonly id: string; readonly name: string; readonly description: string; readonly kind: string; readonly status: string }[];
+  readonly prologueShown: boolean;
   readonly ending: { readonly endingId: string; readonly outcome: string } | null;
 };
 
@@ -36,6 +43,30 @@ export function projectGameSessionView(
       const loc = worldState.locations.find((l) => l.id === id);
       return { locationId: id, name: loc?.name ?? "???" };
     }) ?? [];
+
+  const scene = storyState.narrative.currentScene;
+  const hasScene = scene !== null;
+
+  // Battle projection
+  const battle: GameSessionViewV2["battle"] = (() => {
+    if (worldState.battle.status !== "active") return null;
+    const enemy = worldState.enemies.find((e) => e.id === worldState.battle.enemyId);
+    return {
+      enemyName: enemy?.name ?? "???",
+      playerHp: worldState.battle.playerHp,
+      enemyHp: worldState.battle.enemyHp,
+      round: worldState.battle.round,
+    };
+  })();
+
+  // Quests projection
+  const quests: GameSessionViewV2["quests"] = worldState.quests.map((q) => ({
+    id: String(q.id),
+    name: q.name,
+    description: q.description,
+    kind: q.kind,
+    status: q.status,
+  }));
 
   return {
     revision,
@@ -66,8 +97,25 @@ export function projectGameSessionView(
     },
     narrative: {
       mode: storyState.narrative.mode,
-      hasScene: storyState.narrative.currentScene !== null,
+      hasScene,
+      ...(hasScene && scene ? {
+        narration: scene.narration,
+        choices: scene.choices.map((c) => ({
+          choiceToken: c.choiceToken,
+          label: c.label,
+          actionKey: c.actionKey,
+        })),
+        npcLine: scene.npcLine
+          ? { npcId: String(scene.npcLine.npcId), text: scene.npcLine.text, emotion: scene.npcLine.emotion }
+          : null,
+      } : {}),
     },
+    ...(storyState.narrative.generation.status === "pending"
+      ? { narrativeGeneration: { status: "pending" } }
+      : {}),
+    battle,
+    quests,
+    prologueShown: storyState.prologueShown,
     ending: worldState.ending ? { endingId: String(worldState.ending.endingId), outcome: worldState.ending.outcome } : null,
   };
 }
