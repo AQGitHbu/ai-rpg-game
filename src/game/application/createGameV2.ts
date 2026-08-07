@@ -1,9 +1,11 @@
 import type { GameRepositoryV2 } from "./server/persistence/gameRepositoryV2";
 import type { GameId } from "./server/persistence/gameRepository";
-import type { WorldState, LocationEntry, NpcEntry, ItemEntry } from "@/game/domain/worldState";
+import type { WorldState, LocationEntry, NpcEntry, ItemEntry, QuestEntry } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { GameTypeId, GameLength } from "@/game/domain/newGame";
 import { createInitialWorldState, appendLocation, appendNpc, appendItem } from "@/game/domain/worldState";
+import type { QuestId, EndingId } from "@/game/domain/scenarioBlueprint";
+import { asQuestId, asEndingId } from "@/game/domain/scenarioBlueprint";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asItemId, asGenerationId } from "@/game/domain/scenarioBlueprint";
 
@@ -79,6 +81,36 @@ export async function createGameV2(
   worldState = {
     ...worldState,
     unlockedLocationIds: [worldState.currentLocationId, ...unlockIds],
+  };
+
+  // Create a default main quest from generated world data
+  // (spec §9.2: 初始任务主线3幕骨架)
+  const firstNpc = generated.npcs[0];
+  const secondLoc = generated.locations.find((l) => l.id !== generated.startingLocationId);
+  const quest: QuestEntry = {
+    id: asQuestId("quest_main"),
+    name: "探索未知世界",
+    description: "踏出客栈，探索这个世界隐藏的秘密。",
+    kind: "main",
+    status: "active",
+    objectives: [
+      ...(firstNpc ? [{ kind: "talk_to_npc" as const, npcId: firstNpc.id }] : []),
+      ...(secondLoc ? [{ kind: "visit_location" as const, locationId: secondLoc.id }] : []),
+    ],
+    onSuccess: { kind: "reach_ending", endingId: asEndingId("ending_success") },
+    onFailure: { kind: "closed" },
+    tags: ["main"],
+  };
+  worldState = {
+    ...worldState,
+    quests: [quest],
+  };
+  // Also add a default ending so quest onSuccess can resolve
+  worldState = {
+    ...worldState,
+    endings: [
+      { id: asEndingId("ending_success"), name: "冒险成功", description: "你完成了这段冒险。", requirements: [] },
+    ],
   };
 
   const storyState = createInitialStoryState({

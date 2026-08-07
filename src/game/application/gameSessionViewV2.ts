@@ -27,7 +27,14 @@ export type GameSessionViewV2 = {
   };
   readonly narrativeGeneration?: { readonly status: string };
   readonly battle: { readonly enemyName: string; readonly playerHp: number; readonly enemyHp: number; readonly round: number } | null;
-  readonly quests: readonly { readonly id: string; readonly name: string; readonly description: string; readonly kind: string; readonly status: string }[];
+  readonly quests: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly description: string;
+    readonly kind: string;
+    readonly status: string;
+    readonly objectives: readonly { readonly label: string; readonly completed: boolean }[];
+  }[];
   readonly prologueShown: boolean;
   readonly ending: { readonly endingId: string; readonly outcome: string } | null;
 };
@@ -63,13 +70,50 @@ export function projectGameSessionView(
     };
   })();
 
-  // Quests projection
+  // Quests projection（含派生 label 和 completed）
   const quests: GameSessionViewV2["quests"] = worldState.quests.map((q) => ({
     id: String(q.id),
     name: q.name,
     description: q.description,
     kind: q.kind,
     status: q.status,
+    objectives: q.objectives.map((o) => {
+      let label = "";
+      let completed = false;
+      switch (o.kind) {
+        case "visit_location": {
+          const loc = worldState.locations.find((l) => l.id === o.locationId);
+          label = `前往${loc?.name ?? "未知地点"}`;
+          completed = worldState.visitedLocationIds.includes(o.locationId);
+          break;
+        }
+        case "talk_to_npc": {
+          const npc = worldState.npcs.find((n) => n.id === o.npcId);
+          label = `与${npc?.name ?? "某人"}交谈`;
+          completed = npc?.met ?? false;
+          break;
+        }
+        case "obtain_item": {
+          const item = worldState.items.find((i) => i.id === o.itemId);
+          label = `获取${item?.name ?? "某物"}`;
+          completed = worldState.inventory.includes(o.itemId);
+          break;
+        }
+        case "discover_fact": {
+          const fact = worldState.worldFacts.find((f) => f.factId === o.factId);
+          label = `发现${fact?.text ?? "秘密"}`;
+          completed = fact?.discovered ?? false;
+          break;
+        }
+        case "defeat_enemy": {
+          const enemy = worldState.enemies.find((e) => e.id === o.enemyId);
+          label = `击败${enemy?.name ?? "敌人"}`;
+          completed = worldState.defeatedEnemyIds.includes(o.enemyId);
+          break;
+        }
+      }
+      return { label, completed };
+    }),
   }));
 
   return {

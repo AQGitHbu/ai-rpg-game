@@ -90,14 +90,17 @@ export function adaptV2ToV1View(v2: GameSessionViewV2): GameSessionView {
     icon: "item_misc" as const,
   }));
 
-  // 派生 activeQuests
+  // 派生 activeQuests（从 V2 quests 的 objectives）
   const activeQuests = v2.quests
     .filter((q) => q.status === "active")
     .map((q) => ({
       name: q.name,
       description: q.description,
       kind: q.kind as "main" | "side",
-      objectives: [],
+      objectives: q.objectives.map((o) => ({
+        label: o.label,
+        completed: o.completed,
+      })),
     }));
 
   // 派生 narrative (V1 NarrativeSceneView)
