@@ -15,20 +15,21 @@ import type { GameSessionView } from "@/game/application";
 // ---------------------------------------------------------------------------
 
 export function adaptV2ToV1View(v2: GameSessionViewV2): GameSessionView {
-  // 派生 worldMap（极简：当前地点 + 可移动地点）
+  // 派生 worldMap（极简：当前地点 + 可移动地点，分散位置避免重叠）
+  const MAP_POSITIONS = ["center", "north_west", "north_east", "south_west", "south_east"] as const;
   const mapNodes = [
     {
       state: "current" as const,
       locationId: String(v2.currentLocation.id),
       name: v2.currentLocation.name,
-      position: 0,
+      position: MAP_POSITIONS[0],
       visual: "location_main" as const,
     },
     ...v2.availableMoves.map((m, i) => ({
       state: "unlocked" as const,
       locationId: String(m.locationId),
       name: m.name,
-      position: i + 1,
+      position: MAP_POSITIONS[(i + 1) % MAP_POSITIONS.length],
       visual: "location_main" as const,
     })),
   ];
@@ -51,13 +52,22 @@ export function adaptV2ToV1View(v2: GameSessionViewV2): GameSessionView {
   }) ?? [];
 
   // 派生 dialogues（从 availableNpcs）
+  const dialogueChoices = v2.narrative.choices?.map((c) => ({
+    label: c.label,
+    choiceToken: c.choiceToken,
+  })) ?? [];
   const dialogues = v2.availableNpcs.map((npc) => ({
     npcId: String(npc.id),
     name: npc.name,
     role: npc.role,
+    slot: "talk" as const,
     speechPages: v2.narrative.npcLine?.npcId === String(npc.id)
       ? [v2.narrative.npcLine.text]
       : [],
+    choices: dialogueChoices,
+    freeInputEnabled: true,
+    reviewClues: [] as readonly string[],
+    preparingNextScene: false,
   }));
 
   // 派生 presentNpcs

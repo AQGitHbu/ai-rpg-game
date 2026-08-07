@@ -25,6 +25,7 @@ type Props = {
   readonly view: GameSessionViewV2;
   readonly onViewChange: (view: GameSessionViewV2) => void;
   readonly onStaleRevision: () => void;
+  readonly onClearDevelopmentSave: () => Promise<void>;
 };
 
 type AdventureScreen = "map" | "scene";
@@ -52,7 +53,7 @@ function entryScreenFor(_view: GameSessionViewV2): AdventureScreen {
   return "scene";
 }
 
-export function AdventureGameShellV2({ view, onViewChange, onStaleRevision }: Props) {
+export function AdventureGameShellV2({ view, onViewChange, onStaleRevision, onClearDevelopmentSave }: Props) {
   const v1View = adaptV2ToV1View(view);
 
   const [screen, setScreen] = useState<AdventureScreen>("map");
@@ -199,7 +200,7 @@ export function AdventureGameShellV2({ view, onViewChange, onStaleRevision }: Pr
         view={v1View}
         screen={screen}
         onOpen={openDetails}
-        developmentTools={false}
+        developmentTools={true}
         onOpenDevTools={() => {
           devToolsTriggerRef.current = document.activeElement as HTMLElement;
           setDevToolsOpen(true);
@@ -251,9 +252,9 @@ export function AdventureGameShellV2({ view, onViewChange, onStaleRevision }: Pr
 
       {devToolsOpen ? (
         <AdventureOverlay title="开发工具" onClose={() => setDevToolsOpen(false)} returnFocusRef={devToolsTriggerRef}>
-          <p className="development-tools-hint">
-            仅清除当前本地试玩存档；不会删除数据库文件或其它项目数据。
-          </p>
+          <InlineButton onClick={() => void onClearDevelopmentSave()}>
+            清除本地试玩存档
+          </InlineButton>
         </AdventureOverlay>
       ) : null}
 

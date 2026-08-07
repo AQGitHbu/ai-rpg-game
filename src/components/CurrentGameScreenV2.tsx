@@ -84,6 +84,17 @@ export function CurrentGameScreenV2() {
     };
   }, [narrativePending, applyResponse]);
 
+  // 清除本地试玩存档
+  async function clearDevelopmentSave() {
+    if (!window.confirm("仅清除当前本地试玩存档并重新开局？此操作只在开发环境可用。")) return;
+    try {
+      await fetch("/api/game/dev/current", { method: "DELETE" });
+    } catch {
+      // ignore
+    }
+    await loadCurrentGame();
+  }
+
   // 序幕确认
   async function handlePrologueAck() {
     await ackV2Prologue();
@@ -135,6 +146,7 @@ export function CurrentGameScreenV2() {
         view={view}
         onViewChange={(newView) => setState({ phase: "active", view: newView })}
         onStaleRevision={() => void loadCurrentGame()}
+        onClearDevelopmentSave={clearDevelopmentSave}
       />
     );
   }
