@@ -8,7 +8,7 @@ import { convertInteraction, type ActionChoiceMap } from "./actionConverter";
 import { ruleEngine } from "@/game/gameplay/rpg/ruleEngine";
 import { commitState } from "./stateCommit";
 import { buildIntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
-import type { IntentParserSource } from "./server/ai/intentParserSource";
+import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
 
 export type PerformActionV2Command = {
   readonly gameId: GameId;

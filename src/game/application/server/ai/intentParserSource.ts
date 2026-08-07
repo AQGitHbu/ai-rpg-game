@@ -1,24 +1,10 @@
 import type { IntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
-import type { Action } from "@/game/domain/action";
+import type { IntentParserSource, IntentParserResult } from "@/game/gameplay/rpg/intentParser/intentParserSource";
 import { asLocationId, asNpcId, asItemId } from "@/game/domain/scenarioBlueprint";
 
 // ---------------------------------------------------------------------------
-// IntentParserSource：可注入的 AI 意图解析 port。
-// 生产环境注入 live source（小模型），测试/离线注入 fixture source。
-// ---------------------------------------------------------------------------
-
-export type IntentParserResult =
-  | { readonly ok: true; readonly action: Action }
-  | { readonly ok: false; readonly reason: "unclassifiable" | "service_error" };
-
-export type IntentParserSource = {
-  readonly sourceVersion: string;
-  parseIntent(text: string, ctx: IntentContext): Promise<IntentParserResult>;
-};
-
-// ---------------------------------------------------------------------------
 // Fixture：确定性硬编码映射，用于离线测试。
-// 策略：按关键词匹配 IntentContext 中的实体名，命中则返回对应 Action。
+// 类型定义在 gameplay 层（intentParserSource.ts），此文件只含 fixture 实现。
 // ---------------------------------------------------------------------------
 
 export function createFixtureIntentParserSource(): IntentParserSource {

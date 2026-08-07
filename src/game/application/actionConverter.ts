@@ -1,7 +1,7 @@
 import type { Interaction, Action } from "@/game/domain/action";
 import type { IntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
 import { preClassifyFreeText } from "@/game/gameplay/rpg/intentParser/preClassify";
-import type { IntentParserSource } from "./server/ai/intentParserSource";
+import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
 
 export type ActionChoiceMap = ReadonlyMap<string, Action>;
 
