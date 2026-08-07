@@ -82,7 +82,7 @@ export function AdventureGameShellV2({ view, onViewChange, onStaleRevision }: Pr
 
   const narrativePending = view.narrativeGeneration?.status === "pending";
   const isSubmitting = feedback.phase === "submitting";
-  const shellBusy = isSubmitting;
+  const shellBusy = isSubmitting || narrativePending;
 
   const selectedDialogue = dialogueNpcId !== null
     ? v1View.dialogues.find((d) => d.npcId === dialogueNpcId) ?? null
@@ -180,6 +180,9 @@ export function AdventureGameShellV2({ view, onViewChange, onStaleRevision }: Pr
       if (result.kind === "narrative_trigger") {
         setFeedback({ phase: "idle" });
         setDialogueNpcId(null);
+        if (result.view !== undefined) {
+          onViewChange(result.view);
+        }
         return { kind: "narrative_trigger" };
       }
       setFeedback({ phase: "idle" });

@@ -20,6 +20,7 @@ export type GameSessionViewV2 = {
   readonly narrative: {
     readonly mode: string;
     readonly hasScene: boolean;
+    readonly eventKind?: string;
     readonly narration?: string;
     readonly choices?: readonly { readonly choiceToken: string; readonly label: string; readonly actionKey: string }[];
     readonly npcLine?: { readonly npcId: string; readonly text: string; readonly emotion: string } | null;
@@ -101,6 +102,7 @@ export function projectGameSessionView(
       mode: storyState.narrative.mode,
       hasScene,
       ...(hasScene && scene ? {
+        eventKind: scene.event?.kind,
         narration: scene.narration,
         choices: scene.choices.map((c) => ({
           choiceToken: c.choiceToken,

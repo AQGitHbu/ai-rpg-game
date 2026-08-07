@@ -118,7 +118,7 @@ export async function ackV2Prologue(): Promise<boolean> {
 /** POST /api/v2/game/npc/dialogue — NPC 自由对话。 */
 export type V2DialogueResult =
   | { readonly kind: "chat"; readonly npcSpeech: string; readonly revision: number }
-  | { readonly kind: "narrative_trigger"; readonly revision: number }
+  | { readonly kind: "narrative_trigger"; readonly revision: number; readonly view?: GameSessionViewV2 }
   | { readonly kind: "error"; readonly message: string };
 
 export async function postV2Dialogue(npcId: string, text: string, revision: number): Promise<V2DialogueResult> {
@@ -129,13 +129,13 @@ export async function postV2Dialogue(npcId: string, text: string, revision: numb
       body: JSON.stringify({ npcId, text, expectedRevision: revision }),
     });
     const body = (await response.json().catch(() => null)) as {
-      ok?: boolean; kind?: string; npcSpeech?: string; revision?: number; code?: string;
+      ok?: boolean; kind?: string; npcSpeech?: string; revision?: number; code?: string; view?: GameSessionViewV2;
     } | null;
     if (body?.ok === true && body.kind === "chat") {
       return { kind: "chat", npcSpeech: body.npcSpeech ?? "...", revision: body.revision ?? revision };
     }
     if (body?.ok === true && body.kind === "narrative_trigger") {
-      return { kind: "narrative_trigger", revision: body.revision ?? revision };
+      return { kind: "narrative_trigger", revision: body.revision ?? revision, view: body.view };
     }
     return { kind: "error", message: "对话失败。" };
   } catch {

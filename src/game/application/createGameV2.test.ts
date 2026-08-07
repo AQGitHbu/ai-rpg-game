@@ -45,8 +45,8 @@ describe("createGameV2", () => {
       expect(result.revision).toBe(0);
       const record = getRecord();
       expect(record).not.toBeNull();
-      expect(record!.worldState.locations.length).toBe(1);
-      expect(record!.worldState.npcs.length).toBe(1);
+      expect(record!.worldState.locations.length).toBe(4);
+      expect(record!.worldState.npcs.length).toBe(3);
       expect(record!.storyState.currentAct).toBe(1);
     }
   });

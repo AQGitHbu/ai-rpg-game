@@ -46,6 +46,15 @@ export async function performActionV2(
     return { ok: false, code: "STALE_GAME_REVISION", feedback: "Stale revision" };
   }
 
+  // spec §11.4: pending 期间不允许玩家再次推进世界（ack_prologue 例外）
+  if (
+    record.storyState.narrative.generation.status === "pending" &&
+    command.interaction.kind === "fixed_choice" &&
+    command.choiceMap.get(command.interaction.choiceToken)?.type !== "ack_prologue"
+  ) {
+    return { ok: false, code: "ACTION_REJECTED", feedback: "正在编排下一幕，请稍候。" };
+  }
+
   const freeTextDeps = command.interaction.kind === "free_text"
     ? { intentContext: buildIntentContext(record.worldState), intentParserSource: deps.intentParserSource }
     : undefined;

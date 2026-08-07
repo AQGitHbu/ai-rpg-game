@@ -93,7 +93,7 @@ export function adaptV2ToV1View(v2: GameSessionViewV2): GameSessionView {
   const narrative = v2.narrative.hasScene && v2.narrative.narration
     ? {
         narration: v2.narrative.narration,
-        eventKind: undefined as unknown as undefined,
+        eventKind: v2.narrative.eventKind as unknown as undefined,
         npcLine: v2.narrative.npcLine
           ? { text: v2.narrative.npcLine.text, emotion: v2.narrative.npcLine.emotion }
           : null,
