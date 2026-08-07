@@ -139,7 +139,7 @@ const APPLICATION_SERVER_IMPORT = forbiddenSpecifierPrefix("@/game/application/s
 /** API route 层对 application/server 只许组合根，persistence 等 deep-import 一律禁止。 */
 const APPLICATION_SERVER_DEEP_IMPORT: BoundaryPattern = {
   label: "application/server deep import (api routes may only use the composition root)",
-  regex: /["']@\/game\/application\/server\/(?!compositionRoot["'])/
+  regex: /["']@\/game\/application\/server\/(?!compositionRoot(?:V2)?["'])/
 };
 
 /** UI/API/store 禁止直连 domain：运行时与类型一律经 "@/game/application" 门面中转。 */
@@ -761,6 +761,8 @@ const PURE_PORT_SPECIFIER = "./server/persistence/gameRepository";
 const PURE_PORT_SPECIFIER_V2 = "./server/persistence/gameRepositoryV2";
 /** API route 层唯一许可的 server 入口。 */
 const COMPOSITION_ROOT_SPECIFIER = "@/game/application/server/compositionRoot";
+/** P1 双状态：V2 组合根与 V1 同级，API route 层同样许可。 */
+const COMPOSITION_ROOT_V2_SPECIFIER = "@/game/application/server/compositionRootV2";
 const SERVER_LOGGER_SPECIFIER = "@/game/logging/serverConsoleLogger";
 
 /** src 相对路径（POSIX 分隔符），便于断言与报告。 */
@@ -825,7 +827,7 @@ describe("server-only modules stay out of client-importable code", () => {
       const allowed = key.startsWith("game/application/")
         ? [PURE_PORT_SPECIFIER, PURE_PORT_SPECIFIER_V2]
         : key.startsWith("app/api/")
-          ? [COMPOSITION_ROOT_SPECIFIER]
+          ? [COMPOSITION_ROOT_SPECIFIER, COMPOSITION_ROOT_V2_SPECIFIER]
           : null;
       for (const specifier of reaching) {
         if (allowed === null || !allowed.includes(specifier)) violations.push(`${key}: ${specifier}`);
@@ -934,6 +936,7 @@ describe("server-only modules stay out of client-importable code", () => {
   it("only the server composition root imports the server console logger", () => {
     const violations = productionFiles
       .filter((file) => toPosixRelative(file) !== "game/application/server/compositionRoot.ts")
+      .filter((file) => toPosixRelative(file) !== "game/application/server/compositionRootV2.ts")
       .filter((file) => extractSpecifiers(readFileSync(file, "utf8")).includes(SERVER_LOGGER_SPECIFIER))
       .map(toPosixRelative);
     expect(violations).toEqual([]);
