@@ -23,3 +23,4 @@ tmp/
 .workbuddy/
 .opencode/
 .clinerules/
+.tmp-sqlite-v2-test/
