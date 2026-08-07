@@ -4,6 +4,7 @@ import type { LocationId, NpcId, EnemyId } from "@/game/domain/scenarioBlueprint
 
 export type GameSessionViewV2 = {
   readonly revision: number;
+  readonly gameType: string;
   readonly player: { readonly name: string; readonly identity: string; readonly hp: number; readonly attack: number; readonly defense: number };
   readonly currentLocation: { readonly id: LocationId; readonly name: string; readonly description: string };
   readonly availableNpcs: readonly { readonly id: NpcId; readonly name: string; readonly role: string; readonly met: boolean }[];
@@ -70,6 +71,7 @@ export function projectGameSessionView(
 
   return {
     revision,
+    gameType: worldState.generation.gameType,
     player: {
       name: worldState.player.name,
       identity: worldState.player.identity,

@@ -49,8 +49,18 @@ export async function postV2Action(payload: V2ActionPayload): Promise<V2ActionOu
       return { kind: "error", message: "服务器返回了无法解析的响应。" };
     }
 
-    if (body.ok === true && body.view !== undefined) {
-      return { kind: "success", view: body.view, message: body.feedback ?? "操作成功" };
+    if (body.ok === true) {
+      // V2 API returns view in response; if missing, fetch current game
+      if (body.view !== undefined) {
+        return { kind: "success", view: body.view, message: body.feedback ?? "操作成功" };
+      }
+      // Fallback: fetch current game to get view
+      const currentRes = await fetch("/api/v2/game/current");
+      const currentBody = (await currentRes.json().catch(() => null)) as { view?: GameSessionViewV2 } | null;
+      if (currentBody?.view !== undefined) {
+        return { kind: "success", view: currentBody.view, message: body.feedback ?? "操作成功" };
+      }
+      return { kind: "error", message: "操作成功但无法获取最新状态。" };
     }
 
     if (body.ok === false) {

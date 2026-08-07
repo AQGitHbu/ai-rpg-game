@@ -1,13 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { InlineButton, Panel, Tag } from "@ai-game/ui";
+import { useRef, useState } from "react";
 import type { GameSessionViewV2 } from "@/game/application/gameSessionViewV2";
-import { postV2Action, ensureV2Narrative, postV2Dialogue, type V2ActionOutcome } from "./gameActionRequestV2";
+import type { GameSessionView } from "@/game/application";
+import { adaptV2ToV1View } from "./viewAdapterV2";
+import { postV2Action, postV2Dialogue, type V2ActionOutcome, type V2DialogueResult } from "./gameActionRequestV2";
+import { AdventureHud, type DetailsPanel } from "./AdventureHud";
+import { AdventureOverlay } from "./AdventureOverlay";
+import { AdventureDetailsPanel } from "./AdventureDetailsPanel";
+import { WorldMapScreen } from "./WorldMapScreen";
+import { LocationSceneScreen } from "./LocationSceneScreen";
+import { NpcDialoguePanel, type FreeInputResult } from "./NpcDialoguePanel";
+import { TravelNarrationScreen } from "./TravelNarrationScreen";
+import { ToastContainer, type ToastMessage } from "./ToastNotification";
+import { NarrativeGenerationModal } from "./NarrativeGenerationModal";
+import { InlineButton, Panel } from "@ai-game/ui";
 
 // ---------------------------------------------------------------------------
-// V2 原生主游戏 Shell：直接消费 GameSessionViewV2，不依赖 V1 GameSessionView。
-// 渲染：叙事场景 + 选项 + NPC 按钮 + 移动按钮 + 背包 + 任务 + 战斗面板 + 结局。
+// V2 主游戏 Shell：复用 V1 全部视觉组件，通过 adaptV2ToV1View 将 V2 view
+// 转换为 V1 GameSessionView 兼容结构。API 调用走 V2 路由（/api/v2/game/*）。
 // ---------------------------------------------------------------------------
 
 type Props = {
@@ -16,24 +27,93 @@ type Props = {
   readonly onStaleRevision: () => void;
 };
 
-type Feedback = { phase: "idle" } | { phase: "submitting" } | { phase: "error"; message: string };
+type AdventureScreen = "map" | "scene";
+
+type ActionFeedback =
+  | { readonly phase: "idle" }
+  | { readonly phase: "submitting" }
+  | { readonly phase: "rejected"; readonly message: string }
+  | { readonly phase: "error"; readonly message: string };
+
+type SceneAction =
+  | { readonly type: "observe"; readonly locationId: string }
+  | { readonly type: "investigate"; readonly factId: string }
+  | { readonly type: "take_item"; readonly itemId: string }
+  | { readonly type: "start_battle"; readonly enemyId: string };
+
+const DETAIL_TITLE: Record<DetailsPanel, string> = {
+  character: "角色",
+  inventory: "背包",
+  quests: "任务",
+  journal: "日志",
+};
+
+function entryScreenFor(_view: GameSessionViewV2): AdventureScreen {
+  return "scene";
+}
 
 export function AdventureGameShellV2({ view, onViewChange, onStaleRevision }: Props) {
-  const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState<Feedback>({ phase: "idle" });
-  const [dialogueText, setDialogueText] = useState("");
-  const [npcSpeech, setNpcSpeech] = useState<string | null>(null);
+  const v1View = adaptV2ToV1View(view);
 
-  const handleOutcome = useCallback((outcome: V2ActionOutcome) => {
-    setBusy(false);
+  const [screen, setScreen] = useState<AdventureScreen>("map");
+  const [detailsPanel, setDetailsPanel] = useState<DetailsPanel | null>(null);
+  const [feedback, setFeedback] = useState<ActionFeedback>({ phase: "idle" });
+  const [toasts, setToasts] = useState<readonly ToastMessage[]>([]);
+  const toastSequenceRef = useRef(0);
+  const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
+  const [dismissedTravelNarration, setDismissedTravelNarration] = useState(false);
+  const [devToolsOpen, setDevToolsOpen] = useState(false);
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const devToolsTriggerRef = useRef<HTMLElement | null>(null);
+
+  function pushToast(message: string): void {
+    toastSequenceRef.current += 1;
+    const toast: ToastMessage = {
+      id: `toast-${toastSequenceRef.current}`,
+      message,
+      createdAt: Date.now(),
+    };
+    setToasts((prev) => [...prev, toast]);
+  }
+
+  function dismissToast(id: string): void {
+    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  }
+
+  const narrativePending = view.narrativeGeneration?.status === "pending";
+  const isSubmitting = feedback.phase === "submitting";
+  const shellBusy = isSubmitting;
+
+  const selectedDialogue = dialogueNpcId !== null
+    ? v1View.dialogues.find((d) => d.npcId === dialogueNpcId) ?? null
+    : null;
+
+  const narrativeEventKind = v1View.narrative?.eventKind;
+  const isTravelEvent = narrativeEventKind === "travel";
+  const isDialogueScreen = narrativeEventKind === undefined || narrativeEventKind === "dialogue";
+  const activeDialogue = !isTravelEvent && isDialogueScreen ? selectedDialogue : null;
+  const showGenerationModal = narrativePending && v1View.narrative === null && v1View.battle === null && v1View.ending === null;
+
+  function openDetails(panel: DetailsPanel): void {
+    triggerRef.current = document.activeElement as HTMLElement;
+    setDetailsPanel(panel);
+  }
+
+  function closeOverlay(): void {
+    setDetailsPanel(null);
+    setDialogueNpcId(null);
+  }
+
+  function handleOutcome(outcome: V2ActionOutcome): void {
     switch (outcome.kind) {
       case "success":
         setFeedback({ phase: "idle" });
-        setNpcSpeech(null);
+        pushToast(outcome.message);
         onViewChange(outcome.view);
+        setScreen(entryScreenFor(outcome.view));
         return;
       case "rejected":
-        setFeedback({ phase: "error", message: outcome.message });
+        setFeedback({ phase: "rejected", message: outcome.message });
         return;
       case "stale":
         setFeedback({ phase: "idle" });
@@ -42,247 +122,157 @@ export function AdventureGameShellV2({ view, onViewChange, onStaleRevision }: Pr
       case "error":
         setFeedback({ phase: "error", message: outcome.message });
     }
-  }, [onViewChange, onStaleRevision]);
+  }
 
-  const submitChoice = useCallback((choiceToken: string) => {
-    if (busy) return;
-    setBusy(true);
+  async function handleMove(locationId: string): Promise<void> {
     setFeedback({ phase: "submitting" });
-    void postV2Action({
+    const outcome = await postV2Action({
+      interaction: { kind: "fixed_choice", choiceToken: `move:${locationId}` },
+      revision: view.revision,
+    });
+    handleOutcome(outcome);
+  }
+
+  async function handleSceneAction(action: SceneAction): Promise<void> {
+    setFeedback({ phase: "submitting" });
+    const choiceToken =
+      action.type === "observe" ? "explore"
+      : action.type === "investigate" ? `investigate:${action.factId}`
+      : action.type === "take_item" ? `take_item:${action.itemId}`
+      : `attack:${action.enemyId}`;
+    const outcome = await postV2Action({
       interaction: { kind: "fixed_choice", choiceToken },
       revision: view.revision,
-    }).then(handleOutcome);
-  }, [busy, view.revision, handleOutcome]);
+    });
+    handleOutcome(outcome);
+  }
 
-  const submitAction = useCallback((actionKey: string) => {
-    submitChoice(actionKey);
-  }, [submitChoice]);
-
-  // 叙事 pending 时轮询 ensure
-  const narrativePending = view.narrativeGeneration?.status === "pending";
-  useEffect(() => {
-    if (!narrativePending) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let failures = 0;
-    async function poll() {
-      const ok = await ensureV2Narrative();
-      if (cancelled) return;
-      if (!ok) {
-        failures++;
-        if (failures >= 3) return;
-      } else {
-        failures = 0;
-      }
-      // Re-fetch current game after ensure
-      // The parent (CurrentGameScreenV2) handles re-fetching
-      timer = setTimeout(() => void poll(), 750);
-    }
-    void poll();
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) clearTimeout(timer);
-    };
-  }, [narrativePending]);
-
-  // NPC 自由对话
-  async function handleDialogueSubmit(npcId: string) {
-    if (!dialogueText.trim()) return;
-    setBusy(true);
+  async function handleNarrativeChoice(choiceToken: string): Promise<void> {
     setFeedback({ phase: "submitting" });
-    const result = await postV2Dialogue(npcId, dialogueText, view.revision);
-    setBusy(false);
-    setFeedback({ phase: "idle" });
-    setDialogueText("");
-    if (result.kind === "chat") {
-      setNpcSpeech(result.npcSpeech);
-    } else if (result.kind === "narrative_trigger") {
-      setNpcSpeech(null);
-      // Parent will re-fetch due to pending state
-    } else {
-      setFeedback({ phase: "error", message: result.message });
+    const outcome = await postV2Action({
+      interaction: { kind: "fixed_choice", choiceToken },
+      revision: view.revision,
+    });
+    if (outcome.kind === "success") {
+      setFeedback({ phase: "idle" });
+      pushToast(outcome.message);
+      onViewChange(outcome.view);
+      if (!outcome.view.narrative.hasScene) {
+        setDialogueNpcId(null);
+      }
+      return;
+    }
+    handleOutcome(outcome);
+  }
+
+  function handleDialogueChoiceFromPanel(choiceToken: string): void {
+    void handleNarrativeChoice(choiceToken);
+  }
+
+  async function handleFreeDialogue(npcId: string, text: string): Promise<FreeInputResult> {
+    setFeedback({ phase: "submitting" });
+    try {
+      const result = await postV2Dialogue(npcId, text, view.revision);
+      if (result.kind === "chat") {
+        setFeedback({ phase: "idle" });
+        return { kind: "chat", npcSpeech: result.npcSpeech };
+      }
+      if (result.kind === "narrative_trigger") {
+        setFeedback({ phase: "idle" });
+        setDialogueNpcId(null);
+        return { kind: "narrative_trigger" };
+      }
+      setFeedback({ phase: "idle" });
+      return { kind: "chat", npcSpeech: "（对方似乎没听清。）" };
+    } catch {
+      setFeedback({ phase: "idle" });
+      return { kind: "chat", npcSpeech: "（对方似乎没听清。）" };
     }
   }
 
-  // 结局面板
-  if (view.ending !== null) {
-    return (
-      <div className="game-screen">
-        <Panel className="ending-panel">
-          <Tag variant={view.ending.outcome === "success" ? "success" : "danger"}>
-            {view.ending.outcome === "success" ? "胜利" : "失败"}
-          </Tag>
-          <h2>故事结局</h2>
-          <p>结局 ID：{view.ending.endingId}</p>
-        </Panel>
-      </div>
-    );
-  }
-
-  // 战斗面板
-  if (view.battle !== null) {
-    return (
-      <div className="game-screen">
-        <Panel className="battle-panel">
-          <h2>战斗：{view.battle.enemyName}</h2>
-          <div className="battle-stats">
-            <span>玩家 HP：{view.battle.playerHp}</span>
-            <span>{view.battle.enemyName} HP：{view.battle.enemyHp}</span>
-            <span>回合：{view.battle.round}</span>
-          </div>
-          <div className="battle-actions">
-            <InlineButton disabled={busy} onClick={() => submitAction("battle_action:attack")}>攻击</InlineButton>
-            <InlineButton disabled={busy} onClick={() => submitAction("battle_action:guard")}>防御</InlineButton>
-            <InlineButton disabled={busy} onClick={() => submitAction("battle_action:flee")}>逃跑</InlineButton>
-          </div>
-        </Panel>
-        {feedback.phase === "error" ? (
-          <p role="status" className="action-feedback error">{feedback.message}</p>
-        ) : null}
-      </div>
-    );
-  }
-
-  // 主场景
   return (
-    <div className="game-screen">
-      {/* HUD */}
-      <Panel className="hud-panel" compact>
-        <div className="hud-row">
-          <Tag variant="info">{view.player.name} · {view.player.identity}</Tag>
-          <span>HP {view.player.hp} · 攻 {view.player.attack} · 防 {view.player.defense}</span>
-          <span>第 {view.story.currentAct}/{view.story.targetActs} 幕 · 张力 {view.story.tension}</span>
-        </div>
-      </Panel>
+    <div className="adventure-game-shell">
+      <AdventureHud
+        view={v1View}
+        screen={screen}
+        onOpen={openDetails}
+        developmentTools={false}
+        onOpenDevTools={() => {
+          devToolsTriggerRef.current = document.activeElement as HTMLElement;
+          setDevToolsOpen(true);
+        }}
+      />
 
-      {/* 叙事场景 */}
-      {view.narrative.hasScene && view.narrative.narration ? (
-        <Panel className="scene-panel">
-          <p className="scene-narration" role="status" aria-live="polite">
-            {view.narrative.narration}
-          </p>
-          {view.narrative.npcLine ? (
-            <blockquote className="npc-line">
-              <strong>{view.narrative.npcLine.text}</strong>
-            </blockquote>
-          ) : null}
-          {/* 选项 */}
-          {view.narrative.choices && view.narrative.choices.length > 0 ? (
-            <div className="scene-choices">
-              {view.narrative.choices.map((choice) => (
-                <InlineButton
-                  key={choice.choiceToken}
-                  disabled={busy}
-                  onClick={() => submitChoice(choice.choiceToken)}
-                >
-                  {choice.label}
-                </InlineButton>
-              ))}
-            </div>
-          ) : null}
-        </Panel>
-      ) : narrativePending ? (
-        <Panel className="scene-pending">
-          <p role="status" aria-live="polite">正在生成叙事场景……</p>
-        </Panel>
+      {screen === "map" ? (
+        <WorldMapScreen
+          view={v1View}
+          busy={shellBusy}
+          onEnterCurrent={() => setScreen(entryScreenFor(view))}
+          onMove={(locationId) => void handleMove(locationId)}
+        />
       ) : (
-        <Panel className="scene-empty">
-          <p>{view.currentLocation.description}</p>
-        </Panel>
+        <LocationSceneScreen
+          view={v1View}
+          busy={shellBusy}
+          onAction={(action) => void handleSceneAction(action)}
+          onOpenDialogue={(npcId) => { triggerRef.current = document.activeElement as HTMLElement; setDialogueNpcId(npcId); }}
+          onReturnMap={() => setScreen("map")}
+        />
       )}
 
-      {/* NPC 对话区 */}
-      {view.availableNpcs.length > 0 ? (
-        <Panel className="npc-panel" compact>
-          <h3>在场人物</h3>
-          <div className="npc-list">
-            {view.availableNpcs.map((npc) => (
-              <div key={String(npc.id)} className="npc-item">
-                <InlineButton disabled={busy} onClick={() => submitAction(`talk:${String(npc.id)}`)}>
-                  与{npc.name}交谈
-                </InlineButton>
-                {npc.met ? <Tag variant="success">已识</Tag> : <Tag variant="default">陌生</Tag>}
-              </div>
-            ))}
-          </div>
-          {/* 自由输入 */}
-          <div className="dialogue-input">
-            <input
-              type="text"
-              value={dialogueText}
-              onChange={(e) => setDialogueText(e.target.value)}
-              placeholder="对NPC说点什么……"
-              disabled={busy}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && view.availableNpcs[0]) {
-                  void handleDialogueSubmit(String(view.availableNpcs[0].id));
-                }
-              }}
-            />
-            <InlineButton
-              disabled={busy || !dialogueText.trim()}
-              onClick={() => view.availableNpcs[0] && void handleDialogueSubmit(String(view.availableNpcs[0].id))}
-            >
-              说话
-            </InlineButton>
-          </div>
-          {npcSpeech ? (
-            <blockquote className="npc-speech">{npcSpeech}</blockquote>
-          ) : null}
-        </Panel>
+      {detailsPanel !== null ? (
+        <AdventureOverlay title={DETAIL_TITLE[detailsPanel]} onClose={closeOverlay} returnFocusRef={triggerRef}>
+          <AdventureDetailsPanel view={v1View} panel={detailsPanel} />
+        </AdventureOverlay>
       ) : null}
 
-      {/* 移动面板 */}
-      {view.availableMoves.length > 0 ? (
-        <Panel className="move-panel" compact>
-          <h3>前往</h3>
-          <div className="move-list">
-            {view.availableMoves.map((move) => (
-              <InlineButton
-                key={String(move.locationId)}
-                disabled={busy}
-                onClick={() => submitAction(`move:${String(move.locationId)}`)}
-              >
-                {move.name}
-              </InlineButton>
-            ))}
-          </div>
-        </Panel>
+      {activeDialogue !== null ? (
+        <AdventureOverlay title={`与${activeDialogue.name}对话`} onClose={closeOverlay} returnFocusRef={triggerRef}>
+          <NpcDialoguePanel
+            dialogue={activeDialogue}
+            gameType={view.gameType}
+            busy={shellBusy}
+            onChoice={handleDialogueChoiceFromPanel}
+            onFreeInput={handleFreeDialogue}
+            freeInputBusy={shellBusy}
+          />
+        </AdventureOverlay>
       ) : null}
 
-      {/* 背包 */}
-      {view.inventory.length > 0 ? (
-        <Panel className="inventory-panel" compact>
-          <h3>背包</h3>
-          <ul>
-            {view.inventory.map((item) => (
-              <li key={item.itemId}>{item.name}</li>
-            ))}
-          </ul>
-        </Panel>
+      {isTravelEvent && v1View.narrative !== null && !dismissedTravelNarration ? (
+        <TravelNarrationScreen
+          narration={v1View.narrative.narration}
+          onComplete={() => { setDialogueNpcId(null); setScreen("scene"); setDismissedTravelNarration(true); }}
+        />
       ) : null}
 
-      {/* 任务 */}
-      {view.quests.length > 0 ? (
-        <Panel className="quest-panel" compact>
-          <h3>任务</h3>
-          <ul>
-            {view.quests.map((q) => (
-              <li key={q.id}>
-                <Tag variant={q.kind === "main" ? "info" : "default"}>{q.kind}</Tag>
-                {q.name} — {q.status}
-              </li>
-            ))}
-          </ul>
-        </Panel>
+      {devToolsOpen ? (
+        <AdventureOverlay title="开发工具" onClose={() => setDevToolsOpen(false)} returnFocusRef={devToolsTriggerRef}>
+          <p className="development-tools-hint">
+            仅清除当前本地试玩存档；不会删除数据库文件或其它项目数据。
+          </p>
+        </AdventureOverlay>
       ) : null}
 
-      {/* 反馈 */}
-      {feedback.phase === "error" ? (
-        <p role="status" className="action-feedback error">{feedback.message}</p>
+      {showGenerationModal ? (
+        <NarrativeGenerationModal
+          progress={undefined}
+          unavailable={false}
+        />
       ) : null}
-      {feedback.phase === "submitting" ? (
-        <p role="status" className="action-feedback submitting">正在处理……</p>
+
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+
+      {feedback.phase === "rejected" || feedback.phase === "error" ? (
+        <p role="status" aria-live="polite" className={`action-feedback ${feedback.phase}`}>
+          {feedback.message}
+        </p>
+      ) : null}
+
+      {isSubmitting ? (
+        <p role="status" aria-live="polite" className="action-feedback submitting">
+          正在处理……
+        </p>
       ) : null}
     </div>
   );

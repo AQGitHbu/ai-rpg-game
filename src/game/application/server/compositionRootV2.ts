@@ -140,7 +140,15 @@ export function createServerGameV2EntryPoints(
         { gameId: current.record.gameId, actionId: command.actionId, interaction: command.interaction, expectedRevision: command.expectedRevision, choiceMap },
         { repository, now, expansionSource },
       );
-      if (result.ok) return { ok: true, revision: result.revision, feedback: result.feedback };
+      if (result.ok) {
+        // Return updated view so the client can render without a separate GET
+        const updated = await repository.getCurrentGame();
+        if (updated.ok && updated.status === "active") {
+          const view = projectGameSessionView(updated.record.worldState, updated.record.storyState, updated.record.revision);
+          return { ok: true, revision: result.revision, feedback: result.feedback, view };
+        }
+        return { ok: true, revision: result.revision, feedback: result.feedback };
+      }
       return { ok: false, code: result.code, feedback: result.feedback };
     },
     getCurrentGameV2: async (_traceId) => {
@@ -171,6 +179,14 @@ export function createServerGameV2EntryPoints(
     handleNpcDialogueV2: async (command, _traceId) => {
       const result = await handleNpcDialogueV2(command, { repository, now });
       if (result.ok) {
+        // Return updated view for narrative_trigger so client can render pending state
+        if (result.kind === "narrative_trigger") {
+          const updated = await repository.getCurrentGame();
+          if (updated.ok && updated.status === "active") {
+            const view = projectGameSessionView(updated.record.worldState, updated.record.storyState, updated.record.revision);
+            return { ok: true, kind: result.kind, npcSpeech: undefined, revision: result.revision, view };
+          }
+        }
         return { ok: true, kind: result.kind, npcSpeech: result.kind === "chat" ? result.npcSpeech : undefined, revision: result.revision };
       }
       return { ok: false, code: result.code };
