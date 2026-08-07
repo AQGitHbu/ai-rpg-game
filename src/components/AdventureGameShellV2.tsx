@@ -224,6 +224,22 @@ export function AdventureGameShellV2({ view, onViewChange, onStaleRevision, onCl
         />
       )}
 
+      {/* V2 叙事选项：当有场景但没有打开的对话面板时，直接在场景中渲染选项 */}
+      {screen === "scene" && view.narrative.hasScene && view.narrative.choices && activeDialogue === null && !narrativePending ? (
+        <nav className="scene-narrative-choices" aria-label="场景选项">
+          {view.narrative.choices.map((choice) => (
+            <button
+              key={choice.choiceToken}
+              type="button"
+              disabled={shellBusy}
+              onClick={() => void handleNarrativeChoice(choice.choiceToken)}
+            >
+              {choice.label}
+            </button>
+          ))}
+        </nav>
+      ) : null}
+
       {detailsPanel !== null ? (
         <AdventureOverlay title={DETAIL_TITLE[detailsPanel]} onClose={closeOverlay} returnFocusRef={triggerRef}>
           <AdventureDetailsPanel view={v1View} panel={detailsPanel} />

@@ -26,11 +26,11 @@ export function adaptV2ToV1View(v2: GameSessionViewV2): GameSessionView {
       visual: "location_main" as const,
     },
     ...v2.availableMoves.map((m, i) => ({
-      state: "unlocked" as const,
+      state: "travelable" as const,
       locationId: String(m.locationId),
       name: m.name,
       position: MAP_POSITIONS[(i + 1) % MAP_POSITIONS.length],
-      visual: "location_main" as const,
+      visual: "map_node" as const,
     })),
   ];
 
@@ -117,15 +117,14 @@ export function adaptV2ToV1View(v2: GameSessionViewV2): GameSessionView {
     : null;
 
   // 派生 locationScene
+  // interactions 只包含 observe/investigate/take_item/start_battle，不包含 talk
+  //（NPC 对话由 view.dialogues 单独渲染，走 onOpenDialogue 回调）
   const locationScene = {
     title: v2.currentLocation.name,
     description: v2.currentLocation.description,
+    backdrop: "location_backdrop" as const,
     scale: "scene" as const,
-    interactions: dialogues.map((d) => ({
-      kind: "talk" as const,
-      npcId: d.npcId,
-      label: `与${d.name}交谈`,
-    })),
+    interactions: [] as readonly unknown[],
   };
 
   // 组装 V1 view
