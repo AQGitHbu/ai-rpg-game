@@ -300,7 +300,7 @@ describe("checkExpansionTrigger", () => {
   const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
   const action: Action = { type: "move", locationId: asLocationId("loc_unknown") };
 
-  it("triggers entity_not_found when ruleEngine returns blocked with UNKNOWN_LOCATION", () => {
+  it("triggers entity_not_found when ruleEngine returns UNKNOWN_LOCATION", () => {
     const initialResult: RuleEngineResult = {
       ok: false,
       code: "UNKNOWN_LOCATION",
@@ -350,7 +350,7 @@ describe("checkExpansionTrigger", () => {
     expect(result.reason).toBe("no_trigger");
   });
 
-  it("does NOT trigger when budget has no room for expansion", () => {
+  it("does NOT trigger when budget has no room for locations expansion", () => {
     const ssMaxed = { ...ss, budget: { ...ss.budget, locations: { ...ss.budget.locations, expanded: ss.budget.locations.max } } };
     const initialResult: RuleEngineResult = {
       ok: false,
@@ -358,6 +358,19 @@ describe("checkExpansionTrigger", () => {
       feedback: "Action rejected: UNKNOWN_LOCATION",
     };
     const result = checkExpansionTrigger(initialResult, ws, ssMaxed, action);
+    expect(result.triggered).toBe(false);
+    expect(result.reason).toBe("no_trigger");
+  });
+
+  it("does NOT trigger when budget has no room for npcs expansion (UNKNOWN_NPC)", () => {
+    const ssMaxedNpcs = { ...ss, budget: { ...ss.budget, npcs: { ...ss.budget.npcs, expanded: ss.budget.npcs.max } } };
+    const initialResult: RuleEngineResult = {
+      ok: false,
+      code: "UNKNOWN_NPC",
+      feedback: "Action rejected: UNKNOWN_NPC",
+    };
+    const talkAction: Action = { type: "talk", npcId: asNpcId("npc_unknown") };
+    const result = checkExpansionTrigger(initialResult, ws, ssMaxedNpcs, talkAction);
     expect(result.triggered).toBe(false);
     expect(result.reason).toBe("no_trigger");
   });
@@ -402,12 +415,11 @@ export function checkExpansionTrigger(
 ): TriggerResult {
   // 信号 1: 初判失败且原因为实体不存在
   if (!initialResult.ok && ENTITY_NOT_FOUND_CODES.has(initialResult.code)) {
-    // 检查预算是否有余量（至少有一个维度可扩展）
-    const hasBudget =
-      budgetAllowsExpansion(ss.budget, "locations") ||
-      budgetAllowsExpansion(ss.budget, "npcs") ||
-      budgetAllowsExpansion(ss.budget, "quests");
-    if (!hasBudget) return { triggered: false, reason: "no_trigger" };
+    // 根据缺失的实体类型检查对应的预算维度
+    const budgetDim = budgetDimForCode(initialResult.code);
+    if (budgetDim !== null && !budgetAllowsExpansion(ss.budget, budgetDim)) {
+      return { triggered: false, reason: "no_trigger" };
+    }
     return { triggered: true, reason: "entity_not_found" };
   }
 
@@ -415,6 +427,16 @@ export function checkExpansionTrigger(
   // 信号 3: 任务目标缺口（P3 暂不实现——预留接口）
 
   return { triggered: false, reason: "no_trigger" };
+}
+
+/** 根据验证失败码映射到对应的预算维度 */
+function budgetDimForCode(code: ValidationCode): "locations" | "npcs" | "quests" | "events" | null {
+  switch (code) {
+    case "UNKNOWN_LOCATION": return "locations";
+    case "UNKNOWN_NPC": return "npcs";
+    // UNKNOWN_FACT/UNKNOWN_ITEM/UNKNOWN_ENEMY 没有独立预算维度——允许触发，不检查预算
+    default: return null;
+  }
 }
 ```
 
@@ -476,7 +498,7 @@ describe("approveExpansions", () => {
       connectFromLocationId: "loc_1",
       reason: "玩家要求前往",
     }];
-    const result = approveExpansions(proposals, ws, ss.budget);
+    const result = approveExpansions(proposals, ws, ss.budget, { genId: (prefix) => `${prefix}_test_1` });
     expect(result.approved.newLocations.length).toBe(1);
     expect(result.approved.newLocations[0]!.name).toBe("密林");
     expect(result.rejected).toEqual([]);
@@ -603,10 +625,18 @@ export type ApprovalResult = {
   readonly nextBudget: StoryBudget;
 };
 
+export type ApproveDeps = {
+  /** 确定性 ID 生成器，避免 Date.now() 保证纯函数可重现 */
+  readonly genId: (prefix: string) => string;
+};
+
 export function approveExpansions(
   proposals: readonly ExpansionProposal[],
   ws: WorldState,
   budget: StoryBudget,
+  deps: ApproveDeps,
+  /** 当 entity_not_found 触发时，用 action 的目标 ID 覆盖新实体 ID，使重演算能命中 */
+  idOverride?: { readonly kind: "location" | "npc"; readonly id: string },
 ): ApprovalResult {
   const existingLocationIds = new Set(ws.locations.map((l) => String(l.id)));
   const existingNpcIds = new Set(ws.npcs.map((n) => String(n.id)));
@@ -624,7 +654,7 @@ export function approveExpansions(
   let workingBudget = budget;
 
   for (const proposal of proposals) {
-    const result = approveOne(proposal, ws, workingBudget, existingLocationIds, existingNpcIds, existingItemIds, existingEnemyIds, existingFactIds);
+    const result = approveOne(proposal, ws, workingBudget, existingLocationIds, existingNpcIds, existingItemIds, existingEnemyIds, existingFactIds, deps, idOverride);
     if (result.ok) {
       switch (proposal.kind) {
         case "location":
@@ -638,19 +668,14 @@ export function approveExpansions(
           workingBudget = consumeExpansion(workingBudget, "npcs");
           break;
         case "item":
+          // items 没有独立预算维度——不消费预算
           newItems.push(result.entry as ItemEntry);
           existingItemIds.add(String(result.entry.id));
-          workingBudget = consumeExpansion(workingBudget, "quests"); // items share quests budget? No—use a separate dimension
-          // Actually items don't have their own budget dimension. Use npcs as proxy or skip budget for items.
-          // Spec says budget dimensions are locations/npcs/quests/events. Items don't have their own.
-          // Decision: items consume no budget dimension (they're minor entities).
-          workingBudget = budget; // revert—items are free
           break;
         case "enemy":
+          // enemies 没有独立预算维度——不消费预算
           newEnemies.push(result.entry as EnemyEntry);
           existingEnemyIds.add(String(result.entry.id));
-          workingBudget = consumeExpansion(workingBudget, "quests"); // enemies share quests budget? No.
-          workingBudget = budget; // revert—enemies are free too (spec only budgets locations/npcs/quests/events)
           break;
         case "fact":
           newFacts.push(result.entry as WorldFactEntry);
@@ -696,6 +721,8 @@ function approveOne(
   _existingItemIds: Set<string>,
   _existingEnemyIds: Set<string>,
   _existingFactIds: Set<string>,
+  deps: ApproveDeps,
+  idOverride?: { readonly kind: "location" | "npc"; readonly id: string },
 ): ApproveOneResult {
   switch (proposal.kind) {
     case "location": {
@@ -708,8 +735,8 @@ function approveOne(
       if (proposal.scale !== "scene" && proposal.scale !== "town") return { ok: false, reason: "invalid_payload" };
       // Reference check
       if (!existingLocationIds.has(proposal.connectFromLocationId)) return { ok: false, reason: "reference_broken" };
-      // Build entry
-      const id = asLocationId(`loc_exp_${ws.locations.length + 1}_${Date.now()}`);
+      // Build entry — ID 优先使用 idOverride（使重演算命中），否则确定性生成
+      const id = idOverride?.kind === "location" ? asLocationId(idOverride.id) : asLocationId(deps.genId("loc_exp"));
       const entry: LocationEntry = {
         id,
         name: proposal.name,
@@ -730,7 +757,7 @@ function approveOne(
       if (codePointLength(proposal.role) < 2 || codePointLength(proposal.role) > 40) return { ok: false, reason: "invalid_payload" };
       if (codePointLength(proposal.description) < 10 || codePointLength(proposal.description) > 120) return { ok: false, reason: "invalid_payload" };
       if (!existingLocationIds.has(proposal.locationId)) return { ok: false, reason: "reference_broken" };
-      const id = asNpcId(`npc_exp_${ws.npcs.length + 1}_${Date.now()}`);
+      const id = idOverride?.kind === "npc" ? asNpcId(idOverride.id) : asNpcId(deps.genId("npc_exp"));
       const entry: NpcEntry = {
         id,
         name: proposal.name,
@@ -756,7 +783,7 @@ function approveOne(
       if (codePointLength(proposal.name) < 2 || codePointLength(proposal.name) > 40) return { ok: false, reason: "invalid_payload" };
       if (codePointLength(proposal.description) < 5 || codePointLength(proposal.description) > 240) return { ok: false, reason: "invalid_payload" };
       if (!existingLocationIds.has(proposal.locationId)) return { ok: false, reason: "reference_broken" };
-      const id = asItemId(`item_exp_${ws.items.length + 1}_${Date.now()}`);
+      const id = asItemId(deps.genId("item_exp"));
       const entry: ItemEntry = {
         id,
         name: proposal.name,
@@ -772,7 +799,7 @@ function approveOne(
       if (proposal.stats.attack < 0 || proposal.stats.attack > 99) return { ok: false, reason: "invalid_payload" };
       if (proposal.stats.defense < 0 || proposal.stats.defense > 99) return { ok: false, reason: "invalid_payload" };
       if (!existingLocationIds.has(proposal.locationId)) return { ok: false, reason: "reference_broken" };
-      const id = asEnemyId(`enemy_exp_${ws.enemies.length + 1}_${Date.now()}`);
+      const id = asEnemyId(deps.genId("enemy_exp"));
       const entry: EnemyEntry = {
         id,
         name: proposal.name,
@@ -786,7 +813,7 @@ function approveOne(
     case "fact": {
       if (codePointLength(proposal.text) < 5 || codePointLength(proposal.text) > 240) return { ok: false, reason: "invalid_payload" };
       if (!existingLocationIds.has(proposal.locationId)) return { ok: false, reason: "reference_broken" };
-      const id = asFactId(`fact_exp_${ws.worldFacts.length + 1}_${Date.now()}`);
+      const id = asFactId(deps.genId("fact_exp"));
       const entry: WorldFactEntry = {
         factId: id,
         text: proposal.text,
@@ -1146,8 +1173,11 @@ export async function runExpansionProposer(
     triggerReason: trigger.reason,
   });
 
-  // Approve proposals
-  const approval = approveExpansions(sourceResult.proposals, ws, ss.budget);
+  // 从 action 提取目标 ID 作为 idOverride（使重演算命中新实体）
+  const idOverride = extractTargetIdOverride(action);
+
+  // Approve proposals — 传入 deps 和 idOverride
+  const approval = approveExpansions(sourceResult.proposals, ws, ss.budget, { genId: (prefix) => `${prefix}_${ws.eventLedger.length + 1}` }, idOverride);
 
   if (approval.approved.newLocations.length === 0 &&
       approval.approved.newNpcs.length === 0 &&
@@ -1183,6 +1213,15 @@ export async function runExpansionProposer(
     reEvaluatedResult,
     rejectedProposals: approval.rejected,
   };
+}
+
+/** 从 action 提取目标 ID，用于 idOverride 使重演算命中新实体 */
+function extractTargetIdOverride(action: Action): { kind: "location" | "npc"; id: string } | undefined {
+  switch (action.type) {
+    case "move": return { kind: "location", id: String(action.locationId) };
+    case "talk": return { kind: "npc", id: String(action.npcId) };
+    default: return undefined;
+  }
 }
 ```
 
@@ -1232,10 +1271,7 @@ export type PerformActionV2Deps = {
 // Inside performActionV2, after ruleEngine:
 const engineResult = ruleEngine(record.worldState, record.storyState, converted.action, command.actionId, { now: deps.now });
 
-let finalResult = engineResult;
-let expandedWorldState = record.worldState;
-let expandedStoryState = record.storyState;
-
+// P3: ExpansionProposer — 初判失败时条件触发
 if (!engineResult.ok && deps.expansionSource) {
   const expansion = await runExpansionProposer(
     engineResult,
@@ -1246,27 +1282,85 @@ if (!engineResult.ok && deps.expansionSource) {
     deps.expansionSource,
     { now: deps.now },
   );
-  if (expansion.triggered && expansion.approved && expansion.reEvaluatedResult?.ok) {
-    finalResult = expansion.reEvaluatedResult;
-    expandedWorldState = finalResult.nextWorldState;
-    expandedStoryState = finalResult.nextStoryState;
-  } else if (expansion.triggered && expansion.approved) {
-    // Expansion approved but re-evaluation still failed—apply expansion for next turn
-    expandedWorldState = applyApprovedExpansion(record.worldState, expansion.approved, deps.now());
-    expandedStoryState = { ...record.storyState, budget: /* updated budget from expansion */ };
+
+  if (expansion.triggered && expansion.approved) {
+    if (expansion.reEvaluatedResult?.ok) {
+      // 重演算成功：提交重演算结果（含已扩展实体 + 行动效果）
+      const commitResult = await commitState(deps.repository, {
+        gameId: command.gameId,
+        expectedRevision: record.revision,
+        nextWorldState: expansion.reEvaluatedResult.nextWorldState,
+        nextStoryState: expansion.reEvaluatedResult.nextStoryState,
+      });
+      if (!commitResult.ok) {
+        return { ok: false, code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE", feedback: "Commit failed" };
+      }
+      return {
+        ok: true,
+        revision: commitResult.record.revision,
+        resolvedEvent: expansion.reEvaluatedResult.resolvedEvent,
+        feedback: "Action performed (with expansion)",
+      };
+    } else {
+      // 重演算仍失败：提交已扩展实体（供下一回合使用），但行动本身被拒绝
+      const expandedWs = applyApprovedExpansion(record.worldState, expansion.approved, deps.now());
+      const expandedSs: StoryState = {
+        ...record.storyState,
+        budget: expansion.reEvaluatedResult && !expansion.reEvaluatedResult.ok
+          ? record.storyState.budget // 重演算失败时不扣减预算（预算在 approveExpansions 中已算）
+          : record.storyState.budget,
+      };
+      // 从 expansion.approved.budgetConsumed 更新预算
+      const budgetAfter = consumeBudgetFromExpansion(record.storyState.budget, expansion.approved.budgetConsumed);
+      const expandedSsWithBudget = { ...record.storyState, budget: budgetAfter };
+      await commitState(deps.repository, {
+        gameId: command.gameId,
+        expectedRevision: record.revision,
+        nextWorldState: expandedWs,
+        nextStoryState: expandedSsWithBudget,
+      });
+      return { ok: false, code: "ACTION_REJECTED", feedback: engineResult.feedback };
+    }
   }
 }
 
-if (!finalResult.ok) {
-  return { ok: false, code: "ACTION_REJECTED", feedback: finalResult.feedback };
+// 无扩展或扩展未触发：正常流程
+if (!engineResult.ok) {
+  return { ok: false, code: "ACTION_REJECTED", feedback: engineResult.feedback };
 }
 
 const commitResult = await commitState(deps.repository, {
   gameId: command.gameId,
   expectedRevision: record.revision,
-  nextWorldState: finalResult.ok ? finalResult.nextWorldState : expandedWorldState,
-  nextStoryState: finalResult.ok ? finalResult.nextStoryState : expandedStoryState,
+  nextWorldState: engineResult.nextWorldState,
+  nextStoryState: engineResult.nextStoryState,
 });
+
+if (!commitResult.ok) {
+  return { ok: false, code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE", feedback: "Commit failed" };
+}
+
+return {
+  ok: true,
+  revision: commitResult.record.revision,
+  resolvedEvent: engineResult.resolvedEvent,
+  feedback: "Action performed",
+};
+```
+
+**辅助函数** `consumeBudgetFromExpansion`：
+
+```typescript
+import { consumeExpansion, type StoryBudget, type BudgetDimensionKey } from "@/game/domain/storyBudget";
+
+function consumeBudgetFromExpansion(budget: StoryBudget, consumed: { locations: number; npcs: number; items: number; enemies: number; facts: number }): StoryBudget {
+  let result = budget;
+  for (let i = 0; i < consumed.locations; i++) result = consumeExpansion(result, "locations");
+  for (let i = 0; i < consumed.npcs; i++) result = consumeExpansion(result, "npcs");
+  for (let i = 0; i < consumed.facts; i++) result = consumeExpansion(result, "events");
+  // items 和 enemies 不消费预算
+  return result;
+}
 ```
 
 - [ ] **Step 2: Update tests to cover expansion path**
