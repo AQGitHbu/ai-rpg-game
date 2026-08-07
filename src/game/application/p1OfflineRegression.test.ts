@@ -75,7 +75,7 @@ describe("P1 offline regression: full createGame -> performAction -> view cycle"
     // 4. Project view after action
     const updatedRecord = getRecord()!;
     const updatedView = projectGameSessionView(updatedRecord.worldState, updatedRecord.storyState, updatedRecord.revision);
-    expect(updatedView.revision).toBe(1);
+    expect(updatedView.revision).toBe(2); // 1 for action commit + 1 for narrative pending
     expect(updatedView.availableNpcs[0]?.met).toBe(true);
     expect(updatedView.story.tension).toBe(33); // 30 + 3 (npc_met)
   });
