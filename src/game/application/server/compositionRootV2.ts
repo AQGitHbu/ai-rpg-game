@@ -9,12 +9,12 @@ import { asGameId, type GameId } from "./persistence/gameRepository";
 import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
 import { createSqliteGameRepositoryV2 } from "./persistence/sqliteGameRepositoryV2";
 import type { GameRepositoryV2 } from "./persistence/gameRepositoryV2";
-import { createGameV2, createFixtureWorldSource, type WorldGenerationSource } from "../createGameV2";
+import { createGameV2, type WorldGenerationSource } from "../createGameV2";
 import { performActionV2 } from "../performActionV2";
 import { projectGameSessionView } from "../gameSessionViewV2";
 import { createFixtureExpansionSource } from "../server/ai/expansionSource";
 import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
-import { createDeterministicSceneSource } from "../deterministicSceneSource";
+import { createV2WorldGenerationSource, createV2SceneSource } from "../server/ai/v2SourceFactory";
 import { generatePendingSceneV2 } from "../generatePendingSceneV2";
 import { handleNpcDialogueV2 } from "../handleNpcDialogueV2";
 import { commitState } from "../stateCommit";
@@ -72,9 +72,9 @@ export function createServerGameV2EntryPoints(
     logError: (operation) => logger.error("sqlite_repository_v2_failure", { operation }),
   });
   const now = () => new Date().toISOString();
-  const source = createFixtureWorldSource();
+  const source = createV2WorldGenerationSource(env, logger);
   const expansionSource = createFixtureExpansionSource();
-  const sceneSource = createDeterministicSceneSource();
+  const sceneSource = createV2SceneSource(env, logger);
 
   const executeHttpRequest = async (
     method: string,
