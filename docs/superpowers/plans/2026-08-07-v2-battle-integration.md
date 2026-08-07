@@ -528,17 +528,26 @@ git commit -m "feat: V2 战斗纯函数 startBattleV2 + battleActionV2——操�
 - [ ] **Step 1: Write failing tests for attack and battle_action validation**
 
 ```typescript
-// Append to src/game/gameplay/rpg/ruleEngine/validateAction.test.ts
-
-import { appendEnemy, type EnemyEntry } from "@/game/domain/worldState";
-import { asEnemyId } from "@/game/domain/scenarioBlueprint";
+// In src/game/gameplay/rpg/ruleEngine/validateAction.test.ts
+// FIRST: Remove the existing test "rejects battle actions in P1" (lines 51-54)
+//        since attack/battle_action will now be validated for real.
+// THEN: Add these new test suites at the end of the file.
+//
+// Also add these imports at the top (alongside existing imports):
+//   import { appendEnemy, type EnemyEntry } from "@/game/domain/worldState";
+//   import { asEnemyId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+//   (asEnemyId and asGenerationId may already be imported — check first)
 
 describe("validateAction — attack", () => {
   function makeWorldWithEnemy() {
+    const startingLocation: LocationEntry = {
+      id: asLocationId("loc_1"), name: "荒野", description: "test", kind: "main",
+      connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+    };
     let ws = createInitialWorldState({
-      gameType: "wuxia", seed: "test",
+      generation: { generationId: asGenerationId("gen_test"), seed: "test", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
       player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocationId: asLocationId("loc_1"),
+      startingLocation,
       startingItemIds: [],
     });
     const enemy: EnemyEntry = {
@@ -589,10 +598,14 @@ describe("validateAction — attack", () => {
 
 describe("validateAction — battle_action", () => {
   it("rejects battle_action when no active battle", () => {
+    const startingLocation: LocationEntry = {
+      id: asLocationId("loc_1"), name: "荒野", description: "test", kind: "main",
+      connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+    };
     const ws = createInitialWorldState({
-      gameType: "wuxia", seed: "test",
+      generation: { generationId: asGenerationId("gen_test"), seed: "test", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
       player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocationId: asLocationId("loc_1"),
+      startingLocation,
       startingItemIds: [],
     });
     const result = validateAction(ws, { type: "battle_action", action: "attack" });
@@ -601,10 +614,14 @@ describe("validateAction — battle_action", () => {
   });
 
   it("accepts battle_action when battle is active", () => {
+    const startingLocation: LocationEntry = {
+      id: asLocationId("loc_1"), name: "荒野", description: "test", kind: "main",
+      connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+    };
     let ws = createInitialWorldState({
-      gameType: "wuxia", seed: "test",
+      generation: { generationId: asGenerationId("gen_test"), seed: "test", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
       player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocationId: asLocationId("loc_1"),
+      startingLocation,
       startingItemIds: [],
     });
     ws = { ...ws, battle: { status: "active", enemyId: asEnemyId("e1"), playerHp: 100, enemyHp: 50, round: 1 } };
@@ -674,16 +691,20 @@ git commit -m "feat: validateAction 接入 attack/battle_action——替换 BATT
 
 ```typescript
 // Append to src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts
-
-import { appendEnemy, type EnemyEntry } from "@/game/domain/worldState";
-import { asEnemyId } from "@/game/domain/scenarioBlueprint";
+// Add these imports at the top (alongside existing imports):
+//   import { appendEnemy, type EnemyEntry, type LocationEntry } from "@/game/domain/worldState";
+//   import { asEnemyId, asGenerationId } from "@/game/domain/scenarioBlueprint";
 
 describe("resolveByType — attack", () => {
   function makeWorldWithEnemy() {
+    const startingLocation: LocationEntry = {
+      id: asLocationId("loc_1"), name: "荒野", description: "test", kind: "main",
+      connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+    };
     let ws = createInitialWorldState({
-      gameType: "wuxia", seed: "test",
+      generation: { generationId: asGenerationId("gen_test"), seed: "test", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
       player: { name: "侠客", identity: "剑客", stats: { hp: 30, attack: 6, defense: 4 } },
-      startingLocationId: asLocationId("loc_1"),
+      startingLocation,
       startingItemIds: [],
     });
     const enemy: EnemyEntry = {
