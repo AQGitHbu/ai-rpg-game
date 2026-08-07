@@ -1,9 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { convertInteraction } from "./actionConverter";
+import { convertInteraction, type ActionChoiceMap } from "./actionConverter";
+import type { Action } from "@/game/domain/action";
 import { asNpcId } from "@/game/domain/scenarioBlueprint";
 
 describe("convertInteraction", () => {
-  const choiceMap = new Map([["tok_talk", { type: "talk", npcId: asNpcId("npc_1") }]]);
+  const choiceMap: ActionChoiceMap = new Map<string, Action>([
+    ["tok_talk", { type: "talk", npcId: asNpcId("npc_1") }],
+  ]);
 
   it("maps known fixed_choice token to action", () => {
     const r = convertInteraction({ kind: "fixed_choice", choiceToken: "tok_talk" }, choiceMap);

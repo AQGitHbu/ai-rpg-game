@@ -30,13 +30,17 @@ describe("validateAction", () => {
   it("rejects move to unknown location", () => {
     const result = validateAction(ws, { type: "move", locationId: asLocationId("unknown") });
     expect(result.ok).toBe(false);
-    expect(result.code).toBe("UNKNOWN_LOCATION");
+    if (!result.ok) {
+      expect(result.code).toBe("UNKNOWN_LOCATION");
+    }
   });
 
   it("rejects talk to unknown npc", () => {
     const result = validateAction(ws, { type: "talk", npcId: asNpcId("unknown") });
     expect(result.ok).toBe(false);
-    expect(result.code).toBe("UNKNOWN_NPC");
+    if (!result.ok) {
+      expect(result.code).toBe("UNKNOWN_NPC");
+    }
   });
 
   it("accepts ack_prologue always", () => {
