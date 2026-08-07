@@ -5,6 +5,7 @@ import type { GameEvent } from "@/game/domain/events";
 import type { ResolvedEventStatus, StateChange, FactChange } from "@/game/domain/resolvedEvent";
 import { relationshipTierOf, RELATIONSHIP_CHANGE } from "@/game/domain/relationship";
 import { updateNpcMemory } from "./updateNpcMemory";
+import { startBattleV2, battleActionV2 } from "./battleResolver";
 import type { NpcInteraction } from "@/game/domain/worldState";
 
 export type ResolveResult = {
@@ -147,6 +148,12 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
     }
     case "ack_prologue": {
       return { ok: true, nextWorldState: { ...ws }, events: [], feedback: "", status: "success", stateChanges: [], facts: [] };
+    }
+    case "attack": {
+      return startBattleV2(ws, action.enemyId, deps);
+    }
+    case "battle_action": {
+      return battleActionV2(ws, action.action, deps);
     }
     default:
       return { ok: false, feedback: "此行动类型暂不支持。" };

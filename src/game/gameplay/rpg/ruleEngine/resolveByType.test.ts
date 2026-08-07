@@ -131,3 +131,58 @@ describe("resolveByType status and stateChanges", () => {
     }
   });
 });
+
+describe("resolveByType — attack", () => {
+  const startingLocation: LocationEntry = {
+    id: asLocationId("loc_1"), name: "荒野", description: "test", kind: "main",
+    connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+  };
+  function makeWorldWithEnemy() {
+    let baseWs = createInitialWorldState({
+      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "侠客", identity: "剑客", stats: { hp: 30, attack: 6, defense: 4 } },
+      startingLocation,
+      startingItemIds: [],
+    });
+    const enemy: import("@/game/domain/worldState").EnemyEntry = {
+      id: asEnemyId("enemy_1"), name: "山贼", tier: "normal",
+      stats: { hp: 20, attack: 5, defense: 2 },
+      locationId: asLocationId("loc_1"), tags: [],
+    };
+    return { ...baseWs, enemies: [enemy] };
+  }
+  const deps = { now: () => "2026-01-01" };
+
+  it("attack starts battle and returns active battle state", () => {
+    const ws = makeWorldWithEnemy();
+    const result = resolveByType(ws, { type: "attack", enemyId: asEnemyId("enemy_1") }, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.nextWorldState.battle.status).toBe("active");
+      expect(result.events.some((e) => e.type === "battle_started")).toBe(true);
+      expect(result.status).toBe("success");
+    }
+  });
+
+  it("battle_action attack resolves a round", () => {
+    const ws = makeWorldWithEnemy();
+    const started = resolveByType(ws, { type: "attack", enemyId: asEnemyId("enemy_1") }, deps);
+    if (!started.ok) throw new Error("setup failed");
+    const result = resolveByType(started.nextWorldState, { type: "battle_action", action: "attack" }, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.events.some((e) => e.type === "battle_round_resolved")).toBe(true);
+    }
+  });
+
+  it("battle_action flee ends battle", () => {
+    const ws = makeWorldWithEnemy();
+    const started = resolveByType(ws, { type: "attack", enemyId: asEnemyId("enemy_1") }, deps);
+    if (!started.ok) throw new Error("setup failed");
+    const result = resolveByType(started.nextWorldState, { type: "battle_action", action: "flee" }, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.nextWorldState.battle.status).toBe("resolved");
+    }
+  });
+});
