@@ -234,7 +234,7 @@ export function AdventureGameShellV2({ view, onViewChange, onStaleRevision, onCl
         <AdventureOverlay title={`与${activeDialogue.name}对话`} onClose={closeOverlay} returnFocusRef={triggerRef}>
           <NpcDialoguePanel
             dialogue={activeDialogue}
-            gameType={view.gameType}
+            gameType={view.gameType as never}
             busy={shellBusy}
             onChoice={handleDialogueChoiceFromPanel}
             onFreeInput={handleFreeDialogue}

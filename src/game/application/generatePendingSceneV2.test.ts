@@ -55,6 +55,7 @@ function makeMockRepo(record: GameRecordV2 | null): GameRepositoryV2 {
         },
       };
     }),
+    clearCurrentGame: vi.fn(async () => ({ ok: true as const })),
   };
 }
 
@@ -92,3 +93,4 @@ describe("generatePendingSceneV2", () => {
     expect(result).toBe("unavailable");
   });
 });
+

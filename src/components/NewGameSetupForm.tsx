@@ -194,6 +194,8 @@ type CreateGameApiBody = {
   generationSource?: unknown;
   code?: string;
   fieldErrors?: NewGameInputError[];
+  ok?: boolean;
+  revision?: number;
 };
 
 /** 严格收窄安全来源字段：缺失或未知值都不得默认按 generated 处理。 */

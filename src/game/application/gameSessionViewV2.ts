@@ -52,7 +52,9 @@ export function projectGameSessionView(
   // Battle projection
   const battle: GameSessionViewV2["battle"] = (() => {
     if (worldState.battle.status !== "active") return null;
-    const enemy = worldState.enemies.find((e) => e.id === worldState.battle.enemyId);
+    const battle = worldState.battle;
+    if (battle.status !== "active") return null;
+    const enemy = worldState.enemies.find((e) => e.id === battle.enemyId);
     return {
       enemyName: enemy?.name ?? "???",
       playerHp: worldState.battle.playerHp,

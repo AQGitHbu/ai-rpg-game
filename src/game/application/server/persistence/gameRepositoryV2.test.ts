@@ -35,6 +35,7 @@ function createInMemoryGameRepositoryV2(): GameRepositoryV2 {
       };
       return { ok: true as const, record };
     },
+    async clearCurrentGame() { record = null; return { ok: true as const }; },
   };
 }
 
@@ -92,5 +93,6 @@ describe("GameRepositoryV2 in-memory", () => {
       expect(r.record.storyState.tension).toBe(storyState.tension);
       expect(r.record.worldState).toBe(worldState);
     }
-  });
+    });
 });
+

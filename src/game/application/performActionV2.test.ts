@@ -31,6 +31,7 @@ function createInMemoryRepoWithRecord(ws: WorldState, ss: StoryState): GameRepos
       record = { ...record, storyState: { ...record.storyState, narrative: input.nextNarrative, candidateEventPool: input.nextCandidateEventPool }, revision: record.revision + 1 };
       return { ok: true as const, record };
     },
+      async clearCurrentGame() { return { ok: true as const }; },
   };
 }
 
@@ -169,3 +170,4 @@ describe("performActionV2 free_text integration", () => {
     }
   });
 });
+

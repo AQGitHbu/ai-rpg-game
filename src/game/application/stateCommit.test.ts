@@ -33,6 +33,7 @@ function createInMemoryRepo(): { repo: GameRepositoryV2; getRecord: () => GameRe
         record = { ...record, storyState: { ...record.storyState, narrative: input.nextNarrative, candidateEventPool: input.nextCandidateEventPool }, revision: record.revision + 1 };
         return { ok: true as const, record };
       },
+      async clearCurrentGame() { return { ok: true as const }; },
     },
     getRecord: () => record,
   };
@@ -85,3 +86,4 @@ describe("commitState", () => {
     expect(result).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
   });
 });
+

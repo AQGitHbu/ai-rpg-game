@@ -32,6 +32,7 @@ function createInMemoryRepo(): { repo: GameRepositoryV2; getRecord: () => GameRe
         record = { ...record, storyState: { ...record.storyState, narrative: input.nextNarrative, candidateEventPool: input.nextCandidateEventPool }, revision: record.revision + 1 };
         return { ok: true as const, record };
       },
+      async clearCurrentGame() { return { ok: true as const }; },
     },
     getRecord: () => record,
   };
@@ -80,3 +81,4 @@ describe("P1 offline regression: full createGame -> performAction -> view cycle"
     expect(updatedView.story.tension).toBe(33); // 30 + 3 (npc_met)
   });
 });
+

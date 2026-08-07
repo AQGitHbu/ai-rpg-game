@@ -1,4 +1,4 @@
-import type { GameSessionViewV2 } from "./gameSessionViewV2";
+import type { GameSessionViewV2 } from "@/game/application/gameSessionViewV2";
 import type { GameSessionView } from "@/game/application";
 
 // ---------------------------------------------------------------------------
@@ -56,11 +56,12 @@ export function adaptV2ToV1View(v2: GameSessionViewV2): GameSessionView {
     label: c.label,
     choiceToken: c.choiceToken,
   })) ?? [];
-  const dialogues = v2.availableNpcs.map((npc) => ({
+  const SLOT_POSITIONS = ["left", "right", "center", "foreground"] as const;
+  const dialogues = v2.availableNpcs.map((npc, idx) => ({
     npcId: String(npc.id),
     name: npc.name,
     role: npc.role,
-    slot: "talk" as const,
+    slot: SLOT_POSITIONS[idx % SLOT_POSITIONS.length],
     speechPages: v2.narrative.npcLine?.npcId === String(npc.id)
       ? [v2.narrative.npcLine.text]
       : [],
