@@ -74,13 +74,16 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       if (npc === undefined) return { ok: false, feedback: "未知角色。" };
       const event: GameEvent = { type: "npc_met", npcId: action.npcId, occurredAt, interactionKind: "greet" };
 
+      const tier = relationshipTierOf(npc.memory.relationship);
+      const isHostile = tier === "hostile";
+
       const interaction: NpcInteraction = {
         turn: ws.eventLedger.length,
         locationId: ws.currentLocationId,
         actionType: "talk",
-        outcome: "positive",
-        relationshipDelta: RELATIONSHIP_CHANGE.GREET_FIRST_MEET,
-        summary: npc.met ? "再次交谈" : "首次见面，好感+5",
+        outcome: isHostile ? "neutral" : "positive",
+        relationshipDelta: isHostile ? 0 : RELATIONSHIP_CHANGE.GREET_FIRST_MEET,
+        summary: npc.met ? "再次交谈" : isHostile ? "敌对状态下勉强交流" : "首次见面，好感+5",
       };
       const updatedNpc = updateNpcMemory(npc, interaction);
 
@@ -89,8 +92,8 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         npcs: ws.npcs.map((n) => n.id === action.npcId ? { ...updatedNpc, met: true } : n),
         eventLedger: [...ws.eventLedger, event],
       };
-      const tier = relationshipTierOf(updatedNpc.memory.relationship);
-      const status: ResolvedEventStatus = tier === "hostile" ? "partial_success" : "success";
+      const tierAfterUpdate = relationshipTierOf(updatedNpc.memory.relationship);
+      const status: ResolvedEventStatus = tierAfterUpdate === "hostile" ? "partial_success" : "success";
       const stateChanges: StateChange[] = [
         { path: `npcs[${String(action.npcId)}].met`, description: `与${npc.name}交谈`, operation: "set" },
       ];
