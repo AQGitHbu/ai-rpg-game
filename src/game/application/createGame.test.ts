@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  createBudgetPolicy,
   validateNewGameInput,
   type NewGameInput,
   type ScenarioBlueprintCandidate
 } from "@/game/domain";
 import {
+  compileScenarioBlueprint,
   createFallbackBlueprint,
   loadScenarioProfiles,
+  validateScenarioBlueprintCandidate,
   type ScenarioProfiles
 } from "@/game/gameplay/rpg/scenario";
+import { repairScenarioCandidate } from "./scenarioCandidateRecovery";
+import type { ScenarioBlueprint } from "@/game/domain";
 import {
   SCENARIO_CANDIDATE_CONTRACT_VERSION,
   type ScenarioCandidateAttempt,
@@ -258,7 +263,7 @@ describe("createGame：repository 结构化失败透传稳定代码", () => {
 });
 
 describe("createGame：视图不泄漏隐藏内容", () => {
-  it("隐藏地点、未解锁任务、结局、敌人、seed/inputDigest 均不出现在视图中", async () => {
+  it("v3 开局收窄：蓝图无隐藏内容可泄；内部信息 seed/inputDigest/结构字段均不出现在视图中", async () => {
     const repository = createFakeGameRepository();
     const result = await createGame(
       { input: FIXTURE.input, seed: FIXTURE.seed },
@@ -269,30 +274,16 @@ describe("createGame：视图不泄漏隐藏内容", () => {
     const viewJson = JSON.stringify(result.view);
     const { blueprint, state } = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
 
-    // 隐藏地点：名称与 ID 都不得出现。
+    // Phase 14 开局收窄：蓝图不含隐藏地点，无锁定任务，也无结局/敌人。
+    // 没有隐藏内容意味着视图天然无权携带任何这些实体，先证明确实为空。
     const hiddenLocations = blueprint.locations.filter((entry) => entry.kind === "hidden");
-    expect(hiddenLocations.length).toBeGreaterThan(0);
-    for (const location of hiddenLocations) {
-      expect(viewJson.includes(location.name), `hidden location=${location.name}`).toBe(false);
-      expect(viewJson.includes(location.id), `hidden location id=${location.id}`).toBe(false);
-    }
-    // 未解锁任务：名称与 ID 都不得出现。
-    const lockedQuestIds = new Set(
-      state.quests.filter((quest) => quest.status === "locked").map((quest) => quest.questId)
+    expect(hiddenLocations).toHaveLength(0);
+    const lockedQuests = blueprint.quests.filter((quest) =>
+      state.quests.some((entry) => entry.questId === quest.id && entry.status === "locked")
     );
-    const lockedQuests = blueprint.quests.filter((quest) => lockedQuestIds.has(quest.id));
-    expect(lockedQuests.length).toBeGreaterThan(0);
-    for (const quest of lockedQuests) {
-      expect(viewJson.includes(quest.name), `locked quest=${quest.name}`).toBe(false);
-      expect(viewJson.includes(quest.id), `locked quest id=${quest.id}`).toBe(false);
-    }
-    // 结局与敌人属于完整蓝图内容，开场视图无权携带。
-    for (const ending of blueprint.endings) {
-      expect(viewJson.includes(ending.name), `ending=${ending.name}`).toBe(false);
-    }
-    for (const enemy of blueprint.enemies) {
-      expect(viewJson.includes(enemy.name), `enemy=${enemy.name}`).toBe(false);
-    }
+    expect(lockedQuests).toHaveLength(0);
+    expect(blueprint.endings).toHaveLength(0);
+    expect(blueprint.enemies).toHaveLength(0);
     // 可复现生成的内部信息与蓝图结构字段不外泄。
     expect(viewJson.includes(blueprint.seed)).toBe(false);
     expect(viewJson.includes(blueprint.inputDigest)).toBe(false);
@@ -307,7 +298,8 @@ describe("createGame：视图不泄漏隐藏内容", () => {
 // 输入无效时 source/repository 零调用；observer 抛错不影响结果。
 // ---------------------------------------------------------------------------
 
-// 此 seed 下的 fallback 候选恰好满额 6 名 NPC：追加第 7 人必然超预算。
+// 此 seed 下的 fallback 候选为 v3 开局收窄（1 名 NPC/1 个地点）：追加 6 名
+// 引用干净的 NPC 凑到 7 名必然超 coreNpcsMax（=6），触发预算裁剪修复。
 const CANDIDATE_SEED = "phase4a-candidate-002";
 // 测试专用：去掉根字段 readonly 并允许挂未知字段，便于构造非法候选。
 type MutableCandidate = {
@@ -321,23 +313,28 @@ function buildSourceCandidate(): ScenarioBlueprintCandidate {
   return createFallbackBlueprint(validated.value, CANDIDATE_SEED, { profiles: PROFILES });
 }
 
-/** 可机械修复：多余根字段 + 超预算第 7 个 NPC（无任何引用指向它）。 */
+/** 可机械修复：多余根字段 + 第 7 名超预算 NPC（v3 开局仅 1 名 NPC，追加后必然超预算）。 */
 function buildRepairableCandidate(): ScenarioBlueprintCandidate {
   const candidate = buildSourceCandidate() as MutableCandidate;
   candidate.extraPromptInstruction = "多余指令字段";
-  candidate.npcs = [
-    ...candidate.npcs,
-    {
-      id: "npc_7",
-      name: "多余随从",
-      role: "路人",
-      description: "超预算第七人，未被任何地点引用。",
-      locationId: "loc_2",
-      isCompanion: false,
-      knownFactIds: [],
-      tags: []
-    }
-  ];
+  const locationId = candidate.locations[0]?.id;
+  if (locationId === undefined) throw new Error("fallback 候选必须含起始地点");
+  const extraCount = 6;
+  for (let index = 1; index <= extraCount; index += 1) {
+    candidate.npcs = [
+      ...candidate.npcs,
+      {
+        id: `npc_7_${index}`,
+        name: `多余随从 ${index}`,
+        role: "路人",
+        description: "超预算冗余 NPC，未被任何地点或任务引用。",
+        locationId,
+        isCompanion: false,
+        knownFactIds: [],
+        tags: []
+      }
+    ];
+  }
   return candidate;
 }
 
@@ -348,6 +345,23 @@ function buildUnrepairableCandidate(): ScenarioBlueprintCandidate {
     index === 0 ? { ...npc, knownFactIds: ["fact_missing"] } : npc
   );
   return candidate;
+}
+
+/** 与 createGame 编排相同的修复路径：repair → 校验 → 编译，作为期望蓝图基准。 */
+function runRepairPipeline(candidate: ScenarioBlueprintCandidate): ScenarioBlueprint {
+  const validated = validateNewGameInput(FIXTURE.input);
+  if (!validated.ok) throw new Error("fixture 输入必须合法");
+  const policy = createBudgetPolicy(validated.value.gameLength);
+  const repaired = repairScenarioCandidate(candidate, { profiles: PROFILES, policy });
+  if (repaired === null) throw new Error("候选必须可机械修复");
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(repaired, {
+      profile: PROFILES.gameTypeProfiles.wuxia,
+      policy
+    })
+  );
+  if (!compiled.ok) throw new Error(`修复后候选不可编译：${JSON.stringify(compiled.issues)}`);
+  return compiled.blueprint;
 }
 
 /** 记录 calls 的脚本化 source：按预设序列逐次返回 attempt。 */
@@ -444,10 +458,10 @@ describe("createGame：Phase 4A 候选编排", () => {
 
     expect(result).toMatchObject({ ok: true, source: "generated" });
     expect(scripted.calls).toHaveLength(1);
-    // 修复只删多余字段/裁剪尾部 ⇒ 与合法候选编译结果完全一致。
-    const expected = runScenarioPipeline(FIXTURE.input, CANDIDATE_SEED);
+    // 期望蓝图 = 与编排相同的修复路径：修复只删多余字段/裁剪尾部。
+    const expected = runRepairPipeline(buildRepairableCandidate());
     expect(repository.createCalls).toHaveLength(1);
-    expect(repository.createCalls[0].blueprint).toEqual(expected.blueprint);
+    expect(repository.createCalls[0].blueprint).toEqual(expected);
     expect(repository.createCalls[0].blueprint.npcs).toHaveLength(6);
     expect(events.map((event) => event.stage)).toEqual([
       "requested",

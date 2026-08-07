@@ -60,9 +60,17 @@ export async function generatePendingNarrativeScene(
   const loaded = await deps.repository.getCurrentGame();
   if (!loaded.ok || loaded.status !== "active") return "unavailable";
   const { record } = loaded;
+  const generation = record.state.narrative.generation;
+  // A dialogue-response followup keeps the consumed followup as currentScene
+  // while the next scene is being assembled (see performAction). That bridge
+  // is identifiable by its trigger context; replacing it on completion is the
+  // intended continuation. Any other pending-with-scene state is not ours.
+  const followupBridgeActive =
+    generation.status === "pending" &&
+    generation.triggerContext?.kind === "dialogue_response";
   if (
-    record.state.narrative.generation.status !== "pending" ||
-    record.state.narrative.currentScene !== null ||
+    generation.status !== "pending" ||
+    (record.state.narrative.currentScene !== null && !followupBridgeActive) ||
     record.state.ending !== null ||
     record.state.battle.status === "active"
   ) {
@@ -83,7 +91,7 @@ export async function generatePendingNarrativeScene(
       expectedRevision: record.revision,
       nextState: {
         ...record.state,
-        narrative: { ...record.state.narrative, currentScene: null, generation: { status: "idle" } },
+        narrative: { ...record.state.narrative, generation: { status: "idle" } },
       },
     });
     if (!cleared.ok) return finish(cleared.code === "STALE_GAME_REVISION" ? "stale" : "unavailable");

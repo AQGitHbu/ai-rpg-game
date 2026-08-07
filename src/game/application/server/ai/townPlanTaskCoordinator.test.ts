@@ -1,18 +1,54 @@
 import { describe, expect, it } from "vitest";
-import { asLocationId, type NewGameInput } from "@/game/domain";
+import { asLocationId, type GameState, type ScenarioBlueprint } from "@/game/domain";
+import { createTownPlanFromLocation, townSeedFor } from "@/game/gameplay/rpg/town";
+import {
+  compileScenarioBlueprint,
+  initializeGameState,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import { asGameId, type GameRecord, type GameRepository } from "../persistence/gameRepository";
-import { runScenarioPipeline } from "../../applicationFixture.testutil";
-import type { TownPlanCandidateSource } from "../../townPlanGeneration";
+import { TOWN_PLAN_CONTRACT_VERSION, type TownPlanCandidateSource } from "../../townPlanGeneration";
 import { TownPlanTaskCoordinator } from "./townPlanTaskCoordinator";
-import wuxiaFixture from "../../../../../data/fixtures/phase1/wuxia.json";
 
 // ---------------------------------------------------------------------------
 // TownPlanTaskCoordinator：进程内去重（镜像 RuntimeNarrativeTaskCoordinator）。
 // pending 持久化在 state，重启后可经同一 ensure 恢复。
+//
+// Phase 14：开场收窄后 fallback 蓝图不再含 town 地点；本文件改用
+// makeValidCandidate 运行时扩展蓝图（runtime_expansion）并把 loc_b 标为
+// town 层，作为协调器契约测试的基准。
 // ---------------------------------------------------------------------------
 
-type Phase1Fixture = { input: NewGameInput; seed: string };
-const fixture = wuxiaFixture as unknown as Phase1Fixture;
+function compileRuntimeBlueprint(): ScenarioBlueprint {
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(makeValidCandidate(), {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
+}
+
+const RUNTIME_BLUEPRINT = compileRuntimeBlueprint();
+// loc_b 已标 town（运行时蓝图中 loc_b 含 npc_b，离线规划可派生剧情建筑）。
+const TOWN_BLUEPRINT: ScenarioBlueprint = {
+  ...RUNTIME_BLUEPRINT,
+  locations: RUNTIME_BLUEPRINT.locations.map((location) =>
+    String(location.id) === "loc_b" ? { ...location, scale: "town" as const } : location
+  )
+};
+const PIPELINE = { blueprint: TOWN_BLUEPRINT, state: initializeGameState(TOWN_BLUEPRINT) };
+
+const TOWN_LOCATION_ID = "loc_b";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -20,13 +56,12 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 function pendingRecord(): GameRecord {
-  const { blueprint, state } = runScenarioPipeline(fixture.input, fixture.seed);
   return {
     gameId: asGameId("town-coordinator-test"),
-    blueprint,
+    blueprint: PIPELINE.blueprint,
     state: {
-      ...state,
-      townGeneration: { status: "pending", locationId: asLocationId("loc_2"), requestedAt: "2026-07-30T08:00:00.000Z" }
+      ...PIPELINE.state,
+      townGeneration: { status: "pending", locationId: asLocationId(TOWN_LOCATION_ID), requestedAt: "2026-07-30T08:00:00.000Z" }
     },
     revision: 0,
     createdAt: "2026-07-30T08:00:00.000Z"
@@ -58,7 +93,7 @@ describe("TownPlanTaskCoordinator", () => {
         await releaseSource.promise;
         return {
           ok: false as const,
-          contractVersion: "town-plan-v1" as const,
+          contractVersion: TOWN_PLAN_CONTRACT_VERSION,
           origin: "unavailable" as const,
           category: "service_error" as const,
           diagnostics: []
@@ -84,14 +119,13 @@ describe("TownPlanTaskCoordinator", () => {
   });
 
   it("townGeneration 非 pending ⇒ not_pending，不启动任务", async () => {
-    const { blueprint, state } = runScenarioPipeline(fixture.input, fixture.seed);
     const repository: GameRepository = {
       async createInitialGame() { return { ok: true }; },
       async getCurrentGame() {
         return {
           ok: true as const,
           status: "active" as const,
-          record: { gameId: asGameId("t"), blueprint, state, revision: 0, createdAt: "t" }
+          record: { gameId: asGameId("t"), blueprint: PIPELINE.blueprint, state: PIPELINE.state, revision: 0, createdAt: "t" }
         };
       },
       async applyResolvedAction() { throw new Error("not reached"); },

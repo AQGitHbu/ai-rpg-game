@@ -53,6 +53,8 @@ const MINIMAL_CANDIDATE = {
   enemies: [],
   items: [],
   endings: [],
+  startAnchor: { locationId: "loc_1", npcId: "npc_1", startQuestId: "quest_main_1" },
+  endingDirection: { theme: "复仇与救赎", possibleTones: ["triumph"], lockedAt: 2 },
   openingScene: {
     id: "scene_opening",
     locationId: "loc_1",
@@ -64,7 +66,7 @@ const MINIMAL_CANDIDATE = {
 };
 
 const MANIFEST = {
-  contractVersion: "scenario-dynamic-v2",
+  contractVersion: "scenario-dynamic-v3",
   fixtures: [
     { id: "generated-wuxia", file: "generated-wuxia.json", gameType: "wuxia", seed: "phase1-wuxia-001" },
     { id: "timeout", file: "timeout.json", gameType: "wuxia", seed: "phase1-wuxia-001" },
@@ -98,7 +100,7 @@ describe("createFixtureScenarioCandidateSource", () => {
     const attempt = await source.generate(buildRequest());
     expect(attempt).toMatchObject({
       ok: true,
-      contractVersion: "scenario-dynamic-v2",
+      contractVersion: "scenario-dynamic-v3",
       origin: "fixture"
     });
     if (attempt.ok) {

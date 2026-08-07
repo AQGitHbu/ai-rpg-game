@@ -10,7 +10,11 @@ import { createTownPlanFromLocation } from "./planFromBlueprint";
 // 的方式给 loc_a 标 scale: "town"，与旧存档零迁移的可选字段模式一致。
 
 function compileFixtureBlueprint(): ScenarioBlueprint {
-  const validation = validateScenarioBlueprintCandidate(makeValidCandidate(), { profile: TEST_PROFILE, policy: TEST_POLICY });
+  const validation = validateScenarioBlueprintCandidate(makeValidCandidate(), {
+    profile: TEST_PROFILE,
+    policy: TEST_POLICY,
+    phase: "runtime_expansion"
+  });
   const compiled = compileScenarioBlueprint(validation);
   if (!compiled.ok) throw new Error("fixture 应当编译成功");
   return compiled.blueprint;

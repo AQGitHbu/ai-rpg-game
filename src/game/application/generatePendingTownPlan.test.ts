@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { asLocationId, type NewGameInput } from "@/game/domain";
+import { asLocationId, type GameState, type ScenarioBlueprint } from "@/game/domain";
 import { createTownPlanFromLocation, townSeedFor } from "@/game/gameplay/rpg/town";
-import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
+import {
+  compileScenarioBlueprint,
+  initializeGameState,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import {
   generatePendingTownPlan,
   TOWN_PLAN_MAX_ATTEMPTS,
@@ -10,7 +19,6 @@ import {
 import { TOWN_PLAN_CONTRACT_VERSION, type TownPlanCandidateSource } from "./townPlanGeneration";
 import {
   createFakeGameRepository,
-  runScenarioPipeline,
   TEST_CREATED_AT,
   TEST_GAME_ID
 } from "./applicationFixture.testutil";
@@ -20,14 +28,38 @@ import type { GameRecord } from "./server/persistence/gameRepository";
 // Town 层：generatePendingTownPlan 契约测试——镜像 generatePendingNarrativeScene：
 // pending → 有界尝试（校验 + 编译验证）→ CAS 写回；耗尽降级 baseline；
 // 失效标记只清除不生成；stale/unavailable 映射稳定。
+//
+// Phase 14：开场收窄后 createGame 只产出 1 幕起始锚点；本文件改用
+// makeValidCandidate 运行时扩展蓝图（runtime_expansion 阶段）并把 loc_b 标
+// 为 town 层，作为小镇规划契约测试的基准。
 // ---------------------------------------------------------------------------
 
-type Phase1Fixture = { input: NewGameInput; seed: string };
-const FIXTURE = wuxiaFixture as unknown as Phase1Fixture;
-const PIPELINE = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
+function compileRuntimeBlueprint(): ScenarioBlueprint {
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(makeValidCandidate(), {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
+}
+
+const RUNTIME_BLUEPRINT = compileRuntimeBlueprint();
+// loc_b 已标 town（运行时蓝图中 loc_b 含 npc_b，离线规划可派生剧情建筑）。
+const TOWN_BLUEPRINT: ScenarioBlueprint = {
+  ...RUNTIME_BLUEPRINT,
+  locations: RUNTIME_BLUEPRINT.locations.map((location) =>
+    String(location.id) === "loc_b" ? { ...location, scale: "town" as const } : location
+  )
+};
+const PIPELINE = { blueprint: TOWN_BLUEPRINT, state: initializeGameState(TOWN_BLUEPRINT) };
 
 const FIXED_TIME = "2026-07-30T09:00:00.000Z";
-const TOWN_LOCATION_ID = "loc_2";
+const TOWN_LOCATION_ID = "loc_b";
 const TOWN_SEED = townSeedFor(PIPELINE.blueprint.seed, TOWN_LOCATION_ID);
 const BASELINE = createTownPlanFromLocation(PIPELINE.blueprint, TOWN_LOCATION_ID, TOWN_SEED);
 
@@ -171,7 +203,7 @@ describe("generatePendingTownPlan：非 pending 与失效标记", () => {
 
   it("pending 指向非 town 地点 ⇒ 只清除标记（cleared），不生成不请求", async () => {
     const repository = createFakeGameRepository();
-    const record = pendingRecord("loc_1");
+    const record = pendingRecord("loc_a");
     repository.setCurrentResult({ ok: true, status: "active", record });
     repository.setApplyResult({ ok: true, record: { ...record, revision: 4 } });
     const source = sourceOf([FAILED_ATTEMPT]);

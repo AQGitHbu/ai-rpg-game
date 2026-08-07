@@ -2,19 +2,19 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { locationScaleOf, type GameState, type ScenarioBlueprint } from "@/game/domain";
 import {
-  locationScaleOf,
-  type NewGameInput,
-  type ScenarioBlueprintCandidate
-} from "@/game/domain";
-import { createGame, type CreateGameDependencies } from "../createGame";
+  compileScenarioBlueprint,
+  initializeGameState,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import { generatePendingTownPlan } from "../generatePendingTownPlan";
-import {
-  SCENARIO_CANDIDATE_CONTRACT_VERSION,
-  type ScenarioCandidateSource
-} from "../scenarioGeneration";
 import { TOWN_PLAN_CONTRACT_VERSION, type TownPlanCandidateSource } from "../townPlanGeneration";
-import { createUnavailableTestScenarioSource } from "../applicationFixture.testutil";
 import {
   asGameId,
   type GameRecord,
@@ -25,8 +25,6 @@ import {
   createSqliteGameRepository,
   type SqliteGameRepository
 } from "../server/persistence/sqliteGameRepository";
-import { createFixtureScenarioCandidateSource } from "../server/ai/fixtureScenarioCandidateSource";
-import { createScenarioCandidateSource } from "../server/ai/scenarioCandidateSourceFactory";
 import { createTownPlanSource } from "../server/ai/townPlanSourceFactory";
 import { createTownPlanFixtureSource } from "../server/ai/townPlanFixtureSource";
 import {
@@ -36,29 +34,49 @@ import {
   type TownPlanRecordedCall
 } from "../server/ai/townPlanRecording";
 import { prepareTmpRunDir } from "./tmpRunDir.testutil";
-import wuxiaFixture from "../../../../data/fixtures/phase1/wuxia.json";
 
 // ---------------------------------------------------------------------------
-// Town 层：真实 AI 的两层（scene）+ 三层（map→town→场景）录制/回放旅程。
-// 三个用例镜像 phase10FullJourney：
-//   1. 无 AI 的本地 record→replay（fallback 蓝图已含 scene+town，验证 town plan
-//      录制/回放管线，始终运行、零网络）；
-//   2. 提交的真实 AI golden 回放（fixtureScenarioCandidateSource 复现蓝图 +
-//      replay town plan source 复现小镇，始终运行、零网络 + drift 断言）；
-//   3. opt-in 真实 AI 录制（RUN_REAL_AI_TOWN_JOURNEY=1）：有界重试直到蓝图同时
-//      含 scene 与 town 且 town plan 真实生成，落盘 fixture 供 (2) 复用。
+// Town 层：小镇规划的录制/回放旅程。
+// Phase 14：开场收窄后 createGame 只产出 1 幕起始锚点，不再直接产出
+// scene+town 蓝图；本文件改用 makeValidCandidate 运行时扩展蓝图
+// （runtime_expansion，loc_b 标为 town，含 4 个 scene 地点），经 real SQLite
+// 直接建档，验证 town-plan 录制/回放管线：
+//   1. 本地 record→replay：fixture town-plan source 录制一条调用，立即零网络
+//      回放——同蓝图 + 同 seed ⇒ 同小镇；
+//   2. 提交的 golden 小镇规划回放：fixtureScenarioCandidate 缯宝——
+//      replay 已提交 town-plan 录制条目，始终运行、零网络 + drift 断言；
+//   3. opt-in 真实 AI 录制（RUN_REAL_AI_TOWN_JOURNEY=1）：复用真实
+//      townPlanSource（provider），有界重试到真实生成成功，落盘 fixture 供 (2) 复用。
 // 录制物只含已解析候选：绝不落 prompt、模型原文或密钥。
 // ---------------------------------------------------------------------------
 
-type Phase1Fixture = { input: NewGameInput; seed: string };
-const fixture: Phase1Fixture = { ...(wuxiaFixture as unknown as Phase1Fixture), input: { ...(wuxiaFixture as unknown as Phase1Fixture).input, gameLength: "short" } };
-
 const goldenRoot = resolve("data", "fixtures", "town-journey", "v1");
-const scenarioFixtureDir = join(goldenRoot, "scenario");
 const townPlanFixtureDir = join(goldenRoot, "town-plan");
-const SCENARIO_FIXTURE_ID = "town-journey";
-const TOWN_JOURNEY_SUMMARY_VERSION = "town-journey-summary-v1" as const;
+const TOWN_JOURNEY_SUMMARY_VERSION = "town-journey-summary-v2" as const;
 const fixedNow = "2026-07-31T08:00:00.000Z";
+
+function compileRuntimeBlueprint(): ScenarioBlueprint {
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(makeValidCandidate(), {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
+}
+
+const RUNTIME_BLUEPRINT = compileRuntimeBlueprint();
+// loc_b 已标 town（运行时蓝图中 loc_b 含 npc_b，离线规划可派生剧情建筑）。
+const TOWN_BLUEPRINT: ScenarioBlueprint = {
+  ...RUNTIME_BLUEPRINT,
+  locations: RUNTIME_BLUEPRINT.locations.map((location) =>
+    String(location.id) === "loc_b" ? { ...location, scale: "town" as const } : location
+  )
+};
 
 // 共享 tmp/ 策略：创建前先清扫上一轮同前缀残留（见 tmpRunDir.testutil.ts）。
 const tmpRoot = prepareTmpRunDir("town-ai-journey-");
@@ -77,7 +95,6 @@ afterAll(async () => {
 type TownJourneySummary = Readonly<{
   version: typeof TOWN_JOURNEY_SUMMARY_VERSION;
   mode: "record" | "replay";
-  scenarioSource: "generated" | "fallback";
   seed: string;
   sceneLocationCount: number;
   townLocationCount: number;
@@ -103,68 +120,27 @@ async function loadRecord(repository: GameRepository): Promise<GameRecord> {
   return loaded.record;
 }
 
-function createGameDeps(
-  repository: GameRepository,
-  scenarioSource: ScenarioCandidateSource
-): CreateGameDependencies {
-  return {
-    repository,
-    newGameId: () => asGameId("town-ai-journey"),
-    newSeed: () => fixture.seed,
-    now: () => fixedNow,
-    scenarioCandidateSource: scenarioSource,
-    newTraceId: () => "town-journey-create-trace",
-    // 离线叙事模式：createGame 无需 runtimeNarrativeSources；town pending 由本
-    // 用例显式置入并交 generatePendingTownPlan 消费（该 use case 不读叙事模式）。
-    runtimeNarrativeMode: "offline"
-  };
-}
-
-/** 录制包装：捕获成功候选的原始 JSON（不改变 source 返回值）。 */
-function createRecordingScenarioSource(
-  source: ScenarioCandidateSource,
-  onCandidate: (candidate: unknown) => void
-): ScenarioCandidateSource {
-  return {
-    async generate(request) {
-      const attempt = await source.generate(request);
-      if (attempt.ok) onCandidate(attempt.candidate);
-      return attempt;
-    }
-  };
-}
-
-/** 零网络回放：始终返回录制到的候选（createGame 仍走完整校验/编译）。 */
-function createReplayScenarioSource(candidate: unknown): ScenarioCandidateSource {
-  return {
-    async generate() {
-      return {
-        ok: true,
-        contractVersion: SCENARIO_CANDIDATE_CONTRACT_VERSION,
-        origin: "fixture",
-        candidate: candidate as ScenarioBlueprintCandidate,
-        diagnostics: []
-      };
-    }
-  };
-}
-
 /**
- * 一次完整 town 旅程：createGame（含 scene+town 蓝图）→ 置 town pending →
- * generatePendingTownPlan 消费 → 汇总。蓝图缺 scene 或 town 时抛错（供真实 AI
- * 用例的有界重试捕获）。
+ * 一次完整 town 旅程：runtime 扩展蓝图（含 town）直接建档 → 置 town pending →
+ * generatePendingTownPlan 消费 → 汇总。蓝图缺 scene 或 town 时抛错（契约回归
+ * 提示），真实 AI 用例仍可用有界重试包装。
  */
 async function runTownJourney(
   name: string,
-  scenarioSource: ScenarioCandidateSource,
   townPlanSource: TownPlanCandidateSource,
   mode: "record" | "replay"
 ): Promise<TownJourneySummary> {
   const repository = openRepository(name);
-  const created = await createGame(
-    { input: fixture.input, seed: fixture.seed },
-    createGameDeps(repository, scenarioSource)
-  );
+  const state: GameState = {
+    ...initializeGameState(TOWN_BLUEPRINT),
+    narrative: { currentScene: null, generation: { status: "idle" }, mode: "offline" },
+  };
+  const created = await repository.createInitialGame({
+    gameId: asGameId(`town-ai-journey-${name}`),
+    blueprint: TOWN_BLUEPRINT,
+    state,
+    createdAt: fixedNow,
+  });
   if (!created.ok) throw new Error(`town journey create failed: ${created.code}`);
 
   const record = await loadRecord(repository);
@@ -202,7 +178,6 @@ async function runTownJourney(
   return {
     version: TOWN_JOURNEY_SUMMARY_VERSION,
     mode,
-    scenarioSource: created.source,
     seed: blueprint.seed,
     sceneLocationCount: sceneLocations.length,
     townLocationCount: townLocations.length,
@@ -215,18 +190,16 @@ async function runTownJourney(
 }
 
 describe("Town AI journey (scene + town) record/replay", () => {
-  it("records the town plan locally over a fallback scene+town blueprint and replays with zero network", async () => {
+  it("records the town plan locally over the runtime-expansion blueprint and replays with zero network", async () => {
     const calls: TownPlanRecordedCall[] = [];
     const recordingTown = createRecordingTownPlanSource(createTownPlanFixtureSource(), {
       append: (call) => { calls.push(call); }
     });
     const recorded = await runTownJourney(
       "local-record",
-      createUnavailableTestScenarioSource(),
       recordingTown,
       "record"
     );
-    expect(recorded.scenarioSource).toBe("fallback");
     expect(recorded.sceneLocationCount).toBeGreaterThanOrEqual(1);
     expect(recorded.townLocationCount).toBeGreaterThanOrEqual(1);
     expect(recorded.townPlanSource).toBe("generated");
@@ -241,7 +214,6 @@ describe("Town AI journey (scene + town) record/replay", () => {
     const replayTown = createReplayTownPlanSource(localized);
     const replayed = await runTownJourney(
       "local-replay",
-      createUnavailableTestScenarioSource(),
       replayTown,
       "replay"
     );
@@ -253,7 +225,7 @@ describe("Town AI journey (scene + town) record/replay", () => {
     expect(replayed.townRequiredBuildingCount).toBe(recorded.townRequiredBuildingCount);
   });
 
-  it("replays the committed real-AI golden fixture (scene + town) with zero network calls", async () => {
+  it("replays the committed golden town-plan fixture with zero network calls", async () => {
     const expected = JSON.parse(
       readFileSync(join(goldenRoot, "expected-summary.json"), "utf8")
     ) as TownJourneySummary;
@@ -261,17 +233,13 @@ describe("Town AI journey (scene + town) record/replay", () => {
       .trim().split("\n").map((line) => JSON.parse(line) as TownPlanRecordedCall);
 
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const scenarioSource = createFixtureScenarioCandidateSource({
-      fixtureRoot: scenarioFixtureDir,
-      fixtureId: SCENARIO_FIXTURE_ID
-    });
     const replayTown = createReplayTownPlanSource(townCalls);
-    const report = await runTownJourney("golden-replay", scenarioSource, replayTown, "replay");
+    const report = await runTownJourney("golden-replay", replayTown, "replay");
     replayTown.assertComplete();
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
 
-    expect(report.scenarioSource).toBe("generated");
+    expect(report.version).toBe(expected.version);
     expect(report.seed).toBe(expected.seed);
     expect(report.sceneLocationCount).toBe(expected.sceneLocationCount);
     expect(report.townLocationCount).toBe(expected.townLocationCount);
@@ -283,19 +251,13 @@ describe("Town AI journey (scene + town) record/replay", () => {
   });
 
   it.runIf(process.env.RUN_REAL_AI_TOWN_JOURNEY === "1")(
-    "records one opt-in real AI journey with a scene+town blueprint and generated town plan",
+    "records one opt-in real AI town journey and replays it with zero network",
     async () => {
       const MAX_ATTEMPTS = 6;
-      let scenarioCandidate: unknown = null;
       let townCalls: TownPlanRecordedCall[] = [];
       let recordSummary: TownJourneySummary | null = null;
 
       for (let attempt = 0; attempt < MAX_ATTEMPTS && recordSummary === null; attempt += 1) {
-        const candidates: unknown[] = [];
-        const scenarioSource = createRecordingScenarioSource(
-          createScenarioCandidateSource(process.env),
-          (candidate) => { candidates.push(candidate); }
-        );
         const calls: TownPlanRecordedCall[] = [];
         const townPlanSource = createRecordingTownPlanSource(createTownPlanSource(process.env), {
           append: (call) => { calls.push(call); }
@@ -303,62 +265,42 @@ describe("Town AI journey (scene + town) record/replay", () => {
         try {
           const summary = await runTownJourney(
             `live-record-${attempt}`,
-            scenarioSource,
             townPlanSource,
             "record"
           );
           // 只接受单次干净生成（可确定性回放）且 town plan 真实生成的旅程。
-          if (summary.scenarioSource !== "generated" || candidates.length !== 1) continue;
           if (summary.townPlanSource !== "generated") continue;
-          scenarioCandidate = candidates[0];
           townCalls = calls;
           recordSummary = summary;
         } catch {
-          // 蓝图缺 town/scene 或生成失败：重试下一次真实 AI 采样。
+          // provider 故障/小镇派生异常：重试下一次真实采样。
           continue;
         }
       }
 
-      if (recordSummary === null || scenarioCandidate === null) {
-        throw new Error("real AI did not produce a clean scene+town journey within bounded retries");
+      if (recordSummary === null) {
+        throw new Error("real AI town plan provider did not produce a clean plan within bounded retries");
       }
 
-      // 立即零网络复放：同候选 + 录制 town plan → 相同小镇，且 fetch 从未调用。
+      // 立即零网络复放：录制 town plan → 相同小镇，且 fetch 从未调用。
       const fetchSpy = vi.spyOn(globalThis, "fetch");
       const replayTown = createReplayTownPlanSource(townCalls);
       const replaySummary = await runTownJourney(
         "live-replay",
-        createReplayScenarioSource(scenarioCandidate),
         replayTown,
         "replay"
       );
       replayTown.assertComplete();
       expect(fetchSpy).not.toHaveBeenCalled();
       fetchSpy.mockRestore();
-      expect(replaySummary.scenarioSource).toBe("generated");
       expect(replaySummary.townPlanSource).toBe("generated");
       expect(replaySummary.townLocationId).toBe(recordSummary.townLocationId);
       expect(replaySummary.townPlanTheme).toBe(recordSummary.townPlanTheme);
 
       const artifactDir = process.env.TOWN_JOURNEY_ARTIFACT_DIR;
       if (artifactDir === undefined) throw new Error("missing safe town journey artifact directory");
-      const artifactScenarioDir = join(artifactDir, "scenario");
       const artifactTownDir = join(artifactDir, "town-plan");
-      mkdirSync(artifactScenarioDir, { recursive: true });
       mkdirSync(artifactTownDir, { recursive: true });
-      writeFileSync(
-        join(artifactScenarioDir, "manifest.json"),
-        JSON.stringify({
-          contractVersion: SCENARIO_CANDIDATE_CONTRACT_VERSION,
-          fixtures: [{ id: SCENARIO_FIXTURE_ID, file: "blueprint.json" }]
-        }, null, 2) + "\n",
-        "utf8"
-      );
-      writeFileSync(
-        join(artifactScenarioDir, "blueprint.json"),
-        JSON.stringify({ candidate: scenarioCandidate }, null, 2) + "\n",
-        "utf8"
-      );
       writeFileSync(
         join(artifactTownDir, "calls.jsonl"),
         townCalls.map((call) => JSON.stringify(call)).join("\n") + "\n",
@@ -370,7 +312,6 @@ describe("Town AI journey (scene + town) record/replay", () => {
           fixtureVersion: TOWN_PLAN_FIXTURE_VERSION,
           contractVersion: TOWN_PLAN_CONTRACT_VERSION,
           origin: "recorded",
-          scenarioFixtureId: SCENARIO_FIXTURE_ID,
           callCount: townCalls.length,
           createdAt: fixedNow
         }, null, 2) + "\n",

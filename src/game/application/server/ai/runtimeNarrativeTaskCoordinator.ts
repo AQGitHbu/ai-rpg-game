@@ -34,9 +34,13 @@ export class RuntimeNarrativeTaskCoordinator {
           return { ok: false, result: "unavailable" };
         }
         const { record } = loaded;
+        const generation = record.state.narrative.generation;
+        const followupBridgeActive =
+          generation.status === "pending" &&
+          generation.triggerContext?.kind === "dialogue_response";
         if (
-          record.state.narrative.generation.status !== "pending" ||
-          record.state.narrative.currentScene !== null ||
+          generation.status !== "pending" ||
+          (record.state.narrative.currentScene !== null && !followupBridgeActive) ||
           record.state.ending !== null ||
           record.state.battle.status === "active"
         ) {

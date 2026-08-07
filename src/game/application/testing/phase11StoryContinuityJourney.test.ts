@@ -2,7 +2,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { budgetPolicyOf, type NewGameInput } from "@/game/domain";
+import { budgetPolicyOf, type GameState, type ScenarioBlueprint } from "@/game/domain";
 import type {
   DirectorAttempt,
   DirectorSource,
@@ -12,14 +12,19 @@ import type {
   SceneScriptSource,
 } from "../runtimeNarrative";
 import { NARRATIVE_CONTRACT_VERSION } from "../runtimeNarrative";
-import { createGame, type CreateGameDependencies } from "../createGame";
 import { generatePendingNarrativeScene } from "../generatePendingNarrativeScene";
 import { getCurrentGame } from "../getCurrentGame";
 import { performAction, type PerformActionDependencies } from "../performAction";
 import {
-  createUnavailableTestScenarioSource,
-  runScenarioPipeline,
-} from "../applicationFixture.testutil";
+  compileScenarioBlueprint,
+  initializeGameState,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import {
   asGameId,
   type GameRecord,
@@ -33,6 +38,7 @@ import {
 import {
   createRecordingRuntimeNarrativeSources,
   createReplayRuntimeNarrativeSources,
+  RUNTIME_NARRATIVE_FIXTURE_VERSION,
   type RuntimeNarrativeRecordedCall,
 } from "../server/ai/runtimeNarrativeRecording";
 import { createRuntimeNarrativeSources } from "../server/ai/runtimeNarrativeSourceFactory";
@@ -41,22 +47,31 @@ import {
   validateJourneyReport,
   type JourneyReport,
 } from "./runtimeNarrativeJourney";
-import wuxiaFixture from "../../../../data/fixtures/phase1/wuxia.json";
 
-type Phase1Fixture = { input: NewGameInput; seed: string };
 type RuntimeSources = Readonly<{
   directorSource: DirectorSource;
   sceneScriptSource: SceneScriptSource;
   npcLineSource: NpcLineSource;
 }>;
 
-// 蓝图动态化后 open 档为 5 幕且开局实体分布变化（loc_4 无敌人）；旅程的 curated 目标序列
-// 依赖旧 3 幕结构，故与 phase10 旅程一致地固定 short 档（见 phase10FullJourney.test.ts）。
-const fixture: Phase1Fixture = {
-  ...(wuxiaFixture as unknown as Phase1Fixture),
-  input: { ...(wuxiaFixture as unknown as Phase1Fixture).input, gameLength: "short" },
-};
-const baseline = runScenarioPipeline(fixture.input, fixture.seed);
+// Phase 14：开场收窄后 createGame 只产出 1 幕起始锚点；旅程改用 makeValidCandidate
+// 运行时扩展蓝图（runtime_expansion，起点 loc_a → loc_b → loc_c → loc_d 决战，
+// npc_c/item_b 沿途），经 real SQLite 直接建档后由 runtime 叙事管线逐幕推进。
+function compileRuntimeBlueprint(): ScenarioBlueprint {
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(makeValidCandidate(), {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
+}
+
+const BLUEPRINT = compileRuntimeBlueprint();
 const goldenRoot = resolve("data", "fixtures", "phase11-journey", "v1");
 const tmpRoot = resolve("tmp", `phase11-full-journey-${process.pid}-${Date.now()}`);
 mkdirSync(tmpRoot, { recursive: true });
@@ -87,27 +102,37 @@ function openRepository(name: string): SqliteGameRepository {
  * source ports and approvals as live AI, but is never labelled as recorded AI.
  */
 function createCuratedJourneySources(): RuntimeSources {
-  const targets = [
-    "move:loc_2",
-    "move:loc_3",
-    "talk:",
-    "take_item:",
-    "move:loc_4",
-    "start_battle:",
-  ];
   let sceneIndex = 0;
+  const preferredTargetsFor = (context: {
+    currentLocationId?: string;
+    recentEvents?: readonly string[];
+    actionCandidates: readonly { actionKey: string; kind: string; label: string }[];
+  }): string[] => {
+    const hasNpcMet = context.recentEvents?.includes("npc_met") ?? false;
+    const hasTakeItem = context.actionCandidates.some((candidate) =>
+      candidate.actionKey.startsWith("take_item:")
+    );
+    if (context.currentLocationId === "loc_a") return ["move:loc_b"];
+    if (context.currentLocationId === "loc_b") return ["move:loc_c"];
+    if (context.currentLocationId === "loc_c") {
+      return hasTakeItem ? (hasNpcMet ? ["take_item:item_b"] : ["talk:npc_c"]) : ["move:loc_d"];
+    }
+    if (context.currentLocationId === "loc_d") return ["start_battle:enemy_b"];
+    return [];
+  };
 
   const directorSource: DirectorSource = {
     async generate(request) {
       const context = request.context as {
         actionCandidates: readonly { actionKey: string; kind: string; label: string }[];
         npcIdsPresent: readonly string[];
+        currentLocationId?: string;
+        recentEvents?: readonly string[];
         progression: { allowedPacing: readonly ("setup" | "develop" | "turn" | "climax" | "resolution")[] };
       };
-      const prefix = targets[sceneIndex];
-      const target = context.actionCandidates.find((candidate) =>
-        candidate.actionKey.startsWith(prefix ?? "")
-      );
+      const target = preferredTargetsFor(context)
+        .map((prefix) => context.actionCandidates.find((candidate) => candidate.actionKey.startsWith(prefix)))
+        .find((candidate) => candidate !== undefined);
       const alternative = context.actionCandidates.find((candidate) =>
         candidate.actionKey !== target?.actionKey
       );
@@ -173,10 +198,12 @@ function createCuratedJourneySources(): RuntimeSources {
         plan: {
           focusNpcId: string | null;
           suggestedActionKeys: readonly [string, string];
+          eventKind?: string;
         };
         npcProfile: Record<string, unknown> | null;
       };
       const [target, alternative] = context.plan.suggestedActionKeys;
+      const isDialogue = context.plan.eventKind === "dialogue";
       return {
         ok: true,
         provenance: "generated",
@@ -192,10 +219,15 @@ function createCuratedJourneySources(): RuntimeSources {
                 allowedFactIds: [],
                 mayLie: false,
               },
-          choices: [
-            { actionKey: target, label: "执行目标行动", strategy: "推进当前主线" },
-            { actionKey: alternative, label: "采取另一行动", strategy: "暂缓当前目标" },
-          ],
+          choices: isDialogue
+            ? [
+                { actionKey: target, label: "继续询问", strategy: "推进当前主线", dialogueIntent: "ask_current_situation" },
+                { actionKey: alternative, label: "转入正题", strategy: "暂缓当前目标", dialogueIntent: "challenge_recent_repair" },
+              ]
+            : [
+                { actionKey: target, label: "执行目标行动", strategy: "推进当前主线" },
+                { actionKey: alternative, label: "采取另一行动", strategy: "暂缓当前目标" },
+              ],
         },
         diagnostics: {
           traceId: request.traceId,
@@ -242,16 +274,16 @@ function createCoverageGuidedSources(sources: RuntimeSources): RuntimeSources {
         const hasTakeItem = candidates.some((candidate) =>
           candidate.actionKey.startsWith("take_item:")
         );
-        const preferredPrefixes = context.currentLocationId === "loc_1"
-          ? ["move:loc_2"]
-          : context.currentLocationId === "loc_2"
-            ? ["move:loc_3"]
-            : context.currentLocationId === "loc_3"
+        const preferredPrefixes = context.currentLocationId === "loc_a"
+          ? ["move:loc_b"]
+          : context.currentLocationId === "loc_b"
+            ? ["move:loc_c"]
+            : context.currentLocationId === "loc_c"
               ? hasTakeItem
-                ? hasNpcMet ? ["take_item:"] : ["talk:"]
-                : ["move:loc_4"]
-              : context.currentLocationId === "loc_4"
-                ? ["start_battle:"]
+                ? hasNpcMet ? ["take_item:item_b"] : ["talk:npc_c"]
+                : ["move:loc_d"]
+              : context.currentLocationId === "loc_d"
+                ? ["start_battle:enemy_b"]
                 : [];
         const target = preferredPrefixes
           .map((prefix) => candidates.find((candidate) => candidate.actionKey.startsWith(prefix)))
@@ -271,19 +303,6 @@ async function loadRecord(repository: GameRepository): Promise<GameRecord> {
   const loaded = await repository.getCurrentGame();
   if (!loaded.ok || loaded.status !== "active") throw new Error("journey record unavailable");
   return loaded.record;
-}
-
-function createDeps(repository: GameRepository, sources: RuntimeSources): CreateGameDependencies {
-  let trace = 0;
-  return {
-    repository,
-    newGameId: () => asGameId("phase11-full-journey"),
-    newSeed: () => fixture.seed,
-    now: () => fixedNow,
-    scenarioCandidateSource: createUnavailableTestScenarioSource(),
-    newTraceId: () => `journey-trace-${trace++}`,
-    runtimeNarrativeSources: sources,
-  };
 }
 
 function actionDeps(repository: GameRepository, sources: RuntimeSources): PerformActionDependencies {
@@ -313,11 +332,27 @@ async function runJourney(
   getAiCalls: () => number = () => 13,
 ): Promise<JourneyReport> {
   const repository = openRepository(name);
-  const created = await createGame(
-    { input: fixture.input, seed: fixture.seed },
-    createDeps(repository, sources),
-  );
-  if (!created.ok) throw new Error("journey create failed");
+  // 蓝图动态化后 createGame 只产出 1 幕起始锚点；旅程直接以 runtime_expansion
+  // 运行时蓝图建档（与 createGame 的 AI 模式初始 pending 语义一致）。
+  const seedState: GameState = {
+    ...initializeGameState(BLUEPRINT),
+    narrative: {
+      currentScene: null,
+      generation: {
+        status: "pending",
+        requestedAt: fixedNow,
+        triggerContext: { kind: "initial_opening", npcId: BLUEPRINT.startAnchor.npcId },
+      },
+      mode: "ai",
+    },
+  };
+  const created = await repository.createInitialGame({
+    gameId: asGameId(`phase11-full-journey-${name}`),
+    blueprint: BLUEPRINT,
+    state: seedState,
+    createdAt: fixedNow,
+  });
+  if (!created.ok) throw new Error(`journey create failed: ${created.code}`);
   const taskDeps = narrativeTaskDeps(repository, sources);
   async function materializePendingScene() {
     const generated = await generatePendingNarrativeScene(taskDeps);
@@ -336,7 +371,7 @@ async function runJourney(
   }
   const deps = actionDeps(repository, sources);
 
-  for (let index = 0; index < 6; index += 1) {
+  for (let index = 0; index < 8; index += 1) {
     const choice = view.narrative?.choices?.[0];
     if (choice === undefined) throw new Error("guided narrative choice unavailable");
     const result = await performAction({
@@ -381,7 +416,7 @@ async function runJourney(
     outcome: view.ending?.outcome ?? "unfinished",
     turns: view.revision,
     aiCalls: getAiCalls(),
-    maxTurns: 20,
+    maxTurns: 24,
     maxAiCalls: 40,
     reloadConsistent,
     contentBudgetValid: (() => {
@@ -408,7 +443,7 @@ async function runJourney(
     },
   };
   // 蓝图动态化：真实导演可能在旅程中提议扩展（loc_dyn_*/npc_dyn_*）。剔除动态
-  // 实体与锚点上的动态反向连边后，基础蓝图必须与 baseline 逐字一致（运行时层不得篡改既有内容）。
+  // 实体与锚点上的动态反向连边后，基础蓝图必须与建档时的运行时蓝图逐字一致。
   const strippedBlueprint = {
     ...record.blueprint,
     locations: record.blueprint.locations
@@ -419,7 +454,7 @@ async function runJourney(
       })),
     npcs: record.blueprint.npcs.filter((npc) => !/^npc_dyn_\d+$/.test(String(npc.id))),
   };
-  expect(strippedBlueprint).toEqual(baseline.blueprint);
+  expect(strippedBlueprint).toEqual(BLUEPRINT);
   return report;
 }
 
@@ -436,6 +471,7 @@ describe("Phase 11 story continuity journey", () => {
     const expected = JSON.parse(
       readFileSync(join(goldenRoot, "expected-summary.json"), "utf8"),
     ) as JourneyReport;
+    const dateSpy = vi.spyOn(Date, "now").mockReturnValue(1_785_379_200_000);
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const replay = createReplayRuntimeNarrativeSources(calls);
     const report = await runJourney(
@@ -452,6 +488,7 @@ describe("Phase 11 story continuity journey", () => {
     expect(report.coverage).toEqual(expected.coverage);
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+    dateSpy.mockRestore();
   });
 
   it("records parsed outputs locally and replays the same successful journey with zero AI", async () => {
@@ -461,9 +498,36 @@ describe("Phase 11 story continuity journey", () => {
       createCuratedJourneySources(),
       { append: (call) => { calls.push(call); } },
     );
-    const recorded = await runJourney("record", recordedSources, "record");
+    const recorded = await runJourney("record", recordedSources, "record", () => calls.length);
     expect(validateJourneyReport(recorded)).toEqual([]);
-    expect(calls).toHaveLength(13);
+    expect(calls).toHaveLength(19);
+
+    // 重录工具：REWRITE_JOURNEY_GOLDEN=1 时把本次确定性子录制物写回 golden 目录。
+    if (process.env.REWRITE_JOURNEY_GOLDEN === "1") {
+      mkdirSync(goldenRoot, { recursive: true });
+      writeFileSync(
+        join(goldenRoot, "calls.jsonl"),
+        calls.map((call) => JSON.stringify(call)).join("\n") + "\n",
+        "utf8",
+      );
+      writeFileSync(
+        join(goldenRoot, "expected-summary.json"),
+        JSON.stringify(recorded, null, 2) + "\n",
+        "utf8",
+      );
+      writeFileSync(
+        join(goldenRoot, "manifest.json"),
+        JSON.stringify({
+          fixtureVersion: RUNTIME_NARRATIVE_FIXTURE_VERSION,
+          contractVersion: NARRATIVE_CONTRACT_VERSION,
+          origin: "recorded",
+          blueprintFixture: "scenarioBlueprintFixture/makeValidCandidate",
+          callCount: calls.length,
+          createdAt: fixedNow,
+        }, null, 2) + "\n",
+        "utf8",
+      );
+    }
 
     const callsPath = join(tmpRoot, "calls.jsonl");
     writeFileSync(callsPath, calls.map((call) => JSON.stringify(call)).join("\n") + "\n", "utf8");
@@ -516,10 +580,10 @@ describe("Phase 11 story continuity journey", () => {
       writeFileSync(
         join(artifactDir, "manifest.json"),
         JSON.stringify({
-          fixtureVersion: "runtime-narrative-fixture-v1",
+          fixtureVersion: RUNTIME_NARRATIVE_FIXTURE_VERSION,
           contractVersion: NARRATIVE_CONTRACT_VERSION,
           origin: "recorded",
-          blueprintFixture: "phase1/wuxia",
+          blueprintFixture: "scenarioBlueprintFixture/makeValidCandidate",
           callCount: calls.length,
           createdAt: fixedNow,
         }, null, 2) + "\n",

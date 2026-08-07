@@ -4,20 +4,22 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   asLocationId,
-  type GameTypeId,
-  type NewGameInput,
   type QuestDefinition,
   type ScenarioBlueprint
 } from "@/game/domain";
 import { type PlayerIntent } from "@/game/gameplay/rpg/actions";
-import scienceFictionFixture from "../../../data/fixtures/phase1/science_fiction.json";
-import urbanFixture from "../../../data/fixtures/phase1/urban.json";
-import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
-import { createGame, type CreateGameDependencies } from "./createGame";
+import {
+  compileScenarioBlueprint,
+  initializeGameState,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import { getCurrentGame } from "./getCurrentGame";
 import { performAction } from "./performAction";
-import { TEST_TRACE_ID } from "./applicationFixture.testutil";
-import { createFixtureScenarioCandidateSource } from "./server/ai/fixtureScenarioCandidateSource";
 import {
   asGameId,
   type GameRecord,
@@ -30,39 +32,41 @@ import {
 } from "./server/persistence/sqliteGameRepository";
 
 // ---------------------------------------------------------------------------
-// Phase 4C Task 5：三类型 generated 候选的完整游戏离线旅程回归。
+// Phase 4C Task 5：完整游戏离线旅程回归（运行时扩展蓝图）。
 //
-// 与 phase6BattleEndingRegression 的差别：开局来自 phase4c fixture source
-// （createGame source==="generated"），而非确定性 fallback 管线。旅程一律由
-// reload 出的 record.blueprint 驱动——地点路径按连通图 BFS 求出、主线目标逐
-// objective 映射为 intent、战斗回合数由玩家/boss 数值推导——任何合法候选蓝图
-// 都能通过，绝不硬编码 fixture 内容。
-//
-// 覆盖：
-//   1) 三类型各一条：创建(generated) → stage 1/2/3 主线 → boss 胜利 → 成功
-//      结局 → 全新 repository reload 一致
-//   2) wuxia 一条：start_battle → withdraw → 失败结局 → reload 一致
+// Phase 14 开局收窄后，createGame/fixture source 只产出 1 幕起始锚点（1 地点/
+// 1 NPC/1 主线 stage 1，无敌人/结局）——fixture 集合与事件契约由
+// phase4cStructuredOutputRegression 覆盖。本文件验证"已存完整蓝图"驱动的
+// 旅程闭环：stage 1/2 主线目标逐 objective 映射为 intent（BFS 求地点路径）、
+// 战斗回合数由玩家/boss 数值推导、成功与失败结局各自完整存档并可 reload——
+// 与 phase6 同构，但地点路径/物品落位/任务图全部从蓝图派生，不硬编码。
 //
 // 全程真实临时 SQLite，路径显式注入，零网络、零 .env.local。
 // ---------------------------------------------------------------------------
 
-type Phase1Fixture = { input: NewGameInput; seed: string };
+// 以 makeValidCandidate 为基座编译（wuxia 题材，runtime_expansion 阶段），
+// 直接写入真实 SQLite 存档后走 performAction 真实管线。
+function compileRuntimeBlueprint(): ScenarioBlueprint {
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(makeValidCandidate(), {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
+}
 
-const CASES: readonly { gameType: GameTypeId; fixture: Phase1Fixture; fixtureId: string }[] = [
-  { gameType: "wuxia", fixture: { ...(wuxiaFixture as unknown as Phase1Fixture), input: { ...(wuxiaFixture as unknown as Phase1Fixture).input, gameLength: "short" } }, fixtureId: "generated-wuxia" },
-  {
-    gameType: "science_fiction",
-    fixture: { ...(scienceFictionFixture as unknown as Phase1Fixture), input: { ...(scienceFictionFixture as unknown as Phase1Fixture).input, gameLength: "short" } },
-    fixtureId: "generated-science-fiction"
-  },
-  { gameType: "urban", fixture: { ...(urbanFixture as unknown as Phase1Fixture), input: { ...(urbanFixture as unknown as Phase1Fixture).input, gameLength: "short" } }, fixtureId: "generated-urban" }
-];
+const RUNTIME_BLUEPRINT = compileRuntimeBlueprint();
+const PIPELINE = { blueprint: RUNTIME_BLUEPRINT, state: initializeGameState(RUNTIME_BLUEPRINT) };
 
-const FIXTURE_ROOT = resolve("data/fixtures/phase4c");
 const FIXED_CREATED_AT = "2026-07-29T00:00:00.000Z";
 const FIXED_ACTION_TIME = "2026-07-29T10:00:00.000Z";
 
-// 与 phase6BattleEndingRegression.test.ts 相同的 tmp/ 策略。
+// 与其他 SQLite 测试相同的 tmp/ 策略：每次运行独立目录，先清扫上一轮残留。
 const TMP_ROOT = resolve("tmp");
 const RUN_PREFIX = "sqlite-phase4c-journey-";
 try {
@@ -107,22 +111,15 @@ afterAll(async () => {
   }
 });
 
-function createDependencies(
-  repository: GameRepository,
-  gameId: string,
-  fixtureId: string
-): CreateGameDependencies {
-  return {
-    repository,
-    newGameId: () => asGameId(gameId),
-    newSeed: () => "seed-unused",
-    now: () => FIXED_CREATED_AT,
-    scenarioCandidateSource: createFixtureScenarioCandidateSource({
-      fixtureRoot: FIXTURE_ROOT,
-      fixtureId
-    }),
-    newTraceId: () => TEST_TRACE_ID
-  };
+/** 用真实 adapter 写入完整蓝图存档（loc_a 开场，m1 active）。 */
+async function seedGame(repository: SqliteGameRepository, gameId: string): Promise<void> {
+  const created = await repository.createInitialGame({
+    gameId: asGameId(gameId),
+    blueprint: PIPELINE.blueprint,
+    state: PIPELINE.state,
+    createdAt: FIXED_CREATED_AT
+  });
+  expect(created).toEqual({ ok: true });
 }
 
 function performDeps(repository: GameRepository) {
@@ -209,9 +206,9 @@ function appendTravel(
 
 /**
  * 从蓝图推导出到达 stage 3 active（boss 可战）的前置序列。
- * 相比 phase6 版本泛化：stage 1/2 的 objective 逐类映射为 intent（visit →
- * move 路径、talk → 移动到 NPC 所在地点后 talk、obtain → 移动到预置地点后
- * take_item），不假设固定的 loc_2/唯一落位结构。
+ * stage 1/2 的 objective 逐类映射为 intent（visit → move 路径、talk → 移动
+ * 到 NPC 所在地点后 talk、obtain → 移动到预置地点后 take_item），不假设固定
+ * 落位结构。
  */
 function buildStage3ReadyJourney(blueprint: ScenarioBlueprint): {
   intents: readonly PlayerIntent[];
@@ -257,169 +254,154 @@ function findBossEnemy(blueprint: ScenarioBlueprint): ScenarioBlueprint["enemies
   return boss;
 }
 
-describe.each(CASES)(
-  "Phase 4C 离线旅程：generated 候选跑通完整闭环（$gameType）",
-  ({ gameType, fixture, fixtureId }) => {
-    it("成功：创建(generated) → stage 1/2/3 主线 → boss 胜利 → 成功结局 → reload", async () => {
-      const databasePath = join(RUN_ROOT, `victory-${gameType}.sqlite`);
-      const writer = openRepository(databasePath);
-
-      // 1) create：候选来自 fixture source，必须是 generated 而非 fallback
-      const created = await createGame(
-        { input: fixture.input, seed: fixture.seed },
-        createDependencies(writer, `game-phase4c-victory-${gameType}`, fixtureId)
-      );
-      expect(created.ok).toBe(true);
-      if (!created.ok) return;
-      expect(created.source).toBe("generated");
-
-      // 2) 旅程完全由已存 blueprint 驱动（不读 fixture 文件本身）
-      const blueprint = (await loadActiveRecord(writer)).blueprint;
-      const stage1 = mainQuestOfStage(blueprint, 1);
-      const stage2 = mainQuestOfStage(blueprint, 2);
-      const stage3 = mainQuestOfStage(blueprint, 3);
-      const boss = findBossEnemy(blueprint);
-
-      // 3) stage 1/2 主线：objective 逐类映射为 intent
-      const journey = buildStage3ReadyJourney(blueprint);
-      let revision = await performSequence(writer, journey.intents, 0);
-      expect(revision).toBe(journey.intents.length);
-
-      // 4) 移动到 boss 所在地点
-      const travelToBoss: PlayerIntent[] = [];
-      appendTravel(blueprint, travelToBoss, journey.endLocationId, boss.locationId);
-      revision = await performSequence(writer, travelToBoss, revision);
-
-      // 5) start_battle：battle view 初值来自蓝图数值
-      const battleStarted = await performAction(
-        { intent: { type: "start_battle", enemyId: boss.id }, expectedRevision: revision },
-        performDeps(writer)
-      );
-      expect(battleStarted.ok).toBe(true);
-      if (!battleStarted.ok) return;
-      revision = battleStarted.view.revision;
-      expect(battleStarted.view.battle).not.toBeNull();
-      if (battleStarted.view.battle === null) return;
-      expect(battleStarted.view.battle.enemyHp).toBe(boss.stats.hp);
-      expect(battleStarted.view.battle.playerHp).toBe(blueprint.player.baseStats.hp);
-      expect(battleStarted.view.battle.round).toBe(1);
-
-      // 6) 回合数从数值推导：每回合伤害 max(1, attack - defense)
-      const playerDamage = Math.max(1, blueprint.player.baseStats.attack - boss.stats.defense);
-      const bossDamage = Math.max(1, boss.stats.attack - blueprint.player.baseStats.defense);
-      const attacksToKill = Math.ceil(boss.stats.hp / playerDamage);
-      // 前置校验：玩家必须能撑到最后一击（否则是蓝图数值问题，不是旅程问题）
-      expect(blueprint.player.baseStats.hp - (attacksToKill - 1) * bossDamage).toBeGreaterThan(0);
-
-      // 7) 连续 attack 直到 boss 被击败
-      let lastView = battleStarted.view;
-      for (let i = 0; i < attacksToKill; i += 1) {
-        const attackResult = await performAction(
-          { intent: { type: "battle_action", action: "attack" }, expectedRevision: revision },
-          performDeps(writer)
-        );
-        expect(attackResult.ok, `attack round ${i + 1}`).toBe(true);
-        if (!attackResult.ok) return;
-        revision = attackResult.view.revision;
-        lastView = attackResult.view;
-
-        if (i < attacksToKill - 1) {
-          // 战斗仍在进行
-          expect(attackResult.view.battle).not.toBeNull();
-          if (attackResult.view.battle === null) return;
-          expect(attackResult.view.battle.enemyHp).toBe(boss.stats.hp - (i + 1) * playerDamage);
-          expect(attackResult.view.ending).toBeNull();
-        }
-      }
-
-      // 8) 最后一击应触发胜利 + 成功结局
-      expect(lastView.ending).not.toBeNull();
-      if (lastView.ending === null) return;
-      expect(lastView.ending.outcome).toBe("success");
-      expect(lastView.battle).toBeNull();
-      expect(lastView.availableActions).toEqual([]);
-
-      // 9) revision 增量全部可推导：前置序列 + 赴 boss 路程 + start_battle + attacks
-      expect(revision).toBe(journey.intents.length + travelToBoss.length + 1 + attacksToKill);
-      await writer.close();
-
-      // 10) reload：全新 repository 重开同一文件
-      const reader = openRepository(databasePath);
-      const restored = await getCurrentGame({ repository: reader });
-      expect(restored.status).toBe("active");
-      if (restored.status !== "active") return;
-      expect(restored.view).toEqual(lastView);
-
-      // 11) 已存记录复核
-      const record = await loadActiveRecord(reader);
-      const statusById = new Map(record.state.quests.map((q) => [q.questId, q.status]));
-      expect(statusById.get(stage1.id)).toBe("completed");
-      expect(statusById.get(stage2.id)).toBe("completed");
-      expect(statusById.get(stage3.id)).toBe("completed");
-      expect(record.state.defeatedEnemyIds).toContain(boss.id);
-      expect(record.state.ending).not.toBeNull();
-      if (record.state.ending === null) return;
-      expect(record.state.ending.outcome).toBe("success");
-      expect(record.state.battle.status).toBe("resolved");
-
-      // 12) 事件账本无重复
-      const enemyDefeatedEvents = record.state.eventLedger.filter((e) => e.type === "enemy_defeated");
-      expect(enemyDefeatedEvents).toHaveLength(1);
-      const endingReachedEvents = record.state.eventLedger.filter((e) => e.type === "ending_reached");
-      expect(endingReachedEvents).toHaveLength(1);
-      const battleResolvedEvents = record.state.eventLedger.filter((e) => e.type === "battle_resolved");
-      expect(battleResolvedEvents).toHaveLength(1);
-      const questCompletedM3 = record.state.eventLedger.filter(
-        (e) => e.type === "quest_completed" && "questId" in e && e.questId === stage3.id
-      );
-      expect(questCompletedM3).toHaveLength(1);
-
-      // 13) 蓝图与内容预算在整个旅程后原封不动
-      expect(record.blueprint).toEqual(blueprint);
-
-      // 14) 结局后 action 安全拒绝且零写入
-      const postEndingAction = await performAction(
-        { intent: { type: "battle_action", action: "attack" }, expectedRevision: revision },
-        performDeps(reader)
-      );
-      expect(postEndingAction.ok).toBe(false);
-      if (postEndingAction.ok) return;
-      expect(postEndingAction.code).toBe("ACTION_REJECTED");
-      const afterReject = await loadActiveRecord(reader);
-      expect(afterReject.revision).toBe(revision);
-    });
-  }
-);
-
-describe("Phase 4C 离线旅程：失败结局同样是完整存档（wuxia）", () => {
-  const { fixture, fixtureId } = CASES[0];
-
-  it("失败：创建(generated) → stage 1/2/3 → start_battle → withdraw → 失败结局 → reload", async () => {
-    const databasePath = join(RUN_ROOT, "withdraw-wuxia.sqlite");
-    const writer = openRepository(databasePath);
-
-    // 1) create
-    const created = await createGame(
-      { input: fixture.input, seed: fixture.seed },
-      createDependencies(writer, "game-phase4c-withdraw-wuxia", fixtureId)
-    );
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    expect(created.source).toBe("generated");
-
-    // 2) blueprint 驱动推进到 stage 3 active 并抵达 boss 地点
-    const blueprint = (await loadActiveRecord(writer)).blueprint;
+describe("Phase 4C 离线旅程：完整蓝图跑通完整闭环（wuxia）", () => {
+  it("成功：建档 → stage 1/2 主线 → boss 胜利 → 成功结局 → reload", async () => {
+    const baseline = PIPELINE;
+    const blueprint = baseline.blueprint;
     const stage1 = mainQuestOfStage(blueprint, 1);
     const stage2 = mainQuestOfStage(blueprint, 2);
     const stage3 = mainQuestOfStage(blueprint, 3);
     const boss = findBossEnemy(blueprint);
+
+    const databasePath = join(RUN_ROOT, "victory-wuxia.sqlite");
+    const writer = openRepository(databasePath);
+
+    // 1) 建档
+    await seedGame(writer, "game-phase4c-victory-wuxia");
+    const created = await getCurrentGame({ repository: writer });
+    expect(created.status).toBe("active");
+    if (created.status !== "active") return;
+
+    // 2) stage 1/2 主线：objective 逐类映射为 intent
+    const journey = buildStage3ReadyJourney(blueprint);
+    let revision = await performSequence(writer, journey.intents, 0);
+    expect(revision).toBe(journey.intents.length);
+
+    // 3) 移动到 boss 所在地点
+    const travelToBoss: PlayerIntent[] = [];
+    appendTravel(blueprint, travelToBoss, journey.endLocationId, boss.locationId);
+    revision = await performSequence(writer, travelToBoss, revision);
+
+    // 4) start_battle：battle view 初值来自蓝图数值
+    const battleStarted = await performAction(
+      { intent: { type: "start_battle", enemyId: boss.id }, expectedRevision: revision },
+      performDeps(writer)
+    );
+    expect(battleStarted.ok).toBe(true);
+    if (!battleStarted.ok) return;
+    revision = battleStarted.view.revision;
+    expect(battleStarted.view.battle).not.toBeNull();
+    if (battleStarted.view.battle === null) return;
+    expect(battleStarted.view.battle.enemyHp).toBe(boss.stats.hp);
+    expect(battleStarted.view.battle.playerHp).toBe(blueprint.player.baseStats.hp);
+    expect(battleStarted.view.battle.round).toBe(1);
+
+    // 5) 回合数从数值推导：每回合伤害 max(1, attack - defense)
+    const playerDamage = Math.max(1, blueprint.player.baseStats.attack - boss.stats.defense);
+    const bossDamage = Math.max(1, boss.stats.attack - blueprint.player.baseStats.defense);
+    const attacksToKill = Math.ceil(boss.stats.hp / playerDamage);
+    // 前置校验：玩家必须能撑到最后一击（否则是蓝图数值问题，不是旅程问题）
+    expect(blueprint.player.baseStats.hp - (attacksToKill - 1) * bossDamage).toBeGreaterThan(0);
+
+    // 6) 连续 attack 直到 boss 被击败
+    let lastView = battleStarted.view;
+    for (let i = 0; i < attacksToKill; i += 1) {
+      const attackResult = await performAction(
+        { intent: { type: "battle_action", action: "attack" }, expectedRevision: revision },
+        performDeps(writer)
+      );
+      expect(attackResult.ok, `attack round ${i + 1}`).toBe(true);
+      if (!attackResult.ok) return;
+      revision = attackResult.view.revision;
+      lastView = attackResult.view;
+
+      if (i < attacksToKill - 1) {
+        // 战斗仍在进行
+        expect(attackResult.view.battle).not.toBeNull();
+        if (attackResult.view.battle === null) return;
+        expect(attackResult.view.battle.enemyHp).toBe(boss.stats.hp - (i + 1) * playerDamage);
+        expect(attackResult.view.ending).toBeNull();
+      }
+    }
+
+    // 7) 最后一击应触发胜利 + 成功结局
+    expect(lastView.ending).not.toBeNull();
+    if (lastView.ending === null) return;
+    expect(lastView.ending.outcome).toBe("success");
+    expect(lastView.battle).toBeNull();
+    expect(lastView.availableActions).toEqual([]);
+
+    // 8) revision 增量全部可推导：前置序列 + 赴 boss 路程 + start_battle + attacks
+    expect(revision).toBe(journey.intents.length + travelToBoss.length + 1 + attacksToKill);
+    await writer.close();
+
+    // 9) reload：全新 repository 重开同一文件
+    const reader = openRepository(databasePath);
+    const restored = await getCurrentGame({ repository: reader });
+    expect(restored.status).toBe("active");
+    if (restored.status !== "active") return;
+    expect(restored.view).toEqual(lastView);
+
+    // 10) 已存记录复核
+    const record = await loadActiveRecord(reader);
+    const statusById = new Map(record.state.quests.map((q) => [q.questId, q.status]));
+    expect(statusById.get(stage1.id)).toBe("completed");
+    expect(statusById.get(stage2.id)).toBe("completed");
+    expect(statusById.get(stage3.id)).toBe("completed");
+    expect(record.state.defeatedEnemyIds).toContain(boss.id);
+    expect(record.state.ending).not.toBeNull();
+    if (record.state.ending === null) return;
+    expect(record.state.ending.outcome).toBe("success");
+    expect(record.state.battle.status).toBe("resolved");
+
+    // 11) 事件账本无重复
+    const enemyDefeatedEvents = record.state.eventLedger.filter((e) => e.type === "enemy_defeated");
+    expect(enemyDefeatedEvents).toHaveLength(1);
+    const endingReachedEvents = record.state.eventLedger.filter((e) => e.type === "ending_reached");
+    expect(endingReachedEvents).toHaveLength(1);
+    const battleResolvedEvents = record.state.eventLedger.filter((e) => e.type === "battle_resolved");
+    expect(battleResolvedEvents).toHaveLength(1);
+    const questCompletedM3 = record.state.eventLedger.filter(
+      (e) => e.type === "quest_completed" && "questId" in e && e.questId === stage3.id
+    );
+    expect(questCompletedM3).toHaveLength(1);
+
+    // 12) 蓝图与内容预算在整个旅程后原封不动
+    expect(record.blueprint).toEqual(blueprint);
+
+    // 13) 结局后 action 安全拒绝且零写入
+    const postEndingAction = await performAction(
+      { intent: { type: "battle_action", action: "attack" }, expectedRevision: revision },
+      performDeps(reader)
+    );
+    expect(postEndingAction.ok).toBe(false);
+    if (postEndingAction.ok) return;
+    expect(postEndingAction.code).toBe("ACTION_REJECTED");
+    const afterReject = await loadActiveRecord(reader);
+    expect(afterReject.revision).toBe(revision);
+  });
+});
+
+describe("Phase 4C 离线旅程：失败结局同样是完整存档（wuxia）", () => {
+  it("失败：建档 → stage 1/2 → start_battle → withdraw → 失败结局 → reload", async () => {
+    const blueprint = PIPELINE.blueprint;
+    const stage1 = mainQuestOfStage(blueprint, 1);
+    const stage2 = mainQuestOfStage(blueprint, 2);
+    const stage3 = mainQuestOfStage(blueprint, 3);
+    const boss = findBossEnemy(blueprint);
+
+    const databasePath = join(RUN_ROOT, "withdraw-wuxia.sqlite");
+    const writer = openRepository(databasePath);
+
+    // 1) 建档 + 蓝图驱动推进到 stage 3 active 并抵达 boss 地点
+    await seedGame(writer, "game-phase4c-withdraw-wuxia");
     const journey = buildStage3ReadyJourney(blueprint);
     let revision = await performSequence(writer, journey.intents, 0);
     const travelToBoss: PlayerIntent[] = [];
     appendTravel(blueprint, travelToBoss, journey.endLocationId, boss.locationId);
     revision = await performSequence(writer, travelToBoss, revision);
 
-    // 3) start_battle
+    // 2) start_battle
     const battleStarted = await performAction(
       { intent: { type: "start_battle", enemyId: boss.id }, expectedRevision: revision },
       performDeps(writer)
@@ -428,7 +410,7 @@ describe("Phase 4C 离线旅程：失败结局同样是完整存档（wuxia）",
     if (!battleStarted.ok) return;
     revision = battleStarted.view.revision;
 
-    // 4) withdraw — 立即失败
+    // 3) withdraw — 立即失败
     const withdrawResult = await performAction(
       { intent: { type: "battle_action", action: "withdraw" }, expectedRevision: revision },
       performDeps(writer)
@@ -438,7 +420,7 @@ describe("Phase 4C 离线旅程：失败结局同样是完整存档（wuxia）",
     revision = withdrawResult.view.revision;
     expect(revision).toBe(journey.intents.length + travelToBoss.length + 2);
 
-    // 5) 验证失败结局
+    // 4) 验证失败结局
     expect(withdrawResult.view.ending).not.toBeNull();
     if (withdrawResult.view.ending === null) return;
     expect(withdrawResult.view.ending.outcome).toBe("failure");
@@ -446,14 +428,14 @@ describe("Phase 4C 离线旅程：失败结局同样是完整存档（wuxia）",
     expect(withdrawResult.view.availableActions).toEqual([]);
     await writer.close();
 
-    // 6) reload
+    // 5) reload
     const reader = openRepository(databasePath);
     const restored = await getCurrentGame({ repository: reader });
     expect(restored.status).toBe("active");
     if (restored.status !== "active") return;
     expect(restored.view).toEqual(withdrawResult.view);
 
-    // 7) 已存记录复核
+    // 6) 已存记录复核
     const record = await loadActiveRecord(reader);
     const statusById = new Map(record.state.quests.map((q) => [q.questId, q.status]));
     expect(statusById.get(stage1.id)).toBe("completed");
@@ -466,7 +448,7 @@ describe("Phase 4C 离线旅程：失败结局同样是完整存档（wuxia）",
     expect(record.state.ending.outcome).toBe("failure");
     expect(record.state.battle.status).toBe("resolved");
 
-    // 8) 事件账本无重复
+    // 7) 事件账本无重复
     const questFailedEvents = record.state.eventLedger.filter((e) => e.type === "quest_failed");
     expect(questFailedEvents).toHaveLength(1);
     const endingReachedEvents = record.state.eventLedger.filter((e) => e.type === "ending_reached");
@@ -476,10 +458,10 @@ describe("Phase 4C 离线旅程：失败结局同样是完整存档（wuxia）",
     const enemyDefeatedEvents = record.state.eventLedger.filter((e) => e.type === "enemy_defeated");
     expect(enemyDefeatedEvents).toHaveLength(0);
 
-    // 9) 蓝图与内容预算不变
+    // 8) 蓝图与内容预算不变
     expect(record.blueprint).toEqual(blueprint);
 
-    // 10) 结局后 action 安全拒绝且零写入
+    // 9) 结局后 action 安全拒绝且零写入
     const postEndingAction = await performAction(
       { intent: { type: "battle_action", action: "withdraw" }, expectedRevision: revision },
       performDeps(reader)

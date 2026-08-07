@@ -66,11 +66,11 @@ describe("buildScenarioCandidateJsonSchema：policy 驱动", () => {
     expect(schema.required).not.toContain("contentBudget");
   });
 
-  it("locations 数组带 minItems/maxItems（opening 3..6）", () => {
+  it("locations 数组带 minItems/maxItems（Phase 14 开局收窄 1..1）", () => {
     const schema = buildScenarioCandidateJsonSchema(createBudgetPolicy("short")) as SchemaNodeView;
     const locations = schema.properties.locations;
-    expect(locations.minItems).toBe(3);
-    expect(locations.maxItems).toBe(6);
+    expect(locations.minItems).toBe(1);
+    expect(locations.maxItems).toBe(1);
   });
 
   it("同 policy 两次构建 JSON round-trip 相等", () => {
