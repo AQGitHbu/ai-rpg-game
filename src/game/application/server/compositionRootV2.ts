@@ -15,7 +15,7 @@ import { projectGameSessionView } from "../gameSessionViewV2";
 import type { Interaction, Action } from "@/game/domain/action";
 import type { ActionChoiceMap } from "../actionConverter";
 import type { GameSessionViewV2 } from "../gameSessionViewV2";
-import type { GameTypeId, GameLength, NewGameInput } from "@/game/domain/newGame";
+import type { GameTypeId, GameLength } from "@/game/domain/newGame";
 
 export type { RequestLogContext };
 
@@ -24,8 +24,14 @@ export type { RequestLogContext };
 // 与 V1 compositionRoot 并行存在，互不干扰。V1 路由保持不动。
 // ---------------------------------------------------------------------------
 
+/** V2 HTTP 开局输入：P1 阶段只收 gameType/gameLength，gameId 与 seed 由服务端装配。 */
+export type CreateGameV2HttpInput = {
+  readonly gameType: GameTypeId;
+  readonly gameLength: GameLength;
+};
+
 export type ServerGameV2EntryPoints = {
-  createGameV2(input: NewGameInput, traceId?: string): Promise<{ ok: boolean; revision?: number; code?: string }>;
+  createGameV2(input: CreateGameV2HttpInput, traceId?: string): Promise<{ ok: boolean; revision?: number; code?: string }>;
   performActionV2(command: {
     actionId: string;
     interaction: Interaction;
