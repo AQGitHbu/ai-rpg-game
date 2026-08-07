@@ -18,6 +18,7 @@ import { createDeterministicSceneSource } from "../deterministicSceneSource";
 import { generatePendingSceneV2 } from "../generatePendingSceneV2";
 import { handleNpcDialogueV2 } from "../handleNpcDialogueV2";
 import { commitState } from "../stateCommit";
+import { buildChoiceMap } from "../buildChoiceMap";
 import type { SceneSource } from "../sceneSource";
 import type { StoryState } from "@/game/domain/storyState";
 import type { NpcId } from "@/game/domain/scenarioBlueprint";
@@ -133,8 +134,10 @@ export function createServerGameV2EntryPoints(
     performActionV2: async (command, _traceId) => {
       const current = await repository.getCurrentGame();
       if (!current.ok || current.status !== "active") return { ok: false, feedback: "No active game" };
+      // Build choiceMap server-side from current state (spec §4.3: server maps choiceToken → Action)
+      const choiceMap = buildChoiceMap(current.record.worldState, current.record.storyState);
       const result = await performActionV2(
-        { gameId: current.record.gameId, actionId: command.actionId, interaction: command.interaction, expectedRevision: command.expectedRevision, choiceMap: command.choiceMap },
+        { gameId: current.record.gameId, actionId: command.actionId, interaction: command.interaction, expectedRevision: command.expectedRevision, choiceMap },
         { repository, now, expansionSource },
       );
       if (result.ok) return { ok: true, revision: result.revision, feedback: result.feedback };
