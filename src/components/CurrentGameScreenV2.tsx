@@ -88,7 +88,7 @@ export function CurrentGameScreenV2() {
   async function clearDevelopmentSave() {
     if (!window.confirm("仅清除当前本地试玩存档并重新开局？此操作只在开发环境可用。")) return;
     try {
-      await fetch("/api/game/dev/current", { method: "DELETE" });
+      await fetch("/api/v2/game/dev/current", { method: "DELETE" });
     } catch {
       // ignore
     }

@@ -55,4 +55,5 @@ export interface GameRepositoryV2 {
   getCurrentGame(): Promise<GetCurrentGameV2Result>;
   applyState(input: ApplyStateV2Input): Promise<ApplyStateV2Result>;
   applySceneWriteBack(input: ApplySceneWriteBackInput): Promise<ApplySceneWriteBackResult>;
+  clearCurrentGame(): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" }>;
 }

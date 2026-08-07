@@ -390,11 +390,36 @@ export function createSqliteGameRepositoryV2(
     }
   }
 
+  async function clearCurrentGame(): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" }> {
+    try {
+      await ensureSchema();
+      const tx = await getClient().transaction("write");
+      try {
+        await tx.execute({
+          sql: "DELETE FROM current_game_v2 WHERE slot = 1",
+          args: [],
+        });
+        await tx.execute({
+          sql: "DELETE FROM game_records_v2",
+          args: [],
+        });
+        await tx.commit();
+        return { ok: true };
+      } finally {
+        tx.close();
+      }
+    } catch (error) {
+      logError("clearCurrentGameV2 failed", error);
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
+  }
+
   return {
     createInitialGame,
     getCurrentGame,
     applyState,
     applySceneWriteBack,
+    clearCurrentGame,
     async initializeSchema() {
       await ensureSchema();
     },

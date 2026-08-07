@@ -52,6 +52,7 @@ export type ServerGameV2EntryPoints = {
   ensureNarrativeSceneV2(traceId?: string): Promise<{ ok: boolean; result?: string }>;
   ackPrologueV2(traceId?: string): Promise<{ ok: boolean; revision?: number; code?: string }>;
   handleNpcDialogueV2(command: { npcId: NpcId; text: string; expectedRevision: number }, traceId?: string): Promise<{ ok: boolean; kind?: string; npcSpeech?: string; revision?: number; code?: string }>;
+  clearDevelopmentCurrentGameV2(traceId?: string): Promise<{ status: "cleared" | "none" | "disabled" }>;
   executeHttpRequest(
     method: string,
     route: string,
@@ -190,6 +191,15 @@ export function createServerGameV2EntryPoints(
         return { ok: true, kind: result.kind, npcSpeech: result.kind === "chat" ? result.npcSpeech : undefined, revision: result.revision };
       }
       return { ok: false, code: result.code };
+    },
+    clearDevelopmentCurrentGameV2: async (_traceId) => {
+      // Only allow in development environment
+      if (env.NODE_ENV !== "development" && env.NODE_ENV !== "test") {
+        return { status: "disabled" };
+      }
+      const result = await repository.clearCurrentGame();
+      if (result.ok) return { status: "cleared" };
+      return { status: "disabled" };
     },
     executeHttpRequest,
     close: async () => {
