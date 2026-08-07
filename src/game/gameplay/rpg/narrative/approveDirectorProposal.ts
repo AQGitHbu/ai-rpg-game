@@ -1,5 +1,5 @@
-import type { GameState, ScenarioBlueprint } from "@/game/domain";
-import type { NarrativeActionCandidate, ProposedNewLocation, ProposedNewNpc } from "./types";
+import type { GameState, NarrativeEventKind, ScenarioBlueprint } from "@/game/domain";
+import type { NarrativeActionCandidate, ProposedNewEnemy, ProposedNewFact, ProposedNewItem, ProposedNewLocation, ProposedNewNpc } from "./types";
 import type {
   DirectorProposal,
   ApprovedDirectorPlan,
@@ -84,13 +84,18 @@ export function approveDirectorProposal(
     }
   }
 
-  // suggestedActionKeys must be exactly two different keys from candidates
+  // World-event choices need two distinct rule routes. Dialogue events only
+  // need one legal candidate as a continuation anchor; the writer supplies
+  // two conversational responses that are not action keys.
   const [keyA, keyB] = proposal.suggestedActionKeys;
-  if (keyA === keyB) {
-    return { ok: false, category: "choice_not_legal" };
-  }
   const candidateKeys = new Set(candidates.map((c) => c.actionKey));
-  if (!candidateKeys.has(keyA) || !candidateKeys.has(keyB)) {
+  const trigger = state.narrative?.generation?.status === "pending"
+    ? state.narrative.generation.triggerContext
+    : undefined;
+  const isDialogueEvent = proposal.eventKind === "dialogue" ||
+    (proposal.eventKind === undefined && trigger !== undefined &&
+      ["initial_opening", "talk", "free_input"].includes(trigger.kind));
+  if (!candidateKeys.has(keyA) || (!isDialogueEvent && (keyA === keyB || !candidateKeys.has(keyB)))) {
     return { ok: false, category: "choice_not_legal" };
   }
 
@@ -113,6 +118,30 @@ export function approveDirectorProposal(
     }
   }
 
+  if (proposal.eventKind !== undefined) {
+    const targetId = proposal.eventTargetId;
+    if (proposal.eventKind === "dialogue") {
+      if (proposal.focusNpcId === null) return { ok: false, category: "reference_broken" };
+    } else {
+      const isRuntimeTarget = targetId !== undefined && isAuthorizedRuntimeTarget(proposal.eventKind, targetId, proposal);
+      const isExistingTarget = targetId !== undefined && hasEventTarget(proposal.eventKind, targetId, {
+        npcIds: allNpcIds,
+        factIds: allFactIds,
+        itemIds: allItemIds,
+        enemyIds: allEnemyIds,
+        locationIds: allLocationIds,
+      });
+      // The event target must also be one of the currently legal rule routes.
+      // Otherwise the scene could claim to investigate/take/fight an entity
+      // that its choices can never resolve.
+      const isLegalExistingRoute = targetId !== undefined &&
+        candidateKeys.has(eventActionKeyOf(proposal.eventKind, targetId));
+      if (targetId === undefined || (!isRuntimeTarget && (!isExistingTarget || !isLegalExistingRoute))) {
+        return { ok: false, category: "reference_broken" };
+      }
+    }
+  }
+
   // Construct approved object field by field (never return AI object by reference)
   const approved: ApprovedDirectorPlan = {
     sceneGoal: proposal.sceneGoal,
@@ -120,14 +149,57 @@ export function approveDirectorProposal(
     focusNpcId: proposal.focusNpcId,
     relevantFactIds: [...proposal.relevantFactIds],
     allowedRevealFactIds: [...proposal.allowedRevealFactIds],
-    suggestedActionKeys: [...proposal.suggestedActionKeys] as readonly [string, string],
+    suggestedActionKeys: [keyA, candidateKeys.has(keyB) ? keyB : keyA] as readonly [string, string],
     introducedEntities: proposal.introducedEntities.map((e) => ({ ...e })),
     pacing: proposal.pacing,
     proposedNewLocations: rebuildLocationProposals(proposal.proposedNewLocations),
     proposedNewNpcs: rebuildNpcProposals(proposal.proposedNewNpcs),
+    proposedNewFacts: rebuildFactProposals(proposal.proposedNewFacts),
+    proposedNewItems: rebuildItemProposals(proposal.proposedNewItems),
+    proposedNewEnemies: rebuildEnemyProposals(proposal.proposedNewEnemies),
+    ...(proposal.eventKind !== undefined ? { eventKind: proposal.eventKind } : {}),
+    ...(proposal.eventTargetId !== undefined ? { eventTargetId: proposal.eventTargetId } : {}),
   };
 
   return { ok: true, value: approved };
+}
+
+function isAuthorizedRuntimeTarget(kind: NarrativeEventKind, targetId: string, proposal: DirectorProposal): boolean {
+  return kind === "investigate" && targetId === "runtime:new_fact" && proposal.proposedNewFacts?.length === 1 ||
+    kind === "item" && targetId === "runtime:new_item" && proposal.proposedNewItems?.length === 1 ||
+    kind === "battle" && targetId === "runtime:new_enemy" && proposal.proposedNewEnemies?.length === 1;
+}
+
+function hasEventTarget(
+  kind: NarrativeEventKind,
+  targetId: string,
+  ids: Readonly<{
+    npcIds: Set<string>;
+    factIds: Set<string>;
+    itemIds: Set<string>;
+    enemyIds: Set<string>;
+    locationIds: Set<string>;
+  }>
+): boolean {
+  switch (kind) {
+    case "dialogue": return ids.npcIds.has(targetId);
+    case "investigate": return ids.factIds.has(targetId);
+    case "item": return ids.itemIds.has(targetId);
+    case "battle": return ids.enemyIds.has(targetId);
+    case "travel":
+    case "observe": return ids.locationIds.has(targetId);
+  }
+}
+
+function eventActionKeyOf(kind: NarrativeEventKind, targetId: string): string {
+  switch (kind) {
+    case "investigate": return `investigate:${targetId}`;
+    case "item": return `take_item:${targetId}`;
+    case "battle": return `start_battle:${targetId}`;
+    case "travel": return `move:${targetId}`;
+    case "observe": return `observe:${targetId}`;
+    case "dialogue": return `talk:${targetId}`;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -169,4 +241,27 @@ function rebuildNpcProposals(
     return [];
   }
   return [{ ...entry }];
+}
+
+function rebuildFactProposals(value: readonly ProposedNewFact[] | undefined): readonly ProposedNewFact[] {
+  if (value === undefined || value.length !== 1) return [];
+  const entry = value[0];
+  if (typeof entry.text !== "string" || typeof entry.locationId !== "string" || typeof entry.reason !== "string") return [];
+  return [{ text: entry.text, locationId: entry.locationId, reason: entry.reason }];
+}
+
+function rebuildItemProposals(value: readonly ProposedNewItem[] | undefined): readonly ProposedNewItem[] {
+  if (value === undefined || value.length !== 1) return [];
+  const entry = value[0];
+  if (typeof entry.name !== "string" || typeof entry.description !== "string" || typeof entry.kind !== "string" || typeof entry.locationId !== "string" || !Array.isArray(entry.tags)) return [];
+  return [{ name: entry.name, description: entry.description, kind: entry.kind, locationId: entry.locationId, tags: entry.tags.filter((tag): tag is string => typeof tag === "string") }];
+}
+
+function rebuildEnemyProposals(value: readonly ProposedNewEnemy[] | undefined): readonly ProposedNewEnemy[] {
+  if (value === undefined || value.length !== 1) return [];
+  const entry = value[0];
+  if (typeof entry.name !== "string" || typeof entry.locationId !== "string" || typeof entry.reason !== "string" || (entry.tier !== "normal" && entry.tier !== "boss")) return [];
+  const stats = entry.stats;
+  if (stats === null || typeof stats !== "object" || !Number.isFinite(stats.hp) || !Number.isFinite(stats.attack) || !Number.isFinite(stats.defense)) return [];
+  return [{ name: entry.name, tier: entry.tier, locationId: entry.locationId, reason: entry.reason, stats: { hp: stats.hp, attack: stats.attack, defense: stats.defense } }];
 }

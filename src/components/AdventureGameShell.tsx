@@ -11,8 +11,9 @@ import { WorldMapScreen } from "./WorldMapScreen";
 import { LocationSceneScreen } from "./LocationSceneScreen";
 import { TownLayerScreen } from "./TownLayerScreen";
 import { NpcDialoguePanel, type FreeInputResult } from "./NpcDialoguePanel";
-import { NarrativeScenePanel } from "./NarrativeScenePanel";
+import { TravelNarrationScreen } from "./TravelNarrationScreen";
 import { ToastContainer, type ToastMessage } from "./ToastNotification";
+import { NarrativeGenerationModal } from "./NarrativeGenerationModal";
 
 type AdventureGameShellProps = {
   readonly view: GameSessionView;
@@ -22,6 +23,7 @@ type AdventureGameShellProps = {
   readonly onStaleRevision: () => void;
   readonly developmentTools: boolean;
   readonly onClearDevelopmentSave: () => Promise<void>;
+  readonly narrativeGenerationUnavailable?: boolean;
 };
 
 type AdventureScreen = "map" | "town" | "scene";
@@ -57,7 +59,8 @@ export function AdventureGameShell({
   onViewChange,
   onStaleRevision,
   developmentTools,
-  onClearDevelopmentSave
+  onClearDevelopmentSave,
+  narrativeGenerationUnavailable = false
 }: AdventureGameShellProps) {
   const [screen, setScreen] = useState<AdventureScreen>("map");
   const [detailsPanel, setDetailsPanel] = useState<DetailsPanel | null>(null);
@@ -82,6 +85,7 @@ export function AdventureGameShell({
   // Treat their absence as ready so a compatible client can still render them.
   const narrativePending = view.narrativeGeneration?.status === "pending";
   const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
+  const [dismissedTravelNarration, setDismissedTravelNarration] = useState(false);
   const [devToolsOpen, setDevToolsOpen] = useState(false);
   const triggerRef = useRef<HTMLElement | null>(null);
   const devToolsTriggerRef = useRef<HTMLElement | null>(null);
@@ -89,9 +93,20 @@ export function AdventureGameShell({
   const isSubmitting = feedback.phase === "submitting";
   const shellBusy = busy || isSubmitting;
 
-  const activeDialogue = dialogueNpcId !== null
+  const selectedDialogue = dialogueNpcId !== null
     ? view.dialogues.find((d) => d.npcId === dialogueNpcId) ?? null
     : null;
+
+  // 旅行事件：全屏旁白；对白事件：对话面板；轻量事件已由 LocationSceneScreen 内嵌 SceneNarrationBar 处理。
+  const narrativeEventKind = view.narrative?.eventKind;
+  const isTravelEvent = narrativeEventKind === "travel";
+  // 对话面板在以下条件可见：
+  // - 玩家选中了 NPC 且当前是对白场景或无场景（首次交谈）
+  // - 非 travel 事件
+  const isDialogueScreen = narrativeEventKind === undefined || narrativeEventKind === "dialogue";
+  const activeDialogue = !isTravelEvent && isDialogueScreen ? selectedDialogue : null;
+  // 仅有 pending 且无可读场景时才显示全屏生成模态；followup 播放期间保留对话面板。
+  const showGenerationModal = narrativePending && view.narrative === null && view.battle === null && view.ending === null;
 
   function openDetails(panel: DetailsPanel): void {
     triggerRef.current = document.activeElement as HTMLElement;
@@ -166,43 +181,32 @@ export function AdventureGameShell({
     }
   }
 
-  async function handleDialogueChoice(npcId: string, choiceId: string): Promise<void> {
-    setFeedback({ phase: "submitting" });
-    onBusyChange(true);
-
-    const outcome = await postGameAction({
-      intent: { type: "dialogue_choice", npcId, choiceId },
-      revision: view.revision
-    });
-
-    onBusyChange(false);
-    switch (outcome.kind) {
-      case "success":
-        setFeedback({ phase: "idle" });
-        pushToast(outcome.message);
-        onViewChange(outcome.view);
-        return;
-      case "rejected":
-        setFeedback({ phase: "rejected", message: outcome.message });
-        return;
-      case "stale":
-        setFeedback({ phase: "idle" });
-        setDialogueNpcId(null);
-        onStaleRevision();
-        return;
-      case "error":
-        setFeedback({ phase: "error", message: outcome.message });
-    }
-  }
-
   async function handleNarrativeChoice(choiceToken: string): Promise<void> {
     setFeedback({ phase: "submitting" }); onBusyChange(true);
     const outcome = await postGameAction({ intent: { type: "narrative_choice", choiceToken }, revision: view.revision });
     onBusyChange(false);
-    if (outcome.kind === "success") { setFeedback({ phase: "idle" }); pushToast(outcome.message); onViewChange(outcome.view); return; }
+    if (outcome.kind === "success") {
+      setFeedback({ phase: "idle" });
+      pushToast(outcome.message);
+      onViewChange(outcome.view);
+      // followup 消费后 currentScene 非空：保留对话面板供玩家阅读。
+      if (outcome.view.narrative === null) {
+        setDialogueNpcId(null);
+      }
+      return;
+    }
     if (outcome.kind === "rejected") { setFeedback({ phase: "rejected", message: outcome.message }); return; }
     if (outcome.kind === "stale") { setFeedback({ phase: "idle" }); onStaleRevision(); return; }
     setFeedback({ phase: "error", message: outcome.message });
+  }
+
+  /**
+   * Phase 14：对话面板情境选项提交——choiceToken 来自 currentScene.choices，
+   * 提交 narrative_choice intent（与场景面板共用同一通路）。pending 期间保留对话覆盖层，
+   * 由生成模态覆盖当前界面，直到 API 返回新的场景。
+   */
+  function handleDialogueChoiceFromPanel(choiceToken: string): void {
+    void handleNarrativeChoice(choiceToken);
   }
 
   /**
@@ -228,6 +232,7 @@ export function AdventureGameShell({
       }
       if (body?.kind === "narrative_trigger" && body.view !== undefined) {
         setFeedback({ phase: "idle" });
+        setDialogueNpcId(null);
         onViewChange(body.view);
         return { kind: "narrative_trigger" };
       }
@@ -284,18 +289,6 @@ export function AdventureGameShell({
             onReturnMap={() => setScreen("map")}
           />
         )
-      ) : narrativePending && view.battle === null && view.ending === null ? (
-        <Panel className="narrative-scene-panel narrative-pending-panel" aria-label="正在生成剧情">
-          <p role="status" aria-live="polite">正在编排下一幕…</p>
-          <p>世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。</p>
-        </Panel>
-      ) : view.narrative !== null && view.battle === null && view.ending === null ? (
-        <NarrativeScenePanel
-          scene={view.narrative}
-          busy={shellBusy}
-          onChoose={(token) => void handleNarrativeChoice(token)}
-          onReturnMap={() => setScreen("map")}
-        />
       ) : (
         <LocationSceneScreen
           view={view}
@@ -318,11 +311,18 @@ export function AdventureGameShell({
             dialogue={activeDialogue}
             gameType={view.world.gameType}
             busy={shellBusy}
-            onChoice={(npcId, choiceId) => void handleDialogueChoice(npcId, choiceId)}
+            onChoice={handleDialogueChoiceFromPanel}
             onFreeInput={handleFreeDialogue}
             freeInputBusy={shellBusy}
           />
         </AdventureOverlay>
+      ) : null}
+
+      {isTravelEvent && view.narrative !== null && !dismissedTravelNarration ? (
+        <TravelNarrationScreen
+          narration={view.narrative.narration}
+          onComplete={() => { setDialogueNpcId(null); setScreen("scene"); setDismissedTravelNarration(true); }}
+        />
       ) : null}
 
       {devToolsOpen ? (
@@ -334,6 +334,13 @@ export function AdventureGameShell({
             清除本地试玩存档
           </InlineButton>
         </AdventureOverlay>
+      ) : null}
+
+      {showGenerationModal ? (
+        <NarrativeGenerationModal
+          progress={view.narrativeGeneration?.progress}
+          unavailable={narrativeGenerationUnavailable}
+        />
       ) : null}
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />

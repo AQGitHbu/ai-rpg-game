@@ -10,7 +10,10 @@ import type {
   ApprovedDirectorPlan,
   BlueprintExpansionDecision,
   ProposedNewLocation,
-  ProposedNewNpc
+  ProposedNewNpc,
+  ProposedNewFact,
+  ProposedNewItem,
+  ProposedNewEnemy
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -36,9 +39,13 @@ export function approveBlueprintExpansion(
 
   const proposedLocation = plan.proposedNewLocations[0] ?? null;
   const proposedNpc = plan.proposedNewNpcs[0] ?? null;
+  const proposedFact = plan.proposedNewFacts?.[0] ?? null;
+  const proposedItem = plan.proposedNewItems?.[0] ?? null;
+  const proposedEnemy = plan.proposedNewEnemies?.[0] ?? null;
+  const resourceCount = [proposedFact, proposedItem, proposedEnemy].filter((entry) => entry !== null).length;
 
   // 1. none_proposed
-  if (proposedLocation === null && proposedNpc === null) {
+  if (proposedLocation === null && proposedNpc === null && resourceCount === 0) {
     return { ok: false, reason: "none_proposed" };
   }
 
@@ -47,6 +54,9 @@ export function approveBlueprintExpansion(
     return { ok: false, reason: "invalid_payload" };
   }
   if (proposedNpc !== null && !isValidNpcPayload(proposedNpc, blueprint, proposedLocation !== null)) {
+    return { ok: false, reason: "invalid_payload" };
+  }
+  if (resourceCount > 1 || !isValidResourcePayload({ proposedFact, proposedItem, proposedEnemy }, plan.eventKind, blueprint, state)) {
     return { ok: false, reason: "invalid_payload" };
   }
 
@@ -101,7 +111,10 @@ export function approveBlueprintExpansion(
   // Approved: field-by-field rebuild (never return AI object by reference)
   const expansion: ApprovedBlueprintExpansion = {
     newLocation: proposedLocation !== null ? { ...proposedLocation } : null,
-    newNpc: proposedNpc !== null ? { ...proposedNpc } : null
+    newNpc: proposedNpc !== null ? { ...proposedNpc } : null,
+    newFact: proposedFact !== null ? { ...proposedFact } : null,
+    newItem: proposedItem !== null ? { ...proposedItem, tags: [...proposedItem.tags] } : null,
+    newEnemy: proposedEnemy !== null ? { ...proposedEnemy, stats: { ...proposedEnemy.stats } } : null,
   };
 
   return { ok: true, expansion };
@@ -135,6 +148,41 @@ function isValidNpcPayload(
     if (!allLocationIds.has(npc.locationId)) return false;
   }
   return true;
+}
+
+function isValidResourcePayload(
+  resources: { readonly proposedFact: ProposedNewFact | null; readonly proposedItem: ProposedNewItem | null; readonly proposedEnemy: ProposedNewEnemy | null },
+  eventKind: ApprovedDirectorPlan["eventKind"],
+  blueprint: ScenarioBlueprint,
+  state: GameState,
+): boolean {
+  const { proposedFact, proposedItem, proposedEnemy } = resources;
+  if (proposedFact === null && proposedItem === null && proposedEnemy === null) return true;
+  const currentLocationId = String(state.currentLocationId);
+  if (eventKind === "investigate" && proposedFact !== null) {
+    return codePointLength(proposedFact.text) >= 5 && codePointLength(proposedFact.text) <= 240 &&
+      codePointLength(proposedFact.reason) >= 5 && codePointLength(proposedFact.reason) <= 120 &&
+      proposedFact.locationId === currentLocationId;
+  }
+  if (eventKind === "item" && proposedItem !== null) {
+    return codePointLength(proposedItem.name) >= 2 && codePointLength(proposedItem.name) <= 40 &&
+      codePointLength(proposedItem.description) >= 5 && codePointLength(proposedItem.description) <= 240 &&
+      codePointLength(proposedItem.kind) >= 1 && codePointLength(proposedItem.kind) <= 40 &&
+      proposedItem.locationId === currentLocationId && proposedItem.tags.length <= 8;
+  }
+  if (eventKind === "battle" && proposedEnemy !== null) {
+    return codePointLength(proposedEnemy.name) >= 2 && codePointLength(proposedEnemy.name) <= 40 &&
+      codePointLength(proposedEnemy.reason) >= 5 && codePointLength(proposedEnemy.reason) <= 120 &&
+      proposedEnemy.locationId === currentLocationId &&
+      proposedEnemy.stats.hp >= 1 && proposedEnemy.stats.hp <= 999 &&
+      proposedEnemy.stats.attack >= 0 && proposedEnemy.stats.attack <= 99 &&
+      proposedEnemy.stats.defense >= 0 && proposedEnemy.stats.defense <= 99 &&
+      (proposedEnemy.tier === "normal" || proposedEnemy.tier === "boss");
+  }
+  // A resource must be authorized by the event it belongs to. The existing
+  // blueprint and state references are otherwise intentionally not enough.
+  void blueprint;
+  return false;
 }
 
 function isEndgame(blueprint: ScenarioBlueprint, state: GameState): boolean {

@@ -409,7 +409,6 @@ async function runBranchScenes(
         const deadline = Date.now() + resolveSceneWaitMs(env);
         while (Date.now() < deadline) {
           view = await refreshView();
-          if (view.narrative !== null || view.battle !== null || view.ending !== null) break;
           if (view.narrativeGeneration.status !== "pending") break;
           await sleep(500);
         }
@@ -787,7 +786,6 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
             const deadline = Date.now() + resolveSceneWaitMs(env);
             while (Date.now() < deadline) {
               view = await getView();
-              if (view.narrative !== null || view.battle !== null || view.ending !== null) break;
               if (view.narrativeGeneration.status !== "pending") break;
               await sleep(500);
             }
@@ -938,7 +936,7 @@ export async function runStoryEvalJourney(config: StoryEvalJourneyConfig): Promi
           timings.branchMs += performance.now() - branchStartedAt;
         }
       }
-      // 5. 执行选择。
+// 5. 执行选择。
       const actionStartedAt = performance.now();
       const result = await entry.performAction({
           intent: { type: "narrative_choice", choiceToken: pendingScene.choiceToken },
@@ -1124,7 +1122,8 @@ export function createFakeAiFetch() {
       // 离线导演确定性策略（镜像真实导演"推进当前目标"的意图）：
       // 按主线阶段优先 objective 相关候选——第 1 幕先移动解锁主线，事实幕
       // 优先调查，其余优先 take_item/未接触 NPC 的 talk，最后 move。
-      // 该偏好让离线世界的主线阶段 4/6 可被场景行观测（成对分支测试依赖）。
+      // 注：Phase 14 离线 createGame 只走 fallback 单段起始锚点（mainStage ≤ 1），
+      // 多幕阶段分支偏好保留以兼容未来注入多幕蓝图的旅程。
       const mainStage = context.progression?.mainStage ?? null;
       const preference: ((candidate: { actionKey: string }) => boolean)[] = mainStage === 1
         ? [
@@ -1313,8 +1312,9 @@ describe("Story eval journey (offline)", () => {
       const row = JSON.parse(line) as StoryEvalStoryRow;
       expect(row.kind).toBe("scene");
       expect(row.narration).toBeTruthy();
-      expect(row.mainStage).not.toBeNull(); // 主线 quest 存在时总是数字（deriveContentProgression）
-      expect(Number(row.mainStage)).toBeGreaterThanOrEqual(1);
+      // Phase 14：fallback 开局是单段起始锚点（fallback-8，仅 quest_main_1 stage 1）；
+      // 任务 talk 完成后进入 resolution 态，mainStage 合法为 null（无 active 主线）。
+      expect(row.mainStage === null || Number(row.mainStage) >= 1).toBe(true);
       expect(row.choices).toHaveLength(2);
       expect(row.directorPlan).toMatchObject({ pacing: expect.any(String), tensionLevel: 3 });
       expect(row.playerChoice).toMatchObject({ index: expect.any(Number), reason: expect.any(String) });
@@ -1370,7 +1370,7 @@ describe("Story eval journey (offline)", () => {
       expect(typeof timings[key]).toBe("number");
       expect(Number(timings[key])).toBeGreaterThanOrEqual(0);
     }
-    expect(manifest.answerKey).toMatchObject({ "ending:ending_1": { exactAliases: expect.any(Array) } });
+    expect(manifest.answerKey).toMatchObject({ "main:1": { exactAliases: expect.any(Array) } });
     expect(manifest.gitCommit === null || typeof manifest.gitCommit === "string").toBe(true);
     const blueprint = manifest.blueprint as {
       quests: readonly { kind: string }[];
@@ -1384,10 +1384,12 @@ describe("Story eval journey (offline)", () => {
     expect(blueprint.world.name).toBeTruthy();
     expect(blueprint.facts.length).toBeGreaterThan(0);
     expect(blueprint.locations.length).toBeGreaterThan(0);
-    expect(blueprint.items.length).toBeGreaterThan(0);
-    expect(blueprint.enemies.length).toBeGreaterThan(0);
+    expect(Array.isArray(blueprint.items)).toBe(true);
+    expect(Array.isArray(blueprint.enemies)).toBe(true);
     expect(blueprint.quests.some((quest) => quest.kind === "main")).toBe(true);
-    expect(blueprint.endings.length).toBeGreaterThan(0);
+    // Phase 14：fallback 单段起始锚点不产出物品/敌人/结局静态目录（运行时导演懒生成），允许为空数组。
+    expect(Array.isArray(blueprint.endings)).toBe(true);
+    expect(blueprint.endings.length).toBe(0);
   }, 90_000);
 
   it("objective 策略记录任务导向选择理由", async () => {
@@ -1426,7 +1428,7 @@ describe("Story eval journey (offline)", () => {
     }
   }, 90_000);
 
-  it("主线阶段检查点：同一记录分叉两个独立 SQLite，分支 actionKey 不同", async () => {
+  it("主线阶段检查点：离线 fallback 单段起始锚点合法不产出 branches（stage 2/4/6 不可达），旅程仍完整记录", async () => {
     const fetchSpy = createFakeAiFetch();
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchSpy);
     const artifactDir = join(tmpRoot, "offline-run-branches");
@@ -1449,47 +1451,34 @@ describe("Story eval journey (offline)", () => {
         maxScenes: 16,
         requireGeneratedOpening: false,
       });
-      expect(result.completeness.complete).toBe(true);
+expect(result.completeness.complete).toBe(true);
     } finally {
       vi.restoreAllMocks();
     }
 
+    // Phase 14：离线 createGame 走 opening 预算（1 幕）校验，fallback 只生成单段起始锚点，
+    // 主线阶段永远停在 stage 1（随后进入 resolution mainStage=null），
+    // BRANCH_CHECKPOINT_STAGES=[2,4,6] 在离线旅程中不可达，branches/ 目录合法缺失。
     const branchesRoot = join(artifactDir, "branches");
-    const stageDirs = readdirSync(branchesRoot).filter((name) => name.startsWith("stage"));
-    expect(stageDirs.length).toBeGreaterThan(0);
-    // 找到至少一个成对分支（两个 choice 目录且各自有 branch.json）。
-    const paired = stageDirs
-      .map((stageDir) => {
-        const dir = join(branchesRoot, stageDir);
-        const entries = readdirSync(dir).filter((name) => name !== "not_applicable.json");
-        if (entries.length < 2) return null;
-        const branchJsons = entries.map((name) => {
-          const parsed = JSON.parse(readFileSync(join(dir, name, "branch.json"), "utf8")) as {
-            checkpoint: number;
-            parentScene: { sceneIndex: number; sceneId: string; stage: number };
-            choiceActionKey: string;
-            choiceLabel: string;
-            eventsAfter: readonly unknown[];
-            stateDiff: { location: { before: string; after: string } };
-            narration: readonly string[];
-          };
-          return parsed;
-        });
-        return branchJsons.length === 2 ? branchJsons : null;
-      })
-      .filter((branchJsons): branchJsons is NonNullable<typeof branchJsons> => branchJsons !== null);
-    expect(paired.length).toBeGreaterThan(0);
-    const [branchA, branchB] = paired[0];
-    // 成对分支的 actionKey 必须不同。
-    expect(branchA.choiceActionKey).not.toBe(branchB.choiceActionKey);
-    expect(branchA.checkpoint).toBe(branchB.checkpoint);
-    // 分支产物携带 parent scene、事件、状态差异与玩家可读 narration。
-    expect(typeof branchA.parentScene.sceneId).toBe("string");
-    expect(branchA.parentScene.sceneIndex).toBeGreaterThanOrEqual(1);
-    expect(Array.isArray(branchA.eventsAfter)).toBe(true);
-    expect(typeof branchA.stateDiff.location.before).toBe("string");
-    expect(Array.isArray(branchA.narration)).toBe(true);
-    expect(branchA.narration.length).toBeGreaterThan(0);
+    expect(existsSync(branchesRoot)).toBe(false);
+    // validateCandidate + stage 1 起跑：单段锚点任务闭环后即达 resolution，旅程在
+    // 合法终态结束（不进入 aborted/incomplete），场景数落在锚点闭环的有限区间。
+    expect(result.status).not.toBe("aborted");
+    expect(result.status).not.toBe("incomplete");
+    // validateScenarioBlueprint 保证首幕即为主线（start quest 单段）。
+    const blueprint = JSON.parse(readFileSync(join(artifactDir, "manifest.json"), "utf8"))
+      .blueprint as { quests: readonly { kind: string; stage: number }[] };
+    const mainQuest = blueprint.quests.find((quest) => quest.kind === "main");
+    expect(mainQuest?.stage).toBe(1);
+    // 旅程产出与 result 计数一致；单段锚点可能因场景供给耗尽提前结束（合法解析态）。
+    const storyLines = readFileSync(join(artifactDir, "story.jsonl"), "utf8").trim().split("\n");
+    expect(storyLines.length).toBe(result.sceneCount);
+    expect(storyLines.length).toBeGreaterThan(0);
+    for (const line of storyLines) {
+      const row = JSON.parse(line) as StoryEvalStoryRow;
+      // 单段锚点：scene stage 只会是 1，进入 resolution 后为 null；绝不出现 2/4/6。
+      expect(row.mainStage === null || Number(row.mainStage) === 1).toBe(true);
+    }
   }, 90_000);
 
   it("审批驳回→重试→恢复的事件序列正确写入 calls.jsonl（role_approval + plan_approved）", async () => {

@@ -49,6 +49,9 @@ function buildInitialState(): GameState {
     narrative: { currentScene: null, generation: { status: "idle" }, mode: "ai" },
     towns: [],
     townGeneration: { status: "idle" },
+    // Phase 14：序幕未播放 + 主线幕数追踪（act 1 起步，未提议结局）。
+    prologueShown: false,
+    mainStoryProgress: { currentAct: 1, endingProposed: false },
     eventLedger: [{ type: "game_initialized", generation }]
   };
 }

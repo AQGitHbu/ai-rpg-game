@@ -10,7 +10,7 @@ import { ensureTownRuntime, townSeedFor } from "./enterTown";
 const OCCURRED_AT = "2024-01-01T00:00:00.000Z";
 
 function compileFixtureBlueprint(): ScenarioBlueprint {
-  const validation = validateScenarioBlueprintCandidate(makeValidCandidate(), { profile: TEST_PROFILE, policy: TEST_POLICY });
+  const validation = validateScenarioBlueprintCandidate(makeValidCandidate(), { profile: TEST_PROFILE, policy: TEST_POLICY, phase: "runtime_expansion" });
   const compiled = compileScenarioBlueprint(validation);
   if (!compiled.ok) throw new Error("fixture 应当编译成功");
   return compiled.blueprint;

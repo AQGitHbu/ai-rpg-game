@@ -38,7 +38,10 @@ const STUB_VIEW: GameSessionView = {
   dialogues: [],
   townStatus: "none",
   narrative: null,
-  narrativeGeneration: { status: "ready" }
+  narrativeGeneration: { status: "ready" },
+  // Phase 14：序幕标记与开场序幕定义（HTTP 映射不读内容）。
+  prologueShown: true,
+  openingScene: {}
 };
 
 /** 构造可注入的 fake entry points：handleNpcDialogue 返回可配置结果。 */

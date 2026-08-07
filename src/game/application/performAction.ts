@@ -2,7 +2,6 @@ import { loadScenarioProfiles, type ScenarioProfiles } from "@/game/gameplay/rpg
 import {
   resolveAction,
   projectAvailableActions,
-  parseDialogueChoiceKind,
   type PlayerIntent,
   type ResolveActionDependencies,
 } from "@/game/gameplay/rpg/actions";
@@ -12,12 +11,14 @@ import { findAvailableActionByKey, reconcileStoryMemory } from "@/game/gameplay/
 import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
 import {
   reconcileQuests,
+  reconcileMainStoryProgress,
   failQuest,
   resolveEnding,
 } from "@/game/gameplay/rpg/quests";
-import { finalMainActOf } from "@/game/domain";
-import type { GameState, QuestId, EnemyId, ScenarioBlueprint } from "@/game/domain";
+import { finalMainActOf, paginateSpeechText, PLAYER_DIALOGUE_RESPONSE_LABELS } from "@/game/domain";
+import type { GameState, NarrativeSceneState, NarrativeTriggerContext, NpcId, QuestId, EnemyId, ScenarioBlueprint } from "@/game/domain";
 import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
+import { SPEECH_PAGE_CHAR_BUDGET } from "./locationAdventureView";
 import type { GameRepository } from "./server/persistence/gameRepository";
 import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
 
@@ -171,6 +172,17 @@ export async function performAction(
   const battleDeps = { now: deps.now };
   const questDeps = { now: deps.now };
   let resolved: ResolvedAction;
+  let dialogueResponse: Readonly<{
+    readonly triggerContext: Extract<NarrativeTriggerContext, { readonly kind: "dialogue_response" }>;
+    readonly playerNpcChat: {
+      readonly npcId: NpcId;
+      readonly playerText: string;
+      readonly npcName: string;
+      readonly npcRole: string;
+    };
+  }> | null = null;
+  let dialogueFollowupConsumed = false;
+  let narrativeChoiceTriggerContext: Extract<NarrativeTriggerContext, { readonly kind: "talk" }> | undefined;
 
   try {
     if (command.intent.type === "narrative_choice") {
@@ -182,9 +194,64 @@ export async function performAction(
         if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "该剧情选项已失效。" } };
       }
-      const available = projectAvailableActions(record.blueprint, record.state);
-      const resolvedIntent = findAvailableActionByKey(available, choice.actionKey);
-      if (resolvedIntent === null) {
+      const isDialogueResponse = choice.choiceKind === "dialogue_response" || choice.dialogueIntent !== undefined;
+      const dialogueNpcId = scene.event?.kind === "dialogue"
+        ? scene.event.focusNpcId
+        : scene.npcLine?.npcId ?? scene.npcDialogues?.find((entry) => entry.speechPages.length > 0)?.npcId;
+      const dialogueNpc = dialogueNpcId === undefined
+        ? undefined
+        : record.blueprint.npcs.find((npc) => String(npc.id) === String(dialogueNpcId));
+      if (isDialogueResponse) {
+        if (dialogueNpcId === undefined || dialogueNpc === undefined || choice.dialogueIntent === undefined) {
+          const view = projectCurrentView();
+          if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+          return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "该对白回应已失效。" } };
+        }
+        const choiceIndex = scene.choices.indexOf(choice);
+        const playerText = choiceIndex === 0
+          ? PLAYER_DIALOGUE_RESPONSE_LABELS[0]
+          : PLAYER_DIALOGUE_RESPONSE_LABELS[1];
+        const preGeneratedFollowup = scene.dialogueFollowups?.find(
+          (followup) => followup.dialogueIntent === choice.dialogueIntent
+        );
+        const followupScene = preGeneratedFollowup === undefined
+          ? null
+          : createPreGeneratedDialogueScene(record.blueprint, scene, preGeneratedFollowup);
+        if (followupScene !== null) dialogueFollowupConsumed = true;
+        const triggerContext = {
+          kind: "dialogue_response" as const,
+          npcId: dialogueNpcId,
+          dialogueIntent: choice.dialogueIntent,
+          playerText,
+        };
+        dialogueResponse = {
+          triggerContext,
+          playerNpcChat: {
+            npcId: dialogueNpcId,
+            playerText,
+            npcName: dialogueNpc.name,
+            npcRole: dialogueNpc.role,
+          },
+        };
+        resolved = {
+          state: {
+            ...record.state,
+            narrative: { ...record.state.narrative, currentScene: followupScene, generation: { status: "idle" } },
+            eventLedger: [...record.state.eventLedger, {
+              type: "narrative_dialogue_choice",
+              choiceToken: choice.choiceToken,
+              dialogueIntent: choice.dialogueIntent,
+              npcId: dialogueNpcId,
+              sceneId: scene.sceneId,
+              occurredAt: deps.now(),
+            }],
+          },
+          feedbackMessage: "你的回应传达给了对方。",
+        };
+      } else {
+        const available = projectAvailableActions(record.blueprint, record.state);
+        const resolvedIntent = findAvailableActionByKey(available, choice.actionKey);
+        if (resolvedIntent === null) {
         const view = projectCurrentView();
         if (view === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         return { ok: false, code: "ACTION_REJECTED", view, feedback: { ok: false, message: "该剧情选项已不再合法。" } };
@@ -223,6 +290,13 @@ export async function performAction(
         }
         choiceState = reconcileQuests(record.blueprint, result.state, questDeps).state;
         choiceFeedback = result.feedback.message;
+        if (resolvedIntent.type === "talk") {
+          narrativeChoiceTriggerContext = {
+            kind: "talk",
+            npcId: resolvedIntent.npcId,
+            isFirstMeeting: !(record.state.npcs.find((npc) => npc.npcId === resolvedIntent.npcId)?.met ?? true),
+          };
+        }
       }
       resolved = {
         state: {
@@ -232,6 +306,7 @@ export async function performAction(
         },
         feedbackMessage: choiceFeedback,
       };
+      }
     } else switch (command.intent.type) {
       case "start_battle": {
         const result = startBattle(
@@ -362,7 +437,12 @@ export async function performAction(
   // A pending scene is a durable job boundary. Do not allow a client to
   // advance the deterministic world a second time while the next narrative
   // projection is still being produced (including after a process restart).
-  if (record.state.narrative.generation.status === "pending") {
+  // ack_prologue 只标记一次性开场状态，不推进规则世界，也不依赖下一幕
+  // 场景；即使开局叙事正在后台生成，也必须允许玩家离开序幕。
+  if (
+    command.intent.type !== "ack_prologue" &&
+    record.state.narrative.generation.status === "pending"
+  ) {
     const view = projectCurrentView();
     if (view === null) {
       return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
@@ -377,29 +457,45 @@ export async function performAction(
 
   // A deterministic action commits its rule result immediately. Scene
   // generation is a recoverable server-side job and must not make the player
-  // request wait for the provider. Narrative choices, dialogue choices, and
-  // direct rule intents all share the same queue boundary: after a successful
-  // action, an AI-mode game with at least two legal actions must expose the
-  // next narrative scene. This also keeps server-side continuation bridges
-  // from leaving a playable state with an empty narrative view.
+  // request wait for the provider. Narrative choices, talk (first meeting),
+  // and direct rule intents all share the same queue boundary: after a
+  // successful action, an AI-mode game with at least two legal actions must
+  // expose the next narrative scene. This also keeps server-side continuation
+  // bridges from leaving a playable state with an empty narrative view.
   if (
     record.state.narrative.mode !== "offline" &&
     deps.runtimeNarrativeSources !== undefined &&
     canQueueRuntimeNarrativeScene(record.blueprint, nextState)
   ) {
     const intent = command.intent;
-    // 防御性守卫：greet 只应在首次结识时触发场景。正常路径下已结识 NPC 不会
-    // 投影 greet 选项且 validateIntent 会拒绝伪造 choiceId，此处防止上游契约
-    // 变化时误触发。必须用 record.state（resolveAction 前）判断——resolveAction
-    // 对所有 dialogue_choice 都会设置 met: true，nextState 中恒为 true。
-    const isRepeatGreet =
-      intent.type === "dialogue_choice" &&
-      parseDialogueChoiceKind(intent.npcId, intent.choiceId) === "greet" &&
+    // Phase 14：talk intent 的首遇判断——已结识 NPC 的重复 talk 不排队场景。
+    // 必须用 record.state（resolveAction 前）判断——resolveAction 对 talk 会
+    // 设置 met: true，nextState 中恒为 true。ack_prologue 跳过排队（纯幂等标记）。
+    const isRepeatTalk =
+      intent.type === "talk" &&
       (record.state.npcs.find((npc) => npc.npcId === intent.npcId)?.met ?? true);
-    if (!isRepeatGreet) {
+    const shouldQueue = intent.type !== "ack_prologue" && !isRepeatTalk;
+    if (shouldQueue) {
       nextState = {
         ...nextState,
-        narrative: { currentScene: null, generation: { status: "pending", requestedAt: deps.now() }, mode: "ai" },
+        narrative: {
+          // followup 播放期间保留 currentScene 供玩家阅读；非 followup 路径照旧清除。
+          currentScene: dialogueFollowupConsumed
+            ? nextState.narrative.currentScene
+            : null,
+          generation: {
+            status: "pending",
+            requestedAt: deps.now(),
+            // Phase 14：携带触发上下文，让导演知道场景是为何触发的。
+            triggerContext: intent.type === "talk"
+              ? { kind: "talk", npcId: intent.npcId, isFirstMeeting: !isRepeatTalk }
+              : intent.type === "narrative_choice"
+                ? dialogueResponse?.triggerContext ?? narrativeChoiceTriggerContext ?? { kind: "narrative_choice_followup", previousChoiceActionKey: intent.choiceToken }
+                : undefined,
+            ...(dialogueResponse !== null ? { playerNpcChat: dialogueResponse.playerNpcChat } : {}),
+          },
+          mode: nextState.narrative.mode,
+        },
       };
     }
   }
@@ -410,6 +506,23 @@ export async function performAction(
   nextState = {
     ...nextState,
     storyMemory: reconcileStoryMemory({ state: nextState })
+  };
+
+  // Phase 14：同步写回派生的 currentAct，使持久化缓存与实际 state.quests 对齐
+  // （spec §405 要求每次 reconcileQuests 后由 performAction 显式写回）。
+  // 闸门读者（approveEndingProposal）依然只读派生值，避免隐式写回依赖；
+  // 写回只维护缓存新鲜度，让旧档迁移/外部工具读 mainStoryProgress 时拿到准确数据。
+  const mainStoryProgress = reconcileMainStoryProgress(
+    record.blueprint,
+    nextState,
+    questDeps,
+  );
+  nextState = {
+    ...nextState,
+    mainStoryProgress: {
+      ...nextState.mainStoryProgress,
+      currentAct: mainStoryProgress.currentAct,
+    },
   };
 
   // Step 5: 最终 state → 原子 compare-and-swap 写入（唯一一次写入）。
@@ -469,4 +582,39 @@ function findStage3QuestForEnemy(
     q.objectives.some((obj) => obj.kind === "defeat_enemy" && obj.enemyId === enemyId)
   );
   return quest?.id;
+}
+
+function createPreGeneratedDialogueScene(
+  blueprint: ScenarioBlueprint,
+  scene: NonNullable<GameState["narrative"]["currentScene"]>,
+  followup: NonNullable<NonNullable<GameState["narrative"]["currentScene"]>["dialogueFollowups"]>[number],
+): NonNullable<GameState["narrative"]["currentScene"]> | null {
+  if (scene.event?.kind !== "dialogue") return null;
+  const npc = blueprint.npcs.find((entry) => String(entry.id) === String(followup.npcLine.npcId));
+  if (npc === undefined) return null;
+  const sceneId = `${scene.sceneId}-dialogue-${followup.dialogueIntent}`;
+  const choices = [0, 1].map((index) => ({
+    choiceToken: `${sceneId}:choice:${index}`,
+    label: PLAYER_DIALOGUE_RESPONSE_LABELS[index as 0 | 1],
+    choiceKind: "dialogue_response" as const,
+    dialogueIntent: scene.choices[index as 0 | 1].dialogueIntent ?? `dialogue_response_${index + 1}`,
+    actionKey: `dialogue:${sceneId}:${index}`,
+  })) as unknown as NarrativeSceneState["choices"];
+  return {
+    sceneId,
+    turn: scene.turn + 1,
+    narration: followup.narration,
+    usedFactIds: followup.npcLine.usedFactIds,
+    npcLine: followup.npcLine,
+    event: scene.event,
+    choices,
+    source: scene.source,
+    npcDialogues: [{
+      npcId: followup.npcLine.npcId,
+      npcName: npc.name,
+      npcRole: npc.role,
+      speechPages: paginateSpeechText(followup.npcLine.text, SPEECH_PAGE_CHAR_BUDGET),
+    }],
+    nextEventHint: followup.nextEventHint,
+  };
 }

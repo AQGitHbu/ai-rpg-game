@@ -7,7 +7,6 @@ import {
   asNpcId,
   asQuestId,
   type GameState,
-  type NewGameInput,
 } from "@/game/domain";
 import {
   resolveAction,
@@ -18,12 +17,21 @@ import {
   battleAction,
 } from "@/game/gameplay/rpg/battle";
 import { reconcileQuests, failQuest, resolveEnding } from "@/game/gameplay/rpg/quests";
-import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
+import {
+  compileScenarioBlueprint,
+  initializeGameState,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import {
   projectGameSessionView,
   type GameSessionView,
 } from "./gameSessionView";
-import { runScenarioPipeline } from "./applicationFixture.testutil";
+import { TEST_GAME_ID } from "./applicationFixture.testutil";
 
 // ---------------------------------------------------------------------------
 // Phase 6 Task 3c：GameSessionView battle/ending read model 测试。
@@ -33,24 +41,41 @@ import { runScenarioPipeline } from "./applicationFixture.testutil";
 // - active battle：battle 含 enemyName/playerHp/enemyHp/round, availableActions 含 battle_action
 // - 结局：ending 含 name/description/outcome, availableActions 为空
 // - 不泄漏 seed/blueprint/内部 ID
+//
+// Phase 14：createGame 只产出 1 幕起始锚点；本文件改用 makeValidCandidate 的
+// 运行时扩展蓝图（runtime_expansion 阶段）驱动全部断言。boss = enemy_b（loc_d，
+// hp20/atk5/def2），玩家 hp30/atk6/def4 ⇒ 每回合 attack 造成 4 伤害、5 回合击杀，
+// boss 每回合反击 1 伤害。stage 3 = m3（defeat_enemy enemy_b）→ 胜利 e1 / 失败 e2。
 // ---------------------------------------------------------------------------
 
-type Phase1Fixture = { input: NewGameInput; seed: string };
-const FIXTURE = wuxiaFixture as unknown as Phase1Fixture;
-const PIPELINE = runScenarioPipeline({ ...FIXTURE.input, gameLength: "short" }, FIXTURE.seed);
-
-const FIXED_TIME = "2026-07-27T10:00:00.000Z";
+const FIXED_TIME = "2026-07-27T12:00:00.000Z";
 const ruleDeps = { now: () => FIXED_TIME };
+
+function compileRuntimeBlueprint() {
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(makeValidCandidate(), {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
+}
+
+const PIPELINE = { blueprint: compileRuntimeBlueprint() };
 
 function buildStage3BossReadyState(): GameState {
   const intents: readonly PlayerIntent[] = [
-    { type: "move", locationId: asLocationId("loc_2") },
-    { type: "move", locationId: asLocationId("loc_3") },
-    { type: "talk", npcId: asNpcId("npc_3") },
-    { type: "take_item", itemId: asItemId("item_key") },
-    { type: "move", locationId: asLocationId("loc_4") },
+    { type: "move", locationId: asLocationId("loc_b") },
+    { type: "move", locationId: asLocationId("loc_c") },
+    { type: "talk", npcId: asNpcId("npc_c") },
+    { type: "take_item", itemId: asItemId("item_b") },
+    { type: "move", locationId: asLocationId("loc_d") },
   ];
-  let state = PIPELINE.state;
+  let state = initializeGameState(PIPELINE.blueprint);
   for (const intent of intents) {
     const resolved = resolveAction(PIPELINE.blueprint, state, intent, ruleDeps);
     if (!resolved.ok) throw new Error(`前置行动应当成功：${resolved.code}`);
@@ -61,7 +86,7 @@ function buildStage3BossReadyState(): GameState {
 
 function projectView(state: GameState, revision = 0): GameSessionView {
   return projectGameSessionView({
-    gameId: "game-test" as never,
+    gameId: TEST_GAME_ID,
     blueprint: PIPELINE.blueprint,
     state,
     revision,
@@ -69,11 +94,11 @@ function projectView(state: GameState, revision = 0): GameSessionView {
   });
 }
 
-const ENEMY_BOSS = asEnemyId("enemy_boss");
+const ENEMY_BOSS = asEnemyId("enemy_b");
 
 describe("GameSessionView：普通场景状态", () => {
   it("battle=null, ending=null, availableActions 含常规行动", () => {
-    const view = projectView(PIPELINE.state);
+    const view = projectView(initializeGameState(PIPELINE.blueprint));
     expect(view.battle).toBeNull();
     expect(view.ending).toBeNull();
     expect(view.availableActions.length).toBeGreaterThan(0);
@@ -139,7 +164,7 @@ describe("GameSessionView：结局状态", () => {
 
     expect(view.ending).not.toBeNull();
     if (view.ending !== null) {
-      const ending = PIPELINE.blueprint.endings.find((e) => e.id === asEndingId("ending_1"));
+      const ending = PIPELINE.blueprint.endings.find((e) => e.id === asEndingId("e1"));
       expect(view.ending.name).toBe(ending?.name);
       expect(view.ending.description).toBe(ending?.description);
       expect(view.ending.outcome).toBe("success");
@@ -155,7 +180,7 @@ describe("GameSessionView：结局状态", () => {
     const withdrawn = battleAction(PIPELINE.blueprint, started.state, "withdraw", ruleDeps);
     if (!withdrawn.ok) throw new Error("withdraw 应当成功");
 
-    const failResult = failQuest(PIPELINE.blueprint, withdrawn.state, asQuestId("quest_main_3"), ruleDeps);
+    const failResult = failQuest(PIPELINE.blueprint, withdrawn.state, asQuestId("m3"), ruleDeps);
     if (!failResult.ok) throw new Error("failQuest 应当成功");
     const endingResult = resolveEnding(PIPELINE.blueprint, failResult.state, ruleDeps);
 
@@ -163,7 +188,7 @@ describe("GameSessionView：结局状态", () => {
 
     expect(view.ending).not.toBeNull();
     if (view.ending !== null) {
-      const ending = PIPELINE.blueprint.endings.find((e) => e.id === asEndingId("ending_2"));
+      const ending = PIPELINE.blueprint.endings.find((e) => e.id === asEndingId("e2"));
       expect(view.ending.name).toBe(ending?.name);
       expect(view.ending.description).toBe(ending?.description);
       expect(view.ending.outcome).toBe("failure");
@@ -198,7 +223,7 @@ describe("GameSessionView：不泄漏敏感信息", () => {
 
     const view = projectView(started.state);
     const json = JSON.stringify(view.battle);
-    expect(json).not.toContain("enemy_boss");
+    expect(json).not.toContain("enemy_b");
     expect(json).not.toContain("attack");
     expect(json).not.toContain("defense");
     expect(json).not.toContain("tier");
@@ -208,12 +233,12 @@ describe("GameSessionView：不泄漏敏感信息", () => {
     const readyState = buildStage3BossReadyState();
     const endedState: GameState = {
       ...readyState,
-      ending: { endingId: asEndingId("ending_1"), outcome: "success" },
+      ending: { endingId: asEndingId("e1"), outcome: "success" },
     };
 
     const view = projectView(endedState);
     const json = JSON.stringify(view.ending);
-    expect(json).not.toContain("ending_1");
+    expect(json).not.toContain("e1");
     expect(json).not.toContain("endingId");
   });
 });

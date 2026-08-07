@@ -114,7 +114,10 @@ export function startBattle(
     return questState?.status === "active" &&
       quest.objectives.some((obj) => obj.kind === "defeat_enemy" && obj.enemyId === enemyId);
   });
-  if (!isStage3Target) {
+  const narrativeBattleTarget = state.narrative.currentScene?.event?.kind === "battle"
+    ? state.narrative.currentScene.event.enemyId
+    : undefined;
+  if (!isStage3Target && narrativeBattleTarget !== enemyId) {
     return {
       ok: false,
       code: "ENEMY_NOT_STAGE3_TARGET",

@@ -8,15 +8,18 @@ import {
   type ItemIconKey,
   type ItemRarity,
   type ItemStatLine,
+  type PrologueDefinition,
   type QuestObjective,
   type ScenarioBlueprint,
-  type StoryMemoryEntry
+  type StoryMemoryEntry,
+  PLAYER_DIALOGUE_RESPONSE_LABELS
 } from "@/game/domain";
 import {
   projectAvailableActions,
   type AvailableAction
 } from "@/game/gameplay/rpg/actions";
 import { isQuestObjectiveSatisfied } from "@/game/gameplay/rpg/quests";
+import type { NarrativeGenerationProgress } from "./runtimeNarrative";
 import {
   projectOpeningGameView,
   type AvailableActionView,
@@ -106,16 +109,30 @@ export type StoryEventView = {
 /** Phase 10：叙事场景安全视图——AI 导演产出的运行时叙事场景与两个固定选项。 */
 export type NarrativeSceneView = {
   readonly narration: string;
+  /** 当前唯一原子事件；旧场景缺失时客户端按 legacy 兼容。 */
+  readonly eventKind?: import("@/game/domain").NarrativeEventKind;
   readonly npcLine: { readonly text: string; readonly emotion: string } | null;
-  readonly choices: readonly [
-    { readonly label: string; readonly choiceToken: string },
-    { readonly label: string; readonly choiceToken: string },
-  ];
+  /** 选中预生成对白分支后显示的安全后续行动提示。 */
+  readonly nextEventHint?: string;
+  /** 场景选项；followup 播放 + 后台生成时为 null（选项区被“准备中”提示替换）。 */
+  readonly choices: readonly {
+    readonly label: string;
+    readonly choiceToken: string;
+  }[] | null;
+  /** Phase 14：场景内多 NPC 对白（含焦点 NPC）；缺失时为空数组。 */
+  readonly npcDialogues: readonly {
+    readonly npcId: string;
+    readonly npcName: string;
+    readonly npcRole: string;
+    readonly speechPages: readonly string[];
+  }[];
 } | null;
 
 /** Pending is deliberately a tiny public state: the UI may wait, not inspect work. */
 export type NarrativeGenerationView = {
   readonly status: "ready" | "pending";
+  /** 进程内后台任务的脱敏阶段进度；刷新或任务结束时可以缺省。 */
+  readonly progress?: NarrativeGenerationProgress;
 };
 
 export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
@@ -151,6 +168,10 @@ export type GameSessionView = Omit<OpeningGameView, "availableActions"> & {
   readonly narrative: NarrativeSceneView;
   /** Phase 10：场景后台生成状态；无内部 task / provider 信息。 */
   readonly narrativeGeneration: NarrativeGenerationView;
+  /** Phase 14：序幕已播放标记（开局 false，ack_prologue 后 true）。 */
+  readonly prologueShown: boolean;
+  /** Phase 14：开场场景的序幕定义（来自 blueprint.openingScene.prologue）。 */
+  readonly openingScene: { readonly prologue?: PrologueDefinition };
 };
 
 /** 输入与 opening 投影完全一致：调用方无需区分两个 read model 的装配来源。 */
@@ -283,6 +304,7 @@ function projectStoryEvent(
     case "quest_failed": return { text: `任务「${quest(event.questId)}」失败，后果已被记录。` };
     case "ending_reached": return { text: `你抵达结局「${endings.get(event.endingId)?.name ?? "终章"}」。` };
     case "narrative_choice": return { text: "你做出了抉择，故事在你脚边展开。" };
+    case "narrative_dialogue_choice": return { text: "你的回应让对话继续向更深处展开。" };
     case "town_plan_generated": return { text: `${location(event.locationId)}的市井轮廓在你眼前展开。` };
     // Phase 11：场景提交事件不作为单条日志行重复呈现——其结构索引经
     // storyMemory.recent 由本章进展里程碑（Task 7 projectStoryContinuity）单独投影。
@@ -345,24 +367,34 @@ function projectNarrativeSceneView(
 ): NarrativeSceneView {
   const scene = state.narrative.currentScene;
   if (scene === null) return null;
+  const isPending = state.narrative.generation.status === "pending";
   return {
     narration: scene.narration,
+    ...(scene.event !== undefined ? { eventKind: scene.event.kind } : {}),
+    ...(scene.nextEventHint === undefined ? {} : { nextEventHint: scene.nextEventHint }),
     npcLine: scene.npcLine === null ? null : {
       text: scene.npcLine.text,
       emotion: scene.npcLine.emotion,
     },
-    choices: scene.choices.map((choice) => ({
-      label: choice.label,
+    // followup 播放 + 后台生成时，选项区被“准备中”提示替换，不投影 choices
+    choices: isPending ? null : scene.choices.map((choice, index) => ({
+      label: scene.event?.kind === "dialogue"
+        ? PLAYER_DIALOGUE_RESPONSE_LABELS[index]
+        : choice.label,
       choiceToken: choice.choiceToken,
-    })) as NarrativeSceneView extends { choices: infer C } ? C : never,
+    })),
+    npcDialogues: (scene.npcDialogues ?? []).map((d) => ({
+      npcId: String(d.npcId),
+      npcName: d.npcName,
+      npcRole: d.npcRole,
+      speechPages: d.speechPages,
+    })),
   };
 }
 
 function projectNarrativeGenerationView(state: GameState): NarrativeGenerationView {
   return {
-    status: state.narrative.currentScene !== null
-      ? "ready"
-      : state.narrative.generation.status === "pending" ? "pending" : "ready",
+    status: state.narrative.generation.status === "pending" ? "pending" : "ready",
   };
 }
 
@@ -464,5 +496,8 @@ export function projectGameSessionView(input: ProjectGameSessionViewInput): Game
     // Phase 10：AI 导演叙事场景视图——不泄漏 sceneId/turn/usedFactIds 等内部细节。
     narrative: projectNarrativeSceneView(state),
     narrativeGeneration: projectNarrativeGenerationView(state),
+    // Phase 14：序幕播放标记与开场序幕定义——UI 依据此判断是否显示黑底白字开场。
+    prologueShown: state.prologueShown,
+    openingScene: { prologue: blueprint.openingScene.prologue },
   };
 }

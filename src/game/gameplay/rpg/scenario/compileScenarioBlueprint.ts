@@ -129,6 +129,9 @@ export function initializeGameState(blueprint: ScenarioBlueprint): GameState {
     townGeneration: { status: "idle" },
     // Phase 11：新局初始化 v1 空 storyMemory（可选字段兼容旧存档）。
     storyMemory: createEmptyStoryMemory(),
+    // Phase 14：序幕未播放 + 主线幕数追踪（act 1 起步，未提议结局）。
+    prologueShown: false,
+    mainStoryProgress: { currentAct: 1, endingProposed: false },
     eventLedger: [{ type: "game_initialized", generation }]
   };
 }

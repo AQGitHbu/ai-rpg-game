@@ -62,12 +62,19 @@ function pendingRecord(): GameRecord {
 /** 将主线推进到末幕（终幕 active、前幕 completed），使 progression 允许 climax pacing。 */
 function climaxPendingRecord(): GameRecord {
   const record = pendingRecord();
+  // 该 fixture 的渐进式开局只编译 stage 1；把测试蓝图收敛为一幕，
+  // 这样导演的 climax 提案能通过内容推进闸门，后续再命中扩展 pacing_locked。
+  const climaxBlueprint = {
+    ...record.blueprint,
+    budgetPolicy: { ...record.blueprint.budgetPolicy, mainActs: 1 },
+  } as ScenarioBlueprint;
   const mainStageById = new Map(
-    record.blueprint.quests.filter((quest) => quest.kind === "main").map((quest) => [quest.id, quest.stage])
+    climaxBlueprint.quests.filter((quest) => quest.kind === "main").map((quest) => [quest.id, quest.stage])
   );
   const finalAct = Math.max(...mainStageById.values());
   return {
     ...record,
+    blueprint: climaxBlueprint,
     state: {
       ...record.state,
       quests: record.state.quests.map((quest) => {
@@ -105,7 +112,7 @@ function proposingDirector(options: {
         },
         diagnostics: {
           traceId: request.traceId,
-          contractVersion: "runtime-narrative-v2",
+          contractVersion: "runtime-narrative-v3",
           stage: "candidate_received",
         },
       } as never;
@@ -132,7 +139,7 @@ function echoScriptSource(): SceneScriptSource {
         },
         diagnostics: {
           traceId: request.traceId,
-          contractVersion: "runtime-narrative-v2",
+          contractVersion: "runtime-narrative-v3",
           stage: "candidate_received",
         },
       } as never;
@@ -202,7 +209,7 @@ describe("blueprintExpansionJourney：编排层扩展决策", () => {
     expect(result.provenance).toBe("generated");
     expect(result.expansionDecision).toEqual({
       ok: true,
-      expansion: { newLocation: VALID_LOCATION_PROPOSAL, newNpc: VALID_NPC_PROPOSAL },
+      expansion: { newLocation: VALID_LOCATION_PROPOSAL, newNpc: VALID_NPC_PROPOSAL, newFact: null, newItem: null, newEnemy: null },
     });
   });
 
@@ -229,7 +236,7 @@ describe("blueprintExpansionJourney：编排层扩展决策", () => {
           category: "service_error",
           diagnostics: {
             traceId: "journey-fallback",
-            contractVersion: "runtime-narrative-v2",
+            contractVersion: "runtime-narrative-v3",
             stage: "failed",
             category: "service_error",
           },
@@ -326,8 +333,8 @@ describe("blueprintExpansionJourney：落库与视图旅程", () => {
 
   it("short 档地点达软上限时扩展被拒（soft_cap_reached），场景仍照常保存", async () => {
     const record = pendingRecord();
-    const template = record.blueprint.locations[1];
-    const padding = [1, 2, 3].map((i) => ({
+    const template = record.blueprint.locations[0];
+    const padding = Array.from({ length: Math.max(0, 8 - record.blueprint.locations.length) }, (_, index) => index + 1).map((i) => ({
       ...template,
       id: asLocationId(`loc_pad_${i}`),
       connectedLocationIds: [],

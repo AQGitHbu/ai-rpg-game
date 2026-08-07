@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
 import { NewGameSetupForm } from "./NewGameSetupForm";
 import { AdventureGameShell } from "./AdventureGameShell";
 import { BattlePanel } from "./BattlePanel";
 import { EndingPanel } from "./EndingPanel";
+import { PrologueScreen } from "./PrologueScreen";
 
 // ---------------------------------------------------------------------------
 // 根页面客户端协调器（Phase 2–5 + Phase 6）：挂载时读取 GET /api/game/current。
@@ -33,6 +34,7 @@ type ScreenState =
 type CurrentGameApiBody = {
   status?: string;
   view?: GameSessionView;
+  code?: string;
   reason?: string;
   developmentTools?: boolean;
 };
@@ -49,22 +51,31 @@ export function CurrentGameScreen() {
   // 任一面板提交中：场景与移动面板的全部按钮一律禁用，避免并发写入。
   const [actionBusy, setActionBusy] = useState(false);
   const [developmentTools, setDevelopmentTools] = useState(false);
+  const [narrativeGenerationUnavailable, setNarrativeGenerationUnavailable] = useState(false);
 
-  function applyCurrentGameBody(body: CurrentGameApiBody | null): void {
+  const setActiveView = useCallback((view: GameSessionView, createdWithFallback: boolean): void => {
+    if (view.narrativeGeneration?.status !== "pending") {
+      setNarrativeGenerationUnavailable(false);
+    }
+    setState({ phase: "active", view, createdWithFallback });
+  }, []);
+
+  const applyCurrentGameBody = useCallback((body: CurrentGameApiBody | null): void => {
     setDevelopmentTools(body?.developmentTools === true);
     if (body?.status === "none") {
+      setNarrativeGenerationUnavailable(false);
       setState({ phase: "none" });
     } else if (body?.status === "active" && body.view !== undefined) {
       // GET current 不携带生成来源：刷新恢复永远不显示降级提示。
-      setState({ phase: "active", view: body.view, createdWithFallback: false });
+      setActiveView(body.view, false);
     } else if (body?.status === "corrupt" && typeof body.reason === "string") {
       setState({ phase: "corrupt", reason: body.reason });
     } else {
       setState({ phase: "unreachable" });
     }
-  }
+  }, [setActiveView]);
 
-  async function loadCurrentGame(): Promise<void> {
+  const loadCurrentGame = useCallback(async (): Promise<void> => {
     try {
       const response = await fetch("/api/game/current");
       const body = (await response.json().catch(() => null)) as CurrentGameApiBody | null;
@@ -72,7 +83,7 @@ export function CurrentGameScreen() {
     } catch {
       setState({ phase: "unreachable" });
     }
-  }
+  }, [applyCurrentGameBody]);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,34 +101,66 @@ export function CurrentGameScreen() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applyCurrentGameBody]);
 
-  const narrativePending = state.phase === "active" &&
+  const rawNarrativePending = state.phase === "active" &&
     state.view.narrativeGeneration?.status === "pending";
+  const narrativePending = rawNarrativePending && !narrativeGenerationUnavailable;
 
   useEffect(() => {
     if (!narrativePending) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let ensureAttempted = false;
+    let lastEnsureAt = 0;
+    let ensureFailures = 0;
     async function ensureAndPoll(): Promise<void> {
+      let nextDelayMs = 750;
       try {
-        await fetch("/api/game/narrative/ensure", { method: "POST" });
+        // ensure 首次立即调用；任务运行期间每 10 秒再调用一次，作为后台
+        // 任务异常退出后的恢复入口。current 高频读取只是获取就绪 view，
+        // 不代表每次 GET 都重新调用 AI。
+        const ensureDue = !ensureAttempted || Date.now() - lastEnsureAt >= 10_000;
+        if (ensureDue) {
+          const ensureResponse = await fetch("/api/game/narrative/ensure", { method: "POST" });
+          lastEnsureAt = Date.now();
+          if (!ensureResponse.ok) {
+            ensureFailures += 1;
+            ensureAttempted = false;
+            nextDelayMs = 3_000;
+            if (ensureFailures >= 3) {
+              setNarrativeGenerationUnavailable(true);
+              return;
+            }
+          } else {
+            ensureAttempted = true;
+            ensureFailures = 0;
+            setNarrativeGenerationUnavailable(false);
+          }
+        }
         if (cancelled) return;
         const response = await fetch("/api/game/current");
         const body = (await response.json().catch(() => null)) as CurrentGameApiBody | null;
         if (!cancelled) applyCurrentGameBody(body);
       } catch {
-        // Keep the current pending view. The next polling tick can recover a
-        // temporarily unavailable local server without discarding the save.
+        // Keep retrying transient ensure/current failures with a bounded
+        // failure count; a persistent infrastructure failure stops the loop.
+        ensureFailures += 1;
+        ensureAttempted = false;
+        nextDelayMs = 3_000;
+        if (ensureFailures >= 3) {
+          setNarrativeGenerationUnavailable(true);
+          return;
+        }
       }
-      if (!cancelled) timer = setTimeout(() => void ensureAndPoll(), 750);
+      if (!cancelled) timer = setTimeout(() => void ensureAndPoll(), nextDelayMs);
     }
     void ensureAndPoll();
     return () => {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [narrativePending]);
+  }, [narrativePending, applyCurrentGameBody]);
 
   const townPending = state.phase === "active" &&
     state.view.townStatus === "pending";
@@ -144,7 +187,7 @@ export function CurrentGameScreen() {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [townPending]);
+  }, [townPending, applyCurrentGameBody]);
 
   async function clearDevelopmentSave(): Promise<void> {
     if (!window.confirm("仅清除当前本地试玩存档并重新开局？此操作只在开发环境可用。")) return;
@@ -153,6 +196,7 @@ export function CurrentGameScreen() {
       const response = await fetch("/api/game/dev/current", { method: "DELETE" });
       const body = (await response.json().catch(() => null)) as { status?: string } | null;
       if (response.ok && (body?.status === "cleared" || body?.status === "none")) {
+        setNarrativeGenerationUnavailable(false);
         setState({ phase: "none" });
         return;
       }
@@ -160,6 +204,29 @@ export function CurrentGameScreen() {
       await loadCurrentGame();
     } finally {
       setActionBusy(false);
+    }
+  }
+
+  /** Phase 14：标记序幕已播放（CAS 幂等）。成功后用返回的 view 切换到正常游戏 UI。 */
+  async function markPrologueShown(revision: number): Promise<void> {
+    try {
+      const response = await fetch("/api/game/prologue/ack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ revision }),
+      });
+      const body = (await response.json().catch(() => null)) as { code?: string; view?: GameSessionView } | null;
+      // /api/game/prologue/ack 与旧 action adapter 一样可能用 200 返回
+      // ACTION_REJECTED + 当前 view；不能把它误判为 ack 成功，否则黑屏会
+      // 原地保留且玩家看不到失败原因。只有无 code 的成功响应才切换视图。
+      if (response.ok && body?.code === undefined && body?.view) {
+        setActiveView(body.view, false);
+        return;
+      }
+      // 版本冲突或其它错误：重新读取当前存档以恢复一致状态。
+      await loadCurrentGame();
+    } catch {
+      // 网络异常：保留当前视图（序幕停留），下次操作可自然恢复。
     }
   }
 
@@ -184,6 +251,16 @@ export function CurrentGameScreen() {
   if (state.phase === "active") {
     const hasEnding = state.view.ending !== null;
     const hasBattle = state.view.battle !== null;
+    // Phase 14：序幕未播放且有序幕定义时，优先显示黑底白字开场。
+    const prologue = state.view.openingScene?.prologue;
+    if (!state.view.prologueShown && prologue) {
+      return (
+        <PrologueScreen
+          prologue={prologue}
+          onComplete={() => void markPrologueShown(state.view.revision)}
+        />
+      );
+    }
 
     return (
       <div className="game-screen">
@@ -202,7 +279,7 @@ export function CurrentGameScreen() {
             view={state.view}
             busy={actionBusy}
             onBusyChange={setActionBusy}
-            onActionSuccess={(view) => setState({ phase: "active", view, createdWithFallback: false })}
+            onActionSuccess={(view) => setActiveView(view, false)}
             onStaleRevision={() => void loadCurrentGame()}
           />
         ) : (
@@ -210,10 +287,11 @@ export function CurrentGameScreen() {
             view={state.view}
             busy={actionBusy}
             onBusyChange={setActionBusy}
-            onViewChange={(view) => setState({ phase: "active", view, createdWithFallback: false })}
+            onViewChange={(view) => setActiveView(view, false)}
             onStaleRevision={() => void loadCurrentGame()}
             developmentTools={developmentTools}
             onClearDevelopmentSave={clearDevelopmentSave}
+            narrativeGenerationUnavailable={narrativeGenerationUnavailable}
           />
         )}
       </div>
@@ -225,11 +303,7 @@ export function CurrentGameScreen() {
       <NewGameSetupForm
         developmentTools={developmentTools}
         onCreated={(view, generationSource) =>
-          setState({
-            phase: "active",
-            view,
-            createdWithFallback: generationSource === "fallback"
-          })
+          setActiveView(view, generationSource === "fallback")
         }
       />
     );

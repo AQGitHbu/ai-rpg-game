@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import type { GameSessionView, SceneInteractionView } from "@/game/application";
 import { AdventureVisual } from "./adventureVisuals";
 import { SceneActionMenu } from "./SceneActionMenu";
+import { SceneNarrationBar } from "./SceneNarrationBar";
 
 type SceneAction =
   | { readonly type: "observe"; readonly locationId: string }
@@ -40,6 +42,15 @@ export function LocationSceneScreen({
 }: LocationSceneScreenProps) {
   const gameType = view.world.gameType;
   const scene = view.locationScene;
+  const [dismissedNarration, setDismissedNarration] = useState(false);
+
+  // 轻量事件旁白：observe/investigate/item 场景有 narration 时显示 SceneNarrationBar
+  const narrationKind = view.narrative?.eventKind;
+  const showNarrationBar = view.narrative !== null
+    && narrationKind !== undefined
+    && narrationKind !== "dialogue"
+    && narrationKind !== "travel"
+    && !dismissedNarration;
 
   return (
     <section className="location-viewport" aria-label={`地点场景：${scene.title}`}>
@@ -47,6 +58,13 @@ export function LocationSceneScreen({
         <AdventureVisual gameType={gameType} kind={scene.backdrop} label="" decorative />
       </div>
       <p className="location-scene-caption">{scene.description}</p>
+
+      {showNarrationBar ? (
+        <SceneNarrationBar
+          narration={view.narrative!.narration}
+          onDismiss={() => setDismissedNarration(true)}
+        />
+      ) : null}
 
       <div className="scene-hotspot-layer" role="group" aria-label="场景互动">
         {scene.interactions.map((interaction) => (

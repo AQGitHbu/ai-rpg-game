@@ -1,4 +1,5 @@
 import type {
+  GameState,
   ScenarioBlueprint,
   TownBuildingType,
   TownPlanSource,
@@ -54,13 +55,38 @@ export type TownLayerView = {
 };
 
 /**
+ * Phase 14：收集当前 active 任务中 talk_to_npc objective 指向的 NPC ID。
+ * 应用层投影 helper（非规则裁决）：只读 blueprint + state，按 quest.status
+ * 判定 active 即可（domain 的 QuestRuntimeState 不维护逐 objective 进度）。
+ */
+function collectActiveTalkTargetNpcIds(
+  blueprint: ScenarioBlueprint,
+  state: GameState
+): Set<string> {
+  const result = new Set<string>();
+  for (const quest of blueprint.quests) {
+    const stateQuest = state.quests.find((sq) => sq.questId === quest.id);
+    if (stateQuest?.status !== "active") continue;
+    for (const obj of quest.objectives) {
+      if (obj.kind === "talk_to_npc") {
+        result.add(String(obj.npcId));
+      }
+    }
+  }
+  return result;
+}
+
+/**
  * towns 条目 → 小镇层视图。地点引用缺失抛错（记录被改坏，由调用方映射
  * 稳定失败）；planKey 指向蓝图外 NPC 的建筑不投影为可交互建筑（AI 候选
- * 允许附加自创剧情建筑，跳过而非抛错）。
+ * 允许附加自创剧情建筑，跳过而非抛错）。Phase 14 起额外应用小镇入口过滤：
+ * 只有「已结识 NPC」或「active 任务 talk_to_npc 目标」对应的剧情建筑进入
+ * interactiveBuildings，其余剧情建筑由 UI 渲染为占位（不可进入）。
  */
 export function projectTownLayerView(
   blueprint: ScenarioBlueprint,
-  town: TownRuntimeState
+  town: TownRuntimeState,
+  state: GameState
 ): TownLayerView {
   const location = blueprint.locations.find(
     (entry) => String(entry.id) === String(town.locationId)
@@ -83,6 +109,12 @@ export function projectTownLayerView(
     validation: snapshot.validation
   };
   const knownNpcIds = new Set(blueprint.npcs.map((npc) => String(npc.id)));
+  // Phase 14：已结识的 NPC —— 其剧情建筑可进入。
+  const metNpcIds = new Set(
+    state.npcs.filter((n) => n.met).map((n) => String(n.npcId))
+  );
+  // Phase 14：active 任务的 talk_to_npc 目标 NPC —— 其剧情建筑可进入。
+  const activeTalkTargetNpcIds = collectActiveTalkTargetNpcIds(blueprint, state);
 
   const interactiveBuildings: TownInteractiveBuildingView[] = [];
   for (const building of snapshot.buildings) {
@@ -90,6 +122,10 @@ export function projectTownLayerView(
     if (key === undefined || !key.startsWith(STORY_NPC_KEY_PREFIX)) continue;
     const npcId = key.slice(STORY_NPC_KEY_PREFIX.length);
     if (!knownNpcIds.has(npcId)) continue;
+    // Phase 14 小镇入口过滤：未结识且非 active talk 目标的 NPC 建筑不进入可交互列表。
+    const isMet = metNpcIds.has(npcId);
+    const isTalkTarget = activeTalkTargetNpcIds.has(npcId);
+    if (!isMet && !isTalkTarget) continue;
     interactiveBuildings.push({
       buildingId: building.buildingId,
       buildingKey: key,

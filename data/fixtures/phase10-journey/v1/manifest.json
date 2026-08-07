@@ -1,8 +1,8 @@
 {
   "fixtureVersion": "runtime-narrative-fixture-v1",
-  "contractVersion": "runtime-narrative-v2",
+  "contractVersion": "runtime-narrative-v3",
   "origin": "recorded",
-  "blueprintFixture": "phase1/wuxia",
-  "callCount": 13,
+  "blueprintFixture": "scenarioBlueprintFixture/makeValidCandidate",
+  "callCount": 19,
   "createdAt": "2026-07-30T08:00:00.000Z"
 }

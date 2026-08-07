@@ -15,7 +15,7 @@ export function NarrativeScenePanel(props: Readonly<{
     <p className="narrative-scene-text">{scene.narration}</p>
     {scene.npcLine !== null ? <p className="narrative-npc-line">{scene.npcLine.text}</p> : null}
     <div className="narrative-choice-list">
-      {scene.choices.map((choice) => <InlineButton key={choice.choiceToken} disabled={busy} onClick={() => onChoose(choice.choiceToken)}>{choice.label}</InlineButton>)}
+      {(scene.choices ?? []).map((choice) => <InlineButton key={choice.choiceToken} disabled={busy} onClick={() => onChoose(choice.choiceToken)}>{choice.label}</InlineButton>)}
     </div>
     <InlineButton disabled={busy} onClick={onReturnMap}>返回地图</InlineButton>
   </Panel>;

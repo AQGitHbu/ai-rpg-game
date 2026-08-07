@@ -37,7 +37,7 @@ const CANDIDATE_ARRAY_FIELDS = [
   "endings"
 ] as const;
 
-const CANDIDATE_OBJECT_FIELDS = ["world", "openingScene", "player"] as const;
+const CANDIDATE_OBJECT_FIELDS = ["world", "openingScene", "player", "startAnchor", "endingDirection"] as const;
 
 const FAILURE_CATEGORY_SET: ReadonlySet<string> = new Set(SCENARIO_CANDIDATE_FAILURE_CATEGORIES);
 

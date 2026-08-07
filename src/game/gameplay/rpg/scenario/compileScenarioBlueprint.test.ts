@@ -12,8 +12,9 @@ import { compileScenarioBlueprint, initializeGameState } from "./compileScenario
 import { validateScenarioBlueprintCandidate } from "./validateScenarioBlueprint";
 import { TEST_POLICY, TEST_PROFILE, makeValidCandidate } from "./scenarioBlueprintFixture.testutil";
 
+/** Phase 14：默认用 runtime_expansion 阶段校验，使多幕/多结局的 fixture 通过。 */
 function compileValid(candidate: ScenarioBlueprintCandidate = makeValidCandidate()): ScenarioBlueprint {
-  const validation = validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY });
+  const validation = validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY, phase: "runtime_expansion" });
   const compiled = compileScenarioBlueprint(validation);
   if (!compiled.ok) throw new Error("fixture 应当编译成功");
   return compiled.blueprint;
@@ -152,6 +153,7 @@ describe("initializeGameState", () => {
         { questId: "s1", status: "locked" }
       ],
       inventory: ["item_a"],
+      prologueShown: false,
       worldFacts: [
         { factId: "fact_a", discovered: true },
         { factId: "fact_b", discovered: false }
@@ -163,6 +165,7 @@ describe("initializeGameState", () => {
       towns: [],
       townGeneration: { status: "idle" },
       storyMemory: createEmptyStoryMemory(),
+      mainStoryProgress: { currentAct: 1, endingProposed: false },
       eventLedger: [{ type: "game_initialized", generation }]
     });
   });

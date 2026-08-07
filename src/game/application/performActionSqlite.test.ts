@@ -8,15 +8,21 @@ import {
   asNpcId,
   asQuestId,
   type GameState,
-  type NewGameInput,
   type ScenarioBlueprint
 } from "@/game/domain";
 import { type PlayerIntent } from "@/game/gameplay/rpg/actions";
-import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
-import { createGame, type CreateGameDependencies } from "./createGame";
+import {
+  compileScenarioBlueprint,
+  initializeGameState,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import { getCurrentGame } from "./getCurrentGame";
 import { performAction, type PerformActionDependencies } from "./performAction";
-import { runScenarioPipeline, createUnavailableTestScenarioSource, TEST_TRACE_ID } from "./applicationFixture.testutil";
 import {
   asGameId,
   type GameRecord,
@@ -35,10 +41,26 @@ import {
 // Phase 3 旧存档（无 visitedLocationIds）读取默认值后可正常移动。
 // ---------------------------------------------------------------------------
 
-type Phase1Fixture = { input: NewGameInput; seed: string };
-const FIXTURE = wuxiaFixture as unknown as Phase1Fixture;
-// 独立复跑管线：与 createGame 相同 seed，得到同一蓝图作为期望基准。
-const PIPELINE = runScenarioPipeline({ ...FIXTURE.input, gameLength: "short" }, FIXTURE.seed);
+// Phase 14 开局收窄后 fallback 蓝图只有起始锚点（loc_1/npc_1/quest_main_1）。
+// 本文件的契约测试依赖"运行时扩展后"的完整蓝图（多地点/NPC/物品/任务链），
+// 因此以 makeValidCandidate 为基座编译完整蓝图作为存档基线。
+function compileRuntimeBlueprint(): ScenarioBlueprint {
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(makeValidCandidate(), {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
+}
+
+const RUNTIME_BLUEPRINT = compileRuntimeBlueprint();
+// 独立复跑管线：完整蓝图 + 确定性初始状态，作为期望基准。
+const PIPELINE = { blueprint: RUNTIME_BLUEPRINT, state: initializeGameState(RUNTIME_BLUEPRINT) };
 
 const FIXED_CREATED_AT = "2026-07-27T00:00:00.000Z";
 const FIXED_ACTION_TIME = "2026-07-27T10:00:00.000Z";
@@ -96,28 +118,19 @@ afterAll(async () => {
   }
 });
 
-function createDependencies(repository: GameRepository, gameId: string): CreateGameDependencies {
-  return {
-    repository,
-    newGameId: () => asGameId(gameId),
-    newSeed: () => "seed-unused",
-    now: () => FIXED_CREATED_AT,
-    scenarioCandidateSource: createUnavailableTestScenarioSource(),
-    newTraceId: () => TEST_TRACE_ID
-  };
-}
-
 function performDependencies(repository: GameRepository): PerformActionDependencies {
   return { repository, now: () => FIXED_ACTION_TIME };
 }
 
-/** 用真实 adapter 建好一局武侠存档（loc_1 开场，quest_main_1 active）。 */
+/** 用真实 adapter 写入一局完整蓝图存档（loc_a 开场，m1 active）。 */
 async function seedGame(repository: SqliteGameRepository, gameId: string): Promise<void> {
-  const created = await createGame(
-    { input: { ...FIXTURE.input, gameLength: "short" }, seed: FIXTURE.seed },
-    createDependencies(repository, gameId)
-  );
-  expect(created.ok).toBe(true);
+  const created = await repository.createInitialGame({
+    gameId: asGameId(gameId),
+    blueprint: PIPELINE.blueprint,
+    state: PIPELINE.state,
+    createdAt: FIXED_CREATED_AT
+  });
+  expect(created).toEqual({ ok: true });
 }
 
 /** 从端口读回 active 记录：非 active 一律视为断言失败。 */
@@ -139,11 +152,11 @@ function locationName(locationId: string): string {
 
 // Phase 5 Task 3：stage-2 就绪序列（未取物品）与 take key 意图。
 const STAGE_TWO_INTENTS: readonly PlayerIntent[] = [
-  { type: "move", locationId: asLocationId("loc_2") },
-  { type: "move", locationId: asLocationId("loc_3") },
-  { type: "talk", npcId: asNpcId("npc_3") }
+  { type: "move", locationId: asLocationId("loc_b") },
+  { type: "move", locationId: asLocationId("loc_c") },
+  { type: "talk", npcId: asNpcId("npc_c") }
 ];
-const TAKE_KEY_INTENT: PlayerIntent = { type: "take_item", itemId: asItemId("item_key") };
+const TAKE_KEY_INTENT: PlayerIntent = { type: "take_item", itemId: asItemId("item_b") };
 
 /** 依次执行必须成功的行动：revision 从 startRevision 逐次递增。 */
 async function performSequence(
@@ -171,20 +184,20 @@ describe("performAction × 真实 SQLite：move 与 quest 事件同一次写入"
     const baseline = await loadActiveRecord(writer);
 
     const result = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
       performDependencies(writer)
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.view.revision).toBe(1);
-    expect(result.view.currentLocation.name).toBe(locationName("loc_2"));
+    expect(result.view.currentLocation.name).toBe(locationName("loc_b"));
     await writer.close();
 
     // 全新实例重开同一文件：单次写入的完整证明只能来自持久化后的记录。
     const reader = openRepository(databasePath);
     const record = await loadActiveRecord(reader);
     expect(record.revision).toBe(1);
-    expect(record.state.currentLocationId).toBe(asLocationId("loc_2"));
+    expect(record.state.currentLocationId).toBe(asLocationId("loc_b"));
     const tailTypes = record.state.eventLedger
       .slice(baseline.state.eventLedger.length)
       .map((event) => event.type);
@@ -193,8 +206,8 @@ describe("performAction × 真实 SQLite：move 与 quest 事件同一次写入"
     expect(tailTypes).toContain("quest_unlocked");
     // 任务状态与移动结果一致：m1 完成、m2 解锁。
     const statusById = new Map(record.state.quests.map((quest) => [quest.questId, quest.status]));
-    expect(statusById.get(asQuestId("quest_main_1"))).toBe("completed");
-    expect(statusById.get(asQuestId("quest_main_2"))).toBe("active");
+    expect(statusById.get(asQuestId("m1"))).toBe("completed");
+    expect(statusById.get(asQuestId("m2"))).toBe("active");
     // Phase 11：重载后 storyMemory 已持久化并追齐 ledger（真实 SQLite 回读证明）。
     expect(record.state.storyMemory?.reducedThroughEventCount).toBe(record.state.eventLedger.length);
     expect(record.state.storyMemory?.recent.some((entry) => entry.kind === "location")).toBe(true);
@@ -206,7 +219,7 @@ describe("performAction × 真实 SQLite：move 与 quest 事件同一次写入"
     await seedGame(writer, "game-move-reload");
 
     const result = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
       performDependencies(writer)
     );
     expect(result.ok).toBe(true);
@@ -230,7 +243,7 @@ describe("performAction × 真实 SQLite：竞争同一 revision 仅一方成功
     const staleLoaded = await repository.getCurrentGame();
 
     const first = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
       performDependencies(repository)
     );
     expect(first.ok).toBe(true);
@@ -242,7 +255,7 @@ describe("performAction × 真实 SQLite：竞争同一 revision 仅一方成功
       applyBlueprintExpansion: (input) => repository.applyBlueprintExpansion(input)
     };
     const second = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
       performDependencies(staleReader)
     );
     expect(second.ok).toBe(false);
@@ -252,7 +265,7 @@ describe("performAction × 真实 SQLite：竞争同一 revision 仅一方成功
     // 仅第一次写入生效：revision 恰为 1，当前地点是第一次移动的目标。
     const record = await loadActiveRecord(repository);
     expect(record.revision).toBe(1);
-    expect(record.state.currentLocationId).toBe(asLocationId("loc_2"));
+    expect(record.state.currentLocationId).toBe(asLocationId("loc_b"));
     // Phase 11：陈旧第二次行动零写入——storyMemory 只反映第一次成功保存。
     expect(record.state.storyMemory?.reducedThroughEventCount).toBe(record.state.eventLedger.length);
   });
@@ -267,7 +280,7 @@ describe("performAction × 真实 SQLite：拒绝零写入", () => {
 
     // loc_3 与开场 loc_1 不连通：resolver 拒绝，application 不得写入。
     const result = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_3") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_c") }, expectedRevision: 0 },
       performDependencies(repository)
     );
     expect(result.ok).toBe(false);
@@ -301,7 +314,7 @@ describe("performAction × 真实 SQLite：Phase 3 旧存档兼容", () => {
 
     // 旧存档可直接移动：不崩溃、正常完成 quest_main_1。
     const result = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
       performDependencies(repository)
     );
     expect(result.ok).toBe(true);
@@ -309,9 +322,9 @@ describe("performAction × 真实 SQLite：Phase 3 旧存档兼容", () => {
     expect(result.view.revision).toBe(1);
 
     const after = await loadActiveRecord(repository);
-    expect(after.state.visitedLocationIds).toContain(asLocationId("loc_2"));
+    expect(after.state.visitedLocationIds).toContain(asLocationId("loc_b"));
     expect(
-      after.state.quests.find((quest) => quest.questId === asQuestId("quest_main_1"))?.status
+      after.state.quests.find((quest) => quest.questId === asQuestId("m1"))?.status
     ).toBe("completed");
   });
 });
@@ -338,14 +351,14 @@ describe("performAction × 真实 SQLite：take_item 单次写入与 read model 
     const reader = openRepository(databasePath);
     const record = await loadActiveRecord(reader);
     expect(record.revision).toBe(4);
-    expect(record.state.inventory).toContain(asItemId("item_key"));
+    expect(record.state.inventory).toContain(asItemId("item_b"));
     const tailTypes = record.state.eventLedger
       .slice(baseline.state.eventLedger.length)
       .map((event) => event.type);
     expect(tailTypes).toEqual(["item_obtained", "quest_completed", "quest_unlocked"]);
     const statusById = new Map(record.state.quests.map((quest) => [quest.questId, quest.status]));
-    expect(statusById.get(asQuestId("quest_main_2"))).toBe("completed");
-    expect(statusById.get(asQuestId("quest_main_3"))).toBe("active");
+    expect(statusById.get(asQuestId("m2"))).toBe("completed");
+    expect(statusById.get(asQuestId("m3"))).toBe("active");
   });
 
   it("reload 后 getCurrentGame 的 read model 与 performAction 返回 view 完全一致", async () => {
@@ -407,7 +420,7 @@ describe("performAction × 真实 SQLite：take_item 竞争同一 revision 仅�
       record.state.eventLedger.filter((event) => event.type === "item_obtained")
     ).toHaveLength(1);
     expect(
-      record.state.inventory.filter((itemId) => itemId === asItemId("item_key"))
+      record.state.inventory.filter((itemId) => itemId === asItemId("item_b"))
     ).toHaveLength(1);
   });
 });
@@ -488,7 +501,7 @@ describe("performAction × 真实 SQLite：Phase 4 旧存档兼容（无 availab
     for (const location of record.blueprint.locations) {
       expect(location.availableItemIds).toEqual([]);
     }
-    expect(record.state.inventory).toEqual([asItemId("item_start")]);
+    expect(record.state.inventory).toEqual([asItemId("item_a")]);
     expect(record.state.eventLedger.some((event) => event.type === "item_obtained")).toBe(false);
 
     // 伪造的 take 意图被规则拒绝（而非基础设施失败），且零写入。
@@ -505,7 +518,7 @@ describe("performAction × 真实 SQLite：Phase 4 旧存档兼容（无 availab
 
     // 旧存档可正常继续：移动完成 quest_main_1，会话视图投影不崩溃。
     const moved = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
       performDependencies(repository)
     );
     expect(moved.ok).toBe(true);
@@ -514,7 +527,7 @@ describe("performAction × 真实 SQLite：Phase 4 旧存档兼容（无 availab
     expect(moved.view.obtainableItems).toEqual([]);
     const after = await loadActiveRecord(repository);
     expect(
-      after.state.quests.find((quest) => quest.questId === asQuestId("quest_main_1"))?.status
+      after.state.quests.find((quest) => quest.questId === asQuestId("m1"))?.status
     ).toBe("completed");
   });
 
@@ -552,7 +565,7 @@ describe("performAction × 真实 SQLite：Phase 4 旧存档兼容（无 availab
       applyBlueprintExpansion: (input) => repository.applyBlueprintExpansion(input)
     };
     const moved = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
       performDependencies(capturingRepository)
     );
     expect(moved.ok).toBe(true);
@@ -601,7 +614,7 @@ describe("performAction × 真实 SQLite：Phase 6 旧存档兼容（无 defeate
 
     // 旧存档可直接移动：不崩溃、正常完成 quest_main_1。
     const result = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
       performDependencies(repository)
     );
     expect(result.ok).toBe(true);
@@ -609,9 +622,9 @@ describe("performAction × 真实 SQLite：Phase 6 旧存档兼容（无 defeate
     expect(result.view.revision).toBe(1);
 
     const after = await loadActiveRecord(repository);
-    expect(after.state.visitedLocationIds).toContain(asLocationId("loc_2"));
+    expect(after.state.visitedLocationIds).toContain(asLocationId("loc_b"));
     expect(
-      after.state.quests.find((quest) => quest.questId === asQuestId("quest_main_1"))?.status
+      after.state.quests.find((quest) => quest.questId === asQuestId("m1"))?.status
     ).toBe("completed");
   });
 
@@ -651,7 +664,7 @@ describe("performAction × 真实 SQLite：Phase 6 旧存档兼容（无 defeate
     };
 
     const moved = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: 0 },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: 0 },
       performDependencies(capturingRepository)
     );
     expect(moved.ok).toBe(true);

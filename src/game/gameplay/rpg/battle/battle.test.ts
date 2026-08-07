@@ -43,7 +43,11 @@ const deps = { now: () => FIXED_TIME };
 
 function compileFrom(candidate: ScenarioBlueprintCandidate): ScenarioBlueprint {
   const compiled = compileScenarioBlueprint(
-    validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY })
+    validateScenarioBlueprintCandidate(candidate, {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
   );
   if (!compiled.ok) {
     throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);

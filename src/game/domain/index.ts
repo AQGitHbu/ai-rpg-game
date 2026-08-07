@@ -73,9 +73,12 @@ export {
   type ItemDefinitionCandidate,
   type EndingDefinitionCandidate,
   type EndingRequirementCandidate,
+  type EndingTone,
   type SceneDefinitionCandidate,
   type GeneratedPlayerDefinitionCandidate,
-  type GenerationMetadata
+  type GenerationMetadata,
+  type ProposedEnding,
+  type PrologueDefinition
 } from "./scenarioBlueprint";
 export {
   resolveItemPresentation,
@@ -100,6 +103,7 @@ export {
   type QuestFailedEvent,
   type EndingReachedEvent,
   type NarrativeChoiceEvent,
+  type NarrativeDialogueChoiceEvent,
   type TownPlanGeneratedEvent,
   type NarrativeScenePresentedEvent,
   type BlueprintExpandedEvent
@@ -130,11 +134,17 @@ export {
   type NarrativeMode,
   type NarrativeSceneState,
   type NarrativeChoiceState,
+  type NarrativeEventKind,
+  type NarrativeEventState,
   type NarrativeNpcLineState,
   type NarrativeEmotion,
   type NarrativeGenerationState,
+  type NarrativeTriggerContext,
+  type NpcDialogueInScene,
+  type NarrativeDialogueFollowupState,
   type PlayerNpcChatState,
-  NARRATIVE_EMOTIONS
+  NARRATIVE_EMOTIONS,
+  PLAYER_DIALOGUE_RESPONSE_LABELS
 } from "./narrative";
 export {
   STORY_MEMORY_VERSION,

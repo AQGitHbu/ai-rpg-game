@@ -1,10 +1,47 @@
 import { describe, expect, it } from "vitest";
-import { asFactId, asLocationId, asNpcId, createBudgetPolicy, type GameState, type NewGameInput, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
-import { ensureTownRuntime } from "@/game/gameplay/rpg/town";
+import { asFactId, asLocationId, asNpcId, createBudgetPolicy, type GameState, type ScenarioBlueprint, type StoryMemoryEntry } from "@/game/domain";
 import { reconcileStoryMemory, type ApprovedDirectorPlan } from "@/game/gameplay/rpg/narrative";
-import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
+import {
+  compileScenarioBlueprint,
+  initializeGameState,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
+import { ensureTownRuntime } from "@/game/gameplay/rpg/town";
 import { toDirectorContext, toNpcLineContext, toSceneScriptContext, toTownSpatialContext } from "./runtimeNarrativeContexts";
-import { runScenarioPipeline } from "./applicationFixture.testutil";
+
+/**
+ * Phase 14 开局收窄后 fallback 蓝图只有起始锚点（无 town/后继地点/多 NPC）。
+ * 小镇空间语义与 Phase 11 连续性测试需要"运行时扩展后"的完整蓝图：以
+ * makeValidCandidate 为基座编译，并把 loc_b 标记为 town 供小镇空间测试使用。
+ */
+function runtimePipeline(): { blueprint: ScenarioBlueprint; state: GameState } {
+  const candidate = makeValidCandidate();
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(
+      {
+        ...candidate,
+        locations: candidate.locations.map((location) =>
+          location.id === "loc_b" ? { ...location, scale: "town" } : location
+        )
+      },
+      {
+        profile: TEST_PROFILE,
+        policy: TEST_POLICY,
+        phase: "runtime_expansion"
+      }
+    )
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  const blueprint = compiled.blueprint;
+  return { blueprint, state: initializeGameState(blueprint) };
+}
 
 function buildTestBlueprint(): ScenarioBlueprint {
   return {
@@ -502,9 +539,8 @@ describe("runtimeNarrativeContexts 演员", () => {
 // ---------------------------------------------------------------------------
 
 describe("runtimeNarrativeContexts 小镇空间语义", () => {
-  const FIXTURE = wuxiaFixture as unknown as { input: NewGameInput; seed: string };
-  const PIPELINE = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
-  const TOWN_ID = "loc_2";
+  const PIPELINE = runtimePipeline();
+  const TOWN_ID = "loc_b";
   const FIXED_TIME = "2026-07-27T12:00:00.000Z";
 
   function readyTownState(): GameState {
@@ -520,7 +556,7 @@ describe("runtimeNarrativeContexts 小镇空间语义", () => {
     focusNpcId: null,
     relevantFactIds: [],
     allowedRevealFactIds: [],
-    suggestedActionKeys: ["observe:loc_2", "observe:loc_2"],
+    suggestedActionKeys: ["observe:loc_b", "observe:loc_b"],
     introducedEntities: [],
     pacing: "develop",
         proposedNewLocations: [],
@@ -528,7 +564,7 @@ describe("runtimeNarrativeContexts 小镇空间语义", () => {
   };
 
   it("非 town 地点：toTownSpatialContext 返回 undefined，两个上下文均不注入", () => {
-    const state: GameState = { ...PIPELINE.state, currentLocationId: asLocationId("loc_1") };
+    const state: GameState = { ...PIPELINE.state, currentLocationId: asLocationId("loc_a") };
     expect(toTownSpatialContext(PIPELINE.blueprint, state)).toBeUndefined();
     expect(toDirectorContext({ blueprint: PIPELINE.blueprint, state }).townSpatial).toBeUndefined();
     expect(
@@ -565,18 +601,17 @@ describe("runtimeNarrativeContexts 小镇空间语义", () => {
 // ---------------------------------------------------------------------------
 
 describe("runtimeNarrativeContexts Phase 11 连续性", () => {
-  const FIXTURE = wuxiaFixture as unknown as { input: NewGameInput; seed: string };
-  const PIPELINE = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
+  const PIPELINE = runtimePipeline();
   const FIXED_TIME = "2026-07-31T00:00:00.000Z";
 
   it("director 暴露当前主线未满足目标及其合法 action 映射", () => {
     const context = toDirectorContext({ blueprint: PIPELINE.blueprint, state: PIPELINE.state });
     expect(context.activeMainObjective).toMatchObject({
-      questId: "quest_main_1",
+      questId: "m1",
       stage: 1,
       kind: "visit_location",
-      targetId: "loc_2",
-      suggestedActionKey: "move:loc_2",
+      targetId: "loc_b",
+      suggestedActionKey: "move:loc_b",
     });
   });
 
@@ -596,7 +631,7 @@ describe("runtimeNarrativeContexts Phase 11 连续性", () => {
       focusNpcId: null,
       relevantFactIds: [],
       allowedRevealFactIds: [],
-      suggestedActionKeys: ["observe:loc_1", "move:loc_2"],
+      suggestedActionKeys: ["observe:loc_a", "move:loc_b"],
       introducedEntities: [],
       pacing: "develop",
       proposedNewLocations: [],
@@ -645,7 +680,7 @@ describe("runtimeNarrativeContexts Phase 11 连续性", () => {
         focusNpcId: String(npc.id),
         relevantFactIds: [],
         allowedRevealFactIds: [],
-        suggestedActionKeys: ["observe:loc_1", "move:loc_2"],
+        suggestedActionKeys: ["observe:loc_a", "move:loc_b"],
         introducedEntities: [],
         pacing: "develop",
         proposedNewLocations: [],

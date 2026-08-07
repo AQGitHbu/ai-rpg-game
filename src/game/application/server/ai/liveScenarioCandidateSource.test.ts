@@ -49,6 +49,8 @@ const MINIMAL_CANDIDATE = {
   enemies: [],
   items: [],
   endings: [],
+  startAnchor: { locationId: "loc_1", npcId: "npc_1", startQuestId: "quest_main_1" },
+  endingDirection: { theme: "复仇与救赎", possibleTones: ["triumph"], lockedAt: 2 },
   openingScene: {
     id: "scene_opening",
     locationId: "loc_1",
@@ -128,7 +130,7 @@ describe("createLiveScenarioCandidateSource：成功路径", () => {
   it("完整 JSON 内容 ⇒ ok/live，携带候选与 audit(ok, usage)", async () => {
     const { source, events } = makeSource([okResult(JSON.stringify(MINIMAL_CANDIDATE))]);
     const attempt = await source.generate(REQUEST);
-    expect(attempt).toMatchObject({ ok: true, origin: "live", contractVersion: "scenario-dynamic-v2" });
+    expect(attempt).toMatchObject({ ok: true, origin: "live", contractVersion: "scenario-dynamic-v3" });
     if (attempt.ok) expect(attempt.candidate.generationId).toBe("gen-live");
     expect(events[0]).toMatchObject({
       outcome: "ok",
@@ -323,7 +325,7 @@ describe("createUnavailableScenarioCandidateSource", () => {
     const source = createUnavailableScenarioCandidateSource(["AI_CONFIG_MODEL_MISSING"]);
     expect(await source.generate(REQUEST)).toEqual({
       ok: false,
-      contractVersion: "scenario-dynamic-v2",
+      contractVersion: "scenario-dynamic-v3",
       origin: "unavailable",
       category: "service_error",
       diagnostics: ["AI_CONFIG_MODEL_MISSING"]

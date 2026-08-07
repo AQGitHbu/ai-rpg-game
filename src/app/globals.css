@@ -1051,6 +1051,44 @@ body:has(.adventure-game-shell) {
   color: var(--game-text-muted);
 }
 
+.narrative-generation-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.narrative-generation-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 68%);
+}
+
+.narrative-generation-modal-content {
+  position: relative;
+  z-index: 1;
+  width: min(90vw, 560px);
+  padding: 28px 32px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 16px;
+  background: var(--game-surface-raised);
+  box-shadow: var(--game-shadow-modal);
+  text-align: center;
+}
+
+.narrative-generation-modal-content h2,
+.narrative-generation-modal-content p {
+  margin: 0;
+}
+
+.narrative-generation-modal-content p {
+  margin-top: 12px;
+  color: var(--game-text-muted);
+  line-height: 1.7;
+}
+
 .development-tools-hint {
   margin: 8px 0 16px;
   color: var(--game-text-muted);
@@ -1711,6 +1749,18 @@ label.town-demo-toggle {
   stroke: #d9a441;
 }
 
+.town-demo-building--unexplored {
+  fill: #4a4a4a;
+  stroke: #6a6a6a;
+  opacity: 0.6;
+}
+
+.town-demo-building--unexplored:hover,
+.town-demo-building--unexplored:focus-visible {
+  stroke: #9a9a9a;
+  opacity: 0.85;
+}
+
 .town-demo-building--selected {
   stroke: #f3ead5;
   stroke-width: 2.5;
@@ -2139,4 +2189,129 @@ label.town-demo-toggle {
 
 .stage-dev-tools .inline-button {
   justify-self: start;
+}
+
+/* Phase 14 Task 6：黑底白字序幕开场样式 */
+.prologue-screen {
+  position: fixed;
+  inset: 0;
+  background-color: #000;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  cursor: pointer;
+  z-index: 9999;
+  animation: prologue-fade-in 800ms ease-out;
+}
+
+.prologue-content {
+  max-width: 640px;
+  text-align: center;
+}
+
+.prologue-text {
+  font-size: 1.25rem;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.prologue-hint {
+  margin-top: 2rem;
+  opacity: 0.6;
+  font-size: 0.9rem;
+}
+
+@keyframes prologue-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 场景旁白条——轻量事件（observe/investigate/item）的 AI 旁白 */
+.scene-narration-bar {
+  position: relative;
+  margin: 8px 0;
+  padding: 12px 36px 12px 16px;
+  background: rgba(17, 22, 18, 0.85);
+  border-left: 3px solid var(--game-accent);
+  border-radius: 4px;
+  animation: scene-narration-fade-in 0.4s ease-out;
+}
+
+.scene-narration-bar-text {
+  margin: 0;
+  line-height: 1.8;
+  color: var(--game-text-primary);
+  font-size: 0.92rem;
+}
+
+.scene-narration-bar-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--game-text-muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.scene-narration-bar-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--game-text-primary);
+}
+
+@keyframes scene-narration-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 旅行事件全屏旁白——复用序幕视觉风格 */
+.travel-narration-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  cursor: pointer;
+}
+
+.travel-narration-content {
+  max-width: 640px;
+  padding: 0 32px;
+  text-align: center;
+}
+
+.travel-narration-text {
+  margin: 0;
+  color: #f3ead5;
+  font-size: 1.1rem;
+  line-height: 2;
+  letter-spacing: 0.04em;
+  min-height: 4em;
+}
+
+.travel-narration-hint {
+  margin-top: 24px;
+  color: rgba(243, 234, 213, 0.5);
+  font-size: 0.82rem;
+}
+
+/* NPC 对话面板"准备中"提示 */
+.npc-dialogue-preparing {
+  margin: 8px 0;
+  padding: 12px 16px;
+  color: var(--game-text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+  background: rgba(215, 185, 111, 0.08);
+  border-radius: 4px;
+  animation: scene-narration-fade-in 0.4s ease-out;
 }

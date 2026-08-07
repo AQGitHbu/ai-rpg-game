@@ -207,9 +207,104 @@ function withNarrativeDefault(state: JsonObject): JsonObject {
   };
 }
 
+// Phase 14：旧存档（无 startAnchor 字段）补默认值——从 locations[0]/npcs[0]/quests[0] 推导。
+// 任一数组缺失则回退到 "loc_1"/"npc_1"/"quest_main_1"，不升 schema 版本也不回写。
+function withStartAnchorDefault(blueprint: JsonObject): JsonObject {
+  if (blueprint["startAnchor"] !== undefined) return blueprint;
+  const locations = blueprint["locations"] as readonly JsonObject[] | undefined;
+  const npcs = blueprint["npcs"] as readonly JsonObject[] | undefined;
+  const quests = blueprint["quests"] as readonly JsonObject[] | undefined;
+  const firstLocationId = locations?.[0]?.["id"] ?? "loc_1";
+  const firstNpcId = npcs?.[0]?.["id"] ?? "npc_1";
+  const firstQuestId = quests?.[0]?.["id"] ?? "quest_main_1";
+  return { ...blueprint, startAnchor: { locationId: firstLocationId, npcId: firstNpcId, startQuestId: firstQuestId } };
+}
+
+// Phase 14：旧存档（无 endingDirection 字段）补默认值——lockedAt 从 budgetPolicy.mainActs 推导。
+// mainActs 缺失时回退 3，lockedAt = Math.ceil(mainActs / 2)；theme 从 world.themes[0] 取，缺失回退 "未定"。
+function withEndingDirectionDefault(blueprint: JsonObject): JsonObject {
+  if (blueprint["endingDirection"] !== undefined) return blueprint;
+  const budgetPolicy = blueprint["budgetPolicy"] as JsonObject | undefined;
+  const mainActs = (budgetPolicy?.["mainActs"] as number | undefined) ?? 3;
+  const world = blueprint["world"] as JsonObject | undefined;
+  const themes = (world?.["themes"] as readonly string[] | undefined) ?? [];
+  const theme = themes[0] ?? "未定";
+  return {
+    ...blueprint,
+    endingDirection: {
+      theme,
+      possibleTones: ["triumph", "tragedy", "bittersweet", "ambiguous"],
+      lockedAt: Math.ceil(mainActs / 2),
+    },
+  };
+}
+
+// Phase 14：旧存档 state 无 prologueShown 字段时补 true（已过开场）。
+// 旧档默认已完成序幕播放，不升 schema 版本也不回写。
+function withPrologueDefault(state: JsonObject): JsonObject {
+  if (state["prologueShown"] !== undefined) return state;
+  return { ...state, prologueShown: true };
+}
+
+// Phase 14：旧存档 state 无 mainStoryProgress 字段时补默认值。
+// currentAct 根据 eventLedger 中已完成的主线任务数量推导（与 reconcileMainStoryProgress
+// 语义一致：仅统计 blueprint.quests.kind==="main" 的 questId）；endingProposed 恒为 false。
+function withMainStoryProgressDefault(
+  state: JsonObject,
+  blueprint: JsonObject,
+): JsonObject {
+  if (state["mainStoryProgress"] !== undefined) return state;
+  const mainQuestIds = new Set<string>();
+  const quests = blueprint["quests"];
+  if (Array.isArray(quests)) {
+    for (const q of quests) {
+      if (isPlainObject(q) && q["kind"] === "main" && typeof q["id"] === "string") {
+        mainQuestIds.add(q["id"]);
+      }
+    }
+  }
+  const eventLedger = (state["eventLedger"] as readonly JsonObject[] | undefined) ?? [];
+  const completedMainQuests = eventLedger.filter(
+    (e) =>
+      e["type"] === "quest_completed" &&
+      typeof e["questId"] === "string" &&
+      mainQuestIds.has(e["questId"]),
+  ).length;
+  return {
+    ...state,
+    mainStoryProgress: {
+      currentAct: completedMainQuests,
+      endingProposed: false,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 单一迁移出口：所有读取路径共用同一组 with*Default 链。
+//   - migrateBlueprint：availableItems → enemyLocationId → startAnchor → endingDirection
+//   - migrateStateOrNull：visited（可能失败）→ narrative → town → phase14 → phase6
+// 集中管理后新增字段的迁移只需在此文件修改一次，避免 interpretGameRow 与
+// applyResolvedAction/applyBlueprintExpansion 三处漂移（fc71150 正是此类漏改修复）。
+// ---------------------------------------------------------------------------
+
+function migrateBlueprint(blueprint: JsonObject): JsonObject {
+  return withEndingDirectionDefault(
+    withStartAnchorDefault(withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint))),
+  );
+}
+
+function migrateStateOrNull(state: JsonObject, blueprint: JsonObject): JsonObject | null {
+  const visited = withVisitedLocationDefault(state);
+  if (visited === null) return null;
+  const narrative = withTownDefaults(withNarrativeDefault(visited));
+  const phase14 = withMainStoryProgressDefault(withPrologueDefault(narrative), blueprint);
+  return withPhase6StateDefaults(phase14);
+}
+
 // 单行 → 结构化结果：只做端口要求的版本 / generationId 校验与形状检查，
 // 不做蓝图内部引用完整性校验（Task 1 评审确认由上游编译器保证）。
-function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordResult {
+// Phase 14：导出供 sqliteGameRepository.test.ts 直接做 v1→2 迁移单元测试。
+export function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordResult {
   const gameId = row["game_id"];
   const recordVersion = row["record_version"];
   const blueprintJson = row["blueprint_json"];
@@ -238,8 +333,9 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordRes
   if (blueprint === null || state === null) {
     return corrupt("UNPARSEABLE_RECORD");
   }
-  // 域内版本字段：蓝图 schemaVersion 与状态 stateVersion 都必须是当前支持的 1。
-  if (blueprint["schemaVersion"] !== 1 || state["stateVersion"] !== 1) {
+  // 域内版本字段：Phase 14 接受 schemaVersion 1（旧档）或 2（新档）；stateVersion 仍为 1。
+  const blueprintVersion = blueprint["schemaVersion"];
+  if ((blueprintVersion !== 1 && blueprintVersion !== 2) || state["stateVersion"] !== 1) {
     return corrupt("VERSION_MISMATCH");
   }
   const blueprintGenerationId = blueprint["generationId"];
@@ -251,13 +347,12 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordRes
   if (stateGenerationId !== blueprintGenerationId) {
     return corrupt("GENERATION_MISMATCH");
   }
-  const visitedState = withVisitedLocationDefault(state);
-  if (visitedState === null) {
+  // 单一迁移出口：blueprint 链 + state 链集中管理（见 migrateBlueprint/migrateStateOrNull）。
+  const migratedState = migrateStateOrNull(state, blueprint);
+  if (migratedState === null) {
     return corrupt("UNPARSEABLE_RECORD");
   }
-  const migratedState = withTownDefaults(withNarrativeDefault(visitedState));
-  const migratedBlueprint = withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint));
-  const phase6State = withPhase6StateDefaults(migratedState);
+  const migratedBlueprint = migrateBlueprint(blueprint);
 
   return {
     ok: true,
@@ -266,7 +361,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameRecordRes
       gameId: asGameId(gameId),
       // 通过全部防御性检查后按端口契约还原类型；深度结构由写入侧的编译器保证。
       blueprint: migratedBlueprint as unknown as ScenarioBlueprint,
-      state: phase6State as unknown as GameState,
+      state: migratedState as unknown as GameState,
       revision,
       createdAt
     }
@@ -473,12 +568,13 @@ export function createSqliteGameRepository(
           return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         }
 
+        const migratedBlueprint = migrateBlueprint(blueprint);
+        const migratedState = migrateStateOrNull(state, migratedBlueprint) ?? state;
         const record: GameRecord = {
           gameId: asGameId(row["game_id"] as string),
-          // 与 interpretGameRow 同样补旧档蓝图的 availableItemIds 和 enemy locationId 默认值，
-          // 避免类型契约缺口。
-          blueprint: withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint)) as unknown as ScenarioBlueprint,
-          state: withTownDefaults(withNarrativeDefault(state)) as unknown as GameState,
+          // 单一迁移出口：与 interpretGameRow 完全一致的链路（见 migrateBlueprint/migrateStateOrNull）。
+          blueprint: migratedBlueprint as unknown as ScenarioBlueprint,
+          state: migratedState as unknown as GameState,
           revision: row["revision"] as number,
           createdAt: row["created_at"] as string
         };
@@ -550,10 +646,13 @@ export function createSqliteGameRepository(
           return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         }
 
+        const migratedBlueprint = migrateBlueprint(blueprint);
+        const migratedState = migrateStateOrNull(state, migratedBlueprint) ?? state;
         const record: GameRecord = {
           gameId: asGameId(row["game_id"] as string),
-          blueprint: withEnemyLocationIdDefault(withAvailableItemsDefault(blueprint)) as unknown as ScenarioBlueprint,
-          state: withTownDefaults(withNarrativeDefault(state)) as unknown as GameState,
+          // 单一迁移出口：与 interpretGameRow 完全一致的链路（见 migrateBlueprint/migrateStateOrNull）。
+          blueprint: migratedBlueprint as unknown as ScenarioBlueprint,
+          state: migratedState as unknown as GameState,
           revision: row["revision"] as number,
           createdAt: row["created_at"] as string
         };

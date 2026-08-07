@@ -47,12 +47,23 @@ const ITEM_START = asItemId("item_1");
 
 function buildBlueprint(): ScenarioBlueprint {
   const candidate: ScenarioBlueprintCandidate = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generationId: "gen-0001",
     seed: "seed-1",
     templateVersion: "tpl-1",
     gameType: "wuxia",
     inputDigest: "digest-abc",
+    // Phase 14：起始锚点 + 结局方向（schemaVersion 2 必填）。
+    startAnchor: {
+      locationId: "loc_a",
+      npcId: "npc_1",
+      startQuestId: "q1"
+    },
+    endingDirection: {
+      theme: "测试主题",
+      possibleTones: ["triumph", "tragedy"],
+      lockedAt: 3
+    },
     world: {
       summary: "测试世界。",
       tone: "测试",
@@ -113,7 +124,7 @@ function buildBlueprint(): ScenarioBlueprint {
     budgetPolicy: TEST_POLICY,
   };
   const compiled = compileScenarioBlueprint(
-    validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY })
+    validateScenarioBlueprintCandidate(candidate, { profile: TEST_PROFILE, policy: TEST_POLICY, phase: "runtime_expansion" })
   );
   if (!compiled.ok) {
     throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
@@ -150,6 +161,9 @@ function buildInitialState(): GameState {
     narrative: { currentScene: null, generation: { status: "idle" }, mode: "ai" },
     towns: [],
     townGeneration: { status: "idle" },
+    // Phase 14：序幕未播放 + 主线幕数追踪。
+    prologueShown: false,
+    mainStoryProgress: { currentAct: 1, endingProposed: false },
     eventLedger: [{ type: "game_initialized", generation: GEN }],
   };
 }

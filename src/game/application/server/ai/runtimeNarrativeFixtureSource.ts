@@ -80,10 +80,28 @@ const FIXTURE_NPC_PERFORMANCE: NpcPerformanceProposal = {
 function createFixtureDirectorSource(): DirectorSource {
   return {
     async generate(request): Promise<DirectorAttempt> {
+      const trigger = typeof request.context.triggerContext === "object" && request.context.triggerContext !== null
+        ? request.context.triggerContext as Record<string, unknown>
+        : null;
+      const isDialogue = trigger !== null &&
+        ["initial_opening", "talk", "free_input"].includes(String(trigger.kind));
+      const candidates = Array.isArray(request.context.actionCandidates)
+        ? request.context.actionCandidates.filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null && typeof (entry as Record<string, unknown>).actionKey === "string")
+        : [];
+      const first = String(candidates[0]?.actionKey ?? "__fixture__");
+      const second = String(candidates[1]?.actionKey ?? first);
       return {
         ok: true,
         provenance: "fixture",
-        plan: { ...FIXTURE_DIRECTOR_PLAN },
+        plan: {
+          ...FIXTURE_DIRECTOR_PLAN,
+          suggestedActionKeys: [first, second],
+          ...(isDialogue ? {
+            eventKind: "dialogue" as const,
+            focusNpcId: typeof trigger?.npcId === "string" ? trigger.npcId : null,
+            eventTargetId: typeof trigger?.npcId === "string" ? trigger.npcId : undefined,
+          } : {}),
+        },
         diagnostics: {
           traceId: request.traceId,
           contractVersion: NARRATIVE_CONTRACT_VERSION,
@@ -101,10 +119,22 @@ function createFixtureDirectorSource(): DirectorSource {
 function createFixtureSceneScriptSource(): SceneScriptSource {
   return {
     async generate(request): Promise<SceneScriptAttempt> {
+      const plan = typeof request.context.plan === "object" && request.context.plan !== null
+        ? request.context.plan as Record<string, unknown>
+        : {};
+      const isDialogue = plan.eventKind === "dialogue";
       return {
         ok: true,
         provenance: "fixture",
-        script: { ...FIXTURE_SCENE_SCRIPT },
+        script: isDialogue
+          ? {
+              ...FIXTURE_SCENE_SCRIPT,
+              choices: [
+                { actionKey: "dialogue:fixture:0", label: "询问目前发生了什么状况", strategy: "先了解现场情况", choiceKind: "dialogue_response", dialogueIntent: "ask_current_situation" },
+                { actionKey: "dialogue:fixture:1", label: "追问刚维修为何又出故障", strategy: "质疑异常维修记录", choiceKind: "dialogue_response", dialogueIntent: "challenge_recent_repair" },
+              ],
+            }
+          : { ...FIXTURE_SCENE_SCRIPT },
         diagnostics: {
           traceId: request.traceId,
           contractVersion: NARRATIVE_CONTRACT_VERSION,

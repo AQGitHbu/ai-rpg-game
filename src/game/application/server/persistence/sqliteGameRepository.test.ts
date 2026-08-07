@@ -12,6 +12,7 @@ import {
   GAME_RECORD_VERSION,
   GAME_SCHEMA_VERSION,
   INITIAL_REVISION,
+  interpretGameRow,
   type SqliteGameRepository
 } from "./sqliteGameRepository";
 
@@ -106,6 +107,57 @@ function buildCreateInput(gameId = "game-sqlite-0001"): CreateInitialGameInput {
   };
 }
 
+/**
+ * Phase 14 测试辅助：对期望蓝图应用与 sqliteGameRepository.with*Defaults 相同的默认值。
+ * getCurrentGame 经 interpretGameRow 读取时会补 startAnchor/endingDirection 默认值，
+ * 旧测试的 toEqual 比较需在期望值上应用同样默认值才能匹配。
+ */
+function withExpectedPhase14BlueprintDefaults(blueprint: ScenarioBlueprint): ScenarioBlueprint {
+  const bp = blueprint as unknown as Record<string, unknown>;
+  if (bp["startAnchor"] !== undefined && bp["endingDirection"] !== undefined) {
+    return blueprint;
+  }
+  const locations = bp["locations"] as readonly { readonly id: string }[] | undefined;
+  const npcs = bp["npcs"] as readonly { readonly id: string }[] | undefined;
+  const quests = bp["quests"] as readonly { readonly id: string }[] | undefined;
+  const world = bp["world"] as { readonly themes?: readonly string[] } | undefined;
+  const budgetPolicy = bp["budgetPolicy"] as { readonly mainActs?: number } | undefined;
+  return {
+    ...blueprint,
+    startAnchor: bp["startAnchor"] ?? {
+      locationId: locations?.[0]?.id ?? "loc_1",
+      npcId: npcs?.[0]?.id ?? "npc_1",
+      startQuestId: quests?.[0]?.id ?? "quest_main_1"
+    },
+    endingDirection: bp["endingDirection"] ?? {
+      theme: (world?.themes ?? [])[0] ?? "未定",
+      possibleTones: ["triumph", "tragedy", "bittersweet"],
+      lockedAt: Math.ceil((budgetPolicy?.mainActs ?? 3) / 2)
+    }
+  } as ScenarioBlueprint;
+}
+
+/**
+ * Phase 14 测试辅助：对期望状态应用与 sqliteGameRepository.with*Defaults 相同的默认值。
+ * getCurrentGame 经 interpretGameRow 读取时会补 prologueShown/mainStoryProgress 默认值。
+ */
+function withExpectedPhase14StateDefaults(state: GameState): GameState {
+  const st = state as unknown as Record<string, unknown>;
+  if (st["prologueShown"] !== undefined && st["mainStoryProgress"] !== undefined) {
+    return state;
+  }
+  const eventLedger = (st["eventLedger"] as readonly { readonly type?: string }[] | undefined) ?? [];
+  const completedMainQuests = eventLedger.filter((e) => e.type === "quest_completed").length;
+  return {
+    ...state,
+    prologueShown: (st["prologueShown"] as boolean | undefined) ?? true,
+    mainStoryProgress: st["mainStoryProgress"] ?? {
+      currentAct: completedMainQuests,
+      endingProposed: false
+    }
+  } as GameState;
+}
+
 const COUNT_SQL = {
   games: "SELECT COUNT(*) AS total FROM games",
   current_game: "SELECT COUNT(*) AS total FROM current_game"
@@ -158,7 +210,12 @@ describe("sqliteGameRepository：round-trip", () => {
     expect(await reader.getCurrentGame()).toEqual({
       ok: true,
       status: "active",
-      record: { ...input, revision: 0 }
+      record: {
+        ...input,
+        blueprint: withExpectedPhase14BlueprintDefaults(input.blueprint),
+        state: withExpectedPhase14StateDefaults(input.state),
+        revision: 0
+      }
     });
   });
 });
@@ -183,7 +240,12 @@ describe("sqliteGameRepository：重复创建", () => {
     expect(await repository.getCurrentGame()).toEqual({
       ok: true,
       status: "active",
-      record: { ...original, revision: 0 }
+      record: {
+        ...original,
+        blueprint: withExpectedPhase14BlueprintDefaults(original.blueprint),
+        state: withExpectedPhase14StateDefaults(original.state),
+        revision: 0
+      }
     });
     const raw = openRawClient(databasePath);
     expect(await countRows(raw, "games")).toBe(1);
@@ -478,8 +540,8 @@ describe("sqliteGameRepository：v1→v2 schema migration", () => {
     expect(result.status).toBe("active");
     if (result.status !== "active") return;
     expect(result.record.gameId).toBe(input.gameId);
-    expect(result.record.blueprint).toEqual(input.blueprint);
-    expect(result.record.state).toEqual(input.state);
+    expect(result.record.blueprint).toEqual(withExpectedPhase14BlueprintDefaults(input.blueprint));
+    expect(result.record.state).toEqual(withExpectedPhase14StateDefaults(input.state));
     expect(result.record.revision).toBe(INITIAL_REVISION);
     expect(result.record.createdAt).toBe(input.createdAt);
 
@@ -512,7 +574,7 @@ describe("sqliteGameRepository：v1→v2 schema migration", () => {
     expect(result.status).toBe("active");
     if (result.status !== "active") return;
     expect(result.record.revision).toBe(INITIAL_REVISION);
-    expect(result.record.state).toEqual(input.state);
+    expect(result.record.state).toEqual(withExpectedPhase14StateDefaults(input.state));
   });
 
   it("未知未来 schema 版本安全失败，绝不重置玩家存档", async () => {
@@ -614,7 +676,7 @@ describe("sqliteGameRepository：applyResolvedAction (compare-and-swap)", () => 
     expect(current.status).toBe("active");
     if (current.status !== "active") return;
     expect(current.record.revision).toBe(1);
-    expect(current.record.state).toEqual(nextState);
+    expect(current.record.state).toEqual(withExpectedPhase14StateDefaults(nextState));
   });
 
   it("连续成功行动：revision 单调递增", async () => {
@@ -793,7 +855,7 @@ describe("sqliteGameRepository：applyResolvedAction 事务故障", () => {
     expect(current.status).toBe("active");
     if (current.status !== "active") return;
     expect(current.record.revision).toBe(0);
-    expect(current.record.state).toEqual(input.state);
+    expect(current.record.state).toEqual(withExpectedPhase14StateDefaults(input.state));
   });
 });
 
@@ -868,8 +930,8 @@ describe("sqliteGameRepository：applyBlueprintExpansion (CAS + blueprint 更新
     expect(current.ok).toBe(true);
     if (!current.ok || current.status !== "active") return;
     expect(current.record.revision).toBe(1);
-    expect(current.record.blueprint).toEqual(nextBlueprint);
-    expect(current.record.state).toEqual(nextState);
+    expect(current.record.blueprint).toEqual(withExpectedPhase14BlueprintDefaults(nextBlueprint));
+    expect(current.record.state).toEqual(withExpectedPhase14StateDefaults(nextState));
   });
 
   it("CAS 冲突：过期 revision 返回 STALE_GAME_REVISION，库中数据不变", async () => {
@@ -901,8 +963,8 @@ describe("sqliteGameRepository：applyBlueprintExpansion (CAS + blueprint 更新
     expect(current.ok).toBe(true);
     if (!current.ok || current.status !== "active") return;
     expect(current.record.revision).toBe(1);
-    expect(current.record.blueprint).toEqual(buildExpandedBlueprint());
-    expect(current.record.state).toEqual(buildExpandedState());
+    expect(current.record.blueprint).toEqual(withExpectedPhase14BlueprintDefaults(buildExpandedBlueprint()));
+    expect(current.record.state).toEqual(withExpectedPhase14StateDefaults(buildExpandedState()));
   });
 
   it("与 applyResolvedAction 交错：expansion 后 action 携带新 revision 成功", async () => {
@@ -945,5 +1007,125 @@ describe("sqliteGameRepository：applyBlueprintExpansion (CAS + blueprint 更新
     expect(action.record.state).toEqual(actionState);
     // blueprint 保持 expansion 后的版本。
     expect(action.record.blueprint).toEqual(nextBlueprint);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 14 Task 2：schemaVersion 1→2 迁移单元测试。
+// 直接对 interpretGameRow 喂入构造的行对象，验证旧档（v1）读取时补齐
+// startAnchor/endingDirection/prologueShown/mainStoryProgress 默认值，
+// 以及新档（v2）读取通过版本检查。零迁移模式：只在内存补默认值，不写回 DB。
+// ---------------------------------------------------------------------------
+
+/**
+ * 构造一份旧存档行（schemaVersion 1，无 Phase 14 新字段）。
+ * 蓝图不含 locations/npcs/quests 数组，触发 fallback "loc_1"/"npc_1"/"quest_main_1"；
+ * state 不含 prologueShown/mainStoryProgress/eventLedger，触发 prologueShown=true、currentAct=0。
+ */
+function buildLegacyV1Row(): Record<string, unknown> {
+  const generationId = "gen-legacy-v1";
+  const blueprint = {
+    schemaVersion: 1,
+    generationId
+    // 无 startAnchor / endingDirection（Phase 14 新字段）
+    // 无 locations / npcs / quests → 触发 fallback 默认值
+  };
+  const state = {
+    stateVersion: 1,
+    generation: { generationId },
+    currentLocationId: "loc_start"
+    // 无 prologueShown / mainStoryProgress / eventLedger（Phase 14 新字段）
+  };
+  return {
+    game_id: "game-legacy-v1",
+    record_version: GAME_RECORD_VERSION,
+    blueprint_json: JSON.stringify(blueprint),
+    state_json: JSON.stringify(state),
+    created_at: "2026-07-27T00:00:00.000Z",
+    revision: INITIAL_REVISION
+  };
+}
+
+/**
+ * 构造一份新存档行（schemaVersion 2，含 Phase 14 全部新字段）。
+ * 用于验证版本检查接受 v2 且新字段原样保留（不触发 with*Defaults 补默认值分支）。
+ */
+function buildNewV2Row(): Record<string, unknown> {
+  const generationId = "gen-new-v2";
+  const blueprint = {
+    schemaVersion: 2,
+    generationId,
+    startAnchor: { locationId: "loc_start", npcId: "npc_start", startQuestId: "quest_start" },
+    endingDirection: { theme: "测试主题", possibleTones: ["triumph"], lockedAt: 2 }
+  };
+  const state = {
+    stateVersion: 1,
+    generation: { generationId },
+    currentLocationId: "loc_start",
+    prologueShown: true,
+    mainStoryProgress: { currentAct: 1, endingProposed: false }
+  };
+  return {
+    game_id: "game-new-v2",
+    record_version: GAME_RECORD_VERSION,
+    blueprint_json: JSON.stringify(blueprint),
+    state_json: JSON.stringify(state),
+    created_at: "2026-07-27T00:00:00.000Z",
+    revision: INITIAL_REVISION
+  };
+}
+
+describe("Phase 14 schemaVersion 1→2 迁移", () => {
+  it("旧存档（schemaVersion 1）读取后含 startAnchor 默认值", () => {
+    const row = buildLegacyV1Row();
+    const result = interpretGameRow(row);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.status).toBe("active");
+    if (result.status !== "active") return;
+    expect(result.record.blueprint.startAnchor).toBeDefined();
+    expect(result.record.blueprint.startAnchor.locationId).toBe("loc_1");
+    expect(result.record.blueprint.startAnchor.npcId).toBe("npc_1");
+  });
+
+  it("旧存档读取后含 endingDirection 默认值", () => {
+    const row = buildLegacyV1Row();
+    const result = interpretGameRow(row);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.status).toBe("active");
+    if (result.status !== "active") return;
+    expect(result.record.blueprint.endingDirection).toBeDefined();
+    expect(result.record.blueprint.endingDirection.lockedAt).toBeGreaterThanOrEqual(1);
+  });
+
+  it("旧存档读取后 prologueShown 为 true（已过开场）", () => {
+    const row = buildLegacyV1Row();
+    const result = interpretGameRow(row);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.status).toBe("active");
+    if (result.status !== "active") return;
+    expect(result.record.state.prologueShown).toBe(true);
+  });
+
+  it("旧存档读取后 mainStoryProgress 含 currentAct 和 endingProposed", () => {
+    const row = buildLegacyV1Row();
+    const result = interpretGameRow(row);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.status).toBe("active");
+    if (result.status !== "active") return;
+    expect(result.record.state.mainStoryProgress).toBeDefined();
+    expect(typeof result.record.state.mainStoryProgress.currentAct).toBe("number");
+    expect(result.record.state.mainStoryProgress.endingProposed).toBe(false);
+  });
+
+  it("新存档（schemaVersion 2）读取通过", () => {
+    const row = buildNewV2Row();
+    const result = interpretGameRow(row);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.status).toBe("active");
   });
 });

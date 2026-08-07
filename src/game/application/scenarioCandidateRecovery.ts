@@ -18,7 +18,7 @@ import {
 // validateScenarioBlueprintCandidate，仍有 issue 一律返回 null（由编排重试/fallback）。
 // ---------------------------------------------------------------------------
 
-/** 候选根字段白名单（plan Task 3 固定集合）。 */
+/** 候选根字段白名单（plan Task 3 固定集合）。Phase 14：补入 startAnchor/endingDirection。 */
 const ROOT_FIELD_WHITELIST = [
   "schemaVersion",
   "generationId",
@@ -35,6 +35,8 @@ const ROOT_FIELD_WHITELIST = [
   "items",
   "endings",
   "openingScene",
+  "startAnchor",
+  "endingDirection",
   "budgetPolicy"
 ] as const;
 

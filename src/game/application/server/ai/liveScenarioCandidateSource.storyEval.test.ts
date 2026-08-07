@@ -11,6 +11,8 @@ const minimalCandidate = {
   world: { name: "W", summary: "S", tone: "dark", themes: ["t"] },
   openingScene: {},
   player: {},
+  startAnchor: {},
+  endingDirection: {},
   locations: [],
   npcs: [],
   quests: [],
@@ -80,7 +82,7 @@ describe("createLiveScenarioCandidateSource captureSink", () => {
 
   it("fenced scenario JSON 的字段引号被多转义一层时仍可恢复", async () => {
     const records: StoryEvalCallRecord[] = [];
-    const malformed = "```json\n{\"world\":{\"name\":\"W\",\"summary\":\"S\",\"tone\":\"dark\",\"themes\":[\"t\"]},\\\"openingScene\\\":{},\\\"player\\\":{},\\\"locations\\\":[],\\\"npcs\\\":[],\\\"quests\\\":[],\\\"items\\\":[],\\\"enemies\\\":[],\\\"endings\\\":[]}\n```";
+    const malformed = "```json\n{\"world\":{\"name\":\"W\",\"summary\":\"S\",\"tone\":\"dark\",\"themes\":[\"t\"]},\\\"openingScene\\\":{},\\\"player\\\":{},\\\"startAnchor\\\":{},\\\"endingDirection\\\":{},\\\"locations\\\":[],\\\"npcs\\\":[],\\\"quests\\\":[],\\\"items\\\":[],\\\"enemies\\\":[],\\\"endings\\\":[]}\n```";
     const { source, fetchSpy } = await buildSource(records, malformed);
     try {
       const result = await source.generate(request);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { asFactId, asLocationId, asNpcId, type GameState, type ScenarioBlueprint } from "@/game/domain";
 import { createGameLogger, type GameLogEntry } from "@/game/logging";
-import { NARRATIVE_CONTRACT_VERSION, type DirectorSource, type SceneScriptSource } from "./runtimeNarrative";
+import { NARRATIVE_CONTRACT_VERSION, type DirectorSource, type SceneScriptSource, type NpcLineSource } from "./runtimeNarrative";
 import { orchestrateNarrativeScene } from "./orchestrateNarrativeScene";
 
 function buildTestBlueprint(): ScenarioBlueprint {
@@ -103,7 +103,7 @@ describe("orchestrateNarrativeScene fallback", () => {
             stage: "failed",
             category: "service_error",
           },
-        };
+        } as never;
       },
     };
 
@@ -145,6 +145,54 @@ describe("orchestrateNarrativeScene fallback", () => {
     expect(directorCalls).toBe(3);
   });
 
+  it("开局对白 fallback 保留焦点 NPC 与两个对白选项", async () => {
+    const dialogueState: GameState = {
+      ...state,
+      narrative: {
+        ...state.narrative,
+        generation: {
+          status: "pending",
+          requestedAt: "2026-08-06T00:00:00.000Z",
+          triggerContext: { kind: "initial_opening", npcId: asNpcId("npc_1") },
+        },
+      },
+    };
+    const unavailable = {
+      async generate() {
+        return {
+          ok: false as const,
+          provenance: "unavailable" as const,
+          category: "service_error" as const,
+          diagnostics: {
+            traceId: "test",
+            contractVersion: NARRATIVE_CONTRACT_VERSION,
+            stage: "failed" as const,
+            category: "service_error" as const,
+          },
+        };
+      },
+    };
+
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-dialogue-fallback",
+      blueprint,
+      state: dialogueState,
+      directorSource: unavailable,
+      sceneScriptSource: unavailable,
+      npcLineSource: unavailable,
+      maxRoleAttempts: 1,
+    });
+
+    expect(result.scene.event).toEqual({ kind: "dialogue", focusNpcId: asNpcId("npc_1") });
+    expect(result.scene.npcDialogues?.map((dialogue) => String(dialogue.npcId))).toEqual(["npc_1"]);
+    expect(result.scene.choices.map((choice) => choice.label)).toEqual([
+      "请问一下目前状况是怎么样的？",
+      "是否可以告诉我事情的缘由？",
+    ]);
+    expect(result.scene.choices.every((choice) => choice.choiceKind === "dialogue_response")).toBe(true);
+    expect(result.scene.dialogueFollowups).toHaveLength(2);
+  });
+
   it("评估模式可把 director 重试限制为一次", async () => {
     let directorCalls = 0;
     const result = await orchestrateNarrativeScene({
@@ -169,6 +217,138 @@ describe("orchestrateNarrativeScene fallback", () => {
 
     expect(result.provenance).toBe("fallback");
     expect(directorCalls).toBe(1);
+  });
+
+  it("生产开局快速路径只尝试一次 director，避免同一 schema 错误拖延数分钟", async () => {
+    let directorCalls = 0;
+    let directorTimeoutMs: number | undefined;
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-fast-opening",
+      blueprint,
+      state: {
+        ...state,
+        narrative: {
+          ...state.narrative,
+          generation: {
+            status: "pending",
+            requestedAt: "2026-08-06T00:00:00.000Z",
+            triggerContext: { kind: "initial_opening", npcId: asNpcId("npc_1") },
+          },
+        },
+      },
+      fastFirstScene: true,
+      directorSource: {
+        async generate(request) {
+          directorCalls += 1;
+          directorTimeoutMs = request.timeoutMs;
+          return {
+            ok: true as const,
+            provenance: "generated" as const,
+            plan: {
+              sceneGoal: "invalid plan",
+              tensionLevel: 0,
+              focusNpcId: null,
+              relevantFactIds: [],
+              allowedRevealFactIds: [],
+              suggestedActionKeys: ["invalid:first", "invalid:second"],
+              introducedEntities: [],
+              pacing: "setup",
+            },
+            diagnostics: { traceId: "test", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" as const },
+          } as never;
+        },
+      },
+      sceneScriptSource: { async generate() { throw new Error("not reached"); } },
+      npcLineSource: { async generate() { throw new Error("not reached"); } },
+    });
+
+    expect(result.provenance).toBe("fallback");
+    expect(directorCalls).toBe(1);
+    expect(directorTimeoutMs).toBe(30_000);
+  });
+
+  it("报告脱敏的角色阶段进度，UI 可区分当前尝试与已完成阶段", async () => {
+    const progress: Array<{ completedCalls: number; totalCalls: 3; currentRole: string; attempt: number }> = [];
+    const unavailable = {
+      async generate() {
+        return {
+          ok: false as const,
+          provenance: "unavailable" as const,
+          category: "service_error" as const,
+          diagnostics: { traceId: "progress", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "failed" as const, category: "service_error" as const },
+        };
+      },
+    };
+
+    await orchestrateNarrativeScene({
+      traceId: "progress-test",
+      blueprint,
+      state: {
+        ...state,
+        narrative: {
+          ...state.narrative,
+          generation: {
+            status: "pending",
+            requestedAt: "2026-08-06T00:00:00.000Z",
+            triggerContext: { kind: "initial_opening", npcId: asNpcId("npc_1") },
+          },
+        },
+      },
+      fastFirstScene: true,
+      directorSource: unavailable,
+      sceneScriptSource: unavailable,
+      npcLineSource: unavailable,
+      progressObserver: (event) => progress.push(event),
+    });
+
+    expect(progress[0]).toEqual({ completedCalls: 0, totalCalls: 3, currentRole: "director", attempt: 1 });
+  });
+
+  it("director 重试不会把同一角色的多次成功响应累计成已完成阶段", async () => {
+    const progress: Array<{ completedCalls: number; totalCalls: 3; currentRole: string; attempt: number }> = [];
+    const rejectedDirector = {
+      async generate() {
+        return {
+          ok: true as const,
+          provenance: "generated" as const,
+          plan: {
+            sceneGoal: "无效提案",
+            tensionLevel: 1 as const,
+            focusNpcId: null,
+            relevantFactIds: [],
+            allowedRevealFactIds: [],
+            suggestedActionKeys: ["invalid:a", "invalid:b"] as const,
+            introducedEntities: [],
+            proposedNewLocations: [],
+            proposedNewNpcs: [],
+            pacing: "setup" as const,
+          },
+          diagnostics: { traceId: "retry", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" as const },
+        };
+      },
+    };
+    const unavailable = {
+      async generate() {
+        throw new Error("not reached");
+      },
+    };
+
+    await orchestrateNarrativeScene({
+      traceId: "progress-retry",
+      blueprint,
+      state,
+      directorSource: rejectedDirector,
+      sceneScriptSource: unavailable,
+      npcLineSource: unavailable,
+      progressObserver: (event) => progress.push(event),
+    });
+
+    expect(progress.filter((event) => event.currentRole === "director").at(-1)).toEqual({
+      completedCalls: 0,
+      totalCalls: 3,
+      currentRole: "director",
+      attempt: 3,
+    });
   });
 
   it("记录被规则拒绝的 director 提案，但不写入提案内容", async () => {
@@ -392,5 +572,196 @@ describe("orchestrateNarrativeScene：NPC 角色交接", () => {
       currentLocationCard: { id: "loc_a", name: "地点A" },
       npcDefinition: { id: "npc_1", description: "守着渡口、对外来者保持警惕的村民。" },
     });
+  });
+});
+
+/**
+ * 构建多 NPC 在场夹具：在 loc_a 放置指定 NPC（均 met=false 以确保 talk 候选存在），均已知 fact_1。
+ * 供 collectNpcDialogues 三路径测试复用。
+ */
+function buildCollectNpcDialoguesFixtures(npcIds: readonly string[]): {
+  readonly blueprint: ScenarioBlueprint;
+  readonly state: GameState;
+} {
+  const npcNameById: Record<string, string> = {
+    npc_1: "老者",
+    npc_2: "商人",
+    npc_3: "过客",
+  };
+  const npcs = npcIds.map((id) => ({
+    id: asNpcId(id),
+    name: npcNameById[id] ?? `NPC${id}`,
+    role: "村民",
+    description: `${npcNameById[id] ?? id} 的描述。`,
+    locationId: asLocationId("loc_a"),
+    knownFactIds: [asFactId("fact_1")],
+  }));
+  const blueprint = { ...buildTestBlueprint(), npcs } as unknown as ScenarioBlueprint;
+  const state = {
+    ...buildTestGameState(),
+    npcs: npcIds.map((id) => ({
+      npcId: asNpcId(id),
+      locationId: asLocationId("loc_a"),
+      met: false,
+    })),
+  } as unknown as GameState;
+  return { blueprint, state };
+}
+
+describe("orchestrateNarrativeScene：Phase 14 collectNpcDialogues 三路径", () => {
+  // 三测试共享的导演计划：焦点 npc_1、允许揭示 fact_1、建议 talk:npc_1 与 observe:loc_a。
+  function buildDirectorSource(): DirectorSource {
+    return {
+      async generate() {
+        return {
+          ok: true,
+          provenance: "generated",
+          plan: {
+            sceneGoal: "推进",
+            tensionLevel: 2,
+            focusNpcId: "npc_1",
+            relevantFactIds: ["fact_1"],
+            allowedRevealFactIds: ["fact_1"],
+            suggestedActionKeys: ["talk:npc_1", "observe:loc_a"],
+            introducedEntities: [],
+            pacing: "setup",
+          },
+          diagnostics: { traceId: "director", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" },
+        } as never;
+      },
+    };
+  }
+
+  // 焦点 NPC npc_1 的演员 source：记录被调用 NPC 的 id，返回固定成功对白。
+  function buildTrackingNpcLineSource(generateCalls: string[]): NpcLineSource {
+    return {
+      async generate(request) {
+        const npcDef = (request.context as { npcDefinition?: { id: string } }).npcDefinition;
+        generateCalls.push(npcDef?.id ?? "unknown");
+        return {
+          ok: true,
+          provenance: "generated",
+          performance: { text: "别靠近渡口。", emotion: "afraid", usedFactIds: [] },
+          diagnostics: { traceId: "npc", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" },
+        } as never;
+      },
+    };
+  }
+
+  it("焦点 NPC 复用已批准的 npcLine，collectNpcDialogues 不再次调用演员 source", async () => {
+    const { blueprint, state } = buildCollectNpcDialoguesFixtures(["npc_1"]);
+    const generateCalls: string[] = [];
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-collect-focus-reuse",
+      blueprint,
+      state,
+      directorSource: buildDirectorSource(),
+      sceneScriptSource: {
+        async generate() {
+          return {
+            ok: true,
+            provenance: "generated",
+            script: {
+              narration: "守门人盯着你的来意。",
+              usedFactIds: [],
+              npcInstruction: { npcId: "npc_1", speechAct: "warn", emotion: "afraid", allowedFactIds: ["fact_1"], mayLie: false },
+              choices: [
+                { actionKey: "talk:npc_1", label: "交谈", strategy: "试探" },
+                { actionKey: "observe:loc_a", label: "观察", strategy: "查看" },
+              ],
+            },
+            diagnostics: { traceId: "writer", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" },
+          } as never;
+        },
+      },
+      npcLineSource: buildTrackingNpcLineSource(generateCalls),
+    });
+
+    expect(result.provenance).toBe("generated");
+    // 焦点 NPC 仅在主流程被调用一次；collectNpcDialogues 复用 npcLine 不再调用。
+    expect(generateCalls).toEqual(["npc_1"]);
+    const focus = result.scene.npcDialogues?.find((d) => String(d.npcId) === "npc_1");
+    expect(focus).toBeDefined();
+    // 分页拼接还原 npcLine 文本（paginateSpeechText 契约：页序拼接 === trim 后原文）。
+    expect(focus!.speechPages.join("")).toBe("别靠近渡口。");
+  });
+
+  it("附加 NPC 走重试生成路径，speechPages 来自演员生成文本", async () => {
+    const { blueprint, state } = buildCollectNpcDialoguesFixtures(["npc_1", "npc_2"]);
+    const generateCalls: string[] = [];
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-collect-additional-generated",
+      blueprint,
+      state,
+      directorSource: buildDirectorSource(),
+      sceneScriptSource: {
+        async generate() {
+          return {
+            ok: true,
+            provenance: "generated",
+            script: {
+              narration: "守门人盯着你的来意。",
+              usedFactIds: [],
+              npcInstruction: { npcId: "npc_1", speechAct: "warn", emotion: "afraid", allowedFactIds: ["fact_1"], mayLie: false },
+              additionalNpcInstructions: [
+                { npcId: "npc_2", speechAct: "inform", emotion: "neutral", allowedFactIds: ["fact_1"], mayLie: false },
+              ],
+              choices: [
+                { actionKey: "talk:npc_1", label: "交谈", strategy: "试探" },
+                { actionKey: "observe:loc_a", label: "观察", strategy: "查看" },
+              ],
+            },
+            diagnostics: { traceId: "writer", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" },
+          } as never;
+        },
+      },
+      npcLineSource: buildTrackingNpcLineSource(generateCalls),
+    });
+
+    expect(result.provenance).toBe("generated");
+    // 焦点 npc_1 在主流程被调用一次；附加 npc_2 经 approveSceneScript 透传后，
+    // 在 collectNpcDialogues 中走 generateNpcLineTextWithRetry 重试生成路径。
+    expect(generateCalls).toEqual(["npc_1", "npc_2"]);
+    const additional = result.scene.npcDialogues?.find((d) => String(d.npcId) === "npc_2");
+    expect(additional).toBeDefined();
+    // 分页拼接还原演员生成文本（paginateSpeechText 契约：页序拼接 === trim 后原文）。
+    expect(additional!.speechPages.join("")).toBe("别靠近渡口。");
+  });
+
+  it("无指令的在场 NPC 仅记录为在场（speechPages 为空），不调用演员 source", async () => {
+    const { blueprint, state } = buildCollectNpcDialoguesFixtures(["npc_1", "npc_3"]);
+    const generateCalls: string[] = [];
+    const result = await orchestrateNarrativeScene({
+      traceId: "test-collect-no-instruction",
+      blueprint,
+      state,
+      directorSource: buildDirectorSource(),
+      sceneScriptSource: {
+        async generate() {
+          return {
+            ok: true,
+            provenance: "generated",
+            script: {
+              narration: "守门人盯着你的来意。",
+              usedFactIds: [],
+              npcInstruction: { npcId: "npc_1", speechAct: "warn", emotion: "afraid", allowedFactIds: ["fact_1"], mayLie: false },
+              choices: [
+                { actionKey: "talk:npc_1", label: "交谈", strategy: "试探" },
+                { actionKey: "observe:loc_a", label: "观察", strategy: "查看" },
+              ],
+            },
+            diagnostics: { traceId: "writer", contractVersion: NARRATIVE_CONTRACT_VERSION, stage: "candidate_received" },
+          } as never;
+        },
+      },
+      npcLineSource: buildTrackingNpcLineSource(generateCalls),
+    });
+
+    expect(result.provenance).toBe("generated");
+    // 仅焦点 npc_1 触发演员调用；npc_3 无指令不调用。
+    expect(generateCalls).toEqual(["npc_1"]);
+    const extra = result.scene.npcDialogues?.find((d) => String(d.npcId) === "npc_3");
+    expect(extra).toBeDefined();
+    expect(extra!.speechPages).toEqual([]);
   });
 });

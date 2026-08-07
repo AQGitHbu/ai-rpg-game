@@ -151,7 +151,29 @@ const OPENING_SCENE = strictObject({
   narration: STRING,
   presentNpcIds: STRING_ARRAY,
   suggestedActions: STRING_ARRAY,
-  investigableFactIds: STRING_ARRAY
+  investigableFactIds: STRING_ARRAY,
+  prologue: strictObject({
+    text: STRING,
+    tone: { enum: ["serious", "epic", "mysterious"] }
+  })
+});
+
+/** Phase 14：起始锚点 schema——固定 ID 引用。 */
+const START_ANCHOR = strictObject({
+  locationId: STRING,
+  npcId: STRING,
+  startQuestId: STRING
+});
+
+/** Phase 14：结局方向 schema——主题 + 可能基调 + 锁定幕数。 */
+const ENDING_DIRECTION = strictObject({
+  theme: STRING,
+  possibleTones: {
+    type: "array",
+    items: { enum: ["triumph", "tragedy", "bittersweet", "ambiguous"] },
+    minItems: 1
+  },
+  lockedAt: { type: "integer", minimum: 1 }
 });
 
 function budgetPolicySchemaOf(policy: BudgetPolicy): JsonSchema {
@@ -194,10 +216,10 @@ function questSchemaOf(policy: BudgetPolicy): JsonSchema {
   };
 }
 
-/** 按 BudgetPolicy 构建 ScenarioBlueprintCandidate 的 strict JSON Schema。 */
+/** 按 BudgetPolicy 构建 ScenarioBlueprintCandidate 的 strict JSON Schema。Phase 14：开局收窄。 */
 export function buildScenarioCandidateJsonSchema(policy: BudgetPolicy): Readonly<JsonSchema> {
   return strictObject({
-    schemaVersion: { const: 1 },
+    schemaVersion: { const: 2 },
     generationId: STRING,
     seed: STRING,
     templateVersion: STRING,
@@ -210,15 +232,14 @@ export function buildScenarioCandidateJsonSchema(policy: BudgetPolicy): Readonly
     inputDigest: STRING,
     world: WORLD,
     player: PLAYER,
-    locations: arrayOf(LOCATION, {
-      minItems: policy.opening.mainLocationsMin,
-      maxItems: policy.opening.mainLocationsMax + policy.opening.hiddenLocationsMax
-    }),
-    npcs: arrayOf(NPC),
-    quests: arrayOf(questSchemaOf(policy)),
-    enemies: arrayOf(ENEMY),
-    items: arrayOf(ITEM),
-    endings: arrayOf(ENDING),
+    startAnchor: START_ANCHOR,
+    endingDirection: ENDING_DIRECTION,
+    locations: arrayOf(LOCATION, { minItems: 1, maxItems: 1 }),
+    npcs: arrayOf(NPC, { minItems: 1, maxItems: 1 }),
+    quests: arrayOf(questSchemaOf(policy), { minItems: 1, maxItems: 1 }),
+    enemies: arrayOf(ENEMY, { maxItems: 0 }),
+    items: arrayOf(ITEM, { maxItems: 0 }),
+    endings: arrayOf(ENDING, { maxItems: 0 }),
     openingScene: OPENING_SCENE,
     budgetPolicy: budgetPolicySchemaOf(policy)
   });

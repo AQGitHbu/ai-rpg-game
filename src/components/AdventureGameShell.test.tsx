@@ -47,9 +47,163 @@ describe("AdventureGameShell", () => {
     expect(screen.getByRole("button", { name: "背包" })).toBeInTheDocument();
   });
 
-  it("已生成 AI 剧情仍以地图为入口；进入地点后才显示剧情", async () => {
+  it("场景生成 pending 时保留当前地图/场景，并在 ready 后解除模态", async () => {
     vi.stubGlobal("fetch", vi.fn());
     const base = buildSessionViewFixture();
+    const pendingView = {
+      ...base,
+      narrativeGeneration: {
+        status: "pending" as const,
+        progress: { completedCalls: 1, totalCalls: 3 as const, currentRole: "writer" as const, attempt: 1 }
+      }
+    };
+    const readyView = {
+      ...base,
+      narrativeGeneration: { status: "ready" as const }
+    };
+    const user = userEvent.setup();
+    const { rerender, props } = renderShell({ view: pendingView });
+
+    expect(screen.getByRole("dialog", { name: "正在准备场景" })).toBeInTheDocument();
+    expect(screen.getByText("世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。"))
+      .toBeInTheDocument();
+    expect(screen.getByText(/已完成 1 \/ 3 个角色 API 阶段/)).toBeInTheDocument();
+    expect(screen.getByText(/当前编剧第1次尝试/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "进入青石镇" }));
+
+    expect(screen.getByRole("region", { name: "地点场景：青石镇" })).toBeInTheDocument();
+    expect(screen.getByText("镇口贴着一张字迹潦草的缉凶告示。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "陆掌柜，客栈掌柜" })).toBeInTheDocument();
+
+    rerender(<AdventureGameShell {...props} view={readyView} />);
+
+    expect(screen.queryByRole("dialog", { name: "正在准备场景" })).toBeNull();
+    expect(screen.getByRole("region", { name: "地点场景：青石镇" })).toBeInTheDocument();
+  });
+
+  it("轻量事件旁白条可通过关闭按钮主动关闭", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const base = buildSessionViewFixture();
+    const worldEventView = {
+      ...base,
+      narrativeGeneration: { status: "ready" as const },
+      narrative: {
+        narration: "雨夜，客栈大门被人一脚踹开，一名蒙面人闯了进来。",
+        npcLine: null,
+        eventKind: "observe" as const,
+        choices: [
+          { label: "上前盘问", choiceToken: "event:a" },
+          { label: "按兵不动", choiceToken: "event:b" },
+        ] as const,
+        npcDialogues: [],
+      },
+    };
+    const user = userEvent.setup();
+    const { rerender, props } = renderShell({ view: worldEventView });
+
+    // 进入场景层才能看到 SceneNarrationBar。
+    await user.click(screen.getByRole("button", { name: "进入青石镇" }));
+
+    // 初始：旁白条可见。
+    expect(screen.getByText("雨夜，客栈大门被人一脚踹开，一名蒙面人闯了进来。")).toBeInTheDocument();
+
+    // 点击关闭按钮后旁白条消失。
+    await user.click(screen.getByRole("button", { name: "关闭旁白" }));
+    expect(screen.queryByText("雨夜，客栈大门被人一脚踹开，一名蒙面人闯了进来。")).toBeNull();
+
+    // 同一事件视图下重新渲染仍保持关闭。
+    rerender(<AdventureGameShell {...props} view={worldEventView} />);
+    expect(screen.queryByText("雨夜，客栈大门被人一脚踹开，一名蒙面人闯了进来。")).toBeNull();
+  });
+
+  it("旅行事件全屏旁白点击后完成并进入场景", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const base = buildSessionViewFixture();
+    const worldEventView = {
+      ...base,
+      narrativeGeneration: { status: "ready" as const },
+      narrative: {
+        narration: "驿道尽头浮现一支火把队伍。",
+        npcLine: null,
+        eventKind: "travel" as const,
+        choices: [
+          { label: "迎上前去", choiceToken: "event:a" },
+          { label: "隐入道旁", choiceToken: "event:b" },
+        ] as const,
+        npcDialogues: [],
+      },
+    };
+    const user = userEvent.setup();
+    renderShell({ view: worldEventView });
+
+    // 旅行事件全屏旁白可见。
+    expect(screen.getByRole("dialog", { name: "旅行旁白" })).toBeInTheDocument();
+    // 第一次点击跳过逐字动画。
+    await user.click(screen.getByRole("dialog", { name: "旅行旁白" }));
+    // 第二次点击完成旁白。
+    await user.click(screen.getByRole("dialog", { name: "旅行旁白" }));
+    expect(screen.queryByRole("dialog", { name: "旅行旁白" })).toBeNull();
+  });
+
+  it("叙事选项提交 pending 时独占场景，不与上一幕 NPC 对话叠加", async () => {
+    const base = buildSessionViewFixture();
+    const readyView = {
+      ...base,
+      narrativeGeneration: { status: "ready" as const },
+      dialogues: base.dialogues.map((dialogue, index) =>
+        index === 0
+          ? {
+              ...dialogue,
+              choices: [{ label: "查问后院", choiceToken: "choice:backyard" }]
+            }
+          : dialogue
+      )
+    };
+    const pendingView = {
+      ...readyView,
+      revision: readyView.revision + 1,
+      narrativeGeneration: { status: "pending" as const }
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          view: pendingView,
+          feedback: { ok: true, message: "选择已记录。" }
+        })
+      )
+    );
+    const onViewChange = vi.fn();
+    const user = userEvent.setup();
+    const { rerender, props } = renderShell({ view: readyView, onViewChange });
+
+    await user.click(screen.getByRole("button", { name: "进入青石镇" }));
+    await user.click(screen.getByRole("button", { name: "陆掌柜，客栈掌柜" }));
+    await user.click(screen.getByRole("button", { name: "1. 查问后院" }));
+
+    await waitFor(() => expect(onViewChange).toHaveBeenCalledWith(pendingView));
+    rerender(<AdventureGameShell {...props} view={pendingView} />);
+
+    expect(screen.queryByRole("dialog", { name: "与陆掌柜对话" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "正在准备场景" })).toBeInTheDocument();
+    expect(screen.getByText("世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。"))
+      .toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "与陆掌柜对话" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "正在准备场景" })).toBeInTheDocument();
+
+    rerender(<AdventureGameShell {...props} view={readyView} />);
+    expect(screen.queryByRole("dialog", { name: "与陆掌柜对话" })).toBeNull();
+  });
+
+  it("已生成 AI 剧情仍以地图为入口；进入地点后才显示场景（含 NPC 热点）", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const base = buildSessionViewFixture();
+    // 模拟 Phase 14 后已经完成 AI 场景生成：narrative.currentScene 已就绪，
+    // 但玩家必须先点"进入"才能离开地图层进入 LocationSceneScreen。
     const view = {
       ...base,
       narrativeGeneration: { status: "ready" as const },
@@ -60,19 +214,65 @@ describe("AdventureGameShell", () => {
           { label: "推门进入客栈", choiceToken: "scene:a" },
           { label: "先查看告示", choiceToken: "scene:b" },
         ] as const,
+        npcDialogues: [],
       },
     };
     const user = userEvent.setup();
     renderShell({ view });
 
     expect(screen.getByRole("button", { name: "进入青石镇" })).toBeVisible();
-    expect(screen.queryByText("客栈的灯火在雨幕里摇曳。")).toBeNull();
+    expect(screen.queryByText("镇口贴着一张字迹潦草的缉凶告示。")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "进入青石镇" }));
-    expect(screen.getByText("客栈的灯火在雨幕里摇曳。")).toBeVisible();
+    // 地点场景层是 LocationSceneScreen：场景描述作为 caption 出现；
+    // AI 剧情已就绪，但场景本身（背景图 / 互动 / NPC 热点）才是玩家首先看到的内容。
+    expect(screen.getByText("镇口贴着一张字迹潦草的缉凶告示。")).toBeVisible();
+    expect(screen.getByRole("button", { name: /陆掌柜.*客栈掌柜/ })).toBeVisible();
+    // 场景返回地图使用 SceneActionMenu 中的"地图"按钮（不再走 NarrativeScenePanel）。
+    expect(screen.queryByRole("button", { name: "返回地图" })).toBeNull();
+    expect(screen.getByRole("button", { name: "地图" })).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "返回地图" }));
+    await user.click(screen.getByRole("button", { name: "地图" }));
     expect(screen.getByRole("button", { name: "进入青石镇" })).toBeVisible();
+  });
+
+  it("对白场景 ready 后不自动弹窗，必须进入地点再点击 NPC 热点", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const base = buildSessionViewFixture();
+    const view = {
+      ...base,
+      narrativeGeneration: { status: "ready" as const },
+      narrative: {
+        narration: "陆掌柜放下酒碗，等着你的问题。",
+        npcLine: null,
+        eventKind: "dialogue" as const,
+        choices: [
+          { label: "请问一下目前状况是怎么样的？", choiceToken: "dialogue:a" },
+          { label: "是否可以告诉我事情的缘由？", choiceToken: "dialogue:b" },
+        ] as const,
+        npcDialogues: [],
+      },
+      dialogues: base.dialogues.map((dialogue, index) => index === 0
+        ? {
+            ...dialogue,
+            choices: [
+              { label: "请问一下目前状况是怎么样的？", choiceToken: "dialogue:a" },
+              { label: "是否可以告诉我事情的缘由？", choiceToken: "dialogue:b" },
+            ],
+          }
+        : dialogue),
+    };
+    const user = userEvent.setup();
+    renderShell({ view });
+
+    expect(screen.queryByRole("dialog", { name: "与陆掌柜对话" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "进入青石镇" }));
+    expect(screen.queryByRole("dialog", { name: "与陆掌柜对话" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "陆掌柜，客栈掌柜" }));
+    expect(screen.getByRole("dialog", { name: "与陆掌柜对话" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1. 请问一下目前状况是怎么样的？" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "2. 是否可以告诉我事情的缘由？" })).toBeInTheDocument();
   });
 
   describe("开发工具入口", () => {

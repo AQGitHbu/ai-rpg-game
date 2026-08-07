@@ -6,7 +6,7 @@ import type { EnemyId, GameState, ScenarioBlueprint, FactId, ItemId, LocationId,
 // application 不能 deep import actions 内部文件。
 // ---------------------------------------------------------------------------
 
-export type { PlayerIntent } from "./intents";
+export type { PlayerIntent, AckPrologueIntent } from "./intents";
 export {
   validateIntent,
   type ValidateIntentResult,
@@ -18,16 +18,6 @@ export {
   type ResolveActionDependencies,
   type ActionFeedback,
 } from "./resolveAction";
-// Phase 7：封闭的 NPC 对话选择规则。
-export {
-  DIALOGUE_CHOICE_KINDS,
-  makeDialogueChoiceId,
-  parseDialogueChoiceKind,
-  projectDialogueChoices,
-  type DialogueChoice,
-  type DialogueChoiceIntent,
-  type DialogueChoiceKind,
-} from "./dialogueChoices";
 // 对话布局重构：确定性 NPC 对白组合。
 export { composeNpcSpeech } from "./npcSpeech";
 // NPC 自由输入：纯规则分类器（零 AI）。
@@ -106,17 +96,22 @@ export function projectAvailableActions(
     }
   }
 
-  // investigate：当前场景可调查且尚未发现的事实（只有 opening 地点携带可调查列表）
-  if (state.currentLocationId === blueprint.openingScene.locationId) {
-    for (const [index, factId] of blueprint.openingScene.investigableFactIds.entries()) {
-      const factState = state.worldFacts.find((f) => f.factId === factId);
-      if (factState !== undefined && !factState.discovered) {
-        actions.push({
-          type: "investigate",
-          factId,
-          label: investigationLabel(index),
-        });
-      }
+  // investigate：开场事实仍按 openingScene 约束；运行时懒生成事实只按
+  // state.worldFacts.locationId 投影，避免把其他地点的隐藏线索全部曝光。
+  const openingFactIds = state.currentLocationId === blueprint.openingScene.locationId
+    ? blueprint.openingScene.investigableFactIds
+    : [];
+  const runtimeFactIds = state.worldFacts
+    .filter((fact) => fact.locationId === state.currentLocationId && !openingFactIds.includes(fact.factId))
+    .map((fact) => fact.factId);
+  for (const [index, factId] of [...openingFactIds, ...runtimeFactIds].entries()) {
+    const factState = state.worldFacts.find((f) => f.factId === factId);
+    if (factState !== undefined && !factState.discovered) {
+      actions.push({
+        type: "investigate",
+        factId,
+        label: investigationLabel(index),
+      });
     }
   }
 
@@ -153,6 +148,9 @@ export function projectAvailableActions(
 
   // Phase 6: start_battle — 位于敌人地点、敌人是 active stage 3 defeat_enemy 目标、未已击败
   if (state.battle.status === "idle" && state.ending === null) {
+    const narrativeBattleTarget = state.narrative.currentScene?.event?.kind === "battle"
+      ? state.narrative.currentScene.event.enemyId
+      : undefined;
     for (const enemy of blueprint.enemies) {
       if (enemy.locationId !== state.currentLocationId) continue;
       if (state.defeatedEnemyIds.includes(enemy.id)) continue;
@@ -163,7 +161,7 @@ export function projectAvailableActions(
         return questState?.status === "active" &&
           quest.objectives.some((obj) => obj.kind === "defeat_enemy" && obj.enemyId === enemy.id);
       });
-      if (isStage3Target) {
+      if (isStage3Target || narrativeBattleTarget === enemy.id) {
         actions.push({
           type: "start_battle",
           enemyId: enemy.id,

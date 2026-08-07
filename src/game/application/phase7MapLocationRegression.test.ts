@@ -4,31 +4,46 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   asLocationId,
-  type GameTypeId,
-  type NewGameInput
+  type ScenarioBlueprint
 } from "@/game/domain";
-import { projectDialogueChoices } from "@/game/gameplay/rpg/actions";
-import scienceFictionFixture from "../../../data/fixtures/phase1/science_fiction.json";
-import urbanFixture from "../../../data/fixtures/phase1/urban.json";
-import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
-import { createGame, type CreateGameDependencies } from "./createGame";
+import {
+  compileScenarioBlueprint,
+  initializeGameState,
+  validateScenarioBlueprintCandidate
+} from "@/game/gameplay/rpg/scenario";
+import {
+  makeValidCandidate,
+  TEST_POLICY,
+  TEST_PROFILE
+} from "@/game/gameplay/rpg/scenario/scenarioBlueprintFixture.testutil";
 import { getCurrentGame } from "./getCurrentGame";
 import { performAction } from "./performAction";
-import { runScenarioPipeline, createUnavailableTestScenarioSource, TEST_TRACE_ID } from "./applicationFixture.testutil";
-import { asGameId, type GameRepository } from "./server/persistence/gameRepository";
+import { asGameId } from "./server/persistence/gameRepository";
 import { createSqliteClient } from "./server/persistence/sqliteClient";
 import {
   createSqliteGameRepository,
   type SqliteGameRepository
 } from "./server/persistence/sqliteGameRepository";
 
-type Phase1Fixture = { input: NewGameInput; seed: string };
+// Phase 14 开局收窄后 createGame 只产出 1 幕起始锚点蓝图；本文件的旅程
+// （observe → talk → move loc_b → reload）需要"运行时扩展后"的完整蓝图。
+// 以 makeValidCandidate 为基座编译（wuxia 题材），直接写入真实 SQLite 存档。
+function compileRuntimeBlueprint(): ScenarioBlueprint {
+  const compiled = compileScenarioBlueprint(
+    validateScenarioBlueprintCandidate(makeValidCandidate(), {
+      profile: TEST_PROFILE,
+      policy: TEST_POLICY,
+      phase: "runtime_expansion"
+    })
+  );
+  if (!compiled.ok) {
+    throw new Error(`fixture 蓝图应当合法：${JSON.stringify(compiled.issues)}`);
+  }
+  return compiled.blueprint;
+}
 
-const CASES: readonly { gameType: GameTypeId; fixture: Phase1Fixture }[] = [
-  { gameType: "wuxia", fixture: wuxiaFixture as unknown as Phase1Fixture },
-  { gameType: "science_fiction", fixture: scienceFictionFixture as unknown as Phase1Fixture },
-  { gameType: "urban", fixture: urbanFixture as unknown as Phase1Fixture }
-];
+const RUNTIME_BLUEPRINT = compileRuntimeBlueprint();
+const PIPELINE = { blueprint: RUNTIME_BLUEPRINT, state: initializeGameState(RUNTIME_BLUEPRINT) };
 
 const FIXED_CREATED_AT = "2026-07-29T00:00:00.000Z";
 const FIXED_ACTION_TIME = "2026-07-29T10:00:00.000Z";
@@ -67,32 +82,30 @@ afterAll(async () => {
   } catch { /* Windows handle not released */ }
 });
 
-function createDependencies(repository: GameRepository, gameId: string): CreateGameDependencies {
-  return {
-    repository,
-    newGameId: () => asGameId(gameId),
-    newSeed: () => "seed-unused",
-    now: () => FIXED_CREATED_AT,
-    scenarioCandidateSource: createUnavailableTestScenarioSource(),
-    newTraceId: () => TEST_TRACE_ID
-  };
+/** 用真实 adapter 写入完整蓝图存档（loc_a 开场，m1 active）。 */
+async function seedGame(repository: SqliteGameRepository, gameId: string): Promise<void> {
+  const created = await repository.createInitialGame({
+    gameId: asGameId(gameId),
+    blueprint: PIPELINE.blueprint,
+    state: PIPELINE.state,
+    createdAt: FIXED_CREATED_AT
+  });
+  expect(created).toEqual({ ok: true });
 }
 
-describe.each(CASES)("Phase 7 地图地点回归（$gameType）", ({ gameType, fixture }) => {
-  it("create → observe → dialogue_choice → move → reload：revision 递增、view 安全", async () => {
-    const baseline = runScenarioPipeline(fixture.input, fixture.seed);
-    const databasePath = join(RUN_ROOT, `journey-${gameType}.sqlite`);
+describe("Phase 7 地图地点回归（wuxia）", () => {
+  it("create → observe → talk → move → reload：revision 递增、view 安全", async () => {
+    const baseline = PIPELINE;
+    const databasePath = join(RUN_ROOT, "journey-wuxia.sqlite");
     const repo = openRepository(databasePath);
 
-    // 1) create
-    const created = await createGame(
-      { input: fixture.input, seed: fixture.seed },
-      createDependencies(repo, `game-phase7-${gameType}`)
-    );
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
+    // 1) 建档
+    await seedGame(repo, "game-phase7-wuxia");
+    const created = await getCurrentGame({ repository: repo });
+    expect(created.status).toBe("active");
+    if (created.status !== "active") return;
     expect(created.view.revision).toBe(0);
-    expect(created.view.world.gameType).toBe(gameType);
+    expect(created.view.world.gameType).toBe("wuxia");
     expect(created.view.worldMap.nodes[0]?.state).toBe("current");
     expect(created.view.locationScene.title).toBe(created.view.currentLocation.name);
 
@@ -107,30 +120,22 @@ describe.each(CASES)("Phase 7 地图地点回归（$gameType）", ({ gameType, f
     expect(observed.view.revision).toBe(1);
     expect(observed.feedback.ok).toBe(true);
 
-    // 3) dialogue_choice: find first NPC with available choices
+    // 3) talk: find first NPC at current location that hasn't been met yet
     const state1 = await repo.getCurrentGame();
     expect(state1.ok).toBe(true);
     if (!state1.ok || state1.status !== "active") return;
 
-    const npcWithChoice = state1.record.state.npcs.find((npcState) => {
-      const choices = projectDialogueChoices(
-        baseline.blueprint, state1.record.state, npcState.npcId
-      );
-      return choices.length > 0;
-    });
+    const npcWithChoice = state1.record.state.npcs.find((npcState) =>
+      npcState.locationId === state1.record.state.currentLocationId && !npcState.met
+    );
 
     let revisionAfterDialogue = 1;
     if (npcWithChoice !== undefined) {
-      const choices = projectDialogueChoices(
-        baseline.blueprint, state1.record.state, npcWithChoice.npcId
-      );
-      const firstChoice = choices[0]!;
       const dialogueResult = await performAction(
         {
           intent: {
-            type: "dialogue_choice",
-            npcId: npcWithChoice.npcId,
-            choiceId: firstChoice.choiceId
+            type: "talk",
+            npcId: npcWithChoice.npcId
           },
           expectedRevision: 1
         },
@@ -143,9 +148,9 @@ describe.each(CASES)("Phase 7 地图地点回归（$gameType）", ({ gameType, f
       revisionAfterDialogue = 2;
     }
 
-    // 4) move to loc_2
+    // 4) move to loc_b
     const moved = await performAction(
-      { intent: { type: "move", locationId: asLocationId("loc_2") }, expectedRevision: revisionAfterDialogue },
+      { intent: { type: "move", locationId: asLocationId("loc_b") }, expectedRevision: revisionAfterDialogue },
       { repository: repo, now: () => FIXED_ACTION_TIME }
     );
     expect(moved.ok).toBe(true);

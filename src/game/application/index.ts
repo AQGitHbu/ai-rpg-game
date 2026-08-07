@@ -48,6 +48,7 @@ export {
   type StoryEventView,
   type NarrativeSceneView
 } from "./gameSessionView";
+export type { NarrativeGenerationProgress } from "./runtimeNarrative";
 // 背包富视图的展示元数据基础类型：UI 经由 facade 中转，禁止直连 domain。
 export {
   type ItemCategory,

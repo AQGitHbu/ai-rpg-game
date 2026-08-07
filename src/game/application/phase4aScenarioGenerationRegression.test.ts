@@ -6,7 +6,9 @@ import { budgetPolicyOf, type NewGameInput } from "@/game/domain";
 import scienceFictionFixture from "../../../data/fixtures/phase1/science_fiction.json";
 import urbanFixture from "../../../data/fixtures/phase1/urban.json";
 import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
-import phase4Manifest from "../../../data/fixtures/phase4/manifest.json";
+// Phase 4A 迁移：契约已升至 scenario-dynamic-v3，fixture 集改用 phase4c 的 v3
+// 合法候选（startAnchor/endingDirection/1 幕开场），而非 phase4 的 v2 全量蓝图。
+import phase4Manifest from "../../../data/fixtures/phase4c/manifest.json";
 import { createGame, type CreateGameDependencies, type CreateGameResult } from "./createGame";
 import { getCurrentGame } from "./getCurrentGame";
 import { TEST_TRACE_ID } from "./applicationFixture.testutil";
@@ -20,13 +22,13 @@ import {
 } from "./server/persistence/sqliteGameRepository";
 
 // ---------------------------------------------------------------------------
-// Phase 4A（Task 5）回归：fixture source × createGame 编排 × 真实 SQLite。
+// Phase 4a（Task 5）回归：fixture source × createGame 编排 × 真实 SQLite。
 // 覆盖三个合法生成 fixture（wuxia / science_fiction / urban）与三个失败
-// fixture（timeout / unrepairable-reference / cross-type-content），证明：
+// fixture（timeout / unrepairable-reference / budget-exceeded），证明：
 //   1) 合法候选 source="generated"、失败路径稳定 fallback；
 //   2) 事件序列与 manifest.expectedStages 逐一吻合（契约测试，仅内部）；
 //   3) reload：全新 repository 重开同一文件，getCurrentGame 投影相同 view；
-//   4) 蓝图守住内容预算与既有双结局路线；
+//   4) 蓝图守住 Phase 14 开场预算（恰 1 地点/1 NPC/1 主线 stage 1，无支线/结局）；
 //   5) 零半初始化记录：唯一一条 revision=0 的完整记录，绝无 corrupt；
 //   6) 玩家可见 view 不含 fixture 名称与内部诊断字段。
 // 临时库只放 tmp/，路径显式注入，不触碰 db/、.foundation 或任何共享仓。
@@ -37,17 +39,32 @@ const WUXIA: Phase1Fixture = { ...(wuxiaFixture as unknown as Phase1Fixture), in
 const SCIENCE_FICTION: Phase1Fixture = { ...(scienceFictionFixture as unknown as Phase1Fixture), input: { ...(scienceFictionFixture as unknown as Phase1Fixture).input, gameLength: "short" } };
 const URBAN: Phase1Fixture = { ...(urbanFixture as unknown as Phase1Fixture), input: { ...(urbanFixture as unknown as Phase1Fixture).input, gameLength: "short" } };
 
-const FIXTURE_ROOT = resolve("data/fixtures/phase4");
+const FIXTURE_ROOT = resolve("data/fixtures/phase4c");
 
-type ManifestFixture = { id: string; expectedStages: string[] };
+type ManifestFixture = {
+  id: string;
+  file: string;
+  gameType: string;
+  seed: string;
+  expectedAttempt: string;
+  expectedCategory?: string;
+  expectedFallback: boolean;
+  expectedStages: string[];
+};
 
-/** manifest 是事件序列的唯一事实来源：契约测试直接消费 expectedStages。 */
-function expectedStages(fixtureId: string): readonly string[] {
-  const entry = (phase4Manifest.fixtures as ManifestFixture[]).find(
-    (fixture) => fixture.id === fixtureId
-  );
-  if (entry === undefined) throw new Error(`manifest 缺少 fixture：${fixtureId}`);
-  return entry.expectedStages;
+const MANIFEST_FIXTURES = phase4Manifest.fixtures as ManifestFixture[];
+
+/** gameType 与 phase1 输入 fixture 的映射（三类型合法样本）。 */
+const INPUT_BY_GAME_TYPE: Record<string, Phase1Fixture> = {
+  wuxia: WUXIA,
+  science_fiction: SCIENCE_FICTION,
+  urban: URBAN
+};
+
+function inputFor(entry: ManifestFixture): Phase1Fixture {
+  const fixture = INPUT_BY_GAME_TYPE[entry.gameType];
+  if (fixture === undefined) throw new Error(`manifest gameType 未映射：${entry.gameType}`);
+  return fixture;
 }
 
 // 与其他 SQLite 测试相同的 tmp/ 策略：每次运行独立目录，先清扫上一轮残留。
@@ -111,7 +128,7 @@ function fixtureDependencies(
     repository,
     newGameId: () => asGameId(gameId),
     newSeed: () => "seed-unused",
-    now: () => "2026-07-28T00:00:00.000Z",
+    now: () => "2026-07-29T00:00:00.000Z",
     scenarioCandidateSource: createFixtureScenarioCandidateSource({
       fixtureRoot: FIXTURE_ROOT,
       fixtureId
@@ -153,73 +170,69 @@ async function createAndReload(
   return { created, record: raw.record };
 }
 
-/** 蓝图必须守住内容预算与既有双结局路线（成功/失败两条 route 各占其一）。 */
+/** Phase 14 收窄后的开场预算形态：起初 1 地点/1 NPC/1 主线 1 幕，无支线/结局。 */
 function assertBudgetsAndEndings(record: GameRecord, label: string): void {
   const { blueprint } = record;
   const policy = budgetPolicyOf(blueprint);
-  expect(blueprint.locations.length, label).toBeGreaterThanOrEqual(policy.opening.mainLocationsMin);
-  expect(blueprint.locations.length, label).toBeLessThanOrEqual(
-    policy.opening.mainLocationsMax + policy.opening.hiddenLocationsMax
-  );
-  expect(blueprint.npcs.length, label).toBeGreaterThanOrEqual(policy.opening.coreNpcsMin);
+  expect(blueprint.locations.length, label).toBe(1);
+  expect(blueprint.npcs.length, label).toBeGreaterThanOrEqual(1);
   expect(blueprint.npcs.length, label).toBeLessThanOrEqual(policy.opening.coreNpcsMax);
-  const sideQuests = blueprint.quests.filter((quest) => quest.kind === "side");
-  expect(sideQuests.length, label).toBeLessThanOrEqual(policy.opening.sideQuestsMax);
-  // 双结局路线：恰好两个结局、ID 互异，且都有可判定的达成条件。
-  expect(blueprint.endings.length, label).toBe(policy.opening.endings);
-  const endingIds = new Set(blueprint.endings.map((ending) => ending.id));
-  expect(endingIds.size, label).toBe(policy.opening.endings);
-  for (const ending of blueprint.endings) {
-    expect(ending.requirements.length, label).toBeGreaterThan(0);
-  }
+  expect(blueprint.quests.length, label).toBe(1);
+  const firstQuest = blueprint.quests[0];
+  expect(firstQuest.kind, label).toBe("main");
+  if (firstQuest.kind !== "main") throw new Error("opening quest must be main");
+  expect(firstQuest.stage, label).toBe(1);
+  expect(blueprint.items.length, label).toBe(0);
+  expect(blueprint.enemies.length, label).toBe(0);
+  expect(blueprint.endings.length, label).toBe(0);
+  // 开始锚点精确指向开场三个起始实体。
+  expect(blueprint.startAnchor.locationId, label).toBe(blueprint.locations[0].id);
+  expect(blueprint.startAnchor.npcId, label).toBe(blueprint.npcs[0].id);
+  expect(blueprint.startAnchor.startQuestId, label).toBe(blueprint.quests[0].id);
+  // 终点方向骨架已锁定（lockedAt >= 1）。
+  expect(blueprint.endingDirection.lockedAt, label).toBeGreaterThanOrEqual(1);
 }
 
 /** 玩家可见面绝不泄漏 fixture 名称或内部诊断字段。 */
 function assertNoInternalLeak(created: CreateGameResult, fixtureId: string): void {
   if (!created.ok) return;
   const serialized = JSON.stringify(created.view);
-  for (const secret of [fixtureId, "fixture", "FIXTURE_", '"diagnostics"', '"traceId"']) {
+  for (const secret of [
+    fixtureId,
+    "fixture",
+    "FIXTURE_",
+    '"diagnostics"',
+    '"traceId"',
+    "responseText",
+    "failureMode"
+  ]) {
     expect(serialized, fixtureId).not.toContain(secret);
   }
 }
 
-describe("Phase 4A 回归：三类型合法 fixture 经 source 生成", () => {
-  const legalCases = [
-    { fixtureId: "generated-wuxia", fixture: WUXIA },
-    { fixtureId: "generated-science-fiction", fixture: SCIENCE_FICTION },
-    { fixtureId: "generated-urban", fixture: URBAN }
-  ] as const;
+/** 六样本：三个合法三类型 + 三个失败（传输超时 / 不可修复引用 / 超预算）。 */
+const SAMPLE_CASES: readonly string[] = [
+  "generated-wuxia",
+  "generated-science-fiction",
+  "generated-urban",
+  "transport-timeout",
+  "unrepairable-reference",
+  "budget-exceeded"
+];
 
-  for (const { fixtureId, fixture } of legalCases) {
-    it(`${fixtureId}：generated + 事件契约 + reload + 预算/双结局 + 零泄漏`, async () => {
+describe("Phase 4a 回归：v4 夹具 × createGame × SQLite（六样本）", () => {
+  for (const fixtureId of SAMPLE_CASES) {
+    const entry = MANIFEST_FIXTURES.find((candidate) => candidate.id === fixtureId);
+    if (entry === undefined) throw new Error(`manifest 缺少 fixture：${fixtureId}`);
+    const expectedSource = entry.expectedFallback ? "fallback" : "generated";
+
+    it(`${fixtureId}：${expectedSource} + 事件契约 + reload + 开场预算 + 零泄漏`, async () => {
       const stages: ScenarioGenerationStage[] = [];
-      const { created, record } = await createAndReload(fixture, fixtureId, stages);
+      const { created, record } = await createAndReload(inputFor(entry), fixtureId, stages);
       if (!created.ok) return;
 
-      expect(created.source).toBe("generated");
-      expect(stages).toEqual(expectedStages(fixtureId));
-      assertBudgetsAndEndings(record, fixtureId);
-      assertNoInternalLeak(created, fixtureId);
-    });
-  }
-});
-
-describe("Phase 4A 回归：失败 fixture 稳定走 fallback", () => {
-  const failureCases = [
-    { fixtureId: "timeout", fixture: WUXIA },
-    { fixtureId: "unrepairable-reference", fixture: WUXIA },
-    { fixtureId: "cross-type-content", fixture: WUXIA }
-  ] as const;
-
-  for (const { fixtureId, fixture } of failureCases) {
-    it(`${fixtureId}：fallback + 事件契约 + reload + 预算/双结局 + 零泄漏`, async () => {
-      const stages: ScenarioGenerationStage[] = [];
-      const { created, record } = await createAndReload(fixture, fixtureId, stages);
-      if (!created.ok) return;
-
-      // 失败路径不半途而废：玩家拿到的是完整 fallback 开局。
-      expect(created.source).toBe("fallback");
-      expect(stages).toEqual(expectedStages(fixtureId));
+      expect(created.source).toBe(expectedSource);
+      expect(stages).toEqual(entry.expectedStages);
       assertBudgetsAndEndings(record, fixtureId);
       assertNoInternalLeak(created, fixtureId);
     });

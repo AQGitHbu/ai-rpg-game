@@ -49,19 +49,20 @@ describe("repairScenarioCandidate", () => {
   it("只移除未知字段并裁剪超预算尾部项", () => {
     const candidate = buildValidCandidate() as MutableCandidate;
     candidate.extraPromptInstruction = "多余指令字段";
-    candidate.npcs = [
-      ...candidate.npcs,
-      {
-        id: "npc_7",
-        name: "多余随从",
-        role: "路人",
-        description: "超预算第七人，未被任何地点引用。",
-        locationId: "loc_2",
-        isCompanion: false,
-        knownFactIds: [],
-        tags: []
-      }
-    ];
+    // v3 开局收窄仅 1 名 NPC：追加 6 名引用干净的 NPC 凑到 7 名必然超预算（coreNpcsMax=6）。
+    const locationId = candidate.locations[0]?.id;
+    if (locationId === undefined) throw new Error("fallback 候选必须含起始地点");
+    const extras = Array.from({ length: 6 }, (_, index) => ({
+      id: `npc_budget_${index + 1}`,
+      name: `多余随从 ${index + 1}`,
+      role: "路人",
+      description: "超预算冗余 NPC，未被任何地点引用。",
+      locationId,
+      isCompanion: false,
+      knownFactIds: [],
+      tags: []
+    }));
+    candidate.npcs = [...candidate.npcs, ...extras];
     const repaired = repairScenarioCandidate(candidate, { policy: REPAIR_POLICY }) as MutableCandidate | null;
     expect(repaired?.extraPromptInstruction).toBeUndefined();
     expect(repaired?.npcs).toHaveLength(6);
@@ -69,15 +70,16 @@ describe("repairScenarioCandidate", () => {
 
   it("非法物品展示稀有度只删除可选字段并保留物品本体", () => {
     const candidate = buildValidCandidate() as MutableCandidate;
-    const sourceItem = candidate.items[1];
-    candidate.items = [
-      ...candidate.items,
-      {
-        ...sourceItem,
-        id: "item_display_invalid",
-        rarity: "legendary"
-      } as unknown as (typeof candidate.items)[number]
-    ];
+    // v3 开局收窄无物品：从零构造一个合法物品 + 非法稀有度，验证只删展示字段。
+    const sourceItem = {
+      id: "item_display_invalid",
+      name: "锈剑",
+      description: "一把生锈的长剑。",
+      category: "equipment",
+      rarity: "legendary",
+      tags: []
+    } as unknown as (typeof candidate.items)[number];
+    candidate.items = [...candidate.items, sourceItem];
 
     const repaired = repairScenarioCandidate(candidate, { policy: REPAIR_POLICY });
     const repairedItem = repaired?.items.find((item) => item.id === "item_display_invalid");
@@ -88,23 +90,24 @@ describe("repairScenarioCandidate", () => {
 
   it("超预算尾部 NPC 被主线引用时，移除安全冗余 NPC 而保留引用 NPC", () => {
     const candidate = buildValidCandidate() as MutableCandidate;
-    candidate.npcs = [
-      ...candidate.npcs,
-      {
-        id: "npc_7",
-        name: "主线遗客",
-        role: "关键线人",
-        description: "主线任务必须找到的线人。",
-        locationId: "loc_2",
-        isCompanion: false,
-        knownFactIds: [],
-        tags: []
-      }
-    ];
+    // v3 开局仅 1 名 NPC；追加 6 名凑到 7 名超预算，其中 npc_7 被主线 talk_to_npc 引用。
+    const locationId = candidate.locations[0]?.id;
+    if (locationId === undefined) throw new Error("fallback 候选必须含起始地点");
+    const extras = Array.from({ length: 6 }, (_, index) => ({
+      id: `npc_budget_${index + 1}`,
+      name: `随从 ${index + 1}`,
+      role: "路人",
+      description: "超预算冗余 NPC。",
+      locationId,
+      isCompanion: false,
+      knownFactIds: [],
+      tags: []
+    }));
+    candidate.npcs = [...candidate.npcs, ...extras];
     candidate.locations = candidate.locations.map((location) => {
-      const npcIds = location.npcIds.filter((id) => id !== "npc_6");
-      return location.id === "loc_2"
-        ? { ...location, npcIds: [...npcIds, "npc_7"] }
+      const npcIds = location.npcIds.filter((id) => id !== "npc_budget_6");
+      return location.id === locationId
+        ? { ...location, npcIds: [...npcIds, "npc_budget_1"] }
         : { ...location, npcIds };
     });
     candidate.quests = candidate.quests.map((quest) =>
@@ -113,7 +116,7 @@ describe("repairScenarioCandidate", () => {
             ...quest,
             objectives: quest.objectives.map((objective) =>
               objective.kind === "talk_to_npc"
-                ? { ...objective, npcId: "npc_7" }
+                ? { ...objective, npcId: "npc_budget_1" }
                 : objective
             )
           }
@@ -124,28 +127,32 @@ describe("repairScenarioCandidate", () => {
 
     expect(repaired).not.toBeNull();
     expect(repaired?.npcs).toHaveLength(6);
-    expect(repaired?.npcs.some((npc) => npc.id === "npc_7")).toBe(true);
-    expect(repaired?.npcs.some((npc) => npc.id === "npc_6")).toBe(false);
+    expect(repaired?.npcs.some((npc) => npc.id === "npc_budget_1")).toBe(true);
+    expect(repaired?.npcs.some((npc) => npc.id === "npc_budget_6")).toBe(false);
   });
 
   it("超预算 NPC 全部被引用时仍拒绝机械修复", () => {
     const candidate = buildValidCandidate() as MutableCandidate;
-    candidate.npcs = [
-      ...candidate.npcs,
-      {
-        id: "npc_7",
-        name: "被引用遗客",
-        role: "关键线人",
-        description: "被地点引用的关键线人。",
-        locationId: "loc_2",
-        isCompanion: false,
-        knownFactIds: [],
-        tags: []
-      }
-    ];
+    // v3 开局仅 1 名 NPC；追加 6 名凑到 7 名超预算，全部被地点 npcIds 引用。
+    const locationId = candidate.locations[0]?.id;
+    if (locationId === undefined) throw new Error("fallback 候选必须含起始地点");
+    const extras = Array.from({ length: 6 }, (_, index) => ({
+      id: `npc_budget_${index + 1}`,
+      name: `被引用随从 ${index + 1}`,
+      role: "关键线人",
+      description: "被地点引用的关键线人。",
+      locationId,
+      isCompanion: false,
+      knownFactIds: [],
+      tags: []
+    }));
+    candidate.npcs = [...candidate.npcs, ...extras];
     candidate.locations = candidate.locations.map((location) =>
-      location.id === "loc_2"
-        ? { ...location, npcIds: [...location.npcIds, "npc_7"] }
+      location.id === locationId
+        ? {
+            ...location,
+            npcIds: [...location.npcIds, ...extras.map((npc) => npc.id)]
+          }
         : location
     );
 
@@ -169,16 +176,10 @@ describe("repairScenarioCandidate", () => {
 
   it("低于预算下限的候选不可修复", () => {
     const candidate = buildValidCandidate() as MutableCandidate;
-    const kept = new Set(candidate.npcs.slice(0, 3).map((npc) => npc.id));
-    candidate.npcs = candidate.npcs.slice(0, 3);
-    candidate.locations = candidate.locations.map((location) => ({
-      ...location,
-      npcIds: location.npcIds.filter((id) => kept.has(id))
-    }));
-    candidate.openingScene = {
-      ...candidate.openingScene,
-      presentNpcIds: candidate.openingScene.presentNpcIds.filter((id) => kept.has(id))
-    };
+    // v3 开局收窄下限为 1 地点 / 1 NPC：清空两者必然低于预算下限，
+    // 机械修复只会裁剪尾部、绝不新增内容 ⇒ 返回 null。
+    candidate.locations = [];
+    candidate.npcs = [];
     expect(repairScenarioCandidate(candidate, { policy: REPAIR_POLICY })).toBeNull();
   });
 });

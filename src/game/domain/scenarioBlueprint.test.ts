@@ -18,12 +18,24 @@ import {
 /** 最小但结构完整的候选蓝图：全部使用普通字符串 ID。 */
 function buildCandidate(): ScenarioBlueprintCandidate {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generationId: "gen-0001",
     seed: "seed-1",
     templateVersion: "tpl-1",
     gameType: "wuxia",
     inputDigest: "digest-abc",
+    // Phase 14：起始锚点（开局生成，运行时只读）。
+    startAnchor: {
+      locationId: "loc_village",
+      npcId: "npc_elder",
+      startQuestId: "quest_main_1"
+    },
+    // Phase 14：结局方向骨架（开局生成，运行时具体化）。
+    endingDirection: {
+      theme: "复仇与救赎",
+      possibleTones: ["triumph", "tragedy", "bittersweet"],
+      lockedAt: 3
+    },
     world: {
       summary: "江湖动荡，门派纷争。",
       tone: "沉稳",
@@ -178,7 +190,7 @@ describe("branded id helpers", () => {
 describe("candidate vs compiled blueprint", () => {
   it("accepts plain string ids in a candidate", () => {
     const candidate = buildCandidate();
-    expect(candidate.schemaVersion).toBe(1);
+    expect(candidate.schemaVersion).toBe(2);
     expect(candidate.openingScene.locationId).toBe("loc_village");
   });
 

@@ -63,6 +63,7 @@ describe("source factories captureSink passthrough", () => {
     const fetchSpy = vi.fn(async () =>
       new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
         world: {}, openingScene: {}, player: {},
+        startAnchor: {}, endingDirection: {},
         locations: [], npcs: [], quests: [], items: [], enemies: [], endings: [],
       }) } }] }), { status: 200, headers: { "content-type": "application/json" } }),
     );

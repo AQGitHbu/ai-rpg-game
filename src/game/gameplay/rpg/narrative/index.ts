@@ -22,6 +22,18 @@ export {
 } from "./approveBlueprintExpansion";
 
 export {
+  approveEndingProposal,
+  type ApproveEndingProposalInput,
+  type EndingApprovalDecision,
+  type EndingApprovalRejection,
+} from "./approveEndingProposal";
+
+export {
+  applyEndingToBlueprint,
+  type ApplyEndingToBlueprintInput,
+} from "./applyEndingToBlueprint";
+
+export {
   compileBlueprintExpansion,
   type CompileBlueprintExpansionInput,
   type CompileBlueprintExpansionResult,
@@ -38,11 +50,15 @@ export { approveNpcPerformance } from "./approveNpcPerformance";
 
 export {
   type NarrativeActionCandidate,
+  type NpcInstruction,
   type NpcPerformanceProposal,
   type NarrativeApprovalCategory,
   type NarrativeApprovalResult,
   type ProposedNewLocation,
   type ProposedNewNpc,
+  type ProposedNewFact,
+  type ProposedNewItem,
+  type ProposedNewEnemy,
   type ApprovedBlueprintExpansion,
   type BlueprintExpansionRejection,
   type BlueprintExpansionDecision,

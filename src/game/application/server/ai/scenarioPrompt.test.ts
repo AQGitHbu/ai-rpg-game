@@ -72,13 +72,12 @@ describe("buildScenarioPromptMessages", () => {
     expect(joined).toMatch(/结局/);
   });
 
-  it("user 消息指导地点分级：大型聚落标 town（至多 2 个）、其余标 scene", () => {
+  it("user 消息指导 Phase 14 开局收窄：起始锚点、序幕与实体数量硬约束", () => {
     const messages = buildScenarioPromptMessages(buildRequest(), PROFILES);
     const joined = messages.map((message) => message.content).join("\n");
-    expect(joined).toContain("scale");
-    expect(joined).toContain("\"town\"");
-    expect(joined).toContain("\"scene\"");
-    expect(joined).toContain(String(createBudgetPolicy("open").opening.townLocationsMax));
+    expect(joined).toContain("1 个主要地点、1 个 NPC、1 个主线任务（stage 1）");
+    expect(joined).toContain('startAnchor 固定为 { locationId: "loc_1", npcId: "npc_1", startQuestId: "quest_main_1" }');
+    expect(joined).toContain("items / enemies / endings 必须为空数组");
   });
 
   it("明确锁定任务目标枚举，避免模型把 obtain_item 改写成自然语言同义词", () => {
@@ -88,7 +87,7 @@ describe("buildScenarioPromptMessages", () => {
     expect(joined).toContain("禁止写 collect_item");
   });
 
-  it("要求中长线主线目标逐幕推进，且契约模板不重复目标", () => {
+  it("要求 stage 1 主线任务目标可验证、结果闭环且无孤儿事实", () => {
     const base = buildRequest();
     const longRequest: ScenarioGenerationRequest = {
       ...base,
@@ -96,24 +95,21 @@ describe("buildScenarioPromptMessages", () => {
     };
     const messages = buildScenarioPromptMessages(longRequest, PROFILES);
     const joined = messages.map((message) => message.content).join("\n");
-    expect(joined).toContain("不得重复前面主线幕的同一 objective kind+target");
-    expect(joined).toContain("不得让新解锁任务的目标在解锁前已满足");
-    expect(joined).toContain("每条 source=generated 的事实必须至少出现在 openingScene.investigableFactIds、某个 NPC.knownFactIds、discover_fact objective 或 fact_discovered ending requirement 之一");
-    expect(joined).toContain("medium/long 主线必须让每一条 source=generated 的事实都由主线 discover_fact objective 直接发现");
-    expect(joined).toContain('"kind":"talk_to_npc","npcId":"npc_2"');
-    expect(joined).toContain('"kind":"obtain_item","itemId":"item_key"');
+    expect(joined).toContain("stage 1 主线任务必须有至少一个可验证 objective");
+    expect(joined).toContain("onSuccess/onFailure 只能使用 closed（后续任务由运行时解锁）");
+    expect(joined).toContain("每条 source=generated 的事实必须至少出现在 openingScene.investigableFactIds 或某个 NPC.knownFactIds 中");
     expect(joined).toContain('"kind":"talk_to_npc","npcId":"npc_1"');
-    expect(joined).toContain('"kind":"talk_to_npc","npcId":"npc_4"');
-    expect(joined).toContain('"kind":"defeat_enemy","enemyId":"enemy_boss"');
   });
 
-  it("明确锁定物品展示元数据枚举与边界", () => {
+  it("明确锁定开局实体边界：items/enemies/endings 为空、结局方向与序幕必填", () => {
     const messages = buildScenarioPromptMessages(buildRequest(), PROFILES);
     const joined = messages.map((message) => message.content).join("\n");
-    expect(joined).toContain("category 只能是 equipment、consumable、material、quest");
-    expect(joined).toContain("rarity 只能是 common、fine、rare、epic");
-    expect(joined).toContain("level 必须是 1~99 的整数");
-    expect(joined).toContain("statLines 最多 6 条");
+    expect(joined).toContain("items / enemies / endings 必须为空数组");
+    expect(joined).toContain("endingDirection 必须含 theme");
+    expect(joined).toContain("possibleTones");
+    expect(joined).toContain("lockedAt");
+    expect(joined).toContain("openingScene 必须含 prologue");
+    expect(joined).toContain("tone 只能是 serious / epic / mysterious");
   });
 
   it("嵌入由同一输入与 seed 派生的完整有效候选样例，作为模型必须遵守的 JSON 契约", () => {

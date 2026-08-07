@@ -22,7 +22,7 @@ import {
 // ---------------------------------------------------------------------------
 // Phase 4C（Task 4）契约回归：版本化离线 fixture 集 × createGame 编排 × 真实 SQLite。
 // 与 phase4a 回归同构，但遍历 phase4c manifest 的全部 12 条 entry（不挑样本），证明：
-//   1) 集合版本化：候选契约升至 scenario-dynamic-v2，fixture 集版本 phase4c-v1；
+//   1) 集合版本化：候选契约升至 scenario-dynamic-v3（Phase 14 开局收窄），fixture 集版本 phase4c-v2；
 //   2) expectedFallback=false ⇒ source="generated"，true ⇒ 稳定 fallback；
 //   3) 事件序列与 manifest.expectedStages 逐一吻合（契约测试，仅内部）；
 //   4) reload：全新 repository 重开同一文件，getCurrentGame 投影相同 view；
@@ -167,25 +167,27 @@ async function createAndReload(
   return { created, record: raw.record };
 }
 
-/** 蓝图必须守住内容预算与既有双结局路线（成功/失败两条 route 各占其一）。 */
+/** 开局收窄后的预算与最终形态：起始锚点恰好 1 地点/1 NPC/1 主线 stage 1，实体数组为空。 */
 function assertBudgetsAndEndings(record: GameRecord, label: string): void {
   const { blueprint } = record;
   const policy = budgetPolicyOf(blueprint);
-  expect(blueprint.locations.length, label).toBeGreaterThanOrEqual(policy.opening.mainLocationsMin);
-  expect(blueprint.locations.length, label).toBeLessThanOrEqual(
-    policy.opening.mainLocationsMax + policy.opening.hiddenLocationsMax
-  );
-  expect(blueprint.npcs.length, label).toBeGreaterThanOrEqual(policy.opening.coreNpcsMin);
+  expect(blueprint.locations.length, label).toBe(1);
+  expect(blueprint.npcs.length, label).toBeGreaterThanOrEqual(1);
   expect(blueprint.npcs.length, label).toBeLessThanOrEqual(policy.opening.coreNpcsMax);
-  const sideQuests = blueprint.quests.filter((quest) => quest.kind === "side");
-  expect(sideQuests.length, label).toBeLessThanOrEqual(policy.opening.sideQuestsMax);
-  // 双结局路线：恰好两个结局、ID 互异，且都有可判定的达成条件。
-  expect(blueprint.endings.length, label).toBe(policy.opening.endings);
-  const endingIds = new Set(blueprint.endings.map((ending) => ending.id));
-  expect(endingIds.size, label).toBe(policy.opening.endings);
-  for (const ending of blueprint.endings) {
-    expect(ending.requirements.length, label).toBeGreaterThan(0);
-  }
+  expect(blueprint.quests.length, label).toBe(1);
+  const firstQuest = blueprint.quests[0];
+  expect(firstQuest.kind, label).toBe("main");
+  if (firstQuest.kind !== "main") throw new Error("opening quest must be main");
+  expect(firstQuest.stage, label).toBe(1);
+  expect(blueprint.items.length, label).toBe(0);
+  expect(blueprint.enemies.length, label).toBe(0);
+  expect(blueprint.endings.length, label).toBe(0);
+  // 起始锚点必须指向既有起始实体。
+  expect(blueprint.startAnchor.locationId, label).toBe(blueprint.locations[0].id);
+  expect(blueprint.startAnchor.npcId, label).toBe(blueprint.npcs[0].id);
+  expect(blueprint.startAnchor.startQuestId, label).toBe(blueprint.quests[0].id);
+  // 结局方向骨架必须可达（lockedAt ≥ 1）。
+  expect(blueprint.endingDirection.lockedAt, label).toBeGreaterThanOrEqual(1);
 }
 
 /** 玩家可见面绝不泄漏 fixture 名称或内部诊断字段（4C 黑名单再加两项）。 */
@@ -206,9 +208,9 @@ function assertNoInternalLeak(created: CreateGameResult, fixtureId: string): voi
 }
 
 describe("Phase 4C 回归：fixture 集版本化", () => {
-  it("manifest：候选契约 scenario-dynamic-v2，fixture 集版本 phase4c-v1", () => {
-    expect(phase4cManifest.contractVersion).toBe("scenario-dynamic-v2");
-    expect(phase4cManifest.fixtureSetVersion).toBe("phase4c-v1");
+  it("manifest：候选契约 scenario-dynamic-v3，fixture 集版本 phase4c-v2", () => {
+    expect(phase4cManifest.contractVersion).toBe("scenario-dynamic-v3");
+    expect(phase4cManifest.fixtureSetVersion).toBe("phase4c-v2");
     expect(phase4cManifest.fixtures).toHaveLength(12);
   });
 });

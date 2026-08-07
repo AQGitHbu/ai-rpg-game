@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { NewGameInput } from "@/game/domain";
+import { asNpcId, type NewGameInput } from "@/game/domain";
 import { asGameId, type GameRecord, type GameRepository } from "../persistence/gameRepository";
 import { runScenarioPipeline } from "../../applicationFixture.testutil";
 import { NARRATIVE_CONTRACT_VERSION } from "../../runtimeNarrative";
@@ -87,5 +87,124 @@ describe("RuntimeNarrativeTaskCoordinator", () => {
     await writeCompleted.promise;
     expect(record.state.narrative.generation).toEqual({ status: "idle" });
     expect(await coordinator.ensure()).toBe("not_pending");
+  });
+
+  it("STALE_GAME_REVISION 会在同一后台任务内最多重试两次，避免一次冲突永久丢任务", async () => {
+    const record = pendingRecord();
+    let applyAttempts = 0;
+    const completed = deferred();
+    const unavailable = () => ({
+      async generate() {
+        return {
+          ok: false as const,
+          provenance: "unavailable" as const,
+          category: "service_error" as const,
+          diagnostics: {
+            traceId: "test", contractVersion: NARRATIVE_CONTRACT_VERSION,
+            stage: "failed" as const, category: "service_error" as const,
+          },
+        };
+      },
+    });
+    const repository: GameRepository = {
+      async createInitialGame() { return { ok: true }; },
+      async getCurrentGame() { return { ok: true as const, status: "active" as const, record }; },
+      async applyResolvedAction() {
+        applyAttempts += 1;
+        if (applyAttempts === 3) completed.resolve();
+        return { ok: false as const, code: "STALE_GAME_REVISION" as const };
+      },
+      async applyBlueprintExpansion() {
+        return { ok: false as const, code: "STALE_GAME_REVISION" as const };
+      },
+    };
+    const coordinator = new RuntimeNarrativeTaskCoordinator({
+      repository,
+      newTraceId: () => "stale-coordinator",
+      now: () => "2026-07-31T01:02:03.000Z",
+      runtimeNarrativeSources: {
+        directorSource: unavailable(),
+        sceneScriptSource: unavailable(),
+        npcLineSource: unavailable(),
+      },
+    });
+
+    expect(await coordinator.ensure()).toBe("queued");
+    await completed.promise;
+    expect(applyAttempts).toBe(3);
+    expect(record.state.narrative.generation.status).toBe("pending");
+  });
+
+  it("对话回应 followup 桥接：pending 携带 dialogue_response 触发且 currentScene 为 followup 时启动后台任务", async () => {
+    let record = pendingRecord();
+    const directorStarted = deferred();
+    const writeCompleted = deferred();
+    const repository: GameRepository = {
+      async createInitialGame() { return { ok: true }; },
+      async getCurrentGame() { return { ok: true as const, status: "active" as const, record }; },
+      async applyResolvedAction(input) {
+        record = { ...record, state: input.nextState, revision: record.revision + 1 };
+        writeCompleted.resolve();
+        return { ok: true as const, record };
+      },
+      async applyBlueprintExpansion(input) {
+        record = { ...record, blueprint: input.nextBlueprint, state: input.nextState, revision: record.revision + 1 };
+        return { ok: true as const, record };
+      },
+    };
+    const coordinator = new RuntimeNarrativeTaskCoordinator({
+      repository,
+      newTraceId: () => "bridge-coordinator",
+      now: () => "2026-07-31T01:02:03.000Z",
+      runtimeNarrativeSources: {
+        directorSource: {
+          async generate() {
+            directorStarted.resolve();
+            return {
+              ok: false as const,
+              provenance: "unavailable" as const,
+              category: "service_error" as const,
+              diagnostics: {
+                traceId: "test", contractVersion: NARRATIVE_CONTRACT_VERSION,
+                stage: "failed" as const, category: "service_error" as const,
+              },
+            };
+          },
+        },
+        sceneScriptSource: { async generate() { throw new Error("not reached"); } },
+        npcLineSource: { async generate() { throw new Error("not reached"); } },
+      },
+    });
+    record = {
+      ...record,
+      state: {
+        ...record.state,
+        narrative: {
+          currentScene: {
+            sceneId: "followup-scene",
+            turn: 1,
+            narration: "对方似乎还有话没有说完。",
+            usedFactIds: [],
+            npcLine: { npcId: asNpcId("npc_1"), text: "事情并不像表面那么简单。", emotion: "guarded", usedFactIds: [] },
+            choices: [
+              { choiceToken: "f1", label: "继续追问", choiceKind: "dialogue_response", dialogueIntent: "ask_more", actionKey: "dialogue:f1" },
+              { choiceToken: "f2", label: "暂且告辞", choiceKind: "dialogue_response", dialogueIntent: "leave", actionKey: "dialogue:f2" },
+            ],
+            source: "generated",
+          },
+          generation: {
+            status: "pending",
+            requestedAt: "2026-07-30T08:00:00.000Z",
+            triggerContext: { kind: "dialogue_response", npcId: asNpcId("npc_1"), dialogueIntent: "ask_more", playerText: "哦？" },
+          },
+          mode: "ai",
+        },
+      },
+    };
+    expect(await coordinator.ensure()).toBe("queued");
+    await directorStarted.promise;
+    await writeCompleted.promise;
+    expect(record.state.narrative.generation.status).toBe("idle");
+    expect(record.state.narrative.currentScene?.source).toBe("fallback");
   });
 });

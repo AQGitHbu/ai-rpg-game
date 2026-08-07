@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import {
   createBudgetPolicy,
   validateNewGameInput,
@@ -7,14 +7,10 @@ import {
   type ScenarioBlueprintCandidate,
   type ValidatedNewGameInput
 } from "@/game/domain";
-import wuxiaFixture from "../../../../../data/fixtures/phase1/wuxia.json";
-import scienceFictionFixture from "../../../../../data/fixtures/phase1/science_fiction.json";
-import urbanFixture from "../../../../../data/fixtures/phase1/urban.json";
 import { compileScenarioBlueprint, initializeGameState } from "./compileScenarioBlueprint";
 import { createFallbackBlueprint, FALLBACK_TEMPLATE_VERSION } from "./createFallbackBlueprint";
 import { loadScenarioProfiles, type ScenarioProfiles } from "./gameTypeProfiles";
 import { createFallbackBlueprint as createFallbackBlueprintViaFacade } from "./index";
-import { analyzeQuestReachability } from "./questGraph";
 import {
   PHASE1_NUMERIC_RANGES,
   validateScenarioBlueprintCandidate
@@ -97,7 +93,7 @@ describe("createFallbackBlueprint：确定性", () => {
     const candidate = generate({}, "seed-meta");
     expect(candidate.seed).toBe("seed-meta");
     expect(candidate.templateVersion).toBe(FALLBACK_TEMPLATE_VERSION);
-    expect(candidate.schemaVersion).toBe(1);
+    expect(candidate.schemaVersion).toBe(2);
     expect(candidate.gameType).toBe("wuxia");
   });
 
@@ -114,20 +110,18 @@ describe("createFallbackBlueprint：seed 敏感性", () => {
     expect(b.inputDigest).not.toBe(a.inputDigest);
     for (const candidate of [a, b]) {
       expect(candidate.budgetPolicy).toEqual(policyFor());
-      expect(candidate.locations.filter((entry) => entry.kind === "main")).toHaveLength(4);
-      expect(candidate.endings).toHaveLength(2);
-      expect(candidate.npcs.length).toBeGreaterThanOrEqual(policyFor().opening.coreNpcsMin);
-      expect(candidate.npcs.length).toBeLessThanOrEqual(policyFor().opening.coreNpcsMax);
+      // Phase 14 开局收窄：1 地点 / 1 NPC / 0 结局。
+      expect(candidate.locations.filter((entry) => entry.kind === "main")).toHaveLength(1);
+      expect(candidate.endings).toHaveLength(0);
+      expect(candidate.npcs).toHaveLength(1);
     }
   });
 
-  it("多个 seed 下 NPC 数量始终落在 4–6，支线不超过 2", () => {
+  it("多个 seed 下 NPC 数量始终为 1，支线为 0", () => {
     for (const seed of ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"]) {
       const candidate = generate({}, seed);
-      expect(candidate.npcs.length).toBeGreaterThanOrEqual(4);
-      expect(candidate.npcs.length).toBeLessThanOrEqual(6);
-      expect(candidate.quests.filter((entry) => entry.kind === "side").length)
-        .toBeLessThanOrEqual(policyFor().opening.sideQuestsMax);
+      expect(candidate.npcs).toHaveLength(1);
+      expect(candidate.quests.filter((entry) => entry.kind === "side").length).toBe(0);
     }
   });
 });
@@ -180,95 +174,22 @@ describe("createFallbackBlueprint：inputDigest 覆盖全部影响字段", () =>
 describe("createFallbackBlueprint：内容预算与结构", () => {
   const candidate = createFallbackBlueprint(buildInput(), "seed-structure");
 
-  it("恰好 4 个主要地点 + 1 个隐藏地点", () => {
-    expect(candidate.locations.filter((entry) => entry.kind === "main")).toHaveLength(4);
-    expect(candidate.locations.filter((entry) => entry.kind === "hidden")).toHaveLength(1);
+  it("Phase 14：恰好 1 个主要地点，0 个隐藏地点", () => {
+    expect(candidate.locations.filter((entry) => entry.kind === "main")).toHaveLength(1);
+    expect(candidate.locations.filter((entry) => entry.kind === "hidden")).toHaveLength(0);
   });
 
-  it("主线幕数等于 policy.mainActs，支线 1–2 条", () => {
-    const policy = policyFor();
+  it("Phase 14：仅 1 个主线任务（stage 1），0 支线", () => {
     const mains = candidate.quests.filter((entry) => entry.kind === "main");
-    expect(mains).toHaveLength(policy.mainActs);
-    expect(mains.map((entry) => (entry.kind === "main" ? entry.stage : 0)).sort((a, b) => a - b))
-      .toEqual(Array.from({ length: policy.mainActs }, (_, i) => i + 1));
-    const sides = candidate.quests.filter((entry) => entry.kind === "side");
-    expect(sides.length).toBeGreaterThanOrEqual(1);
-    expect(sides.length).toBeLessThanOrEqual(2);
+    expect(mains).toHaveLength(1);
+    expect(mains[0].stage).toBe(1);
+    expect(candidate.quests.filter((entry) => entry.kind === "side")).toHaveLength(0);
   });
 
-  it("medium/long 主线目标逐幕推进且不会重复已满足目标", () => {
-    const expectedChain = [
-      "visit_location:loc_2",
-      "talk_to_npc:npc_2",
-      "visit_location:loc_3",
-      "obtain_item:item_key",
-      "talk_to_npc:npc_3",
-      "talk_to_npc:npc_1",
-      "talk_to_npc:npc_4",
-      "visit_location:loc_4",
-    ];
-
-    for (const gameLength of ["medium", "long"] as const) {
-      const generated = generate({ gameLength }, `objective-chain-${gameLength}`);
-      const policy = policyFor({ gameLength });
-      const mainQuests = generated.quests
-        .filter((entry): entry is Extract<typeof entry, { kind: "main" }> => entry.kind === "main")
-        .sort((left, right) => left.stage - right.stage);
-      const signatures = mainQuests.map((quest) => {
-        const objective = quest.objectives[0];
-        switch (objective.kind) {
-          case "visit_location": return `${objective.kind}:${objective.locationId}`;
-          case "talk_to_npc": return `${objective.kind}:${objective.npcId}`;
-          case "obtain_item": return `${objective.kind}:${objective.itemId}`;
-          case "discover_fact": return `${objective.kind}:${objective.factId}`;
-          case "defeat_enemy": return `${objective.kind}:${objective.enemyId}`;
-        }
-      });
-
-      const expected = gameLength === "medium"
-        ? [
-          "visit_location:loc_2",
-          "talk_to_npc:npc_2",
-          "visit_location:loc_3",
-          "obtain_item:item_key",
-          "visit_location:loc_4",
-        ]
-        : expectedChain;
-      expect(signatures).toEqual(expected.slice(0, policy.mainActs));
-      expect(new Set(signatures).size).toBe(signatures.length);
-      expect(new Set(mainQuests.map((quest) => quest.description)).size).toBe(mainQuests.length);
-      for (const quest of mainQuests) expect(quest.description.trim()).toContain(String(quest.stage));
-      const finalQuest = mainQuests.at(-1);
-      expect(finalQuest?.objectives.map((objective) => {
-        switch (objective.kind) {
-          case "visit_location": return `${objective.kind}:${objective.locationId}`;
-          case "defeat_enemy": return `${objective.kind}:${objective.enemyId}`;
-          default: return objective.kind;
-        }
-      })).toEqual(["visit_location:loc_4", "defeat_enemy:enemy_boss"]);
-      const generatedFactObjectives = mainQuests.flatMap((quest) => quest.objectives)
-        .filter((objective): objective is Extract<typeof objective, { kind: "discover_fact" }> => objective.kind === "discover_fact")
-        .map((objective) => objective.factId);
-      expect(generatedFactObjectives).toEqual(expect.arrayContaining(["fact_gen_1", "fact_gen_2"]));
-      const validation = validateScenarioBlueprintCandidate(generated, {
-        profile: PROFILES.gameTypeProfiles[generated.gameType],
-        policy,
-      });
-      expect(validation.ok ? [] : validation.issues).toEqual([]);
-    }
-  });
-
-  it("3 类普通敌人 + 1 名 Boss，数值全部在 Phase 1 范围内", () => {
-    expect(candidate.enemies.filter((entry) => entry.tier === "normal")).toHaveLength(3);
-    expect(candidate.enemies.filter((entry) => entry.tier === "boss")).toHaveLength(1);
-    for (const enemy of candidate.enemies) {
-      expect(enemy.stats.hp).toBeGreaterThanOrEqual(PHASE1_NUMERIC_RANGES.enemyHp.min);
-      expect(enemy.stats.hp).toBeLessThanOrEqual(PHASE1_NUMERIC_RANGES.enemyHp.max);
-      expect(enemy.stats.attack).toBeGreaterThanOrEqual(PHASE1_NUMERIC_RANGES.enemyAttack.min);
-      expect(enemy.stats.attack).toBeLessThanOrEqual(PHASE1_NUMERIC_RANGES.enemyAttack.max);
-      expect(enemy.stats.defense).toBeGreaterThanOrEqual(PHASE1_NUMERIC_RANGES.enemyDefense.min);
-      expect(enemy.stats.defense).toBeLessThanOrEqual(PHASE1_NUMERIC_RANGES.enemyDefense.max);
-    }
+  it("Phase 14：items/enemies/endings 为空数组", () => {
+    expect(candidate.items).toEqual([]);
+    expect(candidate.enemies).toEqual([]);
+    expect(candidate.endings).toEqual([]);
   });
 
   it("玩家出生地点/物品/数值合法", () => {
@@ -297,12 +218,6 @@ describe("createFallbackBlueprint：内容预算与结构", () => {
       const npc = candidate.npcs.find((entry) => entry.id === npcId);
       expect(npc?.locationId).toBe(candidate.openingScene.locationId);
     }
-  });
-
-  it("两个结局均从初始主线可达", () => {
-    const analysis = analyzeQuestReachability(candidate.quests, candidate.endings);
-    expect(analysis.reachableEndingIds).toHaveLength(2);
-    expect(analysis.loopsWithoutClosure).toEqual([]);
   });
 });
 
@@ -437,140 +352,66 @@ describe("createFallbackBlueprint：标签来自 profile.allowedTags", () => {
   }
 });
 
-describe("createFallbackBlueprint：地点可取得物品（Phase 5）", () => {
-  for (const gameType of ALL_GAME_TYPES) {
-    it(`${gameType} 的 obtain_item 目标物品放在唯一的可达主要地点`, () => {
-      const candidate = generate({ gameType }, `available-items-${gameType}`);
-      const mains = candidate.quests.filter((entry) => entry.kind === "main");
-      const obtainObjectives = mains.flatMap((quest) =>
-        quest.objectives.filter((o): o is { kind: "obtain_item"; itemId: string } => o.kind === "obtain_item")
-      );
-      for (const obj of obtainObjectives) {
-        const hosts = candidate.locations.filter((entry) =>
-          entry.availableItemIds.includes(obj.itemId)
-        );
-        expect(hosts).toHaveLength(1);
-        expect(hosts[0]?.kind).toBe("main");
-      }
-      // 关键物品始终放在某个主要地点（无论是否有 obtain_item 目标引用）。
-      const keyHosts = candidate.locations.filter((entry) =>
-        entry.availableItemIds.includes("item_key")
-      );
-      expect(keyHosts).toHaveLength(1);
-      expect(keyHosts[0]?.kind).toBe("main");
-    });
+// ---------------------------------------------------------------------------
+// Phase 14：开局 fallback 收窄——仅起始锚点 + 序幕 + 结局方向。
+// ---------------------------------------------------------------------------
 
-    it(`${gameType} 的初始物品不出现在任何地点的可取得列表，且引用均存在`, () => {
-      const candidate = generate({ gameType }, `available-items-${gameType}`);
-      const itemIds = new Set(candidate.items.map((entry) => entry.id));
-      const startingItemIds = new Set(candidate.player.startingItemIds);
-      for (const location of candidate.locations) {
-        for (const itemId of location.availableItemIds) {
-          expect(itemIds.has(itemId), `itemId=${itemId}`).toBe(true);
-          expect(startingItemIds.has(itemId), `itemId=${itemId}`).toBe(false);
-        }
-      }
-    });
-  }
-});
-
-describe("createFallbackBlueprint：town 地点覆盖", () => {
-  it("全题材模板恰含一个 town 地点（loc_2，主线一阶段 visit 目标）", () => {
-    for (const gameType of ALL_GAME_TYPES) {
-      const candidate = generate({ gameType });
-      const townLocations = candidate.locations.filter((entry) => entry.scale === "town");
-      expect(townLocations.map((entry) => entry.id)).toEqual(["loc_2"]);
-      // 其余地点不写 scale 字段（缺省即 scene，旧存档零迁移模式）。
-      for (const location of candidate.locations) {
-        if (String(location.id) !== "loc_2") expect(location.scale).toBeUndefined();
-      }
-    }
+describe("Phase 14 开局 fallback 收窄", () => {
+  test("只生成 1 个地点", () => {
+    const blueprint = createFallbackBlueprint(buildInput(), "test-seed");
+    expect(blueprint.locations).toHaveLength(1);
+    expect(blueprint.locations[0].id).toBe("loc_1");
   });
-});
 
-describe("createFallbackBlueprint：fixture 回归 pin", () => {
-  type FallbackFixture = {
-    input: NewGameInput;
-    seed: string;
-    expected: {
-      templateVersion: string;
-      inputDigest: string;
-      generationId: string;
-      locationIds: string[];
-      questIds: string[];
-      endingIds: string[];
-      npcCount: number;
-      normalEnemyCount: number;
-      bossEnemyId: string;
-      keyItemLocationId: string;
-    };
-  };
+  test("只生成 1 个 NPC", () => {
+    const blueprint = createFallbackBlueprint(buildInput(), "test-seed");
+    expect(blueprint.npcs).toHaveLength(1);
+    expect(blueprint.npcs[0].id).toBe("npc_1");
+  });
 
-  const fixtures: Record<string, FallbackFixture> = {
-    wuxia: wuxiaFixture as unknown as FallbackFixture,
-    science_fiction: scienceFictionFixture as unknown as FallbackFixture,
-    urban: urbanFixture as unknown as FallbackFixture
-  };
+  test("只生成 1 个任务（stage 1）", () => {
+    const blueprint = createFallbackBlueprint(buildInput(), "test-seed");
+    expect(blueprint.quests).toHaveLength(1);
+    expect(blueprint.quests[0].id).toBe("quest_main_1");
+  });
 
-  for (const [name, fixture] of Object.entries(fixtures)) {
-    it(`${name} fixture 的输入 + seed 复现全部 pin 值`, () => {
-      const validated = validateNewGameInput(fixture.input);
-      expect(validated.ok).toBe(true);
-      if (!validated.ok) return;
-      const candidate = createFallbackBlueprint(validated.value, fixture.seed);
-      expect(candidate.templateVersion).toBe(fixture.expected.templateVersion);
-      expect(candidate.inputDigest).toBe(fixture.expected.inputDigest);
-      expect(candidate.generationId).toBe(fixture.expected.generationId);
-      expect(candidate.locations.map((entry) => entry.id)).toEqual(fixture.expected.locationIds);
-      expect(candidate.quests.map((entry) => entry.id)).toEqual(fixture.expected.questIds);
-      expect(candidate.endings.map((entry) => entry.id)).toEqual(fixture.expected.endingIds);
-      expect(candidate.npcs).toHaveLength(fixture.expected.npcCount);
-      expect(candidate.enemies.filter((entry) => entry.tier === "normal"))
-        .toHaveLength(fixture.expected.normalEnemyCount);
-      expect(candidate.enemies.find((entry) => entry.tier === "boss")?.id)
-        .toBe(fixture.expected.bossEnemyId);
-      // Phase 5 pin：主线关键物品的落位地点。
-      const keyHost = candidate.locations.find((entry) =>
-        entry.availableItemIds.includes("item_key")
-      );
-      expect(keyHost?.id).toBe(fixture.expected.keyItemLocationId);
+  test("items/enemies/endings 为空数组", () => {
+    const blueprint = createFallbackBlueprint(buildInput(), "test-seed");
+    expect(blueprint.items).toEqual([]);
+    expect(blueprint.enemies).toEqual([]);
+    expect(blueprint.endings).toEqual([]);
+  });
+
+  test("含 startAnchor", () => {
+    const blueprint = createFallbackBlueprint(buildInput(), "test-seed");
+    expect(blueprint.startAnchor).toEqual({
+      locationId: "loc_1",
+      npcId: "npc_1",
+      startQuestId: "quest_main_1",
     });
-  }
-});
+  });
 
-// ---------------------------------------------------------------------------
-// 背包界面重构：fallback 模板物品携带展示元数据，且仍通过完整管线。
-// ---------------------------------------------------------------------------
+  test("含 endingDirection", () => {
+    const blueprint = createFallbackBlueprint(buildInput(), "test-seed");
+    expect(blueprint.endingDirection).toBeDefined();
+    expect(blueprint.endingDirection.theme).toBeTruthy();
+    expect(blueprint.endingDirection.possibleTones.length).toBeGreaterThan(0);
+    expect(blueprint.endingDirection.lockedAt).toBeGreaterThanOrEqual(1);
+  });
 
-describe("createFallbackBlueprint：物品展示元数据", () => {
-  for (const gameType of ALL_GAME_TYPES) {
-    it(`${gameType} 的两件物品都有显式 category/rarity，并通过校验管线`, () => {
-      const candidate = generate({ gameType });
-      const startItem = candidate.items.find((entry) => entry.id === "item_start");
-      const keyItem = candidate.items.find((entry) => entry.id === "item_key");
-      expect(startItem).toBeDefined();
-      expect(keyItem).toBeDefined();
+  test("含 openingScene.prologue", () => {
+    const blueprint = createFallbackBlueprint(buildInput(), "test-seed");
+    expect(blueprint.openingScene.prologue).toBeDefined();
+    expect(blueprint.openingScene.prologue?.text).toBeTruthy();
+    expect(blueprint.openingScene.prologue?.tone).toMatch(/serious|epic|mysterious/);
+  });
 
-      // 初始物品：随身装备，至少一条展示属性行与等级。
-      expect(startItem?.category).toBe("equipment");
-      expect(startItem?.rarity).toBeDefined();
-      expect(startItem?.level).toBeGreaterThanOrEqual(1);
-      expect(startItem?.statLines?.length).toBeGreaterThanOrEqual(1);
-      for (const line of startItem?.statLines ?? []) {
-        expect(line.label.trim()).not.toBe("");
-        expect(line.value.trim()).not.toBe("");
-      }
+  test("schemaVersion 为 2", () => {
+    const blueprint = createFallbackBlueprint(buildInput(), "test-seed");
+    expect(blueprint.schemaVersion).toBe(2);
+  });
 
-      // 主线关键物品：任务分类 + 稀有。
-      expect(keyItem?.category).toBe("quest");
-      expect(keyItem?.rarity).toBe("rare");
-
-      // 携带新字段的候选仍能通过校验 + 编译管线。
-      const profile = PROFILES.gameTypeProfiles[gameType];
-      const compiled = compileScenarioBlueprint(
-        validateScenarioBlueprintCandidate(candidate, { profile, policy: policyFor({ gameType }) })
-      );
-      expect(compiled.ok).toBe(true);
-    });
-  }
+  test("FALLBACK_TEMPLATE_VERSION 升级", () => {
+    expect(FALLBACK_TEMPLATE_VERSION).toBe("fallback-8");
+  });
 });

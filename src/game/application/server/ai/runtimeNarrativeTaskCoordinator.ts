@@ -8,6 +8,8 @@ import {
   type EnsureResult,
 } from "./_shared/ensureCoordinator";
 
+const MAX_STALE_REVISION_RETRIES = 2;
+
 export type NarrativeEnsureResult = EnsureResult;
 
 /**
@@ -32,9 +34,13 @@ export class RuntimeNarrativeTaskCoordinator {
           return { ok: false, result: "unavailable" };
         }
         const { record } = loaded;
+        const generation = record.state.narrative.generation;
+        const followupBridgeActive =
+          generation.status === "pending" &&
+          generation.triggerContext?.kind === "dialogue_response";
         if (
-          record.state.narrative.generation.status !== "pending" ||
-          record.state.narrative.currentScene !== null ||
+          generation.status !== "pending" ||
+          (record.state.narrative.currentScene !== null && !followupBridgeActive) ||
           record.state.ending !== null ||
           record.state.battle.status === "active"
         ) {
@@ -42,7 +48,19 @@ export class RuntimeNarrativeTaskCoordinator {
         }
         return { ok: true, key: String(record.gameId) };
       },
-      run: (traceId) => generatePendingNarrativeScene({ ...deps, traceId }),
+      run: async (traceId) => {
+        let result: Awaited<ReturnType<typeof generatePendingNarrativeScene>> = "stale";
+        for (let retry = 0; retry <= MAX_STALE_REVISION_RETRIES; retry += 1) {
+          result = await generatePendingNarrativeScene({
+            ...deps,
+            traceId: retry === 0
+              ? traceId
+              : `${traceId ?? deps.newTraceId()}-stale-retry-${retry}`,
+          });
+          if (result !== "stale") return result;
+        }
+        return result;
+      },
     });
   }
 
