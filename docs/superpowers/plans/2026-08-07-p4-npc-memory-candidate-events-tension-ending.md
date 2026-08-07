@@ -567,7 +567,8 @@ Expected: FAIL — interactionHistory 仍为 0
 1. `ResolveResult` 的成功变体添加 `facts: readonly FactChange[]` 字段
 2. `talk` case 调用 `updateNpcMemory`，使用 `RELATIONSHIP_CHANGE.GREET_FIRST_MEET` 作为 relationshipDelta
 3. `investigate` case 产出 `FactChange`，audience 为当前地点所有已 met 的 NPC
-4. 其他 case 的 `facts` 默认为 `[]`
+4. 其他 case（freeform、blocked、explore、rest、ack_prologue、move、take_item）的 return 语句全部添加 `facts: []`
+5. ruleEngine/index.ts 中的 blocked case 返回的 ResolvedEvent 也需要添加 `facts: []`
 
 ```typescript
 // resolveByType.ts 修改（关键部分）
@@ -1008,7 +1009,7 @@ function actProgressThreshold(act: number, targetActs: number): number {
 function shouldAdvanceAct(ws: WorldState, ss: StoryState, events: readonly GameEvent[]): boolean {
   const mainQuestCompleted = events.some(
     (e) => e.type === "quest_completed" &&
-    ws.quests.find((q) => q.id === (e as any).questId)?.kind === "main",
+    ws.quests.find((q) => q.id === e.questId)?.kind === "main",
   );
   if (!mainQuestCompleted) return false;
 
@@ -1098,32 +1099,79 @@ git commit -m "feat: 幕推进 + endingAllowed 推导 + unresolvedThreads 管理
 
 ```typescript
 // 追加到 index.test.ts
+import { createInitialWorldState, appendNpc } from "@/game/domain/worldState";
+import { createInitialStoryState } from "@/game/domain/storyState";
+import { asNpcId, asLocationId, asFactId, asQuestId } from "@/game/domain/scenarioBlueprint";
+import type { EventCandidate } from "@/game/domain/storyState";
+
 describe("ruleEngine — P4 full integration", () => {
+  function makeWsWithNpc() {
+    const ws = createInitialWorldState({
+      generation: { generationId: "" as any, seed: "test", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: { id: asLocationId("loc_1"), name: "村庄", description: "测试", kind: "main", connectedLocationIds: [], npcIds: [asNpcId("npc_1")], availableItemIds: [], tags: [], scale: "scene" },
+      startingItemIds: [],
+    });
+    return appendNpc(ws, {
+      id: asNpcId("npc_1"),
+      name: "老张", role: "村民", description: "测试",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    });
+  }
+
   it("talk action produces NPC with interactionHistory and updated relationship", () => {
-    // 构建含 NPC 的 WorldState
-    // 执行 talk action
-    // 验证 nextWorldState.npcs[0].memory.interactionHistory.length === 1
-    // 验证 nextWorldState.npcs[0].memory.relationship.affinity === 5
+    const ws = makeWsWithNpc();
+    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+    const result = ruleEngine(ws, ss, { type: "talk", npcId: asNpcId("npc_1") }, "act_1", { now: () => "t1" });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const npc = result.nextWorldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
+      expect(npc.met).toBe(true);
+      expect(npc.memory.interactionHistory.length).toBe(1);
+      expect(npc.memory.interactionHistory[0]?.actionType).toBe("talk");
+      expect(npc.memory.relationship.affinity).toBe(5);
+    }
   });
 
   it("investigate action propagates discovered fact to nearby NPC knownFactIds", () => {
-    // 构建含 NPC + 世界事实的 WorldState
-    // NPC 在当前地点且已 met
-    // 执行 investigate action
-    // 验证 nextWorldState.npcs[0].memory.knownFactIds 包含该事实
+    let ws = makeWsWithNpc();
+    // 先 talk 使 NPC met = true
+    ws = { ...ws, npcs: ws.npcs.map((n) => ({ ...n, met: true })) };
+    // 追加世界事实
+    ws = { ...ws, worldFacts: [{ factId: asFactId("fact_1"), text: "线索", source: "world", discovered: false, locationId: asLocationId("loc_1") }] };
+    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+    const result = ruleEngine(ws, ss, { type: "investigate", factId: asFactId("fact_1") }, "act_2", { now: () => "t2" });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const npc = result.nextWorldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
+      expect(npc.memory.knownFactIds).toContain(asFactId("fact_1"));
+    }
   });
 
   it("approves candidateEventPool events and consumes budget", () => {
-    // 构建 StoryState 含 candidateEventPool
-    // 执行任意 action
-    // 验证 nextStoryState.candidateEventPool 被消费
-    // 验证 budget.events.expanded 增加
+    const ws = makeWsWithNpc();
+    const candidates: EventCandidate[] = [
+      { id: "c1", description: "有人跟踪", proposedAtTurn: 0 },
+    ];
+    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+    const ssWithPool = { ...ss, candidateEventPool: candidates };
+    const result = ruleEngine(ws, ssWithPool, { type: "explore" }, "act_3", { now: () => "t3" });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.nextStoryState.candidateEventPool.length).toBe(0);
+      expect(result.nextStoryState.budget.events.expanded).toBe(1);
+    }
   });
 
-  it("advances act when main quest completed", () => {
-    // 构建 WorldState 含可完成的主线任务
-    // 执行完成任务的 action
-    // 验证 nextStoryState.currentAct === 2
+  it("does not advance act when no main quest completed", () => {
+    const ws = makeWsWithNpc();
+    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+    const result = ruleEngine(ws, ss, { type: "explore" }, "act_4", { now: () => "t4" });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.nextStoryState.currentAct).toBe(1);
+    }
   });
 });
 ```
@@ -1162,9 +1210,9 @@ export function ruleEngine(...): RuleEngineResult {
     progression.nextStoryState.candidateEventPool,
   );
 
-  // Step: 张力更新
-  const allEvents = [...resolved.events, ...quests.events, ...ending.events, ...approved.approvedEvents.map((e) => ({ type: "narrative_event_approved", ...e } as GameEvent))];
-  const nextStoryState = updateStoryMetrics(approved.nextStoryState, allEvents);
+  // Step: 张力更新（approved events 的张力已在 approveCandidateEvents 中处理，不重复计入）
+  const gameEvents = [...resolved.events, ...quests.events, ...ending.events];
+  const nextStoryState = updateStoryMetrics(approved.nextStoryState, gameEvents);
 
   // 构建最终 ResolvedEvent
   const resolvedEvent: ResolvedEvent = {
@@ -1175,7 +1223,7 @@ export function ruleEngine(...): RuleEngineResult {
     facts: resolved.facts,
     costs: [],
     rewards: [],
-    triggeredEvents: allEvents.map((e) => e.type),
+    triggeredEvents: [...gameEvents.map((e) => e.type), ...approved.approvedEvents.map((e) => e.id)],
     rejectedEffects: [],
     stateVersion: ending.nextWorldState.eventLedger.length,
   };
@@ -1212,11 +1260,25 @@ git commit -m "feat: ruleEngine facade 集成 P4——NPC记忆+knownFactIds+can
 - [ ] **Step 1: Write failing test for materialized view reconciliation**
 
 ```typescript
-it("reconciles materialized view after state commit", () => {
-  // 执行 talk action
-  // 验证 nextStoryState.recentBeats 不为空
-  // 验证 nextStoryState.npcContacts 包含该 NPC
-  // 验证 nextStoryState.reducedThroughEventCount === eventLedger.length
+// 追加到 index.test.ts
+import { reconcileMaterializedView, createEmptyMaterializedView, type RecentBeat, type NpcContact } from "@/game/domain/materializedView";
+
+it("reconciles materialized view after talk action", () => {
+  const ws = makeWsWithNpc();
+  const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+  const result = ruleEngine(ws, ss, { type: "talk", npcId: asNpcId("npc_1") }, "act_mv", { now: () => "t_mv" });
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    // npc_met 事件应出现在 recentBeats 中
+    expect(result.nextStoryState.recentBeats.length).toBeGreaterThan(0);
+    const beat = result.nextStoryState.recentBeats[0] as RecentBeat;
+    expect(beat.kind).toBe("npc_met");
+    // npcContacts 应包含该 NPC
+    const contacts = result.nextStoryState.npcContacts as readonly NpcContact[];
+    expect(contacts.some((c) => String(c.npcId) === "npc_1")).toBe(true);
+    // cursor 应推进到 eventLedger 末尾
+    expect(result.nextStoryState.reducedThroughEventCount).toBe(result.nextWorldState.eventLedger.length);
+  }
 });
 ```
 
@@ -1224,24 +1286,26 @@ it("reconciles materialized view after state commit", () => {
 
 ```typescript
 // 在 updateStoryMetrics 之后添加：
-import { reconcileMaterializedView, createEmptyMaterializedView } from "@/game/domain/materializedView";
+import { reconcileMaterializedView } from "@/game/domain/materializedView";
 
-// 构建物化视图
-const prevView = {
-  recentBeats: storyState.recentBeats as readonly RecentBeat[],
-  npcContacts: storyState.npcContacts as readonly NpcContact[],
-  reducedThroughEventCount: storyState.reducedThroughEventCount,
-};
+// 构建物化视图——StoryState.recentBeats/npcContacts 存储为 unknown[],
+// 此处通过 MaterializedView 中间结构安全转型
+const prevView = createEmptyMaterializedView();
+// 用 prev storyState 的已有数据初始化（若非首次）
+const prevReduced = storyState.reducedThroughEventCount;
+const prevBeats = storyState.recentBeats as readonly import("@/game/domain/materializedView").RecentBeat[];
+const prevContacts = storyState.npcContacts as readonly import("@/game/domain/materializedView").NpcContact[];
+const prev = { recentBeats: prevBeats, npcContacts: prevContacts, reducedThroughEventCount: prevReduced };
 const newView = reconcileMaterializedView(
-  prevView,
+  prev,
   ending.nextWorldState.eventLedger,
   ending.nextWorldState.currentLocationId,
 );
 
 const nextStoryStateWithView: StoryState = {
   ...nextStoryState,
-  recentBeats: newView.recentBeats,
-  npcContacts: newView.npcContacts,
+  recentBeats: newView.recentBeats as readonly unknown[],
+  npcContacts: newView.npcContacts as readonly unknown[],
   reducedThroughEventCount: newView.reducedThroughEventCount,
 };
 ```
@@ -1262,13 +1326,54 @@ git commit -m "feat: 物化视图集成到 ruleEngine——recentBeats + npcCont
 
 - [ ] **Step 1: Write full pipeline regression test**
 
-测试完整流程：
-1. createGameV2 创建初始世界（离线 fixture）
-2. performActionV2 执行 talk action → 验证 NPC 记忆更新
-3. performActionV2 执行 investigate → 验证 knownFactIds 传播
-4. performActionV2 执行 move → 验证物化视图更新
-5. 模拟 candidateEventPool 写入 → 下一次 action 验证审批消费
-6. 模拟主线任务完成 → 验证幕推进
+```typescript
+// src/game/application/p4OfflineRegression.test.ts
+import { describe, it, expect } from "vitest";
+import { createGameV2 } from "./createGameV2";
+import { performActionV2 } from "./performActionV2";
+import { type GameRepositoryV2 } from "./server/persistence/gameRepositoryV2";
+import { asNpcId, asLocationId, asFactId, asQuestId } from "@/game/domain/scenarioBlueprint";
+import { type Interaction } from "@/game/domain/action";
+
+describe("P4 offline regression", () => {
+  // 使用 in-memory repository fixture（复用 P1-P3 的测试工具）
+  // 参见 p3OfflineRegression.test.ts 中的 makeInMemoryRepo
+
+  it("talk action updates NPC interactionHistory and relationship", async () => {
+    // 1. createGameV2 创建初始世界
+    // 2. performActionV2 执行 talk action
+    // 3. 验证 NPC memory.interactionHistory.length === 1
+    // 4. 验证 NPC memory.relationship.affinity === 5
+  });
+
+  it("investigate action propagates knownFactIds to nearby met NPCs", async () => {
+    // 1. 先 talk 使 NPC met = true
+    // 2. investigate 一个事实
+    // 3. 验证 NPC memory.knownFactIds 包含该事实
+  });
+
+  it("move action updates materialized view recentBeats", async () => {
+    // 1. 执行 move action
+    // 2. 验证 recentBeats 非空，npcContacts 有更新
+    // 3. 验证 reducedThroughEventCount === eventLedger.length
+  });
+
+  it("candidateEventPool is consumed by rule engine approval", async () => {
+    // 1. 通过 sceneWriteBack 写入 candidateEventPool
+    // 2. 执行任意 action
+    // 3. 验证 candidateEventPool 已清空
+    // 4. 验证 budget.events.expanded 增加
+  });
+
+  it("main quest completion advances act", async () => {
+    // 1. 构建含可完成的主线任务的 WorldState
+    // 2. 执行完成任务的 action
+    // 3. 验证 currentAct === 2
+  });
+});
+```
+
+> 实现时需根据实际的 createGameV2 fixture 和 in-memory repository 构建完整的测试数据。测试中的注释描述了每步的验证点，实现者需填充具体的构建代码。
 
 - [ ] **Step 2: Run test**
 
