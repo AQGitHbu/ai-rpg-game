@@ -8,6 +8,11 @@ import { resolveByType, type ResolveDeps } from "./resolveByType";
 import { reconcileQuests } from "./reconcileQuests";
 import { resolveEnding } from "./resolveEnding";
 import { updateStoryMetrics } from "./updateStoryMetrics";
+import { propagateKnownFacts } from "./propagateKnownFacts";
+import { approveCandidateEvents } from "./approveCandidateEvents";
+import { advanceStoryProgression } from "./advanceStoryProgression";
+import { reconcileMaterializedView } from "@/game/domain/materializedView";
+import type { RecentBeat, NpcContact } from "@/game/domain/materializedView";
 
 export type RuleEngineResult =
   | { readonly ok: true; readonly nextWorldState: WorldState; readonly nextStoryState: StoryState; readonly resolvedEvent: ResolvedEvent }
@@ -60,23 +65,60 @@ export function ruleEngine(
     return { ok: true, nextWorldState: resolved.nextWorldState, nextStoryState: storyState, resolvedEvent };
   }
 
-  const quests = reconcileQuests(resolved.nextWorldState, deps);
-  const ending = resolveEnding(quests.nextWorldState, storyState, deps);
-  const allEvents = [...resolved.events, ...quests.events, ...ending.events];
-  const nextStoryState = updateStoryMetrics(ending.nextStoryState, allEvents);
+  // P4 Step 1: NPC knownFactIds 传播
+  const propagatedWs = propagateKnownFacts(resolved.nextWorldState, resolved.facts);
 
+  // P4 Step 2: 任务推进（使用传播后的 WS）
+  const quests = reconcileQuests(propagatedWs, deps);
+  const ending = resolveEnding(quests.nextWorldState, storyState, deps);
+
+  // P4 Step 3: 幕推进 + endingAllowed 推导
+  const progression = advanceStoryProgression(
+    ending.nextWorldState,
+    ending.nextStoryState,
+    [...resolved.events, ...quests.events, ...ending.events],
+  );
+
+  // P4 Step 4: candidateEventPool 审批
+  const approved = approveCandidateEvents(
+    progression.nextStoryState,
+    progression.nextStoryState.candidateEventPool,
+  );
+
+  // P4 Step 5: 张力更新（approved events 的张力已在 approveCandidateEvents 中处理，不重复计入）
+  const gameEvents = [...resolved.events, ...quests.events, ...ending.events];
+  const nextStoryState = updateStoryMetrics(approved.nextStoryState, gameEvents);
+
+  // P4 Step 6: 物化视图增量归约
+  const prevBeats = storyState.recentBeats as readonly RecentBeat[];
+  const prevContacts = storyState.npcContacts as readonly NpcContact[];
+  const prev = { recentBeats: prevBeats, npcContacts: prevContacts, reducedThroughEventCount: storyState.reducedThroughEventCount };
+  const newView = reconcileMaterializedView(
+    prev,
+    ending.nextWorldState.eventLedger,
+    ending.nextWorldState.currentLocationId,
+  );
+
+  const nextStoryStateWithView: StoryState = {
+    ...nextStoryState,
+    recentBeats: newView.recentBeats as readonly unknown[],
+    npcContacts: newView.npcContacts as readonly unknown[],
+    reducedThroughEventCount: newView.reducedThroughEventCount,
+  };
+
+  // 构建最终 ResolvedEvent
   const resolvedEvent: ResolvedEvent = {
     actionId,
-    status: resolved.status,  // 透传 resolveByType 的 status
+    status: resolved.status,
     eventKind: eventKindForAction(action),
-    stateChanges: resolved.stateChanges,  // 透传审计清单
-    facts: [],
+    stateChanges: resolved.stateChanges,
+    facts: resolved.facts,
     costs: [],
     rewards: [],
-    triggeredEvents: allEvents.map((e) => e.type),
+    triggeredEvents: [...gameEvents.map((e) => e.type), ...approved.approvedEvents.map((e) => e.id)],
     rejectedEffects: [],
     stateVersion: ending.nextWorldState.eventLedger.length,
   };
 
-  return { ok: true, nextWorldState: ending.nextWorldState, nextStoryState, resolvedEvent };
+  return { ok: true, nextWorldState: ending.nextWorldState, nextStoryState: nextStoryStateWithView, resolvedEvent };
 }
