@@ -9,6 +9,10 @@ import { ruleEngine } from "@/game/gameplay/rpg/ruleEngine";
 import { commitState } from "./stateCommit";
 import { buildIntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
 import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
+import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
+import { runExpansionProposer } from "@/game/gameplay/rpg/expansion";
+import { applyApprovedExpansion } from "@/game/gameplay/rpg/expansion/applyExpansion";
+import { consumeExpansion, type StoryBudget } from "@/game/domain/storyBudget";
 
 export type PerformActionV2Command = {
   readonly gameId: GameId;
@@ -26,6 +30,7 @@ export type PerformActionV2Deps = {
   readonly repository: GameRepositoryV2;
   readonly now: () => string;
   readonly intentParserSource?: IntentParserSource;
+  readonly expansionSource?: ExpansionSource;
 };
 
 export async function performActionV2(
@@ -42,7 +47,6 @@ export async function performActionV2(
     return { ok: false, code: "STALE_GAME_REVISION", feedback: "Stale revision" };
   }
 
-  // Build intent context only for free_text (fixed_choice doesn't need it)
   const freeTextDeps = command.interaction.kind === "free_text"
     ? { intentContext: buildIntentContext(record.worldState), intentParserSource: deps.intentParserSource }
     : undefined;
@@ -57,6 +61,53 @@ export async function performActionV2(
   }
 
   const engineResult = ruleEngine(record.worldState, record.storyState, converted.action, command.actionId, { now: deps.now });
+
+  // P3: ExpansionProposer — 初判失败时条件触发
+  if (!engineResult.ok && deps.expansionSource) {
+    const expansion = await runExpansionProposer(
+      engineResult,
+      record.worldState,
+      record.storyState,
+      converted.action,
+      command.actionId,
+      deps.expansionSource,
+      { now: deps.now },
+    );
+
+    if (expansion.triggered && expansion.approved) {
+      if (expansion.reEvaluatedResult?.ok) {
+        // 重演算成功：提交重演算结果（含已扩展实体 + 行动效果）
+        const commitResult = await commitState(deps.repository, {
+          gameId: command.gameId,
+          expectedRevision: record.revision,
+          nextWorldState: expansion.reEvaluatedResult.nextWorldState,
+          nextStoryState: expansion.reEvaluatedResult.nextStoryState,
+        });
+        if (!commitResult.ok) {
+          return { ok: false, code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE", feedback: "Commit failed" };
+        }
+        return {
+          ok: true,
+          revision: commitResult.record.revision,
+          resolvedEvent: expansion.reEvaluatedResult.resolvedEvent,
+          feedback: "Action performed (with expansion)",
+        };
+      } else {
+        // 重演算仍失败：提交已扩展实体（供下一回合使用），但行动本身被拒绝
+        const expandedWs = applyApprovedExpansion(record.worldState, expansion.approved, deps.now());
+        const budgetAfter = consumeBudgetFromExpansion(record.storyState.budget, expansion.approved.budgetConsumed);
+        const expandedSs: StoryState = { ...record.storyState, budget: budgetAfter };
+        await commitState(deps.repository, {
+          gameId: command.gameId,
+          expectedRevision: record.revision,
+          nextWorldState: expandedWs,
+          nextStoryState: expandedSs,
+        });
+        return { ok: false, code: "ACTION_REJECTED", feedback: engineResult.feedback };
+      }
+    }
+  }
+
   if (!engineResult.ok) {
     return { ok: false, code: "ACTION_REJECTED", feedback: engineResult.feedback };
   }
@@ -78,4 +129,15 @@ export async function performActionV2(
     resolvedEvent: engineResult.resolvedEvent,
     feedback: "Action performed",
   };
+}
+
+function consumeBudgetFromExpansion(
+  budget: StoryBudget,
+  consumed: { readonly locations: number; readonly npcs: number; readonly items: number; readonly enemies: number; readonly facts: number },
+): StoryBudget {
+  let result = budget;
+  for (let i = 0; i < consumed.locations; i++) result = consumeExpansion(result, "locations");
+  for (let i = 0; i < consumed.npcs; i++) result = consumeExpansion(result, "npcs");
+  for (let i = 0; i < consumed.facts; i++) result = consumeExpansion(result, "events");
+  return result;
 }

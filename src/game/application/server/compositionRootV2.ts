@@ -12,6 +12,8 @@ import type { GameRepositoryV2 } from "./persistence/gameRepositoryV2";
 import { createGameV2, createFixtureWorldSource, type WorldGenerationSource } from "../createGameV2";
 import { performActionV2 } from "../performActionV2";
 import { projectGameSessionView } from "../gameSessionViewV2";
+import { createFixtureExpansionSource } from "../server/ai/expansionSource";
+import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
 import type { Interaction, Action } from "@/game/domain/action";
 import type { ActionChoiceMap } from "../actionConverter";
 import type { GameSessionViewV2 } from "../gameSessionViewV2";
@@ -59,6 +61,7 @@ export function createServerGameV2EntryPoints(
   });
   const now = () => new Date().toISOString();
   const source = createFixtureWorldSource();
+  const expansionSource = createFixtureExpansionSource();
 
   const executeHttpRequest = async (
     method: string,
@@ -121,7 +124,7 @@ export function createServerGameV2EntryPoints(
       if (!current.ok || current.status !== "active") return { ok: false, feedback: "No active game" };
       const result = await performActionV2(
         { gameId: current.record.gameId, actionId: command.actionId, interaction: command.interaction, expectedRevision: command.expectedRevision, choiceMap: command.choiceMap },
-        { repository, now },
+        { repository, now, expansionSource },
       );
       if (result.ok) return { ok: true, revision: result.revision, feedback: result.feedback };
       return { ok: false, code: result.code, feedback: result.feedback };
