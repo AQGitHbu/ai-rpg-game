@@ -36,7 +36,7 @@ src/game/domain/
   action.test.ts
   resolvedEvent.ts       # ResolvedEvent 类型 + 五态 status
   resolvedEvent.test.ts
-  storyBudget.ts         # BudgetDimension + createBudgetPolicy + 预算检查纯函数
+  storyBudget.ts         # BudgetDimension + createStoryBudget + 预算检查纯函数（含 hardLimit）
   storyBudget.test.ts
   materializedView.ts    # 物化派生视图类型 + 纯 reducer（recentBeats, npcContacts）
   materializedView.test.ts
@@ -46,13 +46,19 @@ src/game/gameplay/rpg/ruleEngine/
   validateAction.test.ts
   resolveByType.ts       # 按 Action 类型路由到对应 resolver，产出状态变更
   resolveByType.test.ts
-  reconcileQuests.ts     # 任务进度推进纯函数
+  reconcileQuests.ts     # 任务进度推进纯函数（适配 WorldState；P1 覆盖 visit/talk/take 目标）
   reconcileQuests.test.ts
-  resolveEnding.ts       # 结局条件检查纯函数
+  resolveEnding.ts       # 结局条件检查纯函数（P1 覆盖结局 requirements 检查）
   resolveEnding.test.ts
   updateStoryMetrics.ts  # 张力/进度/节奏更新纯函数
   updateStoryMetrics.test.ts
-  index.ts               # facade: ruleEngine(action, worldState, storyState) → ResolvedEvent
+  index.ts               # facade: ruleEngine(worldState, storyState, action, actionId, deps) → RuleEngineResult
+
+src/game/application/server/persistence/
+  gameRepositoryV2.ts    # v2 持久化端口：GameRecordV2 { worldState, storyState, revision } + CAS 契约
+  gameRepositoryV2.test.ts
+  sqliteGameRepositoryV2.ts  # v2 SQLite adapter：独立新表，与 v1 存档互不干扰（旧存档不迁移）
+  sqliteGameRepositoryV2.test.ts
 
 src/game/application/
   actionConverter.ts     # Interaction → Action（P1 仅固定选项映射，free_text 留 P2）
@@ -72,16 +78,20 @@ src/game/application/
 ### 修改文件
 
 ```
-src/game/application/server/compositionRoot.ts  # 注入新 use case
-src/app/api/game/route.ts                       # 切换到 createGameV2
-src/app/api/game/actions/route.ts               # 切换到 performActionV2
+src/game/application/server/compositionRoot.ts  # 注入新 use case 与 v2 repository
+src/app/api/v2/game/route.ts                    # 新建：并行 v2 路由（createGameV2）
+src/app/api/v2/game/actions/route.ts            # 新建：并行 v2 路由（performActionV2）
+src/app/api/v2/game/current/route.ts            # 新建：并行 v2 路由（gameSessionViewV2）
 ```
+
+> v1 路由（`/api/game/*`）保持不动：前端 CurrentGameScreen/AdventureGameShell/gameActionRequest 与 current、actions、prologue/ack、narrative/ensure、npc/dialogue、town/ensure 等 6+ 路由深度耦合，只切一半会造成 v1/v2 混合状态。UI 切换到 v2 路由为独立后续任务（P2 前完成）。
 
 ### 保留不动（P1 不改）
 
 ```
-src/game/gameplay/rpg/battle/     # 战斗规则复用
-src/game/gameplay/rpg/quests/     # 任务规则复用（适配新状态类型）
+src/game/gameplay/rpg/battle/     # 战斗规则保留；P1 新流水线不路由 attack/battle_action
+                                  # （validateAction 明确返回 BATTLE_NOT_AVAILABLE），战斗接入为后续任务
+src/game/gameplay/rpg/quests/     # v1 任务规则保留；v2 版 reconcileQuests 在 ruleEngine/ 内新建（适配 WorldState）
 src/game/gameplay/rpg/town/       # 小镇层 P1 不改
 src/game/logging/                 # 日志复用
 ```
@@ -112,14 +122,30 @@ import {
   type LocationEntry,
   type NpcEntry,
 } from "./worldState";
-import { asLocationId, asNpcId, asItemId, asFactId, asQuestId, asEnemyId, asEndingId } from "./scenarioBlueprint";
+import { asLocationId, asNpcId, asItemId, asGenerationId } from "./scenarioBlueprint";
 
 describe("WorldState", () => {
+  const startingLocation: LocationEntry = {
+    id: asLocationId("loc_1"),
+    name: "起始客栈",
+    description: "测试",
+    kind: "main",
+    connectedLocationIds: [],
+    npcIds: [],
+    availableItemIds: [],
+    tags: [],
+    scale: "scene",
+  };
   const baseInput = {
-    gameType: "wuxia" as const,
-    seed: "test-seed",
+    generation: {
+      generationId: asGenerationId("gen_test"),
+      seed: "test-seed",
+      templateVersion: "v2",
+      inputDigest: "",
+      gameType: "wuxia" as const,
+    },
     player: { name: "测试侠客", identity: "流浪剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocationId: asLocationId("loc_1"),
+    startingLocation,
     startingItemIds: [asItemId("item_1")] as const,
   };
 
@@ -128,6 +154,7 @@ describe("WorldState", () => {
     expect(ws.version).toBe(2);
     expect(ws.player.name).toBe("测试侠客");
     expect(ws.currentLocationId).toBe(asLocationId("loc_1"));
+    expect(ws.locations).toHaveLength(1); // 起始地点必须在 locations 内，currentLocationId 不指向不存在的地点
     expect(ws.eventLedger[0]?.type).toBe("game_initialized");
   });
 
@@ -165,7 +192,6 @@ describe("WorldState", () => {
       description: "测试",
       locationId: asLocationId("loc_1"),
       isCompanion: false,
-      knownFactIds: [],
       tags: [],
       met: false,
       memory: {
@@ -193,7 +219,6 @@ Expected: FAIL — module not found
 
 ```typescript
 // src/game/domain/worldState.ts
-import type { GameTypeId } from "./newGame";
 import type {
   LocationId, NpcId, ItemId, FactId, QuestId, EnemyId, EndingId,
   StatBlock, LocationScale, LocationKind, ItemCategory, ItemRarity, ItemStatLine,
@@ -248,9 +273,9 @@ export type NpcEntry = {
   readonly description: string;
   readonly locationId: LocationId;
   readonly isCompanion: boolean;
-  readonly knownFactIds: readonly FactId[];
   readonly tags: readonly string[];
   readonly met: boolean;
+  /** knownFactIds 只存于 memory 内（spec §8.5），不在 NpcEntry 顶层重复存储，避免双源歧义 */
   readonly memory: NpcMemory;
 };
 
@@ -393,27 +418,20 @@ export function appendEnemy(ws: WorldState, enemy: EnemyEntry): WorldState {
 }
 
 export function createInitialWorldState(input: {
-  gameType: GameTypeId;
-  seed: string;
+  generation: GenerationMetadata;
   player: PlayerState;
-  startingLocationId: LocationId;
+  startingLocation: LocationEntry;
   startingItemIds: readonly ItemId[];
 }): WorldState {
-  // 最小初始状态——实际开局由 createGameV2 通过 AI 生成填充
+  // 最小初始状态——实际开局实体由 createGameV2 通过 AI 生成后追加填充
   return {
     version: 2,
-    generation: {
-      generationId: "" as any,
-      seed: input.seed,
-      templateVersion: "v2",
-      inputDigest: "",
-      gameType: input.gameType,
-    },
+    generation: input.generation,
     player: input.player,
-    locations: [],
-    currentLocationId: input.startingLocationId,
-    unlockedLocationIds: [input.startingLocationId],
-    visitedLocationIds: [input.startingLocationId],
+    locations: [input.startingLocation],
+    currentLocationId: input.startingLocation.id,
+    unlockedLocationIds: [input.startingLocation.id],
+    visitedLocationIds: [input.startingLocation.id],
     npcs: [],
     items: [],
     inventory: [...input.startingItemIds],
@@ -428,13 +446,7 @@ export function createInitialWorldState(input: {
     towns: [],
     eventLedger: [{
       type: "game_initialized",
-      generation: {
-        generationId: "" as any,
-        seed: input.seed,
-        templateVersion: "v2",
-        inputDigest: "",
-        gameType: input.gameType,
-      },
+      generation: input.generation,
     }],
   };
 }
@@ -464,7 +476,7 @@ git commit -m "feat: WorldState 类型与纯函数——双状态模型基础"
 
 **Interfaces:**
 - Consumes: `GameLength` from `./newGame`
-- Produces: `StoryState`, `StoryBudget`, `BudgetDimension`, `PacingNeed`, `EventCandidate`, `createInitialStoryState()`, `derivePacingNeed()`, `createBudgetPolicy()`, `budgetAllowsExpansion()`
+- Produces: `StoryState`, `StoryBudget`, `BudgetDimension`, `PacingNeed`, `EventCandidate`, `createInitialStoryState()`, `derivePacingNeed()`, `createStoryBudget()`, `budgetAllowsExpansion()`, `withinHardLimit()`, `TARGET_ACTS`
 
 - [ ] **Step 1: Write failing tests for StoryState and budget**
 
@@ -482,6 +494,7 @@ describe("StoryState", () => {
     expect(ss.budget.locations.opening).toBe(4);
     expect(ss.budget.locations.expanded).toBe(0);
     expect(ss.candidateEventPool).toEqual([]);
+    expect(ss.unresolvedThreads).toEqual(["main_thread"]); // spec §9.3：初始含主线 thread
   });
 
   it("derivePacingNeed returns reveal in act 1", () => {
@@ -512,24 +525,33 @@ describe("StoryState", () => {
 ```typescript
 // src/game/domain/storyBudget.test.ts
 import { describe, it, expect } from "vitest";
-import { createBudgetPolicy, budgetAllowsExpansion } from "./storyBudget";
+import { createStoryBudget, budgetAllowsExpansion, withinHardLimit, TARGET_ACTS } from "./storyBudget";
 
 describe("StoryBudget", () => {
-  it("short game: mainActs=3, locations max=8", () => {
-    const bp = createBudgetPolicy("short");
-    expect(bp.mainActs).toBe(3);
-    expect(bp.locations.max).toBe(8);
+  it("short game: locations max=8, opening 记入不占扩展预算", () => {
+    const b = createStoryBudget("short", { locations: 4, npcs: 5, quests: 2, events: 0 });
+    expect(b.locations.max).toBe(8);
+    expect(b.locations.opening).toBe(4);
+    expect(b.locations.expanded).toBe(0);
+    expect(TARGET_ACTS.short).toBe(3);
   });
 
   it("budgetAllowsExpansion true when expanded < max", () => {
-    const bp = createBudgetPolicy("short");
-    expect(budgetAllowsExpansion(bp, "locations")).toBe(true);
+    const b = createStoryBudget("short", { locations: 4, npcs: 5, quests: 2, events: 0 });
+    expect(budgetAllowsExpansion(b, "locations")).toBe(true);
   });
 
   it("budgetAllowsExpansion false when expanded >= max", () => {
-    const bp = createBudgetPolicy("short");
-    const bp2 = { ...bp, locations: { ...bp.locations, expanded: 8 } };
-    expect(budgetAllowsExpansion(bp2, "locations")).toBe(false);
+    const b = createStoryBudget("short", { locations: 4, npcs: 5, quests: 2, events: 0 });
+    const b2 = { ...b, locations: { ...b.locations, expanded: 8 } };
+    expect(budgetAllowsExpansion(b2, "locations")).toBe(false);
+  });
+
+  it("withinHardLimit 针对 opening + expanded 总和（spec §3.3 安全阀）", () => {
+    const b = createStoryBudget("short", { locations: 39, npcs: 0, quests: 0, events: 0 });
+    expect(withinHardLimit(b, "locations")).toBe(true);   // 39 < 40
+    const b2 = { ...b, locations: { ...b.locations, expanded: 1 } };
+    expect(withinHardLimit(b2, "locations")).toBe(false);  // 39+1 = 40 → 超限
   });
 });
 ```
@@ -551,45 +573,57 @@ export type BudgetDimension = {
   readonly max: number;
 };
 
+// 与 spec §3.3 对齐：StoryBudget 只含四个维度 + hardLimit；
+// 幕数不属于预算，targetActs 由 StoryState 持有（见 TARGET_ACTS）。
 export type StoryBudget = {
-  readonly mainActs: number;
   readonly locations: BudgetDimension;
   readonly npcs: BudgetDimension;
-  readonly quests: BudgetDimension;
-  readonly events: BudgetDimension;
+  readonly quests: BudgetDimension;   // 仅计支线任务；主线不计
+  readonly events: BudgetDimension;   // 仅计被批准的 AI 提议事件
   readonly hardLimit: { readonly locations: number; readonly npcs: number };
 };
 
+export const TARGET_ACTS: Record<GameLength, number> = {
+  short: 3, medium: 5, long: 8, open: 5,
+} as const;
+
 const PRESETS = {
-  short: { mainActs: 3, locationsMax: 8, npcsMax: 10, questsMax: 4, eventsMax: 6 },
-  medium: { mainActs: 5, locationsMax: 14, npcsMax: 16, questsMax: 8, eventsMax: 12 },
-  long: { mainActs: 8, locationsMax: 22, npcsMax: 24, questsMax: 12, eventsMax: 20 },
-  open: { mainActs: 5, locationsMax: 999, npcsMax: 999, questsMax: 999, eventsMax: 999 },
+  short: { locationsMax: 8, npcsMax: 10, questsMax: 4, eventsMax: 6 },
+  medium: { locationsMax: 14, npcsMax: 16, questsMax: 8, eventsMax: 12 },
+  long: { locationsMax: 22, npcsMax: 24, questsMax: 12, eventsMax: 20 },
+  open: { locationsMax: 999, npcsMax: 999, questsMax: 999, eventsMax: 999 }, // 软上限开；hardLimit 仍是安全阀
 } as const;
 
 const HARD_LIMIT = { locations: 40, npcs: 30 } as const;
 
-export function createBudgetPolicy(
+export type BudgetDimensionKey = "locations" | "npcs" | "quests" | "events";
+
+export function createStoryBudget(
   gameLength: GameLength,
-  initialCounts?: { locations: number; npcs: number; quests: number; events: number },
+  initialCounts: { locations: number; npcs: number; quests: number; events: number },
 ): StoryBudget {
   const p = PRESETS[gameLength];
-  const ic = initialCounts ?? { locations: 0, npcs: 0, quests: 0, events: 0 };
   return Object.freeze({
-    mainActs: p.mainActs,
-    locations: { opening: ic.locations, expanded: 0, max: p.locationsMax },
-    npcs: { opening: ic.npcs, expanded: 0, max: p.npcsMax },
-    quests: { opening: ic.quests, expanded: 0, max: p.questsMax },
-    events: { opening: ic.events, expanded: 0, max: p.eventsMax },
+    locations: { opening: initialCounts.locations, expanded: 0, max: p.locationsMax },
+    npcs: { opening: initialCounts.npcs, expanded: 0, max: p.npcsMax },
+    quests: { opening: initialCounts.quests, expanded: 0, max: p.questsMax },
+    events: { opening: initialCounts.events, expanded: 0, max: p.eventsMax },
     hardLimit: HARD_LIMIT,
   });
 }
 
-export function budgetAllowsExpansion(budget: StoryBudget, dim: "locations" | "npcs" | "quests" | "events"): boolean {
+/** 软上限检查：约束的是 expanded（开局实体不占扩展预算）。 */
+export function budgetAllowsExpansion(budget: StoryBudget, dim: BudgetDimensionKey): boolean {
   return budget[dim].expanded < budget[dim].max;
 }
 
-export function consumeExpansion(budget: StoryBudget, dim: "locations" | "npcs" | "quests" | "events"): StoryBudget {
+/** 硬上限检查：针对 opening + expanded 总和，任何情况下不可逾越（仅 locations/npcs 有硬限）。 */
+export function withinHardLimit(budget: StoryBudget, dim: "locations" | "npcs"): boolean {
+  const d = budget[dim];
+  return d.opening + d.expanded < budget.hardLimit[dim];
+}
+
+export function consumeExpansion(budget: StoryBudget, dim: BudgetDimensionKey): StoryBudget {
   const d = budget[dim];
   return { ...budget, [dim]: { ...d, expanded: d.expanded + 1 } };
 }
@@ -601,7 +635,7 @@ export function consumeExpansion(budget: StoryBudget, dim: "locations" | "npcs" 
 // src/game/domain/storyState.ts
 import type { GameLength } from "./newGame";
 import type { StoryBudget } from "./storyBudget";
-import { createBudgetPolicy } from "./storyBudget";
+import { createStoryBudget, TARGET_ACTS } from "./storyBudget";
 import type { NarrativeRuntimeState } from "./narrative";
 
 export type PacingNeed = "reveal" | "develop" | "complicate" | "escalate" | "climax" | "resolve";
@@ -636,17 +670,19 @@ export type StoryState = {
 export function createInitialStoryState(input: {
   gameLength: GameLength;
   initialEntityCounts: { locations: number; npcs: number; quests: number; events: number };
+  /** 主线伏笔 ID；spec §9.3 初始 unresolvedThreads = [主线thread] */
+  mainThreadId?: ThreadId;
 }): StoryState {
-  const budget = createBudgetPolicy(input.gameLength, input.initialEntityCounts);
+  const budget = createStoryBudget(input.gameLength, input.initialEntityCounts);
   return {
     version: 2,
     currentAct: 1,
-    targetActs: budget.mainActs,
+    targetActs: TARGET_ACTS[input.gameLength],
     storyProgress: 0,
     tension: 30,
     nextPacingNeed: "reveal",
     budget,
-    unresolvedThreads: [],
+    unresolvedThreads: [input.mainThreadId ?? "main_thread"],
     candidateEventPool: [],
     endingAllowed: false,
     endingProposed: false,
@@ -707,10 +743,11 @@ git commit -m "feat: StoryState 类型与纯函数——张力/节奏/预算/候
 // src/game/domain/action.test.ts
 import { describe, it, expect } from "vitest";
 import type { Action, Interaction } from "./action";
+import { asNpcId } from "./scenarioBlueprint";
 
 describe("Action types", () => {
   it("talk action can carry utterance", () => {
-    const a: Action = { type: "talk", npcId: "npc_1" as any, utterance: "你知道什么？" };
+    const a: Action = { type: "talk", npcId: asNpcId("npc_1"), utterance: "你知道什么？" };
     expect(a.type).toBe("talk");
     expect(a.utterance).toBe("你知道什么？");
   });
@@ -763,13 +800,15 @@ export type Action =
 ```typescript
 // src/game/domain/resolvedEvent.ts
 import type { NarrativeEventKind } from "./narrative";
+import type { FactId, NpcId } from "./scenarioBlueprint";
 
 export type ResolvedEventStatus = "success" | "partial_success" | "failure" | "blocked" | "invalid";
 
 export type FactChange = {
-  readonly factId: string;
+  readonly factId: FactId;
   readonly change: "discovered" | "hidden" | "revealed";
-  readonly audience?: readonly string[];
+  /** 在场/被告知 NPC，供 knownFactIds 规则推导（spec §8.5） */
+  readonly audience?: readonly NpcId[];
 };
 
 export type StateChange = {
@@ -784,9 +823,10 @@ export type Reward = { readonly description: string };
 export type RejectedEffect = { readonly description: string; readonly reason: string };
 
 export type ResolvedEvent = {
+  /** 客户端生成的唯一 ID（spec §11.2），随 Action 传入，仅审计不参与去重 */
   readonly actionId: string;
   readonly status: ResolvedEventStatus;
-  readonly eventKind?: NarrativeEventKind;
+  readonly eventKind: NarrativeEventKind;
   readonly facts: readonly FactChange[];
   readonly stateChanges: readonly StateChange[];
   readonly costs: readonly Cost[];
@@ -802,10 +842,40 @@ export type ResolvedEvent = {
 Run: `npx vitest run src/game/domain/action.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Add minimal resolvedEvent.test.ts (type-shape guard) and run**
+
+```typescript
+// src/game/domain/resolvedEvent.test.ts
+import { describe, it, expect } from "vitest";
+import type { ResolvedEvent } from "./resolvedEvent";
+
+describe("ResolvedEvent", () => {
+  it("supports five statuses and required eventKind", () => {
+    const statuses = ["success", "partial_success", "failure", "blocked", "invalid"] as const;
+    const event: ResolvedEvent = {
+      actionId: "act_1",
+      status: statuses[1]!,
+      eventKind: "dialogue",
+      facts: [],
+      stateChanges: [],
+      costs: [],
+      rewards: [],
+      triggeredEvents: [],
+      rejectedEffects: [],
+      stateVersion: 1,
+    };
+    expect(event.status).toBe("partial_success");
+  });
+});
+```
+
+Run: `npx vitest run src/game/domain/resolvedEvent.test.ts`
+Expected: PASS
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/game/domain/action.ts src/game/domain/action.test.ts src/game/domain/resolvedEvent.ts
+git add src/game/domain/action.ts src/game/domain/action.test.ts src/game/domain/resolvedEvent.ts src/game/domain/resolvedEvent.test.ts
 git commit -m "feat: Action/Interaction/ResolvedEvent 类型——封闭集合+utterance+五态结果"
 ```
 
@@ -818,7 +888,7 @@ git commit -m "feat: Action/Interaction/ResolvedEvent 类型——封闭集合+u
 - Test: `src/game/domain/materializedView.test.ts`
 
 **Interfaces:**
-- Consumes: `GameEvent[]` from `./events`, `WorldState`
+- Consumes: `GameEvent[]` from `./events`，提交时 currentLocationId
 - Produces: `MaterializedView`, `reconcileMaterializedView()`, `RecentBeat`, `NpcContact`
 
 - [ ] **Step 1: Write failing tests**
@@ -828,6 +898,7 @@ git commit -m "feat: Action/Interaction/ResolvedEvent 类型——封闭集合+u
 import { describe, it, expect } from "vitest";
 import { reconcileMaterializedView, createEmptyMaterializedView, type MaterializedView } from "./materializedView";
 import type { GameEvent } from "./events";
+import { asLocationId, asNpcId, asQuestId } from "./scenarioBlueprint";
 
 describe("MaterializedView", () => {
   it("empty view has zero cursor", () => {
@@ -839,28 +910,37 @@ describe("MaterializedView", () => {
 
   it("reconciles from empty ledger", () => {
     const v = createEmptyMaterializedView();
-    const result = reconcileMaterializedView(v, [], 0);
+    const result = reconcileMaterializedView(v, [], asLocationId("loc_1"));
     expect(result.recentBeats).toEqual([]);
   });
 
   it("extracts quest_completed as a beat", () => {
     const events: GameEvent[] = [
-      { type: "quest_completed", questId: "q1" as any, occurredAt: "2026-01-01" },
+      { type: "quest_completed", questId: asQuestId("q1"), occurredAt: "2026-01-01" },
     ];
     const v = createEmptyMaterializedView();
-    const result = reconcileMaterializedView(v, events, 0);
+    const result = reconcileMaterializedView(v, events, asLocationId("loc_1"));
     expect(result.recentBeats.length).toBe(1);
     expect(result.reducedThroughEventCount).toBe(1);
   });
 
-  it("incremental: only processes new events since cursor", () => {
+  it("npc_met 记录接触地点（取提交时 currentLocationId）", () => {
     const events: GameEvent[] = [
-      { type: "quest_completed", questId: "q1" as any, occurredAt: "t1" },
-      { type: "location_visited", locationId: "loc1" as any, occurredAt: "t2" },
+      { type: "npc_met", npcId: asNpcId("npc_1"), occurredAt: "t1" },
     ];
     const v = createEmptyMaterializedView();
-    const r1 = reconcileMaterializedView(v, events, 0);
-    const r2 = reconcileMaterializedView(r1, events, 0); // idempotent
+    const result = reconcileMaterializedView(v, events, asLocationId("loc_1"));
+    expect(result.npcContacts[0]?.lastLocationId).toBe(asLocationId("loc_1"));
+  });
+
+  it("incremental: only processes new events since cursor", () => {
+    const events: GameEvent[] = [
+      { type: "quest_completed", questId: asQuestId("q1"), occurredAt: "t1" },
+      { type: "location_visited", locationId: asLocationId("loc1"), occurredAt: "t2" },
+    ];
+    const v = createEmptyMaterializedView();
+    const r1 = reconcileMaterializedView(v, events, asLocationId("loc_1"));
+    const r2 = reconcileMaterializedView(r1, events, asLocationId("loc_1")); // idempotent
     expect(r2.reducedThroughEventCount).toBe(2);
     expect(r2.recentBeats.length).toBe(r1.recentBeats.length);
   });
@@ -906,12 +986,14 @@ export function createEmptyMaterializedView(): MaterializedView {
 const BEAT_EVENTS = new Set([
   "quest_completed", "quest_failed", "fact_discovered", "npc_met",
   "battle_resolved", "ending_reached", "blueprint_expanded",
+  // 注：blueprint_expanded 是 v1 事件类型；P3 引入世界扩展后换用新事件类型
 ]);
 
 export function reconcileMaterializedView(
   prev: MaterializedView,
   eventLedger: readonly GameEvent[],
-  prevEventCount: number,
+  /** 提交时的玩家所在地：npc_met 只可能发生在当前地点，据此记录接触地点（避免 brand hack） */
+  currentLocationId: LocationId,
 ): MaterializedView {
   if (eventLedger.length <= prev.reducedThroughEventCount) return prev;
 
@@ -933,7 +1015,7 @@ export function reconcileMaterializedView(
       npcContactMap.set(String(npcId), {
         npcId,
         lastContactTurn: turn,
-        lastLocationId: "" as LocationId, // 由调用方补充
+        lastLocationId: currentLocationId,
       });
     }
   }
@@ -993,15 +1075,30 @@ git commit -m "feat: 物化派生视图纯 reducer——recentBeats + npcContact
 // src/game/gameplay/rpg/ruleEngine/validateAction.test.ts
 import { describe, it, expect } from "vitest";
 import { validateAction } from "./validateAction";
-import { createInitialWorldState } from "@/game/domain/worldState";
-import { asLocationId, asNpcId, asItemId, asFactId } from "@/game/domain/scenarioBlueprint";
+import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
+import { asLocationId, asNpcId, asEnemyId, asGenerationId } from "@/game/domain/scenarioBlueprint";
 
 describe("validateAction", () => {
+  const startingLocation: LocationEntry = {
+    id: asLocationId("loc_1"),
+    name: "起始地点",
+    description: "测试",
+    kind: "main",
+    connectedLocationIds: [],
+    npcIds: [],
+    availableItemIds: [],
+    tags: [],
+  };
   const ws = createInitialWorldState({
-    gameType: "wuxia",
-    seed: "test",
+    generation: {
+      generationId: asGenerationId("gen_test"),
+      seed: "test",
+      templateVersion: "v2",
+      inputDigest: "",
+      gameType: "wuxia",
+    },
     player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocationId: asLocationId("loc_1"),
+    startingLocation,
     startingItemIds: [],
   });
 
@@ -1020,6 +1117,11 @@ describe("validateAction", () => {
   it("accepts ack_prologue always", () => {
     const result = validateAction(ws, { type: "ack_prologue" });
     expect(result.ok).toBe(true);
+  });
+
+  it("rejects battle actions in P1（战斗接入为后续任务，明确拒绝而非默认路由丢失）", () => {
+    expect(validateAction(ws, { type: "attack", enemyId: asEnemyId("e1") }).ok).toBe(false);
+    expect(validateAction(ws, { type: "battle_action", action: "attack" }).ok).toBe(false);
   });
 });
 ```
@@ -1043,7 +1145,7 @@ export type ValidationCode =
   | "UNKNOWN_NPC" | "NPC_NOT_PRESENT" | "NPC_ALREADY_MET"
   | "UNKNOWN_FACT" | "FACT_NOT_INVESTIGABLE" | "FACT_ALREADY_DISCOVERED"
   | "UNKNOWN_ITEM" | "ITEM_NOT_AVAILABLE_HERE" | "ITEM_ALREADY_OWNED"
-  | "UNKNOWN_ENEMY" | "INTENT_NOT_ROUTED";
+  | "UNKNOWN_ENEMY" | "BATTLE_NOT_AVAILABLE" | "INTENT_NOT_ROUTED";
 
 export type ValidateResult =
   | { readonly ok: true }
@@ -1084,6 +1186,10 @@ export function validateAction(ws: WorldState, action: Action): ValidateResult {
     case "explore":
     case "rest":
       return { ok: true };
+    case "attack":
+    case "battle_action":
+      // P1 不路由战斗；战斗规则接入新流水线为后续任务
+      return { ok: false, code: "BATTLE_NOT_AVAILABLE", params: {} };
     default:
       return { ok: false, code: "INTENT_NOT_ROUTED", params: {} };
   }
@@ -1135,7 +1241,8 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       const event: GameEvent = { type: "npc_met", npcId: action.npcId, occurredAt, interactionKind: "greet" };
       const nextWs: WorldState = {
         ...ws,
-        npcs: ws.npcs.map((n) => n.npcId === action.npcId ? { ...n, met: true } : n),
+        // NpcEntry 的字段是 id，不是 npcId
+        npcs: ws.npcs.map((n) => n.id === action.npcId ? { ...n, met: true } : n),
         eventLedger: [...ws.eventLedger, event],
       };
       return { ok: true, nextWorldState: nextWs, events: [event], feedback: `你与${npc.name}交谈。` };
@@ -1154,6 +1261,12 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       const nextWs: WorldState = {
         ...ws,
         inventory: [...ws.inventory, action.itemId],
+        // 从当前地点移除，防止重复拾取（validate 只查 inventory 不够）
+        locations: ws.locations.map((l) =>
+          l.id === ws.currentLocationId
+            ? { ...l, availableItemIds: l.availableItemIds.filter((id) => id !== action.itemId) }
+            : l,
+        ),
         eventLedger: [...ws.eventLedger, event],
       };
       return { ok: true, nextWorldState: nextWs, events: [event], feedback: "你取得了这件物品。" };
@@ -1185,13 +1298,17 @@ git commit -m "feat: 规则引擎 validateAction + resolveByType——纯函数�
 
 **Files:**
 - Create: `src/game/gameplay/rpg/ruleEngine/updateStoryMetrics.ts`
+- Create: `src/game/gameplay/rpg/ruleEngine/reconcileQuests.ts`
+- Create: `src/game/gameplay/rpg/ruleEngine/resolveEnding.ts`
 - Create: `src/game/gameplay/rpg/ruleEngine/index.ts`
 - Test: `src/game/gameplay/rpg/ruleEngine/updateStoryMetrics.test.ts`
+- Test: `src/game/gameplay/rpg/ruleEngine/reconcileQuests.test.ts`
+- Test: `src/game/gameplay/rpg/ruleEngine/resolveEnding.test.ts`
 - Test: `src/game/gameplay/rpg/ruleEngine/index.test.ts`
 
 **Interfaces:**
 - Consumes: Tasks 1-5
-- Produces: `ruleEngine()` → `{ nextWorldState, nextStoryState, resolvedEvent }`, `updateStoryMetrics()`
+- Produces: `ruleEngine()` → `{ nextWorldState, nextStoryState, resolvedEvent }`, `updateStoryMetrics()`, `reconcileQuests()`, `resolveEnding()`
 
 - [ ] **Step 1: Write failing tests for updateStoryMetrics**
 
@@ -1201,32 +1318,35 @@ import { describe, it, expect } from "vitest";
 import { updateStoryMetrics, TENSION_CHANGES } from "./updateStoryMetrics";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { GameEvent } from "@/game/domain/events";
+import { asEnemyId, asQuestId } from "@/game/domain/scenarioBlueprint";
 
 describe("updateStoryMetrics", () => {
   const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
 
   it("battle_started increases tension by 15", () => {
-    const events: GameEvent[] = [{ type: "battle_started", enemyId: "e1" as any, occurredAt: "t" }];
+    const events: GameEvent[] = [{ type: "battle_started", enemyId: asEnemyId("e1"), occurredAt: "t" }];
     const result = updateStoryMetrics(ss, events);
     expect(result.tension).toBe(45); // 30 + 15
   });
 
   it("quest_completed increases tension by 8 and progress", () => {
-    const events: GameEvent[] = [{ type: "quest_completed", questId: "q1" as any, occurredAt: "t" }];
+    const events: GameEvent[] = [{ type: "quest_completed", questId: asQuestId("q1"), occurredAt: "t" }];
     const result = updateStoryMetrics(ss, events);
     expect(result.tension).toBe(38); // 30 + 8
   });
 
   it("tension clamps to 100", () => {
     const highTension = { ...ss, tension: 95 };
-    const events: GameEvent[] = [{ type: "battle_started", enemyId: "e1" as any, occurredAt: "t" }];
+    const events: GameEvent[] = [{ type: "battle_started", enemyId: asEnemyId("e1"), occurredAt: "t" }];
     const result = updateStoryMetrics(highTension, events);
     expect(result.tension).toBe(100);
   });
 });
 ```
 
-- [ ] **Step 2: Implement updateStoryMetrics and ruleEngine facade**
+- [ ] **Step 2: Implement updateStoryMetrics, reconcileQuests, resolveEnding and ruleEngine facade**
+
+reconcileQuests / resolveEnding 的测试先写（至少各覆盖：talk 满足 talk_to_npc objective → quest_completed；结局 requirement 满足 → ending_reached），再实现。
 
 ```typescript
 // src/game/gameplay/rpg/ruleEngine/updateStoryMetrics.ts
@@ -1242,8 +1362,7 @@ export const TENSION_CHANGES = {
   fact_discovered: 12,
   quest_completed: 8,
   npc_met: 3,
-  rest: -10,
-  free_input: 0,
+  // rest（-10）与闲聊（0）：当前 events.ts 无对应事件类型，战斗/休息事件接入后补 case
 } as const;
 
 export function updateStoryMetrics(prev: StoryState, newEvents: readonly GameEvent[]): StoryState {
@@ -1273,13 +1392,48 @@ export function updateStoryMetrics(prev: StoryState, newEvents: readonly GameEve
 ```
 
 ```typescript
+// src/game/gameplay/rpg/ruleEngine/reconcileQuests.ts
+import type { WorldState } from "@/game/domain/worldState";
+import type { GameEvent } from "@/game/domain/events";
+
+export type QuestReconcileResult = {
+  readonly nextWorldState: WorldState;
+  readonly events: readonly GameEvent[];
+};
+
+/** P1 覆盖 visit_location / talk_to_npc / obtain_item 目标的推进；
+ *  active 任务全部 objective 满足 → completed + quest_completed 事件 + onSuccess 展开。 */
+export function reconcileQuests(ws: WorldState, deps: { readonly now: () => string }): QuestReconcileResult;
+```
+
+```typescript
+// src/game/gameplay/rpg/ruleEngine/resolveEnding.ts
+import type { WorldState } from "@/game/domain/worldState";
+import type { StoryState } from "@/game/domain/storyState";
+import type { GameEvent } from "@/game/domain/events";
+
+export type EndingResolveResult = {
+  readonly nextWorldState: WorldState;
+  readonly nextStoryState: StoryState;
+  readonly events: readonly GameEvent[];
+};
+
+/** P1 覆盖结局 requirements（quest_completed/quest_failed/fact_discovered）检查；
+ *  endingAllowed 推导与多结局方向选择细化留 P4。 */
+export function resolveEnding(ws: WorldState, ss: StoryState, deps: { readonly now: () => string }): EndingResolveResult;
+```
+
+```typescript
 // src/game/gameplay/rpg/ruleEngine/index.ts
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
 import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
+import type { NarrativeEventKind } from "@/game/domain/narrative";
 import { validateAction, type ValidationCode } from "./validateAction";
 import { resolveByType, type ResolveDeps } from "./resolveByType";
+import { reconcileQuests } from "./reconcileQuests";
+import { resolveEnding } from "./resolveEnding";
 import { updateStoryMetrics } from "./updateStoryMetrics";
 
 export type RuleEngineResult =
@@ -1288,10 +1442,23 @@ export type RuleEngineResult =
 
 export type RuleEngineDeps = ResolveDeps;
 
+function eventKindForAction(action: Action): NarrativeEventKind {
+  switch (action.type) {
+    case "move": return "travel";
+    case "talk": return "dialogue";
+    case "investigate": return "investigate";
+    case "take_item": case "use_item": case "give_item": return "item";
+    case "attack": case "battle_action": return "battle";
+    default: return "observe";
+  }
+}
+
 export function ruleEngine(
   worldState: WorldState,
   storyState: StoryState,
   action: Action,
+  /** 客户端生成的唯一 actionId（spec §11.2），由 performActionV2 从命令传入 */
+  actionId: string,
   deps: RuleEngineDeps,
 ): RuleEngineResult {
   const validation = validateAction(worldState, action);
@@ -1301,24 +1468,29 @@ export function ruleEngine(
 
   const resolved = resolveByType(worldState, action, deps);
   if (!resolved.ok) {
-    return { ok: false, code: "INTENT_NOT_ROUTED" as ValidationCode, feedback: resolved.feedback };
+    return { ok: false, code: "INTENT_NOT_ROUTED", feedback: resolved.feedback };
   }
 
-  const nextStoryState = updateStoryMetrics(storyState, resolved.events);
+  // 流水线顺序与 spec §5.3 一致：resolve → reconcileQuests → resolveEnding → updateStoryMetrics
+  const quests = reconcileQuests(resolved.nextWorldState, deps);
+  const ending = resolveEnding(quests.nextWorldState, storyState, deps);
+  const allEvents = [...resolved.events, ...quests.events, ...ending.events];
+  const nextStoryState = updateStoryMetrics(ending.nextStoryState, allEvents);
 
   const resolvedEvent: ResolvedEvent = {
-    actionId: `act_${deps.now()}`,
+    actionId,
     status: "success",
+    eventKind: eventKindForAction(action),
     stateChanges: [],
     facts: [],
     costs: [],
     rewards: [],
-    triggeredEvents: resolved.events.map((e) => e.type),
+    triggeredEvents: allEvents.map((e) => e.type),
     rejectedEffects: [],
-    stateVersion: worldState.eventLedger.length,
+    stateVersion: ending.nextWorldState.eventLedger.length, // 演算后的账本长度（spec §11.3）
   };
 
-  return { ok: true, nextWorldState: resolved.nextWorldState, nextStoryState, resolvedEvent };
+  return { ok: true, nextWorldState: ending.nextWorldState, nextStoryState, resolvedEvent };
 }
 ```
 
@@ -1345,6 +1517,34 @@ git commit -m "feat: 规则引擎 facade + updateStoryMetrics——张力固定�
 - Produces: `convertInteraction()` — P1 仅固定选项映射，free_text 留 P2
 
 - [ ] **Step 1: Write failing tests + implement + commit**
+
+```typescript
+// src/game/application/actionConverter.test.ts
+import { describe, it, expect } from "vitest";
+import { convertInteraction } from "./actionConverter";
+import { asNpcId } from "@/game/domain/scenarioBlueprint";
+
+describe("convertInteraction", () => {
+  const choiceMap = new Map([["tok_talk", { type: "talk", npcId: asNpcId("npc_1") }]]);
+
+  it("maps known fixed_choice token to action", () => {
+    const r = convertInteraction({ kind: "fixed_choice", choiceToken: "tok_talk" }, choiceMap);
+    expect(r.ok).toBe(true);
+  });
+
+  it("rejects unknown token", () => {
+    const r = convertInteraction({ kind: "fixed_choice", choiceToken: "nope" }, choiceMap);
+    expect(r).toEqual({ ok: false, reason: "unknown_choice" });
+  });
+
+  it("rejects free_text in P1（P2 实现意图解析）", () => {
+    const r = convertInteraction({ kind: "free_text", text: "你好" }, choiceMap);
+    expect(r).toEqual({ ok: false, reason: "free_text_not_supported" });
+  });
+});
+```
+
+Run: `npx vitest run src/game/application/actionConverter.test.ts` → FAIL → 实现 → PASS
 
 ```typescript
 // src/game/application/actionConverter.ts
@@ -1377,31 +1577,106 @@ git commit -m "feat: ActionConverter 固定选项映射——P2 扩展自由文�
 
 ---
 
-## Task 8: StateCommit + 场景写回者
+## Task 8: v2 持久化端口 + StateCommit + 场景写回者
 
 **Files:**
+- Create: `src/game/application/server/persistence/gameRepositoryV2.ts`
+- Create: `src/game/application/server/persistence/sqliteGameRepositoryV2.ts`
 - Create: `src/game/application/stateCommit.ts`
 - Create: `src/game/application/sceneWriteBack.ts`
-- Test: `src/game/application/stateCommit.test.ts`
-- Test: `src/game/application/sceneWriteBack.test.ts`
+- Test: 以上各文件对应 `.test.ts`
 
 **Interfaces:**
-- Consumes: `GameRepository` (existing), Tasks 1-2
-- Produces: `commitState()` (CAS), `writeBackScene()` (CAS, 只写叙事运行时状态)
+- Consumes: Tasks 1-2，现有 sqlite 基础设施（`createSqliteGameRepository` 的连接/事务模式可参照）
+- Produces: `GameRepositoryV2` 端口 + SQLite adapter，`commitState()` (CAS), `writeBackScene()` (CAS, 只写叙事运行时状态)
 
-- [ ] **Step 1: Implement StateCommit and sceneWriteBack with tests**
+- [ ] **Step 1: 定义 v2 持久化端口（先写测试）**
 
-StateCommit wraps the existing repository CAS but operates on the new dual-state model. The repository stores `{ worldState, storyState, revision }`.
+现有 `GameRecord` 绑定 `blueprint + GameState`，双状态模型无法复用，必须新建端口与独立新表（旧存档不迁移，v1/v2 互不干扰）：
 
-SceneWriteBack only updates `storyState.narrative` and `storyState.candidateEventPool` — it must never touch `worldState` or other storyState fields.
+```typescript
+// src/game/application/server/persistence/gameRepositoryV2.ts
+import type { WorldState } from "@/game/domain/worldState";
+import type { StoryState } from "@/game/domain/storyState";
+import type { GameId } from "./gameRepository"; // 复用 GameId 铸造
 
-- [ ] **Step 2: Write boundary tests asserting sceneWriteBack cannot modify worldState**
+export type GameRecordV2 = {
+  readonly gameId: GameId;
+  readonly worldState: WorldState;
+  readonly storyState: StoryState;
+  readonly revision: number;   // 初始 0，每次成功写入 +1
+  readonly createdAt: string;
+};
 
-- [ ] **Step 3: Run tests, commit**
+export type CreateInitialGameV2Input = {
+  readonly gameId: GameId;
+  readonly worldState: WorldState;
+  readonly storyState: StoryState;
+  readonly createdAt: string;
+};
+
+export type ApplyStateV2Input = {
+  readonly gameId: GameId;
+  readonly expectedRevision: number;
+  readonly nextWorldState: WorldState;
+  readonly nextStoryState: StoryState;
+};
+
+/** 场景写回载荷：只允许叙事运行时状态 + 候选事件池（spec §11.1 两个写入者边界） */
+export type ApplySceneWriteBackInput = {
+  readonly gameId: GameId;
+  readonly expectedRevision: number;
+  readonly nextNarrative: StoryState["narrative"];
+  readonly nextCandidateEventPool: StoryState["candidateEventPool"];
+};
+
+// Result 类型与 v1 端口同构：失败不抛异常只返稳定码。
+export type CreateInitialGameV2Result =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly code: "ACTIVE_GAME_EXISTS" }
+  | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" };
+
+export type GetCurrentGameV2Result =
+  | { readonly ok: true; readonly status: "none" }
+  | { readonly ok: true; readonly status: "active"; readonly record: GameRecordV2 }
+  | { readonly ok: true; readonly status: "corrupt"; readonly reason: CorruptGameReason }
+  | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" };
+
+export type ApplyStateV2Result =
+  | { readonly ok: true; readonly record: GameRecordV2 }
+  | { readonly ok: false; readonly code: "STALE_GAME_REVISION" }
+  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" }
+  | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" };
+
+export type ApplySceneWriteBackResult = ApplyStateV2Result;
+
+export interface GameRepositoryV2 {
+  createInitialGame(input: CreateInitialGameV2Input): Promise<CreateInitialGameV2Result>;
+  getCurrentGame(): Promise<GetCurrentGameV2Result>;
+  applyState(input: ApplyStateV2Input): Promise<ApplyStateV2Result>;                    // StateCommit 专用 CAS
+  applySceneWriteBack(input: ApplySceneWriteBackInput): Promise<ApplySceneWriteBackResult>; // 场景写回专用 CAS
+}
+```
+
+> `CorruptGameReason` 从 `./gameRepository` 复用导入。
+
+- [ ] **Step 2: SQLite adapter（独立新表，如 `game_records_v2`）**
+
+参照 `sqliteGameRepository` 的事务/CAS/损坏检测模式；`applySceneWriteBack` 在 adapter 内只重组 `storyState.narrative` 与 `candidateEventPool` 两个字段，其余字段原样保留——类型层面就排除触碰 worldState 的可能。
+
+- [ ] **Step 3: Implement StateCommit and sceneWriteBack with tests**
+
+StateCommit 包装 `GameRepositoryV2.applyState`，并负责写入前的物化视图归约（调 `reconcileMaterializedView`，Task 4）。
+
+SceneWriteBack 只更新 `storyState.narrative` 与 `storyState.candidateEventPool`——绝不触碰 `worldState` 或其他 storyState 字段。
+
+- [ ] **Step 4: Write boundary tests asserting sceneWriteBack cannot modify worldState**
+
+- [ ] **Step 5: Run tests, commit**
 
 ```bash
-git add src/game/application/stateCommit.ts src/game/application/stateCommit.test.ts src/game/application/sceneWriteBack.ts src/game/application/sceneWriteBack.test.ts
-git commit -m "feat: StateCommit + 场景写回者——两个合法 CAS 写入者边界"
+git add src/game/application/server/persistence/gameRepositoryV2.ts src/game/application/server/persistence/gameRepositoryV2.test.ts src/game/application/server/persistence/sqliteGameRepositoryV2.ts src/game/application/server/persistence/sqliteGameRepositoryV2.test.ts src/game/application/stateCommit.ts src/game/application/stateCommit.test.ts src/game/application/sceneWriteBack.ts src/game/application/sceneWriteBack.test.ts
+git commit -m "feat: v2 持久化端口 + StateCommit + 场景写回者——两个合法 CAS 写入者边界"
 ```
 
 ---
@@ -1421,14 +1696,17 @@ git commit -m "feat: StateCommit + 场景写回者——两个合法 CAS 写入�
 ```typescript
 // src/game/application/performActionV2.ts (skeleton)
 export async function performActionV2(command, deps) {
-  // 1. Load current game
-  // 2. Check revision
-  // 3. convertInteraction → Action (P1: fixed_choice only)
-  // 4. ruleEngine(action, worldState, storyState) → { nextWorldState, nextStoryState, resolvedEvent }
+  // command 携带客户端生成的 actionId（spec §11.2）与 Interaction + expectedRevision
+  // 1. Load current game (GameRepositoryV2.getCurrentGame)
+  // 2. Check revision（不匹配 → STALE_GAME_REVISION）
+  // 3. pending 边界检查（spec §11.4：pending 期间拒绝推进，ack_prologue 例外）
+  // 4. convertInteraction → Action (P1: fixed_choice only)
+  // 5. ruleEngine(worldState, storyState, action, actionId, deps)
+  //    → { nextWorldState, nextStoryState, resolvedEvent }
   //    P1: no ExpansionProposer (P3 adds it)
-  // 5. stateCommit CAS write
-  // 6. Queue scene generation if AI mode (async pending → ensure → sceneWriteBack)
-  // 7. Project gameSessionViewV2
+  // 6. stateCommit CAS write（含物化视图归约）
+  // 7. Queue scene generation if AI mode (async pending → ensure → sceneWriteBack)
+  // 8. Project gameSessionViewV2
 }
 ```
 
@@ -1468,23 +1746,26 @@ git commit -m "feat: createGameV2 开局初始化——World State + Story State
 
 ---
 
-## Task 11: gameSessionViewV2 read model + API 接入
+## Task 11: gameSessionViewV2 read model + v2 路由接入
 
 **Files:**
 - Create: `src/game/application/gameSessionViewV2.ts`
-- Modify: `src/app/api/game/route.ts`
-- Modify: `src/app/api/game/actions/route.ts`
+- Create: `src/app/api/v2/game/route.ts`（委托 createGameV2）
+- Create: `src/app/api/v2/game/actions/route.ts`（委托 performActionV2）
+- Create: `src/app/api/v2/game/current/route.ts`（委托 gameSessionViewV2）
 - Test: `src/game/application/gameSessionViewV2.test.ts`
 
 - [ ] **Step 1: Implement read model projection from WorldState + StoryState**
 
-- [ ] **Step 2: Switch API routes to V2 use cases**
+- [ ] **Step 2: 新建并行 v2 路由（不动 v1 `/api/game/*`，参照 v1 route/handler 的参数校验与状态码映射模式）**
+
+> 前端（CurrentGameScreen/AdventureGameShell/gameActionRequest 等）切到 v2 路由为独立后续任务（P2 前完成）；P1 通过 Task 12 的离线回归验证全链路。
 
 - [ ] **Step 3: Run all tests, commit**
 
 ```bash
 git add -A
-git commit -m "feat: gameSessionViewV2 read model + API 接入 V2"
+git commit -m "feat: gameSessionViewV2 read model + 并行 v2 路由"
 ```
 
 ---
@@ -1519,17 +1800,19 @@ git commit -m "feat: P1 依赖边界守卫 + 离线全流水线回归"
 - ✅ World State + Story State 双状态模型 → Tasks 1-2
 - ✅ 严格流水线骨架 → Tasks 5-9
 - ✅ 封闭 Action 集合 + utterance → Task 3
-- ✅ ResolvedEvent 五态结果 → Task 3
+- ✅ ResolvedEvent 五态结果（类型；五态语义细化在 P2）→ Task 3
 - ✅ 物化派生视图 → Task 4
-- ✅ 预算控制 opening/expanded/max → Task 2
+- ✅ 预算控制 opening/expanded/max + hardLimit 检查 → Task 2
 - ✅ 张力/节奏追踪 → Task 6
-- ✅ 两个合法写入者 → Task 8
+- ✅ 两个合法写入者 + v2 持久化端口 → Task 8
 - ✅ 离线基线与可注入 AI source → Tasks 9-12
 - ⏳ ActionConverter 自由文本 → P2
 - ⏳ ExpansionProposer → P3
 - ⏳ NPC 结构化记忆完整接入 → P4
 - ⏳ candidateEventPool 审批 → P4
+- ⏳ 战斗规则接入新流水线（attack/battle_action 当前 BATTLE_NOT_AVAILABLE）→ 后续任务
+- ⏳ 前端切换到 v2 路由 → 后续任务（P2 前）
 
 **Placeholder scan:** No TBDs. All code blocks contain actual implementation.
 
-**Type consistency:** WorldState.version = 2, StoryState.version = 2 consistently. Action types match between action.ts and resolveByType.ts.
+**Type consistency:** WorldState.version = 2, StoryState.version = 2 consistently. Action types match between action.ts and resolveByType.ts. ruleEngine 签名（worldState, storyState, action, actionId, deps）在 File Structure、Task 6、Task 9 三处一致。
