@@ -121,9 +121,31 @@ export async function performActionV2(
     return { ok: false, code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE", feedback: "Commit failed" };
   }
 
+  // Queue narrative scene generation (spec §7: async pending → ensure → sceneWriteBack)
+  const pendingStoryState: StoryState = {
+    ...commitResult.record.storyState,
+    narrative: {
+      ...commitResult.record.storyState.narrative,
+      generation: {
+        status: "pending",
+        requestedAt: deps.now(),
+      },
+    },
+  };
+
+  const pendingCommit = await commitState(deps.repository, {
+    gameId: command.gameId,
+    expectedRevision: commitResult.record.revision,
+    nextWorldState: commitResult.record.worldState,
+    nextStoryState: pendingStoryState,
+  });
+
+  // Scene queuing failure is non-fatal — action still succeeded
+  const finalRevision = pendingCommit.ok ? pendingCommit.record.revision : commitResult.record.revision;
+
   return {
     ok: true,
-    revision: commitResult.record.revision,
+    revision: finalRevision,
     resolvedEvent: engineResult.resolvedEvent,
     feedback: "Action performed",
   };

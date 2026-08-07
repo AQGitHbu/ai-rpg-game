@@ -73,7 +73,7 @@ describe("performActionV2", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.revision).toBe(1);
+      expect(result.revision).toBe(2); // 1 for action commit + 1 for scene queuing
       expect(result.resolvedEvent.status).toBe("success");
       expect(result.resolvedEvent.eventKind).toBe("dialogue");
     }
@@ -146,7 +146,7 @@ describe("performActionV2 free_text integration", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.revision).toBe(1);
+      expect(result.revision).toBe(2); // 1 for action commit + 1 for scene queuing
       expect(result.resolvedEvent.status).toBe("success");
     }
   });
