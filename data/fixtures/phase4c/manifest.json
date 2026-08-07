@@ -1,7 +1,7 @@
 {
-  "$comment": "Phase 4C fixture manifest：候选契约升至 scenario-dynamic-v2；fixtureSetVersion 标识本离线集合版本。expectedStages 仅供契约测试。",
-  "contractVersion": "scenario-dynamic-v2",
-  "fixtureSetVersion": "phase4c-v1",
+  "$comment": "Phase 4C fixture manifest：候选契约升至 scenario-dynamic-v3（Phase 14 开局收窄：起始锚点+序幕+结局方向）；fixtureSetVersion 标识本离线集合版本（v2：候选迁移到 v3 开局形态）。expectedStages 仅供契约测试。",
+  "contractVersion": "scenario-dynamic-v3",
+  "fixtureSetVersion": "phase4c-v2",
   "fixtures": [
     {
       "id": "generated-wuxia",

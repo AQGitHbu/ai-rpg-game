@@ -1,13 +1,12 @@
 {
-  "version": "town-journey-summary-v1",
+  "version": "town-journey-summary-v2",
   "mode": "record",
-  "scenarioSource": "generated",
-  "seed": "phase1-wuxia-001",
+  "seed": "seed-1",
   "sceneLocationCount": 4,
   "townLocationCount": 1,
-  "townLocationId": "loc_2",
+  "townLocationId": "loc_b",
   "townPlanSource": "generated",
-  "townPlanTheme": "苍凉渡口",
+  "townPlanTheme": "渡口集市（fixture 规划）",
   "townDistrictCount": 4,
-  "townRequiredBuildingCount": 8
+  "townRequiredBuildingCount": 1
 }

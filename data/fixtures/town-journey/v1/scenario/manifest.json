@@ -1,9 +1,0 @@
-{
-  "contractVersion": "scenario-dynamic-v2",
-  "fixtures": [
-    {
-      "id": "town-journey",
-      "file": "blueprint.json"
-    }
-  ]
-}

@@ -1,11 +1,12 @@
 {
+  "$comment": "Phase 14：合法的 scenario-dynamic-v3 开局候选（科幻题材）。",
   "candidate": {
-    "schemaVersion": 1,
-    "generationId": "gen-cfde0b5f96356317",
+    "schemaVersion": 2,
+    "generationId": "gen-daff839b73452a23",
     "seed": "phase1-scifi-001",
-    "templateVersion": "fallback-3",
+    "templateVersion": "fallback-8",
     "gameType": "science_fiction",
-    "inputDigest": "ed5c8eeabc423f52",
+    "inputDigest": "363b1c73d57afe23",
     "world": {
       "summary": "【玩家输入】殖民星环带航线接连失联，星港各方势力都在暗中打探失踪船队的下落。在可推演的科技秩序之下，失联船队的谜团正牵动整条航线。",
       "tone": "冷峻悬疑",
@@ -46,14 +47,27 @@
       "identity": "货运飞船领航员",
       "backgroundSummary": "【玩家输入】身为货运飞船领航员，程曜在环带航线上跑了八年货运，熟悉每一个中转站的暗面规矩。终端幽光映着舷窗，一场跨越航线的追查开始了。",
       "startingLocationId": "loc_1",
-      "startingItemIds": [
-        "item_start"
-      ],
+      "startingItemIds": [],
       "baseStats": {
         "hp": 30,
         "attack": 6,
         "defense": 4
       }
+    },
+    "startAnchor": {
+      "locationId": "loc_1",
+      "npcId": "npc_1",
+      "startQuestId": "quest_main_1"
+    },
+    "endingDirection": {
+      "theme": "技术伦理",
+      "possibleTones": [
+        "triumph",
+        "tragedy",
+        "bittersweet",
+        "ambiguous"
+      ],
+      "lockedAt": 2
     },
     "locations": [
       {
@@ -61,82 +75,13 @@
         "name": "曙光空间站",
         "description": "航线枢纽站，往来货船在此补给中转。",
         "kind": "main",
-        "connectedLocationIds": [
-          "loc_2"
-        ],
+        "connectedLocationIds": [],
         "npcIds": [
           "npc_1"
         ],
         "availableItemIds": [],
         "tags": [
           "星舰"
-        ]
-      },
-      {
-        "id": "loc_2",
-        "name": "环带货运港",
-        "description": "货运集散的港区，暗面规矩自成一套。",
-        "kind": "main",
-        "connectedLocationIds": [
-          "loc_1",
-          "loc_3"
-        ],
-        "npcIds": [
-          "npc_2"
-        ],
-        "availableItemIds": [],
-        "tags": [
-          "人工智能"
-        ]
-      },
-      {
-        "id": "loc_3",
-        "name": "殖民地穹顶城",
-        "description": "穹顶之下的殖民都市，议会与企业角力。",
-        "kind": "main",
-        "connectedLocationIds": [
-          "loc_2",
-          "loc_4"
-        ],
-        "npcIds": [
-          "npc_3"
-        ],
-        "availableItemIds": [
-          "item_key"
-        ],
-        "tags": [
-          "殖民星球"
-        ]
-      },
-      {
-        "id": "loc_4",
-        "name": "静默号残骸",
-        "description": "漂浮在轨道上的失事货船残骸。",
-        "kind": "main",
-        "connectedLocationIds": [
-          "loc_3",
-          "loc_hidden"
-        ],
-        "npcIds": [
-          "npc_4"
-        ],
-        "availableItemIds": [],
-        "tags": [
-          "曲率航行"
-        ]
-      },
-      {
-        "id": "loc_hidden",
-        "name": "废弃AI机房",
-        "description": "早被封存的旧式AI机房，仍有余电闪烁。",
-        "kind": "hidden",
-        "connectedLocationIds": [
-          "loc_4"
-        ],
-        "npcIds": [],
-        "availableItemIds": [],
-        "tags": [
-          "机甲"
         ]
       }
     ],
@@ -154,44 +99,6 @@
         "tags": [
           "星舰"
         ]
-      },
-      {
-        "id": "npc_2",
-        "name": "港区走私客",
-        "role": "消息贩子",
-        "description": "在灰色航道上讨生活，消息灵通。",
-        "locationId": "loc_2",
-        "isCompanion": false,
-        "knownFactIds": [],
-        "tags": [
-          "人工智能"
-        ]
-      },
-      {
-        "id": "npc_3",
-        "name": "殖民地议员",
-        "role": "盟友",
-        "description": "力主彻查失联事件的殖民地代表。",
-        "locationId": "loc_3",
-        "isCompanion": false,
-        "knownFactIds": [
-          "fact_gen_1"
-        ],
-        "tags": [
-          "殖民星球"
-        ]
-      },
-      {
-        "id": "npc_4",
-        "name": "义体医师",
-        "role": "同伴",
-        "description": "改造技术精湛，愿随主角深入调查。",
-        "locationId": "loc_4",
-        "isCompanion": true,
-        "knownFactIds": [],
-        "tags": [
-          "曲率航行"
-        ]
       }
     ],
     "quests": [
@@ -200,19 +107,15 @@
         "stage": 1,
         "id": "quest_main_1",
         "name": "失联溯源",
-        "description": "程曜从港区记录追查船队失联的起点。线索指向：【玩家输入】殖民星环带航线接连失联，星港各方势力都在暗中打探失踪船队的下落。",
+        "description": "第 1 幕：程曜从港区记录追查船队失联的起点。线索指向：【玩家输入】殖民星环带航线接连失联，星港各方势力都在暗中打探失踪船队的下落。",
         "objectives": [
           {
-            "kind": "visit_location",
-            "locationId": "loc_2"
+            "kind": "talk_to_npc",
+            "npcId": "npc_1"
           }
         ],
         "onSuccess": {
-          "kind": "unlock_quests",
-          "questIds": [
-            "quest_main_2",
-            "quest_s1"
-          ]
+          "kind": "closed"
         },
         "onFailure": {
           "kind": "closed"
@@ -220,174 +123,11 @@
         "tags": [
           "星舰"
         ]
-      },
-      {
-        "kind": "main",
-        "stage": 2,
-        "id": "quest_main_2",
-        "name": "残骸取证",
-        "description": "潜入静默号残骸取回加密数据核心。",
-        "objectives": [
-          {
-            "kind": "talk_to_npc",
-            "npcId": "npc_3"
-          },
-          {
-            "kind": "obtain_item",
-            "itemId": "item_key"
-          }
-        ],
-        "onSuccess": {
-          "kind": "unlock_quests",
-          "questIds": [
-            "quest_main_3"
-          ]
-        },
-        "onFailure": {
-          "kind": "closed"
-        },
-        "tags": []
-      },
-      {
-        "kind": "main",
-        "stage": 3,
-        "id": "quest_main_3",
-        "name": "核心对峙",
-        "description": "在废弃机房与叛逃AI核心正面对峙。",
-        "objectives": [
-          {
-            "kind": "defeat_enemy",
-            "enemyId": "enemy_boss"
-          }
-        ],
-        "onSuccess": {
-          "kind": "reach_ending",
-          "endingId": "ending_1"
-        },
-        "onFailure": {
-          "kind": "reach_ending",
-          "endingId": "ending_2"
-        },
-        "tags": []
-      },
-      {
-        "kind": "side",
-        "id": "quest_s1",
-        "name": "旧机房传闻",
-        "description": "核实废弃AI机房仍在运转的传闻。",
-        "objectives": [
-          {
-            "kind": "discover_fact",
-            "factId": "fact_gen_1"
-          }
-        ],
-        "onSuccess": {
-          "kind": "closed"
-        },
-        "onFailure": {
-          "kind": "closed"
-        },
-        "tags": []
       }
     ],
-    "enemies": [
-      {
-        "id": "enemy_normal_1",
-        "name": "治安巡逻无人机",
-        "tier": "normal",
-        "stats": {
-          "hp": 24,
-          "attack": 5,
-          "defense": 2
-        },
-        "locationId": "loc_1",
-        "tags": [
-          "曲率航行"
-        ]
-      },
-      {
-        "id": "enemy_normal_2",
-        "name": "走私团打手",
-        "tier": "normal",
-        "stats": {
-          "hp": 30,
-          "attack": 6,
-          "defense": 3
-        },
-        "locationId": "loc_2",
-        "tags": [
-          "机甲"
-        ]
-      },
-      {
-        "id": "enemy_normal_3",
-        "name": "失控工程机甲",
-        "tier": "normal",
-        "stats": {
-          "hp": 36,
-          "attack": 7,
-          "defense": 4
-        },
-        "locationId": "loc_3",
-        "tags": [
-          "义体改造"
-        ]
-      },
-      {
-        "id": "enemy_boss",
-        "name": "叛逃AI核心",
-        "tier": "boss",
-        "stats": {
-          "hp": 20,
-          "attack": 5,
-          "defense": 2
-        },
-        "locationId": "loc_4",
-        "tags": []
-      }
-    ],
-    "items": [
-      {
-        "id": "item_start",
-        "name": "领航员终端",
-        "description": "随身终端，存有旧航线数据。",
-        "kind": "gear",
-        "tags": [
-          "殖民星球"
-        ]
-      },
-      {
-        "id": "item_key",
-        "name": "加密数据核心",
-        "description": "封存失联真相的加密核心。",
-        "kind": "key",
-        "tags": []
-      }
-    ],
-    "endings": [
-      {
-        "id": "ending_1",
-        "name": "真相曝光",
-        "description": "失联真相公之于众，秩序得以重整。",
-        "requirements": [
-          {
-            "kind": "quest_completed",
-            "questId": "quest_main_3"
-          }
-        ]
-      },
-      {
-        "id": "ending_2",
-        "name": "隐入星海",
-        "description": "调查受阻，主角带着秘密隐入星海。",
-        "requirements": [
-          {
-            "kind": "quest_failed",
-            "questId": "quest_main_3"
-          }
-        ]
-      }
-    ],
+    "enemies": [],
+    "items": [],
+    "endings": [],
     "openingScene": {
       "id": "scene_opening",
       "locationId": "loc_1",
@@ -403,7 +143,11 @@
       "investigableFactIds": [
         "fact_gen_1",
         "fact_gen_2"
-      ]
+      ],
+      "prologue": {
+        "text": "【玩家输入】殖民星环带航线接连失联，星港各方势力都在暗中打探失踪船队的下落。在可推演的科技秩序之下，失联船队的谜团正牵动整条航线。",
+        "tone": "mysterious"
+      }
     },
     "budgetPolicy": {
       "policyVersion": 1,
