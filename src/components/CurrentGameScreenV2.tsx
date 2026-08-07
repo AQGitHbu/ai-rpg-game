@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import type { GameSessionViewV2 } from "@/game/application/gameSessionViewV2";
 import { AdventureGameShellV2 } from "./AdventureGameShellV2";
-import { NewGameSetupFormV2 } from "./NewGameSetupFormV2";
+import { NewGameSetupForm } from "./NewGameSetupForm";
 import { fetchV2CurrentGame, ensureV2Narrative, ackV2Prologue } from "./gameActionRequestV2";
 
 // ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ export function CurrentGameScreenV2() {
   }
 
   if (state.phase === "none") {
-    return <NewGameSetupFormV2 onCreated={handleCreated} />;
+    return <NewGameSetupForm apiPath="/api/v2/game" onCreatedV2={handleCreated} />;
   }
 
   if (state.phase === "corrupt") {

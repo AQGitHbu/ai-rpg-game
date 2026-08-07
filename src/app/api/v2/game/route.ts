@@ -2,21 +2,24 @@ import { getServerGameV2EntryPoints, type CreateGameV2HttpInput } from "@/game/a
 
 // POST /api/v2/game：V2 并行路由——委托 createGameV2。
 // V1 路由 /api/game 保持不动，互不干扰。
+// 接受完整 NewGameInput（与 V1 表单兼容），但 V2 目前只使用 gameType + gameLength。
+// 额外字段（角色名、世界观等）保留供未来 AI 世界生成器使用。
 export async function POST(request: Request): Promise<Response> {
   const entryPoints = getServerGameV2EntryPoints();
   return entryPoints.executeHttpRequest(
     "POST",
     "/api/v2/game",
     async () => {
-      let body: { gameType: string; gameLength: string };
+      let body: Record<string, unknown>;
       try {
-        body = await request.json();
+        body = await request.json() as Record<string, unknown>;
       } catch {
         return new Response(JSON.stringify({ ok: false, code: "INVALID_INPUT" }), {
           status: 400,
           headers: { "Content-Type": "application/json" },
         });
       }
+      // 只校验 V2 必需字段；额外字段（characterName 等）透传但当前不使用。
       if (typeof body.gameType !== "string" || typeof body.gameLength !== "string") {
         return new Response(JSON.stringify({ ok: false, code: "INVALID_INPUT" }), {
           status: 400,

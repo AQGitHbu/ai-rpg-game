@@ -204,11 +204,15 @@ function parseGenerationSource(value: unknown): GenerationSource | null {
 type NewGameSetupFormProps = {
   /** 创建成功回调：父级用会话视图与安全来源切换到开场画面。 */
   onCreated?: (view: GameSessionView, generationSource: GenerationSource) => void;
+  /** V2 模式回调：不携带 view（V2 API 不返回 view，父级自行 reload）。 */
+  onCreatedV2?: () => void;
   /** 仅由 current-game 的 server metadata 提供，浏览器不可自行开启。 */
   developmentTools?: boolean;
+  /** API 端点路径：默认 /api/game (V1)，V2 模式传 /api/v2/game。 */
+  apiPath?: string;
 };
 
-export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGameSetupFormProps = {}) {
+export function NewGameSetupForm({ onCreated, onCreatedV2, developmentTools = false, apiPath = "/api/game" }: NewGameSetupFormProps = {}) {
   const [gameType, setGameType] = useState<(typeof GAME_TYPES)[number]["id"]>(DEFAULT_GAME_TYPE);
   const [characterName, setCharacterName] = useState(DEFAULT_PRESET.characterName);
   const [characterIdentity, setCharacterIdentity] = useState(DEFAULT_PRESET.characterIdentity);
@@ -294,18 +298,41 @@ export function NewGameSetupForm({ onCreated, developmentTools = false }: NewGam
     setSubmitting(true);
     setStatusMessage("正在生成世界，请稍候……");
     try {
-      const response = await fetch("/api/game", {
+      const response = await fetch(apiPath, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(input)
       });
       const body = (await response.json().catch(() => null)) as CreateGameApiBody | null;
-      // 成功判定要求 view 与合法来源同时存在：来源缺失/未知视为契约失败。
-      const generationSource = parseGenerationSource(body?.generationSource);
-      if (response.ok && body?.view !== undefined && generationSource !== null) {
-        setStatusMessage("开局已生成。");
-        onCreated?.(body.view, generationSource);
-        return;
+      // V2 模式：响应是 { ok: true, revision: N }，没有 view。
+      if (apiPath === "/api/v2/game") {
+        if (response.ok && body?.ok === true) {
+          setStatusMessage("开局已生成。");
+          onCreatedV2?.();
+          return;
+        }
+        setStatusMessage("");
+        switch (body?.code) {
+          case "ACTIVE_GAME_EXISTS":
+            setErrorMessage("已存在进行中的存档：刷新页面即可回到当前开局。");
+            break;
+          case "GENERATION_FAILED":
+            setErrorMessage("开局生成失败，请调整开局资料后重试。");
+            break;
+          case "INFRASTRUCTURE_FAILURE":
+            setErrorMessage("本地存档数据库暂时不可用，请稍后重试。");
+            break;
+          default:
+            setErrorMessage("创建开局失败，请稍后重试。");
+        }
+      } else {
+        // V1 模式：成功判定要求 view 与合法来源同时存在。
+        const generationSource = parseGenerationSource(body?.generationSource);
+        if (response.ok && body?.view !== undefined && generationSource !== null) {
+          setStatusMessage("开局已生成。");
+          onCreated?.(body.view, generationSource);
+          return;
+        }
       }
       setStatusMessage("");
       switch (body?.code) {
