@@ -18,6 +18,7 @@ tmp/
 .foundation/
 .agents/commands/*
 .agents/skills/*
+.agents/
 .qoder/
 .codebuddy/
 .workbuddy/
