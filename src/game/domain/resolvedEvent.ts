@@ -30,5 +30,4 @@ export type ResolvedEvent = {
   readonly rewards: readonly Reward[];
   readonly triggeredEvents: readonly string[];
   readonly rejectedEffects: readonly RejectedEffect[];
-  readonly stateVersion: number;
 };
