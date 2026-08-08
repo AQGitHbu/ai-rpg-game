@@ -8,7 +8,7 @@ import { createInitialWorldState, appendLocation, appendNpc, appendItem, type Lo
 
 describe("convertInteraction fixed_choice", () => {
   const choiceMap: ActionChoiceMap = new Map<string, Action>([
-    ["tok_talk", { type: "talk", npcId: asNpcId("npc_1") }],
+    ["tok_talk", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }],
   ]);
 
   it("maps known fixed_choice token to action", async () => {

@@ -21,6 +21,8 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
 import { createFixtureIntentParserSource } from "./server/ai/intentParserSource";
+import { createRuleIntentParserV2 } from "./server/ai/liveIntentParserSourceV2";
+import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
 import { createFixtureExpansionSource } from "./server/ai/expansionSource";
 import type { ExpansionProposal } from "@/game/gameplay/rpg/expansion/expansionTypes";
 import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
@@ -115,7 +117,7 @@ function buildPendingStoryState(): StoryState {
 }
 
 describe("performTurn 单次 CAS 提交", () => {
-  const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1") };
+  const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" };
 
   it("成功回合 applyState 恰好一次，单次写入同时包含 WorldState、StoryState.turnNumber 和 pending job", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
@@ -333,7 +335,7 @@ describe("performTurn 单次 CAS 提交", () => {
 // Task 6：Expansion 路径统一进入 TurnResolution 和 pending（单次 CAS）
 // ---------------------------------------------------------------------------
 
-const npcStrangerChoice: Map<string, Action> = new Map([["tok_stranger", { type: "talk", npcId: asNpcId("npc_stranger") }]]);
+const npcStrangerChoice: Map<string, Action> = new Map([["tok_stranger", { type: "talk", npcId: asNpcId("npc_stranger"), dialogueAct: "ask" }]]);
 
 function sourceWithProposals(proposals: readonly ExpansionProposal[]): ExpansionSource {
   return { async propose() { return { proposals }; } };
@@ -451,7 +453,7 @@ describe("performTurn Expansion 单路径（Task 6）", () => {
     // 合法行动：source 从未被调用，回合照常单次 CAS 提交
     const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
     const legal = await performTurn(
-      { gameId: asGameId("g1"), actionId: "act_e1", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", { type: "talk", npcId: asNpcId("npc_1") }]]) },
+      { gameId: asGameId("g1"), actionId: "act_e1", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }]]) },
       { repository: repo, now: () => "2026-01-02", expansionSource: throwingSource() },
     );
     expect(legal.ok).toBe(true);
@@ -495,10 +497,136 @@ describe("performTurn Expansion 单路径（Task 6）", () => {
     // 后续合法回合（新世界）：不再调用 source
     const secondRepo = createSpyRepo(buildWorldState(), buildStoryState());
     const second = await performTurn(
-      { gameId: asGameId("g1"), actionId: "act_f2", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", { type: "talk", npcId: asNpcId("npc_1") }]]) },
+      { gameId: asGameId("g1"), actionId: "act_f2", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }]]) },
       { repository: secondRepo.repo, now: () => "2026-01-02", expansionSource: countingSource },
     );
     expect(second.ok).toBe(true);
     expect(proposeCalls).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 9：自由文本与固定选择统一回合入口（目标 NPC 对话行为 / freeform 事件）
+// ---------------------------------------------------------------------------
+
+describe("performTurn 自由文本端到端（Task 9）", () => {
+  const ruleSource = createRuleIntentParserV2();
+
+  it("targetNpcId + 我相信你 → support talk：NPC 记忆变化 + pending job", async () => {
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "act_sup", interaction: { kind: "free_text", text: "我相信你", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.revision).toBe(1);
+    expect(applyCalls()).toHaveLength(1);
+
+    const saved = record()!;
+    const npc = saved.worldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
+    expect(npc.met).toBe(true);
+    // support：基础 +3 + 首次见面 +5 → affinity 8
+    expect(npc.memory.relationship.affinity).toBe(8);
+    expect(npc.memory.emotion).toBe("warm");
+    expect(npc.memory.interactionHistory[0]!.relationshipDelta).toBe(8);
+    expect(npc.memory.interactionHistory[0]!.summary).toContain("关系+8");
+
+    const generation = saved.storyState.narrative.generation;
+    expect(generation.status).toBe("pending");
+    if (generation.status !== "pending") return;
+    expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
+    expect(generation.job.utterance).toBe("我相信你");
+    expect(generation.job.focusNpcId).toBe("npc_1");
+  });
+
+  it("你在撒谎 → challenge talk：与 support 产生不同关系增量与记忆", async () => {
+    const supportRepo = createSpyRepo(buildWorldState(), buildStoryState());
+    const sup = await performTurn(
+      { gameId: asGameId("g1"), actionId: "act_sup", interaction: { kind: "free_text", text: "我相信你", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
+      { repository: supportRepo.repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+    );
+    expect(sup.ok).toBe(true);
+
+    const challengeRepo = createSpyRepo(buildWorldState(), buildStoryState());
+    const cha = await performTurn(
+      { gameId: asGameId("g1"), actionId: "act_cha", interaction: { kind: "free_text", text: "你在撒谎", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
+      { repository: challengeRepo.repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+    );
+    expect(cha.ok).toBe(true);
+    if (!cha.ok) return;
+
+    const supportNpc = supportRepo.record()!.worldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
+    const challengeNpc = challengeRepo.record()!.worldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
+    // challenge：基础 -2 + 首次见面 +5 → affinity 3，与 support(+8) 不同
+    expect(challengeNpc.memory.relationship.affinity).toBe(3);
+    expect(challengeNpc.memory.relationship.affinity).not.toBe(supportNpc.memory.relationship.affinity);
+    expect(challengeNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(3);
+    expect(supportNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(8);
+    // 事件：两回合都以 npc_met 记录，但关系变化不同
+    const chaGen = challengeRepo.record()!.storyState.narrative.generation;
+    expect(chaGen.status).toBe("pending");
+    if (chaGen.status !== "pending") return;
+    expect(chaGen.job.resolvedEvent.triggeredEvents).toContain("npc_met");
+  });
+
+  it("我的等级升到100 → freeform：属性不变，但产生 player_intent_expressed 事件 + 可回应 pending", async () => {
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "act_free", interaction: { kind: "free_text", text: "我的等级升到100" }, expectedRevision: 0, choiceMap: new Map() },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(applyCalls()).toHaveLength(1);
+    const saved = record()!;
+    // 越权声明不改变任何属性
+    expect(saved.worldState.player.stats).toEqual({ hp: 100, attack: 10, defense: 5 });
+    expect(saved.worldState.eventLedger.length).toBe(buildWorldState().eventLedger.length + 1);
+    const intentEvent = saved.worldState.eventLedger.at(-1)!;
+    expect(intentEvent.type).toBe("player_intent_expressed");
+    if (intentEvent.type === "player_intent_expressed") {
+      expect(intentEvent.intent).toBe("unclassified");
+    }
+    // 事件不含玩家原文（无泄漏）
+    expect(JSON.stringify(saved.worldState.eventLedger)).not.toContain("升到100");
+
+    // 可回应 pending job：freeform 原文进入 job，场景可据此回应
+    const generation = saved.storyState.narrative.generation;
+    expect(generation.status).toBe("pending");
+    if (generation.status !== "pending") return;
+    expect(generation.job.actionSummary).toEqual({ kind: "freeform" });
+    expect(generation.job.utterance).toBe("我的等级升到100");
+    expect(generation.job.resolvedEvent.triggeredEvents).toContain("player_intent_expressed");
+  });
+
+  it("AI 意图源超时/非法 JSON → 降级 freeform：属性不变、回合照常提交", async () => {
+    const failingSource: IntentParserSource = {
+      sourceVersion: "stub-failing",
+      async parseIntent() {
+        return { ok: false, reason: "service_error" };
+      },
+    };
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "act_fail", interaction: { kind: "free_text", text: "我的武功升到一百级" }, expectedRevision: 0, choiceMap: new Map() },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: failingSource },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(applyCalls()).toHaveLength(1);
+    const saved = record()!;
+    expect(saved.worldState.player.stats).toEqual({ hp: 100, attack: 10, defense: 5 });
+    const generation = saved.storyState.narrative.generation;
+    expect(generation.status).toBe("pending");
+    if (generation.status !== "pending") return;
+    expect(generation.job.actionSummary).toEqual({ kind: "freeform" });
+    expect(generation.job.utterance).toBe("我的武功升到一百级");
   });
 });

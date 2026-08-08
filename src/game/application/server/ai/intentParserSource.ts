@@ -19,7 +19,7 @@ export function createFixtureIntentParserSource(): IntentParserSource {
         if (trimmed.includes(npc.name)) {
           return {
             ok: true,
-            action: { type: "talk", npcId: asNpcId(npc.id), utterance: trimmed },
+            action: { type: "talk", npcId: asNpcId(npc.id), dialogueAct: "ask", utterance: trimmed },
           };
         }
       }

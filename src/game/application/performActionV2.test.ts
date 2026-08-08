@@ -64,7 +64,7 @@ describe("performActionV2", () => {
     const ws = buildWorldState();
     const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
     const repo = createInMemoryRepoWithRecord(ws, ss);
-    const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1") };
+    const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" };
     const choiceMap = new Map([["tok_talk", talkAction]]);
 
     const result = await performActionV2(
@@ -152,7 +152,7 @@ describe("performActionV2 free_text integration", () => {
     }
   });
 
-  it("converts unclassifiable text to freeform, rejected with zero writes (无事件回合无法形成叙事任务)", async () => {
+  it("converts unclassifiable text to freeform: 属性不变，但形成可回应叙事任务（player_intent_expressed + pending）", async () => {
     const ws = buildWorldState();
     const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
     const repo = createInMemoryRepoWithRecord(ws, ss);
@@ -163,10 +163,14 @@ describe("performActionV2 free_text integration", () => {
       { repository: repo, now: () => "2026-01-02", intentParserSource: source },
     );
 
-    // spec §9.3：若无法建立 PendingNarrativeJob，则整次回合不提交
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe("ACTION_REJECTED");
+    // Task 9（spec §7.3/§13.5）：freeform 不再被拒——以结构化事件 + 可回应 pending 完整提交
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.revision).toBe(1);
+    const saved = await repo.getCurrentGame();
+    expect(saved.ok && saved.status === "active" && saved.record.worldState.eventLedger.some(
+      (e) => e.type === "player_intent_expressed",
+    )).toBe(true);
   });
 });
 

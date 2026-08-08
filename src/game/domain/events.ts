@@ -189,6 +189,17 @@ export type BlueprintExpandedEvent = {
   readonly occurredAt: string;
 };
 
+/**
+ * Task 9：玩家自由输入未映射为规则行动时表达意图的结构化审计事件。
+ * 只携带解析结果 intent 兜底标，绝不携带玩家原文（原文只允许出现在
+ * PendingNarrativeJob.utterance，供叙事回应）。
+ */
+export type PlayerIntentExpressedEvent = {
+  readonly type: "player_intent_expressed";
+  readonly intent: string;
+  readonly occurredAt: string;
+};
+
 export type GameEvent =
   | GameInitializedEvent
   | LocationObservedEvent
@@ -208,4 +219,5 @@ export type GameEvent =
   | NarrativeDialogueChoiceEvent
   | TownPlanGeneratedEvent
   | NarrativeScenePresentedEvent
-  | BlueprintExpandedEvent;
+  | BlueprintExpandedEvent
+  | PlayerIntentExpressedEvent;

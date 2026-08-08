@@ -310,6 +310,8 @@ function projectStoryEvent(
     // storyMemory.recent 由本章进展里程碑（Task 7 projectStoryContinuity）单独投影。
     case "narrative_scene_presented": return null;
     case "blueprint_expanded": return null;
+    // Task 9：意图表达事件不作为台词呈现（不包含玩家原文）；经叙事任务回应。
+    case "player_intent_expressed": return null;
   }
 }
 

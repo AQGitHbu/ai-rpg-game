@@ -24,12 +24,14 @@ export type ResolveDeps = { readonly now: () => string };
 export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps): ResolveResult {
   const occurredAt = deps.now();
 
-  // freeform：零世界变化
+  // freeform：零世界变化，但必须以结构化事件落账意图，
+  // 让回合能形成可回应的叙事任务（spec §7.3/@13.5；事件不携带玩家原文）。
   if (action.type === "freeform") {
+    const event: GameEvent = { type: "player_intent_expressed", intent: action.intent, occurredAt };
     return {
       ok: true,
-      nextWorldState: ws,
-      events: [],
+      nextWorldState: { ...ws, eventLedger: [...ws.eventLedger, event] },
+      events: [event],
       feedback: "",
       status: "success",
       stateChanges: [],

@@ -1,7 +1,7 @@
 import type { GameRepositoryV2 } from "./server/persistence/gameRepositoryV2";
 import type { NpcId } from "@/game/domain/scenarioBlueprint";
-import type { StoryState } from "@/game/domain/storyState";
-import { commitState } from "./stateCommit";
+import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
+import { performTurn } from "./performTurn";
 
 export type HandleNpcDialogueV2Command = {
   readonly npcId: NpcId;
@@ -12,6 +12,7 @@ export type HandleNpcDialogueV2Command = {
 export type HandleNpcDialogueV2Deps = {
   readonly repository: GameRepositoryV2;
   readonly now: () => string;
+  readonly intentParserSource?: IntentParserSource;
 };
 
 export type HandleNpcDialogueV2Result =
@@ -19,11 +20,12 @@ export type HandleNpcDialogueV2Result =
   | { readonly ok: true; readonly kind: "narrative_trigger"; readonly revision: number }
   | { readonly ok: false; readonly code: string };
 
-// 简单闲聊关键词——命中时走 chat 路径，零 CAS 写入
-const CHAT_KEYWORDS = ["你好", "再见", "谢谢", "早上好", "晚上好", "嗨", "哈喽"];
+// 任务 9：对话入口收敛为 performTurn 的 thin adapter —— 不再有零 CAS 闲聊旁路，
+// 不再直接写 playerNpcChat pending；所有输入都形成受规则记录的回合。
+// chat / narrative_trigger 只决定交互呈现方式（即时回复 vs 等待场景），不改变提交语义。
 
-function isChatText(text: string): boolean {
-  return CHAT_KEYWORDS.some((kw) => text.includes(kw)) || text.length < 6;
+function withNpcName(record: { readonly worldState: { readonly npcs: readonly { id: NpcId; name: string }[] } }, npcId: NpcId): string | null {
+  return record.worldState.npcs.find((n) => n.id === npcId)?.name ?? null;
 }
 
 export async function handleNpcDialogueV2(
@@ -32,47 +34,45 @@ export async function handleNpcDialogueV2(
 ): Promise<HandleNpcDialogueV2Result> {
   const current = await deps.repository.getCurrentGame();
   if (!current.ok || current.status !== "active") return { ok: false, code: "NO_ACTIVE_GAME" };
-  if (current.record.revision !== command.expectedRevision) return { ok: false, code: "STALE_GAME_REVISION" };
-
   const { record } = current;
-  const npc = record.worldState.npcs.find(
-    (n) => n.id === command.npcId && n.locationId === record.worldState.currentLocationId,
-  );
-  if (npc === undefined) return { ok: false, code: "NPC_NOT_PRESENT" };
+  if (record.revision !== command.expectedRevision) return { ok: false, code: "STALE_GAME_REVISION" };
 
-  if (isChatText(command.text)) {
-    // Chat path: deterministic casual reply, zero CAS write
-    const speech = buildCasualReply(npc.name, command.text);
-    return { ok: true, kind: "chat", npcSpeech: speech, revision: record.revision };
-  }
+  // NPC 不在场：零写入拒绝（与固定选项校验一致的显式前置）
+  const npcName = withNpcName(record, command.npcId);
+  if (npcName === null) return { ok: false, code: "NPC_NOT_PRESENT" };
 
-  // Narrative path: queue pending scene with playerNpcChat snapshot
-  const nextStoryState: StoryState = {
-    ...record.storyState,
-    narrative: {
-      ...record.storyState.narrative,
-      generation: {
-        status: "pending",
-        requestedAt: deps.now(),
-        playerNpcChat: {
-          npcId: command.npcId,
-          playerText: command.text,
-          npcName: npc.name,
-          npcRole: npc.role,
-        },
-      },
+  const turn = await performTurn(
+    {
+      gameId: record.gameId,
+      actionId: `input_${String(command.npcId)}`,
+      interaction: { kind: "free_text", text: command.text, targetNpcId: command.npcId },
+      expectedRevision: command.expectedRevision,
+      choiceMap: new Map(),
     },
-  };
+    { repository: deps.repository, now: deps.now, intentParserSource: deps.intentParserSource },
+  );
 
-  const commit = await commitState(deps.repository, {
-    gameId: record.gameId,
-    expectedRevision: record.revision,
-    nextWorldState: record.worldState,
-    nextStoryState,
-  });
+  if (!turn.ok) return { ok: false, code: turn.code };
 
-  if (!commit.ok) return { ok: false, code: commit.code };
-  return { ok: true, kind: "narrative_trigger", revision: commit.record.revision };
+  // 交互呈现：轻量问候即时回复（chat），其余走 narrative_trigger。
+  // 注意：两种 kind 的回合都已被 performTurn 单次 CAS 提交。
+  if (isChatText(command.text)) {
+    return {
+      ok: true,
+      kind: "chat",
+      npcSpeech: buildCasualReply(npcName, command.text),
+      revision: turn.revision,
+    };
+  }
+  return { ok: true, kind: "narrative_trigger", revision: turn.revision };
+}
+
+// 简单闲聊关键词——命中时决定"即时回复型"呈现（不再零 CAS 旁路）。
+// 关键词未命中一律走 narrative_trigger（含短文本，如"我相信你"）。
+const CHAT_KEYWORDS = ["你好", "再见", "谢谢", "早上好", "晚上好", "嗨", "哈喽"];
+
+function isChatText(text: string): boolean {
+  return CHAT_KEYWORDS.some((kw) => text.includes(kw));
 }
 
 function buildCasualReply(npcName: string, playerText: string): string {

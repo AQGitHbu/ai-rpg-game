@@ -78,7 +78,7 @@ describe("P2 offline regression", () => {
     }
   });
 
-  it("free text → freeform → no world change", async () => {
+  it("free text → freeform → 只落账意图事件，不改变其它世界状态（Task 9）", async () => {
     const ctx = buildIntentContext(ws);
     const source = createFixtureIntentParserSource();
     const converted = await convertInteraction(
@@ -94,14 +94,18 @@ describe("P2 offline regression", () => {
       if (result.ok) {
         expect(result.resolvedEvent.status).toBe("success");
         expect(result.resolvedEvent.stateChanges).toEqual([]);
-        expect(result.nextWorldState).toBe(ws);
+        // spec §7.3/§13.5：freeform 仅追加结构化意图事件（不含玩家原文），其余世界状态不变
+        expect(result.nextWorldState.eventLedger.length).toBe(ws.eventLedger.length + 1);
+        expect(result.nextWorldState.eventLedger.at(-1)?.type).toBe("player_intent_expressed");
+        expect(result.nextWorldState.currentLocationId).toBe(ws.currentLocationId);
+        expect(result.nextWorldState.player).toBe(ws.player);
       }
     }
   });
 
   it("partial_success: talk to hostile npc", () => {
     const wsWithHostile = appendNpc(ws, hostileNpc);
-    const result = ruleEngine(wsWithHostile, ss, { type: "talk", npcId: asNpcId("npc_h") }, "act_4", deps);
+    const result = ruleEngine(wsWithHostile, ss, { type: "talk", npcId: asNpcId("npc_h"), dialogueAct: "ask" }, "act_4", deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.resolvedEvent.status).toBe("partial_success");

@@ -10,6 +10,7 @@ import { commitState } from "./stateCommit";
 import { asNarrativeJobId, asTurnId, type TurnId } from "@/game/domain/events";
 import {
   createPendingNarrativeJob,
+  PLAYER_UTTERANCE_MAX_LENGTH,
   type PendingNarrativeJob,
   type StructuredActionSummary,
 } from "@/game/domain/pendingNarrativeJob";
@@ -107,7 +108,11 @@ export async function performTurn(
   }
 
   const freeTextDeps = command.interaction.kind === "free_text"
-    ? { intentContext: buildIntentContext(record.worldState), intentParserSource: deps.intentParserSource }
+    ? {
+        intentContext: buildIntentContext(record.worldState),
+        intentParserSource: deps.intentParserSource,
+        targetNpcId: command.interaction.targetNpcId,
+      }
     : undefined;
 
   const converted = await convertInteraction(command.interaction, command.choiceMap, freeTextDeps);
@@ -256,6 +261,12 @@ async function runExpansionOrchestration(input: RunExpansionOrchestrationInput):
   );
 }
 
+/** 玩家原文长度上限与 job 构造常量保持一致（spec §7.3 截断）。 */
+function clipPlayerUtterance(text: string): string {
+  if (Array.from(text).length <= PLAYER_UTTERANCE_MAX_LENGTH) return text;
+  return Array.from(text).slice(0, PLAYER_UTTERANCE_MAX_LENGTH).join("");
+}
+
 type CommitResolutionInput = {
   readonly repository: GameRepositoryV2;
   readonly gameId: GameId;
@@ -283,7 +294,13 @@ async function commitResolution(input: CommitResolutionInput): Promise<PerformTu
     expectedRevision: input.expectedRevision,
     turnNumber: input.turnNumber,
     actionSummary: buildActionSummary(input.action),
-    utterance: input.action.type === "talk" ? input.action.utterance : undefined,
+    // Task 9：talk 带 utterance；freeform 把（截断后的）玩家原文带进 job，
+    // 供叙事回应；其余行动不携带玩家原文。
+    utterance: input.action.type === "talk"
+      ? input.action.utterance
+      : input.action.type === "freeform"
+        ? clipPlayerUtterance(input.action.rawText)
+        : undefined,
     resolvedEvent: input.primaryResult,
     domainEventRange: {
       fromLedgerIndex: input.baseLedgerLength,
