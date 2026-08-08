@@ -100,30 +100,37 @@ export function resolveTurn(
   // P4 Step 1: NPC knownFactIds 传播
   const propagatedWs = propagateKnownFacts(resolved.nextWorldState, resolved.facts);
 
-  // P4 Step 2: 任务推进（使用传播后的 WS）
+  // Spec §13.1 固定顺序：resolve → propagate → reconcile quests → advance act/
+  // derive endingAllowed → approve candidate events → update tension/progress →
+  // resolve ending（最后，禁止在 endingAllowed 更新前调用）→ reconcile view。
+  // 领域事件严格按 resolver → quest → ending 顺序聚合；ledger 对齐由此保证。
+
+  // Step 1: 任务推进（使用传播后的 WS）
   const quests = reconcileQuests(propagatedWs, deps);
-  const ending = resolveEnding(quests.nextWorldState, storyState, deps);
+  // 初步 domainEvents：resolver + quest（ending 事件在 Step 5 结算后追加）
+  const domainEvents: GameEvent[] = [...resolved.events, ...quests.events];
 
-  // 领域事件严格按 resolver → quest → ending 顺序聚合；ledger 对齐由此保证
-  const domainEvents: GameEvent[] = [...resolved.events, ...quests.events, ...ending.events];
-
-  // P4 Step 3: 幕推进 + endingAllowed 推导
+  // Step 2: 幕推进 + storyProgress + endingAllowed 推导（§13.1 在 resolveEnding 之前）
   const progression = advanceStoryProgression(
-    ending.nextWorldState,
-    ending.nextStoryState,
+    quests.nextWorldState,
+    storyState,
     domainEvents,
   );
 
-  // P4 Step 4: candidateEventPool 审批
+  // Step 3: candidateEventPool 审批
   const approved = approveCandidateEvents(
     progression.nextStoryState,
     progression.nextStoryState.candidateEventPool,
   );
 
-  // P4 Step 5: 张力更新（approved events 的张力已在 approveCandidateEvents 中处理，不重复计入）
+  // Step 4: 张力/进度更新（storyProgress 由 advanceStoryProgression 推导，此处只更新 tension）
   const nextStoryState = updateStoryMetrics(approved.nextStoryState, domainEvents);
 
-  // P4 Step 6: 物化视图增量归约
+  // Step 5: 结局结算（§13.1 放最后；用含 endingAllowed 的 storyState）
+  const ending = resolveEnding(quests.nextWorldState, nextStoryState, deps);
+  const finalDomainEvents: GameEvent[] = [...domainEvents, ...ending.events];
+
+  // Step 6: 物化视图增量归约
   const prevBeats = storyState.recentBeats as readonly RecentBeat[];
   const prevContacts = storyState.npcContacts as readonly NpcContact[];
   const prev = { recentBeats: prevBeats, npcContacts: prevContacts, reducedThroughEventCount: storyState.reducedThroughEventCount };
@@ -140,12 +147,12 @@ export function resolveTurn(
     reducedThroughEventCount: newView.reducedThroughEventCount,
   };
 
-  // eventLedger 与 domainEvents 严格对齐：只追加本回合按序产生的事件；无事件时保持原对象不变
-  const nextWorldState: WorldState = domainEvents.length === 0
+  // eventLedger 与 finalDomainEvents 严格对齐：只追加本回合按序产生的事件；无事件时保持原对象不变
+  const nextWorldState: WorldState = finalDomainEvents.length === 0
     ? ending.nextWorldState
     : {
         ...ending.nextWorldState,
-        eventLedger: [...worldState.eventLedger, ...domainEvents],
+        eventLedger: [...worldState.eventLedger, ...finalDomainEvents],
       };
 
   // 构建最终 ResolvedEvent（作为 TurnResolution.primaryResult）
@@ -157,7 +164,7 @@ export function resolveTurn(
     facts: resolved.facts,
     costs: [],
     rewards: [],
-    triggeredEvents: [...domainEvents.map((e) => e.type), ...approved.approvedEvents.map((e) => e.id)],
+    triggeredEvents: [...finalDomainEvents.map((e) => e.type), ...approved.approvedEvents.map((e) => e.id)],
     rejectedEffects: [],
   };
 
@@ -167,7 +174,7 @@ export function resolveTurn(
     interactionKind,
     action,
     primaryResult,
-    domainEvents,
+    domainEvents: finalDomainEvents,
     nextWorldState,
     previousStoryState: storyState,
     nextStoryState: nextStoryStateWithView,

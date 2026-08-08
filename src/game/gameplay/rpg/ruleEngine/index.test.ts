@@ -195,15 +195,24 @@ describe("resolveTurn facade", () => {
         id: questId, name: "q", description: "d",
         objectives: [{ kind: "visit_location", locationId: asLocationId("loc_2") }],
         onSuccess: { kind: "closed" }, onFailure: { kind: "closed" },
-        tags: [], kind: "side", status: "active",
+        tags: [], kind: "main", stage: 3, status: "active",
       }],
       endings: [{
         id: "ending_1" as EndingId, name: "终局", description: "d",
         requirements: [{ kind: "quest_completed", questId }],
       }],
     };
-    const ssEndingAllowed = { ...ss, endingAllowed: true };
-    const result = resolveTurn(questWs, ssEndingAllowed, { type: "move", locationId: asLocationId("loc_2") }, "act_4", baseRevision, turnId, "fixed_choice", deps);
+    // Spec §13.1：最终幕 + 无未决主线 thread → advance 推导 endingAllowed=true，
+    // resolveEnding 最后调用并同回合抵达结局，无需额外点击。
+    const ssFinalAct = {
+      ...ss,
+      currentAct: 3,
+      targetActs: 3,
+      storyProgress: 85,
+      unresolvedThreads: [],
+      endingAllowed: false,
+    };
+    const result = resolveTurn(questWs, ssFinalAct, { type: "move", locationId: asLocationId("loc_2") }, "act_4", baseRevision, turnId, "fixed_choice", deps);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unexpected failure");
     const r = result.resolution;

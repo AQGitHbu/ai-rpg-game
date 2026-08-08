@@ -67,16 +67,30 @@ describe("advanceStoryProgression", () => {
     expect(result.nextStoryState.storyProgress).toBeGreaterThanOrEqual(33);
   });
 
-  it("sets endingAllowed at final act with high progress", () => {
+  it("sets endingAllowed at final act with high progress and no unresolved thread", () => {
     const nearEnd = {
       ...ss,
       currentAct: 3,
       targetActs: 3,
       storyProgress: 85,
+      unresolvedThreads: [],
     };
     const ws = makeWorld();
     const result = advanceStoryProgression(ws, nearEnd, []);
     expect(result.nextStoryState.endingAllowed).toBe(true);
+  });
+
+  it("does not set endingAllowed with unresolved main thread even at final act (Spec §13.3)", () => {
+    const nearEnd = {
+      ...ss,
+      currentAct: 3,
+      targetActs: 3,
+      storyProgress: 90,
+      unresolvedThreads: ["thread_main"],
+    };
+    const ws = makeWorld();
+    const result = advanceStoryProgression(ws, nearEnd, []);
+    expect(result.nextStoryState.endingAllowed).toBe(false);
   });
 
   it("does not set endingAllowed before final act", () => {
@@ -86,27 +100,21 @@ describe("advanceStoryProgression", () => {
     expect(result.nextStoryState.endingAllowed).toBe(false);
   });
 
-  it("resolves thread when main quest completed", () => {
+  it("recycles main thread when all main quests resolved at final act", () => {
     const ws = makeWorld({
-      quests: [{
-        id: asQuestId("q_main_1"),
-        name: "主线1",
-        description: "",
-        objectives: [],
-        onSuccess: { kind: "closed" },
-        onFailure: { kind: "closed" },
-        tags: [],
-        kind: "main",
-        stage: 1,
-        status: "completed",
-      }],
+      quests: [
+        {
+          id: asQuestId("q_main_1"), name: "主线1", description: "", objectives: [],
+          onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [],
+          kind: "main", stage: 3, status: "completed",
+        },
+      ],
     });
     const events: GameEvent[] = [
       { type: "quest_completed", questId: asQuestId("q_main_1"), occurredAt: "t" },
     ];
-    const ssWithActThread = { ...ss, unresolvedThreads: [...ss.unresolvedThreads, "act_1"] };
-    const result = advanceStoryProgression(ws, ssWithActThread, events);
-    expect(result.nextStoryState.unresolvedThreads).not.toContain("act_1");
-    expect(result.nextStoryState.unresolvedThreads).toContain("act_2");
+    const finalAct = { ...ss, currentAct: 3, targetActs: 3, unresolvedThreads: ["thread_main"] };
+    const result = advanceStoryProgression(ws, finalAct, events);
+    expect(result.nextStoryState.unresolvedThreads).not.toContain("thread_main");
   });
 });
