@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent, LocationVisitedEvent, QuestCompletedEvent, QuestUnlockedEvent, ItemObtainedEvent, BattleStartedEvent, BattleRoundResolvedEvent, BattleResolvedEvent, EnemyDefeatedEvent, QuestFailedEvent, EndingReachedEvent, NarrativeScenePresentedEvent } from "./events";
+import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent, LocationVisitedEvent, QuestCompletedEvent, QuestUnlockedEvent, ItemObtainedEvent, BattleStartedEvent, BattleRoundResolvedEvent, BattleResolvedEvent, EnemyDefeatedEvent, QuestFailedEvent, EndingReachedEvent, NarrativeScenePresentedEvent, CandidateEventProposedEvent, CandidateEventApprovedEvent, CandidateEventRejectedEvent, CandidateEventExpiredEvent, CandidateEventActivatedEvent } from "./events";
 import { asLocationId, asNpcId, asFactId, asGenerationId, asItemId, asQuestId, asEnemyId, asEndingId, type GenerationMetadata } from "./scenarioBlueprint";
 
 function buildGeneration(): GenerationMetadata {
@@ -284,5 +284,93 @@ describe("GameEvent union (Phase 11 narrative scene presented)", () => {
     } else {
       throw new Error("discriminator narrowing failed");
     }
+  });
+});
+
+describe("GameEvent union (R4 candidate event audit events)", () => {
+  it("accepts candidate_event_proposed carrying only structural indexes", () => {
+    const event: CandidateEventProposedEvent = {
+      type: "candidate_event_proposed",
+      candidateId: "ce-1",
+      kind: "enemy_appears",
+      proposedAtTurn: 3,
+      expiresAtTurn: 6,
+      occurredAt: "2026-08-09T00:00:00.000Z",
+    };
+    expect(event.type).toBe("candidate_event_proposed");
+    expect(event.candidateId).toBe("ce-1");
+    expect(event.kind).toBe("enemy_appears");
+    // 只携带结构索引，不携带 AI 原文或隐藏事实正文
+    const keys = Object.keys(event).sort();
+    expect(keys).toEqual([
+      "candidateId", "expiresAtTurn", "kind", "occurredAt", "proposedAtTurn", "type",
+    ]);
+  });
+
+  it("accepts candidate_event_approved with stable code", () => {
+    const event: CandidateEventApprovedEvent = {
+      type: "candidate_event_approved",
+      candidateId: "ce-1",
+      kind: "npc_reveals_fact",
+      approvedAtTurn: 4,
+      occurredAt: "t1",
+    };
+    expect(event.approvedAtTurn).toBe(4);
+    const keys = Object.keys(event).sort();
+    expect(keys).toEqual(["approvedAtTurn", "candidateId", "kind", "occurredAt", "type"]);
+  });
+
+  it("accepts candidate_event_rejected with reasonCode but no conflict body", () => {
+    const event: CandidateEventRejectedEvent = {
+      type: "candidate_event_rejected",
+      candidateId: "ce-2",
+      kind: "thread_complicates",
+      reasonCode: "prerequisite_unmet",
+      rejectedAtTurn: 4,
+      occurredAt: "t2",
+    };
+    expect(event.reasonCode).toBe("prerequisite_unmet");
+    expect("conflictText" in event).toBe(false);
+  });
+
+  it("accepts candidate_event_expired at expiry turn", () => {
+    const event: CandidateEventExpiredEvent = {
+      type: "candidate_event_expired",
+      candidateId: "ce-3",
+      kind: "location_state_changes",
+      expiredAtTurn: 6,
+      occurredAt: "t3",
+    };
+    expect(event.expiredAtTurn).toBe(6);
+  });
+
+  it("accepts candidate_event_activated when compiled to real domain event", () => {
+    const event: CandidateEventActivatedEvent = {
+      type: "candidate_event_activated",
+      candidateId: "ce-1",
+      kind: "npc_reveals_fact",
+      activatedAtTurn: 4,
+      occurredAt: "t4",
+    };
+    expect(event.type).toBe("candidate_event_activated");
+    expect(event.candidateId).toBe("ce-1");
+  });
+
+  it("all five candidate audit discriminators appear in the GameEvent union", () => {
+    const events: GameEvent[] = [
+      { type: "candidate_event_proposed", candidateId: "ce-1", kind: "enemy_appears", proposedAtTurn: 3, expiresAtTurn: 6, occurredAt: "t1" },
+      { type: "candidate_event_approved", candidateId: "ce-1", kind: "enemy_appears", approvedAtTurn: 4, occurredAt: "t2" },
+      { type: "candidate_event_rejected", candidateId: "ce-2", kind: "thread_complicates", reasonCode: "budget", rejectedAtTurn: 4, occurredAt: "t3" },
+      { type: "candidate_event_expired", candidateId: "ce-3", kind: "npc_reveals_fact", expiredAtTurn: 6, occurredAt: "t4" },
+      { type: "candidate_event_activated", candidateId: "ce-1", kind: "npc_reveals_fact", activatedAtTurn: 4, occurredAt: "t5" },
+    ];
+    const types = events.map((e) => e.type);
+    expect(types).toEqual([
+      "candidate_event_proposed",
+      "candidate_event_approved",
+      "candidate_event_rejected",
+      "candidate_event_expired",
+      "candidate_event_activated",
+    ]);
   });
 });

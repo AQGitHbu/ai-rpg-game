@@ -2,6 +2,10 @@ import type { GameLength } from "./newGame";
 import type { StoryBudget } from "./storyBudget";
 import { createStoryBudget, TARGET_ACTS } from "./storyBudget";
 import type { NarrativeRuntimeState } from "./narrative";
+import type { EventCandidate } from "./candidateEvent";
+
+// 结构化候选事件契约由 candidateEvent.ts 定义并在此再导出，保持既有调用点兼容。
+export type { EventCandidate, EventCandidateKind, ProposedEffect } from "./candidateEvent";
 
 export const STORY_STATE_SCHEMA_VERSION = 3 as const;
 
@@ -29,12 +33,6 @@ export function classifyStoryStateSchemaVersion(
 }
 
 export type PacingNeed = "reveal" | "develop" | "complicate" | "escalate" | "climax" | "resolve";
-
-export type EventCandidate = {
-  readonly id: string;
-  readonly description: string;
-  readonly proposedAtTurn: number;
-};
 
 export type ThreadId = string;
 

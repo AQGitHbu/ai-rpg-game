@@ -214,6 +214,58 @@ export type PlayerIntentExpressedEvent = {
   readonly occurredAt: string;
 };
 
+// ---------------------------------------------------------------------------
+// R4（Task 18）：AI 候选事件生命周期审计事件
+// 只携带结构化索引（candidateId/kind/turn/code），绝不携带完整 AI 原文或隐藏事实正文。
+// ---------------------------------------------------------------------------
+
+/** 候选事件进入池：由 SceneWriteBack 追加候选时写入。 */
+export type CandidateEventProposedEvent = {
+  readonly type: "candidate_event_proposed";
+  readonly candidateId: string;
+  readonly kind: string;
+  readonly proposedAtTurn: number;
+  readonly expiresAtTurn: number;
+  readonly occurredAt: string;
+};
+
+/** 候选事件审批通过：由下一回合纯规则审批成功后写入。 */
+export type CandidateEventApprovedEvent = {
+  readonly type: "candidate_event_approved";
+  readonly candidateId: string;
+  readonly kind: string;
+  readonly approvedAtTurn: number;
+  readonly occurredAt: string;
+};
+
+/** 候选事件审批拒绝：原因用稳定 code，不携带冲突正文。 */
+export type CandidateEventRejectedEvent = {
+  readonly type: "candidate_event_rejected";
+  readonly candidateId: string;
+  readonly kind: string;
+  readonly reasonCode: string;
+  readonly rejectedAtTurn: number;
+  readonly occurredAt: string;
+};
+
+/** 候选事件过期：当前回合超过 expiresAtTurn 且未审批时写入。 */
+export type CandidateEventExpiredEvent = {
+  readonly type: "candidate_event_expired";
+  readonly candidateId: string;
+  readonly kind: string;
+  readonly expiredAtTurn: number;
+  readonly occurredAt: string;
+};
+
+/** 候选事件激活：审批通过后编译为真实领域事件与状态变化时写入。 */
+export type CandidateEventActivatedEvent = {
+  readonly type: "candidate_event_activated";
+  readonly candidateId: string;
+  readonly kind: string;
+  readonly activatedAtTurn: number;
+  readonly occurredAt: string;
+};
+
 export type GameEvent =
   | GameInitializedEvent
   | LocationObservedEvent
@@ -236,4 +288,9 @@ export type GameEvent =
   | TownPlanGeneratedEvent
   | NarrativeScenePresentedEvent
   | BlueprintExpandedEvent
-  | PlayerIntentExpressedEvent;
+  | PlayerIntentExpressedEvent
+  | CandidateEventProposedEvent
+  | CandidateEventApprovedEvent
+  | CandidateEventRejectedEvent
+  | CandidateEventExpiredEvent
+  | CandidateEventActivatedEvent;
