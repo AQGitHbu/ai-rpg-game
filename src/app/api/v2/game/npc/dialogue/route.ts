@@ -1,4 +1,5 @@
 import { getServerGameV2EntryPoints } from "@/game/application/server/compositionRootV2";
+import { parseV2DialogueRequest, httpStatusForV2Code } from "@/game/application/http/v2RequestParser";
 
 // POST /api/v2/game/npc/dialogue：NPC 自由对话。
 export async function POST(request: Request): Promise<Response> {
@@ -7,7 +8,7 @@ export async function POST(request: Request): Promise<Response> {
     "POST",
     "/api/v2/game/npc/dialogue",
     async () => {
-      let body: { npcId: string; text: string; expectedRevision: number };
+      let body: unknown;
       try {
         body = await request.json();
       } catch {
@@ -16,19 +17,21 @@ export async function POST(request: Request): Promise<Response> {
           headers: { "Content-Type": "application/json" },
         });
       }
-      if (typeof body.npcId !== "string" || typeof body.text !== "string" || typeof body.expectedRevision !== "number") {
+      // Task 10：严格解析；禁止 `as never` 把原始 body 送入 use case。
+      const parsed = parseV2DialogueRequest(body);
+      if (!parsed.ok) {
         return new Response(JSON.stringify({ ok: false, code: "INVALID_INPUT" }), {
-          status: 400,
+          status: httpStatusForV2Code("INVALID_INPUT"),
           headers: { "Content-Type": "application/json" },
         });
       }
       const result = await entryPoints.handleNpcDialogueV2({
-        npcId: body.npcId as never,
-        text: body.text,
-        expectedRevision: body.expectedRevision,
+        npcId: parsed.npcId,
+        text: parsed.text,
+        expectedRevision: parsed.expectedRevision,
       });
       return new Response(JSON.stringify(result), {
-        status: result.ok ? 200 : 409,
+        status: result.ok ? 200 : httpStatusForV2Code(result.code),
         headers: { "Content-Type": "application/json" },
       });
     },

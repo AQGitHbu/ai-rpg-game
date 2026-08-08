@@ -31,13 +31,40 @@ const ERROR_MESSAGES: Record<string, string> = {
   UNKNOWN_CHOICE: "选项无效，请刷新页面。",
 };
 
+/**
+ * actionId 生成器：浏览器使用 crypto.randomUUID()（Task 10，Spec §16.2）。
+ * 测试环境可注入确定性 fallback；禁止用 Date.now() 作为唯一 actionId。
+ */
+function defaultActionIdGenerator(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  // 极旧/非安全上下文兜底：随机数 + 时间戳 + 计数器，仍非唯一时间戳。
+  const rand = Math.random().toString(36).slice(2, 10);
+  const counter = actionIdCounter++;
+  return `act_${rand}_${Date.now().toString(36)}_${counter}`;
+}
+
+let actionIdCounter = 0;
+let actionIdGenerator: () => string = defaultActionIdGenerator;
+
+/** 测试注入：返回当前 actionId 生成器。 */
+export function getActionIdGenerator(): () => string {
+  return actionIdGenerator;
+}
+
+/** 测试注入：设置确定性 actionId 生成器。 */
+export function setActionIdGenerator(generator: () => string): void {
+  actionIdGenerator = generator;
+}
+
 export async function postV2Action(payload: V2ActionPayload): Promise<V2ActionOutcome> {
   try {
     const response = await fetch("/api/v2/game/actions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        actionId: `act_${Date.now()}`,
+        actionId: actionIdGenerator(),
         interaction: payload.interaction,
         expectedRevision: payload.revision,
       }),
