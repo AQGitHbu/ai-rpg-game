@@ -31,6 +31,8 @@ import type { SqliteClient, SqliteClientFactory, SqliteStatement } from "./sqlit
 // ---------------------------------------------------------------------------
 
 const GAME_RECORD_VERSION_V2 = 1;
+/** 旧 v2 存档的表级 record_version：明确识别为 legacy，不迁移不伪装。 */
+const LEGACY_V2_RECORD_VERSION = 0;
 const INITIAL_REVISION = 0;
 
 const SCHEMA_STATEMENTS_V2: readonly SqliteStatement[] = [
@@ -97,6 +99,13 @@ function interpretGameRowV2(row: Record<string, unknown>): GetCurrentGameV2Resul
   ) {
     return corruptV2("UNPARSEABLE_RECORD");
   }
+  // Step 3：明确识别旧 v2 schema（LEGACY_V2_RECORD），不伪装成新状态。
+  // 旧 v2 存档：表级 record_version 为 LEGACY_V2_RECORD_VERSION，或 JSON 内部
+  // version 为 1（v2.0）。这些因缺失 v2.1 因果字段而被判定不兼容，返回
+  // LEGACY_V2_RECORD；开发清档可恢复，绝不填充 optional default 伪装。
+  if (recordVersion === LEGACY_V2_RECORD_VERSION) {
+    return corruptV2("LEGACY_V2_RECORD");
+  }
   if (recordVersion !== GAME_RECORD_VERSION_V2) {
     return corruptV2("VERSION_MISMATCH");
   }
@@ -110,6 +119,9 @@ function interpretGameRowV2(row: Record<string, unknown>): GetCurrentGameV2Resul
     return corruptV2("UNPARSEABLE_RECORD");
   }
 
+  if (worldState["version"] === 1 || storyState["version"] === 1) {
+    return corruptV2("LEGACY_V2_RECORD");
+  }
   if (worldState["version"] !== 2 || storyState["version"] !== 2) {
     return corruptV2("VERSION_MISMATCH");
   }

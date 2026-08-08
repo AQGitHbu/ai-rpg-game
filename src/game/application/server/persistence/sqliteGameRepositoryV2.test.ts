@@ -137,6 +137,103 @@ describe("sqliteGameRepositoryV2", () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.status).toBe("none");
   });
+
+  // -------------------------------------------------------------------------
+  // Task 14 Step 3：旧 v2 schema 明确分类为 LEGACY_V2_RECORD，不迁移、不伪装。
+  // -------------------------------------------------------------------------
+
+  it("record_version=0 的旧 v2 存档返回 LEGACY_V2_RECORD", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    await repo.initializeSchema();
+    const raw = createSqliteClient(dbPath);
+    rawClients.push(raw);
+    await raw.batch(
+      [
+        `CREATE TABLE IF NOT EXISTS game_records_v2 (
+          game_id TEXT PRIMARY KEY, record_version INTEGER NOT NULL,
+          world_state_json TEXT NOT NULL, story_state_json TEXT NOT NULL,
+          created_at TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0)`,
+        `CREATE TABLE IF NOT EXISTS current_game_v2 (slot INTEGER PRIMARY KEY CHECK (slot = 1), game_id TEXT NOT NULL)`,
+      ],
+      "write",
+    );
+    await raw.execute({
+      sql: `INSERT INTO game_records_v2 (game_id, record_version, world_state_json, story_state_json, created_at, revision)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: ["legacy_game", 0, JSON.stringify({ version: 1 }), JSON.stringify({ version: 1 }), "2025-01-01", 0],
+    });
+    await raw.execute({ sql: "INSERT INTO current_game_v2 (slot, game_id) VALUES (1, ?)", args: ["legacy_game"] });
+
+    const result = await repo.getCurrentGame();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.status).toBe("corrupt");
+      if (result.status === "corrupt") expect(result.reason).toBe("LEGACY_V2_RECORD");
+    }
+  });
+
+  it("JSON 内部 version=1 的旧 v2 存档返回 LEGACY_V2_RECORD（不伪装）", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    await repo.initializeSchema();
+    const raw = createSqliteClient(dbPath);
+    rawClients.push(raw);
+    await raw.batch(
+      [
+        `CREATE TABLE IF NOT EXISTS game_records_v2 (
+          game_id TEXT PRIMARY KEY, record_version INTEGER NOT NULL,
+          world_state_json TEXT NOT NULL, story_state_json TEXT NOT NULL,
+          created_at TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0)`,
+        `CREATE TABLE IF NOT EXISTS current_game_v2 (slot INTEGER PRIMARY KEY CHECK (slot = 1), game_id TEXT NOT NULL)`,
+      ],
+      "write",
+    );
+    await raw.execute({
+      sql: `INSERT INTO game_records_v2 (game_id, record_version, world_state_json, story_state_json, created_at, revision)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: ["legacy_v1", 1, JSON.stringify({ version: 1 }), JSON.stringify({ version: 1 }), "2025-01-01", 0],
+    });
+    await raw.execute({ sql: "INSERT INTO current_game_v2 (slot, game_id) VALUES (1, ?)", args: ["legacy_v1"] });
+
+    const result = await repo.getCurrentGame();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.status).toBe("corrupt");
+      if (result.status === "corrupt") expect(result.reason).toBe("LEGACY_V2_RECORD");
+    }
+  });
+
+  it("未知 record_version 仍返回 VERSION_MISMATCH（非 LEGACY）", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    await repo.initializeSchema();
+    const raw = createSqliteClient(dbPath);
+    rawClients.push(raw);
+    await raw.batch(
+      [
+        `CREATE TABLE IF NOT EXISTS game_records_v2 (
+          game_id TEXT PRIMARY KEY, record_version INTEGER NOT NULL,
+          world_state_json TEXT NOT NULL, story_state_json TEXT NOT NULL,
+          created_at TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0)`,
+        `CREATE TABLE IF NOT EXISTS current_game_v2 (slot INTEGER PRIMARY KEY CHECK (slot = 1), game_id TEXT NOT NULL)`,
+      ],
+      "write",
+    );
+    await raw.execute({
+      sql: `INSERT INTO game_records_v2 (game_id, record_version, world_state_json, story_state_json, created_at, revision)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: ["unknown_v", 99, JSON.stringify({ version: 2 }), JSON.stringify({ version: 2 }), "2025-01-01", 0],
+    });
+    await raw.execute({ sql: "INSERT INTO current_game_v2 (slot, game_id) VALUES (1, ?)", args: ["unknown_v"] });
+
+    const result = await repo.getCurrentGame();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.status).toBe("corrupt");
+      if (result.status === "corrupt") expect(result.reason).toBe("VERSION_MISMATCH");
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

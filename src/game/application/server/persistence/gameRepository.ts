@@ -48,7 +48,9 @@ export type CreateInitialGameResult =
 export type CorruptGameReason =
   | "UNPARSEABLE_RECORD"
   | "VERSION_MISMATCH"
-  | "GENERATION_MISMATCH";
+  | "GENERATION_MISMATCH"
+  /** 明确识别为旧 v2 存档（schema 不兼容，非损坏）。开发清档可恢复。 */
+  | "LEGACY_V2_RECORD";
 
 export type GetCurrentGameRecordResult =
   | { readonly ok: true; readonly status: "none" }
