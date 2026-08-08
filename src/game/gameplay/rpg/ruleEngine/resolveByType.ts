@@ -3,10 +3,8 @@ import { findLocation, findNpc } from "@/game/domain/worldState";
 import type { Action } from "@/game/domain/action";
 import type { GameEvent } from "@/game/domain/events";
 import type { ResolvedEventStatus, StateChange, FactChange } from "@/game/domain/resolvedEvent";
-import { relationshipTierOf, RELATIONSHIP_CHANGE } from "@/game/domain/relationship";
-import { updateNpcMemory } from "./updateNpcMemory";
 import { startBattleV2, battleActionV2 } from "./battleResolver";
-import type { NpcInteraction } from "@/game/domain/worldState";
+import { resolveDialogue } from "@/game/gameplay/rpg/dialogue";
 
 export type ResolveResult = {
   readonly ok: true;
@@ -73,35 +71,23 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
     case "talk": {
       const npc = findNpc(ws, action.npcId);
       if (npc === undefined) return { ok: false, feedback: "未知角色。" };
-      const event: GameEvent = { type: "npc_met", npcId: action.npcId, occurredAt, interactionKind: "greet" };
-
-      const tier = relationshipTierOf(npc.memory.relationship);
-      const isHostile = tier === "hostile";
-
-      const interaction: NpcInteraction = {
-        turn: ws.eventLedger.length,
-        locationId: ws.currentLocationId,
-        actionType: "talk",
-        outcome: isHostile ? "neutral" : "positive",
-        relationshipDelta: isHostile ? 0 : RELATIONSHIP_CHANGE.GREET_FIRST_MEET,
-        summary: npc.met ? "再次交谈" : isHostile ? "敌对状态下勉强交流" : "首次见面，好感+5",
-      };
-      const updatedNpc = updateNpcMemory(npc, interaction);
-
+      // 旧构造器可能缺失 dialogueAct（Task 9 交割前）：回退 ask
+      const dialogueAct = action.dialogueAct ?? "ask";
+      const dialogue = resolveDialogue(ws, npc, { ...action, dialogueAct }, deps);
       const nextWs: WorldState = {
         ...ws,
-        npcs: ws.npcs.map((n) => n.id === action.npcId ? { ...updatedNpc, met: true } : n),
-        eventLedger: [...ws.eventLedger, event],
+        npcs: ws.npcs.map((n) => n.id === action.npcId ? dialogue.npcAfter : n),
+        eventLedger: [...ws.eventLedger, dialogue.event],
       };
-      const tierAfterUpdate = relationshipTierOf(updatedNpc.memory.relationship);
-      const status: ResolvedEventStatus = tierAfterUpdate === "hostile" ? "partial_success" : "success";
-      const stateChanges: StateChange[] = [
-        { path: `npcs[${String(action.npcId)}].met`, description: `与${npc.name}交谈`, operation: "set" },
-      ];
-      if (status === "partial_success") {
-        stateChanges.push({ path: `npcs[${String(action.npcId)}].relationship`, description: `${npc.name}态度敌对，勉强交流`, operation: "update" });
-      }
-      return { ok: true, nextWorldState: nextWs, events: [event], feedback: `你与${npc.name}交谈。`, status, stateChanges, facts: [] };
+      return {
+        ok: true,
+        nextWorldState: nextWs,
+        events: [dialogue.event],
+        feedback: dialogue.feedback,
+        status: dialogue.status,
+        stateChanges: [...dialogue.stateChanges],
+        facts: [],
+      };
     }
     case "investigate": {
       const event: GameEvent = { type: "fact_discovered", factId: action.factId, occurredAt };

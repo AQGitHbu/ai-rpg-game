@@ -1,11 +1,42 @@
 import type { LocationId, NpcId, FactId, ItemId, EnemyId, QuestId } from "./scenarioBlueprint";
+import type { ThreadId } from "./storyState";
+
+/** 规则可识别的对话行为（Spec §7.2）。utterance 只供叙事表现，不得声明结果。 */
+export const DIALOGUE_ACTS = [
+  "ask",
+  "support",
+  "challenge",
+  "threaten",
+  "deceive",
+  "offer",
+  "refuse",
+  "reassure",
+] as const;
+
+export type DialogueAct = (typeof DIALOGUE_ACTS)[number];
+
+/** 对话主题：规则只读取 kind 与实体 ID；thread 复用 storyState.ThreadId。 */
+export type DialogueTopic =
+  | { readonly kind: "fact"; readonly factId: FactId }
+  | { readonly kind: "quest"; readonly questId: QuestId }
+  | { readonly kind: "thread"; readonly threadId: ThreadId }
+  | { readonly kind: "general" };
 
 export type Interaction =
   | { readonly kind: "fixed_choice"; readonly choiceToken: string }
   | { readonly kind: "free_text"; readonly text: string; readonly targetNpcId?: NpcId };
 
+/** 固定对话选项（Spec §7.2）：dialogueAct 必填，topic/utterance 可选。 */
+export type TalkAction = {
+  readonly type: "talk";
+  readonly npcId: NpcId;
+  readonly dialogueAct: DialogueAct;
+  readonly topic?: DialogueTopic;
+  readonly utterance?: string;
+};
+
 export type Action =
-  | { readonly type: "talk"; readonly npcId: NpcId; readonly utterance?: string }
+  | TalkAction
   | { readonly type: "move"; readonly locationId: LocationId }
   | { readonly type: "explore" }
   | { readonly type: "investigate"; readonly factId: FactId; readonly utterance?: string }
