@@ -105,7 +105,7 @@ describe("runExpansionProposer（纯函数：触发→审批→应用→重演�
     };
     const result = runExpansionProposer(
       initialResult, ws, ss,
-      { type: "talk", npcId: asNpcId("npc_unknown") },
+      { type: "talk", npcId: asNpcId("npc_unknown"), dialogueAct: "ask" },
       "act_4",
       [talkProposal],
       deps,

@@ -36,7 +36,7 @@ describe("checkExpansionTrigger", () => {
       code: "UNKNOWN_NPC",
       feedback: "Action rejected: UNKNOWN_NPC",
     };
-    const talkAction: Action = { type: "talk", npcId: asNpcId("npc_unknown") };
+    const talkAction: Action = { type: "talk", npcId: asNpcId("npc_unknown"), dialogueAct: "ask" };
     const result = checkExpansionTrigger(initialResult, ws, ss, talkAction);
     expect(result.triggered).toBe(true);
     expect(result.reason).toBe("entity_not_found");
@@ -50,7 +50,7 @@ describe("checkExpansionTrigger", () => {
       resolvedEvent: {
         actionId: "a1", status: "success", eventKind: "travel",
         facts: [], stateChanges: [], costs: [], rewards: [],
-        triggeredEvents: [], rejectedEffects: [], stateVersion: 1,
+        triggeredEvents: [], rejectedEffects: [],
       },
     };
     const result = checkExpansionTrigger(initialResult, ws, ss, action);
@@ -88,7 +88,7 @@ describe("checkExpansionTrigger", () => {
       code: "UNKNOWN_NPC",
       feedback: "Action rejected: UNKNOWN_NPC",
     };
-    const talkAction: Action = { type: "talk", npcId: asNpcId("npc_unknown") };
+    const talkAction: Action = { type: "talk", npcId: asNpcId("npc_unknown"), dialogueAct: "ask" };
     const result = checkExpansionTrigger(initialResult, ws, ssMaxedNpcs, talkAction);
     expect(result.triggered).toBe(false);
     expect(result.reason).toBe("no_trigger");

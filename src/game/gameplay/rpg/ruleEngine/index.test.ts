@@ -49,7 +49,7 @@ describe("ruleEngine facade", () => {
       memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
     const wsWithNpc = appendNpc(ws, npc);
-    const result = ruleEngine(wsWithNpc, ss, { type: "talk", npcId: asNpcId("npc_1") }, "act_3", deps);
+    const result = ruleEngine(wsWithNpc, ss, { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }, "act_3", deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.nextStoryState.tension).toBe(33); // 30 + 3 (npc_met)
@@ -83,7 +83,7 @@ describe("ruleEngine status passthrough", () => {
       memory: { npcId: asNpcId("npc_hostile"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: -70 }, emotion: "angry", goals: [] },
     };
     const wsWithHostile = appendNpc(ws, hostileNpc);
-    const result = ruleEngine(wsWithHostile, ss, { type: "talk", npcId: asNpcId("npc_hostile") }, "act_1", deps);
+    const result = ruleEngine(wsWithHostile, ss, { type: "talk", npcId: asNpcId("npc_hostile"), dialogueAct: "ask" }, "act_1", deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.resolvedEvent.status).toBe("partial_success");
@@ -157,13 +157,17 @@ describe("resolveTurn facade", () => {
     expect(result.resolution.interactionKind).toBe("free_text");
   });
 
-  it("no-change action preserves world state identity", () => {
+  it("freeform records a structured player_intent_expressed event without extra world changes", () => {
     const result = resolveTurn(ws, ss, { type: "freeform", intent: "chat", rawText: "你好" }, "act_2", baseRevision, turnId, "free_text", deps);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unexpected rejection");
-    expect(result.resolution.domainEvents).toEqual([]);
-    expect(result.resolution.nextWorldState).toBe(ws); // 无事件 → 原对象
-    expect(result.resolution.nextWorldState.eventLedger).toEqual(ws.eventLedger);
+    // Spec §13.5：freeform 不产生实质世界变化，但必须以结构化 player_intent_expressed 事件落账意图。
+    expect(result.resolution.domainEvents.map((e) => e.type)).toEqual(["player_intent_expressed"]);
+    expect(result.resolution.nextWorldState).not.toBe(ws);
+    expect(result.resolution.nextWorldState.eventLedger).toEqual([
+      ...ws.eventLedger,
+      ...result.resolution.domainEvents,
+    ]);
   });
 
   it("talk to hostile npc yields partial_success with domain event and aligned ledger", () => {
@@ -173,7 +177,7 @@ describe("resolveTurn facade", () => {
       memory: { npcId: asNpcId("npc_hostile"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: -70 }, emotion: "angry", goals: [] },
     };
     const wsWithHostile = appendNpc(ws, hostileNpc);
-    const result = resolveTurn(wsWithHostile, ss, { type: "talk", npcId: asNpcId("npc_hostile") }, "act_3", baseRevision, turnId, "fixed_choice", deps);
+    const result = resolveTurn(wsWithHostile, ss, { type: "talk", npcId: asNpcId("npc_hostile"), dialogueAct: "ask" }, "act_3", baseRevision, turnId, "fixed_choice", deps);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(`unexpected rejection: ${result.code}`);
     const r = result.resolution;

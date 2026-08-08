@@ -37,7 +37,7 @@ describe("resolveByType", () => {
       memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
     const wsWithNpc = appendNpc(ws, npc);
-    const result = resolveByType(wsWithNpc, { type: "talk", npcId: asNpcId("npc_1") }, deps);
+    const result = resolveByType(wsWithNpc, { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       const npc2 = result.nextWorldState.npcs.find((n) => n.id === asNpcId("npc_1"));
@@ -95,7 +95,7 @@ describe("resolveByType status and stateChanges", () => {
       memory: { ...npc1.memory, npcId: asNpcId("npc_hostile"), relationship: { affinity: -70 } },
     };
     const wsWithHostile = appendNpc(ws, hostileNpc);
-    const result = resolveByType(wsWithHostile, { type: "talk", npcId: asNpcId("npc_hostile") }, deps);
+    const result = resolveByType(wsWithHostile, { type: "talk", npcId: asNpcId("npc_hostile"), dialogueAct: "ask" }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.status).toBe("partial_success");
@@ -121,13 +121,14 @@ describe("resolveByType status and stateChanges", () => {
     }
   });
 
-  it("freeform action returns success with no state changes", () => {
+  it("freeform action returns success, appends player_intent_expressed event, but no stateChanges", () => {
     const result = resolveByType(ws, { type: "freeform", intent: "chat", rawText: "你好" }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.status).toBe("success");
       expect(result.stateChanges).toEqual([]);
-      expect(result.nextWorldState).toBe(ws); // 无变化
+      expect(result.events.map((e) => e.type)).toEqual(["player_intent_expressed"]);
+      expect(result.nextWorldState.eventLedger.length).toBe(ws.eventLedger.length + 1);
     }
   });
 });

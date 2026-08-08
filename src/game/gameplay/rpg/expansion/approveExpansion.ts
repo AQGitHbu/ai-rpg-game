@@ -44,29 +44,39 @@ export function approveExpansions(
     const result = approveOne(proposal, ws, workingBudget, existingLocationIds, existingNpcIds, existingItemIds, existingEnemyIds, existingFactIds, deps, idOverride);
     if (result.ok) {
       switch (proposal.kind) {
-        case "location":
-          newLocations.push(result.entry as LocationEntry);
-          existingLocationIds.add(String(result.entry.id));
+        case "location": {
+          const locEntry = result.entry as LocationEntry;
+          newLocations.push(locEntry);
+          existingLocationIds.add(String(locEntry.id));
           workingBudget = consumeExpansion(workingBudget, "locations");
           break;
-        case "npc":
-          newNpcs.push(result.entry as NpcEntry);
-          existingNpcIds.add(String(result.entry.id));
+        }
+        case "npc": {
+          const npcEntry = result.entry as NpcEntry;
+          newNpcs.push(npcEntry);
+          existingNpcIds.add(String(npcEntry.id));
           workingBudget = consumeExpansion(workingBudget, "npcs");
           break;
-        case "item":
-          newItems.push(result.entry as ItemEntry);
-          existingItemIds.add(String(result.entry.id));
+        }
+        case "item": {
+          const itemEntry = result.entry as ItemEntry;
+          newItems.push(itemEntry);
+          existingItemIds.add(String(itemEntry.id));
           break;
-        case "enemy":
-          newEnemies.push(result.entry as EnemyEntry);
-          existingEnemyIds.add(String(result.entry.id));
+        }
+        case "enemy": {
+          const enemyEntry = result.entry as EnemyEntry;
+          newEnemies.push(enemyEntry);
+          existingEnemyIds.add(String(enemyEntry.id));
           break;
-        case "fact":
-          newFacts.push(result.entry as WorldFactEntry);
-          existingFactIds.add(String(result.entry.id));
+        }
+        case "fact": {
+          const factEntry = result.entry as WorldFactEntry;
+          newFacts.push(factEntry);
+          existingFactIds.add(String(factEntry.factId));
           workingBudget = consumeExpansion(workingBudget, "events");
           break;
+        }
       }
     } else {
       rejected.push({ proposal, reason: result.reason });
@@ -198,7 +208,7 @@ function approveOne(
       const entry: WorldFactEntry = {
         factId: id,
         text: proposal.text,
-        source: "runtime_expansion",
+        source: "generated",
         discovered: false,
         locationId: asLocationId(proposal.locationId),
       };
