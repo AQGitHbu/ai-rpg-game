@@ -70,21 +70,43 @@ function createStates(): {
       occurredAt: "2026-08-08T08:00:01.000Z",
     },
   ];
+  const priorEvents: readonly GameEvent[] = [
+    {
+      type: "location_observed",
+      locationId: startingLocation.id,
+      occurredAt: "2026-08-08T07:59:56.000Z",
+    },
+    {
+      type: "location_observed",
+      locationId: startingLocation.id,
+      occurredAt: "2026-08-08T07:59:57.000Z",
+    },
+    {
+      type: "location_observed",
+      locationId: startingLocation.id,
+      occurredAt: "2026-08-08T07:59:58.000Z",
+    },
+    {
+      type: "location_observed",
+      locationId: startingLocation.id,
+      occurredAt: "2026-08-08T07:59:59.000Z",
+    },
+  ];
 
   return {
     previousStoryState,
     nextStoryState: { ...previousStoryState, tension: 35 },
     nextWorldState: {
       ...worldState,
-      eventLedger: [...worldState.eventLedger, ...domainEvents],
+      eventLedger: [...worldState.eventLedger, ...priorEvents, ...domainEvents],
     },
     domainEvents,
   };
 }
 
-function createCanonicalResolvedEvent(): ResolvedEvent {
+function createCanonicalResolvedEvent(actionId = "action-1"): ResolvedEvent {
   return {
-    actionId: "action-1",
+    actionId,
     status: "success",
     eventKind: "observe",
     facts: [],
@@ -102,7 +124,6 @@ function createResolution(): TurnResolution {
 
   return createTurnResolution({
     turnId: asTurnId("turn-1"),
-    actionId: "action-1",
     baseRevision: 41,
     interactionKind: "fixed_choice",
     action,
@@ -141,13 +162,40 @@ describe("TurnResolution", () => {
     expect(resolution.turnNumber).toBe(1);
   });
 
+  it("derives actionId from primaryResult as the single causal source", () => {
+    const states = createStates();
+    const primaryResult = createCanonicalResolvedEvent("action-from-primary-result");
+
+    const resolution = createTurnResolution({
+      turnId: asTurnId("turn-action-invariant"),
+      baseRevision: 41,
+      interactionKind: "fixed_choice",
+      action: { type: "explore" },
+      primaryResult,
+      domainEvents: states.domainEvents,
+      previousStoryState: states.previousStoryState,
+      nextWorldState: states.nextWorldState,
+      nextStoryState: states.nextStoryState,
+    });
+
+    expect(resolution.actionId).toBe("action-from-primary-result");
+    expect(resolution.actionId).toBe(resolution.primaryResult.actionId);
+  });
+
   it("keeps schema version, database revision, turn number, and ledger cursor separate", () => {
     const resolution = createResolution();
 
-    expect(resolution.nextStoryState.version).toBe(3);
-    expect(resolution.baseRevision).toBe(41);
-    expect(resolution.turnNumber).toBe(1);
-    expect(resolution.nextWorldState.eventLedger).toHaveLength(3);
+    expect({
+      schemaVersion: resolution.nextStoryState.version,
+      baseRevision: resolution.baseRevision,
+      turnNumber: resolution.turnNumber,
+      ledgerCursor: resolution.nextWorldState.eventLedger.length,
+    }).toEqual({
+      schemaVersion: 3,
+      baseRevision: 41,
+      turnNumber: 1,
+      ledgerCursor: 7,
+    });
   });
 
   it("does not read the system clock or randomness", () => {

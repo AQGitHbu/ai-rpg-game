@@ -25,7 +25,7 @@ export type TurnResolution = {
 
 export type CreateTurnResolutionInput = Omit<
   TurnResolution,
-  "turnNumber" | "domainEvents" | "nextStoryState"
+  "actionId" | "turnNumber" | "domainEvents" | "nextStoryState"
 > & {
   readonly domainEvents: readonly GameEvent[];
   readonly previousStoryState: StoryState;
@@ -42,12 +42,15 @@ export function createTurnResolution(
     previousStoryState,
     nextStoryState,
     domainEvents,
+    primaryResult,
     ...resolution
   } = input;
   const turnNumber = previousStoryState.turnNumber + 1;
 
   return {
     ...resolution,
+    actionId: primaryResult.actionId,
+    primaryResult,
     turnNumber,
     domainEvents: [...domainEvents],
     nextStoryState: {
