@@ -35,6 +35,7 @@ function nextDbPath(): string {
 }
 
 const openedRepos: ReturnType<typeof createSqliteGameRepositoryV2>[] = [];
+const rawClients: SqliteClient[] = [];
 
 function openRepo(databasePath: string): ReturnType<typeof createSqliteGameRepositoryV2> {
   const repo = createSqliteGameRepositoryV2({
@@ -48,6 +49,9 @@ function openRepo(databasePath: string): ReturnType<typeof createSqliteGameRepos
 afterAll(async () => {
   for (const repo of openedRepos) {
     try { await repo.close(); } catch { /* ignore */ }
+  }
+  for (const client of rawClients) {
+    try { client.close(); } catch { /* ignore */ }
   }
   try { rmSync(RUN_ROOT, { recursive: true, force: true }); } catch { /* ignore */ }
 });
@@ -132,5 +136,182 @@ describe("sqliteGameRepositoryV2", () => {
     const result = await repo.getCurrentGame();
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.status).toBe("none");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SQLite 原子性（Task 4 Step 2）：包一层真实客户端做故障注入。
+// 失败必须整体回滚——World 与 Story 都保持旧值，且 revision 不变。
+// ---------------------------------------------------------------------------
+
+type SqliteTransactionV2 = Awaited<ReturnType<SqliteClient["transaction"]>>;
+
+function wrapTransactionWithFault(
+  tx: SqliteTransactionV2,
+  shouldThrow: (sql: string) => boolean,
+): SqliteTransactionV2 {
+  return new Proxy(tx, {
+    get(target, property) {
+      if (property === "execute") {
+        return (async (stmtOrSql: unknown, args?: unknown) => {
+          const sql =
+            typeof stmtOrSql === "string" ? stmtOrSql : (stmtOrSql as { sql: string }).sql;
+          if (shouldThrow(sql)) throw new Error(`注入故障：${sql}`);
+          return (target.execute as (a: unknown, b?: unknown) => Promise<unknown>)(stmtOrSql, args);
+        }) as SqliteTransactionV2["execute"];
+      }
+      const value = Reflect.get(target, property) as unknown;
+      return typeof value === "function"
+        ? (value as (...callArgs: unknown[]) => unknown).bind(target)
+        : value;
+    },
+  });
+}
+
+function createFaultClient(
+  real: SqliteClient,
+  shouldThrow: (sql: string) => boolean,
+): SqliteClient {
+  rawClients.push(real);
+  return new Proxy(real, {
+    get(target, property) {
+      if (property === "transaction") {
+        return (async (mode?: "write" | "read" | "deferred") => {
+          const tx = mode === undefined ? await target.transaction() : await target.transaction(mode);
+          return wrapTransactionWithFault(tx, shouldThrow);
+        }) as SqliteClient["transaction"];
+      }
+      const value = Reflect.get(target, property) as unknown;
+      return typeof value === "function"
+        ? (value as (...callArgs: unknown[]) => unknown).bind(target)
+        : value;
+    },
+  });
+}
+
+describe("sqliteGameRepositoryV2：事务原子性", () => {
+  it("JSON 序列化失败（循环引用）→ 零写入，旧值完整保留", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    const { worldState, storyState } = buildTestState();
+    const gameId = asGameId("g1");
+    await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });
+
+    const cyclic = { ...worldState } as Record<string, unknown>;
+    cyclic.self = cyclic;
+
+    const result = await repo.applyState({
+      gameId,
+      expectedRevision: 0,
+      nextWorldState: cyclic as unknown as WorldState,
+      nextStoryState: storyState,
+    });
+    expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
+
+    const current = await repo.getCurrentGame();
+    expect(current.ok).toBe(true);
+    if (current.ok && current.status === "active") {
+      expect(current.record.revision).toBe(0);
+      expect(current.record.worldState).toEqual(worldState);
+      expect(current.record.storyState).toEqual(storyState);
+    }
+  });
+
+  it("UPDATE 前失败（注入 UPDATE 语句异常）→ 回滚后 World/Story 均保持旧值", async () => {
+    const dbPath = nextDbPath();
+    const { worldState, storyState } = buildTestState();
+    const gameId = asGameId("g1");
+
+    const seed = openRepo(dbPath);
+    await seed.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });
+
+    const faulty = createSqliteGameRepositoryV2({
+      clientFactory: () => createFaultClient(
+        createSqliteClient(dbPath),
+        (sql) => /^\s*UPDATE\s+game_records_v2/i.test(sql),
+      ),
+      logError: () => {},
+    });
+    openedRepos.push(faulty);
+
+    const result = await faulty.applyState({
+      gameId,
+      expectedRevision: 0,
+      nextWorldState: worldState,
+      nextStoryState: storyState,
+    });
+    expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
+
+    // 全新实例读取同一文件：revision 未增长，World 与 Story 都是旧值
+    const reader = openRepo(dbPath);
+    const current = await reader.getCurrentGame();
+    expect(current.ok).toBe(true);
+    if (current.ok && current.status === "active") {
+      expect(current.record.revision).toBe(0);
+      expect(current.record.worldState).toEqual(worldState);
+      expect(current.record.storyState).toEqual(storyState);
+    }
+  });
+
+  it("read-back 失败（UPDATE 成功后注入读取异常）→ 整体回滚，旧值保留", async () => {
+    const dbPath = nextDbPath();
+    const { worldState, storyState } = buildTestState();
+    const gameId = asGameId("g1");
+
+    const seed = openRepo(dbPath);
+    await seed.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });
+
+    const faulty = createSqliteGameRepositoryV2({
+      clientFactory: () => createFaultClient(
+        createSqliteClient(dbPath),
+        (sql) => /^\s*SELECT\s+game_id,\s*record_version/i.test(sql),
+      ),
+      logError: () => {},
+    });
+    openedRepos.push(faulty);
+
+    const result = await faulty.applyState({
+      gameId,
+      expectedRevision: 0,
+      nextWorldState: { ...worldState, eventLedger: [] },
+      nextStoryState: storyState,
+    });
+    expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
+
+    const reader = openRepo(dbPath);
+    const current = await reader.getCurrentGame();
+    expect(current.ok).toBe(true);
+    if (current.ok && current.status === "active") {
+      expect(current.record.revision).toBe(0);
+      expect(current.record.worldState).toEqual(worldState);
+      expect(current.record.storyState).toEqual(storyState);
+    }
+  });
+});
+
+describe("sqliteGameRepositoryV2：stale 后旧值保留", () => {
+  it("stale revision → STALE_GAME_REVISION 且存档保持旧值", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    const { worldState, storyState } = buildTestState();
+    const gameId = asGameId("g1");
+    await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });
+
+    const nextStory = { ...storyState, tension: 99 };
+    const stale = await repo.applyState({
+      gameId,
+      expectedRevision: 42,
+      nextWorldState: worldState,
+      nextStoryState: nextStory,
+    });
+    expect(stale).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
+
+    const current = await repo.getCurrentGame();
+    expect(current.ok).toBe(true);
+    if (current.ok && current.status === "active") {
+      expect(current.record.revision).toBe(0);
+      expect(current.record.storyState.tension).toBe(storyState.tension);
+      expect(current.record.worldState).toEqual(worldState);
+    }
   });
 });

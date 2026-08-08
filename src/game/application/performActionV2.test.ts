@@ -74,7 +74,7 @@ describe("performActionV2", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.revision).toBe(2); // 1 for action commit + 1 for scene queuing
+      expect(result.revision).toBe(1); // 单次 CAS：行动事实与 pending job 同一次 revision 增长
       expect(result.resolvedEvent.status).toBe("success");
       expect(result.resolvedEvent.eventKind).toBe("dialogue");
     }
@@ -147,12 +147,12 @@ describe("performActionV2 free_text integration", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.revision).toBe(2); // 1 for action commit + 1 for scene queuing
+      expect(result.revision).toBe(1); // 单次 CAS：行动事实与 pending job 同一次 revision 增长
       expect(result.resolvedEvent.status).toBe("success");
     }
   });
 
-  it("converts unclassifiable text to freeform, worldState unchanged", async () => {
+  it("converts unclassifiable text to freeform, rejected with zero writes (无事件回合无法形成叙事任务)", async () => {
     const ws = buildWorldState();
     const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
     const repo = createInMemoryRepoWithRecord(ws, ss);
@@ -163,11 +163,10 @@ describe("performActionV2 free_text integration", () => {
       { repository: repo, now: () => "2026-01-02", intentParserSource: source },
     );
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.resolvedEvent.status).toBe("success");
-      expect(result.resolvedEvent.stateChanges).toEqual([]);
-    }
+    // spec §9.3：若无法建立 PendingNarrativeJob，则整次回合不提交
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("ACTION_REJECTED");
   });
 });
 
