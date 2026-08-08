@@ -10,29 +10,35 @@ export const TENSION_CHANGES = {
   fact_discovered: 12,
   quest_completed: 8,
   npc_met: 3,
+  player_rested: -10,
 } as const;
 
+// Spec §13.2：storyProgress 由主线 stage/目标比例推导，不在此固定 +10。
+// 本模块只更新 tension（确定性张力指标），storyProgress 由 advanceStoryProgression 按
+// 主线 stage 比例推导。此处保持 prev.storyProgress 不变。
 export function updateStoryMetrics(prev: StoryState, newEvents: readonly GameEvent[]): StoryState {
   let tension = prev.tension;
-  let storyProgress = prev.storyProgress;
 
   for (const event of newEvents) {
     switch (event.type) {
       case "battle_started": tension += TENSION_CHANGES.battle_started; break;
       case "battle_resolved":
-        tension += event.outcome === "victory" ? TENSION_CHANGES.battle_resolved_victory : TENSION_CHANGES.battle_resolved_defeat;
+        tension +=
+          event.outcome === "victory"
+            ? TENSION_CHANGES.battle_resolved_victory
+            : event.outcome === "withdraw"
+              ? TENSION_CHANGES.battle_resolved_withdraw
+              : TENSION_CHANGES.battle_resolved_defeat;
         break;
       case "fact_discovered": tension += TENSION_CHANGES.fact_discovered; break;
-      case "quest_completed":
-        tension += TENSION_CHANGES.quest_completed;
-        storyProgress = Math.min(100, storyProgress + 10);
-        break;
+      case "quest_completed": tension += TENSION_CHANGES.quest_completed; break;
       case "npc_met": tension += TENSION_CHANGES.npc_met; break;
+      case "player_rested": tension += TENSION_CHANGES.player_rested; break;
     }
   }
 
   const tension2 = clampTension(tension);
-  const nextPacingNeed = derivePacingNeed({ ...prev, tension: tension2, storyProgress });
+  const nextPacingNeed = derivePacingNeed({ ...prev, tension: tension2, storyProgress: prev.storyProgress });
 
-  return { ...prev, tension: tension2, storyProgress, nextPacingNeed };
+  return { ...prev, tension: tension2, storyProgress: prev.storyProgress, nextPacingNeed };
 }
