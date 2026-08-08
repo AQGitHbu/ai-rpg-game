@@ -1,5 +1,6 @@
 import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "./scenarioBlueprint";
 import { paginateSpeechText } from "./speechPagination";
+import type { PendingNarrativeJob } from "./pendingNarrativeJob";
 
 export const NARRATIVE_EMOTIONS = [
   "neutral", "warm", "guarded", "afraid", "angry", "sad"
@@ -107,10 +108,8 @@ export type NarrativeGenerationState =
   | { readonly status: "idle" }
   | {
       readonly status: "pending";
-      readonly requestedAt: string;
-      /** Phase 14: 场景生成的触发上下文。 */
-      readonly triggerContext?: NarrativeTriggerContext;
-      readonly playerNpcChat?: PlayerNpcChatState;
+      /** v2.1：pending 的唯一载体；玩家原文只在 job.utterance 内。 */
+      readonly job: PendingNarrativeJob;
     };
 
 /** Runtime AI is opt-in per save. Offline development presets never call it. */
