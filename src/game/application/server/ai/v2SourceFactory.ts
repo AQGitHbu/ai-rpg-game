@@ -10,6 +10,7 @@ import { NARRATIVE_EMOTIONS, buildNpcDialoguePages, type NpcDialogueInScene } fr
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createFixtureWorldSource } from "../../createGameV2";
+import { createWorldGenerationSourceV2 } from "./worldGenerationSourceV2";
 import { createDeterministicSceneSource } from "../../deterministicSceneSource";
 
 // ---------------------------------------------------------------------------
@@ -277,14 +278,15 @@ export function createV2WorldGenerationSource(
   const runtime = parseAiRuntimeConfig(env);
   if (runtime.status === "available") {
     logger?.info("v2_world_source_live", { model: runtime.config.model });
-    return createLiveWorldGenerationSource(
-      createOpenAiCompatibleTransport(),
-      runtime.config,
+    // Task 17：live 源带机械修复 + 校验 + 确定性 fallback 编排。
+    return createWorldGenerationSourceV2({
+      transport: createOpenAiCompatibleTransport(),
+      config: runtime.config,
       logger,
-    );
+    });
   }
   logger?.info("v2_world_source_fixture", { diagnostics: runtime.diagnostics });
-  return createFixtureWorldSource();
+  return createWorldGenerationSourceV2({});
 }
 
 export function createV2SceneSource(
