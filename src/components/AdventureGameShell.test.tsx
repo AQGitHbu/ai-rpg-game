@@ -65,10 +65,9 @@ describe("AdventureGameShell", () => {
     const { rerender, props } = renderShell({ view: pendingView });
 
     expect(screen.getByRole("dialog", { name: "正在准备场景" })).toBeInTheDocument();
-    expect(screen.getByText("世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。"))
+    expect(screen.getByText("正在调用 AI 生成下一段剧情，请稍候…"))
       .toBeInTheDocument();
-    expect(screen.getByText(/已完成 1 \/ 3 个角色 API 阶段/)).toBeInTheDocument();
-    expect(screen.getByText(/当前编剧第1次尝试/)).toBeInTheDocument();
+    expect(screen.getByText(/已完成 1 \/ 3 个阶段，当前编剧第1次尝试/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "进入青石镇" }));
 
@@ -187,7 +186,7 @@ describe("AdventureGameShell", () => {
 
     expect(screen.queryByRole("dialog", { name: "与陆掌柜对话" })).toBeNull();
     expect(screen.getByRole("dialog", { name: "正在准备场景" })).toBeInTheDocument();
-    expect(screen.getByText("世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。"))
+    expect(screen.getByText("正在调用 AI 生成下一段剧情，请稍候…"))
       .toBeInTheDocument();
 
     await user.keyboard("{Escape}");

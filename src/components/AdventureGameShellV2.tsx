@@ -276,7 +276,7 @@ export function AdventureGameShellV2({ view, onViewChange, onStaleRevision, onCl
 
       {showGenerationModal ? (
         <NarrativeGenerationModal
-          progress={undefined}
+          totalApiCalls={view.narrativeGeneration?.totalApiCalls}
           unavailable={false}
         />
       ) : null}

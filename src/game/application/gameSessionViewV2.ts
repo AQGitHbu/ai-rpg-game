@@ -25,7 +25,7 @@ export type GameSessionViewV2 = {
     readonly choices?: readonly { readonly choiceToken: string; readonly label: string; readonly actionKey: string }[];
     readonly npcLine?: { readonly npcId: string; readonly text: string; readonly emotion: string } | null;
   };
-  readonly narrativeGeneration?: { readonly status: string };
+  readonly narrativeGeneration?: { readonly status: string; readonly totalApiCalls: number };
   readonly battle: { readonly enemyName: string; readonly playerHp: number; readonly enemyHp: number; readonly round: number } | null;
   readonly quests: readonly {
     readonly id: string;
@@ -161,7 +161,7 @@ export function projectGameSessionView(
       } : {}),
     },
     ...(storyState.narrative.generation.status === "pending"
-      ? { narrativeGeneration: { status: "pending" } }
+      ? { narrativeGeneration: { status: "pending", totalApiCalls: 1 } }
       : {}),
     battle,
     quests,

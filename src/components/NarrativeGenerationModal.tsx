@@ -4,13 +4,18 @@ import { useEffect, useId, useRef, type KeyboardEvent } from "react";
 import type { NarrativeGenerationProgress } from "@/game/application";
 
 const NARRATIVE_GENERATION_MESSAGE =
-  "世界导演、编剧与当前角色正在依据已保存的规则结果准备场景。";
+  "正在调用 AI 生成下一段剧情，请稍候…";
 
 /**
  * 场景生成期间的阻塞提示。
  *
  * 这个组件只覆盖当前界面，不接收 onClose：pending 结束前不能由玩家手动解除，
  * 由父级在 API 轮询得到非 pending view 后卸载。
+ *
+ * 进度来源有两种：
+ * - `progress`（V1 三角色流水线）：按角色阶段上报，展示"已完成 X / Y 个阶段"。
+ * - `totalApiCalls`（V2 严格流水线）：本次场景生成的真实 AI 调用次数，展示"将调用 N 次"。
+ * 二者互斥，最多传一个；都不传时仅显示通用等待文案。
  */
 const ROLE_LABELS: Record<NarrativeGenerationProgress["currentRole"], string> = {
   director: "导演",
@@ -20,10 +25,16 @@ const ROLE_LABELS: Record<NarrativeGenerationProgress["currentRole"], string> = 
 
 type NarrativeGenerationModalProps = {
   readonly progress?: NarrativeGenerationProgress;
+  /** V2 场景生成为单次原子 AI 调用：本次将调用的真实 AI 请求数。 */
+  readonly totalApiCalls?: number;
   readonly unavailable?: boolean;
 };
 
-export function NarrativeGenerationModal({ progress, unavailable = false }: NarrativeGenerationModalProps) {
+export function NarrativeGenerationModal({
+  progress,
+  totalApiCalls,
+  unavailable = false,
+}: NarrativeGenerationModalProps) {
   const titleId = useId();
   const dialogRef = useRef<HTMLElement>(null);
 
@@ -57,8 +68,11 @@ export function NarrativeGenerationModal({ progress, unavailable = false }: Narr
         </p>
         {!unavailable ? (
           <p role="status" aria-live="polite">
-            已完成 {progress?.completedCalls ?? 0} / {progress?.totalCalls ?? 3} 个角色 API 阶段
-            {progress === undefined ? "（正在启动）" : `，当前${ROLE_LABELS[progress.currentRole]}第${progress.attempt}次尝试`}
+            {progress !== undefined
+              ? `已完成 ${progress.completedCalls} / ${progress.totalCalls} 个阶段，当前${ROLE_LABELS[progress.currentRole]}第${progress.attempt}次尝试`
+              : totalApiCalls !== undefined
+                ? `本次生成将调用 ${totalApiCalls} 次 AI`
+                : "（正在启动）"}
           </p>
         ) : null}
       </div>
