@@ -2,15 +2,13 @@ import { createOpenAiCompatibleTransport, type AiMessage, type AiTransport, type
 import type { GameLogger } from "@/game/logging";
 import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
 import type { WorldGenerationSource } from "../../createGameV2";
+import { parseWorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
 import type { SceneSource, SceneSourceResult } from "../../sceneSource";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
 import type { NarrativeSceneState, NarrativeEventState, NarrativeEmotion, NarrativeNpcLineState } from "@/game/domain/narrative";
 import { NARRATIVE_EMOTIONS, buildNpcDialoguePages, type NpcDialogueInScene } from "@/game/domain/narrative";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
-import type { LocationEntry, NpcEntry, ItemEntry } from "@/game/domain/worldState";
-import type { GameTypeId, GameLength } from "@/game/domain/newGame";
-import { asLocationId, asNpcId, asItemId } from "@/game/domain/scenarioBlueprint";
 import { createFixtureWorldSource } from "../../createGameV2";
 import { createDeterministicSceneSource } from "../../deterministicSceneSource";
 
@@ -55,19 +53,28 @@ function createLiveWorldGenerationSource(
 种子：${input.seed}
 
 要求：
-1. 生成 3-5 个互相连接的地点
-2. 生成 3-6 个 NPC，分布在各个地点
+1. 生成 3-5 个互相连接的地点，所有地点 connectedLocationIds 形成可达网络
+2. 生成 3-6 个 NPC，分布在各个地点，knownFactIds/hiddenFactIds 引用 world.publicFacts/hiddenFacts
 3. 生成 1-3 个物品
-4. 玩家有名字、身份、属性
-5. 所有地点都要有 connectedLocationIds 形成可达网络
+4. 玩家有名字、身份、属性、起始物品
+5. 世界观含公开事实（publicFacts）与隐藏事实（hiddenFacts）
+6. 至少 1 个主线任务（kind=main, stage=1）+ 0-2 个支线（kind=side）
+7. 至少 2 个语义不同的结局，每个 requirements 非空
+8. startAnchor 指明起始地点/NPC/主线任务/main thread
 
-返回严格 JSON，格式如下：
+返回严格 JSON（ID 全部为普通字符串，非品牌化），格式如下：
 {
-  "locations": [{ "id": "loc_xxx", "name": "...", "description": "...", "kind": "main", "connectedLocationIds": ["loc_yyy"], "npcIds": ["npc_zzz"], "availableItemIds": [], "tags": [] }],
-  "npcs": [{ "id": "npc_xxx", "name": "...", "role": "...", "description": "...", "locationId": "loc_xxx", "isCompanion": false, "tags": [], "met": false, "memory": { "npcId": "npc_xxx", "knownFactIds": [], "hiddenFactIds": [], "interactionHistory": [], "relationship": { "affinity": 0 }, "emotion": "neutral", "goals": [] } }],
+  "world": { "summary": "...", "tone": "...", "themes": ["..."], "publicFacts": [{ "id": "fact_xxx", "text": "..." }], "hiddenFacts": [{ "id": "fact_yyy", "text": "..." }], "tags": [] },
+  "player": { "name": "...", "identity": "...", "backgroundSummary": "...", "startingLocationId": "loc_xxx", "startingItemIds": [], "baseStats": { "hp": 100, "attack": 10, "defense": 5 } },
+  "startAnchor": { "locationId": "loc_xxx", "npcId": "npc_xxx", "startQuestId": "quest_main", "mainThreadId": "thread_main" },
+  "locations": [{ "id": "loc_xxx", "name": "...", "description": "...", "kind": "main", "connectedLocationIds": ["loc_yyy"], "npcIds": ["npc_xxx"], "availableItemIds": [], "tags": [] }],
+  "npcs": [{ "id": "npc_xxx", "name": "...", "role": "...", "description": "...", "locationId": "loc_xxx", "isCompanion": false, "knownFactIds": [], "hiddenFactIds": [], "goals": [], "tags": [] }],
   "items": [{ "id": "item_xxx", "name": "...", "description": "...", "kind": "key", "tags": [] }],
-  "startingLocationId": "loc_xxx",
-  "player": { "name": "...", "identity": "...", "stats": { "hp": 100, "attack": 10, "defense": 5 } }
+  "enemies": [],
+  "factions": [],
+  "quests": [{ "id": "quest_main", "name": "...", "description": "...", "kind": "main", "stage": 1, "objectives": [{ "kind": "talk_to_npc", "npcId": "npc_xxx" }], "onSuccess": { "kind": "reach_ending", "endingId": "ending_xxx" }, "onFailure": { "kind": "closed" }, "tags": ["main"] }],
+  "endings": [{ "id": "ending_xxx", "name": "...", "description": "...", "requirements": [{ "kind": "quest_completed", "questId": "quest_main" }] }],
+  "openingBudget": { "locationsCount": 3, "npcsCount": 4, "sideQuestsCount": 0, "endingsCount": 2, "townLocationsCount": 0 }
 }
 
 确保 ID 唯一且互相引用正确。只返回 JSON，不要其他文字。`;
@@ -92,39 +99,13 @@ function createLiveWorldGenerationSource(
           return fixture.generate(input);
         }
 
-        const data = parsed as Record<string, unknown>;
-        const locations = Array.isArray(data.locations) ? data.locations as readonly LocationEntry[] : [];
-        const npcs = Array.isArray(data.npcs) ? data.npcs as readonly NpcEntry[] : [];
-        const items = Array.isArray(data.items) ? data.items as readonly ItemEntry[] : [];
-        const startingLocationId = data.startingLocationId;
-        const player = data.player as { name: string; identity: string; stats: { hp: number; attack: number; defense: number } };
-
-        if (locations.length === 0 || !startingLocationId || !player) {
-          logger?.warn("v2_world_generation_invalid_data");
+        // Step 2.2：AI 原始 JSON 必须经 schema parser，禁止 `as never` 直接断言成 Entry。
+        const candidateResult = parseWorldGenerationCandidate(parsed);
+        if (!candidateResult.ok) {
+          logger?.warn("v2_world_generation_invalid_data", { code: candidateResult.code });
           return fixture.generate(input);
         }
-
-        return {
-          locations: locations.map((l) => ({
-            ...l,
-            id: asLocationId(String(l.id)),
-            connectedLocationIds: (l.connectedLocationIds ?? []).map((id: unknown) => asLocationId(String(id))),
-            npcIds: (l.npcIds ?? []).map((id: unknown) => asNpcId(String(id))),
-            availableItemIds: (l.availableItemIds ?? []).map((id: unknown) => asItemId(String(id))),
-          })),
-          npcs: npcs.map((n) => ({
-            ...n,
-            id: asNpcId(String(n.id)),
-            locationId: asLocationId(String(n.locationId)),
-            memory: n.memory ?? { npcId: n.id, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
-          })),
-          items: items.map((i) => ({
-            ...i,
-            id: asItemId(String(i.id)),
-          })),
-          startingLocationId: asLocationId(String(startingLocationId)),
-          player,
-        };
+        return candidateResult.value;
       } catch (error) {
         logger?.error("v2_world_generation_error", { error: error instanceof Error ? error.message : "unknown" });
         return fixture.generate(input);

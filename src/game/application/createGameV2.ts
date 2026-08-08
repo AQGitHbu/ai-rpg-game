@@ -1,26 +1,28 @@
 import type { GameRepositoryV2 } from "./server/persistence/gameRepositoryV2";
 import type { GameId } from "./server/persistence/gameRepository";
-import type { WorldState, LocationEntry, NpcEntry, ItemEntry, QuestEntry } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { GameTypeId, GameLength } from "@/game/domain/newGame";
-import { createInitialWorldState, appendLocation, appendNpc, appendItem } from "@/game/domain/worldState";
-import type { QuestId, EndingId } from "@/game/domain/scenarioBlueprint";
-import { asQuestId, asEndingId } from "@/game/domain/scenarioBlueprint";
-import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asItemId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import type { WorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
+import { parseWorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
+import { validateWorldGenerationCandidate } from "@/game/gameplay/rpg/scenarioV2";
+import { compileWorldGenerationCandidate } from "@/game/gameplay/rpg/scenarioV2";
+import { asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+
+// ---------------------------------------------------------------------------
+// Task 14 Step 2：世界生成编排改为 source → parse → validate → compile。
+// WorldGenerationSource.generate 返回 WorldGenerationCandidate（原始字符串 ID）。
+// createGameV2 内：schema parse → gameplay validate → compile 为单一 World/Story
+// State，任何失败返回明确错误码，绝不用 `as never` 透传。
+// ---------------------------------------------------------------------------
 
 export type WorldGenerationSource = {
   generate(input: {
     gameType: GameTypeId;
     seed: string;
     gameLength: GameLength;
-  }): Promise<{
-    locations: readonly LocationEntry[];
-    npcs: readonly NpcEntry[];
-    items: readonly ItemEntry[];
-    startingLocationId: LocationEntry["id"];
-    player: { name: string; identity: string; stats: { hp: number; attack: number; defense: number } };
-  }>;
+  }): Promise<WorldGenerationCandidate>;
 };
 
 export type CreateGameV2Input = {
@@ -53,6 +55,13 @@ export async function createGameV2(
   });
   if (!generated) return { ok: false, code: "GENERATION_FAILED" };
 
+  // Step 2.2：schema parse → validate → compile。
+  const parsed = parseWorldGenerationCandidate(generated);
+  if (!parsed.ok) return { ok: false, code: "GENERATION_FAILED" };
+
+  const validated = validateWorldGenerationCandidate(parsed.value);
+  if (!validated.ok) return { ok: false, code: "GENERATION_FAILED" };
+
   const generation = {
     generationId: asGenerationId(`gen_${input.seed}`),
     seed: input.seed,
@@ -61,82 +70,47 @@ export async function createGameV2(
     gameType: input.gameType,
   };
 
-  const startingLocation = generated.locations.find((l) => l.id === generated.startingLocationId);
-  if (startingLocation === undefined) return { ok: false, code: "GENERATION_FAILED" };
-
-  let worldState = createInitialWorldState({
+  const { worldState, storyState } = compileWorldGenerationCandidate({
+    candidate: validated.validated,
     generation,
-    player: generated.player,
-    startingLocation,
-    startingItemIds: [],
-  });
-
-  for (const loc of generated.locations) {
-    if (loc.id !== startingLocation.id) worldState = appendLocation(worldState, loc);
-  }
-  for (const npc of generated.npcs) worldState = appendNpc(worldState, npc);
-  for (const item of generated.items) worldState = appendItem(worldState, item);
-
-  // Only unlock the starting location; connected locations are discovered
-  // through gameplay (spec: 渐进式世界扩展)
-  worldState = {
-    ...worldState,
-    unlockedLocationIds: [worldState.currentLocationId],
-  };
-
-  // Create a default main quest from generated world data
-  // (spec §9.2: 初始任务主线3幕骨架)
-  const firstNpc = generated.npcs[0];
-  const secondLoc = generated.locations.find((l) => l.id !== generated.startingLocationId);
-  const quest: QuestEntry = {
-    id: asQuestId("quest_main"),
-    name: "探索未知世界",
-    description: "踏出客栈，探索这个世界隐藏的秘密。",
-    kind: "main",
-    status: "active",
-    objectives: [
-      ...(firstNpc ? [{ kind: "talk_to_npc" as const, npcId: firstNpc.id }] : []),
-      ...(secondLoc ? [{ kind: "visit_location" as const, locationId: secondLoc.id }] : []),
-    ],
-    onSuccess: { kind: "reach_ending", endingId: asEndingId("ending_success") },
-    onFailure: { kind: "closed" },
-    tags: ["main"],
-  };
-  worldState = {
-    ...worldState,
-    quests: [quest],
-  };
-  // Also add a default ending so quest onSuccess can resolve
-  worldState = {
-    ...worldState,
-    endings: [
-      { id: asEndingId("ending_success"), name: "冒险成功", description: "你完成了这段冒险。", requirements: [] },
-    ],
-  };
-
-  const storyState = createInitialStoryState({
+    gameType: input.gameType,
     gameLength: input.gameLength,
-    initialEntityCounts: {
-      locations: generated.locations.length,
-      npcs: generated.npcs.length,
-      quests: 1,
-      events: 0,
-    },
   });
 
   // Set narrative to pending so the first scene (prologue) gets generated
-  // by the ensure polling mechanism (spec §9.1: 生成序幕场景)
-  // Also set narrative.mode to "ai" when AI config is available
+  // by the ensure polling mechanism (spec §9.1: 生成序幕场景).
+  // v2.1：pending 唯一载体是带 job 的 PendingNarrativeJob（Spec §10.3），
+  // 不再使用无 job 的 requestedAt legacy 形式。
   const narrativeMode = deps.aiEnabled ? "ai" : "offline";
+  const jobResult = createPendingNarrativeJob({
+    jobId: asNarrativeJobId(`job_${input.seed}_0`),
+    turnId: asTurnId(`turn_${input.seed}_0`),
+    actionId: `start_${input.seed}`,
+    expectedRevision: 0,
+    turnNumber: 0,
+    actionSummary: { kind: "explore" },
+    resolvedEvent: {
+      actionId: `start_${input.seed}`,
+      status: "success",
+      eventKind: "observe",
+      facts: [],
+      stateChanges: [],
+      costs: [],
+      rewards: [],
+      triggeredEvents: [],
+      rejectedEffects: [],
+    },
+    domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+    requestedAt: deps.now(),
+  });
+  if (!jobResult.ok) return { ok: false, code: "GENERATION_FAILED" };
+
   const storyStateWithPending: StoryState = {
     ...storyState,
     narrative: {
       ...storyState.narrative,
       mode: narrativeMode,
-      generation: {
-        status: "pending",
-        requestedAt: deps.now(),
-      },
+      generation: { status: "pending", job: jobResult.job },
     },
   };
 
@@ -154,27 +128,65 @@ export async function createGameV2(
 export function createFixtureWorldSource(): WorldGenerationSource {
   return {
     async generate() {
-      // 开局只给 1 个地点 + 1 个 NPC（spec：渐进式世界扩展）
-      const loc1: LocationEntry = {
-        id: asLocationId("loc_start"), name: "起始客栈", description: "一间简朴的客栈，空气中弥漫着茶香。门外是一条通往小镇的土路。", kind: "main",
-        connectedLocationIds: [asLocationId("loc_street")], npcIds: [asNpcId("npc_innkeeper")], availableItemIds: [], tags: [],
-      };
-      // 第二个地点存在但不解锁——通过剧情推进后 ExpansionProposer 提议解锁
-      const loc2: LocationEntry = {
-        id: asLocationId("loc_street"), name: "小镇街道", description: "热闹的街道两旁摆满了摊位", kind: "main",
-        connectedLocationIds: [asLocationId("loc_start")], npcIds: [], availableItemIds: [], tags: [],
-      };
-      const npc1: NpcEntry = {
-        id: asNpcId("npc_innkeeper"), name: "客栈老板", role: "路人", description: "热情的客栈老板，似乎知道很多消息",
-        locationId: asLocationId("loc_start"), isCompanion: false, tags: [], met: false,
-        memory: { npcId: asNpcId("npc_innkeeper"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
-      };
+      // 开局只给 1 个地点 + 1 个 NPC（spec：渐进式世界扩展）。
+      // 第二个地点存在但不解锁——通过剧情推进后 ExpansionProposer 提议解锁。
       return {
-        locations: [loc1, loc2],
-        npcs: [npc1],
+        world: {
+          summary: "一个江湖恩怨交织的世界。",
+          tone: "江湖沧桑",
+          themes: ["探索", "抉择"],
+          publicFacts: [{ id: "fact_inn", text: "起始客栈是小镇的门户。" }],
+          hiddenFacts: [],
+          tags: ["武侠"],
+        },
+        player: {
+          name: "无名侠客",
+          identity: "流浪剑客",
+          backgroundSummary: "独自流浪，追寻身世之谜。",
+          startingLocationId: "loc_start",
+          startingItemIds: [],
+          baseStats: { hp: 100, attack: 10, defense: 5 },
+        },
+        startAnchor: {
+          locationId: "loc_start",
+          npcId: "npc_innkeeper",
+          startQuestId: "quest_main",
+          mainThreadId: "thread_main",
+        },
+        locations: [
+          {
+            id: "loc_start", name: "起始客栈", description: "一间简朴的客栈，空气中弥漫着茶香。门外是一条通往小镇的土路。", kind: "main",
+            connectedLocationIds: ["loc_street"], npcIds: ["npc_innkeeper"], availableItemIds: [], tags: [],
+          },
+          {
+            id: "loc_street", name: "小镇街道", description: "热闹的街道两旁摆满了摊位", kind: "main",
+            connectedLocationIds: ["loc_start"], npcIds: [], availableItemIds: [], tags: [],
+          },
+        ],
+        npcs: [
+          {
+            id: "npc_innkeeper", name: "客栈老板", role: "路人", description: "热情的客栈老板，似乎知道很多消息",
+            locationId: "loc_start", isCompanion: false,
+            knownFactIds: ["fact_inn"], hiddenFactIds: [], goals: [], tags: [],
+          },
+        ],
         items: [],
-        startingLocationId: loc1.id,
-        player: { name: "无名侠客", identity: "流浪剑客", stats: { hp: 100, attack: 10, defense: 5 } },
+        enemies: [],
+        factions: [],
+        quests: [
+          {
+            id: "quest_main", name: "探索未知世界", description: "踏出客栈，探索这个世界隐藏的秘密。", kind: "main", stage: 1,
+            objectives: [{ kind: "talk_to_npc", npcId: "npc_innkeeper" }, { kind: "visit_location", locationId: "loc_street" }],
+            onSuccess: { kind: "reach_ending", endingId: "ending_success" },
+            onFailure: { kind: "closed" },
+            tags: ["main"],
+          },
+        ],
+        endings: [
+          { id: "ending_success", name: "冒险成功", description: "你完成了这段冒险。", requirements: [{ kind: "quest_completed", questId: "quest_main" }] },
+          { id: "ending_roam", name: "浪迹天涯", description: "你选择了继续流浪。", requirements: [{ kind: "fact_discovered", factId: "fact_inn" }] },
+        ],
+        openingBudget: { locationsCount: 2, npcsCount: 1, sideQuestsCount: 0, endingsCount: 2, townLocationsCount: 0 },
       };
     },
   };
