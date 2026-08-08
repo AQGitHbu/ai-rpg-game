@@ -11,7 +11,14 @@ import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { adaptV2ToV1View } from "./viewAdapterV2";
 
 function makeV2View(overrides: {
-  readonly npcLines?: readonly { readonly npcId: string; readonly npcName: string; readonly npcRole: string; readonly speechPages: readonly string[] }[];
+  readonly npcLines?: readonly {
+    readonly npcId: string;
+    readonly npcName: string;
+    readonly npcRole: string;
+    readonly speechPages: readonly string[];
+    readonly choices?: readonly { readonly choiceToken: string; readonly label: string; readonly hint?: string }[];
+    readonly freeInputEnabled?: boolean;
+  }[];
   readonly npcLine?: { readonly npcId: string; readonly text: string; readonly emotion: string } | null;
 }): GameSessionViewV2 {
   return {
@@ -78,6 +85,28 @@ describe("adaptV2ToV1View dialogues", () => {
       dialogues: readonly { npcId: string; speechPages: readonly string[] }[];
     };
     expect(adapted.dialogues.find((d) => d.npcId === "npc_1")!.speechPages.join("")).toBe("焦点台词。");
+  });
+
+  it("focus-NPC only: dialogue choices & freeInput 只对焦点 NPC 生效，非焦点 NPC 无选项", () => {
+    const v = makeV2View({
+      npcLines: [
+        { npcId: "npc_1", npcName: "老板", npcRole: "路人", speechPages: ["需要什么吗？"], choices: [{ choiceToken: "t1", label: "询问" }, { choiceToken: "t2", label: "告辞" }], freeInputEnabled: true },
+        { npcId: "npc_2", npcName: "客人", npcRole: "酒客", speechPages: ["客人点头。"], freeInputEnabled: false },
+      ],
+    });
+    const adapted = adaptV2ToV1View(v) as unknown as {
+      dialogues: readonly {
+        npcId: string;
+        choices: readonly { choiceToken: string; label: string }[];
+        freeInputEnabled: boolean;
+      }[];
+    };
+    const lu = adapted.dialogues.find((d) => d.npcId === "npc_1")!;
+    const guest = adapted.dialogues.find((d) => d.npcId === "npc_2")!;
+    expect(lu.choices.map((c) => c.choiceToken).sort()).toEqual(["t1", "t2"]);
+    expect(lu.freeInputEnabled).toBe(true);
+    expect(guest.choices).toHaveLength(0);
+    expect(guest.freeInputEnabled).toBe(false);
   });
 
   it("chain: deterministic scene -> projection -> adapter keeps every present NPC voiced", async () => {

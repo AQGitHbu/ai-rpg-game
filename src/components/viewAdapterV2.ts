@@ -34,28 +34,15 @@ export function adaptV2ToV1View(v2: GameSessionViewV2): GameSessionView {
     })),
   ];
 
-  // 派生 availableActions（从 narrative.choices）
-  const availableActions = v2.narrative.choices?.map((c) => {
-    if (c.actionKey.startsWith("talk:")) {
-      return { type: "talk" as const, npcId: c.actionKey.slice(5), label: c.label };
-    }
-    if (c.actionKey.startsWith("move:")) {
-      return { type: "move" as const, locationId: c.actionKey.slice(5), label: c.label };
-    }
-    if (c.actionKey.startsWith("take_item:")) {
-      return { type: "take_item" as const, itemId: c.actionKey.slice(10), label: c.label };
-    }
-    if (c.actionKey.startsWith("start_battle:")) {
-      return { type: "start_battle" as const, enemyId: c.actionKey.slice(13), label: c.label };
-    }
-    return { type: "observe" as const, locationId: String(v2.currentLocation.id), label: c.label };
-  }) ?? [];
+  // Task 11：客户端不再从字符串解析 Action。
+  // availableActions 只从结构化数据派生（可移动地点 = move、在场 NPC = talk），
+  // 绝不再解析 actionKey 构造 Action。
+  const availableActions = [
+    ...v2.availableMoves.map((m) => ({ type: "move" as const, locationId: String(m.locationId), label: `前往${m.name}` })),
+    ...v2.availableNpcs.map((n) => ({ type: "talk" as const, npcId: String(n.id), label: `与${n.name}交谈` })),
+  ];
 
-  // 派生 dialogues（从 availableNpcs）
-  const dialogueChoices = v2.narrative.choices?.map((c) => ({
-    label: c.label,
-    choiceToken: c.choiceToken,
-  })) ?? [];
+  // 派生 dialogues（从 availableNpcs + per-NPC choices/freeInputEnabled）
   const SLOT_POSITIONS = ["left", "right", "center", "foreground"] as const;
   const dialogues = v2.availableNpcs.map((npc, idx) => {
     // 每 NPC 对白：narrative.npcDialogues 非空分页优先；空页/缺失回退 npcLine，
@@ -69,14 +56,20 @@ export function adaptV2ToV1View(v2: GameSessionViewV2): GameSessionView {
       : npcLineMatches
         ? [v2.narrative.npcLine!.text]
         : [];
+    // 对话选项只来自焦点 NPC 的 npcDialogues.choices；自定义自由输入只对焦点 NPC 开启。
+    const choices = (npcDialogue?.choices ?? []).map((c) => ({
+      choiceToken: c.choiceToken,
+      label: c.label,
+      ...(c.hint !== undefined ? { hint: c.hint } : {}),
+    }));
     return {
       npcId: String(npc.id),
       name: npc.name,
       role: npc.role,
       slot: SLOT_POSITIONS[idx % SLOT_POSITIONS.length],
       speechPages,
-      choices: dialogueChoices,
-      freeInputEnabled: true,
+      choices,
+      freeInputEnabled: npcDialogue?.freeInputEnabled ?? false,
       reviewClues: [] as readonly string[],
       preparingNextScene: false,
     };

@@ -23,10 +23,20 @@ export type GameSessionViewV2 = {
     readonly hasScene: boolean;
     readonly eventKind?: string;
     readonly narration?: string;
-    readonly choices?: readonly { readonly choiceToken: string; readonly label: string; readonly actionKey: string }[];
+    /** 世界行动选项（observe/move/travel 等）；对话场景下为空。只含白名单字段。 */
+    readonly choices?: readonly { readonly choiceToken: string; readonly label: string; readonly hint?: string }[];
     readonly npcLine?: { readonly npcId: string; readonly text: string; readonly emotion: string } | null;
     /** 在场 NPC 的对白（场景对白优先，缺失/空页回退确定性台词）；与 availableNpcs 一一对应。 */
-    readonly npcDialogues?: readonly { readonly npcId: string; readonly npcName: string; readonly npcRole: string; readonly speechPages: readonly string[] }[];
+    readonly npcDialogues?: readonly {
+      readonly npcId: string;
+      readonly npcName: string;
+      readonly npcRole: string;
+      readonly speechPages: readonly string[];
+      /** 仅焦点 NPC 持有 dialogue choices；其他在场 NPC 只展示台词。 */
+      readonly choices?: readonly { readonly choiceToken: string; readonly label: string; readonly hint?: string }[];
+      /** 自定义自由输入仅对焦点 NPC 开启。 */
+      readonly freeInputEnabled: boolean;
+    }[];
   };
   readonly narrativeGeneration?: { readonly status: string; readonly totalApiCalls: number };
   readonly battle: { readonly enemyName: string; readonly playerHp: number; readonly enemyHp: number; readonly round: number } | null;
@@ -59,11 +69,28 @@ export function projectGameSessionView(
   const scene = storyState.narrative.currentScene;
   const hasScene = scene !== null;
 
+  // Task 11：识别焦点 NPC 并拆分选项——对话选项只给焦点 NPC，
+  // 世界行动选项进入 narrative.choices，绝不无条件投影到每个 NPC。
+  const isDialogueScene = scene !== null
+    && (scene.event?.kind === "dialogue" || scene.npcLine !== null);
+  const focusNpcId: string | null = isDialogueScene && scene !== null
+    ? String((scene.event?.kind === "dialogue" ? scene.event.focusNpcId : scene.npcLine?.npcId) ?? "")
+    : null;
+  // 对话选项：dialogue 场景的选项；世界行动选项：非 dialogue 场景的选项。
+  const dialogueChoices = isDialogueScene && scene !== null
+    ? scene.choices.map((c) => ({ choiceToken: c.choiceToken, label: c.label, ...(c.hint !== undefined ? { hint: c.hint } : {}) }))
+    : [];
+  const worldChoices = !isDialogueScene && scene !== null
+    ? scene.choices.map((c) => ({ choiceToken: c.choiceToken, label: c.label, ...(c.hint !== undefined ? { hint: c.hint } : {}) }))
+    : [];
+
   // 每 NPC 对白：场景 npcDialogues 有非空分页时直用；否则回退焦点 npcLine 或确定性台词。
+  // 对话选项只挂在焦点 NPC 名下；自定义自由输入只对焦点 NPC 开启。
   const sceneDialoguesById = new Map(
     (scene?.npcDialogues ?? []).map((d) => [String(d.npcId), d])
   );
   const npcDialogues = npcsHere.map((n) => {
+    const isFocus = focusNpcId !== null && focusNpcId === String(n.id);
     const sceneEntry = sceneDialoguesById.get(String(n.id));
     if (sceneEntry !== undefined && sceneEntry.speechPages.length > 0) {
       return {
@@ -71,12 +98,14 @@ export function projectGameSessionView(
         npcName: n.name,
         npcRole: n.role,
         speechPages: sceneEntry.speechPages,
+        ...(isFocus ? { choices: dialogueChoices } : {}),
+        freeInputEnabled: isFocus,
       };
     }
-    const isFocus = scene?.npcLine !== null && scene?.npcLine !== undefined
+    const hasFocusLine = scene?.npcLine !== null && scene?.npcLine !== undefined
       && String(scene.npcLine.npcId) === String(n.id)
       && scene.npcLine.text.trim() !== "";
-    const text = isFocus
+    const text = hasFocusLine
       ? scene!.npcLine!.text.trim()
       : composeDeterministicNpcLine(n.name, n.role);
     return {
@@ -84,6 +113,8 @@ export function projectGameSessionView(
       npcName: n.name,
       npcRole: n.role,
       speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
+      ...(isFocus ? { choices: dialogueChoices } : {}),
+      freeInputEnabled: isFocus,
     };
   });
 
@@ -182,11 +213,7 @@ export function projectGameSessionView(
       ...(hasScene && scene ? {
         eventKind: scene.event?.kind,
         narration: scene.narration,
-        choices: scene.choices.map((c) => ({
-          choiceToken: c.choiceToken,
-          label: c.label,
-          actionKey: c.actionKey,
-        })),
+        choices: worldChoices,
         npcLine: scene.npcLine
           ? { npcId: String(scene.npcLine.npcId), text: scene.npcLine.text, emotion: scene.npcLine.emotion }
           : null,
