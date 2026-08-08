@@ -1,14 +1,42 @@
 import { describe, it, expect } from "vitest";
 import { ruleEngine } from "@/game/gameplay/rpg/ruleEngine";
-import { runExpansionProposer } from "@/game/gameplay/rpg/expansion";
+import { checkExpansionTrigger, runExpansionProposer } from "@/game/gameplay/rpg/expansion";
 import { createInitialWorldState, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/scenarioBlueprint";
 import { createFixtureExpansionSource } from "./server/ai/expansionSource";
-import { applyApprovedExpansion } from "@/game/gameplay/rpg/expansion/applyExpansion";
 import { approveExpansions } from "@/game/gameplay/rpg/expansion/approveExpansion";
 import type { ExpansionProposal } from "@/game/gameplay/rpg/expansion/expansionTypes";
-import type { StoryBudget } from "@/game/domain/storyBudget";
+import type { RuleEngineResult } from "@/game/gameplay/rpg/ruleEngine";
+import type { Action } from "@/game/domain/action";
+
+/**
+ * 模拟 application 的编排顺序（performTurn 同款）：
+ * 触发判断 → await source 提案 → 纯 proposer 审批/重演算。
+ * source 的 await 属于 application，这里按 application 职责显式完成。
+ */
+async function runOfflineExpansion(
+  engineResult: RuleEngineResult,
+  ws: Parameters<typeof ruleEngine>[0],
+  ss: Parameters<typeof ruleEngine>[1],
+  action: Action,
+  actionId: string,
+  useSource: boolean,
+  deps: { readonly now: () => string },
+): Promise<ReturnType<typeof runExpansionProposer>> {
+  const source = createFixtureExpansionSource();
+  const trigger = checkExpansionTrigger(engineResult, ws, ss, action);
+  if (!trigger.triggered || !useSource) {
+    return runExpansionProposer(engineResult, ws, ss, action, actionId, null, deps);
+  }
+  const sourceResult = await source.propose({
+    worldState: ws,
+    storyState: ss,
+    action,
+    triggerReason: trigger.reason,
+  });
+  return runExpansionProposer(engineResult, ws, ss, action, actionId, sourceResult.proposals, deps);
+}
 
 describe("P3 offline regression", () => {
   const loc1: LocationEntry = {
@@ -40,11 +68,11 @@ describe("P3 offline regression", () => {
     const engineResult = ruleEngine(wsWithUnlocked, ss, { type: "move", locationId: asLocationId("loc_mystery") }, "act_1", deps);
     expect(engineResult.ok).toBe(false);
     if (!engineResult.ok) {
-      const expansion = await runExpansionProposer(
+      const expansion = await runOfflineExpansion(
         engineResult, wsWithUnlocked, ss,
         { type: "move", locationId: asLocationId("loc_mystery") },
         "act_1",
-        createFixtureExpansionSource(),
+        true,
         deps,
       );
       expect(expansion.triggered).toBe(true);
@@ -58,11 +86,11 @@ describe("P3 offline regression", () => {
     const engineResult = ruleEngine(ws, ss, { type: "talk", npcId: asNpcId("npc_stranger") }, "act_2", deps);
     expect(engineResult.ok).toBe(false);
     if (!engineResult.ok) {
-      const expansion = await runExpansionProposer(
+      const expansion = await runOfflineExpansion(
         engineResult, ws, ss,
         { type: "talk", npcId: asNpcId("npc_stranger") },
         "act_2",
-        createFixtureExpansionSource(),
+        true,
         deps,
       );
       expect(expansion.triggered).toBe(true);
@@ -84,11 +112,11 @@ describe("P3 offline regression", () => {
     const engineResult = ruleEngine(wsWithUnlocked, ssMaxed, { type: "move", locationId: asLocationId("loc_mystery") }, "act_4", deps);
     expect(engineResult.ok).toBe(false);
     if (!engineResult.ok) {
-      const expansion = await runExpansionProposer(
+      const expansion = await runOfflineExpansion(
         engineResult, wsWithUnlocked, ssMaxed,
         { type: "move", locationId: asLocationId("loc_mystery") },
         "act_4",
-        createFixtureExpansionSource(),
+        false,
         deps,
       );
       expect(expansion.triggered).toBe(false);

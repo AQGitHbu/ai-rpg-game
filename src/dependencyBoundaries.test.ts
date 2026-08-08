@@ -883,9 +883,10 @@ describe("server-only modules stay out of client-importable code", () => {
       ).toEqual([]);
     }
     // application V2 编排只经纯端口取 V2 持久化契约（无 libsql/env/路径）。
+    // Task 4 将 performActionV2 收敛为薄适配层，真实 V2 编排面是 performTurn。
     for (const relative of [
       "game/application/createGameV2.ts",
-      "game/application/performActionV2.ts",
+      "game/application/performTurn.ts",
       "game/application/stateCommit.ts",
       "game/application/sceneWriteBack.ts"
     ]) {

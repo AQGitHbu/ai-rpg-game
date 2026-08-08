@@ -3,25 +3,38 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
 import type { RuleEngineResult } from "@/game/gameplay/rpg/ruleEngine";
 import { ruleEngine } from "@/game/gameplay/rpg/ruleEngine";
-import type { ExpansionSource } from "./expansionSource";
 import { checkExpansionTrigger } from "./expansionTrigger";
 import { approveExpansions } from "./approveExpansion";
 import { applyApprovedExpansion } from "./applyExpansion";
-import type { ExpansionResult } from "./expansionTypes";
+import type { ExpansionProposal, ExpansionResult } from "./expansionTypes";
+
+// ---------------------------------------------------------------------------
+// Task 6：gameplay expansion/ 只保留纯 trigger/approve/apply/re-evaluate 决策；
+// AI source 的 await 一律由 application 编排（performTurn 负责 await 与注入）。
+// runExpansionProposer 接收已拉取的提案数组，不再接受/await ExpansionSource。
+// ---------------------------------------------------------------------------
 
 export type ExpansionDeps = { readonly now: () => string };
 
-export async function runExpansionProposer(
+export { checkExpansionTrigger } from "./expansionTrigger";
+export type { TriggerResult } from "./expansionTrigger";
+
+/**
+ * 纯函数触发→审批→应用→重演算编排。
+ * 不执行任何 await：提案由调用方（application）先经 ExpansionSource 获取。
+ * proposals === null 表示本轮没有可用提案（无 source / source 未产出），不等同于“提案被拒”。
+ */
+export function runExpansionProposer(
   initialResult: RuleEngineResult,
   ws: WorldState,
   ss: StoryState,
   action: Action,
   actionId: string,
-  source: ExpansionSource | null,
+  proposals: readonly ExpansionProposal[] | null,
   deps: ExpansionDeps,
-): Promise<ExpansionResult> {
+): ExpansionResult {
   const trigger = checkExpansionTrigger(initialResult, ws, ss, action);
-  if (!trigger.triggered || source === null) {
+  if (!trigger.triggered || proposals === null) {
     return {
       triggered: false,
       reason: "no_trigger",
@@ -32,17 +45,10 @@ export async function runExpansionProposer(
     };
   }
 
-  const sourceResult = await source.propose({
-    worldState: ws,
-    storyState: ss,
-    action,
-    triggerReason: trigger.reason,
-  });
-
   const idOverride = extractTargetIdOverride(action);
 
   const approval = approveExpansions(
-    sourceResult.proposals,
+    proposals,
     ws,
     ss.budget,
     { genId: (prefix) => `${prefix}_${ws.eventLedger.length + 1}` },

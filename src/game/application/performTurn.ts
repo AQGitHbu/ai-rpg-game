@@ -15,9 +15,14 @@ import {
 } from "@/game/domain/pendingNarrativeJob";
 import { buildIntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
 import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
-import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
-import { runExpansionProposer } from "@/game/gameplay/rpg/expansion";
+import type { ExpansionSource, ExpansionSourceResult } from "@/game/gameplay/rpg/expansion/expansionSource";
+import type { ExpansionResult } from "@/game/gameplay/rpg/expansion/expansionTypes";
+import {
+  checkExpansionTrigger,
+  runExpansionProposer,
+} from "@/game/gameplay/rpg/expansion";
 import { applyApprovedExpansion } from "@/game/gameplay/rpg/expansion/applyExpansion";
+import type { RuleEngineResult } from "@/game/gameplay/rpg/ruleEngine";
 
 export type PerformTurnCommand = {
   readonly gameId: GameId;
@@ -36,9 +41,9 @@ export type PerformTurnDeps = {
   readonly now: () => string;
   readonly intentParserSource?: IntentParserSource;
   /**
-   * TODO(Task 6)：ExpansionProposer 按计划在 Task 6 正式迁移/收敛；
-   * 当前在 performTurn 内部保留 P3 行为（触发 → 审批 → 重演算），
-   * 全部路径都只走单次 CAS。
+   * Task 6：Expansion 编排全部位于 application —— 这里的 source 只负责
+   * 产出提案（await 由 performTurn 完成），gameplay `expansion/` 仅做纯决策。
+   * 触发→审批→重演算全部路径都只走单次 CAS。
    */
   readonly expansionSource?: ExpansionSource;
 };
@@ -122,50 +127,50 @@ export async function performTurn(
   );
 
   if (!resolved.ok) {
-    // P3：ExpansionProposer —— 初判失败且命中实体缺失时条件触发；批准则单次 CAS 提交
-    if (deps.expansionSource) {
-      const expansion = await runExpansionProposer(
-        { ok: false, code: resolved.code, feedback: resolved.feedback },
-        record.worldState,
-        record.storyState,
-        converted.action,
-        command.actionId,
-        deps.expansionSource,
-        { now: deps.now },
-      );
+    // P3（Task 6）：Expansion 由 application 编排——先纯触发，命中且配置了
+    // source 才 await 提案；gameplay 只做审批/应用/重演算纯决策。
+    const expansionOutcome = await runExpansionOrchestration({
+      initialResult: { ok: false, code: resolved.code, feedback: resolved.feedback },
+      ws: record.worldState,
+      ss: record.storyState,
+      action: converted.action,
+      actionId: command.actionId,
+      expansionSource: deps.expansionSource,
+      now: deps.now,
+    });
 
-      if (expansion.triggered && expansion.approved) {
-        if (expansion.reEvaluatedResult?.ok) {
-          // 重演算成功：单次 CAS 提交（含已扩展实体 + 行动效果 + pending job）
-          return commitResolution({
-            repository: deps.repository,
-            gameId: command.gameId,
-            actionId: command.actionId,
-            expectedRevision: record.revision,
-            action: converted.action,
-            turnId: asTurnId(command.actionId),
-            nextWorldState: expansion.reEvaluatedResult.nextWorldState,
-            nextStoryState: expansion.reEvaluatedResult.nextStoryState,
-            turnNumber: expansion.reEvaluatedResult.nextStoryState.turnNumber,
-            primaryResult: expansion.reEvaluatedResult.resolvedEvent,
-            baseLedgerLength: record.worldState.eventLedger.length,
-            now: deps.now(),
-          });
-        }
-        // 重演算仍失败：只提交已扩展实体（供下一回合使用），行动本身被拒绝
-        const expandedWs = applyApprovedExpansion(record.worldState, expansion.approved, deps.now());
-        const expandedSs: StoryState = { ...record.storyState, budget: expansion.nextBudget ?? record.storyState.budget };
-        const commitResult = await commitState(deps.repository, {
+    if (expansionOutcome.triggered && expansionOutcome.approved) {
+      if (expansionOutcome.reEvaluatedResult?.ok) {
+        // 重演算成功：单次 CAS 提交（含已扩展实体 + 行动效果 + pending job）
+        return commitResolution({
+          repository: deps.repository,
           gameId: command.gameId,
+          actionId: command.actionId,
           expectedRevision: record.revision,
-          nextWorldState: expandedWs,
-          nextStoryState: expandedSs,
+          action: converted.action,
+          turnId: asTurnId(command.actionId),
+          nextWorldState: expansionOutcome.reEvaluatedResult.nextWorldState,
+          nextStoryState: expansionOutcome.reEvaluatedResult.nextStoryState,
+          turnNumber: expansionOutcome.reEvaluatedResult.nextStoryState.turnNumber,
+          primaryResult: expansionOutcome.reEvaluatedResult.resolvedEvent,
+          baseLedgerLength: record.worldState.eventLedger.length,
+          now: deps.now(),
         });
-        if (!commitResult.ok) {
-          return { ok: false, code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE", feedback: "Commit failed" };
-        }
-        return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };
       }
+      // 重演算仍失败：commit 结果不能被忽略——实体提交必须真实发生，
+      // 其产物（扩展后的 WorldState）供下一回合使用，行动本身被拒绝。
+      const expandedWs = applyApprovedExpansion(record.worldState, expansionOutcome.approved, deps.now());
+      const expandedSs: StoryState = { ...record.storyState, budget: expansionOutcome.nextBudget ?? record.storyState.budget };
+      const commitResult = await commitState(deps.repository, {
+        gameId: command.gameId,
+        expectedRevision: record.revision,
+        nextWorldState: expandedWs,
+        nextStoryState: expandedSs,
+      });
+      if (!commitResult.ok) {
+        return { ok: false, code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE", feedback: "Commit failed" };
+      }
+      return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };
     }
     return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };
   }
@@ -191,6 +196,64 @@ export async function performTurn(
     baseLedgerLength: record.worldState.eventLedger.length,
     now: deps.now(),
   });
+}
+
+type RunExpansionOrchestrationInput = {
+  readonly initialResult: RuleEngineResult;
+  readonly ws: WorldState;
+  readonly ss: StoryState;
+  readonly action: Action;
+  readonly actionId: string;
+  readonly expansionSource: ExpansionSource | undefined;
+  readonly now: () => string;
+};
+
+/**
+ * application 编排 Expansion：纯触发 →（条件）await source 提案 → 纯审批/重演算。
+ * source 抛错或返回失败时以“无提案”降级，绝不炸穿回合流水线。
+ */
+async function runExpansionOrchestration(input: RunExpansionOrchestrationInput): Promise<ExpansionResult> {
+  const trigger = checkExpansionTrigger(input.initialResult, input.ws, input.ss, input.action);
+  if (!trigger.triggered || !input.expansionSource) {
+    return runExpansionProposer(
+      input.initialResult,
+      input.ws,
+      input.ss,
+      input.action,
+      input.actionId,
+      null,
+      { now: input.now },
+    );
+  }
+  let sourceResult: ExpansionSourceResult;
+  try {
+    sourceResult = await input.expansionSource.propose({
+      worldState: input.ws,
+      storyState: input.ss,
+      action: input.action,
+      triggerReason: trigger.reason,
+    });
+  } catch {
+    // AI/source 失败：不破坏普通行动拒绝语义，本轮按“无提案”处理（零写入）
+    return runExpansionProposer(
+      input.initialResult,
+      input.ws,
+      input.ss,
+      input.action,
+      input.actionId,
+      null,
+      { now: input.now },
+    );
+  }
+  return runExpansionProposer(
+    input.initialResult,
+    input.ws,
+    input.ss,
+    input.action,
+    input.actionId,
+    sourceResult.proposals,
+    { now: input.now },
+  );
 }
 
 type CommitResolutionInput = {
