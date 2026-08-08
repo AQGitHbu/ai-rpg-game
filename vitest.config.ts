@@ -6,7 +6,15 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
     globals: true,
-    exclude: [...configDefaults.exclude, ".foundation/**", ".worktrees/**", "scripts/**/*.node-test.mjs"]
+    exclude: [...configDefaults.exclude, ".foundation/**", ".worktrees/**", "scripts/**/*.node-test.mjs"],
+    server: {
+      deps: {
+        // foundation 的 dist 及其 sibling 依赖（react、@libsql/client）在 foundation 内
+        // 无 node_modules，必须由 consumer 解析。inline 强制 Vite 处理这些依赖，
+        // 使其经 resolve.alias 走 consumer 路径，避免从 sibling realpath 向上查找失败。
+        inline: [/@ai-game\//, /@libsql\//]
+      }
+    }
   },
   resolve: {
     // @ai-game/ui 是 file: 依赖。保留 consumer 的 symlink 路径，才能由 consumer
@@ -18,6 +26,9 @@ export default defineConfig({
       "react/jsx-runtime": path.resolve(__dirname, "./node_modules/react/jsx-runtime.js"),
       "react/jsx-dev-runtime": path.resolve(__dirname, "./node_modules/react/jsx-dev-runtime.js"),
       react: path.resolve(__dirname, "./node_modules/react"),
+      // @ai-game/logging 的 SQLite sink（@libsql/client）在 foundation 内无 node_modules，
+      // 从 consumer 解析，避免 foundation dist 向上查找 sibling 失败。
+      "@libsql/client": path.resolve(__dirname, "./node_modules/@libsql/client"),
       // `server-only` intentionally throws outside Next's server compiler.
       // Unit tests exercise server composition directly, so map only Vitest to
       // a no-op shim while keeping the production import intact.
