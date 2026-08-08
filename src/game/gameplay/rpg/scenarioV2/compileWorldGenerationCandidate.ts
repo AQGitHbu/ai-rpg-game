@@ -225,7 +225,11 @@ function compileObjective(objective: QuestObjectiveCandidate): QuestObjective {
 
 function compileOutcome(outcome: QuestOutcomeCandidate): QuestOutcome {
   switch (outcome.kind) {
-    case "unlock_quests": return { kind: "unlock_quests", questIds: outcome.questIds.map(asQuestId) };
+    case "unlock_quests": return {
+      kind: "unlock_quests",
+      questIds: outcome.questIds.map(asQuestId),
+      ...(outcome.locationIds !== undefined ? { locationIds: outcome.locationIds.map(asLocationId) } : {}),
+    };
     case "reach_ending": return { kind: "reach_ending", endingId: asEndingId(outcome.endingId) };
     case "closed": return { kind: "closed" };
   }

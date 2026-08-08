@@ -80,6 +80,14 @@ export type QuestUnlockedEvent = {
   readonly occurredAt: string;
 };
 
+/** 地点解锁：由任务 outcome（unlock_quests 携带 locationIds）将 locked 地点解锁时追加。
+ *  地点解锁只能来自规则 outcome/事实/权限/物品/批准候选事件，禁止交给 ExpansionProposer。 */
+export type LocationUnlockedEvent = {
+  readonly type: "location_unlocked";
+  readonly locationId: LocationId;
+  readonly occurredAt: string;
+};
+
 /** 玩家取得地点预置物品：由 take_item 行动成功时追加；locationId 为取得时所在地点。 */
 export type ItemObtainedEvent = {
   readonly type: "item_obtained";
@@ -208,6 +216,7 @@ export type GameEvent =
   | LocationVisitedEvent
   | QuestCompletedEvent
   | QuestUnlockedEvent
+  | LocationUnlockedEvent
   | ItemObtainedEvent
   | BattleStartedEvent
   | BattleRoundResolvedEvent

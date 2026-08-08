@@ -88,7 +88,7 @@ export type QuestObjective =
   | { readonly kind: "defeat_enemy"; readonly enemyId: EnemyId };
 
 export type QuestOutcome =
-  | { readonly kind: "unlock_quests"; readonly questIds: readonly QuestId[] }
+  | { readonly kind: "unlock_quests"; readonly questIds: readonly QuestId[]; readonly locationIds?: readonly LocationId[] }
   | { readonly kind: "reach_ending"; readonly endingId: EndingId }
   | { readonly kind: "closed" };
 

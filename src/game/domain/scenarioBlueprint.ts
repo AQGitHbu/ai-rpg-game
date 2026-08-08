@@ -124,7 +124,7 @@ type QuestObjectiveOf<I extends IdSet> =
 
 // 任务节点的关闭方式：解锁后续任务、抵达结局或显式关闭（无后续）。
 type QuestOutcomeOf<I extends IdSet> =
-  | { readonly kind: "unlock_quests"; readonly questIds: readonly I["quest"][] }
+  | { readonly kind: "unlock_quests"; readonly questIds: readonly I["quest"][]; readonly locationIds?: readonly I["location"][] }
   | { readonly kind: "reach_ending"; readonly endingId: I["ending"] }
   | { readonly kind: "closed" };
 
