@@ -1,6 +1,7 @@
 import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "./scenarioBlueprint";
 import { paginateSpeechText } from "./speechPagination";
 import type { PendingNarrativeJob } from "./pendingNarrativeJob";
+import type { ApprovedChoice } from "./approvedChoice";
 
 export const NARRATIVE_EMOTIONS = [
   "neutral", "warm", "guarded", "afraid", "angry", "sad"
@@ -20,6 +21,10 @@ export type NarrativeChoiceState = {
   readonly choiceKind?: "dialogue_response" | "world_action";
   /** 对话回应的稳定语义，不是规则 actionKey。 */
   readonly dialogueIntent?: string;
+  /**
+   * @deprecated Task 8 起服务端只从 choiceRegistry（ApprovedChoice）解析
+   * actionKey；本字段仅供旧存档/旧视图适配器兼容读取，Task 11 移除。
+   */
   readonly actionKey: string;
   /** Phase 14: 选项展示提示（如"将引入新 NPC"）。 */
   readonly hint?: string;
@@ -119,6 +124,14 @@ export type NarrativeRuntimeState = {
   readonly currentScene: NarrativeSceneState | null;
   readonly generation: NarrativeGenerationState;
   readonly mode: NarrativeMode;
+  /**
+   * 服务端持久化选项注册表（Spec §8.2）：ApprovedChoice 只存在于服务端，
+   * 绝不进入 read model；客户端只能拿到 { choiceToken, label, hint? }。
+   * 条目自带 sceneId/basedOnRevision，消费时校验
+   * entry.sceneId === currentScene.sceneId &&
+   * entry.basedOnRevision === 当前 record revision，否则视为过期失效。
+   */
+  readonly choiceRegistry?: readonly ApprovedChoice[];
 };
 
 /** 场景对白每页字符预算：纯展示策略常量，与 V1 的 SPEECH_PAGE_CHAR_BUDGET 对齐。 */

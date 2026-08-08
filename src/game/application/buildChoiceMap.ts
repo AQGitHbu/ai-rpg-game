@@ -2,24 +2,32 @@ import type { Action } from "@/game/domain/action";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { ActionChoiceMap } from "./actionConverter";
-import { asNpcId, asLocationId, asItemId, asEnemyId } from "@/game/domain/scenarioBlueprint";
 
 // ---------------------------------------------------------------------------
 // 服务端 choiceMap 构建器：从当前 WorldState + StoryState 派生所有合法行动的
-// choiceToken → Action 映射。客户端只需发送 choiceToken（actionKey 格式）。
+// choiceToken → Action 映射。客户端只需发送 choiceToken（opaque token）。
 //
-// actionKey 格式：
-//   talk:<npcId>     → { type: "talk", npcId }
-//   move:<locationId> → { type: "move", locationId }
-//   explore           → { type: "explore" }
-//   rest              → { type: "rest" }
-//   take_item:<itemId> → { type: "take_item", itemId }
-//   attack:<enemyId>  → { type: "attack", enemyId }
+// 世界行动候选（actionKey 格式，规则直判，不经 AI）：
+//   talk:<npcId>            → { type: "talk", npcId, dialogueAct: "ask" }
+//   move:<locationId>      → { type: "move", locationId }
+//   explore                → { type: "explore" }
+//   rest                   → { type: "rest" }
+//   take_item:<itemId>     → { type: "take_item", itemId }
+//   use_item:<itemId>      → { type: "use_item", itemId }
+//   attack:<enemyId>       → { type: "attack", enemyId }
 //   battle_action:<action> → { type: "battle_action", action }
-//   ack_prologue      → { type: "ack_prologue" }
+//   ack_prologue           → { type: "ack_prologue" }
+//
+// 场景固定选项只从持久化 choiceRegistry（ApprovedChoice）按 token 映射，
+// 不再解析 scene.choices 的 actionKey（Spec §8.3：客户端不可构造 actionKey）。
+// registry 条目必须匹配当前 sceneId 与（可选）当前 record revision 才有效。
 // ---------------------------------------------------------------------------
 
-export function buildChoiceMap(worldState: WorldState, storyState: StoryState): ActionChoiceMap {
+export function buildChoiceMap(
+  worldState: WorldState,
+  storyState: StoryState,
+  currentRevision?: number,
+): ActionChoiceMap {
   const map = new Map<string, Action>();
 
   // 如果有活跃战斗，只允许 battle_action
@@ -34,7 +42,7 @@ export function buildChoiceMap(worldState: WorldState, storyState: StoryState): 
   for (const npc of worldState.npcs) {
     if (npc.locationId === worldState.currentLocationId) {
       const key = `talk:${String(npc.id)}`;
-      map.set(key, { type: "talk", npcId: npc.id });
+      map.set(key, { type: "talk", npcId: npc.id, dialogueAct: "ask" });
     }
   }
 
@@ -74,46 +82,19 @@ export function buildChoiceMap(worldState: WorldState, storyState: StoryState): 
   map.set("explore", { type: "explore" });
   map.set("rest", { type: "rest" });
 
-  // 叙事场景的固定选项也加入 choiceMap
+  // 叙事场景的固定选项：只从服务端 choiceRegistry 按 token 映射。
+  // 不再解析 scene.choices 的 actionKey；未知/过期 token 不产生映射。
   const scene = storyState.narrative.currentScene;
-  if (scene !== null) {
-    for (const choice of scene.choices) {
-      // choiceToken 已经是 actionKey 格式，或独立格式——两者都映射
-      if (!map.has(choice.choiceToken)) {
-        const parsed = parseActionKey(choice.actionKey);
-        if (parsed !== null) {
-          map.set(choice.choiceToken, parsed);
-        }
+  const registry = storyState.narrative.choiceRegistry;
+  if (scene !== null && registry !== undefined) {
+    for (const entry of registry) {
+      if (entry.sceneId !== scene.sceneId) continue;
+      if (currentRevision !== undefined && entry.basedOnRevision !== currentRevision) continue;
+      if (!map.has(entry.choiceToken)) {
+        map.set(entry.choiceToken, entry.action);
       }
     }
   }
 
   return map;
-}
-
-function parseActionKey(actionKey: string): Action | null {
-  const colonIdx = actionKey.indexOf(":");
-  if (colonIdx === -1) {
-    // 无参数行动
-    switch (actionKey) {
-      case "explore": return { type: "explore" };
-      case "rest": return { type: "rest" };
-      case "ack_prologue": return { type: "ack_prologue" };
-      default: return null;
-    }
-  }
-  const prefix = actionKey.slice(0, colonIdx);
-  const arg = actionKey.slice(colonIdx + 1);
-  switch (prefix) {
-    case "talk": return { type: "talk", npcId: asNpcId(arg) };
-    case "move": return { type: "move", locationId: asLocationId(arg) };
-    case "take_item": return { type: "take_item", itemId: asItemId(arg) };
-    case "attack": return { type: "attack", enemyId: asEnemyId(arg) };
-    case "battle_action":
-      if (arg === "attack" || arg === "guard" || arg === "flee") {
-        return { type: "battle_action", action: arg };
-      }
-      return null;
-    default: return null;
-  }
 }
