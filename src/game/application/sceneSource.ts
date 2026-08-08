@@ -1,12 +1,12 @@
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { NarrativeSceneState } from "@/game/domain/narrative";
+import type { EventCandidate } from "@/game/domain/candidateEvent";
 
-/** SceneGenerator 的事件提议（spec §7.4 newEvents）。 */
-export type EventProposal = {
-  readonly id: string;
-  readonly description: string;
-  readonly proposedAtTurn: number;
-};
+/**
+ * SceneGenerator 的事件提议（spec §7.4 newEvents）。
+ * R4 后为结构化候选事件（含可执行 proposedEffects），由 SceneWriteBack 追加进池。
+ */
+export type EventProposal = EventCandidate;
 
 /** SceneGenerator 调用结果（spec §7.3 ScenePackage 映射）。 */
 export type SceneSourceResult = {

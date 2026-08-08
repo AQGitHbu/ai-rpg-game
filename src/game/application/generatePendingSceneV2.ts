@@ -1,6 +1,7 @@
 import type { GameRepositoryV2 } from "./server/persistence/gameRepositoryV2";
 import type { SceneSource } from "./sceneSource";
 import { buildSceneGenerationContext } from "./sceneGenerationContext";
+import { parseEventCandidate } from "@/game/domain/candidateEvent";
 
 export type GeneratePendingSceneV2Deps = {
   readonly repository: GameRepositoryV2;
@@ -53,11 +54,11 @@ export async function generatePendingSceneV2(
     },
     nextCandidateEventPool: [
       ...record.storyState.candidateEventPool,
-      ...result.eventProposals.map((p) => ({
-        id: p.id,
-        description: p.description,
-        proposedAtTurn: p.proposedAtTurn,
-      })),
+      // 结构化候选经 schema 解析后入池；无法解析的提议直接丢弃（不携带可执行效果）。
+      ...result.eventProposals.flatMap((p) => {
+        const parsed = parseEventCandidate(p);
+        return parsed.ok ? [parsed.candidate] : [];
+      }),
     ].slice(-8), // FIFO max 8
   });
 

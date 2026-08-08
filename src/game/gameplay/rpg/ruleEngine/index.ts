@@ -14,8 +14,8 @@ import { reconcileQuests } from "./reconcileQuests";
 import { resolveEnding } from "./resolveEnding";
 import { updateStoryMetrics } from "./updateStoryMetrics";
 import { propagateKnownFacts } from "./propagateKnownFacts";
-import { approveCandidateEvents } from "./approveCandidateEvents";
 import { advanceStoryProgression } from "./advanceStoryProgression";
+import { approveCandidateEvents, compileCandidateEvent } from "@/game/gameplay/rpg/candidateEvents";
 import { reconcileMaterializedView } from "@/game/domain/materializedView";
 import type { RecentBeat, NpcContact } from "@/game/domain/materializedView";
 
@@ -117,18 +117,31 @@ export function resolveTurn(
     domainEvents,
   );
 
-  // Step 3: candidateEventPool 审批
-  const approved = approveCandidateEvents(
-    progression.nextStoryState,
-    progression.nextStoryState.candidateEventPool,
+  // Step 3: candidateEventPool 审批（纯规则）+ 编译批准候选为真实领域事件
+  const approval = approveCandidateEvents(
+    {
+      worldState: quests.nextWorldState,
+      storyState: progression.nextStoryState,
+      candidates: progression.nextStoryState.candidateEventPool,
+    },
+    { now: deps.now },
   );
+  const candidateFlowEvents: GameEvent[] = [...approval.events];
+  let afterCandidateWs = quests.nextWorldState;
+  for (const candidate of approval.approvedCandidates) {
+    const compiled = compileCandidateEvent(afterCandidateWs, candidate, { now: deps.now });
+    afterCandidateWs = compiled.worldState;
+    candidateFlowEvents.push(...compiled.events);
+  }
+  // 候选事件及其审计事件纳入本回合领域事件流（供张力/结局/ledger 归约）
+  const domainEventsWithCandidate: GameEvent[] = [...domainEvents, ...candidateFlowEvents];
 
   // Step 4: 张力/进度更新（storyProgress 由 advanceStoryProgression 推导，此处只更新 tension）
-  const nextStoryState = updateStoryMetrics(approved.nextStoryState, domainEvents);
+  const nextStoryState = updateStoryMetrics(approval.nextStoryState, domainEventsWithCandidate);
 
   // Step 5: 结局结算（§13.1 放最后；用含 endingAllowed 的 storyState）
-  const ending = resolveEnding(quests.nextWorldState, nextStoryState, deps);
-  const finalDomainEvents: GameEvent[] = [...domainEvents, ...ending.events];
+  const ending = resolveEnding(afterCandidateWs, nextStoryState, deps);
+  const finalDomainEvents: GameEvent[] = [...domainEventsWithCandidate, ...ending.events];
 
   // Step 6: 物化视图增量归约
   const prevBeats = storyState.recentBeats as readonly RecentBeat[];
@@ -164,7 +177,7 @@ export function resolveTurn(
     facts: resolved.facts,
     costs: [],
     rewards: [],
-    triggeredEvents: [...finalDomainEvents.map((e) => e.type), ...approved.approvedEvents.map((e) => e.id)],
+    triggeredEvents: [...finalDomainEvents.map((e) => e.type), ...approval.approvedCandidates.map((e) => e.id)],
     rejectedEffects: [],
   };
 
