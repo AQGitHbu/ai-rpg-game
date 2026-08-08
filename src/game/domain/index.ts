@@ -81,6 +81,13 @@ export {
   type PrologueDefinition
 } from "./scenarioBlueprint";
 export {
+  parseWorldGenerationCandidate,
+  type WorldGenerationCandidate,
+  type NpcGenerationCandidate,
+  type FactionCandidate,
+  type ParseWorldGenerationCandidateResult
+} from "./worldGenerationCandidate";
+export {
   resolveItemPresentation,
   type ItemIconKey,
   type ItemPresentation,
