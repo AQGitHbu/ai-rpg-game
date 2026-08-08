@@ -116,4 +116,43 @@ describe("deterministicSceneSource", () => {
     );
     expect(hasMoveChoice).toBe(true);
   });
+
+  it("npcDialogues covers every present NPC with non-empty pages", async () => {
+    const { ws, ss } = makeWorldWithNpc();
+    const secondNpc: NpcEntry = {
+      id: asNpcId("npc_2"), name: "客人", role: "酒客", description: "t",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const worldTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
+    const source = createDeterministicSceneSource();
+    const result = await source.generateScene({
+      worldState: worldTwo,
+      storyState: ss,
+      resolvedEvent: makeResolvedEvent("success", "dialogue"),
+    });
+    const dialogues = result.scene.npcDialogues;
+    expect(dialogues).toBeDefined();
+    const ids = (dialogues ?? []).map((d) => String(d.npcId));
+    expect(ids).toContain("npc_1");
+    expect(ids).toContain("npc_2");
+    for (const d of dialogues ?? []) {
+      expect(d.speechPages.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("npcDialogues focus NPC speech joins to the npcLine text", async () => {
+    const { ws, ss } = makeWorldWithNpc();
+    const source = createDeterministicSceneSource();
+    const result = await source.generateScene({
+      worldState: ws,
+      storyState: ss,
+      resolvedEvent: makeResolvedEvent("success", "dialogue"),
+    });
+    const focus = (result.scene.npcDialogues ?? []).find(
+      (d) => String(d.npcId) === String(result.scene.npcLine?.npcId)
+    );
+    expect(focus).toBeDefined();
+    expect(focus!.speechPages.join("")).toBe(result.scene.npcLine!.text);
+  });
 });

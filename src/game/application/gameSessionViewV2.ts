@@ -1,6 +1,7 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { LocationId, NpcId, EnemyId } from "@/game/domain/scenarioBlueprint";
+import { paginateSpeechText, composeDeterministicNpcLine, NPC_SCENE_PAGE_CHAR_BUDGET } from "@/game/domain";
 
 export type GameSessionViewV2 = {
   readonly revision: number;
@@ -24,6 +25,8 @@ export type GameSessionViewV2 = {
     readonly narration?: string;
     readonly choices?: readonly { readonly choiceToken: string; readonly label: string; readonly actionKey: string }[];
     readonly npcLine?: { readonly npcId: string; readonly text: string; readonly emotion: string } | null;
+    /** 在场 NPC 的对白（场景对白优先，缺失/空页回退确定性台词）；与 availableNpcs 一一对应。 */
+    readonly npcDialogues?: readonly { readonly npcId: string; readonly npcName: string; readonly npcRole: string; readonly speechPages: readonly string[] }[];
   };
   readonly narrativeGeneration?: { readonly status: string; readonly totalApiCalls: number };
   readonly battle: { readonly enemyName: string; readonly playerHp: number; readonly enemyHp: number; readonly round: number } | null;
@@ -55,6 +58,34 @@ export function projectGameSessionView(
 
   const scene = storyState.narrative.currentScene;
   const hasScene = scene !== null;
+
+  // 每 NPC 对白：场景 npcDialogues 有非空分页时直用；否则回退焦点 npcLine 或确定性台词。
+  const sceneDialoguesById = new Map(
+    (scene?.npcDialogues ?? []).map((d) => [String(d.npcId), d])
+  );
+  const npcDialogues = npcsHere.map((n) => {
+    const sceneEntry = sceneDialoguesById.get(String(n.id));
+    if (sceneEntry !== undefined && sceneEntry.speechPages.length > 0) {
+      return {
+        npcId: String(n.id),
+        npcName: n.name,
+        npcRole: n.role,
+        speechPages: sceneEntry.speechPages,
+      };
+    }
+    const isFocus = scene?.npcLine !== null && scene?.npcLine !== undefined
+      && String(scene.npcLine.npcId) === String(n.id)
+      && scene.npcLine.text.trim() !== "";
+    const text = isFocus
+      ? scene!.npcLine!.text.trim()
+      : composeDeterministicNpcLine(n.name, n.role);
+    return {
+      npcId: String(n.id),
+      npcName: n.name,
+      npcRole: n.role,
+      speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
+    };
+  });
 
   // Battle projection
   const battle: GameSessionViewV2["battle"] = (() => {
@@ -147,6 +178,7 @@ export function projectGameSessionView(
     narrative: {
       mode: storyState.narrative.mode,
       hasScene,
+      npcDialogues,
       ...(hasScene && scene ? {
         eventKind: scene.event?.kind,
         narration: scene.narration,

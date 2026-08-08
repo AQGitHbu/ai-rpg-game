@@ -90,5 +90,6 @@
 
 ## 最近维护
 
+- 2026-08-08：修复「点击 NPC 无任何对白」。V2 视图链路补齐每 NPC 对白：`gameSessionViewV2` 的 `narrative` 新增 `npcDialogues`（在场 NPC 逐条 speechPages，场景 `npcDialogues` 非空分页优先，否则焦点 `npcLine` 或确定性台词兜底，纯函数零 AI）；`viewAdapterV2` 改从 `npcDialogues` 按 npcId 取对白再回退 `npcLine`；确定性/AI 场景源为所有在场 NPC 填充 `npcDialogues`，AI `npcLine.npcId` 必须归属在场 NPC 且 emotion 收敛为合法枚举（`resolveLiveNpcLine`），无效回退确定性台词。
 - 2026-07-31：系统首次实现（spec/plan：`docs/superpowers/{specs,plans}/2026-07-31-npc-dialogue-narrative-trigger.md`）。
 - 2026-08-06：对白场景生成时确定性预生成两个 NPC 回复；点击任一固定玩家口吻选项后同一请求直接落库下一句对白与两个新的对白选项，不再显示“正在准备场景”。下一次对白选择才进入新的三角色原子场景生成；无预生成分支的旧存档仍走 pending 兼容路径。

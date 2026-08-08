@@ -144,6 +144,8 @@ export {
   type NarrativeDialogueFollowupState,
   type PlayerNpcChatState,
   NARRATIVE_EMOTIONS,
+  NPC_SCENE_PAGE_CHAR_BUDGET,
+  composeDeterministicNpcLine,
   PLAYER_DIALOGUE_RESPONSE_LABELS
 } from "./narrative";
 export {

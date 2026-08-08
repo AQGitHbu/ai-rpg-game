@@ -57,19 +57,30 @@ export function adaptV2ToV1View(v2: GameSessionViewV2): GameSessionView {
     choiceToken: c.choiceToken,
   })) ?? [];
   const SLOT_POSITIONS = ["left", "right", "center", "foreground"] as const;
-  const dialogues = v2.availableNpcs.map((npc, idx) => ({
-    npcId: String(npc.id),
-    name: npc.name,
-    role: npc.role,
-    slot: SLOT_POSITIONS[idx % SLOT_POSITIONS.length],
-    speechPages: v2.narrative.npcLine?.npcId === String(npc.id)
-      ? [v2.narrative.npcLine.text]
-      : [],
-    choices: dialogueChoices,
-    freeInputEnabled: true,
-    reviewClues: [] as readonly string[],
-    preparingNextScene: false,
-  }));
+  const dialogues = v2.availableNpcs.map((npc, idx) => {
+    // 每 NPC 对白：narrative.npcDialogues 非空分页优先；空页/缺失回退 npcLine，
+    // 避免空数组 `??` 短路成无声对话。
+    const npcDialogue = v2.narrative.npcDialogues?.find(
+      (d) => String(d.npcId) === String(npc.id)
+    );
+    const npcLineMatches = v2.narrative.npcLine?.npcId === String(npc.id);
+    const speechPages = npcDialogue !== undefined && npcDialogue.speechPages.length > 0
+      ? npcDialogue.speechPages
+      : npcLineMatches
+        ? [v2.narrative.npcLine!.text]
+        : [];
+    return {
+      npcId: String(npc.id),
+      name: npc.name,
+      role: npc.role,
+      slot: SLOT_POSITIONS[idx % SLOT_POSITIONS.length],
+      speechPages,
+      choices: dialogueChoices,
+      freeInputEnabled: true,
+      reviewClues: [] as readonly string[],
+      preparingNextScene: false,
+    };
+  });
 
   // 派生 presentNpcs
   const presentNpcs = v2.availableNpcs.map((n) => ({

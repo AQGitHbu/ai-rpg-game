@@ -3,7 +3,8 @@ import type { GameLogger } from "@/game/logging";
 import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
 import type { WorldGenerationSource } from "../../createGameV2";
 import type { SceneSource, SceneSourceContext, SceneSourceResult } from "../../sceneSource";
-import type { NarrativeSceneState, NarrativeChoiceState, NarrativeEventState } from "@/game/domain/narrative";
+import type { NarrativeSceneState, NarrativeChoiceState, NarrativeEventState, NarrativeEmotion, NarrativeNpcLineState } from "@/game/domain/narrative";
+import { NARRATIVE_EMOTIONS, buildNpcDialoguePages, type NpcDialogueInScene } from "@/game/domain/narrative";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { LocationEntry, NpcEntry, ItemEntry } from "@/game/domain/worldState";
@@ -133,6 +134,32 @@ function createLiveWorldGenerationSource(
 
 // --- Live Scene Source ---
 
+export type LiveNpcLineCandidate = {
+  readonly npcId: string;
+  readonly text: string;
+  readonly emotion: string;
+};
+
+/**
+ * 归一化 AI 返回的 npcLine：npcId 必须真实存在于在场 NPC、text 非空、
+ * emotion 收敛到合法枚举，否则返回 null（调用方用确定性兜底）。
+ * 纯函数：零 AI / IO / 随机。
+ */
+export function resolveLiveNpcLine<TNpcId>(
+  candidate: LiveNpcLineCandidate | null,
+  presentNpcs: readonly { readonly id: TNpcId }[],
+): { readonly npcId: TNpcId; readonly text: string; readonly emotion: NarrativeEmotion } | null {
+  if (candidate === null || typeof candidate !== "object") return null;
+  if (typeof candidate.npcId !== "string" || typeof candidate.text !== "string") return null;
+  if (candidate.text.trim() === "") return null;
+  const presentNpc = presentNpcs.find((npc) => String(npc.id) === candidate.npcId);
+  if (presentNpc === undefined) return null;
+  const emotion = NARRATIVE_EMOTIONS.includes(candidate.emotion as NarrativeEmotion)
+    ? (candidate.emotion as NarrativeEmotion)
+    : "neutral";
+  return { npcId: presentNpc.id, text: candidate.text.trim(), emotion };
+}
+
 function createLiveSceneSource(
   transport: AiTransport,
   config: AiTransportConfig,
@@ -197,7 +224,7 @@ choices 必须恰好 2 个。actionKey 可以是 "explore"、"move:地点ID"、"
 
         const data = parsed as Record<string, unknown>;
         const narration = typeof data.narration === "string" ? data.narration : "";
-        const npcLine = data.npcLine as { npcId: string; text: string; emotion: string } | null;
+        const rawNpcLine = data.npcLine as { npcId: string; text: string; emotion: string } | null;
         const choices = Array.isArray(data.choices) ? data.choices as { label: string; actionKey: string }[] : [];
 
         if (narration === "" || choices.length < 2) {
@@ -209,10 +236,22 @@ choices 必须恰好 2 个。actionKey 可以是 "explore"、"move:地点ID"、"
         const turn = ws.eventLedger.length;
         const firstNpc = npcsHere[0];
 
-        const event: NarrativeEventState | undefined = firstNpc !== undefined
-          ? { kind: "dialogue", focusNpcId: firstNpc.id }
-          : { kind: "observe", locationId: ws.currentLocationId };
+        // AI 的 npcLine 必须归属在场 NPC 且 emotion 合法；无效时回退确定性台词。
+        const resolvedLine = resolveLiveNpcLine(rawNpcLine, npcsHere);
+        const npcLine: NarrativeNpcLineState | null = resolvedLine !== null
+          ? { npcId: resolvedLine.npcId, text: resolvedLine.text, emotion: resolvedLine.emotion, usedFactIds: [] }
+          : null;
 
+        // 焦点 NPC 与有效 npcLine 对齐，避免 event 与台词指向不同的 NPC。
+        const event: NarrativeEventState | undefined = firstNpc !== undefined
+          ? { kind: "dialogue", focusNpcId: resolvedLine?.npcId ?? firstNpc.id }
+          : { kind: "observe", locationId: ws.currentLocationId };
+        const npcDialogues: readonly NpcDialogueInScene[] = npcsHere.length > 0
+          ? buildNpcDialoguePages(npcsHere, {
+              focusNpcId: resolvedLine?.npcId,
+              focusSpeech: resolvedLine?.text,
+            })
+          : [];
         const scene: NarrativeSceneState = {
           sceneId,
           turn,
@@ -220,9 +259,8 @@ choices 必须恰好 2 个。actionKey 可以是 "explore"、"move:地点ID"、"
           event,
           usedFactIds: [],
           source: "generated",
-          npcLine: npcLine
-            ? { npcId: npcLine.npcId as never, text: npcLine.text, emotion: npcLine.emotion as never, usedFactIds: [] }
-            : null,
+          npcLine,
+          ...(npcsHere.length > 0 ? { npcDialogues } : {}),
           choices: [
             {
               choiceToken: `choice_${sceneId}_0`,

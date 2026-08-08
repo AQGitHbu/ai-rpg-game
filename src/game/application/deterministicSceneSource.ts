@@ -1,5 +1,6 @@
 import type { SceneSource, SceneSourceContext, SceneSourceResult } from "./sceneSource";
 import type { NarrativeSceneState, NarrativeChoiceState, NarrativeNpcLineState, NarrativeEventState } from "@/game/domain/narrative";
+import { buildNpcDialoguePages } from "@/game/domain/narrative";
 import type { WorldState } from "@/game/domain/worldState";
 import type { NpcId, LocationId } from "@/game/domain/scenarioBlueprint";
 import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
@@ -53,6 +54,14 @@ export function createDeterministicSceneSource(): SceneSource {
         choices: choices as readonly [NarrativeChoiceState, NarrativeChoiceState],
         source: "fallback",
         event,
+        ...(npcsHere.length > 0
+          ? {
+              npcDialogues: buildNpcDialoguePages(npcsHere, {
+                focusNpcId: firstNpc?.id,
+                focusSpeech: npcLine?.text,
+              }),
+            }
+          : {}),
       };
 
       return {

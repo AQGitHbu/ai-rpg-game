@@ -1,4 +1,5 @@
 import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "./scenarioBlueprint";
+import { paginateSpeechText } from "./speechPagination";
 
 export const NARRATIVE_EMOTIONS = [
   "neutral", "warm", "guarded", "afraid", "angry", "sad"
@@ -120,3 +121,35 @@ export type NarrativeRuntimeState = {
   readonly generation: NarrativeGenerationState;
   readonly mode: NarrativeMode;
 };
+
+/** 场景对白每页字符预算：纯展示策略常量，与 V1 的 SPEECH_PAGE_CHAR_BUDGET 对齐。 */
+export const NPC_SCENE_PAGE_CHAR_BUDGET = 48;
+
+/** 确定性 NPC 台词兜底：无场景对白/AI 行无效时的稳定问候（纯函数，零 AI/IO/随机）。 */
+export function composeDeterministicNpcLine(npcName: string, npcRole: string): string {
+  return `${npcName}（${npcRole}）看了你一眼："欢迎光临，有什么需要帮忙的吗？"`;
+}
+
+/**
+ * 为在场 NPC 列表构造场景对白（NpcDialogueInScene）：焦点 NPC 优先使用
+ * 给定台词，其余与无焦点时均回退确定性兜底台词；纯函数，输出顺序与输入一致。
+ */
+export function buildNpcDialoguePages(
+  npcs: readonly { readonly id: unknown; readonly name: string; readonly role: string }[],
+  options?: { readonly focusNpcId?: unknown; readonly focusSpeech?: string },
+): readonly NpcDialogueInScene[] {
+  return npcs.map((npc) => {
+    const isFocus = options?.focusNpcId !== undefined
+      && String(npc.id) === String(options.focusNpcId)
+      && (options.focusSpeech ?? "").trim() !== "";
+    const text = isFocus
+      ? options!.focusSpeech!.trim()
+      : composeDeterministicNpcLine(npc.name, npc.role);
+    return {
+      npcId: npc.id as NpcId,
+      npcName: npc.name,
+      npcRole: npc.role,
+      speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
+    };
+  });
+}

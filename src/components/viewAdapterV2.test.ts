@@ -1,0 +1,113 @@
+import { describe, it, expect } from "vitest";
+import type { GameSessionViewV2 } from "@/game/application/gameSessionViewV2";
+import { projectGameSessionView } from "@/game/application/gameSessionViewV2";
+import { createDeterministicSceneSource } from "@/game/application/deterministicSceneSource";
+import { createInitialWorldState, appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
+import { createInitialStoryState } from "@/game/domain/storyState";
+import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { adaptV2ToV1View } from "./viewAdapterV2";
+
+function makeV2View(overrides: {
+  readonly npcLines?: readonly { readonly npcId: string; readonly npcName: string; readonly npcRole: string; readonly speechPages: readonly string[] }[];
+  readonly npcLine?: { readonly npcId: string; readonly text: string; readonly emotion: string } | null;
+}): GameSessionViewV2 {
+  return {
+    revision: 0,
+    gameType: "wuxia",
+    player: { name: "侠客", identity: "剑客", hp: 100, attack: 10, defense: 5 },
+    currentLocation: { id: "loc_1" as never, name: "客栈", description: "一间客栈" },
+    availableNpcs: [
+      { id: "npc_1" as never, name: "老板", role: "路人", met: false },
+      { id: "npc_2" as never, name: "客人", role: "酒客", met: false },
+    ],
+    availableMoves: [],
+    inventory: [],
+    story: { currentAct: 1, targetActs: 3, tension: 30, pacingNeed: "reveal", storyProgress: 0 },
+    narrative: {
+      mode: "offline",
+      hasScene: true,
+      eventKind: "dialogue",
+      narration: "你在客栈。",
+      choices: [],
+      npcLine: overrides.npcLine ?? null,
+      ...(overrides.npcLines !== undefined ? { npcDialogues: overrides.npcLines } : {}),
+    },
+    battle: null,
+    quests: [],
+    prologueShown: true,
+    ending: null,
+  } as unknown as GameSessionViewV2;
+}
+
+describe("adaptV2ToV1View dialogues", () => {
+  it("uses narrative.npcDialogues speech pages per NPC", () => {
+    const v = makeV2View({
+      npcLines: [
+        { npcId: "npc_1", npcName: "老板", npcRole: "路人", speechPages: ["老板说道：\"欢迎。\""] },
+        { npcId: "npc_2", npcName: "客人", npcRole: "酒客", speechPages: ["客人点了点头。"] },
+      ],
+    });
+    const adapted = adaptV2ToV1View(v) as unknown as {
+      readonly dialogues: readonly { readonly npcId: string; readonly speechPages: readonly string[] }[];
+    };
+    const lu = adapted.dialogues.find((d) => d.npcId === "npc_1");
+    const guest = adapted.dialogues.find((d) => d.npcId === "npc_2");
+    expect(lu!.speechPages).toEqual(["老板说道：\"欢迎。\""]);
+    expect(guest!.speechPages).toEqual(["客人点了点头。"]);
+  });
+
+  it("falls back to narrative.npcLine when npcDialogues is absent", () => {
+    const v = makeV2View({ npcLine: { npcId: "npc_1", text: "直接台词。", emotion: "neutral" } });
+    const adapted = adaptV2ToV1View(v) as unknown as {
+      dialogues: readonly { npcId: string; speechPages: readonly string[] }[];
+    };
+    expect(adapted.dialogues.find((d) => d.npcId === "npc_1")!.speechPages.join("")).toBe("直接台词。");
+  });
+
+  it("falls back to npcLine when npcDialogues entry has empty pages", () => {
+    const v = makeV2View({
+      npcLines: [
+        { npcId: "npc_1", npcName: "老板", npcRole: "路人", speechPages: [] },
+      ],
+      npcLine: { npcId: "npc_1", text: "焦点台词。", emotion: "neutral" },
+    });
+    const adapted = adaptV2ToV1View(v) as unknown as {
+      dialogues: readonly { npcId: string; speechPages: readonly string[] }[];
+    };
+    expect(adapted.dialogues.find((d) => d.npcId === "npc_1")!.speechPages.join("")).toBe("焦点台词。");
+  });
+
+  it("chain: deterministic scene -> projection -> adapter keeps every present NPC voiced", async () => {
+    const loc: LocationEntry = {
+      id: asLocationId("loc_1"), name: "客栈", description: "一间客栈", kind: "main",
+      connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+    };
+    let ws = createInitialWorldState({
+      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: loc,
+      startingItemIds: [],
+    });
+    const npcs: readonly NpcEntry[] = [
+      { id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t", locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false, memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] } },
+      { id: asNpcId("npc_2"), name: "客人", role: "酒客", description: "t", locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false, memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] } },
+    ];
+    for (const npc of npcs) ws = appendNpc(ws, npc);
+    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 2, quests: 0, events: 0 } });
+    const sceneResult = await createDeterministicSceneSource().generateScene({
+      worldState: ws,
+      storyState: ss,
+      resolvedEvent: { actionId: "act", status: "success", eventKind: "dialogue", facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [], stateVersion: 0 },
+    });
+    const ssWithScene = { ...ss, narrative: { ...ss.narrative, currentScene: sceneResult.scene } };
+    const view = projectGameSessionView({ ...ws, npcs }, ssWithScene, 1);
+    expect(view.narrative.npcDialogues).toHaveLength(2);
+    const adapted = adaptV2ToV1View(view) as unknown as {
+      dialogues: readonly { npcId: string; speechPages: readonly string[] }[];
+    };
+    expect(adapted.dialogues).toHaveLength(2);
+    for (const d of adapted.dialogues) {
+      expect(d.speechPages.length).toBeGreaterThan(0);
+    }
+  });
+});

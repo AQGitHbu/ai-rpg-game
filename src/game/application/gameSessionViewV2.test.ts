@@ -51,4 +51,57 @@ describe("projectGameSessionView", () => {
     expect(view.story.tension).toBe(30);
     expect(view.story.pacingNeed).toBe("reveal");
   });
+
+  it("projects per-NPC dialogue pages for every present NPC", () => {
+    const secondNpc: NpcEntry = {
+      id: asNpcId("npc_2"), name: "客人", role: "酒客", description: "t",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
+    const view = projectGameSessionView(wsTwo, ss, 0);
+    const dialogues = view.narrative.npcDialogues;
+    expect(dialogues).toBeDefined();
+    const ids = (dialogues ?? []).map((d) => String(d.npcId));
+    expect(ids).toContain("npc_1");
+    expect(ids).toContain("npc_2");
+    for (const d of dialogues ?? []) {
+      expect(d.speechPages.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("npcDialogues prefer scene dialogue pages and fall back to deterministic line", () => {
+    const sceneWithDialogue = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: {
+          sceneId: "scene-1",
+          turn: 0,
+          narration: "你在客栈。",
+          usedFactIds: [],
+          npcLine: { npcId: asNpcId("npc_1"), text: "老板说道：\"需要什么吗？\"", emotion: "neutral" as const, usedFactIds: [] },
+          choices: [] as never,
+          source: "generated" as const,
+          event: { kind: "dialogue" as const, focusNpcId: asNpcId("npc_1") },
+          npcDialogues: [
+            { npcId: asNpcId("npc_1"), npcName: "老板", npcRole: "路人", speechPages: ["需要什么吗？"] },
+            { npcId: asNpcId("npc_2"), npcName: "客人", npcRole: "酒客", speechPages: [] },
+          ],
+        },
+      },
+    };
+    const secondNpc: NpcEntry = {
+      id: asNpcId("npc_2"), name: "客人", role: "酒客", description: "t",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
+    const view = projectGameSessionView(wsTwo, sceneWithDialogue, 0);
+    const dialogues = view.narrative.npcDialogues ?? [];
+    const lu = dialogues.find((d) => String(d.npcId) === "npc_1");
+    const guest = dialogues.find((d) => String(d.npcId) === "npc_2");
+    expect(lu!.speechPages.join("")).toBe("需要什么吗？");
+    expect(guest!.speechPages.length).toBeGreaterThan(0);
+  });
 });
