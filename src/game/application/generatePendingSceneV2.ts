@@ -1,7 +1,7 @@
 import type { GameRepositoryV2 } from "./server/persistence/gameRepositoryV2";
 import type { SceneSource } from "./sceneSource";
 import { buildSceneGenerationContext } from "./sceneGenerationContext";
-import { parseEventCandidate } from "@/game/domain/candidateEvent";
+import { approveSceneEventProposals } from "./approveAndWriteScene";
 
 export type GeneratePendingSceneV2Deps = {
   readonly repository: GameRepositoryV2;
@@ -44,6 +44,13 @@ export async function generatePendingSceneV2(
     return "unavailable";
   }
 
+  // 候选事件审批：schema 解析 + 去重 + FIFO 上限，非法/path patch 候选丢弃不拖垮场景。
+  const approved = approveSceneEventProposals({
+    existingPool: record.storyState.candidateEventPool,
+    proposals: result.eventProposals,
+  });
+  if (!approved.ok) return "unavailable";
+
   const writeBack = await deps.repository.applySceneWriteBack({
     gameId: record.gameId,
     expectedRevision: record.revision,
@@ -52,14 +59,7 @@ export async function generatePendingSceneV2(
       currentScene: result.scene,
       generation: { status: "idle" },
     },
-    nextCandidateEventPool: [
-      ...record.storyState.candidateEventPool,
-      // 结构化候选经 schema 解析后入池；无法解析的提议直接丢弃（不携带可执行效果）。
-      ...result.eventProposals.flatMap((p) => {
-        const parsed = parseEventCandidate(p);
-        return parsed.ok ? [parsed.candidate] : [];
-      }),
-    ].slice(-8), // FIFO max 8
+    nextCandidateEventPool: approved.nextCandidateEventPool,
   });
 
   if (!writeBack.ok) {

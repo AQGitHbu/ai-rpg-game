@@ -4,9 +4,24 @@ import type { GameRepositoryV2, GameRecordV2 } from "./server/persistence/gameRe
 import { asGameId } from "./server/persistence/gameRepository";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import type { EventCandidate } from "@/game/domain/candidateEvent";
+import { asLocationId, asGenerationId, asEnemyId } from "@/game/domain/scenarioBlueprint";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
+
+function validCandidate(id: string): EventCandidate {
+  return {
+    id,
+    kind: "enemy_appears",
+    involvedEntityIds: ["enemy_1", "loc_1"],
+    prerequisiteFactIds: [],
+    proposedEffects: [{ kind: "enemy_appears", enemyId: asEnemyId("enemy_1"), locationId: asLocationId("loc_1") }],
+    intendedPacing: "complicate",
+    reason: "r",
+    proposedAtTurn: 3,
+    expiresAtTurn: 6,
+  };
+}
 
 function createInMemoryRepo(): { repo: GameRepositoryV2; getRecord: () => GameRecordV2 | null } {
   let record: GameRecordV2 | null = null;
@@ -91,6 +106,34 @@ describe("writeBackScene", () => {
       nextCandidateEventPool: storyState.candidateEventPool,
     });
     expect(result).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
+  });
+
+  it("结构化候选池写回不改变 World State / tension / 任务（Task 21）", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const { worldState, storyState } = buildTestState();
+    const gameId = asGameId("g1");
+    await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });
+
+    const originalWorldState = getRecord()!.worldState;
+    const originalTension = getRecord()!.storyState.tension;
+    const nextPool = [validCandidate("ce-1")];
+
+    const result = await writeBackScene(repo, {
+      gameId,
+      expectedRevision: 0,
+      nextNarrative: { ...storyState.narrative, mode: "ai" as const },
+      nextCandidateEventPool: nextPool,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const saved = result.record;
+    // 池被写回（下一回合待审批）
+    expect(saved.storyState.candidateEventPool.map((c) => c.id)).toEqual(["ce-1"]);
+    // 写回绝不触碰世界事实/张力/任务/关系
+    expect(saved.worldState).toBe(originalWorldState);
+    expect(saved.storyState.tension).toBe(originalTension);
+    expect(saved.worldState.quests).toEqual(worldState.quests);
   });
 });
 
