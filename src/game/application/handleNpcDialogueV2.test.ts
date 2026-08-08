@@ -163,6 +163,27 @@ describe("handleNpcDialogueV2 thin adapter（Task 9）", () => {
     expect(applyCalls()).toHaveLength(0);
   });
 
+  it("NPC 存在于世界但不在当前地点 → NPC_NOT_PRESENT 且零写入（不降级 freeform 写入）", async () => {
+    // npc_2 在 loc_2（未解锁/不可达），玩家在 loc_1 —— 属于"不在场"
+    const farNpc: NpcEntry = {
+      ...npc1,
+      id: asNpcId("npc_2"),
+      name: "远方的商人",
+      locationId: asLocationId("loc_2"),
+    };
+    const world = { ...buildWorldState(), npcs: [...buildWorldState().npcs, farNpc] };
+    const { repo, applyCalls } = createSpyRepo(world, buildStoryState());
+
+    const result = await handleNpcDialogueV2(
+      { npcId: asNpcId("npc_2"), text: "我相信你", expectedRevision: 0 },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: createRuleIntentParserV2() },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("NPC_NOT_PRESENT");
+    expect(applyCalls()).toHaveLength(0);
+  });
+
   it("pending 期间自由文本被拒绝且零写入", async () => {
     const base = buildStoryState();
     const ss: StoryState = {

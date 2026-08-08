@@ -15,8 +15,7 @@ import { projectGameSessionView } from "../gameSessionViewV2";
 import { createFixtureExpansionSource } from "../server/ai/expansionSource";
 import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
 import { createV2WorldGenerationSource, createV2SceneSource } from "../server/ai/v2SourceFactory";
-import { createV2IntentParserSource } from "../server/ai/liveIntentParserSourceV2";
-import { createOpenAiCompatibleTransport } from "@ai-game/ai-transport";
+import { createServerV2IntentParserSource } from "../server/ai/intentParserSourceFactory";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { generatePendingSceneV2 } from "../generatePendingSceneV2";
 import { handleNpcDialogueV2 } from "../handleNpcDialogueV2";
@@ -81,10 +80,8 @@ export function createServerGameV2EntryPoints(
   const expansionSource = createFixtureExpansionSource();
   const sceneSource = createV2SceneSource(env, logger);
   // Task 9：对话自由输入统一走 performTurn 回合入口，AI 可用时注入 live 意图源，否则规则源。
-  const intentParserSource = createV2IntentParserSource(
-    env,
-    aiEnabled ? createOpenAiCompatibleTransport() : undefined,
-  );
+  // transport 构建收敛在 server/ai 工厂内（@ai-game/ai-transport 边界守卫）。
+  const intentParserSource = createServerV2IntentParserSource(env);
 
   const executeHttpRequest = async (
     method: string,

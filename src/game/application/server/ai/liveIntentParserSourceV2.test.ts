@@ -165,6 +165,22 @@ describe("createLiveIntentParserV2（AI 配置有效时的 live 源）", () => {
     expect(result.ok).toBe(false);
   });
 
+it("AI 声称的 npcId 与玩家显式目标不一致 → 丢弃 AI 的 npcId，仍绑定玩家目标在场 NPC（不静默改送其它 NPC）", async () => {
+    const live = createLiveIntentParserV2(
+      stubTransport({ ok: true, content: '{"dialogueAct":"support","npcId":"npc_2"}' }),
+    );
+    const result = await live.parseIntent("我相信你", ctx, asNpcId("npc_1"));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.action.type).toBe("talk");
+      if (result.action.type === "talk") {
+        // 玩家显式目标是 npc_1；AI 声称的 npc_2 不合法且 npc_2 不在场 → 必须落到玩家目标，绝不能改送 npc_2。
+        expect(result.action.npcId).toBe(asNpcId("npc_1"));
+        expect(result.action.npcId).not.toBe(asNpcId("npc_2"));
+      }
+    }
+  });
+
 it("AI 抛异常 → 规则降级，绝不炸穿", async () => {
     const exploding = {
       async complete() {

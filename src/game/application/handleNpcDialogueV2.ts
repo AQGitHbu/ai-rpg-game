@@ -24,8 +24,12 @@ export type HandleNpcDialogueV2Result =
 // 不再直接写 playerNpcChat pending；所有输入都形成受规则记录的回合。
 // chat / narrative_trigger 只决定交互呈现方式（即时回复 vs 等待场景），不改变提交语义。
 
-function withNpcName(record: { readonly worldState: { readonly npcs: readonly { id: NpcId; name: string }[] } }, npcId: NpcId): string | null {
-  return record.worldState.npcs.find((n) => n.id === npcId)?.name ?? null;
+function withNpcName(record: { readonly worldState: { readonly currentLocationId: string; readonly npcs: readonly { id: NpcId; name: string; locationId: string }[] } }, npcId: NpcId): string | null {
+  const npc = record.worldState.npcs.find((n) => n.id === npcId);
+  if (npc === undefined) return null;
+  // 在场 = 与玩家同处当前地点（与固定选项校验一致）；仅存在于世界但不在场仍拒绝。
+  if (npc.locationId !== record.worldState.currentLocationId) return null;
+  return npc.name;
 }
 
 export async function handleNpcDialogueV2(

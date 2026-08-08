@@ -93,21 +93,17 @@ export function parseIntentPayload(
       ? (value as DialogueAct)
       : null;
 
-  if (typeof data.dialogueAct === "string") {
+  // talk 路径：AI 返回 dialogueAct（或 type:"talk"）→ 绑定玩家目标/在场 NPC。
+  if (typeof data.dialogueAct === "string" || data.type === "talk") {
     const act = actOf(data.dialogueAct);
     if (act === null) return { ok: false, reason: "unclassifiable" };
-    const target = resolvePresentNpc(ctx, typeof data.npcId === "string" ? data.npcId : targetNpcId);
-    if (target === null) return { ok: false, reason: "unclassifiable" };
-    return {
-      ok: true,
-      action: { type: "talk", npcId: target, dialogueAct: act, utterance: trimmed },
-    };
-  }
-
-  if (data.type === "talk") {
-    const act = actOf(data.dialogueAct);
-    if (act === null) return { ok: false, reason: "unclassifiable" };
-    const target = resolvePresentNpc(ctx, typeof data.npcId === "string" ? data.npcId : targetNpcId);
+    // 玩家显式绑定目标 NPC 时以玩家为准：AI 声称的 npcId 只允许等于该目标
+    // （等于 → 用玩家绑定；不等 → unclassifiable，绝不静默改送到别的 NPC）。
+    const rawTarget = typeof data.npcId === "string" ? data.npcId : targetNpcId;
+    if (targetNpcId !== undefined && rawTarget !== String(targetNpcId)) {
+      return { ok: false, reason: "unclassifiable" };
+    }
+    const target = resolvePresentNpc(ctx, rawTarget);
     if (target === null) return { ok: false, reason: "unclassifiable" };
     return {
       ok: true,
@@ -116,19 +112,24 @@ export function parseIntentPayload(
   }
 
   if (data.type === "move" && typeof data.locationId === "string") {
-    const loc = ctx.connectedLocations.find((l) => String(l.id) === data.locationId);
-    if (loc === undefined) return { ok: false, reason: "unclassifiable" };
-    return { ok: true, action: { type: "move", locationId: asLocationId(String(loc.id)) } };
+    const found = ctx.connectedLocations.find((l) => String(l.id) === data.locationId);
+    if (found === undefined) return { ok: false, reason: "unclassifiable" };
+    return { ok: true, action: { type: "move", locationId: asLocationId(String(found.id)) } };
   }
 
   if (data.type === "take_item" && typeof data.itemId === "string") {
-    const item = ctx.availableItems.find((i) => String(i.id) === data.itemId);
-    if (item === undefined) return { ok: false, reason: "unclassifiable" };
-    return { ok: true, action: { type: "take_item", itemId: asItemId(String(item.id)) } };
+    const found = ctx.availableItems.find((i) => String(i.id) === data.itemId);
+    if (found === undefined) return { ok: false, reason: "unclassifiable" };
+    return { ok: true, action: { type: "take_item", itemId: asItemId(String(found.id)) } };
   }
 
-  if (data.type === "explore" || data.type === "rest") {
-    const action: Action = { type: data.type };
+  if (data.type === "explore") {
+    const action: Action = { type: "explore" };
+    return { ok: true, action };
+  }
+
+  if (data.type === "rest") {
+    const action: Action = { type: "rest" };
     return { ok: true, action };
   }
 
