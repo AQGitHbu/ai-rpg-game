@@ -216,6 +216,22 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(applyCalls()).toHaveLength(0);
   });
 
+  it("pending 期间自由文本同样被拒绝，且零写入", async () => {
+    const ws = buildWorldState();
+    const { repo, applyCalls } = createSpyRepo(ws, buildPendingStoryState());
+
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "act_6", interaction: { kind: "free_text", text: "和老板聊聊" }, expectedRevision: 0, choiceMap: new Map() },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: createFixtureIntentParserSource() },
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("ACTION_REJECTED");
+    expect(result.feedback).toBe("正在编排下一幕，请稍候。");
+    expect(applyCalls()).toHaveLength(0);
+  });
+
   it("CAS stale 时不返回行动成功且零写入", async () => {
     const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
 
