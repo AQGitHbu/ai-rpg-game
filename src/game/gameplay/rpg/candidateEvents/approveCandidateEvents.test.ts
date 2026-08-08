@@ -100,11 +100,12 @@ describe("approveCandidateEvents 审批失败矩阵", () => {
     expect(result.rejected.some((r) => r.reasonCode === "expired")).toBe(true);
   });
 
-  it("重复 ID 拒绝（duplicate_id）", () => {
+  it("同批重复 ID 拒绝（duplicate_id）", () => {
     const ss = makeSs();
-    const pool = { ...ss, candidateEventPool: [candidate()] };
-    const result = approveCandidateEvents({ worldState: makeWorldState(), storyState: pool, candidates: [candidate()] }, { now: NOW });
-    expect(result.approvedCandidates.length).toBe(0);
+    const a = candidate({ id: "ce-dup" });
+    const b = candidate({ id: "ce-dup" });
+    const result = approveCandidateEvents({ worldState: makeWorldState(), storyState: ss, candidates: [a, b] }, { now: NOW });
+    expect(result.approvedCandidates.length).toBe(1); // 同批去重：只批准先到的一条
     expect(result.rejected.some((r) => r.reasonCode === "duplicate_id")).toBe(true);
   });
 

@@ -14,6 +14,7 @@ import {
   type NpcEntry,
 } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
+import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { asLocationId, asNpcId, asGenerationId, asEnemyId } from "@/game/domain/scenarioBlueprint";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
@@ -328,6 +329,50 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("NO_ACTIVE_GAME");
+  });
+
+  it("玩家行动优先完成后激活候选反应；池生命周期在单次 CAS 中持久化（Task 20）", async () => {
+    const enemyWs = {
+      ...buildWorldState(),
+      enemies: [{
+        id: asEnemyId("enemy_1"), name: "山贼", tier: "normal" as const,
+        stats: { hp: 10, attack: 5, defense: 2 },
+        locationId: asLocationId("loc_1"), tags: [],
+      }],
+    };
+    const candidate: EventCandidate = {
+      id: "ce-1",
+      kind: "enemy_appears",
+      involvedEntityIds: ["enemy_1", "loc_1"],
+      prerequisiteFactIds: [],
+      proposedEffects: [{ kind: "enemy_appears", enemyId: asEnemyId("enemy_1"), locationId: asLocationId("loc_1") }],
+      intendedPacing: "complicate",
+      reason: "敌人在客栈现身",
+      proposedAtTurn: 1,
+      expiresAtTurn: 9,
+    };
+    const ss = { ...buildStoryState(), candidateEventPool: [candidate] };
+    const { repo, record, applyCalls } = createSpyRepo(enemyWs, ss);
+
+    const moveAction: Action = { type: "move", locationId: asLocationId("loc_2") };
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "act_move", interaction: { kind: "fixed_choice", choiceToken: "tok_move" }, expectedRevision: 0, choiceMap: new Map([["tok_move", moveAction]]) },
+      { repository: repo, now: () => "2026-01-02" },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // 单次 CAS 提交
+    expect(applyCalls()).toHaveLength(1);
+    const saved = record()!;
+    // 玩家行动（location_visited）先于候选反应（battle_started + activated 审计）
+    const ledger = saved.worldState.eventLedger;
+    const types = ledger.map((e) => e.type);
+    expect(types.indexOf("location_visited")).toBeLessThan(types.indexOf("battle_started"));
+    expect(types.indexOf("battle_started")).toBeLessThan(types.indexOf("candidate_event_activated"));
+    // 已批准候选从池移除；池随状态一并持久化
+    expect(saved.storyState.candidateEventPool.map((c) => c.id)).not.toContain("ce-1");
+    expect(saved.worldState.battle).toEqual({ status: "active", enemyId: asEnemyId("enemy_1"), playerHp: 100, enemyHp: 10, round: 1 });
   });
 });
 

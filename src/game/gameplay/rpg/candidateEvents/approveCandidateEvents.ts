@@ -80,8 +80,8 @@ export function approveCandidateEvents(
   const kept: EventCandidate[] = [];
 
   for (const candidate of candidates) {
-    // 重复 ID（池内已存在，或本批重复）→ 拒绝
-    if (storyState.candidateEventPool.some((c) => c.id === candidate.id) || seenIds.has(candidate.id)) {
+    // 同批内重复 ID → 拒绝（池本身由写回方去重，见 Task 20）
+    if (seenIds.has(candidate.id)) {
       rejected.push({ candidate, reasonCode: "duplicate_id" });
       events.push({
         type: "candidate_event_rejected",

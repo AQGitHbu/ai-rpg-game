@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { reconcileMaterializedView, createEmptyMaterializedView, type MaterializedView } from "./materializedView";
 import type { GameEvent } from "./events";
-import { asLocationId, asNpcId, asQuestId } from "./scenarioBlueprint";
+import { asLocationId, asNpcId, asQuestId, asFactId } from "./scenarioBlueprint";
 
 describe("MaterializedView", () => {
   it("empty view has zero cursor", () => {
@@ -46,5 +46,27 @@ describe("MaterializedView", () => {
     const r2 = reconcileMaterializedView(r1, events, asLocationId("loc_1")); // idempotent
     expect(r2.reducedThroughEventCount).toBe(2);
     expect(r2.recentBeats.length).toBe(r1.recentBeats.length);
+  });
+});
+
+describe("MaterializedView candidate reaction visibility (Task 20)", () => {
+  it("approved candidate reaction (fact_discovered) appears in recentBeats without AI text", () => {
+    const events: GameEvent[] = [
+      { type: "candidate_event_proposed", candidateId: "ce-1", kind: "npc_reveals_fact", proposedAtTurn: 3, expiresAtTurn: 6, occurredAt: "t1" },
+      { type: "candidate_event_approved", candidateId: "ce-1", kind: "npc_reveals_fact", approvedAtTurn: 4, occurredAt: "t2" },
+      { type: "fact_discovered", factId: asFactId("fact_2"), occurredAt: "t3" },
+      { type: "candidate_event_activated", candidateId: "ce-1", kind: "npc_reveals_fact", activatedAtTurn: 4, occurredAt: "t4" },
+    ];
+    const v = createEmptyMaterializedView();
+    const result = reconcileMaterializedView(v, events, asLocationId("loc_1"));
+    // 编译后的真实领域事件进入 recentBeats（无 AI 原文）
+    expect(result.recentBeats.some((b) => b.kind === "fact_discovered")).toBe(true);
+    expect(result.recentBeats.some((b) => b.summary.includes("fact_2"))).toBe(true);
+    // 审计事件（proposed/approved/activated）不成为 beat，也不携带 AI 原文
+    expect(result.recentBeats.some((b) => b.kind === "candidate_event_activated")).toBe(false);
+    // 任何 beat 摘要都不含隐藏事实正文或 AI 原文（只含结构化 ID）
+    for (const beat of result.recentBeats) {
+      expect(beat.summary).not.toMatch(/秘密|hidden|原文/);
+    }
   });
 });
