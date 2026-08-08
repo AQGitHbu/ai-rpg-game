@@ -2,9 +2,12 @@ import { describe, it, expect } from "vitest";
 import type { GameSessionViewV2 } from "@/game/application/gameSessionViewV2";
 import { projectGameSessionView } from "@/game/application/gameSessionViewV2";
 import { createDeterministicSceneSource } from "@/game/application/deterministicSceneSource";
+import type { SceneGenerationContext } from "@/game/application/sceneGenerationContext";
 import { createInitialWorldState, appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { adaptV2ToV1View } from "./viewAdapterV2";
 
 function makeV2View(overrides: {
@@ -94,11 +97,30 @@ describe("adaptV2ToV1View dialogues", () => {
     ];
     for (const npc of npcs) ws = appendNpc(ws, npc);
     const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 2, quests: 0, events: 0 } });
-    const sceneResult = await createDeterministicSceneSource().generateScene({
-      worldState: ws,
-      storyState: ss,
-      resolvedEvent: { actionId: "act", status: "success", eventKind: "dialogue", facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [], stateVersion: 0 },
+    const jobResult = createPendingNarrativeJob({
+      jobId: asNarrativeJobId("job_s1"),
+      turnId: asTurnId("turn_s1"),
+      actionId: "act_s1",
+      expectedRevision: 0,
+      turnNumber: 1,
+      actionSummary: { kind: "talk", npcId: asNpcId("npc_1") },
+      resolvedEvent: {
+        actionId: "act_s1", status: "success", eventKind: "dialogue",
+        facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [],
+      },
+      domainEventRange: { fromLedgerIndex: 1, toLedgerIndexExclusive: 2 },
+      focusNpcId: asNpcId("npc_1"),
+      requestedAt: "2026-01-01",
     });
+    if (!jobResult.ok) throw new Error("fixture job 构造失败");
+    const context: SceneGenerationContext = {
+      job: jobResult.job,
+      currentLocation: { id: loc.id, name: loc.name, description: loc.description },
+      presentNpcs: npcs.map((n) => ({ id: n.id, name: n.name, role: n.role })),
+      reachableLocations: [],
+      story: { currentAct: ss.currentAct, targetActs: ss.targetActs, tension: ss.tension, nextPacingNeed: ss.nextPacingNeed },
+    };
+    const sceneResult = await createDeterministicSceneSource().generateScene(context);
     const ssWithScene = { ...ss, narrative: { ...ss.narrative, currentScene: sceneResult.scene } };
     const view = projectGameSessionView({ ...ws, npcs }, ssWithScene, 1);
     expect(view.narrative.npcDialogues).toHaveLength(2);

@@ -1,49 +1,30 @@
-import type { SceneSource, SceneSourceContext, SceneSourceResult } from "./sceneSource";
+import type { SceneSource, SceneSourceResult } from "./sceneSource";
+import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { NarrativeSceneState, NarrativeChoiceState, NarrativeNpcLineState, NarrativeEventState } from "@/game/domain/narrative";
 import { buildNpcDialoguePages } from "@/game/domain/narrative";
-import type { WorldState } from "@/game/domain/worldState";
-import type { NpcId, LocationId } from "@/game/domain/scenarioBlueprint";
-import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 
 // ---------------------------------------------------------------------------
 // 确定性 fallback 场景生成器（spec §7.6 安全降级模板）。
-// 不调用 AI，基于 WorldState 当前状态派生叙述 + 2 个选项。
+// 不调用 AI、不读时钟/随机数：sceneId/choiceToken 全部从 job 纯函数派生，
+// 两次调用同样的 context 产出逐字节相同的场景。
 // 选项从当前地点的合法行动中选取（移动、交谈、探索）。
 // ---------------------------------------------------------------------------
 
 export function createDeterministicSceneSource(): SceneSource {
   return {
-    async generateScene(context: SceneSourceContext): Promise<SceneSourceResult> {
-      const { worldState: ws, storyState: ss, resolvedEvent } = context;
-      const sceneId = `scene-${ws.eventLedger.length}-${Date.now()}`;
-      const turn = ws.eventLedger.length;
+    async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
+      const { job, currentLocation, presentNpcs, reachableLocations } = context;
 
-      // 派生当前地点 NPC
-      const npcsHere = ws.npcs.filter((n) => n.locationId === ws.currentLocationId);
-      const firstNpc = npcsHere[0];
+      const sceneId = `scene-${job.jobId}`;
+      const turn = job.turnNumber;
 
-      // 派生 narration
-      const currentLoc = ws.locations.find((l) => l.id === ws.currentLocationId);
-      const locName = currentLoc?.name ?? "未知地点";
-      const narration = buildNarration(resolvedEvent, locName, firstNpc?.name);
+      const firstNpc = presentNpcs[0];
 
-      // 派生 NPC 对白
-      const npcLine: NarrativeNpcLineState | null = firstNpc !== undefined
-        ? {
-            npcId: firstNpc.id,
-            text: buildNpcLine(firstNpc.name, resolvedEvent),
-            emotion: "neutral",
-            usedFactIds: [],
-          }
-        : null;
+      const narration = buildNarration(context);
+      const npcLine = buildNpcLineState(context);
+      const event = buildEventState(context);
 
-      // 派生 event state
-      const event: NarrativeEventState | undefined = firstNpc !== undefined
-        ? { kind: "dialogue", focusNpcId: firstNpc.id }
-        : { kind: "observe", locationId: ws.currentLocationId };
-
-      // 派生 2 个选项
-      const choices = buildChoices(ws, sceneId, firstNpc?.id);
+      const choices = buildChoices(context, sceneId);
 
       const scene: NarrativeSceneState = {
         sceneId,
@@ -54,10 +35,10 @@ export function createDeterministicSceneSource(): SceneSource {
         choices: choices as readonly [NarrativeChoiceState, NarrativeChoiceState],
         source: "fallback",
         event,
-        ...(npcsHere.length > 0
+        ...(presentNpcs.length > 0
           ? {
-              npcDialogues: buildNpcDialoguePages(npcsHere, {
-                focusNpcId: firstNpc?.id,
+              npcDialogues: buildNpcDialoguePages(presentNpcs, {
+                focusNpcId: npcLine?.npcId,
                 focusSpeech: npcLine?.text,
               }),
             }
@@ -73,17 +54,35 @@ export function createDeterministicSceneSource(): SceneSource {
   };
 }
 
-function buildNarration(
-  resolvedEvent: ResolvedEvent,
-  locName: string,
-  npcName: string | undefined,
-): string {
+/** 焦点 NPC：talk job 优先使用 job.focusNpcId，否则第一个在场 NPC。 */
+function focusNpc(context: SceneGenerationContext): SceneGenerationContext["presentNpcs"][number] | undefined {
+  const { job, presentNpcs } = context;
+  const talkTarget = job.actionSummary.kind === "talk" ? job.focusNpcId : undefined;
+  if (talkTarget !== undefined) {
+    const match = presentNpcs.find((n) => String(n.id) === String(talkTarget));
+    if (match !== undefined) return match;
+  }
+  return presentNpcs[0];
+}
+
+/** 玩家原话以中性口吻回显（不加工、不评判）；无原话则不适用。 */
+function buildNarration(context: SceneGenerationContext): string {
+  const { job, currentLocation } = context;
+  const { resolvedEvent } = job;
+  const locName = currentLocation.name;
+  const npc = focusNpc(context);
+
+  const isTalk = job.actionSummary.kind === "talk";
+  if (isTalk && job.utterance !== undefined && npc !== undefined) {
+    return `你对${npc.name}说："${job.utterance}"。${npc.name}听完，注视着你的眼睛。`;
+  }
+
   switch (resolvedEvent.eventKind) {
     case "travel":
       return `你来到了${locName}。四周的景象映入眼帘，空气中弥漫着不同的气息。`;
     case "dialogue":
-      return npcName !== undefined
-        ? `你与${npcName}交谈。${npcName}注视着你，似乎有话要说。`
+      return npc !== undefined
+        ? `你与${npc.name}交谈。${npc.name}注视着你，似乎有话要说。`
         : `你在${locName}四处张望，却没看到可以交谈的人。`;
     case "investigate":
       return `你仔细调查了周围的线索，发现了一些值得注意的细节。`;
@@ -98,7 +97,31 @@ function buildNarration(
   }
 }
 
-function buildNpcLine(npcName: string, resolvedEvent: ResolvedEvent): string {
+function buildNpcLineState(context: SceneGenerationContext): NarrativeNpcLineState | null {
+  const { job } = context;
+  const { resolvedEvent } = job;
+  const npc = focusNpc(context);
+  if (npc === undefined) return null;
+
+  // talk job：原话中性回显在台词里，保持焦点 NPC 与场景对白一致。
+  if (job.actionSummary.kind === "talk" && job.utterance !== undefined) {
+    return {
+      npcId: npc.id,
+      text: `你刚才说："${job.utterance}"。${npc.name}听完点了点头。`,
+      emotion: "neutral",
+      usedFactIds: [],
+    };
+  }
+
+  return {
+    npcId: npc.id,
+    text: buildNpcLine(npc.name, resolvedEvent),
+    emotion: "neutral",
+    usedFactIds: [],
+  };
+}
+
+function buildNpcLine(npcName: string, resolvedEvent: SceneGenerationContext["job"]["resolvedEvent"]): string {
   switch (resolvedEvent.status) {
     case "success":
       return `${npcName}说道："欢迎，有什么需要帮忙的吗？"`;
@@ -106,49 +129,69 @@ function buildNpcLine(npcName: string, resolvedEvent: ResolvedEvent): string {
       return `${npcName}犹豫了一下："这件事……我知道一些，但不方便全说。"`;
     case "failure":
       return `${npcName}摇了摇头："恐怕这件事我帮不上忙。"`;
+    case "blocked":
+      return `${npcName}摇了摇头："现在还不是做这件事的时候。"`;
     default:
       return `${npcName}看了你一眼，没有说话。`;
   }
 }
 
+/** 事件状态由 job 的真实 eventKind 派生：travel→travel，talk→dialogue 焦点 NPC，investigate→首条事实。 */
+export function buildEventState(context: SceneGenerationContext): NarrativeEventState {
+  const { job, currentLocation } = context;
+  switch (job.resolvedEvent.eventKind) {
+    case "travel":
+      return { kind: "travel", locationId: currentLocation.id };
+    case "dialogue": {
+      const focus = focusNpc(context);
+      return focus !== undefined
+        ? { kind: "dialogue", focusNpcId: focus.id }
+        : { kind: "observe", locationId: currentLocation.id };
+    }
+    case "investigate": {
+      const factChange = job.resolvedEvent.facts[0];
+      return factChange !== undefined
+        ? { kind: "investigate", factId: factChange.factId }
+        : { kind: "observe", locationId: currentLocation.id };
+    }
+    default:
+      return { kind: "observe", locationId: currentLocation.id };
+  }
+}
+
 function buildChoices(
-  ws: WorldState,
+  context: SceneGenerationContext,
   sceneId: string,
-  npcId: NpcId | undefined,
 ): readonly [NarrativeChoiceState, NarrativeChoiceState] {
-  const currentLoc = ws.locations.find((l) => l.id === ws.currentLocationId);
-  const connectedUnlocked = currentLoc?.connectedLocationIds
-    .filter((id) => ws.unlockedLocationIds.includes(id)) ?? [];
-  const firstConnected = connectedUnlocked[0];
-  const connectedLoc = firstConnected !== undefined
-    ? ws.locations.find((l) => l.id === firstConnected)
-    : undefined;
+  const { presentNpcs, reachableLocations } = context;
+  const firstNpc = presentNpcs[0];
+  const firstReachable = reachableLocations[0];
 
   // 选项 A：如果有 NPC，优先交谈；否则探索
-  const choiceA: NarrativeChoiceState = npcId !== undefined
+  const choiceA: NarrativeChoiceState = firstNpc !== undefined
     ? {
-        choiceToken: `${sceneId}:a`,
+        choiceToken: `${sceneId}-a`,
         label: `与NPC交谈`,
-        actionKey: `talk:${String(npcId)}`,
+        actionKey: `talk:${String(firstNpc.id)}`,
         choiceKind: "world_action",
       }
     : {
-        choiceToken: `${sceneId}:a`,
+        choiceToken: `${sceneId}-a`,
         label: `探索周围`,
         actionKey: `explore`,
         choiceKind: "world_action",
       };
 
-  // 选项 B：如果有连接地点，移动；否则休息
-  const choiceB: NarrativeChoiceState = connectedLoc !== undefined
+  // 选项 B：如果有可到达地点，移动；否则休息
+  const choiceB: NarrativeChoiceState = firstReachable !== undefined
     ? {
-        choiceToken: `${sceneId}:b`,
-        label: `前往${connectedLoc.name}`,
-        actionKey: `move:${String(connectedLoc.id)}`,
+        choiceToken: `${sceneId}-b`,
+        label: `前往${firstReachable.name}`,
+        actionKey: `move:${String(firstReachable.id)}`,
         choiceKind: "world_action",
       }
     : {
-        choiceToken: `${sceneId}:b`,
+        choiceToken: `${sceneId}-b`,
         label: `稍作休息`,
         actionKey: `rest`,
         choiceKind: "world_action",

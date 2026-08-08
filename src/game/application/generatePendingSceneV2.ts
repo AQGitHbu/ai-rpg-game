@@ -1,6 +1,6 @@
 import type { GameRepositoryV2 } from "./server/persistence/gameRepositoryV2";
 import type { SceneSource } from "./sceneSource";
-import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
+import { buildSceneGenerationContext } from "./sceneGenerationContext";
 
 export type GeneratePendingSceneV2Deps = {
   readonly repository: GameRepositoryV2;
@@ -8,12 +8,17 @@ export type GeneratePendingSceneV2Deps = {
   readonly now: () => string;
 };
 
-export type GeneratePendingSceneV2Result = "saved" | "not_pending" | "stale" | "unavailable";
+export type GeneratePendingSceneV2Result =
+  | "saved"
+  | "not_pending"
+  | "stale"
+  | "unavailable"
+  | "legacy_pending";
 
 /**
- * Executes one pending narrative scene request (spec §7 + §11).
- * Reads pending state → calls SceneSource → writes back via applySceneWriteBack.
- * Only touches storyState.narrative + candidateEventPool.
+ * 执行一个 pending 叙事场景请求（spec §7 + §11）。
+ * 读 pending job → buildSceneGenerationContext → 调 SceneSource → 写回 idle。
+ * 不再伪造 ResolvedEvent：source 只接收 job 驱动的上下文。
  */
 export async function generatePendingSceneV2(
   deps: GeneratePendingSceneV2Deps,
@@ -25,25 +30,18 @@ export async function generatePendingSceneV2(
   const generation = record.storyState.narrative.generation;
   if (generation.status !== "pending") return "not_pending";
 
-  // Build a minimal ResolvedEvent for the scene source
-  const resolvedEvent: ResolvedEvent = {
-    actionId: `scene_${record.revision}`,
-    status: "success",
-    eventKind: "observe",
-    facts: [],
-    stateChanges: [],
-    costs: [],
-    rewards: [],
-    triggeredEvents: [],
-    rejectedEffects: [],
-    stateVersion: record.worldState.eventLedger.length,
-  };
+  // 运行期守卫：旧开发存档的 pending 可能没有 job（如 {status:"pending", requestedAt}）。
+  // 稳定分类为 legacy_pending，绝不伪装成功恢复。
+  if (!("job" in generation) || generation.job === undefined) return "legacy_pending";
 
-  const result = await deps.sceneSource.generateScene({
-    worldState: record.worldState,
-    storyState: record.storyState,
-    resolvedEvent,
-  });
+  const context = buildSceneGenerationContext(record);
+
+  let result;
+  try {
+    result = await deps.sceneSource.generateScene(context);
+  } catch {
+    return "unavailable";
+  }
 
   const writeBack = await deps.repository.applySceneWriteBack({
     gameId: record.gameId,

@@ -2,8 +2,9 @@ import { createOpenAiCompatibleTransport, type AiMessage, type AiTransport, type
 import type { GameLogger } from "@/game/logging";
 import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
 import type { WorldGenerationSource } from "../../createGameV2";
-import type { SceneSource, SceneSourceContext, SceneSourceResult } from "../../sceneSource";
-import type { NarrativeSceneState, NarrativeChoiceState, NarrativeEventState, NarrativeEmotion, NarrativeNpcLineState } from "@/game/domain/narrative";
+import type { SceneSource, SceneSourceResult } from "../../sceneSource";
+import type { SceneGenerationContext } from "../../sceneGenerationContext";
+import type { NarrativeSceneState, NarrativeEventState, NarrativeEmotion, NarrativeNpcLineState } from "@/game/domain/narrative";
 import { NARRATIVE_EMOTIONS, buildNpcDialoguePages, type NpcDialogueInScene } from "@/game/domain/narrative";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
@@ -167,27 +168,24 @@ function createLiveSceneSource(
 ): SceneSource {
   const fallback = createDeterministicSceneSource();
   return {
-    async generateScene(context: SceneSourceContext): Promise<SceneSourceResult> {
+    async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
       try {
-        const { worldState: ws, storyState: ss, resolvedEvent } = context;
-        const currentLoc = ws.locations.find((l) => l.id === ws.currentLocationId);
-        const npcsHere = ws.npcs.filter((n) => n.locationId === ws.currentLocationId);
+        const { job, currentLocation, presentNpcs, reachableLocations, story } = context;
+        const currentLocName = currentLocation.name;
+        const npcsHere = presentNpcs;
 
         const systemPrompt = `你是一个 RPG 叙事设计师。根据当前游戏状态生成一个场景，返回 JSON 格式。
 
-当前地点：${currentLoc?.name ?? "未知"}
-地点描述：${currentLoc?.description ?? ""}
-当前幕数：${ss.currentAct}/${ss.targetActs}
-张力值：${ss.tension}
-节奏需要：${ss.nextPacingNeed}
-玩家行动类型：${resolvedEvent.actionId}
+当前地点：${currentLocName}
+地点描述：${currentLocation.description}
+当前幕数：${story.currentAct}/${story.targetActs}
+张力值：${story.tension}
+节奏需要：${story.nextPacingNeed}
+玩家行动类型：${job.resolvedEvent.eventKind}
 
 在场 NPC：${npcsHere.map((n) => `${n.name}(${n.role})`).join("、") || "无"}
 
-可移动地点：${ws.locations
-  .filter((l) => currentLoc?.connectedLocationIds.includes(l.id))
-  .map((l) => l.name)
-  .join("、") || "无"}
+可移动地点：${reachableLocations.map((l) => l.name).join("、") || "无"}
 
 返回严格 JSON，格式如下：
 {
@@ -204,7 +202,7 @@ choices 必须恰好 2 个。actionKey 可以是 "explore"、"move:地点ID"、"
 
         const messages: readonly AiMessage[] = [
           { role: "system", content: systemPrompt },
-          { role: "user", content: resolvedEvent.actionId },
+          { role: "user", content: job.actionId },
         ];
 
         const result = await transport.complete(config, messages, {
@@ -232,8 +230,9 @@ choices 必须恰好 2 个。actionKey 可以是 "explore"、"move:地点ID"、"
           return fallback.generateScene(context);
         }
 
-        const sceneId = `scene-${ws.eventLedger.length}-${Date.now()}`;
-        const turn = ws.eventLedger.length;
+        // sceneId/turn 从 job 纯函数派生：不读时钟、不依赖 eventLedger 长度。
+        const sceneId = `scene-${job.jobId}`;
+        const turn = job.turnNumber;
         const firstNpc = npcsHere[0];
 
         // AI 的 npcLine 必须归属在场 NPC 且 emotion 合法；无效时回退确定性台词。
@@ -245,7 +244,7 @@ choices 必须恰好 2 个。actionKey 可以是 "explore"、"move:地点ID"、"
         // 焦点 NPC 与有效 npcLine 对齐，避免 event 与台词指向不同的 NPC。
         const event: NarrativeEventState | undefined = firstNpc !== undefined
           ? { kind: "dialogue", focusNpcId: resolvedLine?.npcId ?? firstNpc.id }
-          : { kind: "observe", locationId: ws.currentLocationId };
+          : { kind: "observe", locationId: currentLocation.id };
         const npcDialogues: readonly NpcDialogueInScene[] = npcsHere.length > 0
           ? buildNpcDialoguePages(npcsHere, {
               focusNpcId: resolvedLine?.npcId,
