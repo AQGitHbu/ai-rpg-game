@@ -70,16 +70,20 @@ export function repairWorldGenerationCandidate(
   }
 
   const rawBase = player.baseStats;
+  const rawBaseRecord = typeof rawBase === "object" && rawBase !== null && !Array.isArray(rawBase)
+    ? rawBase as Record<string, unknown>
+    : null;
+  // 缺省/非法数值回退同一 fixture 默认（100/10/5），避免 AI 用自定义属性键时生成 0 HP 不可玩开局。
+  const pickStat = (key: "hp" | "attack" | "defense", fallback: number): number => {
+    const value = rawBaseRecord?.[key];
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+    repaired = true;
+    return fallback;
+  };
   const baseStats = {
-    hp: typeof rawBase === "object" && rawBase !== null && !Array.isArray(rawBase) && typeof (rawBase as Record<string, unknown>).hp === "number"
-      ? (rawBase as Record<string, unknown>).hp as number
-      : (repaired = true, 0),
-    attack: typeof rawBase === "object" && rawBase !== null && !Array.isArray(rawBase) && typeof (rawBase as Record<string, unknown>).attack === "number"
-      ? (rawBase as Record<string, unknown>).attack as number
-      : (repaired = true, 0),
-    defense: typeof rawBase === "object" && rawBase !== null && !Array.isArray(rawBase) && typeof (rawBase as Record<string, unknown>).defense === "number"
-      ? (rawBase as Record<string, unknown>).defense as number
-      : (repaired = true, 0),
+    hp: pickStat("hp", 100),
+    attack: pickStat("attack", 10),
+    defense: pickStat("defense", 5),
   };
   const worldFixed: Record<string, unknown> = {
     ...world,
@@ -154,7 +158,7 @@ export function createWorldGenerationSource(
         const result = await transport.complete(config, [
           { role: "system", content: buildWorldPrompt(input) },
           { role: "user", content: `生成游戏类型 ${input.gameType} / 长度 ${input.gameLength} / 种子 ${input.seed} 的世界。` },
-        ], { timeoutMs: 120_000 });
+        ], { timeoutMs: 240_000 });
 
         if (!result.ok) {
           logger?.warn("world_generation_ai_failed", { code: result.code });
@@ -173,7 +177,11 @@ export function createWorldGenerationSource(
           return fixture.generate(input);
         }
 
-        const validated = validateWorldGenerationCandidate(repaired.candidate, {
+        // 引用完整性修复（无创意）：NPC fact 引用必须存在于 world facts，
+        // 删除悬空引用不改剧情语义，避免整局回退 fixture 丢失玩家世界观。
+        const sanitized = sanitizeFactReferences(repaired.candidate);
+
+        const validated = validateWorldGenerationCandidate(sanitized, {
           gameLength: input.gameLength,
           targetActs: TARGET_ACTS[input.gameLength],
         });
@@ -204,6 +212,28 @@ export function createWorldGenerationSource(
       }
     },
   };
+}
+
+// 引用完整性修复：过滤 NPC known/hidden fact 中不存在于 world facts 的悬空引用。
+// 不新增实体、不修改文本，仅保证引用闭合，属无创意修复。
+export function sanitizeFactReferences(
+  candidate: WorldGenerationCandidate,
+): WorldGenerationCandidate {
+  const factIds = new Set([
+    ...candidate.world.publicFacts.map((fact) => fact.id),
+    ...candidate.world.hiddenFacts.map((fact) => fact.id),
+  ]);
+  let changed = false;
+  const npcs = candidate.npcs.map((npc) => {
+    const known = npc.knownFactIds.filter((id) => factIds.has(id));
+    const hidden = npc.hiddenFactIds.filter((id) => factIds.has(id));
+    if (known.length === npc.knownFactIds.length && hidden.length === npc.hiddenFactIds.length) {
+      return npc;
+    }
+    changed = true;
+    return { ...npc, knownFactIds: known, hiddenFactIds: hidden };
+  });
+  return changed ? { ...candidate, npcs } : candidate;
 }
 
 // 失败分类（只含结构信息，不含玩家内容，可安全入日志）。
@@ -241,11 +271,28 @@ ${setupSection}
 2. player：name/identity/backgroundSummary/startingLocationId/startingItemIds/baseStats
 3. startAnchor：locationId/npcId/startQuestId/mainThreadId
 4. locations：3-5 个互相连接（connectedLocationIds 可达网络）
-5. npcs：3-6 个，knownFactIds/hiddenFactIds 引用 world facts
+5. npcs：3-6 个，knownFactIds/hiddenFactIds 必须且只能引用 world.publicFacts/hiddenFacts 中已定义的 fact id
 6. items：1-3 个
 7. quests：主线必须恰好覆盖 stage 1-${targetActs}，每幕一个可达主任务并逐幕解锁；另可有 0-2 支线
 8. endings：恰好 2 个结局；两者都只包含同一个终幕 quest_completed 条件和同一 NPC 的一个关系条件，关系条件必须分别为相邻的 at_most / at_least（例如 <=5 与 >=6），不得增加其他条件
 9. openingBudget：各实体计数
 
-只返回 JSON，不要其他文字。`;
+必须严格使用以下字段名与嵌套结构（禁止改名、禁止用字符串数组替代结构化 objectives）：
+{
+  "world": { "summary": "...", "tone": "...", "themes": ["..."], "publicFacts": [{ "id": "fact_xxx", "text": "..." }], "hiddenFacts": [{ "id": "fact_yyy", "text": "..." }], "tags": [] },
+  "player": { "name": "...", "identity": "...", "backgroundSummary": "...", "startingLocationId": "loc_xxx", "startingItemIds": [], "baseStats": { "hp": 100, "attack": 10, "defense": 5 } },
+  "startAnchor": { "locationId": "loc_xxx", "npcId": "npc_xxx", "startQuestId": "quest_act1", "mainThreadId": "thread_main" },
+  "locations": [{ "id": "loc_xxx", "name": "...", "description": "...", "kind": "main", "connectedLocationIds": ["loc_yyy"], "npcIds": ["npc_xxx"], "availableItemIds": [], "tags": [] }],
+  "npcs": [{ "id": "npc_xxx", "name": "...", "role": "...", "description": "...", "locationId": "loc_xxx", "isCompanion": false, "knownFactIds": [], "hiddenFactIds": [], "goals": [], "tags": [] }],
+  "items": [{ "id": "item_xxx", "name": "...", "description": "...", "kind": "key", "tags": [] }],
+  "enemies": [{ "id": "enemy_xxx", "name": "...", "tier": "normal", "stats": { "hp": 8, "attack": 4, "defense": 0 }, "locationId": "loc_xxx", "tags": [] }],
+  "factions": [],
+  "quests": [{ "id": "quest_act1", "name": "...", "description": "...", "kind": "main", "stage": 1, "objectives": [{ "kind": "talk_to_npc", "npcId": "npc_xxx" }], "onSuccess": { "kind": "unlock_quests", "questIds": ["quest_act2"], "locationIds": ["loc_yyy"] }, "onFailure": { "kind": "closed" }, "tags": ["main"] }],
+  "endings": [{ "id": "ending_xxx", "name": "...", "description": "...", "requirements": [{ "kind": "quest_completed", "questId": "quest_act${targetActs}" }, { "kind": "npc_affinity_at_least", "npcId": "npc_xxx", "value": 6 }] }],
+  "openingBudget": { "locationsCount": 3, "npcsCount": 4, "sideQuestsCount": 0, "endingsCount": 2, "townLocationsCount": 0 }
+}
+objectives 只允许：{ "kind": "talk_to_npc", "npcId" } / { "kind": "visit_location", "locationId" } / { "kind": "obtain_item", "itemId" } / { "kind": "defeat_enemy", "enemyId" }。
+onSuccess 只允许：{ "kind": "unlock_quests", "questIds", "locationIds"? } 或终幕 { "kind": "reach_ending", "endingId" }。
+最后一个主线任务（stage ${targetActs}）的 onSuccess 必须是 reach_ending；它之前的每个主线任务用 unlock_quests 解锁下一幕任务与地点。
+确保 ID 唯一且互相引用正确。只返回 JSON，不要其他文字。`;
 }

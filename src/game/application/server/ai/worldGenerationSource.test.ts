@@ -169,6 +169,22 @@ describe("createWorldGenerationSource", () => {
     expect(candidate.player.identity).toBe("被逐出师门的机关师");
   });
 
+  it("AI 候选 NPC 含悬空 fact 引用时经引用完整性修复而非整体回退", async () => {
+    const dangling = mutableCandidate();
+    dangling.npcs[0].knownFactIds.push("fact_not_exist");
+    dangling.npcs[0].hiddenFactIds.push("fact_ghost");
+    const transport = {
+      complete: async () => ({ ok: true, content: JSON.stringify(dangling), latencyMs: 1 }),
+    } as unknown as AiTransport;
+    const source = createWorldGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+    const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
+    // 保留 AI 世界（2 地点）而非 fixture；悬空引用被过滤
+    expect(candidate.locations.length).toBe(2);
+    const npc = candidate.npcs[0]!;
+    expect(npc.knownFactIds).not.toContain("fact_not_exist");
+    expect(npc.hiddenFactIds).not.toContain("fact_ghost");
+  });
+
   it("AI 返回非法 JSON 时回退 fixture", async () => {
     const transport = {
       complete: async () => ({ ok: true, content: "not json", latencyMs: 1 }),
