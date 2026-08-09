@@ -3,7 +3,7 @@ import type {
   RequestLogContext,
   ServerGameEntryPoints
 } from "@/game/application/server/compositionRoot";
-import type { PerformActionResult } from "@/game/application";
+import type { PerformActionResult } from "@/game/application/index.v1";
 
 // ---------------------------------------------------------------------------
 // POST /api/game/prologue/ack（Phase 14 Task 6）：薄壳 route——标记序幕已播放。

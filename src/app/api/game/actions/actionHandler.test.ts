@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { handlePerformActionRequest } from "./actionHandler";
 import type {
   PerformActionResult,
-  GameSessionView,
   ActionFeedbackView
-} from "@/game/application";
+} from "@/game/application/index.v1";
+import type { GameSessionView } from "@/game/application";
 import type { ServerGameEntryPoints } from "@/game/application/server/compositionRoot";
 
 // ---------------------------------------------------------------------------

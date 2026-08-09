@@ -89,12 +89,22 @@ export function approveDirectorProposal(
   // two conversational responses that are not action keys.
   const [keyA, keyB] = proposal.suggestedActionKeys;
   const candidateKeys = new Set(candidates.map((c) => c.actionKey));
-  const trigger = state.narrative?.generation?.status === "pending"
-    ? state.narrative.generation.triggerContext
+  // v2.1（R1/Task 2）起 pending 的唯一载体是 job：以 job.actionSummary 派生
+  // 对话语义；同时兼容历史 v1 存档/夹具（无 job、仅 triggerContext）的读取。
+  const generation = state.narrative?.generation;
+  const actionSummary = generation?.status === "pending"
+    ? generation.job?.actionSummary
+    : undefined;
+  const legacyTrigger = generation?.status === "pending"
+    ? (generation as { triggerContext?: { kind: string } }).triggerContext
     : undefined;
   const isDialogueEvent = proposal.eventKind === "dialogue" ||
-    (proposal.eventKind === undefined && trigger !== undefined &&
-      ["initial_opening", "talk", "free_input"].includes(trigger.kind));
+    (proposal.eventKind === undefined && (
+      (actionSummary !== undefined &&
+        (actionSummary.kind === "talk" || actionSummary.kind === "freeform")) ||
+      (legacyTrigger !== undefined &&
+        ["initial_opening", "talk", "free_input"].includes(legacyTrigger.kind))
+    ));
   if (!candidateKeys.has(keyA) || (!isDialogueEvent && (keyA === keyB || !candidateKeys.has(keyB)))) {
     return { ok: false, category: "choice_not_legal" };
   }

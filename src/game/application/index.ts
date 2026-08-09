@@ -1,42 +1,8 @@
-// 应用层公共门面：UI/API 只能从这里导入游戏业务能力，后续任务在此追加导出。
-// Phase 4A：候选生成纯 port（只有类型与冻结常量；server factory 不得经此导出）。
-export {
-  SCENARIO_CANDIDATE_CONTRACT_VERSION,
-  SCENARIO_CANDIDATE_FAILURE_CATEGORIES,
-  type ScenarioCandidateAttempt,
-  type ScenarioCandidateContractVersion,
-  type ScenarioCandidateFailureCategory,
-  type ScenarioCandidateSource,
-  type ScenarioGenerationEvent,
-  type ScenarioGenerationRequest,
-  type ScenarioGenerationSource,
-  type ScenarioGenerationStage
-} from "./scenarioGeneration";
-export {
-  createGame,
-  type CreateGameCommand,
-  type CreateGameDependencies,
-  type CreateGameResult,
-  type GenerationSource
-} from "./createGame";
-export {
-  getCurrentGame,
-  type CurrentGameResult,
-  type CurrentGameUnavailableReason,
-  type GetCurrentGameDependencies
-} from "./getCurrentGame";
-export {
-  type OpeningGameView,
-  type OpeningGenerationView,
-  type OpeningItemView,
-  type OpeningLocationView,
-  type OpeningNpcView,
-  type OpeningPlayerView,
-  type OpeningWorldView,
-  type AvailableActionView,
-  type OpeningFactView
-} from "./openingGameView";
-// Phase 4 Task 3 + Phase 6 Task 3：语义中性的会话 read model（OpeningGameView 的演进）。
+// 应用层公共门面：UI/API 只能从这里导入游戏业务能力。
+// v2.1 为生产链路：本 facade 仅保留 v2.1 生产所需的共享 view 类型与少量值；
+// v1 legacy 业务 re-export 已移至 ./index.v1.ts（仅作行为参考，不进入主门禁）。
+
+// Phase 4 Task 3 + Phase 6 Task 3：语义中性的会话 read model。
 export {
   type GameSessionView,
   type SessionActionView,
@@ -48,7 +14,7 @@ export {
   type StoryEventView,
   type NarrativeSceneView
 } from "./gameSessionView";
-export type { NarrativeGenerationProgress } from "./runtimeNarrative";
+export type { NarrativeGenerationProgress } from "./narrativeProgressTypes";
 // 背包富视图的展示元数据基础类型：UI 经由 facade 中转，禁止直连 domain。
 export {
   type ItemCategory,
@@ -68,20 +34,15 @@ export {
   type WorldMapView,
   type WorldMapNodeView
 } from "./locationAdventureView";
+// Task 8：town 主循环 UI 只读 view 类型（来源模块无类型漂移，可安全经门面中转）。
 export {
-  performAction,
-  type PerformActionCommand,
-  type PerformActionDependencies,
-  type PerformActionResult,
-  type ActionFeedbackView
-} from "./performAction";
-// NPC 自由输入：分类→闲聊/叙事触发编排 use case（零 AI 调用）。
-export {
-  handleNpcDialogue,
-  type HandleNpcDialogueCommand,
-  type HandleNpcDialogueDependencies,
-  type HandleNpcDialogueResult
-} from "./handleNpcDialogue";
+  type TownLayerStats,
+  type TownLayerView,
+  type TownInteractiveBuildingView,
+  type TownRenderSnapshot
+} from "./townRuntimeView";
+// Task 5：开局来源区分类型（scenarioGeneration 无类型漂移，可安全经门面中转）。
+export type { ScenarioGenerationSource as GenerationSource } from "./scenarioGeneration";
 // UI 端预校验经由 application facade 中转，禁止直连 domain。
 export {
   validateNewGameInput,
@@ -96,7 +57,7 @@ export {
   LEGACY_BUDGET_POLICY,
   type BudgetPolicy
 } from "@/game/domain";
-// Phase 3: API handler 需要品牌化 ID 转换与 PlayerIntent 类型（Phase 5 追加 itemId，Phase 6 追加 enemyId）。
+// Phase 3: API handler 需要品牌化 ID 转换与 PlayerIntent 类型。
 export {
   asLocationId,
   asNpcId,
@@ -109,68 +70,7 @@ export {
   type ItemId,
   type EnemyId
 } from "@/game/domain";
-// Phase 10 Task 3：运行时导演 / 编剧 / 演员 contracts 与 contexts。
-export {
-  NARRATIVE_CONTRACT_VERSION,
-  NARRATIVE_FAILURE_CATEGORIES,
-  type NarrativeContractVersion,
-  type NarrativeFailureCategory,
-  type NarrativeDiagnostics,
-  type DirectorRequest,
-  type DirectorAttempt,
-  type DirectorSource,
-  type SceneScriptRequest,
-  type SceneScriptAttempt,
-  type SceneScriptSource,
-  type NpcLineRequest,
-  type NpcLineAttempt,
-  type NpcLineSource,
-} from "./runtimeNarrative";
-export {
-  toDirectorContext,
-  toSceneScriptContext,
-  toNpcLineContext,
-  toTownSpatialContext,
-  type DirectorContext,
-  type DirectorContextInput,
-  type SceneScriptContext,
-  type SceneScriptContextInput,
-  type NpcLineContext,
-  type NpcLineContextInput,
-  type TownSpatialContext,
-} from "./runtimeNarrativeContexts";
-export {
-  orchestrateNarrativeScene,
-  type OrchestrateNarrativeSceneInput,
-  type OrchestrateSceneResult,
-} from "./orchestrateNarrativeScene";
-export {
-  generatePendingNarrativeScene,
-  type GeneratePendingNarrativeSceneDependencies,
-  type GeneratePendingNarrativeSceneResult,
-} from "./generatePendingNarrativeScene";
-export {
-  getOrCreateScene,
-  type GetOrCreateSceneInput,
-  type GetOrCreateSceneResult,
-} from "./getOrCreateScene";
-export {
-  JOURNEY_REPORT_VERSION,
-  JOURNEY_ISSUE_CODES,
-  validateJourneyReport,
-  toJourneySummary,
-  type JourneyCoverage,
-  type JourneyIssueCode,
-  type JourneyReport,
-} from "./testing/runtimeNarrativeJourney";
 export { type PlayerIntent } from "@/game/gameplay/rpg/actions";
-// Town demo（Task 7）：小镇 demo 投影门面。仅服务 /town-demo 实验页，非主循环路径。
-export {
-  generateTownDemoView,
-  type GenerateTownDemoResult,
-  type TownDemoStats,
-  type TownDemoView
-} from "./townDemo";
 // Town demo（Task 8）：UI 渲染地图/档案所需的 domain 类型与纯索引函数经门面中转。
 export {
   tileIndex,
@@ -179,30 +79,6 @@ export {
   type TownBuilding,
   type TownBuildingType
 } from "@/game/domain";
-// Town 主循环（S4）：AI 规划纯 port + 小镇层 read model。
-export {
-  TOWN_PLAN_CONTRACT_VERSION,
-  TOWN_PLAN_FAILURE_CATEGORIES,
-  type TownPlanAttempt,
-  type TownPlanCandidateSource,
-  type TownPlanContractVersion,
-  type TownPlanFailureCategory,
-  type TownPlanRequest
-} from "./townPlanGeneration";
-export {
-  projectTownLayerView,
-  type TownInteractiveBuildingView,
-  type TownLayerStats,
-  type TownLayerView,
-  type TownRenderSnapshot
-} from "./townRuntimeView";
-// Town 主循环（S5）：pending 小镇规划生成 use case。
-export {
-  generatePendingTownPlan,
-  TOWN_PLAN_MAX_ATTEMPTS,
-  type GeneratePendingTownPlanDependencies,
-  type GeneratePendingTownPlanResult
-} from "./generatePendingTownPlan";
 // Town 主循环：UI 消费语义投影与规划来源类型经门面中转。
 export {
   type TownCompassArea,
@@ -210,6 +86,7 @@ export {
   type TownSemanticView
 } from "@/game/gameplay/rpg/town";
 export { type TownPlanSource, type TownSemanticPlan } from "@/game/domain";
+// 纯端口（server persistence 契约）：来源模块无类型漂移，UI/API 可安全经门面中转。
 export {
   asGameId,
   type ApplyResolvedActionInput,

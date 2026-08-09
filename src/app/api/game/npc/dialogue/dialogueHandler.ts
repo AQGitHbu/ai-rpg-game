@@ -1,4 +1,5 @@
-import { asNpcId, type HandleNpcDialogueResult } from "@/game/application";
+import { asNpcId } from "@/game/application";
+import type { HandleNpcDialogueResult } from "@/game/application/index.v1";
 import type {
   RequestLogContext,
   ServerGameEntryPoints

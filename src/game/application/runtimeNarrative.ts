@@ -44,22 +44,12 @@ export type NarrativeDiagnostics = Readonly<{
   category?: NarrativeFailureCategory;
 }>;
 
-/**
- * The three user-visible roles involved in one narrative scene.  This is an
- * internal progress contract: it deliberately contains no provider names,
- * prompts, or raw model output.
- */
-export const NARRATIVE_ROLE_STAGES = ["director", "writer", "npc"] as const;
-export type NarrativeRoleStage = (typeof NARRATIVE_ROLE_STAGES)[number];
-
-export type NarrativeGenerationProgress = Readonly<{
-  /** Number of distinct role stages whose final response passed approval. */
-  completedCalls: number;
-  /** The normal scene pipeline has three role stages. */
-  totalCalls: 3;
-  currentRole: NarrativeRoleStage;
-  attempt: number;
-}>;
+// v2.1 共享叙事进度类型（单一来源：./narrativeProgressTypes，error-free）。
+export {
+  NARRATIVE_ROLE_STAGES,
+  type NarrativeRoleStage,
+  type NarrativeGenerationProgress
+} from "./narrativeProgressTypes";
 
 // ---------------------------------------------------------------------------
 // 导演角色

@@ -19,7 +19,7 @@ import {
   type AvailableAction
 } from "@/game/gameplay/rpg/actions";
 import { isQuestObjectiveSatisfied } from "@/game/gameplay/rpg/quests";
-import type { NarrativeGenerationProgress } from "./runtimeNarrative";
+import type { NarrativeGenerationProgress } from "./narrativeProgressTypes";
 import {
   projectOpeningGameView,
   type AvailableActionView,
@@ -312,6 +312,15 @@ function projectStoryEvent(
     case "blueprint_expanded": return null;
     // Task 9：意图表达事件不作为台词呈现（不包含玩家原文）；经叙事任务回应。
     case "player_intent_expressed": return null;
+    // v2.1（R1-R4）新增事件：均为世界/候选事件内部事实，不投影为台词。
+    case "location_unlocked":
+    case "player_rested":
+    case "candidate_event_proposed":
+    case "candidate_event_approved":
+    case "candidate_event_rejected":
+    case "candidate_event_expired":
+    case "candidate_event_activated":
+      return null;
   }
 }
 

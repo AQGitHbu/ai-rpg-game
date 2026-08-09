@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { handleNpcDialogueRequest } from "./dialogueHandler";
-import type { GameSessionView, HandleNpcDialogueResult } from "@/game/application";
+import type { GameSessionView } from "@/game/application";
+import type { HandleNpcDialogueResult } from "@/game/application/index.v1";
 import type { ServerGameEntryPoints } from "@/game/application/server/compositionRoot";
 
 // ---------------------------------------------------------------------------

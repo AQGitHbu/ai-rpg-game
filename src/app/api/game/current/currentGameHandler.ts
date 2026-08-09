@@ -1,4 +1,4 @@
-import type { CurrentGameResult } from "@/game/application";
+import type { CurrentGameResult } from "@/game/application/index.v1";
 import type {
   RequestLogContext,
   ServerGameEntryPoints

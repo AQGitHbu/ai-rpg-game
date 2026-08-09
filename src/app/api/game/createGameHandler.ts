@@ -1,4 +1,5 @@
-import type { CreateGameResult, NewGameInput } from "@/game/application";
+import type { NewGameInput } from "@/game/application";
+import type { CreateGameResult } from "@/game/application/index.v1";
 import {
   OFFLINE_CASE_IDS,
   type RequestLogContext,

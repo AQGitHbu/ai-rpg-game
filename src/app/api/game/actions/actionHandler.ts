@@ -4,9 +4,9 @@ import {
   asItemId,
   asLocationId,
   asNpcId,
-  type PerformActionResult,
   type PlayerIntent
 } from "@/game/application";
+import type { PerformActionResult } from "@/game/application/index.v1";
 import type {
   RequestLogContext,
   ServerGameEntryPoints

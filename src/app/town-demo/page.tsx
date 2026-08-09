@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { InlineButton, Panel } from "@ai-game/ui";
-import { generateTownDemoView } from "@/game/application";
-import type { GenerateTownDemoResult } from "@/game/application";
+import { generateTownDemoView } from "@/game/application/index.v1";
+import type { GenerateTownDemoResult } from "@/game/application/index.v1";
 import { TownMapSvg } from "@/components/town/TownMapSvg";
 import { BuildingProfilePanel } from "@/components/town/BuildingProfilePanel";
 
