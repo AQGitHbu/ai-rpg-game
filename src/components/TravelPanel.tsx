@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 import { Panel, Tag, InlineButton } from "@ai-game/ui";
-import type { GameSessionView, SessionActionView } from "@/game/application";
+import type { CompatibilityGameSessionView, SessionActionView } from "@/game/application";
 import { postGameAction } from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
 // TravelPanel（Phase 4 Task 4）：地点移动面板。
-// 只渲染 GameSessionView.availableActions 中的 move 行动（连通且已解锁的
+// 只渲染 CompatibilityGameSessionView.availableActions 中的 move 行动（连通且已解锁的
 // 目的地由 read model 决定，UI 不自行猜测），提交/反馈模式与
 // SceneActionPanel 一致：提交期间禁用全部按钮、aria-live 提示结果、
 // 成功后用最新 view 替换、版本冲突触发重新读取当前存档。
@@ -17,12 +17,12 @@ import { postGameAction } from "./gameActionRequest";
 type MoveActionView = Extract<SessionActionView, { type: "move" }>;
 
 type TravelPanelProps = {
-  view: GameSessionView;
+  view: CompatibilityGameSessionView;
   /** 其他面板提交中：为 true 时禁用本面板全部按钮。 */
   busy?: boolean;
   /** 本面板提交开始/结束回调：父级据此禁用其余面板。 */
   onBusyChange?: (busy: boolean) => void;
-  onActionSuccess: (view: GameSessionView) => void;
+  onActionSuccess: (view: CompatibilityGameSessionView) => void;
   onStaleRevision: () => void;
 };
 

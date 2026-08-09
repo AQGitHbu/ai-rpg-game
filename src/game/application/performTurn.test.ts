@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { performTurn } from "./performTurn";
 import type {
-  ApplyStateV2Input,
-  GameRecordV2,
-  GameRepositoryV2,
-} from "./server/persistence/gameRepositoryV2";
+  ApplyStateInput,
+  GameRecord,
+  GameRepository,
+} from "./server/persistence/gameRepository";
 import { asGameId } from "./server/persistence/gameRepository";
 import {
   createInitialWorldState,
@@ -22,22 +22,22 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
 import { createFixtureIntentParserSource } from "./server/ai/intentParserSource";
-import { createRuleIntentParserV2 } from "./server/ai/liveIntentParserSourceV2";
+import { createRuleIntentParser } from "./server/ai/liveIntentParserSource";
 import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
 import { createFixtureExpansionSource } from "./server/ai/expansionSource";
 import type { ExpansionProposal } from "@/game/gameplay/rpg/expansion/expansionTypes";
 import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
 
 function createSpyRepo(ws: WorldState, ss: StoryState): {
-  repo: GameRepositoryV2;
-  applyCalls: () => readonly ApplyStateV2Input[];
-  record: () => GameRecordV2 | null;
+  repo: GameRepository;
+  applyCalls: () => readonly ApplyStateInput[];
+  record: () => GameRecord | null;
 } {
-  let record: GameRecordV2 = {
+  let record: GameRecord = {
     gameId: asGameId("g1"), worldState: ws, storyState: ss, revision: 0, createdAt: "2026-01-01",
   };
-  const applyCallsHistory: ApplyStateV2Input[] = [];
-  const repo: GameRepositoryV2 = {
+  const applyCallsHistory: ApplyStateInput[] = [];
+  const repo: GameRepository = {
     async createInitialGame(input) {
       if (record !== null) return { ok: false as const, code: "ACTIVE_GAME_EXISTS" as const };
       record = { gameId: input.gameId, worldState: input.worldState, storyState: input.storyState, revision: 0, createdAt: input.createdAt };
@@ -313,7 +313,7 @@ describe("performTurn 单次 CAS 提交", () => {
   });
 
   it("没有活跃对局 → NO_ACTIVE_GAME", async () => {
-    const repo: GameRepositoryV2 = {
+    const repo: GameRepository = {
       async createInitialGame() { return { ok: true as const }; },
       async getCurrentGame() { return { ok: true, status: "none" }; },
       async applyState() { return { ok: false as const, code: "NO_ACTIVE_GAME" as const }; },
@@ -555,7 +555,7 @@ describe("performTurn Expansion 单路径（Task 6）", () => {
 // ---------------------------------------------------------------------------
 
 describe("performTurn 自由文本端到端（Task 9）", () => {
-  const ruleSource = createRuleIntentParserV2();
+  const ruleSource = createRuleIntentParser();
 
   it("同一 NPC 连续两个 ready 场景的自定义输入使用不同 actionId，各自形成记忆与 pending job", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());

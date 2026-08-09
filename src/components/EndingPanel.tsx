@@ -1,7 +1,7 @@
 "use client";
 
 import { Panel, Tag } from "@ai-game/ui";
-import type { GameSessionView } from "@/game/application";
+import type { CompatibilityGameSessionView } from "@/game/application";
 
 // ---------------------------------------------------------------------------
 // EndingPanel（Phase 6 Task 4）：结局面板。
@@ -11,7 +11,7 @@ import type { GameSessionView } from "@/game/application";
 // ---------------------------------------------------------------------------
 
 type EndingPanelProps = {
-  view: GameSessionView;
+  view: CompatibilityGameSessionView;
 };
 
 export function EndingPanel({ view }: EndingPanelProps) {

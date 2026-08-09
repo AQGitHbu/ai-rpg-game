@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 import { Panel, Tag, InlineButton } from "@ai-game/ui";
-import type { GameSessionView, SessionActionView } from "@/game/application";
+import type { CompatibilityGameSessionView, SessionActionView } from "@/game/application";
 import { postGameAction } from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
 // ItemPanel（Phase 5 Task 4）：物品面板，含「可取得物品」与「背包」两个
-// 业务区域。拾取按钮渲染 GameSessionView.availableActions 中的 take_item
+// 业务区域。拾取按钮渲染 CompatibilityGameSessionView.availableActions 中的 take_item
 // 行动（与 obtainableItems 摘要按 read model 顺序一一对应），名称/描述只
 // 来自 read model，不 import blueprint/gameplay。提交/反馈模式与
 // SceneActionPanel/TravelPanel 一致：提交期间禁用全部按钮、aria-live 提示
@@ -18,12 +18,12 @@ import { postGameAction } from "./gameActionRequest";
 type TakeItemActionView = Extract<SessionActionView, { type: "take_item" }>;
 
 type ItemPanelProps = {
-  view: GameSessionView;
+  view: CompatibilityGameSessionView;
   /** 其他面板提交中：为 true 时禁用本面板全部按钮。 */
   busy?: boolean;
   /** 本面板提交开始/结束回调：父级据此禁用其余面板。 */
   onBusyChange?: (busy: boolean) => void;
-  onActionSuccess: (view: GameSessionView) => void;
+  onActionSuccess: (view: CompatibilityGameSessionView) => void;
   onStaleRevision: () => void;
 };
 

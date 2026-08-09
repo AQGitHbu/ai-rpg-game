@@ -20,7 +20,7 @@ import {
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
-import type { GameRecordV2 } from "./server/persistence/gameRepositoryV2";
+import type { GameRecord } from "./server/persistence/gameRepository";
 
 const loc1: LocationEntry = {
   id: asLocationId("loc_1"), name: "客栈", description: "一间简朴的客栈", kind: "main",
@@ -75,7 +75,7 @@ function makeWorld(): ReturnType<typeof createInitialWorldState> {
   return { ...withNpc, unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
 }
 
-function makeRecord(withJob = true): GameRecordV2 {
+function makeRecord(withJob = true): GameRecord {
   const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
   const storyState: StoryState = withJob
     ? { ...ss, narrative: { ...ss.narrative, generation: { status: "pending", job: makeJob() } } }
@@ -113,7 +113,7 @@ describe("buildSceneGenerationContext", () => {
     expect(context.legalActionCandidates.some((c) => c.kind === "move")).toBe(true);
   });
 
-  it("never receives the whole record: a GameRecordV2 is not assignable to the context type", () => {
+  it("never receives the whole record: a GameRecord is not assignable to the context type", () => {
     const record = makeRecord();
     // @ts-expect-error SceneSource must not receive the full record
     acceptContext(record);

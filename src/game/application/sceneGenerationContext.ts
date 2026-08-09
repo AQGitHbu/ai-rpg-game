@@ -9,7 +9,7 @@ import type {
 } from "@/game/domain/scenarioBlueprint";
 import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { RecentBeat } from "@/game/domain/materializedView";
-import type { GameRecordV2 } from "./server/persistence/gameRepositoryV2";
+import type { GameRecord } from "./server/persistence/gameRepository";
 
 /**
  * SceneGenerator 的最小输入 DTO（spec §7.1 / §10.1-10.2）：
@@ -102,7 +102,7 @@ export type SceneGenerationContext = {
 };
 
 /** 从持久化 record 投影最小权限上下文（唯一构造入口）。 */
-export function buildSceneGenerationContext(record: GameRecordV2): SceneGenerationContext {
+export function buildSceneGenerationContext(record: GameRecord): SceneGenerationContext {
   const ws = record.worldState;
   const ss = record.storyState;
 

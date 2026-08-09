@@ -3,7 +3,7 @@ import type { ActiveQuestView } from "@/game/application";
 
 // ---------------------------------------------------------------------------
 // QuestTracker（Phase 4 Task 4）：active 任务面板，纯展示组件。
-// 只消费 GameSessionView.activeQuests 允许的信息：locked/closed 任务由
+// 只消费 CompatibilityGameSessionView.activeQuests 允许的信息：locked/closed 任务由
 // read model 过滤，这里不做任何推断。objective 按 completed/supported 三态
 // 打标签；未支持的 objective 标注「后续阶段能力」并附说明，绝不渲染
 // 按钮或其他假的可完成入口。

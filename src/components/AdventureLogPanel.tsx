@@ -1,11 +1,11 @@
 import { Panel, Tag } from "@ai-game/ui";
-import type { GameSessionView } from "@/game/application";
+import type { CompatibilityGameSessionView } from "@/game/application";
 
 /**
  * 无 AI MVP 的连续叙事层：只显示 application 已投影的结构化事件文本。
  * 它不读取 state/blueprint，也不根据按钮自行推断剧情结果。
  */
-export function AdventureLogPanel({ events }: { readonly events: GameSessionView["storyEvents"] }) {
+export function AdventureLogPanel({ events }: { readonly events: CompatibilityGameSessionView["storyEvents"] }) {
   return (
     <Panel
       eyebrow="冒险记录"

@@ -1,307 +1,193 @@
-import {
-  createBudgetPolicy,
-  validateNewGameInput,
-  type NewGameInput,
-  type NewGameInputError,
-  type NarrativeMode,
-  type ScenarioBlueprint
-} from "@/game/domain";
-import {
-  compileScenarioBlueprint,
-  createFallbackBlueprint,
-  initializeGameState,
-  loadScenarioProfiles,
-  validateScenarioBlueprintCandidate,
-  type ScenarioBlueprintIssue,
-  type ScenarioProfiles
-} from "@/game/gameplay/rpg/scenario";
-import { projectGameSessionView, type GameSessionView } from "./gameSessionView";
-import { repairScenarioCandidate } from "./scenarioCandidateRecovery";
-import type {
-  ScenarioCandidateAttempt,
-  ScenarioCandidateFailureCategory,
-  ScenarioCandidateSource,
-  ScenarioGenerationEvent,
-  ScenarioGenerationSource
-} from "./scenarioGeneration";
-import type {
-  CreateInitialGameResult,
-  GameId,
-  GameRepository
-} from "./server/persistence/gameRepository";
-import type { DirectorSource, NpcLineSource, SceneScriptSource } from "./runtimeNarrative";
-import { canQueueRuntimeNarrativeScene } from "./runtimeNarrativeEligibility";
-
-/**
- * 将校验器的细粒度 issue 收敛为生成契约已有的、可脱敏汇总的失败分类。
- * issue 的顺序由校验器稳定决定；取首项既保留最先阻断生成的原因，又不向日志
- * 泄漏候选内容、字段路径或具体参数。
- */
-function classifyValidationFailure(
-  issues: readonly ScenarioBlueprintIssue[]
-): ScenarioCandidateFailureCategory {
-  switch (issues[0]?.code) {
-    case "BUDGET_POLICY_MISMATCH":
-    case "MAIN_LOCATION_COUNT_OUT_OF_RANGE":
-    case "HIDDEN_LOCATION_OVERBUDGET":
-    case "CORE_NPC_COUNT_OUT_OF_RANGE":
-    case "COMPANION_OVERBUDGET":
-    case "ENDING_COUNT_MISMATCH":
-    case "MAIN_STAGE_OVERBUDGET":
-    case "SIDE_QUEST_OVERBUDGET":
-      return "budget_exceeded";
-    case "DANGLING_REFERENCE":
-    case "DANGLING_QUEST_REF":
-    case "DANGLING_ENDING_REF":
-    case "UNKNOWN_OBJECTIVE_TARGET":
-    case "INVALID_ENDING_REQUIREMENT":
-      return "reference_broken";
-    case "NO_INITIAL_MAIN_QUEST":
-    case "MULTIPLE_INITIAL_MAIN_QUESTS":
-    case "MISSING_MAIN_STAGE":
-    case "LOOP_WITHOUT_CLOSURE":
-    case "UNREACHABLE_ENDING":
-    case "REPEATED_MAIN_OBJECTIVE":
-      return "unreachable_ending";
-    case "GAME_TYPE_MISMATCH":
-    case "FORBIDDEN_TAG":
-      return "cross_type_content";
-    case "DUPLICATE_GLOBAL_ID":
-    case "DUPLICATE_AVAILABLE_ITEM":
-    case "STARTING_ITEM_AVAILABLE_AT_LOCATION":
-    case "OPENING_SCENE_HIDDEN_LOCATION":
-    case "OPENING_NPC_NOT_AT_LOCATION":
-    case "OPENING_SCENE_NO_INVESTIGABLE_FACTS":
-    case "DUPLICATE_INVESTIGABLE_FACT":
-    case "DUPLICATE_QUEST_ID":
-    case "DUPLICATE_ENDING_ID":
-      return "illegal_entity";
-    default:
-      return "schema_violation";
-  }
-}
+import type { GameRepository } from "./server/persistence/gameRepository";
+import type { GameId } from "./server/persistence/gameRepository";
+import type { StoryState } from "@/game/domain/storyState";
+import type { GameTypeId, GameLength } from "@/game/domain/newGame";
+import type { WorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
+import { parseWorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
+import { validateWorldGenerationCandidate } from "@/game/gameplay/rpg/worldGeneration";
+import { compileWorldGenerationCandidate } from "@/game/gameplay/rpg/worldGeneration";
+import { asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 
 // ---------------------------------------------------------------------------
-// createGame use case（Task 1 契约 + Phase 4A Task 3 候选编排）。
-// 严格顺序：validateNewGameInput → attempt #1（validate/compile 或 repair 一次）
-//   → attempt #2 同流程 → createFallbackBlueprint → validate/compile
-//   → initializeGameState → repository.createInitialGame 一次 → 投影 GameSessionView。
-// source 失败永不变 GENERATION_INVALID（仅 fallback 本身不可编译才返回该码）；
-// diagnostics/阶段事件不进 CreateGameResult，observer 仅供契约测试/结构化日志。
-// application 不读 process.env / 文件路径 / libsql 类型。
+// Task 14 Step 2：世界生成编排改为 source → parse → validate → compile。
+// WorldGenerationSource.generate 返回 WorldGenerationCandidate（原始字符串 ID）。
+// createGame 内：schema parse → gameplay validate → compile 为单一 World/Story
+// State，任何失败返回明确错误码，绝不用 `as never` 透传。
 // ---------------------------------------------------------------------------
 
-/** 创建结果的安全来源区分（spec §5）：Phase 4A 起可为 generated 或 fallback。 */
-export type GenerationSource = ScenarioGenerationSource;
-
-/**
- * 创建命令：只承载浏览器允许提交的原始开局资料。
- * `seed` 仅供 server 端测试/组合根注入，浏览器提交不得携带（API adapter 负责拒收）；
- * 生产 seed 由 CreateGameDependencies.newSeed 提供，gameId/时钟同为注入依赖。
- */
-export type CreateGameCommand = {
-  readonly input: NewGameInput;
-  readonly seed?: string;
+export type WorldGenerationSource = {
+  generate(input: {
+    gameType: GameTypeId;
+    seed: string;
+    gameLength: GameLength;
+  }): Promise<WorldGenerationCandidate>;
 };
 
-/** 全部依赖注入：确定性由调用方掌控，测试不依赖真实时间或随机数。 */
-export type CreateGameDependencies = {
-  readonly repository: GameRepository;
-  /** 新存档 ID provider：生产为 UUID，测试注入固定值。 */
-  readonly newGameId: () => GameId;
-  /** 生产 seed provider；command.seed 存在时优先生效。 */
-  readonly newSeed: () => string;
-  /** 注入时钟：返回 ISO 8601 字符串，用作存档 createdAt。 */
-  readonly now: () => string;
-  /** Phase 4A：候选来源 port；生产注入 unavailable source（稳定走 fallback）。 */
-  readonly scenarioCandidateSource: ScenarioCandidateSource;
-  /** 每次创建一个 traceId：只进 source 请求与日志，绝不进玩家 API 响应。 */
-  readonly newTraceId: () => string;
-  /** 可选阶段观察者：仅供契约测试/日志；抛错被吞，不写库、不经 API 返回。 */
-  readonly generationObserver?: (event: ScenarioGenerationEvent) => void;
-  /** 场景 profile 配置：缺省加载内置 data/base 配置，测试可注入变体。 */
-  readonly profiles?: ScenarioProfiles;
-  /** Optional only for legacy/unit callers; production always injects the three sources. */
-  readonly runtimeNarrativeSources?: Readonly<{ directorSource: DirectorSource; sceneScriptSource: SceneScriptSource; npcLineSource: NpcLineSource }>;
-  /** Server-owned save mode; offline development presets never call a provider. */
-  readonly runtimeNarrativeMode?: NarrativeMode;
+export type CreateGameInput = {
+  readonly gameId: GameId;
+  readonly gameType: GameTypeId;
+  readonly gameLength: GameLength;
+  readonly seed: string;
 };
 
 export type CreateGameResult =
-  | {
-      readonly ok: true;
-      readonly gameId: GameId;
-      readonly source: GenerationSource;
-      readonly view: GameSessionView;
-    }
-  // 输入验证失败：字段错误原样透传（含可显示 params），供表单逐字段提示。
-  | {
-      readonly ok: false;
-      readonly code: "INVALID_INPUT";
-      readonly fieldErrors: readonly NewGameInputError[];
-    }
-  // 生成/编译诊断、存档冲突与基础设施失败：只暴露稳定代码，不泄漏内部细节。
-  | {
-      readonly ok: false;
-      readonly code: "GENERATION_INVALID" | "ACTIVE_GAME_EXISTS" | "INFRASTRUCTURE_FAILURE";
-    };
+  | { readonly ok: true; readonly revision: number }
+  | { readonly ok: false; readonly code: "ACTIVE_GAME_EXISTS" | "GENERATION_FAILED" | "INFRASTRUCTURE_FAILURE" };
+
+export type CreateGameDeps = {
+  readonly repository: GameRepository;
+  readonly source: WorldGenerationSource;
+  readonly now: () => string;
+  /** Whether AI config is available (determines narrative.mode) */
+  readonly aiEnabled?: boolean;
+};
 
 export async function createGame(
-  command: CreateGameCommand,
-  deps: CreateGameDependencies
+  input: CreateGameInput,
+  deps: CreateGameDeps,
 ): Promise<CreateGameResult> {
-  const validatedInput = validateNewGameInput(command.input);
-  if (!validatedInput.ok) {
-    return { ok: false, code: "INVALID_INPUT", fieldErrors: validatedInput.errors };
-  }
+  const generated = await deps.source.generate({
+    gameType: input.gameType,
+    seed: input.seed,
+    gameLength: input.gameLength,
+  });
+  if (!generated) return { ok: false, code: "GENERATION_FAILED" };
 
-  const profiles = deps.profiles ?? loadScenarioProfiles();
-  const profile = profiles.gameTypeProfiles[validatedInput.value.gameType];
-  const policy = createBudgetPolicy(validatedInput.value.gameLength);
-  const seed = command.seed ?? deps.newSeed();
-  const request = { input: validatedInput.value, seed, traceId: deps.newTraceId() };
-  const emit = (event: ScenarioGenerationEvent): void => {
-    try {
-      deps.generationObserver?.({
-        ...event,
-        traceId: event.traceId ?? request.traceId
-      });
-    } catch {
-      // observer 只做诊断：任何异常不得影响创建流程。
-    }
+  // Step 2.2：schema parse → validate → compile。
+  const parsed = parseWorldGenerationCandidate(generated);
+  if (!parsed.ok) return { ok: false, code: "GENERATION_FAILED" };
+
+  const validated = validateWorldGenerationCandidate(parsed.value);
+  if (!validated.ok) return { ok: false, code: "GENERATION_FAILED" };
+
+  const generation = {
+    generationId: asGenerationId(`gen_${input.seed}`),
+    seed: input.seed,
+    templateVersion: "v2" as const,
+    inputDigest: "",
+    gameType: input.gameType,
   };
 
-  // ── 候选编排：最多两次 source 尝试，每次允许一次机械修复；全部失败走 fallback。
-  emit({ stage: "requested" });
-  const baseRequest = { input: validatedInput.value, seed, traceId: deps.newTraceId() };
-  let blueprint: ScenarioBlueprint | null = null;
-  let source: GenerationSource = "fallback";
-  // 默认值保证 fallback 事件始终有一个稳定、可汇总的脱敏原因。
-  let lastFailureCategory: ScenarioCandidateFailureCategory = "service_error";
+  const { worldState, storyState } = compileWorldGenerationCandidate({
+    candidate: validated.validated,
+    generation,
+    gameType: input.gameType,
+    gameLength: input.gameLength,
+  });
 
-  for (let attemptIndex = 0; attemptIndex < 2 && blueprint === null; attemptIndex += 1) {
-    if (attemptIndex === 1) emit({ stage: "retrying" });
-    // 每次尝试唯一可解析的 traceId：第 N 次尝试堆叠 N 个 -retry（评估采集按此解析 attempt）。
-    const request = {
-      ...baseRequest,
-      traceId: `${baseRequest.traceId}${"-retry".repeat(attemptIndex)}`,
-    };
-    let attempt: ScenarioCandidateAttempt;
-    try {
-      attempt = await deps.scenarioCandidateSource.generate(request);
-    } catch {
-      // source 契约外抛错视同失败尝试：绝不外泄、绝不变 GENERATION_INVALID。
-      lastFailureCategory = "service_error";
-      continue;
-    }
-    if (!attempt.ok) {
-      lastFailureCategory = attempt.category;
-      continue;
-    }
+  // Set narrative to pending so the first scene (prologue) gets generated
+  // by the ensure polling mechanism (spec §9.1: 生成序幕场景).
+  // v2.1：pending 唯一载体是带 job 的 PendingNarrativeJob（Spec §10.3），
+  // 不再使用无 job 的 requestedAt legacy 形式。
+  const narrativeMode = deps.aiEnabled ? "ai" : "offline";
+  const jobResult = createPendingNarrativeJob({
+    jobId: asNarrativeJobId(`job_${input.seed}_0`),
+    turnId: asTurnId(`turn_${input.seed}_0`),
+    actionId: `start_${input.seed}`,
+    expectedRevision: 0,
+    turnNumber: 0,
+    actionSummary: { kind: "explore" },
+    resolvedEvent: {
+      actionId: `start_${input.seed}`,
+      status: "success",
+      eventKind: "observe",
+      facts: [],
+      stateChanges: [],
+      costs: [],
+      rewards: [],
+      triggeredEvents: [],
+      rejectedEffects: [],
+    },
+    domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+    requestedAt: deps.now(),
+  });
+  if (!jobResult.ok) return { ok: false, code: "GENERATION_FAILED" };
 
-    emit({ stage: "candidate_received" });
-    emit({ stage: "validating" });
-    const validation = validateScenarioBlueprintCandidate(attempt.candidate, { profile, policy });
-    if (validation.ok) {
-      const compiled = compileScenarioBlueprint(validation);
-      if (compiled.ok) {
-        blueprint = compiled.blueprint;
-        source = "generated";
-      } else {
-        lastFailureCategory = "illegal_entity";
-      }
-      continue;
-    }
-    lastFailureCategory = classifyValidationFailure(validation.issues);
-    // 一次机械修复：修复成功（非 null）才发 repairing，否则直接重试/fallback。
-    const repaired = repairScenarioCandidate(attempt.candidate, { profiles, policy });
-    if (repaired === null) continue;
-    emit({ stage: "repairing" });
-    const repairedValidation = validateScenarioBlueprintCandidate(repaired, { profile, policy });
-    if (!repairedValidation.ok) {
-      lastFailureCategory = classifyValidationFailure(repairedValidation.issues);
-      continue;
-    }
-    const compiledRepaired = compileScenarioBlueprint(repairedValidation);
-    if (compiledRepaired.ok) {
-      blueprint = compiledRepaired.blueprint;
-      source = "generated";
-    } else {
-      lastFailureCategory = "illegal_entity";
-    }
-  }
+  const storyStateWithPending: StoryState = {
+    ...storyState,
+    narrative: {
+      ...storyState.narrative,
+      mode: narrativeMode,
+      generation: { status: "pending", job: jobResult.job },
+    },
+  };
 
-  if (blueprint === null) {
-    emit({ stage: "falling_back", category: lastFailureCategory });
-    const candidate = createFallbackBlueprint(validatedInput.value, seed, { profiles });
-    const compiled = compileScenarioBlueprint(
-      validateScenarioBlueprintCandidate(candidate, { profile, policy })
-    );
-    if (!compiled.ok) {
-      // 仅 fallback 本身不可编译才返回该码：不外泄 issue，也不触及 repository。
-      return { ok: false, code: "GENERATION_INVALID" };
-    }
-    blueprint = compiled.blueprint;
-    source = "fallback";
-  }
+  const createResult = await deps.repository.createInitialGame({
+    gameId: input.gameId,
+    worldState,
+    storyState: storyStateWithPending,
+    createdAt: deps.now(),
+  });
 
-  let state = initializeGameState(blueprint);
-  const narrativeMode = deps.runtimeNarrativeMode ?? "ai";
-  if (narrativeMode === "offline") {
-    state = {
-      ...state,
-      narrative: { currentScene: null, generation: { status: "idle" }, mode: "offline" },
-    };
-  } else if (deps.runtimeNarrativeSources !== undefined && canQueueRuntimeNarrativeScene(blueprint, state)) {
-    // Rules and the initial save complete immediately. The server-side task
-    // coordinator later produces the scene and CAS-saves it from this marker.
-    state = {
-      ...state,
-      narrative: {
-        currentScene: null,
-        generation: {
-          status: "pending",
-          requestedAt: deps.now(),
-          triggerContext: {
-            kind: "initial_opening",
-            npcId: blueprint.startAnchor.npcId,
-          }
-        },
-        mode: "ai"
-      },
-    };
-  }
-  const gameId = deps.newGameId();
-  let created: CreateInitialGameResult;
-  try {
-    created = await deps.repository.createInitialGame({
-      gameId,
-      blueprint,
-      state,
-      createdAt: deps.now()
-    });
-  } catch {
-    // 端口契约外的意外抛错（adapter 漏网的驱动异常等）：与结构化失败同样
-    // 映射稳定代码，异常文本绝不向 API/UI 层泄漏。
-    emit({ stage: "failed", category: "persistence_failure" });
-    return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-  }
-  if (!created.ok) {
-    emit({ stage: "failed", category: "persistence_failure" });
-    return { ok: false, code: created.code };
-  }
+  if (!createResult.ok) return createResult;
+  return { ok: true, revision: 0 };
+}
 
-  emit({ stage: "completed", outcome: source });
+export function createFixtureWorldSource(): WorldGenerationSource {
   return {
-    ok: true,
-    gameId,
-    source,
-    view: projectGameSessionView({
-      gameId,
-      blueprint,
-      state,
-      revision: 0,
-      worldName: profile.label
-    })
+    async generate() {
+      // 开局只给 1 个地点 + 1 个 NPC（spec：渐进式世界扩展）。
+      // 第二个地点存在但不解锁——通过剧情推进后 ExpansionProposer 提议解锁。
+      return {
+        world: {
+          summary: "一个江湖恩怨交织的世界。",
+          tone: "江湖沧桑",
+          themes: ["探索", "抉择"],
+          publicFacts: [{ id: "fact_inn", text: "起始客栈是小镇的门户。" }],
+          hiddenFacts: [],
+          tags: ["武侠"],
+        },
+        player: {
+          name: "无名侠客",
+          identity: "流浪剑客",
+          backgroundSummary: "独自流浪，追寻身世之谜。",
+          startingLocationId: "loc_start",
+          startingItemIds: [],
+          baseStats: { hp: 100, attack: 10, defense: 5 },
+        },
+        startAnchor: {
+          locationId: "loc_start",
+          npcId: "npc_innkeeper",
+          startQuestId: "quest_main",
+          mainThreadId: "thread_main",
+        },
+        locations: [
+          {
+            id: "loc_start", name: "起始客栈", description: "一间简朴的客栈，空气中弥漫着茶香。门外是一条通往小镇的土路。", kind: "main",
+            connectedLocationIds: ["loc_street"], npcIds: ["npc_innkeeper"], availableItemIds: [], tags: [],
+          },
+          {
+            id: "loc_street", name: "小镇街道", description: "热闹的街道两旁摆满了摊位", kind: "main",
+            connectedLocationIds: ["loc_start"], npcIds: [], availableItemIds: [], tags: [],
+          },
+        ],
+        npcs: [
+          {
+            id: "npc_innkeeper", name: "客栈老板", role: "路人", description: "热情的客栈老板，似乎知道很多消息",
+            locationId: "loc_start", isCompanion: false,
+            knownFactIds: ["fact_inn"], hiddenFactIds: [], goals: [], tags: [],
+          },
+        ],
+        items: [],
+        enemies: [],
+        factions: [],
+        quests: [
+          {
+            id: "quest_main", name: "探索未知世界", description: "踏出客栈，探索这个世界隐藏的秘密。", kind: "main", stage: 1,
+            objectives: [{ kind: "talk_to_npc", npcId: "npc_innkeeper" }, { kind: "visit_location", locationId: "loc_street" }],
+            onSuccess: { kind: "reach_ending", endingId: "ending_success" },
+            onFailure: { kind: "closed" },
+            tags: ["main"],
+          },
+        ],
+        endings: [
+          { id: "ending_success", name: "冒险成功", description: "你完成了这段冒险。", requirements: [{ kind: "quest_completed", questId: "quest_main" }] },
+          { id: "ending_roam", name: "浪迹天涯", description: "你选择了继续流浪。", requirements: [{ kind: "fact_discovered", factId: "fact_inn" }] },
+        ],
+        openingBudget: { locationsCount: 2, npcsCount: 1, sideQuestsCount: 0, endingsCount: 2, townLocationsCount: 0 },
+      };
+    },
   };
 }

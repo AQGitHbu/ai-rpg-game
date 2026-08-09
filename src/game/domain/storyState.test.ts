@@ -19,7 +19,7 @@ describe("StoryState", () => {
   it("classifies legacy v2 without silently migrating it", () => {
     expect(classifyStoryStateSchemaVersion(2)).toEqual({
       ok: false,
-      code: "LEGACY_V2_RECORD",
+      code: "UNSUPPORTED_RECORD",
     });
     expect(classifyStoryStateSchemaVersion(3)).toEqual({
       ok: true,

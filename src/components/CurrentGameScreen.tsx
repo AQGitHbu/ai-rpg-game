@@ -2,243 +2,109 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
-import type { GameSessionView } from "@/game/application";
-import { NewGameSetupForm } from "./NewGameSetupForm";
+import type { GameSessionView } from "@/game/application/gameSessionView";
 import { AdventureGameShell } from "./AdventureGameShell";
-import { BattlePanel } from "./BattlePanel";
-import { EndingPanel } from "./EndingPanel";
-import { PrologueScreen } from "./PrologueScreen";
+import { NewGameSetupForm } from "./NewGameSetupForm";
+import { fetchCurrentGame, ensureNarrative, ackPrologue } from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
-// 根页面客户端协调器（Phase 2–5 + Phase 6）：挂载时读取 GET /api/game/current。
-//   none    → 显示创建表单；创建成功后无需刷新，直接切换到会话视图。
-//   active  → 恢复已保存的会话视图：场景 + 行动面板 + 移动面板 + 物品面板 +
-//             任务面板 + 战斗面板（如有）+ 结局面板（如有）；成功行动用 API
-//             返回的最新 view 替换本地 view；任一面板提交中禁用全部行动按钮；
-//             版本冲突后重新请求 current-game。
-//   结局后  → 只显示结局面板与场景信息，普通互动区不再可操作。
-//   corrupt → 按 reason 分支可恢复提示：真实数据损坏 ≠ 数据库暂时不可用。
-// 只消费 API 响应与 application 的 read model 类型，不接触持久化/gameplay。
+// V2 根页面客户端协调器：直接消费 V2 API（/api/game/*）。
+// 挂载时读取 GET /api/game/current。
+//   none    → 显示创建表单
+//   active  → 显示 V2 主游戏 Shell
+//   结局后  → 只显示结局面板
+//   corrupt → 错误提示
 // ---------------------------------------------------------------------------
 
 type ScreenState =
   | { phase: "loading" }
   | { phase: "none" }
-  // createdWithFallback：仅在本次创建回调中置 true 的一次性降级标记；
-  // 刷新恢复/行动成功/重新读取都会清除，不随存档持久化。
-  | { phase: "active"; view: GameSessionView; createdWithFallback: boolean }
+  | { phase: "active"; view: GameSessionView }
   | { phase: "corrupt"; reason: string }
   | { phase: "unreachable" };
 
-/** GET /api/game/current 的响应形态（宽松解析：非法 body 按不可达处理）。 */
-type CurrentGameApiBody = {
-  status?: string;
-  view?: GameSessionView;
-  code?: string;
-  reason?: string;
-  developmentTools?: boolean;
-};
-
-/** 数据损坏 reason → 可显示的具体原因（区别于基础设施失败）。 */
-const CORRUPT_REASON_COPY: Record<string, string> = {
-  UNPARSEABLE_RECORD: "存档记录无法解析",
-  VERSION_MISMATCH: "存档版本与当前程序不匹配",
-  GENERATION_MISMATCH: "存档内容与其生成记录不一致"
-};
-
 export function CurrentGameScreen() {
   const [state, setState] = useState<ScreenState>({ phase: "loading" });
-  // 任一面板提交中：场景与移动面板的全部按钮一律禁用，避免并发写入。
-  const [actionBusy, setActionBusy] = useState(false);
-  const [developmentTools, setDevelopmentTools] = useState(false);
-  const [narrativeGenerationUnavailable, setNarrativeGenerationUnavailable] = useState(false);
 
-  const setActiveView = useCallback((view: GameSessionView, createdWithFallback: boolean): void => {
-    if (view.narrativeGeneration?.status !== "pending") {
-      setNarrativeGenerationUnavailable(false);
-    }
-    setState({ phase: "active", view, createdWithFallback });
-  }, []);
-
-  const applyCurrentGameBody = useCallback((body: CurrentGameApiBody | null): void => {
-    setDevelopmentTools(body?.developmentTools === true);
-    if (body?.status === "none") {
-      setNarrativeGenerationUnavailable(false);
+  const applyResponse = useCallback((res: { ok: boolean; status: string; view?: GameSessionView; code?: string }) => {
+    if (res.status === "none") {
       setState({ phase: "none" });
-    } else if (body?.status === "active" && body.view !== undefined) {
-      // GET current 不携带生成来源：刷新恢复永远不显示降级提示。
-      setActiveView(body.view, false);
-    } else if (body?.status === "corrupt" && typeof body.reason === "string") {
-      setState({ phase: "corrupt", reason: body.reason });
+    } else if (res.status === "active" && res.view !== undefined) {
+      setState({ phase: "active", view: res.view });
+    } else if (res.status === "corrupt") {
+      setState({ phase: "corrupt", reason: res.code ?? "UNKNOWN" });
     } else {
       setState({ phase: "unreachable" });
     }
-  }, [setActiveView]);
+  }, []);
 
-  const loadCurrentGame = useCallback(async (): Promise<void> => {
-    try {
-      const response = await fetch("/api/game/current");
-      const body = (await response.json().catch(() => null)) as CurrentGameApiBody | null;
-      applyCurrentGameBody(body);
-    } catch {
-      setState({ phase: "unreachable" });
-    }
-  }, [applyCurrentGameBody]);
+  const loadCurrentGame = useCallback(async () => {
+    const res = await fetchCurrentGame();
+    applyResponse(res);
+  }, [applyResponse]);
 
   useEffect(() => {
     let cancelled = false;
     async function init() {
-      try {
-        const response = await fetch("/api/game/current");
-        const body = (await response.json().catch(() => null)) as CurrentGameApiBody | null;
-        if (cancelled) return;
-        applyCurrentGameBody(body);
-      } catch {
-        if (!cancelled) setState({ phase: "unreachable" });
-      }
+      const res = await fetchCurrentGame();
+      if (!cancelled) applyResponse(res);
     }
     void init();
-    return () => {
-      cancelled = true;
-    };
-  }, [applyCurrentGameBody]);
+    return () => { cancelled = true; };
+  }, [applyResponse]);
 
-  const rawNarrativePending = state.phase === "active" &&
+  // 叙事 pending 时轮询 ensure + 重新读取
+  const narrativePending = state.phase === "active" &&
     state.view.narrativeGeneration?.status === "pending";
-  const narrativePending = rawNarrativePending && !narrativeGenerationUnavailable;
 
   useEffect(() => {
     if (!narrativePending) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let ensureAttempted = false;
-    let lastEnsureAt = 0;
-    let ensureFailures = 0;
-    async function ensureAndPoll(): Promise<void> {
-      let nextDelayMs = 750;
-      try {
-        // ensure 首次立即调用；任务运行期间每 10 秒再调用一次，作为后台
-        // 任务异常退出后的恢复入口。current 高频读取只是获取就绪 view，
-        // 不代表每次 GET 都重新调用 AI。
-        const ensureDue = !ensureAttempted || Date.now() - lastEnsureAt >= 10_000;
-        if (ensureDue) {
-          const ensureResponse = await fetch("/api/game/narrative/ensure", { method: "POST" });
-          lastEnsureAt = Date.now();
-          if (!ensureResponse.ok) {
-            ensureFailures += 1;
-            ensureAttempted = false;
-            nextDelayMs = 3_000;
-            if (ensureFailures >= 3) {
-              setNarrativeGenerationUnavailable(true);
-              return;
-            }
-          } else {
-            ensureAttempted = true;
-            ensureFailures = 0;
-            setNarrativeGenerationUnavailable(false);
-          }
-        }
-        if (cancelled) return;
-        const response = await fetch("/api/game/current");
-        const body = (await response.json().catch(() => null)) as CurrentGameApiBody | null;
-        if (!cancelled) applyCurrentGameBody(body);
-      } catch {
-        // Keep retrying transient ensure/current failures with a bounded
-        // failure count; a persistent infrastructure failure stops the loop.
-        ensureFailures += 1;
-        ensureAttempted = false;
-        nextDelayMs = 3_000;
-        if (ensureFailures >= 3) {
-          setNarrativeGenerationUnavailable(true);
-          return;
-        }
+    let failures = 0;
+
+    async function poll() {
+      const ok = await ensureNarrative();
+      if (cancelled) return;
+      if (!ok) {
+        failures++;
+        if (failures >= 3) return;
+      } else {
+        failures = 0;
       }
-      if (!cancelled) timer = setTimeout(() => void ensureAndPoll(), nextDelayMs);
+      // Re-fetch current game
+      const res = await fetchCurrentGame();
+      if (!cancelled) applyResponse(res);
+      if (!cancelled) timer = setTimeout(() => void poll(), 750);
     }
-    void ensureAndPoll();
+    void poll();
     return () => {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [narrativePending, applyCurrentGameBody]);
+  }, [narrativePending, applyResponse]);
 
-  const townPending = state.phase === "active" &&
-    state.view.townStatus === "pending";
-
-  useEffect(() => {
-    if (!townPending) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    async function ensureAndPoll(): Promise<void> {
-      try {
-        await fetch("/api/game/town/ensure", { method: "POST" });
-        if (cancelled) return;
-        const response = await fetch("/api/game/current");
-        const body = (await response.json().catch(() => null)) as CurrentGameApiBody | null;
-        if (!cancelled) applyCurrentGameBody(body);
-      } catch {
-        // Keep the current pending view. The next polling tick can recover a
-        // temporarily unavailable local server without discarding the save.
-      }
-      if (!cancelled) timer = setTimeout(() => void ensureAndPoll(), 750);
-    }
-    void ensureAndPoll();
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) clearTimeout(timer);
-    };
-  }, [townPending, applyCurrentGameBody]);
-
-  async function clearDevelopmentSave(): Promise<void> {
+  // 清除本地试玩存档
+  async function clearDevelopmentSave() {
     if (!window.confirm("仅清除当前本地试玩存档并重新开局？此操作只在开发环境可用。")) return;
-    setActionBusy(true);
     try {
-      const response = await fetch("/api/game/dev/current", { method: "DELETE" });
-      const body = (await response.json().catch(() => null)) as { status?: string } | null;
-      if (response.ok && (body?.status === "cleared" || body?.status === "none")) {
-        setNarrativeGenerationUnavailable(false);
-        setState({ phase: "none" });
-        return;
-      }
-      // 生产或服务异常都不清空当前 UI，避免前端伪造新开局。
-      await loadCurrentGame();
-    } finally {
-      setActionBusy(false);
-    }
-  }
-
-  /** Phase 14：标记序幕已播放（CAS 幂等）。成功后用返回的 view 切换到正常游戏 UI。 */
-  async function markPrologueShown(revision: number): Promise<void> {
-    try {
-      const response = await fetch("/api/game/prologue/ack", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ revision }),
-      });
-      const body = (await response.json().catch(() => null)) as { code?: string; view?: GameSessionView } | null;
-      // /api/game/prologue/ack 与旧 action adapter 一样可能用 200 返回
-      // ACTION_REJECTED + 当前 view；不能把它误判为 ack 成功，否则黑屏会
-      // 原地保留且玩家看不到失败原因。只有无 code 的成功响应才切换视图。
-      if (response.ok && body?.code === undefined && body?.view) {
-        setActiveView(body.view, false);
-        return;
-      }
-      // 版本冲突或其它错误：重新读取当前存档以恢复一致状态。
-      await loadCurrentGame();
+      await fetch("/api/game/dev/current", { method: "DELETE" });
     } catch {
-      // 网络异常：保留当前视图（序幕停留），下次操作可自然恢复。
+      // ignore
     }
+    await loadCurrentGame();
   }
 
-  const developmentControl = developmentTools ? (
-    <Panel className="setup-result" compact>
-      <Tag variant="warning">开发工具</Tag>
-      <p>仅清除当前本地试玩存档；不会删除数据库文件或其它项目数据。</p>
-      <InlineButton disabled={actionBusy} onClick={() => void clearDevelopmentSave()}>
-        清除本地试玩存档
-      </InlineButton>
-    </Panel>
-  ) : null;
+  // 序幕确认
+  async function handlePrologueAck() {
+    await ackPrologue();
+    await loadCurrentGame();
+  }
+
+  // 创建游戏后
+  function handleCreated() {
+    void loadCurrentGame();
+  }
 
   if (state.phase === "loading") {
     return (
@@ -249,102 +115,61 @@ export function CurrentGameScreen() {
   }
 
   if (state.phase === "active") {
-    const hasEnding = state.view.ending !== null;
-    const hasBattle = state.view.battle !== null;
-    // Phase 14：序幕未播放且有序幕定义时，优先显示黑底白字开场。
-    const prologue = state.view.openingScene?.prologue;
-    if (!state.view.prologueShown && prologue) {
+    const { view } = state;
+    // 序幕
+    if (!view.prologueShown) {
       return (
-        <PrologueScreen
-          prologue={prologue}
-          onComplete={() => void markPrologueShown(state.view.revision)}
-        />
+        <Panel className="prologue-screen">
+          <h2>序幕</h2>
+          <p>你踏上了冒险的旅途。前方是未知的世界，充满了机遇与危险。</p>
+          <InlineButton onClick={() => void handlePrologueAck()}>开始冒险</InlineButton>
+        </Panel>
+      );
+    }
+
+    // 结局
+    if (view.ending !== null) {
+      return (
+        <Panel className="ending-screen">
+          <Tag variant={view.ending.outcome === "success" ? "success" : "danger"}>
+            {view.ending.outcome === "success" ? "胜利" : "失败"}
+          </Tag>
+          <h2>故事结局</h2>
+          <p>你的冒险至此结束。</p>
+          <InlineButton onClick={() => void loadCurrentGame()}>重新开始</InlineButton>
+        </Panel>
       );
     }
 
     return (
-      <div className="game-screen">
-        {state.createdWithFallback ? (
-          <Panel className="setup-result" compact>
-            <Tag variant="warning">稳定模板开局</Tag>
-            <p role="status" aria-live="polite">
-              已使用稳定模板完成开局，仍可完整游玩。
-            </p>
-          </Panel>
-        ) : null}
-        {hasEnding ? (
-          <EndingPanel view={state.view} />
-        ) : hasBattle ? (
-          <BattlePanel
-            view={state.view}
-            busy={actionBusy}
-            onBusyChange={setActionBusy}
-            onActionSuccess={(view) => setActiveView(view, false)}
-            onStaleRevision={() => void loadCurrentGame()}
-          />
-        ) : (
-          <AdventureGameShell
-            view={state.view}
-            busy={actionBusy}
-            onBusyChange={setActionBusy}
-            onViewChange={(view) => setActiveView(view, false)}
-            onStaleRevision={() => void loadCurrentGame()}
-            developmentTools={developmentTools}
-            onClearDevelopmentSave={clearDevelopmentSave}
-            narrativeGenerationUnavailable={narrativeGenerationUnavailable}
-          />
-        )}
-      </div>
-    );
-  }
-
-  if (state.phase === "none") {
-    return (
-      <NewGameSetupForm
-        developmentTools={developmentTools}
-        onCreated={(view, generationSource) =>
-          setActiveView(view, generationSource === "fallback")
-        }
+      <AdventureGameShell
+        view={view}
+        onViewChange={(newView) => setState({ phase: "active", view: newView })}
+        onStaleRevision={() => void loadCurrentGame()}
+        onClearDevelopmentSave={clearDevelopmentSave}
       />
     );
   }
 
+  if (state.phase === "none") {
+    return <NewGameSetupForm apiPath="/api/game" onCreatedWithoutView={handleCreated} />;
+  }
+
   if (state.phase === "corrupt") {
-    if (state.reason === "INFRASTRUCTURE_FAILURE") {
-      return (
-        <>
-          <Panel className="setup-result" compact>
-            <Tag variant="warning">暂时无法读取</Tag>
-            <p role="alert">
-              本地存档数据库暂时不可用：存档并未丢失，请稍后刷新页面重试。
-            </p>
-          </Panel>
-          {developmentControl}
-        </>
-      );
-    }
-    const detail = CORRUPT_REASON_COPY[state.reason] ?? "存档记录出现未知异常";
     return (
-      <>
-        <Panel className="setup-result" compact>
-          <Tag variant="danger">存档数据已损坏</Tag>
-          <p role="alert">
-            {detail}（原因代码：{state.reason}）。本阶段不会自动重置或覆盖该存档，
-            恢复方案将在后续阶段提供。
-          </p>
-        </Panel>
-        {developmentControl}
-      </>
+      <Panel className="error-panel">
+        <Tag variant="danger">存档异常</Tag>
+        <p role="alert">存档读取异常：{state.reason}</p>
+        <InlineButton onClick={() => void loadCurrentGame()}>重试</InlineButton>
+      </Panel>
     );
   }
 
   return (
-    <>
-      <Panel className="setup-result" compact>
-        <Tag variant="warning">读取失败</Tag>
-        <p role="alert">未能读取当前存档：网络或本地服务异常，请刷新页面重试。</p>
-      </Panel>
-      {developmentControl}
-    </>
+    <Panel className="error-panel">
+      <Tag variant="warning">读取失败</Tag>
+      <p role="alert">未能读取存档，请刷新页面重试。</p>
+      <InlineButton onClick={() => void loadCurrentGame()}>重试</InlineButton>
+    </Panel>
   );
 }

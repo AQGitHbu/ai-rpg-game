@@ -1,6 +1,6 @@
 "use client";
 
-import type { GameSessionView } from "@/game/application";
+import type { CompatibilityGameSessionView } from "@/game/application";
 import { CharacterAvatarIcon } from "./CharacterAvatarIcon";
 
 export type DetailsPanel = "character" | "inventory" | "quests" | "journal";
@@ -16,7 +16,7 @@ const PANEL_LABELS: Record<DetailsPanel, string> = {
 const ACTION_PANELS: DetailsPanel[] = ["inventory", "quests", "journal"];
 
 type AdventureHudProps = {
-  readonly view: GameSessionView;
+  readonly view: CompatibilityGameSessionView;
   readonly screen: "map" | "town" | "scene";
   readonly onOpen: (panel: DetailsPanel) => void;
   readonly developmentTools?: boolean;

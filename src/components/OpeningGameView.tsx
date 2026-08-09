@@ -1,16 +1,16 @@
 import { Panel, Tag } from "@ai-game/ui";
-import type { GameSessionView } from "@/game/application";
+import type { CompatibilityGameSessionView } from "@/game/application";
 
 // ---------------------------------------------------------------------------
 // 开场/场景视图（Phase 2 + Phase 3 + Phase 4）：纯展示组件，只消费
-// application 的 GameSessionView。Phase 4：在场人物改用运行时 presentNpcs
+// application 的 CompatibilityGameSessionView。Phase 4：在场人物改用运行时 presentNpcs
 //（随当前地点变化），不再误用开场快照名单 visibleNpcs。
 // 建议行动仍为文本灵感，实际可执行行动由 SceneActionPanel/TravelPanel 渲染。
 // 不出现自由输入框、战斗入口或未来阶段的功能。
 // ---------------------------------------------------------------------------
 
 type OpeningGameViewProps = {
-  view: GameSessionView;
+  view: CompatibilityGameSessionView;
 };
 
 export function OpeningGameView({ view }: OpeningGameViewProps) {

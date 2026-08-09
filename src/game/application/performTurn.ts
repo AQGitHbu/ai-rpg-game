@@ -1,5 +1,5 @@
 import type { GameId } from "./server/persistence/gameRepository";
-import type { GameRepositoryV2 } from "./server/persistence/gameRepositoryV2";
+import type { GameRepository } from "./server/persistence/gameRepository";
 import type { Action, Interaction } from "@/game/domain/action";
 import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import type { WorldState } from "@/game/domain/worldState";
@@ -33,7 +33,7 @@ export type PerformTurnResult =
   | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "UNKNOWN_CHOICE" | "ACTION_REJECTED" | "INFRASTRUCTURE_FAILURE"; readonly feedback: string };
 
 export type PerformTurnDeps = {
-  readonly repository: GameRepositoryV2;
+  readonly repository: GameRepository;
   readonly now: () => string;
   readonly intentParserSource?: IntentParserSource;
   /**
@@ -200,7 +200,7 @@ function clipPlayerUtterance(text: string): string {
 }
 
 type CommitResolutionInput = {
-  readonly repository: GameRepositoryV2;
+  readonly repository: GameRepository;
   readonly gameId: GameId;
   readonly actionId: string;
   readonly expectedRevision: number;

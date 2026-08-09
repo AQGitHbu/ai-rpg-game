@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { EndingPanel } from "./EndingPanel";
-import type { GameSessionView } from "@/game/application";
+import type { CompatibilityGameSessionView } from "@/game/application";
 
 // ---------------------------------------------------------------------------
 // Phase 6 Task 4：结局面板测试。
@@ -9,7 +9,7 @@ import type { GameSessionView } from "@/game/application";
 // 成功结局与失败结局有不同视觉标识；结局后无任何可操作按钮。
 // ---------------------------------------------------------------------------
 
-function buildEndingViewFixture(outcome: "success" | "failure"): GameSessionView {
+function buildEndingViewFixture(outcome: "success" | "failure"): CompatibilityGameSessionView {
   return {
     gameId: "game-ending-001",
     world: { name: "武侠", summary: "镖局一夜覆灭。", gameType: "wuxia" },
@@ -40,12 +40,12 @@ function buildEndingViewFixture(outcome: "success" | "failure"): GameSessionView
             description: "撤退后线索断裂，真相终被掩埋。",
             outcome: "failure",
           },
-  } as unknown as GameSessionView;
+  } as unknown as CompatibilityGameSessionView;
 }
 
-function buildNoEndingViewFixture(): GameSessionView {
+function buildNoEndingViewFixture(): CompatibilityGameSessionView {
   const base = buildEndingViewFixture("success");
-  return { ...base, ending: null } as unknown as GameSessionView;
+  return { ...base, ending: null } as unknown as CompatibilityGameSessionView;
 }
 
 describe("EndingPanel：渲染条件", () => {

@@ -1,12 +1,12 @@
 "use client";
 
-import type { GameSessionView } from "@/game/application";
+import type { CompatibilityGameSessionView } from "@/game/application";
 import type { DetailsPanel } from "./AdventureHud";
 import { CharacterAvatarIcon } from "./CharacterAvatarIcon";
 import { InventoryPanel } from "./InventoryPanel";
 
 type AdventureDetailsPanelProps = {
-  readonly view: GameSessionView;
+  readonly view: CompatibilityGameSessionView;
   readonly panel: DetailsPanel;
 };
 
@@ -76,7 +76,7 @@ const EXTENDED_STAT_SLOTS = [
   { label: "闪避率", value: "5%" }
 ] as const;
 
-function CharacterPanel({ view }: { readonly view: GameSessionView }) {
+function CharacterPanel({ view }: { readonly view: CompatibilityGameSessionView }) {
   const { player } = view;
 
   return (

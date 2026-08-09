@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { GameSessionView, SceneInteractionView } from "@/game/application";
+import type { CompatibilityGameSessionView, SceneInteractionView } from "@/game/application";
 import { AdventureVisual } from "./adventureVisuals";
 import { SceneActionMenu } from "./SceneActionMenu";
 import { SceneNarrationBar } from "./SceneNarrationBar";
@@ -13,7 +13,7 @@ type SceneAction =
   | { readonly type: "start_battle"; readonly enemyId: string };
 
 type LocationSceneScreenProps = {
-  readonly view: GameSessionView;
+  readonly view: CompatibilityGameSessionView;
   readonly onAction: (action: SceneAction) => void;
   readonly onOpenDialogue: (npcId: string) => void;
   readonly onReturnMap: () => void;

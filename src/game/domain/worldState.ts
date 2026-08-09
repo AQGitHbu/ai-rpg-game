@@ -209,7 +209,7 @@ export function createInitialWorldState(input: {
   startingLocation: LocationEntry;
   startingItemIds: readonly ItemId[];
 }): WorldState {
-  // 最小初始状态——实际开局实体由 createGameV2 通过 AI 生成后追加填充
+  // 最小初始状态——实际开局实体由 createGame 通过 AI 生成后追加填充
   return {
     version: 2,
     generation: input.generation,

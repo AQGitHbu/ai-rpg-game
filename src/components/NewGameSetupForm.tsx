@@ -7,7 +7,7 @@ import {
   validateNewGameInput,
   type NewGameInput,
   type NewGameInputError,
-  type GameSessionView,
+  type CompatibilityGameSessionView,
   type GenerationSource
 } from "@/game/application";
 import { AdventureVisual, ADVENTURE_THEMES } from "./adventureVisuals";
@@ -190,7 +190,7 @@ function toFieldErrorMap(errors: readonly NewGameInputError[]): FieldErrorMap {
 
 /** POST /api/game 的响应形态（宽松解析：非法 body 一律按未知错误处理）。 */
 type CreateGameApiBody = {
-  view?: GameSessionView;
+  view?: CompatibilityGameSessionView;
   generationSource?: unknown;
   code?: string;
   fieldErrors?: NewGameInputError[];
@@ -205,16 +205,16 @@ function parseGenerationSource(value: unknown): GenerationSource | null {
 
 type NewGameSetupFormProps = {
   /** 创建成功回调：父级用会话视图与安全来源切换到开场画面。 */
-  onCreated?: (view: GameSessionView, generationSource: GenerationSource) => void;
+  onCreated?: (view: CompatibilityGameSessionView, generationSource: GenerationSource) => void;
   /** V2 模式回调：不携带 view（V2 API 不返回 view，父级自行 reload）。 */
-  onCreatedV2?: () => void;
+  onCreatedWithoutView?: () => void;
   /** 仅由 current-game 的 server metadata 提供，浏览器不可自行开启。 */
   developmentTools?: boolean;
-  /** API 端点路径：默认 /api/game (V1)，V2 模式传 /api/v2/game。 */
+  /** API 端点路径：默认 /api/game (V1)，V2 模式传 /api/game。 */
   apiPath?: string;
 };
 
-export function NewGameSetupForm({ onCreated, onCreatedV2, developmentTools = false, apiPath = "/api/game" }: NewGameSetupFormProps = {}) {
+export function NewGameSetupForm({ onCreated, onCreatedWithoutView, developmentTools = false, apiPath = "/api/game" }: NewGameSetupFormProps = {}) {
   const [gameType, setGameType] = useState<(typeof GAME_TYPES)[number]["id"]>(DEFAULT_GAME_TYPE);
   const [characterName, setCharacterName] = useState(DEFAULT_PRESET.characterName);
   const [characterIdentity, setCharacterIdentity] = useState(DEFAULT_PRESET.characterIdentity);
@@ -307,10 +307,10 @@ export function NewGameSetupForm({ onCreated, onCreatedV2, developmentTools = fa
       });
       const body = (await response.json().catch(() => null)) as CreateGameApiBody | null;
       // V2 模式：响应是 { ok: true, revision: N }，没有 view。
-      if (apiPath === "/api/v2/game") {
+      if (apiPath === "/api/game") {
         if (response.ok && body?.ok === true) {
           setStatusMessage("开局已生成。");
-          onCreatedV2?.();
+          onCreatedWithoutView?.();
           return;
         }
         setStatusMessage("");

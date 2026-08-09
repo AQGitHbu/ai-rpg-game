@@ -10,7 +10,7 @@ export type { EventCandidate, EventCandidateKind, ProposedEffect } from "./candi
 export const STORY_STATE_SCHEMA_VERSION = 3 as const;
 
 export type StoryStateSchemaVersionErrorCode =
-  | "LEGACY_V2_RECORD"
+  | "UNSUPPORTED_RECORD"
   | "UNSUPPORTED_STORY_STATE_VERSION";
 
 export type StoryStateSchemaVersionClassification =
@@ -27,7 +27,7 @@ export function classifyStoryStateSchemaVersion(
     return { ok: true, version: STORY_STATE_SCHEMA_VERSION };
   }
   if (version === 2) {
-    return { ok: false, code: "LEGACY_V2_RECORD" };
+    return { ok: false, code: "UNSUPPORTED_RECORD" };
   }
   return { ok: false, code: "UNSUPPORTED_STORY_STATE_VERSION" };
 }

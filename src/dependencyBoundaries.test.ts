@@ -757,12 +757,12 @@ function walk(dir: string, includeTestFiles: boolean): string[] {
 const SERVER_DIR = "game/application/server/";
 /** 纯端口文件：只有类型与 asGameId/asGenerationId 等，application 本体唯一合法的 server 入口。 */
 const PURE_PORT_SPECIFIER = "./server/persistence/gameRepository";
-/** P1 双状态：gameRepositoryV2 与 V1 同级，同为纯类型/接口 port（无 libsql/env/路径感知）。 */
-const PURE_PORT_SPECIFIER_V2 = "./server/persistence/gameRepositoryV2";
+/** P1 双状态：gameRepository 与 V1 同级，同为纯类型/接口 port（无 libsql/env/路径感知）。 */
+const PURE_PORT_SPECIFIER_V2 = "./server/persistence/gameRepository";
 /** API route 层唯一许可的 server 入口。 */
 const COMPOSITION_ROOT_SPECIFIER = "@/game/application/server/compositionRoot";
 /** P1 双状态：V2 组合根与 V1 同级，API route 层同样许可。 */
-const COMPOSITION_ROOT_V2_SPECIFIER = "@/game/application/server/compositionRootV2";
+const COMPOSITION_ROOT_V2_SPECIFIER = "@/game/application/server/compositionRoot";
 const SERVER_LOGGER_SPECIFIER = "@/game/logging/serverConsoleLogger";
 
 /** src 相对路径（POSIX 分隔符），便于断言与报告。 */
@@ -885,7 +885,7 @@ describe("server-only modules stay out of client-importable code", () => {
     // application V2 编排只经纯端口取 V2 持久化契约（无 libsql/env/路径）。
     // Task 4 将 performActionV2 收敛为薄适配层，真实 V2 编排面是 performTurn。
     for (const relative of [
-      "game/application/createGameV2.ts",
+      "game/application/createGame.ts",
       "game/application/performTurn.ts",
       "game/application/stateCommit.ts",
       "game/application/sceneWriteBack.ts"
@@ -937,7 +937,7 @@ describe("server-only modules stay out of client-importable code", () => {
   it("only the server composition root imports the server console logger", () => {
     const violations = productionFiles
       .filter((file) => toPosixRelative(file) !== "game/application/server/compositionRoot.ts")
-      .filter((file) => toPosixRelative(file) !== "game/application/server/compositionRootV2.ts")
+      .filter((file) => toPosixRelative(file) !== "game/application/server/compositionRoot.ts")
       .filter((file) => extractSpecifiers(readFileSync(file, "utf8")).includes(SERVER_LOGGER_SPECIFIER))
       .map(toPosixRelative);
     expect(violations).toEqual([]);

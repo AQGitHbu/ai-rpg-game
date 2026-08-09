@@ -1,4 +1,4 @@
-import type { GameRepositoryV2, ApplyStateV2Result } from "./server/persistence/gameRepositoryV2";
+import type { GameRepository, ApplyStateResult } from "./server/persistence/gameRepository";
 import type { GameId } from "./server/persistence/gameRepository";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
@@ -12,9 +12,9 @@ export type CommitStateInput = {
 };
 
 export async function commitState(
-  repo: GameRepositoryV2,
+  repo: GameRepository,
   input: CommitStateInput,
-): Promise<ApplyStateV2Result> {
+): Promise<ApplyStateResult> {
   const view = reconcileMaterializedView(
     {
       recentBeats: input.nextStoryState.recentBeats as never[],

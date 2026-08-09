@@ -1,10 +1,10 @@
 "use client";
 
-import type { GameSessionView, WorldMapNodeView } from "@/game/application";
+import type { CompatibilityGameSessionView, WorldMapNodeView } from "@/game/application";
 import { AdventureVisual } from "./adventureVisuals";
 
 type WorldMapScreenProps = {
-  readonly view: GameSessionView;
+  readonly view: CompatibilityGameSessionView;
   readonly onEnterCurrent: () => void;
   readonly onMove: (locationId: string) => void;
   readonly busy: boolean;

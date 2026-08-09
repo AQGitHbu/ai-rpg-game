@@ -1,10 +1,13 @@
 // 应用层公共门面：UI/API 只能从这里导入游戏业务能力。
-// v2.1 为生产链路：本 facade 仅保留 v2.1 生产所需的共享 view 类型与少量值；
-// v1 legacy 业务 re-export 已移至 ./index.v1.ts（仅作行为参考，不进入主门禁）。
 
 // Phase 4 Task 3 + Phase 6 Task 3：语义中性的会话 read model。
 export {
   type GameSessionView,
+} from "./gameSessionView";
+// Task 4 会把尚未迁移的视觉组件直接改为消费上方 read model；在此之前，
+// 兼容形状只用于既有视觉组件，不能作为 server/API 契约。
+export {
+  type GameSessionView as CompatibilityGameSessionView,
   type SessionActionView,
   type ActiveQuestView,
   type QuestObjectiveView,
@@ -13,7 +16,7 @@ export {
   type InventoryItemView,
   type StoryEventView,
   type NarrativeSceneView
-} from "./gameSessionView";
+} from "./gameSessionCompatibilityView";
 export type { NarrativeGenerationProgress } from "./narrativeProgressTypes";
 // 背包富视图的展示元数据基础类型：UI 经由 facade 中转，禁止直连 domain。
 export {
@@ -41,8 +44,6 @@ export {
   type TownInteractiveBuildingView,
   type TownRenderSnapshot
 } from "./townRuntimeView";
-// Task 5：开局来源区分类型（scenarioGeneration 无类型漂移，可安全经门面中转）。
-export type { ScenarioGenerationSource as GenerationSource } from "./scenarioGeneration";
 // UI 端预校验经由 application facade 中转，禁止直连 domain。
 export {
   validateNewGameInput,
@@ -89,15 +90,16 @@ export { type TownPlanSource, type TownSemanticPlan } from "@/game/domain";
 // 纯端口（server persistence 契约）：来源模块无类型漂移，UI/API 可安全经门面中转。
 export {
   asGameId,
-  type ApplyResolvedActionInput,
-  type ApplyResolvedActionResult,
+  type ApplySceneWriteBackInput,
+  type ApplySceneWriteBackResult,
+  type ApplyStateInput,
+  type ApplyStateResult,
   type ClearCurrentGameResult,
-  type DevelopmentGameRepository,
   type CorruptGameReason,
   type CreateInitialGameInput,
   type CreateInitialGameResult,
   type GameId,
   type GameRecord,
   type GameRepository,
-  type GetCurrentGameRecordResult
+  type GetCurrentGameResult
 } from "./server/persistence/gameRepository";

@@ -1,9 +1,9 @@
-import { CurrentGameScreenV2 } from "@/components/CurrentGameScreenV2";
+import { CurrentGameScreen } from "@/components/CurrentGameScreen";
 
 export default function HomePage() {
   return (
     <main className="new-game-page">
-      <CurrentGameScreenV2 />
+      <CurrentGameScreen />
     </main>
   );
 }

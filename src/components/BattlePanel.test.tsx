@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BattlePanel } from "./BattlePanel";
-import type { GameSessionView } from "@/game/application";
+import type { CompatibilityGameSessionView } from "@/game/application";
 
 // ---------------------------------------------------------------------------
 // Phase 6 Task 4：战斗面板测试。
@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 /** 构造 active battle 的会话视图 fixture。 */
-function buildBattleViewFixture(): GameSessionView {
+function buildBattleViewFixture(): CompatibilityGameSessionView {
   return {
     gameId: "game-battle-001",
     world: { name: "武侠", summary: "镖局一夜覆灭。", gameType: "wuxia" },
@@ -60,11 +60,11 @@ function buildBattleViewFixture(): GameSessionView {
       round: 2,
     },
     ending: null,
-  } as unknown as GameSessionView;
+  } as unknown as CompatibilityGameSessionView;
 }
 
 /** 构造无战斗的会话视图 fixture。 */
-function buildNoBattleViewFixture(): GameSessionView {
+function buildNoBattleViewFixture(): CompatibilityGameSessionView {
   const base = buildBattleViewFixture();
   return {
     ...base,
@@ -72,7 +72,7 @@ function buildNoBattleViewFixture(): GameSessionView {
     availableActions: [
       { type: "observe", locationId: "loc_forest", label: "观察密林" },
     ],
-  } as unknown as GameSessionView;
+  } as unknown as CompatibilityGameSessionView;
 }
 
 describe("BattlePanel：渲染条件", () => {
@@ -128,7 +128,7 @@ describe("BattlePanel：服务器 read model 展示", () => {
     vi.stubGlobal("fetch", vi.fn());
     const baseView = buildBattleViewFixture();
     // 添加一些非 battle_action 行动，确保它们不被渲染
-    const view: GameSessionView = {
+    const view: CompatibilityGameSessionView = {
       ...baseView,
       availableActions: [
         ...baseView.availableActions,

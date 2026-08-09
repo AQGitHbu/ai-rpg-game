@@ -1,17 +1,17 @@
 import type {
-  GameSessionView,
+  CompatibilityGameSessionView,
   LocationSceneView,
   NpcDialogueView,
   WorldMapView
 } from "@/game/application";
 
-// Phase 4 Task 4 组件测试共享 fixture：手写一份形如 GameSessionView 的会话视图
+// Phase 4 Task 4 组件测试共享 fixture：手写一份形如 CompatibilityGameSessionView 的会话视图
 //（openingViewFixture 的演进：追加 move 行动、presentNpcs 与 activeQuests；
 // Phase 5 Task 4 再追加 take_item 行动、obtainableItems 与 inventoryItems；
 // Phase 6 Task 4 追加 battle/ending 字段；Phase 7 Task 5 追加 worldMap /
 // locationScene / dialogues read model——新字段独立成 typed const，保证
 // 即使整体经 unknown 断言，Phase 7 形状仍被编译器检查）。
-// gameId 为 branded type，测试数据经 unknown 断言为 GameSessionView。
+// gameId 为 branded type，测试数据经 unknown 断言为 CompatibilityGameSessionView。
 
 /** Phase 7：青石镇为当前地点的世界地图——四种节点状态各一。 */
 const QINGSHI_WORLD_MAP: WorldMapView = {
@@ -75,7 +75,7 @@ const QINGSHI_DIALOGUES: readonly NpcDialogueView[] = [
   }
 ];
 
-export function buildSessionViewFixture(): GameSessionView {
+export function buildSessionViewFixture(): CompatibilityGameSessionView {
   return {
     gameId: "game-test-0001",
     world: { name: "武侠", summary: "镖局一夜覆灭，江湖各派暗流涌动。", gameType: "wuxia" },
@@ -147,11 +147,11 @@ export function buildSessionViewFixture(): GameSessionView {
     townStatus: "none",
     // Phase 10：叙事场景视图——默认无 AI 导演场景。
     narrative: null,
-  } as unknown as GameSessionView;
+  } as unknown as CompatibilityGameSessionView;
 }
 
 /** 拾取成功后的会话视图：物品从可取得列表消失、进入背包，对应任务目标完成。 */
-export function buildItemTakenSessionViewFixture(): GameSessionView {
+export function buildItemTakenSessionViewFixture(): CompatibilityGameSessionView {
   const base = buildSessionViewFixture();
   return {
     ...base,
@@ -193,11 +193,11 @@ export function buildItemTakenSessionViewFixture(): GameSessionView {
         ]
       }
     ]
-  } as unknown as GameSessionView;
+  } as unknown as CompatibilityGameSessionView;
 }
 
 /** 移动成功后的会话视图：新地点、新在场 NPC、新行动与更新后的任务。 */
-export function buildMovedSessionViewFixture(): GameSessionView {
+export function buildMovedSessionViewFixture(): CompatibilityGameSessionView {
   const base = buildSessionViewFixture();
   return {
     ...base,
@@ -257,11 +257,11 @@ export function buildMovedSessionViewFixture(): GameSessionView {
         preparingNextScene: false
       }
     ] satisfies readonly NpcDialogueView[]
-  } as unknown as GameSessionView;
+  } as unknown as CompatibilityGameSessionView;
 }
 
 /** Phase 6 Task 4：战斗中的会话视图——active battle + battle_action 行动。 */
-export function buildBattleSessionViewFixture(): GameSessionView {
+export function buildBattleSessionViewFixture(): CompatibilityGameSessionView {
   const base = buildSessionViewFixture();
   return {
     ...base,
@@ -301,11 +301,11 @@ export function buildBattleSessionViewFixture(): GameSessionView {
       interactions: []
     } satisfies LocationSceneView,
     dialogues: [] satisfies readonly NpcDialogueView[]
-  } as unknown as GameSessionView;
+  } as unknown as CompatibilityGameSessionView;
 }
 
 /** Phase 6 Task 4：成功结局的会话视图——ending outcome = success。 */
-export function buildSuccessEndingSessionViewFixture(): GameSessionView {
+export function buildSuccessEndingSessionViewFixture(): CompatibilityGameSessionView {
   const base = buildSessionViewFixture();
   return {
     ...base,
@@ -324,11 +324,11 @@ export function buildSuccessEndingSessionViewFixture(): GameSessionView {
       interactions: []
     } satisfies LocationSceneView,
     dialogues: QINGSHI_DIALOGUES
-  } as unknown as GameSessionView;
+  } as unknown as CompatibilityGameSessionView;
 }
 
 /** Phase 6 Task 4：失败结局的会话视图——ending outcome = failure。 */
-export function buildFailureEndingSessionViewFixture(): GameSessionView {
+export function buildFailureEndingSessionViewFixture(): CompatibilityGameSessionView {
   const base = buildSessionViewFixture();
   return {
     ...base,
@@ -347,5 +347,5 @@ export function buildFailureEndingSessionViewFixture(): GameSessionView {
       interactions: []
     } satisfies LocationSceneView,
     dialogues: QINGSHI_DIALOGUES
-  } as unknown as GameSessionView;
+  } as unknown as CompatibilityGameSessionView;
 }

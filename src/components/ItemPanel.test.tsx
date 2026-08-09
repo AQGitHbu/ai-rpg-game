@@ -6,7 +6,7 @@ import { buildItemTakenSessionViewFixture, buildSessionViewFixture } from "./ses
 
 // ---------------------------------------------------------------------------
 // Phase 5 Task 4：物品面板测试（"可取得物品" + "背包" 两个业务区域）。
-// 名称/描述只来自 GameSessionView（obtainableItems / inventoryItems），
+// 名称/描述只来自 CompatibilityGameSessionView（obtainableItems / inventoryItems），
 // 拾取按钮提交带 revision 的 take_item payload，提交期间禁用、拒绝/陈旧
 // revision 反馈与 SceneActionPanel/TravelPanel 同一套模式（aria-live），
 // fetch 全程打桩。绝不出现 use/give/trade 等未来阶段按钮。

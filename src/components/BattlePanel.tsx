@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { GameSessionView, SessionActionView, BattleView } from "@/game/application";
+import type { CompatibilityGameSessionView, SessionActionView, BattleView } from "@/game/application";
 import { postGameAction } from "./gameActionRequest";
 import { BattleArena } from "./BattleArena";
 import { BattleActionRail } from "./BattleActionRail";
@@ -11,18 +11,18 @@ import { BattleActionRail } from "./BattleActionRail";
 // 使用 BattleArena 呈现战场背景、敌我肖像与 HP；BattleActionRail 呈现
 // 固定行动栏。仍是唯一调用 postGameAction 的协调器：过滤 battle_action，
 // 提交带 revision 的 payload，根据 API 结果显示反馈日志。
-// 不引入本地 HP、回合或胜负状态——所有数值来自服务端 GameSessionView。
+// 不引入本地 HP、回合或胜负状态——所有数值来自服务端 CompatibilityGameSessionView。
 // ---------------------------------------------------------------------------
 
 type BattleActionView = Extract<SessionActionView, { type: "battle_action" }>;
 
 type BattlePanelProps = {
-  view: GameSessionView;
+  view: CompatibilityGameSessionView;
   /** 其他面板提交中：为 true 时禁用本面板全部按钮。 */
   busy?: boolean;
   /** 本面板提交开始/结束回调：父级据此禁用其余面板。 */
   onBusyChange?: (busy: boolean) => void;
-  onActionSuccess: (view: GameSessionView) => void;
+  onActionSuccess: (view: CompatibilityGameSessionView) => void;
   onStaleRevision: () => void;
 };
 

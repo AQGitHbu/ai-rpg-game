@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { writeBackScene } from "./sceneWriteBack";
-import type { GameRepositoryV2, GameRecordV2 } from "./server/persistence/gameRepositoryV2";
+import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import { asGameId } from "./server/persistence/gameRepository";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -23,8 +23,8 @@ function validCandidate(id: string): EventCandidate {
   };
 }
 
-function createInMemoryRepo(): { repo: GameRepositoryV2; getRecord: () => GameRecordV2 | null } {
-  let record: GameRecordV2 | null = null;
+function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameRecord | null } {
+  let record: GameRecord | null = null;
   return {
     repo: {
       async createInitialGame(input) {

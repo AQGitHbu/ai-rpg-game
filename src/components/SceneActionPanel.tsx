@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 import { Panel, Tag, InlineButton } from "@ai-game/ui";
-import type { GameSessionView, SessionActionView } from "@/game/application";
+import type { CompatibilityGameSessionView, SessionActionView } from "@/game/application";
 import { postGameAction, type GameActionPayload } from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
 // SceneActionPanel（Phase 3 Task 5 + Phase 4 Task 4 + Phase 5 Task 4 + Phase 6 Task 3d）：固定行动面板。
-// 消费 GameSessionView.availableActions 中的观察/交谈/调查/开始战斗行动（move 归
+// 消费 CompatibilityGameSessionView.availableActions 中的观察/交谈/调查/开始战斗行动（move 归
 // TravelPanel、take_item 归 ItemPanel、battle_action 归 BattlePanel，与各自业务区域的上下文一起渲染），
 // 禁用提交中的所有按钮，以 aria-live 提示结果。
 // 成功后用 API 返回的最新 view 替换本地 view；规则拒绝显示具体但不
@@ -19,12 +19,12 @@ import { postGameAction, type GameActionPayload } from "./gameActionRequest";
 type SceneActionView = Extract<SessionActionView, { type: "observe" | "talk" | "investigate" | "start_battle" }>;
 
 type SceneActionPanelProps = {
-  view: GameSessionView;
+  view: CompatibilityGameSessionView;
   /** 其他面板提交中：为 true 时禁用本面板全部按钮。 */
   busy?: boolean;
   /** 本面板提交开始/结束回调：父级据此禁用其余面板。 */
   onBusyChange?: (busy: boolean) => void;
-  onActionSuccess: (view: GameSessionView) => void;
+  onActionSuccess: (view: CompatibilityGameSessionView) => void;
   onStaleRevision: () => void;
 };
 

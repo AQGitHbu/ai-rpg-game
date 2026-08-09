@@ -1,14 +1,25 @@
 import { getServerGameEntryPoints } from "@/game/application/server/compositionRoot";
-import { handleCurrentGameRequest } from "./currentGameHandler";
 
-// GET /api/game/current：薄壳 route——只注入生产单例入口，
-// 结果映射全部在 currentGameHandler（可注入测试）。
+// GET /api/game/current：V2 并行路由——委托 gameSessionView。
+// V1 路由 /api/game/current 保持不动，互不干扰。
 export async function GET(request: Request): Promise<Response> {
   const entryPoints = getServerGameEntryPoints();
   return entryPoints.executeHttpRequest(
     "GET",
     "/api/game/current",
-    (context) => handleCurrentGameRequest(entryPoints, context),
-    request.headers.get("x-request-trace-id") ?? undefined
+    async () => {
+      const result = await entryPoints.getCurrentGame();
+      if (result.ok) {
+        return new Response(JSON.stringify(result), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify(result), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+    request.headers.get("x-request-trace-id") ?? undefined,
   );
 }
