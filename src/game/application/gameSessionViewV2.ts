@@ -163,8 +163,9 @@ export function projectGameSessionView(
         }
         case "discover_fact": {
           const fact = worldState.worldFacts.find((f) => f.factId === o.factId);
-          label = `发现${fact?.text ?? "秘密"}`;
-          completed = fact?.discovered ?? false;
+          // 未发现：只显示中性目标，绝不泄漏 fact.text / FactId（spec §10.2）。
+          label = fact !== undefined && fact.discovered ? `发现${fact.text}` : "发现秘密";
+          completed = fact !== undefined && fact.discovered;
           break;
         }
         case "defeat_enemy": {

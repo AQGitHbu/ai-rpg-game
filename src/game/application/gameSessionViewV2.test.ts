@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { projectGameSessionView } from "./gameSessionViewV2";
-import { createInitialWorldState, appendNpc, appendLocation, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
+import { createInitialWorldState, appendNpc, appendLocation, type WorldState, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId, asGenerationId, asFactId } from "@/game/domain/scenarioBlueprint";
 
 describe("projectGameSessionView", () => {
   const loc1: LocationEntry = {
@@ -209,5 +209,49 @@ describe("projectGameSessionView", () => {
     const guest = dialogues.find((d) => String(d.npcId) === "npc_2");
     expect(lu!.speechPages.join("")).toBe("需要什么吗？");
     expect(guest!.speechPages.length).toBeGreaterThan(0);
+  });
+
+  it("任务目标引用未发现隐藏事实时，view 只显示中性目标，不泄漏 fact.text/FactId", () => {
+    const SECRET_TEXT = "地窖里埋着先人的宝藏";
+    const hiddenFact = { factId: asFactId("fact_secret"), text: SECRET_TEXT, source: "generated" as const, discovered: false };
+    const wsWithSecret = {
+      ...ws,
+      worldFacts: [hiddenFact],
+      quests: [{
+        id: "q1", name: "寻宝", description: "t", kind: "main" as const, stage: 1, status: "active" as const,
+        objectives: [{ kind: "discover_fact" as const, factId: asFactId("fact_secret") }],
+        onSuccess: { kind: "reach_ending" as const, endingId: "ending_1" },
+        onFailure: { kind: "closed" as const },
+        tags: [],
+      }      ] as unknown as WorldState["quests"],
+    };
+    const view = projectGameSessionView(wsWithSecret, ss, 0);
+    const serialized = JSON.stringify(view);
+    // 未发现：不出现事实正文，也不出现 FactId 字符串
+    expect(serialized).not.toContain(SECRET_TEXT);
+    expect(serialized).not.toContain("fact_secret");
+    const objective = view.quests[0]?.objectives[0];
+    expect(objective?.label).toBe("发现秘密");
+    expect(objective?.completed).toBe(false);
+  });
+
+  it("任务目标引用已发现事实时，view 显示该事实文本", () => {
+    const SECRET_TEXT = "地窖里埋着先人的宝藏";
+    const discoveredFact = { factId: asFactId("fact_secret"), text: SECRET_TEXT, source: "generated" as const, discovered: true };
+    const wsWithSecret = {
+      ...ws,
+      worldFacts: [discoveredFact],
+      quests: [{
+        id: "q1", name: "寻宝", description: "t", kind: "main" as const, stage: 1, status: "active" as const,
+        objectives: [{ kind: "discover_fact" as const, factId: asFactId("fact_secret") }],
+        onSuccess: { kind: "reach_ending" as const, endingId: "ending_1" },
+        onFailure: { kind: "closed" as const },
+        tags: [],
+      }      ] as unknown as WorldState["quests"],
+    };
+    const view = projectGameSessionView(wsWithSecret, ss, 0);
+    const objective = view.quests[0]?.objectives[0];
+    expect(objective?.label).toContain(SECRET_TEXT);
+    expect(objective?.completed).toBe(true);
   });
 });
