@@ -23,24 +23,25 @@ export function resolveEnding(ws: WorldState, ss: StoryState, deps: { readonly n
     return { nextWorldState: ws, nextStoryState: ss, events: [] };
   }
 
-  for (const ending of ws.endings) {
-    if (ending.requirements.every((req) => isRequirementMet(ws, req))) {
+  const matchingEnding = ws.endings
+    .filter((ending) => ending.requirements.every((req) => isRequirementMet(ws, req)))
+    .sort((left, right) => left.id.localeCompare(right.id))[0];
+  if (matchingEnding) {
       const event: GameEvent = {
         type: "ending_reached",
-        endingId: ending.id,
+        endingId: matchingEnding.id,
         outcome: "success",
         occurredAt: deps.now(),
       };
       return {
         nextWorldState: {
           ...ws,
-          ending: { endingId: ending.id, outcome: "success" },
+          ending: { endingId: matchingEnding.id, outcome: "success" },
           eventLedger: [...ws.eventLedger, event],
         },
         nextStoryState: ss,
         events: [event],
       };
-    }
   }
 
   return { nextWorldState: ws, nextStoryState: ss, events: [] };

@@ -62,4 +62,18 @@ describe("resolveEnding", () => {
     const result = resolveEnding(ws, { ...baseSs, endingAllowed: true }, deps);
     expect(result.nextWorldState.ending?.endingId).toBe(asEndingId("e_doubt"));
   });
+
+  it("resolves an invalid ambiguous state independently of ending array order", () => {
+    const endings: WorldState["endings"] = [
+      { id: asEndingId("ending_z"), name: "z", description: "t", requirements: [] },
+      { id: asEndingId("ending_a"), name: "a", description: "t", requirements: [] },
+    ];
+    const storyState = { ...baseSs, endingAllowed: true };
+
+    const forward = resolveEnding({ ...baseWs, endings }, storyState, deps);
+    const reversed = resolveEnding({ ...baseWs, endings: [...endings].reverse() }, storyState, deps);
+
+    expect(forward.nextWorldState.ending?.endingId).toBe(asEndingId("ending_a"));
+    expect(reversed.nextWorldState.ending).toEqual(forward.nextWorldState.ending);
+  });
 });

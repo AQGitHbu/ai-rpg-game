@@ -35,21 +35,31 @@ function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameReco
 }
 
 describe("createGame", () => {
-  it("fixture worlds are deterministic for one seed and structurally different for another", async () => {
-    const source = createFixtureWorldSource();
-    const generate = (seed: string) => source.generate({ gameType: "wuxia", gameLength: "short", seed });
+  it("persists byte-equivalent compiled state for one seed and structural differences for another", async () => {
+    const createAndRead = async (seed: string): Promise<GameRecord> => {
+      const { repo, getRecord } = createInMemoryRepo();
+      const result = await createGame(
+        { gameId: asGameId("seed-proof"), gameType: "wuxia", gameLength: "short", seed },
+        { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-01" },
+      );
+      expect(result.ok).toBe(true);
+      const record = getRecord();
+      expect(record).not.toBeNull();
+      return record!;
+    };
 
-    const first = await generate("branching-seed-alpha");
-    const replay = await generate("branching-seed-alpha");
-    const other = await generate("branching-seed-beta");
+    const first = await createAndRead("branching-seed-alpha");
+    const replay = await createAndRead("branching-seed-alpha");
+    const other = await createAndRead("branching-seed-beta");
 
-    expect(replay).toEqual(first);
-    const signatures = (candidate: Awaited<ReturnType<typeof generate>>) => ({
-      npcIdentity: candidate.npcs.map((npc) => [npc.id, npc.name, npc.role]),
-      questGraph: candidate.quests.map((quest) => [quest.id, quest.name, quest.objectives, quest.onSuccess]),
-      facts: [...candidate.world.publicFacts, ...candidate.world.hiddenFacts],
-      locations: candidate.locations.map((location) => [location.id, location.name, location.connectedLocationIds]),
-      endingPredicates: candidate.endings.map((ending) => ending.requirements),
+    expect(JSON.stringify({ worldState: replay.worldState, storyState: replay.storyState }))
+      .toBe(JSON.stringify({ worldState: first.worldState, storyState: first.storyState }));
+    const signatures = (record: GameRecord) => ({
+      npcIdentity: record.worldState.npcs.map((npc) => [npc.id, npc.name, npc.role]),
+      questGraph: record.worldState.quests.map((quest) => [quest.id, quest.name, quest.objectives, quest.onSuccess]),
+      facts: record.worldState.worldFacts.map((fact) => [fact.factId, fact.text]),
+      locations: record.worldState.locations.map((location) => [location.id, location.name, location.connectedLocationIds]),
+      endingPredicates: record.worldState.endings.map((ending) => ending.requirements),
     });
     const a = signatures(first);
     const b = signatures(other);

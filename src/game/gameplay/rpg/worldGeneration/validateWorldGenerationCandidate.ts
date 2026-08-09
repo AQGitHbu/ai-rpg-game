@@ -26,6 +26,7 @@ export type WorldGenerationIssueCode =
   | "ending_requirement_empty"
   | "ending_unreachable"
   | "insufficient_distinct_endings"
+  | "overlapping_ending_predicates"
   | "npc_fact_reference_invalid"
   | "budget_exceeded"
   | "hard_limit_exceeded"
@@ -247,6 +248,43 @@ export function validateWorldGenerationCandidate(
   }
   if (endingFingerprints.size < 2) {
     issues.push({ path: "endings", code: "insufficient_distinct_endings", params: { count: endingFingerprints.size } });
+  }
+
+  // Relationship-based endings must form disjoint intervals for each NPC.
+  // Otherwise one affinity value can satisfy multiple endings and resolution
+  // would depend on the source array order rather than player state.
+  const relationshipIntervals = candidate.endings.map((ending) => {
+    const byNpc = new Map<string, { minimum: number; maximum: number }>();
+    for (const requirement of ending.requirements) {
+      if (requirement.kind !== "npc_affinity_at_least" && requirement.kind !== "npc_affinity_at_most") continue;
+      const interval = byNpc.get(requirement.npcId) ?? { minimum: -100, maximum: 100 };
+      if (requirement.kind === "npc_affinity_at_least") {
+        interval.minimum = Math.max(interval.minimum, requirement.value);
+      } else {
+        interval.maximum = Math.min(interval.maximum, requirement.value);
+      }
+      byNpc.set(requirement.npcId, interval);
+    }
+    return { ending, byNpc };
+  });
+  for (let leftIndex = 0; leftIndex < relationshipIntervals.length; leftIndex++) {
+    const left = relationshipIntervals[leftIndex]!;
+    for (let rightIndex = leftIndex + 1; rightIndex < relationshipIntervals.length; rightIndex++) {
+      const right = relationshipIntervals[rightIndex]!;
+      for (const [npcId, leftInterval] of left.byNpc) {
+        const rightInterval = right.byNpc.get(npcId);
+        if (!rightInterval) continue;
+        const overlapMinimum = Math.max(leftInterval.minimum, rightInterval.minimum);
+        const overlapMaximum = Math.min(leftInterval.maximum, rightInterval.maximum);
+        if (overlapMinimum <= overlapMaximum) {
+          issues.push({
+            path: `endings[${rightIndex}].requirements`,
+            code: "overlapping_ending_predicates",
+            params: { leftEndingId: left.ending.id, rightEndingId: right.ending.id, npcId },
+          });
+        }
+      }
+    }
   }
 
   // budget_exceeded / hard_limit_exceeded：openingBudget 与实体计数核对。

@@ -148,6 +148,18 @@ describe("validateWorldGenerationCandidate 错误矩阵", () => {
     expect(issues(c)).toContain("insufficient_distinct_endings");
   });
 
+  it("rejects overlapping affinity predicates for the same NPC", () => {
+    const c = baseCandidate();
+    c.endings[0].requirements = [
+      { kind: "npc_affinity_at_least", npcId: "npc_innkeeper", value: 0 },
+    ];
+    c.endings[1].requirements = [
+      { kind: "npc_affinity_at_least", npcId: "npc_innkeeper", value: 10 },
+    ];
+
+    expect(issues(c)).toContain("overlapping_ending_predicates");
+  });
+
   it("npc_fact_reference_invalid", () => {
     const c = baseCandidate();
     c.npcs[0].knownFactIds.push("fact_missing");
