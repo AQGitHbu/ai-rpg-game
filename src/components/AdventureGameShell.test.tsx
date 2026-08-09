@@ -182,6 +182,53 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.queryByRole("heading", { name: "老板" })).not.toBeInTheDocument();
   });
 
+  it("auto-switches to the scene view when the player moves to a new location", () => {
+    const initialView = buildView();
+    const { rerender } = render(<AdventureGameShell
+      view={initialView}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+
+    // 初始仍在地图视图，等待玩家手动进入
+    expect(screen.getByRole("button", { name: "进入客栈" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "地点场景：客栈" })).not.toBeInTheDocument();
+
+    // 玩家移动到新地点：performTurn 返回 currentLocation 变化、revision+1
+    const movedView: GameSessionView = {
+      ...initialView,
+      revision: initialView.revision + 1,
+      worldMap: {
+        locations: [
+          { name: "客栈", current: false, visited: true, travelChoice: choice(TOKENS.travel, "前往客栈", "travel") },
+          { name: "街道", current: true, visited: true, travelChoice: null },
+        ],
+      },
+      currentLocation: {
+        name: "街道",
+        description: "夜市灯火通明",
+        actions: [choice(TOKENS.explore, "探索街道", "explore")],
+      },
+      narrative: {
+        ...initialView.narrative,
+        narration: "夜市灯火通明，行人摩肩接踵。",
+        npcDialogues: [],
+        choices: [],
+      },
+    };
+    rerender(<AdventureGameShell
+      view={movedView}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+
+    // 移动到新地点后应自动进入场景视图，显示新地点的探索/活动行动栏
+    expect(screen.getByRole("region", { name: "地点场景：街道" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "探索街道" })).toBeInTheDocument();
+  });
+
   it("hides NPC dialogue panels while narrative generation is pending instead of showing empty choices", async () => {
     const view = {
       ...buildView(),
