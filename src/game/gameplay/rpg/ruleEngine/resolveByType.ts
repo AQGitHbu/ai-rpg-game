@@ -111,12 +111,11 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       const stateChanges: StateChange[] = [
         { path: `worldFacts[${String(action.factId)}].discovered`, description: `发现线索`, operation: "set" },
       ];
-      // 产出 FactChange：audience 为当前地点已 met 的 NPC
-      const audience = ws.npcs
-        .filter((n) => n.locationId === ws.currentLocationId && n.met)
-        .map((n) => n.id);
+      // 产出 FactChange：玩家发现事实，但不自动传播给当前地点所有已 met NPC
+      // （§14.3：不得把"在场"假设为全地点已 met NPC；investigate 未定义在场见证者，
+      // 故 audience 为空 → 不向任何 NPC 自动传播）。
       const facts: FactChange[] = [
-        { factId: action.factId, change: "discovered", audience: audience.length > 0 ? audience : undefined },
+        { factId: action.factId, change: "discovered", source: "scene_witness" },
       ];
       return { ok: true, nextWorldState: nextWs, events: [event], feedback: "你调查了这条线索。", status: "success", stateChanges, facts };
     }

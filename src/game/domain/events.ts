@@ -57,6 +57,8 @@ export type FactDiscoveredEvent = {
   readonly type: "fact_discovered";
   readonly factId: FactId;
   readonly occurredAt: string;
+  /** 在场目击的 NPC（scene_witness 传播来源）；缺省 = 无人目击，不自动传播。 */
+  readonly witnessNpcIds?: readonly NpcId[];
 };
 
 /** 玩家移动到达地点：由 move 行动成功时追加；重复到访照常追加事件。 */
