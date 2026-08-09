@@ -2,21 +2,13 @@ import type { Action } from "@/game/domain/action";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { ActionChoiceMap } from "./actionConverter";
+import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 
 // ---------------------------------------------------------------------------
 // 服务端 choiceMap 构建器：从当前 WorldState + StoryState 派生所有合法行动的
 // choiceToken → Action 映射。客户端只需发送 choiceToken（opaque token）。
 //
-// 世界行动候选（actionKey 格式，规则直判，不经 AI）：
-//   talk:<npcId>            → { type: "talk", npcId, dialogueAct: "ask" }
-//   move:<locationId>      → { type: "move", locationId }
-//   explore                → { type: "explore" }
-//   rest                   → { type: "rest" }
-//   take_item:<itemId>     → { type: "take_item", itemId }
-//   use_item:<itemId>      → { type: "use_item", itemId }
-//   attack:<enemyId>       → { type: "attack", enemyId }
-//   battle_action:<action> → { type: "battle_action", action }
-//   ack_prologue           → { type: "ack_prologue" }
+// 世界行动候选也使用 opaque token；projector 与本映射共享同一铸造函数。
 //
 // 场景固定选项只从持久化 choiceRegistry（ApprovedChoice）按 token 映射，
 // 不再解析 scene.choices 的 actionKey（Spec §8.3：客户端不可构造 actionKey）。
@@ -29,18 +21,20 @@ export function buildChoiceMap(
   currentRevision: number,
 ): ActionChoiceMap {
   const map = new Map<string, Action>();
+  const addRuntimeAction = (action: Action): void => {
+    map.set(deriveRuntimeChoiceToken(action, currentRevision), action);
+  };
 
   // 如果有活跃战斗，只允许 battle_action
   if (worldState.battle.status === "active") {
-    map.set("battle_action:attack", { type: "battle_action", action: "attack" });
-    map.set("battle_action:guard", { type: "battle_action", action: "guard" });
-    map.set("battle_action:flee", { type: "battle_action", action: "flee" });
+    addRuntimeAction({ type: "battle_action", action: "attack" });
+    addRuntimeAction({ type: "battle_action", action: "guard" });
+    addRuntimeAction({ type: "battle_action", action: "flee" });
   } else {
     // 当前地点 NPC → talk
     for (const npc of worldState.npcs) {
       if (npc.locationId === worldState.currentLocationId) {
-        const key = `talk:${String(npc.id)}`;
-        map.set(key, { type: "talk", npcId: npc.id, dialogueAct: "ask" });
+        addRuntimeAction({ type: "talk", npcId: npc.id, dialogueAct: "ask" });
       }
     }
 
@@ -49,8 +43,7 @@ export function buildChoiceMap(
     if (currentLoc !== undefined) {
       for (const locId of currentLoc.connectedLocationIds) {
         if (worldState.unlockedLocationIds.includes(locId)) {
-          const key = `move:${String(locId)}`;
-          map.set(key, { type: "move", locationId: locId });
+          addRuntimeAction({ type: "move", locationId: locId });
         }
       }
     }
@@ -59,8 +52,7 @@ export function buildChoiceMap(
     if (currentLoc !== undefined) {
       for (const itemId of currentLoc.availableItemIds) {
         if (!worldState.inventory.includes(itemId)) {
-          const key = `take_item:${String(itemId)}`;
-          map.set(key, { type: "take_item", itemId });
+          addRuntimeAction({ type: "take_item", itemId });
         }
       }
     }
@@ -71,14 +63,13 @@ export function buildChoiceMap(
         enemy.locationId === worldState.currentLocationId &&
         !worldState.defeatedEnemyIds.includes(enemy.id)
       ) {
-        const key = `attack:${String(enemy.id)}`;
-        map.set(key, { type: "attack", enemyId: enemy.id });
+        addRuntimeAction({ type: "attack", enemyId: enemy.id });
       }
     }
 
     // 通用行动
-    map.set("explore", { type: "explore" });
-    map.set("rest", { type: "rest" });
+    addRuntimeAction({ type: "explore" });
+    addRuntimeAction({ type: "rest" });
   }
 
   // 叙事场景的固定选项：只从服务端 choiceRegistry 按 token 映射。
@@ -91,7 +82,7 @@ export function buildChoiceMap(
       if (entry.sceneId !== scene.sceneId) continue;
       if (entry.basedOnRevision !== currentRevision) continue;
       if (!currentSceneTokens.has(entry.choiceToken)) continue;
-      if (!isCurrentlyLegalRegistryAction(entry.action, worldState, map)) continue;
+      if (!isCurrentlyLegalRegistryAction(entry.action, worldState, map, currentRevision)) continue;
       if (!map.has(entry.choiceToken)) {
         map.set(entry.choiceToken, entry.action);
       }
@@ -105,18 +96,20 @@ function isCurrentlyLegalRegistryAction(
   action: Action,
   worldState: WorldState,
   worldActionMap: ReadonlyMap<string, Action>,
+  currentRevision: number,
 ): boolean {
   switch (action.type) {
     case "talk":
       return worldState.npcs.some(
         (npc) => npc.id === action.npcId && npc.locationId === worldState.currentLocationId,
       );
-    case "move": return worldActionMap.has(`move:${String(action.locationId)}`);
-    case "explore": return worldActionMap.has("explore");
-    case "take_item": return worldActionMap.has(`take_item:${String(action.itemId)}`);
-    case "attack": return worldActionMap.has(`attack:${String(action.enemyId)}`);
-    case "rest": return worldActionMap.has("rest");
-    case "battle_action": return worldActionMap.has(`battle_action:${action.action}`);
+    case "move":
+    case "explore":
+    case "take_item":
+    case "attack":
+    case "rest":
+    case "battle_action":
+      return worldActionMap.has(deriveRuntimeChoiceToken(action, currentRevision));
     case "investigate":
     case "ack_prologue":
     case "freeform":

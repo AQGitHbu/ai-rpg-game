@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
-import type { GameSessionView } from "@/game/application";
+import type { GameSessionView, PlayerChoiceView } from "@/game/application";
 import { postAction, type ActionOutcome } from "./gameActionRequest";
 
 type Props = {
@@ -40,10 +40,10 @@ function NpcInteractionCard({
 
   return (
     <Panel className="npc-interaction-card">
-      <h3>{dialogue.npcName} · {dialogue.npcRole}</h3>
+      <h3>{dialogue.name} · {dialogue.role}</h3>
       {dialogue.speechPages.map((page, index) => <p key={`${dialogue.npcId}-${index}`}>{page}</p>)}
-      <div role="group" aria-label={`${dialogue.npcName}的回应选项`}>
-        {(dialogue.choices ?? []).map((choice) => (
+      <div role="group" aria-label={`${dialogue.name}的回应选项`}>
+        {dialogue.choices.map((choice) => (
           <InlineButton
             key={choice.choiceToken}
             disabled={busy}
@@ -95,8 +95,20 @@ export function AdventureGameShell({ view, onViewChange, onStaleRevision, onClea
     void postAction({ interaction: { kind: "fixed_choice", choiceToken }, revision: view.revision }).then(applyOutcome);
   }
 
-  const pending = view.narrativeGeneration?.status === "pending";
+  const pending = view.narrativeGeneration.status === "pending";
   const disabled = busy || pending;
+
+  function renderChoiceButton(playerChoice: PlayerChoiceView) {
+    return (
+      <InlineButton
+        key={playerChoice.choiceToken}
+        disabled={disabled}
+        onClick={() => submitChoice(playerChoice.choiceToken)}
+      >
+        {playerChoice.label}
+      </InlineButton>
+    );
+  }
 
   return (
     <main className="canonical-game-shell">
@@ -110,16 +122,47 @@ export function AdventureGameShell({ view, onViewChange, onStaleRevision, onClea
       {pending ? <p role="status">正在生成下一幕……</p> : null}
       {message !== "" ? <p role="status">{message}</p> : null}
 
+      <Panel>
+        <h2>世界地图</h2>
+        <div role="group" aria-label="可前往地点">
+          {view.worldMap.locations.map((location) => location.travelChoice === null
+            ? <span key={location.id}>{location.name}{location.current ? "（当前）" : ""}</span>
+            : renderChoiceButton(location.travelChoice))}
+        </div>
+      </Panel>
+
+      <Panel>
+        <h2>地点行动</h2>
+        <div role="group" aria-label="地点行动">
+          {view.currentLocation.actions.map(renderChoiceButton)}
+        </div>
+      </Panel>
+
+      {view.obtainableItems.length > 0 ? (
+        <Panel>
+          <h2>可获取物品</h2>
+          <div role="group" aria-label="可获取物品">
+            {view.obtainableItems.map((item) => renderChoiceButton(item.choice))}
+          </div>
+        </Panel>
+      ) : null}
+
+      {view.battle !== null ? (
+        <Panel>
+          <h2>战斗 · {view.battle.enemyName}</h2>
+          <p>第 {view.battle.round} 回合 · 你 {view.battle.playerHp} HP · 敌人 {view.battle.enemyHp} HP</p>
+          <div role="group" aria-label="战斗行动">
+            {view.battle.controls.map(renderChoiceButton)}
+          </div>
+        </Panel>
+      ) : null}
+
       {view.narrative.hasScene ? (
         <Panel>
           <h2>当前场景</h2>
           {view.narrative.narration ? <p>{view.narrative.narration}</p> : null}
           <div role="group" aria-label="场景选项">
-            {(view.narrative.choices ?? []).map((choice) => (
-              <InlineButton key={choice.choiceToken} disabled={disabled} onClick={() => submitChoice(choice.choiceToken)}>
-                {choice.label}
-              </InlineButton>
-            ))}
+            {view.narrative.choices.map(renderChoiceButton)}
           </div>
         </Panel>
       ) : null}
@@ -136,7 +179,15 @@ export function AdventureGameShell({ view, onViewChange, onStaleRevision, onClea
 
       <Panel>
         <h2>任务</h2>
-        {view.quests.map((quest) => <p key={quest.id}>{quest.name} · {quest.status}</p>)}
+        {view.quests.map((quest) => (
+          <section key={quest.id}>
+            <h3>{quest.name} · {quest.status}</h3>
+            <p>{quest.description}</p>
+            <ul>{quest.objectives.map((objective) => (
+              <li key={objective.label}>{objective.completed ? "✓" : "○"} {objective.label}</li>
+            ))}</ul>
+          </section>
+        ))}
       </Panel>
     </main>
   );

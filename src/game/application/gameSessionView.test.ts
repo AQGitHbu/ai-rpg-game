@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { projectGameSessionView } from "./gameSessionView";
+import { buildChoiceMap } from "./buildChoiceMap";
 import { createInitialWorldState, appendNpc, appendLocation, type WorldState, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
-import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId, asFactId } from "@/game/domain/scenarioBlueprint";
+import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
+import { asLocationId, asNpcId, asGenerationId, asFactId, asItemId, asEnemyId, asEndingId } from "@/game/domain/scenarioBlueprint";
 
 describe("projectGameSessionView", () => {
   const loc1: LocationEntry = {
@@ -35,14 +36,15 @@ describe("projectGameSessionView", () => {
 
   it("projects available NPCs at current location", () => {
     const view = projectGameSessionView(ws, ss, 0);
-    expect(view.availableNpcs).toHaveLength(1);
-    expect(view.availableNpcs[0]?.name).toBe("老板");
+    expect(view.narrative.npcDialogues).toHaveLength(1);
+    expect(view.narrative.npcDialogues[0]?.name).toBe("老板");
   });
 
   it("projects available moves to connected unlocked locations", () => {
     const view = projectGameSessionView(ws, ss, 0);
-    expect(view.availableMoves).toHaveLength(1);
-    expect(view.availableMoves[0]?.name).toBe("街道");
+    const moves = view.worldMap.locations.filter((location) => location.travelChoice !== null);
+    expect(moves).toHaveLength(1);
+    expect(moves[0]?.name).toBe("街道");
   });
 
   it("projects story metrics", () => {
@@ -107,7 +109,7 @@ describe("projectGameSessionView", () => {
     // 选项只含白名单字段
     const choices = view.narrative.choices ?? [];
     for (const c of choices) {
-      expect(Object.keys(c).sort()).toEqual(["choiceToken", "label"]);
+      expect(Object.keys(c).sort()).toEqual(["choiceToken", "label", "presentation"]);
     }
   });
 
@@ -168,7 +170,7 @@ describe("projectGameSessionView", () => {
     // 世界行动选项出现在 narrative.choices（白名单形状）
     expect(view.narrative.choices?.map((c) => c.choiceToken).sort()).toEqual(["w1", "w2"]);
     for (const c of view.narrative.choices ?? []) {
-      expect(Object.keys(c).sort()).toEqual(["choiceToken", "label"]);
+      expect(Object.keys(c).sort()).toEqual(["choiceToken", "label", "presentation"]);
     }
     // 不进入任何 NPC 的对话选择
     for (const d of view.narrative.npcDialogues ?? []) {
@@ -253,5 +255,125 @@ describe("projectGameSessionView", () => {
     const objective = view.quests[0]?.objectives[0];
     expect(objective?.label).toContain(SECRET_TEXT);
     expect(objective?.completed).toBe(true);
+  });
+
+  it("projects complete map, location, item, and idle-battle choices as opaque presentation tokens", () => {
+    const itemId = asItemId("item_key");
+    const enemyId = asEnemyId("enemy_wolf");
+    const completeWorld: WorldState = {
+      ...ws,
+      locations: ws.locations.map((location) => location.id === asLocationId("loc_1")
+        ? { ...location, availableItemIds: [itemId] }
+        : location),
+      items: [{ id: itemId, name: "铜钥匙", description: "一把旧钥匙", kind: "key", tags: [] }],
+      enemies: [{ id: enemyId, name: "灰狼", tier: "normal", stats: { hp: 20, attack: 5, defense: 2 }, locationId: asLocationId("loc_1"), tags: [] }],
+    };
+
+    const view = projectGameSessionView(completeWorld, ss, 7);
+    const travel = view.worldMap.locations.find((location) => location.id === "loc_2")?.travelChoice;
+    expect(travel).toMatchObject({ label: "前往街道", presentation: "travel" });
+    expect(travel?.choiceToken).toMatch(/^c_[0-9a-f]{16}$/);
+    expect(travel?.choiceToken).not.toContain("loc_2");
+
+    expect(view.currentLocation.actions.map((choice) => choice.presentation)).toEqual([
+      "explore", "dialogue", "battle", "rest",
+    ]);
+    expect(view.obtainableItems).toEqual([
+      expect.objectContaining({ itemId: "item_key", name: "铜钥匙", choice: expect.objectContaining({ presentation: "item" }) }),
+    ]);
+    for (const choice of [
+      ...view.currentLocation.actions,
+      ...view.obtainableItems.map((item) => item.choice),
+    ]) {
+      expect(choice.choiceToken).toMatch(/^c_[0-9a-f]{16}$/);
+      expect(choice.choiceToken).not.toMatch(/move:|take_item:|attack:|explore|rest/);
+    }
+    const executable = buildChoiceMap(completeWorld, ss, 7);
+    for (const playerChoice of [
+      travel!,
+      ...view.currentLocation.actions,
+      ...view.obtainableItems.map((item) => item.choice),
+    ]) {
+      expect(executable.has(playerChoice.choiceToken)).toBe(true);
+    }
+  });
+
+  it("projects active battle controls as three opaque tokens and no non-battle location actions", () => {
+    const enemyId = asEnemyId("enemy_wolf");
+    const battleWorld: WorldState = {
+      ...ws,
+      enemies: [{ id: enemyId, name: "灰狼", tier: "normal", stats: { hp: 20, attack: 5, defense: 2 }, locationId: asLocationId("loc_1"), tags: [] }],
+      battle: { status: "active", enemyId, playerHp: 91, enemyHp: 13, round: 2 },
+    };
+    const view = projectGameSessionView(battleWorld, ss, 3);
+    expect(view.currentLocation.actions).toEqual([]);
+    expect(view.battle).toMatchObject({ enemyName: "灰狼", playerHp: 91, enemyHp: 13, round: 2 });
+    expect(view.battle?.controls.map((choice) => choice.label)).toEqual(["攻击", "防御", "撤退"]);
+    expect(view.battle?.controls.every((choice) => choice.presentation === "battle")).toBe(true);
+    expect(view.battle?.controls.every((choice) => /^c_[0-9a-f]{16}$/.test(choice.choiceToken))).toBe(true);
+    const executable = buildChoiceMap(battleWorld, ss, 3);
+    expect(view.battle?.controls.every((choice) => executable.has(choice.choiceToken))).toBe(true);
+  });
+
+  it("projects focused NPC as exactly two dialogue choices plus custom input", () => {
+    const scene = {
+      sceneId: "scene-dialogue",
+      turn: 2,
+      narration: "老板压低声音。",
+      usedFactIds: [],
+      npcLine: { npcId: asNpcId("npc_1"), text: "此事不可声张。", emotion: "guarded" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "c_aabbccddeeff0011", label: "追问线索" },
+        { choiceToken: "c_1122334455667788", label: "表示理解" },
+      ] as const,
+      source: "generated" as const,
+      event: { kind: "dialogue" as const, focusNpcId: asNpcId("npc_1") },
+    };
+    const story = { ...ss, narrative: { ...ss.narrative, currentScene: scene } };
+    const view = projectGameSessionView(ws, story, 2);
+    const dialogue = view.narrative.npcDialogues[0];
+    expect(dialogue).toMatchObject({ npcId: "npc_1", name: "老板", role: "路人", freeInputEnabled: true });
+    expect(dialogue?.choices).toHaveLength(2);
+    expect(dialogue?.choices.map((choice) => choice.presentation)).toEqual(["dialogue", "dialogue"]);
+  });
+
+  it("projects quest objectives, pending/reload data, and ending without leaking server state", () => {
+    const endingId = asEndingId("ending_home");
+    const secretText = "皇城密道位于古井之下";
+    const fullWorld: WorldState = {
+      ...ws,
+      worldFacts: [{ factId: asFactId("fact_hidden"), text: secretText, source: "generated", discovered: false }],
+      quests: [{
+        id: "quest_main" as WorldState["quests"][number]["id"],
+        name: "查明真相", description: "追寻线索", kind: "main", stage: 1, status: "active",
+        objectives: [{ kind: "discover_fact", factId: asFactId("fact_hidden") }],
+        onSuccess: { kind: "reach_ending", endingId }, onFailure: { kind: "closed" }, tags: [],
+      }],
+      ending: { endingId, outcome: "success" },
+    };
+    const pendingStory = {
+      ...ss,
+      candidateEventPool: [{ secretEffect: "must-never-leak" }] as unknown as StoryState["candidateEventPool"],
+      narrative: {
+        ...ss.narrative,
+        choiceRegistry: [{ secretRegistry: true }] as unknown as NonNullable<StoryState["narrative"]["choiceRegistry"]>,
+        generation: { status: "pending", job: { utterance: "private player text" } } as unknown as StoryState["narrative"]["generation"],
+      },
+    };
+    const view = projectGameSessionView(fullWorld, pendingStory, 12);
+    expect(view.revision).toBe(12);
+    expect(view.narrativeGeneration).toEqual({ status: "pending" });
+    expect(view.quests[0]?.objectives).toEqual([{ label: "发现秘密", completed: false }]);
+    expect(view.ending).toMatchObject({ endingId: "ending_home", outcome: "success" });
+
+    const reloaded = JSON.parse(JSON.stringify(view));
+    expect(reloaded).toEqual(view);
+    const serialized = JSON.stringify(view);
+    for (const forbidden of [
+      "actionKey", "choiceRegistry", "candidateEventPool", "secretEffect", "secretRegistry",
+      "private player text", secretText, "worldState", "storyState", "eventLedger",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
   });
 });

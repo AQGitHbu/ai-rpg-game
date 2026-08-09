@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildChoiceMap } from "./buildChoiceMap";
+import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import type { WorldState, LocationEntry, NpcEntry, EnemyEntry, ItemEntry } from "@/game/domain/worldState";
 import {
   createInitialWorldState,
@@ -81,21 +82,28 @@ function approvedFor(choice: {
 }
 
 describe("buildChoiceMap", () => {
-  it("世界行动候选直接构建：talk/move/attack/take/explore/rest", () => {
+  it("世界行动候选只以 opaque token 构建：talk/move/attack/take/explore/rest", () => {
     const map = buildChoiceMap(buildWorldState(), buildStoryState({}), 0);
-    expect(map.get("talk:npc_smith")).toEqual(talkSmith);
-    expect(map.get("move:loc_2")).toEqual(moveStreet);
-    expect(map.get("attack:enemy_wolf")).toEqual(attackWolf);
-    expect(map.get("take_item:item_well_key")).toEqual(takeKey);
-    expect(map.get("explore")).toEqual({ type: "explore" });
-    expect(map.get("rest")).toEqual({ type: "rest" });
-    expect(map.has("talk:npc_maiden")).toBe(false);
-    expect(map.has("move:loc_99")).toBe(false);
+    for (const action of [
+      talkSmith,
+      moveStreet,
+      attackWolf,
+      takeKey,
+      { type: "explore" } as const,
+      { type: "rest" } as const,
+    ]) {
+      const token = deriveRuntimeChoiceToken(action, 0);
+      expect(token).toMatch(/^c_[0-9a-f]{16}$/);
+      expect(map.get(token)).toEqual(action);
+    }
+    for (const semantic of ["talk:npc_smith", "move:loc_2", "attack:enemy_wolf", "take_item:item_well_key", "explore", "rest"]) {
+      expect(map.has(semantic)).toBe(false);
+    }
   });
 
   it("talk 候选包含 dialogueAct: 默认 ask（Task 7 类型兼容）", () => {
     const map = buildChoiceMap(buildWorldState(), buildStoryState({}), 0);
-    expect(map.get("talk:npc_smith")).toEqual({ type: "talk", npcId: asNpcId("npc_smith"), dialogueAct: "ask" });
+    expect(map.get(deriveRuntimeChoiceToken(talkSmith, 0))).toEqual({ type: "talk", npcId: asNpcId("npc_smith"), dialogueAct: "ask" });
   });
 
   it("战斗激活时只允许 battle_action", () => {
@@ -104,7 +112,12 @@ describe("buildChoiceMap", () => {
       battle: { status: "active", enemyId: asEnemyId("enemy_wolf"), playerHp: 90, enemyHp: 20, round: 1 },
     };
     const map = buildChoiceMap(ws, buildStoryState({}), 0);
-    expect([...map.keys()]).toEqual(["battle_action:attack", "battle_action:guard", "battle_action:flee"]);
+    const actions = [
+      { type: "battle_action", action: "attack" },
+      { type: "battle_action", action: "guard" },
+      { type: "battle_action", action: "flee" },
+    ] as const;
+    expect([...map.keys()]).toEqual(actions.map((action) => deriveRuntimeChoiceToken(action, 0)));
   });
 
   it("active battle 仍解析当前 revision 的两个 opaque registry token；stale/tampered 不解析", () => {

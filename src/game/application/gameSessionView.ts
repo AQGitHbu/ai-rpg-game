@@ -1,16 +1,67 @@
-import type { WorldState } from "@/game/domain/worldState";
+import type { Action } from "@/game/domain/action";
+import {
+  NPC_SCENE_PAGE_CHAR_BUDGET,
+  composeDeterministicNpcLine,
+  paginateSpeechText,
+} from "@/game/domain";
 import type { StoryState } from "@/game/domain/storyState";
-import type { LocationId, NpcId, EnemyId } from "@/game/domain/scenarioBlueprint";
-import { paginateSpeechText, composeDeterministicNpcLine, NPC_SCENE_PAGE_CHAR_BUDGET } from "@/game/domain";
+import type { WorldState } from "@/game/domain/worldState";
+import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
+
+export type PlayerChoiceView = {
+  readonly choiceToken: string;
+  readonly label: string;
+  readonly hint?: string;
+  readonly presentation: "dialogue" | "travel" | "explore" | "item" | "battle" | "rest";
+};
+
+export type NpcDialogueView = {
+  readonly npcId: string;
+  readonly name: string;
+  readonly role: string;
+  readonly speechPages: readonly string[];
+  readonly choices: readonly [PlayerChoiceView, PlayerChoiceView] | readonly [];
+  readonly freeInputEnabled: boolean;
+};
+
+type QuestObjectiveView = { readonly label: string; readonly completed: boolean };
 
 export type GameSessionView = {
   readonly revision: number;
   readonly gameType: string;
-  readonly player: { readonly name: string; readonly identity: string; readonly hp: number; readonly attack: number; readonly defense: number };
-  readonly currentLocation: { readonly id: LocationId; readonly name: string; readonly description: string };
-  readonly availableNpcs: readonly { readonly id: NpcId; readonly name: string; readonly role: string; readonly met: boolean }[];
-  readonly availableMoves: readonly { readonly locationId: LocationId; readonly name: string }[];
-  readonly inventory: readonly { readonly itemId: string; readonly name: string }[];
+  readonly player: {
+    readonly name: string;
+    readonly identity: string;
+    readonly hp: number;
+    readonly attack: number;
+    readonly defense: number;
+  };
+  readonly worldMap: {
+    readonly locations: readonly {
+      readonly id: string;
+      readonly name: string;
+      readonly current: boolean;
+      readonly visited: boolean;
+      readonly travelChoice: PlayerChoiceView | null;
+    }[];
+  };
+  readonly currentLocation: {
+    readonly id: string;
+    readonly name: string;
+    readonly description: string;
+    readonly actions: readonly PlayerChoiceView[];
+  };
+  readonly obtainableItems: readonly {
+    readonly itemId: string;
+    readonly name: string;
+    readonly description: string;
+    readonly choice: PlayerChoiceView;
+  }[];
+  readonly inventory: readonly {
+    readonly itemId: string;
+    readonly name: string;
+    readonly description: string;
+  }[];
   readonly story: {
     readonly currentAct: number;
     readonly targetActs: number;
@@ -23,161 +74,234 @@ export type GameSessionView = {
     readonly hasScene: boolean;
     readonly eventKind?: string;
     readonly narration?: string;
-    /** 世界行动选项（observe/move/travel 等）；对话场景下为空。只含白名单字段。 */
-    readonly choices?: readonly { readonly choiceToken: string; readonly label: string; readonly hint?: string }[];
-    readonly npcLine?: { readonly npcId: string; readonly text: string; readonly emotion: string } | null;
-    /** 在场 NPC 的对白（场景对白优先，缺失/空页回退确定性台词）；与 availableNpcs 一一对应。 */
-    readonly npcDialogues?: readonly {
-      readonly npcId: string;
-      readonly npcName: string;
-      readonly npcRole: string;
-      readonly speechPages: readonly string[];
-      /** 仅焦点 NPC 持有 dialogue choices；其他在场 NPC 只展示台词。 */
-      readonly choices?: readonly { readonly choiceToken: string; readonly label: string; readonly hint?: string }[];
-      /** 自定义自由输入仅对焦点 NPC 开启。 */
-      readonly freeInputEnabled: boolean;
-    }[];
+    readonly choices: readonly PlayerChoiceView[];
+    readonly npcLine: { readonly npcId: string; readonly text: string; readonly emotion: string } | null;
+    readonly npcDialogues: readonly NpcDialogueView[];
   };
-  readonly narrativeGeneration?: { readonly status: string; readonly totalApiCalls: number };
-  readonly battle: { readonly enemyName: string; readonly playerHp: number; readonly enemyHp: number; readonly round: number } | null;
+  readonly narrativeGeneration: { readonly status: "idle" | "pending" };
+  readonly battle: {
+    readonly enemyName: string;
+    readonly playerHp: number;
+    readonly enemyHp: number;
+    readonly round: number;
+    readonly controls: readonly PlayerChoiceView[];
+  } | null;
   readonly quests: readonly {
     readonly id: string;
     readonly name: string;
     readonly description: string;
     readonly kind: string;
     readonly status: string;
-    readonly objectives: readonly { readonly label: string; readonly completed: boolean }[];
+    readonly objectives: readonly QuestObjectiveView[];
   }[];
   readonly prologueShown: boolean;
-  readonly ending: { readonly endingId: string; readonly outcome: string } | null;
+  readonly ending: {
+    readonly endingId: string;
+    readonly name: string;
+    readonly description: string;
+    readonly outcome: string;
+  } | null;
 };
+
+function choice(
+  action: Action,
+  revision: number,
+  label: string,
+  presentation: PlayerChoiceView["presentation"],
+  hint?: string,
+): PlayerChoiceView {
+  return {
+    choiceToken: deriveRuntimeChoiceToken(action, revision),
+    label,
+    ...(hint === undefined ? {} : { hint }),
+    presentation,
+  };
+}
+
+function presentationForAction(action: Action): PlayerChoiceView["presentation"] {
+  switch (action.type) {
+    case "talk":
+    case "freeform":
+      return "dialogue";
+    case "move":
+      return "travel";
+    case "take_item":
+      return "item";
+    case "attack":
+    case "battle_action":
+      return "battle";
+    case "rest":
+      return "rest";
+    case "explore":
+    case "investigate":
+    case "ack_prologue":
+      return "explore";
+  }
+}
+
+function fallbackScenePresentation(
+  kind: string | undefined,
+): PlayerChoiceView["presentation"] {
+  switch (kind) {
+    case "dialogue": return "dialogue";
+    case "travel": return "travel";
+    case "item": return "item";
+    case "battle": return "battle";
+    default: return "explore";
+  }
+}
+
+function projectQuestObjectives(worldState: WorldState, objectives: WorldState["quests"][number]["objectives"]): readonly QuestObjectiveView[] {
+  return objectives.map((objective) => {
+    switch (objective.kind) {
+      case "visit_location": {
+        const location = worldState.locations.find((entry) => entry.id === objective.locationId);
+        return { label: `前往${location?.name ?? "未知地点"}`, completed: worldState.visitedLocationIds.includes(objective.locationId) };
+      }
+      case "talk_to_npc": {
+        const npc = worldState.npcs.find((entry) => entry.id === objective.npcId);
+        return { label: `与${npc?.name ?? "某人"}交谈`, completed: npc?.met ?? false };
+      }
+      case "obtain_item": {
+        const item = worldState.items.find((entry) => entry.id === objective.itemId);
+        return { label: `获取${item?.name ?? "某物"}`, completed: worldState.inventory.includes(objective.itemId) };
+      }
+      case "discover_fact": {
+        const fact = worldState.worldFacts.find((entry) => entry.factId === objective.factId);
+        return {
+          label: fact?.discovered === true ? `发现${fact.text}` : "发现秘密",
+          completed: fact?.discovered === true,
+        };
+      }
+      case "defeat_enemy": {
+        const enemy = worldState.enemies.find((entry) => entry.id === objective.enemyId);
+        return { label: `击败${enemy?.name ?? "敌人"}`, completed: worldState.defeatedEnemyIds.includes(objective.enemyId) };
+      }
+    }
+  });
+}
 
 export function projectGameSessionView(
   worldState: WorldState,
   storyState: StoryState,
   revision: number,
 ): GameSessionView {
-  const currentLoc = worldState.locations.find((l) => l.id === worldState.currentLocationId);
-  const npcsHere = worldState.npcs.filter((n) => n.locationId === worldState.currentLocationId);
-  const moves = currentLoc?.connectedLocationIds
-    .filter((id) => worldState.unlockedLocationIds.includes(id))
-    .map((id) => {
-      const loc = worldState.locations.find((l) => l.id === id);
-      return { locationId: id, name: loc?.name ?? "???" };
-    }) ?? [];
+  const currentLocation = worldState.locations.find((entry) => entry.id === worldState.currentLocationId);
+  const presentNpcs = worldState.npcs.filter((entry) => entry.locationId === worldState.currentLocationId);
+  const activeBattle = worldState.battle.status === "active" ? worldState.battle : null;
+
+  const travelTargets = new Set(
+    activeBattle === null ? currentLocation?.connectedLocationIds ?? [] : [],
+  );
+  const mapLocations = worldState.locations
+    .filter((location) => worldState.unlockedLocationIds.includes(location.id))
+    .map((location) => ({
+      id: String(location.id),
+      name: location.name,
+      current: location.id === worldState.currentLocationId,
+      visited: worldState.visitedLocationIds.includes(location.id),
+      travelChoice: travelTargets.has(location.id)
+        ? choice({ type: "move", locationId: location.id }, revision, `前往${location.name}`, "travel")
+        : null,
+    }));
+
+  const locationActions: PlayerChoiceView[] = [];
+  if (activeBattle === null) {
+    locationActions.push(choice({ type: "explore" }, revision, `探索${currentLocation?.name ?? "此地"}`, "explore"));
+    for (const npc of presentNpcs) {
+      locationActions.push(choice(
+        { type: "talk", npcId: npc.id, dialogueAct: "ask" },
+        revision,
+        `与${npc.name}交谈`,
+        "dialogue",
+      ));
+    }
+    for (const enemy of worldState.enemies) {
+      if (enemy.locationId === worldState.currentLocationId && !worldState.defeatedEnemyIds.includes(enemy.id)) {
+        locationActions.push(choice({ type: "attack", enemyId: enemy.id }, revision, `挑战${enemy.name}`, "battle"));
+      }
+    }
+    locationActions.push(choice({ type: "rest" }, revision, "休息", "rest"));
+  }
+
+  const obtainableItems = activeBattle === null
+    ? (currentLocation?.availableItemIds ?? [])
+      .filter((itemId) => !worldState.inventory.includes(itemId))
+      .map((itemId) => {
+        const item = worldState.items.find((entry) => entry.id === itemId);
+        return {
+          itemId: String(itemId),
+          name: item?.name ?? "未知物品",
+          description: item?.description ?? "",
+          choice: choice({ type: "take_item", itemId }, revision, `拾取${item?.name ?? "物品"}`, "item"),
+        };
+      })
+    : [];
 
   const scene = storyState.narrative.currentScene;
-  const hasScene = scene !== null;
-
-  // Task 11：识别焦点 NPC 并拆分选项——对话选项只给焦点 NPC，
-  // 世界行动选项进入 narrative.choices，绝不无条件投影到每个 NPC。
-  const isDialogueScene = scene !== null
-    && (scene.event?.kind === "dialogue" || scene.npcLine !== null);
-  const focusNpcId: string | null = isDialogueScene && scene !== null
-    ? String((scene.event?.kind === "dialogue" ? scene.event.focusNpcId : scene.npcLine?.npcId) ?? "")
-    : null;
-  // 对话选项：dialogue 场景的选项；世界行动选项：非 dialogue 场景的选项。
-  const dialogueChoices = isDialogueScene && scene !== null
-    ? scene.choices.map((c) => ({ choiceToken: c.choiceToken, label: c.label, ...(c.hint !== undefined ? { hint: c.hint } : {}) }))
-    : [];
-  const worldChoices = !isDialogueScene && scene !== null
-    ? scene.choices.map((c) => ({ choiceToken: c.choiceToken, label: c.label, ...(c.hint !== undefined ? { hint: c.hint } : {}) }))
-    : [];
-
-  // 每 NPC 对白：场景 npcDialogues 有非空分页时直用；否则回退焦点 npcLine 或确定性台词。
-  // 对话选项只挂在焦点 NPC 名下；自定义自由输入只对焦点 NPC 开启。
-  const sceneDialoguesById = new Map(
-    (scene?.npcDialogues ?? []).map((d) => [String(d.npcId), d])
-  );
-  const npcDialogues = npcsHere.map((n) => {
-    const isFocus = focusNpcId !== null && focusNpcId === String(n.id);
-    const sceneEntry = sceneDialoguesById.get(String(n.id));
-    if (sceneEntry !== undefined && sceneEntry.speechPages.length > 0) {
-      return {
-        npcId: String(n.id),
-        npcName: n.name,
-        npcRole: n.role,
-        speechPages: sceneEntry.speechPages,
-        ...(isFocus ? { choices: dialogueChoices } : {}),
-        freeInputEnabled: isFocus,
-      };
-    }
-    const hasFocusLine = scene?.npcLine !== null && scene?.npcLine !== undefined
-      && String(scene.npcLine.npcId) === String(n.id)
-      && scene.npcLine.text.trim() !== "";
-    const text = hasFocusLine
-      ? scene!.npcLine!.text.trim()
-      : composeDeterministicNpcLine(n.name, n.role);
+  const focusNpcId = scene?.event?.kind === "dialogue"
+    ? String(scene.event.focusNpcId)
+    : scene?.npcLine === null || scene?.npcLine === undefined
+      ? null
+      : String(scene.npcLine.npcId);
+  const registry = storyState.narrative.choiceRegistry ?? [];
+  const projectSceneChoice = (sceneChoice: NonNullable<typeof scene>["choices"][number]): PlayerChoiceView => {
+    const approved = registry.find((entry) =>
+      entry.choiceToken === sceneChoice.choiceToken
+      && entry.sceneId === scene?.sceneId
+      && entry.basedOnRevision === revision
+    );
     return {
-      npcId: String(n.id),
-      npcName: n.name,
-      npcRole: n.role,
-      speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
-      ...(isFocus ? { choices: dialogueChoices } : {}),
+      choiceToken: sceneChoice.choiceToken,
+      label: sceneChoice.label,
+      ...(sceneChoice.hint === undefined ? {} : { hint: sceneChoice.hint }),
+      presentation: approved === undefined
+        ? fallbackScenePresentation(scene?.event?.kind)
+        : presentationForAction(approved.action),
+    };
+  };
+  const projectedSceneChoices = scene?.choices.map(projectSceneChoice) ?? [];
+  const isDialogueScene = focusNpcId !== null;
+  const dialogueChoices: NpcDialogueView["choices"] = isDialogueScene && projectedSceneChoices.length === 2
+    ? [projectedSceneChoices[0]!, projectedSceneChoices[1]!]
+    : [];
+  const sceneDialogues = new Map((scene?.npcDialogues ?? []).map((entry) => [String(entry.npcId), entry]));
+  const npcDialogues: readonly NpcDialogueView[] = presentNpcs.map((npc) => {
+    const isFocus = focusNpcId === String(npc.id);
+    const supplied = sceneDialogues.get(String(npc.id));
+    const focusLine = scene?.npcLine !== null
+      && scene?.npcLine !== undefined
+      && scene.npcLine.npcId === npc.id
+      && scene.npcLine.text.trim() !== ""
+      ? scene.npcLine.text.trim()
+      : null;
+    const speechPages = supplied !== undefined && supplied.speechPages.length > 0
+      ? [...supplied.speechPages]
+      : paginateSpeechText(focusLine ?? composeDeterministicNpcLine(npc.name, npc.role), NPC_SCENE_PAGE_CHAR_BUDGET);
+    return {
+      npcId: String(npc.id),
+      name: npc.name,
+      role: npc.role,
+      speechPages,
+      choices: isFocus ? dialogueChoices : [],
       freeInputEnabled: isFocus,
     };
   });
 
-  // Battle projection
-  const battle: GameSessionView["battle"] = (() => {
-    if (worldState.battle.status !== "active") return null;
-    const battle = worldState.battle;
-    if (battle.status !== "active") return null;
-    const enemy = worldState.enemies.find((e) => e.id === battle.enemyId);
-    return {
-      enemyName: enemy?.name ?? "???",
-      playerHp: worldState.battle.playerHp,
-      enemyHp: worldState.battle.enemyHp,
-      round: worldState.battle.round,
-    };
-  })();
-
-  // Quests projection（含派生 label 和 completed）
-  const quests: GameSessionView["quests"] = worldState.quests.map((q) => ({
-    id: String(q.id),
-    name: q.name,
-    description: q.description,
-    kind: q.kind,
-    status: q.status,
-    objectives: q.objectives.map((o) => {
-      let label = "";
-      let completed = false;
-      switch (o.kind) {
-        case "visit_location": {
-          const loc = worldState.locations.find((l) => l.id === o.locationId);
-          label = `前往${loc?.name ?? "未知地点"}`;
-          completed = worldState.visitedLocationIds.includes(o.locationId);
-          break;
-        }
-        case "talk_to_npc": {
-          const npc = worldState.npcs.find((n) => n.id === o.npcId);
-          label = `与${npc?.name ?? "某人"}交谈`;
-          completed = npc?.met ?? false;
-          break;
-        }
-        case "obtain_item": {
-          const item = worldState.items.find((i) => i.id === o.itemId);
-          label = `获取${item?.name ?? "某物"}`;
-          completed = worldState.inventory.includes(o.itemId);
-          break;
-        }
-        case "discover_fact": {
-          const fact = worldState.worldFacts.find((f) => f.factId === o.factId);
-          // 未发现：只显示中性目标，绝不泄漏 fact.text / FactId（spec §10.2）。
-          label = fact !== undefined && fact.discovered ? `发现${fact.text}` : "发现秘密";
-          completed = fact !== undefined && fact.discovered;
-          break;
-        }
-        case "defeat_enemy": {
-          const enemy = worldState.enemies.find((e) => e.id === o.enemyId);
-          label = `击败${enemy?.name ?? "敌人"}`;
-          completed = worldState.defeatedEnemyIds.includes(o.enemyId);
-          break;
-        }
-      }
-      return { label, completed };
-    }),
-  }));
+  const battle = activeBattle === null ? null : {
+    enemyName: worldState.enemies.find((entry) => entry.id === activeBattle.enemyId)?.name ?? "未知敌人",
+    playerHp: activeBattle.playerHp,
+    enemyHp: activeBattle.enemyHp,
+    round: activeBattle.round,
+    controls: [
+      choice({ type: "battle_action", action: "attack" }, revision, "攻击", "battle"),
+      choice({ type: "battle_action", action: "guard" }, revision, "防御", "battle"),
+      choice({ type: "battle_action", action: "flee" }, revision, "撤退", "battle"),
+    ],
+  };
+  const endingDefinition = worldState.ending === null
+    ? undefined
+    : worldState.endings.find((entry) => entry.id === worldState.ending?.endingId);
 
   return {
     revision,
@@ -189,16 +313,17 @@ export function projectGameSessionView(
       attack: worldState.player.stats.attack,
       defense: worldState.player.stats.defense,
     },
+    worldMap: { locations: mapLocations },
     currentLocation: {
-      id: worldState.currentLocationId,
-      name: currentLoc?.name ?? "???",
-      description: currentLoc?.description ?? "",
+      id: String(worldState.currentLocationId),
+      name: currentLocation?.name ?? "未知地点",
+      description: currentLocation?.description ?? "",
+      actions: locationActions,
     },
-    availableNpcs: npcsHere.map((n) => ({ id: n.id, name: n.name, role: n.role, met: n.met })),
-    availableMoves: moves,
+    obtainableItems,
     inventory: worldState.inventory.map((itemId) => {
-      const item = worldState.items.find((i) => i.id === itemId);
-      return { itemId: String(itemId), name: item?.name ?? "???" };
+      const item = worldState.items.find((entry) => entry.id === itemId);
+      return { itemId: String(itemId), name: item?.name ?? "未知物品", description: item?.description ?? "" };
     }),
     story: {
       currentAct: storyState.currentAct,
@@ -209,23 +334,30 @@ export function projectGameSessionView(
     },
     narrative: {
       mode: storyState.narrative.mode,
-      hasScene,
+      hasScene: scene !== null,
+      ...(scene === null ? {} : { eventKind: scene.event?.kind, narration: scene.narration }),
+      choices: isDialogueScene ? [] : projectedSceneChoices,
+      npcLine: scene?.npcLine === null || scene?.npcLine === undefined
+        ? null
+        : { npcId: String(scene.npcLine.npcId), text: scene.npcLine.text, emotion: scene.npcLine.emotion },
       npcDialogues,
-      ...(hasScene && scene ? {
-        eventKind: scene.event?.kind,
-        narration: scene.narration,
-        choices: worldChoices,
-        npcLine: scene.npcLine
-          ? { npcId: String(scene.npcLine.npcId), text: scene.npcLine.text, emotion: scene.npcLine.emotion }
-          : null,
-      } : {}),
     },
-    ...(storyState.narrative.generation.status === "pending"
-      ? { narrativeGeneration: { status: "pending", totalApiCalls: 1 } }
-      : {}),
+    narrativeGeneration: { status: storyState.narrative.generation.status },
     battle,
-    quests,
+    quests: worldState.quests.map((quest) => ({
+      id: String(quest.id),
+      name: quest.name,
+      description: quest.description,
+      kind: quest.kind,
+      status: quest.status,
+      objectives: projectQuestObjectives(worldState, quest.objectives),
+    })),
     prologueShown: storyState.prologueShown,
-    ending: worldState.ending ? { endingId: String(worldState.ending.endingId), outcome: worldState.ending.outcome } : null,
+    ending: worldState.ending === null ? null : {
+      endingId: String(worldState.ending.endingId),
+      name: endingDefinition?.name ?? "故事结局",
+      description: endingDefinition?.description ?? "",
+      outcome: worldState.ending.outcome,
+    },
   };
 }

@@ -55,7 +55,7 @@ export function CurrentGameScreen() {
 
   // 叙事 pending 时轮询 ensure + 重新读取
   const narrativePending = state.phase === "active" &&
-    state.view.narrativeGeneration?.status === "pending";
+    state.view.narrativeGeneration.status === "pending";
 
   useEffect(() => {
     if (!narrativePending) return;
@@ -134,8 +134,8 @@ export function CurrentGameScreen() {
           <Tag variant={view.ending.outcome === "success" ? "success" : "danger"}>
             {view.ending.outcome === "success" ? "胜利" : "失败"}
           </Tag>
-          <h2>故事结局</h2>
-          <p>你的冒险至此结束。</p>
+          <h2>{view.ending.name}</h2>
+          <p>{view.ending.description || "你的冒险至此结束。"}</p>
           <InlineButton onClick={() => void loadCurrentGame()}>重新开始</InlineButton>
         </Panel>
       );
