@@ -557,3 +557,8 @@ Before declaring the runtime fully usable, close these production gaps:
 2. Bind custom NPC input to the authoritative focused NPC before intent classification; reject missing/non-focused targets.
 3. Make the ending-screen “restart” create a fresh game/seed through the canonical API, including production behavior.
 4. Make fallback world generation honor `gameType` and provide stronger seed-dependent compiled story variation, with deterministic replay tests.
+
+5. Close post-remediation review gaps: make fallback ending predicates exhaustive for mixed/skip paths, and carry an opaque ending-session restart identity through HTTP to the repository CAS to prevent ABA replacement.
+6. Apply the same game-length/reachable-act and exhaustive-ending validation to live AI candidates before they can bypass the deterministic fallback.
+7. Constrain accepted live endings to a provably exhaustive, disjoint terminal partition and require progressive stage unlocks on the continuing path.
+8. Reject side-quest unlock edges that bypass the progressive main-act chain.
