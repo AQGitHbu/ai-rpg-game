@@ -16,14 +16,9 @@ import {
 } from "@/game/domain/pendingNarrativeJob";
 import { buildIntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
 import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
-import type { ExpansionSource, ExpansionSourceResult } from "@/game/gameplay/rpg/expansion/expansionSource";
-import type { ExpansionResult } from "@/game/gameplay/rpg/expansion/expansionTypes";
-import {
-  checkExpansionTrigger,
-  runExpansionProposer,
-} from "@/game/gameplay/rpg/expansion";
+import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
 import { applyApprovedExpansion } from "@/game/gameplay/rpg/expansion/applyExpansion";
-import type { RuleEngineResult } from "@/game/gameplay/rpg/ruleEngine";
+import { runExpansionOrchestration } from "./expansionProposer";
 
 export type PerformTurnCommand = {
   readonly gameId: GameId;
@@ -201,64 +196,6 @@ export async function performTurn(
     baseLedgerLength: record.worldState.eventLedger.length,
     now: deps.now(),
   });
-}
-
-type RunExpansionOrchestrationInput = {
-  readonly initialResult: RuleEngineResult;
-  readonly ws: WorldState;
-  readonly ss: StoryState;
-  readonly action: Action;
-  readonly actionId: string;
-  readonly expansionSource: ExpansionSource | undefined;
-  readonly now: () => string;
-};
-
-/**
- * application 编排 Expansion：纯触发 →（条件）await source 提案 → 纯审批/重演算。
- * source 抛错或返回失败时以“无提案”降级，绝不炸穿回合流水线。
- */
-async function runExpansionOrchestration(input: RunExpansionOrchestrationInput): Promise<ExpansionResult> {
-  const trigger = checkExpansionTrigger(input.initialResult, input.ws, input.ss, input.action);
-  if (!trigger.triggered || !input.expansionSource) {
-    return runExpansionProposer(
-      input.initialResult,
-      input.ws,
-      input.ss,
-      input.action,
-      input.actionId,
-      null,
-      { now: input.now },
-    );
-  }
-  let sourceResult: ExpansionSourceResult;
-  try {
-    sourceResult = await input.expansionSource.propose({
-      worldState: input.ws,
-      storyState: input.ss,
-      action: input.action,
-      triggerReason: trigger.reason,
-    });
-  } catch {
-    // AI/source 失败：不破坏普通行动拒绝语义，本轮按“无提案”处理（零写入）
-    return runExpansionProposer(
-      input.initialResult,
-      input.ws,
-      input.ss,
-      input.action,
-      input.actionId,
-      null,
-      { now: input.now },
-    );
-  }
-  return runExpansionProposer(
-    input.initialResult,
-    input.ws,
-    input.ss,
-    input.action,
-    input.actionId,
-    sourceResult.proposals,
-    { now: input.now },
-  );
 }
 
 /** 玩家原文长度上限与 job 构造常量保持一致（spec §7.3 截断）。 */

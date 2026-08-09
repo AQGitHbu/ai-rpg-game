@@ -12,9 +12,8 @@ import type { GameRepositoryV2 } from "./persistence/gameRepositoryV2";
 import { createGameV2, type WorldGenerationSource } from "../createGameV2";
 import { performActionV2 } from "../performActionV2";
 import { projectGameSessionView } from "../gameSessionViewV2";
-import { createFixtureExpansionSource } from "../server/ai/expansionSource";
 import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
-import { createV2WorldGenerationSource, createV2SceneSource } from "../server/ai/v2SourceFactory";
+import { createV2WorldGenerationSource, createV2SceneSource, createV2ExpansionSource } from "../server/ai/v2SourceFactory";
 import { createServerV2IntentParserSource } from "../server/ai/intentParserSourceFactory";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { generatePendingSceneV2 } from "../generatePendingSceneV2";
@@ -77,7 +76,8 @@ export function createServerGameV2EntryPoints(
   const aiConfig = parseAiRuntimeConfig(env);
   const aiEnabled = aiConfig.status === "available";
   const source = createV2WorldGenerationSource(env, logger);
-  const expansionSource = createFixtureExpansionSource();
+  // Task 28：AI 可用注入 live 扩张源，否则确定性 fixture（不再直接注入 createFixtureExpansionSource）。
+  const expansionSource = createV2ExpansionSource(env, logger);
   const sceneSource = createV2SceneSource(env, logger);
   // Task 9：对话自由输入统一走 performTurn 回合入口，AI 可用时注入 live 意图源，否则规则源。
   // transport 构建收敛在 server/ai 工厂内（@ai-game/ai-transport 边界守卫）。

@@ -12,6 +12,9 @@ import type { StoryState } from "@/game/domain/storyState";
 import { createFixtureWorldSource } from "../../createGameV2";
 import { createWorldGenerationSourceV2 } from "./worldGenerationSourceV2";
 import { createDeterministicSceneSource } from "../../deterministicSceneSource";
+import { createLiveExpansionSourceV2 } from "./liveExpansionSourceV2";
+import { createFixtureExpansionSource } from "./expansionSource";
+import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
 
 // ---------------------------------------------------------------------------
 // V2 AI source 工厂：根据 AI 运行时配置注入 live 或 fixture/deterministic source。
@@ -304,4 +307,29 @@ export function createV2SceneSource(
   }
   logger?.info("v2_scene_source_deterministic", { diagnostics: runtime.diagnostics });
   return createDeterministicSceneSource();
+}
+
+// --- Live Expansion Source Factory（Task 28） ---
+
+/**
+ * Task 28：按 AI 运行时配置选择 live / fixture ExpansionSource。
+ * - AI 可用 → live 源（AI 提案 → 纯解析/校验/引用过滤，失败回退空提案）。
+ * - 无配置 → 确定性 fixture 源（测试/离线）。
+ * 生产唯一注入点：compositionRootV2。禁止直接注入 createFixtureExpansionSource。
+ */
+export function createV2ExpansionSource(
+  env: Record<string, string | undefined> = process.env,
+  logger?: GameLogger,
+): ExpansionSource {
+  const runtime = parseAiRuntimeConfig(env);
+  if (runtime.status === "available") {
+    logger?.info("v2_expansion_source_live", { model: runtime.config.model });
+    return createLiveExpansionSourceV2({
+      transport: createOpenAiCompatibleTransport(),
+      config: runtime.config,
+      logger,
+    });
+  }
+  logger?.info("v2_expansion_source_fixture", { diagnostics: runtime.diagnostics });
+  return createFixtureExpansionSource();
 }
