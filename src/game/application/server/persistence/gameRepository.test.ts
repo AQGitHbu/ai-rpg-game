@@ -16,6 +16,20 @@ function createInMemoryGameRepository(): GameRepository {
       record = { gameId: input.gameId, worldState: input.worldState, storyState: input.storyState, revision: 0, createdAt: input.createdAt };
       return { ok: true as const };
     },
+    async replaceCurrentGame(input) {
+      if (record === null) return { ok: false as const, code: "NO_ACTIVE_GAME" as const };
+      if (record.gameId !== input.expectedCurrentGameId || record.revision !== input.expectedRevision) {
+        return { ok: false as const, code: "STALE_GAME_REVISION" as const };
+      }
+      record = {
+        gameId: input.gameId,
+        worldState: input.worldState,
+        storyState: input.storyState,
+        revision: 0,
+        createdAt: input.createdAt,
+      };
+      return { ok: true as const };
+    },
     async getCurrentGame() {
       if (record === null) return { ok: true as const, status: "none" as const };
       return { ok: true as const, status: "active" as const, record };

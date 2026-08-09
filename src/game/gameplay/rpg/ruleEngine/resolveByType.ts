@@ -63,6 +63,7 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       const event: GameEvent = { type: "location_visited", locationId: action.locationId, occurredAt };
       const nextWs: WorldState = {
         ...ws,
+        battle: ws.battle.status === "resolved" ? { status: "idle" } : ws.battle,
         currentLocationId: action.locationId,
         visitedLocationIds: ws.visitedLocationIds.includes(action.locationId)
           ? ws.visitedLocationIds

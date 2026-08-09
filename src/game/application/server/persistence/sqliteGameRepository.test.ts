@@ -106,6 +106,40 @@ describe("sqliteGameRepository", () => {
     expect(result).toEqual({ ok: false, code: "ACTIVE_GAME_EXISTS" });
   });
 
+  it("atomically replaces the expected current revision and preserves it on stale failure", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    const oldState = buildTestState();
+    const newState = buildTestState();
+    await repo.createInitialGame({
+      gameId: asGameId("ended-game"),
+      ...oldState,
+      createdAt: "2026-01-01",
+    });
+
+    const stale = await repo.replaceCurrentGame({
+      expectedCurrentGameId: asGameId("ended-game"),
+      expectedRevision: 7,
+      gameId: asGameId("stale-new-game"),
+      ...newState,
+      createdAt: "2026-01-02",
+    });
+    expect(stale).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
+    const preserved = await repo.getCurrentGame();
+    expect(preserved).toMatchObject({ ok: true, status: "active", record: { gameId: "ended-game", revision: 0 } });
+
+    const replaced = await repo.replaceCurrentGame({
+      expectedCurrentGameId: asGameId("ended-game"),
+      expectedRevision: 0,
+      gameId: asGameId("fresh-game"),
+      ...newState,
+      createdAt: "2026-01-02",
+    });
+    expect(replaced).toEqual({ ok: true });
+    const current = await repo.getCurrentGame();
+    expect(current).toMatchObject({ ok: true, status: "active", record: { gameId: "fresh-game", revision: 0 } });
+  });
+
   it("applyState CAS success and stale rejection", async () => {
     const dbPath = nextDbPath();
     const repo = openRepo(dbPath);

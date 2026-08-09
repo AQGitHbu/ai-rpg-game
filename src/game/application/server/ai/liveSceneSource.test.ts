@@ -72,6 +72,7 @@ function makeRepo(record: GameRecord | null): GameRepository {
   let current = record;
   return {
     createInitialGame: vi.fn(),
+    replaceCurrentGame: vi.fn(),
     getCurrentGame: vi.fn(async () => {
       if (current === null) return { ok: true as const, status: "none" as const };
       return { ok: true as const, status: "active" as const, record: current };

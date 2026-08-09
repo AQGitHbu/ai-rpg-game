@@ -39,6 +39,37 @@ export async function convertInteraction(
     return { ok: true, action: { type: "freeform", intent: "unclassified", rawText: text } };
   }
 
+  // A custom response rendered under a focused NPC is dialogue by transport
+  // contract. Do not let movement/item keywords escape that authority before
+  // the dialogue intent has been classified. The server use case validates
+  // that this target is the authoritative scene focus before calling here.
+  const targetNpcId = freeTextDeps?.targetNpcId;
+  if (targetNpcId !== undefined) {
+    if (freeTextDeps?.intentParserSource !== undefined) {
+      const classified = await freeTextDeps.intentParserSource.parseIntent(
+        text,
+        ctx,
+        targetNpcId,
+      );
+      if (
+        classified.ok
+        && classified.action.type === "talk"
+        && classified.action.npcId === targetNpcId
+      ) {
+        return { ok: true, action: classified.action };
+      }
+    }
+    return {
+      ok: true,
+      action: {
+        type: "talk",
+        npcId: targetNpcId,
+        dialogueAct: "ask",
+        utterance: text.trim(),
+      },
+    };
+  }
+
   // 1. 纯规则预分类（零 AI）
   const preClassified = preClassifyFreeText(text, ctx);
   if (preClassified !== null) {

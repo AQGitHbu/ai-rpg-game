@@ -30,6 +30,16 @@ describe("resolveByType", () => {
     }
   });
 
+  it("move clears a resolved encounter so a later location can start another battle", () => {
+    const afterBattle = {
+      ...ws,
+      battle: { status: "resolved" as const, enemyId: asEnemyId("enemy_old"), outcome: "victory" as const },
+    };
+    const result = resolveByType(afterBattle, { type: "move", locationId: asLocationId("loc_2") }, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.nextWorldState.battle).toEqual({ status: "idle" });
+  });
+
   it("talk marks npc as met", () => {
     const npc: NpcEntry = {
       id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",

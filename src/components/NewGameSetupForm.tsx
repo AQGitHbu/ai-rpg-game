@@ -21,9 +21,10 @@ const GAME_LENGTHS = [
 
 export type NewGameSetupFormProps = {
   readonly onCreated: () => void;
+  readonly restartRevision?: number;
 };
 
-export function NewGameSetupForm({ onCreated }: NewGameSetupFormProps) {
+export function NewGameSetupForm({ onCreated, restartRevision }: NewGameSetupFormProps) {
   const [gameType, setGameType] = useState<NewGameInput["gameType"]>("wuxia");
   const [gameLength, setGameLength] = useState<NonNullable<NewGameInput["gameLength"]>>("short");
   const [submitting, setSubmitting] = useState(false);
@@ -38,11 +39,21 @@ export function NewGameSetupForm({ onCreated }: NewGameSetupFormProps) {
       const response = await fetch("/api/game", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gameType, gameLength }),
+        body: JSON.stringify({
+          gameType,
+          gameLength,
+          ...(restartRevision === undefined ? {} : { restart: { expectedRevision: restartRevision } }),
+        }),
       });
       const body = await response.json().catch(() => null) as { readonly ok?: boolean; readonly code?: string } | null;
       if (!response.ok || body?.ok !== true) {
-        setError(body?.code === "ACTIVE_GAME_EXISTS" ? "已有进行中的游戏。" : "创建游戏失败，请稍后重试。");
+        setError(
+          body?.code === "ACTIVE_GAME_EXISTS"
+            ? "已有进行中的游戏。"
+            : body?.code === "STALE_GAME_REVISION"
+              ? "结局存档已变化，请刷新后重试。"
+              : "创建游戏失败，原结局存档已保留，请稍后重试。",
+        );
         return;
       }
       onCreated();

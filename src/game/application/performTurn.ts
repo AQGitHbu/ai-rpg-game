@@ -95,6 +95,20 @@ export async function performTurn(
     }
   }
 
+  if (command.interaction.kind === "free_text" && command.interaction.targetNpcId !== undefined) {
+    const sceneEvent = record.storyState.narrative.currentScene?.event;
+    if (
+      sceneEvent?.kind !== "dialogue"
+      || sceneEvent.focusNpcId !== command.interaction.targetNpcId
+    ) {
+      return {
+        ok: false,
+        code: "ACTION_REJECTED",
+        feedback: "自定义对话目标已失效，请使用当前场景重新选择。",
+      };
+    }
+  }
+
   const freeTextDeps = command.interaction.kind === "free_text"
     ? {
         intentContext: buildIntentContext(record.worldState),

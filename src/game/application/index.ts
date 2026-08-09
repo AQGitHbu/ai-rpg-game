@@ -13,6 +13,8 @@ export {
   type CorruptGameReason,
   type CreateInitialGameInput,
   type CreateInitialGameResult,
+  type ReplaceCurrentGameInput,
+  type ReplaceCurrentGameResult,
   type GameId,
   type GameRecord,
   type GameRepository,

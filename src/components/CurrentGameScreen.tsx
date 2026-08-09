@@ -20,6 +20,7 @@ type ScreenState =
   | { phase: "loading" }
   | { phase: "none" }
   | { phase: "active"; view: GameSessionView }
+  | { phase: "restart"; expectedRevision: number }
   | { phase: "corrupt"; reason: string }
   | { phase: "unreachable" };
 
@@ -136,7 +137,7 @@ export function CurrentGameScreen() {
           </Tag>
           <h2>{view.ending.name}</h2>
           <p>{view.ending.description || "你的冒险至此结束。"}</p>
-          <InlineButton onClick={() => void loadCurrentGame()}>重新开始</InlineButton>
+          <InlineButton onClick={() => setState({ phase: "restart", expectedRevision: view.revision })}>重新开始</InlineButton>
         </Panel>
       );
     }
@@ -153,6 +154,10 @@ export function CurrentGameScreen() {
 
   if (state.phase === "none") {
     return <NewGameSetupForm onCreated={handleCreated} />;
+  }
+
+  if (state.phase === "restart") {
+    return <NewGameSetupForm onCreated={handleCreated} restartRevision={state.expectedRevision} />;
   }
 
   if (state.phase === "corrupt") {

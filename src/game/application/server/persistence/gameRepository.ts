@@ -29,6 +29,16 @@ export type CreateInitialGameInput = {
   readonly createdAt: string;
 };
 
+/**
+ * Atomically install a freshly compiled game in place of the current one.
+ * Both the active id and revision participate in the CAS so a failed restart
+ * can never clear or overwrite the ended save the player was viewing.
+ */
+export type ReplaceCurrentGameInput = CreateInitialGameInput & {
+  readonly expectedCurrentGameId: GameId;
+  readonly expectedRevision: number;
+};
+
 export type ApplyStateInput = {
   readonly gameId: GameId;
   readonly expectedRevision: number;
@@ -47,6 +57,12 @@ export type ApplySceneWriteBackInput = {
 export type CreateInitialGameResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly code: "ACTIVE_GAME_EXISTS" }
+  | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" };
+
+export type ReplaceCurrentGameResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" }
+  | { readonly ok: false; readonly code: "STALE_GAME_REVISION" }
   | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" };
 
 export type GetCurrentGameResult =
@@ -69,6 +85,7 @@ export type ClearCurrentGameResult =
 
 export interface GameRepository {
   createInitialGame(input: CreateInitialGameInput): Promise<CreateInitialGameResult>;
+  replaceCurrentGame(input: ReplaceCurrentGameInput): Promise<ReplaceCurrentGameResult>;
   getCurrentGame(): Promise<GetCurrentGameResult>;
   applyState(input: ApplyStateInput): Promise<ApplyStateResult>;
   applySceneWriteBack(input: ApplySceneWriteBackInput): Promise<ApplySceneWriteBackResult>;

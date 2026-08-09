@@ -32,6 +32,7 @@ function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameReco
         record = { gameId: input.gameId, worldState: input.worldState, storyState: input.storyState, revision: 0, createdAt: input.createdAt };
         return { ok: true as const };
       },
+      async replaceCurrentGame() { return { ok: false as const, code: "NO_ACTIVE_GAME" as const }; },
       async getCurrentGame() {
         if (record === null) return { ok: true as const, status: "none" as const };
         return { ok: true as const, status: "active" as const, record };
@@ -136,4 +137,3 @@ describe("writeBackScene", () => {
     expect(saved.worldState.quests).toEqual(worldState.quests);
   });
 });
-

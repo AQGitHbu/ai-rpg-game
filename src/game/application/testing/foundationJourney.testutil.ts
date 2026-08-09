@@ -14,6 +14,7 @@ import { asGameId } from "@/game/application/server/persistence/gameRepository";
 import { buildChoiceMap } from "@/game/application/buildChoiceMap";
 import { projectGameSessionView, type GameSessionView, type PlayerChoiceView } from "@/game/application/gameSessionView";
 import type { EventProposal, SceneSource } from "@/game/application/sceneSource";
+import type { GameLength, GameTypeId } from "@/game/domain/newGame";
 
 // ---------------------------------------------------------------------------
 // Foundation 完整离线旅程 harness。
@@ -46,6 +47,7 @@ export function createInMemoryRepo(_gameId: GameId): InMemoryRepo {
       record = { gameId: input.gameId, worldState: input.worldState, storyState: input.storyState, revision: 0, createdAt: input.createdAt };
       return { ok: true as const };
     },
+    async replaceCurrentGame() { return { ok: false as const, code: "NO_ACTIVE_GAME" as const }; },
     async getCurrentGame() {
       if (record === null) return { ok: true, status: "none" };
       return { ok: true, status: "active", record };
@@ -128,10 +130,12 @@ export async function createJourneyGame(
   gameId: GameId = asGameId("journey_g1"),
   repo?: InMemoryRepo,
   seed = "journey_seed",
+  gameLength: GameLength = "short",
+  gameType: GameTypeId = "wuxia",
 ): Promise<{ repo: InMemoryRepo; gameId: GameId }> {
   const store = repo ?? createInMemoryRepo(gameId);
   const created = await createGame(
-    { gameId, gameType: "wuxia", gameLength: "short", seed },
+    { gameId, gameType, gameLength, seed },
     { repository: store.repo, source: createFixtureWorldSource(), now: journeyNow, aiEnabled: false },
   );
   if (!created.ok) throw new Error(`创建世界失败：${created.code}`);

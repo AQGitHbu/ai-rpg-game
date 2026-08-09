@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { createGame, createFixtureWorldSource } from "./createGame";
-import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
+import type { GameId, GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import { asGameId } from "./server/persistence/gameRepository";
+import type { GameLength, GameTypeId } from "@/game/domain/newGame";
 
 function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameRecord | null } {
   let record: GameRecord | null = null;
@@ -29,43 +30,160 @@ function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameReco
         return { ok: true as const, record };
       },
       async clearCurrentGame() { return { ok: true as const }; },
+      async replaceCurrentGame(input: {
+        expectedCurrentGameId: GameId;
+        expectedRevision: number;
+        gameId: GameId;
+        worldState: GameRecord["worldState"];
+        storyState: GameRecord["storyState"];
+        createdAt: string;
+      }) {
+        if (record === null) return { ok: false as const, code: "NO_ACTIVE_GAME" as const };
+        if (record.gameId !== input.expectedCurrentGameId || record.revision !== input.expectedRevision) {
+          return { ok: false as const, code: "STALE_GAME_REVISION" as const };
+        }
+        record = { gameId: input.gameId, worldState: input.worldState, storyState: input.storyState, revision: 0, createdAt: input.createdAt };
+        return { ok: true as const };
+      },
     },
     getRecord: () => record,
   };
 }
 
+async function createPersistedGame(input: {
+  readonly seed: string;
+  readonly gameType?: GameTypeId;
+  readonly gameLength?: GameLength;
+}): Promise<GameRecord> {
+  const { repo, getRecord } = createInMemoryRepo();
+  const result = await createGame(
+    {
+      gameId: asGameId("compiled-proof"),
+      gameType: input.gameType ?? "wuxia",
+      gameLength: input.gameLength ?? "short",
+      seed: input.seed,
+    },
+    { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-01" },
+  );
+  expect(result.ok).toBe(true);
+  const record = getRecord();
+  expect(record).not.toBeNull();
+  return record!;
+}
+
+function structuralSignature(record: GameRecord) {
+  return {
+    world: record.worldState.worldFacts.map((fact) => [fact.factId, fact.text]),
+    npcIdentity: record.worldState.npcs.map((npc) => [npc.id, npc.name, npc.role]),
+    questGraph: record.worldState.quests.map((quest) => [quest.id, quest.name, quest.stage, quest.objectives, quest.onSuccess]),
+    locations: record.worldState.locations.map((location) => [location.id, location.name, location.connectedLocationIds]),
+    enemies: record.worldState.enemies.map((enemy) => [enemy.id, enemy.name, enemy.locationId]),
+    endingPredicates: record.worldState.endings.map((ending) => ending.requirements),
+  };
+}
+
 describe("createGame", () => {
   it("persists byte-equivalent compiled state for one seed and structural differences for another", async () => {
-    const createAndRead = async (seed: string): Promise<GameRecord> => {
-      const { repo, getRecord } = createInMemoryRepo();
-      const result = await createGame(
-        { gameId: asGameId("seed-proof"), gameType: "wuxia", gameLength: "short", seed },
-        { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-01" },
-      );
-      expect(result.ok).toBe(true);
-      const record = getRecord();
-      expect(record).not.toBeNull();
-      return record!;
-    };
-
-    const first = await createAndRead("branching-seed-alpha");
-    const replay = await createAndRead("branching-seed-alpha");
-    const other = await createAndRead("branching-seed-beta");
+    const first = await createPersistedGame({ seed: "branching-seed-alpha" });
+    const replay = await createPersistedGame({ seed: "branching-seed-alpha" });
+    const other = await createPersistedGame({ seed: "branching-seed-beta" });
+    const gamma = await createPersistedGame({ seed: "branching-seed-gamma" });
+    const delta = await createPersistedGame({ seed: "branching-seed-delta" });
 
     expect(JSON.stringify({ worldState: replay.worldState, storyState: replay.storyState }))
       .toBe(JSON.stringify({ worldState: first.worldState, storyState: first.storyState }));
-    const signatures = (record: GameRecord) => ({
-      npcIdentity: record.worldState.npcs.map((npc) => [npc.id, npc.name, npc.role]),
-      questGraph: record.worldState.quests.map((quest) => [quest.id, quest.name, quest.objectives, quest.onSuccess]),
-      facts: record.worldState.worldFacts.map((fact) => [fact.factId, fact.text]),
-      locations: record.worldState.locations.map((location) => [location.id, location.name, location.connectedLocationIds]),
-      endingPredicates: record.worldState.endings.map((ending) => ending.requirements),
-    });
-    const a = signatures(first);
-    const b = signatures(other);
+    const a = structuralSignature(first);
+    const b = structuralSignature(other);
     const changedDimensions = (Object.keys(a) as (keyof typeof a)[])
       .filter((key) => JSON.stringify(a[key]) !== JSON.stringify(b[key]));
-    expect(changedDimensions.length).toBeGreaterThanOrEqual(2);
+    expect(changedDimensions.length).toBeGreaterThanOrEqual(4);
+    expect(new Set([first, other, gamma, delta].map((record) => JSON.stringify(structuralSignature(record)))).size).toBe(4);
+  });
+
+  it("compiles a reachable five-stage medium fallback with a final ending predicate", async () => {
+    const record = await createPersistedGame({ seed: "medium-seed", gameLength: "medium" });
+    const mainStages = record.worldState.quests
+      .filter((quest) => quest.kind === "main")
+      .map((quest) => quest.stage)
+      .sort((left, right) => (left ?? 0) - (right ?? 0));
+
+    expect(record.storyState.targetActs).toBe(5);
+    expect(mainStages).toEqual([1, 2, 3, 4, 5]);
+    expect(record.worldState.endings.every((ending) => ending.requirements.some(
+      (requirement) => requirement.kind === "quest_completed" && requirement.questId === "quest_climax",
+    ))).toBe(true);
+  });
+
+  it("honors every game type in compiled fallback structure and remains deterministic", async () => {
+    const gameTypes: readonly GameTypeId[] = [
+      "wuxia", "xianxia", "fantasy", "science_fiction", "urban", "alternate_history", "post_apocalypse",
+    ];
+    const compiled = await Promise.all(gameTypes.map((gameType) => createPersistedGame({ seed: "genre-seed", gameType })));
+    const replay = await createPersistedGame({ seed: "genre-seed", gameType: "science_fiction" });
+    const signatures = compiled.map((record) => JSON.stringify(structuralSignature(record)));
+
+    expect(new Set(signatures).size).toBe(gameTypes.length);
+    expect(structuralSignature(replay)).toEqual(structuralSignature(compiled[3]!));
+    for (let index = 0; index < compiled.length; index += 1) {
+      expect(compiled[index]!.worldState.generation.gameType).toBe(gameTypes[index]);
+    }
+  });
+
+  it("atomically replaces an ended game and preserves it on stale replacement", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const first = await createGame(
+      { gameId: asGameId("old-game"), gameType: "wuxia", gameLength: "short", seed: "old-seed" },
+      { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-01" },
+    );
+    expect(first.ok).toBe(true);
+    const initialized = getRecord()!;
+    const ended = await repo.applyState({
+      gameId: initialized.gameId,
+      expectedRevision: initialized.revision,
+      nextWorldState: {
+        ...initialized.worldState,
+        ending: { endingId: initialized.worldState.endings[0]!.id, outcome: "success" },
+      },
+      nextStoryState: initialized.storyState,
+    });
+    expect(ended.ok).toBe(true);
+    const oldRecord = structuredClone(getRecord()!);
+
+    const generationFailure = await createGame(
+      {
+        gameId: asGameId("new-invalid"), gameType: "science_fiction", gameLength: "short", seed: "new-seed",
+        replaceCurrent: { expectedGameId: oldRecord.gameId, expectedRevision: oldRecord.revision },
+      },
+      {
+        repository: repo,
+        source: { async generate() { return null as never; } },
+        now: () => "2026-01-02",
+      },
+    );
+    expect(generationFailure).toEqual({ ok: false, code: "GENERATION_FAILED" });
+    expect(getRecord()).toEqual(oldRecord);
+
+    const stale = await createGame(
+      {
+        gameId: asGameId("new-stale"), gameType: "science_fiction", gameLength: "short", seed: "new-seed",
+        replaceCurrent: { expectedGameId: oldRecord.gameId, expectedRevision: 99 },
+      },
+      { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-02" },
+    );
+    expect(stale).toMatchObject({ ok: false, code: "STALE_GAME_REVISION" });
+    expect(getRecord()).toEqual(oldRecord);
+
+    const replaced = await createGame(
+      {
+        gameId: asGameId("new-game"), gameType: "science_fiction", gameLength: "short", seed: "new-seed",
+        replaceCurrent: { expectedGameId: oldRecord.gameId, expectedRevision: oldRecord.revision },
+      },
+      { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-02" },
+    );
+    expect(replaced.ok).toBe(true);
+    expect(getRecord()).toMatchObject({ gameId: "new-game", revision: 0 });
+    expect(getRecord()!.worldState.generation.seed).toBe("new-seed");
+    expect(getRecord()!.worldState.ending).toBeNull();
   });
 
   it("creates a game with fixture source", async () => {

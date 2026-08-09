@@ -35,6 +35,7 @@ export type { RequestLogContext };
 export type CreateGameHttpInput = {
   readonly gameType: GameTypeId;
   readonly gameLength: GameLength;
+  readonly restart?: { readonly expectedRevision: number };
 };
 
 type PerformTurnEntryPointResult =
@@ -130,8 +131,30 @@ export function createServerGameEntryPoints(
   return {
     createGame: async (input, _traceId) => {
       const gameId = asGameId(randomUUID());
+      let replaceCurrent: { readonly expectedGameId: GameId; readonly expectedRevision: number } | undefined;
+      if (input.restart !== undefined) {
+        const current = await repository.getCurrentGame();
+        if (!current.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        if (current.status !== "active") return { ok: false, code: "NO_ACTIVE_GAME" };
+        if (current.record.revision !== input.restart.expectedRevision) {
+          return { ok: false, code: "STALE_GAME_REVISION" };
+        }
+        if (current.record.worldState.ending === null) {
+          return { ok: false, code: "GAME_NOT_ENDED" };
+        }
+        replaceCurrent = {
+          expectedGameId: current.record.gameId,
+          expectedRevision: input.restart.expectedRevision,
+        };
+      }
       const result = await createGame(
-        { gameId, gameType: input.gameType, gameLength: input.gameLength, seed: randomUUID() },
+        {
+          gameId,
+          gameType: input.gameType,
+          gameLength: input.gameLength,
+          seed: randomUUID(),
+          ...(replaceCurrent === undefined ? {} : { replaceCurrent }),
+        },
         { repository, source, now, aiEnabled },
       );
       if (result.ok) return { ok: true, revision: result.revision };

@@ -548,3 +548,12 @@ Commit: `docs: close canonical choice-driven RPG runtime`
 ### Completion rule
 
 The work is complete only when Tasks 1–7 and every final command pass on the neutral runtime. Passing the old 229-file suite before deletion is baseline evidence only; it is not acceptance because the old suite currently masks production gaps and excluded type debt.
+
+### Post-review remediation (added after final independent review)
+
+Before declaring the runtime fully usable, close these production gaps:
+
+1. Make the deterministic fallback honor `short`/`medium` act budgets with a reachable ending for both lengths.
+2. Bind custom NPC input to the authoritative focused NPC before intent classification; reject missing/non-focused targets.
+3. Make the ending-screen “restart” create a fresh game/seed through the canonical API, including production behavior.
+4. Make fallback world generation honor `gameType` and provide stronger seed-dependent compiled story variation, with deterministic replay tests.

@@ -10,6 +10,8 @@ import type {
   ApplyStateResult,
   CreateInitialGameInput,
   CreateInitialGameResult,
+  ReplaceCurrentGameInput,
+  ReplaceCurrentGameResult,
   GameRecord,
   GameRepository,
   GetCurrentGameResult,
@@ -232,6 +234,76 @@ export function createSqliteGameRepository(
     }
   }
 
+  async function replaceCurrentGame(
+    input: ReplaceCurrentGameInput,
+  ): Promise<ReplaceCurrentGameResult> {
+    let worldStateJson: string;
+    let storyStateJson: string;
+    try {
+      await ensureSchema();
+      worldStateJson = JSON.stringify(input.worldState);
+      storyStateJson = JSON.stringify(input.storyState);
+    } catch (error) {
+      logError("replaceCurrentGame prepare failed", error);
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
+
+    try {
+      const tx = await getClient().transaction("write");
+      try {
+        const pointer = await tx.execute({
+          sql: "SELECT game_id FROM current_game WHERE slot = 1",
+          args: [],
+        });
+        if (pointer.rows.length === 0) {
+          return { ok: false, code: "NO_ACTIVE_GAME" };
+        }
+        if (pointer.rows[0]?.["game_id"] !== input.expectedCurrentGameId) {
+          return { ok: false, code: "STALE_GAME_REVISION" };
+        }
+
+        const expected = await tx.execute({
+          sql: "SELECT revision FROM game_records WHERE game_id = ?",
+          args: [input.expectedCurrentGameId],
+        });
+        if (expected.rows.length === 0) {
+          return { ok: false, code: "NO_ACTIVE_GAME" };
+        }
+        if (expected.rows[0]?.["revision"] !== input.expectedRevision) {
+          return { ok: false, code: "STALE_GAME_REVISION" };
+        }
+
+        await tx.execute({
+          sql: `INSERT INTO game_records (game_id, record_version, world_state_json, story_state_json, created_at, revision)
+                VALUES (?, ?, ?, ?, ?, ?)`,
+          args: [
+            input.gameId,
+            GAME_RECORD_VERSION,
+            worldStateJson,
+            storyStateJson,
+            input.createdAt,
+            INITIAL_REVISION,
+          ],
+        });
+        const replaced = await tx.execute({
+          sql: "UPDATE current_game SET game_id = ? WHERE slot = 1 AND game_id = ?",
+          args: [input.gameId, input.expectedCurrentGameId],
+        });
+        if (Number(replaced.rowsAffected ?? 0) !== 1) {
+          return { ok: false, code: "STALE_GAME_REVISION" };
+        }
+
+        await tx.commit();
+        return { ok: true };
+      } finally {
+        tx.close();
+      }
+    } catch (error) {
+      logError("replaceCurrentGame transaction failed, rolled back", error);
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
+  }
+
   async function applyState(input: ApplyStateInput): Promise<ApplyStateResult> {
     let worldStateJson: string;
     let storyStateJson: string;
@@ -426,6 +498,7 @@ export function createSqliteGameRepository(
 
   return {
     createInitialGame,
+    replaceCurrentGame,
     getCurrentGame,
     applyState,
     applySceneWriteBack,

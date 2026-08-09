@@ -90,6 +90,57 @@ describe("foundation 15-turn journey", () => {
     expect(record.worldState.eventLedger.some((event) => event.type === "ending_reached")).toBe(true);
   });
 
+  it("completes the reachable five-act medium fallback through the canonical choice path", async () => {
+    const created = await createJourneyGame(undefined, undefined, "medium-journey-seed", "medium");
+    const store = created.repo;
+    let successfulTurns = 0;
+    const accept = (result: Awaited<ReturnType<typeof playTurn>>) => {
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      if (result.ok) successfulTurns += 1;
+    };
+    const scene = async () => expect(await advanceScene(store.repo)).toBe(true);
+    const fixed = async (label: string) => accept(await playIssuedChoice(store.repo, label));
+    const travel = async () => accept(await playIssuedTravelToUnvisited(store.repo));
+
+    await scene();
+    await fixed("交谈"); // 1: stage 1
+    await scene();
+    await fixed("支持"); // 2
+    await scene();
+    accept(await playTurn(store.repo, { kind: "free_text", text: "我相信你", targetNpcId: asNpcId("npc_innkeeper") })); // 3
+    await scene();
+    await travel(); // 4: stage 2 route
+    await scene();
+    await fixed("拾取"); // 5: stage 2 complete
+    await scene();
+    await travel(); // 6: stage 3 guard
+    await scene();
+    await fixed("挑战"); // 7
+    await scene();
+    await fixed("攻击"); // 8: stage 3 complete
+    await scene();
+    await travel(); // 9: stage 4 archive
+    await scene();
+    await fixed("拾取"); // 10: stage 4 complete
+    await scene();
+    await travel(); // 11: stage 5 climax
+    await scene();
+    await fixed("挑战"); // 12
+    await scene();
+    await fixed("攻击"); // 13
+    await scene();
+    await fixed("攻击"); // 14
+    await scene();
+    await fixed("攻击"); // 15: ending
+
+    const record = store.record()!;
+    expect(successfulTurns).toBeGreaterThanOrEqual(15);
+    expect(record.storyState.targetActs).toBe(5);
+    expect(record.storyState.currentAct).toBe(5);
+    expect(record.worldState.ending).not.toBeNull();
+    expect(record.worldState.eventLedger.some((event) => event.type === "ending_reached")).toBe(true);
+  });
+
   it("creates a validated world, generates prologue, then plays a multi-turn journey with single CAS per turn", async () => {
     const { repo, gameId } = await createJourneyGame();
     expect(repo.record()).not.toBeNull();

@@ -104,6 +104,7 @@ function makeGameRecord(option:
 function makeMockRepo(record: GameRecord | null): GameRepository {
   return {
     createInitialGame: vi.fn(),
+    replaceCurrentGame: vi.fn(),
     getCurrentGame: vi.fn(async () => {
       if (record === null) return { ok: true as const, status: "none" as const };
       return { ok: true as const, status: "active" as const, record };

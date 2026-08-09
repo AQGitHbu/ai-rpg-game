@@ -27,6 +27,7 @@ import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intent
 import { createFixtureExpansionSource } from "./server/ai/expansionSource";
 import type { ExpansionProposal } from "@/game/gameplay/rpg/expansion/expansionTypes";
 import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
+import { createApprovedChoice } from "@/game/domain/approvedChoice";
 
 function createSpyRepo(ws: WorldState, ss: StoryState): {
   repo: GameRepository;
@@ -43,6 +44,7 @@ function createSpyRepo(ws: WorldState, ss: StoryState): {
       record = { gameId: input.gameId, worldState: input.worldState, storyState: input.storyState, revision: 0, createdAt: input.createdAt };
       return { ok: true as const };
     },
+    async replaceCurrentGame() { return { ok: false as const, code: "NO_ACTIVE_GAME" as const }; },
     async getCurrentGame() {
       return { ok: true, status: "active", record };
     },
@@ -90,6 +92,45 @@ function buildStoryState(): StoryState {
   return createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
 }
 
+function buildFocusedDialogueStoryState(focusNpcId = asNpcId("npc_1")): StoryState {
+  const base = buildStoryState();
+  const support = createApprovedChoice({
+    sceneId: "scene-focused",
+    basedOnRevision: 0,
+    label: "支持",
+    action: { type: "talk", npcId: focusNpcId, dialogueAct: "support" },
+  });
+  const challenge = createApprovedChoice({
+    sceneId: "scene-focused",
+    basedOnRevision: 0,
+    label: "质疑",
+    action: { type: "talk", npcId: focusNpcId, dialogueAct: "challenge" },
+  });
+  if (!support.ok || !challenge.ok) throw new Error("focused dialogue fixture invalid");
+  return {
+    ...base,
+    narrative: {
+      ...base.narrative,
+      currentScene: {
+        sceneId: "scene-focused",
+        turn: 0,
+        narration: "老板等着你的回应。",
+        usedFactIds: [],
+        npcLine: { npcId: focusNpcId, text: "你怎么看？", emotion: "neutral", usedFactIds: [] },
+        choices: [
+          { choiceToken: support.choice.choiceToken, label: support.choice.label },
+          { choiceToken: challenge.choice.choiceToken, label: challenge.choice.label },
+        ],
+        source: "fallback",
+        event: { kind: "dialogue", focusNpcId },
+        npcDialogues: [{ npcId: focusNpcId, npcName: "老板", npcRole: "路人", speechPages: ["你怎么看？"] }],
+      },
+      choiceRegistry: [support.choice, challenge.choice],
+      generation: { status: "idle" },
+    },
+  };
+}
+
 function makePendingJob(): PendingNarrativeJob {
   const result = createPendingNarrativeJob({
     jobId: asNarrativeJobId("existing-job"),
@@ -121,7 +162,7 @@ describe("performTurn 单次 CAS 提交", () => {
   const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" };
 
   it("成功回合 applyState 恰好一次，单次写入同时包含 WorldState、StoryState.turnNumber 和 pending job", async () => {
-    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_1", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", talkAction]]) },
@@ -152,7 +193,7 @@ describe("performTurn 单次 CAS 提交", () => {
   });
 
   it("pending job.resolvedEvent 等于真实 TurnResolution.primaryResult，basedOnRevision 等于提交后 revision", async () => {
-    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_1", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", talkAction]]) },
@@ -315,6 +356,7 @@ describe("performTurn 单次 CAS 提交", () => {
   it("没有活跃对局 → NO_ACTIVE_GAME", async () => {
     const repo: GameRepository = {
       async createInitialGame() { return { ok: true as const }; },
+      async replaceCurrentGame() { return { ok: false as const, code: "NO_ACTIVE_GAME" as const }; },
       async getCurrentGame() { return { ok: true, status: "none" }; },
       async applyState() { return { ok: false as const, code: "NO_ACTIVE_GAME" as const }; },
       async applySceneWriteBack() { return { ok: false as const, code: "NO_ACTIVE_GAME" as const }; },
@@ -405,7 +447,7 @@ const validLocationProposal: ExpansionProposal = {
 
 describe("performTurn Expansion 单路径（Task 6）", () => {
   it("未知 NPC 扩展 + 重演算成功 → 一次 CAS，pending job 保存真实对话", async () => {
-    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_exp_npc", interaction: { kind: "fixed_choice", choiceToken: "tok_stranger" }, expectedRevision: 0, choiceMap: npcStrangerChoice },
@@ -557,8 +599,47 @@ describe("performTurn Expansion 单路径（Task 6）", () => {
 describe("performTurn 自由文本端到端（Task 9）", () => {
   const ruleSource = createRuleIntentParser();
 
+  it("rejects a non-focused target before intent classification and writes nothing", async () => {
+    let parserCalls = 0;
+    const parser: IntentParserSource = {
+      sourceVersion: "must-not-run",
+      async parseIntent() {
+        parserCalls += 1;
+        return { ok: false, reason: "unclassifiable" };
+      },
+    };
+    const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
+
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "invalid-target", interaction: { kind: "free_text", text: "我相信你", targetNpcId: asNpcId("npc_2") }, expectedRevision: 0, choiceMap: new Map() },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: parser },
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "ACTION_REJECTED" });
+    expect(parserCalls).toBe(0);
+    expect(applyCalls()).toHaveLength(0);
+  });
+
+  it("keeps location-like text addressed to the focused NPC as dialogue", async () => {
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
+
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "focused-dialogue", interaction: { kind: "free_text", text: "去街道看看", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+    expect(record()!.worldState.currentLocationId).toBe(asLocationId("loc_1"));
+    const generation = record()!.storyState.narrative.generation;
+    expect(generation.status).toBe("pending");
+    if (generation.status !== "pending") return;
+    expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
+    expect(generation.job.utterance).toBe("去街道看看");
+  });
+
   it("同一 NPC 连续两个 ready 场景的自定义输入使用不同 actionId，各自形成记忆与 pending job", async () => {
-    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 
     const first = await performTurn(
       { gameId: asGameId("g1"), actionId: "uuid-1", interaction: { kind: "free_text", text: "我相信你", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
@@ -614,7 +695,7 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
   });
 
   it("短问候也提交真实回合，并在 CAS 后留下可生成回应的 pending job", async () => {
-    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "uuid-greeting", interaction: { kind: "free_text", text: "嗨", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
@@ -634,7 +715,7 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
   });
 
   it("targetNpcId + 我相信你 → support talk：NPC 记忆变化 + pending job", async () => {
-    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_sup", interaction: { kind: "free_text", text: "我相信你", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
@@ -664,14 +745,14 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
   });
 
   it("你在撒谎 → challenge talk：与 support 产生不同关系增量与记忆", async () => {
-    const supportRepo = createSpyRepo(buildWorldState(), buildStoryState());
+    const supportRepo = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
     const sup = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_sup", interaction: { kind: "free_text", text: "我相信你", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
       { repository: supportRepo.repo, now: () => "2026-01-02", intentParserSource: ruleSource },
     );
     expect(sup.ok).toBe(true);
 
-    const challengeRepo = createSpyRepo(buildWorldState(), buildStoryState());
+    const challengeRepo = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
     const cha = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_cha", interaction: { kind: "free_text", text: "你在撒谎", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
       { repository: challengeRepo.repo, now: () => "2026-01-02", intentParserSource: ruleSource },
