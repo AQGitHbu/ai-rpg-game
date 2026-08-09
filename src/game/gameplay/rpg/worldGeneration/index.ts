@@ -3,6 +3,7 @@ export {
   type WorldGenerationIssue,
   type WorldGenerationIssueCode,
   type ValidateWorldGenerationResult,
+  type WorldGenerationValidationContext,
 } from "./validateWorldGenerationCandidate";
 export {
   analyzeLocationReachability,

@@ -9,6 +9,7 @@ import { compileWorldGenerationCandidate } from "@/game/gameplay/rpg/worldGenera
 import { asGenerationId } from "@/game/domain/scenarioBlueprint";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { TARGET_ACTS } from "@/game/domain/storyBudget";
 
 // ---------------------------------------------------------------------------
 // Task 14 Step 2：世界生成编排改为 source → parse → validate → compile。
@@ -78,7 +79,10 @@ export async function createGame(
   const parsed = parseWorldGenerationCandidate(generated);
   if (!parsed.ok) return { ok: false, code: "GENERATION_FAILED" };
 
-  const validated = validateWorldGenerationCandidate(parsed.value);
+  const validated = validateWorldGenerationCandidate(parsed.value, {
+    gameLength: input.gameLength,
+    targetActs: TARGET_ACTS[input.gameLength],
+  });
   if (!validated.ok) return { ok: false, code: "GENERATION_FAILED" };
 
   const generation = {

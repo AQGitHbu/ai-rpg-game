@@ -2,9 +2,11 @@ import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
 import type { WorldGenerationSource } from "../../createGame";
 import type { WorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
+import type { GameLength } from "@/game/domain/newGame";
 import { parseWorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
 import { validateWorldGenerationCandidate } from "@/game/gameplay/rpg/worldGeneration";
 import { createFixtureWorldSource } from "../../createGame";
+import { TARGET_ACTS } from "@/game/domain/storyBudget";
 
 // ---------------------------------------------------------------------------
 // 世界生成源（live/fixture）。
@@ -171,7 +173,10 @@ export function createWorldGenerationSource(
           return fixture.generate(input);
         }
 
-        const validated = validateWorldGenerationCandidate(repaired.candidate);
+        const validated = validateWorldGenerationCandidate(repaired.candidate, {
+          gameLength: input.gameLength,
+          targetActs: TARGET_ACTS[input.gameLength],
+        });
         if (!validated.ok) {
           logger?.warn("world_generation_validation_failed");
           return fixture.generate(input);
@@ -185,7 +190,8 @@ export function createWorldGenerationSource(
   };
 }
 
-function buildWorldPrompt(input: { gameType: string; gameLength: string; seed: string }): string {
+function buildWorldPrompt(input: { gameType: string; gameLength: GameLength; seed: string }): string {
+  const targetActs = TARGET_ACTS[input.gameLength];
   return `你是一个 RPG 世界设计师。生成完整游戏世界，返回严格 JSON（ID 为普通字符串，非品牌化）。
 游戏类型：${input.gameType}
 游戏长度：${input.gameLength}
@@ -198,8 +204,8 @@ function buildWorldPrompt(input: { gameType: string; gameLength: string; seed: s
 4. locations：3-5 个互相连接（connectedLocationIds 可达网络）
 5. npcs：3-6 个，knownFactIds/hiddenFactIds 引用 world facts
 6. items：1-3 个
-7. quests：主线 stage 连续且逐幕解锁；short 覆盖 1-3 幕，另可有 0-2 支线
-8. endings：≥2 个可达且互斥的结局；可用 npc_affinity_at_least / npc_affinity_at_most 绑定关键 NPC
+7. quests：主线必须恰好覆盖 stage 1-${targetActs}，每幕一个可达主任务并逐幕解锁；另可有 0-2 支线
+8. endings：≥2 个可达且互斥的结局；关系分支必须对 -100..100 无重叠且无空档（例如 <=5 与 >=6）
 9. openingBudget：各实体计数
 
 只返回 JSON，不要其他文字。`;

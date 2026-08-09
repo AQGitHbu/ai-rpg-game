@@ -42,31 +42,70 @@ function baseCandidate(): DeepMutable<WorldGenerationCandidate> {
     enemies: [],
     factions: [],
     quests: [
-      { id: "quest_main", name: "寻剑", description: "找回宝剑", kind: "main", stage: 1, objectives: [{ kind: "talk_to_npc", npcId: "npc_innkeeper" }], onSuccess: { kind: "reach_ending", endingId: "ending_hero" }, onFailure: { kind: "closed" }, tags: ["main"] },
+      { id: "quest_main", name: "寻剑", description: "找回宝剑", kind: "main", stage: 1, objectives: [{ kind: "talk_to_npc", npcId: "npc_innkeeper" }], onSuccess: { kind: "unlock_quests", questIds: ["quest_act2"] }, onFailure: { kind: "closed" }, tags: ["main"] },
+      { id: "quest_act2", name: "追查", description: "追查宝剑去向", kind: "main", stage: 2, objectives: [{ kind: "visit_location", locationId: "loc_street" }], onSuccess: { kind: "unlock_quests", questIds: ["quest_act3"] }, onFailure: { kind: "closed" }, tags: ["main"] },
+      { id: "quest_act3", name: "终幕", description: "找回宝剑", kind: "main", stage: 3, objectives: [{ kind: "obtain_item", itemId: "item_sword" }], onSuccess: { kind: "reach_ending", endingId: "ending_hero" }, onFailure: { kind: "closed" }, tags: ["main"] },
       { id: "quest_side", name: "帮镖局", description: "帮忙", kind: "side", objectives: [{ kind: "visit_location", locationId: "loc_street" }], onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: ["side"] },
     ],
     endings: [
-      { id: "ending_hero", name: "英雄", description: "归来", requirements: [{ kind: "quest_completed", questId: "quest_main" }] },
-      { id: "ending_wanderer", name: "归隐", description: "归隐山林", requirements: [{ kind: "fact_discovered", factId: "fact_sword" }] },
+      { id: "ending_hero", name: "英雄", description: "归来", requirements: [{ kind: "quest_completed", questId: "quest_act3" }, { kind: "npc_affinity_at_least", npcId: "npc_innkeeper", value: 6 }] },
+      { id: "ending_wanderer", name: "归隐", description: "归隐山林", requirements: [{ kind: "quest_completed", questId: "quest_act3" }, { kind: "npc_affinity_at_most", npcId: "npc_innkeeper", value: 5 }] },
     ],
     openingBudget: { locationsCount: 2, npcsCount: 1, sideQuestsCount: 1, endingsCount: 2, townLocationsCount: 0 },
   };
 }
 
 function issues(candidate: DeepMutable<WorldGenerationCandidate>): WorldGenerationIssueCode[] {
-  const result = validateWorldGenerationCandidate(candidate as unknown as WorldGenerationCandidate);
+  const result = validateWorldGenerationCandidate(
+    candidate as unknown as WorldGenerationCandidate,
+    { gameLength: "short", targetActs: 3 },
+  );
   if (result.ok) return [];
   return result.issues.map((i) => i.code);
 }
 
 describe("validateWorldGenerationCandidate 合法候选", () => {
   it("合法候选通过", () => {
-    const result = validateWorldGenerationCandidate(baseCandidate());
+    const result = validateWorldGenerationCandidate(baseCandidate(), { gameLength: "short", targetActs: 3 });
     expect(result.ok).toBe(true);
   });
 });
 
 describe("validateWorldGenerationCandidate 错误矩阵", () => {
+  it("rejects a short candidate whose reachable main chain does not cover acts 1 through 3", () => {
+    const c = baseCandidate();
+    c.quests = c.quests.filter((quest) => quest.kind !== "main" || quest.stage === 1);
+    const first = c.quests.find((quest) => quest.id === "quest_main");
+    if (first?.kind !== "main") throw new Error("missing main quest fixture");
+    first.onSuccess = { kind: "reach_ending", endingId: "ending_hero" };
+    c.endings = [
+      { id: "ending_hero", name: "英雄", description: "归来", requirements: [{ kind: "quest_completed", questId: "quest_main" }, { kind: "npc_affinity_at_least", npcId: "npc_innkeeper", value: 6 }] },
+      { id: "ending_wanderer", name: "归隐", description: "归隐山林", requirements: [{ kind: "quest_completed", questId: "quest_main" }, { kind: "npc_affinity_at_most", npcId: "npc_innkeeper", value: 5 }] },
+    ];
+
+    const result = validateWorldGenerationCandidate(
+      c as unknown as WorldGenerationCandidate,
+      { gameLength: "short", targetActs: 3 },
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.map((issue) => issue.code)).toContain("main_act_gap");
+  });
+
+  it("rejects a medium candidate whose reachable main chain stops at act 3", () => {
+    const c = baseCandidate();
+
+    const result = validateWorldGenerationCandidate(
+      c as unknown as WorldGenerationCandidate,
+      { gameLength: "medium", targetActs: 5 },
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.map((issue) => issue.code)).toContain("main_act_gap");
+  });
+
   it("duplicate_id", () => {
     const c = baseCandidate();
     c.items.push({ id: "item_sword", name: "重复剑", description: "x", kind: "weapon", tags: [] });
@@ -99,7 +138,9 @@ describe("validateWorldGenerationCandidate 错误矩阵", () => {
 
   it("main_act_gap", () => {
     const c = baseCandidate();
-    c.quests.push({ id: "quest_act3", name: "终幕", description: "x", kind: "main", stage: 3, objectives: [{ kind: "visit_location", locationId: "loc_street" }], onSuccess: { kind: "reach_ending", endingId: "ending_hero" }, onFailure: { kind: "closed" }, tags: ["main"] });
+    c.quests = c.quests.filter((quest) => quest.id !== "quest_act2");
+    const first = c.quests.find((quest) => quest.id === "quest_main");
+    if (first?.kind === "main") first.onSuccess = { kind: "unlock_quests", questIds: ["quest_act3"] };
     expect(issues(c)).toContain("main_act_gap");
   });
 
@@ -143,8 +184,7 @@ describe("validateWorldGenerationCandidate 错误矩阵", () => {
 
   it("insufficient_distinct_endings", () => {
     const c = baseCandidate();
-    // 两个结局都指向同一任务，只一条可满足路径。
-    c.endings[1].requirements = [{ kind: "quest_completed", questId: "quest_main" }];
+    c.endings[1].requirements = [...c.endings[0].requirements];
     expect(issues(c)).toContain("insufficient_distinct_endings");
   });
 
@@ -158,6 +198,25 @@ describe("validateWorldGenerationCandidate 错误矩阵", () => {
     ];
 
     expect(issues(c)).toContain("overlapping_ending_predicates");
+  });
+
+  it("rejects affinity endings that leave reachable values without an ending", () => {
+    const c = baseCandidate();
+    c.endings[0].requirements = [
+      { kind: "npc_affinity_at_most", npcId: "npc_innkeeper", value: 5 },
+    ];
+    c.endings[1].requirements = [
+      { kind: "npc_affinity_at_least", npcId: "npc_innkeeper", value: 10 },
+    ];
+
+    const result = validateWorldGenerationCandidate(
+      c as unknown as WorldGenerationCandidate,
+      { gameLength: "short", targetActs: 3 },
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.map((issue) => issue.code)).toContain("non_exhaustive_ending_predicates");
   });
 
   it("npc_fact_reference_invalid", () => {

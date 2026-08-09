@@ -2,6 +2,8 @@ import type {
   WorldGenerationCandidate,
 } from "@/game/domain/worldGenerationCandidate";
 import type { QuestDefinitionCandidate } from "@/game/domain/scenarioBlueprint";
+import type { GameLength } from "@/game/domain/newGame";
+import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import { analyzeLocationReachability } from "./reachability";
 
 // ---------------------------------------------------------------------------
@@ -27,6 +29,7 @@ export type WorldGenerationIssueCode =
   | "ending_unreachable"
   | "insufficient_distinct_endings"
   | "overlapping_ending_predicates"
+  | "non_exhaustive_ending_predicates"
   | "npc_fact_reference_invalid"
   | "budget_exceeded"
   | "hard_limit_exceeded"
@@ -44,8 +47,14 @@ export type ValidateWorldGenerationResult =
   | { readonly ok: true; readonly validated: WorldGenerationCandidate }
   | { readonly ok: false; readonly issues: readonly WorldGenerationIssue[] };
 
+export type WorldGenerationValidationContext = {
+  readonly gameLength: GameLength;
+  readonly targetActs: number;
+};
+
 export function validateWorldGenerationCandidate(
   candidate: WorldGenerationCandidate,
+  context: WorldGenerationValidationContext,
 ): ValidateWorldGenerationResult {
   const issues: WorldGenerationIssue[] = [];
 
@@ -216,15 +225,39 @@ export function validateWorldGenerationCandidate(
     });
   });
 
-  // 任务骨架：main_act_gap / first_act_not_actionable。
+  // 任务骨架：main_act_gap / first_act_not_actionable。主线必须是一条
+  // 从第 1 幕到 targetActs 的可达链；缺幕、重复幕、超出目标幕或
+  // 声称的 gameLength/targetActs 不一致都不能进入正式状态。
   const mainQuests = candidate.quests.filter((q): q is Extract<QuestDefinitionCandidate, { kind: "main" }> => q.kind === "main");
-  const stages = mainQuests.map((q) => q.stage).sort((a, b) => a - b);
-  if (stages.length > 0 && stages[0] !== 1) {
-    issues.push({ path: "quests", code: "first_act_not_actionable", params: { stage: stages[0] } });
+  const expectedTargetActs = TARGET_ACTS[context.gameLength];
+  const validTargetActs = Number.isSafeInteger(context.targetActs) && context.targetActs > 0;
+  if (!validTargetActs || context.targetActs !== expectedTargetActs) {
+    issues.push({
+      path: "quests",
+      code: "main_act_gap",
+      params: { stage: expectedTargetActs },
+    });
   }
-  for (let i = 1; i < stages.length; i++) {
-    if (stages[i] - stages[i - 1] > 1) {
-      issues.push({ path: "quests", code: "main_act_gap", params: { stage: stages[i] } });
+
+  const targetActs = validTargetActs ? context.targetActs : expectedTargetActs;
+  const reachableMainQuests = mainQuests.filter((quest) => reachableQuestIds.has(quest.id));
+  const reachableByStage = new Map<number, number>();
+  for (const quest of reachableMainQuests) {
+    reachableByStage.set(quest.stage, (reachableByStage.get(quest.stage) ?? 0) + 1);
+  }
+
+  const firstActQuests = reachableMainQuests.filter((quest) => quest.stage === 1);
+  if (firstActQuests.length !== 1 || firstActQuests[0]!.objectives.length === 0) {
+    issues.push({ path: "quests", code: "first_act_not_actionable", params: { stage: 1 } });
+  }
+  for (let stage = 1; stage <= targetActs; stage++) {
+    if ((reachableByStage.get(stage) ?? 0) !== 1) {
+      issues.push({ path: "quests", code: "main_act_gap", params: { stage } });
+    }
+  }
+  for (const quest of mainQuests) {
+    if (!reachableQuestIds.has(quest.id) || quest.stage < 1 || quest.stage > targetActs) {
+      issues.push({ path: "quests", code: "main_act_gap", params: { stage: quest.stage, id: quest.id } });
     }
   }
 
@@ -284,6 +317,42 @@ export function validateWorldGenerationCandidate(
           });
         }
       }
+    }
+  }
+
+  // 互斥还不足以保证可完成：同一 NPC 的关系分支还必须覆盖
+  // 所有可能的 affinity（规则状态域为 -100..100 的整数）。例如
+  // <=5 与 >=10 虽然不重叠，但 6..9 会让已完成主线的玩家无结局。
+  const intervalsByNpc = new Map<string, Array<{ minimum: number; maximum: number; endingId: string }>>();
+  for (const { ending, byNpc } of relationshipIntervals) {
+    for (const [npcId, interval] of byNpc) {
+      const intervals = intervalsByNpc.get(npcId) ?? [];
+      intervals.push({ ...interval, endingId: ending.id });
+      intervalsByNpc.set(npcId, intervals);
+    }
+  }
+  for (const [npcId, intervals] of intervalsByNpc) {
+    if (intervals.length < 2) continue;
+    const normalized = intervals
+      .map((interval) => ({
+        ...interval,
+        minimum: Math.max(-100, Math.ceil(interval.minimum)),
+        maximum: Math.min(100, Math.floor(interval.maximum)),
+      }))
+      .sort((left, right) => left.minimum - right.minimum || left.maximum - right.maximum);
+    let coveredThrough = -101;
+    let hasGap = false;
+    for (const interval of normalized) {
+      if (interval.minimum > coveredThrough + 1) hasGap = true;
+      coveredThrough = Math.max(coveredThrough, interval.maximum);
+    }
+    if (coveredThrough < 100) hasGap = true;
+    if (hasGap) {
+      issues.push({
+        path: "endings",
+        code: "non_exhaustive_ending_predicates",
+        params: { npcId },
+      });
     }
   }
 

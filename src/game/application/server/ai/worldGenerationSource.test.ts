@@ -22,13 +22,33 @@ function validCandidate(): WorldGenerationCandidate {
     enemies: [],
     factions: [],
     quests: [
-      { id: "quest_main", name: "寻剑", description: "d", kind: "main", stage: 1, objectives: [{ kind: "talk_to_npc", npcId: "npc_1" }], onSuccess: { kind: "reach_ending", endingId: "ending_1" }, onFailure: { kind: "closed" }, tags: ["main"] },
+      { id: "quest_main", name: "寻剑", description: "d", kind: "main", stage: 1, objectives: [{ kind: "talk_to_npc", npcId: "npc_1" }], onSuccess: { kind: "unlock_quests", questIds: ["quest_act2"] }, onFailure: { kind: "closed" }, tags: ["main"] },
+      { id: "quest_act2", name: "追查", description: "d", kind: "main", stage: 2, objectives: [{ kind: "visit_location", locationId: "loc_2" }], onSuccess: { kind: "unlock_quests", questIds: ["quest_act3"] }, onFailure: { kind: "closed" }, tags: ["main"] },
+      { id: "quest_act3", name: "终幕", description: "d", kind: "main", stage: 3, objectives: [{ kind: "obtain_item", itemId: "item_1" }], onSuccess: { kind: "reach_ending", endingId: "ending_1" }, onFailure: { kind: "closed" }, tags: ["main"] },
     ],
     endings: [
-      { id: "ending_1", name: "英雄", description: "d", requirements: [{ kind: "quest_completed", questId: "quest_main" }] },
-      { id: "ending_2", name: "归隐", description: "d", requirements: [{ kind: "fact_discovered", factId: "fact_sword" }] },
+      { id: "ending_1", name: "英雄", description: "d", requirements: [{ kind: "quest_completed", questId: "quest_act3" }, { kind: "npc_affinity_at_least", npcId: "npc_1", value: 6 }] },
+      { id: "ending_2", name: "归隐", description: "d", requirements: [{ kind: "quest_completed", questId: "quest_act3" }, { kind: "npc_affinity_at_most", npcId: "npc_1", value: 5 }] },
     ],
     openingBudget: { locationsCount: 2, npcsCount: 1, sideQuestsCount: 0, endingsCount: 2, townLocationsCount: 0 },
+  };
+}
+
+function incompleteCandidate(): WorldGenerationCandidate {
+  const candidate = validCandidate();
+  return {
+    ...candidate,
+    quests: [
+      {
+        id: "quest_main", name: "寻剑", description: "d", kind: "main", stage: 1,
+        objectives: [{ kind: "talk_to_npc", npcId: "npc_1" }],
+        onSuccess: { kind: "reach_ending", endingId: "ending_1" }, onFailure: { kind: "closed" }, tags: ["main"],
+      },
+    ],
+    endings: [
+      { id: "ending_1", name: "英雄", description: "d", requirements: [{ kind: "quest_completed", questId: "quest_main" }, { kind: "npc_affinity_at_least", npcId: "npc_1", value: 6 }] },
+      { id: "ending_2", name: "归隐", description: "d", requirements: [{ kind: "quest_completed", questId: "quest_main" }, { kind: "npc_affinity_at_most", npcId: "npc_1", value: 5 }] },
+    ],
   };
 }
 
@@ -97,6 +117,57 @@ describe("createWorldGenerationSource", () => {
     const source = createWorldGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
     const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
     expect(candidate.endings.length).toBeGreaterThanOrEqual(2); // fixture
+  });
+
+  it("AI short 候选缺失第 2–3 幕主线时确定性回退", async () => {
+    const transport = {
+      complete: async () => ({ ok: true, content: JSON.stringify(incompleteCandidate()), latencyMs: 1 }),
+    } as unknown as AiTransport;
+    const source = createWorldGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+
+    const first = await source.generate({ gameType: "wuxia", seed: "incomplete-short", gameLength: "short" });
+    const replay = await source.generate({ gameType: "wuxia", seed: "incomplete-short", gameLength: "short" });
+
+    expect(first).toEqual(replay);
+    expect(first.quests.filter((quest) => quest.kind === "main").map((quest) => quest.stage)).toEqual([1, 2, 3]);
+    expect(first.locations).toHaveLength(3);
+  });
+
+  it("AI medium 候选未覆盖 5 幕主线时确定性回退", async () => {
+    const transport = {
+      complete: async () => ({ ok: true, content: JSON.stringify(incompleteCandidate()), latencyMs: 1 }),
+    } as unknown as AiTransport;
+    const source = createWorldGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+
+    const candidate = await source.generate({ gameType: "wuxia", seed: "incomplete-medium", gameLength: "medium" });
+
+    expect(candidate.quests.filter((quest) => quest.kind === "main").map((quest) => quest.stage)).toEqual([1, 2, 3, 4, 5]);
+    expect(candidate.locations).toHaveLength(5);
+  });
+
+  it("AI 关系结局留下 affinity 6–9 空档时回退到无缝的 trust/doubt 分区", async () => {
+    const bad = validCandidate();
+    const endings = [
+      {
+        id: "ending_1", name: "信任", description: "d",
+        requirements: [{ kind: "npc_affinity_at_most" as const, npcId: "npc_1", value: 5 }],
+      },
+      {
+        id: "ending_2", name: "疑心", description: "d",
+        requirements: [{ kind: "npc_affinity_at_least" as const, npcId: "npc_1", value: 10 }],
+      },
+    ];
+    const transport = {
+      complete: async () => ({ ok: true, content: JSON.stringify({ ...bad, endings }), latencyMs: 1 }),
+    } as unknown as AiTransport;
+    const source = createWorldGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+
+    const candidate = await source.generate({ gameType: "wuxia", seed: "ending-gap", gameLength: "short" });
+    const trust = candidate.endings.find((ending) => ending.id === "ending_trust");
+    const doubt = candidate.endings.find((ending) => ending.id === "ending_doubt");
+
+    expect(trust?.requirements).toContainEqual({ kind: "npc_affinity_at_least", npcId: "npc_innkeeper", value: 6 });
+    expect(doubt?.requirements).toContainEqual({ kind: "npc_affinity_at_most", npcId: "npc_innkeeper", value: 5 });
   });
 
   it("transport 失败时回退 fixture 且不泄露 apiKey 到日志", async () => {
