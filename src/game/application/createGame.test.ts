@@ -35,6 +35,29 @@ function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameReco
 }
 
 describe("createGame", () => {
+  it("fixture worlds are deterministic for one seed and structurally different for another", async () => {
+    const source = createFixtureWorldSource();
+    const generate = (seed: string) => source.generate({ gameType: "wuxia", gameLength: "short", seed });
+
+    const first = await generate("branching-seed-alpha");
+    const replay = await generate("branching-seed-alpha");
+    const other = await generate("branching-seed-beta");
+
+    expect(replay).toEqual(first);
+    const signatures = (candidate: Awaited<ReturnType<typeof generate>>) => ({
+      npcIdentity: candidate.npcs.map((npc) => [npc.id, npc.name, npc.role]),
+      questGraph: candidate.quests.map((quest) => [quest.id, quest.name, quest.objectives, quest.onSuccess]),
+      facts: [...candidate.world.publicFacts, ...candidate.world.hiddenFacts],
+      locations: candidate.locations.map((location) => [location.id, location.name, location.connectedLocationIds]),
+      endingPredicates: candidate.endings.map((ending) => ending.requirements),
+    });
+    const a = signatures(first);
+    const b = signatures(other);
+    const changedDimensions = (Object.keys(a) as (keyof typeof a)[])
+      .filter((key) => JSON.stringify(a[key]) !== JSON.stringify(b[key]));
+    expect(changedDimensions.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("creates a game with fixture source", async () => {
     const { repo, getRecord } = createInMemoryRepo();
     const result = await createGame(
@@ -46,7 +69,7 @@ describe("createGame", () => {
       expect(result.revision).toBe(0);
       const record = getRecord();
       expect(record).not.toBeNull();
-      expect(record!.worldState.locations.length).toBe(2);
+      expect(record!.worldState.locations.length).toBe(3);
       expect(record!.worldState.npcs.length).toBe(1);
       expect(record!.storyState.currentAct).toBe(1);
     }
@@ -66,4 +89,3 @@ describe("createGame", () => {
     if (!result.ok) expect(result.code).toBe("ACTIVE_GAME_EXISTS");
   });
 });
-

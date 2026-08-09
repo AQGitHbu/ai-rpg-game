@@ -158,6 +158,8 @@ export function validateWorldGenerationCandidate(
         }
       } else if (req.kind === "fact_discovered") {
         satisfiableEndingIds.add(ending.id);
+      } else if (npcIdSet.has(req.npcId) && Number.isFinite(req.value) && req.value >= -100 && req.value <= 100) {
+        satisfiableEndingIds.add(ending.id);
       }
     }
   });
@@ -184,6 +186,11 @@ export function validateWorldGenerationCandidate(
         if (!questIdSet.has(req.questId)) issues.push({ path: `endings[${index}].requirements`, code: "missing_reference", params: { id: req.questId } });
       } else if (req.kind === "fact_discovered") {
         if (!allFactIds.has(req.factId)) issues.push({ path: `endings[${index}].requirements`, code: "missing_reference", params: { id: req.factId } });
+      } else {
+        if (!npcIdSet.has(req.npcId)) issues.push({ path: `endings[${index}].requirements`, code: "missing_reference", params: { id: req.npcId } });
+        if (!Number.isFinite(req.value) || req.value < -100 || req.value > 100) {
+          issues.push({ path: `endings[${index}].requirements`, code: "ending_unreachable", params: { id: ending.id } });
+        }
       }
     }
   });
@@ -226,7 +233,13 @@ export function validateWorldGenerationCandidate(
   for (const ending of candidate.endings) {
     if (satisfiableEndingIds.has(ending.id)) {
       const fp = ending.requirements
-        .map((r) => r.kind === "fact_discovered" ? `f:${r.factId}` : `q:${(r as { questId: string }).questId}`)
+        .map((r) => {
+          if (r.kind === "fact_discovered") return `f:${r.factId}`;
+          if (r.kind === "npc_affinity_at_least" || r.kind === "npc_affinity_at_most") {
+            return `n:${r.kind}:${r.npcId}:${r.value}`;
+          }
+          return `q:${r.kind}:${r.questId}`;
+        })
         .sort()
         .join("|");
       endingFingerprints.add(fp);

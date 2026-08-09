@@ -198,8 +198,8 @@ function buildWorldPrompt(input: { gameType: string; gameLength: string; seed: s
 4. locations：3-5 个互相连接（connectedLocationIds 可达网络）
 5. npcs：3-6 个，knownFactIds/hiddenFactIds 引用 world facts
 6. items：1-3 个
-7. quests：≥1 主线（kind=main, stage=1）+ 0-2 支线（kind=side）
-8. endings：≥2 个语义不同、requirements 非空的结局
+7. quests：主线 stage 连续且逐幕解锁；short 覆盖 1-3 幕，另可有 0-2 支线
+8. endings：≥2 个可达且互斥的结局；可用 npc_affinity_at_least / npc_affinity_at_most 绑定关键 NPC
 9. openingBudget：各实体计数
 
 只返回 JSON，不要其他文字。`;

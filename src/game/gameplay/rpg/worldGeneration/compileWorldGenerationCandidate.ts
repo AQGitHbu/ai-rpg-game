@@ -243,6 +243,8 @@ function compileEndings(endings: readonly EndingDefinitionCandidate[]): readonly
     requirements: e.requirements.map((r) => {
       if (r.kind === "fact_discovered") return { kind: "fact_discovered", factId: asFactId(r.factId) };
       if (r.kind === "quest_failed") return { kind: "quest_failed", questId: asQuestId(r.questId) };
+      if (r.kind === "npc_affinity_at_least") return { kind: "npc_affinity_at_least", npcId: asNpcId(r.npcId), value: r.value };
+      if (r.kind === "npc_affinity_at_most") return { kind: "npc_affinity_at_most", npcId: asNpcId(r.npcId), value: r.value };
       return { kind: "quest_completed", questId: asQuestId(r.questId) };
     }),
   }));

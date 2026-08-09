@@ -39,7 +39,7 @@ function fixture(): WorldGenerationCandidate {
       { id: "quest_side", name: "帮镖局", description: "帮忙", kind: "side", objectives: [{ kind: "visit_location", locationId: "loc_street" }], onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: ["side"] },
     ],
     endings: [
-      { id: "ending_hero", name: "英雄", description: "归来", requirements: [{ kind: "quest_completed", questId: "quest_main" }] },
+      { id: "ending_hero", name: "英雄", description: "归来", requirements: [{ kind: "quest_completed", questId: "quest_main" }, { kind: "npc_affinity_at_least", npcId: "npc_innkeeper", value: 10 }] },
       { id: "ending_wanderer", name: "归隐", description: "归隐山林", requirements: [{ kind: "fact_discovered", factId: "fact_sword" }] },
     ],
     openingBudget: { locationsCount: 2, npcsCount: 1, sideQuestsCount: 1, endingsCount: 2, townLocationsCount: 0 },
@@ -119,7 +119,10 @@ describe("compileWorldGenerationCandidate", () => {
     });
     const hero = worldState.endings.find((e) => e.id === asEnding("ending_hero"));
     const wanderer = worldState.endings.find((e) => e.id === asEnding("ending_wanderer"));
-    expect(hero?.requirements).toEqual([{ kind: "quest_completed", questId: asQuest("quest_main") }]);
+    expect(hero?.requirements).toEqual([
+      { kind: "quest_completed", questId: asQuest("quest_main") },
+      { kind: "npc_affinity_at_least", npcId: asNpcId("npc_innkeeper"), value: 10 },
+    ]);
     expect(wanderer?.requirements).toEqual([{ kind: "fact_discovered", factId: asFact("fact_sword") }]);
   });
 

@@ -128,7 +128,9 @@ export type EndingEntry = {
 export type EndingRequirement =
   | { readonly kind: "quest_completed"; readonly questId: QuestId }
   | { readonly kind: "quest_failed"; readonly questId: QuestId }
-  | { readonly kind: "fact_discovered"; readonly factId: FactId };
+  | { readonly kind: "fact_discovered"; readonly factId: FactId }
+  | { readonly kind: "npc_affinity_at_least"; readonly npcId: NpcId; readonly value: number }
+  | { readonly kind: "npc_affinity_at_most"; readonly npcId: NpcId; readonly value: number };
 
 export type FactionEntry = {
   readonly factionId: string;

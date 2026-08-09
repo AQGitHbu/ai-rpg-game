@@ -127,16 +127,26 @@ export async function createGame(
 
 export function createFixtureWorldSource(): WorldGenerationSource {
   return {
-    async generate() {
-      // 开局只给 1 个地点 + 1 个 NPC（spec：渐进式世界扩展）。
-      // 第二个地点存在但不解锁——通过剧情推进后 ExpansionProposer 提议解锁。
+    async generate(input) {
+      const variants = [
+        { npc: "沈掌柜", route: "青石古道", lair: "黑风寨", clue: "残月密函", secret: "密函暗纹指向黑风寨主的秘密盟约。", boss: "黑风寨主" },
+        { npc: "顾账房", route: "芦苇渡口", lair: "沉钟水寨", clue: "潮痕账册", secret: "账册夹页记录着水寨与官府的暗中交易。", boss: "沉钟舵主" },
+        { npc: "陆驿丞", route: "断桥驿道", lair: "赤焰山庄", clue: "焦边路引", secret: "路引背面藏着山庄劫掠商队的密令。", boss: "赤焰庄主" },
+        { npc: "叶药师", route: "药王山径", lair: "寒鸦别院", clue: "药香手札", secret: "手札末页揭示别院正在试炼禁药。", boss: "寒鸦院主" },
+      ] as const;
+      let hash = 2166136261;
+      for (const char of input.seed) {
+        hash ^= char.charCodeAt(0);
+        hash = Math.imul(hash, 16777619) >>> 0;
+      }
+      const variant = variants[hash % variants.length]!;
       return {
         world: {
-          summary: "一个江湖恩怨交织的世界。",
+          summary: `一场从客栈延伸到${variant.lair}的江湖追索。`,
           tone: "江湖沧桑",
           themes: ["探索", "抉择"],
-          publicFacts: [{ id: "fact_inn", text: "起始客栈是小镇的门户。" }],
-          hiddenFacts: [],
+          publicFacts: [{ id: "fact_inn", text: `${variant.npc}守着通往${variant.route}的消息。` }],
+          hiddenFacts: [{ id: "fact_secret", text: variant.secret }],
           tags: ["武侠"],
         },
         player: {
@@ -155,38 +165,56 @@ export function createFixtureWorldSource(): WorldGenerationSource {
         },
         locations: [
           {
-            id: "loc_start", name: "起始客栈", description: "一间简朴的客栈，空气中弥漫着茶香。门外是一条通往小镇的土路。", kind: "main",
+            id: "loc_start", name: "听雨客栈", description: `一间临近${variant.route}的旧客栈。`, kind: "main",
             connectedLocationIds: ["loc_street"], npcIds: ["npc_innkeeper"], availableItemIds: [], tags: [],
           },
           {
-            id: "loc_street", name: "小镇街道", description: "热闹的街道两旁摆满了摊位", kind: "main",
-            connectedLocationIds: ["loc_start"], npcIds: [], availableItemIds: [], tags: [],
+            id: "loc_street", name: variant.route, description: `通向${variant.lair}的必经之路。`, kind: "main",
+            connectedLocationIds: ["loc_start", "loc_lair"], npcIds: [], availableItemIds: ["item_clue"], tags: ["route"],
+          },
+          {
+            id: "loc_lair", name: variant.lair, description: `${variant.boss}盘踞的险地。`, kind: "main",
+            connectedLocationIds: ["loc_street"], npcIds: [], availableItemIds: [], tags: ["climax"],
           },
         ],
         npcs: [
           {
-            id: "npc_innkeeper", name: "客栈老板", role: "路人", description: "热情的客栈老板，似乎知道很多消息",
+            id: "npc_innkeeper", name: variant.npc, role: "关键线人", description: `掌握${variant.route}沿途消息的客栈主人。`,
             locationId: "loc_start", isCompanion: false,
-            knownFactIds: ["fact_inn"], hiddenFactIds: [], goals: [], tags: [],
+            knownFactIds: ["fact_inn"], hiddenFactIds: ["fact_secret"], goals: ["查明幕后势力"], tags: ["key_npc"],
           },
         ],
-        items: [],
-        enemies: [],
+        items: [{ id: "item_clue", name: variant.clue, description: "能指向最终据点的关键证物。", kind: "clue", tags: ["quest"] }],
+        enemies: [{ id: "enemy_boss", name: variant.boss, description: "主线最终强敌。", tier: "boss", stats: { hp: 24, attack: 6, defense: 2 }, locationId: "loc_lair", tags: ["boss"] }],
         factions: [],
         quests: [
           {
-            id: "quest_main", name: "探索未知世界", description: "踏出客栈，探索这个世界隐藏的秘密。", kind: "main", stage: 1,
-            objectives: [{ kind: "talk_to_npc", npcId: "npc_innkeeper" }, { kind: "visit_location", locationId: "loc_street" }],
-            onSuccess: { kind: "reach_ending", endingId: "ending_success" },
+            id: "quest_main", name: `取得${variant.npc}的信任`, description: "从关键线人口中确认追索方向。", kind: "main", stage: 1,
+            objectives: [{ kind: "talk_to_npc", npcId: "npc_innkeeper" }],
+            onSuccess: { kind: "unlock_quests", questIds: ["quest_clue"], locationIds: ["loc_street"] },
             onFailure: { kind: "closed" },
             tags: ["main"],
           },
+          {
+            id: "quest_clue", name: `追查${variant.clue}`, description: "沿途取得证物并查明其中秘密。", kind: "main", stage: 2,
+            objectives: [{ kind: "visit_location", locationId: "loc_street" }, { kind: "obtain_item", itemId: "item_clue" }],
+            onSuccess: { kind: "unlock_quests", questIds: ["quest_climax"], locationIds: ["loc_lair"] },
+            onFailure: { kind: "closed" },
+            tags: ["main"],
+          },
+          {
+            id: "quest_climax", name: `决战${variant.boss}`, description: "击败幕后强敌，为选择承担结果。", kind: "main", stage: 3,
+            objectives: [{ kind: "defeat_enemy", enemyId: "enemy_boss" }],
+            onSuccess: { kind: "reach_ending", endingId: "ending_trust" },
+            onFailure: { kind: "closed" },
+            tags: ["main", "climax"],
+          },
         ],
         endings: [
-          { id: "ending_success", name: "冒险成功", description: "你完成了这段冒险。", requirements: [{ kind: "quest_completed", questId: "quest_main" }] },
-          { id: "ending_roam", name: "浪迹天涯", description: "你选择了继续流浪。", requirements: [{ kind: "fact_discovered", factId: "fact_inn" }] },
+          { id: "ending_trust", name: "并肩破局", description: `你与${variant.npc}以信任守住了胜利。`, requirements: [{ kind: "quest_completed", questId: "quest_climax" }, { kind: "npc_affinity_at_least", npcId: "npc_innkeeper", value: 10 }] },
+          { id: "ending_doubt", name: "孤身远行", description: "你赢下决战，却因猜疑独自离开。", requirements: [{ kind: "quest_completed", questId: "quest_climax" }, { kind: "npc_affinity_at_most", npcId: "npc_innkeeper", value: 5 }] },
         ],
-        openingBudget: { locationsCount: 2, npcsCount: 1, sideQuestsCount: 0, endingsCount: 2, townLocationsCount: 0 },
+        openingBudget: { locationsCount: 3, npcsCount: 1, sideQuestsCount: 0, endingsCount: 2, townLocationsCount: 0 },
       };
     },
   };

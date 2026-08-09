@@ -63,8 +63,8 @@ function createLiveWorldGenerationSource(
 3. 生成 1-3 个物品
 4. 玩家有名字、身份、属性、起始物品
 5. 世界观含公开事实（publicFacts）与隐藏事实（hiddenFacts）
-6. 至少 1 个主线任务（kind=main, stage=1）+ 0-2 个支线（kind=side）
-7. 至少 2 个语义不同的结局，每个 requirements 非空
+6. 主线 stage 必须连续且可完成；short 至少覆盖 1-3 幕，任务 outcome 逐幕解锁下一任务与地点
+7. 至少 2 个语义不同且互斥的结局；可用 npc_affinity_at_least / npc_affinity_at_most 绑定关键 NPC，阈值不得重叠
 8. startAnchor 指明起始地点/NPC/主线任务/main thread
 
 返回严格 JSON（ID 全部为普通字符串，非品牌化），格式如下：
@@ -78,7 +78,7 @@ function createLiveWorldGenerationSource(
   "enemies": [],
   "factions": [],
   "quests": [{ "id": "quest_main", "name": "...", "description": "...", "kind": "main", "stage": 1, "objectives": [{ "kind": "talk_to_npc", "npcId": "npc_xxx" }], "onSuccess": { "kind": "reach_ending", "endingId": "ending_xxx" }, "onFailure": { "kind": "closed" }, "tags": ["main"] }],
-  "endings": [{ "id": "ending_xxx", "name": "...", "description": "...", "requirements": [{ "kind": "quest_completed", "questId": "quest_main" }] }],
+  "endings": [{ "id": "ending_xxx", "name": "...", "description": "...", "requirements": [{ "kind": "quest_completed", "questId": "quest_main" }, { "kind": "npc_affinity_at_least", "npcId": "npc_xxx", "value": 10 }] }],
   "openingBudget": { "locationsCount": 3, "npcsCount": 4, "sideQuestsCount": 0, "endingsCount": 2, "townLocationsCount": 0 }
 }
 

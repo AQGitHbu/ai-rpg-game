@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { resolveEnding } from "./resolveEnding";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asQuestId, asEndingId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asQuestId, asEndingId, asGenerationId, asNpcId } from "@/game/domain/scenarioBlueprint";
 import type { WorldState } from "@/game/domain/worldState";
 
 describe("resolveEnding", () => {
@@ -40,5 +40,26 @@ describe("resolveEnding", () => {
     const ss = { ...baseSs, endingAllowed: false };
     const result = resolveEnding(ws, ss, deps);
     expect(result.events).toHaveLength(0);
+  });
+
+  it("selects mutually exclusive endings from the key NPC affinity", () => {
+    const keyNpc = {
+      id: asNpcId("npc_key"), name: "线人", role: "ally", description: "t",
+      locationId: loc.id, isCompanion: false, tags: [], met: true,
+      memory: {
+        npcId: asNpcId("npc_key"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
+        relationship: { affinity: -8 }, emotion: "guarded" as const, goals: [],
+      },
+    };
+    const ws: WorldState = {
+      ...baseWs,
+      npcs: [keyNpc],
+      endings: [
+        { id: asEndingId("e_trust"), name: "trust", description: "t", requirements: [{ kind: "npc_affinity_at_least", npcId: keyNpc.id, value: 10 }] },
+        { id: asEndingId("e_doubt"), name: "doubt", description: "t", requirements: [{ kind: "npc_affinity_at_most", npcId: keyNpc.id, value: 5 }] },
+      ],
+    };
+    const result = resolveEnding(ws, { ...baseSs, endingAllowed: true }, deps);
+    expect(result.nextWorldState.ending?.endingId).toBe(asEndingId("e_doubt"));
   });
 });

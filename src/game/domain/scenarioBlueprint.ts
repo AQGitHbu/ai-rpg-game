@@ -192,7 +192,9 @@ type ItemDefinitionOf<I extends IdSet> = {
 type EndingRequirementOf<I extends IdSet> =
   | { readonly kind: "quest_completed"; readonly questId: I["quest"] }
   | { readonly kind: "quest_failed"; readonly questId: I["quest"] }
-  | { readonly kind: "fact_discovered"; readonly factId: I["fact"] };
+  | { readonly kind: "fact_discovered"; readonly factId: I["fact"] }
+  | { readonly kind: "npc_affinity_at_least"; readonly npcId: I["npc"]; readonly value: number }
+  | { readonly kind: "npc_affinity_at_most"; readonly npcId: I["npc"]; readonly value: number };
 
 type EndingDefinitionOf<I extends IdSet> = {
   readonly id: I["ending"];

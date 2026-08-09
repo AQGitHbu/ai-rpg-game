@@ -171,6 +171,29 @@ export function parseWorldGenerationCandidate(
     if (!Array.isArray(e.requirements) || e.requirements.length === 0) {
       return { ok: false, code: "EMPTY_ENDING_REQUIREMENTS" };
     }
+    for (const requirement of e.requirements) {
+      if (!isRecord(requirement) || typeof requirement.kind !== "string") {
+        return { ok: false, code: "INVALID_ENDING_REQUIREMENT" };
+      }
+      if (
+        (requirement.kind === "quest_completed" || requirement.kind === "quest_failed")
+        && typeof requirement.questId !== "string"
+      ) return { ok: false, code: "INVALID_ENDING_REQUIREMENT" };
+      if (requirement.kind === "fact_discovered" && typeof requirement.factId !== "string") {
+        return { ok: false, code: "INVALID_ENDING_REQUIREMENT" };
+      }
+      if (
+        (requirement.kind === "npc_affinity_at_least" || requirement.kind === "npc_affinity_at_most")
+        && (typeof requirement.npcId !== "string" || !isNumber(requirement.value))
+      ) return { ok: false, code: "INVALID_ENDING_REQUIREMENT" };
+      if (![
+        "quest_completed",
+        "quest_failed",
+        "fact_discovered",
+        "npc_affinity_at_least",
+        "npc_affinity_at_most",
+      ].includes(requirement.kind)) return { ok: false, code: "INVALID_ENDING_REQUIREMENT" };
+    }
   }
 
   if (!isRecord(openingBudget)) return { ok: false, code: "INVALID_OPENING_BUDGET" };

@@ -13,6 +13,8 @@ function isRequirementMet(ws: WorldState, req: WorldState["endings"][number]["re
     case "quest_completed": return ws.quests.find((q) => q.id === req.questId)?.status === "completed";
     case "quest_failed": return ws.quests.find((q) => q.id === req.questId)?.status === "failed";
     case "fact_discovered": return ws.worldFacts.find((f) => f.factId === req.factId)?.discovered ?? false;
+    case "npc_affinity_at_least": return (ws.npcs.find((npc) => npc.id === req.npcId)?.memory.relationship.affinity ?? -101) >= req.value;
+    case "npc_affinity_at_most": return (ws.npcs.find((npc) => npc.id === req.npcId)?.memory.relationship.affinity ?? 101) <= req.value;
   }
 }
 

@@ -1,4 +1,4 @@
-import type { SceneSource, SceneSourceResult } from "./sceneSource";
+import type { EventProposal, SceneSource, SceneSourceResult } from "./sceneSource";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { NarrativeNpcLineState, NarrativeEventState } from "@/game/domain/narrative";
 import type { ChoiceProposal } from "@/game/domain/approvedChoice";
@@ -33,11 +33,37 @@ export function createDeterministicSceneSource(): SceneSource {
         npcLine,
         event,
         choiceProposals,
-        eventProposals: [],
+        eventProposals: buildRelationshipEventProposals(context, sceneId),
         source: "fallback",
       };
     },
   };
+}
+
+function buildRelationshipEventProposals(
+  context: SceneGenerationContext,
+  sceneId: string,
+): readonly EventProposal[] {
+  if (context.job.actionSummary.kind !== "talk") return [];
+  const npc = focusNpc(context);
+  if (npc === undefined) return [];
+  const stance = npc.relationship.affinity >= 10
+    ? "friendly"
+    : npc.relationship.affinity <= 3
+      ? "hostile"
+      : null;
+  if (stance === null) return [];
+  return [{
+    id: `${sceneId}-stance-${stance}`,
+    kind: "npc_changes_stance",
+    involvedEntityIds: [String(npc.id)],
+    prerequisiteFactIds: [],
+    proposedEffects: [{ kind: "npc_changes_stance", npcId: npc.id, stance }],
+    intendedPacing: context.story.nextPacingNeed,
+    reason: "关键 NPC 的规则关系已形成明确立场",
+    proposedAtTurn: context.job.turnNumber,
+    expiresAtTurn: context.job.turnNumber + 5,
+  }];
 }
 
 /** 焦点 NPC：talk job 优先使用 job.focusNpcId，否则第一个在场 NPC。 */
@@ -152,13 +178,9 @@ export function buildChoiceProposals(
   if (event.kind === "dialogue") {
     const npc = context.presentNpcs.find((entry) => entry.id === event.focusNpcId);
     if (npc === undefined) throw new Error("dialogue fallback requires a present focus NPC");
-    const secondAct = npc.relationship.affinity >= 0 ? "support" as const : "challenge" as const;
     return [
-      { label: `询问${npc.name}目前的状况`, action: { type: "talk", npcId: npc.id, dialogueAct: "ask" } },
-      {
-        label: secondAct === "support" ? `表示愿意支持${npc.name}` : `质疑${npc.name}的说法`,
-        action: { type: "talk", npcId: npc.id, dialogueAct: secondAct },
-      },
+      { label: `表示愿意支持${npc.name}`, action: { type: "talk", npcId: npc.id, dialogueAct: "support" } },
+      { label: `质疑${npc.name}的说法`, action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" } },
     ];
   }
 

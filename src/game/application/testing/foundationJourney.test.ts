@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createInMemoryRepo, createJourneyGame, playTurn, advanceScene, loadWorldState, loadStoryState } from "./foundationJourney.testutil";
+import { createInMemoryRepo, createJourneyGame, playTurn, playIssuedChoice, playIssuedTravelToUnvisited, advanceScene, loadWorldState, loadStoryState } from "./foundationJourney.testutil";
 import type { Action } from "@/game/domain/action";
 import type { ActionChoiceMap } from "@/game/application/actionConverter";
 import { asNpcId } from "@/game/domain/scenarioBlueprint";
@@ -9,6 +9,87 @@ function cmap(entries: readonly [string, Action][]): ActionChoiceMap {
 }
 
 describe("foundation 15-turn journey", () => {
+  it("executes 15 successful choice-driven turns, reloads, activates an event, survives a climax, and reaches an ending", async () => {
+    const created = await createJourneyGame();
+    let store = created.repo;
+    let successfulTurns = 0;
+    let reloadCount = 0;
+    const issuedTokens: string[] = [];
+    const accept = (result: Awaited<ReturnType<typeof playTurn>>) => {
+      expect(result.ok).toBe(true);
+      if (result.ok) successfulTurns += 1;
+    };
+    const fixed = async (label: string) => {
+      const result = await playIssuedChoice(store.repo, label);
+      issuedTokens.push(result.choiceToken);
+      accept(result);
+    };
+    const travel = async () => {
+      const result = await playIssuedTravelToUnvisited(store.repo);
+      issuedTokens.push(result.choiceToken);
+      accept(result);
+    };
+    const scene = async () => expect(await advanceScene(store.repo)).toBe(true);
+    const reload = () => {
+      const snapshot = store.record();
+      if (snapshot === null) throw new Error("reload 缺少存档");
+      const next = createInMemoryRepo(created.gameId);
+      next.restore(structuredClone(snapshot));
+      store = next;
+      reloadCount += 1;
+    };
+
+    await scene();
+    await fixed("交谈"); // 1: fixed NPC entry; completes act 1 and unlocks route
+    await scene();
+    await fixed("支持"); // 2: server-approved dialogue choice
+    await scene();
+    accept(await playTurn(store.repo, { kind: "free_text", text: "我相信你，我们一起查明真相", targetNpcId: asNpcId("npc_innkeeper") })); // 3: custom NPC input
+
+    await scene();
+    await fixed("休息"); // 4: approves and activates candidate event
+    await scene();
+    await fixed("探索"); // 5
+    await scene();
+    reload();
+
+    await travel(); // 6: move to unlocked middle location
+    await scene();
+    await fixed("拾取"); // 7: obtain quest item
+    await scene();
+    await fixed("休息"); // 8
+    await scene();
+    await fixed("探索"); // 9
+    await scene();
+    reload();
+
+    await travel(); // 10: enter climax location
+    await scene();
+    await fixed("探索"); // 11
+    await scene();
+    await fixed("挑战"); // 12: start battle
+    await scene();
+    reload();
+    await fixed("攻击"); // 13
+    await scene();
+    await fixed("攻击"); // 14
+    await scene();
+    await fixed("攻击"); // 15: defeat boss, complete final act, resolve ending
+
+    const record = store.record()!;
+    expect(successfulTurns).toBeGreaterThanOrEqual(15);
+    expect(record.storyState.turnNumber).toBe(successfulTurns);
+    expect(reloadCount).toBeGreaterThanOrEqual(3);
+    expect(issuedTokens.length).toBeGreaterThanOrEqual(12);
+    expect(issuedTokens.every((token) => /^c_[0-9a-f]{16}$/.test(token))).toBe(true);
+    expect(record.worldState.eventLedger.some((event) => event.type === "location_unlocked")).toBe(true);
+    expect(record.worldState.eventLedger.some((event) => event.type === "item_obtained")).toBe(true);
+    expect(record.worldState.eventLedger.some((event) => event.type === "candidate_event_activated")).toBe(true);
+    expect(record.worldState.eventLedger.some((event) => event.type === "battle_resolved" && event.outcome === "victory")).toBe(true);
+    expect(record.worldState.ending).not.toBeNull();
+    expect(record.worldState.eventLedger.some((event) => event.type === "ending_reached")).toBe(true);
+  });
+
   it("creates a validated world, generates prologue, then plays a multi-turn journey with single CAS per turn", async () => {
     const { repo, gameId } = await createJourneyGame();
     expect(repo.record()).not.toBeNull();

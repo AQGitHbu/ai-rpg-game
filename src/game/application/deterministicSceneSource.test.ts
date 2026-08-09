@@ -165,8 +165,8 @@ describe("deterministicSceneSource", () => {
     expect(result.event).toEqual({ kind: "dialogue", focusNpcId: asNpcId("npc_1") });
     expect(result.npcLine?.npcId).toBe(asNpcId("npc_1"));
     expect(result.choiceProposals.map((choice) => choice.action)).toEqual([
-      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" },
       { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" },
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "challenge" },
     ]);
   });
 
@@ -207,6 +207,28 @@ describe("deterministicSceneSource", () => {
   it("event proposals is empty for deterministic source", async () => {
     const result = await source.generateScene(makeContext(makeJob()));
     expect(result.eventProposals).toEqual([]);
+  });
+
+  it("proposes a structured stance consequence after relationship choices cross a threshold", async () => {
+    const base = makeContext(makeJob({
+      eventKind: "dialogue",
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+    }));
+    const context: SceneGenerationContext = {
+      ...base,
+      presentNpcs: base.presentNpcs.map((npc) => npc.id === asNpcId("npc_1")
+        ? { ...npc, relationship: { affinity: 12 } }
+        : npc),
+    };
+    const result = await source.generateScene(context);
+    expect(result.eventProposals).toEqual([
+      expect.objectContaining({
+        kind: "npc_changes_stance",
+        involvedEntityIds: ["npc_1"],
+        proposedEffects: [{ kind: "npc_changes_stance", npcId: asNpcId("npc_1"), stance: "friendly" }],
+      }),
+    ]);
   });
 
   it("choices include a move action toward a reachable location", async () => {

@@ -171,4 +171,10 @@ describe("validateWorldGenerationCandidate 错误矩阵", () => {
     c.startAnchor.npcId = "npc_ghost";
     expect(issues(c)).toContain("invalid_starting_npc");
   });
+
+  it("rejects an affinity ending that references an unknown NPC", () => {
+    const c = baseCandidate();
+    c.endings[0].requirements = [{ kind: "npc_affinity_at_least", npcId: "npc_ghost", value: 10 }];
+    expect(issues(c)).toContain("missing_reference");
+  });
 });

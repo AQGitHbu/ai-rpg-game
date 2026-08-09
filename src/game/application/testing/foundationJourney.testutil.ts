@@ -11,6 +11,9 @@ import { createDeterministicSceneSource } from "@/game/application/deterministic
 import { createRuleIntentParser } from "@/game/application/server/ai/liveIntentParserSource";
 import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser";
 import { asGameId } from "@/game/application/server/persistence/gameRepository";
+import { buildChoiceMap } from "@/game/application/buildChoiceMap";
+import { projectGameSessionView, type GameSessionView, type PlayerChoiceView } from "@/game/application/gameSessionView";
+import type { EventProposal, SceneSource } from "@/game/application/sceneSource";
 
 // ---------------------------------------------------------------------------
 // Foundation 完整离线旅程 harness。
@@ -104,10 +107,17 @@ export async function playTurn(
 }
 
 /** 用确定性 SceneSource 清空当前 pending job（无 pending 返回 true）。 */
-export async function advanceScene(repo: GameRepository): Promise<boolean> {
+export async function advanceScene(repo: GameRepository, eventProposals: readonly EventProposal[] = []): Promise<boolean> {
+  const deterministic = createDeterministicSceneSource();
+  const sceneSource: SceneSource = eventProposals.length === 0 ? deterministic : {
+    async generateScene(context) {
+      const proposal = await deterministic.generateScene(context);
+      return { ...proposal, eventProposals };
+    },
+  };
   const result = await generatePendingScene({
     repository: repo,
-    sceneSource: createDeterministicSceneSource(),
+    sceneSource,
     now: journeyNow,
   });
   return result === "saved" || result === "not_pending";
@@ -117,14 +127,68 @@ export async function advanceScene(repo: GameRepository): Promise<boolean> {
 export async function createJourneyGame(
   gameId: GameId = asGameId("journey_g1"),
   repo?: InMemoryRepo,
+  seed = "journey_seed",
 ): Promise<{ repo: InMemoryRepo; gameId: GameId }> {
   const store = repo ?? createInMemoryRepo(gameId);
   const created = await createGame(
-    { gameId, gameType: "wuxia", gameLength: "short", seed: "journey_seed" },
+    { gameId, gameType: "wuxia", gameLength: "short", seed },
     { repository: store.repo, source: createFixtureWorldSource(), now: journeyNow, aiEnabled: false },
   );
   if (!created.ok) throw new Error(`创建世界失败：${created.code}`);
   return { repo: store, gameId };
+}
+
+export async function loadGameView(repo: GameRepository): Promise<GameSessionView> {
+  const loaded = await repo.getCurrentGame();
+  if (!loaded.ok || loaded.status !== "active") throw new Error("游戏视图不可用");
+  return projectGameSessionView(loaded.record.worldState, loaded.record.storyState, loaded.record.revision);
+}
+
+function allIssuedChoices(view: GameSessionView): readonly PlayerChoiceView[] {
+  return [
+    ...view.currentLocation.actions,
+    ...view.worldMap.locations.flatMap((location) => location.travelChoice === null ? [] : [location.travelChoice]),
+    ...view.obtainableItems.map((item) => item.choice),
+    ...view.narrative.choices,
+    ...view.narrative.npcDialogues.flatMap((dialogue) => dialogue.choices),
+    ...(view.battle?.controls ?? []),
+  ];
+}
+
+/** 像生产 composition root 一样，只消费 projector 下发的 opaque token。 */
+export async function playIssuedChoice(
+  repo: GameRepository,
+  labelIncludes: string,
+): Promise<JourneyTurnResult & { readonly choiceToken: string }> {
+  const loaded = await repo.getCurrentGame();
+  if (!loaded.ok || loaded.status !== "active") throw new Error("游戏记录不可用");
+  const view = projectGameSessionView(loaded.record.worldState, loaded.record.storyState, loaded.record.revision);
+  const choice = allIssuedChoices(view).find((entry) => entry.label.includes(labelIncludes));
+  if (choice === undefined) throw new Error(`找不到服务器选项：${labelIncludes}`);
+  const result = await playTurn(
+    repo,
+    { kind: "fixed_choice", choiceToken: choice.choiceToken },
+    buildChoiceMap(loaded.record.worldState, loaded.record.storyState, loaded.record.revision),
+  );
+  return { ...result, choiceToken: choice.choiceToken };
+}
+
+export async function playIssuedTravelToUnvisited(
+  repo: GameRepository,
+): Promise<JourneyTurnResult & { readonly choiceToken: string }> {
+  const loaded = await repo.getCurrentGame();
+  if (!loaded.ok || loaded.status !== "active") throw new Error("游戏记录不可用");
+  const view = projectGameSessionView(loaded.record.worldState, loaded.record.storyState, loaded.record.revision);
+  const choice = view.worldMap.locations.find(
+    (location) => !location.current && !location.visited && location.travelChoice !== null,
+  )?.travelChoice;
+  if (choice === null || choice === undefined) throw new Error("找不到服务器下发的未到访地点选项");
+  const result = await playTurn(
+    repo,
+    { kind: "fixed_choice", choiceToken: choice.choiceToken },
+    buildChoiceMap(loaded.record.worldState, loaded.record.storyState, loaded.record.revision),
+  );
+  return { ...result, choiceToken: choice.choiceToken };
 }
 
 /** 从当前记录返回故事状态（reload 断言用）。 */
