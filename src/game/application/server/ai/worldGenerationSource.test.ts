@@ -3,6 +3,18 @@ import { repairWorldGenerationCandidate, createWorldGenerationSource } from "./w
 import type { WorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
 import type { AiTransport } from "@ai-game/ai-transport";
 
+type DeepMutable<T> = {
+  -readonly [K in keyof T]: T[K] extends ReadonlyArray<infer U>
+    ? DeepMutable<U>[]
+    : T[K] extends object
+      ? DeepMutable<T[K]>
+      : T[K];
+};
+
+function mutableCandidate(): DeepMutable<WorldGenerationCandidate> {
+  return JSON.parse(JSON.stringify(validCandidate())) as DeepMutable<WorldGenerationCandidate>;
+}
+
 function validCandidate(): WorldGenerationCandidate {
   return {
     world: {
@@ -168,6 +180,77 @@ describe("createWorldGenerationSource", () => {
 
     expect(trust?.requirements).toContainEqual({ kind: "npc_affinity_at_least", npcId: "npc_innkeeper", value: 6 });
     expect(doubt?.requirements).toContainEqual({ kind: "npc_affinity_at_most", npcId: "npc_innkeeper", value: 5 });
+  });
+
+  it.each([
+    {
+      name: "quest-only branch",
+      build: () => {
+        const candidate = mutableCandidate();
+        candidate.endings[0].requirements = [{ kind: "quest_completed", questId: "quest_act3" }];
+        return candidate;
+      },
+    },
+    {
+      name: "different NPC discriminators",
+      build: () => {
+        const candidate = mutableCandidate();
+        candidate.npcs.push({
+          id: "npc_2", name: "守卫", role: "见证人", description: "d", locationId: "loc_2",
+          isCompanion: false, knownFactIds: [], hiddenFactIds: [], goals: [], tags: [],
+        });
+        candidate.locations[1].npcIds.push("npc_2");
+        candidate.openingBudget.npcsCount = 2;
+        candidate.endings[1].requirements = [
+          { kind: "quest_completed", questId: "quest_act3" },
+          { kind: "npc_affinity_at_most", npcId: "npc_2", value: 5 },
+        ];
+        return candidate;
+      },
+    },
+    {
+      name: "single ending interval",
+      build: () => {
+        const candidate = mutableCandidate();
+        candidate.endings = [candidate.endings[0]];
+        candidate.openingBudget.endingsCount = 1;
+        return candidate;
+      },
+    },
+    {
+      name: "conjunctive extra",
+      build: () => {
+        const candidate = mutableCandidate();
+        candidate.endings[0].requirements.push({ kind: "fact_discovered", factId: "fact_sword" });
+        return candidate;
+      },
+    },
+    {
+      name: "non-progressive stage unlock",
+      build: () => {
+        const candidate = mutableCandidate();
+        const act1 = candidate.quests.find((quest) => quest.id === "quest_main");
+        const act2 = candidate.quests.find((quest) => quest.id === "quest_act2");
+        const act3 = candidate.quests.find((quest) => quest.id === "quest_act3");
+        if (act1?.kind !== "main" || act2?.kind !== "main" || act3?.kind !== "main") {
+          throw new Error("missing main quest fixture");
+        }
+        act1.onSuccess = { kind: "unlock_quests", questIds: [act3.id] };
+        act3.onSuccess = { kind: "unlock_quests", questIds: [act2.id] };
+        act2.onSuccess = { kind: "reach_ending", endingId: "ending_1" };
+        return candidate;
+      },
+    },
+  ])("AI $name candidate is rejected in favor of the deterministic fallback", async ({ build }) => {
+    const input = { gameType: "wuxia" as const, seed: "guard-fallback", gameLength: "short" as const };
+    const invalidCandidate = build();
+    const transport = {
+      complete: async () => ({ ok: true, content: JSON.stringify(invalidCandidate), latencyMs: 1 }),
+    } as unknown as AiTransport;
+    const liveSource = createWorldGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+    const deterministicSource = createWorldGenerationSource({});
+
+    await expect(liveSource.generate(input)).resolves.toEqual(await deterministicSource.generate(input));
   });
 
   it("transport 失败时回退 fixture 且不泄露 apiKey 到日志", async () => {

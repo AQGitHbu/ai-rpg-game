@@ -219,6 +219,69 @@ describe("validateWorldGenerationCandidate 错误矩阵", () => {
     expect(result.issues.map((issue) => issue.code)).toContain("non_exhaustive_ending_predicates");
   });
 
+  it("rejects a quest-only ending paired with an affinity ending", () => {
+    const c = baseCandidate();
+    c.endings[0].requirements = [
+      { kind: "quest_completed", questId: "quest_act3" },
+    ];
+
+    expect(issues(c)).toContain("non_exhaustive_ending_predicates");
+  });
+
+  it("rejects ending discriminators that use different NPCs", () => {
+    const c = baseCandidate();
+    c.npcs.push({
+      id: "npc_guard",
+      name: "守卫",
+      role: "见证人",
+      description: "守卫",
+      locationId: "loc_street",
+      isCompanion: false,
+      knownFactIds: [],
+      hiddenFactIds: [],
+      goals: [],
+      tags: [],
+    });
+    c.locations[1].npcIds.push("npc_guard");
+    c.openingBudget.npcsCount = 2;
+    c.endings[1].requirements = [
+      { kind: "quest_completed", questId: "quest_act3" },
+      { kind: "npc_affinity_at_most", npcId: "npc_guard", value: 5 },
+    ];
+
+    expect(issues(c)).toContain("non_exhaustive_ending_predicates");
+  });
+
+  it("rejects a single ending interval", () => {
+    const c = baseCandidate();
+    c.endings = [c.endings[0]];
+    c.openingBudget.endingsCount = 1;
+
+    expect(issues(c)).toContain("non_exhaustive_ending_predicates");
+  });
+
+  it("rejects a conjunctive extra requirement on one ending branch", () => {
+    const c = baseCandidate();
+    c.endings[0].requirements.push({ kind: "fact_discovered", factId: "fact_sword" });
+
+    expect(issues(c)).toContain("non_exhaustive_ending_predicates");
+  });
+
+  it("rejects a reachable main quest graph that unlocks stages out of order", () => {
+    const c = baseCandidate();
+    const act1 = c.quests.find((quest) => quest.id === "quest_main");
+    const act2 = c.quests.find((quest) => quest.id === "quest_act2");
+    const act3 = c.quests.find((quest) => quest.id === "quest_act3");
+    if (act1?.kind !== "main" || act2?.kind !== "main" || act3?.kind !== "main") {
+      throw new Error("missing main quest fixture");
+    }
+    act1.onSuccess = { kind: "unlock_quests", questIds: [act3.id] };
+    act3.onSuccess = { kind: "unlock_quests", questIds: [act2.id] };
+    act2.onSuccess = { kind: "reach_ending", endingId: "ending_hero" };
+
+    expect(issues(c)).toContain("main_act_gap");
+  });
+
   it("npc_fact_reference_invalid", () => {
     const c = baseCandidate();
     c.npcs[0].knownFactIds.push("fact_missing");

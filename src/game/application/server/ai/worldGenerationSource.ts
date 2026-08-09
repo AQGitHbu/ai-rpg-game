@@ -205,7 +205,7 @@ function buildWorldPrompt(input: { gameType: string; gameLength: GameLength; see
 5. npcs：3-6 个，knownFactIds/hiddenFactIds 引用 world facts
 6. items：1-3 个
 7. quests：主线必须恰好覆盖 stage 1-${targetActs}，每幕一个可达主任务并逐幕解锁；另可有 0-2 支线
-8. endings：≥2 个可达且互斥的结局；关系分支必须对 -100..100 无重叠且无空档（例如 <=5 与 >=6）
+8. endings：恰好 2 个结局；两者都只包含同一个终幕 quest_completed 条件和同一 NPC 的一个关系条件，关系条件必须分别为相邻的 at_most / at_least（例如 <=5 与 >=6），不得增加其他条件
 9. openingBudget：各实体计数
 
 只返回 JSON，不要其他文字。`;

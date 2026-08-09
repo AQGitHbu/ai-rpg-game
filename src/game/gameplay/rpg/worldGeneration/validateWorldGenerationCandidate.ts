@@ -261,6 +261,38 @@ export function validateWorldGenerationCandidate(
     }
   }
 
+  // 可达并不等于按幕推进：例如 1 -> 3 -> 2 的图也会被 BFS 标为全部可达，
+  // 但运行时会提前暴露终幕。正式候选只接受 onSuccess 从第 N 幕继续解锁
+  // 第 N+1 幕，并拒绝任何跨幕、倒序的 main -> main 解锁边。
+  const mainQuestById = new Map(mainQuests.map((quest) => [quest.id, quest]));
+  const mainQuestByStage = new Map<number, Extract<QuestDefinitionCandidate, { kind: "main" }>>();
+  for (const quest of mainQuests) {
+    if (!mainQuestByStage.has(quest.stage)) mainQuestByStage.set(quest.stage, quest);
+  }
+  for (let stage = 1; stage < targetActs; stage++) {
+    const current = mainQuestByStage.get(stage);
+    const next = mainQuestByStage.get(stage + 1);
+    if (!current || !next) continue;
+    if (current.onSuccess?.kind !== "unlock_quests" || !current.onSuccess.questIds.includes(next.id)) {
+      issues.push({ path: "quests", code: "main_act_gap", params: { stage: stage + 1, id: next.id } });
+    }
+  }
+  for (const quest of mainQuests) {
+    for (const outcome of [quest.onSuccess, quest.onFailure]) {
+      if (outcome?.kind !== "unlock_quests") continue;
+      for (const unlockedId of outcome.questIds) {
+        const unlockedMainQuest = mainQuestById.get(unlockedId);
+        if (unlockedMainQuest && unlockedMainQuest.stage !== quest.stage + 1) {
+          issues.push({
+            path: "quests",
+            code: "main_act_gap",
+            params: { stage: unlockedMainQuest.stage, id: unlockedMainQuest.id },
+          });
+        }
+      }
+    }
+  }
+
   // insufficient_distinct_endings：至少两条可满足、语义不同的结局路线。
   // 语义不同指 requirements 引用的目标（quest/fact）不完全相同。
   const endingFingerprints = new Set<string>();
@@ -281,6 +313,15 @@ export function validateWorldGenerationCandidate(
   }
   if (endingFingerprints.size < 2) {
     issues.push({ path: "endings", code: "insufficient_distinct_endings", params: { count: endingFingerprints.size } });
+  }
+
+  // Live 候选的结局必须是一个可证明完整的二分：两条结局共享终幕任务
+  // 完成条件，并且只用同一 NPC 的相邻 <= / >= 阈值作为唯一判别器。
+  // quest-only 分支、不同 NPC、额外合取条件或单分支都无法证明对所有
+  // 玩家状态既互斥又穷尽，因此统一拒绝并由上层走确定性 fallback。
+  const finalMainQuest = mainQuestByStage.get(targetActs);
+  if (!finalMainQuest || !hasCanonicalEndingPartition(candidate.endings, finalMainQuest.id)) {
+    issues.push({ path: "endings", code: "non_exhaustive_ending_predicates", params: { count: candidate.endings.length } });
   }
 
   // Relationship-based endings must form disjoint intervals for each NPC.
@@ -483,6 +524,39 @@ function analyzeQuestDependencies(quests: readonly QuestDefinitionCandidate[]): 
 function objectiveTargetId(objective: { kind: string }): string | undefined {
   const o = objective as { locationId?: string; npcId?: string; itemId?: string; factId?: string; enemyId?: string };
   return o.locationId ?? o.npcId ?? o.itemId ?? o.factId ?? o.enemyId;
+}
+
+function hasCanonicalEndingPartition(
+  endings: WorldGenerationCandidate["endings"],
+  finalQuestId: string,
+): boolean {
+  if (endings.length !== 2) return false;
+
+  const discriminators: Array<{
+    readonly kind: "npc_affinity_at_least" | "npc_affinity_at_most";
+    readonly npcId: string;
+    readonly value: number;
+  }> = [];
+
+  for (const ending of endings) {
+    if (ending.requirements.length !== 2) return false;
+    const questRequirements = ending.requirements.filter((requirement) => requirement.kind === "quest_completed");
+    const affinityRequirements = ending.requirements.filter(
+      (requirement) => requirement.kind === "npc_affinity_at_least" || requirement.kind === "npc_affinity_at_most",
+    );
+    if (questRequirements.length !== 1 || questRequirements[0]!.questId !== finalQuestId) return false;
+    if (affinityRequirements.length !== 1) return false;
+    discriminators.push(affinityRequirements[0]!);
+  }
+
+  const atMost = discriminators.find((requirement) => requirement.kind === "npc_affinity_at_most");
+  const atLeast = discriminators.find((requirement) => requirement.kind === "npc_affinity_at_least");
+  return atMost !== undefined
+    && atLeast !== undefined
+    && atMost.npcId === atLeast.npcId
+    && Number.isInteger(atMost.value)
+    && Number.isInteger(atLeast.value)
+    && atMost.value + 1 === atLeast.value;
 }
 
 function collectDuplicates(issues: WorldGenerationIssue[], candidate: WorldGenerationCandidate): void {
