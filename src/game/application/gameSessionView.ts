@@ -2,8 +2,8 @@ import type { Action } from "@/game/domain/action";
 import {
   NPC_SCENE_PAGE_CHAR_BUDGET,
   composeDeterministicNpcLine,
-  paginateSpeechText,
-} from "@/game/domain";
+} from "@/game/domain/narrative";
+import { paginateSpeechText } from "@/game/domain/speechPagination";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import { buildChoiceMap } from "./buildChoiceMap";

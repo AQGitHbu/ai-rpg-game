@@ -1,6 +1,6 @@
 import type { EndingId, EnemyId, FactId, GenerationMetadata, ItemId, LocationId, NpcId, QuestId } from "./scenarioBlueprint";
-import type { StoryPacing } from "./storyMemory";
-import type { TownPlanSource } from "./townSnapshot";
+
+export type StoryPacing = "setup" | "develop" | "turn" | "climax" | "resolution";
 
 declare const turnContextIdBrand: unique symbol;
 type BrandedTurnContextId<Name extends string> = string & {
@@ -178,14 +178,6 @@ export type NarrativeDialogueChoiceEvent = {
   readonly occurredAt: string;
 };
 
-/** Town 层：小镇规划生成完成——离线同步写入或 AI ensure 写回时追加。 */
-export type TownPlanGeneratedEvent = {
-  readonly type: "town_plan_generated";
-  readonly locationId: LocationId;
-  readonly planSource: TownPlanSource;
-  readonly occurredAt: string;
-};
-
 /**
  * Phase 11：场景提交事件——玩家已看见一幕及其安全结构索引的审计事实。
  * 只携带结构索引（场景 ID、地点、焦点 NPC、已向玩家呈现的已发现事实 ID、节奏标签），
@@ -295,7 +287,6 @@ export type GameEvent =
   | PlayerRestedEvent
   | NarrativeChoiceEvent
   | NarrativeDialogueChoiceEvent
-  | TownPlanGeneratedEvent
   | NarrativeScenePresentedEvent
   | BlueprintExpandedEvent
   | PlayerIntentExpressedEvent

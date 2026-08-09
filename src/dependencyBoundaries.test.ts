@@ -54,16 +54,12 @@ type FacadeSpec = {
 };
 
 const FACADES: readonly FacadeSpec[] = [
-  { name: "scenario", path: "@/game/gameplay/rpg/scenario", anchors: ["createFallbackBlueprint"] },
-  // Phase 4/5：actions 额外钉死 take_item 的 validateIntent 与 intents 内部模块。
-  { name: "actions", path: "@/game/gameplay/rpg/actions", anchors: ["resolveAction", "validateIntent", "intents"] },
-  { name: "quests", path: "@/game/gameplay/rpg/quests", anchors: ["reconcileQuests"] },
-  // Phase 6：battle 额外钉死 battleAction 类型模块。
-  { name: "battle", path: "@/game/gameplay/rpg/battle", anchors: ["startBattle", "battleAction"] },
-  // Phase 10：narrative 额外钉死 actionCandidates 与 types 内部模块。
-  { name: "narrative", path: "@/game/gameplay/rpg/narrative", anchors: ["actionCandidates", "types"] },
-  // Town demo（Task 7）：town 额外钉死 generateTown 与 townRandom 内部模块。
-  { name: "town", path: "@/game/gameplay/rpg/town", anchors: ["generateTown", "townRandom"] }
+  { name: "worldGeneration", path: "@/game/gameplay/rpg/worldGeneration", anchors: ["compileWorldGenerationCandidate"] },
+  { name: "ruleEngine", path: "@/game/gameplay/rpg/ruleEngine", anchors: ["resolveByType", "validateAction"] },
+  { name: "expansion", path: "@/game/gameplay/rpg/expansion", anchors: ["applyExpansion", "expansionSource", "expansionTypes"] },
+  { name: "intentParser", path: "@/game/gameplay/rpg/intentParser", anchors: ["intentContext", "intentParserSource"] },
+  { name: "dialogue", path: "@/game/gameplay/rpg/dialogue", anchors: ["dialogueResolution"] },
+  { name: "candidateEvents", path: "@/game/gameplay/rpg/candidateEvents", anchors: ["approveCandidateEvents", "compileCandidateEvent"] }
 ] as const satisfies readonly FacadeSpec[];
 
 /** 由 facade 清单生成 deep-import 规则：只许门面本体，禁止任何内部文件。 */
@@ -239,12 +235,7 @@ const rules: readonly BoundaryRule[] = [
       forbiddenSpecifierPrefix("@/store/"),
       forbiddenSpecifierPrefix("@/app/"),
       forbiddenSpecifierPrefix("@/providers/"),
-      // 现状保留：narrative 未列入本层（与历史行为一致），scenario/actions/quests/battle/town 有。
-      FACADE_DEEP_IMPORTS.scenario,
-      FACADE_DEEP_IMPORTS.actions,
-      FACADE_DEEP_IMPORTS.quests,
-      FACADE_DEEP_IMPORTS.battle,
-      FACADE_DEEP_IMPORTS.town,
+      ...Object.values(FACADE_DEEP_IMPORTS),
       RELATIVE_ESCAPE_FROM_APPLICATION,
       SERVER_ONLY_IMPORT,
       LIBSQL_IMPORT,
@@ -259,10 +250,7 @@ const rules: readonly BoundaryRule[] = [
       forbiddenSpecifierPrefix("@/store/"),
       forbiddenSpecifierPrefix("@/app/"),
       forbiddenSpecifierPrefix("@/providers/"),
-      // 现状保留：仅 scenario/actions/quests 列入（与历史行为一致）。
-      FACADE_DEEP_IMPORTS.scenario,
-      FACADE_DEEP_IMPORTS.actions,
-      FACADE_DEEP_IMPORTS.quests,
+      ...Object.values(FACADE_DEEP_IMPORTS),
       RELATIVE_ESCAPE_FROM_APPLICATION
     ]
   },
@@ -387,7 +375,7 @@ describe("boundary patterns detect synthetic violations", () => {
     { pattern: SLG_IMPORT, snippet: `import { hex } from "@ai-slg-game/map";` },
     {
       pattern: RELATIVE_ESCAPE_FROM_DOMAIN,
-      snippet: `import { load } from "../gameplay/rpg/scenario";`
+      snippet: `import { load } from "../gameplay/rpg/ruleEngine";`
     },
     {
       pattern: RELATIVE_ESCAPE_FROM_GAMEPLAY,
@@ -395,25 +383,23 @@ describe("boundary patterns detect synthetic violations", () => {
     },
     {
       pattern: RELATIVE_GAMEPLAY_IMPORT,
-      snippet: `import { questGraph } from "../game/gameplay/rpg/scenario/questGraph";`
+      snippet: `import { resolve } from "../game/gameplay/rpg/ruleEngine/resolveByType";`
     },
     {
       pattern: APPLICATION_SERVER_IMPORT,
       snippet: `import { getServerGameEntryPoints } from "@/game/application/server/compositionRoot";`
     },
     {
-      // Phase 4A：UI 层连 server-only fixture source 也碰不到。
       pattern: APPLICATION_SERVER_IMPORT,
-      snippet: `import { createFixtureScenarioCandidateSource } from "@/game/application/server/ai/fixtureScenarioCandidateSource";`
+      snippet: `import { createSource } from "@/game/application/server/ai/sourceFactory";`
     },
     {
       pattern: APPLICATION_SERVER_DEEP_IMPORT,
       snippet: `import { adapter } from "@/game/application/server/persistence/sqliteGameRepository";`
     },
     {
-      // Phase 4A：api 层只许组合根，deep-import ai 目录同样被拦。
       pattern: APPLICATION_SERVER_DEEP_IMPORT,
-      snippet: `import { createFixtureScenarioCandidateSource } from "@/game/application/server/ai/fixtureScenarioCandidateSource";`
+      snippet: `import { createSource } from "@/game/application/server/ai/sourceFactory";`
     },
     {
       pattern: DOMAIN_IMPORT,
@@ -870,5 +856,74 @@ describe("server-only modules stay out of client-importable code", () => {
       "utf8"
     );
     expect(extractSpecifiers(compositionRoot)).toContain(SERVER_LOGGER_SPECIFIER);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Canonical runtime closure: there is one executable chain and no source-debt
+// typecheck quarantine. Persisted schema/fixture version values are outside
+// this naming scan and remain intentionally supported as data-contract facts.
+// ---------------------------------------------------------------------------
+
+describe("one canonical executable chain remains", () => {
+  const productionFiles = walk(sourceRoot, false).filter(
+    (file) => toPosixRelative(file) !== "dependencyBoundaries.test.ts",
+  );
+
+  it("has one repository, composition root, read model, request client, and six routes", () => {
+    const relativeFiles = productionFiles.map(toPosixRelative);
+    expect(relativeFiles.filter((file) => file.endsWith("/gameRepository.ts"))).toEqual([
+      "game/application/server/persistence/gameRepository.ts",
+    ]);
+    expect(relativeFiles.filter((file) => file.endsWith("/compositionRoot.ts"))).toEqual([
+      "game/application/server/compositionRoot.ts",
+    ]);
+    expect(relativeFiles.filter((file) => file.endsWith("/gameSessionView.ts"))).toEqual([
+      "game/application/gameSessionView.ts",
+    ]);
+    expect(relativeFiles.filter((file) => file.endsWith("/gameActionRequest.ts"))).toEqual([
+      "components/gameActionRequest.ts",
+    ]);
+    expect(relativeFiles.filter((file) => file.startsWith("app/api/") && file.endsWith("/route.ts")).sort()).toEqual([
+      "app/api/game/actions/route.ts",
+      "app/api/game/current/route.ts",
+      "app/api/game/dev/current/route.ts",
+      "app/api/game/narrative/ensure/route.ts",
+      "app/api/game/prologue/ack/route.ts",
+      "app/api/game/route.ts",
+    ]);
+  });
+
+  it("contains no retired executable gameplay chain", () => {
+    const retiredPrefixes = [
+      "game/gameplay/rpg/actions/",
+      "game/gameplay/rpg/battle/",
+      "game/gameplay/rpg/choices/",
+      "game/gameplay/rpg/narrative/",
+      "game/gameplay/rpg/quests/",
+      "game/gameplay/rpg/scenario/",
+      "game/gameplay/rpg/town/",
+    ];
+    const retired = productionFiles
+      .map(toPosixRelative)
+      .filter((file) => retiredPrefixes.some((prefix) => file.startsWith(prefix)));
+    expect(retired).toEqual([]);
+  });
+
+  it("has no versioned executable naming outside persisted schema/fixture values", () => {
+    const offenders = productionFiles.flatMap((file) => {
+      const source = readFileSync(file, "utf8");
+      const versionPattern = new RegExp(["V", "[12]|v2\\.1|/api/v[12]/"].join(""));
+      return versionPattern.test(source) ? [toPosixRelative(file)] : [];
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it("does not quarantine application, API, or component production source from typecheck", () => {
+    const config = JSON.parse(readFileSync(resolve(sourceRoot, "../tsconfig.json"), "utf8")) as {
+      readonly exclude?: readonly string[];
+    };
+    expect(config.exclude ?? []).toEqual(["node_modules", ".next"]);
+    expect((config.exclude ?? []).filter((entry) => /(?:src|app|api|component|game\/application)/i.test(entry))).toEqual([]);
   });
 });

@@ -79,7 +79,7 @@ export async function createGame(
 
   // Set narrative to pending so the first scene (prologue) gets generated
   // by the ensure polling mechanism (spec §9.1: 生成序幕场景).
-  // v2.1：pending 唯一载体是带 job 的 PendingNarrativeJob（Spec §10.3），
+  // pending 唯一载体是带 job 的 PendingNarrativeJob（Spec §10.3），
   // 不再使用无 job 的 requestedAt legacy 形式。
   const narrativeMode = deps.aiEnabled ? "ai" : "offline";
   const jobResult = createPendingNarrativeJob({

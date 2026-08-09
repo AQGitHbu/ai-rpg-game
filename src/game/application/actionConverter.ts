@@ -1,7 +1,9 @@
 import type { Interaction, Action } from "@/game/domain/action";
-import type { IntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
-import { preClassifyFreeText } from "@/game/gameplay/rpg/intentParser/preClassify";
-import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
+import {
+  preClassifyFreeText,
+  type IntentContext,
+  type IntentParserSource,
+} from "@/game/gameplay/rpg/intentParser";
 import type { NpcId } from "@/game/domain/scenarioBlueprint";
 
 export type ActionChoiceMap = ReadonlyMap<string, Action>;

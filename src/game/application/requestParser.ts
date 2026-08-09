@@ -89,7 +89,7 @@ export function parseActionRequest(body: unknown): ActionRequestResult {
 }
 
 /**
- * v2.1 错误 → HTTP 状态映射（Spec §16.3）：
+ * canonical 错误 → HTTP 状态映射（Spec §16.3）：
  * - 400 输入非法；404 无活动存档；409 stale revision；
  * - 422 行动被规则拒绝（含未知选项）；503 基础设施/AI 暂不可用；
  * - 500 损坏存档或未分类内部错误。

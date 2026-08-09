@@ -101,7 +101,7 @@ export type NarrativeGenerationState =
   | { readonly status: "idle" }
   | {
       readonly status: "pending";
-      /** v2.1：pending 的唯一载体；玩家原文只在 job.utterance 内。 */
+      /** pending 的唯一载体；玩家原文只在 job.utterance 内。 */
       readonly job: PendingNarrativeJob;
     };
 

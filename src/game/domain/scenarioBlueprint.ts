@@ -182,8 +182,7 @@ type ItemDefinitionOf<I extends IdSet> = {
   readonly description: string;
   readonly kind: string;
   readonly tags: readonly string[];
-  // 以下均为可选展示元数据：缺省时由 resolveItemPresentation 按 kind 推导，
-  // 旧存档蓝图与不含新字段的 AI 候选零迁移可用。
+  // 以下均为可选展示元数据；缺省时由 read model 按 kind 提供展示回退。
   readonly category?: ItemCategory;
   readonly rarity?: ItemRarity;
   readonly level?: number;

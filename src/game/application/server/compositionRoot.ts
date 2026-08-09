@@ -12,7 +12,7 @@ import type { GameRepository } from "./persistence/gameRepository";
 import { createGame, type WorldGenerationSource } from "../createGame";
 import { performTurn } from "../performTurn";
 import { projectGameSessionView } from "../gameSessionView";
-import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
+import type { ExpansionSource } from "@/game/gameplay/rpg/expansion";
 import { createWorldGenerationSource, createSceneSource, createExpansionSource } from "../server/ai/sourceFactory";
 import { createServerIntentParserSource } from "../server/ai/intentParserSourceFactory";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";

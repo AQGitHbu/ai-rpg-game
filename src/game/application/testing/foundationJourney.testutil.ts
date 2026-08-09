@@ -9,11 +9,11 @@ import { createGame, createFixtureWorldSource } from "@/game/application/createG
 import { generatePendingScene } from "@/game/application/generatePendingScene";
 import { createDeterministicSceneSource } from "@/game/application/deterministicSceneSource";
 import { createRuleIntentParser } from "@/game/application/server/ai/liveIntentParserSource";
-import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
+import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser";
 import { asGameId } from "@/game/application/server/persistence/gameRepository";
 
 // ---------------------------------------------------------------------------
-// Task 30：v2.1 完整离线旅程 harness。
+// Foundation 完整离线旅程 harness。
 //
 // - 内存 GameRepository（CAS 语义与 SQLite 一致）。
 // - 经 createGame + fixture world source 创建经验证世界。

@@ -48,7 +48,7 @@ async function runBranch(branch: Branch): Promise<{ story: NonNullable<Awaited<R
   return { story, world };
 }
 
-describe("v2.1 同 seed 分叉与多结局证明 (Task 31)", () => {
+describe("同 seed 分叉与多结局证明", () => {
   it("同一开局世界，A(支持)与B(质疑)对关键 NPC 产生同回合结构化分化", async () => {
     const a = await runBranch({ name: "A", dialogueAct: "support" });
     const b = await runBranch({ name: "B", dialogueAct: "challenge" });

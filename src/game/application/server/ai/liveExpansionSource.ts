@@ -1,7 +1,10 @@
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
-import type { ExpansionSource, ExpansionSourceContext } from "@/game/gameplay/rpg/expansion/expansionSource";
-import type { ExpansionProposal } from "@/game/gameplay/rpg/expansion/expansionTypes";
+import type {
+  ExpansionProposal,
+  ExpansionSource,
+  ExpansionSourceContext,
+} from "@/game/gameplay/rpg/expansion";
 import { createFixtureExpansionSource } from "./expansionSource";
 import type { WorldState } from "@/game/domain/worldState";
 

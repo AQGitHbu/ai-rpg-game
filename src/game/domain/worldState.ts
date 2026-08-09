@@ -6,7 +6,6 @@ import type {
 import type { GameEvent } from "./events";
 import type { RelationshipValue } from "./relationship";
 import type { NarrativeEmotion, NarrativeRuntimeState } from "./narrative";
-import type { TownRuntimeState } from "./gameState";
 import type { DialogueAct } from "./action";
 
 // ── Entry 类型：定义 + 运行时 ──
@@ -165,7 +164,6 @@ export type WorldState = {
   readonly endings: readonly EndingEntry[];
   readonly ending: EndingState;
   readonly factions: readonly FactionEntry[];
-  readonly towns: readonly TownRuntimeState[];
   readonly eventLedger: readonly GameEvent[];
 };
 
@@ -229,7 +227,6 @@ export function createInitialWorldState(input: {
     endings: [],
     ending: null,
     factions: [],
-    towns: [],
     eventLedger: [{
       type: "game_initialized",
       generation: input.generation,

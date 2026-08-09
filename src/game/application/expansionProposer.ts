@@ -2,9 +2,13 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
 import type { RuleEngineResult } from "@/game/gameplay/rpg/ruleEngine";
-import type { ExpansionSource, ExpansionSourceResult } from "@/game/gameplay/rpg/expansion/expansionSource";
-import type { ExpansionResult } from "@/game/gameplay/rpg/expansion/expansionTypes";
-import { checkExpansionTrigger, runExpansionProposer } from "@/game/gameplay/rpg/expansion";
+import {
+  checkExpansionTrigger,
+  runExpansionProposer,
+  type ExpansionResult,
+  type ExpansionSource,
+  type ExpansionSourceResult,
+} from "@/game/gameplay/rpg/expansion";
 
 // ---------------------------------------------------------------------------
 // Task 28：application 层 Expansion 编排（从 performTurn 抽出，独立可测）。

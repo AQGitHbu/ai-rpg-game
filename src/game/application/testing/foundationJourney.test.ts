@@ -8,7 +8,7 @@ function cmap(entries: readonly [string, Action][]): ActionChoiceMap {
   return new Map(entries as Iterable<[string, Action]>) as ActionChoiceMap;
 }
 
-describe("v2.1 foundation 15-turn journey (Task 30)", () => {
+describe("foundation 15-turn journey", () => {
   it("creates a validated world, generates prologue, then plays a multi-turn journey with single CAS per turn", async () => {
     const { repo, gameId } = await createJourneyGame();
     expect(repo.record()).not.toBeNull();

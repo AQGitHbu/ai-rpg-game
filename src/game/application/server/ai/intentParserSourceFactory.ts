@@ -1,5 +1,5 @@
 import { createOpenAiCompatibleTransport } from "@ai-game/ai-transport";
-import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
+import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser";
 import { createIntentParserSource } from "./liveIntentParserSource";
 import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
 

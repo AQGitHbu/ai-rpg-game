@@ -1,10 +1,10 @@
 import type { Action, DialogueAct } from "@/game/domain/action";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
-import type { IntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
+import type { IntentContext } from "@/game/gameplay/rpg/intentParser";
 import type {
   IntentParserResult,
   IntentParserSource,
-} from "@/game/gameplay/rpg/intentParser/intentParserSource";
+} from "@/game/gameplay/rpg/intentParser";
 import {
   asItemId,
   asLocationId,

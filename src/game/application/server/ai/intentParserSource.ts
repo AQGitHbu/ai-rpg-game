@@ -1,5 +1,8 @@
-import type { IntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
-import type { IntentParserSource, IntentParserResult } from "@/game/gameplay/rpg/intentParser/intentParserSource";
+import type {
+  IntentContext,
+  IntentParserResult,
+  IntentParserSource,
+} from "@/game/gameplay/rpg/intentParser";
 import { asLocationId, asNpcId, asItemId } from "@/game/domain/scenarioBlueprint";
 
 // ---------------------------------------------------------------------------

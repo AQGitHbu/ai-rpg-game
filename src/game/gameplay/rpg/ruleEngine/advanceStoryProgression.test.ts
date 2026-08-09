@@ -25,7 +25,6 @@ function makeWorld(overrides?: Partial<WorldState>): WorldState {
     endings: [],
     ending: null,
     factions: [],
-    towns: [],
     eventLedger: [],
     ...overrides,
   };

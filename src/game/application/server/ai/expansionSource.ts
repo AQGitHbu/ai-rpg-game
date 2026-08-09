@@ -1,4 +1,4 @@
-import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
+import type { ExpansionSource } from "@/game/gameplay/rpg/expansion";
 
 // ---------------------------------------------------------------------------
 // Fixture ExpansionSource：离线确定性提案，测试用。

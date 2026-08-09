@@ -14,10 +14,8 @@ import {
   type PendingNarrativeJob,
   type StructuredActionSummary,
 } from "@/game/domain/pendingNarrativeJob";
-import { buildIntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
-import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
-import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
-import { applyApprovedExpansion } from "@/game/gameplay/rpg/expansion/applyExpansion";
+import { buildIntentContext, type IntentParserSource } from "@/game/gameplay/rpg/intentParser";
+import { applyApprovedExpansion, type ExpansionSource } from "@/game/gameplay/rpg/expansion";
 import { runExpansionOrchestration } from "./expansionProposer";
 
 export type PerformTurnCommand = {

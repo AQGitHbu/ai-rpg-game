@@ -14,7 +14,7 @@ import { createWorldGenerationSource as createValidatedWorldGenerationSource } f
 import { createDeterministicSceneSource } from "../../deterministicSceneSource";
 import { createLiveExpansionSource } from "./liveExpansionSource";
 import { createFixtureExpansionSource } from "./expansionSource";
-import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
+import type { ExpansionSource } from "@/game/gameplay/rpg/expansion";
 import type { ChoiceProposal } from "@/game/domain/approvedChoice";
 import { actionFromLegalCandidate, buildChoiceProposals } from "../../deterministicSceneSource";
 

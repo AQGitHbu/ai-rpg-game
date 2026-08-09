@@ -18,6 +18,21 @@ export type ExpansionDeps = { readonly now: () => string };
 
 export { checkExpansionTrigger } from "./expansionTrigger";
 export type { TriggerResult } from "./expansionTrigger";
+export { applyApprovedExpansion } from "./applyExpansion";
+export type {
+  ExpansionSource,
+  ExpansionSourceContext,
+  ExpansionSourceResult,
+} from "./expansionSource";
+export type {
+  ApprovedExpansion,
+  ExpansionClosureSignal,
+  ExpansionProposal,
+  ExpansionRejection,
+  ExpansionResult,
+  ExpansionReuse,
+  ExpansionTriggerReason,
+} from "./expansionTypes";
 
 /**
  * 纯函数触发→审批→应用→重演算编排。
