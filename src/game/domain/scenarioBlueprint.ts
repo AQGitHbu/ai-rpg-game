@@ -124,7 +124,7 @@ type QuestObjectiveOf<I extends IdSet> =
 
 // 任务节点的关闭方式：解锁后续任务、抵达结局或显式关闭（无后续）。
 type QuestOutcomeOf<I extends IdSet> =
-  | { readonly kind: "unlock_quests"; readonly questIds: readonly I["quest"][] }
+  | { readonly kind: "unlock_quests"; readonly questIds: readonly I["quest"][]; readonly locationIds?: readonly I["location"][] }
   | { readonly kind: "reach_ending"; readonly endingId: I["ending"] }
   | { readonly kind: "closed" };
 
@@ -182,8 +182,7 @@ type ItemDefinitionOf<I extends IdSet> = {
   readonly description: string;
   readonly kind: string;
   readonly tags: readonly string[];
-  // 以下均为可选展示元数据：缺省时由 resolveItemPresentation 按 kind 推导，
-  // 旧存档蓝图与不含新字段的 AI 候选零迁移可用。
+  // 以下均为可选展示元数据；缺省时由 read model 按 kind 提供展示回退。
   readonly category?: ItemCategory;
   readonly rarity?: ItemRarity;
   readonly level?: number;
@@ -193,7 +192,9 @@ type ItemDefinitionOf<I extends IdSet> = {
 type EndingRequirementOf<I extends IdSet> =
   | { readonly kind: "quest_completed"; readonly questId: I["quest"] }
   | { readonly kind: "quest_failed"; readonly questId: I["quest"] }
-  | { readonly kind: "fact_discovered"; readonly factId: I["fact"] };
+  | { readonly kind: "fact_discovered"; readonly factId: I["fact"] }
+  | { readonly kind: "npc_affinity_at_least"; readonly npcId: I["npc"]; readonly value: number }
+  | { readonly kind: "npc_affinity_at_most"; readonly npcId: I["npc"]; readonly value: number };
 
 type EndingDefinitionOf<I extends IdSet> = {
   readonly id: I["ending"];

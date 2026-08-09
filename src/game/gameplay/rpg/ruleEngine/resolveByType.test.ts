@@ -19,7 +19,7 @@ describe("resolveByType", () => {
     startingItemIds: [],
   });
   const ws = appendLocation(baseWs, loc2);
-  const deps = { now: () => "2026-01-01" };
+  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
 
   it("move updates currentLocationId and adds event", () => {
     const result = resolveByType(ws, { type: "move", locationId: asLocationId("loc_2") }, deps);
@@ -30,6 +30,16 @@ describe("resolveByType", () => {
     }
   });
 
+  it("move clears a resolved encounter so a later location can start another battle", () => {
+    const afterBattle = {
+      ...ws,
+      battle: { status: "resolved" as const, enemyId: asEnemyId("enemy_old"), outcome: "victory" as const },
+    };
+    const result = resolveByType(afterBattle, { type: "move", locationId: asLocationId("loc_2") }, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.nextWorldState.battle).toEqual({ status: "idle" });
+  });
+
   it("talk marks npc as met", () => {
     const npc: NpcEntry = {
       id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
@@ -37,7 +47,7 @@ describe("resolveByType", () => {
       memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
     const wsWithNpc = appendNpc(ws, npc);
-    const result = resolveByType(wsWithNpc, { type: "talk", npcId: asNpcId("npc_1") }, deps);
+    const result = resolveByType(wsWithNpc, { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       const npc2 = result.nextWorldState.npcs.find((n) => n.id === asNpcId("npc_1"));
@@ -50,6 +60,24 @@ describe("resolveByType", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.events).toHaveLength(0);
+    }
+  });
+
+  it("explore emits location_explored primary event (Task 29)", () => {
+    const result = resolveByType(ws, { type: "explore" }, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.events.map((e) => e.type)).toEqual(["location_explored"]);
+      expect(result.nextWorldState.eventLedger.length).toBe(ws.eventLedger.length + 1);
+    }
+  });
+
+  it("rest emits player_rested primary event (Task 29)", () => {
+    const result = resolveByType(ws, { type: "rest" }, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.events.map((e) => e.type)).toEqual(["player_rested"]);
+      expect(result.nextWorldState.eventLedger.length).toBe(ws.eventLedger.length + 1);
     }
   });
 });
@@ -70,7 +98,7 @@ describe("resolveByType status and stateChanges", () => {
     startingItemIds: [],
   });
   const ws = appendLocation(baseWs, loc2);
-  const deps = { now: () => "2026-01-01" };
+  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
   const npc1: NpcEntry = {
     id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
     locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
@@ -95,7 +123,7 @@ describe("resolveByType status and stateChanges", () => {
       memory: { ...npc1.memory, npcId: asNpcId("npc_hostile"), relationship: { affinity: -70 } },
     };
     const wsWithHostile = appendNpc(ws, hostileNpc);
-    const result = resolveByType(wsWithHostile, { type: "talk", npcId: asNpcId("npc_hostile") }, deps);
+    const result = resolveByType(wsWithHostile, { type: "talk", npcId: asNpcId("npc_hostile"), dialogueAct: "ask" }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.status).toBe("partial_success");
@@ -103,7 +131,7 @@ describe("resolveByType status and stateChanges", () => {
   });
 
   it("investigate undiscovered fact returns success", () => {
-    const wsWithFact = { ...ws, worldFacts: [{ factId: asFactId("fact_1"), text: "墙上刻字", source: "scene" as any, discovered: false }] };
+    const wsWithFact = { ...ws, worldFacts: [{ factId: asFactId("fact_1"), text: "墙上刻字", source: "generated" as const, discovered: false }] };
     const result = resolveByType(wsWithFact, { type: "investigate", factId: asFactId("fact_1") }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -121,13 +149,14 @@ describe("resolveByType status and stateChanges", () => {
     }
   });
 
-  it("freeform action returns success with no state changes", () => {
+  it("freeform action returns success, appends player_intent_expressed event, but no stateChanges", () => {
     const result = resolveByType(ws, { type: "freeform", intent: "chat", rawText: "你好" }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.status).toBe("success");
       expect(result.stateChanges).toEqual([]);
-      expect(result.nextWorldState).toBe(ws); // 无变化
+      expect(result.events.map((e) => e.type)).toEqual(["player_intent_expressed"]);
+      expect(result.nextWorldState.eventLedger.length).toBe(ws.eventLedger.length + 1);
     }
   });
 });
@@ -138,7 +167,7 @@ describe("resolveByType — attack", () => {
     connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
   };
   function makeWorldWithEnemy() {
-    let baseWs = createInitialWorldState({
+    const baseWs = createInitialWorldState({
       generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
       player: { name: "侠客", identity: "剑客", stats: { hp: 30, attack: 6, defense: 4 } },
       startingLocation,
@@ -151,7 +180,7 @@ describe("resolveByType — attack", () => {
     };
     return { ...baseWs, enemies: [enemy] };
   }
-  const deps = { now: () => "2026-01-01" };
+  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
 
   it("attack starts battle and returns active battle state", () => {
     const ws = makeWorldWithEnemy();

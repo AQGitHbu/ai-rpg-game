@@ -1,4 +1,4 @@
-import type { GameRepositoryV2, ApplySceneWriteBackResult } from "./server/persistence/gameRepositoryV2";
+import type { GameRepository, ApplySceneWriteBackResult } from "./server/persistence/gameRepository";
 import type { GameId } from "./server/persistence/gameRepository";
 import type { StoryState } from "@/game/domain/storyState";
 
@@ -10,7 +10,7 @@ export type SceneWriteBackInput = {
 };
 
 export async function writeBackScene(
-  repo: GameRepositoryV2,
+  repo: GameRepository,
   input: SceneWriteBackInput,
 ): Promise<ApplySceneWriteBackResult> {
   return repo.applySceneWriteBack({

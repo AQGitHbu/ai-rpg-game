@@ -1,12 +1,15 @@
 import type { WorldState } from "@/game/domain/worldState";
-import { findLocation, findNpc, findItem } from "@/game/domain/worldState";
+import { findLocation, findNpc, findItem, findQuest } from "@/game/domain/worldState";
 import type { Action } from "@/game/domain/action";
+import { DIALOGUE_ACTS } from "@/game/domain/action";
 
 export type ValidationCode =
   | "UNKNOWN_LOCATION" | "LOCATION_NOT_CURRENT" | "LOCATION_ALREADY_CURRENT"
   | "LOCATION_NOT_CONNECTED" | "LOCATION_LOCKED" | "LOCATION_ALREADY_OBSERVED"
   | "UNKNOWN_NPC" | "NPC_NOT_PRESENT" | "NPC_ALREADY_MET"
   | "UNKNOWN_FACT" | "FACT_NOT_INVESTIGABLE" | "FACT_ALREADY_DISCOVERED"
+  | "UNKNOWN_QUEST"
+  | "UNKNOWN_DIALOGUE_ACT"
   | "UNKNOWN_ITEM" | "ITEM_NOT_AVAILABLE_HERE" | "ITEM_ALREADY_OWNED"
   | "UNKNOWN_ENEMY" | "ENEMY_NOT_AT_LOCATION" | "BATTLE_ALREADY_ACTIVE"
   | "ENEMY_ALREADY_DEFEATED" | "NO_ACTIVE_BATTLE" | "INTENT_NOT_ROUTED";
@@ -30,6 +33,18 @@ export function validateAction(ws: WorldState, action: Action): ValidateResult {
       const npc = findNpc(ws, action.npcId);
       if (npc === undefined) return { ok: false, code: "UNKNOWN_NPC", params: { npcId: String(action.npcId) } };
       if (npc.locationId !== ws.currentLocationId) return { ok: false, code: "NPC_NOT_PRESENT", params: { npcId: String(action.npcId) } };
+      // dialogueAct 枚举守卫：旧构造器（无 act）放行回退 ask，Task 9 交割后收紧
+      if (action.dialogueAct !== undefined && !DIALOGUE_ACTS.includes(action.dialogueAct)) {
+        return { ok: false, code: "UNKNOWN_DIALOGUE_ACT", params: { dialogueAct: String(action.dialogueAct) } };
+      }
+      const topic = action.topic;
+      if (topic?.kind === "fact") {
+        const fact = ws.worldFacts.find((f) => f.factId === topic.factId);
+        if (fact === undefined) return { ok: false, code: "UNKNOWN_FACT", params: { factId: String(topic.factId) } };
+      }
+      if (topic?.kind === "quest") {
+        if (findQuest(ws, topic.questId) === undefined) return { ok: false, code: "UNKNOWN_QUEST", params: { questId: String(topic.questId) } };
+      }
       return { ok: true };
     }
     case "investigate": {

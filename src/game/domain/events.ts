@@ -1,6 +1,27 @@
 import type { EndingId, EnemyId, FactId, GenerationMetadata, ItemId, LocationId, NpcId, QuestId } from "./scenarioBlueprint";
-import type { StoryPacing } from "./storyMemory";
-import type { TownPlanSource } from "./townSnapshot";
+
+export type StoryPacing = "setup" | "develop" | "turn" | "climax" | "resolution";
+
+declare const turnContextIdBrand: unique symbol;
+type BrandedTurnContextId<Name extends string> = string & {
+  readonly [turnContextIdBrand]: Name;
+};
+
+/** 一次规则回合的稳定标识；具体生成策略由领域外调用方决定。 */
+export type TurnId = BrandedTurnContextId<"TurnId">;
+
+/** 一个可恢复叙事任务的稳定标识；具体生成策略由领域外调用方决定。 */
+export type NarrativeJobId = BrandedTurnContextId<"NarrativeJobId">;
+
+/** 纯品牌转换：不读取时钟、随机数、环境变量或其它 IO。 */
+export function asTurnId(raw: string): TurnId {
+  return raw as TurnId;
+}
+
+/** 纯品牌转换：不读取时钟、随机数、环境变量或其它 IO。 */
+export function asNarrativeJobId(raw: string): NarrativeJobId {
+  return raw as NarrativeJobId;
+}
 
 // 领域事件：纯数据，时间戳等外部信息由调用方传入（domain 不读取时钟）。
 // Phase 3 扩展：行动 resolver 产出地点观察、NPC 初次交谈和事实发现三种事件。
@@ -36,11 +57,20 @@ export type FactDiscoveredEvent = {
   readonly type: "fact_discovered";
   readonly factId: FactId;
   readonly occurredAt: string;
+  /** 在场目击的 NPC（scene_witness 传播来源）；缺省 = 无人目击，不自动传播。 */
+  readonly witnessNpcIds?: readonly NpcId[];
 };
 
 /** 玩家移动到达地点：由 move 行动成功时追加；重复到访照常追加事件。 */
 export type LocationVisitedEvent = {
   readonly type: "location_visited";
+  readonly locationId: LocationId;
+  readonly occurredAt: string;
+};
+
+/** 玩家探索当前地点：由 explore 行动成功时追加（Spec §7/Task 29，不得 success + 空事件）。 */
+export type LocationExploredEvent = {
+  readonly type: "location_explored";
   readonly locationId: LocationId;
   readonly occurredAt: string;
 };
@@ -56,6 +86,14 @@ export type QuestCompletedEvent = {
 export type QuestUnlockedEvent = {
   readonly type: "quest_unlocked";
   readonly questId: QuestId;
+  readonly occurredAt: string;
+};
+
+/** 地点解锁：由任务 outcome（unlock_quests 携带 locationIds）将 locked 地点解锁时追加。
+ *  地点解锁只能来自规则 outcome/事实/权限/物品/批准候选事件，禁止交给 ExpansionProposer。 */
+export type LocationUnlockedEvent = {
+  readonly type: "location_unlocked";
+  readonly locationId: LocationId;
   readonly occurredAt: string;
 };
 
@@ -115,6 +153,12 @@ export type EndingReachedEvent = {
   readonly occurredAt: string;
 };
 
+/** 玩家休息：由 rest 行动成功时追加，按固定值更新张力（Spec §13.5）。 */
+export type PlayerRestedEvent = {
+  readonly type: "player_rested";
+  readonly occurredAt: string;
+};
+
 /** Phase 10：叙事选择——玩家在 AI 导演场景中做出的选择。 */
 export type NarrativeChoiceEvent = {
   readonly type: "narrative_choice";
@@ -131,14 +175,6 @@ export type NarrativeDialogueChoiceEvent = {
   readonly dialogueIntent: string;
   readonly npcId: NpcId;
   readonly sceneId: string;
-  readonly occurredAt: string;
-};
-
-/** Town 层：小镇规划生成完成——离线同步写入或 AI ensure 写回时追加。 */
-export type TownPlanGeneratedEvent = {
-  readonly type: "town_plan_generated";
-  readonly locationId: LocationId;
-  readonly planSource: TownPlanSource;
   readonly occurredAt: string;
 };
 
@@ -168,14 +204,79 @@ export type BlueprintExpandedEvent = {
   readonly occurredAt: string;
 };
 
+/**
+ * Task 9：玩家自由输入未映射为规则行动时表达意图的结构化审计事件。
+ * 只携带解析结果 intent 兜底标，绝不携带玩家原文（原文只允许出现在
+ * PendingNarrativeJob.utterance，供叙事回应）。
+ */
+export type PlayerIntentExpressedEvent = {
+  readonly type: "player_intent_expressed";
+  readonly intent: string;
+  readonly occurredAt: string;
+};
+
+// ---------------------------------------------------------------------------
+// R4（Task 18）：AI 候选事件生命周期审计事件
+// 只携带结构化索引（candidateId/kind/turn/code），绝不携带完整 AI 原文或隐藏事实正文。
+// ---------------------------------------------------------------------------
+
+/** 候选事件进入池：由 SceneWriteBack 追加候选时写入。 */
+export type CandidateEventProposedEvent = {
+  readonly type: "candidate_event_proposed";
+  readonly candidateId: string;
+  readonly kind: string;
+  readonly proposedAtTurn: number;
+  readonly expiresAtTurn: number;
+  readonly occurredAt: string;
+};
+
+/** 候选事件审批通过：由下一回合纯规则审批成功后写入。 */
+export type CandidateEventApprovedEvent = {
+  readonly type: "candidate_event_approved";
+  readonly candidateId: string;
+  readonly kind: string;
+  readonly approvedAtTurn: number;
+  readonly occurredAt: string;
+};
+
+/** 候选事件审批拒绝：原因用稳定 code，不携带冲突正文。 */
+export type CandidateEventRejectedEvent = {
+  readonly type: "candidate_event_rejected";
+  readonly candidateId: string;
+  readonly kind: string;
+  readonly reasonCode: string;
+  readonly rejectedAtTurn: number;
+  readonly occurredAt: string;
+};
+
+/** 候选事件过期：当前回合超过 expiresAtTurn 且未审批时写入。 */
+export type CandidateEventExpiredEvent = {
+  readonly type: "candidate_event_expired";
+  readonly candidateId: string;
+  readonly kind: string;
+  readonly expiredAtTurn: number;
+  readonly occurredAt: string;
+};
+
+/** 候选事件激活：审批通过后编译为真实领域事件与状态变化时写入。 */
+export type CandidateEventActivatedEvent = {
+  readonly type: "candidate_event_activated";
+  readonly candidateId: string;
+  readonly kind: string;
+  readonly activatedAtTurn: number;
+  readonly occurredAt: string;
+};
+
 export type GameEvent =
   | GameInitializedEvent
   | LocationObservedEvent
   | NpcMetEvent
   | FactDiscoveredEvent
   | LocationVisitedEvent
+  | LocationExploredEvent
   | QuestCompletedEvent
   | QuestUnlockedEvent
+  | LocationUnlockedEvent
   | ItemObtainedEvent
   | BattleStartedEvent
   | BattleRoundResolvedEvent
@@ -183,8 +284,14 @@ export type GameEvent =
   | EnemyDefeatedEvent
   | QuestFailedEvent
   | EndingReachedEvent
+  | PlayerRestedEvent
   | NarrativeChoiceEvent
   | NarrativeDialogueChoiceEvent
-  | TownPlanGeneratedEvent
   | NarrativeScenePresentedEvent
-  | BlueprintExpandedEvent;
+  | BlueprintExpandedEvent
+  | PlayerIntentExpressedEvent
+  | CandidateEventProposedEvent
+  | CandidateEventApprovedEvent
+  | CandidateEventRejectedEvent
+  | CandidateEventExpiredEvent
+  | CandidateEventActivatedEvent;

@@ -1,677 +1,284 @@
-import { describe, expect, it } from "vitest";
-import {
-  createBudgetPolicy,
-  validateNewGameInput,
-  type NewGameInput,
-  type ScenarioBlueprintCandidate
-} from "@/game/domain";
-import {
-  compileScenarioBlueprint,
-  createFallbackBlueprint,
-  loadScenarioProfiles,
-  validateScenarioBlueprintCandidate,
-  type ScenarioProfiles
-} from "@/game/gameplay/rpg/scenario";
-import { repairScenarioCandidate } from "./scenarioCandidateRecovery";
-import type { ScenarioBlueprint } from "@/game/domain";
-import {
-  SCENARIO_CANDIDATE_CONTRACT_VERSION,
-  type ScenarioCandidateAttempt,
-  type ScenarioCandidateSource,
-  type ScenarioGenerationEvent,
-  type ScenarioGenerationRequest
-} from "./scenarioGeneration";
-import scienceFictionFixture from "../../../data/fixtures/phase1/science_fiction.json";
-import urbanFixture from "../../../data/fixtures/phase1/urban.json";
-import wuxiaFixture from "../../../data/fixtures/phase1/wuxia.json";
-import { createGame } from "./createGame";
-import type { GameRepository } from "./server/persistence/gameRepository";
-import {
-  createFakeGameRepository,
-  createTestDependencies,
-  runScenarioPipeline,
-  TEST_CREATED_AT,
-  TEST_GAME_ID
-} from "./applicationFixture.testutil";
+import { describe, it, expect } from "vitest";
+import { createGame, createFixtureWorldSource } from "./createGame";
+import type { GameId, GameRepository, GameRecord } from "./server/persistence/gameRepository";
+import { asGameId } from "./server/persistence/gameRepository";
+import type { GameLength, GameTypeId } from "@/game/domain/newGame";
+import { resolveEnding } from "@/game/gameplay/rpg/ruleEngine/resolveEnding";
 
-// ---------------------------------------------------------------------------
-// Task 1：createGame use case 契约测试。
-// 覆盖 plan 要求：有效输入的 view、所有验证错误透传、候选/编译失败不触及
-// repository（stub/spy 端口）、view 不泄漏隐藏内容、注入 seed/gameId/clock 可重复。
-// ---------------------------------------------------------------------------
-
-type Phase1Fixture = { input: NewGameInput; seed: string };
-const FIXTURE = wuxiaFixture as unknown as Phase1Fixture;
-const PROFILES = loadScenarioProfiles();
-
-describe("createGame：有效输入产出开场视图", () => {
-  it("返回注入的 gameId、fallback 来源与仅含允许字段的 OpeningGameView", async () => {
-    const repository = createFakeGameRepository();
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(repository)
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.gameId).toBe(TEST_GAME_ID);
-    expect(result.source).toBe("fallback");
-
-    const expected = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
-    const view = result.view;
-    expect(view.gameId).toBe(TEST_GAME_ID);
-    // 世界：名称来自类型 profile 的 label（蓝图暂无独立世界名），摘要/类型来自蓝图。
-    expect(view.world.name).toBe(PROFILES.gameTypeProfiles.wuxia.label);
-    expect(view.world.summary).toBe(expected.blueprint.world.summary);
-    expect(view.world.gameType).toBe("wuxia");
-    // 玩家身份来自初始 GameState。
-    expect(view.player.name).toBe(expected.state.player.name);
-    expect(view.player.identity).toBe(expected.state.player.identity);
-    // 当前地点 = state.currentLocationId 对应的蓝图地点。
-    const openingLocation = expected.blueprint.locations.find(
-      (entry) => entry.id === expected.state.currentLocationId
-    );
-    expect(view.currentLocation).toEqual({
-      name: openingLocation?.name,
-      description: openingLocation?.description
-    });
-    // 可见 NPC = 开场场景在场 NPC，按蓝图顺序。
-    expect(view.visibleNpcs).toEqual(
-      expected.blueprint.openingScene.presentNpcIds.map((npcId) => {
-        const npc = expected.blueprint.npcs.find((entry) => entry.id === npcId);
-        return { name: npc?.name, role: npc?.role };
-      })
-    );
-    // 初始物品 = 初始背包对应的蓝图物品。
-    expect(view.initialItems).toEqual(
-      expected.state.inventory.map((itemId) => {
-        const item = expected.blueprint.items.find((entry) => entry.id === itemId);
-        return { name: item?.name, description: item?.description };
-      })
-    );
-    expect(view.openingNarration).toBe(expected.blueprint.openingScene.narration);
-    expect(view.suggestedActions).toEqual(expected.blueprint.openingScene.suggestedActions);
-    // generation metadata 只暴露非敏感展示字段。
-    expect(view.generation).toEqual({
-      generationId: expected.blueprint.generationId,
-      templateVersion: expected.blueprint.templateVersion
-    });
-  });
-
-  it("repository 收到一次创建载荷：注入的 gameId/createdAt 与管线一致的蓝图/状态", async () => {
-    const repository = createFakeGameRepository();
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(repository)
-    );
-
-    expect(result.ok).toBe(true);
-    const expected = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
-    expect(repository.createCalls).toHaveLength(1);
-    const record = repository.createCalls[0];
-    expect(record.gameId).toBe(TEST_GAME_ID);
-    expect(record.createdAt).toBe(TEST_CREATED_AT);
-    expect(record.blueprint).toEqual(expected.blueprint);
-    expect(record.state).toEqual(expected.state);
-  });
-
-  it("未提供 command.seed 时使用注入的 newSeed provider", async () => {
-    const repository = createFakeGameRepository();
-    const result = await createGame(
-      { input: FIXTURE.input },
-      createTestDependencies(repository, { newSeed: () => FIXTURE.seed })
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const expected = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
-    expect(result.view.generation.generationId).toBe(expected.blueprint.generationId);
-  });
-});
-
-describe("createGame：三种游戏类型均成功创建（Task 3）", () => {
-  // wuxia 的字段级细节由上一组用例覆盖；这里保证三种类型走完整编排都成功，
-  // 且持久化载荷与独立复跑的管线逐类型一致。
-  const fixtures: readonly Phase1Fixture[] = [
-    wuxiaFixture,
-    scienceFictionFixture,
-    urbanFixture
-  ] as unknown as Phase1Fixture[];
-
-  for (const fixture of fixtures) {
-    it(`${fixture.input.gameType}：创建成功，view 与持久化载荷与管线一致`, async () => {
-      const repository = createFakeGameRepository();
-      const result = await createGame(
-        { input: fixture.input, seed: fixture.seed },
-        createTestDependencies(repository)
-      );
-
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.source).toBe("fallback");
-      const expected = runScenarioPipeline(fixture.input, fixture.seed);
-      expect(result.view.world.gameType).toBe(fixture.input.gameType);
-      expect(result.view.world.name).toBe(
-        PROFILES.gameTypeProfiles[fixture.input.gameType].label
-      );
-      expect(result.view.generation.generationId).toBe(expected.blueprint.generationId);
-      expect(repository.createCalls).toHaveLength(1);
-      expect(repository.createCalls[0].blueprint).toEqual(expected.blueprint);
-      expect(repository.createCalls[0].state).toEqual(expected.state);
-    });
-  }
-});
-
-describe("createGame：验证失败立即返回字段错误", () => {
-  const invalidInput: NewGameInput = {
-    ...FIXTURE.input,
-    characterName: "",
-    worldPremise: "太短",
-    personalityTags: ["果敢", "果敢", " ", "多疑", "谨慎"]
-  };
-
-  it("所有 NewGameInputError 原样透传，repository 零调用", async () => {
-    const repository = createFakeGameRepository();
-    const result = await createGame(
-      { input: invalidInput, seed: FIXTURE.seed },
-      createTestDependencies(repository)
-    );
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe("INVALID_INPUT");
-    if (result.code !== "INVALID_INPUT") return;
-    const direct = validateNewGameInput(invalidInput);
-    expect(direct.ok).toBe(false);
-    if (direct.ok) return;
-    expect(result.fieldErrors).toEqual(direct.errors);
-    expect(repository.createCalls).toHaveLength(0);
-  });
-});
-
-describe("createGame：生成/编译诊断映射为 GENERATION_INVALID", () => {
-  // 注入被污染的 profile（allowedTags 全部同时列为 forbiddenTags），
-  // 使既有 validator 必然产生 FORBIDDEN_TAG 诊断。
-  const poisonedProfiles: ScenarioProfiles = {
-    ...PROFILES,
-    gameTypeProfiles: {
-      ...PROFILES.gameTypeProfiles,
-      wuxia: {
-        ...PROFILES.gameTypeProfiles.wuxia,
-        forbiddenTags: [...PROFILES.gameTypeProfiles.wuxia.allowedTags]
-      }
-    }
-  };
-
-  it("返回稳定代码且不触及 repository", async () => {
-    const repository = createFakeGameRepository();
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(repository, { profiles: poisonedProfiles })
-    );
-
-    expect(result).toEqual({ ok: false, code: "GENERATION_INVALID" });
-    expect(repository.createCalls).toHaveLength(0);
-  });
-});
-
-describe("createGame：repository 结构化失败透传稳定代码", () => {
-  it("已有当前存档 ⇒ ACTIVE_GAME_EXISTS，不含异常文本", async () => {
-    const repository = createFakeGameRepository();
-    repository.setCreateResult({ ok: false, code: "ACTIVE_GAME_EXISTS" });
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(repository)
-    );
-    expect(result).toEqual({ ok: false, code: "ACTIVE_GAME_EXISTS" });
-  });
-
-  it("基础设施失败 ⇒ INFRASTRUCTURE_FAILURE", async () => {
-    const repository = createFakeGameRepository();
-    repository.setCreateResult({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(repository)
-    );
-    expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
-  });
-
-  it("repository 端口契约外意外抛错 ⇒ 捕获为 INFRASTRUCTURE_FAILURE，不泄漏异常文本", async () => {
-    // 模拟 adapter 漏网的驱动异常：use case 必须兜底为稳定代码，绝不向 API 层抛出。
-    const throwingRepository: GameRepository = {
-      async createInitialGame() {
-        throw new Error("libsql 驱动崩溃：connection refused at F:\\db\\rpg.sqlite");
+function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameRecord | null } {
+  let record: GameRecord | null = null;
+  return {
+    repo: {
+      async createInitialGame(input) {
+        if (record !== null) return { ok: false, code: "ACTIVE_GAME_EXISTS" as const };
+        record = { gameId: input.gameId, worldState: input.worldState, storyState: input.storyState, revision: 0, createdAt: input.createdAt };
+        return { ok: true as const };
       },
       async getCurrentGame() {
-        return { ok: true, status: "none" };
+        if (record === null) return { ok: true as const, status: "none" as const };
+        return { ok: true as const, status: "active" as const, record };
       },
-      async applyResolvedAction() {
-        throw new Error("libsql 驱动崩溃：connection refused at F:\\db\\rpg.sqlite");
+      async applyState(input) {
+        if (record === null) return { ok: false, code: "NO_ACTIVE_GAME" as const };
+        if (input.expectedRevision !== record.revision) return { ok: false, code: "STALE_GAME_REVISION" as const };
+        record = { ...record, worldState: input.nextWorldState, storyState: input.nextStoryState, revision: record.revision + 1 };
+        return { ok: true as const, record };
       },
-      async applyBlueprintExpansion() {
-        throw new Error("libsql 驱动崩溃：connection refused at F:\\db\\rpg.sqlite");
-      }
-    };
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(throwingRepository)
-    );
-    // toEqual 精确匹配：结果对象只含稳定代码，异常 message/堆栈不得出现。
-    expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
-    expect(JSON.stringify(result)).not.toContain("connection refused");
-  });
-});
-
-describe("createGame：视图不泄漏隐藏内容", () => {
-  it("v3 开局收窄：蓝图无隐藏内容可泄；内部信息 seed/inputDigest/结构字段均不出现在视图中", async () => {
-    const repository = createFakeGameRepository();
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(repository)
-    );
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const viewJson = JSON.stringify(result.view);
-    const { blueprint, state } = runScenarioPipeline(FIXTURE.input, FIXTURE.seed);
-
-    // Phase 14 开局收窄：蓝图不含隐藏地点，无锁定任务，也无结局/敌人。
-    // 没有隐藏内容意味着视图天然无权携带任何这些实体，先证明确实为空。
-    const hiddenLocations = blueprint.locations.filter((entry) => entry.kind === "hidden");
-    expect(hiddenLocations).toHaveLength(0);
-    const lockedQuests = blueprint.quests.filter((quest) =>
-      state.quests.some((entry) => entry.questId === quest.id && entry.status === "locked")
-    );
-    expect(lockedQuests).toHaveLength(0);
-    expect(blueprint.endings).toHaveLength(0);
-    expect(blueprint.enemies).toHaveLength(0);
-    // 可复现生成的内部信息与蓝图结构字段不外泄。
-    expect(viewJson.includes(blueprint.seed)).toBe(false);
-    expect(viewJson.includes(blueprint.inputDigest)).toBe(false);
-    expect(viewJson.includes("contentBudget")).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Task 3（Phase 4A）：候选编排失败矩阵。
-// 合法候选 generated；repairable 修复后 generated；首次不可修复→重试；两次失败
-// →fallback；repository 冲突/抛错稳定错误 + failed(persistence_failure) 事件；
-// 输入无效时 source/repository 零调用；observer 抛错不影响结果。
-// ---------------------------------------------------------------------------
-
-// 此 seed 下的 fallback 候选为 v3 开局收窄（1 名 NPC/1 个地点）：追加 6 名
-// 引用干净的 NPC 凑到 7 名必然超 coreNpcsMax（=6），触发预算裁剪修复。
-const CANDIDATE_SEED = "phase4a-candidate-002";
-// 测试专用：去掉根字段 readonly 并允许挂未知字段，便于构造非法候选。
-type MutableCandidate = {
-  -readonly [K in keyof ScenarioBlueprintCandidate]: ScenarioBlueprintCandidate[K];
-} & Record<string, unknown>;
-
-/** 与 fallback 管线同构但 seed 不同的合法候选：可证明持久化蓝图来自 source。 */
-function buildSourceCandidate(): ScenarioBlueprintCandidate {
-  const validated = validateNewGameInput(FIXTURE.input);
-  if (!validated.ok) throw new Error("fixture 输入必须合法");
-  return createFallbackBlueprint(validated.value, CANDIDATE_SEED, { profiles: PROFILES });
-}
-
-/** 可机械修复：多余根字段 + 第 7 名超预算 NPC（v3 开局仅 1 名 NPC，追加后必然超预算）。 */
-function buildRepairableCandidate(): ScenarioBlueprintCandidate {
-  const candidate = buildSourceCandidate() as MutableCandidate;
-  candidate.extraPromptInstruction = "多余指令字段";
-  const locationId = candidate.locations[0]?.id;
-  if (locationId === undefined) throw new Error("fallback 候选必须含起始地点");
-  const extraCount = 6;
-  for (let index = 1; index <= extraCount; index += 1) {
-    candidate.npcs = [
-      ...candidate.npcs,
-      {
-        id: `npc_7_${index}`,
-        name: `多余随从 ${index}`,
-        role: "路人",
-        description: "超预算冗余 NPC，未被任何地点或任务引用。",
-        locationId,
-        isCompanion: false,
-        knownFactIds: [],
-        tags: []
-      }
-    ];
-  }
-  return candidate;
-}
-
-/** 不可修复：悬空 fact 引用（机械修复禁止伪造引用）。 */
-function buildUnrepairableCandidate(): ScenarioBlueprintCandidate {
-  const candidate = buildSourceCandidate() as MutableCandidate;
-  candidate.npcs = candidate.npcs.map((npc, index) =>
-    index === 0 ? { ...npc, knownFactIds: ["fact_missing"] } : npc
-  );
-  return candidate;
-}
-
-/** 与 createGame 编排相同的修复路径：repair → 校验 → 编译，作为期望蓝图基准。 */
-function runRepairPipeline(candidate: ScenarioBlueprintCandidate): ScenarioBlueprint {
-  const validated = validateNewGameInput(FIXTURE.input);
-  if (!validated.ok) throw new Error("fixture 输入必须合法");
-  const policy = createBudgetPolicy(validated.value.gameLength);
-  const repaired = repairScenarioCandidate(candidate, { profiles: PROFILES, policy });
-  if (repaired === null) throw new Error("候选必须可机械修复");
-  const compiled = compileScenarioBlueprint(
-    validateScenarioBlueprintCandidate(repaired, {
-      profile: PROFILES.gameTypeProfiles.wuxia,
-      policy
-    })
-  );
-  if (!compiled.ok) throw new Error(`修复后候选不可编译：${JSON.stringify(compiled.issues)}`);
-  return compiled.blueprint;
-}
-
-/** 记录 calls 的脚本化 source：按预设序列逐次返回 attempt。 */
-function createScriptedSource(attempts: readonly ScenarioCandidateAttempt[]): {
-  source: ScenarioCandidateSource;
-  calls: ScenarioGenerationRequest[];
-} {
-  const calls: ScenarioGenerationRequest[] = [];
-  return {
-    calls,
-    source: {
-      async generate(request) {
-        calls.push(request);
-        const attempt = attempts[calls.length - 1];
-        if (attempt === undefined) throw new Error("scripted source 超出预设尝试次数");
-        return attempt;
-      }
-    }
-  };
-}
-
-function okAttempt(candidate: ScenarioBlueprintCandidate): ScenarioCandidateAttempt {
-  return {
-    ok: true,
-    contractVersion: SCENARIO_CANDIDATE_CONTRACT_VERSION,
-    origin: "fixture",
-    candidate,
-    diagnostics: []
-  };
-}
-
-const TIMEOUT_ATTEMPT: ScenarioCandidateAttempt = {
-  ok: false,
-  contractVersion: SCENARIO_CANDIDATE_CONTRACT_VERSION,
-  origin: "fixture",
-  category: "timeout",
-  diagnostics: ["FIXTURE_TIMEOUT"]
-};
-
-describe("createGame：Phase 4A 候选编排", () => {
-  it("合法候选一次通过 ⇒ source=generated，持久化 source 候选蓝图", async () => {
-    const repository = createFakeGameRepository();
-    const scripted = createScriptedSource([okAttempt(buildSourceCandidate())]);
-    const events: ScenarioGenerationEvent[] = [];
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(repository, {
-        scenarioCandidateSource: scripted.source,
-        generationObserver: (event) => events.push(event)
-      })
-    );
-
-    expect(result).toMatchObject({ ok: true, source: "generated" });
-    // source 只调用一次，请求携带 validated 输入、command seed 与注入 traceId。
-    expect(scripted.calls).toHaveLength(1);
-    const validated = validateNewGameInput(FIXTURE.input);
-    if (!validated.ok) throw new Error("fixture 输入必须合法");
-    expect(scripted.calls[0]).toEqual({
-      input: validated.value,
-      seed: FIXTURE.seed,
-      traceId: "trace-test-0001"
-    });
-    // 持久化蓝图来自 source 候选（CANDIDATE_SEED），而非本地 fallback。
-    const expected = runScenarioPipeline(FIXTURE.input, CANDIDATE_SEED);
-    expect(repository.createCalls).toHaveLength(1);
-    expect(repository.createCalls[0].blueprint).toEqual(expected.blueprint);
-    if (!result.ok) return;
-    expect(result.view.generation.generationId).toBe(expected.blueprint.generationId);
-    // 阶段序列与 manifest GENERATED 约定一致，completed 携带 outcome。
-    expect(events.map((event) => event.stage)).toEqual([
-      "requested",
-      "candidate_received",
-      "validating",
-      "completed"
-    ]);
-    expect(events.at(-1)).toEqual({
-      stage: "completed",
-      outcome: "generated",
-      traceId: "trace-test-0001"
-    });
-  });
-
-  it("repairable 候选 ⇒ 修复后 generated，source 只调用一次", async () => {
-    const repository = createFakeGameRepository();
-    const scripted = createScriptedSource([okAttempt(buildRepairableCandidate())]);
-    const events: ScenarioGenerationEvent[] = [];
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(repository, {
-        scenarioCandidateSource: scripted.source,
-        generationObserver: (event) => events.push(event)
-      })
-    );
-
-    expect(result).toMatchObject({ ok: true, source: "generated" });
-    expect(scripted.calls).toHaveLength(1);
-    // 期望蓝图 = 与编排相同的修复路径：修复只删多余字段/裁剪尾部。
-    const expected = runRepairPipeline(buildRepairableCandidate());
-    expect(repository.createCalls).toHaveLength(1);
-    expect(repository.createCalls[0].blueprint).toEqual(expected);
-    expect(repository.createCalls[0].blueprint.npcs).toHaveLength(6);
-    expect(events.map((event) => event.stage)).toEqual([
-      "requested",
-      "candidate_received",
-      "validating",
-      "repairing",
-      "completed"
-    ]);
-    expect(events.at(-1)).toEqual({
-      stage: "completed",
-      outcome: "generated",
-      traceId: "trace-test-0001"
-    });
-  });
-
-  it("首次不可修复、第二次合法 ⇒ generated 且 source 调用两次", async () => {
-    const repository = createFakeGameRepository();
-    const scripted = createScriptedSource([
-      okAttempt(buildUnrepairableCandidate()),
-      okAttempt(buildSourceCandidate())
-    ]);
-    const events: ScenarioGenerationEvent[] = [];
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(repository, {
-        scenarioCandidateSource: scripted.source,
-        generationObserver: (event) => events.push(event)
-      })
-    );
-
-    expect(result).toMatchObject({ ok: true, source: "generated" });
-    expect(scripted.calls).toHaveLength(2);
-    expect(repository.createCalls).toHaveLength(1);
-    expect(repository.createCalls[0].blueprint).toEqual(
-      runScenarioPipeline(FIXTURE.input, CANDIDATE_SEED).blueprint
-    );
-    // 修复失败不发 repairing；retrying 标记第二次 source 调用。
-    expect(events.map((event) => event.stage)).toEqual([
-      "requested",
-      "candidate_received",
-      "validating",
-      "retrying",
-      "candidate_received",
-      "validating",
-      "completed"
-    ]);
-  });
-
-  it("两次 timeout ⇒ fallback 完整可玩，repository 仍收到一次创建", async () => {
-    const repository = createFakeGameRepository();
-    const scripted = createScriptedSource([TIMEOUT_ATTEMPT, TIMEOUT_ATTEMPT]);
-    const events: ScenarioGenerationEvent[] = [];
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(repository, {
-        scenarioCandidateSource: scripted.source,
-        generationObserver: (event) => events.push(event)
-      })
-    );
-
-    expect(result).toMatchObject({ ok: true, source: "fallback" });
-    expect(scripted.calls).toHaveLength(2);
-    expect(repository.createCalls).toHaveLength(1);
-    // fallback 蓝图使用 command seed，与既有管线一致。
-    expect(repository.createCalls[0].blueprint).toEqual(
-      runScenarioPipeline(FIXTURE.input, FIXTURE.seed).blueprint
-    );
-    expect(events.map((event) => event.stage)).toEqual([
-      "requested",
-      "retrying",
-      "falling_back",
-      "completed"
-    ]);
-    expect(events.at(-2)).toEqual({
-      stage: "falling_back",
-      category: "timeout",
-      traceId: "trace-test-0001"
-    });
-    expect(events.at(-1)).toEqual({
-      stage: "completed",
-      outcome: "fallback",
-      traceId: "trace-test-0001"
-    });
-  });
-
-  it("两次候选引用违规 ⇒ fallback 记录 reference_broken，供脱敏 smoke 汇总", async () => {
-    const repository = createFakeGameRepository();
-    const scripted = createScriptedSource([
-      okAttempt(buildUnrepairableCandidate()),
-      okAttempt(buildUnrepairableCandidate())
-    ]);
-    const events: ScenarioGenerationEvent[] = [];
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(repository, {
-        scenarioCandidateSource: scripted.source,
-        generationObserver: (event) => events.push(event)
-      })
-    );
-
-    expect(result).toMatchObject({ ok: true, source: "fallback" });
-    expect(scripted.calls).toHaveLength(2);
-    expect(events.at(-2)).toEqual({
-      stage: "falling_back",
-      category: "reference_broken",
-      traceId: "trace-test-0001"
-    });
-  });
-
-  it("候选合法但 repository 冲突 ⇒ ACTIVE_GAME_EXISTS + failed(persistence_failure)", async () => {
-    const repository = createFakeGameRepository();
-    repository.setCreateResult({ ok: false, code: "ACTIVE_GAME_EXISTS" });
-    const scripted = createScriptedSource([okAttempt(buildSourceCandidate())]);
-    const events: ScenarioGenerationEvent[] = [];
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(repository, {
-        scenarioCandidateSource: scripted.source,
-        generationObserver: (event) => events.push(event)
-      })
-    );
-
-    expect(result).toEqual({ ok: false, code: "ACTIVE_GAME_EXISTS" });
-    expect(events.at(-1)).toEqual({
-      stage: "failed",
-      category: "persistence_failure",
-      traceId: "trace-test-0001"
-    });
-  });
-
-  it("候选合法但 repository 抛错 ⇒ INFRASTRUCTURE_FAILURE + failed(persistence_failure)", async () => {
-    const throwingRepository: GameRepository = {
-      async createInitialGame() {
-        throw new Error("libsql 驱动崩溃");
+      async applySceneWriteBack(input) {
+        if (record === null) return { ok: false, code: "NO_ACTIVE_GAME" as const };
+        if (input.expectedRevision !== record.revision) return { ok: false, code: "STALE_GAME_REVISION" as const };
+        record = { ...record, storyState: { ...record.storyState, narrative: input.nextNarrative, candidateEventPool: input.nextCandidateEventPool }, revision: record.revision + 1 };
+        return { ok: true as const, record };
       },
-      async getCurrentGame() {
-        return { ok: true, status: "none" };
-      },
-      async applyResolvedAction() {
-        throw new Error("libsql 驱动崩溃");
-      },
-      async applyBlueprintExpansion() {
-        throw new Error("libsql 驱动崩溃");
-      }
-    };
-    const scripted = createScriptedSource([okAttempt(buildSourceCandidate())]);
-    const events: ScenarioGenerationEvent[] = [];
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(throwingRepository, {
-        scenarioCandidateSource: scripted.source,
-        generationObserver: (event) => events.push(event)
-      })
-    );
-
-    expect(result).toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
-    expect(events.at(-1)).toEqual({
-      stage: "failed",
-      category: "persistence_failure",
-      traceId: "trace-test-0001"
-    });
-  });
-
-  it("输入无效 ⇒ source 与 repository 调用均为零，且无任何阶段事件", async () => {
-    const repository = createFakeGameRepository();
-    const scripted = createScriptedSource([okAttempt(buildSourceCandidate())]);
-    const events: ScenarioGenerationEvent[] = [];
-    const result = await createGame(
-      { input: { ...FIXTURE.input, characterName: "" }, seed: FIXTURE.seed },
-      createTestDependencies(repository, {
-        scenarioCandidateSource: scripted.source,
-        generationObserver: (event) => events.push(event)
-      })
-    );
-
-    expect(result).toMatchObject({ ok: false, code: "INVALID_INPUT" });
-    expect(scripted.calls).toHaveLength(0);
-    expect(repository.createCalls).toHaveLength(0);
-    expect(events).toHaveLength(0);
-  });
-
-  it("observer 抛错不得影响创建结果", async () => {
-    const repository = createFakeGameRepository();
-    const scripted = createScriptedSource([okAttempt(buildSourceCandidate())]);
-    const result = await createGame(
-      { input: FIXTURE.input, seed: FIXTURE.seed },
-      createTestDependencies(repository, {
-        scenarioCandidateSource: scripted.source,
-        generationObserver: () => {
-          throw new Error("observer 崩溃");
+      async clearCurrentGame() { return { ok: true as const }; },
+      async replaceCurrentGame(input: {
+        expectedCurrentGameId: GameId;
+        expectedRevision: number;
+        gameId: GameId;
+        worldState: GameRecord["worldState"];
+        storyState: GameRecord["storyState"];
+        createdAt: string;
+      }) {
+        if (record === null) return { ok: false as const, code: "NO_ACTIVE_GAME" as const };
+        if (record.gameId !== input.expectedCurrentGameId || record.revision !== input.expectedRevision) {
+          return { ok: false as const, code: "STALE_GAME_REVISION" as const };
         }
-      })
+        record = { gameId: input.gameId, worldState: input.worldState, storyState: input.storyState, revision: 0, createdAt: input.createdAt };
+        return { ok: true as const };
+      },
+    },
+    getRecord: () => record,
+  };
+}
+
+async function createPersistedGame(input: {
+  readonly seed: string;
+  readonly gameType?: GameTypeId;
+  readonly gameLength?: GameLength;
+}): Promise<GameRecord> {
+  const { repo, getRecord } = createInMemoryRepo();
+  const result = await createGame(
+    {
+      gameId: asGameId("compiled-proof"),
+      gameType: input.gameType ?? "wuxia",
+      gameLength: input.gameLength ?? "short",
+      seed: input.seed,
+    },
+    { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-01" },
+  );
+  expect(result.ok).toBe(true);
+  const record = getRecord();
+  expect(record).not.toBeNull();
+  return record!;
+}
+
+function structuralSignature(record: GameRecord) {
+  return {
+    world: record.worldState.worldFacts.map((fact) => [fact.factId, fact.text]),
+    npcIdentity: record.worldState.npcs.map((npc) => [npc.id, npc.name, npc.role]),
+    questGraph: record.worldState.quests.map((quest) => [quest.id, quest.name, quest.stage, quest.objectives, quest.onSuccess]),
+    locations: record.worldState.locations.map((location) => [location.id, location.name, location.connectedLocationIds]),
+    enemies: record.worldState.enemies.map((enemy) => [enemy.id, enemy.name, enemy.locationId]),
+    endingPredicates: record.worldState.endings.map((ending) => ending.requirements),
+  };
+}
+
+describe("createGame", () => {
+  it("persists byte-equivalent compiled state for one seed and structural differences for another", async () => {
+    const first = await createPersistedGame({ seed: "branching-seed-alpha" });
+    const replay = await createPersistedGame({ seed: "branching-seed-alpha" });
+    const other = await createPersistedGame({ seed: "branching-seed-beta" });
+    const gamma = await createPersistedGame({ seed: "branching-seed-gamma" });
+    const delta = await createPersistedGame({ seed: "branching-seed-delta" });
+
+    expect(JSON.stringify({ worldState: replay.worldState, storyState: replay.storyState }))
+      .toBe(JSON.stringify({ worldState: first.worldState, storyState: first.storyState }));
+    const a = structuralSignature(first);
+    const b = structuralSignature(other);
+    const changedDimensions = (Object.keys(a) as (keyof typeof a)[])
+      .filter((key) => JSON.stringify(a[key]) !== JSON.stringify(b[key]));
+    expect(changedDimensions.length).toBeGreaterThanOrEqual(4);
+    expect(new Set([first, other, gamma, delta].map((record) => JSON.stringify(structuralSignature(record)))).size).toBe(4);
+  });
+
+  it("compiles a reachable five-stage medium fallback with a final ending predicate", async () => {
+    const record = await createPersistedGame({ seed: "medium-seed", gameLength: "medium" });
+    const mainStages = record.worldState.quests
+      .filter((quest) => quest.kind === "main")
+      .map((quest) => quest.stage)
+      .sort((left, right) => (left ?? 0) - (right ?? 0));
+
+    expect(record.storyState.targetActs).toBe(5);
+    expect(mainStages).toEqual([1, 2, 3, 4, 5]);
+    expect(record.worldState.endings.every((ending) => ending.requirements.some(
+      (requirement) => requirement.kind === "quest_completed" && requirement.questId === "quest_climax",
+    ))).toBe(true);
+  });
+
+  it("covers every possible key-NPC affinity with exactly one deterministic fallback ending", async () => {
+    const record = await createPersistedGame({ seed: "ending-coverage-seed", gameLength: "short" });
+    const relationshipRequirements = record.worldState.endings.map((ending) =>
+      ending.requirements.find((requirement) =>
+        requirement.kind === "npc_affinity_at_least" || requirement.kind === "npc_affinity_at_most",
+      ),
     );
 
-    expect(result).toMatchObject({ ok: true, source: "generated" });
-    expect(repository.createCalls).toHaveLength(1);
+    for (let affinity = -100; affinity <= 100; affinity += 1) {
+      const matchingEndings = relationshipRequirements.filter((requirement) => {
+        if (requirement?.kind === "npc_affinity_at_least") return affinity >= requirement.value;
+        if (requirement?.kind === "npc_affinity_at_most") return affinity <= requirement.value;
+        return false;
+      });
+      expect(matchingEndings, `affinity ${affinity}`).toHaveLength(1);
+    }
+
+    expect(relationshipRequirements).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "npc_affinity_at_least", value: 6 }),
+      expect.objectContaining({ kind: "npc_affinity_at_most", value: 5 }),
+    ]));
+
+    const affinitySixWorld = {
+      ...record.worldState,
+      quests: record.worldState.quests.map((quest) =>
+        quest.id === "quest_climax" ? { ...quest, status: "completed" as const } : quest,
+      ),
+      npcs: record.worldState.npcs.map((npc) => ({
+        ...npc,
+        memory: { ...npc.memory, relationship: { affinity: 6 } },
+      })),
+    };
+    const resolved = resolveEnding(
+      affinitySixWorld,
+      { ...record.storyState, endingAllowed: true },
+      { now: () => "2026-01-01" },
+    );
+    expect(resolved.nextWorldState.ending?.endingId).toBe("ending_trust");
   });
-});
 
-describe("createGame：注入依赖下完全可重复", () => {
-  it("相同 seed/gameId/clock 两次运行 ⇒ 结果与持久化载荷深度相等", async () => {
-    const first = createFakeGameRepository();
-    const second = createFakeGameRepository();
-    const command = { input: FIXTURE.input, seed: FIXTURE.seed };
-    const resultA = await createGame(command, createTestDependencies(first));
-    const resultB = await createGame(command, createTestDependencies(second));
+  it("honors every game type in compiled fallback structure and remains deterministic", async () => {
+    const gameTypes: readonly GameTypeId[] = [
+      "wuxia", "xianxia", "fantasy", "science_fiction", "urban", "alternate_history", "post_apocalypse",
+    ];
+    const compiled = await Promise.all(gameTypes.map((gameType) => createPersistedGame({ seed: "genre-seed", gameType })));
+    const replay = await createPersistedGame({ seed: "genre-seed", gameType: "science_fiction" });
+    const signatures = compiled.map((record) => JSON.stringify(structuralSignature(record)));
 
-    expect(resultB).toEqual(resultA);
-    expect(JSON.stringify(resultB)).toBe(JSON.stringify(resultA));
-    expect(second.createCalls).toEqual(first.createCalls);
-    expect(JSON.stringify(second.createCalls)).toBe(JSON.stringify(first.createCalls));
+    expect(new Set(signatures).size).toBe(gameTypes.length);
+    expect(structuralSignature(replay)).toEqual(structuralSignature(compiled[3]!));
+    for (let index = 0; index < compiled.length; index += 1) {
+      expect(compiled[index]!.worldState.generation.gameType).toBe(gameTypes[index]);
+    }
+  });
+
+  it("atomically replaces an ended game and preserves it on stale replacement", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const first = await createGame(
+      { gameId: asGameId("old-game"), gameType: "wuxia", gameLength: "short", seed: "old-seed" },
+      { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-01" },
+    );
+    expect(first.ok).toBe(true);
+    const initialized = getRecord()!;
+    const ended = await repo.applyState({
+      gameId: initialized.gameId,
+      expectedRevision: initialized.revision,
+      nextWorldState: {
+        ...initialized.worldState,
+        ending: { endingId: initialized.worldState.endings[0]!.id, outcome: "success" },
+      },
+      nextStoryState: initialized.storyState,
+    });
+    expect(ended.ok).toBe(true);
+    const oldRecord = structuredClone(getRecord()!);
+
+    const generationFailure = await createGame(
+      {
+        gameId: asGameId("new-invalid"), gameType: "science_fiction", gameLength: "short", seed: "new-seed",
+        replaceCurrent: { expectedGameId: oldRecord.gameId, expectedRevision: oldRecord.revision },
+      },
+      {
+        repository: repo,
+        source: { async generate() { return null as never; } },
+        now: () => "2026-01-02",
+      },
+    );
+    expect(generationFailure).toEqual({ ok: false, code: "GENERATION_FAILED" });
+    expect(getRecord()).toEqual(oldRecord);
+
+    const stale = await createGame(
+      {
+        gameId: asGameId("new-stale"), gameType: "science_fiction", gameLength: "short", seed: "new-seed",
+        replaceCurrent: { expectedGameId: oldRecord.gameId, expectedRevision: 99 },
+      },
+      { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-02" },
+    );
+    expect(stale).toMatchObject({ ok: false, code: "STALE_GAME_REVISION" });
+    expect(getRecord()).toEqual(oldRecord);
+
+    const replaced = await createGame(
+      {
+        gameId: asGameId("new-game"), gameType: "science_fiction", gameLength: "short", seed: "new-seed",
+        replaceCurrent: { expectedGameId: oldRecord.gameId, expectedRevision: oldRecord.revision },
+      },
+      { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-02" },
+    );
+    expect(replaced.ok).toBe(true);
+    expect(getRecord()).toMatchObject({ gameId: "new-game", revision: 0 });
+    expect(getRecord()!.worldState.generation.seed).toBe("new-seed");
+    expect(getRecord()!.worldState.ending).toBeNull();
+
+    const replacement = getRecord()!;
+    const replacementEnded = await repo.applyState({
+      gameId: replacement.gameId,
+      expectedRevision: replacement.revision,
+      nextWorldState: {
+        ...replacement.worldState,
+        ending: { endingId: replacement.worldState.endings[0]!.id, outcome: "success" },
+      },
+      nextStoryState: replacement.storyState,
+    });
+    expect(replacementEnded.ok).toBe(true);
+    const newerAtSameRevision = structuredClone(getRecord()!);
+    expect(newerAtSameRevision.revision).toBe(oldRecord.revision);
+
+    const abaAttempt = await createGame(
+      {
+        gameId: asGameId("stale-page-replacement"), gameType: "urban", gameLength: "short", seed: "aba-seed",
+        replaceCurrent: { expectedGameId: oldRecord.gameId, expectedRevision: oldRecord.revision },
+      },
+      { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-03" },
+    );
+    expect(abaAttempt).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
+    expect(getRecord()).toEqual(newerAtSameRevision);
+  });
+
+  it("creates a game with fixture source", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const result = await createGame(
+      { gameId: asGameId("g1"), gameType: "wuxia", gameLength: "short", seed: "test-seed" },
+      { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-01" },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.revision).toBe(0);
+      const record = getRecord();
+      expect(record).not.toBeNull();
+      expect(record!.worldState.locations.length).toBe(3);
+      expect(record!.worldState.npcs.length).toBe(1);
+      expect(record!.storyState.currentAct).toBe(1);
+    }
+  });
+
+  it("rejects when active game exists", async () => {
+    const { repo } = createInMemoryRepo();
+    await createGame(
+      { gameId: asGameId("g1"), gameType: "wuxia", gameLength: "short", seed: "s1" },
+      { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-01" },
+    );
+    const result = await createGame(
+      { gameId: asGameId("g2"), gameType: "wuxia", gameLength: "short", seed: "s2" },
+      { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-01" },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("ACTIVE_GAME_EXISTS");
   });
 });

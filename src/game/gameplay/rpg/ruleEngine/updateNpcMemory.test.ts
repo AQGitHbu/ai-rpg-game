@@ -3,10 +3,11 @@ import {
   updateNpcMemory,
   appendInteraction,
   trimInteractionHistory,
+  hasInteractionForAction,
   NPC_INTERACTION_HISTORY_LIMIT,
 } from "./updateNpcMemory";
 import type { NpcEntry, NpcInteraction } from "@/game/domain/worldState";
-import { asNpcId, asLocationId } from "@/game/domain/scenarioBlueprint";
+import { asNpcId, asLocationId, asFactId } from "@/game/domain/scenarioBlueprint";
 
 function makeNpc(overrides?: Partial<NpcEntry>): NpcEntry {
   return {
@@ -31,99 +32,90 @@ function makeNpc(overrides?: Partial<NpcEntry>): NpcEntry {
   };
 }
 
+function makeInteraction(overrides?: Partial<NpcInteraction>): NpcInteraction {
+  return {
+    turnNumber: 1,
+    actionId: "act_1",
+    locationId: asLocationId("loc_1"),
+    dialogueAct: "support",
+    topicSummary: "闲谈",
+    outcome: "positive",
+    relationshipDelta: 5,
+    learnedFactIds: [],
+    summary: "首次见面，support，气氛融洽，关系+5",
+    ...overrides,
+  };
+}
+
 describe("updateNpcMemory", () => {
   it("appends interaction to history", () => {
     const npc = makeNpc();
-    const interaction: NpcInteraction = {
-      turn: 1,
-      locationId: asLocationId("loc_1"),
-      actionType: "talk",
-      outcome: "positive",
-      relationshipDelta: 5,
-      summary: "首次见面，好感+5",
-    };
+    const interaction = makeInteraction();
     const updated = updateNpcMemory(npc, interaction);
     expect(updated.memory.interactionHistory.length).toBe(1);
-    expect(updated.memory.interactionHistory[0]?.summary).toBe("首次见面，好感+5");
+    expect(updated.memory.interactionHistory[0]?.summary).toBe("首次见面，support，气氛融洽，关系+5");
   });
 
   it("updates relationship based on delta", () => {
     const npc = makeNpc();
-    const interaction: NpcInteraction = {
-      turn: 1,
-      locationId: asLocationId("loc_1"),
-      actionType: "talk",
-      outcome: "positive",
-      relationshipDelta: 5,
-      summary: "首次见面",
-    };
-    const updated = updateNpcMemory(npc, interaction);
+    const updated = updateNpcMemory(npc, makeInteraction());
     expect(updated.memory.relationship.affinity).toBe(5);
   });
 
   it("updates emotion based on outcome", () => {
     const npc = makeNpc();
-    const interaction: NpcInteraction = {
-      turn: 1,
-      locationId: asLocationId("loc_1"),
-      actionType: "talk",
-      outcome: "negative",
-      relationshipDelta: -3,
-      summary: "不愉快",
-    };
-    const updated = updateNpcMemory(npc, interaction);
+    const updated = updateNpcMemory(npc, makeInteraction({ outcome: "negative", relationshipDelta: -3 }));
     expect(updated.memory.emotion).toBe("guarded");
+  });
+
+  it("mixed outcome 不会把情绪推离中性（guarded/angry 时回落 neutral）", () => {
+    const npc = makeNpc({
+      memory: {
+        npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
+        relationship: { affinity: 0 }, emotion: "angry", goals: [],
+      },
+    });
+    const updated = updateNpcMemory(npc, makeInteraction({ outcome: "mixed", relationshipDelta: 0 }));
+    expect(updated.memory.emotion).toBe("neutral");
   });
 
   it("clamps relationship to [-100, 100]", () => {
     const npc = makeNpc({
       memory: {
-        npcId: asNpcId("npc_1"),
-        knownFactIds: [],
-        hiddenFactIds: [],
-        interactionHistory: [],
-        relationship: { affinity: 98 },
-        emotion: "neutral",
-        goals: [],
+        npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
+        relationship: { affinity: 98 }, emotion: "neutral", goals: [],
       },
     });
-    const interaction: NpcInteraction = {
-      turn: 1,
-      locationId: asLocationId("loc_1"),
-      actionType: "talk",
-      outcome: "positive",
-      relationshipDelta: 5,
-      summary: "好感已满",
-    };
-    const updated = updateNpcMemory(npc, interaction);
+    const updated = updateNpcMemory(npc, makeInteraction());
     expect(updated.memory.relationship.affinity).toBe(100);
   });
 
   it("trims history to limit (10)", () => {
-    const interactions: NpcInteraction[] = Array.from({ length: 15 }, (_, i) => ({
-      turn: i,
-      locationId: asLocationId("loc_1"),
-      actionType: "talk",
-      outcome: "neutral" as const,
-      relationshipDelta: 0,
-      summary: `交互${i}`,
-    }));
+    const interactions: NpcInteraction[] = Array.from({ length: 15 }, (_, i) =>
+      makeInteraction({ actionId: `act_${i}`, summary: `交互${i}` }));
     const trimmed = trimInteractionHistory(interactions);
     expect(trimmed.length).toBe(NPC_INTERACTION_HISTORY_LIMIT);
     expect(trimmed[0]?.summary).toBe("交互5"); // 保留最近10条
   });
 
+  it("同 actionId 不因错误重试追加两次（零写入）", () => {
+    const npc = makeNpc();
+    const first = updateNpcMemory(npc, makeInteraction({ actionId: "act_retry" }));
+    const retried = updateNpcMemory(first, makeInteraction({ actionId: "act_retry" }));
+    expect(retried.memory.interactionHistory.length).toBe(1);
+    expect(hasInteractionForAction(retried.memory.interactionHistory, "act_retry")).toBe(true);
+  });
+
+  it("不同 actionId 正常追加", () => {
+    const npc = makeNpc();
+    const a = updateNpcMemory(npc, makeInteraction({ actionId: "act_1" }));
+    const b = updateNpcMemory(a, makeInteraction({ actionId: "act_2" }));
+    expect(b.memory.interactionHistory.length).toBe(2);
+  });
+
   it("does not mutate original npc", () => {
     const npc = makeNpc();
-    const interaction: NpcInteraction = {
-      turn: 1,
-      locationId: asLocationId("loc_1"),
-      actionType: "talk",
-      outcome: "positive",
-      relationshipDelta: 5,
-      summary: "测试",
-    };
-    updateNpcMemory(npc, interaction);
+    updateNpcMemory(npc, makeInteraction());
     expect(npc.memory.interactionHistory.length).toBe(0); // 原始不变
   });
 });

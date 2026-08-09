@@ -1,5 +1,7 @@
 import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "./scenarioBlueprint";
 import { paginateSpeechText } from "./speechPagination";
+import type { PendingNarrativeJob } from "./pendingNarrativeJob";
+import type { ApprovedChoice } from "./approvedChoice";
 
 export const NARRATIVE_EMOTIONS = [
   "neutral", "warm", "guarded", "afraid", "angry", "sad"
@@ -15,15 +17,7 @@ export const PLAYER_DIALOGUE_RESPONSE_LABELS = [
 export type NarrativeChoiceState = {
   readonly choiceToken: string;
   readonly label: string;
-  /** 规则行动与 NPC 对话回应是两种不同的提交语义。 */
-  readonly choiceKind?: "dialogue_response" | "world_action";
-  /** 对话回应的稳定语义，不是规则 actionKey。 */
-  readonly dialogueIntent?: string;
-  readonly actionKey: string;
-  /** Phase 14: 选项展示提示（如"将引入新 NPC"）。 */
   readonly hint?: string;
-  /** Phase 14: 情境语义，供导演后续参考。 */
-  readonly narrativeIntent?: "advance_plot" | "introduce_npc" | "introduce_location" | "combat" | "discover_item";
 };
 
 export type NarrativeEventKind =
@@ -107,10 +101,8 @@ export type NarrativeGenerationState =
   | { readonly status: "idle" }
   | {
       readonly status: "pending";
-      readonly requestedAt: string;
-      /** Phase 14: 场景生成的触发上下文。 */
-      readonly triggerContext?: NarrativeTriggerContext;
-      readonly playerNpcChat?: PlayerNpcChatState;
+      /** pending 的唯一载体；玩家原文只在 job.utterance 内。 */
+      readonly job: PendingNarrativeJob;
     };
 
 /** Runtime AI is opt-in per save. Offline development presets never call it. */
@@ -120,9 +112,17 @@ export type NarrativeRuntimeState = {
   readonly currentScene: NarrativeSceneState | null;
   readonly generation: NarrativeGenerationState;
   readonly mode: NarrativeMode;
+  /**
+   * 服务端持久化选项注册表（Spec §8.2）：ApprovedChoice 只存在于服务端，
+   * 绝不进入 read model；客户端只能拿到 { choiceToken, label, hint? }。
+   * 条目自带 sceneId/basedOnRevision，消费时校验
+   * entry.sceneId === currentScene.sceneId &&
+   * entry.basedOnRevision === 当前 record revision，否则视为过期失效。
+   */
+  readonly choiceRegistry?: readonly ApprovedChoice[];
 };
 
-/** 场景对白每页字符预算：纯展示策略常量，与 V1 的 SPEECH_PAGE_CHAR_BUDGET 对齐。 */
+/** 场景对白每页字符预算：纯展示策略常量。 */
 export const NPC_SCENE_PAGE_CHAR_BUDGET = 48;
 
 /** 确定性 NPC 台词兜底：无场景对白/AI 行无效时的稳定问候（纯函数，零 AI/IO/随机）。 */

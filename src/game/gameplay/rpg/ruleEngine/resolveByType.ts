@@ -3,10 +3,8 @@ import { findLocation, findNpc } from "@/game/domain/worldState";
 import type { Action } from "@/game/domain/action";
 import type { GameEvent } from "@/game/domain/events";
 import type { ResolvedEventStatus, StateChange, FactChange } from "@/game/domain/resolvedEvent";
-import { relationshipTierOf, RELATIONSHIP_CHANGE } from "@/game/domain/relationship";
-import { updateNpcMemory } from "./updateNpcMemory";
-import { startBattleV2, battleActionV2 } from "./battleResolver";
-import type { NpcInteraction } from "@/game/domain/worldState";
+import { startBattle, battleAction } from "./battleResolver";
+import { resolveDialogue } from "@/game/gameplay/rpg/dialogue";
 
 export type ResolveResult = {
   readonly ok: true;
@@ -21,17 +19,25 @@ export type ResolveResult = {
   readonly feedback: string;
 };
 
-export type ResolveDeps = { readonly now: () => string };
+export type ResolveDeps = {
+  readonly now: () => string;
+  /** 当前回合的 actionId（写入 NpcInteraction.actionId，用于记忆去重）。 */
+  readonly actionId: string;
+  /** 当前回合号（写入 NpcInteraction.turnNumber）。 */
+  readonly turnNumber: number;
+};
 
 export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps): ResolveResult {
   const occurredAt = deps.now();
 
-  // freeform：零世界变化
+  // freeform：零世界变化，但必须以结构化事件落账意图，
+  // 让回合能形成可回应的叙事任务（spec §7.3/@13.5；事件不携带玩家原文）。
   if (action.type === "freeform") {
+    const event: GameEvent = { type: "player_intent_expressed", intent: action.intent, occurredAt };
     return {
       ok: true,
-      nextWorldState: ws,
-      events: [],
+      nextWorldState: { ...ws, eventLedger: [...ws.eventLedger, event] },
+      events: [event],
       feedback: "",
       status: "success",
       stateChanges: [],
@@ -57,6 +63,7 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       const event: GameEvent = { type: "location_visited", locationId: action.locationId, occurredAt };
       const nextWs: WorldState = {
         ...ws,
+        battle: ws.battle.status === "resolved" ? { status: "idle" } : ws.battle,
         currentLocationId: action.locationId,
         visitedLocationIds: ws.visitedLocationIds.includes(action.locationId)
           ? ws.visitedLocationIds
@@ -73,35 +80,27 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
     case "talk": {
       const npc = findNpc(ws, action.npcId);
       if (npc === undefined) return { ok: false, feedback: "未知角色。" };
-      const event: GameEvent = { type: "npc_met", npcId: action.npcId, occurredAt, interactionKind: "greet" };
-
-      const tier = relationshipTierOf(npc.memory.relationship);
-      const isHostile = tier === "hostile";
-
-      const interaction: NpcInteraction = {
-        turn: ws.eventLedger.length,
-        locationId: ws.currentLocationId,
-        actionType: "talk",
-        outcome: isHostile ? "neutral" : "positive",
-        relationshipDelta: isHostile ? 0 : RELATIONSHIP_CHANGE.GREET_FIRST_MEET,
-        summary: npc.met ? "再次交谈" : isHostile ? "敌对状态下勉强交流" : "首次见面，好感+5",
-      };
-      const updatedNpc = updateNpcMemory(npc, interaction);
-
+      // 旧构造器可能缺失 dialogueAct（Task 9 交割前）：回退 ask
+      const dialogueAct = action.dialogueAct ?? "ask";
+      const dialogue = resolveDialogue(ws, npc, { ...action, dialogueAct }, {
+        now: deps.now,
+        actionId: deps.actionId,
+        turnNumber: deps.turnNumber,
+      });
       const nextWs: WorldState = {
         ...ws,
-        npcs: ws.npcs.map((n) => n.id === action.npcId ? { ...updatedNpc, met: true } : n),
-        eventLedger: [...ws.eventLedger, event],
+        npcs: ws.npcs.map((n) => n.id === action.npcId ? dialogue.npcAfter : n),
+        eventLedger: [...ws.eventLedger, dialogue.event],
       };
-      const tierAfterUpdate = relationshipTierOf(updatedNpc.memory.relationship);
-      const status: ResolvedEventStatus = tierAfterUpdate === "hostile" ? "partial_success" : "success";
-      const stateChanges: StateChange[] = [
-        { path: `npcs[${String(action.npcId)}].met`, description: `与${npc.name}交谈`, operation: "set" },
-      ];
-      if (status === "partial_success") {
-        stateChanges.push({ path: `npcs[${String(action.npcId)}].relationship`, description: `${npc.name}态度敌对，勉强交流`, operation: "update" });
-      }
-      return { ok: true, nextWorldState: nextWs, events: [event], feedback: `你与${npc.name}交谈。`, status, stateChanges, facts: [] };
+      return {
+        ok: true,
+        nextWorldState: nextWs,
+        events: [dialogue.event],
+        feedback: dialogue.feedback,
+        status: dialogue.status,
+        stateChanges: [...dialogue.stateChanges],
+        facts: [],
+      };
     }
     case "investigate": {
       const event: GameEvent = { type: "fact_discovered", factId: action.factId, occurredAt };
@@ -113,12 +112,11 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       const stateChanges: StateChange[] = [
         { path: `worldFacts[${String(action.factId)}].discovered`, description: `发现线索`, operation: "set" },
       ];
-      // 产出 FactChange：audience 为当前地点已 met 的 NPC
-      const audience = ws.npcs
-        .filter((n) => n.locationId === ws.currentLocationId && n.met)
-        .map((n) => n.id);
+      // 产出 FactChange：玩家发现事实，但不自动传播给当前地点所有已 met NPC
+      // （§14.3：不得把"在场"假设为全地点已 met NPC；investigate 未定义在场见证者，
+      // 故 audience 为空 → 不向任何 NPC 自动传播）。
       const facts: FactChange[] = [
-        { factId: action.factId, change: "discovered", audience: audience.length > 0 ? audience : undefined },
+        { factId: action.factId, change: "discovered", source: "scene_witness" },
       ];
       return { ok: true, nextWorldState: nextWs, events: [event], feedback: "你调查了这条线索。", status: "success", stateChanges, facts };
     }
@@ -141,19 +139,39 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       return { ok: true, nextWorldState: nextWs, events: [event], feedback: "你取得了这件物品。", status: "success", stateChanges, facts: [] };
     }
     case "explore": {
-      return { ok: true, nextWorldState: { ...ws }, events: [], feedback: "你探索了周围环境。", status: "success", stateChanges: [], facts: [] };
+      // 无状态行动也产生主事件（Task 29）：explore → location_explored，不得 success + 空事件。
+      const event: GameEvent = { type: "location_explored", locationId: ws.currentLocationId, occurredAt };
+      return {
+        ok: true,
+        nextWorldState: { ...ws, eventLedger: [...ws.eventLedger, event] },
+        events: [event],
+        feedback: "你探索了周围环境。",
+        status: "success",
+        stateChanges: [],
+        facts: [],
+      };
     }
     case "rest": {
-      return { ok: true, nextWorldState: { ...ws }, events: [], feedback: "你休息了一会儿。", status: "success", stateChanges: [], facts: [] };
+      // 无状态行动也产生主事件（Task 29）：rest → player_rested，不得 success + 空事件。
+      const event: GameEvent = { type: "player_rested", occurredAt };
+      return {
+        ok: true,
+        nextWorldState: { ...ws, eventLedger: [...ws.eventLedger, event] },
+        events: [event],
+        feedback: "你休息了一会儿。",
+        status: "success",
+        stateChanges: [],
+        facts: [],
+      };
     }
     case "ack_prologue": {
       return { ok: true, nextWorldState: { ...ws }, events: [], feedback: "", status: "success", stateChanges: [], facts: [] };
     }
     case "attack": {
-      return startBattleV2(ws, action.enemyId, deps);
+      return startBattle(ws, action.enemyId, deps);
     }
     case "battle_action": {
-      return battleActionV2(ws, action.action, deps);
+      return battleAction(ws, action.action, deps);
     }
     default:
       return { ok: false, feedback: "此行动类型暂不支持。" };

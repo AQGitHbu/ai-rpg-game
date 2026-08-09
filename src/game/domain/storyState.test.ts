@@ -1,7 +1,36 @@
 import { describe, it, expect } from "vitest";
-import { createInitialStoryState, derivePacingNeed, type StoryState } from "./storyState";
+import {
+  STORY_STATE_SCHEMA_VERSION,
+  classifyStoryStateSchemaVersion,
+  createInitialStoryState,
+  derivePacingNeed,
+  type StoryState,
+} from "./storyState";
 
 describe("StoryState", () => {
+  it("initializes the v3 schema at turn zero", () => {
+    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
+
+    expect(STORY_STATE_SCHEMA_VERSION).toBe(3);
+    expect(ss.version).toBe(3);
+    expect(ss.turnNumber).toBe(0);
+  });
+
+  it("classifies legacy v2 without silently migrating it", () => {
+    expect(classifyStoryStateSchemaVersion(2)).toEqual({
+      ok: false,
+      code: "UNSUPPORTED_RECORD",
+    });
+    expect(classifyStoryStateSchemaVersion(3)).toEqual({
+      ok: true,
+      version: 3,
+    });
+    expect(classifyStoryStateSchemaVersion(4)).toEqual({
+      ok: false,
+      code: "UNSUPPORTED_STORY_STATE_VERSION",
+    });
+  });
+
   it("createInitialStoryState sets act=1, tension=30, reveal", () => {
     const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
     expect(ss.currentAct).toBe(1);

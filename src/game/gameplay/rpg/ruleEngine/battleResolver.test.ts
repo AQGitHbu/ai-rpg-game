@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { startBattleV2, battleActionV2 } from "./battleResolver";
+import { startBattle, battleAction } from "./battleResolver";
 import {
   createInitialWorldState,
   appendEnemy,
@@ -23,7 +23,7 @@ function makeWorldWithEnemy(): WorldState {
     availableItemIds: [],
     tags: [],
   };
-  let ws = createInitialWorldState({
+  const ws = createInitialWorldState({
     generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
     player: { name: "侠客", identity: "剑客", stats: { hp: 30, attack: 6, defense: 4 } },
     startingLocation,
@@ -40,10 +40,10 @@ function makeWorldWithEnemy(): WorldState {
   return appendEnemy(ws, enemy);
 }
 
-describe("startBattleV2", () => {
+describe("startBattle", () => {
   it("starts battle when enemy exists at player location and no active battle", () => {
     const ws = makeWorldWithEnemy();
-    const result = startBattleV2(ws, asEnemyId("enemy_1"), deps);
+    const result = startBattle(ws, asEnemyId("enemy_1"), deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.nextWorldState.battle.status).toBe("active");
@@ -60,40 +60,40 @@ describe("startBattleV2", () => {
 
   it("rejects when enemy does not exist", () => {
     const ws = makeWorldWithEnemy();
-    const result = startBattleV2(ws, asEnemyId("nonexistent"), deps);
+    const result = startBattle(ws, asEnemyId("nonexistent"), deps);
     expect(result.ok).toBe(false);
   });
 
   it("rejects when player not at enemy location", () => {
     const ws = makeWorldWithEnemy();
     const ws2: WorldState = { ...ws, currentLocationId: asLocationId("loc_elsewhere") };
-    const result = startBattleV2(ws2, asEnemyId("enemy_1"), deps);
+    const result = startBattle(ws2, asEnemyId("enemy_1"), deps);
     expect(result.ok).toBe(false);
   });
 
   it("rejects when battle already active", () => {
     const ws = makeWorldWithEnemy();
-    const started = startBattleV2(ws, asEnemyId("enemy_1"), deps);
+    const started = startBattle(ws, asEnemyId("enemy_1"), deps);
     if (!started.ok) throw new Error("setup failed");
-    const result = startBattleV2(started.nextWorldState, asEnemyId("enemy_1"), deps);
+    const result = startBattle(started.nextWorldState, asEnemyId("enemy_1"), deps);
     expect(result.ok).toBe(false);
   });
 
   it("rejects when enemy already defeated", () => {
     const ws = makeWorldWithEnemy();
     const ws2: WorldState = { ...ws, defeatedEnemyIds: [asEnemyId("enemy_1")] };
-    const result = startBattleV2(ws2, asEnemyId("enemy_1"), deps);
+    const result = startBattle(ws2, asEnemyId("enemy_1"), deps);
     expect(result.ok).toBe(false);
   });
 });
 
-describe("battleActionV2", () => {
+describe("battleAction", () => {
   it("attack deals damage and enemy counters", () => {
     const ws = makeWorldWithEnemy();
-    const started = startBattleV2(ws, asEnemyId("enemy_1"), deps);
+    const started = startBattle(ws, asEnemyId("enemy_1"), deps);
     if (!started.ok) throw new Error("setup failed");
     // player attack=6, enemy defense=2 → damage=4; enemy attack=5, player defense=4 → counter=1
-    const result = battleActionV2(started.nextWorldState, "attack", deps);
+    const result = battleAction(started.nextWorldState, "attack", deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.nextWorldState.battle.status).toBe("active");
@@ -107,10 +107,10 @@ describe("battleActionV2", () => {
 
   it("guard reduces counter damage", () => {
     const ws = makeWorldWithEnemy();
-    const started = startBattleV2(ws, asEnemyId("enemy_1"), deps);
+    const started = startBattle(ws, asEnemyId("enemy_1"), deps);
     if (!started.ok) throw new Error("setup failed");
     // guard: no damage to enemy; counter = max(1, 5-4-2) = max(1,-1) = 1
-    const result = battleActionV2(started.nextWorldState, "guard", deps);
+    const result = battleAction(started.nextWorldState, "guard", deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       if (result.nextWorldState.battle.status === "active") {
@@ -122,9 +122,9 @@ describe("battleActionV2", () => {
 
   it("flee ends battle as withdraw", () => {
     const ws = makeWorldWithEnemy();
-    const started = startBattleV2(ws, asEnemyId("enemy_1"), deps);
+    const started = startBattle(ws, asEnemyId("enemy_1"), deps);
     if (!started.ok) throw new Error("setup failed");
-    const result = battleActionV2(started.nextWorldState, "flee", deps);
+    const result = battleAction(started.nextWorldState, "flee", deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.nextWorldState.battle.status).toBe("resolved");
@@ -136,13 +136,14 @@ describe("battleActionV2", () => {
 
   it("victory when enemyHp reaches 0", () => {
     const ws = makeWorldWithEnemy();
-    const started = startBattleV2(ws, asEnemyId("enemy_1"), deps);
+    const started = startBattle(ws, asEnemyId("enemy_1"), deps);
     if (!started.ok) throw new Error("setup failed");
+    if (started.nextWorldState.battle.status !== "active") throw new Error("battle not active");
     const wsLowHp: WorldState = {
       ...started.nextWorldState,
       battle: { ...started.nextWorldState.battle, enemyHp: 4 },
     };
-    const result = battleActionV2(wsLowHp, "attack", deps);
+    const result = battleAction(wsLowHp, "attack", deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.nextWorldState.battle.status).toBe("resolved");
@@ -155,13 +156,14 @@ describe("battleActionV2", () => {
 
   it("defeat when playerHp reaches 0", () => {
     const ws = makeWorldWithEnemy();
-    const started = startBattleV2(ws, asEnemyId("enemy_1"), deps);
+    const started = startBattle(ws, asEnemyId("enemy_1"), deps);
     if (!started.ok) throw new Error("setup failed");
+    if (started.nextWorldState.battle.status !== "active") throw new Error("battle not active");
     const wsLowHp: WorldState = {
       ...started.nextWorldState,
       battle: { ...started.nextWorldState.battle, playerHp: 1 },
     };
-    const result = battleActionV2(wsLowHp, "attack", deps);
+    const result = battleAction(wsLowHp, "attack", deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.nextWorldState.battle.status).toBe("resolved");
@@ -173,7 +175,7 @@ describe("battleActionV2", () => {
 
   it("rejects when no active battle", () => {
     const ws = makeWorldWithEnemy();
-    const result = battleActionV2(ws, "attack", deps);
+    const result = battleAction(ws, "attack", deps);
     expect(result.ok).toBe(false);
   });
 });

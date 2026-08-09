@@ -25,4 +25,31 @@ describe("updateStoryMetrics", () => {
     const result = updateStoryMetrics(highTension, events);
     expect(result.tension).toBe(100);
   });
+
+  // -------------------------------------------------------------------------
+  // Task 16 Step 2：确定性张力指标（Spec §13.2/§13.5）
+  // -------------------------------------------------------------------------
+
+  it("quest_completed 不再固定推 storyProgress（Spec §13.2）", () => {
+    const events: GameEvent[] = [{ type: "quest_completed", questId: asQuestId("q1"), occurredAt: "t" }];
+    const result = updateStoryMetrics({ ...ss, storyProgress: 40 }, events);
+    expect(result.storyProgress).toBe(40); // 不变，由 advanceStoryProgression 按主线 stage 推导
+  });
+
+  it("battle_resolved 正确区分 victory / defeat / withdraw 张力", () => {
+    const victory = updateStoryMetrics(ss, [{ type: "battle_resolved", enemyId: asEnemyId("e1"), outcome: "victory", occurredAt: "t" }]);
+    expect(victory.tension).toBe(50); // 30 + 20
+
+    const defeat = updateStoryMetrics(ss, [{ type: "battle_resolved", enemyId: asEnemyId("e1"), outcome: "defeat", occurredAt: "t" }]);
+    expect(defeat.tension).toBe(18); // 30 - 12
+
+    const withdraw = updateStoryMetrics(ss, [{ type: "battle_resolved", enemyId: asEnemyId("e1"), outcome: "withdraw", occurredAt: "t" }]);
+    expect(withdraw.tension).toBe(18); // 30 - 12（与 defeat 一致，明确使用 withdraw 分支）
+  });
+
+  it("player_rested 固定 -10 张力", () => {
+    const result = updateStoryMetrics(ss, [{ type: "player_rested", occurredAt: "t" }]);
+    expect(result.tension).toBe(20); // 30 - 10
+    expect(TENSION_CHANGES.player_rested).toBe(-10);
+  });
 });

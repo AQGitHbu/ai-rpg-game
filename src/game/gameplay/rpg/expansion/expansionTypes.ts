@@ -72,7 +72,22 @@ export type ApprovedExpansion = {
 export type ExpansionTriggerReason =
   | "entity_not_found"
   | "low_tension"
-  | "quest_gap";
+  | "quest_gap"
+  | "reuse";
+
+/** 扩展收束信号：本轮不扩张，并告知调用方原因。 */
+export type ExpansionClosureSignal =
+  | "climax"
+  | "resolve"
+  | "soft_max"
+  | "hard_limit"
+  | "budget_exhausted";
+
+/** 优先复用信号：已有合适实体可复用（不新建实体）。 */
+export type ExpansionReuse = {
+  readonly kind: "npc" | "enemy" | "faction";
+  readonly id: string;
+};
 
 /** 扩展结果 */
 export type ExpansionResult = {
@@ -82,4 +97,8 @@ export type ExpansionResult = {
   readonly nextBudget: StoryBudget | null;
   readonly reEvaluatedResult: RuleEngineResult | null;
   readonly rejectedProposals: readonly { readonly proposal: ExpansionProposal; readonly reason: ExpansionRejection }[];
+  /** 复用目标（reason === "reuse" 时非空）：由调用方决定是否用该实体继续。 */
+  readonly reuse?: ExpansionReuse;
+  /** 收束信号：本轮不扩张的原因（climax/resolve/soft_max/hard_limit/budget_exhausted）。 */
+  readonly closureSignal?: ExpansionClosureSignal;
 };

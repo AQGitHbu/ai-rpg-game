@@ -1,5 +1,8 @@
-import type { IntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
-import type { IntentParserSource, IntentParserResult } from "@/game/gameplay/rpg/intentParser/intentParserSource";
+import type {
+  IntentContext,
+  IntentParserResult,
+  IntentParserSource,
+} from "@/game/gameplay/rpg/intentParser";
 import { asLocationId, asNpcId, asItemId } from "@/game/domain/scenarioBlueprint";
 
 // ---------------------------------------------------------------------------
@@ -19,7 +22,7 @@ export function createFixtureIntentParserSource(): IntentParserSource {
         if (trimmed.includes(npc.name)) {
           return {
             ok: true,
-            action: { type: "talk", npcId: asNpcId(npc.id), utterance: trimmed },
+            action: { type: "talk", npcId: asNpcId(npc.id), dialogueAct: "ask", utterance: trimmed },
           };
         }
       }

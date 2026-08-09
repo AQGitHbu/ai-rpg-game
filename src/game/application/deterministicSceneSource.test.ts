@@ -1,158 +1,254 @@
 import { describe, it, expect } from "vitest";
 import { createDeterministicSceneSource } from "./deterministicSceneSource";
 import { createInitialWorldState, appendNpc, appendLocation, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
-import { createInitialStoryState } from "@/game/domain/storyState";
+import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/scenarioBlueprint";
-import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
+import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import type { ResolvedEvent, ResolvedEventStatus } from "@/game/domain/resolvedEvent";
+import type { SceneGenerationContext } from "./sceneGenerationContext";
+import type { NarrativeEventKind } from "@/game/domain/narrative";
 
-function makeWorldWithNpc() {
-  const loc: LocationEntry = {
-    id: asLocationId("loc_1"), name: "客栈", description: "一间简朴的客栈", kind: "main",
-    connectedLocationIds: [asLocationId("loc_2")], npcIds: [asNpcId("npc_1")], availableItemIds: [], tags: [],
-  };
-  const loc2: LocationEntry = {
-    id: asLocationId("loc_2"), name: "街道", description: "一条热闹的街道", kind: "main",
-    connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
-  };
-  let ws = createInitialWorldState({
+const loc1: LocationEntry = {
+  id: asLocationId("loc_1"), name: "客栈", description: "一间简朴的客栈", kind: "main",
+  connectedLocationIds: [asLocationId("loc_2")], npcIds: [asNpcId("npc_1")], availableItemIds: [], tags: [],
+};
+const loc2: LocationEntry = {
+  id: asLocationId("loc_2"), name: "街道", description: "一条热闹的街道", kind: "main",
+  connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
+};
+const npc1: NpcEntry = {
+  id: asNpcId("npc_1"), name: "客栈老板", role: "路人", description: "热情的老板",
+  locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+  memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+};
+const npc2: NpcEntry = {
+  id: asNpcId("npc_2"), name: "客人", role: "酒客", description: "t",
+  locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+  memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+};
+
+function makeWorld(): ReturnType<typeof createInitialWorldState> {
+  const base = createInitialWorldState({
     generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
     player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc,
+    startingLocation: loc1,
     startingItemIds: [],
   });
-  ws = appendLocation(ws, loc2);
-  const npc: NpcEntry = {
-    id: asNpcId("npc_1"), name: "客栈老板", role: "路人", description: "热情的老板",
-    locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
-    memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
-  };
-  ws = appendNpc(ws, npc);
-  ws = { ...ws, unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
-  return { ws, ss: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } }) };
+  const withNpcs = appendNpc(appendNpc(appendLocation(base, loc2), npc1), npc2);
+  return { ...withNpcs, unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
 }
 
-function makeResolvedEvent(status: "success" | "partial_success" | "failure" | "blocked" = "success", eventKind: string = "observe"): ResolvedEvent {
+function makeStory(): StoryState {
+  return createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 2, quests: 0, events: 0 } });
+}
+
+function makeResolvedEvent(
+  status: ResolvedEventStatus = "success",
+  eventKind: NarrativeEventKind = "observe",
+  facts: ResolvedEvent["facts"] = [],
+): ResolvedEvent {
   return {
     actionId: "act_test",
     status,
-    eventKind: eventKind as ResolvedEvent["eventKind"],
-    facts: [],
+    eventKind,
+    facts,
     stateChanges: [],
     costs: [],
     rewards: [],
     triggeredEvents: [],
     rejectedEffects: [],
-    stateVersion: 0,
+  };
+}
+
+type JobOverrides = {
+  jobId?: string;
+  status?: ResolvedEventStatus;
+  eventKind?: NarrativeEventKind;
+  summary?: PendingNarrativeJob["actionSummary"];
+  utterance?: string;
+  focusNpcId?: string;
+};
+
+function makeJob(overrides: JobOverrides = {}): PendingNarrativeJob {
+  const result = createPendingNarrativeJob({
+    jobId: asNarrativeJobId(overrides.jobId ?? "job_1"),
+    turnId: asTurnId("turn_1"),
+    actionId: "act_test",
+    expectedRevision: 0,
+    turnNumber: 1,
+    actionSummary: overrides.summary ?? { kind: "move", locationId: asLocationId("loc_2") },
+    utterance: overrides.utterance,
+    resolvedEvent: makeResolvedEvent(overrides.status, overrides.eventKind),
+    domainEventRange: { fromLedgerIndex: 1, toLedgerIndexExclusive: 2 },
+    focusNpcId: overrides.focusNpcId !== undefined ? asNpcId(overrides.focusNpcId) : undefined,
+    requestedAt: "2026-01-02",
+  });
+  if (!result.ok) throw new Error("fixture job 构造失败");
+  return result.job;
+}
+
+// 最小上下文构造：直接按 SceneGenerationContext 契约组装（不引用完整的 record）。
+function makeContext(job: PendingNarrativeJob): SceneGenerationContext {
+  const ss = makeStory();
+  return {
+    job,
+    player: { name: "侠客", identity: "剑客", knownFactCards: [] },
+    currentLocation: { id: loc1.id, name: loc1.name, description: loc1.description, kind: "main" },
+    publicWorldFacts: [],
+    sceneVisibleFacts: [],
+    presentNpcs: [npc1, npc2].map((n) => ({
+      id: n.id, name: n.name, role: n.role, publicProfile: n.description,
+      knownFactCards: [], hiddenFactCards: [], sceneVisibleFactIds: [],
+      recentInteractionSummaries: [], relationship: { affinity: 0 }, emotion: "neutral",
+      goals: [], forbiddenKnowledgeIds: [],
+    })),
+    story: {
+      currentAct: ss.currentAct, targetActs: ss.targetActs, tension: ss.tension,
+      nextPacingNeed: ss.nextPacingNeed,
+      remainingBudget: { remainingLocations: 1, remainingNpcs: 1, remainingEvents: 1 },
+      unresolvedThreadSummaries: [],
+    },
+    recentBeats: [],
+    legalActionCandidates: [
+      { kind: "move", label: `前往${loc2.name}`, targetId: loc2.id },
+      { kind: "explore", label: "查看四周" },
+    ],
+    legalEventTargets: {
+      locationIds: [loc1.id, loc2.id], factIds: [], itemIds: [], enemyIds: [],
+    },
+    worldConstraints: [],
   };
 }
 
 describe("deterministicSceneSource", () => {
-  it("produces a scene with narration and 2 choices", async () => {
-    const { ws, ss } = makeWorldWithNpc();
-    const source = createDeterministicSceneSource();
-    const result = await source.generateScene({
-      worldState: ws,
-      storyState: ss,
-      resolvedEvent: makeResolvedEvent(),
-    });
-    expect(result.scene.narration).toBeTruthy();
-    expect(result.scene.narration.length).toBeGreaterThan(0);
-    expect(result.scene.choices).toHaveLength(2);
-    expect(result.scene.source).toBe("fallback");
-    expect(result.scene.sceneId).toBeTruthy();
+  const source = createDeterministicSceneSource();
+
+  it("derives sceneId purely from the job: scene-<jobId>, identical across calls", async () => {
+    const context = makeContext(makeJob({ jobId: "job_7" }));
+    const first = await source.generateScene(context);
+    const second = await source.generateScene(context);
+    expect(first.sceneId).toBe("scene-job_7");
+    expect(second.sceneId).toBe("scene-job_7");
+    expect(first.sceneId).toBe(second.sceneId);
   });
 
-  it("choices have choiceToken and actionKey", async () => {
-    const { ws, ss } = makeWorldWithNpc();
-    const source = createDeterministicSceneSource();
-    const result = await source.generateScene({
-      worldState: ws,
-      storyState: ss,
-      resolvedEvent: makeResolvedEvent(),
-    });
-    for (const choice of result.scene.choices) {
-      expect(choice.choiceToken).toBeTruthy();
-      expect(choice.actionKey).toBeTruthy();
-      expect(choice.label).toBeTruthy();
-    }
+  it("is fully deterministic: same context → same proposal package", async () => {
+    const context = makeContext(makeJob({ jobId: "job_det" }));
+    const first = await source.generateScene(context);
+    const second = await source.generateScene(context);
+    expect(first).toEqual(second);
+    expect(first.choiceProposals).toHaveLength(2);
   });
 
-  it("produces NPC dialogue when NPC is at location", async () => {
-    const { ws, ss } = makeWorldWithNpc();
-    const source = createDeterministicSceneSource();
-    const result = await source.generateScene({
-      worldState: ws,
-      storyState: ss,
-      resolvedEvent: makeResolvedEvent("success", "dialogue"),
-    });
-    expect(result.scene.npcLine).not.toBeNull();
-    if (result.scene.npcLine) {
-      expect(result.scene.npcLine.npcId).toBe(asNpcId("npc_1"));
-      expect(result.scene.npcLine.text.length).toBeGreaterThan(0);
-    }
+  it("produces a proposal with narration, turn from job, and exactly 2 distinct actions", async () => {
+    const result = await source.generateScene(makeContext(makeJob({ eventKind: "travel" })));
+    expect(result.narration.length).toBeGreaterThan(0);
+    expect(result.turn).toBe(1);
+    expect(result.choiceProposals).toHaveLength(2);
+    expect(result.source).toBe("fallback");
+    expect(result.choiceProposals.every((choice) => choice.label.length > 0)).toBe(true);
+    expect(result.choiceProposals[0].action).not.toEqual(result.choiceProposals[1].action);
   });
 
-  it("event proposals is empty array for deterministic source", async () => {
-    const { ws, ss } = makeWorldWithNpc();
-    const source = createDeterministicSceneSource();
-    const result = await source.generateScene({
-      worldState: ws,
-      storyState: ss,
-      resolvedEvent: makeResolvedEvent(),
-    });
+  it("maps a move/travel job to a travel event state", async () => {
+    const result = await source.generateScene(makeContext(makeJob({ eventKind: "travel", summary: { kind: "move", locationId: asLocationId("loc_2") } })));
+    expect(result.event).toEqual({ kind: "travel", locationId: asLocationId("loc_1") });
+  });
+
+  it("maps a talk job to a dialogue event state focused on the job NPC", async () => {
+    const result = await source.generateScene(makeContext(makeJob({
+      eventKind: "dialogue",
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+    })));
+    expect(result.event).toEqual({ kind: "dialogue", focusNpcId: asNpcId("npc_1") });
+    expect(result.npcLine?.npcId).toBe(asNpcId("npc_1"));
+    expect(result.choiceProposals.map((choice) => choice.action)).toEqual([
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" },
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "challenge" },
+    ]);
+  });
+
+  it("talk job keeps focusNpcId and echoes the utterance neutrally", async () => {
+    const utterance = "请问关于失踪的商队有什么线索吗？";
+    const result = await source.generateScene(makeContext(makeJob({
+      eventKind: "dialogue",
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+      utterance,
+    })));
+    expect(result.npcLine?.npcId).toBe(asNpcId("npc_1"));
+    expect(result.npcLine?.text).toContain(utterance);
+    expect(result.narration).toContain(utterance);
+  });
+
+  it.each(["partial_success", "failure", "blocked"] as const)(
+    "does not rewrite %s to a success: narration keeps a non-victory tone",
+    async (status) => {
+      const result = await source.generateScene(makeContext(makeJob({ status, eventKind: "dialogue", summary: { kind: "talk", npcId: asNpcId("npc_1") }, focusNpcId: "npc_1" })));
+      expect(result.narration.length).toBeGreaterThan(0);
+      expect(result.npcLine?.text).toBeTruthy();
+      expect(result.npcLine?.text).not.toContain("欢迎光临");
+      if (status === "partial_success") {
+        expect(result.npcLine?.text).toContain("不方便全说");
+      } else {
+        expect(result.npcLine?.text).not.toContain("欢迎光临");
+      }
+    },
+  );
+
+  it("keeps NPC presentation data as proposal fields; ready pages are built only after approval", async () => {
+    const result = await source.generateScene(makeContext(makeJob({ eventKind: "dialogue", summary: { kind: "talk", npcId: asNpcId("npc_1") }, focusNpcId: "npc_1" })));
+    expect(result.npcLine?.npcId).toBe(asNpcId("npc_1"));
+    expect("npcDialogues" in result).toBe(false);
+  });
+
+  it("event proposals is empty for deterministic source", async () => {
+    const result = await source.generateScene(makeContext(makeJob()));
     expect(result.eventProposals).toEqual([]);
   });
 
-  it("choices include a move action when connected locations exist", async () => {
-    const { ws, ss } = makeWorldWithNpc();
-    const source = createDeterministicSceneSource();
-    const result = await source.generateScene({
-      worldState: ws,
-      storyState: ss,
-      resolvedEvent: makeResolvedEvent(),
-    });
-    const hasMoveChoice = result.scene.choices.some(
-      (c) => c.actionKey.startsWith("move:"),
-    );
-    expect(hasMoveChoice).toBe(true);
-  });
-
-  it("npcDialogues covers every present NPC with non-empty pages", async () => {
-    const { ws, ss } = makeWorldWithNpc();
-    const secondNpc: NpcEntry = {
-      id: asNpcId("npc_2"), name: "客人", role: "酒客", description: "t",
-      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
-      memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+  it("proposes a structured stance consequence after relationship choices cross a threshold", async () => {
+    const base = makeContext(makeJob({
+      eventKind: "dialogue",
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+    }));
+    const context: SceneGenerationContext = {
+      ...base,
+      presentNpcs: base.presentNpcs.map((npc) => npc.id === asNpcId("npc_1")
+        ? { ...npc, relationship: { affinity: 12 } }
+        : npc),
     };
-    const worldTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
-    const source = createDeterministicSceneSource();
-    const result = await source.generateScene({
-      worldState: worldTwo,
-      storyState: ss,
-      resolvedEvent: makeResolvedEvent("success", "dialogue"),
-    });
-    const dialogues = result.scene.npcDialogues;
-    expect(dialogues).toBeDefined();
-    const ids = (dialogues ?? []).map((d) => String(d.npcId));
-    expect(ids).toContain("npc_1");
-    expect(ids).toContain("npc_2");
-    for (const d of dialogues ?? []) {
-      expect(d.speechPages.length).toBeGreaterThan(0);
-    }
+    const result = await source.generateScene(context);
+    expect(result.eventProposals).toEqual([
+      expect.objectContaining({
+        kind: "npc_changes_stance",
+        involvedEntityIds: ["npc_1"],
+        proposedEffects: [{ kind: "npc_changes_stance", npcId: asNpcId("npc_1"), stance: "friendly" }],
+      }),
+    ]);
   });
 
-  it("npcDialogues focus NPC speech joins to the npcLine text", async () => {
-    const { ws, ss } = makeWorldWithNpc();
-    const source = createDeterministicSceneSource();
-    const result = await source.generateScene({
-      worldState: ws,
-      storyState: ss,
-      resolvedEvent: makeResolvedEvent("success", "dialogue"),
-    });
-    const focus = (result.scene.npcDialogues ?? []).find(
-      (d) => String(d.npcId) === String(result.scene.npcLine?.npcId)
-    );
-    expect(focus).toBeDefined();
-    expect(focus!.speechPages.join("")).toBe(result.scene.npcLine!.text);
+  it("choices include a move action toward a reachable location", async () => {
+    const result = await source.generateScene(makeContext(makeJob()));
+    expect(result.choiceProposals.some((c) => c.action.type === "move" && String(c.action.locationId) === "loc_2")).toBe(true);
+  });
+
+  it("active battle fallback proposes two distinct executable battle actions", async () => {
+    const context: SceneGenerationContext = {
+      ...makeContext(makeJob({ eventKind: "battle" })),
+      legalActionCandidates: [
+        { kind: "battle_action", label: "攻击", targetId: "attack" },
+        { kind: "battle_action", label: "防守", targetId: "guard" },
+        { kind: "battle_action", label: "撤退", targetId: "flee" },
+      ],
+    };
+    const result = await source.generateScene(context);
+    expect(result.choiceProposals.map((choice) => choice.action)).toEqual([
+      { type: "battle_action", action: "attack" },
+      { type: "battle_action", action: "guard" },
+    ]);
   });
 });

@@ -30,7 +30,7 @@ export function preClassifyFreeText(text: string, ctx: IntentContext): Action | 
   if (matchesAny(trimmed, TALK_VERBS)) {
     for (const npc of ctx.presentNpcs) {
       if (trimmed.includes(npc.name)) {
-        return { type: "talk", npcId: asNpcId(npc.id), utterance: trimmed };
+        return { type: "talk", npcId: asNpcId(npc.id), dialogueAct: "ask", utterance: trimmed };
       }
     }
   }

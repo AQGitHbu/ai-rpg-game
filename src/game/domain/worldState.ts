@@ -6,7 +6,7 @@ import type {
 import type { GameEvent } from "./events";
 import type { RelationshipValue } from "./relationship";
 import type { NarrativeEmotion, NarrativeRuntimeState } from "./narrative";
-import type { TownRuntimeState } from "./gameState";
+import type { DialogueAct } from "./action";
 
 // ── Entry 类型：定义 + 运行时 ──
 
@@ -38,12 +38,16 @@ export type NpcMemory = {
   readonly goals: readonly string[];
 };
 
+/** 一次与 NPC 的结构化交互记录（Spec §14.2）：规则生成，绝不包含玩家原文。 */
 export type NpcInteraction = {
-  readonly turn: number;
+  readonly turnNumber: number;
+  readonly actionId: string;
   readonly locationId: LocationId;
-  readonly actionType: string;
-  readonly outcome: "positive" | "negative" | "neutral";
+  readonly dialogueAct: DialogueAct | "freeform";
+  readonly topicSummary: string;
+  readonly outcome: "positive" | "negative" | "neutral" | "mixed";
   readonly relationshipDelta: number;
+  readonly learnedFactIds: readonly FactId[];
   readonly summary: string;
 };
 
@@ -88,7 +92,7 @@ export type QuestObjective =
   | { readonly kind: "defeat_enemy"; readonly enemyId: EnemyId };
 
 export type QuestOutcome =
-  | { readonly kind: "unlock_quests"; readonly questIds: readonly QuestId[] }
+  | { readonly kind: "unlock_quests"; readonly questIds: readonly QuestId[]; readonly locationIds?: readonly LocationId[] }
   | { readonly kind: "reach_ending"; readonly endingId: EndingId }
   | { readonly kind: "closed" };
 
@@ -124,7 +128,9 @@ export type EndingEntry = {
 export type EndingRequirement =
   | { readonly kind: "quest_completed"; readonly questId: QuestId }
   | { readonly kind: "quest_failed"; readonly questId: QuestId }
-  | { readonly kind: "fact_discovered"; readonly factId: FactId };
+  | { readonly kind: "fact_discovered"; readonly factId: FactId }
+  | { readonly kind: "npc_affinity_at_least"; readonly npcId: NpcId; readonly value: number }
+  | { readonly kind: "npc_affinity_at_most"; readonly npcId: NpcId; readonly value: number };
 
 export type FactionEntry = {
   readonly factionId: string;
@@ -160,7 +166,6 @@ export type WorldState = {
   readonly endings: readonly EndingEntry[];
   readonly ending: EndingState;
   readonly factions: readonly FactionEntry[];
-  readonly towns: readonly TownRuntimeState[];
   readonly eventLedger: readonly GameEvent[];
 };
 
@@ -204,7 +209,7 @@ export function createInitialWorldState(input: {
   startingLocation: LocationEntry;
   startingItemIds: readonly ItemId[];
 }): WorldState {
-  // 最小初始状态——实际开局实体由 createGameV2 通过 AI 生成后追加填充
+  // 最小初始状态——实际开局实体由 createGame 通过 AI 生成后追加填充
   return {
     version: 2,
     generation: input.generation,
@@ -224,7 +229,6 @@ export function createInitialWorldState(input: {
     endings: [],
     ending: null,
     factions: [],
-    towns: [],
     eventLedger: [{
       type: "game_initialized",
       generation: input.generation,

@@ -8,6 +8,13 @@ export type StoryProgressionResult = {
   readonly events: readonly GameEvent[];
 };
 
+// 主线 thread 的固定命名（Spec §13.3：开局 thread ID 与主线一致，不得出现
+// main_thread 初始 + act_N 推进的命名不一致）。实际主线 thread ID 由调用方
+// 传入 mainThreadId（compile 用 thread_main），此处以 mainThreadId 归一。
+function mainThreadId(ss: StoryState): string {
+  return ss.unresolvedThreads.find((t) => t !== undefined) ?? "main_thread";
+}
+
 function actProgressThreshold(act: number, targetActs: number): number {
   return Math.floor((act - 1) / targetActs * 100);
 }
@@ -25,6 +32,12 @@ function shouldAdvanceAct(ws: WorldState, ss: StoryState, events: readonly GameE
   return currentActMainQuests.every((q) => q.status === "completed" || q.status === "failed");
 }
 
+function allMainQuestsResolved(ws: WorldState): boolean {
+  const mainQuests = ws.quests.filter((q) => q.kind === "main");
+  if (mainQuests.length === 0) return false;
+  return mainQuests.every((q) => q.status === "completed" || q.status === "failed" || q.status === "closed");
+}
+
 export function advanceStoryProgression(
   ws: WorldState,
   ss: StoryState,
@@ -34,20 +47,34 @@ export function advanceStoryProgression(
   let storyProgress = ss.storyProgress;
   let endingAllowed = ss.endingAllowed;
   let unresolvedThreads = ss.unresolvedThreads;
+  const thread = mainThreadId(ss);
 
-  if (shouldAdvanceAct(ws, ss, newEvents) && currentAct < ss.targetActs) {
+  // 主线 thread 始终以主线 ID 命名，随幕推进保持 unresolved；最终幕完成主线后回收。
+  const advanced = shouldAdvanceAct(ws, ss, newEvents) && currentAct < ss.targetActs;
+  if (advanced) {
     currentAct += 1;
     storyProgress = Math.max(storyProgress, actProgressThreshold(currentAct, ss.targetActs));
-
-    const actThread = `act_${ss.currentAct}`;
-    unresolvedThreads = unresolvedThreads.filter((t) => t !== actThread);
-    if (!unresolvedThreads.includes(`act_${currentAct}`)) {
-      unresolvedThreads = [...unresolvedThreads, `act_${currentAct}`];
-    }
   }
 
-  if (currentAct >= ss.targetActs && storyProgress >= 80) {
+  // 最终幕主线全部解决 → 回收主线 thread。
+  if (currentAct >= ss.targetActs && allMainQuestsResolved(ws)) {
+    unresolvedThreads = unresolvedThreads.filter((t) => t !== thread);
+  }
+
+  // storyProgress：按主线已完成/失败任务占总主线比例推导（Spec §13.2），
+  // 不依赖任意任务 +10。支线不直接推进主幕进度。
+  const totalMain = ws.quests.filter((q) => q.kind === "main").length;
+  if (totalMain > 0) {
+    const resolvedMain = ws.quests.filter((q) => q.kind === "main" && (q.status === "completed" || q.status === "failed")).length;
+    const byStage = Math.floor(resolvedMain / totalMain * 100);
+    storyProgress = Math.max(storyProgress, byStage, actProgressThreshold(currentAct, ss.targetActs));
+  }
+
+  // endingAllowed：最终幕 + progress≥80 + 无未决主线 thread（Spec §13.3）。
+  if (currentAct >= ss.targetActs && storyProgress >= 80 && unresolvedThreads.length === 0) {
     endingAllowed = true;
+  } else {
+    endingAllowed = false;
   }
 
   const nextPacingNeed = derivePacingNeed({

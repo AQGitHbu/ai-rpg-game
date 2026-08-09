@@ -1,15 +1,38 @@
 import { describe, it, expect } from "vitest";
 import { commitState } from "./stateCommit";
-import type { GameRepositoryV2, GameRecordV2 } from "./server/persistence/gameRepositoryV2";
+import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import { asGameId } from "./server/persistence/gameRepository";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId, asQuestId } from "@/game/domain/scenarioBlueprint";
+import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 
-function createInMemoryRepo(): { repo: GameRepositoryV2; getRecord: () => GameRecordV2 | null } {
-  let record: GameRecordV2 | null = null;
+function createValidJobFixture(): PendingNarrativeJob {
+  const result = createPendingNarrativeJob({
+    jobId: asNarrativeJobId("job-1"),
+    turnId: asTurnId("turn-1"),
+    actionId: "act_1",
+    expectedRevision: 0,
+    turnNumber: 1,
+    actionSummary: { kind: "talk", npcId: asNpcId("npc_1") },
+    utterance: "请问矿坑里有什么？",
+    resolvedEvent: {
+      actionId: "act_1", status: "success", eventKind: "dialogue",
+      facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: ["npc_met"], rejectedEffects: [],
+    },
+    domainEventRange: { fromLedgerIndex: 1, toLedgerIndexExclusive: 2 },
+    focusNpcId: asNpcId("npc_1"),
+    requestedAt: "2026-01-02",
+  });
+  if (!result.ok) throw new Error("fixture job 构造失败");
+  return result.job;
+}
+
+function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameRecord | null } {
+  let record: GameRecord | null = null;
   return {
     repo: {
       async createInitialGame(input) {
@@ -17,6 +40,7 @@ function createInMemoryRepo(): { repo: GameRepositoryV2; getRecord: () => GameRe
         record = { gameId: input.gameId, worldState: input.worldState, storyState: input.storyState, revision: 0, createdAt: input.createdAt };
         return { ok: true as const };
       },
+      async replaceCurrentGame() { return { ok: false as const, code: "NO_ACTIVE_GAME" as const }; },
       async getCurrentGame() {
         if (record === null) return { ok: true as const, status: "none" as const };
         return { ok: true as const, status: "active" as const, record };
@@ -85,5 +109,34 @@ describe("commitState", () => {
     const result = await commitState(repo, { gameId, expectedRevision: 99, nextWorldState: worldState, nextStoryState: storyState });
     expect(result).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
   });
-});
 
+  it("pending job 随 StoryState 原样进入保存记录（物化视图归约不触碰 narrative）", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const { worldState, storyState } = buildTestState();
+    const gameId = asGameId("g1");
+    await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });
+
+    const job = createValidJobFixture();
+    const nextStoryState: StoryState = {
+      ...storyState,
+      turnNumber: 1,
+      narrative: {
+        ...storyState.narrative,
+        generation: { status: "pending", job },
+      },
+    };
+
+    const result = await commitState(repo, { gameId, expectedRevision: 0, nextWorldState: worldState, nextStoryState });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const saved = getRecord()!;
+    const generation = saved.storyState.narrative.generation;
+    expect(generation.status).toBe("pending");
+    if (generation.status !== "pending") return;
+    expect(generation.job).toEqual(job);
+    expect(generation.job.basedOnRevision).toBe(1);
+    expect(saved.storyState.narrative.currentScene).toBe(storyState.narrative.currentScene);
+    expect(saved.storyState.narrative.mode).toBe(storyState.narrative.mode);
+  });
+});

@@ -8,7 +8,7 @@ function makeWorldWithEnemy() {
     id: asLocationId("loc_1"), name: "荒野", description: "test", kind: "main",
     connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
   };
-  let ws = createInitialWorldState({
+  const ws = createInitialWorldState({
     generation: { generationId: asGenerationId("gen_test"), seed: "test", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
     player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
     startingLocation,
@@ -55,7 +55,7 @@ describe("validateAction", () => {
   });
 
   it("rejects talk to unknown npc", () => {
-    const result = validateAction(ws, { type: "talk", npcId: asNpcId("unknown") });
+    const result = validateAction(ws, { type: "talk", npcId: asNpcId("unknown"), dialogueAct: "ask" });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe("UNKNOWN_NPC");
@@ -92,7 +92,7 @@ describe("validateAction", () => {
 
   it("rejects attack when battle already active", () => {
     const ws2 = makeWorldWithEnemy();
-    const ws3 = { ...ws2, battle: { status: "active", enemyId: asEnemyId("enemy_1"), playerHp: 30, enemyHp: 20, round: 1 } };
+    const ws3 = { ...ws2, battle: { status: "active", enemyId: asEnemyId("enemy_1"), playerHp: 30, enemyHp: 20, round: 1 } as const };
     const result = validateAction(ws3, { type: "attack", enemyId: asEnemyId("enemy_1") });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("BATTLE_ALREADY_ACTIVE");

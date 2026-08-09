@@ -5,16 +5,15 @@ import type { ResolvedEventStatus, StateChange, FactChange } from "@/game/domain
 import type { ResolveDeps, ResolveResult } from "./resolveByType";
 
 // ---------------------------------------------------------------------------
-// V2 战斗纯函数：操作 WorldState，不依赖 ScenarioBlueprint。
-// 逻辑移植自 V1 startBattle.ts + battleAction.ts，简化了 stage-3 目标检查
-// （V2 不要求敌人是终幕目标，只要存在且在玩家地点即可开战）。
+// 战斗纯函数：操作 WorldState，不依赖 ScenarioBlueprint。
+// 只要敌人存在且在玩家地点即可开战。
 // 纯函数：不修改输入 state，不依赖 IO/Date/Math.random/AI。
 // ---------------------------------------------------------------------------
 
-export type BattleResolveDeps = ResolveDeps;
+export type BattleResolveDeps = Pick<ResolveDeps, "now">;
 
-/** V2 startBattle：校验 + 初始化战斗状态。 */
-export function startBattleV2(
+/** 校验并初始化战斗状态。 */
+export function startBattle(
   ws: WorldState,
   enemyId: EnemyId,
   deps: BattleResolveDeps,
@@ -70,8 +69,8 @@ export function startBattleV2(
   };
 }
 
-/** V2 battleAction：处理 attack/guard/flee。flee 映射到 V1 withdraw 语义。 */
-export function battleActionV2(
+/** 处理 attack/guard/flee。flee 以 withdraw 结果落账。 */
+export function battleAction(
   ws: WorldState,
   action: "attack" | "guard" | "flee",
   deps: BattleResolveDeps,

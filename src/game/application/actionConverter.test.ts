@@ -8,7 +8,7 @@ import { createInitialWorldState, appendLocation, appendNpc, appendItem, type Lo
 
 describe("convertInteraction fixed_choice", () => {
   const choiceMap: ActionChoiceMap = new Map<string, Action>([
-    ["tok_talk", { type: "talk", npcId: asNpcId("npc_1") }],
+    ["tok_talk", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }],
   ]);
 
   it("maps known fixed_choice token to action", async () => {
@@ -59,6 +59,22 @@ describe("convertInteraction free_text", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.action.type).toBe("move");
+    }
+  });
+
+  it("keeps focused NPC custom text in dialogue authority instead of pre-classifying movement", async () => {
+    const result = await convertInteraction(
+      { kind: "free_text", text: "去街道看看", targetNpcId: asNpcId("npc_1") },
+      new Map(),
+      { intentContext: ctx, intentParserSource: source, targetNpcId: asNpcId("npc_1") },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.action.type).toBe("talk");
+    if (result.action.type === "talk") {
+      expect(result.action.npcId).toBe(asNpcId("npc_1"));
+      expect(result.action.utterance).toBe("去街道看看");
     }
   });
 

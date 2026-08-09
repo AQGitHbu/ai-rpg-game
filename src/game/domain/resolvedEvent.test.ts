@@ -14,7 +14,6 @@ describe("ResolvedEvent", () => {
       rewards: [],
       triggeredEvents: [],
       rejectedEffects: [],
-      stateVersion: 1,
     };
     expect(event.status).toBe("partial_success");
   });

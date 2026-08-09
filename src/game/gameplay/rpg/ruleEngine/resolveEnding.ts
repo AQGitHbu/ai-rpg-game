@@ -13,6 +13,8 @@ function isRequirementMet(ws: WorldState, req: WorldState["endings"][number]["re
     case "quest_completed": return ws.quests.find((q) => q.id === req.questId)?.status === "completed";
     case "quest_failed": return ws.quests.find((q) => q.id === req.questId)?.status === "failed";
     case "fact_discovered": return ws.worldFacts.find((f) => f.factId === req.factId)?.discovered ?? false;
+    case "npc_affinity_at_least": return (ws.npcs.find((npc) => npc.id === req.npcId)?.memory.relationship.affinity ?? -101) >= req.value;
+    case "npc_affinity_at_most": return (ws.npcs.find((npc) => npc.id === req.npcId)?.memory.relationship.affinity ?? 101) <= req.value;
   }
 }
 
@@ -21,24 +23,25 @@ export function resolveEnding(ws: WorldState, ss: StoryState, deps: { readonly n
     return { nextWorldState: ws, nextStoryState: ss, events: [] };
   }
 
-  for (const ending of ws.endings) {
-    if (ending.requirements.every((req) => isRequirementMet(ws, req))) {
+  const matchingEnding = ws.endings
+    .filter((ending) => ending.requirements.every((req) => isRequirementMet(ws, req)))
+    .sort((left, right) => left.id.localeCompare(right.id))[0];
+  if (matchingEnding) {
       const event: GameEvent = {
         type: "ending_reached",
-        endingId: ending.id,
+        endingId: matchingEnding.id,
         outcome: "success",
         occurredAt: deps.now(),
       };
       return {
         nextWorldState: {
           ...ws,
-          ending: { endingId: ending.id, outcome: "success" },
+          ending: { endingId: matchingEnding.id, outcome: "success" },
           eventLedger: [...ws.eventLedger, event],
         },
         nextStoryState: ss,
         events: [event],
       };
-    }
   }
 
   return { nextWorldState: ws, nextStoryState: ss, events: [] };

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -54,16 +54,12 @@ type FacadeSpec = {
 };
 
 const FACADES: readonly FacadeSpec[] = [
-  { name: "scenario", path: "@/game/gameplay/rpg/scenario", anchors: ["createFallbackBlueprint"] },
-  // Phase 4/5：actions 额外钉死 take_item 的 validateIntent 与 intents 内部模块。
-  { name: "actions", path: "@/game/gameplay/rpg/actions", anchors: ["resolveAction", "validateIntent", "intents"] },
-  { name: "quests", path: "@/game/gameplay/rpg/quests", anchors: ["reconcileQuests"] },
-  // Phase 6：battle 额外钉死 battleAction 类型模块。
-  { name: "battle", path: "@/game/gameplay/rpg/battle", anchors: ["startBattle", "battleAction"] },
-  // Phase 10：narrative 额外钉死 actionCandidates 与 types 内部模块。
-  { name: "narrative", path: "@/game/gameplay/rpg/narrative", anchors: ["actionCandidates", "types"] },
-  // Town demo（Task 7）：town 额外钉死 generateTown 与 townRandom 内部模块。
-  { name: "town", path: "@/game/gameplay/rpg/town", anchors: ["generateTown", "townRandom"] }
+  { name: "worldGeneration", path: "@/game/gameplay/rpg/worldGeneration", anchors: ["compileWorldGenerationCandidate"] },
+  { name: "ruleEngine", path: "@/game/gameplay/rpg/ruleEngine", anchors: ["resolveByType", "validateAction"] },
+  { name: "expansion", path: "@/game/gameplay/rpg/expansion", anchors: ["applyExpansion", "expansionSource", "expansionTypes"] },
+  { name: "intentParser", path: "@/game/gameplay/rpg/intentParser", anchors: ["intentContext", "intentParserSource"] },
+  { name: "dialogue", path: "@/game/gameplay/rpg/dialogue", anchors: ["dialogueResolution"] },
+  { name: "candidateEvents", path: "@/game/gameplay/rpg/candidateEvents", anchors: ["approveCandidateEvents", "compileCandidateEvent"] }
 ] as const satisfies readonly FacadeSpec[];
 
 /** 由 facade 清单生成 deep-import 规则：只许门面本体，禁止任何内部文件。 */
@@ -139,7 +135,7 @@ const APPLICATION_SERVER_IMPORT = forbiddenSpecifierPrefix("@/game/application/s
 /** API route 层对 application/server 只许组合根，persistence 等 deep-import 一律禁止。 */
 const APPLICATION_SERVER_DEEP_IMPORT: BoundaryPattern = {
   label: "application/server deep import (api routes may only use the composition root)",
-  regex: /["']@\/game\/application\/server\/(?!compositionRoot(?:V2)?["'])/
+  regex: /["']@\/game\/application\/server\/(?!compositionRoot["'])/
 };
 
 /** UI/API/store 禁止直连 domain：运行时与类型一律经 "@/game/application" 门面中转。 */
@@ -239,12 +235,7 @@ const rules: readonly BoundaryRule[] = [
       forbiddenSpecifierPrefix("@/store/"),
       forbiddenSpecifierPrefix("@/app/"),
       forbiddenSpecifierPrefix("@/providers/"),
-      // 现状保留：narrative 未列入本层（与历史行为一致），scenario/actions/quests/battle/town 有。
-      FACADE_DEEP_IMPORTS.scenario,
-      FACADE_DEEP_IMPORTS.actions,
-      FACADE_DEEP_IMPORTS.quests,
-      FACADE_DEEP_IMPORTS.battle,
-      FACADE_DEEP_IMPORTS.town,
+      ...Object.values(FACADE_DEEP_IMPORTS),
       RELATIVE_ESCAPE_FROM_APPLICATION,
       SERVER_ONLY_IMPORT,
       LIBSQL_IMPORT,
@@ -259,10 +250,7 @@ const rules: readonly BoundaryRule[] = [
       forbiddenSpecifierPrefix("@/store/"),
       forbiddenSpecifierPrefix("@/app/"),
       forbiddenSpecifierPrefix("@/providers/"),
-      // 现状保留：仅 scenario/actions/quests 列入（与历史行为一致）。
-      FACADE_DEEP_IMPORTS.scenario,
-      FACADE_DEEP_IMPORTS.actions,
-      FACADE_DEEP_IMPORTS.quests,
+      ...Object.values(FACADE_DEEP_IMPORTS),
       RELATIVE_ESCAPE_FROM_APPLICATION
     ]
   },
@@ -364,19 +352,9 @@ describe("boundary patterns detect synthetic violations", () => {
       snippet: `import { createOpenAiCompatibleTransport } from "@ai-game/ai-transport";`
     },
     {
-      // Phase 4B：UI 层连 server-only live source 也碰不到（前缀规则整段拦截）。
+      // UI 层不能触达 server-only world generation source（前缀规则整段拦截）。
       pattern: APPLICATION_SERVER_IMPORT,
-      snippet: `import { createLiveScenarioCandidateSource } from "@/game/application/server/ai/liveScenarioCandidateSource";`
-    },
-    {
-      // Phase 4B：私有 prompt builder 是 server-only，UI 层不可达。
-      pattern: APPLICATION_SERVER_IMPORT,
-      snippet: `import { buildScenarioPromptMessages } from "@/game/application/server/ai/scenarioPrompt";`
-    },
-    {
-      // Phase 4B：脱敏 audit 是 server-only，UI 层不可达。
-      pattern: APPLICATION_SERVER_IMPORT,
-      snippet: `import { createStructuredScenarioGenerationAudit } from "@/game/application/server/ai/scenarioGenerationAudit";`
+      snippet: `import { createWorldGenerationSource } from "@/game/application/server/ai/worldGenerationSource";`
     },
     {
       // Phase 4B：AI 运行时配置解析是 server-only，UI 层不可达。
@@ -384,20 +362,20 @@ describe("boundary patterns detect synthetic violations", () => {
       snippet: `import { parseAiRuntimeConfig } from "@/game/application/server/ai/aiRuntimeConfig";`
     },
     {
-      // Phase 4B：api 层只许组合根，deep-import live source/prompt/audit/config 一律被拦。
+      // API 层只许组合根，deep-import source/config 一律被拦。
       pattern: APPLICATION_SERVER_DEEP_IMPORT,
-      snippet: `import { createLiveScenarioCandidateSource } from "@/game/application/server/ai/liveScenarioCandidateSource";`
+      snippet: `import { createWorldGenerationSource } from "@/game/application/server/ai/worldGenerationSource";`
     },
     {
-      // Phase 4B：domain/gameplay 连 application 门面本体都禁止（含 server/ai live source）。
+      // domain/gameplay 连 application 门面本体都禁止（含 server/ai source）。
       pattern: forbiddenSpecifierPrefix("@/game/application"),
-      snippet: `import { buildScenarioPromptMessages } from "@/game/application/server/ai/scenarioPrompt";`
+      snippet: `import { createWorldGenerationSource } from "@/game/application/server/ai/worldGenerationSource";`
     },
     { pattern: SLG_IMPORT, snippet: `import { grid } from "../ai-slg-game/src/map";` },
     { pattern: SLG_IMPORT, snippet: `import { hex } from "@ai-slg-game/map";` },
     {
       pattern: RELATIVE_ESCAPE_FROM_DOMAIN,
-      snippet: `import { load } from "../gameplay/rpg/scenario";`
+      snippet: `import { load } from "../gameplay/rpg/ruleEngine";`
     },
     {
       pattern: RELATIVE_ESCAPE_FROM_GAMEPLAY,
@@ -405,25 +383,23 @@ describe("boundary patterns detect synthetic violations", () => {
     },
     {
       pattern: RELATIVE_GAMEPLAY_IMPORT,
-      snippet: `import { questGraph } from "../game/gameplay/rpg/scenario/questGraph";`
+      snippet: `import { resolve } from "../game/gameplay/rpg/ruleEngine/resolveByType";`
     },
     {
       pattern: APPLICATION_SERVER_IMPORT,
       snippet: `import { getServerGameEntryPoints } from "@/game/application/server/compositionRoot";`
     },
     {
-      // Phase 4A：UI 层连 server-only fixture source 也碰不到。
       pattern: APPLICATION_SERVER_IMPORT,
-      snippet: `import { createFixtureScenarioCandidateSource } from "@/game/application/server/ai/fixtureScenarioCandidateSource";`
+      snippet: `import { createSource } from "@/game/application/server/ai/sourceFactory";`
     },
     {
       pattern: APPLICATION_SERVER_DEEP_IMPORT,
       snippet: `import { adapter } from "@/game/application/server/persistence/sqliteGameRepository";`
     },
     {
-      // Phase 4A：api 层只许组合根，deep-import ai 目录同样被拦。
       pattern: APPLICATION_SERVER_DEEP_IMPORT,
-      snippet: `import { createFixtureScenarioCandidateSource } from "@/game/application/server/ai/fixtureScenarioCandidateSource";`
+      snippet: `import { createSource } from "@/game/application/server/ai/sourceFactory";`
     },
     {
       pattern: DOMAIN_IMPORT,
@@ -521,86 +497,38 @@ describe("boundary patterns detect synthetic violations", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Phase 5（Task 5）：take_item 新增面的扫描覆盖自检。上方目录规则已禁止
-// UI/API/store 绕过 "@/game/application" 门面；这里额外钉死：Phase 5 落地的
-// 具体文件确实在对应规则的扫描范围内（守卫不空转），且它们对游戏层的
-// 唯一触达就是 application 门面。
-// ---------------------------------------------------------------------------
-
-describe("phase 5 take_item surfaces stay behind the application facade", () => {
-  it("ItemPanel/gameActionRequest/actions route are inside the scanned rule scopes", () => {
+describe("canonical client surfaces stay behind the application facade", () => {
+  it("canonical components and exactly six game routes are inside the scanned rule scopes", () => {
     const componentFiles = exists(resolve(sourceRoot, "components"), false).map(toPosixRelative);
-    expect(componentFiles).toContain("components/ItemPanel.tsx");
-    expect(componentFiles).toContain("components/gameActionRequest.ts");
-    const apiFiles = exists(resolve(sourceRoot, "app/api"), true).map(toPosixRelative);
-    expect(apiFiles).toContain("app/api/game/actions/actionHandler.ts");
-    expect(apiFiles).toContain("app/api/game/actions/route.ts");
-  });
-
-  it("ItemPanel and gameActionRequest import game types only via @/game/application", () => {
-    for (const relative of ["components/ItemPanel.tsx", "components/gameActionRequest.ts"]) {
-      const specifiers = extractSpecifiers(readFileSync(resolve(sourceRoot, relative), "utf8"));
-      // 门面确实被使用（而非碰巧零导入），且除门面外没有任何 @/game/** 说明符。
-      expect(specifiers, relative).toContain("@/game/application");
-      const offenders = specifiers.filter(
-        (specifier) => specifier.startsWith("@/game/") && specifier !== "@/game/application"
-      );
-      expect(offenders, relative).toEqual([]);
+    for (const relative of [
+      "components/AdventureGameShell.tsx",
+      "components/CurrentGameScreen.tsx",
+      "components/NewGameSetupForm.tsx",
+      "components/gameActionRequest.ts"
+    ]) {
+      expect(componentFiles).toContain(relative);
     }
-  });
-});
-
-describe("phase 6 battle/ending surfaces stay behind the application facade", () => {
-  it("BattlePanel/EndingPanel/gameActionRequest are inside the scanned rule scopes", () => {
-    const componentFiles = exists(resolve(sourceRoot, "components"), false).map(toPosixRelative);
-    expect(componentFiles).toContain("components/BattlePanel.tsx");
-    expect(componentFiles).toContain("components/EndingPanel.tsx");
-    expect(componentFiles).toContain("components/gameActionRequest.ts");
-  });
-
-  it("BattlePanel and EndingPanel import game types only via @/game/application", () => {
-    for (const relative of ["components/BattlePanel.tsx", "components/EndingPanel.tsx"]) {
-      const specifiers = extractSpecifiers(readFileSync(resolve(sourceRoot, relative), "utf8"));
-      const offenders = specifiers.filter(
-        (specifier) => specifier.startsWith("@/game/") && specifier !== "@/game/application"
-      );
-      expect(offenders, relative).toEqual([]);
-    }
+    const routeFiles = exists(resolve(sourceRoot, "app/api"), false)
+      .map(toPosixRelative)
+      .filter((relative) => relative.endsWith("/route.ts"))
+      .sort();
+    expect(routeFiles).toEqual([
+      "app/api/game/actions/route.ts",
+      "app/api/game/current/route.ts",
+      "app/api/game/dev/current/route.ts",
+      "app/api/game/narrative/ensure/route.ts",
+      "app/api/game/prologue/ack/route.ts",
+      "app/api/game/route.ts"
+    ]);
   });
 
-  it("battle facade directory exists and is scanned by the gameplay boundary rule", () => {
-    const battleFiles = exists(resolve(sourceRoot, "game/gameplay/rpg/battle"), false).map(toPosixRelative);
-    expect(battleFiles.length).toBeGreaterThan(0);
-    // battle 内部文件不导入 application/UI 层
-    for (const file of battleFiles) {
-      const specifiers = extractSpecifiers(readFileSync(resolve(sourceRoot, file), "utf8"));
-      const offenders = specifiers.filter(
-        (specifier) =>
-          specifier.startsWith("@/game/application") ||
-          specifier.startsWith("@/components/") ||
-          specifier.startsWith("@/store/") ||
-          specifier.startsWith("@/app/")
-      );
-      expect(offenders, file).toEqual([]);
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 背包界面重构：四分类页签 + 图标网格 + 详情。钩死新增的 InventoryPanel /
-// inventoryVisuals 确实在扫描范围内，且对游戏层的唯一触达是 application 门面。
-// ---------------------------------------------------------------------------
-
-describe("inventory panel surfaces stay behind the application facade", () => {
-  it("InventoryPanel/inventoryVisuals are inside the scanned rule scopes", () => {
-    const componentFiles = exists(resolve(sourceRoot, "components"), false).map(toPosixRelative);
-    expect(componentFiles).toContain("components/InventoryPanel.tsx");
-    expect(componentFiles).toContain("components/inventoryVisuals.tsx");
-  });
-
-  it("InventoryPanel and inventoryVisuals import game types only via @/game/application", () => {
-    for (const relative of ["components/InventoryPanel.tsx", "components/inventoryVisuals.tsx"]) {
+  it("canonical components import game types only through @/game/application", () => {
+    for (const relative of [
+      "components/AdventureGameShell.tsx",
+      "components/CurrentGameScreen.tsx",
+      "components/NewGameSetupForm.tsx",
+      "components/gameActionRequest.ts"
+    ]) {
       const specifiers = extractSpecifiers(readFileSync(resolve(sourceRoot, relative), "utf8"));
       expect(specifiers, relative).toContain("@/game/application");
       const offenders = specifiers.filter(
@@ -612,22 +540,19 @@ describe("inventory panel surfaces stay behind the application facade", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 4A（Task 5）：scenario source 分层守卫。上方目录规则已禁止 UI/API
-// 直达 application/server（ai 目录包含在内）；这里额外钉死：
-//   1) fixture source 自身不得导入 persistence/sqlite/libsql；
-//   2) domain/gameplay 不得导入 application 的 scenarioGeneration 纯 port；
-//   3) 许可面真实存在（createGame 经纯 port、组合根经 fixture 工厂），守卫不空转。
+// Canonical AI sources stay server-only and layered.
 // ---------------------------------------------------------------------------
 
-describe("phase 4a scenario source stays server-only and layered", () => {
+describe("canonical AI sources stay server-only and layered", () => {
   const aiDir = resolve(sourceRoot, "game/application/server/ai");
 
-  it("fixture source files exist and are inside the server rule scope", () => {
+  it("source files exist and are inside the server rule scope", () => {
     const files = exists(aiDir, false).map(toPosixRelative);
-    expect(files).toContain("game/application/server/ai/fixtureScenarioCandidateSource.ts");
+    expect(files).toContain("game/application/server/ai/sourceFactory.ts");
+    expect(files).toContain("game/application/server/ai/worldGenerationSource.ts");
   });
 
-  it("fixture source never imports persistence/sqlite/libsql", () => {
+  it("AI sources never import persistence/sqlite/libsql", () => {
     for (const file of exists(aiDir, false)) {
       const offenders = extractSpecifiers(readFileSync(file, "utf8")).filter(
         (specifier) =>
@@ -639,43 +564,34 @@ describe("phase 4a scenario source stays server-only and layered", () => {
     }
   });
 
-  it("domain/gameplay never import the application scenarioGeneration port", () => {
+  it("domain/gameplay never import application AI sources", () => {
     const files = [
       ...exists(resolve(sourceRoot, "game/domain"), false),
       ...exists(resolve(sourceRoot, "game/gameplay"), false)
     ];
     const offenders = files.flatMap((file) =>
       extractSpecifiers(readFileSync(file, "utf8"))
-        .filter((specifier) => /scenarioGeneration/.test(specifier))
+        .filter((specifier) => /application\/server\/ai/.test(specifier))
         .map((specifier) => `${toPosixRelative(file)}: ${specifier}`)
     );
     expect(offenders).toEqual([]);
   });
 
-  it("sanctioned imports actually exist (guard is not vacuous)", () => {
-    // createGame 只经层内纯 port 取契约；组合根经候选来源工厂装配 live/unavailable source。
-    const createGameSpecifiers = extractSpecifiers(
-      readFileSync(resolve(sourceRoot, "game/application/createGame.ts"), "utf8")
-    );
-    expect(createGameSpecifiers).toContain("./scenarioGeneration");
+  it("composition root reaches AI only through canonical factories", () => {
     const rootSpecifiers = extractSpecifiers(
       readFileSync(resolve(sourceRoot, "game/application/server/compositionRoot.ts"), "utf8")
     );
-    expect(rootSpecifiers).toContain("./ai/scenarioCandidateSourceFactory");
-    // 工厂确实接通 shared transport、live source、私有 prompt 与脱敏 audit。
+    expect(rootSpecifiers).toContain("../server/ai/sourceFactory");
+    expect(rootSpecifiers).toContain("../server/ai/intentParserSourceFactory");
     const factorySpecifiers = extractSpecifiers(
-      readFileSync(
-        resolve(sourceRoot, "game/application/server/ai/scenarioCandidateSourceFactory.ts"),
-        "utf8"
-      )
+      readFileSync(resolve(sourceRoot, "game/application/server/ai/sourceFactory.ts"), "utf8")
     );
     expect(factorySpecifiers).toContain("@ai-game/ai-transport");
-    expect(factorySpecifiers).toContain("./liveScenarioCandidateSource");
+    expect(factorySpecifiers).toContain("./worldGenerationSource");
   });
 });
 
 // ---------------------------------------------------------------------------
-// Phase 4B（Task 5）：live source / 私有 prompt / 脱敏 audit / 运行时配置与
 // @ai-game/ai-transport 共享包的分层守卫。上方目录规则已禁止 UI/API/
 // domain/gameplay 达到 server/ai；这里额外钉死：
 //   1) 全库只有 application/server/ai 内的生产代码可导入 @ai-game/ai-transport；
@@ -683,7 +599,7 @@ describe("phase 4a scenario source stays server-only and layered", () => {
 //   3) 只有 composition root 经工厂读取运行时配置（process.env 守卫已在下方覆盖）。
 // ---------------------------------------------------------------------------
 
-describe("phase 4b live source + ai-transport stay confined to application/server/ai", () => {
+describe("ai-transport stays confined to application/server/ai", () => {
   const AI_DIR = "game/application/server/ai/";
   const productionFiles = walk(sourceRoot, false).filter(
     (file) => toPosixRelative(file) !== "dependencyBoundaries.test.ts"
@@ -704,12 +620,12 @@ describe("phase 4b live source + ai-transport stay confined to application/serve
     expect(users.length).toBeGreaterThan(0);
   });
 
-  it("live source + prompt + audit + factory never import persistence/sqlite/libsql", () => {
+  it("source modules never import persistence/sqlite/libsql", () => {
     for (const relative of [
-      "liveScenarioCandidateSource.ts",
-      "scenarioPrompt.ts",
-      "scenarioGenerationAudit.ts",
-      "scenarioCandidateSourceFactory.ts"
+      "sourceFactory.ts",
+      "worldGenerationSource.ts",
+      "liveExpansionSource.ts",
+      "liveIntentParserSource.ts"
     ]) {
       const file = resolve(sourceRoot, "game/application/server/ai", relative);
       const offenders = extractSpecifiers(readFileSync(file, "utf8")).filter(
@@ -757,12 +673,8 @@ function walk(dir: string, includeTestFiles: boolean): string[] {
 const SERVER_DIR = "game/application/server/";
 /** 纯端口文件：只有类型与 asGameId/asGenerationId 等，application 本体唯一合法的 server 入口。 */
 const PURE_PORT_SPECIFIER = "./server/persistence/gameRepository";
-/** P1 双状态：gameRepositoryV2 与 V1 同级，同为纯类型/接口 port（无 libsql/env/路径感知）。 */
-const PURE_PORT_SPECIFIER_V2 = "./server/persistence/gameRepositoryV2";
 /** API route 层唯一许可的 server 入口。 */
 const COMPOSITION_ROOT_SPECIFIER = "@/game/application/server/compositionRoot";
-/** P1 双状态：V2 组合根与 V1 同级，API route 层同样许可。 */
-const COMPOSITION_ROOT_V2_SPECIFIER = "@/game/application/server/compositionRootV2";
 const SERVER_LOGGER_SPECIFIER = "@/game/logging/serverConsoleLogger";
 
 /** src 相对路径（POSIX 分隔符），便于断言与报告。 */
@@ -825,9 +737,9 @@ describe("server-only modules stay out of client-importable code", () => {
       if (reaching.length === 0) continue;
       // application 本体只能用纯端口；api route 只能用组合根；其余一律禁止。
       const allowed = key.startsWith("game/application/")
-        ? [PURE_PORT_SPECIFIER, PURE_PORT_SPECIFIER_V2]
+        ? [PURE_PORT_SPECIFIER]
         : key.startsWith("app/api/")
-          ? [COMPOSITION_ROOT_SPECIFIER, COMPOSITION_ROOT_V2_SPECIFIER]
+          ? [COMPOSITION_ROOT_SPECIFIER]
           : null;
       for (const specifier of reaching) {
         if (allowed === null || !allowed.includes(specifier)) violations.push(`${key}: ${specifier}`);
@@ -847,9 +759,9 @@ describe("server-only modules stay out of client-importable code", () => {
     expect(routes.length).toBeGreaterThanOrEqual(2);
   });
 
-  // P1 双状态：domain/gameplay 纯函数层不触达上层，application 本体只经纯端口
-  // 取 V2 状态模型。钉死新模块确实在扫描范围内、且不违反分层（守卫不空转）。
-  it("P1 dual-state surfaces stay inside scanned scopes and respect layering", () => {
+  // canonical domain/gameplay 纯函数层不触达上层，application 本体只经纯端口
+  // 取持久化契约。钉死模块确实在扫描范围内、且不违反分层（守卫不空转）。
+  it("canonical state surfaces stay inside scanned scopes and respect layering", () => {
     // domain 纯函数层文件存在且不导入 application/UI/server（目录规则已覆盖，此处钉死不空转）。
     for (const relative of [
       "game/domain/worldState.ts",
@@ -882,22 +794,21 @@ describe("server-only modules stay out of client-importable code", () => {
         relative
       ).toEqual([]);
     }
-    // application V2 编排只经纯端口取 V2 持久化契约（无 libsql/env/路径）。
+    // application 编排只经纯端口取持久化契约（无 libsql/env/路径）。
     for (const relative of [
-      "game/application/createGameV2.ts",
-      "game/application/performActionV2.ts",
+      "game/application/createGame.ts",
+      "game/application/performTurn.ts",
       "game/application/stateCommit.ts",
       "game/application/sceneWriteBack.ts"
     ]) {
       const file = resolve(sourceRoot, relative);
       expect(statSync(file).isFile(), relative).toBe(true);
       const specifiers = extractSpecifiers(readFileSync(file, "utf8"));
-      expect(specifiers, relative).toContain(PURE_PORT_SPECIFIER_V2);
+      expect(specifiers, relative).toContain(PURE_PORT_SPECIFIER);
       expect(
         specifiers.filter(
           (s) =>
             reachesServerLayer(s) &&
-            s !== PURE_PORT_SPECIFIER_V2 &&
             s !== PURE_PORT_SPECIFIER
         ),
         relative
@@ -936,7 +847,7 @@ describe("server-only modules stay out of client-importable code", () => {
   it("only the server composition root imports the server console logger", () => {
     const violations = productionFiles
       .filter((file) => toPosixRelative(file) !== "game/application/server/compositionRoot.ts")
-      .filter((file) => toPosixRelative(file) !== "game/application/server/compositionRootV2.ts")
+      .filter((file) => toPosixRelative(file) !== "game/application/server/compositionRoot.ts")
       .filter((file) => extractSpecifiers(readFileSync(file, "utf8")).includes(SERVER_LOGGER_SPECIFIER))
       .map(toPosixRelative);
     expect(violations).toEqual([]);
@@ -945,5 +856,85 @@ describe("server-only modules stay out of client-importable code", () => {
       "utf8"
     );
     expect(extractSpecifiers(compositionRoot)).toContain(SERVER_LOGGER_SPECIFIER);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Canonical runtime closure: there is one executable chain and no source-debt
+// typecheck quarantine. Persisted schema/fixture version values are outside
+// this naming scan and remain intentionally supported as data-contract facts.
+// ---------------------------------------------------------------------------
+
+describe("one canonical executable chain remains", () => {
+  const productionFiles = walk(sourceRoot, false).filter(
+    (file) => toPosixRelative(file) !== "dependencyBoundaries.test.ts",
+  );
+
+  it("has one repository, composition root, read model, request client, and six routes", () => {
+    const relativeFiles = productionFiles.map(toPosixRelative);
+    expect(relativeFiles.filter((file) => file.endsWith("/gameRepository.ts"))).toEqual([
+      "game/application/server/persistence/gameRepository.ts",
+    ]);
+    expect(relativeFiles.filter((file) => file.endsWith("/compositionRoot.ts"))).toEqual([
+      "game/application/server/compositionRoot.ts",
+    ]);
+    expect(relativeFiles.filter((file) => file.endsWith("/gameSessionView.ts"))).toEqual([
+      "game/application/gameSessionView.ts",
+    ]);
+    expect(relativeFiles.filter((file) => file.endsWith("/gameActionRequest.ts"))).toEqual([
+      "components/gameActionRequest.ts",
+    ]);
+    expect(relativeFiles.filter((file) => file.startsWith("app/api/") && file.endsWith("/route.ts")).sort()).toEqual([
+      "app/api/game/actions/route.ts",
+      "app/api/game/current/route.ts",
+      "app/api/game/dev/current/route.ts",
+      "app/api/game/narrative/ensure/route.ts",
+      "app/api/game/prologue/ack/route.ts",
+      "app/api/game/route.ts",
+    ]);
+  });
+
+  it("contains no retired executable gameplay chain", () => {
+    const retiredPrefixes = [
+      "game/gameplay/rpg/actions/",
+      "game/gameplay/rpg/battle/",
+      "game/gameplay/rpg/choices/",
+      "game/gameplay/rpg/narrative/",
+      "game/gameplay/rpg/quests/",
+      "game/gameplay/rpg/scenario/",
+      "game/gameplay/rpg/town/",
+    ];
+    const retired = productionFiles
+      .map(toPosixRelative)
+      .filter((file) => retiredPrefixes.some((prefix) => file.startsWith(prefix)));
+    expect(retired).toEqual([]);
+  });
+
+  it("contains no retired town demo script, assets, or styles", () => {
+    const repositoryRoot = resolve(sourceRoot, "..");
+    const retiredScript = ["genTown", "BuildingImages.mjs"].join("");
+    const retiredAssetDirectory = ["town", "experiment"].join("-");
+    expect(existsSync(resolve(repositoryRoot, "scripts", retiredScript))).toBe(false);
+    expect(existsSync(resolve(repositoryRoot, "public/assets", retiredAssetDirectory))).toBe(false);
+    expect(readFileSync(resolve(sourceRoot, "app/globals.css"), "utf8")).not.toMatch(
+      new RegExp(["\\.town-", "(?:demo|layer)-"].join("")),
+    );
+  });
+
+  it("has no versioned executable naming outside persisted schema/fixture values", () => {
+    const offenders = productionFiles.flatMap((file) => {
+      const source = readFileSync(file, "utf8");
+      const versionPattern = new RegExp(["V", "[12]|v2\\.1|/api/v[12]/"].join(""));
+      return versionPattern.test(source) ? [toPosixRelative(file)] : [];
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it("does not quarantine application, API, or component production source from typecheck", () => {
+    const config = JSON.parse(readFileSync(resolve(sourceRoot, "../tsconfig.json"), "utf8")) as {
+      readonly exclude?: readonly string[];
+    };
+    expect(config.exclude ?? []).toEqual(["node_modules", ".next"]);
+    expect((config.exclude ?? []).filter((entry) => /(?:src|app|api|component|game\/application)/i.test(entry))).toEqual([]);
   });
 });
