@@ -1,5 +1,5 @@
 import type { WorldState, NpcEntry, NpcInteraction } from "@/game/domain/worldState";
-import type { DialogueAct, TalkAction } from "@/game/domain/action";
+import type { DialogueAct, DialogueTopic, TalkAction } from "@/game/domain/action";
 import { relationshipTierOf, RELATIONSHIP_CHANGE, type RelationshipTier } from "@/game/domain/relationship";
 import type { FactId } from "@/game/domain/scenarioBlueprint";
 import type { GameEvent } from "@/game/domain/events";
@@ -12,7 +12,13 @@ import { updateNpcMemory } from "@/game/gameplay/rpg/ruleEngine/updateNpcMemory"
 // 不读时钟/随机数：时间由调用方注入 deps.now。
 // ---------------------------------------------------------------------------
 
-export type DialogueDeps = { readonly now: () => string };
+export type DialogueDeps = {
+  readonly now: () => string;
+  /** 当前回合的 actionId：用于记忆零写入去重（同 actionId 不重复追加）。 */
+  readonly actionId: string;
+  /** 当前回合号：写入 NpcInteraction.turnNumber。 */
+  readonly turnNumber: number;
+};
 
 export type DialogueStatus = "success" | "partial_success" | "failure";
 
@@ -96,11 +102,27 @@ function statusFor(
   return "success";
 }
 
-function summaryFor(npc: NpcEntry, outcome: NpcInteraction["outcome"], delta: number): string {
+function summaryFor(
+  npc: NpcEntry,
+  act: DialogueAct | "freeform",
+  outcome: NpcInteraction["outcome"],
+  delta: number,
+): string {
   const meetPart = npc.met ? "再次交谈" : "首次见面";
-  const moodPart = outcome === "positive" ? "气氛融洽" : outcome === "negative" ? "氛围紧张" : "语气平淡";
+  const moodPart = outcome === "positive" ? "气氛融洽"
+    : outcome === "negative" ? "氛围紧张"
+    : outcome === "mixed" ? "气氛复杂"
+    : "语气平淡";
   const deltaText = delta >= 0 ? `+${delta}` : `${delta}`;
-  return `${meetPart}，${moodPart}，关系${deltaText}`;
+  return `${meetPart}，${act}，${moodPart}，关系${deltaText}`;
+}
+
+/** 主题摘要（规则生成，绝不含玩家原文；不含事实内容本身）。 */
+function topicSummaryFor(topic: DialogueTopic): string {
+  if (topic.kind === "fact") return "询问线索";
+  if (topic.kind === "quest") return "谈论任务";
+  if (topic.kind === "thread") return "延续话题";
+  return "闲谈";
 }
 
 function feedbackFor(name: string, status: DialogueStatus, disclosure: DialogueDisclosure): string {
@@ -141,14 +163,19 @@ export function resolveDialogue(
 
   const outcome = outcomeFor(relationshipDelta);
   const status = statusFor(act, tier, outcome, disclosure);
+  // NPC 当场披露的事实才进入本轮 learnedFactIds（玩家由此得知）。
+  const learnedFactIds = disclosure.kind === "revealed" ? [disclosure.factId] : [];
 
   const interaction: NpcInteraction = {
-    turn: ws.eventLedger.length,
+    turnNumber: deps.turnNumber,
+    actionId: deps.actionId,
     locationId: ws.currentLocationId,
-    actionType: "talk",
+    dialogueAct: act,
+    topicSummary: topicSummaryFor(topic),
     outcome,
     relationshipDelta,
-    summary: summaryFor(npc, outcome, relationshipDelta),
+    learnedFactIds,
+    summary: summaryFor(npc, act, outcome, relationshipDelta),
   };
   const npcAfter = { ...updateNpcMemory(npc, interaction), met: true };
   const event: GameEvent = { type: "npc_met", npcId: action.npcId, occurredAt: deps.now(), interactionKind: "greet" };

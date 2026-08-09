@@ -25,7 +25,7 @@ export type RuleEngineResult =
   | { readonly ok: true; readonly nextWorldState: WorldState; readonly nextStoryState: StoryState; readonly resolvedEvent: ResolvedEvent }
   | { readonly ok: false; readonly code: ValidationCode; readonly feedback: string };
 
-export type RuleEngineDeps = ResolveDeps;
+export type RuleEngineDeps = { readonly now: () => string };
 
 /** resolveTurn 的返回值：拒绝路径返回稳定 code + feedback，不携带任何写入。 */
 export type ResolveTurnResult =
@@ -62,7 +62,11 @@ export function resolveTurn(
     return { ok: false, code: validation.code, feedback: `Action rejected: ${validation.code}` };
   }
 
-  const resolved = resolveByType(worldState, action, deps);
+  const resolved = resolveByType(worldState, action, {
+    now: deps.now,
+    actionId,
+    turnNumber: storyState.turnNumber,
+  });
   if (!resolved.ok) {
     return { ok: false, code: "INTENT_NOT_ROUTED", feedback: resolved.feedback };
   }

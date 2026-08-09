@@ -19,7 +19,13 @@ export type ResolveResult = {
   readonly feedback: string;
 };
 
-export type ResolveDeps = { readonly now: () => string };
+export type ResolveDeps = {
+  readonly now: () => string;
+  /** 当前回合的 actionId（写入 NpcInteraction.actionId，用于记忆去重）。 */
+  readonly actionId: string;
+  /** 当前回合号（写入 NpcInteraction.turnNumber）。 */
+  readonly turnNumber: number;
+};
 
 export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps): ResolveResult {
   const occurredAt = deps.now();
@@ -75,7 +81,11 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       if (npc === undefined) return { ok: false, feedback: "未知角色。" };
       // 旧构造器可能缺失 dialogueAct（Task 9 交割前）：回退 ask
       const dialogueAct = action.dialogueAct ?? "ask";
-      const dialogue = resolveDialogue(ws, npc, { ...action, dialogueAct }, deps);
+      const dialogue = resolveDialogue(ws, npc, { ...action, dialogueAct }, {
+        now: deps.now,
+        actionId: deps.actionId,
+        turnNumber: deps.turnNumber,
+      });
       const nextWs: WorldState = {
         ...ws,
         npcs: ws.npcs.map((n) => n.id === action.npcId ? dialogue.npcAfter : n),

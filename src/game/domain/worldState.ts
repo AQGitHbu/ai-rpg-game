@@ -7,6 +7,7 @@ import type { GameEvent } from "./events";
 import type { RelationshipValue } from "./relationship";
 import type { NarrativeEmotion, NarrativeRuntimeState } from "./narrative";
 import type { TownRuntimeState } from "./gameState";
+import type { DialogueAct } from "./action";
 
 // ── Entry 类型：定义 + 运行时 ──
 
@@ -38,12 +39,16 @@ export type NpcMemory = {
   readonly goals: readonly string[];
 };
 
+/** 一次与 NPC 的结构化交互记录（Spec §14.2）：规则生成，绝不包含玩家原文。 */
 export type NpcInteraction = {
-  readonly turn: number;
+  readonly turnNumber: number;
+  readonly actionId: string;
   readonly locationId: LocationId;
-  readonly actionType: string;
-  readonly outcome: "positive" | "negative" | "neutral";
+  readonly dialogueAct: DialogueAct | "freeform";
+  readonly topicSummary: string;
+  readonly outcome: "positive" | "negative" | "neutral" | "mixed";
   readonly relationshipDelta: number;
+  readonly learnedFactIds: readonly FactId[];
   readonly summary: string;
 };
 

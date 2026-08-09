@@ -19,7 +19,7 @@ describe("resolveByType", () => {
     startingItemIds: [],
   });
   const ws = appendLocation(baseWs, loc2);
-  const deps = { now: () => "2026-01-01" };
+  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
 
   it("move updates currentLocationId and adds event", () => {
     const result = resolveByType(ws, { type: "move", locationId: asLocationId("loc_2") }, deps);
@@ -70,7 +70,7 @@ describe("resolveByType status and stateChanges", () => {
     startingItemIds: [],
   });
   const ws = appendLocation(baseWs, loc2);
-  const deps = { now: () => "2026-01-01" };
+  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
   const npc1: NpcEntry = {
     id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
     locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
@@ -152,7 +152,7 @@ describe("resolveByType — attack", () => {
     };
     return { ...baseWs, enemies: [enemy] };
   }
-  const deps = { now: () => "2026-01-01" };
+  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
 
   it("attack starts battle and returns active battle state", () => {
     const ws = makeWorldWithEnemy();

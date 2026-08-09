@@ -52,7 +52,7 @@ function talkOf(action: {
   return { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: action.act, topic: action.topic, utterance: action.utterance };
 }
 
-const deps = { now: () => "2026-01-01" };
+const deps = { now: () => "2026-01-01", actionId: "act_1", turnNumber: 7 };
 
 describe("resolveDialogue — 行为语义", () => {
   it("首次 ask 与重复 ask 的关系变化不同", () => {
@@ -155,13 +155,38 @@ describe("resolveDialogue — 行为语义", () => {
     const r1 = resolveDialogue(makeWs(), npc, talkOf({ act: "support", utterance: "说的在理" }), deps);
     const r2 = resolveDialogue(makeWs(), npc, talkOf({ act: "support", utterance: "说的在理" }), deps);
     expect(r2.interaction).toEqual(r1.interaction);
-    expect(r1.interaction.actionType).toBe("talk");
+    expect(r1.interaction.dialogueAct).toBe("support");
+    expect(r1.interaction.turnNumber).toBe(7);
+    expect(r1.interaction.actionId).toBe("act_1");
+    expect(r1.interaction.locationId).toBe(asLocationId("loc_1"));
+    expect(r1.interaction.topicSummary).toBe("闲谈");
+    expect(r1.interaction.learnedFactIds).toEqual([]);
     expect(r1.interaction.outcome).toBe("positive");
     expect(r1.interaction.relationshipDelta).toBe(r1.relationshipDelta);
     expect(r1.interaction.summary).toContain("首次见面");
     expect(r1.interaction.summary).not.toContain("说的在理");
     const repeated = resolveDialogue(makeWs(), r1.npcAfter, talkOf({ act: "support" }), deps);
     expect(repeated.interaction.summary).toContain("再次交谈");
+  });
+
+  it("NPC 披露 fact 时 learnedFactIds 记录该 fact，且同 actionId 不重复追加", () => {
+    const npc = makeNpc({ met: true });
+    const res = resolveDialogue(makeWs(), npc, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN } }), deps);
+    expect(res.disclosure.kind).toBe("revealed");
+    expect(res.interaction.learnedFactIds).toContain(FACT_KNOWN);
+    expect(res.npcAfter.memory.interactionHistory).toHaveLength(1);
+    // 同 actionId 重试：CAS 失败路径零写入
+    const retry = resolveDialogue(makeWs(), res.npcAfter, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN } }), deps);
+    expect(retry.npcAfter.memory.interactionHistory).toHaveLength(1);
+  });
+
+  it("support/challenge/threaten/freeform 产生稳定不同的 topicSummary/summary 语义", () => {
+    const npc = makeNpc({ met: true });
+    const support = resolveDialogue(makeWs(), npc, talkOf({ act: "support" }), deps);
+    const threaten = resolveDialogue(makeWs(), npc, talkOf({ act: "threaten" }), deps);
+    expect(support.interaction.summary).toContain("support");
+    expect(threaten.interaction.summary).toContain("threaten");
+    expect(support.interaction.summary).not.toBe(threaten.interaction.summary);
   });
 
   it("NPC 披露已知 topic fact 时返回结构化 disclosure", () => {
