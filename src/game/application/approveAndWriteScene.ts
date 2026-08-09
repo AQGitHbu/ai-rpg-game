@@ -7,6 +7,8 @@ import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { ApprovedChoice, ChoiceProposal } from "@/game/domain/approvedChoice";
 import { createApprovedChoice, semanticSummaryOf } from "@/game/domain/approvedChoice";
 import { actionFromLegalCandidate } from "./deterministicSceneSource";
+import type { Action } from "@/game/domain/action";
+import { DIALOGUE_ACTS } from "@/game/domain/action";
 
 // ---------------------------------------------------------------------------
 // R4（Task 21）：SceneSource 提议 → 候选事件池审批
@@ -102,7 +104,9 @@ export type SceneRejectionCode =
   | "unknown_dialogue_npc"
   | "npc_uses_forbidden_fact"
   | "semantic_duplicate_choices"
-  | "illegal_choice_target";
+  | "illegal_choice_target"
+  | "illegal_event_target"
+  | "invalid_choice_action";
 
 export type ApprovedSceneWriteBack = {
   readonly scene: NarrativeSceneState;
@@ -121,12 +125,110 @@ function isLegalChoiceTarget(
   choice: ChoiceProposal,
 ): boolean {
   if (event.kind === "dialogue") {
-    return choice.action.type === "talk" && choice.action.npcId === event.focusNpcId;
+    const focusTalkIsCurrentlyLegal = context.legalActionCandidates.some(
+      (candidate) => candidate.kind === "talk" && candidate.targetId === String(event.focusNpcId),
+    );
+    return focusTalkIsCurrentlyLegal
+      && choice.action.type === "talk"
+      && choice.action.npcId === event.focusNpcId;
   }
   return context.legalActionCandidates.some((candidate) => {
     const legalAction = actionFromLegalCandidate(candidate);
     return legalAction !== null && semanticSummaryOf(legalAction) === semanticSummaryOf(choice.action);
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyKeys(record: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const allowedSet = new Set(allowed);
+  return Object.keys(record).every((key) => allowedSet.has(key));
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function isDialogueTopic(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.kind !== "string") return false;
+  switch (value.kind) {
+    case "general": return hasOnlyKeys(value, ["kind"]);
+    case "fact": return hasOnlyKeys(value, ["kind", "factId"]) && isNonEmptyString(value.factId);
+    case "quest": return hasOnlyKeys(value, ["kind", "questId"]) && isNonEmptyString(value.questId);
+    case "thread": return hasOnlyKeys(value, ["kind", "threadId"]) && isNonEmptyString(value.threadId);
+    default: return false;
+  }
+}
+
+/** SceneSource output is untrusted at runtime even when its TypeScript port says Action. */
+function isWellFormedAction(value: unknown): value is Action {
+  if (!isRecord(value) || typeof value.type !== "string") return false;
+  switch (value.type) {
+    case "talk":
+      return hasOnlyKeys(value, ["type", "npcId", "dialogueAct", "topic", "utterance"])
+        && isNonEmptyString(value.npcId)
+        && typeof value.dialogueAct === "string"
+        && DIALOGUE_ACTS.includes(value.dialogueAct as (typeof DIALOGUE_ACTS)[number])
+        && (value.topic === undefined || isDialogueTopic(value.topic))
+        && (value.utterance === undefined || typeof value.utterance === "string");
+    case "move": return hasOnlyKeys(value, ["type", "locationId"]) && isNonEmptyString(value.locationId);
+    case "explore": return hasOnlyKeys(value, ["type"]);
+    case "investigate":
+      return hasOnlyKeys(value, ["type", "factId", "utterance"])
+        && isNonEmptyString(value.factId)
+        && (value.utterance === undefined || typeof value.utterance === "string");
+    case "take_item": return hasOnlyKeys(value, ["type", "itemId"]) && isNonEmptyString(value.itemId);
+    case "attack": return hasOnlyKeys(value, ["type", "enemyId"]) && isNonEmptyString(value.enemyId);
+    case "battle_action":
+      return hasOnlyKeys(value, ["type", "action"])
+        && (value.action === "attack" || value.action === "guard" || value.action === "flee");
+    case "rest": return hasOnlyKeys(value, ["type"]);
+    case "ack_prologue": return hasOnlyKeys(value, ["type"]);
+    case "freeform":
+      return hasOnlyKeys(value, ["type", "intent", "rawText"])
+        && typeof value.intent === "string"
+        && typeof value.rawText === "string";
+    default: return false;
+  }
+}
+
+function isWellFormedChoiceProposal(value: unknown): value is ChoiceProposal {
+  return isRecord(value)
+    && hasOnlyKeys(value, ["label", "hint", "action"])
+    && typeof value.label === "string"
+    && (value.hint === undefined || typeof value.hint === "string")
+    && isWellFormedAction(value.action);
+}
+
+function includesId(ids: readonly unknown[], target: unknown): boolean {
+  return typeof target === "string" && ids.some((id) => String(id) === target);
+}
+
+/** Event target must be both structurally valid and present in the authority-only context. */
+function isLegalEventTarget(context: SceneGenerationContext, value: unknown): value is NarrativeEventState {
+  if (!isRecord(value) || typeof value.kind !== "string") return false;
+  switch (value.kind) {
+    case "dialogue":
+      return hasOnlyKeys(value, ["kind", "focusNpcId"])
+        && isNonEmptyString(value.focusNpcId)
+        && context.presentNpcs.some((npc) => String(npc.id) === value.focusNpcId);
+    case "investigate":
+      return hasOnlyKeys(value, ["kind", "factId"])
+        && includesId(context.legalEventTargets.factIds, value.factId);
+    case "item":
+      return hasOnlyKeys(value, ["kind", "itemId"])
+        && includesId(context.legalEventTargets.itemIds, value.itemId);
+    case "battle":
+      return hasOnlyKeys(value, ["kind", "enemyId"])
+        && includesId(context.legalEventTargets.enemyIds, value.enemyId);
+    case "travel":
+    case "observe":
+      return hasOnlyKeys(value, ["kind", "locationId"])
+        && includesId(context.legalEventTargets.locationIds, value.locationId);
+    default: return false;
+  }
 }
 
 function rebuildEvent(event: NarrativeEventState): NarrativeEventState {
@@ -168,6 +270,9 @@ export function approveScenePackage(input: {
   const { context, proposal } = input;
 
   if (proposal.narration.trim() === "") return { ok: false, code: "empty_narration" };
+  if (!isLegalEventTarget(context, proposal.event)) {
+    return { ok: false, code: "illegal_event_target" };
+  }
 
   // 台词归属校验：NPC 必须在场。
   if (proposal.npcLine !== null) {
@@ -184,8 +289,13 @@ export function approveScenePackage(input: {
   }
 
   // 选项：恰好两个、不语义重复、目标合法。
-  if (proposal.choiceProposals.length !== 2) return { ok: false, code: "illegal_choice_target" };
+  if (!Array.isArray(proposal.choiceProposals) || proposal.choiceProposals.length !== 2) {
+    return { ok: false, code: "illegal_choice_target" };
+  }
   const [a, b] = proposal.choiceProposals;
+  if (!isWellFormedChoiceProposal(a) || !isWellFormedChoiceProposal(b)) {
+    return { ok: false, code: "invalid_choice_action" };
+  }
   if (semanticSummaryOf(a.action) === semanticSummaryOf(b.action)) {
     return { ok: false, code: "semantic_duplicate_choices" };
   }

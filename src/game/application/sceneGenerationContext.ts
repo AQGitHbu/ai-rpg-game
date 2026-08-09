@@ -4,6 +4,8 @@ import type {
   LocationId,
   NpcId,
   FactId,
+  ItemId,
+  EnemyId,
 } from "@/game/domain/scenarioBlueprint";
 import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { RecentBeat } from "@/game/domain/materializedView";
@@ -65,9 +67,17 @@ export type BudgetSummary = {
 };
 
 export type LegalActionCandidate = {
-  readonly kind: "move" | "talk" | "explore";
+  readonly kind: "move" | "talk" | "explore" | "battle_action";
   readonly label: string;
   readonly targetId?: string;
+};
+
+/** 只暴露权威实体 ID，供纯审批验证 event target；不附带隐藏正文或状态。 */
+export type LegalEventTargets = {
+  readonly locationIds: readonly LocationId[];
+  readonly factIds: readonly FactId[];
+  readonly itemIds: readonly ItemId[];
+  readonly enemyIds: readonly EnemyId[];
 };
 
 export type SceneGenerationContext = {
@@ -87,6 +97,7 @@ export type SceneGenerationContext = {
   };
   readonly recentBeats: readonly RecentBeat[];
   readonly legalActionCandidates: readonly LegalActionCandidate[];
+  readonly legalEventTargets: LegalEventTargets;
   readonly worldConstraints: readonly string[];
 };
 
@@ -158,6 +169,7 @@ export function buildSceneGenerationContext(record: GameRecordV2): SceneGenerati
     .filter((f) => !secretFactKeys.has(String(f.factId)))
     .filter((f) => f.locationId === currentLocId || f.discovered)
     .map((f) => ({ factId: f.factId, text: f.text }));
+  const activeBattleEnemyId = ws.battle.status === "active" ? ws.battle.enemyId : null;
 
   return {
     job,
@@ -188,19 +200,39 @@ export function buildSceneGenerationContext(record: GameRecordV2): SceneGenerati
       unresolvedThreadSummaries: [...ss.unresolvedThreads],
     },
     recentBeats: (ss.recentBeats as readonly RecentBeat[]).slice(-5),
-    legalActionCandidates: [
-      ...presentNpcs.map((npc) => ({
-        kind: "talk" as const,
-        label: `与${npc.name}交谈`,
-        targetId: npc.id,
-      })),
-      ...reachableLocations.map((l) => ({
-        kind: "move" as const,
-        label: `前往${l.name}`,
-        targetId: l.id,
-      })),
-      { kind: "explore" as const, label: "查看四周" },
-    ],
+    legalActionCandidates: ws.battle.status === "active"
+      ? [
+          { kind: "battle_action" as const, label: "攻击", targetId: "attack" },
+          { kind: "battle_action" as const, label: "防守", targetId: "guard" },
+          { kind: "battle_action" as const, label: "撤退", targetId: "flee" },
+        ]
+      : [
+          ...presentNpcs.map((npc) => ({
+            kind: "talk" as const,
+            label: `与${npc.name}交谈`,
+            targetId: npc.id,
+          })),
+          ...reachableLocations.map((l) => ({
+            kind: "move" as const,
+            label: `前往${l.name}`,
+            targetId: l.id,
+          })),
+          { kind: "explore" as const, label: "查看四周" },
+        ],
+    legalEventTargets: {
+      locationIds: ws.locations.map((location) => location.id),
+      factIds: Array.from(new Set([
+        ...sceneVisible.map((fact) => fact.factId),
+        ...job.resolvedEvent.facts.map((fact) => fact.factId),
+      ])),
+      itemIds: ws.items.map((item) => item.id),
+      enemyIds: activeBattleEnemyId !== null
+        ? [
+            activeBattleEnemyId,
+            ...ws.enemies.filter((enemy) => enemy.id !== activeBattleEnemyId).map((enemy) => enemy.id),
+          ]
+        : ws.enemies.map((enemy) => enemy.id),
+    },
     worldConstraints: [],
   };
 }

@@ -188,5 +188,10 @@ export function actionFromLegalCandidate(
     case "talk": return candidate.targetId === undefined
       ? null
       : { type: "talk", npcId: asNpcId(candidate.targetId), dialogueAct: "ask" };
+    case "battle_action": return candidate.targetId === "attack"
+      || candidate.targetId === "guard"
+      || candidate.targetId === "flee"
+      ? { type: "battle_action", action: candidate.targetId }
+      : null;
   }
 }

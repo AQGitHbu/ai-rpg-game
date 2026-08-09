@@ -114,6 +114,9 @@ function makeContext(job: PendingNarrativeJob): SceneGenerationContext {
       { kind: "move", label: `前往${loc2.name}`, targetId: loc2.id },
       { kind: "explore", label: "查看四周" },
     ],
+    legalEventTargets: {
+      locationIds: [loc1.id, loc2.id], factIds: [], itemIds: [], enemyIds: [],
+    },
     worldConstraints: [],
   };
 }
@@ -209,5 +212,21 @@ describe("deterministicSceneSource", () => {
   it("choices include a move action toward a reachable location", async () => {
     const result = await source.generateScene(makeContext(makeJob()));
     expect(result.choiceProposals.some((c) => c.action.type === "move" && String(c.action.locationId) === "loc_2")).toBe(true);
+  });
+
+  it("active battle fallback proposes two distinct executable battle actions", async () => {
+    const context: SceneGenerationContext = {
+      ...makeContext(makeJob({ eventKind: "battle" })),
+      legalActionCandidates: [
+        { kind: "battle_action", label: "攻击", targetId: "attack" },
+        { kind: "battle_action", label: "防守", targetId: "guard" },
+        { kind: "battle_action", label: "撤退", targetId: "flee" },
+      ],
+    };
+    const result = await source.generateScene(context);
+    expect(result.choiceProposals.map((choice) => choice.action)).toEqual([
+      { type: "battle_action", action: "attack" },
+      { type: "battle_action", action: "guard" },
+    ]);
   });
 });

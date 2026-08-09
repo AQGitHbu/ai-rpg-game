@@ -43,9 +43,16 @@ function makeContext(overrides?: Partial<SceneGenerationContext>): SceneGenerati
     },
     recentBeats: [],
     legalActionCandidates: [
+      { kind: "talk", label: "与老板交谈", targetId: "npc_1" },
       { kind: "explore", label: "探索" },
       { kind: "move", label: "前往客栈", targetId: "loc_2" },
     ],
+    legalEventTargets: {
+      locationIds: [asLocationId("loc_1"), asLocationId("loc_2")],
+      factIds: [asFactId("fact_a"), asFactId("fact_vis")],
+      itemIds: ["item_1" as never],
+      enemyIds: [asEnemyId("enemy_1")],
+    },
     worldConstraints: [],
     ...overrides,
   };
@@ -214,5 +221,73 @@ describe("approveScenePackage (Task 25)", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("illegal_choice_target");
+  });
+
+  it("dialogue focus NPC 不在场且 npcLine=null → 整场拒绝，不铸造 registry/writeback", () => {
+    const ghost = asNpcId("npc_ghost");
+    const result = approveScenePackage({
+      context: makeContext(),
+      proposal: makeProposal({
+        npcLine: null,
+        event: { kind: "dialogue", focusNpcId: ghost },
+        choiceProposals: [
+          { label: "询问", action: { type: "talk", npcId: ghost, dialogueAct: "ask" } },
+          { label: "支持", action: { type: "talk", npcId: ghost, dialogueAct: "support" } },
+        ],
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(false);
+    expect("choiceRegistry" in result).toBe(false);
+    expect("scene" in result).toBe(false);
+  });
+
+  it.each([
+    { name: "location", event: { kind: "observe", locationId: asLocationId("loc_unknown") } },
+    { name: "fact", event: { kind: "investigate", factId: asFactId("fact_unknown") } },
+    { name: "item", event: { kind: "item", itemId: "item_unknown" as never } },
+    { name: "enemy", event: { kind: "battle", enemyId: asEnemyId("enemy_unknown") } },
+  ] as const)("unknown $name event target → 整场拒绝且无 registry/writeback", ({ event }) => {
+    const result = approveScenePackage({
+      context: makeContext(),
+      proposal: makeProposal({ event }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(false);
+    expect("choiceRegistry" in result).toBe(false);
+    expect("scene" in result).toBe(false);
+  });
+
+  it("畸形 dialogueAct / Action 运行时形状 → 审批拒绝且不调用 ApprovedChoice 构造路径", () => {
+    const malformedDialogue = approveScenePackage({
+      context: makeContext(),
+      proposal: makeProposal({
+        event: { kind: "dialogue", focusNpcId: asNpcId("npc_1") },
+        choiceProposals: [
+          { label: "伪造行为", action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "invented" } as never },
+          { label: "支持", action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" } },
+        ],
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    const malformedShape = approveScenePackage({
+      context: makeContext(),
+      proposal: makeProposal({
+        choiceProposals: [
+          { label: "夹带字段", action: { type: "explore", grant: 999 } as never },
+          { label: "前往客栈", action: { type: "move", locationId: asLocationId("loc_2") } },
+        ],
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    for (const result of [malformedDialogue, malformedShape]) {
+      expect(result.ok).toBe(false);
+      expect("choiceRegistry" in result).toBe(false);
+      expect("scene" in result).toBe(false);
+    }
   });
 });

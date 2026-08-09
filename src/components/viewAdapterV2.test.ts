@@ -163,6 +163,7 @@ describe("adaptV2ToV1View dialogues", () => {
       },
       recentBeats: [],
       legalActionCandidates: [],
+      legalEventTargets: { locationIds: [loc.id], factIds: [], itemIds: [], enemyIds: [] },
       worldConstraints: [],
     };
     const sceneResult = await createDeterministicSceneSource().generateScene(context);

@@ -107,6 +107,25 @@ describe("buildChoiceMap", () => {
     expect([...map.keys()]).toEqual(["battle_action:attack", "battle_action:guard", "battle_action:flee"]);
   });
 
+  it("active battle 仍解析当前 revision 的两个 opaque registry token；stale/tampered 不解析", () => {
+    const ws: WorldState = {
+      ...buildWorldState(),
+      battle: { status: "active", enemyId: asEnemyId("enemy_wolf"), playerHp: 90, enemyHp: 20, round: 1 },
+    };
+    const registry = [
+      approvedFor({ sceneId: "scene-current", basedOnRevision: 3, label: "猛攻", action: { type: "battle_action", action: "attack" } }),
+      approvedFor({ sceneId: "scene-current", basedOnRevision: 3, label: "防守", action: { type: "battle_action", action: "guard" } }),
+    ];
+    const story = buildStoryState({ registry });
+    const current = buildChoiceMap(ws, story, 3);
+    expect(current.get(registry[0]!.choiceToken)).toEqual({ type: "battle_action", action: "attack" });
+    expect(current.get(registry[1]!.choiceToken)).toEqual({ type: "battle_action", action: "guard" });
+    expect(current.has("c_tampered")).toBe(false);
+    const stale = buildChoiceMap(ws, story, 4);
+    expect(stale.has(registry[0]!.choiceToken)).toBe(false);
+    expect(stale.has(registry[1]!.choiceToken)).toBe(false);
+  });
+
   it("场景选项只从 choiceRegistry token 映射，不再解析 actionKey", () => {
     const registry = [
       approvedFor({ sceneId: "scene-current", basedOnRevision: 3, label: "问铁匠", action: talkSmith }),

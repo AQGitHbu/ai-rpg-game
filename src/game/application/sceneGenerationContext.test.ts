@@ -137,6 +137,22 @@ describe("buildSceneGenerationContext", () => {
     expect(contextA).toEqual(contextB);
   });
 
+  it("active battle 只投影三个可执行 battle_action 候选", () => {
+    const record = makeRecord();
+    const context = buildSceneGenerationContext({
+      ...record,
+      worldState: {
+        ...record.worldState,
+        battle: { status: "active", enemyId: "enemy_1" as never, playerHp: 80, enemyHp: 30, round: 2 },
+      },
+    });
+    expect(context.legalActionCandidates).toEqual([
+      { kind: "battle_action", label: "攻击", targetId: "attack" },
+      { kind: "battle_action", label: "防守", targetId: "guard" },
+      { kind: "battle_action", label: "撤退", targetId: "flee" },
+    ]);
+  });
+
   it("NPC 最小权限：焦点 NPC context 不含其他 NPC 私密事实正文", () => {
     const world = makeWorld();
     const secretA = { factId: asFactId("fact_secret_a"), text: "老板的秘密A", source: "generated" as const, discovered: false };

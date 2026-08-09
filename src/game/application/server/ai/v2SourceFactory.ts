@@ -161,9 +161,15 @@ function createLiveSceneSource(
         const currentLocName = currentLocation.name;
         const npcsHere = presentNpcs;
         const firstNpc = npcsHere[0];
-        const event: NarrativeEventState = firstNpc !== undefined
-          ? { kind: "dialogue", focusNpcId: firstNpc.id }
-          : { kind: "observe", locationId: currentLocation.id };
+        const hasBattleCandidates = context.legalActionCandidates.some(
+          (candidate) => candidate.kind === "battle_action",
+        );
+        const battleEnemyId = context.legalEventTargets.enemyIds[0];
+        const event: NarrativeEventState = hasBattleCandidates && battleEnemyId !== undefined
+          ? { kind: "battle", enemyId: battleEnemyId }
+          : firstNpc !== undefined
+            ? { kind: "dialogue", focusNpcId: firstNpc.id }
+            : { kind: "observe", locationId: currentLocation.id };
         const selectable = buildSelectableChoiceProposals(context, event);
         if (selectable.length < 2) return fallback.generateScene(context);
 

@@ -35,52 +35,51 @@ export function buildChoiceMap(
     map.set("battle_action:attack", { type: "battle_action", action: "attack" });
     map.set("battle_action:guard", { type: "battle_action", action: "guard" });
     map.set("battle_action:flee", { type: "battle_action", action: "flee" });
-    return map;
-  }
-
-  // 当前地点 NPC → talk
-  for (const npc of worldState.npcs) {
-    if (npc.locationId === worldState.currentLocationId) {
-      const key = `talk:${String(npc.id)}`;
-      map.set(key, { type: "talk", npcId: npc.id, dialogueAct: "ask" });
-    }
-  }
-
-  // 连接且已解锁的地点 → move
-  const currentLoc = worldState.locations.find((l) => l.id === worldState.currentLocationId);
-  if (currentLoc !== undefined) {
-    for (const locId of currentLoc.connectedLocationIds) {
-      if (worldState.unlockedLocationIds.includes(locId)) {
-        const key = `move:${String(locId)}`;
-        map.set(key, { type: "move", locationId: locId });
+  } else {
+    // 当前地点 NPC → talk
+    for (const npc of worldState.npcs) {
+      if (npc.locationId === worldState.currentLocationId) {
+        const key = `talk:${String(npc.id)}`;
+        map.set(key, { type: "talk", npcId: npc.id, dialogueAct: "ask" });
       }
     }
-  }
 
-  // 当前地点可拾取物品 → take_item
-  if (currentLoc !== undefined) {
-    for (const itemId of currentLoc.availableItemIds) {
-      if (!worldState.inventory.includes(itemId)) {
-        const key = `take_item:${String(itemId)}`;
-        map.set(key, { type: "take_item", itemId });
+    // 连接且已解锁的地点 → move
+    const currentLoc = worldState.locations.find((l) => l.id === worldState.currentLocationId);
+    if (currentLoc !== undefined) {
+      for (const locId of currentLoc.connectedLocationIds) {
+        if (worldState.unlockedLocationIds.includes(locId)) {
+          const key = `move:${String(locId)}`;
+          map.set(key, { type: "move", locationId: locId });
+        }
       }
     }
-  }
 
-  // 当前地点敌人 → attack
-  for (const enemy of worldState.enemies) {
-    if (
-      enemy.locationId === worldState.currentLocationId &&
-      !worldState.defeatedEnemyIds.includes(enemy.id)
-    ) {
-      const key = `attack:${String(enemy.id)}`;
-      map.set(key, { type: "attack", enemyId: enemy.id });
+    // 当前地点可拾取物品 → take_item
+    if (currentLoc !== undefined) {
+      for (const itemId of currentLoc.availableItemIds) {
+        if (!worldState.inventory.includes(itemId)) {
+          const key = `take_item:${String(itemId)}`;
+          map.set(key, { type: "take_item", itemId });
+        }
+      }
     }
-  }
 
-  // 通用行动
-  map.set("explore", { type: "explore" });
-  map.set("rest", { type: "rest" });
+    // 当前地点敌人 → attack
+    for (const enemy of worldState.enemies) {
+      if (
+        enemy.locationId === worldState.currentLocationId &&
+        !worldState.defeatedEnemyIds.includes(enemy.id)
+      ) {
+        const key = `attack:${String(enemy.id)}`;
+        map.set(key, { type: "attack", enemyId: enemy.id });
+      }
+    }
+
+    // 通用行动
+    map.set("explore", { type: "explore" });
+    map.set("rest", { type: "rest" });
+  }
 
   // 叙事场景的固定选项：只从服务端 choiceRegistry 按 token 映射。
   // 不再解析 scene.choices 的 actionKey；未知/过期 token 不产生映射。
