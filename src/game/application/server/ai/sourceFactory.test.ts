@@ -66,3 +66,73 @@ describe("resolveSelectedChoiceProposals", () => {
     ])).toBeNull();
   });
 });
+
+describe("createLiveSceneSource 焦点 NPC", () => {
+  it("talk 回合的对话场景必须指向玩家实际交谈的 NPC，而非第一个在场 NPC", async () => {
+    const { createLiveSceneSource } = await import("./sourceFactory");
+    const { asNpcId, asLocationId } = await import("@/game/domain/scenarioBlueprint");
+    const { asNarrativeJobId, asTurnId } = await import("@/game/domain/events");
+    const { createPendingNarrativeJob } = await import("@/game/domain/pendingNarrativeJob");
+
+    const npcA = { id: asNpcId("npc_a"), name: "格里姆", role: "工匠", publicProfile: "p", knownFactCards: [], hiddenFactCards: [], sceneVisibleFactIds: [] };
+    const npcB = { id: asNpcId("npc_b"), name: "维珀", role: "情报贩子", publicProfile: "p", knownFactCards: [], hiddenFactCards: [], sceneVisibleFactIds: [] };
+
+    const jobResult = createPendingNarrativeJob({
+      jobId: asNarrativeJobId("job_1"),
+      turnId: asTurnId("turn_1"),
+      actionId: "act_talk",
+      expectedRevision: 0,
+      turnNumber: 1,
+      actionSummary: { kind: "talk", npcId: npcB.id },
+      focusNpcId: npcB.id,
+      resolvedEvent: {
+        actionId: "act_talk", status: "success", eventKind: "dialogue",
+        facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [],
+      },
+      domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+      requestedAt: "2026-01-02",
+    });
+    if (!jobResult.ok) throw new Error("job 构造失败");
+
+    const context = {
+      job: jobResult.job,
+      player: { name: "p", identity: "i", knownFactCards: [] },
+      currentLocation: { id: asLocationId("loc_1"), name: "小镇", description: "d", kind: "main" },
+      publicWorldFacts: [],
+      sceneVisibleFacts: [],
+      presentNpcs: [npcA, npcB],
+      story: {
+        currentAct: 1, targetActs: 3, tension: 30, nextPacingNeed: "reveal",
+        remainingBudget: { remainingLocations: 1, remainingNpcs: 1, remainingEvents: 1, remainingSideQuests: 0 },
+        unresolvedThreadSummaries: [],
+      },
+      recentBeats: [],
+      legalActionCandidates: [],
+      legalEventTargets: { locationIds: [], factIds: [], itemIds: [], enemyIds: [] },
+      worldConstraints: [],
+    };
+
+    const transport = {
+      complete: async () => ({
+        ok: true,
+        content: JSON.stringify({
+          narration: "场景。",
+          npcLine: { npcId: "npc_b", text: "维珀开口。", emotion: "neutral" },
+          choices: [
+            { label: "支持", candidateId: "candidate_1" },
+            { label: "质疑", candidateId: "candidate_2" },
+          ],
+        }),
+        latencyMs: 1,
+      }),
+    } as never;
+
+    const source = createLiveSceneSource(transport, { baseUrl: "x", apiKey: "k", model: "m" });
+    const result = await source.generateScene(context as never);
+    expect(result.event.kind).toBe("dialogue");
+    if (result.event.kind === "dialogue") {
+      // 关键断言：焦点是玩家交谈的 npc_b（维珀），不是第一个在场 NPC npc_a
+      expect(String(result.event.focusNpcId)).toBe("npc_b");
+    }
+  });
+});

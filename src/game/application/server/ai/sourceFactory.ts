@@ -149,7 +149,7 @@ export function resolveLiveNpcLine<TNpcId>(
   return { npcId: presentNpc.id, text: candidate.text.trim(), emotion };
 }
 
-function createLiveSceneSource(
+export function createLiveSceneSource(
   transport: AiTransport,
   config: AiTransportConfig,
   logger?: GameLogger,
@@ -161,7 +161,12 @@ function createLiveSceneSource(
         const { job, currentLocation, presentNpcs, story } = context;
         const currentLocName = currentLocation.name;
         const npcsHere = presentNpcs;
-        const firstNpc = npcsHere[0];
+        // 焦点 NPC：talk 回合必须指向玩家实际交谈的 NPC（job.focusNpcId），
+        // 不能固定取第一个在场 NPC，否则"与 B 交谈"永远生成 A 的对话。
+        const talkTarget = job.actionSummary.kind === "talk" ? job.focusNpcId : undefined;
+        const firstNpc = talkTarget !== undefined
+          ? npcsHere.find((npc) => String(npc.id) === String(talkTarget)) ?? npcsHere[0]
+          : npcsHere[0];
         const hasBattleCandidates = context.legalActionCandidates.some(
           (candidate) => candidate.kind === "battle_action",
         );
@@ -198,6 +203,7 @@ function createLiveSceneSource(
 }
 
 choices 必须恰好 2 个，candidateId 必须从服务端候选中选择且不能重复。
+narration 与 npcLine 中出现的 NPC 名字必须与上方列出的名字逐字一致，不得使用别名或变体。
 只返回 JSON，不要其他文字。`;
 
         const messages: readonly AiMessage[] = [
