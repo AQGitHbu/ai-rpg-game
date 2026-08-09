@@ -134,12 +134,14 @@ export type LiveNpcLineCandidate = {
  */
 export function resolveLiveNpcLine<TNpcId>(
   candidate: LiveNpcLineCandidate | null,
-  presentNpcs: readonly { readonly id: TNpcId }[],
+  presentNpcs: readonly { readonly id: TNpcId; readonly name?: string }[],
 ): { readonly npcId: TNpcId; readonly text: string; readonly emotion: NarrativeEmotion } | null {
   if (candidate === null || typeof candidate !== "object") return null;
   if (typeof candidate.npcId !== "string" || typeof candidate.text !== "string") return null;
   if (candidate.text.trim() === "") return null;
-  const presentNpc = presentNpcs.find((npc) => String(npc.id) === candidate.npcId);
+  // AI 可能把 ID 写成名字：先按 ID 精确匹配，再按名字回退匹配。
+  const presentNpc = presentNpcs.find((npc) => String(npc.id) === candidate.npcId)
+    ?? presentNpcs.find((npc) => npc.name !== undefined && npc.name === candidate.npcId);
   if (presentNpc === undefined) return null;
   const emotion = NARRATIVE_EMOTIONS.includes(candidate.emotion as NarrativeEmotion)
     ? (candidate.emotion as NarrativeEmotion)
@@ -181,14 +183,14 @@ function createLiveSceneSource(
 节奏需要：${story.nextPacingNeed}
 玩家行动类型：${job.resolvedEvent.eventKind}
 
-在场 NPC：${npcsHere.map((n) => `${n.name}(${n.role})`).join("、") || "无"}
+在场 NPC（npcLine.npcId 必须使用下列 ID 之一，不得自创）：${npcsHere.map((n) => `${n.id}=${n.name}(${n.role})`).join("、") || "无"}
 
 服务端候选：${JSON.stringify(selectable.map((entry) => ({ candidateId: entry.candidateId, label: entry.proposal.label })))}
 
 返回严格 JSON，格式如下：
 {
   "narration": "场景旁白文字（2-4句）",
-  "npcLine": { "npcId": "在场NPC的ID", "text": "NPC说的台词", "emotion": "neutral" },
+  "npcLine": { "npcId": "在场NPC的ID（必须原样使用上方列出的 ID）", "text": "NPC说的台词（符合其身份与当前情境，不要用招呼语敷衍）", "emotion": "neutral" },
   "choices": [
     { "label": "选项1文字", "candidateId": "candidate_1" },
     { "label": "选项2文字", "candidateId": "candidate_2" }

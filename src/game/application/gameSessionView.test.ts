@@ -48,8 +48,10 @@ describe("projectGameSessionView", () => {
 
   it("projects available NPCs at current location", () => {
     const view = projectGameSessionView(ws, ss, 0, "test-ending-session");
-    expect(view.narrative.npcDialogues).toHaveLength(1);
-    expect(view.narrative.npcDialogues[0]?.name).toBe("老板");
+    // 无焦点场景时 NPC 经 currentLocation.npcs 暴露；不渲染模板对话面板
+    expect(view.currentLocation.npcs).toHaveLength(1);
+    expect(view.currentLocation.npcs[0]?.name).toBe("老板");
+    expect(view.narrative.npcDialogues).toHaveLength(0);
   });
 
   it("projects available moves to connected unlocked locations", () => {
@@ -74,14 +76,11 @@ describe("projectGameSessionView", () => {
     };
     const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
     const view = projectGameSessionView(wsTwo, ss, 0, "test-ending-session");
-    const dialogues = view.narrative.npcDialogues;
-    expect(dialogues).toBeDefined();
-    const ids = (dialogues ?? []).map((d) => String(d.npcId));
-    expect(ids).toContain("npc_1");
-    expect(ids).toContain("npc_2");
-    for (const d of dialogues ?? []) {
-      expect(d.speechPages.length).toBeGreaterThan(0);
-    }
+    // 无焦点场景：所有在场 NPC 经 currentLocation.npcs 暴露，不产生模板对话面板
+    const names = view.currentLocation.npcs.map((npc) => npc.name);
+    expect(names).toContain("老板");
+    expect(names).toContain("客人");
+    expect(view.narrative.npcDialogues ?? []).toHaveLength(0);
   });
 
   it("read model 零泄漏：序列化 view 不含 actionKey/choiceRegistry/PendingNarrativeJob/candidateEventPool/hidden facts", () => {
@@ -166,9 +165,9 @@ describe("projectGameSessionView", () => {
     // 焦点 NPC 持有两个 dialogue choices 且 freeInput 开启
     expect(lu?.choices?.map((c) => c.choiceToken).sort()).toEqual(["t1", "t2"]);
     expect(lu?.freeInputEnabled).toBe(true);
-    // 非焦点 NPC 只有台词，无 choices，freeInput 关闭
-    expect(guest?.choices ?? []).toHaveLength(0);
-    expect(guest?.freeInputEnabled).toBe(false);
+    // 非焦点 NPC 无场景供给台词时不渲染模板面板（仍经 currentLocation.npcs 可见）
+    expect(guest).toBeUndefined();
+    expect(view.currentLocation.npcs.map((npc) => npc.name)).toContain("客人");
     // 世界行动选择不投影为每 NPC 对话选择（dialogue 场景下 narrative.choices 应为空）
     expect(view.narrative.choices ?? []).toHaveLength(0);
   });

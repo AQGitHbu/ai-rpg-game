@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { resolveLiveNpcLine, resolveSelectedChoiceProposals } from "./sourceFactory";
 
-const presentNpcs = [{ id: "npc_1" }, { id: "npc_2" }] as readonly { readonly id: unknown }[];
+const presentNpcs = [
+  { id: "npc_1", name: "老板" },
+  { id: "npc_2", name: "客人" },
+] as readonly { readonly id: unknown; readonly name: string }[];
 
 describe("resolveLiveNpcLine", () => {
   it("keeps a line whose npcId belongs to a present NPC", () => {
@@ -25,6 +28,13 @@ describe("resolveLiveNpcLine", () => {
   it("normalizes invalid emotion to neutral", () => {
     const resolved = resolveLiveNpcLine({ npcId: "npc_1", text: "你好。", emotion: "furious" }, presentNpcs);
     expect(resolved?.emotion).toBe("neutral");
+  });
+
+  it("falls back to name matching when AI writes the NPC name instead of id", () => {
+    const resolved = resolveLiveNpcLine({ npcId: "客人", text: "这壶酒我请。", emotion: "neutral" }, presentNpcs);
+    expect(resolved).not.toBeNull();
+    expect(String(resolved!.npcId)).toBe("npc_2");
+    expect(resolved!.text).toBe("这壶酒我请。");
   });
 });
 

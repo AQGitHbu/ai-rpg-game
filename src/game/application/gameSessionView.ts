@@ -276,7 +276,7 @@ export function projectGameSessionView(
     ? [projectedSceneChoices[0]!, projectedSceneChoices[1]!]
     : [];
   const sceneDialogues = new Map((scene?.npcDialogues ?? []).map((entry) => [String(entry.npcId), entry]));
-  const npcDialogues: readonly NpcDialogueView[] = presentNpcs.map((npc) => {
+  const npcDialogues: readonly NpcDialogueView[] = presentNpcs.flatMap((npc) => {
     const isFocus = focusNpcId === String(npc.id);
     const supplied = sceneDialogues.get(String(npc.id));
     const focusLine = scene?.npcLine !== null
@@ -285,17 +285,19 @@ export function projectGameSessionView(
       && scene.npcLine.text.trim() !== ""
       ? scene.npcLine.text.trim()
       : null;
+    // 非焦点 NPC 若没有场景供给的台词，不渲染千篇一律的模板招呼面板。
+    if (!isFocus && supplied === undefined && focusLine === null) return [];
     const speechPages = supplied !== undefined && supplied.speechPages.length > 0
       ? [...supplied.speechPages]
       : paginateSpeechText(focusLine ?? composeDeterministicNpcLine(npc.name, npc.role), NPC_SCENE_PAGE_CHAR_BUDGET);
-    return {
+    return [{
       npcId: String(npc.id),
       name: npc.name,
       role: npc.role,
       speechPages,
       choices: isFocus ? dialogueChoices : [],
       freeInputEnabled: isFocus,
-    };
+    }];
   });
 
   const battle = activeBattle === null ? null : {
