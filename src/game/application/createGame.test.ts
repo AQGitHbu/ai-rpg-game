@@ -292,6 +292,9 @@ describe("createGame", () => {
     expect(record!.worldState.player.identity).toBe("被逐出师门的机关师");
     // setup 持久化，供序幕/角色面板/叙事生成消费
     expect(record!.worldState.generation.setup).toEqual(setup);
+    // 起始地点必须为小镇层级（town 生成覆盖）
+    const startLocation = record!.worldState.locations.find((location) => location.id === record!.worldState.currentLocationId);
+    expect(startLocation?.scale).toBe("town");
   });
 
   it("rejects when active game exists", async () => {

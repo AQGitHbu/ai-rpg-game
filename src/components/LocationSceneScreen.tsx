@@ -120,6 +120,24 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap }: Locat
       <div className="location-scene-content">
         <p className="location-scene-caption">{view.currentLocation.description}</p>
 
+        {/* 小镇层级：展示居民/人物入口，交谈统一走正式回合选项 */}
+        {view.currentLocation.scale === "town" && view.currentLocation.npcs.length > 0 ? (
+          <section className="scene-town-residents" aria-label="小镇人物">
+            <h3>小镇人物</h3>
+            {view.currentLocation.npcs.map((npc) => (
+              <button
+                key={npc.talkChoice.choiceToken}
+                type="button"
+                disabled={busy || pending}
+                onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: npc.talkChoice.choiceToken })}
+              >
+                <strong>{npc.name}</strong>
+                <span>{npc.role}</span>
+              </button>
+            ))}
+          </section>
+        ) : null}
+
         {pending ? (
           <p role="status" aria-live="polite" className="narrative-pending-caption">
             正在编排下一幕……

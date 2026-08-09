@@ -44,7 +44,12 @@ export function AdventureHud({ view, screen, onOpen, developmentTools, onOpenDev
         </span>
       </button>
 
-      {screen === "scene" ? <h1 className="adventure-hud-location-title">{view.currentLocation.name}</h1> : null}
+      {screen === "scene" ? (
+        <h1 className="adventure-hud-location-title">
+          {view.currentLocation.name}
+          {view.currentLocation.scale === "town" ? <small className="adventure-hud-location-scale">小镇</small> : null}
+        </h1>
+      ) : null}
 
       <aside className="adventure-hud-objective">
         <span>当前目标</span>

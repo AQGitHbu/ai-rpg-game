@@ -118,7 +118,17 @@ export function repairWorldGenerationCandidate(
     world: worldFixed,
     player: playerFixed,
     startAnchor: anchorFixed,
-    locations: fixArray(record.locations),
+    locations: fixArray(record.locations).map((entry) => {
+      // scale 白名单化：非法值视为缺省（scene），避免脏值流入 WorldState。
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return entry;
+      const location = entry as Record<string, unknown>;
+      if (location.scale !== "town" && location.scale !== "scene" && location.scale !== undefined) {
+        repaired = true;
+        const { scale: _ignored, ...rest } = location;
+        return rest;
+      }
+      return entry;
+    }),
     npcs: fixArray(record.npcs),
     items: fixArray(record.items),
     enemies: fixArray(record.enemies),
@@ -279,7 +289,7 @@ ${setupSection}
 1. world：summary/tone/themes/publicFacts/hiddenFacts/tags
 2. player：name/identity/backgroundSummary/startingLocationId/startingItemIds/baseStats
 3. startAnchor：locationId/npcId/startQuestId/mainThreadId
-4. locations：3-5 个互相连接（connectedLocationIds 可达网络）
+4. locations：3-5 个互相连接（connectedLocationIds 可达网络）；起始地点（startAnchor.locationId）必须是 scale "town" 的小镇，其余地点 scale "scene"
 5. npcs：3-6 个，knownFactIds/hiddenFactIds 必须且只能引用 world.publicFacts/hiddenFacts 中已定义的 fact id
 6. items：1-3 个
 7. quests：主线必须恰好覆盖 stage 1-${targetActs}，每幕一个可达主任务并逐幕解锁；另可有 0-2 支线
@@ -291,7 +301,7 @@ ${setupSection}
   "world": { "summary": "...", "tone": "...", "themes": ["..."], "publicFacts": [{ "id": "fact_xxx", "text": "..." }], "hiddenFacts": [{ "id": "fact_yyy", "text": "..." }], "tags": [] },
   "player": { "name": "...", "identity": "...", "backgroundSummary": "...", "startingLocationId": "loc_xxx", "startingItemIds": [], "baseStats": { "hp": 100, "attack": 10, "defense": 5 } },
   "startAnchor": { "locationId": "loc_xxx", "npcId": "npc_xxx", "startQuestId": "quest_act1", "mainThreadId": "thread_main" },
-  "locations": [{ "id": "loc_xxx", "name": "...", "description": "...", "kind": "main", "connectedLocationIds": ["loc_yyy"], "npcIds": ["npc_xxx"], "availableItemIds": [], "tags": [] }],
+  "locations": [{ "id": "loc_xxx", "name": "...", "description": "...", "kind": "main", "scale": "town", "connectedLocationIds": ["loc_yyy"], "npcIds": ["npc_xxx"], "availableItemIds": [], "tags": [] }],
   "npcs": [{ "id": "npc_xxx", "name": "...", "role": "...", "description": "...", "locationId": "loc_xxx", "isCompanion": false, "knownFactIds": [], "hiddenFactIds": [], "goals": [], "tags": [] }],
   "items": [{ "id": "item_xxx", "name": "...", "description": "...", "kind": "key", "tags": [] }],
   "enemies": [{ "id": "enemy_xxx", "name": "...", "tier": "normal", "stats": { "hp": 8, "attack": 4, "defense": 0 }, "locationId": "loc_xxx", "tags": [] }],

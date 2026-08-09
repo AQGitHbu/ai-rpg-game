@@ -331,7 +331,7 @@ export function createFixtureWorldSource(): WorldGenerationSource {
       const locations = medium
         ? [
             {
-              id: "loc_start", name: profile.start, description: `一处临近${variant.route}的落脚点。`, kind: "main" as const,
+              id: "loc_start", name: profile.start, description: `一处临近${variant.route}的落脚点。`, kind: "main" as const, scale: "town" as const,
               connectedLocationIds: ["loc_street"], npcIds: ["npc_innkeeper"], availableItemIds: [], tags: [input.gameType],
             },
             {
@@ -353,7 +353,7 @@ export function createFixtureWorldSource(): WorldGenerationSource {
           ]
         : [
             {
-              id: "loc_start", name: profile.start, description: `一处临近${variant.route}的落脚点。`, kind: "main" as const,
+              id: "loc_start", name: profile.start, description: `一处临近${variant.route}的落脚点。`, kind: "main" as const, scale: "town" as const,
               connectedLocationIds: ["loc_street"], npcIds: ["npc_innkeeper"], availableItemIds: [], tags: [input.gameType],
             },
             {

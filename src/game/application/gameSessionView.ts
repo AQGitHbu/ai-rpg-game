@@ -4,6 +4,7 @@ import {
   composeDeterministicNpcLine,
 } from "@/game/domain/narrative";
 import { paginateSpeechText } from "@/game/domain/speechPagination";
+import { locationScaleOf } from "@/game/domain/scenarioBlueprint";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import { buildChoiceMap } from "./buildChoiceMap";
@@ -51,13 +52,22 @@ export type GameSessionView = {
       readonly name: string;
       readonly current: boolean;
       readonly visited: boolean;
+      /** 地点层级：town/scene，UI 据此渲染小镇或场景视图。 */
+      readonly scale: "town" | "scene";
       readonly travelChoice: PlayerChoiceView | null;
     }[];
   };
   readonly currentLocation: {
     readonly name: string;
     readonly description: string;
+    readonly scale: "town" | "scene";
     readonly actions: readonly PlayerChoiceView[];
+    /** 当前地点的 NPC 名单：小镇视图渲染居民/人物入口。 */
+    readonly npcs: readonly {
+      readonly name: string;
+      readonly role: string;
+      readonly talkChoice: PlayerChoiceView;
+    }[];
   };
   readonly obtainableItems: readonly {
     readonly name: string;
@@ -193,6 +203,7 @@ export function projectGameSessionView(
       name: location.name,
       current: location.id === worldState.currentLocationId,
       visited: worldState.visitedLocationIds.includes(location.id),
+      scale: locationScaleOf(location),
       travelChoice: travelTargets.has(location.id)
         ? choice({ type: "move", locationId: location.id }, revision, `前往${location.name}`, "travel")
         : null,
@@ -323,7 +334,18 @@ export function projectGameSessionView(
     currentLocation: {
       name: currentLocation?.name ?? "未知地点",
       description: currentLocation?.description ?? "",
+      scale: currentLocation === undefined ? "scene" : locationScaleOf(currentLocation),
       actions: locationActions,
+      npcs: presentNpcs.map((npc) => ({
+        name: npc.name,
+        role: npc.role,
+        talkChoice: choice(
+          { type: "talk", npcId: npc.id, dialogueAct: "ask" },
+          revision,
+          `与${npc.name}交谈`,
+          "dialogue",
+        ),
+      })),
     },
     obtainableItems,
     inventory: worldState.inventory.map((itemId) => {
