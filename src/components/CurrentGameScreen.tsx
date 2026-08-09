@@ -117,12 +117,12 @@ export function CurrentGameScreen() {
 
   if (state.phase === "active") {
     const { view } = state;
-    // 序幕
+    // 序幕：优先展示玩家开局配置中的故事开端，旧存档回退通用文案。
     if (!view.prologueShown) {
       return (
         <Panel className="prologue-screen">
           <h2>序幕</h2>
-          <p>你踏上了冒险的旅途。前方是未知的世界，充满了机遇与危险。</p>
+          <p>{view.setup.storyOpening ?? "你踏上了冒险的旅途。前方是未知的世界，充满了机遇与危险。"}</p>
           <InlineButton onClick={() => void handlePrologueAck()}>开始冒险</InlineButton>
         </Panel>
       );

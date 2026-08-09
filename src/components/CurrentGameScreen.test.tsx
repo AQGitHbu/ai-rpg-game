@@ -13,7 +13,9 @@ vi.mock("./gameActionRequest", () => ({
 
 const endedView: GameSessionView = {
   revision: 9,
+  turnNumber: 8,
   gameType: "wuxia",
+  setup: { storyOpening: null, worldPremise: null, characterProfile: null, narrativeStyle: null },
   player: { name: "侠客", identity: "剑客", hp: 80, attack: 10, defense: 5 },
   worldMap: { locations: [] },
   currentLocation: { name: "终局", description: "", actions: [] },

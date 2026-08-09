@@ -2,7 +2,7 @@ import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
 import type { WorldGenerationSource } from "../../createGame";
 import type { WorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
-import type { GameLength } from "@/game/domain/newGame";
+import type { GameLength, GameSetup } from "@/game/domain/newGame";
 import { parseWorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
 import { validateWorldGenerationCandidate } from "@/game/gameplay/rpg/worldGeneration";
 import { createFixtureWorldSource } from "../../createGame";
@@ -162,14 +162,14 @@ export function createWorldGenerationSource(
         }
         const parsed = parseJsonResponse(result.content);
         if (parsed === null) {
-          logger?.warn("world_generation_parse_failed");
+          logger?.warn("world_generation_parse_failed", { reason: "json_parse_error" });
           return fixture.generate(input);
         }
 
         // 机械修复（无创意）后走同一 schema parser + validator。
         const repaired = repairWorldGenerationCandidate(parsed);
         if (repaired.candidate === null) {
-          logger?.warn("world_generation_repair_failed");
+          logger?.warn("world_generation_repair_failed", { reason: classifyRepairFailure(parsed) });
           return fixture.generate(input);
         }
 
@@ -178,8 +178,24 @@ export function createWorldGenerationSource(
           targetActs: TARGET_ACTS[input.gameLength],
         });
         if (!validated.ok) {
-          logger?.warn("world_generation_validation_failed");
+          logger?.warn("world_generation_validation_failed", {
+            reason: validated.issues[0]?.code ?? "unknown",
+            issueCount: validated.issues.length,
+          });
           return fixture.generate(input);
+        }
+        // 玩家开局配置是权威输入：无论 AI 返回什么，角色名/身份/背景必须以配置为准。
+        if (input.setup !== undefined) {
+          const candidate = validated.validated;
+          return {
+            ...candidate,
+            player: {
+              ...candidate.player,
+              name: input.setup.characterName,
+              identity: input.setup.characterIdentity,
+              backgroundSummary: input.setup.characterProfile ?? candidate.player.backgroundSummary,
+            },
+          };
         }
         return validated.validated;
       } catch (error) {
@@ -190,13 +206,36 @@ export function createWorldGenerationSource(
   };
 }
 
-function buildWorldPrompt(input: { gameType: string; gameLength: GameLength; seed: string }): string {
+// 失败分类（只含结构信息，不含玩家内容，可安全入日志）。
+function classifyRepairFailure(raw: unknown): string {
+  if (typeof raw !== "object" || raw === null) return "not_object";
+  if (Array.isArray(raw)) return "array_root";
+  const record = raw as Record<string, unknown>;
+  const missing: string[] = [];
+  for (const key of ["world", "player", "startAnchor", "locations", "npcs", "quests", "endings"]) {
+    if (!(key in record)) missing.push(key);
+  }
+  return missing.length > 0 ? `missing:${missing.join(",")}` : "schema_invalid";
+}
+
+function buildWorldPrompt(input: { gameType: string; gameLength: GameLength; seed: string; setup?: GameSetup }): string {
   const targetActs = TARGET_ACTS[input.gameLength];
+  const setup = input.setup;
+  const setupSection = setup === undefined
+    ? ""
+    : `
+玩家已提交开局配置，世界必须围绕它构建：
+- 主角姓名：${setup.characterName}（player.name 必须原样返回，不得更改）
+- 主角身份/职业：${setup.characterIdentity}（player.identity 必须原样返回）
+${setup.characterProfile !== undefined && setup.characterProfile !== "" ? `- 主角背景（写入 player.backgroundSummary）：${setup.characterProfile}\n` : ""}- 世界观背景（world.summary/publicFacts/地点与 NPC 设定必须与之吻合）：${setup.worldPremise}
+- 故事开端（起始地点、起始 NPC 与首个任务必须服务于这个开端）：${setup.storyOpening}
+- 叙事风格：${setup.narrativeStyle}（所有文本描述遵循该风格）
+`;
   return `你是一个 RPG 世界设计师。生成完整游戏世界，返回严格 JSON（ID 为普通字符串，非品牌化）。
 游戏类型：${input.gameType}
 游戏长度：${input.gameLength}
 种子：${input.seed}
-
+${setupSection}
 要求：
 1. world：summary/tone/themes/publicFacts/hiddenFacts/tags
 2. player：name/identity/backgroundSummary/startingLocationId/startingItemIds/baseStats

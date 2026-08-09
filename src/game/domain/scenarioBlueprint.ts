@@ -1,4 +1,4 @@
-import type { GameTypeId } from "./newGame";
+import type { GameTypeId, GameSetup } from "./newGame";
 import type { BudgetPolicy } from "./budgetPolicy";
 
 // ---------------------------------------------------------------------------
@@ -350,4 +350,6 @@ export type GenerationMetadata = {
   readonly templateVersion: string;
   readonly inputDigest: string;
   readonly gameType: GameTypeId;
+  /** 玩家开局配置（可选）：旧存档无此字段，读取时必须容忍缺省。 */
+  readonly setup?: GameSetup;
 };

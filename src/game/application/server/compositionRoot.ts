@@ -23,7 +23,7 @@ import type { SceneSource } from "../sceneSource";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Interaction } from "@/game/domain/action";
 import type { GameSessionView } from "../gameSessionView";
-import type { GameTypeId, GameLength, NarrativeStyle, ContentIntensity } from "@/game/domain/newGame";
+import type { GameTypeId, GameLength, GameSetup } from "@/game/domain/newGame";
 import { deriveEndingSessionIdentity, matchesEndingSessionIdentity } from "./endingSessionIdentity";
 
 export type { RequestLogContext };
@@ -33,20 +33,13 @@ export type { RequestLogContext };
 // ---------------------------------------------------------------------------
 
 /** HTTP 开局输入：核心收 gameType/gameLength，gameId 与 seed 由服务端装配。
- *  role/world 字段为 NewGameInput 的可选透传（当前世界生成源不使用，
- *  保留供未来 AI 世界生成器消费），字段名与 domain NewGameInput 完全一致。 */
+ *  setup 为路由层已经通过 validateNewGameInput 的开局配置，
+ *  世界生成源必须消费它（角色名/身份/世界观/故事开端）。 */
 export type CreateGameHttpInput = {
   readonly gameType: GameTypeId;
   readonly gameLength: GameLength;
   readonly restart?: { readonly identity: string; readonly expectedRevision: number };
-  readonly characterName?: string;
-  readonly characterIdentity?: string;
-  readonly characterProfile?: string;
-  readonly personalityTags?: readonly string[];
-  readonly worldPremise?: string;
-  readonly storyOpening?: string;
-  readonly narrativeStyle?: NarrativeStyle;
-  readonly contentIntensity?: ContentIntensity;
+  readonly setup?: GameSetup;
 };
 
 type PerformTurnEntryPointResult =
@@ -167,6 +160,7 @@ export function createServerGameEntryPoints(
           gameType: input.gameType,
           gameLength: input.gameLength,
           seed: randomUUID(),
+          ...(input.setup === undefined ? {} : { setup: input.setup }),
           ...(replaceCurrent === undefined ? {} : { replaceCurrent }),
         },
         { repository, source, now, aiEnabled },

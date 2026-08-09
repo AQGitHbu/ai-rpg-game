@@ -111,6 +111,64 @@ describe("createWorldGenerationSource", () => {
     expect(candidate.locations.length).toBe(2);
   });
 
+  it("开局配置作为权威输入：prompt 消费配置且玩家字段强制覆盖 AI 返回", async () => {
+    const prompts: string[] = [];
+    const transport = {
+      complete: async (_config: unknown, messages: readonly { role: string; content: string }[]) => {
+        prompts.push(messages.map((message) => message.content).join("\n"));
+        return { ok: true, content: JSON.stringify(validCandidate()), latencyMs: 1 };
+      },
+    } as unknown as AiTransport;
+    const source = createWorldGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+    const setup = {
+      characterName: "沈砚",
+      characterIdentity: "被逐出师门的机关师",
+      characterProfile: "擅长修理与改造古代机关。",
+      personalityTags: [],
+      worldPremise: "大陆由七座浮空城邦统治。",
+      storyOpening: "沈砚带着一枚核心齿轮逃离师门。",
+      narrativeStyle: "cinematic" as const,
+      contentIntensity: "normal" as const,
+    };
+    const candidate = await source.generate({ gameType: "fantasy", seed: "s", gameLength: "short", setup });
+    // AI 候选中的玩家名（陆）必须被配置覆盖
+    expect(candidate.player.name).toBe("沈砚");
+    expect(candidate.player.identity).toBe("被逐出师门的机关师");
+    expect(candidate.player.backgroundSummary).toBe("擅长修理与改造古代机关。");
+    // prompt 必须包含配置关键内容
+    expect(prompts[0]).toContain("沈砚");
+    expect(prompts[0]).toContain("大陆由七座浮空城邦统治。");
+    expect(prompts[0]).toContain("沈砚带着一枚核心齿轮逃离师门。");
+  });
+
+  it("无配置时保留 AI 候选自身玩家字段", async () => {
+    const transport = {
+      complete: async () => ({ ok: true, content: JSON.stringify(validCandidate()), latencyMs: 1 }),
+    } as unknown as AiTransport;
+    const source = createWorldGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+    const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
+    expect(candidate.player.name).toBe("陆");
+  });
+
+  it("AI 失败回退 fixture 时仍消费开局配置的玩家身份", async () => {
+    const transport = {
+      complete: async () => ({ ok: true, content: "not json", latencyMs: 1 }),
+    } as unknown as AiTransport;
+    const source = createWorldGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+    const setup = {
+      characterName: "沈砚",
+      characterIdentity: "被逐出师门的机关师",
+      personalityTags: [],
+      worldPremise: "大陆由七座浮空城邦统治，城邦之下是机关兽占据的荒原。",
+      storyOpening: "沈砚带着一枚核心齿轮逃离师门，来到边陲小镇。",
+      narrativeStyle: "cinematic" as const,
+      contentIntensity: "normal" as const,
+    };
+    const candidate = await source.generate({ gameType: "fantasy", seed: "s", gameLength: "short", setup });
+    expect(candidate.player.name).toBe("沈砚");
+    expect(candidate.player.identity).toBe("被逐出师门的机关师");
+  });
+
   it("AI 返回非法 JSON 时回退 fixture", async () => {
     const transport = {
       complete: async () => ({ ok: true, content: "not json", latencyMs: 1 }),

@@ -26,7 +26,9 @@ function choice(choiceToken: string, label: string, presentation: "dialogue" | "
 function buildView(): GameSessionView {
   return {
     revision: 9,
+    turnNumber: 8,
     gameType: "wuxia",
+    setup: { storyOpening: null, worldPremise: null, characterProfile: null, narrativeStyle: null },
     player: { name: "侠客", identity: "剑客", hp: 90, attack: 10, defense: 5 },
     worldMap: {
       locations: [

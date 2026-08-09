@@ -29,7 +29,16 @@ type QuestObjectiveView = { readonly label: string; readonly completed: boolean 
 
 export type GameSessionView = {
   readonly revision: number;
+  /** 权威玩家回合数（storyState.turnNumber），用于 HUD 与试玩账本。 */
+  readonly turnNumber: number;
   readonly gameType: string;
+  /** 开局配置回显：旧存档无 setup 时字段均为 null。 */
+  readonly setup: {
+    readonly storyOpening: string | null;
+    readonly worldPremise: string | null;
+    readonly characterProfile: string | null;
+    readonly narrativeStyle: string | null;
+  };
   readonly player: {
     readonly name: string;
     readonly identity: string;
@@ -295,7 +304,14 @@ export function projectGameSessionView(
 
   return {
     revision,
+    turnNumber: storyState.turnNumber,
     gameType: worldState.generation.gameType,
+    setup: {
+      storyOpening: worldState.generation.setup?.storyOpening ?? null,
+      worldPremise: worldState.generation.setup?.worldPremise ?? null,
+      characterProfile: worldState.generation.setup?.characterProfile ?? null,
+      narrativeStyle: worldState.generation.setup?.narrativeStyle ?? null,
+    },
     player: {
       name: worldState.player.name,
       identity: worldState.player.identity,
