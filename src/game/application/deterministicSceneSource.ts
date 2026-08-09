@@ -1,52 +1,38 @@
 import type { SceneSource, SceneSourceResult } from "./sceneSource";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
-import type { NarrativeSceneState, NarrativeChoiceState, NarrativeNpcLineState, NarrativeEventState } from "@/game/domain/narrative";
-import { buildNpcDialoguePages } from "@/game/domain/narrative";
+import type { NarrativeNpcLineState, NarrativeEventState } from "@/game/domain/narrative";
+import type { ChoiceProposal } from "@/game/domain/approvedChoice";
+import { semanticSummaryOf } from "@/game/domain/approvedChoice";
+import type { Action } from "@/game/domain/action";
+import { asLocationId, asNpcId } from "@/game/domain/scenarioBlueprint";
 
 // ---------------------------------------------------------------------------
 // 确定性 fallback 场景生成器（spec §7.6 安全降级模板）。
-// 不调用 AI、不读时钟/随机数：sceneId/choiceToken 全部从 job 纯函数派生，
-// 两次调用同样的 context 产出逐字节相同的场景。
+// 不调用 AI、不读时钟/随机数：sceneId 从 job 纯函数派生，
+// 两次调用同样的 context 产出逐字节相同的提案。
 // 选项从当前地点的合法行动中选取（移动、交谈、探索）。
 // ---------------------------------------------------------------------------
 
 export function createDeterministicSceneSource(): SceneSource {
   return {
     async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
-      const { job, currentLocation, presentNpcs } = context;
+      const { job } = context;
 
       const sceneId = `scene-${job.jobId}`;
       const turn = job.turnNumber;
 
-      const firstNpc = presentNpcs[0];
-
       const narration = buildNarration(context);
       const npcLine = buildNpcLineState(context);
       const event = buildEventState(context);
+      const choiceProposals = buildChoiceProposals(context, event);
 
-      const choices = buildChoices(context, sceneId);
-
-      const scene: NarrativeSceneState = {
+      return {
         sceneId,
         turn,
         narration,
-        usedFactIds: [],
         npcLine,
-        choices: choices as readonly [NarrativeChoiceState, NarrativeChoiceState],
-        source: "fallback",
         event,
-        ...(presentNpcs.length > 0
-          ? {
-              npcDialogues: buildNpcDialoguePages(presentNpcs, {
-                focusNpcId: npcLine?.npcId,
-                focusSpeech: npcLine?.text,
-              }),
-            }
-          : {}),
-      };
-
-      return {
-        scene,
+        choiceProposals,
         eventProposals: [],
         source: "fallback",
       };
@@ -159,46 +145,48 @@ export function buildEventState(context: SceneGenerationContext): NarrativeEvent
   }
 }
 
-function buildChoices(
+export function buildChoiceProposals(
   context: SceneGenerationContext,
-  sceneId: string,
-): readonly [NarrativeChoiceState, NarrativeChoiceState] {
-  const { presentNpcs, legalActionCandidates } = context;
-  const firstNpc = presentNpcs[0];
-  const firstMove = legalActionCandidates.find((c) => c.kind === "move");
-  const firstReachable = firstMove !== undefined
-    ? { id: firstMove.targetId ?? "", name: firstMove.label }
-    : undefined;
+  event: NarrativeEventState,
+): readonly [ChoiceProposal, ChoiceProposal] {
+  if (event.kind === "dialogue") {
+    const npc = context.presentNpcs.find((entry) => entry.id === event.focusNpcId);
+    if (npc === undefined) throw new Error("dialogue fallback requires a present focus NPC");
+    const secondAct = npc.relationship.affinity >= 0 ? "support" as const : "challenge" as const;
+    return [
+      { label: `询问${npc.name}目前的状况`, action: { type: "talk", npcId: npc.id, dialogueAct: "ask" } },
+      {
+        label: secondAct === "support" ? `表示愿意支持${npc.name}` : `质疑${npc.name}的说法`,
+        action: { type: "talk", npcId: npc.id, dialogueAct: secondAct },
+      },
+    ];
+  }
 
-  // 选项 A：如果有 NPC，优先交谈；否则探索
-  const choiceA: NarrativeChoiceState = firstNpc !== undefined
-    ? {
-        choiceToken: `${sceneId}-a`,
-        label: `与NPC交谈`,
-        actionKey: `talk:${String(firstNpc.id)}`,
-        choiceKind: "world_action",
-      }
-    : {
-        choiceToken: `${sceneId}-a`,
-        label: `探索周围`,
-        actionKey: `explore`,
-        choiceKind: "world_action",
-      };
+  const distinct: ChoiceProposal[] = [];
+  const seen = new Set<string>();
+  for (const candidate of context.legalActionCandidates) {
+    const action = actionFromLegalCandidate(candidate);
+    if (action === null) continue;
+    const key = semanticSummaryOf(action);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    distinct.push({ label: candidate.label, action });
+    if (distinct.length === 2) break;
+  }
+  if (distinct.length !== 2) throw new Error("non-dialogue fallback requires two legal action candidates");
+  return [distinct[0]!, distinct[1]!];
+}
 
-  // 选项 B：如果有可到达地点，移动；否则休息
-  const choiceB: NarrativeChoiceState = firstReachable !== undefined
-    ? {
-        choiceToken: `${sceneId}-b`,
-        label: `前往${firstReachable.name}`,
-        actionKey: `move:${String(firstReachable.id)}`,
-        choiceKind: "world_action",
-      }
-    : {
-        choiceToken: `${sceneId}-b`,
-        label: `稍作休息`,
-        actionKey: `rest`,
-        choiceKind: "world_action",
-      };
-
-  return [choiceA, choiceB];
+export function actionFromLegalCandidate(
+  candidate: SceneGenerationContext["legalActionCandidates"][number],
+): Action | null {
+  switch (candidate.kind) {
+    case "explore": return { type: "explore" };
+    case "move": return candidate.targetId === undefined
+      ? null
+      : { type: "move", locationId: asLocationId(candidate.targetId) };
+    case "talk": return candidate.targetId === undefined
+      ? null
+      : { type: "talk", npcId: asNpcId(candidate.targetId), dialogueAct: "ask" };
+  }
 }

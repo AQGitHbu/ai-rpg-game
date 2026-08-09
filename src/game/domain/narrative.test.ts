@@ -53,12 +53,13 @@ describe("NarrativeSceneState", () => {
       usedFactIds: [],
       npcLine: null,
       choices: [
-        { choiceToken: "scene-1:a", label: "询问掌柜", actionKey: "talk:npc_1" },
-        { choiceToken: "scene-1:b", label: "检查角落", actionKey: "investigate:fact_1" }
+        { choiceToken: "c_0123456789abcdef", label: "询问掌柜" },
+        { choiceToken: "c_fedcba9876543210", label: "检查角落", hint: "可能发现新线索" }
       ],
       source: "generated"
     } satisfies NarrativeSceneState;
     expect(scene.choices).toHaveLength(2);
+    expect(JSON.stringify(scene)).not.toContain("actionKey");
   });
 });
 

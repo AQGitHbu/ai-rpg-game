@@ -5,8 +5,8 @@ import type { WorldGenerationSource } from "../../createGameV2";
 import { parseWorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
 import type { SceneSource, SceneSourceResult } from "../../sceneSource";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
-import type { NarrativeSceneState, NarrativeEventState, NarrativeEmotion, NarrativeNpcLineState } from "@/game/domain/narrative";
-import { NARRATIVE_EMOTIONS, buildNpcDialoguePages, type NpcDialogueInScene } from "@/game/domain/narrative";
+import type { NarrativeEventState, NarrativeEmotion, NarrativeNpcLineState } from "@/game/domain/narrative";
+import { NARRATIVE_EMOTIONS } from "@/game/domain/narrative";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createFixtureWorldSource } from "../../createGameV2";
@@ -15,6 +15,8 @@ import { createDeterministicSceneSource } from "../../deterministicSceneSource";
 import { createLiveExpansionSourceV2 } from "./liveExpansionSourceV2";
 import { createFixtureExpansionSource } from "./expansionSource";
 import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
+import type { ChoiceProposal } from "@/game/domain/approvedChoice";
+import { actionFromLegalCandidate, buildChoiceProposals } from "../../deterministicSceneSource";
 
 // ---------------------------------------------------------------------------
 // V2 AI source 工厂：根据 AI 运行时配置注入 live 或 fixture/deterministic source。
@@ -155,9 +157,15 @@ function createLiveSceneSource(
   return {
     async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
       try {
-        const { job, currentLocation, presentNpcs, legalActionCandidates, story } = context;
+        const { job, currentLocation, presentNpcs, story } = context;
         const currentLocName = currentLocation.name;
         const npcsHere = presentNpcs;
+        const firstNpc = npcsHere[0];
+        const event: NarrativeEventState = firstNpc !== undefined
+          ? { kind: "dialogue", focusNpcId: firstNpc.id }
+          : { kind: "observe", locationId: currentLocation.id };
+        const selectable = buildSelectableChoiceProposals(context, event);
+        if (selectable.length < 2) return fallback.generateScene(context);
 
         const systemPrompt = `你是一个 RPG 叙事设计师。根据当前游戏状态生成一个场景，返回 JSON 格式。
 
@@ -170,19 +178,19 @@ function createLiveSceneSource(
 
 在场 NPC：${npcsHere.map((n) => `${n.name}(${n.role})`).join("、") || "无"}
 
-可移动地点：${legalActionCandidates.filter((c) => c.kind === "move").map((c) => c.label).join("、") || "无"}
+服务端候选：${JSON.stringify(selectable.map((entry) => ({ candidateId: entry.candidateId, label: entry.proposal.label })))}
 
 返回严格 JSON，格式如下：
 {
   "narration": "场景旁白文字（2-4句）",
   "npcLine": { "npcId": "在场NPC的ID", "text": "NPC说的台词", "emotion": "neutral" },
   "choices": [
-    { "label": "选项1文字", "actionKey": "explore" },
-    { "label": "选项2文字", "actionKey": "move:目标地点ID" }
+    { "label": "选项1文字", "candidateId": "candidate_1" },
+    { "label": "选项2文字", "candidateId": "candidate_2" }
   ]
 }
 
-choices 必须恰好 2 个。actionKey 可以是 "explore"、"move:地点ID"、"talk:NPC_ID" 等。
+choices 必须恰好 2 个，candidateId 必须从服务端候选中选择且不能重复。
 只返回 JSON，不要其他文字。`;
 
         const messages: readonly AiMessage[] = [
@@ -208,9 +216,9 @@ choices 必须恰好 2 个。actionKey 可以是 "explore"、"move:地点ID"、"
         const data = parsed as Record<string, unknown>;
         const narration = typeof data.narration === "string" ? data.narration : "";
         const rawNpcLine = data.npcLine as { npcId: string; text: string; emotion: string } | null;
-        const choices = Array.isArray(data.choices) ? data.choices as { label: string; actionKey: string }[] : [];
+        const choices = Array.isArray(data.choices) ? data.choices as { label: string; candidateId: string }[] : [];
 
-        if (narration === "" || choices.length < 2) {
+        if (narration === "" || choices.length !== 2) {
           logger?.warn("v2_scene_generation_invalid_data");
           return fallback.generateScene(context);
         }
@@ -218,51 +226,27 @@ choices 必须恰好 2 个。actionKey 可以是 "explore"、"move:地点ID"、"
         // sceneId/turn 从 job 纯函数派生：不读时钟、不依赖 eventLedger 长度。
         const sceneId = `scene-${job.jobId}`;
         const turn = job.turnNumber;
-        const firstNpc = npcsHere[0];
-
         // AI 的 npcLine 必须归属在场 NPC 且 emotion 合法；无效时回退确定性台词。
         const resolvedLine = resolveLiveNpcLine(rawNpcLine, npcsHere);
         const npcLine: NarrativeNpcLineState | null = resolvedLine !== null
           ? { npcId: resolvedLine.npcId, text: resolvedLine.text, emotion: resolvedLine.emotion, usedFactIds: [] }
           : null;
 
-        // 焦点 NPC 与有效 npcLine 对齐，避免 event 与台词指向不同的 NPC。
-        const event: NarrativeEventState | undefined = firstNpc !== undefined
-          ? { kind: "dialogue", focusNpcId: resolvedLine?.npcId ?? firstNpc.id }
-          : { kind: "observe", locationId: currentLocation.id };
-        const npcDialogues: readonly NpcDialogueInScene[] = npcsHere.length > 0
-          ? buildNpcDialoguePages(npcsHere, {
-              focusNpcId: resolvedLine?.npcId,
-              focusSpeech: resolvedLine?.text,
-            })
-          : [];
-        const scene: NarrativeSceneState = {
+        const choiceProposals = resolveSelectedChoiceProposals(selectable, choices);
+        if (choiceProposals === null) {
+          logger?.warn("v2_scene_generation_invalid_choice_ids");
+          return fallback.generateScene(context);
+        }
+
+        return {
           sceneId,
           turn,
           narration,
           event,
-          usedFactIds: [],
           source: "generated",
           npcLine,
-          ...(npcsHere.length > 0 ? { npcDialogues } : {}),
-          choices: [
-            {
-              choiceToken: `choice_${sceneId}_0`,
-              label: choices[0]?.label ?? "探索",
-              actionKey: choices[0]?.actionKey ?? "explore",
-            },
-            {
-              choiceToken: `choice_${sceneId}_1`,
-              label: choices[1]?.label ?? "查看四周",
-              actionKey: choices[1]?.actionKey ?? "explore",
-            },
-          ] as readonly [{ choiceToken: string; label: string; actionKey: string }, { choiceToken: string; label: string; actionKey: string }],
-        };
-
-        return {
-          scene,
+          choiceProposals,
           eventProposals: [],
-          source: "generated",
         };
       } catch (error) {
         logger?.error("v2_scene_generation_error", { error: error instanceof Error ? error.message : "unknown" });
@@ -270,6 +254,37 @@ choices 必须恰好 2 个。actionKey 可以是 "explore"、"move:地点ID"、"
       }
     },
   };
+}
+
+type SelectableChoiceProposal = {
+  readonly candidateId: string;
+  readonly proposal: ChoiceProposal;
+};
+
+function buildSelectableChoiceProposals(
+  context: SceneGenerationContext,
+  event: NarrativeEventState,
+): readonly SelectableChoiceProposal[] {
+  const proposals: readonly ChoiceProposal[] = event.kind === "dialogue"
+    ? buildChoiceProposals(context, event)
+    : context.legalActionCandidates.flatMap((candidate) => {
+        const action = actionFromLegalCandidate(candidate);
+        return action === null ? [] : [{ label: candidate.label, action }];
+      });
+  return proposals.map((proposal, index) => ({ candidateId: `candidate_${index + 1}`, proposal }));
+}
+
+export function resolveSelectedChoiceProposals(
+  selectable: readonly SelectableChoiceProposal[],
+  selected: readonly { readonly label: string; readonly candidateId: string }[],
+): readonly [ChoiceProposal, ChoiceProposal] | null {
+  if (selected.length !== 2 || selected[0]!.candidateId === selected[1]!.candidateId) return null;
+  const resolved = selected.map((choice) => {
+    const match = selectable.find((candidate) => candidate.candidateId === choice.candidateId);
+    if (match === undefined || typeof choice.label !== "string" || choice.label.trim() === "") return null;
+    return { label: choice.label.trim(), action: match.proposal.action } as ChoiceProposal;
+  });
+  return resolved[0] === null || resolved[1] === null ? null : [resolved[0], resolved[1]];
 }
 
 // --- Factory ---

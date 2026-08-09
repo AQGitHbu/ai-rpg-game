@@ -143,7 +143,11 @@ export function createServerGameV2EntryPoints(
       const current = await repository.getCurrentGame();
       if (!current.ok || current.status !== "active") return { ok: false, feedback: "No active game" };
       // Build choiceMap server-side from current state (spec §4.3: server maps choiceToken → Action)
-      const choiceMap = buildChoiceMap(current.record.worldState, current.record.storyState);
+      const choiceMap = buildChoiceMap(
+        current.record.worldState,
+        current.record.storyState,
+        current.record.revision,
+      );
       const result = await performActionV2(
         { gameId: current.record.gameId, actionId: command.actionId, interaction: command.interaction, expectedRevision: command.expectedRevision, choiceMap },
         { repository, now, expansionSource },

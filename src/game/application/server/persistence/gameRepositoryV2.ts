@@ -27,6 +27,7 @@ export type ApplyStateV2Input = {
 export type ApplySceneWriteBackInput = {
   readonly gameId: GameId;
   readonly expectedRevision: number;
+  /** Ready scene and its ApprovedChoice registry travel in this same CAS payload. */
   readonly nextNarrative: StoryState["narrative"];
   readonly nextCandidateEventPool: StoryState["candidateEventPool"];
 };

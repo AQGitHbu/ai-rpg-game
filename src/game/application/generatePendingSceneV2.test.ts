@@ -8,7 +8,7 @@ import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/doma
 import type { GameRepositoryV2, GameRecordV2 } from "./server/persistence/gameRepositoryV2";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { SceneSource, SceneSourceResult } from "./sceneSource";
-import type { NarrativeEventKind, NarrativeSceneState } from "@/game/domain/narrative";
+import type { NarrativeEventKind } from "@/game/domain/narrative";
 import type { ResolvedEventStatus } from "@/game/domain/resolvedEvent";
 
 const IMPORTANT_ACTION_ID = "act_persist";
@@ -96,7 +96,7 @@ function makeGameRecord(option:
     gameId: "g1" as never,
     worldState: makeWorldState(),
     storyState: ss,
-    revision: 0,
+    revision: 7,
     createdAt: "2026-01-01",
   };
 }
@@ -122,19 +122,19 @@ function makeSpySceneSource(): { source: SceneSource; contexts: () => readonly S
   const sceneSource: SceneSource = {
     async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
       seen.push(context);
-      const dummyScene: NarrativeSceneState = {
+      return {
         sceneId: `scene-${context.job.jobId}`,
         turn: context.job.turnNumber,
         narration: "dummy",
-        usedFactIds: [],
         npcLine: null,
-        choices: [
-          { choiceToken: `scene-${context.job.jobId}-a`, label: "a", actionKey: "explore" },
-          { choiceToken: `scene-${context.job.jobId}-b`, label: "b", actionKey: "rest" },
+        event: { kind: "dialogue", focusNpcId: asNpcId("npc_1") },
+        choiceProposals: [
+          { label: "a", action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" } },
+          { label: "b", action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" } },
         ],
+        eventProposals: [],
         source: "fallback",
       };
-      return { scene: dummyScene, eventProposals: [], source: "fallback" };
     },
   };
   return { source: sceneSource, contexts: () => seen };
@@ -198,6 +198,11 @@ describe("generatePendingSceneV2", () => {
     const result = await generatePendingSceneV2(deps);
     expect(result).toBe("saved");
     expect(deps.repository.applySceneWriteBack).toHaveBeenCalledOnce();
+    const input = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
+    expect(JSON.stringify(input.nextNarrative.currentScene)).not.toContain("actionKey");
+    expect(input.nextNarrative.choiceRegistry).toHaveLength(2);
+    expect(new Set(input.nextNarrative.choiceRegistry!.map((x) => x.choiceToken)).size).toBe(2);
+    expect(input.nextNarrative.choiceRegistry!.every((x) => x.basedOnRevision === 8)).toBe(true);
     const context = spy.contexts()[0];
     expect(context.job.jobId).toBe(IMPORTANT_JOB_ID);
     expect(context.job.actionId).toBe(IMPORTANT_ACTION_ID);

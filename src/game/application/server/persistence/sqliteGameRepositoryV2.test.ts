@@ -10,6 +10,7 @@ import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asGenerationId } from "@/game/domain/scenarioBlueprint";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
+import { createApprovedChoice } from "@/game/domain/approvedChoice";
 
 const RUN_ROOT = join(import.meta.dirname ?? __dirname, ".tmp-sqlite-v2-test");
 
@@ -114,7 +115,11 @@ describe("sqliteGameRepositoryV2", () => {
 
     await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });
 
-    const newNarrative = { ...storyState.narrative, mode: "ai" as const };
+    const approved = createApprovedChoice({
+      sceneId: "scene-1", basedOnRevision: 1, label: "探索", action: { type: "explore" },
+    });
+    if (!approved.ok) throw new Error("fixture approval failed");
+    const newNarrative = { ...storyState.narrative, mode: "ai" as const, choiceRegistry: [approved.choice] };
     const r = await repo.applySceneWriteBack({
       gameId,
       expectedRevision: 0,
@@ -124,6 +129,7 @@ describe("sqliteGameRepositoryV2", () => {
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.record.storyState.narrative.mode).toBe("ai");
+      expect(r.record.storyState.narrative.choiceRegistry).toEqual([approved.choice]);
       expect(r.record.storyState.tension).toBe(storyState.tension);
       expect(r.record.worldState).toEqual(worldState);
       expect(r.record.revision).toBe(1);

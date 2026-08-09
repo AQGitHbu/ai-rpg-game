@@ -17,19 +17,7 @@ export const PLAYER_DIALOGUE_RESPONSE_LABELS = [
 export type NarrativeChoiceState = {
   readonly choiceToken: string;
   readonly label: string;
-  /** 规则行动与 NPC 对话回应是两种不同的提交语义。 */
-  readonly choiceKind?: "dialogue_response" | "world_action";
-  /** 对话回应的稳定语义，不是规则 actionKey。 */
-  readonly dialogueIntent?: string;
-  /**
-   * @deprecated Task 8 起服务端只从 choiceRegistry（ApprovedChoice）解析
-   * actionKey；本字段仅供旧存档/旧视图适配器兼容读取，Task 11 移除。
-   */
-  readonly actionKey: string;
-  /** Phase 14: 选项展示提示（如"将引入新 NPC"）。 */
   readonly hint?: string;
-  /** Phase 14: 情境语义，供导演后续参考。 */
-  readonly narrativeIntent?: "advance_plot" | "introduce_npc" | "introduce_location" | "combat" | "discover_item";
 };
 
 export type NarrativeEventKind =

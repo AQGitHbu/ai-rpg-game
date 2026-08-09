@@ -1,21 +1,22 @@
 import { describe, it, expect } from "vitest";
 import { approveSceneEventProposals, approveScenePackage, POOL_MAX_CANDIDATES } from "./approveAndWriteScene";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import type { NarrativeSceneState } from "@/game/domain/narrative";
+import type { ScenePackageProposal } from "./sceneSource";
 import { asEnemyId, asLocationId, asNpcId, asFactId } from "@/game/domain/scenarioBlueprint";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 
-function makeScene(overrides?: Partial<NarrativeSceneState>): NarrativeSceneState {
+function makeProposal(overrides?: Partial<ScenePackageProposal>): ScenePackageProposal {
   return {
     sceneId: "scene-1",
     turn: 1,
     narration: "场景旁白",
-    usedFactIds: [],
     npcLine: null,
-    choices: [
-      { choiceToken: "a", label: "探索", actionKey: "explore" },
-      { choiceToken: "b", label: "前往客栈", actionKey: "move:loc_2" },
+    event: { kind: "observe", locationId: asLocationId("loc_1") },
+    choiceProposals: [
+      { label: "探索", action: { type: "explore" } },
+      { label: "前往客栈", action: { type: "move", locationId: asLocationId("loc_2") } },
     ],
+    eventProposals: [],
     source: "generated",
     ...overrides,
   };
@@ -41,7 +42,10 @@ function makeContext(overrides?: Partial<SceneGenerationContext>): SceneGenerati
       unresolvedThreadSummaries: [],
     },
     recentBeats: [],
-    legalActionCandidates: [],
+    legalActionCandidates: [
+      { kind: "explore", label: "探索" },
+      { kind: "move", label: "前往客栈", targetId: "loc_2" },
+    ],
     worldConstraints: [],
     ...overrides,
   };
@@ -131,69 +135,82 @@ describe("approveSceneEventProposals (Task 21)", () => {
 });
 
 describe("approveScenePackage (Task 25)", () => {
-  it("合法场景通过审批，原样返回", () => {
-    const result = approveScenePackage({ context: makeContext(), scene: makeScene() });
+  it("合法提案逐字段重建 ready scene + registry，token 不透明且绑定写回后 revision", () => {
+    const proposal = makeProposal();
+    const result = approveScenePackage({
+      context: makeContext(),
+      proposal,
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.scene.narration).toBe("场景旁白");
+    expect(JSON.stringify(result.scene)).not.toContain("actionKey");
+    expect(result.choiceRegistry).toHaveLength(2);
+    expect(new Set(result.choiceRegistry.map((x) => x.choiceToken)).size).toBe(2);
+    expect(result.choiceRegistry.every((x) => x.basedOnRevision === 8)).toBe(true);
+    expect(result.choiceRegistry.map((x) => x.action)).toEqual(proposal.choiceProposals.map((x) => x.action));
+    expect(result.scene).not.toBe(proposal);
+    expect(result.choiceRegistry[0]?.action).not.toBe(proposal.choiceProposals[0].action);
   });
 
   it("旁白为空 → 整场拒绝 empty_narration", () => {
-    const result = approveScenePackage({ context: makeContext(), scene: makeScene({ narration: "  " }) });
+    const result = approveScenePackage({ context: makeContext(), proposal: makeProposal({ narration: "  " }), basedOnRevision: 8, existingCandidateEventPool: [] });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("empty_narration");
   });
 
   it("台词 NPC 不在场 → 整场拒绝 unknown_dialogue_npc", () => {
-    const scene = makeScene({
+    const proposal = makeProposal({
       npcLine: { npcId: asNpcId("ghost"), text: "你是谁", emotion: "neutral", usedFactIds: [] },
     });
-    const result = approveScenePackage({ context: makeContext(), scene });
+    const result = approveScenePackage({ context: makeContext(), proposal, basedOnRevision: 8, existingCandidateEventPool: [] });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("unknown_dialogue_npc");
   });
 
   it("NPC 使用 forbidden fact → 整场拒绝 npc_uses_forbidden_fact", () => {
-    const scene = makeScene({
+    const proposal = makeProposal({
       npcLine: { npcId: asNpcId("npc_1"), text: "这是秘密", emotion: "neutral", usedFactIds: [asFactId("fact_forbidden")] },
     });
-    const result = approveScenePackage({ context: makeContext(), scene });
+    const result = approveScenePackage({ context: makeContext(), proposal, basedOnRevision: 8, existingCandidateEventPool: [] });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("npc_uses_forbidden_fact");
   });
 
   it("NPC 使用自己 known/scene-visible fact → 通过", () => {
-    const scene = makeScene({
+    const proposal = makeProposal({
       npcLine: { npcId: asNpcId("npc_1"), text: "我知道这个", emotion: "neutral", usedFactIds: [asFactId("fact_a")] },
     });
-    const result = approveScenePackage({ context: makeContext(), scene });
+    const result = approveScenePackage({ context: makeContext(), proposal, basedOnRevision: 8, existingCandidateEventPool: [] });
     expect(result.ok).toBe(true);
   });
 
   it("两选项语义重复 → 整场拒绝 semantic_duplicate_choices", () => {
-    const scene = makeScene({
-      choices: [
-        { choiceToken: "a", label: "探索", actionKey: "explore" },
-        { choiceToken: "b", label: "再次探索", actionKey: "explore" },
+    const proposal = makeProposal({
+      choiceProposals: [
+        { label: "探索", action: { type: "explore" } },
+        { label: "再次探索", action: { type: "explore" } },
       ],
     });
-    const result = approveScenePackage({ context: makeContext(), scene });
+    const result = approveScenePackage({ context: makeContext(), proposal, basedOnRevision: 8, existingCandidateEventPool: [] });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("semantic_duplicate_choices");
   });
 
   it("选项目标非法 → 整场拒绝 illegal_choice_target", () => {
-    const scene = makeScene({
-      choices: [
-        { choiceToken: "a", label: "作弊", actionKey: "grant:999999" },
-        { choiceToken: "b", label: "探索", actionKey: "explore" },
+    const proposal = makeProposal({
+      choiceProposals: [
+        { label: "去不存在的地方", action: { type: "move", locationId: asLocationId("loc_999") } },
+        { label: "探索", action: { type: "explore" } },
       ],
     });
-    const result = approveScenePackage({ context: makeContext(), scene });
+    const result = approveScenePackage({ context: makeContext(), proposal, basedOnRevision: 8, existingCandidateEventPool: [] });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("illegal_choice_target");

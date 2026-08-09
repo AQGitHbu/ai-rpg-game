@@ -189,6 +189,11 @@ export function buildSceneGenerationContext(record: GameRecordV2): SceneGenerati
     },
     recentBeats: (ss.recentBeats as readonly RecentBeat[]).slice(-5),
     legalActionCandidates: [
+      ...presentNpcs.map((npc) => ({
+        kind: "talk" as const,
+        label: `与${npc.name}交谈`,
+        targetId: npc.id,
+      })),
       ...reachableLocations.map((l) => ({
         kind: "move" as const,
         label: `前往${l.name}`,

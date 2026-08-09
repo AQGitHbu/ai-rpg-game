@@ -1,9 +1,12 @@
 import { parseEventCandidate } from "@/game/domain/candidateEvent";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import type { EventProposal } from "./sceneSource";
-import type { NarrativeSceneState, NarrativeChoiceState } from "@/game/domain/narrative";
+import type { EventProposal, ScenePackageProposal } from "./sceneSource";
+import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState } from "@/game/domain/narrative";
+import { buildNpcDialoguePages } from "@/game/domain/narrative";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
-import type { FactId, NpcId } from "@/game/domain/scenarioBlueprint";
+import type { ApprovedChoice, ChoiceProposal } from "@/game/domain/approvedChoice";
+import { createApprovedChoice, semanticSummaryOf } from "@/game/domain/approvedChoice";
+import { actionFromLegalCandidate } from "./deterministicSceneSource";
 
 // ---------------------------------------------------------------------------
 // R4（Task 21）：SceneSource 提议 → 候选事件池审批
@@ -101,21 +104,49 @@ export type SceneRejectionCode =
   | "semantic_duplicate_choices"
   | "illegal_choice_target";
 
+export type ApprovedSceneWriteBack = {
+  readonly scene: NarrativeSceneState;
+  readonly choiceRegistry: readonly ApprovedChoice[];
+  readonly candidateEventPool: readonly EventCandidate[];
+};
+
 export type ApproveScenePackageResult =
-  | { readonly ok: true; readonly scene: NarrativeSceneState }
+  | ({ readonly ok: true } & ApprovedSceneWriteBack)
   | { readonly ok: false; readonly code: SceneRejectionCode };
 
-/** 校验选项是否为目标语义合法的候选（talk/move/explore 等已批准动作）。 */
-function isLegalChoiceTarget(choice: NarrativeChoiceState): boolean {
-  if (choice.actionKey === "explore" || choice.actionKey === "rest") return true;
-  if (choice.actionKey.startsWith("talk:")) return true;
-  if (choice.actionKey.startsWith("move:")) return true;
-  return false;
+/** 对话场景只允许对焦点 NPC 提出两个不同 dialogueAct；其余场景必须命中服务端合法候选。 */
+function isLegalChoiceTarget(
+  context: SceneGenerationContext,
+  event: NarrativeEventState,
+  choice: ChoiceProposal,
+): boolean {
+  if (event.kind === "dialogue") {
+    return choice.action.type === "talk" && choice.action.npcId === event.focusNpcId;
+  }
+  return context.legalActionCandidates.some((candidate) => {
+    const legalAction = actionFromLegalCandidate(candidate);
+    return legalAction !== null && semanticSummaryOf(legalAction) === semanticSummaryOf(choice.action);
+  });
 }
 
-/** 判断两个选项是否语义重复（actionKey 归一化后相同）。 */
-function semanticKey(choice: NarrativeChoiceState): string {
-  return choice.actionKey.trim();
+function rebuildEvent(event: NarrativeEventState): NarrativeEventState {
+  switch (event.kind) {
+    case "dialogue": return { kind: "dialogue", focusNpcId: event.focusNpcId };
+    case "investigate": return { kind: "investigate", factId: event.factId };
+    case "item": return { kind: "item", itemId: event.itemId };
+    case "battle": return { kind: "battle", enemyId: event.enemyId };
+    case "travel": return { kind: "travel", locationId: event.locationId };
+    case "observe": return { kind: "observe", locationId: event.locationId };
+  }
+}
+
+function rebuildNpcLine(line: NarrativeNpcLineState | null): NarrativeNpcLineState | null {
+  return line === null ? null : {
+    npcId: line.npcId,
+    text: line.text,
+    emotion: line.emotion,
+    usedFactIds: [...line.usedFactIds],
+  };
 }
 
 /**
@@ -125,36 +156,100 @@ function semanticKey(choice: NarrativeChoiceState): string {
  * - NPC 使用 forbidden fact（不在其 known/scene-visible 允许集合）→ 整场拒绝；
  * - 两选项语义重复 → 整场拒绝；
  * - 选项目标非法 → 整场拒绝；
- * - 通过后返回原始 scene（不改写；choiceToken 由写回阶段服务器铸造）。
+ * - 通过后逐字段重建 ready scene 与 ApprovedChoice registry；提案对象不直达持久化。
  * 纯函数：不读时钟/随机数/DB。
  */
 export function approveScenePackage(input: {
   readonly context: SceneGenerationContext;
-  readonly scene: NarrativeSceneState;
+  readonly proposal: ScenePackageProposal;
+  readonly basedOnRevision: number;
+  readonly existingCandidateEventPool: readonly EventCandidate[];
 }): ApproveScenePackageResult {
-  const { context, scene } = input;
+  const { context, proposal } = input;
 
-  if (scene.narration.trim() === "") return { ok: false, code: "empty_narration" };
+  if (proposal.narration.trim() === "") return { ok: false, code: "empty_narration" };
 
   // 台词归属校验：NPC 必须在场。
-  if (scene.npcLine !== null) {
-    const present = context.presentNpcs.find((n) => String(n.id) === String(scene.npcLine!.npcId));
+  if (proposal.npcLine !== null) {
+    const present = context.presentNpcs.find((n) => String(n.id) === String(proposal.npcLine!.npcId));
     if (present === undefined) return { ok: false, code: "unknown_dialogue_npc" };
     // forbidden fact：usedFactIds 必须是该 NPC 允许集合（known ∪ scene-visible）之一。
     const allowed = new Set<string>([
       ...present.knownFactCards.map((f) => String(f.factId)),
       ...present.sceneVisibleFactIds.map(String),
     ]);
-    for (const factId of scene.npcLine.usedFactIds) {
+    for (const factId of proposal.npcLine.usedFactIds) {
       if (!allowed.has(String(factId))) return { ok: false, code: "npc_uses_forbidden_fact" };
     }
   }
 
   // 选项：恰好两个、不语义重复、目标合法。
-  if (scene.choices.length !== 2) return { ok: false, code: "illegal_choice_target" };
-  const [a, b] = scene.choices as readonly [NarrativeChoiceState, NarrativeChoiceState];
-  if (semanticKey(a) === semanticKey(b)) return { ok: false, code: "semantic_duplicate_choices" };
-  if (!isLegalChoiceTarget(a) || !isLegalChoiceTarget(b)) return { ok: false, code: "illegal_choice_target" };
+  if (proposal.choiceProposals.length !== 2) return { ok: false, code: "illegal_choice_target" };
+  const [a, b] = proposal.choiceProposals;
+  if (semanticSummaryOf(a.action) === semanticSummaryOf(b.action)) {
+    return { ok: false, code: "semantic_duplicate_choices" };
+  }
+  if (!isLegalChoiceTarget(context, proposal.event, a) || !isLegalChoiceTarget(context, proposal.event, b)) {
+    return { ok: false, code: "illegal_choice_target" };
+  }
 
-  return { ok: true, scene };
+  const approvedA = createApprovedChoice({
+    sceneId: proposal.sceneId,
+    basedOnRevision: input.basedOnRevision,
+    label: a.label,
+    action: a.action,
+  });
+  const approvedB = createApprovedChoice({
+    sceneId: proposal.sceneId,
+    basedOnRevision: input.basedOnRevision,
+    label: b.label,
+    action: b.action,
+  });
+  if (!approvedA.ok || !approvedB.ok || approvedA.choice.choiceToken === approvedB.choice.choiceToken) {
+    return { ok: false, code: "illegal_choice_target" };
+  }
+
+  const approvedEvents = approveSceneEventProposals({
+    existingPool: input.existingCandidateEventPool,
+    proposals: proposal.eventProposals,
+  });
+  if (!approvedEvents.ok) return { ok: false, code: "illegal_choice_target" };
+
+  const npcLine = rebuildNpcLine(proposal.npcLine);
+  const scene: NarrativeSceneState = {
+    sceneId: proposal.sceneId,
+    turn: proposal.turn,
+    narration: proposal.narration,
+    usedFactIds: [],
+    npcLine,
+    choices: [
+      {
+        choiceToken: approvedA.choice.choiceToken,
+        label: approvedA.choice.label,
+        ...(a.hint !== undefined ? { hint: a.hint } : {}),
+      },
+      {
+        choiceToken: approvedB.choice.choiceToken,
+        label: approvedB.choice.label,
+        ...(b.hint !== undefined ? { hint: b.hint } : {}),
+      },
+    ],
+    source: proposal.source,
+    event: rebuildEvent(proposal.event),
+    ...(context.presentNpcs.length > 0
+      ? {
+          npcDialogues: buildNpcDialoguePages(context.presentNpcs, {
+            focusNpcId: npcLine?.npcId,
+            focusSpeech: npcLine?.text,
+          }),
+        }
+      : {}),
+  };
+
+  return {
+    ok: true,
+    scene,
+    choiceRegistry: [approvedA.choice, approvedB.choice],
+    candidateEventPool: approvedEvents.nextCandidateEventPool,
+  };
 }

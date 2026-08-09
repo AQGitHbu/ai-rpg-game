@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { generatePendingSceneV2 } from "../../generatePendingSceneV2";
 import { approveSceneEventProposals, POOL_MAX_CANDIDATES } from "../../approveAndWriteScene";
-import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
+import { appendLocation, createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { asLocationId, asGenerationId, asEnemyId } from "@/game/domain/scenarioBlueprint";
@@ -10,19 +10,23 @@ import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/doma
 import type { GameRepositoryV2, GameRecordV2, GetCurrentGameV2Result } from "../../server/persistence/gameRepositoryV2";
 import type { SceneSource, SceneSourceResult } from "../../sceneSource";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
-import type { NarrativeSceneState } from "@/game/domain/narrative";
 
 function makeWorldState() {
   const loc: LocationEntry = {
     id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
-    connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+    connectedLocationIds: [asLocationId("loc_2")], npcIds: [], availableItemIds: [], tags: [],
   };
-  return createInitialWorldState({
+  const base = createInitialWorldState({
     generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
     player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
     startingLocation: loc,
     startingItemIds: [],
   });
+  const next = appendLocation(base, {
+    id: asLocationId("loc_2"), name: "街道", description: "t", kind: "main",
+    connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
+  });
+  return { ...next, unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
 }
 
 function makeJob(): PendingNarrativeJob {
@@ -85,19 +89,19 @@ function makeRepo(record: GameRecordV2 | null): GameRepositoryV2 {
 function makeSceneSource(proposals: readonly EventCandidate[]): SceneSource {
   return {
     async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
-      const scene: NarrativeSceneState = {
+      return {
         sceneId: `scene-${context.job.jobId}`,
         turn: context.job.turnNumber,
         narration: "dummy",
-        usedFactIds: [],
         npcLine: null,
-        choices: [
-          { choiceToken: `scene-${context.job.jobId}-a`, label: "a", actionKey: "explore" },
-          { choiceToken: `scene-${context.job.jobId}-b`, label: "b", actionKey: "rest" },
+        event: { kind: "observe", locationId: asLocationId("loc_1") },
+        choiceProposals: [
+          { label: "a", action: { type: "explore" } },
+          { label: "b", action: { type: "move", locationId: asLocationId("loc_2") } },
         ],
+        eventProposals: proposals,
         source: "generated",
       };
-      return { scene, eventProposals: proposals, source: "generated" };
     },
   };
 }

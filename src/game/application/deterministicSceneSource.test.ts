@@ -125,35 +125,32 @@ describe("deterministicSceneSource", () => {
     const context = makeContext(makeJob({ jobId: "job_7" }));
     const first = await source.generateScene(context);
     const second = await source.generateScene(context);
-    expect(first.scene.sceneId).toBe("scene-job_7");
-    expect(second.scene.sceneId).toBe("scene-job_7");
-    expect(first.scene.sceneId).toBe(second.scene.sceneId);
+    expect(first.sceneId).toBe("scene-job_7");
+    expect(second.sceneId).toBe("scene-job_7");
+    expect(first.sceneId).toBe(second.sceneId);
   });
 
-  it("is fully deterministic: same context → same scene, choices and choiceTokens", async () => {
+  it("is fully deterministic: same context → same proposal package", async () => {
     const context = makeContext(makeJob({ jobId: "job_det" }));
     const first = await source.generateScene(context);
     const second = await source.generateScene(context);
-    expect(first.scene).toEqual(second.scene);
-    expect(first.scene.choices.map((c) => c.choiceToken)).toEqual(["scene-job_det-a", "scene-job_det-b"]);
+    expect(first).toEqual(second);
+    expect(first.choiceProposals).toHaveLength(2);
   });
 
-  it("produces a scene with narration, turn from job, and 2 choices with tokens/actionKeys", async () => {
+  it("produces a proposal with narration, turn from job, and exactly 2 distinct actions", async () => {
     const result = await source.generateScene(makeContext(makeJob({ eventKind: "travel" })));
-    expect(result.scene.narration.length).toBeGreaterThan(0);
-    expect(result.scene.turn).toBe(1);
-    expect(result.scene.choices).toHaveLength(2);
-    expect(result.scene.source).toBe("fallback");
-    for (const choice of result.scene.choices) {
-      expect(choice.choiceToken).toBeTruthy();
-      expect(choice.actionKey).toBeTruthy();
-      expect(choice.label).toBeTruthy();
-    }
+    expect(result.narration.length).toBeGreaterThan(0);
+    expect(result.turn).toBe(1);
+    expect(result.choiceProposals).toHaveLength(2);
+    expect(result.source).toBe("fallback");
+    expect(result.choiceProposals.every((choice) => choice.label.length > 0)).toBe(true);
+    expect(result.choiceProposals[0].action).not.toEqual(result.choiceProposals[1].action);
   });
 
   it("maps a move/travel job to a travel event state", async () => {
     const result = await source.generateScene(makeContext(makeJob({ eventKind: "travel", summary: { kind: "move", locationId: asLocationId("loc_2") } })));
-    expect(result.scene.event).toEqual({ kind: "travel", locationId: asLocationId("loc_1") });
+    expect(result.event).toEqual({ kind: "travel", locationId: asLocationId("loc_1") });
   });
 
   it("maps a talk job to a dialogue event state focused on the job NPC", async () => {
@@ -162,8 +159,12 @@ describe("deterministicSceneSource", () => {
       summary: { kind: "talk", npcId: asNpcId("npc_1") },
       focusNpcId: "npc_1",
     })));
-    expect(result.scene.event).toEqual({ kind: "dialogue", focusNpcId: asNpcId("npc_1") });
-    expect(result.scene.npcLine?.npcId).toBe(asNpcId("npc_1"));
+    expect(result.event).toEqual({ kind: "dialogue", focusNpcId: asNpcId("npc_1") });
+    expect(result.npcLine?.npcId).toBe(asNpcId("npc_1"));
+    expect(result.choiceProposals.map((choice) => choice.action)).toEqual([
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" },
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" },
+    ]);
   });
 
   it("talk job keeps focusNpcId and echoes the utterance neutrally", async () => {
@@ -174,38 +175,30 @@ describe("deterministicSceneSource", () => {
       focusNpcId: "npc_1",
       utterance,
     })));
-    expect(result.scene.npcLine?.npcId).toBe(asNpcId("npc_1"));
-    expect(result.scene.npcLine?.text).toContain(utterance);
-    expect(result.scene.narration).toContain(utterance);
+    expect(result.npcLine?.npcId).toBe(asNpcId("npc_1"));
+    expect(result.npcLine?.text).toContain(utterance);
+    expect(result.narration).toContain(utterance);
   });
 
   it.each(["partial_success", "failure", "blocked"] as const)(
     "does not rewrite %s to a success: narration keeps a non-victory tone",
     async (status) => {
       const result = await source.generateScene(makeContext(makeJob({ status, eventKind: "dialogue", summary: { kind: "talk", npcId: asNpcId("npc_1") }, focusNpcId: "npc_1" })));
-      expect(result.scene.narration.length).toBeGreaterThan(0);
-      expect(result.scene.npcLine?.text).toBeTruthy();
-      expect(result.scene.npcLine?.text).not.toContain("欢迎光临");
+      expect(result.narration.length).toBeGreaterThan(0);
+      expect(result.npcLine?.text).toBeTruthy();
+      expect(result.npcLine?.text).not.toContain("欢迎光临");
       if (status === "partial_success") {
-        expect(result.scene.npcLine?.text).toContain("不方便全说");
+        expect(result.npcLine?.text).toContain("不方便全说");
       } else {
-        expect(result.scene.npcLine?.text).not.toContain("欢迎光临");
+        expect(result.npcLine?.text).not.toContain("欢迎光临");
       }
     },
   );
 
-  it("produces NPC dialogue pages covering every present NPC", async () => {
+  it("keeps NPC presentation data as proposal fields; ready pages are built only after approval", async () => {
     const result = await source.generateScene(makeContext(makeJob({ eventKind: "dialogue", summary: { kind: "talk", npcId: asNpcId("npc_1") }, focusNpcId: "npc_1" })));
-    const dialogues = result.scene.npcDialogues;
-    expect(dialogues).toBeDefined();
-    const ids = (dialogues ?? []).map((d) => String(d.npcId));
-    expect(ids).toEqual(["npc_1", "npc_2"]);
-    for (const d of dialogues ?? []) {
-      expect(d.speechPages.length).toBeGreaterThan(0);
-    }
-    const focus = (dialogues ?? []).find((d) => String(d.npcId) === String(result.scene.npcLine?.npcId));
-    expect(focus).toBeDefined();
-    expect(focus!.speechPages.join("")).toBe(result.scene.npcLine!.text);
+    expect(result.npcLine?.npcId).toBe(asNpcId("npc_1"));
+    expect("npcDialogues" in result).toBe(false);
   });
 
   it("event proposals is empty for deterministic source", async () => {
@@ -215,6 +208,6 @@ describe("deterministicSceneSource", () => {
 
   it("choices include a move action toward a reachable location", async () => {
     const result = await source.generateScene(makeContext(makeJob()));
-    expect(result.scene.choices.some((c) => c.actionKey === "move:loc_2")).toBe(true);
+    expect(result.choiceProposals.some((c) => c.action.type === "move" && String(c.action.locationId) === "loc_2")).toBe(true);
   });
 });

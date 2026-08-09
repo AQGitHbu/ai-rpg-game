@@ -350,7 +350,8 @@ export function createSqliteGameRepositoryV2(
           return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         }
 
-        // Only update narrative + candidateEventPool; everything else unchanged.
+        // One CAS persists the ready scene, its ApprovedChoice registry (both inside
+        // narrative), and candidateEventPool; everything else stays unchanged.
         const patchedStoryState = {
           ...storyState,
           narrative: JSON.parse(nextNarrativeJson),

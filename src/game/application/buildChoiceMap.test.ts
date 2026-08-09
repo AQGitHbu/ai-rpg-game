@@ -82,7 +82,7 @@ function approvedFor(choice: {
 
 describe("buildChoiceMap", () => {
   it("世界行动候选直接构建：talk/move/attack/take/explore/rest", () => {
-    const map = buildChoiceMap(buildWorldState(), buildStoryState({}));
+    const map = buildChoiceMap(buildWorldState(), buildStoryState({}), 0);
     expect(map.get("talk:npc_smith")).toEqual(talkSmith);
     expect(map.get("move:loc_2")).toEqual(moveStreet);
     expect(map.get("attack:enemy_wolf")).toEqual(attackWolf);
@@ -94,7 +94,7 @@ describe("buildChoiceMap", () => {
   });
 
   it("talk 候选包含 dialogueAct: 默认 ask（Task 7 类型兼容）", () => {
-    const map = buildChoiceMap(buildWorldState(), buildStoryState({}));
+    const map = buildChoiceMap(buildWorldState(), buildStoryState({}), 0);
     expect(map.get("talk:npc_smith")).toEqual({ type: "talk", npcId: asNpcId("npc_smith"), dialogueAct: "ask" });
   });
 
@@ -103,7 +103,7 @@ describe("buildChoiceMap", () => {
       ...buildWorldState(),
       battle: { status: "active", enemyId: asEnemyId("enemy_wolf"), playerHp: 90, enemyHp: 20, round: 1 },
     };
-    const map = buildChoiceMap(ws, buildStoryState({}));
+    const map = buildChoiceMap(ws, buildStoryState({}), 0);
     expect([...map.keys()]).toEqual(["battle_action:attack", "battle_action:guard", "battle_action:flee"]);
   });
 
@@ -115,22 +115,19 @@ describe("buildChoiceMap", () => {
     const story = buildStoryState({
       registry,
       choices: [
-        { choiceToken: registry[0].choiceToken, label: "问铁匠", actionKey: "talk:npc_smith" },
-        { choiceToken: registry[1].choiceToken, label: "前往街道", actionKey: "move:loc_2" },
+        { choiceToken: registry[0].choiceToken, label: "问铁匠" },
+        { choiceToken: registry[1].choiceToken, label: "前往街道" },
       ],
     });
-    const map = buildChoiceMap(buildWorldState(), story);
+    const map = buildChoiceMap(buildWorldState(), story, 3);
     expect(map.get(registry[0].choiceToken)).toEqual(talkSmith);
     expect(map.get(registry[1].choiceToken)).toEqual(moveStreet);
   });
 
   it("未知/过期 token（不在 registry）不产生映射，即旧 actionKey 不再作为选择入口", () => {
     const map = buildChoiceMap(buildWorldState(), buildStoryState({
-      choices: [
-        { choiceToken: "legacy-a", label: "探索", actionKey: "explore" },
-        { choiceToken: "legacy-b", label: "休息", actionKey: "rest" },
-      ],
-    }));
+      choices: [{ choiceToken: "legacy-a", label: "探索" }, { choiceToken: "legacy-b", label: "休息" }],
+    }), 0);
     expect(map.has("legacy-a")).toBe(false);
     expect(map.has("legacy-b")).toBe(false);
   });
@@ -140,7 +137,7 @@ describe("buildChoiceMap", () => {
       approvedFor({ sceneId: "scene-old", basedOnRevision: 2, label: "问铁匠", action: talkSmith }),
     ];
     const story = buildStoryState({ registry });
-    const map = buildChoiceMap(buildWorldState(), story);
+    const map = buildChoiceMap(buildWorldState(), story, 2);
     expect(map.has(registry[0].choiceToken)).toBe(false);
   });
 
@@ -150,10 +147,7 @@ describe("buildChoiceMap", () => {
     ];
     const story = buildStoryState({
       registry,
-      choices: [
-        { choiceToken: registry[0].choiceToken, label: "问铁匠", actionKey: "explore" },
-        { choiceToken: "t_b", label: "B", actionKey: "explore" },
-      ],
+      choices: [{ choiceToken: registry[0].choiceToken, label: "问铁匠" }, { choiceToken: "t_b", label: "B" }],
     });
     const map = buildChoiceMap(buildWorldState(), story, 7);
     expect(map.has(registry[0].choiceToken)).toBe(false);
@@ -167,8 +161,19 @@ describe("buildChoiceMap", () => {
     ];
     const revived = JSON.parse(JSON.stringify(registry)) as readonly ApprovedChoice[];
     const story = buildStoryState({ registry: revived });
-    const map = buildChoiceMap(buildWorldState(), story);
+    const map = buildChoiceMap(buildWorldState(), story, 3);
     expect(map.get(revived[0].choiceToken)).toEqual(attackWolf);
+  });
+
+  it("registry action 已不再是当前合法行动时不映射", () => {
+    const registry = [approvedFor({
+      sceneId: "scene-current",
+      basedOnRevision: 3,
+      label: "前往锁定地点",
+      action: { type: "move", locationId: asLocationId("loc_3") },
+    })];
+    const map = buildChoiceMap(buildWorldState(), buildStoryState({ registry }), 3);
+    expect(map.has(registry[0]!.choiceToken)).toBe(false);
   });
 });
 
@@ -190,8 +195,14 @@ function buildStoryState(opts: {
     source: "generated",
     npcLine: null,
     choices: opts.choices ?? [
-      { choiceToken: "t_a", label: "A", actionKey: "explore" },
-      { choiceToken: "t_b", label: "B", actionKey: "explore" },
+      {
+        choiceToken: opts.registry?.[0]?.choiceToken ?? "t_a",
+        label: opts.registry?.[0]?.label ?? "A",
+      },
+      {
+        choiceToken: opts.registry?.[1]?.choiceToken ?? "t_b",
+        label: opts.registry?.[1]?.label ?? "B",
+      },
     ],
   };
   const narrative: NarrativeRuntimeState = {

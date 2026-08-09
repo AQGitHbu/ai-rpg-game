@@ -1,6 +1,7 @@
 import type { SceneGenerationContext } from "./sceneGenerationContext";
-import type { NarrativeSceneState } from "@/game/domain/narrative";
+import type { NarrativeEventState, NarrativeNpcLineState } from "@/game/domain/narrative";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
+import type { ChoiceProposal } from "@/game/domain/approvedChoice";
 
 /**
  * SceneGenerator 的事件提议（spec §7.4 newEvents）。
@@ -8,12 +9,20 @@ import type { EventCandidate } from "@/game/domain/candidateEvent";
  */
 export type EventProposal = EventCandidate;
 
-/** SceneGenerator 调用结果（spec §7.3 ScenePackage 映射）。 */
-export type SceneSourceResult = {
-  readonly scene: NarrativeSceneState;
+/** SceneSource 只负责提案；token 与 ready state 一律由审批边界构造。 */
+export type ScenePackageProposal = {
+  readonly sceneId: string;
+  readonly turn: number;
+  readonly narration: string;
+  readonly npcLine: NarrativeNpcLineState | null;
+  readonly event: NarrativeEventState;
+  readonly choiceProposals: readonly [ChoiceProposal, ChoiceProposal];
   readonly eventProposals: readonly EventProposal[];
   readonly source: "generated" | "fallback";
 };
+
+/** 兼容现有 source 命名；结果本身就是尚未批准的场景包提案。 */
+export type SceneSourceResult = ScenePackageProposal;
 
 /** 可注入的叙事场景 source。离线 fixture 不调用 AI。 */
 export type SceneSource = {

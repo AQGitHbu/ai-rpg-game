@@ -40,6 +40,7 @@ Phase 10 建立第一条真实运行时 AI 剧情闭环；Phase 14 将其收敛�
 
 ## 最近维护
 
+- 2026-08-09：v2.1 `SceneSource` 收敛为只返回 `ChoiceProposal` 的场景包提案；审批边界逐字段重建 ready scene 与 `ApprovedChoice` registry，并按写回后的 revision 铸造不透明 token。scene、registry、candidate pool 由同一次 CAS 写回；消费时同时校验当前 scene、当前 revision 与当前规则合法性。live source 只能回传服务端候选 ID，不再接收任意 `actionKey`。
 - 2026-08-06：修复运行时叙事任务异常退出后长期保持 `pending` 的问题。编排边界现在将未预期异常收敛为确定性 fallback，并与 `narrative_scene_presented`、memory 归约一起通过 CAS 写入 `currentScene` 与 `generation: idle`；只有持久化本身失败才返回 `unavailable`。初始开场增加 30 秒单次 provider 上限，避免三个角色各等 120 秒导致 5–6 分钟无反馈。序幕 ack 与后台生成并发时，生成器会在仅 `prologueShown` 改变的最新 revision 上安全重基准；其它 stale 由 coordinator 最多重试两次。客户端每 10 秒重新 ensure，连续基础设施失败才停止并提示刷新。pending UI 展示角色阶段进度；fallback 对话绑定当前触发 NPC，并始终提供两个 `dialogue_response` 选项。
 - 2026-08-06：修复角色进度按“响应次数”累计导致“导演第 3 次尝试却显示 2/3”的语义错误；现在只有 director/writer/npc 各自审批完成后才分别计入 1 个阶段。对白场景同步预生成两个 NPC 回复，选择后即时显示连续对白与安全的下一行动提示；后续选择才进入 pending，避免对白回应被错误替换成无关“剧情事件”。
 

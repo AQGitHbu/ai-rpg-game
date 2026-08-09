@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { GameSessionViewV2 } from "@/game/application/gameSessionViewV2";
 import { projectGameSessionView } from "@/game/application/gameSessionViewV2";
 import { createDeterministicSceneSource } from "@/game/application/deterministicSceneSource";
+import { approveScenePackage } from "@/game/application/approveAndWriteScene";
 import type { SceneGenerationContext } from "@/game/application/sceneGenerationContext";
 import { createInitialWorldState, appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -165,7 +166,14 @@ describe("adaptV2ToV1View dialogues", () => {
       worldConstraints: [],
     };
     const sceneResult = await createDeterministicSceneSource().generateScene(context);
-    const ssWithScene = { ...ss, narrative: { ...ss.narrative, currentScene: sceneResult.scene } };
+    const approved = approveScenePackage({
+      context,
+      proposal: sceneResult,
+      basedOnRevision: 1,
+      existingCandidateEventPool: [],
+    });
+    if (!approved.ok) throw new Error(`fixture approval failed: ${approved.code}`);
+    const ssWithScene = { ...ss, narrative: { ...ss.narrative, currentScene: approved.scene } };
     const view = projectGameSessionView({ ...ws, npcs }, ssWithScene, 1);
     expect(view.narrative.npcDialogues).toHaveLength(2);
     const adapted = adaptV2ToV1View(view) as unknown as {

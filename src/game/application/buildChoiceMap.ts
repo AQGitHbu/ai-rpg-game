@@ -26,7 +26,7 @@ import type { ActionChoiceMap } from "./actionConverter";
 export function buildChoiceMap(
   worldState: WorldState,
   storyState: StoryState,
-  currentRevision?: number,
+  currentRevision: number,
 ): ActionChoiceMap {
   const map = new Map<string, Action>();
 
@@ -87,9 +87,12 @@ export function buildChoiceMap(
   const scene = storyState.narrative.currentScene;
   const registry = storyState.narrative.choiceRegistry;
   if (scene !== null && registry !== undefined) {
+    const currentSceneTokens = new Set(scene.choices.map((choice) => choice.choiceToken));
     for (const entry of registry) {
       if (entry.sceneId !== scene.sceneId) continue;
-      if (currentRevision !== undefined && entry.basedOnRevision !== currentRevision) continue;
+      if (entry.basedOnRevision !== currentRevision) continue;
+      if (!currentSceneTokens.has(entry.choiceToken)) continue;
+      if (!isCurrentlyLegalRegistryAction(entry.action, worldState, map)) continue;
       if (!map.has(entry.choiceToken)) {
         map.set(entry.choiceToken, entry.action);
       }
@@ -97,4 +100,27 @@ export function buildChoiceMap(
   }
 
   return map;
+}
+
+function isCurrentlyLegalRegistryAction(
+  action: Action,
+  worldState: WorldState,
+  worldActionMap: ReadonlyMap<string, Action>,
+): boolean {
+  switch (action.type) {
+    case "talk":
+      return worldState.npcs.some(
+        (npc) => npc.id === action.npcId && npc.locationId === worldState.currentLocationId,
+      );
+    case "move": return worldActionMap.has(`move:${String(action.locationId)}`);
+    case "explore": return worldActionMap.has("explore");
+    case "take_item": return worldActionMap.has(`take_item:${String(action.itemId)}`);
+    case "attack": return worldActionMap.has(`attack:${String(action.enemyId)}`);
+    case "rest": return worldActionMap.has("rest");
+    case "battle_action": return worldActionMap.has(`battle_action:${action.action}`);
+    case "investigate":
+    case "ack_prologue":
+    case "freeform":
+      return false;
+  }
 }
