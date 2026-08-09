@@ -8,6 +8,8 @@ import { performTurn } from "@/game/application/performTurn";
 import { createGameV2, createFixtureWorldSource } from "@/game/application/createGameV2";
 import { generatePendingSceneV2 } from "@/game/application/generatePendingSceneV2";
 import { createDeterministicSceneSource } from "@/game/application/deterministicSceneSource";
+import { createRuleIntentParserV2 } from "@/game/application/server/ai/liveIntentParserSourceV2";
+import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
 import { asGameId } from "@/game/application/server/persistence/gameRepository";
 
 // ---------------------------------------------------------------------------
@@ -75,6 +77,9 @@ export type JourneyTurnResult = {
   readonly turnNumberAfter: number;
 };
 
+/** 规则意图源（离线确定性）：让自由文本可靠分类 support/challenge 等。 */
+const RULE_INTENT_SOURCE: IntentParserSource = createRuleIntentParserV2();
+
 /** 执行一个回合：先清空 pending（如无 pending 则跳过），再走 performTurn。 */
 export async function playTurn(
   repo: GameRepositoryV2,
@@ -88,7 +93,7 @@ export async function playTurn(
   const turnNumber = current.record.storyState.turnNumber;
   const result = await performTurn(
     { gameId: current.record.gameId, actionId: `act_j_${turnNumber}`, interaction, expectedRevision: revision, choiceMap },
-    { repository: repo, now, expansionSource: undefined },
+    { repository: repo, now, expansionSource: undefined, intentParserSource: RULE_INTENT_SOURCE },
   );
   if (result.ok) {
     const after = await repo.getCurrentGame();
