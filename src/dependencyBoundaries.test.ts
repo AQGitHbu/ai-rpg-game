@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -908,6 +908,17 @@ describe("one canonical executable chain remains", () => {
       .map(toPosixRelative)
       .filter((file) => retiredPrefixes.some((prefix) => file.startsWith(prefix)));
     expect(retired).toEqual([]);
+  });
+
+  it("contains no retired town demo script, assets, or styles", () => {
+    const repositoryRoot = resolve(sourceRoot, "..");
+    const retiredScript = ["genTown", "BuildingImages.mjs"].join("");
+    const retiredAssetDirectory = ["town", "experiment"].join("-");
+    expect(existsSync(resolve(repositoryRoot, "scripts", retiredScript))).toBe(false);
+    expect(existsSync(resolve(repositoryRoot, "public/assets", retiredAssetDirectory))).toBe(false);
+    expect(readFileSync(resolve(sourceRoot, "app/globals.css"), "utf8")).not.toMatch(
+      new RegExp(["\\.town-", "(?:demo|layer)-"].join("")),
+    );
   });
 
   it("has no versioned executable naming outside persisted schema/fixture values", () => {
