@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import type { GameSessionView, PlayerChoiceView } from "@/game/application";
-import { postAction, type ActionOutcome } from "./gameActionRequest";
+import { postAction, type ActionOutcome, type ActionPayload } from "./gameActionRequest";
 
 type Props = {
   readonly view: GameSessionView;
@@ -16,14 +16,12 @@ type Dialogue = NonNullable<GameSessionView["narrative"]["npcDialogues"]>[number
 
 function NpcInteractionCard({
   dialogue,
-  revision,
   busy,
-  onOutcome,
+  onSubmit,
 }: {
   readonly dialogue: Dialogue;
-  readonly revision: number;
   readonly busy: boolean;
-  readonly onOutcome: (outcome: ActionOutcome) => void;
+  readonly onSubmit: (interaction: ActionPayload["interaction"]) => void;
 }) {
   const [text, setText] = useState("");
 
@@ -31,10 +29,7 @@ function NpcInteractionCard({
     event.preventDefault();
     const normalized = text.trim();
     if (normalized === "") return;
-    onOutcome(await postAction({
-      interaction: { kind: "free_text", text: normalized, targetNpcId: dialogue.npcId },
-      revision,
-    }));
+    onSubmit({ kind: "free_text", text: normalized, targetNpcId: dialogue.npcId });
     setText("");
   }
 
@@ -47,10 +42,7 @@ function NpcInteractionCard({
           <InlineButton
             key={choice.choiceToken}
             disabled={busy}
-            onClick={() => void postAction({
-              interaction: { kind: "fixed_choice", choiceToken: choice.choiceToken },
-              revision,
-            }).then(onOutcome)}
+            onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken })}
           >
             {choice.label}
           </InlineButton>
@@ -90,9 +82,16 @@ export function AdventureGameShell({ view, onViewChange, onStaleRevision, onClea
     }
   }
 
-  function submitChoice(choiceToken: string): void {
+  function submitInteraction(interaction: ActionPayload["interaction"]): void {
     setBusy(true);
-    void postAction({ interaction: { kind: "fixed_choice", choiceToken }, revision: view.revision }).then(applyOutcome);
+    const request = interaction.kind === "fixed_choice"
+      ? postAction({ interaction, revision: view.revision })
+      : postAction({ interaction, revision: view.revision });
+    void request.then(applyOutcome);
+  }
+
+  function submitChoice(choiceToken: string): void {
+    submitInteraction({ kind: "fixed_choice", choiceToken });
   }
 
   const pending = view.narrativeGeneration.status === "pending";
@@ -125,8 +124,8 @@ export function AdventureGameShell({ view, onViewChange, onStaleRevision, onClea
       <Panel>
         <h2>世界地图</h2>
         <div role="group" aria-label="可前往地点">
-          {view.worldMap.locations.map((location) => location.travelChoice === null
-            ? <span key={location.id}>{location.name}{location.current ? "（当前）" : ""}</span>
+          {view.worldMap.locations.map((location, index) => location.travelChoice === null
+            ? <span key={`${location.name}-${index}`}>{location.name}{location.current ? "（当前）" : ""}</span>
             : renderChoiceButton(location.travelChoice))}
         </div>
       </Panel>
@@ -171,16 +170,15 @@ export function AdventureGameShell({ view, onViewChange, onStaleRevision, onClea
         <NpcInteractionCard
           key={dialogue.npcId}
           dialogue={dialogue}
-          revision={view.revision}
           busy={disabled}
-          onOutcome={applyOutcome}
+          onSubmit={submitInteraction}
         />
       ))}
 
       <Panel>
         <h2>任务</h2>
-        {view.quests.map((quest) => (
-          <section key={quest.id}>
+        {view.quests.map((quest, index) => (
+          <section key={`${quest.name}-${index}`}>
             <h3>{quest.name} · {quest.status}</h3>
             <p>{quest.description}</p>
             <ul>{quest.objectives.map((objective) => (

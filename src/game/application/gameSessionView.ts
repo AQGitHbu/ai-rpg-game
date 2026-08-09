@@ -6,6 +6,7 @@ import {
 } from "@/game/domain";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
+import { buildChoiceMap } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 
 export type PlayerChoiceView = {
@@ -38,7 +39,6 @@ export type GameSessionView = {
   };
   readonly worldMap: {
     readonly locations: readonly {
-      readonly id: string;
       readonly name: string;
       readonly current: boolean;
       readonly visited: boolean;
@@ -46,19 +46,16 @@ export type GameSessionView = {
     }[];
   };
   readonly currentLocation: {
-    readonly id: string;
     readonly name: string;
     readonly description: string;
     readonly actions: readonly PlayerChoiceView[];
   };
   readonly obtainableItems: readonly {
-    readonly itemId: string;
     readonly name: string;
     readonly description: string;
     readonly choice: PlayerChoiceView;
   }[];
   readonly inventory: readonly {
-    readonly itemId: string;
     readonly name: string;
     readonly description: string;
   }[];
@@ -75,7 +72,7 @@ export type GameSessionView = {
     readonly eventKind?: string;
     readonly narration?: string;
     readonly choices: readonly PlayerChoiceView[];
-    readonly npcLine: { readonly npcId: string; readonly text: string; readonly emotion: string } | null;
+    readonly npcLine: { readonly text: string; readonly emotion: string } | null;
     readonly npcDialogues: readonly NpcDialogueView[];
   };
   readonly narrativeGeneration: { readonly status: "idle" | "pending" };
@@ -87,7 +84,6 @@ export type GameSessionView = {
     readonly controls: readonly PlayerChoiceView[];
   } | null;
   readonly quests: readonly {
-    readonly id: string;
     readonly name: string;
     readonly description: string;
     readonly kind: string;
@@ -96,7 +92,6 @@ export type GameSessionView = {
   }[];
   readonly prologueShown: boolean;
   readonly ending: {
-    readonly endingId: string;
     readonly name: string;
     readonly description: string;
     readonly outcome: string;
@@ -136,18 +131,6 @@ function presentationForAction(action: Action): PlayerChoiceView["presentation"]
     case "investigate":
     case "ack_prologue":
       return "explore";
-  }
-}
-
-function fallbackScenePresentation(
-  kind: string | undefined,
-): PlayerChoiceView["presentation"] {
-  switch (kind) {
-    case "dialogue": return "dialogue";
-    case "travel": return "travel";
-    case "item": return "item";
-    case "battle": return "battle";
-    default: return "explore";
   }
 }
 
@@ -196,7 +179,6 @@ export function projectGameSessionView(
   const mapLocations = worldState.locations
     .filter((location) => worldState.unlockedLocationIds.includes(location.id))
     .map((location) => ({
-      id: String(location.id),
       name: location.name,
       current: location.id === worldState.currentLocationId,
       visited: worldState.visitedLocationIds.includes(location.id),
@@ -230,7 +212,6 @@ export function projectGameSessionView(
       .map((itemId) => {
         const item = worldState.items.find((entry) => entry.id === itemId);
         return {
-          itemId: String(itemId),
           name: item?.name ?? "未知物品",
           description: item?.description ?? "",
           choice: choice({ type: "take_item", itemId }, revision, `拾取${item?.name ?? "物品"}`, "item"),
@@ -245,22 +226,29 @@ export function projectGameSessionView(
       ? null
       : String(scene.npcLine.npcId);
   const registry = storyState.narrative.choiceRegistry ?? [];
-  const projectSceneChoice = (sceneChoice: NonNullable<typeof scene>["choices"][number]): PlayerChoiceView => {
+  const legalChoiceMap = buildChoiceMap(worldState, storyState, revision);
+  const projectSceneChoice = (sceneChoice: NonNullable<typeof scene>["choices"][number]): PlayerChoiceView | null => {
     const approved = registry.find((entry) =>
       entry.choiceToken === sceneChoice.choiceToken
       && entry.sceneId === scene?.sceneId
       && entry.basedOnRevision === revision
     );
+    if (
+      approved === undefined
+      || legalChoiceMap.get(sceneChoice.choiceToken) !== approved.action
+    ) {
+      return null;
+    }
     return {
       choiceToken: sceneChoice.choiceToken,
-      label: sceneChoice.label,
+      label: approved.label,
       ...(sceneChoice.hint === undefined ? {} : { hint: sceneChoice.hint }),
-      presentation: approved === undefined
-        ? fallbackScenePresentation(scene?.event?.kind)
-        : presentationForAction(approved.action),
+      presentation: presentationForAction(approved.action),
     };
   };
-  const projectedSceneChoices = scene?.choices.map(projectSceneChoice) ?? [];
+  const projectedSceneChoices = scene?.choices
+    .map(projectSceneChoice)
+    .filter((entry): entry is PlayerChoiceView => entry !== null) ?? [];
   const isDialogueScene = focusNpcId !== null;
   const dialogueChoices: NpcDialogueView["choices"] = isDialogueScene && projectedSceneChoices.length === 2
     ? [projectedSceneChoices[0]!, projectedSceneChoices[1]!]
@@ -315,7 +303,6 @@ export function projectGameSessionView(
     },
     worldMap: { locations: mapLocations },
     currentLocation: {
-      id: String(worldState.currentLocationId),
       name: currentLocation?.name ?? "未知地点",
       description: currentLocation?.description ?? "",
       actions: locationActions,
@@ -323,7 +310,7 @@ export function projectGameSessionView(
     obtainableItems,
     inventory: worldState.inventory.map((itemId) => {
       const item = worldState.items.find((entry) => entry.id === itemId);
-      return { itemId: String(itemId), name: item?.name ?? "未知物品", description: item?.description ?? "" };
+      return { name: item?.name ?? "未知物品", description: item?.description ?? "" };
     }),
     story: {
       currentAct: storyState.currentAct,
@@ -339,13 +326,12 @@ export function projectGameSessionView(
       choices: isDialogueScene ? [] : projectedSceneChoices,
       npcLine: scene?.npcLine === null || scene?.npcLine === undefined
         ? null
-        : { npcId: String(scene.npcLine.npcId), text: scene.npcLine.text, emotion: scene.npcLine.emotion },
+        : { text: scene.npcLine.text, emotion: scene.npcLine.emotion },
       npcDialogues,
     },
     narrativeGeneration: { status: storyState.narrative.generation.status },
     battle,
     quests: worldState.quests.map((quest) => ({
-      id: String(quest.id),
       name: quest.name,
       description: quest.description,
       kind: quest.kind,
@@ -354,7 +340,6 @@ export function projectGameSessionView(
     })),
     prologueShown: storyState.prologueShown,
     ending: worldState.ending === null ? null : {
-      endingId: String(worldState.ending.endingId),
       name: endingDefinition?.name ?? "故事结局",
       description: endingDefinition?.description ?? "",
       outcome: worldState.ending.outcome,

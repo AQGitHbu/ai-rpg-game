@@ -4,6 +4,8 @@ import { buildChoiceMap } from "./buildChoiceMap";
 import { createInitialWorldState, appendNpc, appendLocation, type WorldState, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId, asFactId, asItemId, asEnemyId, asEndingId } from "@/game/domain/scenarioBlueprint";
+import type { Action } from "@/game/domain/action";
+import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 
 describe("projectGameSessionView", () => {
   const loc1: LocationEntry = {
@@ -27,6 +29,16 @@ describe("projectGameSessionView", () => {
     startingItemIds: [],
   }), loc2), npc1), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
   const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
+
+  function approved(
+    choiceToken: string,
+    sceneId: string,
+    basedOnRevision: number,
+    label: string,
+    action: Action,
+  ): ApprovedChoice {
+    return { choiceToken, sceneId, basedOnRevision, label, action, semanticSummary: `approved:${choiceToken}` };
+  }
 
   it("projects player and current location", () => {
     const view = projectGameSessionView(ws, ss, 0);
@@ -94,7 +106,7 @@ describe("projectGameSessionView", () => {
       narrative: {
         ...ss.narrative,
         currentScene: scene,
-        choiceRegistry: [{ choiceToken: "t1", sceneId: "scene-1", basedOnRevision: 0, label: "x", action: { type: "move" as const, locationId: asLocationId("loc_2") }, semanticSummary: "s" }],
+        choiceRegistry: [approved("t1", "scene-1", 0, "x", { type: "move", locationId: asLocationId("loc_2") })],
         generation: { status: "pending" as const, job: { kind: "scene" as const, sceneId: "scene-1", seed: "s", inputDigest: "d", gameType: "wuxia" as const, intent: { kind: "initial" as const }, context: { triggerContext: { kind: "initial_opening" as const, npcId: asNpcId("npc_1") }, locationId: asLocationId("loc_1"), presentNpcIds: [] }, mode: "ai" as const, utterance: "你好" } } as unknown as import("@/game/domain/storyState").StoryState["narrative"]["generation"],
       },
     };
@@ -136,7 +148,17 @@ describe("projectGameSessionView", () => {
       memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
     const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
-    const ssScene = { ...ss, narrative: { ...ss.narrative, currentScene: scene } };
+    const ssScene = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("t1", "scene-d", 0, scene.choices[0].label, { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }),
+          approved("t2", "scene-d", 0, scene.choices[1].label, { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" }),
+        ],
+      },
+    };
     const view = projectGameSessionView(wsTwo, ssScene, 0);
     const dialogues = view.narrative.npcDialogues ?? [];
     const lu = dialogues.find((d) => d.npcId === "npc_1");
@@ -165,7 +187,17 @@ describe("projectGameSessionView", () => {
       source: "generated" as const,
       event: { kind: "observe" as const, locationId: asLocationId("loc_1") },
     };
-    const ssScene = { ...ss, narrative: { ...ss.narrative, currentScene: scene } };
+    const ssScene = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("w1", "scene-w", 0, scene.choices[0].label, { type: "explore" }),
+          approved("w2", "scene-w", 0, scene.choices[1].label, { type: "move", locationId: asLocationId("loc_2") }),
+        ],
+      },
+    };
     const view = projectGameSessionView(ws, ssScene, 0);
     // 世界行动选项出现在 narrative.choices（白名单形状）
     expect(view.narrative.choices?.map((c) => c.choiceToken).sort()).toEqual(["w1", "w2"]);
@@ -175,6 +207,50 @@ describe("projectGameSessionView", () => {
     // 不进入任何 NPC 的对话选择
     for (const d of view.narrative.npcDialogues ?? []) {
       expect(d.choices ?? []).toHaveLength(0);
+    }
+  });
+
+  it("只投影当前场景、当前 revision 且仍可执行的 ApprovedChoice token", () => {
+    const cases: readonly {
+      readonly badToken: string;
+      readonly badRegistry: readonly ApprovedChoice[];
+    }[] = [
+      { badToken: "missing-token", badRegistry: [] },
+      { badToken: "stale-token", badRegistry: [approved("stale-token", "scene-current", 3, "旧选项", { type: "rest" })] },
+      { badToken: "wrong-scene-token", badRegistry: [approved("wrong-scene-token", "scene-other", 4, "别处选项", { type: "rest" })] },
+      { badToken: "tampered-token", badRegistry: [approved("server-token", "scene-current", 4, "服务器原始选项", { type: "rest" })] },
+      { badToken: "illegal-token", badRegistry: [approved("illegal-token", "scene-current", 4, "前往未连接地点", { type: "move", locationId: asLocationId("loc_locked") })] },
+    ];
+
+    for (const testCase of cases) {
+      const scene = {
+        sceneId: "scene-current",
+        turn: 4,
+        narration: "客栈里出现了新的动静。",
+        usedFactIds: [],
+        npcLine: null,
+        choices: [
+          { choiceToken: "valid-token", label: "场景中被篡改的标签" },
+          { choiceToken: testCase.badToken, label: "无效选项" },
+        ] as const,
+        source: "generated" as const,
+        event: { kind: "observe" as const, locationId: asLocationId("loc_1") },
+      };
+      const story: StoryState = {
+        ...ss,
+        narrative: {
+          ...ss.narrative,
+          currentScene: scene,
+          choiceRegistry: [
+            approved("valid-token", scene.sceneId, 4, "继续观察", { type: "explore" }),
+            ...testCase.badRegistry,
+          ],
+        },
+      };
+
+      expect(projectGameSessionView(ws, story, 4).narrative.choices).toEqual([
+        { choiceToken: "valid-token", label: "继续观察", presentation: "explore" },
+      ]);
     }
   });
 
@@ -270,7 +346,7 @@ describe("projectGameSessionView", () => {
     };
 
     const view = projectGameSessionView(completeWorld, ss, 7);
-    const travel = view.worldMap.locations.find((location) => location.id === "loc_2")?.travelChoice;
+    const travel = view.worldMap.locations.find((location) => location.name === "街道")?.travelChoice;
     expect(travel).toMatchObject({ label: "前往街道", presentation: "travel" });
     expect(travel?.choiceToken).toMatch(/^c_[0-9a-f]{16}$/);
     expect(travel?.choiceToken).not.toContain("loc_2");
@@ -279,8 +355,16 @@ describe("projectGameSessionView", () => {
       "explore", "dialogue", "battle", "rest",
     ]);
     expect(view.obtainableItems).toEqual([
-      expect.objectContaining({ itemId: "item_key", name: "铜钥匙", choice: expect.objectContaining({ presentation: "item" }) }),
+      expect.objectContaining({ name: "铜钥匙", choice: expect.objectContaining({ presentation: "item" }) }),
     ]);
+    expect(Object.keys(view.worldMap.locations[0]!).sort()).toEqual([
+      "current", "name", "travelChoice", "visited",
+    ]);
+    expect(Object.keys(view.currentLocation).sort()).toEqual(["actions", "description", "name"]);
+    expect(Object.keys(view.obtainableItems[0]!).sort()).toEqual(["choice", "description", "name"]);
+    const inventoryView = projectGameSessionView({ ...completeWorld, inventory: [itemId] }, ss, 7);
+    expect(inventoryView.inventory).toEqual([{ name: "铜钥匙", description: "一把旧钥匙" }]);
+    expect(JSON.stringify(view)).not.toMatch(/loc_1|loc_2|item_key|enemy_wolf/);
     for (const choice of [
       ...view.currentLocation.actions,
       ...view.obtainableItems.map((item) => item.choice),
@@ -329,7 +413,17 @@ describe("projectGameSessionView", () => {
       source: "generated" as const,
       event: { kind: "dialogue" as const, focusNpcId: asNpcId("npc_1") },
     };
-    const story = { ...ss, narrative: { ...ss.narrative, currentScene: scene } };
+    const story = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved(scene.choices[0].choiceToken, scene.sceneId, 2, scene.choices[0].label, { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }),
+          approved(scene.choices[1].choiceToken, scene.sceneId, 2, scene.choices[1].label, { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" }),
+        ],
+      },
+    };
     const view = projectGameSessionView(ws, story, 2);
     const dialogue = view.narrative.npcDialogues[0];
     expect(dialogue).toMatchObject({ npcId: "npc_1", name: "老板", role: "路人", freeInputEnabled: true });
@@ -364,7 +458,7 @@ describe("projectGameSessionView", () => {
     expect(view.revision).toBe(12);
     expect(view.narrativeGeneration).toEqual({ status: "pending" });
     expect(view.quests[0]?.objectives).toEqual([{ label: "发现秘密", completed: false }]);
-    expect(view.ending).toMatchObject({ endingId: "ending_home", outcome: "success" });
+    expect(view.ending).toMatchObject({ name: "故事结局", outcome: "success" });
 
     const reloaded = JSON.parse(JSON.stringify(view));
     expect(reloaded).toEqual(view);
@@ -372,8 +466,13 @@ describe("projectGameSessionView", () => {
     for (const forbidden of [
       "actionKey", "choiceRegistry", "candidateEventPool", "secretEffect", "secretRegistry",
       "private player text", secretText, "worldState", "storyState", "eventLedger",
+      "quest_main", "ending_home", "loc_1", "loc_2",
     ]) {
       expect(serialized).not.toContain(forbidden);
     }
+    expect(Object.keys(view.quests[0]!).sort()).toEqual([
+      "description", "kind", "name", "objectives", "status",
+    ]);
+    expect(Object.keys(view.ending!).sort()).toEqual(["description", "name", "outcome"]);
   });
 });

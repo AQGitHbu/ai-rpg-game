@@ -1,9 +1,9 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GameSessionView } from "@/game/application";
 import { AdventureGameShell } from "./AdventureGameShell";
-import { postAction } from "./gameActionRequest";
+import { postAction, type ActionOutcome } from "./gameActionRequest";
 
 vi.mock("./gameActionRequest", () => ({
   postAction: vi.fn(async () => ({ kind: "rejected", message: "stop" })),
@@ -29,15 +29,15 @@ function buildView(): GameSessionView {
     player: { name: "侠客", identity: "剑客", hp: 90, attack: 10, defense: 5 },
     worldMap: {
       locations: [
-        { id: "loc_1", name: "客栈", current: true, visited: true, travelChoice: null },
-        { id: "loc_2", name: "街道", current: false, visited: false, travelChoice: choice(TOKENS.travel, "前往街道", "travel") },
+        { name: "客栈", current: true, visited: true, travelChoice: null },
+        { name: "街道", current: false, visited: false, travelChoice: choice(TOKENS.travel, "前往街道", "travel") },
       ],
     },
     currentLocation: {
-      id: "loc_1", name: "客栈", description: "一间客栈",
+      name: "客栈", description: "一间客栈",
       actions: [choice(TOKENS.explore, "探索客栈", "explore")],
     },
-    obtainableItems: [{ itemId: "item_key", name: "铜钥匙", description: "旧钥匙", choice: choice(TOKENS.item, "拾取铜钥匙", "item") }],
+    obtainableItems: [{ name: "铜钥匙", description: "旧钥匙", choice: choice(TOKENS.item, "拾取铜钥匙", "item") }],
     inventory: [],
     story: { currentAct: 1, targetActs: 3, tension: 30, pacingNeed: "reveal", storyProgress: 5 },
     narrative: {
@@ -56,7 +56,7 @@ function buildView(): GameSessionView {
       enemyName: "灰狼", playerHp: 90, enemyHp: 12, round: 2,
       controls: [choice(TOKENS.battle, "攻击", "battle")],
     },
-    quests: [{ id: "q1", name: "查明真相", description: "追寻线索", kind: "main", status: "active", objectives: [{ label: "发现秘密", completed: false }] }],
+    quests: [{ name: "查明真相", description: "追寻线索", kind: "main", status: "active", objectives: [{ label: "发现秘密", completed: false }] }],
     prologueShown: true,
     ending: null,
   };
@@ -102,6 +102,45 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(postAction).toHaveBeenCalledWith({
       interaction: { kind: "free_text", text: "我相信你", targetNpcId: "npc_1" },
       revision: 9,
+    });
+  });
+
+  it("sets the common busy state for NPC fixed choices until the request settles", async () => {
+    let resolveRequest!: (outcome: ActionOutcome) => void;
+    vi.mocked(postAction).mockImplementationOnce(() => new Promise<ActionOutcome>((resolve) => {
+      resolveRequest = resolve;
+    }));
+    renderShell();
+
+    await userEvent.click(screen.getByRole("button", { name: "追问线索" }));
+
+    expect((screen.getByRole("button", { name: "表示理解" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("textbox", { name: "自定义回应" }) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "前往街道" }) as HTMLButtonElement).disabled).toBe(true);
+
+    resolveRequest({ kind: "rejected", message: "stop" });
+    await waitFor(() => {
+      expect((screen.getByRole("button", { name: "表示理解" }) as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
+
+  it("sets the same busy state for NPC free text until the request settles", async () => {
+    let resolveRequest!: (outcome: ActionOutcome) => void;
+    vi.mocked(postAction).mockImplementationOnce(() => new Promise<ActionOutcome>((resolve) => {
+      resolveRequest = resolve;
+    }));
+    renderShell();
+    await userEvent.type(screen.getByRole("textbox", { name: "自定义回应" }), "我有一个主意");
+
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    expect((screen.getByRole("textbox", { name: "自定义回应" }) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "追问线索" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "探索客栈" }) as HTMLButtonElement).disabled).toBe(true);
+
+    resolveRequest({ kind: "rejected", message: "stop" });
+    await waitFor(() => {
+      expect((screen.getByRole("textbox", { name: "自定义回应" }) as HTMLInputElement).disabled).toBe(false);
     });
   });
 });
