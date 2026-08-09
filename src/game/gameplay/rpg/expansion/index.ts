@@ -34,6 +34,19 @@ export function runExpansionProposer(
   deps: ExpansionDeps,
 ): ExpansionResult {
   const trigger = checkExpansionTrigger(initialResult, ws, ss, action);
+  // reuse：已有合适实体可复用，不新建任何实体；reEvaluatedResult 为 null，
+  // 由 application 决定是否用复用目标重定向后重演算（Task 28 编排）。
+  if (trigger.reason === "reuse" && trigger.reuse) {
+    return {
+      triggered: true,
+      reason: "reuse",
+      approved: null,
+      nextBudget: ss.budget,
+      reEvaluatedResult: null,
+      rejectedProposals: [],
+      reuse: trigger.reuse,
+    };
+  }
   if (!trigger.triggered || proposals === null) {
     return {
       triggered: false,
@@ -42,6 +55,7 @@ export function runExpansionProposer(
       nextBudget: null,
       reEvaluatedResult: null,
       rejectedProposals: [],
+      closureSignal: trigger.closureSignal,
     };
   }
 

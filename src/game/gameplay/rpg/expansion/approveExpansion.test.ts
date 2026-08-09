@@ -141,4 +141,136 @@ describe("approveExpansions", () => {
     const result = approveExpansions(proposals, ws, ss.budget, deps, { kind: "location", id: "loc_custom_id" });
     expect(result.approved.newLocations[0]!.id).toBe(asLocationId("loc_custom_id"));
   });
+
+  // ── Task 27：同批 ID 唯一与跨批引用 ──
+
+  it("produces unique IDs for multiple entities of the same kind in one batch", () => {
+    const proposals: ExpansionProposal[] = [
+      {
+        kind: "location",
+        name: "密林",
+        description: "一片幽暗的密林，传说中有猛兽出没。",
+        scale: "scene",
+        connectFromLocationId: "loc_1",
+        reason: "玩家要求前往",
+      },
+      {
+        kind: "location",
+        name: "洞窟",
+        description: "一座幽深的山洞，深处隐约传来水声。",
+        scale: "scene",
+        connectFromLocationId: "loc_1",
+        reason: "玩家要求前往",
+      },
+    ];
+    const result = approveExpansions(proposals, ws, ss.budget, { genId: (p) => `${p}_seq` });
+    expect(result.approved.newLocations.length).toBe(2);
+    const ids = result.approved.newLocations.map((l) => String(l.id));
+    expect(new Set(ids).size).toBe(2);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it("approves a new location that references another newly-approved location in the same batch", () => {
+    const proposals: ExpansionProposal[] = [
+      {
+        kind: "location",
+        name: "密林",
+        description: "一片幽暗的密林，传说中有猛兽出没。",
+        scale: "scene",
+        connectFromLocationId: "loc_1",
+        reason: "玩家要求前往",
+      },
+      {
+        kind: "location",
+        name: "林间空地",
+        description: "密林深处一片被阳光照亮的小空地。",
+        scale: "scene",
+        connectFromLocationId: "loc_1",
+        reason: "玩家要求前往",
+      },
+    ];
+    // 带确定性 genId 序列，使第二个地点可引用第一个新地点 ID
+    let seq = 0;
+    const genId = (p: string) => `${p}_${++seq}`;
+    const result = approveExpansions(proposals, ws, ss.budget, { genId });
+    expect(result.approved.newLocations.length).toBe(2);
+    expect(result.approved.newLocations[1]!.connectedLocationIds.length).toBe(1);
+  });
+
+  it("rejects an item proposal when events budget is exhausted", () => {
+    const exhaustedBudget: StoryBudget = {
+      ...ss.budget,
+      events: { ...ss.budget.events, expanded: ss.budget.events.max },
+    };
+    const proposals: ExpansionProposal[] = [{
+      kind: "item",
+      name: "锈剑",
+      description: "一把已经生锈的铁剑。",
+      kind_hint: "weapon",
+      tags: [],
+      locationId: "loc_1",
+    }];
+    const result = approveExpansions(proposals, ws, exhaustedBudget, deps);
+    expect(result.approved.newItems).toEqual([]);
+    expect(result.rejected[0]!.reason).toBe("budget_exceeded");
+  });
+
+  it("rejects an enemy proposal when events budget is exhausted", () => {
+    const exhaustedBudget: StoryBudget = {
+      ...ss.budget,
+      events: { ...ss.budget.events, expanded: ss.budget.events.max },
+    };
+    const proposals: ExpansionProposal[] = [{
+      kind: "enemy",
+      name: "狼群",
+      tier: "normal",
+      stats: { hp: 30, attack: 5, defense: 1 },
+      locationId: "loc_1",
+      reason: "低张力需要敌对势力",
+    }];
+    const result = approveExpansions(proposals, ws, exhaustedBudget, deps);
+    expect(result.approved.newEnemies).toEqual([]);
+    expect(result.rejected[0]!.reason).toBe("budget_exceeded");
+  });
+
+  it("rejects a fact proposal when events budget is exhausted", () => {
+    const exhaustedBudget: StoryBudget = {
+      ...ss.budget,
+      events: { ...ss.budget.events, expanded: ss.budget.events.max },
+    };
+    const proposals: ExpansionProposal[] = [{
+      kind: "fact",
+      text: "传闻密林深处藏着失落的宝剑。",
+      locationId: "loc_1",
+      reason: "增加世界深度",
+    }];
+    const result = approveExpansions(proposals, ws, exhaustedBudget, deps);
+    expect(result.approved.newFacts).toEqual([]);
+    expect(result.rejected[0]!.reason).toBe("budget_exceeded");
+  });
+
+  it("consumes events budget for approved item/enemy/fact", () => {
+    const proposals: ExpansionProposal[] = [
+      {
+        kind: "item",
+        name: "锈剑",
+        description: "一把已经生锈的铁剑。",
+        kind_hint: "weapon",
+        tags: [],
+        locationId: "loc_1",
+      },
+      {
+        kind: "enemy",
+        name: "狼群",
+        tier: "normal",
+        stats: { hp: 30, attack: 5, defense: 1 },
+        locationId: "loc_1",
+        reason: "低张力需要敌对势力",
+      },
+    ];
+    const result = approveExpansions(proposals, ws, ss.budget, deps);
+    expect(result.approved.newItems.length).toBe(1);
+    expect(result.approved.newEnemies.length).toBe(1);
+    expect(result.nextBudget.events.expanded).toBe(2);
+  });
 });
