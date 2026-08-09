@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GameSessionView } from "@/game/application";
 import { AdventureGameShell } from "./AdventureGameShell";
+import { LocationSceneScreen } from "./LocationSceneScreen";
 import { postAction, type ActionOutcome } from "./gameActionRequest";
 
 vi.mock("./gameActionRequest", () => ({
@@ -71,23 +72,44 @@ function renderShell(): void {
   />);
 }
 
+/** 进入当前地点场景（地图视图点击"进入客栈"）。 */
+async function enterScene(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole("button", { name: "进入客栈" }));
+}
+
 afterEach(() => {
   cleanup();
   vi.mocked(postAction).mockClear();
 });
 
 describe("AdventureGameShell canonical opaque choices", () => {
+  it("starts on the world map with current and travel nodes", () => {
+    renderShell();
+    expect(screen.getByRole("button", { name: "进入客栈" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "前往街道" })).toBeInTheDocument();
+  });
+
+  it("forwards the server token for 前往街道 from the map", async () => {
+    renderShell();
+    await userEvent.click(screen.getByRole("button", { name: "前往街道" }));
+    expect(postAction).toHaveBeenCalledWith({
+      interaction: { kind: "fixed_choice", choiceToken: TOKENS.travel },
+      revision: 9,
+    });
+  });
+
   for (const [label, token] of [
     ["追问线索", TOKENS.dialogueOne],
     ["表示理解", TOKENS.dialogueTwo],
-    ["前往街道", TOKENS.travel],
     ["探索客栈", TOKENS.explore],
     ["拾取铜钥匙", TOKENS.item],
     ["攻击", TOKENS.battle],
   ] as const) {
     it(`forwards the server token for ${label}`, async () => {
+      const user = userEvent.setup();
       renderShell();
-      await userEvent.click(screen.getByRole("button", { name: label }));
+      await enterScene(user);
+      await user.click(screen.getByRole("button", { name: label }));
       expect(postAction).toHaveBeenCalledWith({
         interaction: { kind: "fixed_choice", choiceToken: token },
         revision: 9,
@@ -96,9 +118,11 @@ describe("AdventureGameShell canonical opaque choices", () => {
   }
 
   it("forwards custom dialogue input without constructing a semantic token", async () => {
+    const user = userEvent.setup();
     renderShell();
-    await userEvent.type(screen.getByRole("textbox", { name: "自定义回应" }), "  我相信你  ");
-    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    await enterScene(user);
+    await user.type(screen.getByRole("textbox", { name: "自定义回应" }), "  我相信你  ");
+    await user.click(screen.getByRole("button", { name: "发送" }));
     expect(postAction).toHaveBeenCalledWith({
       interaction: { kind: "free_text", text: "我相信你", targetNpcId: "npc_1" },
       revision: 9,
@@ -110,13 +134,15 @@ describe("AdventureGameShell canonical opaque choices", () => {
     vi.mocked(postAction).mockImplementationOnce(() => new Promise<ActionOutcome>((resolve) => {
       resolveRequest = resolve;
     }));
+    const user = userEvent.setup();
     renderShell();
+    await enterScene(user);
 
-    await userEvent.click(screen.getByRole("button", { name: "追问线索" }));
+    await user.click(screen.getByRole("button", { name: "追问线索" }));
 
     expect((screen.getByRole("button", { name: "表示理解" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("textbox", { name: "自定义回应" }) as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "前往街道" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "探索客栈" }) as HTMLButtonElement).disabled).toBe(true);
 
     resolveRequest({ kind: "rejected", message: "stop" });
     await waitFor(() => {
@@ -129,10 +155,12 @@ describe("AdventureGameShell canonical opaque choices", () => {
     vi.mocked(postAction).mockImplementationOnce(() => new Promise<ActionOutcome>((resolve) => {
       resolveRequest = resolve;
     }));
+    const user = userEvent.setup();
     renderShell();
-    await userEvent.type(screen.getByRole("textbox", { name: "自定义回应" }), "我有一个主意");
+    await enterScene(user);
+    await user.type(screen.getByRole("textbox", { name: "自定义回应" }), "我有一个主意");
 
-    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    await user.click(screen.getByRole("button", { name: "发送" }));
 
     expect((screen.getByRole("textbox", { name: "自定义回应" }) as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "追问线索" }) as HTMLButtonElement).disabled).toBe(true);
@@ -142,5 +170,32 @@ describe("AdventureGameShell canonical opaque choices", () => {
     await waitFor(() => {
       expect((screen.getByRole("textbox", { name: "自定义回应" }) as HTMLInputElement).disabled).toBe(false);
     });
+  });
+
+  it("provides a close button that collapses the NPC dialogue panel", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await enterScene(user);
+
+    expect(screen.getByRole("heading", { name: "老板" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "关闭对话" }));
+    expect(screen.queryByRole("heading", { name: "老板" })).not.toBeInTheDocument();
+  });
+
+  it("hides NPC dialogue panels while narrative generation is pending instead of showing empty choices", async () => {
+    const view = {
+      ...buildView(),
+      narrativeGeneration: { status: "pending" as const },
+    };
+    render(<LocationSceneScreen
+      view={view}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+
+    // 叙事生成中：对话面板不渲染（避免出现无选项的空面板），仅显示编排提示
+    expect(screen.queryByRole("heading", { name: "老板" })).not.toBeInTheDocument();
+    expect(screen.getByText("正在编排下一幕……")).toBeInTheDocument();
   });
 });

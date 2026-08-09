@@ -46,9 +46,9 @@ describe("CurrentGameScreen ending restart", () => {
 
     expect(await screen.findByRole("heading", { name: "开始新的冒险" })).toBeInTheDocument();
     expect(fetchCurrentGame).toHaveBeenCalledOnce();
-    await waitFor(() => expect(screen.getByRole("button", { name: "进入世界" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "踏上旅程" })).toBeEnabled());
 
-    await userEvent.click(screen.getByRole("button", { name: "进入世界" }));
+    await userEvent.click(screen.getByRole("button", { name: "踏上旅程" }));
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledOnce());
     const init = vi.mocked(globalThis.fetch).mock.calls[0]![1] as RequestInit;
     expect(JSON.parse(String(init.body))).toMatchObject({

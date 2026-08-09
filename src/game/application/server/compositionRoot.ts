@@ -23,7 +23,7 @@ import type { SceneSource } from "../sceneSource";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Interaction } from "@/game/domain/action";
 import type { GameSessionView } from "../gameSessionView";
-import type { GameTypeId, GameLength } from "@/game/domain/newGame";
+import type { GameTypeId, GameLength, NarrativeStyle, ContentIntensity } from "@/game/domain/newGame";
 import { deriveEndingSessionIdentity, matchesEndingSessionIdentity } from "./endingSessionIdentity";
 
 export type { RequestLogContext };
@@ -32,11 +32,21 @@ export type { RequestLogContext };
 // 双状态模型的唯一 server-only 装配点。
 // ---------------------------------------------------------------------------
 
-/** HTTP 开局输入：只收 gameType/gameLength，gameId 与 seed 由服务端装配。 */
+/** HTTP 开局输入：核心收 gameType/gameLength，gameId 与 seed 由服务端装配。
+ *  role/world 字段为 NewGameInput 的可选透传（当前世界生成源不使用，
+ *  保留供未来 AI 世界生成器消费），字段名与 domain NewGameInput 完全一致。 */
 export type CreateGameHttpInput = {
   readonly gameType: GameTypeId;
   readonly gameLength: GameLength;
   readonly restart?: { readonly identity: string; readonly expectedRevision: number };
+  readonly characterName?: string;
+  readonly characterIdentity?: string;
+  readonly characterProfile?: string;
+  readonly personalityTags?: readonly string[];
+  readonly worldPremise?: string;
+  readonly storyOpening?: string;
+  readonly narrativeStyle?: NarrativeStyle;
+  readonly contentIntensity?: ContentIntensity;
 };
 
 type PerformTurnEntryPointResult =

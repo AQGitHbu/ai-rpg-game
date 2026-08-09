@@ -45,6 +45,7 @@ select {
 }
 
 .new-game-hero {
+  grid-column: 1 / -1;
   max-width: 780px;
   margin-bottom: 38px;
 }
@@ -1153,8 +1154,33 @@ body:has(.adventure-game-shell) {
 }
 
 .npc-dialogue-panel {
+  position: relative;
   display: grid;
   gap: 12px;
+}
+
+.npc-dialogue-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 50%;
+  background: var(--game-surface-raised);
+  color: var(--game-text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.npc-dialogue-close:hover {
+  color: var(--game-text);
+  border-color: var(--game-accent);
 }
 
 .npc-dialogue-stage {
@@ -2097,4 +2123,99 @@ body:has(.adventure-game-shell) {
   background: rgba(215, 185, 111, 0.08);
   border-radius: 4px;
   animation: scene-narration-fade-in 0.4s ease-out;
+}
+
+/* ==========================================================================
+   地图模式场景内容（canonical 界面恢复）：场景内叙事 / 物品 / 战斗 / 对话
+   均以可滚动内容层呈现，复用 RPG 主题变量，避免与 HUD 弹层相互遮挡。
+   ========================================================================== */
+
+.location-scene-content {
+  position: relative;
+  z-index: 1;
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100dvh - 120px);
+  overflow-y: auto;
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 14px;
+  background: rgb(7 12 9 / 55%);
+  backdrop-filter: blur(10px);
+}
+
+.narrative-pending-caption {
+  margin: 0;
+  color: var(--game-text-muted);
+  font-size: 0.92rem;
+  text-align: center;
+}
+
+.scene-narrative {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 10px;
+  background: var(--game-surface-raised);
+}
+
+.scene-narrative > p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.scene-narrative > div[role="group"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scene-narrative button,
+.scene-obtainable button {
+  padding: 8px 14px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: var(--game-surface-raised);
+  color: var(--game-text-primary);
+  cursor: pointer;
+}
+
+.scene-narrative button:disabled,
+.scene-obtainable button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.scene-obtainable {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.scene-obtainable button {
+  display: grid;
+  gap: 6px;
+  min-width: 130px;
+  justify-items: center;
+  padding: 12px;
+}
+
+.scene-obtainable button > span {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.location-scene-caption {
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 700px) {
+  .location-scene-content {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 96px);
+    padding: 14px;
+  }
 }

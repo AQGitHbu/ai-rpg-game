@@ -7,9 +7,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * 创建开局允许的顶层字段：核心三字段（gameType/gameLength/restart）之外，
+ * 放行 NewGameInput 的角色与世界观字段（domain 层已定义完整校验）。
+ * 这些字段当前由世界生成源透传保留，供未来 AI 世界生成器使用；
+ * 未知字段仍一律拒绝，保证契约可审查。
+ */
+const CREATE_INPUT_ALLOWED_KEYS = new Set([
+  "gameType", "gameLength", "restart",
+  "characterName", "characterIdentity", "characterProfile", "personalityTags",
+  "worldPremise", "storyOpening", "narrativeStyle", "contentIntensity",
+]);
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function optionalStringArray(value: unknown): readonly string[] | undefined {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string")
+    ? value
+    : undefined;
+}
+
 function parseCreateInput(body: unknown): CreateGameHttpInput | null {
   if (!isRecord(body)) return null;
-  if (!Object.keys(body).every((key) => ["gameType", "gameLength", "restart"].includes(key))) return null;
+  if (!Object.keys(body).every((key) => CREATE_INPUT_ALLOWED_KEYS.has(key))) return null;
   if (typeof body.gameType !== "string" || !GAME_TYPES.has(body.gameType)) return null;
   if (typeof body.gameLength !== "string" || !GAME_LENGTHS.has(body.gameLength)) return null;
   let restart: CreateGameHttpInput["restart"];
@@ -29,6 +51,15 @@ function parseCreateInput(body: unknown): CreateGameHttpInput | null {
     gameType: body.gameType as CreateGameHttpInput["gameType"],
     gameLength: body.gameLength as CreateGameHttpInput["gameLength"],
     ...(restart === undefined ? {} : { restart }),
+    // 透传 NewGameInput 可选字段：类型收窄后交 createGame，当前不使用但保留契约。
+    ...(optionalString(body.characterName) === undefined ? {} : { characterName: body.characterName as string }),
+    ...(optionalString(body.characterIdentity) === undefined ? {} : { characterIdentity: body.characterIdentity as string }),
+    ...(optionalString(body.characterProfile) === undefined ? {} : { characterProfile: body.characterProfile as string }),
+    ...(optionalStringArray(body.personalityTags) === undefined ? {} : { personalityTags: body.personalityTags as readonly string[] }),
+    ...(optionalString(body.worldPremise) === undefined ? {} : { worldPremise: body.worldPremise as string }),
+    ...(optionalString(body.storyOpening) === undefined ? {} : { storyOpening: body.storyOpening as string }),
+    ...(optionalString(body.narrativeStyle) === undefined ? {} : { narrativeStyle: body.narrativeStyle as CreateGameHttpInput["narrativeStyle"] }),
+    ...(optionalString(body.contentIntensity) === undefined ? {} : { contentIntensity: body.contentIntensity as CreateGameHttpInput["contentIntensity"] }),
   };
 }
 

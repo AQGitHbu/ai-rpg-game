@@ -12,7 +12,7 @@ describe("NewGameSetupForm canonical contract", () => {
     }));
     render(<NewGameSetupForm onCreated={onCreated} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "进入世界" }));
+    await userEvent.click(screen.getByRole("button", { name: "踏上旅程" }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
     expect(fetch).toHaveBeenCalledWith("/api/game", expect.objectContaining({ method: "POST" }));
   });
@@ -24,12 +24,19 @@ describe("NewGameSetupForm canonical contract", () => {
     }));
     render(<NewGameSetupForm onCreated={vi.fn()} restart={{ identity: "opaque-ended-session", expectedRevision: 9 }} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "进入世界" }));
+    await userEvent.click(screen.getByRole("button", { name: "踏上旅程" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     const init = vi.mocked(fetch).mock.calls[0]![1] as RequestInit;
-    expect(JSON.parse(String(init.body))).toEqual({
+    expect(JSON.parse(String(init.body))).toMatchObject({
       gameType: "wuxia",
       gameLength: "short",
+      characterName: expect.any(String),
+      characterIdentity: expect.any(String),
+      characterProfile: expect.any(String),
+      worldPremise: expect.any(String),
+      storyOpening: expect.any(String),
+      narrativeStyle: "novel",
+      contentIntensity: "normal",
       restart: { identity: "opaque-ended-session", expectedRevision: 9 },
     });
   });

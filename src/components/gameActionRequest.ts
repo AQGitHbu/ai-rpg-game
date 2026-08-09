@@ -5,9 +5,15 @@ import type { GameSessionView } from "@/game/application";
 // 服务端构建 choiceMap，客户端只发送 choiceToken + revision。
 // ---------------------------------------------------------------------------
 
-export type ActionPayload =
-  | { readonly interaction: { readonly kind: "fixed_choice"; readonly choiceToken: string }; readonly revision: number }
-  | { readonly interaction: { readonly kind: "free_text"; readonly text: string; readonly targetNpcId: string }; readonly revision: number };
+/** 玩家可提交的交互：固定选项（choiceToken）或自由文本（含目标 NPC）。 */
+export type PlayerInteraction =
+  | { readonly kind: "fixed_choice"; readonly choiceToken: string }
+  | { readonly kind: "free_text"; readonly text: string; readonly targetNpcId: string };
+
+export type ActionPayload = {
+  readonly interaction: PlayerInteraction;
+  readonly revision: number;
+};
 
 export type ActionOutcome =
   | { readonly kind: "success"; readonly view: GameSessionView; readonly message: string }
