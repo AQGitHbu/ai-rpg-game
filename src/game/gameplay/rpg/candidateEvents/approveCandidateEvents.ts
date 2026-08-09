@@ -51,7 +51,7 @@ export function approveCandidateEvents(
   const currentTurn = storyState.turnNumber;
   const events: GameEvent[] = [];
   const rejected: CandidateRejection[] = [];
-  let approvedCandidates: ApprovedEventCandidate[] = [];
+  const approvedCandidates: ApprovedEventCandidate[] = [];
   let nextBudget = storyState.budget;
 
   // 1. 结局已抵达：一律拒绝（不激活任何反应事件）。

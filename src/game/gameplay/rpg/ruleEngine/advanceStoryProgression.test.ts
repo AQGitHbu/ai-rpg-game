@@ -3,12 +3,12 @@ import { advanceStoryProgression } from "./advanceStoryProgression";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import type { GameEvent } from "@/game/domain/events";
-import { asQuestId, asLocationId } from "@/game/domain/scenarioBlueprint";
+import { asQuestId, asLocationId, asGenerationId } from "@/game/domain/scenarioBlueprint";
 
 function makeWorld(overrides?: Partial<WorldState>): WorldState {
   return {
     version: 2,
-    generation: { generationId: "" as any, seed: "test", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+    generation: { generationId: asGenerationId("test"), seed: "test", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
     player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
     locations: [],
     currentLocationId: asLocationId("loc_1"),

@@ -55,7 +55,7 @@ function makeWs(overrides?: Partial<WorldState>): WorldState {
     },
     startingItemIds: [],
   });
-  let ws: WorldState = {
+  const ws: WorldState = {
     ...base,
     npcs: [makeNpc("npc_1"), makeNpc("npc_2"), makeNpc("npc_3")],
     worldFacts: [

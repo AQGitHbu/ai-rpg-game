@@ -121,7 +121,7 @@ describe("resolveByType status and stateChanges", () => {
   });
 
   it("investigate undiscovered fact returns success", () => {
-    const wsWithFact = { ...ws, worldFacts: [{ factId: asFactId("fact_1"), text: "墙上刻字", source: "scene" as any, discovered: false }] };
+    const wsWithFact = { ...ws, worldFacts: [{ factId: asFactId("fact_1"), text: "墙上刻字", source: "generated" as const, discovered: false }] };
     const result = resolveByType(wsWithFact, { type: "investigate", factId: asFactId("fact_1") }, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -157,7 +157,7 @@ describe("resolveByType — attack", () => {
     connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
   };
   function makeWorldWithEnemy() {
-    let baseWs = createInitialWorldState({
+    const baseWs = createInitialWorldState({
       generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
       player: { name: "侠客", identity: "剑客", stats: { hp: 30, attack: 6, defense: 4 } },
       startingLocation,

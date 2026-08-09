@@ -72,6 +72,8 @@ export function AdventureGameShellV2({ view, onViewChange, onStaleRevision, onCl
     const toast: ToastMessage = {
       id: `toast-${toastSequenceRef.current}`,
       message,
+      // pushToast 是事件处理器内调用，Date.now() 仅在交互时求值（非 render 期间）。
+      // eslint-disable-next-line
       createdAt: Date.now(),
     };
     setToasts((prev) => [...prev, toast]);

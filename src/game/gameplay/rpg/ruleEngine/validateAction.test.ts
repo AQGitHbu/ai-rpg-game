@@ -8,7 +8,7 @@ function makeWorldWithEnemy() {
     id: asLocationId("loc_1"), name: "荒野", description: "test", kind: "main",
     connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
   };
-  let ws = createInitialWorldState({
+  const ws = createInitialWorldState({
     generation: { generationId: asGenerationId("gen_test"), seed: "test", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
     player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
     startingLocation,

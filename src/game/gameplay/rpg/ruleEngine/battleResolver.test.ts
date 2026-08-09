@@ -23,7 +23,7 @@ function makeWorldWithEnemy(): WorldState {
     availableItemIds: [],
     tags: [],
   };
-  let ws = createInitialWorldState({
+  const ws = createInitialWorldState({
     generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
     player: { name: "侠客", identity: "剑客", stats: { hp: 30, attack: 6, defense: 4 } },
     startingLocation,
