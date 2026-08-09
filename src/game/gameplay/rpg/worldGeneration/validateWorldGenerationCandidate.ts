@@ -263,7 +263,8 @@ export function validateWorldGenerationCandidate(
 
   // 可达并不等于按幕推进：例如 1 -> 3 -> 2 的图也会被 BFS 标为全部可达，
   // 但运行时会提前暴露终幕。正式候选只接受 onSuccess 从第 N 幕继续解锁
-  // 第 N+1 幕，并拒绝任何跨幕、倒序的 main -> main 解锁边。
+  // 第 N+1 幕，并拒绝任何跨幕、倒序的 main -> main 解锁边。支线也不得
+  // 解锁主线，否则一个初始可接的 side quest 就能绕过幕级门槛。
   const mainQuestById = new Map(mainQuests.map((quest) => [quest.id, quest]));
   const mainQuestByStage = new Map<number, Extract<QuestDefinitionCandidate, { kind: "main" }>>();
   for (const quest of mainQuests) {
@@ -277,12 +278,12 @@ export function validateWorldGenerationCandidate(
       issues.push({ path: "quests", code: "main_act_gap", params: { stage: stage + 1, id: next.id } });
     }
   }
-  for (const quest of mainQuests) {
+  for (const quest of candidate.quests) {
     for (const outcome of [quest.onSuccess, quest.onFailure]) {
       if (outcome?.kind !== "unlock_quests") continue;
       for (const unlockedId of outcome.questIds) {
         const unlockedMainQuest = mainQuestById.get(unlockedId);
-        if (unlockedMainQuest && unlockedMainQuest.stage !== quest.stage + 1) {
+        if (unlockedMainQuest && (quest.kind !== "main" || unlockedMainQuest.stage !== quest.stage + 1)) {
           issues.push({
             path: "quests",
             code: "main_act_gap",

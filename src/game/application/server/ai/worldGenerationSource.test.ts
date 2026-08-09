@@ -241,6 +241,24 @@ describe("createWorldGenerationSource", () => {
         return candidate;
       },
     },
+    {
+      name: "side quest main-act bypass",
+      build: () => {
+        const candidate = mutableCandidate();
+        candidate.quests.push({
+          id: "quest_side_door",
+          name: "旁门",
+          description: "绕过主线门槛",
+          kind: "side",
+          objectives: [{ kind: "talk_to_npc", npcId: "npc_1" }],
+          onSuccess: { kind: "unlock_quests", questIds: ["quest_act3"] },
+          onFailure: { kind: "closed" },
+          tags: ["side"],
+        });
+        candidate.openingBudget.sideQuestsCount = candidate.quests.filter((quest) => quest.kind === "side").length;
+        return candidate;
+      },
+    },
   ])("AI $name candidate is rejected in favor of the deterministic fallback", async ({ build }) => {
     const input = { gameType: "wuxia" as const, seed: "guard-fallback", gameLength: "short" as const };
     const invalidCandidate = build();

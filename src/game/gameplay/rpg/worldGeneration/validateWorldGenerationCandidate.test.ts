@@ -282,6 +282,23 @@ describe("validateWorldGenerationCandidate 错误矩阵", () => {
     expect(issues(c)).toContain("main_act_gap");
   });
 
+  it("rejects a side quest that unlocks a later main act early", () => {
+    const c = baseCandidate();
+    c.quests.push({
+      id: "quest_side_door",
+      name: "旁门",
+      description: "绕过主线门槛",
+      kind: "side",
+      objectives: [{ kind: "talk_to_npc", npcId: "npc_innkeeper" }],
+      onSuccess: { kind: "unlock_quests", questIds: ["quest_act3"] },
+      onFailure: { kind: "closed" },
+      tags: ["side"],
+    });
+    c.openingBudget.sideQuestsCount = c.quests.filter((quest) => quest.kind === "side").length;
+
+    expect(issues(c)).toContain("main_act_gap");
+  });
+
   it("npc_fact_reference_invalid", () => {
     const c = baseCandidate();
     c.npcs[0].knownFactIds.push("fact_missing");
