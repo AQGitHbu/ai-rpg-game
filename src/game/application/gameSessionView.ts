@@ -294,6 +294,7 @@ function projectStoryEvent(
     case "npc_met": return { text: `你与${npc(event.npcId)}交谈。对方以自己的身份和立场回应了你。` };
     case "fact_discovered": return { text: `你查明了一条线索：${fact(event.factId)}` };
     case "location_visited": return { text: `你抵达${location(event.locationId)}，故事继续向前。` };
+    case "location_explored": return { text: `你探索了${location(event.locationId)}，发现更多细节。` };
     case "quest_completed": return { text: `任务「${quest(event.questId)}」已完成。` };
     case "quest_unlocked": return { text: `新的线索将你引向任务「${quest(event.questId)}」。` };
     case "item_obtained": return { text: `你在${location(event.locationId)}取得了${item(event.itemId)}。` };

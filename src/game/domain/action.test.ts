@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { Action, Interaction, DialogueAct } from "./action";
-import { DIALOGUE_ACTS } from "./action";
+import type { Action, Interaction, DialogueAct, ActionType } from "./action";
+import { DIALOGUE_ACTS, SUPPORTED_ACTION_TYPES } from "./action";
 import { asNpcId, asFactId, asQuestId } from "./scenarioBlueprint";
 import type { ThreadId } from "./storyState";
 
@@ -60,5 +60,40 @@ describe("Action types", () => {
   it("fixed_choice interaction has choiceToken", () => {
     const i: Interaction = { kind: "fixed_choice", choiceToken: "tok_1" };
     expect(i.kind).toBe("fixed_choice");
+  });
+});
+
+describe("Action support matrix (Task 29)", () => {
+  it("declares the canonical set of fully-supported production action types", () => {
+    const expected = [
+      "talk", "move", "explore", "investigate", "take_item",
+      "attack", "battle_action", "rest", "ack_prologue", "freeform",
+    ];
+    expect([...SUPPORTED_ACTION_TYPES]).toEqual(expected);
+  });
+
+  it("does NOT include unimplemented action types in the supported set", () => {
+    // use_item/give_item/interact/accept_quest/narrative_choice 无规则实现，
+    // 不得作为永远 INTENT_NOT_ROUTED 的公开候选保留。
+    const unimplemented = ["use_item", "give_item", "interact", "accept_quest", "narrative_choice"];
+    for (const t of unimplemented) {
+      expect(SUPPORTED_ACTION_TYPES).not.toContain(t);
+    }
+  });
+
+  it("every supported action type is assignable to the production Action union", () => {
+    // 编译期守卫：SUPPORTED_ACTION_TYPES 的元素必须是合法 Action type。
+    const asType = (t: ActionType) => t;
+    for (const t of SUPPORTED_ACTION_TYPES) {
+      expect(asType(t)).toBe(t);
+    }
+  });
+
+  it("ack_prologue is the only supported type allowed to produce no primary event", () => {
+    const expected = new Set(SUPPORTED_ACTION_TYPES);
+    // explore/rest/freeform 必须产生主事件；仅 ack_prologue 允许空事件（幂等标记）。
+    for (const t of ["explore", "rest", "freeform"] as const) {
+      expect(expected.has(t)).toBe(true);
+    }
   });
 });

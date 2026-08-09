@@ -37,7 +37,7 @@ function eventKindForAction(action: Action): NarrativeEventKind {
     case "move": return "travel";
     case "talk": return "dialogue";
     case "investigate": return "investigate";
-    case "take_item": case "use_item": case "give_item": return "item";
+    case "take_item": return "item";
     case "attack": case "battle_action": return "battle";
     default: return "observe";
   }

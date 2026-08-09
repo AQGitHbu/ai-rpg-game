@@ -84,22 +84,12 @@ function rebuildAction(action: Action): Action {
       return { type: "investigate", factId: action.factId };
     case "take_item":
       return { type: "take_item", itemId: action.itemId };
-    case "use_item":
-      return { type: "use_item", itemId: action.itemId, targetId: action.targetId, utterance: action.utterance };
-    case "give_item":
-      return { type: "give_item", itemId: action.itemId, targetNpcId: action.targetNpcId };
     case "attack":
       return { type: "attack", enemyId: action.enemyId };
     case "battle_action":
       return { type: "battle_action", action: action.action };
-    case "interact":
-      return { type: "interact", targetId: action.targetId };
     case "rest":
       return { type: "rest" };
-    case "accept_quest":
-      return { type: "accept_quest", questId: action.questId };
-    case "narrative_choice":
-      return { type: "narrative_choice", choiceToken: action.choiceToken };
     case "ack_prologue":
       return { type: "ack_prologue" };
     case "freeform":
@@ -118,14 +108,9 @@ export function semanticSummaryOf(action: Action): string {
     case "explore": return "explore";
     case "investigate": return `investigate:${action.factId}`;
     case "take_item": return `take_item:${action.itemId}`;
-    case "use_item": return `use_item:${action.itemId}:${action.targetId ?? "-"}`;
-    case "give_item": return `give_item:${action.itemId}:${action.targetNpcId}`;
     case "attack": return `attack:${action.enemyId}`;
     case "battle_action": return `battle_action:${action.action}`;
-    case "interact": return `interact:${action.targetId}`;
     case "rest": return "rest";
-    case "accept_quest": return `accept_quest:${action.questId}`;
-    case "narrative_choice": return `narrative_choice:${action.choiceToken}`;
     case "ack_prologue": return "ack_prologue";
     case "freeform": return `freeform:${action.intent}`;
   }
@@ -156,14 +141,9 @@ function serializeAction(action: Action): string {
     case "explore": return "explore";
     case "investigate": return `investigate|${String(action.factId)}`;
     case "take_item": return `take_item|${String(action.itemId)}`;
-    case "use_item": return `use_item|${String(action.itemId)}|${action.targetId ?? "-"}`;
-    case "give_item": return `give_item|${String(action.itemId)}|${String(action.targetNpcId)}`;
     case "attack": return `attack|${String(action.enemyId)}`;
     case "battle_action": return `battle_action|${action.action}`;
-    case "interact": return `interact|${action.targetId}`;
     case "rest": return "rest";
-    case "accept_quest": return `accept_quest|${String(action.questId)}`;
-    case "narrative_choice": return `narrative_choice|${action.choiceToken}`;
     case "ack_prologue": return "ack_prologue";
     case "freeform": return `freeform|${action.intent}`;
   }

@@ -68,6 +68,13 @@ export type LocationVisitedEvent = {
   readonly occurredAt: string;
 };
 
+/** 玩家探索当前地点：由 explore 行动成功时追加（Spec §7/Task 29，不得 success + 空事件）。 */
+export type LocationExploredEvent = {
+  readonly type: "location_explored";
+  readonly locationId: LocationId;
+  readonly occurredAt: string;
+};
+
 /** 任务完成：由任务 reconciliation 在 active 任务全部 objective 满足时追加。 */
 export type QuestCompletedEvent = {
   readonly type: "quest_completed";
@@ -274,6 +281,7 @@ export type GameEvent =
   | NpcMetEvent
   | FactDiscoveredEvent
   | LocationVisitedEvent
+  | LocationExploredEvent
   | QuestCompletedEvent
   | QuestUnlockedEvent
   | LocationUnlockedEvent

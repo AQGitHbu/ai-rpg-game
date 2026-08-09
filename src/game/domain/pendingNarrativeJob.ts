@@ -6,7 +6,6 @@ import type {
   ItemId,
   LocationId,
   NpcId,
-  QuestId,
 } from "./scenarioBlueprint";
 
 /** 玩家原话（utterance）的长度上限：全链路统一引用的常量。 */
@@ -22,14 +21,9 @@ export type StructuredActionSummary =
   | { readonly kind: "explore" }
   | { readonly kind: "investigate"; readonly factId: FactId }
   | { readonly kind: "take_item"; readonly itemId: ItemId }
-  | { readonly kind: "use_item"; readonly itemId: ItemId; readonly targetId?: string }
-  | { readonly kind: "give_item"; readonly itemId: ItemId; readonly npcId: NpcId }
   | { readonly kind: "attack"; readonly enemyId: EnemyId }
   | { readonly kind: "battle_action"; readonly action: "attack" | "guard" | "flee" }
-  | { readonly kind: "interact"; readonly targetId?: string }
   | { readonly kind: "rest" }
-  | { readonly kind: "accept_quest"; readonly questId: QuestId }
-  | { readonly kind: "narrative_choice"; readonly choiceToken: string }
   | { readonly kind: "ack_prologue" }
   | { readonly kind: "freeform" };
 

@@ -13,7 +13,7 @@ import type { WorldState } from "@/game/domain/worldState";
 // SceneSource 只输出 ChoiceProposal（label + Action 建议），本管线负责：
 //  1. action ∈ legalActionCandidates（规则层给出的合法集合）；
 //  2. 目标存在且在场/可达（worldState 硬检查，脱离候选集再次验证）；
-//  3. label 与目标名明显不一致（talk/move/attack/give_item 必须含目标名）；
+//  3. label 与目标名明显不一致（talk/move/attack 必须含目标名）；
 //  4. 语义重复（同一 semanticSummary/同一 action）拒绝后发；
 //  5. 逐字段重建 ApprovedChoice（token 由服务端铸造），绝不放行 AI 原对象。
 //
@@ -125,12 +125,6 @@ export function isTargetReachable(action: Action, ws: WorldState): boolean {
         && enemy.locationId === ws.currentLocationId
         && !ws.defeatedEnemyIds.includes(action.enemyId);
     }
-    case "give_item": {
-      const npc = ws.npcs.find((n) => n.id === action.targetNpcId);
-      return npc !== undefined
-        && npc.locationId === ws.currentLocationId
-        && ws.inventory.includes(action.itemId);
-    }
     case "take_item": {
       const current = ws.locations.find((l) => l.id === ws.currentLocationId);
       if (current === undefined) return false;
@@ -141,27 +135,13 @@ export function isTargetReachable(action: Action, ws: WorldState): boolean {
     }
     case "investigate":
       return ws.worldFacts.some((f) => f.factId === action.factId);
-    case "use_item":
-      return ws.inventory.includes(action.itemId);
-    case "accept_quest":
-      return ws.quests.some((q) => q.id === action.questId);
-    case "interact": {
-      const target = String(action.targetId);
-      return ws.locations.some((l) => String(l.id) === target)
-        || ws.npcs.some((n) => String(n.id) === target)
-        || ws.items.some((i) => String(i.id) === target)
-        || ws.enemies.some((e) => String(e.id) === target)
-        || ws.worldFacts.some((f) => String(f.factId) === target)
-        || ws.quests.some((q) => String(q.id) === target);
-    }
     case "explore":
     case "rest":
     case "battle_action":
     case "ack_prologue":
       return true;
-    case "narrative_choice":
     case "freeform":
-      // 嵌套叙事选择与玩家自由输入不构成场景选项
+      // 玩家自由输入不构成场景选项
       return false;
   }
 }
@@ -195,10 +175,8 @@ function knownEntityNames(ws: WorldState): readonly string[] {
 /** action 自身覆盖的实体名（与 label 强校验同一口径）。 */
 function targetNamesOf(action: Action, ws: WorldState): readonly string[] {
   switch (action.type) {
-    case "talk":
-    case "give_item": {
-      const npcId = action.type === "talk" ? action.npcId : action.targetNpcId;
-      const npc = ws.npcs.find((n) => n.id === npcId);
+    case "talk": {
+      const npc = ws.npcs.find((n) => n.id === action.npcId);
       return npc !== undefined ? [npc.name] : [];
     }
     case "move": {
@@ -227,10 +205,6 @@ function targetNameOf(action: Action, ws: WorldState): string | undefined {
     case "attack": {
       const enemy = ws.enemies.find((e) => e.id === action.enemyId);
       return enemy?.name;
-    }
-    case "give_item": {
-      const npc = ws.npcs.find((n) => n.id === action.targetNpcId);
-      return npc?.name;
     }
     default:
       return undefined;

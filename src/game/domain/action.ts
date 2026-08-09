@@ -35,19 +35,36 @@ export type TalkAction = {
   readonly utterance?: string;
 };
 
+/**
+ * 生产支持的 Action union（Spec §7 / Task 29）。
+ * use_item/give_item/interact/accept_quest/narrative_choice 无规则实现，
+ * 已从生产 union 移除——不得作为永远 INTENT_NOT_ROUTED 的公开候选保留。
+ */
 export type Action =
   | TalkAction
   | { readonly type: "move"; readonly locationId: LocationId }
   | { readonly type: "explore" }
   | { readonly type: "investigate"; readonly factId: FactId; readonly utterance?: string }
   | { readonly type: "take_item"; readonly itemId: ItemId }
-  | { readonly type: "use_item"; readonly itemId: ItemId; readonly targetId?: string; readonly utterance?: string }
-  | { readonly type: "give_item"; readonly itemId: ItemId; readonly targetNpcId: NpcId; readonly utterance?: string }
   | { readonly type: "attack"; readonly enemyId: EnemyId }
   | { readonly type: "battle_action"; readonly action: "attack" | "guard" | "flee" }
-  | { readonly type: "interact"; readonly targetId: string; readonly utterance?: string }
   | { readonly type: "rest" }
-  | { readonly type: "accept_quest"; readonly questId: QuestId }
-  | { readonly type: "narrative_choice"; readonly choiceToken: string }
   | { readonly type: "ack_prologue" }
   | { readonly type: "freeform"; readonly intent: string; readonly rawText: string };
+
+/** Action 的判别字段（用于数据驱动支持矩阵测试）。 */
+export type ActionType = Action["type"];
+
+/** 生产支持的 Action type 集合（Task 29：与 Action union 保持一致）。 */
+export const SUPPORTED_ACTION_TYPES: readonly ActionType[] = [
+  "talk",
+  "move",
+  "explore",
+  "investigate",
+  "take_item",
+  "attack",
+  "battle_action",
+  "rest",
+  "ack_prologue",
+  "freeform",
+];

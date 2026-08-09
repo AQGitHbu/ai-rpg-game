@@ -138,10 +138,30 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       return { ok: true, nextWorldState: nextWs, events: [event], feedback: "你取得了这件物品。", status: "success", stateChanges, facts: [] };
     }
     case "explore": {
-      return { ok: true, nextWorldState: { ...ws }, events: [], feedback: "你探索了周围环境。", status: "success", stateChanges: [], facts: [] };
+      // 无状态行动也产生主事件（Task 29）：explore → location_explored，不得 success + 空事件。
+      const event: GameEvent = { type: "location_explored", locationId: ws.currentLocationId, occurredAt };
+      return {
+        ok: true,
+        nextWorldState: { ...ws, eventLedger: [...ws.eventLedger, event] },
+        events: [event],
+        feedback: "你探索了周围环境。",
+        status: "success",
+        stateChanges: [],
+        facts: [],
+      };
     }
     case "rest": {
-      return { ok: true, nextWorldState: { ...ws }, events: [], feedback: "你休息了一会儿。", status: "success", stateChanges: [], facts: [] };
+      // 无状态行动也产生主事件（Task 29）：rest → player_rested，不得 success + 空事件。
+      const event: GameEvent = { type: "player_rested", occurredAt };
+      return {
+        ok: true,
+        nextWorldState: { ...ws, eventLedger: [...ws.eventLedger, event] },
+        events: [event],
+        feedback: "你休息了一会儿。",
+        status: "success",
+        stateChanges: [],
+        facts: [],
+      };
     }
     case "ack_prologue": {
       return { ok: true, nextWorldState: { ...ws }, events: [], feedback: "", status: "success", stateChanges: [], facts: [] };
