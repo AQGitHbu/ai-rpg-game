@@ -87,9 +87,41 @@ describe("postV2Action 使用注入的 actionId", () => {
     }) as unknown as typeof fetch;
 
     const result = await postV2Action({
-      interaction: { kind: "free_text", text: "我相信你" },
+      interaction: { kind: "free_text", text: "我相信你", targetNpcId: "npc_1" },
       revision: 0,
     });
     expect(result.kind).toBe("stale");
+  });
+
+  it("同一 NPC 的两次自定义输入都向 actions endpoint 发送不同 actionId", async () => {
+    const requests: Array<{ readonly url: string; readonly body: Record<string, unknown> }> = [];
+    const ids = ["uuid-1", "uuid-2"];
+    setActionIdGenerator(() => ids.shift() ?? "unexpected-id");
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      requests.push({ url, body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+      return new Response(
+        JSON.stringify({ ok: false, code: "NO_ACTIVE_GAME" }),
+        { status: 404, headers: { "Content-Type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    await postV2Action({
+      interaction: { kind: "free_text", text: "我相信你", targetNpcId: "npc_1" },
+      revision: 4,
+    });
+    await postV2Action({
+      interaction: { kind: "free_text", text: "你在撒谎", targetNpcId: "npc_1" },
+      revision: 6,
+    });
+
+    expect(requests.map((request) => request.url)).toEqual([
+      "/api/v2/game/actions",
+      "/api/v2/game/actions",
+    ]);
+    expect(requests.map((request) => request.body.actionId)).toEqual(["uuid-1", "uuid-2"]);
+    expect(requests.map((request) => request.body.interaction)).toEqual([
+      { kind: "free_text", text: "我相信你", targetNpcId: "npc_1" },
+      { kind: "free_text", text: "你在撒谎", targetNpcId: "npc_1" },
+    ]);
   });
 });

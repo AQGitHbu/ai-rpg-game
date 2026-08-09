@@ -162,7 +162,7 @@ describe("adaptV2ToV1View dialogues", () => {
         unresolvedThreadSummaries: [],
       },
       recentBeats: [],
-      legalActionCandidates: [],
+      legalActionCandidates: [{ kind: "talk", label: "与老板交谈", targetId: "npc_1" }],
       legalEventTargets: { locationIds: [loc.id], factIds: [], itemIds: [], enemyIds: [] },
       worldConstraints: [],
     };

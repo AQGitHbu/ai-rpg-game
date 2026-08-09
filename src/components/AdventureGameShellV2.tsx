@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import type { GameSessionViewV2 } from "@/game/application/gameSessionViewV2";
 import type { GameSessionView } from "@/game/application";
 import { adaptV2ToV1View } from "./viewAdapterV2";
-import { postV2Action, postV2Dialogue, type V2ActionOutcome, type V2DialogueResult } from "./gameActionRequestV2";
+import { postV2Action, type V2ActionOutcome } from "./gameActionRequestV2";
 import { AdventureHud, type DetailsPanel } from "./AdventureHud";
 import { AdventureOverlay } from "./AdventureOverlay";
 import { AdventureDetailsPanel } from "./AdventureDetailsPanel";
@@ -174,25 +174,26 @@ export function AdventureGameShellV2({ view, onViewChange, onStaleRevision, onCl
 
   async function handleFreeDialogue(npcId: string, text: string): Promise<FreeInputResult> {
     setFeedback({ phase: "submitting" });
-    try {
-      const result = await postV2Dialogue(npcId, text, view.revision);
-      if (result.kind === "chat") {
-        setFeedback({ phase: "idle" });
-        return { kind: "chat", npcSpeech: result.npcSpeech };
-      }
-      if (result.kind === "narrative_trigger") {
+    const outcome = await postV2Action({
+      interaction: { kind: "free_text", text, targetNpcId: npcId },
+      revision: view.revision,
+    });
+    switch (outcome.kind) {
+      case "success":
         setFeedback({ phase: "idle" });
         setDialogueNpcId(null);
-        if (result.view !== undefined) {
-          onViewChange(result.view);
-        }
+        onViewChange(outcome.view);
         return { kind: "narrative_trigger" };
-      }
-      setFeedback({ phase: "idle" });
-      return { kind: "chat", npcSpeech: "（对方似乎没听清。）" };
-    } catch {
-      setFeedback({ phase: "idle" });
-      return { kind: "chat", npcSpeech: "（对方似乎没听清。）" };
+      case "rejected":
+        setFeedback({ phase: "rejected", message: outcome.message });
+        return { kind: "chat", npcSpeech: "（对方似乎没听清。）" };
+      case "stale":
+        setFeedback({ phase: "idle" });
+        onStaleRevision();
+        return { kind: "chat", npcSpeech: "（对方似乎没听清。）" };
+      case "error":
+        setFeedback({ phase: "error", message: outcome.message });
+        return { kind: "chat", npcSpeech: "（对方似乎没听清。）" };
     }
   }
 

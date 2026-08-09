@@ -1,4 +1,3 @@
-import type { Interaction } from "@/game/domain/action";
 import { asNpcId, type NpcId } from "@/game/domain/scenarioBlueprint";
 import { PLAYER_UTTERANCE_MAX_LENGTH } from "@/game/domain/pendingNarrativeJob";
 
@@ -13,23 +12,19 @@ import { PLAYER_UTTERANCE_MAX_LENGTH } from "@/game/domain/pendingNarrativeJob";
 
 export type V2ParseError = { readonly ok: false; readonly code: "INVALID_INPUT" };
 
-export type V2ActionRequest = {
-  readonly ok: true;
+export type ActionRequest = {
   readonly actionId: string;
-  readonly interaction: Interaction;
+  readonly interaction:
+    | { readonly kind: "fixed_choice"; readonly choiceToken: string }
+    | { readonly kind: "free_text"; readonly text: string; readonly targetNpcId: NpcId };
   readonly expectedRevision: number;
+};
+
+export type V2ActionRequest = ActionRequest & {
+  readonly ok: true;
 };
 
 export type V2ActionRequestResult = V2ActionRequest | V2ParseError;
-
-export type V2DialogueRequest = {
-  readonly ok: true;
-  readonly npcId: NpcId;
-  readonly text: string;
-  readonly expectedRevision: number;
-};
-
-export type V2DialogueRequestResult = V2DialogueRequest | V2ParseError;
 
 const isNonNegativeInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0;
@@ -42,6 +37,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const rejectExtraKeys = (obj: Record<string, unknown>, allowed: readonly string[]): boolean =>
   Object.keys(obj).every((k) => allowed.includes(k));
 
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 /**
  * 解析 POST /api/v2/game/actions 的请求体。
  * 只返回白名单 Interaction；未知 kind/字段、空 token、空/超长 text、
@@ -49,7 +46,7 @@ const rejectExtraKeys = (obj: Record<string, unknown>, allowed: readonly string[
  */
 export function parseV2ActionRequest(body: unknown): V2ActionRequestResult {
   if (!isRecord(body)) return { ok: false, code: "INVALID_INPUT" };
-  if (typeof body.actionId !== "string" || body.actionId.length === 0) return { ok: false, code: "INVALID_INPUT" };
+  if (typeof body.actionId !== "string" || !UUID_V4.test(body.actionId)) return { ok: false, code: "INVALID_INPUT" };
   if (!isNonNegativeInteger(body.expectedRevision)) return { ok: false, code: "INVALID_INPUT" };
   if (!rejectExtraKeys(body, ["actionId", "expectedRevision", "interaction"])) return { ok: false, code: "INVALID_INPUT" };
 
@@ -58,7 +55,7 @@ export function parseV2ActionRequest(body: unknown): V2ActionRequestResult {
 
   if (interaction.kind === "fixed_choice") {
     if (!rejectExtraKeys(interaction, ["kind", "choiceToken"])) return { ok: false, code: "INVALID_INPUT" };
-    if (typeof interaction.choiceToken !== "string" || interaction.choiceToken.length === 0) {
+    if (typeof interaction.choiceToken !== "string" || interaction.choiceToken.trim().length === 0) {
       return { ok: false, code: "INVALID_INPUT" };
     }
     return {
@@ -71,28 +68,26 @@ export function parseV2ActionRequest(body: unknown): V2ActionRequestResult {
 
   if (interaction.kind === "free_text") {
     if (!rejectExtraKeys(interaction, ["kind", "text", "targetNpcId"])) return { ok: false, code: "INVALID_INPUT" };
-    if (typeof interaction.text !== "string" || interaction.text.length === 0) {
+    if (typeof interaction.text !== "string" || interaction.text.trim().length === 0) {
       return { ok: false, code: "INVALID_INPUT" };
     }
     if (codePointLength(interaction.text) > PLAYER_UTTERANCE_MAX_LENGTH) {
       return { ok: false, code: "INVALID_INPUT" };
     }
-    if (interaction.targetNpcId !== undefined && typeof interaction.targetNpcId !== "string") {
+    if (typeof interaction.targetNpcId !== "string" || interaction.targetNpcId.trim().length === 0) {
       return { ok: false, code: "INVALID_INPUT" };
     }
-    const interactionOut: Interaction = interaction.targetNpcId === undefined
-      ? { kind: "free_text", text: interaction.text }
-      : { kind: "free_text", text: interaction.text, targetNpcId: asNpcId(interaction.targetNpcId) };
+    const interactionOut: ActionRequest["interaction"] = {
+      kind: "free_text",
+      text: interaction.text,
+      targetNpcId: asNpcId(interaction.targetNpcId),
+    };
     return { ok: true, actionId: body.actionId, expectedRevision: body.expectedRevision, interaction: interactionOut };
   }
 
   return { ok: false, code: "INVALID_INPUT" };
 }
 
-/**
- * 解析 POST /api/v2/game/npc/dialogue 的请求体。
- * 合法输入返回白名单 { npcId, text, expectedRevision }。
- */
 /**
  * v2.1 错误 → HTTP 状态映射（Spec §16.3）：
  * - 400 输入非法；404 无活动存档；409 stale revision；
@@ -115,14 +110,4 @@ export function httpStatusForV2Code(code: string | undefined): number {
     default:
       return 500;
   }
-}
-
-export function parseV2DialogueRequest(body: unknown): V2DialogueRequestResult {
-  if (!isRecord(body)) return { ok: false, code: "INVALID_INPUT" };
-  if (typeof body.npcId !== "string" || body.npcId.length === 0) return { ok: false, code: "INVALID_INPUT" };
-  if (typeof body.text !== "string" || body.text.length === 0) return { ok: false, code: "INVALID_INPUT" };
-  if (codePointLength(body.text) > PLAYER_UTTERANCE_MAX_LENGTH) return { ok: false, code: "INVALID_INPUT" };
-  if (!isNonNegativeInteger(body.expectedRevision)) return { ok: false, code: "INVALID_INPUT" };
-  if (!rejectExtraKeys(body, ["npcId", "text", "expectedRevision"])) return { ok: false, code: "INVALID_INPUT" };
-  return { ok: true, npcId: asNpcId(body.npcId), text: body.text, expectedRevision: body.expectedRevision };
 }

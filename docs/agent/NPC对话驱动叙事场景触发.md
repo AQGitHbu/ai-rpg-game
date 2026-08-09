@@ -55,6 +55,8 @@
 
 已实现（2026-08-06，Phase 14）：domain 类型扩展、纯规则分类器、固定玩家口吻选项、对白回应事件模型、场景内双分支预生成与即时消费、无分支时的 `performAction` dialogue_response 排队、`DirectorContext.playerNpcChat` 投影、场景 ready 后快照不残留回归、UI 自由输入接线。不含：自由输入意图解析 AI、闲聊记忆、NPC 关系数值。
 
+v2.1 生产链（2026-08-09）已进一步收敛：焦点 NPC 的两个固定选项与一个自定义输入都只 POST `/api/v2/game/actions`。浏览器每次提交生成独立 UUID actionId，free_text 必须携带 text、targetNpcId 与 expectedRevision；composition root 直接调用 `performTurn` 并返回统一 view。短问候也必须完成规则裁决、单次 CAS、NPC 记忆与 pending job，不再存在 `/api/v2/game/npc/dialogue` 或 `handleNpcDialogueV2` 旁路。上文 `/api/game/npc/dialogue` 与 `handleNpcDialogue` 仅描述 v1 历史参考链。
+
 ## 主要文件
 
 - `src/game/domain/narrative.ts` — `PlayerNpcChatState`、pending 变体可选快照
@@ -90,6 +92,7 @@
 
 ## 最近维护
 
+- 2026-08-09：v2.1 删除独立 NPC dialogue route/use case；固定选择与自定义输入统一经 `/api/v2/game/actions` → `performTurn`，每次浏览器 UUID 防止同 NPC 连续输入被记忆去重。
 - 2026-08-08：修复「点击 NPC 无任何对白」。V2 视图链路补齐每 NPC 对白：`gameSessionViewV2` 的 `narrative` 新增 `npcDialogues`（在场 NPC 逐条 speechPages，场景 `npcDialogues` 非空分页优先，否则焦点 `npcLine` 或确定性台词兜底，纯函数零 AI）；`viewAdapterV2` 改从 `npcDialogues` 按 npcId 取对白再回退 `npcLine`；确定性/AI 场景源为所有在场 NPC 填充 `npcDialogues`，AI `npcLine.npcId` 必须归属在场 NPC 且 emotion 收敛为合法枚举（`resolveLiveNpcLine`），无效回退确定性台词。
 - 2026-07-31：系统首次实现（spec/plan：`docs/superpowers/{specs,plans}/2026-07-31-npc-dialogue-narrative-trigger.md`）。
 - 2026-08-06：对白场景生成时确定性预生成两个 NPC 回复；点击任一固定玩家口吻选项后同一请求直接落库下一句对白与两个新的对白选项，不再显示“正在准备场景”。下一次对白选择才进入新的三角色原子场景生成；无预生成分支的旧存档仍走 pending 兼容路径。

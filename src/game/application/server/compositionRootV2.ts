@@ -10,21 +10,18 @@ import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
 import { createSqliteGameRepositoryV2 } from "./persistence/sqliteGameRepositoryV2";
 import type { GameRepositoryV2 } from "./persistence/gameRepositoryV2";
 import { createGameV2, type WorldGenerationSource } from "../createGameV2";
-import { performActionV2 } from "../performActionV2";
+import { performTurn } from "../performTurn";
 import { projectGameSessionView } from "../gameSessionViewV2";
 import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
 import { createV2WorldGenerationSource, createV2SceneSource, createV2ExpansionSource } from "../server/ai/v2SourceFactory";
 import { createServerV2IntentParserSource } from "../server/ai/intentParserSourceFactory";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { generatePendingSceneV2 } from "../generatePendingSceneV2";
-import { handleNpcDialogueV2 } from "../handleNpcDialogueV2";
 import { commitState } from "../stateCommit";
 import { buildChoiceMap } from "../buildChoiceMap";
 import type { SceneSource } from "../sceneSource";
 import type { StoryState } from "@/game/domain/storyState";
-import type { NpcId } from "@/game/domain/scenarioBlueprint";
-import type { Interaction, Action } from "@/game/domain/action";
-import type { ActionChoiceMap } from "../actionConverter";
+import type { Interaction } from "@/game/domain/action";
 import type { GameSessionViewV2 } from "../gameSessionViewV2";
 import type { GameTypeId, GameLength } from "@/game/domain/newGame";
 
@@ -41,18 +38,20 @@ export type CreateGameV2HttpInput = {
   readonly gameLength: GameLength;
 };
 
+type PerformTurnV2EntryPointResult =
+  | { readonly ok: true; readonly revision: number; readonly feedback: string; readonly view: GameSessionViewV2 }
+  | { readonly ok: false; readonly code: string; readonly feedback?: string };
+
 export type ServerGameV2EntryPoints = {
   createGameV2(input: CreateGameV2HttpInput, traceId?: string): Promise<{ ok: boolean; revision?: number; code?: string }>;
-  performActionV2(command: {
+  performTurnV2(command: {
     actionId: string;
     interaction: Interaction;
     expectedRevision: number;
-    choiceMap: ActionChoiceMap;
-  }, traceId?: string): Promise<{ ok: boolean; revision?: number; feedback?: string; code?: string }>;
+  }, traceId?: string): Promise<PerformTurnV2EntryPointResult>;
   getCurrentGameV2(traceId?: string): Promise<{ ok: boolean; status: string; view?: GameSessionViewV2; revision?: number }>;
   ensureNarrativeSceneV2(traceId?: string): Promise<{ ok: boolean; result?: string }>;
   ackPrologueV2(traceId?: string): Promise<{ ok: boolean; revision?: number; code?: string }>;
-  handleNpcDialogueV2(command: { npcId: NpcId; text: string; expectedRevision: number }, traceId?: string): Promise<{ ok: boolean; kind?: string; npcSpeech?: string; revision?: number; code?: string }>;
   clearDevelopmentCurrentGameV2(traceId?: string): Promise<{ status: "cleared" | "none" | "disabled" }>;
   executeHttpRequest(
     method: string,
@@ -139,18 +138,19 @@ export function createServerGameV2EntryPoints(
       if (result.ok) return { ok: true, revision: result.revision };
       return { ok: false, code: result.code };
     },
-    performActionV2: async (command, _traceId) => {
+    performTurnV2: async (command, _traceId) => {
       const current = await repository.getCurrentGame();
-      if (!current.ok || current.status !== "active") return { ok: false, feedback: "No active game" };
+      if (!current.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE", feedback: "Infrastructure error" };
+      if (current.status !== "active") return { ok: false, code: "NO_ACTIVE_GAME", feedback: "No active game" };
       // Build choiceMap server-side from current state (spec §4.3: server maps choiceToken → Action)
       const choiceMap = buildChoiceMap(
         current.record.worldState,
         current.record.storyState,
         current.record.revision,
       );
-      const result = await performActionV2(
+      const result = await performTurn(
         { gameId: current.record.gameId, actionId: command.actionId, interaction: command.interaction, expectedRevision: command.expectedRevision, choiceMap },
-        { repository, now, expansionSource },
+        { repository, now, expansionSource, intentParserSource },
       );
       if (result.ok) {
         // Return updated view so the client can render without a separate GET
@@ -159,7 +159,7 @@ export function createServerGameV2EntryPoints(
           const view = projectGameSessionView(updated.record.worldState, updated.record.storyState, updated.record.revision);
           return { ok: true, revision: result.revision, feedback: result.feedback, view };
         }
-        return { ok: true, revision: result.revision, feedback: result.feedback };
+        return { ok: false, code: "INFRASTRUCTURE_FAILURE", feedback: "Unable to read saved game" };
       }
       return { ok: false, code: result.code, feedback: result.feedback };
     },
@@ -187,21 +187,6 @@ export function createServerGameV2EntryPoints(
       });
       if (!commit.ok) return { ok: false, code: commit.code };
       return { ok: true, revision: commit.record.revision };
-    },
-    handleNpcDialogueV2: async (command, _traceId) => {
-      const result = await handleNpcDialogueV2(command, { repository, now, intentParserSource });
-      if (result.ok) {
-        // Return updated view for narrative_trigger so client can render pending state
-        if (result.kind === "narrative_trigger") {
-          const updated = await repository.getCurrentGame();
-          if (updated.ok && updated.status === "active") {
-            const view = projectGameSessionView(updated.record.worldState, updated.record.storyState, updated.record.revision);
-            return { ok: true, kind: result.kind, npcSpeech: undefined, revision: result.revision, view };
-          }
-        }
-        return { ok: true, kind: result.kind, npcSpeech: result.kind === "chat" ? result.npcSpeech : undefined, revision: result.revision };
-      }
-      return { ok: false, code: result.code };
     },
     clearDevelopmentCurrentGameV2: async (_traceId) => {
       // Only allow in development environment

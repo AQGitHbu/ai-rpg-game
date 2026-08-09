@@ -1,8 +1,7 @@
 import { getServerGameV2EntryPoints } from "@/game/application/server/compositionRootV2";
 import { parseV2ActionRequest, httpStatusForV2Code } from "@/game/application/http/v2RequestParser";
 
-// POST /api/v2/game/actions：V2 并行路由——委托 performActionV2。
-// V1 路由 /api/game/actions 保持不动，互不干扰。
+// POST /api/v2/game/actions：固定选项与 NPC 自定义输入的唯一 V2 行动入口。
 export async function POST(request: Request): Promise<Response> {
   const entryPoints = getServerGameV2EntryPoints();
   return entryPoints.executeHttpRequest(
@@ -26,13 +25,10 @@ export async function POST(request: Request): Promise<Response> {
           headers: { "Content-Type": "application/json" },
         });
       }
-      const result = await entryPoints.performActionV2({
+      const result = await entryPoints.performTurnV2({
         actionId: parsed.actionId,
         interaction: parsed.interaction,
         expectedRevision: parsed.expectedRevision,
-        // 服务端从当前存档重建 choiceMap（composition root 内部 buildChoiceMap），
-        // 客户端不再发送 actionKey/choiceMap（Spec §8.3）。
-        choiceMap: new Map(),
       });
       if (result.ok) {
         return new Response(JSON.stringify(result), {

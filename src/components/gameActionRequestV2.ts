@@ -7,7 +7,7 @@ import type { GameSessionViewV2 } from "@/game/application/gameSessionViewV2";
 
 export type V2ActionPayload =
   | { readonly interaction: { readonly kind: "fixed_choice"; readonly choiceToken: string }; readonly revision: number }
-  | { readonly interaction: { readonly kind: "free_text"; readonly text: string; readonly targetNpcId?: string }; readonly revision: number };
+  | { readonly interaction: { readonly kind: "free_text"; readonly text: string; readonly targetNpcId: string }; readonly revision: number };
 
 export type V2ActionOutcome =
   | { readonly kind: "success"; readonly view: GameSessionViewV2; readonly message: string }
@@ -39,13 +39,15 @@ function defaultActionIdGenerator(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
-  // 极旧/非安全上下文兜底：随机数 + 时间戳 + 计数器，仍非唯一时间戳。
-  const rand = Math.random().toString(36).slice(2, 10);
-  const counter = actionIdCounter++;
-  return `act_${rand}_${Date.now().toString(36)}_${counter}`;
+  // 极旧/非安全上下文兜底：保持 UUID v4 形状，使服务端仍可执行同一严格契约。
+  // 现代浏览器总会走上方 crypto.randomUUID；此分支只用于兼容和测试环境。
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (marker) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = marker === "x" ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
 }
 
-let actionIdCounter = 0;
 let actionIdGenerator: () => string = defaultActionIdGenerator;
 
 /** 测试注入：返回当前 actionId 生成器。 */
@@ -77,15 +79,8 @@ export async function postV2Action(payload: V2ActionPayload): Promise<V2ActionOu
     }
 
     if (body.ok === true) {
-      // V2 API returns view in response; if missing, fetch current game
       if (body.view !== undefined) {
         return { kind: "success", view: body.view, message: body.feedback ?? "操作成功" };
-      }
-      // Fallback: fetch current game to get view
-      const currentRes = await fetch("/api/v2/game/current");
-      const currentBody = (await currentRes.json().catch(() => null)) as { view?: GameSessionViewV2 } | null;
-      if (currentBody?.view !== undefined) {
-        return { kind: "success", view: currentBody.view, message: body.feedback ?? "操作成功" };
       }
       return { kind: "error", message: "操作成功但无法获取最新状态。" };
     }
@@ -139,33 +134,5 @@ export async function ackV2Prologue(): Promise<boolean> {
     return response.ok;
   } catch {
     return false;
-  }
-}
-
-/** POST /api/v2/game/npc/dialogue — NPC 自由对话。 */
-export type V2DialogueResult =
-  | { readonly kind: "chat"; readonly npcSpeech: string; readonly revision: number }
-  | { readonly kind: "narrative_trigger"; readonly revision: number; readonly view?: GameSessionViewV2 }
-  | { readonly kind: "error"; readonly message: string };
-
-export async function postV2Dialogue(npcId: string, text: string, revision: number): Promise<V2DialogueResult> {
-  try {
-    const response = await fetch("/api/v2/game/npc/dialogue", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ npcId, text, expectedRevision: revision }),
-    });
-    const body = (await response.json().catch(() => null)) as {
-      ok?: boolean; kind?: string; npcSpeech?: string; revision?: number; code?: string; view?: GameSessionViewV2;
-    } | null;
-    if (body?.ok === true && body.kind === "chat") {
-      return { kind: "chat", npcSpeech: body.npcSpeech ?? "...", revision: body.revision ?? revision };
-    }
-    if (body?.ok === true && body.kind === "narrative_trigger") {
-      return { kind: "narrative_trigger", revision: body.revision ?? revision, view: body.view };
-    }
-    return { kind: "error", message: "对话失败。" };
-  } catch {
-    return { kind: "error", message: "网络异常。" };
   }
 }

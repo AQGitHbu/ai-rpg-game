@@ -138,6 +138,9 @@ describe("NpcDialoguePanel：底部选项", () => {
 
     const choiceA = screen.getByRole("button", { name: "1. 选项A" });
     const choiceB = screen.getByRole("button", { name: "2. 选项B" });
+    expect(within(screen.getByRole("group", { name: "对话选项" })).getAllByRole("button")).toHaveLength(2);
+    expect(screen.getByRole("textbox", { name: "自由输入" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
     expect(choiceA).toBeEnabled();
     expect(choiceB).toBeEnabled();
 

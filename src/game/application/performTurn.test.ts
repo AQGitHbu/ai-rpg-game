@@ -557,6 +557,82 @@ describe("performTurn Expansion 单路径（Task 6）", () => {
 describe("performTurn 自由文本端到端（Task 9）", () => {
   const ruleSource = createRuleIntentParserV2();
 
+  it("同一 NPC 连续两个 ready 场景的自定义输入使用不同 actionId，各自形成记忆与 pending job", async () => {
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+
+    const first = await performTurn(
+      { gameId: asGameId("g1"), actionId: "uuid-1", interaction: { kind: "free_text", text: "我相信你", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const afterFirst = record()!;
+    const sceneWrite = await repo.applySceneWriteBack({
+      gameId: afterFirst.gameId,
+      expectedRevision: afterFirst.revision,
+      nextNarrative: {
+        ...afterFirst.storyState.narrative,
+        currentScene: {
+          sceneId: "scene-1",
+          turn: 1,
+          narration: "老板等着你的下一句话。",
+          usedFactIds: [],
+          npcLine: { npcId: asNpcId("npc_1"), text: "请继续。", emotion: "neutral", usedFactIds: [] },
+          choices: [
+            { choiceToken: "tok-1", label: "继续询问" },
+            { choiceToken: "tok-2", label: "提出质疑" },
+          ],
+          source: "fallback",
+          event: { kind: "dialogue", focusNpcId: asNpcId("npc_1") },
+        },
+        generation: { status: "idle" },
+      },
+      nextCandidateEventPool: afterFirst.storyState.candidateEventPool,
+    });
+    expect(sceneWrite.ok).toBe(true);
+    if (!sceneWrite.ok) return;
+
+    const second = await performTurn(
+      { gameId: asGameId("g1"), actionId: "uuid-2", interaction: { kind: "free_text", text: "你在撒谎", targetNpcId: asNpcId("npc_1") }, expectedRevision: sceneWrite.record.revision, choiceMap: new Map() },
+      { repository: repo, now: () => "2026-01-03", intentParserSource: ruleSource },
+    );
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+
+    const saved = record()!;
+    const history = saved.worldState.npcs.find((npc) => npc.id === asNpcId("npc_1"))!.memory.interactionHistory;
+    expect(history.map((entry) => entry.actionId)).toEqual(["uuid-1", "uuid-2"]);
+    expect(new Set(history.map((entry) => entry.actionId)).size).toBe(2);
+    expect(saved.storyState.turnNumber).toBe(2);
+
+    expect(applyCalls()).toHaveLength(2);
+    const pendingJobs = applyCalls().map((call) => call.nextStoryState.narrative.generation);
+    expect(pendingJobs.every((generation) => generation.status === "pending")).toBe(true);
+    expect(pendingJobs.map((generation) => generation.status === "pending" ? generation.job.actionId : null)).toEqual(["uuid-1", "uuid-2"]);
+    expect(pendingJobs.map((generation) => generation.status === "pending" ? generation.job.turnId : null)).toEqual(["uuid-1", "uuid-2"]);
+  });
+
+  it("短问候也提交真实回合，并在 CAS 后留下可生成回应的 pending job", async () => {
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "uuid-greeting", interaction: { kind: "free_text", text: "嗨", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+    const saved = record()!;
+    expect(saved.storyState.turnNumber).toBe(1);
+    expect(saved.worldState.npcs[0]!.memory.interactionHistory).toHaveLength(1);
+    const generation = saved.storyState.narrative.generation;
+    expect(generation.status).toBe("pending");
+    if (generation.status !== "pending") return;
+    expect(generation.job.actionId).toBe("uuid-greeting");
+    expect(generation.job.utterance).toBe("嗨");
+  });
+
   it("targetNpcId + 我相信你 → support talk：NPC 记忆变化 + pending job", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
 
