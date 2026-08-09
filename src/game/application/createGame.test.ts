@@ -3,6 +3,7 @@ import { createGame, createFixtureWorldSource } from "./createGame";
 import type { GameId, GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import { asGameId } from "./server/persistence/gameRepository";
 import type { GameLength, GameTypeId } from "@/game/domain/newGame";
+import { resolveEnding } from "@/game/gameplay/rpg/ruleEngine/resolveEnding";
 
 function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameRecord | null } {
   let record: GameRecord | null = null;
@@ -114,6 +115,46 @@ describe("createGame", () => {
     ))).toBe(true);
   });
 
+  it("covers every possible key-NPC affinity with exactly one deterministic fallback ending", async () => {
+    const record = await createPersistedGame({ seed: "ending-coverage-seed", gameLength: "short" });
+    const relationshipRequirements = record.worldState.endings.map((ending) =>
+      ending.requirements.find((requirement) =>
+        requirement.kind === "npc_affinity_at_least" || requirement.kind === "npc_affinity_at_most",
+      ),
+    );
+
+    for (let affinity = -100; affinity <= 100; affinity += 1) {
+      const matchingEndings = relationshipRequirements.filter((requirement) => {
+        if (requirement?.kind === "npc_affinity_at_least") return affinity >= requirement.value;
+        if (requirement?.kind === "npc_affinity_at_most") return affinity <= requirement.value;
+        return false;
+      });
+      expect(matchingEndings, `affinity ${affinity}`).toHaveLength(1);
+    }
+
+    expect(relationshipRequirements).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "npc_affinity_at_least", value: 6 }),
+      expect.objectContaining({ kind: "npc_affinity_at_most", value: 5 }),
+    ]));
+
+    const affinitySixWorld = {
+      ...record.worldState,
+      quests: record.worldState.quests.map((quest) =>
+        quest.id === "quest_climax" ? { ...quest, status: "completed" as const } : quest,
+      ),
+      npcs: record.worldState.npcs.map((npc) => ({
+        ...npc,
+        memory: { ...npc.memory, relationship: { affinity: 6 } },
+      })),
+    };
+    const resolved = resolveEnding(
+      affinitySixWorld,
+      { ...record.storyState, endingAllowed: true },
+      { now: () => "2026-01-01" },
+    );
+    expect(resolved.nextWorldState.ending?.endingId).toBe("ending_trust");
+  });
+
   it("honors every game type in compiled fallback structure and remains deterministic", async () => {
     const gameTypes: readonly GameTypeId[] = [
       "wuxia", "xianxia", "fantasy", "science_fiction", "urban", "alternate_history", "post_apocalypse",
@@ -184,6 +225,30 @@ describe("createGame", () => {
     expect(getRecord()).toMatchObject({ gameId: "new-game", revision: 0 });
     expect(getRecord()!.worldState.generation.seed).toBe("new-seed");
     expect(getRecord()!.worldState.ending).toBeNull();
+
+    const replacement = getRecord()!;
+    const replacementEnded = await repo.applyState({
+      gameId: replacement.gameId,
+      expectedRevision: replacement.revision,
+      nextWorldState: {
+        ...replacement.worldState,
+        ending: { endingId: replacement.worldState.endings[0]!.id, outcome: "success" },
+      },
+      nextStoryState: replacement.storyState,
+    });
+    expect(replacementEnded.ok).toBe(true);
+    const newerAtSameRevision = structuredClone(getRecord()!);
+    expect(newerAtSameRevision.revision).toBe(oldRecord.revision);
+
+    const abaAttempt = await createGame(
+      {
+        gameId: asGameId("stale-page-replacement"), gameType: "urban", gameLength: "short", seed: "aba-seed",
+        replaceCurrent: { expectedGameId: oldRecord.gameId, expectedRevision: oldRecord.revision },
+      },
+      { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-03" },
+    );
+    expect(abaAttempt).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
+    expect(getRecord()).toEqual(newerAtSameRevision);
   });
 
   it("creates a game with fixture source", async () => {

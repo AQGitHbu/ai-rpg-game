@@ -377,7 +377,7 @@ export function createFixtureWorldSource(): WorldGenerationSource {
         factions: [],
         quests,
         endings: [
-          { id: "ending_trust", name: "并肩破局", description: `你与${variant.npc}以信任守住了胜利。`, requirements: [{ kind: "quest_completed", questId: "quest_climax" }, { kind: "npc_affinity_at_least", npcId: "npc_innkeeper", value: 10 }] },
+          { id: "ending_trust", name: "并肩破局", description: `你与${variant.npc}以信任守住了胜利。`, requirements: [{ kind: "quest_completed", questId: "quest_climax" }, { kind: "npc_affinity_at_least", npcId: "npc_innkeeper", value: 6 }] },
           { id: "ending_doubt", name: "孤身远行", description: "你赢下决战，却因猜疑独自离开。", requirements: [{ kind: "quest_completed", questId: "quest_climax" }, { kind: "npc_affinity_at_most", npcId: "npc_innkeeper", value: 5 }] },
         ],
         openingBudget: { locationsCount: locations.length, npcsCount: 1, sideQuestsCount: 0, endingsCount: 2, townLocationsCount: 0 },

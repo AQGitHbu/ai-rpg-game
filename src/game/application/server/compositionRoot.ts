@@ -24,6 +24,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { Interaction } from "@/game/domain/action";
 import type { GameSessionView } from "../gameSessionView";
 import type { GameTypeId, GameLength } from "@/game/domain/newGame";
+import { deriveEndingSessionIdentity, matchesEndingSessionIdentity } from "./endingSessionIdentity";
 
 export type { RequestLogContext };
 
@@ -35,7 +36,7 @@ export type { RequestLogContext };
 export type CreateGameHttpInput = {
   readonly gameType: GameTypeId;
   readonly gameLength: GameLength;
-  readonly restart?: { readonly expectedRevision: number };
+  readonly restart?: { readonly identity: string; readonly expectedRevision: number };
 };
 
 type PerformTurnEntryPointResult =
@@ -136,7 +137,10 @@ export function createServerGameEntryPoints(
         const current = await repository.getCurrentGame();
         if (!current.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         if (current.status !== "active") return { ok: false, code: "NO_ACTIVE_GAME" };
-        if (current.record.revision !== input.restart.expectedRevision) {
+        if (
+          current.record.revision !== input.restart.expectedRevision
+          || !matchesEndingSessionIdentity(current.record.gameId, current.record.revision, input.restart.identity)
+        ) {
           return { ok: false, code: "STALE_GAME_REVISION" };
         }
         if (current.record.worldState.ending === null) {
@@ -178,7 +182,12 @@ export function createServerGameEntryPoints(
         // Return updated view so the client can render without a separate GET
         const updated = await repository.getCurrentGame();
         if (updated.ok && updated.status === "active") {
-          const view = projectGameSessionView(updated.record.worldState, updated.record.storyState, updated.record.revision);
+          const view = projectGameSessionView(
+            updated.record.worldState,
+            updated.record.storyState,
+            updated.record.revision,
+            deriveEndingSessionIdentity(updated.record.gameId, updated.record.revision),
+          );
           return { ok: true, revision: result.revision, feedback: result.feedback, view };
         }
         return { ok: false, code: "INFRASTRUCTURE_FAILURE", feedback: "Unable to read saved game" };
@@ -190,7 +199,12 @@ export function createServerGameEntryPoints(
       if (!current.ok) return { ok: false, status: "error" };
       if (current.status === "none") return { ok: true, status: "none" };
       if (current.status === "corrupt") return { ok: false, status: "corrupt" };
-      const view = projectGameSessionView(current.record.worldState, current.record.storyState, current.record.revision);
+      const view = projectGameSessionView(
+        current.record.worldState,
+        current.record.storyState,
+        current.record.revision,
+        deriveEndingSessionIdentity(current.record.gameId, current.record.revision),
+      );
       return { ok: true, status: "active", view, revision: current.record.revision };
     },
     ensureNarrativeScene: async (_traceId) => {

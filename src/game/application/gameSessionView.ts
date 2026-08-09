@@ -95,6 +95,7 @@ export type GameSessionView = {
     readonly name: string;
     readonly description: string;
     readonly outcome: string;
+    readonly restartIdentity: string;
   } | null;
 };
 
@@ -168,6 +169,7 @@ export function projectGameSessionView(
   worldState: WorldState,
   storyState: StoryState,
   revision: number,
+  endingSessionIdentity: string,
 ): GameSessionView {
   const currentLocation = worldState.locations.find((entry) => entry.id === worldState.currentLocationId);
   const presentNpcs = worldState.npcs.filter((entry) => entry.locationId === worldState.currentLocationId);
@@ -343,6 +345,7 @@ export function projectGameSessionView(
       name: endingDefinition?.name ?? "故事结局",
       description: endingDefinition?.description ?? "",
       outcome: worldState.ending.outcome,
+      restartIdentity: endingSessionIdentity,
     },
   };
 }

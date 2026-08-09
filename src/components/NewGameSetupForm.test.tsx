@@ -17,12 +17,12 @@ describe("NewGameSetupForm canonical contract", () => {
     expect(fetch).toHaveBeenCalledWith("/api/game", expect.objectContaining({ method: "POST" }));
   });
 
-  it("includes an explicit ended-save revision when creating a replacement game", async () => {
+  it("includes the opaque ended-session identity and revision when creating a replacement game", async () => {
     globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true, revision: 0 }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     }));
-    render(<NewGameSetupForm onCreated={vi.fn()} restartRevision={9} />);
+    render(<NewGameSetupForm onCreated={vi.fn()} restart={{ identity: "opaque-ended-session", expectedRevision: 9 }} />);
 
     await userEvent.click(screen.getByRole("button", { name: "进入世界" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
@@ -30,7 +30,7 @@ describe("NewGameSetupForm canonical contract", () => {
     expect(JSON.parse(String(init.body))).toEqual({
       gameType: "wuxia",
       gameLength: "short",
-      restart: { expectedRevision: 9 },
+      restart: { identity: "opaque-ended-session", expectedRevision: 9 },
     });
   });
 });

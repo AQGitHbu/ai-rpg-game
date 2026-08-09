@@ -14,13 +14,16 @@ function parseCreateInput(body: unknown): CreateGameHttpInput | null {
   if (typeof body.gameLength !== "string" || !GAME_LENGTHS.has(body.gameLength)) return null;
   let restart: CreateGameHttpInput["restart"];
   if (body.restart !== undefined) {
-    if (!isRecord(body.restart) || !Object.keys(body.restart).every((key) => key === "expectedRevision")) return null;
+    if (!isRecord(body.restart) || !Object.keys(body.restart).every((key) => ["identity", "expectedRevision"].includes(key))) return null;
     if (
-      typeof body.restart.expectedRevision !== "number"
+      typeof body.restart.identity !== "string"
+      || body.restart.identity.length === 0
+      || body.restart.identity.length > 128
+      || typeof body.restart.expectedRevision !== "number"
       || !Number.isInteger(body.restart.expectedRevision)
       || body.restart.expectedRevision < 0
     ) return null;
-    restart = { expectedRevision: body.restart.expectedRevision };
+    restart = { identity: body.restart.identity, expectedRevision: body.restart.expectedRevision };
   }
   return {
     gameType: body.gameType as CreateGameHttpInput["gameType"],

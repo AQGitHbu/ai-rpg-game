@@ -20,7 +20,7 @@ type ScreenState =
   | { phase: "loading" }
   | { phase: "none" }
   | { phase: "active"; view: GameSessionView }
-  | { phase: "restart"; expectedRevision: number }
+  | { phase: "restart"; identity: string; expectedRevision: number }
   | { phase: "corrupt"; reason: string }
   | { phase: "unreachable" };
 
@@ -129,15 +129,20 @@ export function CurrentGameScreen() {
     }
 
     // 结局
-    if (view.ending !== null) {
+    const ending = view.ending;
+    if (ending !== null) {
       return (
         <Panel className="ending-screen">
-          <Tag variant={view.ending.outcome === "success" ? "success" : "danger"}>
-            {view.ending.outcome === "success" ? "胜利" : "失败"}
+          <Tag variant={ending.outcome === "success" ? "success" : "danger"}>
+            {ending.outcome === "success" ? "胜利" : "失败"}
           </Tag>
-          <h2>{view.ending.name}</h2>
-          <p>{view.ending.description || "你的冒险至此结束。"}</p>
-          <InlineButton onClick={() => setState({ phase: "restart", expectedRevision: view.revision })}>重新开始</InlineButton>
+          <h2>{ending.name}</h2>
+          <p>{ending.description || "你的冒险至此结束。"}</p>
+          <InlineButton onClick={() => setState({
+            phase: "restart",
+            identity: ending.restartIdentity,
+            expectedRevision: view.revision,
+          })}>重新开始</InlineButton>
         </Panel>
       );
     }
@@ -157,7 +162,10 @@ export function CurrentGameScreen() {
   }
 
   if (state.phase === "restart") {
-    return <NewGameSetupForm onCreated={handleCreated} restartRevision={state.expectedRevision} />;
+    return <NewGameSetupForm
+      onCreated={handleCreated}
+      restart={{ identity: state.identity, expectedRevision: state.expectedRevision }}
+    />;
   }
 
   if (state.phase === "corrupt") {

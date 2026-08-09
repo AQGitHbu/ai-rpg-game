@@ -25,18 +25,18 @@ beforeEach(() => {
 });
 
 describe("POST /api/game", () => {
-  it("forwards an explicit ending revision through the canonical restart contract", async () => {
+  it("forwards an opaque ending identity and revision through the canonical restart contract", async () => {
     const response = await POST(request({
       gameType: "science_fiction",
       gameLength: "medium",
-      restart: { expectedRevision: 12 },
+      restart: { identity: "opaque-ended-session", expectedRevision: 12 },
     }));
 
     expect(response.status).toBe(200);
     expect(mocks.createGame).toHaveBeenCalledWith({
       gameType: "science_fiction",
       gameLength: "medium",
-      restart: { expectedRevision: 12 },
+      restart: { identity: "opaque-ended-session", expectedRevision: 12 },
     });
   });
 
@@ -44,6 +44,8 @@ describe("POST /api/game", () => {
     { gameType: "unknown", gameLength: "short" },
     { gameType: "wuxia", gameLength: "long" },
     { gameType: "wuxia", gameLength: "short", restart: {} },
+    { gameType: "wuxia", gameLength: "short", restart: { expectedRevision: 1 } },
+    { gameType: "wuxia", gameLength: "short", restart: { identity: "", expectedRevision: 1 } },
     { gameType: "wuxia", gameLength: "short", restart: { expectedRevision: -1 } },
     { gameType: "wuxia", gameLength: "short", restart: { expectedRevision: 1, extra: true } },
     { gameType: "wuxia", gameLength: "short", extra: true },
@@ -58,7 +60,7 @@ describe("POST /api/game", () => {
     const response = await POST(request({
       gameType: "wuxia",
       gameLength: "short",
-      restart: { expectedRevision: 3 },
+      restart: { identity: "stale-ended-session", expectedRevision: 3 },
     }));
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({ ok: false, code: "STALE_GAME_REVISION" });

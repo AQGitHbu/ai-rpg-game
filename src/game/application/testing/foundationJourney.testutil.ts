@@ -145,7 +145,7 @@ export async function createJourneyGame(
 export async function loadGameView(repo: GameRepository): Promise<GameSessionView> {
   const loaded = await repo.getCurrentGame();
   if (!loaded.ok || loaded.status !== "active") throw new Error("游戏视图不可用");
-  return projectGameSessionView(loaded.record.worldState, loaded.record.storyState, loaded.record.revision);
+  return projectGameSessionView(loaded.record.worldState, loaded.record.storyState, loaded.record.revision, "journey-session");
 }
 
 function allIssuedChoices(view: GameSessionView): readonly PlayerChoiceView[] {
@@ -166,7 +166,7 @@ export async function playIssuedChoice(
 ): Promise<JourneyTurnResult & { readonly choiceToken: string }> {
   const loaded = await repo.getCurrentGame();
   if (!loaded.ok || loaded.status !== "active") throw new Error("游戏记录不可用");
-  const view = projectGameSessionView(loaded.record.worldState, loaded.record.storyState, loaded.record.revision);
+  const view = projectGameSessionView(loaded.record.worldState, loaded.record.storyState, loaded.record.revision, "journey-session");
   const choice = allIssuedChoices(view).find((entry) => entry.label.includes(labelIncludes));
   if (choice === undefined) throw new Error(`找不到服务器选项：${labelIncludes}`);
   const result = await playTurn(
@@ -182,7 +182,7 @@ export async function playIssuedTravelToUnvisited(
 ): Promise<JourneyTurnResult & { readonly choiceToken: string }> {
   const loaded = await repo.getCurrentGame();
   if (!loaded.ok || loaded.status !== "active") throw new Error("游戏记录不可用");
-  const view = projectGameSessionView(loaded.record.worldState, loaded.record.storyState, loaded.record.revision);
+  const view = projectGameSessionView(loaded.record.worldState, loaded.record.storyState, loaded.record.revision, "journey-session");
   const choice = view.worldMap.locations.find(
     (location) => !location.current && !location.visited && location.travelChoice !== null,
   )?.travelChoice;

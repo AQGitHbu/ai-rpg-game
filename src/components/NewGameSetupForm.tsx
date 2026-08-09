@@ -21,10 +21,10 @@ const GAME_LENGTHS = [
 
 export type NewGameSetupFormProps = {
   readonly onCreated: () => void;
-  readonly restartRevision?: number;
+  readonly restart?: { readonly identity: string; readonly expectedRevision: number };
 };
 
-export function NewGameSetupForm({ onCreated, restartRevision }: NewGameSetupFormProps) {
+export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) {
   const [gameType, setGameType] = useState<NewGameInput["gameType"]>("wuxia");
   const [gameLength, setGameLength] = useState<NonNullable<NewGameInput["gameLength"]>>("short");
   const [submitting, setSubmitting] = useState(false);
@@ -42,7 +42,7 @@ export function NewGameSetupForm({ onCreated, restartRevision }: NewGameSetupFor
         body: JSON.stringify({
           gameType,
           gameLength,
-          ...(restartRevision === undefined ? {} : { restart: { expectedRevision: restartRevision } }),
+          ...(restart === undefined ? {} : { restart }),
         }),
       });
       const body = await response.json().catch(() => null) as { readonly ok?: boolean; readonly code?: string } | null;

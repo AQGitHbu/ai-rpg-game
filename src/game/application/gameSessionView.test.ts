@@ -41,26 +41,26 @@ describe("projectGameSessionView", () => {
   }
 
   it("projects player and current location", () => {
-    const view = projectGameSessionView(ws, ss, 0);
+    const view = projectGameSessionView(ws, ss, 0, "test-ending-session");
     expect(view.player.name).toBe("侠客");
     expect(view.currentLocation.name).toBe("客栈");
   });
 
   it("projects available NPCs at current location", () => {
-    const view = projectGameSessionView(ws, ss, 0);
+    const view = projectGameSessionView(ws, ss, 0, "test-ending-session");
     expect(view.narrative.npcDialogues).toHaveLength(1);
     expect(view.narrative.npcDialogues[0]?.name).toBe("老板");
   });
 
   it("projects available moves to connected unlocked locations", () => {
-    const view = projectGameSessionView(ws, ss, 0);
+    const view = projectGameSessionView(ws, ss, 0, "test-ending-session");
     const moves = view.worldMap.locations.filter((location) => location.travelChoice !== null);
     expect(moves).toHaveLength(1);
     expect(moves[0]?.name).toBe("街道");
   });
 
   it("projects story metrics", () => {
-    const view = projectGameSessionView(ws, ss, 0);
+    const view = projectGameSessionView(ws, ss, 0, "test-ending-session");
     expect(view.story.currentAct).toBe(1);
     expect(view.story.tension).toBe(30);
     expect(view.story.pacingNeed).toBe("reveal");
@@ -73,7 +73,7 @@ describe("projectGameSessionView", () => {
       memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
     const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
-    const view = projectGameSessionView(wsTwo, ss, 0);
+    const view = projectGameSessionView(wsTwo, ss, 0, "test-ending-session");
     const dialogues = view.narrative.npcDialogues;
     expect(dialogues).toBeDefined();
     const ids = (dialogues ?? []).map((d) => String(d.npcId));
@@ -110,7 +110,7 @@ describe("projectGameSessionView", () => {
         generation: { status: "pending" as const, job: { kind: "scene" as const, sceneId: "scene-1", seed: "s", inputDigest: "d", gameType: "wuxia" as const, intent: { kind: "initial" as const }, context: { triggerContext: { kind: "initial_opening" as const, npcId: asNpcId("npc_1") }, locationId: asLocationId("loc_1"), presentNpcIds: [] }, mode: "ai" as const, utterance: "你好" } } as unknown as import("@/game/domain/storyState").StoryState["narrative"]["generation"],
       },
     };
-    const view = projectGameSessionView(ws, ssWithScene, 0);
+    const view = projectGameSessionView(ws, ssWithScene, 0, "test-ending-session");
     const serialized = JSON.stringify(view);
     expect(serialized).not.toContain("actionKey");
     expect(serialized).not.toContain("ApprovedAction");
@@ -159,7 +159,7 @@ describe("projectGameSessionView", () => {
         ],
       },
     };
-    const view = projectGameSessionView(wsTwo, ssScene, 0);
+    const view = projectGameSessionView(wsTwo, ssScene, 0, "test-ending-session");
     const dialogues = view.narrative.npcDialogues ?? [];
     const lu = dialogues.find((d) => d.npcId === "npc_1");
     const guest = dialogues.find((d) => d.npcId === "npc_2");
@@ -198,7 +198,7 @@ describe("projectGameSessionView", () => {
         ],
       },
     };
-    const view = projectGameSessionView(ws, ssScene, 0);
+    const view = projectGameSessionView(ws, ssScene, 0, "test-ending-session");
     // 世界行动选项出现在 narrative.choices（白名单形状）
     expect(view.narrative.choices?.map((c) => c.choiceToken).sort()).toEqual(["w1", "w2"]);
     for (const c of view.narrative.choices ?? []) {
@@ -248,7 +248,7 @@ describe("projectGameSessionView", () => {
         },
       };
 
-      expect(projectGameSessionView(ws, story, 4).narrative.choices).toEqual([
+      expect(projectGameSessionView(ws, story, 4, "test-ending-session").narrative.choices).toEqual([
         { choiceToken: "valid-token", label: "继续观察", presentation: "explore" },
       ]);
     }
@@ -281,7 +281,7 @@ describe("projectGameSessionView", () => {
       memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
     const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
-    const view = projectGameSessionView(wsTwo, sceneWithDialogue, 0);
+    const view = projectGameSessionView(wsTwo, sceneWithDialogue, 0, "test-ending-session");
     const dialogues = view.narrative.npcDialogues ?? [];
     const lu = dialogues.find((d) => String(d.npcId) === "npc_1");
     const guest = dialogues.find((d) => String(d.npcId) === "npc_2");
@@ -303,7 +303,7 @@ describe("projectGameSessionView", () => {
         tags: [],
       }      ] as unknown as WorldState["quests"],
     };
-    const view = projectGameSessionView(wsWithSecret, ss, 0);
+    const view = projectGameSessionView(wsWithSecret, ss, 0, "test-ending-session");
     const serialized = JSON.stringify(view);
     // 未发现：不出现事实正文，也不出现 FactId 字符串
     expect(serialized).not.toContain(SECRET_TEXT);
@@ -327,7 +327,7 @@ describe("projectGameSessionView", () => {
         tags: [],
       }      ] as unknown as WorldState["quests"],
     };
-    const view = projectGameSessionView(wsWithSecret, ss, 0);
+    const view = projectGameSessionView(wsWithSecret, ss, 0, "test-ending-session");
     const objective = view.quests[0]?.objectives[0];
     expect(objective?.label).toContain(SECRET_TEXT);
     expect(objective?.completed).toBe(true);
@@ -345,7 +345,7 @@ describe("projectGameSessionView", () => {
       enemies: [{ id: enemyId, name: "灰狼", tier: "normal", stats: { hp: 20, attack: 5, defense: 2 }, locationId: asLocationId("loc_1"), tags: [] }],
     };
 
-    const view = projectGameSessionView(completeWorld, ss, 7);
+    const view = projectGameSessionView(completeWorld, ss, 7, "test-ending-session");
     const travel = view.worldMap.locations.find((location) => location.name === "街道")?.travelChoice;
     expect(travel).toMatchObject({ label: "前往街道", presentation: "travel" });
     expect(travel?.choiceToken).toMatch(/^c_[0-9a-f]{16}$/);
@@ -362,7 +362,7 @@ describe("projectGameSessionView", () => {
     ]);
     expect(Object.keys(view.currentLocation).sort()).toEqual(["actions", "description", "name"]);
     expect(Object.keys(view.obtainableItems[0]!).sort()).toEqual(["choice", "description", "name"]);
-    const inventoryView = projectGameSessionView({ ...completeWorld, inventory: [itemId] }, ss, 7);
+    const inventoryView = projectGameSessionView({ ...completeWorld, inventory: [itemId] }, ss, 7, "test-ending-session");
     expect(inventoryView.inventory).toEqual([{ name: "铜钥匙", description: "一把旧钥匙" }]);
     expect(JSON.stringify(view)).not.toMatch(/loc_1|loc_2|item_key|enemy_wolf/);
     for (const choice of [
@@ -389,7 +389,7 @@ describe("projectGameSessionView", () => {
       enemies: [{ id: enemyId, name: "灰狼", tier: "normal", stats: { hp: 20, attack: 5, defense: 2 }, locationId: asLocationId("loc_1"), tags: [] }],
       battle: { status: "active", enemyId, playerHp: 91, enemyHp: 13, round: 2 },
     };
-    const view = projectGameSessionView(battleWorld, ss, 3);
+    const view = projectGameSessionView(battleWorld, ss, 3, "test-ending-session");
     expect(view.currentLocation.actions).toEqual([]);
     expect(view.battle).toMatchObject({ enemyName: "灰狼", playerHp: 91, enemyHp: 13, round: 2 });
     expect(view.battle?.controls.map((choice) => choice.label)).toEqual(["攻击", "防御", "撤退"]);
@@ -424,7 +424,7 @@ describe("projectGameSessionView", () => {
         ],
       },
     };
-    const view = projectGameSessionView(ws, story, 2);
+    const view = projectGameSessionView(ws, story, 2, "test-ending-session");
     const dialogue = view.narrative.npcDialogues[0];
     expect(dialogue).toMatchObject({ npcId: "npc_1", name: "老板", role: "路人", freeInputEnabled: true });
     expect(dialogue?.choices).toHaveLength(2);
@@ -454,11 +454,11 @@ describe("projectGameSessionView", () => {
         generation: { status: "pending", job: { utterance: "private player text" } } as unknown as StoryState["narrative"]["generation"],
       },
     };
-    const view = projectGameSessionView(fullWorld, pendingStory, 12);
+    const view = projectGameSessionView(fullWorld, pendingStory, 12, "opaque-ended-session");
     expect(view.revision).toBe(12);
     expect(view.narrativeGeneration).toEqual({ status: "pending" });
     expect(view.quests[0]?.objectives).toEqual([{ label: "发现秘密", completed: false }]);
-    expect(view.ending).toMatchObject({ name: "故事结局", outcome: "success" });
+    expect(view.ending).toMatchObject({ name: "故事结局", outcome: "success", restartIdentity: "opaque-ended-session" });
 
     const reloaded = JSON.parse(JSON.stringify(view));
     expect(reloaded).toEqual(view);
@@ -473,6 +473,6 @@ describe("projectGameSessionView", () => {
     expect(Object.keys(view.quests[0]!).sort()).toEqual([
       "description", "kind", "name", "objectives", "status",
     ]);
-    expect(Object.keys(view.ending!).sort()).toEqual(["description", "name", "outcome"]);
+    expect(Object.keys(view.ending!).sort()).toEqual(["description", "name", "outcome", "restartIdentity"]);
   });
 });

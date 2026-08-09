@@ -25,7 +25,7 @@ const endedView: GameSessionView = {
   battle: null,
   quests: [],
   prologueShown: true,
-  ending: { name: "并肩破局", description: "故事结束。", outcome: "success" },
+  ending: { name: "并肩破局", description: "故事结束。", outcome: "success", restartIdentity: "opaque-ended-session" },
 };
 
 afterEach(() => {
@@ -35,6 +35,10 @@ afterEach(() => {
 
 describe("CurrentGameScreen ending restart", () => {
   it("opens a replacement-game form instead of reloading the same ended record", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true, revision: 0 }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
     vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: endedView });
     render(<CurrentGameScreen />);
 
@@ -43,5 +47,12 @@ describe("CurrentGameScreen ending restart", () => {
     expect(await screen.findByRole("heading", { name: "开始新的冒险" })).toBeInTheDocument();
     expect(fetchCurrentGame).toHaveBeenCalledOnce();
     await waitFor(() => expect(screen.getByRole("button", { name: "进入世界" })).toBeEnabled());
+
+    await userEvent.click(screen.getByRole("button", { name: "进入世界" }));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledOnce());
+    const init = vi.mocked(globalThis.fetch).mock.calls[0]![1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      restart: { identity: "opaque-ended-session", expectedRevision: 9 },
+    });
   });
 });
