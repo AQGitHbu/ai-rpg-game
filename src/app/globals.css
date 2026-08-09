@@ -2321,12 +2321,13 @@ body:has(.adventure-game-shell) {
   position: absolute;
   inset: auto 50% max(12px, env(safe-area-inset-bottom)) 50%;
   transform: translateX(-50%);
+  width: max-content;
+  max-width: min(860px, calc(100vw - 24px));
   z-index: 3;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 8px;
-  max-width: min(860px, calc(100vw - 24px));
   padding: 10px 14px;
   border: 1px solid var(--game-surface-border);
   border-radius: 12px;
@@ -2335,12 +2336,14 @@ body:has(.adventure-game-shell) {
 }
 
 .scene-action-rail button {
+  flex: 0 0 auto;
   padding: 8px 16px;
   border: 1px solid var(--game-surface-border);
   border-radius: 6px;
   background: var(--game-surface-raised);
   color: var(--game-text-primary);
   font-size: 0.85rem;
+  white-space: nowrap;
   cursor: pointer;
   transition: border-color 120ms ease;
 }
