@@ -144,10 +144,25 @@ describe("adaptV2ToV1View dialogues", () => {
     if (!jobResult.ok) throw new Error("fixture job 构造失败");
     const context: SceneGenerationContext = {
       job: jobResult.job,
-      currentLocation: { id: loc.id, name: loc.name, description: loc.description },
-      presentNpcs: npcs.map((n) => ({ id: n.id, name: n.name, role: n.role })),
-      reachableLocations: [],
-      story: { currentAct: ss.currentAct, targetActs: ss.targetActs, tension: ss.tension, nextPacingNeed: ss.nextPacingNeed },
+      player: { name: "侠客", identity: "剑客", knownFactCards: [] },
+      currentLocation: { id: loc.id, name: loc.name, description: loc.description, kind: "main" },
+      publicWorldFacts: [],
+      sceneVisibleFacts: [],
+      presentNpcs: npcs.map((n) => ({
+        id: n.id, name: n.name, role: n.role, publicProfile: n.description,
+        knownFactCards: [], hiddenFactCards: [], sceneVisibleFactIds: [],
+        recentInteractionSummaries: [], relationship: { affinity: 0 }, emotion: "neutral",
+        goals: [], forbiddenKnowledgeIds: [],
+      })),
+      story: {
+        currentAct: ss.currentAct, targetActs: ss.targetActs, tension: ss.tension,
+        nextPacingNeed: ss.nextPacingNeed,
+        remainingBudget: { remainingLocations: 1, remainingNpcs: 1, remainingEvents: 1 },
+        unresolvedThreadSummaries: [],
+      },
+      recentBeats: [],
+      legalActionCandidates: [],
+      worldConstraints: [],
     };
     const sceneResult = await createDeterministicSceneSource().generateScene(context);
     const ssWithScene = { ...ss, narrative: { ...ss.narrative, currentScene: sceneResult.scene } };

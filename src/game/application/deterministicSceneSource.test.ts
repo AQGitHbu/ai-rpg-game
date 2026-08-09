@@ -90,12 +90,31 @@ function makeJob(overrides: JobOverrides = {}): PendingNarrativeJob {
 
 // 最小上下文构造：直接按 SceneGenerationContext 契约组装（不引用完整的 record）。
 function makeContext(job: PendingNarrativeJob): SceneGenerationContext {
+  const ss = makeStory();
   return {
     job,
-    currentLocation: { id: loc1.id, name: loc1.name, description: loc1.description },
-    presentNpcs: [npc1, npc2].map((n) => ({ id: n.id, name: n.name, role: n.role })),
-    reachableLocations: [{ id: loc2.id, name: loc2.name }],
-    story: (() => { const ss = makeStory(); return { currentAct: ss.currentAct, targetActs: ss.targetActs, tension: ss.tension, nextPacingNeed: ss.nextPacingNeed }; })(),
+    player: { name: "侠客", identity: "剑客", knownFactCards: [] },
+    currentLocation: { id: loc1.id, name: loc1.name, description: loc1.description, kind: "main" },
+    publicWorldFacts: [],
+    sceneVisibleFacts: [],
+    presentNpcs: [npc1, npc2].map((n) => ({
+      id: n.id, name: n.name, role: n.role, publicProfile: n.description,
+      knownFactCards: [], hiddenFactCards: [], sceneVisibleFactIds: [],
+      recentInteractionSummaries: [], relationship: { affinity: 0 }, emotion: "neutral",
+      goals: [], forbiddenKnowledgeIds: [],
+    })),
+    story: {
+      currentAct: ss.currentAct, targetActs: ss.targetActs, tension: ss.tension,
+      nextPacingNeed: ss.nextPacingNeed,
+      remainingBudget: { remainingLocations: 1, remainingNpcs: 1, remainingEvents: 1 },
+      unresolvedThreadSummaries: [],
+    },
+    recentBeats: [],
+    legalActionCandidates: [
+      { kind: "move", label: `前往${loc2.name}`, targetId: loc2.id },
+      { kind: "explore", label: "查看四周" },
+    ],
+    worldConstraints: [],
   };
 }
 

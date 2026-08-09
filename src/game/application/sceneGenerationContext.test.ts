@@ -15,6 +15,7 @@ import {
   asLocationId,
   asNpcId,
   asGenerationId,
+  asFactId,
 } from "@/game/domain/scenarioBlueprint";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
@@ -96,13 +97,20 @@ describe("buildSceneGenerationContext", () => {
     const context = buildSceneGenerationContext(record);
     const generation = record.storyState.narrative.generation;
     expect(context.job).toEqual(generation.status === "pending" ? generation.job : undefined);
-    expect(context.currentLocation).toEqual({ id: loc1.id, name: loc1.name, description: loc1.description });
-    expect(context.presentNpcs).toEqual([{ id: npc1.id, name: npc1.name, role: npc1.role }]);
+    expect(context.currentLocation).toEqual({
+      id: loc1.id, name: loc1.name, description: loc1.description, kind: "main",
+    });
+    expect(context.presentNpcs).toEqual([{
+      id: npc1.id, name: npc1.name, role: npc1.role, publicProfile: npc1.description,
+      knownFactCards: [], hiddenFactCards: [], sceneVisibleFactIds: [],
+      recentInteractionSummaries: [], relationship: { affinity: 0 }, emotion: "neutral",
+      goals: [], forbiddenKnowledgeIds: [],
+    }]);
     expect(context.story.currentAct).toBe(1);
     expect(context.story.targetActs).toBe(3);
     expect(context.story.tension).toBe(30);
     expect(context.story.nextPacingNeed).toBe("reveal");
-    expect(context.reachableLocations).toEqual([{ id: loc2.id, name: loc2.name }]);
+    expect(context.legalActionCandidates.some((c) => c.kind === "move")).toBe(true);
   });
 
   it("never receives the whole record: a GameRecordV2 is not assignable to the context type", () => {
@@ -127,5 +135,35 @@ describe("buildSceneGenerationContext", () => {
     const contextA = buildSceneGenerationContext(makeRecord());
     const contextB = buildSceneGenerationContext(makeRecord());
     expect(contextA).toEqual(contextB);
+  });
+
+  it("NPC 最小权限：焦点 NPC context 不含其他 NPC 私密事实正文", () => {
+    const world = makeWorld();
+    const secretA = { factId: asFactId("fact_secret_a"), text: "老板的秘密A", source: "generated" as const, discovered: false };
+    const secretB = { factId: asFactId("fact_secret_b"), text: "客人的秘密B", source: "generated" as const, discovered: false };
+    const npcA = { ...npc1, name: "老板", memory: { ...npc1.memory, hiddenFactIds: [asFactId("fact_secret_a")] } };
+    const npcB: NpcEntry = {
+      id: asNpcId("npc_2"), name: "客人", role: "酒客", description: "沉默的客人",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
+      memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [asFactId("fact_secret_b")], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const worldWithSecrets = {
+      ...world,
+      npcs: [npcA, npcB],
+      worldFacts: [secretA, secretB],
+    };
+    const record = { ...makeRecord(), worldState: worldWithSecrets };
+    const context = buildSceneGenerationContext(record);
+    const npcAContext = context.presentNpcs.find((n) => String(n.id) === "npc_1")!;
+    const npcBContext = context.presentNpcs.find((n) => String(n.id) === "npc_2")!;
+    const serialized = JSON.stringify(context);
+    // npcA 的私密事实正文只出现在 npcA 自己的 hiddenFactCards，不出现在 npcB context / 全局文本
+    expect(npcAContext.hiddenFactCards.map((f) => f.text)).toContain("老板的秘密A");
+    expect(npcAContext.hiddenFactCards.map((f) => f.text)).not.toContain("客人的秘密B");
+    expect(npcBContext.hiddenFactCards.map((f) => f.text)).toContain("客人的秘密B");
+    expect(npcBContext.hiddenFactCards.map((f) => f.text)).not.toContain("老板的秘密A");
+    // 序列化后只出现各自秘密一次（无全局 publicWorldFacts 泄漏文本）
+    expect(serialized.split("老板的秘密A").length - 1).toBe(1);
+    expect(serialized.split("客人的秘密B").length - 1).toBe(1);
   });
 });

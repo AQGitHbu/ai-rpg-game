@@ -13,7 +13,7 @@ import { buildNpcDialoguePages } from "@/game/domain/narrative";
 export function createDeterministicSceneSource(): SceneSource {
   return {
     async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
-      const { job, currentLocation, presentNpcs, reachableLocations } = context;
+      const { job, currentLocation, presentNpcs } = context;
 
       const sceneId = `scene-${job.jobId}`;
       const turn = job.turnNumber;
@@ -163,9 +163,12 @@ function buildChoices(
   context: SceneGenerationContext,
   sceneId: string,
 ): readonly [NarrativeChoiceState, NarrativeChoiceState] {
-  const { presentNpcs, reachableLocations } = context;
+  const { presentNpcs, legalActionCandidates } = context;
   const firstNpc = presentNpcs[0];
-  const firstReachable = reachableLocations[0];
+  const firstMove = legalActionCandidates.find((c) => c.kind === "move");
+  const firstReachable = firstMove !== undefined
+    ? { id: firstMove.targetId ?? "", name: firstMove.label }
+    : undefined;
 
   // 选项 A：如果有 NPC，优先交谈；否则探索
   const choiceA: NarrativeChoiceState = firstNpc !== undefined

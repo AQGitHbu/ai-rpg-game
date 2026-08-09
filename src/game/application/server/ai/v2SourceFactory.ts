@@ -152,7 +152,7 @@ function createLiveSceneSource(
   return {
     async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
       try {
-        const { job, currentLocation, presentNpcs, reachableLocations, story } = context;
+        const { job, currentLocation, presentNpcs, legalActionCandidates, story } = context;
         const currentLocName = currentLocation.name;
         const npcsHere = presentNpcs;
 
@@ -167,7 +167,7 @@ function createLiveSceneSource(
 
 在场 NPC：${npcsHere.map((n) => `${n.name}(${n.role})`).join("、") || "无"}
 
-可移动地点：${reachableLocations.map((l) => l.name).join("、") || "无"}
+可移动地点：${legalActionCandidates.filter((c) => c.kind === "move").map((c) => c.label).join("、") || "无"}
 
 返回严格 JSON，格式如下：
 {
