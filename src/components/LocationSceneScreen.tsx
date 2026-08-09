@@ -144,13 +144,15 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap }: Locat
           </p>
         ) : null}
 
-        {/* 叙事场景 */}
+        {/* 叙事场景：无选项时不渲染空分组 */}
         {view.narrative.hasScene && view.narrative.narration ? (
           <section className="scene-narrative" aria-label="当前场景">
             <p>{view.narrative.narration}</p>
-            <div role="group" aria-label="场景选项">
-              {view.narrative.choices.map(renderChoiceButton)}
-            </div>
+            {view.narrative.choices.length > 0 ? (
+              <div role="group" aria-label="场景选项">
+                {view.narrative.choices.map(renderChoiceButton)}
+              </div>
+            ) : null}
           </section>
         ) : null}
 

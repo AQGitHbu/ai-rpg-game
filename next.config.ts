@@ -8,6 +8,8 @@ const foundationRoot = existsSync(foundationLink) ? realpathSync(foundationLink)
 const workspaceRoot = commonAncestor(projectRoot, foundationRoot);
 
 const nextConfig: NextConfig = {
+  // 游戏全屏界面内不展示 Next.js 开发指示器。
+  devIndicators: false,
   serverExternalPackages: ["@libsql/client"],
   transpilePackages: ["@ai-game/ui"],
   outputFileTracingRoot: workspaceRoot,

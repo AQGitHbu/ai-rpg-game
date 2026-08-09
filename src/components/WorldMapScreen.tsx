@@ -36,6 +36,7 @@ export function WorldMapScreen({ view, busy, onEnterCurrent, onMove }: WorldMapS
               >
                 <AdventureVisual gameType={gameType} kind="map_node" label={location.name} decorative />
                 进入{location.name}
+                {location.scale === "town" ? <span className="map-node-scale" aria-hidden="true">小镇</span> : null}
               </button>
             );
           }
@@ -51,6 +52,7 @@ export function WorldMapScreen({ view, busy, onEnterCurrent, onMove }: WorldMapS
               >
                 <AdventureVisual gameType={gameType} kind="map_node" label={location.name} decorative />
                 前往{location.name}
+                {location.scale === "town" ? <span className="map-node-scale" aria-hidden="true">小镇</span> : null}
               </button>
             );
           }
