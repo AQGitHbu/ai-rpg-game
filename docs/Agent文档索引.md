@@ -12,7 +12,8 @@
 |---|---|---|---|
 | 共享基础设施 | `共同规范/共享模块开发流程.md` | `共同规范/共享模块目录.json` | 仅按触发条件读取 |
 | 项目脚手架 | `agent/项目脚手架.md` | — | 已建立 |
-| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | Phase 13 已实现（implemented）：NPC 关系与知识演化（好感度、语气分类、交互记忆）；唯一阶段 Plan：`superpowers/plans/2026-07-31-mvp-phase-13-npc-relationship-knowledge-evolution.md` |
+| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | v2.1 基础修复 R5 已实现（implemented）：NPC 有界结构化记忆、知识传播最小权限来源、SceneGenerationContext 最小权限 DTO、AI 场景包审批与 fallback、read model 隐藏事实隔离；v2.1 为当前生产链，v1 仅作历史参考（分支 `codex-v2-foundation-remediation`，worktree `.worktrees/v2-foundation-remediation`）；唯一阶段 Plan：`superpowers/plans/2026-08-08-ai-rpg-v2-foundation-remediation.md` |
+| v1/v2.1 链路边界 | `agent/当前开发阶段.md` | — | v2.1（`/api/v2/**` + `compositionRootV2`）为生产链；v1 叙事/行动链路（`performAction`/`handleNpcDialogue` 等）仅作行为参考，re-export 拆至 `index.v1.ts` 并从主 typecheck/build 门禁排除（v1 类型债，保留运行时测试） |
 | MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | Phase 4C 已实现：创建、恢复、固定行动、探索、物品、战斗与双结局 + 真实 AI 动态开局（`AI_OUTPUT_FORMAT` 结构化输出，失败安全 fallback，phase4c 离线 fixture 集为主回归） |
 | 行动裁决 | `agent/行动裁决.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现：observe / talk / investigate / move / take_item / battle intents |
 | 探索与任务推进 | `agent/探索与任务推进.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现：移动、任务解锁、obtain_item / defeat_enemy objective 与 outcome |

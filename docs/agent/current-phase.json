@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "phase": "mvp-phase-13-npc-relationship-knowledge-evolution",
+  "phase": "v2-foundation-remediation-r5",
   "status": "completed",
-  "implementationStatus": "merged",
-  "targetBranch": "codex/phase13-npc-relationship",
-  "worktreeName": "phase13-npc-relationship",
+  "implementationStatus": "implemented",
+  "targetBranch": "codex-v2-foundation-remediation",
+  "worktreeName": "v2-foundation-remediation",
   "repositories": ["ai-rpg-game"],
-  "plan": "docs/superpowers/plans/2026-07-31-mvp-phase-13-npc-relationship-knowledge-evolution.md",
+  "plan": "docs/superpowers/plans/2026-08-08-ai-rpg-v2-foundation-remediation.md",
   "sharedInfrastructureChangeAllowed": false,
   "startCommand": "npm run phase:start",
   "entryDocs": [
@@ -14,10 +14,13 @@
     "docs/游戏开发规范.md",
     "docs/Agent文档索引.md",
     "docs/agent/当前开发阶段.md",
-    "docs/superpowers/specs/2026-07-31-npc-relationship-knowledge-evolution-design.md",
-    "docs/superpowers/plans/2026-07-31-mvp-phase-13-npc-relationship-knowledge-evolution.md"
+    "docs/superpowers/specs/2026-08-08-ai-rpg-v2-foundation-remediation-spec.md",
+    "docs/superpowers/plans/2026-08-08-ai-rpg-v2-foundation-remediation.md"
   ],
   "acceptanceCommands": [
-    "npm run accept"
+    "npm run typecheck",
+    "npm run test:boundaries",
+    "npm test",
+    "npm run build"
   ]
 }

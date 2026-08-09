@@ -1187,7 +1187,7 @@ npm run typecheck
 - Modify: `src/game/gameplay/rpg/dialogue/dialogueResolution.ts`
 - Test: `src/game/gameplay/rpg/dialogue/dialogueResolution.test.ts`
 
-- [ ] **Step 1：写失败记忆测试**
+- [x] **Step 1：写失败记忆测试**
 
 NpcInteraction 必须含 turnNumber/actionId/locationId/dialogueAct/topicSummary/outcome/relationshipDelta/learnedFactIds/规则摘要。覆盖：
 
@@ -1199,9 +1199,9 @@ NpcInteraction 必须含 turnNumber/actionId/locationId/dialogueAct/topicSummary
 - 玩家原文不进入长期 summary；
 - 同 actionId 不因错误重试追加两次（CAS 失败路径零写入）。
 
-- [ ] **Step 2：实现并集成 TalkAction/free text**
+- [x] **Step 2：实现并集成 TalkAction/free text**
 
-- [ ] **Step 3：运行 domain/gameplay 测试**
+- [x] **Step 3：运行 domain/gameplay 测试**
 
 Run：
 
@@ -1211,7 +1211,7 @@ npm run test:game-gameplay -- src/game/gameplay/rpg/dialogue src/game/gameplay/r
 npm run typecheck
 ```
 
-- [ ] **Step 4：提交**
+- [x] **Step 4：提交**
 
 建议提交：`feat(npc-memory): 记录结构化对话语义与规则结果`
 
@@ -1226,7 +1226,7 @@ npm run typecheck
 - Test: `src/game/gameplay/rpg/ruleEngine/propagateKnownFacts.test.ts`
 - Modify: relevant investigate/dialogue/candidate event resolvers
 
-- [ ] **Step 1：写失败知识传播测试**
+- [x] **Step 1：写失败知识传播测试**
 
 区分：scene_witness、player_told、npc_revealed、public_broadcast、faction_shared。断言：
 
@@ -1238,9 +1238,9 @@ npm run typecheck
 - 未知/不存在 fact 或 audience 被拒绝；
 - 同 ledger replay 得到相同知识分布。
 
-- [ ] **Step 2：实现封闭传播来源和纯 reducer**
+- [x] **Step 2：实现封闭传播来源和纯 reducer**
 
-- [ ] **Step 3：运行 rule engine 测试并提交**
+- [x] **Step 3：运行 rule engine 测试并提交**
 
 Run：`npm run test:game-gameplay -- src/game/gameplay/rpg/ruleEngine/propagateKnownFacts.test.ts src/game/gameplay/rpg/ruleEngine`
 
@@ -1257,7 +1257,7 @@ Run：`npm run test:game-gameplay -- src/game/gameplay/rpg/ruleEngine/propagateK
 - Modify: `src/game/application/generatePendingSceneV2.ts`
 - Modify: `src/game/domain/materializedView.ts`（仅必要类型）
 
-- [ ] **Step 1：写 context 快照/零泄漏测试**
+- [x] **Step 1：写 context 快照/零泄漏测试**
 
 构造两个 NPC 各自秘密，断言焦点 NPC context 只含：
 
@@ -1280,11 +1280,11 @@ Run：`npm run test:game-gameplay -- src/game/gameplay/rpg/ruleEngine/propagateK
 - candidate pool 全部内部 effect；
 - choice registry 的其它内部 Action。
 
-- [ ] **Step 2：实现 application projector**
+- [x] **Step 2：实现 application projector**
 
 SceneSource port 只接受 DTO。禁止先把完整 state 传给 source 再让 adapter 自行过滤。
 
-- [ ] **Step 3：运行 application + boundary tests**
+- [x] **Step 3：运行 application + boundary tests**
 
 Run：
 
@@ -1294,7 +1294,7 @@ npm run test:boundaries
 npm run typecheck
 ```
 
-- [ ] **Step 4：提交**
+- [x] **Step 4：提交**
 
 建议提交：`refactor(scene-context): 以最小权限 DTO 隔离 NPC 知识`
 
@@ -1309,15 +1309,15 @@ npm run typecheck
 - Test: `src/game/application/approveAndWriteScene.test.ts`
 - Modify: `src/game/application/deterministicSceneSource.ts`
 
-- [ ] **Step 1：写 AI source 测试矩阵**
+- [x] **Step 1：写 AI source 测试矩阵**
 
 覆盖：合法 JSON、非法 JSON、未知 emotion、未知 NPC、NPC 使用 forbidden fact、叙事把 failure 写成 success、选项目标非法、选项语义重复、候选事件部分非法、超长字段、timeout/provider failure。
 
-- [ ] **Step 2：实现一次调用场景包**
+- [x] **Step 2：实现一次调用场景包**
 
 输出一次包含 narration/dialogue/two choice proposals/event proposals/asset requests（资产可为空）。不恢复三角色串行调用。
 
-- [ ] **Step 3：实现纯审批后写回**
+- [x] **Step 3：实现纯审批后写回**
 
 - 冲突文本或核心结构非法 → 整场 fallback；
 - 非核心非法 event proposal → 丢弃 proposal，合法场景可保留；
@@ -1325,7 +1325,7 @@ npm run typecheck
 - source 原对象不得直接持久化；
 - fallback 同样走审批，防止两套契约漂移。
 
-- [ ] **Step 4：运行 application/server AI 测试**
+- [x] **Step 4：运行 application/server AI 测试**
 
 Run：
 
@@ -1334,7 +1334,7 @@ npm run test:game-application -- src/game/application/approveAndWriteScene.test.
 npm run typecheck
 ```
 
-- [ ] **Step 5：提交**
+- [x] **Step 5：提交**
 
 建议提交：`feat(scene-ai): 生成并审批最小知识场景包`
 
@@ -1349,15 +1349,15 @@ npm run typecheck
 - Test: `src/components/viewAdapterV2.test.ts`
 - Modify: relevant NPC dialogue component tests
 
-- [ ] **Step 1：写未发现事实泄漏测试**
+- [x] **Step 1：写未发现事实泄漏测试**
 
 任务目标引用隐藏 FactId 时，view 只能显示中性目标，不出现 fact.text/FactId。NPC hidden/known cards、forbiddenKnowledge 和长期内部摘要不出现在客户端。
 
-- [ ] **Step 2：写多 NPC 对话测试**
+- [x] **Step 2：写多 NPC 对话测试**
 
 焦点 NPC 台词和选项对应；其他 NPC 不复用 token；切换 NPC 时只能使用该 NPC 当前可用的自定义输入/选择。
 
-- [ ] **Step 3：实现并运行测试**
+- [x] **Step 3：实现并运行测试**
 
 Run：
 
@@ -1367,7 +1367,7 @@ npm run test:components
 npm run typecheck
 ```
 
-- [ ] **Step 4：提交**
+- [x] **Step 4：提交**
 
 建议提交：`fix(npc-view): 阻断隐藏事实与跨 NPC 选项泄漏`
 
@@ -1375,12 +1375,12 @@ npm run typecheck
 
 ## R5 阶段验收
 
-- [ ] NPC 自定义和固定对话均写入有界结构化记忆；
-- [ ] 玩家原文不进入长期记忆和日志；
-- [ ] NPC 只能引用自己的知识；
-- [ ] 玩家告知/在场目击的知识传播可回放；
-- [ ] SceneSource 不再接收完整双状态；
-- [ ] FND-08、FND-10 对应测试通过。
+- [x] NPC 自定义和固定对话均写入有界结构化记忆；
+- [x] 玩家原文不进入长期记忆和日志；
+- [x] NPC 只能引用自己的知识；
+- [x] 玩家告知/在场目击的知识传播可回放；
+- [x] SceneSource 不再接收完整双状态；
+- [x] FND-08、FND-10 对应测试通过。
 
 ---
 
