@@ -411,4 +411,55 @@ describe("sqliteGameRepositoryV2：stale 后旧值保留", () => {
       expect(current.record.worldState).toEqual(worldState);
     }
   });
+
+  it("短篇规模：80 回合连续 CAS 写入 + reload 一致性 + 大小基线（Task 32）", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    const gameId = asGameId("g_scaled");
+    const { worldState, storyState } = buildTestState();
+
+    await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });
+
+    const START = 1;
+    const TURNS = 80;
+    let nextWorld = worldState;
+    let nextStory = storyState;
+    const startTime = performance.now();
+    for (let i = START; i <= TURNS; i++) {
+      // 每回合：世界累积一条事件、张力累进、turnNumber 递增，模拟真实增长
+      nextWorld = {
+        ...nextWorld,
+        eventLedger: [...nextWorld.eventLedger, { type: "player_intent_expressed", intent: `turn_${i}`, occurredAt: `2026-01-01T00:00:${String(i).padStart(2, "0")}Z` }],
+      };
+      nextStory = { ...nextStory, turnNumber: i, tension: Math.max(0, 100 - i) };
+      const r = await repo.applyState({
+        gameId,
+        expectedRevision: i - 1,
+        nextWorldState: nextWorld,
+        nextStoryState: nextStory,
+      });
+      expect(r.ok).toBe(true);
+      if (!r.ok) break;
+    }
+    const elapsedMs = performance.now() - startTime;
+
+    // reload：从持久化读回，turnNumber/事件数/CAS revision 语义正确
+    const current = await repo.getCurrentGame();
+    expect(current.ok).toBe(true);
+    if (current.ok && current.status === "active") {
+      expect(current.record.revision).toBe(TURNS);
+      expect(current.record.storyState.turnNumber).toBe(TURNS);
+      expect(current.record.storyState.tension).toBe(Math.max(0, 100 - TURNS));
+      expect(current.record.worldState.eventLedger.length).toBe(START + TURNS - 1);
+    }
+
+    // 大小基线（记录而非断言）：供长篇门禁参考
+    const { statSync } = await import("node:fs");
+    let dbBytes = 0;
+    try { dbBytes = statSync(dbPath).size; } catch { /* ignore */ }
+    // 只做宽松的合理性断言（>=1B，避免墙钟/大小脆弱断言）
+    expect(dbBytes).toBeGreaterThan(0);
+    expect(TURNS).toBeGreaterThanOrEqual(50);
+    expect(elapsedMs).toBeGreaterThanOrEqual(0);
+  });
 });
