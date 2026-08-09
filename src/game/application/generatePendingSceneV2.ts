@@ -1,7 +1,8 @@
 import type { GameRepositoryV2 } from "./server/persistence/gameRepositoryV2";
-import type { SceneSource } from "./sceneSource";
+import type { SceneSource, SceneSourceResult } from "./sceneSource";
 import { buildSceneGenerationContext } from "./sceneGenerationContext";
-import { approveSceneEventProposals } from "./approveAndWriteScene";
+import { approveSceneEventProposals, approveScenePackage } from "./approveAndWriteScene";
+import { createDeterministicSceneSource } from "./deterministicSceneSource";
 
 export type GeneratePendingSceneV2Deps = {
   readonly repository: GameRepositoryV2;
@@ -37,11 +38,23 @@ export async function generatePendingSceneV2(
 
   const context = buildSceneGenerationContext(record);
 
-  let result;
+  let result: SceneSourceResult;
   try {
     result = await deps.sceneSource.generateScene(context);
   } catch {
     return "unavailable";
+  }
+
+  // 完整场景包审批（Task 25）：核心结构非法（旁空/未知台词NPC/forbidden fact/
+  // 选项重复/选项目标非法）→ 整场回退确定性 source，且 fallback 同样过审批，
+  // 防止两套契约漂移。
+  let scene = result.scene;
+  const approvedScene = approveScenePackage({ context, scene });
+  if (!approvedScene.ok) {
+    const fallbackResult = await createDeterministicSceneSource().generateScene(context);
+    const approvedFallback = approveScenePackage({ context, scene: fallbackResult.scene });
+    if (!approvedFallback.ok) return "unavailable";
+    scene = approvedFallback.scene;
   }
 
   // 候选事件审批：schema 解析 + 去重 + FIFO 上限，非法/path patch 候选丢弃不拖垮场景。
@@ -56,7 +69,7 @@ export async function generatePendingSceneV2(
     expectedRevision: record.revision,
     nextNarrative: {
       ...record.storyState.narrative,
-      currentScene: result.scene,
+      currentScene: scene,
       generation: { status: "idle" },
     },
     nextCandidateEventPool: approved.nextCandidateEventPool,
