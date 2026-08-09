@@ -155,10 +155,19 @@ export function createWorldGenerationSource(
       }
 
       try {
-        const result = await transport.complete(config, [
+        // 推理模型偶发返回空内容（empty_response）或瞬时超时：
+        // 对瞬时失败最多重试一次，仍失败再走确定性 fallback。
+        let result = await transport.complete(config, [
           { role: "system", content: buildWorldPrompt(input) },
           { role: "user", content: `生成游戏类型 ${input.gameType} / 长度 ${input.gameLength} / 种子 ${input.seed} 的世界。` },
         ], { timeoutMs: 240_000 });
+        if (!result.ok && (result.code === "empty_response" || result.code === "timeout" || result.code === "service_error")) {
+          logger?.warn("world_generation_retry", { code: result.code });
+          result = await transport.complete(config, [
+            { role: "system", content: buildWorldPrompt(input) },
+            { role: "user", content: `生成游戏类型 ${input.gameType} / 长度 ${input.gameLength} / 种子 ${input.seed} 的世界。` },
+          ], { timeoutMs: 240_000 });
+        }
 
         if (!result.ok) {
           logger?.warn("world_generation_ai_failed", { code: result.code });
