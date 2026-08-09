@@ -24,6 +24,8 @@ export type NpcDialogueView = {
   readonly speechPages: readonly string[];
   readonly choices: readonly [PlayerChoiceView, PlayerChoiceView] | readonly [];
   readonly freeInputEnabled: boolean;
+  /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
+  readonly giveChoices: readonly { readonly itemName: string; readonly choice: PlayerChoiceView }[];
 };
 
 type QuestObjectiveView = { readonly label: string; readonly completed: boolean };
@@ -141,6 +143,7 @@ function presentationForAction(action: Action): PlayerChoiceView["presentation"]
     case "move":
       return "travel";
     case "take_item":
+    case "give_item":
       return "item";
     case "attack":
     case "battle_action":
@@ -297,6 +300,21 @@ export function projectGameSessionView(
       speechPages,
       choices: isFocus ? dialogueChoices : [],
       freeInputEnabled: isFocus,
+      giveChoices: isFocus
+        ? worldState.inventory.map((itemId) => {
+            const item = worldState.items.find((entry) => entry.id === itemId);
+            const itemName = item?.name ?? "未知物品";
+            return {
+              itemName,
+              choice: choice(
+                { type: "give_item", itemId, npcId: npc.id },
+                revision,
+                `把${itemName}交给${npc.name}`,
+                "item",
+              ),
+            };
+          })
+        : [],
     }];
   });
 

@@ -21,6 +21,7 @@ export type StructuredActionSummary =
   | { readonly kind: "explore" }
   | { readonly kind: "investigate"; readonly factId: FactId }
   | { readonly kind: "take_item"; readonly itemId: ItemId }
+  | { readonly kind: "give_item"; readonly itemId: ItemId; readonly npcId: NpcId }
   | { readonly kind: "attack"; readonly enemyId: EnemyId }
   | { readonly kind: "battle_action"; readonly action: "attack" | "guard" | "flee" }
   | { readonly kind: "rest" }

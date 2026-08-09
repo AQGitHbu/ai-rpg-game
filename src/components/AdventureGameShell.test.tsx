@@ -53,6 +53,7 @@ function buildView(): GameSessionView {
           choice(TOKENS.dialogueTwo, "表示理解", "dialogue"),
         ],
         freeInputEnabled: true,
+        giveChoices: [],
       }],
     },
     narrativeGeneration: { status: "idle" },

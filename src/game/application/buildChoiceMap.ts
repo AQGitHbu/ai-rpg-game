@@ -57,6 +57,14 @@ export function buildChoiceMap(
       }
     }
 
+    // 背包物品 × 在场 NPC → give_item（正式给予入口）
+    for (const npc of worldState.npcs) {
+      if (npc.locationId !== worldState.currentLocationId) continue;
+      for (const itemId of worldState.inventory) {
+        addRuntimeAction({ type: "give_item", itemId, npcId: npc.id });
+      }
+    }
+
     // 当前地点敌人 → attack
     for (const enemy of worldState.enemies) {
       if (
@@ -106,6 +114,7 @@ function isCurrentlyLegalRegistryAction(
     case "move":
     case "explore":
     case "take_item":
+    case "give_item":
     case "attack":
     case "rest":
     case "battle_action":

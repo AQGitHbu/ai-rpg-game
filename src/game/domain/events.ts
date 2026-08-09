@@ -105,6 +105,15 @@ export type ItemObtainedEvent = {
   readonly occurredAt: string;
 };
 
+/** 玩家将背包物品移交给在场 NPC：由 give_item 行动成功时追加。 */
+export type ItemGivenEvent = {
+  readonly type: "item_given";
+  readonly itemId: ItemId;
+  readonly npcId: NpcId;
+  readonly locationId: LocationId;
+  readonly occurredAt: string;
+};
+
 /** Phase 6：战斗开始——由 start_battle 成功时追加。 */
 export type BattleStartedEvent = {
   readonly type: "battle_started";
@@ -278,6 +287,7 @@ export type GameEvent =
   | QuestUnlockedEvent
   | LocationUnlockedEvent
   | ItemObtainedEvent
+  | ItemGivenEvent
   | BattleStartedEvent
   | BattleRoundResolvedEvent
   | BattleResolvedEvent

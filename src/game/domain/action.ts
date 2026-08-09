@@ -37,8 +37,9 @@ export type TalkAction = {
 
 /**
  * 生产支持的 Action union（Spec §7 / Task 29）。
- * use_item/give_item/interact/accept_quest/narrative_choice 无规则实现，
+ * use_item/interact/accept_quest/narrative_choice 无规则实现，
  * 已从生产 union 移除——不得作为永远 INTENT_NOT_ROUTED 的公开候选保留。
+ * give_item 于 2026-08-09 实机试玩补齐规则实现（背包物品移交给在场 NPC）。
  */
 export type Action =
   | TalkAction
@@ -46,6 +47,7 @@ export type Action =
   | { readonly type: "explore" }
   | { readonly type: "investigate"; readonly factId: FactId; readonly utterance?: string }
   | { readonly type: "take_item"; readonly itemId: ItemId }
+  | { readonly type: "give_item"; readonly itemId: ItemId; readonly npcId: NpcId }
   | { readonly type: "attack"; readonly enemyId: EnemyId }
   | { readonly type: "battle_action"; readonly action: "attack" | "guard" | "flee" }
   | { readonly type: "rest" }
@@ -62,6 +64,7 @@ export const SUPPORTED_ACTION_TYPES: readonly ActionType[] = [
   "explore",
   "investigate",
   "take_item",
+  "give_item",
   "attack",
   "battle_action",
   "rest",

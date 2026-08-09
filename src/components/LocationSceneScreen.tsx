@@ -72,6 +72,23 @@ function NpcDialogueCard({
         ))}
       </div>
 
+      {/* 给予道具：把背包物品交给当前对话 NPC，走正式 give_item 回合 */}
+      {dialogue.giveChoices.length > 0 ? (
+        <div className="npc-dialogue-give" role="group" aria-label="给予道具">
+          <span className="npc-dialogue-give-label">给予道具</span>
+          {dialogue.giveChoices.map((entry) => (
+            <button
+              key={entry.choice.choiceToken}
+              type="button"
+              disabled={busy}
+              onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: entry.choice.choiceToken })}
+            >
+              {entry.choice.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {dialogue.freeInputEnabled ? (
         <form className="npc-dialogue-input" onSubmit={(event) => void submitFreeText(event)}>
           <input

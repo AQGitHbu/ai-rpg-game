@@ -52,6 +52,7 @@ export function buildActionSummary(action: Action): StructuredActionSummary {
     case "explore": return { kind: "explore" };
     case "investigate": return { kind: "investigate", factId: action.factId };
     case "take_item": return { kind: "take_item", itemId: action.itemId };
+    case "give_item": return { kind: "give_item", itemId: action.itemId, npcId: action.npcId };
     case "attack": return { kind: "attack", enemyId: action.enemyId };
     case "battle_action": return { kind: "battle_action", action: action.action };
     case "rest": return { kind: "rest" };

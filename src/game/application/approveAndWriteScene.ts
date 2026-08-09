@@ -180,6 +180,7 @@ function isWellFormedAction(value: unknown): value is Action {
         && isNonEmptyString(value.factId)
         && (value.utterance === undefined || typeof value.utterance === "string");
     case "take_item": return hasOnlyKeys(value, ["type", "itemId"]) && isNonEmptyString(value.itemId);
+    case "give_item": return hasOnlyKeys(value, ["type", "itemId", "npcId"]) && isNonEmptyString(value.itemId) && isNonEmptyString(value.npcId);
     case "attack": return hasOnlyKeys(value, ["type", "enemyId"]) && isNonEmptyString(value.enemyId);
     case "battle_action":
       return hasOnlyKeys(value, ["type", "action"])

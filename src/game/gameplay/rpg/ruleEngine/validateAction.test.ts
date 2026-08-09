@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { validateAction } from "./validateAction";
-import { createInitialWorldState, appendEnemy, type LocationEntry, type EnemyEntry } from "@/game/domain/worldState";
-import { asLocationId, asNpcId, asEnemyId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { createInitialWorldState, appendEnemy, appendNpc, type LocationEntry, type EnemyEntry, type NpcEntry } from "@/game/domain/worldState";
+import { asLocationId, asNpcId, asEnemyId, asGenerationId, asItemId } from "@/game/domain/scenarioBlueprint";
 
 function makeWorldWithEnemy() {
   const startingLocation: LocationEntry = {
@@ -136,5 +136,50 @@ describe("validateAction — battle_action", () => {
     ws2 = { ...ws2, battle: { status: "active", enemyId: asEnemyId("e1"), playerHp: 100, enemyHp: 50, round: 1 } };
     const result = validateAction(ws2, { type: "battle_action", action: "attack" });
     expect(result.ok).toBe(true);
+  });
+
+  describe("give_item", () => {
+    const giveLoc: LocationEntry = {
+      id: asLocationId("loc_1"), name: "起始地点", description: "测试", kind: "main",
+      connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+    };
+    const giveBase = createInitialWorldState({
+      generation: { generationId: asGenerationId("gen_test"), seed: "test", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: giveLoc,
+      startingItemIds: [],
+    });
+    const npc: NpcEntry = {
+      id: asNpcId("npc_gift"), name: "老板", role: "路人", description: "t",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
+      memory: { npcId: asNpcId("npc_gift"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const item = { id: asItemId("item_gift"), name: "铜钥匙", description: "d", kind: "key", tags: [] } as const;
+    const base = appendNpc(giveBase, npc);
+    const withGift = { ...base, items: [...base.items, item], inventory: [...base.inventory, item.id] };
+
+    it("拥有物品且 NPC 在场时允许给予", () => {
+      expect(validateAction(withGift, { type: "give_item", itemId: item.id, npcId: npc.id }).ok).toBe(true);
+    });
+
+    it("未拥有物品拒绝给予", () => {
+      // 世界存在该物品但不在背包 → ITEM_NOT_OWNED
+      const notOwned = { ...base, items: [...base.items, item] };
+      const result = validateAction(notOwned, { type: "give_item", itemId: item.id, npcId: npc.id });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe("ITEM_NOT_OWNED");
+    });
+
+    it("重复给予（物品已不在背包）稳定拒绝且零写入", () => {
+      const afterGive = { ...withGift, inventory: withGift.inventory.filter((id) => id !== item.id) };
+      const result = validateAction(afterGive, { type: "give_item", itemId: item.id, npcId: npc.id });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe("ITEM_NOT_OWNED");
+    });
+
+    it("未知物品与不在场 NPC 拒绝", () => {
+      expect(validateAction(withGift, { type: "give_item", itemId: asItemId("item_none"), npcId: npc.id }).ok).toBe(false);
+      expect(validateAction(withGift, { type: "give_item", itemId: item.id, npcId: asNpcId("npc_absent") }).ok).toBe(false);
+    });
   });
 });

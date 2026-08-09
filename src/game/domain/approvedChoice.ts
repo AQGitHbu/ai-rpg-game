@@ -84,6 +84,8 @@ function rebuildAction(action: Action): Action {
       return { type: "investigate", factId: action.factId };
     case "take_item":
       return { type: "take_item", itemId: action.itemId };
+    case "give_item":
+      return { type: "give_item", itemId: action.itemId, npcId: action.npcId };
     case "attack":
       return { type: "attack", enemyId: action.enemyId };
     case "battle_action":
@@ -108,6 +110,7 @@ export function semanticSummaryOf(action: Action): string {
     case "explore": return "explore";
     case "investigate": return `investigate:${action.factId}`;
     case "take_item": return `take_item:${action.itemId}`;
+    case "give_item": return `give_item:${action.itemId}:${action.npcId}`;
     case "attack": return `attack:${action.enemyId}`;
     case "battle_action": return `battle_action:${action.action}`;
     case "rest": return "rest";
@@ -141,6 +144,7 @@ function serializeAction(action: Action): string {
     case "explore": return "explore";
     case "investigate": return `investigate|${String(action.factId)}`;
     case "take_item": return `take_item|${String(action.itemId)}`;
+    case "give_item": return `give_item|${String(action.itemId)}|${String(action.npcId)}`;
     case "attack": return `attack|${String(action.enemyId)}`;
     case "battle_action": return `battle_action|${action.action}`;
     case "rest": return "rest";

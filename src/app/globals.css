@@ -2397,6 +2397,36 @@ body:has(.adventure-game-shell) {
   font-size: 0.78rem;
 }
 
+/* 对话面板给予道具区 */
+.npc-dialogue-give {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--game-surface-border);
+}
+
+.npc-dialogue-give-label {
+  color: var(--game-accent);
+  font-size: 0.75rem;
+  letter-spacing: 0.14em;
+}
+
+.npc-dialogue-give button {
+  text-align: left;
+  padding: 7px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: var(--game-surface-raised);
+  color: var(--game-text-primary);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.npc-dialogue-give button:hover:not(:disabled) {
+  border-color: var(--game-accent);
+}
+
 /* 地图节点小镇徽标 */
 .map-node-scale {
   padding: 1px 8px;
