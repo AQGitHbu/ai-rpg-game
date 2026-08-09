@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "phase": "v2-foundation-remediation-r5",
+  "phase": "v2-foundation-remediation-r6",
   "status": "completed",
   "implementationStatus": "implemented",
   "targetBranch": "codex-v2-foundation-remediation",
@@ -21,6 +21,7 @@
     "npm run typecheck",
     "npm run test:boundaries",
     "npm test",
+    "npm run test:v2-foundation-journey",
     "npm run build"
   ]
 }
