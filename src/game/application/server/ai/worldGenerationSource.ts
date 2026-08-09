@@ -290,11 +290,12 @@ ${setupSection}
 2. player：name/identity/backgroundSummary/startingLocationId/startingItemIds/baseStats
 3. startAnchor：locationId/npcId/startQuestId/mainThreadId
 4. locations：3-5 个互相连接（connectedLocationIds 可达网络）；起始地点（startAnchor.locationId）必须是 scale "town" 的小镇，其余地点 scale "scene"
-5. npcs：3-6 个，knownFactIds/hiddenFactIds 必须且只能引用 world.publicFacts/hiddenFacts 中已定义的 fact id
-6. items：1-3 个
-7. quests：主线必须恰好覆盖 stage 1-${targetActs}，每幕一个可达主任务并逐幕解锁；另可有 0-2 支线
-8. endings：恰好 2 个结局；两者都只包含同一个终幕 quest_completed 条件和同一 NPC 的一个关系条件，关系条件必须分别为相邻的 at_most / at_least（例如 <=5 与 >=6），不得增加其他条件
-9. openingBudget：各实体计数
+5. npcs：3-6 个，knownFactIds/hiddenFactIds 必须且只能引用 world.publicFacts/hiddenFacts 中已定义的 fact id；所有文本中 NPC 名字必须与 npcs[].name 逐字一致，不得使用别名/简称/音近变体
+6. items：1-3 个；每件物品必须布点：放入某个地点的 availableItemIds 或 player.startingItemIds；若任务含 obtain_item 目标，对应物品必须布在该幕可达地点
+7. enemies：1-2 个，布置在非起始地点，供 defeat_enemy 目标与战斗玩法使用；stats 为小数值（hp 6-30、attack 2-8、defense 0-3）
+8. quests：主线必须恰好覆盖 stage 1-${targetActs}，每幕一个可达主任务并逐幕解锁；另可有 0-2 支线；建议至少一个主线任务含 obtain_item 目标（对应物品按第 6 条布点）
+9. endings：恰好 2 个结局；两者都只包含同一个终幕 quest_completed 条件和同一 NPC 的一个关系条件，关系条件必须分别为相邻的 at_most / at_least（例如 <=5 与 >=6），不得增加其他条件
+10. openingBudget：各实体计数
 
 必须严格使用以下字段名与嵌套结构（禁止改名、禁止用字符串数组替代结构化 objectives）：
 {

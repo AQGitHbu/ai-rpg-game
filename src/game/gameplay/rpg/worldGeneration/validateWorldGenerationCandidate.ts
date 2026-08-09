@@ -217,13 +217,44 @@ export function validateWorldGenerationCandidate(
       else if (objective.kind === "discover_fact") exists = allFactIds.has(targetId);
       else if (objective.kind === "defeat_enemy") exists = enemyIdSet.has(targetId);
       if (!exists) issues.push({ path: `quests[${qIndex}].objectives[${oIndex}]`, code: "missing_reference", params: { id: targetId } });
-      // objective_unreachable：objective 目标实体存在但不可达（visit_location 目标地点
+      // objective_unreachable：objective 目标实体存在但不可达（visit_location  目标地点
       // 不在可达集合内）。
       if (objective.kind === "visit_location" && locationIdSet.has(targetId) && !reachability.reachableLocationIds.includes(targetId)) {
         issues.push({ path: `quests[${qIndex}].objectives[${oIndex}]`, code: "objective_unreachable", params: { id: targetId } });
       }
+      // obtain_item 目标物品必须已布点（某地点 availableItemIds 或起始背包），
+      // 否则玩家永远无法取得，任务链卡死。
+      if (objective.kind === "obtain_item" && itemIdSet.has(targetId)) {
+        const placed = candidate.locations.some((location) => location.availableItemIds.includes(targetId))
+          || candidate.player.startingItemIds.includes(targetId);
+        if (!placed) {
+          issues.push({ path: `quests[${qIndex}].objectives[${oIndex}]`, code: "objective_unreachable", params: { id: targetId } });
+        }
+      }
+      // defeat_enemy / talk_to_npc 目标实体所在地点必须可达。
+      if (objective.kind === "defeat_enemy" && enemyIdSet.has(targetId)) {
+        const enemy = candidate.enemies.find((entry) => entry.id === targetId);
+        if (enemy !== undefined && !reachability.reachableLocationIds.includes(enemy.locationId)) {
+          issues.push({ path: `quests[${qIndex}].objectives[${oIndex}]`, code: "objective_unreachable", params: { id: targetId } });
+        }
+      }
+      if (objective.kind === "talk_to_npc" && npcIdSet.has(targetId)) {
+        const npc = candidate.npcs.find((entry) => entry.id === targetId);
+        if (npc !== undefined && !reachability.reachableLocationIds.includes(npc.locationId)) {
+          issues.push({ path: `quests[${qIndex}].objectives[${oIndex}]`, code: "objective_unreachable", params: { id: targetId } });
+        }
+      }
     });
   });
+  
+  // 可玩性底线：至少一件物品可被玩家获得（地点布点或起始背包），
+  // 否则物品"获得"玩法在整局中不可触达。
+  const anyObtainableItem = candidate.items.some((item) =>
+    candidate.locations.some((location) => location.availableItemIds.includes(item.id))
+    || candidate.player.startingItemIds.includes(item.id));
+  if (candidate.items.length > 0 && !anyObtainableItem) {
+    issues.push({ path: "items", code: "objective_unreachable", params: { id: "any" } });
+  }
 
   // 任务骨架：main_act_gap / first_act_not_actionable。主线必须是一条
   // 从第 1 幕到 targetActs 的可达链；缺幕、重复幕、超出目标幕或
