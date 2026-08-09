@@ -1,3 +1,4 @@
+/** @vitest-environment node */
 import { describe, expect, it } from "vitest";
 import { createGame } from "./createGame";
 import { generatePendingScene } from "./generatePendingScene";

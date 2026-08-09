@@ -19,8 +19,8 @@ import { STORY_STATE_SCHEMA_VERSION, type StoryState } from "@/game/domain/story
 import type { SqliteClient, SqliteClientFactory, SqliteStatement } from "./sqliteClient";
 
 // ---------------------------------------------------------------------------
-// SQLite adapter（P1 V2）：GameRepository 端口的 libsql 实现。
-//   - 独立新表 game_records / current_game，与 V1 表互不干扰；
+// SQLite adapter：GameRepository 端口的 libsql 实现。
+//   - 只使用 game_records / current_game；
 //   - 旧存档不迁移（spec：新架构重开新局）；
 //   - createInitialGame 单事务写入存档行 + 指针，失败整体回滚；
 //   - applyState / applySceneWriteBack 以 CAS 原子更新 + revision + 1；

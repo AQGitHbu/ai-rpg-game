@@ -35,7 +35,7 @@ describe("createFixtureExpansionSource", () => {
     const result = await source.propose({
       worldState: ws,
       storyState: ss,
-      action: { type: "talk", npcId: asNpcId("npc_unknown") },
+      action: { type: "talk", npcId: asNpcId("npc_unknown"), dialogueAct: "ask" },
       triggerReason: "entity_not_found",
     });
     expect(result.proposals.length).toBe(1);

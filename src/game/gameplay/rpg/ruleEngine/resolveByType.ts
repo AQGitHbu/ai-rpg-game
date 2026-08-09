@@ -3,7 +3,7 @@ import { findLocation, findNpc } from "@/game/domain/worldState";
 import type { Action } from "@/game/domain/action";
 import type { GameEvent } from "@/game/domain/events";
 import type { ResolvedEventStatus, StateChange, FactChange } from "@/game/domain/resolvedEvent";
-import { startBattleV2, battleActionV2 } from "./battleResolver";
+import { startBattle, battleAction } from "./battleResolver";
 import { resolveDialogue } from "@/game/gameplay/rpg/dialogue";
 
 export type ResolveResult = {
@@ -167,10 +167,10 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       return { ok: true, nextWorldState: { ...ws }, events: [], feedback: "", status: "success", stateChanges: [], facts: [] };
     }
     case "attack": {
-      return startBattleV2(ws, action.enemyId, deps);
+      return startBattle(ws, action.enemyId, deps);
     }
     case "battle_action": {
-      return battleActionV2(ws, action.action, deps);
+      return battleAction(ws, action.action, deps);
     }
     default:
       return { ok: false, feedback: "此行动类型暂不支持。" };

@@ -1,8 +1,8 @@
-import type { GameSessionView } from "@/game/application/gameSessionView";
+import type { GameSessionView } from "@/game/application";
 
 // ---------------------------------------------------------------------------
-// POST /api/game/actions 的 V2 客户端请求模块。
-// V2 简化：服务端构建 choiceMap，客户端只发送 choiceToken + revision。
+// POST /api/game/actions 的客户端请求模块。
+// 服务端构建 choiceMap，客户端只发送 choiceToken + revision。
 // ---------------------------------------------------------------------------
 
 export type ActionPayload =

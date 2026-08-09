@@ -6,7 +6,7 @@ import { createFixtureExpansionSource } from "./expansionSource";
 import type { WorldState } from "@/game/domain/worldState";
 
 // ---------------------------------------------------------------------------
-// Task 28：V2 Expansion live source。
+// Expansion live source。
 //
 // 编排：AI 原始 JSON → 逐条纯解析/校验（非法字段、未知 kind、超长、引用越权直接丢弃）
 // → 失败/异常回退空提案（不破坏回合流水线）。

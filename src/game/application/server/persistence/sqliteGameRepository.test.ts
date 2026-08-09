@@ -443,6 +443,7 @@ describe("sqliteGameRepository：stale 后旧值保留", () => {
 
     const START = 1;
     const TURNS = 80;
+    const initialLedgerLength = worldState.eventLedger.length;
     let nextWorld = worldState;
     let nextStory = storyState;
     const startTime = performance.now();
@@ -471,7 +472,7 @@ describe("sqliteGameRepository：stale 后旧值保留", () => {
       expect(current.record.revision).toBe(TURNS);
       expect(current.record.storyState.turnNumber).toBe(TURNS);
       expect(current.record.storyState.tension).toBe(Math.max(0, 100 - TURNS));
-      expect(current.record.worldState.eventLedger.length).toBe(START + TURNS - 1);
+      expect(current.record.worldState.eventLedger.length).toBe(initialLedgerLength + TURNS);
     }
 
     // 大小基线（记录而非断言）：供长篇门禁参考

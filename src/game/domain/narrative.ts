@@ -122,7 +122,7 @@ export type NarrativeRuntimeState = {
   readonly choiceRegistry?: readonly ApprovedChoice[];
 };
 
-/** 场景对白每页字符预算：纯展示策略常量，与 V1 的 SPEECH_PAGE_CHAR_BUDGET 对齐。 */
+/** 场景对白每页字符预算：纯展示策略常量。 */
 export const NPC_SCENE_PAGE_CHAR_BUDGET = 48;
 
 /** 确定性 NPC 台词兜底：无场景对白/AI 行无效时的稳定问候（纯函数，零 AI/IO/随机）。 */

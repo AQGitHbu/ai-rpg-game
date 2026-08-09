@@ -2,16 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
-import type { GameSessionView } from "@/game/application/gameSessionView";
+import type { GameSessionView } from "@/game/application";
 import { AdventureGameShell } from "./AdventureGameShell";
 import { NewGameSetupForm } from "./NewGameSetupForm";
 import { fetchCurrentGame, ensureNarrative, ackPrologue } from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
-// V2 根页面客户端协调器：直接消费 V2 API（/api/game/*）。
+// 根页面客户端协调器：直接消费 canonical API（/api/game/*）。
 // 挂载时读取 GET /api/game/current。
 //   none    → 显示创建表单
-//   active  → 显示 V2 主游戏 Shell
+//   active  → 显示主游戏 Shell
 //   结局后  → 只显示结局面板
 //   corrupt → 错误提示
 // ---------------------------------------------------------------------------
@@ -152,7 +152,7 @@ export function CurrentGameScreen() {
   }
 
   if (state.phase === "none") {
-    return <NewGameSetupForm apiPath="/api/game" onCreatedWithoutView={handleCreated} />;
+    return <NewGameSetupForm onCreated={handleCreated} />;
   }
 
   if (state.phase === "corrupt") {

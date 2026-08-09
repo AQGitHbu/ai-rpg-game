@@ -1,6 +1,6 @@
 import { getServerGameEntryPoints } from "@/game/application/server/compositionRoot";
 
-// DELETE /api/game/dev/current：V2 开发环境清除当前本地试玩存档。
+// DELETE /api/game/dev/current：开发环境清除当前本地试玩存档。
 export async function DELETE(request: Request): Promise<Response> {
   const entryPoints = getServerGameEntryPoints();
   return entryPoints.executeHttpRequest(

@@ -63,7 +63,7 @@ export function buildActionSummary(action: Action): StructuredActionSummary {
 }
 
 /**
- * 玩家回合统一入口（P0/P1 修复的核心用例，替代 performActionV2 双 CAS 流程）：
+ * 玩家回合统一入口：
  *   校验 → 转换 → 规则编排（resolveTurn）→（条件触发 Expansion）→
  *   构造 PendingNarrativeJob → 单次 CAS 同时提交 World/Story(turnNumber+pending job)。
  *

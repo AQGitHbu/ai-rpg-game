@@ -106,7 +106,7 @@ function makeSceneSource(proposals: readonly EventCandidate[]): SceneSource {
   };
 }
 
-describe("sceneSourceV2 候选事件提议 → 写回审批（Task 21）", () => {
+describe("scene source 候选事件提议 → 写回审批（Task 21）", () => {
   it("合法候选经 generatePendingScene 写回池，且不改变 World State/tension", async () => {
     const record = makeRecord([]);
     const repo = makeRepo(record);

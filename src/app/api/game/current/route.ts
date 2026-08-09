@@ -1,7 +1,6 @@
 import { getServerGameEntryPoints } from "@/game/application/server/compositionRoot";
 
-// GET /api/game/current：V2 并行路由——委托 gameSessionView。
-// V1 路由 /api/game/current 保持不动，互不干扰。
+// GET /api/game/current：canonical 当前游戏路由，委托 gameSessionView。
 export async function GET(request: Request): Promise<Response> {
   const entryPoints = getServerGameEntryPoints();
   return entryPoints.executeHttpRequest(

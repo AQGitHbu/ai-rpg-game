@@ -7,7 +7,7 @@ import { validateWorldGenerationCandidate } from "@/game/gameplay/rpg/worldGener
 import { createFixtureWorldSource } from "../../createGame";
 
 // ---------------------------------------------------------------------------
-// Task 17：V2 世界生成源（live/fixture）。
+// 世界生成源（live/fixture）。
 //
 // 编排：AI 原始 JSON → schema parse → 机械修复（无创意）→ 纯 validator →
 // 确定性 fallback（必须通过同一 validator/compiler）。
