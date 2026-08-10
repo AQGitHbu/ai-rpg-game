@@ -199,11 +199,18 @@ export function createLiveSceneSource(
   "choices": [
     { "label": "选项1文字", "candidateId": "candidate_1" },
     { "label": "选项2文字", "candidateId": "candidate_2" }
+  ],
+  "smallTalks": [
+    { "npcId": "非焦点NPC的ID", "prompt": "闲聊选项文本（如'向韩征打个招呼'）", "response": "NPC的简短回应（1-2句，符合其身份和当前情境，但不推进剧情）" }
   ]
 }
 
-choices 必须恰好 2 个，candidateId 必须从服务端候选中选择且不能重复。
-narration 与 npcLine 中出现的 NPC 名字必须与上方列出的名字逐字一致，不得使用别名或变体。
+重要说明：
+- choices 必须恰好 2 个，candidateId 必须从服务端候选中选择且不能重复。
+- smallTalks 是可选的，为除焦点 NPC 之外的其他在场 NPC 提供闲聊选项。
+- smallTalks 中的 npcId 必须是非焦点 NPC（即不等于 npcLine.npcId 的其他在场 NPC）。
+- 闲聊的 response 应该简短、符合 NPC 身份，但不包含剧情关键信息。
+- narration 与 npcLine 中出现的 NPC 名字必须与上方列出的名字逐字一致，不得使用别名或变体。
 只返回 JSON，不要其他文字。`;
 
         const messages: readonly AiMessage[] = [
@@ -230,6 +237,9 @@ narration 与 npcLine 中出现的 NPC 名字必须与上方列出的名字逐�
         const narration = typeof data.narration === "string" ? data.narration : "";
         const rawNpcLine = data.npcLine as { npcId: string; text: string; emotion: string } | null;
         const choices = Array.isArray(data.choices) ? data.choices as { label: string; candidateId: string }[] : [];
+        const rawSmallTalks = Array.isArray(data.smallTalks) 
+          ? data.smallTalks as Array<{ npcId: string; prompt: string; response: string }>
+          : [];
 
         if (narration === "" || choices.length !== 2) {
           logger?.warn("scene_generation_invalid_data");
@@ -251,6 +261,26 @@ narration 与 npcLine 中出现的 NPC 名字必须与上方列出的名字逐�
           return fallback.generateScene(context);
         }
 
+        // 解析闲聊数据：只保留属于非焦点在场 NPC 的闲聊
+        const focusNpcId = npcLine?.npcId;
+        const smallTalks = new Map<string, { prompt: string; response: string }>();
+        for (const talk of rawSmallTalks) {
+          if (
+            typeof talk.npcId === "string" &&
+            typeof talk.prompt === "string" &&
+            typeof talk.response === "string" &&
+            talk.npcId !== String(focusNpcId) &&
+            npcsHere.some((npc) => String(npc.id) === talk.npcId) &&
+            talk.prompt.trim() !== "" &&
+            talk.response.trim() !== ""
+          ) {
+            smallTalks.set(talk.npcId, {
+              prompt: talk.prompt.trim(),
+              response: talk.response.trim(),
+            });
+          }
+        }
+
         return {
           sceneId,
           turn,
@@ -260,6 +290,7 @@ narration 与 npcLine 中出现的 NPC 名字必须与上方列出的名字逐�
           npcLine,
           choiceProposals,
           eventProposals: [],
+          ...(smallTalks.size > 0 ? { smallTalks } : {}),
         };
       } catch (error) {
         logger?.error("scene_generation_error", { error: error instanceof Error ? error.message : "unknown" });

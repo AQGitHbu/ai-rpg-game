@@ -352,6 +352,7 @@ export function approveScenePackage(input: {
           npcDialogues: buildNpcDialoguePages(context.presentNpcs, {
             focusNpcId: npcLine?.npcId,
             focusSpeech: npcLine?.text,
+            smallTalkData: proposal.smallTalks,
           }),
         }
       : {}),

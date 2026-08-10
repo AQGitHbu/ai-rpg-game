@@ -26,6 +26,11 @@ export type NpcDialogueView = {
   readonly freeInputEnabled: boolean;
   /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
   readonly giveChoices: readonly { readonly itemName: string; readonly choice: PlayerChoiceView }[];
+  /** 非焦点 NPC 的闲聊：点击显示回复，不消耗回合。 */
+  readonly smallTalk?: {
+    readonly prompt: string;
+    readonly response: string;
+  };
 };
 
 type QuestObjectiveView = { readonly label: string; readonly completed: boolean };
@@ -315,6 +320,7 @@ export function projectGameSessionView(
             };
           })
         : [],
+      ...(supplied?.smallTalk ? { smallTalk: supplied.smallTalk } : {}),
     }];
   });
 

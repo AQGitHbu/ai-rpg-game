@@ -19,6 +19,7 @@ export type ScenePackageProposal = {
   readonly choiceProposals: readonly [ChoiceProposal, ChoiceProposal];
   readonly eventProposals: readonly EventProposal[];
   readonly source: "generated" | "fallback";
+  readonly smallTalks?: ReadonlyMap<string, { prompt: string; response: string }>;
 };
 
 /** 兼容现有 source 命名；结果本身就是尚未批准的场景包提案。 */

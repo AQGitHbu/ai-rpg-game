@@ -38,6 +38,7 @@ function NpcDialogueModal({
   readonly onClose: () => void;
 }) {
   const [text, setText] = useState("");
+  const [smallTalkShown, setSmallTalkShown] = useState(false);
 
   const hasFocusInteraction = dialogue.choices.length > 0 || dialogue.freeInputEnabled;
 
@@ -47,6 +48,10 @@ function NpcDialogueModal({
     if (normalized === "") return;
     onSubmit({ kind: "free_text", text: normalized, targetNpcId: dialogue.npcId });
     setText("");
+  }
+
+  function handleSmallTalkClick(): void {
+    setSmallTalkShown(true);
   }
 
   return (
@@ -75,6 +80,11 @@ function NpcDialogueModal({
             {dialogue.speechPages.map((page, index) => (
               <p key={`${dialogue.npcId}-${index}`} className="npc-dialogue-speech-text">{page}</p>
             ))}
+            {smallTalkShown && dialogue.smallTalk ? (
+              <p className="npc-dialogue-speech-text npc-dialogue-small-talk-response">
+                {dialogue.smallTalk.response}
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -126,22 +136,34 @@ function NpcDialogueModal({
             ) : null}
           </>
         ) : (
-          /* 非焦点 NPC 降级对话选项（若存在） */
-          dialogue.choices.length > 0 ? (
-            <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
-              {dialogue.choices.map((choice) => (
-                <button
-                  key={choice.choiceToken}
-                  type="button"
-                  disabled={busy}
-                  className="npc-dialogue-talk-cta"
-                  onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken })}
-                >
-                  {choice.label}
-                </button>
-              ))}
-            </div>
-          ) : null
+          /* 非焦点 NPC：显示闲聊按钮或降级对话选项 */
+          <>
+            {dialogue.smallTalk && !smallTalkShown ? (
+              <button
+                type="button"
+                className="npc-dialogue-small-talk-btn"
+                disabled={busy}
+                onClick={handleSmallTalkClick}
+              >
+                💬 {dialogue.smallTalk.prompt}
+              </button>
+            ) : null}
+            {dialogue.choices.length > 0 ? (
+              <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
+                {dialogue.choices.map((choice) => (
+                  <button
+                    key={choice.choiceToken}
+                    type="button"
+                    disabled={busy}
+                    className="npc-dialogue-talk-cta"
+                    onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken })}
+                  >
+                    {choice.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </>
         )}
       </section>
     </div>

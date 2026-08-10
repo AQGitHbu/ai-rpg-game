@@ -474,4 +474,75 @@ describe("projectGameSessionView", () => {
     ]);
     expect(Object.keys(view.ending!).sort()).toEqual(["description", "name", "outcome", "restartIdentity"]);
   });
+
+  it("projects smallTalk for non-focus NPCs when provided in scene", () => {
+    const scene = {
+      sceneId: "scene-small-talk",
+      turn: 2,
+      narration: "你与周伯交谈时，韩征在一旁巡视。",
+      usedFactIds: [],
+      npcLine: { npcId: asNpcId("npc_1"), text: "周伯低声说道：那天晚上我确实看到了可疑的人影。", emotion: "guarded" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "c_choice1", label: "追问详情" },
+        { choiceToken: "c_choice2", label: "表示支持" },
+      ] as const,
+      source: "generated" as const,
+      event: { kind: "dialogue" as const, focusNpcId: asNpcId("npc_1") },
+      npcDialogues: [
+        {
+          npcId: asNpcId("npc_1"),
+          npcName: "周伯",
+          npcRole: "客栈掌柜",
+          speechPages: ["那天晚上我确实看到了可疑的人影。"],
+        },
+        {
+          npcId: asNpcId("npc_2"),
+          npcName: "韩征",
+          npcRole: "捕头",
+          speechPages: ["韩征看了你一眼，继续巡视。"],
+          smallTalk: {
+            prompt: "向韩征打个招呼",
+            response: "韩征点了点头：「有什么事直接找我，别耽误正事。」",
+          },
+        },
+      ],
+    };
+    const secondNpc: NpcEntry = {
+      id: asNpcId("npc_2"), name: "韩征", role: "捕头", description: "镇上的捕头",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
+    const story = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("c_choice1", scene.sceneId, 2, "追问详情", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }),
+          approved("c_choice2", scene.sceneId, 2, "表示支持", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" }),
+        ],
+      },
+    };
+
+    const view = projectGameSessionView(wsTwo, story, 2, "test-ending-session");
+    const dialogues = view.narrative.npcDialogues ?? [];
+
+    // 焦点 NPC (周伯) 有选项，无闲聊
+    const focusNpc = dialogues.find((d) => d.npcId === "npc_1");
+    expect(focusNpc).toBeDefined();
+    expect(focusNpc?.choices).toHaveLength(2);
+    expect(focusNpc?.freeInputEnabled).toBe(true);
+    expect(focusNpc?.smallTalk).toBeUndefined();
+
+    // 非焦点 NPC (韩征) 无选项，有闲聊
+    const nonFocusNpc = dialogues.find((d) => d.npcId === "npc_2");
+    expect(nonFocusNpc).toBeDefined();
+    expect(nonFocusNpc?.choices).toHaveLength(0);
+    expect(nonFocusNpc?.freeInputEnabled).toBe(false);
+    expect(nonFocusNpc?.smallTalk).toEqual({
+      prompt: "向韩征打个招呼",
+      response: "韩征点了点头：「有什么事直接找我，别耽误正事。」",
+    });
+  });
 });

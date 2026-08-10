@@ -1320,6 +1320,39 @@ body:has(.adventure-game-shell) {
   cursor: not-allowed;
 }
 
+/* 闲聊按钮：次要视觉权重，区别于主要对话选项 */
+.npc-dialogue-small-talk-btn {
+  padding: 6px 12px;
+  border: 1px dashed var(--game-surface-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--game-text-muted);
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.npc-dialogue-small-talk-btn:hover:not(:disabled) {
+  border-color: var(--game-accent);
+  color: var(--game-text-primary);
+  background: var(--game-accent-soft);
+}
+
+.npc-dialogue-small-talk-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 闲聊回复：视觉上区分于主要台词 */
+.npc-dialogue-small-talk-response {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--game-surface-border);
+  color: var(--game-text-muted);
+  font-style: italic;
+}
+
 .npc-dialogue-input {
   display: flex;
   gap: 8px;
