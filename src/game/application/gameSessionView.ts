@@ -22,7 +22,7 @@ export type NpcDialogueView = {
   readonly name: string;
   readonly role: string;
   readonly speechPages: readonly string[];
-  readonly choices: readonly [PlayerChoiceView, PlayerChoiceView] | readonly [];
+  readonly choices: readonly PlayerChoiceView[];
   readonly freeInputEnabled: boolean;
   /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
   readonly giveChoices: readonly { readonly itemName: string; readonly choice: PlayerChoiceView }[];

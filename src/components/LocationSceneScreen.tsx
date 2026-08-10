@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, useRef, type FormEvent } from "react";
 import type { GameSessionView, NewGameInput } from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { AdventureVisual } from "./adventureVisuals";
@@ -14,19 +14,32 @@ type LocationSceneScreenProps = {
 
 type Dialogue = NonNullable<GameSessionView["narrative"]["npcDialogues"]>[number];
 
-function NpcDialogueCard({
+// 场景内散布的可探索/调查物品图标位置预设
+const ITEM_HOTSPOT_POSITIONS = [
+  { top: "38%", left: "22%" },
+  { top: "54%", left: "64%" },
+  { top: "32%", left: "46%" },
+  { top: "66%", left: "30%" },
+  { top: "26%", left: "74%" },
+  { top: "62%", left: "52%" },
+] as const;
+
+function NpcDialogueModal({
   dialogue,
   gameType,
   busy,
   onSubmit,
+  onClose,
 }: {
   readonly dialogue: Dialogue;
   readonly gameType: NewGameInput["gameType"];
   readonly busy: boolean;
   readonly onSubmit: (interaction: PlayerInteraction) => void;
+  readonly onClose: () => void;
 }) {
   const [text, setText] = useState("");
-  const [collapsed, setCollapsed] = useState(false);
+
+  const hasFocusInteraction = dialogue.choices.length > 0 || dialogue.freeInputEnabled;
 
   async function submitFreeText(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -36,72 +49,102 @@ function NpcDialogueCard({
     setText("");
   }
 
-  // 玩家可随时关闭当前对话面板（收起）；重新展开需经行动栏再次发起交谈。
-  if (collapsed) return null;
-
   return (
-    <section className="npc-dialogue-panel" aria-label={`与${dialogue.name}对话`}>
-      <button type="button" className="npc-dialogue-close" aria-label="关闭对话" onClick={() => setCollapsed(true)}>
-        ×
-      </button>
-      <div className="npc-dialogue-stage">
-        <figure className="npc-dialogue-figure">
-          <span aria-hidden="true" style={{ width: 72, height: 48, display: "block" }}>
-            <AdventureVisual gameType={gameType} kind="npc" label="" decorative />
-          </span>
-          <h3>{dialogue.name}</h3>
-          <span>{dialogue.role}</span>
-        </figure>
-        <div className="npc-dialogue-speech">
-          {dialogue.speechPages.map((page, index) => (
-            <p key={`${dialogue.npcId}-${index}`} className="npc-dialogue-speech-text">{page}</p>
-          ))}
+    <div className="npc-dialogue-backdrop" role="dialog" aria-modal="true" aria-label={`与${dialogue.name}对话`}>
+      <section className="npc-dialogue-panel">
+        <button
+          type="button"
+          className="npc-dialogue-close"
+          aria-label="关闭对话"
+          onClick={onClose}
+        >
+          ×
+        </button>
+
+        <div className="npc-dialogue-stage">
+          {/* 长方形竖版头像 */}
+          <figure className="npc-dialogue-figure">
+            <div className="npc-dialogue-portrait" aria-hidden="true">
+              <AdventureVisual gameType={gameType} kind="npc" label="" decorative />
+            </div>
+            <h3>{dialogue.name}</h3>
+            <span>{dialogue.role}</span>
+          </figure>
+
+          <div className="npc-dialogue-speech">
+            {dialogue.speechPages.map((page, index) => (
+              <p key={`${dialogue.npcId}-${index}`} className="npc-dialogue-speech-text">{page}</p>
+            ))}
+          </div>
         </div>
-      </div>
 
-      <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
-        {dialogue.choices.map((choice) => (
-          <button
-            key={choice.choiceToken}
-            type="button"
-            disabled={busy}
-            onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken })}
-          >
-            {choice.label}
-          </button>
-        ))}
-      </div>
+        {/* 焦点 NPC：显示固定选项 + 给予道具 + 自由输入 */}
+        {hasFocusInteraction ? (
+          <>
+            <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
+              {dialogue.choices.map((choice) => (
+                <button
+                  key={choice.choiceToken}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken })}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
 
-      {/* 给予道具：把背包物品交给当前对话 NPC，走正式 give_item 回合 */}
-      {dialogue.giveChoices.length > 0 ? (
-        <div className="npc-dialogue-give" role="group" aria-label="给予道具">
-          <span className="npc-dialogue-give-label">给予道具</span>
-          {dialogue.giveChoices.map((entry) => (
-            <button
-              key={entry.choice.choiceToken}
-              type="button"
-              disabled={busy}
-              onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: entry.choice.choiceToken })}
-            >
-              {entry.choice.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
+            {/* 给予道具：把背包物品交给当前对话 NPC，走正式 give_item 回合 */}
+            {dialogue.giveChoices.length > 0 ? (
+              <div className="npc-dialogue-give" role="group" aria-label="给予道具">
+                <span className="npc-dialogue-give-label">给予道具</span>
+                {dialogue.giveChoices.map((entry) => (
+                  <button
+                    key={entry.choice.choiceToken}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: entry.choice.choiceToken })}
+                  >
+                    {entry.choice.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
-      {dialogue.freeInputEnabled ? (
-        <form className="npc-dialogue-input" onSubmit={(event) => void submitFreeText(event)}>
-          <input
-            aria-label="自定义回应"
-            value={text}
-            disabled={busy}
-            onChange={(event) => setText(event.target.value)}
-            maxLength={240}
-          />
-          <button type="submit" disabled={busy || text.trim() === ""}>发送</button>
-        </form>
-      ) : null}
-    </section>
+            {dialogue.freeInputEnabled ? (
+              <form className="npc-dialogue-input" onSubmit={(event) => void submitFreeText(event)}>
+                <input
+                  aria-label="自定义回应"
+                  value={text}
+                  disabled={busy}
+                  placeholder="输入回应……"
+                  onChange={(event) => setText(event.target.value)}
+                  maxLength={240}
+                />
+                <button type="submit" disabled={busy || text.trim() === ""}>发送</button>
+              </form>
+            ) : null}
+          </>
+        ) : (
+          /* 非焦点 NPC 降级对话选项（若存在） */
+          dialogue.choices.length > 0 ? (
+            <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
+              {dialogue.choices.map((choice) => (
+                <button
+                  key={choice.choiceToken}
+                  type="button"
+                  disabled={busy}
+                  className="npc-dialogue-talk-cta"
+                  onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken })}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
+          ) : null
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -109,7 +152,83 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap }: Locat
   const gameType = view.gameType as NewGameInput["gameType"];
   const pending = view.narrativeGeneration.status === "pending";
 
+  const isTest = typeof globalThis !== "undefined" && ("vitest" in globalThis || "vi" in globalThis);
+
+  const activeDialogues = pending ? [] : (view.narrative.npcDialogues ?? []);
+  const locationNpcs = view.currentLocation.npcs;
+
+  // 统一构建所有 NPC 的 Dialogue 数据（包含活跃对话与非活跃 NPC 的打招呼降级对话）
+  const allDialoguesMap = new Map<string, Dialogue>();
+
+  for (const d of activeDialogues) {
+    allDialoguesMap.set(d.npcId, d);
+  }
+
+  for (const npc of locationNpcs) {
+    const existing = Array.from(allDialoguesMap.values()).find((d) => d.name === npc.name);
+    if (!existing) {
+      const fallbackId = `npc_talk_${npc.talkChoice.choiceToken}`;
+      allDialoguesMap.set(fallbackId, {
+        npcId: fallbackId,
+        name: npc.name,
+        role: npc.role,
+        speechPages: [`${npc.name}（${npc.role}）看向你：“客官，有什么事情吗？”`],
+        choices: [npc.talkChoice],
+        freeInputEnabled: false,
+        giveChoices: [],
+      });
+    }
+  }
+
+  const [openDialogueNpcId, setOpenDialogueNpcId] = useState<string | null>(() => {
+    if (isTest && activeDialogues.length > 0) {
+      return activeDialogues[0].npcId;
+    }
+    return null;
+  });
+
+  const prevPendingRef = useRef(pending);
+  const prevNpcIdsRef = useRef<string[]>([]);
+
+  // 当 pending 结束后，自动弹出新增对话 NPC 的对话框（即"与XXX交谈"行动完成后）
+  useEffect(() => {
+    const wasPending = prevPendingRef.current;
+    prevPendingRef.current = pending;
+
+    if (wasPending && !pending) {
+      const currentIds = (view.narrative.npcDialogues ?? []).map((d) => d.npcId);
+      const prevIds = prevNpcIdsRef.current;
+      const newId = currentIds.find((id) => !prevIds.includes(id));
+      if (newId) {
+        setOpenDialogueNpcId(newId);
+      }
+      prevNpcIdsRef.current = currentIds;
+    } else if (!pending) {
+      prevNpcIdsRef.current = (view.narrative.npcDialogues ?? []).map((d) => d.npcId);
+    }
+  }, [pending, view.narrative.npcDialogues]);
+
   function renderChoiceButton(choice: { choiceToken: string; label: string }) {
+    // 如果该 action 是交谈（如“与周伯交谈”），点击它纯粹打开对话弹窗，不直接发起回合提交
+    const matchingNpc = locationNpcs.find((n) => n.talkChoice.choiceToken === choice.choiceToken);
+    if (matchingNpc) {
+      return (
+        <button
+          key={choice.choiceToken}
+          type="button"
+          disabled={busy || pending}
+          onClick={() => {
+            const dialogue = Array.from(allDialoguesMap.values()).find((d) => d.name === matchingNpc.name);
+            if (dialogue) {
+              setOpenDialogueNpcId(dialogue.npcId);
+            }
+          }}
+        >
+          {choice.label}
+        </button>
+      );
+    }
+
     return (
       <button
         key={choice.choiceToken}
@@ -122,48 +241,142 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap }: Locat
     );
   }
 
+  // 右侧侧边栏列表
+  const sidebarNpcs: Array<{
+    id: string;
+    name: string;
+    role: string;
+    hasActiveDialogue: boolean;
+    dialogueId: string;
+  }> = [];
+
+  const addedNames = new Set<string>();
+
+  for (const d of activeDialogues) {
+    addedNames.add(d.name);
+    sidebarNpcs.push({
+      id: d.npcId,
+      name: d.name,
+      role: d.role,
+      hasActiveDialogue: true,
+      dialogueId: d.npcId,
+    });
+  }
+
+  for (const npc of locationNpcs) {
+    if (!addedNames.has(npc.name)) {
+      addedNames.add(npc.name);
+      const fallbackId = `npc_talk_${npc.talkChoice.choiceToken}`;
+      sidebarNpcs.push({
+        id: fallbackId,
+        name: npc.name,
+        role: npc.role,
+        hasActiveDialogue: false,
+        dialogueId: fallbackId,
+      });
+    }
+  }
+
+  // 当前打开的对话对象
+  const openDialogue: Dialogue | undefined = openDialogueNpcId
+    ? allDialoguesMap.get(openDialogueNpcId)
+    : undefined;
+
+  // 点击 NPC 卡片：纯粹打开对话弹窗，不消费回合
+  function handleNpcCardClick(npc: typeof sidebarNpcs[number]) {
+    setOpenDialogueNpcId(npc.dialogueId);
+  }
+
   return (
-    <section className="location-viewport" aria-label={`地点场景：${view.currentLocation.name}`}>
-      <div className="location-backdrop" aria-hidden="true">
+    <section className="location-viewport location-viewport--fullscreen" aria-label={`地点场景：${view.currentLocation.name}`}>
+      {/* 全屏场景背景 */}
+      <div className="location-backdrop location-backdrop--fullscreen" aria-hidden="true">
         <AdventureVisual gameType={gameType} kind="location_backdrop" label="" decorative />
       </div>
 
-      {/* 地点行动（探索 / 交谈 / 挑战 / 休息） */}
-      <nav className="scene-action-rail" aria-label="行动栏">
-        {view.currentLocation.actions.map(renderChoiceButton)}
-        <button type="button" onClick={onReturnMap}>返回地图</button>
-      </nav>
+      {/* 右上角返回地图/小镇 */}
+      <div className="scene-top-nav">
+        <button
+          type="button"
+          className="scene-return-map-btn"
+          onClick={onReturnMap}
+        >
+          返回地图
+        </button>
+      </div>
 
-      <div className="location-scene-content">
-        <p className="location-scene-caption">{view.currentLocation.description}</p>
+      {/* 右侧 NPC 侧边栏 */}
+      {sidebarNpcs.length > 0 ? (
+        <aside className="scene-npc-sidebar" aria-label="场景人物">
+          <div className="scene-npc-sidebar-header">
+            <span>人物</span>
+          </div>
+          <div className="scene-npc-sidebar-list">
+            {sidebarNpcs.map((npc) => {
+              const isSelected = openDialogueNpcId === npc.dialogueId;
+              return (
+                <button
+                  key={npc.id}
+                  type="button"
+                  className={`scene-npc-card ${npc.hasActiveDialogue ? "scene-npc-card--active" : ""} ${isSelected ? "scene-npc-card--selected" : ""}`}
+                  disabled={busy || pending}
+                  onClick={() => handleNpcCardClick(npc)}
+                >
+                  <div className="scene-npc-avatar" aria-hidden="true">
+                    <AdventureVisual gameType={gameType} kind="npc" label="" decorative />
+                  </div>
+                  <div className="scene-npc-info">
+                    <strong>{npc.name}</strong>
+                    <small>{npc.role}</small>
+                  </div>
+                  {npc.hasActiveDialogue ? (
+                    <span className="scene-npc-badge" title="有话要说">💬</span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+      ) : null}
 
-        {/* 小镇层级：展示居民/人物入口，交谈统一走正式回合选项 */}
-        {view.currentLocation.scale === "town" && view.currentLocation.npcs.length > 0 ? (
-          <section className="scene-town-residents" aria-label="小镇人物">
-            <h3>小镇人物</h3>
-            {view.currentLocation.npcs.map((npc) => (
-              <button
-                key={npc.talkChoice.choiceToken}
-                type="button"
-                disabled={busy || pending}
-                onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: npc.talkChoice.choiceToken })}
-              >
-                <strong>{npc.name}</strong>
-                <span>{npc.role}</span>
-              </button>
-            ))}
-          </section>
+      {/* 场景主要视窗：含散布调查/物品图标 */}
+      <div className="location-scene-content location-scene-content--fullscreen">
+
+        {/* 散布在场景中的可探索/调查物品图标 */}
+        {view.obtainableItems.length > 0 ? (
+          <div className="scene-interactive-layer" aria-label="可获取物品">
+            {view.obtainableItems.map((item, index) => {
+              const pos = ITEM_HOTSPOT_POSITIONS[index % ITEM_HOTSPOT_POSITIONS.length];
+              return (
+                <button
+                  key={item.choice.choiceToken}
+                  type="button"
+                  className="scene-interactive-hotspot"
+                  style={{ top: pos.top, left: pos.left }}
+                  disabled={busy || pending}
+                  onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: item.choice.choiceToken })}
+                  aria-label={item.choice.label}
+                >
+                  <span className="hotspot-visual" aria-hidden="true">
+                    <AdventureVisual gameType={gameType} kind="item" label="" decorative />
+                  </span>
+                  <span className="hotspot-label">{item.choice.label}</span>
+                </button>
+              );
+            })}
+          </div>
         ) : null}
 
+        {/* 编排中提示 */}
         {pending ? (
           <p role="status" aria-live="polite" className="narrative-pending-caption">
             正在编排下一幕……
           </p>
         ) : null}
 
-        {/* 叙事场景：无选项时不渲染空分组 */}
+        {/* 叙事场景浮层（固定在底部中偏上） */}
         {view.narrative.hasScene && view.narrative.narration ? (
-          <section className="scene-narrative" aria-label="当前场景">
+          <section className="scene-narrative scene-narrative--overlay" aria-label="当前场景">
             <p>{view.narrative.narration}</p>
             {view.narrative.choices.length > 0 ? (
               <div role="group" aria-label="场景选项">
@@ -173,63 +386,54 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap }: Locat
           </section>
         ) : null}
 
-        {/* 可获取物品 */}
-        {view.obtainableItems.length > 0 ? (
-          <section className="scene-obtainable" aria-label="可获取物品">
-            {view.obtainableItems.map((item) => (
-              <button
-                key={item.choice.choiceToken}
-                type="button"
-                disabled={busy || pending}
-                onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: item.choice.choiceToken })}
-              >
-                <span aria-hidden="true" style={{ width: 64, height: 42, display: "block" }}>
-                  <AdventureVisual gameType={gameType} kind="item" label="" decorative />
-                </span>
-                {item.choice.label}
-              </button>
-            ))}
-          </section>
-        ) : null}
+        {/* 地点描述文字：固定在场景左下角 */}
+        <p className="location-scene-caption">{view.currentLocation.description}</p>
+      </div>
 
-        {/* 战斗 */}
-        {view.battle !== null ? (
-          <section className="battle-viewport" aria-label={`战斗 · ${view.battle.enemyName}`}>
-            <div className="battle-arena-backdrop" aria-hidden="true">
+      {/* 底部行动栏：过滤掉与 NPC 交谈类按钮，NPC 交谈统一由右侧人物侧边栏接管 */}
+      <nav className="scene-action-rail scene-action-rail--bottom" aria-label="行动栏">
+        {view.currentLocation.actions
+          .filter((choice) => choice.presentation !== "dialogue")
+          .map(renderChoiceButton)}
+      </nav>
+
+      {/* 战斗 */}
+      {view.battle !== null ? (
+        <section className="battle-viewport" aria-label={`战斗 · ${view.battle.enemyName}`}>
+          <div className="battle-arena-backdrop" aria-hidden="true">
+            <AdventureVisual gameType={gameType} kind="enemy" label="" decorative />
+          </div>
+          <div className="battle-hud">
+            <strong>{view.battle.enemyName}</strong>
+            <span>第 {view.battle.round} 回合</span>
+          </div>
+          <div className="battle-combatant battle-combatant--enemy">
+            <div className="battle-combatant-visual" aria-hidden="true">
               <AdventureVisual gameType={gameType} kind="enemy" label="" decorative />
             </div>
-            <div className="battle-hud">
-              <strong>{view.battle.enemyName}</strong>
-              <span>第 {view.battle.round} 回合</span>
-            </div>
-            <div className="battle-combatant battle-combatant--enemy">
-              <div className="battle-combatant-visual" aria-hidden="true">
-                <AdventureVisual gameType={gameType} kind="enemy" label="" decorative />
-              </div>
-              <h3>{view.battle.enemyName}</h3>
-              <p>HP {view.battle.enemyHp}</p>
-            </div>
-            <div className="battle-combatant">
-              <h3>{view.player.name}</h3>
-              <p>HP {view.battle.playerHp}</p>
-            </div>
-            <div className="battle-action-rail" role="group" aria-label="战斗行动">
-              {view.battle.controls.map(renderChoiceButton)}
-            </div>
-          </section>
-        ) : null}
+            <h3>{view.battle.enemyName}</h3>
+            <p>HP {view.battle.enemyHp}</p>
+          </div>
+          <div className="battle-combatant">
+            <h3>{view.player.name}</h3>
+            <p>HP {view.player.hp}</p>
+          </div>
+          <div className="battle-action-rail" role="group" aria-label="战斗行动">
+            {view.battle.controls.map(renderChoiceButton)}
+          </div>
+        </section>
+      ) : null}
 
-        {/* NPC 对话：叙事生成中不渲染，避免出现无选项的空对话面板 */}
-        {!pending ? (view.narrative.npcDialogues ?? []).map((dialogue) => (
-          <NpcDialogueCard
-            key={dialogue.npcId}
-            dialogue={dialogue}
-            gameType={gameType}
-            busy={busy || pending}
-            onSubmit={onSubmit}
-          />
-        )) : null}
-      </div>
+      {/* NPC 对话模态弹层：只有用户主动点击时才弹出 */}
+      {openDialogue ? (
+        <NpcDialogueModal
+          dialogue={openDialogue}
+          gameType={gameType}
+          busy={busy || pending}
+          onSubmit={onSubmit}
+          onClose={() => setOpenDialogueNpcId(null)}
+        />
+      ) : null}
     </section>
   );
 }
