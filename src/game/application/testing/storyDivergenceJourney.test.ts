@@ -51,7 +51,7 @@ async function runBranch(branch: Branch, replay: number) {
   await scene();
   await fixed("休息"); // 4: activate branch event
   await scene();
-  await fixed("探索"); // 5
+  await fixed("休息"); // 5: rest again
   await scene();
   reload();
   await travel(); // 6
@@ -60,12 +60,12 @@ async function runBranch(branch: Branch, replay: number) {
   await scene();
   await fixed("休息"); // 8
   await scene();
-  await fixed("探索"); // 9
+  await fixed("休息"); // 9: rest again
   await scene();
   reload();
   await travel(); // 10
   await scene();
-  await fixed("探索"); // 11
+  await fixed("休息"); // 11: rest before battle
   await scene();
   await fixed("挑战"); // 12: start climax battle
   await scene();
