@@ -331,10 +331,12 @@ export function createSqliteGameRepository(
           return { ok: false, code: "NO_ACTIVE_GAME" };
         }
 
+        const incrementRevision = input.incrementRevision ?? true;
         const updateResult = await tx.execute({
-          sql: `UPDATE game_records SET world_state_json = ?, story_state_json = ?, revision = revision + 1
+          sql: `UPDATE game_records SET world_state_json = ?, story_state_json = ?,
+                revision = CASE WHEN ? THEN revision + 1 ELSE revision END
                 WHERE game_id = ? AND revision = ?`,
-          args: [worldStateJson, storyStateJson, input.gameId, input.expectedRevision],
+          args: [worldStateJson, storyStateJson, incrementRevision ? 1 : 0, input.gameId, input.expectedRevision],
         });
         const rowsAffected = Number(updateResult.rowsAffected ?? 0);
         if (rowsAffected === 0) {

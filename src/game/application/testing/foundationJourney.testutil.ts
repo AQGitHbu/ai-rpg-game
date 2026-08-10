@@ -56,7 +56,13 @@ export function createInMemoryRepo(_gameId: GameId): InMemoryRepo {
       if (record === null) return { ok: false as const, code: "NO_ACTIVE_GAME" as const };
       applyCallsHistory.push(input);
       if (input.expectedRevision !== record.revision) return { ok: false as const, code: "STALE_GAME_REVISION" as const };
-      record = { ...record, worldState: input.nextWorldState, storyState: input.nextStoryState, revision: record.revision + 1 };
+      const incrementRevision = input.incrementRevision ?? true;
+      record = {
+        ...record,
+        worldState: input.nextWorldState,
+        storyState: input.nextStoryState,
+        revision: incrementRevision ? record.revision + 1 : record.revision,
+      };
       return { ok: true, record };
     },
     async applySceneWriteBack(input) {

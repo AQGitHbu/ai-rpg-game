@@ -218,12 +218,18 @@ export function createServerGameEntryPoints(
     ackPrologue: async (_traceId) => {
       const current = await repository.getCurrentGame();
       if (!current.ok || current.status !== "active") return { ok: false, code: "NO_ACTIVE_GAME" };
-      const nextStoryState: StoryState = { ...current.record.storyState, prologueShown: true };
+      // prologueShown 是 UI 元数据，不改变世界状态：不递增 revision，
+      // 避免破坏基于当前 revision 铸造的 choiceToken（否则场景固定选项全部失效）。
+      const nextStoryState: StoryState = {
+        ...current.record.storyState,
+        prologueShown: true,
+      };
       const commit = await commitState(repository, {
         gameId: current.record.gameId,
         expectedRevision: current.record.revision,
         nextWorldState: current.record.worldState,
         nextStoryState,
+        incrementRevision: false,
       });
       if (!commit.ok) return { ok: false, code: commit.code };
       return { ok: true, revision: commit.record.revision };
