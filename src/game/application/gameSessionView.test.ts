@@ -197,7 +197,14 @@ describe("projectGameSessionView", () => {
         ],
       },
     };
-    const view = projectGameSessionView(ws, ssScene, 0, "test-ending-session");
+    // 本地点有未发现线索事实 → explore 场景选项具备可探索性，可以投影。
+    const wsWithTrace = {
+      ...ws,
+      worldFacts: [
+        { factId: asFactId("fact_trace"), text: "柜台下的旧账簿", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") },
+      ],
+    };
+    const view = projectGameSessionView(wsWithTrace, ssScene, 0, "test-ending-session");
     // 世界行动选项出现在 narrative.choices（白名单形状）
     expect(view.narrative.choices?.map((c) => c.choiceToken).sort()).toEqual(["w1", "w2"]);
     for (const c of view.narrative.choices ?? []) {
@@ -207,6 +214,36 @@ describe("projectGameSessionView", () => {
     for (const d of view.narrative.npcDialogues ?? []) {
       expect(d.choices ?? []).toHaveLength(0);
     }
+  });
+
+  it("无剧情钩子的地点：探索场景选项被过滤（方案 1）", () => {
+    const scene = {
+      sceneId: "scene-w",
+      turn: 0,
+      narration: "你在客栈大堂。",
+      usedFactIds: [],
+      npcLine: null,
+      choices: [
+        { choiceToken: "w1", label: "观察", choiceKind: "world_action" as const, actionKey: "explore" },
+        { choiceToken: "w2", label: "离开", choiceKind: "world_action" as const, actionKey: "move:loc_2" },
+      ] as const,
+      source: "generated" as const,
+      event: { kind: "observe" as const, locationId: asLocationId("loc_1") },
+    };
+    const ssScene = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("w1", "scene-w", 0, scene.choices[0].label, { type: "explore" }),
+          approved("w2", "scene-w", 0, scene.choices[1].label, { type: "move", locationId: asLocationId("loc_2") }),
+        ],
+      },
+    };
+    // 干净地点：无事实、无物品、无任务、无候选事件 → explore 不投影，move 仍投影。
+    const view = projectGameSessionView(ws, ssScene, 0, "test-ending-session");
+    expect(view.narrative.choices?.map((c) => c.choiceToken).sort()).toEqual(["w2"]);
   });
 
   it("只投影当前场景、当前 revision 且仍可执行的 ApprovedChoice token", () => {
@@ -241,14 +278,14 @@ describe("projectGameSessionView", () => {
           ...ss.narrative,
           currentScene: scene,
           choiceRegistry: [
-            approved("valid-token", scene.sceneId, 4, "继续观察", { type: "explore" }),
+            approved("valid-token", scene.sceneId, 4, "继续休息", { type: "rest" }),
             ...testCase.badRegistry,
           ],
         },
       };
 
       expect(projectGameSessionView(ws, story, 4, "test-ending-session").narrative.choices).toEqual([
-        { choiceToken: "valid-token", label: "继续观察", presentation: "explore" },
+        { choiceToken: "valid-token", label: "继续休息", presentation: "rest" },
       ]);
     }
   });

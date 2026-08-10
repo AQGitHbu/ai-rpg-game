@@ -7,7 +7,7 @@ import { paginateSpeechText } from "@/game/domain/speechPagination";
 import { locationScaleOf } from "@/game/domain/scenarioBlueprint";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
-import { buildChoiceMap } from "./buildChoiceMap";
+import { buildChoiceMap, hasExplorableContent } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 
 export type PlayerChoiceView = {
@@ -219,7 +219,11 @@ export function projectGameSessionView(
 
   const locationActions: PlayerChoiceView[] = [];
   if (activeBattle === null) {
-    locationActions.push(choice({ type: "explore" }, revision, `探索${currentLocation?.name ?? "此地"}`, "explore"));
+    // 探索：仅当前地点有可探索内容（未发现线索/未拾取物品/未满足目标/候选事件）
+    // 时显示，避免无剧情钩子地点的空转选项（方案 1）。
+    if (hasExplorableContent(worldState, storyState)) {
+      locationActions.push(choice({ type: "explore" }, revision, `探索${currentLocation?.name ?? "此地"}`, "explore"));
+    }
     for (const npc of presentNpcs) {
       locationActions.push(choice(
         { type: "talk", npcId: npc.id, dialogueAct: "ask" },
