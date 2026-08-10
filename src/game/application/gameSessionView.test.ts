@@ -379,6 +379,8 @@ describe("projectGameSessionView", () => {
         : location),
       items: [{ id: itemId, name: "铜钥匙", description: "一把旧钥匙", kind: "key", tags: [] }],
       enemies: [{ id: enemyId, name: "灰狼", tier: "normal", stats: { hp: 20, attack: 5, defense: 2 }, locationId: asLocationId("loc_1"), tags: [] }],
+      // 未发现的线索事实：探索的真正剧情钩子（仅有物品/敌人不构成探索钩子）。
+      worldFacts: [{ factId: asFactId("fact_trace"), text: "柜底暗格", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") }],
     };
 
     const view = projectGameSessionView(completeWorld, ss, 7, "test-ending-session");

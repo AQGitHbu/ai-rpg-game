@@ -83,7 +83,12 @@ function approvedFor(choice: {
 
 describe("buildChoiceMap", () => {
   it("世界行动候选只以 opaque token 构建：talk/move/attack/take/explore/rest", () => {
-    const map = buildChoiceMap(buildWorldState(), buildStoryState({}), 0);
+    // 本地点有未发现线索事实 → explore 为合法世界行动（有剧情钩子）。
+    const hookedWorld = {
+      ...buildWorldState(),
+      worldFacts: [{ factId: asFactId("fact_trace"), text: "残月密函的线索", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") }],
+    };
+    const map = buildChoiceMap(hookedWorld, buildStoryState({}), 0);
     for (const action of [
       talkSmith,
       moveStreet,
@@ -227,9 +232,10 @@ describe("hasExplorableContent（方案 1：有剧情钩子才允许探索）", 
     expect(map.has(deriveRuntimeChoiceToken({ type: "explore" }, 0))).toBe(false);
   });
 
-  it("本地点有未拾取物品 → 可探索", () => {
-    // buildWorldState 的 loc_1 仍有井边钥匙且未拥有。
-    expect(hasExplorableContent(buildWorldState(), buildStoryState({}))).toBe(true);
+  it("本地点仅有未拾取物品（无线索/目标/候选事件）→ 不可探索（物品走 take_item 入口）", () => {
+    // buildWorldState 的 loc_1 有井边钥匙且未拥有，但探索不拾取物品——
+    // 物品不应构成探索钩子，避免无剧情钩子地点出现空转探索按钮。
+    expect(hasExplorableContent(buildWorldState(), buildStoryState({}))).toBe(false);
   });
 
   it("本地点有未发现的线索事实 → 可探索；事实已发现 → 不可探索", () => {
@@ -305,8 +311,11 @@ describe("hasExplorableContent（方案 1：有剧情钩子才允许探索）", 
         { choiceToken: "t_rest", label: "休息" },
       ],
     });
-    // 有物品钩子的世界：探索选项可解析
-    const hooked = buildChoiceMap(buildWorldState(), storyWithChoice, 3);
+    // 有未发现线索事实钩子的世界：探索选项可解析
+    const hooked = buildChoiceMap({
+      ...buildWorldState(),
+      worldFacts: [{ factId: asFactId("fact_trace"), text: "残月密函的线索", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") }],
+    }, storyWithChoice, 3);
     expect(hooked.get(exploreChoice.choiceToken)).toEqual({ type: "explore" });
     // 干净地点：探索选项不映射
     const bare = buildChoiceMap(bareWorld(), storyWithChoice, 3);

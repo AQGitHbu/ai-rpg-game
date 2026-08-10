@@ -136,9 +136,13 @@ function isCurrentlyLegalRegistryAction(
 }
 
 // ---------------------------------------------------------------------------
-// 可探索性判定（方案 1）：探索选项只在存在剧情钩子时对玩家可见/可执行。
-// 钩子 = 当前地点仍有未发现的线索事实、未拾取的物品、未满足的地点相关
-// 目标、或候选事件池中涉及当前地点的有效（未过期）候选事件。
+// 可探索性判定（方案 1 修订）：探索选项只在存在"探索能推进"的剧情钩子时
+// 对玩家可见/可执行。
+// 钩子 = 当前地点仍有未发现的线索事实、未满足的地点相关目标、或候选事件池
+// 中涉及当前地点的有效（未过期）候选事件。
+// 注意：本地点有未拾取物品（availableItemIds）不构成探索钩子——探索动作
+// 不拾取物品（拾取走独立 take_item 入口），有物品并不代表探索有剧情作用；
+// 若把物品当作钩子，无剧情钩子的地点（如开局青石镇）会出现空转探索按钮。
 // ---------------------------------------------------------------------------
 export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
   const currentId = ws.currentLocationId;
@@ -146,16 +150,7 @@ export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
   // 1) 本地点仍有未发现的线索事实（含 NPC 私密事实：探索可引动揭示，不泄漏正文）。
   if (ws.worldFacts.some((f) => f.locationId === currentId && !f.discovered)) return true;
 
-  // 2) 本地点仍有未拾取的物品。
-  const currentLoc = ws.locations.find((l) => l.id === currentId);
-  if (
-    currentLoc !== undefined &&
-    currentLoc.availableItemIds.some((itemId) => !ws.inventory.includes(itemId))
-  ) {
-    return true;
-  }
-
-  // 3) 未满足的、指向本地点或其线索事实的任务目标（active 任务）。
+  // 2) 未满足的、指向本地点或其线索事实的任务目标（active 任务）。
   const hasUnmetLocationObjective = ws.quests.some((q) =>
     q.status === "active" &&
     q.objectives.some((o) => {
@@ -171,7 +166,7 @@ export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
   );
   if (hasUnmetLocationObjective) return true;
 
-  // 4) 候选事件池中涉及当前地点的有效候选（探索是激活这些事件的手段之一）。
+  // 3) 候选事件池中涉及当前地点的有效候选（探索是激活这些事件的手段之一）。
   return ss.candidateEventPool.some((candidate) =>
     !isExpiredCandidate(candidate, ss.turnNumber) &&
     candidateTouchesLocation(ws, candidate, currentId),
