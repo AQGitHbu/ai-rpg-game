@@ -50,7 +50,6 @@ export type Action =
   | { readonly type: "give_item"; readonly itemId: ItemId; readonly npcId: NpcId }
   | { readonly type: "attack"; readonly enemyId: EnemyId }
   | { readonly type: "battle_action"; readonly action: "attack" | "guard" | "flee" }
-  | { readonly type: "rest" }
   | { readonly type: "ack_prologue" }
   | { readonly type: "freeform"; readonly intent: string; readonly rawText: string };
 
@@ -67,7 +66,6 @@ export const SUPPORTED_ACTION_TYPES: readonly ActionType[] = [
   "give_item",
   "attack",
   "battle_action",
-  "rest",
   "ack_prologue",
   "freeform",
 ];

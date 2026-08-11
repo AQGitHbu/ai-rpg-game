@@ -10,7 +10,6 @@ export const TENSION_CHANGES = {
   fact_discovered: 12,
   quest_completed: 8,
   npc_met: 3,
-  player_rested: -10,
 } as const;
 
 // Spec §13.2：storyProgress 由主线 stage/目标比例推导，不在此固定 +10。
@@ -33,7 +32,6 @@ export function updateStoryMetrics(prev: StoryState, newEvents: readonly GameEve
       case "fact_discovered": tension += TENSION_CHANGES.fact_discovered; break;
       case "quest_completed": tension += TENSION_CHANGES.quest_completed; break;
       case "npc_met": tension += TENSION_CHANGES.npc_met; break;
-      case "player_rested": tension += TENSION_CHANGES.player_rested; break;
     }
   }
 

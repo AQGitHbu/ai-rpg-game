@@ -141,7 +141,7 @@ describe("checkExpansionTrigger", () => {
         triggeredEvents: [], rejectedEffects: [],
       },
     };
-    const result = checkExpansionTrigger(okResult, wsWithGuard, ss, { type: "rest" });
+    const result = checkExpansionTrigger(okResult, wsWithGuard, ss, { type: "explore" });
     expect(result.triggered).toBe(true);
     expect(result.reason).toBe("reuse");
     expect(result.reuse).toBeDefined();
@@ -181,8 +181,8 @@ describe("checkExpansionTrigger", () => {
         triggeredEvents: [], rejectedEffects: [],
       },
     };
-    const restAction: Action = { type: "rest" };
-    const result = checkExpansionTrigger(okResult, ws, lowSs, restAction);
+    const exploreAction: Action = { type: "explore" };
+    const result = checkExpansionTrigger(okResult, ws, lowSs, exploreAction);
     expect(result.triggered).toBe(true);
     expect(result.reason).toBe("low_tension");
   });
@@ -199,7 +199,7 @@ describe("checkExpansionTrigger", () => {
         triggeredEvents: [], rejectedEffects: [],
       },
     };
-    const result = checkExpansionTrigger(okResult, ws, midSs, { type: "rest" });
+    const result = checkExpansionTrigger(okResult, ws, midSs, { type: "explore" });
     expect(result.triggered).toBe(false);
     expect(result.reason).toBe("no_trigger");
   });
@@ -220,7 +220,7 @@ describe("checkExpansionTrigger", () => {
         triggeredEvents: [], rejectedEffects: [],
       },
     };
-    const result = checkExpansionTrigger(okResult, wsWithEnemy, lowSs, { type: "rest" });
+    const result = checkExpansionTrigger(okResult, wsWithEnemy, lowSs, { type: "explore" });
     expect(result.triggered).toBe(true);
     expect(result.reason).toBe("reuse");
     expect(result.reuse!.kind).toBe("enemy");
@@ -246,7 +246,7 @@ describe("checkExpansionTrigger", () => {
         triggeredEvents: [], rejectedEffects: [],
       },
     };
-    const result = checkExpansionTrigger(okResult, ws, climaxSs, { type: "rest" });
+    const result = checkExpansionTrigger(okResult, ws, climaxSs, { type: "explore" });
     expect(result.triggered).toBe(false);
     expect(result.closureSignal).toBe("climax");
   });
@@ -272,7 +272,7 @@ describe("checkExpansionTrigger", () => {
         triggeredEvents: [], rejectedEffects: [],
       },
     };
-    const result = checkExpansionTrigger(okResult, ws, hardLimitSs, { type: "rest" });
+    const result = checkExpansionTrigger(okResult, ws, hardLimitSs, { type: "explore" });
     expect(result.triggered).toBe(false);
     expect(result.closureSignal).toBe("hard_limit");
   });
@@ -304,7 +304,7 @@ describe("checkExpansionTrigger", () => {
         triggeredEvents: [], rejectedEffects: [],
       },
     };
-    const result = checkExpansionTrigger(okResult, wsWithQuest, ss, { type: "rest" });
+    const result = checkExpansionTrigger(okResult, wsWithQuest, ss, { type: "explore" });
     expect(result.triggered).toBe(true);
     expect(result.reason).toBe("quest_gap");
   });

@@ -162,12 +162,6 @@ export type EndingReachedEvent = {
   readonly occurredAt: string;
 };
 
-/** 玩家休息：由 rest 行动成功时追加，按固定值更新张力（Spec §13.5）。 */
-export type PlayerRestedEvent = {
-  readonly type: "player_rested";
-  readonly occurredAt: string;
-};
-
 /** Phase 10：叙事选择——玩家在 AI 导演场景中做出的选择。 */
 export type NarrativeChoiceEvent = {
   readonly type: "narrative_choice";
@@ -294,7 +288,6 @@ export type GameEvent =
   | EnemyDefeatedEvent
   | QuestFailedEvent
   | EndingReachedEvent
-  | PlayerRestedEvent
   | NarrativeChoiceEvent
   | NarrativeDialogueChoiceEvent
   | NarrativeScenePresentedEvent

@@ -19,7 +19,7 @@ const TOKENS = {
   battle: "c_0000000000000006",
 } as const;
 
-function choice(choiceToken: string, label: string, presentation: "dialogue" | "travel" | "explore" | "item" | "battle" | "rest") {
+function choice(choiceToken: string, label: string, presentation: "dialogue" | "travel" | "explore" | "item" | "battle") {
   return { choiceToken, label, presentation } as const;
 }
 

@@ -25,7 +25,7 @@
 - 七种预设题材；产品 UI 只开放短篇和中篇。
 - seed 相关的世界、地点、NPC、任务、物品、敌人和至少两个结局；相同 seed 可 replay，不同 seed 结构不同。
 - 焦点 NPC 两个固定对白选择和一个自定义输入；两者走同一 `/api/game/actions` 与 `performTurn`。
-- 探索、调查、移动、拾取、休息、NPC 关系/记忆、候选事件、确定性战斗与结局。
+- 探索、调查、移动、拾取、NPC 关系/记忆、候选事件、确定性战斗与结局。
 - AI/fixture 只生成 proposal；规则审批、Action、任务、知识、关系、战斗、预算和结局独占正式状态。
 - SQLite `game_records + current_game`、单一 revision CAS、刷新恢复、开发环境安全清档。
 - live AI 不可用时使用同轨确定性 fallback，仍可离线完成一局。

@@ -77,8 +77,6 @@ export function buildChoiceMap(
       }
     }
 
-    // 通用行动
-    addRuntimeAction({ type: "rest" });
     // 探索：仅当前地点有可探索内容（未发现线索/未拾取物品/未满足目标/候选事件）
     // 时才作为合法世界行动（方案 1：无剧情钩子不显示探索）。
     if (hasExplorableContent(worldState, storyState)) {
@@ -122,7 +120,6 @@ function isCurrentlyLegalRegistryAction(
     case "take_item":
     case "give_item":
     case "attack":
-    case "rest":
     case "battle_action":
       return worldActionMap.has(deriveRuntimeChoiceToken(action, currentRevision));
     // 探索：只有当前地点有可探索内容时，AI 提案的探索选项才合法并投影。

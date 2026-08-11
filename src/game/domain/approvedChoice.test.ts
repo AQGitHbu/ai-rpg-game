@@ -129,7 +129,6 @@ describe("semanticSummaryOf", () => {
     const exploreA: ApprovedChoice["action"] = { type: "explore" };
     const exploreB: ApprovedChoice["action"] = { type: "explore" };
     expect(semanticSummaryOf(exploreA)).toBe(semanticSummaryOf(exploreB));
-    expect(semanticSummaryOf(exploreA)).not.toBe(semanticSummaryOf({ type: "rest" }));
     expect(semanticSummaryOf({ type: "ack_prologue" })).toBe("ack_prologue");
   });
 

@@ -22,7 +22,7 @@ const CHALLENGE: Branch = { name: "challenge", fixedLabel: "质疑", customText:
 async function runBranch(branch: Branch, replay: number) {
   const gameId = asGameId(`divergence_${branch.name}_${replay}`);
   let store: InMemoryRepo = createInMemoryRepo(gameId);
-  await createJourneyGame(gameId, store, "shared-branch-seed");
+  await createJourneyGame(gameId, store, "shared-branch-seed", "medium");
   let successfulTurns = 0;
   let reloads = 0;
   const accept = (result: { readonly ok: boolean }) => {
@@ -49,23 +49,23 @@ async function runBranch(branch: Branch, replay: number) {
   const npcId = store.record()!.worldState.npcs[0]!.id;
   accept(await playTurn(store.repo, { kind: "free_text", text: branch.customText, targetNpcId: npcId })); // 3: custom NPC branch
   await scene();
-  await fixed("休息"); // 4: activate branch event
+  await travel(); // 4: move to the route
   await scene();
-  await fixed("休息"); // 5: rest again
-  await scene();
-  reload();
-  await travel(); // 6
-  await scene();
-  await fixed("拾取"); // 7: unlock act 3 route
-  await scene();
-  await fixed("休息"); // 8
-  await scene();
-  await fixed("休息"); // 9: rest again
+  await fixed("拾取"); // 5: obtain the route clue
   await scene();
   reload();
-  await travel(); // 10
+  await travel(); // 6: move to the guard location
   await scene();
-  await fixed("休息"); // 11: rest before battle
+  await fixed("挑战"); // 7: start the guard battle
+  await scene();
+  await fixed("攻击"); // 8: defeat the guard
+  await scene();
+  await travel(); // 9: move to the archive
+  await scene();
+  reload();
+  await fixed("拾取"); // 10: obtain the archive evidence
+  await scene();
+  await travel(); // 11: enter the climax location
   await scene();
   await fixed("挑战"); // 12: start climax battle
   await scene();

@@ -14,7 +14,7 @@ export type PlayerChoiceView = {
   readonly choiceToken: string;
   readonly label: string;
   readonly hint?: string;
-  readonly presentation: "dialogue" | "travel" | "explore" | "item" | "battle" | "rest";
+  readonly presentation: "dialogue" | "travel" | "explore" | "item" | "battle";
 };
 
 export type NpcDialogueView = {
@@ -153,8 +153,6 @@ function presentationForAction(action: Action): PlayerChoiceView["presentation"]
     case "attack":
     case "battle_action":
       return "battle";
-    case "rest":
-      return "rest";
     case "explore":
     case "investigate":
     case "ack_prologue":
@@ -237,7 +235,6 @@ export function projectGameSessionView(
         locationActions.push(choice({ type: "attack", enemyId: enemy.id }, revision, `挑战${enemy.name}`, "battle"));
       }
     }
-    locationActions.push(choice({ type: "rest" }, revision, "休息", "rest"));
   }
 
   const obtainableItems = activeBattle === null

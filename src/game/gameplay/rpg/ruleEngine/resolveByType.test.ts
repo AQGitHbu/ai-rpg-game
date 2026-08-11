@@ -72,14 +72,6 @@ describe("resolveByType", () => {
     }
   });
 
-  it("rest emits player_rested primary event (Task 29)", () => {
-    const result = resolveByType(ws, { type: "rest" }, deps);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.events.map((e) => e.type)).toEqual(["player_rested"]);
-      expect(result.nextWorldState.eventLedger.length).toBe(ws.eventLedger.length + 1);
-    }
-  });
 });
 
 describe("resolveByType status and stateChanges", () => {

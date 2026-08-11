@@ -84,7 +84,6 @@ export function validateAction(ws: WorldState, action: Action): ValidateResult {
     }
     case "ack_prologue":
     case "explore":
-    case "rest":
     case "freeform":
       return { ok: true };
     default:

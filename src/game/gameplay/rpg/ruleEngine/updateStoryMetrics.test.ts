@@ -47,9 +47,4 @@ describe("updateStoryMetrics", () => {
     expect(withdraw.tension).toBe(18); // 30 - 12（与 defeat 一致，明确使用 withdraw 分支）
   });
 
-  it("player_rested 固定 -10 张力", () => {
-    const result = updateStoryMetrics(ss, [{ type: "player_rested", occurredAt: "t" }]);
-    expect(result.tension).toBe(20); // 30 - 10
-    expect(TENSION_CHANGES.player_rested).toBe(-10);
-  });
 });

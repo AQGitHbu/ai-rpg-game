@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolveLiveNpcLine, resolveSelectedChoiceProposals } from "./sourceFactory";
+import { asLocationId } from "@/game/domain/scenarioBlueprint";
 
 const presentNpcs = [
   { id: "npc_1", name: "老板" },
@@ -41,16 +42,16 @@ describe("resolveLiveNpcLine", () => {
 describe("resolveSelectedChoiceProposals", () => {
   const selectable = [
     { candidateId: "candidate_1", proposal: { label: "探索", action: { type: "explore" as const } } },
-    { candidateId: "candidate_2", proposal: { label: "休息", action: { type: "rest" as const } } },
+    { candidateId: "candidate_2", proposal: { label: "前往街道", action: { type: "move" as const, locationId: asLocationId("loc_2") } } },
   ];
 
   it("只把两个不同的服务端 candidateId 映射为 Action 提案", () => {
     const resolved = resolveSelectedChoiceProposals(selectable, [
-      { candidateId: "candidate_2", label: "稍作休息" },
+      { candidateId: "candidate_2", label: "前往街道" },
       { candidateId: "candidate_1", label: "查看四周" },
     ]);
     expect(resolved).toEqual([
-      { label: "稍作休息", action: { type: "rest" } },
+      { label: "前往街道", action: { type: "move", locationId: asLocationId("loc_2") } },
       { label: "查看四周", action: { type: "explore" } },
     ]);
   });

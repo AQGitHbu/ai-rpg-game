@@ -74,7 +74,7 @@ function presentNpcByName(ctx: IntentContext, text: string): NpcId | null {
 /**
  * AI 载荷纯校验（schema + 目标合法性）：
  * - {dialogueAct} 或 {type:"talk", dialogueAct} → 绑定在场目标 NPC；
- * - move/take_item → 实体必须存在于上下文；explore/rest 直接放行；
+ * - move/take_item → 实体必须存在于上下文；explore 直接放行；
  * - 其余一律 unclassifiable。
  */
 export function parseIntentPayload(
@@ -125,11 +125,6 @@ export function parseIntentPayload(
 
   if (data.type === "explore") {
     const action: Action = { type: "explore" };
-    return { ok: true, action };
-  }
-
-  if (data.type === "rest") {
-    const action: Action = { type: "rest" };
     return { ok: true, action };
   }
 
@@ -225,7 +220,7 @@ function buildUserPrompt(text: string, ctx: IntentContext, targetNpcId?: NpcId):
     `在场NPC：${npcNames}`,
     `可达地点：${locNames}`,
     `可用物品：${itemNames}`,
-    "返回严格 JSON：{\"dialogueAct\":\"ask|support|challenge|threaten|deceive|offer|refuse|reassure\"} 或 {\"type\":\"talk\"|\"move\"|\"take_item\"|\"explore\"|\"rest\", ...}",
+    "返回严格 JSON：{\"dialogueAct\":\"ask|support|challenge|threaten|deceive|offer|refuse|reassure\"} 或 {\"type\":\"talk\"|\"move\"|\"take_item\"|\"explore\", ...}",
   ].join("\n");
 }
 

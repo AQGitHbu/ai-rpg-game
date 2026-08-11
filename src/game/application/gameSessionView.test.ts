@@ -252,9 +252,9 @@ describe("projectGameSessionView", () => {
       readonly badRegistry: readonly ApprovedChoice[];
     }[] = [
       { badToken: "missing-token", badRegistry: [] },
-      { badToken: "stale-token", badRegistry: [approved("stale-token", "scene-current", 3, "旧选项", { type: "rest" })] },
-      { badToken: "wrong-scene-token", badRegistry: [approved("wrong-scene-token", "scene-other", 4, "别处选项", { type: "rest" })] },
-      { badToken: "tampered-token", badRegistry: [approved("server-token", "scene-current", 4, "服务器原始选项", { type: "rest" })] },
+      { badToken: "stale-token", badRegistry: [approved("stale-token", "scene-current", 3, "旧选项", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" })] },
+      { badToken: "wrong-scene-token", badRegistry: [approved("wrong-scene-token", "scene-other", 4, "别处选项", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" })] },
+      { badToken: "tampered-token", badRegistry: [approved("server-token", "scene-current", 4, "服务器原始选项", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" })] },
       { badToken: "illegal-token", badRegistry: [approved("illegal-token", "scene-current", 4, "前往未连接地点", { type: "move", locationId: asLocationId("loc_locked") })] },
     ];
 
@@ -278,14 +278,14 @@ describe("projectGameSessionView", () => {
           ...ss.narrative,
           currentScene: scene,
           choiceRegistry: [
-            approved("valid-token", scene.sceneId, 4, "继续休息", { type: "rest" }),
+            approved("valid-token", scene.sceneId, 4, "询问老板", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }),
             ...testCase.badRegistry,
           ],
         },
       };
 
       expect(projectGameSessionView(ws, story, 4, "test-ending-session").narrative.choices).toEqual([
-        { choiceToken: "valid-token", label: "继续休息", presentation: "rest" },
+        { choiceToken: "valid-token", label: "询问老板", presentation: "dialogue" },
       ]);
     }
   });
@@ -390,7 +390,7 @@ describe("projectGameSessionView", () => {
     expect(travel?.choiceToken).not.toContain("loc_2");
 
     expect(view.currentLocation.actions.map((choice) => choice.presentation)).toEqual([
-      "explore", "dialogue", "battle", "rest",
+      "explore", "dialogue", "battle",
     ]);
     expect(view.obtainableItems).toEqual([
       expect.objectContaining({ name: "铜钥匙", choice: expect.objectContaining({ presentation: "item" }) }),
@@ -408,7 +408,7 @@ describe("projectGameSessionView", () => {
       ...view.obtainableItems.map((item) => item.choice),
     ]) {
       expect(choice.choiceToken).toMatch(/^c_[0-9a-f]{16}$/);
-      expect(choice.choiceToken).not.toMatch(/move:|take_item:|attack:|explore|rest/);
+      expect(choice.choiceToken).not.toMatch(/move:|take_item:|attack:|explore/);
     }
     const executable = buildChoiceMap(completeWorld, ss, 7);
     for (const playerChoice of [

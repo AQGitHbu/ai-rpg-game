@@ -82,7 +82,7 @@ function approvedFor(choice: {
 }
 
 describe("buildChoiceMap", () => {
-  it("世界行动候选只以 opaque token 构建：talk/move/attack/take/explore/rest", () => {
+  it("世界行动候选只以 opaque token 构建：talk/move/attack/take/explore", () => {
     // 本地点有未发现线索事实 → explore 为合法世界行动（有剧情钩子）。
     const hookedWorld = {
       ...buildWorldState(),
@@ -95,13 +95,12 @@ describe("buildChoiceMap", () => {
       attackWolf,
       takeKey,
       { type: "explore" } as const,
-      { type: "rest" } as const,
     ]) {
       const token = deriveRuntimeChoiceToken(action, 0);
       expect(token).toMatch(/^c_[0-9a-f]{16}$/);
       expect(map.get(token)).toEqual(action);
     }
-    for (const semantic of ["talk:npc_smith", "move:loc_2", "attack:enemy_wolf", "take_item:item_well_key", "explore", "rest"]) {
+    for (const semantic of ["talk:npc_smith", "move:loc_2", "attack:enemy_wolf", "take_item:item_well_key", "explore"]) {
       expect(map.has(semantic)).toBe(false);
     }
   });
@@ -163,7 +162,7 @@ describe("buildChoiceMap", () => {
 
   it("未知/过期 token（不在 registry）不产生映射，即旧 actionKey 不再作为选择入口", () => {
     const map = buildChoiceMap(buildWorldState(), buildStoryState({
-      choices: [{ choiceToken: "legacy-a", label: "探索" }, { choiceToken: "legacy-b", label: "休息" }],
+      choices: [{ choiceToken: "legacy-a", label: "探索" }, { choiceToken: "legacy-b", label: "旧选项" }],
     }), 0);
     expect(map.has("legacy-a")).toBe(false);
     expect(map.has("legacy-b")).toBe(false);
@@ -308,7 +307,7 @@ describe("hasExplorableContent（方案 1：有剧情钩子才允许探索）", 
       registry: [exploreChoice],
       choices: [
         { choiceToken: exploreChoice.choiceToken, label: "探索客栈" },
-        { choiceToken: "t_rest", label: "休息" },
+        { choiceToken: "t_old", label: "旧选项" },
       ],
     });
     // 有未发现线索事实钩子的世界：探索选项可解析

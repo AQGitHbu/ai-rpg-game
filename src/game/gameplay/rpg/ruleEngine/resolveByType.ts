@@ -181,19 +181,6 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         facts: [],
       };
     }
-    case "rest": {
-      // 无状态行动也产生主事件（Task 29）：rest → player_rested，不得 success + 空事件。
-      const event: GameEvent = { type: "player_rested", occurredAt };
-      return {
-        ok: true,
-        nextWorldState: { ...ws, eventLedger: [...ws.eventLedger, event] },
-        events: [event],
-        feedback: "你休息了一会儿。",
-        status: "success",
-        stateChanges: [],
-        facts: [],
-      };
-    }
     case "ack_prologue": {
       return { ok: true, nextWorldState: { ...ws }, events: [], feedback: "", status: "success", stateChanges: [], facts: [] };
     }

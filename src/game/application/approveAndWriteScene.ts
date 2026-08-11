@@ -185,7 +185,6 @@ function isWellFormedAction(value: unknown): value is Action {
     case "battle_action":
       return hasOnlyKeys(value, ["type", "action"])
         && (value.action === "attack" || value.action === "guard" || value.action === "flee");
-    case "rest": return hasOnlyKeys(value, ["type"]);
     case "ack_prologue": return hasOnlyKeys(value, ["type"]);
     case "freeform":
       return hasOnlyKeys(value, ["type", "intent", "rawText"])

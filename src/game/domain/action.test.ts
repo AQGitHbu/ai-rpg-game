@@ -67,7 +67,7 @@ describe("Action support matrix (Task 29)", () => {
   it("declares the canonical set of fully-supported production action types", () => {
     const expected = [
       "talk", "move", "explore", "investigate", "take_item", "give_item",
-      "attack", "battle_action", "rest", "ack_prologue", "freeform",
+      "attack", "battle_action", "ack_prologue", "freeform",
     ];
     expect([...SUPPORTED_ACTION_TYPES]).toEqual(expected);
   });
@@ -92,8 +92,8 @@ describe("Action support matrix (Task 29)", () => {
 
   it("ack_prologue is the only supported type allowed to produce no primary event", () => {
     const expected = new Set(SUPPORTED_ACTION_TYPES);
-    // explore/rest/freeform 必须产生主事件；仅 ack_prologue 允许空事件（幂等标记）。
-    for (const t of ["explore", "rest", "freeform"] as const) {
+    // explore/freeform 必须产生主事件；仅 ack_prologue 允许空事件（幂等标记）。
+    for (const t of ["explore", "freeform"] as const) {
       expect(expected.has(t)).toBe(true);
     }
   });
