@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  createJourneyEvolutionSource,
   createJourneyGame,
   playIssuedChoice,
   advanceScene,
