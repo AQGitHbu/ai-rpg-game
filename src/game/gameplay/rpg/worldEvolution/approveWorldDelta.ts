@@ -275,10 +275,21 @@ export function approveWorldDelta(input: {
     return reject("invalid_location_ref", "connect_from");
   }
 
-  // 重名约束：新实体不得与既有同名实体撞名。
+  // 重名约束：新实体不得与既有同名实体撞名（敌人、跨幕任务名一并纳入）。
   if (p.newNpc && ws.npcs.some((n) => n.name === p.newNpc!.name)) return reject("duplicate_name", "npc");
   if (p.newLocation && ws.locations.some((l) => l.name === p.newLocation!.name)) return reject("duplicate_name", "location");
   if (p.newItem && ws.items.some((i) => i.name === p.newItem!.name)) return reject("duplicate_name", "item");
+  if (p.newEnemy && ws.enemies.some((e) => e.name === p.newEnemy!.name)) return reject("duplicate_name", "enemy");
+  if (p.nextMainQuest && ws.quests.some((q) => q.name === p.nextMainQuest!.name)) return reject("duplicate_name", "quest");
+  const proposedNames = [
+    ...(p.newNpc ? [p.newNpc.name] : []),
+    ...(p.newLocation ? [p.newLocation.name] : []),
+    ...(p.newItem ? [p.newItem.name] : []),
+    ...(p.newEnemy ? [p.newEnemy.name] : []),
+    ...(p.nextMainQuest ? [p.nextMainQuest.name] : []),
+    ...(p.endingPair ? p.endingPair.map((e) => e.name) : []),
+  ];
+  if (new Set(proposedNames).size !== proposedNames.length) return reject("duplicate_name", "proposal_internal");
 
   // 体裁结构约束（最小集）：名称 2-40 字符，描述/正文非空且 <=200 字符。
   if (p.newNpc && (!validName(p.newNpc.name) || !validText(p.newNpc.role) || !validText(p.newNpc.description))) {

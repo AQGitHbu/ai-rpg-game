@@ -5,7 +5,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import type { EvolutionNeed, WorldDeltaProposal } from "@/game/domain/worldDelta";
-import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asEnemyId, asGenerationId } from "@/game/domain/worldEntity";
 
 function makeWorld(): WorldState {
   const base = createInitialWorldState({
@@ -154,6 +154,56 @@ describe("approveWorldDelta", () => {
       newNpc: {
         name: "韩征", role: "掌柜", description: "一个名叫韩征的人。",
         locationRef: { kind: "new_location" }, goals: [],
+      },
+    };
+    const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }) });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("duplicate_name");
+  });
+
+  it("rejects a duplicate name against an existing enemy", () => {
+    const ws: WorldState = {
+      ...makeWorld(),
+      enemies: [{
+        id: asEnemyId("enemy_0"), name: "拦路山贼", tier: "normal", stats: { hp: 60, attack: 8, defense: 3 },
+        locationId: asLocationId("loc_0"), tags: [],
+      }],
+    };
+    const proposal: WorldDeltaProposal = {
+      ...nextActProposal(),
+      newEnemy: {
+        name: "拦路山贼", tier: "normal",
+        locationRef: "current",
+      },
+    };
+    const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws, ss: makeStory({ currentAct: 2 }) });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("duplicate_name");
+  });
+
+  it("rejects a next main quest whose name collides with a quest from another act", () => {
+    const ws: WorldState = {
+      ...makeWorld(),
+      quests: [{
+        id: "quest_other_act" as never, name: "追查密信", description: "旧剧本里的同名线索。", objectives: [],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 3, status: "active",
+      }],
+    };
+    const result = approveWorldDelta({ proposal: nextActProposal(), need: { kind: "next_act", act: 2 }, ws, ss: makeStory({ currentAct: 2 }) });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("duplicate_name");
+  });
+
+  it("rejects proposals that collide with each other on a name", () => {
+    const proposal: WorldDeltaProposal = {
+      ...nextActProposal(),
+      newNpc: {
+        name: "青山别院", role: "掌柜", description: "一个跟同批新地点撞名的人。",
+        locationRef: { kind: "existing", id: "loc_0" }, goals: [],
       },
     };
     const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }) });

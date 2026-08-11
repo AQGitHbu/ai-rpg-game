@@ -19,20 +19,17 @@ export function deriveEvolutionNeed(ws: WorldState, ss: StoryState): EvolutionNe
   }
 
   const pacing = ss.nextPacingNeed;
-  if (pacing === "climax" || pacing === "resolve") {
+  if (pacing === "climax" || pacing === "resolve" || pacing === "reveal" || pacing === "develop") {
     return { kind: "none" };
   }
 
   if (
     evolutionStatus === "stable" &&
     ss.currentAct >= 2 &&
-    ss.tension < 30 &&
     budgetAllowsExpansion(ss.budget, "events")
   ) {
-    return {
-      kind: "pacing",
-      pacingNeed: pacing === "escalate" ? "escalate" : "complicate",
-    };
+    if (pacing === "complicate") return { kind: "pacing", pacingNeed: "complicate" };
+    if (pacing === "escalate") return { kind: "pacing", pacingNeed: "escalate" };
   }
 
   return { kind: "none" };

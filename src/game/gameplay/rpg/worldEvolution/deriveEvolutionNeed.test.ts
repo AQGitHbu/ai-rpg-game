@@ -57,6 +57,16 @@ describe("deriveEvolutionNeed", () => {
     expect(deriveEvolutionNeed(makeWorld(), ss)).toEqual({ kind: "none" });
   });
 
+  it("returns an escalate pacing need when the pacing hint is escalate and story is ascending", () => {
+    const ss = makeStory({ currentAct: 2, targetActs: 3, tension: 60, nextPacingNeed: "escalate" });
+    expect(deriveEvolutionNeed(makeWorld(), ss)).toEqual({ kind: "pacing", pacingNeed: "escalate" });
+  });
+
+  it("returns none for a develop pacing hint even with budget available", () => {
+    const ss = makeStory({ currentAct: 2, targetActs: 3, tension: 40, nextPacingNeed: "develop" });
+    expect(deriveEvolutionNeed(makeWorld(), ss)).toEqual({ kind: "none" });
+  });
+
   it("returns none when no budget remains for any pacing entity", () => {
     const base = makeStory({ currentAct: 2, targetActs: 3, tension: 10 });
     const ss: StoryState = {
