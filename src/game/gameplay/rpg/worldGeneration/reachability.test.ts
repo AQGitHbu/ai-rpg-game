@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { analyzeLocationReachability } from "./reachability";
-import type { LocationDefinitionCandidate } from "@/game/domain/scenarioBlueprint";
+import type { LocationDefinitionCandidate } from "@/game/domain/worldEntity";
 
 function loc(id: string, connected: readonly string[]): LocationDefinitionCandidate {
   return {

@@ -7,7 +7,7 @@ import {
   type EnemyEntry,
   type LocationEntry,
 } from "@/game/domain/worldState";
-import { asEnemyId, asLocationId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asEnemyId, asLocationId, asGenerationId } from "@/game/domain/worldEntity";
 
 const FIXED_TIME = "2026-08-07T12:00:00Z";
 const deps = { now: () => FIXED_TIME };

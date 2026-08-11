@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { validateAction } from "./validateAction";
 import { createInitialWorldState, appendEnemy, appendNpc, type LocationEntry, type EnemyEntry, type NpcEntry } from "@/game/domain/worldState";
-import { asLocationId, asNpcId, asEnemyId, asGenerationId, asItemId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId, asEnemyId, asGenerationId, asItemId } from "@/game/domain/worldEntity";
 
 function makeWorldWithEnemy() {
   const startingLocation: LocationEntry = {

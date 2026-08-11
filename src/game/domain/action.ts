@@ -1,4 +1,4 @@
-import type { LocationId, NpcId, FactId, ItemId, EnemyId, QuestId } from "./scenarioBlueprint";
+import type { LocationId, NpcId, FactId, ItemId, EnemyId, QuestId } from "./worldEntity";
 import type { ThreadId } from "./storyState";
 
 /** 规则可识别的对话行为（Spec §7.2）。utterance 只供叙事表现，不得声明结果。 */

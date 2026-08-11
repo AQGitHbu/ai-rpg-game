@@ -1,5 +1,4 @@
 import type { GameTypeId, GameSetup } from "./newGame";
-import type { BudgetPolicy } from "./budgetPolicy";
 
 // ---------------------------------------------------------------------------
 // 品牌化稳定 ID
@@ -18,7 +17,6 @@ export type ItemId = BrandedId<"ItemId">;
 export type EnemyId = BrandedId<"EnemyId">;
 export type EndingId = BrandedId<"EndingId">;
 export type FactId = BrandedId<"FactId">;
-export type SceneId = BrandedId<"SceneId">;
 
 // 供编译器（Task 5）和测试铸造 ID 的最小 helper；不做任何格式校验。
 export function asGenerationId(raw: string): GenerationId { return raw as GenerationId; }
@@ -29,15 +27,14 @@ export function asItemId(raw: string): ItemId { return raw as ItemId; }
 export function asEnemyId(raw: string): EnemyId { return raw as EnemyId; }
 export function asEndingId(raw: string): EndingId { return raw as EndingId; }
 export function asFactId(raw: string): FactId { return raw as FactId; }
-export function asSceneId(raw: string): SceneId { return raw as SceneId; }
 
 // ---------------------------------------------------------------------------
-// 候选 / 已编译共用的结构模板
-// 同一套字段以 IdSet 参数实例化两次：候选用普通字符串，编译后用品牌化 ID。
+// 候选定义结构模板
+// 同一套字段以 IdSet 参数实例化：候选定义用普通字符串 ID，运行时 entry 类型
+// 由 worldState.ts 使用品牌化 ID 承担。
 // ---------------------------------------------------------------------------
 
 type IdSet = {
-  generation: string;
   location: string;
   npc: string;
   quest: string;
@@ -45,39 +42,12 @@ type IdSet = {
   enemy: string;
   ending: string;
   fact: string;
-  scene: string;
 };
 
 type CandidateIds = IdSet;
 
-type CompiledIds = {
-  generation: GenerationId;
-  location: LocationId;
-  npc: NpcId;
-  quest: QuestId;
-  item: ItemId;
-  enemy: EnemyId;
-  ending: EndingId;
-  fact: FactId;
-  scene: SceneId;
-};
-
 /** 事实来源标记：区分玩家输入宣称与生成器补全，供校验与展示追溯。 */
 export type FactSource = "player_input" | "generated";
-
-type WorldFactOf<I extends IdSet> = {
-  readonly id: I["fact"];
-  readonly text: string;
-  readonly source: FactSource;
-};
-
-type WorldDefinitionOf<I extends IdSet> = {
-  readonly summary: string;
-  readonly tone: string;
-  readonly themes: readonly string[];
-  readonly facts: readonly WorldFactOf<I>[];
-  readonly tags: readonly string[];
-};
 
 export type LocationKind = "main" | "hidden";
 
@@ -129,7 +99,7 @@ type QuestOutcomeOf<I extends IdSet> =
   | { readonly kind: "closed" };
 
 // 正整数，上限由 budgetPolicy.mainActs 决定，结构校验在 questGraph
-export type MainQuestStage = number;
+type MainQuestStage = number;
 
 type QuestCommonOf<I extends IdSet> = {
   readonly id: I["quest"];
@@ -203,125 +173,7 @@ type EndingDefinitionOf<I extends IdSet> = {
   readonly requirements: readonly EndingRequirementOf<I>[];
 };
 
-// === Phase 14：结局方向与序幕 ===
-
-/** 结局基调：影响结局文案与视觉风格。 */
-export type EndingTone = "triumph" | "tragedy" | "bittersweet" | "ambiguous";
-
-/** 序幕定义：黑底白字开场，开局一次性生成。 */
-export type PrologueDefinition = {
-  /** 序幕正文，如"南宋覆灭五十余年..." */
-  readonly text: string;
-  /** 影响视觉风格（字体动画速度等）。 */
-  readonly tone: "serious" | "epic" | "mysterious";
-  /** 可选自动播放时长（毫秒）；缺省由玩家点击跳过。 */
-  readonly durationMs?: number;
-};
-
-/** 结局方向骨架：开局生成，运行时由 AI 导演具体化。 */
-type EndingDirectionOf = {
-  /** 结局主题方向，如"反元抉择"。 */
-  readonly theme: string;
-  /** 可能的基调集合，AI 提议的结局必须从中选择。 */
-  readonly possibleTones: readonly EndingTone[];
-  /** 主线幕数阈值，达此阈值后 AI 可提议具体化结局。 */
-  readonly lockedAt: number;
-};
-
-/** 起始锚点：开局生成，运行时只读。 */
-type StartAnchorOf<I extends IdSet> = {
-  readonly locationId: I["location"];
-  readonly npcId: I["npc"];
-  readonly startQuestId: I["quest"];
-};
-
-/** 运行时 AI 提议的结局（经闸门审批后转为 EndingDefinition）。 */
-export type ProposedEnding = {
-  readonly name: string;
-  readonly description: string;
-  readonly tone: EndingTone;
-  readonly requirements: readonly EndingRequirement[];
-  /** AI 解释为何此结局合适（审计用）。 */
-  readonly reason: string;
-};
-
-type SceneDefinitionOf<I extends IdSet> = {
-  readonly id: I["scene"];
-  readonly locationId: I["location"];
-  readonly narration: string;
-  readonly presentNpcIds: readonly I["npc"][];
-  readonly suggestedActions: readonly string[];
-  /** Phase 3: 当前场景中可调查的世界事实 ID（opening scene 至少一个）。 */
-  readonly investigableFactIds: readonly I["fact"][];
-  /** Phase 14: 序幕（黑底白字开场），仅 openingScene 使用。 */
-  readonly prologue?: PrologueDefinition;
-};
-
-type GeneratedPlayerDefinitionOf<I extends IdSet> = {
-  readonly name: string;
-  readonly identity: string;
-  readonly backgroundSummary: string;
-  readonly startingLocationId: I["location"];
-  readonly startingItemIds: readonly I["item"][];
-  readonly baseStats: StatBlock;
-};
-
-// ---------------------------------------------------------------------------
-// 蓝图：候选 vs 已编译
-// ---------------------------------------------------------------------------
-
-type ScenarioBlueprintShapeOf<I extends IdSet> = {
-  readonly schemaVersion: 2;  // Phase 14: 从 1 升到 2
-  readonly generationId: I["generation"];
-  readonly seed: string;
-  readonly templateVersion: string;
-  readonly gameType: GameTypeId;
-  readonly inputDigest: string;
-  readonly world: WorldDefinitionOf<I>;
-  readonly player: GeneratedPlayerDefinitionOf<I>;
-  /** Phase 14: 起始锚点（开局生成，运行时只读）。 */
-  readonly startAnchor: StartAnchorOf<I>;
-  /** Phase 14: 结局方向骨架（开局生成，运行时具体化）。 */
-  readonly endingDirection: EndingDirectionOf;
-  readonly locations: readonly LocationDefinitionOf<I>[];
-  readonly npcs: readonly NpcDefinitionOf<I>[];
-  readonly quests: readonly QuestDefinitionOf<I>[];
-  readonly enemies: readonly EnemyTemplateOf<I>[];
-  readonly items: readonly ItemDefinitionOf<I>[];
-  readonly endings: readonly EndingDefinitionOf<I>[];
-  readonly openingScene: SceneDefinitionOf<I>;
-  // 旧存档缺省，读取一律经 budgetPolicyOf
-  readonly budgetPolicy?: BudgetPolicy;
-};
-
-/** 生成器（AI 或 fallback）产出的原始候选：ID 为普通字符串，未经校验。 */
-export type ScenarioBlueprintCandidate = ScenarioBlueprintShapeOf<CandidateIds>;
-
-declare const compiledScenarioBlueprintBrand: unique symbol;
-
-/** 只有 validate/compile（Task 5）成功后才能产生；候选不可直接赋值。 */
-export type ScenarioBlueprint = ScenarioBlueprintShapeOf<CompiledIds> & {
-  readonly [compiledScenarioBlueprintBrand]: true;
-};
-
-// 已编译子定义的公开别名（品牌化 ID）。
-export type WorldDefinition = WorldDefinitionOf<CompiledIds>;
-export type WorldFact = WorldFactOf<CompiledIds>;
-export type LocationDefinition = LocationDefinitionOf<CompiledIds>;
-export type NpcDefinition = NpcDefinitionOf<CompiledIds>;
-export type QuestDefinition = QuestDefinitionOf<CompiledIds>;
-export type QuestObjective = QuestObjectiveOf<CompiledIds>;
-export type QuestOutcome = QuestOutcomeOf<CompiledIds>;
-export type EnemyTemplate = EnemyTemplateOf<CompiledIds>;
-export type ItemDefinition = ItemDefinitionOf<CompiledIds>;
-export type EndingDefinition = EndingDefinitionOf<CompiledIds>;
-export type EndingRequirement = EndingRequirementOf<CompiledIds>;
-export type SceneDefinition = SceneDefinitionOf<CompiledIds>;
-export type GeneratedPlayerDefinition = GeneratedPlayerDefinitionOf<CompiledIds>;
-
-// 候选子定义的公开别名（普通字符串 ID），供 Task 4–6 的分析/校验/生成使用。
-export type WorldDefinitionCandidate = WorldDefinitionOf<CandidateIds>;
-export type WorldFactCandidate = WorldFactOf<CandidateIds>;
+// 候选子定义的公开别名（普通字符串 ID），供分析/校验/生成（Task 4–6）使用。
 export type LocationDefinitionCandidate = LocationDefinitionOf<CandidateIds>;
 export type NpcDefinitionCandidate = NpcDefinitionOf<CandidateIds>;
 export type QuestDefinitionCandidate = QuestDefinitionOf<CandidateIds>;
@@ -331,14 +183,6 @@ export type EnemyTemplateCandidate = EnemyTemplateOf<CandidateIds>;
 export type ItemDefinitionCandidate = ItemDefinitionOf<CandidateIds>;
 export type EndingDefinitionCandidate = EndingDefinitionOf<CandidateIds>;
 export type EndingRequirementCandidate = EndingRequirementOf<CandidateIds>;
-export type SceneDefinitionCandidate = SceneDefinitionOf<CandidateIds>;
-export type GeneratedPlayerDefinitionCandidate = GeneratedPlayerDefinitionOf<CandidateIds>;
-
-// Phase 14 新增别名
-export type EndingDirection = EndingDirectionOf;
-export type StartAnchor = StartAnchorOf<CompiledIds>;
-export type EndingDirectionCandidate = EndingDirectionOf;
-export type StartAnchorCandidate = StartAnchorOf<CandidateIds>;
 
 // ---------------------------------------------------------------------------
 // 生成元数据：初始事件账本与 GameState 复用。

@@ -14,7 +14,7 @@ import { createInitialStoryState } from "@/game/domain/storyState";
 import type { NarrativeSceneState, NarrativeChoiceState, NarrativeRuntimeState } from "@/game/domain/narrative";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
-import { asEnemyId, asFactId, asGenerationId, asItemId, asLocationId, asNpcId, asQuestId } from "@/game/domain/scenarioBlueprint";
+import { asEnemyId, asFactId, asGenerationId, asItemId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import type { Action } from "@/game/domain/action";
 
 // ---------------------------------------------------------------------------

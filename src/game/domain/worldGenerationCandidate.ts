@@ -5,13 +5,13 @@ import type {
   QuestDefinitionCandidate,
   EndingDefinitionCandidate,
   StatBlock,
-} from "./scenarioBlueprint";
+} from "./worldEntity";
 
 // ---------------------------------------------------------------------------
 // Task 12：WorldGenerationCandidate 完整领域契约。
 //
 // 这是 AI 世界源（WorldGenerationSource）产出的原始候选类型：ID 为普通字符串，
-// 未经品牌化编译。与 ScenarioBlueprintCandidate 不同，本候选聚焦当前世界生成：
+// 未经品牌化编译。与全量世界蓝图候选不同，本候选聚焦当前世界生成：
 // 公开/隐藏 facts、NPC 初始 known/hidden facts 与 goals、主线任务骨架、结局
 // requirements、起始锚点与 opening 预算计数。
 //

@@ -3,6 +3,9 @@ import type { StoryBudget } from "./storyBudget";
 import { createStoryBudget, TARGET_ACTS } from "./storyBudget";
 import type { NarrativeRuntimeState } from "./narrative";
 import type { EventCandidate } from "./candidateEvent";
+import type { StoryContract } from "./storyContract";
+import { createStoryContract } from "./storyContract";
+import type { StoryEvolutionState } from "./worldDelta";
 
 // 结构化候选事件契约由 candidateEvent.ts 定义并在此再导出，保持既有调用点兼容。
 export type { EventCandidate, EventCandidateKind, ProposedEffect } from "./candidateEvent";
@@ -55,6 +58,10 @@ export type StoryState = {
   readonly recentBeats: readonly unknown[];
   readonly npcContacts: readonly unknown[];
   readonly reducedThroughEventCount: number;
+  /** 开局生成的故事契约：只含抽象方向，不含未来实体 ID（Task 2 起由开局生成写入）。 */
+  readonly contract: StoryContract;
+  /** 运行时具象化账本：实体序号与演化状态（Task 3 起由世界演化推进）。 */
+  readonly evolution: StoryEvolutionState;
 };
 
 export function createInitialStoryState(input: {
@@ -63,6 +70,12 @@ export function createInitialStoryState(input: {
   mainThreadId?: ThreadId;
 }): StoryState {
   const budget = createStoryBudget(input.gameLength, input.initialEntityCounts);
+  const contract = createStoryContract({
+    // 默认契约只区分短/中档；long/open 暂按 medium（5 幕）处理，后续任务覆盖。
+    gameLength: input.gameLength === "short" ? "short" : "medium",
+    centralConflict: "",
+    endingThemes: { trust: "", doubt: "" },
+  });
   return {
     version: STORY_STATE_SCHEMA_VERSION,
     turnNumber: 0,
@@ -85,6 +98,15 @@ export function createInitialStoryState(input: {
     recentBeats: [],
     npcContacts: [],
     reducedThroughEventCount: 0,
+    contract,
+    evolution: {
+      nextLocationOrdinal: 0,
+      nextNpcOrdinal: 0,
+      nextItemOrdinal: 0,
+      nextEnemyOrdinal: 0,
+      nextFactOrdinal: 0,
+      status: "stable",
+    },
   };
 }
 

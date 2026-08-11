@@ -8,7 +8,7 @@ import {
   type LocationEntry,
   type NpcEntry,
 } from "./worldState";
-import { asLocationId, asNpcId, asItemId, asGenerationId } from "./scenarioBlueprint";
+import { asLocationId, asNpcId, asItemId, asGenerationId } from "./worldEntity";
 
 describe("WorldState", () => {
   const startingLocation: LocationEntry = {

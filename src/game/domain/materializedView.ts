@@ -1,5 +1,5 @@
 import type { GameEvent } from "./events";
-import type { LocationId, NpcId } from "./scenarioBlueprint";
+import type { LocationId, NpcId } from "./worldEntity";
 
 const RECENT_BEATS_LIMIT = 12;
 

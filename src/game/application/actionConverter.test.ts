@@ -3,7 +3,7 @@ import { convertInteraction, type ActionChoiceMap } from "./actionConverter";
 import { createFixtureIntentParserSource } from "./server/ai/intentParserSource";
 import { buildIntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
 import type { Action } from "@/game/domain/action";
-import { asNpcId, asLocationId, asItemId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asNpcId, asLocationId, asItemId, asGenerationId } from "@/game/domain/worldEntity";
 import { createInitialWorldState, appendLocation, appendNpc, appendItem, type LocationEntry, type NpcEntry, type ItemEntry } from "@/game/domain/worldState";
 
 describe("convertInteraction fixed_choice", () => {

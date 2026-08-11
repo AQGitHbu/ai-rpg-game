@@ -4,7 +4,7 @@ import type { GameRepository, GameRecord } from "./server/persistence/gameReposi
 import { asGameId } from "./server/persistence/gameRepository";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId, asQuestId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId, asGenerationId, asQuestId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { WorldState } from "@/game/domain/worldState";

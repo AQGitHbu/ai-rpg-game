@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { resolveDialogue } from "./dialogueResolution";
 import type { WorldState, NpcEntry } from "@/game/domain/worldState";
 import { createInitialWorldState } from "@/game/domain/worldState";
-import { asNpcId, asLocationId, asFactId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asNpcId, asLocationId, asFactId, asGenerationId } from "@/game/domain/worldEntity";
 import type { TalkAction } from "@/game/domain/action";
 
 const FACT_KNOWN = asFactId("fact_known");

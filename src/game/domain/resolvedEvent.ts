@@ -1,5 +1,5 @@
 import type { NarrativeEventKind } from "./narrative";
-import type { FactId, NpcId } from "./scenarioBlueprint";
+import type { FactId, NpcId } from "./worldEntity";
 
 export type ResolvedEventStatus = "success" | "partial_success" | "failure" | "blocked" | "invalid";
 

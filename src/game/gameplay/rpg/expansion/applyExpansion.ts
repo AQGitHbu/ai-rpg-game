@@ -1,7 +1,7 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { GameEvent } from "@/game/domain/events";
 import type { ApprovedExpansion } from "./expansionTypes";
-import { asLocationId, type LocationId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, type LocationId } from "@/game/domain/worldEntity";
 
 /** 审批阶段为 item 记录的挂载目标：`location_id:<id>` tag（无 path patch）。 */
 const ITEM_LOCATION_TAG = "location_id:";

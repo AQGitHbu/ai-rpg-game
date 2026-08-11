@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { compileWorldGenerationCandidate } from "./compileWorldGenerationCandidate";
 import type { WorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
-import { asGenerationId, asLocationId, asNpcId, asFactId, asQuestId, asEndingId } from "@/game/domain/scenarioBlueprint";
+import { asGenerationId, asLocationId, asNpcId, asFactId, asQuestId, asEndingId } from "@/game/domain/worldEntity";
 import { findNpc, findQuest } from "@/game/domain/worldState";
 
 // ---------------------------------------------------------------------------

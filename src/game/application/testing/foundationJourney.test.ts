@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createInMemoryRepo, createJourneyGame, playTurn, playIssuedChoice, playIssuedTravelToUnvisited, advanceScene, loadWorldState, loadStoryState } from "./foundationJourney.testutil";
 import type { Action } from "@/game/domain/action";
 import type { ActionChoiceMap } from "@/game/application/actionConverter";
-import { asNpcId } from "@/game/domain/scenarioBlueprint";
+import { asNpcId } from "@/game/domain/worldEntity";
 
 function cmap(entries: readonly [string, Action][]): ActionChoiceMap {
   return new Map(entries as Iterable<[string, Action]>) as ActionChoiceMap;

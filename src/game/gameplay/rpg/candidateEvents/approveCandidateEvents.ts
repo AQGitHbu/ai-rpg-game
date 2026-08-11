@@ -4,7 +4,7 @@ import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { isExpiredCandidate } from "@/game/domain/candidateEvent";
 import { budgetAllowsExpansion, consumeExpansion } from "@/game/domain/storyBudget";
 import type { GameEvent } from "@/game/domain/events";
-import { asFactId } from "@/game/domain/scenarioBlueprint";
+import { asFactId } from "@/game/domain/worldEntity";
 
 // ---------------------------------------------------------------------------
 // 纯候选事件审批（Spec §11.2 / Task 19）

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildIntentContext } from "./intentContext";
 import { createInitialWorldState, appendLocation, appendNpc, appendItem, type LocationEntry, type NpcEntry, type ItemEntry } from "@/game/domain/worldState";
-import { asLocationId, asNpcId, asItemId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId, asItemId, asGenerationId } from "@/game/domain/worldEntity";
 
 describe("buildIntentContext", () => {
   const loc1: LocationEntry = {

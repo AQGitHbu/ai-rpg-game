@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { asNarrativeJobId, asTurnId } from "./events";
 import type { ResolvedEvent } from "./resolvedEvent";
 import { createPendingNarrativeJob } from "./pendingNarrativeJob";
-import { asNpcId } from "./scenarioBlueprint";
+import { asNpcId } from "./worldEntity";
 import type {
   NarrativeGenerationState,
   NarrativeSceneState,

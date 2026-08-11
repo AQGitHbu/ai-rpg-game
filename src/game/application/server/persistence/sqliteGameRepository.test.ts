@@ -8,7 +8,7 @@ import { createSqliteClient, type SqliteClient } from "./sqliteClient";
 import { asGameId } from "./gameRepository";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asGenerationId } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";

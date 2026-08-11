@@ -7,7 +7,7 @@ import type { WorldGenerationCandidate } from "@/game/domain/worldGenerationCand
 import { parseWorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
 import { validateWorldGenerationCandidate } from "@/game/gameplay/rpg/worldGeneration";
 import { compileWorldGenerationCandidate } from "@/game/gameplay/rpg/worldGeneration";
-import { asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asGenerationId } from "@/game/domain/worldEntity";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";

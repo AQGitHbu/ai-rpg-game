@@ -1,6 +1,6 @@
 import type { WorldState, NpcEntry } from "@/game/domain/worldState";
 import type { FactChange, FactChangeSource } from "@/game/domain/resolvedEvent";
-import type { FactId } from "@/game/domain/scenarioBlueprint";
+import type { FactId } from "@/game/domain/worldEntity";
 
 /** 封闭来源集合：非此集合的 source 一律拒绝。 */
 const VALID_SOURCES: readonly FactChangeSource[] = [

@@ -8,7 +8,7 @@ import {
   type LiveIntentTransport,
 } from "./liveIntentParserSource";
 import type { IntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
-import { asNpcId, asLocationId } from "@/game/domain/scenarioBlueprint";
+import { asNpcId, asLocationId } from "@/game/domain/worldEntity";
 
 // ---------------------------------------------------------------------------
 // live/fixture IntentParserSource

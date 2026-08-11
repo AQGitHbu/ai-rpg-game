@@ -10,7 +10,7 @@ import {
   asGenerationId,
   asLocationId,
   type GenerationMetadata,
-} from "./scenarioBlueprint";
+} from "./worldEntity";
 import { createInitialStoryState, type StoryState } from "./storyState";
 import { createTurnResolution, type TurnResolution } from "./turnResolution";
 import {

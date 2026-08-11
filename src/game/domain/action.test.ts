@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Action, Interaction, DialogueAct, ActionType } from "./action";
 import { DIALOGUE_ACTS, SUPPORTED_ACTION_TYPES } from "./action";
-import { asNpcId, asFactId, asQuestId } from "./scenarioBlueprint";
+import { asNpcId, asFactId, asQuestId } from "./worldEntity";
 import type { ThreadId } from "./storyState";
 
 describe("Action types", () => {

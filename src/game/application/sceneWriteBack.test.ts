@@ -5,7 +5,7 @@ import { asGameId } from "./server/persistence/gameRepository";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import { asLocationId, asGenerationId, asEnemyId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asGenerationId, asEnemyId } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 

@@ -2,7 +2,7 @@ import type {
   LocationId, NpcId, ItemId, FactId, QuestId, EnemyId, EndingId,
   StatBlock, LocationScale, LocationKind, ItemCategory, ItemRarity, ItemStatLine,
   EnemyTier, FactSource, GenerationMetadata,
-} from "./scenarioBlueprint";
+} from "./worldEntity";
 import type { GameEvent } from "./events";
 import type { RelationshipValue } from "./relationship";
 import type { NarrativeEmotion } from "./narrative";

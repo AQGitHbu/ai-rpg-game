@@ -1,7 +1,7 @@
 import type { WorldState, NpcEntry, NpcInteraction } from "@/game/domain/worldState";
 import type { DialogueAct, DialogueTopic, TalkAction } from "@/game/domain/action";
 import { relationshipTierOf, RELATIONSHIP_CHANGE, type RelationshipTier } from "@/game/domain/relationship";
-import type { FactId } from "@/game/domain/scenarioBlueprint";
+import type { FactId } from "@/game/domain/worldEntity";
 import type { GameEvent } from "@/game/domain/events";
 import type { StateChange } from "@/game/domain/resolvedEvent";
 import { updateNpcMemory } from "@/game/gameplay/rpg/ruleEngine/updateNpcMemory";

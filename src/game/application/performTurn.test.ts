@@ -15,7 +15,7 @@ import {
 } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import { asLocationId, asNpcId, asGenerationId, asEnemyId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId, asGenerationId, asEnemyId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { WorldState } from "@/game/domain/worldState";

@@ -1,4 +1,4 @@
-import { asNpcId, type NpcId } from "@/game/domain/scenarioBlueprint";
+import { asNpcId, type NpcId } from "@/game/domain/worldEntity";
 import { PLAYER_UTTERANCE_MAX_LENGTH } from "@/game/domain/pendingNarrativeJob";
 
 // ---------------------------------------------------------------------------

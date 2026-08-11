@@ -16,7 +16,7 @@ import {
   asNpcId,
   asGenerationId,
   asFactId,
-} from "@/game/domain/scenarioBlueprint";
+} from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";

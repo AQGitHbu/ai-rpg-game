@@ -4,7 +4,7 @@ import { approveSceneEventProposals, POOL_MAX_CANDIDATES } from "../../approveAn
 import { appendLocation, createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import { asLocationId, asGenerationId, asEnemyId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asGenerationId, asEnemyId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { GameRepository, GameRecord, GetCurrentGameResult } from "../../server/persistence/gameRepository";

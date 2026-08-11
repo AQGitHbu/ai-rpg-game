@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolveLiveNpcLine, resolveSelectedChoiceProposals } from "./sourceFactory";
-import { asLocationId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId } from "@/game/domain/worldEntity";
 
 const presentNpcs = [
   { id: "npc_1", name: "老板" },
@@ -71,7 +71,7 @@ describe("resolveSelectedChoiceProposals", () => {
 describe("createLiveSceneSource 焦点 NPC", () => {
   it("talk 回合的对话场景必须指向玩家实际交谈的 NPC，而非第一个在场 NPC", async () => {
     const { createLiveSceneSource } = await import("./sourceFactory");
-    const { asNpcId, asLocationId } = await import("@/game/domain/scenarioBlueprint");
+    const { asNpcId, asLocationId } = await import("@/game/domain/worldEntity");
     const { asNarrativeJobId, asTurnId } = await import("@/game/domain/events");
     const { createPendingNarrativeJob } = await import("@/game/domain/pendingNarrativeJob");
 

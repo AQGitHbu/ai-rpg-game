@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { approveCandidateEvents } from "./approveCandidateEvents";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/storyState";
-import { asNpcId, asEnemyId, asLocationId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asNpcId, asEnemyId, asLocationId, asGenerationId } from "@/game/domain/worldEntity";
 import { createInitialWorldState, appendNpc, appendEnemy } from "@/game/domain/worldState";
 import type { NpcEntry, EnemyEntry } from "@/game/domain/worldState";
 

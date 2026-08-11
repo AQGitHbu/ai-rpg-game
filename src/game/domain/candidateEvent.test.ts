@@ -7,7 +7,7 @@ import {
   type EventCandidateKind,
   type ProposedEffect,
 } from "./candidateEvent";
-import { asNpcId, asFactId, asEnemyId, asLocationId } from "./scenarioBlueprint";
+import { asNpcId, asFactId, asEnemyId, asLocationId } from "./worldEntity";
 import type { PacingNeed } from "./storyState";
 
 function baseCandidate(overrides?: Partial<EventCandidate>): EventCandidate {

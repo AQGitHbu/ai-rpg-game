@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { asNarrativeJobId, asTurnId } from "./events";
 import type { ResolvedEvent } from "./resolvedEvent";
-import { asLocationId, asNpcId } from "./scenarioBlueprint";
+import { asLocationId, asNpcId } from "./worldEntity";
 import {
   PLAYER_UTTERANCE_MAX_LENGTH,
   createPendingNarrativeJob,

@@ -4,7 +4,7 @@ import type { NarrativeNpcLineState, NarrativeEventState } from "@/game/domain/n
 import type { ChoiceProposal } from "@/game/domain/approvedChoice";
 import { semanticSummaryOf } from "@/game/domain/approvedChoice";
 import type { Action } from "@/game/domain/action";
-import { asLocationId, asNpcId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId } from "@/game/domain/worldEntity";
 
 // ---------------------------------------------------------------------------
 // 确定性 fallback 场景生成器（spec §7.6 安全降级模板）。

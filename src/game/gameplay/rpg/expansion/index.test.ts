@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { runExpansionProposer } from "./index";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
 import type { RuleEngineResult } from "@/game/gameplay/rpg/ruleEngine";
 import type { ExpansionProposal } from "./expansionTypes";
 

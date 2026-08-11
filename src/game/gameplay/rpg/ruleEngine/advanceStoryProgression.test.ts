@@ -3,7 +3,7 @@ import { advanceStoryProgression } from "./advanceStoryProgression";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import type { GameEvent } from "@/game/domain/events";
-import { asQuestId, asLocationId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asQuestId, asLocationId, asGenerationId } from "@/game/domain/worldEntity";
 
 function makeWorld(overrides?: Partial<WorldState>): WorldState {
   return {

@@ -4,7 +4,7 @@ import {
   composeDeterministicNpcLine,
 } from "@/game/domain/narrative";
 import { paginateSpeechText } from "@/game/domain/speechPagination";
-import { locationScaleOf } from "@/game/domain/scenarioBlueprint";
+import { locationScaleOf } from "@/game/domain/worldEntity";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import { buildChoiceMap, hasExplorableContent } from "./buildChoiceMap";

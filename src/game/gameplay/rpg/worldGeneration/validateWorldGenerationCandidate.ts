@@ -1,7 +1,7 @@
 import type {
   WorldGenerationCandidate,
 } from "@/game/domain/worldGenerationCandidate";
-import type { QuestDefinitionCandidate } from "@/game/domain/scenarioBlueprint";
+import type { QuestDefinitionCandidate } from "@/game/domain/worldEntity";
 import type { GameLength } from "@/game/domain/newGame";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import { analyzeLocationReachability } from "./reachability";
@@ -10,7 +10,7 @@ import { analyzeLocationReachability } from "./reachability";
 // Task 13：开局世界 validator——校验引用完整性、地点连通、任务图、结局可达性
 // 与预算计数。纯函数、零 AI 修复、同一候选结果确定。
 //
-// 错误格式遵循 ScenarioBlueprint 范式：{ path, code, params }，params 只含
+// 错误格式遵循候选定义校验范式：{ path, code, params }，params 只含
 // string|number 最小定位 ID，绝不携带完整秘密正文。
 // ---------------------------------------------------------------------------
 

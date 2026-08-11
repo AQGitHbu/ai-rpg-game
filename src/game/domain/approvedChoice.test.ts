@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asEnemyId, asItemId, asLocationId, asNpcId } from "./scenarioBlueprint";
+import { asEnemyId, asItemId, asLocationId, asNpcId } from "./worldEntity";
 import {
   createApprovedChoice,
   deriveChoiceToken,

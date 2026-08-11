@@ -1,4 +1,4 @@
-import type { EndingId, EnemyId, FactId, GenerationMetadata, ItemId, LocationId, NpcId, QuestId } from "./scenarioBlueprint";
+import type { EndingId, EnemyId, FactId, GenerationMetadata, ItemId, LocationId, NpcId, QuestId } from "./worldEntity";
 
 export type StoryPacing = "setup" | "develop" | "turn" | "climax" | "resolution";
 

@@ -7,7 +7,7 @@ import {
 import type { AiTransport, AiCompletionResult } from "@ai-game/ai-transport";
 import type { WorldState } from "@/game/domain/worldState";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
-import { asLocationId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asGenerationId } from "@/game/domain/worldEntity";
 import type { ExpansionSourceContext } from "@/game/gameplay/rpg/expansion/expansionSource";
 import { createInitialStoryState } from "@/game/domain/storyState";
 

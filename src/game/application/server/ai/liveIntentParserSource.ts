@@ -10,7 +10,7 @@ import {
   asLocationId,
   asNpcId,
   type NpcId,
-} from "@/game/domain/scenarioBlueprint";
+} from "@/game/domain/worldEntity";
 
 // ---------------------------------------------------------------------------
 // live/fixture IntentParserSource。

@@ -12,7 +12,7 @@ import {
   asFactId,
   asGenerationId,
   type GenerationMetadata,
-} from "@/game/domain/scenarioBlueprint";
+} from "@/game/domain/worldEntity";
 
 const generation: GenerationMetadata = {
   generationId: asGenerationId("g1"),

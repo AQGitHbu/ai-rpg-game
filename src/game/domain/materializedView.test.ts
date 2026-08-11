@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { reconcileMaterializedView, createEmptyMaterializedView } from "./materializedView";
 import type { GameEvent } from "./events";
-import { asLocationId, asNpcId, asQuestId, asFactId } from "./scenarioBlueprint";
+import { asLocationId, asNpcId, asQuestId, asFactId } from "./worldEntity";
 
 describe("MaterializedView", () => {
   it("empty view has zero cursor", () => {

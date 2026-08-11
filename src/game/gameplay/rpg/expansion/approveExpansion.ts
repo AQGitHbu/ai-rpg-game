@@ -3,7 +3,7 @@ import type { StoryBudget } from "@/game/domain/storyBudget";
 import { budgetAllowsExpansion, withinHardLimit, consumeExpansion } from "@/game/domain/storyBudget";
 import {
   asLocationId, asNpcId, asItemId, asEnemyId, asFactId,
-} from "@/game/domain/scenarioBlueprint";
+} from "@/game/domain/worldEntity";
 import type { ExpansionProposal, ApprovedExpansion, ExpansionRejection } from "./expansionTypes";
 
 const codePointLength = (value: string) => Array.from(value).length;

@@ -1,4 +1,4 @@
-import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "./scenarioBlueprint";
+import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "./worldEntity";
 import { paginateSpeechText } from "./speechPagination";
 import type { PendingNarrativeJob } from "./pendingNarrativeJob";
 import type { ApprovedChoice } from "./approvedChoice";

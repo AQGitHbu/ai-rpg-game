@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import { approveCandidateEvents } from "./approveCandidateEvents";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import { asNpcId, asFactId, asEnemyId, asLocationId } from "@/game/domain/scenarioBlueprint";
+import { asNpcId, asFactId, asEnemyId, asLocationId } from "@/game/domain/worldEntity";
 import { createInitialWorldState, appendNpc, appendEnemy } from "@/game/domain/worldState";
 import type { NpcEntry, EnemyEntry } from "@/game/domain/worldState";
-import { asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asGenerationId } from "@/game/domain/worldEntity";
 
 const NOW = () => "2026-08-09T00:00:00.000Z";
 

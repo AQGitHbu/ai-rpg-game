@@ -3,7 +3,7 @@ import { projectGameSessionView } from "./gameSessionView";
 import { buildChoiceMap } from "./buildChoiceMap";
 import { createInitialWorldState, appendNpc, appendLocation, type WorldState, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId, asFactId, asItemId, asEnemyId, asEndingId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId, asGenerationId, asFactId, asItemId, asEnemyId, asEndingId } from "@/game/domain/worldEntity";
 import type { Action } from "@/game/domain/action";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 

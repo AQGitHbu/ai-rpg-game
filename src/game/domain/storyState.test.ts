@@ -41,6 +41,19 @@ describe("StoryState", () => {
     expect(ss.unresolvedThreads).toEqual(["main_thread"]);
   });
 
+  it("populates a default story contract and a stable evolution state", () => {
+    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
+    expect(ss.contract.version).toBe(1);
+    expect(ss.contract.targetActs).toBe(3);
+    expect(ss.contract.endingDirections.map((d) => d.key)).toEqual(["trust", "doubt"]);
+    expect(ss.evolution.nextLocationOrdinal).toBe(0);
+    expect(ss.evolution.nextNpcOrdinal).toBe(0);
+    expect(ss.evolution.nextItemOrdinal).toBe(0);
+    expect(ss.evolution.nextEnemyOrdinal).toBe(0);
+    expect(ss.evolution.nextFactOrdinal).toBe(0);
+    expect(ss.evolution.status).toBe("stable");
+  });
+
   it("derivePacingNeed returns reveal in act 1", () => {
     const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
     expect(derivePacingNeed(ss)).toBe("reveal");

@@ -1,11 +1,11 @@
 import type { WorldState } from "@/game/domain/worldState";
-import type { EnemyId } from "@/game/domain/scenarioBlueprint";
+import type { EnemyId } from "@/game/domain/worldEntity";
 import type { GameEvent } from "@/game/domain/events";
 import type { StateChange } from "@/game/domain/resolvedEvent";
 import type { ResolveDeps, ResolveResult } from "./resolveByType";
 
 // ---------------------------------------------------------------------------
-// 战斗纯函数：操作 WorldState，不依赖 ScenarioBlueprint。
+// 战斗纯函数：操作 WorldState，不依赖世界生成聚合。
 // 只要敌人存在且在玩家地点即可开战。
 // 纯函数：不修改输入 state，不依赖 IO/Date/Math.random/AI。
 // ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ import type {
   FactId,
   ItemId,
   EnemyId,
-} from "@/game/domain/scenarioBlueprint";
+} from "@/game/domain/worldEntity";
 import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { RecentBeat } from "@/game/domain/materializedView";
 import type { GameRecord } from "./server/persistence/gameRepository";

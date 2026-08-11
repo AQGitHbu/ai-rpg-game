@@ -4,7 +4,7 @@ import {
   type IntentContext,
   type IntentParserSource,
 } from "@/game/gameplay/rpg/intentParser";
-import type { NpcId } from "@/game/domain/scenarioBlueprint";
+import type { NpcId } from "@/game/domain/worldEntity";
 
 export type ActionChoiceMap = ReadonlyMap<string, Action>;
 

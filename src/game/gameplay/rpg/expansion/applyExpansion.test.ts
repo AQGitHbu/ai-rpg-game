@@ -6,7 +6,7 @@ import {
   type NpcEntry,
   type ItemEntry,
 } from "@/game/domain/worldState";
-import { asLocationId, asNpcId, asItemId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId, asItemId, asGenerationId } from "@/game/domain/worldEntity";
 import type { ApprovedExpansion } from "./expansionTypes";
 
 describe("applyApprovedExpansion", () => {

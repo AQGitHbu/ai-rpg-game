@@ -1,4 +1,4 @@
-import type { EnemyId, FactId, LocationId, NpcId } from "./scenarioBlueprint";
+import type { EnemyId, FactId, LocationId, NpcId } from "./worldEntity";
 import type { PacingNeed, ThreadId } from "./storyState";
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { approveSceneEventProposals, approveScenePackage, POOL_MAX_CANDIDATES } from "./approveAndWriteScene";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import type { ScenePackageProposal } from "./sceneSource";
-import { asEnemyId, asLocationId, asNpcId, asFactId } from "@/game/domain/scenarioBlueprint";
+import { asEnemyId, asLocationId, asNpcId, asFactId } from "@/game/domain/worldEntity";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 
 function makeProposal(overrides?: Partial<ScenePackageProposal>): ScenePackageProposal {

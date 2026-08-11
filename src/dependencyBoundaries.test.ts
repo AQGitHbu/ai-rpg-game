@@ -470,7 +470,7 @@ describe("boundary patterns detect synthetic violations", () => {
   });
 
   it("relative domain import does not trip the relative gameplay rule", () => {
-    const snippet = `import { types } from "../game/domain/scenarioBlueprint";`;
+    const snippet = `import { types } from "../game/domain/worldEntity";`;
     expect(findBoundaryViolations(snippet, [RELATIVE_GAMEPLAY_IMPORT])).toEqual([]);
   });
 

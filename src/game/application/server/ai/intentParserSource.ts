@@ -3,7 +3,7 @@ import type {
   IntentParserResult,
   IntentParserSource,
 } from "@/game/gameplay/rpg/intentParser";
-import { asLocationId, asNpcId, asItemId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId, asItemId } from "@/game/domain/worldEntity";
 
 // ---------------------------------------------------------------------------
 // Fixture：确定性硬编码映射，用于离线测试。

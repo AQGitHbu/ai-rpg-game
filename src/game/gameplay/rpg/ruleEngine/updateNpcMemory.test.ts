@@ -6,7 +6,7 @@ import {
   NPC_INTERACTION_HISTORY_LIMIT,
 } from "./updateNpcMemory";
 import type { NpcEntry, NpcInteraction } from "@/game/domain/worldState";
-import { asNpcId, asLocationId } from "@/game/domain/scenarioBlueprint";
+import { asNpcId, asLocationId } from "@/game/domain/worldEntity";
 
 function makeNpc(overrides?: Partial<NpcEntry>): NpcEntry {
   return {

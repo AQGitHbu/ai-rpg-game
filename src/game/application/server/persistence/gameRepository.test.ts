@@ -5,7 +5,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import { asGameId } from "./gameRepository";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asGenerationId } from "@/game/domain/worldEntity";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
 
 function createInMemoryGameRepository(): GameRepository {

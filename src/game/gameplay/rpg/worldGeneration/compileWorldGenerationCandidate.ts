@@ -24,7 +24,7 @@ import {
   type GenerationMetadata, type QuestDefinitionCandidate, type LocationDefinitionCandidate,
   type ItemDefinitionCandidate, type EnemyTemplateCandidate, type EndingDefinitionCandidate,
   type QuestOutcomeCandidate, type QuestObjectiveCandidate,
-} from "@/game/domain/scenarioBlueprint";
+} from "@/game/domain/worldEntity";
 import {
   createInitialWorldState, appendLocation, appendNpc, appendItem, appendEnemy,
 } from "@/game/domain/worldState";

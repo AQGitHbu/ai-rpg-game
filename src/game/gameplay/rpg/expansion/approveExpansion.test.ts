@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { approveExpansions } from "./approveExpansion";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asGenerationId } from "@/game/domain/worldEntity";
 import type { ExpansionProposal } from "./expansionTypes";
 import type { StoryBudget } from "@/game/domain/storyBudget";
 

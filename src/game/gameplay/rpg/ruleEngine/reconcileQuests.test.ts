@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { reconcileQuests } from "./reconcileQuests";
 import { createInitialWorldState, appendNpc, type NpcEntry, type LocationEntry } from "@/game/domain/worldState";
-import { asLocationId, asNpcId, asQuestId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId, asQuestId, asGenerationId } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 
 describe("reconcileQuests", () => {

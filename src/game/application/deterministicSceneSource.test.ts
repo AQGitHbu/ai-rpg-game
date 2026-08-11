@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createDeterministicSceneSource } from "./deterministicSceneSource";
 import type { LocationEntry, NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { ResolvedEvent, ResolvedEventStatus } from "@/game/domain/resolvedEvent";

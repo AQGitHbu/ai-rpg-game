@@ -1,6 +1,6 @@
 import type { Action } from "@/game/domain/action";
 import type { IntentContext } from "./intentContext";
-import { asLocationId, asNpcId, asItemId, asFactId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId, asItemId, asFactId } from "@/game/domain/worldEntity";
 
 const MOVE_VERBS = ["去", "前往", "到", "回", "进", "出"];
 const TALK_VERBS = ["和", "与", "跟", "找", "问", "交谈", "聊聊", "说话"];

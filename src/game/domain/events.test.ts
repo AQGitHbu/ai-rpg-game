@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GameEvent, LocationObservedEvent, NpcMetEvent, FactDiscoveredEvent, LocationVisitedEvent, QuestCompletedEvent, QuestUnlockedEvent, ItemObtainedEvent, BattleStartedEvent, BattleRoundResolvedEvent, BattleResolvedEvent, EnemyDefeatedEvent, QuestFailedEvent, EndingReachedEvent, NarrativeScenePresentedEvent, CandidateEventProposedEvent, CandidateEventApprovedEvent, CandidateEventRejectedEvent, CandidateEventExpiredEvent, CandidateEventActivatedEvent } from "./events";
-import { asLocationId, asNpcId, asFactId, asGenerationId, asItemId, asQuestId, asEnemyId, asEndingId, type GenerationMetadata } from "./scenarioBlueprint";
+import { asLocationId, asNpcId, asFactId, asGenerationId, asItemId, asQuestId, asEnemyId, asEndingId, type GenerationMetadata } from "./worldEntity";
 
 function buildGeneration(): GenerationMetadata {
   return {

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { ruleEngine, resolveTurn } from "./index";
 import { createInitialWorldState, appendNpc, appendLocation, type LocationEntry, type NpcEntry, type EnemyEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId, asEnemyId, type QuestId, type EndingId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId, asGenerationId, asEnemyId, type QuestId, type EndingId } from "@/game/domain/worldEntity";
 import { asTurnId } from "@/game/domain/events";
 
 describe("ruleEngine facade", () => {

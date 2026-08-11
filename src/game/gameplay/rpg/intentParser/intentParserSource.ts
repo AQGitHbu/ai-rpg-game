@@ -1,6 +1,6 @@
 import type { IntentContext } from "./intentContext";
 import type { Action } from "@/game/domain/action";
-import type { NpcId } from "@/game/domain/scenarioBlueprint";
+import type { NpcId } from "@/game/domain/worldEntity";
 
 // ---------------------------------------------------------------------------
 // IntentParserSource：可注入的 AI 意图解析 port。

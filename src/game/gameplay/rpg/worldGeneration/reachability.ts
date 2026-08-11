@@ -1,4 +1,4 @@
-import type { LocationDefinitionCandidate } from "@/game/domain/scenarioBlueprint";
+import type { LocationDefinitionCandidate } from "@/game/domain/worldEntity";
 
 // ---------------------------------------------------------------------------
 // Task 13：世界地点连通性与解锁路径分析（纯图算法，零 IO）。

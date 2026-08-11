@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { resolveEnding } from "./resolveEnding";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asQuestId, asEndingId, asGenerationId, asNpcId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asQuestId, asEndingId, asGenerationId, asNpcId } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 
 describe("resolveEnding", () => {

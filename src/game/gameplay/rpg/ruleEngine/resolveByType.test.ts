@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { resolveByType } from "./resolveByType";
 import { createInitialWorldState, appendLocation, appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
-import { asLocationId, asNpcId, asItemId, asFactId, asGenerationId, asEnemyId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId, asItemId, asFactId, asGenerationId, asEnemyId } from "@/game/domain/worldEntity";
 
 describe("resolveByType", () => {
   const loc1: LocationEntry = {

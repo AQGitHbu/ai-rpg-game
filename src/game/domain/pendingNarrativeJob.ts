@@ -6,7 +6,7 @@ import type {
   ItemId,
   LocationId,
   NpcId,
-} from "./scenarioBlueprint";
+} from "./worldEntity";
 
 /** 玩家原话（utterance）的长度上限：全链路统一引用的常量。 */
 export const PLAYER_UTTERANCE_MAX_LENGTH = 200 as const;
