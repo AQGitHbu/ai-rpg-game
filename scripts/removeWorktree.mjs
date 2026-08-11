@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, rmSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, rmSync, rmdirSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -101,7 +101,52 @@ function removeResidualDirectory(target, foundation) {
   if (remaining.length > 0) {
     fail(`仍有未解除的链接，拒绝递归删除：${remaining.join("; ")}`);
   }
-  rmSync(target, { recursive: true, force: true });
+
+  // Windows 可能因某个深层原生模块或构建产物被占用，使一次性的递归
+  // rmSync 在清理过程中半途失败。此时按“文件 → 空目录”的顺序逐项删，
+  // 既能继续清除已释放的条目，也能准确报告仍被占用的精确路径。
+  const files = [];
+  const directories = [target];
+  const stack = [target];
+  while (stack.length > 0) {
+    const directory = stack.pop();
+    for (const entry of readdirSync(directory)) {
+      const path = join(directory, entry);
+      const info = lstatSync(path);
+      if (info.isSymbolicLink()) {
+        fail(`清理期间出现新的链接，拒绝继续：${path}`);
+      }
+      if (info.isDirectory()) {
+        directories.push(path);
+        stack.push(path);
+      } else {
+        files.push(path);
+      }
+    }
+  }
+
+  const failures = [];
+  for (const file of files) {
+    try {
+      rmSync(file, { force: true });
+    } catch (error) {
+      failures.push(`${file} :: ${error.message}`);
+    }
+  }
+  if (failures.length > 0) {
+    fail(`残留文件仍被占用或无权删除，保留现场：${failures.join("; ")}`);
+  }
+
+  for (const directory of directories.sort((a, b) => b.length - a.length)) {
+    try {
+      rmdirSync(directory);
+    } catch (error) {
+      failures.push(`${directory} :: ${error.message}`);
+    }
+  }
+  if (failures.length > 0) {
+    fail(`残留目录仍无法删除，保留现场：${failures.join("; ")}`);
+  }
 }
 
 export function removeWorktree({ name, deleteBranch = false }) {

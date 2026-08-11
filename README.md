@@ -58,11 +58,14 @@ npm run build
 npm run accept
 npm run phase:status
 npm run phase:start -- --dry-run
+npm run branch:finish -- codex/<worktree-name>
 npm run handoff:check
 npm run env:check
 ```
 
 `npm run accept` 是统一验收入口（lint + typecheck + test + test:fast + build + phase:status）。
+
+功能分支合入 `main` 后，从主工作区运行 `npm run branch:finish -- <branch>` 完成合并确认、worktree 安全清理和分支删除。脚本要求 `main` 干净且目标分支已合入；Windows 上运行前先退出该 worktree 的开发服务器和测试 watcher。
 
 ## 文档入口
 

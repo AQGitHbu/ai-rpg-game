@@ -27,5 +27,6 @@
 ## 核心约束
 
 - 分支放 `.worktrees/`，不用 `git checkout`
+- 已合入主线的功能分支统一从本仓 `main` 执行 `npm run branch:finish -- <branch>` 收尾；该命令会先确认主工作区干净、分支已合入 `main`，再按 worktree 安全流程清理并执行安全分支删除。
 - `../ai-game-foundation` 是受保护的 sibling Git 仓库，`.foundation` 是其 junction：禁止删除、移动、重建二者，尤其禁止递归删除 junction；异常时停止并按共享流程恢复/链接。
 - **Windows worktree 清理**：只要 phase worktree 内存在 `.foundation` junction，禁止直接执行 `git worktree remove`（它可能沿 junction 递归到 `../ai-game-foundation`）。必须从本仓 main 运行 `node ../ai-game-foundation/scripts/cleanupConsumerWorktree.mjs --repository . --worktree-name <name>`；该工具会无递归解绑 junction、复核 foundation 完整，再调用 Git。工具报错时保留残留 worktree 并报告。
