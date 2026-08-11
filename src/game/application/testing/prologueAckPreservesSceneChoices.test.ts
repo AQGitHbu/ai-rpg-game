@@ -23,7 +23,8 @@ describe("ackPrologue 不递增 revision，场景固定选项保持有效", () =
     const current = await repo.getCurrentGame();
     if (!current.ok || current.status !== "active") throw new Error("存档不可用");
     const { storyState } = current.record;
-    const npcId = asNpcId("npc_innkeeper");
+    // 开局编译只铸造 npc_0（旧 fixture 的 npc_innkeeper 已不存在）。
+    const npcId = asNpcId("npc_0");
 
     // 注入一个 dialogue 场景：2 个 talk 固定选项（复现用户存档形态）
     const sceneId = "scene-regression-ack";

@@ -8,12 +8,16 @@ import { performTurn } from "@/game/application/performTurn";
 import { createGame, createFixtureOpeningSource } from "@/game/application/createGame";
 import { generatePendingScene } from "@/game/application/generatePendingScene";
 import { createDeterministicSceneSource } from "@/game/application/deterministicSceneSource";
+import { buildSceneGenerationContext, type SceneGenerationContext } from "@/game/application/sceneGenerationContext";
+import type { SceneSource, SceneSourceResult } from "@/game/application/sceneSource";
+import { createDeterministicEvolutionSource } from "@/game/application/deterministicEvolutionSource";
+import type { WorldEvolutionSource } from "@/game/application/worldEvolutionSource";
+import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import { createRuleIntentParser } from "@/game/application/server/ai/liveIntentParserSource";
 import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser";
 import { asGameId } from "@/game/application/server/persistence/gameRepository";
 import { buildChoiceMap } from "@/game/application/buildChoiceMap";
 import { projectGameSessionView, type GameSessionView, type PlayerChoiceView } from "@/game/application/gameSessionView";
-import type { SceneSource } from "@/game/application/sceneSource";
 import type { GameLength, GameTypeId } from "@/game/domain/newGame";
 
 // ---------------------------------------------------------------------------
@@ -91,12 +95,99 @@ export type JourneyTurnResult = {
 /** 规则意图源（离线确定性）：让自由文本可靠分类 support/challenge 等。 */
 const RULE_INTENT_SOURCE: IntentParserSource = createRuleIntentParser();
 
+/**
+ * 旅程用确定性世界演化源。`createDeterministicEvolutionSource`（Task 3）只在
+ * next_act 时提议单一固定名称（传讯人/循迹而行）且不产新地点/物品——第二次
+ * next_act 会被 duplicate_name 审批拒绝，且无法满足"新 NPC + 新地点/物品"的
+ * 具象化断言。本源逐幕铸造唯一名称，并在每幕附上信物（物品）、守径人（敌人）
+ * 与延伸之地（地点），让旅程能覆盖 拾取物品 / 战斗 / 地图移动 / 多幕推进；
+ * ending_pair 与 pacing 委托 Task 3 确定性源（零 AI）。
+ */
+function journeyNextActProposal(act: number, currentLocationId: string): WorldDeltaProposal {
+  return {
+    beatSummary: `第${act}幕的传讯人带来新的线索`,
+    newLocation: {
+      name: `延伸之地·${act}`,
+      description: `第${act}幕线索延伸出的一处新地界。`,
+      scale: "scene",
+      connectFromLocationId: currentLocationId,
+    },
+    newNpc: {
+      name: `传讯人·${act}`,
+      role: "信使",
+      description: `风尘仆仆赶来的第${act}幕传讯人。`,
+      locationRef: { kind: "existing", id: currentLocationId },
+      goals: [`传递第${act}幕的线索`],
+    },
+    newItem: {
+      name: `信物·${act}`,
+      description: `第${act}幕途中拾得的信物。`,
+      locationRef: "current",
+    },
+    newEnemy: {
+      name: `守径人·${act}`,
+      tier: "normal",
+      locationRef: "current",
+    },
+    newFact: null,
+    nextMainQuest: {
+      name: `循迹第${act}幕`,
+      description: `与第${act}幕的传讯人交谈，继续追索。`,
+      objectiveText: `与传讯人·${act}交谈`,
+    },
+    endingPair: null,
+  };
+}
+
+function journeyEndingPairProposal(ss: StoryState): WorldDeltaProposal {
+  const byKey = new Map(ss.contract.endingDirections.map((d) => [d.key, d.theme]));
+  const themeName = (key: "trust" | "doubt", fallback: string): string => {
+    const raw = (byKey.get(key) ?? "").trim();
+    return raw.length >= 2 && raw.length <= 40 ? raw : fallback;
+  };
+  return {
+    beatSummary: "终幕的两种走向浮现",
+    newLocation: null,
+    newNpc: null,
+    newItem: null,
+    newEnemy: null,
+    newFact: null,
+    nextMainQuest: null,
+    endingPair: [
+      { name: themeName("trust", "共赴真相"), description: "在众人面前摊开一切，共同承担结果。", themeKey: "trust" },
+      { name: themeName("doubt", "孤身揭晓"), description: "独自揭开真相，把后果揽在自己肩上。", themeKey: "doubt" },
+    ],
+  };
+}
+
+export function createJourneyEvolutionSource(): WorldEvolutionSource {
+  const deterministic = createDeterministicEvolutionSource();
+  return {
+    async propose(ctx) {
+      switch (ctx.need.kind) {
+        case "none":
+          return { proposal: null };
+        case "next_act":
+          return { proposal: journeyNextActProposal(ctx.need.act, String(ctx.worldState.currentLocationId)) };
+        case "ending_pair":
+          return { proposal: journeyEndingPairProposal(ctx.storyState) };
+        case "pacing":
+          return deterministic.propose(ctx);
+      }
+    },
+  };
+}
+
+/** 旅程默认的世界演化源：让幕边界具象化真实触发（旧 harness 以 undefined 运行）。 */
+const JOURNEY_EVOLUTION_SOURCE: WorldEvolutionSource = createJourneyEvolutionSource();
+
 /** 执行一个回合：先清空 pending（如无 pending 则跳过），再走 performTurn。 */
 export async function playTurn(
   repo: GameRepository,
   interaction: Interaction,
   choiceMap: ActionChoiceMap = new Map(),
   now: () => string = journeyNow,
+  worldEvolutionSource: WorldEvolutionSource | undefined = JOURNEY_EVOLUTION_SOURCE,
 ): Promise<JourneyTurnResult> {
   const current = await repo.getCurrentGame();
   if (!current.ok || current.status !== "active") return { ok: false, code: "NO_ACTIVE_GAME", revisionAfter: -1, turnNumberAfter: -1 };
@@ -104,7 +195,7 @@ export async function playTurn(
   const turnNumber = current.record.storyState.turnNumber;
   const result = await performTurn(
     { gameId: current.record.gameId, actionId: `act_j_${turnNumber}`, interaction, expectedRevision: revision, choiceMap },
-    { repository: repo, now, worldEvolutionSource: undefined, intentParserSource: RULE_INTENT_SOURCE },
+    { repository: repo, now, worldEvolutionSource, intentParserSource: RULE_INTENT_SOURCE },
   );
   if (result.ok) {
     const after = await repo.getCurrentGame();
@@ -115,11 +206,15 @@ export async function playTurn(
 }
 
 /** 用确定性 SceneSource 清空当前 pending job（无 pending 返回 true）。 */
-export async function advanceScene(repo: GameRepository): Promise<boolean> {
+export async function advanceScene(
+  repo: GameRepository,
+  worldEvolutionSource: WorldEvolutionSource | undefined = JOURNEY_EVOLUTION_SOURCE,
+): Promise<boolean> {
   const sceneSource: SceneSource = createDeterministicSceneSource();
   const result = await generatePendingScene({
     repository: repo,
     sceneSource,
+    worldEvolutionSource,
     now: journeyNow,
   });
   return result === "saved" || result === "not_pending";
@@ -163,6 +258,7 @@ function allIssuedChoices(view: GameSessionView): readonly PlayerChoiceView[] {
 export async function playIssuedChoice(
   repo: GameRepository,
   labelIncludes: string,
+  worldEvolutionSource: WorldEvolutionSource | undefined = JOURNEY_EVOLUTION_SOURCE,
 ): Promise<JourneyTurnResult & { readonly choiceToken: string }> {
   const loaded = await repo.getCurrentGame();
   if (!loaded.ok || loaded.status !== "active") throw new Error("游戏记录不可用");
@@ -173,12 +269,15 @@ export async function playIssuedChoice(
     repo,
     { kind: "fixed_choice", choiceToken: choice.choiceToken },
     buildChoiceMap(loaded.record.worldState, loaded.record.storyState, loaded.record.revision),
+    journeyNow,
+    worldEvolutionSource,
   );
   return { ...result, choiceToken: choice.choiceToken };
 }
 
 export async function playIssuedTravelToUnvisited(
   repo: GameRepository,
+  worldEvolutionSource: WorldEvolutionSource | undefined = JOURNEY_EVOLUTION_SOURCE,
 ): Promise<JourneyTurnResult & { readonly choiceToken: string }> {
   const loaded = await repo.getCurrentGame();
   if (!loaded.ok || loaded.status !== "active") throw new Error("游戏记录不可用");
@@ -191,6 +290,8 @@ export async function playIssuedTravelToUnvisited(
     repo,
     { kind: "fixed_choice", choiceToken: choice.choiceToken },
     buildChoiceMap(loaded.record.worldState, loaded.record.storyState, loaded.record.revision),
+    journeyNow,
+    worldEvolutionSource,
   );
   return { ...result, choiceToken: choice.choiceToken };
 }
@@ -206,4 +307,27 @@ export async function loadWorldState(repo: GameRepository): Promise<WorldState |
   const current = await repo.getCurrentGame();
   if (!current.ok || current.status !== "active") return null;
   return current.record.worldState;
+}
+
+/** 从当前记录返回完整 GameRecord（场景断言/回读用）。 */
+export async function loadGameRecord(repo: GameRepository): Promise<GameRecord | null> {
+  const current = await repo.getCurrentGame();
+  if (!current.ok || current.status !== "active") return null;
+  return current.record;
+}
+
+/**
+ * 对当前 pending 记录构造场景上下文 + 确定性场景提案（不写库）。
+ * 供"场景覆盖全部强制节拍 / objectiveLink == HUD 当前目标"断言使用：
+ * proposal 与 generatePendingScene 实际采用的确定性提案逐字节一致。
+ */
+export async function pendingSceneProposal(
+  repo: GameRepository,
+): Promise<{ context: SceneGenerationContext; proposal: SceneSourceResult } | null> {
+  const record = await loadGameRecord(repo);
+  if (record === null) return null;
+  if (record.storyState.narrative.generation.status !== "pending") return null;
+  const context = buildSceneGenerationContext(record);
+  const proposal = await createDeterministicSceneSource().generateScene(context);
+  return { context, proposal };
 }
