@@ -87,19 +87,24 @@ describe("buildOutcomeBeats（Task 4）", () => {
     expect(got[0].instruction).toContain("15");
   });
 
-  it("battle_resolved：胜利与撤退均落节拍", () => {
+it("battle_resolved：胜利、败北与撤退均落节拍", () => {
     const before = withBattle(baseWorld(), {
       status: "active", enemyId: ENEMY_WOLF_ID, playerHp: 80, enemyHp: 5, round: 2,
     });
     const victory = withBattle(baseWorld(), { status: "resolved", enemyId: ENEMY_WOLF_ID, outcome: "victory" });
     const withdrawal = withBattle(baseWorld(), { status: "resolved", enemyId: ENEMY_WOLF_ID, outcome: "withdraw" });
+    const defeat = withBattle(baseWorld(), { status: "resolved", enemyId: ENEMY_WOLF_ID, outcome: "defeat" });
     const win = oneOfKind(beats(before, victory), "battle_resolved");
     const withr = oneOfKind(beats(before, withdrawal), "battle_resolved");
+    const def = oneOfKind(beats(before, defeat), "battle_resolved");
     expect(win).toHaveLength(1);
     expect(win[0].subjectIds).toEqual([String(ENEMY_WOLF_ID)]);
     expect(win[0].instruction).toContain("胜利");
     expect(withr).toHaveLength(1);
     expect(withr[0].instruction).toContain("撤退");
+    expect(def).toHaveLength(1);
+    expect(def[0].instruction).toContain("败北");
+    expect(def[0].instruction).not.toContain("撤退");
   });
 
   it("entity_introduced：具象化的新 NPC/新任务进入节拍", () => {

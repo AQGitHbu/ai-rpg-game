@@ -11,6 +11,7 @@ import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { RecentBeat } from "@/game/domain/materializedView";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { WorldState } from "@/game/domain/worldState";
+import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import type { GameRecord } from "./server/persistence/gameRepository";
 
 /**
@@ -156,7 +157,12 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
   const job = narrative.generation.job;
 
   // Task 4：节拍与目标转换引用的 subject ID 全部收集后从持久化状态解析描述。
-  const transition = job.objectiveTransition;
+  // after 以持久化状态里的权威当前目标为准（幕边界时 job 快照尚无下一幕目标，
+  // 而场景装配的预览状态里下一幕任务已具象化，故在此修正投影）。
+  const transition: ObjectiveTransition = {
+    ...job.objectiveTransition,
+    after: currentObjectiveOf(record.worldState, record.storyState),
+  };
   const transitionQuestIds: string[] = [];
   if (transition.before !== null) transitionQuestIds.push(String(transition.before.questId));
   for (const completed of transition.completed) transitionQuestIds.push(String(completed.questId));
@@ -286,7 +292,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
         : ws.enemies.map((enemy) => enemy.id),
     },
     worldConstraints: [],
-    objectiveTransition: job.objectiveTransition,
+    objectiveTransition: transition,
     mandatoryBeats: job.mandatoryBeats,
     beatSubjects,
   };

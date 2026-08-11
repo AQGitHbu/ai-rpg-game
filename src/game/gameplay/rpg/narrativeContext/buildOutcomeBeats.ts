@@ -54,8 +54,11 @@ function collectRawBeats({ beforeW, afterW, beforeS, afterS }: CollectInput): Ma
     push("battle_round", [String(aBattle.enemyId)], `战斗进入第${aBattle.round}回合，我方生命 ${aBattle.playerHp}，敌方生命 ${aBattle.enemyHp}`);
   } else if (bBattle.status === "active" && aBattle.status === "resolved") {
     const enemy = afterW.enemies.find((e) => e.id === aBattle.enemyId);
-    const outcome = aBattle.outcome === "victory" ? "胜利" : "撤退";
-    push("battle_resolved", [String(aBattle.enemyId)], `与${enemy?.name ?? "敌人"}的战斗以${outcome}告终`);
+    const outcomeLabel =
+      aBattle.outcome === "victory" ? "胜利"
+      : aBattle.outcome === "defeat" ? "败北"
+      : "撤退";
+    push("battle_resolved", [String(aBattle.enemyId)], `与${enemy?.name ?? "敌人"}的战斗以${outcomeLabel}告终`);
   }
 
   // ── 物品获得（库存增量；名称取当前世界状态）──

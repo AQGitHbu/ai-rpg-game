@@ -218,7 +218,7 @@ describe("buildSceneGenerationContext", () => {
 
   // ── Task 4：把规则结果/目标转换投影给场景源 ──────────────────────────────
 
-  it("context 原样暴露 job 的 objectiveTransition 与 mandatoryBeats", () => {
+  it("context 投影 job 的目标转换，但 after 以持久化状态的权威当前目标为准", () => {
     const transition: ObjectiveTransition = {
       before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与客栈老板交谈" },
       completed: [{ questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与客栈老板交谈" }],
@@ -229,10 +229,26 @@ describe("buildSceneGenerationContext", () => {
       { beatId: "quest_0", kind: "quest_progress", subjectIds: ["quest_0"], instruction: "完成了目标：与客栈老板交谈" },
       { beatId: "item_0", kind: "item_obtained", subjectIds: ["item_seal"], instruction: "获得物品「盟誓印谱」" },
     ];
-    const record = makeRecord(true, makeJob({ transition, beats }));
+    const record = makeRecord(true, makeJob({ transition, beats }), makeQuestWorld());
     const context = buildSceneGenerationContext(record);
-    expect(context.objectiveTransition).toEqual(transition);
+    expect(context.objectiveTransition.after).toEqual({ questId: asQuestId("quest_0"), objectiveIndex: 1, label: "获取盟誓印谱" });
+    expect(context.objectiveTransition.before).toEqual(transition.before);
+    expect(context.objectiveTransition.completed).toEqual(transition.completed);
+    expect(context.objectiveTransition.mode).toBe("progressed");
     expect(context.mandatoryBeats).toEqual(beats);
+  });
+
+  it("幕边界：job 快照 after 为空时，after 修正为已具象化的下一幕目标", () => {
+    const transition: ObjectiveTransition = {
+      before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与客栈老板交谈" },
+      completed: [],
+      after: null,
+      mode: "advanced_act",
+    };
+    const record = makeRecord(true, makeJob({ transition }), makeQuestWorld());
+    const context = buildSceneGenerationContext(record);
+    expect(context.objectiveTransition.mode).toBe("advanced_act");
+    expect(context.objectiveTransition.after?.label).toBe("获取盟誓印谱");
   });
 
   it("beatSubjects 从持久化状态解析节拍引用的实体描述（item_seal → 盟誓印谱）", () => {
