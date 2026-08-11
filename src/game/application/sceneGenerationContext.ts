@@ -12,6 +12,7 @@ import type { RecentBeat } from "@/game/domain/materializedView";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { WorldState } from "@/game/domain/worldState";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
+import { buildFocusNpcContext, type FocusNpcContext, type FactCard } from "./focusNpcContext";
 import type { GameRecord } from "./server/persistence/gameRepository";
 
 /**
@@ -24,11 +25,7 @@ import type { GameRecord } from "./server/persistence/gameRepository";
  */
 
 /** 事实卡：仅含可安全下发的摘要/ID，不含私密正文。 */
-export type FactCard = {
-  readonly factId: FactId;
-  readonly text: string;
-};
-
+export type { FactCard } from "./focusNpcContext";
 /** 焦点 NPC 的最小知识上下文。 */
 export type NpcSceneContext = {
   readonly id: NpcId;
@@ -116,6 +113,8 @@ export type SceneGenerationContext = {
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
   /** Task 4：节拍/目标引用实体从持久化状态解析出的最小描述。 */
   readonly beatSubjects: readonly EntityDescription[];
+  /** Task 5：焦点 NPC 的隔离记忆 + 关系政策（talk 指向 job.focusNpcId，否则第一个在场 NPC）。 */
+  readonly focusNpcContext?: FocusNpcContext;
 };
 
 /** 从持久化世界状态解析 subject ID 为最小实体描述；引用未命中时保留 ID 兜底。 */
@@ -214,6 +213,12 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
       && ws.unlockedLocationIds.includes(l.id),
   );
 
+  // Task 5：焦点 NPC = talk 行动指向的 NPC（job.focusNpcId），否则第一个在场 NPC。
+  const focusNpcId = job.focusNpcId ?? presentNpcs[0]?.id;
+  const focusNpcContext = focusNpcId !== undefined
+    ? buildFocusNpcContext(record, focusNpcId)
+    : undefined;
+
   // 私密事实集合：属于任何 NPC hiddenFactIds 的事实不得进入公开/场景可见卡，
   // 只出现在对应 NPC 自己的 hiddenFactCards（最小权限，spec §10.2）。
   const secretFactKeys = new Set<string>();
@@ -295,5 +300,6 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     objectiveTransition: transition,
     mandatoryBeats: job.mandatoryBeats,
     beatSubjects,
+    focusNpcContext,
   };
 }

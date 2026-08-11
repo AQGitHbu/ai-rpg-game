@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { resolveDialogue } from "./dialogueResolution";
 import type { WorldState, NpcEntry } from "@/game/domain/worldState";
 import { createInitialWorldState } from "@/game/domain/worldState";
-import { asNpcId, asLocationId, asFactId, asGenerationId } from "@/game/domain/worldEntity";
+import { asNpcId, asLocationId, asFactId, asGenerationId, asQuestId } from "@/game/domain/worldEntity";
 import type { TalkAction } from "@/game/domain/action";
 
 const FACT_KNOWN = asFactId("fact_known");
@@ -193,5 +193,36 @@ describe("resolveDialogue — 行为语义", () => {
     const npc = makeNpc({ met: true });
     const res = resolveDialogue(makeWs(), npc, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN } }), deps);
     expect(res.disclosure).toEqual({ kind: "revealed", factId: FACT_KNOWN });
+  });
+
+  it("结构化 topic 持久化进 NpcInteraction（fact/quest/thread/general 与规则裁决同源）", () => {
+    const npc = makeNpc({ met: true });
+    const fact = resolveDialogue(makeWs(), npc, talkOf({ act: "ask", topic: { kind: "fact", factId: FACT_KNOWN } }), deps);
+    expect(fact.interaction.topic).toEqual({ kind: "fact", factId: FACT_KNOWN });
+    expect(fact.interaction.topicSummary).toBe("询问线索");
+
+    const quest = resolveDialogue(makeWs(), npc, talkOf({ act: "ask", topic: { kind: "quest", questId: asQuestId("quest_0") } }), deps);
+    expect(quest.interaction.topic).toEqual({ kind: "quest", questId: asQuestId("quest_0") });
+    expect(quest.interaction.topicSummary).toBe("谈论任务");
+
+    const thread = resolveDialogue(makeWs(), npc, talkOf({ act: "support", topic: { kind: "thread", threadId: "main_thread" } }), deps);
+    expect(thread.interaction.topic).toEqual({ kind: "thread", threadId: "main_thread" });
+    expect(thread.interaction.topicSummary).toBe("延续话题");
+
+    const general = resolveDialogue(makeWs(), npc, talkOf({ act: "ask" }), deps);
+    expect(general.interaction.topic).toEqual({ kind: "general" });
+    expect(general.interaction.topicSummary).toBe("闲谈");
+  });
+
+  it("持久化的 interaction 只含结构化 topic 与摘要，绝不包含玩家原话", () => {
+    const npc = makeNpc({ met: true });
+    const res = resolveDialogue(makeWs(), npc, talkOf({
+      act: "ask",
+      topic: { kind: "fact", factId: FACT_KNOWN },
+      utterance: "你能告诉我矿坑的秘密吗？",
+    }), deps);
+    expect(res.interaction.topic).toEqual({ kind: "fact", factId: FACT_KNOWN });
+    expect(res.interaction.topicSummary).toBe("询问线索");
+    expect(res.interaction).not.toMatchObject({ utterance: expect.anything() });
   });
 });

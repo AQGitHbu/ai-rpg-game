@@ -10,6 +10,7 @@ describe("preClassifyFreeText", () => {
     availableItems: [{ id: "item_1", name: "钥匙" }],
     undiscoveredFacts: [{ id: "fact_1", name: "墙上刻字" }],
     activeQuests: [{ id: "quest_1", name: "寻找失物" }],
+    topicRefs: [],
   };
 
   it("matches move by connected location name", () => {

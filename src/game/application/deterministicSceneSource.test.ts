@@ -2,12 +2,14 @@ import { describe, it, expect } from "vitest";
 import { createDeterministicSceneSource } from "./deterministicSceneSource";
 import type { LocationEntry, NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asFactId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { ResolvedEvent, ResolvedEventStatus } from "@/game/domain/resolvedEvent";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { NarrativeEventKind } from "@/game/domain/narrative";
+import type { FocusNpcContext } from "./focusNpcContext";
+import type { RelationshipTier } from "@/game/domain/relationship";
 
 const loc1: LocationEntry = {
   id: asLocationId("loc_1"), name: "客栈", description: "一间简朴的客栈", kind: "main",
@@ -57,6 +59,7 @@ type JobOverrides = {
   summary?: PendingNarrativeJob["actionSummary"];
   utterance?: string;
   focusNpcId?: string;
+  beats?: PendingNarrativeJob["mandatoryBeats"];
 };
 
 function makeJob(overrides: JobOverrides = {}): PendingNarrativeJob {
@@ -73,14 +76,35 @@ function makeJob(overrides: JobOverrides = {}): PendingNarrativeJob {
     focusNpcId: overrides.focusNpcId !== undefined ? asNpcId(overrides.focusNpcId) : undefined,
     requestedAt: "2026-01-02",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
-    mandatoryBeats: [],
+    mandatoryBeats: overrides.beats ?? [],
   });
   if (!result.ok) throw new Error("fixture job 构造失败");
   return result.job;
 }
 
+function makeFocusContext(tier: RelationshipTier): FocusNpcContext {
+  return {
+    id: asNpcId("npc_1"),
+    name: "老板",
+    role: "客栈老板",
+    publicProfile: "热情的老板",
+    responsePolicy: {
+      tier,
+      toneInstruction: tier === "hostile" ? "简短冷淡，拒绝配合" : "坦诚相待",
+      initiative: tier === "hostile" ? "refuse" : "proactive",
+      allowedDisclosureFactIds: tier === "hostile" ? [] : [asFactId("fact_1")],
+      privateKnowledgeIds: [],
+    },
+    speakableFactCards: tier === "hostile" ? [] : [{ factId: asFactId("fact_1"), text: "矿坑里藏着密道" }],
+    recentInteractions: [],
+    goals: [],
+    emotion: tier === "hostile" ? "angry" : "warm",
+    thisTurn: { relationshipDelta: tier === "hostile" ? -2 : 2, outcome: tier === "hostile" ? "negative" : "positive" },
+  };
+}
+
 // 最小上下文构造：直接按 SceneGenerationContext 契约组装（不引用完整的 record）。
-function makeContext(job: PendingNarrativeJob): SceneGenerationContext {
+function makeContext(job: PendingNarrativeJob, focus?: FocusNpcContext): SceneGenerationContext {
   const ss = makeStory();
   return {
     job,
@@ -110,9 +134,22 @@ function makeContext(job: PendingNarrativeJob): SceneGenerationContext {
     },
     worldConstraints: [],
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
-    mandatoryBeats: [],
+    mandatoryBeats: job.mandatoryBeats,
     beatSubjects: [],
+    ...(focus !== undefined ? { focusNpcContext: focus } : {}),
   };
+}
+
+/** talk job + 玩家原话 + 焦点 NPC 上下文的快速构造。 */
+function makeUtteranceContext(tier: RelationshipTier): SceneGenerationContext {
+  const job = makeJob({
+    eventKind: "dialogue",
+    summary: { kind: "talk", npcId: asNpcId("npc_1") },
+    focusNpcId: "npc_1",
+    utterance: "你知道商队失踪的事吗？",
+    beats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应玩家" }],
+  });
+  return makeContext(job, makeFocusContext(tier));
 }
 
 describe("deterministicSceneSource", () => {
@@ -164,17 +201,19 @@ describe("deterministicSceneSource", () => {
     ]);
   });
 
-  it("talk job keeps focusNpcId and echoes the utterance neutrally", async () => {
+  it("talk job keeps focusNpcId; narration echoes the utterance and the NPC line answers the player_utterance beat", async () => {
     const utterance = "请问关于失踪的商队有什么线索吗？";
-    const result = await source.generateScene(makeContext(makeJob({
+    const job = makeJob({
       eventKind: "dialogue",
       summary: { kind: "talk", npcId: asNpcId("npc_1") },
       focusNpcId: "npc_1",
       utterance,
-    })));
+      beats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应" }],
+    });
+    const result = await source.generateScene(makeContext(job, makeFocusContext("trusted")));
     expect(result.npcLine?.npcId).toBe(asNpcId("npc_1"));
-    expect(result.npcLine?.text).toContain(utterance);
     expect(result.narration).toContain(utterance);
+    expect(result.npcLine?.answeredBeatIds).toContain("player_utterance");
   });
 
   it.each(["partial_success", "failure", "blocked"] as const)(
@@ -244,5 +283,44 @@ describe("deterministicSceneSource", () => {
       { type: "battle_action", action: "attack" },
       { type: "battle_action", action: "guard" },
     ]);
+  });
+
+  // ── Task 5 Step 1 + 4：档位感知台词 + 玩家原话应答 ──────────────────────
+
+  it("hostile 与 trusted 对同一 talk action 产出肉眼可辨的不同台词", async () => {
+    const hostile = await source.generateScene(makeUtteranceContext("hostile"));
+    const trusted = await source.generateScene(makeUtteranceContext("trusted"));
+    expect(hostile.npcLine?.text).not.toBe(trusted.npcLine?.text);
+    expect(hostile.npcLine?.text).toBeTruthy();
+    expect(trusted.npcLine?.text).toBeTruthy();
+    // 旁白保留原话回显（不随档位变化），但台词因政策不同
+    expect(hostile.narration).toContain("你知道商队失踪的事吗");
+    expect(trusted.narration).toContain("你知道商队失踪的事吗");
+  });
+
+  it("hostile 档位 NPC 的台词为冷淡拒绝式", async () => {
+    const result = await source.generateScene(makeUtteranceContext("hostile"));
+    expect(result.npcLine?.text).toMatch(/冷冷|关你事|拒绝/);
+    expect(result.npcLine?.emotion).toBe("angry");
+  });
+
+  it("trusted 档位 NPC 的台词为坦诚主动式", async () => {
+    const result = await source.generateScene(makeUtteranceContext("trusted"));
+    expect(result.npcLine?.text).toMatch(/坦诚|告诉|这件事/);
+    expect(result.npcLine?.emotion).toBe("warm");
+  });
+
+  it("有 player_utterance 节拍时 npcLine 的 answeredBeatIds 包含该节拍 ID", async () => {
+    const result = await source.generateScene(makeUtteranceContext("trusted"));
+    expect(result.npcLine?.answeredBeatIds).toEqual(["player_utterance"]);
+  });
+
+  it("无 player_utterance 节拍时 answeredBeatIds 为空数组", async () => {
+    const context = makeContext(makeJob({
+      eventKind: "travel",
+      summary: { kind: "move", locationId: asLocationId("loc_2") },
+    }));
+    const result = await source.generateScene(context);
+    expect(result.npcLine?.answeredBeatIds).toEqual([]);
   });
 });

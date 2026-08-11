@@ -15,12 +15,15 @@ export const DIALOGUE_ACTS = [
 
 export type DialogueAct = (typeof DIALOGUE_ACTS)[number];
 
-/** 对话主题：规则只读取 kind 与实体 ID；thread 复用 storyState.ThreadId。 */
-export type DialogueTopic =
+/** 对话主题（Task 5 重命名结构化持久化契约）：规则只读取 kind 与实体 ID；thread 复用 storyState.ThreadId。 */
+export type StructuredDialogueTopic =
   | { readonly kind: "fact"; readonly factId: FactId }
   | { readonly kind: "quest"; readonly questId: QuestId }
   | { readonly kind: "thread"; readonly threadId: ThreadId }
   | { readonly kind: "general" };
+
+/** 兼容既有命名；结构化主题唯一来源。 */
+export type DialogueTopic = StructuredDialogueTopic;
 
 export type Interaction =
   | { readonly kind: "fixed_choice"; readonly choiceToken: string }

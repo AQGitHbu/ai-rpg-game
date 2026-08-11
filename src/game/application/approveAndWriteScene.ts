@@ -106,7 +106,8 @@ export type SceneRejectionCode =
   | "semantic_duplicate_choices"
   | "illegal_choice_target"
   | "illegal_event_target"
-  | "invalid_choice_action";
+  | "invalid_choice_action"
+  | "player_utterance_unanswered";
 
 export type ApprovedSceneWriteBack = {
   readonly scene: NarrativeSceneState;
@@ -248,6 +249,7 @@ function rebuildNpcLine(line: NarrativeNpcLineState | null): NarrativeNpcLineSta
     text: line.text,
     emotion: line.emotion,
     usedFactIds: [...line.usedFactIds],
+    ...(line.answeredBeatIds !== undefined ? { answeredBeatIds: [...line.answeredBeatIds] } : {}),
   };
 }
 
@@ -285,6 +287,19 @@ export function approveScenePackage(input: {
     ]);
     for (const factId of proposal.npcLine.usedFactIds) {
       if (!allowed.has(String(factId))) return { ok: false, code: "npc_uses_forbidden_fact" };
+    }
+  }
+
+  // Task 5 Step 4：player_utterance 应答钩子。有玩家原话节拍时，
+  // 提案必须由焦点 NPC 出场应答，并显式列出应答的节拍 ID；
+  // 缺台词/错 NPC/未列出 ID → 整场拒绝（调用方走确定性 fallback）。
+  const utteranceBeat = context.mandatoryBeats.find((b) => b.kind === "player_utterance");
+  if (utteranceBeat !== undefined) {
+    const focusNpcId = utteranceBeat.subjectIds[0];
+    if (proposal.npcLine === null
+      || String(proposal.npcLine.npcId) !== String(focusNpcId)
+      || !(proposal.npcLine.answeredBeatIds ?? []).includes(utteranceBeat.beatId)) {
+      return { ok: false, code: "player_utterance_unanswered" };
     }
   }
 

@@ -5,7 +5,7 @@ import {
   baseWorld, quest, withQuest, withMet, withInventoryItem, withDiscoveredFact, withBattle, withNextAct,
   canonicalResolvedEvent, NPC_1_ID, NPC_2_ID, ITEM_SEAL_ID, ENEMY_WOLF_ID, FACT_1_ID,
 } from "./narrativeContext.testutil";
-import { asItemId } from "@/game/domain/worldEntity";
+import { asItemId, asNpcId } from "@/game/domain/worldEntity";
 import type { ItemEntry, WorldState } from "@/game/domain/worldState";
 import { buildOutcomeBeats, capMandatoryBeats } from "./buildOutcomeBeats";
 
@@ -14,13 +14,19 @@ const ss = createInitialStoryState({
   initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 },
 });
 
-function beats(beforeWorldState = baseWorld(), afterWorldState = baseWorld(), afterStoryState = ss) {
+function beats(
+  beforeWorldState = baseWorld(),
+  afterWorldState = baseWorld(),
+  afterStoryState = ss,
+  extra: { readonly utterance?: string; readonly npcId?: ReturnType<typeof asNpcId> } = {},
+) {
   return buildOutcomeBeats({
     resolvedEvent: canonicalResolvedEvent(),
     beforeWorldState,
     beforeStoryState: ss,
     afterWorldState,
     afterStoryState,
+    ...extra,
   });
 }
 
@@ -137,7 +143,7 @@ it("battle_resolved：胜利、败北与撤退均落节拍", () => {
     expect(oneOfKind(result, "entity_introduced")).toHaveLength(0);
   });
 
-  it("capMandatoryBeats：按固定优先级保留前 8 条且顺序稳定", () => {
+it("capMandatoryBeats：按固定优先级保留前 8 条且顺序稳定", () => {
     const kinds: MandatoryNarrativeBeat["kind"][] = [
       "entity_introduced", "item_obtained", "battle_resolved", "fact_discovered",
       "battle_started", "quest_progress", "quest_advanced", "battle_round", "player_utterance",
@@ -151,5 +157,37 @@ it("battle_resolved：胜利、败北与撤退均落节拍", () => {
       "battle_resolved", "battle_started", "battle_round", "quest_advanced",
       "quest_progress", "item_obtained", "fact_discovered", "player_utterance",
     ]);
+  });
+
+  // ── Task 5 Step 4：player_utterance 节拍 ─────────────────────────────────
+
+  it("有玩家原话且行动指向焦点 NPC 时，必须产出 player_utterance 节拍", () => {
+    const got = oneOfKind(beats(baseWorld(), baseWorld(), ss, {
+      utterance: "请问商队失踪的事你知道吗？",
+      npcId: NPC_1_ID,
+    }), "player_utterance");
+    expect(got).toHaveLength(1);
+    expect(got[0].subjectIds).toEqual([String(NPC_1_ID)]);
+    expect(got[0].instruction.length).toBeGreaterThan(0);
+  });
+
+  it("无玩家原话 → 不产出 player_utterance 节拍", () => {
+    const got = oneOfKind(beats(baseWorld(), baseWorld(), ss, { npcId: NPC_1_ID }), "player_utterance");
+    expect(got).toHaveLength(0);
+  });
+
+  it("节拍挤爆上限时 player_utterance 仍保留（mandatory，替换最低优先级）", () => {
+    const manyItems: readonly ItemEntry[] = Array.from({ length: 8 }, (_, i) => ({
+      id: asItemId(`item_${i + 1}`), name: `物品${i + 1}`, description: "d", kind: "quest", tags: [],
+    }));
+    let after: WorldState = { ...baseWorld(), items: manyItems, inventory: manyItems.map((i) => i.id) };
+    after = withBattle(after, { status: "active", enemyId: ENEMY_WOLF_ID, playerHp: 100, enemyHp: 30, round: 1 });
+    const result = beats(baseWorld(), after, ss, {
+      utterance: "我知道你在隐瞒什么",
+      npcId: NPC_1_ID,
+    });
+    expect(result.length).toBeLessThanOrEqual(8);
+    expect(oneOfKind(result, "player_utterance")).toHaveLength(1);
+    expect(oneOfKind(result, "battle_started")).toHaveLength(1);
   });
 });

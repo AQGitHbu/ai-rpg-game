@@ -265,6 +265,10 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
     expect(generation.job.utterance).toBe("和老板聊聊");
     expect(generation.job.focusNpcId).toBe("npc_1");
+    // Task 5 Step 4：talk + 玩家原话 → 强制 player_utterance 节拍进入 job
+    const utteranceBeat = generation.job.mandatoryBeats.find((b) => b.kind === "player_utterance");
+    expect(utteranceBeat).toBeDefined();
+    expect(utteranceBeat?.subjectIds).toEqual(["npc_1"]);
   });
 
   it("pending 期间拒绝推进世界（ack_prologue 例外仍允许尝试）", async () => {

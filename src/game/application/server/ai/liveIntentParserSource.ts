@@ -1,4 +1,4 @@
-import type { Action, DialogueAct } from "@/game/domain/action";
+import type { Action, DialogueAct, StructuredDialogueTopic } from "@/game/domain/action";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
 import type { IntentContext } from "@/game/gameplay/rpg/intentParser";
 import type {
@@ -9,6 +9,8 @@ import {
   asItemId,
   asLocationId,
   asNpcId,
+  asFactId,
+  asQuestId,
   type NpcId,
 } from "@/game/domain/worldEntity";
 
@@ -72,6 +74,34 @@ function presentNpcByName(ctx: IntentContext, text: string): NpcId | null {
 }
 
 /**
+ * Task 5 Step 3：主题引用白名单解析。
+ * 只允许选择服务端供应的 fact/quest/thread ID；ID 不存在或 kind 非法一律降级 general。
+ */
+export function resolveIntentTopic(raw: unknown, ctx: IntentContext): StructuredDialogueTopic {
+  if (raw === null || typeof raw !== "object") return { kind: "general" };
+  const data = raw as { kind?: unknown; factId?: unknown; questId?: unknown; threadId?: unknown };
+  if (data.kind === "fact" && typeof data.factId === "string") {
+    if (ctx.topicRefs.some((r) => r.kind === "fact" && String(r.id) === data.factId)) {
+      return { kind: "fact", factId: asFactId(data.factId) };
+    }
+    return { kind: "general" };
+  }
+  if (data.kind === "quest" && typeof data.questId === "string") {
+    if (ctx.topicRefs.some((r) => r.kind === "quest" && String(r.id) === data.questId)) {
+      return { kind: "quest", questId: asQuestId(data.questId) };
+    }
+    return { kind: "general" };
+  }
+  if (data.kind === "thread" && typeof data.threadId === "string") {
+    if (ctx.topicRefs.some((r) => r.kind === "thread" && String(r.id) === data.threadId)) {
+      return { kind: "thread", threadId: data.threadId };
+    }
+    return { kind: "general" };
+  }
+  return { kind: "general" };
+}
+
+/**
  * AI 载荷纯校验（schema + 目标合法性）：
  * - {dialogueAct} 或 {type:"talk", dialogueAct} → 绑定在场目标 NPC；
  * - move/take_item → 实体必须存在于上下文；explore 直接放行；
@@ -107,7 +137,13 @@ export function parseIntentPayload(
     if (target === null) return { ok: false, reason: "unclassifiable" };
     return {
       ok: true,
-      action: { type: "talk", npcId: target, dialogueAct: act, utterance: trimmed },
+      action: {
+        type: "talk",
+        npcId: target,
+        dialogueAct: act,
+        utterance: trimmed,
+        topic: resolveIntentTopic(data.topic, ctx),
+      },
     };
   }
 
@@ -213,6 +249,7 @@ function buildUserPrompt(text: string, ctx: IntentContext, targetNpcId?: NpcId):
   const npcNames = ctx.presentNpcs.map((n) => n.name).join("、") || "无";
   const locNames = ctx.connectedLocations.map((l) => l.name).join("、") || "无";
   const itemNames = ctx.availableItems.map((i) => i.name).join("、") || "无";
+  const topicRefs = ctx.topicRefs.map((r) => `${r.kind}:${String(r.id)}`).join("、") || "无";
   const targetLine = targetNpcId !== undefined ? `目标NPC：${String(targetNpcId)}` : "无明确目标";
   return [
     `玩家输入：${text}`,
@@ -220,7 +257,8 @@ function buildUserPrompt(text: string, ctx: IntentContext, targetNpcId?: NpcId):
     `在场NPC：${npcNames}`,
     `可达地点：${locNames}`,
     `可用物品：${itemNames}`,
-    "返回严格 JSON：{\"dialogueAct\":\"ask|support|challenge|threaten|deceive|offer|refuse|reassure\"} 或 {\"type\":\"talk\"|\"move\"|\"take_item\"|\"explore\", ...}",
+    `可引用主题（仅以下 ID，topic.kind/ID 必须原样使用其中之一）：${topicRefs}`,
+    "返回严格 JSON：{\"dialogueAct\":\"ask|support|challenge|threaten|deceive|offer|refuse|reassure\",\"topic\":{\"kind\":\"fact|quest|thread|general\",\"factId\"|\"questId\"|\"threadId\":\"服务端ID\"},\"npcId\":\"目标NPC\"} 或 {\"type\":\"talk\"|\"move\"|\"take_item\"|\"explore\", ...}",
   ].join("\n");
 }
 

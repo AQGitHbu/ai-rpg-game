@@ -293,4 +293,98 @@ describe("approveScenePackage (Task 25)", () => {
       expect("scene" in result).toBe(false);
     }
   });
+
+  // ── Task 5 Step 4：player_utterance 应答校验 ─────────────────────────────
+
+  function utteranceContext(): SceneGenerationContext {
+    return makeContext({
+      mandatoryBeats: [{
+        beatId: "player_utterance",
+        kind: "player_utterance",
+        subjectIds: ["npc_1"],
+        instruction: "直接回应玩家",
+      }],
+    });
+  }
+
+  function utteranceAnswer(): ScenePackageProposal["npcLine"] {
+    return { npcId: asNpcId("npc_1"), text: "这件事我也正想说。", emotion: "warm", usedFactIds: [], answeredBeatIds: ["player_utterance"] };
+  }
+
+  it("有 player_utterance 节拍但提案没有 NPC 台词 → 整场拒绝 player_utterance_unanswered", () => {
+    const result = approveScenePackage({
+      context: utteranceContext(),
+      proposal: makeProposal({ npcLine: null }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("player_utterance_unanswered");
+  });
+
+  it("有 player_utterance 节拍但台词来自错误 NPC → 整场拒绝", () => {
+    const result = approveScenePackage({
+      context: makeContext({
+        mandatoryBeats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应" }],
+        presentNpcs: [
+          {
+            id: asNpcId("npc_1"), name: "老板", role: "路人", publicProfile: "t",
+            knownFactCards: [{ factId: asFactId("fact_a"), text: "已知" }],
+            hiddenFactCards: [], sceneVisibleFactIds: [asFactId("fact_vis")],
+            recentInteractionSummaries: [], relationship: { affinity: 0 }, emotion: "neutral",
+            goals: [], forbiddenKnowledgeIds: [],
+          },
+          {
+            id: asNpcId("npc_2"), name: "客人", role: "酒客", publicProfile: "t",
+            knownFactCards: [], hiddenFactCards: [], sceneVisibleFactIds: [],
+            recentInteractionSummaries: [], relationship: { affinity: 0 }, emotion: "neutral",
+            goals: [], forbiddenKnowledgeIds: [],
+          },
+        ],
+      }),
+      proposal: makeProposal({
+        npcLine: { npcId: asNpcId("npc_2"), text: "他说这件事交给他", emotion: "neutral", usedFactIds: [], answeredBeatIds: ["player_utterance"] },
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("player_utterance_unanswered");
+  });
+
+  it("有 player_utterance 节拍但台词未列出应答节拍 ID → 整场拒绝", () => {
+    const result = approveScenePackage({
+      context: utteranceContext(),
+      proposal: makeProposal({
+        npcLine: { npcId: asNpcId("npc_1"), text: "这件事我也正想说。", emotion: "warm", usedFactIds: [], answeredBeatIds: [] },
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("player_utterance_unanswered");
+  });
+
+  it("有 player_utterance 节拍且台词命中焦点 NPC + 应答 ID → 通过", () => {
+    const result = approveScenePackage({
+      context: utteranceContext(),
+      proposal: makeProposal({ npcLine: utteranceAnswer() }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("无 player_utterance 节拍时不要求 answeredBeatIds（既有行为不受影响）", () => {
+    const result = approveScenePackage({
+      context: makeContext(),
+      proposal: makeProposal({ npcLine: { npcId: asNpcId("npc_1"), text: "欢迎", emotion: "neutral", usedFactIds: [] } }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(true);
+  });
 });

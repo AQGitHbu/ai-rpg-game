@@ -1,17 +1,35 @@
 import type { EventProposal, SceneSource, SceneSourceResult } from "./sceneSource";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
-import type { NarrativeNpcLineState, NarrativeEventState } from "@/game/domain/narrative";
+import type { NarrativeEmotion, NarrativeNpcLineState, NarrativeEventState } from "@/game/domain/narrative";
 import type { ChoiceProposal } from "@/game/domain/approvedChoice";
 import { semanticSummaryOf } from "@/game/domain/approvedChoice";
 import type { Action } from "@/game/domain/action";
 import { asLocationId, asNpcId } from "@/game/domain/worldEntity";
+import type { RelationshipTier } from "@/game/domain/relationship";
 
 // ---------------------------------------------------------------------------
 // 确定性 fallback 场景生成器（spec §7.6 安全降级模板）。
 // 不调用 AI、不读时钟/随机数：sceneId 从 job 纯函数派生，
 // 两次调用同样的 context 产出逐字节相同的提案。
 // 选项从当前地点的合法行动中选取（移动、交谈、探索）。
-// ---------------------------------------------------------------------------
+// Task 5：NPC 台词按关系档位政策生成（hostile/trusted 肉眼可辨），
+// 且必须应答强制 player_utterance 节拍。
+// -----------------------------------------------------------------------------
+
+/** 档位 → 确定性台词（同一档位恒定；不同档位肉眼可辨）。 */
+const TIER_LINES: Readonly<Record<RelationshipTier, { readonly text: string; readonly emotion: NarrativeEmotion }>> = {
+  hostile: { text: "冷冷地答道：\"这不关你的事。\"", emotion: "angry" },
+  cold: { text: "谨慎地答道：\"我不便多说。\"", emotion: "guarded" },
+  neutral: { text: "如实答道：\"我知道了。\"", emotion: "neutral" },
+  friendly: { text: "热情地说：\"我很乐意帮忙。\"", emotion: "warm" },
+  trusted: { text: "坦诚地说：\"正好，我也想告诉你这件事。\"", emotion: "warm" },
+};
+
+/** 强制 player_utterance 节拍 ID（无则空数组）。 */
+export function answeredUtteranceBeatIds(context: SceneGenerationContext): readonly string[] {
+  const beat = (context.mandatoryBeats ?? []).find((b) => b.kind === "player_utterance");
+  return beat !== undefined ? [beat.beatId] : [];
+}
 
 export function createDeterministicSceneSource(): SceneSource {
   return {
@@ -115,25 +133,25 @@ function buildNpcLineState(context: SceneGenerationContext): NarrativeNpcLineSta
   const npc = focusNpc(context);
   if (npc === undefined) return null;
 
-  // talk job：原话中性回显在台词里，保持焦点 NPC 与场景对白一致。
-  if (job.actionSummary.kind === "talk" && job.utterance !== undefined) {
-    return {
-      npcId: npc.id,
-      text: `你刚才说："${job.utterance}"。${npc.name}听完点了点头。`,
-      emotion: "neutral",
-      usedFactIds: [],
-    };
-  }
+  const policy = context.focusNpcContext?.responsePolicy;
+  // Task 5：有焦点 NPC 政策时按档位出台词（同一行动，hostile/trusted 肉眼可辨）；
+  // 无政策（纯 fallback 夹具）保持既有状态文案。
+  const tierLine = policy !== undefined ? TIER_LINES[policy.tier] : null;
+  const text = tierLine !== null
+    ? `${npc.name}${tierLine.text}`
+    : buildStatusLine(npc.name, resolvedEvent);
+  const emotion = tierLine !== null ? tierLine.emotion : "neutral";
 
   return {
     npcId: npc.id,
-    text: buildNpcLine(npc.name, resolvedEvent),
-    emotion: "neutral",
+    text,
+    emotion,
     usedFactIds: [],
+    answeredBeatIds: answeredUtteranceBeatIds(context),
   };
 }
 
-function buildNpcLine(npcName: string, resolvedEvent: SceneGenerationContext["job"]["resolvedEvent"]): string {
+function buildStatusLine(npcName: string, resolvedEvent: SceneGenerationContext["job"]["resolvedEvent"]): string {
   switch (resolvedEvent.status) {
     case "success":
       return `${npcName}说道："欢迎，有什么需要帮忙的吗？"`;

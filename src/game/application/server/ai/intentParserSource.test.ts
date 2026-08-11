@@ -10,6 +10,7 @@ describe("FixtureIntentParserSource", () => {
     availableItems: [{ id: "item_1", name: "钥匙" }],
     undiscoveredFacts: [],
     activeQuests: [],
+    topicRefs: [],
   };
   const source = createFixtureIntentParserSource();
 

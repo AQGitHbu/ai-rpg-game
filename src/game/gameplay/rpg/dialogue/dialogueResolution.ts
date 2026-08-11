@@ -171,6 +171,7 @@ export function resolveDialogue(
     actionId: deps.actionId,
     locationId: ws.currentLocationId,
     dialogueAct: act,
+    topic,
     topicSummary: topicSummaryFor(topic),
     outcome,
     relationshipDelta,

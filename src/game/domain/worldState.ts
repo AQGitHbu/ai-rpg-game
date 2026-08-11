@@ -6,7 +6,7 @@ import type {
 import type { GameEvent } from "./events";
 import type { RelationshipValue } from "./relationship";
 import type { NarrativeEmotion } from "./narrative";
-import type { DialogueAct } from "./action";
+import type { DialogueAct, StructuredDialogueTopic } from "./action";
 
 // ── Entry 类型：定义 + 运行时 ──
 
@@ -44,6 +44,8 @@ export type NpcInteraction = {
   readonly actionId: string;
   readonly locationId: LocationId;
   readonly dialogueAct: DialogueAct | "freeform";
+  /** Task 5：本轮的结构化主题引用（规则裁决同源）；无主题时为 general 或省略。 */
+  readonly topic?: StructuredDialogueTopic;
   readonly topicSummary: string;
   readonly outcome: "positive" | "negative" | "neutral" | "mixed";
   readonly relationshipDelta: number;

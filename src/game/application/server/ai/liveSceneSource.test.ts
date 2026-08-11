@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { generatePendingScene } from "../../generatePendingScene";
 import { approveSceneEventProposals, POOL_MAX_CANDIDATES } from "../../approveAndWriteScene";
-import { appendLocation, createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
+import { appendLocation, createInitialWorldState, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import { asLocationId, asGenerationId, asEnemyId } from "@/game/domain/worldEntity";
+import { asLocationId, asGenerationId, asEnemyId, asNpcId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { GameRepository, GameRecord, GetCurrentGameResult } from "../../server/persistence/gameRepository";
@@ -14,7 +14,12 @@ import type { SceneGenerationContext } from "../../sceneGenerationContext";
 function makeWorldState() {
   const loc: LocationEntry = {
     id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
-    connectedLocationIds: [asLocationId("loc_2")], npcIds: [], availableItemIds: [], tags: [],
+    connectedLocationIds: [asLocationId("loc_2")], npcIds: [asNpcId("npc_1")], availableItemIds: [], tags: [],
+  };
+  const npc: NpcEntry = {
+    id: asNpcId("npc_1"), name: "老板", role: "客栈老板", description: "t",
+    locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
+    memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 30 }, emotion: "neutral", goals: [] },
   };
   const base = createInitialWorldState({
     generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
@@ -22,29 +27,32 @@ function makeWorldState() {
     startingLocation: loc,
     startingItemIds: [],
   });
-  const next = appendLocation(base, {
+  const withNpc = { ...base, npcs: [npc] };
+  const next = appendLocation(withNpc, {
     id: asLocationId("loc_2"), name: "街道", description: "t", kind: "main",
     connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
   });
   return { ...next, unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
 }
 
-function makeJob(): PendingNarrativeJob {
+function makeJob(overrides: { utterance?: string; beats?: PendingNarrativeJob["mandatoryBeats"] } = {}): PendingNarrativeJob {
   const result = createPendingNarrativeJob({
     jobId: asNarrativeJobId("job_1"),
     turnId: asTurnId("turn_1"),
     actionId: "act_1",
     expectedRevision: 0,
     turnNumber: 1,
-    actionSummary: { kind: "move", locationId: asLocationId("loc_1") },
+    actionSummary: { kind: "talk", npcId: asNpcId("npc_1") },
+    utterance: overrides.utterance,
     resolvedEvent: {
-      actionId: "act_1", status: "success", eventKind: "travel",
+      actionId: "act_1", status: "success", eventKind: "dialogue",
       facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [],
     },
     domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+    focusNpcId: asNpcId("npc_1"),
     requestedAt: "2026-01-02",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
-    mandatoryBeats: [],
+    mandatoryBeats: overrides.beats ?? [],
   });
   if (!result.ok) throw new Error("job 构造失败");
   return result.job;
@@ -154,5 +162,57 @@ describe("scene source 候选事件提议 → 写回审批（Task 21）", () => 
     expect(dup.ok).toBe(true);
     if (!dup.ok) return;
     expect(dup.nextCandidateEventPool.filter((c) => c.id === "ce-dup").length).toBe(1);
+  });
+
+  // ── Task 5 Step 4：player_utterance 应答缺失 → 确定性 fallback ───────────
+
+  it("live/stub 提案未应答 player_utterance 节拍 → 整场回退确定性源并保存", async () => {
+    const job = makeJob({
+      utterance: "商队失踪的事你知道吗？",
+      beats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应" }],
+    });
+    const record = { ...makeRecord([]), storyState: { ...makeRecord([]).storyState, narrative: { ...makeRecord([]).storyState.narrative, generation: { status: "pending" as const, job } } } };
+    const repo = makeRepo(record);
+    // stub 源返回 npcLine:null → 未应答 → 审批拒绝 → 确定性 fallback
+    const source = makeSceneSource([]);
+    const result = await generatePendingScene({ repository: repo, sceneSource: source, now: () => "2026-01-02" });
+    expect(result).toBe("saved");
+    const current: GetCurrentGameResult = await repo.getCurrentGame();
+    const saved = current.ok && current.status === "active" ? current.record : null;
+    expect(saved?.storyState.narrative.currentScene?.npcLine?.npcId).toBe(asNpcId("npc_1"));
+    expect(saved?.storyState.narrative.currentScene?.npcLine?.answeredBeatIds).toContain("player_utterance");
+    expect(saved?.storyState.narrative.currentScene?.source).toBe("fallback");
+  });
+
+  it("stub 提案正确应答 player_utterance 节拍 → 直接采纳（不触发 fallback）", async () => {
+    const job = makeJob({
+      utterance: "商队失踪的事你知道吗？",
+      beats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应" }],
+    });
+    const record = { ...makeRecord([]), storyState: { ...makeRecord([]).storyState, narrative: { ...makeRecord([]).storyState.narrative, generation: { status: "pending" as const, job } } } };
+    const repo = makeRepo(record);
+    const answering: SceneSource = {
+      async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
+        return {
+          sceneId: `scene-${context.job.jobId}`,
+          turn: context.job.turnNumber,
+          narration: "你提出了你的疑问。",
+          npcLine: { npcId: asNpcId("npc_1"), text: "这件事我也正想说。", emotion: "warm", usedFactIds: [], answeredBeatIds: ["player_utterance"] },
+          event: { kind: "dialogue", focusNpcId: asNpcId("npc_1") },
+          choiceProposals: [
+            { label: "支持", action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" } },
+            { label: "质疑", action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "challenge" } },
+          ],
+          eventProposals: [],
+          source: "generated",
+        };
+      },
+    };
+    const result = await generatePendingScene({ repository: repo, sceneSource: answering, now: () => "2026-01-02" });
+    expect(result).toBe("saved");
+    const current: GetCurrentGameResult = await repo.getCurrentGame();
+    const saved = current.ok && current.status === "active" ? current.record : null;
+    expect(saved?.storyState.narrative.currentScene?.npcLine?.text).toBe("这件事我也正想说。");
+    expect(saved?.storyState.narrative.currentScene?.source).toBe("generated");
   });
 });

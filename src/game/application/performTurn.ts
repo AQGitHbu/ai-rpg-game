@@ -115,7 +115,7 @@ export async function performTurn(
 
   const freeTextDeps = command.interaction.kind === "free_text"
     ? {
-        intentContext: buildIntentContext(record.worldState),
+        intentContext: buildIntentContext(record.worldState, record.storyState),
         intentParserSource: deps.intentParserSource,
         targetNpcId: command.interaction.targetNpcId,
       }
@@ -175,6 +175,7 @@ export async function performTurn(
             { worldState: record.worldState, storyState: record.storyState },
             { worldState: reEvaluated.resolution.nextWorldState, storyState: reEvaluated.resolution.nextStoryState },
             reEvaluated.resolution.primaryResult,
+            converted.action,
           );
           return commitResolution({
             repository: deps.repository,
@@ -220,6 +221,7 @@ export async function performTurn(
     { worldState: record.worldState, storyState: record.storyState },
     { worldState: resolution.nextWorldState, storyState: resolution.nextStoryState },
     resolution.primaryResult,
+    converted.action,
   );
 
   return commitResolution({
@@ -258,11 +260,13 @@ function clipPlayerUtterance(text: string): string {
 /**
  * Task 4：提交前从规则结果 + before/after 状态纯派生目标转换与强制叙事节拍。
  * 禁止把事件正文/账本字符串丢给 AI 去推断状态变化。
+ * Task 5：talk 行动的玩家原话与焦点 NPC 一并注入，强制产出 player_utterance 节拍。
  */
 function buildTurnNarrative(
   before: { readonly worldState: WorldState; readonly storyState: StoryState },
   after: { readonly worldState: WorldState; readonly storyState: StoryState },
   primaryResult: ResolvedEvent,
+  action: Action,
 ): { readonly objectiveTransition: ObjectiveTransition; readonly mandatoryBeats: readonly MandatoryNarrativeBeat[] } {
   return {
     objectiveTransition: deriveObjectiveTransition({
@@ -277,6 +281,9 @@ function buildTurnNarrative(
       beforeStoryState: before.storyState,
       afterWorldState: after.worldState,
       afterStoryState: after.storyState,
+      ...(action.type === "talk"
+        ? { utterance: action.utterance, npcId: action.npcId }
+        : {}),
     }),
   };
 }

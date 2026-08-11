@@ -42,6 +42,8 @@ export type NarrativeNpcLineState = {
   readonly text: string;
   readonly emotion: NarrativeEmotion;
   readonly usedFactIds: readonly FactId[];
+  /** Task 5：该台词应答的强制节拍 ID 列表（player_utterance 节拍必须命中）。 */
+  readonly answeredBeatIds?: readonly string[];
 };
 
 /** Pre-generated branch consumed immediately by a dialogue response choice. */

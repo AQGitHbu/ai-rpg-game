@@ -9,6 +9,7 @@ import {
   appendLocation,
   type LocationEntry,
   type NpcEntry,
+  type NpcInteraction,
 } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import {
@@ -44,6 +45,9 @@ const IMPORTANT_ACTION_ID = "act_persist";
 function makeJob(overrides: {
   transition?: ObjectiveTransition;
   beats?: readonly MandatoryNarrativeBeat[];
+  summary?: PendingNarrativeJob["actionSummary"];
+  focusNpcId?: string;
+  utterance?: string;
 } = {}): PendingNarrativeJob {
   const result = createPendingNarrativeJob({
     jobId: asNarrativeJobId("job_1"),
@@ -51,7 +55,8 @@ function makeJob(overrides: {
     actionId: IMPORTANT_ACTION_ID,
     expectedRevision: 0,
     turnNumber: 1,
-    actionSummary: { kind: "move", locationId: asLocationId("loc_2") },
+    actionSummary: overrides.summary ?? { kind: "move", locationId: asLocationId("loc_2") },
+    utterance: overrides.utterance,
     resolvedEvent: {
       actionId: IMPORTANT_ACTION_ID,
       status: "success",
@@ -64,6 +69,7 @@ function makeJob(overrides: {
       rejectedEffects: [],
     },
     domainEventRange: { fromLedgerIndex: 1, toLedgerIndexExclusive: 2 },
+    focusNpcId: overrides.focusNpcId !== undefined ? asNpcId(overrides.focusNpcId) : undefined,
     requestedAt: "2026-01-02",
     objectiveTransition: overrides.transition ?? { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: overrides.beats ?? [],
@@ -278,5 +284,76 @@ describe("buildSceneGenerationContext", () => {
     expect(context.objectiveTransition.after?.label).toBe("获取盟誓印谱");
     expect(view.story.currentObjectiveLabel).toBe("获取盟誓印谱");
     expect(view.story.currentObjectiveLabel).toBe(context.objectiveTransition.after?.label);
+  });
+
+  // ── Task 5：焦点 NPC 隔离上下文 ─────────────────────────────────────────
+
+  it("talk 行动投影 focusNpcContext（焦点 NPC 政策 + 本轮关系结果）", () => {
+    const record = makeRecord(true, makeJob({
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+      utterance: "你知道矿坑的密道吗？",
+    }), makeQuestWorld());
+    const context = buildSceneGenerationContext(record);
+    expect(context.focusNpcContext).toBeDefined();
+    expect(context.focusNpcContext?.id).toBe(asNpcId("npc_1"));
+    expect(context.focusNpcContext?.responsePolicy.tier).toBe("neutral"); // affinity 0
+    expect(context.focusNpcContext?.responsePolicy.initiative).toBe("reactive");
+    expect(context.focusNpcContext?.emotion).toBe("neutral");
+    // talk job 无 interaction → 本轮默认 neutral/0
+    expect(context.focusNpcContext?.thisTurn).toEqual({ relationshipDelta: 0, outcome: "neutral" });
+  });
+
+  it("focusNpcContext 不含玩家原话、其他 NPC 交互或私密事实正文", () => {
+    const world = makeQuestWorld();
+    const secretB = asFactId("fact_secret_b");
+    const npcB: NpcEntry = {
+      id: asNpcId("npc_2"), name: "客人", role: "酒客", description: "沉默的客人",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
+      memory: {
+        npcId: asNpcId("npc_2"),
+        knownFactIds: [secretB],
+        hiddenFactIds: [secretB],
+        interactionHistory: [{
+          turnNumber: 1, actionId: "guest_1", locationId: asLocationId("loc_1"),
+          dialogueAct: "ask", topic: { kind: "general" }, topicSummary: "闲谈",
+          outcome: "positive", relationshipDelta: 1, learnedFactIds: [],
+          summary: "客人的交谈",
+        }],
+        relationship: { affinity: 5 }, emotion: "neutral", goals: [],
+      },
+    };
+    const bossHistory: NpcInteraction = {
+      turnNumber: 9, actionId: IMPORTANT_ACTION_ID, locationId: asLocationId("loc_1"),
+      dialogueAct: "ask", topic: { kind: "fact", factId: secretB }, topicSummary: "询问线索",
+      outcome: "negative", relationshipDelta: -2, learnedFactIds: [],
+      summary: "再次交谈，ask，氛围紧张，关系-2",
+    };
+    const boss = world.npcs.find((n) => n.id === asNpcId("npc_1"))!;
+    const worldWithNpcB = {
+      ...world,
+      npcs: [
+        { ...boss, memory: { ...boss.memory, interactionHistory: [bossHistory] } },
+        npcB,
+      ],
+      worldFacts: [
+        ...world.worldFacts,
+        { factId: secretB, text: "客人暗藏私货", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") },
+      ],
+    };
+    const record = makeRecord(true, makeJob({
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+      utterance: "你知道矿坑的密道吗？",
+    }), worldWithNpcB);
+    const context = buildSceneGenerationContext(record);
+    const serialized = JSON.stringify(context.focusNpcContext);
+    expect(serialized).not.toContain("你知道矿坑的密道吗"); // 无玩家原话
+    expect(serialized).not.toContain("客人的交谈"); // 无其他 NPC 交互
+    expect(serialized).not.toContain("客人暗藏私货"); // 无私密正文
+    expect(context.focusNpcContext?.recentInteractions).toHaveLength(1);
+    expect(context.focusNpcContext?.recentInteractions[0]?.actionId).toBe(IMPORTANT_ACTION_ID);
+    // 本轮 delta/outcome 来自 actionId 匹配的 interaction
+    expect(context.focusNpcContext?.thisTurn).toEqual({ relationshipDelta: -2, outcome: "negative" });
   });
 });

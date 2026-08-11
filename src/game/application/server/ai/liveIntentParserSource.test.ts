@@ -8,7 +8,7 @@ import {
   type LiveIntentTransport,
 } from "./liveIntentParserSource";
 import type { IntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
-import { asNpcId, asLocationId } from "@/game/domain/worldEntity";
+import { asNpcId, asLocationId, asFactId, asQuestId } from "@/game/domain/worldEntity";
 
 // ---------------------------------------------------------------------------
 // live/fixture IntentParserSource
@@ -24,6 +24,11 @@ const ctx: IntentContext = {
   availableItems: [{ id: "item_1", name: "钥匙" }],
   undiscoveredFacts: [],
   activeQuests: [],
+  topicRefs: [
+    { kind: "fact", id: asFactId("fact_1") },
+    { kind: "quest", id: asQuestId("quest_1") },
+    { kind: "thread", id: "thread_1" },
+  ],
 };
 
 describe("classifyDialogueAct 短语表", () => {
@@ -79,6 +84,80 @@ describe("parseIntentPayload dialogueAct 映射表", () => {
   it("已移除的休息 payload 不再转换为 Action", () => {
     const result = parseIntentPayload({ type: "rest" }, "休息一下", ctx);
     expect(result.ok).toBe(false);
+  });
+
+  // ── Task 5 Step 3：结构化主题引用 ────────────────────────────────────────
+
+  it("AI 提供的 topic 命中服务端 fact ID → 附到 talk action", () => {
+    const result = parseIntentPayload(
+      { dialogueAct: "ask", topic: { kind: "fact", factId: "fact_1" } },
+      "你知道矿坑的密道吗？", ctx, asNpcId("npc_1"));
+    expect(result.ok).toBe(true);
+    if (result.ok && result.action.type === "talk") {
+      expect(result.action.topic).toEqual({ kind: "fact", factId: asFactId("fact_1") });
+    }
+  });
+
+  it("topic 命中服务端 quest/thread ID → 附到 talk action", () => {
+    const quest = parseIntentPayload(
+      { dialogueAct: "ask", topic: { kind: "quest", questId: "quest_1" } },
+      "关于查明真相的任务", ctx, asNpcId("npc_1"));
+    expect(quest.ok).toBe(true);
+    if (quest.ok && quest.action.type === "talk") {
+      expect(quest.action.topic).toEqual({ kind: "quest", questId: asQuestId("quest_1") });
+    }
+    const thread = parseIntentPayload(
+      { dialogueAct: "ask", topic: { kind: "thread", threadId: "thread_1" } },
+      "我们继续刚才的话题", ctx, asNpcId("npc_1"));
+    expect(thread.ok).toBe(true);
+    if (thread.ok && thread.action.type === "talk") {
+      expect(thread.action.topic).toEqual({ kind: "thread", threadId: "thread_1" });
+    }
+  });
+
+  it("topic ID 不在服务端白名单 → 降级 general（绝不接受自创 ID）", () => {
+    const fakeFact = parseIntentPayload(
+      { dialogueAct: "ask", topic: { kind: "fact", factId: "fact_ghost" } },
+      "关于幽灵线索", ctx, asNpcId("npc_1"));
+    expect(fakeFact.ok).toBe(true);
+    if (fakeFact.ok && fakeFact.action.type === "talk") {
+      expect(fakeFact.action.topic).toEqual({ kind: "general" });
+    }
+    const fakeQuest = parseIntentPayload(
+      { dialogueAct: "ask", topic: { kind: "quest", questId: "quest_ghost" } },
+      "关于幽灵任务", ctx, asNpcId("npc_1"));
+    if (fakeQuest.ok && fakeQuest.action.type === "talk") {
+      expect(fakeQuest.action.topic).toEqual({ kind: "general" });
+    }
+  });
+
+  it("kind 未知或结构非法 → 降级 general", () => {
+    const badKind = parseIntentPayload(
+      { dialogueAct: "ask", topic: { kind: "memory", factId: "fact_1" } },
+      "还记得吗", ctx, asNpcId("npc_1"));
+    expect(badKind.ok).toBe(true);
+    if (badKind.ok && badKind.action.type === "talk") {
+      expect(badKind.action.topic).toEqual({ kind: "general" });
+    }
+  });
+
+  it("无 topic 字段 → general（既有行为）", () => {
+    const result = parseIntentPayload({ dialogueAct: "support" }, "我相信你", ctx, asNpcId("npc_1"));
+    expect(result.ok).toBe(true);
+    if (result.ok && result.action.type === "talk") {
+      expect(result.action.topic).toEqual({ kind: "general" });
+    }
+  });
+
+  it("live 源透传合法 topic；AI 返回非法 topic 时规则降级仍保留 general", async () => {
+    const live = createLiveIntentParser(
+      stubTransport({ ok: true, content: '{"dialogueAct":"ask","topic":{"kind":"fact","factId":"fact_1"}}' }),
+    );
+    const result = await live.parseIntent("你知道矿坑的密道吗？", ctx, asNpcId("npc_1"));
+    expect(result.ok).toBe(true);
+    if (result.ok && result.action.type === "talk") {
+      expect(result.action.topic).toEqual({ kind: "fact", factId: asFactId("fact_1") });
+    }
   });
 });
 

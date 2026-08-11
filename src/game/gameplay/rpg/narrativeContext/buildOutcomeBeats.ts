@@ -4,6 +4,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import type { MandatoryNarrativeBeat, MandatoryNarrativeBeatKind } from "@/game/domain/narrativeBeat";
 import { MAX_MANDATORY_BEATS } from "@/game/domain/narrativeBeat";
+import type { NpcId } from "@/game/domain/worldEntity";
 import { isObjectiveSatisfied, objectiveLabel } from "./objectiveRules";
 import { currentObjectiveOf } from "./deriveObjectiveTransition";
 
@@ -13,6 +14,10 @@ export type BuildOutcomeBeatsInput = {
   readonly beforeStoryState: StoryState;
   readonly afterWorldState: WorldState;
   readonly afterStoryState: StoryState;
+  /** Task 5：玩家本轮原话（talk 行动）；存在且指向焦点 NPC 时强制产出 player_utterance 节拍。 */
+  readonly utterance?: string;
+  /** Task 5：行动指向的焦点 NPC（talk 行动为 action.npcId）。 */
+  readonly npcId?: NpcId;
 };
 
 // 固定优先级（数字小者优先保留）。battle 生死优先，纯展开信息（entity_introduced）最先丢弃。
@@ -131,17 +136,37 @@ function collectRawBeats({ beforeW, afterW, beforeS, afterS }: CollectInput): Ma
     push("entity_introduced", [String(enemy.id)], `新的威胁「${enemy.name}」出没`);
   }
 
-  // player_utterance 不在此派生：resolvedEvent 不含玩家原文，由作业组合层用 job.utterance 注入。
+  // player_utterance 不在 raw beats 中派生：由 buildOutcomeBeats 根据
+  // input.utterance/npcId 生成强制节拍（原话只存在于 job.utterance）。
   return beats;
+}
+
+function requiredUtteranceBeat(input: BuildOutcomeBeatsInput): MandatoryNarrativeBeat | null {
+  const utterance = input.utterance?.trim() ?? "";
+  if (utterance === "" || input.npcId === undefined) return null;
+  return {
+    beatId: "player_utterance",
+    kind: "player_utterance",
+    subjectIds: [String(input.npcId)],
+    // 只含规范化指示，绝不含玩家原话正文（原话只在 job.utterance 内）。
+    instruction: "直接回应玩家刚说的话，并承接当前情境",
+  };
 }
 
 export function buildOutcomeBeats(input: BuildOutcomeBeatsInput): MandatoryNarrativeBeat[] {
   const { resolvedEvent, beforeWorldState, beforeStoryState, afterWorldState, afterStoryState } = input;
   void resolvedEvent;
-  return capMandatoryBeats(collectRawBeats({
+  const raw = collectRawBeats({
     beforeW: beforeWorldState,
     afterW: afterWorldState,
     beforeS: beforeStoryState,
     afterS: afterStoryState,
-  }));
+  });
+  const capped = capMandatoryBeats(raw);
+  const required = requiredUtteranceBeat(input);
+  if (required === null) return capped;
+  const hasIt = capped.some((b) => b.kind === "player_utterance");
+  if (hasIt) return capped;
+  // Mandatory：替换最低优先级节拍，保证 player_utterance 存在
+  return [...capped.slice(0, MAX_MANDATORY_BEATS - 1), required];
 }

@@ -7,7 +7,7 @@ import type { SceneGenerationContext } from "../../sceneGenerationContext";
 import type { NarrativeEventState, NarrativeEmotion, NarrativeNpcLineState } from "@/game/domain/narrative";
 import { NARRATIVE_EMOTIONS } from "@/game/domain/narrative";
 import { createOpeningGenerationSource as createValidatedOpeningGenerationSource } from "./openingGenerationSource";
-import { createDeterministicSceneSource } from "../../deterministicSceneSource";
+import { createDeterministicSceneSource, answeredUtteranceBeatIds } from "../../deterministicSceneSource";
 import { createLiveWorldEvolutionSource } from "./liveWorldEvolutionSource";
 import { createDeterministicEvolutionSource } from "../../deterministicEvolutionSource";
 import type { WorldEvolutionSource } from "../../worldEvolutionSource";
@@ -96,6 +96,22 @@ export function createLiveSceneSource(
         const selectable = buildSelectableChoiceProposals(context, event);
         if (selectable.length < 2) return fallback.generateScene(context);
 
+        const focus = context.focusNpcContext;
+        const focusSection = focus !== undefined
+          ? `焦点NPC记忆（只允许此NPC的隔离上下文，不要编造其他NPC的记忆）：
+- ${focus.name}（${focus.role}）：${focus.publicProfile}
+- 关系档位：${focus.responsePolicy.tier}；态度指示：${focus.responsePolicy.toneInstruction}；主动性：${focus.responsePolicy.initiative}
+- 本轮关系结果：delta ${focus.thisTurn.relationshipDelta}（${focus.thisTurn.outcome}）；情绪：${focus.emotion}
+- 目标：${focus.goals.join("、") || "无"}
+- 可透露线索（仅以下可写进台词）：${focus.speakableFactCards.map((f) => `${f.text}`).join("、") || "无"}
+- 私密知识ID（绝不能说出正文，最多含糊带过）：${focus.responsePolicy.privateKnowledgeIds.join("、") || "无"}
+- 最近交互摘要（最近5条）：${focus.recentInteractions.map((i) => `[${i.dialogueAct}/${i.topicSummary}/${i.outcome}] ${i.summary}`).join("；") || "无"}`
+          : "无焦点NPC";
+        const utteranceBeat = (context.mandatoryBeats ?? []).find((b) => b.kind === "player_utterance");
+        const utteranceInstruction = utteranceBeat !== undefined
+          ? `\n玩家刚对${focus?.name ?? "焦点NPC"}说了话（节拍ID ${utteranceBeat.beatId}）。npcLine 必须由该焦点NPC直接回应这句话，并在 npcLine.answeredBeatIds 中列出该节拍ID；否则场景无效。`
+          : "";
+
         const systemPrompt = `你是一个 RPG 叙事设计师。根据当前游戏状态生成一个场景，返回 JSON 格式。
 
 当前地点：${currentLocName}
@@ -105,6 +121,9 @@ export function createLiveSceneSource(
 节奏需要：${story.nextPacingNeed}
 玩家行动类型：${job.resolvedEvent.eventKind}
 
+${focusSection}
+${utteranceInstruction}
+
 在场 NPC（npcLine.npcId 必须使用下列 ID 之一，不得自创）：${npcsHere.map((n) => `${n.id}=${n.name}(${n.role})`).join("、") || "无"}
 
 服务端候选：${JSON.stringify(selectable.map((entry) => ({ candidateId: entry.candidateId, label: entry.proposal.label })))}
@@ -112,7 +131,7 @@ export function createLiveSceneSource(
 返回严格 JSON，格式如下：
 {
   "narration": "场景旁白文字（2-4句）",
-  "npcLine": { "npcId": "在场NPC的ID（必须原样使用上方列出的 ID）", "text": "NPC说的台词（符合其身份与当前情境，不要用招呼语敷衍）", "emotion": "neutral" },
+  "npcLine": { "npcId": "在场NPC的ID（必须原样使用上方列出的 ID）", "text": "NPC说的台词（符合其身份与当前情境，不要用招呼语敷衍）", "emotion": "neutral", "answeredBeatIds": ["player_utterance（若有）"] },
   "choices": [
     { "label": "选项1文字", "candidateId": "candidate_1" },
     { "label": "选项2文字", "candidateId": "candidate_2" }
@@ -128,6 +147,7 @@ export function createLiveSceneSource(
 - smallTalks 中的 npcId 必须是非焦点 NPC（即不等于 npcLine.npcId 的其他在场 NPC）。
 - 闲聊的 response 应该简短、符合 NPC 身份，但不包含剧情关键信息。
 - narration 与 npcLine 中出现的 NPC 名字必须与上方列出的名字逐字一致，不得使用别名或变体。
+- 只能使用“可透露线索”里的内容；私密知识ID的正文绝不能写进任何台词。
 只返回 JSON，不要其他文字。`;
 
         const messages: readonly AiMessage[] = [
@@ -168,8 +188,15 @@ export function createLiveSceneSource(
         const turn = job.turnNumber;
         // AI 的 npcLine 必须归属在场 NPC 且 emotion 合法；无效时回退确定性台词。
         const resolvedLine = resolveLiveNpcLine(rawNpcLine, npcsHere);
+        const utteranceBeatId = answeredUtteranceBeatIds(context)[0];
         const npcLine: NarrativeNpcLineState | null = resolvedLine !== null
-          ? { npcId: resolvedLine.npcId, text: resolvedLine.text, emotion: resolvedLine.emotion, usedFactIds: [] }
+          ? {
+              npcId: resolvedLine.npcId,
+              text: resolvedLine.text,
+              emotion: resolvedLine.emotion,
+              usedFactIds: [],
+              ...(utteranceBeatId !== undefined ? { answeredBeatIds: [utteranceBeatId] } : {}),
+            }
           : null;
 
         const choiceProposals = resolveSelectedChoiceProposals(selectable, choices);
