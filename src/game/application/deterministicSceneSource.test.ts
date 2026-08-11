@@ -282,6 +282,36 @@ describe("deterministicSceneSource", () => {
     expect(result.segments[0]?.text).toContain("盟誓印谱");
   });
 
+  it("幕边界 fallback：quest_advanced segment 以权威 objectiveTarget 点名，可通过审批", async () => {
+    const job = makeJob({
+      beats: [{
+        beatId: "qa",
+        kind: "quest_advanced",
+        subjectIds: [],
+        instruction: "主线推进到第2幕。已完成：先前的目标；当前目标：新的线索",
+      }],
+      transition: {
+        before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与客栈老板交谈" },
+        completed: [],
+        after: null,
+        mode: "advanced_act",
+      },
+    });
+    const context: SceneGenerationContext = {
+      ...makeContext(job),
+      objectiveTransition: {
+        ...job.objectiveTransition,
+        after: { questId: asQuestId("quest_0"), objectiveIndex: 1, label: "与信使交谈" },
+      },
+      objectiveTarget: { questId: asQuestId("quest_0"), objectiveIndex: 1, entityId: "npc_dyn_1", entityName: "信使" },
+    };
+    const proposal = await source.generateScene(context);
+    const segment = proposal.segments.find((s) => s.beatId === "qa");
+    expect(segment?.text).toContain("信使");
+    const approved = approveScenePerformance({ context, proposal, basedOnRevision: 1, existingCandidateEventPool: [] });
+    expect(approved.ok).toBe(true);
+  });
+
   it("choices include a move action toward a reachable location", async () => {
     const context = makeContext(makeJob());
     const result = await source.generateScene(context);

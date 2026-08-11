@@ -110,6 +110,14 @@ function buildSegments(context: SceneGenerationContext): readonly ScenePerforman
           ? `你对${npc.name}说："${utterance}"。${npc.name}听完，注视着你的眼睛。`
           : "你向对方提出了你的疑问。",
       });
+    } else if (beat.kind === "quest_advanced" && context.objectiveTarget !== null) {
+      // 幕边界：turn 时刻的下一个目标尚未具象化，节拍指令里没有实体名；
+      // 场景装配的预览状态已具象化，此处用权威 objectiveTarget 点名，
+      // 保证确定性 fallback 也能通过 quest_advanced_unnamed 审批。
+      segments.push({
+        beatId: beat.beatId,
+        text: `主线推进。当前目标：${context.objectiveTarget.entityName}（${context.objectiveTransition.after?.label ?? "新的线索"}）`,
+      });
     } else {
       segments.push({ beatId: beat.beatId, text: beat.instruction });
     }
