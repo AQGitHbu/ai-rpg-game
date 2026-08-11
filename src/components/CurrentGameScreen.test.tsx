@@ -11,7 +11,7 @@ vi.mock("./gameActionRequest", () => ({
   ackPrologue: vi.fn(async () => true),
 }));
 
-const endedView: GameSessionView = {
+const baseView: GameSessionView = {
   revision: 9,
   turnNumber: 8,
   gameType: "wuxia",
@@ -27,7 +27,17 @@ const endedView: GameSessionView = {
   battle: null,
   quests: [],
   prologueShown: true,
+  prologueText: "",
   ending: { name: "并肩破局", description: "故事结束。", outcome: "success", restartIdentity: "opaque-ended-session" },
+};
+
+const endedView: GameSessionView = { ...baseView, prologueShown: true, prologueText: "" };
+
+const activeViewWithPrologue: GameSessionView = {
+  ...baseView,
+  prologueShown: false,
+  prologueText: "你在听雨客栈醒来，雨声压住了街道上的马蹄。",
+  ending: null,
 };
 
 afterEach(() => {
@@ -56,5 +66,40 @@ describe("CurrentGameScreen ending restart", () => {
     expect(JSON.parse(String(init.body))).toMatchObject({
       restart: { identity: "opaque-ended-session", expectedRevision: 9 },
     });
+  });
+});
+
+describe("CurrentGameScreen prologue display", () => {
+  it("shows the generated prologueText on the black screen when present", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: activeViewWithPrologue });
+    render(<CurrentGameScreen />);
+
+    expect(await screen.findByText("你在听雨客栈醒来，雨声压住了街道上的马蹄。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "开始冒险" })).toBeInTheDocument();
+  });
+
+  it("falls back to the player's original storyOpening only when prologueText is empty", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const failedGenerationView: GameSessionView = {
+      ...activeViewWithPrologue,
+      prologueText: "",
+      setup: {
+        storyOpening: "我收到一封来自失踪妹妹、却署着三年前日期的信……",
+        worldPremise: null,
+        characterProfile: null,
+        narrativeStyle: null,
+      },
+    };
+    vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: failedGenerationView });
+    render(<CurrentGameScreen />);
+
+    expect(await screen.findByText("我收到一封来自失踪妹妹、却署着三年前日期的信……")).toBeInTheDocument();
   });
 });

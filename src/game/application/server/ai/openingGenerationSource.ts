@@ -7,6 +7,7 @@ import { parseOpeningGenerationCandidate } from "@/game/domain/openingGeneration
 import type { GameLength, GameSetup } from "@/game/domain/newGame";
 import { validateOpeningGenerationCandidate } from "@/game/gameplay/rpg/openingGeneration";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
+import { buildStylePolicy } from "../../stylePolicy";
 
 // ---------------------------------------------------------------------------
 // 开局生成源（live/fixture）。
@@ -266,16 +267,21 @@ function buildOpeningPrompt(input: { gameType: string; gameLength: GameLength; s
   const setup = input.setup;
   const setupSection = setup === undefined
     ? ""
-    : `
+    : (() => {
+        const policy = buildStylePolicy(setup);
+        return `
 玩家已提交开局配置，开场切片必须围绕它构建：
 - 主角姓名：${setup.characterName}（player.name 必须原样返回，不得更改）
 - 主角身份/职业：${setup.characterIdentity}（player.identity 必须原样返回）
 ${setup.characterProfile !== undefined && setup.characterProfile !== "" ? `- 主角背景（写入 player.backgroundSummary）：${setup.characterProfile}\n` : ""}- 世界观背景（world.summary/publicFacts/开场地点与 NPC 设定必须与之吻合）：${setup.worldPremise}
 - 故事开端（开场地点、开场 NPC 与首个任务必须服务于这个开端）：${setup.storyOpening}
-- 叙事风格：${setup.narrativeStyle}（所有文本描述遵循该风格）
-- 角色标签：${setup.personalityTags.join("、") || "无"}（只影响呈现风格，不得改变规则数值）
-- 内容强度：${setup.contentIntensity}（影响描写的克制程度，不得改变规则数值）
+- 叙事风格：${policy.narration}（所有文本描述遵循该风格）
+- 角色标签：${policy.protagonistTraits.join("、") || "无"}（只影响呈现风格，不得改变规则数值）
+- 内容强度：${policy.intensity}（影响描写的克制程度，不得改变规则数值）
+- 呈现指令：${policy.narrationInstruction}
+- 强度指令：${policy.intensityInstruction}
 `;
+      })();
   return `你是一个 RPG 世界设计师。只生成游戏的开场切片，返回严格 JSON（fact key 为普通字符串；实体 ID 一律由服务端铸造，你不得提供实体 ID）。
 游戏类型：${input.gameType}
 游戏长度：${input.gameLength}

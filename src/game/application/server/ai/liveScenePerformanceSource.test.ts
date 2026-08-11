@@ -3,6 +3,7 @@ import { createLiveScenePerformanceSource, buildLiveScenePrompt } from "./liveSc
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
 import { buildSelectableSceneCandidates } from "../../deterministicSceneSource";
+import { buildStylePolicy } from "../../stylePolicy";
 import { asLocationId, asNpcId, asFactId, asQuestId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
@@ -72,7 +73,7 @@ function makeContext(overrides: {
       currentAct: 1, targetActs: 3, tension: 30, nextPacingNeed: "reveal",
       remainingBudget: { remainingLocations: 1, remainingNpcs: 1, remainingEvents: 1 },
       unresolvedThreadSummaries: ["商队失踪"],
-      style: { personalityTags: ["冷静"], narrativeStyle: "concise", contentIntensity: "normal" },
+      stylePolicy: buildStylePolicy({ personalityTags: ["冷静"], narrativeStyle: "concise", contentIntensity: "normal" }),
     },
     recentBeats: [
       { turn: 0, kind: "npc_met", summary: "NPC met: npc_1" },
@@ -264,6 +265,10 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain("已知线索"); // 允许披露事实正文可写进台词
     expect(prompt).not.toContain("绝不外泄的私密"); // 私密事实正文绝不出现
     expect(prompt).not.toContain("eventLedger");
+    // Task 8：政策指令作为【风格政策】段落整体出现
+    const policy = buildStylePolicy({ personalityTags: ["冷静"], narrativeStyle: "concise", contentIntensity: "normal" });
+    expect(prompt).toContain(policy.narrationInstruction);
+    expect(prompt).toContain(policy.intensityInstruction);
   });
 
   it("AI 返回不可解析 JSON → 回退确定性 source（source=fallback）", async () => {

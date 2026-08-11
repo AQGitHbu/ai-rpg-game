@@ -2041,6 +2041,27 @@ body:has(.adventure-game-shell) {
   box-shadow: 0 0 0 3px rgb(215 185 111 / 13%);
 }
 
+/* Task 8：人物性格标签——紧凑胶囊，与 segment-option 复用选中态 */
+.tag-row {
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+}
+
+.tag-option {
+  min-height: 48px;
+  padding: 8px 10px;
+  align-content: center;
+}
+
+.tag-option strong {
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.tag-option span {
+  text-align: center;
+  font-size: 0.72rem;
+}
+
 /* ---- 舞台内开发开局面板 ---- */
 /* 开发开局：舞台内独立模块，位于"你的角色"版块下方 */
 .stage-dev-tools {

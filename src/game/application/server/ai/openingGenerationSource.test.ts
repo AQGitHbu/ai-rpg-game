@@ -3,6 +3,7 @@ import { repairOpeningGenerationCandidate, createOpeningGenerationSource, saniti
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import { validateOpeningGenerationCandidate } from "@/game/gameplay/rpg/openingGeneration";
 import type { AiTransport } from "@ai-game/ai-transport";
+import { buildStylePolicy } from "../../stylePolicy";
 
 function validCandidate(): OpeningGenerationCandidate {
   return {
@@ -160,6 +161,13 @@ describe("createOpeningGenerationSource", () => {
     expect(prompt).toContain("dark");
     expect(prompt).toContain("talk_to_opening_npc");
     expect(prompt).toContain("不得生成未来");
+    // Task 8：开场提示词携带同一 StylePolicy 的呈现/强度指令（非仅 narrativeStyle）
+    expect(prompt).toContain(buildStylePolicy({
+      personalityTags: ["冷静", "多疑"],
+      narrativeStyle: "cinematic",
+      contentIntensity: "dark",
+    }).narrationInstruction);
+    expect(prompt).toContain("道德上艰难的结果");
   });
 
   it("开局配置作为权威输入：玩家字段强制覆盖 AI 返回", async () => {

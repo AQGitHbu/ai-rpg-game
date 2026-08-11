@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { resolveLiveNpcLine, resolvePerformanceChoices } from "./liveScenePerformanceSource";
 import { asLocationId } from "@/game/domain/worldEntity";
+import { buildStylePolicy } from "../../stylePolicy";
 
 const presentNpcs = [
   { id: "npc_1", name: "老板" },
@@ -108,7 +109,7 @@ describe("createLiveScenePerformanceSource 焦点 NPC", () => {
         currentAct: 1, targetActs: 3, tension: 30, nextPacingNeed: "reveal",
         remainingBudget: { remainingLocations: 1, remainingNpcs: 1, remainingEvents: 1, remainingSideQuests: 0 },
         unresolvedThreadSummaries: [],
-        style: { personalityTags: [], narrativeStyle: "concise", contentIntensity: "normal" },
+        stylePolicy: buildStylePolicy(),
       },
       recentBeats: [],
       legalActionCandidates: [],

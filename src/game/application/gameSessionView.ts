@@ -123,6 +123,8 @@ export type GameSessionView = {
     readonly objectives: readonly QuestObjectiveView[];
   }[];
   readonly prologueShown: boolean;
+  /** 开局生成并审批通过的序幕文本；空串 = 生成失败，UI 回退玩家 storyOpening。 */
+  readonly prologueText: string;
   readonly ending: {
     readonly name: string;
     readonly description: string;
@@ -416,6 +418,7 @@ export function projectGameSessionView(
       objectives: projectQuestObjectives(worldState, quest.objectives),
     })),
     prologueShown: storyState.prologueShown,
+    prologueText: storyState.prologueText,
     ending: worldState.ending === null ? null : {
       name: endingDefinition?.name ?? "故事结局",
       description: endingDefinition?.description ?? "",

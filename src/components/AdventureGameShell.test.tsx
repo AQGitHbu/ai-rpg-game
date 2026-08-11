@@ -94,6 +94,7 @@ function buildView(): GameSessionView {
     },
     quests: [{ name: "查明真相", description: "追寻线索", kind: "main", status: "active", objectives: [{ label: "发现秘密", completed: false }] }],
     prologueShown: true,
+    prologueText: "",
     ending: null,
   };
 }

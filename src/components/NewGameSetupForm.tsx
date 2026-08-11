@@ -5,6 +5,7 @@ import Image from "next/image";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import {
   validateNewGameInput,
+  PERSONALITY_TRAIT_OPTIONS,
   type NewGameInput,
   type NewGameInputError,
 } from "@/game/application";
@@ -134,6 +135,23 @@ const GAME_LENGTH_OPTIONS: readonly SegmentOption<GameLengthValue>[] = [
   { value: "medium", label: "中篇", hint: "多幕推进" },
 ] as const satisfies readonly SegmentOption<GameLengthValue>[];
 
+/** 内容强度分段选项：dark 只影响描写与后果呈现，不改变规则数值。 */
+type ContentIntensityValue = NonNullable<NewGameInput["contentIntensity"]>;
+const CONTENT_INTENSITY_OPTIONS: readonly SegmentOption<ContentIntensityValue>[] = [
+  { value: "normal", label: "普通", hint: "含蓄克制" },
+  { value: "dark", label: "黑暗", hint: "暗色意象与艰难后果" },
+] as const satisfies readonly SegmentOption<ContentIntensityValue>[];
+
+/** 每个性格标签的简短呈现代言（只影响叙述与选项措辞）。 */
+const PERSONALITY_TAG_HINTS: Record<string, string> = {
+  冷静: "沉着分析",
+  冲动: "敢作敢当",
+  善良: "心怀善意",
+  多疑: "警惕多疑",
+  幽默: "插科打诨",
+  寡言: "沉默寡言",
+};
+
 /** 通过受控枚举查找 option，返回 null 表示不存在（防御性收窄，替代 unchecked cast）。 */
 function findSegmentOption<T extends string>(
   options: readonly SegmentOption<T>[],
@@ -199,6 +217,9 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
     useState<NarrativeStyleValue>("novel");
   const [gameLength, setGameLength] =
     useState<GameLengthValue>("short");
+  const [personalityTags, setPersonalityTags] = useState<string[]>([]);
+  const [contentIntensity, setContentIntensity] =
+    useState<ContentIntensityValue>("normal");
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -240,23 +261,32 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
     setStoryOpening(preset.storyOpening);
   }
 
+  /** 性格标签多选：最多三个，已选可取消。 */
+  function togglePersonalityTag(tag: string) {
+    setPersonalityTags((current) => {
+      if (current.includes(tag)) return current.filter((entry) => entry !== tag);
+      if (current.length >= 3) return current;
+      return [...current, tag];
+    });
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     // loading 期间禁止重复提交（按钮已禁用，这里是键盘/程序化提交的兜底）。
     if (submitting) return;
 
-    // 只承载 NewGameInput 允许的字段；标签与内容强度暂无表单项，取安全缺省。
+    // 只承载 NewGameInput 允许的字段；标签与内容强度是受控表单项。
     const input: NewGameInput = {
       gameType,
       characterName,
       characterIdentity,
       characterProfile,
-      personalityTags: [],
+      personalityTags,
       worldPremise,
       storyOpening,
       narrativeStyle,
       gameLength,
-      contentIntensity: "normal"
+      contentIntensity
     };
 
     // 客户端预校验：立即反馈字段错误，不发无谓请求（server 仍会重新校验）。
@@ -362,6 +392,10 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
             <Tag variant="accent">{selectedType.label}</Tag>
             <span>{findSegmentOption(NARRATIVE_STYLE_OPTIONS, narrativeStyle)?.label ?? narrativeStyle}</span>
             <span>{findSegmentOption(GAME_LENGTH_OPTIONS, gameLength)?.label ?? gameLength}</span>
+            <span>{findSegmentOption(CONTENT_INTENSITY_OPTIONS, contentIntensity)?.label ?? contentIntensity}</span>
+            {personalityTags.length > 0
+              ? <span>{personalityTags.join("、")}</span>
+              : null}
           </div>
         </div>
       </aside>
@@ -528,6 +562,50 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
                         const matched = findSegmentOption(GAME_LENGTH_OPTIONS, event.target.value);
                         if (matched !== null) setGameLength(matched.value);
                       }}
+                    />
+                    <strong>{option.label}</strong>
+                    <span>{option.hint}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="segment-group">
+              <legend className="segment-group--legend">人物性格（最多选择 3 个，只影响呈现）</legend>
+              <div className="segment-row tag-row">
+                {PERSONALITY_TRAIT_OPTIONS.map((tag) => (
+                  <label
+                    key={tag}
+                    className={`segment-option tag-option${personalityTags.includes(tag) ? " segment-option--selected" : ""}`}
+                  >
+                    <input
+                      type="checkbox"
+                      name="personalityTags"
+                      value={tag}
+                      checked={personalityTags.includes(tag)}
+                      onChange={() => togglePersonalityTag(tag)}
+                    />
+                    <strong>{tag}</strong>
+                    <span>{PERSONALITY_TAG_HINTS[tag] ?? ""}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="segment-group">
+              <legend className="segment-group--legend">内容强度（只影响描写与后果的呈现）</legend>
+              <div className="segment-row">
+                {CONTENT_INTENSITY_OPTIONS.map((option) => (
+                  <label
+                    key={option.value}
+                    className={`segment-option${contentIntensity === option.value ? " segment-option--selected" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name="contentIntensity"
+                      value={option.value}
+                      checked={contentIntensity === option.value}
+                      onChange={() => setContentIntensity(option.value)}
                     />
                     <strong>{option.label}</strong>
                     <span>{option.hint}</span>

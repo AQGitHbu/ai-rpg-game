@@ -117,13 +117,20 @@ export function CurrentGameScreen() {
 
   if (state.phase === "active") {
     const { view } = state;
-    // 序幕：优先展示玩家开局配置中的故事开端，旧存档回退通用文案。
+    // 序幕：优先展示开局生成并审批通过的 prologueText；仅当生成失败
+    // （prologueText 为空）时才回退玩家开局配置中的故事开端。
     if (!view.prologueShown) {
+      const prologueText = view.prologueText !== ""
+        ? view.prologueText
+        : (view.setup.storyOpening ?? "你踏上了冒险的旅途。前方是未知的世界，充满了机遇与危险。");
       return (
         <Panel className="prologue-screen">
-          <h2>序幕</h2>
-          <p>{view.setup.storyOpening ?? "你踏上了冒险的旅途。前方是未知的世界，充满了机遇与危险。"}</p>
-          <InlineButton onClick={() => void handlePrologueAck()}>开始冒险</InlineButton>
+          <div className="prologue-content">
+            <h2>序幕</h2>
+            <p className="prologue-text">{prologueText}</p>
+            <p className="prologue-hint">点击开始冒险，踏入这段旅程。</p>
+            <InlineButton onClick={() => void handlePrologueAck()}>开始冒险</InlineButton>
+          </div>
         </Panel>
       );
     }

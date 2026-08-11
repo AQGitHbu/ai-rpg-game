@@ -69,6 +69,17 @@ describe("projectGameSessionView", () => {
     expect(view.story.pacingNeed).toBe("reveal");
   });
 
+  it("exposes the generated prologue text through the read model", () => {
+    const ssWithPrologue = { ...ss, prologueText: "你在听雨客栈醒来，雨声压住了街道上的马蹄。" };
+    const view = projectGameSessionView(ws, ssWithPrologue, 0, "test-ending-session");
+    expect(view.prologueText).toBe("你在听雨客栈醒来，雨声压住了街道上的马蹄。");
+  });
+
+  it("empty prologue text stays empty (生成失败时由 UI 回退玩家 storyOpening)", () => {
+    const view = projectGameSessionView(ws, ss, 0, "test-ending-session");
+    expect(view.prologueText).toBe("");
+  });
+
   it("projects the authoritative current objective label from persisted state", () => {
     const wsWithQuest: WorldState = {
       ...ws,

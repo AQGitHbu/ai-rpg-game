@@ -12,6 +12,7 @@ import type { SceneGenerationContext } from "./sceneGenerationContext";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
+import { buildStylePolicy } from "./stylePolicy";
 
 function validCandidate(id: string): EventCandidate {
   return {
@@ -159,7 +160,7 @@ function makeContext(overrides: {
       currentAct: 1, targetActs: 3, tension: 30, nextPacingNeed: "reveal",
       remainingBudget: { remainingLocations: 1, remainingNpcs: 1, remainingEvents: 1 },
       unresolvedThreadSummaries: [],
-      style: { personalityTags: ["冷静"], narrativeStyle: "concise", contentIntensity: "normal" },
+      stylePolicy: buildStylePolicy({ personalityTags: ["冷静"], narrativeStyle: "concise", contentIntensity: "normal" }),
     },
     recentBeats: [],
     legalActionCandidates: overrides.legalActionCandidates ?? [

@@ -5,6 +5,7 @@ import {
   buildSelectableSceneCandidates,
   buildSceneChoices,
 } from "./deterministicSceneSource";
+import { buildStylePolicy } from "./stylePolicy";
 import { approveScenePerformance } from "./approveAndWriteScene";
 import type { LocationEntry, NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
@@ -132,7 +133,7 @@ function makeContext(job: PendingNarrativeJob, focus?: FocusNpcContext): SceneGe
       nextPacingNeed: ss.nextPacingNeed,
       remainingBudget: { remainingLocations: 1, remainingNpcs: 1, remainingEvents: 1 },
       unresolvedThreadSummaries: [],
-      style: { personalityTags: [], narrativeStyle: "concise", contentIntensity: "normal" },
+      stylePolicy: buildStylePolicy(),
     },
     recentBeats: [],
     legalActionCandidates: [
@@ -400,5 +401,52 @@ describe("deterministicSceneSource", () => {
     const choices = buildSceneChoices(context);
     expect(choices).toHaveLength(2);
     expect(choices[0].candidateId).not.toBe(choices[1].candidateId);
+  });
+
+  // ── Task 8：呈现政策影响的确定性变体 ──────────────────────────────────────
+
+  it("dark intensity 的氛围 segment 与 normal 不同（暗色意象 vs 含蓄）", async () => {
+    const normal = await source.generateScene(makeContext(makeJob()));
+    const darkCtx: SceneGenerationContext = {
+      ...makeContext(makeJob()),
+      story: { ...makeContext(makeJob()).story, stylePolicy: buildStylePolicy({ contentIntensity: "dark" }) },
+    };
+    const dark = await source.generateScene(darkCtx);
+    const normalAtmos = normal.segments.find((s) => s.beatId === "atmosphere")?.text ?? "";
+    const darkAtmos = dark.segments.find((s) => s.beatId === "atmosphere")?.text ?? "";
+    expect(normalAtmos).not.toBe(darkAtmos);
+    expect(darkAtmos).toContain("阴影");
+  });
+
+  it("呈现政策不改变规则部分：不同政策下 choices/objectiveLink 相同，仅叙述文本不同", async () => {
+    const baseCtx = makeContext(makeJob());
+    const darkCtx: SceneGenerationContext = {
+      ...baseCtx,
+      story: { ...baseCtx.story, stylePolicy: buildStylePolicy({ personalityTags: ["多疑"], contentIntensity: "dark" }) },
+    };
+    const a = await source.generateScene(baseCtx);
+    const b = await source.generateScene(darkCtx);
+    expect(a.choices).toEqual(b.choices);
+    expect(a.objectiveLink).toEqual(b.objectiveLink);
+    expect(a.npcLine).toEqual(b.npcLine);
+    expect(a.segments.map((s) => s.text)).not.toEqual(b.segments.map((s) => s.text));
+  });
+
+  it("冲动标签的玩家原话 segment 措辞含冲动特征前缀", async () => {
+    const utterance = "商队失踪的事你知道吗？";
+    const impJob = makeJob({
+      eventKind: "dialogue", summary: { kind: "talk", npcId: asNpcId("npc_1") }, focusNpcId: "npc_1",
+      utterance,
+      beats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应" }],
+    });
+    const impCtx: SceneGenerationContext = {
+      ...makeContext(makeJob({ eventKind: "dialogue", summary: { kind: "talk", npcId: asNpcId("npc_1") }, focusNpcId: "npc_1", utterance, beats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应" }] })),
+      story: { ...makeContext(makeJob()).story, stylePolicy: buildStylePolicy({ personalityTags: ["冲动"] }) },
+      job: impJob,
+    };
+    const result = await source.generateScene(impCtx);
+    const utteranceSegment = result.segments.find((s) => s.beatId === "player_utterance");
+    expect(utteranceSegment?.text).toContain("没多想");
+    expect(utteranceSegment?.text).toContain(utterance);
   });
 });

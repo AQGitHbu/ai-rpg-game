@@ -237,10 +237,12 @@ export function buildLiveScenePrompt(
 
   return `你是 RPG 叙事场景表演者。服务端已给出本回合的权威规则结果节拍与目标；你只负责把每一节拍表演成一致的旁白，返回严格 JSON。
 
-【风格政策】
-- 叙事风格：${story.style.narrativeStyle}
-- 角色标签：${story.style.personalityTags.join("、") || "无"}
-- 内容强度：${story.style.contentIntensity}
+【风格政策】（Task 8：同一 StylePolicy 同时供给开场与场景表演；只影响呈现，不得改变规则数值）
+- 叙事风格：${story.stylePolicy.narration}
+- 角色标签：${story.stylePolicy.protagonistTraits.join("、") || "无"}
+- 内容强度：${story.stylePolicy.intensity}
+- 呈现指令：${story.stylePolicy.narrationInstruction}
+- 强度指令：${story.stylePolicy.intensityInstruction}
 - 节奏需要：${story.nextPacingNeed}；张力：${story.tension}；幕：${story.currentAct}/${story.targetActs}
 
 【玩家本轮原话】${utterance === "" ? "（无）" : `"${utterance}"（焦点 NPC 必须直接回应这句话）`}

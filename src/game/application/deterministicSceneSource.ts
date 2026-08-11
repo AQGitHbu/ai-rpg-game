@@ -107,7 +107,7 @@ function buildSegments(context: SceneGenerationContext): readonly ScenePerforman
       segments.push({
         beatId: beat.beatId,
         text: npc !== undefined && utterance !== ""
-          ? `你对${npc.name}说："${utterance}"。${npc.name}听完，注视着你的眼睛。`
+          ? `${utteranceLead(context.story.stylePolicy.protagonistTraits)}你开口对${npc.name}说："${utterance}"。${npc.name}听完，注视着你的眼睛。`
           : "你向对方提出了你的疑问。",
       });
     } else if (beat.kind === "quest_advanced" && context.objectiveTarget !== null) {
@@ -129,10 +129,23 @@ function buildSegments(context: SceneGenerationContext): readonly ScenePerforman
   return segments;
 }
 
-/** 氛围描写：当前地点的最小安全文本（纯函数）。 */
+/** 氛围描写：当前地点的最小安全文本；dark 呈现克制的暗色意象（纯函数）。 */
 function buildAtmosphere(context: SceneGenerationContext): string {
   const { currentLocation } = context;
-  return `你身处${currentLocation.name}，${currentLocation.description}`;
+  const base = `你身处${currentLocation.name}，${currentLocation.description}`;
+  if (context.story.stylePolicy.intensity === "dark") {
+    return `${base}。阴影里似乎有什么在注视着这里。`;
+  }
+  return `${base}。`;
+}
+
+/** 性格标签 → 玩家原话 segment 的确定性前缀（只影响措辞，纯函数）。 */
+function utteranceLead(traits: readonly string[]): string {
+  if (traits.includes("冲动")) return "你几乎没多想，";
+  if (traits.includes("寡言")) return "你沉默了片刻，";
+  if (traits.includes("幽默")) return "你带着轻松的笑意，";
+  if (traits.includes("多疑")) return "你打量着对方，";
+  return "";
 }
 
 /** 焦点 NPC：talk job 优先使用 job.focusNpcId，否则第一个在场 NPC。 */

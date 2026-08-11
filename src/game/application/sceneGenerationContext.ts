@@ -13,6 +13,7 @@ import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/
 import type { WorldState } from "@/game/domain/worldState";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { buildFocusNpcContext, type FocusNpcContext, type FactCard } from "./focusNpcContext";
+import { buildStylePolicy, type StylePolicy } from "./stylePolicy";
 import type { GameRecord } from "./server/persistence/gameRepository";
 
 /**
@@ -112,12 +113,8 @@ export type SceneGenerationContext = {
     readonly nextPacingNeed: PacingNeed;
     readonly remainingBudget: BudgetSummary;
     readonly unresolvedThreadSummaries: readonly string[];
-    /** Task 6：开局风格配置（默认值回退）。 */
-    readonly style: {
-      readonly personalityTags: readonly string[];
-      readonly narrativeStyle: string;
-      readonly contentIntensity: string;
-    };
+    /** Task 8：开局呈现政策（人格标签/叙事风格/内容强度 → 指令）。 */
+    readonly stylePolicy: StylePolicy;
   };
   readonly recentBeats: readonly RecentBeat[];
   readonly legalActionCandidates: readonly LegalActionCandidate[];
@@ -313,11 +310,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
         remainingEvents: Math.max(0, ss.budget.events.max - ss.budget.events.expanded),
       },
       unresolvedThreadSummaries: [...ss.unresolvedThreads],
-      style: {
-        personalityTags: [...(ws.generation.setup?.personalityTags ?? [])],
-        narrativeStyle: ws.generation.setup?.narrativeStyle ?? "concise",
-        contentIntensity: ws.generation.setup?.contentIntensity ?? "normal",
-      },
+      stylePolicy: buildStylePolicy(ws.generation.setup),
     },
     recentBeats: (ss.recentBeats as readonly RecentBeat[]).slice(-5),
     legalActionCandidates: ws.battle.status === "active"

@@ -3,6 +3,7 @@ import {
   buildSceneGenerationContext,
   type SceneGenerationContext,
 } from "./sceneGenerationContext";
+import { buildStylePolicy } from "./stylePolicy";
 import {
   createInitialWorldState,
   appendNpc,
@@ -151,6 +152,39 @@ describe("buildSceneGenerationContext", () => {
     expect(context.story.tension).toBe(30);
     expect(context.story.nextPacingNeed).toBe("reveal");
     expect(context.legalActionCandidates.some((c) => c.kind === "move")).toBe(true);
+  });
+
+  it("story.stylePolicy 由开局配置的呈现字段映射而来（缺省 = 默认政策）", () => {
+    const context = buildSceneGenerationContext(makeRecord());
+    expect(context.story.stylePolicy).toEqual(buildStylePolicy());
+  });
+
+  it("story.stylePolicy 携带开局配置的标签/叙事风格/内容强度并只含呈现字段", () => {
+    const world = makeWorld();
+    const worldWithSetup = {
+      ...world,
+      generation: {
+        ...world.generation,
+        setup: {
+          characterName: "侠客",
+          characterIdentity: "剑客",
+          personalityTags: ["冷静", "多疑"],
+          worldPremise: "旧盟约正在瓦解。",
+          storyOpening: "主角在客栈醒来。",
+          narrativeStyle: "cinematic" as const,
+          contentIntensity: "dark" as const,
+        },
+      },
+    };
+    const record = { ...makeRecord(), worldState: worldWithSetup };
+    const context = buildSceneGenerationContext(record);
+    expect(context.story.stylePolicy).toEqual(buildStylePolicy({
+      personalityTags: ["冷静", "多疑"],
+      narrativeStyle: "cinematic",
+      contentIntensity: "dark",
+    }));
+    // 呈现政策不进入规则字段
+    expect(JSON.stringify(context.story.stylePolicy)).not.toMatch(/"stats"|"attack"|"hp"|"rewards"|"budget"/);
   });
 
   it("never receives the whole record: a GameRecord is not assignable to the context type", () => {
