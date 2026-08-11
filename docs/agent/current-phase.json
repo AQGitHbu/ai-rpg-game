@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "phase": "canonical-choice-driven-runtime",
+  "phase": "dynamic-story-materialization",
   "status": "completed",
   "implementationStatus": "implemented",
-  "targetBranch": "codex-v2-foundation-remediation",
-  "worktreeName": "v2-foundation-remediation",
+  "targetBranch": "codex/dynamic-story-materialization",
+  "worktreeName": "dynamic-story-materialization",
   "repositories": ["ai-rpg-game"],
-  "plan": "docs/superpowers/plans/2026-08-09-ai-rpg-canonical-runtime-completion.md",
+  "plan": "docs/superpowers/plans/2026-08-11-dynamic-story-materialization-and-contextual-narrative.md",
   "sharedInfrastructureChangeAllowed": false,
   "startCommand": "npm run phase:start",
   "entryDocs": [
@@ -14,7 +14,7 @@
     "docs/游戏开发规范.md",
     "docs/Agent文档索引.md",
     "docs/agent/当前开发阶段.md",
-    "docs/superpowers/plans/2026-08-09-ai-rpg-canonical-runtime-completion.md"
+    "docs/superpowers/plans/2026-08-11-dynamic-story-materialization-and-contextual-narrative.md"
   ],
   "acceptanceCommands": [
     "npm run check:standards",

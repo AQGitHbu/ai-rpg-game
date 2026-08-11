@@ -399,7 +399,7 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 
 对应路径保留在 `artifacts/story-eval/` 的 case 目录中。结构门禁在 14 个代表性 run 上均通过：主线推进、事实覆盖、`setup/develop/turn/climax/resolution` 节奏证据、三处 paired checkpoint 的状态/事件/叙事差异以及结局行均存在，`trigramRepeat` 约为 0.016–0.025。首次 release gate 的唯一失败为 `JUDGE_EVIDENCE_INCOMPLETE`；judge 证据收齐后仍须按真实 S/C 分数审计，协议缺失不能按通过处理。
 
-额外的 `wuxia-b` 压力样本暴露了一个比文本重复更严重的玩法问题：蓝图把主线目标指向静态 `hidden` 地点，初始 `unlockedLocationIds` 永远不包含该地点，导演只能在相邻地点和终局动作间循环，60 幕后仍为 `time_budget`。现已在 `validateScenarioBlueprintCandidate` 增加 `HIDDEN_LOCATION_OBJECTIVE_UNREACHABLE` 校验，覆盖访问隐藏地点以及隐藏地点上的 NPC、物品、敌人目标；候选会在生成阶段拒绝并触发有界 retry/fallback。新增回归测试已通过，避免把这种不可达蓝图误判成 AI 选择或 pacing 问题。
+额外的 `wuxia-b` 压力样本暴露了一个比文本重复更严重的玩法问题：蓝图把主线目标指向静态 `hidden` 地点，初始 `unlockedLocationIds` 永远不包含该地点，导演只能在相邻地点和终局动作间循环，60 幕后仍为 `time_budget`。现已在候选校验增加 `HIDDEN_LOCATION_OBJECTIVE_UNREACHABLE` 校验，覆盖访问隐藏地点以及隐藏地点上的 NPC、物品、敌人目标；候选会在生成阶段拒绝并触发有界 retry/fallback。新增回归测试已通过，避免把这种不可达蓝图误判成 AI 选择或 pacing 问题。
 
 同一矩阵的 judge 抽查还发现 `investigate` 行动默认都显示为“调查线索”，多个事实因此在玩家选择和评审证据中看起来是重复选项。行动投影现在使用不泄漏事实正文的稳定序号（“调查第 1 条线索”），完整事实仍要执行调查后才进入已发现事实卡；相关行动回归测试与 TypeScript/ESLint 已通过。该修复只改变可读性和选择区分度，不改变事实发现规则。
 

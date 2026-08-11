@@ -95,12 +95,11 @@ $env:RUN_REAL_AI_SMOKE='1'; npm run smoke:ai:phase4b
 
 真实 AI 出现不可接受行为时，把 `compositionRoot.ts` 的 `scenarioCandidateSource` 改回固定注入 `createUnavailableScenarioCandidateSource([...])`（Phase 4A 形态）即可：玩家创建路径恒为 fallback，API 契约与 fixture regression（`data/fixtures/phase4/`）全部保持不变，无需迁移数据。
 
-## Phase 10：运行时 AI 导演与场景表演（已收尾）
+## 运行时 AI 导演与场景表演
 
 - 复用现有 `AI_API_BASE_URL`、`AI_MODEL`、`AI_API_KEY`、`AI_OUTPUT_FORMAT` 和 `@ai-game/ai-transport@0.1.0` public API，不修改 foundation。
-- director、writer、npc 是三次独立 non-stream 请求；共享 transport 不等于共享 prompt 或上下文。
-- 日常 fixture 回归零网络零计费；完整离线回放命令为 `npm run journey:phase10`。
+- 运行时只走两类可选调用：开局生成（opening slice）与逐次世界演化（仅 `EvolutionNeed !== none` 时）；每个 ready 场景由一次场景表演调用产出（`liveScenePerformanceSource`），不再有 director/writer/npc 三次独立调用管线。
+- 日常 fixture 回归零网络零计费；完整离线回放命令为 `npm run journey:phase10` 与 `npm run journey:foundation`。
 - 真实完整旅程只在 `RUN_REAL_AI_JOURNEY=1 npm run smoke:ai:phase10-journey` 时运行；该命令不是 CI，也不替代离线回放。
-- 2026-07-31 离线收口门禁已通过；本次未执行真实 AI 调用，不能将该次验收表述为真实 provider 认证。
 - audit 只允许 traceId、role、attempt、稳定失败类别、generated/fallback、latency 和 provider 安全 usage；禁止 prompt、响应原文、事实正文、URL、模型原文、Authorization 和 key。
-- 回滚时只把 runtime narrative sources 装配为 unavailable，开局蓝图 AI 与既有确定性规则路径保持不变。
+- 回滚时只把 runtime narrative sources 装配为 unavailable，开局生成 AI 与既有确定性规则路径保持不变。

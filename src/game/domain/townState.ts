@@ -30,7 +30,7 @@ export type TownRuntimeState = {
 
 // ---------------------------------------------------------------------------
 // 纯生成器所需的瓦片 / 快照类型（自旧 townSnapshot.ts 迁入）。
-// 生成器只消费这些类型与 worldEntity；不带 GameState/ScenarioBlueprint 依赖。
+// 生成器只消费这些类型与 worldEntity；不带旧 GameState 依赖。
 // ---------------------------------------------------------------------------
 
 export type TownPlanSource = "offline" | "generated" | "fallback";
