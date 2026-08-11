@@ -31,7 +31,8 @@ export type MandatoryNarrativeBeatKind =
   | "battle_started"
   | "battle_round"
   | "battle_resolved"
-  | "entity_introduced";
+  | "entity_introduced"
+  | "atmosphere";
 
 export type MandatoryNarrativeBeat = {
   readonly beatId: string;
@@ -41,3 +42,10 @@ export type MandatoryNarrativeBeat = {
 };
 
 export const MAX_MANDATORY_BEATS = 8 as const;
+
+/**
+ * Task 6：服务端提供的可选氛围节拍 ID。
+ * 场景表演提案允许最多一个 beatId === ATMOSPHERE_BEAT_ID 的 segment 作为
+ * 氛围描写，且必须放在所有强制节拍之后；缺失该 segment 不算非法。
+ */
+export const ATMOSPHERE_BEAT_ID = "atmosphere" as const;

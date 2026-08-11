@@ -40,6 +40,8 @@ export type NpcSceneContext = {
   readonly sceneVisibleFactIds: readonly FactId[];
   /** 最近交互的规则摘要（不含玩家原文）。 */
   readonly recentInteractionSummaries: readonly string[];
+  /** Task 6：该 NPC 最近交互的 actionId（供审批校验 usedInteractionActionIds 归属）。 */
+  readonly recentInteractionActionIds: readonly string[];
   readonly relationship: { readonly affinity: number };
   readonly emotion: NarrativeEmotion;
   readonly goals: readonly string[];
@@ -88,6 +90,14 @@ export type EntityDescription = {
   readonly description: string;
 };
 
+/** 当前权威目标引用的目标实体：用于目标推进/选项合法性校验（Task 6）。 */
+export type ObjectiveTargetRef = {
+  readonly questId: string;
+  readonly objectiveIndex: number;
+  readonly entityId: string;
+  readonly entityName: string;
+};
+
 export type SceneGenerationContext = {
   readonly job: PendingNarrativeJob;
   readonly player: PlayerSceneSummary;
@@ -102,6 +112,12 @@ export type SceneGenerationContext = {
     readonly nextPacingNeed: PacingNeed;
     readonly remainingBudget: BudgetSummary;
     readonly unresolvedThreadSummaries: readonly string[];
+    /** Task 6：开局风格配置（默认值回退）。 */
+    readonly style: {
+      readonly personalityTags: readonly string[];
+      readonly narrativeStyle: string;
+      readonly contentIntensity: string;
+    };
   };
   readonly recentBeats: readonly RecentBeat[];
   readonly legalActionCandidates: readonly LegalActionCandidate[];
@@ -115,6 +131,8 @@ export type SceneGenerationContext = {
   readonly beatSubjects: readonly EntityDescription[];
   /** Task 5：焦点 NPC 的隔离记忆 + 关系政策（talk 指向 job.focusNpcId，否则第一个在场 NPC）。 */
   readonly focusNpcContext?: FocusNpcContext;
+  /** Task 6：当前权威目标引用的目标实体（无 after 目标时为 null）。 */
+  readonly objectiveTarget: ObjectiveTargetRef | null;
 };
 
 /** 从持久化世界状态解析 subject ID 为最小实体描述；引用未命中时保留 ID 兜底。 */
@@ -142,6 +160,39 @@ function resolveEntityDescriptions(ws: WorldState, subjectIds: readonly string[]
     push({ id, kind: "npc", name: id, description: "（尚未具象化的实体）" });
   }
   return result;
+}
+
+/** 从目标引用解析其目标实体（推进/接近该目标所需的实体 ID 与名称）。 */
+function resolveObjectiveTarget(
+  ws: WorldState,
+  ref: { readonly questId: string; readonly objectiveIndex: number } | null,
+): ObjectiveTargetRef | null {
+  if (ref === null) return null;
+  const quest = ws.quests.find((q) => String(q.id) === String(ref.questId));
+  const objective = quest?.objectives[ref.objectiveIndex];
+  if (objective === undefined) return null;
+  switch (objective.kind) {
+    case "visit_location": {
+      const loc = ws.locations.find((l) => String(l.id) === String(objective.locationId));
+      return { questId: String(ref.questId), objectiveIndex: ref.objectiveIndex, entityId: String(objective.locationId), entityName: loc?.name ?? "某地" };
+    }
+    case "talk_to_npc": {
+      const npc = ws.npcs.find((n) => String(n.id) === String(objective.npcId));
+      return { questId: String(ref.questId), objectiveIndex: ref.objectiveIndex, entityId: String(objective.npcId), entityName: npc?.name ?? "某人" };
+    }
+    case "obtain_item": {
+      const item = ws.items.find((i) => String(i.id) === String(objective.itemId));
+      return { questId: String(ref.questId), objectiveIndex: ref.objectiveIndex, entityId: String(objective.itemId), entityName: item?.name ?? "某物" };
+    }
+    case "discover_fact": {
+      const fact = ws.worldFacts.find((f) => String(f.factId) === String(objective.factId));
+      return { questId: String(ref.questId), objectiveIndex: ref.objectiveIndex, entityId: String(objective.factId), entityName: fact?.discovered === true ? fact.text : "某件往事" };
+    }
+    case "defeat_enemy": {
+      const enemy = ws.enemies.find((e) => String(e.id) === String(objective.enemyId));
+      return { questId: String(ref.questId), objectiveIndex: ref.objectiveIndex, entityId: String(objective.enemyId), entityName: enemy?.name ?? "强敌" };
+    }
+  }
 }
 
 /** 从持久化 record 投影最小权限上下文（唯一构造入口）。 */
@@ -201,6 +252,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
           .filter((f) => f.locationId === currentLocId || f.discovered)
           .map((f) => f.factId),
         recentInteractionSummaries: n.memory.interactionHistory.slice(-3).map((h) => h.summary),
+        recentInteractionActionIds: n.memory.interactionHistory.slice(-5).map((h) => String(h.actionId)),
         relationship: { affinity: n.memory.relationship.affinity },
         emotion: n.memory.emotion,
         goals: [...n.memory.goals],
@@ -261,6 +313,11 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
         remainingEvents: Math.max(0, ss.budget.events.max - ss.budget.events.expanded),
       },
       unresolvedThreadSummaries: [...ss.unresolvedThreads],
+      style: {
+        personalityTags: [...(ws.generation.setup?.personalityTags ?? [])],
+        narrativeStyle: ws.generation.setup?.narrativeStyle ?? "concise",
+        contentIntensity: ws.generation.setup?.contentIntensity ?? "normal",
+      },
     },
     recentBeats: (ss.recentBeats as readonly RecentBeat[]).slice(-5),
     legalActionCandidates: ws.battle.status === "active"
@@ -301,5 +358,6 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     mandatoryBeats: job.mandatoryBeats,
     beatSubjects,
     focusNpcContext,
+    objectiveTarget: resolveObjectiveTarget(ws, transition.after),
   };
 }

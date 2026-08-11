@@ -25,10 +25,11 @@ describe("narrativeBeat（Task 4 领域接口）", () => {
     }
   });
 
-  it("MandatoryNarrativeBeat 只允许计划定义的九种 kind", () => {
+  it("MandatoryNarrativeBeat 只允许计划定义的十种 kind", () => {
     const kinds = [
       "player_utterance", "item_obtained", "fact_discovered", "quest_progress",
-      "quest_advanced", "battle_started", "battle_round", "battle_resolved", "entity_introduced",
+      "quest_advanced", "battle_started", "battle_round", "battle_resolved",
+      "entity_introduced", "atmosphere",
     ] as const;
     for (const kind of kinds) {
       const beat: MandatoryNarrativeBeat = { beatId: `beat_${kind}`, kind, subjectIds: [], instruction: "i" };

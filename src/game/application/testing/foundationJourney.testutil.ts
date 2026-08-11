@@ -13,7 +13,7 @@ import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser";
 import { asGameId } from "@/game/application/server/persistence/gameRepository";
 import { buildChoiceMap } from "@/game/application/buildChoiceMap";
 import { projectGameSessionView, type GameSessionView, type PlayerChoiceView } from "@/game/application/gameSessionView";
-import type { EventProposal, SceneSource } from "@/game/application/sceneSource";
+import type { SceneSource } from "@/game/application/sceneSource";
 import type { GameLength, GameTypeId } from "@/game/domain/newGame";
 
 // ---------------------------------------------------------------------------
@@ -115,14 +115,8 @@ export async function playTurn(
 }
 
 /** 用确定性 SceneSource 清空当前 pending job（无 pending 返回 true）。 */
-export async function advanceScene(repo: GameRepository, eventProposals: readonly EventProposal[] = []): Promise<boolean> {
-  const deterministic = createDeterministicSceneSource();
-  const sceneSource: SceneSource = eventProposals.length === 0 ? deterministic : {
-    async generateScene(context) {
-      const proposal = await deterministic.generateScene(context);
-      return { ...proposal, eventProposals };
-    },
-  };
+export async function advanceScene(repo: GameRepository): Promise<boolean> {
+  const sceneSource: SceneSource = createDeterministicSceneSource();
   const result = await generatePendingScene({
     repository: repo,
     sceneSource,

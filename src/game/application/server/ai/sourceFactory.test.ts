@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveLiveNpcLine, resolveSelectedChoiceProposals } from "./sourceFactory";
+import { resolveLiveNpcLine, resolvePerformanceChoices } from "./liveScenePerformanceSource";
 import { asLocationId } from "@/game/domain/worldEntity";
 
 const presentNpcs = [
@@ -39,38 +39,38 @@ describe("resolveLiveNpcLine", () => {
   });
 });
 
-describe("resolveSelectedChoiceProposals", () => {
+describe("resolvePerformanceChoices", () => {
   const selectable = [
-    { candidateId: "candidate_1", proposal: { label: "探索", action: { type: "explore" as const } } },
-    { candidateId: "candidate_2", proposal: { label: "前往街道", action: { type: "move" as const, locationId: asLocationId("loc_2") } } },
+    { candidateId: "candidate_1", label: "探索", action: { type: "explore" as const } },
+    { candidateId: "candidate_2", label: "前往街道", action: { type: "move" as const, locationId: asLocationId("loc_2") } },
   ];
 
-  it("只把两个不同的服务端 candidateId 映射为 Action 提案", () => {
-    const resolved = resolveSelectedChoiceProposals(selectable, [
+  it("只把两个不同的服务端 candidateId 映射为选项", () => {
+    const resolved = resolvePerformanceChoices(selectable, [
       { candidateId: "candidate_2", label: "前往街道" },
       { candidateId: "candidate_1", label: "查看四周" },
     ]);
     expect(resolved).toEqual([
-      { label: "前往街道", action: { type: "move", locationId: asLocationId("loc_2") } },
-      { label: "查看四周", action: { type: "explore" } },
+      { candidateId: "candidate_2", label: "前往街道" },
+      { candidateId: "candidate_1", label: "查看四周" },
     ]);
   });
 
   it("拒绝任意/重复 candidateId，不能用 actionKey 绕过候选", () => {
-    expect(resolveSelectedChoiceProposals(selectable, [
+    expect(resolvePerformanceChoices(selectable, [
       { candidateId: "invented", label: "作弊" },
       { candidateId: "candidate_1", label: "探索" },
     ])).toBeNull();
-    expect(resolveSelectedChoiceProposals(selectable, [
+    expect(resolvePerformanceChoices(selectable, [
       { candidateId: "candidate_1", label: "A" },
       { candidateId: "candidate_1", label: "B" },
     ])).toBeNull();
   });
 });
 
-describe("createLiveSceneSource 焦点 NPC", () => {
+describe("createLiveScenePerformanceSource 焦点 NPC", () => {
   it("talk 回合的对话场景必须指向玩家实际交谈的 NPC，而非第一个在场 NPC", async () => {
-    const { createLiveSceneSource } = await import("./sourceFactory");
+    const { createLiveScenePerformanceSource } = await import("./liveScenePerformanceSource");
     const { asNpcId, asLocationId } = await import("@/game/domain/worldEntity");
     const { asNarrativeJobId, asTurnId } = await import("@/game/domain/events");
     const { createPendingNarrativeJob } = await import("@/game/domain/pendingNarrativeJob");
@@ -108,19 +108,25 @@ describe("createLiveSceneSource 焦点 NPC", () => {
         currentAct: 1, targetActs: 3, tension: 30, nextPacingNeed: "reveal",
         remainingBudget: { remainingLocations: 1, remainingNpcs: 1, remainingEvents: 1, remainingSideQuests: 0 },
         unresolvedThreadSummaries: [],
+        style: { personalityTags: [], narrativeStyle: "concise", contentIntensity: "normal" },
       },
       recentBeats: [],
       legalActionCandidates: [],
       legalEventTargets: { locationIds: [], factIds: [], itemIds: [], enemyIds: [] },
       worldConstraints: [],
+      mandatoryBeats: [],
+      beatSubjects: [],
+      objectiveTarget: null,
+      objectiveTransition: jobResult.job.objectiveTransition,
     };
 
     const transport = {
       complete: async () => ({
         ok: true,
         content: JSON.stringify({
-          narration: "场景。",
-          npcLine: { npcId: "npc_b", text: "维珀开口。", emotion: "neutral" },
+          segments: [{ beatId: "atmosphere", text: "场景。" }],
+          npcLine: { npcId: "npc_b", text: "维珀开口。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+          objectiveLink: null,
           choices: [
             { label: "支持", candidateId: "candidate_1" },
             { label: "质疑", candidateId: "candidate_2" },
@@ -130,12 +136,12 @@ describe("createLiveSceneSource 焦点 NPC", () => {
       }),
     } as never;
 
-    const source = createLiveSceneSource(transport, { baseUrl: "x", apiKey: "k", model: "m" });
+    const source = createLiveScenePerformanceSource({
+      transport,
+      config: { baseUrl: "x", apiKey: "k", model: "m" },
+    });
     const result = await source.generateScene(context as never);
-    expect(result.event.kind).toBe("dialogue");
-    if (result.event.kind === "dialogue") {
-      // 关键断言：焦点是玩家交谈的 npc_b（维珀），不是第一个在场 NPC npc_a
-      expect(String(result.event.focusNpcId)).toBe("npc_b");
-    }
+    // 关键断言：焦点台词归属玩家实际交谈的 npc_b（维珀），不是第一个在场 NPC npc_a
+    expect(result.npcLine?.npcId).toBe("npc_b");
   });
 });

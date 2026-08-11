@@ -1,7 +1,7 @@
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
-import type { SceneSource, ScenePackageProposal } from "./sceneSource";
+import type { SceneSource, ScenePerformanceProposal } from "./sceneSource";
 import { buildSceneGenerationContext } from "./sceneGenerationContext";
-import { approveScenePackage, type ApprovedSceneWriteBack } from "./approveAndWriteScene";
+import { approveScenePerformance, type ApprovedSceneWriteBack } from "./approveAndWriteScene";
 import { createDeterministicSceneSource } from "./deterministicSceneSource";
 import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import { evolveWorld } from "./evolveWorld";
@@ -71,18 +71,18 @@ export async function generatePendingScene(
 
   const context = buildSceneGenerationContext(scenarioRecord);
 
-  let proposal: ScenePackageProposal;
+  let proposal: ScenePerformanceProposal;
   try {
     proposal = await deps.sceneSource.generateScene(context);
   } catch {
     return "unavailable";
   }
 
-  // 完整场景包审批（Task 25）：核心结构非法（旁空/未知台词NPC/forbidden fact/
-  // 选项重复/选项目标非法）→ 整场回退确定性 source，且 fallback 同样过审批，
-  // 防止两套契约漂移。
+  // 完整场景表演审批（Task 6）：核心结构非法（缺强制节拍/自创节拍 ID/
+  // 错误 NPC 应答/forbidden fact/他人交互/过期目标/重复选项/无推进选项）→
+  // 整场回退确定性 source，且 fallback 同样过同一审批，防止两套契约漂移。
   let approved: ApprovedSceneWriteBack | null = null;
-  const approvedGenerated = approveScenePackage({
+  const approvedGenerated = approveScenePerformance({
     context,
     proposal,
     basedOnRevision: record.revision + 1,
@@ -93,7 +93,7 @@ export async function generatePendingScene(
   } else {
     try {
       const fallbackProposal = await createDeterministicSceneSource().generateScene(context);
-      const approvedFallback = approveScenePackage({
+      const approvedFallback = approveScenePerformance({
         context,
         proposal: fallbackProposal,
         basedOnRevision: record.revision + 1,

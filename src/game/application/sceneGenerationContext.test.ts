@@ -142,7 +142,8 @@ describe("buildSceneGenerationContext", () => {
     expect(context.presentNpcs).toEqual([{
       id: npc1.id, name: npc1.name, role: npc1.role, publicProfile: npc1.description,
       knownFactCards: [], hiddenFactCards: [], sceneVisibleFactIds: [],
-      recentInteractionSummaries: [], relationship: { affinity: 0 }, emotion: "neutral",
+      recentInteractionSummaries: [], recentInteractionActionIds: [],
+      relationship: { affinity: 0 }, emotion: "neutral",
       goals: [], forbiddenKnowledgeIds: [],
     }]);
     expect(context.story.currentAct).toBe(1);

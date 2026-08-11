@@ -1,29 +1,59 @@
 import type { SceneGenerationContext } from "./sceneGenerationContext";
-import type { NarrativeEventState, NarrativeNpcLineState } from "@/game/domain/narrative";
+import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import type { ChoiceProposal } from "@/game/domain/approvedChoice";
 
 /**
  * SceneGenerator 的事件提议（spec §7.4 newEvents）。
- * R4 后为结构化候选事件（含可执行 proposedEffects），由 SceneWriteBack 追加进池。
+ * R4 后为结构化候选事件（含可执行 proposedEffects），由场景写回阶段独立审批。
+ * Task 6：事件提议不再随场景表演契约传递；场景只负责表现层。
  */
 export type EventProposal = EventCandidate;
 
-/** SceneSource 只负责提案；token 与 ready state 一律由审批边界构造。 */
-export type ScenePackageProposal = {
-  readonly sceneId: string;
-  readonly turn: number;
-  readonly narration: string;
-  readonly npcLine: NarrativeNpcLineState | null;
-  readonly event: NarrativeEventState;
-  readonly choiceProposals: readonly [ChoiceProposal, ChoiceProposal];
-  readonly eventProposals: readonly EventProposal[];
-  readonly source: "generated" | "fallback";
-  readonly smallTalks?: ReadonlyMap<string, { prompt: string; response: string }>;
+/** 场景表演的一段旁白：必须对应服务端提供的强制节拍 ID（atmosphere 可选且最后）。 */
+export type ScenePerformanceSegment = {
+  readonly beatId: string;
+  readonly text: string;
 };
 
-/** 兼容现有 source 命名；结果本身就是尚未批准的场景包提案。 */
-export type SceneSourceResult = ScenePackageProposal;
+/** 焦点 NPC 的台词：所有引用（事实/交互）必须归属该 NPC 的允许集合。 */
+export type ScenePerformanceNpcLine = {
+  readonly npcId: string;
+  readonly text: string;
+  readonly emotion: NarrativeEmotion;
+  /** Task 5：该台词应答的强制节拍 ID（player_utterance 必须命中）。 */
+  readonly answeredBeatIds: readonly string[];
+  /** 仅允许该 NPC known ∪ scene-visible 的事实；私密/未知事实 → 整场拒绝。 */
+  readonly usedFactIds: readonly string[];
+  /** 仅允许该 NPC 自己最近的交互 actionId；引用他人交互 → 整场拒绝。 */
+  readonly usedInteractionActionIds: readonly string[];
+};
+
+/** objectiveLink 必须与 ObjectiveTransition.after 一致（无 after 时必须为 null）。 */
+export type ScenePerformanceObjectiveLink = {
+  readonly questId: string;
+  readonly objectiveIndex: number;
+  readonly mode: "hint" | "progress" | "handoff";
+};
+
+/**
+ * 场景表演契约（spec §10.3，Task 6）。
+ * 只描述"如何表演"：旁白分段、焦点台词、目标链接与合法选项 ID。
+ * 不含事件、不含完整状态、不含任意 path；所有实体 ID 由服务端权威下发。
+ */
+export type ScenePerformanceProposal = {
+  readonly sceneId: string;
+  readonly segments: readonly ScenePerformanceSegment[];
+  readonly npcLine: ScenePerformanceNpcLine | null;
+  readonly objectiveLink: ScenePerformanceObjectiveLink | null;
+  readonly choices: readonly [
+    { readonly candidateId: string; readonly label: string },
+    { readonly candidateId: string; readonly label: string },
+  ];
+  readonly source: "generated" | "fallback";
+};
+
+/** 兼容现有 source 命名；结果本身就是尚未批准的表演提案。 */
+export type SceneSourceResult = ScenePerformanceProposal;
 
 /** 可注入的叙事场景 source。离线 fixture 不调用 AI。 */
 export type SceneSource = {

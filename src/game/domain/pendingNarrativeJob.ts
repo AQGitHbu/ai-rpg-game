@@ -91,7 +91,8 @@ const OBJECTIVE_TRANSITION_MODES: ReadonlySet<string> = new Set([
 
 const MANDATORY_BEAT_KINDS: ReadonlySet<string> = new Set([
   "player_utterance", "item_obtained", "fact_discovered", "quest_progress",
-  "quest_advanced", "battle_started", "battle_round", "battle_resolved", "entity_introduced",
+  "quest_advanced", "battle_started", "battle_round", "battle_resolved",
+  "entity_introduced", "atmosphere",
 ]);
 
 function isValidObjectiveRef(candidate: unknown): boolean {

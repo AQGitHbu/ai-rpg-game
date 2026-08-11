@@ -10,6 +10,7 @@ import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { SceneSource, SceneSourceResult } from "./sceneSource";
 import type { NarrativeEventKind } from "@/game/domain/narrative";
 import type { ResolvedEventStatus } from "@/game/domain/resolvedEvent";
+import { ATMOSPHERE_BEAT_ID } from "./approveAndWriteScene";
 
 const IMPORTANT_ACTION_ID = "act_persist";
 const IMPORTANT_JOB_ID = "job_persist";
@@ -42,6 +43,7 @@ type JobFixture = {
   focusNpcId?: string;
   jobId?: string;
   actionId?: string;
+  beats?: PendingNarrativeJob["mandatoryBeats"];
 };
 
 function makeJob(fixture: JobFixture): PendingNarrativeJob {
@@ -68,7 +70,7 @@ function makeJob(fixture: JobFixture): PendingNarrativeJob {
     focusNpcId: fixture.focusNpcId !== undefined ? asNpcId(fixture.focusNpcId) : undefined,
     requestedAt: "2026-01-02",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
-    mandatoryBeats: [],
+    mandatoryBeats: fixture.beats ?? [],
   });
   if (!result.ok) throw new Error("fixture job 构造失败");
   return result.job;
@@ -127,15 +129,13 @@ function makeSpySceneSource(): { source: SceneSource; contexts: () => readonly S
       seen.push(context);
       return {
         sceneId: `scene-${context.job.jobId}`,
-        turn: context.job.turnNumber,
-        narration: "dummy",
+        segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "dummy" }],
         npcLine: null,
-        event: { kind: "dialogue", focusNpcId: asNpcId("npc_1") },
-        choiceProposals: [
-          { label: "a", action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" } },
-          { label: "b", action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" } },
+        objectiveLink: null,
+        choices: [
+          { candidateId: "candidate_1", label: "a" },
+          { candidateId: "candidate_2", label: "b" },
         ],
-        eventProposals: [],
         source: "fallback",
       };
     },
@@ -268,5 +268,77 @@ describe("generatePendingScene", () => {
     const first = await run();
     const second = await run();
     expect(first).toEqual(second);
+  });
+
+  // ── Task 6：缺强制节拍 / 未应答 → 整场回退确定性源（同一审批） ──────────
+
+  function utteranceRecord(): GameRecord {
+    const job = makeJob({
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      eventKind: "dialogue",
+      utterance: "商队失踪的事你知道吗？",
+      focusNpcId: "npc_1",
+      beats: [
+        { beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应" },
+        { beatId: ATMOSPHERE_BEAT_ID, kind: "atmosphere", subjectIds: [], instruction: "氛围" },
+      ],
+    });
+    return makeGameRecord({ kind: "pending", job });
+  }
+
+  it("stub 提案缺强制 player_utterance 节拍 → 整场回退确定性源并保存（fallback 过同一审批）", async () => {
+    const record = utteranceRecord();
+    const repo = makeMockRepo(record);
+    // stub 源只给 atmosphere 段、无台词 → 缺强制节拍 → 审批拒绝 → 确定性 fallback
+    const stub: SceneSource = {
+      async generateScene(): Promise<SceneSourceResult> {
+        return {
+          sceneId: "scene-stub",
+          segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "dummy" }],
+          npcLine: null,
+          objectiveLink: null,
+          choices: [
+            { candidateId: "candidate_1", label: "a" },
+            { candidateId: "candidate_2", label: "b" },
+          ],
+          source: "generated",
+        };
+      },
+    };
+    const result = await generatePendingScene({ repository: repo, sceneSource: stub, now: () => "2026-01-02" });
+    expect(result).toBe("saved");
+    const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
+    const scene = input.nextStoryState.narrative.currentScene!;
+    expect(scene.source).toBe("fallback");
+    expect(scene.npcLine?.npcId).toBe(asNpcId("npc_1"));
+    expect(scene.npcLine?.answeredBeatIds).toContain("player_utterance");
+  });
+
+  it("stub 提案正确应答 player_utterance 节拍 → 直接采纳（不触发 fallback）", async () => {
+    const record = utteranceRecord();
+    const repo = makeMockRepo(record);
+    const answering: SceneSource = {
+      async generateScene(): Promise<SceneSourceResult> {
+        return {
+          sceneId: "scene-answer",
+          segments: [
+            { beatId: "player_utterance", text: "你提出了你的疑问。" },
+            { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" },
+          ],
+          npcLine: { npcId: "npc_1", text: "这件事我也正想说。", emotion: "warm", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
+          objectiveLink: null,
+          choices: [
+            { candidateId: "candidate_1", label: "支持" },
+            { candidateId: "candidate_2", label: "质疑" },
+          ],
+          source: "generated",
+        };
+      },
+    };
+    const result = await generatePendingScene({ repository: repo, sceneSource: answering, now: () => "2026-01-02" });
+    expect(result).toBe("saved");
+    const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
+    expect(input.nextStoryState.narrative.currentScene?.npcLine?.text).toBe("这件事我也正想说。");
+    expect(input.nextStoryState.narrative.currentScene?.source).toBe("generated");
   });
 });

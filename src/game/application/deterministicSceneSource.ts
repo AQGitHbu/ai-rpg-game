@@ -1,20 +1,20 @@
-import type { EventProposal, SceneSource, SceneSourceResult } from "./sceneSource";
+import type { SceneSource, SceneSourceResult, ScenePerformanceSegment, ScenePerformanceProposal } from "./sceneSource";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { NarrativeEmotion, NarrativeNpcLineState, NarrativeEventState } from "@/game/domain/narrative";
-import type { ChoiceProposal } from "@/game/domain/approvedChoice";
-import { semanticSummaryOf } from "@/game/domain/approvedChoice";
 import type { Action } from "@/game/domain/action";
+import { semanticSummaryOf } from "@/game/domain/approvedChoice";
 import { asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import type { RelationshipTier } from "@/game/domain/relationship";
+import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 
 // ---------------------------------------------------------------------------
-// 确定性 fallback 场景生成器（spec §7.6 安全降级模板）。
+// 确定性 fallback 场景表演生成器（spec §7.6 安全降级模板）。
 // 不调用 AI、不读时钟/随机数：sceneId 从 job 纯函数派生，
 // 两次调用同样的 context 产出逐字节相同的提案。
-// 选项从当前地点的合法行动中选取（移动、交谈、探索）。
-// Task 5：NPC 台词按关系档位政策生成（hostile/trusted 肉眼可辨），
-// 且必须应答强制 player_utterance 节拍。
-// -----------------------------------------------------------------------------
+// Task 6：产出与 approveScenePerformance 同一契约的表演提案（segments/
+// npcLine/objectiveLink/choices），必须能通过同一审批——因此所有引用
+// （节拍 ID、NPC 台词、目标链接、合法选项）都从服务端权威上下文派生。
+// ---------------------------------------------------------------------------
 
 /** 档位 → 确定性台词（同一档位恒定；不同档位肉眼可辨）。 */
 const TIER_LINES: Readonly<Record<RelationshipTier, { readonly text: string; readonly emotion: NarrativeEmotion }>> = {
@@ -31,57 +31,100 @@ export function answeredUtteranceBeatIds(context: SceneGenerationContext): reado
   return beat !== undefined ? [beat.beatId] : [];
 }
 
+/** 场景表演的合法选项候选（服务端权威）：审批、确定性源、live 提示词共用。 */
+export type SceneChoiceCandidate = {
+  readonly candidateId: string;
+  readonly label: string;
+  readonly action: Action;
+};
+
+/** 判断某行动是否推进/接近/搜集当前目标（objectiveTarget.entityId）。 */
+export function actionTargetsObjective(action: Action, entityId: string): boolean {
+  switch (action.type) {
+    case "move": return String(action.locationId) === entityId;
+    case "talk": return String(action.npcId) === entityId;
+    case "take_item": return String(action.itemId) === entityId;
+    case "investigate": return String(action.factId) === entityId;
+    case "attack": return String(action.enemyId) === entityId;
+    default: return false;
+  }
+}
+
+/**
+ * 从上下文投影服务端权威的可选候选（candidateId 与 approval 使用同一集合）：
+ * - dialogue 事件 → 焦点 NPC 的固定 support/challenge 两选项；
+ * - 其余事件 → legalActionCandidates 去重映射（candidate_1..N）。
+ */
+export function buildSelectableSceneCandidates(context: SceneGenerationContext): readonly SceneChoiceCandidate[] {
+  const event = buildEventState(context);
+  if (event.kind === "dialogue") {
+    const npc = context.presentNpcs.find((entry) => String(entry.id) === String(event.focusNpcId));
+    if (npc === undefined) return [];
+    return [
+      { candidateId: "candidate_1", label: `表示愿意支持${npc.name}`, action: { type: "talk", npcId: npc.id, dialogueAct: "support" } },
+      { candidateId: "candidate_2", label: `质疑${npc.name}的说法`, action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" } },
+    ];
+  }
+  const candidates: SceneChoiceCandidate[] = [];
+  const seen = new Set<string>();
+  for (const candidate of context.legalActionCandidates) {
+    const action = actionFromLegalCandidate(candidate);
+    if (action === null) continue;
+    const key = semanticSummaryOf(action);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push({ candidateId: `candidate_${candidates.length + 1}`, label: candidate.label, action });
+  }
+  return candidates;
+}
+
 export function createDeterministicSceneSource(): SceneSource {
   return {
     async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
-      const { job } = context;
-
-      const sceneId = `scene-${job.jobId}`;
-      const turn = job.turnNumber;
-
-      const narration = buildNarration(context);
-      const npcLine = buildNpcLineState(context);
-      const event = buildEventState(context);
-      const choiceProposals = buildChoiceProposals(context, event);
-
+      const sceneId = `scene-${context.job.jobId}`;
       return {
         sceneId,
-        turn,
-        narration,
-        npcLine,
-        event,
-        choiceProposals,
-        eventProposals: buildRelationshipEventProposals(context, sceneId),
+        segments: buildSegments(context),
+        npcLine: buildNpcLineState(context),
+        objectiveLink: buildObjectiveLink(context),
+        choices: buildSceneChoices(context),
         source: "fallback",
       };
     },
   };
 }
 
-function buildRelationshipEventProposals(
-  context: SceneGenerationContext,
-  sceneId: string,
-): readonly EventProposal[] {
-  if (context.job.actionSummary.kind !== "talk") return [];
+/** 一段节拍对应一个 segment（强制节拍顺序即上下文顺序；atmosphere 可选放最后）。 */
+function buildSegments(context: SceneGenerationContext): readonly ScenePerformanceSegment[] {
+  const { job } = context;
   const npc = focusNpc(context);
-  if (npc === undefined) return [];
-  const stance = npc.relationship.affinity >= 10
-    ? "friendly"
-    : npc.relationship.affinity <= 3
-      ? "hostile"
-      : null;
-  if (stance === null) return [];
-  return [{
-    id: `${sceneId}-stance-${stance}`,
-    kind: "npc_changes_stance",
-    involvedEntityIds: [String(npc.id)],
-    prerequisiteFactIds: [],
-    proposedEffects: [{ kind: "npc_changes_stance", npcId: npc.id, stance }],
-    intendedPacing: context.story.nextPacingNeed,
-    reason: "关键 NPC 的规则关系已形成明确立场",
-    proposedAtTurn: context.job.turnNumber,
-    expiresAtTurn: context.job.turnNumber + 5,
-  }];
+  const segments: ScenePerformanceSegment[] = [];
+  for (const beat of context.mandatoryBeats) {
+    if (beat.beatId === ATMOSPHERE_BEAT_ID) {
+      segments.push({ beatId: beat.beatId, text: buildAtmosphere(context) });
+    } else if (beat.kind === "player_utterance") {
+      const utterance = job.utterance?.trim() ?? "";
+      segments.push({
+        beatId: beat.beatId,
+        text: npc !== undefined && utterance !== ""
+          ? `你对${npc.name}说："${utterance}"。${npc.name}听完，注视着你的眼睛。`
+          : "你向对方提出了你的疑问。",
+      });
+    } else {
+      segments.push({ beatId: beat.beatId, text: beat.instruction });
+    }
+  }
+  // 服务端恒带 atmosphere 节拍；纯测试夹具无强制节拍时仍保底一段氛围。
+  if (segments.length === 0) {
+    segments.push({ beatId: ATMOSPHERE_BEAT_ID, text: buildAtmosphere(context) });
+  }
+  return segments;
+}
+
+/** 氛围描写：当前地点的最小安全文本（纯函数）。 */
+function buildAtmosphere(context: SceneGenerationContext): string {
+  const { currentLocation } = context;
+  return `你身处${currentLocation.name}，${currentLocation.description}`;
 }
 
 /** 焦点 NPC：talk job 优先使用 job.focusNpcId，否则第一个在场 NPC。 */
@@ -95,41 +138,8 @@ function focusNpc(context: SceneGenerationContext): SceneGenerationContext["pres
   return presentNpcs[0];
 }
 
-/** 玩家原话以中性口吻回显（不加工、不评判）；无原话则不适用。 */
-function buildNarration(context: SceneGenerationContext): string {
-  const { job, currentLocation } = context;
-  const { resolvedEvent } = job;
-  const locName = currentLocation.name;
-  const npc = focusNpc(context);
-
-  const isTalk = job.actionSummary.kind === "talk";
-  if (isTalk && job.utterance !== undefined && npc !== undefined) {
-    return `你对${npc.name}说："${job.utterance}"。${npc.name}听完，注视着你的眼睛。`;
-  }
-
-  switch (resolvedEvent.eventKind) {
-    case "travel":
-      return `你来到了${locName}。四周的景象映入眼帘，空气中弥漫着不同的气息。`;
-    case "dialogue":
-      return npc !== undefined
-        ? `你与${npc.name}交谈。${npc.name}注视着你，似乎有话要说。`
-        : `你在${locName}四处张望，却没看到可以交谈的人。`;
-    case "investigate":
-      return `你仔细调查了周围的线索，发现了一些值得注意的细节。`;
-    case "item":
-      return `你获得了某件物品，它或许在旅途中派上用场。`;
-    case "battle":
-      return resolvedEvent.status === "success"
-        ? `战斗结束，你取得了胜利。`
-        : `战斗的余波仍在空气中回荡。`;
-    default:
-      return `你身处${locName}，周围的一切静待探索。`;
-  }
-}
-
-function buildNpcLineState(context: SceneGenerationContext): NarrativeNpcLineState | null {
+function buildNpcLineState(context: SceneGenerationContext): ScenePerformanceProposal["npcLine"] {
   const { job } = context;
-  const { resolvedEvent } = job;
   const npc = focusNpc(context);
   if (npc === undefined) return null;
 
@@ -139,14 +149,15 @@ function buildNpcLineState(context: SceneGenerationContext): NarrativeNpcLineSta
   const tierLine = policy !== undefined ? TIER_LINES[policy.tier] : null;
   const text = tierLine !== null
     ? `${npc.name}${tierLine.text}`
-    : buildStatusLine(npc.name, resolvedEvent);
+    : buildStatusLine(npc.name, job.resolvedEvent);
   const emotion = tierLine !== null ? tierLine.emotion : "neutral";
 
   return {
-    npcId: npc.id,
+    npcId: String(npc.id),
     text,
     emotion,
     usedFactIds: [],
+    usedInteractionActionIds: [],
     answeredBeatIds: answeredUtteranceBeatIds(context),
   };
 }
@@ -164,6 +175,48 @@ function buildStatusLine(npcName: string, resolvedEvent: SceneGenerationContext[
     default:
       return `${npcName}看了你一眼，没有说话。`;
   }
+}
+
+/** 目标链接：与 objectiveTransition.after 精确一致；无 after 时为 null。 */
+function buildObjectiveLink(context: SceneGenerationContext): ScenePerformanceProposal["objectiveLink"] {
+  const after = context.objectiveTransition.after;
+  if (after === null) return null;
+  const mode = context.objectiveTransition.mode === "advanced_act"
+    ? "handoff"
+    : context.objectiveTransition.mode === "progressed"
+      ? "progress"
+      : "hint";
+  return { questId: String(after.questId), objectiveIndex: after.objectiveIndex, mode };
+}
+
+/** 两个不同的合法选项：优先选择推进当前目标的行动，再保底任意合法候选。 */
+export function buildSceneChoices(context: SceneGenerationContext): ScenePerformanceProposal["choices"] {
+  const selectable = buildSelectableSceneCandidates(context);
+  if (selectable.length < 2) {
+    throw new Error("scene fallback requires at least two legal action candidates");
+  }
+  const targetEntityId = context.objectiveTarget?.entityId;
+  const ordered = [...selectable].sort((a, b) => {
+    const aScore = targetEntityId !== undefined && actionTargetsObjective(a.action, targetEntityId) ? 1 : 0;
+    const bScore = targetEntityId !== undefined && actionTargetsObjective(b.action, targetEntityId) ? 1 : 0;
+    return bScore - aScore;
+  });
+  const distinct: SceneChoiceCandidate[] = [];
+  const seen = new Set<string>();
+  for (const candidate of ordered) {
+    const key = semanticSummaryOf(candidate.action);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    distinct.push(candidate);
+    if (distinct.length === 2) break;
+  }
+  if (distinct.length !== 2) {
+    throw new Error("scene fallback requires two distinct legal action candidates");
+  }
+  return [
+    { candidateId: distinct[0]!.candidateId, label: distinct[0]!.label },
+    { candidateId: distinct[1]!.candidateId, label: distinct[1]!.label },
+  ];
 }
 
 /** 事件状态由 job 的真实 eventKind 派生：travel→travel，talk→dialogue 焦点 NPC，investigate→首条事实。 */
@@ -187,34 +240,6 @@ export function buildEventState(context: SceneGenerationContext): NarrativeEvent
     default:
       return { kind: "observe", locationId: currentLocation.id };
   }
-}
-
-export function buildChoiceProposals(
-  context: SceneGenerationContext,
-  event: NarrativeEventState,
-): readonly [ChoiceProposal, ChoiceProposal] {
-  if (event.kind === "dialogue") {
-    const npc = context.presentNpcs.find((entry) => entry.id === event.focusNpcId);
-    if (npc === undefined) throw new Error("dialogue fallback requires a present focus NPC");
-    return [
-      { label: `表示愿意支持${npc.name}`, action: { type: "talk", npcId: npc.id, dialogueAct: "support" } },
-      { label: `质疑${npc.name}的说法`, action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" } },
-    ];
-  }
-
-  const distinct: ChoiceProposal[] = [];
-  const seen = new Set<string>();
-  for (const candidate of context.legalActionCandidates) {
-    const action = actionFromLegalCandidate(candidate);
-    if (action === null) continue;
-    const key = semanticSummaryOf(action);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    distinct.push({ label: candidate.label, action });
-    if (distinct.length === 2) break;
-  }
-  if (distinct.length !== 2) throw new Error("non-dialogue fallback requires two legal action candidates");
-  return [distinct[0]!, distinct[1]!];
 }
 
 export function actionFromLegalCandidate(

@@ -3,7 +3,7 @@ import { findItem } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import type { MandatoryNarrativeBeat, MandatoryNarrativeBeatKind } from "@/game/domain/narrativeBeat";
-import { MAX_MANDATORY_BEATS } from "@/game/domain/narrativeBeat";
+import { ATMOSPHERE_BEAT_ID, MAX_MANDATORY_BEATS } from "@/game/domain/narrativeBeat";
 import type { NpcId } from "@/game/domain/worldEntity";
 import { isObjectiveSatisfied, objectiveLabel } from "./objectiveRules";
 import { currentObjectiveOf } from "./deriveObjectiveTransition";
@@ -164,9 +164,23 @@ export function buildOutcomeBeats(input: BuildOutcomeBeatsInput): MandatoryNarra
   });
   const capped = capMandatoryBeats(raw);
   const required = requiredUtteranceBeat(input);
-  if (required === null) return capped;
-  const hasIt = capped.some((b) => b.kind === "player_utterance");
-  if (hasIt) return capped;
-  // Mandatory：替换最低优先级节拍，保证 player_utterance 存在
-  return [...capped.slice(0, MAX_MANDATORY_BEATS - 1), required];
+  const base = required === null
+    ? capped
+    : capped.some((b) => b.kind === "player_utterance")
+      ? capped
+      // Mandatory：替换最低优先级节拍，保证 player_utterance 存在
+      : [...capped.slice(0, MAX_MANDATORY_BEATS - 1), required];
+  // Task 6：服务端氛围节拍恒在最后（可选表演段；缺失不算非法）。
+  // 已达上限时替换最低优先级节拍，但 player_utterance 是 mandatory 必须保留。
+  const atmosphere: MandatoryNarrativeBeat = {
+    beatId: ATMOSPHERE_BEAT_ID,
+    kind: "atmosphere",
+    subjectIds: [],
+    instruction: "对当前场景氛围的简短描写（可选，放在最后）",
+  };
+  if (base.length < MAX_MANDATORY_BEATS) return [...base, atmosphere];
+  if (base[base.length - 1]?.kind === "player_utterance") {
+    return [...base.slice(0, MAX_MANDATORY_BEATS - 2), base[base.length - 1]!, atmosphere];
+  }
+  return [...base.slice(0, MAX_MANDATORY_BEATS - 1), atmosphere];
 }

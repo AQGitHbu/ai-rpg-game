@@ -190,4 +190,20 @@ it("capMandatoryBeats：按固定优先级保留前 8 条且顺序稳定", () =>
     expect(oneOfKind(result, "player_utterance")).toHaveLength(1);
     expect(oneOfKind(result, "battle_started")).toHaveLength(1);
   });
+
+  // ── Task 6：atmosphere 节拍恒在最后（可选表演段）───────────────────────
+
+  it("恒产出 atmosphere 节拍且位于最后，总数不超过 8", () => {
+    const result = beats(baseWorld(), baseWorld());
+    const last = result[result.length - 1];
+    expect(last?.beatId).toBe("atmosphere");
+    expect(last?.kind).toBe("atmosphere");
+
+    const manyItems: readonly ItemEntry[] = Array.from({ length: 8 }, (_, i) => ({
+      id: asItemId(`item_${i + 1}`), name: `物品${i + 1}`, description: "d", kind: "quest", tags: [],
+    }));
+    const busy = beats(baseWorld(), { ...baseWorld(), items: manyItems, inventory: manyItems.map((i) => i.id) });
+    expect(busy.length).toBeLessThanOrEqual(8);
+    expect(busy[busy.length - 1]?.beatId).toBe("atmosphere");
+  });
 });

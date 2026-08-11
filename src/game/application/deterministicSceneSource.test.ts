@@ -1,8 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { createDeterministicSceneSource } from "./deterministicSceneSource";
+import {
+  createDeterministicSceneSource,
+  buildEventState,
+  buildSelectableSceneCandidates,
+  buildSceneChoices,
+} from "./deterministicSceneSource";
+import { approveScenePerformance } from "./approveAndWriteScene";
 import type { LocationEntry, NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asFactId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asFactId, asQuestId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { ResolvedEvent, ResolvedEventStatus } from "@/game/domain/resolvedEvent";
@@ -10,6 +16,7 @@ import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { NarrativeEventKind } from "@/game/domain/narrative";
 import type { FocusNpcContext } from "./focusNpcContext";
 import type { RelationshipTier } from "@/game/domain/relationship";
+import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
 
 const loc1: LocationEntry = {
   id: asLocationId("loc_1"), name: "客栈", description: "一间简朴的客栈", kind: "main",
@@ -60,6 +67,7 @@ type JobOverrides = {
   utterance?: string;
   focusNpcId?: string;
   beats?: PendingNarrativeJob["mandatoryBeats"];
+  transition?: ObjectiveTransition;
 };
 
 function makeJob(overrides: JobOverrides = {}): PendingNarrativeJob {
@@ -75,7 +83,7 @@ function makeJob(overrides: JobOverrides = {}): PendingNarrativeJob {
     domainEventRange: { fromLedgerIndex: 1, toLedgerIndexExclusive: 2 },
     focusNpcId: overrides.focusNpcId !== undefined ? asNpcId(overrides.focusNpcId) : undefined,
     requestedAt: "2026-01-02",
-    objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+    objectiveTransition: overrides.transition ?? { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: overrides.beats ?? [],
   });
   if (!result.ok) throw new Error("fixture job 构造失败");
@@ -115,7 +123,8 @@ function makeContext(job: PendingNarrativeJob, focus?: FocusNpcContext): SceneGe
     presentNpcs: [npc1, npc2].map((n) => ({
       id: n.id, name: n.name, role: n.role, publicProfile: n.description,
       knownFactCards: [], hiddenFactCards: [], sceneVisibleFactIds: [],
-      recentInteractionSummaries: [], relationship: { affinity: 0 }, emotion: "neutral",
+      recentInteractionSummaries: [], recentInteractionActionIds: [],
+      relationship: { affinity: 0 }, emotion: "neutral",
       goals: [], forbiddenKnowledgeIds: [],
     })),
     story: {
@@ -123,6 +132,7 @@ function makeContext(job: PendingNarrativeJob, focus?: FocusNpcContext): SceneGe
       nextPacingNeed: ss.nextPacingNeed,
       remainingBudget: { remainingLocations: 1, remainingNpcs: 1, remainingEvents: 1 },
       unresolvedThreadSummaries: [],
+      style: { personalityTags: [], narrativeStyle: "concise", contentIntensity: "normal" },
     },
     recentBeats: [],
     legalActionCandidates: [
@@ -133,9 +143,10 @@ function makeContext(job: PendingNarrativeJob, focus?: FocusNpcContext): SceneGe
       locationIds: [loc1.id, loc2.id], factIds: [], itemIds: [], enemyIds: [],
     },
     worldConstraints: [],
-    objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+    objectiveTransition: job.objectiveTransition,
     mandatoryBeats: job.mandatoryBeats,
     beatSubjects: [],
+    objectiveTarget: null,
     ...(focus !== undefined ? { focusNpcContext: focus } : {}),
   };
 }
@@ -161,7 +172,6 @@ describe("deterministicSceneSource", () => {
     const second = await source.generateScene(context);
     expect(first.sceneId).toBe("scene-job_7");
     expect(second.sceneId).toBe("scene-job_7");
-    expect(first.sceneId).toBe(second.sceneId);
   });
 
   it("is fully deterministic: same context → same proposal package", async () => {
@@ -169,39 +179,51 @@ describe("deterministicSceneSource", () => {
     const first = await source.generateScene(context);
     const second = await source.generateScene(context);
     expect(first).toEqual(second);
-    expect(first.choiceProposals).toHaveLength(2);
+    expect(first.choices).toHaveLength(2);
   });
 
-  it("produces a proposal with narration, turn from job, and exactly 2 distinct actions", async () => {
+  it("produces a performance proposal with segments, two distinct legal choices and source=fallback", async () => {
     const result = await source.generateScene(makeContext(makeJob({ eventKind: "travel" })));
-    expect(result.narration.length).toBeGreaterThan(0);
-    expect(result.turn).toBe(1);
-    expect(result.choiceProposals).toHaveLength(2);
+    expect(result.segments.length).toBeGreaterThan(0);
     expect(result.source).toBe("fallback");
-    expect(result.choiceProposals.every((choice) => choice.label.length > 0)).toBe(true);
-    expect(result.choiceProposals[0].action).not.toEqual(result.choiceProposals[1].action);
+    expect(result.choices).toHaveLength(2);
+    expect(result.choices[0].candidateId).not.toBe(result.choices[1].candidateId);
+    expect(result.choices.every((choice) => choice.label.length > 0)).toBe(true);
+  });
+
+  it("deterministic proposal passes the same approval used for generated scenes", async () => {
+    const context = makeContext(makeJob({ eventKind: "travel" }));
+    const proposal = await source.generateScene(context);
+    const approved = approveScenePerformance({
+      context,
+      proposal,
+      basedOnRevision: 1,
+      existingCandidateEventPool: [],
+    });
+    expect(approved.ok).toBe(true);
+    if (approved.ok) {
+      expect(approved.scene.source).toBe("fallback");
+      expect(approved.scene.narration.length).toBeGreaterThan(0);
+    }
   });
 
   it("maps a move/travel job to a travel event state", async () => {
-    const result = await source.generateScene(makeContext(makeJob({ eventKind: "travel", summary: { kind: "move", locationId: asLocationId("loc_2") } })));
-    expect(result.event).toEqual({ kind: "travel", locationId: asLocationId("loc_1") });
+    const context = makeContext(makeJob({ eventKind: "travel", summary: { kind: "move", locationId: asLocationId("loc_2") } }));
+    expect(buildEventState(context)).toEqual({ kind: "travel", locationId: asLocationId("loc_1") });
   });
 
   it("maps a talk job to a dialogue event state focused on the job NPC", async () => {
-    const result = await source.generateScene(makeContext(makeJob({
+    const context = makeContext(makeJob({
       eventKind: "dialogue",
       summary: { kind: "talk", npcId: asNpcId("npc_1") },
       focusNpcId: "npc_1",
-    })));
-    expect(result.event).toEqual({ kind: "dialogue", focusNpcId: asNpcId("npc_1") });
-    expect(result.npcLine?.npcId).toBe(asNpcId("npc_1"));
-    expect(result.choiceProposals.map((choice) => choice.action)).toEqual([
-      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" },
-      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "challenge" },
-    ]);
+    }));
+    expect(buildEventState(context)).toEqual({ kind: "dialogue", focusNpcId: asNpcId("npc_1") });
+    const result = await source.generateScene(context);
+    expect(result.npcLine?.npcId).toBe("npc_1");
   });
 
-  it("talk job keeps focusNpcId; narration echoes the utterance and the NPC line answers the player_utterance beat", async () => {
+  it("talk job keeps focusNpcId; player_utterance segment echoes the utterance and the NPC line answers the beat", async () => {
     const utterance = "请问关于失踪的商队有什么线索吗？";
     const job = makeJob({
       eventKind: "dialogue",
@@ -211,62 +233,61 @@ describe("deterministicSceneSource", () => {
       beats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应" }],
     });
     const result = await source.generateScene(makeContext(job, makeFocusContext("trusted")));
-    expect(result.npcLine?.npcId).toBe(asNpcId("npc_1"));
-    expect(result.narration).toContain(utterance);
+    const utteranceSegment = result.segments.find((s) => s.beatId === "player_utterance");
+    expect(utteranceSegment?.text).toContain(utterance);
+    expect(result.npcLine?.npcId).toBe("npc_1");
     expect(result.npcLine?.answeredBeatIds).toContain("player_utterance");
   });
 
-  it.each(["partial_success", "failure", "blocked"] as const)(
-    "does not rewrite %s to a success: narration keeps a non-victory tone",
-    async (status) => {
+  it("does not rewrite partial_success/failure/blocked: the NPC line keeps the status tone", async () => {
+    for (const status of ["partial_success", "failure", "blocked"] as const) {
       const result = await source.generateScene(makeContext(makeJob({ status, eventKind: "dialogue", summary: { kind: "talk", npcId: asNpcId("npc_1") }, focusNpcId: "npc_1" })));
-      expect(result.narration.length).toBeGreaterThan(0);
       expect(result.npcLine?.text).toBeTruthy();
-      expect(result.npcLine?.text).not.toContain("欢迎光临");
       if (status === "partial_success") {
         expect(result.npcLine?.text).toContain("不方便全说");
       } else {
         expect(result.npcLine?.text).not.toContain("欢迎光临");
       }
-    },
-  );
+    }
+  });
 
   it("keeps NPC presentation data as proposal fields; ready pages are built only after approval", async () => {
     const result = await source.generateScene(makeContext(makeJob({ eventKind: "dialogue", summary: { kind: "talk", npcId: asNpcId("npc_1") }, focusNpcId: "npc_1" })));
-    expect(result.npcLine?.npcId).toBe(asNpcId("npc_1"));
+    expect(result.npcLine?.npcId).toBe("npc_1");
     expect("npcDialogues" in result).toBe(false);
   });
 
-  it("event proposals is empty for deterministic source", async () => {
-    const result = await source.generateScene(makeContext(makeJob()));
-    expect(result.eventProposals).toEqual([]);
+  it("objectiveLink follows objectiveTransition.after; null when no after", async () => {
+    const transition: ObjectiveTransition = {
+      before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与客栈老板交谈" },
+      completed: [],
+      after: { questId: asQuestId("quest_0"), objectiveIndex: 1, label: "获取盟誓印谱" },
+      mode: "progressed",
+    };
+    const withAfter = await source.generateScene(makeContext(makeJob({ transition })));
+    expect(withAfter.objectiveLink).toEqual({ questId: "quest_0", objectiveIndex: 1, mode: "progress" });
+    const withoutAfter = await source.generateScene(makeContext(makeJob()));
+    expect(withoutAfter.objectiveLink).toBeNull();
   });
 
-  it("proposes a structured stance consequence after relationship choices cross a threshold", async () => {
-    const base = makeContext(makeJob({
-      eventKind: "dialogue",
-      summary: { kind: "talk", npcId: asNpcId("npc_1") },
-      focusNpcId: "npc_1",
-    }));
-    const context: SceneGenerationContext = {
-      ...base,
-      presentNpcs: base.presentNpcs.map((npc) => npc.id === asNpcId("npc_1")
-        ? { ...npc, relationship: { affinity: 12 } }
-        : npc),
-    };
-    const result = await source.generateScene(context);
-    expect(result.eventProposals).toEqual([
-      expect.objectContaining({
-        kind: "npc_changes_stance",
-        involvedEntityIds: ["npc_1"],
-        proposedEffects: [{ kind: "npc_changes_stance", npcId: asNpcId("npc_1"), stance: "friendly" }],
-      }),
-    ]);
+  it("segments cover every mandatory beat with its beatId, in order, plus optional atmosphere last", async () => {
+    const job = makeJob({
+      beats: [
+        { beatId: "item_0", kind: "item_obtained", subjectIds: ["item_1"], instruction: "获得物品「盟誓印谱」" },
+        { beatId: "atmosphere", kind: "atmosphere", subjectIds: [], instruction: "氛围" },
+      ],
+    });
+    const result = await source.generateScene(makeContext(job));
+    expect(result.segments.map((s) => s.beatId)).toEqual(["item_0", "atmosphere"]);
+    expect(result.segments[0]?.text).toContain("盟誓印谱");
   });
 
   it("choices include a move action toward a reachable location", async () => {
-    const result = await source.generateScene(makeContext(makeJob()));
-    expect(result.choiceProposals.some((c) => c.action.type === "move" && String(c.action.locationId) === "loc_2")).toBe(true);
+    const context = makeContext(makeJob());
+    const result = await source.generateScene(context);
+    const selectable = buildSelectableSceneCandidates(context);
+    const actions = result.choices.map((choice) => selectable.find((c) => c.candidateId === choice.candidateId)?.action);
+    expect(actions.some((a) => a?.type === "move" && String(a.locationId) === "loc_2")).toBe(true);
   });
 
   it("active battle fallback proposes two distinct executable battle actions", async () => {
@@ -279,10 +300,33 @@ describe("deterministicSceneSource", () => {
       ],
     };
     const result = await source.generateScene(context);
-    expect(result.choiceProposals.map((choice) => choice.action)).toEqual([
+    const selectable = buildSelectableSceneCandidates(context);
+    const actions = result.choices.map((choice) => selectable.find((c) => c.candidateId === choice.candidateId)?.action);
+    expect(actions).toEqual([
       { type: "battle_action", action: "attack" },
       { type: "battle_action", action: "guard" },
     ]);
+  });
+
+  it("prefers an objective-progress-capable choice when after exists", async () => {
+    const transition: ObjectiveTransition = {
+      before: null,
+      completed: [],
+      after: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "前往街道" },
+      mode: "unchanged",
+    };
+    const context: SceneGenerationContext = {
+      ...makeContext(makeJob({ transition })),
+      legalActionCandidates: [
+        { kind: "explore", label: "查看四周" },
+        { kind: "move", label: "前往街道", targetId: "loc_2" },
+      ],
+      objectiveTarget: { questId: "quest_0", objectiveIndex: 0, entityId: "loc_2", entityName: "街道" },
+    };
+    const result = await source.generateScene(context);
+    const selectable = buildSelectableSceneCandidates(context);
+    const chosenLabels = result.choices.map((choice) => selectable.find((c) => c.candidateId === choice.candidateId)?.label);
+    expect(chosenLabels).toContain("前往街道");
   });
 
   // ── Task 5 Step 1 + 4：档位感知台词 + 玩家原话应答 ──────────────────────
@@ -293,9 +337,6 @@ describe("deterministicSceneSource", () => {
     expect(hostile.npcLine?.text).not.toBe(trusted.npcLine?.text);
     expect(hostile.npcLine?.text).toBeTruthy();
     expect(trusted.npcLine?.text).toBeTruthy();
-    // 旁白保留原话回显（不随档位变化），但台词因政策不同
-    expect(hostile.narration).toContain("你知道商队失踪的事吗");
-    expect(trusted.narration).toContain("你知道商队失踪的事吗");
   });
 
   it("hostile 档位 NPC 的台词为冷淡拒绝式", async () => {
@@ -322,5 +363,12 @@ describe("deterministicSceneSource", () => {
     }));
     const result = await source.generateScene(context);
     expect(result.npcLine?.answeredBeatIds).toEqual([]);
+  });
+
+  it("buildSceneChoices returns exactly two distinct candidate IDs from the legal set", () => {
+    const context = makeContext(makeJob({ eventKind: "travel" }));
+    const choices = buildSceneChoices(context);
+    expect(choices).toHaveLength(2);
+    expect(choices[0].candidateId).not.toBe(choices[1].candidateId);
   });
 });
