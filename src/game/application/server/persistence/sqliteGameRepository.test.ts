@@ -1,7 +1,8 @@
 /** @vitest-environment node */
-import { describe, it, expect, afterAll, beforeAll } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 import { join } from "node:path";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createSqliteGameRepository } from "./sqliteGameRepository";
 import { createSqliteClient, type SqliteClient } from "./sqliteClient";
 import { asGameId } from "./gameRepository";
@@ -12,7 +13,9 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
 
-const RUN_ROOT = join(import.meta.dirname ?? __dirname, ".tmp-sqlite-test");
+// 每个 Vitest 进程使用独立的 OS 临时目录，避免 Git Bash/Windows 下多个
+// test run 争用源码目录中的固定 SQLite 文件，也避免清理残留目录时受句柄影响。
+const RUN_ROOT = mkdtempSync(join(tmpdir(), "ai-rpg-game-sqlite-"));
 
 function buildTestState(): { worldState: WorldState; storyState: StoryState } {
   const loc: LocationEntry = {
@@ -55,11 +58,6 @@ afterAll(async () => {
     try { client.close(); } catch { /* ignore */ }
   }
   try { rmSync(RUN_ROOT, { recursive: true, force: true }); } catch { /* ignore */ }
-});
-
-beforeAll(() => {
-  try { rmSync(RUN_ROOT, { recursive: true, force: true }); } catch { /* ignore */ }
-  mkdirSync(RUN_ROOT, { recursive: true });
 });
 
 describe("sqliteGameRepository", () => {
