@@ -46,7 +46,7 @@ function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameReco
       async applySceneWriteBack(input) {
         if (record === null) return { ok: false, code: "NO_ACTIVE_GAME" as const };
         if (input.expectedRevision !== record.revision) return { ok: false, code: "STALE_GAME_REVISION" as const };
-        record = { ...record, storyState: { ...record.storyState, narrative: input.nextNarrative, candidateEventPool: input.nextCandidateEventPool }, revision: record.revision + 1 };
+        record = { ...record, worldState: input.nextWorldState, storyState: input.nextStoryState, revision: record.revision + 1 };
         return { ok: true as const, record };
       },
       async clearCurrentGame() { return { ok: true as const }; },
@@ -71,7 +71,7 @@ function buildTestState(): { worldState: WorldState; storyState: StoryState } {
 }
 
 describe("writeBackScene", () => {
-  it("updates only narrative + candidateEventPool, never worldState", async () => {
+  it("persists the patched story (narrative + pool) against the given world, in one CAS", async () => {
     const { repo, getRecord } = createInMemoryRepo();
     const { worldState, storyState } = buildTestState();
     const gameId = asGameId("g1");
@@ -83,8 +83,8 @@ describe("writeBackScene", () => {
     const result = await writeBackScene(repo, {
       gameId,
       expectedRevision: 0,
-      nextNarrative: newNarrative,
-      nextCandidateEventPool: storyState.candidateEventPool,
+      nextWorldState: originalWorldState,
+      nextStoryState: { ...storyState, narrative: newNarrative, candidateEventPool: storyState.candidateEventPool },
     });
 
     expect(result.ok).toBe(true);
@@ -103,8 +103,8 @@ describe("writeBackScene", () => {
     const result = await writeBackScene(repo, {
       gameId,
       expectedRevision: 99,
-      nextNarrative: storyState.narrative,
-      nextCandidateEventPool: storyState.candidateEventPool,
+      nextWorldState: worldState,
+      nextStoryState: storyState,
     });
     expect(result).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
   });
@@ -122,8 +122,8 @@ describe("writeBackScene", () => {
     const result = await writeBackScene(repo, {
       gameId,
       expectedRevision: 0,
-      nextNarrative: { ...storyState.narrative, mode: "ai" as const },
-      nextCandidateEventPool: nextPool,
+      nextWorldState: originalWorldState,
+      nextStoryState: { ...storyState, narrative: { ...storyState.narrative, mode: "ai" as const }, candidateEventPool: nextPool },
     });
 
     expect(result.ok).toBe(true);

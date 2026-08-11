@@ -1,12 +1,13 @@
 import type { GameRepository, ApplySceneWriteBackResult } from "./server/persistence/gameRepository";
 import type { GameId } from "./server/persistence/gameRepository";
+import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 
 export type SceneWriteBackInput = {
   readonly gameId: GameId;
   readonly expectedRevision: number;
-  readonly nextNarrative: StoryState["narrative"];
-  readonly nextCandidateEventPool: StoryState["candidateEventPool"];
+  readonly nextWorldState: WorldState;
+  readonly nextStoryState: StoryState;
 };
 
 export async function writeBackScene(
@@ -16,7 +17,7 @@ export async function writeBackScene(
   return repo.applySceneWriteBack({
     gameId: input.gameId,
     expectedRevision: input.expectedRevision,
-    nextNarrative: input.nextNarrative,
-    nextCandidateEventPool: input.nextCandidateEventPool,
+    nextWorldState: input.nextWorldState,
+    nextStoryState: input.nextStoryState,
   });
 }

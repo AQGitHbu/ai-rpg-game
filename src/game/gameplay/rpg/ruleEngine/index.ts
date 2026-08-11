@@ -202,7 +202,7 @@ export function resolveTurn(
 }
 
 /**
- * 兼容包装：过渡期保留旧调用方（expansion 重演算等）的签名；
+ * 兼容包装：过渡期保留旧调用方（worldEvolution 预览重演算等）的签名；
  * turnId/baseRevision 由包装器按输入派生，只用于内部编排，不回传。
  */
 export function ruleEngine(

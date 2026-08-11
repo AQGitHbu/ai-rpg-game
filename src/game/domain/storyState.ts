@@ -108,6 +108,8 @@ export function createInitialStoryState(input: {
       nextItemOrdinal: 0,
       nextEnemyOrdinal: 0,
       nextFactOrdinal: 0,
+      nextQuestOrdinal: 0,
+      nextEndingOrdinal: 0,
       status: "stable",
     },
   };

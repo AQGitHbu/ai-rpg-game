@@ -56,7 +56,7 @@ type FacadeSpec = {
 const FACADES: readonly FacadeSpec[] = [
   { name: "openingGeneration", path: "@/game/gameplay/rpg/openingGeneration", anchors: ["compileOpeningGenerationCandidate"] },
   { name: "ruleEngine", path: "@/game/gameplay/rpg/ruleEngine", anchors: ["resolveByType", "validateAction"] },
-  { name: "expansion", path: "@/game/gameplay/rpg/expansion", anchors: ["applyExpansion", "expansionSource", "expansionTypes"] },
+  { name: "worldEvolution", path: "@/game/gameplay/rpg/worldEvolution", anchors: ["deriveEvolutionNeed", "approveWorldDelta", "materializeWorldDelta"] },
   { name: "intentParser", path: "@/game/gameplay/rpg/intentParser", anchors: ["intentContext", "intentParserSource"] },
   { name: "dialogue", path: "@/game/gameplay/rpg/dialogue", anchors: ["dialogueResolution"] },
   { name: "candidateEvents", path: "@/game/gameplay/rpg/candidateEvents", anchors: ["approveCandidateEvents", "compileCandidateEvent"] }
@@ -624,7 +624,7 @@ describe("ai-transport stays confined to application/server/ai", () => {
     for (const relative of [
       "sourceFactory.ts",
       "openingGenerationSource.ts",
-      "liveExpansionSource.ts",
+      "liveWorldEvolutionSource.ts",
       "liveIntentParserSource.ts"
     ]) {
       const file = resolve(sourceRoot, "game/application/server/ai", relative);

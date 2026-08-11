@@ -200,10 +200,10 @@ describe("generatePendingScene", () => {
     expect(result).toBe("saved");
     expect(deps.repository.applySceneWriteBack).toHaveBeenCalledOnce();
     const input = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
-    expect(JSON.stringify(input.nextNarrative.currentScene)).not.toContain("actionKey");
-    expect(input.nextNarrative.choiceRegistry).toHaveLength(2);
-    expect(new Set(input.nextNarrative.choiceRegistry!.map((x) => x.choiceToken)).size).toBe(2);
-    expect(input.nextNarrative.choiceRegistry!.every((x) => x.basedOnRevision === 8)).toBe(true);
+    expect(JSON.stringify(input.nextStoryState.narrative.currentScene)).not.toContain("actionKey");
+    expect(input.nextStoryState.narrative.choiceRegistry).toHaveLength(2);
+    expect(new Set(input.nextStoryState.narrative.choiceRegistry!.map((x) => x.choiceToken)).size).toBe(2);
+    expect(input.nextStoryState.narrative.choiceRegistry!.every((x) => x.basedOnRevision === 8)).toBe(true);
     const context = spy.contexts()[0];
     expect(context.job.jobId).toBe(IMPORTANT_JOB_ID);
     expect(context.job.actionId).toBe(IMPORTANT_ACTION_ID);

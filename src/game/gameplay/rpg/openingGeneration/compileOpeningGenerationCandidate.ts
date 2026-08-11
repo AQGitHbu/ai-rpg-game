@@ -119,6 +119,8 @@ export function compileOpeningGenerationCandidate(
       nextItemOrdinal: 0,
       nextEnemyOrdinal: 0,
       nextFactOrdinal: factIds.length,
+      nextQuestOrdinal: 1,
+      nextEndingOrdinal: 0,
       status: "stable",
     },
   };

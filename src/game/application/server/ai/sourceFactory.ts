@@ -8,9 +8,9 @@ import type { NarrativeEventState, NarrativeEmotion, NarrativeNpcLineState } fro
 import { NARRATIVE_EMOTIONS } from "@/game/domain/narrative";
 import { createOpeningGenerationSource as createValidatedOpeningGenerationSource } from "./openingGenerationSource";
 import { createDeterministicSceneSource } from "../../deterministicSceneSource";
-import { createLiveExpansionSource } from "./liveExpansionSource";
-import { createFixtureExpansionSource } from "./expansionSource";
-import type { ExpansionSource } from "@/game/gameplay/rpg/expansion";
+import { createLiveWorldEvolutionSource } from "./liveWorldEvolutionSource";
+import { createDeterministicEvolutionSource } from "../../deterministicEvolutionSource";
+import type { WorldEvolutionSource } from "../../worldEvolutionSource";
 import type { ChoiceProposal } from "@/game/domain/approvedChoice";
 import { actionFromLegalCandidate, buildChoiceProposals } from "../../deterministicSceneSource";
 
@@ -285,27 +285,27 @@ export function createSceneSource(
   return createDeterministicSceneSource();
 }
 
-// --- Live Expansion Source Factory（Task 28） ---
+// --- World Evolution Source Factory（Task 3） ---
 
 /**
- * Task 28：按 AI 运行时配置选择 live / fixture ExpansionSource。
- * - AI 可用 → live 源（AI 提案 → 纯解析/校验/引用过滤，失败回退空提案）。
- * - 无配置 → 确定性 fixture 源（测试/离线）。
- * 生产唯一注入点：compositionRoot。禁止直接注入 createFixtureExpansionSource。
+ * Task 3：按 AI 运行时配置选择 live / deterministic WorldEvolutionSource。
+ * - AI 可用 → live 源（AI 提案 → 纯解析/校验/引用过滤，失败回退确定性源）。
+ * - 无配置 → 确定性源（always materializes a completable next act）。
+ * 生产唯一注入点：compositionRoot。
  */
-export function createExpansionSource(
+export function createWorldEvolutionSource(
   env: Record<string, string | undefined> = process.env,
   logger?: GameLogger,
-): ExpansionSource {
+): WorldEvolutionSource {
   const runtime = parseAiRuntimeConfig(env);
   if (runtime.status === "available") {
-    logger?.info("expansion_source_live", { model: runtime.config.model });
-    return createLiveExpansionSource({
+    logger?.info("world_evolution_source_live", { model: runtime.config.model });
+    return createLiveWorldEvolutionSource({
       transport: createOpenAiCompatibleTransport(),
       config: runtime.config,
       logger,
     });
   }
-  logger?.info("expansion_source_fixture", { diagnostics: runtime.diagnostics });
-  return createFixtureExpansionSource();
+  logger?.info("world_evolution_source_fixture", { diagnostics: runtime.diagnostics });
+  return createDeterministicEvolutionSource();
 }

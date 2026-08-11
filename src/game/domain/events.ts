@@ -90,7 +90,7 @@ export type QuestUnlockedEvent = {
 };
 
 /** 地点解锁：由任务 outcome（unlock_quests 携带 locationIds）将 locked 地点解锁时追加。
- *  地点解锁只能来自规则 outcome/事实/权限/物品/批准候选事件，禁止交给 ExpansionProposer。 */
+ *  地点解锁只能来自规则 outcome/事实/权限/物品/批准候选事件，禁止交给 worldEvolution。 */
 export type LocationUnlockedEvent = {
   readonly type: "location_unlocked";
   readonly locationId: LocationId;
@@ -204,6 +204,8 @@ export type BlueprintExpandedEvent = {
   readonly newFactIds?: readonly FactId[];
   readonly newItemIds?: readonly ItemId[];
   readonly newEnemyIds?: readonly EnemyId[];
+  readonly newQuestIds?: readonly QuestId[];
+  readonly newEndingIds?: readonly EndingId[];
   readonly occurredAt: string;
 };
 

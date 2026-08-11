@@ -66,6 +66,38 @@ describe("advanceStoryProgression", () => {
     expect(result.nextStoryState.storyProgress).toBeGreaterThanOrEqual(33);
   });
 
+  it("flags evolution.status needs_next_act when a non-final act completes", () => {
+    const ws = makeWorld({
+      quests: [{
+        id: asQuestId("q_main_1"), name: "主线1", description: "测试", objectives: [],
+        onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [],
+        kind: "main", stage: 1, status: "completed",
+      }],
+    });
+    const events: GameEvent[] = [
+      { type: "quest_completed", questId: asQuestId("q_main_1"), occurredAt: "t" },
+    ];
+    const result = advanceStoryProgression(ws, ss, events);
+    expect(result.nextStoryState.currentAct).toBe(2);
+    expect(result.nextStoryState.evolution.status).toBe("needs_next_act");
+  });
+
+  it("flags evolution.status needs_ending_pair when the final act's main quest completes", () => {
+    const ws = makeWorld({
+      quests: [{
+        id: asQuestId("q_final"), name: "终局", description: "测试", objectives: [],
+        onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [],
+        kind: "main", stage: 3, status: "completed",
+      }],
+    });
+    const events: GameEvent[] = [
+      { type: "quest_completed", questId: asQuestId("q_final"), occurredAt: "t" },
+    ];
+    const finalAct = { ...ss, currentAct: 3, targetActs: 3 };
+    const result = advanceStoryProgression(ws, finalAct, events);
+    expect(result.nextStoryState.evolution.status).toBe("needs_ending_pair");
+  });
+
   it("sets endingAllowed at final act with high progress and no unresolved thread", () => {
     const nearEnd = {
       ...ss,

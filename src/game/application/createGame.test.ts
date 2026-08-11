@@ -27,7 +27,7 @@ function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameReco
       async applySceneWriteBack(input) {
         if (record === null) return { ok: false, code: "NO_ACTIVE_GAME" as const };
         if (input.expectedRevision !== record.revision) return { ok: false, code: "STALE_GAME_REVISION" as const };
-        record = { ...record, storyState: { ...record.storyState, narrative: input.nextNarrative, candidateEventPool: input.nextCandidateEventPool }, revision: record.revision + 1 };
+        record = { ...record, worldState: input.nextWorldState, storyState: input.nextStoryState, revision: record.revision + 1 };
         return { ok: true as const, record };
       },
       async clearCurrentGame() { return { ok: true as const }; },

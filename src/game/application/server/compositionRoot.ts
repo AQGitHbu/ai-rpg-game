@@ -10,7 +10,7 @@ import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
 import { createGame } from "../createGame";
 import { performTurn } from "../performTurn";
 import { projectGameSessionView } from "../gameSessionView";
-import { createOpeningGenerationSource, createSceneSource, createExpansionSource } from "../server/ai/sourceFactory";
+import { createOpeningGenerationSource, createSceneSource, createWorldEvolutionSource } from "../server/ai/sourceFactory";
 import { createServerIntentParserSource } from "../server/ai/intentParserSourceFactory";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { generatePendingScene } from "../generatePendingScene";
@@ -75,8 +75,8 @@ export function createServerGameEntryPoints(
   const aiConfig = parseAiRuntimeConfig(env);
   const aiEnabled = aiConfig.status === "available";
   const source = createOpeningGenerationSource(env, logger);
-  // Task 28：AI 可用注入 live 扩张源，否则确定性 fixture（不再直接注入 createFixtureExpansionSource）。
-  const expansionSource = createExpansionSource(env, logger);
+  // Task 3：AI 可用注入 live 世界演化源，否则确定性源（不再直接注入 deterministic）。
+  const worldEvolutionSource = createWorldEvolutionSource(env, logger);
   const sceneSource = createSceneSource(env, logger);
   // Task 9：对话自由输入统一走 performTurn 回合入口，AI 可用时注入 live 意图源，否则规则源。
   // transport 构建收敛在 server/ai 工厂内（@ai-game/ai-transport 边界守卫）。
@@ -176,7 +176,7 @@ export function createServerGameEntryPoints(
       );
       const result = await performTurn(
         { gameId: current.record.gameId, actionId: command.actionId, interaction: command.interaction, expectedRevision: command.expectedRevision, choiceMap },
-        { repository, now, expansionSource, intentParserSource },
+        { repository, now, worldEvolutionSource, intentParserSource },
       );
       if (result.ok) {
         // Return updated view so the client can render without a separate GET
@@ -208,7 +208,7 @@ export function createServerGameEntryPoints(
       return { ok: true, status: "active", view, revision: current.record.revision };
     },
     ensureNarrativeScene: async (_traceId) => {
-      const result = await generatePendingScene({ repository, sceneSource, now });
+      const result = await generatePendingScene({ repository, sceneSource, worldEvolutionSource, now });
       return { ok: result === "saved", result };
     },
     ackPrologue: async (_traceId) => {

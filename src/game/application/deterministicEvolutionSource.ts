@@ -1,0 +1,153 @@
+import type { WorldState } from "@/game/domain/worldState";
+import type { StoryState } from "@/game/domain/storyState";
+import type { Action } from "@/game/domain/action";
+import type { EvolutionNeed, WorldDeltaProposal } from "@/game/domain/worldDelta";
+import type { WorldEvolutionSource } from "./worldEvolutionSource";
+
+// ---------------------------------------------------------------------------
+// 确定性世界演化 source（离线/测试/兜底）：
+// - next_act：当前地点补一个 NPC + 锚定该 NPC 的主线任务（保证可达）；
+// - ending_pair：按故事契约的两条主题方向产出互斥结局对；
+// - pacing（回合修复）：按行动类型补齐缺失实体类别——talk→npc / move→地点
+//   / investigate→fact / take_item→item / attack→enemy；无 action 时无提案。
+// 输出纯提案；铸造与装配交给审批/具象化纯函数。
+// ---------------------------------------------------------------------------
+
+function currentLocationId(ws: WorldState): string {
+  return String(ws.currentLocationId);
+}
+
+function planRepairByAction(ws: WorldState, action: Action): WorldDeltaProposal | null {
+  const current = currentLocationId(ws);
+  switch (action.type) {
+    case "talk":
+      return {
+        beatSummary: "补充在场人物以回应交谈",
+        newLocation: null,
+        newNpc: {
+          name: "新来客",
+          role: "过客",
+          description: "恰好路过的旅人，愿意与你说上几句。",
+          locationRef: { kind: "existing", id: current },
+          goals: ["随缘而行"],
+        },
+        newItem: null,
+        newEnemy: null,
+        newFact: null,
+        nextMainQuest: null,
+        endingPair: null,
+      };
+    case "move":
+      return {
+        beatSummary: "地点延伸出一条新径",
+        newLocation: {
+          name: "延伸之地",
+          description: "自当前所在之处延伸出的一小片新地界。",
+          scale: "scene",
+          connectFromLocationId: current,
+        },
+        newNpc: null,
+        newItem: null,
+        newEnemy: null,
+        newFact: null,
+        nextMainQuest: null,
+        endingPair: null,
+      };
+    case "investigate":
+      return {
+        beatSummary: "现场浮出新的可探查线索",
+        newLocation: null,
+        newNpc: null,
+        newItem: null,
+        newEnemy: null,
+        newFact: { text: "现场遗留的线索逐渐清晰。", visibility: "public" },
+        nextMainQuest: null,
+        endingPair: null,
+      };
+    case "take_item":
+      return {
+        beatSummary: "脚边发现可拾取的物件",
+        newLocation: null,
+        newNpc: null,
+        newItem: { name: "散落之物", description: "不知何人遗落在此。", locationRef: "current" },
+        newEnemy: null,
+        newFact: null,
+        nextMainQuest: null,
+        endingPair: null,
+      };
+    case "attack":
+      return {
+        beatSummary: "阴影中现出敌人",
+        newLocation: null,
+        newNpc: null,
+        newItem: null,
+        newEnemy: { name: "来犯之敌", tier: "normal", locationRef: "current" },
+        newFact: null,
+        nextMainQuest: null,
+        endingPair: null,
+      };
+    default:
+      return null;
+  }
+}
+
+function planNextAct(ws: WorldState): WorldDeltaProposal {
+  return {
+    beatSummary: "下一幕的推进人物与先声",
+    newLocation: null,
+    newNpc: {
+      name: "传讯人",
+      role: "信使",
+      description: "风尘仆仆赶来的信使，手里攥着关乎下文的线索。",
+      locationRef: { kind: "existing", id: currentLocationId(ws) },
+      goals: ["传递密信"],
+    },
+    newItem: null,
+    newEnemy: null,
+    newFact: null,
+    nextMainQuest: {
+      name: "循迹而行",
+      description: "跟随信使的线索推进故事。",
+      objectiveText: "与传讯人交谈",
+    },
+    endingPair: null,
+  };
+}
+
+function planEndingPair(ss: StoryState): WorldDeltaProposal {
+  const byKey = new Map(ss.contract.endingDirections.map((d) => [d.key, d.theme]));
+  const themeName = (key: "trust" | "doubt", fallback: string): string => {
+    const raw = (byKey.get(key) ?? "").trim();
+    return raw.length >= 2 && raw.length <= 40 ? raw : fallback;
+  };
+  return {
+    beatSummary: "终幕的两种走向浮现",
+    newLocation: null,
+    newNpc: null,
+    newItem: null,
+    newEnemy: null,
+    newFact: null,
+    nextMainQuest: null,
+    endingPair: [
+      { name: themeName("trust", "共赴真相"), description: "在众人面前摊开一切，共同承担结果。", themeKey: "trust" },
+      { name: themeName("doubt", "孤身揭晓"), description: "独自揭开真相，把后果揽在自己肩上。", themeKey: "doubt" },
+    ],
+  };
+}
+
+export function createDeterministicEvolutionSource(): WorldEvolutionSource {
+  return {
+    async propose(ctx) {
+      switch (ctx.need.kind) {
+        case "none":
+          return { proposal: null };
+        case "next_act":
+          return { proposal: planNextAct(ctx.worldState) };
+        case "ending_pair":
+          return { proposal: planEndingPair(ctx.storyState) };
+        case "pacing":
+          return { proposal: ctx.action ? planRepairByAction(ctx.worldState, ctx.action) : null };
+      }
+    },
+  };
+}

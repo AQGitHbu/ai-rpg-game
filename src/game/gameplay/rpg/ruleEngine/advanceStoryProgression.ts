@@ -85,6 +85,14 @@ export function advanceStoryProgression(
     unresolvedThreads,
   });
 
+  // Task 3：演化状态消费方是世界演化派生（deriveEvolutionNeed）。
+  // 非终幕主线解决 → 请求下一幕主线的具象化；终幕主线全部解决 → 请求结局对。
+  const evolutionStatus = advanced
+    ? "needs_next_act"
+    : currentAct >= ss.targetActs && allMainQuestsResolved(ws)
+      ? "needs_ending_pair"
+      : ss.evolution.status;
+
   return {
     nextStoryState: {
       ...ss,
@@ -93,6 +101,7 @@ export function advanceStoryProgression(
       endingAllowed,
       unresolvedThreads,
       nextPacingNeed,
+      evolution: { ...ss.evolution, status: evolutionStatus },
     },
     events: [],
   };

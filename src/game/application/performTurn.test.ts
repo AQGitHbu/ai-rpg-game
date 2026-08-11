@@ -24,9 +24,9 @@ import type { Action } from "@/game/domain/action";
 import { createFixtureIntentParserSource } from "./server/ai/intentParserSource";
 import { createRuleIntentParser } from "./server/ai/liveIntentParserSource";
 import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
-import { createFixtureExpansionSource } from "./server/ai/expansionSource";
-import type { ExpansionProposal } from "@/game/gameplay/rpg/expansion/expansionTypes";
-import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
+import { createDeterministicEvolutionSource } from "./deterministicEvolutionSource";
+import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
+import type { WorldEvolutionSource } from "./worldEvolutionSource";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
 
 function createSpyRepo(ws: WorldState, ss: StoryState): {
@@ -56,7 +56,7 @@ function createSpyRepo(ws: WorldState, ss: StoryState): {
     },
     async applySceneWriteBack(input) {
       if (input.expectedRevision !== record.revision) return { ok: false as const, code: "STALE_GAME_REVISION" as const };
-      record = { ...record, storyState: { ...record.storyState, narrative: input.nextNarrative, candidateEventPool: input.nextCandidateEventPool }, revision: record.revision + 1 };
+      record = { ...record, worldState: input.nextWorldState, storyState: input.nextStoryState, revision: record.revision + 1 };
       return { ok: true, record };
     },
     async clearCurrentGame() { return { ok: true as const }; },
@@ -419,39 +419,46 @@ describe("performTurn 单次 CAS 提交", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 6：Expansion 路径统一进入 TurnResolution 和 pending（单次 CAS）
+// Task 3：worldEvolution 回合修复路径统一进入 TurnResolution 和 pending（单次 CAS）
 // ---------------------------------------------------------------------------
 
 const npcStrangerChoice: Map<string, Action> = new Map([["tok_stranger", { type: "talk", npcId: asNpcId("npc_stranger"), dialogueAct: "ask" }]]);
 
-function sourceWithProposals(proposals: readonly ExpansionProposal[]): ExpansionSource {
-  return { async propose() { return { proposals }; } };
+function sourceWithProposals(proposal: WorldDeltaProposal): WorldEvolutionSource {
+  return { async propose() { return { proposal }; } };
 }
 
-function throwingSource(): ExpansionSource {
+function throwingSource(): WorldEvolutionSource {
   return {
     async propose() {
-      throw new Error("AI expansion source exploded");
+      throw new Error("AI evolution source exploded");
     },
   };
 }
 
-const validLocationProposal: ExpansionProposal = {
-  kind: "location",
-  name: "青山别院",
-  description: "山腰上一座独立的别院，与世隔绝。",
-  scale: "scene",
-  connectFromLocationId: "loc_1",
-  reason: "世界扩展提案",
+const validLocationProposal: WorldDeltaProposal = {
+  beatSummary: "世界扩展提案",
+  newLocation: {
+    name: "青山别院",
+    description: "山腰上一座独立的别院，与世隔绝。",
+    scale: "scene",
+    connectFromLocationId: "loc_1",
+  },
+  newNpc: null,
+  newItem: null,
+  newEnemy: null,
+  newFact: null,
+  nextMainQuest: null,
+  endingPair: null,
 };
 
-describe("performTurn Expansion 单路径（Task 6）", () => {
-  it("未知 NPC 扩展 + 重演算成功 → 一次 CAS，pending job 保存真实对话", async () => {
+describe("performTurn worldEvolution 修复路径（Task 3）", () => {
+  it("未知 NPC 修复 + 重演算成功 → 一次 CAS，pending job 保存真实对话", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_exp_npc", interaction: { kind: "fixed_choice", choiceToken: "tok_stranger" }, expectedRevision: 0, choiceMap: npcStrangerChoice },
-      { repository: repo, now: () => "2026-01-02", expansionSource: createFixtureExpansionSource() },
+      { repository: repo, now: () => "2026-01-02", worldEvolutionSource: createDeterministicEvolutionSource() },
     );
 
     expect(result.ok).toBe(true);
@@ -459,7 +466,7 @@ describe("performTurn Expansion 单路径（Task 6）", () => {
     // 单次 CAS：不存在第二次“非致命” commit
     expect(applyCalls()).toHaveLength(1);
     const saved = record()!;
-    // 已扩展实体确实提交到世界
+    // 修复装配的新实体确实提交到世界（ID 按行动引用铸造）
     expect(saved.worldState.npcs.map((n) => String(n.id))).toContain("npc_stranger");
     const generation = saved.storyState.narrative.generation;
     expect(generation.status).toBe("pending");
@@ -471,20 +478,20 @@ describe("performTurn Expansion 单路径（Task 6）", () => {
     expect(generation.job.resolvedEvent.eventKind).toBe("dialogue");
   });
 
-  it("未知地点扩展 + 重演算成功 → 一次 CAS，真实 travel pending", async () => {
+  it("未知地点修复 + 重演算成功 → 一次 CAS，真实 travel pending", async () => {
     const wsMystery = { ...buildWorldState(), unlockedLocationIds: [...buildWorldState().unlockedLocationIds, asLocationId("loc_mystery")] };
     const { repo, record, applyCalls } = createSpyRepo(wsMystery, buildStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_exp_move", interaction: { kind: "fixed_choice", choiceToken: "tok_move" }, expectedRevision: 0, choiceMap: new Map([["tok_move", { type: "move", locationId: asLocationId("loc_mystery") }]]) },
-      { repository: repo, now: () => "2026-01-02", expansionSource: createFixtureExpansionSource() },
+      { repository: repo, now: () => "2026-01-02", worldEvolutionSource: createDeterministicEvolutionSource() },
     );
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(applyCalls()).toHaveLength(1);
     const saved = record()!;
-    // 扩展的地点实体已提交
+    // 修复装配的地点实体已提交（ID 按行动引用铸造）
     expect(saved.worldState.locations.some((l) => String(l.id) === "loc_mystery")).toBe(true);
     const generation = saved.storyState.narrative.generation;
     expect(generation.status).toBe("pending");
@@ -493,20 +500,20 @@ describe("performTurn Expansion 单路径（Task 6）", () => {
     expect(generation.job.resolvedEvent.eventKind).toBe("travel");
   });
 
-  it("重演算仍失败 → 已扩展实体提交（一次 CAS）且结果不被吞掉", async () => {
-    // talk → npc_stranger：扩展只同意新增地点（talk 无法用它通过），重演算必仍失败
+  it("重演算仍失败 → 已装配实体提交（一次 CAS）且结果不被吞掉", async () => {
+    // talk → npc_stranger：装配只同意新增地点（talk 无法用它通过），重演算必仍失败
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_c", interaction: { kind: "fixed_choice", choiceToken: "tok_stranger" }, expectedRevision: 0, choiceMap: npcStrangerChoice },
-      { repository: repo, now: () => "2026-01-02", expansionSource: sourceWithProposals([validLocationProposal]) },
+      { repository: repo, now: () => "2026-01-02", worldEvolutionSource: sourceWithProposals(validLocationProposal) },
     );
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("ACTION_REJECTED");
     expect(result.feedback).toBe("Action rejected: UNKNOWN_NPC");
-    // 实体的提交必须真实发生：恰好一次 CAS，且世界状态里存在扩展实体
+    // 实体的提交必须真实发生：恰好一次 CAS，且世界状态里存在装配实体
     expect(applyCalls()).toHaveLength(1);
     const saved = record()!;
     expect(saved.worldState.locations.some((l) => l.name === "青山别院")).toBe(true);
@@ -514,19 +521,26 @@ describe("performTurn Expansion 单路径（Task 6）", () => {
   });
 
   it("审批拒绝（提案未获批准）→ 保持原行动拒绝且零规则写入", async () => {
-    const badProposal: ExpansionProposal = {
-      kind: "location",
-      name: "X",
-      description: "名字短于两个字符，非法负荷。",
-      scale: "scene",
-      connectFromLocationId: "loc_1",
-      reason: "坏提案",
+    const badProposal: WorldDeltaProposal = {
+      beatSummary: "坏提案",
+      newLocation: {
+        name: "X",
+        description: "名字短于两个字符，非法负荷。",
+        scale: "scene",
+        connectFromLocationId: "loc_1",
+      },
+      newNpc: null,
+      newItem: null,
+      newEnemy: null,
+      newFact: null,
+      nextMainQuest: null,
+      endingPair: null,
     };
     const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_d", interaction: { kind: "fixed_choice", choiceToken: "tok_stranger" }, expectedRevision: 0, choiceMap: npcStrangerChoice },
-      { repository: repo, now: () => "2026-01-02", expansionSource: sourceWithProposals([badProposal]) },
+      { repository: repo, now: () => "2026-01-02", worldEvolutionSource: sourceWithProposals(badProposal) },
     );
 
     expect(result.ok).toBe(false);
@@ -536,12 +550,12 @@ describe("performTurn Expansion 单路径（Task 6）", () => {
     expect(applyCalls()).toHaveLength(0);
   });
 
-  it("Expansion source 抛错不破坏普通合法行动；触发场景下也干净降级拒绝", async () => {
+  it("worldEvolution source 抛错不破坏普通合法行动；触发场景下也干净降级拒绝", async () => {
     // 合法行动：source 从未被调用，回合照常单次 CAS 提交
     const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
     const legal = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_e1", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }]]) },
-      { repository: repo, now: () => "2026-01-02", expansionSource: throwingSource() },
+      { repository: repo, now: () => "2026-01-02", worldEvolutionSource: throwingSource() },
     );
     expect(legal.ok).toBe(true);
     if (!legal.ok) return;
@@ -552,7 +566,7 @@ describe("performTurn Expansion 单路径（Task 6）", () => {
     const { repo: repo2, applyCalls: applyCalls2 } = createSpyRepo(buildWorldState(), buildStoryState());
     const triggered = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_e2", interaction: { kind: "fixed_choice", choiceToken: "tok_stranger" }, expectedRevision: 0, choiceMap: npcStrangerChoice },
-      { repository: repo2, now: () => "2026-01-02", expansionSource: throwingSource() },
+      { repository: repo2, now: () => "2026-01-02", worldEvolutionSource: throwingSource() },
     );
     expect(triggered.ok).toBe(false);
     if (triggered.ok) return;
@@ -561,21 +575,21 @@ describe("performTurn Expansion 单路径（Task 6）", () => {
     expect(applyCalls2()).toHaveLength(0);
   });
 
-  it("整回合至多一次 propose（不发生第二轮 Expansion）", async () => {
+  it("整回合至多一次 propose（不发生第二轮 worldEvolution）", async () => {
     let proposeCalls = 0;
-    const fixture = createFixtureExpansionSource();
-    const countingSource: ExpansionSource = {
+    const deterministic = createDeterministicEvolutionSource();
+    const countingSource: WorldEvolutionSource = {
       async propose(ctx) {
         proposeCalls += 1;
-        return fixture.propose(ctx);
+        return deterministic.propose(ctx);
       },
     };
 
-    // 扩展回合：恰好一次 propose，随后一次 CAS 提交
+    // 修复回合：恰好一次 propose，随后一次 CAS 提交
     const firstRepo = createSpyRepo(buildWorldState(), buildStoryState());
     const first = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_f1", interaction: { kind: "fixed_choice", choiceToken: "tok_stranger" }, expectedRevision: 0, choiceMap: npcStrangerChoice },
-      { repository: firstRepo.repo, now: () => "2026-01-02", expansionSource: countingSource },
+      { repository: firstRepo.repo, now: () => "2026-01-02", worldEvolutionSource: countingSource },
     );
     expect(first.ok).toBe(true);
     expect(proposeCalls).toBe(1);
@@ -585,7 +599,7 @@ describe("performTurn Expansion 单路径（Task 6）", () => {
     const secondRepo = createSpyRepo(buildWorldState(), buildStoryState());
     const second = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_f2", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }]]) },
-      { repository: secondRepo.repo, now: () => "2026-01-02", expansionSource: countingSource },
+      { repository: secondRepo.repo, now: () => "2026-01-02", worldEvolutionSource: countingSource },
     );
     expect(second.ok).toBe(true);
     expect(proposeCalls).toBe(1);
@@ -652,24 +666,28 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     const sceneWrite = await repo.applySceneWriteBack({
       gameId: afterFirst.gameId,
       expectedRevision: afterFirst.revision,
-      nextNarrative: {
-        ...afterFirst.storyState.narrative,
-        currentScene: {
-          sceneId: "scene-1",
-          turn: 1,
-          narration: "老板等着你的下一句话。",
-          usedFactIds: [],
-          npcLine: { npcId: asNpcId("npc_1"), text: "请继续。", emotion: "neutral", usedFactIds: [] },
-          choices: [
-            { choiceToken: "tok-1", label: "继续询问" },
-            { choiceToken: "tok-2", label: "提出质疑" },
-          ],
-          source: "fallback",
-          event: { kind: "dialogue", focusNpcId: asNpcId("npc_1") },
+      nextWorldState: afterFirst.worldState,
+      nextStoryState: {
+        ...afterFirst.storyState,
+        narrative: {
+          ...afterFirst.storyState.narrative,
+          currentScene: {
+            sceneId: "scene-1",
+            turn: 1,
+            narration: "老板等着你的下一句话。",
+            usedFactIds: [],
+            npcLine: { npcId: asNpcId("npc_1"), text: "请继续。", emotion: "neutral", usedFactIds: [] },
+            choices: [
+              { choiceToken: "tok-1", label: "继续询问" },
+              { choiceToken: "tok-2", label: "提出质疑" },
+            ],
+            source: "fallback",
+            event: { kind: "dialogue", focusNpcId: asNpcId("npc_1") },
+          },
+          generation: { status: "idle" },
         },
-        generation: { status: "idle" },
+        candidateEventPool: afterFirst.storyState.candidateEventPool,
       },
-      nextCandidateEventPool: afterFirst.storyState.candidateEventPool,
     });
     expect(sceneWrite.ok).toBe(true);
     if (!sceneWrite.ok) return;

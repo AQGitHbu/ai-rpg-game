@@ -60,13 +60,17 @@ describe("ackPrologue 不递增 revision，场景固定选项保持有效", () =
     const writeBack = await repo.applySceneWriteBack({
       gameId: current.record.gameId,
       expectedRevision: current.record.revision,
-      nextNarrative: {
-        ...storyState.narrative,
-        currentScene: scene,
-        generation: { status: "idle" },
-        choiceRegistry: [choiceA.choice, choiceB.choice],
+      nextWorldState: current.record.worldState,
+      nextStoryState: {
+        ...storyState,
+        narrative: {
+          ...storyState.narrative,
+          currentScene: scene,
+          generation: { status: "idle" },
+          choiceRegistry: [choiceA.choice, choiceB.choice],
+        },
+        candidateEventPool: storyState.candidateEventPool,
       },
-      nextCandidateEventPool: storyState.candidateEventPool,
     });
     expect(writeBack.ok).toBe(true);
 

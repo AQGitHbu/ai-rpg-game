@@ -68,7 +68,7 @@ export function createInMemoryRepo(_gameId: GameId): InMemoryRepo {
     async applySceneWriteBack(input) {
       if (record === null) return { ok: false as const, code: "NO_ACTIVE_GAME" as const };
       if (input.expectedRevision !== record.revision) return { ok: false as const, code: "STALE_GAME_REVISION" as const };
-      record = { ...record, storyState: { ...record.storyState, narrative: input.nextNarrative, candidateEventPool: input.nextCandidateEventPool }, revision: record.revision + 1 };
+      record = { ...record, worldState: input.nextWorldState, storyState: input.nextStoryState, revision: record.revision + 1 };
       return { ok: true, record };
     },
     async clearCurrentGame() { record = null; return { ok: true as const }; },
@@ -104,7 +104,7 @@ export async function playTurn(
   const turnNumber = current.record.storyState.turnNumber;
   const result = await performTurn(
     { gameId: current.record.gameId, actionId: `act_j_${turnNumber}`, interaction, expectedRevision: revision, choiceMap },
-    { repository: repo, now, expansionSource: undefined, intentParserSource: RULE_INTENT_SOURCE },
+    { repository: repo, now, worldEvolutionSource: undefined, intentParserSource: RULE_INTENT_SOURCE },
   );
   if (result.ok) {
     const after = await repo.getCurrentGame();

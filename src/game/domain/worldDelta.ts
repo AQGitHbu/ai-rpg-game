@@ -21,6 +21,8 @@ export type StoryEvolutionState = {
   readonly nextItemOrdinal: number;
   readonly nextEnemyOrdinal: number;
   readonly nextFactOrdinal: number;
+  readonly nextQuestOrdinal: number;
+  readonly nextEndingOrdinal: number;
   readonly status: "stable" | "needs_next_act" | "needs_ending_pair";
 };
 

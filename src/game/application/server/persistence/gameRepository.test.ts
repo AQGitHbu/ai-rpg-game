@@ -45,7 +45,8 @@ function createInMemoryGameRepository(): GameRepository {
       if (input.expectedRevision !== record.revision) return { ok: false, code: "STALE_GAME_REVISION" as const };
       record = {
         ...record,
-        storyState: { ...record.storyState, narrative: input.nextNarrative, candidateEventPool: input.nextCandidateEventPool },
+        worldState: input.nextWorldState,
+        storyState: input.nextStoryState,
         revision: record.revision + 1,
       };
       return { ok: true as const, record };
@@ -95,7 +96,7 @@ describe("GameRepository in-memory", () => {
     expect(r2).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
   });
 
-  it("applySceneWriteBack only updates narrative + candidateEventPool", async () => {
+  it("applySceneWriteBack persists full world + story state through one CAS", async () => {
     const repo = createInMemoryGameRepository();
     const { worldState, storyState } = buildTestRecord();
     const gameId = asGameId("game_1");
@@ -104,14 +105,18 @@ describe("GameRepository in-memory", () => {
       sceneId: "scene-1", basedOnRevision: 1, label: "探索", action: { type: "explore" },
     });
     if (!approved.ok) throw new Error("fixture approval failed");
-    const newNarrative = { ...storyState.narrative, mode: "ai" as const, choiceRegistry: [approved.choice] };
-    const r = await repo.applySceneWriteBack({ gameId, expectedRevision: 0, nextNarrative: newNarrative, nextCandidateEventPool: storyState.candidateEventPool });
+    const nextNarrative = { ...storyState.narrative, mode: "ai" as const, choiceRegistry: [approved.choice] };
+    const nextWorldState = { ...worldState, currentLocationId: asLocationId("loc_1") };
+    const nextStoryState = { ...storyState, narrative: nextNarrative, candidateEventPool: storyState.candidateEventPool };
+    const r = await repo.applySceneWriteBack({ gameId, expectedRevision: 0, nextWorldState, nextStoryState });
     expect(r.ok).toBe(true);
     if (r.ok) {
+      expect(r.record.revision).toBe(1);
       expect(r.record.storyState.narrative.mode).toBe("ai");
       expect(r.record.storyState.narrative.choiceRegistry).toEqual([approved.choice]);
+      expect(r.record.storyState.candidateEventPool).toEqual(storyState.candidateEventPool);
       expect(r.record.storyState.tension).toBe(storyState.tension);
-      expect(r.record.worldState).toBe(worldState);
+      expect(r.record.worldState.currentLocationId).toBe(asLocationId("loc_1"));
     }
-    });
+  });
 });

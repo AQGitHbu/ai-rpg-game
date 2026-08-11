@@ -1,12 +1,17 @@
-import type { GameRepository } from "./server/persistence/gameRepository";
+import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import type { SceneSource, ScenePackageProposal } from "./sceneSource";
 import { buildSceneGenerationContext } from "./sceneGenerationContext";
 import { approveScenePackage, type ApprovedSceneWriteBack } from "./approveAndWriteScene";
 import { createDeterministicSceneSource } from "./deterministicSceneSource";
+import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
+import { evolveWorld } from "./evolveWorld";
+import type { WorldEvolutionSource } from "./worldEvolutionSource";
 
 export type GeneratePendingSceneDeps = {
   readonly repository: GameRepository;
   readonly sceneSource: SceneSource;
+  /** Task 3：场景编排联动的世界演化源（幕推进/结局对时装配预览状态后再出场景）。 */
+  readonly worldEvolutionSource?: WorldEvolutionSource;
   readonly now: () => string;
 };
 
@@ -36,7 +41,35 @@ export async function generatePendingScene(
   // 稳定分类为 legacy_pending，绝不伪装成功恢复。
   if (!("job" in generation) || generation.job === undefined) return "legacy_pending";
 
-  const context = buildSceneGenerationContext(record);
+  // Task 3：场景编排同样可能挂着演化需求（幕推进/结局对）。
+  // 先把 delta 装配为预览记录（只读预览，不落库），再以预览世界/故事状态出场景，
+  // 最后经 applySceneWriteBack 单次 CAS 一并写回实体与场景。
+  let scenarioWs = record.worldState;
+  let scenarioSs = record.storyState;
+  const need = deriveEvolutionNeed(record.worldState, record.storyState);
+  // 未注入演化源时不主动演化：保持既有时景写回行为，仅当配置了 source 才装配预览。
+  if (need.kind !== "none" && deps.worldEvolutionSource !== undefined) {
+    const outcome = await evolveWorld({
+      need,
+      worldState: record.worldState,
+      storyState: record.storyState,
+      source: deps.worldEvolutionSource,
+      reason: "scene_evolution",
+      now: deps.now,
+    });
+    if (outcome.ok) {
+      scenarioWs = outcome.delta.previewWorldState;
+      scenarioSs = outcome.delta.previewStoryState;
+    }
+  }
+
+  const scenarioRecord: GameRecord = {
+    ...record,
+    worldState: scenarioWs,
+    storyState: scenarioSs,
+  };
+
+  const context = buildSceneGenerationContext(scenarioRecord);
 
   let proposal: ScenePackageProposal;
   try {
@@ -76,13 +109,17 @@ export async function generatePendingScene(
   const writeBack = await deps.repository.applySceneWriteBack({
     gameId: record.gameId,
     expectedRevision: record.revision,
-    nextNarrative: {
-      ...record.storyState.narrative,
-      currentScene: approved.scene,
-      generation: { status: "idle" },
-      choiceRegistry: approved.choiceRegistry,
+    nextWorldState: scenarioWs,
+    nextStoryState: {
+      ...scenarioSs,
+      narrative: {
+        ...scenarioSs.narrative,
+        currentScene: approved.scene,
+        generation: { status: "idle" },
+        choiceRegistry: approved.choiceRegistry,
+      },
+      candidateEventPool: approved.candidateEventPool,
     },
-    nextCandidateEventPool: approved.candidateEventPool,
   });
 
   if (!writeBack.ok) {

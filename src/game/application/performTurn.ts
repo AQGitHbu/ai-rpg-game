@@ -15,8 +15,10 @@ import {
   type StructuredActionSummary,
 } from "@/game/domain/pendingNarrativeJob";
 import { buildIntentContext, type IntentParserSource } from "@/game/gameplay/rpg/intentParser";
-import { applyApprovedExpansion, type ExpansionSource } from "@/game/gameplay/rpg/expansion";
-import { runExpansionOrchestration } from "./expansionProposer";
+import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
+import type { EvolutionNeed } from "@/game/domain/worldDelta";
+import { evolveWorld, repairIdOverrideForAction, type EvolveWorldResult } from "./evolveWorld";
+import type { WorldEvolutionSource } from "./worldEvolutionSource";
 
 export type PerformTurnCommand = {
   readonly gameId: GameId;
@@ -35,11 +37,11 @@ export type PerformTurnDeps = {
   readonly now: () => string;
   readonly intentParserSource?: IntentParserSource;
   /**
-   * Task 6：Expansion 编排全部位于 application —— 这里的 source 只负责
-   * 产出提案（await 由 performTurn 完成），gameplay `expansion/` 仅做纯决策。
-   * 触发→审批→重演算全部路径都只走单次 CAS。
+   * Task 3：worldEvolution 由 application 编排——source 只负责产出提案
+   * （await 由 performTurn 完成），gameplay `worldEvolution/` 仅做纯决策。
+   * 触发→审批→预览→重演算全部路径都只走单次 CAS。
    */
-  readonly expansionSource?: ExpansionSource;
+  readonly worldEvolutionSource?: WorldEvolutionSource;
 };
 
 /**
@@ -62,7 +64,7 @@ export function buildActionSummary(action: Action): StructuredActionSummary {
 
 /**
  * 玩家回合统一入口：
- *   校验 → 转换 → 规则编排（resolveTurn）→（条件触发 Expansion）→
+ *   校验 → 转换 → 规则编排（resolveTurn）→（条件触发 worldEvolution 修复）→
  *   构造 PendingNarrativeJob → 单次 CAS 同时提交 World/Story(turnNumber+pending job)。
  *
  * 不变式：
@@ -134,50 +136,66 @@ export async function performTurn(
   );
 
   if (!resolved.ok) {
-    // P3（Task 6）：Expansion 由 application 编排——先纯触发，命中且配置了
-    // source 才 await 提案；gameplay 只做审批/应用/重演算纯决策。
-    const expansionOutcome = await runExpansionOrchestration({
-      initialResult: { ok: false, code: resolved.code, feedback: resolved.feedback },
-      ws: record.worldState,
-      ss: record.storyState,
-      action: converted.action,
-      actionId: command.actionId,
-      expansionSource: deps.expansionSource,
-      now: deps.now,
-    });
+    // Task 3：回合修复路径——未知实体引用（UNKNOWN_*）强制节奏需求
+    // complicate；非未知失败按常规需求派生。命中且装配成功才允许提交，
+    // 否则保持零写入并保留原始拒绝信息。
+    const repairMode = UNKNOWN_REPAIR_CODES.has(resolved.code);
+    const need: EvolutionNeed = repairMode
+      ? { kind: "pacing", pacingNeed: "complicate" }
+      : deriveEvolutionNeed(record.worldState, record.storyState);
 
-    if (expansionOutcome.triggered && expansionOutcome.approved) {
-      if (expansionOutcome.reEvaluatedResult?.ok) {
-        // 重演算成功：单次 CAS 提交（含已扩展实体 + 行动效果 + pending job）
-        return commitResolution({
-          repository: deps.repository,
-          gameId: command.gameId,
-          actionId: command.actionId,
-          expectedRevision: record.revision,
-          action: converted.action,
-          turnId: asTurnId(command.actionId),
-          nextWorldState: expansionOutcome.reEvaluatedResult.nextWorldState,
-          nextStoryState: expansionOutcome.reEvaluatedResult.nextStoryState,
-          turnNumber: expansionOutcome.reEvaluatedResult.nextStoryState.turnNumber,
-          primaryResult: expansionOutcome.reEvaluatedResult.resolvedEvent,
-          baseLedgerLength: record.worldState.eventLedger.length,
-          now: deps.now(),
-        });
-      }
-      // 重演算仍失败：commit 结果不能被忽略——实体提交必须真实发生，
-      // 其产物（扩展后的 WorldState）供下一回合使用，行动本身被拒绝。
-      const expandedWs = applyApprovedExpansion(record.worldState, expansionOutcome.approved, deps.now());
-      const expandedSs: StoryState = { ...record.storyState, budget: expansionOutcome.nextBudget ?? record.storyState.budget };
-      const commitResult = await commitState(deps.repository, {
-        gameId: command.gameId,
-        expectedRevision: record.revision,
-        nextWorldState: expandedWs,
-        nextStoryState: expandedSs,
+    // 未注入演化源时不主动演化：保持纯规则拒绝（零写入），仅当配置了 source 才装配。
+    if (need.kind !== "none" && deps.worldEvolutionSource !== undefined) {
+      const outcome = await evolveWorld({
+        need,
+        worldState: record.worldState,
+        storyState: record.storyState,
+        source: deps.worldEvolutionSource,
+        action: converted.action,
+        reason: resolved.code,
+        idOverride: repairMode ? repairIdOverrideForAction(converted.action) : undefined,
+        now: deps.now,
       });
-      if (!commitResult.ok) {
-        return { ok: false, code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE", feedback: "Commit failed" };
+      if (outcome.ok) {
+        const reEvaluated = resolveTurn(
+          outcome.delta.previewWorldState,
+          outcome.delta.previewStoryState,
+          converted.action,
+          command.actionId,
+          record.revision,
+          asTurnId(command.actionId),
+          command.interaction.kind,
+          { now: deps.now },
+        );
+        if (reEvaluated.ok && reEvaluated.resolution.primaryResult.status === "success") {
+          // 重演算成功：单次 CAS 提交（含已世界演化实体 + 行动效果 + pending job）
+          return commitResolution({
+            repository: deps.repository,
+            gameId: command.gameId,
+            actionId: command.actionId,
+            expectedRevision: record.revision,
+            action: converted.action,
+            turnId: reEvaluated.resolution.turnId,
+            nextWorldState: reEvaluated.resolution.nextWorldState,
+            nextStoryState: reEvaluated.resolution.nextStoryState,
+            turnNumber: reEvaluated.resolution.turnNumber,
+            primaryResult: reEvaluated.resolution.primaryResult,
+            baseLedgerLength: record.worldState.eventLedger.length,
+            now: deps.now(),
+          });
+        }
+        // 重演算仍失败：实体提交必须真实发生（供下一回合使用），行动本身被拒绝。
+        const commitResult = await commitState(deps.repository, {
+          gameId: command.gameId,
+          expectedRevision: record.revision,
+          nextWorldState: outcome.delta.previewWorldState,
+          nextStoryState: outcome.delta.previewStoryState,
+        });
+        if (!commitResult.ok) {
+          return { ok: false, code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE", feedback: "Commit failed" };
+        }
+        return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };
       }
-      return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };
     }
     return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };
   }
@@ -204,6 +222,15 @@ export async function performTurn(
     now: deps.now(),
   });
 }
+
+/** Task 3：可经回合修复路径装配的未知实体引用代码。 */
+const UNKNOWN_REPAIR_CODES: ReadonlySet<string> = new Set([
+  "UNKNOWN_NPC",
+  "UNKNOWN_LOCATION",
+  "UNKNOWN_FACT",
+  "UNKNOWN_ITEM",
+  "UNKNOWN_ENEMY",
+]);
 
 /** 玩家原文长度上限与 job 构造常量保持一致（spec §7.3 截断）。 */
 function clipPlayerUtterance(text: string): string {

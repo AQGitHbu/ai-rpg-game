@@ -80,7 +80,7 @@ function makeRepo(record: GameRecord | null): GameRepository {
     applyState: vi.fn(),
     applySceneWriteBack: vi.fn(async (input) => {
       if (current === null) return { ok: false as const, code: "NO_ACTIVE_GAME" as const };
-      current = { ...current, storyState: { ...current.storyState, narrative: input.nextNarrative, candidateEventPool: input.nextCandidateEventPool }, revision: current.revision + 1 };
+      current = { ...current, worldState: input.nextWorldState, storyState: input.nextStoryState, revision: current.revision + 1 };
       return { ok: true as const, record: current };
     }),
     clearCurrentGame: vi.fn(async () => ({ ok: true as const })),

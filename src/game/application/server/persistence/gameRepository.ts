@@ -52,12 +52,16 @@ export type ApplyStateInput = {
   readonly incrementRevision?: boolean;
 };
 
+/**
+ * 场景写回：与 applyState 同构的 single CAS——一次原子更新 world_state_json 与
+ * story_state_json 两列并把 revision + 1（CAS 走 WHERE game_id AND revision）。
+ * 世界演化（materializeWorldDelta 装配的预览状态）与场景包一并在此落盘。
+ */
 export type ApplySceneWriteBackInput = {
   readonly gameId: GameId;
   readonly expectedRevision: number;
-  /** Ready scene and its ApprovedChoice registry travel in this same CAS payload. */
-  readonly nextNarrative: StoryState["narrative"];
-  readonly nextCandidateEventPool: StoryState["candidateEventPool"];
+  readonly nextWorldState: WorldState;
+  readonly nextStoryState: StoryState;
 };
 
 export type CreateInitialGameResult =

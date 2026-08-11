@@ -189,7 +189,7 @@ describe("sqliteGameRepository", () => {
     if (r2.ok) expect(r2.record.revision).toBe(1);
   });
 
-  it("applySceneWriteBack only updates narrative + candidateEventPool", async () => {
+  it("applySceneWriteBack persists full world + story through one CAS", async () => {
     const dbPath = nextDbPath();
     const repo = openRepo(dbPath);
     const { worldState, storyState } = buildTestState();
@@ -202,18 +202,20 @@ describe("sqliteGameRepository", () => {
     });
     if (!approved.ok) throw new Error("fixture approval failed");
     const newNarrative = { ...storyState.narrative, mode: "ai" as const, choiceRegistry: [approved.choice] };
+    const nextWorldState = { ...worldState, currentLocationId: asLocationId("loc_1") };
+    const nextStoryState = { ...storyState, narrative: newNarrative, candidateEventPool: storyState.candidateEventPool };
     const r = await repo.applySceneWriteBack({
       gameId,
       expectedRevision: 0,
-      nextNarrative: newNarrative,
-      nextCandidateEventPool: storyState.candidateEventPool,
+      nextWorldState,
+      nextStoryState,
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.record.storyState.narrative.mode).toBe("ai");
       expect(r.record.storyState.narrative.choiceRegistry).toEqual([approved.choice]);
       expect(r.record.storyState.tension).toBe(storyState.tension);
-      expect(r.record.worldState).toEqual(worldState);
+      expect(r.record.worldState.currentLocationId).toBe(asLocationId("loc_1"));
       expect(r.record.revision).toBe(1);
     }
   });

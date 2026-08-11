@@ -26,8 +26,8 @@ import type { SqliteClient, SqliteClientFactory, SqliteStatement } from "./sqlit
 //   - 旧存档不迁移（spec：新架构重开新局）；
 //   - createInitialGame 单事务写入存档行 + 指针，失败整体回滚；
 //   - applyState / applySceneWriteBack 以 CAS 原子更新 + revision + 1；
-//   - applySceneWriteBack 只重组 storyState.narrative + candidateEventPool，
-//     类型层面排除触碰 worldState 的可能；
+//   - applySceneWriteBack 与 applyState 同构：一次原子更新世界 JSON 两列，
+//     场景写回（含世界演化预览状态）在同一 CAS 落盘；
 //   - 读取防御性 JSON 解析，坏数据标记 corrupt，绝不自动重置；
 //   - 所有失败只返回端口定义的稳定代码。
 // ---------------------------------------------------------------------------
@@ -379,99 +379,14 @@ export function createSqliteGameRepository(
   }
 
   async function applySceneWriteBack(input: ApplySceneWriteBackInput): Promise<ApplySceneWriteBackResult> {
-    let nextNarrativeJson: string;
-    let nextCandidatePoolJson: string;
-    try {
-      await ensureSchema();
-      nextNarrativeJson = JSON.stringify(input.nextNarrative);
-      nextCandidatePoolJson = JSON.stringify(input.nextCandidateEventPool);
-    } catch (error) {
-      logError("applySceneWriteBack prepare failed", error);
-      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-    }
-
-    try {
-      const tx = await getClient().transaction("write");
-      try {
-        const pointer = await tx.execute({
-          sql: "SELECT game_id FROM current_game WHERE slot = 1",
-          args: [],
-        });
-        if (pointer.rows.length === 0) {
-          return { ok: false, code: "NO_ACTIVE_GAME" };
-        }
-        const activeGameId = pointer.rows[0]?.["game_id"];
-        if (activeGameId !== input.gameId) {
-          return { ok: false, code: "NO_ACTIVE_GAME" };
-        }
-
-        // Read current story state, patch only narrative + candidateEventPool, write back.
-        const readResult = await tx.execute({
-          sql: `SELECT story_state_json, world_state_json, game_id, record_version, created_at, revision
-                FROM game_records WHERE game_id = ? AND revision = ?`,
-          args: [input.gameId, input.expectedRevision],
-        });
-        const row = readResult.rows[0];
-        if (row === undefined) {
-          return { ok: false, code: "STALE_GAME_REVISION" };
-        }
-
-        const storyState = parseJsonObject(row["story_state_json"] as string);
-        if (storyState === null) {
-          return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-        }
-
-        // One CAS persists the ready scene, its ApprovedChoice registry (both inside
-        // narrative), and candidateEventPool; everything else stays unchanged.
-        const patchedStoryState = {
-          ...storyState,
-          narrative: JSON.parse(nextNarrativeJson),
-          candidateEventPool: JSON.parse(nextCandidatePoolJson),
-        };
-
-        const updateResult = await tx.execute({
-          sql: `UPDATE game_records SET story_state_json = ?, revision = revision + 1
-                WHERE game_id = ? AND revision = ?`,
-          args: [JSON.stringify(patchedStoryState), input.gameId, input.expectedRevision],
-        });
-        const rowsAffected = Number(updateResult.rowsAffected ?? 0);
-        if (rowsAffected === 0) {
-          return { ok: false, code: "STALE_GAME_REVISION" };
-        }
-
-        const readBack = await tx.execute({
-          sql: `SELECT game_id, record_version, world_state_json, story_state_json, created_at, revision
-                FROM game_records WHERE game_id = ?`,
-          args: [input.gameId],
-        });
-        const readBackRow = readBack.rows[0];
-        if (readBackRow === undefined) {
-          return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-        }
-
-        const worldState = parseJsonObject(readBackRow["world_state_json"] as string);
-        const patchedState = parseJsonObject(readBackRow["story_state_json"] as string);
-        if (worldState === null || patchedState === null) {
-          return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-        }
-
-        const record: GameRecord = {
-          gameId: asGameId(readBackRow["game_id"] as string),
-          worldState: worldState as unknown as WorldState,
-          storyState: patchedState as unknown as StoryState,
-          revision: readBackRow["revision"] as number,
-          createdAt: readBackRow["created_at"] as string,
-        };
-
-        await tx.commit();
-        return { ok: true, record };
-      } finally {
-        tx.close();
-      }
-    } catch (error) {
-      logError("applySceneWriteBack transaction failed, rolled back", error);
-      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
-    }
+    // 场景写回 = 一次原子更新两列 JSON + revision + 1（CAS 走 WHERE game_id AND revision）。
+    // 与 applyState 同构；世界演化预览状态与场景包在此同一 CAS 落盘。
+    return applyState({
+      gameId: input.gameId,
+      expectedRevision: input.expectedRevision,
+      nextWorldState: input.nextWorldState,
+      nextStoryState: input.nextStoryState,
+    });
   }
 
   async function clearCurrentGame(): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" }> {
