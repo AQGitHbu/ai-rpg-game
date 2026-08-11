@@ -13,7 +13,7 @@ const PANEL_LABELS: Record<DetailsPanel, string> = {
 
 type AdventureHudProps = {
   readonly view: GameSessionView;
-  readonly screen: "map" | "scene";
+  readonly screen: "map" | "town" | "scene";
   readonly onOpen: (panel: DetailsPanel) => void;
   readonly developmentTools: boolean;
   readonly onOpenDevTools: () => void;
@@ -58,6 +58,11 @@ export function AdventureHud({ view, screen, onOpen, developmentTools, onOpenDev
             <h1 className="adventure-hud-location-title">
               {view.currentLocation.name}
               {inTown ? <small className="adventure-hud-location-scale" aria-hidden="true">小镇</small> : null}
+            </h1>
+          ) : screen === "town" ? (
+            <h1 className="adventure-hud-location-title">
+              {view.currentLocation.name}
+              <small className="adventure-hud-location-scale" aria-hidden="true">小镇</small>
             </h1>
           ) : (
             <h1 className="adventure-hud-location-title">世界地图</h1>

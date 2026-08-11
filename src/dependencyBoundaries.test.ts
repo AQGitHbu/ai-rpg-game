@@ -57,6 +57,7 @@ const FACADES: readonly FacadeSpec[] = [
   { name: "openingGeneration", path: "@/game/gameplay/rpg/openingGeneration", anchors: ["compileOpeningGenerationCandidate"] },
   { name: "ruleEngine", path: "@/game/gameplay/rpg/ruleEngine", anchors: ["resolveByType", "validateAction"] },
   { name: "worldEvolution", path: "@/game/gameplay/rpg/worldEvolution", anchors: ["deriveEvolutionNeed", "approveWorldDelta", "materializeWorldDelta"] },
+  { name: "town", path: "@/game/gameplay/rpg/town", anchors: ["generateTown", "createTownRuntime", "bindNpcToTownSlot"] },
   { name: "intentParser", path: "@/game/gameplay/rpg/intentParser", anchors: ["intentContext", "intentParserSource"] },
   { name: "dialogue", path: "@/game/gameplay/rpg/dialogue", anchors: ["dialogueResolution"] },
   { name: "candidateEvents", path: "@/game/gameplay/rpg/candidateEvents", anchors: ["approveCandidateEvents", "compileCandidateEvent"] }
@@ -902,7 +903,6 @@ describe("one canonical executable chain remains", () => {
       "game/gameplay/rpg/narrative/",
       "game/gameplay/rpg/quests/",
       "game/gameplay/rpg/scenario/",
-      "game/gameplay/rpg/town/",
     ];
     const retired = productionFiles
       .map(toPosixRelative)
@@ -910,15 +910,12 @@ describe("one canonical executable chain remains", () => {
     expect(retired).toEqual([]);
   });
 
-  it("contains no retired town demo script, assets, or styles", () => {
+  it("contains no retired town demo script or assets", () => {
     const repositoryRoot = resolve(sourceRoot, "..");
     const retiredScript = ["genTown", "BuildingImages.mjs"].join("");
     const retiredAssetDirectory = ["town", "experiment"].join("-");
     expect(existsSync(resolve(repositoryRoot, "scripts", retiredScript))).toBe(false);
     expect(existsSync(resolve(repositoryRoot, "public/assets", retiredAssetDirectory))).toBe(false);
-    expect(readFileSync(resolve(sourceRoot, "app/globals.css"), "utf8")).not.toMatch(
-      new RegExp(["\\.town-", "(?:demo|layer)-"].join("")),
-    );
   });
 
   it("has no versioned executable naming outside persisted schema/fixture values", () => {

@@ -6,6 +6,7 @@ import type { WorldState } from "@/game/domain/worldState";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
+import { createTownRuntime, townSeedFor, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 
 // ---------------------------------------------------------------------------
 // Task 2：把已验证的开局切片编译为单一 World State + Story State。
@@ -44,6 +45,15 @@ export function compileOpeningGenerationCandidate(
   const knownFactIds = candidate.opening.npc.knownFactKeys.map((key) => factIds.find((fact) => fact.key === key)!.factId);
   const privateFactIds = candidate.opening.npc.privateFactKeys.map((key) => factIds.find((fact) => fact.key === key)!.factId);
 
+  // Task 7：开局地点是 scale="town" 时编译稳定几何 + 未绑定剧情建筑 slot，
+  // 开局 NPC npc_0 绑定 slot_0。不再生成任何未来 NPC 名称。
+  const openingTown = candidate.opening.location.scale === "town"
+    ? bindNpcToTownSlot(
+        createTownRuntime({ locationId, seed: townSeedFor(generation.seed, locationId) }),
+        npcId,
+      ).town
+    : undefined;
+
   const worldState: WorldState = {
     ...createInitialWorldState({
       generation,
@@ -62,6 +72,7 @@ export function compileOpeningGenerationCandidate(
         availableItemIds: [],
         tags: [],
         scale: candidate.opening.location.scale,
+        town: openingTown,
       },
       startingItemIds: [],
     }),

@@ -18,7 +18,7 @@ const endedView: GameSessionView = {
   setup: { storyOpening: null, worldPremise: null, characterProfile: null, narrativeStyle: null },
   player: { name: "侠客", identity: "剑客", hp: 80, attack: 10, defense: 5 },
   worldMap: { locations: [] },
-  currentLocation: { name: "终局", description: "", scale: "scene", actions: [], npcs: [] },
+  currentLocation: { name: "终局", description: "", scale: "scene", actions: [], npcs: [], town: null },
   obtainableItems: [],
   inventory: [],
   story: { currentAct: 3, targetActs: 3, tension: 100, pacingNeed: "resolve", storyProgress: 100, currentObjectiveLabel: null },

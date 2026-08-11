@@ -7,6 +7,7 @@ import type { GameEvent } from "./events";
 import type { RelationshipValue } from "./relationship";
 import type { NarrativeEmotion } from "./narrative";
 import type { DialogueAct, StructuredDialogueTopic } from "./action";
+import type { TownRuntimeState } from "./townState";
 
 // ── Entry 类型：定义 + 运行时 ──
 
@@ -26,6 +27,8 @@ export type LocationEntry = {
   readonly availableItemIds: readonly ItemId[];
   readonly tags: readonly string[];
   readonly scale?: LocationScale;
+  /** 仅 scale="town" 的地点携带：稳定几何 seed + 剧情建筑 slot 绑定（Task 7）。 */
+  readonly town?: TownRuntimeState;
 };
 
 export type NpcMemory = {

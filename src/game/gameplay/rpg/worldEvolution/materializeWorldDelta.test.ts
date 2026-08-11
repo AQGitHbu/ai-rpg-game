@@ -7,6 +7,7 @@ import { createInitialWorldState } from "@/game/domain/worldState";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
 import { approveWorldDelta, type ApprovedWorldDeltaCore } from "./approveWorldDelta";
+import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 
 function makeWorld(): WorldState {
   const base = createInitialWorldState({
@@ -151,5 +152,60 @@ describe("materializeWorldDelta", () => {
     expect(npc.locationId).toBe("loc_0");
     expect(delta.previewWorldState.locations.find((l) => l.id === "loc_0")!.npcIds).toContain("npc_dyn_1");
     expect(delta.previewStoryState.evolution.status).toBe("stable");
+  });
+
+  it("materializes a new town-scale location with its town runtime and binds its NPC to slot 0", () => {
+    const ws = makeWorld();
+    const ss = makeStory({ currentAct: 2, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_next_act" } });
+    const proposal: WorldDeltaProposal = {
+      beatSummary: "新的小镇浮现",
+      newLocation: { name: "青山集", description: "山脚下的集贸小镇。", scale: "town", connectFromLocationId: "loc_0" },
+      newNpc: {
+        name: "集市管事", role: "管事", description: "打理集市秩序的管事。",
+        locationRef: { kind: "new_location" }, goals: [],
+      },
+      newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null,
+    };
+    const approved = approve({ proposal, need: { kind: "pacing", pacingNeed: "complicate" }, ws, ss });
+    const delta = materializeWorldDelta({ approved, need: { kind: "pacing", pacingNeed: "complicate" }, ws, ss, now: () => "2026-01-02" });
+    const locNew = delta.previewWorldState.locations.find((l) => l.id === "loc_dyn_1")!;
+    expect(locNew.scale).toBe("town");
+    expect(locNew.town).toBeDefined();
+    expect(locNew.town?.locationId).toBe(asLocationId("loc_dyn_1"));
+    expect(locNew.town?.seed).toBe("s#town#loc_dyn_1");
+    expect(locNew.town?.slots[0]?.boundNpcId).toBe(asNpcId("npc_dyn_1"));
+  });
+
+  it("binds an NPC materialized into an existing town to the FIRST FREE slot (slot_0 stays bound)", () => {
+    const base = makeWorld();
+    const town = bindNpcToTownSlot(
+      createTownRuntime({ locationId: asLocationId("loc_0"), seed: "s#town#loc_0" }),
+      asNpcId("npc_0"),
+    ).town;
+    const ws: WorldState = {
+      ...base,
+      locations: base.locations.map((loc) =>
+        loc.id === asLocationId("loc_0") ? { ...loc, scale: "town" as const, town } : loc,
+      ),
+    };
+    const ss = makeStory({ currentAct: 2, targetActs: 3, tension: 10 });
+    const proposal: WorldDeltaProposal = {
+      beatSummary: "小镇里的新来客",
+      newLocation: null,
+      newNpc: {
+        name: "新来客", role: "旅人", description: "在小镇落脚的外乡人。",
+        locationRef: { kind: "existing", id: "loc_0" }, goals: [],
+      },
+      newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null,
+    };
+    const approved = approve({ proposal, need: { kind: "pacing", pacingNeed: "complicate" }, ws, ss });
+    const delta = materializeWorldDelta({ approved, need: { kind: "pacing", pacingNeed: "complicate" }, ws, ss, now: () => "2026-01-02" });
+    const locOut = delta.previewWorldState.locations.find((l) => l.id === "loc_0")!;
+    expect(locOut.town?.slots[0]?.boundNpcId).toBe(asNpcId("npc_0"));
+    const boundIndex = locOut.town?.slots.findIndex((slot) => slot.boundNpcId === asNpcId("npc_dyn_1"));
+    expect(boundIndex).toBe(1);
+    expect(locOut.town?.slots[1]?.boundNpcId).toBe(asNpcId("npc_dyn_1"));
+    // 几何/既有绑定不变
+    expect(locOut.town?.slots.map((slot) => slot.buildingId)).toEqual(town.slots.map((slot) => slot.buildingId));
   });
 });

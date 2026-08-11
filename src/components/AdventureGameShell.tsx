@@ -9,6 +9,7 @@ import { AdventureOverlay } from "./AdventureOverlay";
 import { AdventureDetailsPanel } from "./AdventureDetailsPanel";
 import { WorldMapScreen } from "./WorldMapScreen";
 import { LocationSceneScreen } from "./LocationSceneScreen";
+import { TownLayerScreen } from "./TownLayerScreen";
 
 type Props = {
   readonly view: GameSessionView;
@@ -17,7 +18,7 @@ type Props = {
   readonly onClearDevelopmentSave: () => Promise<void>;
 };
 
-type AdventureScreen = "map" | "scene";
+type AdventureScreen = "map" | "town" | "scene";
 
 type ActionFeedback =
   | { readonly phase: "idle" }
@@ -43,6 +44,7 @@ export function AdventureGameShell({
   const [detailsPanel, setDetailsPanel] = useState<DetailsPanel | null>(null);
   const [devToolsOpen, setDevToolsOpen] = useState(false);
   const [feedback, setFeedback] = useState<ActionFeedback>({ phase: "idle" });
+  const [focusNpcId, setFocusNpcId] = useState<string | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const devToolsTriggerRef = useRef<HTMLElement | null>(null);
   const previousLocationRef = useRef<string | null>(null);
@@ -51,13 +53,25 @@ export function AdventureGameShell({
   const isSubmitting = feedback.phase === "submitting";
   const busy = isSubmitting || pending;
 
-  // 玩家移动到新地点后，自动从地图切换到场景视图，避免停留在只读地图上无法继续操作。
+  // 三层导航：从地图进入当前地点——town 地点先进小镇层，scene 地点直达场景。
+  function entryScreenFor(view: GameSessionView): AdventureScreen {
+    return view.currentLocation.scale === "town" && view.currentLocation.town !== null ? "town" : "scene";
+  }
+
+  // 场景返回：来自小镇的场景回到小镇层；来自 scene 地点回到地图。
+  function returnFromScene(): void {
+    setFocusNpcId(null);
+    setScreen(view.currentLocation.scale === "town" ? "town" : "map");
+  }
+
+  // 玩家移动到新地点后，自动进入对应层级视图。
   useEffect(() => {
     const currentName = view.currentLocation.name;
     const previousName = previousLocationRef.current;
     previousLocationRef.current = currentName;
     if (previousName !== null && previousName !== currentName) {
-      setScreen("scene");
+      setFocusNpcId(null);
+      setScreen(entryScreenFor(view));
     }
   }, [view.currentLocation.name, view.revision]);
 
@@ -110,15 +124,29 @@ export function AdventureGameShell({
         <WorldMapScreen
           view={view}
           busy={busy}
-          onEnterCurrent={() => setScreen("scene")}
+          onEnterCurrent={() => {
+            setFocusNpcId(null);
+            setScreen(entryScreenFor(view));
+          }}
           onMove={(choiceToken) => submitInteraction({ kind: "fixed_choice", choiceToken })}
+        />
+      ) : screen === "town" && view.currentLocation.town !== null ? (
+        <TownLayerScreen
+          town={view.currentLocation.town}
+          busy={busy}
+          onEnterBuilding={(npcId) => {
+            setFocusNpcId(npcId);
+            setScreen("scene");
+          }}
+          onReturnMap={() => setScreen("map")}
         />
       ) : (
         <LocationSceneScreen
           view={view}
           busy={busy}
           onSubmit={submitInteraction}
-          onReturnMap={() => setScreen("map")}
+          onReturnMap={returnFromScene}
+          initialFocusNpcId={focusNpcId}
         />
       )}
 

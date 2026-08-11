@@ -10,6 +10,8 @@ type LocationSceneScreenProps = {
   readonly busy: boolean;
   readonly onSubmit: (interaction: PlayerInteraction) => void;
   readonly onReturnMap: () => void;
+  /** Task 7：从小镇建筑进入场景时聚焦该建筑绑定的 NPC（打开其对话）。 */
+  readonly initialFocusNpcId?: string | null;
 };
 
 type Dialogue = NonNullable<GameSessionView["narrative"]["npcDialogues"]>[number];
@@ -170,7 +172,7 @@ function NpcDialogueModal({
   );
 }
 
-export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap }: LocationSceneScreenProps) {
+export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initialFocusNpcId }: LocationSceneScreenProps) {
   const gameType = view.gameType as NewGameInput["gameType"];
   const pending = view.narrativeGeneration.status === "pending";
 
@@ -203,6 +205,10 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap }: Locat
   }
 
   const [openDialogueNpcId, setOpenDialogueNpcId] = useState<string | null>(() => {
+    // 从小镇建筑进入：聚焦绑定 NPC；测试环境下默认打开第一个活跃对话。
+    if (initialFocusNpcId !== null && initialFocusNpcId !== undefined) {
+      return initialFocusNpcId;
+    }
     if (isTest && activeDialogues.length > 0) {
       return activeDialogues[0].npcId;
     }
@@ -323,7 +329,7 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap }: Locat
           className="scene-return-map-btn"
           onClick={onReturnMap}
         >
-          返回地图
+          {view.currentLocation.scale === "town" ? "返回小镇" : "返回地图"}
         </button>
       </div>
 

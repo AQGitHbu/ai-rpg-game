@@ -152,4 +152,23 @@ describe("compileOpeningGenerationCandidate", () => {
     expect(budget.npcs.opening).toBe(1);
     expect(budget.quests.opening).toBe(1);
   });
+
+  it("scale=town 开局地点携带稳定 town 运行时：npc_0 绑定 slot_0，其余 slot 未绑定", () => {
+    const { worldState } = compile();
+    const location = worldState.locations[0]!;
+    expect(location.scale).toBe("town");
+    expect(location.town).toBeDefined();
+    expect(location.town?.locationId).toBe(asLocationId("loc_0"));
+    expect(location.town?.generatorVersion).toBe("town-gen-0.1.0");
+    expect(location.town?.slots[0]?.boundNpcId).toBe(asNpcId("npc_0"));
+    expect(location.town?.slots.slice(1).every((slot) => slot.boundNpcId === null)).toBe(true);
+    expect(location.town?.slots).toHaveLength(3);
+  });
+
+  it("town seed 由 generation seed 确定性派生，且不开局具象化未来 NPC 名称", () => {
+    const { worldState } = compile();
+    const serialized = JSON.stringify(worldState);
+    expect(serialized).not.toMatch(/npc_dyn_/);
+    expect(worldState.locations[0]?.town?.seed).toBe("seed#town#loc_0");
+  });
 });

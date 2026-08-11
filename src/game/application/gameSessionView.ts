@@ -10,6 +10,7 @@ import type { WorldState } from "@/game/domain/worldState";
 import { buildChoiceMap, hasExplorableContent } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
+import { buildTownView, type TownView } from "./townView";
 
 export type PlayerChoiceView = {
   readonly choiceToken: string;
@@ -76,6 +77,8 @@ export type GameSessionView = {
       readonly role: string;
       readonly talkChoice: PlayerChoiceView;
     }[];
+    /** Task 7：scale="town" 地点的受控读模型（快照/标签/已绑定建筑条目），scene 为 null。 */
+    readonly town: TownView | null;
   };
   readonly obtainableItems: readonly {
     readonly name: string;
@@ -376,6 +379,9 @@ export function projectGameSessionView(
           "dialogue",
         ),
       })),
+      town: currentLocation !== undefined
+        ? buildTownView(worldState, currentLocation.id)
+        : null,
     },
     obtainableItems,
     inventory: worldState.inventory.map((itemId) => {

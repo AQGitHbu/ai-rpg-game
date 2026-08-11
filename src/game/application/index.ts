@@ -1,5 +1,8 @@
 // 客户端可达 application facade：只导出中性 read model 与开局输入类型。
 export type { GameSessionView, NpcDialogueView, PlayerChoiceView } from "./gameSessionView";
+export type { TownView, InteractiveBuildingEntry, TownRenderSnapshot } from "./townView";
+export { tileIndex } from "@/game/domain/townState";
+export type { TileType } from "@/game/domain/townState";
 export type { NewGameInput } from "@/game/domain/newGame";
 // 客户端预校验：与 server 同一校验器，UI 层经 facade 使用（禁止 deep-import domain）。
 export { validateNewGameInput, type NewGameInputError } from "@/game/domain/newGame";

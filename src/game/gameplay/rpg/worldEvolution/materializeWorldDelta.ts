@@ -4,6 +4,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { EvolutionNeed, ApprovedWorldDelta } from "@/game/domain/worldDelta";
 import type { BlueprintExpandedEvent } from "@/game/domain/events";
 import type { LocationId, NpcId, ItemId } from "@/game/domain/worldEntity";
+import { createTownRuntime, townSeedFor, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 
 // ---------------------------------------------------------------------------
 // Task 3：把已审批的世界演化装配为预览状态并落账。
@@ -51,20 +52,39 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
         .filter((nl) => nl.connectedLocationIds.includes(loc.id))
         .map((nl) => nl.id);
       const p = patch.get(loc.id);
+      // Task 7：NPC 具象化到既有小镇地点时绑定第一个空闲 slot（几何/建筑 ID 不变）。
+      let town = loc.town;
+      if (town !== undefined && p?.npcIds) {
+        for (const npcId of p.npcIds) {
+          town = bindNpcToTownSlot(town, npcId).town;
+        }
+      }
       return {
         ...loc,
         connectedLocationIds: [...new Set([...loc.connectedLocationIds, ...connectedToNew])],
         npcIds: p?.npcIds ? [...loc.npcIds, ...p.npcIds] : loc.npcIds,
         availableItemIds: p?.availableItemIds ? [...loc.availableItemIds, ...p.availableItemIds] : loc.availableItemIds,
+        town,
       };
     }),
     ...approved.newLocations.map((loc) => {
       const p = patch.get(loc.id);
+      // Task 7：新具象化的 town 地点在装配时创建稳定几何；随行 NPC 绑定空闲 slot。
+      let town: WorldState["locations"][number]["town"] = loc.scale === "town"
+        ? createTownRuntime({ locationId: loc.id, seed: townSeedFor(ws.generation.seed, loc.id) })
+        : undefined;
+      if (town !== undefined) {
+        const npcIds = p?.npcIds ?? [...loc.npcIds];
+        for (const npcId of npcIds) {
+          town = bindNpcToTownSlot(town, npcId).town;
+        }
+      }
       return {
         ...loc,
         connectedLocationIds: [...new Set([...loc.connectedLocationIds, ...newLocationIds])],
         npcIds: p?.npcIds ?? [...loc.npcIds],
         availableItemIds: p?.availableItemIds ?? [...loc.availableItemIds],
+        town,
       };
     }),
   ];

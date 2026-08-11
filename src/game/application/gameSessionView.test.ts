@@ -6,6 +6,7 @@ import { createInitialStoryState, type StoryState } from "@/game/domain/storySta
 import { asLocationId, asNpcId, asGenerationId, asFactId, asItemId, asEnemyId, asEndingId, asQuestId } from "@/game/domain/worldEntity";
 import type { Action } from "@/game/domain/action";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
+import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 
 describe("projectGameSessionView", () => {
   const loc1: LocationEntry = {
@@ -423,7 +424,7 @@ describe("projectGameSessionView", () => {
     expect(Object.keys(view.worldMap.locations[0]!).sort()).toEqual([
       "current", "name", "scale", "travelChoice", "visited",
     ]);
-    expect(Object.keys(view.currentLocation).sort()).toEqual(["actions", "description", "name", "npcs", "scale"]);
+    expect(Object.keys(view.currentLocation).sort()).toEqual(["actions", "description", "name", "npcs", "scale", "town"]);
     expect(Object.keys(view.obtainableItems[0]!).sort()).toEqual(["choice", "description", "name"]);
     const inventoryView = projectGameSessionView({ ...completeWorld, inventory: [itemId] }, ss, 7, "test-ending-session");
     expect(inventoryView.inventory).toEqual([{ name: "铜钥匙", description: "一把旧钥匙" }]);
@@ -608,5 +609,71 @@ describe("projectGameSessionView", () => {
       prompt: "向韩征打个招呼",
       response: "韩征点了点头：「有什么事直接找我，别耽误正事。」",
     });
+  });
+});
+
+describe("projectGameSessionView town read model", () => {
+  const townLoc1: LocationEntry = {
+    id: asLocationId("loc_1"), name: "街道", description: "一条街道", kind: "main",
+    connectedLocationIds: [asLocationId("loc_1")], npcIds: [asNpcId("npc_1")], availableItemIds: [], tags: [],
+  };
+  const townNpc1: NpcEntry = {
+    id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
+    locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+    memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+  };
+
+  function makeTownWorld(): WorldState {
+    const town = bindNpcToTownSlot(
+      createTownRuntime({ locationId: asLocationId("loc_1"), seed: "view-town-test" }),
+      asNpcId("npc_1"),
+    ).town;
+    const base = createInitialWorldState({
+      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: townLoc1,
+      startingItemIds: [],
+    });
+    return {
+      ...base,
+      locations: base.locations.map((loc) => (loc.id === asLocationId("loc_1") ? { ...loc, scale: "town" as const, town } : loc)),
+      npcs: [townNpc1],
+    };
+  }
+
+  it("currentLocation.town 暴露快照 + 已绑定交互建筑条目", () => {
+    const townWs = makeTownWorld();
+    const townSs = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+    const view = projectGameSessionView(townWs, townSs, 0, "test-ending-session");
+    const town = view.currentLocation.town;
+    expect(town).not.toBeNull();
+    expect(town!.townName).toBe("街道");
+    expect(town!.snapshot.grid.width).toBe(32);
+    const interactive = town!.interactiveBuildings;
+    expect(interactive.length).toBeGreaterThan(0);
+    expect(interactive[0]?.npcId).toBe("npc_1");
+    expect(interactive[0]?.npcName).toBe("老板");
+  });
+
+  it("town 读模型不泄漏 seed/空闲 slot/生成器内部", () => {
+    const townWs = makeTownWorld();
+    const townSs = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+    const view = projectGameSessionView(townWs, townSs, 0, "test-ending-session");
+    const serialized = JSON.stringify(view.currentLocation.town);
+    expect(serialized).not.toMatch(/"seed"/);
+    expect(serialized).not.toMatch(/"generatorVersion"/);
+    expect(serialized).not.toMatch(/"boundNpcId"/);
+    expect(serialized).not.toMatch(/"slotId"/);
+  });
+
+  it("scene 地点 currentLocation.town 为 null", () => {
+    const base = createInitialWorldState({
+      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: townLoc1,
+      startingItemIds: [],
+    });
+    const view = projectGameSessionView(base, createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } }), 0, "test-ending-session");
+    expect(view.currentLocation.town).toBeNull();
   });
 });

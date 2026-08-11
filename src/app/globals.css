@@ -2963,3 +2963,103 @@ body:has(.adventure-game-shell) {
     max-height: calc(100dvh - 230px);
   }
 }
+
+/* ── Town 层（Task 7）：小镇视图 + SVG 逻辑地图 ─────────────────────────── */
+.town-layer-viewport {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100dvh;
+  padding: 72px 16px 16px;
+  box-sizing: border-box;
+}
+
+.town-layer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.town-layer-header h2 {
+  margin: 0;
+  color: var(--game-text-primary);
+  font-size: 1.25rem;
+}
+
+.town-layer-body {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.town-demo-map {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: #1a1d24;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.town-demo-building {
+  fill: #7d6b58;
+  stroke: #3a332c;
+  stroke-width: 1;
+  cursor: pointer;
+  outline: none;
+}
+
+.town-demo-building--story {
+  stroke: var(--game-accent, #d9a441);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 3px rgb(217 164 65 / 0.55));
+}
+
+.town-demo-building--selected {
+  fill: #a98d5c;
+  stroke: #fff3d6;
+  stroke-width: 2;
+}
+
+.town-demo-building--unexplored {
+  fill: #3f3b36;
+  stroke: #2c2a26;
+  stroke-width: 1;
+}
+
+.town-layer-side {
+  flex: 1 1 260px;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.town-layer-building {
+  padding: 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: rgb(17 22 18 / 45%);
+}
+
+.town-layer-building h3 {
+  margin: 0 0 4px;
+  color: var(--game-text-primary);
+}
+
+.town-layer-building p {
+  margin: 0 0 10px;
+  color: var(--game-text-muted);
+  font-size: 0.9rem;
+}
+
+.town-layer-hint {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--game-surface-border);
+  border-radius: 8px;
+  color: var(--game-text-muted);
+  font-size: 0.9rem;
+}

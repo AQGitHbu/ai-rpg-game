@@ -5,6 +5,10 @@ import type { GameSessionView } from "@/game/application";
 import { AdventureGameShell } from "./AdventureGameShell";
 import { LocationSceneScreen } from "./LocationSceneScreen";
 import { postAction, type ActionOutcome } from "./gameActionRequest";
+import { buildTownView } from "@/game/application/townView";
+import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
+import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
+import { createInitialWorldState, type WorldState } from "@/game/domain/worldState";
 
 vi.mock("./gameActionRequest", () => ({
   postAction: vi.fn(async () => ({ kind: "rejected", message: "stop" })),
@@ -23,6 +27,32 @@ function choice(choiceToken: string, label: string, presentation: "dialogue" | "
   return { choiceToken, label, presentation } as const;
 }
 
+/** 构建合法的 TownView fixture：稳定几何 + npc_1 绑定一个剧情建筑。 */
+function townViewFixture(): NonNullable<GameSessionView["currentLocation"]["town"]> {
+  const town = bindNpcToTownSlot(
+    createTownRuntime({ locationId: asLocationId("loc_0"), seed: "shell-town-fixture" }),
+    asNpcId("npc_1"),
+  ).town;
+  const ws: WorldState = {
+    ...createInitialWorldState({
+      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: {
+        id: asLocationId("loc_0"), name: "客栈", description: "一间客栈", kind: "main",
+        connectedLocationIds: [], npcIds: [asNpcId("npc_1")], availableItemIds: [], tags: [],
+        scale: "town", town,
+      },
+      startingItemIds: [],
+    }),
+    npcs: [{
+      id: asNpcId("npc_1"), name: "老板", role: "路人", description: "客栈老板。",
+      locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: true,
+      memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    }],
+  };
+  return buildTownView(ws, "loc_0")!;
+}
+
 function buildView(): GameSessionView {
   return {
     revision: 9,
@@ -32,14 +62,15 @@ function buildView(): GameSessionView {
     player: { name: "侠客", identity: "剑客", hp: 90, attack: 10, defense: 5 },
     worldMap: {
       locations: [
-        { name: "客栈", current: true, visited: true, scale: "town", travelChoice: null },
+        { name: "客栈", current: true, visited: true, scale: "scene", travelChoice: null },
         { name: "街道", current: false, visited: false, scale: "scene", travelChoice: choice(TOKENS.travel, "前往街道", "travel") },
       ],
     },
     currentLocation: {
-      name: "客栈", description: "一间客栈", scale: "town",
+      name: "客栈", description: "一间客栈", scale: "scene",
       actions: [choice(TOKENS.explore, "探索客栈", "explore")],
-      npcs: [],
+      npcs: [{ name: "老板", role: "路人", talkChoice: choice(TOKENS.dialogueOne, "与老板交谈", "dialogue") }],
+      town: null,
     },
     obtainableItems: [{ name: "铜钥匙", description: "旧钥匙", choice: choice(TOKENS.item, "拾取铜钥匙", "item") }],
     inventory: [],
@@ -215,6 +246,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
         scale: "scene",
         actions: [choice(TOKENS.explore, "探索街道", "explore")],
         npcs: [],
+        town: null,
       },
       narrative: {
         ...initialView.narrative,
@@ -250,5 +282,89 @@ describe("AdventureGameShell canonical opaque choices", () => {
     // 叙事生成中：对话面板不渲染（避免出现无选项的空面板），仅显示编排提示
     expect(screen.queryByRole("heading", { name: "老板" })).not.toBeInTheDocument();
     expect(screen.getByText("正在编排下一幕……")).toBeInTheDocument();
+  });
+});
+
+describe("AdventureGameShell three-layer navigation", () => {
+  const townFixture = townViewFixture();
+  const interactive = townFixture.interactiveBuildings[0]!;
+
+  function buildTownView(): GameSessionView {
+    return {
+      ...buildView(),
+      worldMap: {
+        locations: [
+          { name: "客栈", current: true, visited: true, scale: "town", travelChoice: null },
+          { name: "街道", current: false, visited: false, scale: "scene", travelChoice: choice(TOKENS.travel, "前往街道", "travel") },
+        ],
+      },
+      currentLocation: {
+        name: "客栈", description: "一间客栈", scale: "town",
+        actions: [choice(TOKENS.explore, "探索客栈", "explore")],
+        npcs: [{ name: "老板", role: "路人", talkChoice: choice(TOKENS.dialogueOne, "与老板交谈", "dialogue") }],
+        town: townFixture,
+      },
+    };
+  }
+
+  it("entering a town-scale location from the map renders TownLayerScreen", async () => {
+    const user = userEvent.setup();
+    render(<AdventureGameShell
+      view={buildTownView()}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+    await user.click(screen.getByRole("button", { name: "进入客栈" }));
+    expect(screen.getByRole("region", { name: `小镇：客栈` })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "返回地图" })).toBeInTheDocument();
+  });
+
+  it("selecting a bound story building renders LocationSceneScreen and focuses its NPC", async () => {
+    const user = userEvent.setup();
+    render(<AdventureGameShell
+      view={buildTownView()}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+    await user.click(screen.getByRole("button", { name: "进入客栈" }));
+    await user.click(screen.getByRole("button", { name: interactive.displayName }));
+    await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
+    expect(screen.getByRole("region", { name: "地点场景：客栈" })).toBeInTheDocument();
+    // 场景返回按钮从小镇进入时显示“返回小镇”
+    expect(screen.getByRole("button", { name: "返回小镇" })).toBeInTheDocument();
+  });
+
+  it("returning from scene goes to town, and returning from town goes to the world map", async () => {
+    const user = userEvent.setup();
+    render(<AdventureGameShell
+      view={buildTownView()}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+    await user.click(screen.getByRole("button", { name: "进入客栈" }));
+    await user.click(screen.getByRole("button", { name: interactive.displayName }));
+    await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
+    // 场景 → 小镇
+    await user.click(screen.getByRole("button", { name: "返回小镇" }));
+    expect(screen.getByRole("region", { name: `小镇：客栈` })).toBeInTheDocument();
+    // 小镇 → 世界地图
+    await user.click(screen.getByRole("button", { name: "返回地图" }));
+    expect(screen.getByRole("button", { name: "进入客栈" })).toBeInTheDocument();
+  });
+
+  it("a scene-scale location continues map → scene directly", async () => {
+    const user = userEvent.setup();
+    render(<AdventureGameShell
+      view={buildView()}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+    await user.click(screen.getByRole("button", { name: "进入客栈" }));
+    expect(screen.getByRole("region", { name: "地点场景：客栈" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "返回地图" })).toBeInTheDocument();
   });
 });
