@@ -17,8 +17,9 @@ function isObjectiveSatisfied(ws: WorldState, objective: WorldState["quests"][nu
 }
 
 // 应用任务 outcome（只改 worldState，不碰 eventLedger——由 resolveTurn 统一按序追加）。
-//   - unlock_quests：解锁 locked 任务（→active）与 locked 地点，产出 quest_unlocked/location_unlocked；
-//   - reach_ending：只保持完成状态，结局由 ending resolver 独立评估，不在此绕过；
+// Task 2 起任务不再引用预生成实体：
+//   - advance_story：幕推进信号（Task 3 世界演化消费），本阶段零世界状态变化；
+//   - resolve_story：终幕完成信号，结局由 ending resolver 独立评估，不在此绕过；
 //   - closed：由调用方把任务置为 closed。
 function applyOutcome(
   ws: WorldState,
@@ -26,37 +27,9 @@ function applyOutcome(
   now: string,
 ): { readonly nextWorldState: WorldState; readonly events: readonly GameEvent[] } {
   switch (outcome.kind) {
-    case "unlock_quests": {
-      const questEvents: GameEvent[] = [];
-      let nextQuests = ws.quests;
-      for (const questId of outcome.questIds) {
-        const target = nextQuests.find((q) => q.id === questId);
-        if (target && target.status === "locked") {
-          nextQuests = nextQuests.map((q) =>
-            q.id === questId ? { ...q, status: "active" as const } : q,
-          );
-          questEvents.push({ type: "quest_unlocked", questId, occurredAt: now });
-        }
-      }
-
-      const locEvents: GameEvent[] = [];
-      let unlockedLocationIds = ws.unlockedLocationIds;
-      for (const locationId of outcome.locationIds ?? []) {
-        if (!unlockedLocationIds.includes(locationId)) {
-          unlockedLocationIds = [...unlockedLocationIds, locationId];
-          locEvents.push({ type: "location_unlocked", locationId, occurredAt: now });
-        }
-      }
-
-      if (questEvents.length === 0 && locEvents.length === 0) {
-        return { nextWorldState: ws, events: [] };
-      }
-      return {
-        nextWorldState: { ...ws, quests: nextQuests, unlockedLocationIds },
-        events: [...questEvents, ...locEvents],
-      };
-    }
-    case "reach_ending":
+    case "advance_story":
+      return { nextWorldState: ws, events: [] };
+    case "resolve_story":
       // 结局由 ending resolver 依据 quest_completed/failed/fact_discovered 独立评估。
       return { nextWorldState: ws, events: [] };
     case "closed":
@@ -68,7 +41,7 @@ export function reconcileQuests(ws: WorldState, deps: { readonly now: () => stri
   const events: GameEvent[] = [];
   let nextWorldState: WorldState = ws;
 
-  // 1) active 任务：objective 全满足 → 完成 + 应用 onSuccess（unlock_quests 解锁后续任务/地点）。
+  // 1) active 任务：objective 全满足 → 完成 + 应用 onSuccess（advance_story 零世界状态变化）。
   for (const quest of ws.quests) {
     if (quest.status !== "active") continue;
     const allSatisfied = quest.objectives.every((obj) => isObjectiveSatisfied(ws, obj));

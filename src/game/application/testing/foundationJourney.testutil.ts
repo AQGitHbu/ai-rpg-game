@@ -5,7 +5,7 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { Interaction } from "@/game/domain/action";
 import type { ActionChoiceMap } from "@/game/application/actionConverter";
 import { performTurn } from "@/game/application/performTurn";
-import { createGame, createFixtureWorldSource } from "@/game/application/createGame";
+import { createGame, createFixtureOpeningSource } from "@/game/application/createGame";
 import { generatePendingScene } from "@/game/application/generatePendingScene";
 import { createDeterministicSceneSource } from "@/game/application/deterministicSceneSource";
 import { createRuleIntentParser } from "@/game/application/server/ai/liveIntentParserSource";
@@ -142,7 +142,7 @@ export async function createJourneyGame(
   const store = repo ?? createInMemoryRepo(gameId);
   const created = await createGame(
     { gameId, gameType, gameLength, seed },
-    { repository: store.repo, source: createFixtureWorldSource(), now: journeyNow, aiEnabled: false },
+    { repository: store.repo, source: createFixtureOpeningSource(), now: journeyNow, aiEnabled: false },
   );
   if (!created.ok) throw new Error(`创建世界失败：${created.code}`);
   return { repo: store, gameId };

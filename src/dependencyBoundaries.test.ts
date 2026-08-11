@@ -54,7 +54,7 @@ type FacadeSpec = {
 };
 
 const FACADES: readonly FacadeSpec[] = [
-  { name: "worldGeneration", path: "@/game/gameplay/rpg/worldGeneration", anchors: ["compileWorldGenerationCandidate"] },
+  { name: "openingGeneration", path: "@/game/gameplay/rpg/openingGeneration", anchors: ["compileOpeningGenerationCandidate"] },
   { name: "ruleEngine", path: "@/game/gameplay/rpg/ruleEngine", anchors: ["resolveByType", "validateAction"] },
   { name: "expansion", path: "@/game/gameplay/rpg/expansion", anchors: ["applyExpansion", "expansionSource", "expansionTypes"] },
   { name: "intentParser", path: "@/game/gameplay/rpg/intentParser", anchors: ["intentContext", "intentParserSource"] },
@@ -352,9 +352,9 @@ describe("boundary patterns detect synthetic violations", () => {
       snippet: `import { createOpenAiCompatibleTransport } from "@ai-game/ai-transport";`
     },
     {
-      // UI 层不能触达 server-only world generation source（前缀规则整段拦截）。
+      // UI 层不能触达 server-only opening generation source（前缀规则整段拦截）。
       pattern: APPLICATION_SERVER_IMPORT,
-      snippet: `import { createWorldGenerationSource } from "@/game/application/server/ai/worldGenerationSource";`
+      snippet: `import { createOpeningGenerationSource } from "@/game/application/server/ai/openingGenerationSource";`
     },
     {
       // Phase 4B：AI 运行时配置解析是 server-only，UI 层不可达。
@@ -364,12 +364,12 @@ describe("boundary patterns detect synthetic violations", () => {
     {
       // API 层只许组合根，deep-import source/config 一律被拦。
       pattern: APPLICATION_SERVER_DEEP_IMPORT,
-      snippet: `import { createWorldGenerationSource } from "@/game/application/server/ai/worldGenerationSource";`
+      snippet: `import { createOpeningGenerationSource } from "@/game/application/server/ai/openingGenerationSource";`
     },
     {
       // domain/gameplay 连 application 门面本体都禁止（含 server/ai source）。
       pattern: forbiddenSpecifierPrefix("@/game/application"),
-      snippet: `import { createWorldGenerationSource } from "@/game/application/server/ai/worldGenerationSource";`
+      snippet: `import { createOpeningGenerationSource } from "@/game/application/server/ai/openingGenerationSource";`
     },
     { pattern: SLG_IMPORT, snippet: `import { grid } from "../ai-slg-game/src/map";` },
     { pattern: SLG_IMPORT, snippet: `import { hex } from "@ai-slg-game/map";` },
@@ -549,7 +549,7 @@ describe("canonical AI sources stay server-only and layered", () => {
   it("source files exist and are inside the server rule scope", () => {
     const files = exists(aiDir, false).map(toPosixRelative);
     expect(files).toContain("game/application/server/ai/sourceFactory.ts");
-    expect(files).toContain("game/application/server/ai/worldGenerationSource.ts");
+    expect(files).toContain("game/application/server/ai/openingGenerationSource.ts");
   });
 
   it("AI sources never import persistence/sqlite/libsql", () => {
@@ -587,7 +587,7 @@ describe("canonical AI sources stay server-only and layered", () => {
       readFileSync(resolve(sourceRoot, "game/application/server/ai/sourceFactory.ts"), "utf8")
     );
     expect(factorySpecifiers).toContain("@ai-game/ai-transport");
-    expect(factorySpecifiers).toContain("./worldGenerationSource");
+    expect(factorySpecifiers).toContain("./openingGenerationSource");
   });
 });
 
@@ -623,7 +623,7 @@ describe("ai-transport stays confined to application/server/ai", () => {
   it("source modules never import persistence/sqlite/libsql", () => {
     for (const relative of [
       "sourceFactory.ts",
-      "worldGenerationSource.ts",
+      "openingGenerationSource.ts",
       "liveExpansionSource.ts",
       "liveIntentParserSource.ts"
     ]) {

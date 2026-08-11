@@ -1,12 +1,12 @@
 import { createOpenAiCompatibleTransport, type AiMessage, type AiTransport, type AiTransportConfig } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
 import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
-import type { WorldGenerationSource } from "../../createGame";
+import type { OpeningGenerationSource } from "../../createGame";
 import type { SceneSource, SceneSourceResult } from "../../sceneSource";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
 import type { NarrativeEventState, NarrativeEmotion, NarrativeNpcLineState } from "@/game/domain/narrative";
 import { NARRATIVE_EMOTIONS } from "@/game/domain/narrative";
-import { createWorldGenerationSource as createValidatedWorldGenerationSource } from "./worldGenerationSource";
+import { createOpeningGenerationSource as createValidatedOpeningGenerationSource } from "./openingGenerationSource";
 import { createDeterministicSceneSource } from "../../deterministicSceneSource";
 import { createLiveExpansionSource } from "./liveExpansionSource";
 import { createFixtureExpansionSource } from "./expansionSource";
@@ -250,22 +250,22 @@ export function resolveSelectedChoiceProposals(
 
 // --- Factory ---
 
-export function createWorldGenerationSource(
+export function createOpeningGenerationSource(
   env: Record<string, string | undefined> = process.env,
   logger?: GameLogger,
-): WorldGenerationSource {
+): OpeningGenerationSource {
   const runtime = parseAiRuntimeConfig(env);
   if (runtime.status === "available") {
-    logger?.info("world_source_live", { model: runtime.config.model });
-    // Task 17：live 源带机械修复 + 校验 + 确定性 fallback 编排。
-    return createValidatedWorldGenerationSource({
+    logger?.info("opening_source_live", { model: runtime.config.model });
+    // live 源带机械修复 + 校验 + 确定性 fallback 编排。
+    return createValidatedOpeningGenerationSource({
       transport: createOpenAiCompatibleTransport(),
       config: runtime.config,
       logger,
     });
   }
-  logger?.info("world_source_fixture", { diagnostics: runtime.diagnostics });
-  return createValidatedWorldGenerationSource({});
+  logger?.info("opening_source_fixture", { diagnostics: runtime.diagnostics });
+  return createValidatedOpeningGenerationSource({});
 }
 
 export function createSceneSource(

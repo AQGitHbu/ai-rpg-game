@@ -91,9 +91,10 @@ export type QuestObjective =
   | { readonly kind: "discover_fact"; readonly factId: FactId }
   | { readonly kind: "defeat_enemy"; readonly enemyId: EnemyId };
 
+// 幕推进（Task 2）：开局任务不引用预生成后续任务；推进由世界演化（Task 3）消费。
 export type QuestOutcome =
-  | { readonly kind: "unlock_quests"; readonly questIds: readonly QuestId[]; readonly locationIds?: readonly LocationId[] }
-  | { readonly kind: "reach_ending"; readonly endingId: EndingId }
+  | { readonly kind: "advance_story" }
+  | { readonly kind: "resolve_story" }
   | { readonly kind: "closed" };
 
 export type QuestEntry = {

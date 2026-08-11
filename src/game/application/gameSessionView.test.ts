@@ -334,7 +334,7 @@ describe("projectGameSessionView", () => {
       quests: [{
         id: "q1", name: "寻宝", description: "t", kind: "main" as const, stage: 1, status: "active" as const,
         objectives: [{ kind: "discover_fact" as const, factId: asFactId("fact_secret") }],
-        onSuccess: { kind: "reach_ending" as const, endingId: "ending_1" },
+        onSuccess: { kind: "resolve_story" as const },
         onFailure: { kind: "closed" as const },
         tags: [],
       }      ] as unknown as WorldState["quests"],
@@ -358,7 +358,7 @@ describe("projectGameSessionView", () => {
       quests: [{
         id: "q1", name: "寻宝", description: "t", kind: "main" as const, stage: 1, status: "active" as const,
         objectives: [{ kind: "discover_fact" as const, factId: asFactId("fact_secret") }],
-        onSuccess: { kind: "reach_ending" as const, endingId: "ending_1" },
+        onSuccess: { kind: "resolve_story" as const },
         onFailure: { kind: "closed" as const },
         tags: [],
       }      ] as unknown as WorldState["quests"],
@@ -479,7 +479,7 @@ describe("projectGameSessionView", () => {
         id: "quest_main" as WorldState["quests"][number]["id"],
         name: "查明真相", description: "追寻线索", kind: "main", stage: 1, status: "active",
         objectives: [{ kind: "discover_fact", factId: asFactId("fact_hidden") }],
-        onSuccess: { kind: "reach_ending", endingId }, onFailure: { kind: "closed" }, tags: [],
+        onSuccess: { kind: "resolve_story" }, onFailure: { kind: "closed" }, tags: [],
       }],
       ending: { endingId, outcome: "success" },
     };

@@ -55,6 +55,8 @@ export type StoryState = {
   readonly endingProposed: boolean;
   readonly narrative: NarrativeRuntimeState;
   readonly prologueShown: boolean;
+  /** 开局生成并审批通过的序幕文本（Task 2 起由开局编译写入，UI 据此展示）。 */
+  readonly prologueText: string;
   readonly recentBeats: readonly unknown[];
   readonly npcContacts: readonly unknown[];
   readonly reducedThroughEventCount: number;
@@ -95,6 +97,7 @@ export function createInitialStoryState(input: {
       mode: "offline",
     },
     prologueShown: false,
+    prologueText: "",
     recentBeats: [],
     npcContacts: [],
     reducedThroughEventCount: 0,

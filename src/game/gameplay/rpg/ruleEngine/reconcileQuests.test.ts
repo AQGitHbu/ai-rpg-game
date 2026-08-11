@@ -81,14 +81,14 @@ describe("reconcileQuests 完整 outcome", () => {
     connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
   };
 
-  it("完成第一幕 → unlock_quests 与 location_unlocked 同回合", () => {
+  it("完成第一幕 → onSuccess advance_story 不携带世界状态变化（不产出 quest_unlocked/location_unlocked）", () => {
     const ws = baseWs({
       locations: [loc1, loc2],
       quests: [
         {
           id: asQuestId("q1"), name: "开场", description: "t",
           objectives: [{ kind: "visit_location", locationId: asLocationId("loc_1") }],
-          onSuccess: { kind: "unlock_quests", questIds: [asQuestId("q2")], locationIds: [asLocationId("loc_2")] },
+          onSuccess: { kind: "advance_story" },
           onFailure: { kind: "closed" }, tags: [], kind: "main", status: "active",
         },
         { id: asQuestId("q2"), name: "后续", description: "t", objectives: [], onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [], kind: "side", status: "locked" },
@@ -98,13 +98,13 @@ describe("reconcileQuests 完整 outcome", () => {
     });
     const result = reconcileQuests(ws, deps);
     expect(result.nextWorldState.quests.find((q) => q.id === asQuestId("q1"))?.status).toBe("completed");
-    expect(result.nextWorldState.quests.find((q) => q.id === asQuestId("q2"))?.status).toBe("active");
-    expect(result.nextWorldState.unlockedLocationIds).toContain(asLocationId("loc_2"));
-    // 同回合事件：quest_completed + quest_unlocked + location_unlocked
+    // advance_story 是幕推进信号（Task 3 消费），本阶段零世界状态变化：
+    expect(result.nextWorldState.quests.find((q) => q.id === asQuestId("q2"))?.status).toBe("locked");
+    expect(result.nextWorldState.unlockedLocationIds).toEqual([asLocationId("loc_1")]);
     const types = result.events.map((e) => e.type);
     expect(types).toContain("quest_completed");
-    expect(types).toContain("quest_unlocked");
-    expect(types).toContain("location_unlocked");
+    expect(types).not.toContain("quest_unlocked");
+    expect(types).not.toContain("location_unlocked");
   });
 
   it("解锁后的任务可继续检查但不重复完成已完成任务", () => {
@@ -118,13 +118,13 @@ describe("reconcileQuests 完整 outcome", () => {
     expect(result.nextWorldState.quests[0]?.status).toBe("completed");
   });
 
-  it("onSuccess reach_ending 只保持完成，不绕过 ending resolver（不产出 ending_reached）", () => {
+  it("onSuccess resolve_story 只保持完成，不绕过 ending resolver（不产出 ending_reached）", () => {
     const ws = baseWs({
       quests: [
         {
           id: asQuestId("q1"), name: "a", description: "t",
           objectives: [{ kind: "visit_location", locationId: asLocationId("loc_1") }],
-          onSuccess: { kind: "reach_ending", endingId: "end_1" as never },
+          onSuccess: { kind: "resolve_story" },
           onFailure: { kind: "closed" }, tags: [], kind: "main", status: "active",
         },
       ],
@@ -145,15 +145,15 @@ describe("reconcileQuests 完整 outcome", () => {
     expect(result.nextWorldState.quests[0]?.status).toBe("closed");
   });
 
-  it("onFailure unlock_quests：failed 任务解锁失败路线", () => {
+  it("onFailure advance_story：failed 任务不携带解锁语义（不产出 quest_unlocked）", () => {
     const ws = baseWs({
       quests: [
-        { id: asQuestId("q1"), name: "a", description: "t", objectives: [], onSuccess: { kind: "closed" }, onFailure: { kind: "unlock_quests", questIds: [asQuestId("q2")] }, tags: [], kind: "main", status: "failed" },
+        { id: asQuestId("q1"), name: "a", description: "t", objectives: [], onSuccess: { kind: "closed" }, onFailure: { kind: "advance_story" }, tags: [], kind: "main", status: "failed" },
         { id: asQuestId("q2"), name: "b", description: "t", objectives: [], onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [], kind: "side", status: "locked" },
       ],
     });
     const result = reconcileQuests(ws, deps);
-    expect(result.nextWorldState.quests.find((q) => q.id === asQuestId("q2"))?.status).toBe("active");
-    expect(result.events.map((e) => e.type)).toContain("quest_unlocked");
+    expect(result.nextWorldState.quests.find((q) => q.id === asQuestId("q2"))?.status).toBe("locked");
+    expect(result.events.map((e) => e.type)).not.toContain("quest_unlocked");
   });
 });

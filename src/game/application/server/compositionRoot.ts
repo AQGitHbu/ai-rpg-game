@@ -10,7 +10,7 @@ import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
 import { createGame } from "../createGame";
 import { performTurn } from "../performTurn";
 import { projectGameSessionView } from "../gameSessionView";
-import { createWorldGenerationSource, createSceneSource, createExpansionSource } from "../server/ai/sourceFactory";
+import { createOpeningGenerationSource, createSceneSource, createExpansionSource } from "../server/ai/sourceFactory";
 import { createServerIntentParserSource } from "../server/ai/intentParserSourceFactory";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { generatePendingScene } from "../generatePendingScene";
@@ -74,7 +74,7 @@ export function createServerGameEntryPoints(
   const now = () => new Date().toISOString();
   const aiConfig = parseAiRuntimeConfig(env);
   const aiEnabled = aiConfig.status === "available";
-  const source = createWorldGenerationSource(env, logger);
+  const source = createOpeningGenerationSource(env, logger);
   // Task 28：AI 可用注入 live 扩张源，否则确定性 fixture（不再直接注入 createFixtureExpansionSource）。
   const expansionSource = createExpansionSource(env, logger);
   const sceneSource = createSceneSource(env, logger);
