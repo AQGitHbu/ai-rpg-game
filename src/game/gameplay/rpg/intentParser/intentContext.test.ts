@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildIntentContext, type IntentContext } from "./intentContext";
+import { buildIntentContext } from "./intentContext";
 import { createInitialWorldState, appendLocation, appendNpc, appendItem, type LocationEntry, type NpcEntry, type ItemEntry } from "@/game/domain/worldState";
 import { asLocationId, asNpcId, asItemId, asGenerationId } from "@/game/domain/scenarioBlueprint";
 

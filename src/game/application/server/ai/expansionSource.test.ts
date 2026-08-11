@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { createFixtureExpansionSource } from "./expansionSource";
-import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/scenarioBlueprint";

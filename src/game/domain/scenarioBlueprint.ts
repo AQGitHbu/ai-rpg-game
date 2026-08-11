@@ -219,7 +219,7 @@ export type PrologueDefinition = {
 };
 
 /** 结局方向骨架：开局生成，运行时由 AI 导演具体化。 */
-type EndingDirectionOf<I extends IdSet> = {
+type EndingDirectionOf = {
   /** 结局主题方向，如"反元抉择"。 */
   readonly theme: string;
   /** 可能的基调集合，AI 提议的结局必须从中选择。 */
@@ -282,7 +282,7 @@ type ScenarioBlueprintShapeOf<I extends IdSet> = {
   /** Phase 14: 起始锚点（开局生成，运行时只读）。 */
   readonly startAnchor: StartAnchorOf<I>;
   /** Phase 14: 结局方向骨架（开局生成，运行时具体化）。 */
-  readonly endingDirection: EndingDirectionOf<I>;
+  readonly endingDirection: EndingDirectionOf;
   readonly locations: readonly LocationDefinitionOf<I>[];
   readonly npcs: readonly NpcDefinitionOf<I>[];
   readonly quests: readonly QuestDefinitionOf<I>[];
@@ -335,9 +335,9 @@ export type SceneDefinitionCandidate = SceneDefinitionOf<CandidateIds>;
 export type GeneratedPlayerDefinitionCandidate = GeneratedPlayerDefinitionOf<CandidateIds>;
 
 // Phase 14 新增别名
-export type EndingDirection = EndingDirectionOf<CompiledIds>;
+export type EndingDirection = EndingDirectionOf;
 export type StartAnchor = StartAnchorOf<CompiledIds>;
-export type EndingDirectionCandidate = EndingDirectionOf<CandidateIds>;
+export type EndingDirectionCandidate = EndingDirectionOf;
 export type StartAnchorCandidate = StartAnchorOf<CandidateIds>;
 
 // ---------------------------------------------------------------------------

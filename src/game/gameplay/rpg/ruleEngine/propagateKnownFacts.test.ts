@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { propagateKnownFacts } from "./propagateKnownFacts";
 import {
   createInitialWorldState,
-  appendNpc,
   type WorldState,
   type NpcEntry,
 } from "@/game/domain/worldState";

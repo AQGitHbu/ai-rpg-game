@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compileCandidateEvent } from "./compileCandidateEvent";
 import type { ApprovedEventCandidate } from "./approveCandidateEvents";
-import { createInitialStoryState } from "@/game/domain/storyState";
 import { asNpcId, asFactId, asEnemyId, asLocationId, asGenerationId } from "@/game/domain/scenarioBlueprint";
 import { createInitialWorldState, appendNpc, appendEnemy, findNpc } from "@/game/domain/worldState";
 import type { NpcEntry, EnemyEntry } from "@/game/domain/worldState";

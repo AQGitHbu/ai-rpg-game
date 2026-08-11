@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { createDeterministicSceneSource } from "./deterministicSceneSource";
-import { createInitialWorldState, appendNpc, appendLocation, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
+import type { LocationEntry, NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/scenarioBlueprint";
+import { asLocationId, asNpcId } from "@/game/domain/scenarioBlueprint";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { ResolvedEvent, ResolvedEventStatus } from "@/game/domain/resolvedEvent";
@@ -27,17 +27,6 @@ const npc2: NpcEntry = {
   locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
   memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
 };
-
-function makeWorld(): ReturnType<typeof createInitialWorldState> {
-  const base = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  });
-  const withNpcs = appendNpc(appendNpc(appendLocation(base, loc2), npc1), npc2);
-  return { ...withNpcs, unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
-}
 
 function makeStory(): StoryState {
   return createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 2, quests: 0, events: 0 } });

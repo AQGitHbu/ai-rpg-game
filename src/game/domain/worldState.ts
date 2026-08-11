@@ -5,7 +5,7 @@ import type {
 } from "./scenarioBlueprint";
 import type { GameEvent } from "./events";
 import type { RelationshipValue } from "./relationship";
-import type { NarrativeEmotion, NarrativeRuntimeState } from "./narrative";
+import type { NarrativeEmotion } from "./narrative";
 import type { DialogueAct } from "./action";
 
 // ── Entry 类型：定义 + 运行时 ──

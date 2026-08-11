@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { reconcileMaterializedView, createEmptyMaterializedView, type MaterializedView } from "./materializedView";
+import { reconcileMaterializedView, createEmptyMaterializedView } from "./materializedView";
 import type { GameEvent } from "./events";
 import { asLocationId, asNpcId, asQuestId, asFactId } from "./scenarioBlueprint";
 

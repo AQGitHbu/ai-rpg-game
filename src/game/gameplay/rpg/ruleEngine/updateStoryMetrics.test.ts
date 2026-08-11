@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { updateStoryMetrics, TENSION_CHANGES } from "./updateStoryMetrics";
+import { updateStoryMetrics } from "./updateStoryMetrics";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { GameEvent } from "@/game/domain/events";
 import { asEnemyId, asQuestId } from "@/game/domain/scenarioBlueprint";

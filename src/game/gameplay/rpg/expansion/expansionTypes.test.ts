@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import type {
   ExpansionProposal,
   ApprovedExpansion,
-  ExpansionRejection,
-  ExpansionTriggerReason,
   ExpansionResult,
 } from "./expansionTypes";
 

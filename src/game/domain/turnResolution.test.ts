@@ -219,11 +219,10 @@ describe("TurnResolution", () => {
   });
 
   it("keeps TurnId and NarrativeJobId as distinct branded identifiers", () => {
-    const turnId = asTurnId("turn-1");
     const jobId = asNarrativeJobId("job-1");
 
     // @ts-expect-error NarrativeJobId must not be assignable to TurnId.
-    const wrongId: typeof turnId = jobId;
+    const wrongId: ReturnType<typeof asTurnId> = jobId;
     expect(wrongId).toBe("job-1");
   });
 

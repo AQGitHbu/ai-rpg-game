@@ -9,7 +9,7 @@ import type { TurnResolution } from "@/game/domain/turnResolution";
 import { createTurnResolution } from "@/game/domain/turnResolution";
 import type { ValidationCode } from "./validateAction";
 import { validateAction } from "./validateAction";
-import { resolveByType, type ResolveDeps } from "./resolveByType";
+import { resolveByType } from "./resolveByType";
 import { reconcileQuests } from "./reconcileQuests";
 import { resolveEnding } from "./resolveEnding";
 import { updateStoryMetrics } from "./updateStoryMetrics";

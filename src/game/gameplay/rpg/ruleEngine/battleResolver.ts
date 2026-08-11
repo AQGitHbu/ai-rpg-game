@@ -1,7 +1,7 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { EnemyId } from "@/game/domain/scenarioBlueprint";
 import type { GameEvent } from "@/game/domain/events";
-import type { ResolvedEventStatus, StateChange, FactChange } from "@/game/domain/resolvedEvent";
+import type { StateChange } from "@/game/domain/resolvedEvent";
 import type { ResolveDeps, ResolveResult } from "./resolveByType";
 
 // ---------------------------------------------------------------------------

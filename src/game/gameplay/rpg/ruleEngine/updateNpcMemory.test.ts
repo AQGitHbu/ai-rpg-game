@@ -1,13 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
   updateNpcMemory,
-  appendInteraction,
   trimInteractionHistory,
   hasInteractionForAction,
   NPC_INTERACTION_HISTORY_LIMIT,
 } from "./updateNpcMemory";
 import type { NpcEntry, NpcInteraction } from "@/game/domain/worldState";
-import { asNpcId, asLocationId, asFactId } from "@/game/domain/scenarioBlueprint";
+import { asNpcId, asLocationId } from "@/game/domain/scenarioBlueprint";
 
 function makeNpc(overrides?: Partial<NpcEntry>): NpcEntry {
   return {

@@ -4,7 +4,6 @@ import {
   classifyStoryStateSchemaVersion,
   createInitialStoryState,
   derivePacingNeed,
-  type StoryState,
 } from "./storyState";
 
 describe("StoryState", () => {

@@ -4,7 +4,6 @@ import { createInitialWorldState, type LocationEntry } from "@/game/domain/world
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/scenarioBlueprint";
 import type { ExpansionSource } from "@/game/gameplay/rpg/expansion/expansionSource";
-import type { ExpansionProposal } from "@/game/gameplay/rpg/expansion/expansionTypes";
 import type { RuleEngineResult, ValidationCode } from "@/game/gameplay/rpg/ruleEngine";
 
 function makeWs() {
@@ -32,10 +31,6 @@ function rejection(code: ValidationCode): RuleEngineResult {
 }
 
 const strangerTalk = { type: "talk", npcId: asNpcId("npc_stranger"), dialogueAct: "ask" } as const;
-
-function sourceWith(proposals: readonly ExpansionProposal[]): ExpansionSource {
-  return { async propose() { return { proposals }; } };
-}
 
 describe("runExpansionOrchestration", () => {
   it("does not call source when trigger does not fire", async () => {

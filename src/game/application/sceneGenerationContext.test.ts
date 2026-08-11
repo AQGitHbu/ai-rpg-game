@@ -119,7 +119,7 @@ describe("buildSceneGenerationContext", () => {
     acceptContext(record);
     const context = buildSceneGenerationContext(record);
     // @ts-expect-error full candidate pool must not leak into the context type
-    context.story.candidateEventPool;
+    void context.story.candidateEventPool;
   });
 
   it("context JSON carries no eventLedger / candidateEventPool / worldFacts secret text", () => {

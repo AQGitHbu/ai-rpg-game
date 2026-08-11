@@ -2,14 +2,10 @@ import { createOpenAiCompatibleTransport, type AiMessage, type AiTransport, type
 import type { GameLogger } from "@/game/logging";
 import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
 import type { WorldGenerationSource } from "../../createGame";
-import { parseWorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
 import type { SceneSource, SceneSourceResult } from "../../sceneSource";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
 import type { NarrativeEventState, NarrativeEmotion, NarrativeNpcLineState } from "@/game/domain/narrative";
 import { NARRATIVE_EMOTIONS } from "@/game/domain/narrative";
-import type { WorldState } from "@/game/domain/worldState";
-import type { StoryState } from "@/game/domain/storyState";
-import { createFixtureWorldSource } from "../../createGame";
 import { createWorldGenerationSource as createValidatedWorldGenerationSource } from "./worldGenerationSource";
 import { createDeterministicSceneSource } from "../../deterministicSceneSource";
 import { createLiveExpansionSource } from "./liveExpansionSource";
@@ -38,85 +34,6 @@ function parseJsonResponse(text: string): unknown {
     }
     return null;
   }
-}
-
-// --- Live World Generation Source ---
-
-function createLiveWorldGenerationSource(
-  transport: AiTransport,
-  config: AiTransportConfig,
-  logger?: GameLogger,
-): WorldGenerationSource {
-  const fixture = createFixtureWorldSource();
-  return {
-    async generate(input) {
-      try {
-        const systemPrompt = `你是一个 RPG 世界设计师。根据以下要求生成一个完整的游戏世界，返回 JSON 格式。
-
-游戏类型：${input.gameType}
-游戏长度：${input.gameLength}
-种子：${input.seed}
-
-要求：
-1. 生成 3-5 个互相连接的地点，所有地点 connectedLocationIds 形成可达网络
-2. 生成 3-6 个 NPC，分布在各个地点，knownFactIds/hiddenFactIds 引用 world.publicFacts/hiddenFacts
-3. 生成 1-3 个物品
-4. 玩家有名字、身份、属性、起始物品
-5. 世界观含公开事实（publicFacts）与隐藏事实（hiddenFacts）
-6. 主线 stage 必须连续且可完成；short 至少覆盖 1-3 幕，任务 outcome 逐幕解锁下一任务与地点
-7. 至少 2 个语义不同且互斥的结局；可用 npc_affinity_at_least / npc_affinity_at_most 绑定关键 NPC，阈值不得重叠
-8. startAnchor 指明起始地点/NPC/主线任务/main thread
-
-返回严格 JSON（ID 全部为普通字符串，非品牌化），格式如下：
-{
-  "world": { "summary": "...", "tone": "...", "themes": ["..."], "publicFacts": [{ "id": "fact_xxx", "text": "..." }], "hiddenFacts": [{ "id": "fact_yyy", "text": "..." }], "tags": [] },
-  "player": { "name": "...", "identity": "...", "backgroundSummary": "...", "startingLocationId": "loc_xxx", "startingItemIds": [], "baseStats": { "hp": 100, "attack": 10, "defense": 5 } },
-  "startAnchor": { "locationId": "loc_xxx", "npcId": "npc_xxx", "startQuestId": "quest_main", "mainThreadId": "thread_main" },
-  "locations": [{ "id": "loc_xxx", "name": "...", "description": "...", "kind": "main", "connectedLocationIds": ["loc_yyy"], "npcIds": ["npc_xxx"], "availableItemIds": [], "tags": [] }],
-  "npcs": [{ "id": "npc_xxx", "name": "...", "role": "...", "description": "...", "locationId": "loc_xxx", "isCompanion": false, "knownFactIds": [], "hiddenFactIds": [], "goals": [], "tags": [] }],
-  "items": [{ "id": "item_xxx", "name": "...", "description": "...", "kind": "key", "tags": [] }],
-  "enemies": [],
-  "factions": [],
-  "quests": [{ "id": "quest_main", "name": "...", "description": "...", "kind": "main", "stage": 1, "objectives": [{ "kind": "talk_to_npc", "npcId": "npc_xxx" }], "onSuccess": { "kind": "reach_ending", "endingId": "ending_xxx" }, "onFailure": { "kind": "closed" }, "tags": ["main"] }],
-  "endings": [{ "id": "ending_xxx", "name": "...", "description": "...", "requirements": [{ "kind": "quest_completed", "questId": "quest_main" }, { "kind": "npc_affinity_at_least", "npcId": "npc_xxx", "value": 10 }] }],
-  "openingBudget": { "locationsCount": 3, "npcsCount": 4, "sideQuestsCount": 0, "endingsCount": 2, "townLocationsCount": 0 }
-}
-
-确保 ID 唯一且互相引用正确。只返回 JSON，不要其他文字。`;
-
-        const messages: readonly AiMessage[] = [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: `请生成一个${input.gameType}类型的世界。` },
-        ];
-
-        const result = await transport.complete(config, messages, {
-          timeoutMs: 120_000,
-        });
-
-        if (!result.ok) {
-          logger?.warn("world_generation_ai_failed", { code: result.code });
-          return fixture.generate(input);
-        }
-
-        const parsed = parseJsonResponse(result.content);
-        if (parsed === null || typeof parsed !== "object") {
-          logger?.warn("world_generation_parse_failed");
-          return fixture.generate(input);
-        }
-
-        // Step 2.2：AI 原始 JSON 必须经 schema parser，禁止 `as never` 直接断言成 Entry。
-        const candidateResult = parseWorldGenerationCandidate(parsed);
-        if (!candidateResult.ok) {
-          logger?.warn("world_generation_invalid_data", { code: candidateResult.code });
-          return fixture.generate(input);
-        }
-        return candidateResult.value;
-      } catch (error) {
-        logger?.error("world_generation_error", { error: error instanceof Error ? error.message : "unknown" });
-        return fixture.generate(input);
-      }
-    },
-  };
 }
 
 // --- Live Scene Source ---

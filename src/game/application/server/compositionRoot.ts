@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { GameLogDetails, GameLogger } from "@/game/logging";
 import {
   createRequestLogContext,
   createServerLogRuntime,
@@ -8,18 +7,15 @@ import {
 import { asGameId, type GameId } from "./persistence/gameRepository";
 import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
 import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
-import type { GameRepository } from "./persistence/gameRepository";
-import { createGame, type WorldGenerationSource } from "../createGame";
+import { createGame } from "../createGame";
 import { performTurn } from "../performTurn";
 import { projectGameSessionView } from "../gameSessionView";
-import type { ExpansionSource } from "@/game/gameplay/rpg/expansion";
 import { createWorldGenerationSource, createSceneSource, createExpansionSource } from "../server/ai/sourceFactory";
 import { createServerIntentParserSource } from "../server/ai/intentParserSourceFactory";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { generatePendingScene } from "../generatePendingScene";
 import { commitState } from "../stateCommit";
 import { buildChoiceMap } from "../buildChoiceMap";
-import type { SceneSource } from "../sceneSource";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Interaction } from "@/game/domain/action";
 import type { GameSessionView } from "../gameSessionView";

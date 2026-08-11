@@ -68,8 +68,6 @@ export function validateWorldGenerationCandidate(
   const enemyIdSet = new Set(enemyIds);
   const questIds = candidate.quests.map((q) => q.id);
   const questIdSet = new Set(questIds);
-  const endingIds = candidate.endings.map((e) => e.id);
-  const endingIdSet = new Set(endingIds);
   const publicFactIds = new Set(candidate.world.publicFacts.map((f) => f.id));
   const hiddenFactIds = new Set(candidate.world.hiddenFacts.map((f) => f.id));
   const allFactIds = new Set([...publicFactIds, ...hiddenFactIds]);

@@ -80,7 +80,7 @@ function buildTestState(): { worldState: WorldState; storyState: StoryState } {
 
 describe("commitState", () => {
   it("writes state with CAS and reconciles materialized views", async () => {
-    const { repo, getRecord } = createInMemoryRepo();
+    const { repo } = createInMemoryRepo();
     const { worldState, storyState } = buildTestState();
     const gameId = asGameId("g1");
     await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });

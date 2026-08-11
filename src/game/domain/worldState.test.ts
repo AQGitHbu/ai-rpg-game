@@ -5,7 +5,6 @@ import {
   findNpc,
   appendLocation,
   appendNpc,
-  type WorldState,
   type LocationEntry,
   type NpcEntry,
 } from "./worldState";
