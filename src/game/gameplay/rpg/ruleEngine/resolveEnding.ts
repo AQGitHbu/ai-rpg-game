@@ -23,9 +23,12 @@ export function resolveEnding(ws: WorldState, ss: StoryState, deps: { readonly n
     return { nextWorldState: ws, nextStoryState: ss, events: [] };
   }
 
-  const matchingEnding = ws.endings
-    .filter((ending) => ending.requirements.every((req) => isRequirementMet(ws, req)))
-    .sort((left, right) => left.id.localeCompare(right.id))[0];
+  // 首选：满足全部要求的结局。命中多个或一个都不中时，退化为按 id 的
+  // 确定性平局裁决（同 id 排序下首个），保证 endingAllowed 下必有结局可达。
+  const satisfied = ws.endings
+    .filter((ending) => ending.requirements.every((req) => isRequirementMet(ws, req)));
+  const candidates = satisfied.length > 0 ? satisfied : ws.endings;
+  const matchingEnding = [...candidates].sort((left, right) => left.id.localeCompare(right.id))[0];
   if (matchingEnding) {
       const event: GameEvent = {
         type: "ending_reached",

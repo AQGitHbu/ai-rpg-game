@@ -11,20 +11,18 @@ import {
 import { asGameId } from "@/game/application/server/persistence/gameRepository";
 import { asNpcId } from "@/game/domain/worldEntity";
 import type { WorldEvolutionSource } from "@/game/application/worldEvolutionSource";
-import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
-import type { EndingDirectionKey } from "@/game/domain/storyContract";
 
 // ---------------------------------------------------------------------------
 // Step 3：同 seed 分叉旅程。
 // 支持/质疑两个分支从同一 seed 出发：都具象化可完成内容、保留各自隔离的
-// NPC 记忆，并抵达不同主题的结局定义；每条分支重复 replay 后 WorldState +
+// NPC 记忆，并抵达不同主题的结局方向；每条分支重复 replay 后 WorldState +
 // StoryState 逐字节一致（离线确定性）。
 //
-// 说明：终点结局 ID 由 approveWorldDelta 按 evolution 序号铸造
-// （ending_dyn_0/ending_dyn_1），两个分支铸造出的 ID 集合相同；本测试用
-// 分支敏感的确定性演化源按关键 NPC 亲和度调整结局对顺序（信任在前 vs 质疑
-// 在前），使两个分支抵达不同主题的结局定义，从而在不依赖任何 AI 的前提下
-// 证明"选择改变结局"。
+// 结局分歧由生产规则承载：确定性演化源为两条结局附上关键 NPC（npc_0）亲和度
+// 达成要求（trust 需亲和度 ≥ TRUST_ENDING_MIN_AFFINITY，doubt ≤ 该值-1）。
+// 支持分支（支持/信任互动）亲和度走高 → 命中信任结局；质疑分支（质疑/敌意
+// 互动）亲和度走低 → 命中质疑结局。同一 stock 离线源、同一 seed、不同玩法
+// → 不同结局解析，全程零 AI。
 // ---------------------------------------------------------------------------
 
 type Branch = {
@@ -36,41 +34,11 @@ type Branch = {
 const SUPPORT: Branch = { name: "support", fixedLabel: "支持", customText: "我相信你，我们一起查明真相" };
 const CHALLENGE: Branch = { name: "challenge", fixedLabel: "质疑", customText: "你在撒谎，我会亲自揭穿真相" };
 
-/** 按关键 NPC 亲和度调整结局对顺序的确定性演化源（其余委托旅程源）。 */
-function createBranchOrderedEndingSource(): WorldEvolutionSource {
-  const base = createJourneyEvolutionSource();
-  const endingOf = (key: EndingDirectionKey, fallback: string, contract: readonly { readonly key: string; readonly theme: string }[]): { readonly name: string; readonly description: string; readonly themeKey: EndingDirectionKey } => {
-    const raw = (contract.find((d) => d.key === key)?.theme ?? "").trim();
-    const name = raw.length >= 2 && raw.length <= 40 ? raw : fallback;
-    return { name, description: `终幕${key === "trust" ? "共同承担" : "独自承担"}结果。`, themeKey: key };
-  };
-  return {
-    async propose(ctx) {
-      if (ctx.need.kind !== "ending_pair") return base.propose(ctx);
-      const keyNpc = ctx.worldState.npcs.find((n) => String(n.id) === "npc_0");
-      const trustFirst = (keyNpc?.memory.relationship.affinity ?? 0) >= 10;
-      const trust = endingOf("trust", "共赴真相", ctx.storyState.contract.endingDirections);
-      const doubt = endingOf("doubt", "孤身揭晓", ctx.storyState.contract.endingDirections);
-      const proposal: WorldDeltaProposal = {
-        beatSummary: "终幕的两种走向浮现",
-        newLocation: null,
-        newNpc: null,
-        newItem: null,
-        newEnemy: null,
-        newFact: null,
-        nextMainQuest: null,
-        endingPair: trustFirst ? [trust, doubt] : [doubt, trust],
-      };
-      return { proposal };
-    },
-  };
-}
-
 async function runBranch(branch: Branch, replay: number) {
   const gameId = asGameId(`divergence_${branch.name}_${replay}`);
   let store: InMemoryRepo = createInMemoryRepo(gameId);
   await createJourneyGame(gameId, store, "shared-branch-seed", "short");
-  const source = createBranchOrderedEndingSource();
+  const source: WorldEvolutionSource = createJourneyEvolutionSource();
   let successfulTurns = 0;
   let reloads = 0;
   const accept = (result: { readonly ok: boolean }) => {
@@ -104,8 +72,8 @@ async function runBranch(branch: Branch, replay: number) {
   await scene(); // 具象化第 3 幕内容
   reload(); // 重载 2
   await fixed("传讯人·3"); // 6: 完成最终幕主线
-  await scene(); // 具象化结局对（分支敏感顺序）
-  await fixed("传讯人·2"); // 7: 结局落定（不改变关键 NPC 情绪）
+  await scene(); // 具象化结局对（stock 规则要求）
+  await fixed("传讯人·2"); // 7: 结局落定
   await scene();
   reload(); // 重载 3
 
@@ -119,7 +87,7 @@ async function runBranch(branch: Branch, replay: number) {
 }
 
 describe("同 seed 的完整选择分叉与多结局（Step 3）", () => {
-  it("支持与质疑分支都可完成，形成关系/记忆/结局定义差异", async () => {
+  it("支持与质疑分支都可完成，规则裁决为不同结局方向（信任 vs 质疑）", async () => {
     const support = await runBranch(SUPPORT, 1);
     const challenge = await runBranch(CHALLENGE, 1);
     const supportNpc = support.worldState.npcs[0]!;
@@ -131,11 +99,15 @@ describe("同 seed 的完整选择分叉与多结局（Step 3）", () => {
     expect(supportNpc.memory.emotion).toBe("warm");
     expect(challengeNpc.memory.emotion).toBe("guarded");
 
-    // 分支到达不同主题的结局定义（信任共同承担 vs 质疑独自揭晓）。
+    // 结局对以规则要求铸造：两条结局附有互斥的亲和度门槛。
     const supportEnding = support.worldState.endings.find((e) => e.id === support.worldState.ending?.endingId);
     const challengeEnding = challenge.worldState.endings.find((e) => e.id === challenge.worldState.ending?.endingId);
     expect(supportEnding).toBeDefined();
     expect(challengeEnding).toBeDefined();
+    expect(supportEnding!.requirements.length).toBeGreaterThan(0);
+    expect(challengeEnding!.requirements.length).toBeGreaterThan(0);
+
+    // 支持分支命中信任方向；质疑分支命中质疑方向——离线（零 AI）也能靠规则区分。
     expect(supportEnding!.name).toContain("共同承担");
     expect(challengeEnding!.name).toContain("独自揭");
     expect(supportEnding!.name).not.toBe(challengeEnding!.name);
@@ -155,7 +127,7 @@ describe("同 seed 的完整选择分叉与多结局（Step 3）", () => {
     expect(challengeTwo.worldState).toEqual(challengeOne.worldState);
     expect(challengeTwo.storyState).toEqual(challengeOne.storyState);
 
-    // 分叉间世界状态确实不同（NPC 记忆与结局定义），但不是同一份状态的别名。
+    // 分叉间世界状态确实不同（NPC 记忆与结局解析），但不是同一份状态的别名。
     expect(supportOne.worldState).not.toEqual(challengeOne.worldState);
   });
 });

@@ -267,6 +267,54 @@ describe("approveWorldDelta", () => {
     expect(new Set(result.approved.newEndings.map((e) => e.name)).size).toBe(2);
   });
 
+  it("passes proposal ending requirements through to minted endings", () => {
+    const ws = makeWorld();
+    const ss = makeStory({ currentAct: 3, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_ending_pair" } });
+    const proposal: WorldDeltaProposal = {
+      beatSummary: "终幕两种走向",
+      newLocation: null,
+      newNpc: null,
+      newItem: null,
+      newEnemy: null,
+      newFact: null,
+      nextMainQuest: null,
+      endingPair: [
+        { name: "共担真相", description: "公开一切。", themeKey: "trust", requirements: [{ kind: "npc_affinity_at_least", npcId: asNpcId("npc_0"), value: 10 }] },
+        { name: "独自揭露", description: "独自承担。", themeKey: "doubt", requirements: [{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_0"), value: 9 }] },
+      ],
+    };
+    const result = approveWorldDelta({ proposal, need: { kind: "ending_pair", finalAct: 3 }, ws, ss });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [trust, doubt] = result.approved.newEndings;
+    expect(trust!.requirements).toEqual([{ kind: "npc_affinity_at_least", npcId: asNpcId("npc_0"), value: 10 }]);
+    expect(doubt!.requirements).toEqual([{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_0"), value: 9 }]);
+  });
+
+  it("defaults to empty requirements when proposal omits them", () => {
+    const ws = makeWorld();
+    const ss = makeStory({ currentAct: 3, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_ending_pair" } });
+    const proposal: WorldDeltaProposal = {
+      beatSummary: "终幕两种走向",
+      newLocation: null,
+      newNpc: null,
+      newItem: null,
+      newEnemy: null,
+      newFact: null,
+      nextMainQuest: null,
+      endingPair: [
+        { name: "共担真相", description: "公开一切。", themeKey: "trust" },
+        { name: "独自揭露", description: "独自承担。", themeKey: "doubt" },
+      ],
+    };
+    const result = approveWorldDelta({ proposal, need: { kind: "ending_pair", finalAct: 3 }, ws, ss });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    for (const ending of result.approved.newEndings) {
+      expect(ending.requirements).toEqual([]);
+    }
+  });
+
   it("rejects an ending pair with duplicated theme keys", () => {
     const ss = makeStory({ currentAct: 3, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_ending_pair" } });
     const proposal: WorldDeltaProposal = {

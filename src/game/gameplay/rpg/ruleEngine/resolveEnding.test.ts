@@ -76,4 +76,50 @@ describe("resolveEnding", () => {
     expect(forward.nextWorldState.ending?.endingId).toBe(asEndingId("ending_a"));
     expect(reversed.nextWorldState.ending).toEqual(forward.nextWorldState.ending);
   });
+
+  it("picks the requirement-satisfied ending even when its id sorts later", () => {
+    const keyNpc = {
+      id: asNpcId("npc_key"), name: "线人", role: "ally", description: "t",
+      locationId: loc.id, isCompanion: false, tags: [], met: true,
+      memory: {
+        npcId: asNpcId("npc_key"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
+        relationship: { affinity: 80 }, emotion: "warm" as const, goals: [],
+      },
+    };
+    const ws: WorldState = {
+      ...baseWs,
+      npcs: [keyNpc],
+      endings: [
+        // doubt 的 id 更小，但亲和度高，满足的是 trust 要求。
+        { id: asEndingId("ending_a"), name: "doubt", description: "t", requirements: [{ kind: "npc_affinity_at_most", npcId: keyNpc.id, value: 9 }] },
+        { id: asEndingId("ending_z"), name: "trust", description: "t", requirements: [{ kind: "npc_affinity_at_least", npcId: keyNpc.id, value: 10 }] },
+      ],
+    };
+    const result = resolveEnding(ws, { ...baseSs, endingAllowed: true }, deps);
+    expect(result.nextWorldState.ending?.endingId).toBe(asEndingId("ending_z"));
+  });
+
+  it("falls back to a deterministic pick when no requirement is satisfied", () => {
+    const keyNpc = {
+      id: asNpcId("npc_key"), name: "线人", role: "ally", description: "t",
+      locationId: loc.id, isCompanion: false, tags: [], met: true,
+      memory: {
+        npcId: asNpcId("npc_key"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
+        relationship: { affinity: 8 }, emotion: "neutral" as const, goals: [],
+      },
+    };
+    const ws: WorldState = {
+      ...baseWs,
+      npcs: [keyNpc],
+      endings: [
+        { id: asEndingId("ending_a"), name: "trust", description: "t", requirements: [{ kind: "npc_affinity_at_least", npcId: keyNpc.id, value: 10 }] },
+        { id: asEndingId("ending_z"), name: "doubt", description: "t", requirements: [{ kind: "npc_affinity_at_most", npcId: keyNpc.id, value: 5 }] },
+      ],
+    };
+    // 亲和度 8：既不满足 trust(≥10) 也不满足 doubt(≤5)——此时按 id 确定性回退。
+    const forward = resolveEnding(ws, { ...baseSs, endingAllowed: true }, deps);
+    const reversed = resolveEnding({ ...ws, endings: [...ws.endings].reverse() }, { ...baseSs, endingAllowed: true }, deps);
+    expect(forward.nextWorldState.ending?.endingId).toBe(asEndingId("ending_a"));
+    expect(reversed.nextWorldState.ending).toEqual(forward.nextWorldState.ending);
+  });
 });

@@ -139,27 +139,6 @@ function journeyNextActProposal(act: number, currentLocationId: string): WorldDe
   };
 }
 
-function journeyEndingPairProposal(ss: StoryState): WorldDeltaProposal {
-  const byKey = new Map(ss.contract.endingDirections.map((d) => [d.key, d.theme]));
-  const themeName = (key: "trust" | "doubt", fallback: string): string => {
-    const raw = (byKey.get(key) ?? "").trim();
-    return raw.length >= 2 && raw.length <= 40 ? raw : fallback;
-  };
-  return {
-    beatSummary: "终幕的两种走向浮现",
-    newLocation: null,
-    newNpc: null,
-    newItem: null,
-    newEnemy: null,
-    newFact: null,
-    nextMainQuest: null,
-    endingPair: [
-      { name: themeName("trust", "共赴真相"), description: "在众人面前摊开一切，共同承担结果。", themeKey: "trust" },
-      { name: themeName("doubt", "孤身揭晓"), description: "独自揭开真相，把后果揽在自己肩上。", themeKey: "doubt" },
-    ],
-  };
-}
-
 export function createJourneyEvolutionSource(): WorldEvolutionSource {
   const deterministic = createDeterministicEvolutionSource();
   return {
@@ -170,7 +149,8 @@ export function createJourneyEvolutionSource(): WorldEvolutionSource {
         case "next_act":
           return { proposal: journeyNextActProposal(ctx.need.act, String(ctx.worldState.currentLocationId)) };
         case "ending_pair":
-          return { proposal: journeyEndingPairProposal(ctx.storyState) };
+          // 结局对走 Task 3 确定性源的规则化要求（关键 NPC 亲和度分歧）。
+          return deterministic.propose(ctx);
         case "pacing":
           return deterministic.propose(ctx);
       }

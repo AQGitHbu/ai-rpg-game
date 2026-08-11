@@ -3,15 +3,24 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
 import type { EvolutionNeed, WorldDeltaProposal } from "@/game/domain/worldDelta";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
+import type { NpcId } from "@/game/domain/worldEntity";
 
 // ---------------------------------------------------------------------------
 // 确定性世界演化 source（离线/测试/兜底）：
 // - next_act：当前地点补一个 NPC + 锚定该 NPC 的主线任务（保证可达）；
-// - ending_pair：按故事契约的两条主题方向产出互斥结局对；
+// - ending_pair：按故事契约的两条主题方向产出互斥结局对，并给两条结局附上
+//   规则可判定的达成要求——以关键 NPC（首位 NPC，即开局主角锚点）的亲和度为
+//   分歧信号：亲和度 ≥ TRUST_THRESHOLD 走 trust 结局，≤ DOUBT_THRESHOLD
+//   走 doubt 结局（两阈值相邻，任何亲和度恰好命中其一，离线必有一个方向可达）。
 // - pacing（回合修复）：按行动类型补齐缺失实体类别——talk→npc / move→地点
 //   / investigate→fact / take_item→item / attack→enemy；无 action 时无提案。
 // 输出纯提案；铸造与装配交给审批/具象化纯函数。
 // ---------------------------------------------------------------------------
+
+/** 信任结局所需的亲和度下限：关键 NPC 亲和度 ≥ 该值 → 信任方向。 */
+export const TRUST_ENDING_MIN_AFFINITY = 10;
+/** 质疑结局所需的亲和度上限：关键 NPC 亲和度 ≤ 该值 → 质疑方向（与信任阈值相邻）。 */
+export const DOUBT_ENDING_MAX_AFFINITY = TRUST_ENDING_MIN_AFFINITY - 1;
 
 function currentLocationId(ws: WorldState): string {
   return String(ws.currentLocationId);
@@ -114,12 +123,14 @@ function planNextAct(ws: WorldState): WorldDeltaProposal {
   };
 }
 
-function planEndingPair(ss: StoryState): WorldDeltaProposal {
+function planEndingPair(ws: WorldState, ss: StoryState): WorldDeltaProposal {
   const byKey = new Map(ss.contract.endingDirections.map((d) => [d.key, d.theme]));
   const themeName = (key: "trust" | "doubt", fallback: string): string => {
     const raw = (byKey.get(key) ?? "").trim();
     return raw.length >= 2 && raw.length <= 40 ? raw : fallback;
   };
+  // 分歧信号：关键 NPC（首位 NPC）对玩家的亲和度。亲暖互动推高，敌意/质疑拉低。
+  const keyNpcId: NpcId | undefined = ws.npcs[0]?.id;
   return {
     beatSummary: "终幕的两种走向浮现",
     newLocation: null,
@@ -129,8 +140,22 @@ function planEndingPair(ss: StoryState): WorldDeltaProposal {
     newFact: null,
     nextMainQuest: null,
     endingPair: [
-      { name: themeName("trust", "共赴真相"), description: "在众人面前摊开一切，共同承担结果。", themeKey: "trust" },
-      { name: themeName("doubt", "孤身揭晓"), description: "独自揭开真相，把后果揽在自己肩上。", themeKey: "doubt" },
+      {
+        name: themeName("trust", "共赴真相"),
+        description: "在众人面前摊开一切，共同承担结果。",
+        themeKey: "trust",
+        requirements: keyNpcId
+          ? [{ kind: "npc_affinity_at_least", npcId: keyNpcId, value: TRUST_ENDING_MIN_AFFINITY }]
+          : [],
+      },
+      {
+        name: themeName("doubt", "孤身揭晓"),
+        description: "独自揭开真相，把后果揽在自己肩上。",
+        themeKey: "doubt",
+        requirements: keyNpcId
+          ? [{ kind: "npc_affinity_at_most", npcId: keyNpcId, value: DOUBT_ENDING_MAX_AFFINITY }]
+          : [],
+      },
     ],
   };
 }
@@ -144,7 +169,7 @@ export function createDeterministicEvolutionSource(): WorldEvolutionSource {
         case "next_act":
           return { proposal: planNextAct(ctx.worldState) };
         case "ending_pair":
-          return { proposal: planEndingPair(ctx.storyState) };
+          return { proposal: planEndingPair(ctx.worldState, ctx.storyState) };
         case "pacing":
           return { proposal: ctx.action ? planRepairByAction(ctx.worldState, ctx.action) : null };
       }

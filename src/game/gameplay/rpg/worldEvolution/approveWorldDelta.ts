@@ -433,8 +433,18 @@ export function approveWorldDelta(input: {
 
   if (p.endingPair && ids.endingIds.length === 2) {
     newEndings.push(
-      { id: ids.endingIds[0], name: p.endingPair[0].name, description: p.endingPair[0].description, requirements: [] },
-      { id: ids.endingIds[1], name: p.endingPair[1].name, description: p.endingPair[1].description, requirements: [] },
+      {
+        id: ids.endingIds[0],
+        name: p.endingPair[0].name,
+        description: p.endingPair[0].description,
+        requirements: p.endingPair[0].requirements ?? [],
+      },
+      {
+        id: ids.endingIds[1],
+        name: p.endingPair[1].name,
+        description: p.endingPair[1].description,
+        requirements: p.endingPair[1].requirements ?? [],
+      },
     );
   }
 

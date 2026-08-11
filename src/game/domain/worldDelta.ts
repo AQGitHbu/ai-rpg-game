@@ -9,7 +9,7 @@ import type {
   QuestId,
 } from "./worldEntity";
 import type { StoryState } from "./storyState";
-import type { WorldState } from "./worldState";
+import type { EndingRequirement, WorldState } from "./worldState";
 
 // ---------------------------------------------------------------------------
 // 故事演化状态与需求：运行时按需具象化的推进账本。
@@ -49,6 +49,8 @@ export type DynamicEndingProposal = {
   readonly name: string;
   readonly description: string;
   readonly themeKey: EndingDirectionKey;
+  /** 结局的规则达成条件（可选；缺省为「无要求」，即始终可达）。 */
+  readonly requirements?: readonly EndingRequirement[];
 };
 
 export type WorldDeltaProposal = {
