@@ -4,16 +4,17 @@ import {
   composeDeterministicNpcLine,
 } from "@/game/domain/narrative";
 import { paginateSpeechText } from "@/game/domain/speechPagination";
+import { locationScaleOf } from "@/game/domain/scenarioBlueprint";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
-import { buildChoiceMap } from "./buildChoiceMap";
+import { buildChoiceMap, hasExplorableContent } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 
 export type PlayerChoiceView = {
   readonly choiceToken: string;
   readonly label: string;
   readonly hint?: string;
-  readonly presentation: "dialogue" | "travel" | "explore" | "item" | "battle" | "rest";
+  readonly presentation: "dialogue" | "travel" | "explore" | "item" | "battle";
 };
 
 export type NpcDialogueView = {
@@ -21,15 +22,31 @@ export type NpcDialogueView = {
   readonly name: string;
   readonly role: string;
   readonly speechPages: readonly string[];
-  readonly choices: readonly [PlayerChoiceView, PlayerChoiceView] | readonly [];
+  readonly choices: readonly PlayerChoiceView[];
   readonly freeInputEnabled: boolean;
+  /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
+  readonly giveChoices: readonly { readonly itemName: string; readonly choice: PlayerChoiceView }[];
+  /** 非焦点 NPC 的闲聊：点击显示回复，不消耗回合。 */
+  readonly smallTalk?: {
+    readonly prompt: string;
+    readonly response: string;
+  };
 };
 
 type QuestObjectiveView = { readonly label: string; readonly completed: boolean };
 
 export type GameSessionView = {
   readonly revision: number;
+  /** 权威玩家回合数（storyState.turnNumber），用于 HUD 与试玩账本。 */
+  readonly turnNumber: number;
   readonly gameType: string;
+  /** 开局配置回显：旧存档无 setup 时字段均为 null。 */
+  readonly setup: {
+    readonly storyOpening: string | null;
+    readonly worldPremise: string | null;
+    readonly characterProfile: string | null;
+    readonly narrativeStyle: string | null;
+  };
   readonly player: {
     readonly name: string;
     readonly identity: string;
@@ -42,13 +59,22 @@ export type GameSessionView = {
       readonly name: string;
       readonly current: boolean;
       readonly visited: boolean;
+      /** 地点层级：town/scene，UI 据此渲染小镇或场景视图。 */
+      readonly scale: "town" | "scene";
       readonly travelChoice: PlayerChoiceView | null;
     }[];
   };
   readonly currentLocation: {
     readonly name: string;
     readonly description: string;
+    readonly scale: "town" | "scene";
     readonly actions: readonly PlayerChoiceView[];
+    /** 当前地点的 NPC 名单：小镇视图渲染居民/人物入口。 */
+    readonly npcs: readonly {
+      readonly name: string;
+      readonly role: string;
+      readonly talkChoice: PlayerChoiceView;
+    }[];
   };
   readonly obtainableItems: readonly {
     readonly name: string;
@@ -122,12 +148,11 @@ function presentationForAction(action: Action): PlayerChoiceView["presentation"]
     case "move":
       return "travel";
     case "take_item":
+    case "give_item":
       return "item";
     case "attack":
     case "battle_action":
       return "battle";
-    case "rest":
-      return "rest";
     case "explore":
     case "investigate":
     case "ack_prologue":
@@ -184,6 +209,7 @@ export function projectGameSessionView(
       name: location.name,
       current: location.id === worldState.currentLocationId,
       visited: worldState.visitedLocationIds.includes(location.id),
+      scale: locationScaleOf(location),
       travelChoice: travelTargets.has(location.id)
         ? choice({ type: "move", locationId: location.id }, revision, `前往${location.name}`, "travel")
         : null,
@@ -191,7 +217,11 @@ export function projectGameSessionView(
 
   const locationActions: PlayerChoiceView[] = [];
   if (activeBattle === null) {
-    locationActions.push(choice({ type: "explore" }, revision, `探索${currentLocation?.name ?? "此地"}`, "explore"));
+    // 探索：仅当前地点有可探索内容（未发现线索/未拾取物品/未满足目标/候选事件）
+    // 时显示，避免无剧情钩子地点的空转选项（方案 1）。
+    if (hasExplorableContent(worldState, storyState)) {
+      locationActions.push(choice({ type: "explore" }, revision, `探索${currentLocation?.name ?? "此地"}`, "explore"));
+    }
     for (const npc of presentNpcs) {
       locationActions.push(choice(
         { type: "talk", npcId: npc.id, dialogueAct: "ask" },
@@ -205,7 +235,6 @@ export function projectGameSessionView(
         locationActions.push(choice({ type: "attack", enemyId: enemy.id }, revision, `挑战${enemy.name}`, "battle"));
       }
     }
-    locationActions.push(choice({ type: "rest" }, revision, "休息", "rest"));
   }
 
   const obtainableItems = activeBattle === null
@@ -256,7 +285,7 @@ export function projectGameSessionView(
     ? [projectedSceneChoices[0]!, projectedSceneChoices[1]!]
     : [];
   const sceneDialogues = new Map((scene?.npcDialogues ?? []).map((entry) => [String(entry.npcId), entry]));
-  const npcDialogues: readonly NpcDialogueView[] = presentNpcs.map((npc) => {
+  const npcDialogues: readonly NpcDialogueView[] = presentNpcs.flatMap((npc) => {
     const isFocus = focusNpcId === String(npc.id);
     const supplied = sceneDialogues.get(String(npc.id));
     const focusLine = scene?.npcLine !== null
@@ -265,17 +294,35 @@ export function projectGameSessionView(
       && scene.npcLine.text.trim() !== ""
       ? scene.npcLine.text.trim()
       : null;
+    // 非焦点 NPC 若没有场景供给的台词，不渲染千篇一律的模板招呼面板。
+    if (!isFocus && supplied === undefined && focusLine === null) return [];
     const speechPages = supplied !== undefined && supplied.speechPages.length > 0
       ? [...supplied.speechPages]
       : paginateSpeechText(focusLine ?? composeDeterministicNpcLine(npc.name, npc.role), NPC_SCENE_PAGE_CHAR_BUDGET);
-    return {
+    return [{
       npcId: String(npc.id),
       name: npc.name,
       role: npc.role,
       speechPages,
       choices: isFocus ? dialogueChoices : [],
       freeInputEnabled: isFocus,
-    };
+      giveChoices: isFocus
+        ? worldState.inventory.map((itemId) => {
+            const item = worldState.items.find((entry) => entry.id === itemId);
+            const itemName = item?.name ?? "未知物品";
+            return {
+              itemName,
+              choice: choice(
+                { type: "give_item", itemId, npcId: npc.id },
+                revision,
+                `把${itemName}交给${npc.name}`,
+                "item",
+              ),
+            };
+          })
+        : [],
+      ...(supplied?.smallTalk ? { smallTalk: supplied.smallTalk } : {}),
+    }];
   });
 
   const battle = activeBattle === null ? null : {
@@ -295,7 +342,14 @@ export function projectGameSessionView(
 
   return {
     revision,
+    turnNumber: storyState.turnNumber,
     gameType: worldState.generation.gameType,
+    setup: {
+      storyOpening: worldState.generation.setup?.storyOpening ?? null,
+      worldPremise: worldState.generation.setup?.worldPremise ?? null,
+      characterProfile: worldState.generation.setup?.characterProfile ?? null,
+      narrativeStyle: worldState.generation.setup?.narrativeStyle ?? null,
+    },
     player: {
       name: worldState.player.name,
       identity: worldState.player.identity,
@@ -307,7 +361,18 @@ export function projectGameSessionView(
     currentLocation: {
       name: currentLocation?.name ?? "未知地点",
       description: currentLocation?.description ?? "",
+      scale: currentLocation === undefined ? "scene" : locationScaleOf(currentLocation),
       actions: locationActions,
+      npcs: presentNpcs.map((npc) => ({
+        name: npc.name,
+        role: npc.role,
+        talkChoice: choice(
+          { type: "talk", npcId: npc.id, dialogueAct: "ask" },
+          revision,
+          `与${npc.name}交谈`,
+          "dialogue",
+        ),
+      })),
     },
     obtainableItems,
     inventory: worldState.inventory.map((itemId) => {

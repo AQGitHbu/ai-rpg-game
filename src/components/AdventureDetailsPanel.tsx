@@ -8,6 +8,26 @@ type AdventureDetailsPanelProps = {
   readonly panel: DetailsPanel;
 };
 
+const QUEST_STATUS_LABELS: Record<string, string> = {
+  active: "进行中",
+  completed: "已完成",
+  locked: "未解锁",
+  failed: "已失败",
+};
+
+const PACING_LABELS: Record<string, string> = {
+  reveal: "铺垫线索",
+  develop: "推进剧情",
+  complicate: "制造变数",
+  escalate: "升温冲突",
+  climax: "迎接高潮",
+  resolve: "收束伏线",
+};
+
+function questStatusClass(status: string): string {
+  return `quest-status quest-status--${status}`;
+}
+
 export function AdventureDetailsPanel({ view, panel }: AdventureDetailsPanelProps) {
   if (panel === "journal") {
     return (
@@ -16,13 +36,19 @@ export function AdventureDetailsPanel({ view, panel }: AdventureDetailsPanelProp
           <h3>旅途进度</h3>
           <p>
             第 {view.story.currentAct} / {view.story.targetActs} 幕 · 张力 {view.story.tension}%
-            · 进度 {view.story.storyProgress}%
+            · 进度 {view.story.storyProgress}% · 已行动 {view.turnNumber} 回合
           </p>
         </section>
         <section>
-          <h3>节奏需要</h3>
-          <p>{view.story.pacingNeed}</p>
+          <h3>剧情节奏</h3>
+          <p>{PACING_LABELS[view.story.pacingNeed] ?? view.story.pacingNeed}</p>
         </section>
+        {view.setup.worldPremise !== null ? (
+          <section>
+            <h3>世界观</h3>
+            <p>{view.setup.worldPremise}</p>
+          </section>
+        ) : null}
         {view.narrative.narration ? (
           <section>
             <h3>最近一幕</h3>
@@ -38,7 +64,8 @@ export function AdventureDetailsPanel({ view, panel }: AdventureDetailsPanelProp
       <ul className="details-inventory">
         {view.inventory.map((item) => (
           <li key={item.name}>
-            <strong>{item.name}</strong>：{item.description}
+            <strong>{item.name}</strong>
+            <span>{item.description}</span>
           </li>
         ))}
         {view.inventory.length === 0 ? <li>背包空空如也。</li> : null}
@@ -50,12 +77,17 @@ export function AdventureDetailsPanel({ view, panel }: AdventureDetailsPanelProp
     return (
       <div className="details-quests">
         {view.quests.map((quest) => (
-          <section key={quest.name}>
-            <h4>{quest.name} · {quest.status}</h4>
+          <section key={quest.name} className={`quest-card ${quest.status === "active" ? "quest-card--active" : ""}`}>
+            <h4>
+              {quest.name}
+              <span className={questStatusClass(quest.status)}>
+                {QUEST_STATUS_LABELS[quest.status] ?? quest.status}
+              </span>
+            </h4>
             <p>{quest.description}</p>
             <ul>
               {quest.objectives.map((objective) => (
-                <li key={objective.label}>
+                <li key={objective.label} className={objective.completed ? "quest-objective--done" : ""}>
                   {objective.completed ? "✓" : "○"} {objective.label}
                 </li>
               ))}
@@ -67,28 +99,36 @@ export function AdventureDetailsPanel({ view, panel }: AdventureDetailsPanelProp
     );
   }
 
+  const hpPercent = Math.max(0, Math.min(100, view.player.hp));
   return (
-    <dl className="details-character">
-      <div>
-        <dt>姓名</dt>
-        <dd>{view.player.name}</dd>
+    <div className="details-character">
+      <dl className="details-character-stats">
+        <div>
+          <dt>姓名</dt>
+          <dd>{view.player.name}</dd>
+        </div>
+        <div>
+          <dt>身份</dt>
+          <dd>{view.player.identity}</dd>
+        </div>
+        <div>
+          <dt>攻击</dt>
+          <dd>{view.player.attack}</dd>
+        </div>
+        <div>
+          <dt>防御</dt>
+          <dd>{view.player.defense}</dd>
+        </div>
+      </dl>
+      <div className="details-character-hp" role="meter" aria-valuenow={hpPercent} aria-valuemin={0} aria-valuemax={100} aria-label="生命值">
+        <span>生命 {view.player.hp}</span>
+        <div className="details-character-hp-bar" aria-hidden="true">
+          <div style={{ width: `${hpPercent}%` }} />
+        </div>
       </div>
-      <div>
-        <dt>身份</dt>
-        <dd>{view.player.identity}</dd>
-      </div>
-      <div>
-        <dt>生命</dt>
-        <dd>{view.player.hp}</dd>
-      </div>
-      <div>
-        <dt>攻击</dt>
-        <dd>{view.player.attack}</dd>
-      </div>
-      <div>
-        <dt>防御</dt>
-        <dd>{view.player.defense}</dd>
-      </div>
-    </dl>
+      {view.setup.characterProfile !== null ? (
+        <p className="details-character-profile">{view.setup.characterProfile}</p>
+      ) : null}
+    </div>
   );
 }

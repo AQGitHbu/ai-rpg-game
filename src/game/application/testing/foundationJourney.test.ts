@@ -10,7 +10,7 @@ function cmap(entries: readonly [string, Action][]): ActionChoiceMap {
 
 describe("foundation 15-turn journey", () => {
   it("executes 15 successful choice-driven turns, reloads, activates an event, survives a climax, and reaches an ending", async () => {
-    const created = await createJourneyGame();
+    const created = await createJourneyGame(undefined, undefined, "foundation-medium-seed", "medium");
     let store = created.repo;
     let successfulTurns = 0;
     let reloadCount = 0;
@@ -47,34 +47,38 @@ describe("foundation 15-turn journey", () => {
     accept(await playTurn(store.repo, { kind: "free_text", text: "我相信你，我们一起查明真相", targetNpcId: asNpcId("npc_innkeeper") })); // 3: custom NPC input
 
     await scene();
-    await fixed("休息"); // 4: approves and activates candidate event
+    await fixed("支持"); // 4: approves and activates candidate event
     await scene();
-    await fixed("探索"); // 5
-    await scene();
-    reload();
-
-    await travel(); // 6: move to unlocked middle location
-    await scene();
-    await fixed("拾取"); // 7: obtain quest item
-    await scene();
-    await fixed("休息"); // 8
-    await scene();
-    await fixed("探索"); // 9
+    await fixed("支持"); // 5: another meaningful NPC response
     await scene();
     reload();
 
-    await travel(); // 10: enter climax location
+    await travel(); // 6: move to unlocked route
     await scene();
-    await fixed("探索"); // 11
+    await fixed("拾取"); // 7: obtain route clue
     await scene();
-    await fixed("挑战"); // 12: start battle
+    await travel(); // 8: move to the guard location
+    await scene();
+    await fixed("挑战"); // 9: start the guard battle
     await scene();
     reload();
-    await fixed("攻击"); // 13
+
+    await fixed("攻击"); // 10: defeat the guard
     await scene();
-    await fixed("攻击"); // 14
+    await travel(); // 11: move to the archive
     await scene();
-    await fixed("攻击"); // 15: defeat boss, complete final act, resolve ending
+    await fixed("拾取"); // 12: obtain the archive evidence
+    await scene();
+    await travel(); // 13: enter the climax location
+    await scene();
+    await fixed("挑战"); // 14: start the boss battle
+    await scene();
+    reload();
+    await fixed("攻击"); // 15
+    await scene();
+    await fixed("攻击"); // 16
+    await scene();
+    await fixed("攻击"); // 17: defeat boss, complete final act, resolve ending
 
     const record = store.record()!;
     expect(successfulTurns).toBeGreaterThanOrEqual(15);
@@ -189,8 +193,8 @@ describe("foundation 15-turn journey", () => {
     expect(t4.turnNumberAfter).toBe(4);
     expect(await advanceScene(repo.repo)).toBe(true);
 
-    // 5) rest → player_rested 主事件
-    const t5 = await playTurn(repo.repo, { kind: "fixed_choice", choiceToken: "tok_rest" }, cmap([["tok_rest", { type: "rest" }]]));
+    // 5) repeated explore still produces a real primary event
+    const t5 = await playTurn(repo.repo, { kind: "fixed_choice", choiceToken: "tok_explore_again" }, cmap([["tok_explore_again", { type: "explore" }]]));
     expect(t5.ok).toBe(true);
     expect(t5.turnNumberAfter).toBe(5);
     expect(await advanceScene(repo.repo)).toBe(true);
@@ -234,12 +238,12 @@ describe("foundation 15-turn journey", () => {
     expect(t1.ok).toBe(true);
 
     // 未生成场景（pending 仍在）：下一行动被拒
-    const blocked = await playTurn(repo.repo, { kind: "fixed_choice", choiceToken: "tok_rest" }, cmap([["tok_rest", { type: "rest" }]]));
+    const blocked = await playTurn(repo.repo, { kind: "fixed_choice", choiceToken: "tok_explore" }, cmap([["tok_explore", { type: "explore" }]]));
     expect(blocked.ok).toBe(false);
 
     // 生成场景清空 pending 后：合法行动成功
     expect(await advanceScene(repo.repo)).toBe(true);
-    const t2 = await playTurn(repo.repo, { kind: "fixed_choice", choiceToken: "tok_rest" }, cmap([["tok_rest", { type: "rest" }]]));
+    const t2 = await playTurn(repo.repo, { kind: "fixed_choice", choiceToken: "tok_explore" }, cmap([["tok_explore", { type: "explore" }]]));
     expect(t2.ok).toBe(true);
   });
 });

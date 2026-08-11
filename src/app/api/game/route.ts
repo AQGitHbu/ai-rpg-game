@@ -1,4 +1,5 @@
 import { getServerGameEntryPoints, type CreateGameHttpInput } from "@/game/application/server/compositionRoot";
+import { parseGameSetup } from "@/game/application/createGame";
 
 const GAME_TYPES = new Set(["wuxia", "xianxia", "fantasy", "science_fiction", "urban", "alternate_history", "post_apocalypse"]);
 const GAME_LENGTHS = new Set(["short", "medium"]);
@@ -9,8 +10,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * 创建开局允许的顶层字段：核心三字段（gameType/gameLength/restart）之外，
- * 放行 NewGameInput 的角色与世界观字段（domain 层已定义完整校验）。
- * 这些字段当前由世界生成源透传保留，供未来 AI 世界生成器使用；
+ * 放行 NewGameInput 的角色与世界观字段；提交任一配置字段时必须整体通过
+ * domain validateNewGameInput，校验后的 setup 由世界生成源消费。
  * 未知字段仍一律拒绝，保证契约可审查。
  */
 const CREATE_INPUT_ALLOWED_KEYS = new Set([
@@ -19,24 +20,14 @@ const CREATE_INPUT_ALLOWED_KEYS = new Set([
   "worldPremise", "storyOpening", "narrativeStyle", "contentIntensity",
 ]);
 
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function optionalStringArray(value: unknown): readonly string[] | undefined {
-  return Array.isArray(value) && value.every((entry) => typeof entry === "string")
-    ? value
-    : undefined;
-}
-
-function parseCreateInput(body: unknown): CreateGameHttpInput | null {
-  if (!isRecord(body)) return null;
-  if (!Object.keys(body).every((key) => CREATE_INPUT_ALLOWED_KEYS.has(key))) return null;
-  if (typeof body.gameType !== "string" || !GAME_TYPES.has(body.gameType)) return null;
-  if (typeof body.gameLength !== "string" || !GAME_LENGTHS.has(body.gameLength)) return null;
+function parseCreateInput(body: unknown): { input: CreateGameHttpInput } | { invalid: true; errors?: readonly { field: string; code: string }[] } {
+  if (!isRecord(body)) return { invalid: true };
+  if (!Object.keys(body).every((key) => CREATE_INPUT_ALLOWED_KEYS.has(key))) return { invalid: true };
+  if (typeof body.gameType !== "string" || !GAME_TYPES.has(body.gameType)) return { invalid: true };
+  if (typeof body.gameLength !== "string" || !GAME_LENGTHS.has(body.gameLength)) return { invalid: true };
   let restart: CreateGameHttpInput["restart"];
   if (body.restart !== undefined) {
-    if (!isRecord(body.restart) || !Object.keys(body.restart).every((key) => ["identity", "expectedRevision"].includes(key))) return null;
+    if (!isRecord(body.restart) || !Object.keys(body.restart).every((key) => ["identity", "expectedRevision"].includes(key))) return { invalid: true };
     if (
       typeof body.restart.identity !== "string"
       || body.restart.identity.length === 0
@@ -44,22 +35,31 @@ function parseCreateInput(body: unknown): CreateGameHttpInput | null {
       || typeof body.restart.expectedRevision !== "number"
       || !Number.isInteger(body.restart.expectedRevision)
       || body.restart.expectedRevision < 0
-    ) return null;
+    ) return { invalid: true };
     restart = { identity: body.restart.identity, expectedRevision: body.restart.expectedRevision };
   }
+  const setupResult = parseGameSetup({
+    gameType: body.gameType,
+    gameLength: body.gameLength,
+    characterName: body.characterName,
+    characterIdentity: body.characterIdentity,
+    characterProfile: body.characterProfile,
+    personalityTags: body.personalityTags,
+    worldPremise: body.worldPremise,
+    storyOpening: body.storyOpening,
+    narrativeStyle: body.narrativeStyle,
+    contentIntensity: body.contentIntensity,
+  });
+  if (setupResult !== null && !setupResult.ok) {
+    return { invalid: true, errors: setupResult.errors };
+  }
   return {
-    gameType: body.gameType as CreateGameHttpInput["gameType"],
-    gameLength: body.gameLength as CreateGameHttpInput["gameLength"],
-    ...(restart === undefined ? {} : { restart }),
-    // 透传 NewGameInput 可选字段：类型收窄后交 createGame，当前不使用但保留契约。
-    ...(optionalString(body.characterName) === undefined ? {} : { characterName: body.characterName as string }),
-    ...(optionalString(body.characterIdentity) === undefined ? {} : { characterIdentity: body.characterIdentity as string }),
-    ...(optionalString(body.characterProfile) === undefined ? {} : { characterProfile: body.characterProfile as string }),
-    ...(optionalStringArray(body.personalityTags) === undefined ? {} : { personalityTags: body.personalityTags as readonly string[] }),
-    ...(optionalString(body.worldPremise) === undefined ? {} : { worldPremise: body.worldPremise as string }),
-    ...(optionalString(body.storyOpening) === undefined ? {} : { storyOpening: body.storyOpening as string }),
-    ...(optionalString(body.narrativeStyle) === undefined ? {} : { narrativeStyle: body.narrativeStyle as CreateGameHttpInput["narrativeStyle"] }),
-    ...(optionalString(body.contentIntensity) === undefined ? {} : { contentIntensity: body.contentIntensity as CreateGameHttpInput["contentIntensity"] }),
+    input: {
+      gameType: body.gameType as CreateGameHttpInput["gameType"],
+      gameLength: body.gameLength as CreateGameHttpInput["gameLength"],
+      ...(restart === undefined ? {} : { restart }),
+      ...(setupResult === null || !setupResult.ok ? {} : { setup: setupResult.setup }),
+    },
   };
 }
 
@@ -73,7 +73,7 @@ function statusForCreateFailure(code: string | undefined): number {
 }
 
 // POST /api/game：canonical 创建游戏路由，委托 createGame。
-// 额外字段（角色名、世界观等）保留供未来 AI 世界生成器使用。
+// 开局配置字段经 domain 校验后作为 setup 由世界生成源消费。
 export async function POST(request: Request): Promise<Response> {
   const entryPoints = getServerGameEntryPoints();
   return entryPoints.executeHttpRequest(
@@ -89,14 +89,14 @@ export async function POST(request: Request): Promise<Response> {
           headers: { "Content-Type": "application/json" },
         });
       }
-      const input = parseCreateInput(body);
-      if (input === null) {
-        return new Response(JSON.stringify({ ok: false, code: "INVALID_INPUT" }), {
+      const parsed = parseCreateInput(body);
+      if ("invalid" in parsed) {
+        return new Response(JSON.stringify({ ok: false, code: "INVALID_INPUT", ...(parsed.errors === undefined ? {} : { errors: parsed.errors }) }), {
           status: 400,
           headers: { "Content-Type": "application/json" },
         });
       }
-      const result = await entryPoints.createGame(input);
+      const result = await entryPoints.createGame(parsed.input);
       if (result.ok) {
         return new Response(JSON.stringify(result), {
           status: 200,

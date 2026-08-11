@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { InlineButton } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
 import { postAction, type ActionOutcome, type PlayerInteraction } from "./gameActionRequest";
@@ -45,10 +45,21 @@ export function AdventureGameShell({
   const [feedback, setFeedback] = useState<ActionFeedback>({ phase: "idle" });
   const triggerRef = useRef<HTMLElement | null>(null);
   const devToolsTriggerRef = useRef<HTMLElement | null>(null);
+  const previousLocationRef = useRef<string | null>(null);
 
   const pending = view.narrativeGeneration.status === "pending";
   const isSubmitting = feedback.phase === "submitting";
   const busy = isSubmitting || pending;
+
+  // 玩家移动到新地点后，自动从地图切换到场景视图，避免停留在只读地图上无法继续操作。
+  useEffect(() => {
+    const currentName = view.currentLocation.name;
+    const previousName = previousLocationRef.current;
+    previousLocationRef.current = currentName;
+    if (previousName !== null && previousName !== currentName) {
+      setScreen("scene");
+    }
+  }, [view.currentLocation.name, view.revision]);
 
   function applyOutcome(outcome: ActionOutcome): void {
     switch (outcome.kind) {

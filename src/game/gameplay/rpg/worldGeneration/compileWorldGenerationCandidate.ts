@@ -146,6 +146,8 @@ function compileLocation(loc: LocationDefinitionCandidate): LocationEntry {
     npcIds: loc.npcIds.map(asNpcId),
     availableItemIds: loc.availableItemIds.map(asItemId),
     tags: loc.tags,
+    // town 层级标记：缺省不落字段，读取统一经 locationScaleOf。
+    ...(loc.scale === "town" ? { scale: "town" as const } : {}),
   };
 }
 

@@ -57,8 +57,8 @@ describe("preClassifyFreeText", () => {
     expect(action?.type).toBe("explore");
   });
 
-  it("matches rest intent", () => {
+  it("does not route removed rest intent", () => {
     const action = preClassifyFreeText("休息一会儿", ctx);
-    expect(action?.type).toBe("rest");
+    expect(action).toBeNull();
   });
 });

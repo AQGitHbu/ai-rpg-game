@@ -68,6 +68,11 @@ export type NpcDialogueInScene = {
   readonly npcRole: string;
   /** 复用现有分页机制（paginateSpeechText）。 */
   readonly speechPages: readonly string[];
+  /** 非焦点 NPC 的闲聊：AI 生成，点击后直接显示回复，不消耗回合。 */
+  readonly smallTalk?: {
+    readonly prompt: string;
+    readonly response: string;
+  };
 };
 
 export type NarrativeSceneState = {
@@ -136,7 +141,11 @@ export function composeDeterministicNpcLine(npcName: string, npcRole: string): s
  */
 export function buildNpcDialoguePages(
   npcs: readonly { readonly id: unknown; readonly name: string; readonly role: string }[],
-  options?: { readonly focusNpcId?: unknown; readonly focusSpeech?: string },
+  options?: {
+    readonly focusNpcId?: unknown;
+    readonly focusSpeech?: string;
+    readonly smallTalkData?: ReadonlyMap<string, { prompt: string; response: string }>;
+  },
 ): readonly NpcDialogueInScene[] {
   return npcs.map((npc) => {
     const isFocus = options?.focusNpcId !== undefined
@@ -145,11 +154,15 @@ export function buildNpcDialoguePages(
     const text = isFocus
       ? options!.focusSpeech!.trim()
       : composeDeterministicNpcLine(npc.name, npc.role);
+    const smallTalk = !isFocus && options?.smallTalkData
+      ? options.smallTalkData.get(String(npc.id))
+      : undefined;
     return {
       npcId: npc.id as NpcId,
       npcName: npc.name,
       npcRole: npc.role,
       speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
+      ...(smallTalk ? { smallTalk } : {}),
     };
   });
 }

@@ -134,12 +134,14 @@ export type LiveNpcLineCandidate = {
  */
 export function resolveLiveNpcLine<TNpcId>(
   candidate: LiveNpcLineCandidate | null,
-  presentNpcs: readonly { readonly id: TNpcId }[],
+  presentNpcs: readonly { readonly id: TNpcId; readonly name?: string }[],
 ): { readonly npcId: TNpcId; readonly text: string; readonly emotion: NarrativeEmotion } | null {
   if (candidate === null || typeof candidate !== "object") return null;
   if (typeof candidate.npcId !== "string" || typeof candidate.text !== "string") return null;
   if (candidate.text.trim() === "") return null;
-  const presentNpc = presentNpcs.find((npc) => String(npc.id) === candidate.npcId);
+  // AI 可能把 ID 写成名字：先按 ID 精确匹配，再按名字回退匹配。
+  const presentNpc = presentNpcs.find((npc) => String(npc.id) === candidate.npcId)
+    ?? presentNpcs.find((npc) => npc.name !== undefined && npc.name === candidate.npcId);
   if (presentNpc === undefined) return null;
   const emotion = NARRATIVE_EMOTIONS.includes(candidate.emotion as NarrativeEmotion)
     ? (candidate.emotion as NarrativeEmotion)
@@ -147,7 +149,7 @@ export function resolveLiveNpcLine<TNpcId>(
   return { npcId: presentNpc.id, text: candidate.text.trim(), emotion };
 }
 
-function createLiveSceneSource(
+export function createLiveSceneSource(
   transport: AiTransport,
   config: AiTransportConfig,
   logger?: GameLogger,
@@ -159,7 +161,12 @@ function createLiveSceneSource(
         const { job, currentLocation, presentNpcs, story } = context;
         const currentLocName = currentLocation.name;
         const npcsHere = presentNpcs;
-        const firstNpc = npcsHere[0];
+        // 焦点 NPC：talk 回合必须指向玩家实际交谈的 NPC（job.focusNpcId），
+        // 不能固定取第一个在场 NPC，否则"与 B 交谈"永远生成 A 的对话。
+        const talkTarget = job.actionSummary.kind === "talk" ? job.focusNpcId : undefined;
+        const firstNpc = talkTarget !== undefined
+          ? npcsHere.find((npc) => String(npc.id) === String(talkTarget)) ?? npcsHere[0]
+          : npcsHere[0];
         const hasBattleCandidates = context.legalActionCandidates.some(
           (candidate) => candidate.kind === "battle_action",
         );
@@ -181,21 +188,29 @@ function createLiveSceneSource(
 节奏需要：${story.nextPacingNeed}
 玩家行动类型：${job.resolvedEvent.eventKind}
 
-在场 NPC：${npcsHere.map((n) => `${n.name}(${n.role})`).join("、") || "无"}
+在场 NPC（npcLine.npcId 必须使用下列 ID 之一，不得自创）：${npcsHere.map((n) => `${n.id}=${n.name}(${n.role})`).join("、") || "无"}
 
 服务端候选：${JSON.stringify(selectable.map((entry) => ({ candidateId: entry.candidateId, label: entry.proposal.label })))}
 
 返回严格 JSON，格式如下：
 {
   "narration": "场景旁白文字（2-4句）",
-  "npcLine": { "npcId": "在场NPC的ID", "text": "NPC说的台词", "emotion": "neutral" },
+  "npcLine": { "npcId": "在场NPC的ID（必须原样使用上方列出的 ID）", "text": "NPC说的台词（符合其身份与当前情境，不要用招呼语敷衍）", "emotion": "neutral" },
   "choices": [
     { "label": "选项1文字", "candidateId": "candidate_1" },
     { "label": "选项2文字", "candidateId": "candidate_2" }
+  ],
+  "smallTalks": [
+    { "npcId": "非焦点NPC的ID", "prompt": "闲聊选项文本（如'向韩征打个招呼'）", "response": "NPC的简短回应（1-2句，符合其身份和当前情境，但不推进剧情）" }
   ]
 }
 
-choices 必须恰好 2 个，candidateId 必须从服务端候选中选择且不能重复。
+重要说明：
+- choices 必须恰好 2 个，candidateId 必须从服务端候选中选择且不能重复。
+- smallTalks 是可选的，为除焦点 NPC 之外的其他在场 NPC 提供闲聊选项。
+- smallTalks 中的 npcId 必须是非焦点 NPC（即不等于 npcLine.npcId 的其他在场 NPC）。
+- 闲聊的 response 应该简短、符合 NPC 身份，但不包含剧情关键信息。
+- narration 与 npcLine 中出现的 NPC 名字必须与上方列出的名字逐字一致，不得使用别名或变体。
 只返回 JSON，不要其他文字。`;
 
         const messages: readonly AiMessage[] = [
@@ -222,6 +237,9 @@ choices 必须恰好 2 个，candidateId 必须从服务端候选中选择且不
         const narration = typeof data.narration === "string" ? data.narration : "";
         const rawNpcLine = data.npcLine as { npcId: string; text: string; emotion: string } | null;
         const choices = Array.isArray(data.choices) ? data.choices as { label: string; candidateId: string }[] : [];
+        const rawSmallTalks = Array.isArray(data.smallTalks) 
+          ? data.smallTalks as Array<{ npcId: string; prompt: string; response: string }>
+          : [];
 
         if (narration === "" || choices.length !== 2) {
           logger?.warn("scene_generation_invalid_data");
@@ -243,6 +261,26 @@ choices 必须恰好 2 个，candidateId 必须从服务端候选中选择且不
           return fallback.generateScene(context);
         }
 
+        // 解析闲聊数据：只保留属于非焦点在场 NPC 的闲聊
+        const focusNpcId = npcLine?.npcId;
+        const smallTalks = new Map<string, { prompt: string; response: string }>();
+        for (const talk of rawSmallTalks) {
+          if (
+            typeof talk.npcId === "string" &&
+            typeof talk.prompt === "string" &&
+            typeof talk.response === "string" &&
+            talk.npcId !== String(focusNpcId) &&
+            npcsHere.some((npc) => String(npc.id) === talk.npcId) &&
+            talk.prompt.trim() !== "" &&
+            talk.response.trim() !== ""
+          ) {
+            smallTalks.set(talk.npcId, {
+              prompt: talk.prompt.trim(),
+              response: talk.response.trim(),
+            });
+          }
+        }
+
         return {
           sceneId,
           turn,
@@ -252,6 +290,7 @@ choices 必须恰好 2 个，candidateId 必须从服务端候选中选择且不
           npcLine,
           choiceProposals,
           eventProposals: [],
+          ...(smallTalks.size > 0 ? { smallTalks } : {}),
         };
       } catch (error) {
         logger?.error("scene_generation_error", { error: error instanceof Error ? error.message : "unknown" });

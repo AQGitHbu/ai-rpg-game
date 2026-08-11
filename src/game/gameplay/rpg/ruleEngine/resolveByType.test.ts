@@ -72,14 +72,6 @@ describe("resolveByType", () => {
     }
   });
 
-  it("rest emits player_rested primary event (Task 29)", () => {
-    const result = resolveByType(ws, { type: "rest" }, deps);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.events.map((e) => e.type)).toEqual(["player_rested"]);
-      expect(result.nextWorldState.eventLedger.length).toBe(ws.eventLedger.length + 1);
-    }
-  });
 });
 
 describe("resolveByType status and stateChanges", () => {
@@ -213,5 +205,53 @@ describe("resolveByType — attack", () => {
     if (result.ok) {
       expect(result.nextWorldState.battle.status).toBe("resolved");
     }
+  });
+
+  describe("give_item", () => {
+    const giveLoc: LocationEntry = {
+      id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
+      connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+    };
+    const giveBase = createInitialWorldState({
+      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: giveLoc,
+      startingItemIds: [],
+    });
+    const npc: NpcEntry = {
+      id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
+      memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 2 }, emotion: "neutral", goals: [] },
+    };
+    const item = { id: asItemId("item_gift"), name: "铜钥匙", description: "旧钥匙", kind: "key", tags: [] } as const;
+    const wsWithGift = {
+      ...appendNpc(giveBase, npc),
+      items: [...giveBase.items, item],
+      inventory: [...giveBase.inventory, item.id],
+    };
+    const deps = { now: () => "2026-01-01", actionId: "act_give", turnNumber: 1 };
+
+    it("移交背包物品：背包原子移除、item_given 落账、NPC 好感上升", () => {
+      const result = resolveByType(wsWithGift, { type: "give_item", itemId: item.id, npcId: npc.id }, deps);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.nextWorldState.inventory).not.toContain(item.id);
+        expect(result.events[0]).toMatchObject({ type: "item_given", itemId: item.id, npcId: npc.id });
+        const after = result.nextWorldState.npcs.find((n) => n.id === npc.id);
+        expect(after?.memory.relationship.affinity).toBe(3);
+        expect(after?.memory.interactionHistory.at(-1)?.dialogueAct).toBe("offer");
+        expect(result.status).toBe("success");
+      }
+    });
+
+    it("战斗中无法给予", () => {
+      const inBattle = { ...wsWithGift, battle: { status: "active" as const, enemyId: asEnemyId("enemy_1"), enemyHp: 10, playerHp: 10, round: 1 } };
+      const result = resolveByType(inBattle, { type: "give_item", itemId: item.id, npcId: npc.id }, deps);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.status).toBe("blocked");
+        expect(result.nextWorldState.inventory).toContain(item.id);
+      }
+    });
   });
 });

@@ -105,6 +105,15 @@ export type ItemObtainedEvent = {
   readonly occurredAt: string;
 };
 
+/** 玩家将背包物品移交给在场 NPC：由 give_item 行动成功时追加。 */
+export type ItemGivenEvent = {
+  readonly type: "item_given";
+  readonly itemId: ItemId;
+  readonly npcId: NpcId;
+  readonly locationId: LocationId;
+  readonly occurredAt: string;
+};
+
 /** Phase 6：战斗开始——由 start_battle 成功时追加。 */
 export type BattleStartedEvent = {
   readonly type: "battle_started";
@@ -150,12 +159,6 @@ export type EndingReachedEvent = {
   readonly type: "ending_reached";
   readonly endingId: EndingId;
   readonly outcome: "success" | "failure";
-  readonly occurredAt: string;
-};
-
-/** 玩家休息：由 rest 行动成功时追加，按固定值更新张力（Spec §13.5）。 */
-export type PlayerRestedEvent = {
-  readonly type: "player_rested";
   readonly occurredAt: string;
 };
 
@@ -278,13 +281,13 @@ export type GameEvent =
   | QuestUnlockedEvent
   | LocationUnlockedEvent
   | ItemObtainedEvent
+  | ItemGivenEvent
   | BattleStartedEvent
   | BattleRoundResolvedEvent
   | BattleResolvedEvent
   | EnemyDefeatedEvent
   | QuestFailedEvent
   | EndingReachedEvent
-  | PlayerRestedEvent
   | NarrativeChoiceEvent
   | NarrativeDialogueChoiceEvent
   | NarrativeScenePresentedEvent

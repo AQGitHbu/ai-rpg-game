@@ -43,7 +43,7 @@ describe("parseActionRequest — free_text", () => {
   });
 
   it("free_text 必须提供 targetNpcId", () => {
-    const r = parseActionRequest({ actionId: ACTION_ID, expectedRevision: 0, interaction: { kind: "free_text", text: "休息一下" } });
+    const r = parseActionRequest({ actionId: ACTION_ID, expectedRevision: 0, interaction: { kind: "free_text", text: "我想说点什么" } });
     expect(r.ok).toBe(false);
   });
 

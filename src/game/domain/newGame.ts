@@ -36,10 +36,26 @@ export type NewGameInputError = {
 
 declare const validatedNewGameInputBrand: unique symbol;
 
-/** 规范化后的输入：字段已 trim、标签已去空白。与原始 NewGameInput 类型不可互换。 */
+/** 规范化后的输入：字段已 trim、标签已去空白。与原始 NewGameInput 类型不可互换 。 */
 export type ValidatedNewGameInput = NewGameInput & {
   gameLength: GameLength;
   readonly [validatedNewGameInputBrand]: true;
+};
+
+/**
+ * 开局配置（已通过 validateNewGameInput 的字段子集）。
+ * 世界生成源必须消费该配置，并持久化到 generation 元数据，
+ * 使角色名/身份/世界观/故事开端对玩家可见且可追溯。
+ */
+export type GameSetup = {
+  readonly characterName: string;
+  readonly characterIdentity: string;
+  readonly characterProfile?: string;
+  readonly personalityTags: readonly string[];
+  readonly worldPremise: string;
+  readonly storyOpening: string;
+  readonly narrativeStyle: NarrativeStyle;
+  readonly contentIntensity: ContentIntensity;
 };
 
 export type ValidateNewGameInputResult =

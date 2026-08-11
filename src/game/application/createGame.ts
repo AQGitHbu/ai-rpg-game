@@ -1,7 +1,8 @@
 import type { GameRepository } from "./server/persistence/gameRepository";
 import type { GameId } from "./server/persistence/gameRepository";
 import type { StoryState } from "@/game/domain/storyState";
-import type { GameTypeId, GameLength } from "@/game/domain/newGame";
+import type { GameTypeId, GameLength, GameSetup, NewGameInput } from "@/game/domain/newGame";
+import { validateNewGameInput } from "@/game/domain/newGame";
 import type { WorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
 import { parseWorldGenerationCandidate } from "@/game/domain/worldGenerationCandidate";
 import { validateWorldGenerationCandidate } from "@/game/gameplay/rpg/worldGeneration";
@@ -23,6 +24,8 @@ export type WorldGenerationSource = {
     gameType: GameTypeId;
     seed: string;
     gameLength: GameLength;
+    /** 玩家开局配置：生成源必须消费（角色/世界观/故事开端），不得丢弃。 */
+    setup?: GameSetup;
   }): Promise<WorldGenerationCandidate>;
 };
 
@@ -31,6 +34,7 @@ export type CreateGameInput = {
   readonly gameType: GameTypeId;
   readonly gameLength: GameLength;
   readonly seed: string;
+  readonly setup?: GameSetup;
   readonly replaceCurrent?: {
     readonly expectedGameId: GameId;
     readonly expectedRevision: number;
@@ -40,6 +44,71 @@ export type CreateGameInput = {
 export type CreateGameResult =
   | { readonly ok: true; readonly revision: number }
   | { readonly ok: false; readonly code: "ACTIVE_GAME_EXISTS" | "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "GAME_NOT_ENDED" | "GENERATION_FAILED" | "INFRASTRUCTURE_FAILURE" };
+
+// ---------------------------------------------------------------------------
+// 开局配置解析：路由层不得直连 domain，统一经 application 层调用
+// validateNewGameInput；提交任一配置字段时必须整体通过校验。
+// ---------------------------------------------------------------------------
+
+export type ParseGameSetupInput = {
+  readonly gameType: string;
+  readonly gameLength: string;
+  readonly characterName?: unknown;
+  readonly characterIdentity?: unknown;
+  readonly characterProfile?: unknown;
+  readonly personalityTags?: unknown;
+  readonly worldPremise?: unknown;
+  readonly storyOpening?: unknown;
+  readonly narrativeStyle?: unknown;
+  readonly contentIntensity?: unknown;
+};
+
+export type ParseGameSetupResult =
+  | { readonly ok: true; readonly setup: GameSetup }
+  | { readonly ok: false; readonly errors: readonly { readonly field: string; readonly code: string }[] };
+
+const SETUP_FIELD_KEYS = [
+  "characterName", "characterIdentity", "characterProfile", "personalityTags",
+  "worldPremise", "storyOpening", "narrativeStyle", "contentIntensity",
+] as const;
+
+/** 无任一配置字段时返回 null；有则整体校验，产出 GameSetup 或字段错误列表。 */
+export function parseGameSetup(raw: ParseGameSetupInput): ParseGameSetupResult | null {
+  if (!SETUP_FIELD_KEYS.some((key) => raw[key] !== undefined)) return null;
+  const stringOrEmpty = (value: unknown): string => (typeof value === "string" ? value : "");
+  const input: NewGameInput = {
+    gameType: raw.gameType as NewGameInput["gameType"],
+    characterName: stringOrEmpty(raw.characterName),
+    characterIdentity: stringOrEmpty(raw.characterIdentity),
+    ...(typeof raw.characterProfile === "string" ? { characterProfile: raw.characterProfile } : {}),
+    personalityTags: Array.isArray(raw.personalityTags) && raw.personalityTags.every((entry) => typeof entry === "string")
+      ? (raw.personalityTags as string[])
+      : [],
+    worldPremise: stringOrEmpty(raw.worldPremise),
+    storyOpening: stringOrEmpty(raw.storyOpening),
+    narrativeStyle: (typeof raw.narrativeStyle === "string" ? raw.narrativeStyle : "concise") as NewGameInput["narrativeStyle"],
+    contentIntensity: (typeof raw.contentIntensity === "string" ? raw.contentIntensity : "normal") as NewGameInput["contentIntensity"],
+    gameLength: raw.gameLength as GameLength,
+  };
+  const validation = validateNewGameInput(input);
+  if (!validation.ok) {
+    return { ok: false, errors: validation.errors.map((error) => ({ field: error.field, code: error.code })) };
+  }
+  const value = validation.value;
+  return {
+    ok: true,
+    setup: {
+      characterName: value.characterName,
+      characterIdentity: value.characterIdentity,
+      ...(value.characterProfile === undefined ? {} : { characterProfile: value.characterProfile }),
+      personalityTags: value.personalityTags,
+      worldPremise: value.worldPremise,
+      storyOpening: value.storyOpening,
+      narrativeStyle: value.narrativeStyle,
+      contentIntensity: value.contentIntensity,
+    },
+  };
+}
 
 export type CreateGameDeps = {
   readonly repository: GameRepository;
@@ -72,6 +141,7 @@ export async function createGame(
     gameType: input.gameType,
     seed: input.seed,
     gameLength: input.gameLength,
+    ...(input.setup === undefined ? {} : { setup: input.setup }),
   });
   if (!generated) return { ok: false, code: "GENERATION_FAILED" };
 
@@ -91,6 +161,7 @@ export async function createGame(
     templateVersion: "v2" as const,
     inputDigest: "",
     gameType: input.gameType,
+    ...(input.setup === undefined ? {} : { setup: input.setup }),
   };
 
   const { worldState, storyState } = compileWorldGenerationCandidate({
@@ -260,7 +331,7 @@ export function createFixtureWorldSource(): WorldGenerationSource {
       const locations = medium
         ? [
             {
-              id: "loc_start", name: profile.start, description: `一处临近${variant.route}的落脚点。`, kind: "main" as const,
+              id: "loc_start", name: profile.start, description: `一处临近${variant.route}的落脚点。`, kind: "main" as const, scale: "town" as const,
               connectedLocationIds: ["loc_street"], npcIds: ["npc_innkeeper"], availableItemIds: [], tags: [input.gameType],
             },
             {
@@ -282,7 +353,7 @@ export function createFixtureWorldSource(): WorldGenerationSource {
           ]
         : [
             {
-              id: "loc_start", name: profile.start, description: `一处临近${variant.route}的落脚点。`, kind: "main" as const,
+              id: "loc_start", name: profile.start, description: `一处临近${variant.route}的落脚点。`, kind: "main" as const, scale: "town" as const,
               connectedLocationIds: ["loc_street"], npcIds: ["npc_innkeeper"], availableItemIds: [], tags: [input.gameType],
             },
             {
@@ -349,9 +420,9 @@ export function createFixtureWorldSource(): WorldGenerationSource {
           tags: [profile.genre, input.gameType],
         },
         player: {
-          name: "无名旅者",
-          identity: profile.identity,
-          backgroundSummary: `为追寻一段被掩埋的${profile.genre}真相独自上路。`,
+          name: input.setup?.characterName ?? "无名旅者",
+          identity: input.setup?.characterIdentity ?? profile.identity,
+          backgroundSummary: input.setup?.characterProfile ?? `为追寻一段被掩埋的${profile.genre}真相独自上路。`,
           startingLocationId: "loc_start",
           startingItemIds: [],
           baseStats: { hp: 100, attack: 10, defense: 5 },

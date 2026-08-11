@@ -7,7 +7,6 @@ const TALK_VERBS = ["和", "与", "跟", "找", "问", "交谈", "聊聊", "说�
 const TAKE_VERBS = ["拿", "取", "捡", "拿走", "拾起", "取走"];
 const INVESTIGATE_VERBS = ["调查", "查看", "检查", "研究", "观察"];
 const EXPLORE_VERBS = ["探索", "四处看看", "看看周围", "搜索"];
-const REST_VERBS = ["休息", "睡觉", "歇息", "打坐"];
 
 function matchesAny(text: string, verbs: readonly string[]): boolean {
   return verbs.some((v) => text.includes(v));
@@ -56,11 +55,6 @@ export function preClassifyFreeText(text: string, ctx: IntentContext): Action | 
   // 5. Explore
   if (matchesAny(trimmed, EXPLORE_VERBS)) {
     return { type: "explore" };
-  }
-
-  // 6. Rest
-  if (matchesAny(trimmed, REST_VERBS)) {
-    return { type: "rest" };
   }
 
   // 无法纯规则分类——需要 AI

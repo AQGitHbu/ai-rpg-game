@@ -10,7 +10,7 @@ import { createLogSink, createLogger } from "@ai-game/logging";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function runCli(dbPath, args) {
-  const output = execFileSync(process.execPath, ["scripts/logs.mjs", ...args], {
+  const output = execFileSync(process.execPath, ["--preserve-symlinks", "scripts/logs.mjs", ...args], {
     cwd: ROOT,
     env: { ...process.env, GAME_LOG_DB_PATH: dbPath },
     encoding: "utf8",

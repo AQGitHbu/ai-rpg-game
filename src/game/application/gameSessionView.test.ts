@@ -48,8 +48,10 @@ describe("projectGameSessionView", () => {
 
   it("projects available NPCs at current location", () => {
     const view = projectGameSessionView(ws, ss, 0, "test-ending-session");
-    expect(view.narrative.npcDialogues).toHaveLength(1);
-    expect(view.narrative.npcDialogues[0]?.name).toBe("老板");
+    // 无焦点场景时 NPC 经 currentLocation.npcs 暴露；不渲染模板对话面板
+    expect(view.currentLocation.npcs).toHaveLength(1);
+    expect(view.currentLocation.npcs[0]?.name).toBe("老板");
+    expect(view.narrative.npcDialogues).toHaveLength(0);
   });
 
   it("projects available moves to connected unlocked locations", () => {
@@ -74,14 +76,11 @@ describe("projectGameSessionView", () => {
     };
     const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
     const view = projectGameSessionView(wsTwo, ss, 0, "test-ending-session");
-    const dialogues = view.narrative.npcDialogues;
-    expect(dialogues).toBeDefined();
-    const ids = (dialogues ?? []).map((d) => String(d.npcId));
-    expect(ids).toContain("npc_1");
-    expect(ids).toContain("npc_2");
-    for (const d of dialogues ?? []) {
-      expect(d.speechPages.length).toBeGreaterThan(0);
-    }
+    // 无焦点场景：所有在场 NPC 经 currentLocation.npcs 暴露，不产生模板对话面板
+    const names = view.currentLocation.npcs.map((npc) => npc.name);
+    expect(names).toContain("老板");
+    expect(names).toContain("客人");
+    expect(view.narrative.npcDialogues ?? []).toHaveLength(0);
   });
 
   it("read model 零泄漏：序列化 view 不含 actionKey/choiceRegistry/PendingNarrativeJob/candidateEventPool/hidden facts", () => {
@@ -166,9 +165,9 @@ describe("projectGameSessionView", () => {
     // 焦点 NPC 持有两个 dialogue choices 且 freeInput 开启
     expect(lu?.choices?.map((c) => c.choiceToken).sort()).toEqual(["t1", "t2"]);
     expect(lu?.freeInputEnabled).toBe(true);
-    // 非焦点 NPC 只有台词，无 choices，freeInput 关闭
-    expect(guest?.choices ?? []).toHaveLength(0);
-    expect(guest?.freeInputEnabled).toBe(false);
+    // 非焦点 NPC 无场景供给台词时不渲染模板面板（仍经 currentLocation.npcs 可见）
+    expect(guest).toBeUndefined();
+    expect(view.currentLocation.npcs.map((npc) => npc.name)).toContain("客人");
     // 世界行动选择不投影为每 NPC 对话选择（dialogue 场景下 narrative.choices 应为空）
     expect(view.narrative.choices ?? []).toHaveLength(0);
   });
@@ -198,7 +197,14 @@ describe("projectGameSessionView", () => {
         ],
       },
     };
-    const view = projectGameSessionView(ws, ssScene, 0, "test-ending-session");
+    // 本地点有未发现线索事实 → explore 场景选项具备可探索性，可以投影。
+    const wsWithTrace = {
+      ...ws,
+      worldFacts: [
+        { factId: asFactId("fact_trace"), text: "柜台下的旧账簿", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") },
+      ],
+    };
+    const view = projectGameSessionView(wsWithTrace, ssScene, 0, "test-ending-session");
     // 世界行动选项出现在 narrative.choices（白名单形状）
     expect(view.narrative.choices?.map((c) => c.choiceToken).sort()).toEqual(["w1", "w2"]);
     for (const c of view.narrative.choices ?? []) {
@@ -210,15 +216,45 @@ describe("projectGameSessionView", () => {
     }
   });
 
+  it("无剧情钩子的地点：探索场景选项被过滤（方案 1）", () => {
+    const scene = {
+      sceneId: "scene-w",
+      turn: 0,
+      narration: "你在客栈大堂。",
+      usedFactIds: [],
+      npcLine: null,
+      choices: [
+        { choiceToken: "w1", label: "观察", choiceKind: "world_action" as const, actionKey: "explore" },
+        { choiceToken: "w2", label: "离开", choiceKind: "world_action" as const, actionKey: "move:loc_2" },
+      ] as const,
+      source: "generated" as const,
+      event: { kind: "observe" as const, locationId: asLocationId("loc_1") },
+    };
+    const ssScene = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("w1", "scene-w", 0, scene.choices[0].label, { type: "explore" }),
+          approved("w2", "scene-w", 0, scene.choices[1].label, { type: "move", locationId: asLocationId("loc_2") }),
+        ],
+      },
+    };
+    // 干净地点：无事实、无物品、无任务、无候选事件 → explore 不投影，move 仍投影。
+    const view = projectGameSessionView(ws, ssScene, 0, "test-ending-session");
+    expect(view.narrative.choices?.map((c) => c.choiceToken).sort()).toEqual(["w2"]);
+  });
+
   it("只投影当前场景、当前 revision 且仍可执行的 ApprovedChoice token", () => {
     const cases: readonly {
       readonly badToken: string;
       readonly badRegistry: readonly ApprovedChoice[];
     }[] = [
       { badToken: "missing-token", badRegistry: [] },
-      { badToken: "stale-token", badRegistry: [approved("stale-token", "scene-current", 3, "旧选项", { type: "rest" })] },
-      { badToken: "wrong-scene-token", badRegistry: [approved("wrong-scene-token", "scene-other", 4, "别处选项", { type: "rest" })] },
-      { badToken: "tampered-token", badRegistry: [approved("server-token", "scene-current", 4, "服务器原始选项", { type: "rest" })] },
+      { badToken: "stale-token", badRegistry: [approved("stale-token", "scene-current", 3, "旧选项", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" })] },
+      { badToken: "wrong-scene-token", badRegistry: [approved("wrong-scene-token", "scene-other", 4, "别处选项", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" })] },
+      { badToken: "tampered-token", badRegistry: [approved("server-token", "scene-current", 4, "服务器原始选项", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" })] },
       { badToken: "illegal-token", badRegistry: [approved("illegal-token", "scene-current", 4, "前往未连接地点", { type: "move", locationId: asLocationId("loc_locked") })] },
     ];
 
@@ -242,14 +278,14 @@ describe("projectGameSessionView", () => {
           ...ss.narrative,
           currentScene: scene,
           choiceRegistry: [
-            approved("valid-token", scene.sceneId, 4, "继续观察", { type: "explore" }),
+            approved("valid-token", scene.sceneId, 4, "询问老板", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }),
             ...testCase.badRegistry,
           ],
         },
       };
 
       expect(projectGameSessionView(ws, story, 4, "test-ending-session").narrative.choices).toEqual([
-        { choiceToken: "valid-token", label: "继续观察", presentation: "explore" },
+        { choiceToken: "valid-token", label: "询问老板", presentation: "dialogue" },
       ]);
     }
   });
@@ -343,6 +379,8 @@ describe("projectGameSessionView", () => {
         : location),
       items: [{ id: itemId, name: "铜钥匙", description: "一把旧钥匙", kind: "key", tags: [] }],
       enemies: [{ id: enemyId, name: "灰狼", tier: "normal", stats: { hp: 20, attack: 5, defense: 2 }, locationId: asLocationId("loc_1"), tags: [] }],
+      // 未发现的线索事实：探索的真正剧情钩子（仅有物品/敌人不构成探索钩子）。
+      worldFacts: [{ factId: asFactId("fact_trace"), text: "柜底暗格", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") }],
     };
 
     const view = projectGameSessionView(completeWorld, ss, 7, "test-ending-session");
@@ -352,15 +390,15 @@ describe("projectGameSessionView", () => {
     expect(travel?.choiceToken).not.toContain("loc_2");
 
     expect(view.currentLocation.actions.map((choice) => choice.presentation)).toEqual([
-      "explore", "dialogue", "battle", "rest",
+      "explore", "dialogue", "battle",
     ]);
     expect(view.obtainableItems).toEqual([
       expect.objectContaining({ name: "铜钥匙", choice: expect.objectContaining({ presentation: "item" }) }),
     ]);
     expect(Object.keys(view.worldMap.locations[0]!).sort()).toEqual([
-      "current", "name", "travelChoice", "visited",
+      "current", "name", "scale", "travelChoice", "visited",
     ]);
-    expect(Object.keys(view.currentLocation).sort()).toEqual(["actions", "description", "name"]);
+    expect(Object.keys(view.currentLocation).sort()).toEqual(["actions", "description", "name", "npcs", "scale"]);
     expect(Object.keys(view.obtainableItems[0]!).sort()).toEqual(["choice", "description", "name"]);
     const inventoryView = projectGameSessionView({ ...completeWorld, inventory: [itemId] }, ss, 7, "test-ending-session");
     expect(inventoryView.inventory).toEqual([{ name: "铜钥匙", description: "一把旧钥匙" }]);
@@ -370,7 +408,7 @@ describe("projectGameSessionView", () => {
       ...view.obtainableItems.map((item) => item.choice),
     ]) {
       expect(choice.choiceToken).toMatch(/^c_[0-9a-f]{16}$/);
-      expect(choice.choiceToken).not.toMatch(/move:|take_item:|attack:|explore|rest/);
+      expect(choice.choiceToken).not.toMatch(/move:|take_item:|attack:|explore/);
     }
     const executable = buildChoiceMap(completeWorld, ss, 7);
     for (const playerChoice of [
@@ -474,5 +512,76 @@ describe("projectGameSessionView", () => {
       "description", "kind", "name", "objectives", "status",
     ]);
     expect(Object.keys(view.ending!).sort()).toEqual(["description", "name", "outcome", "restartIdentity"]);
+  });
+
+  it("projects smallTalk for non-focus NPCs when provided in scene", () => {
+    const scene = {
+      sceneId: "scene-small-talk",
+      turn: 2,
+      narration: "你与周伯交谈时，韩征在一旁巡视。",
+      usedFactIds: [],
+      npcLine: { npcId: asNpcId("npc_1"), text: "周伯低声说道：那天晚上我确实看到了可疑的人影。", emotion: "guarded" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "c_choice1", label: "追问详情" },
+        { choiceToken: "c_choice2", label: "表示支持" },
+      ] as const,
+      source: "generated" as const,
+      event: { kind: "dialogue" as const, focusNpcId: asNpcId("npc_1") },
+      npcDialogues: [
+        {
+          npcId: asNpcId("npc_1"),
+          npcName: "周伯",
+          npcRole: "客栈掌柜",
+          speechPages: ["那天晚上我确实看到了可疑的人影。"],
+        },
+        {
+          npcId: asNpcId("npc_2"),
+          npcName: "韩征",
+          npcRole: "捕头",
+          speechPages: ["韩征看了你一眼，继续巡视。"],
+          smallTalk: {
+            prompt: "向韩征打个招呼",
+            response: "韩征点了点头：「有什么事直接找我，别耽误正事。」",
+          },
+        },
+      ],
+    };
+    const secondNpc: NpcEntry = {
+      id: asNpcId("npc_2"), name: "韩征", role: "捕头", description: "镇上的捕头",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
+    const story = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("c_choice1", scene.sceneId, 2, "追问详情", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }),
+          approved("c_choice2", scene.sceneId, 2, "表示支持", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" }),
+        ],
+      },
+    };
+
+    const view = projectGameSessionView(wsTwo, story, 2, "test-ending-session");
+    const dialogues = view.narrative.npcDialogues ?? [];
+
+    // 焦点 NPC (周伯) 有选项，无闲聊
+    const focusNpc = dialogues.find((d) => d.npcId === "npc_1");
+    expect(focusNpc).toBeDefined();
+    expect(focusNpc?.choices).toHaveLength(2);
+    expect(focusNpc?.freeInputEnabled).toBe(true);
+    expect(focusNpc?.smallTalk).toBeUndefined();
+
+    // 非焦点 NPC (韩征) 无选项，有闲聊
+    const nonFocusNpc = dialogues.find((d) => d.npcId === "npc_2");
+    expect(nonFocusNpc).toBeDefined();
+    expect(nonFocusNpc?.choices).toHaveLength(0);
+    expect(nonFocusNpc?.freeInputEnabled).toBe(false);
+    expect(nonFocusNpc?.smallTalk).toEqual({
+      prompt: "向韩征打个招呼",
+      response: "韩征点了点头：「有什么事直接找我，别耽误正事。」",
+    });
   });
 });

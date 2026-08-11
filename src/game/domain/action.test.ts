@@ -66,16 +66,17 @@ describe("Action types", () => {
 describe("Action support matrix (Task 29)", () => {
   it("declares the canonical set of fully-supported production action types", () => {
     const expected = [
-      "talk", "move", "explore", "investigate", "take_item",
-      "attack", "battle_action", "rest", "ack_prologue", "freeform",
+      "talk", "move", "explore", "investigate", "take_item", "give_item",
+      "attack", "battle_action", "ack_prologue", "freeform",
     ];
     expect([...SUPPORTED_ACTION_TYPES]).toEqual(expected);
   });
 
   it("does NOT include unimplemented action types in the supported set", () => {
-    // use_item/give_item/interact/accept_quest/narrative_choice 无规则实现，
+    // use_item/interact/accept_quest/narrative_choice 无规则实现，
     // 不得作为永远 INTENT_NOT_ROUTED 的公开候选保留。
-    const unimplemented = ["use_item", "give_item", "interact", "accept_quest", "narrative_choice"];
+    // give_item 于 2026-08-09 补齐规则实现，已移出未实现清单。
+    const unimplemented = ["use_item", "interact", "accept_quest", "narrative_choice"];
     for (const t of unimplemented) {
       expect(SUPPORTED_ACTION_TYPES).not.toContain(t);
     }
@@ -91,8 +92,8 @@ describe("Action support matrix (Task 29)", () => {
 
   it("ack_prologue is the only supported type allowed to produce no primary event", () => {
     const expected = new Set(SUPPORTED_ACTION_TYPES);
-    // explore/rest/freeform 必须产生主事件；仅 ack_prologue 允许空事件（幂等标记）。
-    for (const t of ["explore", "rest", "freeform"] as const) {
+    // explore/freeform 必须产生主事件；仅 ack_prologue 允许空事件（幂等标记）。
+    for (const t of ["explore", "freeform"] as const) {
       expect(expected.has(t)).toBe(true);
     }
   });

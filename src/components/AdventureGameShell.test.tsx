@@ -19,24 +19,27 @@ const TOKENS = {
   battle: "c_0000000000000006",
 } as const;
 
-function choice(choiceToken: string, label: string, presentation: "dialogue" | "travel" | "explore" | "item" | "battle" | "rest") {
+function choice(choiceToken: string, label: string, presentation: "dialogue" | "travel" | "explore" | "item" | "battle") {
   return { choiceToken, label, presentation } as const;
 }
 
 function buildView(): GameSessionView {
   return {
     revision: 9,
+    turnNumber: 8,
     gameType: "wuxia",
+    setup: { storyOpening: null, worldPremise: null, characterProfile: null, narrativeStyle: null },
     player: { name: "侠客", identity: "剑客", hp: 90, attack: 10, defense: 5 },
     worldMap: {
       locations: [
-        { name: "客栈", current: true, visited: true, travelChoice: null },
-        { name: "街道", current: false, visited: false, travelChoice: choice(TOKENS.travel, "前往街道", "travel") },
+        { name: "客栈", current: true, visited: true, scale: "town", travelChoice: null },
+        { name: "街道", current: false, visited: false, scale: "scene", travelChoice: choice(TOKENS.travel, "前往街道", "travel") },
       ],
     },
     currentLocation: {
-      name: "客栈", description: "一间客栈",
+      name: "客栈", description: "一间客栈", scale: "town",
       actions: [choice(TOKENS.explore, "探索客栈", "explore")],
+      npcs: [],
     },
     obtainableItems: [{ name: "铜钥匙", description: "旧钥匙", choice: choice(TOKENS.item, "拾取铜钥匙", "item") }],
     inventory: [],
@@ -50,6 +53,7 @@ function buildView(): GameSessionView {
           choice(TOKENS.dialogueTwo, "表示理解", "dialogue"),
         ],
         freeInputEnabled: true,
+        giveChoices: [],
       }],
     },
     narrativeGeneration: { status: "idle" },
@@ -180,6 +184,55 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.getByRole("heading", { name: "老板" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "关闭对话" }));
     expect(screen.queryByRole("heading", { name: "老板" })).not.toBeInTheDocument();
+  });
+
+  it("auto-switches to the scene view when the player moves to a new location", () => {
+    const initialView = buildView();
+    const { rerender } = render(<AdventureGameShell
+      view={initialView}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+
+    // 初始仍在地图视图，等待玩家手动进入
+    expect(screen.getByRole("button", { name: "进入客栈" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "地点场景：客栈" })).not.toBeInTheDocument();
+
+    // 玩家移动到新地点：performTurn 返回 currentLocation 变化、revision+1
+    const movedView: GameSessionView = {
+      ...initialView,
+      revision: initialView.revision + 1,
+      worldMap: {
+        locations: [
+          { name: "客栈", current: false, visited: true, scale: "town", travelChoice: choice(TOKENS.travel, "前往客栈", "travel") },
+          { name: "街道", current: true, visited: true, scale: "scene", travelChoice: null },
+        ],
+      },
+      currentLocation: {
+        name: "街道",
+        description: "夜市灯火通明",
+        scale: "scene",
+        actions: [choice(TOKENS.explore, "探索街道", "explore")],
+        npcs: [],
+      },
+      narrative: {
+        ...initialView.narrative,
+        narration: "夜市灯火通明，行人摩肩接踵。",
+        npcDialogues: [],
+        choices: [],
+      },
+    };
+    rerender(<AdventureGameShell
+      view={movedView}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+
+    // 移动到新地点后应自动进入场景视图，显示新地点的探索/活动行动栏
+    expect(screen.getByRole("region", { name: "地点场景：街道" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "探索街道" })).toBeInTheDocument();
   });
 
   it("hides NPC dialogue panels while narrative generation is pending instead of showing empty choices", async () => {

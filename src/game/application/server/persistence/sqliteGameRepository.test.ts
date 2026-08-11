@@ -156,6 +156,41 @@ describe("sqliteGameRepository", () => {
     expect(r2).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
   });
 
+  it("applyState with incrementRevision=false keeps revision unchanged and later CAS still succeeds", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    const { worldState, storyState } = buildTestState();
+    const gameId = asGameId("g1");
+
+    await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });
+
+    // 元数据更新（如 ackPrologue 的 prologueShown）：revision 不递增
+    const r1 = await repo.applyState({
+      gameId,
+      expectedRevision: 0,
+      nextWorldState: worldState,
+      nextStoryState: { ...storyState, prologueShown: true },
+      incrementRevision: false,
+    });
+    expect(r1.ok).toBe(true);
+    if (r1.ok) {
+      expect(r1.record.revision).toBe(0);
+      expect(r1.record.storyState.prologueShown).toBe(true);
+    }
+
+    // 持久化读回同样保持 revision 不变
+    const current = await repo.getCurrentGame();
+    if (current.ok && current.status === "active") {
+      expect(current.record.revision).toBe(0);
+      expect(current.record.storyState.prologueShown).toBe(true);
+    }
+
+    // 后续基于同一 revision 的正常写入（默认递增）仍可 CAS 成功
+    const r2 = await repo.applyState({ gameId, expectedRevision: 0, nextWorldState: worldState, nextStoryState: storyState });
+    expect(r2.ok).toBe(true);
+    if (r2.ok) expect(r2.record.revision).toBe(1);
+  });
+
   it("applySceneWriteBack only updates narrative + candidateEventPool", async () => {
     const dbPath = nextDbPath();
     const repo = openRepo(dbPath);

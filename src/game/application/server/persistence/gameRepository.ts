@@ -44,6 +44,12 @@ export type ApplyStateInput = {
   readonly expectedRevision: number;
   readonly nextWorldState: WorldState;
   readonly nextStoryState: StoryState;
+  /**
+   * 是否递增 revision（默认 true）。仅用于"不改变世界状态"的元数据更新
+   * （如 ackPrologue 的 prologueShown 标记）：递增会破坏基于旧 revision
+   * 铸造的 choiceToken，导致当前场景固定选项全部失效。
+   */
+  readonly incrementRevision?: boolean;
 };
 
 export type ApplySceneWriteBackInput = {

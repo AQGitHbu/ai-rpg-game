@@ -1,9 +1,10 @@
 import type { WorldState } from "@/game/domain/worldState";
-import { findLocation, findNpc } from "@/game/domain/worldState";
+import { findLocation, findNpc, findItem } from "@/game/domain/worldState";
 import type { Action } from "@/game/domain/action";
 import type { GameEvent } from "@/game/domain/events";
 import type { ResolvedEventStatus, StateChange, FactChange } from "@/game/domain/resolvedEvent";
 import { startBattle, battleAction } from "./battleResolver";
+import { updateNpcMemory } from "./updateNpcMemory";
 import { resolveDialogue } from "@/game/gameplay/rpg/dialogue";
 
 export type ResolveResult = {
@@ -138,6 +139,35 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       ];
       return { ok: true, nextWorldState: nextWs, events: [event], feedback: "你取得了这件物品。", status: "success", stateChanges, facts: [] };
     }
+    case "give_item": {
+      const item = findItem(ws, action.itemId);
+      const npc = findNpc(ws, action.npcId);
+      if (item === undefined || npc === undefined) return { ok: false, feedback: "无法交付这件物品。" };
+      const event: GameEvent = { type: "item_given", itemId: action.itemId, npcId: action.npcId, locationId: ws.currentLocationId, occurredAt };
+      // 移交是善意互动：好感 +1，记入交互历史（同 actionId 去重由 appendInteraction 保证）。
+      const npcAfter = updateNpcMemory(npc, {
+        turnNumber: deps.turnNumber,
+        actionId: deps.actionId,
+        locationId: ws.currentLocationId,
+        dialogueAct: "offer",
+        topicSummary: `收到玩家交付的${item.name}`,
+        outcome: "positive",
+        relationshipDelta: 1,
+        learnedFactIds: [],
+        summary: `收下了${item.name}`,
+      });
+      const nextWs: WorldState = {
+        ...ws,
+        inventory: ws.inventory.filter((id) => id !== action.itemId),
+        npcs: ws.npcs.map((n) => n.id === action.npcId ? npcAfter : n),
+        eventLedger: [...ws.eventLedger, event],
+      };
+      const stateChanges: StateChange[] = [
+        { path: "inventory", description: `交出物品 ${item.name}`, operation: "remove" },
+        { path: `npcs[${String(action.npcId)}].memory`, description: `${npc.name} 收下物品，关系改善`, operation: "set" },
+      ];
+      return { ok: true, nextWorldState: nextWs, events: [event], feedback: `你把${item.name}交给了${npc.name}。`, status: "success", stateChanges, facts: [] };
+    }
     case "explore": {
       // 无状态行动也产生主事件（Task 29）：explore → location_explored，不得 success + 空事件。
       const event: GameEvent = { type: "location_explored", locationId: ws.currentLocationId, occurredAt };
@@ -146,19 +176,6 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         nextWorldState: { ...ws, eventLedger: [...ws.eventLedger, event] },
         events: [event],
         feedback: "你探索了周围环境。",
-        status: "success",
-        stateChanges: [],
-        facts: [],
-      };
-    }
-    case "rest": {
-      // 无状态行动也产生主事件（Task 29）：rest → player_rested，不得 success + 空事件。
-      const event: GameEvent = { type: "player_rested", occurredAt };
-      return {
-        ok: true,
-        nextWorldState: { ...ws, eventLedger: [...ws.eventLedger, event] },
-        events: [event],
-        feedback: "你休息了一会儿。",
         status: "success",
         stateChanges: [],
         facts: [],

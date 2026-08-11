@@ -75,6 +75,11 @@ describe("parseIntentPayload dialogueAct 映射表", () => {
     const result = parseIntentPayload({ dialogueAct: "support" }, "我相信你", ctx, asNpcId("npc_ghost"));
     expect(result.ok).toBe(false);
   });
+
+  it("已移除的休息 payload 不再转换为 Action", () => {
+    const result = parseIntentPayload({ type: "rest" }, "休息一下", ctx);
+    expect(result.ok).toBe(false);
+  });
 });
 
 describe("createRuleIntentParser（无 AI 配置时的确定性源）", () => {

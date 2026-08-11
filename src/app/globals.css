@@ -1185,30 +1185,68 @@ body:has(.adventure-game-shell) {
 
 .npc-dialogue-stage {
   display: grid;
-  grid-template-columns: minmax(96px, 140px) 1fr;
+  grid-template-columns: 100px 1fr;
   gap: 16px;
   align-items: start;
 }
 
 .npc-dialogue-figure {
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  padding: 12px 8px;
-  border-radius: 10px;
-  background: var(--game-surface-raised);
-  border: 1px solid var(--game-surface-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   text-align: center;
+  margin: 0;
+}
+
+/* 长方形竖版头像 (3:4 比例) */
+.npc-dialogue-portrait {
+  width: 90px;
+  height: 120px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #1a221d;
+  border: 1px solid var(--game-accent);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.npc-dialogue-portrait svg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .npc-dialogue-figure h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.95rem;
+  color: var(--game-text-primary);
 }
 
-.npc-dialogue-figure span {
+.npc-dialogue-figure > span {
   color: var(--game-text-muted);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
+}
+
+/* 非焦点 NPC：发起交谈 CTA 按钮 */
+.npc-dialogue-talk-cta {
+  width: 100%;
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--game-accent);
+  background: rgba(215, 185, 111, 0.12);
+  color: var(--game-accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+
+.npc-dialogue-talk-cta:hover:not(:disabled) {
+  background: var(--game-accent);
+  color: #111;
 }
 
 .npc-dialogue-speech {
@@ -1280,6 +1318,39 @@ body:has(.adventure-game-shell) {
 .npc-dialogue-choices button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* 闲聊按钮：次要视觉权重，区别于主要对话选项 */
+.npc-dialogue-small-talk-btn {
+  padding: 6px 12px;
+  border: 1px dashed var(--game-surface-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--game-text-muted);
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.npc-dialogue-small-talk-btn:hover:not(:disabled) {
+  border-color: var(--game-accent);
+  color: var(--game-text-primary);
+  background: var(--game-accent-soft);
+}
+
+.npc-dialogue-small-talk-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 闲聊回复：视觉上区分于主要台词 */
+.npc-dialogue-small-talk-response {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--game-surface-border);
+  color: var(--game-text-muted);
+  font-style: italic;
 }
 
 .npc-dialogue-input {
@@ -2217,5 +2288,678 @@ body:has(.adventure-game-shell) {
     width: calc(100vw - 20px);
     max-height: calc(100dvh - 96px);
     padding: 14px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 全屏场景视图 (2层/3层 沉浸式 UI 重构)
+ * ------------------------------------------------------------------------- */
+
+.location-viewport--fullscreen {
+  position: absolute;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.location-backdrop--fullscreen {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.55;
+  filter: saturate(1.2) contrast(1.1);
+  pointer-events: none;
+}
+
+.location-backdrop--fullscreen svg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 右上角返回地图/小镇导航按钮 */
+.scene-top-nav {
+  position: absolute;
+  top: 72px;
+  right: 20px;
+  z-index: 10;
+}
+
+.scene-return-map-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--game-accent);
+  background: rgba(14, 20, 16, 0.85);
+  backdrop-filter: blur(8px);
+  color: var(--game-accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  transition: all 160ms ease;
+}
+
+.scene-return-map-btn:hover {
+  background: var(--game-accent);
+  color: #111;
+  box-shadow: 0 0 12px rgba(215, 185, 111, 0.5);
+  transform: translateY(-1px);
+}
+
+/* 右侧 NPC 侧边栏 */
+.scene-npc-sidebar {
+  position: absolute;
+  top: 120px;
+  right: 20px;
+  z-index: 10;
+  width: 200px;
+  max-height: calc(100dvh - 200px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--game-surface-border);
+  background: rgba(10, 15, 12, 0.75);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.scene-npc-sidebar-header {
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  color: var(--game-accent);
+  text-transform: uppercase;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed var(--game-surface-border);
+}
+
+.scene-npc-sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scene-npc-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--game-surface-border);
+  background: var(--game-surface-raised);
+  color: var(--game-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.scene-npc-card:hover:not(:disabled) {
+  border-color: var(--game-accent);
+  background: rgba(215, 185, 111, 0.12);
+  transform: translateX(-2px);
+}
+
+.scene-npc-card--active {
+  border-color: var(--game-accent);
+  box-shadow: 0 0 10px rgba(215, 185, 111, 0.25);
+}
+
+.scene-npc-card--selected {
+  background: rgba(215, 185, 111, 0.2);
+  border-color: var(--game-accent);
+}
+
+.scene-npc-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid var(--game-surface-border);
+  flex-shrink: 0;
+  background: #1a221d;
+}
+
+.scene-npc-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.scene-npc-info strong {
+  font-size: 0.85rem;
+  color: var(--game-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scene-npc-info small {
+  font-size: 0.72rem;
+  color: var(--game-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scene-npc-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 0.8rem;
+  animation: pulse 1.5s infinite;
+}
+
+/* 场景全屏主视窗 */
+.location-scene-content--fullscreen {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  max-height: none;
+  border: none;
+  background: transparent;
+  backdrop-filter: none;
+  padding: 0;
+  pointer-events: none;
+  display: block;
+}
+
+.location-scene-content--fullscreen > * {
+  pointer-events: auto;
+}
+
+.location-scene-content--fullscreen .location-scene-caption {
+  position: absolute;
+  left: 24px;
+  bottom: 24px;
+  max-width: 360px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: rgba(10, 15, 12, 0.85);
+  border: 1px solid var(--game-surface-border);
+  color: var(--game-text-muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  text-align: left;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  pointer-events: auto;
+}
+
+@media (max-width: 1024px) {
+  .location-scene-content--fullscreen .location-scene-caption {
+    position: relative;
+    left: auto;
+    bottom: auto;
+    margin: 20px auto;
+    max-width: 90%;
+  }
+}
+
+/* 散布的可探索/调查物品点位 */
+.scene-interactive-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.scene-interactive-hotspot {
+  position: absolute;
+  z-index: 3;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: transform 200ms cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.scene-interactive-hotspot:hover:not(:disabled) {
+  transform: scale(1.12);
+}
+
+.hotspot-visual {
+  width: 48px;
+  height: 36px;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+  border: 1px solid var(--game-accent);
+  background: rgba(14, 20, 16, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hotspot-label {
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(10, 15, 12, 0.85);
+  border: 1px solid var(--game-surface-border);
+  color: var(--game-text-primary);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+/* 叙事浮层 (全屏下吸附在底中偏上) */
+.scene-narrative--overlay {
+  max-width: 640px;
+  margin: 0 auto;
+  background: rgba(10, 15, 12, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--game-surface-border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+/* 底部行动栏 */
+.scene-action-rail--bottom {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--game-surface-border);
+  background: rgba(10, 15, 12, 0.88);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+}
+
+/* NPC 对话 Modal 遮罩层 */
+.npc-dialogue-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  animation: modal-fade-in 0.2s ease-out;
+}
+
+.npc-dialogue-backdrop .npc-dialogue-panel {
+  width: min(580px, 92vw);
+  max-height: 85vh;
+  overflow-y: auto;
+  background: rgba(16, 22, 18, 0.95);
+  border: 1px solid var(--game-accent);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 20px rgba(215, 185, 111, 0.15);
+}
+
+@keyframes modal-fade-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@media (max-width: 768px) {
+  .location-scene-content--fullscreen {
+    padding: 70px 16px 100px 16px;
+  }
+  .scene-npc-sidebar {
+    top: 70px;
+    right: 12px;
+    width: 140px;
+  }
+  .scene-top-nav {
+    top: 70px;
+    left: 16px;
+    right: auto;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 2026-08-09 实机试玩 UI 重设计：顶栏 HUD + 底部行动栏，消除浮层重叠，
+ * 统一游戏风格按钮/徽标/面板。
+ * ------------------------------------------------------------------------- */
+
+.adventure-hud-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
+  pointer-events: auto;
+  background: linear-gradient(rgb(7 12 9 / 92%), rgb(7 12 9 / 55%) 78%, transparent);
+}
+
+/* 顶栏内元素取消绝对定位，改由 flex 布局接管 */
+.adventure-hud-topbar .adventure-hud-player-card,
+.adventure-hud-topbar .adventure-hud-location-title,
+.adventure-hud-topbar .adventure-hud-actions {
+  position: static;
+  transform: none;
+}
+
+.adventure-hud-center {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.adventure-hud-topbar .adventure-hud-location-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: clamp(1.05rem, 2.4vw, 1.4rem);
+  letter-spacing: 0.08em;
+}
+
+.adventure-hud-location-scale {
+  padding: 2px 8px;
+  border: 1px solid var(--game-accent);
+  border-radius: 999px;
+  color: var(--game-accent);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+}
+
+.adventure-hud-turn {
+  color: var(--game-text-muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+}
+
+.adventure-hud-topbar .adventure-hud-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: min(30rem, 48vw);
+}
+
+.adventure-hud-actions button {
+  padding: 7px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: rgb(17 22 18 / 86%);
+  color: var(--game-text-primary);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.adventure-hud-actions button:hover {
+  border-color: var(--game-accent);
+  background: rgb(26 34 28 / 92%);
+}
+
+.adventure-hud-actions button:focus-visible {
+  outline: 2px solid var(--game-accent);
+  outline-offset: 2px;
+}
+
+/* 当前目标：移到顶栏下方左上，不再垂直居中遮挡内容 */
+.adventure-hud-objective {
+  top: auto;
+  top: 78px;
+  left: max(14px, env(safe-area-inset-left));
+  transform: none;
+}
+
+/* 场景行动栏：底部居中横排，与顶栏导航不再重叠 */
+.scene-action-rail {
+  position: absolute;
+  inset: auto 50% max(12px, env(safe-area-inset-bottom)) 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(860px, calc(100vw - 24px));
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 12px;
+  background: rgb(7 12 9 / 78%);
+  backdrop-filter: blur(8px);
+}
+
+.scene-action-rail button {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: var(--game-surface-raised);
+  color: var(--game-text-primary);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.scene-action-rail button:hover:not(:disabled) {
+  border-color: var(--game-accent);
+}
+
+/* 场景内容给顶栏/底部行动栏留出空间 */
+.location-viewport .location-scene-content {
+  margin-top: 64px;
+  max-height: calc(100dvh - 190px);
+}
+
+/* 小镇人物入口 */
+.scene-town-residents {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 10px;
+  background: rgb(17 22 18 / 55%);
+}
+
+.scene-town-residents h3 {
+  margin: 0;
+  color: var(--game-accent);
+  font-size: 0.9rem;
+  letter-spacing: 0.14em;
+}
+
+.scene-town-residents button {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  padding: 8px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: var(--game-surface-raised);
+  color: var(--game-text-primary);
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.scene-town-residents button:hover:not(:disabled) {
+  border-color: var(--game-accent);
+}
+
+.scene-town-residents button span {
+  color: var(--game-text-muted);
+  font-size: 0.78rem;
+}
+
+/* 对话面板给予道具区 */
+.npc-dialogue-give {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--game-surface-border);
+}
+
+.npc-dialogue-give-label {
+  color: var(--game-accent);
+  font-size: 0.75rem;
+  letter-spacing: 0.14em;
+}
+
+.npc-dialogue-give button {
+  text-align: left;
+  padding: 7px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: var(--game-surface-raised);
+  color: var(--game-text-primary);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.npc-dialogue-give button:hover:not(:disabled) {
+  border-color: var(--game-accent);
+}
+
+/* 地图节点小镇徽标 */
+.map-node-scale {
+  padding: 1px 8px;
+  border: 1px solid var(--game-accent);
+  border-radius: 999px;
+  color: var(--game-accent);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+}
+
+/* 任务卡片 */
+.quest-card {
+  padding: 10px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: rgb(17 22 18 / 45%);
+}
+
+.quest-card--active {
+  border-color: var(--game-accent);
+}
+
+.quest-card h4 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+}
+
+.quest-status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.quest-status--active { background: rgb(215 185 111 / 18%); color: var(--game-accent); }
+.quest-status--completed { background: rgb(120 170 120 / 16%); color: #9ecf9e; }
+.quest-status--locked { background: rgb(120 120 120 / 14%); color: var(--game-text-muted); }
+.quest-status--failed { background: rgb(190 90 90 / 16%); color: #d99;
+}
+
+.quest-objective--done {
+  color: var(--game-text-muted);
+  text-decoration: line-through;
+  text-decoration-color: rgb(158 207 158 / 60%);
+}
+
+/* 角色面板：HP 条与背景 */
+.details-character {
+  display: grid;
+  gap: 14px;
+}
+
+.details-character-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.details-character-hp {
+  display: grid;
+  gap: 6px;
+}
+
+.details-character-hp-bar {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgb(120 120 120 / 20%);
+}
+
+.details-character-hp-bar > div {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #7ea87e, #9ecf9e);
+}
+
+.details-character-profile {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--game-accent);
+  background: rgb(17 22 18 / 45%);
+  color: var(--game-text-muted);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
+/* 背包条目 */
+.details-inventory li {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: rgb(17 22 18 / 45%);
+}
+
+.details-inventory li span {
+  color: var(--game-text-muted);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 700px) {
+  .adventure-hud-topbar {
+    flex-wrap: wrap;
+  }
+
+  .adventure-hud-topbar .adventure-hud-actions {
+    max-width: 100%;
+  }
+
+  .adventure-hud-objective {
+    top: 118px;
+  }
+
+  .location-viewport .location-scene-content {
+    margin-top: 104px;
+    max-height: calc(100dvh - 230px);
   }
 }

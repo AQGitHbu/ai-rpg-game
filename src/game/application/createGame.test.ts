@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createGame, createFixtureWorldSource } from "./createGame";
+import { createGame, createFixtureWorldSource, parseGameSetup } from "./createGame";
 import type { GameId, GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import { asGameId } from "./server/persistence/gameRepository";
 import type { GameLength, GameTypeId } from "@/game/domain/newGame";
@@ -268,6 +268,35 @@ describe("createGame", () => {
     }
   });
 
+  it("开局配置落地：玩家身份采用配置且 setup 持久化到 generation", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const setup = {
+      characterName: "沈砚",
+      characterIdentity: "被逐出师门的机关师",
+      characterProfile: "擅长修理与改造古代机关。",
+      personalityTags: [],
+      worldPremise: "大陆由七座浮空城邦统治，城邦之下是机关兽占据的荒原。",
+      storyOpening: "沈砚带着一枚核心齿轮逃离师门，来到边陲小镇。",
+      narrativeStyle: "cinematic" as const,
+      contentIntensity: "normal" as const,
+    };
+    const result = await createGame(
+      { gameId: asGameId("g-setup"), gameType: "fantasy", gameLength: "medium", seed: "setup-seed", setup },
+      { repository: repo, source: createFixtureWorldSource(), now: () => "2026-01-01" },
+    );
+    expect(result.ok).toBe(true);
+    const record = getRecord();
+    expect(record).not.toBeNull();
+    // 玩家身份必须来自配置，而非默认 fixture 文案
+    expect(record!.worldState.player.name).toBe("沈砚");
+    expect(record!.worldState.player.identity).toBe("被逐出师门的机关师");
+    // setup 持久化，供序幕/角色面板/叙事生成消费
+    expect(record!.worldState.generation.setup).toEqual(setup);
+    // 起始地点必须为小镇层级（town 生成覆盖）
+    const startLocation = record!.worldState.locations.find((location) => location.id === record!.worldState.currentLocationId);
+    expect(startLocation?.scale).toBe("town");
+  });
+
   it("rejects when active game exists", async () => {
     const { repo } = createInMemoryRepo();
     await createGame(
@@ -280,5 +309,44 @@ describe("createGame", () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("ACTIVE_GAME_EXISTS");
+  });
+});
+
+describe("parseGameSetup", () => {
+  it("无配置字段时返回 null（保持旧契约）", () => {
+    expect(parseGameSetup({ gameType: "wuxia", gameLength: "short" })).toBeNull();
+  });
+
+  it("合法配置产出 trim 后的 GameSetup", () => {
+    const result = parseGameSetup({
+      gameType: "fantasy",
+      gameLength: "medium",
+      characterName: " 沈砚 ",
+      characterIdentity: "被逐出师门的机关师",
+      worldPremise: "大陆由七座浮空城邦统治，城邦之下是机关兽占据的荒原。",
+      storyOpening: "沈砚带着一枚核心齿轮逃离师门，来到边陲小镇。",
+      narrativeStyle: "cinematic",
+    });
+    expect(result).not.toBeNull();
+    expect(result!.ok).toBe(true);
+    if (result!.ok) {
+      expect(result!.setup.characterName).toBe("沈砚");
+      expect(result!.setup.narrativeStyle).toBe("cinematic");
+    }
+  });
+
+  it("提交任一配置字段但缺必填时返回字段错误而非静默丢弃", () => {
+    const result = parseGameSetup({
+      gameType: "fantasy",
+      gameLength: "medium",
+      characterName: "沈砚",
+    });
+    expect(result).not.toBeNull();
+    expect(result!.ok).toBe(false);
+    if (!result!.ok) {
+      const fields = result!.errors.map((error) => error.field);
+      expect(fields).toContain("characterIdentity");
+      expect(fields).toContain("worldPremise");
+    }
   });
 });
