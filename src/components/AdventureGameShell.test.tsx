@@ -43,7 +43,7 @@ function buildView(): GameSessionView {
     },
     obtainableItems: [{ name: "铜钥匙", description: "旧钥匙", choice: choice(TOKENS.item, "拾取铜钥匙", "item") }],
     inventory: [],
-    story: { currentAct: 1, targetActs: 3, tension: 30, pacingNeed: "reveal", storyProgress: 5 },
+    story: { currentAct: 1, targetActs: 3, tension: 30, pacingNeed: "reveal", storyProgress: 5, currentObjectiveLabel: null },
     narrative: {
       mode: "offline", hasScene: true, narration: "老板压低声音。", choices: [], npcLine: null,
       npcDialogues: [{

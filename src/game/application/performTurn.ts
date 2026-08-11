@@ -16,6 +16,8 @@ import {
 } from "@/game/domain/pendingNarrativeJob";
 import { buildIntentContext, type IntentParserSource } from "@/game/gameplay/rpg/intentParser";
 import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
+import { buildOutcomeBeats, deriveObjectiveTransition } from "@/game/gameplay/rpg/narrativeContext";
+import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import { evolveWorld, repairIdOverrideForAction, type EvolveWorldResult } from "./evolveWorld";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
@@ -169,6 +171,11 @@ export async function performTurn(
         );
         if (reEvaluated.ok && reEvaluated.resolution.primaryResult.status === "success") {
           // 重演算成功：单次 CAS 提交（含已世界演化实体 + 行动效果 + pending job）
+          const narrative = buildTurnNarrative(
+            { worldState: record.worldState, storyState: record.storyState },
+            { worldState: reEvaluated.resolution.nextWorldState, storyState: reEvaluated.resolution.nextStoryState },
+            reEvaluated.resolution.primaryResult,
+          );
           return commitResolution({
             repository: deps.repository,
             gameId: command.gameId,
@@ -182,6 +189,8 @@ export async function performTurn(
             primaryResult: reEvaluated.resolution.primaryResult,
             baseLedgerLength: record.worldState.eventLedger.length,
             now: deps.now(),
+            objectiveTransition: narrative.objectiveTransition,
+            mandatoryBeats: narrative.mandatoryBeats,
           });
         }
         // 重演算仍失败：实体提交必须真实发生（供下一回合使用），行动本身被拒绝。
@@ -207,6 +216,12 @@ export async function performTurn(
     return { ok: false, code: "ACTION_REJECTED", feedback: "被战斗阻止" };
   }
 
+  const narrative = buildTurnNarrative(
+    { worldState: record.worldState, storyState: record.storyState },
+    { worldState: resolution.nextWorldState, storyState: resolution.nextStoryState },
+    resolution.primaryResult,
+  );
+
   return commitResolution({
     repository: deps.repository,
     gameId: command.gameId,
@@ -220,6 +235,8 @@ export async function performTurn(
     primaryResult: resolution.primaryResult,
     baseLedgerLength: record.worldState.eventLedger.length,
     now: deps.now(),
+    objectiveTransition: narrative.objectiveTransition,
+    mandatoryBeats: narrative.mandatoryBeats,
   });
 }
 
@@ -238,6 +255,32 @@ function clipPlayerUtterance(text: string): string {
   return Array.from(text).slice(0, PLAYER_UTTERANCE_MAX_LENGTH).join("");
 }
 
+/**
+ * Task 4：提交前从规则结果 + before/after 状态纯派生目标转换与强制叙事节拍。
+ * 禁止把事件正文/账本字符串丢给 AI 去推断状态变化。
+ */
+function buildTurnNarrative(
+  before: { readonly worldState: WorldState; readonly storyState: StoryState },
+  after: { readonly worldState: WorldState; readonly storyState: StoryState },
+  primaryResult: ResolvedEvent,
+): { readonly objectiveTransition: ObjectiveTransition; readonly mandatoryBeats: readonly MandatoryNarrativeBeat[] } {
+  return {
+    objectiveTransition: deriveObjectiveTransition({
+      beforeWorldState: before.worldState,
+      beforeStoryState: before.storyState,
+      afterWorldState: after.worldState,
+      afterStoryState: after.storyState,
+    }),
+    mandatoryBeats: buildOutcomeBeats({
+      resolvedEvent: primaryResult,
+      beforeWorldState: before.worldState,
+      beforeStoryState: before.storyState,
+      afterWorldState: after.worldState,
+      afterStoryState: after.storyState,
+    }),
+  };
+}
+
 type CommitResolutionInput = {
   readonly repository: GameRepository;
   readonly gameId: GameId;
@@ -251,6 +294,8 @@ type CommitResolutionInput = {
   readonly primaryResult: ResolvedEvent;
   readonly baseLedgerLength: number;
   readonly now: string;
+  readonly objectiveTransition: ObjectiveTransition;
+  readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
 };
 
 /**
@@ -279,6 +324,8 @@ async function commitResolution(input: CommitResolutionInput): Promise<PerformTu
     },
     focusNpcId: input.action.type === "talk" ? input.action.npcId : undefined,
     requestedAt: input.now,
+    objectiveTransition: input.objectiveTransition,
+    mandatoryBeats: input.mandatoryBeats,
   });
   if (!built.ok) {
     return { ok: false, code: "ACTION_REJECTED", feedback: "本回合无法形成叙事任务" };

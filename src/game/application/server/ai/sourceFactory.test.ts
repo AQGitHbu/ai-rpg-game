@@ -92,6 +92,8 @@ describe("createLiveSceneSource 焦点 NPC", () => {
       },
       domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
       requestedAt: "2026-01-02",
+      objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+      mandatoryBeats: [],
     });
     if (!jobResult.ok) throw new Error("job 构造失败");
 

@@ -72,6 +72,8 @@ function makeJob(overrides: JobOverrides = {}): PendingNarrativeJob {
     domainEventRange: { fromLedgerIndex: 1, toLedgerIndexExclusive: 2 },
     focusNpcId: overrides.focusNpcId !== undefined ? asNpcId(overrides.focusNpcId) : undefined,
     requestedAt: "2026-01-02",
+    objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+    mandatoryBeats: [],
   });
   if (!result.ok) throw new Error("fixture job 构造失败");
   return result.job;
@@ -107,6 +109,9 @@ function makeContext(job: PendingNarrativeJob): SceneGenerationContext {
       locationIds: [loc1.id, loc2.id], factIds: [], itemIds: [], enemyIds: [],
     },
     worldConstraints: [],
+    objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+    mandatoryBeats: [],
+    beatSubjects: [],
   };
 }
 

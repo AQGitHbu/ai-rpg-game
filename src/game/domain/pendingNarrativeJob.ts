@@ -7,6 +7,7 @@ import type {
   LocationId,
   NpcId,
 } from "./worldEntity";
+import { MAX_MANDATORY_BEATS, type MandatoryNarrativeBeat, type ObjectiveTransition } from "./narrativeBeat";
 
 /** 玩家原话（utterance）的长度上限：全链路统一引用的常量。 */
 export const PLAYER_UTTERANCE_MAX_LENGTH = 200 as const;
@@ -44,6 +45,8 @@ export type PendingNarrativeJob = {
   };
   readonly focusNpcId?: NpcId;
   readonly requestedAt: string;
+  readonly objectiveTransition: ObjectiveTransition;
+  readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
 };
 
 export type CreatePendingNarrativeJobInput = {
@@ -62,13 +65,17 @@ export type CreatePendingNarrativeJobInput = {
   };
   readonly focusNpcId?: NpcId;
   readonly requestedAt: string;
+  readonly objectiveTransition: ObjectiveTransition;
+  readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
 };
 
 export type PendingNarrativeJobErrorCode =
   | "EMPTY_ACTION_ID"
   | "INVALID_EXPECTED_REVISION"
   | "INVALID_LEDGER_RANGE"
-  | "UTTERANCE_TOO_LONG";
+  | "UTTERANCE_TOO_LONG"
+  | "OBJECTIVE_TRANSITION_INVALID"
+  | "MANDATORY_BEATS_OVER_CAP";
 
 export type PendingNarrativeJobError = {
   readonly code: PendingNarrativeJobErrorCode;
@@ -77,6 +84,54 @@ export type PendingNarrativeJobError = {
 export type CreatePendingNarrativeJobResult =
   | { readonly ok: true; readonly job: PendingNarrativeJob }
   | { readonly ok: false; readonly errors: readonly PendingNarrativeJobError[] };
+
+const OBJECTIVE_TRANSITION_MODES: ReadonlySet<string> = new Set([
+  "unchanged", "progressed", "advanced_act", "ready_for_ending",
+]);
+
+const MANDATORY_BEAT_KINDS: ReadonlySet<string> = new Set([
+  "player_utterance", "item_obtained", "fact_discovered", "quest_progress",
+  "quest_advanced", "battle_started", "battle_round", "battle_resolved", "entity_introduced",
+]);
+
+function isValidObjectiveRef(candidate: unknown): boolean {
+  if (!candidate || typeof candidate !== "object") return false;
+  const ref = candidate as { questId?: unknown; objectiveIndex?: unknown; label?: unknown };
+  return typeof ref.questId === "string"
+    && typeof ref.objectiveIndex === "number"
+    && Number.isInteger(ref.objectiveIndex)
+    && ref.objectiveIndex >= 0
+    && typeof ref.label === "string"
+    && ref.label.length > 0;
+}
+
+function isValidObjectiveTransition(candidate: unknown): boolean {
+  if (!candidate || typeof candidate !== "object") return false;
+  const transition = candidate as {
+    before?: unknown; completed?: unknown; after?: unknown; mode?: unknown;
+  };
+  if (typeof transition.mode !== "string" || !OBJECTIVE_TRANSITION_MODES.has(transition.mode)) {
+    return false;
+  }
+  if (transition.before !== null && !isValidObjectiveRef(transition.before)) return false;
+  if (transition.after !== null && !isValidObjectiveRef(transition.after)) return false;
+  return Array.isArray(transition.completed) && transition.completed.every((c) => isValidObjectiveRef(c));
+}
+
+function isValidMandatoryBeat(candidate: unknown): boolean {
+  if (!candidate || typeof candidate !== "object") return false;
+  const beat = candidate as {
+    beatId?: unknown; kind?: unknown; subjectIds?: unknown; instruction?: unknown;
+  };
+  return typeof beat.beatId === "string"
+    && beat.beatId.length > 0
+    && typeof beat.kind === "string"
+    && MANDATORY_BEAT_KINDS.has(beat.kind)
+    && Array.isArray(beat.subjectIds)
+    && beat.subjectIds.every((s) => typeof s === "string")
+    && typeof beat.instruction === "string"
+    && beat.instruction.length > 0;
+}
 
 /** 纯构造：拒绝空 actionId、无效 ledger range、超长 utterance 和非法 expectedRevision。 */
 export function createPendingNarrativeJob(
@@ -105,6 +160,16 @@ export function createPendingNarrativeJob(
   ) {
     errors.push({ code: "UTTERANCE_TOO_LONG" });
   }
+  if (!isValidObjectiveTransition(input.objectiveTransition)) {
+    errors.push({ code: "OBJECTIVE_TRANSITION_INVALID" });
+  }
+  if (
+    !Array.isArray(input.mandatoryBeats)
+    || input.mandatoryBeats.length > MAX_MANDATORY_BEATS
+    || !input.mandatoryBeats.every((beat) => isValidMandatoryBeat(beat))
+  ) {
+    errors.push({ code: "MANDATORY_BEATS_OVER_CAP" });
+  }
 
   if (errors.length > 0) return { ok: false, errors };
 
@@ -120,6 +185,8 @@ export function createPendingNarrativeJob(
       resolvedEvent: input.resolvedEvent,
       domainEventRange: { fromLedgerIndex, toLedgerIndexExclusive },
       requestedAt: input.requestedAt,
+      objectiveTransition: input.objectiveTransition,
+      mandatoryBeats: input.mandatoryBeats,
       ...(input.utterance !== undefined ? { utterance: input.utterance } : {}),
       ...(input.focusNpcId !== undefined ? { focusNpcId: input.focusNpcId } : {}),
     },

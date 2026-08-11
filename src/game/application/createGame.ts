@@ -195,6 +195,8 @@ export async function createGame(
     },
     domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
     requestedAt: deps.now(),
+    objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+    mandatoryBeats: [],
   });
   if (!jobResult.ok) return { ok: false, code: "GENERATION_FAILED" };
 

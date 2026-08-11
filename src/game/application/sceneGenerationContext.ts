@@ -9,6 +9,8 @@ import type {
 } from "@/game/domain/worldEntity";
 import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { RecentBeat } from "@/game/domain/materializedView";
+import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
+import type { WorldState } from "@/game/domain/worldState";
 import type { GameRecord } from "./server/persistence/gameRepository";
 
 /**
@@ -80,6 +82,14 @@ export type LegalEventTargets = {
   readonly enemyIds: readonly EnemyId[];
 };
 
+/** 节拍/目标引用实体的最小描述：供场景表演者引用实体名，不携带完整状态。 */
+export type EntityDescription = {
+  readonly id: string;
+  readonly kind: "npc" | "location" | "item" | "fact" | "enemy" | "quest";
+  readonly name: string;
+  readonly description: string;
+};
+
 export type SceneGenerationContext = {
   readonly job: PendingNarrativeJob;
   readonly player: PlayerSceneSummary;
@@ -99,7 +109,40 @@ export type SceneGenerationContext = {
   readonly legalActionCandidates: readonly LegalActionCandidate[];
   readonly legalEventTargets: LegalEventTargets;
   readonly worldConstraints: readonly string[];
+  /** Task 4：本回合的目标转换（job 持久化的权威值）。 */
+  readonly objectiveTransition: ObjectiveTransition;
+  /** Task 4：本回合的强制叙事节拍（job 持久化的权威值，≤8）。 */
+  readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
+  /** Task 4：节拍/目标引用实体从持久化状态解析出的最小描述。 */
+  readonly beatSubjects: readonly EntityDescription[];
 };
+
+/** 从持久化世界状态解析 subject ID 为最小实体描述；引用未命中时保留 ID 兜底。 */
+function resolveEntityDescriptions(ws: WorldState, subjectIds: readonly string[]): EntityDescription[] {
+  const result: EntityDescription[] = [];
+  const seen = new Set<string>();
+  const push = (desc: EntityDescription): void => {
+    if (seen.has(desc.id)) return;
+    seen.add(desc.id);
+    result.push(desc);
+  };
+  for (const id of subjectIds) {
+    const npc = ws.npcs.find((n) => String(n.id) === id);
+    if (npc) { push({ id, kind: "npc", name: npc.name, description: npc.description }); continue; }
+    const location = ws.locations.find((l) => String(l.id) === id);
+    if (location) { push({ id, kind: "location", name: location.name, description: location.description }); continue; }
+    const item = ws.items.find((i) => String(i.id) === id);
+    if (item) { push({ id, kind: "item", name: item.name, description: item.description }); continue; }
+    const enemy = ws.enemies.find((e) => String(e.id) === id);
+    if (enemy) { push({ id, kind: "enemy", name: enemy.name, description: `威胁等级：${enemy.tier}` }); continue; }
+    const quest = ws.quests.find((q) => String(q.id) === id);
+    if (quest) { push({ id, kind: "quest", name: quest.name, description: quest.description }); continue; }
+    const fact = ws.worldFacts.find((f) => String(f.factId) === id);
+    if (fact) { push({ id, kind: "fact", name: "线索", description: fact.discovered ? fact.text : "尚未查明的线索" }); continue; }
+    push({ id, kind: "npc", name: id, description: "（尚未具象化的实体）" });
+  }
+  return result;
+}
 
 /** 从持久化 record 投影最小权限上下文（唯一构造入口）。 */
 export function buildSceneGenerationContext(record: GameRecord): SceneGenerationContext {
@@ -111,6 +154,15 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     throw new Error("buildSceneGenerationContext requires a pending narrative job");
   }
   const job = narrative.generation.job;
+
+  // Task 4：节拍与目标转换引用的 subject ID 全部收集后从持久化状态解析描述。
+  const transition = job.objectiveTransition;
+  const transitionQuestIds: string[] = [];
+  if (transition.before !== null) transitionQuestIds.push(String(transition.before.questId));
+  for (const completed of transition.completed) transitionQuestIds.push(String(completed.questId));
+  if (transition.after !== null) transitionQuestIds.push(String(transition.after.questId));
+  const beatSubjectIds = job.mandatoryBeats.flatMap((beat) => beat.subjectIds);
+  const beatSubjects = resolveEntityDescriptions(ws, [...transitionQuestIds, ...beatSubjectIds]);
 
   const currentLocation = ws.locations.find((l) => l.id === ws.currentLocationId)
     ?? ws.locations[0];
@@ -234,5 +286,8 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
         : ws.enemies.map((enemy) => enemy.id),
     },
     worldConstraints: [],
+    objectiveTransition: job.objectiveTransition,
+    mandatoryBeats: job.mandatoryBeats,
+    beatSubjects,
   };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { asNarrativeJobId, asTurnId } from "./events";
 import type { ResolvedEvent } from "./resolvedEvent";
-import { asLocationId, asNpcId } from "./worldEntity";
+import { asLocationId, asNpcId, asQuestId } from "./worldEntity";
 import {
   PLAYER_UTTERANCE_MAX_LENGTH,
   createPendingNarrativeJob,
@@ -9,6 +9,7 @@ import {
   type PendingNarrativeJob,
   type StructuredActionSummary,
 } from "./pendingNarrativeJob";
+import { MAX_MANDATORY_BEATS, type MandatoryNarrativeBeat } from "./narrativeBeat";
 
 function canonicalResolvedEvent(): ResolvedEvent {
   return {
@@ -36,6 +37,8 @@ const DEFAULT_INPUT: CreatePendingNarrativeJobInput = {
   domainEventRange: { fromLedgerIndex: 12, toLedgerIndexExclusive: 15 },
   focusNpcId: asNpcId("npc_1"),
   requestedAt: "2026-08-08T08:00:00.000Z",
+  objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+  mandatoryBeats: [],
 };
 
 function createValidJob(
@@ -63,6 +66,8 @@ describe("PendingNarrativeJob", () => {
       "domainEventRange",
       "focusNpcId",
       "jobId",
+      "mandatoryBeats",
+      "objectiveTransition",
       "requestedAt",
       "resolvedEvent",
       "turnId",
@@ -196,6 +201,72 @@ describe("PendingNarrativeJob", () => {
     } finally {
       dateNow.mockRestore();
       random.mockRestore();
+    }
+  });
+
+  it("job 携带 objectiveTransition（纯容器，默认 unchanged）", () => {
+    const job = createValidJob();
+    expect(job.objectiveTransition).toEqual({
+      before: null, completed: [], after: null, mode: "unchanged",
+    });
+
+    const advanced = createValidJob({
+      objectiveTransition: {
+        before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老板交谈" },
+        completed: [{ questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老板交谈" }],
+        after: { questId: asQuestId("quest_dyn_1"), objectiveIndex: 0, label: "与信使交谈" },
+        mode: "advanced_act",
+      },
+    });
+    expect(advanced.objectiveTransition.mode).toBe("advanced_act");
+    expect(advanced.objectiveTransition.after?.questId).toBe("quest_dyn_1");
+  });
+
+  it("job 携带 mandatoryBeats 且 JSON round-trip 完整", () => {
+    const beats: MandatoryNarrativeBeat[] = [
+      { beatId: "item_0", kind: "item_obtained", subjectIds: ["item_seal"], instruction: "获得物品「盟誓印谱」" },
+      { beatId: "battle_0", kind: "battle_started", subjectIds: ["enemy_wolf"], instruction: "遭遇了野狼" },
+    ];
+    const job = createValidJob({ mandatoryBeats: beats });
+    expect(job.mandatoryBeats).toEqual(beats);
+    expect(JSON.parse(JSON.stringify(job))).toEqual(job);
+  });
+
+  it("拒绝超过上限的 mandatoryBeats", () => {
+    const beats: MandatoryNarrativeBeat[] = Array.from({ length: MAX_MANDATORY_BEATS + 1 }, (_, i) => ({
+      beatId: `b${i}`, kind: "player_utterance" as const, subjectIds: [], instruction: "i",
+    }));
+    const result = createResult({ mandatoryBeats: beats });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toContainEqual({ code: "MANDATORY_BEATS_OVER_CAP" });
+    }
+  });
+
+  it("接受恰好等于上限的 mandatoryBeats", () => {
+    const beats: MandatoryNarrativeBeat[] = Array.from({ length: MAX_MANDATORY_BEATS }, (_, i) => ({
+      beatId: `b${i}`, kind: "player_utterance" as const, subjectIds: [], instruction: "i",
+    }));
+    expect(createResult({ mandatoryBeats: beats }).ok).toBe(true);
+  });
+
+  it("拒绝非法 mandatoryBeat 形状（空 instruction / 空 beatId / 未知 kind / 非字符串 subject）", () => {
+    for (const beat of [
+      { beatId: "b", kind: "item_obtained", subjectIds: [], instruction: "" },
+      { beatId: "", kind: "item_obtained", subjectIds: [], instruction: "i" },
+      { beatId: "b", kind: "unlicensed", subjectIds: [], instruction: "i" },
+      { beatId: "b", kind: "item_obtained", subjectIds: [42], instruction: "i" },
+    ]) {
+      expect(createResult({ mandatoryBeats: [beat as never] }).ok).toBe(false);
+    }
+  });
+
+  it("拒绝非法 objectiveTransition（未知 mode / 残缺 completed）", () => {
+    for (const transition of [
+      { before: null, completed: [], after: null, mode: "nope" },
+      { before: null, completed: [{ questId: "quest_0", objectiveIndex: 0 }], after: null, mode: "progressed" },
+    ] as const) {
+      expect(createResult({ objectiveTransition: transition as never }).ok).toBe(false);
     }
   });
 });

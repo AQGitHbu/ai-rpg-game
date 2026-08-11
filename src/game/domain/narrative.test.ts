@@ -39,6 +39,8 @@ function pendingWithJob(): Extract<
     domainEventRange: { fromLedgerIndex: 12, toLedgerIndexExclusive: 15 },
     focusNpcId: asNpcId("npc_1"),
     requestedAt: "2026-08-08T08:00:00.000Z",
+    objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+    mandatoryBeats: [],
   });
   if (!result.ok) throw new Error("fixture 构造失败");
   return { status: "pending", job: result.job };

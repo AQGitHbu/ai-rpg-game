@@ -20,7 +20,10 @@ import {
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
+import { asItemId, asQuestId } from "@/game/domain/worldEntity";
 import type { GameRecord } from "./server/persistence/gameRepository";
+import { projectGameSessionView } from "./gameSessionView";
 
 const loc1: LocationEntry = {
   id: asLocationId("loc_1"), name: "客栈", description: "一间简朴的客栈", kind: "main",
@@ -38,7 +41,10 @@ const npc1: NpcEntry = {
 
 const IMPORTANT_ACTION_ID = "act_persist";
 
-function makeJob(): PendingNarrativeJob {
+function makeJob(overrides: {
+  transition?: ObjectiveTransition;
+  beats?: readonly MandatoryNarrativeBeat[];
+} = {}): PendingNarrativeJob {
   const result = createPendingNarrativeJob({
     jobId: asNarrativeJobId("job_1"),
     turnId: asTurnId("turn_1"),
@@ -59,6 +65,8 @@ function makeJob(): PendingNarrativeJob {
     },
     domainEventRange: { fromLedgerIndex: 1, toLedgerIndexExclusive: 2 },
     requestedAt: "2026-01-02",
+    objectiveTransition: overrides.transition ?? { before: null, completed: [], after: null, mode: "unchanged" },
+    mandatoryBeats: overrides.beats ?? [],
   });
   if (!result.ok) throw new Error("fixture job 构造失败");
   return result.job;
@@ -75,17 +83,42 @@ function makeWorld(): ReturnType<typeof createInitialWorldState> {
   return { ...withNpc, unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
 }
 
-function makeRecord(withJob = true): GameRecord {
+function makeRecord(withJob = true, job?: PendingNarrativeJob, world?: ReturnType<typeof makeWorld>): GameRecord {
   const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
   const storyState: StoryState = withJob
-    ? { ...ss, narrative: { ...ss.narrative, generation: { status: "pending", job: makeJob() } } }
+    ? { ...ss, narrative: { ...ss.narrative, generation: { status: "pending", job: job ?? makeJob() } } }
     : ss;
   return {
     gameId: "g1" as never,
-    worldState: makeWorld(),
+    worldState: world ?? makeWorld(),
     storyState,
     revision: 0,
     createdAt: "2026-01-01",
+  };
+}
+
+/** 主线任务（已交谈后）：当前权威目标 = 获取盟誓印谱。 */
+function makeQuestWorld(met = true): ReturnType<typeof makeWorld> {
+  const base = makeWorld();
+  return {
+    ...base,
+    npcs: base.npcs.map((n) => (n.id === asNpcId("npc_1") ? { ...n, met } : n)),
+    quests: [{
+      id: asQuestId("quest_0"),
+      name: "查明真相",
+      description: "查清矿坑的真相",
+      objectives: [
+        { kind: "talk_to_npc", npcId: asNpcId("npc_1") },
+        { kind: "obtain_item", itemId: asItemId("item_seal") },
+      ],
+      onSuccess: { kind: "advance_story" },
+      onFailure: { kind: "closed" },
+      tags: [],
+      kind: "main",
+      stage: 1,
+      status: "active",
+    }],
+    items: [{ id: asItemId("item_seal"), name: "盟誓印谱", description: "刻着盟约的印谱", kind: "quest", tags: [] }],
   };
 }
 
@@ -181,5 +214,53 @@ describe("buildSceneGenerationContext", () => {
     // 序列化后只出现各自秘密一次（无全局 publicWorldFacts 泄漏文本）
     expect(serialized.split("老板的秘密A").length - 1).toBe(1);
     expect(serialized.split("客人的秘密B").length - 1).toBe(1);
+  });
+
+  // ── Task 4：把规则结果/目标转换投影给场景源 ──────────────────────────────
+
+  it("context 原样暴露 job 的 objectiveTransition 与 mandatoryBeats", () => {
+    const transition: ObjectiveTransition = {
+      before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与客栈老板交谈" },
+      completed: [{ questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与客栈老板交谈" }],
+      after: { questId: asQuestId("quest_0"), objectiveIndex: 1, label: "获取盟誓印谱" },
+      mode: "progressed",
+    };
+    const beats: readonly MandatoryNarrativeBeat[] = [
+      { beatId: "quest_0", kind: "quest_progress", subjectIds: ["quest_0"], instruction: "完成了目标：与客栈老板交谈" },
+      { beatId: "item_0", kind: "item_obtained", subjectIds: ["item_seal"], instruction: "获得物品「盟誓印谱」" },
+    ];
+    const record = makeRecord(true, makeJob({ transition, beats }));
+    const context = buildSceneGenerationContext(record);
+    expect(context.objectiveTransition).toEqual(transition);
+    expect(context.mandatoryBeats).toEqual(beats);
+  });
+
+  it("beatSubjects 从持久化状态解析节拍引用的实体描述（item_seal → 盟誓印谱）", () => {
+    const beats: readonly MandatoryNarrativeBeat[] = [
+      { beatId: "item_0", kind: "item_obtained", subjectIds: ["item_seal"], instruction: "获得物品「盟誓印谱」" },
+      { beatId: "quest_0", kind: "quest_progress", subjectIds: ["quest_0"], instruction: "完成了目标" },
+    ];
+    const record = makeRecord(true, makeJob({ beats }), makeQuestWorld());
+    const context = buildSceneGenerationContext(record);
+    const itemSubject = context.beatSubjects.find((s) => s.id === "item_seal");
+    expect(itemSubject).toEqual({ id: "item_seal", kind: "item", name: "盟誓印谱", description: "刻着盟约的印谱" });
+    const questSubject = context.beatSubjects.find((s) => s.id === "quest_0");
+    expect(questSubject).toEqual({ id: "quest_0", kind: "quest", name: "查明真相", description: "查清矿坑的真相" });
+  });
+
+  it("HUD 与场景上下文投影同一个 after.label（同源持久化状态）", () => {
+    const record = makeRecord(true, makeJob({
+      transition: {
+        before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与客栈老板交谈" },
+        completed: [{ questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与客栈老板交谈" }],
+        after: { questId: asQuestId("quest_0"), objectiveIndex: 1, label: "获取盟誓印谱" },
+        mode: "progressed",
+      },
+    }), makeQuestWorld());
+    const context = buildSceneGenerationContext(record);
+    const view = projectGameSessionView(record.worldState, record.storyState, record.revision, "test-ending-session");
+    expect(context.objectiveTransition.after?.label).toBe("获取盟誓印谱");
+    expect(view.story.currentObjectiveLabel).toBe("获取盟誓印谱");
+    expect(view.story.currentObjectiveLabel).toBe(context.objectiveTransition.after?.label);
   });
 });

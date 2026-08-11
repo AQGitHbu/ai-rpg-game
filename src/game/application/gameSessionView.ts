@@ -9,6 +9,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import { buildChoiceMap, hasExplorableContent } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
+import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 
 export type PlayerChoiceView = {
   readonly choiceToken: string;
@@ -91,6 +92,8 @@ export type GameSessionView = {
     readonly tension: number;
     readonly pacingNeed: string;
     readonly storyProgress: number;
+    /** Task 4：权威当前目标标签（与场景上下文 after.label 同源持久化状态）。 */
+    readonly currentObjectiveLabel: string | null;
   };
   readonly narrative: {
     readonly mode: string;
@@ -385,6 +388,7 @@ export function projectGameSessionView(
       tension: storyState.tension,
       pacingNeed: storyState.nextPacingNeed,
       storyProgress: storyState.storyProgress,
+      currentObjectiveLabel: currentObjectiveOf(worldState, storyState)?.label ?? null,
     },
     narrative: {
       mode: storyState.narrative.mode,

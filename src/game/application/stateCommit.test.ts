@@ -26,6 +26,8 @@ function createValidJobFixture(): PendingNarrativeJob {
     domainEventRange: { fromLedgerIndex: 1, toLedgerIndexExclusive: 2 },
     focusNpcId: asNpcId("npc_1"),
     requestedAt: "2026-01-02",
+    objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+    mandatoryBeats: [],
   });
   if (!result.ok) throw new Error("fixture job 构造失败");
   return result.job;

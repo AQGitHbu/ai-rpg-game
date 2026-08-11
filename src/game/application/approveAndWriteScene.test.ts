@@ -54,6 +54,9 @@ function makeContext(overrides?: Partial<SceneGenerationContext>): SceneGenerati
       enemyIds: [asEnemyId("enemy_1")],
     },
     worldConstraints: [],
+    objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+    mandatoryBeats: [],
+    beatSubjects: [],
     ...overrides,
   };
 }

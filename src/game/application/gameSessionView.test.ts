@@ -3,7 +3,7 @@ import { projectGameSessionView } from "./gameSessionView";
 import { buildChoiceMap } from "./buildChoiceMap";
 import { createInitialWorldState, appendNpc, appendLocation, type WorldState, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId, asFactId, asItemId, asEnemyId, asEndingId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asGenerationId, asFactId, asItemId, asEnemyId, asEndingId, asQuestId } from "@/game/domain/worldEntity";
 import type { Action } from "@/game/domain/action";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 
@@ -66,6 +66,31 @@ describe("projectGameSessionView", () => {
     expect(view.story.currentAct).toBe(1);
     expect(view.story.tension).toBe(30);
     expect(view.story.pacingNeed).toBe("reveal");
+  });
+
+  it("projects the authoritative current objective label from persisted state", () => {
+    const wsWithQuest: WorldState = {
+      ...ws,
+      quests: [{
+        id: asQuestId("quest_0"),
+        name: "查明真相",
+        description: "查清矿坑的真相",
+        objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_1") }],
+        onSuccess: { kind: "advance_story" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 1,
+        status: "active",
+      }],
+    };
+    const view = projectGameSessionView(wsWithQuest, ss, 0, "test-ending-session");
+    expect(view.story.currentObjectiveLabel).toBe("与老板交谈");
+  });
+
+  it("exposes null current objective label when no active quest exists", () => {
+    const view = projectGameSessionView(ws, ss, 0, "test-ending-session");
+    expect(view.story.currentObjectiveLabel).toBeNull();
   });
 
   it("projects per-NPC dialogue pages for every present NPC", () => {

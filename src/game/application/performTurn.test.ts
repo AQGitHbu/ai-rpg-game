@@ -15,7 +15,7 @@ import {
 } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import { asLocationId, asNpcId, asGenerationId, asEnemyId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asItemId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { WorldState } from "@/game/domain/worldState";
@@ -92,6 +92,29 @@ function buildStoryState(): StoryState {
   return createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
 }
 
+/** 世界带上一条主线任务：首个目标与老板交谈，第二个目标获取盟誓印谱。 */
+function buildWorldWithMainQuest(): WorldState {
+  return {
+    ...buildWorldState(),
+    quests: [{
+      id: asQuestId("quest_0"),
+      name: "查明真相",
+      description: "查清矿坑的真相",
+      objectives: [
+        { kind: "talk_to_npc", npcId: asNpcId("npc_1") },
+        { kind: "obtain_item", itemId: asItemId("item_seal") },
+      ],
+      onSuccess: { kind: "advance_story" },
+      onFailure: { kind: "closed" },
+      tags: [],
+      kind: "main",
+      stage: 1,
+      status: "active",
+    }],
+    items: [{ id: asItemId("item_seal"), name: "盟誓印谱", description: "刻着盟约的印谱", kind: "quest", tags: [] }],
+  };
+}
+
 function buildFocusedDialogueStoryState(focusNpcId = asNpcId("npc_1")): StoryState {
   const base = buildStoryState();
   const support = createApprovedChoice({
@@ -145,6 +168,8 @@ function makePendingJob(): PendingNarrativeJob {
     },
     domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
     requestedAt: "2026-01-02",
+    objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+    mandatoryBeats: [],
   });
   if (!result.ok) throw new Error("fixture job 构造失败");
   return result.job;
@@ -848,5 +873,85 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     if (generation.status !== "pending") return;
     expect(generation.job.actionSummary).toEqual({ kind: "freeform" });
     expect(generation.job.utterance).toBe("我的武功升到一百级");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 4：performTurn 在提交前把规则结果/任务变化转成 objectiveTransition 与
+// mandatoryBeats，并随 pending job 一起持久化（非占位值）。
+// ---------------------------------------------------------------------------
+
+describe("performTurn 叙事节拍与目标转换（Task 4）", () => {
+  const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" };
+
+  it("目标推进回合：job 携带真实 objectiveTransition（before/completed/after）与 quest_progress 节拍", async () => {
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldWithMainQuest(), buildStoryState());
+
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "act_quest", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", talkAction]]) },
+      { repository: repo, now: () => "2026-01-02" },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(applyCalls()).toHaveLength(1);
+    const generation = record()!.storyState.narrative.generation;
+    expect(generation.status).toBe("pending");
+    if (generation.status !== "pending") return;
+
+    // 完成 talk 目标 → progressed：completed 记录旧目标，after 指向下一个未完成目标
+    expect(generation.job.objectiveTransition.mode).toBe("progressed");
+    expect(generation.job.objectiveTransition.before).toEqual({ questId: "quest_0", objectiveIndex: 0, label: "与老板交谈" });
+    expect(generation.job.objectiveTransition.completed).toEqual([{ questId: "quest_0", objectiveIndex: 0, label: "与老板交谈" }]);
+    expect(generation.job.objectiveTransition.after).toEqual({ questId: "quest_0", objectiveIndex: 1, label: "获取盟誓印谱" });
+    // 本回合真实产出的节拍：subjectIds 引用实体 ID，instruction 来自当前状态
+    expect(generation.job.mandatoryBeats).toContainEqual(expect.objectContaining({
+      kind: "quest_progress",
+      subjectIds: ["quest_0"],
+      instruction: expect.stringContaining("与老板交谈"),
+    }));
+  });
+
+  it("候选事件激活战斗：mandatoryBeats 含 battle_started 节拍，objectiveTransition 保持 unchanged", async () => {
+    const enemyWs = {
+      ...buildWorldState(),
+      enemies: [{
+        id: asEnemyId("enemy_1"), name: "山贼", tier: "normal" as const,
+        stats: { hp: 10, attack: 5, defense: 2 },
+        locationId: asLocationId("loc_1"), tags: [],
+      }],
+    };
+    const candidate: EventCandidate = {
+      id: "ce-1",
+      kind: "enemy_appears",
+      involvedEntityIds: ["enemy_1", "loc_1"],
+      prerequisiteFactIds: [],
+      proposedEffects: [{ kind: "enemy_appears", enemyId: asEnemyId("enemy_1"), locationId: asLocationId("loc_1") }],
+      intendedPacing: "complicate",
+      reason: "敌人在客栈现身",
+      proposedAtTurn: 1,
+      expiresAtTurn: 9,
+    };
+    const ss = { ...buildStoryState(), candidateEventPool: [candidate] };
+    const { repo, record, applyCalls } = createSpyRepo(enemyWs, ss);
+
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "act_battle", interaction: { kind: "fixed_choice", choiceToken: "tok_move" }, expectedRevision: 0, choiceMap: new Map([["tok_move", { type: "move", locationId: asLocationId("loc_2") }]]) },
+      { repository: repo, now: () => "2026-01-02" },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(applyCalls()).toHaveLength(1);
+    const generation = record()!.storyState.narrative.generation;
+    expect(generation.status).toBe("pending");
+    if (generation.status !== "pending") return;
+    expect(generation.job.mandatoryBeats).toContainEqual(expect.objectContaining({
+      kind: "battle_started",
+      subjectIds: ["enemy_1"],
+      instruction: expect.stringContaining("山贼"),
+    }));
+    // 无 active 任务 → 权威目标 null，模式 unchanged
+    expect(generation.job.objectiveTransition).toEqual({ before: null, completed: [], after: null, mode: "unchanged" });
   });
 });
