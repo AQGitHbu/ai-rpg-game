@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  createInMemoryRepo,
   createJourneyGame,
-  createJourneyEvolutionSource,
   playIssuedChoice,
   advanceScene,
   loadWorldState,
@@ -71,7 +69,7 @@ function createMediumJourneyEvolutionSource(): WorldEvolutionSource {
 describe("中篇 5 幕离线可完成性", () => {
   it("5 幕全程离线推进到结局：currentAct==targetActs、结局具象化+解析、预算在界内", async () => {
     const created = await createJourneyGame(undefined, undefined, "medium-five-act-seed", "medium");
-    let store: InMemoryRepo = created.repo;
+    const store: InMemoryRepo = created.repo;
     const source: WorldEvolutionSource = createMediumJourneyEvolutionSource();
     let successfulTurns = 0;
 
