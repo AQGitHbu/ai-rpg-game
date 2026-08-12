@@ -86,4 +86,14 @@ describe("modern turn-based battle resolver", () => {
     expect(resolved?.type === "battle_resolved" ? resolved.enemyIds : undefined).toEqual([asEnemyId("enemy_a"), asEnemyId("enemy_b")]);
     expect(second.events.filter((event) => event.type === "enemy_defeated")).toHaveLength(2);
   });
+
+  it("rejects a command bound to a non-current actor without changing the battle", () => {
+    const started = startBattle(makeModernWorld(), asEnemyId("enemy_b"), deps);
+    if (!started.ok || started.nextWorldState.battle.status !== "active") throw new Error("setup failed");
+    const result = battleAction(started.nextWorldState, "attack", deps, {
+      actorId: "ally:forged" as never,
+      targetId: "enemy:enemy_b" as never,
+    });
+    expect(result).toEqual({ ok: false, feedback: "战斗行动者与当前回合不匹配。" });
+  });
 });

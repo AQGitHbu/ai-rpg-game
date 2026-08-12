@@ -130,6 +130,9 @@ function modernBattleAction(
   const actorId = battle.turnOrder[battle.turnIndex];
   const actor = battle.combatants.find((unit) => unit.combatantId === actorId);
   if (actor === undefined || actor.controller !== "player") return { ok: false, feedback: "尚未轮到玩家行动。" };
+  if (requestedCommand?.actorId !== undefined && requestedCommand.actorId !== actorId) {
+    return { ok: false, feedback: "战斗行动者与当前回合不匹配。" };
+  }
   const requestedTargetId = requestedCommand?.actorId === actorId ? requestedCommand.targetId : undefined;
   const command: CombatCommand = {
     actorId,
