@@ -1,5 +1,6 @@
 import type { LocationId, NpcId, FactId, ItemId, EnemyId, QuestId } from "./worldEntity";
 import type { ThreadId } from "./storyState";
+import type { CombatActionKind, CombatCommand } from "./combat";
 
 /** 规则可识别的对话行为（Spec §7.2）。utterance 只供叙事表现，不得声明结果。 */
 export const DIALOGUE_ACTS = [
@@ -52,7 +53,7 @@ export type Action =
   | { readonly type: "take_item"; readonly itemId: ItemId }
   | { readonly type: "give_item"; readonly itemId: ItemId; readonly npcId: NpcId }
   | { readonly type: "attack"; readonly enemyId: EnemyId }
-  | { readonly type: "battle_action"; readonly action: "attack" | "guard" | "flee" }
+  | { readonly type: "battle_action"; readonly action: CombatActionKind; readonly command?: Omit<CombatCommand, "kind"> }
   | { readonly type: "ack_prologue" }
   | { readonly type: "freeform"; readonly intent: string; readonly rawText: string };
 

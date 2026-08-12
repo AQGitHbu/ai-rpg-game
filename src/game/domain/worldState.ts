@@ -8,6 +8,7 @@ import type { RelationshipValue } from "./relationship";
 import type { NarrativeEmotion } from "./narrative";
 import type { DialogueAct, StructuredDialogueTopic } from "./action";
 import type { TownRuntimeState } from "./townState";
+import type { ActiveBattleCombatState, CombatActionKind, CombatCommand } from "./combat";
 
 // ── Entry 类型：定义 + 运行时 ──
 
@@ -146,7 +147,8 @@ export type FactionEntry = {
 
 export type BattleState =
   | { readonly status: "idle" }
-  | { readonly status: "active"; readonly enemyId: EnemyId; readonly playerHp: number; readonly enemyHp: number; readonly round: number }
+  | ({ readonly status: "active"; readonly enemyId: EnemyId; readonly playerHp: number; readonly enemyHp: number; readonly round: number }
+    & Partial<ActiveBattleCombatState>)
   | { readonly status: "resolved"; readonly enemyId: EnemyId; readonly outcome: "victory" | "defeat" | "withdraw" };
 
 export type EndingState = { readonly endingId: EndingId; readonly outcome: "success" | "failure" } | null;

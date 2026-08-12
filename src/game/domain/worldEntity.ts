@@ -52,6 +52,10 @@ export type StatBlock = {
   readonly hp: number;
   readonly attack: number;
   readonly defense: number;
+  /** 正式战斗属性；旧存档可缺省，由 combatStatsFromLegacy 投影。 */
+  readonly maxHp?: number;
+  readonly maxEnergy?: number;
+  readonly speed?: number;
 };
 
 /** 背包界面页签的封闭分类：装备 / 道具 / 材料 / 任务。 */

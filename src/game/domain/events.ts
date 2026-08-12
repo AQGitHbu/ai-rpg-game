@@ -1,4 +1,5 @@
 import type { EndingId, EnemyId, FactId, GenerationMetadata, ItemId, LocationId, NpcId, QuestId } from "./worldEntity";
+import type { CombatActionResult, CombatActionKind } from "./combat";
 
 export type StoryPacing = "setup" | "develop" | "turn" | "climax" | "resolution";
 
@@ -118,6 +119,8 @@ export type ItemGivenEvent = {
 export type BattleStartedEvent = {
   readonly type: "battle_started";
   readonly enemyId: EnemyId;
+  /** 多敌人遭遇的扩展字段；旧单敌人事件仍可读取 enemyId。 */
+  readonly enemyIds?: readonly EnemyId[];
   readonly occurredAt: string;
 };
 
@@ -128,7 +131,8 @@ export type BattleRoundResolvedEvent = {
   readonly round: number;
   readonly playerHp: number;
   readonly enemyHp: number;
-  readonly action: "attack" | "guard" | "withdraw";
+  readonly action: CombatActionKind | "withdraw";
+  readonly results?: readonly CombatActionResult[];
   readonly occurredAt: string;
 };
 
@@ -136,6 +140,7 @@ export type BattleRoundResolvedEvent = {
 export type BattleResolvedEvent = {
   readonly type: "battle_resolved";
   readonly enemyId: EnemyId;
+  readonly enemyIds?: readonly EnemyId[];
   readonly outcome: "victory" | "defeat" | "withdraw";
   readonly occurredAt: string;
 };

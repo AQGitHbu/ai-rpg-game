@@ -58,7 +58,7 @@ export function buildActionSummary(action: Action): StructuredActionSummary {
     case "take_item": return { kind: "take_item", itemId: action.itemId };
     case "give_item": return { kind: "give_item", itemId: action.itemId, npcId: action.npcId };
     case "attack": return { kind: "attack", enemyId: action.enemyId };
-    case "battle_action": return { kind: "battle_action", action: action.action };
+    case "battle_action": return { kind: "battle_action", action: action.action as "attack" | "guard" | "flee" };
     case "ack_prologue": return { kind: "ack_prologue" };
     case "freeform": return { kind: "freeform" };
   }
