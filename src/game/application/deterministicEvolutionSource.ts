@@ -1,7 +1,7 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
-import type { EvolutionNeed, WorldDeltaProposal } from "@/game/domain/worldDelta";
+import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
 import type { NpcId } from "@/game/domain/worldEntity";
 
@@ -116,8 +116,23 @@ function planRepairByAction(ws: WorldState, action: Action): WorldDeltaProposal 
   }
 }
 
-function planNextAct(ws: WorldState): WorldDeltaProposal {
+function uniqueName(base: string, existingNames: readonly string[], suffix: string): string {
+  const taken = new Set(existingNames);
+  if (!taken.has(base)) return base;
+
+  let attempt = 1;
+  let candidate = `${base}·${suffix}`;
+  while (taken.has(candidate)) {
+    attempt += 1;
+    candidate = `${base}·${suffix}-${attempt}`;
+  }
+  return candidate;
+}
+
+function planNextAct(ws: WorldState, act: number): WorldDeltaProposal {
   const useNewLocation = currentTownNeedsNewLocation(ws);
+  const npcName = uniqueName("传讯人", ws.npcs.map((npc) => npc.name), String(act));
+  const questName = uniqueName("循迹而行", ws.quests.map((quest) => quest.name), `第${act}幕`);
   return {
     beatSummary: "下一幕的推进人物与先声",
     newLocation: useNewLocation
@@ -128,8 +143,8 @@ function planNextAct(ws: WorldState): WorldDeltaProposal {
           connectFromLocationId: currentLocationId(ws),
         }
       : null,
-    newNpc: {
-      name: "传讯人",
+        newNpc: {
+      name: npcName,
       role: "信使",
       description: "风尘仆仆赶来的信使，手里攥着关乎下文的线索。",
       locationRef: useNewLocation
@@ -141,9 +156,9 @@ function planNextAct(ws: WorldState): WorldDeltaProposal {
     newEnemy: null,
     newFact: null,
     nextMainQuest: {
-      name: "循迹而行",
+      name: questName,
       description: "跟随信使的线索推进故事。",
-      objectiveText: "与传讯人交谈",
+      objectiveText: `与${npcName}交谈`,
     },
     endingPair: null,
   };
@@ -193,7 +208,7 @@ export function createDeterministicEvolutionSource(): WorldEvolutionSource {
         case "none":
           return { proposal: null };
         case "next_act":
-          return { proposal: planNextAct(ctx.worldState) };
+          return { proposal: planNextAct(ctx.worldState, ctx.need.act) };
         case "ending_pair":
           return { proposal: planEndingPair(ctx.worldState, ctx.storyState) };
         case "pacing":

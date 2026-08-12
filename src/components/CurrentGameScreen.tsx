@@ -5,6 +5,7 @@ import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
 import { AdventureGameShell } from "./AdventureGameShell";
 import { NewGameSetupForm } from "./NewGameSetupForm";
+import { GenerationStatusModal } from "./GenerationStatusModal";
 import { fetchCurrentGame, ensureNarrative, ackPrologue } from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
@@ -144,6 +145,7 @@ export function CurrentGameScreen() {
               {prologueAcking ? "正在进入……" : "开始冒险"}
             </InlineButton>
           </div>
+          {prologueAcking ? <GenerationStatusModal kind="action" /> : null}
         </Panel>
       );
     }

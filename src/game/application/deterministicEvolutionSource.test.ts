@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createDeterministicEvolutionSource, TRUST_ENDING_MIN_AFFINITY, DOUBT_ENDING_MAX_AFFINITY } from "./deterministicEvolutionSource";
 import { createInitialWorldState, type NpcEntry, type WorldState } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asQuestId, asGenerationId } from "@/game/domain/worldEntity";
 
 function makeWorldWithNpc(affinity: number): WorldState {
   const base = createInitialWorldState({
@@ -60,5 +60,27 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
     expect(coldDoubt.kind).toBe("npc_affinity_at_most");
     if (warmTrust.kind === "npc_affinity_at_least") expect(20).toBeGreaterThanOrEqual(warmTrust.value);
     if (coldDoubt.kind === "npc_affinity_at_most") expect(-20).toBeLessThanOrEqual(coldDoubt.value);
+  });
+
+  it("names later-act NPCs and quests uniquely when the base names already exist", async () => {
+    const source = createDeterministicEvolutionSource();
+    const base = makeWorldWithNpc(0);
+    const existingNpc = { ...base.npcs[0]!, id: asNpcId("npc_1"), name: "传讯人" };
+    const ws: WorldState = {
+      ...base,
+      npcs: [...base.npcs, existingNpc],
+      quests: [{
+        id: asQuestId("quest_dyn_1"), name: "循迹而行", description: "上一幕。", objectives: [],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" }, tags: ["dynamic"],
+        kind: "main", stage: 2, status: "completed",
+      }],
+    };
+    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 2, quests: 2, events: 0 } });
+
+    const result = await source.propose({ worldState: ws, storyState: ss, need: { kind: "next_act", act: 3 }, reason: "test" });
+
+    expect(result.proposal?.newNpc?.name).toBe("传讯人·3");
+    expect(result.proposal?.nextMainQuest?.name).toBe("循迹而行·第3幕");
+    expect(result.proposal?.nextMainQuest?.objectiveText).toBe("与传讯人·3交谈");
   });
 });

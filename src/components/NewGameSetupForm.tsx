@@ -10,6 +10,7 @@ import {
   type NewGameInputError,
 } from "@/game/application";
 import { AdventureVisual, ADVENTURE_THEMES } from "./adventureVisuals";
+import { GenerationStatusModal } from "./GenerationStatusModal";
 
 // ---------------------------------------------------------------------------
 // 新开局表单（单页双栏）：受控表单，提交时真实调用 POST /api/game（canonical）。
@@ -635,6 +636,8 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
           </Panel>
         ) : null}
       </div>
+
+      {submitting ? <GenerationStatusModal kind="creation" /> : null}
     </form>
   );
 }

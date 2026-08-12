@@ -337,6 +337,41 @@ describe("AdventureGameShell three-layer navigation", () => {
     expect(screen.getByRole("button", { name: "返回小镇" })).toBeInTheDocument();
   });
 
+  it("entering a building starts the NPC talk action when the current scene is not dialogue-ready", async () => {
+    const user = userEvent.setup();
+    const view = buildTownView();
+    const notDialogueReady: GameSessionView = {
+      ...view,
+      narrative: {
+        ...view.narrative,
+        npcDialogues: [{
+          npcId: "npc_1",
+          name: "老板",
+          role: "路人",
+          speechPages: ["老板说道：我知道了。"],
+          choices: [],
+          freeInputEnabled: false,
+          giveChoices: [],
+        }],
+      },
+    };
+    render(<AdventureGameShell
+      view={notDialogueReady}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+
+    await user.click(screen.getByRole("button", { name: "进入客栈" }));
+    await user.click(screen.getByRole("button", { name: interactive.displayName }));
+    await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
+
+    expect(postAction).toHaveBeenCalledWith({
+      interaction: { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
+      revision: notDialogueReady.revision,
+    });
+  });
+
   it("returning from scene goes to town, and returning from town goes to the world map", async () => {
     const user = userEvent.setup();
     render(<AdventureGameShell

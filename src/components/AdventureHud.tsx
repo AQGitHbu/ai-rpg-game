@@ -21,11 +21,17 @@ type AdventureHudProps = {
 
 /** 当前目标推导：优先进行中主线；主线全部完成时回退任意未完成任务。 */
 function deriveObjective(view: GameSessionView): string {
+  if (view.story.currentObjectiveLabel !== null) {
+    return view.story.currentObjectiveLabel;
+  }
+
   const activeMain = view.quests.find((quest) => quest.kind === "main" && quest.status === "active");
   const nextMain = view.quests.find((quest) => quest.kind === "main" && quest.status !== "completed" && quest.status !== "failed");
   const quest = activeMain ?? nextMain ?? view.quests.find((entry) => entry.status === "active");
   const objective = quest?.objectives.find((entry) => !entry.completed);
-  return objective?.label ?? "暂无线索";
+  if (objective !== undefined) return objective.label;
+  if (view.ending === null && view.story.storyProgress >= 100) return "结局生成中";
+  return "暂无线索";
 }
 
 export function AdventureHud({ view, screen, onOpen, developmentTools, onOpenDevTools }: AdventureHudProps) {

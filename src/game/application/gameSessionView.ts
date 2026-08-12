@@ -259,11 +259,12 @@ export function projectGameSessionView(
     : [];
 
   const scene = storyState.narrative.currentScene;
+  // 只有结构化 dialogue event 才能赋予 NPC“焦点对话”能力。
+  // observe/travel 等场景也可能带 npcLine 作为旁白表演，但不能因此泄露
+  // 自由输入或伪造一个没有两个批准选项的焦点对话框。
   const focusNpcId = scene?.event?.kind === "dialogue"
     ? String(scene.event.focusNpcId)
-    : scene?.npcLine === null || scene?.npcLine === undefined
-      ? null
-      : String(scene.npcLine.npcId);
+    : null;
   const registry = storyState.narrative.choiceRegistry ?? [];
   const legalChoiceMap = buildChoiceMap(worldState, storyState, revision);
   const projectSceneChoice = (sceneChoice: NonNullable<typeof scene>["choices"][number]): PlayerChoiceView | null => {

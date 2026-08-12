@@ -207,13 +207,17 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
   const [openDialogueNpcId, setOpenDialogueNpcId] = useState<string | null>(() => {
     // 从小镇建筑进入：聚焦绑定 NPC；测试环境下默认打开第一个活跃对话。
     if (initialFocusNpcId !== null && initialFocusNpcId !== undefined) {
-      return initialFocusNpcId;
+      const initialDialogue = activeDialogues.find((dialogue) => dialogue.npcId === initialFocusNpcId);
+      return initialDialogue?.freeInputEnabled === true && initialDialogue.choices.length === 2
+        ? initialFocusNpcId
+        : null;
     }
     if (isTest && activeDialogues.length > 0) {
       return activeDialogues[0].npcId;
     }
     return null;
   });
+  const [autoFocusEnabled, setAutoFocusEnabled] = useState(initialFocusNpcId !== null && initialFocusNpcId !== undefined);
 
   const prevPendingRef = useRef(pending);
   const prevNpcIdsRef = useRef<string[]>([]);
@@ -305,13 +309,26 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
     }
   }
 
+  const readyInitialFocusNpcId = autoFocusEnabled
+    && initialFocusNpcId !== null
+    && initialFocusNpcId !== undefined
+    && activeDialogues.some((dialogue) =>
+      dialogue.npcId === initialFocusNpcId
+      && dialogue.freeInputEnabled
+      && dialogue.choices.length === 2,
+    )
+    ? initialFocusNpcId
+    : null;
+  const openDialogueNpcIdForRender = openDialogueNpcId ?? readyInitialFocusNpcId;
+
   // 当前打开的对话对象
-  const openDialogue: Dialogue | undefined = openDialogueNpcId
-    ? allDialoguesMap.get(openDialogueNpcId)
+  const openDialogue: Dialogue | undefined = openDialogueNpcIdForRender
+    ? allDialoguesMap.get(openDialogueNpcIdForRender)
     : undefined;
 
   // 点击 NPC 卡片：纯粹打开对话弹窗，不消费回合
   function handleNpcCardClick(npc: typeof sidebarNpcs[number]) {
+    setAutoFocusEnabled(false);
     setOpenDialogueNpcId(npc.dialogueId);
   }
 
@@ -341,7 +358,7 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
           </div>
           <div className="scene-npc-sidebar-list">
             {sidebarNpcs.map((npc) => {
-              const isSelected = openDialogueNpcId === npc.dialogueId;
+              const isSelected = openDialogueNpcIdForRender === npc.dialogueId;
               return (
                 <button
                   key={npc.id}
@@ -459,7 +476,10 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
           gameType={gameType}
           busy={busy || pending}
           onSubmit={onSubmit}
-          onClose={() => setOpenDialogueNpcId(null)}
+          onClose={() => {
+            setAutoFocusEnabled(false);
+            setOpenDialogueNpcId(null);
+          }}
         />
       ) : null}
     </section>

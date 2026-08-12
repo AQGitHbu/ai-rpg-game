@@ -1090,6 +1090,21 @@ body:has(.adventure-game-shell) {
   line-height: 1.7;
 }
 
+.narrative-generation-spinner {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  margin-bottom: 14px;
+  border: 3px solid var(--game-surface-border);
+  border-top-color: var(--game-accent);
+  border-radius: 50%;
+  animation: narrative-generation-spin 0.9s linear infinite;
+}
+
+@keyframes narrative-generation-spin {
+  to { transform: rotate(360deg); }
+}
+
 .development-tools-hint {
   margin: 8px 0 16px;
   color: var(--game-text-muted);

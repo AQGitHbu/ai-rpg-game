@@ -106,9 +106,45 @@ describe("advanceStoryProgression", () => {
       storyProgress: 85,
       unresolvedThreads: [],
     };
-    const ws = makeWorld();
+    const ws = makeWorld({
+      quests: [{
+        id: asQuestId("q_final"), name: "终局", description: "测试", objectives: [],
+        onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [],
+        kind: "main", stage: 3, status: "completed",
+      }],
+    });
     const result = advanceStoryProgression(ws, nearEnd, []);
     expect(result.nextStoryState.endingAllowed).toBe(true);
+  });
+
+  it("does not allow an ending before the current final-act quest is materialized", () => {
+    const lateAct = {
+      ...ss,
+      currentAct: 3,
+      targetActs: 3,
+      storyProgress: 100,
+      unresolvedThreads: ["thread_main"],
+    };
+    const ws = makeWorld({
+      quests: [
+        {
+          id: asQuestId("q_main_1"), name: "主线1", description: "", objectives: [],
+          onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [],
+          kind: "main", stage: 1, status: "completed",
+        },
+        {
+          id: asQuestId("q_main_2"), name: "主线2", description: "", objectives: [],
+          onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [],
+          kind: "main", stage: 2, status: "completed",
+        },
+      ],
+    });
+
+    const result = advanceStoryProgression(ws, lateAct, []);
+
+    expect(result.nextStoryState.endingAllowed).toBe(false);
+    expect(result.nextStoryState.evolution.status).toBe("needs_next_act");
+    expect(result.nextStoryState.unresolvedThreads).toContain("thread_main");
   });
 
   it("does not set endingAllowed with unresolved main thread even at final act (Spec §13.3)", () => {

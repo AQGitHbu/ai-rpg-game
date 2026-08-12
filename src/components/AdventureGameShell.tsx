@@ -10,6 +10,7 @@ import { AdventureDetailsPanel } from "./AdventureDetailsPanel";
 import { WorldMapScreen } from "./WorldMapScreen";
 import { LocationSceneScreen } from "./LocationSceneScreen";
 import { TownLayerScreen } from "./TownLayerScreen";
+import { GenerationStatusModal } from "./GenerationStatusModal";
 
 type Props = {
   readonly view: GameSessionView;
@@ -78,7 +79,10 @@ export function AdventureGameShell({
   function applyOutcome(outcome: ActionOutcome): void {
     switch (outcome.kind) {
       case "success":
-        setFeedback({ phase: "success", message: outcome.message });
+        setFeedback({
+          phase: "success",
+          message: outcome.message === "Action performed" ? "行动已完成" : outcome.message,
+        });
         onViewChange(outcome.view);
         break;
       case "stale":
@@ -95,6 +99,31 @@ export function AdventureGameShell({
   function submitInteraction(interaction: PlayerInteraction): void {
     setFeedback({ phase: "submitting" });
     void postAction({ interaction, revision: view.revision }).then(applyOutcome);
+  }
+
+  function enterNpcBuilding(npcId: string): void {
+    const building = view.currentLocation.town?.interactiveBuildings.find((entry) => entry.npcId === npcId);
+    const objectiveNpcName = view.story.currentObjectiveLabel?.match(/^与(.+)交谈$/)?.[1];
+    const objectiveNpc = objectiveNpcName === undefined
+      ? undefined
+      : view.currentLocation.npcs.find((entry) => entry.name === objectiveNpcName);
+    const npc = objectiveNpc ?? (building === undefined
+      ? undefined
+      : view.currentLocation.npcs.find((entry) => entry.name === building.npcName));
+    const currentDialogue = view.narrative.npcDialogues.find((entry) =>
+      entry.npcId === npcId || (npc !== undefined && entry.name === npc.name),
+    );
+    const alreadyReady = currentDialogue?.freeInputEnabled === true && currentDialogue.choices.length === 2;
+
+    setFocusNpcId(currentDialogue?.npcId ?? npcId);
+    setScreen("scene");
+
+    // 建筑入口是 NPC 对话入口：若当前没有已经就绪的焦点对话，
+    // 使用当前地点 read model 下发的 opaque talk token 发起正式回合。
+    // 不能只打开一个没有 choices 的旁白弹窗。
+    if (!alreadyReady && npc !== undefined) {
+      submitInteraction({ kind: "fixed_choice", choiceToken: npc.talkChoice.choiceToken });
+    }
   }
 
   function openDetails(panel: DetailsPanel): void {
@@ -134,10 +163,7 @@ export function AdventureGameShell({
         <TownLayerScreen
           town={view.currentLocation.town}
           busy={busy}
-          onEnterBuilding={(npcId) => {
-            setFocusNpcId(npcId);
-            setScreen("scene");
-          }}
+          onEnterBuilding={enterNpcBuilding}
           onReturnMap={() => setScreen("map")}
         />
       ) : (
@@ -179,11 +205,7 @@ export function AdventureGameShell({
         </p>
       ) : null}
 
-      {isSubmitting ? (
-        <p role="status" aria-live="polite" className="action-feedback submitting">
-          正在处理……
-        </p>
-      ) : null}
+      {busy ? <GenerationStatusModal kind={pending ? "narrative" : "action"} /> : null}
     </main>
   );
 }

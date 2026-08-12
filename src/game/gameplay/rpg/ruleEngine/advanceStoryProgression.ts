@@ -38,6 +38,10 @@ function allMainQuestsResolved(ws: WorldState): boolean {
   return mainQuests.every((q) => q.status === "completed" || q.status === "failed" || q.status === "closed");
 }
 
+function hasCurrentActMainQuest(ws: WorldState, currentAct: number): boolean {
+  return ws.quests.some((q) => q.kind === "main" && q.stage === currentAct);
+}
+
 export function advanceStoryProgression(
   ws: WorldState,
   ss: StoryState,
@@ -56,8 +60,11 @@ export function advanceStoryProgression(
     storyProgress = Math.max(storyProgress, actProgressThreshold(currentAct, ss.targetActs));
   }
 
+  const currentActMainQuestExists = hasCurrentActMainQuest(ws, currentAct);
+  const mainQuestsResolved = allMainQuestsResolved(ws);
+
   // 最终幕主线全部解决 → 回收主线 thread。
-  if (currentAct >= ss.targetActs && allMainQuestsResolved(ws)) {
+  if (currentAct >= ss.targetActs && currentActMainQuestExists && mainQuestsResolved) {
     unresolvedThreads = unresolvedThreads.filter((t) => t !== thread);
   }
 
@@ -71,7 +78,13 @@ export function advanceStoryProgression(
   }
 
   // endingAllowed：最终幕 + progress≥80 + 无未决主线 thread（Spec §13.3）。
-  if (currentAct >= ss.targetActs && storyProgress >= 80 && unresolvedThreads.length === 0) {
+  if (
+    currentAct >= ss.targetActs
+    && currentActMainQuestExists
+    && mainQuestsResolved
+    && storyProgress >= 80
+    && unresolvedThreads.length === 0
+  ) {
     endingAllowed = true;
   } else {
     endingAllowed = false;
@@ -89,7 +102,9 @@ export function advanceStoryProgression(
   // 非终幕主线解决 → 请求下一幕主线的具象化；终幕主线全部解决 → 请求结局对。
   const evolutionStatus = advanced
     ? "needs_next_act"
-    : currentAct >= ss.targetActs && allMainQuestsResolved(ws)
+    : currentAct >= ss.targetActs && !currentActMainQuestExists
+      ? "needs_next_act"
+      : currentAct >= ss.targetActs && mainQuestsResolved
       ? "needs_ending_pair"
       : ss.evolution.status;
 

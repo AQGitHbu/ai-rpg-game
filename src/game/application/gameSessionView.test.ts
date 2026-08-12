@@ -362,6 +362,30 @@ describe("projectGameSessionView", () => {
     expect(guest!.speechPages.length).toBeGreaterThan(0);
   });
 
+  it("observe 场景的 NPC 旁白不会伪装成可自由输入的焦点对话", () => {
+    const storyWithObservation = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: {
+          sceneId: "scene-observe-with-npc-line",
+          turn: 0,
+          narration: "镇口一阵风吹过。",
+          usedFactIds: [],
+          npcLine: { npcId: asNpcId("npc_1"), text: "老板说道：\"我知道了。\"", emotion: "neutral" as const, usedFactIds: [] },
+          choices: [] as never,
+          source: "generated" as const,
+          event: { kind: "observe" as const, locationId: asLocationId("loc_1") },
+        },
+      },
+    };
+    const view = projectGameSessionView(ws, storyWithObservation, 0, "test-ending-session");
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1");
+    expect(dialogue?.freeInputEnabled).toBe(false);
+    expect(dialogue?.choices).toHaveLength(1);
+    expect(dialogue?.choices[0]?.label).toBe("与老板交谈");
+  });
+
   it("任务目标引用未发现隐藏事实时，view 只显示中性目标，不泄漏 fact.text/FactId", () => {
     const SECRET_TEXT = "地窖里埋着先人的宝藏";
     const hiddenFact = { factId: asFactId("fact_secret"), text: SECRET_TEXT, source: "generated" as const, discovered: false };
