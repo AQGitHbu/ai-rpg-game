@@ -3,6 +3,10 @@ import type { EnemyId } from "@/game/domain/worldEntity";
 import type { GameEvent } from "@/game/domain/events";
 import type { StateChange } from "@/game/domain/resolvedEvent";
 import type { ResolveDeps, ResolveResult } from "./resolveByType";
+import type { ActiveBattleCombatState, BattleCombatant, CombatActionKind, CombatCommand } from "@/game/domain/combat";
+import { buildEncounter } from "./buildEncounter";
+import { advanceUntilPlayerDecision } from "./advanceBattle";
+import { createTurnOrder } from "./combatMath";
 
 // ---------------------------------------------------------------------------
 // 战斗纯函数：操作 WorldState，不依赖世界生成聚合。
@@ -11,6 +15,134 @@ import type { ResolveDeps, ResolveResult } from "./resolveByType";
 // ---------------------------------------------------------------------------
 
 export type BattleResolveDeps = Pick<ResolveDeps, "now">;
+
+type ActiveBattle = Extract<WorldState["battle"], { status: "active" }>;
+
+function isModernBattle(battle: ActiveBattle): battle is ActiveBattle & ActiveBattleCombatState {
+  return Array.isArray(battle.combatants)
+    && Array.isArray(battle.turnOrder)
+    && Array.isArray(battle.enemyIntents)
+    && Array.isArray(battle.downedEnemyIds)
+    && Array.isArray(battle.lastAdvance)
+    && typeof battle.turnIndex === "number";
+}
+
+function snapshotHp(combatants: readonly BattleCombatant[], enemyId: EnemyId): { playerHp: number; enemyHp: number } {
+  const playerHp = combatants.find((unit) => unit.side === "allies")?.hp ?? 0;
+  const enemyHp = combatants.find((unit) => unit.source.kind === "enemy" && unit.source.enemyId === enemyId)?.hp
+    ?? combatants.find((unit) => unit.side === "enemies")?.hp
+    ?? 0;
+  return { playerHp, enemyHp };
+}
+
+function activeBattleState(enemyId: EnemyId, enemyIds: readonly EnemyId[], state: ActiveBattleCombatState): ActiveBattle {
+  const hp = snapshotHp(state.combatants, enemyId);
+  return {
+    status: "active",
+    enemyId,
+    enemyIds,
+    playerHp: hp.playerHp,
+    enemyHp: hp.enemyHp,
+    ...state,
+  };
+}
+
+function modernFeedback(results: readonly ActiveBattleCombatState["lastAdvance"][number][], combatants: readonly BattleCombatant[]): string {
+  if (results.length === 0) return "轮到你行动。";
+  return results.map((result) => {
+    const actor = combatants.find((unit) => unit.combatantId === result.actorId)?.name ?? "单位";
+    if (result.kind === "guard") return `${actor}采取防御姿态。`;
+    if (result.kind === "flee") return `${actor}撤出了战斗。`;
+    return `${actor}${result.kind === "skill" ? "施放技能" : "攻击"}${result.damage > 0 ? `，造成 ${result.damage} 点伤害` : ""}。`;
+  }).join(" ");
+}
+
+function modernResult(
+  ws: WorldState,
+  battle: ActiveBattle,
+  command: CombatActionKind,
+  advanced: ReturnType<typeof advanceUntilPlayerDecision>,
+  deps: BattleResolveDeps,
+): ResolveResult {
+  const occurredAt = deps.now();
+  const enemyIds = battle.enemyIds ?? [battle.enemyId];
+  const hp = snapshotHp(advanced.state.combatants, battle.enemyId);
+  const roundEvent: GameEvent = {
+    type: "battle_round_resolved",
+    enemyId: battle.enemyId,
+    round: advanced.state.round,
+    playerHp: hp.playerHp,
+    enemyHp: hp.enemyHp,
+    action: command === "flee" ? "withdraw" : command,
+    results: advanced.results,
+    occurredAt,
+  };
+  const events: GameEvent[] = [roundEvent];
+  const outcome = advanced.outcome;
+  if (outcome === null) {
+    const nextBattle = activeBattleState(battle.enemyId, enemyIds, advanced.state);
+    const nextWs: WorldState = { ...ws, battle: nextBattle, eventLedger: [...ws.eventLedger, roundEvent] };
+    return {
+      ok: true,
+      nextWorldState: nextWs,
+      events,
+      feedback: modernFeedback(advanced.results, advanced.state.combatants),
+      status: "success",
+      stateChanges: [{ path: "battle", description: `回合 ${advanced.state.round} 结算`, operation: "update" }],
+      facts: [],
+    };
+  }
+
+  events.push({ type: "battle_resolved", enemyId: battle.enemyId, enemyIds, outcome, occurredAt });
+  if (outcome === "victory") {
+    for (const defeatedId of advanced.state.downedEnemyIds) {
+      events.push({ type: "enemy_defeated", enemyId: defeatedId, occurredAt });
+    }
+  }
+  const defeated = outcome === "victory"
+    ? Array.from(new Set([...ws.defeatedEnemyIds, ...advanced.state.downedEnemyIds]))
+    : ws.defeatedEnemyIds;
+  const nextWs: WorldState = {
+    ...ws,
+    battle: { status: "resolved", enemyId: battle.enemyId, outcome },
+    defeatedEnemyIds: defeated,
+    eventLedger: [...ws.eventLedger, ...events],
+  };
+  const firstEnemy = ws.enemies.find((enemy) => enemy.id === battle.enemyId);
+  const label = outcome === "victory" ? `你击败了${firstEnemy?.name ?? "敌人"}！`
+    : outcome === "withdraw" ? "你选择了撤退，战斗以失败告终。"
+      : `你被${firstEnemy?.name ?? "敌人"}击败了……`;
+  return {
+    ok: true,
+    nextWorldState: nextWs,
+    events,
+    feedback: label,
+    status: outcome === "defeat" ? "failure" : "success",
+    stateChanges: [{ path: "battle", description: outcome === "victory" ? "战斗胜利" : "战斗结束", operation: "set" }],
+    facts: [],
+  };
+}
+
+function modernBattleAction(ws: WorldState, action: CombatActionKind, deps: BattleResolveDeps): ResolveResult {
+  if (ws.battle.status !== "active" || !isModernBattle(ws.battle)) return { ok: false, feedback: "当前战斗状态不可推进。" };
+  const battle = ws.battle;
+  const actorId = battle.turnOrder[battle.turnIndex];
+  const actor = battle.combatants.find((unit) => unit.combatantId === actorId);
+  if (actor === undefined || actor.controller !== "player") return { ok: false, feedback: "尚未轮到玩家行动。" };
+  const command: CombatCommand = {
+    actorId,
+    kind: action,
+    targetId: action === "attack" || action === "skill"
+      ? battle.combatants.find((unit) => unit.side === "enemies" && unit.hp > 0)?.combatantId
+      : undefined,
+  };
+  try {
+    const advanced = advanceUntilPlayerDecision(battle, command);
+    return modernResult(ws, battle, action, advanced, deps);
+  } catch (error) {
+    return { ok: false, feedback: error instanceof Error ? error.message : "战斗行动无效。" };
+  }
+}
 
 /** 校验并初始化战斗状态。 */
 export function startBattle(
@@ -38,6 +170,39 @@ export function startBattle(
   // 敌人未被击败
   if (ws.defeatedEnemyIds.includes(enemyId)) {
     return { ok: false, feedback: "该敌人已被击败。" };
+  }
+
+  const encounter = buildEncounter(ws, enemyId);
+  if (typeof ws.player.stats.maxEnergy === "number" && typeof ws.player.stats.speed === "number" && encounter.length >= 2) {
+    const enemyIds = encounter
+      .filter((unit): unit is BattleCombatant & { readonly source: { readonly kind: "enemy"; readonly enemyId: EnemyId } } => unit.source.kind === "enemy")
+      .map((unit) => unit.source.enemyId);
+    const initial: ActiveBattleCombatState = {
+      round: 1,
+      combatants: encounter,
+      turnOrder: createTurnOrder(encounter),
+      turnIndex: 0,
+      enemyIntents: [],
+      downedEnemyIds: [],
+      lastAdvance: [],
+    };
+    const advanced = advanceUntilPlayerDecision(initial, null);
+    const occurredAt = deps.now();
+    const event: GameEvent = { type: "battle_started", enemyId, enemyIds, occurredAt };
+    const nextWs: WorldState = {
+      ...ws,
+      battle: activeBattleState(enemyId, enemyIds, advanced.state),
+      eventLedger: [...ws.eventLedger, event],
+    };
+    return {
+      ok: true,
+      nextWorldState: nextWs,
+      events: [event],
+      feedback: `战斗开始：你与${enemy.name}${enemyIds.length > 2 ? `等 ${enemyIds.length} 名敌人` : "展开了战斗"}！`,
+      status: "success",
+      stateChanges: [{ path: "battle", description: `与${enemy.name}展开战斗`, operation: "set" }],
+      facts: [],
+    };
   }
 
   const occurredAt = deps.now();
@@ -73,7 +238,7 @@ export function startBattle(
 /** 处理 attack/guard/flee。flee 以 withdraw 结果落账。 */
 export function battleAction(
   ws: WorldState,
-  action: "attack" | "guard" | "flee",
+  action: CombatActionKind,
   deps: BattleResolveDeps,
 ): ResolveResult {
   if (ws.battle.status !== "active") {
@@ -81,6 +246,7 @@ export function battleAction(
   }
 
   const battle = ws.battle;
+  if (isModernBattle(battle)) return modernBattleAction(ws, action, deps);
   const enemy = ws.enemies.find((e) => e.id === battle.enemyId);
   if (enemy === undefined) {
     return { ok: false, feedback: "战斗中的敌人不存在。" };

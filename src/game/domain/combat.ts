@@ -69,6 +69,7 @@ export type EnemyIntent = {
 
 /** active battle 的多单位扩展；旧字段由 BattleState 保留用于存档读取兼容。 */
 export type ActiveBattleCombatState = {
+  readonly round: number;
   readonly combatants: readonly BattleCombatant[];
   readonly turnOrder: readonly CombatantId[];
   readonly turnIndex: number;

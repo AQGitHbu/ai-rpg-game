@@ -147,7 +147,7 @@ export type FactionEntry = {
 
 export type BattleState =
   | { readonly status: "idle" }
-  | ({ readonly status: "active"; readonly enemyId: EnemyId; readonly playerHp: number; readonly enemyHp: number; readonly round: number }
+  | ({ readonly status: "active"; readonly enemyId: EnemyId; readonly enemyIds?: readonly EnemyId[]; readonly playerHp: number; readonly enemyHp: number; readonly round: number }
     & Partial<ActiveBattleCombatState>)
   | { readonly status: "resolved"; readonly enemyId: EnemyId; readonly outcome: "victory" | "defeat" | "withdraw" };
 
