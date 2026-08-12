@@ -592,6 +592,17 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
               {battleFeedback.message}
             </p>
           ) : null}
+          {view.battle.lastAdvance !== undefined && view.battle.lastAdvance.length > 0 ? (
+            <ol className="battle-log" aria-label="本次行动记录">
+              {view.battle.lastAdvance.map((entry) => (
+                <li key={`${entry.round}:${entry.sequence}`}>
+                  {entry.actorName}{entry.kind === "guard" ? "防御" : entry.kind === "flee" ? "撤退" : entry.kind === "skill" ? "施放技能" : "攻击"}
+                  {entry.targetName ? ` → ${entry.targetName}` : ""}
+                  {entry.damage > 0 ? `，${entry.damage} 伤害` : ""}
+                </li>
+              ))}
+            </ol>
+          ) : null}
         </section>
       ) : null}
 
