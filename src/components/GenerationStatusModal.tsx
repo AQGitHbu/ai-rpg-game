@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 type GenerationStatusModalProps = {
   readonly kind: "creation" | "narrative" | "action";
   readonly onRetry?: () => void;
+  /** 战斗回合生成中时保留竞技场可见，只把状态收敛成上方提示条。 */
+  readonly battleVisible?: boolean;
 };
 
 const COPY = {
@@ -25,7 +27,7 @@ const COPY = {
   },
 } as const;
 
-export function GenerationStatusModal({ kind, onRetry }: GenerationStatusModalProps) {
+export function GenerationStatusModal({ kind, onRetry, battleVisible = false }: GenerationStatusModalProps) {
   const copy = COPY[kind];
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
@@ -35,12 +37,17 @@ export function GenerationStatusModal({ kind, onRetry }: GenerationStatusModalPr
   }, []);
 
   return (
-    <div className="narrative-generation-modal" role="dialog" aria-modal="true" aria-labelledby="generation-status-title">
+    <div
+      className={`narrative-generation-modal${battleVisible ? " narrative-generation-modal--battle" : ""}`}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="generation-status-title"
+    >
       <div className="narrative-generation-modal-backdrop" />
       <section className="narrative-generation-modal-content" aria-live="polite">
         <span className="narrative-generation-spinner" aria-hidden="true" />
         <h2 id="generation-status-title">{copy.title}</h2>
-        <p>{copy.description}</p>
+        <p>{battleVisible ? "战斗结果正在结算，下一回合即将开始。" : copy.description}</p>
         <p className="narrative-generation-modal-hint">{copy.hint}</p>
         <p className="narrative-generation-modal-elapsed">已等待 {elapsedSeconds} 秒</p>
         {onRetry && elapsedSeconds >= 15 ? (

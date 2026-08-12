@@ -20,6 +20,9 @@ export type WorldEvolutionLiveDeps = {
   readonly logger?: GameLogger;
 };
 
+/** 世界演化不能把一次回合锁在长 provider 请求上；超时即确定性回退。 */
+export const LIVE_WORLD_EVOLUTION_TIMEOUT_MS = 12_000;
+
 function parseJsonResponse(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -204,7 +207,7 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
         const result = await transport.complete(config, [
           { role: "system", content: buildWorldEvolutionPrompt(ctx) },
           { role: "user", content: userPrompt(ctx) },
-        ], { timeoutMs: 60_000 });
+        ], { timeoutMs: LIVE_WORLD_EVOLUTION_TIMEOUT_MS });
 
         if (!result.ok) {
           logger?.warn("world_evolution_ai_failed", { code: result.code });

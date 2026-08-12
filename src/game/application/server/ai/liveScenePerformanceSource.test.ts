@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createLiveScenePerformanceSource, buildLiveScenePrompt } from "./liveScenePerformanceSource";
+import { createLiveScenePerformanceSource, buildLiveScenePrompt, LIVE_SCENE_TIMEOUT_MS } from "./liveScenePerformanceSource";
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
 import { buildSelectableSceneCandidates } from "../../deterministicSceneSource";
@@ -130,7 +130,7 @@ function stubTransport(payload: unknown, content: string | null = null): AiTrans
 const config: AiTransportConfig = { baseUrl: "x", apiKey: "k", model: "m" };
 
 describe("liveScenePerformanceSource（Task 6）", () => {
-  it("bounds live scene generation to 30 seconds before deterministic fallback", async () => {
+  it("bounds live scene generation before deterministic fallback", async () => {
     const context = makeContext();
     const transport = stubTransport(null, "not-json");
     const source = createLiveScenePerformanceSource({ transport, config });
@@ -140,7 +140,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(transport.complete).toHaveBeenCalledWith(
       config,
       expect.any(Array),
-      { timeoutMs: 30_000 },
+      { timeoutMs: LIVE_SCENE_TIMEOUT_MS },
     );
   });
 

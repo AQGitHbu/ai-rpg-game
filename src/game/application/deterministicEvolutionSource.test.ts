@@ -83,4 +83,24 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
     expect(result.proposal?.nextMainQuest?.name).toBe("循迹而行·第3幕");
     expect(result.proposal?.nextMainQuest?.objectiveText).toBe("与传讯人·3交谈");
   });
+
+  it("seeds a later act with an item and enemy for the complete playable loop", async () => {
+    const source = createDeterministicEvolutionSource();
+    const result = await source.propose({
+      worldState: makeWorldWithNpc(0),
+      storyState: createInitialStoryState({ gameLength: "medium", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } }),
+      need: { kind: "next_act", act: 2 },
+      reason: "medium-playtest",
+    });
+
+    expect(result.proposal?.newItem).toMatchObject({
+      name: "幕间信物",
+      locationRef: "current",
+    });
+    expect(result.proposal?.newEnemy).toMatchObject({
+      name: "迷雾守卫",
+      tier: "normal",
+      locationRef: "current",
+    });
+  });
 });

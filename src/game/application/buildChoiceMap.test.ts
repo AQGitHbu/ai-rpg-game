@@ -110,6 +110,10 @@ describe("buildChoiceMap", () => {
     expect(map.get(deriveRuntimeChoiceToken(talkSmith, 0))).toEqual({ type: "talk", npcId: asNpcId("npc_smith"), dialogueAct: "ask" });
   });
 
+  it("有物品或敌人的地点允许先探索再处理实体", () => {
+    expect(hasExplorableContent(buildWorldState(), buildStoryState({}))).toBe(true);
+  });
+
   it("战斗激活时只允许 battle_action", () => {
     const ws: WorldState = {
       ...buildWorldState(),
@@ -214,7 +218,7 @@ describe("buildChoiceMap", () => {
 });
 
 describe("hasExplorableContent（方案 1：有剧情钩子才允许探索）", () => {
-  // 干净地点：无物品（清空 loc_1 可拾取）、无事实、无任务、无候选事件。
+  // 干净地点：无物品、无敌人、无事实、无任务、无候选事件。
   function bareWorld(): WorldState {
     const ws = buildWorldState();
     return {
@@ -222,6 +226,7 @@ describe("hasExplorableContent（方案 1：有剧情钩子才允许探索）", 
       locations: ws.locations.map((l) =>
         l.id === asLocationId("loc_1") ? { ...l, availableItemIds: [] } : l,
       ),
+      enemies: [],
     };
   }
 
@@ -231,10 +236,16 @@ describe("hasExplorableContent（方案 1：有剧情钩子才允许探索）", 
     expect(map.has(deriveRuntimeChoiceToken({ type: "explore" }, 0))).toBe(false);
   });
 
-  it("本地点仅有未拾取物品（无线索/目标/候选事件）→ 不可探索（物品走 take_item 入口）", () => {
-    // buildWorldState 的 loc_1 有井边钥匙且未拥有，但探索不拾取物品——
-    // 物品不应构成探索钩子，避免无剧情钩子地点出现空转探索按钮。
-    expect(hasExplorableContent(buildWorldState(), buildStoryState({}))).toBe(false);
+  it("本地点仅有未拾取物品（无线索/目标/候选事件）→ 可先探索再拾取", () => {
+    const itemOnlyWorld = {
+      ...bareWorld(),
+      locations: bareWorld().locations.map((location) =>
+        location.id === asLocationId("loc_1")
+          ? { ...location, availableItemIds: [asItemId("item_well_key")] }
+          : location,
+      ),
+    };
+    expect(hasExplorableContent(itemOnlyWorld, buildStoryState({}))).toBe(true);
   });
 
   it("本地点有未发现的线索事实 → 可探索；事实已发现 → 不可探索", () => {

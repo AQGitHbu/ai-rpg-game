@@ -440,6 +440,9 @@ export function approveWorldDelta(input: {
       text: p.newFact.text,
       source: "generated",
       discovered: p.newFact.visibility === "public",
+      // 提案协议中的 fact 没有单独 locationRef：同批新地点优先，否则挂到
+      // 当前地点，保证调查入口能从权威世界状态投影出来。
+      locationId: ids.locationId ?? ws.currentLocationId,
     });
   }
 

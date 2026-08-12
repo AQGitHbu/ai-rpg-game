@@ -7,7 +7,8 @@ import type { NpcId } from "@/game/domain/worldEntity";
 
 // ---------------------------------------------------------------------------
 // 确定性世界演化 source（离线/测试/兜底）：
-// - next_act：当前地点补一个 NPC + 锚定该 NPC 的主线任务（保证可达）；
+// - next_act：当前地点补一个 NPC、可拾取信物与敌人 + 锚定该 NPC 的主线任务
+//   （保证可达，同时让中篇兜底流程覆盖探索、物品、战斗三类入口）；
 // - ending_pair：按故事契约的两条主题方向产出互斥结局对，并给两条结局附上
 //   规则可判定的达成要求——以关键 NPC（首位 NPC，即开局主角锚点）的亲和度为
 //   分歧信号：亲和度 ≥ TRUST_THRESHOLD 走 trust 结局，≤ DOUBT_THRESHOLD
@@ -133,6 +134,9 @@ function planNextAct(ws: WorldState, act: number): WorldDeltaProposal {
   const useNewLocation = currentTownNeedsNewLocation(ws);
   const npcName = uniqueName("传讯人", ws.npcs.map((npc) => npc.name), String(act));
   const questName = uniqueName("循迹而行", ws.quests.map((quest) => quest.name), `第${act}幕`);
+  const itemName = uniqueName("幕间信物", ws.items.map((item) => item.name), String(act));
+  const enemyName = uniqueName("迷雾守卫", ws.enemies.map((enemy) => enemy.name), String(act));
+  const mountedLocation = useNewLocation ? "new_location" : "current";
   return {
     beatSummary: "下一幕的推进人物与先声",
     newLocation: useNewLocation
@@ -152,9 +156,20 @@ function planNextAct(ws: WorldState, act: number): WorldDeltaProposal {
         : { kind: "existing", id: currentLocationId(ws) },
       goals: ["传递密信"],
     },
-    newItem: null,
-    newEnemy: null,
-    newFact: null,
+    newItem: {
+      name: itemName,
+      description: "在新线索旁发现的信物，表面留着尚未褪去的微光。",
+      locationRef: mountedLocation,
+    },
+    newEnemy: {
+      name: enemyName,
+      tier: "normal",
+      locationRef: mountedLocation,
+    },
+    newFact: {
+      text: "信使带来的地图边角藏着一行尚未解读的暗号。",
+      visibility: "npc_private",
+    },
     nextMainQuest: {
       name: questName,
       description: "跟随信使的线索推进故事。",

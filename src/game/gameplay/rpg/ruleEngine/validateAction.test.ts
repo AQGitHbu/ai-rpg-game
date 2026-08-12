@@ -103,6 +103,15 @@ describe("validateAction", () => {
     const result = validateAction(ws2, { type: "attack", enemyId: asEnemyId("enemy_1") });
     expect(result.ok).toBe(true);
   });
+
+  it("accepts attack after a resolved withdrawal when the enemy remains undefeated", () => {
+    const ws2 = makeWorldWithEnemy();
+    const ws3 = {
+      ...ws2,
+      battle: { status: "resolved", enemyId: asEnemyId("enemy_1"), outcome: "withdraw" } as const,
+    };
+    expect(validateAction(ws3, { type: "attack", enemyId: asEnemyId("enemy_1") }).ok).toBe(true);
+  });
 });
 
 describe("validateAction — battle_action", () => {

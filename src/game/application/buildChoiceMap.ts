@@ -59,6 +59,14 @@ export function buildChoiceMap(
       }
     }
 
+    // 当前地点未发现事实 → investigate；正文仍只在行动结算后由场景投影，
+    // 这里只下发不泄漏 factId 的 opaque token。
+    for (const fact of worldState.worldFacts) {
+      if (fact.locationId === worldState.currentLocationId && !fact.discovered) {
+        addRuntimeAction({ type: "investigate", factId: fact.factId });
+      }
+    }
+
     // 背包物品 × 在场 NPC → give_item（正式给予入口）
     for (const npc of worldState.npcs) {
       if (npc.locationId !== worldState.currentLocationId) continue;
@@ -77,7 +85,7 @@ export function buildChoiceMap(
       }
     }
 
-    // 探索：仅当前地点有可探索内容（未发现线索/未拾取物品/未满足目标/候选事件）
+    // 探索：仅当前地点有可探索内容（未发现线索/未拾取物品或敌人/未满足目标/候选事件）
     // 时才作为合法世界行动（方案 1：无剧情钩子不显示探索）。
     if (hasExplorableContent(worldState, storyState)) {
       addRuntimeAction({ type: "explore" });
@@ -126,6 +134,7 @@ function isCurrentlyLegalRegistryAction(
     case "explore":
       return hasExplorableContent(worldState, storyState);
     case "investigate":
+      return worldActionMap.has(deriveRuntimeChoiceToken(action, currentRevision));
     case "ack_prologue":
     case "freeform":
       return false;
@@ -135,14 +144,24 @@ function isCurrentlyLegalRegistryAction(
 // ---------------------------------------------------------------------------
 // 可探索性判定（方案 1 修订）：探索选项只在存在"探索能推进"的剧情钩子时
 // 对玩家可见/可执行。
-// 钩子 = 当前地点仍有未发现的线索事实、未满足的地点相关目标、或候选事件池
-// 中涉及当前地点的有效（未过期）候选事件。
-// 注意：本地点有未拾取物品（availableItemIds）不构成探索钩子——探索动作
-// 不拾取物品（拾取走独立 take_item 入口），有物品并不代表探索有剧情作用；
-// 若把物品当作钩子，无剧情钩子的地点（如开局青石镇）会出现空转探索按钮。
+// 钩子 = 当前地点仍有未发现的线索事实、可拾取物品、未击败敌人、未满足的
+// 地点相关目标，或候选事件池中涉及当前地点的有效（未过期）候选事件。
+// 注意：探索不会代替拾取或攻击（它们仍走独立入口），但场景中存在未处理实体
+// 时允许先观察现场；没有任何实体或线索的地点仍不显示探索，避免空转按钮。
 // ---------------------------------------------------------------------------
 export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
   const currentId = ws.currentLocationId;
+
+  // 物品与敌人都是场景中可被观察、靠近和处理的实体；有它们时“探索”不是
+  // 空转，而是允许玩家先观察现场，再决定拾取或开战。
+  const currentLocation = ws.locations.find((location) => location.id === currentId);
+  if (currentLocation !== undefined) {
+    const hasAvailableItem = currentLocation.availableItemIds.some((itemId) => !ws.inventory.includes(itemId));
+    const hasUndefeatedEnemy = ws.enemies.some((enemy) =>
+      enemy.locationId === currentId && !ws.defeatedEnemyIds.includes(enemy.id),
+    );
+    if (hasAvailableItem || hasUndefeatedEnemy) return true;
+  }
 
   // 1) 本地点仍有未发现的线索事实（含 NPC 私密事实：探索可引动揭示，不泄漏正文）。
   if (ws.worldFacts.some((f) => f.locationId === currentId && !f.discovered)) return true;

@@ -79,6 +79,16 @@ describe("startBattle", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("allows retrying an undefeated enemy after withdrawing", () => {
+    const ws = makeWorldWithEnemy();
+    const started = startBattle(ws, asEnemyId("enemy_1"), deps);
+    if (!started.ok) throw new Error("setup failed");
+    const withdrawn = battleAction(started.nextWorldState, "flee", deps);
+    if (!withdrawn.ok) throw new Error("withdraw failed");
+    const retried = startBattle(withdrawn.nextWorldState, asEnemyId("enemy_1"), deps);
+    expect(retried.ok).toBe(true);
+  });
+
   it("rejects when enemy already defeated", () => {
     const ws = makeWorldWithEnemy();
     const ws2: WorldState = { ...ws, defeatedEnemyIds: [asEnemyId("enemy_1")] };

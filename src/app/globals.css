@@ -1071,6 +1071,32 @@ body:has(.adventure-game-shell) {
   padding: 24px;
 }
 
+/* 战斗回合结算时保留双方站位与动作反馈可见，避免整屏模态遮住战斗表现。 */
+.narrative-generation-modal--battle {
+  align-items: start;
+  padding-top: 86px;
+  pointer-events: none;
+}
+
+.narrative-generation-modal--battle .narrative-generation-modal-backdrop {
+  background: linear-gradient(180deg, rgb(0 0 0 / 58%), rgb(0 0 0 / 10%) 34%, transparent 70%);
+}
+
+.narrative-generation-modal--battle .narrative-generation-modal-content {
+  width: min(92vw, 460px);
+  padding: 12px 18px;
+  pointer-events: auto;
+}
+
+.narrative-generation-modal--battle .narrative-generation-spinner,
+.narrative-generation-modal--battle .narrative-generation-modal-hint {
+  display: none;
+}
+
+.narrative-generation-modal--battle .narrative-generation-modal-content p {
+  margin-top: 6px;
+}
+
 .narrative-generation-modal-backdrop {
   position: absolute;
   inset: 0;
@@ -1528,6 +1554,18 @@ body:has(.adventure-game-shell) {
   gap: 12px;
 }
 
+.battle-hud-side {
+  color: var(--game-accent);
+  font-size: .8rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.battle-hud-side--enemy {
+  color: #e09a91;
+  text-align: right;
+}
+
 .battle-hud strong {
   font-family: Georgia, "STSong", serif;
   font-size: clamp(1.1rem, 2.5vw, 1.6rem);
@@ -1537,6 +1575,17 @@ body:has(.adventure-game-shell) {
   position: relative;
   z-index: 1;
   padding: clamp(1rem, 3vw, 2rem);
+  min-width: 0;
+  animation: battle-combatant-idle 3s ease-in-out infinite;
+}
+
+.battle-combatant--player {
+  justify-self: start;
+  text-align: left;
+}
+
+.battle-combatant--player .battle-combatant-visual {
+  margin-right: auto;
 }
 
 .battle-combatant h3 {
@@ -1552,10 +1601,98 @@ body:has(.adventure-game-shell) {
 
 .battle-combatant--enemy {
   text-align: right;
+  justify-self: end;
+}
+
+.battle-combatant--enemy .battle-combatant-visual {
+  margin-left: auto;
+  transform: scaleX(-1);
 }
 
 .battle-combatant-visual {
   max-width: 120px;
+}
+
+.battle-faction-label {
+  display: inline-block;
+  margin-top: 10px;
+  color: var(--game-text-muted);
+  font-size: .72rem;
+  letter-spacing: .12em;
+}
+
+.battle-feedback {
+  position: absolute;
+  top: 46%;
+  left: 50%;
+  z-index: 3;
+  margin: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--game-accent);
+  border-radius: 999px;
+  background: rgb(10 15 12 / 90%);
+  color: var(--game-accent);
+  font-weight: 700;
+  text-shadow: 0 2px 10px rgb(0 0 0 / 80%);
+  transform: translate(-50%, -50%);
+  animation: battle-feedback-pop 1.8s ease-out both;
+}
+
+.battle-feedback--player-hit {
+  top: 35%;
+  left: 25%;
+  border-color: #e09a91;
+  color: #f0b0a8;
+}
+
+.battle-feedback--enemy-hit {
+  top: 35%;
+  left: 75%;
+}
+
+.battle-feedback--resolved {
+  border-color: var(--game-success);
+  color: var(--game-success);
+}
+
+@keyframes battle-combatant-idle {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -4px; }
+}
+
+.battle-combatant--attacking {
+  animation: battle-player-lunge 520ms ease-out both;
+}
+
+.battle-combatant--hit {
+  animation: battle-combatant-hit 420ms ease-out both;
+}
+
+@keyframes battle-player-lunge {
+  0%, 100% { translate: 0 0; }
+  38% { translate: 54px -8px; }
+  68% { translate: 18px -3px; }
+}
+
+@keyframes battle-combatant-hit {
+  0%, 100% { translate: 0 0; }
+  25% { translate: -8px 0; }
+  50% { translate: 8px 0; }
+  75% { translate: -4px 0; }
+}
+
+@keyframes battle-feedback-pop {
+  0% { opacity: 0; transform: translate(-50%, -22%) scale(.82); }
+  16% { opacity: 1; transform: translate(-50%, -50%) scale(1.04); }
+  72% { opacity: 1; transform: translate(-50%, -70%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -92%) scale(.96); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .battle-combatant,
+  .battle-feedback {
+    animation: none;
+  }
 }
 
 .battle-action-rail {
@@ -1624,8 +1761,22 @@ body:has(.adventure-game-shell) {
 
 @media (max-width: 700px) {
   .battle-viewport {
-    grid-template-columns: 1fr;
+    /* 即使在窄屏也保留己方左、敌方右的战斗语义；压缩卡片而不是把
+       两个阵营垂直堆叠，避免玩家失去战场方向感。 */
+    grid-template-columns: 1fr 1fr;
     min-height: 72dvh;
+  }
+
+  .battle-combatant {
+    padding: .75rem .5rem;
+  }
+
+  .battle-combatant-visual {
+    max-width: 76px;
+  }
+
+  .battle-combatant h3 {
+    font-size: .85rem;
   }
 
   .battle-action-rail {

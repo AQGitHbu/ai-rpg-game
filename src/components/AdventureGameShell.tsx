@@ -249,6 +249,7 @@ export function AdventureGameShell({
         <GenerationStatusModal
           kind={pending ? "narrative" : "action"}
           onRetry={pending ? onRetryNarrative : undefined}
+          battleVisible={view.battle !== null}
         />
       ) : null}
     </div>

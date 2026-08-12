@@ -371,6 +371,73 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     expect(screen.getByText("正在准备对话……")).toBeInTheDocument();
   });
+
+  it("keeps battle sides explicit and shows the attack feedback before the next snapshot", async () => {
+    const base = buildView();
+    const onSubmit = vi.fn();
+    const { rerender } = render(<LocationSceneScreen
+      view={base}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    expect(screen.getByRole("group", { name: "己方：侠客" })).toHaveAttribute("data-side", "player");
+    expect(screen.getByRole("group", { name: "敌方：灰狼" })).toHaveAttribute("data-side", "enemy");
+    await userEvent.click(screen.getByRole("button", { name: "攻击" }));
+    expect(screen.getByText("你攻击！")).toBeInTheDocument();
+    expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: TOKENS.battle });
+
+    rerender(<LocationSceneScreen
+      view={{ ...base, battle: { ...base.battle!, enemyHp: 5, round: 3 } }}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+    expect(screen.getByText("攻击命中！灰狼 -7 HP")).toBeInTheDocument();
+  });
+
+  it("offers non-focus NPC small talk without submitting a game action", async () => {
+    const base = buildView();
+    const onSubmit = vi.fn();
+    const view: GameSessionView = {
+      ...base,
+      currentLocation: {
+        ...base.currentLocation,
+        npcs: [
+          ...base.currentLocation.npcs,
+          { name: "猎人", role: "游侠", talkChoice: choice("c_hunter_talk", "与猎人交谈", "dialogue") },
+        ],
+      },
+      narrative: {
+        ...base.narrative,
+        npcDialogues: [
+          ...base.narrative.npcDialogues,
+          {
+            npcId: "npc_2",
+            name: "猎人",
+            role: "游侠",
+            speechPages: ["猎人靠在门边观察雨幕。"],
+            choices: [choice("c_hunter_talk", "与猎人交谈", "dialogue")],
+            freeInputEnabled: false,
+            giveChoices: [],
+            smallTalk: { prompt: "向猎人打听附近动静", response: "猎人说：林子里今天很安静。" },
+          },
+        ],
+      },
+    };
+    render(<LocationSceneScreen
+      view={view}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    await userEvent.click(screen.getByRole("button", { name: /猎人游侠/ }));
+    await userEvent.click(screen.getByRole("button", { name: /向猎人打听附近动静/ }));
+    expect(screen.getByText("猎人说：林子里今天很安静。")).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
 });
 
 describe("AdventureGameShell three-layer navigation", () => {

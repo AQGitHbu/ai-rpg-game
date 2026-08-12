@@ -148,6 +148,23 @@ function choice(
   };
 }
 
+/**
+ * 非焦点 NPC 的展示层闲聊兜底。
+ *
+ * 场景表演源可以提供更贴合上下文的 smallTalk；当 live/fallback 场景
+ * 没有附带时，仍给玩家一个不消耗回合的轻交互入口。文本只描述无状态
+ * 影响的环境闲话，不授予事实、不推进任务，也不替代正式 talk action。
+ */
+function buildSmallTalkFallback(npc: { readonly name: string; readonly role: string }): {
+  readonly prompt: string;
+  readonly response: string;
+} {
+  return {
+    prompt: `和${npc.name}聊几句`,
+    response: `${npc.name}压低声音聊了几句${npc.role}的日常：“先看看周围，别急着下结论。”`,
+  };
+}
+
 function presentationForAction(action: Action): PlayerChoiceView["presentation"] {
   switch (action.type) {
     case "talk":
@@ -225,10 +242,19 @@ export function projectGameSessionView(
 
   const locationActions: PlayerChoiceView[] = [];
   if (activeBattle === null) {
-    // 探索：仅当前地点有可探索内容（未发现线索/未拾取物品/未满足目标/候选事件）
+    // 探索：仅当前地点有可探索内容（未发现线索/未处理物品或敌人/未满足目标/候选事件）
     // 时显示，避免无剧情钩子地点的空转选项（方案 1）。
     if (hasExplorableContent(worldState, storyState)) {
       locationActions.push(choice({ type: "explore" }, revision, `探索${currentLocation?.name ?? "此地"}`, "explore"));
+    }
+    const undiscoveredFacts = worldState.worldFacts.filter((fact) =>
+      fact.locationId === worldState.currentLocationId && !fact.discovered,
+    );
+    for (const [index, fact] of undiscoveredFacts.entries()) {
+      if (fact.locationId === worldState.currentLocationId && !fact.discovered) {
+        const suffix = undiscoveredFacts.length > 1 ? ` ${index + 1}` : "";
+        locationActions.push(choice({ type: "investigate", factId: fact.factId }, revision, `调查现场线索${suffix}`, "explore"));
+      }
     }
     for (const npc of presentNpcs) {
       locationActions.push(choice(
@@ -338,7 +364,9 @@ export function projectGameSessionView(
             };
           })
         : [],
-      ...(supplied?.smallTalk ? { smallTalk: supplied.smallTalk } : {}),
+      ...(!isFocus
+        ? { smallTalk: supplied?.smallTalk ?? buildSmallTalkFallback(npc) }
+        : {}),
     }];
   });
 

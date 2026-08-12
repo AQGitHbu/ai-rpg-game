@@ -17,6 +17,11 @@ type LocationSceneScreenProps = {
 
 type Dialogue = NonNullable<GameSessionView["narrative"]["npcDialogues"]>[number];
 
+type BattleFeedback = {
+  readonly kind: "player-action" | "enemy-hit" | "player-hit" | "resolved";
+  readonly message: string;
+};
+
 // 场景内散布的可探索/调查物品图标位置预设
 const ITEM_HOTSPOT_POSITIONS = [
   { top: "38%", left: "22%" },
@@ -43,8 +48,11 @@ function NpcDialogueModal({
   const [text, setText] = useState("");
   const [smallTalkShown, setSmallTalkShown] = useState(false);
 
-  const hasFocusInteraction = dialogue.choices.length > 0 || dialogue.freeInputEnabled;
-  const isDialoguePreparing = !dialogue.freeInputEnabled
+  // 焦点 NPC 的正式对话严格由两个批准选项或自由输入标识；
+  // 非焦点 NPC 的单个 talk choice 只是打开正式交谈的入口，不能吞掉闲聊。
+  const hasFocusInteraction = dialogue.freeInputEnabled || dialogue.choices.length === 2;
+  const isDialoguePreparing = !hasFocusInteraction
+    && !dialogue.freeInputEnabled
     && dialogue.choices.length === 1
     && dialogue.choices[0]?.presentation === "dialogue";
 
@@ -149,6 +157,11 @@ function NpcDialogueModal({
         ) : (
           /* 非焦点 NPC：显示闲聊按钮或降级对话选项 */
           <>
+            {isDialoguePreparing && !dialogue.smallTalk ? (
+              <p role="status" aria-live="polite" className="npc-dialogue-preparing">
+                正在准备对话……
+              </p>
+            ) : null}
             {dialogue.smallTalk && !smallTalkShown ? (
               <button
                 type="button"
@@ -235,9 +248,38 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
     return null;
   });
   const [autoFocusEnabled, setAutoFocusEnabled] = useState(initialFocusNpcId !== null && initialFocusNpcId !== undefined);
+  const [battleFeedback, setBattleFeedback] = useState<BattleFeedback | null>(null);
+  const previousBattleRef = useRef(view.battle);
 
   const prevPendingRef = useRef(pending);
   const prevNpcIdsRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    const previous = previousBattleRef.current;
+    const current = view.battle;
+    previousBattleRef.current = current;
+
+    if (previous !== null && current !== null) {
+      const enemyDamage = previous.enemyHp - current.enemyHp;
+      const playerDamage = previous.playerHp - current.playerHp;
+      if (enemyDamage > 0) {
+        setBattleFeedback({ kind: "enemy-hit", message: `攻击命中！${current.enemyName} -${enemyDamage} HP` });
+      } else if (playerDamage > 0) {
+        setBattleFeedback({ kind: "player-hit", message: `受到反击！你 -${playerDamage} HP` });
+      } else if (current.round > previous.round) {
+        setBattleFeedback({ kind: "resolved", message: `第 ${current.round} 回合开始` });
+      }
+      const timer = window.setTimeout(() => setBattleFeedback(null), 1800);
+      return () => window.clearTimeout(timer);
+    }
+
+    if (previous !== null && current === null) {
+      setBattleFeedback({ kind: "resolved", message: "战斗结算完成" });
+      const timer = window.setTimeout(() => setBattleFeedback(null), 1800);
+      return () => window.clearTimeout(timer);
+    }
+    return undefined;
+  }, [view.battle]);
 
   // 当 pending 结束后，自动弹出新增对话 NPC 的对话框（即"与XXX交谈"行动完成后）
   useEffect(() => {
@@ -347,6 +389,23 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
   function handleNpcCardClick(npc: typeof sidebarNpcs[number]) {
     setAutoFocusEnabled(false);
     setOpenDialogueNpcId(npc.dialogueId);
+  }
+
+  function renderBattleChoiceButton(choice: { choiceToken: string; label: string }) {
+    return (
+      <button
+        key={choice.choiceToken}
+        type="button"
+        data-battle-action="true"
+        disabled={busy || pending}
+        onClick={() => {
+          setBattleFeedback({ kind: "player-action", message: `你${choice.label}！` });
+          onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken });
+        }}
+      >
+        {choice.label}
+      </button>
+    );
   }
 
   return (
@@ -470,23 +529,44 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
             <AdventureVisual gameType={gameType} kind="enemy" label="" decorative />
           </div>
           <div className="battle-hud">
-            <strong>{view.battle.enemyName}</strong>
-            <span>第 {view.battle.round} 回合</span>
+            <span className="battle-hud-side">己方</span>
+            <strong>第 {view.battle.round} 回合</strong>
+            <span className="battle-hud-side battle-hud-side--enemy">敌方 · {view.battle.enemyName}</span>
           </div>
-          <div className="battle-combatant battle-combatant--enemy">
+          <div
+            className={`battle-combatant battle-combatant--player ${battleFeedback?.kind === "player-action" ? "battle-combatant--attacking" : ""} ${battleFeedback?.kind === "player-hit" ? "battle-combatant--hit" : ""}`}
+            data-side="player"
+            role="group"
+            aria-label={`己方：${view.player.name}`}
+          >
+            <div className="battle-combatant-visual" aria-hidden="true">
+              <AdventureVisual gameType={gameType} kind="npc" label="" decorative />
+            </div>
+            <span className="battle-faction-label">己方</span>
+            <h3>{view.player.name}</h3>
+            <p>HP {view.battle.playerHp}</p>
+          </div>
+          <div
+            className={`battle-combatant battle-combatant--enemy ${battleFeedback?.kind === "enemy-hit" ? "battle-combatant--hit" : ""}`}
+            data-side="enemy"
+            role="group"
+            aria-label={`敌方：${view.battle.enemyName}`}
+          >
             <div className="battle-combatant-visual" aria-hidden="true">
               <AdventureVisual gameType={gameType} kind="enemy" label="" decorative />
             </div>
+            <span className="battle-faction-label">敌方</span>
             <h3>{view.battle.enemyName}</h3>
             <p>HP {view.battle.enemyHp}</p>
           </div>
-          <div className="battle-combatant">
-            <h3>{view.player.name}</h3>
-            <p>HP {view.player.hp}</p>
-          </div>
           <div className="battle-action-rail" role="group" aria-label="战斗行动">
-            {view.battle.controls.map(renderChoiceButton)}
+            {view.battle.controls.map(renderBattleChoiceButton)}
           </div>
+          {battleFeedback !== null ? (
+            <p className={`battle-feedback battle-feedback--${battleFeedback.kind}`} role="status" aria-live="assertive">
+              {battleFeedback.message}
+            </p>
+          ) : null}
         </section>
       ) : null}
 

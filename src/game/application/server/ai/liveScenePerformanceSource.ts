@@ -26,6 +26,9 @@ export type LiveScenePerformanceDeps = {
   readonly logger?: GameLogger;
 };
 
+/** 场景表演必须有明确上限；超时后使用同轨确定性 fallback，避免卡住整局。 */
+export const LIVE_SCENE_TIMEOUT_MS = 12_000;
+
 function parseJsonResponse(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -183,9 +186,9 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
           { role: "user", content: `当前回合：${context.job.actionId}（${context.job.actionSummary.kind}）` },
         ];
 
-        // 场景生成位于每个玩家回合的必经等待界面。30 秒内拿不到提案时
+        // 场景生成位于每个玩家回合的必经等待界面。12 秒内拿不到提案时
         // 立即使用同轨确定性 source，避免存档长期停在 pending。
-        const result = await transport.complete(config, messages, { timeoutMs: 30_000 });
+        const result = await transport.complete(config, messages, { timeoutMs: LIVE_SCENE_TIMEOUT_MS });
         if (!result.ok) {
           logger?.warn("scene_generation_ai_failed", { code: result.code });
           return deterministic.generateScene(context);

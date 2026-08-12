@@ -440,7 +440,7 @@ describe("projectGameSessionView", () => {
         : location),
       items: [{ id: itemId, name: "铜钥匙", description: "一把旧钥匙", kind: "key", tags: [] }],
       enemies: [{ id: enemyId, name: "灰狼", tier: "normal", stats: { hp: 20, attack: 5, defense: 2 }, locationId: asLocationId("loc_1"), tags: [] }],
-      // 未发现的线索事实：探索的真正剧情钩子（仅有物品/敌人不构成探索钩子）。
+      // 未发现的线索事实：探索与调查的剧情钩子。
       worldFacts: [{ factId: asFactId("fact_trace"), text: "柜底暗格", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") }],
     };
 
@@ -451,7 +451,7 @@ describe("projectGameSessionView", () => {
     expect(travel?.choiceToken).not.toContain("loc_2");
 
     expect(view.currentLocation.actions.map((choice) => choice.presentation)).toEqual([
-      "explore", "dialogue", "battle",
+      "explore", "explore", "dialogue", "battle",
     ]);
     expect(view.obtainableItems).toEqual([
       expect.objectContaining({ name: "铜钥匙", choice: expect.objectContaining({ presentation: "item" }) }),
@@ -496,6 +496,16 @@ describe("projectGameSessionView", () => {
     expect(view.battle?.controls.every((choice) => /^c_[0-9a-f]{16}$/.test(choice.choiceToken))).toBe(true);
     const executable = buildChoiceMap(battleWorld, ss, 3);
     expect(view.battle?.controls.every((choice) => executable.has(choice.choiceToken))).toBe(true);
+  });
+
+  it("numbers multiple undiscovered investigation entries so the choices remain distinguishable", () => {
+    const facts = [
+      { factId: asFactId("fact_a"), text: "暗号一", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") },
+      { factId: asFactId("fact_b"), text: "暗号二", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") },
+    ];
+    const view = projectGameSessionView({ ...ws, worldFacts: facts }, ss, 7, "test-ending-session");
+    expect(view.currentLocation.actions.filter((choice) => choice.presentation === "explore").map((choice) => choice.label)).toContain("调查现场线索 1");
+    expect(view.currentLocation.actions.filter((choice) => choice.presentation === "explore").map((choice) => choice.label)).toContain("调查现场线索 2");
   });
 
   it("projects focused NPC as exactly two dialogue choices plus custom input", () => {
@@ -644,6 +654,24 @@ describe("projectGameSessionView", () => {
     expect(nonFocusNpc?.smallTalk).toEqual({
       prompt: "向韩征打个招呼",
       response: "韩征点了点头：「有什么事直接找我，别耽误正事。」",
+    });
+
+    const fallbackStory = {
+      ...story,
+      narrative: {
+        ...story.narrative,
+        currentScene: {
+          ...scene,
+          npcDialogues: scene.npcDialogues.map((entry) =>
+            entry.npcId === asNpcId("npc_2") ? { ...entry, smallTalk: undefined } : entry,
+          ),
+        },
+      },
+    };
+    const fallbackView = projectGameSessionView(wsTwo, fallbackStory, 2, "test-ending-session");
+    expect(fallbackView.narrative.npcDialogues.find((d) => d.npcId === "npc_2")?.smallTalk).toEqual({
+      prompt: "和韩征聊几句",
+      response: "韩征压低声音聊了几句捕头的日常：“先看看周围，别急着下结论。”",
     });
   });
 });

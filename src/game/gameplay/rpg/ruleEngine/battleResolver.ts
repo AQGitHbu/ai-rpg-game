@@ -18,8 +18,9 @@ export function startBattle(
   enemyId: EnemyId,
   deps: BattleResolveDeps,
 ): ResolveResult {
-  // 已有 active battle
-  if (ws.battle.status !== "idle") {
+  // resolved 只表示上一场战斗的结果；没有 active battle 时可以重新挑战
+  // 尚未击败的敌人，避免撤退后界面仍有“挑战”按钮却永远被规则拒绝。
+  if (ws.battle.status === "active") {
     return { ok: false, feedback: "已有进行中的战斗。" };
   }
 

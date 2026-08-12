@@ -73,7 +73,9 @@ export function validateAction(ws: WorldState, action: Action): ValidateResult {
     case "attack": {
       const enemy = ws.enemies.find((e) => e.id === action.enemyId);
       if (enemy === undefined) return { ok: false, code: "UNKNOWN_ENEMY", params: { enemyId: String(action.enemyId) } };
-      if (ws.battle.status !== "idle") return { ok: false, code: "BATTLE_ALREADY_ACTIVE", params: {} };
+      // resolved 只保留上一场战斗的结果；只要没有 active battle，仍可再次
+      // 挑战尚未击败的敌人（例如撤退后重新进入战斗）。
+      if (ws.battle.status === "active") return { ok: false, code: "BATTLE_ALREADY_ACTIVE", params: {} };
       if (ws.currentLocationId !== enemy.locationId) return { ok: false, code: "ENEMY_NOT_AT_LOCATION", params: {} };
       if (ws.defeatedEnemyIds.includes(action.enemyId)) return { ok: false, code: "ENEMY_ALREADY_DEFEATED", params: {} };
       return { ok: true };
