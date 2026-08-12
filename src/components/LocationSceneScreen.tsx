@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, type FormEvent } from "react";
 import type { GameSessionView, NewGameInput } from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { AdventureVisual } from "./adventureVisuals";
+import { normalizeDisplayText } from "./displayText";
 
 type LocationSceneScreenProps = {
   readonly view: GameSessionView;
@@ -43,6 +44,9 @@ function NpcDialogueModal({
   const [smallTalkShown, setSmallTalkShown] = useState(false);
 
   const hasFocusInteraction = dialogue.choices.length > 0 || dialogue.freeInputEnabled;
+  const isDialoguePreparing = !dialogue.freeInputEnabled
+    && dialogue.choices.length === 1
+    && dialogue.choices[0]?.presentation === "dialogue";
 
   async function submitFreeText(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -80,11 +84,11 @@ function NpcDialogueModal({
 
           <div className="npc-dialogue-speech">
             {dialogue.speechPages.map((page, index) => (
-              <p key={`${dialogue.npcId}-${index}`} className="npc-dialogue-speech-text">{page}</p>
+              <p key={`${dialogue.npcId}-${index}`} className="npc-dialogue-speech-text">{normalizeDisplayText(page)}</p>
             ))}
             {smallTalkShown && dialogue.smallTalk ? (
               <p className="npc-dialogue-speech-text npc-dialogue-small-talk-response">
-                {dialogue.smallTalk.response}
+                {normalizeDisplayText(dialogue.smallTalk.response)}
               </p>
             ) : null}
           </div>
@@ -93,6 +97,11 @@ function NpcDialogueModal({
         {/* 焦点 NPC：显示固定选项 + 给予道具 + 自由输入 */}
         {hasFocusInteraction ? (
           <>
+            {isDialoguePreparing ? (
+              <p role="status" aria-live="polite" className="npc-dialogue-preparing">
+                正在准备对话……
+              </p>
+            ) : null}
             <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
               {dialogue.choices.map((choice) => (
                 <button
@@ -180,6 +189,14 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
 
   const activeDialogues = pending ? [] : (view.narrative.npcDialogues ?? []);
   const locationNpcs = view.currentLocation.npcs;
+  const displayNarration = normalizeDisplayText(view.narrative.narration ?? "");
+  const displayLocationDescription = normalizeDisplayText(view.currentLocation.description);
+  const shouldShowLocationDescription = displayLocationDescription !== ""
+    && (displayNarration === "" || !displayNarration.includes(displayLocationDescription));
+  const sceneActions = view.currentLocation.actions.filter((choice) => choice.presentation !== "dialogue");
+  const hasDialogueInteraction = activeDialogues.some((dialogue) =>
+    dialogue.choices.length > 0 || dialogue.freeInputEnabled,
+  );
 
   // 统一构建所有 NPC 的 Dialogue 数据（包含活跃对话与非活跃 NPC 的打招呼降级对话）
   const allDialoguesMap = new Map<string, Dialogue>();
@@ -420,9 +437,9 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
         ) : null}
 
         {/* 叙事场景浮层（固定在底部中偏上） */}
-        {view.narrative.hasScene && view.narrative.narration ? (
+        {view.narrative.hasScene && displayNarration ? (
           <section className="scene-narrative scene-narrative--overlay" aria-label="当前场景">
-            <p>{view.narrative.narration}</p>
+            <p>{displayNarration}</p>
             {view.narrative.choices.length > 0 ? (
               <div role="group" aria-label="场景选项">
                 {view.narrative.choices.map(renderChoiceButton)}
@@ -432,14 +449,18 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
         ) : null}
 
         {/* 地点描述文字：固定在场景左下角 */}
-        <p className="location-scene-caption">{view.currentLocation.description}</p>
+        {shouldShowLocationDescription ? (
+          <p className="location-scene-caption">{displayLocationDescription}</p>
+        ) : null}
       </div>
 
       {/* 底部行动栏：过滤掉与 NPC 交谈类按钮，NPC 交谈统一由右侧人物侧边栏接管 */}
       <nav className="scene-action-rail scene-action-rail--bottom" aria-label="行动栏">
-        {view.currentLocation.actions
-          .filter((choice) => choice.presentation !== "dialogue")
-          .map(renderChoiceButton)}
+        {sceneActions.length > 0
+          ? sceneActions.map(renderChoiceButton)
+          : view.narrative.choices.length === 0 && view.battle === null && !hasDialogueInteraction
+            ? <span className="scene-action-rail-empty" role="status">等待剧情推进……</span>
+            : null}
       </nav>
 
       {/* 战斗 */}

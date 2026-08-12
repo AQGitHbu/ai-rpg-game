@@ -50,6 +50,7 @@ describe("TownLayerScreen", () => {
     expect(screen.getByRole("region", { name: "小镇：边陲小镇" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "返回地图" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "小镇地图" })).toBeInTheDocument();
+    expect(screen.getByText("当前剧情建筑" )).toBeInTheDocument();
   });
 
   it("selecting a bound interactive building shows its entry action and calls onEnterBuilding with its NPC", async () => {
@@ -64,6 +65,7 @@ describe("TownLayerScreen", () => {
       onReturnMap={vi.fn()}
     />);
     await user.click(screen.getByRole("button", { name: interactive.displayName }));
+    expect(screen.getByText("当前剧情")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
     expect(onEnterBuilding).toHaveBeenCalledWith(interactive.npcId);
   });

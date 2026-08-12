@@ -176,6 +176,7 @@ export function TownMapSvg({
             tabIndex={0}
             aria-label={building.displayName}
             aria-pressed={selected}
+            data-story-building={building.storyRequired ? "true" : undefined}
             x={building.footprint.x * TILE_SIZE}
             y={building.footprint.y * TILE_SIZE}
             width={building.footprint.width * TILE_SIZE}

@@ -17,6 +17,7 @@ type Props = {
   readonly onViewChange: (view: GameSessionView) => void;
   readonly onStaleRevision: () => void;
   readonly onClearDevelopmentSave: () => Promise<void>;
+  readonly onRetryNarrative?: () => void;
 };
 
 type AdventureScreen = "map" | "town" | "scene";
@@ -40,6 +41,7 @@ export function AdventureGameShell({
   onViewChange,
   onStaleRevision,
   onClearDevelopmentSave,
+  onRetryNarrative,
 }: Props) {
   const [screen, setScreen] = useState<AdventureScreen>("map");
   const [detailsPanel, setDetailsPanel] = useState<DetailsPanel | null>(null);
@@ -205,7 +207,12 @@ export function AdventureGameShell({
         </p>
       ) : null}
 
-      {busy ? <GenerationStatusModal kind={pending ? "narrative" : "action"} /> : null}
+      {busy ? (
+        <GenerationStatusModal
+          kind={pending ? "narrative" : "action"}
+          onRetry={pending ? onRetryNarrative : undefined}
+        />
+      ) : null}
     </main>
   );
 }

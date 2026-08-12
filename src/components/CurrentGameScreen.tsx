@@ -29,6 +29,7 @@ export function CurrentGameScreen() {
   const [state, setState] = useState<ScreenState>({ phase: "loading" });
   const prologueAckInFlight = useRef(false);
   const [prologueAcking, setPrologueAcking] = useState(false);
+  const [narrativeRetryNonce, setNarrativeRetryNonce] = useState(0);
 
   const applyResponse = useCallback((res: { ok: boolean; status: string; view?: GameSessionView; code?: string }) => {
     if (res.status === "none") {
@@ -74,21 +75,23 @@ export function CurrentGameScreen() {
       if (cancelled) return;
       if (!ok) {
         failures++;
-        if (failures >= 3) return;
       } else {
         failures = 0;
       }
       // Re-fetch current game
       const res = await fetchCurrentGame();
       if (!cancelled) applyResponse(res);
-      if (!cancelled) timer = setTimeout(() => void poll(), 750);
+      if (!cancelled) {
+        const delay = failures === 0 ? 750 : Math.min(5000, failures * 1000);
+        timer = setTimeout(() => void poll(), delay);
+      }
     }
     void poll();
     return () => {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [narrativePending, applyResponse]);
+  }, [narrativePending, narrativeRetryNonce, applyResponse]);
 
   // 清除本地试玩存档
   async function clearDevelopmentSave() {
@@ -175,6 +178,7 @@ export function CurrentGameScreen() {
         onViewChange={(newView) => setState({ phase: "active", view: newView })}
         onStaleRevision={() => void loadCurrentGame()}
         onClearDevelopmentSave={clearDevelopmentSave}
+        onRetryNarrative={() => setNarrativeRetryNonce((current) => current + 1)}
       />
     );
   }

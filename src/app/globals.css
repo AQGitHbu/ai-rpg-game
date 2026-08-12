@@ -1090,6 +1090,26 @@ body:has(.adventure-game-shell) {
   line-height: 1.7;
 }
 
+.narrative-generation-modal-content .narrative-generation-modal-elapsed {
+  margin-top: 8px;
+  color: var(--game-accent);
+  font-size: 0.82rem;
+}
+
+.narrative-generation-modal-retry {
+  margin-top: 16px;
+  padding: 8px 16px;
+  border: 1px solid var(--game-accent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--game-text-primary);
+  cursor: pointer;
+}
+
+.narrative-generation-modal-retry:hover {
+  background: rgb(215 185 111 / 0.14);
+}
+
 .narrative-generation-spinner {
   display: inline-block;
   width: 24px;
@@ -2800,6 +2820,13 @@ body:has(.adventure-game-shell) {
   border-color: var(--game-accent);
 }
 
+.scene-action-rail-empty {
+  padding: 8px 4px;
+  color: var(--game-text-muted);
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+}
+
 /* 场景内容给顶栏/底部行动栏留出空间 */
 .location-viewport .location-scene-content {
   margin-top: 64px;
@@ -3052,8 +3079,14 @@ body:has(.adventure-game-shell) {
 
 .town-demo-building--story {
   stroke: var(--game-accent, #d9a441);
-  stroke-width: 2;
-  filter: drop-shadow(0 0 3px rgb(217 164 65 / 0.55));
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 4px rgb(217 164 65 / 0.8));
+  animation: town-story-pulse 2s ease-in-out infinite;
+}
+
+@keyframes town-story-pulse {
+  0%, 100% { opacity: 0.82; }
+  50% { opacity: 1; }
 }
 
 .town-demo-building--selected {
@@ -3075,11 +3108,53 @@ body:has(.adventure-game-shell) {
   gap: 12px;
 }
 
+.town-layer-legend {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: rgb(17 22 18 / 45%);
+}
+
+.town-layer-legend-title {
+  color: var(--game-text-primary);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.town-layer-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--game-text-muted);
+  font-size: 0.82rem;
+}
+
+.town-layer-legend-swatch {
+  width: 18px;
+  height: 12px;
+  border: 2px solid var(--game-accent, #d9a441);
+  border-radius: 3px;
+  box-shadow: 0 0 5px rgb(217 164 65 / 0.7);
+}
+
 .town-layer-building {
   padding: 12px;
   border: 1px solid var(--game-surface-border);
   border-radius: 8px;
   background: rgb(17 22 18 / 45%);
+}
+
+.town-layer-story-badge {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 3px 8px;
+  border: 1px solid var(--game-accent);
+  border-radius: 999px;
+  color: var(--game-accent);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
 }
 
 .town-layer-building h3 {

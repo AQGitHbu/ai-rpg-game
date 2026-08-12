@@ -284,6 +284,57 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.queryByRole("heading", { name: "老板" })).not.toBeInTheDocument();
     expect(screen.getByText("正在编排下一幕……")).toBeInTheDocument();
   });
+
+  it("does not repeat a location description when it matches the scene narration", () => {
+    const view = {
+      ...buildView(),
+      currentLocation: { ...buildView().currentLocation, description: "夜市灯火通明。。" },
+      narrative: { ...buildView().narrative, narration: "夜市灯火通明。" },
+    };
+    render(<LocationSceneScreen
+      view={view}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+
+    expect(screen.getAllByText("夜市灯火通明。")).toHaveLength(1);
+  });
+
+  it("explains when the scene has no available actions", () => {
+    const base = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        battle: null,
+        currentLocation: { ...base.currentLocation, actions: [] },
+        narrative: { ...base.narrative, npcDialogues: [] },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+
+    expect(screen.getByText("等待剧情推进……")).toBeInTheDocument();
+  });
+
+  it("labels the single NPC talk choice as a dialogue preparation state", () => {
+    const base = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        narrative: {
+          ...base.narrative,
+          npcDialogues: [{ ...base.narrative.npcDialogues[0]!, choices: [choice(TOKENS.dialogueOne, "与老板交谈", "dialogue")], freeInputEnabled: false }],
+        },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+
+    expect(screen.getByText("正在准备对话……")).toBeInTheDocument();
+  });
 });
 
 describe("AdventureGameShell three-layer navigation", () => {
