@@ -41,7 +41,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // 机械修复：只做无创意、可推导的修复。返回是否发生变更。
 //   - 数组字段为 null/非数组 → 空数组；
 //   - 字符串字段为 null/非字符串 → 空字符串；
-//   - 数值字段非法 → fixture 默认（100/10/5）；
+//   - 旧候选数值字段非法 → fixture 默认（仅为旧 fixture 解析兼容，编译阶段不采纳）；
 //   不修改剧情语义、不新增/删除实体、不重写文本。
 export function repairOpeningGenerationCandidate(
   raw: unknown,
@@ -289,7 +289,7 @@ ${setup.characterProfile !== undefined && setup.characterProfile !== "" ? `- 主
 ${setupSection}
 要求：
 1. world：summary/tone/themes/publicFacts（key 必须形如 fact_xxx，且全局唯一）
-2. player：name/identity/backgroundSummary/baseStats（hp 100 / attack 10 / defense 5 附近的小数值）
+2. player：name/identity/backgroundSummary；战斗属性由服务端规则配置，禁止生成 baseStats
 3. prologue：玩家进入游戏时的第一段画面旁白（2-3 句）
 4. storyContract：version=1、targetActs=${targetActs}（必须与档位一致）、centralConflict、endingDirections 恰好两个（key 分别为 "trust" 与 "doubt"）
 5. opening.location：开场地点，scale 必须是 "town"（小镇层级）
@@ -300,7 +300,7 @@ ${setupSection}
 必须严格使用以下字段名与嵌套结构（禁止改名）：
 {
   "world": { "summary": "...", "tone": "...", "themes": ["..."], "publicFacts": [{ "key": "fact_xxx", "text": "..." }] },
-  "player": { "name": "...", "identity": "...", "backgroundSummary": "...", "baseStats": { "hp": 100, "attack": 10, "defense": 5 } },
+  "player": { "name": "...", "identity": "...", "backgroundSummary": "..." },
   "prologue": "...",
   "storyContract": { "version": 1, "targetActs": ${targetActs}, "centralConflict": "...", "endingDirections": [{ "key": "trust", "theme": "..." }, { "key": "doubt", "theme": "..." }] },
   "opening": {

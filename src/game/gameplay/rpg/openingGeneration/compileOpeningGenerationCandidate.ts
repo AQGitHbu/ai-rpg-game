@@ -7,6 +7,7 @@ import { createInitialWorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { createTownRuntime, townSeedFor, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
+import { PLAYER_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
 
 // ---------------------------------------------------------------------------
 // Task 2：把已验证的开局切片编译为单一 World State + Story State。
@@ -60,7 +61,8 @@ export function compileOpeningGenerationCandidate(
       player: {
         name: candidate.player.name,
         identity: candidate.player.identity,
-        stats: candidate.player.baseStats,
+        // 规则拥有玩家战斗属性；旧候选中的 baseStats 只为历史 fixture 保留，不能越权落库。
+        stats: toStatBlock(PLAYER_COMBAT_STATS),
       },
       startingLocation: {
         id: locationId,

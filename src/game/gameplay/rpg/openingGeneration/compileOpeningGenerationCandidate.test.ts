@@ -114,7 +114,11 @@ describe("compileOpeningGenerationCandidate", () => {
 
   it("player 与 generation 落地；开场切片不含任何预生成未来实体", () => {
     const { worldState } = compile();
-    expect(worldState.player).toEqual({ name: "陆遥", identity: "流浪剑客", stats: { hp: 100, attack: 10, defense: 5 } });
+    expect(worldState.player).toEqual({
+      name: "陆遥",
+      identity: "流浪剑客",
+      stats: { hp: 100, maxHp: 100, maxEnergy: 40, attack: 20, defense: 10, speed: 12 },
+    });
     expect(worldState.generation.seed).toBe("seed");
     expect(worldState.generation.gameType).toBe("wuxia");
     const serialized = JSON.stringify(worldState);

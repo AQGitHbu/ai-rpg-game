@@ -23,6 +23,7 @@ import {
   asLocationId, asNpcId, asItemId, asEnemyId, asFactId, asQuestId, asEndingId,
   type LocationId, type NpcId, type ItemId, type EnemyId, type FactId, type QuestId, type EndingId,
 } from "@/game/domain/worldEntity";
+import { ENEMY_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
 
 // ---------------------------------------------------------------------------
 // Task 3：世界演化提议的审批。纯函数，无 IO。
@@ -423,12 +424,11 @@ export function approveWorldDelta(input: {
   }
 
   if (p.newEnemy && ids.enemyId) {
-    const boss = p.newEnemy.tier === "boss";
     newEnemies.push({
       id: ids.enemyId,
       name: p.newEnemy.name,
       tier: p.newEnemy.tier,
-      stats: boss ? { hp: 100, attack: 15, defense: 8 } : { hp: 30, attack: 8, defense: 4 },
+      stats: toStatBlock(ENEMY_COMBAT_STATS[p.newEnemy.tier]),
       locationId: enemyLocationId!,
       tags: ["dynamic"],
     });

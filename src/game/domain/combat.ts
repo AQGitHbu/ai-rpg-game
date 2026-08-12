@@ -116,6 +116,18 @@ export function combatStatsFromLegacy(stats: StatBlock, fallback: CombatStats = 
   };
 }
 
+/** 写回既有 WorldState StatBlock 时保留旧 hp 字段，同时携带正式属性。 */
+export function toStatBlock(stats: CombatStats): StatBlock {
+  return {
+    hp: stats.maxHp,
+    maxHp: stats.maxHp,
+    maxEnergy: stats.maxEnergy,
+    attack: stats.attack,
+    defense: stats.defense,
+    speed: stats.speed,
+  };
+}
+
 export function initialCombatResources(stats: CombatStats, energyRatio = 0.5): CombatResources {
   return {
     hp: stats.maxHp,
