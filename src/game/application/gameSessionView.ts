@@ -307,12 +307,20 @@ export function projectGameSessionView(
     const speechPages = supplied !== undefined && supplied.speechPages.length > 0
       ? [...supplied.speechPages]
       : paginateSpeechText(focusLine ?? composeDeterministicNpcLine(npc.name, npc.role), NPC_SCENE_PAGE_CHAR_BUDGET);
+    // 非焦点 NPC 的场景台词也必须能转化为一次真实交谈：点击后提交 ask，
+    // 下一回合再由规则把该 NPC 设为焦点并生成两项回应 + 自由输入。
+    const fallbackTalkChoice = choice(
+      { type: "talk", npcId: npc.id, dialogueAct: "ask" },
+      revision,
+      `与${npc.name}交谈`,
+      "dialogue",
+    );
     return [{
       npcId: String(npc.id),
       name: npc.name,
       role: npc.role,
       speechPages,
-      choices: isFocus ? dialogueChoices : [],
+      choices: isFocus ? dialogueChoices : [fallbackTalkChoice],
       freeInputEnabled: isFocus,
       giveChoices: isFocus
         ? worldState.inventory.map((itemId) => {

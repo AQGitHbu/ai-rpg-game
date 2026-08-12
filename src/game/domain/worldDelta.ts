@@ -49,7 +49,10 @@ export type DynamicEndingProposal = {
   readonly name: string;
   readonly description: string;
   readonly themeKey: EndingDirectionKey;
-  /** 结局的规则达成条件（可选；缺省为「无要求」，即始终可达）。 */
+  /**
+   * @deprecated 仅为旧提案兼容保留。结局条件由服务端规则按 themeKey/关键 NPC
+   * 派生，审批阶段不会采纳 AI 提交的 requirements。
+   */
   readonly requirements?: readonly EndingRequirement[];
 };
 

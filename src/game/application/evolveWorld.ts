@@ -15,7 +15,8 @@ import {
 // ---------------------------------------------------------------------------
 // Template：application 层世界演化编排。纯触发（需求已由领域派生）→（条件）
 // await source 提案 → 纯审批/装配预览状态；不写状态、不做 AI 内置。
-// source 抛错/无提案/审批拒绝 一律以"未应用"降级，绝不炸穿回合或场景流水线。
+// source 抛错/无提案/审批拒绝先走一次确定性 fallback；fallback 仍无法通过时才以
+// "未应用"降级，绝不炸穿回合或场景流水线。
 // ---------------------------------------------------------------------------
 
 export type EvolveWorldResult =
@@ -60,7 +61,8 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
     return { ok: false, code: "no_need" };
   }
 
-  const source: WorldEvolutionSource = input.source ?? createDeterministicEvolutionSource();
+  const deterministicSource = createDeterministicEvolutionSource();
+  const source: WorldEvolutionSource = input.source ?? deterministicSource;
 
   const context: WorldEvolutionSourceContext = {
     worldState: input.worldState,
@@ -70,34 +72,43 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
     reason: input.reason,
   };
 
-  let sourceResult;
-  try {
-    sourceResult = await source.propose(context);
-  } catch {
-    return { ok: false, code: "source_error" };
-  }
-  if (sourceResult.proposal === null) {
-    return { ok: false, code: "no_proposal" };
-  }
+  const attempt = async (candidateSource: WorldEvolutionSource): Promise<EvolveWorldResult> => {
+    let sourceResult;
+    try {
+      sourceResult = await candidateSource.propose(context);
+    } catch {
+      return { ok: false, code: "source_error" };
+    }
+    if (sourceResult.proposal === null) {
+      return { ok: false, code: "no_proposal" };
+    }
 
-  const approval = approveWorldDelta({
-    proposal: sourceResult.proposal,
-    need: input.need,
-    ws: input.worldState,
-    ss: input.storyState,
-    idOverride: input.idOverride,
-  });
-  if (!approval.ok) {
-    return { ok: false, code: "rejected", rejectionCode: approval.code };
-  }
+    const approval = approveWorldDelta({
+      proposal: sourceResult.proposal,
+      need: input.need,
+      ws: input.worldState,
+      ss: input.storyState,
+      idOverride: input.idOverride,
+    });
+    if (!approval.ok) {
+      return { ok: false, code: "rejected", rejectionCode: approval.code };
+    }
 
-  const delta = materializeWorldDelta({
-    approved: approval.approved,
-    need: input.need,
-    ws: input.worldState,
-    ss: input.storyState,
-    now: input.now,
-  });
+    const delta = materializeWorldDelta({
+      approved: approval.approved,
+      need: input.need,
+      ws: input.worldState,
+      ss: input.storyState,
+      now: input.now,
+    });
 
-  return { ok: true, proposal: sourceResult.proposal, approved: approval.approved, delta };
+    return { ok: true, proposal: sourceResult.proposal, approved: approval.approved, delta };
+  };
+
+  const primary = await attempt(source);
+  // AI 的 JSON 可能结构合法但语义不可装配（例如缺少主线锚点、预算超限或
+  // 小镇已无可用 slot）。这类失败也必须走离线确定性方案，否则 needs_next_act
+  // 会永久挂起，下一场景只会重复同一失败。
+  if (primary.ok || input.source === undefined) return primary;
+  return attempt(deterministicSource);
 }

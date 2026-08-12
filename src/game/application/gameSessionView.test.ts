@@ -611,10 +611,11 @@ describe("projectGameSessionView", () => {
     expect(focusNpc?.freeInputEnabled).toBe(true);
     expect(focusNpc?.smallTalk).toBeUndefined();
 
-    // 非焦点 NPC (韩征) 无选项，有闲聊
+    // 非焦点 NPC (韩征) 有一次真实交谈入口，并保留不消耗回合的闲聊
     const nonFocusNpc = dialogues.find((d) => d.npcId === "npc_2");
     expect(nonFocusNpc).toBeDefined();
-    expect(nonFocusNpc?.choices).toHaveLength(0);
+    expect(nonFocusNpc?.choices).toHaveLength(1);
+    expect(nonFocusNpc?.choices[0]?.label).toBe("与韩征交谈");
     expect(nonFocusNpc?.freeInputEnabled).toBe(false);
     expect(nonFocusNpc?.smallTalk).toEqual({
       prompt: "向韩征打个招呼",

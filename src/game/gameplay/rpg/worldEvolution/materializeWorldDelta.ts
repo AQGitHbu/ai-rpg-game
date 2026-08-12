@@ -4,6 +4,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { EvolutionNeed, ApprovedWorldDelta } from "@/game/domain/worldDelta";
 import type { BlueprintExpandedEvent } from "@/game/domain/events";
 import type { LocationId, NpcId, ItemId } from "@/game/domain/worldEntity";
+import type { TownRuntimeState } from "@/game/domain/townState";
 import { createTownRuntime, townSeedFor, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 
 // ---------------------------------------------------------------------------
@@ -26,6 +27,13 @@ type LocationPatch = {
   readonly npcIds?: readonly NpcId[];
   readonly availableItemIds?: readonly ItemId[];
 };
+
+function bindTownNpcIfAvailable(town: TownRuntimeState, npcId: NpcId): TownRuntimeState {
+  // 审批阶段会拒绝满槽小镇；这里仍保持装配函数防御性，避免旧存档或直接调用
+  // materializeWorldDelta 时因 slot 不足把整条叙事流水线抛出异常。
+  if (!town.slots.some((slot) => slot.boundNpcId === null)) return town;
+  return bindNpcToTownSlot(town, npcId).town;
+}
 
 export function materializeWorldDelta(input: MaterializeWorldDeltaInput): ApprovedWorldDelta {
   const { approved, ws, ss, now } = input;
@@ -56,7 +64,7 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
       let town = loc.town;
       if (town !== undefined && p?.npcIds) {
         for (const npcId of p.npcIds) {
-          town = bindNpcToTownSlot(town, npcId).town;
+          town = bindTownNpcIfAvailable(town, npcId);
         }
       }
       return {
@@ -76,12 +84,14 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
       if (town !== undefined) {
         const npcIds = p?.npcIds ?? [...loc.npcIds];
         for (const npcId of npcIds) {
-          town = bindNpcToTownSlot(town, npcId).town;
+          town = bindTownNpcIfAvailable(town, npcId);
         }
       }
       return {
         ...loc,
-        connectedLocationIds: [...new Set([...loc.connectedLocationIds, ...newLocationIds])],
+        // approved.newLocations 已在审批时带有 connectFrom 的反向边；不要把
+        // 同批新地点（尤其自身）再次并入连接表，否则会产生“前往当前地点”的自环。
+        connectedLocationIds: [...new Set(loc.connectedLocationIds)],
         npcIds: p?.npcIds ?? [...loc.npcIds],
         availableItemIds: p?.availableItemIds ?? [...loc.availableItemIds],
         town,

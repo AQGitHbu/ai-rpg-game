@@ -549,7 +549,7 @@ describe("performTurn worldEvolution 修复路径（Task 3）", () => {
     expect(saved.worldState.eventLedger.at(-1)!.type).toBe("blueprint_expanded");
   });
 
-  it("审批拒绝（提案未获批准）→ 保持原行动拒绝且零规则写入", async () => {
+  it("语义审批拒绝 → 自动回退确定性提案并完成修复", async () => {
     const badProposal: WorldDeltaProposal = {
       beatSummary: "坏提案",
       newLocation: {
@@ -565,21 +565,19 @@ describe("performTurn worldEvolution 修复路径（Task 3）", () => {
       nextMainQuest: null,
       endingPair: null,
     };
-    const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_d", interaction: { kind: "fixed_choice", choiceToken: "tok_stranger" }, expectedRevision: 0, choiceMap: npcStrangerChoice },
       { repository: repo, now: () => "2026-01-02", worldEvolutionSource: sourceWithProposals(badProposal) },
     );
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe("ACTION_REJECTED");
-    expect(result.feedback).toBe("Action rejected: UNKNOWN_NPC");
-    expect(applyCalls()).toHaveLength(0);
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+    expect(record()?.worldState.npcs.some((npc) => npc.id === "npc_stranger")).toBe(true);
   });
 
-  it("worldEvolution source 抛错不破坏普通合法行动；触发场景下也干净降级拒绝", async () => {
+  it("worldEvolution source 抛错不破坏普通合法行动；触发场景下回退确定性修复", async () => {
     // 合法行动：source 从未被调用，回合照常单次 CAS 提交
     const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
     const legal = await performTurn(
@@ -591,17 +589,15 @@ describe("performTurn worldEvolution 修复路径（Task 3）", () => {
     expect(legal.revision).toBe(1);
     expect(applyCalls()).toHaveLength(1);
 
-    // 触发场景下 source 抛错：不炸穿 performTurn，干净拒绝且零写入
-    const { repo: repo2, applyCalls: applyCalls2 } = createSpyRepo(buildWorldState(), buildStoryState());
+    // 触发场景下 source 抛错：不炸穿 performTurn，回退后仍完成修复
+    const { repo: repo2, record: record2, applyCalls: applyCalls2 } = createSpyRepo(buildWorldState(), buildStoryState());
     const triggered = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_e2", interaction: { kind: "fixed_choice", choiceToken: "tok_stranger" }, expectedRevision: 0, choiceMap: npcStrangerChoice },
       { repository: repo2, now: () => "2026-01-02", worldEvolutionSource: throwingSource() },
     );
-    expect(triggered.ok).toBe(false);
-    if (triggered.ok) return;
-    expect(triggered.code).toBe("ACTION_REJECTED");
-    expect(triggered.feedback).toBe("Action rejected: UNKNOWN_NPC");
-    expect(applyCalls2()).toHaveLength(0);
+    expect(triggered.ok).toBe(true);
+    expect(applyCalls2()).toHaveLength(1);
+    expect(record2()?.worldState.npcs.some((npc) => npc.id === "npc_stranger")).toBe(true);
   });
 
   it("整回合至多一次 propose（不发生第二轮 worldEvolution）", async () => {

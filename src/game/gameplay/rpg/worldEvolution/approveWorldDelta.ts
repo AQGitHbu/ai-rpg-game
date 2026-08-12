@@ -9,6 +9,7 @@ import type {
   EndingEntry,
   QuestObjective,
 } from "@/game/domain/worldState";
+import type { EndingRequirement } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import {
   budgetAllowsExpansion,
@@ -33,6 +34,10 @@ import {
 const MIN_ENTITY_NAME_LENGTH = 2;
 const MAX_ENTITY_NAME_LENGTH = 40;
 const MAX_ENTITY_TEXT_LENGTH = 200;
+// 结局分歧是规则层信号，不接受 AI 直接提交的 requirements。关键 NPC 的
+// 关系达到 10 进入 trust，低于 10 进入 doubt，保证两条方向互斥且可达。
+const TRUST_ENDING_MIN_AFFINITY = 10;
+const DOUBT_ENDING_MAX_AFFINITY = TRUST_ENDING_MIN_AFFINITY - 1;
 
 export type WorldDeltaRejection =
   | "empty_proposal"
@@ -42,6 +47,7 @@ export type WorldDeltaRejection =
   | "hard_limit_exceeded"
   | "genre_constraint"
   | "invalid_location_ref"
+  | "town_capacity"
   | "duplicate_name"
   | "unreachable_objective"
   | "main_quest_conflict"
@@ -161,6 +167,11 @@ function resolveNpcLocationId(ws: WorldState, p: WorldDeltaProposal, mintedLocat
   return mintedLocationId;
 }
 
+function townHasNpcSlot(ws: WorldState, locationId: LocationId): boolean {
+  const location = ws.locations.find((entry) => entry.id === locationId);
+  return location?.town === undefined || location.town.slots.some((slot) => slot.boundNpcId === null);
+}
+
 function resolveMountedLocationId(
   ws: WorldState,
   ref: "current" | "new_location",
@@ -182,6 +193,17 @@ function deriveAnchorObjective(
   if (p.newFact && ids.factId) return { kind: "discover_fact", factId: ids.factId };
   if (p.newEnemy && ids.enemyId) return { kind: "defeat_enemy", enemyId: ids.enemyId };
   return null;
+}
+
+function ruleOwnedEndingRequirements(
+  themeKey: "trust" | "doubt",
+  ws: WorldState,
+): readonly EndingRequirement[] {
+  const keyNpcId = ws.npcs[0]?.id;
+  if (keyNpcId === undefined) return [];
+  return themeKey === "trust"
+    ? [{ kind: "npc_affinity_at_least", npcId: keyNpcId, value: TRUST_ENDING_MIN_AFFINITY }]
+    : [{ kind: "npc_affinity_at_most", npcId: keyNpcId, value: DOUBT_ENDING_MAX_AFFINITY }];
 }
 
 /** 审批预算预占：逐实体计数，返回预占后的预算或其对应的拒绝结果。 */
@@ -261,6 +283,11 @@ export function approveWorldDelta(input: {
   if (p.newNpc) {
     npcLocationId = resolveNpcLocationId(ws, p, ids.locationId);
     if (npcLocationId === null) return reject("invalid_location_ref", "npc_location");
+    // town 层的剧情建筑是有限槽位；不允许把动态 NPC 写入已满的小镇，
+    // 否则装配阶段无法绑定入口，玩家也无法从三层 UI 触达该 NPC。
+    if (p.newNpc.locationRef.kind === "existing" && !townHasNpcSlot(ws, npcLocationId)) {
+      return reject("town_capacity", "npc_town_slots_full");
+    }
   }
   if (p.newItem) {
     itemLocationId = resolveMountedLocationId(ws, p.newItem.locationRef, ids.locationId);
@@ -437,13 +464,13 @@ export function approveWorldDelta(input: {
         id: ids.endingIds[0],
         name: p.endingPair[0].name,
         description: p.endingPair[0].description,
-        requirements: p.endingPair[0].requirements ?? [],
+        requirements: ruleOwnedEndingRequirements(p.endingPair[0].themeKey, ws),
       },
       {
         id: ids.endingIds[1],
         name: p.endingPair[1].name,
         description: p.endingPair[1].description,
-        requirements: p.endingPair[1].requirements ?? [],
+        requirements: ruleOwnedEndingRequirements(p.endingPair[1].themeKey, ws),
       },
     );
   }

@@ -26,18 +26,33 @@ function currentLocationId(ws: WorldState): string {
   return String(ws.currentLocationId);
 }
 
+function currentTownNeedsNewLocation(ws: WorldState): boolean {
+  const location = ws.locations.find((entry) => entry.id === ws.currentLocationId);
+  return location?.town !== undefined && location.town.slots.every((slot) => slot.boundNpcId !== null);
+}
+
 function planRepairByAction(ws: WorldState, action: Action): WorldDeltaProposal | null {
   const current = currentLocationId(ws);
   switch (action.type) {
-    case "talk":
+    case "talk": {
+      const useNewLocation = currentTownNeedsNewLocation(ws);
       return {
         beatSummary: "补充在场人物以回应交谈",
-        newLocation: null,
+        newLocation: useNewLocation
+          ? {
+              name: `延伸之地·${ws.locations.length + 1}`,
+              description: "从当前城镇延伸出的一处新地界，承接这次交谈。",
+              scale: "scene",
+              connectFromLocationId: current,
+            }
+          : null,
         newNpc: {
           name: "新来客",
           role: "过客",
           description: "恰好路过的旅人，愿意与你说上几句。",
-          locationRef: { kind: "existing", id: current },
+          locationRef: useNewLocation
+            ? { kind: "new_location" }
+            : { kind: "existing", id: current },
           goals: ["随缘而行"],
         },
         newItem: null,
@@ -46,11 +61,12 @@ function planRepairByAction(ws: WorldState, action: Action): WorldDeltaProposal 
         nextMainQuest: null,
         endingPair: null,
       };
+    }
     case "move":
       return {
         beatSummary: "地点延伸出一条新径",
         newLocation: {
-          name: "延伸之地",
+          name: `延伸之地·${ws.locations.length + 1}`,
           description: "自当前所在之处延伸出的一小片新地界。",
           scale: "scene",
           connectFromLocationId: current,
@@ -101,14 +117,24 @@ function planRepairByAction(ws: WorldState, action: Action): WorldDeltaProposal 
 }
 
 function planNextAct(ws: WorldState): WorldDeltaProposal {
+  const useNewLocation = currentTownNeedsNewLocation(ws);
   return {
     beatSummary: "下一幕的推进人物与先声",
-    newLocation: null,
+    newLocation: useNewLocation
+      ? {
+          name: `延伸之地·${ws.locations.length + 1}`,
+          description: "从当前城镇延伸出的一处新地界，承接下一幕的线索。",
+          scale: "scene",
+          connectFromLocationId: currentLocationId(ws),
+        }
+      : null,
     newNpc: {
       name: "传讯人",
       role: "信使",
       description: "风尘仆仆赶来的信使，手里攥着关乎下文的线索。",
-      locationRef: { kind: "existing", id: currentLocationId(ws) },
+      locationRef: useNewLocation
+        ? { kind: "new_location" }
+        : { kind: "existing", id: currentLocationId(ws) },
       goals: ["传递密信"],
     },
     newItem: null,

@@ -107,6 +107,7 @@ describe("materializeWorldDelta", () => {
     expect(locOut.connectedLocationIds).toContain("loc_dyn_1");
     const locNew = delta.previewWorldState.locations.find((l) => l.id === "loc_dyn_1")!;
     expect(locNew.connectedLocationIds).toContain("loc_0");
+    expect(locNew.connectedLocationIds).not.toContain("loc_dyn_1");
     expect(locNew.npcIds).toContain("npc_dyn_1");
     expect(delta.previewWorldState.unlockedLocationIds).toContain("loc_dyn_1");
   });

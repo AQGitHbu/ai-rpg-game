@@ -6,6 +6,7 @@ import { createInitialStoryState } from "@/game/domain/storyState";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import type { EvolutionNeed, WorldDeltaProposal } from "@/game/domain/worldDelta";
 import { asLocationId, asNpcId, asEnemyId, asGenerationId } from "@/game/domain/worldEntity";
+import { bindNpcToTownSlot, createTownRuntime } from "@/game/gameplay/rpg/town";
 
 function makeWorld(): WorldState {
   const base = createInitialWorldState({
@@ -102,6 +103,34 @@ describe("approveWorldDelta", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("main_quest_conflict");
+  });
+
+  it("rejects a new NPC mounted into a full town before materialization", () => {
+    let town = createTownRuntime({ locationId: asLocationId("loc_0"), seed: "s#town#loc_0" });
+    for (let i = 0; i < town.slots.length; i += 1) {
+      town = bindNpcToTownSlot(town, asNpcId(`npc_slot_${i}`)).town;
+    }
+    const ws = {
+      ...makeWorld(),
+      locations: makeWorld().locations.map((location) =>
+        location.id === asLocationId("loc_0") ? { ...location, scale: "town" as const, town } : location,
+      ),
+    };
+    const result = approveWorldDelta({
+      proposal: {
+        beatSummary: "满槽小镇仍试图塞入新人物",
+        newLocation: null,
+        newNpc: {
+          name: "无处落脚者", role: "旅人", description: "找不到空闲建筑的旅人。",
+          locationRef: { kind: "existing", id: "loc_0" }, goals: [],
+        },
+        newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null,
+      },
+      need: { kind: "pacing", pacingNeed: "complicate" },
+      ws,
+      ss: makeStory({ currentAct: 2, targetActs: 3, tension: 10 }),
+    });
+    expect(result).toEqual({ ok: false, code: "town_capacity", reason: "npc_town_slots_full" });
   });
 
   it("rejects a second main quest for the same act", () => {
@@ -267,7 +296,7 @@ describe("approveWorldDelta", () => {
     expect(new Set(result.approved.newEndings.map((e) => e.name)).size).toBe(2);
   });
 
-  it("passes proposal ending requirements through to minted endings", () => {
+  it("derives rule-owned ending requirements instead of trusting proposal values", () => {
     const ws = makeWorld();
     const ss = makeStory({ currentAct: 3, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_ending_pair" } });
     const proposal: WorldDeltaProposal = {
@@ -291,7 +320,7 @@ describe("approveWorldDelta", () => {
     expect(doubt!.requirements).toEqual([{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_0"), value: 9 }]);
   });
 
-  it("defaults to empty requirements when proposal omits them", () => {
+  it("still derives requirements when proposal omits them", () => {
     const ws = makeWorld();
     const ss = makeStory({ currentAct: 3, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_ending_pair" } });
     const proposal: WorldDeltaProposal = {
@@ -310,9 +339,12 @@ describe("approveWorldDelta", () => {
     const result = approveWorldDelta({ proposal, need: { kind: "ending_pair", finalAct: 3 }, ws, ss });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    for (const ending of result.approved.newEndings) {
-      expect(ending.requirements).toEqual([]);
-    }
+    expect(result.approved.newEndings[0]!.requirements).toEqual([
+      { kind: "npc_affinity_at_least", npcId: asNpcId("npc_0"), value: 10 },
+    ]);
+    expect(result.approved.newEndings[1]!.requirements).toEqual([
+      { kind: "npc_affinity_at_most", npcId: asNpcId("npc_0"), value: 9 },
+    ]);
   });
 
   it("rejects an ending pair with duplicated theme keys", () => {

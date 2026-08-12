@@ -7,7 +7,7 @@ import type { EvolutionNeed, WorldDeltaProposal } from "@/game/domain/worldDelta
 // WorldEvolutionSource：可注入的 AI 世界演化提议 port。
 // 只负责"提议"：产出纯提案（普通字符串 ID 引用），审批/铸造 ID/装配预览状态
 // 是 gameplay worldEvolution 纯函数职责。生产注入 live source，离线注入确定性
-// source；propose 抛错或返回 null 由编排层以"无提案"降级。
+// source；propose 抛错、返回 null 或被语义审批拒绝时由编排层尝试确定性 fallback。
 // ---------------------------------------------------------------------------
 
 export type WorldEvolutionSourceContext = {
