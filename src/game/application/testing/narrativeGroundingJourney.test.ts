@@ -181,16 +181,19 @@ describe("叙事落地旅程（Step 2）", () => {
 
     // 战斗开始。
     await playIssuedChoice(store.repo, "挑战");
-    await assertSceneCoversBeatsAndObjective();
-    expect(await advanceScene(store.repo)).toBe(true);
+    // 活跃战斗走直接规则 CAS，不创建 pending 场景。
+    expect(await pendingSceneProposal(store.repo)).toBeNull();
 
     // 战斗回合。
     for (let i = 0; i < 6; i += 1) {
       await playIssuedChoice(store.repo, "攻击");
-      await assertSceneCoversBeatsAndObjective();
-      expect(await advanceScene(store.repo)).toBe(true);
       const ws = await loadWorldState(store.repo);
-      if (ws!.battle.status === "resolved") break;
+      if (ws!.battle.status === "resolved") {
+        await assertSceneCoversBeatsAndObjective();
+        expect(await advanceScene(store.repo)).toBe(true);
+        break;
+      }
+      expect(await pendingSceneProposal(store.repo)).toBeNull();
     }
 
     // 完成第 2 幕主线。

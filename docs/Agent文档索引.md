@@ -18,7 +18,7 @@
 | 行动裁决 | `agent/行动裁决.md` | `策划文档/AI生成RPG_MVP.md` | 固定 choiceToken 与 NPC 自定义输入统一进入 `performTurn`；Action union 只保留有规则实现的 action，已移除无推进作用的 rest，成功回合单次 StateCommit/CAS |
 | 探索与任务推进 | `agent/探索与任务推进.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现：移动、调查、任务解锁、obtain_item / defeat_enemy objective 与 outcome；探索/调查入口按当前地点事实与实体投影（`hasExplorableContent`，2026-08-12） |
 | 物品与任务奖励 | `agent/物品与任务奖励.md` | `策划文档/AI生成RPG_MVP.md` | Phase 5 已实现：地点预置物品、take_item 取得和 obtain_item objective；背包界面已重构（2026-07-30）：四分类页签 + 图标网格 + 详情，展示元数据缺省推导；不含物品使用/奖励数值 |
-| 战斗与结局 | `agent/战斗与结局.md` | `策划文档/AI生成RPG_MVP.md` | Phase 6 已实现确定性 boss 回合战与双结局；Phase 9 已实现：场景化左右阵营战斗视窗、回合反馈与展示动效，不改规则或 AI |
+| 战斗与结局 | `agent/战斗与结局.md` | `策划文档/AI生成RPG_MVP.md` | 已实现规则拥有五项战斗属性、1–2 普通敌人/Boss 遭遇、速度队列、多玩家单位接口、目标绑定 opaque controls、active fast path 与多单位战斗视图 |
 | 地图与地点冒险 | `agent/地图与地点冒险.md` | `策划文档/AI生成RPG_MVP.md` | Phase 7 地图/地点主循环、Phase 8 非战斗 HUD/视窗/行动栏/详情/对话层、响应式全屏地图 HUD 细化均已实现；Phase 10 narrative 仅在进入地点后显示，地图始终为入口；town 层已接入主循环（map→town→scene 三层导航，2026-07-31）；叙事生成 pending 时以模态覆盖当前界面（2026-08-06）；序幕确认前暂停首场景轮询并防重复确认（2026-08-12）；TownView 对旧存档的在场 NPC/slot 失同步提供只读补偿（2026-08-12）；建筑入口会先触发正式 talk 回合，再打开 ready 对话（2026-08-12）；ready 对话仍需地图→地点→NPC 热点，fallback 对话投影固定双选项（2026-08-06）；真机 UI 已补充生成阶段/耗时/重试反馈、场景文本去重与展示标点清洗、空行动提示、NPC 准备态和剧情建筑图例（2026-08-12） |
 | 运行时 AI 导演与场景表演 | `agent/运行时AI导演与场景表演.md` | `策划文档/AI生成RPG_MVP.md` | SceneSource 只提案；每次 ready 场景一次场景表演调用，分段旁白逐段对应强制节拍、`objectiveLink` 与 HUD 目标一致、焦点 NPC 只收隔离记忆；审批后同一次叙事 CAS 原子持久化世界演化、ready scene、ApprovedChoice registry 与候选池。客户端不接收 actionKey；live source 只选服务端候选 ID |
 | NPC 对话驱动叙事场景触发 | `agent/NPC对话驱动叙事场景触发.md` | `策划文档/AI生成RPG_MVP.md` | 焦点 NPC 始终提供两个固定选择与一个自定义输入；两者统一经 `/api/game/actions` → `performTurn`，浏览器逐次 UUID，均记录回合并创建 pending job |

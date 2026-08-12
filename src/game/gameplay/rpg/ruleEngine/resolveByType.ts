@@ -188,7 +188,7 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       return startBattle(ws, action.enemyId, deps);
     }
     case "battle_action": {
-      return battleAction(ws, action.action, deps);
+      return battleAction(ws, action.action, deps, action.command);
     }
     default:
       return { ok: false, feedback: "此行动类型暂不支持。" };

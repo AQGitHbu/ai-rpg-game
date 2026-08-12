@@ -94,14 +94,10 @@ function modernResult(
   }
 
   events.push({ type: "battle_resolved", enemyId: battle.enemyId, enemyIds, outcome, occurredAt });
-  if (outcome === "victory") {
-    for (const defeatedId of advanced.state.downedEnemyIds) {
-      events.push({ type: "enemy_defeated", enemyId: defeatedId, occurredAt });
-    }
+  for (const defeatedId of advanced.state.downedEnemyIds) {
+    events.push({ type: "enemy_defeated", enemyId: defeatedId, occurredAt });
   }
-  const defeated = outcome === "victory"
-    ? Array.from(new Set([...ws.defeatedEnemyIds, ...advanced.state.downedEnemyIds]))
-    : ws.defeatedEnemyIds;
+  const defeated = Array.from(new Set([...ws.defeatedEnemyIds, ...advanced.state.downedEnemyIds]));
   const nextWs: WorldState = {
     ...ws,
     battle: { status: "resolved", enemyId: battle.enemyId, outcome },
@@ -123,17 +119,23 @@ function modernResult(
   };
 }
 
-function modernBattleAction(ws: WorldState, action: CombatActionKind, deps: BattleResolveDeps): ResolveResult {
+function modernBattleAction(
+  ws: WorldState,
+  action: CombatActionKind,
+  deps: BattleResolveDeps,
+  requestedCommand?: Omit<CombatCommand, "kind">,
+): ResolveResult {
   if (ws.battle.status !== "active" || !isModernBattle(ws.battle)) return { ok: false, feedback: "当前战斗状态不可推进。" };
   const battle = ws.battle;
   const actorId = battle.turnOrder[battle.turnIndex];
   const actor = battle.combatants.find((unit) => unit.combatantId === actorId);
   if (actor === undefined || actor.controller !== "player") return { ok: false, feedback: "尚未轮到玩家行动。" };
+  const requestedTargetId = requestedCommand?.actorId === actorId ? requestedCommand.targetId : undefined;
   const command: CombatCommand = {
     actorId,
     kind: action,
     targetId: action === "attack" || action === "skill"
-      ? battle.combatants.find((unit) => unit.side === "enemies" && unit.hp > 0)?.combatantId
+      ? requestedTargetId ?? battle.combatants.find((unit) => unit.side === "enemies" && unit.hp > 0)?.combatantId
       : undefined,
   };
   try {
@@ -240,13 +242,15 @@ export function battleAction(
   ws: WorldState,
   action: CombatActionKind,
   deps: BattleResolveDeps,
+  requestedCommand?: Omit<CombatCommand, "kind">,
 ): ResolveResult {
   if (ws.battle.status !== "active") {
     return { ok: false, feedback: ws.battle.status === "idle" ? "当前没有进行中的战斗。" : "战斗已经结束。" };
   }
 
   const battle = ws.battle;
-  if (isModernBattle(battle)) return modernBattleAction(ws, action, deps);
+  if (isModernBattle(battle)) return modernBattleAction(ws, action, deps, requestedCommand);
+  if (action === "skill") return { ok: false, feedback: "旧战斗存档暂不支持技能行动。" };
   const enemy = ws.enemies.find((e) => e.id === battle.enemyId);
   if (enemy === undefined) {
     return { ok: false, feedback: "战斗中的敌人不存在。" };

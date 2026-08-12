@@ -58,7 +58,7 @@ export function buildActionSummary(action: Action): StructuredActionSummary {
     case "take_item": return { kind: "take_item", itemId: action.itemId };
     case "give_item": return { kind: "give_item", itemId: action.itemId, npcId: action.npcId };
     case "attack": return { kind: "attack", enemyId: action.enemyId };
-    case "battle_action": return { kind: "battle_action", action: action.action as "attack" | "guard" | "flee" };
+    case "battle_action": return { kind: "battle_action", action: action.action };
     case "ack_prologue": return { kind: "ack_prologue" };
     case "freeform": return { kind: "freeform" };
   }
@@ -215,6 +215,34 @@ export async function performTurn(
   // blocked：零写入，永不作为 success 提交
   if (resolution.primaryResult.status === "blocked") {
     return { ok: false, code: "ACTION_REJECTED", feedback: "被战斗阻止" };
+  }
+
+  // 活跃战斗是低延迟规则路径：只要本次推进后仍在战斗中，直接 CAS
+  // 提交队列状态，不创建 PendingNarrativeJob，也不等待 AI 场景编排。
+  // 终结战斗仍继续走下方叙事任务路径，保证结局/任务有表现机会。
+  if (
+    resolution.nextWorldState.battle.status === "active"
+    && (converted.action.type === "attack" || converted.action.type === "battle_action")
+  ) {
+    const commitResult = await commitState(deps.repository, {
+      gameId: command.gameId,
+      expectedRevision: record.revision,
+      nextWorldState: resolution.nextWorldState,
+      nextStoryState: resolution.nextStoryState,
+    });
+    if (!commitResult.ok) {
+      return {
+        ok: false,
+        code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
+        feedback: "Commit failed",
+      };
+    }
+    return {
+      ok: true,
+      revision: commitResult.record.revision,
+      resolvedEvent: resolution.primaryResult,
+      feedback: "Action performed",
+    };
   }
 
   const narrative = buildTurnNarrative(

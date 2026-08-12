@@ -100,9 +100,6 @@ function executeCommand(
   });
   const currentActor = updated.find((unit) => unit.combatantId === actor.combatantId)!;
   const currentTarget = updated.find((unit) => unit.combatantId === target.combatantId)!;
-  const downedEnemyIds = currentTarget.hp <= 0 && currentTarget.source.kind === "enemy"
-    ? [currentTarget.source.enemyId]
-    : [];
   return {
     combatants: updated,
     result: {
@@ -133,7 +130,7 @@ export function advanceUntilPlayerDecision(
 ): AdvanceBattleResult {
   let state: ActiveBattleCombatState = { ...initialState, lastAdvance: [] };
   let combatants = [...state.combatants];
-  let results: CombatActionResult[] = [];
+  const results: CombatActionResult[] = [];
   let outcome: CombatOutcome = null;
   let commandPending = command;
   let sequence = 0;

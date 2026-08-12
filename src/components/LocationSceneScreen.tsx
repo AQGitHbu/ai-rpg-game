@@ -260,21 +260,25 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
     previousBattleRef.current = current;
 
     if (previous !== null && current !== null) {
-      const enemyDamage = previous.enemyHp - current.enemyHp;
-      const playerDamage = previous.playerHp - current.playerHp;
-      if (enemyDamage > 0) {
-        setBattleFeedback({ kind: "enemy-hit", message: `攻击命中！${current.enemyName} -${enemyDamage} HP` });
-      } else if (playerDamage > 0) {
-        setBattleFeedback({ kind: "player-hit", message: `受到反击！你 -${playerDamage} HP` });
+      const latest = current.lastAdvance?.[0];
+      let nextFeedback: BattleFeedback | null = null;
+      if (latest?.kind === "flee") {
+        nextFeedback = { kind: "resolved", message: `${latest.actorName}撤出战斗` };
+      } else if (latest !== undefined && latest.damage > 0) {
+        nextFeedback = {
+          kind: latest.actorSlot.startsWith("enemy-") ? "player-hit" : "enemy-hit",
+          message: `${latest.actorName}${latest.kind === "skill" ? "施放技能" : "攻击"}${latest.targetName ? ` ${latest.targetName}` : ""} -${latest.damage} HP`,
+        };
       } else if (current.round > previous.round) {
-        setBattleFeedback({ kind: "resolved", message: `第 ${current.round} 回合开始` });
+        nextFeedback = { kind: "resolved", message: `第 ${current.round} 回合开始` };
       }
+      if (nextFeedback !== null) window.setTimeout(() => setBattleFeedback(nextFeedback), 0);
       const timer = window.setTimeout(() => setBattleFeedback(null), 1800);
       return () => window.clearTimeout(timer);
     }
 
     if (previous !== null && current === null) {
-      setBattleFeedback({ kind: "resolved", message: "战斗结算完成" });
+      window.setTimeout(() => setBattleFeedback({ kind: "resolved", message: "战斗结算完成" }), 0);
       const timer = window.setTimeout(() => setBattleFeedback(null), 1800);
       return () => window.clearTimeout(timer);
     }
@@ -391,19 +395,20 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
     setOpenDialogueNpcId(npc.dialogueId);
   }
 
-  function renderBattleChoiceButton(choice: { choiceToken: string; label: string }) {
+  function renderBattleChoiceButton(choice: { choiceToken: string | null; label: string; enabled?: boolean; disabledReason?: string | null }) {
     return (
       <button
-        key={choice.choiceToken}
+        key={`${choice.label}:${choice.choiceToken ?? "disabled"}`}
         type="button"
         data-battle-action="true"
-        disabled={busy || pending}
+        disabled={busy || pending || choice.enabled === false || choice.choiceToken === null}
         onClick={() => {
+          if (choice.choiceToken === null) return;
           setBattleFeedback({ kind: "player-action", message: `你${choice.label}！` });
           onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken });
         }}
       >
-        {choice.label}
+        {choice.label}{choice.disabledReason ? `（${choice.disabledReason}）` : ""}
       </button>
     );
   }
@@ -533,34 +538,54 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
             <strong>第 {view.battle.round} 回合</strong>
             <span className="battle-hud-side battle-hud-side--enemy">敌方 · {view.battle.enemyName}</span>
           </div>
-          <div
-            className={`battle-combatant battle-combatant--player ${battleFeedback?.kind === "player-action" ? "battle-combatant--attacking" : ""} ${battleFeedback?.kind === "player-hit" ? "battle-combatant--hit" : ""}`}
-            data-side="player"
-            role="group"
-            aria-label={`己方：${view.player.name}`}
-          >
-            <div className="battle-combatant-visual" aria-hidden="true">
-              <AdventureVisual gameType={gameType} kind="npc" label="" decorative />
-            </div>
-            <span className="battle-faction-label">己方</span>
-            <h3>{view.player.name}</h3>
-            <p>HP {view.battle.playerHp}</p>
-          </div>
-          <div
-            className={`battle-combatant battle-combatant--enemy ${battleFeedback?.kind === "enemy-hit" ? "battle-combatant--hit" : ""}`}
-            data-side="enemy"
-            role="group"
-            aria-label={`敌方：${view.battle.enemyName}`}
-          >
-            <div className="battle-combatant-visual" aria-hidden="true">
-              <AdventureVisual gameType={gameType} kind="enemy" label="" decorative />
-            </div>
-            <span className="battle-faction-label">敌方</span>
-            <h3>{view.battle.enemyName}</h3>
-            <p>HP {view.battle.enemyHp}</p>
-          </div>
+          {view.battle.units !== undefined && view.battle.units.length > 0
+            ? view.battle.units.map((unit) => (
+                <div
+                  key={unit.slot}
+                  className={`battle-combatant battle-combatant--${unit.side === "allies" ? "player" : "enemy"} ${unit.current ? "battle-combatant--active" : ""} ${battleFeedback?.kind === "enemy-hit" && unit.side === "enemies" ? "battle-combatant--hit" : ""}`}
+                  data-side={unit.side === "allies" ? "player" : "enemy"}
+                  data-slot={unit.slot}
+                  role="group"
+                  aria-label={`${unit.side === "allies" ? "己方" : "敌方"}：${unit.name}`}
+                >
+                  <div className="battle-combatant-visual" aria-hidden="true">
+                    <AdventureVisual gameType={gameType} kind={unit.side === "allies" ? "npc" : "enemy"} label="" decorative />
+                  </div>
+                  <span className="battle-faction-label">{unit.side === "allies" ? "己方" : "敌方"}{unit.current ? " · 当前行动" : ""}</span>
+                  <h3>{unit.name}</h3>
+                  <p>HP {unit.hp}/{unit.maxHp} · EN {unit.energy}/{unit.maxEnergy}</p>
+                </div>
+              ))
+            : <>
+                <div
+                  className={`battle-combatant battle-combatant--player ${battleFeedback?.kind === "player-action" ? "battle-combatant--attacking" : ""} ${battleFeedback?.kind === "player-hit" ? "battle-combatant--hit" : ""}`}
+                  data-side="player"
+                  role="group"
+                  aria-label={`己方：${view.player.name}`}
+                >
+                  <div className="battle-combatant-visual" aria-hidden="true">
+                    <AdventureVisual gameType={gameType} kind="npc" label="" decorative />
+                  </div>
+                  <span className="battle-faction-label">己方</span>
+                  <h3>{view.player.name}</h3>
+                  <p>HP {view.battle.playerHp}</p>
+                </div>
+                <div
+                  className={`battle-combatant battle-combatant--enemy ${battleFeedback?.kind === "enemy-hit" ? "battle-combatant--hit" : ""}`}
+                  data-side="enemy"
+                  role="group"
+                  aria-label={`敌方：${view.battle.enemyName}`}
+                >
+                  <div className="battle-combatant-visual" aria-hidden="true">
+                    <AdventureVisual gameType={gameType} kind="enemy" label="" decorative />
+                  </div>
+                  <span className="battle-faction-label">敌方</span>
+                  <h3>{view.battle.enemyName}</h3>
+                  <p>HP {view.battle.enemyHp}</p>
+                </div>
+              </>}
           <div className="battle-action-rail" role="group" aria-label="战斗行动">
-            {view.battle.controls.map(renderBattleChoiceButton)}
+            {[...view.battle.controls, ...(view.battle.disabledControls ?? [])].map(renderBattleChoiceButton)}
           </div>
           {battleFeedback !== null ? (
             <p className={`battle-feedback battle-feedback--${battleFeedback.kind}`} role="status" aria-live="assertive">

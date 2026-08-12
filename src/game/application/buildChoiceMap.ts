@@ -5,6 +5,7 @@ import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { isExpiredCandidate } from "@/game/domain/candidateEvent";
 import type { ActionChoiceMap } from "./actionConverter";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
+import { SKILL_ENERGY_COST } from "@/game/domain/combat";
 
 // ---------------------------------------------------------------------------
 // 服务端 choiceMap 构建器：从当前 WorldState + StoryState 派生所有合法行动的
@@ -29,9 +30,25 @@ export function buildChoiceMap(
 
   // 如果有活跃战斗，只允许 battle_action
   if (worldState.battle.status === "active") {
-    addRuntimeAction({ type: "battle_action", action: "attack" });
-    addRuntimeAction({ type: "battle_action", action: "guard" });
-    addRuntimeAction({ type: "battle_action", action: "flee" });
+    const battle = worldState.battle;
+    const actorId = battle.combatants?.[battle.turnIndex ?? -1]?.combatantId;
+    const actor = actorId === undefined ? undefined : battle.combatants?.find((unit) => unit.combatantId === actorId);
+    const targets = battle.combatants?.filter((unit) => unit.side === "enemies" && unit.hp > 0) ?? [];
+    if (actor?.controller === "player" && actorId !== undefined && battle.combatants !== undefined) {
+      addRuntimeAction({ type: "battle_action", action: "guard", command: { actorId } });
+      addRuntimeAction({ type: "battle_action", action: "flee", command: { actorId } });
+      for (const target of targets) {
+        addRuntimeAction({ type: "battle_action", action: "attack", command: { actorId, targetId: target.combatantId } });
+        if (actor.energy >= SKILL_ENERGY_COST) {
+          addRuntimeAction({ type: "battle_action", action: "skill", command: { actorId, targetId: target.combatantId } });
+        }
+      }
+    } else {
+      // 旧存档尚未带队列时保留旧 token，保证历史客户端仍可继续战斗。
+      addRuntimeAction({ type: "battle_action", action: "attack" });
+      addRuntimeAction({ type: "battle_action", action: "guard" });
+      addRuntimeAction({ type: "battle_action", action: "flee" });
+    }
   } else {
     // 当前地点 NPC → talk
     for (const npc of worldState.npcs) {

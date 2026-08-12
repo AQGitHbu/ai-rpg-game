@@ -24,7 +24,7 @@ export type StructuredActionSummary =
   | { readonly kind: "take_item"; readonly itemId: ItemId }
   | { readonly kind: "give_item"; readonly itemId: ItemId; readonly npcId: NpcId }
   | { readonly kind: "attack"; readonly enemyId: EnemyId }
-  | { readonly kind: "battle_action"; readonly action: "attack" | "guard" | "flee" }
+  | { readonly kind: "battle_action"; readonly action: "attack" | "skill" | "guard" | "flee" }
   | { readonly kind: "ack_prologue" }
   | { readonly kind: "freeform" };
 

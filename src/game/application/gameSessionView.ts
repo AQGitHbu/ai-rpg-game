@@ -11,6 +11,7 @@ import { buildChoiceMap, hasExplorableContent } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { buildTownView, type TownView } from "./townView";
+import { projectCombatView, type BattleView } from "./combatView";
 
 export type PlayerChoiceView = {
   readonly choiceToken: string;
@@ -55,6 +56,9 @@ export type GameSessionView = {
     readonly hp: number;
     readonly attack: number;
     readonly defense: number;
+    readonly maxHp?: number;
+    readonly maxEnergy?: number;
+    readonly speed?: number;
   };
   readonly worldMap: {
     readonly locations: readonly {
@@ -108,13 +112,7 @@ export type GameSessionView = {
     readonly npcDialogues: readonly NpcDialogueView[];
   };
   readonly narrativeGeneration: { readonly status: "idle" | "pending" };
-  readonly battle: {
-    readonly enemyName: string;
-    readonly playerHp: number;
-    readonly enemyHp: number;
-    readonly round: number;
-    readonly controls: readonly PlayerChoiceView[];
-  } | null;
+  readonly battle: BattleView | null;
   readonly quests: readonly {
     readonly name: string;
     readonly description: string;
@@ -370,17 +368,7 @@ export function projectGameSessionView(
     }];
   });
 
-  const battle = activeBattle === null ? null : {
-    enemyName: worldState.enemies.find((entry) => entry.id === activeBattle.enemyId)?.name ?? "未知敌人",
-    playerHp: activeBattle.playerHp,
-    enemyHp: activeBattle.enemyHp,
-    round: activeBattle.round,
-    controls: [
-      choice({ type: "battle_action", action: "attack" }, revision, "攻击", "battle"),
-      choice({ type: "battle_action", action: "guard" }, revision, "防御", "battle"),
-      choice({ type: "battle_action", action: "flee" }, revision, "撤退", "battle"),
-    ],
-  };
+  const battle = activeBattle === null ? null : projectCombatView(worldState, activeBattle, revision);
   const endingDefinition = worldState.ending === null
     ? undefined
     : worldState.endings.find((entry) => entry.id === worldState.ending?.endingId);
@@ -401,6 +389,9 @@ export function projectGameSessionView(
       hp: worldState.player.stats.hp,
       attack: worldState.player.stats.attack,
       defense: worldState.player.stats.defense,
+      maxHp: worldState.player.stats.maxHp ?? worldState.player.stats.hp,
+      maxEnergy: worldState.player.stats.maxEnergy,
+      speed: worldState.player.stats.speed,
     },
     worldMap: { locations: mapLocations },
     currentLocation: {

@@ -28,6 +28,9 @@ import { createDeterministicEvolutionSource } from "./deterministicEvolutionSour
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
+import { ENEMY_COMBAT_STATS, PLAYER_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
+import { buildEncounter } from "@/game/gameplay/rpg/ruleEngine/buildEncounter";
+import { createTurnOrder } from "@/game/gameplay/rpg/ruleEngine/combatMath";
 
 function createSpyRepo(ws: WorldState, ss: StoryState): {
   repo: GameRepository;
@@ -185,6 +188,48 @@ function buildPendingStoryState(): StoryState {
 
 describe("performTurn 单次 CAS 提交", () => {
   const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" };
+
+  it("活跃战斗推进直接 CAS，不创建 pending narrative job", async () => {
+    const enemy = {
+      id: asEnemyId("enemy_1"), name: "灰狼", tier: "normal" as const,
+      stats: toStatBlock(ENEMY_COMBAT_STATS.normal), locationId: asLocationId("loc_1"), tags: [],
+    };
+    const base = buildWorldState();
+    const modern: WorldState = {
+      ...base,
+      player: { ...base.player, stats: toStatBlock(PLAYER_COMBAT_STATS) },
+      enemies: [enemy],
+    };
+    const encounter = buildEncounter(modern, enemy.id);
+    const active = {
+      status: "active" as const,
+      enemyId: enemy.id,
+      enemyIds: [enemy.id],
+      playerHp: 100,
+      enemyHp: 55,
+      round: 1,
+      combatants: encounter,
+      turnOrder: createTurnOrder(encounter),
+      turnIndex: 0,
+      enemyIntents: [],
+      downedEnemyIds: [],
+      lastAdvance: [],
+    };
+    const { repo, record, applyCalls } = createSpyRepo({ ...modern, battle: active }, buildStoryState());
+    const action: Action = {
+      type: "battle_action",
+      action: "attack",
+      command: { actorId: "ally:protagonist" as never, targetId: "enemy:enemy_1" as never },
+    };
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "battle_1", interaction: { kind: "fixed_choice", choiceToken: "battle" }, expectedRevision: 0, choiceMap: new Map([["battle", action]]) },
+      { repository: repo, now: () => "2026-01-02" },
+    );
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+    expect(record()?.storyState.narrative.generation.status).toBe("idle");
+    expect(record()?.worldState.battle.status).toBe("active");
+  });
 
   it("成功回合 applyState 恰好一次，单次写入同时包含 WorldState、StoryState.turnNumber 和 pending job", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());

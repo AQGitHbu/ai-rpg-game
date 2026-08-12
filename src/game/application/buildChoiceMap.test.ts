@@ -16,6 +16,9 @@ import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
 import { asEnemyId, asFactId, asGenerationId, asItemId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import type { Action } from "@/game/domain/action";
+import { ENEMY_COMBAT_STATS, PLAYER_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
+import { buildEncounter } from "@/game/gameplay/rpg/ruleEngine/buildEncounter";
+import { createTurnOrder } from "@/game/gameplay/rpg/ruleEngine/combatMath";
 
 // ---------------------------------------------------------------------------
 // Fixture：客栈？(loc_1) 有铁匠，街道(loc_2) 连通且解锁，雾谷村(loc_3) 锁定；
@@ -126,6 +129,35 @@ describe("buildChoiceMap", () => {
       { type: "battle_action", action: "flee" },
     ] as const;
     expect([...map.keys()]).toEqual(actions.map((action) => deriveRuntimeChoiceToken(action, 0)));
+  });
+
+  it("现代多单位战斗的 token 绑定当前行动者与具体目标", () => {
+    const base = buildWorldState();
+    const modernWorld: WorldState = {
+      ...base,
+      player: { ...base.player, stats: toStatBlock(PLAYER_COMBAT_STATS) },
+      enemies: [{ ...wolf, stats: toStatBlock(ENEMY_COMBAT_STATS.normal) }],
+    };
+    const encounter = buildEncounter(modernWorld, wolf.id);
+    const active = {
+      status: "active" as const,
+      enemyId: wolf.id,
+      enemyIds: [wolf.id],
+      playerHp: 100,
+      enemyHp: 55,
+      round: 1,
+      combatants: encounter,
+      turnOrder: createTurnOrder(encounter),
+      turnIndex: 0,
+      enemyIntents: [],
+      downedEnemyIds: [],
+      lastAdvance: [],
+    };
+    const map = buildChoiceMap({ ...modernWorld, battle: active }, buildStoryState({}), 0);
+    const actions = [...map.values()].filter((action): action is Extract<Action, { type: "battle_action" }> => action.type === "battle_action");
+    expect(actions.some((action) => action.action === "skill" && action.command?.targetId === "enemy:enemy_wolf")).toBe(true);
+    expect(actions.every((action) => action.command?.actorId === "ally:protagonist")).toBe(true);
+    expect(actions.some((action) => action.command?.targetId === "enemy_wolf")).toBe(false);
   });
 
   it("active battle 仍解析当前 revision 的两个 opaque registry token；stale/tampered 不解析", () => {

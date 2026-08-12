@@ -99,7 +99,8 @@ export function AdventureDetailsPanel({ view, panel }: AdventureDetailsPanelProp
     );
   }
 
-  const hpPercent = Math.max(0, Math.min(100, view.player.hp));
+  const maxHp = view.player.maxHp ?? view.player.hp;
+  const hpPercent = maxHp > 0 ? Math.max(0, Math.min(100, (view.player.hp / maxHp) * 100)) : 0;
   return (
     <div className="details-character">
       <dl className="details-character-stats">
@@ -119,9 +120,21 @@ export function AdventureDetailsPanel({ view, panel }: AdventureDetailsPanelProp
           <dt>防御</dt>
           <dd>{view.player.defense}</dd>
         </div>
+        <div>
+          <dt>生命上限</dt>
+          <dd>{maxHp}</dd>
+        </div>
+        <div>
+          <dt>能量上限</dt>
+          <dd>{view.player.maxEnergy ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>速度</dt>
+          <dd>{view.player.speed ?? "—"}</dd>
+        </div>
       </dl>
       <div className="details-character-hp" role="meter" aria-valuenow={hpPercent} aria-valuemin={0} aria-valuemax={100} aria-label="生命值">
-        <span>生命 {view.player.hp}</span>
+        <span>生命 {view.player.hp}/{maxHp}</span>
         <div className="details-character-hp-bar" aria-hidden="true">
           <div style={{ width: `${hpPercent}%` }} />
         </div>

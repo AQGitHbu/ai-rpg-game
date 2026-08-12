@@ -89,7 +89,16 @@ function rebuildAction(action: Action): Action {
     case "attack":
       return { type: "attack", enemyId: action.enemyId };
     case "battle_action":
-      return { type: "battle_action", action: action.action };
+      return {
+        type: "battle_action",
+        action: action.action,
+        ...(action.command === undefined ? {} : {
+          command: {
+            actorId: action.command.actorId,
+            ...(action.command.targetId === undefined ? {} : { targetId: action.command.targetId }),
+          },
+        }),
+      };
     case "ack_prologue":
       return { type: "ack_prologue" };
     case "freeform":
@@ -110,7 +119,7 @@ export function semanticSummaryOf(action: Action): string {
     case "take_item": return `take_item:${action.itemId}`;
     case "give_item": return `give_item:${action.itemId}:${action.npcId}`;
     case "attack": return `attack:${action.enemyId}`;
-    case "battle_action": return `battle_action:${action.action}`;
+    case "battle_action": return `battle_action:${action.action}:${action.command?.actorId ?? ""}:${action.command?.targetId ?? ""}`;
     case "ack_prologue": return "ack_prologue";
     case "freeform": return `freeform:${action.intent}`;
   }
@@ -143,7 +152,7 @@ function serializeAction(action: Action): string {
     case "take_item": return `take_item|${String(action.itemId)}`;
     case "give_item": return `give_item|${String(action.itemId)}|${String(action.npcId)}`;
     case "attack": return `attack|${String(action.enemyId)}`;
-    case "battle_action": return `battle_action|${action.action}`;
+    case "battle_action": return `battle_action|${action.action}|${action.command?.actorId ?? ""}|${action.command?.targetId ?? ""}`;
     case "ack_prologue": return "ack_prologue";
     case "freeform": return `freeform|${action.intent}`;
   }

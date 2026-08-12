@@ -32,6 +32,7 @@
 - ready scene、choice registry、candidate event pool 与已批准世界演化同一次 scene CAS 写回；行动消费时再次验证当前 scene、revision 与规则合法性。
 - AI/fixture 失败使用确定性 fallback，fallback 也经过同一 proposal → approval → write-back 链。
 - active battle、ending 或候选不足时不伪造普通场景选择。
+- active battle 采用规则 fast path：不创建 pending 场景、不调用 scene source；只有 battle_resolved 等终结事件进入叙事场景编排。
 
 ## 强制节拍与目标链接
 

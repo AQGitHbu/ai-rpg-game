@@ -1609,6 +1609,11 @@ body:has(.adventure-game-shell) {
   transform: scaleX(-1);
 }
 
+.battle-combatant--active {
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px var(--game-accent), 0 0 24px rgb(223 191 112 / 24%);
+}
+
 .battle-combatant-visual {
   max-width: 120px;
 }
