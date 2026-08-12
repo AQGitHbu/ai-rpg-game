@@ -29,6 +29,7 @@ export function CurrentGameScreen() {
   const [state, setState] = useState<ScreenState>({ phase: "loading" });
   const prologueAckInFlight = useRef(false);
   const [prologueAcking, setPrologueAcking] = useState(false);
+  const [prologueAckError, setPrologueAckError] = useState(false);
   const [narrativeRetryNonce, setNarrativeRetryNonce] = useState(0);
 
   const applyResponse = useCallback((res: { ok: boolean; status: string; view?: GameSessionView; code?: string }) => {
@@ -95,12 +96,8 @@ export function CurrentGameScreen() {
 
   // 清除本地试玩存档
   async function clearDevelopmentSave() {
-    if (!window.confirm("仅清除当前本地试玩存档并重新开局？此操作只在开发环境可用。")) return;
-    try {
-      await fetch("/api/game/dev/current", { method: "DELETE" });
-    } catch {
-      // ignore
-    }
+    const response = await fetch("/api/game/dev/current", { method: "DELETE" });
+    if (!response.ok) throw new Error("CLEAR_DEVELOPMENT_SAVE_FAILED");
     await loadCurrentGame();
   }
 
@@ -109,8 +106,15 @@ export function CurrentGameScreen() {
     if (prologueAckInFlight.current) return;
     prologueAckInFlight.current = true;
     setPrologueAcking(true);
+    setPrologueAckError(false);
     try {
-      if (await ackPrologue()) await loadCurrentGame();
+      if (await ackPrologue()) {
+        await loadCurrentGame();
+      } else {
+        setPrologueAckError(true);
+      }
+    } catch {
+      setPrologueAckError(true);
     } finally {
       prologueAckInFlight.current = false;
       setPrologueAcking(false);
@@ -143,7 +147,8 @@ export function CurrentGameScreen() {
           <div className="prologue-content">
             <h2>序幕</h2>
             <p className="prologue-text">{prologueText}</p>
-            <p className="prologue-hint">点击开始冒险，踏入这段旅程。</p>
+            <p className="prologue-hint">点击下方按钮，踏入这段旅程。</p>
+            {prologueAckError ? <p role="alert">进入失败，请检查连接后重试。</p> : null}
             <InlineButton disabled={prologueAcking} onClick={() => void handlePrologueAck()}>
               {prologueAcking ? "正在进入……" : "开始冒险"}
             </InlineButton>
@@ -157,18 +162,20 @@ export function CurrentGameScreen() {
     const ending = view.ending;
     if (ending !== null) {
       return (
-        <Panel className="ending-screen">
-          <Tag variant={ending.outcome === "success" ? "success" : "danger"}>
-            {ending.outcome === "success" ? "胜利" : "失败"}
-          </Tag>
-          <h2>{ending.name}</h2>
-          <p>{ending.description || "你的冒险至此结束。"}</p>
-          <InlineButton onClick={() => setState({
-            phase: "restart",
-            identity: ending.restartIdentity,
-            expectedRevision: view.revision,
-          })}>重新开始</InlineButton>
-        </Panel>
+        <section className="ending-stage" aria-label="冒险结局">
+          <Panel className="ending-screen">
+            <Tag variant={ending.outcome === "success" ? "success" : "danger"}>
+              {ending.outcome === "success" ? "胜利" : "失败"}
+            </Tag>
+            <h2>{ending.name}</h2>
+            <p>{ending.description || "你的冒险至此结束。"}</p>
+            <InlineButton onClick={() => setState({
+              phase: "restart",
+              identity: ending.restartIdentity,
+              expectedRevision: view.revision,
+            })}>重新开始</InlineButton>
+          </Panel>
+        </section>
       );
     }
 

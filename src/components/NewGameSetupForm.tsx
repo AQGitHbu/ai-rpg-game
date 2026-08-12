@@ -251,15 +251,16 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
     );
   }
 
-  /** 切换游戏类型时整体替换主角与世界开端字段为对应示例（覆盖玩家已编辑内容）。 */
+  /** 切换题材时只替换仍是旧预设的字段，避免静默覆盖玩家已编辑的长文本。 */
   function handleGameTypeChange(id: (typeof GAME_TYPES)[number]["id"]) {
     const preset = GAME_TYPE_PRESETS[id];
+    const previousPreset = GAME_TYPE_PRESETS[gameType];
     setGameType(id);
-    setCharacterName(preset.characterName);
-    setCharacterIdentity(preset.characterIdentity);
-    setCharacterProfile(preset.characterProfile);
-    setWorldPremise(preset.worldPremise);
-    setStoryOpening(preset.storyOpening);
+    setCharacterName((current) => current === previousPreset.characterName ? preset.characterName : current);
+    setCharacterIdentity((current) => current === previousPreset.characterIdentity ? preset.characterIdentity : current);
+    setCharacterProfile((current) => current === previousPreset.characterProfile ? preset.characterProfile : current);
+    setWorldPremise((current) => current === previousPreset.worldPremise ? preset.worldPremise : current);
+    setStoryOpening((current) => current === previousPreset.storyOpening ? preset.storyOpening : current);
   }
 
   /** 性格标签多选：最多三个，已选可取消。 */
@@ -409,7 +410,7 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
             <div className="panel-heading">
               <div>
                 <h2>选择世界</h2>
-                <p>类型限制世界生成不能跑题，并绑定对应的 AI 绘图风格与界面主题。</p>
+          <p>类型限制世界生成不能跑题，并绑定对应的视觉风格与界面主题。</p>
               </div>
               <Tag variant="accent">{selectedType.label}</Tag>
             </div>

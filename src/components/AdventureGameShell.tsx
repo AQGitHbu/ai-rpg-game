@@ -46,6 +46,7 @@ export function AdventureGameShell({
   const [screen, setScreen] = useState<AdventureScreen>("map");
   const [detailsPanel, setDetailsPanel] = useState<DetailsPanel | null>(null);
   const [devToolsOpen, setDevToolsOpen] = useState(false);
+  const [devClearPhase, setDevClearPhase] = useState<"idle" | "confirm" | "clearing" | "error">("idle");
   const [feedback, setFeedback] = useState<ActionFeedback>({ phase: "idle" });
   const [focusNpcId, setFocusNpcId] = useState<string | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -109,9 +110,12 @@ export function AdventureGameShell({
     const objectiveNpc = objectiveNpcName === undefined
       ? undefined
       : view.currentLocation.npcs.find((entry) => entry.name === objectiveNpcName);
-    const npc = objectiveNpc ?? (building === undefined
+    const buildingNpc = building === undefined
       ? undefined
-      : view.currentLocation.npcs.find((entry) => entry.name === building.npcName));
+      : view.currentLocation.npcs.find((entry) => entry.name === building.npcName);
+    // 正常存档始终以玩家实际点击的建筑绑定为准；目标 NPC 只用于旧存档
+    // 缺失建筑绑定时的只读补偿，不能把玩家带到另一栋建筑的人物对话。
+    const npc = buildingNpc ?? objectiveNpc;
     const currentDialogue = view.narrative.npcDialogues.find((entry) =>
       entry.npcId === npcId || (npc !== undefined && entry.name === npc.name),
     );
@@ -136,10 +140,21 @@ export function AdventureGameShell({
   function closeOverlay(): void {
     setDetailsPanel(null);
     setDevToolsOpen(false);
+    setDevClearPhase("idle");
+  }
+
+  async function clearDevelopmentSave(): Promise<void> {
+    if (devClearPhase === "clearing") return;
+    setDevClearPhase("clearing");
+    try {
+      await onClearDevelopmentSave();
+    } catch {
+      setDevClearPhase("error");
+    }
   }
 
   return (
-    <main className="adventure-game-shell">
+    <div className="adventure-game-shell">
       <AdventureHud
         view={view}
         screen={screen}
@@ -189,9 +204,32 @@ export function AdventureGameShell({
           <p className="development-tools-hint">
             仅清除当前本地试玩存档；不会删除数据库文件或其它项目数据。
           </p>
-          <InlineButton onClick={() => void onClearDevelopmentSave()}>
-            清除本地试玩存档
-          </InlineButton>
+          {devClearPhase === "idle" ? (
+            <InlineButton onClick={() => setDevClearPhase("confirm")}>
+              清除本地试玩存档
+            </InlineButton>
+          ) : (
+            <div className="development-tools-confirm" role="group" aria-label="确认清除试玩存档">
+              <p>此操作会结束当前试玩并返回新游戏创建界面。</p>
+              {devClearPhase === "error" ? (
+                <p role="alert">清除失败，存档仍然保留。请稍后重试。</p>
+              ) : null}
+              <div className="development-tools-actions">
+                <InlineButton
+                  onClick={() => void clearDevelopmentSave()}
+                  disabled={devClearPhase === "clearing"}
+                >
+                  {devClearPhase === "clearing" ? "正在清除……" : "确认清除并重新开局"}
+                </InlineButton>
+                <InlineButton
+                  onClick={() => setDevClearPhase("idle")}
+                  disabled={devClearPhase === "clearing"}
+                >
+                  取消
+                </InlineButton>
+              </div>
+            </div>
+          )}
         </AdventureOverlay>
       ) : null}
 
@@ -213,6 +251,6 @@ export function AdventureGameShell({
           onRetry={pending ? onRetryNarrative : undefined}
         />
       ) : null}
-    </main>
+    </div>
   );
 }

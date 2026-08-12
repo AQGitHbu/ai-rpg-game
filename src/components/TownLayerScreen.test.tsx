@@ -49,8 +49,23 @@ describe("TownLayerScreen", () => {
     renderTown();
     expect(screen.getByRole("region", { name: "小镇：边陲小镇" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "返回地图" })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "小镇地图" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "小镇地图" })).toBeInTheDocument();
     expect(screen.getByText("当前剧情建筑" )).toBeInTheDocument();
+  });
+
+  it("renders the preset art for known buildings without exposing hidden story building types", () => {
+    const { container } = render(<TownLayerScreen
+      town={townFixture()}
+      busy={false}
+      onEnterBuilding={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+    const interactive = townFixture().interactiveBuildings[0]!;
+    const interactiveArt = container.querySelector(
+      `image[href="/assets/town/${interactive.buildingType}.webp"]`,
+    );
+    expect(interactiveArt).toBeInTheDocument();
+    expect(container.querySelector("[data-building-art]")).toHaveAttribute("aria-hidden", "true");
   });
 
   it("selecting a bound interactive building shows its entry action and calls onEnterBuilding with its NPC", async () => {
@@ -70,17 +85,19 @@ describe("TownLayerScreen", () => {
     expect(onEnterBuilding).toHaveBeenCalledWith(interactive.npcId);
   });
 
-  it("does not leak unbound story buildings as interactive entries", async () => {
-    const user = userEvent.setup();
-    renderTown();
+  it("does not expose unbound story buildings or generic buildings as fake controls", () => {
+    const { container } = render(<TownLayerScreen
+      town={townFixture()}
+      busy={false}
+      onEnterBuilding={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
     const town = townFixture();
     const interactive = town.interactiveBuildings[0]!;
-    // 未绑定 NPC 的剧情建筑渲染为「未探索」占位（aria-disabled）
-    const unexplored = screen.getAllByRole("button", { name: "未探索" });
-    expect(unexplored.length).toBeGreaterThan(0);
-    for (const entry of unexplored) {
-      expect(entry).toHaveAttribute("aria-disabled", "true");
-    }
-    expect(interactive.buildingId).toBeDefined();
+    expect(screen.queryByRole("button", { name: "未探索" })).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".town-demo-building--unexplored").length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button").filter((button) =>
+      button.getAttribute("aria-label") === interactive.displayName,
+    )).toHaveLength(1);
   });
 });

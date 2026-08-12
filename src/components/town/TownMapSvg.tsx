@@ -14,6 +14,19 @@ import { tileIndex, type TileType, type TownRenderSnapshot } from "@/game/applic
 /** 每个网格瓦片的边长（SVG 用户单位）。 */
 const TILE_SIZE = 12;
 
+type TownBuildingType = TownRenderSnapshot["buildings"][number]["buildingType"];
+
+const BUILDING_ART: Record<TownBuildingType, string> = {
+  tavern: "/assets/town/tavern.webp",
+  blacksmith: "/assets/town/blacksmith.webp",
+  house: "/assets/town/house.webp",
+  shop: "/assets/town/shop.webp",
+  workshop: "/assets/town/workshop.webp",
+  warehouse: "/assets/town/warehouse.webp",
+  well: "/assets/town/well.webp",
+  gatehouse: "/assets/town/gatehouse.webp",
+};
+
 /** TileType → 填充色。 */
 const TILE_FILL: Record<TileType, string> = {
   outside: "#1a1d24",
@@ -97,7 +110,7 @@ export function TownMapSvg({
   return (
     <svg
       data-town-map
-      role="img"
+      role="group"
       className="town-demo-map"
       viewBox={`0 0 ${viewWidth} ${viewHeight}`}
       aria-label="小镇地图"
@@ -141,29 +154,42 @@ export function TownMapSvg({
         </g>
       )}
 
-      {snapshot.buildings.map((building) => {
-        if (isUnexploredPlaceholder(building)) {
-          const selected = building.buildingId === selectedBuildingId;
-          const classes = ["town-demo-building", "town-demo-building--unexplored"];
-          if (selected) classes.push("town-demo-building--selected");
+      <g data-building-art aria-hidden="true" pointerEvents="none">
+        {snapshot.buildings.map((building) => {
+          if (isUnexploredPlaceholder(building)) return null;
           return (
-            <rect
-              key={building.buildingId}
-              className={classes.join(" ")}
-              role="button"
-              tabIndex={0}
-              aria-label="未探索"
-              aria-pressed={selected}
-              aria-disabled="true"
+            <image
+              key={`art-${building.buildingId}`}
+              data-building-type={building.buildingType}
+              href={BUILDING_ART[building.buildingType]}
               x={building.footprint.x * TILE_SIZE}
               y={building.footprint.y * TILE_SIZE}
               width={building.footprint.width * TILE_SIZE}
               height={building.footprint.height * TILE_SIZE}
-              onClick={(event) => handleBuildingClick(event, building.buildingId)}
-              onKeyDown={(event) => handleBuildingKeyDown(event, building.buildingId)}
+              preserveAspectRatio="xMidYMid slice"
+            />
+          );
+        })}
+      </g>
+
+      {snapshot.buildings.map((building) => {
+        if (isUnexploredPlaceholder(building)) {
+          return (
+            <rect
+              key={building.buildingId}
+              className="town-demo-building town-demo-building--unexplored"
+              aria-hidden="true"
+              x={building.footprint.x * TILE_SIZE}
+              y={building.footprint.y * TILE_SIZE}
+              width={building.footprint.width * TILE_SIZE}
+              height={building.footprint.height * TILE_SIZE}
             />
           );
         }
+        const interactive = interactiveBuildingIds === undefined
+          ? building.storyRequired
+          : interactiveBuildingIds.has(building.buildingId);
+        if (!interactive) return null;
         const selected = building.buildingId === selectedBuildingId;
         const classes = ["town-demo-building"];
         if (building.storyRequired) classes.push("town-demo-building--story");

@@ -107,6 +107,16 @@ select {
   font-weight: 500;
 }
 
+.ending-stage {
+  min-height: calc(100dvh - 168px);
+  display: grid;
+  place-items: center;
+}
+
+.ending-screen {
+  width: min(720px, 100%);
+}
+
 .panel-heading {
   display: flex;
   align-items: flex-start;
@@ -1131,6 +1141,26 @@ body:has(.adventure-game-shell) {
   line-height: 1.6;
 }
 
+.development-tools-confirm {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--game-danger) 55%, var(--game-surface-border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--game-danger) 8%, transparent);
+}
+
+.development-tools-confirm p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.development-tools-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .adventure-toast-container {
   position: fixed;
   bottom: 24px;
@@ -2137,7 +2167,6 @@ body:has(.adventure-game-shell) {
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  cursor: pointer;
   z-index: 9999;
   animation: prologue-fade-in 800ms ease-out;
 }
@@ -3019,6 +3048,7 @@ body:has(.adventure-game-shell) {
 
   .adventure-hud-objective {
     top: 118px;
+    bottom: auto;
   }
 
   .location-viewport .location-scene-content {
@@ -3070,11 +3100,19 @@ body:has(.adventure-game-shell) {
 }
 
 .town-demo-building {
-  fill: #7d6b58;
+  fill: rgb(125 107 88 / 10%);
   stroke: #3a332c;
   stroke-width: 1;
   cursor: pointer;
   outline: none;
+}
+
+.town-demo-building:hover,
+.town-demo-building:focus-visible {
+  fill: rgb(217 164 65 / 22%);
+  stroke: #fff3d6;
+  stroke-width: 3;
+  filter: drop-shadow(0 0 5px rgb(217 164 65 / 90%));
 }
 
 .town-demo-building--story {
@@ -3090,7 +3128,7 @@ body:has(.adventure-game-shell) {
 }
 
 .town-demo-building--selected {
-  fill: #a98d5c;
+  fill: rgb(169 141 92 / 36%);
   stroke: #fff3d6;
   stroke-width: 2;
 }

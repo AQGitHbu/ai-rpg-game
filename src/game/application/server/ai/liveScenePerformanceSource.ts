@@ -183,7 +183,9 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
           { role: "user", content: `当前回合：${context.job.actionId}（${context.job.actionSummary.kind}）` },
         ];
 
-        const result = await transport.complete(config, messages, { timeoutMs: 120_000 });
+        // 场景生成位于每个玩家回合的必经等待界面。30 秒内拿不到提案时
+        // 立即使用同轨确定性 source，避免存档长期停在 pending。
+        const result = await transport.complete(config, messages, { timeoutMs: 30_000 });
         if (!result.ok) {
           logger?.warn("scene_generation_ai_failed", { code: result.code });
           return deterministic.generateScene(context);

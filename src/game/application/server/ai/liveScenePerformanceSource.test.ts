@@ -130,6 +130,20 @@ function stubTransport(payload: unknown, content: string | null = null): AiTrans
 const config: AiTransportConfig = { baseUrl: "x", apiKey: "k", model: "m" };
 
 describe("liveScenePerformanceSource（Task 6）", () => {
+  it("bounds live scene generation to 30 seconds before deterministic fallback", async () => {
+    const context = makeContext();
+    const transport = stubTransport(null, "not-json");
+    const source = createLiveScenePerformanceSource({ transport, config });
+
+    await source.generateScene(context);
+
+    expect(transport.complete).toHaveBeenCalledWith(
+      config,
+      expect.any(Array),
+      { timeoutMs: 30_000 },
+    );
+  });
+
   it("item 获得：segment 点名精确物品并携带其节拍 ID", async () => {
     const job = makeJob({
       beats: [

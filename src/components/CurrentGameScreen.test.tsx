@@ -59,6 +59,7 @@ describe("CurrentGameScreen ending restart", () => {
     vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: endedView });
     render(<CurrentGameScreen />);
 
+    expect(await screen.findByRole("region", { name: "冒险结局" })).toBeInTheDocument();
     await userEvent.click(await screen.findByRole("button", { name: "重新开始" }));
 
     expect(await screen.findByRole("heading", { name: "开始新的冒险" })).toBeInTheDocument();
@@ -127,6 +128,17 @@ describe("CurrentGameScreen prologue display", () => {
     expect(ackPrologue).toHaveBeenCalledOnce();
     resolveAck(true);
     await waitFor(() => expect(fetchCurrentGame).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows a retryable error when the prologue acknowledgement fails", async () => {
+    vi.mocked(ackPrologue).mockResolvedValueOnce(false);
+    vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: activeViewWithPrologue });
+    render(<CurrentGameScreen />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "开始冒险" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("进入失败，请检查连接后重试。");
+    expect(screen.getByRole("button", { name: "开始冒险" })).toBeEnabled();
   });
 
   it("waits until the prologue is acknowledged before polling the opening scene", async () => {

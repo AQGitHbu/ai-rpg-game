@@ -119,6 +119,42 @@ afterEach(() => {
 });
 
 describe("AdventureGameShell canonical opaque choices", () => {
+  it("requires an in-game second confirmation before clearing the development save", async () => {
+    const clearSave = vi.fn(async () => {});
+    render(<AdventureGameShell
+      view={buildView()}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={clearSave}
+    />);
+
+    await userEvent.click(screen.getByRole("button", { name: "开发工具" }));
+    await userEvent.click(screen.getByRole("button", { name: "清除本地试玩存档" }));
+
+    expect(clearSave).not.toHaveBeenCalled();
+    expect(screen.getByText("此操作会结束当前试玩并返回新游戏创建界面。")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "确认清除并重新开局" }));
+    await waitFor(() => expect(clearSave).toHaveBeenCalledOnce());
+  });
+
+  it("keeps the save and offers retry feedback when development clearing fails", async () => {
+    const clearSave = vi.fn(async () => { throw new Error("delete failed"); });
+    render(<AdventureGameShell
+      view={buildView()}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={clearSave}
+    />);
+
+    await userEvent.click(screen.getByRole("button", { name: "开发工具" }));
+    await userEvent.click(screen.getByRole("button", { name: "清除本地试玩存档" }));
+    await userEvent.click(screen.getByRole("button", { name: "确认清除并重新开局" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("清除失败，存档仍然保留。请稍后重试。");
+    expect(screen.getByRole("button", { name: "确认清除并重新开局" })).toBeEnabled();
+  });
+
   it("starts on the world map with current and travel nodes", () => {
     renderShell();
     expect(screen.getByRole("button", { name: "进入客栈" })).toBeInTheDocument();
@@ -420,6 +456,55 @@ describe("AdventureGameShell three-layer navigation", () => {
     expect(postAction).toHaveBeenCalledWith({
       interaction: { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
       revision: notDialogueReady.revision,
+    });
+  });
+
+  it("uses the NPC bound to the clicked building instead of the current objective NPC", async () => {
+    const user = userEvent.setup();
+    const view = buildTownView();
+    const clickedBuilding = view.currentLocation.town!.interactiveBuildings[0]!;
+    const secondBuilding = view.currentLocation.town!.snapshot.buildings.find((entry) =>
+      entry.storyRequired && entry.buildingId !== clickedBuilding.buildingId,
+    )!;
+    const twoNpcView: GameSessionView = {
+      ...view,
+      story: { ...view.story, currentObjectiveLabel: "与目标人交谈" },
+      currentLocation: {
+        ...view.currentLocation,
+        npcs: [
+          { name: clickedBuilding.npcName, role: "掌柜", talkChoice: choice(TOKENS.dialogueOne, `与${clickedBuilding.npcName}交谈`, "dialogue") },
+          { name: "目标人", role: "信使", talkChoice: choice(TOKENS.dialogueTwo, "与目标人交谈", "dialogue") },
+        ],
+        town: {
+          ...view.currentLocation.town!,
+          interactiveBuildings: [
+            clickedBuilding,
+            {
+              buildingId: secondBuilding.buildingId,
+              displayName: secondBuilding.displayName,
+              buildingType: "house",
+              npcId: "npc_2",
+              npcName: "目标人",
+            },
+          ],
+        },
+      },
+      narrative: { ...view.narrative, npcDialogues: [] },
+    };
+    render(<AdventureGameShell
+      view={twoNpcView}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+
+    await user.click(screen.getByRole("button", { name: "进入客栈" }));
+    await user.click(screen.getByRole("button", { name: clickedBuilding.displayName }));
+    await user.click(screen.getByRole("button", { name: `进入${clickedBuilding.displayName}` }));
+
+    expect(postAction).toHaveBeenCalledWith({
+      interaction: { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
+      revision: twoNpcView.revision,
     });
   });
 

@@ -15,6 +15,18 @@ afterEach(() => {
 });
 
 describe("NewGameSetupForm canonical contract", () => {
+  it("keeps player-edited fields when switching the genre preset", async () => {
+    render(<NewGameSetupForm onCreated={vi.fn()} />);
+    const premise = screen.getByRole("textbox", { name: "世界观背景" });
+    await userEvent.clear(premise);
+    await userEvent.type(premise, "这是玩家亲自写下、切换题材后也必须保留的世界。" );
+
+    await userEvent.click(screen.getByRole("radio", { name: /奇幻/ }));
+
+    expect(premise).toHaveValue("这是玩家亲自写下、切换题材后也必须保留的世界。");
+    expect(screen.getByRole("textbox", { name: "角色名字" })).toHaveValue("凯尔");
+  });
+
   it("posts to the fixed game endpoint and invokes the one completion callback", async () => {
     const onCreated = vi.fn();
     mockCreateSuccess();
