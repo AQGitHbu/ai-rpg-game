@@ -3009,15 +3009,18 @@ body:has(.adventure-game-shell) {
 }
 
 .town-layer-body {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 280px);
   gap: 16px;
   align-items: flex-start;
-  flex-wrap: wrap;
 }
 
 .town-demo-map {
+  display: block;
+  width: min(100%, calc(100dvh - 150px));
   max-width: 100%;
   height: auto;
+  max-height: calc(100dvh - 150px);
   border: 1px solid var(--game-surface-border);
   border-radius: 8px;
   background: #1a1d24;
@@ -3051,8 +3054,7 @@ body:has(.adventure-game-shell) {
 }
 
 .town-layer-side {
-  flex: 1 1 260px;
-  min-width: 260px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -3083,4 +3085,19 @@ body:has(.adventure-game-shell) {
   border-radius: 8px;
   color: var(--game-text-muted);
   font-size: 0.9rem;
+}
+
+@media (max-width: 900px) {
+  .town-layer-viewport {
+    overflow-y: auto;
+  }
+
+  .town-layer-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .town-demo-map {
+    width: min(100%, calc(100dvh - 260px));
+    max-height: calc(100dvh - 260px);
+  }
 }

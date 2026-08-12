@@ -59,6 +59,34 @@ describe("buildTownView", () => {
     expect(view!.interactiveBuildings).toHaveLength(0);
   });
 
+  it("补偿只存在地点绑定、但尚未写入 slot 的在场 NPC", () => {
+    const locationId = asLocationId("loc_0");
+    const npcId = asNpcId("npc_0");
+    const town = createTownRuntime({ locationId, seed: "town-view-repair" });
+    const base = createInitialWorldState({
+      generation: { generationId: asGenerationId("g3"), seed: "s3", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "游侠", identity: "冒险者", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: {
+        id: locationId, name: "青石镇", description: "一座边陲小镇。", kind: "main",
+        connectedLocationIds: [], npcIds: [npcId], availableItemIds: [], tags: [], scale: "town", town,
+      },
+      startingItemIds: [],
+    });
+    const ws: WorldState = {
+      ...base,
+      npcs: [{
+        id: npcId, name: "刘二", role: "关键线人", description: "掌握消息。", locationId,
+        isCompanion: false, tags: [], met: false,
+        memory: { npcId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+      }],
+    };
+
+    const view = buildTownView(ws, locationId);
+    expect(view?.interactiveBuildings).toEqual([
+      expect.objectContaining({ npcId: "npc_0", npcName: "刘二" }),
+    ]);
+  });
+
   it("非 town 地点返回 null", () => {
     const ws = makeWorldWithTown();
     // loc_0 是 town，但假设有另一个 scene 地点

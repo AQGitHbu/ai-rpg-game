@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
 import { AdventureGameShell } from "./AdventureGameShell";
@@ -26,6 +26,8 @@ type ScreenState =
 
 export function CurrentGameScreen() {
   const [state, setState] = useState<ScreenState>({ phase: "loading" });
+  const prologueAckInFlight = useRef(false);
+  const [prologueAcking, setPrologueAcking] = useState(false);
 
   const applyResponse = useCallback((res: { ok: boolean; status: string; view?: GameSessionView; code?: string }) => {
     if (res.status === "none") {
@@ -54,8 +56,10 @@ export function CurrentGameScreen() {
     return () => { cancelled = true; };
   }, [applyResponse]);
 
-  // 叙事 pending 时轮询 ensure + 重新读取
+  // 首场景 pending 在创建游戏时就已写入，但序幕确认前不轮询。
+  // 否则首场景后台写回会与黑屏序幕同时竞争客户端刷新，造成序幕重复播放。
   const narrativePending = state.phase === "active" &&
+    state.view.prologueShown &&
     state.view.narrativeGeneration.status === "pending";
 
   useEffect(() => {
@@ -98,8 +102,15 @@ export function CurrentGameScreen() {
 
   // 序幕确认
   async function handlePrologueAck() {
-    await ackPrologue();
-    await loadCurrentGame();
+    if (prologueAckInFlight.current) return;
+    prologueAckInFlight.current = true;
+    setPrologueAcking(true);
+    try {
+      if (await ackPrologue()) await loadCurrentGame();
+    } finally {
+      prologueAckInFlight.current = false;
+      setPrologueAcking(false);
+    }
   }
 
   // 创建游戏后
@@ -129,7 +140,9 @@ export function CurrentGameScreen() {
             <h2>序幕</h2>
             <p className="prologue-text">{prologueText}</p>
             <p className="prologue-hint">点击开始冒险，踏入这段旅程。</p>
-            <InlineButton onClick={() => void handlePrologueAck()}>开始冒险</InlineButton>
+            <InlineButton disabled={prologueAcking} onClick={() => void handlePrologueAck()}>
+              {prologueAcking ? "正在进入……" : "开始冒险"}
+            </InlineButton>
           </div>
         </Panel>
       );

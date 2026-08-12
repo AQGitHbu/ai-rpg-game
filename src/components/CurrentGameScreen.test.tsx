@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GameSessionView } from "@/game/application";
 import { CurrentGameScreen } from "./CurrentGameScreen";
-import { fetchCurrentGame } from "./gameActionRequest";
+import { fetchCurrentGame, ensureNarrative, ackPrologue } from "./gameActionRequest";
 
 vi.mock("./gameActionRequest", () => ({
   fetchCurrentGame: vi.fn(),
@@ -38,6 +38,11 @@ const activeViewWithPrologue: GameSessionView = {
   prologueShown: false,
   prologueText: "你在听雨客栈醒来，雨声压住了街道上的马蹄。",
   ending: null,
+};
+
+const pendingPrologueView: GameSessionView = {
+  ...activeViewWithPrologue,
+  narrativeGeneration: { status: "pending" },
 };
 
 afterEach(() => {
@@ -101,5 +106,44 @@ describe("CurrentGameScreen prologue display", () => {
     render(<CurrentGameScreen />);
 
     expect(await screen.findByText("我收到一封来自失踪妹妹、却署着三年前日期的信……")).toBeInTheDocument();
+  });
+
+  it("does not submit the prologue acknowledgement twice while the first request is pending", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    let resolveAck!: (value: boolean) => void;
+    vi.mocked(ackPrologue).mockImplementationOnce(() => new Promise<boolean>((resolve) => {
+      resolveAck = resolve;
+    }));
+    vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: activeViewWithPrologue });
+    render(<CurrentGameScreen />);
+
+    const button = await screen.findByRole("button", { name: "开始冒险" });
+    await userEvent.click(button);
+    await userEvent.click(screen.getByRole("button", { name: "正在进入……" }));
+
+    expect(ackPrologue).toHaveBeenCalledOnce();
+    resolveAck(true);
+    await waitFor(() => expect(fetchCurrentGame).toHaveBeenCalledTimes(2));
+  });
+
+  it("waits until the prologue is acknowledged before polling the opening scene", async () => {
+    vi.mocked(fetchCurrentGame)
+      .mockResolvedValueOnce({ ok: true, status: "active", view: pendingPrologueView })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: "active",
+        view: { ...pendingPrologueView, prologueShown: true },
+      });
+    render(<CurrentGameScreen />);
+
+    await screen.findByRole("button", { name: "开始冒险" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(ensureNarrative).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "开始冒险" }));
+    await waitFor(() => expect(ensureNarrative).toHaveBeenCalled());
   });
 });
