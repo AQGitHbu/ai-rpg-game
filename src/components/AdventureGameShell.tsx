@@ -48,7 +48,11 @@ export function AdventureGameShell({
   const [devToolsOpen, setDevToolsOpen] = useState(false);
   const [devClearPhase, setDevClearPhase] = useState<"idle" | "confirm" | "clearing" | "error">("idle");
   const [feedback, setFeedback] = useState<ActionFeedback>({ phase: "idle" });
-  const [focusNpcId, setFocusNpcId] = useState<string | null>(null);
+  const [sceneContext, setSceneContext] = useState<{
+    readonly locationName: string;
+    readonly npcId: string;
+    readonly npcName: string;
+  } | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const devToolsTriggerRef = useRef<HTMLElement | null>(null);
   const previousLocationRef = useRef<string | null>(null);
@@ -65,7 +69,7 @@ export function AdventureGameShell({
 
   // 场景返回：来自小镇的场景回到小镇层；来自 scene 地点回到地图。
   function returnFromScene(): void {
-    setFocusNpcId(null);
+    setSceneContext(null);
     setScreen(view.currentLocation.scale === "town" ? "town" : "map");
   }
 
@@ -75,7 +79,7 @@ export function AdventureGameShell({
     const previousName = previousLocationRef.current;
     previousLocationRef.current = currentName;
     if (previousName !== null && previousName !== currentName) {
-      setFocusNpcId(null);
+      setSceneContext(null);
       setScreen(entryScreenFor(view));
     }
   }, [view.currentLocation.name, view.revision]);
@@ -121,7 +125,13 @@ export function AdventureGameShell({
   function enterNpcBuilding(npcId: string): void {
     // 建筑入口只负责切换到地点场景。进入建筑不能提交回合，
     // 也不能因为当前目标是交谈就提前触发下一幕编排。
-    setFocusNpcId(npcId);
+    const building = view.currentLocation.town?.interactiveBuildings.find((entry) => entry.npcId === npcId);
+    if (building === undefined) return;
+    setSceneContext({
+      locationName: building.displayName,
+      npcId: building.npcId,
+      npcName: building.npcName,
+    });
     setScreen("scene");
   }
 
@@ -151,6 +161,7 @@ export function AdventureGameShell({
       <AdventureHud
         view={view}
         screen={screen}
+        sceneLocationName={sceneContext?.locationName}
         onOpen={openDetails}
         developmentTools={true}
         onOpenDevTools={() => {
@@ -164,7 +175,7 @@ export function AdventureGameShell({
           view={view}
           busy={busy}
           onEnterCurrent={() => {
-            setFocusNpcId(null);
+            setSceneContext(null);
             setScreen(entryScreenFor(view));
           }}
           onMove={(choiceToken) => submitInteraction({ kind: "fixed_choice", choiceToken })}
@@ -182,7 +193,9 @@ export function AdventureGameShell({
           busy={busy}
           onSubmit={submitInteraction}
           onReturnMap={returnFromScene}
-          initialFocusNpcId={focusNpcId}
+          initialFocusNpcId={sceneContext?.npcId}
+          sceneNpcName={sceneContext?.npcName}
+          sceneLocationName={sceneContext?.locationName}
         />
       )}
 

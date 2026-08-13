@@ -14,6 +14,8 @@ const PANEL_LABELS: Record<DetailsPanel, string> = {
 type AdventureHudProps = {
   readonly view: GameSessionView;
   readonly screen: "map" | "town" | "scene";
+  /** 小镇建筑场景的临时标题；不改变服务端 currentLocation。 */
+  readonly sceneLocationName?: string | null;
   readonly onOpen: (panel: DetailsPanel) => void;
   readonly developmentTools: boolean;
   readonly onOpenDevTools: () => void;
@@ -34,9 +36,10 @@ function deriveObjective(view: GameSessionView): string {
   return "暂无线索";
 }
 
-export function AdventureHud({ view, screen, onOpen, developmentTools, onOpenDevTools }: AdventureHudProps) {
+export function AdventureHud({ view, screen, sceneLocationName, onOpen, developmentTools, onOpenDevTools }: AdventureHudProps) {
   const objectiveText = deriveObjective(view);
   const inTown = screen === "scene" && view.currentLocation.scale === "town";
+  const sceneTitle = sceneLocationName ?? view.currentLocation.name;
 
   return (
     <div className="adventure-hud-layer" aria-label="游戏 HUD">
@@ -62,8 +65,12 @@ export function AdventureHud({ view, screen, onOpen, developmentTools, onOpenDev
         <div className="adventure-hud-center">
           {screen === "scene" ? (
             <h1 className="adventure-hud-location-title">
-              {view.currentLocation.name}
-              {inTown ? <small className="adventure-hud-location-scale" aria-hidden="true">小镇</small> : null}
+              {sceneTitle}
+              {sceneLocationName !== null && sceneLocationName !== undefined
+                ? <small className="adventure-hud-location-scale" aria-hidden="true">场景</small>
+                : inTown
+                  ? <small className="adventure-hud-location-scale" aria-hidden="true">小镇</small>
+                  : null}
             </h1>
           ) : screen === "town" ? (
             <h1 className="adventure-hud-location-title">

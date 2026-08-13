@@ -98,6 +98,7 @@ describe("projectGameSessionView", () => {
     };
     const view = projectGameSessionView(wsWithQuest, ss, 0, "test-ending-session");
     expect(view.story.currentObjectiveLabel).toBe("与老板交谈");
+    expect(view.story.currentObjectiveChoiceToken).toBe(view.currentLocation.npcs[0]?.talkChoice.choiceToken);
   });
 
   it("exposes null current objective label when no active quest exists", () => {

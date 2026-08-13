@@ -74,7 +74,7 @@ function buildView(): GameSessionView {
     },
     obtainableItems: [{ name: "铜钥匙", description: "旧钥匙", choice: choice(TOKENS.item, "拾取铜钥匙", "item") }],
     inventory: [],
-    story: { currentAct: 1, targetActs: 3, tension: 30, pacingNeed: "reveal", storyProgress: 5, currentObjectiveLabel: null },
+    story: { currentAct: 1, targetActs: 3, tension: 30, pacingNeed: "reveal", storyProgress: 5, currentObjectiveLabel: null, currentObjectiveChoiceToken: null },
     narrative: {
       mode: "offline", hasScene: true, narration: "老板压低声音。", choices: [], npcLine: null,
       npcDialogues: [{
@@ -471,6 +471,32 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("当前场景没有可执行行动，请返回地图或重新载入存档。");
   });
 
+  it("shows only the current objective action in the scene action rail", () => {
+    const base = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        battle: null,
+        story: { ...base.story, currentObjectiveLabel: "与老板交谈", currentObjectiveChoiceToken: TOKENS.dialogueOne },
+        currentLocation: {
+          ...base.currentLocation,
+          actions: [
+            choice(TOKENS.explore, "探索客栈", "explore"),
+            choice(TOKENS.dialogueOne, "与老板交谈", "dialogue"),
+            choice(TOKENS.battle, "挑战灰狼", "battle"),
+          ],
+        },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+
+    expect(screen.getByRole("button", { name: "与老板交谈" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "探索客栈" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "挑战灰狼" })).not.toBeInTheDocument();
+  });
+
   it("labels the single NPC talk choice as a dialogue preparation state", () => {
     const base = buildView();
     render(<LocationSceneScreen
@@ -661,7 +687,9 @@ describe("AdventureGameShell three-layer navigation", () => {
     await user.click(screen.getByRole("button", { name: "进入客栈" }));
     await user.click(screen.getByRole("button", { name: interactive.displayName }));
     await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
-    expect(screen.getByRole("region", { name: "地点场景：客栈" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: `地点场景：${interactive.displayName}` })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: interactive.displayName })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: new RegExp(`${interactive.npcName}.*`) })).toBeInTheDocument();
     // 场景返回按钮从小镇进入时显示“返回小镇”
     expect(screen.getByRole("button", { name: "返回小镇" })).toBeInTheDocument();
   });
@@ -695,7 +723,7 @@ describe("AdventureGameShell three-layer navigation", () => {
     await user.click(screen.getByRole("button", { name: interactive.displayName }));
     await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
 
-    expect(screen.getByRole("region", { name: "地点场景：客栈" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: `地点场景：${interactive.displayName}` })).toBeInTheDocument();
     expect(postAction).not.toHaveBeenCalled();
   });
 
@@ -742,7 +770,9 @@ describe("AdventureGameShell three-layer navigation", () => {
     await user.click(screen.getByRole("button", { name: clickedBuilding.displayName }));
     await user.click(screen.getByRole("button", { name: `进入${clickedBuilding.displayName}` }));
 
-    expect(screen.getByRole("region", { name: "地点场景：客栈" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: `地点场景：${clickedBuilding.displayName}` })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: new RegExp(`${clickedBuilding.npcName}.*`) })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /目标人.*信使/ })).not.toBeInTheDocument();
     expect(postAction).not.toHaveBeenCalled();
   });
 

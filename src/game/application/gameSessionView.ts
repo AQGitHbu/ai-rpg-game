@@ -102,6 +102,8 @@ export type GameSessionView = {
     readonly storyProgress: number;
     /** Task 4：权威当前目标标签（与场景上下文 after.label 同源持久化状态）。 */
     readonly currentObjectiveLabel: string | null;
+    /** 当前目标对应的世界行动 opaque token；目标不在当前地点时为 null。 */
+    readonly currentObjectiveChoiceToken: string | null;
   };
   readonly narrative: {
     readonly mode: string;
@@ -214,6 +216,58 @@ function projectQuestObjectives(worldState: WorldState, objectives: WorldState["
   });
 }
 
+function currentObjectiveChoiceToken(
+  worldState: WorldState,
+  objective: WorldState["quests"][number]["objectives"][number] | undefined,
+  revision: number,
+): string | null {
+  if (objective === undefined) return null;
+
+  switch (objective.kind) {
+    case "visit_location": {
+      const currentLocation = worldState.locations.find((entry) => entry.id === worldState.currentLocationId);
+      if (
+        currentLocation === undefined
+        || objective.locationId === worldState.currentLocationId
+        || !currentLocation.connectedLocationIds.includes(objective.locationId)
+        || !worldState.unlockedLocationIds.includes(objective.locationId)
+      ) return null;
+      return choice(
+        { type: "move", locationId: objective.locationId },
+        revision,
+        "前往目标地点",
+        "travel",
+      ).choiceToken;
+    }
+    case "talk_to_npc": {
+      const npc = worldState.npcs.find((entry) => entry.id === objective.npcId);
+      return npc?.locationId === worldState.currentLocationId
+        ? choice({ type: "talk", npcId: npc.id, dialogueAct: "ask" }, revision, "与目标人物交谈", "dialogue").choiceToken
+        : null;
+    }
+    case "obtain_item": {
+      const currentLocation = worldState.locations.find((entry) => entry.id === worldState.currentLocationId);
+      return currentLocation?.availableItemIds.includes(objective.itemId) === true
+        && !worldState.inventory.includes(objective.itemId)
+        ? choice({ type: "take_item", itemId: objective.itemId }, revision, "拾取目标物品", "item").choiceToken
+        : null;
+    }
+    case "discover_fact": {
+      const fact = worldState.worldFacts.find((entry) => entry.factId === objective.factId);
+      return fact?.locationId === worldState.currentLocationId && !fact.discovered
+        ? choice({ type: "investigate", factId: fact.factId }, revision, "调查目标线索", "explore").choiceToken
+        : null;
+    }
+    case "defeat_enemy": {
+      const enemy = worldState.enemies.find((entry) => entry.id === objective.enemyId);
+      return enemy?.locationId === worldState.currentLocationId
+        && !worldState.defeatedEnemyIds.includes(objective.enemyId)
+        ? choice({ type: "attack", enemyId: enemy.id }, revision, "挑战目标敌人", "battle").choiceToken
+        : null;
+    }
+  }
+}
+
 export function projectGameSessionView(
   worldState: WorldState,
   storyState: StoryState,
@@ -223,6 +277,14 @@ export function projectGameSessionView(
   const currentLocation = worldState.locations.find((entry) => entry.id === worldState.currentLocationId);
   const presentNpcs = worldState.npcs.filter((entry) => entry.locationId === worldState.currentLocationId);
   const activeBattle = worldState.battle.status === "active" ? worldState.battle : null;
+  const currentObjectiveRef = currentObjectiveOf(worldState, storyState);
+  const currentObjectiveQuest = currentObjectiveRef === null
+    ? undefined
+    : worldState.quests.find((quest) => String(quest.id) === String(currentObjectiveRef.questId));
+  const currentObjective = currentObjectiveRef === null
+    ? undefined
+    : currentObjectiveQuest?.objectives[currentObjectiveRef.objectiveIndex];
+  const currentObjectiveToken = currentObjectiveChoiceToken(worldState, currentObjective, revision);
 
   const travelTargets = new Set(
     activeBattle === null ? currentLocation?.connectedLocationIds ?? [] : [],
@@ -284,13 +346,6 @@ export function projectGameSessionView(
     : [];
 
   const scene = storyState.narrative.currentScene;
-  const currentObjectiveRef = currentObjectiveOf(worldState, storyState);
-  const currentObjectiveQuest = currentObjectiveRef === null
-    ? undefined
-    : worldState.quests.find((quest) => String(quest.id) === String(currentObjectiveRef.questId));
-  const currentObjective = currentObjectiveRef === null
-    ? undefined
-    : currentObjectiveQuest?.objectives[currentObjectiveRef.objectiveIndex];
   const currentObjectiveNpcId = currentObjective?.kind === "talk_to_npc"
     ? String(currentObjective.npcId)
     : null;
@@ -471,6 +526,7 @@ export function projectGameSessionView(
       pacingNeed: storyState.nextPacingNeed,
       storyProgress: storyState.storyProgress,
       currentObjectiveLabel: currentObjectiveRef?.label ?? null,
+      currentObjectiveChoiceToken: currentObjectiveToken,
     },
     narrative: {
       mode: storyState.narrative.mode,

@@ -13,6 +13,10 @@ type LocationSceneScreenProps = {
   readonly onReturnMap: () => void;
   /** Task 7：从小镇建筑进入场景时聚焦该建筑绑定的 NPC（打开其对话）。 */
   readonly initialFocusNpcId?: string | null;
+  /** 建筑场景中的唯一 NPC 名称，用于过滤地点层 NPC 投影。 */
+  readonly sceneNpcName?: string | null;
+  /** 建筑场景的展示名称，不改变权威 currentLocation。 */
+  readonly sceneLocationName?: string | null;
 };
 
 type Dialogue = NonNullable<GameSessionView["narrative"]["npcDialogues"]>[number];
@@ -194,19 +198,47 @@ function NpcDialogueModal({
   );
 }
 
-export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initialFocusNpcId }: LocationSceneScreenProps) {
+export function LocationSceneScreen({
+  view,
+  busy,
+  onSubmit,
+  onReturnMap,
+  initialFocusNpcId,
+  sceneNpcName,
+  sceneLocationName,
+}: LocationSceneScreenProps) {
   const gameType = view.gameType as NewGameInput["gameType"];
   const pending = view.narrativeGeneration.status === "pending";
 
   const isTest = typeof globalThis !== "undefined" && ("vitest" in globalThis || "vi" in globalThis);
 
-  const activeDialogues = pending ? [] : (view.narrative.npcDialogues ?? []);
-  const locationNpcs = view.currentLocation.npcs;
+  const activeDialogues = pending
+    ? []
+    : (view.narrative.npcDialogues ?? []).filter((dialogue) =>
+        initialFocusNpcId === null || initialFocusNpcId === undefined || dialogue.npcId === initialFocusNpcId,
+      );
+  const focusedDialogueName = initialFocusNpcId === null || initialFocusNpcId === undefined
+    ? null
+    : activeDialogues.find((dialogue) => dialogue.npcId === initialFocusNpcId)?.name ?? null;
+  const hasBuildingSceneContext = initialFocusNpcId !== null && initialFocusNpcId !== undefined;
+  const currentSceneNpcName = sceneNpcName ?? focusedDialogueName;
+  const locationNpcs = hasBuildingSceneContext
+    ? currentSceneNpcName === null
+      ? []
+      : view.currentLocation.npcs.filter((npc) => npc.name === currentSceneNpcName)
+    : view.currentLocation.npcs;
   const displayNarration = normalizeDisplayText(view.narrative.narration ?? "");
   const displayLocationDescription = normalizeDisplayText(view.currentLocation.description);
   const shouldShowLocationDescription = displayLocationDescription !== ""
     && (displayNarration === "" || !displayNarration.includes(displayLocationDescription));
-  const sceneActions = view.currentLocation.actions;
+  const selectedNpcChoiceToken = currentSceneNpcName === null
+    ? null
+    : locationNpcs[0]?.talkChoice.choiceToken ?? null;
+  const sceneActions = selectedNpcChoiceToken !== null
+    ? view.currentLocation.actions.filter((action) => action.choiceToken === selectedNpcChoiceToken)
+    : view.story.currentObjectiveChoiceToken !== null
+      ? view.currentLocation.actions.filter((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
+      : view.currentLocation.actions;
   const hasDialogueInteraction = activeDialogues.some((dialogue) =>
     dialogue.choices.length > 0 || dialogue.freeInputEnabled,
   );
@@ -377,7 +409,7 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
   }
 
   return (
-    <section className="location-viewport location-viewport--fullscreen" aria-label={`地点场景：${view.currentLocation.name}`}>
+    <section className="location-viewport location-viewport--fullscreen" aria-label={`地点场景：${sceneLocationName ?? view.currentLocation.name}`}>
       {/* 全屏场景背景 */}
       <div className="location-backdrop location-backdrop--fullscreen" aria-hidden="true">
         <AdventureVisual gameType={gameType} kind="location_backdrop" label="" decorative />

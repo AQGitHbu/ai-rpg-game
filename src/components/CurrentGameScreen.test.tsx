@@ -21,7 +21,7 @@ const baseView: GameSessionView = {
   currentLocation: { name: "终局", description: "", scale: "scene", actions: [], npcs: [], town: null },
   obtainableItems: [],
   inventory: [],
-  story: { currentAct: 3, targetActs: 3, tension: 100, pacingNeed: "resolve", storyProgress: 100, currentObjectiveLabel: null },
+  story: { currentAct: 3, targetActs: 3, tension: 100, pacingNeed: "resolve", storyProgress: 100, currentObjectiveLabel: null, currentObjectiveChoiceToken: null },
   narrative: { mode: "offline", hasScene: false, choices: [], npcLine: null, npcDialogues: [] },
   narrativeGeneration: { status: "idle" },
   battle: null,
