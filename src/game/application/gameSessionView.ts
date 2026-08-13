@@ -5,6 +5,8 @@ import {
 } from "@/game/domain/narrative";
 import { paginateSpeechText } from "@/game/domain/speechPagination";
 import { locationScaleOf } from "@/game/domain/worldEntity";
+import type { ItemCategory, ItemRarity, ItemStatLine } from "@/game/domain/worldEntity";
+import { resolveItemPresentation, type ItemIconKey } from "@/game/domain/itemPresentation";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import { buildChoiceMap, hasExplorableContent } from "./buildChoiceMap";
@@ -30,6 +32,20 @@ export type NpcDialogueView = {
   readonly freeInputEnabled: boolean;
   /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
   readonly giveChoices: readonly { readonly itemName: string; readonly choice: PlayerChoiceView }[];
+};
+
+/**
+ * 背包安全展示视图：只暴露玩家可见文本和展示元数据，不暴露 itemId、kind 或 tags。
+ * category/rarity 等字段不参与任何规则结算。
+ */
+export type InventoryItemView = {
+  readonly name: string;
+  readonly description: string;
+  readonly category: ItemCategory;
+  readonly rarity: ItemRarity;
+  readonly level: number | null;
+  readonly statLines: readonly ItemStatLine[];
+  readonly icon: ItemIconKey;
 };
 
 type QuestObjectiveView = { readonly label: string; readonly completed: boolean };
@@ -85,10 +101,7 @@ export type GameSessionView = {
     readonly description: string;
     readonly choice: PlayerChoiceView;
   }[];
-  readonly inventory: readonly {
-    readonly name: string;
-    readonly description: string;
-  }[];
+  readonly inventory: readonly InventoryItemView[];
   readonly story: {
     readonly currentAct: number;
     readonly targetActs: number;
@@ -485,7 +498,11 @@ export function projectGameSessionView(
     obtainableItems,
     inventory: worldState.inventory.map((itemId) => {
       const item = worldState.items.find((entry) => entry.id === itemId);
-      return { name: item?.name ?? "未知物品", description: item?.description ?? "" };
+      return {
+        name: item?.name ?? "未知物品",
+        description: item?.description ?? "",
+        ...resolveItemPresentation(item ?? { kind: "unknown" }),
+      };
     }),
     story: {
       currentAct: storyState.currentAct,

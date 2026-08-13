@@ -549,7 +549,15 @@ describe("projectGameSessionView", () => {
     expect(Object.keys(view.currentLocation).sort()).toEqual(["actions", "description", "name", "npcs", "scale", "town"]);
     expect(Object.keys(view.obtainableItems[0]!).sort()).toEqual(["choice", "description", "name"]);
     const inventoryView = projectGameSessionView({ ...completeWorld, inventory: [itemId] }, ss, 7, "test-ending-session");
-    expect(inventoryView.inventory).toEqual([{ name: "铜钥匙", description: "一把旧钥匙" }]);
+    expect(inventoryView.inventory).toEqual([{
+      name: "铜钥匙",
+      description: "一把旧钥匙",
+      category: "quest",
+      rarity: "rare",
+      level: null,
+      statLines: [],
+      icon: "key",
+    }]);
     expect(JSON.stringify(view)).not.toMatch(/loc_1|loc_2|item_key|enemy_wolf/);
     for (const choice of [
       ...view.currentLocation.actions,

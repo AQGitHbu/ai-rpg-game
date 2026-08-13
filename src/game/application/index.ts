@@ -1,5 +1,7 @@
 // 客户端可达 application facade：只导出中性 read model 与开局输入类型。
-export type { GameSessionView, NpcDialogueView, PlayerChoiceView } from "./gameSessionView";
+export type { GameSessionView, InventoryItemView, NpcDialogueView, PlayerChoiceView } from "./gameSessionView";
+export type { ItemCategory, ItemRarity, ItemStatLine } from "@/game/domain/worldEntity";
+export type { ItemIconKey } from "@/game/domain/itemPresentation";
 export type { TownView, InteractiveBuildingEntry, TownRenderSnapshot } from "./townView";
 export { tileIndex } from "@/game/domain/townState";
 export type { TileType } from "@/game/domain/townState";

@@ -2,6 +2,7 @@
 
 import type { GameSessionView } from "@/game/application";
 import type { DetailsPanel } from "./AdventureHud";
+import { InventoryPanel } from "./InventoryPanel";
 
 type AdventureDetailsPanelProps = {
   readonly view: GameSessionView;
@@ -60,17 +61,7 @@ export function AdventureDetailsPanel({ view, panel }: AdventureDetailsPanelProp
   }
 
   if (panel === "inventory") {
-    return (
-      <ul className="details-inventory">
-        {view.inventory.map((item) => (
-          <li key={item.name}>
-            <strong>{item.name}</strong>
-            <span>{item.description}</span>
-          </li>
-        ))}
-        {view.inventory.length === 0 ? <li>背包空空如也。</li> : null}
-      </ul>
-    );
+    return <InventoryPanel items={view.inventory} />;
   }
 
   if (panel === "quests") {
