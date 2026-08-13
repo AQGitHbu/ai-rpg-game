@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GameSessionView } from "@/game/application";
@@ -53,7 +53,7 @@ function townViewFixture(): NonNullable<GameSessionView["currentLocation"]["town
   return buildTownView(ws, "loc_0")!;
 }
 
-function buildView(): GameSessionView {
+function buildView(options: { battle?: GameSessionView["battle"] } = {}): GameSessionView {
   return {
     revision: 9,
     turnNumber: 8,
@@ -88,10 +88,7 @@ function buildView(): GameSessionView {
       }],
     },
     narrativeGeneration: { status: "idle" },
-    battle: {
-      enemyName: "灰狼", playerHp: 90, enemyHp: 12, round: 2,
-      controls: [choice(TOKENS.battle, "攻击", "battle")],
-    },
+    battle: options.battle ?? null,
     quests: [{ name: "查明真相", description: "追寻线索", kind: "main", status: "active", objectives: [{ label: "发现秘密", completed: false }] }],
     prologueShown: true,
     prologueText: "",
@@ -99,9 +96,18 @@ function buildView(): GameSessionView {
   };
 }
 
-function renderShell(): void {
+function buildBattleView(): GameSessionView {
+  return buildView({
+    battle: {
+      enemyName: "灰狼", playerHp: 90, enemyHp: 12, round: 2,
+      controls: [choice(TOKENS.battle, "攻击", "battle")],
+    },
+  });
+}
+
+function renderShell(view: GameSessionView = buildView()): void {
   render(<AdventureGameShell
-    view={buildView()}
+    view={view}
     onViewChange={vi.fn()}
     onStaleRevision={vi.fn()}
     onClearDevelopmentSave={vi.fn(async () => {})}
@@ -179,7 +185,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
   ] as const) {
     it(`forwards the server token for ${label}`, async () => {
       const user = userEvent.setup();
-      renderShell();
+      renderShell(label === "攻击" ? buildBattleView() : undefined);
       await enterScene(user);
       await user.click(screen.getByRole("button", { name: label }));
       expect(postAction).toHaveBeenCalledWith({
@@ -221,6 +227,18 @@ describe("AdventureGameShell canonical opaque choices", () => {
     });
     await user.click(screen.getByRole("button", { name: /老板路人/ }));
     expect(screen.getByRole("button", { name: "表示理解" })).toBeEnabled();
+  });
+
+  it("keeps ordinary narrative pending modal while locking rule actions", () => {
+    render(<AdventureGameShell
+      view={{ ...buildView(), narrativeGeneration: { status: "pending" } }}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+
+    expect(screen.getByRole("dialog", { name: "正在编排下一幕……" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "进入客栈" })).toBeDisabled();
   });
 
   it("closes the old NPC dialog as soon as a formal dialogue choice is submitted", async () => {
@@ -433,9 +451,9 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    // 叙事生成中：对话面板不渲染（避免出现无选项的空面板），仅显示编排提示
+    // 叙事生成中：对话面板与底图重复文案都不渲染，统一由外层模态负责锁定与提示
     expect(screen.queryByRole("heading", { name: "老板" })).not.toBeInTheDocument();
-    expect(screen.getByText("正在编排下一幕……")).toBeInTheDocument();
+    expect(screen.queryByText("正在编排下一幕……")).not.toBeInTheDocument();
   });
 
   it("does not repeat a location description when it matches the scene narration", () => {
@@ -452,6 +470,55 @@ describe("AdventureGameShell canonical opaque choices", () => {
     />);
 
     expect(screen.getAllByText("夜市灯火通明。")).toHaveLength(1);
+  });
+
+  it("keeps quest status out of the location side note and identifies the place clearly", () => {
+    const base = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        narrative: {
+          ...base.narrative,
+          narration: "主线推进。当前目标：与陆归鸿交谈 完成了任务「拼回旧案卷宗」的目标：与程砚秋交谈 你身处青石镇，灯笼沿着街檐亮起。",
+        },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+
+    const sideNote = screen.getByRole("region", { name: "地点旁注" });
+    expect(sideNote).toHaveTextContent("客栈");
+    expect(sideNote).toHaveTextContent("你身处青石镇，灯笼沿着街檐亮起。");
+    expect(sideNote).not.toHaveTextContent("当前目标");
+    expect(sideNote).not.toHaveTextContent("完成了任务");
+  });
+
+  it("keeps location side notes informational and moves scene choices to the action rail", () => {
+    const base = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        currentLocation: { ...base.currentLocation, actions: [] },
+        narrative: {
+          ...base.narrative,
+          eventKind: "observe",
+          choices: [
+            choice(TOKENS.dialogueOne, "与老板交谈", "dialogue"),
+            choice(TOKENS.dialogueTwo, "与吴九交谈", "dialogue"),
+          ],
+        },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+
+    const sideNote = screen.getByRole("region", { name: "地点旁注" });
+    expect(sideNote.querySelectorAll("button")).toHaveLength(0);
+    const actionRail = screen.getByRole("navigation", { name: "行动栏" });
+    expect(within(actionRail).getByRole("button", { name: "与老板交谈" })).toBeInTheDocument();
+    expect(within(actionRail).getByRole("button", { name: "与吴九交谈" })).toBeInTheDocument();
   });
 
   it("explains when the scene has no available actions", () => {
@@ -556,7 +623,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
   });
 
   it("keeps battle sides explicit and shows the attack feedback before the next snapshot", async () => {
-    const base = buildView();
+    const base = buildBattleView();
     const onSubmit = vi.fn();
     const { rerender } = render(<LocationSceneScreen
       view={base}
@@ -567,6 +634,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     expect(screen.getByRole("group", { name: "己方：侠客" })).toHaveAttribute("data-side", "player");
     expect(screen.getByRole("group", { name: "敌方：灰狼" })).toHaveAttribute("data-side", "enemy");
+    expect(screen.getByRole("region", { name: "战斗 · 灰狼" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "地点场景：客栈" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "返回地图" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "攻击" }));
     expect(screen.getByText("你攻击！")).toBeInTheDocument();
     expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: TOKENS.battle });
@@ -688,7 +759,7 @@ describe("AdventureGameShell three-layer navigation", () => {
     await user.click(screen.getByRole("button", { name: interactive.displayName }));
     await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
     expect(screen.getByRole("region", { name: `地点场景：${interactive.displayName}` })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: interactive.displayName })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: `地点场景：${interactive.displayName}` })).getByRole("heading", { name: interactive.displayName, level: 2 })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: new RegExp(`${interactive.npcName}.*`) })).toBeInTheDocument();
     // 场景返回按钮从小镇进入时显示“返回小镇”
     expect(screen.getByRole("button", { name: "返回小镇" })).toBeInTheDocument();
@@ -753,6 +824,7 @@ describe("AdventureGameShell three-layer navigation", () => {
               buildingType: "house",
               npcId: "npc_2",
               npcName: "目标人",
+              isCurrentFocus: false,
             },
           ],
         },

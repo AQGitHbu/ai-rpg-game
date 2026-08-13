@@ -135,9 +135,7 @@ export const NPC_SCENE_PAGE_CHAR_BUDGET = 48;
 
 /** 确定性 NPC 台词兜底：无场景对白/AI 行无效时的稳定问候（纯函数，零 AI/IO/随机）。 */
 export function composeDeterministicNpcLine(npcName: string, npcRole: string): string {
-  void npcName;
-  void npcRole;
-  return composeDirectNpcGreeting();
+  return composeDirectNpcGreeting(npcRole, npcName);
 }
 
 /**

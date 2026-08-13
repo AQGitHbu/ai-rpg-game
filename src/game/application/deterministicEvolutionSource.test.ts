@@ -62,15 +62,15 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
     if (coldDoubt.kind === "npc_affinity_at_most") expect(-20).toBeLessThanOrEqual(coldDoubt.value);
   });
 
-  it("names later-act NPCs and quests uniquely when the base names already exist", async () => {
+  it("keeps scripted later-act NPCs and quests unique when their names already exist", async () => {
     const source = createDeterministicEvolutionSource();
     const base = makeWorldWithNpc(0);
-    const existingNpc = { ...base.npcs[0]!, id: asNpcId("npc_1"), name: "传讯人" };
+    const existingNpc = { ...base.npcs[0]!, id: asNpcId("npc_1"), name: "苏绾" };
     const ws: WorldState = {
       ...base,
       npcs: [...base.npcs, existingNpc],
       quests: [{
-        id: asQuestId("quest_dyn_1"), name: "循迹而行", description: "上一幕。", objectives: [],
+        id: asQuestId("quest_dyn_1"), name: "追问断碑谷", description: "上一幕。", objectives: [],
         onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" }, tags: ["dynamic"],
         kind: "main", stage: 2, status: "completed",
       }],
@@ -79,9 +79,9 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
 
     const result = await source.propose({ worldState: ws, storyState: ss, need: { kind: "next_act", act: 3 }, reason: "test" });
 
-    expect(result.proposal?.newNpc?.name).toBe("传讯人·3");
-    expect(result.proposal?.nextMainQuest?.name).toBe("循迹而行·第3幕");
-    expect(result.proposal?.nextMainQuest?.objectiveText).toBe("与传讯人·3交谈");
+    expect(result.proposal?.newNpc?.name).toBe("苏绾·3");
+    expect(result.proposal?.nextMainQuest?.name).toBe("追问断碑谷·第3幕");
+    expect(result.proposal?.nextMainQuest?.objectiveText).toBe("与苏绾·3交谈");
   });
 
   it("seeds a later act with an item and enemy for the complete playable loop", async () => {
@@ -94,11 +94,11 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
     });
 
     expect(result.proposal?.newItem).toMatchObject({
-      name: "幕间信物",
+      name: "染血腰牌",
       locationRef: "current",
     });
     expect(result.proposal?.newEnemy).toMatchObject({
-      name: "迷雾守卫",
+      name: "黑衣追兵",
       tier: "normal",
       locationRef: "current",
     });

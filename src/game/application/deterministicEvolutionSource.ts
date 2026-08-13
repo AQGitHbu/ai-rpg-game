@@ -7,8 +7,8 @@ import type { NpcId } from "@/game/domain/worldEntity";
 
 // ---------------------------------------------------------------------------
 // 确定性世界演化 source（离线/测试/兜底）：
-// - next_act：当前地点补一个 NPC、可拾取信物与敌人 + 锚定该 NPC 的主线任务
-//   （保证可达，同时让中篇兜底流程覆盖探索、物品、战斗三类入口）；
+// - next_act：把有明确身份和前因的剧情角色落到当前地点，并配套信物、线索、
+//   敌人和主线任务（保证可达，同时让中篇兜底流程覆盖探索、物品、战斗三类入口）；
 // - ending_pair：按故事契约的两条主题方向产出互斥结局对，并给两条结局附上
 //   规则可判定的达成要求——以关键 NPC（首位 NPC，即开局主角锚点）的亲和度为
 //   分歧信号：亲和度 ≥ TRUST_THRESHOLD 走 trust 结局，≤ DOUBT_THRESHOLD
@@ -174,49 +174,148 @@ function uniqueName(base: string, existingNames: readonly string[], suffix: stri
   return candidate;
 }
 
+type ActBeat = {
+  readonly npcName: string;
+  readonly npcRole: string;
+  readonly npcDescription: string;
+  readonly npcGoal: string;
+  readonly itemName: string;
+  readonly itemDescription: string;
+  readonly enemyName: string;
+  readonly questName: string;
+  readonly questDescription: string;
+  readonly factText: string;
+  readonly newLocation?: {
+    readonly name: string;
+    readonly description: string;
+  };
+};
+
+/**
+ * 离线 fallback 也要有“上一幕线索 → 下一幕人物 → 可验证威胁”的因果链。
+ * 这些不是随机招募的人物：他们都是被上一条线索牵引到现场的剧情角色。
+ */
+function actBeatFor(act: number): ActBeat {
+  switch (act) {
+    case 2:
+      return {
+        npcName: "顾砚",
+        npcRole: "旧案传讯人",
+        npcDescription: "韩七托他把镇外脚印的密信交给沈青崖，他一路避开追兵才赶到酒楼。",
+        npcGoal: "把韩七交代的密信送达",
+        itemName: "染血腰牌",
+        itemDescription: "顾砚交出的旧腰牌，血迹旁刻着与缉凶告示相同的暗纹。",
+        enemyName: "黑衣追兵",
+        questName: "追查镇外脚印",
+        questDescription: "沿着韩七看见的脚印，核对顾砚带来的密信与腰牌。",
+        factText: "腰牌上的暗纹与镇口缉凶告示来自同一桩旧案。",
+      };
+    case 3:
+      return {
+        npcName: "苏绾",
+        npcRole: "失踪镖队幸存者",
+        npcDescription: "她认出了染血腰牌，昨夜从断碑谷逃出，知道黑衣追兵为何盯上这桩旧案。",
+        npcGoal: "说出断碑谷里被掩埋的真相",
+        itemName: "断裂镖旗",
+        itemDescription: "从苏绾手里接过的半面镖旗，旗角还沾着断碑谷的黑泥。",
+        enemyName: "夺旗客",
+        questName: "追问断碑谷",
+        questDescription: "听苏绾讲清失踪镖队的经过，再前往断碑谷验证她的证词。",
+        factText: "失踪镖队并非遇袭失散，押运的卷宗曾被人带进断碑谷。",
+        newLocation: {
+          name: "断碑谷",
+          description: "荒碑夹着一线山谷，黑泥里留有被拖拽过的车辙。",
+        },
+      };
+    case 4:
+      return {
+        npcName: "程砚秋",
+        npcRole: "旧案卷宗保管人",
+        npcDescription: "他顺着断碑谷留下的车辙来到青石镇，手里藏着能证明幕后主使的残卷。",
+        npcGoal: "交出能指向幕后主使的残卷",
+        itemName: "残缺卷宗",
+        itemDescription: "被撕去关键页的卷宗，剩下的印记仍能与缉凶告示互相印证。",
+        enemyName: "灭口刺客",
+        questName: "拼回旧案卷宗",
+        questDescription: "保护程砚秋并拼回残卷，确认这场追杀真正要掩盖的名字。",
+        factText: "卷宗缺失的最后一页，记录着旧案主使曾在青石镇落脚。",
+      };
+    case 5:
+      return {
+        npcName: "陆归鸿",
+        npcRole: "旧案知情人",
+        npcDescription: "他带着最后一页卷宗现身，承认自己曾替幕后主使传递命令，如今决定说出真相。",
+        npcGoal: "在沈青崖面前说出幕后主使的身份",
+        itemName: "盟誓铁印",
+        itemDescription: "卷宗最后一页上的铁印，能让旧案的责任在终幕前落到实处。",
+        enemyName: "迷雾首领",
+        questName: "揭开青石旧案",
+        questDescription: "让陆归鸿说出幕后主使，并在最终对峙前保住盟誓铁印。",
+        factText: "最后一页卷宗确认：青石镇的缉凶告示是为了掩盖一场灭口。",
+        newLocation: {
+          name: "黑水古道",
+          description: "通往旧案主使藏身处的古道，雾气从碎石缝里不断涌出。",
+        },
+      };
+    default:
+      return {
+        npcName: `传讯人·${act}`,
+        npcRole: "线索传递人",
+        npcDescription: "顺着上一幕留下的线索赶来的传讯人，手里攥着尚未解开的证据。",
+        npcGoal: "交出下一段线索",
+        itemName: `幕间信物·${act}`,
+        itemDescription: "与上一幕线索相互印证的信物。",
+        enemyName: `迷雾守卫·${act}`,
+        questName: `循迹而行·第${act}幕`,
+        questDescription: "沿着已经确认的线索继续追查。",
+        factText: "新的证据与前几幕的线索指向同一桩旧案。",
+      };
+  }
+}
+
 function planNextAct(ws: WorldState, act: number): WorldDeltaProposal {
-  const useNewLocation = currentTownNeedsNewLocation(ws);
-  const npcName = uniqueName("传讯人", ws.npcs.map((npc) => npc.name), String(act));
-  const questName = uniqueName("循迹而行", ws.quests.map((quest) => quest.name), `第${act}幕`);
-  const itemName = uniqueName("幕间信物", ws.items.map((item) => item.name), String(act));
-  const enemyName = uniqueName("迷雾守卫", ws.enemies.map((enemy) => enemy.name), String(act));
-  const mountedLocation = useNewLocation ? "new_location" : "current";
+  const beat = actBeatFor(act);
+  const npcName = uniqueName(beat.npcName, ws.npcs.map((npc) => npc.name), String(act));
+  const questName = uniqueName(beat.questName, ws.quests.map((quest) => quest.name), `第${act}幕`);
+  const itemName = uniqueName(beat.itemName, ws.items.map((item) => item.name), String(act));
+  const enemyName = uniqueName(beat.enemyName, ws.enemies.map((enemy) => enemy.name), String(act));
+  const mountedLocation = beat.newLocation === undefined ? "current" : "new_location";
   return {
-    beatSummary: "下一幕的推进人物与先声",
-    newLocation: useNewLocation
+    beatSummary: `第${act}幕：${npcName}承接上一幕留下的线索`,
+    newLocation: beat.newLocation
       ? {
-          name: `延伸之地·${ws.locations.length + 1}`,
-          description: "从当前城镇延伸出的一处新地界，承接下一幕的线索。",
+          name: uniqueName(beat.newLocation.name, ws.locations.map((location) => location.name), String(act)),
+          description: beat.newLocation.description,
           scale: "scene",
           connectFromLocationId: currentLocationId(ws),
         }
       : null,
-        newNpc: {
+    // NPC 固定落在玩家当前地点，确保“当前目标”与场景中的可交互角色一致。
+    // 若本幕同时铸造了新地点，物品/敌人落在新地点，作为可选的地图分支。
+    newNpc: {
       name: npcName,
-      role: "信使",
-      description: "风尘仆仆赶来的信使，手里攥着关乎下文的线索。",
-      locationRef: useNewLocation
-        ? { kind: "new_location" }
-        : { kind: "existing", id: currentLocationId(ws) },
-      goals: ["传递密信"],
+      role: beat.npcRole,
+      description: beat.npcDescription,
+      locationRef: { kind: "existing", id: currentLocationId(ws) },
+      goals: [beat.npcGoal],
     },
     newItem: {
       name: itemName,
-      description: "在新线索旁发现的信物，表面留着尚未褪去的微光。",
+      description: beat.itemDescription,
       locationRef: mountedLocation,
     },
     newEnemy: {
       name: enemyName,
-      tier: "normal",
+      tier: act === 5 ? "boss" : "normal",
       locationRef: mountedLocation,
     },
     newFact: {
-      text: "信使带来的地图边角藏着一行尚未解读的暗号。",
-      visibility: "npc_private",
+      text: beat.factText,
+      visibility: "public",
     },
     nextMainQuest: {
       name: questName,
-      description: "跟随信使的线索推进故事。",
+      description: beat.questDescription,
       objectiveText: `与${npcName}交谈`,
     },
     endingPair: null,
@@ -229,7 +328,8 @@ function planEndingPair(ws: WorldState, ss: StoryState): WorldDeltaProposal {
     const raw = (byKey.get(key) ?? "").trim();
     return raw.length >= 2 && raw.length <= 40 ? raw : fallback;
   };
-  // 分歧信号：关键 NPC（首位 NPC）对玩家的亲和度。亲暖互动推高，敌意/质疑拉低。
+  // 分歧信号：关键 NPC（首位 NPC）对玩家的亲和度；终幕 support/challenge
+  // 的直接裁决由 resolveEnding 读取最后一次结构化互动，不与此门槛混用。
   const keyNpcId: NpcId | undefined = ws.npcs[0]?.id;
   return {
     beatSummary: "终幕的两种走向浮现",

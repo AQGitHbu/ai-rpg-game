@@ -7,6 +7,7 @@ import { createInitialWorldState } from "@/game/domain/worldState";
 import type { EvolutionNeed, WorldDeltaProposal } from "@/game/domain/worldDelta";
 import { asLocationId, asNpcId, asEnemyId, asGenerationId } from "@/game/domain/worldEntity";
 import { bindNpcToTownSlot, createTownRuntime } from "@/game/gameplay/rpg/town";
+import { TRUST_ENDING_MIN_AFFINITY, DOUBT_ENDING_MAX_AFFINITY } from "@/game/application/deterministicEvolutionSource";
 
 function makeWorld(): WorldState {
   const base = createInitialWorldState({
@@ -105,7 +106,7 @@ describe("approveWorldDelta", () => {
     expect(result.code).toBe("main_quest_conflict");
   });
 
-  it("rejects a new NPC mounted into a full town before materialization", () => {
+  it("accepts a roaming story NPC when every town building slot is occupied", () => {
     let town = createTownRuntime({ locationId: asLocationId("loc_0"), seed: "s#town#loc_0" });
     for (let i = 0; i < town.slots.length; i += 1) {
       town = bindNpcToTownSlot(town, asNpcId(`npc_slot_${i}`)).town;
@@ -130,7 +131,9 @@ describe("approveWorldDelta", () => {
       ws,
       ss: makeStory({ currentAct: 2, targetActs: 3, tension: 10 }),
     });
-    expect(result).toEqual({ ok: false, code: "town_capacity", reason: "npc_town_slots_full" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.newNpcs[0]?.locationId).toBe(asLocationId("loc_0"));
   });
 
   it("rejects a second main quest for the same act", () => {
@@ -316,8 +319,8 @@ describe("approveWorldDelta", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const [trust, doubt] = result.approved.newEndings;
-    expect(trust!.requirements).toEqual([{ kind: "npc_affinity_at_least", npcId: asNpcId("npc_0"), value: 10 }]);
-    expect(doubt!.requirements).toEqual([{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_0"), value: 9 }]);
+    expect(trust!.requirements).toEqual([{ kind: "npc_affinity_at_least", npcId: asNpcId("npc_0"), value: TRUST_ENDING_MIN_AFFINITY }]);
+    expect(doubt!.requirements).toEqual([{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_0"), value: DOUBT_ENDING_MAX_AFFINITY }]);
   });
 
   it("still derives requirements when proposal omits them", () => {
@@ -340,10 +343,10 @@ describe("approveWorldDelta", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.approved.newEndings[0]!.requirements).toEqual([
-      { kind: "npc_affinity_at_least", npcId: asNpcId("npc_0"), value: 10 },
+      { kind: "npc_affinity_at_least", npcId: asNpcId("npc_0"), value: TRUST_ENDING_MIN_AFFINITY },
     ]);
     expect(result.approved.newEndings[1]!.requirements).toEqual([
-      { kind: "npc_affinity_at_most", npcId: asNpcId("npc_0"), value: 9 },
+      { kind: "npc_affinity_at_most", npcId: asNpcId("npc_0"), value: DOUBT_ENDING_MAX_AFFINITY },
     ]);
   });
 

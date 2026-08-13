@@ -12,7 +12,7 @@ import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { buildTownView, type TownView } from "./townView";
 import { projectCombatView, type BattleView } from "./combatView";
-import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
+import { composeDirectNpcGreeting, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 
 export type PlayerChoiceView = {
   readonly choiceToken: string;
@@ -392,7 +392,12 @@ export function projectGameSessionView(
     const suppliedSpeechPages = supplied?.speechPages
       .map((page) => normalizeNpcSpeech(page, npc.name))
       .filter((page) => page !== "") ?? [];
+    // 旧场景把所有非焦点人物都存成“欢迎光临”。这类台词没有剧情上下文，
+    // 读取时按当前 NPC 身份重建，避免已存在的旧存档继续污染新演绎。
+    const onlyLegacyGenericGreeting = suppliedSpeechPages.length > 0
+      && suppliedSpeechPages.every((page) => page === composeDirectNpcGreeting());
     const speechPages = suppliedSpeechPages.length > 0
+      && !onlyLegacyGenericGreeting
       ? suppliedSpeechPages
       : paginateSpeechText(focusLine ?? composeDeterministicNpcLine(npc.name, npc.role), NPC_SCENE_PAGE_CHAR_BUDGET);
     // 非焦点 NPC 的场景台词也必须能转化为一次真实交谈：点击后提交 ask，
@@ -479,7 +484,7 @@ export function projectGameSessionView(
         ),
       })),
       town: currentLocation !== undefined
-        ? buildTownView(worldState, currentLocation.id)
+        ? buildTownView(worldState, currentLocation.id, currentObjectiveNpcId)
         : null,
     },
     obtainableItems,

@@ -83,7 +83,40 @@ describe("buildTownView", () => {
 
     const view = buildTownView(ws, locationId);
     expect(view?.interactiveBuildings).toEqual([
-      expect.objectContaining({ npcId: "npc_0", npcName: "刘二" }),
+      expect.objectContaining({ npcId: "npc_0", npcName: "刘二", isCurrentFocus: false }),
+    ]);
+  });
+
+  it("满槽时把当前目标人物投影到高亮剧情建筑，不生成临时会面面板", () => {
+    const locationId = asLocationId("loc_0");
+    let town = createTownRuntime({ locationId, seed: "town-view-focus" });
+    const slotNpcIds = town.slots.map((_, index) => asNpcId(`npc_slot_${index}`));
+    for (const npcId of slotNpcIds) town = bindNpcToTownSlot(town, npcId).town;
+    const focusNpcId = asNpcId("npc_focus");
+    const base = createInitialWorldState({
+      generation: { generationId: asGenerationId("g-focus"), seed: "s-focus", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "游侠", identity: "冒险者", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: {
+        id: locationId, name: "青石镇", description: "一座边陲小镇。", kind: "main",
+        connectedLocationIds: [], npcIds: [...slotNpcIds, focusNpcId], availableItemIds: [], tags: [], scale: "town", town,
+      },
+      startingItemIds: [],
+    });
+    const npc = (id: typeof focusNpcId, name: string) => ({
+      id, name, role: "旧案传讯人", description: "带着线索而来。", locationId,
+      isCompanion: false, tags: [], met: false,
+      memory: { npcId: id, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral" as const, goals: [] },
+    });
+    const view = buildTownView({
+      ...base,
+      npcs: [
+        ...slotNpcIds.map((id, index) => npc(id, `旧人物${index + 1}`)),
+        npc(focusNpcId, "当前目标"),
+      ],
+    }, locationId, focusNpcId);
+    expect(view?.interactiveBuildings).toHaveLength(town.slots.length);
+    expect(view?.interactiveBuildings.filter((entry) => entry.isCurrentFocus)).toEqual([
+      expect.objectContaining({ npcId: "npc_focus", npcName: "当前目标" }),
     ]);
   });
 

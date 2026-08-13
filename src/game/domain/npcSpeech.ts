@@ -97,7 +97,19 @@ export function isGenericNpcAcknowledgement(text: string): boolean {
   return GENERIC_ACKNOWLEDGEMENTS.has(normalized);
 }
 
-/** 生成稳定的、直接面向玩家的 NPC 默认开场台词。 */
-export function composeDirectNpcGreeting(): string {
+/**
+ * 生成稳定的、直接面向玩家的 NPC 默认开场台词。
+ * 无角色信息时保留旧兼容文案；有角色信息时必须先承接人物身份，
+ * 避免幸存者、信使等剧情人物冒出与场景无关的“欢迎光临”。
+ */
+export function composeDirectNpcGreeting(npcRole?: string, npcName?: string): string {
+  const role = npcRole?.trim() ?? "";
+  if (/(传讯|信使|线人)/u.test(role)) return "你来得正好，我手里的线索只交给正在查这桩旧案的人。";
+  if (/(幸存者|镖队)/u.test(role)) return "别急着问镖队，先让我确认你手里有没有能对上旧案的证据。";
+  if (/(卷宗|保管人)/u.test(role)) return "这份旧案牵连太深；你若真要查下去，我可以先交出我保管的那一页。";
+  if (/知情人/u.test(role)) return "我手里的盟誓铁印能把最后一页卷宗钉在真相上；你若真要查下去，我就不再隐瞒。";
+  if (/(更夫|守夜)/u.test(role)) return "昨夜镇外的风声不对。你想问哪一段，我只说自己亲眼见到的。";
+  if (/(掌柜|摊主)/u.test(role)) return "你是来问镇口那张告示的吧？坐下说，我只讲自己听见的。";
+  if (role !== "") return `${npcName ?? "你"}看起来不是来闲逛的；你想问什么？`;
   return "欢迎光临，有什么需要我帮忙的吗？";
 }

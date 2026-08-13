@@ -13,6 +13,8 @@ export type InteractiveBuildingEntry = {
   readonly buildingType: string;
   readonly npcId: string;
   readonly npcName: string;
+  /** 只有当前主线目标人物所在的入口才显示“当前剧情”。 */
+  readonly isCurrentFocus: boolean;
 };
 
 export type TownRenderSnapshot = {
@@ -36,7 +38,11 @@ export type TownView = {
   readonly interactiveBuildings: readonly InteractiveBuildingEntry[];
 };
 
-export function buildTownView(worldState: WorldState, locationId: string): TownView | null {
+export function buildTownView(
+  worldState: WorldState,
+  locationId: string,
+  currentFocusNpcId?: string | null,
+): TownView | null {
   const location = worldState.locations.find((loc) => loc.id === locationId);
   if (location === undefined) return null;
   if (locationScaleOf(location) !== "town") return null;
@@ -86,7 +92,35 @@ export function buildTownView(worldState: WorldState, locationId: string): TownV
       buildingType: slot.buildingType,
       npcId: boundNpcId,
       npcName: npc.name,
+      isCurrentFocus: String(boundNpcId) === String(currentFocusNpcId ?? ""),
     });
+  }
+
+  // 满槽小镇也不能把当前主线人物丢到一个“临时会面”开发入口里。
+  // 若目标人物没有绑定 slot，就借用第一个剧情建筑作为当前镜头入口；
+  // 建筑几何不变，旧 NPC 仍保留在世界状态，地图层只把入口焦点交给当前目标。
+  const focusNpc = currentFocusNpcId === null || currentFocusNpcId === undefined
+    ? undefined
+    : worldState.npcs.find((npc) => String(npc.id) === String(currentFocusNpcId) && npc.locationId === location.id);
+  if (focusNpc !== undefined && !boundNpcIds.has(String(focusNpc.id))) {
+    const focusBuildingId = interactiveBuildings[0]?.buildingId
+      ?? location.town.slots[0]?.buildingId;
+    const focusBuilding = focusBuildingId === undefined
+      ? undefined
+      : snapshot.buildings.find((building) => building.buildingId === focusBuildingId);
+    if (focusBuilding !== undefined) {
+      const existingIndex = interactiveBuildings.findIndex((entry) => entry.buildingId === focusBuilding.buildingId);
+      const focusEntry: InteractiveBuildingEntry = {
+        buildingId: focusBuilding.buildingId,
+        displayName: focusBuilding.displayName,
+        buildingType: focusBuilding.buildingType,
+        npcId: String(focusNpc.id),
+        npcName: focusNpc.name,
+        isCurrentFocus: true,
+      };
+      if (existingIndex >= 0) interactiveBuildings[existingIndex] = focusEntry;
+      else interactiveBuildings.push(focusEntry);
+    }
   }
 
   return {

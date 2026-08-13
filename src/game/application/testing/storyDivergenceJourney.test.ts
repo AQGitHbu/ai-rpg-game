@@ -18,7 +18,7 @@ import type { WorldEvolutionSource } from "@/game/application/worldEvolutionSour
 // NPC 记忆，并抵达不同主题的结局方向；每条分支重复 replay 后 WorldState +
 // StoryState 逐字节一致（离线确定性）。
 //
-// 结局分歧由生产规则承载：确定性演化源为两条结局附上关键 NPC（npc_0）亲和度
+// 结局分歧由生产规则承载：确定性演化源为两条结局附上关键 NPC（npc_0）的亲和度
 // 达成要求（trust 需亲和度 ≥ TRUST_ENDING_MIN_AFFINITY，doubt ≤ 该值-1）。
 // 支持分支（支持/信任互动）亲和度走高 → 命中信任结局；质疑分支（质疑/敌意
 // 互动）亲和度走低 → 命中质疑结局。同一 stock 离线源、同一 seed、不同玩法

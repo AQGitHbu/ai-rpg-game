@@ -50,7 +50,7 @@ describe("TownLayerScreen", () => {
     expect(screen.getByRole("region", { name: "小镇：边陲小镇" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "返回地图" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "小镇地图" })).toBeInTheDocument();
-    expect(screen.getByText("当前剧情建筑" )).toBeInTheDocument();
+    expect(screen.getByText("可进入建筑" )).toBeInTheDocument();
   });
 
   it("renders the preset art for known buildings without exposing hidden story building types", () => {
@@ -80,9 +80,33 @@ describe("TownLayerScreen", () => {
       onReturnMap={vi.fn()}
     />);
     await user.click(screen.getByRole("button", { name: interactive.displayName }));
-    expect(screen.getByText("当前剧情")).toBeInTheDocument();
+    expect(screen.queryByText("当前剧情")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
     expect(onEnterBuilding).toHaveBeenCalledWith(interactive.npcId);
+  });
+
+  it("only marks the actual focus NPC as current story", async () => {
+    const town = townFixture();
+    const focusNpcId = town.interactiveBuildings[0]!.npcId;
+    const focusedTown = { ...town, interactiveBuildings: town.interactiveBuildings.map((entry) => ({
+      ...entry,
+      isCurrentFocus: entry.npcId === focusNpcId,
+    })) };
+    const user = userEvent.setup();
+    render(<TownLayerScreen
+      town={focusedTown}
+      busy={false}
+      onEnterBuilding={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+    await user.click(screen.getByRole("button", { name: town.interactiveBuildings[0]!.displayName }));
+    expect(screen.getByText("当前剧情")).toBeInTheDocument();
+  });
+
+  it("does not render a permanent temporary-meeting panel", () => {
+    renderTown();
+    expect(screen.queryByRole("group", { name: "镇口临时会面" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/不占用固定建筑/)).not.toBeInTheDocument();
   });
 
   it("does not expose unbound story buildings or generic buildings as fake controls", () => {

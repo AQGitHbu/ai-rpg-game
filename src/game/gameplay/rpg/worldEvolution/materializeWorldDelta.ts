@@ -29,8 +29,8 @@ type LocationPatch = {
 };
 
 function bindTownNpcIfAvailable(town: TownRuntimeState, npcId: NpcId): TownRuntimeState {
-  // 审批阶段会拒绝满槽小镇；这里仍保持装配函数防御性，避免旧存档或直接调用
-  // materializeWorldDelta 时因 slot 不足把整条叙事流水线抛出异常。
+  // 满槽小镇里的临时剧情人物仍挂在 locationId 上，但不占用建筑入口。
+  // 有空槽时才绑定一个建筑；这样 town 的几何保持稳定，场景层仍可展示该人物。
   if (!town.slots.some((slot) => slot.boundNpcId === null)) return town;
   return bindNpcToTownSlot(town, npcId).town;
 }

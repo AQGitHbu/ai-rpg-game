@@ -168,11 +168,6 @@ function resolveNpcLocationId(ws: WorldState, p: WorldDeltaProposal, mintedLocat
   return mintedLocationId;
 }
 
-function townHasNpcSlot(ws: WorldState, locationId: LocationId): boolean {
-  const location = ws.locations.find((entry) => entry.id === locationId);
-  return location?.town === undefined || location.town.slots.some((slot) => slot.boundNpcId === null);
-}
-
 function resolveMountedLocationId(
   ws: WorldState,
   ref: "current" | "new_location",
@@ -284,11 +279,10 @@ export function approveWorldDelta(input: {
   if (p.newNpc) {
     npcLocationId = resolveNpcLocationId(ws, p, ids.locationId);
     if (npcLocationId === null) return reject("invalid_location_ref", "npc_location");
-    // town 层的剧情建筑是有限槽位；不允许把动态 NPC 写入已满的小镇，
-    // 否则装配阶段无法绑定入口，玩家也无法从三层 UI 触达该 NPC。
-    if (p.newNpc.locationRef.kind === "existing" && !townHasNpcSlot(ws, npcLocationId)) {
-      return reject("town_capacity", "npc_town_slots_full");
-    }
+    // town 的建筑入口有有限槽位，但剧情人物不一定是驻店 NPC。
+    // 满槽时保留 locationId 作为“临时在场人物”，由场景层展示和交谈；
+    // materializeWorldDelta 会在有空槽时绑定建筑，没有空槽时安全地跳过绑定。
+    // 这样幕边界不会因为建筑容量把主线人物铸造到玩家不可见的新地点。
   }
   if (p.newItem) {
     itemLocationId = resolveMountedLocationId(ws, p.newItem.locationRef, ids.locationId);

@@ -99,6 +99,40 @@ describe("resolveEnding", () => {
     expect(result.nextWorldState.ending?.endingId).toBe(asEndingId("ending_z"));
   });
 
+  it("lets the final NPC support/challenge choice override a stale opening affinity", () => {
+    const openingNpc = {
+      id: asNpcId("npc_key"), name: "开场线人", role: "ally", description: "t",
+      locationId: loc.id, isCompanion: false, tags: [], met: true,
+      memory: {
+        npcId: asNpcId("npc_key"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
+        relationship: { affinity: 0 }, emotion: "neutral" as const, goals: [],
+      },
+    };
+    const finalNpc = {
+      ...openingNpc,
+      id: asNpcId("npc_final"), name: "终幕知情人",
+      memory: {
+        ...openingNpc.memory,
+        npcId: asNpcId("npc_final"),
+        interactionHistory: [{
+          turnNumber: 9, actionId: "turn-9", locationId: loc.id, dialogueAct: "support" as const,
+          topicSummary: "general", outcome: "positive" as const, relationshipDelta: 3,
+          learnedFactIds: [], summary: "支持终幕知情人",
+        }],
+      },
+    };
+    const ws: WorldState = {
+      ...baseWs,
+      npcs: [openingNpc, finalNpc],
+      endings: [
+        { id: asEndingId("ending_a"), name: "doubt", description: "t", requirements: [{ kind: "npc_affinity_at_most", npcId: openingNpc.id, value: 9 }] },
+        { id: asEndingId("ending_z"), name: "trust", description: "t", requirements: [{ kind: "npc_affinity_at_least", npcId: openingNpc.id, value: 10 }] },
+      ],
+    };
+    const result = resolveEnding(ws, { ...baseSs, endingAllowed: true }, deps);
+    expect(result.nextWorldState.ending?.endingId).toBe(asEndingId("ending_z"));
+  });
+
   it("falls back to a deterministic pick when no requirement is satisfied", () => {
     const keyNpc = {
       id: asNpcId("npc_key"), name: "线人", role: "ally", description: "t",
