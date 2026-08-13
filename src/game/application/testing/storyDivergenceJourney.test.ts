@@ -14,25 +14,25 @@ import type { WorldEvolutionSource } from "@/game/application/worldEvolutionSour
 
 // ---------------------------------------------------------------------------
 // Step 3：同 seed 分叉旅程。
-// 支持/质疑两个分支从同一 seed 出发：都具象化可完成内容、保留各自隔离的
+// 玩家口吻/非对白两个选项从同一 seed 出发：都具象化可完成内容、保留各自隔离的
 // NPC 记忆，并抵达不同主题的结局方向；每条分支重复 replay 后 WorldState +
 // StoryState 逐字节一致（离线确定性）。
 //
 // 结局分歧由生产规则承载：确定性演化源为两条结局附上关键 NPC（npc_0）的亲和度
 // 达成要求（trust 需亲和度 ≥ TRUST_ENDING_MIN_AFFINITY，doubt ≤ 该值-1）。
-// 支持分支（支持/信任互动）亲和度走高 → 命中信任结局；质疑分支（质疑/敌意
-// 互动）亲和度走低 → 命中质疑结局。同一 stock 离线源、同一 seed、不同玩法
+// 信任分支（自定义对白）亲和度走高 → 命中信任结局；质疑分支（自定义对白）
+// 亲和度走低 → 命中质疑结局。同一 stock 离线源、同一 seed、不同玩法
 // → 不同结局解析，全程零 AI。
 // ---------------------------------------------------------------------------
 
 type Branch = {
   readonly name: "support" | "challenge";
-  readonly fixedLabel: "支持" | "质疑";
+  readonly fixedLabel: "回应";
   readonly customText: string;
 };
 
-const SUPPORT: Branch = { name: "support", fixedLabel: "支持", customText: "我相信你，我们一起查明真相" };
-const CHALLENGE: Branch = { name: "challenge", fixedLabel: "质疑", customText: "你在撒谎，我会亲自揭穿真相" };
+const SUPPORT: Branch = { name: "support", fixedLabel: "回应", customText: "我相信你，我们一起查明真相" };
+const CHALLENGE: Branch = { name: "challenge", fixedLabel: "回应", customText: "你在撒谎，我会亲自揭穿真相" };
 
 async function runBranch(branch: Branch, replay: number) {
   const gameId = asGameId(`divergence_${branch.name}_${replay}`);
@@ -66,7 +66,7 @@ async function runBranch(branch: Branch, replay: number) {
   await scene(); // 具象化第 2 幕内容
   await fixed(openingNpcName); // 主动重新开启与开场 NPC 的一轮对话
   await scene();
-  await fixed(branch.fixedLabel); // 3: 固定分支选项
+  await fixed(branch.fixedLabel); // 3: 玩家口吻固定回应
   await scene();
   await fixed(openingNpcName); // 固定选择后已退出焦点；再次主动交谈后才允许自由输入
   await scene();
@@ -92,7 +92,7 @@ async function runBranch(branch: Branch, replay: number) {
 }
 
 describe("同 seed 的完整选择分叉与多结局（Step 3）", () => {
-  it("支持与质疑分支都可完成，规则裁决为不同结局方向（信任 vs 质疑）", async () => {
+  it("玩家口吻/自定义质疑分支都可完成，规则裁决为不同结局方向", async () => {
     const support = await runBranch(SUPPORT, 1);
     const challenge = await runBranch(CHALLENGE, 1);
     const supportNpc = support.worldState.npcs[0]!;

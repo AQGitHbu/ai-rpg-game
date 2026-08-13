@@ -180,6 +180,11 @@ export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
     if (hasAvailableItem || hasUndefeatedEnemy) return true;
   }
 
+  // 对话场景始终提供一个非对白的“暂不回应，先观察”分支。它仍是
+  // 正式 explore 回合，不是零写入闲聊旁路；固定选项因此明确覆盖
+  // “玩家口吻对白 / 玩家动作”两种输入类型。
+  if (ss.narrative.currentScene?.event?.kind === "dialogue") return true;
+
   // 1) 本地点仍有未发现的线索事实（含 NPC 私密事实：探索可引动揭示，不泄漏正文）。
   if (ws.worldFacts.some((f) => f.locationId === currentId && !f.discovered)) return true;
 

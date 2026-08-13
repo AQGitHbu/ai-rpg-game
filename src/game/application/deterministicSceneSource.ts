@@ -76,9 +76,28 @@ export function buildSelectableSceneCandidates(context: SceneGenerationContext):
   if (dialogueNpcId !== undefined) {
     const npc = context.presentNpcs.find((entry) => String(entry.id) === String(dialogueNpcId));
     if (npc === undefined) return [];
+    const dialogueCandidate: SceneChoiceCandidate = {
+      candidateId: "candidate_1",
+      label: `回应${npc.name}：“我先相信你，但请把知道的说清楚。”`,
+      action: { type: "talk", npcId: npc.id, dialogueAct: "support" },
+    };
+    const nonDialogueCandidate = context.legalActionCandidates
+      .map(actionFromLegalCandidate)
+      .filter((action): action is Action => action !== null && action.type !== "talk")
+      .map((action): SceneChoiceCandidate => ({
+        candidateId: "candidate_2",
+        label: nonDialogueChoiceLabel(action),
+        action,
+      }))[0];
+    // 对话场景仍必须给出两种不同输入类型；buildChoiceMap 同源允许
+    // explore，保证即使地点没有物品/敌人，玩家也能选择暂不回应而观察现场。
     return [
-      { candidateId: "candidate_1", label: `表示愿意支持${npc.name}`, action: { type: "talk", npcId: npc.id, dialogueAct: "support" } },
-      { candidateId: "candidate_2", label: `质疑${npc.name}的说法`, action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" } },
+      dialogueCandidate,
+      nonDialogueCandidate ?? {
+        candidateId: "candidate_2",
+        label: nonDialogueChoiceLabel({ type: "explore" }),
+        action: { type: "explore" },
+      },
     ];
   }
   const candidates: SceneChoiceCandidate[] = [];
@@ -353,5 +372,16 @@ export function actionFromLegalCandidate(
       || candidate.targetId === "flee"
       ? { type: "battle_action", action: candidate.targetId }
       : null;
+  }
+}
+
+function nonDialogueChoiceLabel(action: Action): string {
+  switch (action.type) {
+    case "explore": return "默默不作声，先观察四周";
+    case "move": return "不再追问，离开这里";
+    case "take_item": return "暂不回应，先拾取眼前物品";
+    case "investigate": return "暂不回应，先调查现场";
+    case "battle_action": return "暂不回应，先做好应战准备";
+    default: return "暂不回应，先做自己的事";
   }
 }

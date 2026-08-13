@@ -13,6 +13,7 @@ import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/doma
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import { buildStylePolicy } from "./stylePolicy";
+import { createNpcResponsePolicy } from "@/game/gameplay/rpg/narrativeContext";
 
 function validCandidate(id: string): EventCandidate {
   return {
@@ -140,6 +141,7 @@ function makeContext(overrides: {
   presentNpcs?: SceneGenerationContext["presentNpcs"];
   legalActionCandidates?: SceneGenerationContext["legalActionCandidates"];
   objectiveTarget?: SceneGenerationContext["objectiveTarget"];
+  focusNpcContext?: SceneGenerationContext["focusNpcContext"];
 } = {}): SceneGenerationContext {
   const job = overrides.job ?? makeJob();
   return {
@@ -177,6 +179,7 @@ function makeContext(overrides: {
     objectiveTransition: job.objectiveTransition,
     mandatoryBeats: job.mandatoryBeats,
     beatSubjects: [],
+    focusNpcContext: overrides.focusNpcContext,
     objectiveTarget: overrides.objectiveTarget ?? null,
   };
 }
@@ -474,6 +477,65 @@ describe("approveScenePerformance (Task 6)", () => {
           { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉" },
         ],
         npcLine: { npcId: "npc_1", text: "这件事我也正想说。", emotion: "warm", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("幕交接时由新目标 NPC 承接上一回合原话 → 通过", () => {
+    const oldNpc = makeContext().presentNpcs[0]!;
+    const newNpc: SceneGenerationContext["presentNpcs"][number] = {
+      ...oldNpc,
+      id: asNpcId("npc_2"),
+      name: "新掌柜",
+      recentInteractionActionIds: [],
+    };
+    const job = makeJob({
+      utterance: "告示上的案子和我家镖局覆灭有关吗？",
+      transition: {
+        before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老掌柜交谈" },
+        completed: [{ questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老掌柜交谈" }],
+        after: { questId: asQuestId("quest_0"), objectiveIndex: 1, label: "与新掌柜交谈" },
+        mode: "advanced_act",
+      },
+      beats: [
+        { beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应玩家" },
+        { beatId: "quest_advanced", kind: "quest_advanced", subjectIds: ["quest_0"], instruction: "主线推进" },
+        { beatId: ATMOSPHERE_BEAT_ID, kind: "atmosphere", subjectIds: [], instruction: "氛围" },
+      ],
+    });
+    const result = approveScenePerformance({
+      context: makeContext({
+        job,
+        presentNpcs: [oldNpc, newNpc],
+        focusNpcContext: {
+          id: asNpcId("npc_2"),
+          name: "新掌柜",
+          role: "掌柜",
+          publicProfile: "t",
+          responsePolicy: createNpcResponsePolicy({ tier: "neutral", allowedDisclosureFactIds: [], privateKnowledgeIds: [] }),
+          speakableFactCards: [],
+          recentInteractions: [],
+          goals: [],
+          emotion: "neutral",
+          thisTurn: { relationshipDelta: 0, outcome: "neutral" },
+        },
+        objectiveTarget: { questId: "quest_0", objectiveIndex: 1, entityId: "npc_2", entityName: "新掌柜" },
+      }),
+      proposal: makeProposal({
+        segments: [
+          { beatId: "player_utterance", text: "你提出了你的疑问。" },
+          { beatId: "quest_advanced", text: "主线推进到新掌柜。" },
+          { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉" },
+        ],
+        npcLine: { npcId: "npc_2", text: "我知道这件事。", emotion: "neutral", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
+        objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
+        choices: [
+          { candidateId: "candidate_1", label: "表示愿意支持新掌柜" },
+          { candidateId: "candidate_2", label: "质疑新掌柜的说法" },
+        ],
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],

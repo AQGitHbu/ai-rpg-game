@@ -306,8 +306,18 @@ export function approveScenePerformance(input: {
   const utteranceBeat = context.mandatoryBeats.find((b) => b.kind === "player_utterance");
   if (utteranceBeat !== undefined) {
     const focusNpcId = utteranceBeat.subjectIds[0];
+    // 幕交接时，玩家上一回合是在旧 NPC 面前发问，但新一幕的权威目标
+    // NPC 才是当前场景焦点。允许这个明确的交接 NPC 承接原话，避免
+    // deterministic fallback 因“回答错 NPC”被拒绝后把 generation 永久留在 pending。
+    const handoffNpcId = context.objectiveTransition.mode === "advanced_act"
+      && context.objectiveTarget !== null
+      && context.focusNpcContext !== undefined
+      && String(context.focusNpcContext.id) === String(context.objectiveTarget.entityId)
+      ? context.focusNpcContext.id
+      : undefined;
+    const answerNpcId = handoffNpcId ?? focusNpcId;
     if (npcLine === null
-      || String(npcLine.npcId) !== String(focusNpcId)
+      || String(npcLine.npcId) !== String(answerNpcId)
       || !(npcLine.answeredBeatIds ?? []).includes(utteranceBeat.beatId)) {
       return { ok: false, code: "player_utterance_unanswered" };
     }
