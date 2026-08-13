@@ -598,6 +598,54 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(await screen.findByText("侠客攻击 灰狼 -7 HP")).toBeInTheDocument();
   });
 
+  it("removes defeated units from the battle scene", () => {
+    const view = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...view,
+        battle: {
+          ...view.battle!,
+          units: [
+            {
+              slot: "ally-0",
+              name: "侠客",
+              side: "allies",
+              current: true,
+              defeated: false,
+              hp: 80,
+              maxHp: 100,
+              energy: 10,
+              maxEnergy: 40,
+              speed: 12,
+              guarding: false,
+              intent: null,
+            },
+            {
+              slot: "enemy-0",
+              name: "灰狼",
+              side: "enemies",
+              current: false,
+              defeated: true,
+              hp: 0,
+              maxHp: 55,
+              energy: 10,
+              maxEnergy: 40,
+              speed: 8,
+              guarding: false,
+              intent: null,
+            },
+          ],
+        },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+
+    expect(screen.getByRole("group", { name: "己方：侠客" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "敌方：灰狼" })).not.toBeInTheDocument();
+  });
+
   it("offers non-focus NPC only the real talk action", async () => {
     const base = buildView();
     const onSubmit = vi.fn();

@@ -500,7 +500,7 @@ export function LocationSceneScreen({
             <span className="battle-hud-side battle-hud-side--enemy">敌方 · {view.battle.enemyName}</span>
           </div>
           {view.battle.units !== undefined && view.battle.units.length > 0
-            ? view.battle.units.map((unit) => (
+            ? view.battle.units.filter((unit) => unit.hp > 0).map((unit) => (
                 <div
                   key={unit.slot}
                   className={`battle-combatant battle-combatant--${unit.side === "allies" ? "player" : "enemy"} ${unit.current ? "battle-combatant--active" : ""} ${battleFeedback?.kind === "enemy-hit" && unit.side === "enemies" ? "battle-combatant--hit" : ""}`}
