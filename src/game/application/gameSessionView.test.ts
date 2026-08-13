@@ -672,7 +672,7 @@ describe("projectGameSessionView", () => {
     expect(Object.keys(view.ending!).sort()).toEqual(["description", "name", "outcome", "restartIdentity"]);
   });
 
-  it("projects smallTalk for non-focus NPCs when provided in scene", () => {
+  it("does not project non-focus smallTalk as a zero-write action", () => {
     const scene = {
       sceneId: "scene-small-talk",
       turn: 2,
@@ -725,41 +725,19 @@ describe("projectGameSessionView", () => {
     const view = projectGameSessionView(wsTwo, story, 2, "test-ending-session");
     const dialogues = view.narrative.npcDialogues ?? [];
 
-    // 焦点 NPC (周伯) 有选项，无闲聊
+    // 焦点 NPC (周伯) 有两个正式选项
     const focusNpc = dialogues.find((d) => d.npcId === "npc_1");
     expect(focusNpc).toBeDefined();
     expect(focusNpc?.choices).toHaveLength(2);
     expect(focusNpc?.freeInputEnabled).toBe(true);
-    expect(focusNpc?.smallTalk).toBeUndefined();
 
-    // 非焦点 NPC (韩征) 有一次真实交谈入口，并保留不消耗回合的闲聊
+    // 非焦点 NPC (韩征) 只有一次真实交谈入口；旧存档里的 smallTalk 不下发到 UI
     const nonFocusNpc = dialogues.find((d) => d.npcId === "npc_2");
     expect(nonFocusNpc).toBeDefined();
     expect(nonFocusNpc?.choices).toHaveLength(1);
     expect(nonFocusNpc?.choices[0]?.label).toBe("与韩征交谈");
     expect(nonFocusNpc?.freeInputEnabled).toBe(false);
-    expect(nonFocusNpc?.smallTalk).toEqual({
-      prompt: "向韩征打个招呼",
-      response: "有什么事直接找我，别耽误正事。",
-    });
-
-    const fallbackStory = {
-      ...story,
-      narrative: {
-        ...story.narrative,
-        currentScene: {
-          ...scene,
-          npcDialogues: scene.npcDialogues.map((entry) =>
-            entry.npcId === asNpcId("npc_2") ? { ...entry, smallTalk: undefined } : entry,
-          ),
-        },
-      },
-    };
-    const fallbackView = projectGameSessionView(wsTwo, fallbackStory, 2, "test-ending-session");
-    expect(fallbackView.narrative.npcDialogues.find((d) => d.npcId === "npc_2")?.smallTalk).toEqual({
-      prompt: "和韩征聊几句",
-      response: "先看看周围，别急着下结论。",
-    });
+    expect(nonFocusNpc).not.toHaveProperty("smallTalk");
   });
 });
 

@@ -497,7 +497,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.queryByRole("button", { name: "挑战灰狼" })).not.toBeInTheDocument();
   });
 
-  it("labels the single NPC talk choice as a dialogue preparation state", () => {
+  it("does not label a single NPC talk choice as dialogue preparation", () => {
     const base = buildView();
     render(<LocationSceneScreen
       view={{
@@ -512,7 +512,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    expect(screen.getByText("正在准备对话……")).toBeInTheDocument();
+    expect(screen.queryByText("正在准备对话……")).not.toBeInTheDocument();
   });
 
   it("opens prepared NPC dialogue first and submits only after choosing a response", async () => {
@@ -598,7 +598,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(await screen.findByText("侠客攻击 灰狼 -7 HP")).toBeInTheDocument();
   });
 
-  it("offers non-focus NPC small talk without submitting a game action", async () => {
+  it("offers non-focus NPC only the real talk action", async () => {
     const base = buildView();
     const onSubmit = vi.fn();
     const view: GameSessionView = {
@@ -622,7 +622,6 @@ describe("AdventureGameShell canonical opaque choices", () => {
             choices: [choice("c_hunter_talk", "与猎人交谈", "dialogue")],
             freeInputEnabled: false,
             giveChoices: [],
-            smallTalk: { prompt: "向猎人打听附近动静", response: "猎人说：林子里今天很安静。" },
           },
         ],
       },
@@ -635,9 +634,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
     />);
 
     await userEvent.click(screen.getByRole("button", { name: /猎人游侠/ }));
-    await userEvent.click(screen.getByRole("button", { name: /向猎人打听附近动静/ }));
-    expect(screen.getByText("猎人说：林子里今天很安静。")).toBeInTheDocument();
-    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /聊几句/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("正在准备对话……")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "与猎人交谈" }));
+    expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: "c_hunter_talk" });
   });
 });
 

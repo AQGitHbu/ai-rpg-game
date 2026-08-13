@@ -50,15 +50,10 @@ function NpcDialogueModal({
   readonly onClose: () => void;
 }) {
   const [text, setText] = useState("");
-  const [smallTalkShown, setSmallTalkShown] = useState(false);
 
   // 焦点 NPC 的正式对话严格由两个批准选项或自由输入标识；
-  // 非焦点 NPC 的单个 talk choice 只是打开正式交谈的入口，不能吞掉闲聊。
+  // 非焦点 NPC 的单个 talk choice 是唯一的正式交谈入口。
   const hasFocusInteraction = dialogue.freeInputEnabled || dialogue.choices.length === 2;
-  const isDialoguePreparing = !hasFocusInteraction
-    && !dialogue.freeInputEnabled
-    && dialogue.choices.length === 1
-    && dialogue.choices[0]?.presentation === "dialogue";
 
   async function submitFreeText(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -66,10 +61,6 @@ function NpcDialogueModal({
     if (normalized === "") return;
     onSubmit({ kind: "free_text", text: normalized, targetNpcId: dialogue.npcId });
     setText("");
-  }
-
-  function handleSmallTalkClick(): void {
-    setSmallTalkShown(true);
   }
 
   return (
@@ -98,22 +89,12 @@ function NpcDialogueModal({
             {dialogue.speechPages.map((page, index) => (
               <p key={`${dialogue.npcId}-${index}`} className="npc-dialogue-speech-text">{normalizeDisplayText(page)}</p>
             ))}
-            {smallTalkShown && dialogue.smallTalk ? (
-              <p className="npc-dialogue-speech-text npc-dialogue-small-talk-response">
-                {normalizeDisplayText(dialogue.smallTalk.response)}
-              </p>
-            ) : null}
           </div>
         </div>
 
         {/* 焦点 NPC：显示固定选项 + 给予道具 + 自由输入 */}
         {hasFocusInteraction ? (
           <>
-            {isDialoguePreparing ? (
-              <p role="status" aria-live="polite" className="npc-dialogue-preparing">
-                正在准备对话……
-              </p>
-            ) : null}
             <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
               {dialogue.choices.map((choice) => (
                 <button
@@ -159,23 +140,8 @@ function NpcDialogueModal({
             ) : null}
           </>
         ) : (
-          /* 非焦点 NPC：显示闲聊按钮或降级对话选项 */
+          /* 非焦点 NPC：只显示一次真实 ask 行动入口；没有焦点对白时不伪造准备状态 */
           <>
-            {isDialoguePreparing && !dialogue.smallTalk ? (
-              <p role="status" aria-live="polite" className="npc-dialogue-preparing">
-                正在准备对话……
-              </p>
-            ) : null}
-            {dialogue.smallTalk && !smallTalkShown ? (
-              <button
-                type="button"
-                className="npc-dialogue-small-talk-btn"
-                disabled={busy}
-                onClick={handleSmallTalkClick}
-              >
-                💬 {dialogue.smallTalk.prompt}
-              </button>
-            ) : null}
             {dialogue.choices.length > 0 ? (
               <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
                 {dialogue.choices.map((choice) => (

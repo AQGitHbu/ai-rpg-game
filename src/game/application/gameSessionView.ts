@@ -30,11 +30,6 @@ export type NpcDialogueView = {
   readonly freeInputEnabled: boolean;
   /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
   readonly giveChoices: readonly { readonly itemName: string; readonly choice: PlayerChoiceView }[];
-  /** 非焦点 NPC 的闲聊：点击显示回复，不消耗回合。 */
-  readonly smallTalk?: {
-    readonly prompt: string;
-    readonly response: string;
-  };
 };
 
 type QuestObjectiveView = { readonly label: string; readonly completed: boolean };
@@ -146,23 +141,6 @@ function choice(
     label,
     ...(hint === undefined ? {} : { hint }),
     presentation,
-  };
-}
-
-/**
- * 非焦点 NPC 的展示层闲聊兜底。
- *
- * 场景表演源可以提供更贴合上下文的 smallTalk；当 live/fallback 场景
- * 没有附带时，仍给玩家一个不消耗回合的轻交互入口。文本只描述无状态
- * 影响的环境闲话，不授予事实、不推进任务，也不替代正式 talk action。
- */
-function buildSmallTalkFallback(npc: { readonly name: string; readonly role: string }): {
-  readonly prompt: string;
-  readonly response: string;
-} {
-  return {
-    prompt: `和${npc.name}聊几句`,
-    response: `先看看周围，别急着下结论。`,
   };
 }
 
@@ -417,7 +395,6 @@ export function projectGameSessionView(
     const speechPages = suppliedSpeechPages.length > 0
       ? suppliedSpeechPages
       : paginateSpeechText(focusLine ?? composeDeterministicNpcLine(npc.name, npc.role), NPC_SCENE_PAGE_CHAR_BUDGET);
-    const smallTalkData = supplied?.smallTalk ?? buildSmallTalkFallback(npc);
     // 非焦点 NPC 的场景台词也必须能转化为一次真实交谈：点击后提交 ask，
     // 下一回合再由规则把该 NPC 设为焦点并生成两项回应 + 自由输入。
     const fallbackTalkChoice = choice(
@@ -448,15 +425,6 @@ export function projectGameSessionView(
             };
           })
         : [],
-      ...(!isFocus
-        ? {
-            smallTalk: {
-              prompt: smallTalkData.prompt,
-              response: normalizeNpcSpeech(smallTalkData.response, npc.name)
-                || composeDeterministicNpcLine(npc.name, npc.role),
-            },
-          }
-        : {}),
     }];
   });
 

@@ -79,6 +79,7 @@ type ActionRequest = {
 - 规则裁决和 NPC 知识边界不能交给 AI；AI 只负责 proposal 与表达。
 - 场景生成、审批写回和 read model 投影都执行台词归一化，因此旧存档中已保存的“NPC 名称 + 动作 + 台词”包装不会继续出现在对话框。
 - read model 会兼容旧交接存档：当已保存的 dialogue focus 与当前在场 talk 目标不一致时，丢弃过期的焦点选项并把旧 NPC 降为普通交谈入口；不要求玩家清档。
+- 旧场景中可能持久化的 `smallTalk` 数据不再投影到客户端；非焦点 NPC 只显示真实的 `ask` 交谈入口，避免出现点击后只改本地显示、不产生回合的伪交互。
 - 任何新输入形态必须先扩展 `Interaction` union，并继续通过 `/api/game/actions` 与 `performTurn`，不能新增并行入口。
 
 ## 历史说明
