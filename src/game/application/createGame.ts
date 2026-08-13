@@ -175,17 +175,18 @@ export async function createGame(
   // pending 唯一载体是带 job 的 PendingNarrativeJob（Spec §10.3），
   // 不再使用无 job 的 requestedAt legacy 形式。
   const narrativeMode = deps.aiEnabled ? "ai" : "offline";
+  const openingNpcId = worldState.npcs[0]?.id;
   const jobResult = createPendingNarrativeJob({
     jobId: asNarrativeJobId(`job_${input.seed}_0`),
     turnId: asTurnId(`turn_${input.seed}_0`),
     actionId: `start_${input.seed}`,
     expectedRevision: 0,
     turnNumber: 0,
-    actionSummary: { kind: "explore" },
+    actionSummary: openingNpcId === undefined ? { kind: "explore" } : { kind: "talk", npcId: openingNpcId },
     resolvedEvent: {
       actionId: `start_${input.seed}`,
       status: "success",
-      eventKind: "observe",
+      eventKind: openingNpcId === undefined ? "observe" : "dialogue",
       facts: [],
       stateChanges: [],
       costs: [],
@@ -194,6 +195,7 @@ export async function createGame(
       rejectedEffects: [],
     },
     domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+    ...(openingNpcId === undefined ? {} : { focusNpcId: openingNpcId }),
     requestedAt: deps.now(),
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: [],

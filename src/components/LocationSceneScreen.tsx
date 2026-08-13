@@ -206,7 +206,7 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
   const displayLocationDescription = normalizeDisplayText(view.currentLocation.description);
   const shouldShowLocationDescription = displayLocationDescription !== ""
     && (displayNarration === "" || !displayNarration.includes(displayLocationDescription));
-  const sceneActions = view.currentLocation.actions.filter((choice) => choice.presentation !== "dialogue");
+  const sceneActions = view.currentLocation.actions;
   const hasDialogueInteraction = activeDialogues.some((dialogue) =>
     dialogue.choices.length > 0 || dialogue.freeInputEnabled,
   );
@@ -235,19 +235,15 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
   }
 
   const [openDialogueNpcId, setOpenDialogueNpcId] = useState<string | null>(() => {
-    // 从小镇建筑进入：聚焦绑定 NPC；测试环境下默认打开第一个活跃对话。
+    // 从小镇建筑进入只切换场景，不自动打开或提交对话；测试环境下仍默认打开第一个活跃对话。
     if (initialFocusNpcId !== null && initialFocusNpcId !== undefined) {
-      const initialDialogue = activeDialogues.find((dialogue) => dialogue.npcId === initialFocusNpcId);
-      return initialDialogue?.freeInputEnabled === true && initialDialogue.choices.length === 2
-        ? initialFocusNpcId
-        : null;
+      return null;
     }
     if (isTest && activeDialogues.length > 0) {
       return activeDialogues[0].npcId;
     }
     return null;
   });
-  const [autoFocusEnabled, setAutoFocusEnabled] = useState(initialFocusNpcId !== null && initialFocusNpcId !== undefined);
   const [battleFeedback, setBattleFeedback] = useState<BattleFeedback | null>(null);
   const previousBattleRef = useRef(view.battle);
 
@@ -304,9 +300,8 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
   }, [pending, view.narrative.npcDialogues]);
 
   function renderChoiceButton(choice: { choiceToken: string; label: string }) {
-    // 明确的“与 NPC 交谈”已经表达了玩家意图：若焦点对话已 ready 则直接打开，
-    // 否则第一次点击就提交原 opaque token，并在生成完成后自动恢复同一对话。
-    // NPC 人物卡仍只负责查看/打开面板，不自动消费回合。
+    // “与 NPC 交谈”只是打开本幕已经生成好的对话；只有弹窗内的两个选项
+    // 或自定义输入才是正式回合，避免进入地点或点开交谈入口就提前编排下一幕。
     const matchingNpc = locationNpcs.find((n) => n.talkChoice.choiceToken === choice.choiceToken);
     if (matchingNpc) {
       return (
@@ -316,13 +311,7 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
           disabled={busy || pending}
           onClick={() => {
             const dialogue = Array.from(allDialoguesMap.values()).find((d) => d.name === matchingNpc.name);
-            const ready = dialogue?.freeInputEnabled === true && dialogue.choices.length === 2;
-            if (ready && dialogue !== undefined) {
-              setOpenDialogueNpcId(dialogue.npcId);
-              return;
-            }
             if (dialogue !== undefined) setOpenDialogueNpcId(dialogue.npcId);
-            onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken });
           }}
         >
           {choice.label}
@@ -378,17 +367,7 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
     }
   }
 
-  const readyInitialFocusNpcId = autoFocusEnabled
-    && initialFocusNpcId !== null
-    && initialFocusNpcId !== undefined
-    && activeDialogues.some((dialogue) =>
-      dialogue.npcId === initialFocusNpcId
-      && dialogue.freeInputEnabled
-      && dialogue.choices.length === 2,
-    )
-    ? initialFocusNpcId
-    : null;
-  const openDialogueNpcIdForRender = openDialogueNpcId ?? readyInitialFocusNpcId;
+  const openDialogueNpcIdForRender = openDialogueNpcId;
 
   // 当前打开的对话对象
   const openDialogue: Dialogue | undefined = openDialogueNpcIdForRender
@@ -397,7 +376,6 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
 
   // 点击 NPC 卡片：纯粹打开对话弹窗，不消费回合
   function handleNpcCardClick(npc: typeof sidebarNpcs[number]) {
-    setAutoFocusEnabled(false);
     setOpenDialogueNpcId(npc.dialogueId);
   }
 
@@ -510,7 +488,7 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
         {view.narrative.hasScene && displayNarration ? (
           <section className="scene-narrative scene-narrative--overlay" aria-label="当前场景">
             <p>{displayNarration}</p>
-            {view.narrative.choices.length > 0 ? (
+            {view.narrative.eventKind !== "dialogue" && view.narrative.choices.length > 0 ? (
               <div role="group" aria-label="场景选项">
                 {view.narrative.choices.map(renderChoiceButton)}
               </div>
@@ -524,7 +502,7 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
         ) : null}
       </div>
 
-      {/* 底部行动栏：过滤掉与 NPC 交谈类按钮，NPC 交谈统一由右侧人物侧边栏接管 */}
+      {/* 底部行动栏：与 NPC 交谈只打开本幕对话，弹窗选项才提交正式回合 */}
       <nav className="scene-action-rail scene-action-rail--bottom" aria-label="行动栏">
         {sceneActions.length > 0
           ? sceneActions.map(renderChoiceButton)
@@ -620,7 +598,6 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
           busy={busy || pending}
           onSubmit={onSubmit}
           onClose={() => {
-            setAutoFocusEnabled(false);
             setOpenDialogueNpcId(null);
           }}
         />

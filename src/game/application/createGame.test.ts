@@ -127,6 +127,21 @@ describe("createGame", () => {
     expect(record.storyState.evolution.status).toBe("stable");
   });
 
+  it("prepares the opening NPC dialogue before the player submits a turn", async () => {
+    const record = await createPersistedGame({ seed: "opening-dialogue", gameLength: "short" });
+    const openingNpcId = record.worldState.npcs[0]!.id;
+    const generation = record.storyState.narrative.generation;
+
+    expect(generation.status).toBe("pending");
+    if (generation.status !== "pending") return;
+    const job = generation.job;
+    expect(job).toMatchObject({
+      actionSummary: { kind: "talk", npcId: openingNpcId },
+      focusNpcId: openingNpcId,
+      resolvedEvent: { eventKind: "dialogue" },
+    });
+  });
+
   it("honors every game type in compiled fallback structure and remains deterministic", async () => {
     const gameTypes: readonly GameTypeId[] = [
       "wuxia", "xianxia", "fantasy", "science_fiction", "urban", "alternate_history", "post_apocalypse",

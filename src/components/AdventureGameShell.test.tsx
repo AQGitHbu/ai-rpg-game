@@ -372,7 +372,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.getByText("正在准备对话……")).toBeInTheDocument();
   });
 
-  it("submits an explicit NPC talk action on the first click", async () => {
+  it("opens prepared NPC dialogue first and submits only after choosing a response", async () => {
     const base = buildView();
     const onSubmit = vi.fn();
     render(<LocationSceneScreen
@@ -387,18 +387,25 @@ describe("AdventureGameShell canonical opaque choices", () => {
           ...base.narrative,
           npcDialogues: [{
             ...base.narrative.npcDialogues[0]!,
-            choices: [choice(TOKENS.dialogueOne, "与老板交谈", "dialogue")],
-            freeInputEnabled: false,
+            choices: [
+              choice(TOKENS.dialogueOne, "追问线索", "dialogue"),
+              choice(TOKENS.dialogueTwo, "表示理解", "dialogue"),
+            ],
+            freeInputEnabled: true,
           }],
         },
       }}
       busy={false}
       onSubmit={onSubmit}
       onReturnMap={vi.fn()}
+      initialFocusNpcId="npc_1"
     />);
 
     await userEvent.click(screen.getByRole("button", { name: "与老板交谈" }));
 
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "追问线索" }));
     expect(onSubmit).toHaveBeenCalledWith({
       kind: "fixed_choice",
       choiceToken: TOKENS.dialogueOne,
@@ -542,7 +549,7 @@ describe("AdventureGameShell three-layer navigation", () => {
     expect(screen.getByRole("button", { name: "返回小镇" })).toBeInTheDocument();
   });
 
-  it("entering a building starts the NPC talk action when the current scene is not dialogue-ready", async () => {
+  it("entering a building only opens the scene and does not start a talk action", async () => {
     const user = userEvent.setup();
     const view = buildTownView();
     const notDialogueReady: GameSessionView = {
@@ -571,10 +578,8 @@ describe("AdventureGameShell three-layer navigation", () => {
     await user.click(screen.getByRole("button", { name: interactive.displayName }));
     await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
 
-    expect(postAction).toHaveBeenCalledWith({
-      interaction: { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
-      revision: notDialogueReady.revision,
-    });
+    expect(screen.getByRole("region", { name: "地点场景：客栈" })).toBeInTheDocument();
+    expect(postAction).not.toHaveBeenCalled();
   });
 
   it("uses the NPC bound to the clicked building instead of the current objective NPC", async () => {
@@ -620,10 +625,8 @@ describe("AdventureGameShell three-layer navigation", () => {
     await user.click(screen.getByRole("button", { name: clickedBuilding.displayName }));
     await user.click(screen.getByRole("button", { name: `进入${clickedBuilding.displayName}` }));
 
-    expect(postAction).toHaveBeenCalledWith({
-      interaction: { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
-      revision: twoNpcView.revision,
-    });
+    expect(screen.getByRole("region", { name: "地点场景：客栈" })).toBeInTheDocument();
+    expect(postAction).not.toHaveBeenCalled();
   });
 
   it("returning from scene goes to town, and returning from town goes to the world map", async () => {

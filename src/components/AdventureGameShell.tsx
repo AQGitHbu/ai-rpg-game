@@ -105,31 +105,10 @@ export function AdventureGameShell({
   }
 
   function enterNpcBuilding(npcId: string): void {
-    const building = view.currentLocation.town?.interactiveBuildings.find((entry) => entry.npcId === npcId);
-    const objectiveNpcName = view.story.currentObjectiveLabel?.match(/^与(.+)交谈$/)?.[1];
-    const objectiveNpc = objectiveNpcName === undefined
-      ? undefined
-      : view.currentLocation.npcs.find((entry) => entry.name === objectiveNpcName);
-    const buildingNpc = building === undefined
-      ? undefined
-      : view.currentLocation.npcs.find((entry) => entry.name === building.npcName);
-    // 正常存档始终以玩家实际点击的建筑绑定为准；目标 NPC 只用于旧存档
-    // 缺失建筑绑定时的只读补偿，不能把玩家带到另一栋建筑的人物对话。
-    const npc = buildingNpc ?? objectiveNpc;
-    const currentDialogue = view.narrative.npcDialogues.find((entry) =>
-      entry.npcId === npcId || (npc !== undefined && entry.name === npc.name),
-    );
-    const alreadyReady = currentDialogue?.freeInputEnabled === true && currentDialogue.choices.length === 2;
-
-    setFocusNpcId(currentDialogue?.npcId ?? npcId);
+    // 建筑入口只负责切换到地点场景。进入建筑不能提交回合，
+    // 也不能因为当前目标是交谈就提前触发下一幕编排。
+    setFocusNpcId(npcId);
     setScreen("scene");
-
-    // 建筑入口是 NPC 对话入口：若当前没有已经就绪的焦点对话，
-    // 使用当前地点 read model 下发的 opaque talk token 发起正式回合。
-    // 不能只打开一个没有 choices 的旁白弹窗。
-    if (!alreadyReady && npc !== undefined) {
-      submitInteraction({ kind: "fixed_choice", choiceToken: npc.talkChoice.choiceToken });
-    }
   }
 
   function openDetails(panel: DetailsPanel): void {
