@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   composeDirectNpcGreeting,
   isGenericNpcAcknowledgement,
+  isGenericNpcGreeting,
   normalizeNpcSpeech,
 } from "./npcSpeech";
 
@@ -23,6 +24,11 @@ describe("NPC direct speech", () => {
   it("recognizes context-free acknowledgements", () => {
     expect(isGenericNpcAcknowledgement('"我知道了。"')).toBe(true);
     expect(isGenericNpcAcknowledgement("关于商队失踪的事，我先说我确定的部分。")).toBe(false);
+  });
+
+  it("recognizes the context-free AI greeting that must not mask a story NPC", () => {
+    expect(isGenericNpcGreeting("你是来打听事情的吧？想知道什么，直接问我。")).toBe(true);
+    expect(isGenericNpcGreeting("这份旧案牵连太深；你若真要查下去，我可以先交出我保管的那一页。")).toBe(false);
   });
 
   it("provides a direct greeting without a speaker description", () => {

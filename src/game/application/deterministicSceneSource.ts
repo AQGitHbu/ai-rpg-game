@@ -1,12 +1,12 @@
 import type { SceneSource, SceneSourceResult, ScenePerformanceSegment, ScenePerformanceProposal } from "./sceneSource";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
-import type { NarrativeEmotion, NarrativeNpcLineState, NarrativeEventState } from "@/game/domain/narrative";
+import type { NarrativeEmotion, NarrativeEventState } from "@/game/domain/narrative";
 import type { Action } from "@/game/domain/action";
 import { semanticSummaryOf } from "@/game/domain/approvedChoice";
 import { asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import type { RelationshipTier } from "@/game/domain/relationship";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
-import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
+import { composeDirectNpcGreeting, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 
 // ---------------------------------------------------------------------------
 // 确定性 fallback 场景表演生成器（spec §7.6 安全降级模板）。
@@ -58,8 +58,23 @@ export function actionTargetsObjective(action: Action, entityId: string): boolea
  */
 export function buildSelectableSceneCandidates(context: SceneGenerationContext): readonly SceneChoiceCandidate[] {
   const event = buildEventState(context);
-  if (event.kind === "dialogue") {
-    const npc = context.presentNpcs.find((entry) => String(entry.id) === String(event.focusNpcId));
+  // ready scene 已经把当前主线目标 NPC 编排到当前地点。这个场景的真实
+  // event 可以仍然是 travel/observe（用于表达“抵达/新线索出现”），但玩家
+  // 进入目标 NPC 后需要直接拥有对该 NPC 的两项回应，而不是把场景里的
+  // `与某人交谈` / `查看四周` 当成对话选项，再额外提交一次 talk。
+  // 仅在 focusNpcContext 与主线目标一致时启用，避免玩家主动和旁 NPC 闲谈
+  // 后把主线目标错误地投影成当前对话对象。
+  const objectiveNpc = context.objectiveTarget !== null
+    ? context.presentNpcs.find((entry) => String(entry.id) === context.objectiveTarget?.entityId)
+    : undefined;
+  const focusedObjectiveNpc = objectiveNpc !== undefined
+    && context.focusNpcContext !== undefined
+    && String(context.focusNpcContext.id) === String(objectiveNpc.id)
+    ? objectiveNpc
+    : undefined;
+  const dialogueNpcId = event.kind === "dialogue" ? event.focusNpcId : focusedObjectiveNpc?.id;
+  if (dialogueNpcId !== undefined) {
+    const npc = context.presentNpcs.find((entry) => String(entry.id) === String(dialogueNpcId));
     if (npc === undefined) return [];
     return [
       { candidateId: "candidate_1", label: `表示愿意支持${npc.name}`, action: { type: "talk", npcId: npc.id, dialogueAct: "support" } },
@@ -152,6 +167,10 @@ function utteranceLead(traits: readonly string[]): string {
 /** 焦点 NPC：talk job 优先使用 job.focusNpcId，否则第一个在场 NPC。 */
 function focusNpc(context: SceneGenerationContext): SceneGenerationContext["presentNpcs"][number] | undefined {
   const { job, presentNpcs } = context;
+  if (context.focusNpcContext !== undefined) {
+    const contextFocus = presentNpcs.find((n) => String(n.id) === String(context.focusNpcContext?.id));
+    if (contextFocus !== undefined) return contextFocus;
+  }
   const talkTarget = job.actionSummary.kind === "talk" ? job.focusNpcId : undefined;
   if (talkTarget !== undefined) {
     const match = presentNpcs.find((n) => String(n.id) === String(talkTarget));
@@ -202,6 +221,9 @@ function buildContextualTierLine(context: SceneGenerationContext, tier: Relation
   const utterance = boundedUtteranceReference(context.job.utterance);
   const reference = contextReference(context);
   if (utterance === null) {
+    if (context.focusNpcContext !== undefined && ["neutral", "friendly", "trusted"].includes(tier)) {
+      return composeDirectNpcGreeting(context.focusNpcContext.role, context.focusNpcContext.name);
+    }
     switch (tier) {
       case "hostile": return "有事就直说，但别指望我什么都回答。";
       case "cold": return "有事就直说，我只回答我确定的部分。";

@@ -14,6 +14,8 @@ const GENERIC_ACKNOWLEDGEMENTS = new Set([
   "嗯嗯",
 ]);
 
+const GENERIC_GREETING = "你是来打听事情的吧？想知道什么，直接问我。";
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -95,6 +97,14 @@ export function isGenericNpcAcknowledgement(text: string): boolean {
     .replace(/[“”"。！？!?，,、；;：:\s]/gu, "")
     .trim();
   return GENERIC_ACKNOWLEDGEMENTS.has(normalized);
+}
+
+/** 判断 AI 是否只返回了没有身份、地点或当前线索承接的通用问候。 */
+export function isGenericNpcGreeting(text: string): boolean {
+  const normalized = normalizeNpcSpeech(text)
+    .replace(/[“”"。！？!?，,、；;：:\s]/gu, "")
+    .trim();
+  return normalized === GENERIC_GREETING.replace(/[。！？!?，,、；;：:\s]/gu, "");
 }
 
 /**

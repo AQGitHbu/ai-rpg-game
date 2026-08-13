@@ -263,8 +263,25 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
       && ws.unlockedLocationIds.includes(l.id),
   );
 
-  // Task 5：焦点 NPC = talk 行动指向的 NPC（job.focusNpcId），否则第一个在场 NPC。
-  const focusNpcId = job.focusNpcId ?? presentNpcs[0]?.id;
+  // 下一场景优先服务权威主线目标：上一回合可能只是完成了旧 NPC 的交谈，
+  // 但幕交接已经把新 NPC 放进当前地点。若仍沿用 job.focusNpcId，玩家进入
+  // 新地点时只能看到一个“与 NPC 交谈”入口，必须再提交一次 talk 才能拿到
+  // 对话选项。把目标 NPC 在本次场景生成时就编排成焦点，进入场景即可展开
+  // 两项选项与自由输入；只有没有在场目标时才回退到本回合 NPC/首位 NPC。
+  const objectiveNpcId = transition.after?.objectiveIndex === undefined
+    ? undefined
+    : (() => {
+        const quest = ws.quests.find((q) => String(q.id) === String(transition.after?.questId));
+        const objective = quest?.objectives[transition.after?.objectiveIndex ?? -1];
+        return objective?.kind === "talk_to_npc" ? objective.npcId : undefined;
+      })();
+  const preserveActionFocus = job.actionSummary.kind === "talk"
+    && transition.mode !== "advanced_act";
+  const focusNpcId = (!preserveActionFocus
+    && objectiveNpcId !== undefined
+    && presentNpcs.some((npc) => String(npc.id) === String(objectiveNpcId)))
+    ? objectiveNpcId
+    : job.focusNpcId ?? presentNpcs[0]?.id;
   const focusNpcContext = focusNpcId !== undefined
     ? buildFocusNpcContext(record, focusNpcId)
     : undefined;

@@ -214,13 +214,13 @@ function actBeatFor(act: number): ActBeat {
       return {
         npcName: "苏绾",
         npcRole: "失踪镖队幸存者",
-        npcDescription: "她认出了染血腰牌，昨夜从断碑谷逃出，知道黑衣追兵为何盯上这桩旧案。",
+        npcDescription: "她认出了染血腰牌，昨夜从断碑谷逃出后又折返回谷口，知道黑衣追兵为何盯上这桩旧案。",
         npcGoal: "说出断碑谷里被掩埋的真相",
         itemName: "断裂镖旗",
         itemDescription: "从苏绾手里接过的半面镖旗，旗角还沾着断碑谷的黑泥。",
         enemyName: "夺旗客",
         questName: "追问断碑谷",
-        questDescription: "听苏绾讲清失踪镖队的经过，再前往断碑谷验证她的证词。",
+        questDescription: "前往断碑谷找到苏绾，核对她带出的失踪镖队证词。",
         factText: "失踪镖队并非遇袭失散，押运的卷宗曾被人带进断碑谷。",
         newLocation: {
           name: "断碑谷",
@@ -231,7 +231,7 @@ function actBeatFor(act: number): ActBeat {
       return {
         npcName: "程砚秋",
         npcRole: "旧案卷宗保管人",
-        npcDescription: "他顺着断碑谷留下的车辙来到青石镇，手里藏着能证明幕后主使的残卷。",
+        npcDescription: "他沿着断碑谷留下的车辙追到谷口，手里藏着能证明幕后主使的残卷。",
         npcGoal: "交出能指向幕后主使的残卷",
         itemName: "残缺卷宗",
         itemDescription: "被撕去关键页的卷宗，剩下的印记仍能与缉凶告示互相印证。",
@@ -244,13 +244,13 @@ function actBeatFor(act: number): ActBeat {
       return {
         npcName: "陆归鸿",
         npcRole: "旧案知情人",
-        npcDescription: "他带着最后一页卷宗现身，承认自己曾替幕后主使传递命令，如今决定说出真相。",
+        npcDescription: "他带着最后一页卷宗在黑水古道现身，承认自己曾替幕后主使传递命令，如今决定说出真相。",
         npcGoal: "在沈青崖面前说出幕后主使的身份",
         itemName: "盟誓铁印",
         itemDescription: "卷宗最后一页上的铁印，能让旧案的责任在终幕前落到实处。",
         enemyName: "迷雾首领",
         questName: "揭开青石旧案",
-        questDescription: "让陆归鸿说出幕后主使，并在最终对峙前保住盟誓铁印。",
+        questDescription: "前往黑水古道找到陆归鸿，确认幕后主使并面对最后的阻拦。",
         factText: "最后一页卷宗确认：青石镇的缉凶告示是为了掩盖一场灭口。",
         newLocation: {
           name: "黑水古道",
@@ -290,13 +290,16 @@ function planNextAct(ws: WorldState, act: number): WorldDeltaProposal {
           connectFromLocationId: currentLocationId(ws),
         }
       : null,
-    // NPC 固定落在玩家当前地点，确保“当前目标”与场景中的可交互角色一致。
-    // 若本幕同时铸造了新地点，物品/敌人落在新地点，作为可选的地图分支。
+    // 有新地点时，NPC、物品和敌人一起落在新地点，主线目标会先要求玩家前往
+    // 该地点再交谈；没有新地点时才沿用当前地点。这样“前往断碑谷/黑水古道”
+    // 不会只出现在任务描述里，而会成为真实可执行的主线步骤。
     newNpc: {
       name: npcName,
       role: beat.npcRole,
       description: beat.npcDescription,
-      locationRef: { kind: "existing", id: currentLocationId(ws) },
+      locationRef: beat.newLocation
+        ? { kind: "new_location" }
+        : { kind: "existing", id: currentLocationId(ws) },
       goals: [beat.npcGoal],
     },
     newItem: {

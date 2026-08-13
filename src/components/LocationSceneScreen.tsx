@@ -57,6 +57,13 @@ function BattleScene({
   readonly onBattleFeedback: (message: string) => void;
   readonly onSubmit: (interaction: PlayerInteraction) => void;
 }) {
+  const enemyNames = battle.units === undefined
+    ? [battle.enemyName]
+    : battle.units
+      .filter((unit) => unit.side === "enemies")
+      .map((unit) => unit.name);
+  const enemyLabel = enemyNames.length > 1 ? enemyNames.join("、") : battle.enemyName;
+
   function renderBattleChoiceButton(choice: { choiceToken: string | null; label: string; enabled?: boolean; disabledReason?: string | null }) {
     return (
       <button
@@ -76,14 +83,14 @@ function BattleScene({
   }
 
   return (
-    <section className="battle-viewport battle-viewport--fullscreen" aria-label={`战斗 · ${battle.enemyName}`}>
+    <section className="battle-viewport battle-viewport--fullscreen" aria-label={`战斗 · ${enemyLabel}`}>
       <div className="battle-arena-backdrop" aria-hidden="true">
         <AdventureVisual gameType={gameType} kind="enemy" label="" decorative />
       </div>
       <div className="battle-hud">
         <span className="battle-hud-side">己方</span>
         <strong>第 {battle.round} 回合</strong>
-        <span className="battle-hud-side battle-hud-side--enemy">敌方 · {battle.enemyName}</span>
+        <span className="battle-hud-side battle-hud-side--enemy">敌方 · {enemyLabel}</span>
       </div>
       {battle.units !== undefined && battle.units.length > 0
         ? battle.units.map((unit) => (

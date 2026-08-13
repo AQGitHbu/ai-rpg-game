@@ -269,6 +269,56 @@ describe("projectGameSessionView", () => {
     expect(view.story.currentObjectiveLabel).toBe("与传讯人交谈");
   });
 
+  it("uses the newly generated objective NPC as focus even when the triggering event was travel", () => {
+    const secondNpc: NpcEntry = {
+      id: asNpcId("npc_2"), name: "传讯人", role: "旧案传讯人", description: "带来下一幕消息",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const scene = {
+      sceneId: "scene-target-ready",
+      turn: 2,
+      narration: "主线线索把你带到传讯人面前。",
+      usedFactIds: [],
+      npcLine: { npcId: secondNpc.id, text: "我手里有一条线索。", emotion: "neutral" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "t1", label: "表示愿意支持传讯人" },
+        { choiceToken: "t2", label: "质疑传讯人的说法" },
+      ] as const,
+      source: "fallback" as const,
+      event: { kind: "travel" as const, locationId: asLocationId("loc_1") },
+      npcDialogues: [
+        { npcId: secondNpc.id, npcName: secondNpc.name, npcRole: secondNpc.role, speechPages: ["我手里有一条线索。"] },
+      ],
+    };
+    const wsTarget = {
+      ...ws,
+      npcs: [...ws.npcs, secondNpc],
+      quests: [{
+        id: asQuestId("quest_target"), name: "循迹", description: "找到传讯人",
+        objectives: [{ kind: "talk_to_npc" as const, npcId: secondNpc.id }],
+        onSuccess: { kind: "advance_story" as const }, onFailure: { kind: "closed" as const },
+        tags: [], kind: "main" as const, stage: 1, status: "active" as const,
+      }],
+    };
+    const ssTarget = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("t1", scene.sceneId, 0, scene.choices[0].label, { type: "talk", npcId: secondNpc.id, dialogueAct: "support" }),
+          approved("t2", scene.sceneId, 0, scene.choices[1].label, { type: "talk", npcId: secondNpc.id, dialogueAct: "challenge" }),
+        ],
+      },
+    };
+    const view = projectGameSessionView(wsTarget, ssTarget, 0, "test-ending-session");
+    const focus = view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_2");
+    expect(focus?.choices).toHaveLength(2);
+    expect(focus?.freeInputEnabled).toBe(true);
+    expect(view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_1")).toBeUndefined();
+  });
+
   it("世界行动场景：choices 进入 narrative.choices，不投影为任何 NPC 对话选择", () => {
     const scene = {
       sceneId: "scene-w",

@@ -8,7 +8,7 @@ import {
   type SceneChoiceCandidate,
 } from "../../deterministicSceneSource";
 import { NARRATIVE_EMOTIONS, type NarrativeEmotion } from "@/game/domain/narrative";
-import { isGenericNpcAcknowledgement, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
+import { isGenericNpcAcknowledgement, isGenericNpcGreeting, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 
 // ---------------------------------------------------------------------------
 // live 场景表演源（Task 6，取代 liveSceneSource）。
@@ -80,6 +80,9 @@ export function resolveLiveNpcLine<TNpcId>(
   if (presentNpc === undefined) return null;
   const text = normalizeNpcSpeech(candidate.text, presentNpc.name);
   if (text === "") return null;
+  // 这句没有身份、地点或线索承接，AI 在新幕里返回它会把角色演绎
+  // 退化成同一个模板。整场回退到同轨角色化台词，避免玩家看到假上下文。
+  if (isGenericNpcGreeting(text)) return null;
   const emotion = NARRATIVE_EMOTIONS.includes(candidate.emotion as NarrativeEmotion)
     ? (candidate.emotion as NarrativeEmotion)
     : "neutral";
@@ -292,6 +295,7 @@ ${selectable.map((c) => `${c.candidateId} = ${c.label}`).join("\n")}
 要求：
 - segments 逐条覆盖【已解决的本轮规则结果节拍】中的每个节拍并被其 beatId 点名；自创节拍 ID 非法。
 - npcLine.text 只能是焦点 NPC 的第一人称直接台词；不要写 NPC 名称、动作、表情或“说道/答道”等叙述性前缀，并且必须明确承接玩家原话或当前情境，不能只回答“我知道了/好的/嗯”。
+- 禁止使用“你是来打听事情的吧？想知道什么，直接问我。”或“欢迎光临”这类脱离角色身份的通用问候；必须承接焦点 NPC 的角色、当前地点、当前目标、可写线索或最近交互中的至少一项。
 - 私密知识ID 的正文绝不出现在任何文本；只可提及【可写进台词的线索】正文。
 - usedFactIds 只可从【可写进台词的线索】选择；usedInteractionActionIds 只可从【最近交互】选择。
 - 只返回 JSON，不要其他文字。`;

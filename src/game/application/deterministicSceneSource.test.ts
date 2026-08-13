@@ -248,17 +248,23 @@ describe("deterministicSceneSource", () => {
         entityId: "npc_2",
         entityName: "客人",
       },
+      focusNpcContext: {
+        ...makeFocusContext("neutral"),
+        id: asNpcId("npc_2"),
+        name: "客人",
+      },
     };
 
     expect(buildEventState(context)).toEqual({ kind: "observe", locationId: asLocationId("loc_1") });
     const candidates = buildSelectableSceneCandidates(context);
     expect(candidates.map((candidate) => candidate.label)).toEqual([
-      "与客栈老板交谈",
-      "与客人交谈",
+      "表示愿意支持客人",
+      "质疑客人的说法",
     ]);
-    expect(candidates.some((candidate) => candidate.action.type === "talk"
-      && candidate.action.dialogueAct !== "ask")).toBe(false);
-    expect(buildSceneChoices(context)[0]?.label).toBe("与客人交谈");
+    expect(candidates.every((candidate) => candidate.action.type === "talk"
+      && candidate.action.npcId === asNpcId("npc_2")
+      && candidate.action.dialogueAct !== "ask")).toBe(true);
+    expect(buildSceneChoices(context)[0]?.label).toBe("表示愿意支持客人");
   });
 
   it("does not keep a side NPC focused while another present NPC is the current talk objective", () => {

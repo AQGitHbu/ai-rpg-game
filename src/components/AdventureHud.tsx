@@ -32,7 +32,6 @@ function deriveObjective(view: GameSessionView): string {
   const quest = activeMain ?? nextMain ?? view.quests.find((entry) => entry.status === "active");
   const objective = quest?.objectives.find((entry) => !entry.completed);
   if (objective !== undefined) return objective.label;
-  if (view.ending === null && view.story.storyProgress >= 100) return "结局生成中";
   return "暂无线索";
 }
 

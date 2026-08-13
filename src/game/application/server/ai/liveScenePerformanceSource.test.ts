@@ -340,6 +340,45 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(proposal.npcLine?.text).not.toContain("如实答道");
   });
 
+  it("AI 返回脱离角色身份的通用问候 → 回退到角色化 NPC 台词", async () => {
+    const baseContext = makeContext({
+      presentNpcs: [{
+        id: asNpcId("npc_1"), name: "顾砚", role: "旧案传讯人", publicProfile: "带着旧案线索的人",
+        knownFactCards: [], hiddenFactCards: [], sceneVisibleFactIds: [],
+        recentInteractionSummaries: [], recentInteractionActionIds: [],
+        relationship: { affinity: 0 }, emotion: "neutral", goals: [], forbiddenKnowledgeIds: [],
+      }],
+    });
+    const context: SceneGenerationContext = {
+      ...baseContext,
+      focusNpcContext: {
+        ...baseContext.focusNpcContext!,
+        name: "顾砚",
+        role: "旧案传讯人",
+        publicProfile: "带着旧案线索的人",
+      },
+    };
+    const transport = stubTransport({
+      segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "铁器声停了一瞬。" }],
+      npcLine: {
+        npcId: "npc_1",
+        text: "你是来打听事情的吧？想知道什么，直接问我。",
+        emotion: "neutral",
+        answeredBeatIds: [],
+        usedFactIds: [],
+        usedInteractionActionIds: [],
+      },
+      objectiveLink: null,
+      choices: [
+        { candidateId: "candidate_1", label: "支持顾砚" },
+        { candidateId: "candidate_2", label: "质疑顾砚" },
+      ],
+    });
+    const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
+    expect(proposal.source).toBe("fallback");
+    expect(proposal.npcLine?.text).toContain("线索");
+  });
+
   it("AI 返回带叙述前缀的具体回应 → 持久化前归一化为直接台词", async () => {
     const context = makeContext({
       job: makeJob({ utterance: "商队失踪的事你知道吗？" }),

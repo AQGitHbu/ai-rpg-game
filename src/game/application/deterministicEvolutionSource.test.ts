@@ -103,4 +103,23 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
       locationRef: "current",
     });
   });
+
+  it("把带新地点的幕拍人物与物品、敌人放在同一条主线地点上", async () => {
+    const source = createDeterministicEvolutionSource();
+    const storyState = createInitialStoryState({
+      gameLength: "medium",
+      initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 },
+    });
+    const result = await source.propose({
+      worldState: makeWorldWithNpc(0),
+      storyState,
+      need: { kind: "next_act", act: 3 },
+      reason: "medium-story-coherence",
+    });
+    expect(result.proposal?.newLocation?.name).toBe("断碑谷");
+    expect(result.proposal?.newNpc?.locationRef).toEqual({ kind: "new_location" });
+    expect(result.proposal?.newItem?.locationRef).toBe("new_location");
+    expect(result.proposal?.newEnemy?.locationRef).toBe("new_location");
+    expect(result.proposal?.nextMainQuest?.description).toContain("前往断碑谷");
+  });
 });

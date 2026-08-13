@@ -330,9 +330,17 @@ export function projectGameSessionView(
   // 只有结构化 dialogue event 才能赋予 NPC“焦点对话”能力。
   // observe/travel 等场景也可能带 npcLine 作为旁白表演，但不能因此泄露
   // 自由输入或伪造一个没有两个批准选项的焦点对话框。
+  const sceneLineNpcId = scene?.npcLine === null || scene?.npcLine === undefined
+    ? null
+    : String(scene.npcLine.npcId);
+  const generatedObjectiveNpcFocus = currentObjectiveNpcId !== null
+    && sceneLineNpcId === currentObjectiveNpcId
+    && presentNpcs.some((npc) => String(npc.id) === currentObjectiveNpcId)
+    ? currentObjectiveNpcId
+    : null;
   const persistedFocusNpcId = scene?.event?.kind === "dialogue"
     ? String(scene.event.focusNpcId)
-    : null;
+    : generatedObjectiveNpcFocus;
   // 兼容已经写入本地存档的旧交接场景：若权威当前目标明确要求与另一名
   // 在场 NPC 交谈，旧 scene 的 focus/choices 已经过期。将旧 NPC 降为普通
   // 交谈入口，避免继续消费同一组 support/challenge token。

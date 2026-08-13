@@ -29,7 +29,7 @@
 - **世界演化是按需的可选调用**：仅当 `EvolutionNeed.kind !== "none"`（幕推进/节奏/终局对）才触发；正常对话回合不调用演化源。
 - **候选不足恢复**：若真实可执行候选少于两个，生成编排可额外申请 `scene_candidate_shortage` 节奏演化；已有交谈/移动入口时只补探索钩子，完全无入口时才在预算/可达性边界内补 NPC，并按需补地点，然后重建上下文。仍不足则返回 unavailable，不把无内容的 explore 当作合法候选。
 - 对话场景绑定一个在场焦点 NPC，并提出两个语义不同的 TalkAction；其他场景从服务端给出的合法候选 ID 中选择两个不同 Action。
-- `ObjectiveTransition.mode === advanced_act` 时固定派生为非对话的任务交接场景，不能沿用上一回合 talk 的 `focusNpcId`；若当前目标明确指向另一名在场 NPC，旧人物完成支持/质疑后同样回到通用候选并优先显示目标 NPC。只有玩家重新提交旧人物的普通 `ask` 入口，才允许开启一轮新的焦点对话。
+- `ObjectiveTransition.mode === advanced_act` 时叙事事件仍记录为非对话的任务交接，但若下一目标 NPC 已在场且上下文焦点已切换到该 NPC，场景候选直接铸造该 NPC 的 support/challenge；进入地点或点击 talk 只打开 ready 对话，不再为首次交谈额外提交一次 `ask` API。玩家主动点击旁 NPC 时仍保持普通 `ask` 语义。
 - live source 只能选择服务端候选 ID，不能发明任意 `actionKey`、实体 ID、事实 ID 或规则结果。
 - 审批器逐字段重建 scene/event/choice；生成对象原引用不能直接持久化。
 - 服务器根据 post-writeback revision 铸造 opaque `choiceToken`；客户端场景不含 `actionKey`、registry、候选 effect、隐藏事实或 AI diagnostics。
@@ -57,7 +57,7 @@
 
 ## 连续性与分化
 
-- 每个成功玩家回合都排队下一幕，选择结果进入结构化状态和有界记忆，下一次生成读取这些已批准结果。
+- 每个成功玩家回合都排队下一幕，选择结果进入结构化状态和有界记忆，下一次生成读取这些已批准结果；对话目标的下一幕焦点在 ready 场景生成时确定，避免把“打开对话”误当成新的剧情回合。
 - 相同 seed 与相同输入/选择序列可确定性 replay；不同 seed 改变初始世界结构。
 - 同 seed 下"支持/质疑"选择会改变 NPC affinity/emotion/history、候选事件和结局方向（trust/doubt 由规则要求按关键 NPC 亲和度裁决），不只是改写叙事文案。
 - 开局小、随游玩增长：下一次世界演化批准的新 NPC/地点/物品会进入场景上下文，并要求场景提及该实体。
