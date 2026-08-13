@@ -357,6 +357,28 @@ describe("approveScenePerformance (Task 6)", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("写回场景前统一清理 NPC 名称/动作前缀，scene 与 npcDialogues 都保存直接台词", () => {
+    const result = approveScenePerformance({
+      context: makeContext(),
+      proposal: makeProposal({
+        npcLine: {
+          npcId: "npc_1",
+          text: "老板如实答道：\"我知道了。\"",
+          emotion: "neutral",
+          answeredBeatIds: [],
+          usedFactIds: [],
+          usedInteractionActionIds: [],
+        },
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.scene.npcLine?.text).toBe("我知道了。");
+    expect(result.scene.npcDialogues?.[0]?.speechPages.join("")).toBe("我知道了。");
+  });
+
   it("引用其他 NPC 的交互（不在本 NPC recentInteractionActionIds）→ 整场拒绝 wrong_npc_interaction", () => {
     const result = approveScenePerformance({
       context: makeContext(),

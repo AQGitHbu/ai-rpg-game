@@ -8,6 +8,7 @@ import {
   type SceneChoiceCandidate,
 } from "../../deterministicSceneSource";
 import { NARRATIVE_EMOTIONS, type NarrativeEmotion } from "@/game/domain/narrative";
+import { isGenericNpcAcknowledgement, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 
 // ---------------------------------------------------------------------------
 // live 场景表演源（Task 6，取代 liveSceneSource）。
@@ -77,10 +78,12 @@ export function resolveLiveNpcLine<TNpcId>(
   const presentNpc = presentNpcs.find((npc) => String(npc.id) === candidate.npcId)
     ?? presentNpcs.find((npc) => npc.name !== undefined && npc.name === candidate.npcId);
   if (presentNpc === undefined) return null;
+  const text = normalizeNpcSpeech(candidate.text, presentNpc.name);
+  if (text === "") return null;
   const emotion = NARRATIVE_EMOTIONS.includes(candidate.emotion as NarrativeEmotion)
     ? (candidate.emotion as NarrativeEmotion)
     : "neutral";
-  return { npcId: presentNpc.id, text: candidate.text.trim(), emotion };
+  return { npcId: presentNpc.id, text, emotion };
 }
 
 /** 把 AI 选择的两个合法 candidateId 映射为表演提案的 choices；非法/重复 → null。 */
@@ -131,6 +134,9 @@ export function parseScenePerformanceJson(
     if (!isRecord(raw.npcLine)) return null;
     const resolved = resolveLiveNpcLine(raw.npcLine as LiveNpcLineCandidate, context.presentNpcs);
     if (resolved === null) return null;
+    // 没有承接对象的“我知道了/好的”不能成为 ready scene 的 NPC 回应；
+    // 调用方会沿同一生成链路回退到确定性上下文台词。
+    if (isGenericNpcAcknowledgement(resolved.text)) return null;
     npcLine = {
       npcId: String(resolved.npcId),
       text: resolved.text,
@@ -285,6 +291,7 @@ ${selectable.map((c) => `${c.candidateId} = ${c.label}`).join("\n")}
 
 要求：
 - segments 逐条覆盖【已解决的本轮规则结果节拍】中的每个节拍并被其 beatId 点名；自创节拍 ID 非法。
+- npcLine.text 只能是焦点 NPC 的第一人称直接台词；不要写 NPC 名称、动作、表情或“说道/答道”等叙述性前缀，并且必须明确承接玩家原话或当前情境，不能只回答“我知道了/好的/嗯”。
 - 私密知识ID 的正文绝不出现在任何文本；只可提及【可写进台词的线索】正文。
 - usedFactIds 只可从【可写进台词的线索】选择；usedInteractionActionIds 只可从【最近交互】选择。
 - 只返回 JSON，不要其他文字。`;

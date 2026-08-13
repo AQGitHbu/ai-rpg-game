@@ -59,11 +59,16 @@ async function runBranch(branch: Branch, replay: number) {
     const npcId = store.record()!.worldState.npcs[0]!.id;
     accept(await playTurn(store.repo, { kind: "free_text", text, targetNpcId: asNpcId(npcId) }, new Map(), () => "2026-08-09T00:00:00.000Z", source));
   };
+  const openingNpcName = store.record()!.worldState.npcs[0]!.name;
 
   await scene(); // 1: 序幕
   await fixed("交谈"); // 2: 完成第一幕
   await scene(); // 具象化第 2 幕内容
+  await fixed(openingNpcName); // 主动重新开启与开场 NPC 的一轮对话
+  await scene();
   await fixed(branch.fixedLabel); // 3: 固定分支选项
+  await scene();
+  await fixed(openingNpcName); // 固定选择后已退出焦点；再次主动交谈后才允许自由输入
   await scene();
   await freeText(branch.customText); // 4: 自定义分支输入
   await scene();

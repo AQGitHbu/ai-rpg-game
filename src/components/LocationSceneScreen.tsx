@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, type FormEvent } from "react";
-import type { GameSessionView, NewGameInput } from "@/game/application";
+import { composeDirectNpcGreeting, type GameSessionView, type NewGameInput } from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { AdventureVisual } from "./adventureVisuals";
 import { normalizeDisplayText } from "./displayText";
@@ -226,7 +226,7 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
         npcId: fallbackId,
         name: npc.name,
         role: npc.role,
-        speechPages: [`${npc.name}（${npc.role}）看向你：“客官，有什么事情吗？”`],
+        speechPages: [composeDirectNpcGreeting()],
         choices: [npc.talkChoice],
         freeInputEnabled: false,
         giveChoices: [],
@@ -246,9 +246,6 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
   });
   const [battleFeedback, setBattleFeedback] = useState<BattleFeedback | null>(null);
   const previousBattleRef = useRef(view.battle);
-
-  const prevPendingRef = useRef(pending);
-  const prevNpcIdsRef = useRef<string[]>([]);
 
   useEffect(() => {
     const previous = previousBattleRef.current;
@@ -280,24 +277,6 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
     }
     return undefined;
   }, [view.battle]);
-
-  // 当 pending 结束后，自动弹出新增对话 NPC 的对话框（即"与XXX交谈"行动完成后）
-  useEffect(() => {
-    const wasPending = prevPendingRef.current;
-    prevPendingRef.current = pending;
-
-    if (wasPending && !pending) {
-      const currentIds = (view.narrative.npcDialogues ?? []).map((d) => d.npcId);
-      const prevIds = prevNpcIdsRef.current;
-      const newId = currentIds.find((id) => !prevIds.includes(id));
-      if (newId) {
-        setOpenDialogueNpcId(newId);
-      }
-      prevNpcIdsRef.current = currentIds;
-    } else if (!pending) {
-      prevNpcIdsRef.current = (view.narrative.npcDialogues ?? []).map((d) => d.npcId);
-    }
-  }, [pending, view.narrative.npcDialogues]);
 
   function renderChoiceButton(choice: { choiceToken: string; label: string }) {
     // “与 NPC 交谈”只是打开本幕已经生成好的对话；只有弹窗内的两个选项
@@ -596,7 +575,12 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
           dialogue={openDialogue}
           gameType={gameType}
           busy={busy || pending}
-          onSubmit={onSubmit}
+          onSubmit={(interaction) => {
+            // 正式对白选项消费的是当前场景。先关闭旧弹窗，避免 pending 完成后
+            // 同一个 NPC ID 在新场景中重新挂载，看起来像旧选项从未失效。
+            setOpenDialogueNpcId(null);
+            onSubmit(interaction);
+          }}
           onClose={() => {
             setOpenDialogueNpcId(null);
           }}

@@ -8,6 +8,8 @@ export type { NewGameInput } from "@/game/domain/newGame";
 export { validateNewGameInput, type NewGameInputError } from "@/game/domain/newGame";
 // 开局呈现政策：表单与提示词共用的六个性格标签与政策映射（纯呈现，不触规则）。
 export { PERSONALITY_TRAIT_OPTIONS, buildStylePolicy, type StylePolicy } from "./stylePolicy";
+// UI 可用的 NPC 直接台词兜底；不暴露场景生成、规则或持久化实现。
+export { composeDirectNpcGreeting } from "@/game/domain/npcSpeech";
 
 // 纯持久化端口经 facade 暴露给 application contract tests；不加载 server adapter。
 export {

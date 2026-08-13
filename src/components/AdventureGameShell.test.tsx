@@ -212,14 +212,130 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     await user.click(screen.getByRole("button", { name: "追问线索" }));
 
-    expect((screen.getByRole("button", { name: "表示理解" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("textbox", { name: "自定义回应" }) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
     expect((screen.getByRole("button", { name: "探索客栈" }) as HTMLButtonElement).disabled).toBe(true);
 
     resolveRequest({ kind: "rejected", message: "stop" });
     await waitFor(() => {
-      expect((screen.getByRole("button", { name: "表示理解" }) as HTMLButtonElement).disabled).toBe(false);
+      expect((screen.getByRole("button", { name: "探索客栈" }) as HTMLButtonElement).disabled).toBe(false);
     });
+    await user.click(screen.getByRole("button", { name: /老板路人/ }));
+    expect(screen.getByRole("button", { name: "表示理解" })).toBeEnabled();
+  });
+
+  it("closes the old NPC dialog as soon as a formal dialogue choice is submitted", async () => {
+    const base = buildView();
+    const onSubmit = vi.fn();
+    render(<LocationSceneScreen
+      view={base}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "追问线索" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      kind: "fixed_choice",
+      choiceToken: TOKENS.dialogueOne,
+    });
+    expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
+  });
+
+  it("does not auto-open an NPC dialog when pending completes and a new NPC appears", async () => {
+    const base = buildView();
+    const onSubmit = vi.fn();
+    const { rerender } = render(<LocationSceneScreen
+      view={base}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    await userEvent.click(screen.getByRole("button", { name: "关闭对话" }));
+    rerender(<LocationSceneScreen
+      view={{ ...base, narrativeGeneration: { status: "pending" } }}
+      busy={true}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    const messengerView: GameSessionView = {
+      ...base,
+      revision: base.revision + 1,
+      currentLocation: {
+        ...base.currentLocation,
+        npcs: [
+          ...base.currentLocation.npcs,
+          { name: "传讯人", role: "信使", talkChoice: choice("c_messenger_talk", "与传讯人交谈", "dialogue") },
+        ],
+      },
+      narrative: {
+        ...base.narrative,
+        eventKind: "observe",
+        npcDialogues: [
+          ...base.narrative.npcDialogues,
+          {
+            npcId: "npc_2",
+            name: "传讯人",
+            role: "信使",
+            speechPages: ["我带来了一封信。"],
+            choices: [choice("c_messenger_talk", "与传讯人交谈", "dialogue")],
+            freeInputEnabled: false,
+            giveChoices: [],
+          },
+        ],
+      },
+      narrativeGeneration: { status: "idle" },
+    };
+    rerender(<LocationSceneScreen
+      view={messengerView}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("announces the authoritative next task after the generated handoff becomes ready", async () => {
+    const initial = {
+      ...buildView(),
+      story: { ...buildView().story, currentObjectiveLabel: "与邵叔交谈" },
+    };
+    const { rerender } = render(<AdventureGameShell
+      view={initial}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+
+    rerender(<AdventureGameShell
+      view={{
+        ...initial,
+        revision: initial.revision + 1,
+        story: { ...initial.story, currentObjectiveLabel: null },
+        narrativeGeneration: { status: "pending" },
+      }}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+    rerender(<AdventureGameShell
+      view={{
+        ...initial,
+        revision: initial.revision + 2,
+        story: { ...initial.story, currentObjectiveLabel: "与传讯人交谈" },
+        narrativeGeneration: { status: "idle" },
+      }}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+
+    expect(await screen.findByRole("status")).toHaveTextContent("下一步：与传讯人交谈");
   });
 
   it("sets the same busy state for NPC free text until the request settles", async () => {
@@ -234,14 +350,15 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    expect((screen.getByRole("textbox", { name: "自定义回应" }) as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "追问线索" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
     expect((screen.getByRole("button", { name: "探索客栈" }) as HTMLButtonElement).disabled).toBe(true);
 
     resolveRequest({ kind: "rejected", message: "stop" });
     await waitFor(() => {
-      expect((screen.getByRole("textbox", { name: "自定义回应" }) as HTMLInputElement).disabled).toBe(false);
+      expect((screen.getByRole("button", { name: "探索客栈" }) as HTMLButtonElement).disabled).toBe(false);
     });
+    await user.click(screen.getByRole("button", { name: /老板路人/ }));
+    expect(screen.getByRole("textbox", { name: "自定义回应" })).toBeEnabled();
   });
 
   it("provides a close button that collapses the NPC dialogue panel", async () => {

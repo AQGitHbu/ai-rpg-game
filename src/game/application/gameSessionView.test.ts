@@ -209,6 +209,65 @@ describe("projectGameSessionView", () => {
     expect(view.narrative.choices ?? []).toHaveLength(0);
   });
 
+  it("demotes a persisted stale focus when another present NPC is the current talk objective", () => {
+    const secondNpc: NpcEntry = {
+      id: asNpcId("npc_2"), name: "传讯人", role: "信使", description: "带来下一幕消息",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const wsHandoff: WorldState = {
+      ...ws,
+      npcs: [...ws.npcs, secondNpc],
+      quests: [{
+        id: asQuestId("quest_1"),
+        name: "循迹而行",
+        description: "跟随信使的线索推进故事",
+        objectives: [{ kind: "talk_to_npc", npcId: secondNpc.id }],
+        onSuccess: { kind: "advance_story" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 1,
+        status: "active",
+      }],
+    };
+    const scene = {
+      sceneId: "scene-stale-focus",
+      turn: 2,
+      narration: "主线已经交给传讯人。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text: "去找传讯人吧。", emotion: "neutral" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "t1", label: "表示愿意支持老板" },
+        { choiceToken: "t2", label: "质疑老板的说法" },
+      ] as const,
+      source: "fallback" as const,
+      event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+      npcDialogues: [
+        { npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["去找传讯人吧。"] },
+        { npcId: secondNpc.id, npcName: secondNpc.name, npcRole: secondNpc.role, speechPages: ["我有消息给你。"] },
+      ],
+    };
+    const ssHandoff: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("t1", scene.sceneId, 0, scene.choices[0].label, { type: "talk", npcId: npc1.id, dialogueAct: "support" }),
+          approved("t2", scene.sceneId, 0, scene.choices[1].label, { type: "talk", npcId: npc1.id, dialogueAct: "challenge" }),
+        ],
+      },
+    };
+
+    const view = projectGameSessionView(wsHandoff, ssHandoff, 0, "test-ending-session");
+    const oldNpc = view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_1");
+    expect(oldNpc?.freeInputEnabled).toBe(false);
+    expect(oldNpc?.choices.map((entry) => entry.label)).toEqual(["与老板交谈"]);
+    expect(view.narrative.choices).toHaveLength(0);
+    expect(view.story.currentObjectiveLabel).toBe("与传讯人交谈");
+  });
+
   it("世界行动场景：choices 进入 narrative.choices，不投影为任何 NPC 对话选择", () => {
     const scene = {
       sceneId: "scene-w",
@@ -360,6 +419,33 @@ describe("projectGameSessionView", () => {
     const guest = dialogues.find((d) => String(d.npcId) === "npc_2");
     expect(lu!.speechPages.join("")).toBe("需要什么吗？");
     expect(guest!.speechPages.length).toBeGreaterThan(0);
+  });
+
+  it("旧存档中的 NPC 名称/动作前缀在 read model 投影时被清理", () => {
+    const legacyStory = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: {
+          sceneId: "scene-legacy-speech",
+          turn: 0,
+          narration: "你在客栈。",
+          usedFactIds: [],
+          npcLine: { npcId: asNpcId("npc_1"), text: "老板如实答道：\"我知道了。\"", emotion: "neutral" as const, usedFactIds: [] },
+          choices: [] as never,
+          source: "fallback" as const,
+          event: { kind: "dialogue" as const, focusNpcId: asNpcId("npc_1") },
+          npcDialogues: [
+            { npcId: asNpcId("npc_1"), npcName: "老板", npcRole: "路人", speechPages: ["老板如实答道：\"我知道了。\""] },
+          ],
+        },
+      },
+    };
+    const view = projectGameSessionView(ws, legacyStory, 0, "test-ending-session");
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1");
+    expect(dialogue?.speechPages.join("")).toBe("我知道了。");
+    expect(dialogue?.speechPages.join("")).not.toMatch(/老板|如实答道/);
+    expect(view.narrative.npcLine?.text).toBe("我知道了。");
   });
 
   it("observe 场景的 NPC 旁白不会伪装成可自由输入的焦点对话", () => {
@@ -653,7 +739,7 @@ describe("projectGameSessionView", () => {
     expect(nonFocusNpc?.freeInputEnabled).toBe(false);
     expect(nonFocusNpc?.smallTalk).toEqual({
       prompt: "向韩征打个招呼",
-      response: "韩征点了点头：「有什么事直接找我，别耽误正事。」",
+      response: "有什么事直接找我，别耽误正事。",
     });
 
     const fallbackStory = {
@@ -671,7 +757,7 @@ describe("projectGameSessionView", () => {
     const fallbackView = projectGameSessionView(wsTwo, fallbackStory, 2, "test-ending-session");
     expect(fallbackView.narrative.npcDialogues.find((d) => d.npcId === "npc_2")?.smallTalk).toEqual({
       prompt: "和韩征聊几句",
-      response: "韩征压低声音聊了几句捕头的日常：“先看看周围，别急着下结论。”",
+      response: "先看看周围，别急着下结论。",
     });
   });
 });

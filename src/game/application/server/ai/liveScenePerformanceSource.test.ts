@@ -309,4 +309,60 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     const proposal = await source.generateScene(context);
     expect(proposal.source).toBe("fallback");
   });
+
+  it("AI 返回带叙述前缀的通用确认句 → 清理后仍判定为无上下文并回退", async () => {
+    const context = makeContext({
+      job: makeJob({
+        utterance: "商队失踪的事你知道吗？",
+        beats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应玩家" }],
+      }),
+    });
+    const transport = stubTransport({
+      segments: [{ beatId: "player_utterance", text: "你提出了问题。" }],
+      npcLine: {
+        npcId: "npc_1",
+        text: "老板如实答道：\"我知道了。\"",
+        emotion: "neutral",
+        answeredBeatIds: ["player_utterance"],
+        usedFactIds: [],
+        usedInteractionActionIds: [],
+      },
+      objectiveLink: null,
+      choices: [
+        { candidateId: "candidate_1", label: "支持老板" },
+        { candidateId: "candidate_2", label: "质疑老板" },
+      ],
+    });
+    const source = createLiveScenePerformanceSource({ transport, config });
+    const proposal = await source.generateScene(context);
+    expect(proposal.source).toBe("fallback");
+    expect(proposal.npcLine?.text).toContain("商队失踪的事你知道吗");
+    expect(proposal.npcLine?.text).not.toContain("如实答道");
+  });
+
+  it("AI 返回带叙述前缀的具体回应 → 持久化前归一化为直接台词", async () => {
+    const context = makeContext({
+      job: makeJob({ utterance: "商队失踪的事你知道吗？" }),
+    });
+    const transport = stubTransport({
+      segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+      npcLine: {
+        npcId: "npc_1",
+        text: "老板说道：\"关于商队失踪的事，我先说我确定的部分。\"",
+        emotion: "neutral",
+        answeredBeatIds: [],
+        usedFactIds: [],
+        usedInteractionActionIds: [],
+      },
+      objectiveLink: null,
+      choices: [
+        { candidateId: "candidate_1", label: "支持老板" },
+        { candidateId: "candidate_2", label: "质疑老板" },
+      ],
+    });
+    const source = createLiveScenePerformanceSource({ transport, config });
+    const proposal = await source.generateScene(context);
+    expect(proposal.source).toBe("generated");
+    expect(proposal.npcLine?.text).toBe("关于商队失踪的事，我先说我确定的部分。");
+  });
 });

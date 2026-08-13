@@ -29,6 +29,7 @@
 - **世界演化是按需的可选调用**：仅当 `EvolutionNeed.kind !== "none"`（幕推进/节奏/终局对）才触发；正常对话回合不调用演化源。
 - **候选不足恢复**：若真实可执行候选少于两个，生成编排可额外申请 `scene_candidate_shortage` 节奏演化；已有交谈/移动入口时只补探索钩子，完全无入口时才在预算/可达性边界内补 NPC，并按需补地点，然后重建上下文。仍不足则返回 unavailable，不把无内容的 explore 当作合法候选。
 - 对话场景绑定一个在场焦点 NPC，并提出两个语义不同的 TalkAction；其他场景从服务端给出的合法候选 ID 中选择两个不同 Action。
+- `ObjectiveTransition.mode === advanced_act` 时固定派生为非对话的任务交接场景，不能沿用上一回合 talk 的 `focusNpcId`；若当前目标明确指向另一名在场 NPC，旧人物完成支持/质疑后同样回到通用候选并优先显示目标 NPC。只有玩家重新提交旧人物的普通 `ask` 入口，才允许开启一轮新的焦点对话。
 - live source 只能选择服务端候选 ID，不能发明任意 `actionKey`、实体 ID、事实 ID 或规则结果。
 - 审批器逐字段重建 scene/event/choice；生成对象原引用不能直接持久化。
 - 服务器根据 post-writeback revision 铸造 opaque `choiceToken`；客户端场景不含 `actionKey`、registry、候选 effect、隐藏事实或 AI diagnostics。
@@ -43,6 +44,8 @@
 - 每个 ready 场景以**分段旁白**呈现；每一段必须对应服务端下发的强制节拍 ID（`player_utterance` / `item_obtained` / `fact_discovered` / `quest_progress` / `quest_advanced` / `battle_started` / `battle_round` / `battle_resolved` / `entity_introduced`），数量 ≤8，可另附一个 `atmosphere` 段且必须置于最后。
 - `objectiveLink` 必须与权威 `ObjectiveTransition.after` 一致（无 after 目标时为 null）；目标在本回合推进时，必须产出 `quest_advanced` 段命名新目标相关的已批准实体。
 - 当玩家对焦点 NPC 提交话语（`job.utterance`）时，表演契约必须返回该 NPC 的台词并列出它应答的 `player_utterance` 节拍；缺失应答使提案非法并触发确定性 fallback。
+- `npcLine.text` 的输出边界是 NPC 第一人称直接台词：不得带 NPC 名称、动作或“说道/答道”等叙述性包装。审批写回和 read model 会再次归一化，以兼容历史场景。
+- 确定性 fallback 会读取 `job.utterance`、焦点 NPC 关系档位和当前目标，生成带具体承接对象的回应；通用“我知道了/好的/嗯”会被 live source 判为无上下文并回退。
 
 ## 焦点 NPC 隔离上下文
 
@@ -65,6 +68,7 @@
 - `src/game/application/sceneGenerationContext.ts` — 最小权限上下文与合法候选、强制节拍、目标链接实体。
 - `src/game/application/focusNpcContext.ts` — 焦点 NPC 隔离记忆与关系政策投影。
 - `src/game/application/deterministicSceneSource.ts` — 离线 fallback proposal。
+- `src/game/application/gameSessionView.ts` — 投影焦点能力，并修复旧存档中与权威 talk 目标冲突的过期焦点。
 - `src/game/application/approveAndWriteScene.ts` — 场景表演审批与写回。
 - `src/game/application/generatePendingScene.ts` — 生成编排与原子 write-back。
 - `src/game/application/evolveWorld.ts` / `worldEvolutionSource.ts` — 可选世界演化编排与 port。
@@ -75,6 +79,7 @@
 
 - generated/fallback 场景各有两个 proposal、两个不同 token，scene JSON 无 `actionKey`。
 - 分段旁白逐段命中强制节拍 ID；`objectiveLink` 与 HUD 当前目标一致；焦点 NPC 台词应答当前 `player_utterance`。
+- NPC 台词只保留直接对白正文，不能以“邵叔如实答道：……”形式把舞台说明混入气泡；旧存档投影也必须满足同一断言。
 - registry 的 `basedOnRevision` 等于 scene 写回后的 revision。
 - tampered、stale、重复 token 零写入。
 - live source 越权引用或失败不会绕过审批，也不会阻塞可完成的离线旅程。

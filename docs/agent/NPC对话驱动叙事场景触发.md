@@ -12,7 +12,12 @@ NPC 对话是持续推进故事的主要入口。每个 ready 的焦点 NPC 场�
 - 自定义输入必须绑定当前焦点 NPC。每次提交生成新的浏览器 UUID，即使连续对同一 NPC 输入也分别计为独立回合。
 - 玩家输入表达意图，不声明事实。服务端意图解析器只能转换成当前受支持 Action；越权声明不能直接改变任务、知识、关系、物品、战斗或结局。
 - 每个成功输入都会推进 `turnNumber`、更新结构化 NPC 记忆/关系、产生一个 `PendingNarrativeJob`；服务端在规则写入成功后立即后台排队下一幕，不等待玩家再次点击或客户端 ensure 才开始生成。
+- 当一次对话完成当前幕并具象化出下一任务时，新场景是非焦点的任务交接场景：上一名 NPC 立即失去双选项/自定义输入，场景选择优先包含权威新目标；新出现的 NPC 不会被界面自动打开。
+- 若权威当前目标要求与另一名在场 NPC 交谈，支线 NPC 在完成一次支持/质疑后回到普通“与 NPC 交谈”入口；玩家只有再次主动提交该入口的 `ask` 行动，才开启一轮新的焦点对话，避免同一组 support/challenge 选项自动循环铸造，同时保留自由回访角色的能力。
+- 正式对白提交会关闭当前弹窗；后台写回 ready 快照后，UI 以 `story.currentObjectiveLabel` 显示“下一步：<目标>”，不从旁白或 NPC 名称猜任务。
 - 玩家原文不写入长期记忆、事件账本或日志；长期记录只保存规则归一化的 dialogue act、topic summary 和 fact IDs。
+- `npcLine.text` 是直接展示给玩家的 NPC 第一人称台词正文，不得包含 NPC 名称、角色动作或“说道/答道”等叙述性前缀；点击 NPC 时 UI 已经单独展示名称。
+- NPC 回应必须承接当前玩家话语或当前交谈情境；“我知道了”“好的”“嗯”等无对象确认句不是合法的上下文回应，live source 会拒绝并走确定性 fallback。
 
 ## 单一路径
 
@@ -58,6 +63,7 @@ type ActionRequest = {
 - `src/game/application/performTurn.ts` — 统一回合编排。
 - `src/game/application/actionConverter.ts` — token/free text 到 Action 的服务端转换。
 - `src/game/application/gameSessionView.ts` — 焦点 NPC 对话 read model。
+- `src/game/domain/npcSpeech.ts` — 直接台词归一化、通用确认句识别和无场景问候兜底。
 
 ## 主要验收
 
@@ -71,6 +77,8 @@ type ActionRequest = {
 - UI 不得制造 token、解析 token 或回退到业务 action key。
 - 不能为“短问候”“闲聊”增加零写入快捷路径；成功输入就是正式玩家回合。
 - 规则裁决和 NPC 知识边界不能交给 AI；AI 只负责 proposal 与表达。
+- 场景生成、审批写回和 read model 投影都执行台词归一化，因此旧存档中已保存的“NPC 名称 + 动作 + 台词”包装不会继续出现在对话框。
+- read model 会兼容旧交接存档：当已保存的 dialogue focus 与当前在场 talk 目标不一致时，丢弃过期的焦点选项并把旧 NPC 降为普通交谈入口；不要求玩家清档。
 - 任何新输入形态必须先扩展 `Interaction` union，并继续通过 `/api/game/actions` 与 `performTurn`，不能新增并行入口。
 
 ## 历史说明

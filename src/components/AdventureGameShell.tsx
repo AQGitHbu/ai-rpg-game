@@ -52,6 +52,7 @@ export function AdventureGameShell({
   const triggerRef = useRef<HTMLElement | null>(null);
   const devToolsTriggerRef = useRef<HTMLElement | null>(null);
   const previousLocationRef = useRef<string | null>(null);
+  const lastReadyObjectiveRef = useRef<string | null>(view.story.currentObjectiveLabel);
 
   const pending = view.narrativeGeneration.status === "pending";
   const isSubmitting = feedback.phase === "submitting";
@@ -78,6 +79,19 @@ export function AdventureGameShell({
       setScreen(entryScreenFor(view));
     }
   }, [view.currentLocation.name, view.revision]);
+
+  // 世界演化可能要到 pending 场景写回时才具象化下一幕任务，因此不能只看
+  // action 请求的即时响应。以 ready 快照中的权威目标为准，在目标真正变化后
+  // 告诉玩家下一步；不从旁白、NPC 名称或按钮文案猜任务。
+  useEffect(() => {
+    if (pending) return;
+    const currentObjective = view.story.currentObjectiveLabel;
+    const previousObjective = lastReadyObjectiveRef.current;
+    lastReadyObjectiveRef.current = currentObjective;
+    if (currentObjective !== null && currentObjective !== previousObjective) {
+      setFeedback({ phase: "success", message: `下一步：${currentObjective}` });
+    }
+  }, [pending, view.story.currentObjectiveLabel]);
 
   function applyOutcome(outcome: ActionOutcome): void {
     switch (outcome.kind) {

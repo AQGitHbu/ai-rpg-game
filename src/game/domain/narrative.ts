@@ -2,6 +2,7 @@ import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "./worldEntity";
 import { paginateSpeechText } from "./speechPagination";
 import type { PendingNarrativeJob } from "./pendingNarrativeJob";
 import type { ApprovedChoice } from "./approvedChoice";
+import { composeDirectNpcGreeting, normalizeNpcSpeech } from "./npcSpeech";
 
 export const NARRATIVE_EMOTIONS = [
   "neutral", "warm", "guarded", "afraid", "angry", "sad"
@@ -134,7 +135,9 @@ export const NPC_SCENE_PAGE_CHAR_BUDGET = 48;
 
 /** 确定性 NPC 台词兜底：无场景对白/AI 行无效时的稳定问候（纯函数，零 AI/IO/随机）。 */
 export function composeDeterministicNpcLine(npcName: string, npcRole: string): string {
-  return `${npcName}（${npcRole}）看了你一眼："欢迎光临，有什么需要帮忙的吗？"`;
+  void npcName;
+  void npcRole;
+  return composeDirectNpcGreeting();
 }
 
 /**
@@ -150,11 +153,14 @@ export function buildNpcDialoguePages(
   },
 ): readonly NpcDialogueInScene[] {
   return npcs.map((npc) => {
+    const normalizedFocusSpeech = options?.focusSpeech === undefined
+      ? ""
+      : normalizeNpcSpeech(options.focusSpeech, npc.name);
     const isFocus = options?.focusNpcId !== undefined
       && String(npc.id) === String(options.focusNpcId)
-      && (options.focusSpeech ?? "").trim() !== "";
+      && normalizedFocusSpeech !== "";
     const text = isFocus
-      ? options!.focusSpeech!.trim()
+      ? normalizedFocusSpeech
       : composeDeterministicNpcLine(npc.name, npc.role);
     const smallTalk = !isFocus && options?.smallTalkData
       ? options.smallTalkData.get(String(npc.id))

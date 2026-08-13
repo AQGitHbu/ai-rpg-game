@@ -6,6 +6,7 @@ import { semanticSummaryOf } from "@/game/domain/approvedChoice";
 import { asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import type { RelationshipTier } from "@/game/domain/relationship";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
+import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 
 // ---------------------------------------------------------------------------
 // 确定性 fallback 场景表演生成器（spec §7.6 安全降级模板）。
@@ -16,13 +17,13 @@ import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 // （节拍 ID、NPC 台词、目标链接、合法选项）都从服务端权威上下文派生。
 // ---------------------------------------------------------------------------
 
-/** 档位 → 确定性台词（同一档位恒定；不同档位肉眼可辨）。 */
-const TIER_LINES: Readonly<Record<RelationshipTier, { readonly text: string; readonly emotion: NarrativeEmotion }>> = {
-  hostile: { text: "冷冷地答道：\"这不关你的事。\"", emotion: "angry" },
-  cold: { text: "谨慎地答道：\"我不便多说。\"", emotion: "guarded" },
-  neutral: { text: "如实答道：\"我知道了。\"", emotion: "neutral" },
-  friendly: { text: "热情地说：\"我很乐意帮忙。\"", emotion: "warm" },
-  trusted: { text: "坦诚地说：\"正好，我也想告诉你这件事。\"", emotion: "warm" },
+/** 关系档位只决定回应政策；具体台词还必须读取本轮情境。 */
+const TIER_EMOTIONS: Readonly<Record<RelationshipTier, NarrativeEmotion>> = {
+  hostile: "angry",
+  cold: "guarded",
+  neutral: "neutral",
+  friendly: "warm",
+  trusted: "warm",
 };
 
 /** 强制 player_utterance 节拍 ID（无则空数组）。 */
@@ -165,17 +166,15 @@ function buildNpcLineState(context: SceneGenerationContext): ScenePerformancePro
   if (npc === undefined) return null;
 
   const policy = context.focusNpcContext?.responsePolicy;
-  // Task 5：有焦点 NPC 政策时按档位出台词（同一行动，hostile/trusted 肉眼可辨）；
-  // 无政策（纯 fallback 夹具）保持既有状态文案。
-  const tierLine = policy !== undefined ? TIER_LINES[policy.tier] : null;
-  const text = tierLine !== null
-    ? `${npc.name}${tierLine.text}`
-    : buildStatusLine(npc.name, job.resolvedEvent);
-  const emotion = tierLine !== null ? tierLine.emotion : "neutral";
+  // 回退台词也必须从当前玩家话语/交谈情境生成，不能用脱离上下文的固定确认句。
+  const text = policy !== undefined
+    ? buildContextualTierLine(context, policy.tier)
+    : buildStatusLine(job.resolvedEvent);
+  const emotion = policy !== undefined ? TIER_EMOTIONS[policy.tier] : "neutral";
 
   return {
     npcId: String(npc.id),
-    text,
+    text: normalizeNpcSpeech(text, npc.name),
     emotion,
     usedFactIds: [],
     usedInteractionActionIds: [],
@@ -183,18 +182,56 @@ function buildNpcLineState(context: SceneGenerationContext): ScenePerformancePro
   };
 }
 
-function buildStatusLine(npcName: string, resolvedEvent: SceneGenerationContext["job"]["resolvedEvent"]): string {
+function boundedUtteranceReference(utterance: string | undefined): string | null {
+  const normalized = utterance?.replace(/\s+/gu, " ").trim().replace(/[。！？!?]+$/u, "") ?? "";
+  if (normalized === "") return null;
+  const bounded = Array.from(normalized).slice(0, 36).join("");
+  return bounded === normalized ? bounded : `${bounded}…`;
+}
+
+function contextReference(context: SceneGenerationContext): string {
+  const utterance = boundedUtteranceReference(context.job.utterance);
+  if (utterance !== null) return `你刚才问的“${utterance}”`;
+  const objective = context.objectiveTransition.after?.label;
+  if (objective !== undefined) return `当前要查的“${objective}”`;
+  return "你刚才提到的事情";
+}
+
+/** 同一档位的回退台词也必须承接当前话语，且只使用 NPC 第一人称。 */
+function buildContextualTierLine(context: SceneGenerationContext, tier: RelationshipTier): string {
+  const utterance = boundedUtteranceReference(context.job.utterance);
+  const reference = contextReference(context);
+  if (utterance === null) {
+    switch (tier) {
+      case "hostile": return "有事就直说，但别指望我什么都回答。";
+      case "cold": return "有事就直说，我只回答我确定的部分。";
+      case "neutral": return "你是来打听事情的吧？想知道什么，直接问我。";
+      case "friendly": return "有什么想问的尽管说，我能帮你的会尽量帮。";
+      case "trusted": return "不用绕弯子，你想知道什么就问吧，我会把我知道的都告诉你。";
+    }
+  }
+
+  switch (tier) {
+    case "hostile": return `${reference}，这不关你的事，我不想回答。`;
+    case "cold": return `${reference}，我只能先说我确定的部分。`;
+    case "neutral": return `${reference}，我先说我确定的部分；你还想了解哪一段？`;
+    case "friendly": return `${reference}，我愿意把知道的告诉你，我们可以一起理清楚。`;
+    case "trusted": return `${reference}，这正是我想和你谈的事；我会把来龙去脉说清楚。`;
+  }
+}
+
+function buildStatusLine(resolvedEvent: SceneGenerationContext["job"]["resolvedEvent"]): string {
   switch (resolvedEvent.status) {
     case "success":
-      return `${npcName}说道："欢迎，有什么需要帮忙的吗？"`;
+      return "你想了解什么？我可以先说说我知道的。";
     case "partial_success":
-      return `${npcName}犹豫了一下："这件事……我知道一些，但不方便全说。"`;
+      return "这件事我知道一些，但有些部分不方便现在全说。";
     case "failure":
-      return `${npcName}摇了摇头："恐怕这件事我帮不上忙。"`;
+      return "恐怕这件事我帮不上忙，你换个问题吧。";
     case "blocked":
-      return `${npcName}摇了摇头："现在还不是做这件事的时候。"`;
+      return "现在还不是做这件事的时候。";
     default:
-      return `${npcName}看了你一眼，没有说话。`;
+      return "我还没弄清楚这件事，先别急着下结论。";
   }
 }
 
@@ -243,14 +280,29 @@ export function buildSceneChoices(context: SceneGenerationContext): ScenePerform
 /** 事件状态由 job 的真实 eventKind 派生：travel→travel，talk→dialogue 焦点 NPC，investigate→首条事实。 */
 export function buildEventState(context: SceneGenerationContext): NarrativeEventState {
   const { job, currentLocation } = context;
+  // 幕推进已经把权威目标交给下一名人物/地点；上一回合的 talk 只说明
+  // “刚才发生了什么”，不能继续把旧 NPC 设为新一幕的焦点，否则会重新
+  // 铸造同一组 support/challenge 选项。交接场景改用通用合法候选，并由
+  // objectiveTarget 排序把真正的下一步放在前面。
+  if (context.objectiveTransition.mode === "advanced_act") {
+    return { kind: "observe", locationId: currentLocation.id };
+  }
   switch (job.resolvedEvent.eventKind) {
     case "travel":
       return { kind: "travel", locationId: currentLocation.id };
     case "dialogue": {
       const focus = focusNpc(context);
-      return focus !== undefined
-        ? { kind: "dialogue", focusNpcId: focus.id }
-        : { kind: "observe", locationId: currentLocation.id };
+      if (focus === undefined) return { kind: "observe", locationId: currentLocation.id };
+      const objectiveNpc = context.objectiveTarget === null
+        ? undefined
+        : context.presentNpcs.find((npc) => String(npc.id) === context.objectiveTarget?.entityId);
+      const latestDialogueAct = context.focusNpcContext?.recentInteractions.at(-1)?.dialogueAct;
+      if (objectiveNpc !== undefined
+        && String(objectiveNpc.id) !== String(focus.id)
+        && latestDialogueAct !== "ask") {
+        return { kind: "observe", locationId: currentLocation.id };
+      }
+      return { kind: "dialogue", focusNpcId: focus.id };
     }
     case "investigate": {
       const factChange = job.resolvedEvent.facts[0];

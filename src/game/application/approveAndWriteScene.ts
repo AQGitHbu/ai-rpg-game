@@ -11,6 +11,7 @@ import type { Action } from "@/game/domain/action";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
 import { asFactId, asNpcId } from "@/game/domain/worldEntity";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
+import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 
 // ---------------------------------------------------------------------------
 // R4（Task 21）：候选事件池审批 + Task 6：场景表演契约审批。
@@ -198,10 +199,14 @@ function rebuildEvent(event: NarrativeEventState): NarrativeEventState {
   }
 }
 
-function rebuildNpcLine(line: ScenePerformanceNpcLine): NarrativeNpcLineState {
+function rebuildNpcLine(
+  line: ScenePerformanceNpcLine,
+  presentNpcs: SceneGenerationContext["presentNpcs"],
+): NarrativeNpcLineState {
+  const npcName = presentNpcs.find((npc) => String(npc.id) === String(line.npcId))?.name;
   return {
     npcId: asNpcId(line.npcId),
-    text: line.text,
+    text: normalizeNpcSpeech(line.text, npcName),
     emotion: line.emotion,
     usedFactIds: line.usedFactIds.map((id) => asFactId(id)),
     answeredBeatIds: [...line.answeredBeatIds],
@@ -396,7 +401,7 @@ export function approveScenePerformance(input: {
   }
 
   const narration = proposal.segments.map((s) => s.text).join("\n");
-  const rebuiltNpcLine = npcLine === null ? null : rebuildNpcLine(npcLine);
+  const rebuiltNpcLine = npcLine === null ? null : rebuildNpcLine(npcLine, context.presentNpcs);
   const scene: NarrativeSceneState = {
     sceneId: proposal.sceneId,
     turn: context.job.turnNumber,

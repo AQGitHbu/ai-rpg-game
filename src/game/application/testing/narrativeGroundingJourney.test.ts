@@ -30,8 +30,9 @@ describe("叙事落地旅程（Step 2）", () => {
     await playIssuedChoice(store.repo, "交谈");
     await advanceScene(store.repo);
 
-    // 用 scene 对话的 support 选项构建对话场景，使焦点 NPC 可接收自由输入
-    await playIssuedChoice(store.repo, "支持");
+    // 幕交接后旧 NPC 已退出焦点；玩家主动重新交谈才开启一轮可自由输入的对话。
+    const openingNpcName = store.record()!.worldState.npcs[0]!.name;
+    await playIssuedChoice(store.repo, openingNpcName);
     await advanceScene(store.repo);
 
     // 提交自由输入 + 目标 NPC
@@ -73,6 +74,9 @@ describe("叙事落地旅程（Step 2）", () => {
       // 先建立指向 npc_0 的 dialogue 场景（自由输入要求当前场景焦点 NPC 匹配）。
       await advanceScene(store.repo);
       await playIssuedChoice(store.repo, "交谈");
+      await advanceScene(store.repo);
+      const openingNpcName = store.record()!.worldState.npcs[0]!.name;
+      await playIssuedChoice(store.repo, openingNpcName);
       await advanceScene(store.repo);
 
       // 直接设置 NPC 亲和度（不依赖大量回合交互）。
@@ -127,9 +131,11 @@ describe("叙事落地旅程（Step 2）", () => {
     const hostile = await runWithAffinity(-70);
     const trusted = await runWithAffinity(70);
 
-    // 敌意 NPC 台词含"冷冷地答道"；信任 NPC 含"坦诚地说"。
-    expect(hostile.proposal.npcLine?.text).toContain("冷冷地答道");
-    expect(trusted.proposal.npcLine?.text).toContain("坦诚地说");
+    // 两种关系档位都必须用 NPC 直接台词，并且承接本轮玩家话语。
+    expect(hostile.proposal.npcLine?.text).toContain("不关你的事");
+    expect(trusted.proposal.npcLine?.text).toContain("来龙去脉");
+    expect(hostile.proposal.npcLine?.text).not.toMatch(/冷冷地答道|如实答道/);
+    expect(trusted.proposal.npcLine?.text).not.toMatch(/坦诚地说|说道|答道/);
     expect(hostile.proposal.npcLine?.emotion).toBe("angry");
     expect(trusted.proposal.npcLine?.emotion).toBe("warm");
   });

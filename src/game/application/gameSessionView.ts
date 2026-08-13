@@ -12,6 +12,7 @@ import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { buildTownView, type TownView } from "./townView";
 import { projectCombatView, type BattleView } from "./combatView";
+import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 
 export type PlayerChoiceView = {
   readonly choiceToken: string;
@@ -159,7 +160,7 @@ function buildSmallTalkFallback(npc: { readonly name: string; readonly role: str
 } {
   return {
     prompt: `和${npc.name}聊几句`,
-    response: `${npc.name}压低声音聊了几句${npc.role}的日常：“先看看周围，别急着下结论。”`,
+    response: `先看看周围，别急着下结论。`,
   };
 }
 
@@ -283,12 +284,35 @@ export function projectGameSessionView(
     : [];
 
   const scene = storyState.narrative.currentScene;
+  const currentObjectiveRef = currentObjectiveOf(worldState, storyState);
+  const currentObjectiveQuest = currentObjectiveRef === null
+    ? undefined
+    : worldState.quests.find((quest) => String(quest.id) === String(currentObjectiveRef.questId));
+  const currentObjective = currentObjectiveRef === null
+    ? undefined
+    : currentObjectiveQuest?.objectives[currentObjectiveRef.objectiveIndex];
+  const currentObjectiveNpcId = currentObjective?.kind === "talk_to_npc"
+    ? String(currentObjective.npcId)
+    : null;
   // 只有结构化 dialogue event 才能赋予 NPC“焦点对话”能力。
   // observe/travel 等场景也可能带 npcLine 作为旁白表演，但不能因此泄露
   // 自由输入或伪造一个没有两个批准选项的焦点对话框。
-  const focusNpcId = scene?.event?.kind === "dialogue"
+  const persistedFocusNpcId = scene?.event?.kind === "dialogue"
     ? String(scene.event.focusNpcId)
     : null;
+  // 兼容已经写入本地存档的旧交接场景：若权威当前目标明确要求与另一名
+  // 在场 NPC 交谈，旧 scene 的 focus/choices 已经过期。将旧 NPC 降为普通
+  // 交谈入口，避免继续消费同一组 support/challenge token。
+  const persistedFocusNpc = persistedFocusNpcId === null
+    ? undefined
+    : presentNpcs.find((npc) => String(npc.id) === persistedFocusNpcId);
+  const latestFocusDialogueAct = persistedFocusNpc?.memory.interactionHistory.at(-1)?.dialogueAct;
+  const staleDialogueFocus = persistedFocusNpcId !== null
+    && currentObjectiveNpcId !== null
+    && currentObjectiveNpcId !== persistedFocusNpcId
+    && presentNpcs.some((npc) => String(npc.id) === currentObjectiveNpcId)
+    && latestFocusDialogueAct !== "ask";
+  const focusNpcId = staleDialogueFocus ? null : persistedFocusNpcId;
   const registry = storyState.narrative.choiceRegistry ?? [];
   const legalChoiceMap = buildChoiceMap(worldState, storyState, revision);
   const projectSceneChoice = (sceneChoice: NonNullable<typeof scene>["choices"][number]): PlayerChoiceView | null => {
@@ -310,9 +334,11 @@ export function projectGameSessionView(
       presentation: presentationForAction(approved.action),
     };
   };
-  const projectedSceneChoices = scene?.choices
-    .map(projectSceneChoice)
-    .filter((entry): entry is PlayerChoiceView => entry !== null) ?? [];
+  const projectedSceneChoices = staleDialogueFocus
+    ? []
+    : scene?.choices
+      .map(projectSceneChoice)
+      .filter((entry): entry is PlayerChoiceView => entry !== null) ?? [];
   const isDialogueScene = focusNpcId !== null;
   const dialogueChoices: NpcDialogueView["choices"] = isDialogueScene && projectedSceneChoices.length === 2
     ? [projectedSceneChoices[0]!, projectedSceneChoices[1]!]
@@ -321,17 +347,22 @@ export function projectGameSessionView(
   const npcDialogues: readonly NpcDialogueView[] = presentNpcs.flatMap((npc) => {
     const isFocus = focusNpcId === String(npc.id);
     const supplied = sceneDialogues.get(String(npc.id));
-    const focusLine = scene?.npcLine !== null
+    const normalizedFocusLine = scene?.npcLine !== null
       && scene?.npcLine !== undefined
       && scene.npcLine.npcId === npc.id
       && scene.npcLine.text.trim() !== ""
-      ? scene.npcLine.text.trim()
+      ? normalizeNpcSpeech(scene.npcLine.text, npc.name)
       : null;
+    const focusLine = normalizedFocusLine === "" ? null : normalizedFocusLine;
     // 非焦点 NPC 若没有场景供给的台词，不渲染千篇一律的模板招呼面板。
     if (!isFocus && supplied === undefined && focusLine === null) return [];
-    const speechPages = supplied !== undefined && supplied.speechPages.length > 0
-      ? [...supplied.speechPages]
+    const suppliedSpeechPages = supplied?.speechPages
+      .map((page) => normalizeNpcSpeech(page, npc.name))
+      .filter((page) => page !== "") ?? [];
+    const speechPages = suppliedSpeechPages.length > 0
+      ? suppliedSpeechPages
       : paginateSpeechText(focusLine ?? composeDeterministicNpcLine(npc.name, npc.role), NPC_SCENE_PAGE_CHAR_BUDGET);
+    const smallTalkData = supplied?.smallTalk ?? buildSmallTalkFallback(npc);
     // 非焦点 NPC 的场景台词也必须能转化为一次真实交谈：点击后提交 ask，
     // 下一回合再由规则把该 NPC 设为焦点并生成两项回应 + 自由输入。
     const fallbackTalkChoice = choice(
@@ -363,12 +394,27 @@ export function projectGameSessionView(
           })
         : [],
       ...(!isFocus
-        ? { smallTalk: supplied?.smallTalk ?? buildSmallTalkFallback(npc) }
+        ? {
+            smallTalk: {
+              prompt: smallTalkData.prompt,
+              response: normalizeNpcSpeech(smallTalkData.response, npc.name)
+                || composeDeterministicNpcLine(npc.name, npc.role),
+            },
+          }
         : {}),
     }];
   });
 
   const battle = activeBattle === null ? null : projectCombatView(worldState, activeBattle, revision);
+  const sceneNpc = scene?.npcLine === null || scene?.npcLine === undefined
+    ? undefined
+    : presentNpcs.find((npc) => String(npc.id) === String(scene.npcLine?.npcId));
+  const projectedNpcLine = scene?.npcLine === null || scene?.npcLine === undefined
+    ? null
+    : {
+        text: normalizeNpcSpeech(scene.npcLine.text, sceneNpc?.name),
+        emotion: scene.npcLine.emotion,
+      };
   const endingDefinition = worldState.ending === null
     ? undefined
     : worldState.endings.find((entry) => entry.id === worldState.ending?.endingId);
@@ -424,16 +470,14 @@ export function projectGameSessionView(
       tension: storyState.tension,
       pacingNeed: storyState.nextPacingNeed,
       storyProgress: storyState.storyProgress,
-      currentObjectiveLabel: currentObjectiveOf(worldState, storyState)?.label ?? null,
+      currentObjectiveLabel: currentObjectiveRef?.label ?? null,
     },
     narrative: {
       mode: storyState.narrative.mode,
       hasScene: scene !== null,
       ...(scene === null ? {} : { eventKind: scene.event?.kind, narration: scene.narration }),
       choices: isDialogueScene ? [] : projectedSceneChoices,
-      npcLine: scene?.npcLine === null || scene?.npcLine === undefined
-        ? null
-        : { text: scene.npcLine.text, emotion: scene.npcLine.emotion },
+      npcLine: projectedNpcLine,
       npcDialogues,
     },
     narrativeGeneration: { status: storyState.narrative.generation.status },

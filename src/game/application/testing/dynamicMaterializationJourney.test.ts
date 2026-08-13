@@ -9,7 +9,6 @@ import {
   loadStoryState,
   type InMemoryRepo,
 } from "./foundationJourney.testutil";
-import { asNpcId } from "@/game/domain/worldEntity";
 
 // ---------------------------------------------------------------------------
 // Step 1：动态具象化旅程。
@@ -84,6 +83,9 @@ describe("动态具象化旅程（Step 1）", () => {
     const sceneRecord = store.record();
     const sceneNarration = sceneRecord?.storyState.narrative.currentScene?.narration ?? "";
     expect(sceneNarration).toContain("传讯人·2");
+    const handoffScene = sceneRecord?.storyState.narrative.currentScene;
+    expect(handoffScene?.event?.kind).toBe("observe");
+    expect(handoffScene?.choices.some((choice) => choice.label.includes("传讯人·2"))).toBe(true);
     expect(ws?.eventLedger.some((event) => event.type === "blueprint_expanded")).toBe(true);
 
     await fixed("拾取"); // 4: 物品获取
@@ -153,8 +155,7 @@ describe("动态具象化旅程（Step 1）", () => {
     expect(store.applyCalls().length - applyAfterTurn).toBe(0);
 
     expect(await advanceScene(store.repo)).toBe(true);
-    const npcId = store.record()!.worldState.npcs[0]!.id;
-    const unblocked = await playTurn(store.repo, { kind: "free_text", text: "我相信你", targetNpcId: asNpcId(npcId) });
+    const unblocked = await playIssuedChoice(store.repo, "传讯人");
     expect(unblocked.ok).toBe(true);
   });
 });
