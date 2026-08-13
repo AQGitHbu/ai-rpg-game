@@ -722,6 +722,36 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     expect(generation.job.utterance).toBe("去街道看看");
   });
 
+  it("accepts focused custom dialogue after entering a new location before the scene event becomes dialogue", async () => {
+    const story = buildFocusedDialogueStoryState();
+    const currentScene = story.narrative.currentScene;
+    if (currentScene === null) throw new Error("focused scene fixture missing");
+    const { repo, applyCalls } = createSpyRepo(buildWorldWithMainQuest(), {
+      ...story,
+      narrative: {
+        ...story.narrative,
+        currentScene: {
+          ...currentScene,
+          event: { kind: "travel", locationId: asLocationId("loc_1") },
+        },
+      },
+    });
+
+    const result = await performTurn(
+      {
+        gameId: asGameId("g1"),
+        actionId: "focused-after-travel",
+        interaction: { kind: "free_text", text: "我带来了这枚染血腰牌，你知道失踪镖队吗？", targetNpcId: asNpcId("npc_1") },
+        expectedRevision: 0,
+        choiceMap: new Map(),
+      },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+  });
+
   it("同一 NPC 连续两个 ready 场景的自定义输入使用不同 actionId，各自形成记忆与 pending job", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 

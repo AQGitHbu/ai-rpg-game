@@ -25,7 +25,11 @@ export function objectiveLabel(ws: WorldState, objective: QuestObjective | undef
     }
     case "talk_to_npc": {
       const npc = findNpc(ws, objective.npcId);
-      return npc ? `与${npc.name}交谈` : "与某人交谈";
+      if (!npc) return "与某人交谈";
+      const location = findLocation(ws, npc.locationId);
+      return location !== undefined && String(npc.locationId) !== String(ws.currentLocationId)
+        ? `前往${location.name}，与${npc.name}交谈`
+        : `与${npc.name}交谈`;
     }
     case "obtain_item": {
       const item = findItem(ws, objective.itemId);

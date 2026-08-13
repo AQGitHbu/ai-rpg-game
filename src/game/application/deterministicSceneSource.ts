@@ -78,7 +78,7 @@ export function buildSelectableSceneCandidates(context: SceneGenerationContext):
     if (npc === undefined) return [];
     const dialogueCandidate: SceneChoiceCandidate = {
       candidateId: "candidate_1",
-      label: `回应${npc.name}：“我先相信你，但请把知道的说清楚。”`,
+      label: dialogueChoiceLabel(npc),
       action: { type: "talk", npcId: npc.id, dialogueAct: "support" },
     };
     const nonDialogueCandidate = context.legalActionCandidates
@@ -235,9 +235,36 @@ function contextReference(context: SceneGenerationContext): string {
   return "你刚才提到的事情";
 }
 
+function canReferenceCurrentUtterance(context: SceneGenerationContext): boolean {
+  const focusNpcId = context.focusNpcContext?.id;
+  const jobNpcId = context.job.focusNpcId;
+  return focusNpcId !== undefined && jobNpcId !== undefined && String(focusNpcId) === String(jobNpcId);
+}
+
+function dialogueChoiceLabel(npc: SceneGenerationContext["presentNpcs"][number]): string {
+  const role = npc.role;
+  let utterance = "我想先听你把眼前的事说清楚，再决定是否相信你。";
+  if (/(更夫|守夜)/u.test(role)) {
+    utterance = "你亲眼见到的风声究竟指向哪里？请把昨夜那一段说清楚。";
+  } else if (/(传讯|信使|线人)/u.test(role)) {
+    utterance = "你带来的线索是不是和失踪镖队有关？我愿意拿出证据和你对照。";
+  } else if (/(幸存者|镖队)/u.test(role)) {
+    utterance = "你亲眼见到的镖队究竟发生了什么？我会先把手里的证据交给你核对。";
+  } else if (/(卷宗|保管人)/u.test(role)) {
+    utterance = "你保管的那一页能补上旧案的缺口吗？请把来龙去脉说清楚。";
+  } else if (/知情人/u.test(role)) {
+    utterance = "盟誓铁印是不是能指向幕后主使？我愿意把卷宗交给你核对。";
+  } else if (/(掌柜|摊主)/u.test(role)) {
+    utterance = "你听见的消息是不是和镇口告示有关？请把来历和时间说清楚。";
+  }
+  return `回应${npc.name}：“${utterance}”`;
+}
+
 /** 同一档位的回退台词也必须承接当前话语，且只使用 NPC 第一人称。 */
 function buildContextualTierLine(context: SceneGenerationContext, tier: RelationshipTier): string {
-  const utterance = boundedUtteranceReference(context.job.utterance);
+  const utterance = canReferenceCurrentUtterance(context)
+    ? boundedUtteranceReference(context.job.utterance)
+    : null;
   const reference = contextReference(context);
   if (utterance === null) {
     if (context.focusNpcContext !== undefined && ["neutral", "friendly", "trusted"].includes(tier)) {
@@ -253,11 +280,11 @@ function buildContextualTierLine(context: SceneGenerationContext, tier: Relation
   }
 
   switch (tier) {
-    case "hostile": return `${reference}，这不关你的事，我不想回答。`;
-    case "cold": return `${reference}，我只能先说我确定的部分。`;
-    case "neutral": return `${reference}，我先说我确定的部分；你还想了解哪一段？`;
-    case "friendly": return `${reference}，我愿意把知道的告诉你，我们可以一起理清楚。`;
-    case "trusted": return `${reference}，这正是我想和你谈的事；我会把来龙去脉说清楚。`;
+    case "hostile": return `${reference}，这不关你的事，我不想回答。你再追问也不会有别的结果。`;
+    case "cold": return `${reference}。我只能先说我确定的部分，别逼我替别人下结论。`;
+    case "neutral": return `${reference}，我先说我确定的部分。你还想从哪一段继续追问？`;
+    case "friendly": return `${reference}。我愿意把知道的告诉你，我们可以一起把线索理清楚。`;
+    case "trusted": return `${reference}。这正是我想和你谈的事，我会把来龙去脉说清楚。`;
   }
 }
 

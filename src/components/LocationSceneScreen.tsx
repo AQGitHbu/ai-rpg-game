@@ -34,6 +34,7 @@ function cleanLocationSideNote(text: string): string {
   return text
     .replace(/主线推进。当前目标：[^\s。]+\s*/gu, "")
     .replace(/完成了任务「[^」]+」的目标：[^\s。]+\s*/gu, "")
+    .replace(/。{2,}/gu, "。")
     .replace(/\s{2,}/gu, " ")
     .trim();
 }

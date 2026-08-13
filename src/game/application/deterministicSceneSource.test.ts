@@ -258,12 +258,61 @@ describe("deterministicSceneSource", () => {
     expect(buildEventState(context)).toEqual({ kind: "observe", locationId: asLocationId("loc_1") });
     const candidates = buildSelectableSceneCandidates(context);
     expect(candidates.map((candidate) => candidate.label)).toEqual([
-      "回应客人：“我先相信你，但请把知道的说清楚。”",
+      "回应客人：“我想先听你把眼前的事说清楚，再决定是否相信你。”",
       "默默不作声，先观察四周",
     ]);
     expect(candidates[0]?.action).toEqual({ type: "talk", npcId: asNpcId("npc_2"), dialogueAct: "support" });
     expect(candidates[1]?.action).toEqual({ type: "explore" });
-    expect(buildSceneChoices(context)[0]?.label).toBe("回应客人：“我先相信你，但请把知道的说清楚。”");
+    expect(buildSceneChoices(context)[0]?.label).toBe("回应客人：“我想先听你把眼前的事说清楚，再决定是否相信你。”");
+  });
+
+  it("dialogue choices use role-specific player voice and keep a non-dialogue alternative", () => {
+    const base = makeContext(makeJob({
+      eventKind: "dialogue",
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+    }));
+    const context: SceneGenerationContext = {
+      ...base,
+      focusNpcContext: {
+        ...makeFocusContext("neutral"),
+        role: "失踪镖队幸存者",
+        name: "苏绾",
+      },
+      presentNpcs: base.presentNpcs.map((npc) => npc.id === asNpcId("npc_1")
+        ? { ...npc, name: "苏绾", role: "失踪镖队幸存者" }
+        : npc),
+    };
+    const choices = buildSelectableSceneCandidates(context);
+    expect(choices[0]?.label).toContain("镖队究竟发生了什么");
+    expect(choices[0]?.action.type).toBe("talk");
+    expect(choices[1]?.action.type).not.toBe("talk");
+    expect(choices[1]?.label).toMatch(/不再追问|暂不回应|默默不作声/);
+  });
+
+  it("does not make a new NPC echo the previous NPC's raw utterance", async () => {
+    const job = makeJob({
+      eventKind: "dialogue",
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+      utterance: "你说的旧案是不是和镖队有关？",
+    });
+    const focus = {
+      ...makeFocusContext("neutral"),
+      id: asNpcId("npc_2"),
+      name: "苏绾",
+      role: "失踪镖队幸存者",
+    };
+    const result = await source.generateScene({
+      ...makeContext(job, focus),
+      presentNpcs: [
+        ...makeContext(job).presentNpcs.filter((npc) => npc.id === asNpcId("npc_1")),
+        { ...makeContext(job).presentNpcs[1]!, id: asNpcId("npc_2"), name: "苏绾", role: "失踪镖队幸存者" },
+      ],
+    });
+    expect(result.npcLine?.text).not.toContain("你说的旧案是不是和镖队有关");
+    expect(result.npcLine?.text).toContain("镖队");
+    expect(result.npcLine?.text).toContain("证据");
   });
 
   it("does not keep a side NPC focused while another present NPC is the current talk objective", () => {

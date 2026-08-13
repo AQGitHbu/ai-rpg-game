@@ -3,8 +3,11 @@ import { createInitialStoryState } from "@/game/domain/storyState";
 import { asQuestId } from "@/game/domain/worldEntity";
 import {
   baseWorld, quest, withQuest, withMet, LOC_1_ID, NPC_1_ID, NPC_2_ID, ITEM_SEAL_ID, withNextAct,
+  makeNpc, withAddedNpc,
 } from "./narrativeContext.testutil";
 import { deriveObjectiveTransition, currentObjectiveOf } from "./deriveObjectiveTransition";
+import { objectiveLabel } from "./objectiveRules";
+import { asLocationId } from "@/game/domain/worldEntity";
 
 function story() {
   return createInitialStoryState({
@@ -30,6 +33,20 @@ describe("deriveObjectiveTransition（Task 4）", () => {
     expect(currentObjectiveOf(ws, story())).toEqual({
       questId: asQuestId("quest_0"), objectiveIndex: 0, label: "前往客栈",
     });
+  });
+
+  it("目标 NPC 不在当前地点时，标签同时给出前往地点和交谈对象", () => {
+    const initial = baseWorld();
+    const ws = withQuest(withAddedNpc({
+      ...initial,
+      locations: [...initial.locations, {
+        id: asLocationId("loc_2"), name: "断碑谷", description: "荒碑夹着一线山谷。", kind: "main",
+        connectedLocationIds: [LOC_1_ID], npcIds: [NPC_2_ID], availableItemIds: [], tags: [],
+      }],
+    }, { ...makeNpc(NPC_2_ID, "苏绾", "失踪镖队幸存者"), locationId: asLocationId("loc_2") }),
+      quest([{ kind: "talk_to_npc", npcId: NPC_2_ID }]));
+    expect(objectiveLabel(ws, ws.quests[0]?.objectives[0])).toBe("前往断碑谷，与苏绾交谈");
+    expect(currentObjectiveOf(ws, story())?.label).toBe("前往断碑谷，与苏绾交谈");
   });
 
   it("unchanged：目标未变、无完成、无幕推进 → mode unchanged 且 before===after", () => {

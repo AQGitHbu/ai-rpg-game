@@ -63,6 +63,11 @@ export type LiveNpcLineCandidate = {
   readonly emotion: string;
 };
 
+/** 焦点 NPC 的 ready 台词至少要包含回应和后续承接，避免退化成一句介绍。 */
+function hasDialogicContinuation(text: string): boolean {
+  return (text.match(/[。！？!?；;]/gu) ?? []).length >= 2;
+}
+
 /**
  * 归一化 AI 返回的 npcLine：npcId 必须真实存在于在场 NPC、text 非空、
  * emotion 收敛到合法枚举，否则返回 null（调用方用确定性兜底）。
@@ -137,6 +142,7 @@ export function parseScenePerformanceJson(
     if (!isRecord(raw.npcLine)) return null;
     const resolved = resolveLiveNpcLine(raw.npcLine as LiveNpcLineCandidate, context.presentNpcs);
     if (resolved === null) return null;
+    if (context.focusNpcContext !== undefined && !hasDialogicContinuation(resolved.text)) return null;
     // 没有承接对象的“我知道了/好的”不能成为 ready scene 的 NPC 回应；
     // 调用方会沿同一生成链路回退到确定性上下文台词。
     if (isGenericNpcAcknowledgement(resolved.text)) return null;
@@ -295,6 +301,7 @@ ${selectable.map((c) => `${c.candidateId} = ${c.label}`).join("\n")}
 要求：
 - segments 逐条覆盖【已解决的本轮规则结果节拍】中的每个节拍并被其 beatId 点名；自创节拍 ID 非法。
 - npcLine.text 只能是焦点 NPC 的第一人称直接台词；不要写 NPC 名称、动作、表情或“说道/答道”等叙述性前缀，并且必须明确承接玩家原话或当前情境，不能只回答“我知道了/好的/嗯”。
+- 焦点 NPC 的 npcLine.text 至少写两句完整对白：第一句回应当前问题或线索，第二句继续补充、提出一个具体追问或给出下一步；不要只用一句身份介绍结束本轮。
 - 禁止使用“你是来打听事情的吧？想知道什么，直接问我。”或“欢迎光临”这类脱离角色身份的通用问候；必须承接焦点 NPC 的角色、当前地点、当前目标、可写线索或最近交互中的至少一项。
 - 私密知识ID 的正文绝不出现在任何文本；只可提及【可写进台词的线索】正文。
 - 两个 choices 必须保留服务端候选的行动类型：一个是 talk（玩家用第一人称直接回应 NPC），另一个是 explore/move 等非对白动作；不要把动作型选项改写成 NPC 对话。

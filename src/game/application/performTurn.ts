@@ -16,7 +16,7 @@ import {
 } from "@/game/domain/pendingNarrativeJob";
 import { buildIntentContext, type IntentParserSource } from "@/game/gameplay/rpg/intentParser";
 import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
-import { buildOutcomeBeats, deriveObjectiveTransition } from "@/game/gameplay/rpg/narrativeContext";
+import { buildOutcomeBeats, currentObjectiveOf, deriveObjectiveTransition } from "@/game/gameplay/rpg/narrativeContext";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import { evolveWorld, repairIdOverrideForAction, type EvolveWorldResult } from "./evolveWorld";
@@ -45,6 +45,29 @@ export type PerformTurnDeps = {
    */
   readonly worldEvolutionSource?: WorldEvolutionSource;
 };
+
+/**
+ * The read model can expose a focused NPC immediately after entering a newly
+ * materialized location. That scene is a travel/observe presentation with an
+ * NPC line, not yet a persisted dialogue event, but the current objective and
+ * that line still authorize the NPC's custom response input.
+ */
+function focusedNpcForFreeText(worldState: WorldState, storyState: StoryState): string | null {
+  const scene = storyState.narrative.currentScene;
+  if (scene?.event?.kind === "dialogue") return String(scene.event.focusNpcId);
+
+  const objective = currentObjectiveOf(worldState, storyState);
+  if (objective === null) return null;
+  const quest = worldState.quests.find((entry) => String(entry.id) === String(objective.questId));
+  const objectiveTarget = quest?.objectives[objective.objectiveIndex];
+  if (objectiveTarget?.kind !== "talk_to_npc") return null;
+  const npc = worldState.npcs.find((entry) => String(entry.id) === String(objectiveTarget.npcId));
+  if (npc === undefined || String(npc.locationId) !== String(worldState.currentLocationId)) return null;
+  if (scene?.npcLine === null || scene?.npcLine === undefined) return null;
+  return String(scene.npcLine.npcId) === String(objectiveTarget.npcId)
+    ? String(objectiveTarget.npcId)
+    : null;
+}
 
 /**
  * 纯函数：Action -> 场景生成所需的封闭结构化摘要（不保存 World State / path patch）。
@@ -100,11 +123,8 @@ export async function performTurn(
   }
 
   if (command.interaction.kind === "free_text" && command.interaction.targetNpcId !== undefined) {
-    const sceneEvent = record.storyState.narrative.currentScene?.event;
-    if (
-      sceneEvent?.kind !== "dialogue"
-      || sceneEvent.focusNpcId !== command.interaction.targetNpcId
-    ) {
+    const focusedNpcId = focusedNpcForFreeText(record.worldState, record.storyState);
+    if (focusedNpcId !== command.interaction.targetNpcId) {
       return {
         ok: false,
         code: "ACTION_REJECTED",

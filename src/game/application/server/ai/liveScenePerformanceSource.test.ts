@@ -387,7 +387,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
       npcLine: {
         npcId: "npc_1",
-        text: "老板说道：\"关于商队失踪的事，我先说我确定的部分。\"",
+        text: "老板说道：\"关于商队失踪的事，我先说我确定的部分。你还想从哪一段继续追问？\"",
         emotion: "neutral",
         answeredBeatIds: [],
         usedFactIds: [],
@@ -402,6 +402,30 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     const source = createLiveScenePerformanceSource({ transport, config });
     const proposal = await source.generateScene(context);
     expect(proposal.source).toBe("generated");
-    expect(proposal.npcLine?.text).toBe("关于商队失踪的事，我先说我确定的部分。");
+    expect(proposal.npcLine?.text).toBe("关于商队失踪的事，我先说我确定的部分。你还想从哪一段继续追问？");
+  });
+
+  it("焦点 NPC 只返回一句对白时回退到多轮角色化台词", async () => {
+    const context = makeContext({ job: makeJob({ utterance: "商队失踪的事你知道吗？" }) });
+    const transport = stubTransport({
+      segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+      npcLine: {
+        npcId: "npc_1",
+        text: "关于商队失踪的事，我先说我确定的部分。",
+        emotion: "neutral",
+        answeredBeatIds: [],
+        usedFactIds: [],
+        usedInteractionActionIds: [],
+      },
+      objectiveLink: null,
+      choices: [
+        { candidateId: "candidate_1", label: "支持老板" },
+        { candidateId: "candidate_2", label: "暂不回应，先观察现场" },
+      ],
+    });
+    const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
+    expect(proposal.source).toBe("fallback");
+    expect(proposal.npcLine?.text).toContain("我愿意把知道的告诉你");
+    expect(proposal.npcLine?.text).toContain("一起把线索理清楚");
   });
 });
