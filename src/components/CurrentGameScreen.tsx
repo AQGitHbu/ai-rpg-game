@@ -147,7 +147,6 @@ export function CurrentGameScreen() {
           <div className="prologue-content">
             <h2>序幕</h2>
             <p className="prologue-text">{prologueText}</p>
-            <p className="prologue-hint">点击下方按钮，踏入这段旅程。</p>
             {prologueAckError ? <p role="alert">进入失败，请检查连接后重试。</p> : null}
             <InlineButton disabled={prologueAcking} onClick={() => void handlePrologueAck()}>
               {prologueAcking ? "正在进入……" : "开始冒险"}

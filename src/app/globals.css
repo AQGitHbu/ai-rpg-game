@@ -2338,12 +2338,6 @@ body:has(.adventure-game-shell) {
   white-space: pre-wrap;
 }
 
-.prologue-hint {
-  margin-top: 2rem;
-  opacity: 0.6;
-  font-size: 0.9rem;
-}
-
 @keyframes prologue-fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
