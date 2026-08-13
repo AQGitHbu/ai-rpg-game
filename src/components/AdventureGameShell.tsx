@@ -95,10 +95,8 @@ export function AdventureGameShell({
     const previousObjective = lastReadyObjectiveRef.current;
     lastReadyObjectiveRef.current = currentObjective;
     if (currentObjective !== null && currentObjective !== previousObjective) {
-      // 建筑/临时会面场景只代表上一名 NPC。幕推进后若仍保留它，下一幕的
-      // 新角色会被 sceneContext 过滤掉，造成“目标写了新人物、画面仍是旧人物”。
-      setSceneContext(null);
-      setScreen(entryScreenFor(view));
+      // 目标变化只通知玩家，不替玩家退出当前建筑/地点。由玩家自行返回
+      // 小镇或地图前往下一处，才能保留刚结束的对话现场与空间连续性。
       setFeedback({ phase: "success", message: `下一步：${currentObjective}` });
     }
   }, [pending, view.story.currentObjectiveLabel]);

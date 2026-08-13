@@ -58,6 +58,25 @@ export function actionTargetsObjective(action: Action, entityId: string): boolea
  */
 export function buildSelectableSceneCandidates(context: SceneGenerationContext): readonly SceneChoiceCandidate[] {
   const event = buildEventState(context);
+  // 结局对已经由规则铸造后，玩家必须以两个明确、互斥的对白方向作出
+  // 最后决定。不能把“观察”或“挑战敌人”伪装成结局选择，更不能让任意
+  // 后续行动自动触发结局。
+  if (context.objectiveTransition.mode === "ready_for_ending") {
+    const npc = focusNpc(context);
+    if (npc === undefined) return [];
+    return [
+      {
+        candidateId: "candidate_1",
+        label: `回应${npc.name}：“我愿意和你一起把证据摊开，让该承担的人面对真相。”`,
+        action: { type: "talk", npcId: npc.id, dialogueAct: "support" },
+      },
+      {
+        candidateId: "candidate_2",
+        label: `质疑${npc.name}：“我会核对每一份证据，在确认之前不会把结论交给任何人。”`,
+        action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" },
+      },
+    ];
+  }
   // ready scene 已经把当前主线目标 NPC 编排到当前地点。这个场景的真实
   // event 可以仍然是 travel/observe（用于表达“抵达/新线索出现”），但玩家
   // 进入目标 NPC 后需要直接拥有对该 NPC 的两项回应，而不是把场景里的
@@ -265,27 +284,96 @@ function buildContextualTierLine(context: SceneGenerationContext, tier: Relation
   const utterance = canReferenceCurrentUtterance(context)
     ? boundedUtteranceReference(context.job.utterance)
     : null;
-  const reference = contextReference(context);
   if (utterance === null) {
+    const fixedReply = fixedDialogueReply(context);
+    if (fixedReply !== null) return fixedReply;
     if (context.focusNpcContext !== undefined && ["neutral", "friendly", "trusted"].includes(tier)) {
       return composeDirectNpcGreeting(context.focusNpcContext.role, context.focusNpcContext.name);
     }
     switch (tier) {
-      case "hostile": return "有事就直说，但别指望我什么都回答。";
-      case "cold": return "有事就直说，我只回答我确定的部分。";
-      case "neutral": return "你是来打听事情的吧？想知道什么，直接问我。";
-      case "friendly": return "有什么想问的尽管说，我能帮你的会尽量帮。";
-      case "trusted": return "不用绕弯子，你想知道什么就问吧，我会把我知道的都告诉你。";
+      case "hostile": return "有事就直说，但别指望我什么都回答。真想查下去，先拿能对上的证据来。";
+      case "cold": return "有事就直说，我只回答我确定的部分。其余的，等你拿出证据再谈。";
+      case "neutral": return "你是来打听事情的吧？想知道什么，直接问我。别把传闻当成证据。";
+      case "friendly": return "有什么想问的尽管说，我能帮你的会尽量帮。先把你知道的那一段讲清楚。";
+      case "trusted": return "不用绕弯子，你想知道什么就问吧。我会把我知道的都告诉你。";
     }
   }
 
+  // 玩家原话是生成约束而不是 NPC 应逐字复读的稿子。根据角色给出一个可追查的
+  // 回答/拒答，既自然承接问题，又让每一轮至少落下一个具体事实或去向。
+  const role = context.focusNpcContext?.role ?? "";
+  const directReply = contextualRoleReply(role);
   switch (tier) {
-    case "hostile": return `${reference}，这不关你的事，我不想回答。你再追问也不会有别的结果。`;
-    case "cold": return `${reference}。我只能先说我确定的部分，别逼我替别人下结论。`;
-    case "neutral": return `${reference}，我先说我确定的部分。你还想从哪一段继续追问？`;
-    case "friendly": return `${reference}。我愿意把知道的告诉你，我们可以一起把线索理清楚。`;
-    case "trusted": return `${reference}。这正是我想和你谈的事，我会把来龙去脉说清楚。`;
+    case "hostile": return `这不关你的事，我不会替任何人担保。${directReply}再逼问，我只会把门关上。`;
+    case "cold": return `我只说亲眼见过的部分。${directReply}其余的，等你拿出能对上的证据再谈。`;
+    case "neutral": return `${directReply}这条线索够你先走一步，别急着替谁下结论。`;
+    case "friendly": return `${directReply}你把手里的证据带上，我们可以把前后两段对起来。`;
+    case "trusted": return `${directReply}我会把能证明这件事的东西交给你，一起把来龙去脉查清。`;
   }
+}
+
+/**
+ * 固定 support/challenge 不保存玩家原文，仍应让 NPC 回应这次立场；不能又把
+ * 开场问候重播一遍。只读取同一 NPC 本回合的结构化 dialogueAct，保持最小权限。
+ */
+function fixedDialogueReply(context: SceneGenerationContext): string | null {
+  if (context.job.actionSummary.kind !== "talk") return null;
+  const interaction = context.focusNpcContext?.recentInteractions
+    .find((entry) => entry.actionId === context.job.actionId);
+  if (interaction?.dialogueAct !== "support" && interaction?.dialogueAct !== "challenge") return null;
+  const role = context.focusNpcContext?.role ?? "";
+  const questioning = interaction.dialogueAct === "challenge";
+  if (/(传讯|信使|线人)/u.test(role)) {
+    return questioning
+      ? "你怀疑得对，密信的笔迹能伪造，封蜡却骗不了人。拿腰牌去断碑谷找苏绾，她能认出送信人的刀鞘。"
+      : "既然你愿意对照证据，我就把密信的残角交给你。封蜡指向北巷旧镖局，苏绾见过送信人的刀鞘。";
+  }
+  if (/(幸存者|镖队)/u.test(role)) {
+    return questioning
+      ? "你不肯轻信是对的；车辙和血痕都还在北坡，我会带你亲自看。看完再决定该不该相信我。"
+      : "你肯把证据交我核对，我就带你去北坡。车辙、弯刀留下的划痕和血石能对上同一批人。";
+  }
+  if (/(卷宗|保管人)/u.test(role)) {
+    return questioning
+      ? "你先核对也好；缺页边缘的半枚官印能和腰牌背纹拼合，拼不上我绝不让你带走卷宗。"
+      : "既然你肯把来龙去脉查到底，这页残卷交给你。半枚官印和腰牌背纹合在一起，就能补上被抹掉的名字。";
+  }
+  if (/知情人/u.test(role)) {
+    return questioning
+      ? "你该质疑我，盟誓铁印不是谁都能信。去黑水古道尽头验印，最后一个名字会决定谁在说谎。"
+      : "既然你愿意同行，我把盟誓铁印交你验看。黑水古道尽头藏着最后一个名字，我们一起把它带回人前。";
+  }
+  if (/(更夫|守夜)/u.test(role)) {
+    return questioning
+      ? "你别信我一张嘴；酒楼后巷还有半道车轮印，你自己去看赶车人留下的左手血布。"
+      : "你肯信我一回，我就带你去酒楼后巷。无灯马车留下的车轮印和左手血布还在泥里。";
+  }
+  return questioning
+    ? "你先核实是对的。我能带你去看留下的痕迹，真相禁得起逐条对照。"
+    : "既然你愿意继续查，我把知道的线索交给你。先沿着留下的痕迹走，别让人抢先毁掉它。";
+}
+
+/** 角色化的直接答复：每一轮给出一个可核对的内容和可执行的下一步。 */
+function contextualRoleReply(role: string): string {
+  if (/(传讯|信使|线人)/u.test(role)) {
+    return "密信的落款被人刮去了一半，但封蜡是北巷镖局旧用的式样；去断碑谷找苏绾，她见过送信人的刀鞘。";
+  }
+  if (/(幸存者|镖队)/u.test(role)) {
+    return "车辙在断碑谷口忽然折向北坡，袭击者用的是窄刃弯刀；我能带你去看那块留下血痕的石头。";
+  }
+  if (/(卷宗|保管人)/u.test(role)) {
+    return "缺页边缘压着半枚官印，和你腰牌背面的纹路能拼在一起；先把两样东西摊开，名字自然会浮出来。";
+  }
+  if (/知情人/u.test(role)) {
+    return "盟誓铁印只认当年在场的三个人，最后一个名字藏在旧路尽头；你若敢去，我会把印交给你当面验。";
+  }
+  if (/(更夫|守夜)/u.test(role)) {
+    return "子时后我看见一辆无灯马车从北巷出镇，赶车人左手缠着布；车轮压过酒楼后的泥地，痕迹还没完全散。";
+  }
+  if (/(掌柜|摊主)/u.test(role)) {
+    return "告示是个戴斗笠的人趁换灯时贴上的，他给过我一枚沾松脂的铜钱；去北巷问问谁最近收过这类松脂。";
+  }
+  return "我能确认的只有一件：有人故意把线索引到这里。先查清留下的痕迹，再决定该信谁。";
 }
 
 function buildStatusLine(resolvedEvent: SceneGenerationContext["job"]["resolvedEvent"]): string {

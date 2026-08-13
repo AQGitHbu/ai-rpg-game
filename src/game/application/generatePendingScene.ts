@@ -46,7 +46,13 @@ export async function generatePendingScene(
   // 最后经 applySceneWriteBack 单次 CAS 一并写回实体与场景。
   let scenarioWs = record.worldState;
   let scenarioSs = record.storyState;
-  const need = deriveEvolutionNeed(record.worldState, record.storyState);
+  const immediateMove = generation.job.actionSummary.kind === "move";
+  // 移动落点的地点、当前目标和可达候选已由刚提交的规则结果确定。此处不再
+  // 为一键移动额外触发 live 世界演化；若确实候选不足，下面的受控补足分支
+  // 仍会兜底。这样同步落点写回不会被与移动无关的 AI 调用拖慢。
+  const need = immediateMove
+    ? { kind: "none" as const }
+    : deriveEvolutionNeed(record.worldState, record.storyState);
   // 未注入演化源时不主动演化：保持既有时景写回行为，仅当配置了 source 才装配预览。
   if (need.kind !== "none" && deps.worldEvolutionSource !== undefined) {
     const outcome = await evolveWorld({
@@ -97,9 +103,17 @@ export async function generatePendingScene(
 
   if (buildSelectableSceneCandidates(context).length < 2) return "unavailable";
 
+  // 目的地已经由刚刚提交并裁决的 move Action 唯一确定。此时若再等待 live
+  // 表演源，玩家会在一次没有决策的移动后看见不必要的加载页。移动落点改走
+  // 同一审批链上的确定性即时场景：地点、目标和候选仍来自本回合后的权威状态，
+  // 只是不会为一键移动增加一次外部生成等待。对话、探索等仍使用配置的 source。
+  const source = immediateMove
+    ? createDeterministicSceneSource()
+    : deps.sceneSource;
+
   let proposal: ScenePerformanceProposal;
   try {
-    proposal = await deps.sceneSource.generateScene(context);
+    proposal = await source.generateScene(context);
   } catch {
     return "unavailable";
   }

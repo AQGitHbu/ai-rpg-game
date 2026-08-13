@@ -62,6 +62,7 @@ function makeResolvedEvent(
 
 type JobOverrides = {
   jobId?: string;
+  actionId?: string;
   status?: ResolvedEventStatus;
   eventKind?: NarrativeEventKind;
   summary?: PendingNarrativeJob["actionSummary"];
@@ -75,7 +76,7 @@ function makeJob(overrides: JobOverrides = {}): PendingNarrativeJob {
   const result = createPendingNarrativeJob({
     jobId: asNarrativeJobId(overrides.jobId ?? "job_1"),
     turnId: asTurnId("turn_1"),
-    actionId: "act_test",
+    actionId: overrides.actionId ?? "act_test",
     expectedRevision: 0,
     turnNumber: 1,
     actionSummary: overrides.summary ?? { kind: "move", locationId: asLocationId("loc_2") },
@@ -224,7 +225,7 @@ describe("deterministicSceneSource", () => {
     expect(result.npcLine?.npcId).toBe("npc_1");
   });
 
-  it("turns an advanced-act talk result into a task handoff instead of reopening the old NPC choices", () => {
+  it("keeps the old NPC as the speaker during an advanced-act handoff while exposing the new objective", async () => {
     const transition: ObjectiveTransition = {
       before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与客栈老板交谈" },
       completed: [],
@@ -248,22 +249,19 @@ describe("deterministicSceneSource", () => {
         entityId: "npc_2",
         entityName: "客人",
       },
-      focusNpcContext: {
-        ...makeFocusContext("neutral"),
-        id: asNpcId("npc_2"),
-        name: "客人",
-      },
+      focusNpcContext: makeFocusContext("neutral"),
     };
 
     expect(buildEventState(context)).toEqual({ kind: "observe", locationId: asLocationId("loc_1") });
     const candidates = buildSelectableSceneCandidates(context);
     expect(candidates.map((candidate) => candidate.label)).toEqual([
-      "回应客人：“我想先听你把眼前的事说清楚，再决定是否相信你。”",
-      "默默不作声，先观察四周",
+      "与客栈老板交谈",
+      "与客人交谈",
     ]);
-    expect(candidates[0]?.action).toEqual({ type: "talk", npcId: asNpcId("npc_2"), dialogueAct: "support" });
-    expect(candidates[1]?.action).toEqual({ type: "explore" });
-    expect(buildSceneChoices(context)[0]?.label).toBe("回应客人：“我想先听你把眼前的事说清楚，再决定是否相信你。”");
+    expect(candidates[0]?.action).toEqual({ type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" });
+    expect(candidates[1]?.action).toEqual({ type: "talk", npcId: asNpcId("npc_2"), dialogueAct: "ask" });
+    expect(buildSceneChoices(context)[0]?.label).toBe("与客人交谈");
+    expect((await source.generateScene(context)).npcLine?.npcId).toBe("npc_1");
   });
 
   it("dialogue choices use role-specific player voice and keep a non-dialogue alternative", () => {
@@ -290,19 +288,14 @@ describe("deterministicSceneSource", () => {
     expect(choices[1]?.label).toMatch(/不再追问|暂不回应|默默不作声/);
   });
 
-  it("does not make a new NPC echo the previous NPC's raw utterance", async () => {
+  it("keeps a player utterance addressed to the original NPC during a handoff without quoting it back", async () => {
     const job = makeJob({
       eventKind: "dialogue",
       summary: { kind: "talk", npcId: asNpcId("npc_1") },
       focusNpcId: "npc_1",
       utterance: "你说的旧案是不是和镖队有关？",
     });
-    const focus = {
-      ...makeFocusContext("neutral"),
-      id: asNpcId("npc_2"),
-      name: "苏绾",
-      role: "失踪镖队幸存者",
-    };
+    const focus = makeFocusContext("neutral");
     const result = await source.generateScene({
       ...makeContext(job, focus),
       presentNpcs: [
@@ -310,9 +303,31 @@ describe("deterministicSceneSource", () => {
         { ...makeContext(job).presentNpcs[1]!, id: asNpcId("npc_2"), name: "苏绾", role: "失踪镖队幸存者" },
       ],
     });
+    expect(result.npcLine?.npcId).toBe("npc_1");
+    expect(result.npcLine?.text).toContain("有人故意把线索引到这里");
     expect(result.npcLine?.text).not.toContain("你说的旧案是不是和镖队有关");
-    expect(result.npcLine?.text).toContain("镖队");
-    expect(result.npcLine?.text).toContain("证据");
+    expect(result.npcLine?.text).not.toContain("你刚才问的");
+  });
+
+  it("offers two explicit and mutually exclusive dialogue decisions when the ending pair is ready", () => {
+    const context = makeContext(makeJob({
+      eventKind: "dialogue",
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+      transition: {
+        before: null,
+        completed: [],
+        after: null,
+        mode: "ready_for_ending",
+      },
+    }), makeFocusContext("trusted"));
+
+    const choices = buildSelectableSceneCandidates(context);
+    expect(choices.map((choice) => choice.action)).toEqual([
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" },
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "challenge" },
+    ]);
+    expect(choices.map((choice) => choice.label).join(" ")).toMatch(/真相/);
   });
 
   it("does not keep a side NPC focused while another present NPC is the current talk objective", () => {
@@ -506,7 +521,7 @@ describe("deterministicSceneSource", () => {
     expect(result.npcLine?.emotion).toBe("warm");
   });
 
-  it("neutral fallback explicitly refers to the current player question instead of saying only 我知道了", async () => {
+  it("neutral fallback gives a concrete lead instead of echoing the current player question", async () => {
     const job = makeJob({
       eventKind: "dialogue",
       summary: { kind: "talk", npcId: asNpcId("npc_1") },
@@ -515,9 +530,34 @@ describe("deterministicSceneSource", () => {
       beats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应" }],
     });
     const result = await source.generateScene(makeContext(job, makeFocusContext("neutral")));
-    expect(result.npcLine?.text).toContain("商队失踪的事你知道吗");
+    expect(result.npcLine?.text).toContain("有人故意把线索引到这里");
     expect(result.npcLine?.text).not.toBe("我知道了。");
+    expect(result.npcLine?.text).not.toContain("你刚才问的");
     expect(result.npcLine?.text).not.toMatch(/如实答道|说道|答道/);
+  });
+
+  it("uses the current fixed dialogue stance to give a role-specific reply instead of replaying the greeting", async () => {
+    const job = makeJob({
+      actionId: "act_support",
+      eventKind: "dialogue",
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+    });
+    const focus = {
+      ...makeFocusContext("friendly"),
+      role: "旧案卷宗保管人",
+      recentInteractions: [{
+        actionId: "act_support",
+        dialogueAct: "support" as const,
+        topicSummary: "旧案",
+        outcome: "positive" as const,
+        summary: "愿意继续查案",
+      }],
+    };
+    const result = await source.generateScene(makeContext(job, focus));
+    expect(result.npcLine?.text).toContain("半枚官印");
+    expect(result.npcLine?.text).toContain("腰牌背纹");
+    expect(result.npcLine?.text).not.toContain("你来得正好");
   });
 
   it("有 player_utterance 节拍时 npcLine 的 answeredBeatIds 包含该节拍 ID", async () => {

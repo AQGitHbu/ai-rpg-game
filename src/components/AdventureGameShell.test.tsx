@@ -179,7 +179,6 @@ describe("AdventureGameShell canonical opaque choices", () => {
   for (const [label, token] of [
     ["追问线索", TOKENS.dialogueOne],
     ["表示理解", TOKENS.dialogueTwo],
-    ["探索客栈", TOKENS.explore],
     ["拾取铜钥匙", TOKENS.item],
     ["攻击", TOKENS.battle],
   ] as const) {
@@ -194,6 +193,20 @@ describe("AdventureGameShell canonical opaque choices", () => {
       });
     });
   }
+
+  it("forwards a non-dialogue scene action when no prepared main dialogue is present", async () => {
+    const user = userEvent.setup();
+    renderShell({
+      ...buildView(),
+      narrative: { ...buildView().narrative, npcDialogues: [] },
+    });
+    await enterScene(user);
+    await user.click(screen.getByRole("button", { name: "探索客栈" }));
+    expect(postAction).toHaveBeenCalledWith({
+      interaction: { kind: "fixed_choice", choiceToken: TOKENS.explore },
+      revision: 9,
+    });
+  });
 
   it("forwards custom dialogue input without constructing a semantic token", async () => {
     const user = userEvent.setup();
@@ -218,14 +231,13 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     await user.click(screen.getByRole("button", { name: "追问线索" }));
 
-    expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
-    expect((screen.getByRole("button", { name: "探索客栈" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
+    expect((screen.getByRole("button", { name: "与老板交谈" }) as HTMLButtonElement).disabled).toBe(true);
 
     resolveRequest({ kind: "rejected", message: "stop" });
     await waitFor(() => {
-      expect((screen.getByRole("button", { name: "探索客栈" }) as HTMLButtonElement).disabled).toBe(false);
+      expect((screen.getByRole("button", { name: "与老板交谈" }) as HTMLButtonElement).disabled).toBe(false);
     });
-    await user.click(screen.getByRole("button", { name: /老板路人/ }));
     expect(screen.getByRole("button", { name: "表示理解" })).toBeEnabled();
   });
 
@@ -241,7 +253,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.getByRole("button", { name: "进入客栈" })).toBeDisabled();
   });
 
-  it("closes the old NPC dialog as soon as a formal dialogue choice is submitted", async () => {
+  it("keeps the NPC dialog open after a formal choice so the next reply can return in place", async () => {
     const base = buildView();
     const onSubmit = vi.fn();
     render(<LocationSceneScreen
@@ -258,7 +270,57 @@ describe("AdventureGameShell canonical opaque choices", () => {
       kind: "fixed_choice",
       choiceToken: TOKENS.dialogueOne,
     });
+    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
+  });
+
+  it("reopens the same NPC dialog with the generated reply after custom input finishes", async () => {
+    const base = buildView();
+    const onSubmit = vi.fn();
+    const { rerender } = render(<LocationSceneScreen
+      view={base}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    await userEvent.type(screen.getByRole("textbox", { name: "自定义回应" }), "请把昨夜的经过说清楚");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    expect(onSubmit).toHaveBeenCalledWith({
+      kind: "free_text",
+      text: "请把昨夜的经过说清楚",
+      targetNpcId: "npc_1",
+    });
+
+    rerender(<LocationSceneScreen
+      view={{ ...base, narrativeGeneration: { status: "pending" } }}
+      busy={true}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
     expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
+
+    rerender(<LocationSceneScreen
+      view={{
+        ...base,
+        revision: base.revision + 1,
+        narrative: {
+          ...base.narrative,
+          npcDialogues: [{
+            ...base.narrative.npcDialogues[0]!,
+            speechPages: ["我看见告示是子时后贴上的，贴告示的人左手有一道新伤。你若要追查，先去巷口找留下的车辙。"],
+            choices: [],
+            freeInputEnabled: false,
+          }],
+        },
+        narrativeGeneration: { status: "idle" },
+      }}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
+    expect(screen.getByText("我看见告示是子时后贴上的，贴告示的人左手有一道新伤。你若要追查，先去巷口找留下的车辙。")).toBeInTheDocument();
   });
 
   it("does not auto-open an NPC dialog when pending completes and a new NPC appears", async () => {
@@ -356,6 +418,76 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("下一步：与传讯人交谈");
   });
 
+  it("does not leave old-building actions beside a new NPC handoff", () => {
+    const base = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        story: { ...base.story, currentObjectiveLabel: "与传讯人交谈", currentObjectiveChoiceToken: TOKENS.dialogueTwo },
+        narrative: {
+          ...base.narrative,
+          npcDialogues: [{
+            ...base.narrative.npcDialogues[0]!,
+            choices: [choice(TOKENS.dialogueOne, "与老板交谈", "dialogue")],
+            freeInputEnabled: false,
+          }],
+        },
+        currentLocation: {
+          ...base.currentLocation,
+          actions: [
+            choice(TOKENS.explore, "探索客栈", "explore"),
+            choice(TOKENS.dialogueOne, "与老板交谈", "dialogue"),
+            choice(TOKENS.dialogueTwo, "与传讯人交谈", "dialogue"),
+            choice(TOKENS.battle, "挑战灰狼", "battle"),
+          ],
+        },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+      initialFocusNpcId="npc_1"
+      sceneNpcName="老板"
+      sceneLocationName="福来酒楼"
+    />);
+
+    const actionRail = screen.getByRole("navigation", { name: "行动栏" });
+    expect(within(actionRail).queryByRole("button")).toBeNull();
+    expect(screen.getByRole("button", { name: "返回地图" })).toBeInTheDocument();
+  });
+
+  it("also clears old-building actions when the next main objective is at another location", () => {
+    const base = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        story: { ...base.story, currentObjectiveLabel: "前往断碑谷，与苏绾交谈", currentObjectiveChoiceToken: null },
+        narrative: {
+          ...base.narrative,
+          npcDialogues: [{
+            ...base.narrative.npcDialogues[0]!,
+            choices: [choice(TOKENS.dialogueOne, "与老板交谈", "dialogue")],
+            freeInputEnabled: false,
+          }],
+        },
+        currentLocation: {
+          ...base.currentLocation,
+          actions: [
+            choice(TOKENS.explore, "探索客栈", "explore"),
+            choice(TOKENS.dialogueOne, "与老板交谈", "dialogue"),
+            choice(TOKENS.battle, "挑战灰狼", "battle"),
+          ],
+        },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+      initialFocusNpcId="npc_1"
+      sceneNpcName="老板"
+    />);
+
+    expect(within(screen.getByRole("navigation", { name: "行动栏" })).queryByRole("button")).toBeNull();
+  });
+
   it("sets the same busy state for NPC free text until the request settles", async () => {
     let resolveRequest!: (outcome: ActionOutcome) => void;
     vi.mocked(postAction).mockImplementationOnce(() => new Promise<ActionOutcome>((resolve) => {
@@ -368,14 +500,13 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
-    expect((screen.getByRole("button", { name: "探索客栈" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
+    expect((screen.getByRole("button", { name: "与老板交谈" }) as HTMLButtonElement).disabled).toBe(true);
 
     resolveRequest({ kind: "rejected", message: "stop" });
     await waitFor(() => {
-      expect((screen.getByRole("button", { name: "探索客栈" }) as HTMLButtonElement).disabled).toBe(false);
+      expect((screen.getByRole("button", { name: "与老板交谈" }) as HTMLButtonElement).disabled).toBe(false);
     });
-    await user.click(screen.getByRole("button", { name: /老板路人/ }));
     expect(screen.getByRole("textbox", { name: "自定义回应" })).toBeEnabled();
   });
 
@@ -503,6 +634,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
         narrative: {
           ...base.narrative,
           eventKind: "observe",
+          npcDialogues: [],
           choices: [
             choice(TOKENS.dialogueOne, "与老板交谈", "dialogue"),
             choice(TOKENS.dialogueTwo, "与吴九交谈", "dialogue"),
@@ -553,6 +685,15 @@ describe("AdventureGameShell canonical opaque choices", () => {
             choice(TOKENS.battle, "挑战灰狼", "battle"),
           ],
         },
+        narrative: {
+          ...base.narrative,
+          eventKind: "travel",
+          npcDialogues: [],
+          choices: [
+            choice(TOKENS.dialogueTwo, "与吴九交谈", "dialogue"),
+            choice(TOKENS.explore, "探索客栈", "explore"),
+          ],
+        },
       }}
       busy={false}
       onSubmit={vi.fn()}
@@ -562,6 +703,43 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.getByRole("button", { name: "与老板交谈" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "探索客栈" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "挑战灰狼" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "与吴九交谈" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a prepared same-NPC response pair inside dialogue and leaves one mainline action in the rail", () => {
+    const base = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        story: { ...base.story, currentObjectiveLabel: null, currentObjectiveChoiceToken: null },
+        currentLocation: {
+          ...base.currentLocation,
+          actions: [
+            choice(TOKENS.explore, "探索客栈", "explore"),
+            choice(TOKENS.dialogueOne, "与老板交谈", "dialogue"),
+            choice(TOKENS.battle, "挑战灰狼", "battle"),
+          ],
+        },
+        narrative: {
+          ...base.narrative,
+          eventKind: "battle",
+          choices: [
+            choice(TOKENS.dialogueOne, "回应老板：我愿意把证据摊开。", "dialogue"),
+            choice(TOKENS.dialogueTwo, "质疑老板：我会先核对证据。", "dialogue"),
+          ],
+        },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+
+    const actionRail = screen.getByRole("navigation", { name: "行动栏" });
+    expect(within(actionRail).getByRole("button", { name: "与老板交谈" })).toBeInTheDocument();
+    expect(within(actionRail).queryByRole("button", { name: "探索客栈" })).not.toBeInTheDocument();
+    expect(within(actionRail).queryByRole("button", { name: "挑战灰狼" })).not.toBeInTheDocument();
+    expect(within(actionRail).queryByRole("button", { name: "回应老板：我愿意把证据摊开。" })).not.toBeInTheDocument();
+    expect(within(actionRail).queryByRole("button", { name: "质疑老板：我会先核对证据。" })).not.toBeInTheDocument();
   });
 
   it("does not label a single NPC talk choice as dialogue preparation", () => {
@@ -760,9 +938,43 @@ describe("AdventureGameShell three-layer navigation", () => {
     await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
     expect(screen.getByRole("region", { name: `地点场景：${interactive.displayName}` })).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: `地点场景：${interactive.displayName}` })).getByRole("heading", { name: interactive.displayName, level: 2 })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: new RegExp(`${interactive.npcName}.*`) })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: new RegExp(`${interactive.npcName}.*`) }).length).toBeGreaterThan(0);
     // 场景返回按钮从小镇进入时显示“返回小镇”
     expect(screen.getByRole("button", { name: "返回小镇" })).toBeInTheDocument();
+  });
+
+  it("keeps the current building scene open when the next story objective changes", async () => {
+    const user = userEvent.setup();
+    const initialView = {
+      ...buildTownView(),
+      story: { ...buildTownView().story, currentObjectiveLabel: `与${interactive.npcName}交谈` },
+    };
+    const { rerender } = render(<AdventureGameShell
+      view={initialView}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+
+    await user.click(screen.getByRole("button", { name: "进入客栈" }));
+    await user.click(screen.getByRole("button", { name: interactive.displayName }));
+    await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
+
+    rerender(<AdventureGameShell
+      view={{
+        ...initialView,
+        revision: initialView.revision + 1,
+        story: { ...initialView.story, currentObjectiveLabel: "前往街道与线人交谈" },
+      }}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("region", { name: `地点场景：${interactive.displayName}` })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("region", { name: "小镇：客栈" })).not.toBeInTheDocument();
   });
 
   it("entering a building only opens the scene and does not start a talk action", async () => {

@@ -319,6 +319,42 @@ describe("projectGameSessionView", () => {
     expect(view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_1")).toBeUndefined();
   });
 
+  it("keeps a same-NPC ending response pair in that NPC dialogue after a non-dialogue event", () => {
+    const scene = {
+      sceneId: "scene-ending-pair-after-battle",
+      turn: 9,
+      narration: "迷雾散去，老板仍在等你的答复。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text: "证据已经齐了，你准备怎样面对众人？", emotion: "guarded" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "end-support", label: "回应老板：我愿意把证据摊开。" },
+        { choiceToken: "end-challenge", label: "质疑老板：我会先核对证据。" },
+      ] as const,
+      source: "fallback" as const,
+      event: { kind: "battle" as const, enemyId: asEnemyId("enemy_1") },
+      npcDialogues: [
+        { npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["证据已经齐了，你准备怎样面对众人？"] },
+      ],
+    };
+    const story: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("end-support", scene.sceneId, 0, scene.choices[0].label, { type: "talk", npcId: npc1.id, dialogueAct: "support" }),
+          approved("end-challenge", scene.sceneId, 0, scene.choices[1].label, { type: "talk", npcId: npc1.id, dialogueAct: "challenge" }),
+        ],
+      },
+    };
+
+    const view = projectGameSessionView(ws, story, 0, "test-ending-session");
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1");
+    expect(dialogue?.choices.map((choice) => choice.choiceToken)).toEqual(["end-support", "end-challenge"]);
+    expect(dialogue?.freeInputEnabled).toBe(true);
+    expect(view.narrative.choices).toEqual([]);
+  });
+
   it("世界行动场景：choices 进入 narrative.choices，不投影为任何 NPC 对话选择", () => {
     const scene = {
       sceneId: "scene-w",

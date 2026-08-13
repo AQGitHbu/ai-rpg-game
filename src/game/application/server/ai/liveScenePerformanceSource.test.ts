@@ -336,7 +336,8 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     const source = createLiveScenePerformanceSource({ transport, config });
     const proposal = await source.generateScene(context);
     expect(proposal.source).toBe("fallback");
-    expect(proposal.npcLine?.text).toContain("商队失踪的事你知道吗");
+    expect(proposal.npcLine?.text).toContain("有人故意把线索引到这里");
+    expect(proposal.npcLine?.text).not.toContain("你刚才问的");
     expect(proposal.npcLine?.text).not.toContain("如实答道");
   });
 
@@ -425,7 +426,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
     const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
     expect(proposal.source).toBe("fallback");
-    expect(proposal.npcLine?.text).toContain("我愿意把知道的告诉你");
-    expect(proposal.npcLine?.text).toContain("一起把线索理清楚");
+    expect(proposal.npcLine?.text).toContain("有人故意把线索引到这里");
+    expect(proposal.npcLine?.text).toContain("把手里的证据带上");
   });
 });

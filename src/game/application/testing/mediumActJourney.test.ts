@@ -124,7 +124,7 @@ describe("中篇 5 幕离线可完成性", () => {
     let ws = await loadWorldState(store.repo);
     expect(ws?.endings.length).toBeGreaterThanOrEqual(2);
 
-    await fixed("交谈"); // 结局落定
+    await fixed("回应"); // 明确选择结局方向后落定
     await scene();
 
     const record = store.record();

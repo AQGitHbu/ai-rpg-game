@@ -198,6 +198,9 @@ export function createServerGameEntryPoints(
         current.record.storyState,
         current.record.revision,
       );
+      const submittedAction = command.interaction.kind === "fixed_choice"
+        ? choiceMap.get(command.interaction.choiceToken)
+        : undefined;
       const result = await performTurn(
         { gameId: current.record.gameId, actionId: command.actionId, interaction: command.interaction, expectedRevision: command.expectedRevision, choiceMap },
         { repository, now, worldEvolutionSource, intentParserSource },
@@ -206,16 +209,35 @@ export function createServerGameEntryPoints(
         // Return updated view so the client can render without a separate GET
         const updated = await repository.getCurrentGame();
         if (updated.ok && updated.status === "active") {
-          const view = projectGameSessionView(
+          let readyRecord = updated.record;
+          let view = projectGameSessionView(
             updated.record.worldState,
             updated.record.storyState,
             updated.record.revision,
             deriveEndingSessionIdentity(updated.record.gameId, updated.record.revision),
           );
-          // 最后一个影响下一幕的玩家决定已经提交；此时立即启动后台生成。
-          // 活跃战斗 fast path 没有 pending，不会进入该分支。
+          // 目标已锁定的一键移动不应该再经历“先到达、再等 AI 编排”的两段
+          // 等待。同步写回确定性落点场景后再返回 action 响应；若受控补足失败
+          // 才降级为常规后台恢复。其他行动仍保持非阻塞后台排队。
           if (view.narrativeGeneration.status === "pending") {
-            await narrativeCoordinator.ensure(traceId);
+            if (submittedAction?.type === "move") {
+              const moveSceneResult = await generatePendingScene({ repository, sceneSource, worldEvolutionSource, now });
+              if (moveSceneResult === "saved") {
+                const refreshed = await repository.getCurrentGame();
+                if (refreshed.ok && refreshed.status === "active") {
+                  readyRecord = refreshed.record;
+                  view = projectGameSessionView(
+                    readyRecord.worldState,
+                    readyRecord.storyState,
+                    readyRecord.revision,
+                    deriveEndingSessionIdentity(readyRecord.gameId, readyRecord.revision),
+                  );
+                }
+              }
+            }
+            if (view.narrativeGeneration.status === "pending") {
+              await narrativeCoordinator.ensure(traceId);
+            }
           }
           return { ok: true, revision: result.revision, feedback: result.feedback, view };
         }

@@ -476,7 +476,7 @@ describe("approveScenePerformance (Task 6)", () => {
           { beatId: "player_utterance", text: "你提出了你的疑问。" },
           { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉" },
         ],
-        npcLine: { npcId: "npc_1", text: "这件事我也正想说。", emotion: "warm", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_1", text: "这件事我也正想说。你先把手里的线索交给我核对。", emotion: "warm", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],
@@ -484,7 +484,29 @@ describe("approveScenePerformance (Task 6)", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("幕交接时由新目标 NPC 承接上一回合原话 → 通过", () => {
+  it("焦点 NPC 的单句开场会被拒绝并触发角色化 fallback", () => {
+    const result = approveScenePerformance({
+      context: makeContext({
+        focusNpcContext: {
+          id: asNpcId("npc_1"), name: "老板", role: "酒肆老板娘",
+          publicProfile: "t",
+          responsePolicy: createNpcResponsePolicy({ tier: "neutral", allowedDisclosureFactIds: [], privateKnowledgeIds: [] }),
+          speakableFactCards: [], recentInteractions: [], goals: [], emotion: "neutral",
+          thisTurn: { relationshipDelta: 0, outcome: "neutral" },
+        },
+        objectiveTarget: { questId: "quest_0", objectiveIndex: 0, entityId: "npc_1", entityName: "老板" },
+      }),
+      proposal: makeProposal({
+        npcLine: { npcId: "npc_1", text: "你想问什么？", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        objectiveLink: { questId: "quest_0", objectiveIndex: 0, mode: "hint" },
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result).toEqual({ ok: false, code: "npc_dialogue_too_short" });
+  });
+
+  it("幕交接时仍由原 NPC 回应上一回合原话 → 通过", () => {
     const oldNpc = makeContext().presentNpcs[0]!;
     const newNpc: SceneGenerationContext["presentNpcs"][number] = {
       ...oldNpc,
@@ -511,8 +533,8 @@ describe("approveScenePerformance (Task 6)", () => {
         job,
         presentNpcs: [oldNpc, newNpc],
         focusNpcContext: {
-          id: asNpcId("npc_2"),
-          name: "新掌柜",
+          id: asNpcId("npc_1"),
+          name: oldNpc.name,
           role: "掌柜",
           publicProfile: "t",
           responsePolicy: createNpcResponsePolicy({ tier: "neutral", allowedDisclosureFactIds: [], privateKnowledgeIds: [] }),
@@ -530,7 +552,7 @@ describe("approveScenePerformance (Task 6)", () => {
           { beatId: "quest_advanced", text: "主线推进到新掌柜。" },
           { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉" },
         ],
-        npcLine: { npcId: "npc_2", text: "我知道这件事。", emotion: "neutral", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_1", text: "告示的来历我会说清楚。新掌柜掌握的是下一页卷宗。", emotion: "neutral", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
         objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
         choices: [
           { candidateId: "candidate_1", label: "表示愿意支持新掌柜" },

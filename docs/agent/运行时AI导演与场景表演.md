@@ -29,7 +29,9 @@
 - **世界演化是按需的可选调用**：仅当 `EvolutionNeed.kind !== "none"`（幕推进/节奏/终局对）才触发；正常对话回合不调用演化源。
 - **候选不足恢复**：若真实可执行候选少于两个，生成编排可额外申请 `scene_candidate_shortage` 节奏演化；已有交谈/移动入口时只补探索钩子，完全无入口时才在预算/可达性边界内补 NPC，并按需补地点，然后重建上下文。仍不足则返回 unavailable，不把无内容的 explore 当作合法候选。
 - 对话场景绑定一个在场焦点 NPC，并提出两个语义不同的 TalkAction；其他场景从服务端给出的合法候选 ID 中选择两个不同 Action。
-- `ObjectiveTransition.mode === advanced_act` 时叙事事件仍记录为非对话的任务交接，但若下一目标 NPC 已在场且上下文焦点已切换到该 NPC，场景候选直接铸造该 NPC 的 support/challenge；进入地点或点击 talk 只打开 ready 对话，不再为首次交谈额外提交一次 `ask` API。玩家主动点击旁 NPC 时仍保持普通 `ask` 语义。
+- `ObjectiveTransition.mode === advanced_act` 时叙事事件仍记录为非对话的任务交接；上一轮带 `player_utterance` 时焦点保持在原 NPC，由其先回应本轮话语，新目标只作为权威行动入口出现。进入地点或点击 talk 只打开 ready 对话，不再为首次交谈额外提交一次 `ask` API。玩家主动点击旁 NPC 时仍保持普通 `ask` 语义。
+- 已由一键 `move` 唯一确定的目的地走确定性即时落点场景，不等待 live source 或 live 世界演化；在 action 响应前仍用移动后的权威地点、目标、候选和同一审批/CAS 同步写回，避免非决策等待。
+- 两个已批准选择若都指向同一在场 NPC 的 TalkAction，即使触发事件是 travel/battle，也投影为该 NPC 的焦点对白；底栏只保留一个“与 NPC 交谈”主线入口，回答分支只在对话框显示。
 - live source 只能选择服务端候选 ID，不能发明任意 `actionKey`、实体 ID、事实 ID 或规则结果。
 - 审批器逐字段重建 scene/event/choice；生成对象原引用不能直接持久化。
 - 服务器根据 post-writeback revision 铸造 opaque `choiceToken`；客户端场景不含 `actionKey`、registry、候选 effect、隐藏事实或 AI diagnostics。
@@ -43,9 +45,11 @@
 
 - 每个 ready 场景以**分段旁白**呈现；每一段必须对应服务端下发的强制节拍 ID（`player_utterance` / `item_obtained` / `fact_discovered` / `quest_progress` / `quest_advanced` / `battle_started` / `battle_round` / `battle_resolved` / `entity_introduced`），数量 ≤8，可另附一个 `atmosphere` 段且必须置于最后。
 - `objectiveLink` 必须与权威 `ObjectiveTransition.after` 一致（无 after 目标时为 null）；目标在本回合推进时，必须产出 `quest_advanced` 段命名新目标相关的已批准实体。
-- 当玩家对焦点 NPC 提交话语（`job.utterance`）时，表演契约必须返回该 NPC 的台词并列出它应答的 `player_utterance` 节拍；缺失应答使提案非法并触发确定性 fallback。
+- 当玩家对焦点 NPC 提交话语（`job.utterance`）时，表演契约必须返回该 NPC 的台词并列出它应答的 `player_utterance` 节拍；缺失应答使提案非法并触发确定性 fallback。玩家界面保留该 NPC 的会话焦点：pending 时短暂遮蔽，ready 后先显示这句回应，不会直接把玩家抛回场景。
 - `npcLine.text` 的输出边界是 NPC 第一人称直接台词：不得带 NPC 名称、动作或“说道/答道”等叙述性包装。审批写回和 read model 会再次归一化，以兼容历史场景。
 - 确定性 fallback 会读取 `job.utterance`、焦点 NPC 关系档位和当前目标，生成带具体承接对象的回应；通用“我知道了/好的/嗯”会被 live source 判为无上下文并回退。
+- 承接玩家原话时，NPC 以自己的口吻概括并回答，不得把整段玩家输入包进“你刚才问的‘……’”再反问。确定性 fallback 必须输出角色相关的可核对线索或明确下一步。
+- 焦点 NPC 的开场、正式回应与终局追问至少两句：先回应，再补充线索、保留或下一步。该质量门槛由审批器执行；live source 即使返回单句，也会整场回退为角色化的确定性表演。
 
 ## 焦点 NPC 隔离上下文
 

@@ -338,9 +338,37 @@ export function projectGameSessionView(
     && presentNpcs.some((npc) => String(npc.id) === currentObjectiveNpcId)
     ? currentObjectiveNpcId
     : null;
+  const registry = storyState.narrative.choiceRegistry ?? [];
+  const legalChoiceMap = buildChoiceMap(worldState, storyState, revision);
+  // 终幕（或一次战斗/移动后的追问）有时已没有未完成 objective，却仍由同
+  // 一名在场 NPC 给出两个已批准的 TalkAction。这是该 NPC 的回答分支，不是
+  // 地点层的两个普通行动；将它识别为焦点对话，避免把终局决定散落到行动栏。
+  const pairedDialogueNpcId = (() => {
+    if (scene === null || scene === undefined || scene.choices.length !== 2) return null;
+    const actions: Extract<Action, { type: "talk" }>[] = [];
+    for (const sceneChoice of scene.choices) {
+      const approved = registry.find((entry) =>
+        entry.choiceToken === sceneChoice.choiceToken
+        && entry.sceneId === scene.sceneId
+        && entry.basedOnRevision === revision,
+      );
+      if (
+        approved === undefined
+        || legalChoiceMap.get(sceneChoice.choiceToken) !== approved.action
+        || approved.action.type !== "talk"
+      ) return null;
+      actions.push(approved.action);
+    }
+    const npcId = actions[0]?.npcId;
+    return npcId !== undefined
+      && actions.every((action) => action.npcId === npcId)
+      && presentNpcs.some((npc) => npc.id === npcId)
+      ? String(npcId)
+      : null;
+  })();
   const persistedFocusNpcId = scene?.event?.kind === "dialogue"
     ? String(scene.event.focusNpcId)
-    : generatedObjectiveNpcFocus;
+    : generatedObjectiveNpcFocus ?? pairedDialogueNpcId;
   // 兼容已经写入本地存档的旧交接场景：若权威当前目标明确要求与另一名
   // 在场 NPC 交谈，旧 scene 的 focus/choices 已经过期。将旧 NPC 降为普通
   // 交谈入口，避免继续消费同一组 support/challenge token。
@@ -354,8 +382,6 @@ export function projectGameSessionView(
     && presentNpcs.some((npc) => String(npc.id) === currentObjectiveNpcId)
     && latestFocusDialogueAct !== "ask";
   const focusNpcId = staleDialogueFocus ? null : persistedFocusNpcId;
-  const registry = storyState.narrative.choiceRegistry ?? [];
-  const legalChoiceMap = buildChoiceMap(worldState, storyState, revision);
   const projectSceneChoice = (sceneChoice: NonNullable<typeof scene>["choices"][number]): PlayerChoiceView | null => {
     const approved = registry.find((entry) =>
       entry.choiceToken === sceneChoice.choiceToken

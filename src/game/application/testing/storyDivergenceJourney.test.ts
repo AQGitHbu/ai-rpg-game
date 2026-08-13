@@ -78,7 +78,7 @@ async function runBranch(branch: Branch, replay: number) {
   reload(); // 重载 2
   await fixed("传讯人·3"); // 6: 完成最终幕主线
   await scene(); // 具象化结局对（stock 规则要求）
-  await fixed("传讯人·2"); // 7: 结局落定
+  await fixed(branch.name === "support" ? "回应" : "质疑"); // 7: 明确选择结局方向后落定
   await scene();
   reload(); // 重载 3
 

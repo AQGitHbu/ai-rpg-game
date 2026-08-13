@@ -32,13 +32,14 @@ describe("NPC direct speech", () => {
   });
 
   it("provides a direct greeting without a speaker description", () => {
-    expect(composeDirectNpcGreeting()).toBe("欢迎光临，有什么需要我帮忙的吗？");
-    expect(normalizeNpcSpeech("欢迎光临，有什么需要我帮忙的吗？")).toBe("欢迎光临，有什么需要我帮忙的吗？");
+    expect(composeDirectNpcGreeting()).toBe("先进来坐。有什么需要我帮忙的，慢慢说清楚。");
+    expect(normalizeNpcSpeech("先进来坐。有什么需要我帮忙的，慢慢说清楚。")).toBe("先进来坐。有什么需要我帮忙的，慢慢说清楚。");
   });
 
   it("adapts the fallback greeting to a story NPC role", () => {
     expect(composeDirectNpcGreeting("失踪镖队幸存者", "苏绾")).toContain("旧案");
     expect(composeDirectNpcGreeting("旧案传讯人", "顾砚")).toContain("线索");
     expect(composeDirectNpcGreeting("旧案知情人", "陆归鸿")).toContain("盟誓铁印");
+    expect(composeDirectNpcGreeting("酒肆老板娘", "何二娘")).toContain("告示");
   });
 });

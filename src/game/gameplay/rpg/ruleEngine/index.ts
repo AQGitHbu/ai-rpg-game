@@ -144,8 +144,15 @@ export function resolveTurn(
   // Step 4: 张力/进度更新（storyProgress 由 advanceStoryProgression 推导，此处只更新 tension）
   const nextStoryState = updateStoryMetrics(approval.nextStoryState, domainEventsWithCandidate);
 
-  // Step 5: 结局结算（§13.1 放最后；用含 endingAllowed 的 storyState）
-  const ending = resolveEnding(afterCandidateWs, nextStoryState, deps);
+  // Step 5: 结局结算只消费终幕的明确立场。结局对已具象化后，探索、
+  // 移动或开战仍然是正常游戏行动，不能因为 endingAllowed 已为 true 而
+  // 把玩家直接送进结局。
+  const isExplicitEndingDecision = action.type === "talk"
+    && (action.dialogueAct === "support" || action.dialogueAct === "challenge")
+    && afterCandidateWs.endings.length >= 2;
+  const ending = isExplicitEndingDecision
+    ? resolveEnding(afterCandidateWs, nextStoryState, deps)
+    : { nextWorldState: afterCandidateWs, nextStoryState, events: [] };
   const finalDomainEvents: GameEvent[] = [...domainEventsWithCandidate, ...ending.events];
 
   // Step 6: 物化视图增量归约

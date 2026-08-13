@@ -336,14 +336,38 @@ export function LocationSceneScreen({
   const selectedNpcChoiceToken = currentSceneNpcName === null
     ? null
     : locationNpcs[0]?.talkChoice.choiceToken ?? null;
-  const sceneActions = selectedNpcChoiceToken !== null
-    ? view.currentLocation.actions.filter((action) =>
-        action.choiceToken === selectedNpcChoiceToken || action.presentation === "battle",
-      )
-    : view.story.currentObjectiveChoiceToken !== null
-      ? view.currentLocation.actions.filter((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
-      : view.currentLocation.actions;
-  const sceneNarrativeChoices = view.narrative.eventKind !== "dialogue" ? view.narrative.choices : [];
+  // 已准备好的焦点对白代表当前主线的唯一入口。两个 support/challenge 是
+  // 对话框内的回答，不应和探索、战斗等地点通用动作并排在底栏；否则一次
+  // 主线场景会被误读成多条可同时推进的任务。
+  const preparedDialogue = activeDialogues.find((dialogue) =>
+    dialogue.choices.length === 2 || dialogue.freeInputEnabled,
+  );
+  const preparedDialogueTalkChoice = preparedDialogue === undefined
+    ? null
+    : view.currentLocation.npcs.find((npc) => npc.name === preparedDialogue.name)?.talkChoice ?? null;
+  // 仍停留在上一座建筑、但主线已交给另一名 NPC 时，不能继续把旧 NPC、
+  // 探索或战斗当作当前任务入口。保持原场景供玩家读完回应；下一步由 HUD
+  // 指明，玩家返回小镇后从目标人物自己的建筑进入，避免把两处空间混成一幕。
+  const handoffLeavesCurrentBuilding = selectedNpcChoiceToken !== null
+    && view.story.currentObjectiveLabel !== null
+    && selectedNpcChoiceToken !== view.story.currentObjectiveChoiceToken;
+  const sceneActions = preparedDialogueTalkChoice !== null
+    ? [preparedDialogueTalkChoice]
+    : handoffLeavesCurrentBuilding
+      ? []
+      : view.story.currentObjectiveChoiceToken !== null
+        ? view.currentLocation.actions.filter((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
+        : selectedNpcChoiceToken !== null
+          ? view.currentLocation.actions.filter((action) =>
+              action.choiceToken === selectedNpcChoiceToken || action.presentation === "battle",
+            )
+          : view.currentLocation.actions;
+  const sceneNarrativeChoices = preparedDialogue === undefined
+    && !handoffLeavesCurrentBuilding
+    && view.story.currentObjectiveLabel === null
+    && view.narrative.eventKind !== "dialogue"
+    ? view.narrative.choices
+    : [];
   const sceneActionTokens = new Set(sceneActions.map((action) => action.choiceToken));
   const sceneActionLabels = new Set(sceneActions.map((action) => action.label));
   const actionRailChoices = [
@@ -629,9 +653,9 @@ export function LocationSceneScreen({
           gameType={gameType}
           busy={busy || pending}
           onSubmit={(interaction) => {
-            // 正式对白选项消费的是当前场景。先关闭旧弹窗，避免 pending 完成后
-            // 同一个 NPC ID 在新场景中重新挂载，看起来像旧选项从未失效。
-            setOpenDialogueNpcId(null);
+            // 提交后保留当前 NPC 的会话焦点。pending 期间 activeDialogues 会暂时
+            // 让弹窗隐去；下一幕 ready 后，同一 NPC 的新台词会自动回到眼前，玩家
+            // 读完回应后再自行关闭，避免自定义输入像是石沉大海。
             onSubmit(interaction);
           }}
           onClose={() => {

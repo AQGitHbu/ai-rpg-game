@@ -120,7 +120,7 @@ describe("动态具象化旅程（Step 1）", () => {
 
     await fixed("传讯人·3"); // 11: 完成第 3 幕主线
     await scene();
-    await fixed("交谈"); // 12: 结局落定
+    await fixed("回应"); // 12: 明确选择结局方向后落定
 
     const record = store.record();
     if (record === null) throw new Error("旅程结束后存档缺失");

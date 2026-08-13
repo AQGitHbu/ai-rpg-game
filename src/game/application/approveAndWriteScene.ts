@@ -106,6 +106,7 @@ export type SceneRejectionCode =
   | "npc_uses_forbidden_fact"
   | "wrong_npc_interaction"
   | "player_utterance_unanswered"
+  | "npc_dialogue_too_short"
   | "stale_objective_link"
   | "quest_advanced_unnamed"
   | "semantic_duplicate_choices"
@@ -213,6 +214,15 @@ function rebuildNpcLine(
   };
 }
 
+/** 焦点 NPC 的可见对白至少应是两句可独立阅读的话，不能把开场或回答压成一句。 */
+function hasExpandedNpcDialogue(text: string): boolean {
+  return normalizeNpcSpeech(text)
+    .split(/[。！？!?]+/u)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence !== "")
+    .length >= 2;
+}
+
 /**
  * 审批 AI 生成的场景表演提案（spec §10.3，Task 6）：
  * - 分段旁白：每个强制节拍恰好一个 segment 且按节拍顺序排列；atmosphere 可选且最后；
@@ -288,6 +298,20 @@ export function approveScenePerformance(input: {
     }
     const present = context.presentNpcs.find((n) => String(n.id) === String(npcLine.npcId));
     if (present === undefined) return { ok: false, code: "unknown_dialogue_npc" };
+    // 焦点 NPC 的开场、正式回应和终局追问都必须至少两句。提示词本身
+    // 不足以防止 live output 偶尔退化成一句泛问候，因此把这一玩家可见
+    // 质量门槛放进审批；不合格时整场走角色化的确定性 fallback。
+    const isFocusedNpc = context.focusNpcContext !== undefined
+      && String(context.focusNpcContext.id) === String(npcLine.npcId);
+    const isCurrentObjectiveNpc = context.objectiveTarget !== null
+      && context.objectiveTarget.entityId === String(npcLine.npcId);
+    if (isFocusedNpc && (
+        context.job.resolvedEvent.eventKind === "dialogue"
+        || isCurrentObjectiveNpc
+        || context.objectiveTransition.mode === "ready_for_ending"
+      )) {
+      if (!hasExpandedNpcDialogue(npcLine.text)) return { ok: false, code: "npc_dialogue_too_short" };
+    }
     const allowed = new Set<string>([
       ...present.knownFactCards.map((f) => String(f.factId)),
       ...present.sceneVisibleFactIds.map(String),
@@ -301,26 +325,20 @@ export function approveScenePerformance(input: {
     }
   }
 
-  // Task 5 Step 4：player_utterance 应答钩子。有玩家原话节拍时，提案必须由焦点
-  // NPC 出场应答并显式列出应答的节拍 ID；缺台词/错 NPC/未列出 ID → 整场拒绝。
+  // Task 5 Step 4：player_utterance 应答钩子。有玩家原话节拍时，提案必须由
+  // 实际被玩家交谈的 NPC 应答并显式列出节拍 ID；幕交接中的新目标 NPC
+  // 不能篡改成这句话的收件人。
   const utteranceBeat = context.mandatoryBeats.find((b) => b.kind === "player_utterance");
   if (utteranceBeat !== undefined) {
     const focusNpcId = utteranceBeat.subjectIds[0];
-    // 幕交接时，玩家上一回合是在旧 NPC 面前发问，但新一幕的权威目标
-    // NPC 才是当前场景焦点。允许这个明确的交接 NPC 承接原话，避免
-    // deterministic fallback 因“回答错 NPC”被拒绝后把 generation 永久留在 pending。
-    const handoffNpcId = context.objectiveTransition.mode === "advanced_act"
-      && context.objectiveTarget !== null
-      && context.focusNpcContext !== undefined
-      && String(context.focusNpcContext.id) === String(context.objectiveTarget.entityId)
-      ? context.focusNpcContext.id
-      : undefined;
-    const answerNpcId = handoffNpcId ?? focusNpcId;
     if (npcLine === null
-      || String(npcLine.npcId) !== String(answerNpcId)
+      || String(npcLine.npcId) !== String(focusNpcId)
       || !(npcLine.answeredBeatIds ?? []).includes(utteranceBeat.beatId)) {
       return { ok: false, code: "player_utterance_unanswered" };
     }
+    // 先确认说话者确实是本轮的对象，再执行长度门槛。这样错把旧问题交给
+    // 另一名 NPC 时仍稳定报告归属错误，而不是被单句问题掩盖。
+    if (!hasExpandedNpcDialogue(npcLine.text)) return { ok: false, code: "npc_dialogue_too_short" };
   }
 
   // ── 目标一致性：objectiveLink 必须匹配 after ────────────────────────────
