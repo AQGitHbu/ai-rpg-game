@@ -117,6 +117,50 @@ function planRepairByAction(ws: WorldState, action: Action): WorldDeltaProposal 
   }
 }
 
+/** 场景候选不足时的确定性续接：优先只补探索钩子；完全无入口时再补 NPC/地点。 */
+function planSceneCandidateRecovery(ws: WorldState): WorldDeltaProposal {
+  const currentLocation = ws.locations.find((location) => location.id === ws.currentLocationId);
+  const hasExistingEntry = ws.npcs.some((npc) => npc.locationId === ws.currentLocationId)
+    || (currentLocation?.connectedLocationIds.some((id) => ws.unlockedLocationIds.includes(id)) ?? false);
+  const needsNpc = !hasExistingEntry;
+  const useNewLocation = needsNpc && currentTownNeedsNewLocation(ws);
+  const npcName = uniqueName("引路人", ws.npcs.map((npc) => npc.name), String(ws.npcs.length + 1));
+  const itemName = uniqueName("路标残片", ws.items.map((item) => item.name), String(ws.items.length + 1));
+  return {
+    beatSummary: "一名引路人出现，为停滞的场景带来新的行动方向",
+    newLocation: useNewLocation
+      ? {
+          name: uniqueName("新岔路", ws.locations.map((location) => location.name), String(ws.locations.length + 1)),
+          description: "一条刚刚显露的岔路，与当前所在地相连。",
+          scale: "scene",
+          connectFromLocationId: currentLocationId(ws),
+        }
+      : null,
+    newNpc: needsNpc
+      ? {
+          name: npcName,
+          role: "引路人",
+          description: "在故事停滞时现身的旅人，带来可以继续追寻的方向。",
+          locationRef: useNewLocation
+            ? { kind: "new_location" }
+            : { kind: "existing", id: currentLocationId(ws) },
+          goals: ["指出前路"],
+        }
+      : null,
+    // 已有交谈/移动入口时只补一个探索钩子，避免候选恢复无谓占用 NPC/地点预算，
+    // 也避免改变后续正式幕推进的确定性实体编号。
+    newItem: {
+      name: itemName,
+      description: "一块刻着方向记号的残片，似乎能指向新的线索。",
+      locationRef: "current",
+    },
+    newEnemy: null,
+    newFact: null,
+    nextMainQuest: null,
+    endingPair: null,
+  };
+}
+
 function uniqueName(base: string, existingNames: readonly string[], suffix: string): string {
   const taken = new Set(existingNames);
   if (!taken.has(base)) return base;
@@ -227,7 +271,13 @@ export function createDeterministicEvolutionSource(): WorldEvolutionSource {
         case "ending_pair":
           return { proposal: planEndingPair(ctx.worldState, ctx.storyState) };
         case "pacing":
-          return { proposal: ctx.action ? planRepairByAction(ctx.worldState, ctx.action) : null };
+          return {
+            proposal: ctx.action
+              ? planRepairByAction(ctx.worldState, ctx.action)
+              : ctx.reason === "scene_candidate_shortage"
+                ? planSceneCandidateRecovery(ctx.worldState)
+                : null,
+          };
       }
     },
   };

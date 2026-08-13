@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { generatePendingScene } from "./generatePendingScene";
 import { createInitialWorldState, appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
+import { asFactId, asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
@@ -11,6 +11,7 @@ import type { SceneSource, SceneSourceResult } from "./sceneSource";
 import type { NarrativeEventKind } from "@/game/domain/narrative";
 import type { ResolvedEventStatus } from "@/game/domain/resolvedEvent";
 import { ATMOSPHERE_BEAT_ID } from "./approveAndWriteScene";
+import { createDeterministicEvolutionSource } from "./deterministicEvolutionSource";
 
 const IMPORTANT_ACTION_ID = "act_persist";
 const IMPORTANT_JOB_ID = "job_persist";
@@ -32,7 +33,17 @@ function makeWorldState() {
     startingLocation: loc,
     startingItemIds: [],
   });
-  return appendNpc(base, npc);
+  return {
+    ...appendNpc(base, npc),
+    // 通用生成夹具保留一个真实可探索钩子，使 talk + explore 都是规则合法候选。
+    worldFacts: [{
+      factId: asFactId("fact_1"),
+      text: "柜台下藏着一张旧纸条。",
+      source: "generated" as const,
+      discovered: false,
+      locationId: asLocationId("loc_1"),
+    }],
+  };
 }
 
 type JobFixture = {
@@ -209,6 +220,52 @@ describe("generatePendingScene", () => {
     const context = spy.contexts()[0];
     expect(context.job.jobId).toBe(IMPORTANT_JOB_ID);
     expect(context.job.actionId).toBe(IMPORTANT_ACTION_ID);
+  });
+
+  it("materializes reachable content before scene generation when fewer than two choices exist", async () => {
+    const isolatedLocation: LocationEntry = {
+      ...loc,
+      npcIds: [],
+      connectedLocationIds: [],
+    };
+    const isolatedWorld = createInitialWorldState({
+      generation: { generationId: asGenerationId("g-shortage"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: isolatedLocation,
+      startingItemIds: [],
+    });
+    const record: GameRecord = {
+      ...makeGameRecord({
+        kind: "pending",
+        job: makeJob({ summary: { kind: "explore" }, eventKind: "observe" }),
+      }),
+      worldState: isolatedWorld,
+      storyState: {
+        ...createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+        narrative: {
+          ...createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }).narrative,
+          generation: {
+            status: "pending",
+            job: makeJob({ summary: { kind: "explore" }, eventKind: "observe" }),
+          },
+        },
+      },
+    };
+    const spy = makeSpySceneSource();
+    const repo = makeMockRepo(record);
+
+    const result = await generatePendingScene({
+      repository: repo,
+      sceneSource: spy.source,
+      worldEvolutionSource: createDeterministicEvolutionSource(),
+      now: () => "2026-01-02",
+    });
+
+    expect(result).toBe("saved");
+    expect(spy.contexts()[0]!.legalActionCandidates.length).toBeGreaterThanOrEqual(2);
+    const writeBack = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
+    expect(writeBack.nextWorldState.npcs.length + writeBack.nextWorldState.locations.length).toBeGreaterThan(1);
+    expect(writeBack.nextWorldState.items).toHaveLength(1);
   });
 
   it("move job: the source receives a travel eventKind, not observe — no fabricated event", async () => {

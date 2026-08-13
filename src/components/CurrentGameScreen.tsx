@@ -5,7 +5,6 @@ import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
 import { AdventureGameShell } from "./AdventureGameShell";
 import { NewGameSetupForm } from "./NewGameSetupForm";
-import { GenerationStatusModal } from "./GenerationStatusModal";
 import { fetchCurrentGame, ensureNarrative, ackPrologue } from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
@@ -59,10 +58,9 @@ export function CurrentGameScreen() {
     return () => { cancelled = true; };
   }, [applyResponse]);
 
-  // 首场景 pending 在创建游戏时就已写入，但序幕确认前不轮询。
-  // 否则首场景后台写回会与黑屏序幕同时竞争客户端刷新，造成序幕重复播放。
+  // 任何持久化 pending 都立即触发幂等 ensure。首场景在黑屏序幕阅读期间
+  // 静默生成；prologueShown 由仓储在并发场景写回中单调保留，不再靠延迟生成避竞态。
   const narrativePending = state.phase === "active" &&
-    state.view.prologueShown &&
     state.view.narrativeGeneration.status === "pending";
 
   useEffect(() => {
@@ -152,7 +150,6 @@ export function CurrentGameScreen() {
               {prologueAcking ? "正在进入……" : "开始冒险"}
             </InlineButton>
           </div>
-          {prologueAcking ? <GenerationStatusModal kind="action" /> : null}
         </Panel>
       );
     }

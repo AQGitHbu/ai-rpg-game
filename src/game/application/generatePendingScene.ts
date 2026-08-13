@@ -2,7 +2,7 @@ import type { GameRepository, GameRecord } from "./server/persistence/gameReposi
 import type { SceneSource, ScenePerformanceProposal } from "./sceneSource";
 import { buildSceneGenerationContext } from "./sceneGenerationContext";
 import { approveScenePerformance, type ApprovedSceneWriteBack } from "./approveAndWriteScene";
-import { createDeterministicSceneSource } from "./deterministicSceneSource";
+import { buildSelectableSceneCandidates, createDeterministicSceneSource } from "./deterministicSceneSource";
 import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import { evolveWorld } from "./evolveWorld";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
@@ -63,13 +63,39 @@ export async function generatePendingScene(
     }
   }
 
-  const scenarioRecord: GameRecord = {
+  let scenarioRecord: GameRecord = {
     ...record,
     worldState: scenarioWs,
     storyState: scenarioSs,
   };
 
-  const context = buildSceneGenerationContext(scenarioRecord);
+  let context = buildSceneGenerationContext(scenarioRecord);
+
+  // ready scene 必须有两个语义不同的合法选择。若当前世界只有一个候选，
+  // 不让生成任务永久 pending，也不在客户端伪造按钮；通过同一世界演化审批、
+  // 预算和 ID 铸造链补足可达内容，再基于批准后的预览状态生成场景。
+  if (buildSelectableSceneCandidates(context).length < 2 && deps.worldEvolutionSource !== undefined) {
+    const recovery = await evolveWorld({
+      need: { kind: "pacing", pacingNeed: "complicate" },
+      worldState: scenarioWs,
+      storyState: scenarioSs,
+      source: deps.worldEvolutionSource,
+      reason: "scene_candidate_shortage",
+      now: deps.now,
+    });
+    if (recovery.ok) {
+      scenarioWs = recovery.delta.previewWorldState;
+      scenarioSs = recovery.delta.previewStoryState;
+      scenarioRecord = {
+        ...record,
+        worldState: scenarioWs,
+        storyState: scenarioSs,
+      };
+      context = buildSceneGenerationContext(scenarioRecord);
+    }
+  }
+
+  if (buildSelectableSceneCandidates(context).length < 2) return "unavailable";
 
   let proposal: ScenePerformanceProposal;
   try {

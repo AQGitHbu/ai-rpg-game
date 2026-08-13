@@ -351,7 +351,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    expect(screen.getByText("等待剧情推进……")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("当前场景没有可执行行动，请返回地图或重新载入存档。");
   });
 
   it("labels the single NPC talk choice as a dialogue preparation state", () => {
@@ -372,6 +372,39 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.getByText("正在准备对话……")).toBeInTheDocument();
   });
 
+  it("submits an explicit NPC talk action on the first click", async () => {
+    const base = buildView();
+    const onSubmit = vi.fn();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        battle: null,
+        currentLocation: {
+          ...base.currentLocation,
+          actions: [choice(TOKENS.dialogueOne, "与老板交谈", "dialogue")],
+        },
+        narrative: {
+          ...base.narrative,
+          npcDialogues: [{
+            ...base.narrative.npcDialogues[0]!,
+            choices: [choice(TOKENS.dialogueOne, "与老板交谈", "dialogue")],
+            freeInputEnabled: false,
+          }],
+        },
+      }}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    await userEvent.click(screen.getByRole("button", { name: "与老板交谈" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      kind: "fixed_choice",
+      choiceToken: TOKENS.dialogueOne,
+    });
+  });
+
   it("keeps battle sides explicit and shows the attack feedback before the next snapshot", async () => {
     const base = buildView();
     const onSubmit = vi.fn();
@@ -389,12 +422,30 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: TOKENS.battle });
 
     rerender(<LocationSceneScreen
-      view={{ ...base, battle: { ...base.battle!, enemyHp: 5, round: 3 } }}
+      view={{
+        ...base,
+        battle: {
+          ...base.battle!,
+          enemyHp: 5,
+          round: 3,
+          lastAdvance: [{
+            sequence: 0,
+            round: 2,
+            actorSlot: "player-0",
+            actorName: "侠客",
+            targetSlot: "enemy-0",
+            targetName: "灰狼",
+            kind: "attack",
+            damage: 7,
+            targetHpAfter: 5,
+          }],
+        },
+      }}
       busy={false}
       onSubmit={onSubmit}
       onReturnMap={vi.fn()}
     />);
-    expect(screen.getByText("攻击命中！灰狼 -7 HP")).toBeInTheDocument();
+    expect(await screen.findByText("侠客攻击 灰狼 -7 HP")).toBeInTheDocument();
   });
 
   it("offers non-focus NPC small talk without submitting a game action", async () => {

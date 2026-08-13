@@ -220,6 +220,34 @@ describe("sqliteGameRepository", () => {
     }
   });
 
+  it("applySceneWriteBack preserves a concurrently acknowledged prologue", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    const { worldState, storyState } = buildTestState();
+    const gameId = asGameId("g-prologue-race");
+
+    await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });
+    const acknowledged = await repo.applyState({
+      gameId,
+      expectedRevision: 0,
+      nextWorldState: worldState,
+      nextStoryState: { ...storyState, prologueShown: true },
+      incrementRevision: false,
+    });
+    expect(acknowledged.ok).toBe(true);
+
+    const writeBack = await repo.applySceneWriteBack({
+      gameId,
+      expectedRevision: 0,
+      nextWorldState: worldState,
+      // 模拟生成任务在确认前读取到的旧快照。
+      nextStoryState: { ...storyState, prologueShown: false },
+    });
+
+    expect(writeBack).toMatchObject({ ok: true, record: { revision: 1 } });
+    if (writeBack.ok) expect(writeBack.record.storyState.prologueShown).toBe(true);
+  });
+
   it("getCurrentGame returns none when no game exists", async () => {
     const dbPath = nextDbPath();
     const repo = openRepo(dbPath);

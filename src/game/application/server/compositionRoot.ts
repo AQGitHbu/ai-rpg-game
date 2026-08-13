@@ -21,6 +21,7 @@ import type { Interaction } from "@/game/domain/action";
 import type { GameSessionView } from "../gameSessionView";
 import type { GameTypeId, GameLength, GameSetup } from "@/game/domain/newGame";
 import { deriveEndingSessionIdentity, matchesEndingSessionIdentity } from "./endingSessionIdentity";
+import { BackgroundEnsureCoordinator } from "./ai/_shared/ensureCoordinator";
 
 export type { RequestLogContext };
 
@@ -81,6 +82,25 @@ export function createServerGameEntryPoints(
   // Task 9：对话自由输入统一走 performTurn 回合入口，AI 可用时注入 live 意图源，否则规则源。
   // transport 构建收敛在 server/ai 工厂内（@ai-game/ai-transport 边界守卫）。
   const intentParserSource = createServerIntentParserSource(env);
+  const narrativeCoordinator = new BackgroundEnsureCoordinator({
+    loadPending: async () => {
+      const current = await repository.getCurrentGame();
+      if (!current.ok) return { ok: false, result: "unavailable" };
+      if (current.status !== "active") return { ok: false, result: "not_pending" };
+      const generation = current.record.storyState.narrative.generation;
+      if (generation.status !== "pending") return { ok: false, result: "not_pending" };
+      if (!("job" in generation) || generation.job === undefined) {
+        return { ok: false, result: "unavailable" };
+      }
+      return {
+        ok: true,
+        key: `${current.record.gameId}:${generation.job.jobId}`,
+      };
+    },
+    run: () => generatePendingScene({ repository, sceneSource, worldEvolutionSource, now }),
+    logKey: "runtime_narrative_task",
+    logger,
+  });
 
   const executeHttpRequest = async (
     method: string,
@@ -129,7 +149,7 @@ export function createServerGameEntryPoints(
   };
 
   return {
-    createGame: async (input, _traceId) => {
+    createGame: async (input, traceId) => {
       const gameId = asGameId(randomUUID());
       let replaceCurrent: { readonly expectedGameId: GameId; readonly expectedRevision: number } | undefined;
       if (input.restart !== undefined) {
@@ -161,10 +181,14 @@ export function createServerGameEntryPoints(
         },
         { repository, source, now, aiEnabled },
       );
-      if (result.ok) return { ok: true, revision: result.revision };
+      if (result.ok) {
+        // 开局存档已经包含首场景 pending job；立即排队，让序幕阅读时间覆盖生成延迟。
+        await narrativeCoordinator.ensure(traceId);
+        return { ok: true, revision: result.revision };
+      }
       return { ok: false, code: result.code };
     },
-    performTurn: async (command, _traceId) => {
+    performTurn: async (command, traceId) => {
       const current = await repository.getCurrentGame();
       if (!current.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE", feedback: "Infrastructure error" };
       if (current.status !== "active") return { ok: false, code: "NO_ACTIVE_GAME", feedback: "No active game" };
@@ -188,6 +212,11 @@ export function createServerGameEntryPoints(
             updated.record.revision,
             deriveEndingSessionIdentity(updated.record.gameId, updated.record.revision),
           );
+          // 最后一个影响下一幕的玩家决定已经提交；此时立即启动后台生成。
+          // 活跃战斗 fast path 没有 pending，不会进入该分支。
+          if (view.narrativeGeneration.status === "pending") {
+            await narrativeCoordinator.ensure(traceId);
+          }
           return { ok: true, revision: result.revision, feedback: result.feedback, view };
         }
         return { ok: false, code: "INFRASTRUCTURE_FAILURE", feedback: "Unable to read saved game" };
@@ -207,28 +236,34 @@ export function createServerGameEntryPoints(
       );
       return { ok: true, status: "active", view, revision: current.record.revision };
     },
-    ensureNarrativeScene: async (_traceId) => {
-      const result = await generatePendingScene({ repository, sceneSource, worldEvolutionSource, now });
-      return { ok: result === "saved", result };
+    ensureNarrativeScene: async (traceId) => {
+      const result = await narrativeCoordinator.ensure(traceId);
+      return { ok: result !== "unavailable", result };
     },
     ackPrologue: async (_traceId) => {
-      const current = await repository.getCurrentGame();
-      if (!current.ok || current.status !== "active") return { ok: false, code: "NO_ACTIVE_GAME" };
-      // prologueShown 是 UI 元数据，不改变世界状态：不递增 revision，
-      // 避免破坏基于当前 revision 铸造的 choiceToken（否则场景固定选项全部失效）。
-      const nextStoryState: StoryState = {
-        ...current.record.storyState,
-        prologueShown: true,
-      };
-      const commit = await commitState(repository, {
-        gameId: current.record.gameId,
-        expectedRevision: current.record.revision,
-        nextWorldState: current.record.worldState,
-        nextStoryState,
-        incrementRevision: false,
-      });
-      if (!commit.ok) return { ok: false, code: commit.code };
-      return { ok: true, revision: commit.record.revision };
+      // 与后台场景 CAS 撞车时重新读取一次；确认是单调、幂等的 UI 元数据，
+      // 不递增 revision，避免使已经铸造的 scene choice token 失效。
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const current = await repository.getCurrentGame();
+        if (!current.ok || current.status !== "active") return { ok: false, code: "NO_ACTIVE_GAME" };
+        if (current.record.storyState.prologueShown) {
+          return { ok: true, revision: current.record.revision };
+        }
+        const nextStoryState: StoryState = {
+          ...current.record.storyState,
+          prologueShown: true,
+        };
+        const commit = await commitState(repository, {
+          gameId: current.record.gameId,
+          expectedRevision: current.record.revision,
+          nextWorldState: current.record.worldState,
+          nextStoryState,
+          incrementRevision: false,
+        });
+        if (commit.ok) return { ok: true, revision: commit.record.revision };
+        if (commit.code !== "STALE_GAME_REVISION") return { ok: false, code: commit.code };
+      }
+      return { ok: false, code: "STALE_GAME_REVISION" };
     },
     clearDevelopmentCurrentGame: async (_traceId) => {
       // Only allow in development environment

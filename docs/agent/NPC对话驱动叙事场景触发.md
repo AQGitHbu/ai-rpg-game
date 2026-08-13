@@ -7,11 +7,11 @@ NPC 对话是持续推进故事的主要入口。每个 ready 的焦点 NPC 场�
 ## 玩家可见规则
 
 - 当前场景只有一个焦点 NPC；其面板显示恰好两个固定选择和一个自定义输入。
-- 小镇建筑是 NPC 对话入口：若当前没有该 NPC 已就绪的 dialogue scene，进入建筑先提交当前地点下发的 talk choice，等待场景生成完成后再打开对话面板；observe 场景中的 NPC 旁白不构成焦点对话。
+- 小镇建筑和地点行动栏中的明确 talk 行动都是 NPC 对话入口：若当前没有该 NPC 已就绪的 dialogue scene，第一次点击就提交当前地点下发的 talk choice，等待后台场景生成完成后再打开对话面板；不会先打开只有同一 talk 选择的准备态面板。点击 NPC 资料卡仍只查看信息；observe 场景中的 NPC 旁白不构成焦点对话。
 - 固定选择由服务器批准并以 opaque `choiceToken` 下发；客户端只显示 label/hint，不知道 Action 或 `actionKey`。
 - 自定义输入必须绑定当前焦点 NPC。每次提交生成新的浏览器 UUID，即使连续对同一 NPC 输入也分别计为独立回合。
 - 玩家输入表达意图，不声明事实。服务端意图解析器只能转换成当前受支持 Action；越权声明不能直接改变任务、知识、关系、物品、战斗或结局。
-- 每个成功输入都会推进 `turnNumber`、更新结构化 NPC 记忆/关系、产生一个 `PendingNarrativeJob`，并等待下一幕生成。
+- 每个成功输入都会推进 `turnNumber`、更新结构化 NPC 记忆/关系、产生一个 `PendingNarrativeJob`；服务端在规则写入成功后立即后台排队下一幕，不等待玩家再次点击或客户端 ensure 才开始生成。
 - 玩家原文不写入长期记忆、事件账本或日志；长期记录只保存规则归一化的 dialogue act、topic summary 和 fact IDs。
 
 ## 单一路径
@@ -25,6 +25,7 @@ NpcDialogue（两个固定选择 + 一个自定义输入）
   → performTurn
   → GameRepository.applyState（一次规则 CAS）
   → PendingNarrativeJob
+  → 后台生成协调器（gameId + jobId 去重）
 ```
 
 请求合同：

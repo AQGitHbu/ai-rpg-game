@@ -304,7 +304,9 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
   }, [pending, view.narrative.npcDialogues]);
 
   function renderChoiceButton(choice: { choiceToken: string; label: string }) {
-    // 如果该 action 是交谈（如“与周伯交谈”），点击它纯粹打开对话弹窗，不直接发起回合提交
+    // 明确的“与 NPC 交谈”已经表达了玩家意图：若焦点对话已 ready 则直接打开，
+    // 否则第一次点击就提交原 opaque token，并在生成完成后自动恢复同一对话。
+    // NPC 人物卡仍只负责查看/打开面板，不自动消费回合。
     const matchingNpc = locationNpcs.find((n) => n.talkChoice.choiceToken === choice.choiceToken);
     if (matchingNpc) {
       return (
@@ -314,9 +316,13 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
           disabled={busy || pending}
           onClick={() => {
             const dialogue = Array.from(allDialoguesMap.values()).find((d) => d.name === matchingNpc.name);
-            if (dialogue) {
+            const ready = dialogue?.freeInputEnabled === true && dialogue.choices.length === 2;
+            if (ready && dialogue !== undefined) {
               setOpenDialogueNpcId(dialogue.npcId);
+              return;
             }
+            if (dialogue !== undefined) setOpenDialogueNpcId(dialogue.npcId);
+            onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken });
           }}
         >
           {choice.label}
@@ -523,7 +529,7 @@ export function LocationSceneScreen({ view, busy, onSubmit, onReturnMap, initial
         {sceneActions.length > 0
           ? sceneActions.map(renderChoiceButton)
           : view.narrative.choices.length === 0 && view.battle === null && !hasDialogueInteraction
-            ? <span className="scene-action-rail-empty" role="status">等待剧情推进……</span>
+            ? <span className="scene-action-rail-empty" role="alert">当前场景没有可执行行动，请返回地图或重新载入存档。</span>
             : null}
       </nav>
 

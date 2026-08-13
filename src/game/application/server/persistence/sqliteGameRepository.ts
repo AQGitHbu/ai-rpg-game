@@ -304,13 +304,18 @@ export function createSqliteGameRepository(
     }
   }
 
-  async function applyState(input: ApplyStateInput): Promise<ApplyStateResult> {
+  async function applyState(
+    input: ApplyStateInput,
+    options: { readonly preserveAcknowledgedPrologue?: boolean } = {},
+  ): Promise<ApplyStateResult> {
     let worldStateJson: string;
-    let storyStateJson: string;
+    let storyStateJson: string | null;
     try {
       await ensureSchema();
       worldStateJson = JSON.stringify(input.nextWorldState);
-      storyStateJson = JSON.stringify(input.nextStoryState);
+      storyStateJson = options.preserveAcknowledgedPrologue === true
+        ? null
+        : JSON.stringify(input.nextStoryState);
     } catch (error) {
       logError("applyState prepare failed", error);
       return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
@@ -329,6 +334,31 @@ export function createSqliteGameRepository(
         const activeGameId = pointer.rows[0]?.["game_id"];
         if (activeGameId !== input.gameId) {
           return { ok: false, code: "NO_ACTIVE_GAME" };
+        }
+
+        // prologueShown 是只会从 false → true 的展示元数据。场景生成可能在
+        // 序幕确认前读取旧快照，因此必须在同一个 write transaction 内读取
+        // 当前值并做单调合并，不能让完整 StoryState 写回把确认状态覆盖回去。
+        if (options.preserveAcknowledgedPrologue === true) {
+          const current = await tx.execute({
+            sql: "SELECT story_state_json FROM game_records WHERE game_id = ?",
+            args: [input.gameId],
+          });
+          const currentStoryJson = current.rows[0]?.["story_state_json"];
+          if (typeof currentStoryJson !== "string") {
+            return { ok: false, code: "NO_ACTIVE_GAME" };
+          }
+          const currentStory = parseJsonObject(currentStoryJson);
+          if (currentStory === null) {
+            return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+          }
+          storyStateJson = JSON.stringify({
+            ...input.nextStoryState,
+            prologueShown: currentStory["prologueShown"] === true || input.nextStoryState.prologueShown,
+          });
+        }
+        if (storyStateJson === null) {
+          return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         }
 
         const incrementRevision = input.incrementRevision ?? true;
@@ -380,13 +410,14 @@ export function createSqliteGameRepository(
 
   async function applySceneWriteBack(input: ApplySceneWriteBackInput): Promise<ApplySceneWriteBackResult> {
     // 场景写回 = 一次原子更新两列 JSON + revision + 1（CAS 走 WHERE game_id AND revision）。
-    // 与 applyState 同构；世界演化预览状态与场景包在此同一 CAS 落盘。
+    // 世界演化预览状态与场景包在此同一 CAS 落盘；同时在事务内单调保留
+    // 可能与生成并发写入的 prologueShown 元数据。
     return applyState({
       gameId: input.gameId,
       expectedRevision: input.expectedRevision,
       nextWorldState: input.nextWorldState,
       nextStoryState: input.nextStoryState,
-    });
+    }, { preserveAcknowledgedPrologue: true });
   }
 
   async function clearCurrentGame(): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" }> {

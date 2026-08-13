@@ -1,4 +1,5 @@
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import { hasExplorableContent } from "./buildChoiceMap";
 import type { PacingNeed } from "@/game/domain/storyState";
 import type {
   LocationId,
@@ -330,7 +331,9 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
             label: `前往${l.name}`,
             targetId: l.id,
           })),
-          { kind: "explore" as const, label: "查看四周" },
+          ...(hasExplorableContent(ws, ss)
+            ? [{ kind: "explore" as const, label: "查看四周" }]
+            : []),
         ],
     legalEventTargets: {
       locationIds: ws.locations.map((location) => location.id),

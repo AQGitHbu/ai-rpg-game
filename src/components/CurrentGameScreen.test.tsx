@@ -141,21 +141,34 @@ describe("CurrentGameScreen prologue display", () => {
     expect(screen.getByRole("button", { name: "开始冒险" })).toBeEnabled();
   });
 
-  it("waits until the prologue is acknowledged before polling the opening scene", async () => {
+  it("starts polling the opening scene behind the prologue before acknowledgement", async () => {
     vi.mocked(fetchCurrentGame)
       .mockResolvedValueOnce({ ok: true, status: "active", view: pendingPrologueView })
       .mockResolvedValueOnce({
         ok: true,
         status: "active",
-        view: { ...pendingPrologueView, prologueShown: true },
+        view: pendingPrologueView,
       });
     render(<CurrentGameScreen />);
 
-    await screen.findByRole("button", { name: "开始冒险" });
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(ensureNarrative).not.toHaveBeenCalled();
-
-    await userEvent.click(screen.getByRole("button", { name: "开始冒险" }));
     await waitFor(() => expect(ensureNarrative).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "开始冒险" })).toBeInTheDocument();
+    expect(screen.getByText("你在听雨客栈醒来，雨声压住了街道上的马蹄。")).toBeInTheDocument();
+  });
+
+  it("uses only the button busy state while acknowledging the prologue", async () => {
+    let resolveAck!: (value: boolean) => void;
+    vi.mocked(ackPrologue).mockImplementationOnce(() => new Promise<boolean>((resolve) => {
+      resolveAck = resolve;
+    }));
+    vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: activeViewWithPrologue });
+    render(<CurrentGameScreen />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "开始冒险" }));
+
+    expect(screen.getByRole("button", { name: "正在进入……" })).toBeDisabled();
+    expect(screen.queryByRole("dialog", { name: "正在处理……" })).not.toBeInTheDocument();
+    resolveAck(true);
+    await waitFor(() => expect(fetchCurrentGame).toHaveBeenCalledTimes(2));
   });
 });
