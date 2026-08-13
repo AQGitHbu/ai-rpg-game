@@ -752,6 +752,41 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     expect(applyCalls()).toHaveLength(1);
   });
 
+  it("lets an in-location main-objective NPC replace a stale dialogue focus for custom input", async () => {
+    const secondNpc: NpcEntry = {
+      ...npc1,
+      id: asNpcId("npc_2"),
+      name: "传讯人",
+      memory: { ...npc1.memory, npcId: asNpcId("npc_2") },
+    };
+    const world: WorldState = {
+      ...buildWorldState(),
+      npcs: [npc1, secondNpc],
+      quests: [{
+        id: asQuestId("quest_handoff"), name: "循迹", description: "与传讯人核对线索",
+        objectives: [{ kind: "talk_to_npc", npcId: secondNpc.id }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" }, tags: [],
+        kind: "main", stage: 1, status: "active",
+      }],
+    };
+    const { repo, record, applyCalls } = createSpyRepo(world, buildFocusedDialogueStoryState(npc1.id));
+
+    const result = await performTurn(
+      {
+        gameId: asGameId("g1"), actionId: "handoff-custom-input",
+        interaction: { kind: "free_text", text: "我带来了腰牌，请把你亲眼看见的经过说清楚。", targetNpcId: secondNpc.id },
+        expectedRevision: 0, choiceMap: new Map(),
+      },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+    const generation = record()!.storyState.narrative.generation;
+    expect(generation.status).toBe("pending");
+    if (generation.status === "pending") expect(generation.job.focusNpcId).toBe(secondNpc.id);
+  });
+
   it("同一 NPC 连续两个 ready 场景的自定义输入使用不同 actionId，各自形成记忆与 pending job", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 

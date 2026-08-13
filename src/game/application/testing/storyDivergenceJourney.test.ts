@@ -47,6 +47,16 @@ async function runBranch(branch: Branch, replay: number) {
   };
   const fixed = async (label: string) => accept(await playIssuedChoice(store.repo, label, source));
   const scene = async () => expect(await advanceScene(store.repo, source)).toBe(true);
+  const defeat = async (enemyName: string) => {
+    await fixed(enemyName);
+    while (store.record()!.worldState.battle.status === "active") await fixed("攻击");
+    await scene();
+  };
+  const finishActEvidence = async (act: number) => {
+    await fixed(`信物·${act}`);
+    await scene();
+    await defeat(`守径人·${act}`);
+  };
   const reload = () => {
     const snapshot = store.record();
     if (snapshot === null) throw new Error("reload 缺少存档");
@@ -74,9 +84,13 @@ async function runBranch(branch: Branch, replay: number) {
   await scene();
   reload(); // 重载 1
   await fixed("传讯人·2"); // 5: 完成第 2 幕主线
+  await scene();
+  await finishActEvidence(2);
   await scene(); // 具象化第 3 幕内容
   reload(); // 重载 2
   await fixed("传讯人·3"); // 6: 完成最终幕主线
+  await scene();
+  await finishActEvidence(3);
   await scene(); // 具象化结局对（stock 规则要求）
   await fixed(branch.name === "support" ? "回应" : "质疑"); // 7: 明确选择结局方向后落定
   await scene();
@@ -84,7 +98,7 @@ async function runBranch(branch: Branch, replay: number) {
 
   const record = store.record();
   if (record === null) throw new Error("旅程结束后存档缺失");
-  expect(successfulTurns).toBeGreaterThanOrEqual(6);
+  expect(successfulTurns).toBeGreaterThanOrEqual(10);
   expect(record.storyState.turnNumber).toBe(successfulTurns);
   expect(reloads).toBeGreaterThanOrEqual(3);
   expect(record.worldState.ending).not.toBeNull();
@@ -113,8 +127,8 @@ describe("同 seed 的完整选择分叉与多结局（Step 3）", () => {
     expect(challengeEnding!.requirements.length).toBeGreaterThan(0);
 
     // 支持分支命中信任方向；质疑分支命中质疑方向——离线（零 AI）也能靠规则区分。
-    expect(supportEnding!.name).toContain("共同承担");
-    expect(challengeEnding!.name).toContain("独自揭");
+    expect(supportEnding!.name).toContain("共同揭露");
+    expect(challengeEnding!.name).toContain("独自追查");
     expect(supportEnding!.name).not.toBe(challengeEnding!.name);
 
     expect(support.worldState.eventLedger.some((event) => event.type === "ending_reached")).toBe(true);

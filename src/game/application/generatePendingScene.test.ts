@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { generatePendingScene } from "./generatePendingScene";
 import { createInitialWorldState, appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asFactId, asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
+import { asFactId, asItemId, asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
@@ -281,6 +281,22 @@ describe("generatePendingScene", () => {
     const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
     expect(writeBack.nextStoryState.narrative.currentScene?.event?.kind).toBe("travel");
     expect(writeBack.nextStoryState.narrative.currentScene?.source).toBe("fallback");
+  });
+
+  it("take_item job: completes with an immediate deterministic scene without calling the configured source", async () => {
+    const record = makeGameRecord({
+      kind: "pending",
+      job: makeJob({ summary: { kind: "take_item", itemId: asItemId("item_1") }, eventKind: "item" }),
+    });
+    const spy = makeSpySceneSource();
+    const deps = makeDeps(record, spy.source);
+    const result = await generatePendingScene(deps);
+
+    expect(result).toBe("saved");
+    expect(spy.contexts()).toHaveLength(0);
+    const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
+    expect(writeBack.nextStoryState.narrative.currentScene?.source).toBe("fallback");
+    expect(writeBack.nextStoryState.narrative.generation.status).toBe("idle");
   });
 
   it("does not rewrite partial_success/failure/blocked: the source sees the real status", async () => {

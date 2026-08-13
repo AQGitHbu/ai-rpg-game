@@ -191,6 +191,26 @@ function deriveAnchorObjective(
   return null;
 }
 
+/**
+ * 正式幕必须留出可阅读、可验证的过程，而非一次交谈就结束。若本幕同时
+ * 具象化了人物、证物与敌人，按“对话 → 取得证物 → 处理阻拦”串成同一条
+ * 主线；提案只缺其中任一实体时仍退化为单个可达锚点，保持通用审批能力。
+ */
+function deriveActObjectives(
+  p: WorldDeltaProposal,
+  ids: MintedIds,
+): readonly QuestObjective[] | null {
+  if (p.newNpc && ids.npcId && p.newItem && ids.itemId && p.newEnemy && ids.enemyId) {
+    return [
+      { kind: "talk_to_npc", npcId: ids.npcId },
+      { kind: "obtain_item", itemId: ids.itemId },
+      { kind: "defeat_enemy", enemyId: ids.enemyId },
+    ];
+  }
+  const anchor = deriveAnchorObjective(p, ids);
+  return anchor === null ? null : [anchor];
+}
+
 function ruleOwnedEndingRequirements(
   themeKey: "trust" | "doubt",
   ws: WorldState,
@@ -342,8 +362,8 @@ export function approveWorldDelta(input: {
   if (need.kind === "next_act") {
     const stageCollision = ws.quests.some((q) => q.kind === "main" && q.stage === need.act && q.status !== "closed");
     if (stageCollision) return reject("main_quest_conflict", `act_${need.act}_has_main_quest`);
-    const objective = deriveAnchorObjective(p, ids);
-    if (objective === null) return reject("unreachable_objective", "no_anchor_entity");
+    const objectives = deriveActObjectives(p, ids);
+    if (objectives === null) return reject("unreachable_objective", "no_anchor_entity");
   }
 
   // 预算预占（在铸造实体前校验，避免无效提议占用序号）。
@@ -445,7 +465,7 @@ export function approveWorldDelta(input: {
       id: ids.questId,
       name: p.nextMainQuest.name,
       description: p.nextMainQuest.description,
-      objectives: [deriveAnchorObjective(p, ids)!],
+      objectives: deriveActObjectives(p, ids)!,
       onSuccess: { kind: "advance_story" },
       onFailure: { kind: "closed" },
       tags: ["dynamic"],

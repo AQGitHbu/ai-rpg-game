@@ -263,8 +263,15 @@ describe("projectGameSessionView", () => {
 
     const view = projectGameSessionView(wsHandoff, ssHandoff, 0, "test-ending-session");
     const oldNpc = view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_1");
+    const newNpc = view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_2");
     expect(oldNpc?.freeInputEnabled).toBe(false);
     expect(oldNpc?.choices.map((entry) => entry.label)).toEqual(["与老板交谈"]);
+    expect(newNpc?.freeInputEnabled).toBe(true);
+    expect(newNpc?.choices).toHaveLength(2);
+    expect(newNpc?.choices.map((entry) => entry.label)).toEqual([
+      "回应传讯人：“我愿意先把手里的证据交给你核对，请你把知道的那一段说清楚。”",
+      "追问传讯人：“我会逐项核对线索；你凭什么确定它们指向同一个人？”",
+    ]);
     expect(view.narrative.choices).toHaveLength(0);
     expect(view.story.currentObjectiveLabel).toBe("与传讯人交谈");
   });
@@ -868,6 +875,39 @@ describe("projectGameSessionView town read model", () => {
     expect(interactive.length).toBeGreaterThan(0);
     expect(interactive[0]?.npcId).toBe("npc_1");
     expect(interactive[0]?.npcName).toBe("老板");
+  });
+
+  it("town 地点的同一物品只投影到一个可进入建筑，不会在每个建筑场景重复出现", () => {
+    const secondNpcId = asNpcId("npc_2");
+    const secondNpc: NpcEntry = {
+      ...townNpc1,
+      id: secondNpcId,
+      name: "铁匠",
+      role: "铁匠",
+      locationId: asLocationId("loc_1"),
+      memory: { ...townNpc1.memory, npcId: secondNpcId },
+    };
+    const base = makeTownWorld();
+    const location = base.locations[0]!;
+    const town = bindNpcToTownSlot(location.town!, secondNpcId).town;
+    const itemId = asItemId("item_town_relic");
+    const townWs: WorldState = {
+      ...base,
+      locations: [{ ...location, npcIds: [townNpc1.id, secondNpcId], availableItemIds: [itemId], town }],
+      npcs: [townNpc1, secondNpc],
+      items: [{ id: itemId, name: "染血腰牌", description: "一块旧腰牌。", kind: "relic", tags: [] }],
+    };
+    const view = projectGameSessionView(
+      townWs,
+      createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 2, quests: 0, events: 0 } }),
+      0,
+      "test-ending-session",
+    );
+    const interactive = view.currentLocation.town?.interactiveBuildings ?? [];
+    expect(interactive.length).toBeGreaterThanOrEqual(2);
+    expect(view.obtainableItems).toHaveLength(1);
+    expect(view.obtainableItems[0]?.buildingId).toBe(interactive[0]?.buildingId);
+    expect(view.obtainableItems[0]?.buildingId).not.toBe(interactive[1]?.buildingId);
   });
 
   it("town 读模型不泄漏 seed/空闲 slot/生成器内部", () => {

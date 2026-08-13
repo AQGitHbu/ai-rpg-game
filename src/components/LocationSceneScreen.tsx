@@ -17,6 +17,8 @@ type LocationSceneScreenProps = {
   readonly sceneNpcName?: string | null;
   /** 建筑场景的展示名称，不改变权威 currentLocation。 */
   readonly sceneLocationName?: string | null;
+  /** 城镇建筑场景的稳定建筑 ID，用于隔离该建筑内的地点物品。 */
+  readonly sceneBuildingId?: string | null;
 };
 
 type Dialogue = NonNullable<GameSessionView["narrative"]["npcDialogues"]>[number];
@@ -35,8 +37,24 @@ function cleanLocationSideNote(text: string): string {
     .replace(/主线推进。当前目标：[^\s。]+\s*/gu, "")
     .replace(/完成了任务「[^」]+」的目标：[^\s。]+\s*/gu, "")
     .replace(/。{2,}/gu, "。")
-    .replace(/\s{2,}/gu, " ")
+    .replace(/([。！？])\s+/gu, "$1")
+    .replace(/\s+/gu, " ")
+    .replace(/([。！？])\1+/gu, "$1")
+    .replace(/^[。！？\s]+/gu, "")
     .trim();
+}
+
+/** 城镇建筑是独立的可游玩场景，不能把镇口/街道的公共说明搬进室内。 */
+function describeBuildingScene(buildingType: string | undefined, buildingName: string, npcName: string | null | undefined): string {
+  const npcClause = npcName ? `${npcName}就在近处，留意着你的来意。` : "屋内有人留意着门口的动静。";
+  switch (buildingType) {
+    case "tavern": return `${buildingName}里酒气、炭火和低声交谈混在一起，靠窗的木桌还留着湿漉漉的斗笠。${npcClause}`;
+    case "blacksmith": return `${buildingName}的炉火映红铁砧，锤声一停，空气里只剩铁屑和焦炭的味道。${npcClause}`;
+    case "guild": return `${buildingName}的告示板贴满旧纸条，来往的人压低嗓音交换消息。${npcClause}`;
+    case "clinic": return `${buildingName}里药草微苦，帘后偶尔传来瓷碗相碰的轻响。${npcClause}`;
+    case "market": return `${buildingName}外的叫卖声被门帘隔开，柜台上散着刚换手的货单。${npcClause}`;
+    default: return `${buildingName}与镇上的街巷隔出一层安静，眼前的陈设暗示着这里惯常发生的营生。${npcClause}`;
+  }
 }
 
 function BattleScene({
@@ -308,6 +326,7 @@ export function LocationSceneScreen({
   initialFocusNpcId,
   sceneNpcName,
   sceneLocationName,
+  sceneBuildingId,
 }: LocationSceneScreenProps) {
   const gameType = view.gameType as NewGameInput["gameType"];
   const pending = view.narrativeGeneration.status === "pending";
@@ -323,14 +342,25 @@ export function LocationSceneScreen({
     ? null
     : activeDialogues.find((dialogue) => dialogue.npcId === initialFocusNpcId)?.name ?? null;
   const hasBuildingSceneContext = initialFocusNpcId !== null && initialFocusNpcId !== undefined;
+  const buildingItems = hasBuildingSceneContext && view.currentLocation.scale === "town"
+    ? view.obtainableItems.filter((item) => item.buildingId === sceneBuildingId)
+    : view.obtainableItems;
   const currentSceneNpcName = sceneNpcName ?? focusedDialogueName;
   const locationNpcs = hasBuildingSceneContext
     ? currentSceneNpcName === null
       ? []
       : view.currentLocation.npcs.filter((npc) => npc.name === currentSceneNpcName)
     : view.currentLocation.npcs;
-  const displayNarration = cleanLocationSideNote(normalizeDisplayText(view.narrative.narration ?? ""));
-  const displayLocationDescription = normalizeDisplayText(view.currentLocation.description);
+  const activeBuilding = hasBuildingSceneContext
+    ? view.currentLocation.town?.interactiveBuildings.find((building) => building.buildingId === sceneBuildingId)
+    : undefined;
+  const buildingSideNote = activeBuilding === undefined
+    ? ""
+    : describeBuildingScene(activeBuilding.buildingType, activeBuilding.displayName, sceneNpcName);
+  const displayNarration = buildingSideNote || cleanLocationSideNote(normalizeDisplayText(view.narrative.narration ?? ""));
+  const displayLocationDescription = activeBuilding === undefined
+    ? normalizeDisplayText(view.currentLocation.description)
+    : "";
   const shouldShowLocationDescription = displayLocationDescription !== ""
     && (displayNarration === "" || !displayNarration.includes(displayLocationDescription));
   const selectedNpcChoiceToken = currentSceneNpcName === null
@@ -351,9 +381,11 @@ export function LocationSceneScreen({
   const handoffLeavesCurrentBuilding = selectedNpcChoiceToken !== null
     && view.story.currentObjectiveLabel !== null
     && selectedNpcChoiceToken !== view.story.currentObjectiveChoiceToken;
+  const handoffLeavesCurrentLocation = view.story.currentObjectiveLabel !== null
+    && view.story.currentObjectiveChoiceToken === null;
   const sceneActions = preparedDialogueTalkChoice !== null
     ? [preparedDialogueTalkChoice]
-    : handoffLeavesCurrentBuilding
+    : handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation
       ? []
       : view.story.currentObjectiveChoiceToken !== null
         ? view.currentLocation.actions.filter((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
@@ -598,9 +630,9 @@ export function LocationSceneScreen({
       <div className="location-scene-content location-scene-content--fullscreen">
 
         {/* 散布在场景中的可探索/调查物品图标 */}
-        {view.obtainableItems.length > 0 ? (
+        {buildingItems.length > 0 ? (
           <div className="scene-interactive-layer" aria-label="可获取物品">
-            {view.obtainableItems.map((item, index) => {
+            {buildingItems.map((item, index) => {
               const pos = ITEM_HOTSPOT_POSITIONS[index % ITEM_HOTSPOT_POSITIONS.length];
               return (
                 <button

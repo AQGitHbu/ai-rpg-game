@@ -48,25 +48,25 @@ export type PerformTurnDeps = {
 
 /**
  * The read model can expose a focused NPC immediately after entering a newly
- * materialized location. That scene is a travel/observe presentation with an
- * NPC line, not yet a persisted dialogue event, but the current objective and
- * that line still authorize the NPC's custom response input.
+ * materialized location. That scene can still be a handoff from the previous
+ * speaker, so the authoritative current objective (rather than a recycled
+ * npcLine) authorizes the new NPC's custom response input.
  */
 function focusedNpcForFreeText(worldState: WorldState, storyState: StoryState): string | null {
-  const scene = storyState.narrative.currentScene;
-  if (scene?.event?.kind === "dialogue") return String(scene.event.focusNpcId);
-
   const objective = currentObjectiveOf(worldState, storyState);
-  if (objective === null) return null;
-  const quest = worldState.quests.find((entry) => String(entry.id) === String(objective.questId));
-  const objectiveTarget = quest?.objectives[objective.objectiveIndex];
-  if (objectiveTarget?.kind !== "talk_to_npc") return null;
-  const npc = worldState.npcs.find((entry) => String(entry.id) === String(objectiveTarget.npcId));
-  if (npc === undefined || String(npc.locationId) !== String(worldState.currentLocationId)) return null;
-  if (scene?.npcLine === null || scene?.npcLine === undefined) return null;
-  return String(scene.npcLine.npcId) === String(objectiveTarget.npcId)
-    ? String(objectiveTarget.npcId)
-    : null;
+  if (objective !== null) {
+    const quest = worldState.quests.find((entry) => String(entry.id) === String(objective.questId));
+    const objectiveTarget = quest?.objectives[objective.objectiveIndex];
+    if (objectiveTarget?.kind === "talk_to_npc") {
+      const npc = worldState.npcs.find((entry) => String(entry.id) === String(objectiveTarget.npcId));
+      if (npc !== undefined && String(npc.locationId) === String(worldState.currentLocationId)) {
+        return String(objectiveTarget.npcId);
+      }
+    }
+  }
+
+  const scene = storyState.narrative.currentScene;
+  return scene?.event?.kind === "dialogue" ? String(scene.event.focusNpcId) : null;
 }
 
 /**

@@ -209,6 +209,10 @@ function actBeatFor(act: number): ActBeat {
         questName: "追查镇外脚印",
         questDescription: "沿着韩七看见的脚印，核对顾砚带来的密信与腰牌。",
         factText: "腰牌上的暗纹与镇口缉凶告示来自同一桩旧案。",
+        newLocation: {
+          name: "北巷旧道",
+          description: "酒楼后巷通往旧镖局的石道潮湿狭窄，车轮印在泥水里断续延伸。",
+        },
       };
     case 3:
       return {
@@ -326,11 +330,7 @@ function planNextAct(ws: WorldState, act: number): WorldDeltaProposal {
 }
 
 function planEndingPair(ws: WorldState, ss: StoryState): WorldDeltaProposal {
-  const byKey = new Map(ss.contract.endingDirections.map((d) => [d.key, d.theme]));
-  const themeName = (key: "trust" | "doubt", fallback: string): string => {
-    const raw = (byKey.get(key) ?? "").trim();
-    return raw.length >= 2 && raw.length <= 40 ? raw : fallback;
-  };
+  const conflict = ss.contract.centralConflict.trim().replace(/[。！？]+$/gu, "") || "这桩旧案";
   // 分歧信号：关键 NPC（首位 NPC）对玩家的亲和度；终幕 support/challenge
   // 的直接裁决由 resolveEnding 读取最后一次结构化互动，不与此门槛混用。
   const keyNpcId: NpcId | undefined = ws.npcs[0]?.id;
@@ -344,16 +344,16 @@ function planEndingPair(ws: WorldState, ss: StoryState): WorldDeltaProposal {
     nextMainQuest: null,
     endingPair: [
       {
-        name: themeName("trust", "共赴真相"),
-        description: "在众人面前摊开一切，共同承担结果。",
+        name: "共同揭露真相",
+      description: `你与愿意作证的人一同公开已核对的证据，让“${conflict}”不再只是传闻；该承担责任的人无处可逃。`,
         themeKey: "trust",
         requirements: keyNpcId
           ? [{ kind: "npc_affinity_at_least", npcId: keyNpcId, value: TRUST_ENDING_MIN_AFFINITY }]
           : [],
       },
       {
-        name: themeName("doubt", "孤身揭晓"),
-        description: "独自揭开真相，把后果揽在自己肩上。",
+        name: "独自追查到底",
+      description: `你保留最后的判断，独自追查“${conflict}”背后的责任归属，并承担揭露真相后的代价。`,
         themeKey: "doubt",
         requirements: keyNpcId
           ? [{ kind: "npc_affinity_at_most", npcId: keyNpcId, value: DOUBT_ENDING_MAX_AFFINITY }]

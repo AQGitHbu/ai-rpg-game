@@ -161,8 +161,34 @@ function buildSegments(context: SceneGenerationContext): readonly ScenePerforman
       segments.push({
         beatId: beat.beatId,
         text: npc !== undefined && utterance !== ""
-          ? `${utteranceLead(context.story.stylePolicy.protagonistTraits)}你开口对${npc.name}说："${utterance}"。${npc.name}听完，注视着你的眼睛。`
+          ? `${utteranceLead(context.story.stylePolicy.protagonistTraits)}你把关于眼前线索的疑问直截了当地抛给${npc.name}，等他给出能核查的回答。`
           : "你向对方提出了你的疑问。",
+      });
+    } else if (beat.kind === "item_obtained") {
+      const item = context.beatSubjects.find((subject) =>
+        subject.kind === "item" && beat.subjectIds.includes(subject.id),
+      );
+      const namedInInstruction = beat.instruction.match(/「([^」]+)」/u)?.[1];
+      const itemName = item?.name ?? namedInInstruction ?? "那件证物";
+      const itemDetail = item?.description.trim();
+      segments.push({
+        beatId: beat.beatId,
+        text: itemDetail === undefined || itemDetail === ""
+          ? `你将${itemName}仔细收好，准备在下一次交谈时拿它核对证词。`
+          : `你将${itemName}仔细收好。${itemDetail}它足以让接下来的追问有了落脚处。`,
+      });
+    } else if (beat.kind === "battle_started") {
+      const enemy = context.beatSubjects.find((subject) =>
+        subject.kind === "enemy" && beat.subjectIds.includes(subject.id),
+      );
+      segments.push({
+        beatId: beat.beatId,
+        text: `${enemy?.name ?? "来敌"}拦住去路，${completeSceneSentence(beat.instruction)}`,
+      });
+    } else if (beat.kind === "battle_resolved") {
+      segments.push({
+        beatId: beat.beatId,
+        text: `${completeSceneSentence(beat.instruction)}你收拢呼吸，重新确认眼前留下的线索。`,
       });
     } else if (beat.kind === "quest_advanced" && context.objectiveTarget !== null) {
       // 幕边界：turn 时刻的下一个目标尚未具象化，节拍指令里没有实体名；
@@ -173,7 +199,7 @@ function buildSegments(context: SceneGenerationContext): readonly ScenePerforman
         text: `主线推进。当前目标：${context.objectiveTarget.entityName}（${context.objectiveTransition.after?.label ?? "新的线索"}）`,
       });
     } else {
-      segments.push({ beatId: beat.beatId, text: beat.instruction });
+      segments.push({ beatId: beat.beatId, text: completeSceneSentence(beat.instruction) });
     }
   }
   // 服务端恒带 atmosphere 节拍；纯测试夹具无强制节拍时仍保底一段氛围。
@@ -181,6 +207,12 @@ function buildSegments(context: SceneGenerationContext): readonly ScenePerforman
     segments.push({ beatId: ATMOSPHERE_BEAT_ID, text: buildAtmosphere(context) });
   }
   return segments;
+}
+
+/** 把规则节拍的短标签收束为可直接拼进场景旁注的完整句。 */
+function completeSceneSentence(text: string): string {
+  const trimmed = text.trim();
+  return /[。！？]$/u.test(trimmed) ? trimmed : `${trimmed}。`;
 }
 
 /** 氛围描写：当前地点的最小安全文本；dark 呈现克制的暗色意象（纯函数）。 */
@@ -195,10 +227,10 @@ function buildAtmosphere(context: SceneGenerationContext): string {
 
 /** 性格标签 → 玩家原话 segment 的确定性前缀（只影响措辞，纯函数）。 */
 function utteranceLead(traits: readonly string[]): string {
-  if (traits.includes("冲动")) return "你几乎没多想，";
-  if (traits.includes("寡言")) return "你沉默了片刻，";
-  if (traits.includes("幽默")) return "你带着轻松的笑意，";
-  if (traits.includes("多疑")) return "你打量着对方，";
+  if (traits.includes("冲动")) return "你几乎没多想，便";
+  if (traits.includes("寡言")) return "你沉默了片刻，才";
+  if (traits.includes("幽默")) return "你带着轻松的笑意，仍";
+  if (traits.includes("多疑")) return "你打量着对方，随后";
   return "";
 }
 

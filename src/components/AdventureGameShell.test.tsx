@@ -273,6 +273,35 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
   });
 
+  it("does not show a town item inside a different building scene", () => {
+    const town = townViewFixture();
+    const itemBuildingId = town.interactiveBuildings[0]?.buildingId;
+    const view: GameSessionView = {
+      ...buildView(),
+      currentLocation: {
+        ...buildView().currentLocation,
+        scale: "town",
+        town,
+      },
+      obtainableItems: [{
+        name: "染血腰牌",
+        description: "一块旧腰牌。",
+        buildingId: itemBuildingId,
+        choice: choice(TOKENS.item, "拾取染血腰牌", "item"),
+      }],
+    };
+    render(<LocationSceneScreen
+      view={view}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+      initialFocusNpcId="npc_1"
+      sceneBuildingId="building_not_the_item_building"
+    />);
+
+    expect(screen.queryByRole("button", { name: "拾取染血腰牌" })).not.toBeInTheDocument();
+  });
+
   it("reopens the same NPC dialog with the generated reply after custom input finishes", async () => {
     const base = buildView();
     const onSubmit = vi.fn();
@@ -623,6 +652,26 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(sideNote).toHaveTextContent("你身处青石镇，灯笼沿着街檐亮起。");
     expect(sideNote).not.toHaveTextContent("当前目标");
     expect(sideNote).not.toHaveTextContent("完成了任务");
+  });
+
+  it("removes punctuation left behind when a quest-status prefix is cleaned from the side note", () => {
+    const base = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        narrative: {
+          ...base.narrative,
+          narration: "完成了任务「拼回旧案卷宗」的目标：击败灭口刺客。你身处断碑谷，荒碑夹着一线山谷。",
+        },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+
+    const sideNote = screen.getByRole("region", { name: "地点旁注" });
+    expect(sideNote).toHaveTextContent("你身处断碑谷，荒碑夹着一线山谷。");
+    expect(sideNote).not.toHaveTextContent("。你身处");
   });
 
   it("keeps location side notes informational and moves scene choices to the action rail", () => {

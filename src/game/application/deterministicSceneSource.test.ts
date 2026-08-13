@@ -360,7 +360,7 @@ describe("deterministicSceneSource", () => {
     expect(buildSceneChoices(context)[0]?.label).toBe("与客人交谈");
   });
 
-  it("talk job keeps focusNpcId; player_utterance segment echoes the utterance and the NPC line answers the beat", async () => {
+  it("talk job keeps focusNpcId; player_utterance segment summarizes the question and the NPC line answers the beat", async () => {
     const utterance = "请问关于失踪的商队有什么线索吗？";
     const job = makeJob({
       eventKind: "dialogue",
@@ -371,7 +371,8 @@ describe("deterministicSceneSource", () => {
     });
     const result = await source.generateScene(makeContext(job, makeFocusContext("trusted")));
     const utteranceSegment = result.segments.find((s) => s.beatId === "player_utterance");
-    expect(utteranceSegment?.text).toContain(utterance);
+    expect(utteranceSegment?.text).not.toContain(utterance);
+    expect(utteranceSegment?.text).toContain("能核查");
     expect(result.npcLine?.npcId).toBe("npc_1");
     expect(result.npcLine?.answeredBeatIds).toContain("player_utterance");
   });
@@ -418,6 +419,16 @@ describe("deterministicSceneSource", () => {
     const result = await source.generateScene(makeContext(job));
     expect(result.segments.map((s) => s.beatId)).toEqual(["item_0", "atmosphere"]);
     expect(result.segments[0]?.text).toContain("盟誓印谱");
+    expect(result.segments[0]?.text).toContain("收好");
+  });
+
+  it("turns concise combat beat labels into readable scene sentences", async () => {
+    const job = makeJob({
+      beats: [{ beatId: "battle_0", kind: "battle_resolved", subjectIds: ["enemy_1"], instruction: "与灰狼的战斗以胜利告终" }],
+    });
+    const result = await source.generateScene(makeContext(job));
+    expect(result.segments[0]?.text).toContain("与灰狼的战斗以胜利告终。");
+    expect(result.segments[0]?.text).toContain("重新确认眼前留下的线索");
   });
 
   it("幕边界 fallback：quest_advanced segment 以权威 objectiveTarget 点名，可通过审批", async () => {
@@ -610,7 +621,7 @@ describe("deterministicSceneSource", () => {
     expect(a.segments.map((s) => s.text)).not.toEqual(b.segments.map((s) => s.text));
   });
 
-  it("冲动标签的玩家原话 segment 措辞含冲动特征前缀", async () => {
+  it("冲动标签的玩家追问 segment 保留冲动特征前缀，但不回显原话", async () => {
     const utterance = "商队失踪的事你知道吗？";
     const impJob = makeJob({
       eventKind: "dialogue", summary: { kind: "talk", npcId: asNpcId("npc_1") }, focusNpcId: "npc_1",
@@ -625,6 +636,6 @@ describe("deterministicSceneSource", () => {
     const result = await source.generateScene(impCtx);
     const utteranceSegment = result.segments.find((s) => s.beatId === "player_utterance");
     expect(utteranceSegment?.text).toContain("没多想");
-    expect(utteranceSegment?.text).toContain(utterance);
+    expect(utteranceSegment?.text).not.toContain(utterance);
   });
 });

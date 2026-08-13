@@ -216,11 +216,11 @@ export function createServerGameEntryPoints(
             updated.record.revision,
             deriveEndingSessionIdentity(updated.record.gameId, updated.record.revision),
           );
-          // 目标已锁定的一键移动不应该再经历“先到达、再等 AI 编排”的两段
-          // 等待。同步写回确定性落点场景后再返回 action 响应；若受控补足失败
-          // 才降级为常规后台恢复。其他行动仍保持非阻塞后台排队。
+          // 目标已锁定的一键移动、以及规则已完全确定的拾取动作，不应该再经历
+          // “先完成动作、再等 AI 编排”的两段等待。同步写回确定性场景后再返回
+          // action 响应；若受控补足失败才降级为常规后台恢复。
           if (view.narrativeGeneration.status === "pending") {
-            if (submittedAction?.type === "move") {
+            if (submittedAction?.type === "move" || submittedAction?.type === "take_item") {
               const moveSceneResult = await generatePendingScene({ repository, sceneSource, worldEvolutionSource, now });
               if (moveSceneResult === "saved") {
                 const refreshed = await repository.getCurrentGame();

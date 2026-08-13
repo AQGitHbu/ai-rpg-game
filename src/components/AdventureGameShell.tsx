@@ -52,6 +52,7 @@ export function AdventureGameShell({
     readonly locationName: string;
     readonly npcId: string;
     readonly npcName: string;
+    readonly buildingId: string;
   } | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const devToolsTriggerRef = useRef<HTMLElement | null>(null);
@@ -135,6 +136,7 @@ export function AdventureGameShell({
       locationName: building.displayName,
       npcId,
       npcName: building.npcName,
+      buildingId: building.buildingId,
     });
     setScreen("scene");
   }
@@ -200,6 +202,7 @@ export function AdventureGameShell({
           initialFocusNpcId={sceneContext?.npcId}
           sceneNpcName={sceneContext?.npcName}
           sceneLocationName={sceneContext?.locationName}
+          sceneBuildingId={sceneContext?.buildingId}
         />
       )}
 

@@ -6,6 +6,7 @@ import { isExpiredCandidate } from "@/game/domain/candidateEvent";
 import type { ActionChoiceMap } from "./actionConverter";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { SKILL_ENERGY_COST } from "@/game/domain/combat";
+import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 
 // ---------------------------------------------------------------------------
 // 服务端 choiceMap 构建器：从当前 WorldState + StoryState 派生所有合法行动的
@@ -55,6 +56,26 @@ export function buildChoiceMap(
       if (npc.locationId === worldState.currentLocationId) {
         addRuntimeAction({ type: "talk", npcId: npc.id, dialogueAct: "ask" });
       }
+    }
+
+    // 交接场景中的新主线 NPC 尚未成为已持久化 scene focus 时，也必须提供
+    // 两种正式回应。它们仍由服务器根据当前权威目标铸造并校验，客户端只能
+    // 消费 opaque token，不能把“先点一次交谈”变成无意义的额外回合。
+    const objective = currentObjectiveOf(worldState, storyState);
+    const quest = objective === null
+      ? undefined
+      : worldState.quests.find((entry) => String(entry.id) === String(objective.questId));
+    const objectiveTarget = objective === null
+      ? undefined
+      : quest?.objectives[objective.objectiveIndex];
+    if (
+      objectiveTarget?.kind === "talk_to_npc"
+      && worldState.npcs.some((npc) =>
+        npc.id === objectiveTarget.npcId && npc.locationId === worldState.currentLocationId,
+      )
+    ) {
+      addRuntimeAction({ type: "talk", npcId: objectiveTarget.npcId, dialogueAct: "support" });
+      addRuntimeAction({ type: "talk", npcId: objectiveTarget.npcId, dialogueAct: "challenge" });
     }
 
     // 连接且已解锁的地点 → move

@@ -44,6 +44,8 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
 
     // 两条要求阈值相邻且互斥：任何亲和度恰好命中其一（离线必有一个方向可达）。
     expect(DOUBT_ENDING_MAX_AFFINITY).toBe(TRUST_ENDING_MIN_AFFINITY - 1);
+    expect(trust.description).toContain("已核对的证据");
+    expect(doubt.description).toContain("责任归属");
   });
 
   it("the affinity threshold splits a trust-leaning vs doubt-leaning play", async () => {
@@ -95,12 +97,12 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
 
     expect(result.proposal?.newItem).toMatchObject({
       name: "染血腰牌",
-      locationRef: "current",
+      locationRef: "new_location",
     });
     expect(result.proposal?.newEnemy).toMatchObject({
       name: "黑衣追兵",
       tier: "normal",
-      locationRef: "current",
+      locationRef: "new_location",
     });
   });
 

@@ -39,6 +39,7 @@
 - scene CAS 与序幕确认并发时，repository 单调保留已确认的 `prologueShown=true`；确认接口对 stale revision 读取新快照后有限重试。
 - AI/fixture 失败使用确定性 fallback，fallback 也经过同一 proposal → approval → write-back 链。
 - active battle、ending 或候选不足时不伪造普通场景选择。
+- 移动和拾取物品是规则结果已完全确定的单动作；pending 场景使用确定性 source 同步完成审批/写回，不调用 live scene-performance source。拾取仍保留规则 CAS 和结构化 `item_obtained` 节拍。
 - active battle 采用规则 fast path：不创建 pending 场景、不调用 scene source；只有 battle_resolved 等终结事件进入叙事场景编排。
 
 ## 强制节拍与目标链接
@@ -50,6 +51,7 @@
 - 确定性 fallback 会读取 `job.utterance`、焦点 NPC 关系档位和当前目标，生成带具体承接对象的回应；通用“我知道了/好的/嗯”会被 live source 判为无上下文并回退。
 - 承接玩家原话时，NPC 以自己的口吻概括并回答，不得把整段玩家输入包进“你刚才问的‘……’”再反问。确定性 fallback 必须输出角色相关的可核对线索或明确下一步。
 - 焦点 NPC 的开场、正式回应与终局追问至少两句：先回应，再补充线索、保留或下一步。该质量门槛由审批器执行；live source 即使返回单句，也会整场回退为角色化的确定性表演。
+- 确定性 fallback 会把物品取得、战斗开始/结束等规则短标签扩展为可阅读的场景句，并保留地点氛围；界面清除任务状态后遗留的重复或开头标点，避免规则标签裸露在地点旁注中。
 
 ## 焦点 NPC 隔离上下文
 
