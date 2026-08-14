@@ -249,19 +249,18 @@ describe("createOpeningGenerationSource", () => {
     expect(candidate.opening.npc.privateFactKeys).not.toContain("fact_ghost");
   });
 
-  it("AI 首次返回 empty_response 时重试一次并最终成功", async () => {
+  it("AI 返回 empty_response 时不重复相同请求并回退", async () => {
     let calls = 0;
     const transport = {
       complete: async () => {
         calls += 1;
-        if (calls === 1) return { ok: false, code: "empty_response", retryable: false, latencyMs: 1 };
-        return { ok: true, content: JSON.stringify(validCandidate()), latencyMs: 1 };
+        return { ok: false, code: "empty_response", retryable: false, latencyMs: 1 };
       },
     } as unknown as AiTransport;
     const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
     const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
-    expect(calls).toBe(2);
-    expect(candidate.opening.npc.name).toBe("沈掌柜");
+    expect(calls).toBe(1);
+    expect(candidate.opening.npc.name).toBeTruthy();
   });
 
   it("AI 返回非法 JSON 时回退 fixture", async () => {

@@ -8,7 +8,8 @@ import type { GameLength, GameSetup } from "@/game/domain/newGame";
 import { validateOpeningGenerationCandidate } from "@/game/gameplay/rpg/openingGeneration";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import { buildStylePolicy } from "../../stylePolicy";
-import { createProviderRequestOptions, type ProviderJsonMode } from "./providerRequestOptions";
+import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./rpgAiClient";
+import type { ProviderJsonMode } from "./providerRequestOptions";
 
 // ---------------------------------------------------------------------------
 // 开局生成源（live/fixture）。
@@ -176,6 +177,8 @@ export function sanitizeOpeningFactReferences(
 export type OpeningGenerationSourceDeps = {
   readonly transport?: AiTransport;
   readonly config?: AiTransportConfig;
+  /** Shared RPG client supplied by the server composition root. */
+  readonly aiClient?: RpgAiClient;
   readonly jsonMode?: ProviderJsonMode;
   readonly logger?: GameLogger;
   /** 生产 live 模式关闭静默 fixture 降级，保证开局设计确实来自 API。 */
@@ -189,6 +192,8 @@ export type OpeningGenerationResultMarker = Readonly<{
   readonly source: "generated" | "fallback";
 }>;
 
+export const LIVE_OPENING_MAX_TOKENS = RPG_AI_DEFAULT_POLICIES.opening.maxTokens ?? 0;
+
 // live 开局源：AI 产出 → parse → 机械修复 → 引用修复 → 校验 → 失败回退 fixture。
 // fixture 必须通过同一 validator/compiler（由 createFixtureOpeningSource 保证）。
 export function createOpeningGenerationSource(
@@ -196,6 +201,14 @@ export function createOpeningGenerationSource(
 ): OpeningGenerationSource {
   const fixture = createFixtureOpeningSource();
   const { transport, config, logger, jsonMode, onResult } = deps;
+  const aiClient = deps.aiClient ?? (transport && config
+    ? createRpgAiClient({
+      transport,
+      config,
+      logger,
+      policies: { opening: { jsonMode: jsonMode ?? "prompt_only" } },
+    })
+    : undefined);
 
   return {
     async generate(input) {
@@ -210,25 +223,16 @@ export function createOpeningGenerationSource(
         onResult?.({ seed: input.seed, source: "generated" });
         return candidate;
       };
-      // 无 transport/config：确定性 fallback（fixture 通过同一 validator/compiler）。
-      if (!transport || !config) {
+      // 无 AI client：确定性 fallback（fixture 通过同一 validator/compiler）。
+      if (!aiClient) {
         return fallback();
       }
 
       try {
-        // 推理模型偶发返回空内容（empty_response）或瞬时超时：
-        // 对瞬时失败最多重试一次，仍失败再走确定性 fallback。
-        let result = await transport.complete(config, [
+        const result = await aiClient.complete("opening", [
           { role: "system", content: buildOpeningPrompt(input) },
           { role: "user", content: `生成游戏类型 ${input.gameType} / 长度 ${input.gameLength} / 种子 ${input.seed} 的开场切片。` },
-        ], createProviderRequestOptions(240_000, undefined, jsonMode));
-        if (!result.ok && (result.code === "empty_response" || result.code === "timeout" || result.code === "service_error")) {
-          logger?.warn("opening_generation_retry", { code: result.code });
-          result = await transport.complete(config, [
-            { role: "system", content: buildOpeningPrompt(input) },
-            { role: "user", content: `生成游戏类型 ${input.gameType} / 长度 ${input.gameLength} / 种子 ${input.seed} 的开场切片。` },
-          ], createProviderRequestOptions(240_000, undefined, jsonMode));
-        }
+        ]);
 
         if (!result.ok) {
           logger?.warn("opening_generation_ai_failed", { code: result.code });

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { parseWorldDeltaProposal, filterProposalRefs, createLiveWorldEvolutionSource } from "./liveWorldEvolutionSource";
+import {
+  parseWorldDeltaProposal,
+  filterProposalRefs,
+  createLiveWorldEvolutionSource,
+  LIVE_WORLD_EVOLUTION_MAX_TOKENS,
+  LIVE_WORLD_EVOLUTION_TIMEOUT_MS,
+} from "./liveWorldEvolutionSource";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { asLocationId, asGenerationId, asNpcId } from "@/game/domain/worldEntity";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -84,6 +90,11 @@ describe("filterProposalRefs", () => {
 });
 
 describe("createLiveWorldEvolutionSource", () => {
+  it("reserves enough completion budget for provider reasoning and evolution JSON", () => {
+    expect(LIVE_WORLD_EVOLUTION_MAX_TOKENS).toBeGreaterThanOrEqual(3_200);
+    expect(LIVE_WORLD_EVOLUTION_TIMEOUT_MS).toBe(45_000);
+  });
+
   it("falls back to the deterministic source without a transport", async () => {
     const source = createLiveWorldEvolutionSource({});
     const ctx: WorldEvolutionSourceContext = {
@@ -146,23 +157,12 @@ describe("createLiveWorldEvolutionSource", () => {
     );
   });
 
-  it("retries an empty AI response and adopts the next valid evolution proposal", async () => {
+  it("does not repeat an empty AI response and falls back deterministically", async () => {
     let attempts = 0;
     const transport: AiTransport = {
       complete: vi.fn(async () => {
         attempts += 1;
-        if (attempts === 1) return { ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 };
-        return {
-          ok: true as const,
-          content: JSON.stringify({
-            beatSummary: "线人带来新的旧案账目。",
-            newNpc: {
-              name: "顾砚", role: "旧案账房", description: "掌握账目的证人。",
-              locationRef: { kind: "existing", id: "loc_a" }, goals: ["核对账册"],
-            },
-          }),
-          latencyMs: 1,
-        };
+        return { ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 };
       }),
       stream: async () => ({ ok: false as const, code: "network_error" as const, retryable: true, message: "unused", latencyMs: 1 }),
     };
@@ -180,7 +180,7 @@ describe("createLiveWorldEvolutionSource", () => {
 
     const result = await source.propose(ctx);
 
-    expect(attempts).toBe(2);
-    expect(result.proposal?.newNpc?.name).toBe("顾砚");
+    expect(attempts).toBe(1);
+    expect(result.proposal).not.toBeNull();
   });
 });

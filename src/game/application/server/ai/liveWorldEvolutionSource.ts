@@ -4,7 +4,8 @@ import type { WorldEvolutionSource, WorldEvolutionSourceContext } from "../../wo
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import { createDeterministicEvolutionSource } from "../../deterministicEvolutionSource";
 import type { WorldState } from "@/game/domain/worldState";
-import { createProviderRequestOptions, type ProviderJsonMode } from "./providerRequestOptions";
+import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./rpgAiClient";
+import type { ProviderJsonMode } from "./providerRequestOptions";
 
 // ---------------------------------------------------------------------------
 // WorldEvolution live source（Task 3）。
@@ -18,6 +19,8 @@ import { createProviderRequestOptions, type ProviderJsonMode } from "./providerR
 export type WorldEvolutionLiveDeps = {
   readonly transport?: AiTransport;
   readonly config?: AiTransportConfig;
+  /** Shared RPG client supplied by the server composition root. */
+  readonly aiClient?: RpgAiClient;
   readonly jsonMode?: ProviderJsonMode;
   readonly logger?: GameLogger;
   /** 生产 live 模式关闭静默确定性降级，失败会让演化需求保留并等待真实 API 重试。 */
@@ -28,12 +31,11 @@ export type WorldEvolutionLiveDeps = {
  * 世界演化与场景共用同一兼容 provider；30 秒会在正文到达前中止合法 JSON。
  * 该超时只决定何时明确记录失败，不会把 fallback 当成一次有效 AI 演化。
  */
-export const LIVE_WORLD_EVOLUTION_TIMEOUT_MS = 45_000;
+export const LIVE_WORLD_EVOLUTION_TIMEOUT_MS = RPG_AI_DEFAULT_POLICIES.world.timeoutMs;
 /** 世界演化只生成一次增量，限制输出以保持场景等待可控。 */
-// 同一 provider 的演化 JSON 也会先输出 reasoning_content；预留正文空间。
-export const LIVE_WORLD_EVOLUTION_MAX_TOKENS = 1_800;
-// 与场景表演同一 provider：保留第三次机会，三次都失败才显式降级。
-const LIVE_WORLD_EVOLUTION_MAX_ATTEMPTS = 3;
+// 同一 provider 的演化 JSON 也会先输出 reasoning_content；completion token 预算
+// 必须同时预留 reasoning 和完整提案正文空间，避免长度截断后的无效 proposal。
+export const LIVE_WORLD_EVOLUTION_MAX_TOKENS = RPG_AI_DEFAULT_POLICIES.world.maxTokens ?? 0;
 
 function parseJsonResponse(text: string): unknown {
   try {
@@ -209,6 +211,14 @@ export function filterProposalRefs(proposal: WorldDeltaProposal, ws: WorldState)
 export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): WorldEvolutionSource {
   const deterministic = createDeterministicEvolutionSource();
   const { transport, config, logger, jsonMode } = deps;
+  const aiClient = deps.aiClient ?? (transport && config
+    ? createRpgAiClient({
+      transport,
+      config,
+      logger,
+      policies: { world: { jsonMode: jsonMode ?? "prompt_only" } },
+    })
+    : undefined);
   const fallbackProposal = (ctx: WorldEvolutionSourceContext): Promise<{ readonly proposal: WorldDeltaProposal | null }> => {
     if (deps.allowFallback === false) {
       throw new Error("LIVE_WORLD_EVOLUTION_UNAVAILABLE");
@@ -218,7 +228,7 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
 
   return {
     async propose(ctx) {
-      if (!transport || !config) {
+      if (!aiClient) {
         return fallbackProposal(ctx);
       }
       try {
@@ -226,22 +236,13 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
           { role: "system" as const, content: buildWorldEvolutionPrompt(ctx) },
           { role: "user" as const, content: userPrompt(ctx) },
         ];
-        // 同一兼容 provider 对较长结构化提案偶发空响应。重试仍是实际 AI
-        // 请求；最终仍失败才落到显式、可审计的确定性降级。
-        for (let attempt = 1; attempt <= LIVE_WORLD_EVOLUTION_MAX_ATTEMPTS; attempt += 1) {
-          const result = await transport.complete(
-            config,
-            messages,
-            createProviderRequestOptions(LIVE_WORLD_EVOLUTION_TIMEOUT_MS, LIVE_WORLD_EVOLUTION_MAX_TOKENS, jsonMode),
-          );
-          if (!result.ok) {
-            if (attempt < LIVE_WORLD_EVOLUTION_MAX_ATTEMPTS) {
-              logger?.warn("world_evolution_retry", { code: result.code });
-              continue;
-            }
-            logger?.warn("world_evolution_ai_failed", { code: result.code });
-            return fallbackProposal(ctx);
-          }
+        // 瞬态网络失败由统一 client 按角色策略重试；empty_response 或非法
+        // JSON 不再重复相同请求，避免 provider reasoning 失败时重复计费。
+        const result = await aiClient.complete("world", messages);
+        if (!result.ok) {
+          logger?.warn("world_evolution_ai_failed", { code: result.code });
+          return fallbackProposal(ctx);
+        }
           const parsed = parseJsonResponse(result.content);
           const rawProposal = typeof parsed === "object" && parsed !== null && "proposal" in parsed
             ? (parsed as Record<string, unknown>).proposal
@@ -251,14 +252,8 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
             const filtered = filterProposalRefs(proposal, ctx.worldState);
             return { proposal: filtered };
           }
-          if (attempt < LIVE_WORLD_EVOLUTION_MAX_ATTEMPTS) {
-            logger?.warn("world_evolution_retry", { code: "invalid_data" });
-            continue;
-          }
           logger?.warn("world_evolution_invalid_data");
           return fallbackProposal(ctx);
-        }
-        return fallbackProposal(ctx);
       } catch (error) {
         logger?.warn("world_evolution_transport_failed", { message: (error as Error)?.message });
         return fallbackProposal(ctx);

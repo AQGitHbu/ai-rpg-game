@@ -12,6 +12,7 @@ import { performTurn } from "../performTurn";
 import { projectGameSessionView } from "../gameSessionView";
 import { createOpeningGenerationSource, createSceneSource, createWorldEvolutionSource } from "../server/ai/sourceFactory";
 import { createServerIntentParserSource } from "../server/ai/intentParserSourceFactory";
+import { createServerRpgAiClient } from "../server/ai/rpgAiClient";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { generatePendingScene } from "../generatePendingScene";
 import { buildSceneGenerationContext } from "../sceneGenerationContext";
@@ -84,13 +85,16 @@ export function createServerGameEntryPoints(
   const now = () => new Date().toISOString();
   const aiConfig = parseAiRuntimeConfig(env);
   const aiEnabled = aiConfig.status === "available";
+  // One provider transport/client per server composition root. Role policy,
+  // thinking mode, budgets, and transient retries are centralized there.
+  const aiClient = createServerRpgAiClient(env, logger);
   const openingGenerationSources = new Map<string, "generated" | "fallback">();
   const source = createOpeningGenerationSource(env, logger, (marker) => {
     openingGenerationSources.set(marker.seed, marker.source);
-  });
+  }, aiClient);
   // Task 3：AI 可用注入 live 世界演化源，否则确定性源（不再直接注入 deterministic）。
-  const worldEvolutionSource = createWorldEvolutionSource(env, logger);
-  const sceneSource = createSceneSource(env, logger);
+  const worldEvolutionSource = createWorldEvolutionSource(env, logger, aiClient);
+  const sceneSource = createSceneSource(env, logger, aiClient);
   // 战斗只保留胜利/失败两态后，战斗开始即后台预热胜利场景。API 提案和
   // 确定性提案并行准备：API 优先用于剧情质量，确定性提案只负责保证最后
   // 一击不会再打开叙事等待。预热结果只存 server memory，最终写回仍以
@@ -210,7 +214,7 @@ export function createServerGameEntryPoints(
   };
   // Task 9：对话自由输入统一走 performTurn 回合入口，AI 可用时注入 live 意图源，否则规则源。
   // transport 构建收敛在 server/ai 工厂内（@ai-game/ai-transport 边界守卫）。
-  const intentParserSource = createServerIntentParserSource(env);
+  const intentParserSource = createServerIntentParserSource(env, aiClient);
   const narrativeCoordinator = new BackgroundEnsureCoordinator({
     loadPending: async () => {
       const current = await repository.getCurrentGame();

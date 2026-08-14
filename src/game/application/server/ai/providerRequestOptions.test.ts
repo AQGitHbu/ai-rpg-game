@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { createProviderRequestOptions } from "./providerRequestOptions";
 
 describe("createProviderRequestOptions", () => {
-  it("uses the provider's nested-only switch to disable reasoning", () => {
+  it("uses DeepSeek's official thinking.type switch to disable reasoning", () => {
     expect(createProviderRequestOptions(30_000)).toEqual({
       timeoutMs: 30_000,
-      extraBody: { chat_template_kwargs: { enable_thinking: false } },
+      extraBody: { thinking: { type: "disabled" } },
     });
   });
 
@@ -14,7 +14,7 @@ describe("createProviderRequestOptions", () => {
       timeoutMs: 30_000,
       temperature: 0.2,
       extraBody: {
-        chat_template_kwargs: { enable_thinking: false },
+        thinking: { type: "disabled" },
         max_tokens: 800,
       },
     });
@@ -25,7 +25,7 @@ describe("createProviderRequestOptions", () => {
       timeoutMs: 30_000,
       temperature: 0.2,
       extraBody: {
-        chat_template_kwargs: { enable_thinking: false },
+        thinking: { type: "disabled" },
         max_tokens: 800,
         response_format: { type: "json_object" },
       },
@@ -36,7 +36,7 @@ describe("createProviderRequestOptions", () => {
     expect(createProviderRequestOptions(240_000, undefined, "json_object")).toEqual({
       timeoutMs: 240_000,
       extraBody: {
-        chat_template_kwargs: { enable_thinking: false },
+        thinking: { type: "disabled" },
         response_format: { type: "json_object" },
       },
     });

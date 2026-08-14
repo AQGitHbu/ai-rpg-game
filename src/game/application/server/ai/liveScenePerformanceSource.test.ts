@@ -136,6 +136,11 @@ function stubTransport(payload: unknown, content: string | null = null): AiTrans
 const config: AiTransportConfig = { baseUrl: "x", apiKey: "k", model: "m" };
 
 describe("liveScenePerformanceSource（Task 6）", () => {
+  it("reserves enough completion budget for provider reasoning and scene JSON", () => {
+    expect(LIVE_SCENE_MAX_TOKENS).toBeGreaterThanOrEqual(3_000);
+    expect(LIVE_SCENE_TIMEOUT_MS).toBe(45_000);
+  });
+
   it("bounds live scene generation before deterministic fallback", async () => {
     const context = makeContext();
     const transport = stubTransport(null, "not-json");
@@ -150,7 +155,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         timeoutMs: LIVE_SCENE_TIMEOUT_MS,
         temperature: 0.2,
         extraBody: {
-          chat_template_kwargs: { enable_thinking: false },
+          thinking: { type: "disabled" },
           max_tokens: LIVE_SCENE_MAX_TOKENS,
         },
       },
@@ -372,34 +377,19 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(result).toEqual({ ok: false, reason: "segment_unknown_beat" });
   });
 
-  it("契约重试日志包含具体原因和脱敏响应结构", async () => {
+  it("契约失败不重复相同请求，并只记录脱敏响应结构", async () => {
     const logger = { warn: vi.fn() };
     let attempts = 0;
     const transport: AiTransport = {
       complete: vi.fn(async () => {
         attempts += 1;
-        if (attempts === 1) {
-          return {
-            ok: true as const,
-            content: JSON.stringify({
-              segments: [],
-              npcLine: null,
-              objectiveLink: null,
-              choices: [],
-            }),
-            latencyMs: 1,
-          };
-        }
         return {
           ok: true as const,
           content: JSON.stringify({
-            segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+            segments: [],
             npcLine: null,
             objectiveLink: null,
-            choices: [
-              { candidateId: "candidate_1", label: "继续交谈" },
-              { candidateId: "candidate_2", label: "观察四周" },
-            ],
+            choices: [],
           }),
           latencyMs: 1,
         };
@@ -412,9 +402,9 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       logger: logger as never,
     }).generateScene(makeContext());
 
-    expect(proposal.source).toBe("generated");
-    expect(logger.warn).toHaveBeenCalledWith("scene_generation_retry", {
-      code: "invalid_data",
+    expect(proposal.source).toBe("fallback");
+    expect(attempts).toBe(1);
+    expect(logger.warn).toHaveBeenCalledWith("scene_generation_invalid_data", {
       reason: "segments_empty",
       object: true,
       keys: "choices,npcLine,objectiveLink,segments",
@@ -449,33 +439,20 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(logger.info).toHaveBeenCalledWith("scene_generation_repaired", { kind: "npc_line_only" });
   });
 
-  it("首个 AI 响应为空时重试一次；第二个有效提案仍作为 generated 采用", async () => {
+  it("首个 AI 响应为空时不重复相同请求，直接回退", async () => {
     const context = makeContext();
     let attempts = 0;
     const transport: AiTransport = {
       complete: vi.fn(async () => {
         attempts += 1;
-        if (attempts === 1) return { ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 };
-        return {
-          ok: true as const,
-          content: JSON.stringify({
-            segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
-            npcLine: null,
-            objectiveLink: null,
-            choices: [
-              { candidateId: "candidate_1", label: "继续交谈" },
-              { candidateId: "candidate_2", label: "观察四周" },
-            ],
-          }),
-          latencyMs: 1,
-        };
+        return { ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 };
       }),
     } as unknown as AiTransport;
 
     const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
 
-    expect(attempts).toBe(2);
-    expect(proposal.source).toBe("generated");
+    expect(attempts).toBe(1);
+    expect(proposal.source).toBe("fallback");
   });
 
   it("AI 返回非法选项 ID → 回退确定性 source", async () => {

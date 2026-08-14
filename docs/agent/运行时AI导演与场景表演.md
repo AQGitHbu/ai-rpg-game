@@ -4,7 +4,7 @@
 
 运行时 AI 负责提出下一幕的结构化场景表演（分段旁白、焦点 NPC 台词、目标链接与合法选项）；规则系统负责审批候选、铸造玩家 token、裁决行动、审批世界演化并写入状态。AI 不直接写存档，也不能决定任务、关系、知识、战斗或结局。
 
-真机回合的 live 场景表演调用以 45 秒为单次上限；生产配置启用 live 时先重试真实 API，超时、服务失败或非法响应会记录稳定失败码，非法响应另外记录脱敏的具体契约失败原因，并在同一审批链切换到确定性 fallback，不能把 fallback 标成 generated，也不能让玩家永久停留在 `narrativeGeneration.pending`。无 AI 配置的离线模式仍使用确定性 source。
+真机回合的 live 场景表演调用以 45 秒为单次上限；场景表演和世界演化分别使用 3000/3200 completion tokens，因为 provider 可能仍把 reasoning_content 计入同一预算。当前 new-api → DeepSeek 官方 OpenAI-compatible 链路通过请求体 `thinking: { type: "disabled" }` 关闭默认思考，显式角色策略才发送 `type: "enabled"`。若预算被 reasoning 消耗完，API 可能返回 HTTP 200 但没有可解析的 `message.content`，仍按 AI 提案失败处理。生产配置启用 live 时由单一 `RpgAiClient` 统一执行：只对 timeout、限流、5xx 和网络失败按角色策略重试；`empty_response`、非法 JSON 和 schema 失败不再重复相同请求，而是记录安全诊断并在同一审批链切换到确定性 fallback，不能把 fallback 标成 generated，也不能让玩家永久停留在 `narrativeGeneration.pending`。无 AI 配置的离线模式仍使用确定性 source。
 
 一旦 pending job 已由规则结果完全确定，服务器立即在后台生成，不等待“开始冒险”、继续、确认或下一次客户端 ensure。创建新局与成功回合返回前只完成快速排队，不等待 AI；协调器以 `gameId + jobId` 去重，客户端 ensure/polling 只负责崩溃恢复和结果观测。
 
@@ -82,6 +82,7 @@
 - `src/game/application/evolveWorld.ts` / `worldEvolutionSource.ts` — 可选世界演化编排与 port。
 - `src/game/gameplay/rpg/narrativeContext/` — `buildOutcomeBeats` / `deriveObjectiveTransition` / `npcResponsePolicy`。
 - `src/game/application/server/ai/liveScenePerformanceSource.ts` / `liveWorldEvolutionSource.ts` / `sourceFactory.ts`。
+- `src/game/application/server/ai/rpgAiClient.ts` — 唯一 server-side transport facade；按 `intent/opening/scene/world` 独立控制 thinking、预算、超时、JSON mode 和 transient retry。
 
 ## 验收重点
 

@@ -1,12 +1,10 @@
-// 当前兼容的 Qwen3/SGLang provider 会在未关闭 reasoning 时长时间不返回
-// JSON 正文。必须只使用 nested 的 chat_template_kwargs；顶层
-// enable_thinking 同样会让请求卡在超时，不能补发。
-const REASONING_DISABLED_BODY = {
-  chat_template_kwargs: { enable_thinking: false },
-} as const;
+// 当前链路是 new-api → DeepSeek 官方 OpenAI-compatible API。
+// DeepSeek 官方通过顶层 thinking.type 切换 enabled/disabled；不要发送
+// Qwen/SGLang 专用的 chat_template_kwargs.enable_thinking。
 
 /** 只启用已实测兼容的 OpenAI JSON object 模式；strict schema 仍由各角色另行定义。 */
 export type ProviderJsonMode = "json_object" | "prompt_only";
+export type ProviderThinking = "off" | "on";
 
 /** 为所有 RPG live source 统一构建 provider 兼容的非推理请求参数。 */
 export type ProviderRequestOptions = Readonly<{
@@ -24,6 +22,7 @@ export function createProviderRequestOptions(
   timeoutMs: number,
   maxTokens?: number,
   jsonMode: ProviderJsonMode = "prompt_only",
+  thinking: ProviderThinking = "off",
 ): ProviderRequestOptions {
   return {
     timeoutMs,
@@ -34,7 +33,7 @@ export function createProviderRequestOptions(
     // enabled; otherwise an opening silently takes a different protocol from
     // every later narrative turn.
     extraBody: {
-      ...REASONING_DISABLED_BODY,
+      thinking: { type: thinking === "on" ? "enabled" : "disabled" },
       ...(maxTokens === undefined ? {} : { max_tokens: maxTokens }),
       ...(jsonMode === "json_object" ? { response_format: { type: "json_object" } } : {}),
     },

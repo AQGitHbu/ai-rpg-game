@@ -15,7 +15,8 @@ import {
   normalizeNpcSpeech,
 } from "@/game/domain/npcSpeech";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
-import { createProviderRequestOptions, type ProviderJsonMode } from "./providerRequestOptions";
+import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./rpgAiClient";
+import type { ProviderJsonMode } from "./providerRequestOptions";
 
 // ---------------------------------------------------------------------------
 // live 场景表演源（Task 6，取代 liveSceneSource）。
@@ -29,8 +30,10 @@ import { createProviderRequestOptions, type ProviderJsonMode } from "./providerR
 // ---------------------------------------------------------------------------
 
 export type LiveScenePerformanceDeps = {
-  readonly transport: AiTransport;
-  readonly config: AiTransportConfig;
+  readonly transport?: AiTransport;
+  readonly config?: AiTransportConfig;
+  /** Shared RPG client supplied by the server composition root. */
+  readonly aiClient?: RpgAiClient;
   /** 仅由已验证兼容的 AI_OUTPUT_FORMAT=json_object 启用。 */
   readonly jsonMode?: ProviderJsonMode;
   readonly logger?: GameLogger;
@@ -43,13 +46,12 @@ export type LiveScenePerformanceDeps = {
  * 处理 reasoning，因此 30 秒会把可用的 AI 结果误判为超时；给一次完整的服务端
  * 生成窗口。真正超时仍会记录为失败，不能计作 AI 场景通过。
  */
-export const LIVE_SCENE_TIMEOUT_MS = 45_000;
+export const LIVE_SCENE_TIMEOUT_MS = RPG_AI_DEFAULT_POLICIES.scene.timeoutMs;
 /** 场景只需旁白、两句 NPC 台词与两个选项，避免默认大输出拖慢整回合。 */
 // 当前 provider 即使请求关闭 reasoning，复杂 JSON 仍会先占用约两千 token
-// 的 reasoning_content；预算必须覆盖它和最终正文，才能避免 content 为空。
-export const LIVE_SCENE_MAX_TOKENS = 1_800;
-// 一次完整窗口后只保留一次瞬态重试：避免在卡住时将玩家锁在三轮 90 秒请求中。
-const LIVE_SCENE_MAX_ATTEMPTS = 2;
+// 的 reasoning_content；completion token 预算必须同时容纳 reasoning 和最终正文，
+// 否则会得到 HTTP 200 但 message.content 为空的响应。
+export const LIVE_SCENE_MAX_TOKENS = RPG_AI_DEFAULT_POLICIES.scene.maxTokens ?? 0;
 
 type SceneJsonParseResult =
   | { readonly ok: true; readonly value: unknown }
@@ -301,6 +303,14 @@ function repairPartialLiveScene(
 export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps): SceneSource {
   const deterministic = createDeterministicSceneSource();
   const { transport, config, logger, jsonMode } = deps;
+  const aiClient = deps.aiClient ?? (transport && config
+    ? createRpgAiClient({
+      transport,
+      config,
+      logger,
+      policies: { scene: { jsonMode: jsonMode ?? "prompt_only" } },
+    })
+    : undefined);
   const fallbackScene = (context: SceneGenerationContext): Promise<ScenePerformanceProposal> => {
     if (deps.allowFallback === false) {
       throw new Error("LIVE_SCENE_UNAVAILABLE");
@@ -313,66 +323,39 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
       try {
         const selectable = buildSelectableSceneCandidates(context);
         if (selectable.length < 2) return fallbackScene(context);
+        if (aiClient === undefined) return fallbackScene(context);
 
         const messages: readonly AiMessage[] = [
           { role: "system", content: buildLiveScenePrompt(context, selectable) },
           { role: "user", content: `当前回合：${context.job.actionId}（${context.job.actionSummary.kind}）` },
         ];
 
-        // 场景生成位于每个玩家回合的必经等待界面。一个完整服务窗口内仍拿不到
-        // 提案时才降级，避免把慢而有效的 AI 结果错误当作 fallback。
-        // 兼容 provider 会偶发空响应；立即重试一次仍然走同一 AI 源，只有两次
-        // 都拿不到可审批提案时才允许 fallback，不能把第一次空响应伪装成成功。
-        let lastFailureCode: string | null = null;
-        for (let attempt = 1; attempt <= LIVE_SCENE_MAX_ATTEMPTS; attempt += 1) {
-          const result = await transport.complete(
-            config,
-            messages,
-            createProviderRequestOptions(LIVE_SCENE_TIMEOUT_MS, LIVE_SCENE_MAX_TOKENS, jsonMode),
-          );
-          if (!result.ok) {
-            lastFailureCode = result.code;
-            if (attempt < LIVE_SCENE_MAX_ATTEMPTS) {
-              logger?.warn("scene_generation_retry", { code: result.code });
-              continue;
-            }
-            logger?.warn("scene_generation_ai_failed", { code: result.code });
-            return fallbackScene(context);
-          }
-
-          const parsed = parseJsonResponse(result.content);
-          const parseResult = parsed.ok
-            ? parseScenePerformanceJson(parsed.value, context, selectable)
-            : parsed;
-          if (parseResult.ok) return parseResult.proposal;
-
-          const repaired = await repairPartialLiveScene(parsed.ok ? parsed.value : null, context, deterministic);
-          if (repaired !== null) {
-            logger?.info("scene_generation_repaired", { kind: "npc_line_only" });
-            return repaired;
-          }
-
-          lastFailureCode = "invalid_data";
-          if (attempt < LIVE_SCENE_MAX_ATTEMPTS) {
-            logger?.warn("scene_generation_retry", {
-              code: lastFailureCode,
-              reason: parseResult.reason,
-              ...(parsed.ok
-                ? sceneResponseShape(parsed.value)
-                : { object: false, kind: "invalid_json" }),
-            });
-            continue;
-          }
-          logger?.warn("scene_generation_invalid_data", {
-            reason: parseResult.reason,
-            ...(parsed.ok
-              ? sceneResponseShape(parsed.value)
-              : { object: false, kind: "invalid_json" }),
-          });
+        // 场景生成位于每个玩家回合的必经等待界面。瞬态网络失败由统一 client
+        // 按角色策略重试；empty_response 或非法 JSON 不再重复同一个请求。
+        const result = await aiClient.complete("scene", messages);
+        if (!result.ok) {
+          logger?.warn("scene_generation_ai_failed", { code: result.code });
           return fallbackScene(context);
         }
-        // 仅为 TypeScript 完整性；循环一定从内部 return。
-        logger?.warn("scene_generation_ai_failed", { code: lastFailureCode ?? "unknown" });
+
+        const parsed = parseJsonResponse(result.content);
+        const parseResult = parsed.ok
+          ? parseScenePerformanceJson(parsed.value, context, selectable)
+          : parsed;
+        if (parseResult.ok) return parseResult.proposal;
+
+        const repaired = await repairPartialLiveScene(parsed.ok ? parsed.value : null, context, deterministic);
+        if (repaired !== null) {
+          logger?.info("scene_generation_repaired", { kind: "npc_line_only" });
+          return repaired;
+        }
+
+        logger?.warn("scene_generation_invalid_data", {
+          reason: parseResult.reason,
+          ...(parsed.ok
+            ? sceneResponseShape(parsed.value)
+            : { object: false, kind: "invalid_json" }),
+        });
         return fallbackScene(context);
       } catch (error) {
         logger?.error("scene_generation_error", { error: error instanceof Error ? error.message : "unknown" });
