@@ -47,6 +47,7 @@ const pendingPrologueView: GameSessionView = {
 
 afterEach(() => {
   cleanup();
+  window.sessionStorage.clear();
   vi.clearAllMocks();
 });
 
@@ -72,6 +73,39 @@ describe("CurrentGameScreen ending restart", () => {
     expect(JSON.parse(String(init.body))).toMatchObject({
       restart: { identity: "opaque-ended-session", expectedRevision: 9 },
     });
+  });
+
+  it("keeps the replacement-game form open after a page refresh", async () => {
+    vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: endedView });
+
+    const firstMount = render(<CurrentGameScreen />);
+    await userEvent.click(await screen.findByRole("button", { name: "重新开始" }));
+    expect(screen.getByRole("heading", { name: "开始新的冒险" })).toBeInTheDocument();
+
+    firstMount.unmount();
+    render(<CurrentGameScreen />);
+
+    expect(await screen.findByRole("heading", { name: "开始新的冒险" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "冒险结局" })).not.toBeInTheDocument();
+  });
+
+  it("ignores a restart marker when the ended save identity or revision has changed", async () => {
+    vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: endedView });
+
+    const firstMount = render(<CurrentGameScreen />);
+    await userEvent.click(await screen.findByRole("button", { name: "重新开始" }));
+    firstMount.unmount();
+
+    const newerEndedView: GameSessionView = {
+      ...endedView,
+      revision: endedView.revision + 1,
+      ending: { ...endedView.ending!, restartIdentity: "new-ended-session" },
+    };
+    vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: newerEndedView });
+    render(<CurrentGameScreen />);
+
+    expect(await screen.findByRole("region", { name: "冒险结局" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "开始新的冒险" })).not.toBeInTheDocument();
   });
 });
 
