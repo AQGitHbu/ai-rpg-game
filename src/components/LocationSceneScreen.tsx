@@ -384,9 +384,6 @@ export function LocationSceneScreen({
     ? ""
     : describeBuildingScene(activeBuilding.buildingType, activeBuilding.displayName, sceneNpcName);
   const displayNarration = buildingSideNote || cleanLocationSideNote(normalizeDisplayText(view.narrative.narration ?? ""));
-  const displayNpcLine = view.narrative.npcLine === null
-    ? ""
-    : normalizeDisplayText(view.narrative.npcLine.text);
   const displayLocationDescription = activeBuilding === undefined
     ? normalizeDisplayText(view.currentLocation.description)
     : "";
@@ -719,22 +716,13 @@ export function LocationSceneScreen({
         ) : null}
 
         {/* 叙事场景浮层（固定在底部中偏上） */}
-        {view.narrative.hasScene && (displayNarration || displayNpcLine) ? (
+        {view.narrative.hasScene && displayNarration ? (
           <section className="scene-narrative scene-narrative--side-note" aria-label="地点旁注">
-            {displayNpcLine ? (
-              <div className="scene-narrative-reply" aria-label="角色回应">
-                <span className="scene-narrative-kicker">角色回应</span>
-                <strong>{view.narrative.npcLine?.speaker ?? "场景人物"}</strong>
-                <p>{displayNpcLine}</p>
-              </div>
-            ) : null}
-            {displayNarration ? (
-              <div className="scene-narrative-location-note">
-                <span className="scene-narrative-kicker">地点旁注</span>
-                <h2>{sceneLocationName ?? view.currentLocation.name}</h2>
-                <p>{displayNarration}</p>
-              </div>
-            ) : null}
+            <div className="scene-narrative-location-note">
+              <span className="scene-narrative-kicker">地点旁注</span>
+              <h2>{sceneLocationName ?? view.currentLocation.name}</h2>
+              <p>{displayNarration}</p>
+            </div>
           </section>
         ) : null}
 

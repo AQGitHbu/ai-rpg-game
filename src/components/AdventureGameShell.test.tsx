@@ -750,6 +750,28 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(within(actionRail).getByRole("button", { name: "与吴九交谈" })).toBeInTheDocument();
   });
 
+  it("does not show NPC replies in the location side note", () => {
+    const base = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        narrative: {
+          ...base.narrative,
+          npcLine: { text: "这句对白只应在人物对话里出现。", emotion: "neutral", speaker: "老板" },
+          npcDialogues: [{ ...base.narrative.npcDialogues[0]!, speechPages: ["这句对白只应在人物对话里出现。"] }],
+        },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+
+    const sideNote = screen.getByRole("region", { name: "地点旁注" });
+    expect(sideNote).not.toHaveTextContent("角色回应");
+    expect(sideNote).not.toHaveTextContent("这句对白只应在人物对话里出现。");
+    expect(screen.getByRole("dialog", { name: "与老板对话" })).toHaveTextContent("这句对白只应在人物对话里出现。");
+  });
+
   it("explains when the scene has no available actions", () => {
     const base = buildView();
     render(<LocationSceneScreen
