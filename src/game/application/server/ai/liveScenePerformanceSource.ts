@@ -51,19 +51,23 @@ export const LIVE_SCENE_MAX_TOKENS = 1_800;
 // 一次完整窗口后只保留一次瞬态重试：避免在卡住时将玩家锁在三轮 90 秒请求中。
 const LIVE_SCENE_MAX_ATTEMPTS = 2;
 
-function parseJsonResponse(text: string): unknown {
+type SceneJsonParseResult =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly reason: "invalid_json" };
+
+function parseJsonResponse(text: string): SceneJsonParseResult {
   try {
-    return JSON.parse(text);
+    return { ok: true, value: JSON.parse(text) };
   } catch {
     const match = text.match(/```json\s*([\s\S]*?)```/);
     if (match) {
       try {
-        return JSON.parse(match[1]);
+        return { ok: true, value: JSON.parse(match[1]) };
       } catch {
-        return null;
+        return { ok: false, reason: "invalid_json" };
       }
     }
-    return null;
+    return { ok: false, reason: "invalid_json" };
   }
 }
 
@@ -99,6 +103,21 @@ export type LiveNpcLineCandidate = {
   readonly text: string;
   readonly emotion: string;
 };
+
+export type ScenePerformanceParseFailureReason =
+  | "root_not_object"
+  | "segments_empty"
+  | "segment_invalid"
+  | "segment_unknown_beat"
+  | "npc_line_invalid_shape"
+  | "npc_line_unusable"
+  | "objective_link_invalid_shape"
+  | "objective_link_invalid_fields"
+  | "choices_invalid";
+
+export type ScenePerformanceParseResult =
+  | { readonly ok: true; readonly proposal: ScenePerformanceProposal }
+  | { readonly ok: false; readonly reason: ScenePerformanceParseFailureReason };
 
 /** 焦点 NPC 的 ready 台词必须是两句可独立阅读的直接对白。 */
 function hasDialogicContinuation(text: string): boolean {
@@ -171,8 +190,8 @@ export function parseScenePerformanceJson(
   raw: unknown,
   context: SceneGenerationContext,
   selectable: readonly SceneChoiceCandidate[],
-): ScenePerformanceProposal | null {
-  if (!isRecord(raw)) return null;
+): ScenePerformanceParseResult {
+  if (!isRecord(raw)) return { ok: false, reason: "root_not_object" };
 
   const segments: ScenePerformanceSegment[] = [];
   const allowedBeatIds = new Set([
@@ -186,22 +205,24 @@ export function parseScenePerformanceJson(
         || s.beatId.trim() === ""
         || typeof s.text !== "string"
         || s.text.trim() === "") {
-        return null;
+        return { ok: false, reason: "segment_invalid" };
       }
       // 让“自创节拍 ID”进入机械修复路径：有焦点 NPC 时保留真实
       // API 返回的台词，只用服务端已批准的节拍/确定性段落补齐，
       // 避免到了最终审批才静默写 fallback 或永久卡 pending。
-      if (!allowedBeatIds.has(s.beatId.trim())) return null;
+      if (!allowedBeatIds.has(s.beatId.trim())) {
+        return { ok: false, reason: "segment_unknown_beat" };
+      }
       segments.push({ beatId: s.beatId, text: s.text.trim() });
     }
   }
-  if (segments.length === 0) return null;
+  if (segments.length === 0) return { ok: false, reason: "segments_empty" };
 
   let npcLine: ScenePerformanceProposal["npcLine"] = null;
   if (raw.npcLine !== null && raw.npcLine !== undefined) {
-    if (!isRecord(raw.npcLine)) return null;
+    if (!isRecord(raw.npcLine)) return { ok: false, reason: "npc_line_invalid_shape" };
     const resolved = isUsableLiveNpcLine(raw.npcLine as LiveNpcLineCandidate, context);
-    if (resolved === null) return null;
+    if (resolved === null) return { ok: false, reason: "npc_line_unusable" };
     npcLine = {
       npcId: String(resolved.npcId),
       text: resolved.text,
@@ -214,12 +235,12 @@ export function parseScenePerformanceJson(
 
   let objectiveLink: ScenePerformanceProposal["objectiveLink"] = null;
   if (raw.objectiveLink !== null && raw.objectiveLink !== undefined) {
-    if (!isRecord(raw.objectiveLink)) return null;
+    if (!isRecord(raw.objectiveLink)) return { ok: false, reason: "objective_link_invalid_shape" };
     const mode = raw.objectiveLink.mode;
     if (typeof raw.objectiveLink.questId !== "string"
       || typeof raw.objectiveLink.objectiveIndex !== "number"
       || !["hint", "progress", "handoff"].includes(mode as string)) {
-      return null;
+      return { ok: false, reason: "objective_link_invalid_fields" };
     }
     objectiveLink = {
       questId: raw.objectiveLink.questId,
@@ -229,15 +250,18 @@ export function parseScenePerformanceJson(
   }
 
   const choices = resolvePerformanceChoices(selectable, raw.choices);
-  if (choices === null) return null;
+  if (choices === null) return { ok: false, reason: "choices_invalid" };
 
   return {
-    sceneId: `scene-${context.job.jobId}`,
-    segments,
-    npcLine,
-    objectiveLink,
-    choices,
-    source: "generated",
+    ok: true,
+    proposal: {
+      sceneId: `scene-${context.job.jobId}`,
+      segments,
+      npcLine,
+      objectiveLink,
+      choices,
+      source: "generated",
+    },
   };
 }
 
@@ -317,10 +341,12 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
           }
 
           const parsed = parseJsonResponse(result.content);
-          const proposal = parseScenePerformanceJson(parsed, context, selectable);
-          if (proposal !== null) return proposal;
+          const parseResult = parsed.ok
+            ? parseScenePerformanceJson(parsed.value, context, selectable)
+            : parsed;
+          if (parseResult.ok) return parseResult.proposal;
 
-          const repaired = await repairPartialLiveScene(parsed, context, deterministic);
+          const repaired = await repairPartialLiveScene(parsed.ok ? parsed.value : null, context, deterministic);
           if (repaired !== null) {
             logger?.info("scene_generation_repaired", { kind: "npc_line_only" });
             return repaired;
@@ -328,10 +354,21 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
 
           lastFailureCode = "invalid_data";
           if (attempt < LIVE_SCENE_MAX_ATTEMPTS) {
-            logger?.warn("scene_generation_retry", { code: lastFailureCode });
+            logger?.warn("scene_generation_retry", {
+              code: lastFailureCode,
+              reason: parseResult.reason,
+              ...(parsed.ok
+                ? sceneResponseShape(parsed.value)
+                : { object: false, kind: "invalid_json" }),
+            });
             continue;
           }
-          logger?.warn("scene_generation_invalid_data", sceneResponseShape(parsed));
+          logger?.warn("scene_generation_invalid_data", {
+            reason: parseResult.reason,
+            ...(parsed.ok
+              ? sceneResponseShape(parsed.value)
+              : { object: false, kind: "invalid_json" }),
+          });
           return fallbackScene(context);
         }
         // 仅为 TypeScript 完整性；循环一定从内部 return。

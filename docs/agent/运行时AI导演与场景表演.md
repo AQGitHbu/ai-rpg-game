@@ -4,7 +4,7 @@
 
 运行时 AI 负责提出下一幕的结构化场景表演（分段旁白、焦点 NPC 台词、目标链接与合法选项）；规则系统负责审批候选、铸造玩家 token、裁决行动、审批世界演化并写入状态。AI 不直接写存档，也不能决定任务、关系、知识、战斗或结局。
 
-真机回合的 live 场景表演调用以 45 秒为单次上限；生产配置启用 live 时先重试真实 API，超时、服务失败或非法响应会记录稳定失败码并在同一审批链切换到确定性 fallback，不能把 fallback 标成 generated，也不能让玩家永久停留在 `narrativeGeneration.pending`。无 AI 配置的离线模式仍使用确定性 source。
+真机回合的 live 场景表演调用以 45 秒为单次上限；生产配置启用 live 时先重试真实 API，超时、服务失败或非法响应会记录稳定失败码，非法响应另外记录脱敏的具体契约失败原因，并在同一审批链切换到确定性 fallback，不能把 fallback 标成 generated，也不能让玩家永久停留在 `narrativeGeneration.pending`。无 AI 配置的离线模式仍使用确定性 source。
 
 一旦 pending job 已由规则结果完全确定，服务器立即在后台生成，不等待“开始冒险”、继续、确认或下一次客户端 ensure。创建新局与成功回合返回前只完成快速排队，不等待 AI；协调器以 `gameId + jobId` 去重，客户端 ensure/polling 只负责崩溃恢复和结果观测。
 

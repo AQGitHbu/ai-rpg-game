@@ -4,6 +4,7 @@ import {
   buildLiveScenePrompt,
   LIVE_SCENE_MAX_TOKENS,
   LIVE_SCENE_TIMEOUT_MS,
+  parseScenePerformanceJson,
 } from "./liveScenePerformanceSource";
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
@@ -346,6 +347,75 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     await source.generateScene(makeContext());
 
     expect(logger.warn).toHaveBeenLastCalledWith("scene_generation_invalid_data", {
+      reason: "segments_empty",
+      object: true,
+      keys: "choices,npcLine,objectiveLink,segments",
+      segmentCount: 0,
+      npcLineKind: "null",
+      choiceCount: 0,
+      objectiveLinkKind: "null",
+    });
+  });
+
+  it("解析场景候选时返回具体的契约失败原因", () => {
+    const result = parseScenePerformanceJson(
+      {
+        segments: [{ beatId: "invented", text: "不采用的旁白" }],
+        npcLine: null,
+        objectiveLink: null,
+        choices: [],
+      },
+      makeContext(),
+      buildSelectableSceneCandidates(makeContext()),
+    );
+
+    expect(result).toEqual({ ok: false, reason: "segment_unknown_beat" });
+  });
+
+  it("契约重试日志包含具体原因和脱敏响应结构", async () => {
+    const logger = { warn: vi.fn() };
+    let attempts = 0;
+    const transport: AiTransport = {
+      complete: vi.fn(async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return {
+            ok: true as const,
+            content: JSON.stringify({
+              segments: [],
+              npcLine: null,
+              objectiveLink: null,
+              choices: [],
+            }),
+            latencyMs: 1,
+          };
+        }
+        return {
+          ok: true as const,
+          content: JSON.stringify({
+            segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+            npcLine: null,
+            objectiveLink: null,
+            choices: [
+              { candidateId: "candidate_1", label: "继续交谈" },
+              { candidateId: "candidate_2", label: "观察四周" },
+            ],
+          }),
+          latencyMs: 1,
+        };
+      }),
+    } as unknown as AiTransport;
+
+    const proposal = await createLiveScenePerformanceSource({
+      transport,
+      config,
+      logger: logger as never,
+    }).generateScene(makeContext());
+
+    expect(proposal.source).toBe("generated");
+    expect(logger.warn).toHaveBeenCalledWith("scene_generation_retry", {
+      code: "invalid_data",
+      reason: "segments_empty",
       object: true,
       keys: "choices,npcLine,objectiveLink,segments",
       segmentCount: 0,
