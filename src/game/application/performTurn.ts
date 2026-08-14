@@ -19,7 +19,7 @@ import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import { buildOutcomeBeats, currentObjectiveOf, deriveObjectiveTransition } from "@/game/gameplay/rpg/narrativeContext";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
-import { evolveWorld, repairIdOverrideForAction, type EvolveWorldResult } from "./evolveWorld";
+import { evolveWorld, repairIdOverrideForAction } from "./evolveWorld";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
 
 export type PerformTurnCommand = {

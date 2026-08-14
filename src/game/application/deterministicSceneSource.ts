@@ -278,14 +278,6 @@ function boundedUtteranceReference(utterance: string | undefined): string | null
   return bounded === normalized ? bounded : `${bounded}…`;
 }
 
-function contextReference(context: SceneGenerationContext): string {
-  const utterance = boundedUtteranceReference(context.job.utterance);
-  if (utterance !== null) return `你刚才问的“${utterance}”`;
-  const objective = context.objectiveTransition.after?.label;
-  if (objective !== undefined) return `当前要查的“${objective}”`;
-  return "你刚才提到的事情";
-}
-
 function canReferenceCurrentUtterance(context: SceneGenerationContext): boolean {
   const focusNpcId = context.focusNpcContext?.id;
   const jobNpcId = context.job.focusNpcId;

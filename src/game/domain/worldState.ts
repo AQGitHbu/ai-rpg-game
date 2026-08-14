@@ -8,7 +8,7 @@ import type { RelationshipValue } from "./relationship";
 import type { NarrativeEmotion } from "./narrative";
 import type { DialogueAct, StructuredDialogueTopic } from "./action";
 import type { TownRuntimeState } from "./townState";
-import type { ActiveBattleCombatState, CombatActionKind, CombatCommand } from "./combat";
+import type { ActiveBattleCombatState } from "./combat";
 
 // ── Entry 类型：定义 + 运行时 ──
 

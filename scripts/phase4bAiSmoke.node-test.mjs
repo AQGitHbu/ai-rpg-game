@@ -4,7 +4,6 @@ import {
   SMOKE_CASES,
   buildCaseSummaryLine,
   checkContentBudget,
-  checkOpeningRuntimeState,
   realRunCase,
   resolveOutputFormatLabel,
   runPhase4bAiSmoke,

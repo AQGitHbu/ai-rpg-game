@@ -7,10 +7,8 @@ import type {
 } from "./worldDelta";
 import {
   asEndingId,
-  asEnemyId,
   asFactId,
   asGenerationId,
-  asItemId,
   asLocationId,
   asNpcId,
   asQuestId,

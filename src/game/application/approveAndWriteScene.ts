@@ -4,11 +4,9 @@ import type { EventProposal, ScenePerformanceProposal, ScenePerformanceNpcLine }
 import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState } from "@/game/domain/narrative";
 import { buildNpcDialoguePages } from "@/game/domain/narrative";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
-import type { ApprovedChoice, ChoiceProposal } from "@/game/domain/approvedChoice";
+import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice, semanticSummaryOf } from "@/game/domain/approvedChoice";
 import { buildEventState, buildSelectableSceneCandidates, actionTargetsObjective } from "./deterministicSceneSource";
-import type { Action } from "@/game/domain/action";
-import { DIALOGUE_ACTS } from "@/game/domain/action";
 import { asFactId, asNpcId } from "@/game/domain/worldEntity";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
@@ -126,67 +124,6 @@ export type ApproveScenePerformanceResult =
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasOnlyKeys(record: Record<string, unknown>, allowed: readonly string[]): boolean {
-  const allowedSet = new Set(allowed);
-  return Object.keys(record).every((key) => allowedSet.has(key));
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim() !== "";
-}
-
-function isDialogueTopic(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.kind !== "string") return false;
-  switch (value.kind) {
-    case "general": return hasOnlyKeys(value, ["kind"]);
-    case "fact": return hasOnlyKeys(value, ["kind", "factId"]) && isNonEmptyString(value.factId);
-    case "quest": return hasOnlyKeys(value, ["kind", "questId"]) && isNonEmptyString(value.questId);
-    case "thread": return hasOnlyKeys(value, ["kind", "threadId"]) && isNonEmptyString(value.threadId);
-    default: return false;
-  }
-}
-
-/** SceneSource output is untrusted at runtime even when its TypeScript port says Action. */
-function isWellFormedAction(value: unknown): value is Action {
-  if (!isRecord(value) || typeof value.type !== "string") return false;
-  switch (value.type) {
-    case "talk":
-      return hasOnlyKeys(value, ["type", "npcId", "dialogueAct", "topic", "utterance"])
-        && isNonEmptyString(value.npcId)
-        && typeof value.dialogueAct === "string"
-        && DIALOGUE_ACTS.includes(value.dialogueAct as (typeof DIALOGUE_ACTS)[number])
-        && (value.topic === undefined || isDialogueTopic(value.topic))
-        && (value.utterance === undefined || typeof value.utterance === "string");
-    case "move": return hasOnlyKeys(value, ["type", "locationId"]) && isNonEmptyString(value.locationId);
-    case "explore": return hasOnlyKeys(value, ["type"]);
-    case "investigate":
-      return hasOnlyKeys(value, ["type", "factId", "utterance"])
-        && isNonEmptyString(value.factId)
-        && (value.utterance === undefined || typeof value.utterance === "string");
-    case "take_item": return hasOnlyKeys(value, ["type", "itemId"]) && isNonEmptyString(value.itemId);
-    case "give_item": return hasOnlyKeys(value, ["type", "itemId", "npcId"]) && isNonEmptyString(value.itemId) && isNonEmptyString(value.npcId);
-    case "attack": return hasOnlyKeys(value, ["type", "enemyId"]) && isNonEmptyString(value.enemyId);
-      case "battle_action":
-        return hasOnlyKeys(value, ["type", "action"])
-          && (value.action === "attack" || value.action === "skill" || value.action === "guard" || value.action === "flee");
-    case "ack_prologue": return hasOnlyKeys(value, ["type"]);
-    case "freeform":
-      return hasOnlyKeys(value, ["type", "intent", "rawText"])
-        && typeof value.intent === "string"
-        && typeof value.rawText === "string";
-    default: return false;
-  }
-}
-
-/** 候选选项形状校验（供非新契约路径保留）。 */
-function isWellFormedChoiceProposal(value: unknown): value is ChoiceProposal {
-  return isRecord(value)
-    && hasOnlyKeys(value, ["label", "hint", "action"])
-    && typeof value.label === "string"
-    && (value.hint === undefined || typeof value.hint === "string")
-    && isWellFormedAction(value.action);
 }
 
 function rebuildEvent(event: NarrativeEventState): NarrativeEventState {

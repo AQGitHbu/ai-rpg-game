@@ -69,6 +69,7 @@ export function AdventureGameShell({
   function entryScreenFor(view: GameSessionView): AdventureScreen {
     return view.currentLocation.scale === "town" && view.currentLocation.town !== null ? "town" : "scene";
   }
+  const currentLocationScreen = entryScreenFor(view);
 
   // 场景返回：来自小镇的场景回到小镇层；来自 scene 地点回到地图。
   function returnFromScene(): void {
@@ -83,9 +84,9 @@ export function AdventureGameShell({
     previousLocationRef.current = currentName;
     if (previousName !== null && previousName !== currentName) {
       setSceneContext(null);
-      setScreen(entryScreenFor(view));
+      setScreen(currentLocationScreen);
     }
-  }, [view.currentLocation.name, view.revision]);
+  }, [currentLocationScreen, view.currentLocation.name, view.revision]);
 
   // 世界演化可能要到 pending 场景写回时才具象化下一幕任务，因此不能只看
   // action 请求的即时响应。以 ready 快照中的权威目标为准，在目标真正变化后

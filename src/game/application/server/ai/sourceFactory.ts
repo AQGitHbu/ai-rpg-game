@@ -1,4 +1,4 @@
-import { createOpenAiCompatibleTransport, type AiTransportConfig } from "@ai-game/ai-transport";
+import { createOpenAiCompatibleTransport } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
 import { parseAiRuntimeConfig, type AiOutputFormat } from "./aiRuntimeConfig";
 import type { ProviderJsonMode } from "./providerRequestOptions";

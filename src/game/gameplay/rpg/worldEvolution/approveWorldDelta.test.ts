@@ -4,7 +4,7 @@ import type { WorldState, NpcEntry } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { createInitialWorldState } from "@/game/domain/worldState";
-import type { EvolutionNeed, WorldDeltaProposal } from "@/game/domain/worldDelta";
+import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import { asLocationId, asNpcId, asEnemyId, asGenerationId } from "@/game/domain/worldEntity";
 import { bindNpcToTownSlot, createTownRuntime } from "@/game/gameplay/rpg/town";
 import { TRUST_ENDING_MIN_AFFINITY, DOUBT_ENDING_MAX_AFFINITY } from "@/game/application/deterministicEvolutionSource";

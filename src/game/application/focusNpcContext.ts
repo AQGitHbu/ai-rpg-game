@@ -4,7 +4,7 @@ import type { GameRecord } from "./server/persistence/gameRepository";
 import type { FactId, NpcId } from "@/game/domain/worldEntity";
 import { relationshipTierOf, type RelationshipTier } from "@/game/domain/relationship";
 import type { NarrativeEmotion } from "@/game/domain/narrative";
-import type { DialogueAct, StructuredDialogueTopic } from "@/game/domain/action";
+import type { DialogueAct } from "@/game/domain/action";
 import {
   createNpcResponsePolicy,
   selectAllowedDisclosureFactIds,

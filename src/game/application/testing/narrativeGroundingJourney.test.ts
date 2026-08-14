@@ -6,7 +6,6 @@ import {
   advanceScene,
   pendingSceneProposal,
   loadWorldState,
-  loadStoryState,
   loadGameRecord,
 } from "./foundationJourney.testutil";
 import { asNpcId } from "@/game/domain/worldEntity";

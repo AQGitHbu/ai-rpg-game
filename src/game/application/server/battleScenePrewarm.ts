@@ -37,9 +37,6 @@ function projectedVictoryRecord(record: GameRecord): { readonly record: GameReco
   if (battle.status !== "active" || battle.battleKey === undefined) return null;
 
   const actorId = battle.combatants?.[battle.turnIndex ?? -1]?.combatantId;
-  const actor = actorId === undefined
-    ? undefined
-    : battle.combatants?.find((unit) => unit.combatantId === actorId);
   const target = battle.combatants?.find((unit) => unit.side === "enemies" && unit.hp > 0);
   const action: Action = {
     type: "battle_action",

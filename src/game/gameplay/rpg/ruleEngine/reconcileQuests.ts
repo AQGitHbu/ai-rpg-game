@@ -15,7 +15,6 @@ export type QuestReconcileResult = {
 function applyOutcome(
   ws: WorldState,
   outcome: QuestOutcome,
-  now: string,
 ): { readonly nextWorldState: WorldState; readonly events: readonly GameEvent[] } {
   switch (outcome.kind) {
     case "advance_story":
@@ -45,7 +44,7 @@ export function reconcileQuests(ws: WorldState, deps: { readonly now: () => stri
         q.id === quest.id ? { ...q, status: "completed" as const } : q,
       ),
     };
-    const successOutcome = applyOutcome(nextWorldState, quest.onSuccess, deps.now());
+    const successOutcome = applyOutcome(nextWorldState, quest.onSuccess);
     nextWorldState = successOutcome.nextWorldState;
     events.push(...successOutcome.events);
   }
@@ -53,7 +52,7 @@ export function reconcileQuests(ws: WorldState, deps: { readonly now: () => stri
   // 2) failed 任务：应用 onFailure（解锁失败路线或关闭）。onFailure 为 closed 时关闭任务。
   for (const quest of ws.quests) {
     if (quest.status !== "failed") continue;
-    const failureOutcome = applyOutcome(nextWorldState, quest.onFailure, deps.now());
+    const failureOutcome = applyOutcome(nextWorldState, quest.onFailure);
     nextWorldState = failureOutcome.nextWorldState;
     events.push(...failureOutcome.events);
     if (quest.onFailure.kind === "closed") {

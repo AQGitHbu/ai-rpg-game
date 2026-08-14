@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, type FormEvent } from "react";
+import { useState, useEffect, useReducer, useRef, type FormEvent } from "react";
 import { composeDirectNpcGreeting, type GameSessionView, type NewGameInput } from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { AdventureVisual } from "./adventureVisuals";
@@ -27,6 +27,25 @@ type BattleFeedback = {
   readonly kind: "player-action" | "enemy-hit" | "player-hit" | "resolved";
   readonly message: string;
 };
+
+type DialogueUiState = {
+  readonly npcId: string | null;
+  readonly revision: number;
+};
+
+type DialogueUiAction =
+  | { readonly kind: "set"; readonly npcId: string | null }
+  | { readonly kind: "sync_revision"; readonly revision: number; readonly close: boolean };
+
+function reduceDialogueUiState(state: DialogueUiState, action: DialogueUiAction): DialogueUiState {
+  switch (action.kind) {
+    case "set": return { ...state, npcId: action.npcId };
+    case "sync_revision": return {
+      revision: action.revision,
+      npcId: action.close ? null : state.npcId,
+    };
+  }
+}
 
 /**
  * 地点旁注只负责回答“我现在在哪里、这里发生了什么”。
@@ -447,7 +466,7 @@ export function LocationSceneScreen({
     }
   }
 
-  const [openDialogueNpcId, setOpenDialogueNpcId] = useState<string | null>(() => {
+  const initialOpenDialogueNpcId = (() => {
     // 从小镇建筑进入只切换场景，不自动打开或提交对话；测试环境下仍默认打开第一个活跃对话。
     if (initialFocusNpcId !== null && initialFocusNpcId !== undefined) {
       return null;
@@ -456,9 +475,16 @@ export function LocationSceneScreen({
       return activeDialogues[0].npcId;
     }
     return null;
+  })();
+  const [dialogueUi, dispatchDialogueUi] = useReducer(reduceDialogueUiState, {
+    npcId: initialOpenDialogueNpcId,
+    revision: view.revision,
   });
+  const openDialogueNpcId = dialogueUi.npcId;
+  function setOpenDialogueNpcId(npcId: string | null): void {
+    dispatchDialogueUi({ kind: "set", npcId });
+  }
   const [battleFeedback, setBattleFeedback] = useState<BattleFeedback | null>(null);
-  const previousViewRevisionRef = useRef(view.revision);
   const previousBattleRef = useRef(view.battle);
 
   useEffect(() => {
@@ -560,40 +586,30 @@ export function LocationSceneScreen({
     }
   }
 
-  const openDialogueNpcIdForRender = openDialogueNpcId;
-
   // 当前打开的对话对象
-  const openDialogue: Dialogue | undefined = openDialogueNpcIdForRender
-    ? allDialoguesMap.get(openDialogueNpcIdForRender)
+  const openDialogue: Dialogue | undefined = openDialogueNpcId
+    ? allDialoguesMap.get(openDialogueNpcId)
     : undefined;
 
   // 幕交接时旧焦点 NPC 可能只剩一次普通 ask 入口。若继续保留旧弹窗，
   // 玩家会看到单个“与 NPC 交谈”按钮，却误以为仍在正式双选项对话中。
-  // 只有真正的焦点对白（双选项或自定义输入）才允许跨 pending 保持弹窗。
+  // 用 reducer 同步 revision，避免 effect 内直接 setState 触发 cascading render。
   useEffect(() => {
-    const revisionChanged = previousViewRevisionRef.current !== view.revision;
-    previousViewRevisionRef.current = view.revision;
-
-    if (
-      !revisionChanged
-      || pending
-    ) {
-      return;
-    }
-    if (handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation) {
-      setOpenDialogueNpcId(null);
-      return;
-    }
-    if (
-      view.narrative.eventKind !== "dialogue"
-      || openDialogue === undefined
-      || openDialogue.freeInputEnabled
-      || openDialogue.choices.length === 2
-    ) {
-      return;
-    }
-    setOpenDialogueNpcId(null);
+    if (dialogueUi.revision === view.revision) return;
+    const shouldClose = !pending
+      && (
+        handoffLeavesCurrentBuilding
+        || handoffLeavesCurrentLocation
+        || (
+          view.narrative.eventKind === "dialogue"
+          && openDialogue !== undefined
+          && !openDialogue.freeInputEnabled
+          && openDialogue.choices.length !== 2
+        )
+      );
+    dispatchDialogueUi({ kind: "sync_revision", revision: view.revision, close: shouldClose });
   }, [
+    dialogueUi.revision,
     handoffLeavesCurrentBuilding,
     handoffLeavesCurrentLocation,
     openDialogue,
@@ -648,7 +664,7 @@ export function LocationSceneScreen({
           </div>
           <div className="scene-npc-sidebar-list">
             {sidebarNpcs.map((npc) => {
-              const isSelected = openDialogueNpcIdForRender === npc.dialogueId;
+              const isSelected = openDialogueNpcId === npc.dialogueId;
               return (
                 <button
                   key={npc.id}

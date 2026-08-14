@@ -97,7 +97,7 @@ export function compileOpeningGenerationCandidate(
         goals: candidate.opening.npc.goals,
       },
     }],
-    worldFacts: factIds.map((fact, index) => ({
+    worldFacts: factIds.map((fact) => ({
       factId: fact.factId,
       text: fact.text,
       source: "generated",

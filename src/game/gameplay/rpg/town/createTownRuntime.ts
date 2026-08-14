@@ -1,4 +1,4 @@
-import type { LocationId, NpcId } from "@/game/domain/worldEntity";
+import type { LocationId } from "@/game/domain/worldEntity";
 import type { TownBuildingSlot, TownBuildingSlotType, TownRuntimeState, TownBuildingType } from "@/game/domain/townState";
 import { TOWN_GENERATOR_VERSION } from "@/game/domain/townState";
 import { generateTown } from "./generateTown";
