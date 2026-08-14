@@ -312,13 +312,14 @@ ${setupSection}
 要求：
 1. world：summary/tone/themes/publicFacts（key 必须形如 fact_xxx，且全局唯一）
 2. player：name/identity/backgroundSummary；战斗属性由服务端规则配置，禁止生成 baseStats
-3. prologue：玩家进入游戏时的第一段画面旁白（2-3 句）
+3. prologue：故事序幕（2-3 句），聚焦故事钩子、主角动机和背景冲突：说明主角为什么会来到这条故事线上、什么未解事件或危险正在逼近、以及为什么值得继续行动。它可以提及已确定的世界背景，但不是当前地点的感官镜头；不要描写雨声、光线、气味、脚步、材质等即时细节，不要写 NPC 台词、玩家选项或完整场景表演
 4. storyContract：version=1、targetActs=${targetActs}（必须与档位一致）、centralConflict、endingDirections 恰好两个（key 分别为 "trust" 与 "doubt"）
 5. opening.location：开场地点，scale 必须是 "town"（小镇层级）
 6. opening.npc：开场焦点 NPC，knownFactKeys/privateFactKeys 必须且只能引用 world.publicFacts 中已定义的 fact key
 7. opening.quest：首个主线任务，objective 只能是 { "kind": "talk_to_opening_npc" }
 
 不得生成未来：不得输出任何未来地点、未来 NPC、未来任务、敌人、物品或结局；世界只存在开场切片的这一个地点、一个 NPC、一个任务。
+叙事职责边界：prologue 只回答“为什么要继续这段故事”，通过故事钩子、人物动机和背景冲突建立期待；不要抢写首个场景的空间氛围或即时感官体验，首个场景的 atmosphere 段由场景表演源负责。
 必须严格使用以下字段名与嵌套结构（禁止改名）：
 {
   "world": { "summary": "...", "tone": "...", "themes": ["..."], "publicFacts": [{ "key": "fact_xxx", "text": "..." }] },
