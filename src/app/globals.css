@@ -2796,6 +2796,21 @@ body:has(.adventure-game-shell) {
   color: var(--game-text-primary);
 }
 
+.scene-narrative-reply {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
+.scene-narrative-reply strong {
+  display: block;
+  margin-top: 0.15rem;
+}
+
+.scene-narrative-location-note {
+  margin-top: 0.25rem;
+}
+
 /* 底部行动栏 */
 .scene-action-rail--bottom {
   position: absolute;

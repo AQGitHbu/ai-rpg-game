@@ -282,17 +282,22 @@ function NpcDialogueModal({
             ) : null}
 
             {dialogue.freeInputEnabled ? (
-              <form className="npc-dialogue-input" onSubmit={(event) => void submitFreeText(event)}>
-                <input
-                  aria-label="自定义回应"
-                  value={text}
-                  disabled={busy}
-                  placeholder="输入回应……"
-                  onChange={(event) => setText(event.target.value)}
-                  maxLength={240}
-                />
-                <button type="submit" disabled={busy || text.trim() === ""}>发送</button>
-              </form>
+              <>
+                {dialogue.giveChoices.length > 0 ? (
+                  <p className="npc-dialogue-input-hint">自定义输入仅用于对白；交付道具请点击上方选项。</p>
+                ) : null}
+                <form className="npc-dialogue-input" onSubmit={(event) => void submitFreeText(event)}>
+                  <input
+                    aria-label="自定义回应"
+                    value={text}
+                    disabled={busy}
+                    placeholder="输入回应……"
+                    onChange={(event) => setText(event.target.value)}
+                    maxLength={240}
+                  />
+                  <button type="submit" disabled={busy || text.trim() === ""}>发送</button>
+                </form>
+              </>
             ) : null}
           </>
         ) : (
@@ -360,6 +365,9 @@ export function LocationSceneScreen({
     ? ""
     : describeBuildingScene(activeBuilding.buildingType, activeBuilding.displayName, sceneNpcName);
   const displayNarration = buildingSideNote || cleanLocationSideNote(normalizeDisplayText(view.narrative.narration ?? ""));
+  const displayNpcLine = view.narrative.npcLine === null
+    ? ""
+    : normalizeDisplayText(view.narrative.npcLine.text);
   const displayLocationDescription = activeBuilding === undefined
     ? normalizeDisplayText(view.currentLocation.description)
     : "";
@@ -695,11 +703,22 @@ export function LocationSceneScreen({
         ) : null}
 
         {/* 叙事场景浮层（固定在底部中偏上） */}
-        {view.narrative.hasScene && displayNarration ? (
+        {view.narrative.hasScene && (displayNarration || displayNpcLine) ? (
           <section className="scene-narrative scene-narrative--side-note" aria-label="地点旁注">
-            <span className="scene-narrative-kicker">地点旁注</span>
-            <h2>{sceneLocationName ?? view.currentLocation.name}</h2>
-            <p>{displayNarration}</p>
+            {displayNpcLine ? (
+              <div className="scene-narrative-reply" aria-label="角色回应">
+                <span className="scene-narrative-kicker">角色回应</span>
+                <strong>{view.narrative.npcLine?.speaker ?? "场景人物"}</strong>
+                <p>{displayNpcLine}</p>
+              </div>
+            ) : null}
+            {displayNarration ? (
+              <div className="scene-narrative-location-note">
+                <span className="scene-narrative-kicker">地点旁注</span>
+                <h2>{sceneLocationName ?? view.currentLocation.name}</h2>
+                <p>{displayNarration}</p>
+              </div>
+            ) : null}
           </section>
         ) : null}
 

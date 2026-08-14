@@ -396,7 +396,7 @@ ${genreContract}
 世界背景=${context.worldPremise ?? "沿用当前世界"}；故事开端=${context.storyOpening ?? "沿用当前主线"}
 风格=${story.stylePolicy.narration}，${story.stylePolicy.narrationInstruction} ${story.stylePolicy.intensityInstruction}
 地点=${context.currentLocation.name}：${context.currentLocation.description}
-玩家=${utterance || "无"}
+玩家角色=${context.player.name}（${context.player.identity}）；本轮输入=${utterance || "无"}
 NPC=${focusSection}；在场ID=${presentNpcLine}
 节拍=${beatsSection}
 目标=${objectiveSection}
@@ -404,7 +404,7 @@ ${utteranceContract} ${handoffContract}
 选项=${selectable.map((c) => `${c.candidateId}:${c.label}`).join("；")}
 JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白"}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},"choices":[{"candidateId":"选项ID","label":"玩家行动"},{"candidateId":"另一选项ID","label":"玩家行动"}]}
 ${segmentInstruction}
-NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。`;
+NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。玩家只能被称为“${context.player.name}”，不得使用其他姓名、姓氏、代号或未经上下文批准的身份称呼。若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。`;
   const allowedFactIds = focus === undefined
     ? []
     : [...new Set([

@@ -109,7 +109,7 @@ export type GameSessionView = {
     readonly eventKind?: string;
     readonly narration?: string;
     readonly choices: readonly PlayerChoiceView[];
-    readonly npcLine: { readonly text: string; readonly emotion: string } | null;
+    readonly npcLine: { readonly text: string; readonly emotion: string; readonly speaker?: string } | null;
     readonly npcDialogues: readonly NpcDialogueView[];
   };
   readonly narrativeGeneration: { readonly status: "idle" | "pending" };
@@ -522,6 +522,7 @@ export function projectGameSessionView(
     : {
         text: normalizeNpcSpeech(scene.npcLine.text, sceneNpc?.name),
         emotion: scene.npcLine.emotion,
+        ...(sceneNpc === undefined ? {} : { speaker: sceneNpc.name }),
       };
   const endingDefinition = worldState.ending === null
     ? undefined

@@ -569,6 +569,7 @@ describe("projectGameSessionView", () => {
     expect(dialogue?.speechPages.join("")).toBe("我知道了。");
     expect(dialogue?.speechPages.join("")).not.toMatch(/老板|如实答道/);
     expect(view.narrative.npcLine?.text).toBe("我知道了。");
+    expect(view.narrative.npcLine?.speaker).toBe("老板");
   });
 
   it("observe 场景的 NPC 旁白不会伪装成可自由输入的焦点对话", () => {

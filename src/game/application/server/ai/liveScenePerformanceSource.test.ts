@@ -299,6 +299,8 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     const selectable = buildSelectableSceneCandidates(context);
     const prompt = buildLiveScenePrompt(context, selectable);
     expect(prompt).toContain("商队失踪的事你知道吗？"); // 当前玩家原话 TEXT 进入提示词
+    expect(prompt).toContain("玩家角色=侠客（剑客）");
+    expect(prompt).toContain("玩家只能被称为“侠客”");
     expect(prompt).toContain("candidate_1");
     expect(prompt).toContain("candidate_2");
     expect(prompt).toContain("客栈");

@@ -19,6 +19,8 @@ type PrewarmDeps = {
   readonly sceneSource: SceneSource;
   readonly logger?: GameLogger;
   readonly now: () => string;
+  /** 默认只接受 live 提案；战斗开始时可用确定性提案做零等待保险。 */
+  readonly requireGenerated?: boolean;
 };
 
 function battleKeyOf(record: GameRecord): string | null {
@@ -133,9 +135,12 @@ export async function prewarmBattleVictoryScene(
 
   try {
     const proposal = await deps.sceneSource.generateScene(buildSceneGenerationContext(projected.record));
-    if (proposal.source !== "generated") {
+    if (proposal.source !== "generated" && deps.requireGenerated !== false) {
       deps.logger?.warn("battle_scene_prewarm_not_live", { battleKey });
       return null;
+    }
+    if (proposal.source !== "generated") {
+      deps.logger?.info("battle_scene_prewarm_fallback_ready", { battleKey });
     }
     deps.logger?.info("battle_scene_prewarm_ready", { battleKey });
     return { battleKey, proposal };
