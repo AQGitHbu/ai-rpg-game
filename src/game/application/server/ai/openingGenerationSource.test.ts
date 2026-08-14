@@ -114,7 +114,8 @@ describe("sanitizeOpeningFactReferences", () => {
 
 describe("createOpeningGenerationSource", () => {
   it("无 transport 时确定性 fallback 只返回开场切片且通过同一 validator", async () => {
-    const source = createOpeningGenerationSource({});
+    const results: Array<{ seed: string; source: "generated" | "fallback" }> = [];
+    const source = createOpeningGenerationSource({ onResult: (result) => results.push(result) });
     const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
     expect(candidate).toBeTruthy();
     expect(candidate.world.publicFacts.length).toBeGreaterThan(0);
@@ -122,16 +123,23 @@ describe("createOpeningGenerationSource", () => {
     expect(candidate.opening.quest.objective).toEqual({ kind: "talk_to_opening_npc" });
     const validated = validateOpeningGenerationCandidate(candidate, { gameLength: "short", targetActs: 3 });
     expect(validated.ok).toBe(true);
+    expect(results).toEqual([{ seed: "s", source: "fallback" }]);
   });
 
   it("AI 返回有效开场切片时经机械修复 + 校验通过", async () => {
     const transport = {
       complete: async () => ({ ok: true, content: JSON.stringify(validCandidate()), latencyMs: 1 }),
     } as unknown as AiTransport;
-    const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+    const results: Array<{ seed: string; source: "generated" | "fallback" }> = [];
+    const source = createOpeningGenerationSource({
+      transport,
+      config: { baseUrl: "x", apiKey: "k", model: "m" },
+      onResult: (result) => results.push(result),
+    });
     const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
     expect(candidate.opening.npc.name).toBe("沈掌柜");
     expect(candidate.opening.location.scale).toBe("town");
+    expect(results).toEqual([{ seed: "s", source: "generated" }]);
   });
 
   it("prompt 包含 personalityTags/narrativeStyle/contentIntensity，且只要求开场切片并禁止未来命名实体", async () => {

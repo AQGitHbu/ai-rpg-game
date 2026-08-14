@@ -4,6 +4,7 @@ import {
   SMOKE_CASES,
   buildCaseSummaryLine,
   checkContentBudget,
+  checkOpeningRuntimeState,
   realRunCase,
   resolveOutputFormatLabel,
   runPhase4bAiSmoke,
@@ -25,7 +26,7 @@ const SECRET_ENV = {
   AI_API_KEY: "sk-super-secret-value",
 };
 
-function okReport(gameType, source = "fallback") {
+function okReport(gameType, source = "generated") {
   return {
     gameType,
     ok: true,
@@ -34,8 +35,7 @@ function okReport(gameType, source = "fallback") {
     codes: ["LIVE_TRANSPORT_TIMEOUT"],
     usage: { promptTokens: 100, completionTokens: 200, totalTokens: 300 },
     reloadOk: true,
-    endingCount: 2,
-    budgetOk: true,
+    openingRuntimeOk: true,
   };
 }
 
@@ -84,6 +84,7 @@ test("固定覆盖武侠/科幻/都市三组合法输入", () => {
   );
   for (const smokeCase of SMOKE_CASES) {
     assert.equal(smokeCase.input.gameType, smokeCase.gameType);
+    assert.equal(smokeCase.input.gameLength, "medium");
     // 与 domain 校验的下限保持一致：worldPremise ≥ 20、storyOpening ≥ 20。
     assert.ok([...smokeCase.input.worldPremise].length >= 20);
     assert.ok([...smokeCase.input.storyOpening].length >= 20);
@@ -145,8 +146,8 @@ test("stdout 永不包含键值、玩家输入或 prompt 素材", async () => {
   }
 });
 
-test("generated 与 fallback 都算成功；每例输出白名单摘要", async () => {
-  const sources = { wuxia: "generated", science_fiction: "fallback", urban: "fallback" };
+test("只有 generated 算真实 AI smoke 成功；每例输出白名单摘要", async () => {
+  const sources = { wuxia: "generated", science_fiction: "generated", urban: "generated" };
   const harness = createHarness({
     env: { RUN_REAL_AI_SMOKE: "1" },
     runCase: async (smokeCase) => okReport(smokeCase.gameType, sources[smokeCase.gameType]),
@@ -162,16 +163,25 @@ test("generated 与 fallback 都算成功；每例输出白名单摘要", async 
       ["codes", "durationMs", "gameType", "promptTokens", "completionTokens",
         "totalTokens", "source"].sort(),
     );
-    assert.ok(["generated", "fallback"].includes(parsed.source));
+    assert.equal(parsed.source, "generated");
   }
 });
 
-test("source 越界 / reload 失败 / 结局与预算违约：退出非零", async () => {
+test("fallback 保持可观测，但真实 AI smoke 必须失败", async () => {
+  const harness = createHarness({
+    env: { RUN_REAL_AI_SMOKE: "1" },
+    runCase: async (smokeCase) => okReport(smokeCase.gameType, "fallback"),
+  });
+  const exitCode = await runPhase4bAiSmoke(harness.deps);
+  assert.notEqual(exitCode, 0);
+  assert.ok(harness.logs.some((line) => line.includes("AI_FALLBACK_USED")));
+});
+
+test("source 越界 / reload 失败 / 开局预算违约：退出非零", async () => {
   const badReports = [
     { ...okReport("wuxia"), source: "fixture" },
     { ...okReport("wuxia"), reloadOk: false },
-    { ...okReport("wuxia"), endingCount: 3 },
-    { ...okReport("wuxia"), budgetOk: false },
+    { ...okReport("wuxia"), openingRuntimeOk: false },
     { gameType: "wuxia", ok: false, failureCode: "INFRASTRUCTURE_FAILURE", durationMs: 5 },
   ];
   for (const bad of badReports) {
@@ -212,7 +222,7 @@ test("runCase 返回非对象报告：退出非零且不抛出", async () => {
 
 test("摘要行只包含白名单字段，usage 缺失时省略 tokens", () => {
   const line = buildCaseSummaryLine({
-    ...okReport("urban", "fallback"),
+    ...okReport("urban"),
     usage: undefined,
     // 即使 report 被误塞入敏感字段，摘要也不得输出。
     prompt: "should-never-appear",
@@ -450,14 +460,15 @@ test("离线实跑：占位配置驱动真实链路 → 确定性 fallback，零
   );
   assert.equal(fetchCalls.length, 0);
 
-  // 完整穿过真实装配：创建成功、降级 fallback、存档可 reload、预算/双结局复查通过。
+  // 完整穿过真实装配：创建可恢复的 fallback 存档并通过 reload/开局预算复查；
+  // 但严格真实 AI 验收必须把它报成失败。
   assert.equal(result.ok, true);
   assert.equal(result.source, "fallback");
   assert.equal(result.reloadOk, true);
-  assert.equal(result.endingCount, 2);
-  assert.equal(result.budgetOk, true);
-  assert.deepEqual(result.codes, ["service_error"]);
-  assert.deepEqual(validateCaseReport(result), []);
+  assert.equal(result.openingRuntimeOk, true);
+  // unavailable source 不伪造 transport 失败码；来源标记已足以让严格验收失败。
+  assert.deepEqual(result.codes, []);
+  assert.deepEqual(validateCaseReport(result), ["AI_FALLBACK_USED"]);
 
   // 摘要行与 report 序列化中都不得出现任何配置值或玩家输入。
   const line = buildCaseSummaryLine(result);

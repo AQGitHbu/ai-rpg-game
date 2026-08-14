@@ -15,6 +15,11 @@ const GENERIC_ACKNOWLEDGEMENTS = new Set([
 ]);
 
 const GENERIC_GREETING = "你是来打听事情的吧？想知道什么，直接问我。";
+const GENERIC_INQUIRY_PATTERNS = [
+  /你(?:还)?想(?:从)?哪一段/u,
+  /你(?:还)?想(?:问|了解|知道)什么/u,
+  /有什么想问的/u,
+];
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -108,6 +113,18 @@ export function isGenericNpcGreeting(text: string): boolean {
 }
 
 /**
+ * 判断台词是否只把对话责任推回给玩家的空泛追问。
+ *
+ * 这类句子即使披上“关于旧案”的前缀，仍没有给出角色自己的观察、线索、
+ * 判断或下一步，会让每位 NPC 听起来像同一个问答机器人。live 输出遇到它
+ * 应回退到带角色和线索的确定性台词，而不是把它当作合格的多轮对白。
+ */
+export function isGenericNpcInquiry(text: string): boolean {
+  const normalized = normalizeNpcSpeech(text).replace(/\s+/gu, "").trim();
+  return GENERIC_INQUIRY_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+/**
  * 生成稳定的、直接面向玩家的 NPC 默认开场台词。
  * 无角色信息时保留旧兼容文案；有角色信息时必须先承接人物身份，
  * 避免幸存者、信使等剧情人物冒出与场景无关的“欢迎光临”。
@@ -118,7 +135,7 @@ export function composeDirectNpcGreeting(npcRole?: string, npcName?: string): st
   if (/(幸存者|镖队)/u.test(role)) return "别急着问镖队，先让我确认你手里有没有能对上旧案的证据。我不想再让一个无辜的人替这桩旧案付出代价。";
   if (/(卷宗|保管人)/u.test(role)) return "这份旧案牵连太深；你若真要查下去，我可以先交出我保管的那一页。缺失的印记，必须和你手里的证据一一核对。";
   if (/知情人/u.test(role)) return "我手里的盟誓铁印能把最后一页卷宗钉在真相上；你若真要查下去，我就不再隐瞒。只是名字一旦说出口，就没有回头路了。";
-  if (/(更夫|守夜)/u.test(role)) return "昨夜镇外的风声不对。你想问哪一段，我只说自己亲眼见到的。先从子时之后说起，别把传闻混进来。";
+  if (/(更夫|守夜)/u.test(role)) return "昨夜子时，一辆无灯马车从北巷出镇，赶车人左手缠着血布。车轮印还留在酒楼后巷；要查就去北巷看看，别把传闻当证据。";
   if (/(掌柜|摊主|老板|老板娘|店主|酒肆)/u.test(role)) return "你是来问镇口那张告示的吧？坐下说，我只讲自己听见的。至于谁在撒谎，你自己听完再判断。";
   if (role !== "") return "你不是来闲逛的。把想查的事和手里的证据说清楚，我只回答能确认的那部分。";
   return "先进来坐。有什么需要我帮忙的，慢慢说清楚。";

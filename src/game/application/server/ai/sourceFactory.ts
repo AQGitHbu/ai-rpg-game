@@ -1,9 +1,13 @@
 import { createOpenAiCompatibleTransport, type AiTransportConfig } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
-import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
+import { parseAiRuntimeConfig, type AiOutputFormat } from "./aiRuntimeConfig";
+import type { ProviderJsonMode } from "./providerRequestOptions";
 import type { OpeningGenerationSource } from "../../createGame";
 import type { SceneSource } from "../../sceneSource";
-import { createOpeningGenerationSource as createValidatedOpeningGenerationSource } from "./openingGenerationSource";
+import {
+  createOpeningGenerationSource as createValidatedOpeningGenerationSource,
+  type OpeningGenerationResultMarker,
+} from "./openingGenerationSource";
 import { createDeterministicSceneSource } from "../../deterministicSceneSource";
 import { createLiveWorldEvolutionSource } from "./liveWorldEvolutionSource";
 import { createDeterministicEvolutionSource } from "../../deterministicEvolutionSource";
@@ -18,11 +22,16 @@ import { createLiveScenePerformanceSource } from "./liveScenePerformanceSource";
 export { resolveLiveNpcLine, resolvePerformanceChoices } from "./liveScenePerformanceSource";
 export type { LiveNpcLineCandidate } from "./liveScenePerformanceSource";
 
+function providerJsonModeFor(format: AiOutputFormat): ProviderJsonMode {
+  return format === "json_object" ? "json_object" : "prompt_only";
+}
+
 // --- Factory ---
 
 export function createOpeningGenerationSource(
   env: Record<string, string | undefined> = process.env,
   logger?: GameLogger,
+  onResult?: (result: OpeningGenerationResultMarker) => void,
 ): OpeningGenerationSource {
   const runtime = parseAiRuntimeConfig(env);
   if (runtime.status === "available") {
@@ -31,11 +40,13 @@ export function createOpeningGenerationSource(
     return createValidatedOpeningGenerationSource({
       transport: createOpenAiCompatibleTransport(),
       config: runtime.config,
+      jsonMode: providerJsonModeFor(runtime.outputFormat),
       logger,
+      onResult,
     });
   }
   logger?.info("opening_source_fixture", { diagnostics: runtime.diagnostics });
-  return createValidatedOpeningGenerationSource({});
+  return createValidatedOpeningGenerationSource({ onResult });
 }
 
 export function createSceneSource(
@@ -48,6 +59,7 @@ export function createSceneSource(
     return createLiveScenePerformanceSource({
       transport: createOpenAiCompatibleTransport(),
       config: runtime.config,
+      jsonMode: providerJsonModeFor(runtime.outputFormat),
       logger,
     });
   }
@@ -73,6 +85,7 @@ export function createWorldEvolutionSource(
     return createLiveWorldEvolutionSource({
       transport: createOpenAiCompatibleTransport(),
       config: runtime.config,
+      jsonMode: providerJsonModeFor(runtime.outputFormat),
       logger,
     });
   }

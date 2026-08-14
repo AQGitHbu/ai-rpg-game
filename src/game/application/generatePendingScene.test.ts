@@ -391,6 +391,39 @@ describe("generatePendingScene", () => {
     expect(scene.npcLine?.answeredBeatIds).toContain("player_utterance");
   });
 
+  it("真实 AI 形状的提案被审批拒绝时记录原因，不能把 fallback 当作成功", async () => {
+    const record = utteranceRecord();
+    const repo = makeMockRepo(record);
+    const logger = { warn: vi.fn() };
+    const invalidGenerated: SceneSource = {
+      async generateScene(): Promise<SceneSourceResult> {
+        return {
+          sceneId: "scene-invalid-generated",
+          segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+          npcLine: null,
+          objectiveLink: null,
+          choices: [
+            { candidateId: "candidate_1", label: "支持" },
+            { candidateId: "candidate_2", label: "观察" },
+          ],
+          source: "generated",
+        };
+      },
+    };
+
+    const result = await generatePendingScene({
+      repository: repo,
+      sceneSource: invalidGenerated,
+      logger: logger as never,
+      now: () => "2026-01-02",
+    });
+
+    expect(result).toBe("saved");
+    expect(logger.warn).toHaveBeenCalledWith("scene_generation_rejected", { code: "missing_mandatory_beat" });
+    const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
+    expect(input.nextStoryState.narrative.currentScene?.source).toBe("fallback");
+  });
+
   it("stub 提案正确应答 player_utterance 节拍 → 直接采纳（不触发 fallback）", async () => {
     const record = utteranceRecord();
     const repo = makeMockRepo(record);

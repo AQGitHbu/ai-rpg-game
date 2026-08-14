@@ -13,6 +13,7 @@ import {
   asQuestId,
   type NpcId,
 } from "@/game/domain/worldEntity";
+import { createProviderRequestOptions, type ProviderJsonMode } from "./providerRequestOptions";
 
 // ---------------------------------------------------------------------------
 // live/fixture IntentParserSource。
@@ -45,7 +46,7 @@ export type LiveIntentTransport = {
   complete(
     config: LiveTransportConfig,
     messages: readonly LiveTransportMessage[],
-    options: { readonly timeoutMs: number },
+    options: { readonly timeoutMs: number; readonly extraBody?: Record<string, unknown> },
   ): Promise<LiveTransportResponse>;
 };
 
@@ -267,6 +268,7 @@ export function createLiveIntentParser(
   transport: LiveIntentTransport,
   config?: LiveTransportConfig,
   logger?: { warn(event: string, details?: unknown): void },
+  jsonMode: ProviderJsonMode = "prompt_only",
 ): IntentParserSource {
   const rule = createRuleIntentParser();
   const cfg = config ?? { baseUrl: "", apiKey: "", model: "" };
@@ -280,7 +282,7 @@ export function createLiveIntentParser(
             { role: "system", content: "你是 RPG 意图解析器，只返回严格 JSON。" },
             { role: "user", content: buildUserPrompt(text, ctx, targetNpcId) },
           ],
-          { timeoutMs: 20_000 },
+          createProviderRequestOptions(30_000, 320, jsonMode),
         );
         if (response.ok && typeof response.content === "string") {
           const parsed = parseJsonResponse(response.content);
@@ -306,12 +308,13 @@ export function createLiveIntentParser(
 export function createIntentParserSource(
   env: Record<string, string | undefined> = process.env,
   transport?: LiveIntentTransport,
+  jsonMode: ProviderJsonMode = "prompt_only",
 ): IntentParserSource {
   const baseUrl = env.AI_API_BASE_URL?.trim() ?? "";
   const apiKey = env.AI_API_KEY?.trim() ?? "";
   const model = env.AI_MODEL?.trim() ?? "";
   if (baseUrl !== "" && apiKey !== "" && model !== "" && transport !== undefined) {
-    return createLiveIntentParser(transport, { baseUrl, apiKey, model });
+    return createLiveIntentParser(transport, { baseUrl, apiKey, model }, undefined, jsonMode);
   }
   return createRuleIntentParser();
 }

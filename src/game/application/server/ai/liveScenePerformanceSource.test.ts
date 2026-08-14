@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { createLiveScenePerformanceSource, buildLiveScenePrompt, LIVE_SCENE_TIMEOUT_MS } from "./liveScenePerformanceSource";
+import {
+  createLiveScenePerformanceSource,
+  buildLiveScenePrompt,
+  LIVE_SCENE_MAX_TOKENS,
+  LIVE_SCENE_TIMEOUT_MS,
+} from "./liveScenePerformanceSource";
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
 import { buildSelectableSceneCandidates } from "../../deterministicSceneSource";
@@ -140,7 +145,30 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(transport.complete).toHaveBeenCalledWith(
       config,
       expect.any(Array),
-      { timeoutMs: LIVE_SCENE_TIMEOUT_MS },
+      {
+        timeoutMs: LIVE_SCENE_TIMEOUT_MS,
+        temperature: 0.2,
+        extraBody: {
+          chat_template_kwargs: { enable_thinking: false },
+          max_tokens: LIVE_SCENE_MAX_TOKENS,
+        },
+      },
+    );
+    expect(LIVE_SCENE_TIMEOUT_MS).toBe(90_000);
+  });
+
+  it("uses JSON object mode only when the factory explicitly enables it", async () => {
+    const transport = stubTransport(null, "not-json");
+    const source = createLiveScenePerformanceSource({ transport, config, jsonMode: "json_object" });
+
+    await source.generateScene(makeContext());
+
+    expect(transport.complete).toHaveBeenCalledWith(
+      config,
+      expect.any(Array),
+      expect.objectContaining({
+        extraBody: expect.objectContaining({ response_format: { type: "json_object" } }),
+      }),
     );
   });
 
@@ -285,6 +313,16 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain(policy.intensityInstruction);
   });
 
+  it("开局没有强制节拍时，prompt 明确要求唯一合法的 atmosphere 段，避免空 segments 降级", () => {
+    const context = makeContext({ job: makeJob({ beats: [] }) });
+
+    const prompt = buildLiveScenePrompt(context, buildSelectableSceneCandidates(context));
+
+    expect(prompt).toContain("当前没有其他强制节拍");
+    expect(prompt).toContain("beatId 为 atmosphere");
+    expect(prompt).toContain("不得返回空数组");
+  });
+
   it("AI 返回不可解析 JSON → 回退确定性 source（source=fallback）", async () => {
     const context = makeContext();
     const transport = stubTransport(null, "这不是 JSON");
@@ -292,6 +330,79 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     const proposal = await source.generateScene(context);
     expect(proposal.source).toBe("fallback");
     expect(proposal.segments.length).toBeGreaterThan(0);
+  });
+
+  it("最终结构非法时只记录安全形状，不记录模型文本", async () => {
+    const logger = { warn: vi.fn() };
+    const source = createLiveScenePerformanceSource({
+      transport: stubTransport({ segments: [], npcLine: null, objectiveLink: null, choices: [] }),
+      config,
+      logger: logger as never,
+    });
+
+    await source.generateScene(makeContext());
+
+    expect(logger.warn).toHaveBeenLastCalledWith("scene_generation_invalid_data", {
+      object: true,
+      keys: "choices,npcLine,objectiveLink,segments",
+      segmentCount: 0,
+      npcLineKind: "null",
+      choiceCount: 0,
+      objectiveLinkKind: "null",
+    });
+  });
+
+  it("JSON mode 把合格的字符串 NPC 台词与服务器节拍/选项机械合成为 generated 场景", async () => {
+    const context = makeContext({
+      job: makeJob({
+        utterance: "商队失踪的事你知道吗？",
+        beats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应玩家" }],
+      }),
+    });
+    const logger = { info: vi.fn() };
+    const transport = stubTransport({
+      segments: [{ beatId: "invented", text: "不采用的旁白" }],
+      npcLine: "商队离开前，有人用松脂封住了后门的锁孔。去巷口找那枚沾松脂的铜钱，它能证明谁来过。",
+      objectiveLink: null,
+      choices: ["继续问", "观察", "离开"],
+    });
+
+    const proposal = await createLiveScenePerformanceSource({ transport, config, logger: logger as never }).generateScene(context);
+
+    expect(proposal.source).toBe("generated");
+    expect(proposal.npcLine?.text).toContain("松脂");
+    expect(proposal.npcLine?.answeredBeatIds).toEqual(["player_utterance"]);
+    expect(proposal.choices).toHaveLength(2);
+    expect(logger.info).toHaveBeenCalledWith("scene_generation_repaired", { kind: "npc_line_only" });
+  });
+
+  it("首个 AI 响应为空时重试一次；第二个有效提案仍作为 generated 采用", async () => {
+    const context = makeContext();
+    let attempts = 0;
+    const transport: AiTransport = {
+      complete: vi.fn(async () => {
+        attempts += 1;
+        if (attempts === 1) return { ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 };
+        return {
+          ok: true as const,
+          content: JSON.stringify({
+            segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+            npcLine: null,
+            objectiveLink: null,
+            choices: [
+              { candidateId: "candidate_1", label: "继续交谈" },
+              { candidateId: "candidate_2", label: "观察四周" },
+            ],
+          }),
+          latencyMs: 1,
+        };
+      }),
+    } as unknown as AiTransport;
+
+    const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
+
+    expect(attempts).toBe(2);
+    expect(proposal.source).toBe("generated");
   });
 
   it("AI 返回非法选项 ID → 回退确定性 source", async () => {
@@ -388,7 +499,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
       npcLine: {
         npcId: "npc_1",
-        text: "老板说道：\"关于商队失踪的事，我先说我确定的部分。你还想从哪一段继续追问？\"",
+        text: "老板说道：\"商队离开前，有人用松脂封住了后门的锁孔。去巷口找那枚沾松脂的铜钱，它能证明谁来过。\"",
         emotion: "neutral",
         answeredBeatIds: [],
         usedFactIds: [],
@@ -403,7 +514,32 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     const source = createLiveScenePerformanceSource({ transport, config });
     const proposal = await source.generateScene(context);
     expect(proposal.source).toBe("generated");
-    expect(proposal.npcLine?.text).toBe("关于商队失踪的事，我先说我确定的部分。你还想从哪一段继续追问？");
+    expect(proposal.npcLine?.text).toBe("商队离开前，有人用松脂封住了后门的锁孔。去巷口找那枚沾松脂的铜钱，它能证明谁来过。");
+  });
+
+  it("AI 只用空泛追问接话时回退到角色化台词", async () => {
+    const context = makeContext({ job: makeJob({ utterance: "商队失踪的事你知道吗？" }) });
+    const transport = stubTransport({
+      segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+      npcLine: {
+        npcId: "npc_1",
+        text: "关于商队失踪的事，我先说我确定的部分。你还想从哪一段继续追问？",
+        emotion: "neutral",
+        answeredBeatIds: [],
+        usedFactIds: [],
+        usedInteractionActionIds: [],
+      },
+      objectiveLink: null,
+      choices: [
+        { candidateId: "candidate_1", label: "支持老板" },
+        { candidateId: "candidate_2", label: "暂不回应，先观察现场" },
+      ],
+    });
+
+    const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
+
+    expect(proposal.source).toBe("fallback");
+    expect(proposal.npcLine?.text).not.toContain("你还想从哪一段");
   });
 
   it("焦点 NPC 只返回一句对白时回退到多轮角色化台词", async () => {

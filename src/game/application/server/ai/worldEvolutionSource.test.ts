@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { parseWorldDeltaProposal, filterProposalRefs, createLiveWorldEvolutionSource } from "./liveWorldEvolutionSource";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { asLocationId, asGenerationId, asNpcId } from "@/game/domain/worldEntity";
@@ -116,5 +116,71 @@ describe("createLiveWorldEvolutionSource", () => {
     };
     const result = await source.propose(ctx);
     expect(result.proposal?.newNpc).not.toBeNull();
+  });
+
+  it("uses JSON object mode when explicitly enabled", async () => {
+    const complete = vi.fn(async () => ({ ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 }));
+    const transport: AiTransport = {
+      complete,
+      stream: async () => ({ ok: false as const, code: "network_error" as const, retryable: true, message: "unused", latencyMs: 1 }),
+    };
+    const source = createLiveWorldEvolutionSource({
+      transport,
+      config: { apiKey: "k", baseUrl: "http://x", model: "m" },
+      jsonMode: "json_object",
+    });
+    const ctx: WorldEvolutionSourceContext = {
+      worldState: makeWorld(),
+      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      need: pacingNeed,
+      action: { type: "talk", npcId: asNpcId("npc_new"), dialogueAct: "ask" },
+      reason: "UNKNOWN_NPC",
+    };
+
+    await source.propose(ctx);
+
+    expect(complete).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Array),
+      expect.objectContaining({ extraBody: expect.objectContaining({ response_format: { type: "json_object" } }) }),
+    );
+  });
+
+  it("retries an empty AI response and adopts the next valid evolution proposal", async () => {
+    let attempts = 0;
+    const transport: AiTransport = {
+      complete: vi.fn(async () => {
+        attempts += 1;
+        if (attempts === 1) return { ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 };
+        return {
+          ok: true as const,
+          content: JSON.stringify({
+            beatSummary: "线人带来新的旧案账目。",
+            newNpc: {
+              name: "顾砚", role: "旧案账房", description: "掌握账目的证人。",
+              locationRef: { kind: "existing", id: "loc_a" }, goals: ["核对账册"],
+            },
+          }),
+          latencyMs: 1,
+        };
+      }),
+      stream: async () => ({ ok: false as const, code: "network_error" as const, retryable: true, message: "unused", latencyMs: 1 }),
+    };
+    const source = createLiveWorldEvolutionSource({
+      transport,
+      config: { apiKey: "k", baseUrl: "http://x", model: "m" },
+    });
+    const ctx: WorldEvolutionSourceContext = {
+      worldState: makeWorld(),
+      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      need: pacingNeed,
+      action: { type: "talk", npcId: asNpcId("npc_new"), dialogueAct: "ask" },
+      reason: "UNKNOWN_NPC",
+    };
+
+    const result = await source.propose(ctx);
+
+    expect(attempts).toBe(2);
+    expect(result.proposal?.newNpc?.name).toBe("顾砚");
   });
 });

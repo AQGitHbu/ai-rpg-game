@@ -4,6 +4,7 @@ import type { WorldEvolutionSource, WorldEvolutionSourceContext } from "../../wo
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import { createDeterministicEvolutionSource } from "../../deterministicEvolutionSource";
 import type { WorldState } from "@/game/domain/worldState";
+import { createProviderRequestOptions, type ProviderJsonMode } from "./providerRequestOptions";
 
 // ---------------------------------------------------------------------------
 // WorldEvolution live source（Task 3）。
@@ -17,11 +18,20 @@ import type { WorldState } from "@/game/domain/worldState";
 export type WorldEvolutionLiveDeps = {
   readonly transport?: AiTransport;
   readonly config?: AiTransportConfig;
+  readonly jsonMode?: ProviderJsonMode;
   readonly logger?: GameLogger;
 };
 
-/** 世界演化不能把一次回合锁在长 provider 请求上；超时即确定性回退。 */
-export const LIVE_WORLD_EVOLUTION_TIMEOUT_MS = 12_000;
+/**
+ * 世界演化与场景共用同一兼容 provider；30 秒会在正文到达前中止合法 JSON。
+ * 该超时只决定何时明确记录失败，不会把 fallback 当成一次有效 AI 演化。
+ */
+export const LIVE_WORLD_EVOLUTION_TIMEOUT_MS = 90_000;
+/** 世界演化只生成一次增量，限制输出以保持场景等待可控。 */
+// 同一 provider 的演化 JSON 也会先输出 reasoning_content；预留正文空间。
+export const LIVE_WORLD_EVOLUTION_MAX_TOKENS = 3_200;
+// 与场景表演同一 provider：保留第三次机会，三次都失败才显式降级。
+const LIVE_WORLD_EVOLUTION_MAX_ATTEMPTS = 3;
 
 function parseJsonResponse(text: string): unknown {
   try {
@@ -196,7 +206,7 @@ export function filterProposalRefs(proposal: WorldDeltaProposal, ws: WorldState)
 /** live 世界演化源：AI 提案 → 纯解析/校验/引用过滤 → 失败回退确定性源。 */
 export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): WorldEvolutionSource {
   const deterministic = createDeterministicEvolutionSource();
-  const { transport, config, logger } = deps;
+  const { transport, config, logger, jsonMode } = deps;
 
   return {
     async propose(ctx) {
@@ -204,26 +214,43 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
         return deterministic.propose(ctx);
       }
       try {
-        const result = await transport.complete(config, [
-          { role: "system", content: buildWorldEvolutionPrompt(ctx) },
-          { role: "user", content: userPrompt(ctx) },
-        ], { timeoutMs: LIVE_WORLD_EVOLUTION_TIMEOUT_MS });
-
-        if (!result.ok) {
-          logger?.warn("world_evolution_ai_failed", { code: result.code });
-          return deterministic.propose(ctx);
-        }
-        const parsed = parseJsonResponse(result.content);
-        const rawProposal = typeof parsed === "object" && parsed !== null && "proposal" in parsed
-          ? (parsed as Record<string, unknown>).proposal
-          : parsed;
-        const proposal = parseWorldDeltaProposal(rawProposal);
-        if (proposal === null) {
+        const messages = [
+          { role: "system" as const, content: buildWorldEvolutionPrompt(ctx) },
+          { role: "user" as const, content: userPrompt(ctx) },
+        ];
+        // 同一兼容 provider 对较长结构化提案偶发空响应。重试仍是实际 AI
+        // 请求；最终仍失败才落到显式、可审计的确定性降级。
+        for (let attempt = 1; attempt <= LIVE_WORLD_EVOLUTION_MAX_ATTEMPTS; attempt += 1) {
+          const result = await transport.complete(
+            config,
+            messages,
+            createProviderRequestOptions(LIVE_WORLD_EVOLUTION_TIMEOUT_MS, LIVE_WORLD_EVOLUTION_MAX_TOKENS, jsonMode),
+          );
+          if (!result.ok) {
+            if (attempt < LIVE_WORLD_EVOLUTION_MAX_ATTEMPTS) {
+              logger?.warn("world_evolution_retry", { code: result.code });
+              continue;
+            }
+            logger?.warn("world_evolution_ai_failed", { code: result.code });
+            return deterministic.propose(ctx);
+          }
+          const parsed = parseJsonResponse(result.content);
+          const rawProposal = typeof parsed === "object" && parsed !== null && "proposal" in parsed
+            ? (parsed as Record<string, unknown>).proposal
+            : parsed;
+          const proposal = parseWorldDeltaProposal(rawProposal);
+          if (proposal !== null) {
+            const filtered = filterProposalRefs(proposal, ctx.worldState);
+            return { proposal: filtered };
+          }
+          if (attempt < LIVE_WORLD_EVOLUTION_MAX_ATTEMPTS) {
+            logger?.warn("world_evolution_retry", { code: "invalid_data" });
+            continue;
+          }
           logger?.warn("world_evolution_invalid_data");
           return deterministic.propose(ctx);
         }
-        const filtered = filterProposalRefs(proposal, ctx.worldState);
-        return { proposal: filtered };
+        return deterministic.propose(ctx);
       } catch (error) {
         logger?.warn("world_evolution_transport_failed", { message: (error as Error)?.message });
         return deterministic.propose(ctx);
@@ -248,24 +275,13 @@ function kindText(need: WorldEvolutionSourceContext["need"]): string {
 function buildWorldEvolutionPrompt(ctx: WorldEvolutionSourceContext): string {
   const { worldState, storyState } = ctx;
   const currentLoc = worldState.locations.find((l) => l.id === worldState.currentLocationId);
-  return `你是 RPG 世界设计师。根据演化需求产出一次世界演化提案，返回严格 JSON：
-{
-  "proposal": {
-    "beatSummary": "一句话说明本次演化的叙事意义",
-    "newLocation": null | { "name": "...", "description": "...", "scale": "scene" | "town", "connectFromLocationId": "..." },
-    "newNpc": null | { "name": "...", "role": "...", "description": "...", "locationRef": { "kind": "existing", "id": "..." } | { "kind": "new_location" }, "goals": ["..."] },
-    "newItem": null | { "name": "...", "description": "...", "locationRef": "current" | "new_location" },
-    "newEnemy": null | { "name": "...", "tier": "normal" | "boss", "locationRef": "current" | "new_location" },
-    "newFact": null | { "text": "...", "visibility": "public" | "npc_private" },
-    "nextMainQuest": null | { "name": "...", "description": "...", "objectiveText": "..." },
-    "endingPair": null | [{ "name": "...", "description": "...", "themeKey": "trust" }, { "name": "...", "description": "...", "themeKey": "doubt" }]
-  }
-}
-
-当前地点：${currentLoc?.name ?? "未知"}
-当前幕数：${storyState.currentAct}/${storyState.targetActs}
-张力值：${storyState.tension}
-演化需求：${kindText(ctx.need)} / 原因 ${ctx.reason}
-
-要求：只填充与演化需求相称的字段（next_act 必须给 nextMainQuest 且至少一名锚定 NPC；ending_pair 必须给互斥且名称各异的 endingPair；pacing 补缺失实体即可）；所有 existing 地点引用必须来自世界已存在的地点；名称 2-40 字符，描述非空且不超过 200 字符；只返回 JSON，不要其他文字。`;
+  const existingLocationIds = worldState.locations.map((location) => String(location.id)).join("、") || "无";
+  return `只输出 JSON，不能解释。你为 RPG 生成一次小型世界演化。
+需求=${kindText(ctx.need)}；原因=${ctx.reason}；地点=${currentLoc?.name ?? "未知"}；现有地点ID=${existingLocationIds}；幕=${storyState.currentAct}/${storyState.targetActs}。
+外层必须是 {"proposal":{...}}。proposal 必有 beatSummary；未使用字段直接省略，不要写 null。
+新地点={"newLocation":{"name":"","description":"","scale":"scene","connectFromLocationId":"现有地点ID"}}。
+新NPC={"newNpc":{"name":"","role":"","description":"","locationRef":{"kind":"existing","id":"现有地点ID"}或{"kind":"new_location"},"goals":[""]}}。
+新任务={"nextMainQuest":{"name":"","description":"","objectiveText":""}}。
+终局={"endingPair":[{"name":"","description":"","themeKey":"trust"},{"name":"","description":"","themeKey":"doubt"}]}。
+下一幕必须给新地点、新NPC和新任务；终局必须只给两个不同结局；其他情况只补一个必要实体。名称2-40字、描述200字内。`;
 }

@@ -3,6 +3,7 @@ import {
   composeDirectNpcGreeting,
   isGenericNpcAcknowledgement,
   isGenericNpcGreeting,
+  isGenericNpcInquiry,
   normalizeNpcSpeech,
 } from "./npcSpeech";
 
@@ -41,5 +42,13 @@ describe("NPC direct speech", () => {
     expect(composeDirectNpcGreeting("旧案传讯人", "顾砚")).toContain("线索");
     expect(composeDirectNpcGreeting("旧案知情人", "陆归鸿")).toContain("盟誓铁印");
     expect(composeDirectNpcGreeting("酒肆老板娘", "何二娘")).toContain("告示");
+    const watchman = composeDirectNpcGreeting("镇口更夫", "老白");
+    expect(watchman).toContain("无灯马车");
+    expect(watchman).not.toContain("你想问哪一段");
+  });
+
+  it("rejects empty inquiry templates that make distinct NPCs sound identical", () => {
+    expect(isGenericNpcInquiry("关于旧案，我先说我确定的部分。你还想从哪一段继续追问？")).toBe(true);
+    expect(isGenericNpcInquiry("无灯马车从北巷出镇，车轮印还留在酒楼后巷。去那里核对左手血布。")).toBe(false);
   });
 });

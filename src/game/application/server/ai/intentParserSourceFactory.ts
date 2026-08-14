@@ -14,5 +14,9 @@ export function createServerIntentParserSource(
 ): IntentParserSource {
   const aiConfig = parseAiRuntimeConfig(env);
   if (aiConfig.status !== "available") return createIntentParserSource(env);
-  return createIntentParserSource(env, createOpenAiCompatibleTransport());
+  return createIntentParserSource(
+    env,
+    createOpenAiCompatibleTransport(),
+    aiConfig.outputFormat === "json_object" ? "json_object" : "prompt_only",
+  );
 }

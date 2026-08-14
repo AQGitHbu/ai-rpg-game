@@ -44,7 +44,12 @@ type PerformTurnEntryPointResult =
   | { readonly ok: false; readonly code: string; readonly feedback?: string };
 
 export type ServerGameEntryPoints = {
-  createGame(input: CreateGameHttpInput, traceId?: string): Promise<{ ok: boolean; revision?: number; code?: string }>;
+  createGame(input: CreateGameHttpInput, traceId?: string): Promise<{
+    ok: boolean;
+    revision?: number;
+    code?: string;
+    generationSource?: "generated" | "fallback";
+  }>;
   performTurn(command: {
     actionId: string;
     interaction: Interaction;
@@ -75,7 +80,10 @@ export function createServerGameEntryPoints(
   const now = () => new Date().toISOString();
   const aiConfig = parseAiRuntimeConfig(env);
   const aiEnabled = aiConfig.status === "available";
-  const source = createOpeningGenerationSource(env, logger);
+  const openingGenerationSources = new Map<string, "generated" | "fallback">();
+  const source = createOpeningGenerationSource(env, logger, (marker) => {
+    openingGenerationSources.set(marker.seed, marker.source);
+  });
   // Task 3：AI 可用注入 live 世界演化源，否则确定性源（不再直接注入 deterministic）。
   const worldEvolutionSource = createWorldEvolutionSource(env, logger);
   const sceneSource = createSceneSource(env, logger);
@@ -97,7 +105,7 @@ export function createServerGameEntryPoints(
         key: `${current.record.gameId}:${generation.job.jobId}`,
       };
     },
-    run: () => generatePendingScene({ repository, sceneSource, worldEvolutionSource, now }),
+    run: () => generatePendingScene({ repository, sceneSource, worldEvolutionSource, logger, now }),
     logKey: "runtime_narrative_task",
     logger,
   });
@@ -151,6 +159,7 @@ export function createServerGameEntryPoints(
   return {
     createGame: async (input, traceId) => {
       const gameId = asGameId(randomUUID());
+      const generationSeed = randomUUID();
       let replaceCurrent: { readonly expectedGameId: GameId; readonly expectedRevision: number } | undefined;
       if (input.restart !== undefined) {
         const current = await repository.getCurrentGame();
@@ -175,17 +184,24 @@ export function createServerGameEntryPoints(
           gameId,
           gameType: input.gameType,
           gameLength: input.gameLength,
-          seed: randomUUID(),
+          seed: generationSeed,
           ...(input.setup === undefined ? {} : { setup: input.setup }),
           ...(replaceCurrent === undefined ? {} : { replaceCurrent }),
         },
         { repository, source, now, aiEnabled },
       );
       if (result.ok) {
+        const generationSource = openingGenerationSources.get(generationSeed);
+        openingGenerationSources.delete(generationSeed);
         // 开局存档已经包含首场景 pending job；立即排队，让序幕阅读时间覆盖生成延迟。
         await narrativeCoordinator.ensure(traceId);
-        return { ok: true, revision: result.revision };
+        return {
+          ok: true,
+          revision: result.revision,
+          ...(generationSource === undefined ? {} : { generationSource }),
+        };
       }
+      openingGenerationSources.delete(generationSeed);
       return { ok: false, code: result.code };
     },
     performTurn: async (command, traceId) => {
@@ -221,7 +237,7 @@ export function createServerGameEntryPoints(
           // action 响应；若受控补足失败才降级为常规后台恢复。
           if (view.narrativeGeneration.status === "pending") {
             if (submittedAction?.type === "move" || submittedAction?.type === "take_item") {
-              const moveSceneResult = await generatePendingScene({ repository, sceneSource, worldEvolutionSource, now });
+              const moveSceneResult = await generatePendingScene({ repository, sceneSource, worldEvolutionSource, logger, now });
               if (moveSceneResult === "saved") {
                 const refreshed = await repository.getCurrentGame();
                 if (refreshed.ok && refreshed.status === "active") {
@@ -307,11 +323,27 @@ export function createServerGameEntryPoints(
   };
 }
 
+// Next 的不同 route bundle 会各自求值模块级变量。叙事回合在 action route
+// 里立即 ensure，而客户端随后会在 narrative/ensure route 轮询；若只用模块级
+// singleton，两条 route 会各自创建 coordinator，对同一个 pending job 并发调用
+// AI。把唯一入口挂到进程级 globalThis，才能让两条 route 共用同一把去重锁。
+const ENTRY_POINTS_GLOBAL_KEY = Symbol.for("ai-rpg-game.server-entry-points");
+type EntryPointsGlobal = typeof globalThis & {
+  [ENTRY_POINTS_GLOBAL_KEY]?: ServerGameEntryPoints;
+};
+
 let productionEntryPoints: ServerGameEntryPoints | null = null;
 
 export function getServerGameEntryPoints(): ServerGameEntryPoints {
+  const runtime = globalThis as EntryPointsGlobal;
+  const shared = runtime[ENTRY_POINTS_GLOBAL_KEY];
+  if (shared !== undefined) {
+    productionEntryPoints = shared;
+    return shared;
+  }
   if (productionEntryPoints === null) {
     productionEntryPoints = createServerGameEntryPoints();
   }
+  runtime[ENTRY_POINTS_GLOBAL_KEY] = productionEntryPoints;
   return productionEntryPoints;
 }

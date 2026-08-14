@@ -66,7 +66,7 @@ Phase 1/Phase 2 不发起 AI 调用（Phase 2 仅确定性 fallback 生成），
 ### 运行时配置
 
 - 生产 composition root（`src/game/application/server/compositionRoot.ts`）经 `parseAiRuntimeConfig(env)` 解析 `AI_API_BASE_URL` / `AI_MODEL` / `AI_API_KEY`：三键有效 ⇒ 注入 live source（shared `@ai-game/ai-transport`）；无效 ⇒ 注入 unavailable source，玩家创建路径稳定走 fallback，API 契约不变。
-- 第四个非敏感可选键 `AI_OUTPUT_FORMAT`（Phase 4C）：严格三值 `json_schema | json_object | prompt_only`，**大小写敏感**（trim 包裹空白后校验），缺失/空白缺省 `prompt_only`（请求形状与 Phase 4B 完全一致，不发送 `response_format`）；无效值 ⇒ 诊断码 `AI_CONFIG_OUTPUT_FORMAT_INVALID`（绝不回显值）⇒ unavailable source ⇒ 玩家稳定走确定性 fallback。`json_object` / `json_schema` 时 live source 经 extraBody 附带 OpenAI-compatible `response_format`（`json_schema` 为 strict 命名 schema，对应候选契约 `phase4b-v1`）；只在 provider 明确支持时设置，不做能力探测。输出格式不进 audit、玩家 API、UI、存档或客户端 bundle。
+- 第四个非敏感可选键 `AI_OUTPUT_FORMAT`（Phase 4C）：严格三值 `json_schema | json_object | prompt_only`，**大小写敏感**（trim 包裹空白后校验），缺失/空白缺省 `prompt_only`（请求形状与 Phase 4B 完全一致，不发送 `response_format`）；无效值 ⇒ 诊断码 `AI_CONFIG_OUTPUT_FORMAT_INVALID`（绝不回显值）⇒ unavailable source ⇒ 玩家稳定走确定性 fallback。经本 provider 的兼容性验证，只有 `json_object` 会由 live source 经 extraBody 附带 OpenAI-compatible `response_format`；`json_schema` 目前仍接受配置但按 `prompt_only` 请求，避免未支持的 schema 参数伪造成可用能力。输出格式不进 audit、玩家 API、UI、存档或客户端 bundle。
 - `.env.local` 仍只在 RPG 自己的检出里；运行时与测试不读 `../ai-slg-game/.env*`。
 
 ### opt-in 真实 smoke（不是 CI、不是质量评分）
@@ -79,9 +79,9 @@ $env:RUN_REAL_AI_SMOKE='1'; npm run smoke:ai:phase4b
 - 必须显式设置 `RUN_REAL_AI_SMOKE=1` 才会执行（真实、可计费的 AI 调用）；缺失时脚本立即退出非零且不发起任何请求。该变量只在 shell 里临时设置，不写入 `.env.local`。
 - opt-in 实跑依赖 Node ≥ 22.18（原生 TS type-stripping 直跑 `src/**/*.ts`）；仓库 `engines` 下限更低（>=20.9），操作者运行前须先 `node --version` 确认版本满足。
 - smoke 对三组固定合法输入（武侠 / 科幻 / 都市）各创建一局：默认使用 `tmp/` 下的临时 SQLite，跑完显式关闭并删除（Windows 句柄延迟时留待下次运行清扫）。
-- 判定标准：结果 `source` 属于 `generated | fallback` 即为成功——真实服务慢、限流或返回非法输出时，可观测地降级到 fallback 也算通过。smoke 不评估生成文本质量，也不依赖固定模型文本。只有本地脚本 / 配置 / 持久化失败或 fallback 违约（存档不可 reload、内容预算 / 双结局不满足）才退出非零。
+- 判定标准：真实 AI smoke 的每例必须为 `source=generated`；模型超时、限流、空响应或非法输出而降级到 `fallback` 时，流程仍可恢复，但该例必须以 `AI_FALLBACK_USED` 退出非零，绝不算作 AI 调用成功。smoke 不依赖固定模型文本；本地脚本、配置、持久化、reload 或开局运行时预算违约同样失败。当前存档只持久化开局地点/NPC/主任务，未来实体与结局由运行时演化，因此 smoke 复查的是持久化的开局状态，不会读取不存在的 blueprint/结局字段伪造通过。
 - 输出白名单：每例只打印 `gameType`、`generated|fallback`、耗时、稳定诊断码与 tokens/cost（如有）；永不输出玩家输入、prompt、模型原文、URL 或 Key。安全门禁由 `npm run test:phase4b-ai-smoke-script`（mock，不触网）强制。
-- 汇总行（Phase 4C）：opt-in 实跑结束时输出恰一行 `[phase4b-smoke] summary {...}`，JSON 字段为白名单：`outputFormat`、`cases`、`generated`、`fallback`、`failed`、`fallbackCategories`（按稳定失败码计数）、`totalDurationMs`，以及可选的 `usage`（tokens 合计）与 `estimatedCostUsd`（合计）。`fallbackCategories` 同时汇聚 source audit 与 `createGame` 最终 `falling_back` 事件：后者将候选校验失败收敛为既有稳定类别，避免“attempt_ok 但最终 fallback”遗漏原因。`outputFormat` 是安全标签：合法三值原样、缺失/空白 → `prompt_only`、其余一律 → `invalid`，**绝不回显原值**。汇总只做可观测聚合，通过条件不变（仍是 `generated|fallback` 契约）；无 opt-in 时不输出汇总行、零请求。
+- 汇总行（Phase 4C）：opt-in 实跑结束时输出恰一行 `[phase4b-smoke] summary {...}`，JSON 字段为白名单：`outputFormat`、`cases`、`generated`、`fallback`、`failed`、`fallbackCategories`（按稳定失败码计数）、`totalDurationMs`，以及可选的 `usage`（tokens 合计）与 `estimatedCostUsd`（合计）。`fallbackCategories` 同时汇聚 source audit 与 `createGame` 最终 `falling_back` 事件：后者将候选校验失败收敛为既有稳定类别，避免“attempt_ok 但最终 fallback”遗漏原因。`outputFormat` 是安全标签：合法三值原样、缺失/空白 → `prompt_only`、其余一律 → `invalid`，**绝不回显原值**。汇总只做可观测聚合；任一 fallback 都使真实 AI smoke 失败。无 opt-in 时不输出汇总行、零请求。
 - smoke 决不进入 `npm test` / `test:fast` / build / CI；只作为人工外部验收命令。
 
 ### audit 字段与错误码

@@ -6,12 +6,15 @@ import { buildSelectableSceneCandidates, createDeterministicSceneSource } from "
 import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import { evolveWorld } from "./evolveWorld";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
+import type { GameLogger } from "@/game/logging";
 
 export type GeneratePendingSceneDeps = {
   readonly repository: GameRepository;
   readonly sceneSource: SceneSource;
   /** Task 3：场景编排联动的世界演化源（幕推进/结局对时装配预览状态后再出场景）。 */
   readonly worldEvolutionSource?: WorldEvolutionSource;
+  /** 生成提案经审批被拒时记录稳定原因，不能让 fallback 伪装成 AI 成功。 */
+  readonly logger?: GameLogger;
   readonly now: () => string;
 };
 
@@ -131,6 +134,12 @@ export async function generatePendingScene(
   if (approvedGenerated.ok) {
     approved = approvedGenerated;
   } else {
+    // live source 已成功取得并解析响应、但审批拒绝时必须留下可审计原因。
+    // 这和 transport/JSON failure 分开，防止浏览器只看到平滑 fallback 就把
+    // 本回合误计成真实 AI 生成。
+    if (proposal.source === "generated") {
+      deps.logger?.warn("scene_generation_rejected", { code: approvedGenerated.code });
+    }
     try {
       const fallbackProposal = await createDeterministicSceneSource().generateScene(context);
       const approvedFallback = approveScenePerformance({
