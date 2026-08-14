@@ -303,13 +303,7 @@ export function approveScenePerformance(input: {
     // 质量门槛放进审批；不合格时整场走角色化的确定性 fallback。
     const isFocusedNpc = context.focusNpcContext !== undefined
       && String(context.focusNpcContext.id) === String(npcLine.npcId);
-    const isCurrentObjectiveNpc = context.objectiveTarget !== null
-      && context.objectiveTarget.entityId === String(npcLine.npcId);
-    if (isFocusedNpc && (
-        context.job.resolvedEvent.eventKind === "dialogue"
-        || isCurrentObjectiveNpc
-        || context.objectiveTransition.mode === "ready_for_ending"
-      )) {
+    if (isFocusedNpc) {
       if (!hasExpandedNpcDialogue(npcLine.text)) return { ok: false, code: "npc_dialogue_too_short" };
     }
     const allowed = new Set<string>([

@@ -14,6 +14,9 @@ import { createOpeningGenerationSource, createSceneSource, createWorldEvolutionS
 import { createServerIntentParserSource } from "../server/ai/intentParserSourceFactory";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { generatePendingScene } from "../generatePendingScene";
+import { buildSceneGenerationContext } from "../sceneGenerationContext";
+import { approveScenePerformance } from "../approveAndWriteScene";
+import { prewarmBattleVictoryScene, type BattleScenePrewarm } from "./battleScenePrewarm";
 import { commitState } from "../stateCommit";
 import { buildChoiceMap } from "../buildChoiceMap";
 import type { StoryState } from "@/game/domain/storyState";
@@ -87,6 +90,58 @@ export function createServerGameEntryPoints(
   // Task 3：AI 可用注入 live 世界演化源，否则确定性源（不再直接注入 deterministic）。
   const worldEvolutionSource = createWorldEvolutionSource(env, logger);
   const sceneSource = createSceneSource(env, logger);
+  // 战斗只保留胜利/失败两态后，战斗开始即后台预热胜利场景。预热结果只存
+  // server memory，最终写回仍以最后一击的权威 World/Story 记录为准。
+  const battleScenePrewarmCache = new Map<string, BattleScenePrewarm>();
+  const battleScenePrewarmPromises = new Map<string, Promise<BattleScenePrewarm | null>>();
+  const ensureBattleScenePrewarm = (record: Parameters<typeof prewarmBattleVictoryScene>[0]): void => {
+    const battle = record.worldState.battle;
+    if (battle.status !== "active" || battle.battleKey === undefined) return;
+    if (battleScenePrewarmCache.has(battle.battleKey) || battleScenePrewarmPromises.has(battle.battleKey)) return;
+    const promise = prewarmBattleVictoryScene(record, { sceneSource, logger, now })
+      .then((prewarm) => {
+        if (prewarm !== null) battleScenePrewarmCache.set(prewarm.battleKey, prewarm);
+        return prewarm;
+      })
+      .catch(() => null)
+      .finally(() => {
+        battleScenePrewarmPromises.delete(battle.battleKey!);
+      });
+    battleScenePrewarmPromises.set(battle.battleKey, promise);
+  };
+  const applyPrewarmedBattleScene = async (record: Parameters<typeof prewarmBattleVictoryScene>[0], prewarm: BattleScenePrewarm): Promise<boolean> => {
+    const generation = record.storyState.narrative.generation;
+    if (generation.status !== "pending" || !("job" in generation) || generation.job === undefined) return false;
+    const context = buildSceneGenerationContext(record);
+    const approved = approveScenePerformance({
+      context,
+      proposal: prewarm.proposal,
+      basedOnRevision: record.revision,
+      existingCandidateEventPool: record.storyState.candidateEventPool,
+    });
+    if (!approved.ok) {
+      logger.warn("battle_scene_prewarm_rejected", { battleKey: prewarm.battleKey, code: approved.code });
+      return false;
+    }
+    const writeBack = await repository.applySceneWriteBack({
+      gameId: record.gameId,
+      expectedRevision: record.revision,
+      nextWorldState: record.worldState,
+      nextStoryState: {
+        ...record.storyState,
+        candidateEventPool: approved.candidateEventPool,
+        narrative: {
+          ...record.storyState.narrative,
+          currentScene: approved.scene,
+          generation: { status: "idle" },
+          choiceRegistry: approved.choiceRegistry,
+        },
+      },
+    });
+    if (!writeBack.ok) return false;
+    logger.info("battle_scene_prewarm_used", { battleKey: prewarm.battleKey });
+    return true;
+  };
   // Task 9：对话自由输入统一走 performTurn 回合入口，AI 可用时注入 live 意图源，否则规则源。
   // transport 构建收敛在 server/ai 工厂内（@ai-game/ai-transport 边界守卫）。
   const intentParserSource = createServerIntentParserSource(env);
@@ -105,7 +160,7 @@ export function createServerGameEntryPoints(
         key: `${current.record.gameId}:${generation.job.jobId}`,
       };
     },
-    run: () => generatePendingScene({ repository, sceneSource, worldEvolutionSource, logger, now }),
+    run: () => generatePendingScene({ repository, sceneSource, worldEvolutionSource, logger, allowDeterministicFallback: false, now }),
     logKey: "runtime_narrative_task",
     logger,
   });
@@ -219,7 +274,7 @@ export function createServerGameEntryPoints(
         : undefined;
       const result = await performTurn(
         { gameId: current.record.gameId, actionId: command.actionId, interaction: command.interaction, expectedRevision: command.expectedRevision, choiceMap },
-        { repository, now, worldEvolutionSource, intentParserSource },
+        { repository, now, worldEvolutionSource, intentParserSource, allowDeterministicWorldEvolutionFallback: false },
       );
       if (result.ok) {
         // Return updated view so the client can render without a separate GET
@@ -232,13 +287,38 @@ export function createServerGameEntryPoints(
             updated.record.revision,
             deriveEndingSessionIdentity(updated.record.gameId, updated.record.revision),
           );
-          // 目标已锁定的一键移动、以及规则已完全确定的拾取动作，不应该再经历
-          // “先完成动作、再等 AI 编排”的两段等待。同步写回确定性场景后再返回
-          // action 响应；若受控补足失败才降级为常规后台恢复。
+          if (readyRecord.worldState.battle.status === "active") {
+            ensureBattleScenePrewarm(readyRecord);
+          }
+          // 目标已锁定的一键移动、规则已完全确定的拾取动作，以及结束战斗的
+          // 最后一击，不应该再经历“先完成动作、再等 AI 编排”的两段等待。
+          // battle_action 只有在 performTurn 已经把战斗结算为非 active 后才会
+          // 留下 pending，因此这里正好把权威 battle_resolved 节拍与战后场景
+          // 放进同一次玩家 action 请求；普通战斗回合仍保持低延迟规则路径。
+          // 若受控场景写回失败，再降级为常规后台恢复。
           if (view.narrativeGeneration.status === "pending") {
-            if (submittedAction?.type === "move" || submittedAction?.type === "take_item") {
-              const moveSceneResult = await generatePendingScene({ repository, sceneSource, worldEvolutionSource, logger, now });
-              if (moveSceneResult === "saved") {
+            const shouldCompleteSceneInAction = submittedAction?.type === "move"
+              || submittedAction?.type === "take_item"
+              || submittedAction?.type === "battle_action";
+            if (shouldCompleteSceneInAction) {
+              let usedPrewarm = false;
+              const resolvedBattle = readyRecord.worldState.battle;
+              if (submittedAction?.type === "battle_action"
+                && resolvedBattle.status === "resolved"
+                && resolvedBattle.outcome === "victory"
+                && resolvedBattle.battleKey !== undefined) {
+                const pendingPrewarm = battleScenePrewarmPromises.get(resolvedBattle.battleKey);
+                if (pendingPrewarm !== undefined) await pendingPrewarm;
+                const prewarm = battleScenePrewarmCache.get(resolvedBattle.battleKey);
+                if (prewarm !== undefined) {
+                  usedPrewarm = await applyPrewarmedBattleScene(readyRecord, prewarm);
+                  battleScenePrewarmCache.delete(resolvedBattle.battleKey);
+                }
+              }
+              const immediateSceneResult = usedPrewarm
+                ? "saved"
+                : await generatePendingScene({ repository, sceneSource, worldEvolutionSource, logger, allowDeterministicFallback: false, now });
+              if (immediateSceneResult === "saved") {
                 const refreshed = await repository.getCurrentGame();
                 if (refreshed.ok && refreshed.status === "active") {
                   readyRecord = refreshed.record;

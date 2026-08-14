@@ -178,6 +178,8 @@ export type OpeningGenerationSourceDeps = {
   readonly config?: AiTransportConfig;
   readonly jsonMode?: ProviderJsonMode;
   readonly logger?: GameLogger;
+  /** 生产 live 模式关闭静默 fixture 降级，保证开局设计确实来自 API。 */
+  readonly allowFallback?: boolean;
   /** 只回传安全来源标记；用于严格区分 AI 成功和可恢复 fallback。 */
   readonly onResult?: (result: OpeningGenerationResultMarker) => void;
 };
@@ -198,6 +200,9 @@ export function createOpeningGenerationSource(
   return {
     async generate(input) {
       const fallback = async (): Promise<OpeningGenerationCandidate> => {
+        if (deps.allowFallback === false) {
+          throw new Error("LIVE_OPENING_UNAVAILABLE");
+        }
         onResult?.({ seed: input.seed, source: "fallback" });
         return fixture.generate(input);
       };

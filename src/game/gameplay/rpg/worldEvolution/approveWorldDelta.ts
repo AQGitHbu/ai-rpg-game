@@ -40,6 +40,11 @@ const MAX_ENTITY_TEXT_LENGTH = 200;
 const TRUST_ENDING_MIN_AFFINITY = 10;
 const DOUBT_ENDING_MAX_AFFINITY = TRUST_ENDING_MIN_AFFINITY - 1;
 
+// 武侠世界允许江湖传闻、奇诡意象，但不允许把另一套题材的实体直接
+// 铸造进世界。该门槛放在审批层，而不是只写进 prompt，防止 live AI 的
+// 合法 JSON 绕过风格约束，造成“骑士灵魂/远古祭坛/纯净光芒”式漂移。
+const WUXIA_FORBIDDEN_TERMS = /魔法|魔力|法术|施法|巫师|精灵|骑士|幽灵|鬼魂|灵魂|祭坛|纯净的光|圣光|魔兽|异界|传送|法阵|咒语|超自然|神谕|结界|元素/;
+
 export type WorldDeltaRejection =
   | "empty_proposal"
   | "no_need"
@@ -106,6 +111,11 @@ function validName(name: string): boolean {
 function validText(text: string): boolean {
   const t = text.trim();
   return t.length > 0 && t.length <= MAX_ENTITY_TEXT_LENGTH;
+}
+
+function violatesGenre(ws: WorldState, texts: readonly string[]): boolean {
+  if (ws.generation.gameType !== "wuxia") return false;
+  return texts.some((text) => WUXIA_FORBIDDEN_TERMS.test(text));
 }
 
 type MintedIds = {
@@ -356,6 +366,20 @@ export function approveWorldDelta(input: {
     for (const e of p.endingPair) {
       if (!validName(e.name) || !validText(e.description)) return reject("genre_constraint", "ending_name_or_text");
     }
+  }
+
+  const proposedText = [
+    p.beatSummary,
+    ...(p.newLocation ? [p.newLocation.name, p.newLocation.description] : []),
+    ...(p.newNpc ? [p.newNpc.name, p.newNpc.role, p.newNpc.description, ...p.newNpc.goals] : []),
+    ...(p.newItem ? [p.newItem.name, p.newItem.description] : []),
+    ...(p.newEnemy ? [p.newEnemy.name] : []),
+    ...(p.newFact ? [p.newFact.text] : []),
+    ...(p.nextMainQuest ? [p.nextMainQuest.name, p.nextMainQuest.description, p.nextMainQuest.objectiveText] : []),
+    ...(p.endingPair ? p.endingPair.flatMap((ending) => [ending.name, ending.description]) : []),
+  ];
+  if (violatesGenre(ws, proposedText)) {
+    return reject("genre_constraint", `game_type_${ws.generation.gameType}`);
   }
 
   // 主线任务：每幕唯一（一个 act 只能有一个 main quest），且目标必须有可达锚点。

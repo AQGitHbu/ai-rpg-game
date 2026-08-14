@@ -211,7 +211,7 @@ describe("buildSceneGenerationContext", () => {
     expect(contextA).toEqual(contextB);
   });
 
-  it("active battle 只投影三个可执行 battle_action 候选", () => {
+  it("active battle 只投影两个可执行 battle_action 候选", () => {
     const record = makeRecord();
     const context = buildSceneGenerationContext({
       ...record,
@@ -223,7 +223,6 @@ describe("buildSceneGenerationContext", () => {
     expect(context.legalActionCandidates).toEqual([
       { kind: "battle_action", label: "攻击", targetId: "attack" },
       { kind: "battle_action", label: "防守", targetId: "guard" },
-      { kind: "battle_action", label: "撤退", targetId: "flee" },
     ]);
   });
 

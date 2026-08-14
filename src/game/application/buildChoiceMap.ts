@@ -37,7 +37,6 @@ export function buildChoiceMap(
     const targets = battle.combatants?.filter((unit) => unit.side === "enemies" && unit.hp > 0) ?? [];
     if (actor?.controller === "player" && actorId !== undefined && battle.combatants !== undefined) {
       addRuntimeAction({ type: "battle_action", action: "guard", command: { actorId } });
-      addRuntimeAction({ type: "battle_action", action: "flee", command: { actorId } });
       for (const target of targets) {
         addRuntimeAction({ type: "battle_action", action: "attack", command: { actorId, targetId: target.combatantId } });
         if (actor.energy >= SKILL_ENERGY_COST) {
@@ -48,7 +47,6 @@ export function buildChoiceMap(
       // 旧存档尚未带队列时保留旧 token，保证历史客户端仍可继续战斗。
       addRuntimeAction({ type: "battle_action", action: "attack" });
       addRuntimeAction({ type: "battle_action", action: "guard" });
-      addRuntimeAction({ type: "battle_action", action: "flee" });
     }
   } else {
     // 当前地点 NPC → talk

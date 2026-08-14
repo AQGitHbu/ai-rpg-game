@@ -20,16 +20,18 @@ export type WorldEvolutionLiveDeps = {
   readonly config?: AiTransportConfig;
   readonly jsonMode?: ProviderJsonMode;
   readonly logger?: GameLogger;
+  /** 生产 live 模式关闭静默确定性降级，失败会让演化需求保留并等待真实 API 重试。 */
+  readonly allowFallback?: boolean;
 };
 
 /**
  * 世界演化与场景共用同一兼容 provider；30 秒会在正文到达前中止合法 JSON。
  * 该超时只决定何时明确记录失败，不会把 fallback 当成一次有效 AI 演化。
  */
-export const LIVE_WORLD_EVOLUTION_TIMEOUT_MS = 90_000;
+export const LIVE_WORLD_EVOLUTION_TIMEOUT_MS = 45_000;
 /** 世界演化只生成一次增量，限制输出以保持场景等待可控。 */
 // 同一 provider 的演化 JSON 也会先输出 reasoning_content；预留正文空间。
-export const LIVE_WORLD_EVOLUTION_MAX_TOKENS = 3_200;
+export const LIVE_WORLD_EVOLUTION_MAX_TOKENS = 1_800;
 // 与场景表演同一 provider：保留第三次机会，三次都失败才显式降级。
 const LIVE_WORLD_EVOLUTION_MAX_ATTEMPTS = 3;
 
@@ -207,11 +209,17 @@ export function filterProposalRefs(proposal: WorldDeltaProposal, ws: WorldState)
 export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): WorldEvolutionSource {
   const deterministic = createDeterministicEvolutionSource();
   const { transport, config, logger, jsonMode } = deps;
+  const fallbackProposal = (ctx: WorldEvolutionSourceContext): Promise<{ readonly proposal: WorldDeltaProposal | null }> => {
+    if (deps.allowFallback === false) {
+      throw new Error("LIVE_WORLD_EVOLUTION_UNAVAILABLE");
+    }
+    return deterministic.propose(ctx);
+  };
 
   return {
     async propose(ctx) {
       if (!transport || !config) {
-        return deterministic.propose(ctx);
+        return fallbackProposal(ctx);
       }
       try {
         const messages = [
@@ -232,7 +240,7 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
               continue;
             }
             logger?.warn("world_evolution_ai_failed", { code: result.code });
-            return deterministic.propose(ctx);
+            return fallbackProposal(ctx);
           }
           const parsed = parseJsonResponse(result.content);
           const rawProposal = typeof parsed === "object" && parsed !== null && "proposal" in parsed
@@ -248,12 +256,12 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
             continue;
           }
           logger?.warn("world_evolution_invalid_data");
-          return deterministic.propose(ctx);
+          return fallbackProposal(ctx);
         }
-        return deterministic.propose(ctx);
+        return fallbackProposal(ctx);
       } catch (error) {
         logger?.warn("world_evolution_transport_failed", { message: (error as Error)?.message });
-        return deterministic.propose(ctx);
+        return fallbackProposal(ctx);
       }
     },
   };
@@ -276,12 +284,17 @@ function buildWorldEvolutionPrompt(ctx: WorldEvolutionSourceContext): string {
   const { worldState, storyState } = ctx;
   const currentLoc = worldState.locations.find((l) => l.id === worldState.currentLocationId);
   const existingLocationIds = worldState.locations.map((location) => String(location.id)).join("、") || "无";
-  return `只输出 JSON，不能解释。你为 RPG 生成一次小型世界演化。
+  const setup = worldState.generation.setup;
+  const genreGuard = worldState.generation.gameType === "wuxia"
+    ? "这是武侠世界：只能使用江湖、门派、镖局、官府、山川、兵器、线索和武学语汇；禁止魔法、巫师、精灵、骑士、幽灵/灵魂、祭坛、法阵、圣光、异界等奇幻或超自然实体。"
+    : `题材=${worldState.generation.gameType}，所有实体必须服从该题材，不得跨题材借词。`;
+  return `只输出 JSON，不能解释。你为 RPG 生成一次小型世界演化。${genreGuard}
 需求=${kindText(ctx.need)}；原因=${ctx.reason}；地点=${currentLoc?.name ?? "未知"}；现有地点ID=${existingLocationIds}；幕=${storyState.currentAct}/${storyState.targetActs}。
+世界背景=${setup?.worldPremise ?? worldState.generation.gameType}；故事开端=${setup?.storyOpening ?? "沿用当前主线冲突"}。
 外层必须是 {"proposal":{...}}。proposal 必有 beatSummary；未使用字段直接省略，不要写 null。
 新地点={"newLocation":{"name":"","description":"","scale":"scene","connectFromLocationId":"现有地点ID"}}。
 新NPC={"newNpc":{"name":"","role":"","description":"","locationRef":{"kind":"existing","id":"现有地点ID"}或{"kind":"new_location"},"goals":[""]}}。
 新任务={"nextMainQuest":{"name":"","description":"","objectiveText":""}}。
 终局={"endingPair":[{"name":"","description":"","themeKey":"trust"},{"name":"","description":"","themeKey":"doubt"}]}。
-下一幕必须给新地点、新NPC和新任务；终局必须只给两个不同结局；其他情况只补一个必要实体。名称2-40字、描述200字内。`;
+下一幕必须给新地点、新NPC和新任务；终局必须只给两个不同结局；其他情况只补一个必要实体。名称2-40字、描述200字内。不要创造与题材不符的角色、地点、物品或结局意象。`;
 }

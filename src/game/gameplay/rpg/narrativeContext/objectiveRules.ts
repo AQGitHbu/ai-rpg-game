@@ -1,15 +1,23 @@
 import type { WorldState } from "@/game/domain/worldState";
+import type { ItemId } from "@/game/domain/worldEntity";
 import { findNpc, findLocation, findItem } from "@/game/domain/worldState";
 
 // 内部共享规则：目标满足判定与稳定展示标签（与 ruleEngine/reconcileQuests 语义一致）。
 
 export type QuestObjective = WorldState["quests"][number]["objectives"][number];
 
+function hasObtainedItem(ws: WorldState, itemId: ItemId): boolean {
+  return ws.inventory.includes(itemId)
+    || ws.eventLedger.some((event) => event.type === "item_obtained" && event.itemId === itemId);
+}
+
 export function isObjectiveSatisfied(ws: WorldState, objective: QuestObjective): boolean {
   switch (objective.kind) {
     case "visit_location": return ws.visitedLocationIds.includes(objective.locationId);
     case "talk_to_npc": return ws.npcs.find((n) => n.id === objective.npcId)?.met ?? false;
-    case "obtain_item": return ws.inventory.includes(objective.itemId);
+    // 物品取得是历史事实：玩家可能先拾取、再按剧情交给 NPC，不能因为
+    // 当前背包为空就把已经完成的“获取”目标重新打开。
+    case "obtain_item": return hasObtainedItem(ws, objective.itemId);
     case "discover_fact": return ws.worldFacts.find((f) => f.factId === objective.factId)?.discovered ?? false;
     case "defeat_enemy": return ws.defeatedEnemyIds.includes(objective.enemyId);
   }

@@ -10,6 +10,7 @@ import type { WorldState } from "@/game/domain/worldState";
 import { buildChoiceMap, hasExplorableContent } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
+import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
 import { buildTownView, type TownView } from "./townView";
 import { projectCombatView, type BattleView } from "./combatView";
 import { composeDirectNpcGreeting, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
@@ -204,7 +205,7 @@ function projectQuestObjectives(worldState: WorldState, objectives: WorldState["
       }
       case "obtain_item": {
         const item = worldState.items.find((entry) => entry.id === objective.itemId);
-        return { label: `获取${item?.name ?? "某物"}`, completed: worldState.inventory.includes(objective.itemId) };
+        return { label: `获取${item?.name ?? "某物"}`, completed: isObjectiveSatisfied(worldState, objective) };
       }
       case "discover_fact": {
         const fact = worldState.worldFacts.find((entry) => entry.factId === objective.factId);
@@ -408,9 +409,15 @@ export function projectGameSessionView(
   // 在场 NPC 交谈，旧 scene 的 focus/choices 已经过期。将旧 NPC 降为普通
   // 交谈入口，避免继续消费同一组 support/challenge token。
   const staleDialogueFocus = persistedFocusNpcId !== null
-    && currentObjectiveNpcId !== null
-    && currentObjectiveNpcId !== persistedFocusNpcId
-    && presentNpcs.some((npc) => String(npc.id) === currentObjectiveNpcId);
+    && (
+      // 当前目标已经换成另一名 NPC：旧交接对白不能继续拦住新目标。
+      (currentObjectiveNpcId !== null
+        && currentObjectiveNpcId !== persistedFocusNpcId
+        && presentNpcs.some((npc) => String(npc.id) === currentObjectiveNpcId))
+      // 当前目标已不是交谈目标时，只保留仍有两个合法 talk choice 的终局对白；
+      // 旧场景若 choice token 已过期，就必须退回地点层行动（例如战斗入口）。
+      || (currentObjectiveNpcId === null && pairedDialogueNpcId !== persistedFocusNpcId)
+    );
   const handoffFocusNpc = staleDialogueFocus || persistedFocusNpcId === null
     ? currentObjectiveNpcId === null
       ? undefined

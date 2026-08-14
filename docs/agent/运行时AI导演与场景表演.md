@@ -4,7 +4,7 @@
 
 运行时 AI 负责提出下一幕的结构化场景表演（分段旁白、焦点 NPC 台词、目标链接与合法选项）；规则系统负责审批候选、铸造玩家 token、裁决行动、审批世界演化并写入状态。AI 不直接写存档，也不能决定任务、关系、知识、战斗或结局。
 
-真机回合的 live 场景表演调用以 30 秒为上限；超时、服务失败或非法响应立即回退同轨确定性 source，不能让存档长期停在 `narrativeGeneration.pending`。
+真机回合的 live 场景表演调用以 45 秒为上限；生产配置启用 live 时，超时、服务失败或非法响应不得静默写入确定性 fallback，而是保留 `narrativeGeneration.pending`，由 ensure/retry 再次调用真实 API。无 AI 配置的离线模式仍使用确定性 source。
 
 一旦 pending job 已由规则结果完全确定，服务器立即在后台生成，不等待“开始冒险”、继续、确认或下一次客户端 ensure。创建新局与成功回合返回前只完成快速排队，不等待 AI；协调器以 `gameId + jobId` 去重，客户端 ensure/polling 只负责崩溃恢复和结果观测。
 
@@ -37,10 +37,12 @@
 - 服务器根据 post-writeback revision 铸造 opaque `choiceToken`；客户端场景不含 `actionKey`、registry、候选 effect、隐藏事实或 AI diagnostics。
 - ready scene、choice registry、candidate event pool 与已批准世界演化同一次 scene CAS 写回；行动消费时再次验证当前 scene、revision 与规则合法性。
 - scene CAS 与序幕确认并发时，repository 单调保留已确认的 `prologueShown=true`；确认接口对 stale revision 读取新快照后有限重试。
-- AI/fixture 失败使用确定性 fallback，fallback 也经过同一 proposal → approval → write-back 链。
+- 离线 fixture 使用确定性 fallback，fallback 也经过同一 proposal → approval → write-back 链；生产 live 路径必须标记 `source=generated`，API 失败或审批拒绝只返回 unavailable，不把 fallback 伪装成 AI 成功。
 - active battle、ending 或候选不足时不伪造普通场景选择。
 - 移动和拾取物品是规则结果已完全确定的单动作；pending 场景使用确定性 source 同步完成审批/写回，不调用 live scene-performance source。拾取仍保留规则 CAS 和结构化 `item_obtained` 节拍。
-- active battle 采用规则 fast path：不创建 pending 场景、不调用 scene source；只有 battle_resolved 等终结事件进入叙事场景编排。
+- active battle 采用规则 fast path：不创建 pending 场景、不调用 scene source；界面只提供攻击/防守，撤退不再作为可执行选项。战斗开始时保存玩家属性、已击败敌人和事件账本快照；失败只恢复快照并可重新挑战，不推进剧情。
+- 战斗胜利在战斗进行期间后台预热一次 live `battle_resolved` 场景提案；最后一击提交后把战斗结果和战后剧情放在同一场景写回中。预热只缓存已通过 live 生成与结构审批的提案，最终以最后一击后的权威世界/故事状态校验后使用。
+- 武侠世界的世界演化审批与 live 提示词共同执行题材边界，拒绝骑士、灵魂、祭坛、圣光等跨题材实体或结局意象，避免 AI 合法 JSON 造成世界观漂移。
 
 ## 强制节拍与目标链接
 

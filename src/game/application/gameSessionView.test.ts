@@ -276,6 +276,35 @@ describe("projectGameSessionView", () => {
     expect(view.story.currentObjectiveLabel).toBe("与传讯人交谈");
   });
 
+  it("旧对白 choice 过期且当前目标已非交谈时，不会吞掉地点战斗入口", () => {
+    const enemy = {
+      id: asEnemyId("enemy_1"), name: "夺旗客", tier: "normal" as const,
+      stats: { hp: 20, attack: 5, defense: 1 }, locationId: asLocationId("loc_1"), tags: [],
+    };
+    const scene = {
+      sceneId: "scene-expired-dialogue",
+      turn: 7,
+      narration: "苏绾已经说完了。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text: "你去面对追兵吧。", emotion: "neutral" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "expired-1", label: "旧选项一" },
+        { choiceToken: "expired-2", label: "旧选项二" },
+      ] as const,
+      source: "generated" as const,
+      event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["你去面对追兵吧。"] }],
+    };
+    const view = projectGameSessionView(
+      { ...ws, enemies: [enemy] },
+      { ...ss, narrative: { ...ss.narrative, currentScene: scene } },
+      0,
+      "test-ending-session",
+    );
+    expect(view.narrative.npcDialogues[0]?.freeInputEnabled).toBe(false);
+    expect(view.currentLocation.actions.map((action) => action.label)).toContain("挑战夺旗客");
+  });
+
   it("uses the newly generated objective NPC as focus even when the triggering event was travel", () => {
     const secondNpc: NpcEntry = {
       id: asNpcId("npc_2"), name: "传讯人", role: "旧案传讯人", description: "带来下一幕消息",
@@ -661,7 +690,7 @@ describe("projectGameSessionView", () => {
     }
   });
 
-  it("projects active battle controls as three opaque tokens and no non-battle location actions", () => {
+  it("projects active battle controls as attack and guard tokens and no non-battle location actions", () => {
     const enemyId = asEnemyId("enemy_wolf");
     const battleWorld: WorldState = {
       ...ws,
@@ -671,7 +700,7 @@ describe("projectGameSessionView", () => {
     const view = projectGameSessionView(battleWorld, ss, 3, "test-ending-session");
     expect(view.currentLocation.actions).toEqual([]);
     expect(view.battle).toMatchObject({ enemyName: "灰狼", playerHp: 91, enemyHp: 13, round: 2 });
-    expect(view.battle?.controls.map((choice) => choice.label)).toEqual(["攻击", "防御", "撤退"]);
+    expect(view.battle?.controls.map((choice) => choice.label)).toEqual(["攻击", "防御"]);
     expect(view.battle?.controls.every((choice) => choice.presentation === "battle")).toBe(true);
     expect(view.battle?.controls.every((choice) => /^c_[0-9a-f]{16}$/.test(choice.choiceToken))).toBe(true);
     const executable = buildChoiceMap(battleWorld, ss, 3);

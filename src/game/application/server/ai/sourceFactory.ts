@@ -42,6 +42,7 @@ export function createOpeningGenerationSource(
       config: runtime.config,
       jsonMode: providerJsonModeFor(runtime.outputFormat),
       logger,
+      allowFallback: false,
       onResult,
     });
   }
@@ -61,6 +62,7 @@ export function createSceneSource(
       config: runtime.config,
       jsonMode: providerJsonModeFor(runtime.outputFormat),
       logger,
+      allowFallback: false,
     });
   }
   logger?.info("scene_source_deterministic", { diagnostics: runtime.diagnostics });
@@ -87,6 +89,7 @@ export function createWorldEvolutionSource(
       config: runtime.config,
       jsonMode: providerJsonModeFor(runtime.outputFormat),
       logger,
+      allowFallback: false,
     });
   }
   logger?.info("world_evolution_source_fixture", { diagnostics: runtime.diagnostics });

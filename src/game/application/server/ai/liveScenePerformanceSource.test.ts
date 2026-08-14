@@ -154,7 +154,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         },
       },
     );
-    expect(LIVE_SCENE_TIMEOUT_MS).toBe(90_000);
+    expect(LIVE_SCENE_TIMEOUT_MS).toBe(45_000);
   });
 
   it("uses JSON object mode only when the factory explicitly enables it", async () => {

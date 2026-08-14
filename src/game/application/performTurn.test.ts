@@ -231,6 +231,43 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(record()?.worldState.battle.status).toBe("active");
   });
 
+  it("战斗失败恢复到战斗开始前，不创建战后叙事任务", async () => {
+    const enemy = {
+      id: asEnemyId("enemy_1"), name: "灰狼", tier: "normal" as const,
+      stats: toStatBlock(ENEMY_COMBAT_STATS.normal), locationId: asLocationId("loc_1"), tags: [],
+    };
+    const base = buildWorldState();
+    const beforeLedger = base.eventLedger;
+    const world: WorldState = {
+      ...base,
+      enemies: [enemy],
+      battle: {
+        status: "active",
+        enemyId: enemy.id,
+        playerHp: 1,
+        enemyHp: enemy.stats.hp,
+        round: 1,
+        battleKey: "battle-rollback",
+        preBattleSnapshot: {
+          playerStats: base.player.stats,
+          defeatedEnemyIds: base.defeatedEnemyIds,
+          eventLedger: beforeLedger,
+        },
+      },
+    };
+    const { repo, record, applyCalls } = createSpyRepo(world, buildStoryState());
+    const action: Action = { type: "battle_action", action: "guard" };
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "battle_defeat", interaction: { kind: "fixed_choice", choiceToken: "battle" }, expectedRevision: 0, choiceMap: new Map([["battle", action]]) },
+      { repository: repo, now: () => "2026-01-02" },
+    );
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+    expect(record()?.worldState.battle).toEqual({ status: "idle" });
+    expect(record()?.worldState.eventLedger).toEqual(beforeLedger);
+    expect(record()?.storyState.narrative.generation.status).toBe("idle");
+  });
+
   it("成功回合 applyState 恰好一次，单次写入同时包含 WorldState、StoryState.turnNumber 和 pending job", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 

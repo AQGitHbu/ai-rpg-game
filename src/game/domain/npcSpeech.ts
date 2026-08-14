@@ -43,13 +43,24 @@ function isActionOnlyNarration(value: string, npcName?: string): boolean {
 }
 
 /**
+ * 兼容模型把两句直接对白各自包上引号后拼接的输出，例如
+ * `第一句。”“第二句`。这种残留标点会直接出现在气泡里，既不像正常对白，
+ * 也会让后续句子难以阅读；只移除句间成对引号，保留句号和正常引号内容。
+ */
+function repairDialogueQuoteArtifacts(value: string): string {
+  return value
+    .replace(/([。！？!?])\s*[”"]\s*[“「『]/gu, "$1")
+    .replace(/([^\s])\s*[”"]\s*[“「『](?=[\p{L}\p{N}\p{Unified_Ideograph}])/gu, "$1");
+}
+
+/**
  * 去除 NPC 台词外层的叙述性包装，保留直接对白正文。
  *
  * 只在引号包住完整对白，或前缀明确像说话人/动作描述时才剥离，
  * 避免误伤“关于这件事：我还不能确定”这样的正常台词。
  */
 export function normalizeNpcSpeech(text: string, npcName?: string): string {
-  const value = text.trim();
+  const value = repairDialogueQuoteArtifacts(text.trim());
   if (value === "") return "";
 
   const firstQuote = value.search(/["“「『]/u);

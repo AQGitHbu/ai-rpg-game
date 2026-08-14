@@ -22,6 +22,11 @@ describe("NPC direct speech", () => {
     expect(normalizeNpcSpeech("邵叔看了你一眼，继续巡视。", "邵叔")).toBe("");
   });
 
+  it("repairs adjacent smart quotes between two AI-generated sentences", () => {
+    expect(normalizeNpcSpeech("你给的腰牌，是镖队的东西。”“镖队不是遇袭失散。"))
+      .toBe("你给的腰牌，是镖队的东西。镖队不是遇袭失散。");
+  });
+
   it("recognizes context-free acknowledgements", () => {
     expect(isGenericNpcAcknowledgement('"我知道了。"')).toBe(true);
     expect(isGenericNpcAcknowledgement("关于商队失踪的事，我先说我确定的部分。")).toBe(false);

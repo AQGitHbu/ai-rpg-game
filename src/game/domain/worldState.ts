@@ -147,9 +147,15 @@ export type FactionEntry = {
 
 export type BattleState =
   | { readonly status: "idle" }
-  | ({ readonly status: "active"; readonly enemyId: EnemyId; readonly enemyIds?: readonly EnemyId[]; readonly playerHp: number; readonly enemyHp: number; readonly round: number }
+  | ({ readonly status: "active"; readonly enemyId: EnemyId; readonly enemyIds?: readonly EnemyId[]; readonly playerHp: number; readonly enemyHp: number; readonly round: number; readonly battleKey?: string; readonly preBattleSnapshot?: BattleStartSnapshot }
     & Partial<ActiveBattleCombatState>)
-  | { readonly status: "resolved"; readonly enemyId: EnemyId; readonly outcome: "victory" | "defeat" | "withdraw" };
+  | { readonly status: "resolved"; readonly enemyId: EnemyId; readonly outcome: "victory" | "defeat" | "withdraw"; readonly battleKey?: string };
+
+export type BattleStartSnapshot = {
+  readonly playerStats: PlayerState["stats"];
+  readonly defeatedEnemyIds: readonly EnemyId[];
+  readonly eventLedger: readonly GameEvent[];
+};
 
 export type EndingState = { readonly endingId: EndingId; readonly outcome: "success" | "failure" } | null;
 

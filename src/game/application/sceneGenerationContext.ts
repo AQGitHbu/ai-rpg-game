@@ -16,6 +16,7 @@ import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { buildFocusNpcContext, type FocusNpcContext, type FactCard } from "./focusNpcContext";
 import { buildStylePolicy, type StylePolicy } from "./stylePolicy";
 import type { GameRecord } from "./server/persistence/gameRepository";
+import type { GameTypeId } from "@/game/domain/newGame";
 
 /**
  * SceneGenerator 的最小输入 DTO（spec §7.1 / §10.1-10.2）：
@@ -101,6 +102,10 @@ export type ObjectiveTargetRef = {
 };
 
 export type SceneGenerationContext = {
+  /** 题材边界与开局设定：允许 live 表演者保持同一世界语义，不可改写规则。 */
+  readonly gameType?: GameTypeId;
+  readonly worldPremise?: string;
+  readonly storyOpening?: string;
   readonly job: PendingNarrativeJob;
   readonly player: PlayerSceneSummary;
   readonly currentLocation: LocationSceneCard;
@@ -297,6 +302,9 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
   const activeBattleEnemyId = ws.battle.status === "active" ? ws.battle.enemyId : null;
 
   return {
+    gameType: ws.generation.gameType,
+    ...(ws.generation.setup?.worldPremise === undefined ? {} : { worldPremise: ws.generation.setup.worldPremise }),
+    ...(ws.generation.setup?.storyOpening === undefined ? {} : { storyOpening: ws.generation.setup.storyOpening }),
     job,
     player: {
       name: ws.player.name,
@@ -330,7 +338,6 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
       ? [
           { kind: "battle_action" as const, label: "攻击", targetId: "attack" },
           { kind: "battle_action" as const, label: "防守", targetId: "guard" },
-          { kind: "battle_action" as const, label: "撤退", targetId: "flee" },
         ]
       : [
           ...presentNpcs.map((npc) => ({

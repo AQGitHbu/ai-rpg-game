@@ -15,6 +15,8 @@ export type GeneratePendingSceneDeps = {
   readonly worldEvolutionSource?: WorldEvolutionSource;
   /** 生成提案经审批被拒时记录稳定原因，不能让 fallback 伪装成 AI 成功。 */
   readonly logger?: GameLogger;
+  /** live 生产路径禁止把设计 AI 的失败静默写成确定性场景。 */
+  readonly allowDeterministicFallback?: boolean;
   readonly now: () => string;
 };
 
@@ -65,6 +67,7 @@ export async function generatePendingScene(
       worldState: record.worldState,
       storyState: record.storyState,
       source: deps.worldEvolutionSource,
+      allowDeterministicFallback: false,
       reason: "scene_evolution",
       now: deps.now,
     });
@@ -91,6 +94,7 @@ export async function generatePendingScene(
       worldState: scenarioWs,
       storyState: scenarioSs,
       source: deps.worldEvolutionSource,
+      allowDeterministicFallback: false,
       reason: "scene_candidate_shortage",
       now: deps.now,
     });
@@ -121,6 +125,13 @@ export async function generatePendingScene(
     return "unavailable";
   }
 
+  // 移动/拾取是规则已完全确定的即时反馈，允许使用确定性场景；其余
+  // 设计性场景在 live 运行时必须能证明 proposal 来自真实 API。
+  if (!immediateAction && deps.allowDeterministicFallback === false && proposal.source !== "generated") {
+    deps.logger?.warn("scene_generation_fallback_blocked", { reason: "live_required" });
+    return "unavailable";
+  }
+
   // 完整场景表演审批（Task 6）：核心结构非法（缺强制节拍/自创节拍 ID/
   // 错误 NPC 应答/forbidden fact/他人交互/过期目标/重复选项/无推进选项）→
   // 整场回退确定性 source，且 fallback 同样过同一审批，防止两套契约漂移。
@@ -139,6 +150,10 @@ export async function generatePendingScene(
     // 本回合误计成真实 AI 生成。
     if (proposal.source === "generated") {
       deps.logger?.warn("scene_generation_rejected", { code: approvedGenerated.code });
+    }
+    if (!immediateAction && deps.allowDeterministicFallback === false) {
+      deps.logger?.warn("scene_generation_fallback_blocked", { reason: approvedGenerated.code });
+      return "unavailable";
     }
     try {
       const fallbackProposal = await createDeterministicSceneSource().generateScene(context);

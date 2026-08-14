@@ -1,20 +1,11 @@
 import type { WorldState, QuestOutcome } from "@/game/domain/worldState";
 import type { GameEvent } from "@/game/domain/events";
+import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
 
 export type QuestReconcileResult = {
   readonly nextWorldState: WorldState;
   readonly events: readonly GameEvent[];
 };
-
-function isObjectiveSatisfied(ws: WorldState, objective: WorldState["quests"][number]["objectives"][number]): boolean {
-  switch (objective.kind) {
-    case "visit_location": return ws.visitedLocationIds.includes(objective.locationId);
-    case "talk_to_npc": return ws.npcs.find((n) => n.id === objective.npcId)?.met ?? false;
-    case "obtain_item": return ws.inventory.includes(objective.itemId);
-    case "discover_fact": return ws.worldFacts.find((f) => f.factId === objective.factId)?.discovered ?? false;
-    case "defeat_enemy": return ws.defeatedEnemyIds.includes(objective.enemyId);
-  }
-}
 
 // 应用任务 outcome（只改 worldState，不碰 eventLedger——由 resolveTurn 统一按序追加）。
 // Task 2 起任务不再引用预生成实体：

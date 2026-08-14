@@ -44,6 +44,8 @@ export type PerformTurnDeps = {
    * 触发→审批→预览→重演算全部路径都只走单次 CAS。
    */
   readonly worldEvolutionSource?: WorldEvolutionSource;
+  /** 生产 live 路径关闭确定性世界演化降级；测试/离线调用默认保留兼容行为。 */
+  readonly allowDeterministicWorldEvolutionFallback?: boolean;
 };
 
 /**
@@ -173,6 +175,7 @@ export async function performTurn(
         worldState: record.worldState,
         storyState: record.storyState,
         source: deps.worldEvolutionSource,
+        allowDeterministicFallback: deps.allowDeterministicWorldEvolutionFallback,
         action: converted.action,
         reason: resolved.code,
         idOverride: repairMode ? repairIdOverrideForAction(converted.action) : undefined,
@@ -237,6 +240,35 @@ export async function performTurn(
     return { ok: false, code: "ACTION_REJECTED", feedback: "被战斗阻止" };
   }
 
+  // 战斗失败不进入叙事生成：按用户可理解的“两态战斗”规则，恢复到本场
+  // 战斗开始前的世界/剧情状态，玩家可以立即重新挑战同一场战斗。
+  if (
+    converted.action.type === "battle_action"
+    && resolution.nextWorldState.battle.status === "resolved"
+    && resolution.nextWorldState.battle.outcome === "defeat"
+  ) {
+    const restoredWorldState = restoreAfterBattleDefeat(record.worldState);
+    const commitResult = await commitState(deps.repository, {
+      gameId: command.gameId,
+      expectedRevision: record.revision,
+      nextWorldState: restoredWorldState,
+      nextStoryState: record.storyState,
+    });
+    if (!commitResult.ok) {
+      return {
+        ok: false,
+        code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
+        feedback: "Commit failed",
+      };
+    }
+    return {
+      ok: true,
+      revision: commitResult.record.revision,
+      resolvedEvent: resolution.primaryResult,
+      feedback: "战斗失败，已恢复到战斗开始前，可以重新挑战。",
+    };
+  }
+
   // 活跃战斗是低延迟规则路径：只要本次推进后仍在战斗中，直接 CAS
   // 提交队列状态，不创建 PendingNarrativeJob，也不等待 AI 场景编排。
   // 终结战斗仍继续走下方叙事任务路径，保证结局/任务有表现机会。
@@ -288,6 +320,20 @@ export async function performTurn(
     objectiveTransition: narrative.objectiveTransition,
     mandatoryBeats: narrative.mandatoryBeats,
   });
+}
+
+function restoreAfterBattleDefeat(worldState: WorldState): WorldState {
+  const battle = worldState.battle;
+  if (battle.status !== "active" || battle.preBattleSnapshot === undefined) {
+    return { ...worldState, battle: { status: "idle" } };
+  }
+  return {
+    ...worldState,
+    player: { ...worldState.player, stats: battle.preBattleSnapshot.playerStats },
+    defeatedEnemyIds: battle.preBattleSnapshot.defeatedEnemyIds,
+    eventLedger: battle.preBattleSnapshot.eventLedger,
+    battle: { status: "idle" },
+  };
 }
 
 /** Task 3：可经回合修复路径装配的未知实体引用代码。 */

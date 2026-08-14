@@ -41,6 +41,8 @@ export type EvolveWorldInput = {
   readonly reason: string;
   /** 回合修复路径：把行动引用 ID 原样铸造为缺失实体 ID（只作用于匹配 kind）。 */
   readonly idOverride?: WorldDeltaIdOverride;
+  /** live 运行时关闭静默确定性降级；失败时保留需求，等待下一次真实 API。 */
+  readonly allowDeterministicFallback?: boolean;
   readonly now: () => string;
 };
 
@@ -109,6 +111,6 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
   // AI 的 JSON 可能结构合法但语义不可装配（例如缺少主线锚点、预算超限或
   // 小镇已无可用 slot）。这类失败也必须走离线确定性方案，否则 needs_next_act
   // 会永久挂起，下一场景只会重复同一失败。
-  if (primary.ok || input.source === undefined) return primary;
+  if (primary.ok || input.source === undefined || input.allowDeterministicFallback === false) return primary;
   return attempt(deterministicSource);
 }

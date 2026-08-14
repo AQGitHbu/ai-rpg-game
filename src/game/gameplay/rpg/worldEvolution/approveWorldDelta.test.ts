@@ -417,6 +417,28 @@ describe("approveWorldDelta", () => {
     expect(result.code).toBe("genre_constraint");
   });
 
+  it("rejects cross-genre supernatural terms in a wuxia world", () => {
+    const proposal: WorldDeltaProposal = {
+      ...nextActProposal(),
+      endingPair: null,
+      newNpc: {
+        ...nextActProposal().newNpc!,
+        name: "破碎骑士的灵魂",
+        role: "远古守护者",
+        description: "守在远古祭坛前的幽灵。",
+      },
+    };
+    const result = approveWorldDelta({
+      proposal,
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("genre_constraint");
+  });
+
   it("rejects an entirely empty proposal", () => {
     const proposal: WorldDeltaProposal = {
       beatSummary: "平静的一轮",

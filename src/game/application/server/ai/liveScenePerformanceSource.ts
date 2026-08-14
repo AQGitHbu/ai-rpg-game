@@ -34,6 +34,8 @@ export type LiveScenePerformanceDeps = {
   /** 仅由已验证兼容的 AI_OUTPUT_FORMAT=json_object 启用。 */
   readonly jsonMode?: ProviderJsonMode;
   readonly logger?: GameLogger;
+  /** 生产 live 模式关闭静默确定性降级；失败会让 pending 保留，等待下一次真实 API 重试。 */
+  readonly allowFallback?: boolean;
 };
 
 /**
@@ -41,11 +43,11 @@ export type LiveScenePerformanceDeps = {
  * 处理 reasoning，因此 30 秒会把可用的 AI 结果误判为超时；给一次完整的服务端
  * 生成窗口。真正超时仍会记录为失败，不能计作 AI 场景通过。
  */
-export const LIVE_SCENE_TIMEOUT_MS = 90_000;
+export const LIVE_SCENE_TIMEOUT_MS = 45_000;
 /** 场景只需旁白、两句 NPC 台词与两个选项，避免默认大输出拖慢整回合。 */
 // 当前 provider 即使请求关闭 reasoning，复杂 JSON 仍会先占用约两千 token
 // 的 reasoning_content；预算必须覆盖它和最终正文，才能避免 content 为空。
-export const LIVE_SCENE_MAX_TOKENS = 3_000;
+export const LIVE_SCENE_MAX_TOKENS = 1_800;
 // 一次完整窗口后只保留一次瞬态重试：避免在卡住时将玩家锁在三轮 90 秒请求中。
 const LIVE_SCENE_MAX_ATTEMPTS = 2;
 
@@ -98,9 +100,13 @@ export type LiveNpcLineCandidate = {
   readonly emotion: string;
 };
 
-/** 焦点 NPC 的 ready 台词至少要包含回应和后续承接，避免退化成一句介绍。 */
+/** 焦点 NPC 的 ready 台词必须是两句可独立阅读的直接对白。 */
 function hasDialogicContinuation(text: string): boolean {
-  return (text.match(/[。！？!?；;]/gu) ?? []).length >= 2;
+  return normalizeNpcSpeech(text)
+    .split(/[。！？!?]+/u)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence !== "")
+    .length >= 2;
 }
 
 function isUsableLiveNpcLine<TNpcId>(
@@ -169,6 +175,10 @@ export function parseScenePerformanceJson(
   if (!isRecord(raw)) return null;
 
   const segments: ScenePerformanceSegment[] = [];
+  const allowedBeatIds = new Set([
+    ...context.mandatoryBeats.map((beat) => beat.beatId),
+    ATMOSPHERE_BEAT_ID,
+  ]);
   if (Array.isArray(raw.segments)) {
     for (const s of raw.segments) {
       if (!isRecord(s)
@@ -178,6 +188,10 @@ export function parseScenePerformanceJson(
         || s.text.trim() === "") {
         return null;
       }
+      // 让“自创节拍 ID”进入机械修复路径：有焦点 NPC 时保留真实
+      // API 返回的台词，只用服务端已批准的节拍/确定性段落补齐，
+      // 避免到了最终审批才静默写 fallback 或永久卡 pending。
+      if (!allowedBeatIds.has(s.beatId.trim())) return null;
       segments.push({ beatId: s.beatId, text: s.text.trim() });
     }
   }
@@ -263,12 +277,18 @@ function repairPartialLiveScene(
 export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps): SceneSource {
   const deterministic = createDeterministicSceneSource();
   const { transport, config, logger, jsonMode } = deps;
+  const fallbackScene = (context: SceneGenerationContext): Promise<ScenePerformanceProposal> => {
+    if (deps.allowFallback === false) {
+      throw new Error("LIVE_SCENE_UNAVAILABLE");
+    }
+    return deterministic.generateScene(context);
+  };
 
   return {
     async generateScene(context: SceneGenerationContext): Promise<ScenePerformanceProposal> {
       try {
         const selectable = buildSelectableSceneCandidates(context);
-        if (selectable.length < 2) return deterministic.generateScene(context);
+        if (selectable.length < 2) return fallbackScene(context);
 
         const messages: readonly AiMessage[] = [
           { role: "system", content: buildLiveScenePrompt(context, selectable) },
@@ -293,7 +313,7 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
               continue;
             }
             logger?.warn("scene_generation_ai_failed", { code: result.code });
-            return deterministic.generateScene(context);
+            return fallbackScene(context);
           }
 
           const parsed = parseJsonResponse(result.content);
@@ -312,14 +332,14 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
             continue;
           }
           logger?.warn("scene_generation_invalid_data", sceneResponseShape(parsed));
-          return deterministic.generateScene(context);
+          return fallbackScene(context);
         }
         // 仅为 TypeScript 完整性；循环一定从内部 return。
         logger?.warn("scene_generation_ai_failed", { code: lastFailureCode ?? "unknown" });
-        return deterministic.generateScene(context);
+        return fallbackScene(context);
       } catch (error) {
         logger?.error("scene_generation_error", { error: error instanceof Error ? error.message : "unknown" });
-        return deterministic.generateScene(context);
+        return fallbackScene(context);
       }
     },
   };
@@ -338,7 +358,9 @@ export function buildLiveScenePrompt(
   const focus = context.focusNpcContext;
   const focusSection = focus === undefined
     ? "无焦点 NPC；npcLine 必须为 null。"
-    : `id=${focus.id}；${focus.name}（${focus.role}）；态度：${focus.responsePolicy.toneInstruction}；目标：${focus.goals.join("、") || "无"}；可说线索：${focus.speakableFactCards.map((f) => f.text).join("、") || "无"}；最近交互：${focus.recentInteractions.slice(-2).map((i) => i.summary).join("；") || "无"}`;
+    : `id=${focus.id}；${focus.name}（${focus.role}）；态度：${focus.responsePolicy.toneInstruction}；目标：${focus.goals.join("、") || "无"}；` +
+      `可说线索卡：${focus.speakableFactCards.map((f) => `${f.factId}=${f.text}`).join("；") || "无（usedFactIds 必须为 []）"}；` +
+      `最近交互：${focus.recentInteractions.slice(-2).map((i) => `${i.actionId}=${i.summary}`).join("；") || "无（usedInteractionActionIds 必须为 []）"}`;
 
   const presentNpcLine = context.presentNpcs.map((n) => `${n.id}=${n.name}`).join("、") || "无";
 
@@ -358,15 +380,40 @@ export function buildLiveScenePrompt(
   const objectiveSection = after === null
     ? "无当前目标；objectiveLink 必须为 null。"
     : `当前目标：${after.label}；objectiveLink 必须为 {"questId":"${after.questId}","objectiveIndex":${after.objectiveIndex},"mode":"${objectiveMode}"}。`;
+  const utteranceBeat = context.mandatoryBeats.find((beat) => beat.kind === "player_utterance");
+  const utteranceContract = utteranceBeat === undefined
+    ? "本轮没有玩家原话节拍。"
+    : `本轮玩家原话节拍的精确 beatId 是 ${utteranceBeat.beatId}；npcLine.npcId 必须是 ${utteranceBeat.subjectIds[0] ?? "焦点 NPC"}，answeredBeatIds 必须精确包含 ["${utteranceBeat.beatId}"]。`;
+  const handoffContract = context.objectiveTransition.mode === "advanced_act" && context.objectiveTarget !== null
+    ? `quest_advanced 节拍的 segment.text 必须逐字包含新目标实体名“${context.objectiveTarget.entityName}”。`
+    : "";
+  const genreContract = context.gameType === "wuxia"
+    ? "题材锁定为武侠：对白和旁白只能使用江湖、门派、镖局、官府、山川、兵器、线索、武学语汇；不得出现魔法、巫师、精灵、骑士、幽灵/灵魂、祭坛、法阵、圣光、异界等奇幻或超自然词汇。"
+    : `题材锁定为${context.gameType ?? "当前游戏"}，不得跨题材改写世界规则。`;
 
-  return `只输出 JSON，不能有解释或 Markdown。写一幕 RPG 场景，不得改规则。
+  const prompt = `只输出 JSON，不能有解释或 Markdown。写一幕 RPG 场景，不得改规则。
+${genreContract}
+世界背景=${context.worldPremise ?? "沿用当前世界"}；故事开端=${context.storyOpening ?? "沿用当前主线"}
 风格=${story.stylePolicy.narration}，${story.stylePolicy.narrationInstruction} ${story.stylePolicy.intensityInstruction}
 地点=${context.currentLocation.name}：${context.currentLocation.description}
 玩家=${utterance || "无"}
 NPC=${focusSection}；在场ID=${presentNpcLine}
 节拍=${beatsSection}
 目标=${objectiveSection}
+${utteranceContract} ${handoffContract}
 选项=${selectable.map((c) => `${c.candidateId}:${c.label}`).join("；")}
-JSON={"segments":[{"beatId":"节拍ID","text":"旁白"}],"npcLine":null或{"npcId":"在场ID","text":"两句直接对白","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},"choices":[{"candidateId":"选项ID","label":"玩家行动"},{"candidateId":"另一选项ID","label":"玩家行动"}]}
-${segmentInstruction} 有焦点 NPC 时必须用两句直接对白回答玩家或当前线索，给出可核验下一步；不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。`;
+JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白"}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},"choices":[{"candidateId":"选项ID","label":"玩家行动"},{"candidateId":"另一选项ID","label":"玩家行动"}]}
+${segmentInstruction}
+NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。`;
+  const allowedFactIds = focus === undefined
+    ? []
+    : [...new Set([
+      ...focus.speakableFactCards.map((fact) => String(fact.factId)),
+      ...context.presentNpcs.flatMap((npc) => npc.sceneVisibleFactIds.map(String)),
+    ])];
+  const allowedInteractionIds = focus?.recentInteractions.map((interaction) => interaction.actionId) ?? [];
+  return `${prompt}\n` +
+    `ID 复核：segments.beatId 只能逐字复制“节拍”列表中的 ID，禁止创造 item_given、dialogue_response 等新 ID；` +
+    `npcLine.usedFactIds 只能从 [${allowedFactIds.join(", ")}] 选择，npcLine.usedInteractionActionIds 只能从 [${allowedInteractionIds.join(", ")}] 选择；` +
+    "没有对应引用时必须输出空数组。输出前逐项核对这些 ID。";
 }

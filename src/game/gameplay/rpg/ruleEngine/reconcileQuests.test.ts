@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { reconcileQuests } from "./reconcileQuests";
 import { createInitialWorldState, appendNpc, type NpcEntry, type LocationEntry } from "@/game/domain/worldState";
-import { asLocationId, asNpcId, asQuestId, asGenerationId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asQuestId, asGenerationId, asItemId } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 
 describe("reconcileQuests", () => {
@@ -55,6 +55,24 @@ describe("reconcileQuests", () => {
     const result = reconcileQuests(ws, deps);
     expect(result.events).toHaveLength(0);
     expect(result.nextWorldState.quests[0]?.status).toBe("active");
+  });
+
+  it("item_obtained 历史事实在物品已交付后仍能完成获取目标", () => {
+    const itemId = asItemId("item_1");
+    const ws: WorldState = {
+      ...baseWs,
+      items: [{ id: itemId, name: "证物", description: "d", kind: "quest", tags: [] }],
+      eventLedger: [{ type: "item_obtained", itemId, locationId: asLocationId("loc_1"), occurredAt: "2026-01-01" }],
+      quests: [{
+        id: asQuestId("q_item"), name: "item quest", description: "t",
+        objectives: [{ kind: "obtain_item", itemId }],
+        onSuccess: { kind: "closed" }, onFailure: { kind: "closed" },
+        tags: [], kind: "side", status: "active",
+      }],
+    };
+    const result = reconcileQuests(ws, deps);
+    expect(result.events[0]?.type).toBe("quest_completed");
+    expect(result.nextWorldState.quests[0]?.status).toBe("completed");
   });
 });
 
