@@ -311,6 +311,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     const policy = buildStylePolicy({ personalityTags: ["冷静"], narrativeStyle: "concise", contentIntensity: "normal" });
     expect(prompt).toContain(policy.narrationInstruction);
     expect(prompt).toContain(policy.intensityInstruction);
+    expect(prompt).toContain("不得输出“主线推进到第X幕”“已完成：”“当前目标：”等系统元话术");
   });
 
   it("开局没有强制节拍时，prompt 明确要求唯一合法的 atmosphere 段，避免空 segments 降级", () => {

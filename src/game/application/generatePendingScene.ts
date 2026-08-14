@@ -67,7 +67,7 @@ export async function generatePendingScene(
       worldState: record.worldState,
       storyState: record.storyState,
       source: deps.worldEvolutionSource,
-      allowDeterministicFallback: false,
+      allowDeterministicFallback: deps.allowDeterministicFallback === true,
       reason: "scene_evolution",
       now: deps.now,
     });
@@ -94,7 +94,7 @@ export async function generatePendingScene(
       worldState: scenarioWs,
       storyState: scenarioSs,
       source: deps.worldEvolutionSource,
-      allowDeterministicFallback: false,
+      allowDeterministicFallback: deps.allowDeterministicFallback === true,
       reason: "scene_candidate_shortage",
       now: deps.now,
     });

@@ -160,7 +160,7 @@ export function createServerGameEntryPoints(
         key: `${current.record.gameId}:${generation.job.jobId}`,
       };
     },
-    run: () => generatePendingScene({ repository, sceneSource, worldEvolutionSource, logger, allowDeterministicFallback: false, now }),
+    run: () => generatePendingScene({ repository, sceneSource, worldEvolutionSource, logger, allowDeterministicFallback: true, now }),
     logKey: "runtime_narrative_task",
     logger,
   });
@@ -274,7 +274,7 @@ export function createServerGameEntryPoints(
         : undefined;
       const result = await performTurn(
         { gameId: current.record.gameId, actionId: command.actionId, interaction: command.interaction, expectedRevision: command.expectedRevision, choiceMap },
-        { repository, now, worldEvolutionSource, intentParserSource, allowDeterministicWorldEvolutionFallback: false },
+        { repository, now, worldEvolutionSource, intentParserSource, allowDeterministicWorldEvolutionFallback: true },
       );
       if (result.ok) {
         // Return updated view so the client can render without a separate GET
@@ -317,7 +317,7 @@ export function createServerGameEntryPoints(
               }
               const immediateSceneResult = usedPrewarm
                 ? "saved"
-                : await generatePendingScene({ repository, sceneSource, worldEvolutionSource, logger, allowDeterministicFallback: false, now });
+                : await generatePendingScene({ repository, sceneSource, worldEvolutionSource, logger, allowDeterministicFallback: true, now });
               if (immediateSceneResult === "saved") {
                 const refreshed = await repository.getCurrentGame();
                 if (refreshed.ok && refreshed.status === "active") {

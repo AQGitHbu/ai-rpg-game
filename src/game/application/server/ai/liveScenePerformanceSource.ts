@@ -415,5 +415,6 @@ NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰�
   return `${prompt}\n` +
     `ID 复核：segments.beatId 只能逐字复制“节拍”列表中的 ID，禁止创造 item_given、dialogue_response 等新 ID；` +
     `npcLine.usedFactIds 只能从 [${allowedFactIds.join(", ")}] 选择，npcLine.usedInteractionActionIds 只能从 [${allowedInteractionIds.join(", ")}] 选择；` +
-    "没有对应引用时必须输出空数组。输出前逐项核对这些 ID。";
+    "没有对应引用时必须输出空数组。输出前逐项核对这些 ID。" +
+    "玩家可见旁白必须是连续、具体的剧情正文；不得输出“主线推进到第X幕”“已完成：”“当前目标：”等系统元话术，任务状态由 HUD 单独展示。";
 }

@@ -34,8 +34,10 @@ type BattleFeedback = {
  */
 function cleanLocationSideNote(text: string): string {
   return text
-    .replace(/主线推进。当前目标：[^\s。]+\s*/gu, "")
-    .replace(/完成了任务「[^」]+」的目标：[^\s。]+\s*/gu, "")
+    .replace(/主线推进(?:到第\d+幕)?[。！？!?]?/gu, "")
+    .replace(/已完成：[^。！？!?]*[。！？!?]?/gu, "")
+    .replace(/完成了任务「[^」]+」的目标：[^。！？!?]*[。！？!?]?/gu, "")
+    .replace(/当前目标：[^。！？!?]*[。！？!?]?/gu, "")
     .replace(/。{2,}/gu, "。")
     .replace(/([。！？])\s+/gu, "$1")
     .replace(/\s+/gu, " ")
@@ -372,17 +374,19 @@ export function LocationSceneScreen({
   const preparedDialogue = activeDialogues.find((dialogue) =>
     dialogue.choices.length === 2 || dialogue.freeInputEnabled,
   );
-  const preparedDialogueTalkChoice = preparedDialogue === undefined
-    ? null
-    : view.currentLocation.npcs.find((npc) => npc.name === preparedDialogue.name)?.talkChoice ?? null;
-  // 仍停留在上一座建筑、但主线已交给另一名 NPC 时，不能继续把旧 NPC、
-  // 探索或战斗当作当前任务入口。保持原场景供玩家读完回应；下一步由 HUD
-  // 指明，玩家返回小镇后从目标人物自己的建筑进入，避免把两处空间混成一幕。
   const handoffLeavesCurrentBuilding = selectedNpcChoiceToken !== null
     && view.story.currentObjectiveLabel !== null
     && selectedNpcChoiceToken !== view.story.currentObjectiveChoiceToken;
   const handoffLeavesCurrentLocation = view.story.currentObjectiveLabel !== null
     && view.story.currentObjectiveChoiceToken === null;
+  const preparedDialogueTalkChoice = preparedDialogue === undefined
+    || handoffLeavesCurrentBuilding
+    || handoffLeavesCurrentLocation
+    ? null
+    : view.currentLocation.npcs.find((npc) => npc.name === preparedDialogue.name)?.talkChoice ?? null;
+  // 仍停留在上一座建筑、但主线已交给另一名 NPC 时，不能继续把旧 NPC、
+  // 探索或战斗当作当前任务入口。保持原场景供玩家读完回应；下一步由 HUD
+  // 指明，玩家返回小镇后从目标人物自己的建筑进入，避免把两处空间混成一幕。
   const sceneActions = preparedDialogueTalkChoice !== null
     ? [preparedDialogueTalkChoice]
     : handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation
@@ -446,6 +450,7 @@ export function LocationSceneScreen({
     return null;
   });
   const [battleFeedback, setBattleFeedback] = useState<BattleFeedback | null>(null);
+  const previousViewRevisionRef = useRef(view.revision);
   const previousBattleRef = useRef(view.battle);
 
   useEffect(() => {
@@ -553,6 +558,41 @@ export function LocationSceneScreen({
   const openDialogue: Dialogue | undefined = openDialogueNpcIdForRender
     ? allDialoguesMap.get(openDialogueNpcIdForRender)
     : undefined;
+
+  // 幕交接时旧焦点 NPC 可能只剩一次普通 ask 入口。若继续保留旧弹窗，
+  // 玩家会看到单个“与 NPC 交谈”按钮，却误以为仍在正式双选项对话中。
+  // 只有真正的焦点对白（双选项或自定义输入）才允许跨 pending 保持弹窗。
+  useEffect(() => {
+    const revisionChanged = previousViewRevisionRef.current !== view.revision;
+    previousViewRevisionRef.current = view.revision;
+
+    if (
+      !revisionChanged
+      || pending
+    ) {
+      return;
+    }
+    if (handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation) {
+      setOpenDialogueNpcId(null);
+      return;
+    }
+    if (
+      view.narrative.eventKind !== "dialogue"
+      || openDialogue === undefined
+      || openDialogue.freeInputEnabled
+      || openDialogue.choices.length === 2
+    ) {
+      return;
+    }
+    setOpenDialogueNpcId(null);
+  }, [
+    handoffLeavesCurrentBuilding,
+    handoffLeavesCurrentLocation,
+    openDialogue,
+    pending,
+    view.narrative.eventKind,
+    view.revision,
+  ]);
 
   // 点击 NPC 卡片：纯粹打开对话弹窗，不消费回合
   function handleNpcCardClick(npc: typeof sidebarNpcs[number]) {

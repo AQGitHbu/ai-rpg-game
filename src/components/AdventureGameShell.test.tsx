@@ -332,6 +332,11 @@ describe("AdventureGameShell canonical opaque choices", () => {
       view={{
         ...base,
         revision: base.revision + 1,
+        story: {
+          ...base.story,
+          currentObjectiveLabel: "前往街道",
+          currentObjectiveChoiceToken: TOKENS.travel,
+        },
         narrative: {
           ...base.narrative,
           npcDialogues: [{
@@ -407,6 +412,48 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("closes a stale dialog when a handoff scene only has a non-focus NPC line", async () => {
+    const base = buildView();
+    const onSubmit = vi.fn();
+    const { rerender } = render(<LocationSceneScreen
+      view={base}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    await userEvent.click(screen.getByRole("button", { name: "关闭对话" }));
+    rerender(<LocationSceneScreen
+      view={{ ...base, narrativeGeneration: { status: "pending" } }}
+      busy={true}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+    rerender(<LocationSceneScreen
+      view={{
+        ...base,
+        revision: base.revision + 1,
+        narrative: {
+          ...base.narrative,
+          eventKind: "dialogue",
+          npcDialogues: [{
+            ...base.narrative.npcDialogues[0]!,
+            speechPages: ["盟誓铁印只认当年在场的三个人。"],
+            choices: [choice(TOKENS.dialogueOne, "与老板交谈", "dialogue")],
+            freeInputEnabled: false,
+          }],
+        },
+        narrativeGeneration: { status: "idle" },
+      }}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /老板/ })).toBeInTheDocument();
   });
 
   it("announces the authoritative next task after the generated handoff becomes ready", async () => {
@@ -639,7 +686,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
         ...base,
         narrative: {
           ...base.narrative,
-          narration: "主线推进。当前目标：与陆归鸿交谈 完成了任务「拼回旧案卷宗」的目标：与程砚秋交谈 你身处青石镇，灯笼沿着街檐亮起。",
+          narration: "主线推进到第3幕。已完成：与陆归鸿交谈；当前目标：新的线索。你身处青石镇，灯笼沿着街檐亮起。",
         },
       }}
       busy={false}
@@ -652,6 +699,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(sideNote).toHaveTextContent("你身处青石镇，灯笼沿着街檐亮起。");
     expect(sideNote).not.toHaveTextContent("当前目标");
     expect(sideNote).not.toHaveTextContent("完成了任务");
+    expect(sideNote).not.toHaveTextContent("主线推进");
   });
 
   it("removes punctuation left behind when a quest-status prefix is cleaned from the side note", () => {

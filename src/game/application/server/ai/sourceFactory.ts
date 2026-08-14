@@ -62,7 +62,9 @@ export function createSceneSource(
       config: runtime.config,
       jsonMode: providerJsonModeFor(runtime.outputFormat),
       logger,
-      allowFallback: false,
+      // API 优先；provider 短暂不可用时仍允许同一审批链的确定性恢复，
+      // 避免玩家被永久锁在 pending。成功的 live proposal 仍保持 generated。
+      allowFallback: true,
     });
   }
   logger?.info("scene_source_deterministic", { diagnostics: runtime.diagnostics });

@@ -35,7 +35,14 @@ export function CurrentGameScreen() {
     if (res.status === "none") {
       setState({ phase: "none" });
     } else if (res.status === "active" && res.view !== undefined) {
-      setState({ phase: "active", view: res.view });
+      setState((current) => {
+        // 多个 action/轮询请求可能交错返回；旧 revision 不能覆盖已经展示的
+        // 新状态，否则战斗结束或结局写回后页面会短暂倒退到上一回合。
+        if (current.phase === "active" && current.view.revision > res.view!.revision) {
+          return current;
+        }
+        return { phase: "active", view: res.view! };
+      });
     } else if (res.status === "corrupt") {
       setState({ phase: "corrupt", reason: res.code ?? "UNKNOWN" });
     } else {
@@ -178,7 +185,12 @@ export function CurrentGameScreen() {
     return (
       <AdventureGameShell
         view={view}
-        onViewChange={(newView) => setState({ phase: "active", view: newView })}
+        onViewChange={(newView) => setState((current) => {
+          if (current.phase === "active" && current.view.revision > newView.revision) {
+            return current;
+          }
+          return { phase: "active", view: newView };
+        })}
         onStaleRevision={() => void loadCurrentGame()}
         onClearDevelopmentSave={clearDevelopmentSave}
         onRetryNarrative={() => setNarrativeRetryNonce((current) => current + 1)}

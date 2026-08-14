@@ -4,7 +4,7 @@
 
 运行时 AI 负责提出下一幕的结构化场景表演（分段旁白、焦点 NPC 台词、目标链接与合法选项）；规则系统负责审批候选、铸造玩家 token、裁决行动、审批世界演化并写入状态。AI 不直接写存档，也不能决定任务、关系、知识、战斗或结局。
 
-真机回合的 live 场景表演调用以 45 秒为上限；生产配置启用 live 时，超时、服务失败或非法响应不得静默写入确定性 fallback，而是保留 `narrativeGeneration.pending`，由 ensure/retry 再次调用真实 API。无 AI 配置的离线模式仍使用确定性 source。
+真机回合的 live 场景表演调用以 45 秒为单次上限；生产配置启用 live 时先重试真实 API，超时、服务失败或非法响应会记录稳定失败码并在同一审批链切换到确定性 fallback，不能把 fallback 标成 generated，也不能让玩家永久停留在 `narrativeGeneration.pending`。无 AI 配置的离线模式仍使用确定性 source。
 
 一旦 pending job 已由规则结果完全确定，服务器立即在后台生成，不等待“开始冒险”、继续、确认或下一次客户端 ensure。创建新局与成功回合返回前只完成快速排队，不等待 AI；协调器以 `gameId + jobId` 去重，客户端 ensure/polling 只负责崩溃恢复和结果观测。
 
@@ -37,7 +37,7 @@
 - 服务器根据 post-writeback revision 铸造 opaque `choiceToken`；客户端场景不含 `actionKey`、registry、候选 effect、隐藏事实或 AI diagnostics。
 - ready scene、choice registry、candidate event pool 与已批准世界演化同一次 scene CAS 写回；行动消费时再次验证当前 scene、revision 与规则合法性。
 - scene CAS 与序幕确认并发时，repository 单调保留已确认的 `prologueShown=true`；确认接口对 stale revision 读取新快照后有限重试。
-- 离线 fixture 使用确定性 fallback，fallback 也经过同一 proposal → approval → write-back 链；生产 live 路径必须标记 `source=generated`，API 失败或审批拒绝只返回 unavailable，不把 fallback 伪装成 AI 成功。
+- 离线 fixture 与 live 失败恢复都使用确定性 fallback，fallback 也经过同一 proposal → approval → write-back 链；成功的 live proposal 必须标记 `source=generated`，API 失败或审批拒绝必须保留 `source=fallback` 并记录失败事件，绝不能把 fallback 伪装成 AI 成功。
 - active battle、ending 或候选不足时不伪造普通场景选择。
 - 移动和拾取物品是规则结果已完全确定的单动作；pending 场景使用确定性 source 同步完成审批/写回，不调用 live scene-performance source。拾取仍保留规则 CAS 和结构化 `item_obtained` 节拍。
 - active battle 采用规则 fast path：不创建 pending 场景、不调用 scene source；界面只提供攻击/防守，撤退不再作为可执行选项。战斗开始时保存玩家属性、已击败敌人和事件账本快照；失败只恢复快照并可重新挑战，不推进剧情。
@@ -52,7 +52,7 @@
 - `npcLine.text` 的输出边界是 NPC 第一人称直接台词：不得带 NPC 名称、动作或“说道/答道”等叙述性包装。审批写回和 read model 会再次归一化，以兼容历史场景。
 - 确定性 fallback 会读取 `job.utterance`、焦点 NPC 关系档位和当前目标，生成带具体承接对象的回应；通用“我知道了/好的/嗯”会被 live source 判为无上下文并回退。
 - 承接玩家原话时，NPC 以自己的口吻概括并回答，不得把整段玩家输入包进“你刚才问的‘……’”再反问。确定性 fallback 必须输出角色相关的可核对线索或明确下一步。
-- 焦点 NPC 的开场、正式回应与终局追问至少两句：先回应，再补充线索、保留或下一步。该质量门槛由审批器执行；live source 即使返回单句，也会整场回退为角色化的确定性表演。
+- 焦点 NPC 的开场、正式回应与终局追问至少两句：先回应，再补充线索、保留或下一步。该质量门槛由审批器执行；live source 即使返回单句，也会整场回退为角色化的确定性表演。live prompt 同时禁止把“主线推进到第 X 幕 / 已完成 / 当前目标”系统元话术写进玩家可见旁白。
 - 确定性 fallback 会把物品取得、战斗开始/结束等规则短标签扩展为可阅读的场景句，并保留地点氛围；界面清除任务状态后遗留的重复或开头标点，避免规则标签裸露在地点旁注中。
 
 ## 焦点 NPC 隔离上下文
