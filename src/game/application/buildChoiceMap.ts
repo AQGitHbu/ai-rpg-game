@@ -7,6 +7,7 @@ import type { ActionChoiceMap } from "./actionConverter";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { SKILL_ENERGY_COST } from "@/game/domain/combat";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
+import { isObjectiveEntityReleased } from "@/game/gameplay/rpg/worldEvolution";
 
 // ---------------------------------------------------------------------------
 // 服务端 choiceMap 构建器：从当前 WorldState + StoryState 派生所有合法行动的
@@ -51,7 +52,11 @@ export function buildChoiceMap(
   } else {
     // 当前地点 NPC → talk
     for (const npc of worldState.npcs) {
-      if (npc.locationId === worldState.currentLocationId) {
+      if (
+        npc.locationId === worldState.currentLocationId
+        && isObjectiveEntityReleased(worldState, storyState, (objective) =>
+          objective.kind === "talk_to_npc" && String(objective.npcId) === String(npc.id))
+      ) {
         addRuntimeAction({ type: "talk", npcId: npc.id, dialogueAct: "ask" });
       }
     }
@@ -66,14 +71,23 @@ export function buildChoiceMap(
     const objectiveTarget = objective === null
       ? undefined
       : quest?.objectives[objective.objectiveIndex];
+    const sceneFocusNpcId = storyState.narrative.currentScene?.event?.kind === "dialogue"
+      ? storyState.narrative.currentScene.event.focusNpcId
+      : undefined;
+    const dialogueNpcId = objectiveTarget?.kind === "talk_to_npc"
+      ? objectiveTarget.npcId
+      : sceneFocusNpcId;
     if (
-      objectiveTarget?.kind === "talk_to_npc"
+      dialogueNpcId !== undefined
       && worldState.npcs.some((npc) =>
-        npc.id === objectiveTarget.npcId && npc.locationId === worldState.currentLocationId,
+        npc.id === dialogueNpcId
+          && npc.locationId === worldState.currentLocationId
+          && isObjectiveEntityReleased(worldState, storyState, (candidate) =>
+            candidate.kind === "talk_to_npc" && String(candidate.npcId) === String(dialogueNpcId)),
       )
     ) {
-      addRuntimeAction({ type: "talk", npcId: objectiveTarget.npcId, dialogueAct: "support" });
-      addRuntimeAction({ type: "talk", npcId: objectiveTarget.npcId, dialogueAct: "challenge" });
+      addRuntimeAction({ type: "talk", npcId: dialogueNpcId, dialogueAct: "support" });
+      addRuntimeAction({ type: "talk", npcId: dialogueNpcId, dialogueAct: "challenge" });
     }
 
     // 连接且已解锁的地点 → move
@@ -89,7 +103,11 @@ export function buildChoiceMap(
     // 当前地点可拾取物品 → take_item
     if (currentLoc !== undefined) {
       for (const itemId of currentLoc.availableItemIds) {
-        if (!worldState.inventory.includes(itemId)) {
+        if (
+          !worldState.inventory.includes(itemId)
+          && isObjectiveEntityReleased(worldState, storyState, (objective) =>
+            objective.kind === "obtain_item" && String(objective.itemId) === String(itemId))
+        ) {
           addRuntimeAction({ type: "take_item", itemId });
         }
       }
@@ -98,7 +116,12 @@ export function buildChoiceMap(
     // 当前地点未发现事实 → investigate；正文仍只在行动结算后由场景投影，
     // 这里只下发不泄漏 factId 的 opaque token。
     for (const fact of worldState.worldFacts) {
-      if (fact.locationId === worldState.currentLocationId && !fact.discovered) {
+      if (
+        fact.locationId === worldState.currentLocationId
+        && !fact.discovered
+        && isObjectiveEntityReleased(worldState, storyState, (objective) =>
+          objective.kind === "discover_fact" && String(objective.factId) === String(fact.factId))
+      ) {
         addRuntimeAction({ type: "investigate", factId: fact.factId });
       }
     }
@@ -116,6 +139,8 @@ export function buildChoiceMap(
       if (
         enemy.locationId === worldState.currentLocationId &&
         !worldState.defeatedEnemyIds.includes(enemy.id)
+        && isObjectiveEntityReleased(worldState, storyState, (objective) =>
+          objective.kind === "defeat_enemy" && String(objective.enemyId) === String(enemy.id))
       ) {
         addRuntimeAction({ type: "attack", enemyId: enemy.id });
       }
@@ -158,7 +183,10 @@ function isCurrentlyLegalRegistryAction(
   switch (action.type) {
     case "talk":
       return worldState.npcs.some(
-        (npc) => npc.id === action.npcId && npc.locationId === worldState.currentLocationId,
+        (npc) => npc.id === action.npcId
+          && npc.locationId === worldState.currentLocationId
+          && isObjectiveEntityReleased(worldState, storyState, (objective) =>
+            objective.kind === "talk_to_npc" && String(objective.npcId) === String(action.npcId)),
       );
     case "move":
     case "take_item":
@@ -192,9 +220,16 @@ export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
   // 空转，而是允许玩家先观察现场，再决定拾取或开战。
   const currentLocation = ws.locations.find((location) => location.id === currentId);
   if (currentLocation !== undefined) {
-    const hasAvailableItem = currentLocation.availableItemIds.some((itemId) => !ws.inventory.includes(itemId));
+    const hasAvailableItem = currentLocation.availableItemIds.some((itemId) =>
+      !ws.inventory.includes(itemId)
+      && isObjectiveEntityReleased(ws, ss, (objective) =>
+        objective.kind === "obtain_item" && String(objective.itemId) === String(itemId)),
+    );
     const hasUndefeatedEnemy = ws.enemies.some((enemy) =>
-      enemy.locationId === currentId && !ws.defeatedEnemyIds.includes(enemy.id),
+      enemy.locationId === currentId
+      && !ws.defeatedEnemyIds.includes(enemy.id)
+      && isObjectiveEntityReleased(ws, ss, (objective) =>
+        objective.kind === "defeat_enemy" && String(objective.enemyId) === String(enemy.id)),
     );
     if (hasAvailableItem || hasUndefeatedEnemy) return true;
   }
@@ -205,18 +240,30 @@ export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
   if (ss.narrative.currentScene?.event?.kind === "dialogue") return true;
 
   // 1) 本地点仍有未发现的线索事实（含 NPC 私密事实：探索可引动揭示，不泄漏正文）。
-  if (ws.worldFacts.some((f) => f.locationId === currentId && !f.discovered)) return true;
+  if (ws.worldFacts.some((f) =>
+    f.locationId === currentId
+    && !f.discovered
+    && isObjectiveEntityReleased(ws, ss, (objective) =>
+      objective.kind === "discover_fact" && String(objective.factId) === String(f.factId)),
+  )) return true;
 
   // 2) 未满足的、指向本地点或其线索事实的任务目标（active 任务）。
   const hasUnmetLocationObjective = ws.quests.some((q) =>
     q.status === "active" &&
     q.objectives.some((o) => {
       if (o.kind === "visit_location") {
-        return o.locationId === currentId && !ws.visitedLocationIds.includes(o.locationId);
+        return o.locationId === currentId
+          && !ws.visitedLocationIds.includes(o.locationId)
+          && isObjectiveEntityReleased(ws, ss, (candidate) =>
+            candidate.kind === "visit_location" && String(candidate.locationId) === String(o.locationId));
       }
       if (o.kind === "discover_fact") {
         const fact = ws.worldFacts.find((f) => f.factId === o.factId);
-        return fact !== undefined && fact.locationId === currentId && !fact.discovered;
+        return fact !== undefined
+          && fact.locationId === currentId
+          && !fact.discovered
+          && isObjectiveEntityReleased(ws, ss, (candidate) =>
+            candidate.kind === "discover_fact" && String(candidate.factId) === String(o.factId));
       }
       return false;
     }),

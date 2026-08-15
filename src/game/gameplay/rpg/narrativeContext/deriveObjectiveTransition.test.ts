@@ -35,7 +35,7 @@ describe("deriveObjectiveTransition（Task 4）", () => {
     });
   });
 
-  it("目标 NPC 不在当前地点时，标签同时给出前往地点和交谈对象", () => {
+  it("目标 NPC 不在当前地点时，交谈目标不再吞掉独立的前往步骤", () => {
     const initial = baseWorld();
     const ws = withQuest(withAddedNpc({
       ...initial,
@@ -45,8 +45,8 @@ describe("deriveObjectiveTransition（Task 4）", () => {
       }],
     }, { ...makeNpc(NPC_2_ID, "苏绾", "失踪镖队幸存者"), locationId: asLocationId("loc_2") }),
       quest([{ kind: "talk_to_npc", npcId: NPC_2_ID }]));
-    expect(objectiveLabel(ws, ws.quests[0]?.objectives[0])).toBe("前往断碑谷，与苏绾交谈");
-    expect(currentObjectiveOf(ws, story())?.label).toBe("前往断碑谷，与苏绾交谈");
+    expect(objectiveLabel(ws, ws.quests[0]?.objectives[0])).toBe("与苏绾交谈");
+    expect(currentObjectiveOf(ws, story())?.label).toBe("与苏绾交谈");
   });
 
   it("unchanged：目标未变、无完成、无幕推进 → mode unchanged 且 before===after", () => {

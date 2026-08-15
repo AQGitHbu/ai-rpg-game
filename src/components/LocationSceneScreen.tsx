@@ -421,6 +421,16 @@ export function LocationSceneScreen({
   const selectedNpcChoiceToken = currentSceneNpcName === null
     ? null
     : locationNpcs[0]?.talkChoice.choiceToken ?? null;
+  const currentObjectiveAction = view.story.currentObjectiveChoiceToken === null
+    ? null
+    : view.currentLocation.actions.find((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
+      ?? buildingItems.find((item) => item.choice.choiceToken === view.story.currentObjectiveChoiceToken)?.choice
+      ?? null;
+  const currentObjectiveIsSceneAction = currentObjectiveAction !== null
+    && (currentObjectiveAction.presentation === "explore"
+      || currentObjectiveAction.presentation === "battle"
+      || (currentObjectiveAction.presentation === "item"
+        && buildingItems.some((item) => item.choice.choiceToken === currentObjectiveAction.choiceToken)));
   // 已准备好的焦点对白代表当前主线的唯一入口。两个 support/challenge 是
   // 对话框内的回答，不应和探索、战斗等地点通用动作并排在底栏；否则一次
   // 主线场景会被误读成多条可同时推进的任务。
@@ -429,7 +439,8 @@ export function LocationSceneScreen({
   );
   const handoffLeavesCurrentBuilding = selectedNpcChoiceToken !== null
     && view.story.currentObjectiveLabel !== null
-    && selectedNpcChoiceToken !== view.story.currentObjectiveChoiceToken;
+    && selectedNpcChoiceToken !== view.story.currentObjectiveChoiceToken
+    && !currentObjectiveIsSceneAction;
   const handoffLeavesCurrentLocation = view.story.currentObjectiveLabel !== null
     && view.story.currentObjectiveChoiceToken === null;
   const preparedDialogueTalkChoice = preparedDialogue === undefined
@@ -437,10 +448,16 @@ export function LocationSceneScreen({
     || handoffLeavesCurrentLocation
     ? null
     : view.currentLocation.npcs.find((npc) => npc.name === preparedDialogue.name)?.talkChoice ?? null;
+  // 当前目标是调查/拾取/战斗时，必须优先给出该规则行动。否则上一轮对话
+  // 仍有两项回应时会抢占底栏，物品热点又可能被地点旁注遮住，玩家会失去
+  // 唯一可推进的入口。
+  const currentObjectiveRailAction = currentObjectiveIsSceneAction ? currentObjectiveAction : null;
   // 仍停留在上一座建筑、但主线已交给另一名 NPC 时，不能继续把旧 NPC、
   // 探索或战斗当作当前任务入口。保持原场景供玩家读完回应；下一步由 HUD
   // 指明，玩家返回小镇后从目标人物自己的建筑进入，避免把两处空间混成一幕。
-  const sceneActions = preparedDialogueTalkChoice !== null
+  const sceneActions = currentObjectiveRailAction !== null
+    ? [currentObjectiveRailAction]
+    : preparedDialogueTalkChoice !== null
     ? [preparedDialogueTalkChoice]
     : handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation
       ? []

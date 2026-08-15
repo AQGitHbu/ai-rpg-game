@@ -319,6 +319,7 @@ function planNextAct(ws: WorldState, act: number): WorldDeltaProposal {
     newFact: {
       text: beat.factText,
       visibility: "public",
+      investigationLabel: act === 2 ? "酒楼后巷的车轮印" : "现场留下的线索",
     },
     nextMainQuest: {
       name: questName,

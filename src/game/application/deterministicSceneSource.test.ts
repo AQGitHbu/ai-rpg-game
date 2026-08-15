@@ -264,7 +264,7 @@ describe("deterministicSceneSource", () => {
     expect((await source.generateScene(context)).npcLine?.npcId).toBe("npc_1");
   });
 
-  it("dialogue choices use role-specific player voice and keep a non-dialogue alternative", () => {
+  it("dialogue choices use role-specific player voice and keep a second dialogue response", () => {
     const base = makeContext(makeJob({
       eventKind: "dialogue",
       summary: { kind: "talk", npcId: asNpcId("npc_1") },
@@ -284,8 +284,8 @@ describe("deterministicSceneSource", () => {
     const choices = buildSelectableSceneCandidates(context);
     expect(choices[0]?.label).toContain("镖队究竟发生了什么");
     expect(choices[0]?.action.type).toBe("talk");
-    expect(choices[1]?.action.type).not.toBe("talk");
-    expect(choices[1]?.label).toMatch(/不再追问|暂不回应|默默不作声/);
+    expect(choices[1]?.action.type).toBe("talk");
+    expect(choices[1]?.label).toContain("追问苏绾");
   });
 
   it("keeps a player utterance addressed to the original NPC during a handoff without quoting it back", async () => {

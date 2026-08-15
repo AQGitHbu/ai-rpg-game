@@ -83,12 +83,16 @@ async function runBranch(branch: Branch, replay: number) {
   await freeText(branch.customText); // 4: 自定义分支输入
   await scene();
   reload(); // 重载 1
-  await fixed("传讯人·2"); // 5: 完成第 2 幕主线
+  await fixed("延伸之地·2"); // 5: 前往第 2 幕地点
+  await scene();
+  await fixed("传讯人·2"); // 6: 完成第 2 幕主线交谈步骤
   await scene();
   await finishActEvidence(2);
   await scene(); // 具象化第 3 幕内容
   reload(); // 重载 2
-  await fixed("传讯人·3"); // 6: 完成最终幕主线
+  await fixed("延伸之地·3"); // 7: 前往最终幕地点
+  await scene();
+  await fixed("传讯人·3"); // 8: 完成最终幕主线交谈步骤
   await scene();
   await finishActEvidence(3);
   await scene(); // 具象化结局对（stock 规则要求）

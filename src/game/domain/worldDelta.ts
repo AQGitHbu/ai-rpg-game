@@ -73,7 +73,12 @@ export type WorldDeltaProposal = {
   };
   readonly newItem: null | { readonly name: string; readonly description: string; readonly locationRef: "current" | "new_location" };
   readonly newEnemy: null | { readonly name: string; readonly tier: "normal" | "boss"; readonly locationRef: "current" | "new_location" };
-  readonly newFact: null | { readonly text: string; readonly visibility: "public" | "npc_private" };
+  readonly newFact: null | {
+    readonly text: string;
+    readonly visibility: "public" | "npc_private";
+    /** 不泄露事实正文的第一阶段调查提示。 */
+    readonly investigationLabel?: string;
+  };
   readonly nextMainQuest: null | DynamicQuestProposal;
   readonly endingPair: null | readonly [DynamicEndingProposal, DynamicEndingProposal];
 };

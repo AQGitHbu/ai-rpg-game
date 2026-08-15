@@ -159,7 +159,13 @@ export function parseWorldDeltaProposal(raw: unknown): WorldDeltaProposal | null
     if (!validText(f.text)) return null;
     const visibility = f.visibility;
     if (visibility !== "public" && visibility !== "npc_private") return null;
-    newFact = { text: f.text.trim(), visibility };
+    const investigationLabel = f.investigationLabel;
+    if (investigationLabel !== undefined && !validName(investigationLabel)) return null;
+    newFact = {
+      text: f.text.trim(),
+      visibility,
+      ...(investigationLabel === undefined ? {} : { investigationLabel: investigationLabel.trim() }),
+    };
   }
 
   let nextMainQuest: WorldDeltaProposal["nextMainQuest"] = null;

@@ -21,6 +21,7 @@ import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import { evolveWorld, repairIdOverrideForAction } from "./evolveWorld";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
+import { advanceStoryReveal, isActionReleased } from "@/game/gameplay/rpg/worldEvolution";
 
 export type PerformTurnCommand = {
   readonly gameId: GameId;
@@ -148,6 +149,11 @@ export async function performTurn(
     return { ok: false, code: "UNKNOWN_CHOICE", feedback: "Conversion failed" };
   }
 
+  // 即使客户端携带了旧 choiceMap，隐藏目标也不能绕过当前主线释放游标。
+  if (!isActionReleased(record.worldState, record.storyState, converted.action)) {
+    return { ok: false, code: "ACTION_REJECTED", feedback: "这条线索还没有展开。" };
+  }
+
   const resolved = resolveTurn(
     record.worldState,
     record.storyState,
@@ -193,10 +199,14 @@ export async function performTurn(
           { now: deps.now },
         );
         if (reEvaluated.ok && reEvaluated.resolution.primaryResult.status === "success") {
+          const revealed = advanceStoryReveal({
+            worldState: reEvaluated.resolution.nextWorldState,
+            storyState: reEvaluated.resolution.nextStoryState,
+          });
           // 重演算成功：单次 CAS 提交（含已世界演化实体 + 行动效果 + pending job）
           const narrative = buildTurnNarrative(
             { worldState: record.worldState, storyState: record.storyState },
-            { worldState: reEvaluated.resolution.nextWorldState, storyState: reEvaluated.resolution.nextStoryState },
+            revealed,
             reEvaluated.resolution.primaryResult,
             converted.action,
           );
@@ -207,8 +217,8 @@ export async function performTurn(
             expectedRevision: record.revision,
             action: converted.action,
             turnId: reEvaluated.resolution.turnId,
-            nextWorldState: reEvaluated.resolution.nextWorldState,
-            nextStoryState: reEvaluated.resolution.nextStoryState,
+            nextWorldState: revealed.worldState,
+            nextStoryState: revealed.storyState,
             turnNumber: reEvaluated.resolution.turnNumber,
             primaryResult: reEvaluated.resolution.primaryResult,
             baseLedgerLength: record.worldState.eventLedger.length,
@@ -269,6 +279,11 @@ export async function performTurn(
     };
   }
 
+  const revealed = advanceStoryReveal({
+    worldState: resolution.nextWorldState,
+    storyState: resolution.nextStoryState,
+  });
+
   // 活跃战斗是低延迟规则路径：只要本次推进后仍在战斗中，直接 CAS
   // 提交队列状态，不创建 PendingNarrativeJob，也不等待 AI 场景编排。
   // 终结战斗仍继续走下方叙事任务路径，保证结局/任务有表现机会。
@@ -279,8 +294,8 @@ export async function performTurn(
     const commitResult = await commitState(deps.repository, {
       gameId: command.gameId,
       expectedRevision: record.revision,
-      nextWorldState: resolution.nextWorldState,
-      nextStoryState: resolution.nextStoryState,
+      nextWorldState: revealed.worldState,
+      nextStoryState: revealed.storyState,
     });
     if (!commitResult.ok) {
       return {
@@ -299,7 +314,7 @@ export async function performTurn(
 
   const narrative = buildTurnNarrative(
     { worldState: record.worldState, storyState: record.storyState },
-    { worldState: resolution.nextWorldState, storyState: resolution.nextStoryState },
+    revealed,
     resolution.primaryResult,
     converted.action,
   );
@@ -311,8 +326,8 @@ export async function performTurn(
     expectedRevision: record.revision,
     action: converted.action,
     turnId: resolution.turnId,
-    nextWorldState: resolution.nextWorldState,
-    nextStoryState: resolution.nextStoryState,
+    nextWorldState: revealed.worldState,
+    nextStoryState: revealed.storyState,
     turnNumber: resolution.turnNumber,
     primaryResult: resolution.primaryResult,
     baseLedgerLength: record.worldState.eventLedger.length,

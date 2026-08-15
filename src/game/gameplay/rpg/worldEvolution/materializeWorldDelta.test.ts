@@ -102,14 +102,15 @@ describe("materializeWorldDelta", () => {
       expect(event.newLocationIds).toEqual(["loc_dyn_1"]);
       expect(event.newQuestIds).toEqual(["quest_dyn_1"]);
     }
-    // 新地点双向连接且解锁；NPC 挂载到其地点索引
+    // 新地点双向连接但暂不解锁；第一阶段是当前地点的调查，NPC 挂载到其地点索引
     const locOut = delta.previewWorldState.locations.find((l) => l.id === "loc_0")!;
     expect(locOut.connectedLocationIds).toContain("loc_dyn_1");
     const locNew = delta.previewWorldState.locations.find((l) => l.id === "loc_dyn_1")!;
     expect(locNew.connectedLocationIds).toContain("loc_0");
     expect(locNew.connectedLocationIds).not.toContain("loc_dyn_1");
     expect(locNew.npcIds).toContain("npc_dyn_1");
-    expect(delta.previewWorldState.unlockedLocationIds).toContain("loc_dyn_1");
+    expect(delta.previewWorldState.unlockedLocationIds).not.toContain("loc_dyn_1");
+    expect(delta.previewStoryState.reveal).toEqual({ questId: "quest_dyn_1", visibleObjectiveIndex: 0 });
   });
 
   it("materializes two disjoint endings at the final act and resets status stable", () => {

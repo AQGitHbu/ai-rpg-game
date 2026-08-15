@@ -14,6 +14,7 @@ import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objec
 import { buildTownView, type TownView } from "./townView";
 import { projectCombatView, type BattleView } from "./combatView";
 import { composeDirectNpcGreeting, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
+import { isObjectiveEntityReleased, isQuestObjectiveReleased } from "@/game/gameplay/rpg/worldEvolution";
 
 export type PlayerChoiceView = {
   readonly choiceToken: string;
@@ -192,8 +193,15 @@ function handoffDialogueChoices(
   ];
 }
 
-function projectQuestObjectives(worldState: WorldState, objectives: WorldState["quests"][number]["objectives"]): readonly QuestObjectiveView[] {
-  return objectives.map((objective) => {
+function projectQuestObjectives(
+  worldState: WorldState,
+  storyState: StoryState,
+  questId: string,
+  objectives: WorldState["quests"][number]["objectives"],
+): readonly QuestObjectiveView[] {
+  return objectives
+    .filter((_objective, index) => isQuestObjectiveReleased(storyState, questId, index))
+    .map((objective) => {
     switch (objective.kind) {
       case "visit_location": {
         const location = worldState.locations.find((entry) => entry.id === objective.locationId);
@@ -210,7 +218,9 @@ function projectQuestObjectives(worldState: WorldState, objectives: WorldState["
       case "discover_fact": {
         const fact = worldState.worldFacts.find((entry) => entry.factId === objective.factId);
         return {
-          label: fact?.discovered === true ? `发现${fact.text}` : "发现秘密",
+          label: fact?.discovered === true
+            ? `查明：${fact.text}`
+            : `调查${fact?.investigationLabel ?? "现场线索"}`,
           completed: fact?.discovered === true,
         };
       }
@@ -261,7 +271,12 @@ function currentObjectiveChoiceToken(
     case "discover_fact": {
       const fact = worldState.worldFacts.find((entry) => entry.factId === objective.factId);
       return fact?.locationId === worldState.currentLocationId && !fact.discovered
-        ? choice({ type: "investigate", factId: fact.factId }, revision, "调查目标线索", "explore").choiceToken
+        ? choice(
+            { type: "investigate", factId: fact.factId },
+            revision,
+            `调查${fact.investigationLabel ?? "现场线索"}`,
+            "explore",
+          ).choiceToken
         : null;
     }
     case "defeat_enemy": {
@@ -281,7 +296,11 @@ export function projectGameSessionView(
   endingSessionIdentity: string,
 ): GameSessionView {
   const currentLocation = worldState.locations.find((entry) => entry.id === worldState.currentLocationId);
-  const presentNpcs = worldState.npcs.filter((entry) => entry.locationId === worldState.currentLocationId);
+  const presentNpcs = worldState.npcs.filter((entry) =>
+    entry.locationId === worldState.currentLocationId
+    && isObjectiveEntityReleased(worldState, storyState, (objective) =>
+      objective.kind === "talk_to_npc" && String(objective.npcId) === String(entry.id)),
+  );
   const activeBattle = worldState.battle.status === "active" ? worldState.battle : null;
   const currentObjectiveRef = currentObjectiveOf(worldState, storyState);
   const currentObjectiveQuest = currentObjectiveRef === null
@@ -321,12 +340,20 @@ export function projectGameSessionView(
       locationActions.push(choice({ type: "explore" }, revision, `探索${currentLocation?.name ?? "此地"}`, "explore"));
     }
     const undiscoveredFacts = worldState.worldFacts.filter((fact) =>
-      fact.locationId === worldState.currentLocationId && !fact.discovered,
+      fact.locationId === worldState.currentLocationId
+      && !fact.discovered
+      && isObjectiveEntityReleased(worldState, storyState, (objective) =>
+        objective.kind === "discover_fact" && String(objective.factId) === String(fact.factId)),
     );
     for (const [index, fact] of undiscoveredFacts.entries()) {
       if (fact.locationId === worldState.currentLocationId && !fact.discovered) {
         const suffix = undiscoveredFacts.length > 1 ? ` ${index + 1}` : "";
-        locationActions.push(choice({ type: "investigate", factId: fact.factId }, revision, `调查现场线索${suffix}`, "explore"));
+        locationActions.push(choice(
+          { type: "investigate", factId: fact.factId },
+          revision,
+          `调查${fact.investigationLabel ?? "现场线索"}${suffix}`,
+          "explore",
+        ));
       }
     }
     for (const npc of presentNpcs) {
@@ -339,6 +366,8 @@ export function projectGameSessionView(
     }
     for (const enemy of worldState.enemies) {
       if (enemy.locationId === worldState.currentLocationId && !worldState.defeatedEnemyIds.includes(enemy.id)) {
+        if (!isObjectiveEntityReleased(worldState, storyState, (objective) =>
+          objective.kind === "defeat_enemy" && String(objective.enemyId) === String(enemy.id))) continue;
         locationActions.push(choice({ type: "attack", enemyId: enemy.id }, revision, `挑战${enemy.name}`, "battle"));
       }
     }
@@ -347,6 +376,8 @@ export function projectGameSessionView(
   const obtainableItems = activeBattle === null
     ? (currentLocation?.availableItemIds ?? [])
       .filter((itemId) => !worldState.inventory.includes(itemId))
+      .filter((itemId) => isObjectiveEntityReleased(worldState, storyState, (objective) =>
+        objective.kind === "obtain_item" && String(objective.itemId) === String(itemId)))
       .map((itemId, index) => {
         const item = worldState.items.find((entry) => entry.id === itemId);
         const townBuildings = townView?.interactiveBuildings ?? [];
@@ -595,7 +626,7 @@ export function projectGameSessionView(
       description: quest.description,
       kind: quest.kind,
       status: quest.status,
-      objectives: projectQuestObjectives(worldState, quest.objectives),
+      objectives: projectQuestObjectives(worldState, storyState, String(quest.id), quest.objectives),
     })),
     prologueShown: storyState.prologueShown,
     prologueText: storyState.prologueText,

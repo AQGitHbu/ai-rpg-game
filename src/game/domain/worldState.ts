@@ -88,6 +88,8 @@ export type WorldFactEntry = {
   readonly source: FactSource;
   readonly discovered: boolean;
   readonly locationId?: LocationId;
+  /** 未发现事实在任务/调查入口中使用的安全提示，不等于事实正文。 */
+  readonly investigationLabel?: string;
 };
 
 export type QuestObjective =

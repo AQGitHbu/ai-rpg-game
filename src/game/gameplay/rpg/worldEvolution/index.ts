@@ -8,3 +8,9 @@ export type {
 } from "./approveWorldDelta";
 export { materializeWorldDelta } from "./materializeWorldDelta";
 export type { MaterializeWorldDeltaInput } from "./materializeWorldDelta";
+export {
+  advanceStoryReveal,
+  isActionReleased,
+  isObjectiveEntityReleased,
+  isQuestObjectiveReleased,
+} from "./storyReveal";

@@ -14,6 +14,7 @@ import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/
 import type { WorldState } from "@/game/domain/worldState";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { buildFocusNpcContext, type FocusNpcContext, type FactCard } from "./focusNpcContext";
+import { isObjectiveEntityReleased } from "@/game/gameplay/rpg/worldEvolution";
 import { buildStylePolicy, type StylePolicy } from "./stylePolicy";
 import type { GameRecord } from "./server/persistence/gameRepository";
 import type { GameTypeId } from "@/game/domain/newGame";
@@ -189,7 +190,12 @@ function resolveObjectiveTarget(
     }
     case "discover_fact": {
       const fact = ws.worldFacts.find((f) => String(f.factId) === String(objective.factId));
-      return { questId: String(ref.questId), objectiveIndex: ref.objectiveIndex, entityId: String(objective.factId), entityName: fact?.discovered === true ? fact.text : "某件往事" };
+      return {
+        questId: String(ref.questId),
+        objectiveIndex: ref.objectiveIndex,
+        entityId: String(objective.factId),
+        entityName: fact?.discovered === true ? fact.text : `调查${fact?.investigationLabel ?? "现场线索"}`,
+      };
     }
     case "defeat_enemy": {
       const enemy = ws.enemies.find((e) => String(e.id) === String(objective.enemyId));
@@ -235,6 +241,8 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
 
   const presentNpcs: NpcSceneContext[] = ws.npcs
     .filter((n) => n.locationId === currentLocId)
+    .filter((n) => isObjectiveEntityReleased(ws, ss, (objective) =>
+      objective.kind === "talk_to_npc" && String(objective.npcId) === String(n.id)))
     .map((n) => {
       const knownCards = n.memory.knownFactIds
         .map((id) => factById.get(String(id)))
@@ -252,7 +260,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
         knownFactCards: knownCards,
         hiddenFactCards: hiddenCards,
         sceneVisibleFactIds: ws.worldFacts
-          .filter((f) => f.locationId === currentLocId || f.discovered)
+          .filter((f) => f.discovered)
           .map((f) => f.factId),
         recentInteractionSummaries: n.memory.interactionHistory.slice(-3).map((h) => h.summary),
         recentInteractionActionIds: n.memory.interactionHistory.slice(-5).map((h) => String(h.actionId)),
@@ -293,13 +301,25 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     for (const id of npc.memory.hiddenFactIds) secretFactKeys.add(String(id));
   }
   const publicFacts = ws.worldFacts
-    .filter((f) => !secretFactKeys.has(String(f.factId)))
+    .filter((f) => !secretFactKeys.has(String(f.factId)) && f.discovered)
     .map((f) => ({ factId: f.factId, text: f.text }));
   const sceneVisible = ws.worldFacts
     .filter((f) => !secretFactKeys.has(String(f.factId)))
-    .filter((f) => f.locationId === currentLocId || f.discovered)
+    .filter((f) => f.discovered)
     .map((f) => ({ factId: f.factId, text: f.text }));
   const activeBattleEnemyId = ws.battle.status === "active" ? ws.battle.enemyId : null;
+  const releasedFacts = ws.worldFacts
+    .filter((fact) => fact.discovered || isObjectiveEntityReleased(ws, ss, (objective) =>
+      objective.kind === "discover_fact" && String(objective.factId) === String(fact.factId)))
+    .map((fact) => fact.factId);
+  const releasedItems = ws.items
+    .filter((item) => ws.inventory.includes(item.id) || isObjectiveEntityReleased(ws, ss, (objective) =>
+      objective.kind === "obtain_item" && String(objective.itemId) === String(item.id)))
+    .map((item) => item.id);
+  const releasedEnemies = ws.enemies
+    .filter((enemy) => isObjectiveEntityReleased(ws, ss, (objective) =>
+      objective.kind === "defeat_enemy" && String(objective.enemyId) === String(enemy.id)))
+    .map((enemy) => enemy.id);
 
   return {
     gameType: ws.generation.gameType,
@@ -355,18 +375,20 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
             : []),
         ],
     legalEventTargets: {
-      locationIds: ws.locations.map((location) => location.id),
+      locationIds: ws.locations
+        .filter((location) => ws.unlockedLocationIds.includes(location.id))
+        .map((location) => location.id),
       factIds: Array.from(new Set([
-        ...sceneVisible.map((fact) => fact.factId),
+        ...releasedFacts,
         ...job.resolvedEvent.facts.map((fact) => fact.factId),
       ])),
-      itemIds: ws.items.map((item) => item.id),
+      itemIds: releasedItems,
       enemyIds: activeBattleEnemyId !== null
         ? [
             activeBattleEnemyId,
-            ...ws.enemies.filter((enemy) => enemy.id !== activeBattleEnemyId).map((enemy) => enemy.id),
+            ...releasedEnemies.filter((enemyId) => enemyId !== activeBattleEnemyId),
           ]
-        : ws.enemies.map((enemy) => enemy.id),
+        : releasedEnemies,
     },
     worldConstraints: [],
     objectiveTransition: transition,

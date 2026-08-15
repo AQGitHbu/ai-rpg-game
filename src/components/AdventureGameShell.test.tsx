@@ -616,6 +616,70 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(within(screen.getByRole("navigation", { name: "行动栏" })).queryByRole("button")).toBeNull();
   });
 
+  it("keeps a same-location investigation action visible after an NPC handoff", () => {
+    const base = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        currentLocation: {
+          ...base.currentLocation,
+          actions: [
+            choice(TOKENS.explore, "调查酒楼后巷的车轮印", "explore"),
+            choice(TOKENS.dialogueOne, "与老板交谈", "dialogue"),
+          ],
+        },
+        story: {
+          ...base.story,
+          currentObjectiveLabel: "调查酒楼后巷的车轮印",
+          currentObjectiveChoiceToken: TOKENS.explore,
+        },
+        narrative: { ...base.narrative, npcDialogues: [] },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+      initialFocusNpcId="npc_1"
+      sceneNpcName="老板"
+    />);
+
+    expect(screen.getByRole("button", { name: "调查酒楼后巷的车轮印" })).toBeInTheDocument();
+  });
+
+  it("keeps the current item objective in the action rail while the prior NPC dialogue is ready", () => {
+    const base = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        currentLocation: {
+          ...base.currentLocation,
+          actions: [
+            choice(TOKENS.item, "拾取染血腰牌", "item"),
+            choice(TOKENS.dialogueOne, "与老板交谈", "dialogue"),
+          ],
+        },
+        obtainableItems: [{
+          name: "染血腰牌",
+          description: "一块旧腰牌。",
+          buildingId: "building_1",
+          choice: choice(TOKENS.item, "拾取染血腰牌", "item"),
+        }],
+        story: {
+          ...base.story,
+          currentObjectiveLabel: "获取染血腰牌",
+          currentObjectiveChoiceToken: TOKENS.item,
+        },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+      initialFocusNpcId="npc_1"
+      sceneNpcName="老板"
+      sceneBuildingId="building_1"
+    />);
+
+    expect(within(screen.getByRole("navigation", { name: "行动栏" })).getByRole("button", { name: "拾取染血腰牌" })).toBeInTheDocument();
+  });
+
   it("sets the same busy state for NPC free text until the request settles", async () => {
     let resolveRequest!: (outcome: ActionOutcome) => void;
     vi.mocked(postAction).mockImplementationOnce(() => new Promise<ActionOutcome>((resolve) => {

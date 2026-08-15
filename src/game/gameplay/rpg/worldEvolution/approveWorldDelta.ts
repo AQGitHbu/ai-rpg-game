@@ -202,21 +202,21 @@ function deriveAnchorObjective(
 }
 
 /**
- * 正式幕必须留出可阅读、可验证的过程，而非一次交谈就结束。若本幕同时
- * 具象化了人物、证物与敌人，按“对话 → 取得证物 → 处理阻拦”串成同一条
- * 主线；提案只缺其中任一实体时仍退化为单个可达锚点，保持通用审批能力。
+ * 正式幕必须留出可阅读、可验证的过程，而非一次交谈就结束。完整动态幕
+ * 按“调查现场 → 前往新地点 → 与人物交谈 → 取得证物 → 处理阻拦”串成
+ * 单向主线；提案缺少某类实体时自动跳过该类，但不压缩仍存在的步骤。
  */
 function deriveActObjectives(
   p: WorldDeltaProposal,
   ids: MintedIds,
 ): readonly QuestObjective[] | null {
-  if (p.newNpc && ids.npcId && p.newItem && ids.itemId && p.newEnemy && ids.enemyId) {
-    return [
-      { kind: "talk_to_npc", npcId: ids.npcId },
-      { kind: "obtain_item", itemId: ids.itemId },
-      { kind: "defeat_enemy", enemyId: ids.enemyId },
-    ];
-  }
+  const objectives: QuestObjective[] = [];
+  if (p.newFact && ids.factId) objectives.push({ kind: "discover_fact", factId: ids.factId });
+  if (p.newLocation && ids.locationId) objectives.push({ kind: "visit_location", locationId: ids.locationId });
+  if (p.newNpc && ids.npcId) objectives.push({ kind: "talk_to_npc", npcId: ids.npcId });
+  if (p.newItem && ids.itemId) objectives.push({ kind: "obtain_item", itemId: ids.itemId });
+  if (p.newEnemy && ids.enemyId) objectives.push({ kind: "defeat_enemy", enemyId: ids.enemyId });
+  if (objectives.length > 0) return objectives;
   const anchor = deriveAnchorObjective(p, ids);
   return anchor === null ? null : [anchor];
 }
@@ -477,10 +477,12 @@ export function approveWorldDelta(input: {
       factId: ids.factId,
       text: p.newFact.text,
       source: "generated",
-      discovered: p.newFact.visibility === "public",
-      // 提案协议中的 fact 没有单独 locationRef：同批新地点优先，否则挂到
-      // 当前地点，保证调查入口能从权威世界状态投影出来。
-      locationId: ids.locationId ?? ws.currentLocationId,
+      // public 只表示可在发现后进入玩家事实卡，不能跳过调查动作。
+      discovered: false,
+      investigationLabel: p.newFact.investigationLabel,
+      // 第一阶段必须是玩家当前所在的酒楼后巷/现场调查；否则新地点一
+      // 生成就会把“现场线索”错误地放到尚未抵达的地点。
+      locationId: ws.currentLocationId,
     });
   }
 

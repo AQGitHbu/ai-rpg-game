@@ -29,6 +29,10 @@ describe("叙事落地旅程（Step 2）", () => {
     await playIssuedChoice(store.repo, "交谈");
     await advanceScene(store.repo);
 
+    // 下一幕先释放并执行抵达步骤，抵达后才释放主线 NPC。
+    await playIssuedChoice(store.repo, "延伸之地·2");
+    await advanceScene(store.repo);
+
     // 幕交接后，新的主线 NPC 即刻接管焦点；无需先浪费一次“打开对话”回合。
     const current = store.record()!;
     const objective = currentObjectiveOf(current.worldState, current.storyState);
@@ -182,6 +186,11 @@ describe("叙事落地旅程（Step 2）", () => {
 
     // 回合 1: 交谈 → 完成 quest_0，幕推进。
     await playIssuedChoice(store.repo, "交谈");
+    await advanceScene(store.repo);
+
+    await playIssuedChoice(store.repo, "延伸之地·2");
+    await advanceScene(store.repo);
+    await playIssuedChoice(store.repo, "传讯人·2");
     await advanceScene(store.repo);
 
     // 物品拾取。

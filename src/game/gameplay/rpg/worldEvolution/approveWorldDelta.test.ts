@@ -86,7 +86,11 @@ describe("approveWorldDelta", () => {
     expect(result.approved.mintedQuestIds[0]).toBe("quest_dyn_1");
     expect(result.approved.newQuests[0]!.stage).toBe(2);
     expect(result.approved.newQuests[0]!.kind).toBe("main");
-    expect(result.approved.newQuests[0]!.objectives[0]).toEqual({ kind: "talk_to_npc", npcId: "npc_dyn_1" });
+    expect(result.approved.newQuests[0]!.objectives).toEqual([
+      { kind: "discover_fact", factId: "fact_dyn_0" },
+      { kind: "visit_location", locationId: "loc_dyn_1" },
+      { kind: "talk_to_npc", npcId: "npc_dyn_1" },
+    ]);
     expect(result.approved.nextEvolution.status).toBe("needs_next_act");
     expect(result.approved.nextEvolution.nextNpcOrdinal).toBe(2);
   });

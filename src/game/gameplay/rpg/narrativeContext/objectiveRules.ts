@@ -34,10 +34,9 @@ export function objectiveLabel(ws: WorldState, objective: QuestObjective | undef
     case "talk_to_npc": {
       const npc = findNpc(ws, objective.npcId);
       if (!npc) return "与某人交谈";
-      const location = findLocation(ws, npc.locationId);
-      return location !== undefined && String(npc.locationId) !== String(ws.currentLocationId)
-        ? `前往${location.name}，与${npc.name}交谈`
-        : `与${npc.name}交谈`;
+      // 前往和交谈是两个可观察、可释放的阶段，不能再把它们压成一句
+      // 任务文本；否则玩家会看到一个尚未抵达的人物已经“可交谈”。
+      return `与${npc.name}交谈`;
     }
     case "obtain_item": {
       const item = findItem(ws, objective.itemId);
@@ -45,8 +44,10 @@ export function objectiveLabel(ws: WorldState, objective: QuestObjective | undef
     }
     case "discover_fact": {
       const fact = ws.worldFacts.find((f) => f.factId === objective.factId);
-      // 未发现的事实正文绝不进入标签（最小权限；发现后与事件卡同文案）。
-      return fact?.discovered === true ? `查明：${fact.text}` : "查明某件往事";
+      // 未发现的事实正文绝不进入标签；调查提示可以指向现场，但不能给答案。
+      return fact?.discovered === true
+        ? `查明：${fact.text}`
+        : `调查${fact?.investigationLabel ?? "现场线索"}`;
     }
     case "defeat_enemy": {
       const enemy = ws.enemies.find((e) => e.id === objective.enemyId);

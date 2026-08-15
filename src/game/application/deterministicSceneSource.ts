@@ -100,6 +100,19 @@ export function buildSelectableSceneCandidates(context: SceneGenerationContext):
       label: dialogueChoiceLabel(npc),
       action: { type: "talk", npcId: npc.id, dialogueAct: "support" },
     };
+    if (event.kind === "dialogue") {
+      // 已经由玩家主动点开的人物对话应保留完整的支持/质疑两项回应，
+      // 即使当前主线正在等待调查或移动；旁支交谈不应被读模型降格成
+      // 一次只有“与某人交谈”的空壳回合。
+      return [
+        dialogueCandidate,
+        {
+          candidateId: "candidate_2",
+          label: `追问${npc.name}：“我会逐项核对线索；你凭什么确定它们指向同一个人？”`,
+          action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" },
+        },
+      ];
+    }
     const nonDialogueCandidate = context.legalActionCandidates
       .map(actionFromLegalCandidate)
       .filter((action): action is Action => action !== null && action.type !== "talk")

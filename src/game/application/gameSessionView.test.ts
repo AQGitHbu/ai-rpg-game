@@ -616,7 +616,7 @@ describe("projectGameSessionView", () => {
     expect(serialized).not.toContain(SECRET_TEXT);
     expect(serialized).not.toContain("fact_secret");
     const objective = view.quests[0]?.objectives[0];
-    expect(objective?.label).toBe("发现秘密");
+    expect(objective?.label).toBe("调查现场线索");
     expect(objective?.completed).toBe(false);
   });
 
@@ -776,7 +776,7 @@ describe("projectGameSessionView", () => {
     const view = projectGameSessionView(fullWorld, pendingStory, 12, "opaque-ended-session");
     expect(view.revision).toBe(12);
     expect(view.narrativeGeneration).toEqual({ status: "pending" });
-    expect(view.quests[0]?.objectives).toEqual([{ label: "发现秘密", completed: false }]);
+    expect(view.quests[0]?.objectives).toEqual([{ label: "调查现场线索", completed: false }]);
     expect(view.ending).toMatchObject({ name: "故事结局", outcome: "success", restartIdentity: "opaque-ended-session" });
 
     const reloaded = JSON.parse(JSON.stringify(view));

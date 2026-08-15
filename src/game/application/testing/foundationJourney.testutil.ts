@@ -116,18 +116,18 @@ function journeyNextActProposal(act: number, currentLocationId: string): WorldDe
       name: `传讯人·${act}`,
       role: "信使",
       description: `风尘仆仆赶来的第${act}幕传讯人。`,
-      locationRef: { kind: "existing", id: currentLocationId },
+      locationRef: { kind: "new_location" },
       goals: [`传递第${act}幕的线索`],
     },
     newItem: {
       name: `信物·${act}`,
       description: `第${act}幕途中拾得的信物。`,
-      locationRef: "current",
+      locationRef: "new_location",
     },
     newEnemy: {
       name: `守径人·${act}`,
       tier: "normal",
-      locationRef: "current",
+      locationRef: "new_location",
     },
     newFact: null,
     nextMainQuest: {

@@ -6,6 +6,7 @@ import type { EventCandidate } from "./candidateEvent";
 import type { StoryContract } from "./storyContract";
 import { createStoryContract } from "./storyContract";
 import type { StoryEvolutionState } from "./worldDelta";
+import type { QuestId } from "./worldEntity";
 
 // 结构化候选事件契约由 candidateEvent.ts 定义并在此再导出，保持既有调用点兼容。
 export type { EventCandidate, EventCandidateKind, ProposedEffect } from "./candidateEvent";
@@ -39,6 +40,17 @@ export type PacingNeed = "reveal" | "develop" | "complicate" | "escalate" | "cli
 
 export type ThreadId = string;
 
+/**
+ * 动态主线的可见释放游标。
+ *
+ * 世界演化可以提前物化完整的一幕，但读模型和动作入口只允许看到当前
+ * 游标及之前的目标。旧存档没有该字段时由各投影按兼容行为处理。
+ */
+export type StoryRevealState = {
+  readonly questId: QuestId;
+  readonly visibleObjectiveIndex: number;
+};
+
 export type StoryState = {
   readonly version: typeof STORY_STATE_SCHEMA_VERSION;
   /** 已提交的玩家回合数；不等于 event ledger 长度或 DB revision。 */
@@ -64,6 +76,8 @@ export type StoryState = {
   readonly contract: StoryContract;
   /** 运行时具象化账本：实体序号与演化状态（Task 3 起由世界演化推进）。 */
   readonly evolution: StoryEvolutionState;
+  /** 动态主线的分阶段释放游标；旧存档缺失时保持既有可见性。 */
+  readonly reveal?: StoryRevealState | null;
 };
 
 export function createInitialStoryState(input: {
@@ -112,6 +126,7 @@ export function createInitialStoryState(input: {
       nextEndingOrdinal: 0,
       status: "stable",
     },
+    reveal: null,
   };
 }
 

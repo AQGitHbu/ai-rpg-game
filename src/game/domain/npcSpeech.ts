@@ -140,8 +140,11 @@ export function isGenericNpcInquiry(text: string): boolean {
  * 无角色信息时保留旧兼容文案；有角色信息时必须先承接人物身份，
  * 避免幸存者、信使等剧情人物冒出与场景无关的“欢迎光临”。
  */
-export function composeDirectNpcGreeting(npcRole?: string, _npcName?: string): string {
+export function composeDirectNpcGreeting(npcRole?: string, npcName?: string): string {
   const role = npcRole?.trim() ?? "";
+  if (npcName?.trim() === "顾砚") {
+    return "你也是顺着酒楼后巷的车轮印和现场线索追来的？我受韩七所托赶到这里。先把你在后巷看到的现场说清楚，我再把带来的东西交给你核对。";
+  }
   if (/(传讯|信使|线人)/u.test(role)) return "你来得正好，我手里的线索只交给正在查这桩旧案的人。先把密信和腰牌的来历对上，我们再谈下一步。";
   if (/(幸存者|镖队)/u.test(role)) return "别急着问镖队，先让我确认你手里有没有能对上旧案的证据。我不想再让一个无辜的人替这桩旧案付出代价。";
   if (/(卷宗|保管人)/u.test(role)) return "这份旧案牵连太深；你若真要查下去，我可以先交出我保管的那一页。缺失的印记，必须和你手里的证据一一核对。";

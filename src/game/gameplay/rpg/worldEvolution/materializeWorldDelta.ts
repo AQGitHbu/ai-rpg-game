@@ -10,7 +10,7 @@ import { createTownRuntime, townSeedFor, bindNpcToTownSlot } from "@/game/gamepl
 // ---------------------------------------------------------------------------
 // Task 3：把已审批的世界演化装配为预览状态并落账。
 // 纯函数（除注入时钟 now）；不改动入参状态，返回 immutable 预览世界/故事状态。
-// 接线规则：新地点与既有地点双向连接并自动解锁；NPC/物品挂载到所属地点；
+// 接线规则：新地点与既有地点双向连接；是否解锁由主线释放游标决定；NPC/物品挂载到所属地点；
 // 实体经 appended 追加；blueprint_expanded 事件记录本次铸造的 ID。
 // ---------------------------------------------------------------------------
 
@@ -39,6 +39,11 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
   const { approved, ws, ss, now } = input;
 
   const newLocationIds = approved.newLocations.map((l) => l.id);
+  const stagedQuest = approved.newQuests[0];
+  const firstObjective = stagedQuest?.objectives[0];
+  const locationsReleasedImmediately = stagedQuest === undefined || firstObjective?.kind === "visit_location"
+    ? newLocationIds
+    : [];
 
   // 挂载增量（避免重复挂载到新地点条目）。
   const patch = new Map<LocationId, LocationPatch>();
@@ -120,8 +125,8 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
     worldFacts: [...ws.worldFacts, ...approved.newFacts],
     quests: [...ws.quests, ...approved.newQuests],
     endings: [...ws.endings, ...approved.newEndings],
-    unlockedLocationIds: newLocationIds.length > 0
-      ? [...new Set([...ws.unlockedLocationIds, ...newLocationIds])]
+    unlockedLocationIds: locationsReleasedImmediately.length > 0
+      ? [...new Set([...ws.unlockedLocationIds, ...locationsReleasedImmediately])]
       : ws.unlockedLocationIds,
     eventLedger: [...ws.eventLedger, event],
   };
@@ -130,6 +135,9 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
     ...ss,
     evolution: { ...approved.nextEvolution, status: "stable" },
     budget: approved.nextBudget,
+    reveal: stagedQuest === undefined || stagedQuest.objectives.length === 0
+      ? ss.reveal ?? null
+      : { questId: stagedQuest.id, visibleObjectiveIndex: 0 },
   };
 
   return {

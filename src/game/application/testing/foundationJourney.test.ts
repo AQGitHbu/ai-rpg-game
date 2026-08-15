@@ -90,7 +90,11 @@ describe("foundation 动态闭环旅程", () => {
     expect(ws?.eventLedger.some((event) => event.type === "blueprint_expanded")).toBe(true);
     reload(); // 重载 1：从持久化记录恢复后状态一致
 
-    // 物品获取。
+    // 第 2 幕按释放游标依次：前往新地点 → 交谈 → 取物。
+    await fixed("延伸之地");
+    await scene();
+    await fixed("传讯人·2");
+    await scene();
     await fixed("拾取");
     await scene();
     ws = await loadWorldState(store.repo);
@@ -104,31 +108,19 @@ describe("foundation 动态闭环旅程", () => {
     expect(ws?.battle.status).toBe("resolved");
     expect(ws?.defeatedEnemyIds.length).toBeGreaterThanOrEqual(1);
 
-    // 地图移动：小镇（loc_0）→ 新延伸之地 → 回到小镇。
+    reload(); // 重载 2：第 3 幕从第 2 幕地点继续
+
+    // 第 3 幕同样先移动，再交谈、取物、战斗。
     await fixed("延伸之地");
     await scene();
-    ws = await loadWorldState(store.repo);
-    expect(ws?.currentLocationId !== undefined).toBe(true);
-    await fixed("前往"); // 回到小镇
+    await fixed("传讯人·3");
     await scene();
-    reload(); // 重载 2
-
-    // 完成第 2 幕主线 → 第 3 幕具象化。
-    await fixed("传讯人·2");
-    await scene();
-    ss = await loadStoryState(store.repo);
-    expect(ss?.currentAct).toBe(3);
-
-    // 第 3 幕：再取物品、再战、完成主线。
     await fixed("拾取");
     await scene();
     await fixed("挑战");
     await scene();
     await fightToVictory();
-    reload(); // 重载 3
-
-    await fixed("传讯人·3"); // 完成最终幕主线 → 结局对具象化
-    await scene();
+    reload(); // 重载 3：最终幕结束后恢复结局场景
     ws = await loadWorldState(store.repo);
     expect(ws?.endings.length).toBeGreaterThanOrEqual(2);
 
