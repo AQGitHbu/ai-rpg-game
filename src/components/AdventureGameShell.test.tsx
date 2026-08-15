@@ -271,6 +271,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       choiceToken: TOKENS.dialogueOne,
     });
     expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("正在等待老板回应");
   });
 
   it("does not show a town item inside a different building scene", () => {
@@ -332,6 +333,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       view={{
         ...base,
         revision: base.revision + 1,
+        turnNumber: base.turnNumber + 1,
         story: {
           ...base.story,
           currentObjectiveLabel: "前往街道",
@@ -355,6 +357,56 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
     expect(screen.getByText("我看见告示是子时后贴上的，贴告示的人左手有一道新伤。你若要追查，先去巷口找留下的车辙。")).toBeInTheDocument();
+    expect(screen.getByText("NPC回应")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("下一步");
+    expect(screen.getByRole("button", { name: "查看下一步" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "查看下一步" }));
+    expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
+  });
+
+  it("shows the NPC reply before restoring the same NPC's next choices", async () => {
+    const base = buildView();
+    const onSubmit = vi.fn();
+    const { rerender } = render(<LocationSceneScreen
+      view={base}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    await userEvent.click(screen.getByRole("button", { name: "追问线索" }));
+    rerender(<LocationSceneScreen
+      view={{ ...base, narrativeGeneration: { status: "pending" } }}
+      busy={true}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+    rerender(<LocationSceneScreen
+      view={{
+        ...base,
+        revision: base.revision + 1,
+        turnNumber: base.turnNumber + 1,
+        story: { ...base.story, currentObjectiveLabel: "查明秘密" },
+        narrative: {
+          ...base.narrative,
+          npcDialogues: [{
+            ...base.narrative.npcDialogues[0]!,
+            speechPages: ["我可以告诉你更多，但你得先说清楚自己站在哪一边。"],
+          }],
+        },
+        narrativeGeneration: { status: "idle" },
+      }}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    expect(screen.getByText("NPC回应")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "继续对话" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "追问线索" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "继续对话" }));
+    expect(screen.getByRole("button", { name: "追问线索" })).toBeInTheDocument();
   });
 
   it("does not auto-open an NPC dialog when pending completes and a new NPC appears", async () => {

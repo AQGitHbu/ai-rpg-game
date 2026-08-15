@@ -17,7 +17,11 @@ import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { generatePendingScene } from "../generatePendingScene";
 import { buildSceneGenerationContext } from "../sceneGenerationContext";
 import { approveScenePerformance } from "../approveAndWriteScene";
-import { prewarmBattleVictoryScene, type BattleScenePrewarm } from "./battleScenePrewarm";
+import {
+  battleVictoryRequiresWorldEvolution,
+  prewarmBattleVictoryScene,
+  type BattleScenePrewarm,
+} from "./battleScenePrewarm";
 import { createDeterministicSceneSource } from "../deterministicSceneSource";
 import { commitState } from "../stateCommit";
 import { buildChoiceMap } from "../buildChoiceMap";
@@ -379,17 +383,23 @@ export function createServerGameEntryPoints(
               && resolvedBattle.outcome === "victory"
               && resolvedBattle.battleKey !== undefined;
             let battlePrewarmPending = false;
+            let victoryNeedsNormalGeneration = false;
             if (isVictoryAction) {
-              // fallback 提案在战斗开始时并行准备；若玩家极快结束战斗，
-              // 这里仅等待本地确定性计算（通常为毫秒级），绝不等待 API。
-              let prewarm = battleScenePrewarmCache.get(resolvedBattle.battleKey);
-              if (prewarm === undefined) {
-                prewarm = await ensureBattleSceneFallback(readyRecord) ?? undefined;
-              }
-              if (prewarm !== undefined) {
-                const usedPrewarm = await applyPrewarmedBattleScene(readyRecord, prewarm);
-                if (usedPrewarm) {
-                  battleScenePrewarmCache.delete(resolvedBattle.battleKey);
+              victoryNeedsNormalGeneration = battleVictoryRequiresWorldEvolution(readyRecord);
+              if (victoryNeedsNormalGeneration) {
+                // 胜利刚刚完成主线目标时，预热提案仍基于战斗中的旧实体集合；
+                // 必须走完整 pending-scene 编排，让 world evolution 先具象化
+                // 下一幕/结局对，再生成并审批对应场景。
+                battleScenePrewarmCache.delete(resolvedBattle.battleKey);
+                const evolvedSceneResult = await generatePendingScene({
+                  repository,
+                  sceneSource,
+                  worldEvolutionSource,
+                  logger,
+                  allowDeterministicFallback: true,
+                  now,
+                });
+                if (evolvedSceneResult === "saved") {
                   const refreshed = await repository.getCurrentGame();
                   if (refreshed.ok && refreshed.status === "active") {
                     readyRecord = refreshed.record;
@@ -402,8 +412,31 @@ export function createServerGameEntryPoints(
                   }
                 }
               } else {
-                // 仅在本地提案确实不可用时保留 live promise 的异步接管。
-                battlePrewarmPending = deferBattleSceneToPrewarm(resolvedBattle.battleKey, traceId);
+                // fallback 提案在战斗开始时并行准备；若玩家极快结束战斗，
+                // 这里仅等待本地确定性计算（通常为毫秒级），绝不等待 API。
+                let prewarm = battleScenePrewarmCache.get(resolvedBattle.battleKey);
+                if (prewarm === undefined) {
+                  prewarm = await ensureBattleSceneFallback(readyRecord) ?? undefined;
+                }
+                if (prewarm !== undefined) {
+                  const usedPrewarm = await applyPrewarmedBattleScene(readyRecord, prewarm);
+                  if (usedPrewarm) {
+                    battleScenePrewarmCache.delete(resolvedBattle.battleKey);
+                    const refreshed = await repository.getCurrentGame();
+                    if (refreshed.ok && refreshed.status === "active") {
+                      readyRecord = refreshed.record;
+                      view = projectGameSessionView(
+                        readyRecord.worldState,
+                        readyRecord.storyState,
+                        readyRecord.revision,
+                        deriveEndingSessionIdentity(readyRecord.gameId, readyRecord.revision),
+                      );
+                    }
+                  }
+                } else {
+                  // 仅在本地提案确实不可用时保留 live promise 的异步接管。
+                  battlePrewarmPending = deferBattleSceneToPrewarm(resolvedBattle.battleKey, traceId);
+                }
               }
             }
             if (shouldCompleteSceneInAction) {
@@ -421,9 +454,13 @@ export function createServerGameEntryPoints(
                 }
               }
             }
-            // 如果 live 预热仍未返回，最后一击也不再同步调用 coordinator；
-            // 只有 live/fallback 两条预热都不可用时，客户端轮询才负责恢复。
-            if (view.narrativeGeneration.status === "pending" && !battlePrewarmPending && !isVictoryAction) {
+            // 普通胜利若 live/fallback 预热仍未返回，交给预热 promise 接管；
+            // 需要世界演化的胜利若同步编排未完成，则立即走 coordinator 恢复。
+            if (
+              view.narrativeGeneration.status === "pending"
+              && !battlePrewarmPending
+              && (!isVictoryAction || victoryNeedsNormalGeneration)
+            ) {
               await narrativeCoordinator.ensure(traceId);
             }
           }

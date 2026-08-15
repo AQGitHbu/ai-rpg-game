@@ -1356,6 +1356,55 @@ body:has(.adventure-game-shell) {
   line-height: 1.7;
 }
 
+.npc-dialogue-phase-label {
+  color: var(--game-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.npc-dialogue-status {
+  margin: 0;
+  color: var(--game-text-muted);
+  font-style: italic;
+}
+
+.npc-dialogue-next-step {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--game-accent);
+  background: rgba(215, 185, 111, 0.1);
+}
+
+.npc-dialogue-next-step span {
+  color: var(--game-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.npc-dialogue-next-step strong {
+  line-height: 1.5;
+}
+
+.npc-dialogue-continue {
+  width: 100%;
+  padding: 10px 16px;
+  border: 1px solid var(--game-accent);
+  border-radius: 8px;
+  background: var(--game-accent);
+  color: #111;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.npc-dialogue-continue:hover {
+  filter: brightness(1.08);
+}
+
 .npc-dialogue-pager {
   display: flex;
   align-items: center;

@@ -9,11 +9,22 @@ import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import type { Action } from "@/game/domain/action";
 import type { WorldState } from "@/game/domain/worldState";
+import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 
 export type BattleScenePrewarm = {
   readonly battleKey: string;
   readonly proposal: ScenePerformanceProposal;
 };
+
+/**
+ * 战斗胜利后的权威状态如果已经提出幕推进/结局对需求，预热场景不能直接
+ * 写回 idle；必须让 generatePendingScene 先完成世界演化，再基于新实体生成场景。
+ */
+export function battleVictoryRequiresWorldEvolution(
+  record: Pick<GameRecord, "worldState" | "storyState">,
+): boolean {
+  return deriveEvolutionNeed(record.worldState, record.storyState).kind !== "none";
+}
 
 type PrewarmDeps = {
   readonly sceneSource: SceneSource;

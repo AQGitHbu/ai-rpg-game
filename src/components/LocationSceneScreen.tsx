@@ -37,6 +37,14 @@ type DialogueUiAction =
   | { readonly kind: "set"; readonly npcId: string | null }
   | { readonly kind: "sync_revision"; readonly revision: number; readonly close: boolean };
 
+type DialoguePhase = "choice" | "waiting" | "response";
+
+type SubmittedDialogue = {
+  readonly revision: number;
+  readonly turnNumber: number;
+  readonly objectiveLabel: string | null;
+};
+
 function reduceDialogueUiState(state: DialogueUiState, action: DialogueUiAction): DialogueUiState {
   switch (action.kind) {
     case "set": return { ...state, npcId: action.npcId };
@@ -215,13 +223,19 @@ function NpcDialogueModal({
   dialogue,
   gameType,
   busy,
+  phase,
+  nextObjectiveLabel,
   onSubmit,
+  onContinue,
   onClose,
 }: {
   readonly dialogue: Dialogue;
   readonly gameType: NewGameInput["gameType"];
   readonly busy: boolean;
+  readonly phase: DialoguePhase;
+  readonly nextObjectiveLabel: string | null;
   readonly onSubmit: (interaction: PlayerInteraction) => void;
+  readonly onContinue: () => void;
   readonly onClose: () => void;
 }) {
   const [text, setText] = useState("");
@@ -261,14 +275,29 @@ function NpcDialogueModal({
           </figure>
 
           <div className="npc-dialogue-speech">
+            {phase === "response" ? <span className="npc-dialogue-phase-label">NPC回应</span> : null}
             {dialogue.speechPages.map((page, index) => (
               <p key={`${dialogue.npcId}-${index}`} className="npc-dialogue-speech-text">{normalizeDisplayText(page)}</p>
             ))}
           </div>
         </div>
 
-        {/* 焦点 NPC：显示固定选项 + 给予道具 + 自由输入 */}
-        {hasFocusInteraction ? (
+        {phase === "waiting" ? (
+          <p className="npc-dialogue-status" role="status" aria-live="polite">正在等待{dialogue.name}回应……</p>
+        ) : phase === "response" ? (
+          <>
+            {nextObjectiveLabel !== null ? (
+              <div className="npc-dialogue-next-step" role="status" aria-live="polite">
+                <span>下一步</span>
+                <strong>{nextObjectiveLabel}</strong>
+              </div>
+            ) : null}
+            <button type="button" className="npc-dialogue-continue" onClick={onContinue}>
+              {hasFocusInteraction ? "继续对话" : "查看下一步"}
+            </button>
+          </>
+        ) : hasFocusInteraction ? (
+          /* 焦点 NPC：显示固定选项 + 给予道具 + 自由输入 */
           <>
             <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
               {dialogue.choices.map((choice) => (
@@ -478,8 +507,20 @@ export function LocationSceneScreen({
     revision: view.revision,
   });
   const openDialogueNpcId = dialogueUi.npcId;
+  const [dialoguePhase, setDialoguePhase] = useState<DialoguePhase>("choice");
+  const [nextObjectiveLabel, setNextObjectiveLabel] = useState<string | null>(null);
+  const submittedDialogueRef = useRef<SubmittedDialogue | null>(null);
+  const previousBusyRef = useRef(busy);
+
   function setOpenDialogueNpcId(npcId: string | null): void {
     dispatchDialogueUi({ kind: "set", npcId });
+  }
+
+  function resetDialogue(): void {
+    setOpenDialogueNpcId(null);
+    setDialoguePhase("choice");
+    setNextObjectiveLabel(null);
+    submittedDialogueRef.current = null;
   }
   const [battleFeedback, setBattleFeedback] = useState<BattleFeedback | null>(null);
   const previousBattleRef = useRef(view.battle);
@@ -515,6 +556,28 @@ export function LocationSceneScreen({
     return undefined;
   }, [view.battle]);
 
+  // 正式对白请求结束后，只有成功推进了回合才进入回应态；失败/拒绝则恢复原选项。
+  // 这样网络错误不会让玩家卡在“正在等待回应”。
+  useEffect(() => {
+    const wasBusy = previousBusyRef.current;
+    previousBusyRef.current = busy;
+    const submitted = submittedDialogueRef.current;
+    if (submitted === null || wasBusy === false || busy) return;
+
+    if (!pending && view.revision > submitted.revision && view.turnNumber > submitted.turnNumber) {
+      setNextObjectiveLabel(
+        view.story.currentObjectiveLabel !== submitted.objectiveLabel
+          ? view.story.currentObjectiveLabel
+          : null,
+      );
+      setDialoguePhase("response");
+    } else {
+      setDialoguePhase("choice");
+      setNextObjectiveLabel(null);
+      submittedDialogueRef.current = null;
+    }
+  }, [busy, pending, view.revision, view.story.currentObjectiveLabel, view.turnNumber]);
+
   function renderChoiceButton(choice: { choiceToken: string; label: string }) {
     // “与 NPC 交谈”只是打开本幕已经生成好的对话；只有弹窗内的两个选项
     // 或自定义输入才是正式回合，避免进入地点或点开交谈入口就提前编排下一幕。
@@ -527,7 +590,12 @@ export function LocationSceneScreen({
           disabled={busy || pending}
           onClick={() => {
             const dialogue = Array.from(allDialoguesMap.values()).find((d) => d.name === matchingNpc.name);
-            if (dialogue !== undefined) setOpenDialogueNpcId(dialogue.npcId);
+            if (dialogue !== undefined) {
+              setOpenDialogueNpcId(dialogue.npcId);
+              setDialoguePhase("choice");
+              setNextObjectiveLabel(null);
+              submittedDialogueRef.current = null;
+            }
           }}
         >
           {choice.label}
@@ -593,7 +661,8 @@ export function LocationSceneScreen({
   // 用 reducer 同步 revision，避免 effect 内直接 setState 触发 cascading render。
   useEffect(() => {
     if (dialogueUi.revision === view.revision) return;
-    const shouldClose = !pending
+    const shouldPreserveResponse = dialoguePhase === "response" || submittedDialogueRef.current !== null;
+    const shouldClose = !pending && !shouldPreserveResponse
       && (
         handoffLeavesCurrentBuilding
         || handoffLeavesCurrentLocation
@@ -609,6 +678,7 @@ export function LocationSceneScreen({
     dialogueUi.revision,
     handoffLeavesCurrentBuilding,
     handoffLeavesCurrentLocation,
+    dialoguePhase,
     openDialogue,
     pending,
     view.narrative.eventKind,
@@ -618,6 +688,9 @@ export function LocationSceneScreen({
   // 点击 NPC 卡片：纯粹打开对话弹窗，不消费回合
   function handleNpcCardClick(npc: typeof sidebarNpcs[number]) {
     setOpenDialogueNpcId(npc.dialogueId);
+    setDialoguePhase("choice");
+    setNextObjectiveLabel(null);
+    submittedDialogueRef.current = null;
   }
 
   if (view.battle !== null) {
@@ -750,11 +823,29 @@ export function LocationSceneScreen({
           onSubmit={(interaction) => {
             // 提交后保留当前 NPC 的会话焦点。pending 期间 activeDialogues 会暂时
             // 让弹窗隐去；下一幕 ready 后，同一 NPC 的新台词会自动回到眼前，玩家
-            // 读完回应后再自行关闭，避免自定义输入像是石沉大海。
+            // 先展示回应，再由玩家确认继续，避免自定义输入像是石沉大海。
+            submittedDialogueRef.current = {
+              revision: view.revision,
+              turnNumber: view.turnNumber,
+              objectiveLabel: view.story.currentObjectiveLabel,
+            };
+            setNextObjectiveLabel(null);
+            setDialoguePhase("waiting");
             onSubmit(interaction);
           }}
+          phase={dialoguePhase}
+          nextObjectiveLabel={nextObjectiveLabel}
+          onContinue={() => {
+            submittedDialogueRef.current = null;
+            if (openDialogue.freeInputEnabled || openDialogue.choices.length === 2) {
+              setDialoguePhase("choice");
+              setNextObjectiveLabel(null);
+            } else {
+              resetDialogue();
+            }
+          }}
           onClose={() => {
-            setOpenDialogueNpcId(null);
+            resetDialogue();
           }}
         />
       ) : null}
