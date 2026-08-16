@@ -1,5 +1,6 @@
 import type { StatBlock } from "./worldEntity";
 import type { StoryContract } from "./storyContract";
+import { parseOpeningVariationProfile, type OpeningVariationProfile } from "./openingNovelty";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局切片候选——AI/确定性 fallback 只产出这一份材料：
@@ -26,7 +27,13 @@ export type OpeningGenerationCandidate = {
   readonly prologue: string;
   readonly storyContract: StoryContract;
   readonly opening: {
-    readonly location: { readonly name: string; readonly description: string; readonly scale: "town" };
+    readonly location: {
+      readonly name: string;
+      readonly description: string;
+      /** AI 生成的剧情建筑名；缺省时编译器回退到地点名。 */
+      readonly buildingName?: string;
+      readonly scale: "town";
+    };
     readonly npc: {
       readonly name: string;
       readonly role: string;
@@ -35,6 +42,8 @@ export type OpeningGenerationCandidate = {
       readonly privateFactKeys: readonly string[];
       readonly goals: readonly string[];
     };
+    /** 描述开局结构的抽象标签，不包含实体名称。 */
+    readonly variationProfile?: OpeningVariationProfile;
     readonly quest: {
       readonly name: string;
       readonly description: string;
@@ -124,6 +133,12 @@ export function parseOpeningGenerationCandidate(
   ) {
     return { ok: false, code: "INVALID_OPENING_LOCATION" };
   }
+  const buildingName = opening.location.buildingName === undefined
+    ? undefined
+    : typeof opening.location.buildingName === "string" && opening.location.buildingName.trim() !== ""
+      ? opening.location.buildingName
+      : null;
+  if (buildingName === null) return { ok: false, code: "INVALID_OPENING_LOCATION" };
   if (!isRecord(opening.npc)) return { ok: false, code: "INVALID_OPENING_NPC" };
   if (
     typeof opening.npc.name !== "string"
@@ -144,6 +159,13 @@ export function parseOpeningGenerationCandidate(
   ) {
     return { ok: false, code: "INVALID_OPENING_QUEST" };
   }
+  const variationProfile = opening.variationProfile === undefined
+    ? undefined
+    : parseOpeningVariationProfile(opening.variationProfile);
+  if (opening.variationProfile !== undefined && variationProfile === null) {
+    return { ok: false, code: "INVALID_OPENING_VARIATION_PROFILE" };
+  }
+  const normalizedVariationProfile = variationProfile === null ? undefined : variationProfile;
 
   const value: OpeningGenerationCandidate = {
     world: {
@@ -176,6 +198,7 @@ export function parseOpeningGenerationCandidate(
       location: {
         name: opening.location.name as string,
         description: opening.location.description as string,
+        ...(buildingName === undefined ? {} : { buildingName }),
         scale: "town",
       },
       npc: {
@@ -191,6 +214,7 @@ export function parseOpeningGenerationCandidate(
         description: opening.quest.description as string,
         objective: { kind: "talk_to_opening_npc" },
       },
+      ...(normalizedVariationProfile === undefined ? {} : { variationProfile: normalizedVariationProfile }),
     },
   };
 

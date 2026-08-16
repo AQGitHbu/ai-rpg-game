@@ -18,11 +18,14 @@ import type {
 } from "./gameRepository";
 import type { WorldState } from "@/game/domain/worldState";
 import { STORY_STATE_SCHEMA_VERSION, type StoryState } from "@/game/domain/storyState";
+import { parseOpeningVariationProfile, type OpeningNoveltyRecord } from "@/game/domain/openingNovelty";
+import type { GameTypeId } from "@/game/domain/newGame";
 import type { SqliteClient, SqliteClientFactory, SqliteStatement } from "./sqliteClient";
 
 // ---------------------------------------------------------------------------
 // SQLite adapter：GameRepository 端口的 libsql 实现。
-//   - 只使用 game_records / current_game；
+//   - 使用 game_records / current_game 保存当前存档，使用 opening_history 保存
+//     已用过的开局指纹；清档只移除当前存档，不清除去重历史；
 //   - 旧存档不迁移（spec：新架构重开新局）；
 //   - createInitialGame 单事务写入存档行 + 指针，失败整体回滚；
 //   - applyState / applySceneWriteBack 以 CAS 原子更新 + revision + 1；
@@ -54,6 +57,21 @@ const SCHEMA_STATEMENTS: readonly SqliteStatement[] = [
             game_id TEXT NOT NULL
           )`,
   },
+  {
+    sql: `CREATE TABLE IF NOT EXISTS opening_history (
+            history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_type TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            semantic_fingerprint TEXT NOT NULL,
+            semantic_text TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            profile_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          )`,
+  },
+  {
+    sql: "CREATE INDEX IF NOT EXISTS opening_history_game_type_created ON opening_history (game_type, history_id DESC)",
+  },
 ];
 
 export type SqliteGameRepositoryOptions = {
@@ -79,6 +97,41 @@ function parseJsonObject(text: string): JsonObject | null {
   } catch {
     return null;
   }
+}
+
+const GAME_TYPES: ReadonlySet<string> = new Set([
+  "wuxia", "xianxia", "fantasy", "science_fiction", "urban", "alternate_history", "post_apocalypse",
+]);
+
+function parseOpeningHistoryRow(row: Record<string, unknown>): OpeningNoveltyRecord | null {
+  const gameType = row["game_type"];
+  const fingerprint = row["fingerprint"];
+  const semanticFingerprint = row["semantic_fingerprint"];
+  const semanticText = row["semantic_text"];
+  const summary = row["summary"];
+  const profileJson = row["profile_json"];
+  const createdAt = row["created_at"];
+  if (
+    typeof gameType !== "string" || !GAME_TYPES.has(gameType)
+    || typeof fingerprint !== "string"
+    || typeof semanticFingerprint !== "string"
+    || typeof semanticText !== "string"
+    || typeof summary !== "string"
+    || typeof profileJson !== "string"
+    || typeof createdAt !== "string"
+  ) return null;
+  const profile = parseJsonObject(profileJson);
+  const parsedProfile = profile === null ? null : parseOpeningVariationProfile(profile);
+  if (parsedProfile === null) return null;
+  return {
+    gameType: gameType as GameTypeId,
+    fingerprint,
+    semanticFingerprint,
+    semanticText,
+    summary,
+    profile: parsedProfile,
+    createdAt,
+  };
 }
 
 function corrupt(reason: CorruptGameReason): GetCurrentGameResult {
@@ -204,6 +257,22 @@ export function createSqliteGameRepository(
           sql: "INSERT INTO current_game (slot, game_id) VALUES (1, ?)",
           args: [input.gameId],
         });
+        if (input.openingHistory !== undefined) {
+          await tx.execute({
+            sql: `INSERT INTO opening_history
+                  (game_type, fingerprint, semantic_fingerprint, semantic_text, summary, profile_json, created_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            args: [
+              input.openingHistory.gameType,
+              input.openingHistory.fingerprint,
+              input.openingHistory.semanticFingerprint,
+              input.openingHistory.semanticText,
+              input.openingHistory.summary,
+              JSON.stringify(input.openingHistory.profile),
+              input.openingHistory.createdAt,
+            ],
+          });
+        }
         await tx.commit();
         return { ok: true };
       } finally {
@@ -291,6 +360,23 @@ export function createSqliteGameRepository(
         });
         if (Number(replaced.rowsAffected ?? 0) !== 1) {
           return { ok: false, code: "STALE_GAME_REVISION" };
+        }
+
+        if (input.openingHistory !== undefined) {
+          await tx.execute({
+            sql: `INSERT INTO opening_history
+                  (game_type, fingerprint, semantic_fingerprint, semantic_text, summary, profile_json, created_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            args: [
+              input.openingHistory.gameType,
+              input.openingHistory.fingerprint,
+              input.openingHistory.semanticFingerprint,
+              input.openingHistory.semanticText,
+              input.openingHistory.summary,
+              JSON.stringify(input.openingHistory.profile),
+              input.openingHistory.createdAt,
+            ],
+          });
         }
 
         await tx.commit();
@@ -444,6 +530,27 @@ export function createSqliteGameRepository(
     }
   }
 
+  async function listOpeningHistory(input: {
+    readonly gameType: GameTypeId;
+    readonly limit: number;
+  }): Promise<{ readonly ok: true; readonly records: readonly OpeningNoveltyRecord[] } | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" }> {
+    try {
+      await ensureSchema();
+      const result = await getClient().execute({
+        sql: `SELECT game_type, fingerprint, semantic_fingerprint, semantic_text, summary, profile_json, created_at
+              FROM opening_history WHERE game_type = ? ORDER BY history_id DESC LIMIT ?`,
+        args: [input.gameType, Math.max(0, Math.floor(input.limit))],
+      });
+      const records = result.rows
+        .map((row) => parseOpeningHistoryRow(row))
+        .filter((record): record is OpeningNoveltyRecord => record !== null);
+      return { ok: true, records };
+    } catch (error) {
+      logError("listOpeningHistory read failed", error);
+      return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+    }
+  }
+
   return {
     createInitialGame,
     replaceCurrentGame,
@@ -451,6 +558,7 @@ export function createSqliteGameRepository(
     applyState,
     applySceneWriteBack,
     clearCurrentGame,
+    listOpeningHistory,
     async initializeSchema() {
       await ensureSchema();
     },

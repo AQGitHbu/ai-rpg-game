@@ -4,6 +4,9 @@ import type { GameId, GameRepository, GameRecord } from "./server/persistence/ga
 import { asGameId } from "./server/persistence/gameRepository";
 import type { GameLength, GameTypeId } from "@/game/domain/newGame";
 import { asEndingId } from "@/game/domain/worldEntity";
+import { createOpeningNoveltyRecord } from "@/game/domain/openingNovelty";
+import { createOpeningGenerationSource } from "./server/ai/openingGenerationSource";
+import type { AiTransport } from "@ai-game/ai-transport";
 
 function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameRecord | null } {
   let record: GameRecord | null = null;
@@ -84,6 +87,75 @@ function structuralSignature(record: GameRecord) {
 }
 
 describe("createGame", () => {
+  it("检测到近期故事过于相似时重新请求，而不是覆盖 AI 的实体名称", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const duplicate = await fixture.generate({ gameType: "wuxia", gameLength: "short", seed: "novelty-seed", attempt: 0 });
+    const history = createOpeningNoveltyRecord({ candidate: duplicate, gameType: "wuxia", createdAt: "2026-01-01" });
+    let calls = 0;
+    let acceptedNpcName = "";
+    const source = {
+      async generate(input: Parameters<typeof fixture.generate>[0]) {
+        calls += 1;
+        if (calls === 1) return duplicate;
+        const next = await fixture.generate(input);
+        acceptedNpcName = next.opening.npc.name;
+        return next;
+      },
+      async generateFallback(input: Parameters<typeof fixture.generate>[0]) {
+        const next = await fixture.generate(input);
+        acceptedNpcName = next.opening.npc.name;
+        return next;
+      },
+    };
+    const result = await createGame(
+      { gameId: asGameId("novelty-retry"), gameType: "wuxia", gameLength: "short", seed: "novelty-seed" },
+      {
+        repository: {
+          ...repo,
+          async listOpeningHistory() { return { ok: true as const, records: [history] }; },
+        },
+        source,
+        now: () => "2026-01-01",
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(calls).toBeGreaterThan(1);
+    expect(getRecord()!.worldState.generation.openingAttempt).toBeGreaterThan(0);
+    expect(getRecord()!.worldState.npcs[0]!.name).toBe(acceptedNpcName);
+  });
+
+  it("live API 连续重复时使用结构性 fallback，而不是接受最后一个重复候选", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const repeated = await fixture.generate({ gameType: "wuxia", gameLength: "short", seed: "live-repeat-seed", attempt: 0 });
+    const history = createOpeningNoveltyRecord({ candidate: repeated, gameType: "wuxia", createdAt: "2026-01-01" });
+    const transport = {
+      complete: async () => ({ ok: true, content: JSON.stringify(repeated), latencyMs: 1 }),
+    } as unknown as AiTransport;
+    const source = createOpeningGenerationSource({
+      transport,
+      config: { baseUrl: "x", apiKey: "k", model: "m" },
+    });
+    const result = await createGame(
+      { gameId: asGameId("live-repeat"), gameType: "wuxia", gameLength: "short", seed: "live-repeat-seed" },
+      {
+        repository: {
+          ...repo,
+          async listOpeningHistory() { return { ok: true as const, records: [history] }; },
+        },
+        source,
+        now: () => "2026-01-01",
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(getRecord()!.worldState.generation.openingAttempt).toBe(3);
+    expect(getRecord()!.worldState.npcs[0]!.name).not.toBe(repeated.opening.npc.name);
+    expect(getRecord()!.worldState.locations[0]!.name).not.toBe(repeated.opening.location.name);
+  });
+
   it("persists byte-equivalent compiled state for one seed and structural differences for another", async () => {
     const first = await createPersistedGame({ seed: "branching-seed-alpha" });
     const replay = await createPersistedGame({ seed: "branching-seed-alpha" });

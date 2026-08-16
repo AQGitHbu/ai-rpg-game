@@ -79,6 +79,9 @@ export function buildTownView(
   }
 
   const interactiveBuildings: InteractiveBuildingEntry[] = [];
+  const displayNameByBuildingId = new Map(
+    location.town.slots.map((slot) => [slot.buildingId, slot.displayName]),
+  );
   for (const slot of location.town.slots) {
     const boundNpcId = slotBindings.get(slot.buildingId);
     if (boundNpcId === undefined) continue;
@@ -88,7 +91,7 @@ export function buildTownView(
     if (building === undefined) continue;
     interactiveBuildings.push({
       buildingId: slot.buildingId,
-      displayName: building.displayName,
+      displayName: slot.displayName ?? building.displayName,
       buildingType: slot.buildingType,
       npcId: boundNpcId,
       npcName: npc.name,
@@ -112,7 +115,7 @@ export function buildTownView(
       const existingIndex = interactiveBuildings.findIndex((entry) => entry.buildingId === focusBuilding.buildingId);
       const focusEntry: InteractiveBuildingEntry = {
         buildingId: focusBuilding.buildingId,
-        displayName: focusBuilding.displayName,
+        displayName: displayNameByBuildingId.get(focusBuilding.buildingId) ?? focusBuilding.displayName,
         buildingType: focusBuilding.buildingType,
         npcId: String(focusNpc.id),
         npcName: focusNpc.name,
@@ -130,7 +133,7 @@ export function buildTownView(
       buildings: snapshot.buildings.map((b) => ({
         buildingId: b.buildingId,
         buildingType: b.buildingType,
-        displayName: b.displayName,
+        displayName: displayNameByBuildingId.get(b.buildingId) ?? b.displayName,
         footprint: b.footprint,
         entrance: b.entrance,
         storyRequired: b.storyRequired,

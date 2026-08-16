@@ -142,6 +142,53 @@ describe("createOpeningGenerationSource", () => {
     expect(results).toEqual([{ seed: "s", source: "generated" }]);
   });
 
+  it("机械修复保留 AI 的建筑名与结构标签", async () => {
+    const generated = {
+      ...validCandidate(),
+      opening: {
+        ...validCandidate().opening,
+        location: { ...validCandidate().opening.location, buildingName: "墨痕驿" },
+        variationProfile: {
+          sceneFrame: "workshop",
+          npcArchetype: "craftsperson",
+          leadType: "object",
+          conflictMode: "dispute",
+        },
+      },
+    } as const;
+    const transport = {
+      complete: async () => ({ ok: true, content: JSON.stringify(generated), latencyMs: 1 }),
+    } as unknown as AiTransport;
+    const source = createOpeningGenerationSource({
+      transport,
+      config: { baseUrl: "x", apiKey: "k", model: "m" },
+    });
+    const candidate = await source.generate({ gameType: "wuxia", seed: "profile-seed", gameLength: "short" });
+    expect(candidate.opening.location.buildingName).toBe("墨痕驿");
+    expect(candidate.opening.variationProfile).toEqual(generated.opening.variationProfile);
+  });
+
+  it("保留 AI 自由生成的实体名，不用服务端硬编码名称覆盖", async () => {
+    const prompts: string[] = [];
+    const transport = {
+      complete: async (_config: unknown, messages: readonly { role: string; content: string }[]) => {
+        prompts.push(messages.map((message) => message.content).join("\n"));
+        return { ok: true, content: JSON.stringify(validCandidate()), latencyMs: 1 };
+      },
+    } as unknown as AiTransport;
+    const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+    const candidate = await source.generate({
+      gameType: "wuxia",
+      seed: "free-generation-seed",
+      gameLength: "short",
+    });
+
+    expect(candidate.opening.location.name).toBe("听雨客栈");
+    expect(candidate.opening.npc.name).toBe("沈掌柜");
+    expect(candidate.opening.quest.name).toBe("取得沈掌柜的信任");
+    expect(prompts[0]).not.toContain("服务端已经为本局选择了结构锚点");
+  });
+
   it("prompt 包含 personalityTags/narrativeStyle/contentIntensity，且只要求开场切片并禁止未来命名实体", async () => {
     const prompts: string[] = [];
     const transport = {

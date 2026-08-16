@@ -101,7 +101,7 @@ $env:RUN_REAL_AI_SMOKE='1'; npm run smoke:ai:phase4b
 ## 运行时 AI 导演与场景表演
 
 - 复用现有 `AI_API_BASE_URL`、`AI_MODEL`、`AI_API_KEY`、`AI_OUTPUT_FORMAT`、`AI_RUNTIME_THINKING_ROLES` 和 `@ai-game/ai-transport@0.1.1` public API；RPG 的 provider 角色策略位于 `RpgAiClient`，shared package 只提供通用 transport 与安全响应元数据。
-- 运行时只走两类可选调用：开局生成（opening slice）与逐次世界演化（仅 `EvolutionNeed !== none` 时）；每个 ready 场景由一次场景表演调用产出（`liveScenePerformanceSource`），不再有 director/writer/npc 三次独立调用管线。
+- 运行时只走两类可选调用：开局生成（opening slice）与逐次世界演化（仅 `EvolutionNeed !== none` 时）；每个 ready 场景由一次场景表演调用产出（`liveScenePerformanceSource`），不再有 director/writer/npc 三次独立调用管线。开局由 live API/fallback 自由生成实体与文本，并返回抽象结构标签；服务端持久化开局指纹，按近期同题材历史执行相似度校验，过于雷同就带着差异上下文重试，不对 AI 候选做实体名覆盖。开发清档不删除开局历史，因此连续新局仍有去重依据。
 - 日常 fixture 回归零网络零计费；完整离线回放命令为 `npm run journey:phase10` 与 `npm run journey:foundation`。
 - 真实完整旅程只在 `RUN_REAL_AI_JOURNEY=1 npm run smoke:ai:phase10-journey` 时运行；该命令不是 CI，也不替代离线回放。
 - audit 只允许 traceId、role、attempt、稳定失败类别、generated/fallback、latency 和 provider 安全 usage；禁止 prompt、响应原文、事实正文、URL、模型原文、Authorization 和 key。
