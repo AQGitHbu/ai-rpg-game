@@ -436,11 +436,28 @@ export function projectGameSessionView(
   const persistedFocusNpcId = scene?.event?.kind === "dialogue"
     ? String(scene.event.focusNpcId)
     : generatedObjectiveNpcFocus ?? pairedDialogueNpcId;
+  const persistedFocusNpc = persistedFocusNpcId === null
+    ? undefined
+    : worldState.npcs.find((npc) => String(npc.id) === persistedFocusNpcId);
+  const latestFocusDialogueAct = persistedFocusNpc?.memory.interactionHistory.at(-1)?.dialogueAct;
+  const isEndingDialogueDecision = storyState.endingAllowed
+    || storyState.evolution.status === "needs_ending_pair";
+  const currentObjectiveRequiresNonDialogueAction = currentObjective !== undefined
+    && currentObjective.kind !== "talk_to_npc";
   // 兼容已经写入本地存档的旧交接场景：若权威当前目标明确要求与另一名
   // 在场 NPC 交谈，旧 scene 的 focus/choices 已经过期。将旧 NPC 降为普通
-  // 交谈入口，避免继续消费同一组 support/challenge token。
+  // 交谈入口，避免继续消费同一组 support/challenge token。当前目标已经
+  // 进入调查/移动/取物/战斗时，即使旧场景的两个 talk token 仍然机械合法，
+  // 也不能把上一轮 NPC 继续投影成焦点；只有没有活动目标的自由回访，或
+  // 明确进入结局抉择，才保留同 NPC 的双选项。
   const staleDialogueFocus = persistedFocusNpcId !== null
     && (
+      (!isEndingDialogueDecision
+        && currentObjectiveRequiresNonDialogueAction
+        // 玩家刚主动点击 NPC 打开的 ask 对话仍是一个有效的可选交谈；
+        // support/challenge/freeform 刚完成后才说明旧焦点已经消费完毕。
+        && latestFocusDialogueAct !== "ask")
+      ||
       // 当前目标已经换成另一名 NPC：旧交接对白不能继续拦住新目标。
       (currentObjectiveNpcId !== null
         && currentObjectiveNpcId !== persistedFocusNpcId

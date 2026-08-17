@@ -439,6 +439,29 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(logger.info).toHaveBeenCalledWith("scene_generation_repaired", { kind: "npc_line_only" });
   });
 
+  it("局部 live 修复沿用带回合上下文的 fallback 选项，不重复整组对白", async () => {
+    const raw = {
+      segments: [{ beatId: "invented", text: "不采用的旁白" }],
+      npcLine: "商队离开前，有人用松脂封住了后门的锁孔。去巷口找那枚沾松脂的铜钱，它能证明谁来过。",
+      objectiveLink: null,
+      choices: ["继续问", "观察", "离开"],
+    };
+    const source = createLiveScenePerformanceSource({ transport: stubTransport(raw), config });
+    const first = await source.generateScene(makeContext({
+      job: makeJob(),
+    }));
+    const second = await source.generateScene(makeContext({
+      job: { ...makeJob(), actionId: "act_2", turnNumber: 2 },
+    }));
+
+    expect(first.source).toBe("generated");
+    expect(second.source).toBe("generated");
+    expect(first.choices).toHaveLength(2);
+    expect(second.choices).toHaveLength(2);
+    expect(first.choices.map((choice) => choice.label))
+      .not.toEqual(second.choices.map((choice) => choice.label));
+  });
+
   it("首个 AI 响应为空时不重复相同请求，直接回退", async () => {
     const context = makeContext();
     let attempts = 0;

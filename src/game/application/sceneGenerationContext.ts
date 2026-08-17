@@ -105,6 +105,11 @@ export type ObjectiveTargetRef = {
 export type SceneGenerationContext = {
   /** 题材边界与开局设定：允许 live 表演者保持同一世界语义，不可改写规则。 */
   readonly gameType?: GameTypeId;
+  /**
+   * 本局的稳定叙事种子：只供确定性文案变体使用，不直接暴露给 live prompt。
+   * 同一局可重放；不同开局不会因为 NPC 角色模板相同而复用同一组对白。
+   */
+  readonly generationSeed?: string;
   readonly worldPremise?: string;
   readonly storyOpening?: string;
   readonly job: PendingNarrativeJob;
@@ -323,6 +328,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
 
   return {
     gameType: ws.generation.gameType,
+    generationSeed: ws.generation.seed,
     ...(ws.generation.setup?.worldPremise === undefined ? {} : { worldPremise: ws.generation.setup.worldPremise }),
     ...(ws.generation.setup?.storyOpening === undefined ? {} : { storyOpening: ws.generation.setup.storyOpening }),
     job,

@@ -51,6 +51,7 @@
 - 当玩家对焦点 NPC 提交话语（`job.utterance`）时，表演契约必须返回该 NPC 的台词并列出它应答的 `player_utterance` 节拍；缺失应答使提案非法并触发确定性 fallback。玩家界面保留该 NPC 的会话焦点：pending 时短暂遮蔽，ready 后先显示这句回应，不会直接把玩家抛回场景。
 - `npcLine.text` 的输出边界是 NPC 第一人称直接台词：不得带 NPC 名称、动作或“说道/答道”等叙述性包装。审批写回和 read model 会再次归一化，以兼容历史场景。
 - 确定性 fallback 会读取 `job.utterance`、焦点 NPC 关系档位和当前目标，生成带具体承接对象的回应；通用“我知道了/好的/嗯”会被 live source 判为无上下文并回退。
+- 对话选项的 fallback 采用“角色语义池 + 结构化上下文变体”机制：本局生成种子、幕次、当前地点/目标、行动类型、回合号和该 NPC 已有交互条数共同决定 support/challenge 文案；相同上下文可重放，连续对话不会重复同一整组。live 局部修复调用同一个 deterministic source，因此不能只修补 NPC 台词而把固定选项带回来。
 - 承接玩家原话时，NPC 以自己的口吻概括并回答，不得把整段玩家输入包进“你刚才问的‘……’”再反问。确定性 fallback 必须输出角色相关的可核对线索或明确下一步。
 - 焦点 NPC 的开场、正式回应与终局追问至少两句：先回应，再补充线索、保留或下一步。该质量门槛由审批器执行；live source 即使返回单句，也会整场回退为角色化的确定性表演。live prompt 同时禁止把“主线推进到第 X 幕 / 已完成 / 当前目标”系统元话术写进玩家可见旁白。
 - 确定性 fallback 会把物品取得、战斗开始/结束等规则短标签扩展为可阅读的场景句，并保留地点氛围；界面清除任务状态后遗留的重复或开头标点，避免规则标签裸露在地点旁注中。
@@ -76,7 +77,7 @@
 - `src/game/application/sceneGenerationContext.ts` — 最小权限上下文与合法候选、强制节拍、目标链接实体。
 - `src/game/application/focusNpcContext.ts` — 焦点 NPC 隔离记忆与关系政策投影。
 - `src/game/application/deterministicSceneSource.ts` — 离线 fallback proposal。
-- `src/game/application/gameSessionView.ts` — 投影焦点能力，并修复旧存档中与权威 talk 目标冲突的过期焦点。
+- `src/game/application/gameSessionView.ts` — 投影焦点能力，并修复旧存档中与权威目标冲突的过期焦点；调查/移动/取物/战斗目标出现时会关闭上一轮 NPC 的双选项焦点。
 - `src/game/application/approveAndWriteScene.ts` — 场景表演审批与写回。
 - `src/game/application/generatePendingScene.ts` — 生成编排与原子 write-back。
 - `src/game/application/evolveWorld.ts` / `worldEvolutionSource.ts` — 可选世界演化编排与 port。

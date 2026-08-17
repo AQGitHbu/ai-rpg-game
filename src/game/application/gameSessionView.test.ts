@@ -305,6 +305,67 @@ describe("projectGameSessionView", () => {
     expect(view.currentLocation.actions.map((action) => action.label)).toContain("挑战夺旗客");
   });
 
+  it("completed talk focus is demoted when the authoritative objective has moved to an item", () => {
+    const itemId = asItemId("item_evidence");
+    const scene = {
+      sceneId: "scene-after-talk",
+      turn: 4,
+      narration: "顾砚已经把证物交到你面前。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text: "这枚腰牌该交给你了。", emotion: "neutral" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "support-after-talk", label: "支持老板" },
+        { choiceToken: "challenge-after-talk", label: "质疑老板" },
+      ] as const,
+      source: "fallback" as const,
+      event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["这枚腰牌该交给你了。"] }],
+    };
+    const wsAfterTalk: WorldState = {
+      ...ws,
+      npcs: [{ ...npc1, met: true }],
+      visitedLocationIds: [loc1.id],
+      worldFacts: [{ factId: asFactId("fact_opening"), text: "已经核实的线索", source: "generated", discovered: true, locationId: loc1.id }],
+      items: [{ id: itemId, name: "染血腰牌", description: "一枚染血的腰牌", kind: "quest", tags: [] }],
+      quests: [{
+        id: asQuestId("quest_after_talk"),
+        name: "追查旧案",
+        description: "先与老板交谈，再取得证物",
+        objectives: [
+          { kind: "discover_fact", factId: asFactId("fact_opening") },
+          { kind: "visit_location", locationId: loc1.id },
+          { kind: "talk_to_npc", npcId: npc1.id },
+          { kind: "obtain_item", itemId },
+        ],
+        onSuccess: { kind: "advance_story" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 1,
+        status: "active",
+      }],
+    };
+    const ssAfterTalk: StoryState = {
+      ...ss,
+      reveal: { questId: asQuestId("quest_after_talk"), visibleObjectiveIndex: 3 },
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("support-after-talk", scene.sceneId, 0, scene.choices[0].label, { type: "talk", npcId: npc1.id, dialogueAct: "support" }),
+          approved("challenge-after-talk", scene.sceneId, 0, scene.choices[1].label, { type: "talk", npcId: npc1.id, dialogueAct: "challenge" }),
+        ],
+      },
+    };
+
+    const view = projectGameSessionView(wsAfterTalk, ssAfterTalk, 0, "test-ending-session");
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(npc1.id));
+    expect(view.story.currentObjectiveLabel).toBe("获取染血腰牌");
+    expect(dialogue?.freeInputEnabled).toBe(false);
+    expect(dialogue?.choices).toHaveLength(1);
+    expect(dialogue?.choices[0]?.label).toBe("与老板交谈");
+  });
+
   it("uses the newly generated objective NPC as focus even when the triggering event was travel", () => {
     const secondNpc: NpcEntry = {
       id: asNpcId("npc_2"), name: "传讯人", role: "旧案传讯人", description: "带来下一幕消息",

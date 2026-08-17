@@ -270,7 +270,9 @@ export function parseScenePerformanceJson(
 /**
  * JSON object mode 下 provider 偶尔把 NPC 直接台词放成字符串、或给出不合法
  * 数量的选项。只要这段台词本身通过同一角色/多句/泛问候校验，就保留它，
- * 用确定性、已审批的节拍和选择框架机械补全；这不是 fallback 文案。
+ * 用同一 SceneGenerationContext 交给确定性源补全节拍和选择框架；因此即使
+ * live 只返回 NPC 台词，support/challenge 仍承接本局种子、回合与交互序列，
+ * 不会退回角色名驱动的固定整组对白。这不是 fallback NPC 文案。
  */
 function repairPartialLiveScene(
   raw: unknown,

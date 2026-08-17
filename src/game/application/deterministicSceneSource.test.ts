@@ -288,6 +288,46 @@ describe("deterministicSceneSource", () => {
     expect(choices[1]?.label).toContain("追问苏绾");
   });
 
+  it("dialogue choice copy varies with the structured conversation context", () => {
+    const base = makeContext(makeJob({
+      actionId: "act_dialogue_0",
+      eventKind: "dialogue",
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+    }));
+    const contextA: SceneGenerationContext = {
+      ...base,
+      generationSeed: "dialogue-variation-test",
+      focusNpcContext: {
+        ...makeFocusContext("neutral"),
+        role: "旧案传讯人",
+        name: "顾砚",
+      },
+      presentNpcs: base.presentNpcs.map((npc) => npc.id === asNpcId("npc_1")
+        ? { ...npc, name: "顾砚", role: "旧案传讯人" }
+        : npc),
+    };
+    const contextB: SceneGenerationContext = {
+      ...contextA,
+      job: { ...contextA.job, actionId: "act_dialogue_1", turnNumber: contextA.job.turnNumber + 1 },
+    };
+    const contextC: SceneGenerationContext = {
+      ...contextA,
+      generationSeed: "different-opening-seed",
+    };
+
+    const labelsA = buildSelectableSceneCandidates(contextA).map((choice) => choice.label);
+    const labelsB = buildSelectableSceneCandidates(contextB).map((choice) => choice.label);
+    const labelsC = buildSelectableSceneCandidates(contextC).map((choice) => choice.label);
+    expect(labelsA).toHaveLength(2);
+    expect(labelsB).toHaveLength(2);
+    expect(labelsC).toHaveLength(2);
+    expect(labelsA).not.toEqual(labelsB);
+    expect(labelsA).not.toEqual(labelsC);
+    expect(labelsA.join(" ")).toContain("顾砚");
+    expect(labelsB.join(" ")).toContain("顾砚");
+  });
+
   it("keeps a player utterance addressed to the original NPC during a handoff without quoting it back", async () => {
     const job = makeJob({
       eventKind: "dialogue",

@@ -95,9 +95,10 @@ export function buildSelectableSceneCandidates(context: SceneGenerationContext):
   if (dialogueNpcId !== undefined) {
     const npc = context.presentNpcs.find((entry) => String(entry.id) === String(dialogueNpcId));
     if (npc === undefined) return [];
+    const dialogueLabels = dialogueChoiceLabels(context, npc);
     const dialogueCandidate: SceneChoiceCandidate = {
       candidateId: "candidate_1",
-      label: dialogueChoiceLabel(npc),
+      label: dialogueLabels.support,
       action: { type: "talk", npcId: npc.id, dialogueAct: "support" },
     };
     if (event.kind === "dialogue") {
@@ -108,7 +109,7 @@ export function buildSelectableSceneCandidates(context: SceneGenerationContext):
         dialogueCandidate,
         {
           candidateId: "candidate_2",
-          label: `追问${npc.name}：“我会逐项核对线索；你凭什么确定它们指向同一个人？”`,
+          label: dialogueLabels.challenge,
           action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" },
         },
       ];
@@ -297,23 +298,170 @@ function canReferenceCurrentUtterance(context: SceneGenerationContext): boolean 
   return focusNpcId !== undefined && jobNpcId !== undefined && String(focusNpcId) === String(jobNpcId);
 }
 
-function dialogueChoiceLabel(npc: SceneGenerationContext["presentNpcs"][number]): string {
+type DialogueChoiceLabels = {
+  readonly support: string;
+  readonly challenge: string;
+};
+
+type DialogueChoiceVariant = {
+  readonly support: string;
+  readonly challenge: string;
+};
+
+/**
+ * 角色只决定可用的语义池，具体采用哪一组由本局种子 + 本回合结构化上下文决定。
+ * 不读取玩家原文，也不改写 NPC 名称；因此同一局可重放，不同回合/不同开局不会
+ * 机械重播同一组 support/challenge 文案。
+ */
+function dialogueChoiceLabels(
+  context: SceneGenerationContext,
+  npc: SceneGenerationContext["presentNpcs"][number],
+): DialogueChoiceLabels {
   const role = npc.role;
-  let utterance = "我想先听你把眼前的事说清楚，再决定是否相信你。";
+  let variants: readonly DialogueChoiceVariant[] = [
+    {
+      support: "我想先听你把眼前的事说清楚，再决定是否相信你。",
+      challenge: "我会逐项核对线索；你凭什么确定它们指向同一个人？",
+    },
+    {
+      support: "把你掌握的那一段先说出来，我们对着眼前的证据一步步核实。",
+      challenge: "这条判断还缺一环；先说清你亲眼见到什么，别急着替旧案下结论。",
+    },
+    {
+      support: "我愿意继续查，但我们得从能落地核对的线索开始。",
+      challenge: "我不会只凭传闻认人；哪一件证物能证明你说的是真的？",
+    },
+  ];
   if (/(更夫|守夜)/u.test(role)) {
-    utterance = "你亲眼见到的风声究竟指向哪里？请把昨夜那一段说清楚。";
+    variants = [
+      {
+        support: "你亲眼见到的风声究竟指向哪里？请把昨夜那一段说清楚。",
+        challenge: "昨夜的车影未必就是答案；你凭什么断定它和旧案有关？",
+      },
+      {
+        support: "先把你在子时看见的细节讲全，我会把车辙和血布一一记下。",
+        challenge: "你只看见一辆车，怎么排除这是有人故意留下的假线索？",
+      },
+      {
+        support: "我想知道你记住了哪些细节，尤其是车轮印和赶车人的去向。",
+        challenge: "夜色里的见闻容易出错；有什么痕迹能让这段传闻经得起核查？",
+      },
+    ];
   } else if (/(传讯|信使|线人)/u.test(role)) {
-    utterance = "你带来的线索是不是和失踪镖队有关？我愿意拿出证据和你对照。";
+    variants = [
+      {
+        support: "你带来的线索是不是和失踪镖队有关？我愿意拿出证据和你对照。",
+        challenge: "我会逐项核对线索；你凭什么确定它们指向同一个人？",
+      },
+      {
+        support: "把密信和腰牌的来历先对上，我们再判断它们是否指向失踪镖队。",
+        challenge: "你的消息还缺证据链；先说清哪一处能证明它和旧案相连。",
+      },
+      {
+        support: "你若真带来了旧案线索，就把能核对的那一件先交出来。",
+        challenge: "别让传闻替你作证；这份线索从谁手里来，又经过了什么地方？",
+      },
+    ];
   } else if (/(幸存者|镖队)/u.test(role)) {
-    utterance = "你亲眼见到的镖队究竟发生了什么？我会先把手里的证据交给你核对。";
+    variants = [
+      {
+        support: "你亲眼见到的镖队究竟发生了什么？我会先把手里的证据交给你核对。",
+        challenge: `追问${npc.name}：“你亲眼见到的那一段，有什么证物能让我先核对？”`,
+      },
+      {
+        support: "先把镖队失踪前后的经过讲清楚，我们对照车辙和留下的物件。",
+        challenge: `追问${npc.name}：“你说袭击者来自北坡，可现场哪一处能证明这点？”`,
+      },
+      {
+        support: "我愿意听你把经过还原，但每一步都要和手里的证据对得上。",
+        challenge: `追问${npc.name}：“你记住的究竟是亲眼所见，还是后来听来的说法？”`,
+      },
+    ];
   } else if (/(卷宗|保管人)/u.test(role)) {
-    utterance = "你保管的那一页能补上旧案的缺口吗？请把来龙去脉说清楚。";
+    variants = [
+      {
+        support: "你保管的那一页能补上旧案的缺口吗？请把来龙去脉说清楚。",
+        challenge: "这页卷宗是否真的属于旧案？我会先核对印记和缺页边缘。",
+      },
+      {
+        support: "先把缺页的来历和经手人说清楚，我们再看它能补上哪一处空白。",
+        challenge: "不能因为卷宗残缺就替它补结论；哪一枚印记能证明你的说法？",
+      },
+      {
+        support: "我愿意对照你保管的记录，但每个名字都要有原件或痕迹支撑。",
+        challenge: "你保管它这么久，为什么现在才拿出来？先解释这段时间线。",
+      },
+    ];
   } else if (/知情人/u.test(role)) {
-    utterance = "盟誓铁印是不是能指向幕后主使？我愿意把卷宗交给你核对。";
+    variants = [
+      {
+        support: "盟誓铁印是不是能指向幕后主使？我愿意把卷宗交给你核对。",
+        challenge: "盟誓铁印真的能指向幕后主使吗？我会先核对它留下的痕迹。",
+      },
+      {
+        support: "把盟誓铁印和卷宗放在一起，我们看看它究竟能证明谁在场。",
+        challenge: "铁印只能证明接触过它的人；你凭什么把它和幕后主使连起来？",
+      },
+      {
+        support: "我愿意拿卷宗和你对照，但先把铁印的来历与经手人说清楚。",
+        challenge: "别把一枚印记当成完整答案；还有哪条线索能和它互相印证？",
+      },
+    ];
   } else if (/(掌柜|摊主)/u.test(role)) {
-    utterance = "你听见的消息是不是和镇口告示有关？请把来历和时间说清楚。";
+    variants = [
+      {
+        support: "你听见的消息是不是和镇口告示有关？请把来历和时间说清楚。",
+        challenge: "你听来的消息未必可靠；谁能证明告示和这件事发生在同一时间？",
+      },
+      {
+        support: "先把告示出现的时辰和来人讲清楚，我们再对照手里的线索。",
+        challenge: "你只听见一句话，怎么确认没有漏掉说话人的身份和目的？",
+      },
+      {
+        support: "我愿意听你还原那条消息，但时间、地点和经手人一个都不能少。",
+        challenge: "别把街头传言当证据；你还记得什么能让它落到具体的人身上？",
+      },
+    ];
   }
-  return `回应${npc.name}：“${utterance}”`;
+  const variant = variants[dialogueChoiceVariantIndex(context, npc, variants.length)] ?? variants[0]!;
+  return {
+    support: `回应${npc.name}：“${variant.support}”`,
+    challenge: `追问${npc.name}：“${variant.challenge}”`,
+  };
+}
+
+function dialogueChoiceVariantIndex(
+  context: SceneGenerationContext,
+  npc: SceneGenerationContext["presentNpcs"][number],
+  variantCount: number,
+): number {
+  if (variantCount <= 1) return 0;
+  const recentInteractions = context.focusNpcContext?.recentInteractions ?? [];
+  // 旧的最小测试/旧存档上下文没有 generationSeed，也没有可用历史时，保持
+  // 第一组基础文案；真实上下文由 buildSceneGenerationContext 注入本局 seed，
+  // 因此不会牺牲新开局之间的多样性。
+  if (context.generationSeed === undefined && recentInteractions.length === 0) return 0;
+  const seed = [
+    context.generationSeed ?? "",
+    String(npc.id),
+    npc.name,
+    npc.role,
+    String(context.currentLocation.id),
+    context.objectiveTarget?.entityId ?? "",
+    context.job.actionSummary.kind,
+    String(context.story.currentAct),
+    context.story.nextPacingNeed,
+  ].join("|");
+  let hash = 2_166_136_261;
+  for (const character of seed) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16_777_619) >>> 0;
+  }
+  // 回合号 + 已有交互条数是“同一 NPC 连续交谈”的序列游标；它让相邻
+  // 正式回合不会因为 actionId 的散列碰撞又回到同一组文案；当前地点、
+  // 目标、行动类型、幕次和节奏则为不同剧情分支提供不同起点。
+  const sequenceOffset = context.job.turnNumber + recentInteractions.length;
+  return (hash % variantCount + sequenceOffset) % variantCount;
 }
 
 /** 同一档位的回退台词也必须承接当前话语，且只使用 NPC 第一人称。 */
