@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   composeDirectNpcGreeting,
+  composeIdleNpcLine,
   isGenericNpcAcknowledgement,
   isGenericNpcGreeting,
   isGenericNpcInquiry,
@@ -58,5 +59,41 @@ describe("NPC direct speech", () => {
   it("rejects empty inquiry templates that make distinct NPCs sound identical", () => {
     expect(isGenericNpcInquiry("关于旧案，我先说我确定的部分。你还想从哪一段继续追问？")).toBe(true);
     expect(isGenericNpcInquiry("无灯马车从北巷出镇，车轮印还留在酒楼后巷。去那里核对左手血布。")).toBe(false);
+  });
+});
+
+describe("composeIdleNpcLine", () => {
+  it("有交互历史的 NPC 生成承接当前权威目标的提醒台词", () => {
+    const line = composeIdleNpcLine({
+      currentObjectiveLabel: "调查酒楼后巷的车轮印",
+      hasInteractionHistory: true,
+      variantIndex: 0,
+    });
+    expect(line).toContain("调查酒楼后巷的车轮印");
+    // 直接对白正文：无叙述包装、无引号残留
+    expect(normalizeNpcSpeech(line)).toBe(line);
+  });
+
+  it("无交互历史的 NPC 使用不泄露主线内容的中性闲聊", () => {
+    for (let variantIndex = 0; variantIndex < 6; variantIndex += 1) {
+      const line = composeIdleNpcLine({
+        currentObjectiveLabel: "调查酒楼后巷的车轮印",
+        hasInteractionHistory: false,
+        variantIndex,
+      });
+      expect(line).not.toContain("车轮印");
+      expect(line).not.toContain("调查");
+    }
+  });
+
+  it("同 variantIndex 稳定，变体索引覆盖全部模板", () => {
+    const a = composeIdleNpcLine({ currentObjectiveLabel: null, hasInteractionHistory: true, variantIndex: 4 });
+    const b = composeIdleNpcLine({ currentObjectiveLabel: null, hasInteractionHistory: true, variantIndex: 4 });
+    expect(a).toBe(b);
+    // objective 为 null 时即使有交互历史也落入中性闲聊（无目标可提醒）
+    const seen = new Set(
+      [0, 1, 2].map((i) => composeIdleNpcLine({ currentObjectiveLabel: null, hasInteractionHistory: false, variantIndex: i })),
+    );
+    expect(seen.size).toBe(3);
   });
 });
