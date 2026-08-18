@@ -49,10 +49,12 @@ describe("projectGameSessionView", () => {
 
   it("projects available NPCs at current location", () => {
     const view = projectGameSessionView(ws, ss, 0, "test-ending-session");
-    // 无焦点场景时 NPC 经 currentLocation.npcs 暴露；不渲染模板对话面板
+    // 无焦点场景时 NPC 经 currentLocation.npcs 暴露；读模型为所有在场 NPC 投影零回合闲聊
     expect(view.currentLocation.npcs).toHaveLength(1);
     expect(view.currentLocation.npcs[0]?.name).toBe("老板");
-    expect(view.narrative.npcDialogues).toHaveLength(0);
+    expect(view.narrative.npcDialogues).toHaveLength(1);
+    expect(view.narrative.npcDialogues[0]?.choices).toEqual([]);
+    expect(view.narrative.npcDialogues[0]?.freeInputEnabled).toBe(false);
   });
 
   it("projects available moves to connected unlocked locations", () => {
@@ -98,7 +100,7 @@ describe("projectGameSessionView", () => {
     };
     const view = projectGameSessionView(wsWithQuest, ss, 0, "test-ending-session");
     expect(view.story.currentObjectiveLabel).toBe("与老板交谈");
-    expect(view.story.currentObjectiveChoiceToken).toBe(view.currentLocation.npcs[0]?.talkChoice.choiceToken);
+    expect(view.story.currentObjectiveChoiceToken).toBe(view.currentLocation.npcs[0]?.talkChoice?.choiceToken ?? null);
   });
 
   it("does not mark a two-turn dialogue objective complete after only the first response", () => {
@@ -151,11 +153,11 @@ describe("projectGameSessionView", () => {
     };
     const wsTwo = { ...ws, npcs: [...ws.npcs, secondNpc] };
     const view = projectGameSessionView(wsTwo, ss, 0, "test-ending-session");
-    // 无焦点场景：所有在场 NPC 经 currentLocation.npcs 暴露，不产生模板对话面板
+    // 无焦点场景：所有在场 NPC 经 currentLocation.npcs 暴露，同时全部获得零回合闲聊投影
     const names = view.currentLocation.npcs.map((npc) => npc.name);
     expect(names).toContain("老板");
     expect(names).toContain("客人");
-    expect(view.narrative.npcDialogues ?? []).toHaveLength(0);
+    expect(view.narrative.npcDialogues ?? []).toHaveLength(2);
   });
 
   it("read model 零泄漏：序列化 view 不含 actionKey/choiceRegistry/PendingNarrativeJob/candidateEventPool/hidden facts", () => {
@@ -240,8 +242,10 @@ describe("projectGameSessionView", () => {
     // 焦点 NPC 持有两个 dialogue choices 且 freeInput 开启
     expect(lu?.choices?.map((c) => c.choiceToken).sort()).toEqual(["t1", "t2"]);
     expect(lu?.freeInputEnabled).toBe(true);
-    // 非焦点 NPC 无场景供给台词时不渲染模板面板（仍经 currentLocation.npcs 可见）
-    expect(guest).toBeUndefined();
+    // 非焦点 NPC 无场景供给台词时投影零回合闲聊（零选项、无自由输入；仍经 currentLocation.npcs 可见）
+    expect(guest).toBeDefined();
+    expect(guest?.choices).toEqual([]);
+    expect(guest?.freeInputEnabled).toBe(false);
     expect(view.currentLocation.npcs.map((npc) => npc.name)).toContain("客人");
     // 世界行动选择不投影为每 NPC 对话选择（dialogue 场景下 narrative.choices 应为空）
     expect(view.narrative.choices ?? []).toHaveLength(0);
@@ -302,7 +306,9 @@ describe("projectGameSessionView", () => {
     const oldNpc = view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_1");
     const newNpc = view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_2");
     expect(oldNpc?.freeInputEnabled).toBe(false);
-    expect(oldNpc?.choices.map((entry) => entry.label)).toEqual(["与老板交谈"]);
+    // 旧断言：expect(oldNpc?.choices.map((entry) => entry.label)).toEqual(["与老板交谈"]);
+    expect(oldNpc?.choices).toEqual([]);
+    expect(oldNpc?.speechPages.length).toBeGreaterThan(0);
     expect(newNpc?.freeInputEnabled).toBe(true);
     expect(newNpc?.choices).toHaveLength(2);
     expect(newNpc?.choices.map((entry) => entry.label)).toEqual([
@@ -399,8 +405,8 @@ describe("projectGameSessionView", () => {
     const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(npc1.id));
     expect(view.story.currentObjectiveLabel).toBe("获取染血腰牌");
     expect(dialogue?.freeInputEnabled).toBe(false);
-    expect(dialogue?.choices).toHaveLength(1);
-    expect(dialogue?.choices[0]?.label).toBe("与老板交谈");
+    // 旧断言：expect(dialogue?.choices).toHaveLength(1); expect(dialogue?.choices[0]?.label).toBe("与老板交谈");
+    expect(dialogue?.choices).toEqual([]);
   });
 
   it("uses the newly generated objective NPC as focus even when the triggering event was travel", () => {
@@ -450,7 +456,11 @@ describe("projectGameSessionView", () => {
     const focus = view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_2");
     expect(focus?.choices).toHaveLength(2);
     expect(focus?.freeInputEnabled).toBe(true);
-    expect(view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_1")).toBeUndefined();
+    // 旧 NPC 无焦点场景供给 → 投影零回合闲聊（零选项、无自由输入）
+    const oldNpcDialogue = view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_1");
+    expect(oldNpcDialogue).toBeDefined();
+    expect(oldNpcDialogue?.choices).toEqual([]);
+    expect(oldNpcDialogue?.freeInputEnabled).toBe(false);
   });
 
   it("keeps a same-NPC ending response pair in that NPC dialogue after a non-dialogue event", () => {
@@ -690,8 +700,8 @@ describe("projectGameSessionView", () => {
     const view = projectGameSessionView(ws, storyWithObservation, 0, "test-ending-session");
     const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1");
     expect(dialogue?.freeInputEnabled).toBe(false);
-    expect(dialogue?.choices).toHaveLength(1);
-    expect(dialogue?.choices[0]?.label).toBe("与老板交谈");
+    // observe 用例
+    expect(dialogue?.choices).toEqual([]);
   });
 
   it("任务目标引用未发现隐藏事实时，view 只显示中性目标，不泄漏 fact.text/FactId", () => {
@@ -759,7 +769,7 @@ describe("projectGameSessionView", () => {
     expect(travel?.choiceToken).not.toContain("loc_2");
 
     expect(view.currentLocation.actions.map((choice) => choice.presentation)).toEqual([
-      "explore", "explore", "dialogue", "battle",
+      "explore", "explore", "battle",
     ]);
     expect(view.obtainableItems).toEqual([
       expect.objectContaining({ name: "铜钥匙", choice: expect.objectContaining({ presentation: "item" }) }),
@@ -960,13 +970,75 @@ describe("projectGameSessionView", () => {
     expect(focusNpc?.choices).toHaveLength(2);
     expect(focusNpc?.freeInputEnabled).toBe(true);
 
-    // 非焦点 NPC (韩征) 只有一次真实交谈入口；旧存档里的 smallTalk 不下发到 UI
+    // 非焦点 NPC (韩征)：无 ask 选项；动作旁白被清洗后回落闲聊台词
     const nonFocusNpc = dialogues.find((d) => d.npcId === "npc_2");
     expect(nonFocusNpc).toBeDefined();
-    expect(nonFocusNpc?.choices).toHaveLength(1);
-    expect(nonFocusNpc?.choices[0]?.label).toBe("与韩征交谈");
+    expect(nonFocusNpc?.choices).toEqual([]);
     expect(nonFocusNpc?.freeInputEnabled).toBe(false);
     expect(nonFocusNpc).not.toHaveProperty("smallTalk");
+    expect(nonFocusNpc?.speechPages.join("")).not.toContain("继续巡视");
+    expect(nonFocusNpc?.speechPages.length).toBeGreaterThan(0);
+  });
+
+  it("交接后的非焦点 NPC 只提供零回合闲聊，不再投影可提交的 ask 选项", () => {
+    const factTracks = {
+      factId: asFactId("fact_tracks"),
+      text: "车轮印",
+      source: "generated" as const,
+      discovered: false,
+      locationId: loc1.id,
+    };
+    const wsHandoffIdle: WorldState = {
+      ...ws,
+      npcs: [{ ...npc1, met: true }],
+      worldFacts: [factTracks],
+      quests: [{
+        id: asQuestId("quest_tracks"),
+        name: "追查车轮印",
+        description: "查明车轮印",
+        objectives: [
+          { kind: "talk_to_npc", npcId: npc1.id },
+          { kind: "discover_fact", factId: factTracks.factId },
+        ],
+        onSuccess: { kind: "advance_story" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 1,
+        status: "active",
+      }],
+    };
+    const ssHandoffIdle: StoryState = {
+      ...ss,
+      reveal: { questId: asQuestId("quest_tracks"), visibleObjectiveIndex: 1 },
+      narrative: {
+        ...ss.narrative,
+        dialogueSession: { npcId: npc1.id, turnCount: 2, requiredTurns: 2, completed: true },
+        currentScene: {
+          sceneId: "scene-handoff-idle",
+          turn: 5,
+          narration: "老板说完了。",
+          usedFactIds: [],
+          npcLine: { npcId: npc1.id, text: "接下来去查明车轮印。", emotion: "neutral" as const, usedFactIds: [] },
+          choices: [] as never,
+          source: "fallback" as const,
+          event: { kind: "observe" as const, locationId: loc1.id },
+        },
+      },
+    };
+
+    const view = projectGameSessionView(wsHandoffIdle, ssHandoffIdle, 0, "test-ending-session");
+    const idle = view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === String(npc1.id));
+    expect(idle).toBeDefined();
+    expect(idle?.choices).toEqual([]);
+    expect(idle?.freeInputEnabled).toBe(false);
+    expect(idle?.speechPages.length).toBeGreaterThan(0);
+    // 老板参与过剧情且当前目标为调查 → 提醒台词承接权威目标
+    //（discover_fact 的目标 label 由 fact 文本派生，故断言事实文本而非具体动词）
+    expect(idle?.speechPages.join("")).toContain("车轮印");
+    // 行动栏与 talkChoice 不再为非目标 NPC 提供交谈入口
+    expect(view.currentLocation.actions.some((action) => action.presentation === "dialogue")).toBe(false);
+    expect(view.currentLocation.npcs[0]?.talkChoice).toBeNull();
   });
 });
 
