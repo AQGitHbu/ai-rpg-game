@@ -279,10 +279,24 @@ export function deriveActObjectives(
   const allowed = SHAPE_ALLOWED_KINDS[shape];
   const shaped = full.filter((objective) => allowed.has(objective.kind));
   // 任何变体都必须保留可达锚点：过滤后为空回退全程链
-  if (shaped.length > 0) return shaped;
-  if (full.length > 0) return full;
-  const anchor = deriveAnchorObjective(p, ids);
-  return anchor === null ? null : [anchor];
+  let chain: readonly QuestObjective[];
+  if (shaped.length > 0) {
+    chain = shaped;
+  } else if (full.length > 0) {
+    chain = full;
+  } else {
+    const anchor = deriveAnchorObjective(p, ids);
+    if (anchor === null) return null;
+    chain = [anchor];
+  }
+  // 物化新地点的幕必须把“抵达新地点”保留在链首：否则该地点永远不会被
+  // storyReveal 的 visit_location 释放游标解锁，而后续幕会把 NPC/物品/敌人
+  // 挂载到其上，主线目标不可达 → 主线永远无法推进（可完成性不变约束）。
+  // 链首保留也维持 materializeWorldDelta 的“首个目标即释放新地点”优化。
+  if (p.newLocation && ids.locationId && !chain.some((objective) => objective.kind === "visit_location")) {
+    chain = [{ kind: "visit_location", locationId: ids.locationId }, ...chain];
+  }
+  return chain;
 }
 
 function ruleOwnedEndingRequirements(

@@ -496,14 +496,14 @@ describe("act objective shape variants", () => {
     expect(kinds).toEqual(["discover_fact", "visit_location", "talk_to_npc", "obtain_item", "defeat_enemy"]);
   });
 
-  it("investigation_focus 去掉移动与战斗，保留调查-交谈-取证", () => {
+  it("investigation_focus 去掉移动与战斗，保留调查-交谈-取证；物化新地点时链首强制保留抵达", () => {
     const kinds = deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "investigation_focus")!.map((objective) => objective.kind);
-    expect(kinds).toEqual(["discover_fact", "talk_to_npc", "obtain_item"]);
+    expect(kinds).toEqual(["visit_location", "discover_fact", "talk_to_npc", "obtain_item"]);
   });
 
   it("confrontation_focus 保留调查-交谈-对峙；errand_focus 保留移动-交谈-取证", () => {
     expect(deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "confrontation_focus")!.map((o) => o.kind))
-      .toEqual(["discover_fact", "talk_to_npc", "defeat_enemy"]);
+      .toEqual(["visit_location", "discover_fact", "talk_to_npc", "defeat_enemy"]);
     expect(deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "errand_focus")!.map((o) => o.kind))
       .toEqual(["visit_location", "talk_to_npc", "obtain_item"]);
   });
@@ -518,5 +518,12 @@ describe("act objective shape variants", () => {
   it("提案完全为空时回落 deriveAnchorObjective（可返回 null）", () => {
     const empty = {} as never;
     expect(deriveActObjectives(empty, {} as never, "full_chain")).toBeNull();
+  });
+
+  it("含 newLocation 的提案在四种形状下都强制保留 visit_location（可完成性不变）", () => {
+    for (const shape of ["full_chain", "investigation_focus", "confrontation_focus", "errand_focus"] as const) {
+      const kinds = deriveActObjectives(FULL_PROPOSAL, FULL_IDS, shape)!.map((o) => o.kind);
+      expect(kinds).toContain("visit_location");
+    }
   });
 });
