@@ -26,9 +26,17 @@ function makeWorldWithNpc(affinity: number): WorldState {
 }
 
 describe("createDeterministicEvolutionSource ending_pair", () => {
-  it("produces a requirement-bearing ending pair keyed to the first NPC's affinity", async () => {
+  it("produces a requirement-bearing ending pair keyed to the final main-quest talk npc", async () => {
     const source = createDeterministicEvolutionSource();
-    const ws = makeWorldWithNpc(0);
+    const ws: WorldState = {
+      ...makeWorldWithNpc(0),
+      quests: [{
+        id: asQuestId("quest_final"), name: "终局", description: "d",
+        objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_9") }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 9, status: "active",
+      }],
+    };
     const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } });
     const result = await source.propose({ worldState: ws, storyState: ss, need: { kind: "ending_pair", finalAct: 3 }, reason: "test" });
     expect(result.proposal).not.toBeNull();
@@ -37,10 +45,10 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
     const [trust, doubt] = pair!;
 
     expect(trust.themeKey).toBe("trust");
-    expect(trust.requirements).toEqual([{ kind: "npc_affinity_at_least", npcId: asNpcId("npc_0"), value: TRUST_ENDING_MIN_AFFINITY }]);
+    expect(trust.requirements).toEqual([{ kind: "npc_affinity_at_least", npcId: asNpcId("npc_9"), value: TRUST_ENDING_MIN_AFFINITY }]);
 
     expect(doubt.themeKey).toBe("doubt");
-    expect(doubt.requirements).toEqual([{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_0"), value: DOUBT_ENDING_MAX_AFFINITY }]);
+    expect(doubt.requirements).toEqual([{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_9"), value: DOUBT_ENDING_MAX_AFFINITY }]);
 
     // 两条要求阈值相邻且互斥：任何亲和度恰好命中其一（离线必有一个方向可达）。
     expect(DOUBT_ENDING_MAX_AFFINITY).toBe(TRUST_ENDING_MIN_AFFINITY - 1);

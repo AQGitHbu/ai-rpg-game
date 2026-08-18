@@ -4,14 +4,15 @@ import type { Action } from "@/game/domain/action";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
 import type { NpcId } from "@/game/domain/worldEntity";
+import { deriveKeyEndingNpcId } from "@/game/gameplay/rpg/worldEvolution";
 
 // ---------------------------------------------------------------------------
 // 确定性世界演化 source（离线/测试/兜底）：
 // - next_act：把有明确身份和前因的剧情角色落到当前地点，并配套信物、线索、
 //   敌人和主线任务（保证可达，同时让中篇兜底流程覆盖探索、物品、战斗三类入口）；
 // - ending_pair：按故事契约的两条主题方向产出互斥结局对，并给两条结局附上
-//   规则可判定的达成要求——以关键 NPC（首位 NPC，即开局主角锚点）的亲和度为
-//   分歧信号：亲和度 ≥ TRUST_THRESHOLD 走 trust 结局，≤ DOUBT_THRESHOLD
+//   规则可判定的达成要求——以关键 NPC（stage 最大主线的交谈目标，回退首位 NPC）
+//   的亲和度为分歧信号：亲和度 ≥ TRUST_THRESHOLD 走 trust 结局，≤ DOUBT_THRESHOLD
 //   走 doubt 结局（两阈值相邻，任何亲和度恰好命中其一，离线必有一个方向可达）。
 // - pacing（回合修复）：按行动类型补齐缺失实体类别——talk→npc / move→地点
 //   / investigate→fact / take_item→item / attack→enemy；无 action 时无提案。
@@ -332,9 +333,10 @@ function planNextAct(ws: WorldState, act: number): WorldDeltaProposal {
 
 function planEndingPair(ws: WorldState, ss: StoryState): WorldDeltaProposal {
   const conflict = ss.contract.centralConflict.trim().replace(/[。！？]+$/gu, "") || "这桩旧案";
-  // 分歧信号：关键 NPC（首位 NPC）对玩家的亲和度；终幕 support/challenge
-  // 的直接裁决由 resolveEnding 读取最后一次结构化互动，不与此门槛混用。
-  const keyNpcId: NpcId | undefined = ws.npcs[0]?.id;
+  // 分歧信号：关键 NPC（stage 最大主线的交谈目标，回退首位 NPC）对玩家的亲和度；
+  // 终幕 support/challenge 的直接裁决由 resolveEnding 读取最后一次结构化互动，
+  // 不与此门槛混用。
+  const keyNpcId: NpcId | undefined = deriveKeyEndingNpcId(ws);
   return {
     beatSummary: "终幕的两种走向浮现",
     newLocation: null,

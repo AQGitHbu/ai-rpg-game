@@ -24,6 +24,7 @@ import {
   type LocationId, type NpcId, type ItemId, type EnemyId, type FactId, type QuestId, type EndingId,
 } from "@/game/domain/worldEntity";
 import { ENEMY_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
+import { deriveKeyEndingNpcId } from "./keyEndingNpc";
 
 // ---------------------------------------------------------------------------
 // Task 3：世界演化提议的审批。纯函数，无 IO。
@@ -225,7 +226,7 @@ function ruleOwnedEndingRequirements(
   themeKey: "trust" | "doubt",
   ws: WorldState,
 ): readonly EndingRequirement[] {
-  const keyNpcId = ws.npcs[0]?.id;
+  const keyNpcId = deriveKeyEndingNpcId(ws);
   if (keyNpcId === undefined) return [];
   return themeKey === "trust"
     ? [{ kind: "npc_affinity_at_least", npcId: keyNpcId, value: TRUST_ENDING_MIN_AFFINITY }]

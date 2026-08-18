@@ -5,7 +5,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
-import { asLocationId, asNpcId, asEnemyId, asGenerationId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asEnemyId, asGenerationId, asQuestId } from "@/game/domain/worldEntity";
 import { bindNpcToTownSlot, createTownRuntime } from "@/game/gameplay/rpg/town";
 import { TRUST_ENDING_MIN_AFFINITY, DOUBT_ENDING_MAX_AFFINITY } from "@/game/application/deterministicEvolutionSource";
 
@@ -304,7 +304,15 @@ describe("approveWorldDelta", () => {
   });
 
   it("derives rule-owned ending requirements instead of trusting proposal values", () => {
-    const ws = makeWorld();
+    const ws: WorldState = {
+      ...makeWorld(),
+      quests: [{
+        id: asQuestId("quest_final"), name: "终局", description: "d",
+        objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_9") }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 9, status: "active",
+      }],
+    };
     const ss = makeStory({ currentAct: 3, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_ending_pair" } });
     const proposal: WorldDeltaProposal = {
       beatSummary: "终幕两种走向",
@@ -323,12 +331,20 @@ describe("approveWorldDelta", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const [trust, doubt] = result.approved.newEndings;
-    expect(trust!.requirements).toEqual([{ kind: "npc_affinity_at_least", npcId: asNpcId("npc_0"), value: TRUST_ENDING_MIN_AFFINITY }]);
-    expect(doubt!.requirements).toEqual([{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_0"), value: DOUBT_ENDING_MAX_AFFINITY }]);
+    expect(trust!.requirements).toEqual([{ kind: "npc_affinity_at_least", npcId: asNpcId("npc_9"), value: TRUST_ENDING_MIN_AFFINITY }]);
+    expect(doubt!.requirements).toEqual([{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_9"), value: DOUBT_ENDING_MAX_AFFINITY }]);
   });
 
   it("still derives requirements when proposal omits them", () => {
-    const ws = makeWorld();
+    const ws: WorldState = {
+      ...makeWorld(),
+      quests: [{
+        id: asQuestId("quest_final"), name: "终局", description: "d",
+        objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_9") }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 9, status: "active",
+      }],
+    };
     const ss = makeStory({ currentAct: 3, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_ending_pair" } });
     const proposal: WorldDeltaProposal = {
       beatSummary: "终幕两种走向",
@@ -347,10 +363,10 @@ describe("approveWorldDelta", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.approved.newEndings[0]!.requirements).toEqual([
-      { kind: "npc_affinity_at_least", npcId: asNpcId("npc_0"), value: TRUST_ENDING_MIN_AFFINITY },
+      { kind: "npc_affinity_at_least", npcId: asNpcId("npc_9"), value: TRUST_ENDING_MIN_AFFINITY },
     ]);
     expect(result.approved.newEndings[1]!.requirements).toEqual([
-      { kind: "npc_affinity_at_most", npcId: asNpcId("npc_0"), value: DOUBT_ENDING_MAX_AFFINITY },
+      { kind: "npc_affinity_at_most", npcId: asNpcId("npc_9"), value: DOUBT_ENDING_MAX_AFFINITY },
     ]);
   });
 
