@@ -332,7 +332,7 @@ Run: `npx vitest run src/game/application/gameSessionView.test.ts`
             : focusLine ?? idleLine,
           NPC_SCENE_PAGE_CHAR_BUDGET,
         );
-    return [{
+    return {
       npcId: String(npc.id),
       name: npc.name,
       role: npc.role,
@@ -356,7 +356,7 @@ Run: `npx vitest run src/game/application/gameSessionView.test.ts`
             };
           })
         : [],
-    }];
+    };
   });
 ```
 
@@ -491,14 +491,18 @@ Run: `npx vitest run src/components/AdventureGameShell.test.tsx`
 
 (b) 删除 `allDialoguesMap` 的 UI 合成循环（现 L478-492，`for (const npc of locationNpcs) { ... composeDirectNpcGreeting ... }` 整段）：read model 已为所有在场 NPC 投影闲聊对话。同时若文件内无其他使用，删除 import 中的 `composeDirectNpcGreeting`（现 L4）。
 
-(c) 删除 `sidebarNpcs` 的合成循环（现 L627-639，引用 `npc.talkChoice.choiceToken` 构造 `fallbackId` 的整段）：同因已死代码，且可空类型下无法编译。
+(c) 删除 `sidebarNpcs` 的合成循环（现 L627-639，引用 `npc.talkChoice.choiceToken` 构造 `fallbackId` 的整段）：因 `activeDialogues` 已包含在场全部 NPC，此段为死代码且在可空类型下无法编译；同时在构建 `sidebarNpcs` 时（现 L616-625）将 `hasActiveDialogue` 设置为 `d.choices.length > 0 || d.freeInputEnabled`，使闲聊 NPC 显示为常规人物卡片而非高亮活跃状态。
 
-(d) `selectedNpcChoiceToken`（现 L403-405）改可空访问：
+(d) `selectedNpcChoiceToken`（现 L403-405）与 `renderChoiceButton` 查找（现 L572）改可空访问：
 
 ```tsx
   const selectedNpcChoiceToken = currentSceneNpcName === null
     ? null
     : locationNpcs[0]?.talkChoice?.choiceToken ?? null;
+```
+
+```tsx
+  const matchingNpc = locationNpcs.find((n) => n.talkChoice?.choiceToken === choice.choiceToken);
 ```
 
 `handoffLeavesCurrentBuilding`（现 L422-425）改为按“建筑场景 NPC 是否就是权威 talk 目标”判定：
