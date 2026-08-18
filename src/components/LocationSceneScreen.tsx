@@ -559,7 +559,8 @@ export function LocationSceneScreen({
           type="button"
           disabled={busy || pending}
           onClick={() => {
-            const dialogue = Array.from(allDialoguesMap.values()).find((d) => d.name === matchingNpc.name);
+            // 按 npcId 精确桥接（同名 NPC 不再错配），allDialoguesMap 以 npcId 为键。
+            const dialogue = allDialoguesMap.get(matchingNpc.npcId);
             if (dialogue !== undefined) {
               setOpenDialogueNpcId(dialogue.npcId);
               setDialoguePhase("choice");

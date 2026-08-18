@@ -31,6 +31,11 @@ export type NpcDialogueView = {
   readonly name: string;
   readonly role: string;
   readonly speechPages: readonly string[];
+  /**
+   * 契约：焦点 NPC 恒为 0 或 2 个批准选项（交接双选项）；
+   * 非焦点 NPC 恒为空数组（零回合闲聊，不含任何可提交选项）。
+   * UI 不得为非焦点 NPC 渲染可提交按钮。
+   */
   readonly choices: readonly PlayerChoiceView[];
   readonly freeInputEnabled: boolean;
   /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
@@ -92,6 +97,7 @@ export type GameSessionView = {
     readonly actions: readonly PlayerChoiceView[];
     /** 当前地点的 NPC 名单：小镇视图渲染居民/人物入口。 */
     readonly npcs: readonly {
+      readonly npcId: string;
       readonly name: string;
       readonly role: string;
       readonly talkChoice: PlayerChoiceView | null;
@@ -634,6 +640,7 @@ export function projectGameSessionView(
       scale: currentLocation === undefined ? "scene" : locationScaleOf(currentLocation),
       actions: locationActions,
       npcs: presentNpcs.map((npc) => ({
+        npcId: String(npc.id),
         name: npc.name,
         role: npc.role,
         // talkChoice 只在“该 NPC 就是当前权威 talk 目标”时下发

@@ -69,7 +69,7 @@ function buildView(options: { battle?: GameSessionView["battle"] } = {}): GameSe
     currentLocation: {
       name: "客栈", description: "一间客栈", scale: "scene",
       actions: [choice(TOKENS.explore, "探索客栈", "explore")],
-      npcs: [{ name: "老板", role: "路人", talkChoice: choice(TOKENS.dialogueOne, "与老板交谈", "dialogue") }],
+      npcs: [{ npcId: "npc_1", name: "老板", role: "路人", talkChoice: choice(TOKENS.dialogueOne, "与老板交谈", "dialogue") }],
       town: null,
     },
     obtainableItems: [{ name: "铜钥匙", description: "旧钥匙", choice: choice(TOKENS.item, "拾取铜钥匙", "item") }],
@@ -249,7 +249,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       ...buildView(),
       currentLocation: {
         ...buildView().currentLocation,
-        npcs: [{ name: "老周", role: "茶摊老板", talkChoice: null }],
+        npcs: [{ npcId: "npc_lao_zhou", name: "老周", role: "茶摊老板", talkChoice: null }],
       },
       narrative: {
         ...buildView().narrative,
@@ -467,7 +467,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
         ...base.currentLocation,
         npcs: [
           ...base.currentLocation.npcs,
-          { name: "传讯人", role: "信使", talkChoice: choice("c_messenger_talk", "与传讯人交谈", "dialogue") },
+          { npcId: "npc_2", name: "传讯人", role: "信使", talkChoice: choice("c_messenger_talk", "与传讯人交谈", "dialogue") },
         ],
       },
       narrative: {
@@ -1122,7 +1122,9 @@ describe("AdventureGameShell canonical opaque choices", () => {
   });
 
   it("removes defeated units from the battle scene", () => {
-    const view = buildView();
+    // 需要 battle 基础字段（controls/enemyName 等）：buildView() 的 battle 为 null，
+    // 展开会丢失 controls 导致渲染崩溃，故用 buildBattleView() 再覆盖 units。
+    const view = buildBattleView();
     render(<LocationSceneScreen
       view={{
         ...view,
@@ -1178,7 +1180,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
         ...base.currentLocation,
         npcs: [
           ...base.currentLocation.npcs,
-          { name: "猎人", role: "游侠", talkChoice: choice("c_hunter_talk", "与猎人交谈", "dialogue") },
+          { npcId: "npc_2", name: "猎人", role: "游侠", talkChoice: choice("c_hunter_talk", "与猎人交谈", "dialogue") },
         ],
       },
       narrative: {
@@ -1228,7 +1230,7 @@ describe("AdventureGameShell three-layer navigation", () => {
       currentLocation: {
         name: "客栈", description: "一间客栈", scale: "town",
         actions: [choice(TOKENS.explore, "探索客栈", "explore")],
-        npcs: [{ name: "老板", role: "路人", talkChoice: choice(TOKENS.dialogueOne, "与老板交谈", "dialogue") }],
+        npcs: [{ npcId: "npc_1", name: "老板", role: "路人", talkChoice: choice(TOKENS.dialogueOne, "与老板交谈", "dialogue") }],
         town: townFixture,
       },
     };
@@ -1345,8 +1347,8 @@ describe("AdventureGameShell three-layer navigation", () => {
       currentLocation: {
         ...view.currentLocation,
         npcs: [
-          { name: clickedBuilding.npcName, role: "掌柜", talkChoice: choice(TOKENS.dialogueOne, `与${clickedBuilding.npcName}交谈`, "dialogue") },
-          { name: "目标人", role: "信使", talkChoice: choice(TOKENS.dialogueTwo, "与目标人交谈", "dialogue") },
+          { npcId: clickedBuilding.npcId, name: clickedBuilding.npcName, role: "掌柜", talkChoice: choice(TOKENS.dialogueOne, `与${clickedBuilding.npcName}交谈`, "dialogue") },
+          { npcId: "npc_2", name: "目标人", role: "信使", talkChoice: choice(TOKENS.dialogueTwo, "与目标人交谈", "dialogue") },
         ],
         town: {
           ...view.currentLocation.town!,
