@@ -211,7 +211,7 @@ describe("buildSceneGenerationContext", () => {
     expect(contextA).toEqual(contextB);
   });
 
-  it("active battle 只投影三个可执行 battle_action 候选", () => {
+  it("active battle 只投影两个可执行 battle_action 候选", () => {
     const record = makeRecord();
     const context = buildSceneGenerationContext({
       ...record,
@@ -223,7 +223,6 @@ describe("buildSceneGenerationContext", () => {
     expect(context.legalActionCandidates).toEqual([
       { kind: "battle_action", label: "攻击", targetId: "attack" },
       { kind: "battle_action", label: "防守", targetId: "guard" },
-      { kind: "battle_action", label: "撤退", targetId: "flee" },
     ]);
   });
 
@@ -277,6 +276,14 @@ describe("buildSceneGenerationContext", () => {
     expect(context.objectiveTransition.completed).toEqual(transition.completed);
     expect(context.objectiveTransition.mode).toBe("progressed");
     expect(context.mandatoryBeats).toEqual(beats);
+    expect(context.story.activeQuest).toEqual({
+      questId: "quest_0",
+      name: "查明真相",
+      description: "查清矿坑的真相",
+      objectiveIndex: 1,
+      objectiveLabel: "获取盟誓印谱",
+      objectiveKind: "obtain_item",
+    });
   });
 
   it("幕边界：job 快照 after 为空时，after 修正为已具象化的下一幕目标", () => {

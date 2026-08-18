@@ -14,25 +14,25 @@ import type { WorldEvolutionSource } from "@/game/application/worldEvolutionSour
 
 // ---------------------------------------------------------------------------
 // Step 3：同 seed 分叉旅程。
-// 支持/质疑两个分支从同一 seed 出发：都具象化可完成内容、保留各自隔离的
+// 玩家口吻/非对白两个选项从同一 seed 出发：都具象化可完成内容、保留各自隔离的
 // NPC 记忆，并抵达不同主题的结局方向；每条分支重复 replay 后 WorldState +
 // StoryState 逐字节一致（离线确定性）。
 //
-// 结局分歧由生产规则承载：确定性演化源为两条结局附上关键 NPC（npc_0）亲和度
+// 结局分歧由生产规则承载：确定性演化源为两条结局附上关键 NPC（npc_0）的亲和度
 // 达成要求（trust 需亲和度 ≥ TRUST_ENDING_MIN_AFFINITY，doubt ≤ 该值-1）。
-// 支持分支（支持/信任互动）亲和度走高 → 命中信任结局；质疑分支（质疑/敌意
-// 互动）亲和度走低 → 命中质疑结局。同一 stock 离线源、同一 seed、不同玩法
+// 信任分支（自定义对白）亲和度走高 → 命中信任结局；质疑分支（自定义对白）
+// 亲和度走低 → 命中质疑结局。同一 stock 离线源、同一 seed、不同玩法
 // → 不同结局解析，全程零 AI。
 // ---------------------------------------------------------------------------
 
 type Branch = {
   readonly name: "support" | "challenge";
-  readonly fixedLabel: "支持" | "质疑";
+  readonly fixedLabel: "回应";
   readonly customText: string;
 };
 
-const SUPPORT: Branch = { name: "support", fixedLabel: "支持", customText: "我相信你，我们一起查明真相" };
-const CHALLENGE: Branch = { name: "challenge", fixedLabel: "质疑", customText: "你在撒谎，我会亲自揭穿真相" };
+const SUPPORT: Branch = { name: "support", fixedLabel: "回应", customText: "我相信你，我们一起查明真相" };
+const CHALLENGE: Branch = { name: "challenge", fixedLabel: "回应", customText: "你在撒谎，我会亲自揭穿真相" };
 
 async function runBranch(branch: Branch, replay: number) {
   const gameId = asGameId(`divergence_${branch.name}_${replay}`);
@@ -47,6 +47,16 @@ async function runBranch(branch: Branch, replay: number) {
   };
   const fixed = async (label: string) => accept(await playIssuedChoice(store.repo, label, source));
   const scene = async () => expect(await advanceScene(store.repo, source)).toBe(true);
+  const defeat = async (enemyName: string) => {
+    await fixed(enemyName);
+    while (store.record()!.worldState.battle.status === "active") await fixed("攻击");
+    await scene();
+  };
+  const finishActEvidence = async (act: number) => {
+    await fixed(`信物·${act}`);
+    await scene();
+    await defeat(`守径人·${act}`);
+  };
   const reload = () => {
     const snapshot = store.record();
     if (snapshot === null) throw new Error("reload 缺少存档");
@@ -66,25 +76,33 @@ async function runBranch(branch: Branch, replay: number) {
   await scene(); // 具象化第 2 幕内容
   await fixed(openingNpcName); // 主动重新开启与开场 NPC 的一轮对话
   await scene();
-  await fixed(branch.fixedLabel); // 3: 固定分支选项
+  await fixed(branch.fixedLabel); // 3: 玩家口吻固定回应
   await scene();
   await fixed(openingNpcName); // 固定选择后已退出焦点；再次主动交谈后才允许自由输入
   await scene();
   await freeText(branch.customText); // 4: 自定义分支输入
   await scene();
   reload(); // 重载 1
-  await fixed("传讯人·2"); // 5: 完成第 2 幕主线
+  await fixed("延伸之地·2"); // 5: 前往第 2 幕地点
+  await scene();
+  await fixed("传讯人·2"); // 6: 完成第 2 幕主线交谈步骤
+  await scene();
+  await finishActEvidence(2);
   await scene(); // 具象化第 3 幕内容
   reload(); // 重载 2
-  await fixed("传讯人·3"); // 6: 完成最终幕主线
+  await fixed("延伸之地·3"); // 7: 前往最终幕地点
+  await scene();
+  await fixed("传讯人·3"); // 8: 完成最终幕主线交谈步骤
+  await scene();
+  await finishActEvidence(3);
   await scene(); // 具象化结局对（stock 规则要求）
-  await fixed("传讯人·2"); // 7: 结局落定
+  await fixed(branch.name === "support" ? "回应" : "质疑"); // 7: 明确选择结局方向后落定
   await scene();
   reload(); // 重载 3
 
   const record = store.record();
   if (record === null) throw new Error("旅程结束后存档缺失");
-  expect(successfulTurns).toBeGreaterThanOrEqual(6);
+  expect(successfulTurns).toBeGreaterThanOrEqual(10);
   expect(record.storyState.turnNumber).toBe(successfulTurns);
   expect(reloads).toBeGreaterThanOrEqual(3);
   expect(record.worldState.ending).not.toBeNull();
@@ -92,7 +110,7 @@ async function runBranch(branch: Branch, replay: number) {
 }
 
 describe("同 seed 的完整选择分叉与多结局（Step 3）", () => {
-  it("支持与质疑分支都可完成，规则裁决为不同结局方向（信任 vs 质疑）", async () => {
+  it("玩家口吻/自定义质疑分支都可完成，规则裁决为不同结局方向", async () => {
     const support = await runBranch(SUPPORT, 1);
     const challenge = await runBranch(CHALLENGE, 1);
     const supportNpc = support.worldState.npcs[0]!;
@@ -113,8 +131,8 @@ describe("同 seed 的完整选择分叉与多结局（Step 3）", () => {
     expect(challengeEnding!.requirements.length).toBeGreaterThan(0);
 
     // 支持分支命中信任方向；质疑分支命中质疑方向——离线（零 AI）也能靠规则区分。
-    expect(supportEnding!.name).toContain("共同承担");
-    expect(challengeEnding!.name).toContain("独自揭");
+    expect(supportEnding!.name).toContain("共同揭露");
+    expect(challengeEnding!.name).toContain("独自追查");
     expect(supportEnding!.name).not.toBe(challengeEnding!.name);
 
     expect(support.worldState.eventLedger.some((event) => event.type === "ending_reached")).toBe(true);

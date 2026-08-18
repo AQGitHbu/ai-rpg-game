@@ -114,7 +114,8 @@ describe("sanitizeOpeningFactReferences", () => {
 
 describe("createOpeningGenerationSource", () => {
   it("无 transport 时确定性 fallback 只返回开场切片且通过同一 validator", async () => {
-    const source = createOpeningGenerationSource({});
+    const results: Array<{ seed: string; source: "generated" | "fallback" }> = [];
+    const source = createOpeningGenerationSource({ onResult: (result) => results.push(result) });
     const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
     expect(candidate).toBeTruthy();
     expect(candidate.world.publicFacts.length).toBeGreaterThan(0);
@@ -122,16 +123,70 @@ describe("createOpeningGenerationSource", () => {
     expect(candidate.opening.quest.objective).toEqual({ kind: "talk_to_opening_npc" });
     const validated = validateOpeningGenerationCandidate(candidate, { gameLength: "short", targetActs: 3 });
     expect(validated.ok).toBe(true);
+    expect(results).toEqual([{ seed: "s", source: "fallback" }]);
   });
 
   it("AI 返回有效开场切片时经机械修复 + 校验通过", async () => {
     const transport = {
       complete: async () => ({ ok: true, content: JSON.stringify(validCandidate()), latencyMs: 1 }),
     } as unknown as AiTransport;
-    const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+    const results: Array<{ seed: string; source: "generated" | "fallback" }> = [];
+    const source = createOpeningGenerationSource({
+      transport,
+      config: { baseUrl: "x", apiKey: "k", model: "m" },
+      onResult: (result) => results.push(result),
+    });
     const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
     expect(candidate.opening.npc.name).toBe("沈掌柜");
     expect(candidate.opening.location.scale).toBe("town");
+    expect(results).toEqual([{ seed: "s", source: "generated" }]);
+  });
+
+  it("机械修复保留 AI 的建筑名与结构标签", async () => {
+    const generated = {
+      ...validCandidate(),
+      opening: {
+        ...validCandidate().opening,
+        location: { ...validCandidate().opening.location, buildingName: "墨痕驿" },
+        variationProfile: {
+          sceneFrame: "workshop",
+          npcArchetype: "craftsperson",
+          leadType: "object",
+          conflictMode: "dispute",
+        },
+      },
+    } as const;
+    const transport = {
+      complete: async () => ({ ok: true, content: JSON.stringify(generated), latencyMs: 1 }),
+    } as unknown as AiTransport;
+    const source = createOpeningGenerationSource({
+      transport,
+      config: { baseUrl: "x", apiKey: "k", model: "m" },
+    });
+    const candidate = await source.generate({ gameType: "wuxia", seed: "profile-seed", gameLength: "short" });
+    expect(candidate.opening.location.buildingName).toBe("墨痕驿");
+    expect(candidate.opening.variationProfile).toEqual(generated.opening.variationProfile);
+  });
+
+  it("保留 AI 自由生成的实体名，不用服务端硬编码名称覆盖", async () => {
+    const prompts: string[] = [];
+    const transport = {
+      complete: async (_config: unknown, messages: readonly { role: string; content: string }[]) => {
+        prompts.push(messages.map((message) => message.content).join("\n"));
+        return { ok: true, content: JSON.stringify(validCandidate()), latencyMs: 1 };
+      },
+    } as unknown as AiTransport;
+    const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+    const candidate = await source.generate({
+      gameType: "wuxia",
+      seed: "free-generation-seed",
+      gameLength: "short",
+    });
+
+    expect(candidate.opening.location.name).toBe("听雨客栈");
+    expect(candidate.opening.npc.name).toBe("沈掌柜");
+    expect(candidate.opening.quest.name).toBe("取得沈掌柜的信任");
+    expect(prompts[0]).not.toContain("服务端已经为本局选择了结构锚点");
   });
 
   it("prompt 包含 personalityTags/narrativeStyle/contentIntensity，且只要求开场切片并禁止未来命名实体", async () => {
@@ -241,19 +296,18 @@ describe("createOpeningGenerationSource", () => {
     expect(candidate.opening.npc.privateFactKeys).not.toContain("fact_ghost");
   });
 
-  it("AI 首次返回 empty_response 时重试一次并最终成功", async () => {
+  it("AI 返回 empty_response 时不重复相同请求并回退", async () => {
     let calls = 0;
     const transport = {
       complete: async () => {
         calls += 1;
-        if (calls === 1) return { ok: false, code: "empty_response", retryable: false, latencyMs: 1 };
-        return { ok: true, content: JSON.stringify(validCandidate()), latencyMs: 1 };
+        return { ok: false, code: "empty_response", retryable: false, latencyMs: 1 };
       },
     } as unknown as AiTransport;
     const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
     const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
-    expect(calls).toBe(2);
-    expect(candidate.opening.npc.name).toBe("沈掌柜");
+    expect(calls).toBe(1);
+    expect(candidate.opening.npc.name).toBeTruthy();
   });
 
   it("AI 返回非法 JSON 时回退 fixture", async () => {

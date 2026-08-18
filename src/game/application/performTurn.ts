@@ -16,11 +16,12 @@ import {
 } from "@/game/domain/pendingNarrativeJob";
 import { buildIntentContext, type IntentParserSource } from "@/game/gameplay/rpg/intentParser";
 import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
-import { buildOutcomeBeats, deriveObjectiveTransition } from "@/game/gameplay/rpg/narrativeContext";
+import { buildOutcomeBeats, currentObjectiveOf, deriveObjectiveTransition } from "@/game/gameplay/rpg/narrativeContext";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
-import { evolveWorld, repairIdOverrideForAction, type EvolveWorldResult } from "./evolveWorld";
+import { evolveWorld, repairIdOverrideForAction } from "./evolveWorld";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
+import { advanceStoryReveal, isActionReleased } from "@/game/gameplay/rpg/worldEvolution";
 
 export type PerformTurnCommand = {
   readonly gameId: GameId;
@@ -44,7 +45,32 @@ export type PerformTurnDeps = {
    * 触发→审批→预览→重演算全部路径都只走单次 CAS。
    */
   readonly worldEvolutionSource?: WorldEvolutionSource;
+  /** 生产 live 路径关闭确定性世界演化降级；测试/离线调用默认保留兼容行为。 */
+  readonly allowDeterministicWorldEvolutionFallback?: boolean;
 };
+
+/**
+ * The read model can expose a focused NPC immediately after entering a newly
+ * materialized location. That scene can still be a handoff from the previous
+ * speaker, so the authoritative current objective (rather than a recycled
+ * npcLine) authorizes the new NPC's custom response input.
+ */
+function focusedNpcForFreeText(worldState: WorldState, storyState: StoryState): string | null {
+  const objective = currentObjectiveOf(worldState, storyState);
+  if (objective !== null) {
+    const quest = worldState.quests.find((entry) => String(entry.id) === String(objective.questId));
+    const objectiveTarget = quest?.objectives[objective.objectiveIndex];
+    if (objectiveTarget?.kind === "talk_to_npc") {
+      const npc = worldState.npcs.find((entry) => String(entry.id) === String(objectiveTarget.npcId));
+      if (npc !== undefined && String(npc.locationId) === String(worldState.currentLocationId)) {
+        return String(objectiveTarget.npcId);
+      }
+    }
+  }
+
+  const scene = storyState.narrative.currentScene;
+  return scene?.event?.kind === "dialogue" ? String(scene.event.focusNpcId) : null;
+}
 
 /**
  * 纯函数：Action -> 场景生成所需的封闭结构化摘要（不保存 World State / path patch）。
@@ -100,11 +126,8 @@ export async function performTurn(
   }
 
   if (command.interaction.kind === "free_text" && command.interaction.targetNpcId !== undefined) {
-    const sceneEvent = record.storyState.narrative.currentScene?.event;
-    if (
-      sceneEvent?.kind !== "dialogue"
-      || sceneEvent.focusNpcId !== command.interaction.targetNpcId
-    ) {
+    const focusedNpcId = focusedNpcForFreeText(record.worldState, record.storyState);
+    if (focusedNpcId !== command.interaction.targetNpcId) {
       return {
         ok: false,
         code: "ACTION_REJECTED",
@@ -125,6 +148,18 @@ export async function performTurn(
   if (!converted.ok) {
     return { ok: false, code: "UNKNOWN_CHOICE", feedback: "Conversion failed" };
   }
+
+  // 即使客户端携带了旧 choiceMap，隐藏目标也不能绕过当前主线释放游标。
+  if (!isActionReleased(record.worldState, record.storyState, converted.action)) {
+    return { ok: false, code: "ACTION_REJECTED", feedback: "这条线索还没有展开。" };
+  }
+
+  const fixedChoiceToken = command.interaction.kind === "fixed_choice"
+    ? command.interaction.choiceToken
+    : undefined;
+  const dialogueChoiceLabel = fixedChoiceToken === undefined
+    ? undefined
+    : record.storyState.narrative.choiceRegistry?.find((entry) => entry.choiceToken === fixedChoiceToken)?.label;
 
   const resolved = resolveTurn(
     record.worldState,
@@ -153,6 +188,7 @@ export async function performTurn(
         worldState: record.worldState,
         storyState: record.storyState,
         source: deps.worldEvolutionSource,
+        allowDeterministicFallback: deps.allowDeterministicWorldEvolutionFallback,
         action: converted.action,
         reason: resolved.code,
         idOverride: repairMode ? repairIdOverrideForAction(converted.action) : undefined,
@@ -170,10 +206,14 @@ export async function performTurn(
           { now: deps.now },
         );
         if (reEvaluated.ok && reEvaluated.resolution.primaryResult.status === "success") {
+          const revealed = advanceStoryReveal({
+            worldState: reEvaluated.resolution.nextWorldState,
+            storyState: reEvaluated.resolution.nextStoryState,
+          });
           // 重演算成功：单次 CAS 提交（含已世界演化实体 + 行动效果 + pending job）
           const narrative = buildTurnNarrative(
             { worldState: record.worldState, storyState: record.storyState },
-            { worldState: reEvaluated.resolution.nextWorldState, storyState: reEvaluated.resolution.nextStoryState },
+            revealed,
             reEvaluated.resolution.primaryResult,
             converted.action,
           );
@@ -184,14 +224,15 @@ export async function performTurn(
             expectedRevision: record.revision,
             action: converted.action,
             turnId: reEvaluated.resolution.turnId,
-            nextWorldState: reEvaluated.resolution.nextWorldState,
-            nextStoryState: reEvaluated.resolution.nextStoryState,
+            nextWorldState: revealed.worldState,
+            nextStoryState: revealed.storyState,
             turnNumber: reEvaluated.resolution.turnNumber,
             primaryResult: reEvaluated.resolution.primaryResult,
             baseLedgerLength: record.worldState.eventLedger.length,
             now: deps.now(),
             objectiveTransition: narrative.objectiveTransition,
             mandatoryBeats: narrative.mandatoryBeats,
+            dialogueChoiceLabel,
           });
         }
         // 重演算仍失败：实体提交必须真实发生（供下一回合使用），行动本身被拒绝。
@@ -217,6 +258,40 @@ export async function performTurn(
     return { ok: false, code: "ACTION_REJECTED", feedback: "被战斗阻止" };
   }
 
+  // 战斗失败不进入叙事生成：按用户可理解的“两态战斗”规则，恢复到本场
+  // 战斗开始前的世界/剧情状态，玩家可以立即重新挑战同一场战斗。
+  if (
+    converted.action.type === "battle_action"
+    && resolution.nextWorldState.battle.status === "resolved"
+    && resolution.nextWorldState.battle.outcome === "defeat"
+  ) {
+    const restoredWorldState = restoreAfterBattleDefeat(record.worldState);
+    const commitResult = await commitState(deps.repository, {
+      gameId: command.gameId,
+      expectedRevision: record.revision,
+      nextWorldState: restoredWorldState,
+      nextStoryState: record.storyState,
+    });
+    if (!commitResult.ok) {
+      return {
+        ok: false,
+        code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
+        feedback: "Commit failed",
+      };
+    }
+    return {
+      ok: true,
+      revision: commitResult.record.revision,
+      resolvedEvent: resolution.primaryResult,
+      feedback: "战斗失败，已恢复到战斗开始前，可以重新挑战。",
+    };
+  }
+
+  const revealed = advanceStoryReveal({
+    worldState: resolution.nextWorldState,
+    storyState: resolution.nextStoryState,
+  });
+
   // 活跃战斗是低延迟规则路径：只要本次推进后仍在战斗中，直接 CAS
   // 提交队列状态，不创建 PendingNarrativeJob，也不等待 AI 场景编排。
   // 终结战斗仍继续走下方叙事任务路径，保证结局/任务有表现机会。
@@ -227,8 +302,8 @@ export async function performTurn(
     const commitResult = await commitState(deps.repository, {
       gameId: command.gameId,
       expectedRevision: record.revision,
-      nextWorldState: resolution.nextWorldState,
-      nextStoryState: resolution.nextStoryState,
+      nextWorldState: revealed.worldState,
+      nextStoryState: revealed.storyState,
     });
     if (!commitResult.ok) {
       return {
@@ -247,7 +322,7 @@ export async function performTurn(
 
   const narrative = buildTurnNarrative(
     { worldState: record.worldState, storyState: record.storyState },
-    { worldState: resolution.nextWorldState, storyState: resolution.nextStoryState },
+    revealed,
     resolution.primaryResult,
     converted.action,
   );
@@ -259,15 +334,30 @@ export async function performTurn(
     expectedRevision: record.revision,
     action: converted.action,
     turnId: resolution.turnId,
-    nextWorldState: resolution.nextWorldState,
-    nextStoryState: resolution.nextStoryState,
+    nextWorldState: revealed.worldState,
+    nextStoryState: revealed.storyState,
     turnNumber: resolution.turnNumber,
     primaryResult: resolution.primaryResult,
     baseLedgerLength: record.worldState.eventLedger.length,
     now: deps.now(),
     objectiveTransition: narrative.objectiveTransition,
     mandatoryBeats: narrative.mandatoryBeats,
+    dialogueChoiceLabel,
   });
+}
+
+function restoreAfterBattleDefeat(worldState: WorldState): WorldState {
+  const battle = worldState.battle;
+  if (battle.status !== "active" || battle.preBattleSnapshot === undefined) {
+    return { ...worldState, battle: { status: "idle" } };
+  }
+  return {
+    ...worldState,
+    player: { ...worldState.player, stats: battle.preBattleSnapshot.playerStats },
+    defeatedEnemyIds: battle.preBattleSnapshot.defeatedEnemyIds,
+    eventLedger: battle.preBattleSnapshot.eventLedger,
+    battle: { status: "idle" },
+  };
 }
 
 /** Task 3：可经回合修复路径装配的未知实体引用代码。 */
@@ -331,6 +421,7 @@ type CommitResolutionInput = {
   readonly now: string;
   readonly objectiveTransition: ObjectiveTransition;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
+  readonly dialogueChoiceLabel?: string;
 };
 
 /**
@@ -358,6 +449,17 @@ async function commitResolution(input: CommitResolutionInput): Promise<PerformTu
       toLedgerIndexExclusive: input.nextWorldState.eventLedger.length,
     },
     focusNpcId: input.action.type === "talk" ? input.action.npcId : undefined,
+    ...(input.action.type === "talk"
+      ? {
+          selectedDialogue: {
+            dialogueAct: input.action.dialogueAct,
+            ...(input.action.topic === undefined ? {} : { topic: input.action.topic }),
+            ...((input.dialogueChoiceLabel ?? input.action.utterance) === undefined
+              ? {}
+              : { label: input.dialogueChoiceLabel ?? input.action.utterance }),
+          },
+        }
+      : {}),
     requestedAt: input.now,
     objectiveTransition: input.objectiveTransition,
     mandatoryBeats: input.mandatoryBeats,

@@ -55,7 +55,6 @@ function collectRawBeats({ beforeW, afterW, beforeS, afterS }: CollectInput): Ma
     const enemy = afterW.enemies.find((e) => e.id === aBattle.enemyId);
     push("battle_started", [String(aBattle.enemyId)], `遭遇了${enemy?.name ?? "敌人"}，战斗开始`);
   } else if (bBattle.status === "active" && aBattle.status === "active") {
-    const enemy = afterW.enemies.find((e) => e.id === aBattle.enemyId);
     push("battle_round", [String(aBattle.enemyId)], `战斗进入第${aBattle.round}回合，我方生命 ${aBattle.playerHp}，敌方生命 ${aBattle.enemyHp}`);
   } else if (bBattle.status === "active" && aBattle.status === "resolved") {
     const enemy = afterW.enemies.find((e) => e.id === aBattle.enemyId);

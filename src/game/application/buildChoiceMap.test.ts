@@ -126,7 +126,6 @@ describe("buildChoiceMap", () => {
     const actions = [
       { type: "battle_action", action: "attack" },
       { type: "battle_action", action: "guard" },
-      { type: "battle_action", action: "flee" },
     ] as const;
     expect([...map.keys()]).toEqual(actions.map((action) => deriveRuntimeChoiceToken(action, 0)));
   });

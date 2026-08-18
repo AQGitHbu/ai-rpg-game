@@ -12,9 +12,12 @@ import type { WorldState } from "@/game/domain/worldState";
 import { buildChoiceMap, hasExplorableContent } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
+import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
 import { buildTownView, type TownView } from "./townView";
 import { projectCombatView, type BattleView } from "./combatView";
-import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
+import { composeDirectNpcGreeting, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
+import { isObjectiveEntityReleased, isQuestObjectiveReleased } from "@/game/gameplay/rpg/worldEvolution";
+import { formatSceneChoiceLabel } from "./deterministicSceneSource";
 
 export type PlayerChoiceView = {
   readonly choiceToken: string;
@@ -99,6 +102,8 @@ export type GameSessionView = {
   readonly obtainableItems: readonly {
     readonly name: string;
     readonly description: string;
+    /** 城镇地点中的物品只属于一个可进入的剧情建筑；scene 地点不设置。 */
+    readonly buildingId?: string;
     readonly choice: PlayerChoiceView;
   }[];
   readonly inventory: readonly InventoryItemView[];
@@ -119,7 +124,7 @@ export type GameSessionView = {
     readonly eventKind?: string;
     readonly narration?: string;
     readonly choices: readonly PlayerChoiceView[];
-    readonly npcLine: { readonly text: string; readonly emotion: string } | null;
+    readonly npcLine: { readonly text: string; readonly emotion: string; readonly speaker?: string } | null;
     readonly npcDialogues: readonly NpcDialogueView[];
   };
   readonly narrativeGeneration: { readonly status: "idle" | "pending" };
@@ -177,8 +182,40 @@ function presentationForAction(action: Action): PlayerChoiceView["presentation"]
   }
 }
 
-function projectQuestObjectives(worldState: WorldState, objectives: WorldState["quests"][number]["objectives"]): readonly QuestObjectiveView[] {
-  return objectives.map((objective) => {
+/**
+ * 幕交接时，新目标 NPC 还没有上一轮的 scene registry 可继承。读模型从
+ * 当前权威目标派生两项语义不同的服务器运行时 token，让玩家能直接开始
+ * 正式对话，而非提交一个只为“打开对话”的 ask 回合。
+ */
+function handoffDialogueChoices(
+  npc: WorldState["npcs"][number],
+  revision: number,
+): readonly [PlayerChoiceView, PlayerChoiceView] {
+  return [
+    choice(
+      { type: "talk", npcId: npc.id, dialogueAct: "support" },
+      revision,
+      "我愿意先把手里的证据交给你核对，请你把知道的那一段说清楚。",
+      "dialogue",
+    ),
+    choice(
+      { type: "talk", npcId: npc.id, dialogueAct: "challenge" },
+      revision,
+      "我会逐项核对线索；你凭什么确定它们指向同一个人？",
+      "dialogue",
+    ),
+  ];
+}
+
+function projectQuestObjectives(
+  worldState: WorldState,
+  storyState: StoryState,
+  questId: string,
+  objectives: WorldState["quests"][number]["objectives"],
+): readonly QuestObjectiveView[] {
+  return objectives
+    .filter((_objective, index) => isQuestObjectiveReleased(storyState, questId, index))
+    .map((objective) => {
     switch (objective.kind) {
       case "visit_location": {
         const location = worldState.locations.find((entry) => entry.id === objective.locationId);
@@ -186,16 +223,24 @@ function projectQuestObjectives(worldState: WorldState, objectives: WorldState["
       }
       case "talk_to_npc": {
         const npc = worldState.npcs.find((entry) => entry.id === objective.npcId);
-        return { label: `与${npc?.name ?? "某人"}交谈`, completed: npc?.met ?? false };
+        const dialogueSession = storyState.narrative.dialogueSession;
+        const sessionIsForNpc = dialogueSession !== undefined
+          && String(dialogueSession.npcId) === String(objective.npcId);
+        const completed = sessionIsForNpc
+          ? dialogueSession.completed && (npc?.met ?? false)
+          : (npc?.met ?? false);
+        return { label: `与${npc?.name ?? "某人"}交谈`, completed };
       }
       case "obtain_item": {
         const item = worldState.items.find((entry) => entry.id === objective.itemId);
-        return { label: `获取${item?.name ?? "某物"}`, completed: worldState.inventory.includes(objective.itemId) };
+        return { label: `获取${item?.name ?? "某物"}`, completed: isObjectiveSatisfied(worldState, objective) };
       }
       case "discover_fact": {
         const fact = worldState.worldFacts.find((entry) => entry.factId === objective.factId);
         return {
-          label: fact?.discovered === true ? `发现${fact.text}` : "发现秘密",
+          label: fact?.discovered === true
+            ? `查明：${fact.text}`
+            : `调查${fact?.investigationLabel ?? "现场线索"}`,
           completed: fact?.discovered === true,
         };
       }
@@ -246,7 +291,12 @@ function currentObjectiveChoiceToken(
     case "discover_fact": {
       const fact = worldState.worldFacts.find((entry) => entry.factId === objective.factId);
       return fact?.locationId === worldState.currentLocationId && !fact.discovered
-        ? choice({ type: "investigate", factId: fact.factId }, revision, "调查目标线索", "explore").choiceToken
+        ? choice(
+            { type: "investigate", factId: fact.factId },
+            revision,
+            `调查${fact.investigationLabel ?? "现场线索"}`,
+            "explore",
+          ).choiceToken
         : null;
     }
     case "defeat_enemy": {
@@ -266,7 +316,11 @@ export function projectGameSessionView(
   endingSessionIdentity: string,
 ): GameSessionView {
   const currentLocation = worldState.locations.find((entry) => entry.id === worldState.currentLocationId);
-  const presentNpcs = worldState.npcs.filter((entry) => entry.locationId === worldState.currentLocationId);
+  const presentNpcs = worldState.npcs.filter((entry) =>
+    entry.locationId === worldState.currentLocationId
+    && isObjectiveEntityReleased(worldState, storyState, (objective) =>
+      objective.kind === "talk_to_npc" && String(objective.npcId) === String(entry.id)),
+  );
   const activeBattle = worldState.battle.status === "active" ? worldState.battle : null;
   const currentObjectiveRef = currentObjectiveOf(worldState, storyState);
   const currentObjectiveQuest = currentObjectiveRef === null
@@ -276,6 +330,12 @@ export function projectGameSessionView(
     ? undefined
     : currentObjectiveQuest?.objectives[currentObjectiveRef.objectiveIndex];
   const currentObjectiveToken = currentObjectiveChoiceToken(worldState, currentObjective, revision);
+  const currentObjectiveNpcId = currentObjective?.kind === "talk_to_npc"
+    ? String(currentObjective.npcId)
+    : null;
+  const townView = currentLocation === undefined
+    ? null
+    : buildTownView(worldState, currentLocation.id, currentObjectiveNpcId);
 
   const travelTargets = new Set(
     activeBattle === null ? currentLocation?.connectedLocationIds ?? [] : [],
@@ -300,12 +360,20 @@ export function projectGameSessionView(
       locationActions.push(choice({ type: "explore" }, revision, `探索${currentLocation?.name ?? "此地"}`, "explore"));
     }
     const undiscoveredFacts = worldState.worldFacts.filter((fact) =>
-      fact.locationId === worldState.currentLocationId && !fact.discovered,
+      fact.locationId === worldState.currentLocationId
+      && !fact.discovered
+      && isObjectiveEntityReleased(worldState, storyState, (objective) =>
+        objective.kind === "discover_fact" && String(objective.factId) === String(fact.factId)),
     );
     for (const [index, fact] of undiscoveredFacts.entries()) {
       if (fact.locationId === worldState.currentLocationId && !fact.discovered) {
         const suffix = undiscoveredFacts.length > 1 ? ` ${index + 1}` : "";
-        locationActions.push(choice({ type: "investigate", factId: fact.factId }, revision, `调查现场线索${suffix}`, "explore"));
+        locationActions.push(choice(
+          { type: "investigate", factId: fact.factId },
+          revision,
+          `调查${fact.investigationLabel ?? "现场线索"}${suffix}`,
+          "explore",
+        ));
       }
     }
     for (const npc of presentNpcs) {
@@ -318,6 +386,8 @@ export function projectGameSessionView(
     }
     for (const enemy of worldState.enemies) {
       if (enemy.locationId === worldState.currentLocationId && !worldState.defeatedEnemyIds.includes(enemy.id)) {
+        if (!isObjectiveEntityReleased(worldState, storyState, (objective) =>
+          objective.kind === "defeat_enemy" && String(objective.enemyId) === String(enemy.id))) continue;
         locationActions.push(choice({ type: "attack", enemyId: enemy.id }, revision, `挑战${enemy.name}`, "battle"));
       }
     }
@@ -326,41 +396,104 @@ export function projectGameSessionView(
   const obtainableItems = activeBattle === null
     ? (currentLocation?.availableItemIds ?? [])
       .filter((itemId) => !worldState.inventory.includes(itemId))
-      .map((itemId) => {
+      .filter((itemId) => isObjectiveEntityReleased(worldState, storyState, (objective) =>
+        objective.kind === "obtain_item" && String(objective.itemId) === String(itemId)))
+      .map((itemId, index) => {
         const item = worldState.items.find((entry) => entry.id === itemId);
+        const townBuildings = townView?.interactiveBuildings ?? [];
+        const townBuilding = townBuildings.length > 0
+          ? townBuildings[index % townBuildings.length]
+          : undefined;
         return {
           name: item?.name ?? "未知物品",
           description: item?.description ?? "",
+          ...(townBuilding === undefined ? {} : { buildingId: townBuilding.buildingId }),
           choice: choice({ type: "take_item", itemId }, revision, `拾取${item?.name ?? "物品"}`, "item"),
         };
       })
     : [];
 
   const scene = storyState.narrative.currentScene;
-  const currentObjectiveNpcId = currentObjective?.kind === "talk_to_npc"
-    ? String(currentObjective.npcId)
-    : null;
   // 只有结构化 dialogue event 才能赋予 NPC“焦点对话”能力。
   // observe/travel 等场景也可能带 npcLine 作为旁白表演，但不能因此泄露
   // 自由输入或伪造一个没有两个批准选项的焦点对话框。
-  const persistedFocusNpcId = scene?.event?.kind === "dialogue"
-    ? String(scene.event.focusNpcId)
-    : null;
-  // 兼容已经写入本地存档的旧交接场景：若权威当前目标明确要求与另一名
-  // 在场 NPC 交谈，旧 scene 的 focus/choices 已经过期。将旧 NPC 降为普通
-  // 交谈入口，避免继续消费同一组 support/challenge token。
-  const persistedFocusNpc = persistedFocusNpcId === null
-    ? undefined
-    : presentNpcs.find((npc) => String(npc.id) === persistedFocusNpcId);
-  const latestFocusDialogueAct = persistedFocusNpc?.memory.interactionHistory.at(-1)?.dialogueAct;
-  const staleDialogueFocus = persistedFocusNpcId !== null
-    && currentObjectiveNpcId !== null
-    && currentObjectiveNpcId !== persistedFocusNpcId
+  const sceneLineNpcId = scene?.npcLine === null || scene?.npcLine === undefined
+    ? null
+    : String(scene.npcLine.npcId);
+  const generatedObjectiveNpcFocus = currentObjectiveNpcId !== null
+    && sceneLineNpcId === currentObjectiveNpcId
     && presentNpcs.some((npc) => String(npc.id) === currentObjectiveNpcId)
-    && latestFocusDialogueAct !== "ask";
-  const focusNpcId = staleDialogueFocus ? null : persistedFocusNpcId;
+    ? currentObjectiveNpcId
+    : null;
   const registry = storyState.narrative.choiceRegistry ?? [];
   const legalChoiceMap = buildChoiceMap(worldState, storyState, revision);
+  // 终幕（或一次战斗/移动后的追问）有时已没有未完成 objective，却仍由同
+  // 一名在场 NPC 给出两个已批准的 TalkAction。这是该 NPC 的回答分支，不是
+  // 地点层的两个普通行动；将它识别为焦点对话，避免把终局决定散落到行动栏。
+  const pairedDialogueNpcId = (() => {
+    if (scene === null || scene === undefined || scene.choices.length !== 2) return null;
+    const actions: Extract<Action, { type: "talk" }>[] = [];
+    for (const sceneChoice of scene.choices) {
+      const approved = registry.find((entry) =>
+        entry.choiceToken === sceneChoice.choiceToken
+        && entry.sceneId === scene.sceneId
+        && entry.basedOnRevision === revision,
+      );
+      if (
+        approved === undefined
+        || legalChoiceMap.get(sceneChoice.choiceToken) !== approved.action
+        || approved.action.type !== "talk"
+      ) return null;
+      actions.push(approved.action);
+    }
+    const npcId = actions[0]?.npcId;
+    return npcId !== undefined
+      && actions.every((action) => action.npcId === npcId)
+      && presentNpcs.some((npc) => npc.id === npcId)
+      ? String(npcId)
+      : null;
+  })();
+  const persistedFocusNpcId = scene?.event?.kind === "dialogue"
+    ? String(scene.event.focusNpcId)
+    : generatedObjectiveNpcFocus ?? pairedDialogueNpcId;
+  const persistedFocusNpc = persistedFocusNpcId === null
+    ? undefined
+    : worldState.npcs.find((npc) => String(npc.id) === persistedFocusNpcId);
+  const latestFocusDialogueAct = persistedFocusNpc?.memory.interactionHistory.at(-1)?.dialogueAct;
+  const isEndingDialogueDecision = storyState.endingAllowed
+    || storyState.evolution.status === "needs_ending_pair";
+  const currentObjectiveRequiresNonDialogueAction = currentObjective !== undefined
+    && currentObjective.kind !== "talk_to_npc";
+  // 兼容已经写入本地存档的旧交接场景：若权威当前目标明确要求与另一名
+  // 在场 NPC 交谈，旧 scene 的 focus/choices 已经过期。将旧 NPC 降为普通
+  // 交谈入口，避免继续消费同一组 support/challenge token。当前目标已经
+  // 进入调查/移动/取物/战斗时，即使旧场景的两个 talk token 仍然机械合法，
+  // 也不能把上一轮 NPC 继续投影成焦点；只有没有活动目标的自由回访，或
+  // 明确进入结局抉择，才保留同 NPC 的双选项。
+  const staleDialogueFocus = persistedFocusNpcId !== null
+    && (
+      (!isEndingDialogueDecision
+        && currentObjectiveRequiresNonDialogueAction
+        // 玩家刚主动点击 NPC 打开的 ask 对话仍是一个有效的可选交谈；
+        // support/challenge/freeform 刚完成后才说明旧焦点已经消费完毕。
+        && latestFocusDialogueAct !== "ask")
+      ||
+      // 当前目标已经换成另一名 NPC：旧交接对白不能继续拦住新目标。
+      (currentObjectiveNpcId !== null
+        && currentObjectiveNpcId !== persistedFocusNpcId
+        && presentNpcs.some((npc) => String(npc.id) === currentObjectiveNpcId))
+      // 当前目标已不是交谈目标时，只保留仍有两个合法 talk choice 的终局对白；
+      // 旧场景若 choice token 已过期，就必须退回地点层行动（例如战斗入口）。
+      || (currentObjectiveNpcId === null && pairedDialogueNpcId !== persistedFocusNpcId)
+    );
+  const handoffFocusNpc = staleDialogueFocus || persistedFocusNpcId === null
+    ? currentObjectiveNpcId === null
+      ? undefined
+      : presentNpcs.find((npc) => String(npc.id) === currentObjectiveNpcId)
+    : undefined;
+  const focusNpcId = handoffFocusNpc === undefined
+    ? staleDialogueFocus ? null : persistedFocusNpcId
+    : String(handoffFocusNpc.id);
   const projectSceneChoice = (sceneChoice: NonNullable<typeof scene>["choices"][number]): PlayerChoiceView | null => {
     const approved = registry.find((entry) =>
       entry.choiceToken === sceneChoice.choiceToken
@@ -375,7 +508,7 @@ export function projectGameSessionView(
     }
     return {
       choiceToken: sceneChoice.choiceToken,
-      label: approved.label,
+      label: formatSceneChoiceLabel(approved.action, approved.label),
       ...(sceneChoice.hint === undefined ? {} : { hint: sceneChoice.hint }),
       presentation: presentationForAction(approved.action),
     };
@@ -386,9 +519,11 @@ export function projectGameSessionView(
       .map(projectSceneChoice)
       .filter((entry): entry is PlayerChoiceView => entry !== null) ?? [];
   const isDialogueScene = focusNpcId !== null;
-  const dialogueChoices: NpcDialogueView["choices"] = isDialogueScene && projectedSceneChoices.length === 2
-    ? [projectedSceneChoices[0]!, projectedSceneChoices[1]!]
-    : [];
+  const dialogueChoices: NpcDialogueView["choices"] = handoffFocusNpc !== undefined
+    ? handoffDialogueChoices(handoffFocusNpc, revision)
+    : isDialogueScene && projectedSceneChoices.length === 2
+      ? [projectedSceneChoices[0]!, projectedSceneChoices[1]!]
+      : [];
   const sceneDialogues = new Map((scene?.npcDialogues ?? []).map((entry) => [String(entry.npcId), entry]));
   const npcDialogues: readonly NpcDialogueView[] = presentNpcs.flatMap((npc) => {
     const isFocus = focusNpcId === String(npc.id);
@@ -405,7 +540,12 @@ export function projectGameSessionView(
     const suppliedSpeechPages = supplied?.speechPages
       .map((page) => normalizeNpcSpeech(page, npc.name))
       .filter((page) => page !== "") ?? [];
+    // 旧场景把所有非焦点人物都存成“欢迎光临”。这类台词没有剧情上下文，
+    // 读取时按当前 NPC 身份重建，避免已存在的旧存档继续污染新演绎。
+    const onlyLegacyGenericGreeting = suppliedSpeechPages.length > 0
+      && suppliedSpeechPages.every((page) => page === composeDirectNpcGreeting());
     const speechPages = suppliedSpeechPages.length > 0
+      && !onlyLegacyGenericGreeting
       ? suppliedSpeechPages
       : paginateSpeechText(focusLine ?? composeDeterministicNpcLine(npc.name, npc.role), NPC_SCENE_PAGE_CHAR_BUDGET);
     // 非焦点 NPC 的场景台词也必须能转化为一次真实交谈：点击后提交 ask，
@@ -450,6 +590,7 @@ export function projectGameSessionView(
     : {
         text: normalizeNpcSpeech(scene.npcLine.text, sceneNpc?.name),
         emotion: scene.npcLine.emotion,
+        ...(sceneNpc === undefined ? {} : { speaker: sceneNpc.name }),
       };
   const endingDefinition = worldState.ending === null
     ? undefined
@@ -491,9 +632,7 @@ export function projectGameSessionView(
           "dialogue",
         ),
       })),
-      town: currentLocation !== undefined
-        ? buildTownView(worldState, currentLocation.id)
-        : null,
+      town: townView,
     },
     obtainableItems,
     inventory: worldState.inventory.map((itemId) => {
@@ -528,7 +667,7 @@ export function projectGameSessionView(
       description: quest.description,
       kind: quest.kind,
       status: quest.status,
-      objectives: projectQuestObjectives(worldState, quest.objectives),
+      objectives: projectQuestObjectives(worldState, storyState, String(quest.id), quest.objectives),
     })),
     prologueShown: storyState.prologueShown,
     prologueText: storyState.prologueText,

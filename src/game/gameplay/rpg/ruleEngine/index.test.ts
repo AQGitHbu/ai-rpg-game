@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { ruleEngine, resolveTurn } from "./index";
 import { createInitialWorldState, appendNpc, appendLocation, type LocationEntry, type NpcEntry, type EnemyEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId, asEnemyId, type QuestId, type EndingId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, type QuestId, type EndingId } from "@/game/domain/worldEntity";
 import { asTurnId } from "@/game/domain/events";
 
 describe("ruleEngine facade", () => {
@@ -54,6 +54,62 @@ describe("ruleEngine facade", () => {
     if (result.ok) {
       expect(result.nextStoryState.tension).toBe(33); // 30 + 3 (npc_met)
     }
+  });
+
+  it("对话会话至少连续两轮后才完成 talk_to_npc 目标", () => {
+    const npc: NpcEntry = {
+      id: asNpcId("npc_dialogue"), name: "线人", role: "知情人", description: "知道一条线索",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_dialogue"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const dialogueWs = {
+      ...appendNpc(ws, npc),
+      quests: [{
+        id: asQuestId("quest_dialogue"), name: "查清口供", description: "把口供问完整",
+        objectives: [{ kind: "talk_to_npc" as const, npcId: npc.id }],
+        onSuccess: { kind: "advance_story" as const }, onFailure: { kind: "closed" as const },
+        tags: [], kind: "main" as const, stage: 1, status: "active" as const,
+      }],
+    };
+    const dialogueState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        dialogueSession: { npcId: npc.id, turnCount: 0, requiredTurns: 2, completed: false },
+      },
+    };
+
+    const first = resolveTurn(
+      dialogueWs,
+      dialogueState,
+      { type: "talk", npcId: npc.id, dialogueAct: "support", topic: { kind: "general" } },
+      "dialogue_1",
+      0,
+      asTurnId("turn_dialogue_1"),
+      "fixed_choice",
+      deps,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("第一轮对话不应失败");
+    expect(first.resolution.nextWorldState.quests[0]?.status).toBe("active");
+    expect(first.resolution.domainEvents.map((event) => event.type)).not.toContain("quest_completed");
+    expect(first.resolution.nextStoryState.narrative.dialogueSession).toMatchObject({ turnCount: 1, completed: false });
+
+    const second = resolveTurn(
+      first.resolution.nextWorldState,
+      first.resolution.nextStoryState,
+      { type: "talk", npcId: npc.id, dialogueAct: "challenge", topic: { kind: "thread", threadId: "main_thread" } },
+      "dialogue_2",
+      1,
+      asTurnId("turn_dialogue_2"),
+      "fixed_choice",
+      deps,
+    );
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error("第二轮对话不应失败");
+    expect(second.resolution.nextWorldState.quests[0]?.status).toBe("completed");
+    expect(second.resolution.domainEvents.map((event) => event.type)).toContain("quest_completed");
+    expect(second.resolution.nextStoryState.narrative.dialogueSession).toMatchObject({ turnCount: 2, completed: true });
   });
 });
 
@@ -187,7 +243,7 @@ describe("resolveTurn facade", () => {
     expect(r.nextWorldState.eventLedger).toEqual([...wsWithHostile.eventLedger, ...r.domainEvents]);
   });
 
-  it("orders domain events resolver → quest → ending and aligns eventLedger; bumps turn once", () => {
+  it("a non-dialogue action can finish the final quest without prematurely resolving an ending", () => {
     const questId = "quest_1" as QuestId;
     const questWs: typeof ws = {
       ...ws,
@@ -202,8 +258,8 @@ describe("resolveTurn facade", () => {
         requirements: [{ kind: "quest_completed", questId }],
       }],
     };
-    // Spec §13.1：最终幕 + 无未决主线 thread → advance 推导 endingAllowed=true，
-    // resolveEnding 最后调用并同回合抵达结局，无需额外点击。
+    // 最终幕 + 无未决主线 thread 会推导 endingAllowed=true，但玩家仍须在
+    // 结局对中明确选择 support/challenge；移动本身不应跳过这一步。
     const ssFinalAct = {
       ...ss,
       currentAct: 3,
@@ -219,19 +275,63 @@ describe("resolveTurn facade", () => {
     expect(r.domainEvents.map((e) => e.type)).toEqual([
       "location_visited",
       "quest_completed",
-      "ending_reached",
     ]);
     expect(r.nextWorldState.eventLedger).toEqual([
       ...questWs.eventLedger,
       ...r.domainEvents,
     ]);
     expect(r.nextWorldState.quests[0]?.status).toBe("completed");
-    expect(r.nextWorldState.ending).toEqual({ endingId: "ending_1", outcome: "success" });
-    expect(r.turnNumber).toBe(ss.turnNumber + 1); // 非事件数（3 个事件也只加 1）
+    expect(r.nextWorldState.ending).toBeNull();
+    expect(r.turnNumber).toBe(ss.turnNumber + 1); // 非事件数（2 个事件也只加 1）
     expect(r.nextStoryState.turnNumber).toBe(r.turnNumber);
     expect(r.primaryResult.triggeredEvents).toEqual([
-      "location_visited", "quest_completed", "ending_reached",
+      "location_visited", "quest_completed",
     ]);
+  });
+
+  it("resolves an ending only after an explicit final support/challenge dialogue decision", () => {
+    const questId = "quest_final" as QuestId;
+    const finalNpc: NpcEntry = {
+      id: asNpcId("npc_final"), name: "见证人", role: "卷宗保管人", description: "t",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
+      memory: { npcId: asNpcId("npc_final"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const finalWs = appendNpc({
+      ...ws,
+      quests: [{
+        id: questId, name: "终幕主线", description: "d",
+        objectives: [{ kind: "visit_location", locationId: asLocationId("loc_1") }],
+        onSuccess: { kind: "closed" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 3, status: "completed",
+      }],
+      endings: [
+        { id: "ending_trust" as EndingId, name: "共担真相", description: "d", requirements: [{ kind: "npc_affinity_at_least", npcId: finalNpc.id, value: 1 }] },
+        { id: "ending_doubt" as EndingId, name: "独自揭露", description: "d", requirements: [{ kind: "npc_affinity_at_most", npcId: finalNpc.id, value: 0 }] },
+      ],
+    }, finalNpc);
+    const ssFinalAct = {
+      ...ss,
+      currentAct: 3,
+      targetActs: 3,
+      storyProgress: 85,
+      unresolvedThreads: [],
+      endingAllowed: true,
+    };
+
+    const result = resolveTurn(
+      finalWs,
+      ssFinalAct,
+      { type: "talk", npcId: finalNpc.id, dialogueAct: "support" },
+      "act_final_choice",
+      baseRevision,
+      turnId,
+      "fixed_choice",
+      deps,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unexpected failure");
+    expect(result.resolution.domainEvents.map((event) => event.type)).toContain("ending_reached");
+    expect(result.resolution.nextWorldState.ending).toEqual({ endingId: "ending_trust", outcome: "success" });
   });
 
   it("blocked action keeps state and produces no commit payload", () => {

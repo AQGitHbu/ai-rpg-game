@@ -78,6 +78,22 @@ describe("convertInteraction free_text", () => {
     }
   });
 
+  it("keeps focused NPC text about handing over an item as dialogue, never as give_item", async () => {
+    const result = await convertInteraction(
+      { kind: "free_text", text: "把钥匙交给老板", targetNpcId: asNpcId("npc_1") },
+      new Map(),
+      { intentContext: ctx, intentParserSource: source, targetNpcId: asNpcId("npc_1") },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.action.type).toBe("talk");
+    if (result.action.type === "talk") {
+      expect(result.action.npcId).toBe(asNpcId("npc_1"));
+      expect(result.action.utterance).toBe("把钥匙交给老板");
+    }
+  });
+
   it("AI classifies text mentioning npc name → talk", async () => {
     const result = await convertInteraction(
       { kind: "free_text", text: "老板你好" },

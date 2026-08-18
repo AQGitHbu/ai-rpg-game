@@ -8,7 +8,7 @@ import type { RelationshipValue } from "./relationship";
 import type { NarrativeEmotion } from "./narrative";
 import type { DialogueAct, StructuredDialogueTopic } from "./action";
 import type { TownRuntimeState } from "./townState";
-import type { ActiveBattleCombatState, CombatActionKind, CombatCommand } from "./combat";
+import type { ActiveBattleCombatState } from "./combat";
 
 // ── Entry 类型：定义 + 运行时 ──
 
@@ -88,6 +88,8 @@ export type WorldFactEntry = {
   readonly source: FactSource;
   readonly discovered: boolean;
   readonly locationId?: LocationId;
+  /** 未发现事实在任务/调查入口中使用的安全提示，不等于事实正文。 */
+  readonly investigationLabel?: string;
 };
 
 export type QuestObjective =
@@ -147,9 +149,15 @@ export type FactionEntry = {
 
 export type BattleState =
   | { readonly status: "idle" }
-  | ({ readonly status: "active"; readonly enemyId: EnemyId; readonly enemyIds?: readonly EnemyId[]; readonly playerHp: number; readonly enemyHp: number; readonly round: number }
+  | ({ readonly status: "active"; readonly enemyId: EnemyId; readonly enemyIds?: readonly EnemyId[]; readonly playerHp: number; readonly enemyHp: number; readonly round: number; readonly battleKey?: string; readonly preBattleSnapshot?: BattleStartSnapshot }
     & Partial<ActiveBattleCombatState>)
-  | { readonly status: "resolved"; readonly enemyId: EnemyId; readonly outcome: "victory" | "defeat" | "withdraw" };
+  | { readonly status: "resolved"; readonly enemyId: EnemyId; readonly outcome: "victory" | "defeat" | "withdraw"; readonly battleKey?: string };
+
+export type BattleStartSnapshot = {
+  readonly playerStats: PlayerState["stats"];
+  readonly defeatedEnemyIds: readonly EnemyId[];
+  readonly eventLedger: readonly GameEvent[];
+};
 
 export type EndingState = { readonly endingId: EndingId; readonly outcome: "success" | "failure" } | null;
 

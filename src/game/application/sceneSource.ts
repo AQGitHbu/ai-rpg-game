@@ -50,6 +50,8 @@ export type ScenePerformanceProposal = {
     { readonly candidateId: string; readonly label: string },
   ];
   readonly source: "generated" | "fallback";
+  /** 仅供 pending 编排限制内容修复次数，不进入 ready scene 持久化。 */
+  readonly contentRepairAttempt?: number;
 };
 
 /** 兼容现有 source 命名；结果本身就是尚未批准的表演提案。 */

@@ -44,6 +44,8 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
 
     // 两条要求阈值相邻且互斥：任何亲和度恰好命中其一（离线必有一个方向可达）。
     expect(DOUBT_ENDING_MAX_AFFINITY).toBe(TRUST_ENDING_MIN_AFFINITY - 1);
+    expect(trust.description).toContain("已核对的证据");
+    expect(doubt.description).toContain("责任归属");
   });
 
   it("the affinity threshold splits a trust-leaning vs doubt-leaning play", async () => {
@@ -62,15 +64,15 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
     if (coldDoubt.kind === "npc_affinity_at_most") expect(-20).toBeLessThanOrEqual(coldDoubt.value);
   });
 
-  it("names later-act NPCs and quests uniquely when the base names already exist", async () => {
+  it("keeps scripted later-act NPCs and quests unique when their names already exist", async () => {
     const source = createDeterministicEvolutionSource();
     const base = makeWorldWithNpc(0);
-    const existingNpc = { ...base.npcs[0]!, id: asNpcId("npc_1"), name: "传讯人" };
+    const existingNpc = { ...base.npcs[0]!, id: asNpcId("npc_1"), name: "苏绾" };
     const ws: WorldState = {
       ...base,
       npcs: [...base.npcs, existingNpc],
       quests: [{
-        id: asQuestId("quest_dyn_1"), name: "循迹而行", description: "上一幕。", objectives: [],
+        id: asQuestId("quest_dyn_1"), name: "追问断碑谷", description: "上一幕。", objectives: [],
         onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" }, tags: ["dynamic"],
         kind: "main", stage: 2, status: "completed",
       }],
@@ -79,9 +81,9 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
 
     const result = await source.propose({ worldState: ws, storyState: ss, need: { kind: "next_act", act: 3 }, reason: "test" });
 
-    expect(result.proposal?.newNpc?.name).toBe("传讯人·3");
-    expect(result.proposal?.nextMainQuest?.name).toBe("循迹而行·第3幕");
-    expect(result.proposal?.nextMainQuest?.objectiveText).toBe("与传讯人·3交谈");
+    expect(result.proposal?.newNpc?.name).toBe("苏绾·3");
+    expect(result.proposal?.nextMainQuest?.name).toBe("追问断碑谷·第3幕");
+    expect(result.proposal?.nextMainQuest?.objectiveText).toBe("与苏绾·3交谈");
   });
 
   it("seeds a later act with an item and enemy for the complete playable loop", async () => {
@@ -94,13 +96,32 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
     });
 
     expect(result.proposal?.newItem).toMatchObject({
-      name: "幕间信物",
-      locationRef: "current",
+      name: "染血腰牌",
+      locationRef: "new_location",
     });
     expect(result.proposal?.newEnemy).toMatchObject({
-      name: "迷雾守卫",
+      name: "黑衣追兵",
       tier: "normal",
-      locationRef: "current",
+      locationRef: "new_location",
     });
+  });
+
+  it("把带新地点的幕拍人物与物品、敌人放在同一条主线地点上", async () => {
+    const source = createDeterministicEvolutionSource();
+    const storyState = createInitialStoryState({
+      gameLength: "medium",
+      initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 },
+    });
+    const result = await source.propose({
+      worldState: makeWorldWithNpc(0),
+      storyState,
+      need: { kind: "next_act", act: 3 },
+      reason: "medium-story-coherence",
+    });
+    expect(result.proposal?.newLocation?.name).toBe("断碑谷");
+    expect(result.proposal?.newNpc?.locationRef).toEqual({ kind: "new_location" });
+    expect(result.proposal?.newItem?.locationRef).toBe("new_location");
+    expect(result.proposal?.newEnemy?.locationRef).toBe("new_location");
+    expect(result.proposal?.nextMainQuest?.description).toContain("前往断碑谷");
   });
 });

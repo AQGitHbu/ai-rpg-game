@@ -1,4 +1,4 @@
-import type { LocationId, NpcId } from "@/game/domain/worldEntity";
+import type { LocationId } from "@/game/domain/worldEntity";
 import type { TownBuildingSlot, TownBuildingSlotType, TownRuntimeState, TownBuildingType } from "@/game/domain/townState";
 import { TOWN_GENERATOR_VERSION } from "@/game/domain/townState";
 import { generateTown } from "./generateTown";
@@ -17,6 +17,8 @@ const SLOT_TYPE_BY_BUILDING_TYPE: Readonly<Record<TownBuildingType, TownBuilding
 export type CreateTownRuntimeInput = {
   readonly locationId: LocationId;
   readonly seed: string;
+  /** 只覆盖 slot_0 的剧情展示名，不参与几何生成。 */
+  readonly openingBuildingName?: string;
 };
 
 export function createTownRuntime(input: CreateTownRuntimeInput): TownRuntimeState {
@@ -32,6 +34,9 @@ export function createTownRuntime(input: CreateTownRuntimeInput): TownRuntimeSta
     slotId: `slot_${index}`,
     buildingId: building.buildingId,
     buildingType: SLOT_TYPE_BY_BUILDING_TYPE[building.buildingType],
+    ...(index === 0 && input.openingBuildingName !== undefined
+      ? { displayName: input.openingBuildingName }
+      : {}),
     boundNpcId: null,
   }));
   return {

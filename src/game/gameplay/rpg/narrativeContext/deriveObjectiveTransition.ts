@@ -22,8 +22,19 @@ export function currentObjectiveOf(ws: WorldState, ss: StoryState): ObjectiveRef
   );
   const quest = mainline ?? ws.quests.find((q) => q.status === "active");
   if (!quest) return null;
-  const firstOpen = quest.objectives.findIndex((obj) => !isObjectiveSatisfied(ws, obj));
-  const objectiveIndex = firstOpen === -1 ? quest.objectives.length - 1 : firstOpen;
+  const reveal = ss.reveal !== undefined && ss.reveal !== null
+    && String(ss.reveal.questId) === String(quest.id)
+    ? ss.reveal
+    : null;
+  const maxVisibleIndex = reveal === null
+    ? quest.objectives.length - 1
+    : Math.min(reveal.visibleObjectiveIndex, quest.objectives.length - 1);
+  const firstOpen = quest.objectives.findIndex((obj, index) =>
+    index <= maxVisibleIndex && !isObjectiveSatisfied(ws, obj),
+  );
+  const objectiveIndex = firstOpen === -1
+    ? Math.max(0, maxVisibleIndex)
+    : firstOpen;
   return {
     questId: quest.id,
     objectiveIndex,

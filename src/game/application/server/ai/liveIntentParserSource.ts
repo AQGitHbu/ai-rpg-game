@@ -1,4 +1,5 @@
 import type { Action, DialogueAct, StructuredDialogueTopic } from "@/game/domain/action";
+import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
 import type { IntentContext } from "@/game/gameplay/rpg/intentParser";
 import type {
@@ -13,6 +14,8 @@ import {
   asQuestId,
   type NpcId,
 } from "@/game/domain/worldEntity";
+import { createRpgAiClient, type RpgAiClient } from "./rpgAiClient";
+import type { ProviderJsonMode } from "./providerRequestOptions";
 
 // ---------------------------------------------------------------------------
 // live/fixture IntentParserSource。
@@ -45,7 +48,7 @@ export type LiveIntentTransport = {
   complete(
     config: LiveTransportConfig,
     messages: readonly LiveTransportMessage[],
-    options: { readonly timeoutMs: number },
+    options: { readonly timeoutMs: number; readonly extraBody?: Record<string, unknown> },
   ): Promise<LiveTransportResponse>;
 };
 
@@ -264,23 +267,33 @@ function buildUserPrompt(text: string, ctx: IntentContext, targetNpcId?: NpcId):
 
 /** AI 配置有效时的 live 意图源：AI 失败一律规则降级，绝不抛穿回合流水线。 */
 export function createLiveIntentParser(
-  transport: LiveIntentTransport,
+  transport?: LiveIntentTransport,
   config?: LiveTransportConfig,
   logger?: { warn(event: string, details?: unknown): void },
+  jsonMode: ProviderJsonMode = "prompt_only",
+  aiClient?: RpgAiClient,
 ): IntentParserSource {
   const rule = createRuleIntentParser();
   const cfg = config ?? { baseUrl: "", apiKey: "", model: "" };
+  const client = aiClient ?? (transport
+    ? createRpgAiClient({
+      transport: transport as unknown as AiTransport,
+      config: cfg as AiTransportConfig,
+      logger,
+      policies: { intent: { jsonMode } },
+    })
+    : undefined);
   return {
     sourceVersion: "live-intent",
     async parseIntent(text, ctx, targetNpcId?) {
       try {
-        const response = await transport.complete(
-          cfg,
+        if (client === undefined) return rule.parseIntent(text, ctx, targetNpcId);
+        const response = await client.complete(
+          "intent",
           [
             { role: "system", content: "你是 RPG 意图解析器，只返回严格 JSON。" },
             { role: "user", content: buildUserPrompt(text, ctx, targetNpcId) },
           ],
-          { timeoutMs: 20_000 },
         );
         if (response.ok && typeof response.content === "string") {
           const parsed = parseJsonResponse(response.content);
@@ -306,12 +319,14 @@ export function createLiveIntentParser(
 export function createIntentParserSource(
   env: Record<string, string | undefined> = process.env,
   transport?: LiveIntentTransport,
+  jsonMode: ProviderJsonMode = "prompt_only",
+  aiClient?: RpgAiClient,
 ): IntentParserSource {
   const baseUrl = env.AI_API_BASE_URL?.trim() ?? "";
   const apiKey = env.AI_API_KEY?.trim() ?? "";
   const model = env.AI_MODEL?.trim() ?? "";
-  if (baseUrl !== "" && apiKey !== "" && model !== "" && transport !== undefined) {
-    return createLiveIntentParser(transport, { baseUrl, apiKey, model });
+  if (baseUrl !== "" && apiKey !== "" && model !== "" && (transport !== undefined || aiClient !== undefined)) {
+    return createLiveIntentParser(transport, { baseUrl, apiKey, model }, undefined, jsonMode, aiClient);
   }
   return createRuleIntentParser();
 }

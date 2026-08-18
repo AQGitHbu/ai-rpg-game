@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asQuestId } from "@/game/domain/worldEntity";
 import {
-  baseWorld, quest, withQuest, withMet, LOC_1_ID, NPC_1_ID, NPC_2_ID, ITEM_SEAL_ID, withNextAct,
+  baseWorld, quest, withQuest, withMet, LOC_1_ID, NPC_1_ID, NPC_2_ID, ITEM_SEAL_ID, ENEMY_WOLF_ID, withNextAct,
+  makeNpc, withAddedNpc,
 } from "./narrativeContext.testutil";
 import { deriveObjectiveTransition, currentObjectiveOf } from "./deriveObjectiveTransition";
+import { objectiveLabel } from "./objectiveRules";
+import { asLocationId } from "@/game/domain/worldEntity";
 
 function story() {
   return createInitialStoryState({
@@ -30,6 +33,20 @@ describe("deriveObjectiveTransition（Task 4）", () => {
     expect(currentObjectiveOf(ws, story())).toEqual({
       questId: asQuestId("quest_0"), objectiveIndex: 0, label: "前往客栈",
     });
+  });
+
+  it("目标 NPC 不在当前地点时，交谈目标不再吞掉独立的前往步骤", () => {
+    const initial = baseWorld();
+    const ws = withQuest(withAddedNpc({
+      ...initial,
+      locations: [...initial.locations, {
+        id: asLocationId("loc_2"), name: "断碑谷", description: "荒碑夹着一线山谷。", kind: "main",
+        connectedLocationIds: [LOC_1_ID], npcIds: [NPC_2_ID], availableItemIds: [], tags: [],
+      }],
+    }, { ...makeNpc(NPC_2_ID, "苏绾", "失踪镖队幸存者"), locationId: asLocationId("loc_2") }),
+      quest([{ kind: "talk_to_npc", npcId: NPC_2_ID }]));
+    expect(objectiveLabel(ws, ws.quests[0]?.objectives[0])).toBe("与苏绾交谈");
+    expect(currentObjectiveOf(ws, story())?.label).toBe("与苏绾交谈");
   });
 
   it("unchanged：目标未变、无完成、无幕推进 → mode unchanged 且 before===after", () => {
@@ -59,6 +76,24 @@ describe("deriveObjectiveTransition（Task 4）", () => {
     expect(t.completed).toEqual([{ questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老板交谈" }]);
     expect(t.after).toEqual({ questId: asQuestId("quest_0"), objectiveIndex: 1, label: "获取盟誓印谱" });
     expect(t.mode).toBe("progressed");
+  });
+
+  it("物品已拾取后即使交给 NPC，当前目标也不会退回获取该物品", () => {
+    const before = withQuest(baseWorld(), quest([
+      { kind: "talk_to_npc", npcId: NPC_1_ID },
+      { kind: "obtain_item", itemId: ITEM_SEAL_ID },
+      { kind: "defeat_enemy", enemyId: ENEMY_WOLF_ID },
+    ]));
+    const after = withMet({
+      ...before,
+      eventLedger: [{
+        type: "item_obtained",
+        itemId: ITEM_SEAL_ID,
+        locationId: LOC_1_ID,
+        occurredAt: "2026-01-01",
+      }],
+    });
+    expect(currentObjectiveOf(after, story())?.label).toBe("击败野狼");
   });
 
   it("advanced_act：completed 记录旧目标，after 为新具象化的下一幕任务目标", () => {

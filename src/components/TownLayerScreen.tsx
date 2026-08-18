@@ -48,12 +48,14 @@ export function TownLayerScreen({ town, busy, onEnterBuilding, onReturnMap }: To
             <span className="town-layer-legend-title">地图图例</span>
             <span className="town-layer-legend-item">
               <i className="town-layer-legend-swatch" aria-hidden="true" />
-              当前剧情建筑
+              可进入建筑
             </span>
           </div>
           {selectedInteractive !== null ? (
             <div className="town-layer-building" role="group" aria-label="剧情建筑">
-              <span className="town-layer-story-badge">当前剧情</span>
+              {selectedInteractive.isCurrentFocus ? (
+                <span className="town-layer-story-badge">当前剧情</span>
+              ) : null}
               <h3>{selectedInteractive.displayName}</h3>
               <p>{selectedInteractive.npcName}</p>
               <InlineButton
@@ -64,7 +66,7 @@ export function TownLayerScreen({ town, busy, onEnterBuilding, onReturnMap }: To
               </InlineButton>
             </div>
           ) : (
-            <p className="town-layer-hint">点击地图上带金色高亮的“当前剧情建筑”，进入其中的场景与对话。</p>
+            <p className="town-layer-hint">点击地图上的高亮建筑，查看其中的人物并进入场景。</p>
           )}
         </aside>
       </div>

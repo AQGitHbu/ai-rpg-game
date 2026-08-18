@@ -111,7 +111,15 @@ export type NarrativeGenerationState =
       readonly status: "pending";
       /** pending 的唯一载体；玩家原文只在 job.utterance 内。 */
       readonly job: PendingNarrativeJob;
-    };
+  };
+
+/** 一段 NPC 对话的服务端会话游标；选择不会在第一轮直接完成 talk 目标。 */
+export type DialogueSessionState = {
+  readonly npcId: NpcId;
+  readonly turnCount: number;
+  readonly requiredTurns: number;
+  readonly completed: boolean;
+};
 
 /** Runtime AI is opt-in per save. Offline development presets never call it. */
 export type NarrativeMode = "ai" | "offline";
@@ -120,6 +128,7 @@ export type NarrativeRuntimeState = {
   readonly currentScene: NarrativeSceneState | null;
   readonly generation: NarrativeGenerationState;
   readonly mode: NarrativeMode;
+  readonly dialogueSession?: DialogueSessionState;
   /**
    * 服务端持久化选项注册表（Spec §8.2）：ApprovedChoice 只存在于服务端，
    * 绝不进入 read model；客户端只能拿到 { choiceToken, label, hint? }。
@@ -135,9 +144,7 @@ export const NPC_SCENE_PAGE_CHAR_BUDGET = 48;
 
 /** 确定性 NPC 台词兜底：无场景对白/AI 行无效时的稳定问候（纯函数，零 AI/IO/随机）。 */
 export function composeDeterministicNpcLine(npcName: string, npcRole: string): string {
-  void npcName;
-  void npcRole;
-  return composeDirectNpcGreeting();
+  return composeDirectNpcGreeting(npcRole, npcName);
 }
 
 /**

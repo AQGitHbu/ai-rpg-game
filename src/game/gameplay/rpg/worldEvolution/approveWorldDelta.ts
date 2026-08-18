@@ -40,6 +40,11 @@ const MAX_ENTITY_TEXT_LENGTH = 200;
 const TRUST_ENDING_MIN_AFFINITY = 10;
 const DOUBT_ENDING_MAX_AFFINITY = TRUST_ENDING_MIN_AFFINITY - 1;
 
+// 武侠世界允许江湖传闻、奇诡意象，但不允许把另一套题材的实体直接
+// 铸造进世界。该门槛放在审批层，而不是只写进 prompt，防止 live AI 的
+// 合法 JSON 绕过风格约束，造成“骑士灵魂/远古祭坛/纯净光芒”式漂移。
+const WUXIA_FORBIDDEN_TERMS = /魔法|魔力|法术|施法|巫师|精灵|骑士|幽灵|鬼魂|灵魂|祭坛|纯净的光|圣光|魔兽|异界|传送|法阵|咒语|超自然|神谕|结界|元素/;
+
 export type WorldDeltaRejection =
   | "empty_proposal"
   | "no_need"
@@ -108,6 +113,11 @@ function validText(text: string): boolean {
   return t.length > 0 && t.length <= MAX_ENTITY_TEXT_LENGTH;
 }
 
+function violatesGenre(ws: WorldState, texts: readonly string[]): boolean {
+  if (ws.generation.gameType !== "wuxia") return false;
+  return texts.some((text) => WUXIA_FORBIDDEN_TERMS.test(text));
+}
+
 type MintedIds = {
   readonly locationId: LocationId | null;
   readonly npcId: NpcId | null;
@@ -168,11 +178,6 @@ function resolveNpcLocationId(ws: WorldState, p: WorldDeltaProposal, mintedLocat
   return mintedLocationId;
 }
 
-function townHasNpcSlot(ws: WorldState, locationId: LocationId): boolean {
-  const location = ws.locations.find((entry) => entry.id === locationId);
-  return location?.town === undefined || location.town.slots.some((slot) => slot.boundNpcId === null);
-}
-
 function resolveMountedLocationId(
   ws: WorldState,
   ref: "current" | "new_location",
@@ -194,6 +199,26 @@ function deriveAnchorObjective(
   if (p.newFact && ids.factId) return { kind: "discover_fact", factId: ids.factId };
   if (p.newEnemy && ids.enemyId) return { kind: "defeat_enemy", enemyId: ids.enemyId };
   return null;
+}
+
+/**
+ * 正式幕必须留出可阅读、可验证的过程，而非一次交谈就结束。完整动态幕
+ * 按“调查现场 → 前往新地点 → 与人物交谈 → 取得证物 → 处理阻拦”串成
+ * 单向主线；提案缺少某类实体时自动跳过该类，但不压缩仍存在的步骤。
+ */
+function deriveActObjectives(
+  p: WorldDeltaProposal,
+  ids: MintedIds,
+): readonly QuestObjective[] | null {
+  const objectives: QuestObjective[] = [];
+  if (p.newFact && ids.factId) objectives.push({ kind: "discover_fact", factId: ids.factId });
+  if (p.newLocation && ids.locationId) objectives.push({ kind: "visit_location", locationId: ids.locationId });
+  if (p.newNpc && ids.npcId) objectives.push({ kind: "talk_to_npc", npcId: ids.npcId });
+  if (p.newItem && ids.itemId) objectives.push({ kind: "obtain_item", itemId: ids.itemId });
+  if (p.newEnemy && ids.enemyId) objectives.push({ kind: "defeat_enemy", enemyId: ids.enemyId });
+  if (objectives.length > 0) return objectives;
+  const anchor = deriveAnchorObjective(p, ids);
+  return anchor === null ? null : [anchor];
 }
 
 function ruleOwnedEndingRequirements(
@@ -284,11 +309,10 @@ export function approveWorldDelta(input: {
   if (p.newNpc) {
     npcLocationId = resolveNpcLocationId(ws, p, ids.locationId);
     if (npcLocationId === null) return reject("invalid_location_ref", "npc_location");
-    // town 层的剧情建筑是有限槽位；不允许把动态 NPC 写入已满的小镇，
-    // 否则装配阶段无法绑定入口，玩家也无法从三层 UI 触达该 NPC。
-    if (p.newNpc.locationRef.kind === "existing" && !townHasNpcSlot(ws, npcLocationId)) {
-      return reject("town_capacity", "npc_town_slots_full");
-    }
+    // town 的建筑入口有有限槽位，但剧情人物不一定是驻店 NPC。
+    // 满槽时保留 locationId 作为“临时在场人物”，由场景层展示和交谈；
+    // materializeWorldDelta 会在有空槽时绑定建筑，没有空槽时安全地跳过绑定。
+    // 这样幕边界不会因为建筑容量把主线人物铸造到玩家不可见的新地点。
   }
   if (p.newItem) {
     itemLocationId = resolveMountedLocationId(ws, p.newItem.locationRef, ids.locationId);
@@ -344,12 +368,26 @@ export function approveWorldDelta(input: {
     }
   }
 
+  const proposedText = [
+    p.beatSummary,
+    ...(p.newLocation ? [p.newLocation.name, p.newLocation.description] : []),
+    ...(p.newNpc ? [p.newNpc.name, p.newNpc.role, p.newNpc.description, ...p.newNpc.goals] : []),
+    ...(p.newItem ? [p.newItem.name, p.newItem.description] : []),
+    ...(p.newEnemy ? [p.newEnemy.name] : []),
+    ...(p.newFact ? [p.newFact.text] : []),
+    ...(p.nextMainQuest ? [p.nextMainQuest.name, p.nextMainQuest.description, p.nextMainQuest.objectiveText] : []),
+    ...(p.endingPair ? p.endingPair.flatMap((ending) => [ending.name, ending.description]) : []),
+  ];
+  if (violatesGenre(ws, proposedText)) {
+    return reject("genre_constraint", `game_type_${ws.generation.gameType}`);
+  }
+
   // 主线任务：每幕唯一（一个 act 只能有一个 main quest），且目标必须有可达锚点。
   if (need.kind === "next_act") {
     const stageCollision = ws.quests.some((q) => q.kind === "main" && q.stage === need.act && q.status !== "closed");
     if (stageCollision) return reject("main_quest_conflict", `act_${need.act}_has_main_quest`);
-    const objective = deriveAnchorObjective(p, ids);
-    if (objective === null) return reject("unreachable_objective", "no_anchor_entity");
+    const objectives = deriveActObjectives(p, ids);
+    if (objectives === null) return reject("unreachable_objective", "no_anchor_entity");
   }
 
   // 预算预占（在铸造实体前校验，避免无效提议占用序号）。
@@ -439,10 +477,12 @@ export function approveWorldDelta(input: {
       factId: ids.factId,
       text: p.newFact.text,
       source: "generated",
-      discovered: p.newFact.visibility === "public",
-      // 提案协议中的 fact 没有单独 locationRef：同批新地点优先，否则挂到
-      // 当前地点，保证调查入口能从权威世界状态投影出来。
-      locationId: ids.locationId ?? ws.currentLocationId,
+      // public 只表示可在发现后进入玩家事实卡，不能跳过调查动作。
+      discovered: false,
+      investigationLabel: p.newFact.investigationLabel,
+      // 第一阶段必须是玩家当前所在的酒楼后巷/现场调查；否则新地点一
+      // 生成就会把“现场线索”错误地放到尚未抵达的地点。
+      locationId: ws.currentLocationId,
     });
   }
 
@@ -451,7 +491,7 @@ export function approveWorldDelta(input: {
       id: ids.questId,
       name: p.nextMainQuest.name,
       description: p.nextMainQuest.description,
-      objectives: [deriveAnchorObjective(p, ids)!],
+      objectives: deriveActObjectives(p, ids)!,
       onSuccess: { kind: "advance_story" },
       onFailure: { kind: "closed" },
       tags: ["dynamic"],

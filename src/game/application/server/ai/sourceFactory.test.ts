@@ -52,8 +52,22 @@ describe("resolvePerformanceChoices", () => {
       { candidateId: "candidate_1", label: "查看四周" },
     ]);
     expect(resolved).toEqual([
-      { candidateId: "candidate_2", label: "前往街道" },
-      { candidateId: "candidate_1", label: "查看四周" },
+      { candidateId: "candidate_2", label: "（前往街道）" },
+      { candidateId: "candidate_1", label: "（查看四周）" },
+    ]);
+  });
+
+  it("对话候选保留 AI 在剧情上下文中生成的直接对白，但动作仍绑定服务端 candidateId", () => {
+    const dialogueSelectable = [
+      { candidateId: "candidate_1", label: "请把刚才的线索说清楚。", action: { type: "talk" as const, npcId: "npc_1" as never, dialogueAct: "support" as const } },
+      { candidateId: "candidate_2", label: "哪件证物能证明？", action: { type: "talk" as const, npcId: "npc_1" as never, dialogueAct: "challenge" as const } },
+    ];
+    expect(resolvePerformanceChoices(dialogueSelectable, [
+      { candidateId: "candidate_1", label: "继续调查" },
+      { candidateId: "candidate_2", label: "相信他" },
+    ])).toEqual([
+      { candidateId: "candidate_1", label: "继续调查" },
+      { candidateId: "candidate_2", label: "相信他" },
     ]);
   });
 

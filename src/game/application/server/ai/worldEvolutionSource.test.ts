@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { parseWorldDeltaProposal, filterProposalRefs, createLiveWorldEvolutionSource } from "./liveWorldEvolutionSource";
+import { describe, it, expect, vi } from "vitest";
+import {
+  parseWorldDeltaProposal,
+  filterProposalRefs,
+  createLiveWorldEvolutionSource,
+  LIVE_WORLD_EVOLUTION_MAX_TOKENS,
+  LIVE_WORLD_EVOLUTION_TIMEOUT_MS,
+} from "./liveWorldEvolutionSource";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { asLocationId, asGenerationId, asNpcId } from "@/game/domain/worldEntity";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -84,6 +90,11 @@ describe("filterProposalRefs", () => {
 });
 
 describe("createLiveWorldEvolutionSource", () => {
+  it("reserves enough completion budget for provider reasoning and evolution JSON", () => {
+    expect(LIVE_WORLD_EVOLUTION_MAX_TOKENS).toBeGreaterThanOrEqual(3_200);
+    expect(LIVE_WORLD_EVOLUTION_TIMEOUT_MS).toBe(45_000);
+  });
+
   it("falls back to the deterministic source without a transport", async () => {
     const source = createLiveWorldEvolutionSource({});
     const ctx: WorldEvolutionSourceContext = {
@@ -116,5 +127,60 @@ describe("createLiveWorldEvolutionSource", () => {
     };
     const result = await source.propose(ctx);
     expect(result.proposal?.newNpc).not.toBeNull();
+  });
+
+  it("uses JSON object mode when explicitly enabled", async () => {
+    const complete = vi.fn(async () => ({ ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 }));
+    const transport: AiTransport = {
+      complete,
+      stream: async () => ({ ok: false as const, code: "network_error" as const, retryable: true, message: "unused", latencyMs: 1 }),
+    };
+    const source = createLiveWorldEvolutionSource({
+      transport,
+      config: { apiKey: "k", baseUrl: "http://x", model: "m" },
+      jsonMode: "json_object",
+    });
+    const ctx: WorldEvolutionSourceContext = {
+      worldState: makeWorld(),
+      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      need: pacingNeed,
+      action: { type: "talk", npcId: asNpcId("npc_new"), dialogueAct: "ask" },
+      reason: "UNKNOWN_NPC",
+    };
+
+    await source.propose(ctx);
+
+    expect(complete).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Array),
+      expect.objectContaining({ extraBody: expect.objectContaining({ response_format: { type: "json_object" } }) }),
+    );
+  });
+
+  it("does not repeat an empty AI response and falls back deterministically", async () => {
+    let attempts = 0;
+    const transport: AiTransport = {
+      complete: vi.fn(async () => {
+        attempts += 1;
+        return { ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 };
+      }),
+      stream: async () => ({ ok: false as const, code: "network_error" as const, retryable: true, message: "unused", latencyMs: 1 }),
+    };
+    const source = createLiveWorldEvolutionSource({
+      transport,
+      config: { apiKey: "k", baseUrl: "http://x", model: "m" },
+    });
+    const ctx: WorldEvolutionSourceContext = {
+      worldState: makeWorld(),
+      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      need: pacingNeed,
+      action: { type: "talk", npcId: asNpcId("npc_new"), dialogueAct: "ask" },
+      reason: "UNKNOWN_NPC",
+    };
+
+    const result = await source.propose(ctx);
+
+    expect(attempts).toBe(1);
+    expect(result.proposal).not.toBeNull();
   });
 });

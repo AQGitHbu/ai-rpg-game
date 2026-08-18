@@ -106,7 +106,6 @@ export function projectCombatView(
       controls: [
         { choiceToken: deriveRuntimeChoiceToken({ type: "battle_action", action: "attack" }, revision), label: "攻击", targetName: null, presentation: "battle", enabled: true, disabledReason: null },
         { choiceToken: deriveRuntimeChoiceToken({ type: "battle_action", action: "guard" }, revision), label: "防御", targetName: null, presentation: "battle", enabled: true, disabledReason: null },
-        { choiceToken: deriveRuntimeChoiceToken({ type: "battle_action", action: "flee" }, revision), label: "撤退", targetName: null, presentation: "battle", enabled: true, disabledReason: null },
       ],
       disabledControls: [],
       lastAdvance: [],
@@ -156,7 +155,6 @@ export function projectCombatView(
       else controls.push(skillControl as BattleControlView);
     }
     controls.push(control("guard", "防御", revision, currentId, undefined, true, null) as BattleControlView);
-    controls.push(control("flee", "撤退", revision, currentId, undefined, true, null) as BattleControlView);
   }
 
   const combatants = battle.combatants ?? [];

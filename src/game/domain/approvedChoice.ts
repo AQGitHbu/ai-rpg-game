@@ -1,4 +1,4 @@
-import type { Action } from "./action";
+import { dialogueTopicKey, type Action } from "./action";
 
 // ---------------------------------------------------------------------------
 // ApprovedChoice：服务端审批后的场景选项（Spec §8.2）。
@@ -75,7 +75,12 @@ export function createApprovedChoice(input: CreateApprovedChoiceInput): CreateAp
 function rebuildAction(action: Action): Action {
   switch (action.type) {
     case "talk":
-      return { type: "talk", npcId: action.npcId, dialogueAct: action.dialogueAct };
+      return {
+        type: "talk",
+        npcId: action.npcId,
+        dialogueAct: action.dialogueAct,
+        ...(action.topic === undefined ? {} : { topic: action.topic }),
+      };
     case "move":
       return { type: "move", locationId: action.locationId };
     case "explore":
@@ -112,7 +117,7 @@ function rebuildAction(action: Action): Action {
  */
 export function semanticSummaryOf(action: Action): string {
   switch (action.type) {
-    case "talk": return `talk:${action.npcId}:${action.dialogueAct}`;
+    case "talk": return `talk:${action.npcId}:${action.dialogueAct}:${dialogueTopicKey(action.topic)}`;
     case "move": return `move:${action.locationId}`;
     case "explore": return "explore";
     case "investigate": return `investigate:${action.factId}`;
@@ -145,7 +150,7 @@ function fnv1a(data: string): number {
 /** 确定性规范序列化：字段次序固定，跨引擎稳定。 */
 function serializeAction(action: Action): string {
   switch (action.type) {
-    case "talk": return `talk|${String(action.npcId)}|${action.dialogueAct}`;
+    case "talk": return `talk|${String(action.npcId)}|${action.dialogueAct}|${dialogueTopicKey(action.topic)}`;
     case "move": return `move|${String(action.locationId)}`;
     case "explore": return "explore";
     case "investigate": return `investigate|${String(action.factId)}`;

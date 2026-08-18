@@ -6,12 +6,17 @@ import { buildSelectableSceneCandidates, createDeterministicSceneSource } from "
 import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import { evolveWorld } from "./evolveWorld";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
+import type { GameLogger } from "@/game/logging";
 
 export type GeneratePendingSceneDeps = {
   readonly repository: GameRepository;
   readonly sceneSource: SceneSource;
   /** Task 3：场景编排联动的世界演化源（幕推进/结局对时装配预览状态后再出场景）。 */
   readonly worldEvolutionSource?: WorldEvolutionSource;
+  /** 生成提案经审批被拒时记录稳定原因，不能让 fallback 伪装成 AI 成功。 */
+  readonly logger?: GameLogger;
+  /** live 生产路径禁止把设计 AI 的失败静默写成确定性场景。 */
+  readonly allowDeterministicFallback?: boolean;
   readonly now: () => string;
 };
 
@@ -46,7 +51,15 @@ export async function generatePendingScene(
   // 最后经 applySceneWriteBack 单次 CAS 一并写回实体与场景。
   let scenarioWs = record.worldState;
   let scenarioSs = record.storyState;
-  const need = deriveEvolutionNeed(record.worldState, record.storyState);
+  const immediateAction = generation.job.actionSummary.kind === "move"
+    || generation.job.actionSummary.kind === "take_item";
+  // 移动落点和拾取结果都已由规则回合完全确定。它们是单动作反馈，不需要
+  // 再调用 live 世界/场景源；直接用确定性场景完成 write-back，避免玩家在
+  // 已经完成动作后等待“编排下一幕”。若确实候选不足，下面的受控补足分支
+  // 仍会兜底。
+  const need = immediateAction
+    ? { kind: "none" as const }
+    : deriveEvolutionNeed(record.worldState, record.storyState);
   // 未注入演化源时不主动演化：保持既有时景写回行为，仅当配置了 source 才装配预览。
   if (need.kind !== "none" && deps.worldEvolutionSource !== undefined) {
     const outcome = await evolveWorld({
@@ -54,6 +67,7 @@ export async function generatePendingScene(
       worldState: record.worldState,
       storyState: record.storyState,
       source: deps.worldEvolutionSource,
+      allowDeterministicFallback: deps.allowDeterministicFallback === true,
       reason: "scene_evolution",
       now: deps.now,
     });
@@ -80,6 +94,7 @@ export async function generatePendingScene(
       worldState: scenarioWs,
       storyState: scenarioSs,
       source: deps.worldEvolutionSource,
+      allowDeterministicFallback: deps.allowDeterministicFallback === true,
       reason: "scene_candidate_shortage",
       now: deps.now,
     });
@@ -97,16 +112,30 @@ export async function generatePendingScene(
 
   if (buildSelectableSceneCandidates(context).length < 2) return "unavailable";
 
+  // 物品拾取与移动一样，当前地点、物品事实和可达候选都由规则结果确定，
+  // 使用同一审批链上的确定性即时场景；对话、探索等仍使用配置的 source。
+  const source = immediateAction
+    ? createDeterministicSceneSource()
+    : deps.sceneSource;
+
   let proposal: ScenePerformanceProposal;
   try {
-    proposal = await deps.sceneSource.generateScene(context);
+    proposal = await source.generateScene(context);
   } catch {
     return "unavailable";
   }
 
+  // 移动/拾取是规则已完全确定的即时反馈，允许使用确定性场景；其余
+  // 设计性场景在 live 运行时必须能证明 proposal 来自真实 API。
+  if (!immediateAction && deps.allowDeterministicFallback === false && proposal.source !== "generated") {
+    deps.logger?.warn("scene_generation_fallback_blocked", { reason: "live_required" });
+    return "unavailable";
+  }
+
   // 完整场景表演审批（Task 6）：核心结构非法（缺强制节拍/自创节拍 ID/
-  // 错误 NPC 应答/forbidden fact/他人交互/过期目标/重复选项/无推进选项）→
-  // 整场回退确定性 source，且 fallback 同样过同一审批，防止两套契约漂移。
+  // 错误 NPC 应答/forbidden fact/他人交互/过期目标/重复选项/无推进选项）时，
+  // 先给 generated proposal 一次带拒绝码的内容修复机会；修复仍失败才
+  // 回退确定性 source，且 fallback 同样过同一审批，防止两套契约漂移。
   let approved: ApprovedSceneWriteBack | null = null;
   const approvedGenerated = approveScenePerformance({
     context,
@@ -117,18 +146,64 @@ export async function generatePendingScene(
   if (approvedGenerated.ok) {
     approved = approvedGenerated;
   } else {
-    try {
-      const fallbackProposal = await createDeterministicSceneSource().generateScene(context);
-      const approvedFallback = approveScenePerformance({
-        context,
-        proposal: fallbackProposal,
-        basedOnRevision: record.revision + 1,
-        existingCandidateEventPool: record.storyState.candidateEventPool,
-      });
-      if (!approvedFallback.ok) return "unavailable";
-      approved = approvedFallback;
-    } catch {
-      return "unavailable";
+    // live source 已成功取得并解析响应、但审批拒绝时先给同一上下文一次
+    // 内容修复机会。修复提示携带结构化拒绝码，避免完全重复同一个请求；
+    // repairAttempt 也限制整个 pending 回合最多一次内容重试。
+    if (proposal.source === "generated") {
+      deps.logger?.warn("scene_generation_rejected", { code: approvedGenerated.code });
+    }
+    if (!immediateAction
+      && proposal.source === "generated"
+      && context.repairAttempt === undefined
+      && proposal.contentRepairAttempt === undefined) {
+      const repairContext = {
+        ...context,
+        repairAttempt: { attempt: 1, reason: `approval:${approvedGenerated.code}` },
+      };
+      try {
+        deps.logger?.warn("scene_generation_content_retry", {
+          reason: `approval:${approvedGenerated.code}`,
+          attempt: 1,
+        });
+        const repairedProposal = await source.generateScene(repairContext);
+        if (repairedProposal.source === "generated") {
+          const repairedApproval = approveScenePerformance({
+            context: repairContext,
+            proposal: repairedProposal,
+            basedOnRevision: record.revision + 1,
+            existingCandidateEventPool: record.storyState.candidateEventPool,
+          });
+          if (repairedApproval.ok) {
+            approved = repairedApproval;
+          } else {
+            deps.logger?.warn("scene_generation_retry_rejected", { code: repairedApproval.code });
+          }
+        } else {
+          deps.logger?.warn("scene_generation_retry_fallback", { reason: approvedGenerated.code });
+        }
+      } catch {
+        deps.logger?.warn("scene_generation_retry_failed", { reason: approvedGenerated.code });
+      }
+    }
+
+    if (approved === null) {
+      if (!immediateAction && deps.allowDeterministicFallback === false) {
+        deps.logger?.warn("scene_generation_fallback_blocked", { reason: approvedGenerated.code });
+        return "unavailable";
+      }
+      try {
+        const fallbackProposal = await createDeterministicSceneSource().generateScene(context);
+        const approvedFallback = approveScenePerformance({
+          context,
+          proposal: fallbackProposal,
+          basedOnRevision: record.revision + 1,
+          existingCandidateEventPool: record.storyState.candidateEventPool,
+        });
+        if (!approvedFallback.ok) return "unavailable";
+        approved = approvedFallback;
+      } catch {
+        return "unavailable";
+      }
     }
   }
 

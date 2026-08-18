@@ -40,7 +40,7 @@ describe("projectCombatView", () => {
     };
     const view = projectCombatView(ws, active, 3);
     expect(view.units?.map((unit) => unit.slot)).toEqual(["ally-0", "enemy-0"]);
-    expect(view.controls.map((control) => control.label)).toEqual(["攻击灰狼", "技能·灰狼", "防御", "撤退"]);
+    expect(view.controls.map((control) => control.label)).toEqual(["攻击灰狼", "技能·灰狼", "防御"]);
     expect(view.controls.every((control) => control.choiceToken === null || /^c_[0-9a-f]{16}$/.test(control.choiceToken))).toBe(true);
     expect(JSON.stringify(view)).not.toMatch(/combatantId|actorId|targetId|enemyId/);
   });

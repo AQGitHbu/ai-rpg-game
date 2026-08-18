@@ -231,6 +231,43 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(record()?.worldState.battle.status).toBe("active");
   });
 
+  it("战斗失败恢复到战斗开始前，不创建战后叙事任务", async () => {
+    const enemy = {
+      id: asEnemyId("enemy_1"), name: "灰狼", tier: "normal" as const,
+      stats: toStatBlock(ENEMY_COMBAT_STATS.normal), locationId: asLocationId("loc_1"), tags: [],
+    };
+    const base = buildWorldState();
+    const beforeLedger = base.eventLedger;
+    const world: WorldState = {
+      ...base,
+      enemies: [enemy],
+      battle: {
+        status: "active",
+        enemyId: enemy.id,
+        playerHp: 1,
+        enemyHp: enemy.stats.hp,
+        round: 1,
+        battleKey: "battle-rollback",
+        preBattleSnapshot: {
+          playerStats: base.player.stats,
+          defeatedEnemyIds: base.defeatedEnemyIds,
+          eventLedger: beforeLedger,
+        },
+      },
+    };
+    const { repo, record, applyCalls } = createSpyRepo(world, buildStoryState());
+    const action: Action = { type: "battle_action", action: "guard" };
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "battle_defeat", interaction: { kind: "fixed_choice", choiceToken: "battle" }, expectedRevision: 0, choiceMap: new Map([["battle", action]]) },
+      { repository: repo, now: () => "2026-01-02" },
+    );
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+    expect(record()?.worldState.battle).toEqual({ status: "idle" });
+    expect(record()?.worldState.eventLedger).toEqual(beforeLedger);
+    expect(record()?.storyState.narrative.generation.status).toBe("idle");
+  });
+
   it("成功回合 applyState 恰好一次，单次写入同时包含 WorldState、StoryState.turnNumber 和 pending job", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 
@@ -720,6 +757,71 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     if (generation.status !== "pending") return;
     expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
     expect(generation.job.utterance).toBe("去街道看看");
+  });
+
+  it("accepts focused custom dialogue after entering a new location before the scene event becomes dialogue", async () => {
+    const story = buildFocusedDialogueStoryState();
+    const currentScene = story.narrative.currentScene;
+    if (currentScene === null) throw new Error("focused scene fixture missing");
+    const { repo, applyCalls } = createSpyRepo(buildWorldWithMainQuest(), {
+      ...story,
+      narrative: {
+        ...story.narrative,
+        currentScene: {
+          ...currentScene,
+          event: { kind: "travel", locationId: asLocationId("loc_1") },
+        },
+      },
+    });
+
+    const result = await performTurn(
+      {
+        gameId: asGameId("g1"),
+        actionId: "focused-after-travel",
+        interaction: { kind: "free_text", text: "我带来了这枚染血腰牌，你知道失踪镖队吗？", targetNpcId: asNpcId("npc_1") },
+        expectedRevision: 0,
+        choiceMap: new Map(),
+      },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+  });
+
+  it("lets an in-location main-objective NPC replace a stale dialogue focus for custom input", async () => {
+    const secondNpc: NpcEntry = {
+      ...npc1,
+      id: asNpcId("npc_2"),
+      name: "传讯人",
+      memory: { ...npc1.memory, npcId: asNpcId("npc_2") },
+    };
+    const world: WorldState = {
+      ...buildWorldState(),
+      npcs: [npc1, secondNpc],
+      quests: [{
+        id: asQuestId("quest_handoff"), name: "循迹", description: "与传讯人核对线索",
+        objectives: [{ kind: "talk_to_npc", npcId: secondNpc.id }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" }, tags: [],
+        kind: "main", stage: 1, status: "active",
+      }],
+    };
+    const { repo, record, applyCalls } = createSpyRepo(world, buildFocusedDialogueStoryState(npc1.id));
+
+    const result = await performTurn(
+      {
+        gameId: asGameId("g1"), actionId: "handoff-custom-input",
+        interaction: { kind: "free_text", text: "我带来了腰牌，请把你亲眼看见的经过说清楚。", targetNpcId: secondNpc.id },
+        expectedRevision: 0, choiceMap: new Map(),
+      },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+    const generation = record()!.storyState.narrative.generation;
+    expect(generation.status).toBe("pending");
+    if (generation.status === "pending") expect(generation.job.focusNpcId).toBe(secondNpc.id);
   });
 
   it("同一 NPC 连续两个 ready 场景的自定义输入使用不同 actionId，各自形成记忆与 pending job", async () => {

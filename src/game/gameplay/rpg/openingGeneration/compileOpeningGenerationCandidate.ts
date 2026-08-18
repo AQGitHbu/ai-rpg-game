@@ -50,7 +50,13 @@ export function compileOpeningGenerationCandidate(
   // 开局 NPC npc_0 绑定 slot_0。不再生成任何未来 NPC 名称。
   const openingTown = candidate.opening.location.scale === "town"
     ? bindNpcToTownSlot(
-        createTownRuntime({ locationId, seed: townSeedFor(generation.seed, locationId) }),
+        createTownRuntime({
+          locationId,
+          seed: townSeedFor(generation.seed, locationId),
+          ...(candidate.opening.location.buildingName === undefined
+            ? {}
+            : { openingBuildingName: candidate.opening.location.buildingName }),
+        }),
         npcId,
       ).town
     : undefined;
@@ -97,7 +103,7 @@ export function compileOpeningGenerationCandidate(
         goals: candidate.opening.npc.goals,
       },
     }],
-    worldFacts: factIds.map((fact, index) => ({
+    worldFacts: factIds.map((fact) => ({
       factId: fact.factId,
       text: fact.text,
       source: "generated",

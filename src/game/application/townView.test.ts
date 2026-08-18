@@ -42,6 +42,36 @@ describe("buildTownView", () => {
     expect(view!.interactiveBuildings[0]?.npcName).toBe("沈掌柜");
   });
 
+  it("开局候选建筑名覆盖类型默认名，并同步到交互条目与快照", () => {
+    const locationId = asLocationId("loc_0");
+    const npcId = asNpcId("npc_0");
+    const town = bindNpcToTownSlot(
+      createTownRuntime({ locationId, seed: "named-town-view", openingBuildingName: "听雨客栈" }),
+      npcId,
+    ).town;
+    const base = createInitialWorldState({
+      generation: { generationId: asGenerationId("g-named"), seed: "s-named", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "游侠", identity: "冒险者", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: {
+        id: locationId, name: "青石镇", description: "一座边陲小镇。", kind: "main",
+        connectedLocationIds: [], npcIds: [npcId], availableItemIds: [], tags: [], scale: "town", town,
+      },
+      startingItemIds: [],
+    });
+    const view = buildTownView({
+      ...base,
+      npcs: [{
+        id: npcId, name: "沈掌柜", role: "关键线人", description: "掌握消息的知情人。", locationId,
+        isCompanion: false, tags: [], met: false,
+        memory: { npcId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+      }],
+    }, locationId);
+
+    expect(view?.interactiveBuildings[0]?.displayName).toBe("听雨客栈");
+    expect(view?.snapshot.buildings.find((building) => building.buildingId === town.slots[0]?.buildingId)?.displayName)
+      .toBe("听雨客栈");
+  });
+
   it("只暴露已绑定 NPC 的 slot；空闲 slot 不产生可交互条目", () => {
     const town = createTownRuntime({ locationId: asLocationId("loc_0"), seed: "town-view-test-2" });
     const ws = createInitialWorldState({
@@ -83,7 +113,40 @@ describe("buildTownView", () => {
 
     const view = buildTownView(ws, locationId);
     expect(view?.interactiveBuildings).toEqual([
-      expect.objectContaining({ npcId: "npc_0", npcName: "刘二" }),
+      expect.objectContaining({ npcId: "npc_0", npcName: "刘二", isCurrentFocus: false }),
+    ]);
+  });
+
+  it("满槽时把当前目标人物投影到高亮剧情建筑，不生成临时会面面板", () => {
+    const locationId = asLocationId("loc_0");
+    let town = createTownRuntime({ locationId, seed: "town-view-focus" });
+    const slotNpcIds = town.slots.map((_, index) => asNpcId(`npc_slot_${index}`));
+    for (const npcId of slotNpcIds) town = bindNpcToTownSlot(town, npcId).town;
+    const focusNpcId = asNpcId("npc_focus");
+    const base = createInitialWorldState({
+      generation: { generationId: asGenerationId("g-focus"), seed: "s-focus", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "游侠", identity: "冒险者", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: {
+        id: locationId, name: "青石镇", description: "一座边陲小镇。", kind: "main",
+        connectedLocationIds: [], npcIds: [...slotNpcIds, focusNpcId], availableItemIds: [], tags: [], scale: "town", town,
+      },
+      startingItemIds: [],
+    });
+    const npc = (id: typeof focusNpcId, name: string) => ({
+      id, name, role: "旧案传讯人", description: "带着线索而来。", locationId,
+      isCompanion: false, tags: [], met: false,
+      memory: { npcId: id, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral" as const, goals: [] },
+    });
+    const view = buildTownView({
+      ...base,
+      npcs: [
+        ...slotNpcIds.map((id, index) => npc(id, `旧人物${index + 1}`)),
+        npc(focusNpcId, "当前目标"),
+      ],
+    }, locationId, focusNpcId);
+    expect(view?.interactiveBuildings).toHaveLength(town.slots.length);
+    expect(view?.interactiveBuildings.filter((entry) => entry.isCurrentFocus)).toEqual([
+      expect.objectContaining({ npcId: "npc_focus", npcName: "当前目标" }),
     ]);
   });
 

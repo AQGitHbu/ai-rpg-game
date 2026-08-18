@@ -52,6 +52,7 @@ export function AdventureGameShell({
     readonly locationName: string;
     readonly npcId: string;
     readonly npcName: string;
+    readonly buildingId: string;
   } | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const devToolsTriggerRef = useRef<HTMLElement | null>(null);
@@ -60,12 +61,15 @@ export function AdventureGameShell({
 
   const pending = view.narrativeGeneration.status === "pending";
   const isSubmitting = feedback.phase === "submitting";
+  // API/后台编排期间保持全屏模态，锁住地图、信息面板和所有规则行动，
+  // 避免玩家在旧 revision 上继续点击；模态中的重试只在 pending 时提供。
   const busy = isSubmitting || pending;
 
   // 三层导航：从地图进入当前地点——town 地点先进小镇层，scene 地点直达场景。
   function entryScreenFor(view: GameSessionView): AdventureScreen {
     return view.currentLocation.scale === "town" && view.currentLocation.town !== null ? "town" : "scene";
   }
+  const currentLocationScreen = entryScreenFor(view);
 
   // 场景返回：来自小镇的场景回到小镇层；来自 scene 地点回到地图。
   function returnFromScene(): void {
@@ -80,9 +84,9 @@ export function AdventureGameShell({
     previousLocationRef.current = currentName;
     if (previousName !== null && previousName !== currentName) {
       setSceneContext(null);
-      setScreen(entryScreenFor(view));
+      setScreen(currentLocationScreen);
     }
-  }, [view.currentLocation.name, view.revision]);
+  }, [currentLocationScreen, view.currentLocation.name, view.revision]);
 
   // 世界演化可能要到 pending 场景写回时才具象化下一幕任务，因此不能只看
   // action 请求的即时响应。以 ready 快照中的权威目标为准，在目标真正变化后
@@ -93,6 +97,8 @@ export function AdventureGameShell({
     const previousObjective = lastReadyObjectiveRef.current;
     lastReadyObjectiveRef.current = currentObjective;
     if (currentObjective !== null && currentObjective !== previousObjective) {
+      // 目标变化只通知玩家，不替玩家退出当前建筑/地点。由玩家自行返回
+      // 小镇或地图前往下一处，才能保留刚结束的对话现场与空间连续性。
       setFeedback({ phase: "success", message: `下一步：${currentObjective}` });
     }
   }, [pending, view.story.currentObjectiveLabel]);
@@ -129,8 +135,9 @@ export function AdventureGameShell({
     if (building === undefined) return;
     setSceneContext({
       locationName: building.displayName,
-      npcId: building.npcId,
+      npcId,
       npcName: building.npcName,
+      buildingId: building.buildingId,
     });
     setScreen("scene");
   }
@@ -196,6 +203,7 @@ export function AdventureGameShell({
           initialFocusNpcId={sceneContext?.npcId}
           sceneNpcName={sceneContext?.npcName}
           sceneLocationName={sceneContext?.locationName}
+          sceneBuildingId={sceneContext?.buildingId}
         />
       )}
 

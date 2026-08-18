@@ -102,6 +102,21 @@ describe("PendingNarrativeJob", () => {
     expect(job.actionSummary).toEqual({ kind: "talk", npcId: "npc_2" });
   });
 
+  it("保存固定选项的结构化对白上下文，供下一幕承接上一轮", () => {
+    const job = createValidJob({
+      selectedDialogue: {
+        dialogueAct: "challenge",
+        topic: { kind: "thread", threadId: "main_thread" },
+        label: "追问线人：哪件证物能证明？",
+      },
+    });
+    expect(job.selectedDialogue).toEqual({
+      dialogueAct: "challenge",
+      topic: { kind: "thread", threadId: "main_thread" },
+      label: "追问线人：哪件证物能证明？",
+    });
+  });
+
   it("move job 可不带 utterance 和 focusNpcId", () => {
     const job = createValidJob({
       actionSummary: { kind: "move", locationId: asLocationId("loc_2") },

@@ -18,6 +18,8 @@ export type TownBuildingSlot = {
   readonly slotId: string;
   readonly buildingId: string;
   readonly buildingType: TownBuildingSlotType;
+  /** 由当前开局候选提供的剧情建筑名；空值时使用类型默认名。 */
+  readonly displayName?: string;
   readonly boundNpcId: NpcId | null;
 };
 

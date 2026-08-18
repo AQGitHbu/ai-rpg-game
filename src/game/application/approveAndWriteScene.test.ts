@@ -13,6 +13,7 @@ import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/doma
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import { buildStylePolicy } from "./stylePolicy";
+import { createNpcResponsePolicy } from "@/game/gameplay/rpg/narrativeContext";
 
 function validCandidate(id: string): EventCandidate {
   return {
@@ -140,6 +141,7 @@ function makeContext(overrides: {
   presentNpcs?: SceneGenerationContext["presentNpcs"];
   legalActionCandidates?: SceneGenerationContext["legalActionCandidates"];
   objectiveTarget?: SceneGenerationContext["objectiveTarget"];
+  focusNpcContext?: SceneGenerationContext["focusNpcContext"];
 } = {}): SceneGenerationContext {
   const job = overrides.job ?? makeJob();
   return {
@@ -177,6 +179,7 @@ function makeContext(overrides: {
     objectiveTransition: job.objectiveTransition,
     mandatoryBeats: job.mandatoryBeats,
     beatSubjects: [],
+    focusNpcContext: overrides.focusNpcContext,
     objectiveTarget: overrides.objectiveTarget ?? null,
   };
 }
@@ -221,6 +224,78 @@ describe("approveScenePerformance (Task 6)", () => {
     expect(result.choiceRegistry.every((x) => x.basedOnRevision === 8)).toBe(true);
     // 场景表演契约不含候选事件：candidateEventPool 原样保留
     expect(result.candidateEventPool.map((c) => c.id)).toEqual(["pool-1"]);
+  });
+
+  it("审批对白选项时以本轮 NPC 台词重建 label，不写入上一轮过期锚点", () => {
+    const previousLine = "告示的这案子，镇上没人敢多嘴。";
+    const currentLine = "墙上只留一个血写的‘崖’字。官府说是山匪所为，可江湖上谁信呢？";
+    const context: SceneGenerationContext = {
+      ...makeContext(),
+      previousDialogue: {
+        npcId: asNpcId("npc_1"),
+        npcLine: previousLine,
+        selectedChoice: { dialogueAct: "support", topic: { kind: "general" } },
+      },
+    };
+    const result = approveScenePerformance({
+      context,
+      proposal: makeProposal({
+        npcLine: {
+          npcId: "npc_1",
+          text: currentLine,
+          emotion: "neutral",
+          answeredBeatIds: [],
+          usedFactIds: [],
+          usedInteractionActionIds: [],
+        },
+        choices: [
+          { candidateId: "candidate_1", label: `回应老板：“${previousLine}”` },
+          { candidateId: "candidate_2", label: `追问老板：“${previousLine}”` },
+        ],
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const labels = result.choiceRegistry.map((choice) => choice.label).join(" ");
+    expect(labels).not.toContain(previousLine);
+    expect(labels).not.toContain(currentLine);
+    expect(labels).toContain("下一步");
+    expect(labels).toContain("证物");
+  });
+
+  it("生成提案复用上一轮两个 fallback 对话模板时，审批拒绝 stale_choice_template", () => {
+    const context: SceneGenerationContext = {
+      ...makeContext(),
+      previousDialogue: {
+        npcId: asNpcId("npc_1"),
+        npcLine: "我知道一些风声，但还不能替你下结论。",
+        selectedChoice: { dialogueAct: "support", topic: { kind: "general" } },
+      },
+    };
+    const result = approveScenePerformance({
+      context,
+      proposal: makeProposal({
+        npcLine: {
+          npcId: "npc_1",
+          text: "这把刀上的旧痕确实与旧案有关，但来历还要当面核对。你若要查，就先说明自己为何认得这道痕。",
+          emotion: "neutral",
+          answeredBeatIds: [],
+          usedFactIds: [],
+          usedInteractionActionIds: [],
+        },
+        choices: [
+          { candidateId: "candidate_1", label: "既然你愿意继续说，就把下一步和能够核对的凭据交代清楚。" },
+          { candidateId: "candidate_2", label: "我可以继续听，但每个判断都要有能落到实处的证物支撑。" },
+        ],
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("stale_choice_template");
   });
 
   it("segments 为空 → 整场拒绝 empty_segments", () => {
@@ -473,7 +548,88 @@ describe("approveScenePerformance (Task 6)", () => {
           { beatId: "player_utterance", text: "你提出了你的疑问。" },
           { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉" },
         ],
-        npcLine: { npcId: "npc_1", text: "这件事我也正想说。", emotion: "warm", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
+        npcLine: { npcId: "npc_1", text: "这件事我也正想说。你先把手里的线索交给我核对。", emotion: "warm", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("焦点 NPC 的单句开场会被拒绝并触发角色化 fallback", () => {
+    const result = approveScenePerformance({
+      context: makeContext({
+        focusNpcContext: {
+          id: asNpcId("npc_1"), name: "老板", role: "酒肆老板娘",
+          publicProfile: "t",
+          responsePolicy: createNpcResponsePolicy({ tier: "neutral", allowedDisclosureFactIds: [], privateKnowledgeIds: [] }),
+          speakableFactCards: [], recentInteractions: [], goals: [], emotion: "neutral",
+          thisTurn: { relationshipDelta: 0, outcome: "neutral" },
+        },
+        objectiveTarget: { questId: "quest_0", objectiveIndex: 0, entityId: "npc_1", entityName: "老板" },
+      }),
+      proposal: makeProposal({
+        npcLine: { npcId: "npc_1", text: "你想问什么？", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        objectiveLink: { questId: "quest_0", objectiveIndex: 0, mode: "hint" },
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result).toEqual({ ok: false, code: "npc_dialogue_too_short" });
+  });
+
+  it("幕交接时仍由原 NPC 回应上一回合原话 → 通过", () => {
+    const oldNpc = makeContext().presentNpcs[0]!;
+    const newNpc: SceneGenerationContext["presentNpcs"][number] = {
+      ...oldNpc,
+      id: asNpcId("npc_2"),
+      name: "新掌柜",
+      recentInteractionActionIds: [],
+    };
+    const job = makeJob({
+      utterance: "告示上的案子和我家镖局覆灭有关吗？",
+      transition: {
+        before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老掌柜交谈" },
+        completed: [{ questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老掌柜交谈" }],
+        after: { questId: asQuestId("quest_0"), objectiveIndex: 1, label: "与新掌柜交谈" },
+        mode: "advanced_act",
+      },
+      beats: [
+        { beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应玩家" },
+        { beatId: "quest_advanced", kind: "quest_advanced", subjectIds: ["quest_0"], instruction: "主线推进" },
+        { beatId: ATMOSPHERE_BEAT_ID, kind: "atmosphere", subjectIds: [], instruction: "氛围" },
+      ],
+    });
+    const result = approveScenePerformance({
+      context: makeContext({
+        job,
+        presentNpcs: [oldNpc, newNpc],
+        focusNpcContext: {
+          id: asNpcId("npc_1"),
+          name: oldNpc.name,
+          role: "掌柜",
+          publicProfile: "t",
+          responsePolicy: createNpcResponsePolicy({ tier: "neutral", allowedDisclosureFactIds: [], privateKnowledgeIds: [] }),
+          speakableFactCards: [],
+          recentInteractions: [],
+          goals: [],
+          emotion: "neutral",
+          thisTurn: { relationshipDelta: 0, outcome: "neutral" },
+        },
+        objectiveTarget: { questId: "quest_0", objectiveIndex: 1, entityId: "npc_2", entityName: "新掌柜" },
+      }),
+      proposal: makeProposal({
+        segments: [
+          { beatId: "player_utterance", text: "你提出了你的疑问。" },
+          { beatId: "quest_advanced", text: "主线推进到新掌柜。" },
+          { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉" },
+        ],
+        npcLine: { npcId: "npc_1", text: "告示的来历我会说清楚。新掌柜掌握的是下一页卷宗。", emotion: "neutral", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
+        objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
+        choices: [
+          { candidateId: "candidate_1", label: "表示愿意支持新掌柜" },
+          { candidateId: "candidate_2", label: "质疑新掌柜的说法" },
+        ],
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],

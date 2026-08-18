@@ -1,5 +1,7 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
+import type { GameTypeId } from "@/game/domain/newGame";
+import type { OpeningNoveltyRecord } from "@/game/domain/openingNovelty";
 
 declare const gameIdBrand: unique symbol;
 
@@ -27,6 +29,8 @@ export type CreateInitialGameInput = {
   readonly worldState: WorldState;
   readonly storyState: StoryState;
   readonly createdAt: string;
+  /** 与新存档原子写入的开局指纹；清档时保留历史，避免新局重复。 */
+  readonly openingHistory?: OpeningNoveltyRecord;
 };
 
 /**
@@ -81,6 +85,10 @@ export type GetCurrentGameResult =
   | { readonly ok: true; readonly status: "corrupt"; readonly reason: CorruptGameReason }
   | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" };
 
+export type ListOpeningHistoryResult =
+  | { readonly ok: true; readonly records: readonly OpeningNoveltyRecord[] }
+  | { readonly ok: false; readonly code: "INFRASTRUCTURE_FAILURE" };
+
 export type ApplyStateResult =
   | { readonly ok: true; readonly record: GameRecord }
   | { readonly ok: false; readonly code: "STALE_GAME_REVISION" }
@@ -100,4 +108,9 @@ export interface GameRepository {
   applyState(input: ApplyStateInput): Promise<ApplyStateResult>;
   applySceneWriteBack(input: ApplySceneWriteBackInput): Promise<ApplySceneWriteBackResult>;
   clearCurrentGame(): Promise<ClearCurrentGameResult>;
+  /** 生产 SQLite 实现提供；轻量 fixture repository 可省略。 */
+  listOpeningHistory?(input: {
+    readonly gameType: GameTypeId;
+    readonly limit: number;
+  }): Promise<ListOpeningHistoryResult>;
 }

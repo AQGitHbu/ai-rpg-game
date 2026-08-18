@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, type FormEvent } from "react";
+import { useState, useEffect, useReducer, useRef, type FormEvent } from "react";
 import { composeDirectNpcGreeting, type GameSessionView, type NewGameInput } from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { AdventureVisual } from "./adventureVisuals";
@@ -17,6 +17,8 @@ type LocationSceneScreenProps = {
   readonly sceneNpcName?: string | null;
   /** 建筑场景的展示名称，不改变权威 currentLocation。 */
   readonly sceneLocationName?: string | null;
+  /** 城镇建筑场景的稳定建筑 ID，用于隔离该建筑内的地点物品。 */
+  readonly sceneBuildingId?: string | null;
 };
 
 type Dialogue = NonNullable<GameSessionView["narrative"]["npcDialogues"]>[number];
@@ -25,6 +27,186 @@ type BattleFeedback = {
   readonly kind: "player-action" | "enemy-hit" | "player-hit" | "resolved";
   readonly message: string;
 };
+
+type DialogueUiState = {
+  readonly npcId: string | null;
+  readonly revision: number;
+};
+
+type DialogueUiAction =
+  | { readonly kind: "set"; readonly npcId: string | null }
+  | { readonly kind: "sync_revision"; readonly revision: number; readonly close: boolean };
+
+type DialoguePhase = "choice" | "waiting";
+
+type SubmittedDialogue = {
+  readonly revision: number;
+  readonly turnNumber: number;
+};
+
+function reduceDialogueUiState(state: DialogueUiState, action: DialogueUiAction): DialogueUiState {
+  switch (action.kind) {
+    case "set": return { ...state, npcId: action.npcId };
+    case "sync_revision": return {
+      revision: action.revision,
+      npcId: action.close ? null : state.npcId,
+    };
+  }
+}
+
+/**
+ * 地点旁注只负责回答“我现在在哪里、这里发生了什么”。
+ * 主线目标与任务完成提示由 HUD/任务面板承载，不能混进地点氛围段落。
+ */
+function cleanLocationSideNote(text: string): string {
+  return text
+    .replace(/主线推进(?:到第\d+幕)?[。！？!?]?/gu, "")
+    .replace(/已完成：[^。！？!?]*[。！？!?]?/gu, "")
+    .replace(/完成了任务「[^」]+」的目标：[^。！？!?]*[。！？!?]?/gu, "")
+    .replace(/当前目标：[^。！？!?]*[。！？!?]?/gu, "")
+    .replace(/。{2,}/gu, "。")
+    .replace(/([。！？])\s+/gu, "$1")
+    .replace(/\s+/gu, " ")
+    .replace(/([。！？])\1+/gu, "$1")
+    .replace(/^[。！？\s]+/gu, "")
+    .trim();
+}
+
+/** 城镇建筑是独立的可游玩场景，不能把镇口/街道的公共说明搬进室内。 */
+function describeBuildingScene(buildingType: string | undefined, buildingName: string, npcName: string | null | undefined): string {
+  const npcClause = npcName ? `${npcName}就在近处，留意着你的来意。` : "屋内有人留意着门口的动静。";
+  switch (buildingType) {
+    case "tavern": return `${buildingName}里酒气、炭火和低声交谈混在一起，靠窗的木桌还留着湿漉漉的斗笠。${npcClause}`;
+    case "blacksmith": return `${buildingName}的炉火映红铁砧，锤声一停，空气里只剩铁屑和焦炭的味道。${npcClause}`;
+    case "guild": return `${buildingName}的告示板贴满旧纸条，来往的人压低嗓音交换消息。${npcClause}`;
+    case "clinic": return `${buildingName}里药草微苦，帘后偶尔传来瓷碗相碰的轻响。${npcClause}`;
+    case "market": return `${buildingName}外的叫卖声被门帘隔开，柜台上散着刚换手的货单。${npcClause}`;
+    default: return `${buildingName}与镇上的街巷隔出一层安静，眼前的陈设暗示着这里惯常发生的营生。${npcClause}`;
+  }
+}
+
+function BattleScene({
+  view,
+  battle,
+  gameType,
+  busy,
+  pending,
+  battleFeedback,
+  onBattleFeedback,
+  onSubmit,
+}: {
+  readonly view: GameSessionView;
+  readonly battle: NonNullable<GameSessionView["battle"]>;
+  readonly gameType: NewGameInput["gameType"];
+  readonly busy: boolean;
+  readonly pending: boolean;
+  readonly battleFeedback: BattleFeedback | null;
+  readonly onBattleFeedback: (message: string) => void;
+  readonly onSubmit: (interaction: PlayerInteraction) => void;
+}) {
+  const enemyNames = battle.units === undefined
+    ? [battle.enemyName]
+    : battle.units
+      .filter((unit) => unit.side === "enemies")
+      .map((unit) => unit.name);
+  const enemyLabel = enemyNames.length > 1 ? enemyNames.join("、") : battle.enemyName;
+
+  function renderBattleChoiceButton(choice: { choiceToken: string | null; label: string; enabled?: boolean; disabledReason?: string | null }) {
+    return (
+      <button
+        key={`${choice.label}:${choice.choiceToken ?? "disabled"}`}
+        type="button"
+        data-battle-action="true"
+        disabled={busy || pending || choice.enabled === false || choice.choiceToken === null}
+        onClick={() => {
+          if (choice.choiceToken === null) return;
+          onBattleFeedback(`你${choice.label}！`);
+          onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken });
+        }}
+      >
+        {choice.label}{choice.disabledReason ? `（${choice.disabledReason}）` : ""}
+      </button>
+    );
+  }
+
+  return (
+    <section className="battle-viewport battle-viewport--fullscreen" aria-label={`战斗 · ${enemyLabel}`}>
+      <div className="battle-arena-backdrop" aria-hidden="true">
+        <AdventureVisual gameType={gameType} kind="enemy" label="" decorative />
+      </div>
+      <div className="battle-hud">
+        <span className="battle-hud-side">己方</span>
+        <strong>第 {battle.round} 回合</strong>
+        <span className="battle-hud-side battle-hud-side--enemy">敌方 · {enemyLabel}</span>
+      </div>
+      {battle.units !== undefined && battle.units.length > 0
+        ? battle.units.filter((unit) => unit.hp > 0).map((unit) => (
+            <div
+              key={unit.slot}
+              className={`battle-combatant battle-combatant--${unit.side === "allies" ? "player" : "enemy"} ${unit.current ? "battle-combatant--active" : ""} ${battleFeedback?.kind === "player-action" && unit.side === "allies" ? "battle-combatant--attacking" : ""} ${battleFeedback?.kind === "player-hit" && unit.side === "allies" ? "battle-combatant--hit" : ""} ${battleFeedback?.kind === "enemy-hit" && unit.side === "enemies" ? "battle-combatant--hit" : ""}`}
+              data-side={unit.side === "allies" ? "player" : "enemy"}
+              data-slot={unit.slot}
+              role="group"
+              aria-label={`${unit.side === "allies" ? "己方" : "敌方"}：${unit.name}`}
+            >
+              <div className="battle-combatant-visual" aria-hidden="true">
+                <AdventureVisual gameType={gameType} kind={unit.side === "allies" ? "npc" : "enemy"} label="" decorative />
+              </div>
+              <span className="battle-faction-label">{unit.side === "allies" ? "己方" : "敌方"}{unit.current ? " · 当前行动" : ""}</span>
+              <h3>{unit.name}</h3>
+              <p>HP {unit.hp}/{unit.maxHp} · EN {unit.energy}/{unit.maxEnergy}</p>
+            </div>
+          ))
+        : <>
+            <div
+              className={`battle-combatant battle-combatant--player ${battleFeedback?.kind === "player-action" ? "battle-combatant--attacking" : ""} ${battleFeedback?.kind === "player-hit" ? "battle-combatant--hit" : ""}`}
+              data-side="player"
+              role="group"
+              aria-label={`己方：${view.player.name}`}
+            >
+              <div className="battle-combatant-visual" aria-hidden="true">
+                <AdventureVisual gameType={gameType} kind="npc" label="" decorative />
+              </div>
+              <span className="battle-faction-label">己方</span>
+              <h3>{view.player.name}</h3>
+              <p>HP {battle.playerHp}</p>
+            </div>
+            <div
+              className={`battle-combatant battle-combatant--enemy ${battleFeedback?.kind === "enemy-hit" ? "battle-combatant--hit" : ""}`}
+              data-side="enemy"
+              role="group"
+              aria-label={`敌方：${battle.enemyName}`}
+            >
+              <div className="battle-combatant-visual" aria-hidden="true">
+                <AdventureVisual gameType={gameType} kind="enemy" label="" decorative />
+              </div>
+              <span className="battle-faction-label">敌方</span>
+              <h3>{battle.enemyName}</h3>
+              <p>HP {battle.enemyHp}</p>
+            </div>
+          </>}
+      <div className="battle-action-rail" role="group" aria-label="战斗行动">
+        {[...battle.controls, ...(battle.disabledControls ?? [])].map(renderBattleChoiceButton)}
+      </div>
+      {battleFeedback !== null ? (
+        <p className={`battle-feedback battle-feedback--${battleFeedback.kind}`} role="status" aria-live="assertive">
+          {battleFeedback.message}
+        </p>
+      ) : null}
+      {battle.lastAdvance !== undefined && battle.lastAdvance.length > 0 ? (
+        <ol className="battle-log" aria-label="本次行动记录">
+          {battle.lastAdvance.map((entry) => (
+            <li key={`${entry.round}:${entry.sequence}`}>
+              {entry.actorName}{entry.kind === "guard" ? "防御" : entry.kind === "flee" ? "撤退" : entry.kind === "skill" ? "施放技能" : "攻击"}
+              {entry.targetName ? ` → ${entry.targetName}` : ""}
+              {entry.damage > 0 ? `，${entry.damage} 伤害` : ""}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </section>
+  );
+}
 
 // 场景内散布的可探索/调查物品图标位置预设
 const ITEM_HOTSPOT_POSITIONS = [
@@ -40,12 +222,14 @@ function NpcDialogueModal({
   dialogue,
   gameType,
   busy,
+  phase,
   onSubmit,
   onClose,
 }: {
   readonly dialogue: Dialogue;
   readonly gameType: NewGameInput["gameType"];
   readonly busy: boolean;
+  readonly phase: DialoguePhase;
   readonly onSubmit: (interaction: PlayerInteraction) => void;
   readonly onClose: () => void;
 }) {
@@ -92,8 +276,10 @@ function NpcDialogueModal({
           </div>
         </div>
 
-        {/* 焦点 NPC：显示固定选项 + 给予道具 + 自由输入 */}
-        {hasFocusInteraction ? (
+        {phase === "waiting" ? (
+          <p className="npc-dialogue-status" role="status" aria-live="polite">正在等待{dialogue.name}回应……</p>
+        ) : hasFocusInteraction ? (
+          /* 焦点 NPC：显示固定选项 + 给予道具 + 自由输入 */
           <>
             <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
               {dialogue.choices.map((choice) => (
@@ -126,17 +312,22 @@ function NpcDialogueModal({
             ) : null}
 
             {dialogue.freeInputEnabled ? (
-              <form className="npc-dialogue-input" onSubmit={(event) => void submitFreeText(event)}>
-                <input
-                  aria-label="自定义回应"
-                  value={text}
-                  disabled={busy}
-                  placeholder="输入回应……"
-                  onChange={(event) => setText(event.target.value)}
-                  maxLength={240}
-                />
-                <button type="submit" disabled={busy || text.trim() === ""}>发送</button>
-              </form>
+              <>
+                {dialogue.giveChoices.length > 0 ? (
+                  <p className="npc-dialogue-input-hint">自定义输入仅用于对白；交付道具请点击上方选项。</p>
+                ) : null}
+                <form className="npc-dialogue-input" onSubmit={(event) => void submitFreeText(event)}>
+                  <input
+                    aria-label="自定义回应"
+                    value={text}
+                    disabled={busy}
+                    placeholder="输入回应……"
+                    onChange={(event) => setText(event.target.value)}
+                    maxLength={240}
+                  />
+                  <button type="submit" disabled={busy || text.trim() === ""}>发送</button>
+                </form>
+              </>
             ) : null}
           </>
         ) : (
@@ -172,6 +363,7 @@ export function LocationSceneScreen({
   initialFocusNpcId,
   sceneNpcName,
   sceneLocationName,
+  sceneBuildingId,
 }: LocationSceneScreenProps) {
   const gameType = view.gameType as NewGameInput["gameType"];
   const pending = view.narrativeGeneration.status === "pending";
@@ -187,24 +379,91 @@ export function LocationSceneScreen({
     ? null
     : activeDialogues.find((dialogue) => dialogue.npcId === initialFocusNpcId)?.name ?? null;
   const hasBuildingSceneContext = initialFocusNpcId !== null && initialFocusNpcId !== undefined;
+  const buildingItems = hasBuildingSceneContext && view.currentLocation.scale === "town"
+    ? view.obtainableItems.filter((item) => item.buildingId === sceneBuildingId)
+    : view.obtainableItems;
   const currentSceneNpcName = sceneNpcName ?? focusedDialogueName;
   const locationNpcs = hasBuildingSceneContext
     ? currentSceneNpcName === null
       ? []
       : view.currentLocation.npcs.filter((npc) => npc.name === currentSceneNpcName)
     : view.currentLocation.npcs;
-  const displayNarration = normalizeDisplayText(view.narrative.narration ?? "");
-  const displayLocationDescription = normalizeDisplayText(view.currentLocation.description);
+  const activeBuilding = hasBuildingSceneContext
+    ? view.currentLocation.town?.interactiveBuildings.find((building) => building.buildingId === sceneBuildingId)
+    : undefined;
+  const buildingSideNote = activeBuilding === undefined
+    ? ""
+    : describeBuildingScene(activeBuilding.buildingType, activeBuilding.displayName, sceneNpcName);
+  const displayNarration = buildingSideNote || cleanLocationSideNote(normalizeDisplayText(view.narrative.narration ?? ""));
+  const displayLocationDescription = activeBuilding === undefined
+    ? normalizeDisplayText(view.currentLocation.description)
+    : "";
   const shouldShowLocationDescription = displayLocationDescription !== ""
     && (displayNarration === "" || !displayNarration.includes(displayLocationDescription));
   const selectedNpcChoiceToken = currentSceneNpcName === null
     ? null
     : locationNpcs[0]?.talkChoice.choiceToken ?? null;
-  const sceneActions = selectedNpcChoiceToken !== null
-    ? view.currentLocation.actions.filter((action) => action.choiceToken === selectedNpcChoiceToken)
-    : view.story.currentObjectiveChoiceToken !== null
-      ? view.currentLocation.actions.filter((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
-      : view.currentLocation.actions;
+  const currentObjectiveAction = view.story.currentObjectiveChoiceToken === null
+    ? null
+    : view.currentLocation.actions.find((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
+      ?? buildingItems.find((item) => item.choice.choiceToken === view.story.currentObjectiveChoiceToken)?.choice
+      ?? null;
+  const currentObjectiveIsSceneAction = currentObjectiveAction !== null
+    && (currentObjectiveAction.presentation === "explore"
+      || currentObjectiveAction.presentation === "battle"
+      || (currentObjectiveAction.presentation === "item"
+        && buildingItems.some((item) => item.choice.choiceToken === currentObjectiveAction.choiceToken)));
+  // 已准备好的焦点对白代表当前主线的唯一入口。两个 support/challenge 是
+  // 对话框内的回答，不应和探索、战斗等地点通用动作并排在底栏；否则一次
+  // 主线场景会被误读成多条可同时推进的任务。
+  const preparedDialogue = activeDialogues.find((dialogue) =>
+    dialogue.choices.length === 2 || dialogue.freeInputEnabled,
+  );
+  const handoffLeavesCurrentBuilding = selectedNpcChoiceToken !== null
+    && view.story.currentObjectiveLabel !== null
+    && selectedNpcChoiceToken !== view.story.currentObjectiveChoiceToken
+    && !currentObjectiveIsSceneAction;
+  const handoffLeavesCurrentLocation = view.story.currentObjectiveLabel !== null
+    && view.story.currentObjectiveChoiceToken === null;
+  const preparedDialogueTalkChoice = preparedDialogue === undefined
+    || handoffLeavesCurrentBuilding
+    || handoffLeavesCurrentLocation
+    ? null
+    : view.currentLocation.npcs.find((npc) => npc.name === preparedDialogue.name)?.talkChoice ?? null;
+  // 当前目标是调查/拾取/战斗时，必须优先给出该规则行动。否则上一轮对话
+  // 仍有两项回应时会抢占底栏，物品热点又可能被地点旁注遮住，玩家会失去
+  // 唯一可推进的入口。
+  const currentObjectiveRailAction = currentObjectiveIsSceneAction ? currentObjectiveAction : null;
+  // 仍停留在上一座建筑、但主线已交给另一名 NPC 时，不能继续把旧 NPC、
+  // 探索或战斗当作当前任务入口。保持原场景供玩家读完回应；下一步由 HUD
+  // 指明，玩家返回小镇后从目标人物自己的建筑进入，避免把两处空间混成一幕。
+  const sceneActions = currentObjectiveRailAction !== null
+    ? [currentObjectiveRailAction]
+    : preparedDialogueTalkChoice !== null
+    ? [preparedDialogueTalkChoice]
+    : handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation
+      ? []
+      : view.story.currentObjectiveChoiceToken !== null
+        ? view.currentLocation.actions.filter((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
+        : selectedNpcChoiceToken !== null
+          ? view.currentLocation.actions.filter((action) =>
+              action.choiceToken === selectedNpcChoiceToken || action.presentation === "battle",
+            )
+          : view.currentLocation.actions;
+  const sceneNarrativeChoices = preparedDialogue === undefined
+    && !handoffLeavesCurrentBuilding
+    && view.story.currentObjectiveLabel === null
+    && view.narrative.eventKind !== "dialogue"
+    ? view.narrative.choices
+    : [];
+  const sceneActionTokens = new Set(sceneActions.map((action) => action.choiceToken));
+  const sceneActionLabels = new Set(sceneActions.map((action) => action.label));
+  const actionRailChoices = [
+    ...sceneActions,
+    ...sceneNarrativeChoices.filter((choice) =>
+      !sceneActionTokens.has(choice.choiceToken) && !sceneActionLabels.has(choice.label),
+    ),
+  ];
   const hasDialogueInteraction = activeDialogues.some((dialogue) =>
     dialogue.choices.length > 0 || dialogue.freeInputEnabled,
   );
@@ -224,7 +483,7 @@ export function LocationSceneScreen({
         npcId: fallbackId,
         name: npc.name,
         role: npc.role,
-        speechPages: [composeDirectNpcGreeting()],
+        speechPages: [composeDirectNpcGreeting(npc.role, npc.name)],
         choices: [npc.talkChoice],
         freeInputEnabled: false,
         giveChoices: [],
@@ -232,7 +491,7 @@ export function LocationSceneScreen({
     }
   }
 
-  const [openDialogueNpcId, setOpenDialogueNpcId] = useState<string | null>(() => {
+  const initialOpenDialogueNpcId = (() => {
     // 从小镇建筑进入只切换场景，不自动打开或提交对话；测试环境下仍默认打开第一个活跃对话。
     if (initialFocusNpcId !== null && initialFocusNpcId !== undefined) {
       return null;
@@ -241,7 +500,25 @@ export function LocationSceneScreen({
       return activeDialogues[0].npcId;
     }
     return null;
+  })();
+  const [dialogueUi, dispatchDialogueUi] = useReducer(reduceDialogueUiState, {
+    npcId: initialOpenDialogueNpcId,
+    revision: view.revision,
   });
+  const openDialogueNpcId = dialogueUi.npcId;
+  const [dialoguePhase, setDialoguePhase] = useState<DialoguePhase>("choice");
+  const submittedDialogueRef = useRef<SubmittedDialogue | null>(null);
+  const previousBusyRef = useRef(busy);
+
+  function setOpenDialogueNpcId(npcId: string | null): void {
+    dispatchDialogueUi({ kind: "set", npcId });
+  }
+
+  function resetDialogue(): void {
+    setOpenDialogueNpcId(null);
+    setDialoguePhase("choice");
+    submittedDialogueRef.current = null;
+  }
   const [battleFeedback, setBattleFeedback] = useState<BattleFeedback | null>(null);
   const previousBattleRef = useRef(view.battle);
 
@@ -276,6 +553,19 @@ export function LocationSceneScreen({
     return undefined;
   }, [view.battle]);
 
+  // 正式对白请求结束后直接恢复下一组选项；失败/拒绝也恢复原选项。
+  // pending 期间旧选项被隐藏，避免重复提交，但不额外插入确认按钮。
+  useEffect(() => {
+    const wasBusy = previousBusyRef.current;
+    previousBusyRef.current = busy;
+    const submitted = submittedDialogueRef.current;
+    if (submitted === null || wasBusy === false || busy) return;
+
+    // NPC 回应 ready 后直接恢复下一组选择；等待态期间旧选项仍被隐藏。
+    setDialoguePhase("choice");
+    submittedDialogueRef.current = null;
+  }, [busy, view.revision, view.turnNumber]);
+
   function renderChoiceButton(choice: { choiceToken: string; label: string }) {
     // “与 NPC 交谈”只是打开本幕已经生成好的对话；只有弹窗内的两个选项
     // 或自定义输入才是正式回合，避免进入地点或点开交谈入口就提前编排下一幕。
@@ -288,7 +578,11 @@ export function LocationSceneScreen({
           disabled={busy || pending}
           onClick={() => {
             const dialogue = Array.from(allDialoguesMap.values()).find((d) => d.name === matchingNpc.name);
-            if (dialogue !== undefined) setOpenDialogueNpcId(dialogue.npcId);
+            if (dialogue !== undefined) {
+              setOpenDialogueNpcId(dialogue.npcId);
+              setDialoguePhase("choice");
+              submittedDialogueRef.current = null;
+            }
           }}
         >
           {choice.label}
@@ -344,33 +638,59 @@ export function LocationSceneScreen({
     }
   }
 
-  const openDialogueNpcIdForRender = openDialogueNpcId;
-
   // 当前打开的对话对象
-  const openDialogue: Dialogue | undefined = openDialogueNpcIdForRender
-    ? allDialoguesMap.get(openDialogueNpcIdForRender)
+  const openDialogue: Dialogue | undefined = openDialogueNpcId
+    ? allDialoguesMap.get(openDialogueNpcId)
     : undefined;
+
+  // 幕交接时旧焦点 NPC 可能只剩一次普通 ask 入口。若继续保留旧弹窗，
+  // 玩家会看到单个“与 NPC 交谈”按钮，却误以为仍在正式双选项对话中。
+  // 用 reducer 同步 revision，避免 effect 内直接 setState 触发 cascading render。
+  useEffect(() => {
+    if (dialogueUi.revision === view.revision) return;
+    const shouldPreservePendingDialogue = submittedDialogueRef.current !== null;
+    const shouldClose = !pending && !shouldPreservePendingDialogue
+      && (
+        handoffLeavesCurrentBuilding
+        || handoffLeavesCurrentLocation
+        || (
+          view.narrative.eventKind === "dialogue"
+          && openDialogue !== undefined
+          && !openDialogue.freeInputEnabled
+          && openDialogue.choices.length !== 2
+        )
+      );
+    dispatchDialogueUi({ kind: "sync_revision", revision: view.revision, close: shouldClose });
+  }, [
+    dialogueUi.revision,
+    handoffLeavesCurrentBuilding,
+    handoffLeavesCurrentLocation,
+    dialoguePhase,
+    openDialogue,
+    pending,
+    view.narrative.eventKind,
+    view.revision,
+  ]);
 
   // 点击 NPC 卡片：纯粹打开对话弹窗，不消费回合
   function handleNpcCardClick(npc: typeof sidebarNpcs[number]) {
     setOpenDialogueNpcId(npc.dialogueId);
+    setDialoguePhase("choice");
+    submittedDialogueRef.current = null;
   }
 
-  function renderBattleChoiceButton(choice: { choiceToken: string | null; label: string; enabled?: boolean; disabledReason?: string | null }) {
+  if (view.battle !== null) {
     return (
-      <button
-        key={`${choice.label}:${choice.choiceToken ?? "disabled"}`}
-        type="button"
-        data-battle-action="true"
-        disabled={busy || pending || choice.enabled === false || choice.choiceToken === null}
-        onClick={() => {
-          if (choice.choiceToken === null) return;
-          setBattleFeedback({ kind: "player-action", message: `你${choice.label}！` });
-          onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken });
-        }}
-      >
-        {choice.label}{choice.disabledReason ? `（${choice.disabledReason}）` : ""}
-      </button>
+      <BattleScene
+        view={view}
+        battle={view.battle}
+        gameType={gameType}
+        busy={busy}
+        pending={pending}
+        battleFeedback={battleFeedback}
+        onBattleFeedback={(message) => setBattleFeedback({ kind: "player-action", message })}
+        onSubmit={onSubmit}
+      />
     );
   }
 
@@ -400,7 +720,7 @@ export function LocationSceneScreen({
           </div>
           <div className="scene-npc-sidebar-list">
             {sidebarNpcs.map((npc) => {
-              const isSelected = openDialogueNpcIdForRender === npc.dialogueId;
+              const isSelected = openDialogueNpcId === npc.dialogueId;
               return (
                 <button
                   key={npc.id}
@@ -430,9 +750,9 @@ export function LocationSceneScreen({
       <div className="location-scene-content location-scene-content--fullscreen">
 
         {/* 散布在场景中的可探索/调查物品图标 */}
-        {view.obtainableItems.length > 0 ? (
+        {buildingItems.length > 0 ? (
           <div className="scene-interactive-layer" aria-label="可获取物品">
-            {view.obtainableItems.map((item, index) => {
+            {buildingItems.map((item, index) => {
               const pos = ITEM_HOTSPOT_POSITIONS[index % ITEM_HOTSPOT_POSITIONS.length];
               return (
                 <button
@@ -454,22 +774,14 @@ export function LocationSceneScreen({
           </div>
         ) : null}
 
-        {/* 编排中提示 */}
-        {pending ? (
-          <p role="status" aria-live="polite" className="narrative-pending-caption">
-            正在编排下一幕……
-          </p>
-        ) : null}
-
         {/* 叙事场景浮层（固定在底部中偏上） */}
         {view.narrative.hasScene && displayNarration ? (
-          <section className="scene-narrative scene-narrative--overlay" aria-label="当前场景">
-            <p>{displayNarration}</p>
-            {view.narrative.eventKind !== "dialogue" && view.narrative.choices.length > 0 ? (
-              <div role="group" aria-label="场景选项">
-                {view.narrative.choices.map(renderChoiceButton)}
-              </div>
-            ) : null}
+          <section className="scene-narrative scene-narrative--side-note" aria-label="地点旁注">
+            <div className="scene-narrative-location-note">
+              <span className="scene-narrative-kicker">地点旁注</span>
+              <h2>{sceneLocationName ?? view.currentLocation.name}</h2>
+              <p>{displayNarration}</p>
+            </div>
           </section>
         ) : null}
 
@@ -481,91 +793,12 @@ export function LocationSceneScreen({
 
       {/* 底部行动栏：与 NPC 交谈只打开本幕对话，弹窗选项才提交正式回合 */}
       <nav className="scene-action-rail scene-action-rail--bottom" aria-label="行动栏">
-        {sceneActions.length > 0
-          ? sceneActions.map(renderChoiceButton)
-          : view.narrative.choices.length === 0 && view.battle === null && !hasDialogueInteraction
+        {actionRailChoices.length > 0
+          ? actionRailChoices.map(renderChoiceButton)
+          : sceneNarrativeChoices.length === 0 && view.battle === null && !hasDialogueInteraction
             ? <span className="scene-action-rail-empty" role="alert">当前场景没有可执行行动，请返回地图或重新载入存档。</span>
             : null}
       </nav>
-
-      {/* 战斗 */}
-      {view.battle !== null ? (
-        <section className="battle-viewport" aria-label={`战斗 · ${view.battle.enemyName}`}>
-          <div className="battle-arena-backdrop" aria-hidden="true">
-            <AdventureVisual gameType={gameType} kind="enemy" label="" decorative />
-          </div>
-          <div className="battle-hud">
-            <span className="battle-hud-side">己方</span>
-            <strong>第 {view.battle.round} 回合</strong>
-            <span className="battle-hud-side battle-hud-side--enemy">敌方 · {view.battle.enemyName}</span>
-          </div>
-          {view.battle.units !== undefined && view.battle.units.length > 0
-            ? view.battle.units.filter((unit) => unit.hp > 0).map((unit) => (
-                <div
-                  key={unit.slot}
-                  className={`battle-combatant battle-combatant--${unit.side === "allies" ? "player" : "enemy"} ${unit.current ? "battle-combatant--active" : ""} ${battleFeedback?.kind === "enemy-hit" && unit.side === "enemies" ? "battle-combatant--hit" : ""}`}
-                  data-side={unit.side === "allies" ? "player" : "enemy"}
-                  data-slot={unit.slot}
-                  role="group"
-                  aria-label={`${unit.side === "allies" ? "己方" : "敌方"}：${unit.name}`}
-                >
-                  <div className="battle-combatant-visual" aria-hidden="true">
-                    <AdventureVisual gameType={gameType} kind={unit.side === "allies" ? "npc" : "enemy"} label="" decorative />
-                  </div>
-                  <span className="battle-faction-label">{unit.side === "allies" ? "己方" : "敌方"}{unit.current ? " · 当前行动" : ""}</span>
-                  <h3>{unit.name}</h3>
-                  <p>HP {unit.hp}/{unit.maxHp} · EN {unit.energy}/{unit.maxEnergy}</p>
-                </div>
-              ))
-            : <>
-                <div
-                  className={`battle-combatant battle-combatant--player ${battleFeedback?.kind === "player-action" ? "battle-combatant--attacking" : ""} ${battleFeedback?.kind === "player-hit" ? "battle-combatant--hit" : ""}`}
-                  data-side="player"
-                  role="group"
-                  aria-label={`己方：${view.player.name}`}
-                >
-                  <div className="battle-combatant-visual" aria-hidden="true">
-                    <AdventureVisual gameType={gameType} kind="npc" label="" decorative />
-                  </div>
-                  <span className="battle-faction-label">己方</span>
-                  <h3>{view.player.name}</h3>
-                  <p>HP {view.battle.playerHp}</p>
-                </div>
-                <div
-                  className={`battle-combatant battle-combatant--enemy ${battleFeedback?.kind === "enemy-hit" ? "battle-combatant--hit" : ""}`}
-                  data-side="enemy"
-                  role="group"
-                  aria-label={`敌方：${view.battle.enemyName}`}
-                >
-                  <div className="battle-combatant-visual" aria-hidden="true">
-                    <AdventureVisual gameType={gameType} kind="enemy" label="" decorative />
-                  </div>
-                  <span className="battle-faction-label">敌方</span>
-                  <h3>{view.battle.enemyName}</h3>
-                  <p>HP {view.battle.enemyHp}</p>
-                </div>
-              </>}
-          <div className="battle-action-rail" role="group" aria-label="战斗行动">
-            {[...view.battle.controls, ...(view.battle.disabledControls ?? [])].map(renderBattleChoiceButton)}
-          </div>
-          {battleFeedback !== null ? (
-            <p className={`battle-feedback battle-feedback--${battleFeedback.kind}`} role="status" aria-live="assertive">
-              {battleFeedback.message}
-            </p>
-          ) : null}
-          {view.battle.lastAdvance !== undefined && view.battle.lastAdvance.length > 0 ? (
-            <ol className="battle-log" aria-label="本次行动记录">
-              {view.battle.lastAdvance.map((entry) => (
-                <li key={`${entry.round}:${entry.sequence}`}>
-                  {entry.actorName}{entry.kind === "guard" ? "防御" : entry.kind === "flee" ? "撤退" : entry.kind === "skill" ? "施放技能" : "攻击"}
-                  {entry.targetName ? ` → ${entry.targetName}` : ""}
-                  {entry.damage > 0 ? `，${entry.damage} 伤害` : ""}
-                </li>
-              ))}
-            </ol>
-          ) : null}
-        </section>
-      ) : null}
 
       {/* NPC 对话模态弹层：只有用户主动点击时才弹出 */}
       {openDialogue ? (
@@ -574,13 +807,19 @@ export function LocationSceneScreen({
           gameType={gameType}
           busy={busy || pending}
           onSubmit={(interaction) => {
-            // 正式对白选项消费的是当前场景。先关闭旧弹窗，避免 pending 完成后
-            // 同一个 NPC ID 在新场景中重新挂载，看起来像旧选项从未失效。
-            setOpenDialogueNpcId(null);
+            // 提交后保留当前 NPC 的会话焦点。pending 期间 activeDialogues 会暂时
+            // 让弹窗隐去；下一幕 ready 后，同一 NPC 的新台词会自动回到眼前，玩家
+            // 先展示回应，再由玩家确认继续，避免自定义输入像是石沉大海。
+            submittedDialogueRef.current = {
+              revision: view.revision,
+              turnNumber: view.turnNumber,
+            };
+            setDialoguePhase("waiting");
             onSubmit(interaction);
           }}
+          phase={dialoguePhase}
           onClose={() => {
-            setOpenDialogueNpcId(null);
+            resetDialogue();
           }}
         />
       ) : null}

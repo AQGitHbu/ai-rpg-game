@@ -18,17 +18,35 @@ function isRequirementMet(ws: WorldState, req: WorldState["endings"][number]["re
   }
 }
 
+function themeFromRequirements(
+  ending: WorldState["endings"][number],
+): "trust" | "doubt" | null {
+  if (ending.requirements.some((req) => req.kind === "npc_affinity_at_least")) return "trust";
+  if (ending.requirements.some((req) => req.kind === "npc_affinity_at_most")) return "doubt";
+  return null;
+}
+
 export function resolveEnding(ws: WorldState, ss: StoryState, deps: { readonly now: () => string }): EndingResolveResult {
   if (!ss.endingAllowed || ws.ending !== null) {
     return { nextWorldState: ws, nextStoryState: ss, events: [] };
   }
 
-  // 首选：满足全部要求的结局。命中多个或一个都不中时，退化为按 id 的
+  // 终幕最后一次 support/challenge 是玩家刚做出的明确分歧，优先于旧的
+  // 开场关系门槛；这样“支持最终知情人”不会被早先 NPC 的 affinity 覆盖。
+  const finalNpc = ws.npcs.at(-1);
+  const finalDialogueAct = finalNpc?.memory.interactionHistory.at(-1)?.dialogueAct;
+  const explicitTheme = finalDialogueAct === "support" ? "trust" : finalDialogueAct === "challenge" ? "doubt" : null;
+  const explicitEnding = explicitTheme === null
+    ? undefined
+    : ws.endings.find((ending) => themeFromRequirements(ending) === explicitTheme);
+
+  // 其次：满足全部要求的结局。命中多个或一个都不中时，退化为按 id 的
   // 确定性平局裁决（同 id 排序下首个），保证 endingAllowed 下必有结局可达。
   const satisfied = ws.endings
     .filter((ending) => ending.requirements.every((req) => isRequirementMet(ws, req)));
   const candidates = satisfied.length > 0 ? satisfied : ws.endings;
-  const matchingEnding = [...candidates].sort((left, right) => left.id.localeCompare(right.id))[0];
+  const matchingEnding = explicitEnding
+    ?? [...candidates].sort((left, right) => left.id.localeCompare(right.id))[0];
   if (matchingEnding) {
       const event: GameEvent = {
         type: "ending_reached",

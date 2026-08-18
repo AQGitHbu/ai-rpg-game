@@ -13,8 +13,8 @@ import {
 // ---------------------------------------------------------------------------
 // Step 1：动态具象化旅程。
 // 开局只有 1 地点/1 NPC/1 主线（opening slice）。完成第一段对话后，下一叙事
-// 写回必须具象化新 NPC 与新地点/物品；下一场场景必须点名已批准实体。随后继续
-// 地图移动 → 小镇 → 场景、物品拾取、战斗，并以 ≥15 个成功回合与 3 次重载
+// 写回可以具象化完整新幕，但玩家可见链路必须按“前往 → 交谈 → 取证 → 战斗”
+// 逐步释放。随后继续地图移动、场景、物品拾取、战斗，并以 ≥15 个成功回合与 3 次重载
 // 抵达结局。journeys 全程确定性源（零 AI）。
 // ---------------------------------------------------------------------------
 
@@ -72,7 +72,7 @@ describe("动态具象化旅程（Step 1）", () => {
     await fixed("交谈"); // 2: 与 npc_0 交谈 → quest_0 完成 → 幕推进
     await scene(); // 3: 下一叙事写回 + 世界演化触发
 
-    // 具象化断言：新 NPC + 新地点/物品 已写入世界，且下一场景点名已批准名称。
+    // 具象化断言：完整新幕已写入世界，但第一可见目标只有前往新地点。
     ws = await loadWorldState(store.repo);
     ss = await loadStoryState(store.repo);
     expect(ws?.npcs.length).toBeGreaterThanOrEqual(2);
@@ -82,45 +82,51 @@ describe("动态具象化旅程（Step 1）", () => {
     expect(ss?.currentAct).toBe(2);
     const sceneRecord = store.record();
     const sceneNarration = sceneRecord?.storyState.narrative.currentScene?.narration ?? "";
-    expect(sceneNarration).toContain("传讯人·2");
+    expect(sceneNarration).not.toContain("传讯人·2");
+    expect(ss?.reveal).toEqual({ questId: "quest_dyn_1", visibleObjectiveIndex: 0 });
+    expect(ws?.unlockedLocationIds).toContain("loc_dyn_1");
     const handoffScene = sceneRecord?.storyState.narrative.currentScene;
     expect(handoffScene?.event?.kind).toBe("observe");
-    expect(handoffScene?.choices.some((choice) => choice.label.includes("传讯人·2"))).toBe(true);
+    expect(handoffScene?.choices.some((choice) => choice.label.includes("延伸之地·2"))).toBe(true);
     expect(ws?.eventLedger.some((event) => event.type === "blueprint_expanded")).toBe(true);
 
-    await fixed("拾取"); // 4: 物品获取
+    await fixed("延伸之地·2"); // 4: 前往新地点，释放 NPC
+    await scene();
+    expect((await loadStoryState(store.repo))?.reveal?.visibleObjectiveIndex).toBe(1);
+    await fixed("传讯人·2"); // 5: 交谈后释放物品
+    await scene();
+    expect((await loadStoryState(store.repo))?.reveal?.visibleObjectiveIndex).toBe(2);
+    await fixed("拾取"); // 6: 物品获取后释放敌人
     await scene();
     ws = await loadWorldState(store.repo);
     expect(ws?.inventory.length).toBeGreaterThanOrEqual(1);
 
-    await fixed("挑战"); // 5: 战斗开始
+    await fixed("挑战"); // 7: 战斗开始
     await scene();
     await fightToVictory();
     ws = await loadWorldState(store.repo);
     expect(ws?.defeatedEnemyIds.length).toBeGreaterThanOrEqual(1);
     reload(); // 重载 1
 
-    await fixed("延伸之地·2"); // 6: 地图移动到新地点
-    await scene();
-    await fixed("前往"); // 7: 移动回小镇
-    await scene();
     reload(); // 重载 2
 
-    await fixed("传讯人·2"); // 8: 完成第 2 幕主线 → 幕推进
+    await fixed("延伸之地·3"); // 8: 第 3 幕先前往新地点
+    await scene();
+    await fixed("传讯人·3"); // 9: 完成第 3 幕主线的交谈步骤
     await scene();
     ss = await loadStoryState(store.repo);
     expect(ss?.currentAct).toBe(3);
 
-    await fixed("拾取"); // 9: 第 3 幕物品
+    await fixed("拾取"); // 10: 第 3 幕物品
     await scene();
-    await fixed("挑战"); // 10: 第 3 幕战斗
+    await fixed("挑战"); // 11: 第 3 幕战斗
     await scene();
     await fightToVictory();
     reload(); // 重载 3
 
-    await fixed("传讯人·3"); // 11: 完成第 3 幕主线
+    await fixed("回应"); // 12: 完成短篇最后一幕后选择结局方向
     await scene();
-    await fixed("交谈"); // 12: 结局落定
+    await fixed("回应"); // 12: 明确选择结局方向后落定
 
     const record = store.record();
     if (record === null) throw new Error("旅程结束后存档缺失");
@@ -155,7 +161,7 @@ describe("动态具象化旅程（Step 1）", () => {
     expect(store.applyCalls().length - applyAfterTurn).toBe(0);
 
     expect(await advanceScene(store.repo)).toBe(true);
-    const unblocked = await playIssuedChoice(store.repo, "传讯人");
+    const unblocked = await playIssuedChoice(store.repo, "延伸之地·2");
     expect(unblocked.ok).toBe(true);
   });
 });

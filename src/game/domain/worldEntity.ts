@@ -82,4 +82,6 @@ export type GenerationMetadata = {
   readonly gameType: GameTypeId;
   /** 玩家开局配置（可选）：旧存档无此字段，读取时必须容忍缺省。 */
   readonly setup?: GameSetup;
+  /** 开局相似度重试次数；用于记录实际采用的确定性 fallback 分支。 */
+  readonly openingAttempt?: number;
 };

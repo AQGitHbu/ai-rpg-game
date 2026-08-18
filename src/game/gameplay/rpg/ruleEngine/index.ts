@@ -18,6 +18,55 @@ import { advanceStoryProgression } from "./advanceStoryProgression";
 import { approveCandidateEvents, compileCandidateEvent } from "@/game/gameplay/rpg/candidateEvents";
 import { reconcileMaterializedView } from "@/game/domain/materializedView";
 import type { RecentBeat, NpcContact } from "@/game/domain/materializedView";
+import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
+
+const DIALOGUE_REQUIRED_TURNS = 2;
+
+function advanceDialogueSession(
+  worldState: WorldState,
+  storyState: StoryState,
+  action: Action,
+): StoryState {
+  if (action.type !== "talk") return storyState;
+  const existing = storyState.narrative.dialogueSession;
+  const currentSceneNpcId = storyState.narrative.currentScene?.event?.kind === "dialogue"
+    ? storyState.narrative.currentScene.event.focusNpcId
+    : undefined;
+  const currentSceneHasDialogue = storyState.narrative.currentScene?.npcLine !== null
+    && storyState.narrative.currentScene?.npcLine !== undefined
+    && String(currentSceneNpcId) === String(action.npcId);
+  // 某些旧流程先展示“与 NPC 交谈”入口，再由下一回合打开正式双选项。
+  // 这个入口本身不是玩家对 NPC 台词的回应，不应消耗多轮会话的一轮。
+  const isExplicitDialogueResponse = action.dialogueAct !== "ask"
+    || action.topic !== undefined
+    || action.utterance !== undefined;
+  const objectiveRef = currentObjectiveOf(worldState, storyState);
+  const objectiveNpcId = objectiveRef === null ? undefined : (() => {
+    const quest = worldState.quests.find((entry) => String(entry.id) === String(objectiveRef.questId));
+    const objective = quest?.objectives[objectiveRef.objectiveIndex];
+    return objective?.kind === "talk_to_npc" ? objective.npcId : undefined;
+  })();
+  const sameSession = existing !== undefined
+    && String(existing.npcId) === String(action.npcId)
+    && isExplicitDialogueResponse;
+  const canStart = sameSession
+    || (currentSceneHasDialogue && isExplicitDialogueResponse)
+    || (isExplicitDialogueResponse && String(objectiveNpcId) === String(action.npcId));
+  if (!canStart) return storyState;
+
+  const requiredTurns = existing?.requiredTurns ?? DIALOGUE_REQUIRED_TURNS;
+  const turnCount = sameSession ? existing.turnCount + 1 : 1;
+  const dialogueSession = {
+    npcId: action.npcId,
+    turnCount,
+    requiredTurns,
+    completed: existing?.completed === true || turnCount >= requiredTurns,
+  };
+  return {
+    ...storyState,
+    narrative: { ...storyState.narrative, dialogueSession },
+  };
+}
 
 export type { ValidationCode };
 
@@ -111,14 +160,24 @@ export function resolveTurn(
   // 领域事件严格按 resolver → quest → ending 顺序聚合；ledger 对齐由此保证。
 
   // Step 1: 任务推进（使用传播后的 WS）
-  const quests = reconcileQuests(propagatedWs, deps);
+  const dialogueStoryState = advanceDialogueSession(propagatedWs, storyState, action);
+  const dialogueSession = dialogueStoryState.narrative.dialogueSession;
+  const dialogueSessionAdvanced = dialogueStoryState !== storyState;
+  const quests = reconcileQuests(propagatedWs, deps, !dialogueSessionAdvanced || dialogueSession === undefined
+    ? undefined
+    : {
+        talkToNpcSession: {
+          npcId: String(dialogueSession.npcId),
+          completed: dialogueSession.completed,
+        },
+      });
   // 初步 domainEvents：resolver + quest（ending 事件在 Step 5 结算后追加）
   const domainEvents: GameEvent[] = [...resolved.events, ...quests.events];
 
   // Step 2: 幕推进 + storyProgress + endingAllowed 推导（§13.1 在 resolveEnding 之前）
   const progression = advanceStoryProgression(
     quests.nextWorldState,
-    storyState,
+    dialogueStoryState,
     domainEvents,
   );
 
@@ -144,8 +203,15 @@ export function resolveTurn(
   // Step 4: 张力/进度更新（storyProgress 由 advanceStoryProgression 推导，此处只更新 tension）
   const nextStoryState = updateStoryMetrics(approval.nextStoryState, domainEventsWithCandidate);
 
-  // Step 5: 结局结算（§13.1 放最后；用含 endingAllowed 的 storyState）
-  const ending = resolveEnding(afterCandidateWs, nextStoryState, deps);
+  // Step 5: 结局结算只消费终幕的明确立场。结局对已具象化后，探索、
+  // 移动或开战仍然是正常游戏行动，不能因为 endingAllowed 已为 true 而
+  // 把玩家直接送进结局。
+  const isExplicitEndingDecision = action.type === "talk"
+    && (action.dialogueAct === "support" || action.dialogueAct === "challenge")
+    && afterCandidateWs.endings.length >= 2;
+  const ending = isExplicitEndingDecision
+    ? resolveEnding(afterCandidateWs, nextStoryState, deps)
+    : { nextWorldState: afterCandidateWs, nextStoryState, events: [] };
   const finalDomainEvents: GameEvent[] = [...domainEventsWithCandidate, ...ending.events];
 
   // Step 6: 物化视图增量归约

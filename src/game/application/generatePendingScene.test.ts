@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { generatePendingScene } from "./generatePendingScene";
 import { createInitialWorldState, appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asFactId, asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
+import { asFactId, asItemId, asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
@@ -196,7 +196,7 @@ describe("generatePendingScene", () => {
   it("returns unavailable when the scene source fails", async () => {
     const record = makeGameRecord({
       kind: "pending",
-      job: makeJob({ summary: { kind: "move", locationId: asLocationId("loc_1") }, eventKind: "travel" }),
+      job: makeJob({ summary: { kind: "explore" }, eventKind: "observe" }),
     });
     const result = await generatePendingScene(makeDeps(record, failingSceneSource()));
     expect(result).toBe("unavailable");
@@ -205,7 +205,7 @@ describe("generatePendingScene", () => {
   it("hands the real persisted job to the source and writes back to idle", async () => {
     const record = makeGameRecord({
       kind: "pending",
-      job: makeJob({ summary: { kind: "move", locationId: asLocationId("loc_1") }, eventKind: "travel" }),
+      job: makeJob({ summary: { kind: "explore" }, eventKind: "observe" }),
     });
     const spy = makeSpySceneSource();
     const deps = makeDeps(record, spy.source);
@@ -268,15 +268,35 @@ describe("generatePendingScene", () => {
     expect(writeBack.nextWorldState.items).toHaveLength(1);
   });
 
-  it("move job: the source receives a travel eventKind, not observe — no fabricated event", async () => {
+  it("move job: materializes an immediate deterministic destination scene without waiting for the configured source", async () => {
     const record = makeGameRecord({
       kind: "pending",
       job: makeJob({ summary: { kind: "move", locationId: asLocationId("loc_1") }, eventKind: "travel" }),
     });
     const spy = makeSpySceneSource();
-    const result = await generatePendingScene(makeDeps(record, spy.source));
+    const deps = makeDeps(record, spy.source);
+    const result = await generatePendingScene(deps);
     expect(result).toBe("saved");
-    expect(spy.contexts()[0].job.resolvedEvent.eventKind).toBe("travel");
+    expect(spy.contexts()).toHaveLength(0);
+    const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
+    expect(writeBack.nextStoryState.narrative.currentScene?.event?.kind).toBe("travel");
+    expect(writeBack.nextStoryState.narrative.currentScene?.source).toBe("fallback");
+  });
+
+  it("take_item job: completes with an immediate deterministic scene without calling the configured source", async () => {
+    const record = makeGameRecord({
+      kind: "pending",
+      job: makeJob({ summary: { kind: "take_item", itemId: asItemId("item_1") }, eventKind: "item" }),
+    });
+    const spy = makeSpySceneSource();
+    const deps = makeDeps(record, spy.source);
+    const result = await generatePendingScene(deps);
+
+    expect(result).toBe("saved");
+    expect(spy.contexts()).toHaveLength(0);
+    const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
+    expect(writeBack.nextStoryState.narrative.currentScene?.source).toBe("fallback");
+    expect(writeBack.nextStoryState.narrative.generation.status).toBe("idle");
   });
 
   it("does not rewrite partial_success/failure/blocked: the source sees the real status", async () => {
@@ -311,7 +331,7 @@ describe("generatePendingScene", () => {
   });
 
   it("process restart: re-hydrating the record from the same JSON rebuilds an identical source context", async () => {
-    const job = makeJob({ summary: { kind: "move", locationId: asLocationId("loc_1") }, eventKind: "travel" });
+    const job = makeJob({ summary: { kind: "explore" }, eventKind: "observe" });
     const recordJson = JSON.stringify(makeGameRecord({ kind: "pending", job }));
 
     const run = async () => {
@@ -371,6 +391,70 @@ describe("generatePendingScene", () => {
     expect(scene.npcLine?.answeredBeatIds).toContain("player_utterance");
   });
 
+  it("真实 AI 形状的提案被审批拒绝时先修复重试，成功后保持 generated", async () => {
+    const record = utteranceRecord();
+    const repo = makeMockRepo(record);
+    const logger = { warn: vi.fn() };
+    let calls = 0;
+    const invalidGenerated: SceneSource = {
+      async generateScene(context): Promise<SceneSourceResult> {
+        calls += 1;
+        if (calls === 2) {
+          expect(context.repairAttempt).toEqual({ attempt: 1, reason: "approval:missing_mandatory_beat" });
+          return {
+            sceneId: "scene-repaired-generated",
+            segments: [
+              { beatId: "player_utterance", text: "你把疑问问得很直白。" },
+              { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" },
+            ],
+            npcLine: {
+              npcId: "npc_1",
+              text: "这件事我也正想说。你先把手里的线索交给我核对。",
+              emotion: "warm",
+              answeredBeatIds: ["player_utterance"],
+              usedFactIds: [],
+              usedInteractionActionIds: [],
+            },
+            objectiveLink: null,
+            choices: [
+              { candidateId: "candidate_1", label: "请把线索交代清楚" },
+              { candidateId: "candidate_2", label: "先观察现场" },
+            ],
+            source: "generated",
+          };
+        }
+        return {
+          sceneId: "scene-invalid-generated",
+          segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+          npcLine: null,
+          objectiveLink: null,
+          choices: [
+            { candidateId: "candidate_1", label: "支持" },
+            { candidateId: "candidate_2", label: "观察" },
+          ],
+          source: "generated",
+        };
+      },
+    };
+
+    const result = await generatePendingScene({
+      repository: repo,
+      sceneSource: invalidGenerated,
+      logger: logger as never,
+      now: () => "2026-01-02",
+    });
+
+    expect(result).toBe("saved");
+    expect(calls).toBe(2);
+    expect(logger.warn).toHaveBeenCalledWith("scene_generation_rejected", { code: "missing_mandatory_beat" });
+    expect(logger.warn).toHaveBeenCalledWith("scene_generation_content_retry", {
+      reason: "approval:missing_mandatory_beat",
+      attempt: 1,
+    });
+    const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
+    expect(input.nextStoryState.narrative.currentScene?.source).toBe("generated");
+  });
+
   it("stub 提案正确应答 player_utterance 节拍 → 直接采纳（不触发 fallback）", async () => {
     const record = utteranceRecord();
     const repo = makeMockRepo(record);
@@ -382,7 +466,7 @@ describe("generatePendingScene", () => {
             { beatId: "player_utterance", text: "你提出了你的疑问。" },
             { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" },
           ],
-          npcLine: { npcId: "npc_1", text: "这件事我也正想说。", emotion: "warm", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
+          npcLine: { npcId: "npc_1", text: "这件事我也正想说。你先把手里的线索交给我核对。", emotion: "warm", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
           objectiveLink: null,
           choices: [
             { candidateId: "candidate_1", label: "支持" },
@@ -395,7 +479,7 @@ describe("generatePendingScene", () => {
     const result = await generatePendingScene({ repository: repo, sceneSource: answering, now: () => "2026-01-02" });
     expect(result).toBe("saved");
     const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
-    expect(input.nextStoryState.narrative.currentScene?.npcLine?.text).toBe("这件事我也正想说。");
+    expect(input.nextStoryState.narrative.currentScene?.npcLine?.text).toBe("这件事我也正想说。你先把手里的线索交给我核对。");
     expect(input.nextStoryState.narrative.currentScene?.source).toBe("generated");
   });
 });

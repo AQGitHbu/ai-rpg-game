@@ -12,17 +12,16 @@ import { projectRoot, readAiEnv } from "./aiEnv.mjs";
 // phase4bAiSmoke：opt-in 的真实 AI 冒烟脚本（Phase 4B Task 5）。
 //
 // 目的：在【操作者显式授权】下，用 production-equivalent 装配（compositionRoot →
-// live source）对三组固定合法输入（武侠 / 科幻 / 都市）各创建一局，确认真实链路
-// 要么产出 generated 开局、要么可观测地降级到 fallback，且成功存档可 reload、
-// 内容预算与双结局约束仍满足。
+// live source）对三组固定合法输入（武侠 / 科幻 / 都市）各创建一局，确认每一局
+// 都实际产出 generated 开局，且成功存档可 reload、开局运行时预算不越界。
 //
 // 安全红线（由 phase4bAiSmoke.node-test.mjs 门禁强制）：
 // - 必须 RUN_REAL_AI_SMOKE=1 才运行；否则退出非零且不发起任何请求。
 // - 运行前先跑 `npm run env:check`，但 stdout/stderr 绝不打印键值。
-// - 每例只输出白名单摘要：gameType、generated|fallback、耗时、稳定诊断码、
+// - 每例只输出白名单摘要：gameType、generated/fallback 标记、耗时、稳定诊断码、
 //   tokens/cost（如有）。永不输出玩家输入、prompt、模型原文、URL、Key。
-// - 真实服务慢 / 限流 / 非法输出 → 记录可观测 fallback 后整体成功；
-//   只有本地脚本 / 配置 / 持久化 / fallback 违约才失败（退出非零）。
+// - 真实服务慢 / 限流 / 非法输出 → 可观测地降级到 fallback，但这次真实 AI
+//   验收必须失败（退出非零）；fallback 只保证玩家流程可恢复，不能冒充 AI 成功。
 // - 决不加入 npm test / test:fast / build / CI。
 //
 // 本文件是 .mjs（Node 直接运行）：真实链路的 TS 依赖只在 opt-in 实跑路径里，
@@ -34,11 +33,8 @@ import { projectRoot, readAiEnv } from "./aiEnv.mjs";
 
 const DIAG_PREFIX = "[phase4b-smoke]";
 
-/** 结果来源白名单：只有这两种算成功；其余（fixture/unavailable 等）视为违约。 */
-export const ALLOWED_SOURCES = Object.freeze(["generated", "fallback"]);
-
-/** 内容预算里的结局数量硬约束（与 domain budgetPolicy.opening.endings 对齐）。 */
-export const REQUIRED_ENDING_COUNT = 2;
+/** 真实 AI 验收唯一的成功来源。fallback 是韧性结果，不是 AI 测试成功。 */
+export const REQUIRED_SOURCE = "generated";
 
 /**
  * 三组固定合法输入：字段均满足 domain 校验下限（characterName≥2、identity≥2、
@@ -50,6 +46,7 @@ export const SMOKE_CASES = Object.freeze([
     gameType: "wuxia",
     input: {
       gameType: "wuxia",
+      gameLength: "medium",
       characterName: "沈孤鸿",
       characterIdentity: "落魄镖师",
       personalityTags: ["重义", "沉默"],
@@ -63,6 +60,7 @@ export const SMOKE_CASES = Object.freeze([
     gameType: "science_fiction",
     input: {
       gameType: "science_fiction",
+      gameLength: "medium",
       characterName: "凯伦",
       characterIdentity: "深空货运领航员",
       personalityTags: ["谨慎"],
@@ -76,6 +74,7 @@ export const SMOKE_CASES = Object.freeze([
     gameType: "urban",
     input: {
       gameType: "urban",
+      gameLength: "medium",
       characterName: "林晚",
       characterIdentity: "深夜电台主持",
       personalityTags: ["敏锐", "念旧"],
@@ -102,17 +101,16 @@ export function validateCaseReport(report) {
     issues.push("CASE_LOCAL_FAILURE");
     return issues;
   }
-  if (!ALLOWED_SOURCES.includes(report.source)) {
+  if (report.source === "fallback") {
+    issues.push("AI_FALLBACK_USED");
+  } else if (report.source !== REQUIRED_SOURCE) {
     issues.push("SOURCE_OUT_OF_CONTRACT");
   }
   if (report.reloadOk !== true) {
     issues.push("RELOAD_FAILED");
   }
-  if (report.endingCount !== REQUIRED_ENDING_COUNT) {
-    issues.push("ENDING_COUNT_MISMATCH");
-  }
-  if (report.budgetOk !== true) {
-    issues.push("CONTENT_BUDGET_VIOLATION");
+  if (report.openingRuntimeOk !== true) {
+    issues.push("OPENING_RUNTIME_BUDGET_VIOLATION");
   }
   return issues;
 }
@@ -199,7 +197,7 @@ export async function runPhase4bAiSmoke(deps) {
     log(`${DIAG_PREFIX} SMOKE_FAILED：${failures}/${SMOKE_CASES.length} 例违约。`);
     return 1;
   }
-  log(`${DIAG_PREFIX} SMOKE_OK：${SMOKE_CASES.length} 例均满足 generated|fallback 契约。`);
+  log(`${DIAG_PREFIX} SMOKE_OK：${SMOKE_CASES.length} 例均由真实 AI 生成。`);
   return 0;
 }
 
@@ -395,6 +393,37 @@ export function checkContentBudget(blueprint, policy) {
   );
 }
 
+/**
+ * 当前架构只在开局持久化一个可玩地点/NPC/主任务，未来实体和两种结局由运行时
+ * 演化产生。因此真实 opening smoke 必须验证持久化 runtime state，而不是读取早已
+ * 不存在的 blueprint 字段后伪造“双结局已验证”。
+ */
+export function checkOpeningRuntimeState(record) {
+  const world = record?.worldState;
+  const story = record?.storyState;
+  if (!world || !story || !world.version || !story.budget) return false;
+  const budget = story.budget;
+  const dimensions = [
+    [world.locations, budget.locations],
+    [world.npcs, budget.npcs],
+    [world.quests, budget.quests],
+  ];
+  return (
+    world.version === 2 &&
+    Array.isArray(world.locations) &&
+    Array.isArray(world.npcs) &&
+    Array.isArray(world.quests) &&
+    dimensions.every(([entities, dimension]) =>
+      Array.isArray(entities) &&
+      dimension &&
+      entities.length === dimension.opening &&
+      dimension.opening + dimension.expanded <= dimension.max,
+    ) &&
+    typeof story.targetActs === "number" && story.targetActs >= 3 &&
+    world.ending === null
+  );
+}
+
 /** 把 aiEnv.mjs 的解析结果收敛为纯四键记录：其余键一概不带入装配 env。 */
 function toAiEnvRecord(values) {
   return {
@@ -456,17 +485,14 @@ export async function realRunCase(smokeCase, overrides = {}) {
   mkdirSync(resolve(projectRoot, "tmp"), { recursive: true });
   sweepStaleTempDatabases();
   const databasePath = join(resolve(projectRoot, "tmp"), `${TEMP_DB_PREFIX}${randomUUID()}.sqlite`);
-  const generationEvents = [];
-
   const entry = modules.createServerGameEntryPoints({
     AI_API_BASE_URL: aiEnv.AI_API_BASE_URL,
     AI_MODEL: aiEnv.AI_MODEL,
     AI_API_KEY: aiEnv.AI_API_KEY,
     AI_OUTPUT_FORMAT: aiEnv.AI_OUTPUT_FORMAT,
     GAME_DB_PATH: databasePath,
-  }, {
-    generationObserver: (event) => generationEvents.push(event),
   });
+  let entryClosed = false;
 
   try {
     // compositionRoot 的默认 audit 走 console.log：创建期间临时接管 stdout，
@@ -491,12 +517,7 @@ export async function realRunCase(smokeCase, overrides = {}) {
     }
     const durationMs = performance.now() - startedAt;
     const { codes: auditCodes, usage, estimatedCostUsd } = summarizeAuditEvents(auditEvents);
-    const fallbackCodes = generationEvents.flatMap((event) =>
-      event.stage === "falling_back" && typeof event.category === "string"
-        ? [event.category]
-        : [],
-    );
-    const codes = [...auditCodes, ...fallbackCodes];
+    const codes = auditCodes;
 
     if (!result.ok) {
       return {
@@ -512,17 +533,22 @@ export async function realRunCase(smokeCase, overrides = {}) {
     const reload = await entry.getCurrentGame();
     const reloadOk = reload.status === "active" && reload.view.gameId === result.gameId;
 
-    // 预算/双结局复查：直接读回持久化 blueprint，不信任内存态。
+    // 先关闭 production entry 持有的 SQLite client，再用独立只读 repository
+    // 复查落盘状态；Windows 下两个 libsql client 并发打开同一临时文件会导致
+    // 后者误报基础设施失败，从而使 smoke 没有实际验证持久化内容。
+    await entry.close();
+    entryClosed = true;
+
+    // 开局运行时预算复查：直接读回持久化 state，不信任内存态。当前架构不在
+    // opening 保存完整 blueprint 或结局；把缺失字段当作验收通过会掩盖真实失败。
     const repository = modules.createSqliteGameRepository({
       clientFactory: () => modules.createSqliteClient(databasePath),
     });
-    let endingCount = -1;
-    let budgetOk = false;
+    let openingRuntimeOk = false;
     try {
       const loaded = await repository.getCurrentGame();
       if (loaded.ok && loaded.status === "active") {
-        endingCount = loaded.record.blueprint.endings.length;
-        budgetOk = checkContentBudget(loaded.record.blueprint, modules.budgetPolicyOf(loaded.record.blueprint));
+        openingRuntimeOk = checkOpeningRuntimeState(loaded.record);
       }
     } finally {
       await repository.close();
@@ -531,17 +557,16 @@ export async function realRunCase(smokeCase, overrides = {}) {
     return {
       gameType: smokeCase.gameType,
       ok: true,
-      source: result.source,
+      source: result.generationSource,
       durationMs,
       codes,
       usage,
       estimatedCostUsd,
       reloadOk,
-      endingCount,
-      budgetOk,
+      openingRuntimeOk,
     };
   } finally {
-    await entry.close();
+    if (!entryClosed) await entry.close();
     await removeTempDatabase(databasePath);
   }
 }

@@ -6,8 +6,11 @@ import type { OpeningGenerationCandidate } from "@/game/domain/openingGeneration
 import { parseOpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import type { GameLength, GameSetup } from "@/game/domain/newGame";
 import { validateOpeningGenerationCandidate } from "@/game/gameplay/rpg/openingGeneration";
+import type { OpeningNoveltyContext } from "@/game/domain/openingNovelty";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import { buildStylePolicy } from "../../stylePolicy";
+import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./rpgAiClient";
+import type { ProviderJsonMode } from "./providerRequestOptions";
 
 // ---------------------------------------------------------------------------
 // 开局生成源（live/fixture）。
@@ -109,10 +112,19 @@ export function repairOpeningGenerationCandidate(
           repaired = true;
           return { name: "", description: "", scale: "town" };
         }
+        const name = fixString(location.name);
+        const description = fixString(location.description);
+        // buildingName 是展示层的同一候选字段。缺省时沿用候选地点名，
+        // 不创造新名称，也不把它改成服务端固定建筑名；地点名为空时不补字段，
+        // 让下游 parser 正确拒绝这个不可玩的候选。
+        const buildingName = typeof location.buildingName === "string" && location.buildingName.trim() !== ""
+          ? location.buildingName
+          : name === "" ? undefined : name;
         return {
           ...location,
-          name: fixString(location.name),
-          description: fixString(location.description),
+          name,
+          description,
+          ...(buildingName === undefined ? {} : { buildingName }),
         };
       })(),
       npc: (() => {
@@ -143,6 +155,7 @@ export function repairOpeningGenerationCandidate(
           description: fixString(quest.description),
         };
       })(),
+      ...(opening.variationProfile === undefined ? {} : { variationProfile: opening.variationProfile }),
     },
   };
 
@@ -175,8 +188,22 @@ export function sanitizeOpeningFactReferences(
 export type OpeningGenerationSourceDeps = {
   readonly transport?: AiTransport;
   readonly config?: AiTransportConfig;
+  /** Shared RPG client supplied by the server composition root. */
+  readonly aiClient?: RpgAiClient;
+  readonly jsonMode?: ProviderJsonMode;
   readonly logger?: GameLogger;
+  /** 生产 live 模式关闭静默 fixture 降级，保证开局设计确实来自 API。 */
+  readonly allowFallback?: boolean;
+  /** 只回传安全来源标记；用于严格区分 AI 成功和可恢复 fallback。 */
+  readonly onResult?: (result: OpeningGenerationResultMarker) => void;
 };
+
+export type OpeningGenerationResultMarker = Readonly<{
+  readonly seed: string;
+  readonly source: "generated" | "fallback";
+}>;
+
+export const LIVE_OPENING_MAX_TOKENS = RPG_AI_DEFAULT_POLICIES.opening.maxTokens ?? 0;
 
 // live 开局源：AI 产出 → parse → 机械修复 → 引用修复 → 校验 → 失败回退 fixture。
 // fixture 必须通过同一 validator/compiler（由 createFixtureOpeningSource 保证）。
@@ -184,45 +211,61 @@ export function createOpeningGenerationSource(
   deps: OpeningGenerationSourceDeps,
 ): OpeningGenerationSource {
   const fixture = createFixtureOpeningSource();
-  const { transport, config, logger } = deps;
+  const { transport, config, logger, jsonMode, onResult } = deps;
+  const aiClient = deps.aiClient ?? (transport && config
+    ? createRpgAiClient({
+      transport,
+      config,
+      logger,
+      policies: { opening: { jsonMode: jsonMode ?? "prompt_only" } },
+    })
+    : undefined);
 
   return {
+    // 这是相似度耗尽后的结构性兜底，不是 provider 故障时的静默降级：
+    // 它返回另一条完整候选，createGame 仍会再次做 schema/gameplay/novelty 校验。
+    async generateFallback(input) {
+      onResult?.({ seed: input.seed, source: "fallback" });
+      return fixture.generate(input);
+    },
     async generate(input) {
-      // 无 transport/config：确定性 fallback（fixture 通过同一 validator/compiler）。
-      if (!transport || !config) {
+        const fallback = async (): Promise<OpeningGenerationCandidate> => {
+        if (deps.allowFallback === false) {
+          throw new Error("LIVE_OPENING_UNAVAILABLE");
+        }
+        onResult?.({ seed: input.seed, source: "fallback" });
         return fixture.generate(input);
+      };
+      const generated = (candidate: OpeningGenerationCandidate): OpeningGenerationCandidate => {
+        onResult?.({ seed: input.seed, source: "generated" });
+        return candidate;
+      };
+      // 无 AI client：确定性 fallback（fixture 通过同一 validator/compiler）。
+      if (!aiClient) {
+        return fallback();
       }
 
       try {
-        // 推理模型偶发返回空内容（empty_response）或瞬时超时：
-        // 对瞬时失败最多重试一次，仍失败再走确定性 fallback。
-        let result = await transport.complete(config, [
+        const result = await aiClient.complete("opening", [
           { role: "system", content: buildOpeningPrompt(input) },
-          { role: "user", content: `生成游戏类型 ${input.gameType} / 长度 ${input.gameLength} / 种子 ${input.seed} 的开场切片。` },
-        ], { timeoutMs: 240_000 });
-        if (!result.ok && (result.code === "empty_response" || result.code === "timeout" || result.code === "service_error")) {
-          logger?.warn("opening_generation_retry", { code: result.code });
-          result = await transport.complete(config, [
-            { role: "system", content: buildOpeningPrompt(input) },
-            { role: "user", content: `生成游戏类型 ${input.gameType} / 长度 ${input.gameLength} / 种子 ${input.seed} 的开场切片。` },
-          ], { timeoutMs: 240_000 });
-        }
+          { role: "user", content: `生成游戏类型 ${input.gameType} / 长度 ${input.gameLength} / 种子 ${input.seed} / 尝试 ${input.attempt ?? 0} 的开场切片。` },
+        ]);
 
         if (!result.ok) {
           logger?.warn("opening_generation_ai_failed", { code: result.code });
-          return fixture.generate(input);
+          return fallback();
         }
         const parsed = parseJsonResponse(result.content);
         if (parsed === null) {
           logger?.warn("opening_generation_parse_failed", { reason: "json_parse_error" });
-          return fixture.generate(input);
+          return fallback();
         }
 
         // 机械修复（无创意）后走同一 schema parser + validator。
         const repaired = repairOpeningGenerationCandidate(parsed);
         if (repaired.candidate === null) {
           logger?.warn("opening_generation_repair_failed", { reason: "schema_invalid" });
-          return fixture.generate(input);
+          return fallback();
         }
 
         // 引用完整性修复（无创意）：NPC fact key 必须存在于 publicFacts，
@@ -238,12 +281,13 @@ export function createOpeningGenerationSource(
             reason: validated.issues[0]?.code ?? "unknown",
             issueCount: validated.issues.length,
           });
-          return fixture.generate(input);
+          return fallback();
         }
-        // 玩家开局配置是权威输入：无论 AI 返回什么，角色名/身份/背景必须以配置为准。
+        // 玩家开局配置是权威输入；实体名、地点和任务仍来自本次 AI 候选，
+        // 不在服务端用另一套硬编码内容覆盖候选。
         if (input.setup !== undefined) {
           const candidate = validated.validated;
-          return {
+          return generated({
             ...candidate,
             player: {
               ...candidate.player,
@@ -251,18 +295,25 @@ export function createOpeningGenerationSource(
               identity: input.setup.characterIdentity,
               backgroundSummary: input.setup.characterProfile ?? candidate.player.backgroundSummary,
             },
-          };
+          });
         }
-        return validated.validated;
+        return generated(validated.validated);
       } catch (error) {
         logger?.warn("opening_generation_transport_failed", { message: (error as Error)?.message });
-        return fixture.generate(input);
+        return fallback();
       }
     },
   };
 }
 
-function buildOpeningPrompt(input: { gameType: string; gameLength: GameLength; seed: string; setup?: GameSetup }): string {
+function buildOpeningPrompt(input: {
+  gameType: string;
+  gameLength: GameLength;
+  seed: string;
+  setup?: GameSetup;
+  novelty?: OpeningNoveltyContext;
+  attempt?: number;
+}): string {
   const targetActs = TARGET_ACTS[input.gameLength];
   const setup = input.setup;
   const setupSection = setup === undefined
@@ -282,21 +333,34 @@ ${setup.characterProfile !== undefined && setup.characterProfile !== "" ? `- 主
 - 强度指令：${policy.intensityInstruction}
 `;
       })();
+  const noveltySection = input.novelty === undefined || input.novelty.recent.length === 0
+    ? ""
+    : `
+近期同题材开局摘要（用于避免故事结构雷同，不得复制名称、角色功能、线索类型和冲突组合）：
+${input.novelty.recent.map((record) => `- ${record.summary}`).join("\n")}
+本次是第 ${input.novelty.attempt + 1} 次生成尝试。请主动改变开局的场景框架、NPC 功能、线索类型或冲突方式；名称可以自由创作，不能用简单改名伪造差异。
+`;
   return `你是一个 RPG 世界设计师。只生成游戏的开场切片，返回严格 JSON（fact key 为普通字符串；实体 ID 一律由服务端铸造，你不得提供实体 ID）。
 游戏类型：${input.gameType}
 游戏长度：${input.gameLength}
 种子：${input.seed}
-${setupSection}
+${setupSection}${noveltySection}
 要求：
 1. world：summary/tone/themes/publicFacts（key 必须形如 fact_xxx，且全局唯一）
 2. player：name/identity/backgroundSummary；战斗属性由服务端规则配置，禁止生成 baseStats
-3. prologue：玩家进入游戏时的第一段画面旁白（2-3 句）
+3. prologue：故事序幕（2-3 句），聚焦故事钩子、主角动机和背景冲突：说明主角为什么会来到这条故事线上、什么未解事件或危险正在逼近、以及为什么值得继续行动。它可以提及已确定的世界背景，但不是当前地点的感官镜头；不要描写雨声、光线、气味、脚步、材质等即时细节，不要写 NPC 台词、玩家选项或完整场景表演
 4. storyContract：version=1、targetActs=${targetActs}（必须与档位一致）、centralConflict、endingDirections 恰好两个（key 分别为 "trust" 与 "doubt"）
-5. opening.location：开场地点，scale 必须是 "town"（小镇层级）
+5. opening.location：开场地点，scale 必须是 "town"（小镇层级），buildingName 是该地点中承载首个 NPC 的剧情建筑名
 6. opening.npc：开场焦点 NPC，knownFactKeys/privateFactKeys 必须且只能引用 world.publicFacts 中已定义的 fact key
 7. opening.quest：首个主线任务，objective 只能是 { "kind": "talk_to_opening_npc" }
+8. opening.variationProfile：只描述结构差异，四个字段必须从以下枚举中各选一个：
+   sceneFrame = street | market | inn | outskirts | station | workshop | shrine | other
+   npcArchetype = witness | keeper | courier | merchant | official | craftsperson | guide | other
+   leadType = trace | document | testimony | token | message | object | other
+   conflictMode = concealment | misdirection | dispute | pursuit | betrayal | other
 
 不得生成未来：不得输出任何未来地点、未来 NPC、未来任务、敌人、物品或结局；世界只存在开场切片的这一个地点、一个 NPC、一个任务。
+叙事职责边界：prologue 只回答“为什么要继续这段故事”，通过故事钩子、人物动机和背景冲突建立期待；不要抢写首个场景的空间氛围或即时感官体验，首个场景的 atmosphere 段由场景表演源负责。
 必须严格使用以下字段名与嵌套结构（禁止改名）：
 {
   "world": { "summary": "...", "tone": "...", "themes": ["..."], "publicFacts": [{ "key": "fact_xxx", "text": "..." }] },
@@ -304,9 +368,10 @@ ${setupSection}
   "prologue": "...",
   "storyContract": { "version": 1, "targetActs": ${targetActs}, "centralConflict": "...", "endingDirections": [{ "key": "trust", "theme": "..." }, { "key": "doubt", "theme": "..." }] },
   "opening": {
-    "location": { "name": "...", "description": "...", "scale": "town" },
+    "location": { "name": "...", "description": "...", "buildingName": "...", "scale": "town" },
     "npc": { "name": "...", "role": "...", "description": "...", "knownFactKeys": ["fact_xxx"], "privateFactKeys": [], "goals": [] },
-    "quest": { "name": "...", "description": "...", "objective": { "kind": "talk_to_opening_npc" } }
+    "quest": { "name": "...", "description": "...", "objective": { "kind": "talk_to_opening_npc" } },
+    "variationProfile": { "sceneFrame": "street", "npcArchetype": "witness", "leadType": "trace", "conflictMode": "concealment" }
   }
 }
 只返回 JSON，不要其他文字。`;

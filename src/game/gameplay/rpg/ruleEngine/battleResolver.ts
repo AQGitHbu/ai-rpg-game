@@ -1,4 +1,4 @@
-import type { WorldState } from "@/game/domain/worldState";
+import type { WorldState, BattleStartSnapshot } from "@/game/domain/worldState";
 import type { EnemyId } from "@/game/domain/worldEntity";
 import type { GameEvent } from "@/game/domain/events";
 import type { StateChange } from "@/game/domain/resolvedEvent";
@@ -35,7 +35,7 @@ function snapshotHp(combatants: readonly BattleCombatant[], enemyId: EnemyId): {
   return { playerHp, enemyHp };
 }
 
-function activeBattleState(enemyId: EnemyId, enemyIds: readonly EnemyId[], state: ActiveBattleCombatState): ActiveBattle {
+function activeBattleState(enemyId: EnemyId, enemyIds: readonly EnemyId[], state: ActiveBattleCombatState, battleKey?: string, preBattleSnapshot?: BattleStartSnapshot): ActiveBattle {
   const hp = snapshotHp(state.combatants, enemyId);
   return {
     status: "active",
@@ -43,6 +43,8 @@ function activeBattleState(enemyId: EnemyId, enemyIds: readonly EnemyId[], state
     enemyIds,
     playerHp: hp.playerHp,
     enemyHp: hp.enemyHp,
+    ...(battleKey === undefined ? {} : { battleKey }),
+    ...(preBattleSnapshot === undefined ? {} : { preBattleSnapshot }),
     ...state,
   };
 }
@@ -80,7 +82,13 @@ function modernResult(
   const events: GameEvent[] = [roundEvent];
   const outcome = advanced.outcome;
   if (outcome === null) {
-    const nextBattle = activeBattleState(battle.enemyId, enemyIds, advanced.state);
+    const nextBattle = activeBattleState(
+      battle.enemyId,
+      enemyIds,
+      advanced.state,
+      battle.battleKey,
+      battle.preBattleSnapshot,
+    );
     const nextWs: WorldState = { ...ws, battle: nextBattle, eventLedger: [...ws.eventLedger, roundEvent] };
     return {
       ok: true,
@@ -100,7 +108,7 @@ function modernResult(
   const defeated = Array.from(new Set([...ws.defeatedEnemyIds, ...advanced.state.downedEnemyIds]));
   const nextWs: WorldState = {
     ...ws,
-    battle: { status: "resolved", enemyId: battle.enemyId, outcome },
+    battle: { status: "resolved", enemyId: battle.enemyId, outcome, ...(battle.battleKey === undefined ? {} : { battleKey: battle.battleKey }) },
     defeatedEnemyIds: defeated,
     eventLedger: [...ws.eventLedger, ...events],
   };
@@ -194,9 +202,14 @@ export function startBattle(
     const advanced = advanceUntilPlayerDecision(initial, null);
     const occurredAt = deps.now();
     const event: GameEvent = { type: "battle_started", enemyId, enemyIds, occurredAt };
+    const preBattleSnapshot: BattleStartSnapshot = {
+      playerStats: ws.player.stats,
+      defeatedEnemyIds: ws.defeatedEnemyIds,
+      eventLedger: ws.eventLedger,
+    };
     const nextWs: WorldState = {
       ...ws,
-      battle: activeBattleState(enemyId, enemyIds, advanced.state),
+      battle: activeBattleState(enemyId, enemyIds, advanced.state, occurredAt, preBattleSnapshot),
       eventLedger: [...ws.eventLedger, event],
     };
     return {
@@ -212,6 +225,11 @@ export function startBattle(
 
   const occurredAt = deps.now();
   const event: GameEvent = { type: "battle_started", enemyId, occurredAt };
+  const preBattleSnapshot: BattleStartSnapshot = {
+    playerStats: ws.player.stats,
+    defeatedEnemyIds: ws.defeatedEnemyIds,
+    eventLedger: ws.eventLedger,
+  };
 
   const nextWs: WorldState = {
     ...ws,
@@ -221,6 +239,8 @@ export function startBattle(
       playerHp: ws.player.stats.hp,
       enemyHp: enemy.stats.hp,
       round: 1,
+      battleKey: occurredAt,
+      preBattleSnapshot,
     },
     eventLedger: [...ws.eventLedger, event],
   };
@@ -240,7 +260,7 @@ export function startBattle(
   };
 }
 
-/** 处理 attack/guard/flee。flee 以 withdraw 结果落账。 */
+/** 处理 attack/guard/flee。flee 保留规则兼容，但不再由正式 UI 暴露。 */
 export function battleAction(
   ws: WorldState,
   action: CombatActionKind,

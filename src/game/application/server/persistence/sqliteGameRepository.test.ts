@@ -73,7 +73,36 @@ describe("sqliteGameRepository", () => {
       args: [],
     });
 
-    expect(tables.rows.map((row) => row["name"])).toEqual(["current_game", "game_records"]);
+    expect(tables.rows.map((row) => row["name"])).toEqual(["current_game", "game_records", "opening_history"]);
+  });
+
+  it("原子保存开局指纹，清档后仍保留历史供下一局去重", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    const { worldState, storyState } = buildTestState();
+    const openingHistory = {
+      gameType: "wuxia" as const,
+      fingerprint: "full-1",
+      semanticFingerprint: "semantic-1",
+      semanticText: "后巷调查|见证者|车轮痕迹",
+      summary: "地点：青石镇后巷；NPC：老陈；结构：street/witness/trace/concealment",
+      profile: { sceneFrame: "street", npcArchetype: "witness", leadType: "trace", conflictMode: "concealment" } as const,
+      createdAt: "2026-01-01",
+    };
+
+    expect(await repo.createInitialGame({
+      gameId: asGameId("history-game"), worldState, storyState, createdAt: "2026-01-01", openingHistory,
+    })).toEqual({ ok: true });
+    expect(await repo.listOpeningHistory?.({ gameType: "wuxia", limit: 10 })).toEqual({
+      ok: true,
+      records: [openingHistory],
+    });
+
+    expect(await repo.clearCurrentGame()).toEqual({ ok: true });
+    expect(await repo.listOpeningHistory?.({ gameType: "wuxia", limit: 10 })).toEqual({
+      ok: true,
+      records: [openingHistory],
+    });
   });
 
   it("createInitialGame + getCurrentGame roundtrip", async () => {

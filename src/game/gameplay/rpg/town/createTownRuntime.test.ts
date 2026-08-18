@@ -35,6 +35,20 @@ describe("createTownRuntime", () => {
     expect(first.seed).toBe("seed-a");
   });
 
+  it("开局建筑名只写入剧情 slot，不改变同 seed 的几何与建筑类型", () => {
+    const plain = createTownRuntime({ locationId: asLocationId("loc_0"), seed: "named-building" });
+    const named = createTownRuntime({
+      locationId: asLocationId("loc_0"),
+      seed: "named-building",
+      openingBuildingName: "听雨客栈",
+    });
+
+    expect(named.slots[0]?.displayName).toBe("听雨客栈");
+    expect(named.slots.slice(1)).toEqual(plain.slots.slice(1));
+    expect(named.slots.map((slot) => [slot.buildingId, slot.buildingType]))
+      .toEqual(plain.slots.map((slot) => [slot.buildingId, slot.buildingType]));
+  });
+
   it("townSeedFor 由 generation seed + locationId 派生唯一确定性 seed", () => {
     expect(townSeedFor("gen-seed", "loc_0")).toBe("gen-seed#town#loc_0");
     expect(townSeedFor("gen-seed", "loc_1")).toBe("gen-seed#town#loc_1");

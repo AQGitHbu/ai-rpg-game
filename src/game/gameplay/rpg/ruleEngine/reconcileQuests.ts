@@ -1,20 +1,11 @@
 import type { WorldState, QuestOutcome } from "@/game/domain/worldState";
 import type { GameEvent } from "@/game/domain/events";
+import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
 
 export type QuestReconcileResult = {
   readonly nextWorldState: WorldState;
   readonly events: readonly GameEvent[];
 };
-
-function isObjectiveSatisfied(ws: WorldState, objective: WorldState["quests"][number]["objectives"][number]): boolean {
-  switch (objective.kind) {
-    case "visit_location": return ws.visitedLocationIds.includes(objective.locationId);
-    case "talk_to_npc": return ws.npcs.find((n) => n.id === objective.npcId)?.met ?? false;
-    case "obtain_item": return ws.inventory.includes(objective.itemId);
-    case "discover_fact": return ws.worldFacts.find((f) => f.factId === objective.factId)?.discovered ?? false;
-    case "defeat_enemy": return ws.defeatedEnemyIds.includes(objective.enemyId);
-  }
-}
 
 // 应用任务 outcome（只改 worldState，不碰 eventLedger——由 resolveTurn 统一按序追加）。
 // Task 2 起任务不再引用预生成实体：
@@ -24,7 +15,6 @@ function isObjectiveSatisfied(ws: WorldState, objective: WorldState["quests"][nu
 function applyOutcome(
   ws: WorldState,
   outcome: QuestOutcome,
-  now: string,
 ): { readonly nextWorldState: WorldState; readonly events: readonly GameEvent[] } {
   switch (outcome.kind) {
     case "advance_story":
@@ -37,14 +27,25 @@ function applyOutcome(
   }
 }
 
-export function reconcileQuests(ws: WorldState, deps: { readonly now: () => string }): QuestReconcileResult {
+export function reconcileQuests(
+  ws: WorldState,
+  deps: { readonly now: () => string },
+  options?: { readonly talkToNpcSession?: { readonly npcId: string; readonly completed: boolean } },
+): QuestReconcileResult {
   const events: GameEvent[] = [];
   let nextWorldState: WorldState = ws;
 
   // 1) active 任务：objective 全满足 → 完成 + 应用 onSuccess（advance_story 零世界状态变化）。
   for (const quest of ws.quests) {
     if (quest.status !== "active") continue;
-    const allSatisfied = quest.objectives.every((obj) => isObjectiveSatisfied(ws, obj));
+    const allSatisfied = quest.objectives.every((obj) => {
+      if (obj.kind === "talk_to_npc"
+        && options?.talkToNpcSession !== undefined
+        && String(obj.npcId) === options.talkToNpcSession.npcId) {
+        return options.talkToNpcSession.completed && isObjectiveSatisfied(ws, obj);
+      }
+      return isObjectiveSatisfied(ws, obj);
+    });
     if (!allSatisfied) continue;
 
     events.push({ type: "quest_completed", questId: quest.id, occurredAt: deps.now() });
@@ -54,7 +55,7 @@ export function reconcileQuests(ws: WorldState, deps: { readonly now: () => stri
         q.id === quest.id ? { ...q, status: "completed" as const } : q,
       ),
     };
-    const successOutcome = applyOutcome(nextWorldState, quest.onSuccess, deps.now());
+    const successOutcome = applyOutcome(nextWorldState, quest.onSuccess);
     nextWorldState = successOutcome.nextWorldState;
     events.push(...successOutcome.events);
   }
@@ -62,7 +63,7 @@ export function reconcileQuests(ws: WorldState, deps: { readonly now: () => stri
   // 2) failed 任务：应用 onFailure（解锁失败路线或关闭）。onFailure 为 closed 时关闭任务。
   for (const quest of ws.quests) {
     if (quest.status !== "failed") continue;
-    const failureOutcome = applyOutcome(nextWorldState, quest.onFailure, deps.now());
+    const failureOutcome = applyOutcome(nextWorldState, quest.onFailure);
     nextWorldState = failureOutcome.nextWorldState;
     events.push(...failureOutcome.events);
     if (quest.onFailure.kind === "closed") {

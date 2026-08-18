@@ -6,7 +6,6 @@ import {
   advanceScene,
   pendingSceneProposal,
   loadWorldState,
-  loadStoryState,
   loadGameRecord,
 } from "./foundationJourney.testutil";
 import { asNpcId } from "@/game/domain/worldEntity";
@@ -30,13 +29,21 @@ describe("叙事落地旅程（Step 2）", () => {
     await playIssuedChoice(store.repo, "交谈");
     await advanceScene(store.repo);
 
-    // 幕交接后旧 NPC 已退出焦点；玩家主动重新交谈才开启一轮可自由输入的对话。
-    const openingNpcName = store.record()!.worldState.npcs[0]!.name;
-    await playIssuedChoice(store.repo, openingNpcName);
+    // 下一幕先释放并执行抵达步骤，抵达后才释放主线 NPC。
+    await playIssuedChoice(store.repo, "延伸之地·2");
     await advanceScene(store.repo);
 
-    // 提交自由输入 + 目标 NPC
-    const npcId = store.record()!.worldState.npcs[0]!.id;
+    // 幕交接后，新的主线 NPC 即刻接管焦点；无需先浪费一次“打开对话”回合。
+    const current = store.record()!;
+    const objective = currentObjectiveOf(current.worldState, current.storyState);
+    expect(objective).not.toBeNull();
+    const quest = current.worldState.quests.find((entry) => String(entry.id) === String(objective!.questId));
+    const objectiveTarget = quest?.objectives[objective!.objectiveIndex];
+    expect(objectiveTarget?.kind).toBe("talk_to_npc");
+    if (objectiveTarget?.kind !== "talk_to_npc") throw new Error("缺少可对话主线目标");
+
+    // 提交自由输入 + 交接后的主线目标 NPC
+    const npcId = objectiveTarget.npcId;
     const turn = await playTurn(store.repo, {
       kind: "free_text",
       text: "我相信你，请你告诉我这里的秘密",
@@ -54,7 +61,8 @@ describe("叙事落地旅程（Step 2）", () => {
     expect(utteranceBeat).toBeDefined();
     const utteranceSegment = proposal.segments.find((s) => s.beatId === utteranceBeat!.beatId);
     expect(utteranceSegment).toBeDefined();
-    expect(utteranceSegment!.text).toContain("我相信你");
+    expect(utteranceSegment!.text).not.toContain("我相信你");
+    expect(utteranceSegment!.text).toContain("能核查");
 
     // 断言：NPC 台词应答了 player_utterance 节拍。
     expect(proposal.npcLine).not.toBeNull();
@@ -178,6 +186,11 @@ describe("叙事落地旅程（Step 2）", () => {
 
     // 回合 1: 交谈 → 完成 quest_0，幕推进。
     await playIssuedChoice(store.repo, "交谈");
+    await advanceScene(store.repo);
+
+    await playIssuedChoice(store.repo, "延伸之地·2");
+    await advanceScene(store.repo);
+    await playIssuedChoice(store.repo, "传讯人·2");
     await advanceScene(store.repo);
 
     // 物品拾取。

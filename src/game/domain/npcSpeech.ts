@@ -14,6 +14,13 @@ const GENERIC_ACKNOWLEDGEMENTS = new Set([
   "嗯嗯",
 ]);
 
+const GENERIC_GREETING = "你是来打听事情的吧？想知道什么，直接问我。";
+const GENERIC_INQUIRY_PATTERNS = [
+  /你(?:还)?想(?:从)?哪一段/u,
+  /你(?:还)?想(?:问|了解|知道)什么/u,
+  /有什么想问的/u,
+];
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -36,13 +43,24 @@ function isActionOnlyNarration(value: string, npcName?: string): boolean {
 }
 
 /**
+ * 兼容模型把两句直接对白各自包上引号后拼接的输出，例如
+ * `第一句。”“第二句`。这种残留标点会直接出现在气泡里，既不像正常对白，
+ * 也会让后续句子难以阅读；只移除句间成对引号，保留句号和正常引号内容。
+ */
+function repairDialogueQuoteArtifacts(value: string): string {
+  return value
+    .replace(/([。！？!?])\s*[”"]\s*[“「『]/gu, "$1")
+    .replace(/([^\s])\s*[”"]\s*[“「『](?=[\p{L}\p{N}\p{Unified_Ideograph}])/gu, "$1");
+}
+
+/**
  * 去除 NPC 台词外层的叙述性包装，保留直接对白正文。
  *
  * 只在引号包住完整对白，或前缀明确像说话人/动作描述时才剥离，
  * 避免误伤“关于这件事：我还不能确定”这样的正常台词。
  */
 export function normalizeNpcSpeech(text: string, npcName?: string): string {
-  const value = text.trim();
+  const value = repairDialogueQuoteArtifacts(text.trim());
   if (value === "") return "";
 
   const firstQuote = value.search(/["“「『]/u);
@@ -97,7 +115,35 @@ export function isGenericNpcAcknowledgement(text: string): boolean {
   return GENERIC_ACKNOWLEDGEMENTS.has(normalized);
 }
 
-/** 生成稳定的、直接面向玩家的 NPC 默认开场台词。 */
-export function composeDirectNpcGreeting(): string {
-  return "欢迎光临，有什么需要我帮忙的吗？";
+/** 判断 AI 是否只返回了没有身份、地点或当前线索承接的通用问候。 */
+export function isGenericNpcGreeting(text: string): boolean {
+  const normalized = normalizeNpcSpeech(text)
+    .replace(/[“”"。！？!?，,、；;：:\s]/gu, "")
+    .trim();
+  return normalized === GENERIC_GREETING.replace(/[。！？!?，,、；;：:\s]/gu, "");
+}
+
+/**
+ * 判断台词是否只把对话责任推回给玩家的空泛追问。
+ *
+ * 这类句子即使披上“关于旧案”的前缀，仍没有给出角色自己的观察、线索、
+ * 判断或下一步，会让每位 NPC 听起来像同一个问答机器人。live 输出遇到它
+ * 应回退到带角色和线索的确定性台词，而不是把它当作合格的多轮对白。
+ */
+export function isGenericNpcInquiry(text: string): boolean {
+  const normalized = normalizeNpcSpeech(text).replace(/\s+/gu, "").trim();
+  return GENERIC_INQUIRY_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+/**
+ * 生成稳定的、直接面向玩家的 NPC 默认开场台词。
+ * 这里只做无剧情语义的安全兜底；具体角色事实、地点和任务交接必须由
+ * 当前场景的结构化上下文或 live performer 提供，不能按 role/name 硬编码。
+ */
+export function composeDirectNpcGreeting(_npcRole?: string, _npcName?: string): string {
+  const hasContext = (_npcRole?.trim() ?? "") !== "" || (_npcName?.trim() ?? "") !== "";
+  if (hasContext) {
+    return "有什么要问的，直接说。我只回答亲眼见过或已经核对的部分。";
+  }
+  return "先进来坐。有什么需要我帮忙的，慢慢说清楚。";
 }

@@ -4,11 +4,15 @@ import type { EventProposal, ScenePerformanceProposal, ScenePerformanceNpcLine }
 import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState } from "@/game/domain/narrative";
 import { buildNpcDialoguePages } from "@/game/domain/narrative";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
-import type { ApprovedChoice, ChoiceProposal } from "@/game/domain/approvedChoice";
+import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice, semanticSummaryOf } from "@/game/domain/approvedChoice";
-import { buildEventState, buildSelectableSceneCandidates, actionTargetsObjective } from "./deterministicSceneSource";
-import type { Action } from "@/game/domain/action";
-import { DIALOGUE_ACTS } from "@/game/domain/action";
+import {
+  buildEventState,
+  buildSelectableSceneCandidates,
+  actionTargetsObjective,
+  formatSceneChoiceLabel,
+  usesFallbackDialogueChoiceLabels,
+} from "./deterministicSceneSource";
 import { asFactId, asNpcId } from "@/game/domain/worldEntity";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
@@ -106,8 +110,10 @@ export type SceneRejectionCode =
   | "npc_uses_forbidden_fact"
   | "wrong_npc_interaction"
   | "player_utterance_unanswered"
+  | "npc_dialogue_too_short"
   | "stale_objective_link"
   | "quest_advanced_unnamed"
+  | "stale_choice_template"
   | "semantic_duplicate_choices"
   | "duplicate_candidate_ids"
   | "illegal_choice_target"
@@ -125,67 +131,6 @@ export type ApproveScenePerformanceResult =
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasOnlyKeys(record: Record<string, unknown>, allowed: readonly string[]): boolean {
-  const allowedSet = new Set(allowed);
-  return Object.keys(record).every((key) => allowedSet.has(key));
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim() !== "";
-}
-
-function isDialogueTopic(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.kind !== "string") return false;
-  switch (value.kind) {
-    case "general": return hasOnlyKeys(value, ["kind"]);
-    case "fact": return hasOnlyKeys(value, ["kind", "factId"]) && isNonEmptyString(value.factId);
-    case "quest": return hasOnlyKeys(value, ["kind", "questId"]) && isNonEmptyString(value.questId);
-    case "thread": return hasOnlyKeys(value, ["kind", "threadId"]) && isNonEmptyString(value.threadId);
-    default: return false;
-  }
-}
-
-/** SceneSource output is untrusted at runtime even when its TypeScript port says Action. */
-function isWellFormedAction(value: unknown): value is Action {
-  if (!isRecord(value) || typeof value.type !== "string") return false;
-  switch (value.type) {
-    case "talk":
-      return hasOnlyKeys(value, ["type", "npcId", "dialogueAct", "topic", "utterance"])
-        && isNonEmptyString(value.npcId)
-        && typeof value.dialogueAct === "string"
-        && DIALOGUE_ACTS.includes(value.dialogueAct as (typeof DIALOGUE_ACTS)[number])
-        && (value.topic === undefined || isDialogueTopic(value.topic))
-        && (value.utterance === undefined || typeof value.utterance === "string");
-    case "move": return hasOnlyKeys(value, ["type", "locationId"]) && isNonEmptyString(value.locationId);
-    case "explore": return hasOnlyKeys(value, ["type"]);
-    case "investigate":
-      return hasOnlyKeys(value, ["type", "factId", "utterance"])
-        && isNonEmptyString(value.factId)
-        && (value.utterance === undefined || typeof value.utterance === "string");
-    case "take_item": return hasOnlyKeys(value, ["type", "itemId"]) && isNonEmptyString(value.itemId);
-    case "give_item": return hasOnlyKeys(value, ["type", "itemId", "npcId"]) && isNonEmptyString(value.itemId) && isNonEmptyString(value.npcId);
-    case "attack": return hasOnlyKeys(value, ["type", "enemyId"]) && isNonEmptyString(value.enemyId);
-      case "battle_action":
-        return hasOnlyKeys(value, ["type", "action"])
-          && (value.action === "attack" || value.action === "skill" || value.action === "guard" || value.action === "flee");
-    case "ack_prologue": return hasOnlyKeys(value, ["type"]);
-    case "freeform":
-      return hasOnlyKeys(value, ["type", "intent", "rawText"])
-        && typeof value.intent === "string"
-        && typeof value.rawText === "string";
-    default: return false;
-  }
-}
-
-/** 候选选项形状校验（供非新契约路径保留）。 */
-function isWellFormedChoiceProposal(value: unknown): value is ChoiceProposal {
-  return isRecord(value)
-    && hasOnlyKeys(value, ["label", "hint", "action"])
-    && typeof value.label === "string"
-    && (value.hint === undefined || typeof value.hint === "string")
-    && isWellFormedAction(value.action);
 }
 
 function rebuildEvent(event: NarrativeEventState): NarrativeEventState {
@@ -211,6 +156,15 @@ function rebuildNpcLine(
     usedFactIds: line.usedFactIds.map((id) => asFactId(id)),
     answeredBeatIds: [...line.answeredBeatIds],
   };
+}
+
+/** 焦点 NPC 的可见对白至少应是两句可独立阅读的话，不能把开场或回答压成一句。 */
+function hasExpandedNpcDialogue(text: string): boolean {
+  return normalizeNpcSpeech(text)
+    .split(/[。！？!?]+/u)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence !== "")
+    .length >= 2;
 }
 
 /**
@@ -288,6 +242,14 @@ export function approveScenePerformance(input: {
     }
     const present = context.presentNpcs.find((n) => String(n.id) === String(npcLine.npcId));
     if (present === undefined) return { ok: false, code: "unknown_dialogue_npc" };
+    // 焦点 NPC 的开场、正式回应和终局追问都必须至少两句。提示词本身
+    // 不足以防止 live output 偶尔退化成一句泛问候，因此把这一玩家可见
+    // 质量门槛放进审批；不合格时整场走角色化的确定性 fallback。
+    const isFocusedNpc = context.focusNpcContext !== undefined
+      && String(context.focusNpcContext.id) === String(npcLine.npcId);
+    if (isFocusedNpc) {
+      if (!hasExpandedNpcDialogue(npcLine.text)) return { ok: false, code: "npc_dialogue_too_short" };
+    }
     const allowed = new Set<string>([
       ...present.knownFactCards.map((f) => String(f.factId)),
       ...present.sceneVisibleFactIds.map(String),
@@ -301,8 +263,9 @@ export function approveScenePerformance(input: {
     }
   }
 
-  // Task 5 Step 4：player_utterance 应答钩子。有玩家原话节拍时，提案必须由焦点
-  // NPC 出场应答并显式列出应答的节拍 ID；缺台词/错 NPC/未列出 ID → 整场拒绝。
+  // Task 5 Step 4：player_utterance 应答钩子。有玩家原话节拍时，提案必须由
+  // 实际被玩家交谈的 NPC 应答并显式列出节拍 ID；幕交接中的新目标 NPC
+  // 不能篡改成这句话的收件人。
   const utteranceBeat = context.mandatoryBeats.find((b) => b.kind === "player_utterance");
   if (utteranceBeat !== undefined) {
     const focusNpcId = utteranceBeat.subjectIds[0];
@@ -311,6 +274,9 @@ export function approveScenePerformance(input: {
       || !(npcLine.answeredBeatIds ?? []).includes(utteranceBeat.beatId)) {
       return { ok: false, code: "player_utterance_unanswered" };
     }
+    // 先确认说话者确实是本轮的对象，再执行长度门槛。这样错把旧问题交给
+    // 另一名 NPC 时仍稳定报告归属错误，而不是被单句问题掩盖。
+    if (!hasExpandedNpcDialogue(npcLine.text)) return { ok: false, code: "npc_dialogue_too_short" };
   }
 
   // ── 目标一致性：objectiveLink 必须匹配 after ────────────────────────────
@@ -329,7 +295,9 @@ export function approveScenePerformance(input: {
   }
 
   // ── 选项校验：合法候选、两两不同、目标推进 ───────────────────────────────
-  const selectable = buildSelectableSceneCandidates(context);
+  // NPC 本轮台词是在 proposal 中才最终确定的。对白选项必须锚定这句
+  // 当前台词，不能继续使用 context.previousDialogue 的上一轮原话。
+  const selectable = buildSelectableSceneCandidates(context, npcLine === null ? undefined : npcLine);
   const candidateById = new Map(selectable.map((c) => [c.candidateId, c]));
 
   if (!Array.isArray(proposal.choices) || proposal.choices.length !== 2) {
@@ -354,6 +322,19 @@ export function approveScenePerformance(input: {
   const ca = candidateById.get(String(a.candidateId));
   const cb = candidateById.get(String(b.candidateId));
   if (ca === undefined || cb === undefined) return { ok: false, code: "illegal_choice_target" };
+
+  // 生成路径不能把本回合生成前的两个 deterministic talk label 原样带回。
+  // fallback proposal 自身就是这些 label 的权威来源，因此只拦 generated，
+  // 避免安全降级被审批器再次拒绝。
+  if (
+    proposal.source === "generated"
+    && npcLine !== null
+    && context.previousDialogue !== undefined
+    && usesFallbackDialogueChoiceLabels(buildSelectableSceneCandidates(context), [a, b])
+  ) {
+    return { ok: false, code: "stale_choice_template" };
+  }
+
   if (semanticSummaryOf(ca.action) === semanticSummaryOf(cb.action)) {
     return { ok: false, code: "semantic_duplicate_choices" };
   }
@@ -387,13 +368,21 @@ export function approveScenePerformance(input: {
   const approvedA = createApprovedChoice({
     sceneId: proposal.sceneId,
     basedOnRevision: input.basedOnRevision,
-    label: a.label,
+    // candidateId/action 由服务端候选集决定；对白 label 可以由 live source
+    // 根据同一份故事上下文润色，审批只重新套用直接对白/动作格式契约。
+    label: approvedChoiceLabel(ca.action, a.label, ca.label, [
+      ...(npcLine === null ? [] : [npcLine.text]),
+      ...(context.previousDialogue === undefined ? [] : [context.previousDialogue.npcLine]),
+    ]),
     action: ca.action,
   });
   const approvedB = createApprovedChoice({
     sceneId: proposal.sceneId,
     basedOnRevision: input.basedOnRevision,
-    label: b.label,
+    label: approvedChoiceLabel(cb.action, b.label, cb.label, [
+      ...(npcLine === null ? [] : [npcLine.text]),
+      ...(context.previousDialogue === undefined ? [] : [context.previousDialogue.npcLine]),
+    ]),
     action: cb.action,
   });
   if (!approvedA.ok || !approvedB.ok || approvedA.choice.choiceToken === approvedB.choice.choiceToken) {
@@ -431,4 +420,25 @@ export function approveScenePerformance(input: {
     // 场景表演契约不含候选事件：池原样保留，事件生命周期由独立审批处理。
     candidateEventPool: [...input.existingCandidateEventPool],
   };
+}
+
+/**
+ * live 可以润色对白，但不能把 NPC 整句原话再次塞进玩家嘴里。这里仅做
+ * 精确重复保护，不做主题关键词匹配；候选动作和 fallback 文案仍由服务端
+ * 提供，避免把一次文案质量问题扩大成整场审批失败。
+ */
+function approvedChoiceLabel(
+  action: ApprovedChoice["action"],
+  proposedLabel: string,
+  fallbackLabel: string,
+  npcLines: readonly string[],
+): string {
+  const formatted = formatSceneChoiceLabel(action, proposedLabel);
+  if (action.type !== "talk") return formatted;
+  if (!npcLines.some((line) => compactDialogueText(formatted) === compactDialogueText(line))) return formatted;
+  return formatSceneChoiceLabel(action, fallbackLabel);
+}
+
+function compactDialogueText(text: string): string {
+  return text.replace(/[\s“”"「」『』。！？!?，,；;：:、（）()]/gu, "");
 }

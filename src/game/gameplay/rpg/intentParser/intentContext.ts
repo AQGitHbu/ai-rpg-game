@@ -3,6 +3,7 @@ import { findLocation } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { FactId, QuestId } from "@/game/domain/worldEntity";
 import type { ThreadId } from "@/game/domain/storyState";
+import { isObjectiveEntityReleased } from "@/game/gameplay/rpg/worldEvolution";
 
 export type IntentContextEntity = {
   readonly id: string;
@@ -33,6 +34,7 @@ export function buildIntentContext(ws: WorldState, ss?: StoryState): IntentConte
     ? currentLoc.connectedLocationIds
         .map((id) => findLocation(ws, id))
         .filter((l): l is NonNullable<typeof l> => l !== undefined)
+        .filter((l) => ss === undefined || ws.unlockedLocationIds.includes(l.id))
         .map((l) => ({ id: String(l.id), name: l.name }))
     : [];
 
@@ -44,11 +46,15 @@ export function buildIntentContext(ws: WorldState, ss?: StoryState): IntentConte
     ? currentLoc.availableItemIds
         .map((id) => ws.items.find((i) => i.id === id))
         .filter((i): i is NonNullable<typeof i> => i !== undefined)
+        .filter((i) => isObjectiveEntityReleased(ws, ss, (objective) =>
+          objective.kind === "obtain_item" && String(objective.itemId) === String(i.id)))
         .map((i) => ({ id: String(i.id), name: i.name }))
     : [];
 
   const undiscoveredFacts = ws.worldFacts
-    .filter((f) => !f.discovered)
+    .filter((f) => f.locationId === ws.currentLocationId && !f.discovered)
+    .filter((f) => isObjectiveEntityReleased(ws, ss, (objective) =>
+      objective.kind === "discover_fact" && String(objective.factId) === String(f.factId)))
     .map((f) => ({ id: String(f.factId), name: f.text.slice(0, 20) }));
 
   const activeQuests = ws.quests

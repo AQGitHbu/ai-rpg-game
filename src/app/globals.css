@@ -1356,6 +1356,55 @@ body:has(.adventure-game-shell) {
   line-height: 1.7;
 }
 
+.npc-dialogue-phase-label {
+  color: var(--game-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.npc-dialogue-status {
+  margin: 0;
+  color: var(--game-text-muted);
+  font-style: italic;
+}
+
+.npc-dialogue-next-step {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--game-accent);
+  background: rgba(215, 185, 111, 0.1);
+}
+
+.npc-dialogue-next-step span {
+  color: var(--game-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.npc-dialogue-next-step strong {
+  line-height: 1.5;
+}
+
+.npc-dialogue-continue {
+  width: 100%;
+  padding: 10px 16px;
+  border: 1px solid var(--game-accent);
+  border-radius: 8px;
+  background: var(--game-accent);
+  color: #111;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.npc-dialogue-continue:hover {
+  filter: brightness(1.08);
+}
+
 .npc-dialogue-pager {
   display: flex;
   align-items: center;
@@ -1497,7 +1546,20 @@ body:has(.adventure-game-shell) {
   overflow: hidden;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  align-items: end;
+  align-items: center;
+  padding: 5rem clamp(1rem, 5vw, 6rem) 7rem;
+}
+
+/* 战斗是独立场景：不继承地点背景、NPC 侧栏或物品热点。 */
+.battle-viewport--fullscreen {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  width: 100vw;
+  min-height: 100dvh;
+  background:
+    radial-gradient(circle at 50% 42%, rgb(70 52 35 / 34%), transparent 48%),
+    linear-gradient(180deg, #111713 0%, #191711 52%, #0e120f 100%);
 }
 
 .battle-arena-backdrop {
@@ -1547,7 +1609,9 @@ body:has(.adventure-game-shell) {
 }
 
 .battle-combatant--player {
+  grid-column: 1;
   justify-self: start;
+  align-self: center;
   text-align: left;
 }
 
@@ -1567,8 +1631,10 @@ body:has(.adventure-game-shell) {
 }
 
 .battle-combatant--enemy {
+  grid-column: 2;
   text-align: right;
   justify-self: end;
+  align-self: center;
 }
 
 .battle-combatant--enemy .battle-combatant-visual {
@@ -1595,7 +1661,7 @@ body:has(.adventure-game-shell) {
 
 .battle-feedback {
   position: absolute;
-  top: 46%;
+  top: 27%;
   left: 50%;
   z-index: 3;
   margin: 0;
@@ -1605,20 +1671,21 @@ body:has(.adventure-game-shell) {
   background: rgb(10 15 12 / 90%);
   color: var(--game-accent);
   font-weight: 700;
+  white-space: nowrap;
   text-shadow: 0 2px 10px rgb(0 0 0 / 80%);
   transform: translate(-50%, -50%);
   animation: battle-feedback-pop 1.8s ease-out both;
 }
 
 .battle-feedback--player-hit {
-  top: 35%;
+  top: 27%;
   left: 25%;
   border-color: #e09a91;
   color: #f0b0a8;
 }
 
 .battle-feedback--enemy-hit {
-  top: 35%;
+  top: 27%;
   left: 75%;
 }
 
@@ -1642,8 +1709,8 @@ body:has(.adventure-game-shell) {
 
 @keyframes battle-player-lunge {
   0%, 100% { translate: 0 0; }
-  38% { translate: 54px -8px; }
-  68% { translate: 18px -3px; }
+  38% { translate: 84px -8px; }
+  68% { translate: 24px -3px; }
 }
 
 @keyframes battle-combatant-hit {
@@ -2749,14 +2816,37 @@ body:has(.adventure-game-shell) {
   box-shadow: 0 2px 8px rgba(0,0,0,0.4);
 }
 
-/* 叙事浮层 (全屏下吸附在底中偏上) */
-.scene-narrative--overlay {
-  max-width: 640px;
-  margin: 0 auto;
+/* 地点旁注：固定在左侧，职责是定位地点和承载氛围，不承载任务状态。 */
+.scene-narrative--side-note {
+  position: absolute;
+  top: 120px;
+  left: 24px;
+  z-index: 4;
+  width: min(380px, calc(100vw - 48px));
+  max-height: calc(100dvh - 250px);
+  overflow-y: auto;
   background: rgba(10, 15, 12, 0.85);
   backdrop-filter: blur(12px);
   border: 1px solid var(--game-surface-border);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+.scene-narrative-kicker {
+  color: var(--game-accent);
+  font-size: .72rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.scene-narrative--side-note h2 {
+  margin: 0;
+  font-family: Georgia, "STSong", serif;
+  font-size: 1.2rem;
+  color: var(--game-text-primary);
+}
+
+.scene-narrative-location-note {
+  margin-top: 0.25rem;
 }
 
 /* 底部行动栏 */
@@ -2819,6 +2909,12 @@ body:has(.adventure-game-shell) {
     top: 70px;
     left: 16px;
     right: auto;
+  }
+  .scene-narrative--side-note {
+    top: 126px;
+    left: 12px;
+    width: min(360px, calc(100vw - 24px));
+    max-height: 36dvh;
   }
 }
 

@@ -24,6 +24,70 @@ type ScreenState =
   | { phase: "corrupt"; reason: string }
   | { phase: "unreachable" };
 
+type RestartSetupMarker = {
+  readonly identity: string;
+  readonly expectedRevision: number;
+};
+
+const RESTART_SETUP_STORAGE_KEY = "ai-rpg-game:restart-setup";
+
+function isRestartSetupMarker(value: unknown): value is RestartSetupMarker {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.identity === "string"
+    && candidate.identity.length > 0
+    && candidate.identity.length <= 128
+    && typeof candidate.expectedRevision === "number"
+    && Number.isInteger(candidate.expectedRevision)
+    && candidate.expectedRevision >= 0;
+}
+
+/**
+ * The restart form is a browser-session intent, not a new server game state.
+ * Storage access can be unavailable in privacy-restricted browsers, so these
+ * helpers deliberately fall back to the authoritative ending response.
+ */
+function readRestartSetupMarker(): RestartSetupMarker | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(RESTART_SETUP_STORAGE_KEY);
+    if (raw === null) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      window.sessionStorage.removeItem(RESTART_SETUP_STORAGE_KEY);
+      return null;
+    }
+    if (!isRestartSetupMarker(parsed)) {
+      window.sessionStorage.removeItem(RESTART_SETUP_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeRestartSetupMarker(marker: RestartSetupMarker): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(RESTART_SETUP_STORAGE_KEY, JSON.stringify(marker));
+  } catch {
+    // The form remains usable for this render; a later refresh will safely
+    // fall back to the ended save if browser storage is unavailable.
+  }
+}
+
+function clearRestartSetupMarker(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(RESTART_SETUP_STORAGE_KEY);
+  } catch {
+    // Ignore storage restrictions; they must not block the current game UI.
+  }
+}
+
 export function CurrentGameScreen() {
   const [state, setState] = useState<ScreenState>({ phase: "loading" });
   const prologueAckInFlight = useRef(false);
@@ -33,9 +97,36 @@ export function CurrentGameScreen() {
 
   const applyResponse = useCallback((res: { ok: boolean; status: string; view?: GameSessionView; code?: string }) => {
     if (res.status === "none") {
+      clearRestartSetupMarker();
       setState({ phase: "none" });
     } else if (res.status === "active" && res.view !== undefined) {
-      setState({ phase: "active", view: res.view });
+      const marker = readRestartSetupMarker();
+      const ending = res.view.ending;
+      const shouldRestoreRestart =
+        ending !== null
+        && marker !== null
+        && marker.identity === ending.restartIdentity
+        && marker.expectedRevision === res.view.revision;
+      if (shouldRestoreRestart) {
+        setState((current) => {
+          // Keep the same monotonic revision guard as the active-game branch;
+          // an older ended response must not reopen the setup over a newer UI.
+          if (current.phase === "active" && current.view.revision > res.view!.revision) {
+            return current;
+          }
+          return { phase: "restart", identity: marker!.identity, expectedRevision: marker!.expectedRevision };
+        });
+        return;
+      }
+      if (marker !== null) clearRestartSetupMarker();
+      setState((current) => {
+        // 多个 action/轮询请求可能交错返回；旧 revision 不能覆盖已经展示的
+        // 新状态，否则战斗结束或结局写回后页面会短暂倒退到上一回合。
+        if (current.phase === "active" && current.view.revision > res.view!.revision) {
+          return current;
+        }
+        return { phase: "active", view: res.view! };
+      });
     } else if (res.status === "corrupt") {
       setState({ phase: "corrupt", reason: res.code ?? "UNKNOWN" });
     } else {
@@ -121,6 +212,7 @@ export function CurrentGameScreen() {
 
   // 创建游戏后
   function handleCreated() {
+    clearRestartSetupMarker();
     void loadCurrentGame();
   }
 
@@ -165,11 +257,14 @@ export function CurrentGameScreen() {
             </Tag>
             <h2>{ending.name}</h2>
             <p>{ending.description || "你的冒险至此结束。"}</p>
-            <InlineButton onClick={() => setState({
-              phase: "restart",
-              identity: ending.restartIdentity,
-              expectedRevision: view.revision,
-            })}>重新开始</InlineButton>
+            <InlineButton onClick={() => {
+              const restart = {
+                identity: ending.restartIdentity,
+                expectedRevision: view.revision,
+              };
+              writeRestartSetupMarker(restart);
+              setState({ phase: "restart", ...restart });
+            }}>重新开始</InlineButton>
           </Panel>
         </section>
       );
@@ -178,7 +273,12 @@ export function CurrentGameScreen() {
     return (
       <AdventureGameShell
         view={view}
-        onViewChange={(newView) => setState({ phase: "active", view: newView })}
+        onViewChange={(newView) => setState((current) => {
+          if (current.phase === "active" && current.view.revision > newView.revision) {
+            return current;
+          }
+          return { phase: "active", view: newView };
+        })}
         onStaleRevision={() => void loadCurrentGame()}
         onClearDevelopmentSave={clearDevelopmentSave}
         onRetryNarrative={() => setNarrativeRetryNonce((current) => current + 1)}

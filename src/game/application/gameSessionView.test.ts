@@ -101,6 +101,43 @@ describe("projectGameSessionView", () => {
     expect(view.story.currentObjectiveChoiceToken).toBe(view.currentLocation.npcs[0]?.talkChoice.choiceToken);
   });
 
+  it("does not mark a two-turn dialogue objective complete after only the first response", () => {
+    const wsWithMetNpc: WorldState = {
+      ...ws,
+      npcs: ws.npcs.map((entry) => ({ ...entry, met: true })),
+      quests: [{
+        id: asQuestId("quest_0"),
+        name: "查明真相",
+        description: "查清矿坑的真相",
+        objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_1") }],
+        onSuccess: { kind: "advance_story" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 1,
+        status: "active",
+      }],
+    };
+    const firstResponseStory: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        dialogueSession: { npcId: asNpcId("npc_1"), turnCount: 1, requiredTurns: 2, completed: false },
+      },
+    };
+    const firstView = projectGameSessionView(wsWithMetNpc, firstResponseStory, 0, "test-ending-session");
+    expect(firstView.quests[0]?.objectives).toEqual([{ label: "与老板交谈", completed: false }]);
+
+    const completedView = projectGameSessionView(wsWithMetNpc, {
+      ...firstResponseStory,
+      narrative: {
+        ...firstResponseStory.narrative,
+        dialogueSession: { npcId: asNpcId("npc_1"), turnCount: 2, requiredTurns: 2, completed: true },
+      },
+    }, 0, "test-ending-session");
+    expect(completedView.quests[0]?.objectives).toEqual([{ label: "与老板交谈", completed: true }]);
+  });
+
   it("exposes null current objective label when no active quest exists", () => {
     const view = projectGameSessionView(ws, ss, 0, "test-ending-session");
     expect(view.story.currentObjectiveLabel).toBeNull();
@@ -263,10 +300,193 @@ describe("projectGameSessionView", () => {
 
     const view = projectGameSessionView(wsHandoff, ssHandoff, 0, "test-ending-session");
     const oldNpc = view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_1");
+    const newNpc = view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_2");
     expect(oldNpc?.freeInputEnabled).toBe(false);
     expect(oldNpc?.choices.map((entry) => entry.label)).toEqual(["与老板交谈"]);
+    expect(newNpc?.freeInputEnabled).toBe(true);
+    expect(newNpc?.choices).toHaveLength(2);
+    expect(newNpc?.choices.map((entry) => entry.label)).toEqual([
+      "我愿意先把手里的证据交给你核对，请你把知道的那一段说清楚。",
+      "我会逐项核对线索；你凭什么确定它们指向同一个人？",
+    ]);
     expect(view.narrative.choices).toHaveLength(0);
     expect(view.story.currentObjectiveLabel).toBe("与传讯人交谈");
+  });
+
+  it("旧对白 choice 过期且当前目标已非交谈时，不会吞掉地点战斗入口", () => {
+    const enemy = {
+      id: asEnemyId("enemy_1"), name: "夺旗客", tier: "normal" as const,
+      stats: { hp: 20, attack: 5, defense: 1 }, locationId: asLocationId("loc_1"), tags: [],
+    };
+    const scene = {
+      sceneId: "scene-expired-dialogue",
+      turn: 7,
+      narration: "苏绾已经说完了。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text: "你去面对追兵吧。", emotion: "neutral" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "expired-1", label: "旧选项一" },
+        { choiceToken: "expired-2", label: "旧选项二" },
+      ] as const,
+      source: "generated" as const,
+      event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["你去面对追兵吧。"] }],
+    };
+    const view = projectGameSessionView(
+      { ...ws, enemies: [enemy] },
+      { ...ss, narrative: { ...ss.narrative, currentScene: scene } },
+      0,
+      "test-ending-session",
+    );
+    expect(view.narrative.npcDialogues[0]?.freeInputEnabled).toBe(false);
+    expect(view.currentLocation.actions.map((action) => action.label)).toContain("挑战夺旗客");
+  });
+
+  it("completed talk focus is demoted when the authoritative objective has moved to an item", () => {
+    const itemId = asItemId("item_evidence");
+    const scene = {
+      sceneId: "scene-after-talk",
+      turn: 4,
+      narration: "顾砚已经把证物交到你面前。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text: "这枚腰牌该交给你了。", emotion: "neutral" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "support-after-talk", label: "支持老板" },
+        { choiceToken: "challenge-after-talk", label: "质疑老板" },
+      ] as const,
+      source: "fallback" as const,
+      event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["这枚腰牌该交给你了。"] }],
+    };
+    const wsAfterTalk: WorldState = {
+      ...ws,
+      npcs: [{ ...npc1, met: true }],
+      visitedLocationIds: [loc1.id],
+      worldFacts: [{ factId: asFactId("fact_opening"), text: "已经核实的线索", source: "generated", discovered: true, locationId: loc1.id }],
+      items: [{ id: itemId, name: "染血腰牌", description: "一枚染血的腰牌", kind: "quest", tags: [] }],
+      quests: [{
+        id: asQuestId("quest_after_talk"),
+        name: "追查旧案",
+        description: "先与老板交谈，再取得证物",
+        objectives: [
+          { kind: "discover_fact", factId: asFactId("fact_opening") },
+          { kind: "visit_location", locationId: loc1.id },
+          { kind: "talk_to_npc", npcId: npc1.id },
+          { kind: "obtain_item", itemId },
+        ],
+        onSuccess: { kind: "advance_story" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 1,
+        status: "active",
+      }],
+    };
+    const ssAfterTalk: StoryState = {
+      ...ss,
+      reveal: { questId: asQuestId("quest_after_talk"), visibleObjectiveIndex: 3 },
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("support-after-talk", scene.sceneId, 0, scene.choices[0].label, { type: "talk", npcId: npc1.id, dialogueAct: "support" }),
+          approved("challenge-after-talk", scene.sceneId, 0, scene.choices[1].label, { type: "talk", npcId: npc1.id, dialogueAct: "challenge" }),
+        ],
+      },
+    };
+
+    const view = projectGameSessionView(wsAfterTalk, ssAfterTalk, 0, "test-ending-session");
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(npc1.id));
+    expect(view.story.currentObjectiveLabel).toBe("获取染血腰牌");
+    expect(dialogue?.freeInputEnabled).toBe(false);
+    expect(dialogue?.choices).toHaveLength(1);
+    expect(dialogue?.choices[0]?.label).toBe("与老板交谈");
+  });
+
+  it("uses the newly generated objective NPC as focus even when the triggering event was travel", () => {
+    const secondNpc: NpcEntry = {
+      id: asNpcId("npc_2"), name: "传讯人", role: "旧案传讯人", description: "带来下一幕消息",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const scene = {
+      sceneId: "scene-target-ready",
+      turn: 2,
+      narration: "主线线索把你带到传讯人面前。",
+      usedFactIds: [],
+      npcLine: { npcId: secondNpc.id, text: "我手里有一条线索。", emotion: "neutral" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "t1", label: "表示愿意支持传讯人" },
+        { choiceToken: "t2", label: "质疑传讯人的说法" },
+      ] as const,
+      source: "fallback" as const,
+      event: { kind: "travel" as const, locationId: asLocationId("loc_1") },
+      npcDialogues: [
+        { npcId: secondNpc.id, npcName: secondNpc.name, npcRole: secondNpc.role, speechPages: ["我手里有一条线索。"] },
+      ],
+    };
+    const wsTarget = {
+      ...ws,
+      npcs: [...ws.npcs, secondNpc],
+      quests: [{
+        id: asQuestId("quest_target"), name: "循迹", description: "找到传讯人",
+        objectives: [{ kind: "talk_to_npc" as const, npcId: secondNpc.id }],
+        onSuccess: { kind: "advance_story" as const }, onFailure: { kind: "closed" as const },
+        tags: [], kind: "main" as const, stage: 1, status: "active" as const,
+      }],
+    };
+    const ssTarget = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("t1", scene.sceneId, 0, scene.choices[0].label, { type: "talk", npcId: secondNpc.id, dialogueAct: "support" }),
+          approved("t2", scene.sceneId, 0, scene.choices[1].label, { type: "talk", npcId: secondNpc.id, dialogueAct: "challenge" }),
+        ],
+      },
+    };
+    const view = projectGameSessionView(wsTarget, ssTarget, 0, "test-ending-session");
+    const focus = view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_2");
+    expect(focus?.choices).toHaveLength(2);
+    expect(focus?.freeInputEnabled).toBe(true);
+    expect(view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === "npc_1")).toBeUndefined();
+  });
+
+  it("keeps a same-NPC ending response pair in that NPC dialogue after a non-dialogue event", () => {
+    const scene = {
+      sceneId: "scene-ending-pair-after-battle",
+      turn: 9,
+      narration: "迷雾散去，老板仍在等你的答复。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text: "证据已经齐了，你准备怎样面对众人？", emotion: "guarded" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "end-support", label: "回应老板：我愿意把证据摊开。" },
+        { choiceToken: "end-challenge", label: "质疑老板：我会先核对证据。" },
+      ] as const,
+      source: "fallback" as const,
+      event: { kind: "battle" as const, enemyId: asEnemyId("enemy_1") },
+      npcDialogues: [
+        { npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["证据已经齐了，你准备怎样面对众人？"] },
+      ],
+    };
+    const story: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("end-support", scene.sceneId, 0, scene.choices[0].label, { type: "talk", npcId: npc1.id, dialogueAct: "support" }),
+          approved("end-challenge", scene.sceneId, 0, scene.choices[1].label, { type: "talk", npcId: npc1.id, dialogueAct: "challenge" }),
+        ],
+      },
+    };
+
+    const view = projectGameSessionView(ws, story, 0, "test-ending-session");
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1");
+    expect(dialogue?.choices.map((choice) => choice.choiceToken)).toEqual(["end-support", "end-challenge"]);
+    expect(dialogue?.freeInputEnabled).toBe(true);
+    expect(view.narrative.choices).toEqual([]);
   });
 
   it("世界行动场景：choices 进入 narrative.choices，不投影为任何 NPC 对话选择", () => {
@@ -447,6 +667,7 @@ describe("projectGameSessionView", () => {
     expect(dialogue?.speechPages.join("")).toBe("我知道了。");
     expect(dialogue?.speechPages.join("")).not.toMatch(/老板|如实答道/);
     expect(view.narrative.npcLine?.text).toBe("我知道了。");
+    expect(view.narrative.npcLine?.speaker).toBe("老板");
   });
 
   it("observe 场景的 NPC 旁白不会伪装成可自由输入的焦点对话", () => {
@@ -493,7 +714,7 @@ describe("projectGameSessionView", () => {
     expect(serialized).not.toContain(SECRET_TEXT);
     expect(serialized).not.toContain("fact_secret");
     const objective = view.quests[0]?.objectives[0];
-    expect(objective?.label).toBe("发现秘密");
+    expect(objective?.label).toBe("调查现场线索");
     expect(objective?.completed).toBe(false);
   });
 
@@ -576,7 +797,7 @@ describe("projectGameSessionView", () => {
     }
   });
 
-  it("projects active battle controls as three opaque tokens and no non-battle location actions", () => {
+  it("projects active battle controls as attack and guard tokens and no non-battle location actions", () => {
     const enemyId = asEnemyId("enemy_wolf");
     const battleWorld: WorldState = {
       ...ws,
@@ -586,7 +807,7 @@ describe("projectGameSessionView", () => {
     const view = projectGameSessionView(battleWorld, ss, 3, "test-ending-session");
     expect(view.currentLocation.actions).toEqual([]);
     expect(view.battle).toMatchObject({ enemyName: "灰狼", playerHp: 91, enemyHp: 13, round: 2 });
-    expect(view.battle?.controls.map((choice) => choice.label)).toEqual(["攻击", "防御", "撤退"]);
+    expect(view.battle?.controls.map((choice) => choice.label)).toEqual(["攻击", "防御"]);
     expect(view.battle?.controls.every((choice) => choice.presentation === "battle")).toBe(true);
     expect(view.battle?.controls.every((choice) => /^c_[0-9a-f]{16}$/.test(choice.choiceToken))).toBe(true);
     const executable = buildChoiceMap(battleWorld, ss, 3);
@@ -661,7 +882,7 @@ describe("projectGameSessionView", () => {
     const view = projectGameSessionView(fullWorld, pendingStory, 12, "opaque-ended-session");
     expect(view.revision).toBe(12);
     expect(view.narrativeGeneration).toEqual({ status: "pending" });
-    expect(view.quests[0]?.objectives).toEqual([{ label: "发现秘密", completed: false }]);
+    expect(view.quests[0]?.objectives).toEqual([{ label: "调查现场线索", completed: false }]);
     expect(view.ending).toMatchObject({ name: "故事结局", outcome: "success", restartIdentity: "opaque-ended-session" });
 
     const reloaded = JSON.parse(JSON.stringify(view));
@@ -790,6 +1011,39 @@ describe("projectGameSessionView town read model", () => {
     expect(interactive.length).toBeGreaterThan(0);
     expect(interactive[0]?.npcId).toBe("npc_1");
     expect(interactive[0]?.npcName).toBe("老板");
+  });
+
+  it("town 地点的同一物品只投影到一个可进入建筑，不会在每个建筑场景重复出现", () => {
+    const secondNpcId = asNpcId("npc_2");
+    const secondNpc: NpcEntry = {
+      ...townNpc1,
+      id: secondNpcId,
+      name: "铁匠",
+      role: "铁匠",
+      locationId: asLocationId("loc_1"),
+      memory: { ...townNpc1.memory, npcId: secondNpcId },
+    };
+    const base = makeTownWorld();
+    const location = base.locations[0]!;
+    const town = bindNpcToTownSlot(location.town!, secondNpcId).town;
+    const itemId = asItemId("item_town_relic");
+    const townWs: WorldState = {
+      ...base,
+      locations: [{ ...location, npcIds: [townNpc1.id, secondNpcId], availableItemIds: [itemId], town }],
+      npcs: [townNpc1, secondNpc],
+      items: [{ id: itemId, name: "染血腰牌", description: "一块旧腰牌。", kind: "relic", tags: [] }],
+    };
+    const view = projectGameSessionView(
+      townWs,
+      createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 2, quests: 0, events: 0 } }),
+      0,
+      "test-ending-session",
+    );
+    const interactive = view.currentLocation.town?.interactiveBuildings ?? [];
+    expect(interactive.length).toBeGreaterThanOrEqual(2);
+    expect(view.obtainableItems).toHaveLength(1);
+    expect(view.obtainableItems[0]?.buildingId).toBe(interactive[0]?.buildingId);
+    expect(view.obtainableItems[0]?.buildingId).not.toBe(interactive[1]?.buildingId);
   });
 
   it("town 读模型不泄漏 seed/空闲 slot/生成器内部", () => {
