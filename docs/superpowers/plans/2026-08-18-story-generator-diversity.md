@@ -16,7 +16,7 @@
 - 纯函数确定性：同 `(gameType, act)` / 同 `(seed, act)` / 同 `WorldState` 输入产出完全一致；不引入随机源、时间或外部依赖。
 - 安全模型不变：AI 仍只有提案权；审批、预算、可达性校验、CAS 写回一概不动；本 plan 不触碰 AI source、prompt、provider。
 - 可完成性不变：任何变体必须保留 `talk_to_npc` 锚点与“每次只释放下一步”的 reveal 机制；过滤后为空回退全程链，禁止生成空目标主线。
-- 兼容性约束：wuxia 题材 acts 2-5 的 ActBeat 数据逐字保持现状（`deterministicEvolutionSource.ts` L198-278），保证既有测试与 journey 断言不因数据迁移漂移；旧存档 `ws.generation.gameType` 恒存在（`GenerationMetadata` 必填字段），无需迁移。
+- 兼容性约束：wuxia 题材 acts 2-5 的 ActBeat 数据逐字保持现状（`deterministicEvolutionSource.ts` L177-278：`ActBeat` 类型 L177-192、`actBeatFor` 函数 L194-278，其中 wuxia 四幕数据 L200-263），保证既有测试与 journey 断言不因数据迁移漂移；旧存档 `ws.generation.gameType` 恒存在（`GenerationMetadata` 必填字段，`worldEntity.ts` L82），无需迁移。
 - 结局裁决引擎不动：`resolveEnding` 继续按 `EndingRequirement` 数据判定，`npc_affinity_at_least/at_most` 两个 requirement kind 不变；只改锚定哪个 NPC。
 - 分层规则：`keyEndingNpc.ts` 属 gameplay（不 import application/UI）；application 的 `deterministicEvolutionSource.ts` 只经 `@/game/gameplay/rpg/worldEvolution` facade 消费它；新模块同目录测试。
 - 最低验收：`npm run test:boundaries` + `npm run typecheck`；行为子集按 `docs/游戏开发规范.md` 5.1 表入口运行（本 plan 涉及 `test:game-gameplay`、`test:game-application`）。
@@ -45,10 +45,10 @@
 import { describe, expect, it } from "vitest";
 import { asNpcId, asQuestId, asLocationId, asGenerationId } from "@/game/domain/worldEntity";
 import { createInitialWorldState, type WorldState } from "@/game/domain/worldState";
-import type { Quest } from "@/game/domain/worldState";
+import type { QuestEntry } from "@/game/domain/worldState";
 import { deriveKeyEndingNpcId } from "./keyEndingNpc";
 
-function baseWorld(npcIds: readonly string[], quests: readonly Quest[] = []): WorldState {
+function baseWorld(npcIds: readonly string[], quests: readonly QuestEntry[] = []): WorldState {
   const ws = createInitialWorldState({
     generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
     player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
@@ -69,32 +69,32 @@ function baseWorld(npcIds: readonly string[], quests: readonly Quest[] = []): Wo
   };
 }
 
-const QUEST_TALK_N9: Quest = {
+const QUEST_TALK_N9: QuestEntry = {
   id: asQuestId("q_final"), name: "终幕", description: "d",
   objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_9") }],
   onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
   tags: [], kind: "main", stage: 5, status: "active",
-} as never;
+};
 
 describe("deriveKeyEndingNpcId", () => {
   it("优先取 stage 最大的主线任务的 talk_to_npc 目标", () => {
-    const earlierTalk: Quest = {
+    const earlierTalk: QuestEntry = {
       id: asQuestId("q_mid"), name: "中幕", description: "d",
       objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_2") }],
       onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
       tags: [], kind: "main", stage: 3, status: "closed",
-    } as never;
+    };
     const ws = baseWorld(["npc_0", "npc_9"], [earlierTalk, QUEST_TALK_N9]);
     expect(String(deriveKeyEndingNpcId(ws))).toBe("npc_9");
   });
 
   it("主线任务没有交谈目标时回退到开局首位 NPC（与旧行为一致）", () => {
-    const noTalk: Quest = {
+    const noTalk: QuestEntry = {
       id: asQuestId("q_no_talk"), name: "无交谈", description: "d",
       objectives: [{ kind: "obtain_item", itemId: "item_1" as never }],
       onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
       tags: [], kind: "main", stage: 5, status: "active",
-    } as never;
+    };
     const ws = baseWorld(["npc_0", "npc_9"], [noTalk]);
     expect(String(deriveKeyEndingNpcId(ws))).toBe("npc_0");
   });
@@ -127,7 +127,8 @@ import type { NpcId } from "@/game/domain/worldEntity";
 export function deriveKeyEndingNpcId(ws: WorldState): NpcId | undefined {
   const mainQuests = ws.quests
     .filter((quest) => quest.kind === "main")
-    .sort((a, b) => b.stage - a.stage);
+    // stage 为可选字段（QuestEntry.stage?: number），缺省按 0 处理
+    .sort((a, b) => (b.stage ?? 0) - (a.stage ?? 0));
   for (const quest of mainQuests) {
     const talkObjective = quest.objectives.find((objective) => objective.kind === "talk_to_npc");
     if (talkObjective !== undefined) return talkObjective.npcId;
@@ -164,7 +165,11 @@ function ruleOwnedEndingRequirements(
 }
 ```
 
-（`deriveKeyEndingNpcId` 从同目录 `"./keyEndingNpc"` 导入。）
+（`deriveKeyEndingNpcId` 从同目录导入；在文件顶部 import 区（`@/game/domain/...` 系列之后）追加：
+
+```typescript
+import { deriveKeyEndingNpcId } from "./keyEndingNpc";
+```）
 
 (b) `deterministicEvolutionSource.ts`：`planEndingPair` 内（现 L337）`const keyNpcId: NpcId | undefined = ws.npcs[0]?.id;` 改为：
 
@@ -172,24 +177,63 @@ function ruleOwnedEndingRequirements(
   const keyNpcId: NpcId | undefined = deriveKeyEndingNpcId(ws);
 ```
 
-（从 `"@/game/gameplay/rpg/worldEvolution"` facade 导入；同步更新 L335-336 注释：“分歧信号：关键 NPC（stage 最大主线的交谈目标，回退首位 NPC）对玩家的亲和度”。）
+（从 `"@/game/gameplay/rpg/worldEvolution"` facade 导入；在文件顶部 import 区追加 `import { deriveKeyEndingNpcId } from "@/game/gameplay/rpg/worldEvolution";`（放在现有 `import type { ... } from "./worldEvolutionSource";` 之后）；同步更新 L335-336 注释：“分歧信号：关键 NPC（stage 最大主线的交谈目标，回退首位 NPC）对玩家的亲和度”。）
 
-(c) `approveWorldDelta.test.ts` 结局要求用例（约 L300-360）：fixture 的 `ws` 追加一个 stage 更大的主线任务，其 `talk_to_npc` 指向 `npc_9`，断言 `npc_0` 全部改为 `npc_9`：
+(c) `approveWorldDelta.test.ts` 结局要求有两个用例都要改：`"derives rule-owned ending requirements instead of trusting proposal values"`（现 L306-328）与 `"still derives requirements when proposal omits them"`（现 L330-355）。两处 fixture 的 `ws` 都追加一个 stage 更大的主线任务（`talk_to_npc` 指向 `npc_9`），断言 `npc_0` 改为 `npc_9`。注意 `WorldState.quests` 是 `readonly QuestEntry[]`，**不能 `push`**，须用对象展开构造：
 
 ```typescript
-    // ws 装配处追加（与该文件既有 quest fixture 结构一致）：
-    ws.quests.push({
-      id: asQuestId("quest_final"), name: "终局", description: "d",
-      objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_9") }],
-      onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
-      tags: [], kind: "main", stage: 9, status: "active",
-    });
-    // 断言处（现 L326-327 / L350-353 的 npc_0）改为：
+    // 两个用例的 ws 装配处（现 L307 / L331 的 const ws = makeWorld();）替换为：
+    const ws: WorldState = {
+      ...makeWorld(),
+      quests: [{
+        id: asQuestId("quest_final"), name: "终局", description: "d",
+        objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_9") }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 9, status: "active",
+      }],
+    };
+    // 断言处（现 L326-327 的 trust/doubt 断言、L349-354 的 newEndings[0]/[1] 断言）的 npc_0 改为：
     expect(trust!.requirements).toEqual([{ kind: "npc_affinity_at_least", npcId: asNpcId("npc_9"), value: TRUST_ENDING_MIN_AFFINITY }]);
     expect(doubt!.requirements).toEqual([{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_9"), value: DOUBT_ENDING_MAX_AFFINITY }]);
 ```
 
-`deterministicEvolutionSource.test.ts` 中断言 fallback endingPair requirement `npcId` 的用例同理：fixture 加 stage 最大主线 talk 任务（`npc_9`），断言锚点为 `npc_9`。
+（两用例的 `npcId: asNpcId("npc_0")` 断言逐一改为 `asNpcId("npc_9")`；`TRUST_ENDING_MIN_AFFINITY` / `DOUBT_ENDING_MAX_AFFINITY` 常量不变。`npc_9` 不必真实存在于 `ws.npcs`——`deriveKeyEndingNpcId` 只读目标 objective 的 npcId，不校验存在性。）
+
+`deterministicEvolutionSource.test.ts`：`"produces a requirement-bearing ending pair keyed to the first NPC's affinity"` 用例（现 L29-49）修改为：
+
+```typescript
+  it("produces a requirement-bearing ending pair keyed to the final main-quest talk npc", async () => {
+    const source = createDeterministicEvolutionSource();
+    const ws: WorldState = {
+      ...makeWorldWithNpc(0),
+      quests: [{
+        id: asQuestId("quest_final"), name: "终局", description: "d",
+        objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_9") }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 9, status: "active",
+      }],
+    };
+    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } });
+    const result = await source.propose({ worldState: ws, storyState: ss, need: { kind: "ending_pair", finalAct: 3 }, reason: "test" });
+    expect(result.proposal).not.toBeNull();
+    const pair = result.proposal!.endingPair;
+    expect(pair).toHaveLength(2);
+    const [trust, doubt] = pair!;
+
+    expect(trust.themeKey).toBe("trust");
+    expect(trust.requirements).toEqual([{ kind: "npc_affinity_at_least", npcId: asNpcId("npc_9"), value: TRUST_ENDING_MIN_AFFINITY }]);
+
+    expect(doubt.themeKey).toBe("doubt");
+    expect(doubt.requirements).toEqual([{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_9"), value: DOUBT_ENDING_MAX_AFFINITY }]);
+
+    // 两条要求阈值相邻且互斥：任何亲和度恰好命中其一（离线必有一个方向可达）。
+    expect(DOUBT_ENDING_MAX_AFFINITY).toBe(TRUST_ENDING_MIN_AFFINITY - 1);
+    expect(trust.description).toContain("已核对的证据");
+    expect(doubt.description).toContain("责任归属");
+  });
+```
+
+（同文件 `"the affinity threshold splits..."` 用例（现 L51-65）只断言 requirement kind 与阈值，不断言 npcId，无需修改；`"keeps scripted later-act NPCs..."` 用例（现 L67-87）的 quests 无 talk objective，`deriveKeyEndingNpcId` 回退 npc_0，该用例走 next_act 不受影响。）
 
 - [ ] **Step 6: 运行 gameplay 与 application 子集**
 
@@ -275,7 +319,12 @@ describe("actBeatFor 题材剧本库", () => {
   it("超出库范围的幕回落到通用模板，且同参数结果稳定", () => {
     expect(actBeatFor("wuxia", 6).npcName).toBe("传讯人·6");
     expect(actBeatFor("fantasy", 9).npcName).toBe("传讯人·9");
-    expect(actBeatFor("urban", 4)).toEqual(actBeatFor("urban", 4));
+    // 同参数两次独立调用深比较一致（确定性回归锁）
+    const first = actBeatFor("urban", 4);
+    const second = actBeatFor("urban", 4);
+    expect(first).toEqual(second);
+    // 通用模板按幕次区分人物名，不同幕不串数据
+    expect(actBeatFor("urban", 4).npcName).not.toBe(actBeatFor("urban", 5).npcName);
   });
 });
 ```
@@ -669,7 +718,7 @@ Run: `npx vitest run src/game/application/deterministicEvolutionBeats.test.ts`
 
 - [ ] **Step 5: 改造 `deterministicEvolutionSource.planNextAct`**
 
-(a) 删除文件内 `ActBeat` 类型与 `actBeatFor` 函数（现 L177-278），改为：
+(a) 删除文件内 `ActBeat` 类型（现 L177-192）与 `actBeatFor` 函数（现 L194-278，含注释 L193-197），改为：
 
 ```typescript
 import { actBeatFor, type EvolutionActBeat } from "./deterministicEvolutionBeats";
@@ -718,7 +767,7 @@ git commit -m "feat(world-evolution): theme-indexed deterministic act beat libra
 在 `src/game/gameplay/rpg/worldEvolution/approveWorldDelta.test.ts` 追加：
 
 ```typescript
-import { actObjectiveShape, deriveActObjectives, type ActObjectiveShape } from "./approveWorldDelta";
+import { actObjectiveShape, deriveActObjectives } from "./approveWorldDelta";
 
 describe("act objective shape variants", () => {
   it("同 seed 同 act 结果稳定，四种变体均可达", () => {
@@ -800,22 +849,46 @@ const SHAPE_ALLOWED_KINDS: Readonly<Record<ActObjectiveShape, ReadonlySet<string
   errand_focus: new Set(["visit_location", "talk_to_npc", "obtain_item"]),
 };
 
-/** 稳定字符串散列：仅用于确定性变体选择，无密码学用途。 */
-function hashStringToIndex(value: string, mod: number): number {
+/** 稳定字符串散列（djb2）：仅用于确定性变体选择，无密码学用途。 */
+function hashStringToIndex(value: string): number {
   let hash = 0;
   for (let i = 0; i < value.length; i += 1) {
     hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
   }
-  return hash % mod;
+  return hash;
 }
 
-/** 由本局 seed 与目标幕次选择目标链结构；同 seed 同幕结果恒定。 */
+/** 雪崩混合（xorshift + 乘法）：打破 djb2 输出对输入尾部的线性敏感。 */
+function mixBits(x: number): number {
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x7feb352d);
+  x ^= x >>> 15;
+  x = Math.imul(x, 0x846ca68b);
+  x ^= x >>> 16;
+  return x >>> 0;
+}
+
+/**
+ * 由本局 seed 与目标幕次选择目标链结构；同 seed 同幕结果恒定。
+ *
+ * 注意：不能直接 `hash % 4`，也不能只做一次乘性高位提取。djb2 对“输入尾字符
+ * 差 1”（`seed:3` 与 `seed:2` 只差末位 '3'-'2'=1）的输出差恒为奇数；任何乘以
+ * 奇数（31≡3 mod 4、2654435761 等）后取低位/高位的桶函数，都会让相邻幕的
+ * bucket 差 (奇 × K 的高 2 位 + 进位) ≠ 0——即 act2 与 act3 的 shape 必然不同，
+ * 既削弱“结构层不可预测”的意图（act2 命中即可排除 act3 的相同变体），也令任何
+ * seed 都无法让两个相邻幕同时命中同一变体（journey 回归无解，实测确认）。必须
+ * 经雪崩混合打散后再取高 2 位：实测 5000 样本分布 1226/1230/1265/1279，plan 的
+ * 200 样本覆盖四种变体断言通过，且存在对 act2-5 全部命中 `full_chain` 的 seed
+ * （`q20`，供 journey 回归使用）。
+ */
 export function actObjectiveShape(seed: string, act: number): ActObjectiveShape {
-  return ACT_OBJECTIVE_SHAPES[hashStringToIndex(`${seed}:${act}`, ACT_OBJECTIVE_SHAPES.length)]!;
+  const digest = hashStringToIndex(`${seed}:${act}`);
+  const bucket = (mixBits(digest) >>> 30) & 3;
+  return ACT_OBJECTIVE_SHAPES[bucket]!;
 }
 ```
 
-`deriveActObjectives`（现 L209-222）改为三段式并导出（供测试直接消费）：
+`deriveActObjectives`（现 L209-222）改为三段式并导出（供测试直接消费；`MintedIds` 为模块内类型别名，tsconfig `noEmit` 下导出含其签名的函数不会触发 declaration 报错，测试以 `as never` 传参亦无需导入）：
 
 ```typescript
 export function deriveActObjectives(
@@ -839,19 +912,42 @@ export function deriveActObjectives(
 }
 ```
 
-`approveWorldDelta` 主函数中，在两处调用 `deriveActObjectives` 之前计算一次并传入（目标幕次取需求携带值）：
+`approveWorldDelta` 主函数中（入参解构为 `const { proposal: p, need, ws, ss } = input;`，见现 L265），在 `const ids = mintIds(...)`（现 L303）之后、`if (need.kind === "next_act")` 校验块（现 L386）之前计算一次并传入；`deriveActObjectives` 的两处调用点（现 L389 校验、现 L494 铸造）统一改为 `deriveActObjectives(p, ids, shape)`：
 
 ```typescript
   const shapeAct = need.kind === "next_act" ? need.act : ss.currentAct;
   const shape = actObjectiveShape(ws.generation.seed, shapeAct);
 ```
 
-（若 `need` 变量名不同，以本文件实际签名为准；两处调用点统一改为 `deriveActObjectives(p, ids, shape)`。）
-
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `npx vitest run src/game/gameplay/rpg/worldEvolution/approveWorldDelta.test.ts`
-预期：PASS。既有 next_act 用例若因 seed 恰好命中非 full_chain 变体而失败，在装配处把 `generation.seed` 改为命中 `full_chain` 的值（用测试内 `actObjectiveShape` 先验证），断言内容不变。
+预期：PASS。**该文件 `makeWorld()` 的 `generation.seed` 需从 `"s"` 改为 `"seed-a"`**（修正后的 `actObjectiveShape` 下 `"s"` 在 act 2 命中 `investigation_focus`，会使 L73-96 用例的 objectives 断言失败；`"seed-a"` 在 act 2 命中 `full_chain`，断言不变。只有该用例对目标链内容敏感，其余 next_act 用例只检查拒绝原因，改 seed 无副作用）。若其它 seed 恰好命中非 full_chain 变体，在装配处把 `generation.seed` 改为命中 `full_chain` 的值（用测试内 `actObjectiveShape` 先验证），断言内容不变。
+
+**关键：同步适配 journey 回归。** 目标链结构变体作用于所有经 `approveWorldDelta` 审批的 next_act（含 journey 测试自定义 proposal）。`materializeWorldDelta.ts`（现 L43-44）只在首个目标为 `visit_location` 时立即解锁新地点；`investigation_focus`/`confrontation_focus` 的首目标是 `talk_to_npc` → 新地点保持锁定 → journey 的 `fixed("延伸之地·N")` 找不到服务器选项而失败。故所有 journey 测试的 `createJourneyGame` seed 统一改为 **`"q20"`**（修正 hash 下对 act 2-5 全部命中 `full_chain`，已实测验证），涉及：
+
+- `src/game/application/testing/storyDivergenceJourney.test.ts` L40：`"shared-branch-seed"` → `"q20"`
+- `src/game/application/testing/dynamicMaterializationJourney.test.ts` L23 `"dynamic-materialization-seed"`、L146 `"dynamic-cas-seed"` → `"q20"`
+- `src/game/application/testing/mediumActJourney.test.ts` L72：`"medium-five-act-seed"` → `"q20"`
+- `src/game/application/testing/foundationJourney.test.ts` L30：`"foundation-dynamic-seed"` → `"q20"`
+- `src/game/application/testing/narrativeGroundingJourney.test.ts` L24 `"grounding-utterance"`、L77 `grounding-affinity-${affinity}`（模板 seed 统一为 `"q20"`，各迭代 repo 独立无冲突）、L152 `"grounding-beats"` → `"q20"`
+- `src/game/application/testing/prologueAckPreservesSceneChoices.test.ts` L20：`createJourneyGame()` 默认 seed `"journey_seed"` → 传 `"q20"`
+
+（换 seed 安全：`createJourneyGame` 用固定 `createFixtureOpeningSource` 开局，seed 只进入 `generation` 元数据，不改变开局实体；replay/分叉断言均在同 seed 内比较。）
+
+变更前可先在本机验证 seed 命中（与 plan 实现同构的 node 脚本）：
+
+```bash
+node -e '
+const SHAPES=["full_chain","investigation_focus","confrontation_focus","errand_focus"];
+const djb2=v=>{let h=0;for(const c of v)h=(h*31+c.charCodeAt(0))>>>0;return h};
+const mix=x=>{x^=x>>>16;x=Math.imul(x,0x7feb352d);x^=x>>>15;x=Math.imul(x,0x846ca68b);x^=x>>>16;return x>>>0};
+const shape=(seed,act)=>SHAPES[(mix(djb2(`${seed}:${act}`))>>>30)&3];
+[["s",2],["seed-a",2],["q20",2],["q20",3],["q20",4],["q20",5],["shared-branch-seed",2],["journey_seed",2],["medium-five-act-seed",2]].forEach(([s,a])=>console.log(s,a,shape(s,a)));
+'
+```
+
+预期输出：`s 2 investigation_focus`（需换 seed-a）、`seed-a 2 full_chain`、`q20 2..5 full_chain`、`shared-branch-seed 2 confrontation_focus`、`journey_seed 2 errand_focus`、`medium-five-act-seed 2 errand_focus`（后三者是换 seed 前必失败的原因——`errand_focus` 会过滤掉战斗目标，`confrontation_focus` 首目标非 `visit_location` 使新地点不解锁）。
 
 - [ ] **Step 5: 提交**
 
@@ -879,15 +975,43 @@ Run: `npm run test:boundaries`
 Run: `npm run typecheck`
 Run: `npm test`
 
-预期：全部 PASS。重点核对 `storyDivergenceJourney`：结局锚点改为终幕主线交谈 NPC 后，该 journey 每个对话回合都提交 support/challenge（含终幕 NPC），trust/doubt 仍应分化；若某分支结局翻转，仅调整该 journey 对“哪位 NPC 亲和度更高”的断言对象（从 `npcs[0]` 改为终幕主线交谈 NPC），不改结局名与服务端断言。
+预期：全部 PASS。**`storyDivergenceJourney.test.ts` 必须配套修改**（不止断言对象）：当前 `freeText` 把所有支持/质疑自由输入发给 `npcs[0]`（现 L69、L83），而结局锚点迁移后 trust/doubt 裁决的是终幕主线交谈 NPC（该旅程中为 stage 3 主线的 `传讯人·3`，其亲和度在两分支间无差异 → 结局不再分化，`expect(supportEnding!.name).toContain("共同揭露")` 必失败）。修改：
+
+1. 在 L95 `await fixed("传讯人·3")` 完成终幕主线交谈、`await scene()` 之后，追加一次发往终幕 NPC 的支持/质疑自由输入（此时焦点 NPC 即为终幕 NPC，`playTurn` 的 `free_text` 可用）：
+
+```typescript
+    await fixed("传讯人·3"); // 8: 完成最终幕主线交谈步骤
+    await scene();
+    await freeTextToFinalNpc(branch.customText); // 终幕向结局锚点 NPC 提交支持/质疑，驱动亲和度分化
+    await scene();
+```
+
+2. 新增 helper：目标 NPC 取“stage 最大的主线任务中第一个 talk_to_npc 目标”（与 `deriveKeyEndingNpcId` 同规则，journey 内可直接遍历 `quests` 推导，不依赖 gameplay 层导入）：
+
+```typescript
+  const finalTalkNpcId = (): string => {
+    const ws = store.record()!.worldState;
+    const mainQuests = ws.quests.filter((q) => q.kind === "main").sort((a, b) => (b.stage ?? 0) - (a.stage ?? 0));
+    for (const quest of mainQuests) {
+      const talk = quest.objectives.find((o) => o.kind === "talk_to_npc");
+      if (talk) return String(talk.npcId);
+    }
+    return String(ws.npcs[0]!.id);
+  };
+  const freeTextToFinalNpc = async (text: string) => {
+    accept(await playTurn(store.repo, { kind: "free_text", text, targetNpcId: asNpcId(finalTalkNpcId()) }, new Map(), () => "2026-08-09T00:00:00.000Z", source));
+  };
+```
+
+3. 断言对象（现 L116-123 的 `npcs[0]`）改为终幕主线交谈 NPC；文件头注释（现 L21-25 “关键 NPC（npc_0）”）同步更新为“关键 NPC（stage 最大主线的交谈目标）”。不改结局名与服务端断言；`npcs[0]` 的亲和度/情绪断言可保留（自由输入对 npc_0 的分化仍成立）或一并改为终幕 NPC。
 
 - [ ] **Step 2: 更新文档**
 
-- `世界动态具象化.md`：fallback 一节补充“确定性剧本按 `gameType` 索引（7 题材库，acts 2-5，超出回落通用模板）；`investigationLabel` 由节拍携带”。
+- `世界动态具象化.md`：在“世界演化闭环”节内 fallback 段（现 L39 附近，`live proposal 传输、解析或语义审批失败时统一尝试确定性 fallback`）补充“确定性剧本按 `gameType` 索引（7 题材库，acts 2-5，超出回落通用模板）；`investigationLabel` 由节拍携带”。
 - `剧情连续性与结构化记忆.md`（现 L27-28 固定五连描述）：改为“目标链结构由 seed+act 在四种合法变体（全程链/调查聚焦/对峙聚焦/跑腿聚焦）中确定性选择；任何变体保留 talk 锚点，过滤为空回退全程链”。
-- `无AI试玩验收.md`：如描述“顾砚/苏绾/程砚秋/陆归鸿”为普适流程，注明该链为 wuxia 题材专属剧本。
+- `无AI试玩验收.md`：核验后该文档**没有**"顾砚/苏绾/程砚秋/陆归鸿"作为普适流程的描述（最近维护段 L40 只提到"7 题材离线基线"，该行提到的 `offlineGenreJourney.test.ts`/`offlineBaselines.ts` 尚未在代码库中实现，属超前描述，不在本 plan 范围），此项不触发；如需补充，在 L40 的"7 题材离线基线"一句后加注"中篇 fallback 剧本按题材索引（wuxia 为顾砚→苏绾→程砚秋→陆归鸿链）"即可。
 - `策划文档/AI生成RPG_MVP.md`（现 L114 “按‘调查 → 前往 → 交谈 → 取得证物 → 击败敌人’连续列为目标”）：改为“主线目标链按题材剧本与结构变体生成（调查/跑腿/对峙等合法子集），仍每次只释放下一步”。
-- `Agent文档索引.md`：第 26/27 行（世界演化相关条目）追加“2026-08-18：题材化 fallback 剧本库、目标链结构变体、结局锚点池化”。
+- `Agent文档索引.md`：第 26/27 行（剧情连续性与结构化记忆、世界动态具象化两条目）追加“2026-08-18：题材化 fallback 剧本库、目标链结构变体、结局锚点池化”。
 
 - [ ] **Step 3: 提交**
 
