@@ -6,7 +6,13 @@ import { buildNpcDialoguePages } from "@/game/domain/narrative";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice, semanticSummaryOf } from "@/game/domain/approvedChoice";
-import { buildEventState, buildSelectableSceneCandidates, actionTargetsObjective, formatSceneChoiceLabel } from "./deterministicSceneSource";
+import {
+  buildEventState,
+  buildSelectableSceneCandidates,
+  actionTargetsObjective,
+  formatSceneChoiceLabel,
+  usesFallbackDialogueChoiceLabels,
+} from "./deterministicSceneSource";
 import { asFactId, asNpcId } from "@/game/domain/worldEntity";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
@@ -107,6 +113,7 @@ export type SceneRejectionCode =
   | "npc_dialogue_too_short"
   | "stale_objective_link"
   | "quest_advanced_unnamed"
+  | "stale_choice_template"
   | "semantic_duplicate_choices"
   | "duplicate_candidate_ids"
   | "illegal_choice_target"
@@ -315,6 +322,19 @@ export function approveScenePerformance(input: {
   const ca = candidateById.get(String(a.candidateId));
   const cb = candidateById.get(String(b.candidateId));
   if (ca === undefined || cb === undefined) return { ok: false, code: "illegal_choice_target" };
+
+  // 生成路径不能把本回合生成前的两个 deterministic talk label 原样带回。
+  // fallback proposal 自身就是这些 label 的权威来源，因此只拦 generated，
+  // 避免安全降级被审批器再次拒绝。
+  if (
+    proposal.source === "generated"
+    && npcLine !== null
+    && context.previousDialogue !== undefined
+    && usesFallbackDialogueChoiceLabels(buildSelectableSceneCandidates(context), [a, b])
+  ) {
+    return { ok: false, code: "stale_choice_template" };
+  }
+
   if (semanticSummaryOf(ca.action) === semanticSummaryOf(cb.action)) {
     return { ok: false, code: "semantic_duplicate_choices" };
   }

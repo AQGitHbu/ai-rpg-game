@@ -6,6 +6,7 @@ import {
   createDeterministicSceneSource,
   buildSelectableSceneCandidates,
   formatSceneChoiceLabel,
+  usesFallbackDialogueChoiceLabels,
   type SceneChoiceCandidate,
 } from "../../deterministicSceneSource";
 import { NARRATIVE_EMOTIONS, type NarrativeEmotion } from "@/game/domain/narrative";
@@ -94,6 +95,15 @@ function sceneResponseShape(raw: unknown): Record<string, string | number | bool
   };
 }
 
+/**
+ * live prompt 只需要知道服务端允许的动作语义，不应看到 deterministic
+ * source 的自然语言 label。否则模型很容易把 fallback 示例误当成当前
+ * NPC 台词对应的玩家回应，尤其是在连续对话的 support/challenge 分支。
+ */
+function describeChoiceCandidate(candidate: SceneChoiceCandidate): string {
+  return `${candidate.candidateId}:${JSON.stringify(candidate.action)}`;
+}
+
 function strArray(value: unknown): readonly string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((v): v is string => typeof v === "string");
@@ -116,7 +126,8 @@ export type ScenePerformanceParseFailureReason =
   | "npc_line_unusable"
   | "objective_link_invalid_shape"
   | "objective_link_invalid_fields"
-  | "choices_invalid";
+  | "choices_invalid"
+  | "choices_stale_template";
 
 export type ScenePerformanceParseResult =
   | { readonly ok: true; readonly proposal: ScenePerformanceProposal }
@@ -263,6 +274,13 @@ export function parseScenePerformanceJson(
     : buildSelectableSceneCandidates(context, npcLine);
   const choices = resolvePerformanceChoices(currentLineSelectable, raw.choices);
   if (choices === null) return { ok: false, reason: "choices_invalid" };
+  if (
+    npcLine !== null
+    && context.previousDialogue !== undefined
+    && usesFallbackDialogueChoiceLabels(selectable, choices)
+  ) {
+    return { ok: false, reason: "choices_stale_template" };
+  }
 
   return {
     ok: true,
@@ -323,6 +341,7 @@ function repairPartialLiveScene(
 export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps): SceneSource {
   const deterministic = createDeterministicSceneSource();
   const { transport, config, logger, jsonMode } = deps;
+  const maxContentRepairAttempts = 1;
   const aiClient = deps.aiClient ?? (transport && config
     ? createRpgAiClient({
       transport,
@@ -338,8 +357,7 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
     return deterministic.generateScene(context);
   };
 
-  return {
-    async generateScene(context: SceneGenerationContext): Promise<ScenePerformanceProposal> {
+  const generateScene = async (context: SceneGenerationContext): Promise<ScenePerformanceProposal> => {
       try {
         const selectable = buildSelectableSceneCandidates(context);
         if (selectable.length < 2) return fallbackScene(context);
@@ -351,10 +369,24 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
         ];
 
         // 场景生成位于每个玩家回合的必经等待界面。瞬态网络失败由统一 client
-        // 按角色策略重试；empty_response 或非法 JSON 不再重复同一个请求。
+        // 按角色策略重试；解析/契约失败则最多再发起一次带失败原因的内容修复，
+        // 避免把一次可修复的格式/结构偏差直接降级成 fallback。
         const result = await aiClient.complete("scene", messages);
         if (!result.ok) {
           logger?.warn("scene_generation_ai_failed", { code: result.code });
+          // empty_response 没有可解析内容，RpgAiClient 不会重复相同请求；
+          // 这里允许一次带修复指令的内容重试，仍为空才 fallback。
+          const repairAttempt = context.repairAttempt?.attempt ?? 0;
+          if (result.code === "empty_response" && repairAttempt < maxContentRepairAttempts) {
+            logger?.warn("scene_generation_content_retry", {
+              reason: result.code,
+              attempt: repairAttempt + 1,
+            });
+            return generateScene({
+              ...context,
+              repairAttempt: { attempt: repairAttempt + 1, reason: result.code },
+            });
+          }
           return fallbackScene(context);
         }
 
@@ -362,12 +394,22 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
         const parseResult = parsed.ok
           ? parseScenePerformanceJson(parsed.value, context, selectable)
           : parsed;
-        if (parseResult.ok) return parseResult.proposal;
+        if (parseResult.ok) return markContentRepairAttempt(parseResult.proposal, context);
+
+        const repairAttempt = context.repairAttempt?.attempt ?? 0;
+        if (repairAttempt < maxContentRepairAttempts) {
+          const reason = parsed.ok ? parseResult.reason : "invalid_json";
+          logger?.warn("scene_generation_content_retry", { reason, attempt: repairAttempt + 1 });
+          return generateScene({
+            ...context,
+            repairAttempt: { attempt: repairAttempt + 1, reason },
+          });
+        }
 
         const repaired = await repairPartialLiveScene(parsed.ok ? parsed.value : null, context, deterministic);
         if (repaired !== null) {
           logger?.info("scene_generation_repaired", { kind: "npc_line_only" });
-          return repaired;
+          return markContentRepairAttempt(repaired, context);
         }
 
         logger?.warn("scene_generation_invalid_data", {
@@ -381,8 +423,18 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
         logger?.error("scene_generation_error", { error: error instanceof Error ? error.message : "unknown" });
         return fallbackScene(context);
       }
-    },
-  };
+    };
+
+  return { generateScene };
+}
+
+function markContentRepairAttempt(
+  proposal: ScenePerformanceProposal,
+  context: SceneGenerationContext,
+): ScenePerformanceProposal {
+  return context.repairAttempt === undefined
+    ? proposal
+    : { ...proposal, contentRepairAttempt: context.repairAttempt.attempt };
 }
 
 /** 安全段落提示词：只含最小权限上下文（Task 6 Step 3）。 */
@@ -407,13 +459,17 @@ export function buildLiveScenePrompt(
     : `上一轮 NPC 原话=${context.previousDialogue.npcLine}；` +
       `玩家上一轮选择=${context.previousDialogue.selectedChoice?.label ?? "自定义回应"}；` +
       `结构化回应=${context.previousDialogue.selectedChoice?.dialogueAct ?? "ask"}；` +
-      `主题=${context.previousDialogue.selectedChoice?.topic?.kind ?? "general"}。`;
+      `主题=${context.previousDialogue.selectedChoice?.topic?.kind ?? "general"}；` +
+      `上一轮已引用事实=${context.previousDialogue.usedFactIds?.join("、") || "无"}。`;
 
   const presentNpcLine = context.presentNpcs.map((n) => `${n.id}=${n.name}`).join("、") || "无";
   const activeQuestSection = story.activeQuest === undefined
     ? "无已解析的当前主线摘要；沿用目标转换和 NPC 可说事实。"
     : `主线=${story.activeQuest.name}；主线说明=${story.activeQuest.description}；` +
       `当前目标=${story.activeQuest.objectiveLabel}（${story.activeQuest.objectiveKind}，序号${story.activeQuest.objectiveIndex}）`;
+  const repairSection = context.repairAttempt === undefined
+    ? ""
+    : `这是同一回合的第${context.repairAttempt.attempt + 1}次内容生成。上一次提案未通过${context.repairAttempt.reason}，请只修复该契约问题，保留当前主线、NPC、历史对话和事实边界。`;
 
   // 审批器要求每幕至少有一个 segment。开局没有规则节拍时，必须明确告诉
   // 模型使用唯一合法的 atmosphere 节拍；否则模型很自然会返回空数组，进而
@@ -453,13 +509,14 @@ ${previousDialogueSection}
 NPC=${focusSection}；在场ID=${presentNpcLine}
 节拍=${beatsSection}
 主线剧情上下文=${activeQuestSection}
+${repairSection}
 目标=${objectiveSection}
 ${utteranceContract} ${handoffContract}
-候选动作=${selectable.map((c) => `${c.candidateId}:${c.action.type}:${c.label}`).join("；")}
+候选动作=${selectable.map(describeChoiceCandidate).join("；")}
 JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白"}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},"choices":[{"candidateId":"选项ID","label":"玩家行动"},{"candidateId":"另一选项ID","label":"玩家行动"}]}
 ${segmentInstruction}
 ${atmosphereInstruction}
-NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。玩家只能被称为“${context.player.name}”，不得使用其他姓名、姓氏、代号或未经上下文批准的身份称呼。若有上一轮 NPC 原话，必须先直接承接其中的问题、信息或拒答，再补充本轮可核验线索或下一步；不得突然切换到无关案件。若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。choices 的 candidateId 必须逐字使用上方候选动作中的两个不同 ID；label 是玩家实际要说的话或动作，不要加“回应某人/追问某人”等前缀，不要机械复述 NPC 原话；动作选项必须用全角括号包裹。两个选项都要直接回应本轮 NPC 台词，并且至少一个要推进当前主线目标或核对 NPC 刚提供的事实，不能只输出“继续调查/相信/不相信”等脱离语境的态度。候选动作中的 label 只是无 AI 时的 fallback 示例，不是要求逐字复制的固定答案；请先完成 NPC 台词，再依据主线剧情上下文、NPC 可说事实和本轮台词写出两句自然、具体、互不重复的玩家对白或动作。`;
+NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。玩家只能被称为“${context.player.name}”，不得使用其他姓名、姓氏、代号或未经上下文批准的身份称呼。若有上一轮 NPC 原话，必须先直接承接其中的问题、信息或拒答，再补充本轮可核验线索或下一步；不得突然切换到无关案件。若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。任何具体地点、人物、时间、物品或证物，都必须能在主线剧情摘要、NPC 可说线索卡、场景可见事实或上一轮已引用事实中找到依据；如果没有依据，只能使用当前 objectiveLink/目标实体给出的下一步，不得自行补出新的核验细节。选项生成顺序：先完成 npcLine，再根据本轮 npcLine 的文本和 usedFactIds 生成 choices；上一轮选择只用于理解承接关系，不得直接复用为本轮可见选项。choices 的 candidateId 必须逐字使用上方候选动作中的两个不同 ID；候选动作只提供服务端合法的 candidateId 和动作语义，不提供可直接复用的自然语言选项。label 是玩家实际要说的话或动作，不要加“回应某人/追问某人”等前缀，不要机械复述 NPC 原话；动作选项必须用全角括号包裹。两个选项都要直接回应本轮 NPC 台词，并且至少一个要推进当前主线目标或核对 NPC 刚提供的事实，不能只输出“继续调查/相信/不相信”等脱离语境的态度。请依据主线剧情上下文、NPC 可说事实和本轮台词写出两句自然、具体、互不重复的玩家对白或动作。`;
   const allowedFactIds = focus === undefined
     ? []
     : [...new Set([

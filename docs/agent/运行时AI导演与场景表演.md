@@ -4,7 +4,7 @@
 
 运行时 AI 负责提出下一幕的结构化场景表演（分段旁白、焦点 NPC 台词、目标链接与合法选项）；规则系统负责审批候选、铸造玩家 token、裁决行动、审批世界演化并写入状态。AI 不直接写存档，也不能决定任务、关系、知识、战斗或结局。
 
-真机回合的 live 场景表演调用以 45 秒为单次上限；场景表演和世界演化分别使用 3000/3200 completion tokens，因为 provider 可能仍把 reasoning_content 计入同一预算。当前 new-api → DeepSeek 官方 OpenAI-compatible 链路通过请求体 `thinking: { type: "disabled" }` 关闭默认思考，显式角色策略才发送 `type: "enabled"`。若预算被 reasoning 消耗完，API 可能返回 HTTP 200 但没有可解析的 `message.content`，仍按 AI 提案失败处理。生产配置启用 live 时由单一 `RpgAiClient` 统一执行：只对 timeout、限流、5xx 和网络失败按角色策略重试；`empty_response`、非法 JSON 和 schema 失败不再重复相同请求，而是记录安全诊断并在同一审批链切换到确定性 fallback，不能把 fallback 标成 generated，也不能让玩家永久停留在 `narrativeGeneration.pending`。无 AI 配置的离线模式仍使用确定性 source。
+真机回合的 live 场景表演调用以 45 秒为单次上限；场景表演和世界演化分别使用 3000/3200 completion tokens，因为 provider 可能仍把 reasoning_content 计入同一预算。当前 new-api → DeepSeek 官方 OpenAI-compatible 链路通过请求体 `thinking: { type: "disabled" }` 关闭默认思考，显式角色策略才发送 `type: "enabled"`。若预算被 reasoning 消耗完，API 可能返回 HTTP 200 但没有可解析的 `message.content`，仍按 AI 提案失败处理。生产配置启用 live 时由单一 `RpgAiClient` 统一执行：timeout、限流、5xx 和网络失败按角色策略重试；AI 已返回但 JSON/场景契约或审批不通过时，同一回合最多再发送一次带失败原因的内容修复请求，修复仍失败才切换到确定性 fallback。`empty_response` 仍不在客户端重复相同请求，避免再次消耗预算却重复得到空 final content；无论哪条路径都不能把 fallback 标成 generated，也不能让玩家永久停留在 `narrativeGeneration.pending`。无 AI 配置的离线模式仍使用确定性 source。
 
 一旦 pending job 已由规则结果完全确定，服务器立即在后台生成，不等待“开始冒险”、继续、确认或下一次客户端 ensure。创建新局与成功回合返回前只完成快速排队，不等待 AI；协调器以 `gameId + jobId` 去重，客户端 ensure/polling 只负责崩溃恢复和结果观测。
 
@@ -37,7 +37,7 @@
 - 服务器根据 post-writeback revision 铸造 opaque `choiceToken`；客户端场景不含 `actionKey`、registry、候选 effect、隐藏事实或 AI diagnostics。
 - ready scene、choice registry、candidate event pool 与已批准世界演化同一次 scene CAS 写回；行动消费时再次验证当前 scene、revision 与规则合法性。
 - scene CAS 与序幕确认并发时，repository 单调保留已确认的 `prologueShown=true`；确认接口对 stale revision 读取新快照后有限重试。
-- 离线 fixture 与 live 失败恢复都使用确定性 fallback，fallback 也经过同一 proposal → approval → write-back 链；成功的 live proposal 必须标记 `source=generated`，API 失败或审批拒绝必须保留 `source=fallback` 并记录失败事件，绝不能把 fallback 伪装成 AI 成功。
+- 离线 fixture 与 live 失败恢复都使用确定性 fallback，fallback 也经过同一 proposal → approval → write-back 链；成功的 live proposal 必须标记 `source=generated`，API 失败或内容修复/审批重试仍拒绝时才保留 `source=fallback` 并记录失败事件，绝不能把 fallback 伪装成 AI 成功。
 - active battle、ending 或候选不足时不伪造普通场景选择。
 - 移动和拾取物品是规则结果已完全确定的单动作；pending 场景使用确定性 source 同步完成审批/写回，不调用 live scene-performance source。拾取仍保留规则 CAS 和结构化 `item_obtained` 节拍。
 - active battle 采用规则 fast path：不创建 pending 场景、不调用 scene source；界面只提供攻击/防守，撤退不再作为可执行选项。战斗开始时保存玩家属性、已击败敌人和事件账本快照；失败只恢复快照并可重新挑战，不推进剧情。
@@ -48,10 +48,10 @@
 
 - 每个 ready 场景以**分段旁白**呈现；每一段必须对应服务端下发的强制节拍 ID（`player_utterance` / `item_obtained` / `fact_discovered` / `quest_progress` / `quest_advanced` / `battle_started` / `battle_round` / `battle_resolved` / `entity_introduced`），数量 ≤8，可另附一个 `atmosphere` 段且必须置于最后。
 - `objectiveLink` 必须与权威 `ObjectiveTransition.after` 一致（无 after 目标时为 null）；目标在本回合推进时，必须产出 `quest_advanced` 段命名新目标相关的已批准实体。
-- 当玩家对焦点 NPC 提交话语（`job.utterance`）时，表演契约必须返回该 NPC 的台词并列出它应答的 `player_utterance` 节拍；缺失应答使提案非法并触发确定性 fallback。玩家界面保留该 NPC 的会话焦点：pending 时短暂遮蔽，ready 后先显示这句回应，不会直接把玩家抛回场景。
+- 当玩家对焦点 NPC 提交话语（`job.utterance`）时，表演契约必须返回该 NPC 的台词并列出它应答的 `player_utterance` 节拍；缺失应答使提案进入一次内容修复，修复仍缺失才触发确定性 fallback。玩家界面保留该 NPC 的会话焦点：pending 时短暂遮蔽，ready 后先显示这句回应，不会直接把玩家抛回场景。
 - `npcLine.text` 的输出边界是 NPC 第一人称直接台词：不得带 NPC 名称、动作或“说道/答道”等叙述性包装。审批写回和 read model 会再次归一化，以兼容历史场景。
-- 确定性 fallback 会读取 `job.utterance`、焦点 NPC 关系档位和当前目标，生成带具体承接对象的回应；通用“我知道了/好的/嗯”会被 live source 判为无上下文并回退。
-- 对话选项的 fallback 采用结构化剧情上下文：当前主线摘要、目标、NPC 可说事实卡、本轮使用的事实引用和上一轮 `dialogueAct/topic` 决定 support/challenge 的核验方向；本局生成种子、幕次、当前地点/目标、行动类型、回合号和该 NPC 已有交互条数只用于选择可重放的措辞变体。流程不再用 NPC 角色名或 NPC 台词关键词分类。live 选项允许在同一上下文上生成自然的直接对白，但 candidateId/action 仍由服务端锁定；局部修复调用同一个 deterministic source。
+- 确定性 fallback 会读取 `job.utterance`、焦点 NPC 关系档位、上一轮结构化对话状态和当前目标，生成有承接对象的安全回应；任务交接只引用权威目标，不按 NPC role/name 制造具体证物或地点。通用“我知道了/好的/嗯”会被 live source 判为无上下文并回退。
+- 对话选项的 fallback 采用结构化剧情上下文：当前主线摘要、目标、NPC 可说事实卡、本轮使用的事实引用和上一轮 `dialogueAct/topic` 决定 support/challenge 的核验方向；本局生成种子、幕次、当前地点/目标、行动类型、回合号和该 NPC 已有交互条数只用于选择可重放的措辞变体。流程不再用 NPC 角色名或 NPC 台词关键词分类。live prompt 只传 candidateId/action 语义，不传 deterministic fallback 的自然语言 label，避免模型把上一轮模板误当成当前选项；模型必须先完成本轮 `npcLine`，再依据本轮台词和 `usedFactIds` 生成自然的直接对白。解析与审批会拒绝两个 talk 选项同时精确复用生成前的 fallback label，并把它作为一次内容修复，而不是直接写入 generated；candidateId/action 仍由服务端锁定，局部修复调用同一个 deterministic source。
 - 承接玩家原话时，NPC 以自己的口吻概括并回答，不得把整段玩家输入包进“你刚才问的‘……’”再反问。确定性 fallback 必须输出角色相关的可核对线索或明确下一步。
 - 焦点 NPC 的开场、正式回应与终局追问至少两句：先回应，再补充线索、保留或下一步。该质量门槛由审批器执行；live source 即使返回单句，也会整场回退为角色化的确定性表演。live prompt 同时禁止把“主线推进到第 X 幕 / 已完成 / 当前目标”系统元话术写进玩家可见旁白。
 - 确定性 fallback 会把物品取得、战斗开始/结束等规则短标签扩展为可阅读的场景句，并保留地点氛围；界面清除任务状态后遗留的重复或开头标点，避免规则标签裸露在地点旁注中。

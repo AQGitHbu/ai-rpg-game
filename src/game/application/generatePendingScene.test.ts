@@ -391,12 +391,38 @@ describe("generatePendingScene", () => {
     expect(scene.npcLine?.answeredBeatIds).toContain("player_utterance");
   });
 
-  it("真实 AI 形状的提案被审批拒绝时记录原因，不能把 fallback 当作成功", async () => {
+  it("真实 AI 形状的提案被审批拒绝时先修复重试，成功后保持 generated", async () => {
     const record = utteranceRecord();
     const repo = makeMockRepo(record);
     const logger = { warn: vi.fn() };
+    let calls = 0;
     const invalidGenerated: SceneSource = {
-      async generateScene(): Promise<SceneSourceResult> {
+      async generateScene(context): Promise<SceneSourceResult> {
+        calls += 1;
+        if (calls === 2) {
+          expect(context.repairAttempt).toEqual({ attempt: 1, reason: "approval:missing_mandatory_beat" });
+          return {
+            sceneId: "scene-repaired-generated",
+            segments: [
+              { beatId: "player_utterance", text: "你把疑问问得很直白。" },
+              { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" },
+            ],
+            npcLine: {
+              npcId: "npc_1",
+              text: "这件事我也正想说。你先把手里的线索交给我核对。",
+              emotion: "warm",
+              answeredBeatIds: ["player_utterance"],
+              usedFactIds: [],
+              usedInteractionActionIds: [],
+            },
+            objectiveLink: null,
+            choices: [
+              { candidateId: "candidate_1", label: "请把线索交代清楚" },
+              { candidateId: "candidate_2", label: "先观察现场" },
+            ],
+            source: "generated",
+          };
+        }
         return {
           sceneId: "scene-invalid-generated",
           segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
@@ -419,9 +445,14 @@ describe("generatePendingScene", () => {
     });
 
     expect(result).toBe("saved");
+    expect(calls).toBe(2);
     expect(logger.warn).toHaveBeenCalledWith("scene_generation_rejected", { code: "missing_mandatory_beat" });
+    expect(logger.warn).toHaveBeenCalledWith("scene_generation_content_retry", {
+      reason: "approval:missing_mandatory_beat",
+      attempt: 1,
+    });
     const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
-    expect(input.nextStoryState.narrative.currentScene?.source).toBe("fallback");
+    expect(input.nextStoryState.narrative.currentScene?.source).toBe("generated");
   });
 
   it("stub 提案正确应答 player_utterance 节拍 → 直接采纳（不触发 fallback）", async () => {

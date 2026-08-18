@@ -48,6 +48,29 @@ export type CurrentNpcLineContext = {
   readonly usedFactIds?: readonly string[];
 };
 
+/**
+ * 判断 live 是否把本回合之前生成的 deterministic talk label 原样带回来了。
+ * 这是结构化候选文案的精确复用保护，不读取/匹配 NPC 台词关键词；只有在
+ * 同一 NPC 的两个 talk 选项都完整复用旧候选文案时才命中。
+ */
+export function usesFallbackDialogueChoiceLabels(
+  selectable: readonly SceneChoiceCandidate[],
+  choices: readonly { readonly candidateId: string; readonly label: string }[],
+): boolean {
+  if (selectable.length < 2 || choices.length !== 2) return false;
+  const selectableById = new Map(selectable.map((candidate) => [candidate.candidateId, candidate]));
+  return choices.every((choice) => {
+    const candidate = selectableById.get(String(choice.candidateId));
+    return candidate !== undefined
+      && candidate.action.type === "talk"
+      && compactChoiceLabel(choice.label) === compactChoiceLabel(candidate.label);
+  });
+}
+
+function compactChoiceLabel(label: string): string {
+  return label.replace(/[\s“”"「」『』。！？!?，,；;：:、（）()]/gu, "");
+}
+
 /** 判断某行动是否推进/接近/搜集当前目标（objectiveTarget.entityId）。 */
 export function actionTargetsObjective(action: Action, entityId: string): boolean {
   switch (action.type) {
@@ -305,19 +328,6 @@ function buildNpcLineState(context: SceneGenerationContext): ScenePerformancePro
   };
 }
 
-function boundedUtteranceReference(utterance: string | undefined): string | null {
-  const normalized = utterance?.replace(/\s+/gu, " ").trim().replace(/[。！？!?]+$/u, "") ?? "";
-  if (normalized === "") return null;
-  const bounded = Array.from(normalized).slice(0, 36).join("");
-  return bounded === normalized ? bounded : `${bounded}…`;
-}
-
-function canReferenceCurrentUtterance(context: SceneGenerationContext): boolean {
-  const focusNpcId = context.focusNpcContext?.id;
-  const jobNpcId = context.job.focusNpcId;
-  return focusNpcId !== undefined && jobNpcId !== undefined && String(focusNpcId) === String(jobNpcId);
-}
-
 type DialogueChoiceLabels = {
   readonly support: string;
   readonly challenge: string;
@@ -351,13 +361,14 @@ function dialogueChoiceLabels(
 
   // 历史回应优先于当前事实池：同一 NPC 的第二轮必须先承接玩家上一轮
   // 的立场，再引出下一处核验点；事实卡只决定可谈范围，不覆盖对话状态。
-  if (previousAct === "challenge") {
+  const hasCurrentLineGrounding = lineContext !== undefined && referencedFacts.length > 0;
+  if (previousAct === "challenge" && !hasCurrentLineGrounding) {
     return {
       support: "你先逐点回应刚才的疑问，再把能核对的下一步说清楚。",
       challenge: "刚才的疑点还没有解开；请指出一件能让我们当场核对的证物。",
     };
   }
-  if (previousAct === "support") {
+  if (previousAct === "support" && !hasCurrentLineGrounding) {
     return {
       support: "既然你愿意继续说，就把下一步和能够核对的凭据交代清楚。",
       challenge: "我可以继续听，但每个判断都要有能落到实处的证物支撑。",
@@ -444,11 +455,8 @@ function dialogueChoiceVariantIndex(
 
 /** 同一档位的回退台词也必须承接当前话语，且只使用 NPC 第一人称。 */
 function buildContextualTierLine(context: SceneGenerationContext, tier: RelationshipTier): string {
-  const utterance = canReferenceCurrentUtterance(context)
-    ? boundedUtteranceReference(context.job.utterance)
-    : null;
-  if (utterance === null) {
-    const fixedReply = fixedDialogueReply(context);
+  if ((context.job.utterance?.trim() ?? "") === "") {
+    const fixedReply = structuredDialogueReply(context, context.previousDialogue?.selectedChoice?.dialogueAct === "challenge");
     if (fixedReply !== null) return fixedReply;
     if (context.focusNpcContext !== undefined && ["neutral", "friendly", "trusted"].includes(tier)) {
       return composeDirectNpcGreeting(context.focusNpcContext.role, context.focusNpcContext.name);
@@ -462,10 +470,10 @@ function buildContextualTierLine(context: SceneGenerationContext, tier: Relation
     }
   }
 
-  // 玩家原话是生成约束而不是 NPC 应逐字复读的稿子。根据角色给出一个可追查的
-  // 回答/拒答，既自然承接问题，又让每一轮至少落下一个具体事实或去向。
-  const role = context.focusNpcContext?.role ?? "";
-  const directReply = contextualRoleReply(role, context.previousDialogue !== undefined);
+  // 玩家原话是生成约束而不是 NPC 应逐字复读的稿子。确定性 fallback 只引用
+  // 服务端已解析的当前目标，不按角色名猜测证物或地点，避免 NPC 平白知道
+  // 一组尚未在故事中出现的细节。
+  const directReply = objectiveDialogueReply(context, false);
   switch (tier) {
     case "hostile": return `这不关你的事，我不会替任何人担保。${directReply}再逼问，我只会把门关上。`;
     case "cold": return `我只说亲眼见过的部分。${directReply}其余的，等你拿出能对上的证据再谈。`;
@@ -476,75 +484,40 @@ function buildContextualTierLine(context: SceneGenerationContext, tier: Relation
 }
 
 /**
- * 固定 support/challenge 不保存玩家原文，仍应让 NPC 回应这次立场；不能又把
- * 开场问候重播一遍。只读取同一 NPC 本回合的结构化 dialogueAct，保持最小权限。
+ * 固定选择和自由输入共用同一条结构化 fallback。它只使用当前主线已经
+ * 解析出的目标类型/实体，不从 NPC role 或对白文本匹配出“松脂/车辙”等
+ * 额外证物；具体 NPC 事实由 live performer 从 speakableFactCards 生成。
  */
-function fixedDialogueReply(context: SceneGenerationContext): string | null {
-  if (context.job.actionSummary.kind !== "talk") return null;
+function structuredDialogueReply(context: SceneGenerationContext, questioning: boolean): string | null {
+  if (context.job.actionSummary.kind !== "talk" || context.previousDialogue === undefined) return null;
   const interaction = context.focusNpcContext?.recentInteractions
     .find((entry) => entry.actionId === context.job.actionId);
   if (interaction?.dialogueAct !== "support" && interaction?.dialogueAct !== "challenge") return null;
-  const role = context.focusNpcContext?.role ?? "";
-  const questioning = interaction.dialogueAct === "challenge";
-  if (/(传讯|信使|线人)/u.test(role)) {
-    return questioning
-      ? "你怀疑得对，密信的笔迹能伪造，封蜡却骗不了人。拿腰牌去断碑谷找苏绾，她能认出送信人的刀鞘。"
-      : "既然你愿意对照证据，我就把密信的残角交给你。封蜡指向北巷旧镖局，苏绾见过送信人的刀鞘。";
-  }
-  if (/(幸存者|镖队)/u.test(role)) {
-    return questioning
-      ? "你不肯轻信是对的；车辙和血痕都还在北坡，我会带你亲自看。看完再决定该不该相信我。"
-      : "你肯把证据交我核对，我就带你去北坡。车辙、弯刀留下的划痕和血石能对上同一批人。";
-  }
-  if (/(卷宗|保管人)/u.test(role)) {
-    return questioning
-      ? "你先核对也好；缺页边缘的半枚官印能和腰牌背纹拼合，拼不上我绝不让你带走卷宗。"
-      : "既然你肯把来龙去脉查到底，这页残卷交给你。半枚官印和腰牌背纹合在一起，就能补上被抹掉的名字。";
-  }
-  if (/知情人/u.test(role)) {
-    return questioning
-      ? "你该质疑我，盟誓铁印不是谁都能信。去黑水古道尽头验印，最后一个名字会决定谁在说谎。"
-      : "既然你愿意同行，我把盟誓铁印交你验看。黑水古道尽头藏着最后一个名字，我们一起把它带回人前。";
-  }
-  if (/(更夫|守夜)/u.test(role)) {
-    return questioning
-      ? "你别信我一张嘴；酒楼后巷还有半道车轮印，你自己去看赶车人留下的左手血布。"
-      : "你肯信我一回，我就带你去酒楼后巷。无灯马车留下的车轮印和左手血布还在泥里。";
-  }
-  if (context.previousDialogue !== undefined && /(掌柜|摊主|客栈老板|老板娘|店主|酒肆|老板)/u.test(role)) {
-    return questioning
-      ? "你问得在理，我不敢拿听来的话糊弄人。镇北门外昨夜有人来过，先去看门闩上的松脂和车辙。"
-      : "你愿意先听我把话说清，我就告诉你我亲眼见过的部分。镇北门外昨夜有人来过，门闩上的松脂还没擦净。";
-  }
-  return questioning
-    ? "你先核实是对的。我能带你去看留下的痕迹，真相禁得起逐条对照。"
-    : "既然你愿意继续查，我把知道的线索交给你。先沿着留下的痕迹走，别让人抢先毁掉它。";
+  return objectiveDialogueReply(context, questioning);
 }
 
-/** 角色化的直接答复：每一轮给出一个可核对的内容和可执行的下一步。 */
-function contextualRoleReply(role: string, hasPreviousDialogue = false): string {
-  if (/(传讯|信使|线人)/u.test(role)) {
-    return "密信的落款被人刮去了一半，但封蜡是北巷镖局旧用的式样；去断碑谷找苏绾，她见过送信人的刀鞘。";
+function objectiveDialogueReply(context: SceneGenerationContext, questioning: boolean): string {
+  const lead = questioning
+    ? "你问得在理，我只说我能确认的部分。"
+    : "既然你愿意继续查，我把眼前能确认的范围说清楚。";
+  return `${lead}${objectiveHandoffLine(context)}`;
+}
+
+/** 当前任务交接只从结构化目标产生，不能由 NPC 身份或台词关键词推断。 */
+function objectiveHandoffLine(context: SceneGenerationContext): string {
+  const target = context.objectiveTarget;
+  const kind = context.story.activeQuest?.objectiveKind;
+  if (target === null || kind === undefined) {
+    return "先把眼前这条线索核对清楚，再往下判断。";
   }
-  if (/(幸存者|镖队)/u.test(role)) {
-    return "车辙在断碑谷口忽然折向北坡，袭击者用的是窄刃弯刀；我能带你去看那块留下血痕的石头。";
+  switch (kind) {
+    case "visit_location": return `接下来去${target.entityName}核对现场。`;
+    case "talk_to_npc": return `接下来找${target.entityName}把这一环问清。`;
+    case "obtain_item": return `接下来先找到${target.entityName}，拿实物核对。`;
+    case "discover_fact": return `接下来查明${target.entityName}，不要只凭传闻判断。`;
+    case "defeat_enemy": return `接下来先处理${target.entityName}，再追查后面的线索。`;
+    default: return `接下来按主线核对${target.entityName}。`;
   }
-  if (/(卷宗|保管人)/u.test(role)) {
-    return "缺页边缘压着半枚官印，和你腰牌背面的纹路能拼在一起；先把两样东西摊开，名字自然会浮出来。";
-  }
-  if (/知情人/u.test(role)) {
-    return "盟誓铁印只认当年在场的三个人，最后一个名字藏在旧路尽头；你若敢去，我会把印交给你当面验。";
-  }
-  if (/(更夫|守夜)/u.test(role)) {
-    return "子时后我看见一辆无灯马车从北巷出镇，赶车人左手缠着布；车轮压过酒楼后的泥地，痕迹还没完全散。";
-  }
-  if (/(掌柜|摊主)/u.test(role)) {
-    return "告示是个戴斗笠的人趁换灯时贴上的，他给过我一枚沾松脂的铜钱；去北巷问问谁最近收过这类松脂。";
-  }
-  if (hasPreviousDialogue && /(客栈老板|老板娘|店主|酒肆|老板)/u.test(role)) {
-    return "我只听见昨夜有人在镇北门外压低声音说话，门闩上还留着松脂；先去看车辙，再回来问我谁来过。";
-  }
-  return "我能确认的只有一件：有人故意把线索引到这里。先查清留下的痕迹，再决定该信谁。";
 }
 
 function buildStatusLine(resolvedEvent: SceneGenerationContext["job"]["resolvedEvent"]): string {

@@ -107,11 +107,19 @@ export type ObjectiveTargetRef = {
 export type PreviousDialogueContext = {
   readonly npcId: NpcId;
   readonly npcLine: string;
+  /** 本轮 NPC 台词实际引用的事实；fallback 不得凭角色名另造证物。 */
+  readonly usedFactIds?: readonly string[];
   readonly selectedChoice?: {
     readonly label?: string;
     readonly dialogueAct: DialogueAct;
     readonly topic?: DialogueTopic;
   };
+};
+
+/** 同一 pending 回合的内容修复尝试；不持久化，只用于下一次 live prompt。 */
+export type SceneGenerationRepair = {
+  readonly attempt: number;
+  readonly reason: string;
 };
 
 export type SceneGenerationContext = {
@@ -165,6 +173,8 @@ export type SceneGenerationContext = {
   readonly objectiveTarget: ObjectiveTargetRef | null;
   /** 若本轮是对当前场景 NPC 的后续回应，提供上一句原话及玩家选项。 */
   readonly previousDialogue?: PreviousDialogueContext;
+  /** AI 提案未通过内容契约时的单次修复提示。 */
+  readonly repairAttempt?: SceneGenerationRepair;
 };
 
 function buildPreviousDialogueContext(
@@ -181,6 +191,7 @@ function buildPreviousDialogueContext(
   return {
     npcId: npcLine.npcId,
     npcLine: npcLine.text,
+    ...(npcLine.usedFactIds.length === 0 ? {} : { usedFactIds: [...npcLine.usedFactIds].map(String) }),
     ...(job.selectedDialogue === undefined ? {} : {
       selectedChoice: {
         ...(job.selectedDialogue.label === undefined ? {} : { label: job.selectedDialogue.label }),

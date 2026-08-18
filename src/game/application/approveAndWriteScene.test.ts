@@ -265,6 +265,39 @@ describe("approveScenePerformance (Task 6)", () => {
     expect(labels).toContain("证物");
   });
 
+  it("生成提案复用上一轮两个 fallback 对话模板时，审批拒绝 stale_choice_template", () => {
+    const context: SceneGenerationContext = {
+      ...makeContext(),
+      previousDialogue: {
+        npcId: asNpcId("npc_1"),
+        npcLine: "我知道一些风声，但还不能替你下结论。",
+        selectedChoice: { dialogueAct: "support", topic: { kind: "general" } },
+      },
+    };
+    const result = approveScenePerformance({
+      context,
+      proposal: makeProposal({
+        npcLine: {
+          npcId: "npc_1",
+          text: "这把刀上的旧痕确实与旧案有关，但来历还要当面核对。你若要查，就先说明自己为何认得这道痕。",
+          emotion: "neutral",
+          answeredBeatIds: [],
+          usedFactIds: [],
+          usedInteractionActionIds: [],
+        },
+        choices: [
+          { candidateId: "candidate_1", label: "既然你愿意继续说，就把下一步和能够核对的凭据交代清楚。" },
+          { candidateId: "candidate_2", label: "我可以继续听，但每个判断都要有能落到实处的证物支撑。" },
+        ],
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("stale_choice_template");
+  });
+
   it("segments 为空 → 整场拒绝 empty_segments", () => {
     const result = approveScenePerformance({
       context: makeContext(),

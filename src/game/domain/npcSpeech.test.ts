@@ -42,14 +42,17 @@ describe("NPC direct speech", () => {
     expect(normalizeNpcSpeech("先进来坐。有什么需要我帮忙的，慢慢说清楚。")).toBe("先进来坐。有什么需要我帮忙的，慢慢说清楚。");
   });
 
-  it("adapts the fallback greeting to a story NPC role", () => {
-    expect(composeDirectNpcGreeting("失踪镖队幸存者", "苏绾")).toContain("旧案");
-    expect(composeDirectNpcGreeting("旧案传讯人", "顾砚")).toContain("线索");
-    expect(composeDirectNpcGreeting("旧案知情人", "陆归鸿")).toContain("盟誓铁印");
-    expect(composeDirectNpcGreeting("酒肆老板娘", "何二娘")).toContain("告示");
-    const watchman = composeDirectNpcGreeting("镇口更夫", "老白");
-    expect(watchman).toContain("无灯马车");
-    expect(watchman).not.toContain("你想问哪一段");
+  it("uses a context-free safe fallback instead of inventing facts from role/name", () => {
+    const greetings = [
+      composeDirectNpcGreeting("失踪镖队幸存者", "苏绾"),
+      composeDirectNpcGreeting("旧案传讯人", "顾砚"),
+      composeDirectNpcGreeting("旧案知情人", "陆归鸿"),
+      composeDirectNpcGreeting("酒肆老板娘", "何二娘"),
+      composeDirectNpcGreeting("镇口更夫", "老白"),
+    ];
+    expect(new Set(greetings).size).toBe(1);
+    expect(greetings[0]).toContain("只回答亲眼见过或已经核对的部分");
+    expect(greetings.join(" ")).not.toMatch(/盟誓铁印|无灯马车|告示|松脂|车辙/u);
   });
 
   it("rejects empty inquiry templates that make distinct NPCs sound identical", () => {

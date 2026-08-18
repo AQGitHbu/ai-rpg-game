@@ -309,6 +309,11 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain("玩家只能被称为“侠客”");
     expect(prompt).toContain("candidate_1");
     expect(prompt).toContain("candidate_2");
+    const candidateSection = prompt.match(/候选动作=([^\n]*)/u)?.[1] ?? "";
+    expect(candidateSection).toContain("candidate_1");
+    expect(candidateSection).toContain("candidate_2");
+    expect(candidateSection).not.toContain("请把你刚才提到的这条线索");
+    expect(candidateSection).not.toContain("哪一件原始证物");
     expect(prompt).toContain("客栈");
     expect(prompt).toContain("与老板交谈"); // 目标 label
     expect(prompt).toContain("老板"); // 焦点 NPC
@@ -320,6 +325,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain(policy.narrationInstruction);
     expect(prompt).toContain(policy.intensityInstruction);
     expect(prompt).toContain("不得输出“主线推进到第X幕”“已完成：”“当前目标：”等系统元话术");
+    expect(prompt).toContain("先完成 npcLine，再根据本轮 npcLine 的文本和 usedFactIds 生成 choices");
   });
 
   it("开局没有强制节拍时，prompt 明确要求唯一合法的 atmosphere 段，避免空 segments 降级", () => {
@@ -392,6 +398,64 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(labels).toContain("旧标签二");
   });
 
+  it("AI 复用上一轮 fallback 选项时触发内容修复，而不是直接保存 generated", async () => {
+    const logger = { warn: vi.fn() };
+    const context: SceneGenerationContext = {
+      ...makeContext(),
+      previousDialogue: {
+        npcId: asNpcId("npc_1"),
+        npcLine: "我知道一些风声，但还不能替你下结论。",
+        selectedChoice: { dialogueAct: "support", topic: { kind: "general" } },
+      },
+    };
+    const staleLabels = buildSelectableSceneCandidates(context).map((choice) => ({
+      candidateId: choice.candidateId,
+      label: choice.label,
+    }));
+    let attempts = 0;
+    const transport: AiTransport = {
+      complete: vi.fn(async () => {
+        attempts += 1;
+        return {
+          ok: true as const,
+          content: JSON.stringify({
+            segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "酒肆里的火苗轻轻一晃。" }],
+            npcLine: {
+              npcId: "npc_1",
+              text: "这把刀上的旧痕确实与旧案有关，但来历还要当面核对。你若要查，就先说明自己为何认得这道痕。",
+              emotion: "neutral",
+              answeredBeatIds: [],
+              usedFactIds: ["fact_a"],
+              usedInteractionActionIds: [],
+            },
+            objectiveLink: null,
+            choices: attempts === 1
+              ? staleLabels
+              : [
+                  { candidateId: "candidate_1", label: "这道痕确实来自我曾押镖的地方，你先把你知道的案情说清楚。" },
+                  { candidateId: "candidate_2", label: "你若只是试探我，就先说清这道痕和旧案究竟有什么关系。" },
+                ],
+          }),
+          latencyMs: 1,
+        };
+      }),
+    } as unknown as AiTransport;
+
+    const proposal = await createLiveScenePerformanceSource({
+      transport,
+      config,
+      logger: logger as never,
+    }).generateScene(context);
+
+    expect(attempts).toBe(2);
+    expect(proposal.source).toBe("generated");
+    expect(proposal.choices.map((choice) => choice.label).join(" ")).not.toContain("既然你愿意继续说");
+    expect(logger.warn).toHaveBeenCalledWith("scene_generation_content_retry", {
+      reason: "choices_stale_template",
+      attempt: 1,
+    });
+  });
+
   it("AI 返回不可解析 JSON → 回退确定性 source（source=fallback）", async () => {
     const context = makeContext();
     const transport = stubTransport(null, "这不是 JSON");
@@ -437,7 +501,56 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(result).toEqual({ ok: false, reason: "segment_unknown_beat" });
   });
 
-  it("契约失败不重复相同请求，并只记录脱敏响应结构", async () => {
+  it("契约失败时带失败原因重试一次，修复成功则保留 generated", async () => {
+    const logger = { warn: vi.fn() };
+    let attempts = 0;
+    const transport: AiTransport = {
+      complete: vi.fn(async () => {
+        attempts += 1;
+        if (attempts === 2) {
+          return {
+            ok: true as const,
+            content: JSON.stringify({
+              segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "修复后的旁白。" }],
+              npcLine: null,
+              objectiveLink: null,
+              choices: [
+                { candidateId: "candidate_1", label: "继续核对" },
+                { candidateId: "candidate_2", label: "先观察现场" },
+              ],
+            }),
+            latencyMs: 1,
+          };
+        }
+        return {
+          ok: true as const,
+          content: JSON.stringify({
+            segments: [],
+            npcLine: null,
+            objectiveLink: null,
+            choices: [],
+          }),
+          latencyMs: 1,
+        };
+      }),
+    } as unknown as AiTransport;
+
+    const proposal = await createLiveScenePerformanceSource({
+      transport,
+      config,
+      logger: logger as never,
+    }).generateScene(makeContext());
+
+    expect(proposal.source).toBe("generated");
+    expect(proposal.contentRepairAttempt).toBe(1);
+    expect(attempts).toBe(2);
+    expect(logger.warn).toHaveBeenCalledWith("scene_generation_content_retry", {
+      reason: "segments_empty",
+      attempt: 1,
+    });
+  });
+
+  it("内容修复仍失败时最多两次请求后才回退，并记录第二次的脱敏原因", async () => {
     const logger = { warn: vi.fn() };
     let attempts = 0;
     const transport: AiTransport = {
@@ -463,8 +576,9 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     }).generateScene(makeContext());
 
     expect(proposal.source).toBe("fallback");
-    expect(attempts).toBe(1);
-    expect(logger.warn).toHaveBeenCalledWith("scene_generation_invalid_data", {
+    expect(attempts).toBe(2);
+    expect(logger).toMatchObject({ warn: expect.any(Function) });
+    expect(logger.warn).toHaveBeenLastCalledWith("scene_generation_invalid_data", {
       reason: "segments_empty",
       object: true,
       keys: "choices,npcLine,objectiveLink,segments",
@@ -482,7 +596,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         beats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应玩家" }],
       }),
     });
-    const logger = { info: vi.fn() };
+    const logger = { info: vi.fn(), warn: vi.fn() };
     const transport = stubTransport({
       segments: [{ beatId: "invented", text: "不采用的旁白" }],
       npcLine: "商队离开前，有人用松脂封住了后门的锁孔。去巷口找那枚沾松脂的铜钱，它能证明谁来过。",
@@ -528,20 +642,36 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(secondLabels).toContain("证物");
   });
 
-  it("首个 AI 响应为空时不重复相同请求，直接回退", async () => {
+  it("首个 AI 响应为空时用修复提示重试一次", async () => {
     const context = makeContext();
     let attempts = 0;
     const transport: AiTransport = {
       complete: vi.fn(async () => {
         attempts += 1;
+        if (attempts === 2) {
+          return {
+            ok: true as const,
+            content: JSON.stringify({
+              segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "修复后的旁白。" }],
+              npcLine: null,
+              objectiveLink: null,
+              choices: [
+                { candidateId: "candidate_1", label: "继续核对" },
+                { candidateId: "candidate_2", label: "先观察现场" },
+              ],
+            }),
+            latencyMs: 1,
+          };
+        }
         return { ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 };
       }),
     } as unknown as AiTransport;
 
     const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
 
-    expect(attempts).toBe(1);
-    expect(proposal.source).toBe("fallback");
+    expect(attempts).toBe(2);
+    expect(proposal.source).toBe("generated");
+    expect(proposal.contentRepairAttempt).toBe(1);
   });
 
   it("AI 返回非法选项 ID → 回退确定性 source", async () => {
@@ -586,12 +716,13 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     const source = createLiveScenePerformanceSource({ transport, config });
     const proposal = await source.generateScene(context);
     expect(proposal.source).toBe("fallback");
-    expect(proposal.npcLine?.text).toContain("有人故意把线索引到这里");
+    expect(proposal.npcLine?.text).toContain("眼前这条线索");
+    expect(proposal.npcLine?.text).not.toMatch(/门闩|松脂|车辙/u);
     expect(proposal.npcLine?.text).not.toContain("你刚才问的");
     expect(proposal.npcLine?.text).not.toContain("如实答道");
   });
 
-  it("AI 返回脱离角色身份的通用问候 → 回退到角色化 NPC 台词", async () => {
+  it("AI 返回脱离上下文的通用问候 → 回退到不编造事实的安全台词", async () => {
     const baseContext = makeContext({
       presentNpcs: [{
         id: asNpcId("npc_1"), name: "顾砚", role: "旧案传讯人", publicProfile: "带着旧案线索的人",
@@ -627,7 +758,8 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
     const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
     expect(proposal.source).toBe("fallback");
-    expect(proposal.npcLine?.text).toContain("线索");
+    expect(proposal.npcLine?.text).toContain("只回答亲眼见过或已经核对的部分");
+    expect(proposal.npcLine?.text).not.toMatch(/盟誓铁印|无灯马车|告示|松脂|车辙/u);
   });
 
   it("AI 返回带叙述前缀的具体回应 → 持久化前归一化为直接台词", async () => {
@@ -701,7 +833,8 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
     const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
     expect(proposal.source).toBe("fallback");
-    expect(proposal.npcLine?.text).toContain("有人故意把线索引到这里");
+    expect(proposal.npcLine?.text).toContain("眼前这条线索");
+    expect(proposal.npcLine?.text).not.toMatch(/门闩|松脂|车辙/u);
     expect(proposal.npcLine?.text).toContain("把手里的证据带上");
   });
 });

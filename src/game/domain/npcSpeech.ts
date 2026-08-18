@@ -137,20 +137,13 @@ export function isGenericNpcInquiry(text: string): boolean {
 
 /**
  * 生成稳定的、直接面向玩家的 NPC 默认开场台词。
- * 无角色信息时保留旧兼容文案；有角色信息时必须先承接人物身份，
- * 避免幸存者、信使等剧情人物冒出与场景无关的“欢迎光临”。
+ * 这里只做无剧情语义的安全兜底；具体角色事实、地点和任务交接必须由
+ * 当前场景的结构化上下文或 live performer 提供，不能按 role/name 硬编码。
  */
-export function composeDirectNpcGreeting(npcRole?: string, npcName?: string): string {
-  const role = npcRole?.trim() ?? "";
-  if (npcName?.trim() === "顾砚") {
-    return "你也是顺着酒楼后巷的车轮印和现场线索追来的？我受韩七所托赶到这里。先把你在后巷看到的现场说清楚，我再把带来的东西交给你核对。";
+export function composeDirectNpcGreeting(_npcRole?: string, _npcName?: string): string {
+  const hasContext = (_npcRole?.trim() ?? "") !== "" || (_npcName?.trim() ?? "") !== "";
+  if (hasContext) {
+    return "有什么要问的，直接说。我只回答亲眼见过或已经核对的部分。";
   }
-  if (/(传讯|信使|线人)/u.test(role)) return "你来得正好，我手里的线索只交给正在查这桩旧案的人。先把密信和腰牌的来历对上，我们再谈下一步。";
-  if (/(幸存者|镖队)/u.test(role)) return "别急着问镖队，先让我确认你手里有没有能对上旧案的证据。我不想再让一个无辜的人替这桩旧案付出代价。";
-  if (/(卷宗|保管人)/u.test(role)) return "这份旧案牵连太深；你若真要查下去，我可以先交出我保管的那一页。缺失的印记，必须和你手里的证据一一核对。";
-  if (/知情人/u.test(role)) return "我手里的盟誓铁印能把最后一页卷宗钉在真相上；你若真要查下去，我就不再隐瞒。只是名字一旦说出口，就没有回头路了。";
-  if (/(更夫|守夜)/u.test(role)) return "昨夜子时，一辆无灯马车从北巷出镇，赶车人左手缠着血布。车轮印还留在酒楼后巷；要查就去北巷看看，别把传闻当证据。";
-  if (/(掌柜|摊主|老板|老板娘|店主|酒肆)/u.test(role)) return "你是来问镇口那张告示的吧？坐下说，我只讲自己听见的。至于谁在撒谎，你自己听完再判断。";
-  if (role !== "") return "你不是来闲逛的。把想查的事和手里的证据说清楚，我只回答能确认的那部分。";
   return "先进来坐。有什么需要我帮忙的，慢慢说清楚。";
 }

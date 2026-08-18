@@ -133,8 +133,9 @@ export async function generatePendingScene(
   }
 
   // 完整场景表演审批（Task 6）：核心结构非法（缺强制节拍/自创节拍 ID/
-  // 错误 NPC 应答/forbidden fact/他人交互/过期目标/重复选项/无推进选项）→
-  // 整场回退确定性 source，且 fallback 同样过同一审批，防止两套契约漂移。
+  // 错误 NPC 应答/forbidden fact/他人交互/过期目标/重复选项/无推进选项）时，
+  // 先给 generated proposal 一次带拒绝码的内容修复机会；修复仍失败才
+  // 回退确定性 source，且 fallback 同样过同一审批，防止两套契约漂移。
   let approved: ApprovedSceneWriteBack | null = null;
   const approvedGenerated = approveScenePerformance({
     context,
@@ -145,28 +146,64 @@ export async function generatePendingScene(
   if (approvedGenerated.ok) {
     approved = approvedGenerated;
   } else {
-    // live source 已成功取得并解析响应、但审批拒绝时必须留下可审计原因。
-    // 这和 transport/JSON failure 分开，防止浏览器只看到平滑 fallback 就把
-    // 本回合误计成真实 AI 生成。
+    // live source 已成功取得并解析响应、但审批拒绝时先给同一上下文一次
+    // 内容修复机会。修复提示携带结构化拒绝码，避免完全重复同一个请求；
+    // repairAttempt 也限制整个 pending 回合最多一次内容重试。
     if (proposal.source === "generated") {
       deps.logger?.warn("scene_generation_rejected", { code: approvedGenerated.code });
     }
-    if (!immediateAction && deps.allowDeterministicFallback === false) {
-      deps.logger?.warn("scene_generation_fallback_blocked", { reason: approvedGenerated.code });
-      return "unavailable";
+    if (!immediateAction
+      && proposal.source === "generated"
+      && context.repairAttempt === undefined
+      && proposal.contentRepairAttempt === undefined) {
+      const repairContext = {
+        ...context,
+        repairAttempt: { attempt: 1, reason: `approval:${approvedGenerated.code}` },
+      };
+      try {
+        deps.logger?.warn("scene_generation_content_retry", {
+          reason: `approval:${approvedGenerated.code}`,
+          attempt: 1,
+        });
+        const repairedProposal = await source.generateScene(repairContext);
+        if (repairedProposal.source === "generated") {
+          const repairedApproval = approveScenePerformance({
+            context: repairContext,
+            proposal: repairedProposal,
+            basedOnRevision: record.revision + 1,
+            existingCandidateEventPool: record.storyState.candidateEventPool,
+          });
+          if (repairedApproval.ok) {
+            approved = repairedApproval;
+          } else {
+            deps.logger?.warn("scene_generation_retry_rejected", { code: repairedApproval.code });
+          }
+        } else {
+          deps.logger?.warn("scene_generation_retry_fallback", { reason: approvedGenerated.code });
+        }
+      } catch {
+        deps.logger?.warn("scene_generation_retry_failed", { reason: approvedGenerated.code });
+      }
     }
-    try {
-      const fallbackProposal = await createDeterministicSceneSource().generateScene(context);
-      const approvedFallback = approveScenePerformance({
-        context,
-        proposal: fallbackProposal,
-        basedOnRevision: record.revision + 1,
-        existingCandidateEventPool: record.storyState.candidateEventPool,
-      });
-      if (!approvedFallback.ok) return "unavailable";
-      approved = approvedFallback;
-    } catch {
-      return "unavailable";
+
+    if (approved === null) {
+      if (!immediateAction && deps.allowDeterministicFallback === false) {
+        deps.logger?.warn("scene_generation_fallback_blocked", { reason: approvedGenerated.code });
+        return "unavailable";
+      }
+      try {
+        const fallbackProposal = await createDeterministicSceneSource().generateScene(context);
+        const approvedFallback = approveScenePerformance({
+          context,
+          proposal: fallbackProposal,
+          basedOnRevision: record.revision + 1,
+          existingCandidateEventPool: record.storyState.candidateEventPool,
+        });
+        if (!approvedFallback.ok) return "unavailable";
+        approved = approvedFallback;
+      } catch {
+        return "unavailable";
+      }
     }
   }
 
