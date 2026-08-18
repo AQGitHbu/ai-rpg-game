@@ -147,3 +147,35 @@ export function composeDirectNpcGreeting(_npcRole?: string, _npcName?: string): 
   }
   return "先进来坐。有什么需要我帮忙的，慢慢说清楚。";
 }
+
+/** 已参与过剧情的 NPC 待机提醒变体：只引用权威当前目标，不制造未发生的地点、证物或人物。 */
+const IDLE_REMINDER_VARIANTS: readonly string[] = [
+  "先前说定的事别忘了。{objective}要紧，有了结果再来告诉我。",
+  "我还在这儿守着。{objective}有了眉目，随时来寻我。",
+  "别在我这里耽搁太久。{objective}查清楚了，我们再从头核对。",
+];
+
+/** 无交互历史 NPC 的中性闲聊变体：不泄露未参与的主线内容。 */
+const IDLE_AMBIENT_VARIANTS: readonly string[] = [
+  "今日没什么可说的。你忙你的正事，我先招呼着。",
+  "我就在这里。亲眼见过的事，问了我才答。",
+  "忙你的去吧。真有要紧事，我不会瞒你。",
+];
+
+/**
+ * 组合非焦点 NPC 的零回合闲聊台词。
+ * 有结构化交互历史且存在权威当前目标 → 提醒变体；否则 → 中性闲聊变体。
+ * variantIndex 由调用方从结构化字段（回合数/幕次/交互条数）派生，保证确定性重放。
+ */
+export function composeIdleNpcLine(input: {
+  readonly currentObjectiveLabel: string | null;
+  readonly hasInteractionHistory: boolean;
+  readonly variantIndex: number;
+}): string {
+  const isReminder = input.hasInteractionHistory && input.currentObjectiveLabel !== null;
+  const variants = isReminder ? IDLE_REMINDER_VARIANTS : IDLE_AMBIENT_VARIANTS;
+  const template = variants[Math.abs(input.variantIndex) % variants.length]!;
+  return isReminder
+    ? template.replaceAll("{objective}", input.currentObjectiveLabel!)
+    : template;
+}

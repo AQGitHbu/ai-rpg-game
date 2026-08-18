@@ -15,7 +15,7 @@ import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
 import { buildTownView, type TownView } from "./townView";
 import { projectCombatView, type BattleView } from "./combatView";
-import { composeDirectNpcGreeting, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
+import { composeDirectNpcGreeting, composeIdleNpcLine, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 import { isObjectiveEntityReleased, isQuestObjectiveReleased } from "@/game/gameplay/rpg/worldEvolution";
 import { formatSceneChoiceLabel } from "./deterministicSceneSource";
 
@@ -31,6 +31,11 @@ export type NpcDialogueView = {
   readonly name: string;
   readonly role: string;
   readonly speechPages: readonly string[];
+  /**
+   * 契约：焦点 NPC 恒为 0 或 2 个批准选项（交接双选项）；
+   * 非焦点 NPC 恒为空数组（零回合闲聊，不含任何可提交选项）。
+   * UI 不得为非焦点 NPC 渲染可提交按钮。
+   */
   readonly choices: readonly PlayerChoiceView[];
   readonly freeInputEnabled: boolean;
   /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
@@ -92,9 +97,10 @@ export type GameSessionView = {
     readonly actions: readonly PlayerChoiceView[];
     /** 当前地点的 NPC 名单：小镇视图渲染居民/人物入口。 */
     readonly npcs: readonly {
+      readonly npcId: string;
       readonly name: string;
       readonly role: string;
-      readonly talkChoice: PlayerChoiceView;
+      readonly talkChoice: PlayerChoiceView | null;
     }[];
     /** Task 7：scale="town" 地点的受控读模型（快照/标签/已绑定建筑条目），scene 为 null。 */
     readonly town: TownView | null;
@@ -376,11 +382,17 @@ export function projectGameSessionView(
         ));
       }
     }
-    for (const npc of presentNpcs) {
+    // 正式交谈入口只属于当前权威 talk 目标；其余在场 NPC 一律零回合闲聊展示，
+    // 不再提供可提交的 ask 行动。
+    if (
+      currentObjective?.kind === "talk_to_npc"
+      && presentNpcs.some((npc) => String(npc.id) === String(currentObjective.npcId))
+    ) {
+      const objectiveNpc = presentNpcs.find((npc) => String(npc.id) === String(currentObjective.npcId))!;
       locationActions.push(choice(
-        { type: "talk", npcId: npc.id, dialogueAct: "ask" },
+        { type: "talk", npcId: objectiveNpc.id, dialogueAct: "ask" },
         revision,
-        `与${npc.name}交谈`,
+        `与${objectiveNpc.name}交谈`,
         "dialogue",
       ));
     }
@@ -525,7 +537,7 @@ export function projectGameSessionView(
       ? [projectedSceneChoices[0]!, projectedSceneChoices[1]!]
       : [];
   const sceneDialogues = new Map((scene?.npcDialogues ?? []).map((entry) => [String(entry.npcId), entry]));
-  const npcDialogues: readonly NpcDialogueView[] = presentNpcs.flatMap((npc) => {
+  const npcDialogues: readonly NpcDialogueView[] = presentNpcs.map((npc) => {
     const isFocus = focusNpcId === String(npc.id);
     const supplied = sceneDialogues.get(String(npc.id));
     const normalizedFocusLine = scene?.npcLine !== null
@@ -535,33 +547,38 @@ export function projectGameSessionView(
       ? normalizeNpcSpeech(scene.npcLine.text, npc.name)
       : null;
     const focusLine = normalizedFocusLine === "" ? null : normalizedFocusLine;
-    // 非焦点 NPC 若没有场景供给的台词，不渲染千篇一律的模板招呼面板。
-    if (!isFocus && supplied === undefined && focusLine === null) return [];
     const suppliedSpeechPages = supplied?.speechPages
       .map((page) => normalizeNpcSpeech(page, npc.name))
       .filter((page) => page !== "") ?? [];
-    // 旧场景把所有非焦点人物都存成“欢迎光临”。这类台词没有剧情上下文，
-    // 读取时按当前 NPC 身份重建，避免已存在的旧存档继续污染新演绎。
+    // 旧场景“欢迎光临”类通用问候没有剧情上下文，读取时重建
     const onlyLegacyGenericGreeting = suppliedSpeechPages.length > 0
       && suppliedSpeechPages.every((page) => page === composeDirectNpcGreeting());
-    const speechPages = suppliedSpeechPages.length > 0
-      && !onlyLegacyGenericGreeting
+    const usableSupplied = suppliedSpeechPages.length > 0 && !onlyLegacyGenericGreeting
       ? suppliedSpeechPages
-      : paginateSpeechText(focusLine ?? composeDeterministicNpcLine(npc.name, npc.role), NPC_SCENE_PAGE_CHAR_BUDGET);
-    // 非焦点 NPC 的场景台词也必须能转化为一次真实交谈：点击后提交 ask，
-    // 下一回合再由规则把该 NPC 设为焦点并生成两项回应 + 自由输入。
-    const fallbackTalkChoice = choice(
-      { type: "talk", npcId: npc.id, dialogueAct: "ask" },
-      revision,
-      `与${npc.name}交谈`,
-      "dialogue",
-    );
-    return [{
+      : null;
+    const interactionCount = npc.memory.interactionHistory.length;
+    // 非焦点 NPC 的零回合闲聊台词：参与过剧情且有权威目标 → 提醒；否则中性闲聊
+    const idleLine = composeIdleNpcLine({
+      currentObjectiveLabel: currentObjectiveRef?.label ?? null,
+      hasInteractionHistory: interactionCount > 0,
+      variantIndex: storyState.turnNumber + storyState.currentAct + interactionCount,
+    });
+    const speechPages = usableSupplied !== null
+      ? usableSupplied
+      : paginateSpeechText(
+          isFocus
+            ? focusLine ?? composeDeterministicNpcLine(npc.name, npc.role)
+            : focusLine ?? idleLine,
+          NPC_SCENE_PAGE_CHAR_BUDGET,
+        );
+    return {
       npcId: String(npc.id),
       name: npc.name,
       role: npc.role,
       speechPages,
-      choices: isFocus ? dialogueChoices : [fallbackTalkChoice],
+      // 非焦点 NPC 是零回合闲聊：不提供任何可提交选项；正式对话只能经
+      // 当前权威 talk 目标入口（交接双选项 / 行动栏目标交谈）开启。
+      choices: isFocus ? dialogueChoices : [],
       freeInputEnabled: isFocus,
       giveChoices: isFocus
         ? worldState.inventory.map((itemId) => {
@@ -578,7 +595,7 @@ export function projectGameSessionView(
             };
           })
         : [],
-    }];
+    };
   });
 
   const battle = activeBattle === null ? null : projectCombatView(worldState, activeBattle, revision);
@@ -623,14 +640,18 @@ export function projectGameSessionView(
       scale: currentLocation === undefined ? "scene" : locationScaleOf(currentLocation),
       actions: locationActions,
       npcs: presentNpcs.map((npc) => ({
+        npcId: String(npc.id),
         name: npc.name,
         role: npc.role,
-        talkChoice: choice(
-          { type: "talk", npcId: npc.id, dialogueAct: "ask" },
-          revision,
-          `与${npc.name}交谈`,
-          "dialogue",
-        ),
+        // talkChoice 只在“该 NPC 就是当前权威 talk 目标”时下发
+        talkChoice: currentObjectiveNpcId === String(npc.id)
+          ? choice(
+              { type: "talk", npcId: npc.id, dialogueAct: "ask" },
+              revision,
+              `与${npc.name}交谈`,
+              "dialogue",
+            )
+          : null,
       })),
       town: townView,
     },
