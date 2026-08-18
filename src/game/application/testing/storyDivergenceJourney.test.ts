@@ -53,7 +53,7 @@ function finalTalkNpcIdOf(ws: WorldState): string {
 async function runBranch(branch: Branch, replay: number) {
   const gameId = asGameId(`divergence_${branch.name}_${replay}`);
   let store: InMemoryRepo = createInMemoryRepo(gameId);
-  await createJourneyGame(gameId, store, "shared-branch-seed", "short");
+  await createJourneyGame(gameId, store, "q20", "short");
   const source: WorldEvolutionSource = createJourneyEvolutionSource();
   let successfulTurns = 0;
   let reloads = 0;

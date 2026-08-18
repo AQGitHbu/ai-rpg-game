@@ -17,7 +17,7 @@ import type { StoryState } from "@/game/domain/storyState";
 // ---------------------------------------------------------------------------
 describe("ackPrologue 不递增 revision，场景固定选项保持有效", () => {
   it("dialogue 场景生成后确认序章：revision 不变，焦点 NPC 对话仍投影出 2 个固定选项且 choiceMap 可解析", async () => {
-    const created = await createJourneyGame();
+    const created = await createJourneyGame(undefined, undefined, "q20");
     const repo = created.repo.repo;
 
     const current = await repo.getCurrentGame();

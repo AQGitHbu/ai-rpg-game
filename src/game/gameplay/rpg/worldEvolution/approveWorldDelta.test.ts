@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { approveWorldDelta } from "./approveWorldDelta";
+import { approveWorldDelta, actObjectiveShape, deriveActObjectives } from "./approveWorldDelta";
 import type { WorldState, NpcEntry } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -11,7 +11,7 @@ import { TRUST_ENDING_MIN_AFFINITY, DOUBT_ENDING_MAX_AFFINITY } from "@/game/app
 
 function makeWorld(): WorldState {
   const base = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+    generation: { generationId: asGenerationId("g1"), seed: "seed-a", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
     player: { name: "林惊羽", identity: "外门弟子", stats: { hp: 100, attack: 10, defense: 5 } },
     startingLocation: {
       id: asLocationId("loc_0"), name: "听雨客栈", description: "山脚小镇的客栈。", kind: "main",
@@ -469,5 +469,54 @@ describe("approveWorldDelta", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("empty_proposal");
+  });
+});
+
+describe("act objective shape variants", () => {
+  it("同 seed 同 act 结果稳定，四种变体均可达", () => {
+    expect(actObjectiveShape("seed-a", 2)).toBe(actObjectiveShape("seed-a", 2));
+    const shapes = new Set<string>();
+    for (let i = 0; i < 200; i += 1) {
+      shapes.add(actObjectiveShape(`seed-${i}`, i % 5 + 2));
+    }
+    expect(shapes).toEqual(new Set(["full_chain", "investigation_focus", "confrontation_focus", "errand_focus"]));
+  });
+
+  // 五类实体齐全的最小提案与铸 ID（deriveActObjectives 只读其存在性）
+  const FULL_PROPOSAL = {
+    newFact: { text: "t" }, newLocation: { name: "l" }, newNpc: { name: "n" },
+    newItem: { name: "i" }, newEnemy: { name: "e" },
+  } as never;
+  const FULL_IDS = {
+    factId: "f", locationId: "l", npcId: "n", itemId: "i", enemyId: "e",
+  } as never;
+
+  it("full_chain 保留全部五类目标且顺序不变", () => {
+    const kinds = deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "full_chain")!.map((objective) => objective.kind);
+    expect(kinds).toEqual(["discover_fact", "visit_location", "talk_to_npc", "obtain_item", "defeat_enemy"]);
+  });
+
+  it("investigation_focus 去掉移动与战斗，保留调查-交谈-取证", () => {
+    const kinds = deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "investigation_focus")!.map((objective) => objective.kind);
+    expect(kinds).toEqual(["discover_fact", "talk_to_npc", "obtain_item"]);
+  });
+
+  it("confrontation_focus 保留调查-交谈-对峙；errand_focus 保留移动-交谈-取证", () => {
+    expect(deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "confrontation_focus")!.map((o) => o.kind))
+      .toEqual(["discover_fact", "talk_to_npc", "defeat_enemy"]);
+    expect(deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "errand_focus")!.map((o) => o.kind))
+      .toEqual(["visit_location", "talk_to_npc", "obtain_item"]);
+  });
+
+  it("变体过滤后为空时回退全程链（提案只有 newLocation+newItem 时 confrontation_focus 无可保留项）", () => {
+    const proposal = { newLocation: { name: "l" }, newItem: { name: "i" } } as never;
+    const ids = { locationId: "l", itemId: "i" } as never;
+    const kinds = deriveActObjectives(proposal, ids, "confrontation_focus")!.map((o) => o.kind);
+    expect(kinds).toEqual(["visit_location", "obtain_item"]);
+  });
+
+  it("提案完全为空时回落 deriveAnchorObjective（可返回 null）", () => {
+    const empty = {} as never;
+    expect(deriveActObjectives(empty, {} as never, "full_chain")).toBeNull();
   });
 });

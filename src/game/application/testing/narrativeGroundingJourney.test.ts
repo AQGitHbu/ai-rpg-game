@@ -21,7 +21,7 @@ import { commitState } from "@/game/application/stateCommit";
 
 describe("叙事落地旅程（Step 2）", () => {
   it("自由输入 → 直接 NPC 回应节拍", async () => {
-    const created = await createJourneyGame(undefined, undefined, "grounding-utterance", "short");
+    const created = await createJourneyGame(undefined, undefined, "q20", "short");
     const store = created.repo;
     await advanceScene(store.repo);
 
@@ -74,7 +74,7 @@ describe("叙事落地旅程（Step 2）", () => {
 
   it("敌意与信任亲和度 → 不同回应策略/兜底线", async () => {
     async function runWithAffinity(affinity: number) {
-      const created = await createJourneyGame(undefined, undefined, `grounding-affinity-${affinity}`, "short");
+      const created = await createJourneyGame(undefined, undefined, "grounding-affinity-q20", "short");
       const store = created.repo;
       const record = await loadGameRecord(store.repo);
       if (record === null) throw new Error("记录不可用");
@@ -149,7 +149,7 @@ describe("叙事落地旅程（Step 2）", () => {
   });
 
   it("物品/任务/战斗 → 场景覆盖全部强制节拍 + objectiveLink == HUD 当前目标", async () => {
-    const created = await createJourneyGame(undefined, undefined, "grounding-beats", "short");
+    const created = await createJourneyGame(undefined, undefined, "q20", "short");
     const store = created.repo;
     await advanceScene(store.repo);
 

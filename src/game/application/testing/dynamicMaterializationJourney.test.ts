@@ -20,7 +20,7 @@ import {
 
 describe("动态具象化旅程（Step 1）", () => {
   it("开局切片 → 首次对话触发具象化 → 拾取/移动/战斗 → ≥15 回合 3 次重载抵达结局", async () => {
-    const created = await createJourneyGame(undefined, undefined, "dynamic-materialization-seed", "short");
+    const created = await createJourneyGame(undefined, undefined, "q20", "short");
     let store: InMemoryRepo = created.repo;
     let successfulTurns = 0;
     let reloadCount = 0;
@@ -143,7 +143,7 @@ describe("动态具象化旅程（Step 1）", () => {
   });
 
   it("单次 CAS 不变式：每个成功回合恰好一次规则提交，pending 阻断自由行动", async () => {
-    const created = await createJourneyGame(undefined, undefined, "dynamic-cas-seed", "short");
+    const created = await createJourneyGame(undefined, undefined, "q20", "short");
     const store = created.repo;
     await advanceScene(store.repo);
 
