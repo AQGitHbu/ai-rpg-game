@@ -303,7 +303,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.queryByRole("button", { name: "拾取染血腰牌" })).not.toBeInTheDocument();
   });
 
-  it("reopens the same NPC dialog with the generated reply after custom input finishes", async () => {
+  it("closes the old NPC dialog when custom input finishes with a story handoff", async () => {
     const base = buildView();
     const onSubmit = vi.fn();
     const { rerender } = render(<LocationSceneScreen
@@ -341,6 +341,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
         },
         narrative: {
           ...base.narrative,
+          eventKind: "dialogue",
           npcDialogues: [{
             ...base.narrative.npcDialogues[0]!,
             speechPages: ["我看见告示是子时后贴上的，贴告示的人左手有一道新伤。你若要追查，先去巷口找留下的车辙。"],
@@ -355,16 +356,11 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
-    expect(screen.getByText("我看见告示是子时后贴上的，贴告示的人左手有一道新伤。你若要追查，先去巷口找留下的车辙。")).toBeInTheDocument();
-    expect(screen.getByText("NPC回应")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("下一步");
-    expect(screen.getByRole("button", { name: "查看下一步" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "查看下一步" }));
     expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "查看下一步" })).not.toBeInTheDocument();
   });
 
-  it("shows the NPC reply before restoring the same NPC's next choices", async () => {
+  it("shows the NPC reply and restores the same NPC's next choices directly", async () => {
     const base = buildView();
     const onSubmit = vi.fn();
     const { rerender } = render(<LocationSceneScreen
@@ -386,9 +382,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
         ...base,
         revision: base.revision + 1,
         turnNumber: base.turnNumber + 1,
-        story: { ...base.story, currentObjectiveLabel: "查明秘密" },
+        story: { ...base.story, currentObjectiveLabel: "查明秘密", currentObjectiveChoiceToken: TOKENS.dialogueOne },
         narrative: {
           ...base.narrative,
+          eventKind: "dialogue",
           npcDialogues: [{
             ...base.narrative.npcDialogues[0]!,
             speechPages: ["我可以告诉你更多，但你得先说清楚自己站在哪一边。"],
@@ -401,12 +398,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    expect(screen.getByText("NPC回应")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "继续对话" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "追问线索" })).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: "继续对话" }));
     expect(screen.getByRole("button", { name: "追问线索" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "继续对话" })).not.toBeInTheDocument();
   });
 
   it("does not auto-open an NPC dialog when pending completes and a new NPC appears", async () => {

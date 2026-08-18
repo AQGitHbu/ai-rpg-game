@@ -332,6 +332,66 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain("不得返回空数组");
   });
 
+  it("后续对话 prompt 注入上一句 NPC 台词、玩家选项和结构化主题", () => {
+    const context: SceneGenerationContext = {
+      ...makeContext(),
+      previousDialogue: {
+        npcId: asNpcId("npc_1"),
+        npcLine: "北巷的车轮印还在泥里，赶车人的左手缠着血布。",
+        selectedChoice: {
+          label: "我愿意继续查。",
+          dialogueAct: "support",
+          topic: { kind: "thread", threadId: "main_thread" },
+        },
+      },
+    };
+    const prompt = buildLiveScenePrompt(context, buildSelectableSceneCandidates(context));
+    expect(prompt).toContain("上一轮 NPC 原话=北巷的车轮印还在泥里，赶车人的左手缠着血布。");
+    expect(prompt).toContain("玩家上一轮选择=我愿意继续查。");
+    expect(prompt).toContain("主题=thread");
+    expect(prompt).toContain("若有上一轮 NPC 原话，必须先直接承接");
+  });
+
+  it("解析 live 场景时按本轮 npcLine 重建 talk 选项，而不是沿用上一轮锚点", () => {
+    const previousLine = "告示的这案子，镇上没人敢多嘴。";
+    const currentLine = "墙上只留一个血写的‘崖’字。官府说是山匪所为，可江湖上谁信呢？";
+    const context: SceneGenerationContext = {
+      ...makeContext(),
+      previousDialogue: {
+        npcId: asNpcId("npc_1"),
+        npcLine: previousLine,
+        selectedChoice: { dialogueAct: "support", topic: { kind: "general" } },
+      },
+    };
+    const result = parseScenePerformanceJson(
+      {
+        segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "炉火在风里轻响。" }],
+        npcLine: {
+          npcId: "npc_1",
+          text: currentLine,
+          emotion: "neutral",
+          answeredBeatIds: [],
+          usedFactIds: [],
+          usedInteractionActionIds: [],
+        },
+        objectiveLink: null,
+        choices: [
+          { candidateId: "candidate_1", label: "旧标签一" },
+          { candidateId: "candidate_2", label: "旧标签二" },
+        ],
+      },
+      context,
+      buildSelectableSceneCandidates(context),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const labels = result.proposal.choices.map((choice) => choice.label).join(" ");
+    expect(labels).not.toContain(previousLine);
+    expect(labels).not.toContain(currentLine);
+    expect(labels).toContain("旧标签一");
+    expect(labels).toContain("旧标签二");
+  });
+
   it("AI 返回不可解析 JSON → 回退确定性 source（source=fallback）", async () => {
     const context = makeContext();
     const transport = stubTransport(null, "这不是 JSON");
@@ -458,8 +518,14 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(second.source).toBe("generated");
     expect(first.choices).toHaveLength(2);
     expect(second.choices).toHaveLength(2);
-    expect(first.choices.map((choice) => choice.label))
-      .not.toEqual(second.choices.map((choice) => choice.label));
+    const firstLabels = first.choices.map((choice) => choice.label).join(" ");
+    const secondLabels = second.choices.map((choice) => choice.label).join(" ");
+    expect(firstLabels).not.toContain("商队离开前，有人用松脂封住了后门的锁孔");
+    expect(secondLabels).not.toContain("商队离开前，有人用松脂封住了后门的锁孔");
+    expect(firstLabels).toContain("线索");
+    expect(firstLabels).toContain("证物");
+    expect(secondLabels).toContain("线索");
+    expect(secondLabels).toContain("证物");
   });
 
   it("首个 AI 响应为空时不重复相同请求，直接回退", async () => {

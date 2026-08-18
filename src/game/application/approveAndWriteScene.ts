@@ -6,7 +6,7 @@ import { buildNpcDialoguePages } from "@/game/domain/narrative";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice, semanticSummaryOf } from "@/game/domain/approvedChoice";
-import { buildEventState, buildSelectableSceneCandidates, actionTargetsObjective } from "./deterministicSceneSource";
+import { buildEventState, buildSelectableSceneCandidates, actionTargetsObjective, formatSceneChoiceLabel } from "./deterministicSceneSource";
 import { asFactId, asNpcId } from "@/game/domain/worldEntity";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
@@ -288,7 +288,9 @@ export function approveScenePerformance(input: {
   }
 
   // ── 选项校验：合法候选、两两不同、目标推进 ───────────────────────────────
-  const selectable = buildSelectableSceneCandidates(context);
+  // NPC 本轮台词是在 proposal 中才最终确定的。对白选项必须锚定这句
+  // 当前台词，不能继续使用 context.previousDialogue 的上一轮原话。
+  const selectable = buildSelectableSceneCandidates(context, npcLine === null ? undefined : npcLine);
   const candidateById = new Map(selectable.map((c) => [c.candidateId, c]));
 
   if (!Array.isArray(proposal.choices) || proposal.choices.length !== 2) {
@@ -346,13 +348,21 @@ export function approveScenePerformance(input: {
   const approvedA = createApprovedChoice({
     sceneId: proposal.sceneId,
     basedOnRevision: input.basedOnRevision,
-    label: a.label,
+    // candidateId/action 由服务端候选集决定；对白 label 可以由 live source
+    // 根据同一份故事上下文润色，审批只重新套用直接对白/动作格式契约。
+    label: approvedChoiceLabel(ca.action, a.label, ca.label, [
+      ...(npcLine === null ? [] : [npcLine.text]),
+      ...(context.previousDialogue === undefined ? [] : [context.previousDialogue.npcLine]),
+    ]),
     action: ca.action,
   });
   const approvedB = createApprovedChoice({
     sceneId: proposal.sceneId,
     basedOnRevision: input.basedOnRevision,
-    label: b.label,
+    label: approvedChoiceLabel(cb.action, b.label, cb.label, [
+      ...(npcLine === null ? [] : [npcLine.text]),
+      ...(context.previousDialogue === undefined ? [] : [context.previousDialogue.npcLine]),
+    ]),
     action: cb.action,
   });
   if (!approvedA.ok || !approvedB.ok || approvedA.choice.choiceToken === approvedB.choice.choiceToken) {
@@ -390,4 +400,25 @@ export function approveScenePerformance(input: {
     // 场景表演契约不含候选事件：池原样保留，事件生命周期由独立审批处理。
     candidateEventPool: [...input.existingCandidateEventPool],
   };
+}
+
+/**
+ * live 可以润色对白，但不能把 NPC 整句原话再次塞进玩家嘴里。这里仅做
+ * 精确重复保护，不做主题关键词匹配；候选动作和 fallback 文案仍由服务端
+ * 提供，避免把一次文案质量问题扩大成整场审批失败。
+ */
+function approvedChoiceLabel(
+  action: ApprovedChoice["action"],
+  proposedLabel: string,
+  fallbackLabel: string,
+  npcLines: readonly string[],
+): string {
+  const formatted = formatSceneChoiceLabel(action, proposedLabel);
+  if (action.type !== "talk") return formatted;
+  if (!npcLines.some((line) => compactDialogueText(formatted) === compactDialogueText(line))) return formatted;
+  return formatSceneChoiceLabel(action, fallbackLabel);
+}
+
+function compactDialogueText(text: string): string {
+  return text.replace(/[\s“”"「」『』。！？!?，,；;：:、（）()]/gu, "");
 }

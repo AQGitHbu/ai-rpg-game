@@ -27,14 +27,25 @@ function applyOutcome(
   }
 }
 
-export function reconcileQuests(ws: WorldState, deps: { readonly now: () => string }): QuestReconcileResult {
+export function reconcileQuests(
+  ws: WorldState,
+  deps: { readonly now: () => string },
+  options?: { readonly talkToNpcSession?: { readonly npcId: string; readonly completed: boolean } },
+): QuestReconcileResult {
   const events: GameEvent[] = [];
   let nextWorldState: WorldState = ws;
 
   // 1) active 任务：objective 全满足 → 完成 + 应用 onSuccess（advance_story 零世界状态变化）。
   for (const quest of ws.quests) {
     if (quest.status !== "active") continue;
-    const allSatisfied = quest.objectives.every((obj) => isObjectiveSatisfied(ws, obj));
+    const allSatisfied = quest.objectives.every((obj) => {
+      if (obj.kind === "talk_to_npc"
+        && options?.talkToNpcSession !== undefined
+        && String(obj.npcId) === options.talkToNpcSession.npcId) {
+        return options.talkToNpcSession.completed && isObjectiveSatisfied(ws, obj);
+      }
+      return isObjectiveSatisfied(ws, obj);
+    });
     if (!allSatisfied) continue;
 
     events.push({ type: "quest_completed", questId: quest.id, occurredAt: deps.now() });

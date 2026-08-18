@@ -226,6 +226,45 @@ describe("approveScenePerformance (Task 6)", () => {
     expect(result.candidateEventPool.map((c) => c.id)).toEqual(["pool-1"]);
   });
 
+  it("审批对白选项时以本轮 NPC 台词重建 label，不写入上一轮过期锚点", () => {
+    const previousLine = "告示的这案子，镇上没人敢多嘴。";
+    const currentLine = "墙上只留一个血写的‘崖’字。官府说是山匪所为，可江湖上谁信呢？";
+    const context: SceneGenerationContext = {
+      ...makeContext(),
+      previousDialogue: {
+        npcId: asNpcId("npc_1"),
+        npcLine: previousLine,
+        selectedChoice: { dialogueAct: "support", topic: { kind: "general" } },
+      },
+    };
+    const result = approveScenePerformance({
+      context,
+      proposal: makeProposal({
+        npcLine: {
+          npcId: "npc_1",
+          text: currentLine,
+          emotion: "neutral",
+          answeredBeatIds: [],
+          usedFactIds: [],
+          usedInteractionActionIds: [],
+        },
+        choices: [
+          { candidateId: "candidate_1", label: `回应老板：“${previousLine}”` },
+          { candidateId: "candidate_2", label: `追问老板：“${previousLine}”` },
+        ],
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const labels = result.choiceRegistry.map((choice) => choice.label).join(" ");
+    expect(labels).not.toContain(previousLine);
+    expect(labels).not.toContain(currentLine);
+    expect(labels).toContain("下一步");
+    expect(labels).toContain("证物");
+  });
+
   it("segments 为空 → 整场拒绝 empty_segments", () => {
     const result = approveScenePerformance({
       context: makeContext(),

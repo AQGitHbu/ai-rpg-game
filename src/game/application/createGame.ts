@@ -298,6 +298,14 @@ export async function createGame(
       ...storyState.narrative,
       mode: narrativeMode,
       generation: { status: "pending", job: jobResult.job },
+      ...(openingNpcId === undefined ? {} : {
+        dialogueSession: {
+          npcId: openingNpcId,
+          turnCount: 0,
+          requiredTurns: 2,
+          completed: false,
+        },
+      }),
     },
   };
 

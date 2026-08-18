@@ -243,7 +243,15 @@ export async function playIssuedChoice(
   const loaded = await repo.getCurrentGame();
   if (!loaded.ok || loaded.status !== "active") throw new Error("游戏记录不可用");
   const view = projectGameSessionView(loaded.record.worldState, loaded.record.storyState, loaded.record.revision, "journey-session");
-  const choice = allIssuedChoices(view).find((entry) => entry.label.includes(labelIncludes));
+  const dialogueChoices = view.narrative.npcDialogues.flatMap((dialogue) => dialogue.choices);
+  // 旅程测试只消费 opaque token；“回应/质疑”是旧版展示前缀，不再依赖
+  // 它们出现在玩家可见文案中，按对白位次选择对应的服务器选项即可。
+  const legacyDialogueChoice = labelIncludes === "回应"
+    ? dialogueChoices[0]
+    : labelIncludes === "追问" || labelIncludes === "质疑"
+      ? dialogueChoices[1]
+      : undefined;
+  const choice = legacyDialogueChoice ?? allIssuedChoices(view).find((entry) => entry.label.includes(labelIncludes));
   if (choice === undefined) throw new Error(`找不到服务器选项：${labelIncludes}`);
   const result = await playTurn(
     repo,

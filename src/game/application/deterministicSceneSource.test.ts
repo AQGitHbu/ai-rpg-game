@@ -4,6 +4,7 @@ import {
   buildEventState,
   buildSelectableSceneCandidates,
   buildSceneChoices,
+  formatSceneChoiceLabel,
 } from "./deterministicSceneSource";
 import { buildStylePolicy } from "./stylePolicy";
 import { approveScenePerformance } from "./approveAndWriteScene";
@@ -264,7 +265,7 @@ describe("deterministicSceneSource", () => {
     expect((await source.generateScene(context)).npcLine?.npcId).toBe("npc_1");
   });
 
-  it("dialogue choices use role-specific player voice and keep a second dialogue response", () => {
+  it("dialogue choices use structured facts rather than NPC role keywords", () => {
     const base = makeContext(makeJob({
       eventKind: "dialogue",
       summary: { kind: "talk", npcId: asNpcId("npc_1") },
@@ -282,10 +283,18 @@ describe("deterministicSceneSource", () => {
         : npc),
     };
     const choices = buildSelectableSceneCandidates(context);
-    expect(choices[0]?.label).toContain("镖队究竟发生了什么");
+    expect(choices[0]?.label).toContain("线索");
     expect(choices[0]?.action.type).toBe("talk");
     expect(choices[1]?.action.type).toBe("talk");
-    expect(choices[1]?.label).toContain("追问苏绾");
+    expect(choices[1]?.label).toContain("证物");
+    const sameFactsWithAnotherRole = buildSelectableSceneCandidates({
+      ...context,
+      focusNpcContext: { ...context.focusNpcContext!, role: "完全不同的身份" },
+      presentNpcs: context.presentNpcs.map((npc) => npc.id === asNpcId("npc_1")
+        ? { ...npc, role: "完全不同的身份" }
+        : npc),
+    });
+    expect(sameFactsWithAnotherRole.map((choice) => choice.label)).toEqual(choices.map((choice) => choice.label));
   });
 
   it("dialogue choice copy varies with the structured conversation context", () => {
@@ -324,8 +333,83 @@ describe("deterministicSceneSource", () => {
     expect(labelsC).toHaveLength(2);
     expect(labelsA).not.toEqual(labelsB);
     expect(labelsA).not.toEqual(labelsC);
-    expect(labelsA.join(" ")).toContain("顾砚");
-    expect(labelsB.join(" ")).toContain("顾砚");
+    expect(labelsA.join(" ")).not.toContain("顾砚");
+    expect(labelsB.join(" ")).not.toContain("顾砚");
+  });
+
+  it("后续对话选项优先承接结构化的上一轮回应状态", () => {
+    const base = makeContext(makeJob({
+      eventKind: "dialogue",
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+    }));
+    const continued: SceneGenerationContext = {
+      ...base,
+      previousDialogue: {
+        npcId: asNpcId("npc_1"),
+        npcLine: "北巷的车轮印还在泥里，赶车人的左手缠着血布。",
+        selectedChoice: { label: "我愿意继续查。", dialogueAct: "support", topic: { kind: "general" } },
+      },
+    };
+    const choices = buildSelectableSceneCandidates(continued);
+    expect(choices).toHaveLength(2);
+    const labels = choices.map((choice) => choice.label).join(" ");
+    expect(labels).not.toContain("赶车人的左手缠着血布");
+    expect(labels).toContain("下一步");
+    expect(labels).toContain("证物");
+    expect(choices.every((choice) => choice.action.type === "talk")).toBe(true);
+  });
+
+  it("后续场景用本轮新生成的 NPC 台词重建选项，不沿用上一轮台词锚点", async () => {
+    const base = makeContext(makeJob({
+      eventKind: "dialogue",
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+    }));
+    const previousLine = "告示的这案子，镇上没人敢多嘴。";
+    const currentLine = "墙上只留一个血写的‘崖’字。官府说是山匪所为，可江湖上谁信呢？";
+    const continued: SceneGenerationContext = {
+      ...base,
+      previousDialogue: {
+        npcId: asNpcId("npc_1"),
+        npcLine: previousLine,
+        selectedChoice: { dialogueAct: "support", topic: { kind: "general" } },
+      },
+    };
+
+    const choices = buildSelectableSceneCandidates(continued, currentLine);
+    expect(choices).toHaveLength(2);
+    const labels = choices.map((choice) => choice.label).join(" ");
+    expect(labels).not.toContain(previousLine);
+    expect(labels).not.toContain(currentLine);
+    expect(labels).not.toContain("江湖上谁信呢");
+    expect(labels).toContain("下一步");
+    expect(labels).toContain("证物");
+
+    const generated = await source.generateScene(continued);
+    expect(generated.npcLine?.text).toBeTruthy();
+    const generatedAnchor = generated.npcLine?.text
+      .replace(/[“”"「」『』。！？!?\s]/gu, "")
+      .slice(-14);
+    expect(generatedAnchor).toBeTruthy();
+    expect(generated.choices.every((choice) => !choice.label.includes(generatedAnchor ?? ""))).toBe(true);
+  });
+
+  it("开场选项不再按 NPC 台词关键词分类，而是使用结构化事实池", () => {
+    const context = makeContext(makeJob({
+      eventKind: "dialogue",
+      summary: { kind: "talk", npcId: asNpcId("npc_1") },
+      focusNpcId: "npc_1",
+    }));
+    const currentLine = "客官，代写书信，还是问路？这镇子不大，但消息倒是不少。";
+    const labels = buildSelectableSceneCandidates(context, currentLine)
+      .map((choice) => choice.label)
+      .join(" ");
+
+    expect(labels).not.toContain(currentLine);
+    expect(labels).not.toContain("路这镇子不大，但消息倒是不少");
+    expect(labels).toContain("线索");
+    expect(labels).toContain("证物");
   });
 
   it("keeps a player utterance addressed to the original NPC during a handoff without quoting it back", async () => {
@@ -364,8 +448,8 @@ describe("deterministicSceneSource", () => {
 
     const choices = buildSelectableSceneCandidates(context);
     expect(choices.map((choice) => choice.action)).toEqual([
-      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" },
-      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "challenge" },
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support", topic: { kind: "general" } },
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "challenge", topic: { kind: "general" } },
     ]);
     expect(choices.map((choice) => choice.label).join(" ")).toMatch(/真相/);
   });
@@ -509,6 +593,27 @@ describe("deterministicSceneSource", () => {
     expect(actions.some((a) => a?.type === "move" && String(a.locationId) === "loc_2")).toBe(true);
   });
 
+  it("玩家对白不带角色前缀，攻击动作使用括号且仍绑定真实 attack action", () => {
+    const talkLabel = formatSceneChoiceLabel(
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" },
+      "回应孙瘸子：“请把这件事的来龙去脉说清楚。”",
+    );
+    expect(talkLabel).toBe("请把这件事的来龙去脉说清楚。");
+
+    const context = makeContext(makeJob({ eventKind: "travel" }));
+    const choices = buildSelectableSceneCandidates({
+      ...context,
+      legalActionCandidates: [
+        { kind: "attack", label: "挑战黑衣人", targetId: "enemy_1" },
+        { kind: "move", label: "前往街道", targetId: "loc_2" },
+      ],
+    });
+    expect(choices[0]).toMatchObject({
+      label: "（拔出兵器，向黑衣人发起攻击）",
+      action: { type: "attack", enemyId: "enemy_1" },
+    });
+  });
+
   it("active battle fallback proposes two distinct executable battle actions", async () => {
     const context: SceneGenerationContext = {
       ...makeContext(makeJob({ eventKind: "battle" })),
@@ -545,7 +650,7 @@ describe("deterministicSceneSource", () => {
     const result = await source.generateScene(context);
     const selectable = buildSelectableSceneCandidates(context);
     const chosenLabels = result.choices.map((choice) => selectable.find((c) => c.candidateId === choice.candidateId)?.label);
-    expect(chosenLabels).toContain("前往街道");
+    expect(chosenLabels).toContain("（前往街道）");
   });
 
   // ── Task 5 Step 1 + 4：档位感知台词 + 玩家原话应答 ──────────────────────

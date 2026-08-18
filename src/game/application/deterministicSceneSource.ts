@@ -1,9 +1,9 @@
 import type { SceneSource, SceneSourceResult, ScenePerformanceSegment, ScenePerformanceProposal } from "./sceneSource";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { NarrativeEmotion, NarrativeEventState } from "@/game/domain/narrative";
-import type { Action } from "@/game/domain/action";
+import type { Action, DialogueTopic } from "@/game/domain/action";
 import { semanticSummaryOf } from "@/game/domain/approvedChoice";
-import { asLocationId, asNpcId } from "@/game/domain/worldEntity";
+import { asEnemyId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import type { RelationshipTier } from "@/game/domain/relationship";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { composeDirectNpcGreeting, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
@@ -39,6 +39,15 @@ export type SceneChoiceCandidate = {
   readonly action: Action;
 };
 
+/**
+ * 当前 NPC 台词的结构化投影。选项生成只消费事实引用，不再扫描台词文本
+ * 猜测“这是问路/告示/住店”等主题；旧的 string 入参仅为兼容历史测试/调用者。
+ */
+export type CurrentNpcLineContext = {
+  readonly text: string;
+  readonly usedFactIds?: readonly string[];
+};
+
 /** 判断某行动是否推进/接近/搜集当前目标（objectiveTarget.entityId）。 */
 export function actionTargetsObjective(action: Action, entityId: string): boolean {
   switch (action.type) {
@@ -56,7 +65,10 @@ export function actionTargetsObjective(action: Action, entityId: string): boolea
  * - dialogue 事件 → 焦点 NPC 的固定 support/challenge 两选项；
  * - 其余事件 → legalActionCandidates 去重映射（candidate_1..N）。
  */
-export function buildSelectableSceneCandidates(context: SceneGenerationContext): readonly SceneChoiceCandidate[] {
+export function buildSelectableSceneCandidates(
+  context: SceneGenerationContext,
+  currentNpcLine?: string | CurrentNpcLineContext,
+): readonly SceneChoiceCandidate[] {
   const event = buildEventState(context);
   // 结局对已经由规则铸造后，玩家必须以两个明确、互斥的对白方向作出
   // 最后决定。不能把“观察”或“挑战敌人”伪装成结局选择，更不能让任意
@@ -67,13 +79,13 @@ export function buildSelectableSceneCandidates(context: SceneGenerationContext):
     return [
       {
         candidateId: "candidate_1",
-        label: `回应${npc.name}：“我愿意和你一起把证据摊开，让该承担的人面对真相。”`,
-        action: { type: "talk", npcId: npc.id, dialogueAct: "support" },
+        label: "我愿意和你一起把证据摊开，让该承担的人面对真相。",
+        action: { type: "talk", npcId: npc.id, dialogueAct: "support", topic: dialogueTopicFor(context, false) },
       },
       {
         candidateId: "candidate_2",
-        label: `质疑${npc.name}：“我会核对每一份证据，在确认之前不会把结论交给任何人。”`,
-        action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" },
+        label: "我会核对每一份证据，在确认之前不会把结论交给任何人。",
+        action: { type: "talk", npcId: npc.id, dialogueAct: "challenge", topic: dialogueTopicFor(context, true) },
       },
     ];
   }
@@ -95,11 +107,11 @@ export function buildSelectableSceneCandidates(context: SceneGenerationContext):
   if (dialogueNpcId !== undefined) {
     const npc = context.presentNpcs.find((entry) => String(entry.id) === String(dialogueNpcId));
     if (npc === undefined) return [];
-    const dialogueLabels = dialogueChoiceLabels(context, npc);
+    const dialogueLabels = dialogueChoiceLabels(context, npc, currentNpcLine);
     const dialogueCandidate: SceneChoiceCandidate = {
       candidateId: "candidate_1",
       label: dialogueLabels.support,
-      action: { type: "talk", npcId: npc.id, dialogueAct: "support" },
+      action: { type: "talk", npcId: npc.id, dialogueAct: "support", topic: dialogueTopicFor(context, false) },
     };
     if (event.kind === "dialogue") {
       // 已经由玩家主动点开的人物对话应保留完整的支持/质疑两项回应，
@@ -110,16 +122,17 @@ export function buildSelectableSceneCandidates(context: SceneGenerationContext):
         {
           candidateId: "candidate_2",
           label: dialogueLabels.challenge,
-          action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" },
+          action: { type: "talk", npcId: npc.id, dialogueAct: "challenge", topic: dialogueTopicFor(context, true) },
         },
       ];
     }
     const nonDialogueCandidate = context.legalActionCandidates
-      .map(actionFromLegalCandidate)
-      .filter((action): action is Action => action !== null && action.type !== "talk")
-      .map((action): SceneChoiceCandidate => ({
+      .map((candidate) => ({ candidate, action: actionFromLegalCandidate(candidate) }))
+      .filter((entry): entry is { candidate: SceneGenerationContext["legalActionCandidates"][number]; action: Action } =>
+        entry.action !== null && entry.action.type !== "talk")
+      .map(({ candidate, action }): SceneChoiceCandidate => ({
         candidateId: "candidate_2",
-        label: nonDialogueChoiceLabel(action),
+        label: nonDialogueChoiceLabel(action, candidate.label),
         action,
       }))[0];
     // 对话场景仍必须给出两种不同输入类型；buildChoiceMap 同源允许
@@ -141,7 +154,13 @@ export function buildSelectableSceneCandidates(context: SceneGenerationContext):
     const key = semanticSummaryOf(action);
     if (seen.has(key)) continue;
     seen.add(key);
-    candidates.push({ candidateId: `candidate_${candidates.length + 1}`, label: candidate.label, action });
+    candidates.push({
+      candidateId: `candidate_${candidates.length + 1}`,
+      label: action.type === "attack"
+        ? nonDialogueChoiceLabel(action, candidate.label)
+        : formatSceneChoiceLabel(action, candidate.label),
+      action,
+    });
   }
   return candidates;
 }
@@ -150,12 +169,13 @@ export function createDeterministicSceneSource(): SceneSource {
   return {
     async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
       const sceneId = `scene-${context.job.jobId}`;
+      const npcLine = buildNpcLineState(context);
       return {
         sceneId,
         segments: buildSegments(context),
-        npcLine: buildNpcLineState(context),
+        npcLine,
         objectiveLink: buildObjectiveLink(context),
-        choices: buildSceneChoices(context),
+        choices: buildSceneChoices(context, npcLine === null ? undefined : npcLine),
         source: "fallback",
       };
     },
@@ -303,131 +323,89 @@ type DialogueChoiceLabels = {
   readonly challenge: string;
 };
 
-type DialogueChoiceVariant = {
-  readonly support: string;
-  readonly challenge: string;
-};
-
 /**
- * 角色只决定可用的语义池，具体采用哪一组由本局种子 + 本回合结构化上下文决定。
- * 不读取玩家原文，也不改写 NPC 名称；因此同一局可重放，不同回合/不同开局不会
- * 机械重播同一组 support/challenge 文案。
+ * 选项 fallback 只从结构化剧情状态生成：当前任务、NPC 可说事实、上一轮
+ * 的结构化回应状态。它不读取 NPC 台词文本，也不按角色名/关键词分类。
+ * 正常 live 路径会在同一份上下文上生成自然措辞；candidateId/action 仍由
+ * 服务端保留，因而 AI 不能借措辞越权改变剧情动作。
  */
 function dialogueChoiceLabels(
   context: SceneGenerationContext,
   npc: SceneGenerationContext["presentNpcs"][number],
+  currentNpcLine?: string | CurrentNpcLineContext,
 ): DialogueChoiceLabels {
-  const role = npc.role;
-  let variants: readonly DialogueChoiceVariant[] = [
+  const lineContext = typeof currentNpcLine === "string"
+    ? { text: currentNpcLine, usedFactIds: [] as readonly string[] }
+    : currentNpcLine;
+  const focusFacts = context.focusNpcContext?.speakableFactCards ?? [];
+  const sceneFacts = [...context.sceneVisibleFacts, ...context.publicWorldFacts];
+  const factsById = new Map<string, FactCardLike>();
+  for (const fact of [...focusFacts, ...sceneFacts]) factsById.set(String(fact.factId), fact);
+  const referencedFacts = lineContext?.usedFactIds
+    ?.map((factId) => factsById.get(String(factId)))
+    .filter((fact): fact is FactCardLike => fact !== undefined) ?? [];
+  const groundingFacts = referencedFacts.length > 0 ? referencedFacts : focusFacts;
+  const hasGrounding = groundingFacts.length > 0;
+  const hasQuest = context.story.activeQuest !== undefined;
+  const previousAct = context.previousDialogue?.selectedChoice?.dialogueAct;
+
+  // 历史回应优先于当前事实池：同一 NPC 的第二轮必须先承接玩家上一轮
+  // 的立场，再引出下一处核验点；事实卡只决定可谈范围，不覆盖对话状态。
+  if (previousAct === "challenge") {
+    return {
+      support: "你先逐点回应刚才的疑问，再把能核对的下一步说清楚。",
+      challenge: "刚才的疑点还没有解开；请指出一件能让我们当场核对的证物。",
+    };
+  }
+  if (previousAct === "support") {
+    return {
+      support: "既然你愿意继续说，就把下一步和能够核对的凭据交代清楚。",
+      challenge: "我可以继续听，但每个判断都要有能落到实处的证物支撑。",
+    };
+  }
+  if (hasGrounding) {
+    const variants: readonly DialogueChoiceLabels[] = [
+      {
+        support: "请把你刚才提到的这条线索的来历、时间和地点说清楚，我好按眼前的主线核对。",
+        challenge: "这条线索还不能直接下结论；哪一件原始证物能把它和眼前的主线联系起来？",
+      },
+      {
+        support: "把这条线索的来历、时间和地点交代清楚，我会按眼前的主线逐一核对。",
+        challenge: "这还只是一个线索；请指出能把它和眼前主线对上的原件或证物。",
+      },
+    ];
+    return variants[dialogueChoiceVariantIndex(context, npc, variants.length)] ?? variants[0]!;
+  }
+  if (hasQuest) {
+    return {
+      support: "先把眼前主线下一步要核对的人、地点或物证说清楚，我就按它查下去。",
+      challenge: "眼前的主线还不能只凭传闻下结论；哪一件原件能证明你的说法？",
+    };
+  }
+  // 只剩通用结构化兜底，不尝试从角色名或 NPC 台词猜主题。
+  const variants: readonly DialogueChoiceLabels[] = [
     {
-      support: "我想先听你把眼前的事说清楚，再决定是否相信你。",
-      challenge: "我会逐项核对线索；你凭什么确定它们指向同一个人？",
+      support: "请把这件事的来历和下一步说清楚，我按能核对的线索查下去。",
+      challenge: "这还不足以下结论；请指出一件能当场核对的原件或证物。",
     },
     {
-      support: "把你掌握的那一段先说出来，我们对着眼前的证据一步步核实。",
-      challenge: "这条判断还缺一环；先说清你亲眼见到什么，别急着替旧案下结论。",
-    },
-    {
-      support: "我愿意继续查，但我们得从能落地核对的线索开始。",
-      challenge: "我不会只凭传闻认人；哪一件证物能证明你说的是真的？",
+      support: "先交代清楚你掌握的事实，以及我接下来该去核对什么。",
+      challenge: "我不会只凭一句话判断；什么证据能证明你的说法？",
     },
   ];
-  if (/(更夫|守夜)/u.test(role)) {
-    variants = [
-      {
-        support: "你亲眼见到的风声究竟指向哪里？请把昨夜那一段说清楚。",
-        challenge: "昨夜的车影未必就是答案；你凭什么断定它和旧案有关？",
-      },
-      {
-        support: "先把你在子时看见的细节讲全，我会把车辙和血布一一记下。",
-        challenge: "你只看见一辆车，怎么排除这是有人故意留下的假线索？",
-      },
-      {
-        support: "我想知道你记住了哪些细节，尤其是车轮印和赶车人的去向。",
-        challenge: "夜色里的见闻容易出错；有什么痕迹能让这段传闻经得起核查？",
-      },
-    ];
-  } else if (/(传讯|信使|线人)/u.test(role)) {
-    variants = [
-      {
-        support: "你带来的线索是不是和失踪镖队有关？我愿意拿出证据和你对照。",
-        challenge: "我会逐项核对线索；你凭什么确定它们指向同一个人？",
-      },
-      {
-        support: "把密信和腰牌的来历先对上，我们再判断它们是否指向失踪镖队。",
-        challenge: "你的消息还缺证据链；先说清哪一处能证明它和旧案相连。",
-      },
-      {
-        support: "你若真带来了旧案线索，就把能核对的那一件先交出来。",
-        challenge: "别让传闻替你作证；这份线索从谁手里来，又经过了什么地方？",
-      },
-    ];
-  } else if (/(幸存者|镖队)/u.test(role)) {
-    variants = [
-      {
-        support: "你亲眼见到的镖队究竟发生了什么？我会先把手里的证据交给你核对。",
-        challenge: `追问${npc.name}：“你亲眼见到的那一段，有什么证物能让我先核对？”`,
-      },
-      {
-        support: "先把镖队失踪前后的经过讲清楚，我们对照车辙和留下的物件。",
-        challenge: `追问${npc.name}：“你说袭击者来自北坡，可现场哪一处能证明这点？”`,
-      },
-      {
-        support: "我愿意听你把经过还原，但每一步都要和手里的证据对得上。",
-        challenge: `追问${npc.name}：“你记住的究竟是亲眼所见，还是后来听来的说法？”`,
-      },
-    ];
-  } else if (/(卷宗|保管人)/u.test(role)) {
-    variants = [
-      {
-        support: "你保管的那一页能补上旧案的缺口吗？请把来龙去脉说清楚。",
-        challenge: "这页卷宗是否真的属于旧案？我会先核对印记和缺页边缘。",
-      },
-      {
-        support: "先把缺页的来历和经手人说清楚，我们再看它能补上哪一处空白。",
-        challenge: "不能因为卷宗残缺就替它补结论；哪一枚印记能证明你的说法？",
-      },
-      {
-        support: "我愿意对照你保管的记录，但每个名字都要有原件或痕迹支撑。",
-        challenge: "你保管它这么久，为什么现在才拿出来？先解释这段时间线。",
-      },
-    ];
-  } else if (/知情人/u.test(role)) {
-    variants = [
-      {
-        support: "盟誓铁印是不是能指向幕后主使？我愿意把卷宗交给你核对。",
-        challenge: "盟誓铁印真的能指向幕后主使吗？我会先核对它留下的痕迹。",
-      },
-      {
-        support: "把盟誓铁印和卷宗放在一起，我们看看它究竟能证明谁在场。",
-        challenge: "铁印只能证明接触过它的人；你凭什么把它和幕后主使连起来？",
-      },
-      {
-        support: "我愿意拿卷宗和你对照，但先把铁印的来历与经手人说清楚。",
-        challenge: "别把一枚印记当成完整答案；还有哪条线索能和它互相印证？",
-      },
-    ];
-  } else if (/(掌柜|摊主)/u.test(role)) {
-    variants = [
-      {
-        support: "你听见的消息是不是和镇口告示有关？请把来历和时间说清楚。",
-        challenge: "你听来的消息未必可靠；谁能证明告示和这件事发生在同一时间？",
-      },
-      {
-        support: "先把告示出现的时辰和来人讲清楚，我们再对照手里的线索。",
-        challenge: "你只听见一句话，怎么确认没有漏掉说话人的身份和目的？",
-      },
-      {
-        support: "我愿意听你还原那条消息，但时间、地点和经手人一个都不能少。",
-        challenge: "别把街头传言当证据；你还记得什么能让它落到具体的人身上？",
-      },
-    ];
-  }
   const variant = variants[dialogueChoiceVariantIndex(context, npc, variants.length)] ?? variants[0]!;
-  return {
-    support: `回应${npc.name}：“${variant.support}”`,
-    challenge: `追问${npc.name}：“${variant.challenge}”`,
-  };
+  return variant;
+}
+
+type FactCardLike = { readonly factId: string; readonly text: string };
+
+function dialogueTopicFor(context: SceneGenerationContext, secondary: boolean): DialogueTopic {
+  if (!secondary) return { kind: "general" };
+  const threadId = context.story.unresolvedThreadSummaries[0];
+  if (threadId !== undefined && threadId.trim() !== "") return { kind: "thread", threadId };
+  const questId = context.objectiveTransition.after?.questId;
+  if (questId !== undefined) return { kind: "quest", questId: asQuestId(String(questId)) };
+  return { kind: "general" };
 }
 
 function dialogueChoiceVariantIndex(
@@ -487,7 +465,7 @@ function buildContextualTierLine(context: SceneGenerationContext, tier: Relation
   // 玩家原话是生成约束而不是 NPC 应逐字复读的稿子。根据角色给出一个可追查的
   // 回答/拒答，既自然承接问题，又让每一轮至少落下一个具体事实或去向。
   const role = context.focusNpcContext?.role ?? "";
-  const directReply = contextualRoleReply(role);
+  const directReply = contextualRoleReply(role, context.previousDialogue !== undefined);
   switch (tier) {
     case "hostile": return `这不关你的事，我不会替任何人担保。${directReply}再逼问，我只会把门关上。`;
     case "cold": return `我只说亲眼见过的部分。${directReply}其余的，等你拿出能对上的证据再谈。`;
@@ -533,13 +511,18 @@ function fixedDialogueReply(context: SceneGenerationContext): string | null {
       ? "你别信我一张嘴；酒楼后巷还有半道车轮印，你自己去看赶车人留下的左手血布。"
       : "你肯信我一回，我就带你去酒楼后巷。无灯马车留下的车轮印和左手血布还在泥里。";
   }
+  if (context.previousDialogue !== undefined && /(掌柜|摊主|客栈老板|老板娘|店主|酒肆|老板)/u.test(role)) {
+    return questioning
+      ? "你问得在理，我不敢拿听来的话糊弄人。镇北门外昨夜有人来过，先去看门闩上的松脂和车辙。"
+      : "你愿意先听我把话说清，我就告诉你我亲眼见过的部分。镇北门外昨夜有人来过，门闩上的松脂还没擦净。";
+  }
   return questioning
     ? "你先核实是对的。我能带你去看留下的痕迹，真相禁得起逐条对照。"
     : "既然你愿意继续查，我把知道的线索交给你。先沿着留下的痕迹走，别让人抢先毁掉它。";
 }
 
 /** 角色化的直接答复：每一轮给出一个可核对的内容和可执行的下一步。 */
-function contextualRoleReply(role: string): string {
+function contextualRoleReply(role: string, hasPreviousDialogue = false): string {
   if (/(传讯|信使|线人)/u.test(role)) {
     return "密信的落款被人刮去了一半，但封蜡是北巷镖局旧用的式样；去断碑谷找苏绾，她见过送信人的刀鞘。";
   }
@@ -557,6 +540,9 @@ function contextualRoleReply(role: string): string {
   }
   if (/(掌柜|摊主)/u.test(role)) {
     return "告示是个戴斗笠的人趁换灯时贴上的，他给过我一枚沾松脂的铜钱；去北巷问问谁最近收过这类松脂。";
+  }
+  if (hasPreviousDialogue && /(客栈老板|老板娘|店主|酒肆|老板)/u.test(role)) {
+    return "我只听见昨夜有人在镇北门外压低声音说话，门闩上还留着松脂；先去看车辙，再回来问我谁来过。";
   }
   return "我能确认的只有一件：有人故意把线索引到这里。先查清留下的痕迹，再决定该信谁。";
 }
@@ -589,8 +575,11 @@ function buildObjectiveLink(context: SceneGenerationContext): ScenePerformancePr
 }
 
 /** 两个不同的合法选项：优先选择推进当前目标的行动，再保底任意合法候选。 */
-export function buildSceneChoices(context: SceneGenerationContext): ScenePerformanceProposal["choices"] {
-  const selectable = buildSelectableSceneCandidates(context);
+export function buildSceneChoices(
+  context: SceneGenerationContext,
+  currentNpcLine?: string | CurrentNpcLineContext,
+): ScenePerformanceProposal["choices"] {
+  const selectable = buildSelectableSceneCandidates(context, currentNpcLine);
   if (selectable.length < 2) {
     throw new Error("scene fallback requires at least two legal action candidates");
   }
@@ -667,6 +656,9 @@ export function actionFromLegalCandidate(
     case "talk": return candidate.targetId === undefined
       ? null
       : { type: "talk", npcId: asNpcId(candidate.targetId), dialogueAct: "ask" };
+    case "attack": return candidate.targetId === undefined
+      ? null
+      : { type: "attack", enemyId: asEnemyId(candidate.targetId) };
     case "battle_action": return candidate.targetId === "attack"
       || candidate.targetId === "guard"
       || candidate.targetId === "flee"
@@ -675,13 +667,42 @@ export function actionFromLegalCandidate(
   }
 }
 
-function nonDialogueChoiceLabel(action: Action): string {
+function nonDialogueChoiceLabel(action: Action, sourceLabel?: string): string {
+  const label = (() => {
   switch (action.type) {
     case "explore": return "默默不作声，先观察四周";
     case "move": return "不再追问，离开这里";
     case "take_item": return "暂不回应，先拾取眼前物品";
     case "investigate": return "暂不回应，先调查现场";
+    case "attack": {
+      const target = sourceLabel?.replace(/^挑战/u, "").trim() || "眼前的敌人";
+      return `（拔出兵器，向${target}发起攻击）`;
+    }
     case "battle_action": return "暂不回应，先做好应战准备";
     default: return "暂不回应，先做自己的事";
   }
+  })();
+  return formatSceneChoiceLabel(action, label);
+}
+
+/**
+ * 场景选项的可见文案契约：对白就是主角要说的话，行动用全角括号包裹。
+ * 审批层也会调用它，避免 live source 用角色前缀或未包裹的行动文案绕过
+ * 这个契约。
+ */
+export function formatSceneChoiceLabel(action: Action, label: string): string {
+  const trimmed = label.trim();
+  if (action.type === "talk") return stripDialoguePrefix(trimmed);
+  if (/^（.*）$/u.test(trimmed)) return trimmed;
+  const withoutAsciiWrapper = trimmed.match(/^\((.*)\)$/u)?.[1]?.trim() ?? trimmed;
+  return `（${withoutAsciiWrapper}）`;
+}
+
+function stripDialoguePrefix(label: string): string {
+  const withoutPrefix = label.replace(/^(?:回应|追问|质疑|询问)[^：:]{0,24}[：:]\s*/u, "").trim();
+  if ((withoutPrefix.startsWith("“") && withoutPrefix.endsWith("”"))
+    || (withoutPrefix.startsWith("\"") && withoutPrefix.endsWith("\""))) {
+    return withoutPrefix.slice(1, -1).trim();
+  }
+  return withoutPrefix;
 }

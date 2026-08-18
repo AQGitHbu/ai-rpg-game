@@ -101,6 +101,43 @@ describe("projectGameSessionView", () => {
     expect(view.story.currentObjectiveChoiceToken).toBe(view.currentLocation.npcs[0]?.talkChoice.choiceToken);
   });
 
+  it("does not mark a two-turn dialogue objective complete after only the first response", () => {
+    const wsWithMetNpc: WorldState = {
+      ...ws,
+      npcs: ws.npcs.map((entry) => ({ ...entry, met: true })),
+      quests: [{
+        id: asQuestId("quest_0"),
+        name: "查明真相",
+        description: "查清矿坑的真相",
+        objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_1") }],
+        onSuccess: { kind: "advance_story" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 1,
+        status: "active",
+      }],
+    };
+    const firstResponseStory: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        dialogueSession: { npcId: asNpcId("npc_1"), turnCount: 1, requiredTurns: 2, completed: false },
+      },
+    };
+    const firstView = projectGameSessionView(wsWithMetNpc, firstResponseStory, 0, "test-ending-session");
+    expect(firstView.quests[0]?.objectives).toEqual([{ label: "与老板交谈", completed: false }]);
+
+    const completedView = projectGameSessionView(wsWithMetNpc, {
+      ...firstResponseStory,
+      narrative: {
+        ...firstResponseStory.narrative,
+        dialogueSession: { npcId: asNpcId("npc_1"), turnCount: 2, requiredTurns: 2, completed: true },
+      },
+    }, 0, "test-ending-session");
+    expect(completedView.quests[0]?.objectives).toEqual([{ label: "与老板交谈", completed: true }]);
+  });
+
   it("exposes null current objective label when no active quest exists", () => {
     const view = projectGameSessionView(ws, ss, 0, "test-ending-session");
     expect(view.story.currentObjectiveLabel).toBeNull();
@@ -269,8 +306,8 @@ describe("projectGameSessionView", () => {
     expect(newNpc?.freeInputEnabled).toBe(true);
     expect(newNpc?.choices).toHaveLength(2);
     expect(newNpc?.choices.map((entry) => entry.label)).toEqual([
-      "回应传讯人：“我愿意先把手里的证据交给你核对，请你把知道的那一段说清楚。”",
-      "追问传讯人：“我会逐项核对线索；你凭什么确定它们指向同一个人？”",
+      "我愿意先把手里的证据交给你核对，请你把知道的那一段说清楚。",
+      "我会逐项核对线索；你凭什么确定它们指向同一个人？",
     ]);
     expect(view.narrative.choices).toHaveLength(0);
     expect(view.story.currentObjectiveLabel).toBe("与传讯人交谈");

@@ -34,7 +34,7 @@ describe("createApprovedChoice", () => {
     expect(choice.basedOnRevision).toBe(7);
     expect(choice.label).toBe("问铁匠烟熏鱼的做法");
     expect(choice.action).toEqual(TALK_ACTION);
-    expect(choice.semanticSummary).toBe("talk:npc_blacksmith_01:ask");
+    expect(choice.semanticSummary).toBe("talk:npc_blacksmith_01:ask:general");
     expect(choice.choiceToken).toBe(deriveChoiceToken({
       sceneId: "scene-abc",
       basedOnRevision: 7,
@@ -120,9 +120,9 @@ describe("deriveChoiceToken", () => {
 
 describe("semanticSummaryOf", () => {
   it("talk 摘要派生自 npc + act", () => {
-    expect(semanticSummaryOf(TALK_ACTION)).toBe("talk:npc_blacksmith_01:ask");
+    expect(semanticSummaryOf(TALK_ACTION)).toBe("talk:npc_blacksmith_01:ask:general");
     expect(semanticSummaryOf({ ...TALK_ACTION, dialogueAct: "threaten" as const }))
-      .toBe("talk:npc_blacksmith_01:threaten");
+      .toBe("talk:npc_blacksmith_01:threaten:general");
   });
 
   it("同类无参行动摘要稳定且不同类互异", () => {

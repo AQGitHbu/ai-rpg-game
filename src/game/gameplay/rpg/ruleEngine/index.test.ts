@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { ruleEngine, resolveTurn } from "./index";
 import { createInitialWorldState, appendNpc, appendLocation, type LocationEntry, type NpcEntry, type EnemyEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId, asEnemyId, type QuestId, type EndingId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, type QuestId, type EndingId } from "@/game/domain/worldEntity";
 import { asTurnId } from "@/game/domain/events";
 
 describe("ruleEngine facade", () => {
@@ -54,6 +54,62 @@ describe("ruleEngine facade", () => {
     if (result.ok) {
       expect(result.nextStoryState.tension).toBe(33); // 30 + 3 (npc_met)
     }
+  });
+
+  it("对话会话至少连续两轮后才完成 talk_to_npc 目标", () => {
+    const npc: NpcEntry = {
+      id: asNpcId("npc_dialogue"), name: "线人", role: "知情人", description: "知道一条线索",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_dialogue"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const dialogueWs = {
+      ...appendNpc(ws, npc),
+      quests: [{
+        id: asQuestId("quest_dialogue"), name: "查清口供", description: "把口供问完整",
+        objectives: [{ kind: "talk_to_npc" as const, npcId: npc.id }],
+        onSuccess: { kind: "advance_story" as const }, onFailure: { kind: "closed" as const },
+        tags: [], kind: "main" as const, stage: 1, status: "active" as const,
+      }],
+    };
+    const dialogueState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        dialogueSession: { npcId: npc.id, turnCount: 0, requiredTurns: 2, completed: false },
+      },
+    };
+
+    const first = resolveTurn(
+      dialogueWs,
+      dialogueState,
+      { type: "talk", npcId: npc.id, dialogueAct: "support", topic: { kind: "general" } },
+      "dialogue_1",
+      0,
+      asTurnId("turn_dialogue_1"),
+      "fixed_choice",
+      deps,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("第一轮对话不应失败");
+    expect(first.resolution.nextWorldState.quests[0]?.status).toBe("active");
+    expect(first.resolution.domainEvents.map((event) => event.type)).not.toContain("quest_completed");
+    expect(first.resolution.nextStoryState.narrative.dialogueSession).toMatchObject({ turnCount: 1, completed: false });
+
+    const second = resolveTurn(
+      first.resolution.nextWorldState,
+      first.resolution.nextStoryState,
+      { type: "talk", npcId: npc.id, dialogueAct: "challenge", topic: { kind: "thread", threadId: "main_thread" } },
+      "dialogue_2",
+      1,
+      asTurnId("turn_dialogue_2"),
+      "fixed_choice",
+      deps,
+    );
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error("第二轮对话不应失败");
+    expect(second.resolution.nextWorldState.quests[0]?.status).toBe("completed");
+    expect(second.resolution.domainEvents.map((event) => event.type)).toContain("quest_completed");
+    expect(second.resolution.nextStoryState.narrative.dialogueSession).toMatchObject({ turnCount: 2, completed: true });
   });
 });
 

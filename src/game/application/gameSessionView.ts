@@ -15,6 +15,7 @@ import { buildTownView, type TownView } from "./townView";
 import { projectCombatView, type BattleView } from "./combatView";
 import { composeDirectNpcGreeting, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 import { isObjectiveEntityReleased, isQuestObjectiveReleased } from "@/game/gameplay/rpg/worldEvolution";
+import { formatSceneChoiceLabel } from "./deterministicSceneSource";
 
 export type PlayerChoiceView = {
   readonly choiceToken: string;
@@ -181,13 +182,13 @@ function handoffDialogueChoices(
     choice(
       { type: "talk", npcId: npc.id, dialogueAct: "support" },
       revision,
-      `回应${npc.name}：“我愿意先把手里的证据交给你核对，请你把知道的那一段说清楚。”`,
+      "我愿意先把手里的证据交给你核对，请你把知道的那一段说清楚。",
       "dialogue",
     ),
     choice(
       { type: "talk", npcId: npc.id, dialogueAct: "challenge" },
       revision,
-      `追问${npc.name}：“我会逐项核对线索；你凭什么确定它们指向同一个人？”`,
+      "我会逐项核对线索；你凭什么确定它们指向同一个人？",
       "dialogue",
     ),
   ];
@@ -209,7 +210,13 @@ function projectQuestObjectives(
       }
       case "talk_to_npc": {
         const npc = worldState.npcs.find((entry) => entry.id === objective.npcId);
-        return { label: `与${npc?.name ?? "某人"}交谈`, completed: npc?.met ?? false };
+        const dialogueSession = storyState.narrative.dialogueSession;
+        const sessionIsForNpc = dialogueSession !== undefined
+          && String(dialogueSession.npcId) === String(objective.npcId);
+        const completed = sessionIsForNpc
+          ? dialogueSession.completed && (npc?.met ?? false)
+          : (npc?.met ?? false);
+        return { label: `与${npc?.name ?? "某人"}交谈`, completed };
       }
       case "obtain_item": {
         const item = worldState.items.find((entry) => entry.id === objective.itemId);
@@ -488,7 +495,7 @@ export function projectGameSessionView(
     }
     return {
       choiceToken: sceneChoice.choiceToken,
-      label: approved.label,
+      label: formatSceneChoiceLabel(approved.action, approved.label),
       ...(sceneChoice.hint === undefined ? {} : { hint: sceneChoice.hint }),
       presentation: presentationForAction(approved.action),
     };

@@ -18,6 +18,7 @@ import { isObjectiveEntityReleased } from "@/game/gameplay/rpg/worldEvolution";
 import { buildStylePolicy, type StylePolicy } from "./stylePolicy";
 import type { GameRecord } from "./server/persistence/gameRepository";
 import type { GameTypeId } from "@/game/domain/newGame";
+import type { DialogueAct, DialogueTopic } from "@/game/domain/action";
 
 /**
  * SceneGenerator 的最小输入 DTO（spec §7.1 / §10.1-10.2）：
@@ -73,7 +74,7 @@ export type BudgetSummary = {
 };
 
 export type LegalActionCandidate = {
-  readonly kind: "move" | "talk" | "explore" | "battle_action";
+  readonly kind: "move" | "talk" | "explore" | "attack" | "battle_action";
   readonly label: string;
   readonly targetId?: string;
 };
@@ -102,6 +103,17 @@ export type ObjectiveTargetRef = {
   readonly entityName: string;
 };
 
+/** 当前 pending 回合要承接的上一轮 NPC 台词与玩家回应。 */
+export type PreviousDialogueContext = {
+  readonly npcId: NpcId;
+  readonly npcLine: string;
+  readonly selectedChoice?: {
+    readonly label?: string;
+    readonly dialogueAct: DialogueAct;
+    readonly topic?: DialogueTopic;
+  };
+};
+
 export type SceneGenerationContext = {
   /** 题材边界与开局设定：允许 live 表演者保持同一世界语义，不可改写规则。 */
   readonly gameType?: GameTypeId;
@@ -125,6 +137,15 @@ export type SceneGenerationContext = {
     readonly nextPacingNeed: PacingNeed;
     readonly remainingBudget: BudgetSummary;
     readonly unresolvedThreadSummaries: readonly string[];
+    /** 当前权威主线的最小叙事摘要；选项/提示词不得再从对白文本猜主题。 */
+    readonly activeQuest?: {
+      readonly questId: string;
+      readonly name: string;
+      readonly description: string;
+      readonly objectiveIndex: number;
+      readonly objectiveLabel: string;
+      readonly objectiveKind: string;
+    };
     /** Task 8：开局呈现政策（人格标签/叙事风格/内容强度 → 指令）。 */
     readonly stylePolicy: StylePolicy;
   };
@@ -142,7 +163,33 @@ export type SceneGenerationContext = {
   readonly focusNpcContext?: FocusNpcContext;
   /** Task 6：当前权威目标引用的目标实体（无 after 目标时为 null）。 */
   readonly objectiveTarget: ObjectiveTargetRef | null;
+  /** 若本轮是对当前场景 NPC 的后续回应，提供上一句原话及玩家选项。 */
+  readonly previousDialogue?: PreviousDialogueContext;
 };
+
+function buildPreviousDialogueContext(
+  narrative: GameRecord["storyState"]["narrative"],
+  job: PendingNarrativeJob,
+): PreviousDialogueContext | undefined {
+  if (job.actionSummary.kind !== "talk") return undefined;
+  const scene = narrative.currentScene;
+  const npcLine = scene?.npcLine;
+  if (npcLine === null || npcLine === undefined) return undefined;
+  if (String(npcLine.npcId) !== String(job.actionSummary.npcId)) return undefined;
+  // sceneId/revision 校验会在 choice map/审批层完成；这里仅按服务端保存的
+  // selectedDialogue 投影，避免从客户端 label 反推动作语义。
+  return {
+    npcId: npcLine.npcId,
+    npcLine: npcLine.text,
+    ...(job.selectedDialogue === undefined ? {} : {
+      selectedChoice: {
+        ...(job.selectedDialogue.label === undefined ? {} : { label: job.selectedDialogue.label }),
+        dialogueAct: job.selectedDialogue.dialogueAct,
+        ...(job.selectedDialogue.topic === undefined ? {} : { topic: job.selectedDialogue.topic }),
+      },
+    }),
+  };
+}
 
 /** 从持久化世界状态解析 subject ID 为最小实体描述；引用未命中时保留 ID 兜底。 */
 function resolveEntityDescriptions(ws: WorldState, subjectIds: readonly string[]): EntityDescription[] {
@@ -219,6 +266,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     throw new Error("buildSceneGenerationContext requires a pending narrative job");
   }
   const job = narrative.generation.job;
+  const previousDialogue = buildPreviousDialogueContext(narrative, job);
 
   // Task 4：节拍与目标转换引用的 subject ID 全部收集后从持久化状态解析描述。
   // after 以持久化状态里的权威当前目标为准（幕边界时 job 快照尚无下一幕目标，
@@ -227,6 +275,21 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     ...job.objectiveTransition,
     after: currentObjectiveOf(record.worldState, record.storyState),
   };
+  const activeQuest = transition.after === null
+    ? undefined
+    : (() => {
+        const quest = ws.quests.find((entry) => String(entry.id) === String(transition.after?.questId));
+        const objective = quest?.objectives[transition.after?.objectiveIndex ?? -1];
+        if (quest === undefined || objective === undefined || transition.after === null) return undefined;
+        return {
+          questId: String(quest.id),
+          name: quest.name,
+          description: quest.description,
+          objectiveIndex: transition.after.objectiveIndex,
+          objectiveLabel: transition.after.label,
+          objectiveKind: objective.kind,
+        };
+      })();
   const transitionQuestIds: string[] = [];
   if (transition.before !== null) transitionQuestIds.push(String(transition.before.questId));
   for (const completed of transition.completed) transitionQuestIds.push(String(completed.questId));
@@ -357,6 +420,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
         remainingEvents: Math.max(0, ss.budget.events.max - ss.budget.events.expanded),
       },
       unresolvedThreadSummaries: [...ss.unresolvedThreads],
+      ...(activeQuest === undefined ? {} : { activeQuest }),
       stylePolicy: buildStylePolicy(ws.generation.setup),
     },
     recentBeats: (ss.recentBeats as readonly RecentBeat[]).slice(-5),
@@ -379,6 +443,15 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
           ...(hasExplorableContent(ws, ss)
             ? [{ kind: "explore" as const, label: "查看四周" }]
             : []),
+          ...ws.enemies
+            .filter((enemy) => enemy.locationId === ws.currentLocationId)
+            .filter((enemy) => !ws.defeatedEnemyIds.includes(enemy.id))
+            .filter((enemy) => releasedEnemies.includes(enemy.id))
+            .map((enemy) => ({
+              kind: "attack" as const,
+              label: `挑战${enemy.name}`,
+              targetId: enemy.id,
+            })),
         ],
     legalEventTargets: {
       locationIds: ws.locations
@@ -402,5 +475,6 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     beatSubjects,
     focusNpcContext,
     objectiveTarget: resolveObjectiveTarget(ws, transition.after),
+    ...(previousDialogue === undefined ? {} : { previousDialogue }),
   };
 }

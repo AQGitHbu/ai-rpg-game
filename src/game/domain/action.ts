@@ -26,6 +26,16 @@ export type StructuredDialogueTopic =
 /** 兼容既有命名；结构化主题唯一来源。 */
 export type DialogueTopic = StructuredDialogueTopic;
 
+/** 结构化主题的稳定摘要：用于服务端去重、提示词上下文与 opaque token 派生。 */
+export function dialogueTopicKey(topic: DialogueTopic | undefined): string {
+  if (topic === undefined || topic.kind === "general") return "general";
+  switch (topic.kind) {
+    case "fact": return `fact:${String(topic.factId)}`;
+    case "quest": return `quest:${String(topic.questId)}`;
+    case "thread": return `thread:${String(topic.threadId)}`;
+  }
+}
+
 export type Interaction =
   | { readonly kind: "fixed_choice"; readonly choiceToken: string }
   | { readonly kind: "free_text"; readonly text: string; readonly targetNpcId?: NpcId };

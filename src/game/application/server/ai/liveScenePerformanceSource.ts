@@ -5,6 +5,7 @@ import type { SceneGenerationContext } from "../../sceneGenerationContext";
 import {
   createDeterministicSceneSource,
   buildSelectableSceneCandidates,
+  formatSceneChoiceLabel,
   type SceneChoiceCandidate,
 } from "../../deterministicSceneSource";
 import { NARRATIVE_EMOTIONS, type NarrativeEmotion } from "@/game/domain/narrative";
@@ -26,7 +27,7 @@ import type { ProviderJsonMode } from "./providerRequestOptions";
 // （那些是 approveScenePerformance 纯函数职责）。sensitive 配置绝不进日志。
 // 提示词只含安全段落：风格政策、玩家本轮原话、已解决规则结果节拍、目标转换、
 // 当前地点、最近故事节拍、预算/节奏、已批准实体、焦点 NPC 上下文、合法选项 ID、
-// 输出 schema；绝不序列化完整 record/事件账本/全部 NPC 上下文/私密事实正文。
+// 当前主线摘要与输出 schema；绝不序列化完整 record/事件账本/全部 NPC 上下文/私密事实正文。
 // ---------------------------------------------------------------------------
 
 export type LiveScenePerformanceDeps = {
@@ -182,8 +183,11 @@ export function resolvePerformanceChoices(
   if (cx === undefined || cy === undefined) return null;
   if (typeof x.label !== "string" || x.label.trim() === "" || typeof y.label !== "string" || y.label.trim() === "") return null;
   return [
-    { candidateId: cx.candidateId, label: x.label.trim() },
-    { candidateId: cy.candidateId, label: y.label.trim() },
+    // candidateId/action 仍由服务端候选集决定；label 允许 AI 在同一份
+    // 剧情上下文上生成自然措辞，最后只由服务端统一格式化，避免又被
+    // 角色/关键词 fallback 覆盖成与 NPC 台词无关的模板。
+    { candidateId: cx.candidateId, label: formatSceneChoiceLabel(cx.action, x.label.trim()) },
+    { candidateId: cy.candidateId, label: formatSceneChoiceLabel(cy.action, y.label.trim()) },
   ];
 }
 
@@ -251,7 +255,13 @@ export function parseScenePerformanceJson(
     };
   }
 
-  const choices = resolvePerformanceChoices(selectable, raw.choices);
+  // raw.npcLine 是本轮刚生成的 NPC 回应；下一组选项以它及其结构化事实引用为锚点。
+  // selectable 仍负责 candidateId/action 的权威集合，避免沿用生成请求前
+  // context.previousDialogue 的旧动作；label 则由 AI 在同一故事上下文中润色。
+  const currentLineSelectable = npcLine === null
+    ? selectable
+    : buildSelectableSceneCandidates(context, npcLine);
+  const choices = resolvePerformanceChoices(currentLineSelectable, raw.choices);
   if (choices === null) return { ok: false, reason: "choices_invalid" };
 
   return {
@@ -285,20 +295,28 @@ function repairPartialLiveScene(
     : isRecord(raw.npcLine) ? raw.npcLine as LiveNpcLineCandidate : null;
   const resolved = isUsableLiveNpcLine(rawLine, context);
   if (resolved === null) return Promise.resolve(null);
-  return deterministic.generateScene(context).then((fallback) => ({
-    ...fallback,
-    npcLine: {
-      npcId: String(resolved.npcId),
-      text: resolved.text,
-      emotion: resolved.emotion,
-      answeredBeatIds: context.mandatoryBeats
-        .filter((beat) => beat.kind === "player_utterance")
-        .map((beat) => beat.beatId),
-      usedFactIds: [],
-      usedInteractionActionIds: [],
-    },
-    source: "generated" as const,
-  }));
+  return deterministic.generateScene(context).then((fallback) => {
+    const currentLineSelectable = buildSelectableSceneCandidates(context, resolved.text);
+    const labelsByCandidateId = new Map(currentLineSelectable.map((choice) => [choice.candidateId, choice.label]));
+    return {
+      ...fallback,
+      npcLine: {
+        npcId: String(resolved.npcId),
+        text: resolved.text,
+        emotion: resolved.emotion,
+        answeredBeatIds: context.mandatoryBeats
+          .filter((beat) => beat.kind === "player_utterance")
+          .map((beat) => beat.beatId),
+        usedFactIds: [],
+        usedInteractionActionIds: [],
+      },
+      choices: fallback.choices.map((choice) => ({
+        candidateId: choice.candidateId,
+        label: labelsByCandidateId.get(choice.candidateId) ?? choice.label,
+      })) as unknown as ScenePerformanceProposal["choices"],
+      source: "generated" as const,
+    };
+  });
 }
 
 /** live 场景表演源：AI 提案 → 纯解析/校验 → 失败回退确定性源。 */
@@ -384,7 +402,18 @@ export function buildLiveScenePrompt(
       `可说线索卡：${focus.speakableFactCards.map((f) => `${f.factId}=${f.text}`).join("；") || "无（usedFactIds 必须为 []）"}；` +
       `最近交互：${focus.recentInteractions.slice(-2).map((i) => `${i.actionId}=${i.summary}`).join("；") || "无（usedInteractionActionIds 必须为 []）"}`;
 
+  const previousDialogueSection = context.previousDialogue === undefined
+    ? "无上一轮 NPC 对话；这是当前对话的开场。"
+    : `上一轮 NPC 原话=${context.previousDialogue.npcLine}；` +
+      `玩家上一轮选择=${context.previousDialogue.selectedChoice?.label ?? "自定义回应"}；` +
+      `结构化回应=${context.previousDialogue.selectedChoice?.dialogueAct ?? "ask"}；` +
+      `主题=${context.previousDialogue.selectedChoice?.topic?.kind ?? "general"}。`;
+
   const presentNpcLine = context.presentNpcs.map((n) => `${n.id}=${n.name}`).join("、") || "无";
+  const activeQuestSection = story.activeQuest === undefined
+    ? "无已解析的当前主线摘要；沿用目标转换和 NPC 可说事实。"
+    : `主线=${story.activeQuest.name}；主线说明=${story.activeQuest.description}；` +
+      `当前目标=${story.activeQuest.objectiveLabel}（${story.activeQuest.objectiveKind}，序号${story.activeQuest.objectiveIndex}）`;
 
   // 审批器要求每幕至少有一个 segment。开局没有规则节拍时，必须明确告诉
   // 模型使用唯一合法的 atmosphere 节拍；否则模型很自然会返回空数组，进而
@@ -420,15 +449,17 @@ ${genreContract}
 风格=${story.stylePolicy.narration}，${story.stylePolicy.narrationInstruction} ${story.stylePolicy.intensityInstruction}
 地点=${context.currentLocation.name}：${context.currentLocation.description}
 玩家角色=${context.player.name}（${context.player.identity}）；本轮输入=${utterance || "无"}
+${previousDialogueSection}
 NPC=${focusSection}；在场ID=${presentNpcLine}
 节拍=${beatsSection}
+主线剧情上下文=${activeQuestSection}
 目标=${objectiveSection}
 ${utteranceContract} ${handoffContract}
-选项=${selectable.map((c) => `${c.candidateId}:${c.label}`).join("；")}
+候选动作=${selectable.map((c) => `${c.candidateId}:${c.action.type}:${c.label}`).join("；")}
 JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白"}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},"choices":[{"candidateId":"选项ID","label":"玩家行动"},{"candidateId":"另一选项ID","label":"玩家行动"}]}
 ${segmentInstruction}
 ${atmosphereInstruction}
-NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。玩家只能被称为“${context.player.name}”，不得使用其他姓名、姓氏、代号或未经上下文批准的身份称呼。若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。`;
+NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。玩家只能被称为“${context.player.name}”，不得使用其他姓名、姓氏、代号或未经上下文批准的身份称呼。若有上一轮 NPC 原话，必须先直接承接其中的问题、信息或拒答，再补充本轮可核验线索或下一步；不得突然切换到无关案件。若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。choices 的 candidateId 必须逐字使用上方候选动作中的两个不同 ID；label 是玩家实际要说的话或动作，不要加“回应某人/追问某人”等前缀，不要机械复述 NPC 原话；动作选项必须用全角括号包裹。两个选项都要直接回应本轮 NPC 台词，并且至少一个要推进当前主线目标或核对 NPC 刚提供的事实，不能只输出“继续调查/相信/不相信”等脱离语境的态度。候选动作中的 label 只是无 AI 时的 fallback 示例，不是要求逐字复制的固定答案；请先完成 NPC 台词，再依据主线剧情上下文、NPC 可说事实和本轮台词写出两句自然、具体、互不重复的玩家对白或动作。`;
   const allowedFactIds = focus === undefined
     ? []
     : [...new Set([

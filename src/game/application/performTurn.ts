@@ -154,6 +154,13 @@ export async function performTurn(
     return { ok: false, code: "ACTION_REJECTED", feedback: "这条线索还没有展开。" };
   }
 
+  const fixedChoiceToken = command.interaction.kind === "fixed_choice"
+    ? command.interaction.choiceToken
+    : undefined;
+  const dialogueChoiceLabel = fixedChoiceToken === undefined
+    ? undefined
+    : record.storyState.narrative.choiceRegistry?.find((entry) => entry.choiceToken === fixedChoiceToken)?.label;
+
   const resolved = resolveTurn(
     record.worldState,
     record.storyState,
@@ -225,6 +232,7 @@ export async function performTurn(
             now: deps.now(),
             objectiveTransition: narrative.objectiveTransition,
             mandatoryBeats: narrative.mandatoryBeats,
+            dialogueChoiceLabel,
           });
         }
         // 重演算仍失败：实体提交必须真实发生（供下一回合使用），行动本身被拒绝。
@@ -334,6 +342,7 @@ export async function performTurn(
     now: deps.now(),
     objectiveTransition: narrative.objectiveTransition,
     mandatoryBeats: narrative.mandatoryBeats,
+    dialogueChoiceLabel,
   });
 }
 
@@ -412,6 +421,7 @@ type CommitResolutionInput = {
   readonly now: string;
   readonly objectiveTransition: ObjectiveTransition;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
+  readonly dialogueChoiceLabel?: string;
 };
 
 /**
@@ -439,6 +449,17 @@ async function commitResolution(input: CommitResolutionInput): Promise<PerformTu
       toLedgerIndexExclusive: input.nextWorldState.eventLedger.length,
     },
     focusNpcId: input.action.type === "talk" ? input.action.npcId : undefined,
+    ...(input.action.type === "talk"
+      ? {
+          selectedDialogue: {
+            dialogueAct: input.action.dialogueAct,
+            ...(input.action.topic === undefined ? {} : { topic: input.action.topic }),
+            ...((input.dialogueChoiceLabel ?? input.action.utterance) === undefined
+              ? {}
+              : { label: input.dialogueChoiceLabel ?? input.action.utterance }),
+          },
+        }
+      : {}),
     requestedAt: input.now,
     objectiveTransition: input.objectiveTransition,
     mandatoryBeats: input.mandatoryBeats,

@@ -276,6 +276,14 @@ describe("buildSceneGenerationContext", () => {
     expect(context.objectiveTransition.completed).toEqual(transition.completed);
     expect(context.objectiveTransition.mode).toBe("progressed");
     expect(context.mandatoryBeats).toEqual(beats);
+    expect(context.story.activeQuest).toEqual({
+      questId: "quest_0",
+      name: "查明真相",
+      description: "查清矿坑的真相",
+      objectiveIndex: 1,
+      objectiveLabel: "获取盟誓印谱",
+      objectiveKind: "obtain_item",
+    });
   });
 
   it("幕边界：job 快照 after 为空时，after 修正为已具象化的下一幕目标", () => {

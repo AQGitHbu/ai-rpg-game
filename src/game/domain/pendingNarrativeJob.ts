@@ -44,6 +44,12 @@ export type PendingNarrativeJob = {
     readonly toLedgerIndexExclusive: number;
   };
   readonly focusNpcId?: NpcId;
+  /** 当前固定选项/自由输入的结构化对白上下文；旧 job 缺失时按兼容路径读取。 */
+  readonly selectedDialogue?: {
+    readonly dialogueAct: import("./action").DialogueAct;
+    readonly topic?: import("./action").DialogueTopic;
+    readonly label?: string;
+  };
   readonly requestedAt: string;
   readonly objectiveTransition: ObjectiveTransition;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
@@ -64,6 +70,11 @@ export type CreatePendingNarrativeJobInput = {
     readonly toLedgerIndexExclusive: number;
   };
   readonly focusNpcId?: NpcId;
+  readonly selectedDialogue?: {
+    readonly dialogueAct: import("./action").DialogueAct;
+    readonly topic?: import("./action").DialogueTopic;
+    readonly label?: string;
+  };
   readonly requestedAt: string;
   readonly objectiveTransition: ObjectiveTransition;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
@@ -190,6 +201,7 @@ export function createPendingNarrativeJob(
       mandatoryBeats: input.mandatoryBeats,
       ...(input.utterance !== undefined ? { utterance: input.utterance } : {}),
       ...(input.focusNpcId !== undefined ? { focusNpcId: input.focusNpcId } : {}),
+      ...(input.selectedDialogue !== undefined ? { selectedDialogue: input.selectedDialogue } : {}),
     },
   };
 }
