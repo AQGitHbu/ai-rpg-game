@@ -231,14 +231,54 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     await user.click(screen.getByRole("button", { name: "追问线索" }));
 
+    // 等待期间弹窗进入等待态：不渲染任何对话选项
     expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
-    expect((screen.getByRole("button", { name: "与老板交谈" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("正在等待老板回应……")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "追问线索" })).not.toBeInTheDocument();
 
     resolveRequest({ kind: "rejected", message: "stop" });
     await waitFor(() => {
-      expect((screen.getByRole("button", { name: "与老板交谈" }) as HTMLButtonElement).disabled).toBe(false);
+      expect(screen.getByRole("button", { name: "追问线索" })).toBeEnabled();
     });
     expect(screen.getByRole("button", { name: "表示理解" })).toBeEnabled();
+  });
+
+  it("renders zero-turn idle dialogue for handed-off NPC with dismiss button and no submission", async () => {
+    const user = userEvent.setup();
+    const idleView: GameSessionView = {
+      ...buildView(),
+      currentLocation: {
+        ...buildView().currentLocation,
+        npcs: [{ name: "老周", role: "茶摊老板", talkChoice: null }],
+      },
+      narrative: {
+        ...buildView().narrative,
+        npcDialogues: [{
+          npcId: "npc_lao_zhou",
+          name: "老周",
+          role: "茶摊老板",
+          speechPages: ["先前说定的事别忘了。调查酒楼后巷的车轮印要紧，有了结果再来告诉我。"],
+          choices: [],
+          freeInputEnabled: false,
+          giveChoices: [],
+        }],
+      },
+    };
+    renderShell(idleView);
+    await enterScene(user);
+
+    // 点击老周卡片打开闲聊弹窗（纯本地打开，不消耗回合）
+    await user.click(screen.getByRole("button", { name: /老周/ }));
+
+    expect(screen.getByText(/调查酒楼后巷的车轮印/)).toBeInTheDocument();
+    // 不存在可提交的“与老周交谈”按钮，也不存在自由输入
+    expect(screen.queryByRole("button", { name: "与老周交谈" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("自定义回应")).not.toBeInTheDocument();
+
+    // “知道了”关闭弹窗；全程零提交
+    await user.click(screen.getByRole("button", { name: "知道了" }));
+    expect(screen.queryByRole("dialog", { name: "与老周对话" })).not.toBeInTheDocument();
+    expect(vi.mocked(postAction)).not.toHaveBeenCalled();
   });
 
   it("keeps ordinary narrative pending modal while locking rule actions", () => {
@@ -685,14 +725,15 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     await user.click(screen.getByRole("button", { name: "发送" }));
 
+    // 等待期间弹窗进入等待态：自由输入与发送按钮被隐藏
     expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
-    expect((screen.getByRole("button", { name: "与老板交谈" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("正在等待老板回应……")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "自定义回应" })).not.toBeInTheDocument();
 
     resolveRequest({ kind: "rejected", message: "stop" });
     await waitFor(() => {
-      expect((screen.getByRole("button", { name: "与老板交谈" }) as HTMLButtonElement).disabled).toBe(false);
+      expect(screen.getByRole("textbox", { name: "自定义回应" })).toBeEnabled();
     });
-    expect(screen.getByRole("textbox", { name: "自定义回应" })).toBeEnabled();
   });
 
   it("provides a close button that collapses the NPC dialogue panel", async () => {
@@ -934,7 +975,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.queryByRole("button", { name: "与吴九交谈" })).not.toBeInTheDocument();
   });
 
-  it("keeps a prepared same-NPC response pair inside dialogue and leaves one mainline action in the rail", () => {
+  it("keeps a prepared same-NPC response pair inside dialogue and leaves all scene actions in the rail", () => {
     const base = buildView();
     render(<LocationSceneScreen
       view={{
@@ -963,11 +1004,16 @@ describe("AdventureGameShell canonical opaque choices", () => {
     />);
 
     const actionRail = screen.getByRole("navigation", { name: "行动栏" });
+    // 底栏保留当前地点的全部场景动作
+    expect(within(actionRail).getByRole("button", { name: "探索客栈" })).toBeInTheDocument();
     expect(within(actionRail).getByRole("button", { name: "与老板交谈" })).toBeInTheDocument();
-    expect(within(actionRail).queryByRole("button", { name: "探索客栈" })).not.toBeInTheDocument();
-    expect(within(actionRail).queryByRole("button", { name: "挑战灰狼" })).not.toBeInTheDocument();
+    expect(within(actionRail).getByRole("button", { name: "挑战灰狼" })).toBeInTheDocument();
+    // 已准备好的回应对进入自动打开的对话弹窗，不占用底栏
     expect(within(actionRail).queryByRole("button", { name: "回应老板：我愿意把证据摊开。" })).not.toBeInTheDocument();
     expect(within(actionRail).queryByRole("button", { name: "质疑老板：我会先核对证据。" })).not.toBeInTheDocument();
+    const dialogue = screen.getByRole("dialog", { name: "与老板对话" });
+    expect(within(dialogue).getByRole("button", { name: "追问线索" })).toBeInTheDocument();
+    expect(within(dialogue).getByRole("button", { name: "表示理解" })).toBeInTheDocument();
   });
 
   it("does not label a single NPC talk choice as dialogue preparation", () => {
@@ -1317,7 +1363,20 @@ describe("AdventureGameShell three-layer navigation", () => {
           ],
         },
       },
-      narrative: { ...view.narrative, npcDialogues: [] },
+      // 读模型为在场全部 NPC 投影对话；此处补上目标建筑 NPC 的零回合闲聊，
+      // 侧边栏只展示有投影对话的人物，不再按地点 NPC 列表合成卡片。
+      narrative: {
+        ...view.narrative,
+        npcDialogues: [{
+          npcId: clickedBuilding.npcId,
+          name: clickedBuilding.npcName,
+          role: "掌柜",
+          speechPages: ["客官里边请，本店规矩照旧。"],
+          choices: [],
+          freeInputEnabled: false,
+          giveChoices: [],
+        }],
+      },
     };
     render(<AdventureGameShell
       view={twoNpcView}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useReducer, useRef, type FormEvent } from "react";
-import { composeDirectNpcGreeting, type GameSessionView, type NewGameInput } from "@/game/application";
+import { type GameSessionView, type NewGameInput } from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { AdventureVisual } from "./adventureVisuals";
 import { normalizeDisplayText } from "./displayText";
@@ -331,7 +331,7 @@ function NpcDialogueModal({
             ) : null}
           </>
         ) : (
-          /* 非焦点 NPC：只显示一次真实 ask 行动入口；没有焦点对白时不伪造准备状态 */
+          /* 非焦点 NPC：零回合闲聊展示；有台词 + “知道了”关闭，不提交任何请求 */
           <>
             {dialogue.choices.length > 0 ? (
               <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
@@ -347,7 +347,17 @@ function NpcDialogueModal({
                   </button>
                 ))}
               </div>
-            ) : null}
+            ) : (
+              <div className="npc-dialogue-choices" role="group" aria-label="对话操作">
+                <button
+                  type="button"
+                  className="npc-dialogue-dismiss-btn"
+                  onClick={onClose}
+                >
+                  知道了
+                </button>
+              </div>
+            )}
           </>
         )}
       </section>
@@ -402,7 +412,7 @@ export function LocationSceneScreen({
     && (displayNarration === "" || !displayNarration.includes(displayLocationDescription));
   const selectedNpcChoiceToken = currentSceneNpcName === null
     ? null
-    : locationNpcs[0]?.talkChoice.choiceToken ?? null;
+    : locationNpcs[0]?.talkChoice?.choiceToken ?? null;
   const currentObjectiveAction = view.story.currentObjectiveChoiceToken === null
     ? null
     : view.currentLocation.actions.find((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
@@ -419,17 +429,14 @@ export function LocationSceneScreen({
   const preparedDialogue = activeDialogues.find((dialogue) =>
     dialogue.choices.length === 2 || dialogue.freeInputEnabled,
   );
-  const handoffLeavesCurrentBuilding = selectedNpcChoiceToken !== null
+  const sceneNpcIsObjectiveTalkTarget = selectedNpcChoiceToken !== null
+    && selectedNpcChoiceToken === view.story.currentObjectiveChoiceToken;
+  const handoffLeavesCurrentBuilding = hasBuildingSceneContext
     && view.story.currentObjectiveLabel !== null
-    && selectedNpcChoiceToken !== view.story.currentObjectiveChoiceToken
-    && !currentObjectiveIsSceneAction;
+    && !currentObjectiveIsSceneAction
+    && !sceneNpcIsObjectiveTalkTarget;
   const handoffLeavesCurrentLocation = view.story.currentObjectiveLabel !== null
     && view.story.currentObjectiveChoiceToken === null;
-  const preparedDialogueTalkChoice = preparedDialogue === undefined
-    || handoffLeavesCurrentBuilding
-    || handoffLeavesCurrentLocation
-    ? null
-    : view.currentLocation.npcs.find((npc) => npc.name === preparedDialogue.name)?.talkChoice ?? null;
   // 当前目标是调查/拾取/战斗时，必须优先给出该规则行动。否则上一轮对话
   // 仍有两项回应时会抢占底栏，物品热点又可能被地点旁注遮住，玩家会失去
   // 唯一可推进的入口。
@@ -439,17 +446,11 @@ export function LocationSceneScreen({
   // 指明，玩家返回小镇后从目标人物自己的建筑进入，避免把两处空间混成一幕。
   const sceneActions = currentObjectiveRailAction !== null
     ? [currentObjectiveRailAction]
-    : preparedDialogueTalkChoice !== null
-    ? [preparedDialogueTalkChoice]
     : handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation
       ? []
       : view.story.currentObjectiveChoiceToken !== null
         ? view.currentLocation.actions.filter((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
-        : selectedNpcChoiceToken !== null
-          ? view.currentLocation.actions.filter((action) =>
-              action.choiceToken === selectedNpcChoiceToken || action.presentation === "battle",
-            )
-          : view.currentLocation.actions;
+        : view.currentLocation.actions;
   const sceneNarrativeChoices = preparedDialogue === undefined
     && !handoffLeavesCurrentBuilding
     && view.story.currentObjectiveLabel === null
@@ -464,31 +465,14 @@ export function LocationSceneScreen({
       !sceneActionTokens.has(choice.choiceToken) && !sceneActionLabels.has(choice.label),
     ),
   ];
-  const hasDialogueInteraction = activeDialogues.some((dialogue) =>
-    dialogue.choices.length > 0 || dialogue.freeInputEnabled,
-  );
+  const hasDialogueInteraction = activeDialogues.length > 0;
 
-  // 统一构建所有 NPC 的 Dialogue 数据（包含活跃对话与非活跃 NPC 的打招呼降级对话）
+  // 统一构建所有 NPC 的 Dialogue 数据（读模型已为在场全部 NPC 投影对话，
+  // 含非焦点 NPC 的零回合闲聊；此处不再用问候语合成缺省条目）。
   const allDialoguesMap = new Map<string, Dialogue>();
 
   for (const d of activeDialogues) {
     allDialoguesMap.set(d.npcId, d);
-  }
-
-  for (const npc of locationNpcs) {
-    const existing = Array.from(allDialoguesMap.values()).find((d) => d.name === npc.name);
-    if (!existing) {
-      const fallbackId = `npc_talk_${npc.talkChoice.choiceToken}`;
-      allDialoguesMap.set(fallbackId, {
-        npcId: fallbackId,
-        name: npc.name,
-        role: npc.role,
-        speechPages: [composeDirectNpcGreeting(npc.role, npc.name)],
-        choices: [npc.talkChoice],
-        freeInputEnabled: false,
-        giveChoices: [],
-      });
-    }
   }
 
   const initialOpenDialogueNpcId = (() => {
@@ -555,13 +539,11 @@ export function LocationSceneScreen({
 
   // 正式对白请求结束后直接恢复下一组选项；失败/拒绝也恢复原选项。
   // pending 期间旧选项被隐藏，避免重复提交，但不额外插入确认按钮。
-  useEffect(() => {
+useEffect(() => {
     const wasBusy = previousBusyRef.current;
     previousBusyRef.current = busy;
     const submitted = submittedDialogueRef.current;
     if (submitted === null || wasBusy === false || busy) return;
-
-    // NPC 回应 ready 后直接恢复下一组选择；等待态期间旧选项仍被隐藏。
     setDialoguePhase("choice");
     submittedDialogueRef.current = null;
   }, [busy, view.revision, view.turnNumber]);
@@ -569,7 +551,7 @@ export function LocationSceneScreen({
   function renderChoiceButton(choice: { choiceToken: string; label: string }) {
     // “与 NPC 交谈”只是打开本幕已经生成好的对话；只有弹窗内的两个选项
     // 或自定义输入才是正式回合，避免进入地点或点开交谈入口就提前编排下一幕。
-    const matchingNpc = locationNpcs.find((n) => n.talkChoice.choiceToken === choice.choiceToken);
+    const matchingNpc = locationNpcs.find((n) => n.talkChoice?.choiceToken === choice.choiceToken);
     if (matchingNpc) {
       return (
         <button
@@ -619,23 +601,9 @@ export function LocationSceneScreen({
       id: d.npcId,
       name: d.name,
       role: d.role,
-      hasActiveDialogue: true,
+      hasActiveDialogue: d.choices.length > 0 || d.freeInputEnabled,
       dialogueId: d.npcId,
     });
-  }
-
-  for (const npc of locationNpcs) {
-    if (!addedNames.has(npc.name)) {
-      addedNames.add(npc.name);
-      const fallbackId = `npc_talk_${npc.talkChoice.choiceToken}`;
-      sidebarNpcs.push({
-        id: fallbackId,
-        name: npc.name,
-        role: npc.role,
-        hasActiveDialogue: false,
-        dialogueId: fallbackId,
-      });
-    }
   }
 
   // 当前打开的对话对象
