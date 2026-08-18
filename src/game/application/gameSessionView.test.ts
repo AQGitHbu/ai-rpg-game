@@ -1033,9 +1033,90 @@ describe("projectGameSessionView", () => {
     expect(idle?.choices).toEqual([]);
     expect(idle?.freeInputEnabled).toBe(false);
     expect(idle?.speechPages.length).toBeGreaterThan(0);
-    // 老板参与过剧情且当前目标为调查 → 提醒台词承接权威目标
-    //（discover_fact 的目标 label 由 fact 文本派生，故断言事实文本而非具体动词）
+    // 断言来自场景 npcLine 焦点台词（本用例保留交接场景的焦点台词），
+    // 并非 composeIdleNpcLine 的提醒变体；提醒路径由下方独立用例覆盖。
+    //（discover_fact 的 label 规则：已发现 → 查明：fact 文本；未发现 → 调查investigationLabel，
+    //  不会把未发现的事实正文泄露进 label，故此处断言的是场景台词中的事实文本）
     expect(idle?.speechPages.join("")).toContain("车轮印");
+    // 行动栏与 talkChoice 不再为非目标 NPC 提供交谈入口
+    expect(view.currentLocation.actions.some((action) => action.presentation === "dialogue")).toBe(false);
+    expect(view.currentLocation.npcs[0]?.talkChoice).toBeNull();
+  });
+
+  it("非焦点 NPC 无场景台词时，按权威目标 label 投影 composeIdleNpcLine 提醒变体", () => {
+    const factTracks = {
+      factId: asFactId("fact_tracks"),
+      text: "车轮印",
+      source: "generated" as const,
+      discovered: false,
+      locationId: loc1.id,
+      // 未发现事实的 label 使用 investigationLabel（知识边界：不泄露事实正文）
+      investigationLabel: "车轮印",
+    };
+    const wsReminder: WorldState = {
+      ...ws,
+      npcs: [{
+        ...npc1,
+        met: true,
+        memory: {
+          ...npc1.memory,
+          interactionHistory: [{
+            turnNumber: 2,
+            actionId: "act_setup",
+            locationId: loc1.id,
+            dialogueAct: "ask" as const,
+            topicSummary: "询问线索",
+            outcome: "positive" as const,
+            relationshipDelta: 2,
+            learnedFactIds: [],
+            summary: "询问车轮印线索",
+          }],
+        },
+      }],
+      worldFacts: [factTracks],
+      quests: [{
+        id: asQuestId("quest_tracks"),
+        name: "追查车轮印",
+        description: "查明车轮印",
+        objectives: [
+          { kind: "talk_to_npc", npcId: npc1.id },
+          { kind: "discover_fact", factId: factTracks.factId },
+        ],
+        onSuccess: { kind: "advance_story" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 1,
+        status: "active",
+      }],
+    };
+    const ssReminder: StoryState = {
+      ...ss,
+      reveal: { questId: asQuestId("quest_tracks"), visibleObjectiveIndex: 1 },
+      narrative: {
+        ...ss.narrative,
+        dialogueSession: { npcId: npc1.id, turnCount: 2, requiredTurns: 2, completed: true },
+        // 该 NPC 既无场景台词，也无焦点台词 → 非焦点 NPC 走 idleLine
+        currentScene: {
+          sceneId: "scene-reminder-idle",
+          turn: 5,
+          narration: "老板没有接话。",
+          usedFactIds: [],
+          npcLine: null,
+          choices: [] as never,
+          source: "fallback" as const,
+          event: { kind: "observe" as const, locationId: loc1.id },
+        },
+      },
+    };
+
+    const view = projectGameSessionView(wsReminder, ssReminder, 0, "test-ending-session");
+    const idle = view.narrative.npcDialogues.find((dialogue) => dialogue.npcId === String(npc1.id));
+    expect(idle).toBeDefined();
+    expect(idle?.choices).toEqual([]);
+    expect(idle?.freeInputEnabled).toBe(false);
+    // 有结构化交互历史 + 权威目标 label → 提醒台词承接权威目标（未发现事实 → 调查investigationLabel）
+    expect(idle?.speechPages.join("")).toContain("调查车轮印");
     // 行动栏与 talkChoice 不再为非目标 NPC 提供交谈入口
     expect(view.currentLocation.actions.some((action) => action.presentation === "dialogue")).toBe(false);
     expect(view.currentLocation.npcs[0]?.talkChoice).toBeNull();

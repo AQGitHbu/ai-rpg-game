@@ -539,7 +539,7 @@ export function LocationSceneScreen({
 
   // 正式对白请求结束后直接恢复下一组选项；失败/拒绝也恢复原选项。
   // pending 期间旧选项被隐藏，避免重复提交，但不额外插入确认按钮。
-useEffect(() => {
+  useEffect(() => {
     const wasBusy = previousBusyRef.current;
     previousBusyRef.current = busy;
     const submitted = submittedDialogueRef.current;
@@ -593,10 +593,7 @@ useEffect(() => {
     dialogueId: string;
   }> = [];
 
-  const addedNames = new Set<string>();
-
   for (const d of activeDialogues) {
-    addedNames.add(d.name);
     sidebarNpcs.push({
       id: d.npcId,
       name: d.name,

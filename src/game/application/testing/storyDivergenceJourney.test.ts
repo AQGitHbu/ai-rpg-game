@@ -27,12 +27,11 @@ import type { WorldEvolutionSource } from "@/game/application/worldEvolutionSour
 
 type Branch = {
   readonly name: "support" | "challenge";
-  readonly fixedLabel: "回应";
   readonly customText: string;
 };
 
-const SUPPORT: Branch = { name: "support", fixedLabel: "回应", customText: "我相信你，我们一起查明真相" };
-const CHALLENGE: Branch = { name: "challenge", fixedLabel: "回应", customText: "你在撒谎，我会亲自揭穿真相" };
+const SUPPORT: Branch = { name: "support", customText: "我相信你，我们一起查明真相" };
+const CHALLENGE: Branch = { name: "challenge", customText: "你在撒谎，我会亲自揭穿真相" };
 
 async function runBranch(branch: Branch, replay: number) {
   const gameId = asGameId(`divergence_${branch.name}_${replay}`);
@@ -74,13 +73,12 @@ async function runBranch(branch: Branch, replay: number) {
   await scene(); // 1: 序幕
   await fixed("交谈"); // 2: 完成第一幕
   await scene(); // 具象化第 2 幕内容
-  await fixed(openingNpcName); // 主动重新开启与开场 NPC 的一轮对话
+  // 手渡场景仍把开场 NPC 作为权威 ask 入口；之后焦点对话内直接自由输入。
+  //（任务目标已切换到第 2 幕，开场 NPC 不再有可再次开启的 ask 入口，
+  //  分歧输入必须发生在本次权威对话回合内，不能先“固定回应”再重新交谈）
+  await fixed(openingNpcName); // 3: 手渡场景的权威 ask 入口 → 焦点对话
   await scene();
-  await fixed(branch.fixedLabel); // 3: 玩家口吻固定回应
-  await scene();
-  await fixed(openingNpcName); // 固定选择后已退出焦点；再次主动交谈后才允许自由输入
-  await scene();
-  await freeText(branch.customText); // 4: 自定义分支输入
+  await freeText(branch.customText); // 4: 自定义分支输入（分歧来源）
   await scene();
   reload(); // 重载 1
   await fixed("延伸之地·2"); // 5: 前往第 2 幕地点
