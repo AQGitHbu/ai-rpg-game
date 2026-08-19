@@ -24,6 +24,7 @@ import {
   type LocationId, type NpcId, type ItemId, type EnemyId, type FactId, type QuestId, type EndingId,
 } from "@/game/domain/worldEntity";
 import { ENEMY_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
+import { deriveKeyEndingNpcId } from "./keyEndingNpc";
 
 // ---------------------------------------------------------------------------
 // Task 3：世界演化提议的审批。纯函数，无 IO。
@@ -201,31 +202,108 @@ function deriveAnchorObjective(
   return null;
 }
 
+/** 幕目标链结构变体：由 seed+act 确定性选择，玩家在结构层无法预测全程流程。 */
+export type ActObjectiveShape =
+  | "full_chain"
+  | "investigation_focus"
+  | "confrontation_focus"
+  | "errand_focus";
+
+const ACT_OBJECTIVE_SHAPES: readonly ActObjectiveShape[] = [
+  "full_chain", "investigation_focus", "confrontation_focus", "errand_focus",
+];
+
+const SHAPE_ALLOWED_KINDS: Readonly<Record<ActObjectiveShape, ReadonlySet<string>>> = {
+  full_chain: new Set(["discover_fact", "visit_location", "talk_to_npc", "obtain_item", "defeat_enemy"]),
+  investigation_focus: new Set(["discover_fact", "talk_to_npc", "obtain_item"]),
+  confrontation_focus: new Set(["discover_fact", "talk_to_npc", "defeat_enemy"]),
+  errand_focus: new Set(["visit_location", "talk_to_npc", "obtain_item"]),
+};
+
+/** 稳定字符串散列（djb2）：仅用于确定性变体选择，无密码学用途。 */
+function hashStringToIndex(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+/** 雪崩混合（xorshift + 乘法）：打破 djb2 输出对输入尾部的线性敏感。 */
+function mixBits(x: number): number {
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x7feb352d);
+  x ^= x >>> 15;
+  x = Math.imul(x, 0x846ca68b);
+  x ^= x >>> 16;
+  return x >>> 0;
+}
+
+/**
+ * 由本局 seed 与目标幕次选择目标链结构；同 seed 同幕结果恒定。
+ *
+ * 注意：不能直接 `hash % 4`，也不能只做一次乘性高位提取。djb2 对“输入尾字符
+ * 差 1”（`seed:3` 与 `seed:2` 只差末位 '3'-'2'=1）的输出差恒为奇数；任何乘以
+ * 奇数（31≡3 mod 4、2654435761 等）后取低位/高位的桶函数，都会让相邻幕的
+ * bucket 差 (奇 × K 的高 2 位 + 进位) ≠ 0——即 act2 与 act3 的 shape 必然不同，
+ * 既削弱“结构层不可预测”的意图（act2 命中即可排除 act3 的相同变体），也令任何
+ * seed 都无法让两个相邻幕同时命中同一变体（journey 回归无解，实测确认）。必须
+ * 经雪崩混合打散后再取高 2 位：实测 5000 样本分布 1226/1230/1265/1279，plan 的
+ * 200 样本覆盖四种变体断言通过，且存在对 act2-5 全部命中 `full_chain` 的 seed
+ * （`q20`，供 journey 回归使用）。
+ */
+export function actObjectiveShape(seed: string, act: number): ActObjectiveShape {
+  const digest = hashStringToIndex(`${seed}:${act}`);
+  const bucket = (mixBits(digest) >>> 30) & 3;
+  return ACT_OBJECTIVE_SHAPES[bucket]!;
+}
+
 /**
  * 正式幕必须留出可阅读、可验证的过程，而非一次交谈就结束。完整动态幕
  * 按“调查现场 → 前往新地点 → 与人物交谈 → 取得证物 → 处理阻拦”串成
  * 单向主线；提案缺少某类实体时自动跳过该类，但不压缩仍存在的步骤。
+ * 结构变体在完整链基础上按 shape 过滤子集；过滤后为空时回退全程链，
+ * 仍为空时回落锚点目标（可返回 null）。
  */
-function deriveActObjectives(
+export function deriveActObjectives(
   p: WorldDeltaProposal,
   ids: MintedIds,
+  shape: ActObjectiveShape,
 ): readonly QuestObjective[] | null {
-  const objectives: QuestObjective[] = [];
-  if (p.newFact && ids.factId) objectives.push({ kind: "discover_fact", factId: ids.factId });
-  if (p.newLocation && ids.locationId) objectives.push({ kind: "visit_location", locationId: ids.locationId });
-  if (p.newNpc && ids.npcId) objectives.push({ kind: "talk_to_npc", npcId: ids.npcId });
-  if (p.newItem && ids.itemId) objectives.push({ kind: "obtain_item", itemId: ids.itemId });
-  if (p.newEnemy && ids.enemyId) objectives.push({ kind: "defeat_enemy", enemyId: ids.enemyId });
-  if (objectives.length > 0) return objectives;
-  const anchor = deriveAnchorObjective(p, ids);
-  return anchor === null ? null : [anchor];
+  const full: QuestObjective[] = [];
+  if (p.newFact && ids.factId) full.push({ kind: "discover_fact", factId: ids.factId });
+  if (p.newLocation && ids.locationId) full.push({ kind: "visit_location", locationId: ids.locationId });
+  if (p.newNpc && ids.npcId) full.push({ kind: "talk_to_npc", npcId: ids.npcId });
+  if (p.newItem && ids.itemId) full.push({ kind: "obtain_item", itemId: ids.itemId });
+  if (p.newEnemy && ids.enemyId) full.push({ kind: "defeat_enemy", enemyId: ids.enemyId });
+  const allowed = SHAPE_ALLOWED_KINDS[shape];
+  const shaped = full.filter((objective) => allowed.has(objective.kind));
+  // 任何变体都必须保留可达锚点：过滤后为空回退全程链
+  let chain: readonly QuestObjective[];
+  if (shaped.length > 0) {
+    chain = shaped;
+  } else if (full.length > 0) {
+    chain = full;
+  } else {
+    const anchor = deriveAnchorObjective(p, ids);
+    if (anchor === null) return null;
+    chain = [anchor];
+  }
+  // 物化新地点的幕必须把“抵达新地点”保留在链首：否则该地点永远不会被
+  // storyReveal 的 visit_location 释放游标解锁，而后续幕会把 NPC/物品/敌人
+  // 挂载到其上，主线目标不可达 → 主线永远无法推进（可完成性不变约束）。
+  // 链首保留也维持 materializeWorldDelta 的“首个目标即释放新地点”优化。
+  if (p.newLocation && ids.locationId && !chain.some((objective) => objective.kind === "visit_location")) {
+    chain = [{ kind: "visit_location", locationId: ids.locationId }, ...chain];
+  }
+  return chain;
 }
 
 function ruleOwnedEndingRequirements(
   themeKey: "trust" | "doubt",
   ws: WorldState,
 ): readonly EndingRequirement[] {
-  const keyNpcId = ws.npcs[0]?.id;
+  const keyNpcId = deriveKeyEndingNpcId(ws);
   if (keyNpcId === undefined) return [];
   return themeKey === "trust"
     ? [{ kind: "npc_affinity_at_least", npcId: keyNpcId, value: TRUST_ENDING_MIN_AFFINITY }]
@@ -301,6 +379,10 @@ export function approveWorldDelta(input: {
   }
 
   const ids = mintIds(ss.evolution, p, input.idOverride);
+
+  // 目标链结构变体仅 next_act 消费（下方校验与铸造共用同一次计算，避免两处口径漂移）；
+  // pacing / ending_pair 不铸造主线目标链，shape 保持 null。
+  let shape: ActObjectiveShape | null = null;
 
   // 引用解析：NPC/物品/敌人 的落点地点必须真实存在或本次同池铸造。
   let npcLocationId: LocationId | null = null;
@@ -384,9 +466,10 @@ export function approveWorldDelta(input: {
 
   // 主线任务：每幕唯一（一个 act 只能有一个 main quest），且目标必须有可达锚点。
   if (need.kind === "next_act") {
+    shape = actObjectiveShape(ws.generation.seed, need.act);
     const stageCollision = ws.quests.some((q) => q.kind === "main" && q.stage === need.act && q.status !== "closed");
     if (stageCollision) return reject("main_quest_conflict", `act_${need.act}_has_main_quest`);
-    const objectives = deriveActObjectives(p, ids);
+    const objectives = deriveActObjectives(p, ids, shape);
     if (objectives === null) return reject("unreachable_objective", "no_anchor_entity");
   }
 
@@ -491,7 +574,8 @@ export function approveWorldDelta(input: {
       id: ids.questId,
       name: p.nextMainQuest.name,
       description: p.nextMainQuest.description,
-      objectives: deriveActObjectives(p, ids)!,
+      // need.kind === "next_act" 时上方校验块必然已为 shape 赋值。
+      objectives: deriveActObjectives(p, ids, shape!)!,
       onSuccess: { kind: "advance_story" },
       onFailure: { kind: "closed" },
       tags: ["dynamic"],

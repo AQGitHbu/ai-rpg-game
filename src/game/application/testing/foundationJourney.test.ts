@@ -27,7 +27,7 @@ function cmap(entries: readonly [string, Action][]): ActionChoiceMap {
 
 describe("foundation 动态闭环旅程", () => {
   it("从开局切片走到具象化、小镇、场景与结局：≥15 回合、3 次重载、单次 CAS", async () => {
-    const created = await createJourneyGame(undefined, undefined, "foundation-dynamic-seed", "short");
+    const created = await createJourneyGame(undefined, undefined, "q20", "short");
     let store: InMemoryRepo = created.repo;
     let successfulTurns = 0;
     let reloadCount = 0;

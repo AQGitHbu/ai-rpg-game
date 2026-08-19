@@ -14,3 +14,4 @@ export {
   isObjectiveEntityReleased,
   isQuestObjectiveReleased,
 } from "./storyReveal";
+export { deriveKeyEndingNpcId } from "./keyEndingNpc";
