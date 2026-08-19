@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { generatePendingScene } from "./generatePendingScene";
 import { createInitialWorldState, appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asFactId, asItemId, asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
+import { asFactId, asItemId, asLocationId, asNpcId, asGenerationId, asQuestId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
@@ -481,5 +481,120 @@ describe("generatePendingScene", () => {
     const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
     expect(input.nextStoryState.narrative.currentScene?.npcLine?.text).toBe("这件事我也正想说。你先把手里的线索交给我核对。");
     expect(input.nextStoryState.narrative.currentScene?.source).toBe("generated");
+  });
+
+  // ── Task 2：AI 预生成单线行动叙事的审批与持久化 ─────────────────────────
+
+  // 权威主线目标链：与老板交谈 → 调查车轮印（fact_2）→ 前往北巷旧道（loc_2）。
+  // 当前目标（talk npc_1）之后是连续单线前缀，context.upcomingLinearObjectives
+  // 投影出 discover_fact(fact_2) 与 visit_location(loc_2)，供审批校验实体引用。
+  function linearObjectiveRecord(): GameRecord {
+    const world = makeWorldState();
+    const loc2: LocationEntry = {
+      id: asLocationId("loc_2"), name: "北巷旧道", description: "t", kind: "main",
+      connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+    };
+    return {
+      ...makeGameRecord({
+        kind: "pending",
+        job: makeJob({ summary: { kind: "explore" }, eventKind: "observe" }),
+      }),
+      worldState: {
+        ...world,
+        locations: [...world.locations, loc2],
+        worldFacts: [...world.worldFacts, {
+          factId: asFactId("fact_2"),
+          text: "车轮印在后巷泥水中断续向北延伸。",
+          source: "generated" as const,
+          discovered: false,
+          locationId: asLocationId("loc_1"),
+          investigationLabel: "酒楼后巷的车轮印",
+        }],
+        quests: [{
+          id: asQuestId("quest_1"),
+          name: "追查车轮印",
+          description: "查明车轮印的去向。",
+          objectives: [
+            { kind: "talk_to_npc", npcId: asNpcId("npc_1") },
+            { kind: "discover_fact", factId: asFactId("fact_2") },
+            { kind: "visit_location", locationId: asLocationId("loc_2") },
+          ],
+          onSuccess: { kind: "advance_story" },
+          onFailure: { kind: "closed" },
+          tags: [],
+          kind: "main" as const,
+          stage: 1,
+          status: "active" as const,
+        }],
+      },
+    };
+  }
+
+  it("persists approved linearActionNarratives into linearNarrativeQueue on scene write-back", async () => {
+    const record = linearObjectiveRecord();
+    const repo = makeMockRepo(record);
+    const pregenerated: SceneSource = {
+      async generateScene(): Promise<SceneSourceResult> {
+        return {
+          sceneId: "scene-pregenerated",
+          segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+          npcLine: null,
+          objectiveLink: { questId: "quest_1", objectiveIndex: 0, mode: "hint" },
+          choices: [
+            { candidateId: "candidate_1", label: "查看四周" },
+            { candidateId: "candidate_2", label: "与老板交谈" },
+          ],
+          linearActionNarratives: [
+            { actionKind: "investigate", factId: "fact_2", narration: "车轮印在后巷泥水中断续向北延伸。" },
+            { actionKind: "move", locationId: "loc_2", narration: "北巷旧道就在前方，夜色掩不住那条土路。" },
+          ],
+          source: "generated",
+        };
+      },
+    };
+    const result = await generatePendingScene({ repository: repo, sceneSource: pregenerated, now: () => "2026-01-02" });
+    expect(result).toBe("saved");
+    const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
+    expect(input.nextStoryState.narrative.linearNarrativeQueue).toEqual([
+      { actionKind: "investigate", factId: asFactId("fact_2"), narration: "车轮印在后巷泥水中断续向北延伸。", source: "generated" },
+      { actionKind: "move", locationId: asLocationId("loc_2"), narration: "北巷旧道就在前方，夜色掩不住那条土路。", source: "generated" },
+    ]);
+  });
+
+  it("drops linearActionNarratives referencing entities outside the authoritative objective chain", async () => {
+    const record = linearObjectiveRecord();
+    const repo = makeMockRepo(record);
+    const logger = { warn: vi.fn() };
+    const fabricated: SceneSource = {
+      async generateScene(): Promise<SceneSourceResult> {
+        return {
+          sceneId: "scene-fabricated",
+          segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+          npcLine: null,
+          objectiveLink: { questId: "quest_1", objectiveIndex: 0, mode: "hint" },
+          choices: [
+            { candidateId: "candidate_1", label: "查看四周" },
+            { candidateId: "candidate_2", label: "与老板交谈" },
+          ],
+          // 一条合法 + 一条捏造：任意非法条目 → 整字段丢弃（不是逐条过滤）。
+          linearActionNarratives: [
+            { actionKind: "investigate", factId: "fact_2", narration: "车轮印在后巷泥水中断续向北延伸。" },
+            { actionKind: "investigate", factId: "fact_fabricated", narration: "我凭空捏造了一个新事实。" },
+          ],
+          source: "generated",
+        };
+      },
+    };
+    const result = await generatePendingScene({
+      repository: repo,
+      sceneSource: fabricated,
+      logger: logger as never,
+      now: () => "2026-01-02",
+    });
+    expect(result).toBe("saved");
+    const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
+    expect(input.nextStoryState.narrative.linearNarrativeQueue).toEqual([]);
+    expect(input.nextStoryState.narrative.currentScene?.source).toBe("generated");
+    expect(logger.warn).toHaveBeenCalledWith("linear_narratives_dropped", expect.anything());
   });
 });

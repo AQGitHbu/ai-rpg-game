@@ -142,6 +142,7 @@ export async function generatePendingScene(
     proposal,
     basedOnRevision: record.revision + 1,
     existingCandidateEventPool: record.storyState.candidateEventPool,
+    logger: deps.logger,
   });
   if (approvedGenerated.ok) {
     approved = approvedGenerated;
@@ -172,6 +173,7 @@ export async function generatePendingScene(
             proposal: repairedProposal,
             basedOnRevision: record.revision + 1,
             existingCandidateEventPool: record.storyState.candidateEventPool,
+            logger: deps.logger,
           });
           if (repairedApproval.ok) {
             approved = repairedApproval;
@@ -198,6 +200,7 @@ export async function generatePendingScene(
           proposal: fallbackProposal,
           basedOnRevision: record.revision + 1,
           existingCandidateEventPool: record.storyState.candidateEventPool,
+          logger: deps.logger,
         });
         if (!approvedFallback.ok) return "unavailable";
         approved = approvedFallback;
@@ -218,6 +221,9 @@ export async function generatePendingScene(
         currentScene: approved.scene,
         generation: { status: "idle" },
         choiceRegistry: approved.choiceRegistry,
+        // Task 2：随同一次 scene CAS 覆盖式持久化预生成单线行动叙事；
+        // 对话回合与非 immediateAction 路径同样是生成时机，必须一并写回。
+        linearNarrativeQueue: approved.linearNarrativeQueue,
       },
       candidateEventPool: approved.candidateEventPool,
     },

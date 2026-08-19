@@ -121,6 +121,24 @@ export type DialogueSessionState = {
   readonly completed: boolean;
 };
 
+/**
+ * AI 预生成单线行动（investigate/move）叙事的持久化形态（Task 2）。
+ * 由审批器从 `LinearActionNarrative` 逐字段重建：绝不直接持久化提案对象原引用。
+ */
+export type LinearActionNarrativeState =
+  | {
+      readonly actionKind: "investigate";
+      readonly factId: FactId;
+      readonly narration: string;
+      readonly source: "generated";
+    }
+  | {
+      readonly actionKind: "move";
+      readonly locationId: LocationId;
+      readonly narration: string;
+      readonly source: "generated";
+    };
+
 /** Runtime AI is opt-in per save. Offline development presets never call it. */
 export type NarrativeMode = "ai" | "offline";
 
@@ -137,6 +155,11 @@ export type NarrativeRuntimeState = {
    * entry.basedOnRevision === 当前 record revision，否则视为过期失效。
    */
   readonly choiceRegistry?: readonly ApprovedChoice[];
+  /**
+   * AI 预生成单线行动叙事队列（Task 2）：随场景写回覆盖式更新，仅 fast path
+   * 消费时读取，消费即除；残留条目仅在实体 ID 精确匹配时生效，无越权风险。
+   */
+  readonly linearNarrativeQueue?: readonly LinearActionNarrativeState[];
 };
 
 /** 场景对白每页字符预算：纯展示策略常量。 */

@@ -1,11 +1,12 @@
 import { parseEventCandidate } from "@/game/domain/candidateEvent";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import type { EventProposal, ScenePerformanceProposal, ScenePerformanceNpcLine } from "./sceneSource";
-import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState } from "@/game/domain/narrative";
+import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState, LinearActionNarrativeState } from "@/game/domain/narrative";
 import { buildNpcDialoguePages } from "@/game/domain/narrative";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice, semanticSummaryOf } from "@/game/domain/approvedChoice";
+import type { GameLogger } from "@/game/logging";
 import {
   buildEventState,
   buildSelectableSceneCandidates,
@@ -13,7 +14,7 @@ import {
   formatSceneChoiceLabel,
   usesFallbackDialogueChoiceLabels,
 } from "./deterministicSceneSource";
-import { asFactId, asNpcId } from "@/game/domain/worldEntity";
+import { asFactId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 
@@ -123,6 +124,8 @@ export type ApprovedSceneWriteBack = {
   readonly scene: NarrativeSceneState;
   readonly choiceRegistry: readonly ApprovedChoice[];
   readonly candidateEventPool: readonly EventCandidate[];
+  /** Task 2：审批过滤后的 AI 预生成单线行动叙事队列（整字段丢弃时为空）。 */
+  readonly linearNarrativeQueue: readonly LinearActionNarrativeState[];
 };
 
 export type ApproveScenePerformanceResult =
@@ -168,20 +171,76 @@ function hasExpandedNpcDialogue(text: string): boolean {
 }
 
 /**
+ * 审批 AI 预生成单线行动叙事（Task 2）：
+ * - factId/locationId 必须精确命中 `context.upcomingLinearObjectives` 的权威实体，
+ *   AI 只能演绎服务端下发的目标链实体，不得捏造新事实/新实体（无越权）；
+ * - narration 非空且不含"主线推进/当前目标"等系统元话术；
+ * - 任意非法条目 → 整字段丢弃（记 logger warn，绝不因该字段拒绝整场）；
+ * - 通过后逐字段重建 `LinearActionNarrativeState`（source 恒为 "generated"），
+ *   提案对象原引用不直接持久化。
+ */
+function approveLinearActionNarratives(
+  proposal: ScenePerformanceProposal,
+  context: SceneGenerationContext,
+  logger: Pick<GameLogger, "warn"> | undefined,
+): readonly LinearActionNarrativeState[] {
+  const raw = proposal.linearActionNarratives;
+  if (raw === undefined) return [];
+  const upcoming = context.upcomingLinearObjectives ?? [];
+  const drop = (reason: string): readonly LinearActionNarrativeState[] => {
+    logger?.warn("linear_narratives_dropped", { reason, sceneId: proposal.sceneId });
+    return [];
+  };
+  const narratives: LinearActionNarrativeState[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry)) return drop("invalid_shape");
+    if (typeof entry.narration !== "string" || entry.narration.trim() === "") return drop("empty_narration");
+    const narration = entry.narration.trim();
+    if (containsSystemMetaSpeech(narration)) return drop("meta_speech");
+    if (entry.actionKind === "investigate") {
+      if (typeof entry.factId !== "string") return drop("invalid_reference");
+      if (!upcoming.some((ref) => ref.kind === "discover_fact" && String(ref.factId) === entry.factId)) {
+        return drop("invalid_reference");
+      }
+      narratives.push({ actionKind: "investigate", factId: asFactId(entry.factId), narration, source: "generated" });
+      continue;
+    }
+    if (entry.actionKind === "move") {
+      if (typeof entry.locationId !== "string") return drop("invalid_reference");
+      if (!upcoming.some((ref) => ref.kind === "visit_location" && String(ref.locationId) === entry.locationId)) {
+        return drop("invalid_reference");
+      }
+      narratives.push({ actionKind: "move", locationId: asLocationId(entry.locationId), narration, source: "generated" });
+      continue;
+    }
+    return drop("unknown_action_kind");
+  }
+  return narratives;
+}
+
+/** 系统元话术：任务状态由 HUD 单独展示，不得写进玩家可见的叙事正文。 */
+function containsSystemMetaSpeech(text: string): boolean {
+  return text.includes("主线推进") || text.includes("当前目标");
+}
+
+/**
  * 审批 AI 生成的场景表演提案（spec §10.3，Task 6）：
  * - 分段旁白：每个强制节拍恰好一个 segment 且按节拍顺序排列；atmosphere 可选且最后；
  * - NPC 台词：归属在场 NPC，fact/交互引用必须属于该 NPC 的允许集合；
  * - player_utterance 必须由焦点 NPC 应答并列出节拍 ID；
  * - objectiveLink 必须与 ObjectiveTransition.after 一致；
  * - 选项必须来自服务端合法候选、两两不同，且 after 存在时至少一项推进目标；
+ * - Task 2：linearActionNarratives 逐条校验，非法整字段丢弃，不拒整场；
  * - 通过后逐字段重建 ready scene 与 ApprovedChoice registry；提案对象不直达持久化。
- * 纯函数：不读时钟/随机数/DB。
+ * 纯函数：不读时钟/随机数/DB（可选 logger 仅为可观测性，不改变结果）。
  */
 export function approveScenePerformance(input: {
   readonly context: SceneGenerationContext;
   readonly proposal: ScenePerformanceProposal;
   readonly basedOnRevision: number;
   readonly existingCandidateEventPool: readonly EventCandidate[];
+  /** Task 2：整字段丢弃预生成叙事时记录稳定事件（不拒整场）。 */
+  readonly logger?: Pick<GameLogger, "warn">;
 }): ApproveScenePerformanceResult {
   const { context, proposal } = input;
 
@@ -419,6 +478,7 @@ export function approveScenePerformance(input: {
     choiceRegistry: [approvedA.choice, approvedB.choice],
     // 场景表演契约不含候选事件：池原样保留，事件生命周期由独立审批处理。
     candidateEventPool: [...input.existingCandidateEventPool],
+    linearNarrativeQueue: approveLinearActionNarratives(proposal, context, input.logger),
   };
 }
 
