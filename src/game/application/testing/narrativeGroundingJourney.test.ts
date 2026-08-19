@@ -74,7 +74,8 @@ describe("叙事落地旅程（Step 2）", () => {
 
   it("敌意与信任亲和度 → 不同回应策略/兜底线", async () => {
     async function runWithAffinity(affinity: number) {
-      const created = await createJourneyGame(undefined, undefined, "grounding-affinity-q20", "short");
+      // seed 统一为 "q20"（与其它 journey 一致；各迭代 repo 独立无冲突）。
+      const created = await createJourneyGame(undefined, undefined, "q20", "short");
       const store = created.repo;
       const record = await loadGameRecord(store.repo);
       if (record === null) throw new Error("记录不可用");

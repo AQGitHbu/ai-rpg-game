@@ -44,6 +44,24 @@ describe("deriveKeyEndingNpcId", () => {
     expect(String(deriveKeyEndingNpcId(ws))).toBe("npc_9");
   });
 
+  it("stage 并列时优先 active 任务（失败重铸的同 stage 旧任务不抢占锚点）", () => {
+    const failedTalk: QuestEntry = {
+      id: asQuestId("q_failed"), name: "失败幕", description: "d",
+      objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_3") }],
+      onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+      tags: [], kind: "main", stage: 5, status: "failed",
+    };
+    const remintedTalk: QuestEntry = {
+      id: asQuestId("q_reminted"), name: "重铸幕", description: "d",
+      objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_8") }],
+      onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+      tags: [], kind: "main", stage: 5, status: "active",
+    };
+    // 数组序旧任务在前，tie-break 后 active 任务胜出。
+    const ws = baseWorld(["npc_0", "npc_3", "npc_8"], [failedTalk, remintedTalk]);
+    expect(String(deriveKeyEndingNpcId(ws))).toBe("npc_8");
+  });
+
   it("主线任务没有交谈目标时回退到开局首位 NPC（与旧行为一致）", () => {
     const noTalk: QuestEntry = {
       id: asQuestId("q_no_talk"), name: "无交谈", description: "d",

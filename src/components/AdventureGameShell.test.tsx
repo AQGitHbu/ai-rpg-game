@@ -1076,7 +1076,9 @@ describe("AdventureGameShell canonical opaque choices", () => {
   });
 
   it("removes defeated units from the battle scene", () => {
-    const view = buildView();
+    // 用带完整 battle（含 controls）的视图作基底；buildView() 的 battle 为 null，
+    // 展开 null 得不到 controls 会让战斗行动栏渲染崩溃。
+    const view = buildBattleView();
     render(<LocationSceneScreen
       view={{
         ...view,

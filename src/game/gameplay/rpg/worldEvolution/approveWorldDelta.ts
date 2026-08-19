@@ -380,8 +380,9 @@ export function approveWorldDelta(input: {
 
   const ids = mintIds(ss.evolution, p, input.idOverride);
 
-  const shapeAct = need.kind === "next_act" ? need.act : ss.currentAct;
-  const shape = actObjectiveShape(ws.generation.seed, shapeAct);
+  // 目标链结构变体仅 next_act 消费（下方校验与铸造共用同一次计算，避免两处口径漂移）；
+  // pacing / ending_pair 不铸造主线目标链，shape 保持 null。
+  let shape: ActObjectiveShape | null = null;
 
   // 引用解析：NPC/物品/敌人 的落点地点必须真实存在或本次同池铸造。
   let npcLocationId: LocationId | null = null;
@@ -465,6 +466,7 @@ export function approveWorldDelta(input: {
 
   // 主线任务：每幕唯一（一个 act 只能有一个 main quest），且目标必须有可达锚点。
   if (need.kind === "next_act") {
+    shape = actObjectiveShape(ws.generation.seed, need.act);
     const stageCollision = ws.quests.some((q) => q.kind === "main" && q.stage === need.act && q.status !== "closed");
     if (stageCollision) return reject("main_quest_conflict", `act_${need.act}_has_main_quest`);
     const objectives = deriveActObjectives(p, ids, shape);
@@ -572,7 +574,8 @@ export function approveWorldDelta(input: {
       id: ids.questId,
       name: p.nextMainQuest.name,
       description: p.nextMainQuest.description,
-      objectives: deriveActObjectives(p, ids, shape)!,
+      // need.kind === "next_act" 时上方校验块必然已为 shape 赋值。
+      objectives: deriveActObjectives(p, ids, shape!)!,
       onSuccess: { kind: "advance_story" },
       onFailure: { kind: "closed" },
       tags: ["dynamic"],

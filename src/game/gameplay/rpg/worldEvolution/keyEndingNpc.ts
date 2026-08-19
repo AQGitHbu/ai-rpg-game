@@ -9,8 +9,13 @@ import type { NpcId } from "@/game/domain/worldEntity";
 export function deriveKeyEndingNpcId(ws: WorldState): NpcId | undefined {
   const mainQuests = ws.quests
     .filter((quest) => quest.kind === "main")
-    // stage 为可选字段（QuestEntry.stage?: number），缺省按 0 处理
-    .sort((a, b) => (b.stage ?? 0) - (a.stage ?? 0));
+    // stage 为可选字段（QuestEntry.stage?: number），缺省按 0 处理；
+    // stage 并列时优先仍在推进的 active 任务（失败重铸的同 stage 旧任务不抢占锚点）。
+    .sort((a, b) => {
+      const stageDiff = (b.stage ?? 0) - (a.stage ?? 0);
+      if (stageDiff !== 0) return stageDiff;
+      return Number(b.status === "active") - Number(a.status === "active");
+    });
   for (const quest of mainQuests) {
     const talkObjective = quest.objectives.find((objective) => objective.kind === "talk_to_npc");
     if (talkObjective !== undefined) return talkObjective.npcId;

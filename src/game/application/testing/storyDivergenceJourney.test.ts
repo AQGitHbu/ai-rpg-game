@@ -85,15 +85,7 @@ async function runBranch(branch: Branch, replay: number) {
     const npcId = store.record()!.worldState.npcs[0]!.id;
     accept(await playTurn(store.repo, { kind: "free_text", text, targetNpcId: asNpcId(npcId) }, new Map(), () => "2026-08-09T00:00:00.000Z", source));
   };
-  const finalTalkNpcId = (): string => {
-    const ws = store.record()!.worldState;
-    const mainQuests = ws.quests.filter((q) => q.kind === "main").sort((a, b) => (b.stage ?? 0) - (a.stage ?? 0));
-    for (const quest of mainQuests) {
-      const talk = quest.objectives.find((o) => o.kind === "talk_to_npc");
-      if (talk) return String(talk.npcId);
-    }
-    return String(ws.npcs[0]!.id);
-  };
+  const finalTalkNpcId = (): string => finalTalkNpcIdOf(store.record()!.worldState);
   const freeTextToFinalNpc = async (text: string) => {
     accept(await playTurn(store.repo, { kind: "free_text", text, targetNpcId: asNpcId(finalTalkNpcId()) }, new Map(), () => "2026-08-09T00:00:00.000Z", source));
   };
