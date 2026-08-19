@@ -219,8 +219,10 @@ function approveLinearActionNarratives(
 }
 
 /** 系统元话术：任务状态由 HUD 单独展示，不得写进玩家可见的叙事正文。 */
+const SYSTEM_META_PATTERNS = /主线推进|当前目标|已完成：|完成了任务/;
+
 function containsSystemMetaSpeech(text: string): boolean {
-  return text.includes("主线推进") || text.includes("当前目标");
+  return SYSTEM_META_PATTERNS.test(text);
 }
 
 /**
