@@ -501,6 +501,100 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(result).toEqual({ ok: false, reason: "segment_unknown_beat" });
   });
 
+  it("parses linearActionNarratives for upcoming investigate/move objectives", () => {
+    const context: SceneGenerationContext = {
+      ...makeContext(),
+      upcomingLinearObjectives: [
+        {
+          kind: "discover_fact",
+          factId: asFactId("fact_wheel"),
+          investigationLabel: "酒楼后巷的车轮印",
+          factText: "车轮印在后巷泥水中断续向北延伸，指向北巷旧道深处的旧镖局废墟。",
+          nextObjectiveEntityName: "北巷旧道",
+        },
+        {
+          kind: "visit_location",
+          locationId: asLocationId("loc_north_lane"),
+          locationName: "北巷旧道",
+        },
+      ],
+    };
+    const selectable = buildSelectableSceneCandidates(context);
+    const valid = parseScenePerformanceJson(
+      {
+        segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+        npcLine: null,
+        objectiveLink: null,
+        choices: [
+          { candidateId: "candidate_1", label: "支持老板" },
+          { candidateId: "candidate_2", label: "质疑老板" },
+        ],
+        linearActionNarratives: [
+          { actionKind: "investigate", factId: "fact_wheel", narration: "泥水里的车轮印断续向北，直指北巷旧道。" },
+          { actionKind: "move", locationId: "loc_north_lane", narration: "你沿旧道向北行去。" },
+        ],
+      },
+      context,
+      selectable,
+    );
+    expect(valid.ok).toBe(true);
+    if (!valid.ok) return;
+    expect(valid.proposal.linearActionNarratives).toEqual([
+      { actionKind: "investigate", factId: "fact_wheel", narration: "泥水里的车轮印断续向北，直指北巷旧道。" },
+      { actionKind: "move", locationId: "loc_north_lane", narration: "你沿旧道向北行去。" },
+    ]);
+
+    const invalid = parseScenePerformanceJson(
+      {
+        segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+        npcLine: null,
+        objectiveLink: null,
+        choices: [
+          { candidateId: "candidate_1", label: "支持老板" },
+          { candidateId: "candidate_2", label: "质疑老板" },
+        ],
+        linearActionNarratives: [
+          { actionKind: "investigate", factId: "invented_fact", narration: "捏造的证物。" },
+        ],
+      },
+      context,
+      selectable,
+    );
+    expect(invalid.ok).toBe(true);
+    if (!invalid.ok) return;
+    expect(invalid.proposal.linearActionNarratives).toBeUndefined();
+  });
+
+  it("prompt 在 upcomingLinearObjectives 非空时要求预生成 linearActionNarratives，为空时要求省略该字段", () => {
+    const withLinear: SceneGenerationContext = {
+      ...makeContext(),
+      upcomingLinearObjectives: [
+        {
+          kind: "discover_fact",
+          factId: asFactId("fact_wheel"),
+          investigationLabel: "酒楼后巷的车轮印",
+          factText: "车轮印在后巷泥水中断续向北延伸，指向北巷旧道深处的旧镖局废墟。",
+          nextObjectiveEntityName: "北巷旧道",
+        },
+        {
+          kind: "visit_location",
+          locationId: asLocationId("loc_north_lane"),
+          locationName: "北巷旧道",
+        },
+      ],
+    };
+    const prompt = buildLiveScenePrompt(withLinear, buildSelectableSceneCandidates(withLinear));
+    expect(prompt).toContain("linearActionNarratives");
+    expect(prompt).toContain("车轮印在后巷泥水中断续向北延伸"); // 权威正文进入 prompt
+    expect(prompt).toContain("北巷旧道"); // 下一地点实体名照抄服务端下发
+    expect(prompt).toContain("不得捏造新事实");
+    expect(prompt).not.toContain("省略 linearActionNarratives");
+
+    const plain = buildLiveScenePrompt(makeContext(), buildSelectableSceneCandidates(makeContext()));
+    expect(plain).toContain("省略 linearActionNarratives");
+    expect(plain).not.toContain("单线行动预告（AI 预生成");
+  });
+
   it("契约失败时带失败原因重试一次，修复成功则保留 generated", async () => {
     const logger = { warn: vi.fn() };
     let attempts = 0;

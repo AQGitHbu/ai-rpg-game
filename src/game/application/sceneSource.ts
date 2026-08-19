@@ -36,6 +36,15 @@ export type ScenePerformanceObjectiveLink = {
 };
 
 /**
+ * 单线行动（investigate/move）的 AI 预生成叙事（Task 1）。
+ * 仅 live 提案携带；随审批持久化后由 fast path 消费，fallback 提案不携带。
+ * 引用必须命中 SceneGenerationContext.upcomingLinearObjectives 的权威实体。
+ */
+export type LinearActionNarrative =
+  | { readonly actionKind: "investigate"; readonly factId: string; readonly narration: string }
+  | { readonly actionKind: "move"; readonly locationId: string; readonly narration: string };
+
+/**
  * 场景表演契约（spec §10.3，Task 6）。
  * 只描述"如何表演"：旁白分段、焦点台词、目标链接与合法选项 ID。
  * 不含事件、不含完整状态、不含任意 path；所有实体 ID 由服务端权威下发。
@@ -49,6 +58,8 @@ export type ScenePerformanceProposal = {
     { readonly candidateId: string; readonly label: string },
     { readonly candidateId: string; readonly label: string },
   ];
+  /** Task 1：仅 live 提案携带的 AI 预生成单线行动叙事；随审批持久化后由 fast path 消费。 */
+  readonly linearActionNarratives?: readonly LinearActionNarrative[];
   readonly source: "generated" | "fallback";
   /** 仅供 pending 编排限制内容修复次数，不进入 ready scene 持久化。 */
   readonly contentRepairAttempt?: number;

@@ -1,6 +1,11 @@
 import type { AiMessage, AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
-import type { SceneSource, ScenePerformanceProposal, ScenePerformanceSegment } from "../../sceneSource";
+import type {
+  SceneSource,
+  ScenePerformanceProposal,
+  ScenePerformanceSegment,
+  LinearActionNarrative,
+} from "../../sceneSource";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
 import {
   createDeterministicSceneSource,
@@ -202,6 +207,42 @@ export function resolvePerformanceChoices(
   ];
 }
 
+/**
+ * 解析/校验 AI 返回的 linearActionNarratives（Task 1）：actionKind/factId/locationId/
+ * narration 逐字段校验，引用必须命中 context.upcomingLinearObjectives 的权威实体；
+ * 任意非法条目 → 整字段丢弃（返回 null，不阻塞主场景解析）。
+ */
+function parseLinearActionNarratives(
+  rawValue: unknown,
+  context: SceneGenerationContext,
+): readonly LinearActionNarrative[] | null {
+  if (!Array.isArray(rawValue)) return null;
+  const upcoming = context.upcomingLinearObjectives ?? [];
+  const narratives: LinearActionNarrative[] = [];
+  for (const entry of rawValue) {
+    if (!isRecord(entry)) return null;
+    if (typeof entry.narration !== "string" || entry.narration.trim() === "") return null;
+    if (entry.actionKind === "investigate") {
+      if (typeof entry.factId !== "string") return null;
+      if (!upcoming.some((ref) => ref.kind === "discover_fact" && String(ref.factId) === entry.factId)) {
+        return null;
+      }
+      narratives.push({ actionKind: "investigate", factId: entry.factId, narration: entry.narration.trim() });
+      continue;
+    }
+    if (entry.actionKind === "move") {
+      if (typeof entry.locationId !== "string") return null;
+      if (!upcoming.some((ref) => ref.kind === "visit_location" && String(ref.locationId) === entry.locationId)) {
+        return null;
+      }
+      narratives.push({ actionKind: "move", locationId: entry.locationId, narration: entry.narration.trim() });
+      continue;
+    }
+    return null;
+  }
+  return narratives;
+}
+
 /** 把 AI 返回的任意形状解析/校验为合法表演提案；非法返回 null（调用方走确定性兜底）。 */
 export function parseScenePerformanceJson(
   raw: unknown,
@@ -282,6 +323,13 @@ export function parseScenePerformanceJson(
     return { ok: false, reason: "choices_stale_template" };
   }
 
+  // 单线行动预生成叙事：非法条目整字段丢弃，绝不阻塞主场景解析/审批。
+  let linearActionNarratives: ScenePerformanceProposal["linearActionNarratives"];
+  if (raw.linearActionNarratives !== undefined && raw.linearActionNarratives !== null) {
+    const parsed = parseLinearActionNarratives(raw.linearActionNarratives, context);
+    if (parsed !== null) linearActionNarratives = parsed;
+  }
+
   return {
     ok: true,
     proposal: {
@@ -290,6 +338,7 @@ export function parseScenePerformanceJson(
       npcLine,
       objectiveLink,
       choices,
+      ...(linearActionNarratives === undefined ? {} : { linearActionNarratives }),
       source: "generated",
     },
   };
@@ -499,6 +548,12 @@ export function buildLiveScenePrompt(
     ? "题材锁定为武侠：对白和旁白只能使用江湖、门派、镖局、官府、山川、兵器、线索、武学语汇；不得出现魔法、巫师、精灵、骑士、幽灵/灵魂、祭坛、法阵、圣光、异界等奇幻或超自然词汇。"
     : `题材锁定为${context.gameType ?? "当前游戏"}，不得跨题材改写世界规则。`;
 
+  // 单线行动预告：有权威单线链时，输出契约额外要求预生成 investigate/move 叙事。
+  const upcoming = context.upcomingLinearObjectives ?? [];
+  const linearJsonField = upcoming.length === 0
+    ? ""
+    : `,"linearActionNarratives":[{"actionKind":"investigate","factId":"权威factId","narration":"调查发现的剧情正文"},{"actionKind":"move","locationId":"权威locationId","narration":"动身与抵达的剧情正文"}]`;
+
   const prompt = `只输出 JSON，不能有解释或 Markdown。写一幕 RPG 场景，不得改规则。
 ${genreContract}
 世界背景=${context.worldPremise ?? "沿用当前世界"}；故事开端=${context.storyOpening ?? "沿用当前主线"}
@@ -513,7 +568,7 @@ ${repairSection}
 目标=${objectiveSection}
 ${utteranceContract} ${handoffContract}
 候选动作=${selectable.map(describeChoiceCandidate).join("；")}
-JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白"}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},"choices":[{"candidateId":"选项ID","label":"玩家行动"},{"candidateId":"另一选项ID","label":"玩家行动"}]}
+JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白"}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},"choices":[{"candidateId":"选项ID","label":"玩家行动"},{"candidateId":"另一选项ID","label":"玩家行动"}]${linearJsonField}}
 ${segmentInstruction}
 ${atmosphereInstruction}
 NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。玩家只能被称为“${context.player.name}”，不得使用其他姓名、姓氏、代号或未经上下文批准的身份称呼。若有上一轮 NPC 原话，必须先直接承接其中的问题、信息或拒答，再补充本轮可核验线索或下一步；不得突然切换到无关案件。若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。任何具体地点、人物、时间、物品或证物，都必须能在主线剧情摘要、NPC 可说线索卡、场景可见事实或上一轮已引用事实中找到依据；如果没有依据，只能使用当前 objectiveLink/目标实体给出的下一步，不得自行补出新的核验细节。选项生成顺序：先完成 npcLine，再根据本轮 npcLine 的文本和 usedFactIds 生成 choices；上一轮选择只用于理解承接关系，不得直接复用为本轮可见选项。choices 的 candidateId 必须逐字使用上方候选动作中的两个不同 ID；候选动作只提供服务端合法的 candidateId 和动作语义，不提供可直接复用的自然语言选项。label 是玩家实际要说的话或动作，不要加“回应某人/追问某人”等前缀，不要机械复述 NPC 原话；动作选项必须用全角括号包裹。两个选项都要直接回应本轮 NPC 台词，并且至少一个要推进当前主线目标或核对 NPC 刚提供的事实，不能只输出“继续调查/相信/不相信”等脱离语境的态度。请依据主线剧情上下文、NPC 可说事实和本轮台词写出两句自然、具体、互不重复的玩家对白或动作。`;
@@ -524,7 +579,16 @@ NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰�
       ...context.presentNpcs.flatMap((npc) => npc.sceneVisibleFactIds.map(String)),
     ])];
   const allowedInteractionIds = focus?.recentInteractions.map((interaction) => interaction.actionId) ?? [];
+  const linearNarrativesContract = upcoming.length === 0
+    ? "无单线行动预告：输出中必须省略 linearActionNarratives 字段。"
+    : `单线行动预告（AI 预生成，服务端权威下发，不得增删改写）：
+${upcoming.map((ref) => ref.kind === "discover_fact"
+      ? `- 调查：factId=${ref.factId}；调查入口=${ref.investigationLabel}；权威正文=${ref.factText}${ref.nextObjectiveEntityName === undefined ? "" : `；下一地点=${ref.nextObjectiveEntityName}`}`
+      : `- 移动：locationId=${ref.locationId}；地点名=${ref.locationName}${ref.nextObjectiveEntityName === undefined ? "" : `；下一目标=${ref.nextObjectiveEntityName}`}`).join("\n")}
+输出契约：linearActionNarratives 必须为上面每个预告各生成一条叙事，形状为 [{"actionKind":"investigate","factId":"上面给出的精确factId","narration":"..."},{"actionKind":"move","locationId":"上面给出的精确locationId","narration":"..."}]；未预告的 actionKind 与实体 ID 一律不得输出。
+约束：investigate 的 narration 只能演绎该条权威正文的既有事实（事实内容不得改写），并解释为何前往下一地点，下一地点实体名必须逐字照抄服务端下发；move 的 narration 描写动身与抵达该地点的所见所感；不得捏造新事实、新实体或具体时间；不得输出“主线推进到第X幕”“当前目标：”“调查完成”等系统元话术。`;
   return `${prompt}\n` +
+    `${linearNarrativesContract}\n` +
     `ID 复核：segments.beatId 只能逐字复制“节拍”列表中的 ID，禁止创造 item_given、dialogue_response 等新 ID；` +
     `npcLine.usedFactIds 只能从 [${allowedFactIds.join(", ")}] 选择，npcLine.usedInteractionActionIds 只能从 [${allowedInteractionIds.join(", ")}] 选择；` +
     "没有对应引用时必须输出空数组。输出前逐项核对这些 ID。" +

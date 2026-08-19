@@ -10,7 +10,7 @@ import type {
 } from "@/game/domain/worldEntity";
 import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { RecentBeat } from "@/game/domain/materializedView";
-import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
+import type { MandatoryNarrativeBeat, ObjectiveRef, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { WorldState } from "@/game/domain/worldState";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { buildFocusNpcContext, type FocusNpcContext, type FactCard } from "./focusNpcContext";
@@ -103,6 +103,27 @@ export type ObjectiveTargetRef = {
   readonly entityName: string;
 };
 
+/**
+ * 当前权威目标之后单线链中的目标投影（Task 1）：只投影 discover_fact / visit_location，
+ * 供 live prompt 预生成 investigate/move 叙事；链末或下一目标为分支点时不携带
+ * nextObjectiveEntityName（实体名由服务端权威下发，prompt 要求逐字照抄）。
+ */
+export type UpcomingObjectiveRef =
+  | {
+      readonly kind: "discover_fact";
+      readonly factId: FactId;
+      readonly investigationLabel: string;
+      readonly factText: string;
+      /** 链中下一目标的玩家可见实体名（服务端权威下发）。 */
+      readonly nextObjectiveEntityName?: string;
+    }
+  | {
+      readonly kind: "visit_location";
+      readonly locationId: LocationId;
+      readonly locationName: string;
+      readonly nextObjectiveEntityName?: string;
+    };
+
 /** 当前 pending 回合要承接的上一轮 NPC 台词与玩家回应。 */
 export type PreviousDialogueContext = {
   readonly npcId: NpcId;
@@ -171,6 +192,12 @@ export type SceneGenerationContext = {
   readonly focusNpcContext?: FocusNpcContext;
   /** Task 6：当前权威目标引用的目标实体（无 after 目标时为 null）。 */
   readonly objectiveTarget: ObjectiveTargetRef | null;
+  /**
+   * Task 1：当前权威目标之后的连续单线目标前缀（discover_fact → visit_location，
+   * 止于 talk_to_npc / defeat_enemy 等分支点）；由 buildSceneGenerationContext 恒投影
+   * （无单线链时为空数组），手工构造上下文缺失时按空数组处理。
+   */
+  readonly upcomingLinearObjectives?: readonly UpcomingObjectiveRef[];
   /** 若本轮是对当前场景 NPC 的后续回应，提供上一句原话及玩家选项。 */
   readonly previousDialogue?: PreviousDialogueContext;
   /** AI 提案未通过内容契约时的单次修复提示。 */
@@ -265,6 +292,68 @@ function resolveObjectiveTarget(
       return { questId: String(ref.questId), objectiveIndex: ref.objectiveIndex, entityId: String(objective.enemyId), entityName: enemy?.name ?? "强敌" };
     }
   }
+}
+
+/** 目标实体名：仅单线目标（discover_fact / visit_location）有玩家可见实体名，分支点无。 */
+function objectiveEntityNameOf(
+  ws: WorldState,
+  objective: WorldState["quests"][number]["objectives"][number] | undefined,
+): string | undefined {
+  if (objective === undefined) return undefined;
+  switch (objective.kind) {
+    case "discover_fact": {
+      const fact = ws.worldFacts.find((f) => String(f.factId) === String(objective.factId));
+      return fact?.investigationLabel;
+    }
+    case "visit_location": {
+      const loc = ws.locations.find((l) => String(l.id) === String(objective.locationId));
+      return loc?.name;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * 从权威 quest objectives 投影当前目标之后的连续单线前缀（Task 1）：
+ * 只保留 discover_fact / visit_location，遇 talk_to_npc / defeat_enemy 等
+ * 分支点立即停止；当前目标无后续单线链时返回空数组。
+ */
+function buildUpcomingLinearObjectives(
+  ws: WorldState,
+  after: ObjectiveRef | null,
+): readonly UpcomingObjectiveRef[] {
+  if (after === null) return [];
+  const quest = ws.quests.find((q) => String(q.id) === String(after.questId));
+  if (quest === undefined) return [];
+  const result: UpcomingObjectiveRef[] = [];
+  for (let index = after.objectiveIndex + 1; index < quest.objectives.length; index += 1) {
+    const objective = quest.objectives[index];
+    const nextEntityName = objectiveEntityNameOf(ws, quest.objectives[index + 1]);
+    if (objective.kind === "discover_fact") {
+      const fact = ws.worldFacts.find((f) => String(f.factId) === String(objective.factId));
+      result.push({
+        kind: "discover_fact",
+        factId: objective.factId,
+        investigationLabel: fact?.investigationLabel ?? "现场线索",
+        factText: fact?.text ?? "",
+        ...(nextEntityName === undefined ? {} : { nextObjectiveEntityName: nextEntityName }),
+      });
+      continue;
+    }
+    if (objective.kind === "visit_location") {
+      const loc = ws.locations.find((l) => String(l.id) === String(objective.locationId));
+      result.push({
+        kind: "visit_location",
+        locationId: objective.locationId,
+        locationName: loc?.name ?? "某地",
+        ...(nextEntityName === undefined ? {} : { nextObjectiveEntityName: nextEntityName }),
+      });
+      continue;
+    }
+    break;
+  }
+  return result;
 }
 
 /** 从持久化 record 投影最小权限上下文（唯一构造入口）。 */
@@ -486,6 +575,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     beatSubjects,
     focusNpcContext,
     objectiveTarget: resolveObjectiveTarget(ws, transition.after),
+    upcomingLinearObjectives: buildUpcomingLinearObjectives(ws, transition.after),
     ...(previousDialogue === undefined ? {} : { previousDialogue }),
   };
 }
