@@ -26,13 +26,24 @@ import { createDeterministicSceneSource } from "../deterministicSceneSource";
 import { commitState } from "../stateCommit";
 import { buildChoiceMap } from "../buildChoiceMap";
 import type { StoryState } from "@/game/domain/storyState";
-import type { Interaction } from "@/game/domain/action";
+import type { Action, Interaction } from "@/game/domain/action";
 import type { GameSessionView } from "../gameSessionView";
 import type { GameTypeId, GameLength, GameSetup } from "@/game/domain/newGame";
 import { deriveEndingSessionIdentity, matchesEndingSessionIdentity } from "./endingSessionIdentity";
 import { BackgroundEnsureCoordinator } from "./ai/_shared/ensureCoordinator";
 
 export type { RequestLogContext };
+
+/**
+ * 规则结果已经完全确定、应在同一个 action 请求中完成场景写回的动作。
+ * investigate 与 move/take_item 一样不需要等待后台场景编排；若遗漏，
+ * action 响应会先返回 pending，客户端只能通过轮询短暂看到等待层。
+ */
+export function shouldCompleteSceneInAction(action: Pick<Action, "type"> | undefined): boolean {
+  return action?.type === "move"
+    || action?.type === "take_item"
+    || action?.type === "investigate";
+}
 
 // ---------------------------------------------------------------------------
 // 双状态模型的唯一 server-only 装配点。
@@ -375,8 +386,7 @@ export function createServerGameEntryPoints(
           // 战斗开始时已并行准备 API 与确定性战后提案；最后一击只使用已在
           // 内存中的提案写回，普通战斗回合仍保持低延迟规则路径。
           if (view.narrativeGeneration.status === "pending") {
-            const shouldCompleteSceneInAction = submittedAction?.type === "move"
-              || submittedAction?.type === "take_item";
+            const shouldCompleteSynchronously = shouldCompleteSceneInAction(submittedAction);
             const resolvedBattle = readyRecord.worldState.battle;
             const isVictoryAction = submittedAction?.type === "battle_action"
               && resolvedBattle.status === "resolved"
@@ -439,7 +449,7 @@ export function createServerGameEntryPoints(
                 }
               }
             }
-            if (shouldCompleteSceneInAction) {
+            if (shouldCompleteSynchronously) {
               const immediateSceneResult = await generatePendingScene({ repository, sceneSource, worldEvolutionSource, logger, allowDeterministicFallback: true, now });
               if (immediateSceneResult === "saved") {
                 const refreshed = await repository.getCurrentGame();
