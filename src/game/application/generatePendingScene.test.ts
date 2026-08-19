@@ -486,9 +486,11 @@ describe("generatePendingScene", () => {
 
   // ── Task 2：AI 预生成单线行动叙事的审批与持久化 ─────────────────────────
 
-  // 权威主线目标链：与老板交谈 → 调查车轮印（fact_2）→ 前往北巷旧道（loc_2）。
-  // 当前目标（talk npc_1）之后是连续单线前缀，context.upcomingLinearObjectives
+  // 权威主线目标链：调查车轮印（fact_2）→ 前往北巷旧道（loc_2）→ 与老板交谈。
+  // 当前目标（discover_fact fact_2）起是连续单线前缀，context.upcomingLinearObjectives
   // 投影出 discover_fact(fact_2) 与 visit_location(loc_2)，供审批校验实体引用。
+  // （若当前目标本身是 talk_to_npc 等分支点，投影为空，预生成叙事无从获批——
+  //  与生产修复后“从当前目标开始投影”的语义一致。）
   function linearObjectiveRecord(): GameRecord {
     const world = makeWorldState();
     const loc2: LocationEntry = {
@@ -516,9 +518,9 @@ describe("generatePendingScene", () => {
           name: "追查车轮印",
           description: "查明车轮印的去向。",
           objectives: [
-            { kind: "talk_to_npc", npcId: asNpcId("npc_1") },
             { kind: "discover_fact", factId: asFactId("fact_2") },
             { kind: "visit_location", locationId: asLocationId("loc_2") },
+            { kind: "talk_to_npc", npcId: asNpcId("npc_1") },
           ],
           onSuccess: { kind: "advance_story" },
           onFailure: { kind: "closed" },

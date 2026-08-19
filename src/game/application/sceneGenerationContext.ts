@@ -104,9 +104,10 @@ export type ObjectiveTargetRef = {
 };
 
 /**
- * 当前权威目标之后单线链中的目标投影（Task 1）：只投影 discover_fact / visit_location，
- * 供 live prompt 预生成 investigate/move 叙事；链末或下一目标为分支点时不携带
- * nextObjectiveEntityName（实体名由服务端权威下发，prompt 要求逐字照抄）。
+ * 从当前权威目标开始的单线链目标投影（Task 1）：只投影 discover_fact /
+ * visit_location（含当前目标），供 live prompt 预生成 investigate/move 叙事；
+ * 链末或下一目标为分支点时不携带 nextObjectiveEntityName（实体名由服务端
+ * 权威下发，prompt 要求逐字照抄）。
  */
 export type UpcomingObjectiveRef =
   | {
@@ -193,9 +194,10 @@ export type SceneGenerationContext = {
   /** Task 6：当前权威目标引用的目标实体（无 after 目标时为 null）。 */
   readonly objectiveTarget: ObjectiveTargetRef | null;
   /**
-   * Task 1：当前权威目标之后的连续单线目标前缀（discover_fact → visit_location，
-   * 止于 talk_to_npc / defeat_enemy 等分支点）；由 buildSceneGenerationContext 恒投影
-   * （无单线链时为空数组），手工构造上下文缺失时按空数组处理。
+   * Task 1：从当前权威目标开始的连续单线目标前缀（含当前目标，discover_fact →
+   * visit_location，止于 talk_to_npc / defeat_enemy 等分支点）；由
+   * buildSceneGenerationContext 恒投影（无单线链时为空数组），手工构造上下文
+   * 缺失时按空数组处理。
    */
   readonly upcomingLinearObjectives?: readonly UpcomingObjectiveRef[];
   /** 若本轮是对当前场景 NPC 的后续回应，提供上一句原话及玩家选项。 */
@@ -315,9 +317,9 @@ function objectiveEntityNameOf(
 }
 
 /**
- * 从权威 quest objectives 投影当前目标之后的连续单线前缀（Task 1）：
- * 只保留 discover_fact / visit_location，遇 talk_to_npc / defeat_enemy 等
- * 分支点立即停止；当前目标无后续单线链时返回空数组。
+ * 从权威 quest objectives 投影从当前目标开始的连续单线前缀（Task 1）：
+ * 当前目标与后续 discover_fact / visit_location 一并纳入；遇 talk_to_npc /
+ * defeat_enemy 等分支点立即停止；当前目标即为分支点或无单线链时返回空数组。
  */
 function buildUpcomingLinearObjectives(
   ws: WorldState,
@@ -327,7 +329,7 @@ function buildUpcomingLinearObjectives(
   const quest = ws.quests.find((q) => String(q.id) === String(after.questId));
   if (quest === undefined) return [];
   const result: UpcomingObjectiveRef[] = [];
-  for (let index = after.objectiveIndex + 1; index < quest.objectives.length; index += 1) {
+  for (let index = after.objectiveIndex; index < quest.objectives.length; index += 1) {
     const objective = quest.objectives[index];
     const nextEntityName = objectiveEntityNameOf(ws, quest.objectives[index + 1]);
     if (objective.kind === "discover_fact") {
