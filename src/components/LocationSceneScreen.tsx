@@ -404,7 +404,16 @@ export function LocationSceneScreen({
   const buildingSideNote = activeBuilding === undefined
     ? ""
     : describeBuildingScene(activeBuilding.buildingType, activeBuilding.displayName, sceneNpcName);
-  const displayNarration = buildingSideNote || cleanLocationSideNote(normalizeDisplayText(view.narrative.narration ?? ""));
+  // 动态行动场景（调查/拾取/移动）的旁注是玩家刚触发的剧情反馈，必须
+  // 优先于静态建筑氛围；初始进入或纯对话/观察场景才展示建筑描述。
+  const dynamicNarration = cleanLocationSideNote(normalizeDisplayText(view.narrative.narration ?? ""));
+  const hasDynamicActionNarration = dynamicNarration !== ""
+    && (view.narrative.eventKind === "investigate"
+      || view.narrative.eventKind === "item"
+      || view.narrative.eventKind === "travel");
+  const displayNarration = hasDynamicActionNarration
+    ? dynamicNarration
+    : (buildingSideNote || dynamicNarration);
   const displayLocationDescription = activeBuilding === undefined
     ? normalizeDisplayText(view.currentLocation.description)
     : "";
