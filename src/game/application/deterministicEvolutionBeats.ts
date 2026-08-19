@@ -28,7 +28,7 @@ function wuxiaBeat(act: number): EvolutionActBeat {
       itemName: "染血腰牌", itemDescription: "顾砚交出的旧腰牌，血迹旁刻着与缉凶告示相同的暗纹。",
       enemyName: "黑衣追兵", questName: "追查镇外脚印",
       questDescription: "沿着韩七看见的脚印，核对顾砚带来的密信与腰牌。",
-      factText: "腰牌上的暗纹与镇口缉凶告示来自同一桩旧案。",
+      factText: "车轮印在后巷泥水中断续向北延伸，指向北巷旧道深处的旧镖局废墟；腰牌上的暗纹与缉凶告示源自同一旧案。",
       investigationLabel: "酒楼后巷的车轮印",
       newLocation: { name: "北巷旧道", description: "酒楼后巷通往旧镖局的石道潮湿狭窄，车轮印在泥水里断续延伸。" },
     };
@@ -58,7 +58,7 @@ function wuxiaBeat(act: number): EvolutionActBeat {
       itemName: "盟誓铁印", itemDescription: "卷宗最后一页上的铁印，能让旧案的责任在终幕前落到实处。",
       enemyName: "迷雾首领", questName: "揭开青石旧案",
       questDescription: "前往黑水古道找到陆归鸿，确认幕后主使并面对最后的阻拦。",
-      factText: "最后一页卷宗确认：青石镇的缉凶告示是为了掩盖一场灭口。",
+      factText: "最后一页卷宗确认：青石镇的缉凶告示是为了掩盖一场灭口，而旧案主使的藏身处，就在黑水古道尽头。",
       newLocation: { name: "黑水古道", description: "通往旧案主使藏身处的古道，雾气从碎石缝里不断涌出。" },
     };
   }
@@ -73,7 +73,7 @@ function xianxiaBeat(act: number): EvolutionActBeat {
       itemName: "灵砂残符", itemDescription: "半张焦黑符纸，残留的灵砂痕迹与云篆观封库印同源。",
       enemyName: "雾行妖修", questName: "追查失窃灵砂",
       questDescription: "与青芜核对灵砂失窃当夜的雾影，追回残符。",
-      factText: "失窃灵砂的提纯手法，只有云篆观丹房一脉会用。",
+      factText: "山门外的雾中足迹一路蔓延向断炉涧，残留的丹气证实失窃灵砂被带往废丹房方向。",
       investigationLabel: "山门外的雾中足迹",
       newLocation: { name: "断炉涧", description: "丹房废炉倾倒的山涧，涧水泛着未散尽的丹气。" },
     };
@@ -84,7 +84,7 @@ function xianxiaBeat(act: number): EvolutionActBeat {
       itemName: "淬毒丹渣", itemDescription: "从谢无咎炉底起出的丹渣，毒性指向禁术淬脉丹。",
       enemyName: "夺丹邪修", questName: "追问废丹房",
       questDescription: "前往断炉涧找谢无咎，核对丹渣背后的禁术线索。",
-      factText: "禁术淬脉丹需要失踪弟子的灵根作引。",
+      factText: "禁术淬脉丹需要失踪弟子的灵根作引，而弟子最后的踪迹，断在沉星渊外。",
       newLocation: { name: "沉星渊", description: "崖底深潭上悬着断落的观星台，潭面倒映不出星子。" },
     };
     case 4: return {
@@ -103,7 +103,7 @@ function xianxiaBeat(act: number): EvolutionActBeat {
       itemName: "掌门印信", itemDescription: "能调动观中封库的真印，与仿件并置即可辨明真伪。",
       enemyName: "雾主", questName: "揭破云篆观旧案",
       questDescription: "深入沉星渊找到玄真子，以印信对质并面对雾主本尊。",
-      factText: "十年前那一夜入观的三名弟子，从未离开过沉星渊。",
+      factText: "十年前那一夜入观的三名弟子，从未离开过沉星渊——断落的观星台之下，那座地宫的炉火十年未熄。",
       newLocation: { name: "观星台地宫", description: "断落的观星台之下藏着一座地宫，炉火十年未熄。" },
     };
   }
@@ -118,7 +118,7 @@ function fantasyBeat(act: number): EvolutionActBeat {
       itemName: "刻纹石片", itemDescription: "残缺石片上的符纹与王都旧城墙基座的铭文同源。",
       enemyName: "地穴窃贼", questName: "追查裂开的遗迹",
       questDescription: "随莉娜回到遗迹裂口，核对石片与铭文的关联。",
-      factText: "王都地基之下封着一圈完整的同一铭文。",
+      factText: "爪状凿痕从裂口边缘一路凿向熔渣隧道，岩壁上凝着未冷的熔渣；石片符纹与王都城墙基座铭文同源，指向地基之下那圈完整的铭文。",
       investigationLabel: "裂口边缘的爪状凿痕",
       newLocation: { name: "熔渣隧道", description: "遗迹裂口通向的旧隧道，岩壁上凝着未冷的熔渣。" },
     };
@@ -129,7 +129,7 @@ function fantasyBeat(act: number): EvolutionActBeat {
       itemName: "断裂符杖", itemDescription: "杖芯里藏着的铜管刻着封印群四座基座的位置。",
       enemyName: "符文魔像", questName: "修复封印符杖",
       questDescription: "前往熔渣隧道找多兰，拼回符杖与封印地图。",
-      factText: "封印群封住的东西，在王国史书里被整页撕去。",
+      factText: "封印群封住的东西在王国史书里被整页撕去，而四座基座的位置，指向城外荒塔地窟。",
       newLocation: { name: "荒塔地窟", description: "城外荒塔坍塌后露出的地窟，四座基座只剩一座完好。" },
     };
     case 4: return {
@@ -148,7 +148,7 @@ function fantasyBeat(act: number): EvolutionActBeat {
       itemName: "团印指环", itemDescription: "骑士团长的印环，是最后一座基座的钥匙。",
       enemyName: "深渊领主", questName: "开启最后封印",
       questDescription: "深入荒塔地窟与塞德里克会合，开启基座并面对封印之下的存在。",
-      factText: "封印之下并非怪物，是被王国抹去的先王血脉。",
+      factText: "封印之下并非怪物，是被王国抹去的先王血脉——他们被封在地窟尽头的基座大厅，完好基座上的锁孔正等着指环。",
       newLocation: { name: "基座大厅", description: "地窟尽头的环形大厅，完好基座上的锁孔正等着指环。" },
     };
   }
@@ -163,7 +163,7 @@ function scienceFictionBeat(act: number): EvolutionActBeat {
       itemName: "异常日志芯片", itemDescription: "芯片里同一段旋律被哼唱的次数，恰等于失踪船员人数。",
       enemyName: "失格安保机", questName: "追查同刻梦游",
       questDescription: "与伊芙核对监护记录，确认旋律与失踪名单的对应。",
-      factText: "旋律的波形与二十年前弃船信标完全一致。",
+      factText: "休眠舱位的抓痕一路伸向货舱回廊，应急灯每隔七秒同步一闪；同夜被反复哼唱的旋律，波形与二十年前弃船信标完全一致。",
       investigationLabel: "休眠舱位的抓痕",
       newLocation: { name: "货舱回廊", description: "封闭检修中的货舱回廊，应急灯每隔七秒同步闪一次。" },
     };
@@ -174,7 +174,7 @@ function scienceFictionBeat(act: number): EvolutionActBeat {
       itemName: "断裂黑匣", itemDescription: "黑匣残段里存着弃船令下达前三十秒的静默。",
       enemyName: "收割无人机", questName: "追问弃船航段",
       questDescription: "前往货舱回廊找卡莱布，拼接黑匣与信标时间线。",
-      factText: "弃船令下达时，船上还有活着的乘客。",
+      factText: "弃船令下达时，船上还有活着的乘客，他们的生命信号最后消失在对接区尽头的弃船区。",
       newLocation: { name: "弃船区", description: "对接区尽头封存的旧船体，舷窗里偶有灯光巡过。" },
     };
     case 4: return {
@@ -193,7 +193,7 @@ function scienceFictionBeat(act: number): EvolutionActBeat {
       itemName: "船长密钥", itemDescription: "能调取公司层加密航令的物理密钥。",
       enemyName: "幽灵主体", questName: "启封弃船真相",
       questDescription: "进入弃船区核心与周衡会合，用密钥调令并面对数据幽灵本体。",
-      factText: "二十年前那次弃船，是为了掩盖一次从未报备的人体实验。",
+      factText: "二十年前那次弃船，是为了掩盖一次从未报备的人体实验——实验数据就封存在弃船区深处的数据冷库里。",
       newLocation: { name: "数据冷库", description: "弃船区深处的服务器冷库，蓝光在机柜间像潮水一样涨落。" },
     };
   }
@@ -208,7 +208,7 @@ function urbanBeat(act: number): EvolutionActBeat {
       itemName: "行车记录U盘", itemDescription: "U盘里的时间戳与火灾报警被掐断的时段重合。",
       enemyName: "跟踪者", questName: "追查旧仓库路线",
       questDescription: "与陈默核对三晚路线，确认旧仓库与火灾的关联。",
-      factText: "火灾报警在起火前十一分钟被人为掐断。",
+      factText: "仓库外墙的新鲜撬痕一路延伸向旧仓库码头，码头边烧塌半边的仓库里，火灾报警在起火前十一分钟被人为掐断。",
       investigationLabel: "仓库外墙的新鲜撬痕",
       newLocation: { name: "旧仓库码头", description: "烧塌半边的仓库紧邻废弃码头，江水拍打着空集装箱。" },
     };
@@ -219,7 +219,7 @@ function urbanBeat(act: number): EvolutionActBeat {
       itemName: "缺页会议纪要", itemDescription: "纪要装订线残留的页根，对应一份从未归档的决议。",
       enemyName: "纵火者", questName: "追问缺页纪要",
       questDescription: "前往档案库找方雨，核对调阅签名与缺页决议。",
-      factText: "调阅签名属于十年前已注销的一家空壳公司。",
+      factText: "调阅签名属于十年前已注销的一家空壳公司，而它的注册地址正是滨江烂尾楼，楼道里至今贴着封条。",
       newLocation: { name: "滨江烂尾楼", description: "空壳公司注册地址所在的烂尾楼，楼道里还贴着封条。" },
     };
     case 4: return {
@@ -238,7 +238,7 @@ function urbanBeat(act: number): EvolutionActBeat {
       itemName: "股权代持协议", itemDescription: "协议末页的签字与慈善基金捐助批文同出一手。",
       enemyName: "幕后代理人", questName: "公开代持链",
       questDescription: "与温以宁会合，核对协议并面对幕后主使的代理人。",
-      factText: "十年前的火灾是为销毁第一批代持文件。",
+      factText: "十年前的火灾是为销毁第一批代持文件，如今第二批文件正被送上集团旧楼天台，等着在慈善晚宴上易手。",
       newLocation: { name: "集团旧楼天台", description: "慈善晚宴所在的旧楼天台，电梯十年前就停用了。" },
     };
   }
@@ -253,7 +253,7 @@ function alternateHistoryBeat(act: number): EvolutionActBeat {
       itemName: "异象观测手稿", itemDescription: "手稿上的逆流时段，与漕运三船密报失窃的更次吻合。",
       enemyName: "机关斥候", questName: "追查管网逆流",
       questDescription: "与沈时叙核对逆流时段，追回观测手稿。",
-      factText: "逆流的蒸汽来自一座图纸之外的地下锅炉。",
+      factText: "管网井盖下的新刮痕随蒸汽逆流一路刮向沉舟闸，闸齿间卡着半页烧残的密报；逆流的蒸汽来自一座图纸之外的地下锅炉。",
       investigationLabel: "管网井盖下的新刮痕",
       newLocation: { name: "沉舟闸", description: "漕运故道上封死的船闸，闸齿间卡着半页烧残的密报。" },
     };
@@ -264,7 +264,7 @@ function alternateHistoryBeat(act: number): EvolutionActBeat {
       itemName: "损毁罗盘仪", itemDescription: "沉船残骸里起出的罗盘仪，指针永远指向京城方向。",
       enemyName: "私运傀儡师", questName: "追问沉船货单",
       questDescription: "前往沉舟闸找白霜，拼接货单与机关部件。",
-      factText: "私运的机关部件拼起来是一台完整的攻城机关兽。",
+      factText: "私运的机关部件拼起来是一台完整的攻城机关兽，而部件的轨辙全部通向先帝陵工的废弃陵工场。",
       newLocation: { name: "废弃陵工场", description: "先帝陵工的旧工场，轨辙从陵门一直延伸到黑暗里。" },
     };
     case 4: return {
@@ -283,7 +283,7 @@ function alternateHistoryBeat(act: number): EvolutionActBeat {
       itemName: "王府火漆印", itemDescription: "与密旨火漆互证的世子印，能坐实监国僭越。",
       enemyName: "机关巨兽", questName: "揭破陵工密谋",
       questDescription: "深入陵工场与世子会合，以印信对质并面对点火的机关巨兽。",
-      factText: "机关兽的目标不是边关，是垂帘的朝堂。",
+      factText: "机关兽的目标不是边关，是垂帘的朝堂——它正在皇陵地宫里完成最后装配，锅炉的呼吸声隔着石壁可闻。",
       newLocation: { name: "皇陵地宫", description: "机关兽装配完成的地宫，锅炉的呼吸声隔着石壁可闻。" },
     };
   }
@@ -298,7 +298,7 @@ function postApocalypseBeat(act: number): EvolutionActBeat {
       itemName: "刻痕水壶", itemDescription: "壶身的刻痕属于本聚落制壶匠，却在劫掠者的巢穴外被捡到。",
       enemyName: "劫掠者斥候", questName: "追查被劫水车",
       questDescription: "与阿蜡核对路线，确认劫掠者的来向。",
-      factText: "劫水车的不是流寇，用的是隔壁聚落的制式武器。",
+      factText: "沙地里的双重车辙一路延伸向锈桥营地，营地里残留着同批武器的痕迹；劫水车的不是流寇，用的是隔壁聚落的制式武器。",
       investigationLabel: "沙地里的双重车辙",
       newLocation: { name: "锈桥营地", description: "废公路桥墩下的营地，风一过铁皮就发出哨音。" },
     };
@@ -328,7 +328,7 @@ function postApocalypseBeat(act: number): EvolutionActBeat {
       itemName: "聚落盟印", itemDescription: "能调动全部水源闸的盟印，是整场阴谋的物证。",
       enemyName: "辐射巨兽", questName: "对质沉默水塔",
       questDescription: "登上水塔与教父对质，夺回盟印并面对被引来的辐射巨兽。",
-      factText: "水源枯竭的预警是伪造的，测水报表被改了三年。",
+      factText: "水源枯竭的预警是伪造的，测水报表被改了三年——真正的水闸就在水塔顶层，生锈的阀门上缠着新的锁链。",
       newLocation: { name: "水塔顶层", description: "塔顶的水闸机房，生锈的阀门上缠着新的锁链。" },
     };
   }
@@ -345,7 +345,7 @@ function genericBeat(act: number): EvolutionActBeat {
     enemyName: `迷雾守卫·${act}`,
     questName: `循迹而行·第${act}幕`,
     questDescription: "沿着已经确认的线索继续追查。",
-    factText: "新的证据与前几幕的线索指向同一桩旧案。",
+    factText: "新的证据与前几幕的线索指向同一桩旧案，痕迹延伸的方向正通向下一处现场。",
   };
 }
 

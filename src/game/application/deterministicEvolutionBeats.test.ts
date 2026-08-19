@@ -22,7 +22,7 @@ describe("actBeatFor 题材剧本库", () => {
       enemyName: "黑衣追兵",
       questName: "追查镇外脚印",
       questDescription: "沿着韩七看见的脚印，核对顾砚带来的密信与腰牌。",
-      factText: "腰牌上的暗纹与镇口缉凶告示来自同一桩旧案。",
+      factText: "车轮印在后巷泥水中断续向北延伸，指向北巷旧道深处的旧镖局废墟；腰牌上的暗纹与缉凶告示源自同一旧案。",
       investigationLabel: "酒楼后巷的车轮印",
       newLocation: {
         name: "北巷旧道",
@@ -67,7 +67,7 @@ describe("actBeatFor 题材剧本库", () => {
       enemyName: "迷雾首领",
       questName: "揭开青石旧案",
       questDescription: "前往黑水古道找到陆归鸿，确认幕后主使并面对最后的阻拦。",
-      factText: "最后一页卷宗确认：青石镇的缉凶告示是为了掩盖一场灭口。",
+      factText: "最后一页卷宗确认：青石镇的缉凶告示是为了掩盖一场灭口，而旧案主使的藏身处，就在黑水古道尽头。",
       newLocation: {
         name: "黑水古道",
         description: "通往旧案主使藏身处的古道，雾气从碎石缝里不断涌出。",
@@ -87,6 +87,29 @@ describe("actBeatFor 题材剧本库", () => {
     };
     for (const theme of ALL_THEMES) {
       expect(actBeatFor(theme, 2).npcName).toBe(expected[theme]);
+    }
+  });
+
+  // 第 2 幕的 factText 必须同时交代“调查发现了什么”（investigationLabel 的核心意象）
+  // 与“指向哪里”（newLocation.name），否则调查场景的兜底叙事缺了动线因果。
+  it("第 2 幕 factText 同时包含线索核心意象与指向的新地点", () => {
+    const labelCore: Record<GameTypeId, string> = {
+      wuxia: "车轮印",
+      xianxia: "雾中足迹",
+      fantasy: "凿痕",
+      science_fiction: "抓痕",
+      urban: "撬痕",
+      alternate_history: "刮痕",
+      post_apocalypse: "车辙",
+    };
+    for (const theme of ALL_THEMES) {
+      const beat = actBeatFor(theme, 2);
+      // 前置自证：labelCore 片段确为 investigationLabel 的可辨识部分。
+      expect(beat.investigationLabel).toBeDefined();
+      expect(beat.investigationLabel).toContain(labelCore[theme]);
+      expect(beat.newLocation).toBeDefined();
+      expect(beat.factText).toContain(labelCore[theme]);
+      expect(beat.factText).toContain(beat.newLocation!.name);
     }
   });
 
