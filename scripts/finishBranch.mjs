@@ -62,14 +62,16 @@ function isInsideWorktrees(path) {
 function resolveTarget({ branch, worktreeName }) {
   const registered = parseWorktreeList(git(["worktree", "list", "--porcelain"], { capture: true }))
     .find((entry) => entry.branch === `refs/heads/${branch}`);
+  const hyphenName = branch.replace(/\//g, "-");
   const expected = resolve(projectRoot, ".worktrees", worktreeName);
   if (registered) {
-    if (!isInsideWorktrees(registered.path) || basename(resolve(registered.path)) !== worktreeName) {
+    const dirName = basename(resolve(registered.path));
+    if (!isInsideWorktrees(registered.path) || (dirName !== worktreeName && dirName !== hyphenName && dirName !== branch)) {
       fail(`分支登记的 worktree 不在 .worktrees/${worktreeName}：${registered.path}`);
     }
-    return { path: resolve(registered.path), registered: true };
+    return { path: resolve(registered.path), worktreeName: dirName, registered: true };
   }
-  return { path: expected, registered: false };
+  return { path: expected, worktreeName, registered: false };
 }
 
 function assertMainCheckout() {
@@ -126,7 +128,7 @@ export function finishBranch({ branch, worktreeName, dryRun = false }) {
     return;
   }
 
-  if (existsSync(target.path)) removeWorktree({ name: worktreeName });
+  if (existsSync(target.path)) removeWorktree({ name: target.worktreeName });
   git(["worktree", "prune"]);
   if (existsSync(target.path)) fail(`worktree 目录仍存在：${target.path}`);
   git(["branch", "-d", branch]);

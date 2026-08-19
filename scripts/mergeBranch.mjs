@@ -51,6 +51,7 @@ function assertLocalBranch(branch) {
 function assertTargetWorktreeClean(branch, worktreeName) {
   const target = parseWorktreeList(git(["worktree", "list", "--porcelain"], { capture: true }))
     .find((entry) => entry.branch === `refs/heads/${branch}`);
+  const hyphenName = branch.replace(/\//g, "-");
   const expected = resolve(projectRoot, ".worktrees", worktreeName);
   if (!target) {
     if (existsSync(expected)) {
@@ -58,7 +59,8 @@ function assertTargetWorktreeClean(branch, worktreeName) {
     }
     return;
   }
-  if (!isInsideWorktrees(target.path) || basename(resolve(target.path)) !== worktreeName) {
+  const dirName = basename(resolve(target.path));
+  if (!isInsideWorktrees(target.path) || (dirName !== worktreeName && dirName !== hyphenName && dirName !== branch)) {
     fail(`分支登记的 worktree 不在 .worktrees/${worktreeName}：${target.path}`);
   }
   if (!existsSync(target.path)) {
