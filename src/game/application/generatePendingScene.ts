@@ -7,6 +7,8 @@ import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import { evolveWorld } from "./evolveWorld";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
 import type { GameLogger } from "@/game/logging";
+import type { LinearActionNarrativeState } from "@/game/domain/narrative";
+import type { StructuredActionSummary } from "@/game/domain/pendingNarrativeJob";
 
 export type GeneratePendingSceneDeps = {
   readonly repository: GameRepository;
@@ -51,8 +53,14 @@ export async function generatePendingScene(
   // 最后经 applySceneWriteBack 单次 CAS 一并写回实体与场景。
   let scenarioWs = record.worldState;
   let scenarioSs = record.storyState;
-  const immediateAction = generation.job.actionSummary.kind === "move"
-    || generation.job.actionSummary.kind === "take_item";
+  const summary = generation.job.actionSummary;
+  // 单线调查与移动/拾取同为规则已完全确定的即时反馈；但幕推进/结局对
+  // 挂起时必须保留完整演化编排，不能被 fast path 短路。
+  const immediateAction = (summary.kind === "move"
+    || summary.kind === "take_item"
+    || summary.kind === "investigate")
+    && record.storyState.evolution.status !== "needs_next_act"
+    && record.storyState.evolution.status !== "needs_ending_pair";
   // 移动落点和拾取结果都已由规则回合完全确定。它们是单动作反馈，不需要
   // 再调用 live 世界/场景源；直接用确定性场景完成 write-back，避免玩家在
   // 已经完成动作后等待“编排下一幕”。若确实候选不足，下面的受控补足分支
@@ -82,6 +90,12 @@ export async function generatePendingScene(
     worldState: scenarioWs,
     storyState: scenarioSs,
   };
+
+  // Task 3：单线调查/移动优先消费上一次场景写回时 AI 预生成的权威叙事
+  // （actionKind + 实体 ID 精确匹配）；未命中才走确定性兜底（消费即除）。
+  const consumeEntry = immediateAction
+    ? findMatchingQueueEntry(scenarioSs.narrative.linearNarrativeQueue, summary)
+    : undefined;
 
   let context = buildSceneGenerationContext(scenarioRecord);
 
@@ -121,8 +135,27 @@ export async function generatePendingScene(
   let proposal: ScenePerformanceProposal;
   try {
     proposal = await source.generateScene(context);
+    if (consumeEntry !== undefined) {
+      // 命中的预生成叙事已在写入时通过审批：以其正文覆盖确定性旁白首段，
+      // 场景其余结构（节拍覆盖/选项/目标链接/事件）仍走同一审批链。
+      proposal = {
+        ...proposal,
+        segments: proposal.segments.map((segment, index) =>
+          index === 0 ? { ...segment, text: consumeEntry.narration } : segment),
+        source: "generated",
+      };
+    }
   } catch {
     return "unavailable";
+  }
+
+  // 预生成叙事未命中时记录稳定失败码（确定性兜底不伪装成 AI 成功）。
+  if (immediateAction && consumeEntry === undefined
+    && (summary.kind === "investigate" || summary.kind === "move")) {
+    deps.logger?.warn("linear_narrative_fallback", {
+      actionKind: summary.kind,
+      entityId: summary.kind === "investigate" ? String(summary.factId) : String(summary.locationId),
+    });
   }
 
   // 移动/拾取是规则已完全确定的即时反馈，允许使用确定性场景；其余
@@ -223,7 +256,11 @@ export async function generatePendingScene(
         choiceRegistry: approved.choiceRegistry,
         // Task 2：随同一次 scene CAS 覆盖式持久化预生成单线行动叙事；
         // 对话回合与非 immediateAction 路径同样是生成时机，必须一并写回。
-        linearNarrativeQueue: approved.linearNarrativeQueue,
+        // Task 3：命中的预生成条目消费即除；未命中/非 immediate 路径沿用
+        // 审批队列（确定性提案不携带预生成叙事 → 覆盖为空数组，保持 Task 2 语义）。
+        linearNarrativeQueue: consumeEntry === undefined
+          ? approved.linearNarrativeQueue
+          : (scenarioSs.narrative.linearNarrativeQueue ?? []).filter((entry) => entry !== consumeEntry),
       },
       candidateEventPool: approved.candidateEventPool,
     },
@@ -234,4 +271,26 @@ export async function generatePendingScene(
   }
 
   return "saved";
+}
+
+/**
+ * 在 AI 预生成叙事队列中查找与 actionSummary 实体精确匹配的条目
+ * （investigate→factId，move→locationId）；take_item 等无队列形态。
+ * 返回原数组引用，消费时按引用移除恰好一条。
+ */
+function findMatchingQueueEntry(
+  queue: readonly LinearActionNarrativeState[] | undefined,
+  summary: StructuredActionSummary,
+): LinearActionNarrativeState | undefined {
+  if (summary.kind === "investigate") {
+    return (queue ?? []).find(
+      (entry) => entry.actionKind === "investigate" && String(entry.factId) === String(summary.factId),
+    );
+  }
+  if (summary.kind === "move") {
+    return (queue ?? []).find(
+      (entry) => entry.actionKind === "move" && String(entry.locationId) === String(summary.locationId),
+    );
+  }
+  return undefined;
 }

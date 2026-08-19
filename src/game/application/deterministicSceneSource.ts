@@ -247,6 +247,14 @@ function buildSegments(context: SceneGenerationContext): readonly ScenePerforman
         beatId: beat.beatId,
         text: `${completeSceneSentence(beat.instruction)}你收拢呼吸，重新确认眼前留下的线索。`,
       });
+    } else if (beat.kind === "fact_discovered") {
+      // Task 3：调查发现的兜底旁白在事实文本（beat instruction）之后追加
+      // 由 objectiveTarget 结构化的下一目标动线提示（复用 objectiveHandoffLine
+      // 的派生，不扫描正文猜主题），保证离线兜底也回答“为什么去下一地点”。
+      segments.push({
+        beatId: beat.beatId,
+        text: `${completeSceneSentence(beat.instruction)}${objectiveHandoffLine(context)}`,
+      });
     } else if (beat.kind === "quest_advanced" && context.objectiveTarget !== null) {
       // 幕边界：turn 时刻的下一个目标尚未具象化，节拍指令里没有实体名；
       // 场景装配的预览状态已具象化，此处用权威 objectiveTarget 点名，

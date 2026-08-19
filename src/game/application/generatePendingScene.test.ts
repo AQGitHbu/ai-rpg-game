@@ -9,7 +9,7 @@ import type { GameRepository, GameRecord } from "./server/persistence/gameReposi
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { SceneSource, SceneSourceResult } from "./sceneSource";
 import type { NarrativeEventKind } from "@/game/domain/narrative";
-import type { ResolvedEventStatus } from "@/game/domain/resolvedEvent";
+import type { ResolvedEvent, ResolvedEventStatus } from "@/game/domain/resolvedEvent";
 import { ATMOSPHERE_BEAT_ID } from "./approveAndWriteScene";
 import { createDeterministicEvolutionSource } from "./deterministicEvolutionSource";
 
@@ -55,6 +55,7 @@ type JobFixture = {
   jobId?: string;
   actionId?: string;
   beats?: PendingNarrativeJob["mandatoryBeats"];
+  facts?: ResolvedEvent["facts"];
 };
 
 function makeJob(fixture: JobFixture): PendingNarrativeJob {
@@ -70,7 +71,7 @@ function makeJob(fixture: JobFixture): PendingNarrativeJob {
       actionId: fixture.actionId ?? IMPORTANT_ACTION_ID,
       status: fixture.status ?? "success",
       eventKind: fixture.eventKind,
-      facts: [],
+      facts: fixture.facts ?? [],
       stateChanges: [],
       costs: [],
       rewards: [],
@@ -596,5 +597,140 @@ describe("generatePendingScene", () => {
     expect(input.nextStoryState.narrative.linearNarrativeQueue).toEqual([]);
     expect(input.nextStoryState.narrative.currentScene?.source).toBe("generated");
     expect(logger.warn).toHaveBeenCalledWith("linear_narratives_dropped", expect.anything());
+  });
+
+  // ── Task 3：investigate 纳入即时消费 fast path（含演化状态防护） ─────────
+
+  // investigate fact_2 已结算（交谈已完成、事实已发现）→ 权威当前目标为
+  // visit_location loc_2，objectiveTarget 具象化为“北巷旧道”，供消费/兜底场景引用。
+  function investigateResolvedRecord(): GameRecord {
+    const record = linearObjectiveRecord();
+    return {
+      ...record,
+      worldState: {
+        ...record.worldState,
+        npcs: record.worldState.npcs.map((n) =>
+          String(n.id) === "npc_1" ? { ...n, met: true } : n),
+        worldFacts: record.worldState.worldFacts.map((f) =>
+          String(f.factId) === "fact_2" ? { ...f, discovered: true } : f),
+      },
+    };
+  }
+
+  function investigateJob(): PendingNarrativeJob {
+    return makeJob({
+      summary: { kind: "investigate", factId: asFactId("fact_2") },
+      eventKind: "investigate",
+      facts: [{ factId: asFactId("fact_2"), change: "discovered", source: "scene_witness" }],
+    });
+  }
+
+  it("resolves investigate immediately by consuming pre-generated AI narrative without remote AI call", async () => {
+    const base = investigateResolvedRecord();
+    const record: GameRecord = {
+      ...base,
+      storyState: {
+        ...base.storyState,
+        narrative: {
+          ...base.storyState.narrative,
+          generation: { status: "pending", job: investigateJob() },
+          linearNarrativeQueue: [
+            { actionKind: "investigate", factId: asFactId("fact_2"), narration: "车轮印在后巷泥水中断续向北延伸。", source: "generated" },
+            { actionKind: "move", locationId: asLocationId("loc_2"), narration: "北巷旧道就在前方，夜色掩不住那条土路。", source: "generated" },
+          ],
+        },
+      },
+    };
+    const spy = makeSpySceneSource();
+    const deps = makeDeps(record, spy.source);
+    const result = await generatePendingScene(deps);
+    expect(result).toBe("saved");
+    expect(spy.contexts()).toHaveLength(0);
+    const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
+    const scene = writeBack.nextStoryState.narrative.currentScene!;
+    expect(scene.narration).toBe("车轮印在后巷泥水中断续向北延伸。");
+    expect(scene.source).toBe("generated");
+    expect(scene.event).toEqual({ kind: "investigate", factId: asFactId("fact_2") });
+    // 消费即除：只移除精确匹配的 investigate 条目，move 条目原样保留。
+    expect(writeBack.nextStoryState.narrative.linearNarrativeQueue).toEqual([
+      { actionKind: "move", locationId: asLocationId("loc_2"), narration: "北巷旧道就在前方，夜色掩不住那条土路。", source: "generated" },
+    ]);
+  });
+
+  it("falls back to deterministic investigate scene when queue has no matching entry", async () => {
+    const base = investigateResolvedRecord();
+    const record: GameRecord = {
+      ...base,
+      storyState: {
+        ...base.storyState,
+        narrative: {
+          ...base.storyState.narrative,
+          generation: {
+            status: "pending",
+            job: makeJob({
+              summary: { kind: "investigate", factId: asFactId("fact_2") },
+              eventKind: "investigate",
+              facts: [{ factId: asFactId("fact_2"), change: "discovered", source: "scene_witness" }],
+              beats: [{
+                beatId: "fact_discovered_0",
+                kind: "fact_discovered",
+                subjectIds: ["fact_2"],
+                instruction: "发现了线索：车轮印在后巷泥水中断续向北延伸。",
+              }],
+            }),
+          },
+          // 空队列：模拟 AI 失败链，预生成叙事从未写入。
+          linearNarrativeQueue: [],
+        },
+      },
+    };
+    const logger = { warn: vi.fn() };
+    const spy = makeSpySceneSource();
+    const deps = { ...makeDeps(record, spy.source), logger: logger as never };
+    const result = await generatePendingScene(deps);
+    expect(result).toBe("saved");
+    expect(spy.contexts()).toHaveLength(0);
+    const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
+    const scene = writeBack.nextStoryState.narrative.currentScene!;
+    expect(scene.source).toBe("fallback");
+    // 兜底正文 = 事实文本（beat instruction）+ objectiveTarget 派生的下一目标动线提示。
+    expect(scene.narration).toContain("发现了线索：车轮印在后巷泥水中断续向北延伸。");
+    expect(scene.narration).toContain("接下来去北巷旧道核对现场");
+    expect(logger.warn).toHaveBeenCalledWith("linear_narrative_fallback", {
+      actionKind: "investigate",
+      entityId: "fact_2",
+    });
+    expect(writeBack.nextStoryState.narrative.linearNarrativeQueue).toEqual([]);
+  });
+
+  it("does not use fast path when evolution demands next act or ending pair", async () => {
+    const base = investigateResolvedRecord();
+    const record: GameRecord = {
+      ...base,
+      storyState: {
+        ...base.storyState,
+        evolution: { ...base.storyState.evolution, status: "needs_next_act" },
+        narrative: {
+          ...base.storyState.narrative,
+          generation: { status: "pending", job: investigateJob() },
+          // 即使存在精确匹配的预生成条目，幕推进挂起时也不能被 fast path 短路。
+          linearNarrativeQueue: [
+            { actionKind: "investigate", factId: asFactId("fact_2"), narration: "车轮印在后巷泥水中断续向北延伸。", source: "generated" },
+          ],
+        },
+      },
+    };
+    const evolutionSource = createDeterministicEvolutionSource();
+    const proposeSpy = vi.spyOn(evolutionSource, "propose");
+    const spy = makeSpySceneSource();
+    const result = await generatePendingScene({
+      repository: makeMockRepo(record),
+      sceneSource: spy.source,
+      worldEvolutionSource: evolutionSource,
+      now: () => "2026-01-02",
+    });
+    expect(result).toBe("saved");
+    expect(proposeSpy).toHaveBeenCalled();
+    expect(spy.contexts()).toHaveLength(1);
   });
 });

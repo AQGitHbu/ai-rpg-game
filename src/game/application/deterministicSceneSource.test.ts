@@ -582,6 +582,40 @@ describe("deterministicSceneSource", () => {
     expect(result.segments[0]?.text).toContain("重新确认眼前留下的线索");
   });
 
+  it("investigate fallback: fact segment appends the next-target movement handoff derived from objectiveTarget", async () => {
+    const job = makeJob({
+      eventKind: "investigate",
+      summary: { kind: "investigate", factId: asFactId("fact_1") },
+      beats: [{
+        beatId: "fact_discovered_0",
+        kind: "fact_discovered",
+        subjectIds: ["fact_1"],
+        instruction: "发现了线索：泥地里的车轮印向北延伸",
+      }],
+    });
+    const context: SceneGenerationContext = {
+      ...makeContext(job),
+      objectiveTarget: { questId: "quest_0", objectiveIndex: 2, entityId: "loc_2", entityName: "北巷旧道" },
+      story: {
+        ...makeContext(job).story,
+        activeQuest: {
+          questId: "quest_0",
+          name: "追查车轮印",
+          description: "查明车轮印的去向。",
+          objectiveIndex: 2,
+          objectiveLabel: "前往北巷旧道",
+          objectiveKind: "visit_location",
+        },
+      },
+    };
+    const proposal = await source.generateScene(context);
+    const segment = proposal.segments.find((s) => s.beatId === "fact_discovered_0");
+    expect(segment?.text).toContain("泥地里的车轮印向北延伸");
+    expect(segment?.text).toContain("接下来去北巷旧道核对现场");
+    const approved = approveScenePerformance({ context, proposal, basedOnRevision: 1, existingCandidateEventPool: [] });
+    expect(approved.ok).toBe(true);
+  });
+
   it("幕边界 fallback：quest_advanced segment 以权威 objectiveTarget 点名，可通过审批", async () => {
     const job = makeJob({
       beats: [{
