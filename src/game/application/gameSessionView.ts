@@ -260,6 +260,7 @@ function projectQuestObjectives(
 
 function currentObjectiveChoiceToken(
   worldState: WorldState,
+  storyState: StoryState,
   objective: WorldState["quests"][number]["objectives"][number] | undefined,
   revision: number,
 ): string | null {
@@ -274,6 +275,24 @@ function currentObjectiveChoiceToken(
         || !currentLocation.connectedLocationIds.includes(objective.locationId)
         || !worldState.unlockedLocationIds.includes(objective.locationId)
       ) return null;
+      // 对话回合完成 talk 目标后，AI 会在交接场景预生成指向下一地点的
+      // move 选项（scene scope token，与 runtime token 派生自不同 sceneId，
+      // 永不相等）。优先采用该已审批选项的 token，让 UI 行动栏直接给出
+      // 角色化交接入口（“我这就去瞧瞧”），并保持 NPC 引导台词的展示链路。
+      const scene = storyState.narrative.currentScene;
+      if (scene !== null && scene !== undefined) {
+        const registry = storyState.narrative.choiceRegistry ?? [];
+        for (const sceneChoice of scene.choices) {
+          const approved = registry.find((entry) =>
+            entry.choiceToken === sceneChoice.choiceToken
+            && entry.sceneId === scene.sceneId
+            && entry.basedOnRevision === revision
+            && entry.action.type === "move"
+            && String(entry.action.locationId) === String(objective.locationId),
+          );
+          if (approved !== undefined) return sceneChoice.choiceToken;
+        }
+      }
       return choice(
         { type: "move", locationId: objective.locationId },
         revision,
@@ -335,7 +354,7 @@ export function projectGameSessionView(
   const currentObjective = currentObjectiveRef === null
     ? undefined
     : currentObjectiveQuest?.objectives[currentObjectiveRef.objectiveIndex];
-  const currentObjectiveToken = currentObjectiveChoiceToken(worldState, currentObjective, revision);
+  const currentObjectiveToken = currentObjectiveChoiceToken(worldState, storyState, currentObjective, revision);
   const currentObjectiveNpcId = currentObjective?.kind === "talk_to_npc"
     ? String(currentObjective.npcId)
     : null;

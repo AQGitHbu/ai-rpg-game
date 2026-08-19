@@ -23,6 +23,8 @@ describe("@ai-game/ui RPG consumer contract", () => {
 function buildBuildingView(overrides: {
   eventKind?: string;
   narration?: string;
+  story?: Partial<GameSessionView["story"]>;
+  narrativeChoices?: GameSessionView["narrative"]["choices"];
 } = {}): GameSessionView {
   return {
     revision: 9,
@@ -56,13 +58,17 @@ function buildBuildingView(overrides: {
     },
     obtainableItems: [],
     inventory: [],
-    story: { currentAct: 1, targetActs: 3, tension: 30, pacingNeed: "reveal", storyProgress: 5, currentObjectiveLabel: null, currentObjectiveChoiceToken: null },
+    story: {
+      currentAct: 1, targetActs: 3, tension: 30, pacingNeed: "reveal", storyProgress: 5,
+      currentObjectiveLabel: null, currentObjectiveChoiceToken: null,
+      ...overrides.story,
+    },
     narrative: {
       mode: "offline",
       hasScene: true,
       ...(overrides.eventKind === undefined ? {} : { eventKind: overrides.eventKind }),
       ...(overrides.narration === undefined ? {} : { narration: overrides.narration }),
-      choices: [],
+      choices: overrides.narrativeChoices ?? [],
       npcLine: null,
       npcDialogues: [],
     },
@@ -109,5 +115,59 @@ describe("LocationSceneScreen building scene side note", () => {
     const sideNote = screen.getByRole("region", { name: "地点旁注" });
     expect(sideNote).toHaveTextContent("福来酒楼里酒气、炭火和低声交谈混在一起");
     expect(sideNote).not.toHaveTextContent("前厅的灯笼刚刚点亮");
+  });
+});
+
+describe("LocationSceneScreen objective handoff inside a building scene", () => {
+  /** 对话回合写回后的交接场景：目标切换为 visit_location，场景携带 AI 预生成的 move 交接选项。 */
+  const handoffNarration = "老板压低声音道：‘脚印往北巷旧道去了，那地方原是旧镖局的仓。’";
+  const handoffChoices: GameSessionView["narrative"]["choices"] = [
+    { choiceToken: "c_talk_stale", label: "老板，那脚印的事你还知道多少？", presentation: "dialogue" },
+    { choiceToken: "c_move_objective", label: "（放下茶钱，起身）北巷旧道是吧，我这就去瞧瞧。", presentation: "travel" },
+  ];
+  const handoffStory: Partial<GameSessionView["story"]> = {
+    currentObjectiveLabel: "前往北巷旧道",
+    currentObjectiveChoiceToken: "c_move_objective",
+  };
+
+  it("shows the authoritative pre-generated move choice in the action rail after dialogue handoff", () => {
+    renderBuildingScene(buildBuildingView({
+      eventKind: "observe",
+      narration: handoffNarration,
+      story: handoffStory,
+      narrativeChoices: handoffChoices,
+    }));
+
+    const rail = screen.getByRole("navigation", { name: "行动栏" });
+    expect(rail).toHaveTextContent("（放下茶钱，起身）北巷旧道是吧，我这就去瞧瞧。");
+    // 旧焦点的过期对白选项不再进入行动栏，避免伪装成新主线入口。
+    expect(rail).not.toHaveTextContent("那脚印的事你还知道多少");
+    expect(rail).not.toHaveTextContent("当前场景没有可执行行动");
+  });
+
+  it("shows the handoff narration with NPC guidance over the static building description", () => {
+    renderBuildingScene(buildBuildingView({
+      eventKind: "observe",
+      narration: handoffNarration,
+      story: handoffStory,
+      narrativeChoices: handoffChoices,
+    }));
+
+    const sideNote = screen.getByRole("region", { name: "地点旁注" });
+    expect(sideNote).toHaveTextContent("脚印往北巷旧道去了");
+    expect(sideNote).not.toHaveTextContent("福来酒楼里酒气、炭火和低声交谈混在一起");
+  });
+
+  it("falls back to a routing hint when the objective has no executable action in the current scene", () => {
+    renderBuildingScene(buildBuildingView({
+      eventKind: "observe",
+      narration: handoffNarration,
+      story: { currentObjectiveLabel: "与顾砚交谈", currentObjectiveChoiceToken: null },
+      narrativeChoices: handoffChoices,
+    }));
+
+    const rail = screen.getByRole("navigation", { name: "行动栏" });
+    expect(rail).toHaveTextContent("主线已指向别处——与顾砚交谈");
+    expect(rail).not.toHaveTextContent("当前场景没有可执行行动");
   });
 });

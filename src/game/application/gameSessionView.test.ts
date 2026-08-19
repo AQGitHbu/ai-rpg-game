@@ -103,6 +103,64 @@ describe("projectGameSessionView", () => {
     expect(view.story.currentObjectiveChoiceToken).toBe(view.currentLocation.npcs[0]?.talkChoice?.choiceToken ?? null);
   });
 
+  it("prefers the approved scene move choice for a visit_location objective after dialogue handoff", () => {
+    // 对话回合完成 talk 目标后的交接场景：eventKind=observe，AI 预生成
+    // 指向下一地点的 move 选项（scene scope token）与 NPC 引导台词。
+    const scene = {
+      sceneId: "scene-handoff",
+      turn: 2,
+      narration: "老板压低声音：“那脚印往街道那边去了。”",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text: "那脚印往街道那边去了，你真想查就去瞧瞧。", emotion: "neutral" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "move-handoff", label: "（动身前往街道）谢过老板，我这就去瞧瞧。" },
+        { choiceToken: "talk-more", label: "老板，那脚印可有什么说法？" },
+      ] as const,
+      source: "fallback" as const,
+      event: { kind: "observe" as const, locationId: asLocationId("loc_1") },
+      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["那脚印往街道那边去了。"] }],
+    };
+    const wsWithQuest: WorldState = {
+      ...ws,
+      quests: [{
+        id: asQuestId("quest_1"),
+        name: "追查脚印",
+        description: "顺着脚印查下去",
+        objectives: [{ kind: "visit_location", locationId: asLocationId("loc_2") }],
+        onSuccess: { kind: "advance_story" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 2,
+        status: "active",
+      }],
+    };
+    const ssWithScene: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("move-handoff", scene.sceneId, 0, "（动身前往街道）谢过老板，我这就去瞧瞧。", { type: "move", locationId: asLocationId("loc_2") }),
+          approved("talk-more", scene.sceneId, 0, "老板，那脚印可有什么说法？", { type: "talk", npcId: npc1.id, dialogueAct: "ask" }),
+        ],
+      },
+    };
+
+    const view = projectGameSessionView(wsWithQuest, ssWithScene, 0, "test-ending-session");
+    // 目标 token 命中场景已审批的 move 交接选项（scene scope，与 runtime
+    // token 派生自不同 sceneId 永不相等），UI 行动栏由此给出角色化交接
+    // 入口，handoff 判定不再把对话弹窗强制关闭。
+    expect(view.story.currentObjectiveChoiceToken).toBe("move-handoff");
+    expect(view.narrative.choices.map((entry) => entry.choiceToken)).toContain("move-handoff");
+
+    // 无场景 move 选项时仍回退 runtime travelChoice token（地图层旅行入口）。
+    const viewWithoutSceneChoice = projectGameSessionView(wsWithQuest, ss, 0, "test-ending-session");
+    expect(viewWithoutSceneChoice.story.currentObjectiveChoiceToken).toBe(
+      viewWithoutSceneChoice.worldMap.locations.find((location) => location.name === "街道")?.travelChoice?.choiceToken ?? null,
+    );
+  });
+
   it("does not mark a two-turn dialogue objective complete after only the first response", () => {
     const wsWithMetNpc: WorldState = {
       ...ws,

@@ -404,13 +404,33 @@ export function LocationSceneScreen({
   const buildingSideNote = activeBuilding === undefined
     ? ""
     : describeBuildingScene(activeBuilding.buildingType, activeBuilding.displayName, sceneNpcName);
-  // 动态行动场景（调查/拾取/移动）的旁注是玩家刚触发的剧情反馈，必须
-  // 优先于静态建筑氛围；初始进入或纯对话/观察场景才展示建筑描述。
+  const selectedNpcChoiceToken = currentSceneNpcName === null
+    ? null
+    : locationNpcs[0]?.talkChoice?.choiceToken ?? null;
+  // 权威当前目标的可执行行动：优先地点行动栏与建筑内物品，最后查场景
+  // 选项——对话回合预生成的交接 move 选项（如“我这就去北巷旧道”）与
+  // 目标 token 按同一 action + revision 派生，可确定性命中并直接展示。
+  const currentObjectiveAction = view.story.currentObjectiveChoiceToken === null
+    ? null
+    : view.currentLocation.actions.find((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
+      ?? buildingItems.find((item) => item.choice.choiceToken === view.story.currentObjectiveChoiceToken)?.choice
+      ?? view.narrative.choices.find((choice) => choice.choiceToken === view.story.currentObjectiveChoiceToken)
+      ?? null;
+  const currentObjectiveIsSceneAction = currentObjectiveAction !== null
+    && (currentObjectiveAction.presentation === "explore"
+      || currentObjectiveAction.presentation === "battle"
+      || currentObjectiveAction.presentation === "travel"
+      || (currentObjectiveAction.presentation === "item"
+        && buildingItems.some((item) => item.choice.choiceToken === currentObjectiveAction.choiceToken)));
+  // 动态行动场景（调查/拾取/移动）与目标交接场景的旁注是玩家刚触发的
+  // 剧情反馈（含焦点 NPC 的引导词），必须优先于静态建筑氛围；初始进入
+  // 或纯对话/观察场景才展示建筑描述。
   const dynamicNarration = cleanLocationSideNote(normalizeDisplayText(view.narrative.narration ?? ""));
   const hasDynamicActionNarration = dynamicNarration !== ""
     && (view.narrative.eventKind === "investigate"
       || view.narrative.eventKind === "item"
-      || view.narrative.eventKind === "travel");
+      || view.narrative.eventKind === "travel"
+      || currentObjectiveIsSceneAction);
   const displayNarration = hasDynamicActionNarration
     ? dynamicNarration
     : (buildingSideNote || dynamicNarration);
@@ -419,19 +439,6 @@ export function LocationSceneScreen({
     : "";
   const shouldShowLocationDescription = displayLocationDescription !== ""
     && (displayNarration === "" || !displayNarration.includes(displayLocationDescription));
-  const selectedNpcChoiceToken = currentSceneNpcName === null
-    ? null
-    : locationNpcs[0]?.talkChoice?.choiceToken ?? null;
-  const currentObjectiveAction = view.story.currentObjectiveChoiceToken === null
-    ? null
-    : view.currentLocation.actions.find((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
-      ?? buildingItems.find((item) => item.choice.choiceToken === view.story.currentObjectiveChoiceToken)?.choice
-      ?? null;
-  const currentObjectiveIsSceneAction = currentObjectiveAction !== null
-    && (currentObjectiveAction.presentation === "explore"
-      || currentObjectiveAction.presentation === "battle"
-      || (currentObjectiveAction.presentation === "item"
-        && buildingItems.some((item) => item.choice.choiceToken === currentObjectiveAction.choiceToken)));
   // 已准备好的焦点对白代表当前主线的唯一入口。两个 support/challenge 是
   // 对话框内的回答，不应和探索、战斗等地点通用动作并排在底栏；否则一次
   // 主线场景会被误读成多条可同时推进的任务。
@@ -446,13 +453,14 @@ export function LocationSceneScreen({
     && !sceneNpcIsObjectiveTalkTarget;
   const handoffLeavesCurrentLocation = view.story.currentObjectiveLabel !== null
     && view.story.currentObjectiveChoiceToken === null;
-  // 当前目标是调查/拾取/战斗时，必须优先给出该规则行动。否则上一轮对话
-  // 仍有两项回应时会抢占底栏，物品热点又可能被地点旁注遮住，玩家会失去
-  // 唯一可推进的入口。
+  // 当前目标是调查/拾取/战斗/移动时，必须优先给出该规则行动（移动含
+  // 对话回合预生成的交接选项）。否则上一轮对话仍有两项回应时会抢占底栏，
+  // 物品热点又可能被地点旁注遮住，玩家会失去唯一可推进的入口。
   const currentObjectiveRailAction = currentObjectiveIsSceneAction ? currentObjectiveAction : null;
-  // 仍停留在上一座建筑、但主线已交给另一名 NPC 时，不能继续把旧 NPC、
-  // 探索或战斗当作当前任务入口。保持原场景供玩家读完回应；下一步由 HUD
-  // 指明，玩家返回小镇后从目标人物自己的建筑进入，避免把两处空间混成一幕。
+  // 仍停留在上一座建筑、但主线目标在当前场景无权威行动入口（例如新目标
+  // NPC 在别处建筑）时，不能继续把旧 NPC、探索或战斗当作当前任务入口。
+  // 保持原场景供玩家读完回应；下一步由 HUD 与行动栏动线提示指明，玩家
+  // 返回小镇后从目标人物自己的建筑或地图进入，避免把两处空间混成一幕。
   const sceneActions = currentObjectiveRailAction !== null
     ? [currentObjectiveRailAction]
     : handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation
@@ -770,9 +778,13 @@ export function LocationSceneScreen({
       <nav className="scene-action-rail scene-action-rail--bottom" aria-label="行动栏">
         {actionRailChoices.length > 0
           ? actionRailChoices.map(renderChoiceButton)
-          : sceneNarrativeChoices.length === 0 && view.battle === null && !hasDialogueInteraction
-            ? <span className="scene-action-rail-empty" role="alert">当前场景没有可执行行动，请返回地图或重新载入存档。</span>
-            : null}
+          : handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation
+            ? <span className="scene-action-rail-empty" role="status">
+                主线已指向别处——{view.story.currentObjectiveLabel}。请返回小镇或地图，再前往下一处。
+              </span>
+            : sceneNarrativeChoices.length === 0 && view.battle === null && !hasDialogueInteraction
+              ? <span className="scene-action-rail-empty" role="alert">当前场景没有可执行行动，请返回地图或重新载入存档。</span>
+              : null}
       </nav>
 
       {/* NPC 对话模态弹层：只有用户主动点击时才弹出 */}
