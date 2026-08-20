@@ -37,6 +37,10 @@
 - 探索与任务推进：有 2–3 个已审批 `investigationApproaches` 时只为当前 `discover_fact` 目标投影独立 opaque token；无方式事实在移动抵达或 NPC 交接的规则边界自动写入一次 `fact_discovered`，调查结果记录 evidence quality 与额外 tension；相关 canonical 文件为 `src/game/application/buildChoiceMap.ts`、`src/game/application/gameSessionView.ts`、`src/game/gameplay/rpg/ruleEngine/` 和 `src/game/application/testing/investigationChoiceJourney.test.ts`。
 - 地图与地点冒险：read model 只投影当前目标的调查方式，客户端不读取 fact/approach/cost/consequence；无方式事实不显示调查按钮，结果场景与 reload 从权威 eventLedger/CAS 恢复；相关 canonical 文件为 `src/components/LocationSceneScreen.tsx`、`src/game/application/sceneGenerationContext.ts` 和 `src/game/application/testing/investigationChoiceJourney.test.ts`。
 
+## 2026-08-20 剧情文本来源标记
+
+- `GameSessionView` 统一将当前场景来源为 `fallback` 的旁白、NPC 台词和对白分页加上 `【fallback】` 展示标记；`generated` 原文不变。标记不持久化，集中实现于 `src/game/application/narrativeText.ts` 与 `src/game/application/gameSessionView.ts`。
+
 ## 维护规则
 
 - 玩法事实变化时同步更新策划文档。

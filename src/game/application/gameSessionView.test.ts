@@ -828,7 +828,34 @@ describe("projectGameSessionView", () => {
     const lu = dialogues.find((d) => String(d.npcId) === "npc_1");
     const guest = dialogues.find((d) => String(d.npcId) === "npc_2");
     expect(lu!.speechPages.join("")).toBe("需要什么吗？");
+    expect(view.narrative.narration).toBe("你在客栈。");
+    expect(view.narrative.npcLine?.text).toBe("需要什么吗？");
     expect(guest!.speechPages.length).toBeGreaterThan(0);
+    expect(guest!.speechPages.join("")).toMatch(/^【fallback】/u);
+  });
+
+  it("在 read model 统一标记 fallback 场景的旁白、NPC 台词和对白页", () => {
+    const view = projectGameSessionView(ws, {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: {
+          sceneId: "scene-fallback-marker",
+          turn: 0,
+          narration: "确定性旁白。",
+          usedFactIds: [],
+          npcLine: { npcId: npc1.id, text: "确定性回应。", emotion: "neutral" as const, usedFactIds: [] },
+          choices: [] as never,
+          source: "fallback" as const,
+          event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+          npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["确定性回应。"] }],
+        },
+      },
+    }, 0, "ending");
+
+    expect(view.narrative.narration).toBe("【fallback】确定性旁白。");
+    expect(view.narrative.npcLine?.text).toBe("【fallback】确定性回应。");
+    expect(view.narrative.npcDialogues[0]?.speechPages).toEqual(["【fallback】确定性回应。"]);
   });
 
   it("旧存档中的 NPC 名称/动作前缀在 read model 投影时被清理", () => {
@@ -853,9 +880,9 @@ describe("projectGameSessionView", () => {
     };
     const view = projectGameSessionView(ws, legacyStory, 0, "test-ending-session");
     const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1");
-    expect(dialogue?.speechPages.join("")).toBe("我知道了。");
+    expect(dialogue?.speechPages.join("")).toBe("【fallback】我知道了。");
     expect(dialogue?.speechPages.join("")).not.toMatch(/老板|如实答道/);
-    expect(view.narrative.npcLine?.text).toBe("我知道了。");
+    expect(view.narrative.npcLine?.text).toBe("【fallback】我知道了。");
     expect(view.narrative.npcLine?.speaker).toBe("老板");
   });
 

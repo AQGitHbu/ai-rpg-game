@@ -18,6 +18,7 @@ import { projectCombatView, type BattleView } from "./combatView";
 import { composeDirectNpcGreeting, composeIdleNpcLine, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 import { isObjectiveEntityReleased, isQuestObjectiveReleased } from "@/game/gameplay/rpg/worldEvolution";
 import { formatSceneChoiceLabel } from "./deterministicSceneSource";
+import { decorateNarrativePages, decorateNarrativeText } from "./narrativeText";
 
 export type PlayerChoiceView = {
   readonly choiceToken: string;
@@ -581,6 +582,9 @@ export function projectGameSessionView(
     const usableSupplied = suppliedSpeechPages.length > 0 && !onlyLegacyGenericGreeting
       ? suppliedSpeechPages
       : null;
+    const speechSource = scene !== null && sceneLineNpcId === String(npc.id)
+      ? scene.source
+      : "fallback";
     const interactionCount = npc.memory.interactionHistory.length;
     // 非焦点 NPC 的零回合闲聊台词：参与过剧情且有权威目标 → 提醒；否则中性闲聊
     const idleLine = composeIdleNpcLine({
@@ -589,12 +593,15 @@ export function projectGameSessionView(
       variantIndex: storyState.turnNumber + storyState.currentAct + interactionCount,
     });
     const speechPages = usableSupplied !== null
-      ? usableSupplied
-      : paginateSpeechText(
-          isFocus
-            ? focusLine ?? composeDeterministicNpcLine(npc.name, npc.role)
-            : focusLine ?? idleLine,
-          NPC_SCENE_PAGE_CHAR_BUDGET,
+      ? decorateNarrativePages(usableSupplied, speechSource)
+      : decorateNarrativePages(
+          paginateSpeechText(
+            isFocus
+              ? focusLine ?? composeDeterministicNpcLine(npc.name, npc.role)
+              : focusLine ?? idleLine,
+            NPC_SCENE_PAGE_CHAR_BUDGET,
+          ),
+          speechSource,
         );
     return {
       npcId: String(npc.id),
@@ -630,7 +637,10 @@ export function projectGameSessionView(
   const projectedNpcLine = scene?.npcLine === null || scene?.npcLine === undefined
     ? null
     : {
-        text: normalizeNpcSpeech(scene.npcLine.text, sceneNpc?.name),
+        text: decorateNarrativeText(
+          normalizeNpcSpeech(scene.npcLine.text, sceneNpc?.name),
+          scene.source,
+        ),
         emotion: scene.npcLine.emotion,
         ...(sceneNpc === undefined ? {} : { speaker: sceneNpc.name }),
       };
@@ -702,7 +712,10 @@ export function projectGameSessionView(
     narrative: {
       mode: storyState.narrative.mode,
       hasScene: scene !== null,
-      ...(scene === null ? {} : { eventKind: scene.event?.kind, narration: scene.narration }),
+      ...(scene === null ? {} : {
+        eventKind: scene.event?.kind,
+        narration: decorateNarrativeText(scene.narration, scene.source),
+      }),
       choices: isDialogueScene ? [] : projectedSceneChoices,
       npcLine: projectedNpcLine,
       npcDialogues,
