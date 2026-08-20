@@ -6,6 +6,7 @@ import type {
   ScenePerformanceSegment,
   LinearActionNarrative,
 } from "../../sceneSource";
+import { sceneInvestigationResultFrom } from "../../sceneSource";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
 import {
   createDeterministicSceneSource,
@@ -406,7 +407,7 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
     return deterministic.generateScene(context);
   };
 
-  const generateScene = async (context: SceneGenerationContext): Promise<ScenePerformanceProposal> => {
+  const generateSceneInner = async (context: SceneGenerationContext): Promise<ScenePerformanceProposal> => {
       try {
         const selectable = buildSelectableSceneCandidates(context);
         if (selectable.length < 2) return fallbackScene(context);
@@ -431,7 +432,7 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
               reason: result.code,
               attempt: repairAttempt + 1,
             });
-            return generateScene({
+            return generateSceneInner({
               ...context,
               repairAttempt: { attempt: repairAttempt + 1, reason: result.code },
             });
@@ -449,7 +450,7 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
         if (repairAttempt < maxContentRepairAttempts) {
           const reason = parsed.ok ? parseResult.reason : "invalid_json";
           logger?.warn("scene_generation_content_retry", { reason, attempt: repairAttempt + 1 });
-          return generateScene({
+          return generateSceneInner({
             ...context,
             repairAttempt: { attempt: repairAttempt + 1, reason },
           });
@@ -473,6 +474,15 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
         return fallbackScene(context);
       }
     };
+
+  // Task 5：已结算调查结果随提案携带（覆盖 generated 与 fallback 两种来源）。
+  const generateScene = async (context: SceneGenerationContext): Promise<ScenePerformanceProposal> => {
+    const proposal = await generateSceneInner(context);
+    const investigationResult = sceneInvestigationResultFrom(context);
+    return investigationResult === undefined
+      ? proposal
+      : { ...proposal, investigationResult };
+  };
 
   return { generateScene };
 }
@@ -537,6 +547,14 @@ export function buildLiveScenePrompt(
   const objectiveSection = after === null
     ? "无当前目标；objectiveLink 必须为 null。"
     : `当前目标：${after.label}；objectiveLink 必须为 {"questId":"${after.questId}","objectiveIndex":${after.objectiveIndex},"mode":"${objectiveMode}"}。`;
+  // Task 5：已结算调查结果只允许引用服务端下发的 approach/evidence/下一目标；
+  // AI 是表演者，不得决定是否发现事实，不得修改 tension。
+  const resolvedInvestigation = context.resolvedInvestigation;
+  const investigationSection = resolvedInvestigation === undefined
+    ? "本轮没有已结算的调查结果节拍。"
+    : `本轮调查已结算（服务端权威，AI 不得更改）：所选方式=${resolvedInvestigation.approachLabel}；证据质量=${resolvedInvestigation.evidenceQuality === "clean" ? "干净无扰" : "留有动静暴露"}；` +
+      `${context.objectiveTarget === null ? "" : `下一目标=${context.objectiveTarget.entityName}；`}` +
+      `fact_discovered 节拍的 segment.text 必须点名方式「${resolvedInvestigation.approachLabel}」，只叙述该已结算结果，不得决定是否发现事实，不得声称与证据质量相反的动静，不得修改张力。`;
   const utteranceBeat = context.mandatoryBeats.find((beat) => beat.kind === "player_utterance");
   const utteranceContract = utteranceBeat === undefined
     ? "本轮没有玩家原话节拍。"
@@ -566,6 +584,7 @@ NPC=${focusSection}；在场ID=${presentNpcLine}
 主线剧情上下文=${activeQuestSection}
 ${repairSection}
 目标=${objectiveSection}
+调查结果=${investigationSection}
 ${utteranceContract} ${handoffContract}
 候选动作=${selectable.map(describeChoiceCandidate).join("；")}
 JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白"}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},"choices":[{"candidateId":"选项ID","label":"玩家行动"},{"candidateId":"另一选项ID","label":"玩家行动"}]${linearJsonField}}

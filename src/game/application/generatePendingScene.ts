@@ -1,8 +1,9 @@
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import type { SceneSource, ScenePerformanceProposal } from "./sceneSource";
+import { sceneInvestigationResultFrom } from "./sceneSource";
 import { buildSceneGenerationContext } from "./sceneGenerationContext";
 import { approveScenePerformance, type ApprovedSceneWriteBack } from "./approveAndWriteScene";
-import { buildSelectableSceneCandidates, createDeterministicSceneSource } from "./deterministicSceneSource";
+import { buildSelectableSceneCandidates, createDeterministicSceneSource, buildInvestigationOutcomeNarrative } from "./deterministicSceneSource";
 import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import { evolveWorld } from "./evolveWorld";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
@@ -80,6 +81,9 @@ export async function generatePendingScene(
       now: deps.now,
     });
     if (outcome.ok) {
+      for (const category of outcome.approved.logCategories ?? []) {
+        deps.logger?.warn(category, {});
+      }
       scenarioWs = outcome.delta.previewWorldState;
       scenarioSs = outcome.delta.previewStoryState;
     }
@@ -113,6 +117,9 @@ export async function generatePendingScene(
       now: deps.now,
     });
     if (recovery.ok) {
+      for (const category of recovery.approved.logCategories ?? []) {
+        deps.logger?.warn(category, {});
+      }
       scenarioWs = recovery.delta.previewWorldState;
       scenarioSs = recovery.delta.previewStoryState;
       scenarioRecord = {
@@ -138,15 +145,40 @@ export async function generatePendingScene(
     if (consumeEntry !== undefined) {
       // 命中的预生成叙事已在写入时通过审批：以其正文覆盖确定性旁白首段，
       // 场景其余结构（节拍覆盖/选项/目标链接/事件）仍走同一审批链。
+      // Task 5：已结算的 investigate 结果把队列叙事作为 baseNarrative，
+      // 叠加所选方式/证据质量/下一目标（与确定性节拍同一包装函数）；
+      // 不得在场景写回阶段再次修改事件账本或 tension。
       proposal = {
         ...proposal,
-        segments: proposal.segments.map((segment, index) =>
-          index === 0 ? { ...segment, text: consumeEntry.narration } : segment),
+        segments: proposal.segments.map((segment, index) => {
+          if (index !== 0) return segment;
+          if (summary.kind === "investigate" && context.resolvedInvestigation !== undefined) {
+            const resolved = context.resolvedInvestigation;
+            const fact = scenarioWs.worldFacts.find((entry) => String(entry.factId) === String(summary.factId));
+            return {
+              ...segment,
+              text: buildInvestigationOutcomeNarrative({
+                approachLabel: resolved.approachLabel,
+                evidenceQuality: resolved.evidenceQuality,
+                factText: fact?.text ?? "",
+                baseNarrative: consumeEntry.narration,
+                ...(context.objectiveTarget === null ? {} : { nextObjectiveLabel: context.objectiveTarget.entityName }),
+              }),
+            };
+          }
+          return { ...segment, text: consumeEntry.narration };
+        }),
         source: "generated",
       };
     }
   } catch {
     return "unavailable";
+  }
+
+  // Task 5：已结算调查结果的叙事上下文随提案携带（覆盖确定性/live/stub 各来源）。
+  const investigationResult = sceneInvestigationResultFrom(context);
+  if (investigationResult !== undefined) {
+    proposal = { ...proposal, investigationResult };
   }
 
   // 预生成叙事未命中时记录稳定失败码（确定性兜底不伪装成 AI 成功）。

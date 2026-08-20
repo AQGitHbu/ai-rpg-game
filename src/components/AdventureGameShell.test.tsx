@@ -23,7 +23,7 @@ const TOKENS = {
   battle: "c_0000000000000006",
 } as const;
 
-function choice(choiceToken: string, label: string, presentation: "dialogue" | "travel" | "explore" | "item" | "battle") {
+function choice(choiceToken: string, label: string, presentation: "dialogue" | "travel" | "explore" | "item" | "battle" | "investigate") {
   return { choiceToken, label, presentation } as const;
 }
 
@@ -74,7 +74,7 @@ function buildView(options: { battle?: GameSessionView["battle"] } = {}): GameSe
     },
     obtainableItems: [{ name: "铜钥匙", description: "旧钥匙", choice: choice(TOKENS.item, "拾取铜钥匙", "item") }],
     inventory: [],
-    story: { currentAct: 1, targetActs: 3, tension: 30, pacingNeed: "reveal", storyProgress: 5, currentObjectiveLabel: null, currentObjectiveChoiceToken: null },
+    story: { currentAct: 1, targetActs: 3, tension: 30, pacingNeed: "reveal", storyProgress: 5, currentObjectiveLabel: null, currentObjectiveChoiceToken: null, currentObjectiveChoiceTokens: [] },
     narrative: {
       mode: "offline", hasScene: true, narration: "老板压低声音。", choices: [], npcLine: null,
       npcDialogues: [{
@@ -676,6 +676,37 @@ describe("AdventureGameShell canonical opaque choices", () => {
     />);
 
     expect(screen.getByRole("button", { name: "调查酒楼后巷的车轮印" })).toBeInTheDocument();
+  });
+
+  it("renders all investigation method buttons of the current objective token set", () => {
+    const base = buildView();
+    render(<LocationSceneScreen
+      view={{
+        ...base,
+        currentLocation: {
+          ...base.currentLocation,
+          actions: [
+            choice(TOKENS.explore, "沿痕迹追查", "investigate"),
+            choice(TOKENS.item, "翻查附近杂物", "investigate"),
+          ],
+          npcs: [],
+        },
+        story: {
+          ...base.story,
+          currentObjectiveLabel: "调查酒楼后巷的车轮印",
+          currentObjectiveChoiceToken: TOKENS.explore,
+          currentObjectiveChoiceTokens: [TOKENS.explore, TOKENS.item],
+        },
+        narrative: { ...base.narrative, npcDialogues: [] },
+      }}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+
+    const rail = screen.getByRole("navigation", { name: "行动栏" });
+    expect(within(rail).getByRole("button", { name: "沿痕迹追查" })).toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: "翻查附近杂物" })).toBeInTheDocument();
   });
 
   it("keeps the current item objective in the action rail while the prior NPC dialogue is ready", () => {

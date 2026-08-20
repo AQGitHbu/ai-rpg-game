@@ -931,4 +931,68 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(proposal.npcLine?.text).not.toMatch(/门闩|松脂|车辙/u);
     expect(proposal.npcLine?.text).toContain("把手里的证据带上");
   });
+
+  // ── Task 5：调查方法结果反馈链 ─────────────────────────────────────────
+
+  it("buildLiveScenePrompt 引用服务端已结算的调查方式与下一目标，禁止 AI 再裁决发现与否", () => {
+    const context: SceneGenerationContext = {
+      ...makeContext({ job: makeJob({ eventKind: "investigate", summary: { kind: "investigate", factId: asFactId("fact_1") } }) }),
+      resolvedInvestigation: {
+        factId: asFactId("fact_1"),
+        approachId: "follow",
+        approachLabel: "沿痕迹追查",
+        evidenceQuality: "clean",
+        tensionDelta: 4,
+      },
+      objectiveTarget: { questId: "quest_0", objectiveIndex: 2, entityId: "loc_2", entityName: "北巷旧道" },
+    };
+    const prompt = buildLiveScenePrompt(context, buildSelectableSceneCandidates(context));
+    expect(prompt).toContain("沿痕迹追查");
+    expect(prompt).toContain("证据质量");
+    expect(prompt).toContain("北巷旧道");
+  });
+
+  it("已结算调查结果随提案携带，且不泄漏 tensionDelta", async () => {
+    const job = makeJob({
+      eventKind: "investigate",
+      summary: { kind: "investigate", factId: asFactId("fact_1") },
+      beats: [
+        { beatId: "fact_discovered_0", kind: "fact_discovered", subjectIds: ["fact_1"], instruction: "发现了线索：泥地里的车轮印向北延伸" },
+        { beatId: ATMOSPHERE_BEAT_ID, kind: "atmosphere", subjectIds: [], instruction: "氛围" },
+      ],
+    });
+    const context: SceneGenerationContext = {
+      ...makeContext({ job }),
+      resolvedInvestigation: {
+        factId: asFactId("fact_1"),
+        approachId: "follow",
+        approachLabel: "沿痕迹追查",
+        evidenceQuality: "clean",
+        tensionDelta: 4,
+      },
+      objectiveTarget: { questId: "quest_0", objectiveIndex: 2, entityId: "loc_2", entityName: "北巷旧道" },
+    };
+    const transport = stubTransport({
+      segments: [
+        { beatId: "fact_discovered_0", text: "你按「沿痕迹追查」的方式仔细查证，泥地里的车轮印向北延伸。这次查证干净利落，没有惊动任何人。" },
+        { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" },
+      ],
+      npcLine: null,
+      objectiveLink: null,
+      choices: [
+        { candidateId: "candidate_1", label: "支持老板" },
+        { candidateId: "candidate_2", label: "质疑老板" },
+      ],
+    });
+    const source = createLiveScenePerformanceSource({ transport, config });
+    const proposal = await source.generateScene(context);
+    expect(proposal.source).toBe("generated");
+    expect(proposal.investigationResult).toEqual({
+      factId: "fact_1",
+      approachLabel: "沿痕迹追查",
+      evidenceQuality: "clean",
+      nextObjectiveLabel: "北巷旧道",
+    });
+    expect(JSON.stringify(proposal)).not.toContain("tensionDelta");
+  });
 });

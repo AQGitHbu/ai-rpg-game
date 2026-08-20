@@ -13,6 +13,7 @@ import {
   actionTargetsObjective,
   formatSceneChoiceLabel,
   usesFallbackDialogueChoiceLabels,
+  buildInvestigationOutcomeNarrative,
 } from "./deterministicSceneSource";
 import { asFactId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
@@ -244,7 +245,8 @@ export function approveScenePerformance(input: {
   /** Task 2：整字段丢弃预生成叙事时记录稳定事件（不拒整场）。 */
   readonly logger?: Pick<GameLogger, "warn">;
 }): ApproveScenePerformanceResult {
-  const { context, proposal } = input;
+  const { context } = input;
+  let proposal = input.proposal;
 
   // ── 分段旁白校验 ───────────────────────────────────────────────────────
   if (!Array.isArray(proposal.segments) || proposal.segments.length === 0) {
@@ -289,6 +291,48 @@ export function approveScenePerformance(input: {
   }
   for (let i = requiredIds.length; i < segmentIds.length; i += 1) {
     if (!atmosphereSet.has(segmentIds[i])) return { ok: false, code: "out_of_order_beats" };
+  }
+
+  // ── Task 5：已结算调查结果的叙事一致性校验 ──────────────────────────────
+  // 规则层已把玩家所选方式写入 eventLedger（fact_discovered）。表演只能引用
+  // 该已结算结果：旁白必须点名所选方式，且不得声称与证据质量相反的动静。
+  // 非法正文就地替换为确定性结算旁白（buildInvestigationOutcomeNarrative），
+  // 不拒绝规则结果（事件账本/tension 权威归规则层持有）。
+  const resolvedInvestigation = context.resolvedInvestigation;
+  if (resolvedInvestigation !== undefined) {
+    const discoveryBeat = context.mandatoryBeats.find((beat) => beat.kind === "fact_discovered");
+    if (discoveryBeat !== undefined) {
+      const discoverySegmentIndex = proposal.segments.findIndex((segment) => segment.beatId === discoveryBeat.beatId);
+      if (discoverySegmentIndex >= 0) {
+        const discoveryText = proposal.segments[discoverySegmentIndex]!.text;
+        const contradictsSettledOutcome = resolvedInvestigation.evidenceQuality === "clean"
+          ? /(?:留下了动静|动静不小|惊动了什么|声响|响声|吵醒|暴露)/u.test(discoveryText)
+          : /(?:没有惊动任何人|干净利落|无声无息|悄无声息)/u.test(discoveryText);
+        if (!discoveryText.includes(resolvedInvestigation.approachLabel) || contradictsSettledOutcome) {
+          input.logger?.warn("linear_narrative_fallback", {
+            actionKind: "investigate",
+            entityId: String(resolvedInvestigation.factId),
+            reason: "contradicts_settled_evidence",
+          });
+          const factLead = "发现了线索：";
+          const trimmedInstruction = discoveryBeat.instruction.trim();
+          const factText = trimmedInstruction.startsWith(factLead)
+            ? trimmedInstruction.slice(factLead.length)
+            : discoveryBeat.instruction;
+          const replacement = buildInvestigationOutcomeNarrative({
+            approachLabel: resolvedInvestigation.approachLabel,
+            evidenceQuality: resolvedInvestigation.evidenceQuality,
+            factText,
+            ...(context.objectiveTarget === null ? {} : { nextObjectiveLabel: context.objectiveTarget.entityName }),
+          });
+          proposal = {
+            ...proposal,
+            segments: proposal.segments.map((segment) =>
+              segment.beatId === discoveryBeat.beatId ? { ...segment, text: replacement } : segment),
+          };
+        }
+      }
+    }
   }
 
   // ── NPC 台词校验 ────────────────────────────────────────────────────────

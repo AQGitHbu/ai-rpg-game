@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   approveSceneEventProposals,
   approveScenePerformance,
@@ -872,5 +872,49 @@ describe("approveScenePerformance (Task 6)", () => {
     expect(result.ok).toBe(false);
     expect("choiceRegistry" in result).toBe(false);
     expect("scene" in result).toBe(false);
+  });
+
+  it("fact_discovered 旁白与已结算证据结果矛盾时走 linear_narrative_fallback，不拒绝规则结果", () => {
+    const job = makeJob({
+      eventKind: "investigate",
+      summary: { kind: "investigate", factId: asFactId("fact_1") },
+      beats: [
+        { beatId: "fact_discovered_0", kind: "fact_discovered", subjectIds: ["fact_1"], instruction: "发现了线索：泥地里的车轮印向北延伸" },
+      ],
+    });
+    const context: SceneGenerationContext = {
+      ...makeContext({ job }),
+      resolvedInvestigation: {
+        factId: asFactId("fact_1"),
+        approachId: "follow",
+        approachLabel: "沿痕迹追查",
+        evidenceQuality: "clean",
+        tensionDelta: 4,
+      },
+      objectiveTarget: { questId: "quest_0", objectiveIndex: 2, entityId: "loc_2", entityName: "北巷旧道" },
+    };
+    const logger = { warn: vi.fn() };
+    const result = approveScenePerformance({
+      context,
+      proposal: makeProposal({
+        segments: [
+          { beatId: "fact_discovered_0", text: "你按「翻查附近杂物」的方式翻找，动静不小，现场留下了动静。" },
+        ],
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+      logger,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // 非法正文被替换为确定性结算旁白，规则结果（eventLedger）不被拒绝。
+    expect(result.scene.narration).toContain("沿痕迹追查");
+    expect(result.scene.narration).toContain("北巷旧道");
+    expect(result.scene.narration).not.toContain("翻查附近杂物");
+    expect(logger.warn).toHaveBeenCalledWith("linear_narrative_fallback", {
+      actionKind: "investigate",
+      entityId: "fact_1",
+      reason: "contradicts_settled_evidence",
+    });
   });
 });

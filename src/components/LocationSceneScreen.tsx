@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useReducer, useRef, type FormEvent } from "react";
 import { type GameSessionView, type NewGameInput } from "@/game/application";
+import type { PlayerChoiceView } from "@/game/application/gameSessionView";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { AdventureVisual } from "./adventureVisuals";
 import { normalizeDisplayText } from "./displayText";
@@ -407,19 +408,27 @@ export function LocationSceneScreen({
   const selectedNpcChoiceToken = currentSceneNpcName === null
     ? null
     : locationNpcs[0]?.talkChoice?.choiceToken ?? null;
-  // 权威当前目标的可执行行动：优先地点行动栏与建筑内物品，最后查场景
-  // 选项——对话回合预生成的交接 move 选项（如“我这就去北巷旧道”）与
-  // 目标 token 按同一 action + revision 派生，可确定性命中并直接展示。
-  const currentObjectiveAction = view.story.currentObjectiveChoiceToken === null
-    ? null
-    : view.currentLocation.actions.find((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
-      ?? buildingItems.find((item) => item.choice.choiceToken === view.story.currentObjectiveChoiceToken)?.choice
-      ?? view.narrative.choices.find((choice) => choice.choiceToken === view.story.currentObjectiveChoiceToken)
-      ?? null;
+  // 权威当前目标的可执行行动集合：优先当前目标的全量 token（discover_fact
+  // 多 approach 时保留全部调查方法），兼容旧单一 token（降级为单元素集合）。
+  // Task 5：不再用单一 currentObjectiveChoiceToken 把第二个调查方法过滤掉。
+  const currentObjectiveTokens = view.story.currentObjectiveChoiceTokens.length > 0
+    ? view.story.currentObjectiveChoiceTokens
+    : view.story.currentObjectiveChoiceToken === null ? [] : [view.story.currentObjectiveChoiceToken];
+  const currentObjectiveAction = (() => {
+    if (currentObjectiveTokens.length === 0) return null;
+    for (const token of currentObjectiveTokens) {
+      const hit = view.currentLocation.actions.find((action) => action.choiceToken === token)
+        ?? buildingItems.find((item) => item.choice.choiceToken === token)?.choice
+        ?? view.narrative.choices.find((choice) => choice.choiceToken === token);
+      if (hit !== null && hit !== undefined) return hit;
+    }
+    return null;
+  })();
   const currentObjectiveIsSceneAction = currentObjectiveAction !== null
     && (currentObjectiveAction.presentation === "explore"
       || currentObjectiveAction.presentation === "battle"
       || currentObjectiveAction.presentation === "travel"
+      || currentObjectiveAction.presentation === "investigate"
       || (currentObjectiveAction.presentation === "item"
         && buildingItems.some((item) => item.choice.choiceToken === currentObjectiveAction.choiceToken)));
   // 动态行动场景（调查/拾取/移动）与目标交接场景的旁注是玩家刚触发的
@@ -456,18 +465,24 @@ export function LocationSceneScreen({
   // 当前目标是调查/拾取/战斗/移动时，必须优先给出该规则行动（移动含
   // 对话回合预生成的交接选项）。否则上一轮对话仍有两项回应时会抢占底栏，
   // 物品热点又可能被地点旁注遮住，玩家会失去唯一可推进的入口。
-  const currentObjectiveRailAction = currentObjectiveIsSceneAction ? currentObjectiveAction : null;
   // 仍停留在上一座建筑、但主线目标在当前场景无权威行动入口（例如新目标
   // NPC 在别处建筑）时，不能继续把旧 NPC、探索或战斗当作当前任务入口。
   // 保持原场景供玩家读完回应；下一步由 HUD 与行动栏动线提示指明，玩家
   // 返回小镇后从目标人物自己的建筑或地图进入，避免把两处空间混成一幕。
-  const sceneActions = currentObjectiveRailAction !== null
-    ? [currentObjectiveRailAction]
-    : handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation
-      ? []
-      : view.story.currentObjectiveChoiceToken !== null
-        ? view.currentLocation.actions.filter((action) => action.choiceToken === view.story.currentObjectiveChoiceToken)
-        : view.currentLocation.actions;
+  const sceneActions = (() => {
+    if (handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation) return [];
+    if (currentObjectiveTokens.length === 0) return view.currentLocation.actions;
+    // 目标 token 集合可以命中地点行动栏、建筑内物品或对话回合预生成的
+    // 交接选项（move）——多调查方法时全部保留，同 token 只留一个入口。
+    const byToken = new Map<string, PlayerChoiceView>();
+    for (const token of currentObjectiveTokens) {
+      const hit = view.currentLocation.actions.find((action) => action.choiceToken === token)
+        ?? buildingItems.find((item) => item.choice.choiceToken === token)?.choice
+        ?? view.narrative.choices.find((choice) => choice.choiceToken === token);
+      if (hit !== undefined) byToken.set(token, hit);
+    }
+    return [...byToken.values()];
+  })();
   const sceneNarrativeChoices = preparedDialogue === undefined
     && !handoffLeavesCurrentBuilding
     && view.story.currentObjectiveLabel === null

@@ -45,6 +45,18 @@ export type LinearActionNarrative =
   | { readonly actionKind: "move"; readonly locationId: string; readonly narration: string };
 
 /**
+ * Task 5：已结算调查结果（investigate 主动选择后由规则层写入 eventLedger）。
+ * 只携带叙事所需的权威标签：所选方式、证据质量与下一目标实体名。
+ * 不含 approachId 之外的裁决字段，绝不含 tensionDelta；客户端不得读取或计算。
+ */
+export type SceneInvestigationResult = {
+  readonly factId: string;
+  readonly approachLabel: string;
+  readonly evidenceQuality: "clean" | "noisy";
+  readonly nextObjectiveLabel?: string;
+};
+
+/**
  * 场景表演契约（spec §10.3，Task 6）。
  * 只描述"如何表演"：旁白分段、焦点台词、目标链接与合法选项 ID。
  * 不含事件、不含完整状态、不含任意 path；所有实体 ID 由服务端权威下发。
@@ -60,10 +72,26 @@ export type ScenePerformanceProposal = {
   ];
   /** Task 1：仅 live 提案携带的 AI 预生成单线行动叙事；随审批持久化后由 fast path 消费。 */
   readonly linearActionNarratives?: readonly LinearActionNarrative[];
+  /** Task 5：本回合已结算调查结果的叙事上下文；仅 investigate + 已结算时携带。 */
+  readonly investigationResult?: SceneInvestigationResult;
   readonly source: "generated" | "fallback";
   /** 仅供 pending 编排限制内容修复次数，不进入 ready scene 持久化。 */
   readonly contentRepairAttempt?: number;
 };
+
+/** 从场景上下文投影已结算调查结果（无结果时返回 undefined）。 */
+export function sceneInvestigationResultFrom(
+  context: SceneGenerationContext,
+): SceneInvestigationResult | undefined {
+  const resolved = context.resolvedInvestigation;
+  if (resolved === undefined) return undefined;
+  return {
+    factId: String(resolved.factId),
+    approachLabel: resolved.approachLabel,
+    evidenceQuality: resolved.evidenceQuality,
+    ...(context.objectiveTarget === null ? {} : { nextObjectiveLabel: context.objectiveTarget.entityName }),
+  };
+}
 
 /** 兼容现有 source 命名；结果本身就是尚未批准的表演提案。 */
 export type SceneSourceResult = ScenePerformanceProposal;

@@ -12,6 +12,7 @@ import type { NarrativeEventKind } from "@/game/domain/narrative";
 import type { ResolvedEvent, ResolvedEventStatus } from "@/game/domain/resolvedEvent";
 import { ATMOSPHERE_BEAT_ID } from "./approveAndWriteScene";
 import { createDeterministicEvolutionSource } from "./deterministicEvolutionSource";
+import { buildInvestigationOutcomeNarrative } from "./deterministicSceneSource";
 
 const IMPORTANT_ACTION_ID = "act_persist";
 const IMPORTANT_JOB_ID = "job_persist";
@@ -734,5 +735,69 @@ describe("generatePendingScene", () => {
     expect(result).toBe("saved");
     expect(proposeSpy).toHaveBeenCalled();
     expect(spy.contexts()).toHaveLength(1);
+  });
+
+  // ── Task 5：调查方法结果反馈链 ─────────────────────────────────────────
+
+  it("uses the chosen approach in deterministic investigation feedback", () => {
+    const narration = buildInvestigationOutcomeNarrative({
+      approachLabel: "翻查附近杂物",
+      evidenceQuality: "noisy",
+      factText: "车轮印指向北巷旧道",
+      baseNarrative: "你在泥地边发现了断续的车轮印。",
+    });
+    expect(narration).toContain("翻查附近杂物");
+    expect(narration).toContain("留下了动静");
+  });
+
+  it("composes the queued investigation narration with the settled approach/evidence result and the next objective", async () => {
+    const base = investigateResolvedRecord();
+    const world = base.worldState;
+    const record: GameRecord = {
+      ...base,
+      worldState: {
+        ...world,
+        worldFacts: world.worldFacts.map((f) =>
+          String(f.factId) === "fact_2" ? {
+            ...f,
+            investigationApproaches: [
+              { approachId: "follow", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
+              { approachId: "search", label: "翻查附近杂物", evidenceQuality: "noisy", tensionDelta: 8 },
+            ],
+          } : f),
+        eventLedger: [
+          { type: "location_visited", locationId: asLocationId("loc_1"), occurredAt: "2026-01-02" },
+          { type: "fact_discovered", factId: asFactId("fact_2"), occurredAt: "2026-01-02", approachId: "follow", evidenceQuality: "clean", tensionDelta: 4 },
+        ],
+      },
+      storyState: {
+        ...base.storyState,
+        narrative: {
+          ...base.storyState.narrative,
+          generation: { status: "pending", job: makeJob({
+            summary: { kind: "investigate", factId: asFactId("fact_2") },
+            eventKind: "investigate",
+            facts: [{ factId: asFactId("fact_2"), change: "discovered", source: "scene_witness" }],
+          }) },
+          linearNarrativeQueue: [
+            { actionKind: "investigate", factId: asFactId("fact_2"), narration: "车轮印在后巷泥水中断续向北延伸。", source: "generated" },
+          ],
+        },
+      },
+    };
+    const spy = makeSpySceneSource();
+    const deps = makeDeps(record, spy.source);
+    const result = await generatePendingScene(deps);
+    expect(result).toBe("saved");
+    expect(spy.contexts()).toHaveLength(0);
+    const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
+    const scene = writeBack.nextStoryState.narrative.currentScene!;
+    // baseNarrative（队列叙事）为主体，叠加已结算的方式/证据结果/下一目标。
+    expect(scene.narration).toContain("车轮印在后巷泥水中断续向北延伸");
+    expect(scene.narration).toContain("沿痕迹追查");
+    expect(scene.narration).toContain("北巷旧道");
+    // 场景写回不得再次修改事件账本或 tension。
+    expect(writeBack.nextWorldState.eventLedger).toEqual(record.worldState.eventLedger);
+    expect(writeBack.nextStoryState.tension).toBe(record.storyState.tension);
   });
 });
