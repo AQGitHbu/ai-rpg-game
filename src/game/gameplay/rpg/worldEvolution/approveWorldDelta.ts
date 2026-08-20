@@ -8,6 +8,7 @@ import type {
   QuestEntry,
   EndingEntry,
   QuestObjective,
+  InvestigationApproach,
 } from "@/game/domain/worldState";
 import type { EndingRequirement } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
@@ -40,6 +41,115 @@ const MAX_ENTITY_TEXT_LENGTH = 200;
 // 关系达到 10 进入 trust，低于 10 进入 doubt，保证两条方向互斥且可达。
 const TRUST_ENDING_MIN_AFFINITY = 10;
 const DOUBT_ENDING_MAX_AFFINITY = TRUST_ENDING_MIN_AFFINITY - 1;
+
+// 调查方式安全边界：显式列表必须恰好 2-3 条；张力在 [-5, 20]。
+const MIN_APPROACH_COUNT = 2;
+const MAX_APPROACH_COUNT = 3;
+const MIN_TENSION_DELTA = -5;
+const MAX_TENSION_DELTA = 20;
+
+/**
+ * 判定软泄漏：label/hint 与事实正文共享 >=2 字符子串（完整正文命中除外，
+ * 走硬泄漏）。正文片段是确定性输入的剪贴风险面，任何 2 字符重合都视为
+ * “关键名词重合”并拒绝/修复；词库文案与剧本事实无重合（见
+ * defaultInvestigationApproachesFor 的约束），确定性路径不会被误伤。
+ */
+function sharesFactFragment(candidate: string, factText: string): boolean {
+  const t = factText.trim();
+  if (t === "" || candidate.trim() === "") return false;
+  for (let size = 2; size <= Math.min(8, t.length); size += 1) {
+    for (let i = 0; i + size <= t.length; i += 1) {
+      if (candidate.includes(t.slice(i, i + size))) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 单条调查方式规范化校验：字段形状/枚举/张力越界/硬泄漏/软泄漏任一不通过
+ * 返回 null；通过则返回规范后的条目。供审批（过滤语义）与开局校验（严格
+ * 语义）共用，两条路径的逐条判定必须一致。
+ */
+function normalizeApproachEntry(
+  entry: InvestigationApproach,
+  factText: string,
+): InvestigationApproach | null {
+  if (typeof entry !== "object" || entry === null) return null;
+  const approachId = typeof entry.approachId === "string" ? entry.approachId.trim() : "";
+  const label = typeof entry.label === "string" ? entry.label.trim() : "";
+  const hint = entry.hint === undefined ? undefined : typeof entry.hint === "string" ? entry.hint.trim() : "";
+  const qualityValid = entry.evidenceQuality === "clean" || entry.evidenceQuality === "noisy";
+  const tensionValid = typeof entry.tensionDelta === "number"
+    && Number.isFinite(entry.tensionDelta)
+    && entry.tensionDelta >= MIN_TENSION_DELTA
+    && entry.tensionDelta <= MAX_TENSION_DELTA;
+  if (approachId === "" || label === "" || hint === "" || !qualityValid || !tensionValid) return null;
+  const leakTexts = [label, ...(hint === undefined ? [] : [hint])];
+  const hardLeak = leakTexts.some((text) => text.includes(factText.trim()));
+  const softLeak = leakTexts.some((text) => sharesFactFragment(text, factText));
+  if (hardLeak || softLeak) return null;
+  return {
+    approachId,
+    label,
+    ...(hint === undefined ? {} : { hint }),
+    evidenceQuality: entry.evidenceQuality,
+    tensionDelta: entry.tensionDelta,
+  };
+}
+
+/**
+ * 调查方式审批（世界演化层，防御性校验）：
+ * - 缺省/空列表 = 自动揭示，不产生日志；
+ * - 逐条校验：approachId/label/hint 非空、quality 枚举、张力在界内、id 唯一、
+ *   硬泄漏（完整正文子串）/软泄漏（关键名词重合）均拒绝该条目；
+ * - 只保留校验通过者；显式非空列表过滤后数量不在 2-3 时降级为空列表，
+ *   并记录 investigation_approach_invalid（规则层修复，绝不拒绝本轮）。
+ * 软泄漏此处直接拒绝而非修复：修复需要题材词库，审批层无词库（词库在
+ * application 层），软泄漏由 AI 输入解析器在上游处理。
+ */
+export function validateInvestigationApproaches(
+  approaches: readonly InvestigationApproach[] | undefined,
+  factText: string,
+): { readonly approaches: readonly InvestigationApproach[]; readonly logCategories: readonly string[] } {
+  if (approaches === undefined || approaches.length === 0) {
+    return { approaches: [], logCategories: [] };
+  }
+  const seenIds = new Set<string>();
+  const validated: InvestigationApproach[] = [];
+  for (const entry of approaches) {
+    const normalized = normalizeApproachEntry(entry, factText);
+    if (normalized === null) continue;
+    if (seenIds.has(normalized.approachId)) continue;
+    seenIds.add(normalized.approachId);
+    validated.push(normalized);
+  }
+  if (validated.length < MIN_APPROACH_COUNT || validated.length > MAX_APPROACH_COUNT) {
+    return { approaches: [], logCategories: ["investigation_approach_invalid"] };
+  }
+  return { approaches: validated, logCategories: [] };
+}
+
+/**
+ * 严格校验（开局候选用，fail-fast）：显式非空列表必须整体合规——数量 2-3、
+ * 每条都通过 normalizeApproachEntry（含硬/软泄漏、重复 id、越界张力）。
+ * 任意一条非法即整体拒绝：开局有确定性 fallback，未获批数据绝不能进入
+ * compile（compile 对 investigationApproaches 是逐字拷贝，不做任何过滤）。
+ */
+export function investigationApproachListIsValid(
+  approaches: readonly InvestigationApproach[] | undefined,
+  factText: string,
+): boolean {
+  if (approaches === undefined || approaches.length === 0) return true;
+  if (approaches.length < MIN_APPROACH_COUNT || approaches.length > MAX_APPROACH_COUNT) return false;
+  const seenIds = new Set<string>();
+  for (const entry of approaches) {
+    const normalized = normalizeApproachEntry(entry, factText);
+    if (normalized === null) return false;
+    if (seenIds.has(normalized.approachId)) return false;
+    seenIds.add(normalized.approachId);
+  }
+  return true;
+}
 
 // 武侠世界允许江湖传闻、奇诡意象，但不允许把另一套题材的实体直接
 // 铸造进世界。该门槛放在审批层，而不是只写进 prompt，防止 live AI 的
@@ -79,6 +189,8 @@ export type ApprovedWorldDeltaCore = {
   /** item/enemy 的挂载地点（fact 为世界级事实，无地点）。 */
   readonly itemLocationId: LocationId | null;
   readonly enemyLocationId: LocationId | null;
+  /** 规则层降级/修复产生的日志类别（如 investigation_approach_invalid），仅非空时携带。 */
+  readonly logCategories?: readonly string[];
   readonly nextEvolution: StoryEvolutionState;
   readonly nextBudget: StoryBudget;
 };
@@ -495,6 +607,7 @@ export function approveWorldDelta(input: {
   const newFacts: WorldFactEntry[] = [];
   const newQuests: QuestEntry[] = [];
   const newEndings: EndingEntry[] = [];
+  const logCategories: string[] = [];
 
   if (p.newLocation && ids.locationId) {
     newLocations.push({
@@ -556,6 +669,7 @@ export function approveWorldDelta(input: {
   }
 
   if (p.newFact && ids.factId) {
+    const approachResult = validateInvestigationApproaches(p.newFact.investigationApproaches, p.newFact.text);
     newFacts.push({
       factId: ids.factId,
       text: p.newFact.text,
@@ -563,10 +677,13 @@ export function approveWorldDelta(input: {
       // public 只表示可在发现后进入玩家事实卡，不能跳过调查动作。
       discovered: false,
       investigationLabel: p.newFact.investigationLabel,
+      // 审批通过才落盘：非法列表已在 validateInvestigationApproaches 内降级为空。
+      ...(approachResult.approaches.length > 0 ? { investigationApproaches: approachResult.approaches } : {}),
       // 第一阶段必须是玩家当前所在的酒楼后巷/现场调查；否则新地点一
       // 生成就会把“现场线索”错误地放到尚未抵达的地点。
       locationId: ws.currentLocationId,
     });
+    logCategories.push(...approachResult.logCategories);
   }
 
   if (need.kind === "next_act" && p.nextMainQuest && ids.questId) {
@@ -635,6 +752,7 @@ export function approveWorldDelta(input: {
       newEndings,
       itemLocationId,
       enemyLocationId,
+      ...(logCategories.length > 0 ? { logCategories } : {}),
       nextEvolution,
       nextBudget: reserved.budget,
     },

@@ -8,7 +8,7 @@ import { createSqliteClient, type SqliteClient } from "./sqliteClient";
 import { asGameId } from "./gameRepository";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asGenerationId } from "@/game/domain/worldEntity";
+import { asLocationId, asGenerationId, asFactId } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
@@ -76,6 +76,36 @@ describe("sqliteGameRepository", () => {
     expect(tables.rows.map((row) => row["name"])).toEqual(["current_game", "game_records", "opening_history"]);
   });
 
+  it("世界事实的 investigationApproaches 随 SQLite JSON 写回完整往返", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    await repo.initializeSchema();
+    const { worldState, storyState } = buildTestState();
+    const withApproaches: WorldState = {
+      ...worldState,
+      worldFacts: [{
+        factId: asFactId("fact_0"),
+        text: "密道入口在井下。",
+        source: "generated",
+        discovered: false,
+        investigationLabel: "井口的痕迹",
+        investigationApproaches: [
+          { approachId: "a", label: "检查井沿", hint: "先看压痕深浅", evidenceQuality: "clean", tensionDelta: 2 },
+          { approachId: "b", label: "细听井底动静", evidenceQuality: "noisy", tensionDelta: 5 },
+        ],
+      }],
+    };
+    await repo.createInitialGame({ gameId: asGameId("g-approaches"), worldState: withApproaches, storyState, createdAt: "2026-01-01T00:00:00.000Z" });
+    const current = await repo.getCurrentGame();
+    expect(current.ok).toBe(true);
+    if (current.ok && current.status === "active") {
+      expect(current.record.worldState.worldFacts[0]?.investigationApproaches).toEqual([
+        { approachId: "a", label: "检查井沿", hint: "先看压痕深浅", evidenceQuality: "clean", tensionDelta: 2 },
+        { approachId: "b", label: "细听井底动静", evidenceQuality: "noisy", tensionDelta: 5 },
+      ]);
+    }
+  });
+
   it("原子保存开局指纹，清档后仍保留历史供下一局去重", async () => {
     const dbPath = nextDbPath();
     const repo = openRepo(dbPath);
@@ -119,7 +149,7 @@ describe("sqliteGameRepository", () => {
       expect(current.record.gameId).toBe(gameId);
       expect(current.record.revision).toBe(0);
       expect(current.record.worldState.version).toBe(2);
-      expect(current.record.storyState.version).toBe(3);
+      expect(current.record.storyState.version).toBe(4);
     }
   });
 

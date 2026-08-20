@@ -136,3 +136,157 @@ describe("validateOpeningGenerationCandidate", () => {
     }
   });
 });
+
+function candidateWithApproaches(fact: {
+  readonly text: string;
+  readonly approaches: readonly {
+    readonly approachId: string;
+    readonly label: string;
+    readonly hint?: string;
+    readonly evidenceQuality: "clean" | "noisy";
+    readonly tensionDelta: number;
+  }[];
+}): OpeningGenerationCandidate {
+  return {
+    ...validCandidate(),
+    world: {
+      ...validCandidate().world,
+      publicFacts: [
+        { key: "fact_inn", text: fact.text, investigationApproaches: fact.approaches },
+        { key: "fact_pact", text: "旧盟书库藏着一份盟誓印谱。" },
+      ],
+    },
+  };
+}
+
+describe("validateOpeningGenerationCandidate · investigationApproaches", () => {
+  it("rejects duplicate approach ids, out-of-range tension and labels containing fact text", () => {
+    const result = validateOpeningGenerationCandidate(candidateWithApproaches({
+      text: "密道入口在井下",
+      approaches: [
+        { approachId: "a", label: "密道入口在井下", evidenceQuality: "clean", tensionDelta: 4 },
+        { approachId: "a", label: "检查井沿", evidenceQuality: "noisy", tensionDelta: 40 },
+      ],
+    }), { gameLength: "short", targetActs: 3 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues).toContainEqual(expect.objectContaining({
+        code: "invalid_investigation_approaches",
+        params: { key: "fact_inn" },
+      }));
+    }
+  });
+
+  it("2 条合法方式通过校验并保留在 validated 候选里", () => {
+    const result = validateOpeningGenerationCandidate(candidateWithApproaches({
+      text: "密道入口在井下",
+      approaches: [
+        { approachId: "a", label: "检查井沿", evidenceQuality: "clean", tensionDelta: 2 },
+        { approachId: "b", label: "向摊贩打听", evidenceQuality: "noisy", tensionDelta: 4 },
+      ],
+    }), { gameLength: "short", targetActs: 3 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.validated.world.publicFacts[0]?.investigationApproaches).toEqual([
+        { approachId: "a", label: "检查井沿", evidenceQuality: "clean", tensionDelta: 2 },
+        { approachId: "b", label: "向摊贩打听", evidenceQuality: "noisy", tensionDelta: 4 },
+      ]);
+    }
+  });
+
+  it("数量为 1 或超过 3 时按非法列表拒绝", () => {
+    const invalidCounts: readonly (readonly {
+      readonly approachId: string;
+      readonly label: string;
+      readonly evidenceQuality: "clean" | "noisy";
+      readonly tensionDelta: number;
+    }[])[] = [
+      [{ approachId: "a", label: "检查井沿", evidenceQuality: "clean", tensionDelta: 2 }],
+      [
+        { approachId: "a", label: "检查井沿", evidenceQuality: "clean", tensionDelta: 2 },
+        { approachId: "b", label: "向摊贩打听", evidenceQuality: "noisy", tensionDelta: 4 },
+        { approachId: "c", label: "查看压痕", evidenceQuality: "clean", tensionDelta: -3 },
+        { approachId: "d", label: "细听动静", evidenceQuality: "noisy", tensionDelta: 5 },
+      ],
+    ];
+    for (const approaches of invalidCounts) {
+      const result = validateOpeningGenerationCandidate(candidateWithApproaches({
+        text: "密道入口在井下", approaches,
+      }), { gameLength: "short", targetActs: 3 });
+      expect(result.ok).toBe(false);
+    }
+  });
+
+  it("空 label/hint 与越界张力拒绝", () => {
+    const invalidEntries: readonly (readonly {
+      readonly approachId: string;
+      readonly label: string;
+      readonly hint?: string;
+      readonly evidenceQuality: "clean" | "noisy";
+      readonly tensionDelta: number;
+    }[])[] = [
+      [{ approachId: "a", label: "", evidenceQuality: "clean", tensionDelta: 2 }],
+      [{ approachId: "a", label: "检查井沿", hint: "", evidenceQuality: "clean", tensionDelta: 2 }],
+      [{ approachId: "a", label: "检查井沿", evidenceQuality: "clean", tensionDelta: -6 }],
+      [{ approachId: "a", label: "检查井沿", evidenceQuality: "clean", tensionDelta: 21 }],
+    ];
+    for (const approaches of invalidEntries) {
+      const result = validateOpeningGenerationCandidate(candidateWithApproaches({
+        text: "密道入口在井下", approaches,
+      }), { gameLength: "short", targetActs: 3 });
+      expect(result.ok).toBe(false);
+    }
+  });
+
+  it("hint 泄漏完整事实正文时拒绝", () => {
+    const result = validateOpeningGenerationCandidate(candidateWithApproaches({
+      text: "密道入口在井下",
+      approaches: [
+        { approachId: "a", label: "检查井沿", hint: "密道入口在井下", evidenceQuality: "clean", tensionDelta: 2 },
+        { approachId: "b", label: "向摊贩打听", evidenceQuality: "noisy", tensionDelta: 4 },
+      ],
+    }), { gameLength: "short", targetActs: 3 });
+    expect(result.ok).toBe(false);
+  });
+
+  it("与正文关键名词重合的软泄漏同样拒绝（开局无题材词库修复，走确定性 fallback）", () => {
+    const result = validateOpeningGenerationCandidate(candidateWithApproaches({
+      text: "密道入口在井下",
+      approaches: [
+        { approachId: "a", label: "密道外的杂声", evidenceQuality: "clean", tensionDelta: 2 },
+        { approachId: "b", label: "检查井沿", evidenceQuality: "noisy", tensionDelta: 4 },
+      ],
+    }), { gameLength: "short", targetActs: 3 });
+    expect(result.ok).toBe(false);
+  });
+
+  it("部分非法列表（3 条中 1 条硬泄漏正文、其余 2 条合法）整体拒绝——过滤后放行会让泄漏条目随原样字段进入 compile", () => {
+    const result = validateOpeningGenerationCandidate(candidateWithApproaches({
+      text: "密道入口在井下",
+      approaches: [
+        { approachId: "a", label: "密道入口在井下", evidenceQuality: "clean", tensionDelta: 2 },
+        { approachId: "b", label: "检查井沿", evidenceQuality: "clean", tensionDelta: 2 },
+        { approachId: "c", label: "向摊贩打听", evidenceQuality: "noisy", tensionDelta: 4 },
+      ],
+    }), { gameLength: "short", targetActs: 3 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues).toContainEqual(expect.objectContaining({
+        code: "invalid_investigation_approaches",
+        params: { key: "fact_inn" },
+      }));
+    }
+  });
+
+  it("部分非法列表（2 条合法 + 1 条张力越界）整体拒绝", () => {
+    const result = validateOpeningGenerationCandidate(candidateWithApproaches({
+      text: "密道入口在井下",
+      approaches: [
+        { approachId: "a", label: "检查井沿", evidenceQuality: "clean", tensionDelta: 2 },
+        { approachId: "b", label: "向摊贩打听", evidenceQuality: "noisy", tensionDelta: 4 },
+        { approachId: "c", label: "细听动静", evidenceQuality: "noisy", tensionDelta: 21 },
+      ],
+    }), { gameLength: "short", targetActs: 3 });
+    expect(result.ok).toBe(false);
+  });
+});

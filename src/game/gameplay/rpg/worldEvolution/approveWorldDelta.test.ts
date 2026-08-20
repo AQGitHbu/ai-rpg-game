@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { approveWorldDelta, actObjectiveShape, deriveActObjectives } from "./approveWorldDelta";
-import type { WorldState, NpcEntry } from "@/game/domain/worldState";
+import type { WorldState, NpcEntry, InvestigationApproach } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { createInitialWorldState } from "@/game/domain/worldState";
@@ -469,6 +469,77 @@ describe("approveWorldDelta", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("empty_proposal");
+  });
+});
+
+function proposalWithApproaches(approaches: readonly InvestigationApproach[]): WorldDeltaProposal {
+  return {
+    ...nextActProposal(),
+    newFact: { text: "盟约已有裂痕。", visibility: "public", investigationApproaches: approaches },
+  };
+}
+
+describe("approveWorldDelta · investigationApproaches", () => {
+  it("2 条合法调查方式通过审批并保留在铸造事实里，无多余日志", () => {
+    const approaches: readonly InvestigationApproach[] = [
+      { approachId: "a", label: "检查酒坛", evidenceQuality: "clean", tensionDelta: 2 },
+      { approachId: "b", label: "询问掌柜", evidenceQuality: "noisy", tensionDelta: 4 },
+    ];
+    const result = approveWorldDelta({
+      proposal: proposalWithApproaches(approaches),
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.newFacts[0]?.investigationApproaches).toEqual(approaches);
+    expect(result.approved.logCategories).toBeUndefined();
+  });
+
+  it("非法列表（数量/重复 id/越界张力/正文泄漏）降级为空并记录 investigation_approach_invalid，不拒绝本轮", () => {
+    const invalidLists: readonly (readonly InvestigationApproach[])[] = [
+      [{ approachId: "a", label: "检查酒坛", evidenceQuality: "clean", tensionDelta: 2 }],
+      [
+        { approachId: "a", label: "检查酒坛", evidenceQuality: "clean", tensionDelta: 2 },
+        { approachId: "a", label: "询问掌柜", evidenceQuality: "noisy", tensionDelta: 4 },
+      ],
+      [
+        { approachId: "a", label: "检查酒坛", evidenceQuality: "clean", tensionDelta: 40 },
+        { approachId: "b", label: "询问掌柜", evidenceQuality: "noisy", tensionDelta: 4 },
+      ],
+      [
+        { approachId: "a", label: "盟约已有裂痕。", evidenceQuality: "clean", tensionDelta: 2 },
+        { approachId: "b", label: "询问掌柜", evidenceQuality: "noisy", tensionDelta: 4 },
+      ],
+    ];
+    for (const approaches of invalidLists) {
+      const result = approveWorldDelta({
+        proposal: proposalWithApproaches(approaches),
+        need: { kind: "next_act", act: 2 },
+        ws: makeWorld(),
+        ss: makeStory({ currentAct: 2 }),
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) continue;
+      expect(result.approved.newFacts[0]?.investigationApproaches).toBeUndefined();
+      expect(result.approved.logCategories).toContain("investigation_approach_invalid");
+    }
+  });
+
+  it("缺省或空列表保持自动揭示，不产生多余日志", () => {
+    for (const approaches of [undefined, [] as readonly InvestigationApproach[]]) {
+      const result = approveWorldDelta({
+        proposal: approaches === undefined ? nextActProposal() : proposalWithApproaches(approaches),
+        need: { kind: "next_act", act: 2 },
+        ws: makeWorld(),
+        ss: makeStory({ currentAct: 2 }),
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.approved.newFacts[0]?.investigationApproaches).toBeUndefined();
+      expect(result.approved.logCategories).toBeUndefined();
+    }
   });
 });
 

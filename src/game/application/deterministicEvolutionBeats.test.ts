@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { GameTypeId } from "@/game/domain/newGame";
-import { actBeatFor } from "./deterministicEvolutionBeats";
+import type { InvestigationApproach } from "@/game/domain/worldState";
+import { actBeatFor, defaultInvestigationApproachesFor } from "./deterministicEvolutionBeats";
 
 const ALL_THEMES: readonly GameTypeId[] = [
   "wuxia", "xianxia", "fantasy", "science_fiction", "urban", "alternate_history", "post_apocalypse",
 ];
+
+function deterministicGeneratedFactFor(gameType: GameTypeId): {
+  readonly text: string;
+  readonly investigationApproaches: readonly InvestigationApproach[];
+} {
+  const beat = actBeatFor(gameType, 2);
+  return { text: beat.factText, investigationApproaches: defaultInvestigationApproachesFor(gameType) };
+}
 
 describe("actBeatFor 题材剧本库", () => {
   // wuxia acts 2-5 的数据从 deterministicEvolutionSource 逐字迁移（计划硬约束），
@@ -140,5 +149,33 @@ describe("actBeatFor 题材剧本库", () => {
     expect(first).toEqual(second);
     // 通用模板按幕次区分人物名，不同幕不串数据
     expect(actBeatFor("urban", 4).npcName).not.toBe(actBeatFor("urban", 5).npcName);
+  });
+});
+
+describe("defaultInvestigationApproachesFor 题材调查词库", () => {
+  it("fallback creates two distinct safe approaches from the genre vocabulary for a generated fact", () => {
+    const fact = deterministicGeneratedFactFor("wuxia");
+    const labels = fact.investigationApproaches?.map((entry) => entry.label) ?? [];
+    expect(labels).toHaveLength(2);
+    expect(new Set(labels).size).toBe(2);
+    expect(labels.every((label) => label !== "" && !label.includes(fact.text))).toBe(true);
+  });
+
+  it("每个题材提供两个独立、合法且可执行的默认方式，且不全共用同一组固定文案", () => {
+    const pairs = new Set<string>();
+    for (const theme of [...ALL_THEMES, "generic" as const]) {
+      const approaches = defaultInvestigationApproachesFor(theme);
+      expect(approaches).toHaveLength(2);
+      expect(new Set(approaches.map((entry) => entry.approachId)).size).toBe(2);
+      expect(new Set(approaches.map((entry) => entry.label)).size).toBe(2);
+      for (const entry of approaches) {
+        expect(entry.label.length).toBeGreaterThan(0);
+        expect(["clean", "noisy"]).toContain(entry.evidenceQuality);
+        expect(entry.tensionDelta).toBeGreaterThanOrEqual(-5);
+        expect(entry.tensionDelta).toBeLessThanOrEqual(20);
+      }
+      pairs.add(approaches.map((entry) => entry.label).join("|"));
+    }
+    expect(pairs.size).toBeGreaterThan(1);
   });
 });

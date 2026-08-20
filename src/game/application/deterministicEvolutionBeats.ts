@@ -1,4 +1,5 @@
 import type { GameTypeId } from "@/game/domain/newGame";
+import type { InvestigationApproach } from "@/game/domain/worldState";
 
 /** 与 deterministicEvolutionSource 原 ActBeat 相同，另含可选调查点标签。 */
 export type EvolutionActBeat = {
@@ -367,4 +368,33 @@ export function actBeatFor(gameType: GameTypeId, act: number): EvolutionActBeat 
   const themeBeat = THEME_BEATS[gameType];
   if (themeBeat === undefined || act < 2 || act > 5) return genericBeat(act);
   return themeBeat(act);
+}
+
+/**
+ * 题材调查词库：每个题材两条固定、不携带任何世界内容的通用调查方式。
+ * 文案是静态常量，绝不含事实正文/线索名，从根上杜绝泄漏。
+ * 约束：两条文案不得与本题材 acts 2-5 任一 factText 共享 2 字符子串，
+ * 否则审批层的软泄漏防线会误伤确定性路径自己的默认方式。
+ */
+const INVESTIGATION_APPROACH_VOCABULARY: Record<GameTypeId | "generic", readonly [string, string]> = {
+  wuxia: ["沿痕迹追查", "向摊贩打听"],
+  xianxia: ["查看炉膛灰烬", "向山脚药铺打听"],
+  fantasy: ["检查地牢刻痕", "向佣兵打听"],
+  science_fiction: ["调取舱室录像", "比对轮值记录"],
+  urban: ["查看监控记录", "走访街坊"],
+  alternate_history: ["查验管路闸阀", "核对码头货单"],
+  post_apocalypse: ["翻找货厢残件", "打听商队路线"],
+  generic: ["检查现场痕迹", "询问在场之人"],
+};
+
+/**
+ * 为确定性生成的调查事实附上两个安全默认方式：
+ * 一条干净（低张力）、一条噪音（高张力），approachId 固定且互不相同。
+ */
+export function defaultInvestigationApproachesFor(gameType: GameTypeId | "generic"): readonly InvestigationApproach[] {
+  const [cleanLabel, noisyLabel] = INVESTIGATION_APPROACH_VOCABULARY[gameType];
+  return [
+    { approachId: "approach_a", label: cleanLabel, evidenceQuality: "clean", tensionDelta: 2 },
+    { approachId: "approach_b", label: noisyLabel, evidenceQuality: "noisy", tensionDelta: 4 },
+  ];
 }

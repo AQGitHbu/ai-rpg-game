@@ -3,7 +3,9 @@ import type { GameLogger } from "@/game/logging";
 import type { WorldEvolutionSource, WorldEvolutionSourceContext } from "../../worldEvolutionSource";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import { createDeterministicEvolutionSource } from "../../deterministicEvolutionSource";
-import type { WorldState } from "@/game/domain/worldState";
+import type { WorldState, InvestigationApproach } from "@/game/domain/worldState";
+import type { GameTypeId } from "@/game/domain/newGame";
+import { defaultInvestigationApproachesFor } from "../../deterministicEvolutionBeats";
 import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./rpgAiClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
 
@@ -91,8 +93,93 @@ function parseMountedRef(v: unknown): "current" | "new_location" | null {
   return v === "current" || v === "new_location" ? v : null;
 }
 
+// 调查方式安全边界：显式列表必须恰好 2-3 条；张力在 [-5, 20]。
+const MIN_APPROACH_COUNT = 2;
+const MAX_APPROACH_COUNT = 3;
+const MIN_TENSION_DELTA = -5;
+const MAX_TENSION_DELTA = 20;
+
+/**
+ * 判定软泄漏：label/hint 与事实正文共享 >=2 字符子串（完整正文命中除外，
+ * 走硬泄漏）。与 gameplay 审批层的判定一致（词库文案与剧本事实无重合，
+ * 确定性路径不会被误伤）。
+ */
+function sharesFactFragment(candidate: string, factText: string): boolean {
+  const t = factText.trim();
+  if (t === "" || candidate.trim() === "") return false;
+  for (let size = 2; size <= Math.min(8, t.length); size += 1) {
+    for (let i = 0; i + size <= t.length; i += 1) {
+      if (candidate.includes(t.slice(i, i + size))) return true;
+    }
+  }
+  return false;
+}
+
+export type ParsedInvestigationApproaches = {
+  readonly approaches: readonly InvestigationApproach[];
+  readonly logCategories: readonly string[];
+};
+
+/**
+ * 解析/校验 AI 提交的 investigationApproaches（世界演化入口，泄漏在此闭环）：
+ * - 非数组或缺省 = 自动揭示，不产生日志；
+ * - 逐条拒绝：approachId/label/hint 非空、quality 枚举、张力在界内、id 唯一、
+ *   硬泄漏（完整正文子串）；
+ * - 软泄漏（关键名词重合）：替换为题材词库的固定 label、丢弃 hint，记
+ *   investigation_label_overlap（绝不整体拒绝本轮）；
+ * - 过滤后数量不在 2-3 时降级为空列表，记 investigation_approach_invalid。
+ */
+export function parseFactInvestigationApproaches(
+  raw: unknown,
+  factText: string,
+  gameType?: GameTypeId,
+): ParsedInvestigationApproaches {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return { approaches: [], logCategories: [] };
+  }
+  const repairLabels = defaultInvestigationApproachesFor(gameType ?? "generic");
+  let repairIndex = 0;
+  const seenIds = new Set<string>();
+  const kept: InvestigationApproach[] = [];
+  const logCategories: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) continue;
+    const entry = item as Record<string, unknown>;
+    const approachId = typeof entry.approachId === "string" ? entry.approachId.trim() : "";
+    const label = typeof entry.label === "string" ? entry.label.trim() : "";
+    const hint = entry.hint === undefined ? undefined : typeof entry.hint === "string" ? entry.hint.trim() : "";
+    const quality = entry.evidenceQuality === "clean" ? "clean" : entry.evidenceQuality === "noisy" ? "noisy" : null;
+    const tensionDelta = typeof entry.tensionDelta === "number" && Number.isFinite(entry.tensionDelta)
+      ? entry.tensionDelta
+      : null;
+    if (approachId === "" || label === "" || hint === "" || quality === null || tensionDelta === null) continue;
+    if (tensionDelta < MIN_TENSION_DELTA || tensionDelta > MAX_TENSION_DELTA) continue;
+    if (seenIds.has(approachId)) continue;
+    const leakTexts = [label, ...(hint === undefined ? [] : [hint])];
+    const factTrimmed = factText.trim();
+    if (leakTexts.some((text) => text.includes(factTrimmed))) continue;
+    if (leakTexts.some((text) => sharesFactFragment(text, factText))) {
+      const repair = repairLabels[repairIndex % repairLabels.length]!;
+      repairIndex += 1;
+      logCategories.push("investigation_label_overlap");
+      seenIds.add(approachId);
+      kept.push({ approachId, label: repair.label, evidenceQuality: quality, tensionDelta });
+      continue;
+    }
+    seenIds.add(approachId);
+    kept.push({ approachId, label, ...(hint === undefined ? {} : { hint }), evidenceQuality: quality, tensionDelta });
+  }
+  if (kept.length < MIN_APPROACH_COUNT || kept.length > MAX_APPROACH_COUNT) {
+    return { approaches: [], logCategories: [...logCategories, "investigation_approach_invalid"] };
+  }
+  return { approaches: kept, logCategories };
+}
+
 /** 把 AI 原始 JSON 逐字段解析/校验为合法 WorldDeltaProposal；非法整条丢弃。 */
-export function parseWorldDeltaProposal(raw: unknown): WorldDeltaProposal | null {
+export function parseWorldDeltaProposal(
+  raw: unknown,
+  gameType?: GameTypeId,
+): { readonly proposal: WorldDeltaProposal; readonly logCategories: readonly string[] } | null {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const rec = raw as Record<string, unknown>;
   const beatSummary = isStr(rec.beatSummary) ? rec.beatSummary.trim().slice(0, MAX_TEXT) : "";
@@ -153,6 +240,7 @@ export function parseWorldDeltaProposal(raw: unknown): WorldDeltaProposal | null
   }
 
   let newFact: WorldDeltaProposal["newFact"] = null;
+  let approachCategories: readonly string[] = [];
   if (rec.newFact !== null && rec.newFact !== undefined) {
     if (typeof rec.newFact !== "object" || Array.isArray(rec.newFact)) return null;
     const f = rec.newFact as Record<string, unknown>;
@@ -161,10 +249,20 @@ export function parseWorldDeltaProposal(raw: unknown): WorldDeltaProposal | null
     if (visibility !== "public" && visibility !== "npc_private") return null;
     const investigationLabel = f.investigationLabel;
     if (investigationLabel !== undefined && !validName(investigationLabel)) return null;
+    const rawApproaches = f.investigationApproaches;
+    const parsedApproaches = rawApproaches === undefined
+      ? undefined
+      : parseFactInvestigationApproaches(rawApproaches, f.text.trim(), gameType);
+    approachCategories = parsedApproaches?.logCategories ?? [];
     newFact = {
       text: f.text.trim(),
       visibility,
       ...(investigationLabel === undefined ? {} : { investigationLabel: investigationLabel.trim() }),
+      // 非数组输入丢弃字段（保持自动揭示且无字段）；显式数组一律落盘
+      // （含降级后的空列表，空列表在审批层保持自动揭示）。
+      ...(parsedApproaches === undefined || !Array.isArray(rawApproaches)
+        ? {}
+        : { investigationApproaches: parsedApproaches.approaches }),
     };
   }
 
@@ -202,7 +300,7 @@ export function parseWorldDeltaProposal(raw: unknown): WorldDeltaProposal | null
     return null;
   }
 
-  return { beatSummary, newLocation, newNpc, newItem, newEnemy, newFact, nextMainQuest, endingPair };
+  return { proposal: { beatSummary, newLocation, newNpc, newItem, newEnemy, newFact, nextMainQuest, endingPair }, logCategories: approachCategories };
 }
 
 /** 引用越权过滤：connectFromLocationId / 现有地点引用必须真实存在（source 层不做审批）。 */
@@ -253,9 +351,13 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
           const rawProposal = typeof parsed === "object" && parsed !== null && "proposal" in parsed
             ? (parsed as Record<string, unknown>).proposal
             : parsed;
-          const proposal = parseWorldDeltaProposal(rawProposal);
-          if (proposal !== null) {
-            const filtered = filterProposalRefs(proposal, ctx.worldState);
+          const parsedResult = parseWorldDeltaProposal(rawProposal, ctx.worldState.generation.gameType);
+          if (parsedResult !== null) {
+            // 解析层修复/降级类别（不含任何事实正文，安全入日志）。
+            for (const category of parsedResult.logCategories) {
+              logger?.warn(category, {});
+            }
+            const filtered = filterProposalRefs(parsedResult.proposal, ctx.worldState);
             return { proposal: filtered };
           }
           logger?.warn("world_evolution_invalid_data");

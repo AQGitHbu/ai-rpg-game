@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compileOpeningGenerationCandidate } from "./compileOpeningGenerationCandidate";
+import { validateOpeningGenerationCandidate } from "./validateOpeningGenerationCandidate";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import type { StoryState } from "@/game/domain/storyState";
 import { asGenerationId, asLocationId, asNpcId, asQuestId, asFactId } from "@/game/domain/worldEntity";
@@ -174,5 +175,75 @@ describe("compileOpeningGenerationCandidate", () => {
     const serialized = JSON.stringify(worldState);
     expect(serialized).not.toMatch(/npc_dyn_/);
     expect(worldState.locations[0]?.town?.seed).toBe("seed#town#loc_0");
+  });
+
+  it("将候选 publicFacts 已审批的 investigationApproaches 逐条复制进编译事实，保持 discovered 语义", () => {
+    const candidate: OpeningGenerationCandidate = {
+      ...validCandidate(),
+      world: {
+        ...validCandidate().world,
+        publicFacts: [
+          {
+            key: "fact_inn",
+            text: "沈掌柜守着通往青石古道的消息。",
+            investigationApproaches: [
+              { approachId: "a", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 2 },
+              { approachId: "b", label: "向摊贩打听", evidenceQuality: "noisy", tensionDelta: 4 },
+            ],
+          },
+          { key: "fact_pact", text: "旧盟书库藏着一份盟誓印谱。" },
+        ],
+      },
+    };
+    const { worldState } = compile(candidate);
+    expect(worldState.worldFacts).toEqual([
+      {
+        factId: asFactId("fact_0"),
+        text: "沈掌柜守着通往青石古道的消息。",
+        source: "generated",
+        discovered: true,
+        investigationApproaches: [
+          { approachId: "a", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 2 },
+          { approachId: "b", label: "向摊贩打听", evidenceQuality: "noisy", tensionDelta: 4 },
+        ],
+      },
+      { factId: asFactId("fact_1"), text: "旧盟书库藏着一份盟誓印谱。", source: "generated", discovered: false },
+    ]);
+  });
+
+  it("部分非法列表（3 条中 1 条硬泄漏正文、其余 2 条合法）在开局校验整体拒绝，管线走确定性 fallback——泄漏条目无法以调查选项到达 WorldFactEntry", () => {
+    const leaked: OpeningGenerationCandidate = {
+      ...validCandidate(),
+      world: {
+        ...validCandidate().world,
+        publicFacts: [
+          {
+            key: "fact_inn",
+            text: "沈掌柜守着通往青石古道的消息。",
+            investigationApproaches: [
+              { approachId: "a", label: "沈掌柜守着通往青石古道的消息。", evidenceQuality: "clean", tensionDelta: 2 },
+              { approachId: "b", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 2 },
+              { approachId: "c", label: "向摊贩打听", evidenceQuality: "noisy", tensionDelta: 4 },
+            ],
+          },
+          { key: "fact_pact", text: "旧盟书库藏着一份盟誓印谱。" },
+        ],
+      },
+    };
+    const validation = validateOpeningGenerationCandidate(leaked, { gameLength: "short", targetActs: 3 });
+    expect(validation.ok).toBe(false);
+    if (!validation.ok) {
+      expect(validation.issues).toContainEqual(expect.objectContaining({
+        code: "invalid_investigation_approaches",
+        params: { key: "fact_inn" },
+      }));
+    }
+    // compile 只接收已获批候选（ok:true 才被调用）；被拒绝后管线改走确定性
+    // fallback 候选（与 validCandidate() 同构：无任何调查方式），泄漏正文
+    // 只允许以事实 text 出现，绝不作为调查选项 label 出现。
+    const { worldState } = compile();
+    expect(worldState.worldFacts.every((fact) => fact.investigationApproaches === undefined)).toBe(true);
+    const serialized = JSON.stringify(worldState);
+    expect(serialized).not.toContain("investigationApproaches");
   });
 });

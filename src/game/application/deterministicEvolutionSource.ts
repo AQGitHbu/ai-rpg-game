@@ -5,7 +5,7 @@ import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
 import type { NpcId } from "@/game/domain/worldEntity";
 import { deriveKeyEndingNpcId } from "@/game/gameplay/rpg/worldEvolution";
-import { actBeatFor, type EvolutionActBeat } from "./deterministicEvolutionBeats";
+import { actBeatFor, defaultInvestigationApproachesFor, type EvolutionActBeat } from "./deterministicEvolutionBeats";
 
 // ---------------------------------------------------------------------------
 // 确定性世界演化 source（离线/测试/兜底）：
@@ -219,6 +219,9 @@ function planNextAct(ws: WorldState, act: number): WorldDeltaProposal {
       text: beat.factText,
       visibility: "public",
       investigationLabel: beat.investigationLabel ?? "现场留下的线索",
+      // 确定性生成的调查事实直接附上题材词库里的安全默认方式
+      // （repair 事实无 investigationLabel、走自动揭示，故不附方式）。
+      investigationApproaches: defaultInvestigationApproachesFor(ws.generation.gameType),
     },
     nextMainQuest: {
       name: questName,

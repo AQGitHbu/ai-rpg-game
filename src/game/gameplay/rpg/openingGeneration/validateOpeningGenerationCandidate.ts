@@ -1,19 +1,24 @@
 import type { GameLength } from "@/game/domain/newGame";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
+import { investigationApproachListIsValid } from "@/game/gameplay/rpg/worldEvolution/approveWorldDelta";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局切片候选的 gameplay 校验（无 schema 校验——那由 domain parser
 // 负责）。这里只做跨字段引用完整性、契约档位一致性与封闭约束：
 //   - storyContract.targetActs 必须等于 context.targetActs（TARGET_ACTS[gameLength] 是权威）；
 //   - publicFacts key 全局唯一；
-//   - NPC known/private fact keys 必须是 publicFacts key 的子集（缺失 key = 校验错误）。
+//   - NPC known/private fact keys 必须是 publicFacts key 的子集（缺失 key = 校验错误）；
+//   - 带 investigationApproaches 的 publicFact 必须通过完整安全校验（数量 2-3、
+//     条目字段合法、无硬/软泄漏），否则记录 invalid_investigation_approaches
+//     并拒绝候选——开局有确定性 fallback，未获批数据绝不能进入编译。
 // ---------------------------------------------------------------------------
 
 export type OpeningGenerationIssueCode =
   | "contract_target_acts_mismatch"
   | "duplicate_fact_key"
-  | "unknown_fact_key";
+  | "unknown_fact_key"
+  | "invalid_investigation_approaches";
 
 export type OpeningGenerationIssue = {
   readonly code: OpeningGenerationIssueCode;
@@ -54,6 +59,16 @@ export function validateOpeningGenerationCandidate(
   for (const key of [...candidate.opening.npc.knownFactKeys, ...candidate.opening.npc.privateFactKeys]) {
     if (!factKeys.has(key)) {
       issues.push({ code: "unknown_fact_key", params: { key } });
+    }
+  }
+
+  for (const fact of candidate.world.publicFacts) {
+    if (fact.investigationApproaches === undefined) continue;
+    // 严格 fail-fast：任意一条非法（含硬/软泄漏、重复 id、越界张力）都拒绝
+    // 候选——compile 对 investigationApproaches 是逐字拷贝，部分合法条目
+    // 无法被“过滤后放行”，否则泄漏条目仍会随原样字段进入 WorldFactEntry。
+    if (!investigationApproachListIsValid(fact.investigationApproaches, fact.text)) {
+      issues.push({ code: "invalid_investigation_approaches", params: { key: fact.key } });
     }
   }
 

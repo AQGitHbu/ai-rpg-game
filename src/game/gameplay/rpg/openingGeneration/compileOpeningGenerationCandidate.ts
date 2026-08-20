@@ -41,6 +41,7 @@ export function compileOpeningGenerationCandidate(
     factId: asFactId(`fact_${index}`),
     key: fact.key,
     text: fact.text,
+    investigationApproaches: fact.investigationApproaches,
   }));
 
   const knownFactIds = candidate.opening.npc.knownFactKeys.map((key) => factIds.find((fact) => fact.key === key)!.factId);
@@ -108,6 +109,10 @@ export function compileOpeningGenerationCandidate(
       text: fact.text,
       source: "generated",
       discovered: knownFactIds.includes(fact.factId),
+      // 只复制已审批（validated）候选携带的方式；缺省/空保持自动揭示。
+      ...(fact.investigationApproaches === undefined || fact.investigationApproaches.length === 0
+        ? {}
+        : { investigationApproaches: fact.investigationApproaches }),
     })),
     quests: [{
       id: questId,
