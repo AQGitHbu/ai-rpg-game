@@ -32,6 +32,11 @@
 | 日志与追踪 | `agent/日志与追踪.md` | `operations/logging.md` | RPG 保留同步兼容 facade，HTTP/use-case/AI 后台链路统一 trace，通用脱敏/截断/独立 SQLite/查询/JSONL fallback 由 `@ai-game/logging` 提供；默认 `data/logs.db`，提供健康检查、查询和分层保留命令（2026-08-01） |
 | AI 内容质量评估 | `agent/AI内容质量评估.md` | `策划文档/AI内容质量评估标准.md` | Task 8–11 已实现（2026-08-01）：三采集点采集通道（STORY_EVAL_CAPTURE 装配）、长故事评估旅程、离线 analyze 与三段 judge 脚本；量表 v2 与实现事实文档已落盘；v2 case/strategy 矩阵接线由 Task 13 完成；2026-08-05 增加 matrix/scene checkpoint、judge 增量缓存与分层验证入口 |
 
+## 2026-08-20 调查选择场景 canonical 更新
+
+- 探索与任务推进：有 2–3 个已审批 `investigationApproaches` 时只为当前 `discover_fact` 目标投影独立 opaque token；无方式事实在移动抵达或 NPC 交接的规则边界自动写入一次 `fact_discovered`，调查结果记录 evidence quality 与额外 tension；相关 canonical 文件为 `src/game/application/buildChoiceMap.ts`、`src/game/application/gameSessionView.ts`、`src/game/gameplay/rpg/ruleEngine/` 和 `src/game/application/testing/investigationChoiceJourney.test.ts`。
+- 地图与地点冒险：read model 只投影当前目标的调查方式，客户端不读取 fact/approach/cost/consequence；无方式事实不显示调查按钮，结果场景与 reload 从权威 eventLedger/CAS 恢复；相关 canonical 文件为 `src/components/LocationSceneScreen.tsx`、`src/game/application/sceneGenerationContext.ts` 和 `src/game/application/testing/investigationChoiceJourney.test.ts`。
+
 ## 维护规则
 
 - 玩法事实变化时同步更新策划文档。
