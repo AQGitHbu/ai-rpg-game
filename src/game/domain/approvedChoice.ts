@@ -121,17 +121,22 @@ function rebuildAction(action: Action): Action {
  */
 export function semanticSummaryOf(action: Action): string {
   switch (action.type) {
-    case "talk": return `talk:${action.npcId}:${action.dialogueAct}:${dialogueTopicKey(action.topic)}`;
-    case "move": return `move:${action.locationId}`;
+    case "talk": return `talk:${escapeSummaryPart(action.npcId)}:${escapeSummaryPart(action.dialogueAct)}:${escapeSummaryPart(dialogueTopicKey(action.topic))}`;
+    case "move": return `move:${escapeSummaryPart(action.locationId)}`;
     case "explore": return "explore";
-    case "investigate": return `investigate:${action.factId}${action.approachId === undefined ? "" : `:${action.approachId}`}`;
-    case "take_item": return `take_item:${action.itemId}`;
-    case "give_item": return `give_item:${action.itemId}:${action.npcId}`;
-    case "attack": return `attack:${action.enemyId}`;
-    case "battle_action": return `battle_action:${action.action}:${action.command?.actorId ?? ""}:${action.command?.targetId ?? ""}`;
+    case "investigate": return `investigate:${escapeSummaryPart(action.factId)}${action.approachId === undefined ? "" : `:${escapeSummaryPart(action.approachId)}`}`;
+    case "take_item": return `take_item:${escapeSummaryPart(action.itemId)}`;
+    case "give_item": return `give_item:${escapeSummaryPart(action.itemId)}:${escapeSummaryPart(action.npcId)}`;
+    case "attack": return `attack:${escapeSummaryPart(action.enemyId)}`;
+    case "battle_action": return `battle_action:${escapeSummaryPart(action.action)}:${escapeSummaryPart(action.command?.actorId ?? "")}:${escapeSummaryPart(action.command?.targetId ?? "")}`;
     case "ack_prologue": return "ack_prologue";
-    case "freeform": return `freeform:${action.intent}`;
+    case "freeform": return `freeform:${escapeSummaryPart(action.intent)}`;
   }
+}
+
+/** 业务 ID/枚举允许外部来源生成，序列化时必须避免分隔符碰撞。 */
+function escapeSummaryPart(value: string): string {
+  return String(value).replaceAll("\\", "\\\\").replaceAll(":", "\\:");
 }
 
 // ---------------------------------------------------------------------------
@@ -153,17 +158,18 @@ function fnv1a(data: string): number {
 
 /** 确定性规范序列化：字段次序固定，跨引擎稳定。 */
 function serializeAction(action: Action): string {
+  const part = (value: string): string => String(value).replaceAll("\\", "\\\\").replaceAll("|", "\\|");
   switch (action.type) {
-    case "talk": return `talk|${String(action.npcId)}|${action.dialogueAct}|${dialogueTopicKey(action.topic)}`;
-    case "move": return `move|${String(action.locationId)}`;
+    case "talk": return `talk|${part(action.npcId)}|${part(action.dialogueAct)}|${part(dialogueTopicKey(action.topic))}`;
+    case "move": return `move|${part(action.locationId)}`;
     case "explore": return "explore";
-    case "investigate": return `investigate|${String(action.factId)}${action.approachId === undefined ? "" : `|${action.approachId}`}`;
-    case "take_item": return `take_item|${String(action.itemId)}`;
-    case "give_item": return `give_item|${String(action.itemId)}|${String(action.npcId)}`;
-    case "attack": return `attack|${String(action.enemyId)}`;
-    case "battle_action": return `battle_action|${action.action}|${action.command?.actorId ?? ""}|${action.command?.targetId ?? ""}`;
+    case "investigate": return `investigate|${part(action.factId)}${action.approachId === undefined ? "" : `|${part(action.approachId)}`}`;
+    case "take_item": return `take_item|${part(action.itemId)}`;
+    case "give_item": return `give_item|${part(action.itemId)}|${part(action.npcId)}`;
+    case "attack": return `attack|${part(action.enemyId)}`;
+    case "battle_action": return `battle_action|${part(action.action)}|${part(action.command?.actorId ?? "")}|${part(action.command?.targetId ?? "")}`;
     case "ack_prologue": return "ack_prologue";
-    case "freeform": return `freeform|${action.intent}`;
+    case "freeform": return `freeform|${part(action.intent)}`;
   }
 }
 

@@ -289,19 +289,6 @@ describe("resolveByType — investigate approaches", () => {
     };
   }
 
-  function worldWithApproachlessFact(): WorldState {
-    return {
-      ...worldWithApproaches(),
-      worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
-      quests: [{
-        id: asQuestId("quest_fact"), name: "追查线索", description: "查明车轮印的来路",
-        objectives: [{ kind: "discover_fact", factId: FACT_1_ID }],
-        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
-        tags: [], kind: "main", stage: 1, status: "active",
-      }],
-    };
-  }
-
   function storyWithDiscoverFact(): StoryState {
     return createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 1, events: 0 } });
   }

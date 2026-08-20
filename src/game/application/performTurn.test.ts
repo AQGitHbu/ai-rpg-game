@@ -1124,7 +1124,7 @@ describe("performTurn — 自动揭示必经事实（Task 3）", () => {
         tags: [], kind: "main", stage: 1, status: "active",
       }],
     };
-    const { repo, record, applyCalls } = createSpyRepo(world, buildStoryState());
+    const { repo, applyCalls } = createSpyRepo(world, buildStoryState());
     const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" };
 
     const result = await performTurn(

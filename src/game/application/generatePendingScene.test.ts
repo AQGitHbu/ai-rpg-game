@@ -682,8 +682,11 @@ describe("generatePendingScene", () => {
               }],
             }),
           },
-          // 空队列：模拟 AI 失败链，预生成叙事从未写入。
-          linearNarrativeQueue: [],
+          // 当前 investigate 没有命中，但未来 move 仍有已审批的预生成叙事；
+          // 即时兜底不应把这条后续队列一起清掉。
+          linearNarrativeQueue: [
+            { actionKind: "move", locationId: asLocationId("loc_2"), narration: "北巷旧道就在前方。", source: "generated" },
+          ],
         },
       },
     };
@@ -703,7 +706,9 @@ describe("generatePendingScene", () => {
       actionKind: "investigate",
       entityId: "fact_2",
     });
-    expect(writeBack.nextStoryState.narrative.linearNarrativeQueue).toEqual([]);
+    expect(writeBack.nextStoryState.narrative.linearNarrativeQueue).toEqual([
+      { actionKind: "move", locationId: asLocationId("loc_2"), narration: "北巷旧道就在前方。", source: "generated" },
+    ]);
   });
 
   it("does not use fast path when evolution demands next act or ending pair", async () => {

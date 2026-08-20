@@ -95,12 +95,6 @@ export async function generatePendingScene(
     storyState: scenarioSs,
   };
 
-  // Task 3：单线调查/移动优先消费上一次场景写回时 AI 预生成的权威叙事
-  // （actionKind + 实体 ID 精确匹配）；未命中才走确定性兜底（消费即除）。
-  const consumeEntry = immediateAction
-    ? findMatchingQueueEntry(scenarioSs.narrative.linearNarrativeQueue, summary)
-    : undefined;
-
   let context = buildSceneGenerationContext(scenarioRecord);
 
   // ready scene 必须有两个语义不同的合法选择。若当前世界只有一个候选，
@@ -132,6 +126,14 @@ export async function generatePendingScene(
   }
 
   if (buildSelectableSceneCandidates(context).length < 2) return "unavailable";
+
+  // Task 3：单线调查/移动优先消费上一次场景写回时 AI 预生成的权威叙事
+  // （actionKind + 实体 ID 精确匹配）；未命中才走确定性兜底（消费即除）。
+  // 必须在候选补足等可能重建 scenarioSs 的步骤之后查找，避免使用旧状态的
+  // 对象引用；写回时也按稳定键移除，而不是按对象 identity 移除。
+  const consumeEntry = immediateAction
+    ? findMatchingQueueEntry(scenarioSs.narrative.linearNarrativeQueue, summary)
+    : undefined;
 
   // 物品拾取与移动一样，当前地点、物品事实和可达候选都由规则结果确定，
   // 使用同一审批链上的确定性即时场景；对话、探索等仍使用配置的 source。
@@ -288,11 +290,14 @@ export async function generatePendingScene(
         choiceRegistry: approved.choiceRegistry,
         // Task 2：随同一次 scene CAS 覆盖式持久化预生成单线行动叙事；
         // 对话回合与非 immediateAction 路径同样是生成时机，必须一并写回。
-        // Task 3：命中的预生成条目消费即除；未命中/非 immediate 路径沿用
-        // 审批队列（确定性提案不携带预生成叙事 → 覆盖为空数组，保持 Task 2 语义）。
-        linearNarrativeQueue: consumeEntry === undefined
-          ? approved.linearNarrativeQueue
-          : (scenarioSs.narrative.linearNarrativeQueue ?? []).filter((entry) => entry !== consumeEntry),
+        // Task 3：命中的预生成条目消费即除；即时行动未命中时保留其他未来条目，
+        // 避免一次确定性兜底把后续 move/investigate 预生成叙事全部清空。
+        // 非 immediate 路径仍以本次场景审批结果覆盖队列。
+        linearNarrativeQueue: immediateAction
+          ? (consumeEntry === undefined
+            ? (scenarioSs.narrative.linearNarrativeQueue ?? [])
+            : removeMatchingQueueEntry(scenarioSs.narrative.linearNarrativeQueue, summary))
+          : approved.linearNarrativeQueue,
       },
       candidateEventPool: approved.candidateEventPool,
     },
@@ -308,7 +313,7 @@ export async function generatePendingScene(
 /**
  * 在 AI 预生成叙事队列中查找与 actionSummary 实体精确匹配的条目
  * （investigate→factId，move→locationId）；take_item 等无队列形态。
- * 返回原数组引用，消费时按引用移除恰好一条。
+ * 返回命中的条目；消费时使用 actionKind + 实体 ID 稳定匹配移除恰好一条。
  */
 function findMatchingQueueEntry(
   queue: readonly LinearActionNarrativeState[] | undefined,
@@ -325,4 +330,22 @@ function findMatchingQueueEntry(
     );
   }
   return undefined;
+}
+
+function removeMatchingQueueEntry(
+  queue: readonly LinearActionNarrativeState[] | undefined,
+  summary: StructuredActionSummary,
+): readonly LinearActionNarrativeState[] {
+  let removed = false;
+  return (queue ?? []).filter((entry) => {
+    if (removed) return true;
+    const matches = summary.kind === "investigate"
+      ? entry.actionKind === "investigate" && String(entry.factId) === String(summary.factId)
+      : summary.kind === "move"
+        ? entry.actionKind === "move" && String(entry.locationId) === String(summary.locationId)
+        : false;
+    if (!matches) return true;
+    removed = true;
+    return false;
+  });
 }

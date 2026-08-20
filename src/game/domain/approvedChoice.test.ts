@@ -142,6 +142,17 @@ describe("semanticSummaryOf", () => {
     expect(semanticSummaryOf(plain)).toBe("investigate:fact_trace");
   });
 
+  it("转义调查实体与方式中的分隔符，避免摘要或 token 发生拼接碰撞", () => {
+    const colonA: Action = { type: "investigate", factId: asFactId("fact:a"), approachId: "b" };
+    const colonB: Action = { type: "investigate", factId: asFactId("fact"), approachId: "a:b" };
+    expect(semanticSummaryOf(colonA)).not.toBe(semanticSummaryOf(colonB));
+
+    const pipeA: Action = { type: "investigate", factId: asFactId("fact"), approachId: "a|b" };
+    const pipeB: Action = { type: "investigate", factId: asFactId("fact|a"), approachId: "b" };
+    expect(deriveChoiceToken({ sceneId: "scene-abc", basedOnRevision: 7, action: pipeA }))
+      .not.toBe(deriveChoiceToken({ sceneId: "scene-abc", basedOnRevision: 7, action: pipeB }));
+  });
+
   it("同类无参行动摘要稳定且不同类互异", () => {
     const exploreA: ApprovedChoice["action"] = { type: "explore" };
     const exploreB: ApprovedChoice["action"] = { type: "explore" };
