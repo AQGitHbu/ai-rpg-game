@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 增加一个默认关闭、显式开启的本地 AI 文本审计模式，完整记录游戏 API 语义输入输出、四类 AI 调用的完整 messages/模型结果、触发动作/用途和最终玩家可见文本，以支持完整游戏还原与后续 prompt 审核。
+**Goal:** 增加一个默认开启、显式关闭的本地 AI 文本审计模式，完整记录游戏 API 语义输入输出、四类 AI 调用的完整 messages/模型结果、触发动作/用途和最终玩家可见文本，以支持完整游戏还原与后续 prompt 审核。
 
 **Architecture:** 新增 RPG 专属的 append-only 审计日志，不复用普通诊断日志的脱敏和事件大小截断路径。`RpgAiClient` 统一记录所有 provider 调用；composition root 记录游戏 API 交换；场景审批后的最终文本记录为独立 story 事件。所有记录通过 `runId/gameId/traceId/jobId/turnNumber` 关联，默认不创建审计文件。
 
@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- 完整审计仅由 `AI_TEXT_AUDIT=full` 显式开启，默认 `off`；客户端不能开启或读取审计内容。
+- 完整审计默认开启；`AI_TEXT_AUDIT` 缺失、空白或非 `off` 值均按 `full` 处理，只有 trim 后明确等于 `off` 才关闭；客户端不能开启或读取审计内容。
 - 审计日志可以保存本游戏的完整语义文本、prompt、模型正文、玩家输入和游戏 API body；仍不得保存 `AI_API_KEY`、Authorization、cookie 或完整请求 URL。
 - 审计日志不是游戏状态源；游戏事务、CAS、fallback 和主流程不能因审计写入失败而失败。
 - 普通 `GameLogger`/`data/logs.db` 继续用于稳定诊断；完整文本写入 `logs/ai-text-audit/<runId>/events.jsonl`，不经过普通日志的递归脱敏和 128 KiB 截断。
@@ -32,14 +32,18 @@
 - Produces `AiTextAuditRecorder`, `AiTextAuditMode`, `AiTextAuditContext`, `AiTextAuditEntry` and `createTextAuditRecorder(env, options?)` for later server composition.
 - `AiTextAuditRecorder.record(entry): Promise<void>` is best-effort and never throws into gameplay; `close(): Promise<void>` flushes/关闭文件。
 
-- [ ] **Step 1: Write failing tests for default-off and full append-only capture**
+- [ ] **Step 1: Write failing tests for default-on, explicit-off and full append-only capture**
 
 覆盖以下行为：
 
 ```ts
-const recorder = createTextAuditRecorder({ AI_TEXT_AUDIT: "off" }, { rootDir: tempDir });
+const recorder = createTextAuditRecorder({}, { rootDir: tempDir });
 await recorder.record({ kind: "ai_call", ...fixtureCall });
-expect(await listFiles(tempDir)).toEqual([]);
+expect(await listFiles(tempDir)).toContain("events.jsonl");
+
+const disabled = createTextAuditRecorder({ AI_TEXT_AUDIT: "off" }, { rootDir: tempDir });
+await disabled.record({ kind: "ai_call", ...fixtureCall });
+expect(await disabled.isEnabled()).toBe(false);
 
 const full = createTextAuditRecorder(
   { AI_TEXT_AUDIT: "full", AI_TEXT_AUDIT_RUN_ID: "run-test" },
@@ -314,7 +318,7 @@ git commit -m "feat: add AI text audit query tools"
 
 - [ ] **Step 1: Update the RPG logging principle**
 
-将普通诊断日志与 AI 文本审计日志明确分开：普通日志仍只保留稳定诊断字段；`AI_TEXT_AUDIT=full` 时，审计日志允许完整保存本游戏 prompt、模型正文、玩家语义输入、游戏 API 输入输出、最终文本、动作和用途。唯一保留的安全排除项是 API key、Authorization、cookie 和完整 URL。
+将普通诊断日志与 AI 文本审计日志明确分开：普通日志仍只保留稳定诊断字段；默认审计开启，只有 `AI_TEXT_AUDIT=off` 时关闭，其他值均按 `full` 处理。开启时审计日志允许完整保存本游戏 prompt、模型正文、玩家语义输入、游戏 API 输入输出、最终文本、动作和用途。唯一保留的安全排除项是 API key、Authorization、cookie 和完整 URL。
 
 - [ ] **Step 2: Mark the old quality standard and historical implementation as retired**
 
@@ -354,7 +358,7 @@ node --test scripts/aiTextAudit.node-test.mjs
 - [ ] **Step 2: Start a full audit run**
 
 ```powershell
-$env:AI_TEXT_AUDIT = "full"
+# 默认已经是 full；只有需要关闭时才设置 $env:AI_TEXT_AUDIT = "off"
 $env:AI_TEXT_AUDIT_RUN_ID = "manual-2026-08-20-01"
 npm run dev
 ```
@@ -381,4 +385,3 @@ npm run build
 ```
 
 Expected: 全部 PASS；审计文件留在 `logs/ai-text-audit/<runId>/`，不进入 git。
-
