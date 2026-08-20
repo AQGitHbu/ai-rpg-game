@@ -221,6 +221,11 @@ export type SceneGenerationContext = {
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
   /** Task 4：节拍/目标引用实体从持久化状态解析出的最小描述。 */
   readonly beatSubjects: readonly EntityDescription[];
+  /**
+   * 允许场景 proposal 用稳定 ID 表达叙事 grounding 的实体集合。
+   * 自然语言正文不参与规则裁决；该字段只供 source/parser/approval 共享边界。
+   */
+  readonly narrativeReferenceIds?: readonly string[];
   /** Task 5：焦点 NPC 的隔离记忆 + 关系政策（talk 指向 job.focusNpcId，否则第一个在场 NPC）。 */
   readonly focusNpcContext?: FocusNpcContext;
   /** Task 6：当前权威目标引用的目标实体（无 after 目标时为 null）。 */
@@ -571,6 +576,16 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     return undefined;
   })();
 
+  const objectiveTarget = resolveObjectiveTarget(ws, transition.after);
+  const upcomingLinearObjectives = buildUpcomingLinearObjectives(ws, transition.after);
+  const narrativeReferenceIds = [...new Set([
+    ...beatSubjects.map((subject) => subject.id),
+    ...(objectiveTarget === null ? [] : [objectiveTarget.entityId]),
+    ...upcomingLinearObjectives.flatMap((ref) => ref.kind === "discover_fact"
+      ? [String(ref.factId)]
+      : [String(ref.locationId)]),
+  ])];
+
   return {
     gameType: ws.generation.gameType,
     generationSeed: ws.generation.seed,
@@ -656,10 +671,11 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     mandatoryBeats: job.mandatoryBeats,
     beatSubjects,
     focusNpcContext,
-    objectiveTarget: resolveObjectiveTarget(ws, transition.after),
+    objectiveTarget,
+    narrativeReferenceIds,
     ...(currentInvestigationApproaches === undefined ? {} : { currentInvestigationApproaches }),
     ...(resolvedInvestigation === undefined ? {} : { resolvedInvestigation }),
-    upcomingLinearObjectives: buildUpcomingLinearObjectives(ws, transition.after),
+    upcomingLinearObjectives,
     ...(previousDialogue === undefined ? {} : { previousDialogue }),
   };
 }

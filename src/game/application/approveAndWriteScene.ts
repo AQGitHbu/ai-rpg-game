@@ -114,12 +114,20 @@ export type SceneRejectionCode =
   | "player_utterance_unanswered"
   | "npc_dialogue_too_short"
   | "stale_objective_link"
-  | "quest_advanced_unnamed"
   | "stale_choice_template"
   | "semantic_duplicate_choices"
   | "duplicate_candidate_ids"
   | "illegal_choice_target"
   | "no_objective_progress_choices";
+
+/**
+ * 场景核心结构合法后，仍可供运营/评测观察的叙事质量信号。
+ * 这些信号不能阻断场景写回，也不能改变规则层状态。
+ */
+export type SceneQualityWarningCode =
+  | "missing_objective_reference"
+  | "invalid_objective_reference"
+  | "missing_objective_surface";
 
 export type ApprovedSceneWriteBack = {
   readonly scene: NarrativeSceneState;
@@ -127,6 +135,8 @@ export type ApprovedSceneWriteBack = {
   readonly candidateEventPool: readonly EventCandidate[];
   /** Task 2：审批过滤后的 AI 预生成单线行动叙事队列（整字段丢弃时为空）。 */
   readonly linearNarrativeQueue: readonly LinearActionNarrativeState[];
+  /** 叙事质量告警：只用于日志/审计，不阻断场景写回。 */
+  readonly qualityWarnings: readonly SceneQualityWarningCode[];
 };
 
 export type ApproveScenePerformanceResult =
@@ -180,7 +190,7 @@ function hasExpandedNpcDialogue(text: string): boolean {
  * - 通过后逐字段重建 `LinearActionNarrativeState`（source 恒为 "generated"），
  *   提案对象原引用不直接持久化。
  */
-function approveLinearActionNarratives(
+export function approveLinearActionNarratives(
   proposal: ScenePerformanceProposal,
   context: SceneGenerationContext,
   logger: Pick<GameLogger, "warn"> | undefined,
@@ -458,14 +468,25 @@ export function approveScenePerformance(input: {
     }
   }
 
-  // Step 4：幕推进时 quest_advanced segment 必须点名新目标实体。
+  // 叙事 grounding 质量诊断：目标身份由 objectiveLink 与稳定实体 ID
+  // 决定，不能再用旁白是否逐字包含 entityName 作为整场拒绝条件。
+  const qualityWarnings: SceneQualityWarningCode[] = [];
   if (context.objectiveTransition.mode === "advanced_act" && objectiveTarget !== null) {
     const advancedBeat = context.mandatoryBeats.find((b) => b.kind === "quest_advanced");
     const advancedSegment = advancedBeat !== undefined
       ? proposal.segments.find((s) => s.beatId === advancedBeat.beatId)
       : undefined;
-    if (advancedSegment === undefined || !advancedSegment.text.includes(objectiveTarget.entityName)) {
-      return { ok: false, code: "quest_advanced_unnamed" };
+    if (advancedSegment === undefined || advancedSegment.text.trim() === "") {
+      qualityWarnings.push("missing_objective_surface");
+    } else {
+      const allowedReferenceIds = new Set((context.narrativeReferenceIds ?? []).map(String));
+      const referencedEntityIds = advancedSegment.referencedEntityIds ?? [];
+      if (referencedEntityIds.some((id) => !allowedReferenceIds.has(String(id)))) {
+        qualityWarnings.push("invalid_objective_reference");
+      }
+      if (!referencedEntityIds.some((id) => String(id) === String(objectiveTarget.entityId))) {
+        qualityWarnings.push("missing_objective_reference");
+      }
     }
   }
 
@@ -525,6 +546,7 @@ export function approveScenePerformance(input: {
     // 场景表演契约不含候选事件：池原样保留，事件生命周期由独立审批处理。
     candidateEventPool: [...input.existingCandidateEventPool],
     linearNarrativeQueue: approveLinearActionNarratives(proposal, context, input.logger),
+    qualityWarnings,
   };
 }
 

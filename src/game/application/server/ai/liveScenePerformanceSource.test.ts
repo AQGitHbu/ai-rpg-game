@@ -101,6 +101,7 @@ function makeContext(overrides: {
       { id: "item_seal", kind: "item", name: "盟誓印谱", description: "刻着盟约的印谱" },
       { id: "npc_1", kind: "npc", name: "老板", description: "客栈老板" },
     ],
+    narrativeReferenceIds: ["item_seal", "npc_1", "fact_a", "fact_vis"],
     objectiveTarget: overrides.objectiveTarget ?? null,
     focusNpcContext: {
       id: asNpcId("npc_1"),
@@ -270,7 +271,11 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
     const transport = stubTransport({
       segments: [
-        { beatId: "quest_adv_0", text: "主线推进，接下来要获取盟誓印谱。" },
+        {
+          beatId: "quest_adv_0",
+          text: "线索沿着旧道延伸，下一步需要核对现场。",
+          referencedEntityIds: ["item_seal"],
+        },
         { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" },
       ],
       npcLine: null,
@@ -284,7 +289,8 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     const proposal = await source.generateScene(context);
     const advanced = proposal.segments.find((s) => s.beatId === "quest_adv_0");
     expect(advanced).toBeDefined();
-    expect(advanced!.text).toContain("盟誓印谱");
+    expect(advanced!.text).not.toContain("盟誓印谱");
+    expect(advanced!.referencedEntityIds).toEqual(["item_seal"]);
     expect(proposal.objectiveLink).toEqual({ questId: "quest_0", objectiveIndex: 1, mode: "handoff" });
     expect(proposal.objectiveLink!.questId).toBe(String(context.objectiveTransition.after!.questId));
     expect(proposal.objectiveLink!.objectiveIndex).toBe(context.objectiveTransition.after!.objectiveIndex);
@@ -326,6 +332,32 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain(policy.intensityInstruction);
     expect(prompt).toContain("不得输出“主线推进到第X幕”“已完成：”“当前目标：”等系统元话术");
     expect(prompt).toContain("先完成 npcLine，再根据本轮 npcLine 的文本和 usedFactIds 生成 choices");
+  });
+
+  it("解析场景时只保留服务端允许的结构化叙事引用，不把未知 ID 传给审批层", () => {
+    const context = makeContext();
+    const result = parseScenePerformanceJson(
+      {
+        segments: [
+          {
+            beatId: ATMOSPHERE_BEAT_ID,
+            text: "炉火在风里轻响。",
+            referencedEntityIds: ["item_seal", "not_allowed", "item_seal"],
+          },
+        ],
+        npcLine: null,
+        objectiveLink: null,
+        choices: [
+          { candidateId: "candidate_1", label: "查看四周" },
+          { candidateId: "candidate_2", label: "与老板交谈" },
+        ],
+      },
+      context,
+      buildSelectableSceneCandidates(context),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.proposal.segments[0]!.referencedEntityIds).toEqual(["item_seal"]);
   });
 
   it("开局没有强制节拍时，prompt 明确要求唯一合法的 atmosphere 段，避免空 segments 降级", () => {
