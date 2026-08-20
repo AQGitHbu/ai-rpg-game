@@ -1,4 +1,5 @@
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
+import type { AiTextAuditRecorder, AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { SceneSource, ScenePerformanceProposal } from "./sceneSource";
 import { sceneInvestigationResultFrom } from "./sceneSource";
 import { buildSceneGenerationContext } from "./sceneGenerationContext";

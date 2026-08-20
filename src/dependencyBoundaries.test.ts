@@ -677,8 +677,8 @@ function walk(dir: string, includeTestFiles: boolean): string[] {
 // ---------------------------------------------------------------------------
 
 const SERVER_DIR = "game/application/server/";
-/** 纯端口文件：只有类型与 asGameId/asGenerationId 等，application 本体唯一合法的 server 入口。 */
-const PURE_PORT_SPECIFIER = "./server/persistence/gameRepository";
+/** 纯端口文件：只有类型与 asGameId/asGenerationId 等。application 本体合法的 server 纯端口清单。 */
+const PURE_PORT_SPECIFIERS = ["./server/persistence/gameRepository", "./server/ai/textAuditTypes"] as const;
 /** API route 层唯一许可的 server 入口。 */
 const COMPOSITION_ROOT_SPECIFIER = "@/game/application/server/compositionRoot";
 const SERVER_LOGGER_SPECIFIER = "@/game/logging/serverConsoleLogger";
@@ -743,12 +743,12 @@ describe("server-only modules stay out of client-importable code", () => {
       if (reaching.length === 0) continue;
       // application 本体只能用纯端口；api route 只能用组合根；其余一律禁止。
       const allowed = key.startsWith("game/application/")
-        ? [PURE_PORT_SPECIFIER]
+        ? PURE_PORT_SPECIFIERS
         : key.startsWith("app/api/")
           ? [COMPOSITION_ROOT_SPECIFIER]
           : null;
       for (const specifier of reaching) {
-        if (allowed === null || !allowed.includes(specifier)) violations.push(`${key}: ${specifier}`);
+        if (allowed === null || !(allowed as readonly string[]).includes(specifier)) violations.push(`${key}: ${specifier}`);
       }
     }
     expect(violations).toEqual([]);
@@ -756,7 +756,13 @@ describe("server-only modules stay out of client-importable code", () => {
 
   it("sanctioned entry points are actually exercised (guard is not vacuous)", () => {
     const facade = readFileSync(resolve(sourceRoot, "game/application/index.ts"), "utf8");
-    expect(extractSpecifiers(facade)).toContain(PURE_PORT_SPECIFIER);
+    expect(extractSpecifiers(facade)).toContain(PURE_PORT_SPECIFIERS[0]);
+    // textAuditTypes 纯端口必须被 application 本体实际导入（非空转守卫）
+    const generatePendingSceneSource = readFileSync(
+      resolve(sourceRoot, "game/application/generatePendingScene.ts"),
+      "utf8",
+    );
+    expect(extractSpecifiers(generatePendingSceneSource)).toContain("./server/ai/textAuditTypes");
     const routes = productionFiles
       .filter((file) => toPosixRelative(file).startsWith("app/api/"))
       .filter((file) =>
@@ -810,12 +816,12 @@ describe("server-only modules stay out of client-importable code", () => {
       const file = resolve(sourceRoot, relative);
       expect(statSync(file).isFile(), relative).toBe(true);
       const specifiers = extractSpecifiers(readFileSync(file, "utf8"));
-      expect(specifiers, relative).toContain(PURE_PORT_SPECIFIER);
+      expect(specifiers, relative).toContain(PURE_PORT_SPECIFIERS[0]);
       expect(
         specifiers.filter(
           (s) =>
             reachesServerLayer(s) &&
-            s !== PURE_PORT_SPECIFIER
+            !PURE_PORT_SPECIFIERS.includes(s as typeof PURE_PORT_SPECIFIERS[number])
         ),
         relative
       ).toEqual([]);
