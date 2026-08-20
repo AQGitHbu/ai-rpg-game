@@ -22,6 +22,7 @@ function fakeRecorder(): AiTextAuditRecorder & { records: AiTextAuditPayload[] }
   const records: AiTextAuditPayload[] = [];
   return {
     enabled: true,
+    gameApiMode: "compact",
     records,
     record: vi.fn(async (payload: AiTextAuditPayload) => { records.push(payload); }),
     close: vi.fn(async () => {}),
@@ -297,6 +298,7 @@ describe("audit recorder integration", () => {
   it("audit write failure does not change the return result", async () => {
     const failingAudit: AiTextAuditRecorder = {
       enabled: true,
+      gameApiMode: "compact",
       record: vi.fn(async () => { throw new Error("write failed"); }),
       close: vi.fn(async () => {}),
     };

@@ -2,12 +2,13 @@
 
 ## 定位
 
-AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录，完整保存游戏运行时的 AI 调用、API 交换和最终玩家可见文本，支持完整游戏还原与后续 prompt 审核。
+AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录，完整保存游戏运行时的 AI 调用和最终玩家可见文本；游戏 API 交换按独立模式记录，支持文本质量审核并保留必要的游戏还原证据。
 
 ## 默认开关
 
 - 默认开启：`AI_TEXT_AUDIT` 缺失、空白或非 `off` 值均按 `full` 处理。
-- 只有 `AI_TEXT_AUDIT=off`（trim 后等于 `off`）才完全不创建审计文件。
+- 只有 `AI_TEXT_AUDIT=off`（trim 后等于 `off`）才关闭 AI 文本事件；若 `GAME_API_AUDIT` 未关闭，仍可能写入 compact API 事件。
+- `GAME_API_AUDIT` 独立控制 `game_api` 事件：缺失、空白或其他值为 `compact`，显式 `full` 保存完整 API body，显式 `off` 不记录 API 事件。
 - 客户端不能开启或读取审计内容。
 
 ## 文件位置
@@ -36,20 +37,18 @@ AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录�
 
 ### game_api
 
-记录六个 canonical API route 的完整请求/响应交换。
+记录六个 canonical API route 的请求/响应摘要或完整交换。`/api/game/current` 与 `/api/game/narrative/ensure` 属于前端轮询路由，在默认 `compact` 模式下不保存 body；创建、玩家行动、序幕确认和开发清档等业务/调试路由在 `compact` 模式仍保存完整 body。
 
 | 字段 | 说明 |
 | --- | --- |
 | `kind` | `"game_api"` |
+| `detail` | `"compact"`（轮询摘要）或 `"full"`（完整交换） |
 | `route` | 路由路径 |
 | `method` | HTTP 方法 |
 | `context` | `AiTextAuditContext`（trigger 为稳定路由触发值） |
-| `request.rawBody` | 原始请求 body 字符串 |
-| `request.json` | JSON parse 后的对象（best-effort） |
-| `response.rawBody` | 原始响应 body 字符串 |
-| `response.json` | JSON parse 后的对象（best-effort） |
-| `response.errorName` | 异常时记录稳定错误名（不记录 message/stack） |
+| `request` / `response` | compact 仅含 `hasBody`；full 含 sanitized `rawBody`/`json`，异常时含稳定 `errorName` |
 | `httpStatus` | HTTP 状态码 |
+| `durationMs` | HTTP handler 总耗时 |
 
 ### story_text
 
@@ -110,7 +109,7 @@ AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录�
 
 ## 安全排除项
 
-审计日志可以保存本游戏的完整语义文本、prompt、模型正文、玩家输入和游戏 API body，但**不得**保存：
+审计日志可以保存本游戏的完整语义文本、prompt、模型正文、玩家输入和 full 模式游戏 API body，但**不得**保存：
 
 - API key
 - Authorization
@@ -131,6 +130,7 @@ npm run ai-text-audit -- list
 
 # 查询事件
 npm run ai-text-audit -- query --run <runId>
+# 文本质量审核通常只看 AI 输入输出和最终文本
 npm run ai-text-audit -- query --run <runId> --kind ai_call
 npm run ai-text-audit -- query --run <runId> --kind game_api
 npm run ai-text-audit -- query --run <runId> --kind story_text

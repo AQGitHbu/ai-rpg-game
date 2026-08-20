@@ -1,12 +1,13 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { mkdir, readFile, readdir, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createTextAuditRecorder } from "./textAuditRecorder";
 import type { AiTextAuditPayload } from "./textAuditTypes";
 
 function readJsonLines(filePath: string): unknown[] {
-  const text = require("node:fs").readFileSync(filePath, "utf8") as string;
+  const text = readFileSync(filePath, "utf8");
   return text
     .trim()
     .split("\n")
@@ -135,6 +136,28 @@ describe("createTextAuditRecorder", () => {
     }
   });
 
+  it("defaults GAME_API_AUDIT to compact and supports full/off", async () => {
+    tempDir = await makeTempDir();
+    try {
+      for (const value of [undefined, "", "compact", "debug", "random"]) {
+        const env = value === undefined ? {} : { GAME_API_AUDIT: value };
+        const recorder = createTextAuditRecorder(env, { rootDir: tempDir });
+        expect(recorder.gameApiMode).toBe("compact");
+        await recorder.close();
+      }
+
+      const full = createTextAuditRecorder({ GAME_API_AUDIT: "FULL" }, { rootDir: tempDir });
+      expect(full.gameApiMode).toBe("full");
+      await full.close();
+
+      const off = createTextAuditRecorder({ GAME_API_AUDIT: "off" }, { rootDir: tempDir });
+      expect(off.gameApiMode).toBe("off");
+      await off.close();
+    } finally {
+      await cleanup(tempDir);
+    }
+  });
+
   it("writes full ai_call payload with messages and model content", async () => {
     tempDir = await makeTempDir();
     try {
@@ -209,13 +232,6 @@ describe("createTextAuditRecorder", () => {
     tempDir = await makeTempDir();
     try {
       let failureCalled = false;
-      const recorder = createTextAuditRecorder(
-        { AI_TEXT_AUDIT_RUN_ID: "run-fail" },
-        {
-          rootDir: tempDir,
-          onWriteFailure: () => { failureCalled = true; },
-        },
-      );
 
       // Sabotage by pointing rootDir to a non-creatable path after first record creates the dir
       // We'll use a rootDir that is a file, not a directory
@@ -304,6 +320,7 @@ describe("createTextAuditRecorder", () => {
 
       await recorder.record({
         kind: "game_api",
+        detail: "full",
         route: "/api/game",
         method: "POST",
         context: {
@@ -314,6 +331,7 @@ describe("createTextAuditRecorder", () => {
         request: { rawBody: '{"gameType":"a"}', json: { gameType: "a" } },
         response: { rawBody: '{"ok":true}', json: { ok: true } },
         httpStatus: 200,
+        durationMs: 4,
       });
       await recorder.close();
 

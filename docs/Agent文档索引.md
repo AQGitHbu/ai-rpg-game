@@ -29,8 +29,8 @@
 | AI 环境 | `agent/AI环境.md` | `.env.example` | 独立环境契约已建立；开局由 live/fallback 自由生成，服务端以开局指纹与近期历史做相似度校验并重试；运行时只走开局切片 + 按需世界演化 + 每次场景一次表演调用（非 director/writer/npc 三次管线），并以 `RUN_REAL_AI_JOURNEY=1` 门禁完整真实认证；`GAME_DB_PATH` 仍为 server-only |
 | 小镇程序化生成 | `agent/小镇程序化生成.md` | `策划文档/AI生成RPG_MVP.md` §5 | 确定性城镇层已接入主循环（map→town→scene 三层导航）：几何与剧情建筑 slot 开局预分配、运行时 NPC 绑定、开局候选建筑名写入展示名、`TownRuntimeState` seed 确定性重建；`TownView` 只暴露快照与可进入建筑，`isCurrentFocus` 只标记真实主线焦点，满槽目标通过建筑入口可达，不再显示临时会面开发面板（2026-08-13）；无 `/api/game/town/ensure` 路由、无 AI 生图 |
 | 视觉资产与 AI 生图参考 | `AI生图资产制作参考.md` | — | 当前运行时无 AI 生图；已盘点大地图、地点、角色、NPC、物品、敌人、战斗序列帧、场景、建筑和结局等图片位，并记录 Prompt、一致性、缓存、切割/atlas 与降级规则；小镇当前只复用静态历史预设图 |
-| 日志与追踪 | `agent/日志与追踪.md` | `operations/logging.md` | RPG 保留同步兼容 facade，HTTP/use-case/AI 后台链路统一 trace，通用脱敏/截断/独立 SQLite/查询/JSONL fallback 由 `@ai-game/logging` 提供；默认 `data/logs.db`，提供健康检查、查询和分层保留命令（2026-08-01）；AI 文本审计日志独立于普通诊断日志，默认开启，保存完整 prompt/模型正文/API body/最终文本，查询使用 `npm run ai-text-audit` CLI（2026-08-20） |
-| AI 文本审计与质量审核 | `agent/AI文本审计.md` | `operations/logging.md` | AI 文本审计已实现（2026-08-20）：默认开启的 append-only JSONL 审计日志，记录四类 AI 调用（opening/intent/world/scene）、六个 API route 交换和最终 story_text 写回；支持完整游戏还原；旧三角色质量量表已退役，当前质量量表待基于新审计基线另立方案 |
+| 日志与追踪 | `agent/日志与追踪.md` | `operations/logging.md` | RPG 保留同步兼容 facade，HTTP/use-case/AI 后台链路统一 trace，通用脱敏/截断/独立 SQLite/查询/JSONL fallback 由 `@ai-game/logging` 提供；默认 `data/logs.db`，提供健康检查、查询和分层保留命令（2026-08-01）；AI 文本审计日志独立于普通诊断日志，AI 文本默认完整记录，游戏 API 由 `GAME_API_AUDIT` 控制并默认轮询 compact，查询使用 `npm run ai-text-audit` CLI（2026-08-20） |
+| AI 文本审计与质量审核 | `agent/AI文本审计.md` | `operations/logging.md` | AI 文本审计已实现（2026-08-20）：默认完整记录四类 AI 调用（opening/intent/world/scene）和最终 story_text；六个 API route 由 `GAME_API_AUDIT` 独立控制，默认轮询 compact、业务 API full；旧三角色质量量表已退役，当前质量量表待基于新审计基线另立方案 |
 
 ## 2026-08-20 调查选择场景 canonical 更新
 

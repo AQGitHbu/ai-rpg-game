@@ -14,6 +14,11 @@ import type { AiMessage, AiCompletionResult } from "@ai-game/ai-transport";
 export type AiTextAuditMode = "off" | "full";
 
 /**
+ * 游戏 HTTP API 审计模式：轮询默认只保留摘要，full 才保存完整 body。
+ */
+export type GameApiAuditMode = "off" | "compact" | "full";
+
+/**
  * role 的唯一契约来源。textAuditTypes 不导入 rpgAiClient，rpgAiClient 复用此类型。
  */
 export type AiTextAuditRole = "intent" | "opening" | "scene" | "world";
@@ -88,6 +93,18 @@ export type AiTextAuditPayload =
     }
   | {
       readonly kind: "game_api";
+      readonly detail: "compact";
+      readonly route: string;
+      readonly method: string;
+      readonly context: AiTextAuditContext;
+      readonly request: { readonly hasBody: boolean };
+      readonly response: { readonly hasBody: boolean; readonly errorName?: string };
+      readonly httpStatus: number;
+      readonly durationMs: number;
+    }
+  | {
+      readonly kind: "game_api";
+      readonly detail: "full";
       readonly route: string;
       readonly method: string;
       readonly context: AiTextAuditContext;
@@ -98,6 +115,7 @@ export type AiTextAuditPayload =
         readonly errorName?: string;
       };
       readonly httpStatus: number;
+      readonly durationMs: number;
     }
   | {
       readonly kind: "story_text";
@@ -119,6 +137,8 @@ export type AiTextAuditEntry = AiTextAuditPayload & AiTextAuditEnvelope;
 export type AiTextAuditRecorder = {
   /** 是否开启审计记录。 */
   readonly enabled: boolean;
+  /** 游戏 API 审计模式，与 AI 文本审计独立。 */
+  readonly gameApiMode: GameApiAuditMode;
   /**
    * 记录一条审计事件。best-effort，永不 reject。
    * 写入失败只通过 onWriteFailure callback 通知。

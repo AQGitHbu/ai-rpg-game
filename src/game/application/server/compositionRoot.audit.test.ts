@@ -1,13 +1,14 @@
 // @vitest-environment node
 
 import { describe, expect, it, vi } from "vitest";
-import { createServerGameEntryPoints, type ServerGameEntryPoints } from "./compositionRoot";
-import type { AiTextAuditPayload, AiTextAuditRecorder } from "./ai/textAuditTypes";
+import { createServerGameEntryPoints } from "./compositionRoot";
+import type { AiTextAuditPayload, AiTextAuditRecorder, GameApiAuditMode } from "./ai/textAuditTypes";
 
-function fakeRecorder(): AiTextAuditRecorder & { records: AiTextAuditPayload[] } {
+function fakeRecorder(gameApiMode: GameApiAuditMode = "full"): AiTextAuditRecorder & { records: AiTextAuditPayload[] } {
   const records: AiTextAuditPayload[] = [];
   return {
     enabled: true,
+    gameApiMode,
     records,
     record: vi.fn(async (payload: AiTextAuditPayload) => { records.push(payload); }),
     close: vi.fn(async () => {}),
@@ -92,6 +93,69 @@ describe("compositionRoot audit recording", () => {
     expect(apiRecords[0].context.traceId).toBe("trace-bodies");
 
     await entryPoints.close();
+  });
+
+  it("records polling APIs compactly by default while keeping action APIs full", async () => {
+    const audit = fakeRecorder("compact");
+    const entryPoints = createServerGameEntryPoints({ NODE_ENV: "test" }, audit);
+
+    await entryPoints.executeHttpRequest(
+      "GET",
+      "/api/game/current",
+      async () => new Response(JSON.stringify({ ok: true, story: "poll output" }), { status: 200 }),
+      "trace-poll",
+    );
+    await entryPoints.executeHttpRequest(
+      "POST",
+      "/api/game/actions",
+      async () => new Response(JSON.stringify({ ok: true, story: "action output" }), { status: 200 }),
+      "trace-action",
+      new Request("http://localhost/api/game/actions", {
+        method: "POST",
+        body: JSON.stringify({ text: "玩家行动" }),
+      }),
+    );
+
+    const records = audit.records.filter((entry) => entry.kind === "game_api");
+    const poll = records.find((entry) => entry.context.traceId === "trace-poll") as Extract<AiTextAuditPayload, { kind: "game_api"; detail: "compact" }> | undefined;
+    const action = records.find((entry) => entry.context.traceId === "trace-action") as Extract<AiTextAuditPayload, { kind: "game_api"; detail: "full" }> | undefined;
+    expect(poll).toMatchObject({ detail: "compact", route: "/api/game/current", durationMs: expect.any(Number) });
+    expect(poll?.request.hasBody).toBe(false);
+    expect(poll?.response.hasBody).toBe(true);
+    expect(poll && "rawBody" in poll.request).toBe(false);
+    expect(poll && "json" in poll.response).toBe(false);
+    expect(action).toMatchObject({ detail: "full", route: "/api/game/actions" });
+    expect(action?.request.rawBody).toContain("玩家行动");
+    expect(action && "rawBody" in action.request).toBe(true);
+    expect(JSON.stringify(action)).toContain("玩家行动");
+
+    await entryPoints.close();
+  });
+
+  it("captures polling bodies in full mode and omits game_api events in off mode", async () => {
+    const fullAudit = fakeRecorder("full");
+    const fullEntryPoints = createServerGameEntryPoints({ NODE_ENV: "test" }, fullAudit);
+    await fullEntryPoints.executeHttpRequest(
+      "GET",
+      "/api/game/current",
+      async () => new Response(JSON.stringify({ story: "full poll output" }), { status: 200 }),
+      "trace-full-poll",
+    );
+    const fullRecord = fullAudit.records.find((entry) => entry.kind === "game_api");
+    expect(fullRecord).toMatchObject({ detail: "full", route: "/api/game/current" });
+    expect(JSON.stringify(fullRecord)).toContain("full poll output");
+    await fullEntryPoints.close();
+
+    const offAudit = fakeRecorder("off");
+    const offEntryPoints = createServerGameEntryPoints({ NODE_ENV: "test" }, offAudit);
+    await offEntryPoints.executeHttpRequest(
+      "GET",
+      "/api/game/current",
+      async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      "trace-off",
+    );
+    expect(offAudit.records.filter((entry) => entry.kind === "game_api")).toHaveLength(0);
+    await offEntryPoints.close();
   });
 
   it("executeHttpRequest records handler exceptions with errorName only", async () => {

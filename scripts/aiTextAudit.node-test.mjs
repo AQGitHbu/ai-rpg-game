@@ -6,7 +6,7 @@
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -59,12 +59,14 @@ async function buildSyntheticRun(rootDir, runId = "test-run") {
     sequence: seq++,
     timestamp: `2026-08-20T00:00:0${seq - 1}.000Z`,
     kind: "game_api",
+    detail: "full",
     route: "/api/game",
     method: "POST",
     context: { purpose: "game_api", trigger: "create_game", traceId: "trace-1" },
     request: { rawBody: '{"gameType":"wuxia"}', json: { gameType: "wuxia" } },
     response: { rawBody: '{"ok":true}', json: { ok: true } },
     httpStatus: 200,
+    durationMs: 12,
   });
 
   // story_text event

@@ -214,7 +214,6 @@ async function cmdVerify(rootDir, args) {
   // Check for secret fields
   for (const { entry, line, raw } of events) {
     // Check the raw JSON string for secret field names
-    const lowerRaw = raw.toLowerCase();
     for (const pattern of SECRET_FIELD_PATTERNS) {
       const lowerPattern = pattern.toLowerCase();
       // Match "fieldName" or "fieldName": pattern in JSON

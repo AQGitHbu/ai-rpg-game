@@ -105,5 +105,5 @@ $env:RUN_REAL_AI_SMOKE='1'; npm run smoke:ai:phase4b
 - 日常 fixture 回归零网络零计费；完整离线回放命令为 `npm run journey:phase10` 与 `npm run journey:foundation`。
 - 真实完整旅程只在 `RUN_REAL_AI_JOURNEY=1 npm run smoke:ai:phase10-journey` 时运行；该命令不是 CI，也不替代离线回放。
 - audit 只允许 traceId、role、attempt、稳定失败类别、generated/fallback、latency 和 provider 安全 usage；禁止 prompt、响应原文、事实正文、URL、模型原文、Authorization 和 key。
-- AI 文本审计日志（`AI_TEXT_AUDIT_*`）独立于普通诊断日志，默认开启（`AI_TEXT_AUDIT=full`，只有显式 `AI_TEXT_AUDIT=off` 才关闭）。审计日志保存完整 prompt、模型正文、玩家语义输入、游戏 API 输入输出和最终文本，落到 `logs/ai-text-audit/<runId>/events.jsonl`，不经过普通日志的脱敏和截断。唯一安全排除项是 API key、Authorization、cookie 和完整 URL。查询使用 `npm run ai-text-audit -- list|query|verify|export`。
+- AI 文本审计日志（`AI_TEXT_AUDIT_*`）独立于普通诊断日志，默认开启（`AI_TEXT_AUDIT=full`，只有显式 `AI_TEXT_AUDIT=off` 才关闭 AI 文本事件）。审计日志保存完整 prompt、模型正文、玩家语义输入和最终文本；游戏 API 由独立的 `GAME_API_AUDIT` 控制，默认 `compact`，轮询只保留摘要，`full` 才保存完整 API body，`off` 不记录 API 事件。日志落到 `logs/ai-text-audit/<runId>/events.jsonl`，不经过普通日志的脱敏和截断。唯一安全排除项是 API key、Authorization、cookie 和完整 URL。查询使用 `npm run ai-text-audit -- list|query|verify|export`。
 - 回滚时只把 runtime narrative sources 装配为 unavailable，开局生成 AI 与既有确定性规则路径保持不变。

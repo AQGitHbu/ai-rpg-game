@@ -15,7 +15,12 @@ import { createServerIntentParserSource } from "../server/ai/intentParserSourceF
 import { createServerRpgAiClient } from "../server/ai/rpgAiClient";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { createTextAuditRecorder } from "../server/ai/textAuditRecorder";
-import type { AiTextAuditRecorder, AiTextAuditContext, AiTextAuditLink } from "../server/ai/textAuditTypes";
+import type {
+  AiTextAuditRecorder,
+  AiTextAuditContext,
+  AiTextAuditLink,
+  GameApiAuditMode,
+} from "../server/ai/textAuditTypes";
 import { generatePendingScene } from "../generatePendingScene";
 import { buildSceneGenerationContext } from "../sceneGenerationContext";
 import { approveScenePerformance } from "../approveAndWriteScene";
@@ -101,6 +106,20 @@ const ROUTE_TRIGGERS: Readonly<Record<string, string>> = {
   "/api/game/dev/current": "dev_current",
 };
 
+const POLLING_AUDIT_ROUTES = new Set([
+  "/api/game/current",
+  "/api/game/narrative/ensure",
+]);
+
+function resolveGameApiDetail(
+  mode: GameApiAuditMode | undefined,
+  route: string,
+): "compact" | "full" | undefined {
+  if (mode === "off") return undefined;
+  if (mode === "full" || !POLLING_AUDIT_ROUTES.has(route)) return "full";
+  return "compact";
+}
+
 /** Best-effort JSON parse; returns undefined on failure. */
 function tryParseJson(text: string): unknown {
   try { return JSON.parse(text); } catch { return undefined; }
@@ -145,23 +164,46 @@ async function recordGameApiExchange(
   traceId: string | undefined,
   requestRawBody: string | null,
   requestJson: unknown,
+  requestHasBody: boolean,
   responseRawBody: string | null,
   responseJson: unknown,
+  responseHasBody: boolean,
   httpStatus: number,
+  durationMs: number,
   errorName?: string,
 ): Promise<void> {
-  if (!audit?.enabled) return;
+  const detail = resolveGameApiDetail(audit?.gameApiMode, route);
+  if (audit === undefined || detail === undefined) return;
   const trigger = ROUTE_TRIGGERS[route] ?? route;
-  const safeRequest = sanitizeAuditBody(requestRawBody, requestJson);
-  const safeResponse = sanitizeAuditBody(responseRawBody, responseJson);
   const context: AiTextAuditContext = {
     purpose: "game_api",
     trigger,
     ...(traceId !== undefined ? { traceId } : {}),
   };
   try {
+    if (detail === "compact") {
+      await audit!.record({
+        kind: "game_api",
+        detail,
+        route,
+        method,
+        context,
+        request: { hasBody: requestHasBody },
+        response: {
+          hasBody: responseHasBody,
+          ...(errorName !== undefined ? { errorName } : {}),
+        },
+        httpStatus,
+        durationMs,
+      });
+      return;
+    }
+
+    const safeRequest = sanitizeAuditBody(requestRawBody, requestJson);
+    const safeResponse = sanitizeAuditBody(responseRawBody, responseJson);
     await audit.record({
       kind: "game_api",
+      detail,
       route,
       method,
       context,
@@ -171,6 +213,7 @@ async function recordGameApiExchange(
         ...(errorName !== undefined ? { errorName } : {}),
       },
       httpStatus,
+      durationMs,
     });
   } catch {
     // best-effort: never throw
@@ -414,6 +457,9 @@ export function createServerGameEntryPoints(
     request?: Request,
   ): Promise<Response> => {
     const context = createRequestLogContext({ method, route, traceId: incomingTraceId });
+    const apiAuditDetail = resolveGameApiDetail(auditRecorder.gameApiMode, route);
+    const shouldCaptureApiBodies = apiAuditDetail === "full";
+    const requestHasBody = request !== undefined && request.body !== null;
     logger.info("http_request_started", {
       traceId: context.traceId,
       scope: "request",
@@ -425,7 +471,7 @@ export function createServerGameEntryPoints(
     // Read request body for audit (best-effort)
     let requestRawBody: string | null = null;
     let requestJson: unknown = undefined;
-    if (request !== undefined && auditRecorder.enabled) {
+    if (request !== undefined && shouldCaptureApiBodies) {
       try {
         requestRawBody = await request.clone().text();
         if (requestRawBody.length > 0) {
@@ -442,7 +488,8 @@ export function createServerGameEntryPoints(
       // Read response body for audit (best-effort)
       let responseRawBody: string | null = null;
       let responseJson: unknown = undefined;
-      if (auditRecorder.enabled) {
+      const responseHasBody = response.body !== null;
+      if (shouldCaptureApiBodies) {
         try {
           const cloned = response.clone();
           responseRawBody = await cloned.text();
@@ -462,9 +509,12 @@ export function createServerGameEntryPoints(
         context.traceId,
         requestRawBody,
         requestJson,
+        requestHasBody,
         responseRawBody,
         responseJson,
+        responseHasBody,
         response.status,
+        Date.now() - context.startedAtMs,
       );
 
       logger.info("http_request_completed", {
@@ -494,9 +544,12 @@ export function createServerGameEntryPoints(
         context.traceId,
         requestRawBody,
         requestJson,
+        requestHasBody,
         null,
         undefined,
+        false,
         500,
+        Date.now() - context.startedAtMs,
         errorName,
       );
 

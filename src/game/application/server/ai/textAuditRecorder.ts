@@ -12,12 +12,13 @@
 
 import "server-only";
 import { appendFile, mkdir } from "node:fs/promises";
-import { join, isAbsolute, resolve } from "node:path";
+import { join } from "node:path";
 import type {
   AiTextAuditEntry,
   AiTextAuditMode,
   AiTextAuditPayload,
   AiTextAuditRecorder,
+  GameApiAuditMode,
 } from "./textAuditTypes";
 
 export type TextAuditRecorderOptions = {
@@ -33,6 +34,16 @@ function resolveMode(env: Record<string, string | undefined>): AiTextAuditMode {
   const value = (env.AI_TEXT_AUDIT ?? "").trim().toLowerCase();
   if (value === "off") return "off";
   return "full";
+}
+
+/**
+ * 游戏 API 审计独立于 AI 文本审计：默认 compact，只有显式 full 才保存轮询 body。
+ */
+function resolveGameApiMode(env: Record<string, string | undefined>): GameApiAuditMode {
+  const value = (env.GAME_API_AUDIT ?? "").trim().toLowerCase();
+  if (value === "off") return "off";
+  if (value === "full") return "full";
+  return "compact";
 }
 
 /** 检查 runId 是否为单一安全路径片段。 */
@@ -56,6 +67,7 @@ export function createTextAuditRecorder(
 ): AiTextAuditRecorder {
   const mode = resolveMode(env);
   const enabled = mode !== "off";
+  const gameApiMode = resolveGameApiMode(env);
 
   const now = options.now ?? (() => new Date().toISOString());
 
@@ -121,7 +133,8 @@ export function createTextAuditRecorder(
   }
 
   function doRecord(payload: AiTextAuditPayload): Promise<void> {
-    if (!enabled || closed) return Promise.resolve();
+    const shouldRecord = enabled || (payload.kind === "game_api" && gameApiMode !== "off");
+    if (!shouldRecord || closed) return Promise.resolve();
 
     const entry: AiTextAuditEntry = {
       ...payload,
@@ -168,6 +181,7 @@ export function createTextAuditRecorder(
 
   return {
     enabled,
+    gameApiMode,
     record: doRecord,
     close: doClose,
   };

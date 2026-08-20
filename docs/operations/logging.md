@@ -6,7 +6,7 @@
 
 日志库只保存稳定诊断字段，不保存玩家原文、prompt、模型原文、密钥或完整存档。接口请求会返回 `X-Request-Trace-Id`，该值可贯穿 HTTP、use case、AI 后台任务和生成审计日志。
 
-AI 文本审计日志与普通诊断日志独立：审计日志默认开启（只有 `AI_TEXT_AUDIT=off` 才关闭），保存完整的 prompt、模型正文、玩家语义输入、游戏 API 输入输出和最终玩家可见文本。唯一保留的安全排除项是 API key、Authorization、cookie 和完整 URL。审计日志落到 `logs/ai-text-audit/<runId>/events.jsonl`（JSONL append-only），不经过普通日志的递归脱敏和 128 KiB 截断。
+AI 文本审计日志与普通诊断日志独立：`AI_TEXT_AUDIT` 默认开启并保存完整 prompt、模型正文、玩家语义输入和最终玩家可见文本；`GAME_API_AUDIT` 默认 `compact`，轮询 API 只保存摘要，`full` 才保存完整 API body，`off` 不记录 API 事件。唯一保留的安全排除项是 API key、Authorization、cookie 和完整 URL。审计日志落到 `logs/ai-text-audit/<runId>/events.jsonl`（JSONL append-only），不经过普通日志的递归脱敏和 128 KiB 截断。
 
 ## 快速检查
 
@@ -78,7 +78,7 @@ npm run logs:retention -- --standard-days 30 --audit-days 365 --vacuum
 
 ### 定位与边界
 
-AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录，路径恒为 `logs/ai-text-audit/<runId>/events.jsonl`（`runId` 取 `AI_TEXT_AUDIT_RUN_ID`，缺省由启动时间派生并转为安全路径片段）。默认开启，只有 `AI_TEXT_AUDIT=off` 才完全不创建审计文件。
+AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录，路径恒为 `logs/ai-text-audit/<runId>/events.jsonl`（`runId` 取 `AI_TEXT_AUDIT_RUN_ID`，缺省由启动时间派生并转为安全路径片段）。AI 文本事件默认开启；API 事件由 `GAME_API_AUDIT` 独立控制。
 
 ### 环境变量
 
@@ -87,6 +87,7 @@ AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录�
 | `AI_TEXT_AUDIT` | `full`（缺省/空白/非 `off` 均按 `full`）| 只有 trim 后等于 `off` 才关闭审计 |
 | `AI_TEXT_AUDIT_DIR` | `logs/ai-text-audit` | 审计日志根目录 |
 | `AI_TEXT_AUDIT_RUN_ID` | 由启动时间派生（ISO 时间戳中 `:` 替换为 `-`）| 显式 runId 必须是单一安全路径片段 |
+| `GAME_API_AUDIT` | `compact` | `compact` 保留轮询摘要且保留业务 API 完整 body；`full` 保存所有 API body；`off` 不记录 `game_api` |
 
 ### 查询命令
 
@@ -125,5 +126,5 @@ npm run ai-text-audit -- export --run <runId> --out <file>
 ### 普通日志与审计日志的区别
 
 - `npm run logs:query` 只查诊断 SQLite（`data/logs.db`），保存稳定事件名和分类码，有 128 KiB 截断。
-- `npm run ai-text-audit` 只读 JSONL 审计日志，保存完整正文、prompt、模型输出、API body 和玩家输入，不截断。
+- `npm run ai-text-audit` 只读 JSONL 审计日志；`ai_call`/`story_text` 保存完整正文，`game_api` 按 `GAME_API_AUDIT` 的 compact/full 模式保存。
 - 两者都通过 trace ID 关联，但存储路径和查询命令完全独立。
