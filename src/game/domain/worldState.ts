@@ -82,6 +82,17 @@ export type ItemEntry = {
   readonly statLines?: readonly ItemStatLine[];
 };
 
+/** 一种已审批的调查方式（Spec 2026-08-20）：玩家选择调查方法时产生的代价与后果契约。 */
+export type InvestigationApproach = {
+  readonly approachId: string;
+  /** 玩家可见的安全提示，不得包含事实正文。 */
+  readonly label: string;
+  readonly hint?: string;
+  readonly evidenceQuality: "clean" | "noisy";
+  /** 本方式声明的额外张力，合法范围 -5..20；越界由生成审批校验层拒绝。 */
+  readonly tensionDelta: number;
+};
+
 export type WorldFactEntry = {
   readonly factId: FactId;
   readonly text: string;
@@ -90,6 +101,8 @@ export type WorldFactEntry = {
   readonly locationId?: LocationId;
   /** 未发现事实在任务/调查入口中使用的安全提示，不等于事实正文。 */
   readonly investigationLabel?: string;
+  /** 已审批的调查方式（2–3 条）；缺省 = 无选项，事实按自动揭示处理。 */
+  readonly investigationApproaches?: readonly InvestigationApproach[];
 };
 
 export type QuestObjective =

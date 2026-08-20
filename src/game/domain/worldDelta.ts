@@ -9,7 +9,7 @@ import type {
   QuestId,
 } from "./worldEntity";
 import type { StoryState } from "./storyState";
-import type { EndingRequirement, WorldState } from "./worldState";
+import type { EndingRequirement, InvestigationApproach, WorldState } from "./worldState";
 
 // ---------------------------------------------------------------------------
 // 故事演化状态与需求：运行时按需具象化的推进账本。
@@ -78,6 +78,8 @@ export type WorldDeltaProposal = {
     readonly visibility: "public" | "npc_private";
     /** 不泄露事实正文的第一阶段调查提示。 */
     readonly investigationLabel?: string;
+    /** 复用 WorldFactEntry 的同一 InvestigationApproach 类型，不创建第二份 shape。 */
+    readonly investigationApproaches?: readonly InvestigationApproach[];
   };
   readonly nextMainQuest: null | DynamicQuestProposal;
   readonly endingPair: null | readonly [DynamicEndingProposal, DynamicEndingProposal];

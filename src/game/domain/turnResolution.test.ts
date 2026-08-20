@@ -191,7 +191,7 @@ describe("TurnResolution", () => {
       turnNumber: resolution.turnNumber,
       ledgerCursor: resolution.nextWorldState.eventLedger.length,
     }).toEqual({
-      schemaVersion: 3,
+      schemaVersion: 4,
       baseRevision: 41,
       turnNumber: 1,
       ledgerCursor: 7,

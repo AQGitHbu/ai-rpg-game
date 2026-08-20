@@ -61,6 +61,13 @@ describe("Action types", () => {
     const i: Interaction = { kind: "fixed_choice", choiceToken: "tok_1" };
     expect(i.kind).toBe("fixed_choice");
   });
+
+  it("investigate may carry a server-issued approachId or omit it", () => {
+    const plain: Action = { type: "investigate", factId: asFactId("fact_trace") };
+    const withApproach: Action = { type: "investigate", factId: asFactId("fact_trace"), approachId: "follow" };
+    expect(plain.approachId).toBeUndefined();
+    expect(withApproach.approachId).toBe("follow");
+  });
 });
 
 describe("Action support matrix (Task 29)", () => {

@@ -7,8 +7,9 @@ import {
   appendNpc,
   type LocationEntry,
   type NpcEntry,
+  type WorldFactEntry,
 } from "./worldState";
-import { asLocationId, asNpcId, asItemId, asGenerationId } from "./worldEntity";
+import { asLocationId, asNpcId, asItemId, asFactId, asGenerationId } from "./worldEntity";
 
 describe("WorldState", () => {
   const startingLocation: LocationEntry = {
@@ -92,5 +93,21 @@ describe("WorldState", () => {
     };
     const ws2 = appendNpc(ws, newNpc);
     expect(findNpc(ws2, asNpcId("npc_new"))).toBeDefined();
+  });
+
+  it("accepts a bounded investigation approach without exposing fact text", () => {
+    const fact: WorldFactEntry = {
+      factId: asFactId("fact_trace"),
+      text: "完整事实正文",
+      source: "generated" as const,
+      discovered: false,
+      investigationLabel: "泥地上的异常痕迹",
+      investigationApproaches: [
+        { approachId: "follow", label: "沿痕迹追查", evidenceQuality: "clean" as const, tensionDelta: 4 },
+        { approachId: "search", label: "翻查附近杂物", evidenceQuality: "noisy" as const, tensionDelta: 12 },
+      ],
+    };
+    expect(fact.investigationApproaches).toHaveLength(2);
+    expect(fact.investigationApproaches?.[0]?.label).not.toContain(fact.text);
   });
 });

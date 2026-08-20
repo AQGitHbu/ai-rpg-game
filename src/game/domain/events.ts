@@ -60,6 +60,12 @@ export type FactDiscoveredEvent = {
   readonly occurredAt: string;
   /** 在场目击的 NPC（scene_witness 传播来源）；缺省 = 无人目击，不自动传播。 */
   readonly witnessNpcIds?: readonly NpcId[];
+  /** 玩家所选调查方式；自动揭示或旧事件缺省，不参与事实裁决。 */
+  readonly approachId?: string;
+  /** 证据质量；旧事件/自动揭示缺省时按 "clean" 读取。 */
+  readonly evidenceQuality?: "clean" | "noisy";
+  /** 本方式声明的额外张力；旧事件/自动揭示缺省时按 0 的额外张力读取，保留既有 fact_discovered 基础张力。 */
+  readonly tensionDelta?: number;
 };
 
 /** 玩家移动到达地点：由 move 行动成功时追加；重复到访照常追加事件。 */

@@ -7,24 +7,28 @@ import {
 } from "./storyState";
 
 describe("StoryState", () => {
-  it("initializes the v3 schema at turn zero", () => {
+  it("initializes the v4 schema at turn zero", () => {
     const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
 
-    expect(STORY_STATE_SCHEMA_VERSION).toBe(3);
-    expect(ss.version).toBe(3);
+    expect(STORY_STATE_SCHEMA_VERSION).toBe(4);
+    expect(ss.version).toBe(4);
     expect(ss.turnNumber).toBe(0);
   });
 
-  it("classifies legacy v2 without silently migrating it", () => {
+  it("classifies legacy v2/v3 without silently migrating them", () => {
     expect(classifyStoryStateSchemaVersion(2)).toEqual({
       ok: false,
       code: "UNSUPPORTED_RECORD",
     });
     expect(classifyStoryStateSchemaVersion(3)).toEqual({
-      ok: true,
-      version: 3,
+      ok: false,
+      code: "UNSUPPORTED_RECORD",
     });
     expect(classifyStoryStateSchemaVersion(4)).toEqual({
+      ok: true,
+      version: 4,
+    });
+    expect(classifyStoryStateSchemaVersion(5)).toEqual({
       ok: false,
       code: "UNSUPPORTED_STORY_STATE_VERSION",
     });

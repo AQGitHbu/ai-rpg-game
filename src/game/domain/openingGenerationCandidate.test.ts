@@ -138,4 +138,42 @@ describe("parseOpeningGenerationCandidate", () => {
       expect(result.value.player.baseStats).toEqual({ hp: 100, attack: 0, defense: 0 });
     }
   });
+
+  it("copies approved investigationApproaches onto parsed public fact entries", () => {
+    const candidate: OpeningGenerationCandidate = {
+      ...validCandidate(),
+      world: {
+        ...validCandidate().world,
+        publicFacts: [
+          {
+            key: "fact_inn",
+            text: "沈掌柜守着通往青石古道的消息。",
+            investigationApproaches: [
+              { approachId: "follow", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
+              { approachId: "ask", label: "向沈掌柜打听", evidenceQuality: "noisy", tensionDelta: 12 },
+            ],
+          },
+        ],
+      },
+    };
+    const result = parseOpeningGenerationCandidate(candidate);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.world.publicFacts[0]?.investigationApproaches).toEqual([
+        { approachId: "follow", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
+        { approachId: "ask", label: "向沈掌柜打听", evidenceQuality: "noisy", tensionDelta: 12 },
+      ]);
+    }
+  });
+
+  it("rejects public fact entries with malformed investigationApproaches", () => {
+    const base = rawCandidate();
+    const world = {
+      ...base.world,
+      publicFacts: [
+        { key: "fact_inn", text: "x", investigationApproaches: [{ approachId: 1, label: "x", evidenceQuality: "clean", tensionDelta: 4 }] },
+      ],
+    };
+    expect(parseOpeningGenerationCandidate({ ...base, world })).toEqual({ ok: false, code: "INVALID_FACT" });
+  });
 });

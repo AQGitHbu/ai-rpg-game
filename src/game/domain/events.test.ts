@@ -44,6 +44,31 @@ describe("GameEvent union (Phase 3 action events)", () => {
     expect(event.factId).toBe("fact_gen_1");
   });
 
+  it("records approach metadata on fact_discovered without requiring it for auto discovery", () => {
+    const event: FactDiscoveredEvent = {
+      type: "fact_discovered",
+      factId: asFactId("fact_trace"),
+      occurredAt: "t1",
+      approachId: "follow",
+      evidenceQuality: "clean",
+      tensionDelta: 4,
+    };
+    expect(event.evidenceQuality).toBe("clean");
+    expect(event.approachId).toBe("follow");
+    expect(event.tensionDelta).toBe(4);
+  });
+
+  it("fact_discovered stays valid when approach metadata is omitted for auto discovery", () => {
+    const event: FactDiscoveredEvent = {
+      type: "fact_discovered",
+      factId: asFactId("fact_trace"),
+      occurredAt: "t1",
+    };
+    expect(event.approachId).toBeUndefined();
+    expect(event.evidenceQuality).toBeUndefined();
+    expect(event.tensionDelta).toBeUndefined();
+  });
+
   it("accepts location_visited event with injected timestamp (Phase 4 move)", () => {
     const event: LocationVisitedEvent = {
       type: "location_visited",

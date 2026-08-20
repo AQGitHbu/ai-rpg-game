@@ -1,5 +1,6 @@
 import type { StatBlock } from "./worldEntity";
 import type { StoryContract } from "./storyContract";
+import type { InvestigationApproach } from "./worldState";
 import { parseOpeningVariationProfile, type OpeningVariationProfile } from "./openingNovelty";
 
 // ---------------------------------------------------------------------------
@@ -16,7 +17,12 @@ export type OpeningGenerationCandidate = {
     readonly summary: string;
     readonly tone: string;
     readonly themes: readonly string[];
-    readonly publicFacts: readonly { readonly key: string; readonly text: string }[];
+    readonly publicFacts: readonly {
+      readonly key: string;
+      readonly text: string;
+      /** 复用 WorldFactEntry 的同一 InvestigationApproach 类型，编译时逐条复制。 */
+      readonly investigationApproaches?: readonly InvestigationApproach[];
+    }[];
   };
   readonly player: {
     readonly name: string;
@@ -80,6 +86,32 @@ function isStatBlock(value: unknown): value is StatBlock {
     && (isNumber(value.defense) || value.defense === undefined);
 }
 
+/**
+ * 形状/枚举检查：approachId/label 必须为字符串，evidenceQuality 只能是
+ * clean|noisy，tensionDelta 必须是有限数值，hint 可选字符串。
+ * 数量/重复/越界/正文泄漏等语义校验由 gameplay 校验层（Task 2）负责。
+ */
+function parseInvestigationApproaches(value: unknown): readonly InvestigationApproach[] | null {
+  if (!Array.isArray(value)) return null;
+  const approaches: InvestigationApproach[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) return null;
+    if (typeof entry.approachId !== "string") return null;
+    if (typeof entry.label !== "string") return null;
+    if (entry.evidenceQuality !== "clean" && entry.evidenceQuality !== "noisy") return null;
+    if (!isNumber(entry.tensionDelta)) return null;
+    if (entry.hint !== undefined && typeof entry.hint !== "string") return null;
+    approaches.push({
+      approachId: entry.approachId as string,
+      label: entry.label as string,
+      ...(entry.hint === undefined ? {} : { hint: entry.hint as string }),
+      evidenceQuality: entry.evidenceQuality as "clean" | "noisy",
+      tensionDelta: entry.tensionDelta as number,
+    });
+  }
+  return approaches;
+}
+
 export function parseOpeningGenerationCandidate(
   input: unknown,
 ): ParseOpeningGenerationCandidateResult {
@@ -92,9 +124,21 @@ export function parseOpeningGenerationCandidate(
   }
   if (!isStringArray(world.themes)) return { ok: false, code: "INVALID_WORLD_LISTS" };
   if (!Array.isArray(world.publicFacts)) return { ok: false, code: "INVALID_FACT" };
+  const parsedPublicFacts: {
+    key: string;
+    text: string;
+    investigationApproaches?: readonly InvestigationApproach[];
+  }[] = [];
   for (const fact of world.publicFacts) {
     if (!isRecord(fact) || typeof fact.key !== "string" || typeof fact.text !== "string") {
       return { ok: false, code: "INVALID_FACT" };
+    }
+    if (fact.investigationApproaches !== undefined) {
+      const approaches = parseInvestigationApproaches(fact.investigationApproaches);
+      if (approaches === null) return { ok: false, code: "INVALID_FACT" };
+      parsedPublicFacts.push({ key: fact.key, text: fact.text, investigationApproaches: approaches });
+    } else {
+      parsedPublicFacts.push({ key: fact.key, text: fact.text });
     }
   }
 
@@ -172,7 +216,7 @@ export function parseOpeningGenerationCandidate(
       summary: world.summary,
       tone: world.tone,
       themes: world.themes,
-      publicFacts: world.publicFacts.map((fact) => ({ key: fact.key as string, text: fact.text as string })),
+      publicFacts: parsedPublicFacts,
     },
     player: {
       name: player.name as string,

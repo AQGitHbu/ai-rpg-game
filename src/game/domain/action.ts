@@ -59,7 +59,13 @@ export type Action =
   | TalkAction
   | { readonly type: "move"; readonly locationId: LocationId }
   | { readonly type: "explore" }
-  | { readonly type: "investigate"; readonly factId: FactId; readonly utterance?: string }
+  | {
+    /** 只发现当前可调查且未发现的事实；approachId 只能来自服务端已审批调查方式的 choice token 派生，客户端不得自造。 */
+    readonly type: "investigate";
+    readonly factId: FactId;
+    readonly approachId?: string;
+    readonly utterance?: string;
+  }
   | { readonly type: "take_item"; readonly itemId: ItemId }
   | { readonly type: "give_item"; readonly itemId: ItemId; readonly npcId: NpcId }
   | { readonly type: "attack"; readonly enemyId: EnemyId }

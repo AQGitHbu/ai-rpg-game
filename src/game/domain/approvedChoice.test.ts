@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { asEnemyId, asItemId, asLocationId, asNpcId } from "./worldEntity";
+import { asEnemyId, asItemId, asLocationId, asNpcId, asFactId } from "./worldEntity";
+import type { Action } from "./action";
 import {
   createApprovedChoice,
   deriveChoiceToken,
@@ -123,6 +124,22 @@ describe("semanticSummaryOf", () => {
     expect(semanticSummaryOf(TALK_ACTION)).toBe("talk:npc_blacksmith_01:ask:general");
     expect(semanticSummaryOf({ ...TALK_ACTION, dialogueAct: "threaten" as const }))
       .toBe("talk:npc_blacksmith_01:threaten:general");
+  });
+
+  it("同 fact 不同 approach 铸造不同 token 与语义摘要，缺省 approach 保持基础摘要", () => {
+    const base = { sceneId: "scene-abc", basedOnRevision: 7 };
+    const follow: Action = { type: "investigate", factId: asFactId("fact_trace"), approachId: "follow" };
+    const search: Action = { type: "investigate", factId: asFactId("fact_trace"), approachId: "search" };
+    const plain: Action = { type: "investigate", factId: asFactId("fact_trace") };
+    const tokens = new Set([
+      deriveChoiceToken({ ...base, action: follow }),
+      deriveChoiceToken({ ...base, action: search }),
+      deriveChoiceToken({ ...base, action: plain }),
+    ]);
+    expect(tokens.size).toBe(3);
+    expect(semanticSummaryOf(follow)).toBe("investigate:fact_trace:follow");
+    expect(semanticSummaryOf(search)).toBe("investigate:fact_trace:search");
+    expect(semanticSummaryOf(plain)).toBe("investigate:fact_trace");
   });
 
   it("同类无参行动摘要稳定且不同类互异", () => {

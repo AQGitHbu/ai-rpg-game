@@ -86,7 +86,11 @@ function rebuildAction(action: Action): Action {
     case "explore":
       return { type: "explore" };
     case "investigate":
-      return { type: "investigate", factId: action.factId };
+      return {
+        type: "investigate",
+        factId: action.factId,
+        ...(action.approachId === undefined ? {} : { approachId: action.approachId }),
+      };
     case "take_item":
       return { type: "take_item", itemId: action.itemId };
     case "give_item":
@@ -120,7 +124,7 @@ export function semanticSummaryOf(action: Action): string {
     case "talk": return `talk:${action.npcId}:${action.dialogueAct}:${dialogueTopicKey(action.topic)}`;
     case "move": return `move:${action.locationId}`;
     case "explore": return "explore";
-    case "investigate": return `investigate:${action.factId}`;
+    case "investigate": return `investigate:${action.factId}${action.approachId === undefined ? "" : `:${action.approachId}`}`;
     case "take_item": return `take_item:${action.itemId}`;
     case "give_item": return `give_item:${action.itemId}:${action.npcId}`;
     case "attack": return `attack:${action.enemyId}`;
@@ -153,7 +157,7 @@ function serializeAction(action: Action): string {
     case "talk": return `talk|${String(action.npcId)}|${action.dialogueAct}|${dialogueTopicKey(action.topic)}`;
     case "move": return `move|${String(action.locationId)}`;
     case "explore": return "explore";
-    case "investigate": return `investigate|${String(action.factId)}`;
+    case "investigate": return `investigate|${String(action.factId)}${action.approachId === undefined ? "" : `|${action.approachId}`}`;
     case "take_item": return `take_item|${String(action.itemId)}`;
     case "give_item": return `give_item|${String(action.itemId)}|${String(action.npcId)}`;
     case "attack": return `attack|${String(action.enemyId)}`;
