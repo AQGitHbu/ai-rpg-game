@@ -37,6 +37,8 @@
     "env:bootstrap": "node scripts/bootstrapAiEnv.mjs",
     "env:check": "node scripts/checkAiEnv.mjs",
     "test:ai-env": "node --test scripts/aiEnv.node-test.mjs",
+    "ai-text-audit": "node scripts/aiTextAudit.mjs",
+    "test:ai-text-audit": "node --test scripts/aiTextAudit.node-test.mjs",
     "phase:status": "node scripts/checkHandoff.mjs --status",
     "phase:start": "node scripts/startCurrentPhase.mjs",
     "worktree:remove": "node scripts/removeWorktree.mjs",
