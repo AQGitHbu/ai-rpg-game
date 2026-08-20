@@ -195,13 +195,20 @@ describe("AI 预生成单线调查流程旅程（Task 1 端到端回归）", () 
 
     // 调查：即时行动，零 live 调用；叙事来自队列并含权威 factText 语义。
     const callsBeforeInvestigate = journey.fake.callCount();
-    await journey.fixed(INVESTIGATE_LABEL);
+    const approachLabel = journey.record().worldState.worldFacts
+      .find((fact) => fact.investigationLabel === "酒楼后巷的车轮印")
+      ?.investigationApproaches?.[0]?.label ?? "";
+    expect(approachLabel).not.toBe("");
+    await journey.fixed(approachLabel);
     await journey.liveScene();
     expect(journey.fake.callCount()).toBe(callsBeforeInvestigate);
     const investigateScene = journey.sceneOf();
     expect(investigateScene.source).toBe("generated");
     expect(investigateScene.narration).toContain(WHEEL_TRACK_FACT_TEXT);
     expect(investigateScene.narration).toContain(NORTH_LANE_NAME);
+    // Task 5：即时叙事点名所选方式与已结算的证据质量（clean 无动静代价）。
+    expect(investigateScene.narration).toContain(approachLabel);
+    expect(investigateScene.narration).toContain("没有惊动任何人");
     // 消费 investigate 叙事，move 叙事保留；目标自动流转。
     const queueAfterInvestigate = journey.record().storyState.narrative.linearNarrativeQueue ?? [];
     expect(queueAfterInvestigate).toHaveLength(1);
@@ -250,13 +257,21 @@ describe("AI 预生成单线调查流程旅程（Task 1 端到端回归）", () 
       .find((fact) => fact.investigationLabel === "酒楼后巷的车轮印")?.factId ?? "";
     expect(String(act2FactId)).not.toBe("");
     const callsBeforeInvestigate = journey.fake.callCount();
-    await journey.fixed(INVESTIGATE_LABEL);
+    const approachLabel = journey.record().worldState.worldFacts
+      .find((fact) => fact.investigationLabel === "酒楼后巷的车轮印")
+      ?.investigationApproaches?.[0]?.label ?? "";
+    expect(approachLabel).not.toBe("");
+    await journey.fixed(approachLabel);
     await journey.liveScene();
     expect(journey.fake.callCount()).toBe(callsBeforeInvestigate);
     const investigateScene = journey.sceneOf();
     expect(investigateScene.source).toBe("fallback");
     expect(investigateScene.narration).toContain(WHEEL_TRACK_FACT_TEXT);
-    expect(investigateScene.narration).toContain(`接下来去${NORTH_LANE_NAME}核对现场`);
+    // Task 4：已结算 approach 的兜底旁白为 方式 → 事实 → 动静代价 → 下一目标。
+    // Task 6：中段的证据质量/动静代价（evidenceQuality=clean → 无动静）必须可读。
+    expect(investigateScene.narration).toContain(approachLabel);
+    expect(investigateScene.narration).toContain("没有惊动任何人");
+    expect(investigateScene.narration).toContain(NORTH_LANE_NAME);
     expect(journey.logger.events).toContainEqual(expect.objectContaining({
       level: "warn",
       event: "linear_narrative_fallback",

@@ -253,6 +253,9 @@ export async function playIssuedChoice(
       : undefined;
   const choice = legacyDialogueChoice ?? allIssuedChoices(view).find((entry) => entry.label.includes(labelIncludes));
   if (choice === undefined) throw new Error(`找不到服务器选项：${labelIncludes}`);
+  // Task 4：buildChoiceMap 为每个已审批调查方式分别铸造 opaque token 并携带
+  // approachId；选择驱动调查旅程必须挑选一个具体方式（如 approaches[0].label），
+  // 不再依赖此处的任何注入桥接。
   const result = await playTurn(
     repo,
     { kind: "fixed_choice", choiceToken: choice.choiceToken },
