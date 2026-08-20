@@ -18,6 +18,8 @@
 - 旧存档允许破坏性 schema 重建，不提供迁移；缺少 investigationApproaches 的事实按“无选项、自动揭示”处理。
 - 保持 AI 不可用时的确定性 fallback；AI 只能提案调查提示，不能凭空创建未审批事实、地点、NPC 或任务效果。
 - 生产 API、无版本后缀命名、短篇/中篇预算和现有六个 /api/game/** route 不变。
+- 自动揭示一律在规则层完成（当前开局契约只保留 NPC 已知事实；运行时由 ruleEngine/resolveTurn 在一次行动的任务 reconciliation 边界处理），fact_discovered 事件必须写入 eventLedger；generatePendingScene 等场景写回只消费规则结果做叙事，不得再次裁决事实、不得修改 tension。reload 只恢复已经结算的结果；若旧状态尚未经过这个规则边界，回归 fixture 必须先执行一个能暴露该事实的成功 action，不能把场景 ensure 当成第二个裁决入口。
+- 同一地点存在多个未发现事实时，只投影当前 discover_fact 主线目标对应事实的调查方式；非目标事实不投影行动按钮（避免行动栏被多事实 × 多 approach 挤爆）。
 
 ---
 
@@ -56,14 +58,15 @@
       view(): GameSessionView;
       record(): GameRecord;
       choose(label: string): Promise<void>;
+      exposeLegacyFact(): Promise<void>;
       reload(): Promise<void>;
     };
 
 ## 文件地图
 
 - src/game/domain/worldState.ts、src/game/domain/worldDelta.ts、src/game/domain/openingGenerationCandidate.ts：事实调查方式的权威结构与生成提案结构。
-- src/game/domain/action.ts、src/game/domain/events.ts、src/game/domain/storyState.ts：调查 Action、发现事件字段、schema 版本和自动揭示边界。
-- src/game/gameplay/rpg/ruleEngine/validateAction.ts、resolveByType.ts、updateStoryMetrics.ts：approach 合法性、代价、事件和张力结算。
+- src/game/domain/action.ts、src/game/domain/events.ts、src/game/domain/storyState.ts、src/game/domain/approvedChoice.ts：调查 Action、发现事件字段、schema 版本、token/语义摘要契约和自动揭示边界。
+- src/game/gameplay/rpg/ruleEngine/validateAction.ts、resolveByType.ts、index.ts、updateStoryMetrics.ts：approach 合法性、自动揭示插入点、代价、事件和张力结算。
 - src/game/gameplay/rpg/openingGeneration/*、src/game/gameplay/rpg/worldEvolution/approveWorldDelta.ts、src/game/application/server/ai/liveWorldEvolutionSource.ts、src/game/application/deterministicEvolutionBeats.ts：生成、校验、审批与离线 fallback。
 - src/game/application/performTurn.ts、src/game/application/buildChoiceMap.ts、src/game/application/gameSessionView.ts：自动揭示、opaque token 和调查选项读模型。
 - src/game/application/sceneGenerationContext.ts、src/game/application/deterministicSceneSource.ts、src/game/application/generatePendingScene.ts：调查结果叙事和自动路径的场景写回。
@@ -82,16 +85,20 @@
 - Modify: src/game/domain/action.ts
 - Modify: src/game/domain/events.ts
 - Modify: src/game/domain/storyState.ts
+- Modify: src/game/domain/approvedChoice.ts
 - Test: src/game/domain/worldState.test.ts
 - Test: src/game/domain/events.test.ts
 - Test: src/game/domain/action.test.ts
 - Test: src/game/domain/storyState.test.ts
+- Test: src/game/domain/approvedChoice.test.ts
+- Test: src/game/domain/openingGenerationCandidate.test.ts
 
 **Interfaces:**
 - Produces InvestigationApproach with approachId, safe label/hint, evidenceQuality and bounded tensionDelta.
 - Extends WorldFactEntry.investigationApproaches and matching WorldDeltaProposal.newFact / opening candidate shape.
 - Extends Action investigate to include optional approachId; approachId is never client-authored outside a server-issued choice token.
 - Extends FactDiscoveredEvent with optional approachId, evidenceQuality and tensionDelta.
+- Extends approvedChoice 的 token/semantic summary 派生以携带 approachId：同 fact 不同 approach 必须铸造出互不相同的 runtime token。
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -125,27 +132,28 @@
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: npm test src/game/domain/worldState.test.ts src/game/domain/events.test.ts src/game/domain/action.test.ts
+Run: npm test src/game/domain/worldState.test.ts src/game/domain/events.test.ts src/game/domain/action.test.ts src/game/domain/storyState.test.ts src/game/domain/approvedChoice.test.ts src/game/domain/openingGenerationCandidate.test.ts
 
 Expected: FAIL because the new approach fields and event metadata are not defined.
 
 - [ ] **Step 3: 实现最小契约**
 
 1. 在 worldState.ts 导出 InvestigationApproach，限制 tensionDelta 的合法范围为 -5..20，并将 investigationApproaches 设为可选以兼容旧记录读取。
-2. 在 worldDelta.ts 和 openingGenerationCandidate.ts 复用同一类型，不创建第二份 shape。
+2. 在 worldDelta.ts 和 openingGenerationCandidate.ts 复用同一类型，不创建第二份 shape；openingGenerationCandidate.world.publicFacts 的每个条目增加可选 investigationApproaches，编译器必须逐条复制到对应 WorldFactEntry。
 3. 在 action.ts 只增加可选 approachId，不增加新的公开 route 或客户端 Action 类型。
-4. 在 events.ts 为 FactDiscoveredEvent 增加可选结构化结果字段；旧事件缺省时按 clean、0 读取。
+4. 在 events.ts 为 FactDiscoveredEvent 增加可选结构化结果字段；旧事件缺省时 evidenceQuality 按 clean 读取，tensionDelta 按 0 的“额外张力”读取，以便保留既有 fact_discovered 的基础张力。
 5. 将 STORY_STATE_SCHEMA_VERSION 从 3 提升到 4，明确旧版本不迁移；在所有 createInitialStoryState/record default 组合处保留空 approach 兼容行为。
+6. 在 approvedChoice.ts 的 rebuildAction / semanticSummaryOf / serializeAction 三处同步携带 approachId，保证同 fact 不同 approach 的 runtime token 与语义摘要不碰撞（否则 Task 4 投影时第二个按钮的 token 会与第一个相同而被去重）。
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: npm test src/game/domain/worldState.test.ts src/game/domain/events.test.ts src/game/domain/action.test.ts
+Run: npm test src/game/domain/worldState.test.ts src/game/domain/events.test.ts src/game/domain/action.test.ts src/game/domain/storyState.test.ts src/game/domain/approvedChoice.test.ts src/game/domain/openingGenerationCandidate.test.ts
 
 Expected: PASS.
 
 - [ ] **Step 5: 提交**
 
-    git add src/game/domain/worldState.ts src/game/domain/worldDelta.ts src/game/domain/openingGenerationCandidate.ts src/game/domain/action.ts src/game/domain/events.ts src/game/domain/storyState.ts
+    git add src/game/domain/worldState.ts src/game/domain/worldDelta.ts src/game/domain/openingGenerationCandidate.ts src/game/domain/action.ts src/game/domain/events.ts src/game/domain/storyState.ts src/game/domain/approvedChoice.ts src/game/domain/worldState.test.ts src/game/domain/events.test.ts src/game/domain/action.test.ts src/game/domain/storyState.test.ts src/game/domain/approvedChoice.test.ts src/game/domain/openingGenerationCandidate.test.ts
     git commit -m "feat(investigation): define approach and evidence outcome contracts"
 
 ---
@@ -180,40 +188,40 @@ Expected: PASS.
           { approachId: "a", label: "密道入口在井下", evidenceQuality: "clean", tensionDelta: 4 },
           { approachId: "a", label: "检查井沿", evidenceQuality: "noisy", tensionDelta: 40 },
         ],
-      }));
+      }), { gameLength: "short", targetActs: 3 });
       expect(result.ok).toBe(false);
     });
 
-    it("fallback creates two distinct safe approaches for a generated fact", () => {
+    it("fallback creates two distinct safe approaches from the genre vocabulary for a generated fact", () => {
       const fact = deterministicGeneratedFactFor("wuxia");
-      expect(fact.investigationApproaches?.map((entry) => entry.label)).toEqual([
-        "沿痕迹追查",
-        "仔细检查现场",
-      ]);
+      const labels = fact.investigationApproaches?.map((entry) => entry.label) ?? [];
+      expect(labels).toHaveLength(2);
+      expect(new Set(labels).size).toBe(2);
+      expect(labels.every((label) => label !== "" && !label.includes(fact.text))).toBe(true);
     });
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: npm test src/game/gameplay/rpg/openingGeneration/validateOpeningGenerationCandidate.test.ts src/game/gameplay/rpg/worldEvolution/approveWorldDelta.test.ts src/game/application/deterministicEvolutionBeats.test.ts
+Run: npm test src/game/gameplay/rpg/openingGeneration/validateOpeningGenerationCandidate.test.ts src/game/gameplay/rpg/worldEvolution/approveWorldDelta.test.ts src/game/application/server/ai/worldEvolutionSource.test.ts src/game/application/deterministicEvolutionBeats.test.ts src/game/application/server/persistence/sqliteGameRepository.test.ts
 
 Expected: FAIL because generated facts do not yet carry or validate approach lists.
 
 - [ ] **Step 3: 实现解析与审批**
 
-1. 在 opening/world-evolution proposal parser 中解析 investigationApproaches，拒绝数组以外的值、重复 approachId、空 label/hint、非 clean|noisy、tensionDelta 超出 -5..20 和 label/hint 直接包含权威事实正文的条目。
-2. 审批时只保留已通过校验的 approach；非法 approach 列表不拒绝整幕，降级为空列表并记录稳定日志分类 investigation_approach_invalid。
-3. 为七种题材与 generic 的确定性新事实提供两个不泄漏正文的默认方式，使用 deterministicEvolutionBeats.ts 的题材场景词汇；旧事实与无列表事实保持自动揭示。
-4. 将 approach 列表随 WorldFactEntry 铸造、世界演化预览和 SQLite JSON 写回；不得在 UI 侧临时生成选项。
+1. 在 opening/world-evolution proposal parser 中解析 investigationApproaches：显式非空列表必须恰好 2–3 条，1 条或超过 3 条按非法列表处理并降为空列表；同时拒绝数组以外的值、重复 approachId、空 label/hint、非 clean|noisy、tensionDelta 超出 -5..20 的条目。label/hint 泄漏判定采用两级：**完整事实正文子串命中 = 硬拒绝**（防 AI 抄全文）；仅与正文关键名词重合 = 软处理，将该条降级为题材词库的 generic label 并记录稳定日志分类 `investigation_label_overlap`，不拒绝整幕。
+2. 世界演化审批时只保留已通过校验的 approach；非法 approach 列表不拒绝整幕，降级为空列表并记录稳定日志分类 investigation_approach_invalid。开局候选沿用 validateOpeningGenerationCandidate 的失败结果，把同类问题记录为稳定 issue 并触发现有 deterministic fallback，未审批数据不得进入 compile。
+3. 为七种题材与 generic 的确定性新事实提供两个不泄漏正文的默认方式，从 deterministicEvolutionBeats.ts 题材词库组合生成（例如武侠 = 沿痕迹追查 / 向摊贩打听，科幻 = 扫描残留数据 / 检查物理痕迹），禁止全部题材共用同一组固定文案；旧事实与无列表事实保持自动揭示。
+4. 将 approach 列表随 WorldFactEntry 铸造、世界演化预览和 SQLite JSON 写回；opening compile 只复制候选 publicFacts 已审批的 investigationApproaches，保持既有 discovered = knownFactIds.includes(factId) 语义，不因“无 approach”把所有开局事实提前发现；不得在 UI 侧临时生成选项。
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: npm test src/game/gameplay/rpg/openingGeneration/validateOpeningGenerationCandidate.test.ts src/game/gameplay/rpg/worldEvolution/approveWorldDelta.test.ts src/game/application/server/ai/worldEvolutionSource.test.ts src/game/application/deterministicEvolutionBeats.test.ts
+Run: npm test src/game/gameplay/rpg/openingGeneration/validateOpeningGenerationCandidate.test.ts src/game/gameplay/rpg/worldEvolution/approveWorldDelta.test.ts src/game/application/server/ai/worldEvolutionSource.test.ts src/game/application/deterministicEvolutionBeats.test.ts src/game/application/server/persistence/sqliteGameRepository.test.ts
 
 Expected: PASS.
 
 - [ ] **Step 5: 提交**
 
-    git add src/game/gameplay/rpg/openingGeneration src/game/gameplay/rpg/worldEvolution/approveWorldDelta.ts src/game/application/server/ai/liveWorldEvolutionSource.ts src/game/application/deterministicEvolutionBeats.ts src/game/application/deterministicEvolutionSource.ts
+    git add src/game/gameplay/rpg/openingGeneration src/game/gameplay/rpg/worldEvolution/approveWorldDelta.ts src/game/application/server/ai/liveWorldEvolutionSource.ts src/game/application/server/ai/worldEvolutionSource.test.ts src/game/application/deterministicEvolutionBeats.ts src/game/application/deterministicEvolutionBeats.test.ts src/game/application/deterministicEvolutionSource.ts src/game/application/server/persistence/sqliteGameRepository.ts src/game/application/server/persistence/sqliteGameRepository.test.ts
     git commit -m "feat(investigation): generate and approve safe investigation approaches"
 
 ---
@@ -223,23 +231,23 @@ Expected: PASS.
 **Files:**
 - Modify: src/game/gameplay/rpg/ruleEngine/validateAction.ts
 - Modify: src/game/gameplay/rpg/ruleEngine/resolveByType.ts
+- Modify: src/game/gameplay/rpg/ruleEngine/index.ts
 - Modify: src/game/gameplay/rpg/ruleEngine/updateStoryMetrics.ts
-- Modify: src/game/application/performTurn.ts
-- Modify: src/game/application/generatePendingScene.ts
 - Test: src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts
 - Test: src/game/gameplay/rpg/ruleEngine/validateAction.test.ts
+- Test: src/game/gameplay/rpg/ruleEngine/index.test.ts
 - Test: src/game/application/performTurn.test.ts
-- Test: src/game/application/generatePendingScene.test.ts
 
 **Interfaces:**
-- Produces resolveFactDiscovery(worldState, action, source), where source is player with approachId or automatic.
+- Produces resolveFactDiscovery(worldState, action, source), where source is { kind: "player"; approachId: string } or { kind: "automatic" }; the helper returns the same rule-resolution shape as resolveByType and never performs persistence.
+- Produces autoResolveCurrentInvestigation(worldState, storyState), a pure bounded helper that either returns one automatic fact resolution or returns no-op; it does not run quest reconciliation, update the ledger itself, or create a pending job.
 - Produces fact_discovered with approachId/evidenceQuality/tensionDelta for player choices; automatic discovery emits the same event with omitted approach metadata and zero extra delta.
-- Produces stable failures INVESTIGATION_APPROACH_REQUIRED, UNKNOWN_INVESTIGATION_APPROACH and INVESTIGATION_APPROACH_ALREADY_USED without partial writes.
+- Produces stable failures INVESTIGATION_APPROACH_REQUIRED、UNKNOWN_INVESTIGATION_APPROACH 和 FACT_NOT_INVESTIGABLE（启用 validateAction 中已定义但从未使用的该码，拒绝无 approach 事实的客户端 investigate）；重复调查不引入新码——事实发现后沿用既有 FACT_ALREADY_DISCOVERED 天然拦截。
 
 - [ ] **Step 1: 编写失败测试**
 
     it("requires an approved approach when a fact has multiple investigation approaches", () => {
-      const result = resolveAction(worldWithApproaches(), { type: "investigate", factId: FACT_1_ID }, deps);
+      const result = validateAction(worldWithApproaches(), { type: "investigate", factId: FACT_1_ID });
       expect(result.ok).toBe(false);
       expect(result.code).toBe("INVESTIGATION_APPROACH_REQUIRED");
     });
@@ -257,34 +265,34 @@ Expected: PASS.
     });
 
     it("automatically discovers an approach-less fact at a reveal boundary without exposing a player action", () => {
-      const result = autoResolveCurrentInvestigation(worldWithApproachlessFact(), storyWithDiscoverFact(), deps);
+      const result = autoResolveCurrentInvestigation(worldWithApproachlessFact(), storyWithDiscoverFact());
       expect(result.events).toContainEqual(expect.objectContaining({ type: "fact_discovered", factId: FACT_1_ID }));
       expect(result.stateChanges.some((change) => change.path.includes("discovered"))).toBe(true);
     });
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: npm test src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts src/game/gameplay/rpg/ruleEngine/validateAction.test.ts src/game/application/performTurn.test.ts src/game/application/generatePendingScene.test.ts
+Run: npm test src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts src/game/gameplay/rpg/ruleEngine/validateAction.test.ts src/game/gameplay/rpg/ruleEngine/index.test.ts src/game/application/performTurn.test.ts
 
 Expected: FAIL because approach validation, event metadata, and automatic reveal do not exist.
 
 - [ ] **Step 3: 实现规则结算**
 
-1. 在 validateAction.ts 中查找目标 fact；有 investigationApproaches.length >= 2 时要求 approachId 命中且未被本次调查记录消费；无列表时拒绝客户端直接 investigate，避免隐藏的无选择按钮继续存在。
+1. 在 validateAction.ts 中查找目标 fact，并要求 fact.locationId 等于 currentLocationId；有 investigationApproaches.length >= 2 时要求 approachId 命中该事实的已审批列表（缺失/未知 approach 分别返回 INVESTIGATION_APPROACH_REQUIRED / UNKNOWN_INVESTIGATION_APPROACH）；无列表或尚未自动揭示的事实返回 FACT_NOT_INVESTIGABLE；已发现事实沿用 FACT_ALREADY_DISCOVERED（同一方式重复提交由发现状态自然拦截，无需 ALREADY_USED 死码）。释放游标/当前主线目标仍由 buildChoiceMap 与 performTurn 的 isActionReleased 共同守护。
 2. 在 resolveByType.ts 抽取纯 resolveFactDiscovery：更新 discovered、追加 fact_discovered、产生 StateChange；player source 写入所选 approach 的 evidence/tension，automatic source 只写基础事实事件。
-3. 在 updateStoryMetrics.ts 使用事件的 tensionDelta（缺省时沿用 fact_discovered=12），并将 evidence quality 保留在 event ledger，供后续 narrative context 使用。
-4. 在 performTurn.ts 增加 autoResolveCurrentInvestigation，只在成功 action 后的当前地点/当前主线首目标是无 approach discover_fact 时执行一次，然后再跑既有 quest reconciliation；不自动消费下一个 objective。
-5. 在 generatePendingScene.ts 对开局/地点抵达/对话交接的初始 direct-fact 场景调用同一规则 helper，确保没有任何玩家 action 也不会出现“当前目标是调查但没有按钮”的软锁；scene write-back 只写 helper 已产生的规则结果，不重新解释 narration。
+3. 在 updateStoryMetrics.ts 保留既有 fact_discovered 基础张力 12，并加上事件的额外 tensionDelta（缺省/自动揭示为 0）；将 evidence quality 保留在 event ledger，供后续 narrative context 使用。
+4. 在 ruleEngine/index.ts 的 resolveTurn 中，先完成当前玩家 action 的既有一次 reconcile；若 reconcile 后的当前主线首目标是当前地点、无 approach 的 discover_fact，则调用 autoResolveCurrentInvestigation 一次，追加 fact_discovered 到同一 domainEvents，随后只再执行一次针对该自动事实的 quest reconciliation，再继续既有 advanceStoryProgression、updateStoryMetrics、ending 和 materialized view 流程。这样自动事件、目标推进、张力和 eventLedger 仍属于同一个规则回合/CAS，且最多自动消费一个事实目标；触发条件覆盖所有成功 action 类型，不只 move/talk。
+5. opening compile 保持既有 discovered = knownFactIds.includes(factId) 语义，不把所有无 approach 事实预先置为 discovered，也不伪造初始 fact_discovered 事件；当前开局契约首目标固定为 talk_to_opening_npc，因此没有 opening discover_fact 时不执行自动揭示。若未来开局契约允许 discover_fact，必须只对那个当前目标事实走同一 autoResolveCurrentInvestigation 规则入口。generatePendingScene 只消费规则已写好的 fact_discovered 结果做场景旁白与“下一步”目标交接，不调用规则 helper、不得再次裁决事实或修改 tension。
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: npm test src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts src/game/gameplay/rpg/ruleEngine/validateAction.test.ts src/game/application/performTurn.test.ts src/game/application/generatePendingScene.test.ts
+Run: npm test src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts src/game/gameplay/rpg/ruleEngine/validateAction.test.ts src/game/gameplay/rpg/ruleEngine/index.test.ts src/game/application/performTurn.test.ts
 
 Expected: PASS.
 
 - [ ] **Step 5: 提交**
 
-    git add src/game/gameplay/rpg/ruleEngine/validateAction.ts src/game/gameplay/rpg/ruleEngine/resolveByType.ts src/game/gameplay/rpg/ruleEngine/updateStoryMetrics.ts src/game/application/performTurn.ts src/game/application/generatePendingScene.ts
+    git add src/game/gameplay/rpg/ruleEngine/validateAction.ts src/game/gameplay/rpg/ruleEngine/resolveByType.ts src/game/gameplay/rpg/ruleEngine/index.ts src/game/gameplay/rpg/ruleEngine/updateStoryMetrics.ts src/game/gameplay/rpg/ruleEngine/validateAction.test.ts src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts src/game/gameplay/rpg/ruleEngine/index.test.ts src/game/application/performTurn.test.ts
     git commit -m "feat(investigation): resolve approach costs and auto-discover linear facts"
 
 ---
@@ -296,7 +304,6 @@ Expected: PASS.
 - Modify: src/game/application/gameSessionView.ts
 - Modify: src/game/application/sceneGenerationContext.ts
 - Modify: src/game/application/deterministicSceneSource.ts
-- Modify: src/game/domain/approvedChoice.ts
 - Test: src/game/application/buildChoiceMap.test.ts
 - Test: src/game/application/gameSessionView.test.ts
 - Test: src/game/application/sceneGenerationContext.test.ts
@@ -306,6 +313,7 @@ Expected: PASS.
 - Produces PlayerChoiceView.presentation investigate for approach choices; existing explore remains only for observation/candidate-event hooks.
 - Produces one opaque token per approved approach with Action = investigate plus factId and approachId.
 - Produces no investigate button/token for an approach-less fact; currentObjectiveChoiceTokens is empty after automatic reveal.
+- Produces buildInvestigationOutcomeNarrative(input: { approachLabel: string; evidenceQuality: "clean" | "noisy"; factText: string; baseNarrative?: string; nextObjectiveLabel?: string }): string as the deterministic wrapper for an already-resolved investigation result.
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -329,11 +337,11 @@ Expected: FAIL because the projector currently creates one action per fact and l
 
 - [ ] **Step 3: 实现投影与叙事契约**
 
-1. buildChoiceMap.ts 只为当前可见 fact 的 approved approach 铸造 runtime token；registry action 校验同时检查 approach 仍属于当前 fact 且事实未发现。
+1. buildChoiceMap.ts 只为当前 discover_fact 主线目标对应事实（且已通过释放游标）的 approved approach 铸造 runtime token；同一地点的非目标未发现事实不投影行动按钮；approach-less/非法列表不得退化为 generic investigate 或用 explore 冒充调查；registry action 校验同时检查 approach 仍属于当前 fact 且事实未发现。
 2. gameSessionView.ts 将 approach label/hint 投影为 presentation investigate，不暴露 factId、approachId、evidenceQuality 或 tensionDelta；自动事实只由 ready scene/事件旁白体现。
 3. GameSessionView.story 新增 currentObjectiveChoiceTokens: readonly string[]；discover_fact 有多个 approach 时返回全部 token，单一目标行动仍同时填充兼容的 currentObjectiveChoiceToken；无 approach 时两个字段均为空/null，避免行动栏显示伪入口。
-4. sceneGenerationContext.ts 给导演提供安全的 approach labels 与结果表现约束，不提供完整 fact text；deterministicSceneSource.ts 为每个 approach 生成“采取方式 → 发现事实 → 证据质量/动静代价 → 下一目标”的 fallback 旁白。
-5. approvedChoice.ts 的 semantic summary 和 token 派生包含 approachId，保证两个同 fact 选项不会碰撞且 stale revision 仍零写入。
+4. sceneGenerationContext.ts 给导演提供安全的 approach labels 与结果表现约束，不提供完整 fact text；deterministicSceneSource.ts 提供 buildInvestigationOutcomeNarrative，将已结算的 approach/evidence 与可选的 linearNarrativeQueue baseNarrative 组合成“采取方式 → 发现事实 → 证据质量/动静代价 → 下一目标”的 fallback 旁白。
+5. 验证同 fact 不同 approach 的 runtime token 互不相同（派生契约已在 Task 1 的 approvedChoice 同步中完成）；stale revision 仍零写入。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -343,7 +351,7 @@ Expected: PASS.
 
 - [ ] **Step 5: 提交**
 
-    git add src/game/application/buildChoiceMap.ts src/game/application/gameSessionView.ts src/game/application/sceneGenerationContext.ts src/game/application/deterministicSceneSource.ts src/game/domain/approvedChoice.ts
+    git add src/game/application/buildChoiceMap.ts src/game/application/gameSessionView.ts src/game/application/sceneGenerationContext.ts src/game/application/deterministicSceneSource.ts src/game/application/buildChoiceMap.test.ts src/game/application/gameSessionView.test.ts src/game/application/sceneGenerationContext.test.ts src/game/application/deterministicSceneSource.test.ts
     git commit -m "feat(investigation): project meaningful approach choices through opaque tokens"
 
 ---
@@ -367,7 +375,7 @@ Expected: PASS.
 - Consumes resolved approach outcome and forced fact_discovered beat.
 - Produces a ready scene whose narration names the chosen method and its structured result; live AI may vary wording but cannot alter fact/evidence/tension outcome.
 - Produces a visible “下一步” target handoff after fact discovery; no extra “确认调查” click.
-- Produces buildInvestigationOutcomeNarrative(input: { approachLabel: string; evidenceQuality: "clean" | "noisy"; factText: string; nextObjectiveLabel?: string }): string for deterministic fallback text.
+- Consumes buildInvestigationOutcomeNarrative from Task 4. The existing linearNarrativeQueue remains keyed by factId; it supplies baseNarrative, and this wrapper adds the already-resolved approach/evidence result without requiring one AI queue entry per approach.
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -376,6 +384,7 @@ Expected: PASS.
         approachLabel: "翻查附近杂物",
         evidenceQuality: "noisy",
         factText: "车轮印指向北巷旧道",
+        baseNarrative: "你在泥地边发现了断续的车轮印。",
       });
       expect(narration).toContain("翻查附近杂物");
       expect(narration).toContain("留下了动静");
@@ -395,10 +404,10 @@ Expected: FAIL because scene context and UI do not carry approach labels/results
 
 - [ ] **Step 3: 实现反馈链**
 
-1. 扩展 ScenePerformanceProposal 的调查结果节拍上下文；live prompt 只允许引用服务端已结算的 approach label、evidence quality 和 next objective，不允许 AI 决定是否发现事实或修改 tension。
+1. 扩展 ScenePerformanceProposal 的调查结果节拍上下文；live prompt 只允许引用服务端已结算的 approach label、evidence quality 和 next objective，不允许 AI 决定是否发现事实或修改 tension。调查前预生成的 linearNarrativeQueue 不携带 approachId/结果，避免在玩家选择前生成错误分支。
 2. approveAndWriteScene.ts 校验 AI 叙事只引用已结算的 approach/fact/entity；非法正文走 linear_narrative_fallback，不拒绝规则结果。
-3. generatePendingScene.ts 将 approach outcome 作为 fact_discovered 强制节拍写回，并保留现有 investigate fast path 的零额外 live 调用语义。
-4. LocationSceneScreen.tsx 将 presentation investigate 渲染为调查方法按钮；当 story.currentObjectiveChoiceTokens 非空时按 token 集合保留全部方法，不再用单一 currentObjectiveChoiceToken 把第二个选项过滤掉；不再渲染“调查现场线索”单按钮。没有行动时显示自动揭示结果或明确动线提示，而不是空白。
+3. generatePendingScene.ts 将规则层已写入的 approach outcome（fact_discovered）作为强制节拍引用进场景叙事，并保留现有 investigate fast path 的零额外 live 调用语义：匹配 factId 的队列条目作为 baseNarrative，再由 buildInvestigationOutcomeNarrative 叠加所选 approachLabel/evidenceQuality/下一目标；不得在场景写回阶段再次修改事件账本或 tension。
+4. LocationSceneScreen.tsx 将 presentation investigate 渲染为调查方法按钮；当 story.currentObjectiveChoiceTokens 非空时按 token 集合保留全部方法，不再用单一 currentObjectiveChoiceToken 把第二个选项过滤掉；同时将 sceneActions 过滤与 currentObjectiveRailAction / currentObjectiveIsSceneAction 判定（现状按单个 currentObjectiveChoiceToken 匹配，`LocationSceneScreen.tsx` 的 currentObjectiveRailAction / currentObjectiveIsSceneAction）改为按 token 集合处理，保证多个调查方法按钮都被识别为当前目标行动并全部保留在行动栏；不再渲染“调查现场线索”单按钮。没有行动时显示自动揭示结果或明确动线提示，而不是空白。
 5. AdventureGameShell.tsx 提交按钮仍只传 choiceToken；结果场景展示 evidence quality/动静反馈和当前目标更新，禁止客户端读取或计算 tensionDelta。
 
 - [ ] **Step 4: 运行测试确认通过**
@@ -409,7 +418,7 @@ Expected: PASS.
 
 - [ ] **Step 5: 提交**
 
-    git add src/game/application/sceneSource.ts src/game/application/server/ai/liveScenePerformanceSource.ts src/game/application/approveAndWriteScene.ts src/game/application/generatePendingScene.ts src/components/LocationSceneScreen.tsx src/components/AdventureGameShell.tsx
+    git add src/game/application/sceneSource.ts src/game/application/server/ai/liveScenePerformanceSource.ts src/game/application/approveAndWriteScene.ts src/game/application/generatePendingScene.ts src/components/LocationSceneScreen.tsx src/components/AdventureGameShell.tsx src/game/application/server/ai/liveScenePerformanceSource.test.ts src/game/application/approveAndWriteScene.test.ts src/game/application/generatePendingScene.test.ts src/components/LocationSceneScreen.test.tsx src/components/AdventureGameShell.test.tsx
     git commit -m "feat(investigation): show method-specific result scenes without extra confirmation"
 
 ---
@@ -445,8 +454,14 @@ Expected: PASS.
 
     it("approach-less facts auto-resolve and never present an investigate button", async () => {
       const journey = await createInvestigationChoiceJourney({ mode: "legacy_fact" });
+      await journey.exposeLegacyFact();
+      await journey.reload();
       expect(journey.view().currentLocation.actions.some((choice) => choice.presentation === "investigate")).toBe(false);
       expect(journey.record().worldState.worldFacts.find((fact) => fact.factId === LEGACY_FACT_ID)?.discovered).toBe(true);
+      expect(journey.record().worldState.eventLedger).toContainEqual(expect.objectContaining({
+        type: "fact_discovered",
+        factId: LEGACY_FACT_ID,
+      }));
     });
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -459,7 +474,7 @@ Expected: FAIL until the full choice and auto paths are wired through repository
 
 1. 用真实临时 SQLite 建立含两个 approach 的 fact fixture；通过 application facade 等价 POST /api/game/actions 提交 opaque token，不在测试中构造 action/fact ID。
 2. 选择 clean/noisy 两条路径各跑一次，断言 WorldState、eventLedger、StoryState.tension 和 ready scene narration 至少有两组结构化差异；两条路径都完成同一个 discover_fact objective。
-3. 使用旧形状 fact（无 investigationApproaches）验证自动揭示、没有 investigate choice、不会等待不存在的 pending。
+3. 使用旧形状 fact（无 investigationApproaches）时，先让 fixture 执行一次会把该事实暴露为当前目标的成功 action；断言该 action 的同一规则回合自动揭示事实、没有 investigate choice，且 reload 只恢复已写入的 fact_discovered，不会等待不存在的 pending。
 4. 更新原 investigationFlowJourney.test.ts：有 approach 的新 fixture 选择方法后再断言即时叙事；保留 queue 消费、fallback、linear_narrative_fallback 和幕推进防护。
 5. 更新 foundationJourney.test.ts 的动作覆盖说明，使完整旅程不再把“点击调查”作为无分支动作计数，改为验证一次有选择调查和一次自动事实揭示。
 
@@ -526,11 +541,20 @@ Expected: PASS，且全文不再把“调查按钮点击”描述成默认必经
 
 ---
 
+## Non-goals
+
+- 第一版 evidenceQuality 只作为叙事与后续生成上下文消费，不直接改变结局条件、软锁或路线关闭；approach 声明的 tensionDelta 会进入现有 tension/pacing 指标，但不新增调查专属的路线关闭规则。机制性后果（如 noisy 导致 NPC 警觉、关系变化）留待后续版本。
+- 不把 NPC 对话选项改名为调查方式；“套话/质问/交换情报”类调查按带 targetNpcId 的调查方式另行建模。
+- 自动揭示不单独消耗玩家回合、不创建额外 PendingNarrativeJob；其 fact_discovered 事件并入触发 action 的同一个规则回合和场景旁白，不额外弹确认按钮。
+- 不为 investigate 增加新的公开 route 或版本化接口；Action union 不新增类型。
+
 ## Self-review checklist
 
 - [ ] 有 approach 的调查是否真的有玩家选择、至少一个可见代价和一个结构化后果？
-- [ ] 无 approach 的事实是否在所有入口（开局、移动抵达、NPC 交接、reload）都不会留下空目标或伪按钮？
+- [ ] 无 approach 的事实是否在所有可达规则入口（移动抵达、NPC 交接；未来若开局允许 discover_fact）都不会留下空目标或伪按钮，且 reload 只恢复已经结算的结果？
 - [ ] NPC 对话选择是否仍保持原有两选项/自定义输入契约，没有被复用为现场调查按钮？
 - [ ] AI 是否只能表达已结算结果，且非法 approach/正文不会污染规则状态？
 - [ ] 同 seed、不同 approach 是否在 eventLedger、tension 或叙事反馈上可观察分化，并可通过 reload 重建？
 - [ ] 是否保留现有 investigate fast path、linear narrative queue 消费和幕推进/结局演化防护？
+- [ ] 自动揭示的 fact_discovered 事件是否全部由规则层写入 eventLedger，generatePendingScene 未重复裁决或修改 tension？
+- [ ] 同 fact 不同 approach 的 runtime token 是否互不相同（approvedChoice 三处派生同步）？
