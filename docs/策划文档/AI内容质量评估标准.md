@@ -1,6 +1,8 @@
 # AI 内容质量评估标准（v2）
 
-> 版本：v2 ｜ 日期：2026-07-31 ｜ 状态：approved（spec：docs/superpowers/specs/2026-07-31-ai-story-quality-evaluation-design.md）
+> **RETIRED（2026-08-20）**：本量表基于旧的 director/writer/NPC 三角色运行链，不能用于当前 canonical runtime 的质量结论。当前质量审核应基于 AI 文本审计日志（`docs/agent/AI文本审计.md`）。保留正文作为历史决策记录，不删除历史资料。
+>
+> 版本：v2 ｜ 日期：2026-07-31 ｜ 状态：retired（spec：docs/superpowers/specs/2026-07-31-ai-story-quality-evaluation-design.md）
 
 本文件是 LLM 评审 prompt 与人工抽查的唯一事实源。量表变更时升版本号（v3…），
 并同步更新 spec 与评审脚本读取逻辑。

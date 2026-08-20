@@ -1,7 +1,9 @@
 # AI 内容质量评估（实现事实）
 
+> **RETIRED（2026-08-20）**：本文档基于旧的 director/writer/NPC 三角色运行链与三采集点评估体系，不能用于当前 canonical runtime 的质量结论。当前质量审核应基于 AI 文本审计日志（`docs/agent/AI文本审计.md`）。保留正文作为历史决策记录，不删除历史资料。
+>
 > 对应 spec：docs/superpowers/specs/2026-07-31-ai-story-quality-evaluation-design.md
-> 量表事实源：docs/策划文档/AI内容质量评估标准.md（v2）
+> 量表事实源：docs/策划文档/AI内容质量评估标准.md（v2，已退役）
 
 ## 采集通道（三采集点，各取其唯一可见的数据）
 
