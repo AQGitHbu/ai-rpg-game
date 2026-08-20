@@ -2,6 +2,7 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
 import type { EvolutionNeed, WorldDeltaProposal } from "@/game/domain/worldDelta";
+import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 
 // ---------------------------------------------------------------------------
 // WorldEvolutionSource：可注入的 AI 世界演化提议 port。
@@ -16,6 +17,8 @@ export type WorldEvolutionSourceContext = {
   readonly need: EvolutionNeed;
   readonly action?: Action;
   readonly reason: string;
+  /** 仅用于关联 world AI 审计事件，不进入世界状态或 prompt 事实字段。 */
+  readonly auditLink?: AiTextAuditLink;
 };
 
 export type WorldEvolutionSourceResult = {

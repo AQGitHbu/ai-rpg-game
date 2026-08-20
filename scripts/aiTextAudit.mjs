@@ -10,7 +10,7 @@
 // does not output model keys, and does not auto-delete logs.
 
 import { readdir, readFile, stat, copyFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, isAbsolute } from "node:path";
 import { existsSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
@@ -22,6 +22,25 @@ const DEFAULT_ROOT_DIR = "logs/ai-text-audit";
 function resolveRootDir(env) {
   const dir = env.AI_TEXT_AUDIT_DIR ?? DEFAULT_ROOT_DIR;
   return resolve(dir);
+}
+
+function isSafeRunId(runId) {
+  return typeof runId === "string"
+    && runId.length > 0
+    && runId !== "."
+    && runId !== ".."
+    && !/[\\/:]/.test(runId);
+}
+
+function resolveRunFile(rootDir, runId) {
+  if (!isSafeRunId(runId)) throw new Error("invalid runId");
+  const root = resolve(rootDir);
+  const filePath = resolve(root, runId, "events.jsonl");
+  const relativePath = relative(root, filePath);
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new Error("invalid runId");
+  }
+  return filePath;
 }
 
 // Secret field names that must never appear in audit records.
@@ -99,7 +118,13 @@ async function cmdQuery(rootDir, args) {
     return 1;
   }
 
-  const filePath = join(rootDir, runId, "events.jsonl");
+  let filePath;
+  try {
+    filePath = resolveRunFile(rootDir, runId);
+  } catch {
+    console.error("Error: invalid --run value");
+    return 1;
+  }
   if (!existsSync(filePath)) {
     console.error(`Error: audit run "${runId}" not found at ${filePath}`);
     return 1;
@@ -136,7 +161,13 @@ async function cmdVerify(rootDir, args) {
     return 1;
   }
 
-  const filePath = join(rootDir, runId, "events.jsonl");
+  let filePath;
+  try {
+    filePath = resolveRunFile(rootDir, runId);
+  } catch {
+    console.error("Error: invalid --run value");
+    return 1;
+  }
   if (!existsSync(filePath)) {
     console.error(`Error: audit run "${runId}" not found at ${filePath}`);
     return 1;
@@ -215,7 +246,13 @@ async function cmdExport(rootDir, args) {
     return 1;
   }
 
-  const filePath = join(rootDir, runId, "events.jsonl");
+  let filePath;
+  try {
+    filePath = resolveRunFile(rootDir, runId);
+  } catch {
+    console.error("Error: invalid --run value");
+    return 1;
+  }
   if (!existsSync(filePath)) {
     console.error(`Error: audit run "${runId}" not found at ${filePath}`);
     return 1;

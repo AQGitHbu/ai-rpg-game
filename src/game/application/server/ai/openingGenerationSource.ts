@@ -249,7 +249,17 @@ export function createOpeningGenerationSource(
         const result = await aiClient.complete("opening", [
           { role: "system", content: buildOpeningPrompt(input) },
           { role: "user", content: `生成游戏类型 ${input.gameType} / 长度 ${input.gameLength} / 种子 ${input.seed} / 尝试 ${input.attempt ?? 0} 的开场切片。` },
-        ]);
+        ], {
+          purpose: "opening_generation",
+          trigger: "new_game",
+          ...(input.auditLink ?? {}),
+          action: {
+            kind: "new_game",
+            gameType: input.gameType,
+            gameLength: input.gameLength,
+            attempt: input.attempt ?? 0,
+          },
+        });
 
         if (!result.ok) {
           logger?.warn("opening_generation_ai_failed", { code: result.code });

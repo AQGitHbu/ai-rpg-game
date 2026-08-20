@@ -2,6 +2,14 @@ import type { IntentContext } from "./intentContext";
 import type { Action } from "@/game/domain/action";
 import type { NpcId } from "@/game/domain/worldEntity";
 
+/** Optional request correlation metadata; never part of gameplay state or intent rules. */
+export type IntentAuditLink = Readonly<{
+  readonly traceId?: string;
+  readonly gameId?: string;
+  readonly jobId?: string;
+  readonly turnNumber?: number;
+}>;
+
 // ---------------------------------------------------------------------------
 // IntentParserSource：可注入的 AI 意图解析 port。
 // 纯类型定义，供 application 回合编排安全导入。
@@ -16,5 +24,5 @@ export type IntentParserResult =
 
 export type IntentParserSource = {
   readonly sourceVersion: string;
-  parseIntent(text: string, ctx: IntentContext, targetNpcId?: NpcId): Promise<IntentParserResult>;
+  parseIntent(text: string, ctx: IntentContext, targetNpcId?: NpcId, auditLink?: IntentAuditLink): Promise<IntentParserResult>;
 };

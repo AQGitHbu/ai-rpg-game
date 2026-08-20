@@ -106,6 +106,37 @@ function tryParseJson(text: string): unknown {
   try { return JSON.parse(text); } catch { return undefined; }
 }
 
+const SENSITIVE_AUDIT_KEY = /^(?:api[_-]?key|authorization|cookie|set-cookie|baseurl|url|endpoint|access[_-]?token|secret|password)$/i;
+const URL_PATTERN = /https?:\/\/[^\s"'<>]+/gi;
+
+function sanitizeAuditText(text: string): string {
+  return text.replace(URL_PATTERN, "[REDACTED_URL]");
+}
+
+function sanitizeAuditValue(value: unknown): unknown {
+  if (typeof value === "string") return sanitizeAuditText(value);
+  if (Array.isArray(value)) return value.map(sanitizeAuditValue);
+  if (typeof value !== "object" || value === null) return value;
+
+  const result: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value)) {
+    result[key] = SENSITIVE_AUDIT_KEY.test(key) ? "[REDACTED]" : sanitizeAuditValue(nested);
+  }
+  return result;
+}
+
+function sanitizeAuditBody(
+  rawBody: string | null,
+  parsed: unknown,
+): { readonly rawBody: string | null; readonly json?: unknown } {
+  if (rawBody === null) return { rawBody: null };
+  if (parsed !== undefined) {
+    const json = sanitizeAuditValue(parsed);
+    return { rawBody: JSON.stringify(json), json };
+  }
+  return { rawBody: sanitizeAuditText(rawBody) };
+}
+
 /** Record a game_api audit event. Best-effort, never throws. */
 async function recordGameApiExchange(
   audit: AiTextAuditRecorder | undefined,
@@ -121,6 +152,8 @@ async function recordGameApiExchange(
 ): Promise<void> {
   if (!audit?.enabled) return;
   const trigger = ROUTE_TRIGGERS[route] ?? route;
+  const safeRequest = sanitizeAuditBody(requestRawBody, requestJson);
+  const safeResponse = sanitizeAuditBody(responseRawBody, responseJson);
   const context: AiTextAuditContext = {
     purpose: "game_api",
     trigger,
@@ -132,10 +165,9 @@ async function recordGameApiExchange(
       route,
       method,
       context,
-      request: { rawBody: requestRawBody, ...(requestJson !== undefined ? { json: requestJson } : {}) },
+      request: safeRequest,
       response: {
-        rawBody: responseRawBody,
-        ...(responseJson !== undefined ? { json: responseJson } : {}),
+        ...safeResponse,
         ...(errorName !== undefined ? { errorName } : {}),
       },
       httpStatus,
@@ -193,6 +225,7 @@ export function createServerGameEntryPoints(
       logger,
       now,
       requireGenerated: false,
+      auditLink: { gameId: String(record.gameId) },
     })
       .then((prewarm) => {
         if (prewarm !== null && !battleScenePrewarmCache.has(prewarm.battleKey)) {
@@ -207,7 +240,10 @@ export function createServerGameEntryPoints(
     battleSceneFallbackPromises.set(battle.battleKey, promise);
     return promise;
   };
-  const ensureBattleScenePrewarm = (record: Parameters<typeof prewarmBattleVictoryScene>[0]): void => {
+  const ensureBattleScenePrewarm = (
+    record: Parameters<typeof prewarmBattleVictoryScene>[0],
+    traceId?: string,
+  ): void => {
     const battle = record.worldState.battle;
     if (battle.status !== "active" || battle.battleKey === undefined) return;
     if (battleScenePrewarmCache.has(battle.battleKey) || battleScenePrewarmPromises.has(battle.battleKey)) return;
@@ -215,7 +251,12 @@ export function createServerGameEntryPoints(
     // 因 live provider 的慢响应在胜利后看到“正在处理”。live 结果回来后
     // 会覆盖 fallback，并在最后一击前优先使用 generated。
     void ensureBattleSceneFallback(record);
-    const promise = prewarmBattleVictoryScene(record, { sceneSource, logger, now })
+    const promise = prewarmBattleVictoryScene(record, {
+      sceneSource,
+      logger,
+      now,
+      auditLink: { gameId: String(record.gameId), ...(traceId === undefined ? {} : { traceId }) },
+    })
       .then(async (prewarm) => {
         if (prewarm !== null) {
           const current = await repository.getCurrentGame();
@@ -504,7 +545,13 @@ export function createServerGameEntryPoints(
           ...(input.setup === undefined ? {} : { setup: input.setup }),
           ...(replaceCurrent === undefined ? {} : { replaceCurrent }),
         },
-        { repository, source, now, aiEnabled },
+        {
+          repository,
+          source,
+          now,
+          aiEnabled,
+          ...(traceId === undefined ? {} : { auditLink: { traceId } }),
+        },
       );
       if (result.ok) {
         const generationSource = openingGenerationSources.get(generationSeed);
@@ -535,7 +582,14 @@ export function createServerGameEntryPoints(
         : undefined;
       const result = await performTurn(
         { gameId: current.record.gameId, actionId: command.actionId, interaction: command.interaction, expectedRevision: command.expectedRevision, choiceMap },
-        { repository, now, worldEvolutionSource, intentParserSource, allowDeterministicWorldEvolutionFallback: true },
+        {
+          repository,
+          now,
+          worldEvolutionSource,
+          intentParserSource,
+          allowDeterministicWorldEvolutionFallback: true,
+          auditLink: { gameId: String(current.record.gameId), traceId },
+        },
       );
       if (result.ok) {
         // Return updated view so the client can render without a separate GET
@@ -549,7 +603,7 @@ export function createServerGameEntryPoints(
             deriveEndingSessionIdentity(updated.record.gameId, updated.record.revision),
           );
           if (readyRecord.worldState.battle.status === "active") {
-            ensureBattleScenePrewarm(readyRecord);
+            ensureBattleScenePrewarm(readyRecord, traceId);
           }
           // 目标已锁定的一键移动、规则已完全确定的拾取动作，以及结束战斗的
           // 最后一击，不应该再经历“先完成动作、再等 AI 编排”的两段等待。
@@ -714,6 +768,14 @@ export function createServerGameEntryPoints(
     },
     executeHttpRequest,
     close: async () => {
+      // Stop accepting the runtime's remaining background work before closing
+      // repository/log resources or the audit ledger. Prewarm promises are not
+      // owned by BackgroundEnsureCoordinator, so drain both maps explicitly.
+      await narrativeCoordinator.waitForIdle();
+      await Promise.allSettled([
+        ...battleScenePrewarmPromises.values(),
+        ...battleSceneFallbackPromises.values(),
+      ]);
       try {
         await repository.close();
       } finally {

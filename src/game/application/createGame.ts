@@ -1,5 +1,6 @@
 import type { GameRepository } from "./server/persistence/gameRepository";
 import type { GameId } from "./server/persistence/gameRepository";
+import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { StoryState } from "@/game/domain/storyState";
 import type { GameTypeId, GameLength, GameSetup, NewGameInput } from "@/game/domain/newGame";
 import { validateNewGameInput } from "@/game/domain/newGame";
@@ -33,8 +34,10 @@ export type OpeningGenerationInput = {
     setup?: GameSetup;
     /** 只提供近期故事指纹，AI 仍自由生成实体名称与剧情文本。 */
     novelty?: OpeningNoveltyContext;
-    /** 相似度重试次数，写入生成元数据以便同一存档可复现。 */
-    attempt?: number;
+  /** 相似度重试次数，写入生成元数据以便同一存档可复现。 */
+  attempt?: number;
+  /** 仅用于关联 opening AI 审计事件，不进入游戏状态。 */
+  auditLink?: AiTextAuditLink;
 };
 
 export type OpeningGenerationSource = {
@@ -130,6 +133,8 @@ export type CreateGameDeps = {
   readonly now: () => string;
   /** Whether AI config is available (determines narrative.mode) */
   readonly aiEnabled?: boolean;
+  /** 仅用于关联 opening AI 审计事件，不进入游戏状态。 */
+  readonly auditLink?: AiTextAuditLink;
 };
 
 const OPENING_HISTORY_LOOKBACK = 12;
@@ -199,6 +204,12 @@ export async function createGame(
           attempt,
         },
         attempt,
+        ...(deps.auditLink === undefined ? {} : {
+          auditLink: {
+            ...deps.auditLink,
+            gameId: String(input.gameId),
+          },
+        }),
       });
     } catch {
       continue;

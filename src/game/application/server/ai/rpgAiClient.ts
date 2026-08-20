@@ -104,14 +104,15 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
   const policies = mergePolicies(options.policies);
   const audit = options.auditRecorder;
 
-  function buildAuditOptions(): AiTextAuditRequestOptions {
-    // Audit options are derived from the policy, not from transport config.
-    // No apiKey, Authorization, baseUrl, AbortSignal or extraBody are written.
-    return {
-      // timeoutMs, temperature, maxTokens, jsonMode, thinking are derived
-      // from the role policy when recording; here we return an empty object
-      // and let the caller's context carry what matters.
-    };
+  function defaultAuditContext(role: RpgAiRole): AiTextAuditContext {
+    const purpose = role === "opening"
+      ? "opening_generation"
+      : role === "intent"
+        ? "intent_parsing"
+        : role === "world"
+          ? "world_evolution"
+          : "scene_performance";
+    return { purpose, trigger: "unspecified" };
   }
 
   return {
@@ -125,26 +126,29 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
       const callId = typeof crypto !== "undefined" && crypto.randomUUID
         ? crypto.randomUUID()
         : `call-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const auditContextToUse = auditContext ?? defaultAuditContext(role);
 
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const providerOptions = createProviderRequestOptions(
+          policy.timeoutMs,
+          policy.maxTokens,
+          policy.jsonMode,
+          policy.thinking,
+        );
         const result = await options.transport.complete(
           options.config,
           messages,
-          createProviderRequestOptions(
-            policy.timeoutMs,
-            policy.maxTokens,
-            policy.jsonMode,
-            policy.thinking,
-          ),
+          providerOptions,
         );
 
         // Record the audit entry for this attempt. Best-effort: never throws.
-        if (audit?.enabled && auditContext !== undefined) {
-          const requestOptions: AiTextAuditRequestOptions = {
+        if (audit?.enabled) {
+          const auditOptions: AiTextAuditRequestOptions = {
             timeoutMs: policy.timeoutMs,
+            ...(providerOptions.temperature === undefined ? {} : { temperature: providerOptions.temperature }),
+            ...(policy.maxTokens === undefined ? {} : { maxTokens: policy.maxTokens }),
             jsonMode: policy.jsonMode,
             thinking: policy.thinking,
-            ...(policy.maxTokens !== undefined ? { maxTokens: policy.maxTokens } : {}),
           };
           try {
             await audit.record({
@@ -152,8 +156,8 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
               callId,
               role,
               attempt,
-              context: auditContext,
-              input: { messages, options: requestOptions },
+              context: auditContextToUse,
+              input: { messages, options: auditOptions },
               output: result,
             });
           } catch {

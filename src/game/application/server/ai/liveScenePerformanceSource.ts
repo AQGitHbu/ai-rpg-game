@@ -421,7 +421,13 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
         // 场景生成位于每个玩家回合的必经等待界面。瞬态网络失败由统一 client
         // 按角色策略重试；解析/契约失败则最多再发起一次带失败原因的内容修复，
         // 避免把一次可修复的格式/结构偏差直接降级成 fallback。
-        const result = await aiClient.complete("scene", messages);
+        const result = await aiClient.complete("scene", messages, {
+          purpose: "scene_performance",
+          trigger: context.auditTrigger ?? `${context.job.actionSummary.kind}_action`,
+          ...(context.auditLink ?? {}),
+          action: context.job.actionSummary,
+          ...(context.repairAttempt === undefined ? {} : { repair: context.repairAttempt }),
+        });
         if (!result.ok) {
           logger?.warn("scene_generation_ai_failed", { code: result.code });
           // empty_response 没有可解析内容，RpgAiClient 不会重复相同请求；

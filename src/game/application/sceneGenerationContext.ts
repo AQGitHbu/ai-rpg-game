@@ -19,6 +19,7 @@ import { buildStylePolicy, type StylePolicy } from "./stylePolicy";
 import type { GameRecord } from "./server/persistence/gameRepository";
 import type { GameTypeId } from "@/game/domain/newGame";
 import type { DialogueAct, DialogueTopic } from "@/game/domain/action";
+import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 
 /**
  * SceneGenerator 的最小输入 DTO（spec §7.1 / §10.1-10.2）：
@@ -172,6 +173,10 @@ export type SceneGenerationRepair = {
 };
 
 export type SceneGenerationContext = {
+  /** 仅用于关联 scene AI 审计事件，不进入 prompt 的世界事实字段。 */
+  readonly auditLink?: AiTextAuditLink;
+  /** 审计触发分类覆盖值，例如 battle_prewarm；不参与场景规则。 */
+  readonly auditTrigger?: string;
   /** 题材边界与开局设定：允许 live 表演者保持同一世界语义，不可改写规则。 */
   readonly gameType?: GameTypeId;
   /**

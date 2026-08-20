@@ -342,7 +342,15 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
         ];
         // 瞬态网络失败由统一 client 按角色策略重试；empty_response 或非法
         // JSON 不再重复相同请求，避免 provider reasoning 失败时重复计费。
-        const result = await aiClient.complete("world", messages);
+        const result = await aiClient.complete("world", messages, {
+          purpose: "world_evolution",
+          trigger: ctx.reason,
+          ...(ctx.auditLink ?? {}),
+          action: {
+            need: ctx.need,
+            ...(ctx.action === undefined ? {} : { action: ctx.action }),
+          },
+        });
         if (!result.ok) {
           logger?.warn("world_evolution_ai_failed", { code: result.code });
           return fallbackProposal(ctx);

@@ -5,6 +5,7 @@ import type { IntentContext } from "@/game/gameplay/rpg/intentParser";
 import type {
   IntentParserResult,
   IntentParserSource,
+  IntentAuditLink,
 } from "@/game/gameplay/rpg/intentParser";
 import {
   asItemId,
@@ -226,7 +227,7 @@ function ruleParse(text: string, ctx: IntentContext, targetNpcId?: NpcId): Inten
 export function createRuleIntentParser(): IntentParserSource {
   return {
     sourceVersion: "rule-intent",
-    async parseIntent(text, ctx, targetNpcId?) {
+    async parseIntent(text, ctx, targetNpcId?, _auditLink?) {
       return ruleParse(text, ctx, targetNpcId);
     },
   };
@@ -285,15 +286,24 @@ export function createLiveIntentParser(
     : undefined);
   return {
     sourceVersion: "live-intent",
-    async parseIntent(text, ctx, targetNpcId?) {
+    async parseIntent(text, ctx, targetNpcId?, auditLink?: IntentAuditLink) {
       try {
-        if (client === undefined) return rule.parseIntent(text, ctx, targetNpcId);
+        if (client === undefined) return rule.parseIntent(text, ctx, targetNpcId, auditLink);
         const response = await client.complete(
           "intent",
           [
             { role: "system", content: "你是 RPG 意图解析器，只返回严格 JSON。" },
             { role: "user", content: buildUserPrompt(text, ctx, targetNpcId) },
           ],
+          {
+            purpose: "intent_parsing",
+            trigger: "free_text_action",
+            ...(auditLink ?? {}),
+            action: {
+              kind: "free_text_action",
+              ...(targetNpcId === undefined ? {} : { targetNpcId: String(targetNpcId) }),
+            },
+          },
         );
         if (response.ok && typeof response.content === "string") {
           const parsed = parseJsonResponse(response.content);
@@ -307,7 +317,7 @@ export function createLiveIntentParser(
           error: error instanceof Error ? error.message : "unknown",
         });
       }
-      return rule.parseIntent(text, ctx, targetNpcId);
+      return rule.parseIntent(text, ctx, targetNpcId, auditLink);
     },
   };
 }

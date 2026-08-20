@@ -21,6 +21,7 @@ import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import { evolveWorld, repairIdOverrideForAction } from "./evolveWorld";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
+import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import { advanceStoryReveal, isActionReleased } from "@/game/gameplay/rpg/worldEvolution";
 
 export type PerformTurnCommand = {
@@ -39,6 +40,8 @@ export type PerformTurnDeps = {
   readonly repository: GameRepository;
   readonly now: () => string;
   readonly intentParserSource?: IntentParserSource;
+  /** 仅用于关联 intent/world AI 审计事件，不进入游戏状态。 */
+  readonly auditLink?: AiTextAuditLink;
   /**
    * Task 3：worldEvolution 由 application 编排——source 只负责产出提案
    * （await 由 performTurn 完成），gameplay `worldEvolution/` 仅做纯决策。
@@ -141,6 +144,7 @@ export async function performTurn(
         intentContext: buildIntentContext(record.worldState, record.storyState),
         intentParserSource: deps.intentParserSource,
         targetNpcId: command.interaction.targetNpcId,
+        auditLink: deps.auditLink,
       }
     : undefined;
 
@@ -191,6 +195,7 @@ export async function performTurn(
         allowDeterministicFallback: deps.allowDeterministicWorldEvolutionFallback,
         action: converted.action,
         reason: resolved.code,
+        auditLink: deps.auditLink,
         idOverride: repairMode ? repairIdOverrideForAction(converted.action) : undefined,
         now: deps.now,
       });

@@ -3,6 +3,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
 import type { EvolutionNeed, ApprovedWorldDelta, WorldDeltaProposal } from "@/game/domain/worldDelta";
 import type { WorldEvolutionSource, WorldEvolutionSourceContext } from "./worldEvolutionSource";
+import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import { createDeterministicEvolutionSource } from "./deterministicEvolutionSource";
 import {
   approveWorldDelta,
@@ -43,6 +44,8 @@ export type EvolveWorldInput = {
   readonly idOverride?: WorldDeltaIdOverride;
   /** live 运行时关闭静默确定性降级；失败时保留需求，等待下一次真实 API。 */
   readonly allowDeterministicFallback?: boolean;
+  /** 仅用于关联 world AI 审计事件，不进入世界状态。 */
+  readonly auditLink?: AiTextAuditLink;
   readonly now: () => string;
 };
 
@@ -72,6 +75,7 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
     need: input.need,
     action: input.action,
     reason: input.reason,
+    auditLink: input.auditLink,
   };
 
   const attempt = async (candidateSource: WorldEvolutionSource): Promise<EvolveWorldResult> => {

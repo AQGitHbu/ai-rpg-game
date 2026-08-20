@@ -87,4 +87,9 @@ export class BackgroundEnsureCoordinator {
     this.running.set(key, task);
     return "queued";
   }
+
+  /** Wait for already queued background work before the server runtime closes. */
+  async waitForIdle(): Promise<void> {
+    await Promise.allSettled([...this.running.values()]);
+  }
 }

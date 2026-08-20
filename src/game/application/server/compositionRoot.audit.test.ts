@@ -123,4 +123,35 @@ describe("compositionRoot audit recording", () => {
 
     await entryPoints.close();
   });
+
+  it("redacts sensitive HTTP body fields while preserving game text", async () => {
+    const audit = fakeRecorder();
+    const entryPoints = createServerGameEntryPoints({ NODE_ENV: "test" }, audit);
+    const request = new Request("http://localhost/api/game", {
+      method: "POST",
+      body: JSON.stringify({
+        apiKey: "should-not-log",
+        nested: { authorization: "Bearer should-not-log" },
+        characterProfile: "保留这段游戏文本",
+        callbackUrl: "https://secret.example.test/callback",
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    await entryPoints.executeHttpRequest(
+      "POST",
+      "/api/game",
+      async () => new Response(JSON.stringify({ ok: true, story: "保留输出文本" }), { status: 200 }),
+      "trace-redaction",
+      request,
+    );
+
+    const record = JSON.stringify(audit.records.find((entry) => entry.kind === "game_api"));
+    expect(record).not.toContain("should-not-log");
+    expect(record).not.toContain("Bearer");
+    expect(record).not.toContain("https://secret.example.test");
+    expect(record).toContain("保留这段游戏文本");
+    expect(record).toContain("保留输出文本");
+    await entryPoints.close();
+  });
 });

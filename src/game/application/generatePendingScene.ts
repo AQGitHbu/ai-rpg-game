@@ -35,6 +35,23 @@ export type GeneratePendingSceneResult =
   | "unavailable"
   | "legacy_pending";
 
+function buildAuditedSceneGenerationContext(
+  record: GameRecord,
+  auditLink: AiTextAuditLink | undefined,
+) {
+  const context = buildSceneGenerationContext(record);
+  return {
+    ...context,
+    auditLink: {
+      ...auditLink,
+      gameId: String(record.gameId),
+      jobId: String(context.job.jobId),
+      turnNumber: context.job.turnNumber,
+    },
+    auditTrigger: deriveSceneTrigger(context.job.actionSummary, context.job),
+  };
+}
+
 /**
  * 执行一个 pending 叙事场景请求（spec §7 + §11）。
  * 读 pending job → buildSceneGenerationContext → 调 SceneSource → 写回 idle。
@@ -83,6 +100,7 @@ export async function generatePendingScene(
       source: deps.worldEvolutionSource,
       allowDeterministicFallback: deps.allowDeterministicFallback === true,
       reason: "scene_evolution",
+      auditLink: { ...deps.auditLink, gameId: String(record.gameId), jobId: String(generation.job.jobId), turnNumber: generation.job.turnNumber },
       now: deps.now,
     });
     if (outcome.ok) {
@@ -100,7 +118,7 @@ export async function generatePendingScene(
     storyState: scenarioSs,
   };
 
-  let context = buildSceneGenerationContext(scenarioRecord);
+  let context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink);
 
   // ready scene 必须有两个语义不同的合法选择。若当前世界只有一个候选，
   // 不让生成任务永久 pending，也不在客户端伪造按钮；通过同一世界演化审批、
@@ -113,6 +131,7 @@ export async function generatePendingScene(
       source: deps.worldEvolutionSource,
       allowDeterministicFallback: deps.allowDeterministicFallback === true,
       reason: "scene_candidate_shortage",
+      auditLink: { ...deps.auditLink, gameId: String(record.gameId), jobId: String(generation.job.jobId), turnNumber: generation.job.turnNumber },
       now: deps.now,
     });
     if (recovery.ok) {
@@ -126,7 +145,7 @@ export async function generatePendingScene(
         worldState: scenarioWs,
         storyState: scenarioSs,
       };
-      context = buildSceneGenerationContext(scenarioRecord);
+      context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink);
     }
   }
 
@@ -321,13 +340,13 @@ export async function generatePendingScene(
         context: {
           purpose: "final_story_text",
           trigger,
+          ...(context.auditLink ?? {}),
           gameId: record.gameId,
           jobId: context.job.jobId,
           actionId: context.job.actionId,
           turnNumber: context.job.turnNumber,
           revision: record.revision + 1,
           action: context.job.actionSummary,
-          ...(deps.auditLink?.traceId !== undefined ? { traceId: deps.auditLink.traceId } : {}),
         },
         source: immediateAction ? "deterministic" : approved.scene.source,
         path: "normal",

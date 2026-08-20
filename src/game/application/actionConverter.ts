@@ -3,6 +3,7 @@ import {
   preClassifyFreeText,
   type IntentContext,
   type IntentParserSource,
+  type IntentAuditLink,
 } from "@/game/gameplay/rpg/intentParser";
 import type { NpcId } from "@/game/domain/worldEntity";
 
@@ -13,6 +14,8 @@ export type ConvertFreeTextDeps = {
   readonly intentParserSource?: IntentParserSource;
   /** Task 9：自由输入显式绑定的目标 NPC（如对 NPC 说话/问候），透传给意图源做目标合法性校验。 */
   readonly targetNpcId?: NpcId;
+  /** 仅用于关联 intent AI 审计事件，不参与意图判断。 */
+  readonly auditLink?: IntentAuditLink;
 };
 
 export type ConvertResult =
@@ -50,6 +53,7 @@ export async function convertInteraction(
         text,
         ctx,
         targetNpcId,
+        freeTextDeps?.auditLink,
       );
       if (
         classified.ok
@@ -78,7 +82,12 @@ export async function convertInteraction(
 
   // 2. AI 意图解析（如果有 source）；目标 NPC 透传做目标合法性校验
   if (freeTextDeps?.intentParserSource !== undefined) {
-    const aiResult = await freeTextDeps.intentParserSource.parseIntent(text, ctx, freeTextDeps.targetNpcId);
+    const aiResult = await freeTextDeps.intentParserSource.parseIntent(
+      text,
+      ctx,
+      freeTextDeps.targetNpcId,
+      freeTextDeps.auditLink,
+    );
     if (aiResult.ok) {
       return { ok: true, action: aiResult.action };
     }

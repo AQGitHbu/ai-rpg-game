@@ -38,8 +38,7 @@ function resolveMode(env: Record<string, string | undefined>): AiTextAuditMode {
 /** 检查 runId 是否为单一安全路径片段。 */
 function isSafeRunId(runId: string): boolean {
   if (runId === "" || runId === "." || runId === "..") return false;
-  if (runId.includes("/") || runId.includes("\\")) return false;
-  return true;
+  return !/[\\/:]/.test(runId);
 }
 
 /** 把 ISO 时间戳中的路径非法字符替换为 -。 */
@@ -113,6 +112,14 @@ export function createTextAuditRecorder(
     return path;
   }
 
+  function notifyWriteFailure(): void {
+    try {
+      options.onWriteFailure?.();
+    } catch {
+      // Observability callbacks are also best-effort.
+    }
+  }
+
   function doRecord(payload: AiTextAuditPayload): Promise<void> {
     if (!enabled || closed) return Promise.resolve();
 
@@ -123,7 +130,13 @@ export function createTextAuditRecorder(
     } as AiTextAuditEntry;
     sequence += 1;
 
-    const line = JSON.stringify(entry) + "\n";
+    let line: string;
+    try {
+      line = JSON.stringify(entry) + "\n";
+    } catch {
+      notifyWriteFailure();
+      return Promise.resolve();
+    }
 
     chain = chain.then(async () => {
       try {
@@ -131,11 +144,15 @@ export function createTextAuditRecorder(
         await appendFile(path, line, "utf8");
       } catch {
         // best-effort: never throw back to game main flow
-        options.onWriteFailure?.();
+        notifyWriteFailure();
       }
     });
 
-    return chain;
+    return chain.catch(() => {
+      // The chain itself must never reject, even if a future implementation
+      // adds a throwing operation outside the guarded appendFile block.
+      notifyWriteFailure();
+    });
   }
 
   async function doClose(): Promise<void> {

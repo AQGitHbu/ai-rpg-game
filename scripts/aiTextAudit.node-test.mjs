@@ -246,6 +246,12 @@ describe("aiTextAudit CLI", () => {
         assert.equal(entry.context.gameId, "game-1");
       }
     });
+
+    it("rejects path traversal in runId", async () => {
+      const result = runCli(["query", "--run", "..\\outside"], { AI_TEXT_AUDIT_DIR: tempRoot });
+      assert.notEqual(result.status, 0, "expected non-zero exit for unsafe runId");
+      assert.match(result.stderr || result.stdout, /invalid.*run/i);
+    });
   });
 
   describe("verify", () => {
