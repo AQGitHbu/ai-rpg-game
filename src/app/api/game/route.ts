@@ -109,5 +109,6 @@ export async function POST(request: Request): Promise<Response> {
       });
     },
     request.headers.get("x-request-trace-id") ?? undefined,
+    request,
   );
 }

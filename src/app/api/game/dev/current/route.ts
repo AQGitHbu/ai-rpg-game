@@ -20,5 +20,6 @@ export async function DELETE(request: Request): Promise<Response> {
       });
     },
     request.headers.get("x-request-trace-id") ?? undefined,
+    request,
   );
 }

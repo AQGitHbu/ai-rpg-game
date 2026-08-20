@@ -14,6 +14,8 @@ import { createOpeningGenerationSource, createSceneSource, createWorldEvolutionS
 import { createServerIntentParserSource } from "../server/ai/intentParserSourceFactory";
 import { createServerRpgAiClient } from "../server/ai/rpgAiClient";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
+import { createTextAuditRecorder } from "../server/ai/textAuditRecorder";
+import type { AiTextAuditRecorder, AiTextAuditContext, AiTextAuditLink } from "../server/ai/textAuditTypes";
 import { generatePendingScene } from "../generatePendingScene";
 import { buildSceneGenerationContext } from "../sceneGenerationContext";
 import { approveScenePerformance } from "../approveAndWriteScene";
@@ -84,15 +86,76 @@ export type ServerGameEntryPoints = {
     route: string,
     handler: (context: RequestLogContext) => Promise<Response>,
     traceId?: string,
+    request?: Request,
   ): Promise<Response>;
   close(): Promise<void>;
 };
 
+/** Stable trigger values for canonical API routes. */
+const ROUTE_TRIGGERS: Readonly<Record<string, string>> = {
+  "/api/game": "create_game",
+  "/api/game/actions": "perform_turn",
+  "/api/game/current": "get_current_game",
+  "/api/game/narrative/ensure": "ensure_narrative_scene",
+  "/api/game/prologue/ack": "ack_prologue",
+  "/api/game/dev/current": "dev_current",
+};
+
+/** Best-effort JSON parse; returns undefined on failure. */
+function tryParseJson(text: string): unknown {
+  try { return JSON.parse(text); } catch { return undefined; }
+}
+
+/** Record a game_api audit event. Best-effort, never throws. */
+async function recordGameApiExchange(
+  audit: AiTextAuditRecorder | undefined,
+  route: string,
+  method: string,
+  traceId: string | undefined,
+  requestRawBody: string | null,
+  requestJson: unknown,
+  responseRawBody: string | null,
+  responseJson: unknown,
+  httpStatus: number,
+  errorName?: string,
+): Promise<void> {
+  if (!audit?.enabled) return;
+  const trigger = ROUTE_TRIGGERS[route] ?? route;
+  const context: AiTextAuditContext = {
+    purpose: "game_api",
+    trigger,
+    ...(traceId !== undefined ? { traceId } : {}),
+  };
+  try {
+    await audit.record({
+      kind: "game_api",
+      route,
+      method,
+      context,
+      request: { rawBody: requestRawBody, ...(requestJson !== undefined ? { json: requestJson } : {}) },
+      response: {
+        rawBody: responseRawBody,
+        ...(responseJson !== undefined ? { json: responseJson } : {}),
+        ...(errorName !== undefined ? { errorName } : {}),
+      },
+      httpStatus,
+    });
+  } catch {
+    // best-effort: never throw
+  }
+}
+
 export function createServerGameEntryPoints(
   env: Record<string, string | undefined> = process.env,
+  externalAuditRecorder?: AiTextAuditRecorder,
 ): ServerGameEntryPoints {
   const logRuntime = createServerLogRuntime(env);
   const { logger } = logRuntime;
+  // Create the audit recorder before the AI client so it can be injected.
+  const auditRecorder = externalAuditRecorder ?? createTextAuditRecorder(env, {
+    onWriteFailure: () => logger.warn("ai_text_audit_write_failed", {}),
+    onConfigIssue: (code) => logger.warn("ai_text_audit_config_issue", { code }),
+  });
   const repository = createSqliteGameRepository({
     clientFactory: createServerSqliteClientFactory(env),
     logError: (operation) => logger.error("sqlite_repository_failure", { operation }),
@@ -102,7 +165,7 @@ export function createServerGameEntryPoints(
   const aiEnabled = aiConfig.status === "available";
   // One provider transport/client per server composition root. Role policy,
   // thinking mode, budgets, and transient retries are centralized there.
-  const aiClient = createServerRpgAiClient(env, logger);
+  const aiClient = createServerRpgAiClient(env, logger, auditRecorder);
   const openingGenerationSources = new Map<string, "generated" | "fallback">();
   const source = createOpeningGenerationSource(env, logger, (marker) => {
     openingGenerationSources.set(marker.seed, marker.source);
@@ -171,7 +234,11 @@ export function createServerGameEntryPoints(
       });
     battleScenePrewarmPromises.set(battle.battleKey, promise);
   };
-  const applyPrewarmedBattleScene = async (record: Parameters<typeof prewarmBattleVictoryScene>[0], prewarm: BattleScenePrewarm): Promise<boolean> => {
+  const applyPrewarmedBattleScene = async (
+    record: Parameters<typeof prewarmBattleVictoryScene>[0],
+    prewarm: BattleScenePrewarm,
+    auditLink?: AiTextAuditLink,
+  ): Promise<boolean> => {
     const generation = record.storyState.narrative.generation;
     if (generation.status !== "pending" || !("job" in generation) || generation.job === undefined) return false;
     const context = buildSceneGenerationContext(record);
@@ -202,6 +269,39 @@ export function createServerGameEntryPoints(
     });
     if (!writeBack.ok) return false;
     logger.info("battle_scene_prewarm_used", { battleKey: prewarm.battleKey });
+    // Record the prewarmed story_text audit event.
+    if (auditRecorder.enabled) {
+      const summary = context.job.actionSummary;
+      const trigger = summary.kind === "battle_action" ? "battle_action" : "explore_action";
+      try {
+        await auditRecorder.record({
+          kind: "story_text",
+          context: {
+            purpose: "final_story_text",
+            trigger,
+            gameId: record.gameId,
+            jobId: context.job.jobId,
+            actionId: context.job.actionId,
+            turnNumber: context.job.turnNumber,
+            revision: record.revision + 1,
+            action: context.job.actionSummary,
+            ...(auditLink?.traceId !== undefined ? { traceId: auditLink.traceId } : {}),
+          },
+          source: approved.scene.source,
+          path: "prewarmed",
+          scene: approved.scene,
+          visibleText: {
+            narration: approved.scene.narration,
+            npcLine: approved.scene.npcLine,
+            npcDialogues: approved.scene.npcDialogues,
+            choices: approved.scene.choices,
+          },
+        });
+      } catch {
+        // best-effort: audit write failure never blocks the game flow
+        logger.warn("ai_text_audit_write_failed", {});
+      }
+    }
     return true;
   };
   const deferBattleSceneToPrewarm = (battleKey: string, traceId?: string): boolean => {
@@ -215,7 +315,7 @@ export function createServerGameEntryPoints(
         || current.record.storyState.narrative.generation.status !== "pending") return;
       const prewarm = battleScenePrewarmCache.get(battleKey);
       if (prewarm !== undefined) {
-        const applied = await applyPrewarmedBattleScene(current.record, prewarm);
+        const applied = await applyPrewarmedBattleScene(current.record, prewarm, { traceId });
         if (applied) {
           battleScenePrewarmCache.delete(battleKey);
           return;
@@ -251,7 +351,16 @@ export function createServerGameEntryPoints(
         key: `${current.record.gameId}:${generation.job.jobId}`,
       };
     },
-    run: () => generatePendingScene({ repository, sceneSource, worldEvolutionSource, logger, allowDeterministicFallback: true, now }),
+    run: (traceId?: string) => generatePendingScene({
+      repository,
+      sceneSource,
+      worldEvolutionSource,
+      logger,
+      allowDeterministicFallback: true,
+      now,
+      textAuditRecorder: auditRecorder,
+      ...(traceId !== undefined ? { auditLink: { traceId } } : {}),
+    }),
     logKey: "runtime_narrative_task",
     logger,
   });
@@ -261,6 +370,7 @@ export function createServerGameEntryPoints(
     route: string,
     handler: (context: RequestLogContext) => Promise<Response>,
     incomingTraceId?: string,
+    request?: Request,
   ): Promise<Response> => {
     const context = createRequestLogContext({ method, route, traceId: incomingTraceId });
     logger.info("http_request_started", {
@@ -270,8 +380,52 @@ export function createServerGameEntryPoints(
       method,
       route,
     });
+
+    // Read request body for audit (best-effort)
+    let requestRawBody: string | null = null;
+    let requestJson: unknown = undefined;
+    if (request !== undefined && auditRecorder.enabled) {
+      try {
+        requestRawBody = await request.clone().text();
+        if (requestRawBody.length > 0) {
+          requestJson = tryParseJson(requestRawBody);
+        }
+      } catch {
+        // best-effort: leave null
+      }
+    }
+
     try {
       const response = await handler(context);
+
+      // Read response body for audit (best-effort)
+      let responseRawBody: string | null = null;
+      let responseJson: unknown = undefined;
+      if (auditRecorder.enabled) {
+        try {
+          const cloned = response.clone();
+          responseRawBody = await cloned.text();
+          if (responseRawBody.length > 0) {
+            responseJson = tryParseJson(responseRawBody);
+          }
+        } catch {
+          // best-effort: leave null
+        }
+      }
+
+      // Record the game_api exchange
+      await recordGameApiExchange(
+        auditRecorder,
+        route,
+        method,
+        context.traceId,
+        requestRawBody,
+        requestJson,
+        responseRawBody,
+        responseJson,
+        response.status,
+      );
+
       logger.info("http_request_completed", {
         traceId: context.traceId,
         scope: "request",
@@ -289,6 +443,22 @@ export function createServerGameEntryPoints(
         headers,
       });
     } catch (error) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+
+      // Record the game_api exchange with error
+      await recordGameApiExchange(
+        auditRecorder,
+        route,
+        method,
+        context.traceId,
+        requestRawBody,
+        requestJson,
+        null,
+        undefined,
+        500,
+        errorName,
+      );
+
       logger.error("http_request_failed", {
         traceId: context.traceId,
         scope: "request",
@@ -296,7 +466,7 @@ export function createServerGameEntryPoints(
         method,
         route,
         durationMs: Date.now() - context.startedAtMs,
-        errorName: error instanceof Error ? error.name : "UnknownError",
+        errorName,
       });
       throw error;
     }
@@ -408,6 +578,8 @@ export function createServerGameEntryPoints(
                   logger,
                   allowDeterministicFallback: true,
                   now,
+                  textAuditRecorder: auditRecorder,
+                  auditLink: { traceId, gameId: readyRecord.gameId },
                 });
                 if (evolvedSceneResult === "saved") {
                   const refreshed = await repository.getCurrentGame();
@@ -429,7 +601,7 @@ export function createServerGameEntryPoints(
                   prewarm = await ensureBattleSceneFallback(readyRecord) ?? undefined;
                 }
                 if (prewarm !== undefined) {
-                  const usedPrewarm = await applyPrewarmedBattleScene(readyRecord, prewarm);
+                  const usedPrewarm = await applyPrewarmedBattleScene(readyRecord, prewarm, { traceId, gameId: readyRecord.gameId });
                   if (usedPrewarm) {
                     battleScenePrewarmCache.delete(resolvedBattle.battleKey);
                     const refreshed = await repository.getCurrentGame();
@@ -450,7 +622,16 @@ export function createServerGameEntryPoints(
               }
             }
             if (shouldCompleteSynchronously) {
-              const immediateSceneResult = await generatePendingScene({ repository, sceneSource, worldEvolutionSource, logger, allowDeterministicFallback: true, now });
+              const immediateSceneResult = await generatePendingScene({
+                repository,
+                sceneSource,
+                worldEvolutionSource,
+                logger,
+                allowDeterministicFallback: true,
+                now,
+                textAuditRecorder: auditRecorder,
+                auditLink: { traceId, gameId: readyRecord.gameId },
+              });
               if (immediateSceneResult === "saved") {
                 const refreshed = await repository.getCurrentGame();
                 if (refreshed.ok && refreshed.status === "active") {
@@ -536,7 +717,11 @@ export function createServerGameEntryPoints(
       try {
         await repository.close();
       } finally {
-        await logRuntime.close();
+        try {
+          await auditRecorder.close();
+        } finally {
+          await logRuntime.close();
+        }
       }
     },
   };

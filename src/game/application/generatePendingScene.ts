@@ -22,6 +22,10 @@ export type GeneratePendingSceneDeps = {
   /** live 生产路径禁止把设计 AI 的失败静默写成确定性场景。 */
   readonly allowDeterministicFallback?: boolean;
   readonly now: () => string;
+  /** AI 文本审计记录器，记录场景写回为 story_text 事件。 */
+  readonly textAuditRecorder?: AiTextAuditRecorder;
+  /** 审计关联 link：traceId/gameId/jobId/turnNumber，只用于日志关联。 */
+  readonly auditLink?: AiTextAuditLink;
 };
 
 export type GeneratePendingSceneResult =
@@ -308,11 +312,70 @@ export async function generatePendingScene(
     return writeBack.code === "STALE_GAME_REVISION" ? "stale" : "unavailable";
   }
 
+  // Record the story_text audit event for the approved scene write-back.
+  if (deps.textAuditRecorder?.enabled) {
+    const trigger = deriveSceneTrigger(context.job.actionSummary, context.job);
+    try {
+      await deps.textAuditRecorder.record({
+        kind: "story_text",
+        context: {
+          purpose: "final_story_text",
+          trigger,
+          gameId: record.gameId,
+          jobId: context.job.jobId,
+          actionId: context.job.actionId,
+          turnNumber: context.job.turnNumber,
+          revision: record.revision + 1,
+          action: context.job.actionSummary,
+          ...(deps.auditLink?.traceId !== undefined ? { traceId: deps.auditLink.traceId } : {}),
+        },
+        source: immediateAction ? "deterministic" : approved.scene.source,
+        path: "normal",
+        scene: approved.scene,
+        visibleText: {
+          narration: approved.scene.narration,
+          npcLine: approved.scene.npcLine,
+          npcDialogues: approved.scene.npcDialogues,
+          choices: approved.scene.choices,
+        },
+      });
+    } catch {
+      // best-effort: audit write failure never blocks the game flow
+      deps.logger?.warn("ai_text_audit_write_failed", {});
+    }
+  }
+
   return "saved";
 }
 
 /**
- * 在 AI 预生成叙事队列中查找与 actionSummary 实体精确匹配的条目
+ * Derive a stable trigger value from the structured action summary and pending job.
+ * actionId starting with start_ = initial_opening; talk with utterance = free_text_dialogue;
+ * talk without utterance = talk_choice; others use action type + _action suffix.
+ */
+function deriveSceneTrigger(
+  summary: StructuredActionSummary,
+  job: { actionId: string; utterance?: string },
+): string {
+  if (job.actionId.startsWith("start_")) return "initial_opening";
+  if (summary.kind === "talk") {
+    return job.utterance !== undefined && job.utterance !== "" ? "free_text_dialogue" : "talk_choice";
+  }
+  switch (summary.kind) {
+    case "explore": return "explore_action";
+    case "investigate": return "investigate_action";
+    case "move": return "move_action";
+    case "take_item": return "take_item_action";
+    case "give_item": return "give_item_action";
+    case "attack": return "attack_action";
+    case "battle_action": return "battle_action";
+    case "ack_prologue": return "ack_prologue_action";
+    case "freeform": return "freeform_action";
+    default: return "explore_action";
+  }
+}
+
+/**
  * （investigate→factId，move→locationId）；take_item 等无队列形态。
  * 返回命中的条目；消费时使用 actionKind + 实体 ID 稳定匹配移除恰好一条。
  */
