@@ -328,6 +328,82 @@ describe("buildSceneGenerationContext", () => {
     expect(view.story.currentObjectiveLabel).toBe(context.objectiveTransition.after?.label);
   });
 
+  // ── Task 4：调查方式投影（approach labels + 已结算结果）──────────────────
+
+  function makeInvestigateRecord(): GameRecord {
+    const world = makeWorld();
+    const fact = {
+      factId: asFactId("fact_trace"),
+      text: "泥地上有两行车辙",
+      source: "generated" as const,
+      discovered: false,
+      locationId: asLocationId("loc_1"),
+      investigationLabel: "泥地上的异常痕迹",
+      investigationApproaches: [
+        { approachId: "follow", label: "沿痕迹追查", evidenceQuality: "clean" as const, tensionDelta: 4 },
+        { approachId: "search", label: "翻查附近杂物", hint: "动静较大", evidenceQuality: "noisy" as const, tensionDelta: 12 },
+      ],
+    };
+    const quest = {
+      id: asQuestId("quest_discover"),
+      name: "查明真相",
+      description: "查清车辙的来历",
+      objectives: [{ kind: "discover_fact" as const, factId: fact.factId }],
+      onSuccess: { kind: "advance_story" as const },
+      onFailure: { kind: "closed" as const },
+      tags: [],
+      kind: "main" as const,
+      stage: 1,
+      status: "active" as const,
+    };
+    const worldWithInvestigation = {
+      ...world,
+      worldFacts: [fact],
+      quests: [quest],
+      eventLedger: [
+        ...world.eventLedger,
+        { type: "fact_discovered" as const, factId: fact.factId, occurredAt: "2026-01-02", approachId: "search", evidenceQuality: "noisy" as const, tensionDelta: 12 },
+      ],
+    };
+    const job = makeJob({
+      summary: { kind: "investigate", factId: fact.factId },
+      transition: { before: null, completed: [], after: { questId: quest.id, objectiveIndex: 0, label: "查明真相" }, mode: "unchanged" },
+      beats: [{ beatId: "fact_discovered_0", kind: "fact_discovered", subjectIds: [String(fact.factId)], instruction: `发现了线索：${fact.text}` }],
+    });
+    return makeRecord(true, job, worldWithInvestigation);
+  }
+
+  it("当前 discover_fact 目标提供安全的 approach labels 与结果表现约束（不含事实正文）", () => {
+    const context = buildSceneGenerationContext(makeInvestigateRecord());
+    expect(context.currentInvestigationApproaches).toEqual([
+      { approachId: "follow", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
+      { approachId: "search", label: "翻查附近杂物", hint: "动静较大", evidenceQuality: "noisy", tensionDelta: 12 },
+    ]);
+    const serialized = JSON.stringify(context.currentInvestigationApproaches);
+    expect(serialized).not.toContain("泥地上有两行车辙");
+    expect(serialized).not.toContain("fact_trace");
+  });
+
+  it("investigate job 从 eventLedger 范围内解析已结算的 approach/evidence 结果", () => {
+    const context = buildSceneGenerationContext(makeInvestigateRecord());
+    expect(context.resolvedInvestigation).toEqual({
+      factId: asFactId("fact_trace"),
+      approachId: "search",
+      approachLabel: "翻查附近杂物",
+      evidenceQuality: "noisy",
+      tensionDelta: 12,
+    });
+    const serialized = JSON.stringify(context.resolvedInvestigation);
+    expect(serialized).not.toContain("泥地上有两行车辙");
+    expect(serialized).not.toContain("follow");
+  });
+
+  it("非 investigate 行动不投影 resolvedInvestigation，approach-less 事实不投影 approach labels", () => {
+    const context = buildSceneGenerationContext(makeRecord());
+    expect(context.resolvedInvestigation).toBeUndefined();
+    expect(context.currentInvestigationApproaches).toBeUndefined();
+  });
+
   // ── Task 5：焦点 NPC 隔离上下文 ─────────────────────────────────────────
 
   it("talk 行动投影 focusNpcContext（焦点 NPC 政策 + 本轮关系结果）", () => {

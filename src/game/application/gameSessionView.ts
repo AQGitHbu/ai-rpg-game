@@ -9,7 +9,7 @@ import type { ItemCategory, ItemRarity, ItemStatLine } from "@/game/domain/world
 import { resolveItemPresentation, type ItemIconKey } from "@/game/domain/itemPresentation";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
-import { buildChoiceMap, hasExplorableContent } from "./buildChoiceMap";
+import { buildChoiceMap, hasExplorableContent, currentInvestigationApproachChoices } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
@@ -23,7 +23,7 @@ export type PlayerChoiceView = {
   readonly choiceToken: string;
   readonly label: string;
   readonly hint?: string;
-  readonly presentation: "dialogue" | "travel" | "explore" | "item" | "battle";
+  readonly presentation: "dialogue" | "travel" | "explore" | "item" | "battle" | "investigate";
 };
 
 export type NpcDialogueView = {
@@ -123,6 +123,12 @@ export type GameSessionView = {
     readonly currentObjectiveLabel: string | null;
     /** 当前目标对应的世界行动 opaque token；目标不在当前地点时为 null。 */
     readonly currentObjectiveChoiceToken: string | null;
+    /**
+     * Task 4：当前目标的全部权威行动 token。
+     * discover_fact 多 approach 时 = 每个已审批调查方式各一个 opaque token；
+     * 其余目标 = 单一兼容 token（与 currentObjectiveChoiceToken 相同）或空数组。
+     */
+    readonly currentObjectiveChoiceTokens: readonly string[];
   };
   readonly narrative: {
     readonly mode: string;
@@ -181,8 +187,9 @@ function presentationForAction(action: Action): PlayerChoiceView["presentation"]
     case "attack":
     case "battle_action":
       return "battle";
-    case "explore":
     case "investigate":
+      return "investigate";
+    case "explore":
     case "ack_prologue":
       return "explore";
   }
@@ -314,15 +321,13 @@ function currentObjectiveChoiceToken(
         : null;
     }
     case "discover_fact": {
-      const fact = worldState.worldFacts.find((entry) => entry.factId === objective.factId);
-      return fact?.locationId === worldState.currentLocationId && !fact.discovered
-        ? choice(
-            { type: "investigate", factId: fact.factId },
-            revision,
-            `调查${fact.investigationLabel ?? "现场线索"}`,
-            "explore",
-          ).choiceToken
-        : null;
+      // Task 4：单一兼容 token 取当前事实第一个已审批 approach 的 token；
+      // 无已审批方式（含自动揭示路径）时为 null，全量 token 见
+      // currentObjectiveChoiceTokens。
+      const first = currentInvestigationApproachChoices(worldState, storyState)[0];
+      return first === undefined
+        ? null
+        : choice(first.action, revision, first.approach.label, "investigate").choiceToken;
     }
     case "defeat_enemy": {
       const enemy = worldState.enemies.find((entry) => entry.id === objective.enemyId);
@@ -355,6 +360,12 @@ export function projectGameSessionView(
     ? undefined
     : currentObjectiveQuest?.objectives[currentObjectiveRef.objectiveIndex];
   const currentObjectiveToken = currentObjectiveChoiceToken(worldState, storyState, currentObjective, revision);
+  // Task 4：discover_fact 多 approach 时 = 每个已审批调查方式的 token；
+  // 其余目标保持单一兼容 token（无目标时为空数组）。
+  const currentObjectiveTokens = currentObjective?.kind === "discover_fact"
+    ? currentInvestigationApproachChoices(worldState, storyState)
+      .map(({ action }) => deriveRuntimeChoiceToken(action, revision))
+    : (currentObjectiveToken === null ? [] : [currentObjectiveToken]);
   const currentObjectiveNpcId = currentObjective?.kind === "talk_to_npc"
     ? String(currentObjective.npcId)
     : null;
@@ -384,22 +395,17 @@ export function projectGameSessionView(
     if (hasExplorableContent(worldState, storyState)) {
       locationActions.push(choice({ type: "explore" }, revision, `探索${currentLocation?.name ?? "此地"}`, "explore"));
     }
-    const undiscoveredFacts = worldState.worldFacts.filter((fact) =>
-      fact.locationId === worldState.currentLocationId
-      && !fact.discovered
-      && isObjectiveEntityReleased(worldState, storyState, (objective) =>
-        objective.kind === "discover_fact" && String(objective.factId) === String(fact.factId)),
-    );
-    for (const [index, fact] of undiscoveredFacts.entries()) {
-      if (fact.locationId === worldState.currentLocationId && !fact.discovered) {
-        const suffix = undiscoveredFacts.length > 1 ? ` ${index + 1}` : "";
-        locationActions.push(choice(
-          { type: "investigate", factId: fact.factId },
-          revision,
-          `调查${fact.investigationLabel ?? "现场线索"}${suffix}`,
-          "explore",
-        ));
-      }
+    // 当前 discover_fact 主线目标事实的已审批调查方式 → 每个 approach 一个
+    // 行动按钮；只暴露 label/hint，不泄漏事实正文/方式 id（Task 4）。
+    // 无已审批方式（少于两个 approach 或自动揭示路径）时不投影调查入口。
+    for (const { action, approach } of currentInvestigationApproachChoices(worldState, storyState)) {
+      locationActions.push(choice(
+        action,
+        revision,
+        approach.label,
+        "investigate",
+        approach.hint,
+      ));
     }
     // 正式交谈入口只属于当前权威 talk 目标；其余在场 NPC 一律零回合闲聊展示，
     // 不再提供可提交的 ask 行动。
@@ -691,6 +697,7 @@ export function projectGameSessionView(
       storyProgress: storyState.storyProgress,
       currentObjectiveLabel: currentObjectiveRef?.label ?? null,
       currentObjectiveChoiceToken: currentObjectiveToken,
+      currentObjectiveChoiceTokens: currentObjectiveTokens,
     },
     narrative: {
       mode: storyState.narrative.mode,

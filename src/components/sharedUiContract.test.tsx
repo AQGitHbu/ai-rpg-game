@@ -62,6 +62,7 @@ function buildBuildingView(overrides: {
       currentAct: 1, targetActs: 3, tension: 30, pacingNeed: "reveal", storyProgress: 5,
       currentObjectiveLabel: null, currentObjectiveChoiceToken: null,
       ...overrides.story,
+      currentObjectiveChoiceTokens: [],
     },
     narrative: {
       mode: "offline",

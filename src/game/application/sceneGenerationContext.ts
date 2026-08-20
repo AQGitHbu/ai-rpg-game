@@ -104,6 +104,33 @@ export type ObjectiveTargetRef = {
 };
 
 /**
+ * Task 4：当前 discover_fact 主线目标事实的已审批调查方式（安全标签 + 结果表现
+ * 约束）。只含 approachId/label/hint/evidenceQuality/tensionDelta，不含事实正文；
+ * 供导演预生成调查叙事并评估动静代价。少于两个 approach 的事实（自动揭示路径）
+ * 不投影。
+ */
+export type InvestigationApproachContext = {
+  readonly approachId: string;
+  readonly label: string;
+  readonly hint?: string;
+  readonly evidenceQuality: "clean" | "noisy";
+  readonly tensionDelta: number;
+};
+
+/**
+ * Task 4：本回合已结算的调查方式结果（investigate + player 主动选择时存在）。
+ * 从 job.domainEventRange 覆盖的 eventLedger 中解析 fact_discovered 事件；
+ * 自动揭示（无 approachId）或范围内未命中时不存在。approachLabel 回退"现场调查"。
+ */
+export type ResolvedInvestigationContext = {
+  readonly factId: FactId;
+  readonly approachId: string;
+  readonly approachLabel: string;
+  readonly evidenceQuality: "clean" | "noisy";
+  readonly tensionDelta: number;
+};
+
+/**
  * 从当前权威目标开始的单线链目标投影（Task 1）：只投影 discover_fact /
  * visit_location（含当前目标），供 live prompt 预生成 investigate/move 叙事；
  * 链末或下一目标为分支点时不携带 nextObjectiveEntityName（实体名由服务端
@@ -193,6 +220,10 @@ export type SceneGenerationContext = {
   readonly focusNpcContext?: FocusNpcContext;
   /** Task 6：当前权威目标引用的目标实体（无 after 目标时为 null）。 */
   readonly objectiveTarget: ObjectiveTargetRef | null;
+  /** Task 4：当前 discover_fact 目标事实的已审批调查方式（无正文，供导演预生成调查叙事）。 */
+  readonly currentInvestigationApproaches?: readonly InvestigationApproachContext[];
+  /** Task 4：本回合已结算的调查方式结果（approach 选择 + 证据质量 + 动静代价）。 */
+  readonly resolvedInvestigation?: ResolvedInvestigationContext;
   /**
    * Task 1：从当前权威目标开始的连续单线目标前缀（含当前目标，discover_fact →
    * visit_location，止于 talk_to_npc / defeat_enemy 等分支点）；由
@@ -491,6 +522,50 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
       objective.kind === "defeat_enemy" && String(objective.enemyId) === String(enemy.id)))
     .map((enemy) => enemy.id);
 
+  // Task 4：当前 discover_fact 主线目标事实的已审批调查方式。只从权威目标解析
+  // 安全标签与结果表现约束，绝不携带事实正文（事实正文经强制节拍 instruction
+  // 在场景表演时下发）。少于两个 approach 视为自动揭示路径，不暴露可选方式。
+  const currentInvestigationApproaches = (() => {
+    const after = transition.after;
+    if (after === null) return undefined;
+    const quest = ws.quests.find((entry) => String(entry.id) === String(after.questId));
+    const objective = quest?.objectives[after.objectiveIndex];
+    if (objective?.kind !== "discover_fact") return undefined;
+    const fact = ws.worldFacts.find((entry) => String(entry.factId) === String(objective.factId));
+    const approaches = fact?.investigationApproaches ?? [];
+    if (approaches.length < 2) return undefined;
+    return approaches.map((approach) => ({
+      approachId: approach.approachId,
+      label: approach.label,
+      ...(approach.hint === undefined ? {} : { hint: approach.hint }),
+      evidenceQuality: approach.evidenceQuality,
+      tensionDelta: approach.tensionDelta,
+    }));
+  })();
+
+  // Task 4：本回合已结算的调查方式结果。仅在 investigate 行动（player 主动选择
+  // approach）时存在；自动揭示（无 approachId）或范围外未命中时不存在。
+  const resolvedInvestigation = (() => {
+    if (job.actionSummary.kind !== "investigate") return undefined;
+    const upper = Math.min(job.domainEventRange.toLedgerIndexExclusive, ws.eventLedger.length);
+    for (let index = job.domainEventRange.fromLedgerIndex; index < upper; index += 1) {
+      const event = ws.eventLedger[index];
+      if (event.type !== "fact_discovered") continue;
+      if (String(event.factId) !== String(job.actionSummary.factId)) continue;
+      if (event.approachId === undefined) return undefined;
+      const fact = ws.worldFacts.find((entry) => String(entry.factId) === String(event.factId));
+      const approach = fact?.investigationApproaches?.find((entry) => entry.approachId === event.approachId);
+      return {
+        factId: event.factId,
+        approachId: event.approachId,
+        approachLabel: approach?.label ?? "现场调查",
+        evidenceQuality: event.evidenceQuality ?? "clean",
+        tensionDelta: event.tensionDelta ?? 0,
+      };
+    }
+    return undefined;
+  })();
+
   return {
     gameType: ws.generation.gameType,
     generationSeed: ws.generation.seed,
@@ -577,6 +652,8 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     beatSubjects,
     focusNpcContext,
     objectiveTarget: resolveObjectiveTarget(ws, transition.after),
+    ...(currentInvestigationApproaches === undefined ? {} : { currentInvestigationApproaches }),
+    ...(resolvedInvestigation === undefined ? {} : { resolvedInvestigation }),
     upcomingLinearObjectives: buildUpcomingLinearObjectives(ws, transition.after),
     ...(previousDialogue === undefined ? {} : { previousDialogue }),
   };

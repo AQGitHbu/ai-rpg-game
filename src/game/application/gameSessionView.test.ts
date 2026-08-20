@@ -41,6 +41,127 @@ describe("projectGameSessionView", () => {
     return { choiceToken, sceneId, basedOnRevision, label, action, semanticSummary: `approved:${choiceToken}` };
   }
 
+  // ── Task 4 fixtures：已审批调查方式 / 无调查方式的事实 ─────────────────────
+  const approachFact = {
+    factId: asFactId("fact_approach"),
+    text: "车辙尽头藏着半枚令牌",
+    source: "generated" as const,
+    discovered: false,
+    locationId: asLocationId("loc_1"),
+    investigationLabel: "泥地上的异常痕迹",
+    investigationApproaches: [
+      { approachId: "follow", label: "沿痕迹追查", evidenceQuality: "clean" as const, tensionDelta: 4 },
+      { approachId: "search", label: "翻查附近杂物", hint: "动静较大，可能惊动旁人", evidenceQuality: "noisy" as const, tensionDelta: 12 },
+    ],
+  };
+  const approachlessFact = {
+    factId: asFactId("fact_approachless"),
+    text: "地窖里堆着旧账册",
+    source: "generated" as const,
+    discovered: false,
+    locationId: asLocationId("loc_1"),
+    investigationLabel: "客栈地窖",
+  };
+
+  function makeDiscoverQuest(fact: WorldState["worldFacts"][number]): WorldState["quests"][number] {
+    return {
+      id: asQuestId("quest_discover"),
+      name: "查明真相",
+      description: "查清车辙的来历",
+      objectives: [{ kind: "discover_fact", factId: fact.factId }],
+      onSuccess: { kind: "advance_story" },
+      onFailure: { kind: "closed" },
+      tags: [],
+      kind: "main",
+      stage: 1,
+      status: "active",
+    };
+  }
+
+  function worldWithApproaches(): WorldState {
+    return { ...ws, worldFacts: [approachFact], quests: [makeDiscoverQuest(approachFact)] };
+  }
+
+  function worldWithApproachlessFact(): WorldState {
+    return { ...ws, worldFacts: [approachlessFact], quests: [makeDiscoverQuest(approachlessFact)] };
+  }
+
+  function storyWithDiscoverFact(): StoryState {
+    return ss;
+  }
+
+  function viewWithInvestigationApproaches(): ReturnType<typeof projectGameSessionView> {
+    return projectGameSessionView(worldWithApproaches(), storyWithDiscoverFact(), 0, "ending");
+  }
+
+  describe("Task 4：investigate approach 投影", () => {
+    it("projects two approach choices and no generic investigate button", () => {
+      const view = projectGameSessionView(worldWithApproaches(), storyWithDiscoverFact(), 0, "ending");
+      expect(view.currentLocation.actions.filter((choice) => choice.presentation === "investigate").map((choice) => choice.label))
+        .toEqual(["沿痕迹追查", "翻查附近杂物"]);
+      expect(view.currentLocation.actions.some((choice) => choice.label === "调查现场线索")).toBe(false);
+    });
+
+    it("does not project any investigate action for an approach-less fact", () => {
+      const view = projectGameSessionView(worldWithApproachlessFact(), storyWithDiscoverFact(), 0, "ending");
+      expect(view.currentLocation.actions.filter((choice) => choice.presentation === "investigate")).toHaveLength(0);
+    });
+
+    it("每个 approach 各获一个 opaque token，且同 fact 不同 approach 的 token 互不相同", () => {
+      const view = viewWithInvestigationApproaches();
+      const investigate = view.currentLocation.actions.filter((choice) => choice.presentation === "investigate");
+      expect(investigate).toHaveLength(2);
+      expect(investigate[0]!.choiceToken).not.toBe(investigate[1]!.choiceToken);
+      expect(investigate.every((choice) => /^c_[0-9a-f]{16}$/.test(choice.choiceToken))).toBe(true);
+    });
+
+    it("行动按钮只暴露 label/hint，不泄漏事实正文/approachId/evidenceQuality/tensionDelta", () => {
+      const view = viewWithInvestigationApproaches();
+      const serialized = JSON.stringify(view.currentLocation.actions);
+      expect(serialized).not.toContain("车辙尽头藏着半枚令牌");
+      expect(serialized).not.toContain("follow");
+      expect(serialized).not.toContain("noisy");
+      expect(serialized).not.toContain("tensionDelta");
+      const search = view.currentLocation.actions.find((choice) => choice.label === "翻查附近杂物");
+      expect(search?.hint).toBe("动静较大，可能惊动旁人");
+    });
+
+    it("discover_fact 多 approach 时 currentObjectiveChoiceTokens 返回全部 token，单一兼容 token 取第一个", () => {
+      const view = viewWithInvestigationApproaches();
+      const investigate = view.currentLocation.actions.filter((choice) => choice.presentation === "investigate");
+      expect(view.story.currentObjectiveChoiceTokens).toEqual(investigate.map((choice) => choice.choiceToken));
+      expect(view.story.currentObjectiveChoiceToken).toBe(investigate[0]?.choiceToken ?? null);
+    });
+
+    it("approach-less 事实：currentObjectiveChoiceTokens 为空，单一 token 为 null，行动栏无伪入口", () => {
+      const view = projectGameSessionView(worldWithApproachlessFact(), storyWithDiscoverFact(), 0, "ending");
+      expect(view.story.currentObjectiveChoiceTokens).toEqual([]);
+      expect(view.story.currentObjectiveChoiceToken).toBeNull();
+      expect(view.currentLocation.actions.some((choice) => choice.label === "调查客栈地窖")).toBe(false);
+    });
+
+    it("非 discover_fact 目标仍填充兼容的单一 token（currentObjectiveChoiceTokens 含该 token）", () => {
+      const wsWithQuest: WorldState = {
+        ...ws,
+        quests: [{
+          id: asQuestId("quest_talk"),
+          name: "查明真相",
+          description: "查清矿坑的真相",
+          objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_1") }],
+          onSuccess: { kind: "advance_story" },
+          onFailure: { kind: "closed" },
+          tags: [],
+          kind: "main",
+          stage: 1,
+          status: "active",
+        }],
+      };
+      const view = projectGameSessionView(wsWithQuest, ss, 0, "test-ending-session");
+      expect(view.story.currentObjectiveChoiceTokens).toEqual([view.story.currentObjectiveChoiceToken]);
+      expect(view.story.currentObjectiveChoiceToken).toBe(view.currentLocation.npcs[0]?.talkChoice?.choiceToken ?? null);
+    });
+  });
+
   it("projects player and current location", () => {
     const view = projectGameSessionView(ws, ss, 0, "test-ending-session");
     expect(view.player.name).toBe("侠客");
@@ -826,8 +947,9 @@ describe("projectGameSessionView", () => {
     expect(travel?.choiceToken).toMatch(/^c_[0-9a-f]{16}$/);
     expect(travel?.choiceToken).not.toContain("loc_2");
 
+    // 未发现事实无已审批调查方式 → 不投影 investigate 按钮，只保留观察探索。
     expect(view.currentLocation.actions.map((choice) => choice.presentation)).toEqual([
-      "explore", "explore", "battle",
+      "explore", "battle",
     ]);
     expect(view.obtainableItems).toEqual([
       expect.objectContaining({ name: "铜钥匙", choice: expect.objectContaining({ presentation: "item" }) }),
@@ -882,14 +1004,15 @@ describe("projectGameSessionView", () => {
     expect(view.battle?.controls.every((choice) => executable.has(choice.choiceToken))).toBe(true);
   });
 
-  it("numbers multiple undiscovered investigation entries so the choices remain distinguishable", () => {
+  it("无已审批调查方式的事实不投影 investigate 入口，也不生成编号的伪按钮", () => {
     const facts = [
       { factId: asFactId("fact_a"), text: "暗号一", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") },
       { factId: asFactId("fact_b"), text: "暗号二", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") },
     ];
     const view = projectGameSessionView({ ...ws, worldFacts: facts }, ss, 7, "test-ending-session");
-    expect(view.currentLocation.actions.filter((choice) => choice.presentation === "explore").map((choice) => choice.label)).toContain("调查现场线索 1");
-    expect(view.currentLocation.actions.filter((choice) => choice.presentation === "explore").map((choice) => choice.label)).toContain("调查现场线索 2");
+    expect(view.currentLocation.actions.filter((choice) => choice.presentation === "investigate")).toHaveLength(0);
+    expect(view.currentLocation.actions.some((choice) => choice.label === "调查现场线索 1")).toBe(false);
+    expect(view.currentLocation.actions.some((choice) => choice.label === "调查现场线索 2")).toBe(false);
   });
 
   it("projects focused NPC as exactly two dialogue choices plus custom input", () => {

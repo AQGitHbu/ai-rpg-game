@@ -5,6 +5,7 @@ import {
   buildSelectableSceneCandidates,
   buildSceneChoices,
   formatSceneChoiceLabel,
+  buildInvestigationOutcomeNarrative,
 } from "./deterministicSceneSource";
 import { buildStylePolicy } from "./stylePolicy";
 import { approveScenePerformance } from "./approveAndWriteScene";
@@ -612,6 +613,73 @@ describe("deterministicSceneSource", () => {
     const segment = proposal.segments.find((s) => s.beatId === "fact_discovered_0");
     expect(segment?.text).toContain("泥地里的车轮印向北延伸");
     expect(segment?.text).toContain("接下来去北巷旧道核对现场");
+    const approved = approveScenePerformance({ context, proposal, basedOnRevision: 1, existingCandidateEventPool: [] });
+    expect(approved.ok).toBe(true);
+  });
+
+  // ── Task 4：已结算调查结果的确定性旁白 ──────────────────────────────────
+
+  it("buildInvestigationOutcomeNarrative 组合 采取方式 → 发现事实 → 证据质量/动静代价 → 下一目标", () => {
+    const narrative = buildInvestigationOutcomeNarrative({
+      approachLabel: "翻查附近杂物",
+      evidenceQuality: "noisy",
+      factText: "泥地里的车轮印向北延伸",
+      nextObjectiveLabel: "北巷旧道",
+    });
+    expect(narrative).toContain("翻查附近杂物");
+    expect(narrative).toContain("泥地里的车轮印向北延伸");
+    expect(narrative).toMatch(/动静|惊动/);
+    expect(narrative).toContain("北巷旧道");
+  });
+
+  it("buildInvestigationOutcomeNarrative：clean 与 noisy 的动静代价表达不同", () => {
+    const clean = buildInvestigationOutcomeNarrative({ approachLabel: "沿痕迹追查", evidenceQuality: "clean", factText: "密函露出边角" });
+    const noisy = buildInvestigationOutcomeNarrative({ approachLabel: "翻查附近杂物", evidenceQuality: "noisy", factText: "密函露出边角" });
+    expect(clean).not.toBe(noisy);
+    expect(clean).toMatch(/干净|没有惊动/);
+    expect(noisy).toMatch(/动静|惊动/);
+  });
+
+  it("buildInvestigationOutcomeNarrative：baseNarrative 优先作为已结算叙事，approach/evidence/下一目标随后", () => {
+    const narrative = buildInvestigationOutcomeNarrative({
+      approachLabel: "沿痕迹追查",
+      evidenceQuality: "clean",
+      factText: "泥地里的车轮印向北延伸",
+      baseNarrative: "你蹲下身，把泥土里的车辙与门口的方向核对了一遍。",
+      nextObjectiveLabel: "北巷旧道",
+    });
+    expect(narrative.startsWith("你蹲下身，把泥土里的车辙与门口的方向核对了一遍。")).toBe(true);
+    expect(narrative).toContain("北巷旧道");
+  });
+
+  it("fact_discovered segment 使用已结算的 approach/evidence 组合确定性旁白", async () => {
+    const job = makeJob({
+      eventKind: "investigate",
+      summary: { kind: "investigate", factId: asFactId("fact_1") },
+      beats: [{
+        beatId: "fact_discovered_0",
+        kind: "fact_discovered",
+        subjectIds: ["fact_1"],
+        instruction: "发现了线索：泥地里的车轮印向北延伸",
+      }],
+    });
+    const context: SceneGenerationContext = {
+      ...makeContext(job),
+      objectiveTarget: { questId: "quest_0", objectiveIndex: 2, entityId: "loc_2", entityName: "北巷旧道" },
+      resolvedInvestigation: {
+        factId: asFactId("fact_1"),
+        approachId: "search",
+        approachLabel: "翻查附近杂物",
+        evidenceQuality: "noisy",
+        tensionDelta: 12,
+      },
+    };
+    const proposal = await source.generateScene(context);
+    const segment = proposal.segments.find((s) => s.beatId === "fact_discovered_0");
+    expect(segment?.text).toContain("翻查附近杂物");
+    expect(segment?.text).toContain("泥地里的车轮印向北延伸");
+    expect(segment?.text).toMatch(/动静|惊动/);
+    expect(segment?.text).toContain("北巷旧道");
     const approved = approveScenePerformance({ context, proposal, basedOnRevision: 1, existingCandidateEventPool: [] });
     expect(approved.ok).toBe(true);
   });

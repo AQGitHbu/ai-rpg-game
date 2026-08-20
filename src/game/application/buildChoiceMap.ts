@@ -1,5 +1,5 @@
 import type { Action } from "@/game/domain/action";
-import type { WorldState } from "@/game/domain/worldState";
+import type { WorldState, InvestigationApproach } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { isExpiredCandidate } from "@/game/domain/candidateEvent";
@@ -8,6 +8,38 @@ import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { SKILL_ENERGY_COST } from "@/game/domain/combat";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { isObjectiveEntityReleased } from "@/game/gameplay/rpg/worldEvolution";
+
+/**
+ * Task 4：当前 discover_fact 主线目标事实的已审批调查方式。
+ * 只投影"当前目标"的、位于当前地点、未发现且已释放（含无 reveal 的默认释放）
+ * 的事实，且 approach 数量 ≥ 2 才构成可选的调查入口（与规则层
+ * FACT_NOT_INVESTIGABLE 一致：少于两个方式的事实由自动揭示推进）。
+ * 每个返回项带 opaque investigate Action（factId + approachId），
+ * 客户端只能消费其 runtime token；正文/方式 id 不进入投影。
+ */
+export function currentInvestigationApproachChoices(
+  ws: WorldState,
+  ss: StoryState,
+): readonly { action: Extract<Action, { type: "investigate" }>; approach: InvestigationApproach }[] {
+  const objective = currentObjectiveOf(ws, ss);
+  if (objective === null) return [];
+  const quest = ws.quests.find((entry) => String(entry.id) === String(objective.questId));
+  const target = quest?.objectives[objective.objectiveIndex];
+  if (target?.kind !== "discover_fact") return [];
+  const fact = ws.worldFacts.find((entry) => String(entry.factId) === String(target.factId));
+  if (fact === undefined) return [];
+  const approaches = fact.investigationApproaches ?? [];
+  if (approaches.length < 2) return [];
+  if (fact.locationId !== ws.currentLocationId) return [];
+  if (fact.discovered) return [];
+  if (!isObjectiveEntityReleased(ws, ss, (candidate) =>
+    candidate.kind === "discover_fact" && String(candidate.factId) === String(fact.factId),
+  )) return [];
+  return approaches.map((approach) => ({
+    action: { type: "investigate", factId: fact.factId, approachId: approach.approachId },
+    approach,
+  }));
+}
 
 // ---------------------------------------------------------------------------
 // 服务端 choiceMap 构建器：从当前 WorldState + StoryState 派生所有合法行动的
@@ -113,17 +145,11 @@ export function buildChoiceMap(
       }
     }
 
-    // 当前地点未发现事实 → investigate；正文仍只在行动结算后由场景投影，
-    // 这里只下发不泄漏 factId 的 opaque token。
-    for (const fact of worldState.worldFacts) {
-      if (
-        fact.locationId === worldState.currentLocationId
-        && !fact.discovered
-        && isObjectiveEntityReleased(worldState, storyState, (objective) =>
-          objective.kind === "discover_fact" && String(objective.factId) === String(fact.factId))
-      ) {
-        addRuntimeAction({ type: "investigate", factId: fact.factId });
-      }
+    // 当前 discover_fact 主线目标事实的已审批调查方式 → 每个 approach 一个
+    // 互不相同的 opaque token；客户端只能看到 label/hint，正文与方式 id
+    // 在行动结算后才由场景投影（Task 4）。
+    for (const { action } of currentInvestigationApproachChoices(worldState, storyState)) {
+      addRuntimeAction(action);
     }
 
     // 背包物品 × 在场 NPC → give_item（正式给予入口）
@@ -198,7 +224,11 @@ function isCurrentlyLegalRegistryAction(
     case "explore":
       return hasExplorableContent(worldState, storyState);
     case "investigate":
-      return worldActionMap.has(deriveRuntimeChoiceToken(action, currentRevision));
+      // 只接受当前 discover_fact 目标事实的已审批 approach（Task 4）。
+      return currentInvestigationApproachChoices(worldState, storyState).some((entry) =>
+        String(entry.action.factId) === String(action.factId)
+        && String(entry.action.approachId) === String(action.approachId),
+      );
     case "ack_prologue":
     case "freeform":
       return false;
@@ -240,9 +270,13 @@ export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
   if (ss.narrative.currentScene?.event?.kind === "dialogue") return true;
 
   // 1) 本地点仍有未发现的线索事实（含 NPC 私密事实：探索可引动揭示，不泄漏正文）。
+  //    有已审批调查方式（≥2 条）的事实已有正式调查入口，不再叠加一个无分支的
+  //    explore（避免"调查方式"与"探索"两个意义重叠的按钮）；无方式的事实仍由
+  //    探索观察或规则自动揭示推进。
   if (ws.worldFacts.some((f) =>
     f.locationId === currentId
     && !f.discovered
+    && (f.investigationApproaches ?? []).length < 2
     && isObjectiveEntityReleased(ws, ss, (objective) =>
       objective.kind === "discover_fact" && String(objective.factId) === String(f.factId)),
   )) return true;
@@ -262,6 +296,8 @@ export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
         return fact !== undefined
           && fact.locationId === currentId
           && !fact.discovered
+          // 有已审批调查方式的事实走正式调查入口，不再叠加 explore 死按钮。
+          && (fact.investigationApproaches ?? []).length < 2
           && isObjectiveEntityReleased(ws, ss, (candidate) =>
             candidate.kind === "discover_fact" && String(candidate.factId) === String(o.factId));
       }

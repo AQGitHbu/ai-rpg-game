@@ -247,14 +247,34 @@ function buildSegments(context: SceneGenerationContext): readonly ScenePerforman
         beatId: beat.beatId,
         text: `${completeSceneSentence(beat.instruction)}你收拢呼吸，重新确认眼前留下的线索。`,
       });
-    } else if (beat.kind === "fact_discovered") {
+} else if (beat.kind === "fact_discovered") {
       // Task 3：调查发现的兜底旁白在事实文本（beat instruction）之后追加
       // 由 objectiveTarget 结构化的下一目标动线提示（复用 objectiveHandoffLine
-      // 的派生，不扫描正文猜主题），保证离线兜底也回答“为什么去下一地点”。
-      segments.push({
-        beatId: beat.beatId,
-        text: `${completeSceneSentence(beat.instruction)}${objectiveHandoffLine(context)}`,
-      });
+      // 的派生，不扫描正文猜主题），保证离线兜底也回答"为什么去下一地点"。
+      // Task 4：已结算的 approach 结果（investigate 主动选择）改为确定性组合
+      // 旁白：采取方式 → 发现事实 → 证据质量/动静代价 → 下一目标。
+      const resolved = context.resolvedInvestigation;
+      if (resolved !== undefined) {
+        const factLead = "发现了线索：";
+        const trimmedInstruction = beat.instruction.trim();
+        const factText = trimmedInstruction.startsWith(factLead)
+          ? trimmedInstruction.slice(factLead.length)
+          : beat.instruction;
+        segments.push({
+          beatId: beat.beatId,
+          text: buildInvestigationOutcomeNarrative({
+            approachLabel: resolved.approachLabel,
+            evidenceQuality: resolved.evidenceQuality,
+            factText,
+            ...(context.objectiveTarget === null ? {} : { nextObjectiveLabel: context.objectiveTarget.entityName }),
+          }),
+        });
+      } else {
+        segments.push({
+          beatId: beat.beatId,
+          text: `${completeSceneSentence(beat.instruction)}${objectiveHandoffLine(context)}`,
+        });
+      }
     } else if (beat.kind === "quest_advanced" && context.objectiveTarget !== null) {
       // 幕边界：turn 时刻的下一个目标尚未具象化，节拍指令里没有实体名；
       // 场景装配的预览状态已具象化，此处用权威 objectiveTarget 点名，
@@ -278,6 +298,35 @@ function buildSegments(context: SceneGenerationContext): readonly ScenePerforman
 function completeSceneSentence(text: string): string {
   const trimmed = text.trim();
   return /[。！？]$/u.test(trimmed) ? trimmed : `${trimmed}。`;
+}
+
+/**
+ * Task 4：已结算调查结果的确定性旁白包装。
+ * 组合顺序：采取方式 → 发现事实 → 证据质量/动静代价 → 下一目标。
+ * baseNarrative（Task 5 linearNarrativeQueue 提供的已结算叙事）存在时优先
+ * 作为主体，approach/evidence/next 随后补充。
+ */
+export function buildInvestigationOutcomeNarrative(input: {
+  readonly approachLabel: string;
+  readonly evidenceQuality: "clean" | "noisy";
+  readonly factText: string;
+  readonly baseNarrative?: string;
+  readonly nextObjectiveLabel?: string;
+}): string {
+  const trimmedBase = input.baseNarrative?.trim() ?? "";
+  // Task 5：baseNarrative（已结算的队列叙事）作为主体时，仍需点名所选方式，
+  // 让结果场景始终可读；无 baseNarrative 时沿用 Task 4 的组合句式。
+  const base = trimmedBase !== ""
+    ? `${trimmedBase}你按「${input.approachLabel}」的方式完成了查证。`
+    : `你按「${input.approachLabel}」的方式仔细查证，${input.factText}`;
+  const lead = /[。！？]$/u.test(base) ? base : `${base}。`;
+  const outcome = input.evidenceQuality === "clean"
+    ? "这次查证干净利落，没有惊动任何人。"
+    : "翻找的动静不小，现场留下了动静。";
+  const next = input.nextObjectiveLabel === undefined || input.nextObjectiveLabel.trim() === ""
+    ? "接下来沿着这条线索继续核对。"
+    : `接下来按主线继续核对：${input.nextObjectiveLabel}。`;
+  return `${lead}${outcome}${next}`;
 }
 
 /** 氛围描写：当前地点的最小安全文本；dark 呈现克制的暗色意象（纯函数）。 */
