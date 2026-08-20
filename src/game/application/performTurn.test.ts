@@ -15,7 +15,7 @@ import {
 } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asItemId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asItemId, asFactId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { WorldState } from "@/game/domain/worldState";
@@ -1100,5 +1100,59 @@ describe("performTurn 叙事节拍与目标转换（Task 4）", () => {
     }));
     // 无 active 任务 → 权威目标 null，模式 unchanged
     expect(generation.job.objectiveTransition).toEqual({ before: null, completed: [], after: null, mode: "unchanged" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3：规则层自动揭示——NPC 交接后同一回合自动发现无 approach 的必经事实，
+// 与 npc_met/quest_completed 一起在单次 CAS 提交，job 覆盖完整 domainEventRange。
+// ---------------------------------------------------------------------------
+
+describe("performTurn — 自动揭示必经事实（Task 3）", () => {
+  it("交谈完成交接后同回合自动发现事实并完成任务，单次 CAS 且 job 覆盖自动事件", async () => {
+    const FACT_1_ID = asFactId("fact_1");
+    const world: WorldState = {
+      ...buildWorldState(),
+      worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
+      quests: [{
+        id: asQuestId("quest_0"), name: "查明真相", description: "查清车轮印的来路",
+        objectives: [
+          { kind: "talk_to_npc", npcId: asNpcId("npc_1") },
+          { kind: "discover_fact", factId: FACT_1_ID },
+        ],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 1, status: "active",
+      }],
+    };
+    const { repo, record, applyCalls } = createSpyRepo(world, buildStoryState());
+    const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" };
+
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "act_handoff", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", talkAction]]) },
+      { repository: repo, now: () => "2026-01-02" },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(applyCalls()).toHaveLength(1);
+    const applied = applyCalls()[0]!;
+    // 事实发现、任务完成与 npc_met 同回合按序落账（自动事件无 approach 元数据）
+    expect(applied.nextWorldState.eventLedger.map((event) => event.type)).toEqual([
+      "game_initialized", "npc_met", "fact_discovered", "quest_completed",
+    ]);
+    const autoEvent = applied.nextWorldState.eventLedger.find((event) => event.type === "fact_discovered");
+    if (autoEvent?.type === "fact_discovered") {
+      expect(autoEvent.factId).toBe(FACT_1_ID);
+      expect(autoEvent.approachId).toBeUndefined();
+      expect(autoEvent.evidenceQuality).toBeUndefined();
+      expect(autoEvent.tensionDelta).toBeUndefined();
+    }
+    expect(applied.nextWorldState.worldFacts[0]?.discovered).toBe(true);
+    expect(applied.nextWorldState.quests[0]?.status).toBe("completed");
+    // pending job 覆盖本回合全部 3 个新事件（base ledger 长度为 1）
+    const generation = applied.nextStoryState.narrative.generation;
+    expect(generation.status).toBe("pending");
+    if (generation.status !== "pending") return;
+    expect(generation.job.domainEventRange).toEqual({ fromLedgerIndex: 1, toLedgerIndexExclusive: 4 });
   });
 });

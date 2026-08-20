@@ -8,6 +8,7 @@ export type ValidationCode =
   | "LOCATION_NOT_CONNECTED" | "LOCATION_LOCKED" | "LOCATION_ALREADY_OBSERVED"
   | "UNKNOWN_NPC" | "NPC_NOT_PRESENT" | "NPC_ALREADY_MET"
   | "UNKNOWN_FACT" | "FACT_NOT_INVESTIGABLE" | "FACT_ALREADY_DISCOVERED"
+  | "INVESTIGATION_APPROACH_REQUIRED" | "UNKNOWN_INVESTIGATION_APPROACH"
   | "UNKNOWN_QUEST"
   | "UNKNOWN_DIALOGUE_ACT"
   | "UNKNOWN_ITEM" | "ITEM_NOT_AVAILABLE_HERE" | "ITEM_ALREADY_OWNED" | "ITEM_NOT_OWNED"
@@ -51,6 +52,17 @@ export function validateAction(ws: WorldState, action: Action): ValidateResult {
       const fact = ws.worldFacts.find((f) => f.factId === action.factId);
       if (fact === undefined) return { ok: false, code: "UNKNOWN_FACT", params: { factId: String(action.factId) } };
       if (fact.discovered) return { ok: false, code: "FACT_ALREADY_DISCOVERED", params: {} };
+      // 只可调查当前地点的事实；无 investigationApproaches 的事实属于规则自动揭示
+      // 路径（FACT_NOT_INVESTIGABLE），玩家不得直接调查。
+      if (fact.locationId !== ws.currentLocationId) return { ok: false, code: "FACT_NOT_INVESTIGABLE", params: {} };
+      const approaches = fact.investigationApproaches ?? [];
+      if (approaches.length < 2) return { ok: false, code: "FACT_NOT_INVESTIGABLE", params: {} };
+      if (action.approachId === undefined) {
+        return { ok: false, code: "INVESTIGATION_APPROACH_REQUIRED", params: { factId: String(action.factId) } };
+      }
+      if (!approaches.some((entry) => entry.approachId === action.approachId)) {
+        return { ok: false, code: "UNKNOWN_INVESTIGATION_APPROACH", params: { factId: String(action.factId), approachId: action.approachId } };
+      }
       return { ok: true };
     }
     case "take_item": {

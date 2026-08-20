@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { validateAction } from "./validateAction";
 import { createInitialWorldState, appendEnemy, appendNpc, type LocationEntry, type EnemyEntry, type NpcEntry } from "@/game/domain/worldState";
-import { asLocationId, asNpcId, asEnemyId, asGenerationId, asItemId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asEnemyId, asGenerationId, asItemId, asFactId } from "@/game/domain/worldEntity";
+import type { WorldState } from "@/game/domain/worldState";
 
 function makeWorldWithEnemy() {
   const startingLocation: LocationEntry = {
@@ -190,5 +191,83 @@ describe("validateAction — battle_action", () => {
       expect(validateAction(withGift, { type: "give_item", itemId: asItemId("item_none"), npcId: npc.id }).ok).toBe(false);
       expect(validateAction(withGift, { type: "give_item", itemId: item.id, npcId: asNpcId("npc_absent") }).ok).toBe(false);
     });
+  });
+});
+
+describe("validateAction — investigate", () => {
+  const FACT_1_ID = asFactId("fact_1");
+  const investigateLoc: LocationEntry = {
+    id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
+    connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+  };
+  function worldWithApproaches(): WorldState {
+    const base = createInitialWorldState({
+      generation: { generationId: asGenerationId("gen_test"), seed: "test", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: investigateLoc,
+      startingItemIds: [],
+    });
+    return {
+      ...base,
+      worldFacts: [{
+        factId: FACT_1_ID,
+        text: "车轮印",
+        source: "generated",
+        discovered: false,
+        locationId: asLocationId("loc_1"),
+        investigationApproaches: [
+          { approachId: "careful", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
+          { approachId: "risky", label: "翻查附近杂物", evidenceQuality: "noisy", tensionDelta: 12 },
+        ],
+      }],
+    };
+  }
+
+  it("requires an approved approach when a fact has multiple investigation approaches", () => {
+    const result = validateAction(worldWithApproaches(), { type: "investigate", factId: FACT_1_ID });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("INVESTIGATION_APPROACH_REQUIRED");
+  });
+
+  it("rejects an unknown approach id", () => {
+    const result = validateAction(worldWithApproaches(), { type: "investigate", factId: FACT_1_ID, approachId: "not_approved" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("UNKNOWN_INVESTIGATION_APPROACH");
+  });
+
+  it("accepts an approved approach for a fact at the current location", () => {
+    const result = validateAction(worldWithApproaches(), { type: "investigate", factId: FACT_1_ID, approachId: "risky" });
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects investigate on an approach-less fact as not investigable", () => {
+    const ws: WorldState = {
+      ...worldWithApproaches(),
+      worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
+    };
+    const result = validateAction(ws, { type: "investigate", factId: FACT_1_ID, approachId: "risky" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("FACT_NOT_INVESTIGABLE");
+  });
+
+  it("rejects investigate on a fact at another location", () => {
+    const ws: WorldState = { ...worldWithApproaches(), currentLocationId: asLocationId("loc_2") };
+    const result = validateAction(ws, { type: "investigate", factId: FACT_1_ID, approachId: "risky" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("FACT_NOT_INVESTIGABLE");
+  });
+
+  it("keeps rejecting already discovered facts without a new code", () => {
+    const ws: WorldState = {
+      ...worldWithApproaches(),
+      worldFacts: [{
+        factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: true,
+        locationId: asLocationId("loc_1"),
+        investigationApproaches: worldWithApproaches().worldFacts[0]?.investigationApproaches,
+      }],
+    };
+    const result = validateAction(ws, { type: "investigate", factId: FACT_1_ID, approachId: "risky" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("FACT_ALREADY_DISCOVERED");
   });
 });

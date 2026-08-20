@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { resolveByType } from "./resolveByType";
-import { createInitialWorldState, appendLocation, appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
-import { asLocationId, asNpcId, asItemId, asFactId, asGenerationId, asEnemyId } from "@/game/domain/worldEntity";
+import { resolveByType, autoResolveCurrentInvestigation } from "./resolveByType";
+import { updateStoryMetrics } from "./updateStoryMetrics";
+import { createInitialWorldState, appendLocation, appendNpc, type LocationEntry, type NpcEntry, type WorldState } from "@/game/domain/worldState";
+import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
+import { asLocationId, asNpcId, asItemId, asFactId, asGenerationId, asEnemyId, asQuestId } from "@/game/domain/worldEntity";
 
 describe("resolveByType", () => {
   const loc1: LocationEntry = {
@@ -253,5 +255,187 @@ describe("resolveByType — attack", () => {
         expect(result.nextWorldState.inventory).toContain(item.id);
       }
     });
+  });
+});
+
+describe("resolveByType — investigate approaches", () => {
+  const FACT_1_ID = asFactId("fact_1");
+  const approachLoc: LocationEntry = {
+    id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
+    connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+  };
+  const deps = { now: () => "2026-01-01", actionId: "act_x", turnNumber: 1 };
+
+  function worldWithApproaches(): WorldState {
+    const base = createInitialWorldState({
+      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: approachLoc,
+      startingItemIds: [],
+    });
+    return {
+      ...base,
+      worldFacts: [{
+        factId: FACT_1_ID,
+        text: "车轮印",
+        source: "generated",
+        discovered: false,
+        locationId: asLocationId("loc_1"),
+        investigationApproaches: [
+          { approachId: "careful", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
+          { approachId: "risky", label: "翻查附近杂物", evidenceQuality: "noisy", tensionDelta: 12 },
+        ],
+      }],
+    };
+  }
+
+  function worldWithApproachlessFact(): WorldState {
+    return {
+      ...worldWithApproaches(),
+      worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
+      quests: [{
+        id: asQuestId("quest_fact"), name: "追查线索", description: "查明车轮印的来路",
+        objectives: [{ kind: "discover_fact", factId: FACT_1_ID }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 1, status: "active",
+      }],
+    };
+  }
+
+  function storyWithDiscoverFact(): StoryState {
+    return createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 1, events: 0 } });
+  }
+
+  it("records clean versus noisy evidence and applies the declared tension cost", () => {
+    const result = resolveByType(worldWithApproaches(), {
+      type: "investigate", factId: FACT_1_ID, approachId: "risky",
+    }, deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("investigate should succeed");
+    expect(result.events[0]).toMatchObject({
+      type: "fact_discovered", approachId: "risky", evidenceQuality: "noisy", tensionDelta: 12,
+    });
+    const nextStory = updateStoryMetrics(storyWithDiscoverFact(), result.events);
+    expect(nextStory.tension).toBeGreaterThan(storyWithDiscoverFact().tension);
+  });
+
+  it("writes clean evidence with a small tension cost and marks the fact discovered", () => {
+    const result = resolveByType(worldWithApproaches(), {
+      type: "investigate", factId: FACT_1_ID, approachId: "careful",
+    }, deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.events[0]).toMatchObject({
+        type: "fact_discovered", approachId: "careful", evidenceQuality: "clean", tensionDelta: 4,
+      });
+      expect(result.nextWorldState.worldFacts[0]?.discovered).toBe(true);
+      expect(result.stateChanges.some((change) => change.path.includes("discovered"))).toBe(true);
+      expect(result.nextWorldState.eventLedger.length).toBe(worldWithApproaches().eventLedger.length + 1);
+    }
+  });
+});
+
+describe("autoResolveCurrentInvestigation", () => {
+  const FACT_1_ID = asFactId("fact_1");
+  const approachLoc: LocationEntry = {
+    id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
+    connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+  };
+
+  function worldWithApproaches(): WorldState {
+    const base = createInitialWorldState({
+      generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: approachLoc,
+      startingItemIds: [],
+    });
+    return {
+      ...base,
+      worldFacts: [{
+        factId: FACT_1_ID,
+        text: "车轮印",
+        source: "generated",
+        discovered: false,
+        locationId: asLocationId("loc_1"),
+        investigationApproaches: [
+          { approachId: "careful", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
+          { approachId: "risky", label: "翻查附近杂物", evidenceQuality: "noisy", tensionDelta: 12 },
+        ],
+      }],
+    };
+  }
+
+  function worldWithApproachlessFact(): WorldState {
+    return {
+      ...worldWithApproaches(),
+      worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
+      quests: [{
+        id: asQuestId("quest_fact"), name: "追查线索", description: "查明车轮印的来路",
+        objectives: [{ kind: "discover_fact", factId: FACT_1_ID }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 1, status: "active",
+      }],
+    };
+  }
+
+  function storyWithDiscoverFact(): StoryState {
+    return createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 1, events: 0 } });
+  }
+
+  it("automatically discovers an approach-less fact at a reveal boundary without exposing a player action", () => {
+    const result = autoResolveCurrentInvestigation(worldWithApproachlessFact(), storyWithDiscoverFact());
+    expect(result.events).toContainEqual(expect.objectContaining({ type: "fact_discovered", factId: FACT_1_ID }));
+    expect(result.stateChanges.some((change) => change.path.includes("discovered"))).toBe(true);
+  });
+
+  it("emits the automatic event with omitted approach metadata and zero extra tension", () => {
+    const result = autoResolveCurrentInvestigation(worldWithApproachlessFact(), storyWithDiscoverFact());
+    const autoEvent = result.events[0];
+    expect(autoEvent).toMatchObject({ type: "fact_discovered", factId: FACT_1_ID });
+    if (autoEvent?.type === "fact_discovered") {
+      expect(autoEvent.approachId).toBeUndefined();
+      expect(autoEvent.evidenceQuality).toBeUndefined();
+      expect(autoEvent.tensionDelta).toBeUndefined();
+    }
+    expect(updateStoryMetrics(storyWithDiscoverFact(), result.events).tension).toBe(42); // 30 + 12
+  });
+
+  it("returns no-op for a non-discover_fact current objective", () => {
+    const ws: WorldState = {
+      ...worldWithApproachlessFact(),
+      quests: [{
+        id: asQuestId("quest_talk"), name: "交谈", description: "与老板交谈",
+        objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_1") }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 1, status: "active",
+      }],
+    };
+    const result = autoResolveCurrentInvestigation(ws, storyWithDiscoverFact());
+    expect(result.events).toEqual([]);
+    expect(result.nextWorldState).toBe(ws);
+  });
+
+  it("returns no-op when the approach-less fact is already discovered", () => {
+    const ws: WorldState = {
+      ...worldWithApproachlessFact(),
+      worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: true, locationId: asLocationId("loc_1") }],
+    };
+    const result = autoResolveCurrentInvestigation(ws, storyWithDiscoverFact());
+    expect(result.events).toEqual([]);
+  });
+
+  it("returns no-op when the current fact has approved approaches (player path only)", () => {
+    const ws: WorldState = {
+      ...worldWithApproaches(),
+      quests: [{
+        id: asQuestId("quest_fact"), name: "追查线索", description: "查明车轮印的来路",
+        objectives: [{ kind: "discover_fact", factId: FACT_1_ID }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 1, status: "active",
+      }],
+    };
+    const result = autoResolveCurrentInvestigation(ws, storyWithDiscoverFact());
+    expect(result.events).toEqual([]);
+    expect(result.nextWorldState).toBe(ws);
   });
 });

@@ -9,7 +9,7 @@ import type { TurnResolution } from "@/game/domain/turnResolution";
 import { createTurnResolution } from "@/game/domain/turnResolution";
 import type { ValidationCode } from "./validateAction";
 import { validateAction } from "./validateAction";
-import { resolveByType } from "./resolveByType";
+import { resolveByType, autoResolveCurrentInvestigation } from "./resolveByType";
 import { reconcileQuests } from "./reconcileQuests";
 import { resolveEnding } from "./resolveEnding";
 import { updateStoryMetrics } from "./updateStoryMetrics";
@@ -163,7 +163,7 @@ export function resolveTurn(
   const dialogueStoryState = advanceDialogueSession(propagatedWs, storyState, action);
   const dialogueSession = dialogueStoryState.narrative.dialogueSession;
   const dialogueSessionAdvanced = dialogueStoryState !== storyState;
-  const quests = reconcileQuests(propagatedWs, deps, !dialogueSessionAdvanced || dialogueSession === undefined
+  let quests = reconcileQuests(propagatedWs, deps, !dialogueSessionAdvanced || dialogueSession === undefined
     ? undefined
     : {
         talkToNpcSession: {
@@ -173,6 +173,17 @@ export function resolveTurn(
       });
   // 初步 domainEvents：resolver + quest（ending 事件在 Step 5 结算后追加）
   const domainEvents: GameEvent[] = [...resolved.events, ...quests.events];
+
+  // Step 1b: 自动揭示——reconcile 后的当前主线首目标是当前地点、无 approach 的
+  // discover_fact 时，本回合自动发现该事实（最多一个事实目标），并为该自动事实
+  // 只再执行一次 quest reconciliation。自动事件、目标推进、张力和 eventLedger
+  // 仍属于同一个规则回合/CAS；触发条件覆盖所有成功 action 类型。
+  const autoInvestigation = autoResolveCurrentInvestigation(quests.nextWorldState, dialogueStoryState, { now: deps.now });
+  if (autoInvestigation.events.length > 0) {
+    domainEvents.push(...autoInvestigation.events);
+    quests = reconcileQuests(autoInvestigation.nextWorldState, deps);
+    domainEvents.push(...quests.events);
+  }
 
   // Step 2: 幕推进 + storyProgress + endingAllowed 推导（§13.1 在 resolveEnding 之前）
   const progression = advanceStoryProgression(

@@ -3,9 +3,11 @@ import { findLocation, findNpc, findItem } from "@/game/domain/worldState";
 import type { Action } from "@/game/domain/action";
 import type { GameEvent } from "@/game/domain/events";
 import type { ResolvedEventStatus, StateChange, FactChange } from "@/game/domain/resolvedEvent";
+import type { StoryState } from "@/game/domain/storyState";
 import { startBattle, battleAction } from "./battleResolver";
 import { updateNpcMemory } from "./updateNpcMemory";
 import { resolveDialogue } from "@/game/gameplay/rpg/dialogue";
+import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 
 export type ResolveResult = {
   readonly ok: true;
@@ -104,22 +106,10 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
       };
     }
     case "investigate": {
-      const event: GameEvent = { type: "fact_discovered", factId: action.factId, occurredAt };
-      const nextWs: WorldState = {
-        ...ws,
-        worldFacts: ws.worldFacts.map((f) => f.factId === action.factId ? { ...f, discovered: true } : f),
-        eventLedger: [...ws.eventLedger, event],
-      };
-      const stateChanges: StateChange[] = [
-        { path: `worldFacts[${String(action.factId)}].discovered`, description: `发现线索`, operation: "set" },
-      ];
-      // 产出 FactChange：玩家发现事实，但不自动传播给当前地点所有已 met NPC
-      // （§14.3：不得把"在场"假设为全地点已 met NPC；investigate 未定义在场见证者，
-      // 故 audience 为空 → 不向任何 NPC 自动传播）。
-      const facts: FactChange[] = [
-        { factId: action.factId, change: "discovered", source: "scene_witness" },
-      ];
-      return { ok: true, nextWorldState: nextWs, events: [event], feedback: "你调查了这条线索。", status: "success", stateChanges, facts };
+      const source: FactDiscoverySource = action.approachId === undefined
+        ? { kind: "automatic" }
+        : { kind: "player", approachId: action.approachId };
+      return resolveFactDiscovery(ws, action, source, { now: deps.now });
     }
     case "take_item": {
       const event: GameEvent = { type: "item_obtained", itemId: action.itemId, locationId: ws.currentLocationId, occurredAt };
@@ -193,4 +183,111 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
     default:
       return { ok: false, feedback: "此行动类型暂不支持。" };
   }
+}
+
+/**
+ * 事实发现的封闭来源：玩家选择已审批调查方式，或规则在揭示边界自动发现。
+ * 客户端不得自造 approachId——只能来自服务端已审批调查方式的 choice token 派生。
+ */
+export type FactDiscoverySource =
+  | { readonly kind: "player"; readonly approachId: string }
+  | { readonly kind: "automatic" };
+
+/**
+ * 纯规则的事实发现结算：更新 discovered、追加 fact_discovered 事件、产生 StateChange，
+ * 与 resolveByType 相同返回形状，绝不执行持久化。
+ * player source 写入所选 approach 的 evidence/tension；automatic source 只写基础
+ * 事实事件（省略 approach 元数据、零额外张力）。
+ */
+export function resolveFactDiscovery(
+  ws: WorldState,
+  action: Extract<Action, { readonly type: "investigate" }>,
+  source: FactDiscoverySource,
+  deps: { readonly now: () => string },
+): ResolveResult {
+  const occurredAt = deps.now();
+  const fact = ws.worldFacts.find((f) => f.factId === action.factId);
+  if (fact === undefined) return { ok: false, feedback: "未知线索。" };
+  if (fact.discovered) return { ok: false, feedback: "这条线索已经调查过了。" };
+
+  const approach = source.kind === "player"
+    ? fact.investigationApproaches?.find((entry) => entry.approachId === source.approachId)
+    : undefined;
+  if (source.kind === "player" && approach === undefined) return { ok: false, feedback: "未知的调查方式。" };
+
+  const event: GameEvent = {
+    type: "fact_discovered",
+    factId: action.factId,
+    occurredAt,
+    ...(approach === undefined
+      ? {}
+      : {
+          approachId: approach.approachId,
+          evidenceQuality: approach.evidenceQuality,
+          tensionDelta: approach.tensionDelta,
+        }),
+  };
+  const nextWs: WorldState = {
+    ...ws,
+    worldFacts: ws.worldFacts.map((f) => f.factId === action.factId ? { ...f, discovered: true } : f),
+    eventLedger: [...ws.eventLedger, event],
+  };
+  const stateChanges: StateChange[] = [
+    { path: `worldFacts[${String(action.factId)}].discovered`, description: `发现线索`, operation: "set" },
+  ];
+  // 玩家发现事实，但不自动传播给当前地点所有已 met NPC（§14.3：investigate 未定义
+  // 在场见证者，audience 为空 → 不向任何 NPC 自动传播）。
+  const facts: FactChange[] = [
+    { factId: action.factId, change: "discovered", source: "scene_witness" },
+  ];
+  return { ok: true, nextWorldState: nextWs, events: [event], feedback: "你调查了这条线索。", status: "success", stateChanges, facts };
+}
+
+/**
+ * 自动揭示的封闭结算结果：no-op 时 events 为空且返回同一 worldState 对象引用。
+ */
+export type AutoResolveInvestigationResult = {
+  readonly nextWorldState: WorldState;
+  readonly events: readonly GameEvent[];
+  readonly stateChanges: readonly StateChange[];
+  readonly facts: readonly FactChange[];
+};
+
+/**
+ * 纯规则的有界辅助：当前主线首目标是当前地点、无 approach 的 discover_fact 时，
+ * 返回一次 automatic 事实发现结算；否则返回 no-op。
+ * 不运行任务 reconciliation、不自行更新 ledger、不创建 pending job（由 resolveTurn 编排）。
+ */
+export function autoResolveCurrentInvestigation(
+  worldState: WorldState,
+  storyState: StoryState,
+  deps?: { readonly now: () => string },
+): AutoResolveInvestigationResult {
+  const noOp: AutoResolveInvestigationResult = {
+    nextWorldState: worldState,
+    events: [],
+    stateChanges: [],
+    facts: [],
+  };
+  const objective = currentObjectiveOf(worldState, storyState);
+  if (objective === null) return noOp;
+  const quest = worldState.quests.find((entry) => String(entry.id) === String(objective.questId));
+  const target = quest?.objectives[objective.objectiveIndex];
+  if (target === undefined || target.kind !== "discover_fact") return noOp;
+  const fact = worldState.worldFacts.find((f) => f.factId === target.factId);
+  if (fact === undefined || fact.discovered) return noOp;
+  // 旧档案事实可能缺 locationId（Task 6 线性模式 legacy_fact 兼容）：视为当前地点。
+  if (fact.locationId !== undefined && String(fact.locationId) !== String(worldState.currentLocationId)) return noOp;
+  const approaches = fact.investigationApproaches ?? [];
+  if (approaches.length >= 2) return noOp;
+
+  const action: Extract<Action, { readonly type: "investigate" }> = { type: "investigate", factId: fact.factId };
+  const resolved = resolveFactDiscovery(worldState, action, { kind: "automatic" }, { now: deps?.now ?? (() => "") });
+  if (!resolved.ok) return noOp;
+  return {
+    nextWorldState: resolved.nextWorldState,
+    events: resolved.events,
+    stateChanges: resolved.stateChanges,
+    facts: resolved.facts,
+  };
 }

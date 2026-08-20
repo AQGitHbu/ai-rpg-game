@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { ruleEngine, resolveTurn } from "./index";
-import { createInitialWorldState, appendNpc, appendLocation, type LocationEntry, type NpcEntry, type EnemyEntry } from "@/game/domain/worldState";
+import { createInitialWorldState, appendNpc, appendLocation, type LocationEntry, type NpcEntry, type EnemyEntry, type WorldState } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, type QuestId, type EndingId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asFactId, type QuestId, type EndingId, type FactId } from "@/game/domain/worldEntity";
 import { asTurnId } from "@/game/domain/events";
 
 describe("ruleEngine facade", () => {
@@ -506,5 +506,125 @@ describe("candidate reaction events integrate after player action (Task 20)", ()
     expect(remainingIds.length).toBe(1);
     // 已批准者从池移除
     expect(remainingIds).not.toContain(activated[0]!.candidateId);
+  });
+});
+
+describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", () => {
+  const loc1: LocationEntry = {
+    id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
+    connectedLocationIds: [asLocationId("loc_2")], npcIds: [], availableItemIds: [], tags: [],
+  };
+  const loc2: LocationEntry = {
+    id: asLocationId("loc_2"), name: "街道", description: "t", kind: "main",
+    connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
+  };
+  const baseWs = createInitialWorldState({
+    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
+    startingLocation: loc1,
+    startingItemIds: [],
+  });
+  const ws = { ...appendLocation(baseWs, loc2), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
+  const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
+  const deps = { now: () => "2026-01-01" };
+  const FACT_1_ID = asFactId("fact_1");
+  const FACT_2_ID = asFactId("fact_2");
+
+  function discoverFactQuest(questId: string, factIds: readonly FactId[]): WorldState["quests"][number] {
+    return {
+      id: asQuestId(questId), name: "追查线索", description: "查明车轮印的来路",
+      objectives: factIds.map((factId) => ({ kind: "discover_fact", factId })),
+      onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+      tags: [], kind: "main", stage: 1, status: "active",
+    };
+  }
+
+  it("任意成功行动后，同回合自动揭示当前地点无 approach 事实并完成其目标", () => {
+    const autoWs: WorldState = {
+      ...ws,
+      worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
+      quests: [discoverFactQuest("quest_auto", [FACT_1_ID])],
+    };
+    const result = resolveTurn(autoWs, ss, { type: "explore" }, "act_auto", 0, asTurnId("turn_auto"), "fixed_choice", deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("explore should succeed");
+    const r = result.resolution;
+    const types = r.domainEvents.map((e) => e.type);
+    expect(types).toContain("fact_discovered");
+    expect(types).toContain("quest_completed");
+    expect(r.domainEvents.find((e) => e.type === "fact_discovered")).toMatchObject({ type: "fact_discovered", factId: FACT_1_ID });
+    expect(r.nextWorldState.worldFacts[0]?.discovered).toBe(true);
+    expect(r.nextWorldState.quests[0]?.status).toBe("completed");
+    expect(r.nextStoryState.tension).toBe(50); // 30 + 12 (fact_discovered) + 8 (quest_completed)
+    expect(r.nextWorldState.eventLedger).toEqual([...autoWs.eventLedger, ...r.domainEvents]);
+  });
+
+  it("同一回合最多自动揭示一个事实目标", () => {
+    const autoWs: WorldState = {
+      ...ws,
+      worldFacts: [
+        { factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") },
+        { factId: FACT_2_ID, text: "脚印", source: "generated", discovered: false, locationId: asLocationId("loc_1") },
+      ],
+      quests: [discoverFactQuest("quest_auto", [FACT_1_ID, FACT_2_ID])],
+    };
+    const result = resolveTurn(autoWs, ss, { type: "explore" }, "act_auto2", 0, asTurnId("turn_auto2"), "fixed_choice", deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("explore should succeed");
+    const r = result.resolution;
+    expect(r.domainEvents.filter((e) => e.type === "fact_discovered")).toHaveLength(1);
+    expect(r.nextWorldState.quests[0]?.status).toBe("active");
+    expect(r.nextWorldState.worldFacts[1]?.discovered).toBe(false);
+  });
+
+  it("有已审批 approach 的事实不自动揭示，留待玩家调查", () => {
+    const autoWs: WorldState = {
+      ...ws,
+      worldFacts: [{
+        factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1"),
+        investigationApproaches: [
+          { approachId: "careful", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
+          { approachId: "risky", label: "翻查附近杂物", evidenceQuality: "noisy", tensionDelta: 12 },
+        ],
+      }],
+      quests: [discoverFactQuest("quest_auto", [FACT_1_ID])],
+    };
+    const result = resolveTurn(autoWs, ss, { type: "explore" }, "act_auto3", 0, asTurnId("turn_auto3"), "fixed_choice", deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("explore should succeed");
+    const r = result.resolution;
+    expect(r.domainEvents.some((e) => e.type === "fact_discovered")).toBe(false);
+    expect(r.nextWorldState.worldFacts[0]?.discovered).toBe(false);
+    expect(r.nextWorldState.quests[0]?.status).toBe("active");
+  });
+
+  it("当前目标不是 discover_fact 时不自动揭示", () => {
+    const autoWs: WorldState = {
+      ...ws,
+      worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
+      quests: [{
+        id: asQuestId("quest_talk"), name: "交谈", description: "与老板交谈",
+        objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_1") }],
+        onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+        tags: [], kind: "main", stage: 1, status: "active",
+      }],
+    };
+    const result = resolveTurn(autoWs, ss, { type: "explore" }, "act_auto4", 0, asTurnId("turn_auto4"), "fixed_choice", deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("explore should succeed");
+    expect(result.resolution.domainEvents.some((e) => e.type === "fact_discovered")).toBe(false);
+  });
+
+  it("其它地点的事实不自动揭示", () => {
+    const autoWs: WorldState = {
+      ...ws,
+      worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_2") }],
+      quests: [discoverFactQuest("quest_auto", [FACT_1_ID])],
+    };
+    const result = resolveTurn(autoWs, ss, { type: "explore" }, "act_auto5", 0, asTurnId("turn_auto5"), "fixed_choice", deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("explore should succeed");
+    expect(result.resolution.domainEvents.some((e) => e.type === "fact_discovered")).toBe(false);
+    expect(result.resolution.nextWorldState.worldFacts[0]?.discovered).toBe(false);
   });
 });

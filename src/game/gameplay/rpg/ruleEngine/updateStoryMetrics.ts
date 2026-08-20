@@ -29,7 +29,11 @@ export function updateStoryMetrics(prev: StoryState, newEvents: readonly GameEve
               ? TENSION_CHANGES.battle_resolved_withdraw
               : TENSION_CHANGES.battle_resolved_defeat;
         break;
-      case "fact_discovered": tension += TENSION_CHANGES.fact_discovered; break;
+      case "fact_discovered":
+        // 保留既有基础张力 12，并加上所选调查方式的额外张力（缺省/自动揭示为 0）；
+        // evidence quality 随事件留在 event ledger，供后续 narrative context 使用。
+        tension += TENSION_CHANGES.fact_discovered + (event.tensionDelta ?? 0);
+        break;
       case "quest_completed": tension += TENSION_CHANGES.quest_completed; break;
       case "npc_met": tension += TENSION_CHANGES.npc_met; break;
     }
