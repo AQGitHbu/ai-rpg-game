@@ -8,9 +8,11 @@ import {
 import type { GameLogger } from "@/game/logging";
 import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
 import { createProviderRequestOptions, type ProviderJsonMode, type ProviderThinking } from "./providerRequestOptions";
+import type { AiTextAuditContext, AiTextAuditRecorder, AiTextAuditRequestOptions, AiTextAuditRole } from "./textAuditTypes";
 
 export const RPG_AI_ROLES = ["intent", "opening", "scene", "world"] as const;
-export type RpgAiRole = (typeof RPG_AI_ROLES)[number];
+/** Reuses the AiTextAuditRole union from textAuditTypes.ts; textAuditTypes never imports rpgAiClient, eliminating a type-cycle. */
+export type RpgAiRole = AiTextAuditRole;
 export type RpgAiThinking = ProviderThinking;
 
 export type RpgAiRolePolicy = Readonly<{
@@ -63,7 +65,7 @@ export const RPG_AI_DEFAULT_POLICIES: Readonly<Record<RpgAiRole, RpgAiRolePolicy
 };
 
 export type RpgAiClient = Readonly<{
-  complete(role: RpgAiRole, messages: readonly AiMessage[]): Promise<AiCompletionResult>;
+  complete(role: RpgAiRole, messages: readonly AiMessage[], context?: AiTextAuditContext): Promise<AiCompletionResult>;
   policy(role: RpgAiRole): RpgAiRolePolicy;
 }>;
 
@@ -72,6 +74,7 @@ export type CreateRpgAiClientOptions = Readonly<{
   readonly config: AiTransportConfig;
   readonly logger?: Pick<GameLogger, "warn">;
   readonly policies?: RpgAiRolePolicyOverrides;
+  readonly auditRecorder?: AiTextAuditRecorder;
 }>;
 
 const RETRYABLE_ROLE_CODES = new Set([
@@ -93,18 +96,35 @@ function mergePolicies(overrides: RpgAiRolePolicyOverrides | undefined): Record<
 /**
  * One RPG-local client is the only owner of provider request options and
  * retry policy. Sources keep prompt/schema/fallback responsibilities only.
+ * When an auditRecorder is provided, every transport.complete call is recorded
+ * with full messages and model output. Audit write failures never change the
+ * return result.
  */
 export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClient {
   const policies = mergePolicies(options.policies);
+  const audit = options.auditRecorder;
+
+  function buildAuditOptions(): AiTextAuditRequestOptions {
+    // Audit options are derived from the policy, not from transport config.
+    // No apiKey, Authorization, baseUrl, AbortSignal or extraBody are written.
+    return {
+      // timeoutMs, temperature, maxTokens, jsonMode, thinking are derived
+      // from the role policy when recording; here we return an empty object
+      // and let the caller's context carry what matters.
+    };
+  }
 
   return {
     policy(role) {
       return policies[role];
     },
 
-    async complete(role, messages) {
+    async complete(role, messages, auditContext) {
       const policy = policies[role];
       const maxAttempts = Math.max(1, Math.floor(policy.maxAttempts));
+      const callId = typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `call-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         const result = await options.transport.complete(
@@ -117,6 +137,30 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
             policy.thinking,
           ),
         );
+
+        // Record the audit entry for this attempt. Best-effort: never throws.
+        if (audit?.enabled && auditContext !== undefined) {
+          const requestOptions: AiTextAuditRequestOptions = {
+            timeoutMs: policy.timeoutMs,
+            jsonMode: policy.jsonMode,
+            thinking: policy.thinking,
+            ...(policy.maxTokens !== undefined ? { maxTokens: policy.maxTokens } : {}),
+          };
+          try {
+            await audit.record({
+              kind: "ai_call",
+              callId,
+              role,
+              attempt,
+              context: auditContext,
+              input: { messages, options: requestOptions },
+              output: result,
+            });
+          } catch {
+            // Audit write failure: never change the return result.
+            options.logger?.warn("ai_text_audit_write_failed", { role, attempt });
+          }
+        }
 
         const reasoningTokens = result.reasoningTokens
           ?? (result.ok ? result.usage?.reasoningTokens : undefined);
@@ -188,6 +232,7 @@ export function resolveRpgAiThinkingRoles(
 export function createServerRpgAiClient(
   env: Record<string, string | undefined> = process.env,
   logger?: GameLogger,
+  auditRecorder?: AiTextAuditRecorder,
 ): RpgAiClient | undefined {
   const runtime = parseAiRuntimeConfig(env);
   if (runtime.status !== "available") return undefined;
@@ -209,5 +254,6 @@ export function createServerRpgAiClient(
     config: runtime.config,
     logger,
     policies,
+    ...(auditRecorder !== undefined ? { auditRecorder } : {}),
   });
 }
