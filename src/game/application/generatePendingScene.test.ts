@@ -565,6 +565,46 @@ describe("generatePendingScene", () => {
     ]);
   });
 
+  it("保留通过独立审批的线性队列，即使整场 proposal 触发 fallback", async () => {
+    const record = linearObjectiveRecord();
+    const repo = makeMockRepo(record);
+    const logger = { warn: vi.fn() };
+    const sceneWithBrokenCore: SceneSource = {
+      async generateScene(): Promise<SceneSourceResult> {
+        return {
+          sceneId: "scene-broken-core",
+          segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+          npcLine: null,
+          objectiveLink: null,
+          // candidate_1 重复会触发场景核心硬拒绝，但下面两条线性叙事
+          // 都命中服务端下发的事实/地点链，不能随 fallback 一起丢失。
+          choices: [
+            { candidateId: "candidate_1", label: "查看四周" },
+            { candidateId: "candidate_1", label: "再次查看" },
+          ],
+          linearActionNarratives: [
+            { actionKind: "investigate", factId: "fact_2", narration: "车轮印向北巷旧道延伸。" },
+            { actionKind: "move", locationId: "loc_2", narration: "北巷旧道隐在夜色尽头。" },
+          ],
+          source: "generated",
+        };
+      },
+    };
+    const result = await generatePendingScene({
+      repository: repo,
+      sceneSource: sceneWithBrokenCore,
+      logger: logger as never,
+      now: () => "2026-01-02",
+    });
+    expect(result).toBe("saved");
+    const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
+    expect(input.nextStoryState.narrative.currentScene?.source).toBe("fallback");
+    expect(input.nextStoryState.narrative.linearNarrativeQueue).toEqual([
+      { actionKind: "investigate", factId: asFactId("fact_2"), narration: "车轮印向北巷旧道延伸。", source: "generated" },
+      { actionKind: "move", locationId: asLocationId("loc_2"), narration: "北巷旧道隐在夜色尽头。", source: "generated" },
+    ]);
+  });
+
   it("drops linearActionNarratives referencing entities outside the authoritative objective chain", async () => {
     const record = linearObjectiveRecord();
     const repo = makeMockRepo(record);

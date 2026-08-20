@@ -3,7 +3,11 @@ import type { AiTextAuditRecorder, AiTextAuditLink } from "./server/ai/textAudit
 import type { SceneSource, ScenePerformanceProposal } from "./sceneSource";
 import { sceneInvestigationResultFrom } from "./sceneSource";
 import { buildSceneGenerationContext } from "./sceneGenerationContext";
-import { approveScenePerformance, type ApprovedSceneWriteBack } from "./approveAndWriteScene";
+import {
+  approveLinearActionNarratives,
+  approveScenePerformance,
+  type ApprovedSceneWriteBack,
+} from "./approveAndWriteScene";
 import { buildSelectableSceneCandidates, createDeterministicSceneSource, buildInvestigationOutcomeNarrative } from "./deterministicSceneSource";
 import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import { evolveWorld } from "./evolveWorld";
@@ -223,6 +227,13 @@ export async function generatePendingScene(
     return "unavailable";
   }
 
+  // 单线行动叙事是独立的可选产物：先从原始 generated proposal 中审批并
+  // 暂存，不能等到整场 scene approval 成功后才提取。否则本轮只要 NPC/节拍/
+  // 选项任一硬校验失败，随后确定性 fallback 就会连带抹掉本来合法的未来叙事。
+  let retainedLinearNarrativeQueue = proposal.source === "generated"
+    ? approveLinearActionNarratives(proposal, context, undefined)
+    : [];
+
   // 完整场景表演审批（Task 6）：核心结构非法（缺强制节拍/自创节拍 ID/
   // 错误 NPC 应答/forbidden fact/他人交互/过期目标/重复选项/无推进选项）时，
   // 先给 generated proposal 一次带拒绝码的内容修复机会；修复仍失败才
@@ -237,7 +248,16 @@ export async function generatePendingScene(
   });
   if (approvedGenerated.ok) {
     approved = approvedGenerated;
+    retainedLinearNarrativeQueue = approvedGenerated.linearNarrativeQueue;
+    for (const code of approvedGenerated.qualityWarnings) {
+      deps.logger?.warn("scene_quality_warning", { code });
+    }
   } else {
+    // 主场景被拒时，补发一次线性字段的可观测性校验；它不参与主场景
+    // 的拒绝码，也不影响已暂存的合法队列。
+    if (proposal.source === "generated") {
+      approveLinearActionNarratives(proposal, context, deps.logger);
+    }
     // live source 已成功取得并解析响应、但审批拒绝时先给同一上下文一次
     // 内容修复机会。修复提示携带结构化拒绝码，避免完全重复同一个请求；
     // repairAttempt 也限制整个 pending 回合最多一次内容重试。
@@ -259,6 +279,14 @@ export async function generatePendingScene(
         });
         const repairedProposal = await source.generateScene(repairContext);
         if (repairedProposal.source === "generated") {
+          const repairedLinearNarrativeQueue = approveLinearActionNarratives(
+            repairedProposal,
+            repairContext,
+            undefined,
+          );
+          if (retainedLinearNarrativeQueue.length === 0 && repairedLinearNarrativeQueue.length > 0) {
+            retainedLinearNarrativeQueue = repairedLinearNarrativeQueue;
+          }
           const repairedApproval = approveScenePerformance({
             context: repairContext,
             proposal: repairedProposal,
@@ -268,7 +296,16 @@ export async function generatePendingScene(
           });
           if (repairedApproval.ok) {
             approved = repairedApproval;
+            retainedLinearNarrativeQueue = repairedApproval.linearNarrativeQueue.length > 0
+              ? repairedApproval.linearNarrativeQueue
+              : (retainedLinearNarrativeQueue.length > 0
+                ? retainedLinearNarrativeQueue
+                : repairedLinearNarrativeQueue);
+            for (const code of repairedApproval.qualityWarnings) {
+              deps.logger?.warn("scene_quality_warning", { code });
+            }
           } else {
+            approveLinearActionNarratives(repairedProposal, repairContext, deps.logger);
             deps.logger?.warn("scene_generation_retry_rejected", { code: repairedApproval.code });
           }
         } else {
@@ -294,7 +331,17 @@ export async function generatePendingScene(
           logger: deps.logger,
         });
         if (!approvedFallback.ok) return "unavailable";
-        approved = approvedFallback;
+        approved = {
+          ...approvedFallback,
+          // fallback 只负责补齐当前场景核心结构；如果原始 generated
+          // proposal 的线性队列已经通过独立审批，则必须把它带过 CAS。
+          linearNarrativeQueue: retainedLinearNarrativeQueue.length > 0
+            ? retainedLinearNarrativeQueue
+            : approvedFallback.linearNarrativeQueue,
+        };
+        for (const code of approvedFallback.qualityWarnings) {
+          deps.logger?.warn("scene_quality_warning", { code });
+        }
       } catch {
         return "unavailable";
       }
@@ -357,6 +404,9 @@ export async function generatePendingScene(
           npcDialogues: approved.scene.npcDialogues,
           choices: approved.scene.choices,
         },
+        ...(approved.qualityWarnings.length === 0
+          ? {}
+          : { qualityWarnings: approved.qualityWarnings }),
       });
     } catch {
       // best-effort: audit write failure never blocks the game flow

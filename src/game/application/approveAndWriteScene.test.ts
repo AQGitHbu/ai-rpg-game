@@ -794,7 +794,7 @@ describe("approveScenePerformance (Task 6)", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("幕推进时 quest_advanced 节拍未点名新目标实体 → 整场拒绝 quest_advanced_unnamed", () => {
+  it("幕推进时不逐字复述目标名也不拒绝场景，并报告缺失结构化引用", () => {
     const job = makeJob({
       eventKind: "travel",
       summary: { kind: "move", locationId: asLocationId("loc_2") },
@@ -824,9 +824,9 @@ describe("approveScenePerformance (Task 6)", () => {
       basedOnRevision: 8,
       existingCandidateEventPool: [],
     });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe("quest_advanced_unnamed");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.qualityWarnings).toContain("missing_objective_reference");
   });
 
   it("幕推进时 quest_advanced 节拍点名新目标实体 → 通过", () => {

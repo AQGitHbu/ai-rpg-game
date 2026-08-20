@@ -124,6 +124,7 @@ export type AiTextAuditPayload =
       readonly path?: "normal" | "prewarmed";
       readonly scene?: unknown;
       readonly visibleText: unknown;
+      readonly qualityWarnings?: readonly string[];
     };
 
 /**

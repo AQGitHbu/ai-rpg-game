@@ -244,6 +244,24 @@ function parseLinearActionNarratives(
   return narratives;
 }
 
+/**
+ * 解析可选的结构化叙事引用。引用只影响质量诊断，不是场景硬契约；
+ * 非法字段被局部丢弃，避免一条多余 ID 让整场自然语言表演降级。
+ */
+function parseReferencedEntityIds(
+  rawValue: unknown,
+  context: SceneGenerationContext,
+): readonly string[] | undefined {
+  if (!Array.isArray(rawValue)) return undefined;
+  const allowed = new Set((context.narrativeReferenceIds ?? []).map(String));
+  const ids: string[] = [];
+  for (const value of rawValue) {
+    if (typeof value !== "string" || !allowed.has(value) || ids.includes(value)) continue;
+    ids.push(value);
+  }
+  return ids;
+}
+
 /** 把 AI 返回的任意形状解析/校验为合法表演提案；非法返回 null（调用方走确定性兜底）。 */
 export function parseScenePerformanceJson(
   raw: unknown,
@@ -272,7 +290,14 @@ export function parseScenePerformanceJson(
       if (!allowedBeatIds.has(s.beatId.trim())) {
         return { ok: false, reason: "segment_unknown_beat" };
       }
-      segments.push({ beatId: s.beatId, text: s.text.trim() });
+      const referencedEntityIds = parseReferencedEntityIds(s.referencedEntityIds, context);
+      segments.push({
+        beatId: s.beatId,
+        text: s.text.trim(),
+        ...(referencedEntityIds === undefined || referencedEntityIds.length === 0
+          ? {}
+          : { referencedEntityIds }),
+      });
     }
   }
   if (segments.length === 0) return { ok: false, reason: "segments_empty" };
@@ -566,7 +591,7 @@ export function buildLiveScenePrompt(
     ? "本轮没有玩家原话节拍。"
     : `本轮玩家原话节拍的精确 beatId 是 ${utteranceBeat.beatId}；npcLine.npcId 必须是 ${utteranceBeat.subjectIds[0] ?? "焦点 NPC"}，answeredBeatIds 必须精确包含 ["${utteranceBeat.beatId}"]。`;
   const handoffContract = context.objectiveTransition.mode === "advanced_act" && context.objectiveTarget !== null
-    ? `quest_advanced 节拍的 segment.text 必须逐字包含新目标实体名“${context.objectiveTarget.entityName}”。`
+    ? `quest_advanced 是幕交接节拍；objectiveLink 已由服务端锁定。请用自然语言表达线索如何把玩家带向新目标，不要求逐字复述当前目标标签；如需标记 grounding，可在该 segment 的 referencedEntityIds 中使用服务端允许的实体 ID。`
     : "";
   const genreContract = context.gameType === "wuxia"
     ? "题材锁定为武侠：对白和旁白只能使用江湖、门派、镖局、官府、山川、兵器、线索、武学语汇；不得出现魔法、巫师、精灵、骑士、幽灵/灵魂、祭坛、法阵、圣光、异界等奇幻或超自然词汇。"
@@ -593,7 +618,7 @@ ${repairSection}
 调查结果=${investigationSection}
 ${utteranceContract} ${handoffContract}
 候选动作=${selectable.map(describeChoiceCandidate).join("；")}
-JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白"}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},"choices":[{"candidateId":"选项ID","label":"玩家行动"},{"candidateId":"另一选项ID","label":"玩家行动"}]${linearJsonField}}
+JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白","referencedEntityIds":["可选的服务端实体ID"]}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},"choices":[{"candidateId":"选项ID","label":"玩家行动"},{"candidateId":"另一选项ID","label":"玩家行动"}]${linearJsonField}}
 ${segmentInstruction}
 ${atmosphereInstruction}
 NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。玩家只能被称为“${context.player.name}”，不得使用其他姓名、姓氏、代号或未经上下文批准的身份称呼。若有上一轮 NPC 原话，必须先直接承接其中的问题、信息或拒答，再补充本轮可核验线索或下一步；不得突然切换到无关案件。若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。任何具体地点、人物、时间、物品或证物，都必须能在主线剧情摘要、NPC 可说线索卡、场景可见事实或上一轮已引用事实中找到依据；如果没有依据，只能使用当前 objectiveLink/目标实体给出的下一步，不得自行补出新的核验细节。选项生成顺序：先完成 npcLine，再根据本轮 npcLine 的文本和 usedFactIds 生成 choices；上一轮选择只用于理解承接关系，不得直接复用为本轮可见选项。choices 的 candidateId 必须逐字使用上方候选动作中的两个不同 ID；候选动作只提供服务端合法的 candidateId 和动作语义，不提供可直接复用的自然语言选项。label 是玩家实际要说的话或动作，不要加“回应某人/追问某人”等前缀，不要机械复述 NPC 原话；动作选项必须用全角括号包裹。两个选项都要直接回应本轮 NPC 台词，并且至少一个要推进当前主线目标或核对 NPC 刚提供的事实，不能只输出“继续调查/相信/不相信”等脱离语境的态度。请依据主线剧情上下文、NPC 可说事实和本轮台词写出两句自然、具体、互不重复的玩家对白或动作。`;
@@ -615,6 +640,7 @@ ${upcoming.map((ref) => ref.kind === "discover_fact"
   return `${prompt}\n` +
     `${linearNarrativesContract}\n` +
     `ID 复核：segments.beatId 只能逐字复制“节拍”列表中的 ID，禁止创造 item_given、dialogue_response 等新 ID；` +
+    `segments.referencedEntityIds 只能从 [${(context.narrativeReferenceIds ?? []).join(", ")}] 选择；` +
     `npcLine.usedFactIds 只能从 [${allowedFactIds.join(", ")}] 选择，npcLine.usedInteractionActionIds 只能从 [${allowedInteractionIds.join(", ")}] 选择；` +
     "没有对应引用时必须输出空数组。输出前逐项核对这些 ID。" +
     "玩家可见旁白必须是连续、具体的剧情正文；不得输出“主线推进到第X幕”“已完成：”“当前目标：”等系统元话术，任务状态由 HUD 单独展示。";

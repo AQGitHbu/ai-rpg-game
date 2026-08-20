@@ -277,11 +277,12 @@ function buildSegments(context: SceneGenerationContext): readonly ScenePerforman
       }
     } else if (beat.kind === "quest_advanced" && context.objectiveTarget !== null) {
       // 幕边界：turn 时刻的下一个目标尚未具象化，节拍指令里没有实体名；
-      // 场景装配的预览状态已具象化，此处用权威 objectiveTarget 点名，
-      // 保证确定性 fallback 也能通过 quest_advanced_unnamed 审批。
+      // 场景装配的预览状态已具象化，此处保留自然语言交接，并用稳定
+      // entityId 提供结构化 grounding；目标身份不再依赖旁白逐字匹配。
       segments.push({
         beatId: beat.beatId,
         text: `主线推进。当前目标：${context.objectiveTarget.entityName}（${context.objectiveTransition.after?.label ?? "新的线索"}）`,
+        referencedEntityIds: [String(context.objectiveTarget.entityId)],
       });
     } else {
       segments.push({ beatId: beat.beatId, text: completeSceneSentence(beat.instruction) });

@@ -29,7 +29,7 @@
 - **世界演化是按需的可选调用**：仅当 `EvolutionNeed.kind !== "none"`（幕推进/节奏/终局对）才触发；正常对话回合不调用演化源。
 - **候选不足恢复**：若真实可执行候选少于两个，生成编排可额外申请 `scene_candidate_shortage` 节奏演化；已有交谈/移动入口时只补探索钩子，完全无入口时才在预算/可达性边界内补 NPC，并按需补地点，然后重建上下文。仍不足则返回 unavailable，不把无内容的 explore 当作合法候选。
 - 对话场景绑定一个在场焦点 NPC，并提出两个语义不同的 TalkAction；其他场景从服务端给出的合法候选 ID 中选择两个不同 Action。
-- `ObjectiveTransition.mode === advanced_act` 时叙事事件仍记录为非对话的任务交接；上一轮带 `player_utterance` 时焦点保持在原 NPC，由其先回应本轮话语，新目标只作为权威行动入口出现。进入地点或点击 talk 只打开 ready 对话，不再为首次交谈额外提交一次 `ask` API。玩家主动点击旁 NPC 时仍保持普通 `ask` 语义。
+- `ObjectiveTransition.mode === advanced_act` 时叙事事件仍记录为非对话的任务交接；上一轮带 `player_utterance` 时焦点保持在原 NPC，由其先回应本轮话语，新目标只作为权威行动入口出现。进入地点或点击 talk 只打开 ready 对话，不再为首次交谈额外提交一次 `ask` API。玩家主动点击旁 NPC 时仍保持普通 `ask` 语义。目标身份由服务端锁定的 `objectiveLink` 和实体 ID 决定，旁白不要求逐字复述目标标签。
 - 已由一键 `move` / `investigate` / `take_item` 唯一确定结果的单动作走确定性即时落点场景，不等待 live source 或 live 世界演化；在 action 响应前仍用行动后的权威地点、事实、目标、候选和同一审批/CAS 同步写回，避免非决策等待。幕推进/结局对挂起（`evolution.status === needs_next_act / needs_ending_pair`）时不被即时路径短路，保留完整世界演化编排。
 - 两个已批准选择若都指向同一在场 NPC 的 TalkAction，即使触发事件是 travel/battle，也投影为该 NPC 的焦点对白；底栏只保留一个“与 NPC 交谈”主线入口，回答分支只在对话框显示。
 - live source 只能选择服务端候选 ID，不能发明任意 `actionKey`、实体 ID、事实 ID 或规则结果。
@@ -37,7 +37,7 @@
 - 服务器根据 post-writeback revision 铸造 opaque `choiceToken`；客户端场景不含 `actionKey`、registry、候选 effect、隐藏事实或 AI diagnostics。
 - ready scene、choice registry、candidate event pool 与已批准世界演化同一次 scene CAS 写回；行动消费时再次验证当前 scene、revision 与规则合法性。
 - scene CAS 与序幕确认并发时，repository 单调保留已确认的 `prologueShown=true`；确认接口对 stale revision 读取新快照后有限重试。
-- 离线 fixture 与 live 失败恢复都使用确定性 fallback，fallback 也经过同一 proposal → approval → write-back 链；成功的 live proposal 必须标记 `source=generated`，API 失败或内容修复/审批重试仍拒绝时才保留 `source=fallback` 并记录失败事件，绝不能把 fallback 伪装成 AI 成功。
+- 离线 fixture 与 live 失败恢复都使用确定性 fallback，fallback 也经过同一 proposal → approval → write-back 链；成功的 live proposal 必须标记 `source=generated`，API 失败或内容修复/审批重试仍拒绝时才保留 `source=fallback` 并记录失败事件，绝不能把 fallback 伪装成 AI 成功。场景核心审批与 `linearActionNarratives` 审批相互独立：核心场景 fallback 时，已通过权威实体链校验的线性队列仍随同一次 CAS 写回。
 - active battle、ending 或候选不足时不伪造普通场景选择。
 - 移动/拾取/调查是规则结果已完全确定的单动作（`immediateAction`）；pending 场景同步完成审批/写回，不调用 live scene-performance source，也不等待 live 世界演化。调查/移动优先从 `linearNarrativeQueue` 精确匹配（actionKind+entityId）消费对话回合 AI 预生成的叙事（source=generated，零 live 调用、消费即除）；未命中才走确定性兜底（source=fallback 并记稳定失败码 `linear_narrative_fallback`）。拾取仍保留规则 CAS 和结构化 `item_obtained` 节拍。幕推进/结局对挂起时不被 fast path 短路。
 - active battle 采用规则 fast path：不创建 pending 场景、不调用 scene source；界面只提供攻击/防守，撤退不再作为可执行选项。战斗开始时保存玩家属性、已击败敌人和事件账本快照；失败只恢复快照并可重新挑战，不推进剧情。
@@ -46,9 +46,9 @@
 
 ## 线性调查叙事队列（2026-08-19）
 
-- **生成点**：对话回合（唯一实时 AI 生成点）的场景表演提案可携带 `linearActionNarratives`（`investigate`→factId / `move`→locationId + narration）。live prompt 在 `SceneGenerationContext.upcomingLinearObjectives` 非空时要求生成；约束：只演绎服务端下发权威事实（factText）、必须解释为何前往下一地点（实体名照抄）、不得捏造新事实/实体/时间、无系统元话术。
+- **生成点**：对话回合（唯一实时 AI 生成点）的场景表演提案可携带 `linearActionNarratives`（`investigate`→factId / `move`→locationId + narration）。live prompt 在 `SceneGenerationContext.upcomingLinearObjectives` 非空时要求生成；约束：只演绎服务端下发权威事实（factText）、必须解释为何前往下一地点、不得捏造新事实/实体/时间、无系统元话术。分段旁白可选 `referencedEntityIds` 表达 grounding，旁白正文保持自然语言，不承担实体身份判定。
 - **投影语义**：`upcomingLinearObjectives` 是从当前权威目标开始的连续单线前缀（discover_fact / visit_location；遇 talk_to_npc / defeat_enemy 等分支点立即停止）；当前目标即分支点或无单线链时为空。
-- **审批与持久化**：`approveScenePerformance` 逐条校验叙事实体引用必须命中 `upcomingLinearObjectives` 的权威实体；非法条目整字段丢弃并 logger warn，不拒整场。通过后随同一次场景 CAS 写回覆盖式持久化到 `storyState.narrative.linearNarrativeQueue`（`LinearActionNarrativeState`，source 恒为 "generated"）；旧存档缺失视为空，零迁移。
+- **审批与持久化**：live parser 先按 `SceneGenerationContext.narrativeReferenceIds` allowlist 去重并过滤未知 `referencedEntityIds`；`approveScenePerformance` 对 `objectiveLink`、节拍、NPC、选项等结构做硬校验，对幕交接缺少目标引用只产出 `SceneQualityWarningCode`（`missing_objective_reference` / `invalid_objective_reference` / `missing_objective_surface`），不再用旁白 `includes(entityName)` 拒绝整场。`linearActionNarratives` 独立逐条校验，非法条目整字段丢弃并 logger warn，不拒整场；通过后随同一次场景 CAS 写回覆盖式持久化到 `storyState.narrative.linearNarrativeQueue`（`LinearActionNarrativeState`，source 恒为 "generated"）。场景核心 fallback 时仍保留原 proposal 中已通过独立审批的队列；旧存档缺失视为空，零迁移。
 - **fast path 消费**：调查/移动走 `immediateAction` 时从 `linearNarrativeQueue` 精确匹配（actionKind+entityId）消费，消费即除、零 live 调用；未命中走确定性兜底（source=fallback 并记稳定失败码 `linear_narrative_fallback`）；幕推进/结局对挂起时保留完整世界演化编排。
 - **兜底动线因果**：确定性 fallback 的 investigate 旁白在权威事实文本后追加结构化下一目标动线提示；全部 7 题材（武侠/仙侠/奇幻/科幻/都市/架空历史/废土）+ generic 的 Act 2 factText 均补全"线索→新地点"物理动线因果。
 

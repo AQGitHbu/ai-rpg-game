@@ -13,6 +13,11 @@ export type EventProposal = EventCandidate;
 export type ScenePerformanceSegment = {
   readonly beatId: string;
   readonly text: string;
+  /**
+   * 可选的结构化叙事引用。它只用于 grounding 质量诊断，不能替代
+   * mandatory beat/objectiveLink，也不能由客户端消费或执行。
+   */
+  readonly referencedEntityIds?: readonly string[];
 };
 
 /** 焦点 NPC 的台词：所有引用（事实/交互）必须归属该 NPC 的允许集合。 */
