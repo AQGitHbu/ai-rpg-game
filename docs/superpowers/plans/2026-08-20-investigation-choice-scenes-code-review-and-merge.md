@@ -195,7 +195,7 @@ git log --oneline main..HEAD
 
 Commit only the review plan, regression tests, implementation fixes, and required documentation updates. The feature worktree must be clean before merge.
 
-- [ ] **Step 3: Fast-forward merge and clean up the branch/worktree**
+- [x] **Step 3: Fast-forward merge and clean up the branch/worktree**
 
 From the repository main worktree, run:
 
@@ -205,7 +205,7 @@ npm run branch:merge -- feat/investigation-choice-scenes
 
 Expected: The script verifies clean `main` and target worktree, fast-forwards `main`, safely unlinks `.foundation` if present, prunes the worktree, and deletes the merged local branch. Do not replace it with `git worktree remove`, recursive deletion, or force branch deletion.
 
-- [ ] **Step 4: Verify the merged repository state**
+- [x] **Step 4: Verify the merged repository state**
 
 Run:
 
