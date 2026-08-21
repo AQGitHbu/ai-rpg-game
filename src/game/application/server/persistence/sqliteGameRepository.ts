@@ -171,7 +171,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
     return corrupt("UNPARSEABLE_RECORD");
   }
 
-  if (worldState["version"] === 1 || storyState["version"] === 1 || storyState["version"] === 2) {
+  if (worldState["version"] === 1 || storyState["version"] === 1 || storyState["version"] === 2 || storyState["version"] === 3 || storyState["version"] === 4) {
     return corrupt("UNSUPPORTED_RECORD");
   }
   if (worldState["version"] !== 2 || storyState["version"] !== STORY_STATE_SCHEMA_VERSION) {

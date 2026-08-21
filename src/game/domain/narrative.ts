@@ -3,6 +3,7 @@ import { paginateSpeechText } from "./speechPagination";
 import type { PendingNarrativeJob } from "./pendingNarrativeJob";
 import type { ApprovedChoice } from "./approvedChoice";
 import { composeDirectNpcGreeting, normalizeNpcSpeech } from "./npcSpeech";
+import type { NarrativeGenerationFailure } from "./narrativeGenerationFailure";
 
 export const NARRATIVE_EMOTIONS = [
   "neutral", "warm", "guarded", "afraid", "angry", "sad"
@@ -111,7 +112,13 @@ export type NarrativeGenerationState =
       readonly status: "pending";
       /** pending 的唯一载体；玩家原文只在 job.utterance 内。 */
       readonly job: PendingNarrativeJob;
-  };
+    }
+  | {
+      readonly status: "failed";
+      /** 失败时仍保留原 job，使重试能复用同一 jobId/行动摘要而不重复规则回合。 */
+      readonly job: PendingNarrativeJob;
+      readonly failure: NarrativeGenerationFailure;
+    };
 
 /** 一段 NPC 对话的服务端会话游标；选择不会在第一轮直接完成 talk 目标。 */
 export type DialogueSessionState = {
