@@ -13,7 +13,6 @@ export { validateNewGameInput, type NewGameInputError } from "@/game/domain/newG
 export { PERSONALITY_TRAIT_OPTIONS, buildStylePolicy, type StylePolicy } from "./stylePolicy";
 // UI 可用的 NPC 直接台词兜底；不暴露场景生成、规则或持久化实现。
 export { composeDirectNpcGreeting } from "@/game/domain/npcSpeech";
-export type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 
 // 纯持久化端口经 facade 暴露给 application contract tests；不加载 server adapter。
 export {
