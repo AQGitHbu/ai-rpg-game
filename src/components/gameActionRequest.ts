@@ -1,4 +1,5 @@
 import type { GameSessionView } from "@/game/application";
+import type { AiFailureKind } from "@/game/application";
 
 // ---------------------------------------------------------------------------
 // POST /api/game/actions 的客户端请求模块。
@@ -18,6 +19,7 @@ export type ActionPayload = {
 export type ActionOutcome =
   | { readonly kind: "success"; readonly view: GameSessionView; readonly message: string }
   | { readonly kind: "rejected"; readonly message: string }
+  | { readonly kind: "ai-failure"; readonly message: string; readonly failureKind: AiFailureKind; readonly interaction: PlayerInteraction }
   | { readonly kind: "stale" }
   | { readonly kind: "error"; readonly message: string };
 
@@ -35,6 +37,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   STALE_GAME_REVISION: "版本冲突，请刷新页面。",
   ACTION_REJECTED: "行动被拒绝。",
   UNKNOWN_CHOICE: "选项无效，请刷新页面。",
+  AI_CALL_FAILED: "AI 调用失败，请重试。",
+  AI_RESPONSE_INVALID: "AI 返回格式不符合要求，请重试。",
 };
 
 /**
@@ -93,6 +97,14 @@ export async function postAction(payload: ActionPayload): Promise<ActionOutcome>
 
     if (body.ok === false) {
       if (body.code === "STALE_GAME_REVISION") return { kind: "stale" };
+      if (body.code === "AI_CALL_FAILED" || body.code === "AI_RESPONSE_INVALID") {
+        return {
+          kind: "ai-failure",
+          message: ERROR_MESSAGES[body.code],
+          failureKind: body.code,
+          interaction: payload.interaction,
+        };
+      }
       const msg = ERROR_MESSAGES[body.code ?? ""] ?? body.feedback ?? "未知错误。";
       return { kind: "rejected", message: msg };
     }
@@ -124,13 +136,31 @@ export async function fetchCurrentGame(): Promise<CurrentGameResponse> {
 }
 
 /** POST /api/game/narrative/ensure — 轮询场景生成。 */
-export async function ensureNarrative(): Promise<boolean> {
+export type EnsureNarrativeOutcome =
+  | { readonly ok: true; readonly result: "queued" | "already_running" | "not_pending" }
+  | {
+      readonly ok: false;
+      readonly code: "INVALID_INPUT" | "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "AI_GENERATION_FAILED" | "AI_CALL_FAILED" | "AI_RESPONSE_INVALID" | "INFRASTRUCTURE_FAILURE";
+      readonly failureKind?: AiFailureKind;
+    };
+
+export async function ensureNarrative(options?: { readonly retry?: true }): Promise<EnsureNarrativeOutcome> {
   try {
-    const response = await fetch("/api/game/narrative/ensure", { method: "POST" });
-    return response.ok;
+    const response = await fetch("/api/game/narrative/ensure", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(options?.retry === true ? { retry: true } : {}),
+    });
+    const body = (await response.json().catch(() => null)) as EnsureNarrativeOutcome | null;
+    if (body !== null && typeof body === "object" && "ok" in body) return body;
+    return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
   } catch {
-    return false;
+    return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
   }
+}
+
+export async function retryNarrative(): Promise<EnsureNarrativeOutcome> {
+  return ensureNarrative({ retry: true });
 }
 
 /** POST /api/game/prologue/ack — 确认序幕。 */
