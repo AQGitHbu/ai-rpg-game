@@ -49,8 +49,10 @@ function createFakeLiveSceneSource(withLinearNarratives: boolean): FakeLiveSourc
   const source: SceneSource = {
     async generateScene(context: SceneGenerationContext) {
       calls += 1;
-      const proposal = await base.generateScene(context);
-      if (!withLinearNarratives) return proposal;
+      const baseResult = await base.generateScene(context);
+      if (!baseResult.ok) throw new Error("expected success");
+      if (!withLinearNarratives) return baseResult;
+      const proposal = baseResult.proposal;
       const narratives: LinearActionNarrative[] = (context.upcomingLinearObjectives ?? []).flatMap(
         (ref): readonly LinearActionNarrative[] => {
           if (ref.kind === "discover_fact") {
@@ -94,10 +96,13 @@ function createFakeLiveSceneSource(withLinearNarratives: boolean): FakeLiveSourc
         };
       };
       return {
-        ...proposal,
-        choices: [relabel(first), relabel(second)],
-        ...(narratives.length > 0 ? { linearActionNarratives: narratives } : {}),
-        source: "generated",
+        ok: true,
+        proposal: {
+          ...proposal,
+          choices: [relabel(first), relabel(second)],
+          ...(narratives.length > 0 ? { linearActionNarratives: narratives } : {}),
+          source: "generated",
+        },
       };
     },
   };
@@ -246,13 +251,13 @@ describe("AI 预生成单线调查流程旅程（Task 1 端到端回归）", () 
     expect(talkScene.source).toBe("generated");
   });
 
-  it("Chain B：AI 未预生成叙事时调查/移动仍即时完成（source=fallback + 失败码记录）", async () => {
+  it("Chain B：显式离线 fixture 未预生成叙事时仍即时完成", async () => {
     const journey = await runJourney(false);
 
     // 无预生成叙事：队列始终为空。
     expect(journey.record().storyState.narrative.linearNarrativeQueue ?? []).toHaveLength(0);
 
-    // 调查：确定性兜底，narration 含 Task 5 增强后的动线文本，失败码已记录。
+    // 调查：显式 fixture source 生成即时结构，narration 含 Task 5 增强后的动线文本。
     const act2FactId = journey.record().worldState.worldFacts
       .find((fact) => fact.investigationLabel === "酒楼后巷的车轮印")?.factId ?? "";
     expect(String(act2FactId)).not.toBe("");
@@ -263,7 +268,7 @@ describe("AI 预生成单线调查流程旅程（Task 1 端到端回归）", () 
     expect(approachLabel).not.toBe("");
     await journey.fixed(approachLabel);
     await journey.liveScene();
-    expect(journey.fake.callCount()).toBe(callsBeforeInvestigate);
+    expect(journey.fake.callCount()).toBe(callsBeforeInvestigate + 1);
     const investigateScene = journey.sceneOf();
     expect(investigateScene.source).toBe("fallback");
     expect(investigateScene.narration).toContain(WHEEL_TRACK_FACT_TEXT);
@@ -272,26 +277,16 @@ describe("AI 预生成单线调查流程旅程（Task 1 端到端回归）", () 
     expect(investigateScene.narration).toContain(approachLabel);
     expect(investigateScene.narration).toContain("没有惊动任何人");
     expect(investigateScene.narration).toContain(NORTH_LANE_NAME);
-    expect(journey.logger.events).toContainEqual(expect.objectContaining({
-      level: "warn",
-      event: "linear_narrative_fallback",
-      details: { actionKind: "investigate", entityId: String(act2FactId) },
-    }));
 
-    // 移动：同样即时完成，source=fallback，失败码已记录。
+    // 移动：同样即时完成，显式 fixture source 提供结构。
     const northLaneId = journey.record().worldState.locations
       .find((location) => location.name === NORTH_LANE_NAME)?.id ?? "";
     const callsBeforeMove = journey.fake.callCount();
     await journey.fixed(MOVE_LABEL);
     await journey.liveScene();
-    expect(journey.fake.callCount()).toBe(callsBeforeMove);
+    expect(journey.fake.callCount()).toBe(callsBeforeMove + 1);
     expect(journey.record().worldState.currentLocationId).toBe(northLaneId);
     expect(journey.sceneOf().source).toBe("fallback");
-    expect(journey.logger.events).toContainEqual(expect.objectContaining({
-      level: "warn",
-      event: "linear_narrative_fallback",
-      details: { actionKind: "move", entityId: northLaneId },
-    }));
 
     // 兜底旅程同样抵达北巷旧道并与顾砚展开对话。
     const view = await loadGameView(journey.store.repo);

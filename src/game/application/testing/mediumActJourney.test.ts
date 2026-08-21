@@ -62,7 +62,7 @@ function createMediumJourneyEvolutionSource(): WorldEvolutionSource {
         },
         endingPair: null,
       };
-      return { proposal };
+      return { ok: true, proposal };
     },
   };
 }

@@ -53,11 +53,12 @@ NPC 可以表现误判、回避或敌意，但不能因为模型看到不该看�
 - 玩家之后的支持、质疑、探索、旅行、物品与战斗选择继续改变关系、事实、任务、候选事件和可达结局。
 - 同 seed 下的不同选择序列必须能抵达不同的结构化状态和不同结局，不能只替换一段叙事文字。
 
-## 7. 失败与降级
+## 7. 失败与手动重试
 
-- AI 不可用、超时、输出不可解析或越权时，整幕切换到确定性 fallback。
-- fallback 经过与 live proposal 相同的审批和写回，不使用旁路或降低规则标准。
-- AI 失败不得阻塞创建、恢复、继续推进或完成一局。
+- transport/content 自动重试耗尽后，开局返回 `AI_GENERATION_FAILED`，并只携带稳定的 `failureKind`：`AI_CALL_FAILED` 或 `AI_RESPONSE_INVALID`。
+- 已提交规则回合的场景保留原 `PendingNarrativeJob` 和规则状态，将 `narrative.generation` 持久化为 `failed`；客户端显示失败原因，玩家点击“重试”后以同一 job 重新调用 AI。
+- 失败态跨 reload 保留；普通 ensure 只观察 pending/failed，不会偷偷再次调用 AI。手动重试通过 revision/jobId CAS，两个并发请求最多恢复一次。
+- 生产 AI 不可用时不生成确定性剧情正文，也不把 deterministic scene 标记为 `generated`。确定性 source 仅属于显式离线 fixture 与回放装配。
 
 ## 8. 产品边界
 
