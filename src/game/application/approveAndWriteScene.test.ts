@@ -874,7 +874,7 @@ describe("approveScenePerformance (Task 6)", () => {
     expect("scene" in result).toBe(false);
   });
 
-  it("fact_discovered 旁白与已结算证据结果矛盾时走 linear_narrative_fallback，不拒绝规则结果", () => {
+  it("fact_discovered 旁白与已结算证据结果矛盾时返回审批失败，不写 deterministic 文案", () => {
     const job = makeJob({
       eventKind: "investigate",
       summary: { kind: "investigate", factId: asFactId("fact_1") },
@@ -905,16 +905,7 @@ describe("approveScenePerformance (Task 6)", () => {
       existingCandidateEventPool: [],
       logger,
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // 非法正文被替换为确定性结算旁白，规则结果（eventLedger）不被拒绝。
-    expect(result.scene.narration).toContain("沿痕迹追查");
-    expect(result.scene.narration).toContain("北巷旧道");
-    expect(result.scene.narration).not.toContain("翻查附近杂物");
-    expect(logger.warn).toHaveBeenCalledWith("linear_narrative_fallback", {
-      actionKind: "investigate",
-      entityId: "fact_1",
-      reason: "contradicts_settled_evidence",
-    });
+    expect(result).toEqual({ ok: false, code: "invalid_investigation_narrative" });
+    expect(logger.warn).not.toHaveBeenCalledWith("linear_narrative_fallback", expect.anything());
   });
 });

@@ -4,7 +4,7 @@ import type { Action } from "@/game/domain/action";
 import type { EvolutionNeed, ApprovedWorldDelta, WorldDeltaProposal } from "@/game/domain/worldDelta";
 import type { WorldEvolutionSource, WorldEvolutionSourceContext } from "./worldEvolutionSource";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
-import { createDeterministicEvolutionSource } from "./deterministicEvolutionSource";
+import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
 import {
   approveWorldDelta,
   materializeWorldDelta,
@@ -16,8 +16,8 @@ import {
 // ---------------------------------------------------------------------------
 // Template：application 层世界演化编排。纯触发（需求已由领域派生）→（条件）
 // await source 提案 → 纯审批/装配预览状态；不写状态、不做 AI 内置。
-// source 抛错/无提案/审批拒绝先走一次确定性 fallback；fallback 仍无法通过时才以
-// "未应用"降级，绝不炸穿回合或场景流水线。
+// source 只执行一次；AI 失败或提案未通过审批时返回稳定失败，不能在 application
+// 层悄悄创建 deterministic source 把生产失败伪装成成功。
 // ---------------------------------------------------------------------------
 
 export type EvolveWorldResult =
@@ -31,6 +31,7 @@ export type EvolveWorldResult =
       readonly ok: false;
       readonly code: "no_need" | "no_proposal" | "rejected" | "source_error";
       readonly rejectionCode?: WorldDeltaRejection;
+      readonly failure?: AiGenerationFailure;
     };
 
 export type EvolveWorldInput = {
@@ -42,8 +43,6 @@ export type EvolveWorldInput = {
   readonly reason: string;
   /** 回合修复路径：把行动引用 ID 原样铸造为缺失实体 ID（只作用于匹配 kind）。 */
   readonly idOverride?: WorldDeltaIdOverride;
-  /** live 运行时关闭静默确定性降级；失败时保留需求，等待下一次真实 API。 */
-  readonly allowDeterministicFallback?: boolean;
   /** 仅用于关联 world AI 审计事件，不进入世界状态。 */
   readonly auditLink?: AiTextAuditLink;
   readonly now: () => string;
@@ -66,8 +65,7 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
     return { ok: false, code: "no_need" };
   }
 
-  const deterministicSource = createDeterministicEvolutionSource();
-  const source: WorldEvolutionSource = input.source ?? deterministicSource;
+  const source: WorldEvolutionSource | undefined = input.source;
 
   const context: WorldEvolutionSourceContext = {
     worldState: input.worldState,
@@ -78,15 +76,25 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
     auditLink: input.auditLink,
   };
 
-  const attempt = async (candidateSource: WorldEvolutionSource): Promise<EvolveWorldResult> => {
-    let sourceResult;
-    try {
-      sourceResult = await candidateSource.propose(context);
-    } catch {
-      return { ok: false, code: "source_error" };
+  if (source === undefined) {
+    return {
+      ok: false,
+      code: "source_error",
+      failure: { kind: "AI_CALL_FAILED", phase: "world" },
+    };
+  }
+
+  try {
+    const sourceResult = await source.propose(context);
+    if (!sourceResult.ok) {
+      return { ok: false, code: "source_error", failure: sourceResult.failure };
     }
     if (sourceResult.proposal === null) {
-      return { ok: false, code: "no_proposal" };
+      return {
+        ok: false,
+        code: "no_proposal",
+        failure: { kind: "AI_RESPONSE_INVALID", phase: "world" },
+      };
     }
 
     const approval = approveWorldDelta({
@@ -97,7 +105,12 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
       idOverride: input.idOverride,
     });
     if (!approval.ok) {
-      return { ok: false, code: "rejected", rejectionCode: approval.code };
+      return {
+        ok: false,
+        code: "rejected",
+        rejectionCode: approval.code,
+        failure: { kind: "AI_RESPONSE_INVALID", phase: "world" },
+      };
     }
 
     const delta = materializeWorldDelta({
@@ -109,12 +122,11 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
     });
 
     return { ok: true, proposal: sourceResult.proposal, approved: approval.approved, delta };
-  };
-
-  const primary = await attempt(source);
-  // AI 的 JSON 可能结构合法但语义不可装配（例如缺少主线锚点、预算超限或
-  // 小镇已无可用 slot）。这类失败也必须走离线确定性方案，否则 needs_next_act
-  // 会永久挂起，下一场景只会重复同一失败。
-  if (primary.ok || input.source === undefined || input.allowDeterministicFallback === false) return primary;
-  return attempt(deterministicSource);
+  } catch {
+    return {
+      ok: false,
+      code: "source_error",
+      failure: { kind: "AI_CALL_FAILED", phase: "world" },
+    };
+  }
 }

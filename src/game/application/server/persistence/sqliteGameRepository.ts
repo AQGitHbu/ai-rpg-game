@@ -448,11 +448,24 @@ export function createSqliteGameRepository(
         }
 
         const incrementRevision = input.incrementRevision ?? true;
+        const narrativePredicate = input.expectedNarrativeGeneration === undefined
+          ? ""
+          : ` AND json_extract(story_state_json, '$.narrative.generation.status') = ?
+              AND json_extract(story_state_json, '$.narrative.generation.job.jobId') = ?`;
         const updateResult = await tx.execute({
           sql: `UPDATE game_records SET world_state_json = ?, story_state_json = ?,
                 revision = CASE WHEN ? THEN revision + 1 ELSE revision END
-                WHERE game_id = ? AND revision = ?`,
-          args: [worldStateJson, storyStateJson, incrementRevision ? 1 : 0, input.gameId, input.expectedRevision],
+                WHERE game_id = ? AND revision = ?${narrativePredicate}`,
+          args: [
+            worldStateJson,
+            storyStateJson,
+            incrementRevision ? 1 : 0,
+            input.gameId,
+            input.expectedRevision,
+            ...(input.expectedNarrativeGeneration === undefined
+              ? []
+              : [input.expectedNarrativeGeneration.status, input.expectedNarrativeGeneration.jobId]),
+          ],
         });
         const rowsAffected = Number(updateResult.rowsAffected ?? 0);
         if (rowsAffected === 0) {

@@ -13,7 +13,6 @@ import {
   actionTargetsObjective,
   formatSceneChoiceLabel,
   usesFallbackDialogueChoiceLabels,
-  buildInvestigationOutcomeNarrative,
 } from "./deterministicSceneSource";
 import { asFactId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
@@ -99,7 +98,7 @@ function containsPathPatch(candidate: EventCandidate): boolean {
 
 // ---------------------------------------------------------------------------
 // Task 6：场景表演审批（approveScenePerformance）。
-// 核心结构非法 → 整场回退确定性 source；fallback 同样经过本函数，防止契约漂移。
+// 核心结构非法 → 返回稳定审批失败；显式 offline fixture 仍复用本函数，防止契约漂移。
 // ---------------------------------------------------------------------------
 
 /** 场景核心结构非法时整场回退的原因。 */
@@ -118,7 +117,8 @@ export type SceneRejectionCode =
   | "semantic_duplicate_choices"
   | "duplicate_candidate_ids"
   | "illegal_choice_target"
-  | "no_objective_progress_choices";
+  | "no_objective_progress_choices"
+  | "invalid_investigation_narrative";
 
 /**
  * 场景核心结构合法后，仍可供运营/评测观察的叙事质量信号。
@@ -256,7 +256,7 @@ export function approveScenePerformance(input: {
   readonly logger?: Pick<GameLogger, "warn">;
 }): ApproveScenePerformanceResult {
   const { context } = input;
-  let proposal = input.proposal;
+  const proposal = input.proposal;
 
   // ── 分段旁白校验 ───────────────────────────────────────────────────────
   if (!Array.isArray(proposal.segments) || proposal.segments.length === 0) {
@@ -319,27 +319,7 @@ export function approveScenePerformance(input: {
           ? /(?:留下了动静|动静不小|惊动了什么|声响|响声|吵醒|暴露)/u.test(discoveryText)
           : /(?:没有惊动任何人|干净利落|无声无息|悄无声息)/u.test(discoveryText);
         if (!discoveryText.includes(resolvedInvestigation.approachLabel) || contradictsSettledOutcome) {
-          input.logger?.warn("linear_narrative_fallback", {
-            actionKind: "investigate",
-            entityId: String(resolvedInvestigation.factId),
-            reason: "contradicts_settled_evidence",
-          });
-          const factLead = "发现了线索：";
-          const trimmedInstruction = discoveryBeat.instruction.trim();
-          const factText = trimmedInstruction.startsWith(factLead)
-            ? trimmedInstruction.slice(factLead.length)
-            : discoveryBeat.instruction;
-          const replacement = buildInvestigationOutcomeNarrative({
-            approachLabel: resolvedInvestigation.approachLabel,
-            evidenceQuality: resolvedInvestigation.evidenceQuality,
-            factText,
-            ...(context.objectiveTarget === null ? {} : { nextObjectiveLabel: context.objectiveTarget.entityName }),
-          });
-          proposal = {
-            ...proposal,
-            segments: proposal.segments.map((segment) =>
-              segment.beatId === discoveryBeat.beatId ? { ...segment, text: replacement } : segment),
-          };
+          return { ok: false, code: "invalid_investigation_narrative" };
         }
       }
     }
@@ -359,7 +339,7 @@ export function approveScenePerformance(input: {
     if (present === undefined) return { ok: false, code: "unknown_dialogue_npc" };
     // 焦点 NPC 的开场、正式回应和终局追问都必须至少两句。提示词本身
     // 不足以防止 live output 偶尔退化成一句泛问候，因此把这一玩家可见
-    // 质量门槛放进审批；不合格时整场走角色化的确定性 fallback。
+    // 质量门槛放进审批；不合格时返回稳定审批失败。
     const isFocusedNpc = context.focusNpcContext !== undefined
       && String(context.focusNpcContext.id) === String(npcLine.npcId);
     if (isFocusedNpc) {
@@ -438,9 +418,8 @@ export function approveScenePerformance(input: {
   const cb = candidateById.get(String(b.candidateId));
   if (ca === undefined || cb === undefined) return { ok: false, code: "illegal_choice_target" };
 
-  // 生成路径不能把本回合生成前的两个 deterministic talk label 原样带回。
-  // fallback proposal 自身就是这些 label 的权威来源，因此只拦 generated，
-  // 避免安全降级被审批器再次拒绝。
+  // 生成路径不能把本回合生成前的两个 fixture talk label 原样带回。
+  // 只拦 generated，避免 live 响应复用离线模板。
   if (
     proposal.source === "generated"
     && npcLine !== null
@@ -481,10 +460,10 @@ export function approveScenePerformance(input: {
     } else {
       const allowedReferenceIds = new Set((context.narrativeReferenceIds ?? []).map(String));
       const referencedEntityIds = advancedSegment.referencedEntityIds ?? [];
-      if (referencedEntityIds.some((id) => !allowedReferenceIds.has(String(id)))) {
+      if (referencedEntityIds.some((id: string) => !allowedReferenceIds.has(String(id)))) {
         qualityWarnings.push("invalid_objective_reference");
       }
-      if (!referencedEntityIds.some((id) => String(id) === String(objectiveTarget.entityId))) {
+      if (!referencedEntityIds.some((id: string) => String(id) === String(objectiveTarget.entityId))) {
         qualityWarnings.push("missing_objective_reference");
       }
     }
@@ -552,7 +531,7 @@ export function approveScenePerformance(input: {
 
 /**
  * live 可以润色对白，但不能把 NPC 整句原话再次塞进玩家嘴里。这里仅做
- * 精确重复保护，不做主题关键词匹配；候选动作和 fallback 文案仍由服务端
+ * 精确重复保护，不做主题关键词匹配；候选动作和 fixture 文案仍由服务端
  * 提供，避免把一次文案质量问题扩大成整场审批失败。
  */
 function approvedChoiceLabel(

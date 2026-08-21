@@ -10,7 +10,7 @@ import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
 // pending 工作本身持久化在 game state 中，进程重启后同一 ensure 调用可恢复。
 // ---------------------------------------------------------------------------
 
-export type EnsureResult = "queued" | "already_running" | "not_pending" | "unavailable";
+export type EnsureResult = "queued" | "already_running" | "not_pending" | "failed" | "unavailable";
 
 /** loadPending 结果：ok 时给出去重 key；否则直接返回终态。 */
 export type EnsurePending =
