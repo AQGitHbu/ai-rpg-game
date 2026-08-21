@@ -63,11 +63,12 @@ function parseCreateInput(body: unknown): { input: CreateGameHttpInput } | { inv
   };
 }
 
-function statusForCreateFailure(code: string | undefined): number {
+function statusForCreateFailure(code: string | undefined, failureKind?: string): number {
   switch (code) {
     case "NO_ACTIVE_GAME": return 404;
     case "GAME_NOT_ENDED": return 422;
     case "INFRASTRUCTURE_FAILURE": return 503;
+    case "AI_GENERATION_FAILED": return failureKind === "AI_RESPONSE_INVALID" ? 502 : 503;
     default: return 409;
   }
 }
@@ -104,7 +105,7 @@ export async function POST(request: Request): Promise<Response> {
         });
       }
       return new Response(JSON.stringify(result), {
-        status: statusForCreateFailure(result.code),
+        status: statusForCreateFailure(result.code, result.failureKind),
         headers: { "Content-Type": "application/json" },
       });
     },

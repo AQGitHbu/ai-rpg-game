@@ -418,7 +418,7 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(applyCalls()).toHaveLength(0);
   });
 
-  it("rule reject（未知地点）→ 零写入", async () => {
+  it("未知地点需要 AI 世界演化修复；缺失 source 返回稳定失败且零写入", async () => {
     const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
 
     const result = await performTurn(
@@ -428,7 +428,8 @@ describe("performTurn 单次 CAS 提交", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.code).toBe("ACTION_REJECTED");
+    expect(result.code).toBe("AI_CALL_FAILED");
+    expect(result.failureKind).toBe("AI_CALL_FAILED");
     expect(applyCalls()).toHaveLength(0);
   });
 
@@ -536,7 +537,7 @@ describe("performTurn 单次 CAS 提交", () => {
 const npcStrangerChoice: Map<string, Action> = new Map([["tok_stranger", { type: "talk", npcId: asNpcId("npc_stranger"), dialogueAct: "ask" }]]);
 
 function sourceWithProposals(proposal: WorldDeltaProposal): WorldEvolutionSource {
-  return { async propose() { return { proposal }; } };
+  return { async propose() { return { ok: true, proposal }; } };
 }
 
 function throwingSource(): WorldEvolutionSource {
@@ -631,7 +632,7 @@ describe("performTurn worldEvolution 修复路径（Task 3）", () => {
     expect(saved.worldState.eventLedger.at(-1)!.type).toBe("blueprint_expanded");
   });
 
-  it("语义审批拒绝 → 自动回退确定性提案并完成修复", async () => {
+  it("语义审批拒绝 → 返回 AI_RESPONSE_INVALID 且不写入规则状态", async () => {
     const badProposal: WorldDeltaProposal = {
       beatSummary: "坏提案",
       newLocation: {
@@ -654,12 +655,12 @@ describe("performTurn worldEvolution 修复路径（Task 3）", () => {
       { repository: repo, now: () => "2026-01-02", worldEvolutionSource: sourceWithProposals(badProposal) },
     );
 
-    expect(result.ok).toBe(true);
-    expect(applyCalls()).toHaveLength(1);
-    expect(record()?.worldState.npcs.some((npc) => npc.id === "npc_stranger")).toBe(true);
+    expect(result).toMatchObject({ ok: false, code: "AI_RESPONSE_INVALID" });
+    expect(applyCalls()).toHaveLength(0);
+    expect(record()?.worldState.npcs.some((npc) => npc.id === "npc_stranger")).toBe(false);
   });
 
-  it("worldEvolution source 抛错不破坏普通合法行动；触发场景下回退确定性修复", async () => {
+  it("worldEvolution source 抛错不破坏普通合法行动；触发场景返回 AI_CALL_FAILED", async () => {
     // 合法行动：source 从未被调用，回合照常单次 CAS 提交
     const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
     const legal = await performTurn(
@@ -671,15 +672,15 @@ describe("performTurn worldEvolution 修复路径（Task 3）", () => {
     expect(legal.revision).toBe(1);
     expect(applyCalls()).toHaveLength(1);
 
-    // 触发场景下 source 抛错：不炸穿 performTurn，回退后仍完成修复
+    // 触发场景下 source 抛错：不炸穿 performTurn，且零写入
     const { repo: repo2, record: record2, applyCalls: applyCalls2 } = createSpyRepo(buildWorldState(), buildStoryState());
     const triggered = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_e2", interaction: { kind: "fixed_choice", choiceToken: "tok_stranger" }, expectedRevision: 0, choiceMap: npcStrangerChoice },
       { repository: repo2, now: () => "2026-01-02", worldEvolutionSource: throwingSource() },
     );
-    expect(triggered.ok).toBe(true);
-    expect(applyCalls2()).toHaveLength(1);
-    expect(record2()?.worldState.npcs.some((npc) => npc.id === "npc_stranger")).toBe(true);
+    expect(triggered).toMatchObject({ ok: false, code: "AI_CALL_FAILED" });
+    expect(applyCalls2()).toHaveLength(0);
+    expect(record2()?.worldState.npcs.some((npc) => npc.id === "npc_stranger")).toBe(false);
   });
 
   it("整回合至多一次 propose（不发生第二轮 worldEvolution）", async () => {
@@ -996,30 +997,22 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     expect(generation.job.resolvedEvent.triggeredEvents).toContain("player_intent_expressed");
   });
 
-  it("AI 意图源超时/非法 JSON → 降级 freeform：属性不变、回合照常提交", async () => {
+  it("AI 意图源超时/非法 JSON → 返回可重试 AI_CALL_FAILED 且零写入", async () => {
     const failingSource: IntentParserSource = {
       sourceVersion: "stub-failing",
       async parseIntent() {
-        return { ok: false, reason: "service_error" };
+        return { ok: false, reason: "service_error", failureKind: "AI_CALL_FAILED" };
       },
     };
-    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+    const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_fail", interaction: { kind: "free_text", text: "我的武功升到一百级" }, expectedRevision: 0, choiceMap: new Map() },
       { repository: repo, now: () => "2026-01-02", intentParserSource: failingSource },
     );
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(applyCalls()).toHaveLength(1);
-    const saved = record()!;
-    expect(saved.worldState.player.stats).toEqual({ hp: 100, attack: 10, defense: 5 });
-    const generation = saved.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
-    expect(generation.job.actionSummary).toEqual({ kind: "freeform" });
-    expect(generation.job.utterance).toBe("我的武功升到一百级");
+    expect(result).toMatchObject({ ok: false, code: "AI_CALL_FAILED" });
+    expect(applyCalls()).toHaveLength(0);
   });
 });
 
