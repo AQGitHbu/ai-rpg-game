@@ -3,11 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GameSessionView } from "@/game/application";
 import { CurrentGameScreen } from "./CurrentGameScreen";
-import { fetchCurrentGame, ensureNarrative, ackPrologue } from "./gameActionRequest";
+import { fetchCurrentGame, ensureNarrative, retryNarrative, ackPrologue } from "./gameActionRequest";
 
 vi.mock("./gameActionRequest", () => ({
   fetchCurrentGame: vi.fn(),
   ensureNarrative: vi.fn(async () => true),
+  retryNarrative: vi.fn(async () => ({ ok: true, result: "queued" })),
   ackPrologue: vi.fn(async () => true),
 }));
 
@@ -122,7 +123,7 @@ describe("CurrentGameScreen prologue display", () => {
     expect(screen.getByRole("button", { name: "开始冒险" })).toBeInTheDocument();
   });
 
-  it("falls back to the player's original storyOpening only when prologueText is empty", async () => {
+  it("does not replace an empty prologue with the player's original storyOpening", async () => {
     globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
@@ -136,11 +137,15 @@ describe("CurrentGameScreen prologue display", () => {
         characterProfile: null,
         narrativeStyle: null,
       },
+      narrativeGeneration: { status: "failed", failureKind: "AI_RESPONSE_INVALID" },
     };
     vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: failedGenerationView });
     render(<CurrentGameScreen />);
 
-    expect(await screen.findByText("我收到一封来自失踪妹妹、却署着三年前日期的信……")).toBeInTheDocument();
+    expect(screen.queryByText("我收到一封来自失踪妹妹、却署着三年前日期的信……")).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("AI 返回格式不符合要求");
+    await userEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(retryNarrative).toHaveBeenCalledOnce());
   });
 
   it("does not submit the prologue acknowledgement twice while the first request is pending", async () => {

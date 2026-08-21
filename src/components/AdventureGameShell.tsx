@@ -27,6 +27,7 @@ type ActionFeedback =
   | { readonly phase: "submitting" }
   | { readonly phase: "success"; readonly message: string }
   | { readonly phase: "rejected"; readonly message: string }
+  | { readonly phase: "retryable"; readonly message: string; readonly interaction: PlayerInteraction }
   | { readonly phase: "error"; readonly message: string };
 
 const DETAIL_TITLE: Record<DetailsPanel, string> = {
@@ -60,10 +61,11 @@ export function AdventureGameShell({
   const lastReadyObjectiveRef = useRef<string | null>(view.story.currentObjectiveLabel);
 
   const pending = view.narrativeGeneration.status === "pending";
+  const narrativeFailed = view.narrativeGeneration.status === "failed";
   const isSubmitting = feedback.phase === "submitting";
   // API/后台编排期间保持全屏模态，锁住地图、信息面板和所有规则行动，
   // 避免玩家在旧 revision 上继续点击；模态中的重试只在 pending 时提供。
-  const busy = isSubmitting || pending;
+  const busy = isSubmitting || pending || narrativeFailed;
 
   // 三层导航：从地图进入当前地点——town 地点先进小镇层，scene 地点直达场景。
   function entryScreenFor(view: GameSessionView): AdventureScreen {
@@ -120,12 +122,19 @@ export function AdventureGameShell({
       case "error":
         setFeedback({ phase: outcome.kind, message: outcome.message });
         break;
+      case "ai-failure":
+        setFeedback({ phase: "retryable", message: outcome.message, interaction: outcome.interaction });
+        break;
     }
   }
 
   function submitInteraction(interaction: PlayerInteraction): void {
     setFeedback({ phase: "submitting" });
     void postAction({ interaction, revision: view.revision }).then(applyOutcome);
+  }
+
+  function retryAction(interaction: PlayerInteraction): void {
+    submitInteraction(interaction);
   }
 
   function enterNpcBuilding(npcId: string): void {
@@ -253,18 +262,31 @@ export function AdventureGameShell({
         </p>
       ) : null}
 
-      {feedback.phase === "rejected" || feedback.phase === "error" ? (
+      {feedback.phase === "rejected" || feedback.phase === "error" || feedback.phase === "retryable" ? (
         <p role="status" aria-live="polite" className={`action-feedback ${feedback.phase}`}>
           {feedback.message}
         </p>
       ) : null}
 
+      {feedback.phase === "retryable" ? (
+        <InlineButton onClick={() => retryAction(feedback.interaction)}>重试</InlineButton>
+      ) : null}
+
       {busy ? (
-        <GenerationStatusModal
-          kind={pending ? "narrative" : "action"}
-          onRetry={pending ? onRetryNarrative : undefined}
-          battleVisible={view.battle !== null}
-        />
+        narrativeFailed ? (
+          <GenerationStatusModal
+            kind="narrative-failure"
+            failureKind={view.narrativeGeneration.failureKind ?? "AI_CALL_FAILED"}
+            onRetry={async () => { await onRetryNarrative?.(); }}
+            battleVisible={view.battle !== null}
+          />
+        ) : (
+          <GenerationStatusModal
+            kind={pending ? "narrative" : "action"}
+            onRetry={pending ? onRetryNarrative : undefined}
+            battleVisible={view.battle !== null}
+          />
+        )
       ) : null}
     </div>
   );

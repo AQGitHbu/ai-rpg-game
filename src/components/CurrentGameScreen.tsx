@@ -5,7 +5,7 @@ import { InlineButton, Panel, Tag } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
 import { AdventureGameShell } from "./AdventureGameShell";
 import { NewGameSetupForm } from "./NewGameSetupForm";
-import { fetchCurrentGame, ensureNarrative, ackPrologue } from "./gameActionRequest";
+import { fetchCurrentGame, ensureNarrative, retryNarrative, ackPrologue } from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
 // 根页面客户端协调器：直接消费 canonical API（/api/game/*）。
@@ -93,7 +93,7 @@ export function CurrentGameScreen() {
   const prologueAckInFlight = useRef(false);
   const [prologueAcking, setPrologueAcking] = useState(false);
   const [prologueAckError, setPrologueAckError] = useState(false);
-  const [narrativeRetryNonce, setNarrativeRetryNonce] = useState(0);
+  const narrativeRetryInFlight = useRef(false);
 
   const applyResponse = useCallback((res: { ok: boolean; status: string; view?: GameSessionView; code?: string }) => {
     if (res.status === "none") {
@@ -161,9 +161,9 @@ export function CurrentGameScreen() {
     let failures = 0;
 
     async function poll() {
-      const ok = await ensureNarrative();
+      const outcome = await ensureNarrative();
       if (cancelled) return;
-      if (!ok) {
+      if (!outcome.ok) {
         failures++;
       } else {
         failures = 0;
@@ -181,7 +181,18 @@ export function CurrentGameScreen() {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [narrativePending, narrativeRetryNonce, applyResponse]);
+  }, [narrativePending, applyResponse]);
+
+  async function handleRetryNarrative(): Promise<void> {
+    if (narrativeRetryInFlight.current) return;
+    narrativeRetryInFlight.current = true;
+    try {
+      await retryNarrative();
+      await loadCurrentGame();
+    } finally {
+      narrativeRetryInFlight.current = false;
+    }
+  }
 
   // 清除本地试玩存档
   async function clearDevelopmentSave() {
@@ -226,17 +237,26 @@ export function CurrentGameScreen() {
 
   if (state.phase === "active") {
     const { view } = state;
-    // 序幕：优先展示开局生成并审批通过的 prologueText；仅当生成失败
-    // （prologueText 为空）时才回退玩家开局配置中的故事开端。
+    if (view.narrativeGeneration.status === "failed") {
+      return (
+        <AdventureGameShell
+          view={view}
+          onViewChange={(newView) => applyResponse({ ok: true, status: "active", view: newView })}
+          onStaleRevision={() => void loadCurrentGame()}
+          onClearDevelopmentSave={clearDevelopmentSave}
+          onRetryNarrative={handleRetryNarrative}
+        />
+      );
+    }
+    // 序幕只展示服务端生成并审批通过的 prologueText；空值不能用玩家输入
+    // 冒充 AI 生成结果。
     if (!view.prologueShown) {
-      const prologueText = view.prologueText !== ""
-        ? view.prologueText
-        : (view.setup.storyOpening ?? "你踏上了冒险的旅途。前方是未知的世界，充满了机遇与危险。");
+      const prologueText = view.prologueText;
       return (
         <Panel className="prologue-screen">
           <div className="prologue-content">
             <h2>序幕</h2>
-            <p className="prologue-text">{prologueText}</p>
+            <p className="prologue-text">{prologueText || "开场叙事暂不可用，请重试。"}</p>
             {prologueAckError ? <p role="alert">进入失败，请检查连接后重试。</p> : null}
             <InlineButton disabled={prologueAcking} onClick={() => void handlePrologueAck()}>
               {prologueAcking ? "正在进入……" : "开始冒险"}
@@ -281,7 +301,7 @@ export function CurrentGameScreen() {
         })}
         onStaleRevision={() => void loadCurrentGame()}
         onClearDevelopmentSave={clearDevelopmentSave}
-        onRetryNarrative={() => setNarrativeRetryNonce((current) => current + 1)}
+        onRetryNarrative={handleRetryNarrative}
       />
     );
   }
