@@ -81,16 +81,15 @@ describe("parseWorldDeltaProposal", () => {
     expect(parsed?.logCategories).toEqual([]);
   });
 
-  it("investigationApproaches 非数组时丢弃字段，保持自动揭示且无日志", () => {
+  it("investigationApproaches 非数组时拒绝整条世界提案", () => {
     const parsed = parseWorldDeltaProposal({
       beatSummary: "调查线索",
       newFact: { text: "密道入口在井下。", visibility: "public", investigationApproaches: "nope" },
     });
-    expect(parsed?.proposal.newFact?.investigationApproaches).toBeUndefined();
-    expect(parsed?.logCategories).toEqual([]);
+    expect(parsed).toBeNull();
   });
 
-  it("丢弃重复 id、空 label、非 clean|noisy、越界张力的条目，其余合法条目保留", () => {
+  it("任一调查方式条目非法时拒绝整条世界提案，不保留部分响应", () => {
     const parsed = parseWorldDeltaProposal({
       beatSummary: "调查线索",
       newFact: {
@@ -107,15 +106,10 @@ describe("parseWorldDeltaProposal", () => {
         ],
       },
     });
-    expect(parsed?.proposal.newFact?.investigationApproaches).toEqual([
-      { approachId: "a", label: "检查井沿", evidenceQuality: "clean", tensionDelta: 2 },
-      { approachId: "b", label: "细听井底动静", evidenceQuality: "noisy", tensionDelta: 4 },
-      { approachId: "c", label: "询问井边挑水人", evidenceQuality: "clean", tensionDelta: -3 },
-    ]);
-    expect(parsed?.logCategories).toEqual([]);
+    expect(parsed).toBeNull();
   });
 
-  it("合法数量不足或超过 3 时降为空列表并记录 investigation_approach_invalid", () => {
+  it("合法数量不足或超过 3 时拒绝整条世界提案", () => {
     for (const approaches of [
       [{ approachId: "a", label: "检查井沿", evidenceQuality: "clean", tensionDelta: 2 }],
       [
@@ -129,12 +123,11 @@ describe("parseWorldDeltaProposal", () => {
         beatSummary: "调查线索",
         newFact: { text: "密道入口在井下。", visibility: "public", investigationApproaches: approaches },
       });
-      expect(parsed?.proposal.newFact?.investigationApproaches).toEqual([]);
-      expect(parsed?.logCategories).toContain("investigation_approach_invalid");
+      expect(parsed).toBeNull();
     }
   });
 
-  it("完整正文子串泄漏的条目被硬拒绝丢弃；软重合条目替换为题材词库 label、丢弃 hint 并记录 investigation_label_overlap", () => {
+  it("完整正文或软重合泄漏时拒绝整条世界提案，不用题材词库修补", () => {
     const parsed = parseWorldDeltaProposal({
       beatSummary: "调查线索",
       newFact: {
@@ -147,14 +140,7 @@ describe("parseWorldDeltaProposal", () => {
         ],
       },
     }, "wuxia");
-    expect(parsed?.proposal.newFact?.investigationApproaches).toEqual([
-      { approachId: "b", label: expect.any(String), evidenceQuality: "noisy", tensionDelta: 4 },
-      { approachId: "c", label: "检查井沿", evidenceQuality: "clean", tensionDelta: 2 },
-    ]);
-    const repaired = parsed!.proposal.newFact!.investigationApproaches![0]!;
-    expect(repaired.label).not.toContain("密道入口在井下。");
-    expect(repaired.hint).toBeUndefined();
-    expect(parsed?.logCategories).toContain("investigation_label_overlap");
+    expect(parsed).toBeNull();
   });
 });
 
@@ -190,7 +176,7 @@ describe("createLiveWorldEvolutionSource", () => {
     expect(LIVE_WORLD_EVOLUTION_TIMEOUT_MS).toBe(45_000);
   });
 
-  it("falls back to the deterministic source without a transport", async () => {
+  it("returns a typed failure without a transport", async () => {
     const source = createLiveWorldEvolutionSource({});
     const ctx: WorldEvolutionSourceContext = {
       worldState: makeWorld(),
@@ -200,11 +186,11 @@ describe("createLiveWorldEvolutionSource", () => {
       reason: "UNKNOWN_LOCATION",
     };
     const result = await source.propose(ctx);
-    expect(result.proposal).not.toBeNull();
-    expect(result.proposal?.newLocation).not.toBeNull();
+    expect(result.ok).toBe(false);
+    expect(result.ok ? null : result.failure.kind).toBe("AI_CALL_FAILED");
   });
 
-  it("falls back to deterministic when the AI output is invalid JSON", async () => {
+  it("returns AI_RESPONSE_INVALID when the AI output is invalid JSON", async () => {
     const transport: AiTransport = {
       complete: async () => ({ ok: true as const, content: "not json", latencyMs: 1 }),
       stream: async () => ({ ok: false as const, code: "network_error" as const, retryable: true, message: "unused", latencyMs: 1 }),
@@ -221,7 +207,8 @@ describe("createLiveWorldEvolutionSource", () => {
       reason: "UNKNOWN_NPC",
     };
     const result = await source.propose(ctx);
-    expect(result.proposal?.newNpc).not.toBeNull();
+    expect(result.ok).toBe(false);
+    expect(result.ok ? null : result.failure.kind).toBe("AI_RESPONSE_INVALID");
   });
 
   it("uses JSON object mode when explicitly enabled", async () => {
@@ -252,7 +239,7 @@ describe("createLiveWorldEvolutionSource", () => {
     );
   });
 
-  it("does not repeat an empty AI response and falls back deterministically", async () => {
+  it("does not repeat an empty AI response and returns a typed failure", async () => {
     let attempts = 0;
     const transport: AiTransport = {
       complete: vi.fn(async () => {
@@ -276,6 +263,7 @@ describe("createLiveWorldEvolutionSource", () => {
     const result = await source.propose(ctx);
 
     expect(attempts).toBe(1);
-    expect(result.proposal).not.toBeNull();
+    expect(result.ok).toBe(false);
+    expect(result.ok ? null : result.failure.kind).toBe("AI_CALL_FAILED");
   });
 });

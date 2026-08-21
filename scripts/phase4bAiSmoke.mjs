@@ -18,23 +18,24 @@ import { projectRoot, readAiEnv } from "./aiEnv.mjs";
 // 安全红线（由 phase4bAiSmoke.node-test.mjs 门禁强制）：
 // - 必须 RUN_REAL_AI_SMOKE=1 才运行；否则退出非零且不发起任何请求。
 // - 运行前先跑 `npm run env:check`，但 stdout/stderr 绝不打印键值。
-// - 每例只输出白名单摘要：gameType、generated/fallback 标记、耗时、稳定诊断码、
+// - 每例只输出白名单摘要：gameType、generated/failed 标记、耗时、稳定诊断码、
 //   tokens/cost（如有）。永不输出玩家输入、prompt、模型原文、URL、Key。
-// - 真实服务慢 / 限流 / 非法输出 → 可观测地降级到 fallback，但这次真实 AI
-//   验收必须失败（退出非零）；fallback 只保证玩家流程可恢复，不能冒充 AI 成功。
+// - 真实服务慢 / 限流 / 非法输出 → 以稳定 failureKind 报告并退出非零；
+//   生产链不把 AI 失败伪装成可玩 fallback。
 // - 决不加入 npm test / test:fast / build / CI。
 //
 // 本文件是 .mjs（Node 直接运行）：真实链路的 TS 依赖只在 opt-in 实跑路径里，
 // 经 node:module registerHooks 惰性加载（Node 24 原生 strip-types；钩子补齐
 // tsconfig 的 @/ 别名、无扩展名相对导入与 JSON 导入）。门禁测试主体 import 下方
 // 纯函数并注入 mock；另有一条离线实跑用例以占位 AI 配置驱动 realRunCase
-// （unavailable → fallback，会加载 TS 但绝不触网）。
+// （unavailable → failed，会加载 TS 但绝不触网）。
 // ---------------------------------------------------------------------------
 
 const DIAG_PREFIX = "[phase4b-smoke]";
 
-/** 真实 AI 验收唯一的成功来源。fallback 是韧性结果，不是 AI 测试成功。 */
+/** 真实 AI 验收唯一的成功来源。 */
 export const REQUIRED_SOURCE = "generated";
+export const VALID_FAILURE_KINDS = Object.freeze(["AI_CALL_FAILED", "AI_RESPONSE_INVALID"]);
 
 /**
  * 三组固定合法输入：字段均满足 domain 校验下限（characterName≥2、identity≥2、
@@ -96,14 +97,15 @@ export function validateCaseReport(report) {
     return ["REPORT_MISSING"];
   }
   if (report.ok !== true) {
-    // 本地创建失败（输入/持久化/基础设施）——真实服务的降级会以 ok:true +
-    // fallback 呈现，因此 ok:false 一律视为需要人工排查的硬失败。
-    issues.push("CASE_LOCAL_FAILURE");
+    if (!VALID_FAILURE_KINDS.includes(report.failureKind)) {
+      issues.push("FAILURE_KIND_OUT_OF_CONTRACT");
+    }
+    if (report.failureCode !== "AI_GENERATION_FAILED") {
+      issues.push("FAILURE_CODE_OUT_OF_CONTRACT");
+    }
     return issues;
   }
-  if (report.source === "fallback") {
-    issues.push("AI_FALLBACK_USED");
-  } else if (report.source !== REQUIRED_SOURCE) {
+  if (report.source !== REQUIRED_SOURCE) {
     issues.push("SOURCE_OUT_OF_CONTRACT");
   }
   if (report.reloadOk !== true) {
@@ -123,8 +125,9 @@ export function buildCaseSummaryLine(report) {
   const payload = { gameType: report.gameType };
   if (report.ok === true) {
     payload.source = report.source;
-  } else if (report.failureCode !== undefined) {
+  } else {
     payload.failureCode = report.failureCode;
+    payload.failureKind = report.failureKind;
   }
   if (report.durationMs !== undefined) {
     payload.durationMs = Math.round(report.durationMs);
@@ -180,6 +183,9 @@ export async function runPhase4bAiSmoke(deps) {
     }
     reports.push(report);
     const issues = validateCaseReport(report);
+    if (report?.ok !== true && issues.length === 0) {
+      issues.push("AI_FAILURE_REPORTED");
+    }
     // 报告结构存在才输出摘要行；缺失/非对象时只记违约码，避免抛出原始堆栈。
     if (report && typeof report === "object") {
       log(buildCaseSummaryLine(report));
@@ -202,7 +208,7 @@ export async function runPhase4bAiSmoke(deps) {
 }
 
 // ---------------------------------------------------------------------------
-// 真实实跑装配（opt-in CLI 路径使用；门禁测试仅经离线 fallback 用例触达，
+// 真实实跑装配（opt-in CLI 路径使用；门禁测试仅经离线 failed 用例触达，
 // 即 overrides.aiEnv 注入占位配置 → unavailable source，不发起任何请求）。
 // ---------------------------------------------------------------------------
 
@@ -330,9 +336,8 @@ export function summarizeSmokeRun(reports, outputFormatLabel) {
     outputFormat: outputFormatLabel,
     cases: 0,
     generated: 0,
-    fallback: 0,
     failed: 0,
-    fallbackCategories: {},
+    failureKinds: {},
     totalDurationMs: 0,
   };
   const usage = {};
@@ -345,14 +350,11 @@ export function summarizeSmokeRun(reports, outputFormatLabel) {
     }
     if (report.ok === true && report.source === "generated") {
       summary.generated += 1;
-    } else if (report.ok === true && report.source === "fallback") {
-      summary.fallback += 1;
-      for (const code of Array.isArray(report.codes) ? report.codes : []) {
-        if (typeof code !== "string" || code === "attempt_ok") continue;
-        summary.fallbackCategories[code] = (summary.fallbackCategories[code] ?? 0) + 1;
-      }
     } else {
       summary.failed += 1;
+      if (VALID_FAILURE_KINDS.includes(report.failureKind)) {
+        summary.failureKinds[report.failureKind] = (summary.failureKinds[report.failureKind] ?? 0) + 1;
+      }
     }
     const reportUsage = report.usage;
     if (reportUsage && typeof reportUsage === "object") {
@@ -475,8 +477,8 @@ async function removeTempDatabase(databasePath) {
  * 真实单例：临时 SQLite + production composition root（live/unavailable 由
  * parseAiRuntimeConfig(env) 决定）。AI 三键默认取自 RPG 自己的 .env.local（与生产
  * 部署同一契约），值只进内存；`overrides.aiEnv` 仅供本地 plumbing 干跑注入占位
- * 配置（unavailable → fallback，不触网），不改变生产等价装配。createGame 后
- * reload、复查持久化 blueprint 的预算/双结局，最后显式 close 并删除临时文件。
+ * 配置（unavailable → failed，不触网），不改变生产等价装配。成功 createGame 后
+ * reload、复查持久化 runtime budget，最后显式 close 并删除临时文件。
  * 只返回白名单可观测字段。
  */
 export async function realRunCase(smokeCase, overrides = {}) {
@@ -524,6 +526,7 @@ export async function realRunCase(smokeCase, overrides = {}) {
         gameType: smokeCase.gameType,
         ok: false,
         failureCode: result.code,
+        failureKind: result.failureKind,
         durationMs,
         codes,
         estimatedCostUsd,

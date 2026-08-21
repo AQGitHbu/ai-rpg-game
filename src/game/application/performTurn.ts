@@ -23,6 +23,7 @@ import { evolveWorld, repairIdOverrideForAction } from "./evolveWorld";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import { advanceStoryReveal, isActionReleased } from "@/game/gameplay/rpg/worldEvolution";
+import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 
 export type PerformTurnCommand = {
   readonly gameId: GameId;
@@ -34,7 +35,7 @@ export type PerformTurnCommand = {
 
 export type PerformTurnResult =
   | { readonly ok: true; readonly revision: number; readonly resolvedEvent: ResolvedEvent; readonly feedback: string }
-  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "UNKNOWN_CHOICE" | "ACTION_REJECTED" | "INFRASTRUCTURE_FAILURE"; readonly feedback: string };
+  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "UNKNOWN_CHOICE" | "ACTION_REJECTED" | "AI_CALL_FAILED" | "AI_RESPONSE_INVALID" | "INFRASTRUCTURE_FAILURE"; readonly feedback: string; readonly failureKind?: AiFailureKind };
 
 export type PerformTurnDeps = {
   readonly repository: GameRepository;
@@ -48,8 +49,6 @@ export type PerformTurnDeps = {
    * 触发→审批→预览→重演算全部路径都只走单次 CAS。
    */
   readonly worldEvolutionSource?: WorldEvolutionSource;
-  /** 生产 live 路径关闭确定性世界演化降级；测试/离线调用默认保留兼容行为。 */
-  readonly allowDeterministicWorldEvolutionFallback?: boolean;
 };
 
 /**
@@ -150,6 +149,14 @@ export async function performTurn(
 
   const converted = await convertInteraction(command.interaction, command.choiceMap, freeTextDeps);
   if (!converted.ok) {
+    if (converted.reason === "ai_failure") {
+      return {
+        ok: false,
+        code: converted.failureKind,
+        failureKind: converted.failureKind,
+        feedback: converted.failureKind === "AI_CALL_FAILED" ? "AI 调用失败，请重试。" : "AI 返回格式不符合要求，请重试。",
+      };
+    }
     return { ok: false, code: "UNKNOWN_CHOICE", feedback: "Conversion failed" };
   }
 
@@ -185,14 +192,14 @@ export async function performTurn(
       ? { kind: "pacing", pacingNeed: "complicate" }
       : deriveEvolutionNeed(record.worldState, record.storyState);
 
-    // 未注入演化源时不主动演化：保持纯规则拒绝（零写入），仅当配置了 source 才装配。
-    if (need.kind !== "none" && deps.worldEvolutionSource !== undefined) {
+    // 需要演化时必须调用注入的 source；缺失 source 由 evolveWorld 映射为
+    // AI_CALL_FAILED，不能静默退回普通 ACTION_REJECTED。
+    if (need.kind !== "none") {
       const outcome = await evolveWorld({
         need,
         worldState: record.worldState,
         storyState: record.storyState,
         source: deps.worldEvolutionSource,
-        allowDeterministicFallback: deps.allowDeterministicWorldEvolutionFallback,
         action: converted.action,
         reason: resolved.code,
         auditLink: deps.auditLink,
@@ -251,6 +258,14 @@ export async function performTurn(
           return { ok: false, code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE", feedback: "Commit failed" };
         }
         return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };
+      }
+      if (outcome.failure !== undefined) {
+        return {
+          ok: false,
+          code: outcome.failure.kind,
+          failureKind: outcome.failure.kind,
+          feedback: outcome.failure.kind === "AI_CALL_FAILED" ? "AI 调用失败，请重试。" : "AI 返回格式不符合要求，请重试。",
+        };
       }
     }
     return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };

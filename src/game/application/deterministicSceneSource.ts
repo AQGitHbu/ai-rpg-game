@@ -193,7 +193,7 @@ export function createDeterministicSceneSource(): SceneSource {
     async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
       const sceneId = `scene-${context.job.jobId}`;
       const npcLine = buildNpcLineState(context);
-      return {
+      const proposal: ScenePerformanceProposal = {
         sceneId,
         segments: buildSegments(context),
         npcLine,
@@ -201,6 +201,7 @@ export function createDeterministicSceneSource(): SceneSource {
         choices: buildSceneChoices(context, npcLine === null ? undefined : npcLine),
         source: "fallback",
       };
+      return { ok: true, proposal };
     },
   };
 }

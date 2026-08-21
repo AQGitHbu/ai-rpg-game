@@ -15,7 +15,7 @@ import {
 // ---------------------------------------------------------------------------
 // Phase 4B 真实 AI smoke 的安全门禁测试：绝不访问网络。主体用例 mock
 // runEnvCheck/runCase；末尾另有一条离线实跑用例，以占位 AI 配置驱动真实
-// realRunCase（unavailable → 确定性 fallback，临时 SQLite，fetch 记录器拦截）。
+// realRunCase（unavailable → stable failed result，临时 SQLite，fetch 记录器拦截）。
 // 真实 smoke（RUN_REAL_AI_SMOKE=1）只允许人工 opt-in 执行。
 // ---------------------------------------------------------------------------
 
@@ -166,14 +166,24 @@ test("只有 generated 算真实 AI smoke 成功；每例输出白名单摘要",
   }
 });
 
-test("fallback 保持可观测，但真实 AI smoke 必须失败", async () => {
+test("AI failure 必须暴露稳定 failureKind，真实 AI smoke 退出非零", async () => {
   const harness = createHarness({
     env: { RUN_REAL_AI_SMOKE: "1" },
-    runCase: async (smokeCase) => okReport(smokeCase.gameType, "fallback"),
+    runCase: async (smokeCase) => ({
+      gameType: smokeCase.gameType,
+      ok: false,
+      failureCode: "AI_GENERATION_FAILED",
+      failureKind: "AI_CALL_FAILED",
+    }),
   });
   const exitCode = await runPhase4bAiSmoke(harness.deps);
   assert.notEqual(exitCode, 0);
-  assert.ok(harness.logs.some((line) => line.includes("AI_FALLBACK_USED")));
+  assert.ok(!harness.logs.some((line) => line.includes("AI_FALLBACK_USED")));
+  assert.deepEqual(validateCaseReport({
+    ok: false,
+    failureCode: "AI_GENERATION_FAILED",
+    failureKind: "AI_CALL_FAILED",
+  }), []);
 });
 
 test("source 越界 / reload 失败 / 开局预算违约：退出非零", async () => {
@@ -359,7 +369,7 @@ test("resolveOutputFormatLabel：合法值原样、缺失/空白按 prompt_only�
   assert.ok(!invalid.includes("bogus"));
 });
 
-test("summarizeSmokeRun：generated/fallback/failed 三份报告聚合白名单统计", () => {
+test("summarizeSmokeRun：generated/failed 两份报告聚合稳定失败分类", () => {
   const summary = summarizeSmokeRun(
     [
       {
@@ -373,24 +383,24 @@ test("summarizeSmokeRun：generated/fallback/failed 三份报告聚合白名单�
       },
       {
         gameType: "science_fiction",
-        ok: true,
-        source: "fallback",
+        ok: false,
+        failureCode: "AI_GENERATION_FAILED",
+        failureKind: "AI_RESPONSE_INVALID",
         durationMs: 2000,
-        codes: ["transport_timeout"],
+        codes: ["invalid_schema"],
         usage: { promptTokens: 50, completionTokens: 60, totalTokens: 110 },
         estimatedCostUsd: 0.002,
       },
-      { gameType: "urban", ok: false },
+      { gameType: "urban", ok: true, source: "generated", durationMs: 0 },
     ],
     "json_schema",
   );
   assert.deepEqual(summary, {
     outputFormat: "json_schema",
     cases: 3,
-    generated: 1,
-    fallback: 1,
+    generated: 2,
     failed: 1,
-    fallbackCategories: { transport_timeout: 1 },
+    failureKinds: { AI_RESPONSE_INVALID: 1 },
     totalDurationMs: 3000,
     usage: { promptTokens: 150, completionTokens: 260, totalTokens: 410 },
     estimatedCostUsd: 0.003,
@@ -414,9 +424,8 @@ test("summary 行：恰一行、JSON 键集合在白名单内、不泄漏玩家�
     "outputFormat",
     "cases",
     "generated",
-    "fallback",
     "failed",
-    "fallbackCategories",
+    "failureKinds",
     "totalDurationMs",
     "usage",
     "estimatedCostUsd",
@@ -453,21 +462,17 @@ const OFFLINE_PLACEHOLDER_ENV = {
   AI_API_KEY: "<offline-probe-key-should-never-appear>",
 };
 
-test("离线实跑：占位配置驱动真实链路 → 确定性 fallback，零 fetch，输出不含配置值", async () => {
+test("离线实跑：占位配置驱动真实链路 → stable failed，零 fetch，输出不含配置值", async () => {
   const { result, fetchCalls } = await withFetchRecorder(() =>
     realRunCase(SMOKE_CASES[0], { aiEnv: OFFLINE_PLACEHOLDER_ENV }),
   );
   assert.equal(fetchCalls.length, 0);
 
-  // 完整穿过真实装配：创建可恢复的 fallback 存档并通过 reload/开局预算复查；
-  // 但严格真实 AI 验收必须把它报成失败。
-  assert.equal(result.ok, true);
-  assert.equal(result.source, "fallback");
-  assert.equal(result.reloadOk, true);
-  assert.equal(result.openingRuntimeOk, true);
-  // unavailable source 不伪造 transport 失败码；来源标记已足以让严格验收失败。
+  assert.equal(result.ok, false);
+  assert.equal(result.failureCode, "AI_GENERATION_FAILED");
+  assert.equal(result.failureKind, "AI_CALL_FAILED");
   assert.deepEqual(result.codes, []);
-  assert.deepEqual(validateCaseReport(result), ["AI_FALLBACK_USED"]);
+  assert.deepEqual(validateCaseReport(result), []);
 
   // 摘要行与 report 序列化中都不得出现任何配置值或玩家输入。
   const line = buildCaseSummaryLine(result);

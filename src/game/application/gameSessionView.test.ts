@@ -1329,6 +1329,83 @@ describe("projectGameSessionView", () => {
     expect(view.currentLocation.actions.some((action) => action.presentation === "dialogue")).toBe(false);
     expect(view.currentLocation.npcs[0]?.talkChoice).toBeNull();
   });
+
+  it("projects only the stable AI failure kind for a failed generation", () => {
+    const failedStory: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        generation: {
+          status: "failed",
+          job: {
+            jobId: "job-failed-1" as never,
+            turnId: "turn-1" as never,
+            actionId: "action-1",
+            basedOnRevision: 2,
+            turnNumber: 3,
+            actionSummary: { kind: "talk", npcId: asNpcId("npc_1") },
+            utterance: "private player text",
+            resolvedEvent: { actionId: "action-1", status: "success", eventKind: "observe", facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [] },
+            domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+            focusNpcId: asNpcId("npc_1"),
+            requestedAt: "2026-08-21T00:00:00.000Z",
+            objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+            mandatoryBeats: [],
+          } as never,
+          failure: {
+            kind: "AI_RESPONSE_INVALID",
+            phase: "scene",
+            failedAt: "2026-08-21T00:00:00.000Z",
+          },
+        } as never,
+      },
+    };
+    const view = projectGameSessionView(ws, failedStory, 3, "ending-id");
+
+    expect(view.narrativeGeneration).toEqual({
+      status: "failed",
+      failureKind: "AI_RESPONSE_INVALID",
+    });
+  });
+
+  it("failed projection does not leak job, utterance or provider details", () => {
+    const failedStory: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        generation: {
+          status: "failed",
+          job: {
+            jobId: "job-failed-1" as never,
+            turnId: "turn-1" as never,
+            actionId: "action-1",
+            basedOnRevision: 2,
+            turnNumber: 3,
+            actionSummary: { kind: "talk", npcId: asNpcId("npc_1") },
+            utterance: "private player text",
+            resolvedEvent: { actionId: "action-1", status: "success", eventKind: "observe", facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [] },
+            domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+            focusNpcId: asNpcId("npc_1"),
+            requestedAt: "2026-08-21T00:00:00.000Z",
+            objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+            mandatoryBeats: [],
+          } as never,
+          failure: {
+            kind: "AI_CALL_FAILED",
+            phase: "scene",
+            failedAt: "2026-08-21T00:00:00.000Z",
+          },
+        } as never,
+      },
+    };
+    const view = projectGameSessionView(ws, failedStory, 3, "ending-id");
+    const serialized = JSON.stringify(view.narrativeGeneration);
+
+    expect(serialized).not.toContain("private player text");
+    expect(serialized).not.toContain("job-failed-1");
+    expect(serialized).not.toContain("action-1");
+    expect(serialized).not.toContain("failedAt");
+  });
 });
 
 describe("projectGameSessionView town read model", () => {

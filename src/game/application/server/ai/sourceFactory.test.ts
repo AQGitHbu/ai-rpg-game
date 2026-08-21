@@ -156,7 +156,8 @@ describe("createLiveScenePerformanceSource 焦点 NPC", () => {
       config: { baseUrl: "x", apiKey: "k", model: "m" },
     });
     const result = await source.generateScene(context as never);
+    if (!result.ok) throw new Error("expected success");
     // 关键断言：焦点台词归属玩家实际交谈的 npc_b（维珀），不是第一个在场 NPC npc_a
-    expect(result.npcLine?.npcId).toBe("npc_b");
+    expect(result.proposal.npcLine?.npcId).toBe("npc_b");
   });
 });

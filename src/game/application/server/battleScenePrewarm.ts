@@ -31,8 +31,6 @@ type PrewarmDeps = {
   readonly sceneSource: SceneSource;
   readonly logger?: GameLogger;
   readonly now: () => string;
-  /** 默认只接受 live 提案；战斗开始时可用确定性提案做零等待保险。 */
-  readonly requireGenerated?: boolean;
   /** 仅用于关联 battle prewarm AI 审计事件，不进入场景 prompt 事实。 */
   readonly auditLink?: AiTextAuditLink;
 };
@@ -146,7 +144,7 @@ export async function prewarmBattleVictoryScene(
 
   try {
     const baseContext = buildSceneGenerationContext(projected.record);
-    const proposal = await deps.sceneSource.generateScene({
+    const sceneResult = await deps.sceneSource.generateScene({
       ...baseContext,
       auditLink: {
         ...deps.auditLink,
@@ -156,12 +154,14 @@ export async function prewarmBattleVictoryScene(
       },
       auditTrigger: "battle_prewarm",
     });
-    if (proposal.source !== "generated" && deps.requireGenerated !== false) {
-      deps.logger?.warn("battle_scene_prewarm_not_live", { battleKey });
+    if (!sceneResult.ok) {
+      deps.logger?.warn("battle_scene_prewarm_failed", { battleKey, reason: sceneResult.failure.kind });
       return null;
     }
+    const proposal = sceneResult.proposal;
     if (proposal.source !== "generated") {
-      deps.logger?.info("battle_scene_prewarm_fallback_ready", { battleKey });
+      deps.logger?.warn("battle_scene_prewarm_not_live", { battleKey });
+      return null;
     }
     deps.logger?.info("battle_scene_prewarm_ready", { battleKey });
     return { battleKey, proposal };

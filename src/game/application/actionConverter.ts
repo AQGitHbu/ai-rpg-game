@@ -6,6 +6,7 @@ import {
   type IntentAuditLink,
 } from "@/game/gameplay/rpg/intentParser";
 import type { NpcId } from "@/game/domain/worldEntity";
+import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 
 export type ActionChoiceMap = ReadonlyMap<string, Action>;
 
@@ -20,7 +21,8 @@ export type ConvertFreeTextDeps = {
 
 export type ConvertResult =
   | { readonly ok: true; readonly action: Action }
-  | { readonly ok: false; readonly reason: "unknown_choice" };
+  | { readonly ok: false; readonly reason: "unknown_choice" }
+  | { readonly ok: false; readonly reason: "ai_failure"; readonly failureKind: AiFailureKind };
 
 export async function convertInteraction(
   interaction: Interaction,
@@ -62,6 +64,9 @@ export async function convertInteraction(
       ) {
         return { ok: true, action: classified.action };
       }
+      if (!classified.ok && classified.reason === "service_error") {
+        return { ok: false, reason: "ai_failure", failureKind: classified.failureKind };
+      }
     }
     return {
       ok: true,
@@ -90,6 +95,9 @@ export async function convertInteraction(
     );
     if (aiResult.ok) {
       return { ok: true, action: aiResult.action };
+    }
+    if (aiResult.reason === "service_error") {
+      return { ok: false, reason: "ai_failure", failureKind: aiResult.failureKind };
     }
   }
 

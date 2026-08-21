@@ -1,9 +1,9 @@
 import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "./worldEntity";
 import { paginateSpeechText } from "./speechPagination";
 import type { PendingNarrativeJob } from "./pendingNarrativeJob";
-import type { NarrativeGenerationFailure } from "./narrativeGenerationFailure";
 import type { ApprovedChoice } from "./approvedChoice";
 import { composeDirectNpcGreeting, normalizeNpcSpeech } from "./npcSpeech";
+import type { NarrativeGenerationFailure } from "./narrativeGenerationFailure";
 
 export const NARRATIVE_EMOTIONS = [
   "neutral", "warm", "guarded", "afraid", "angry", "sad"
@@ -115,9 +115,8 @@ export type NarrativeGenerationState =
     }
   | {
       readonly status: "failed";
-      /** 失败前仍持有的 job；手动重试时复用同一 jobId 恢复为 pending。 */
+      /** 失败时仍保留原 job，使重试能复用同一 jobId/行动摘要而不重复规则回合。 */
       readonly job: PendingNarrativeJob;
-      /** 稳定失败分类 + 时间戳，不含 provider code 或错误正文。 */
       readonly failure: NarrativeGenerationFailure;
     };
 

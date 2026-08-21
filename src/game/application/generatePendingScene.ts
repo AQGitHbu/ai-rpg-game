@@ -8,23 +8,23 @@ import {
   approveScenePerformance,
   type ApprovedSceneWriteBack,
 } from "./approveAndWriteScene";
-import { buildSelectableSceneCandidates, createDeterministicSceneSource, buildInvestigationOutcomeNarrative } from "./deterministicSceneSource";
+import { buildSelectableSceneCandidates, buildSceneChoices, buildInvestigationOutcomeNarrative } from "./deterministicSceneSource";
 import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import { evolveWorld } from "./evolveWorld";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
 import type { GameLogger } from "@/game/logging";
 import type { LinearActionNarrativeState } from "@/game/domain/narrative";
 import type { StructuredActionSummary } from "@/game/domain/pendingNarrativeJob";
+import type { NarrativeGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
+import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
+import { markNarrativeGenerationFailed } from "./markNarrativeGenerationFailed";
 
 export type GeneratePendingSceneDeps = {
   readonly repository: GameRepository;
   readonly sceneSource: SceneSource;
   /** Task 3：场景编排联动的世界演化源（幕推进/结局对时装配预览状态后再出场景）。 */
   readonly worldEvolutionSource?: WorldEvolutionSource;
-  /** 生成提案经审批被拒时记录稳定原因，不能让 fallback 伪装成 AI 成功。 */
   readonly logger?: GameLogger;
-  /** live 生产路径禁止把设计 AI 的失败静默写成确定性场景。 */
-  readonly allowDeterministicFallback?: boolean;
   readonly now: () => string;
   /** AI 文本审计记录器，记录场景写回为 story_text 事件。 */
   readonly textAuditRecorder?: AiTextAuditRecorder;
@@ -36,6 +36,7 @@ export type GeneratePendingSceneResult =
   | "saved"
   | "not_pending"
   | "stale"
+  | "failed"
   | "unavailable"
   | "legacy_pending";
 
@@ -53,6 +54,40 @@ function buildAuditedSceneGenerationContext(
       turnNumber: context.job.turnNumber,
     },
     auditTrigger: deriveSceneTrigger(context.job.actionSummary, context.job),
+  };
+}
+
+/**
+ * 已审批的 linearNarrativeQueue 命中时，正文已经由 live AI 生成并通过审批；
+ * 这里只补齐场景契约所需的节拍、目标链接和权威候选，不创建另一份 scene source。
+ */
+function buildQueuedGeneratedSceneProposal(
+  context: ReturnType<typeof buildAuditedSceneGenerationContext>,
+  narration: string,
+): ScenePerformanceProposal {
+  const beatIds = context.mandatoryBeats.length > 0
+    ? context.mandatoryBeats.map((beat) => beat.beatId)
+    : [ATMOSPHERE_BEAT_ID];
+  if (buildSelectableSceneCandidates(context).length < 2) throw new Error("queued generated scene requires two legal candidates");
+  const after = context.objectiveTransition.after;
+  const objectiveLink: ScenePerformanceProposal["objectiveLink"] = after === null
+    ? null
+    : {
+        questId: String(after.questId),
+        objectiveIndex: after.objectiveIndex,
+        mode: context.objectiveTransition.mode === "advanced_act"
+          ? "handoff"
+          : context.objectiveTransition.mode === "progressed"
+            ? "progress"
+            : "hint",
+      };
+  return {
+    sceneId: `scene-${context.job.jobId}`,
+    segments: beatIds.map((beatId) => ({ beatId, text: narration })),
+    npcLine: null,
+    objectiveLink,
+    choices: buildSceneChoices(context),
+    source: "generated",
   };
 }
 
@@ -75,6 +110,18 @@ export async function generatePendingScene(
   // 稳定分类为 legacy_pending，绝不伪装成功恢复。
   if (!("job" in generation) || generation.job === undefined) return "legacy_pending";
 
+  const fail = async (failure: NarrativeGenerationFailure): Promise<GeneratePendingSceneResult> => {
+    const marked = await markNarrativeGenerationFailed(deps.repository, record, failure);
+    if (marked.ok) return "failed";
+    return marked.code === "STALE_GAME_REVISION" ? "stale" : "unavailable";
+  };
+
+  const sceneFailure = (kind: "AI_CALL_FAILED" | "AI_RESPONSE_INVALID"): NarrativeGenerationFailure => ({
+    kind,
+    phase: "scene",
+    failedAt: deps.now(),
+  });
+
   // Task 3：场景编排同样可能挂着演化需求（幕推进/结局对）。
   // 先把 delta 装配为预览记录（只读预览，不落库），再以预览世界/故事状态出场景，
   // 最后经 applySceneWriteBack 单次 CAS 一并写回实体与场景。
@@ -88,21 +135,24 @@ export async function generatePendingScene(
     || summary.kind === "investigate")
     && record.storyState.evolution.status !== "needs_next_act"
     && record.storyState.evolution.status !== "needs_ending_pair";
-  // 移动落点和拾取结果都已由规则回合完全确定。它们是单动作反馈，不需要
-  // 再调用 live 世界/场景源；直接用确定性场景完成 write-back，避免玩家在
-  // 已经完成动作后等待“编排下一幕”。若确实候选不足，下面的受控补足分支
-  // 仍会兜底。
-  const need = immediateAction
+  // 移动落点和拾取结果都已由规则回合完全确定，但 AI mode 仍须由 live
+  // scene source 提供表现；只有命中已审批队列或显式 offline fixture 才不发起
+  // live 调用。AI 失败必须进入 failed，不改写为确定性成功。
+  const derivedNeed = immediateAction
     ? { kind: "none" as const }
     : deriveEvolutionNeed(record.worldState, record.storyState);
+  // 结局对已具象化后，规则层在最终选择回合仍可能保留
+  // needs_ending_pair 标记；不能再次向 source 请求同一对结局并把合法收尾判成重复。
+  const need = derivedNeed.kind === "ending_pair" && record.worldState.endings.length >= 2
+    ? { kind: "none" as const }
+    : derivedNeed;
   // 未注入演化源时不主动演化：保持既有时景写回行为，仅当配置了 source 才装配预览。
-  if (need.kind !== "none" && deps.worldEvolutionSource !== undefined) {
+  if (need.kind !== "none") {
     const outcome = await evolveWorld({
       need,
       worldState: record.worldState,
       storyState: record.storyState,
       source: deps.worldEvolutionSource,
-      allowDeterministicFallback: deps.allowDeterministicFallback === true,
       reason: "scene_evolution",
       auditLink: { ...deps.auditLink, gameId: String(record.gameId), jobId: String(generation.job.jobId), turnNumber: generation.job.turnNumber },
       now: deps.now,
@@ -113,6 +163,10 @@ export async function generatePendingScene(
       }
       scenarioWs = outcome.delta.previewWorldState;
       scenarioSs = outcome.delta.previewStoryState;
+    } else if (outcome.failure !== undefined) {
+      return fail({ ...outcome.failure, phase: "scene", failedAt: deps.now() });
+    } else {
+      return fail(sceneFailure("AI_RESPONSE_INVALID"));
     }
   }
 
@@ -125,15 +179,14 @@ export async function generatePendingScene(
   let context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink);
 
   // ready scene 必须有两个语义不同的合法选择。若当前世界只有一个候选，
-  // 不让生成任务永久 pending，也不在客户端伪造按钮；通过同一世界演化审批、
-  // 预算和 ID 铸造链补足可达内容，再基于批准后的预览状态生成场景。
-  if (buildSelectableSceneCandidates(context).length < 2 && deps.worldEvolutionSource !== undefined) {
+  // 不让生成任务永久 pending，也不在客户端伪造按钮；生产链将候选不足视为
+  // AI/审批失败，显式 offline fixture 才能注入演化 source 补足测试旅程。
+  if (buildSelectableSceneCandidates(context).length < 2) {
     const recovery = await evolveWorld({
       need: { kind: "pacing", pacingNeed: "complicate" },
       worldState: scenarioWs,
       storyState: scenarioSs,
       source: deps.worldEvolutionSource,
-      allowDeterministicFallback: deps.allowDeterministicFallback === true,
       reason: "scene_candidate_shortage",
       auditLink: { ...deps.auditLink, gameId: String(record.gameId), jobId: String(generation.job.jobId), turnNumber: generation.job.turnNumber },
       now: deps.now,
@@ -150,39 +203,39 @@ export async function generatePendingScene(
         storyState: scenarioSs,
       };
       context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink);
+    } else if (recovery.failure !== undefined) {
+      return fail({ ...recovery.failure, phase: "scene", failedAt: deps.now() });
+    } else {
+      return fail(sceneFailure("AI_RESPONSE_INVALID"));
     }
   }
 
-  if (buildSelectableSceneCandidates(context).length < 2) return "unavailable";
+  if (buildSelectableSceneCandidates(context).length < 2) return fail(sceneFailure("AI_RESPONSE_INVALID"));
 
   // Task 3：单线调查/移动优先消费上一次场景写回时 AI 预生成的权威叙事
-  // （actionKind + 实体 ID 精确匹配）；未命中才走确定性兜底（消费即除）。
+  // （actionKind + 实体 ID 精确匹配）；未命中才调用当前注入的 scene source。
   // 必须在候选补足等可能重建 scenarioSs 的步骤之后查找，避免使用旧状态的
   // 对象引用；写回时也按稳定键移除，而不是按对象 identity 移除。
   const consumeEntry = immediateAction
     ? findMatchingQueueEntry(scenarioSs.narrative.linearNarrativeQueue, summary)
     : undefined;
 
-  // 物品拾取与移动一样，当前地点、物品事实和可达候选都由规则结果确定，
-  // 使用同一审批链上的确定性即时场景；对话、探索等仍使用配置的 source。
-  const source = immediateAction
-    ? createDeterministicSceneSource()
-    : deps.sceneSource;
-
   let proposal: ScenePerformanceProposal;
   try {
-    proposal = await source.generateScene(context);
     if (consumeEntry !== undefined) {
-      // 命中的预生成叙事已在写入时通过审批：以其正文覆盖确定性旁白首段，
+      // 命中的预生成叙事已在写入时通过审批：以其正文作为场景唯一正文来源，
       // 场景其余结构（节拍覆盖/选项/目标链接/事件）仍走同一审批链。
       // Task 5：已结算的 investigate 结果把队列叙事作为 baseNarrative，
       // 叠加所选方式/证据质量/下一目标（与确定性节拍同一包装函数）；
       // 不得在场景写回阶段再次修改事件账本或 tension。
+      proposal = buildQueuedGeneratedSceneProposal(context, consumeEntry.narration);
+      const investigationBeatId = context.mandatoryBeats.find((beat) => beat.kind === "fact_discovered")?.beatId;
       proposal = {
         ...proposal,
         segments: proposal.segments.map((segment, index) => {
-          if (index !== 0) return segment;
           if (summary.kind === "investigate" && context.resolvedInvestigation !== undefined) {
+            if (investigationBeatId !== undefined && segment.beatId !== investigationBeatId) return segment;
+            if (investigationBeatId === undefined && index !== 0) return segment;
             const resolved = context.resolvedInvestigation;
             const fact = scenarioWs.worldFacts.find((entry) => String(entry.factId) === String(summary.factId));
             return {
@@ -200,9 +253,13 @@ export async function generatePendingScene(
         }),
         source: "generated",
       };
+    } else {
+      const sceneResult = await deps.sceneSource.generateScene(context);
+      if (!sceneResult.ok) return fail({ ...sceneResult.failure, phase: "scene", failedAt: deps.now() });
+      proposal = sceneResult.proposal;
     }
   } catch {
-    return "unavailable";
+    return fail(sceneFailure("AI_CALL_FAILED"));
   }
 
   // Task 5：已结算调查结果的叙事上下文随提案携带（覆盖确定性/live/stub 各来源）。
@@ -211,33 +268,18 @@ export async function generatePendingScene(
     proposal = { ...proposal, investigationResult };
   }
 
-  // 预生成叙事未命中时记录稳定失败码（确定性兜底不伪装成 AI 成功）。
-  if (immediateAction && consumeEntry === undefined
-    && (summary.kind === "investigate" || summary.kind === "move")) {
-    deps.logger?.warn("linear_narrative_fallback", {
-      actionKind: summary.kind,
-      entityId: summary.kind === "investigate" ? String(summary.factId) : String(summary.locationId),
-    });
-  }
-
-  // 移动/拾取是规则已完全确定的即时反馈，允许使用确定性场景；其余
-  // 设计性场景在 live 运行时必须能证明 proposal 来自真实 API。
-  if (!immediateAction && deps.allowDeterministicFallback === false && proposal.source !== "generated") {
-    deps.logger?.warn("scene_generation_fallback_blocked", { reason: "live_required" });
-    return "unavailable";
-  }
-
   // 单线行动叙事是独立的可选产物：先从原始 generated proposal 中审批并
   // 暂存，不能等到整场 scene approval 成功后才提取。否则本轮只要 NPC/节拍/
-  // 选项任一硬校验失败，随后确定性 fallback 就会连带抹掉本来合法的未来叙事。
+  // 选项任一硬校验失败，不能连带抹掉本来合法的未来叙事；但核心场景仍须
+  // 通过 live 内容修复，否则整个 pending job 进入 failed。
   let retainedLinearNarrativeQueue = proposal.source === "generated"
     ? approveLinearActionNarratives(proposal, context, undefined)
     : [];
 
   // 完整场景表演审批（Task 6）：核心结构非法（缺强制节拍/自创节拍 ID/
   // 错误 NPC 应答/forbidden fact/他人交互/过期目标/重复选项/无推进选项）时，
-  // 先给 generated proposal 一次带拒绝码的内容修复机会；修复仍失败才
-  // 回退确定性 source，且 fallback 同样过同一审批，防止两套契约漂移。
+  // 先给 generated proposal 一次带拒绝码的内容修复机会；修复仍失败就持久化
+  // AI_RESPONSE_INVALID，不写入 deterministic 场景。
   let approved: ApprovedSceneWriteBack | null = null;
   const approvedGenerated = approveScenePerformance({
     context,
@@ -277,8 +319,9 @@ export async function generatePendingScene(
           reason: `approval:${approvedGenerated.code}`,
           attempt: 1,
         });
-        const repairedProposal = await source.generateScene(repairContext);
-        if (repairedProposal.source === "generated") {
+        const repairedResult = await deps.sceneSource.generateScene(repairContext);
+        if (repairedResult.ok && repairedResult.proposal.source === "generated") {
+          const repairedProposal = repairedResult.proposal;
           const repairedLinearNarrativeQueue = approveLinearActionNarratives(
             repairedProposal,
             repairContext,
@@ -308,8 +351,6 @@ export async function generatePendingScene(
             approveLinearActionNarratives(repairedProposal, repairContext, deps.logger);
             deps.logger?.warn("scene_generation_retry_rejected", { code: repairedApproval.code });
           }
-        } else {
-          deps.logger?.warn("scene_generation_retry_fallback", { reason: approvedGenerated.code });
         }
       } catch {
         deps.logger?.warn("scene_generation_retry_failed", { reason: approvedGenerated.code });
@@ -317,34 +358,7 @@ export async function generatePendingScene(
     }
 
     if (approved === null) {
-      if (!immediateAction && deps.allowDeterministicFallback === false) {
-        deps.logger?.warn("scene_generation_fallback_blocked", { reason: approvedGenerated.code });
-        return "unavailable";
-      }
-      try {
-        const fallbackProposal = await createDeterministicSceneSource().generateScene(context);
-        const approvedFallback = approveScenePerformance({
-          context,
-          proposal: fallbackProposal,
-          basedOnRevision: record.revision + 1,
-          existingCandidateEventPool: record.storyState.candidateEventPool,
-          logger: deps.logger,
-        });
-        if (!approvedFallback.ok) return "unavailable";
-        approved = {
-          ...approvedFallback,
-          // fallback 只负责补齐当前场景核心结构；如果原始 generated
-          // proposal 的线性队列已经通过独立审批，则必须把它带过 CAS。
-          linearNarrativeQueue: retainedLinearNarrativeQueue.length > 0
-            ? retainedLinearNarrativeQueue
-            : approvedFallback.linearNarrativeQueue,
-        };
-        for (const code of approvedFallback.qualityWarnings) {
-          deps.logger?.warn("scene_quality_warning", { code });
-        }
-      } catch {
-        return "unavailable";
-      }
+      return fail(sceneFailure("AI_RESPONSE_INVALID"));
     }
   }
 
@@ -395,7 +409,7 @@ export async function generatePendingScene(
           revision: record.revision + 1,
           action: context.job.actionSummary,
         },
-        source: immediateAction ? "deterministic" : approved.scene.source,
+        source: approved.scene.source,
         path: "normal",
         scene: approved.scene,
         visibleText: {

@@ -54,6 +54,11 @@ export type ApplyStateInput = {
    * 铸造的 choiceToken，导致当前场景固定选项全部失效。
    */
   readonly incrementRevision?: boolean;
+  /** Optional state predicate for revision-preserving narrative status transitions. */
+  readonly expectedNarrativeGeneration?: {
+    readonly status: "pending" | "failed";
+    readonly jobId: string;
+  };
 };
 
 /**

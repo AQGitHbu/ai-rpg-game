@@ -1,0 +1,43 @@
+import type { GameId } from "./server/persistence/gameRepository";
+import type { GameRepository } from "./server/persistence/gameRepository";
+import { commitState } from "./stateCommit";
+
+export type RetryNarrativeGenerationResult =
+  | { readonly ok: true; readonly result: "requeued" | "already_pending" | "not_failed"; readonly jobId?: string }
+  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "INFRASTRUCTURE_FAILURE" };
+
+/** Restore the same failed job to pending with a revision-preserving CAS. */
+export async function retryNarrativeGeneration(
+  repository: GameRepository,
+  gameId: GameId,
+  _now: () => string,
+): Promise<RetryNarrativeGenerationResult> {
+  const current = await repository.getCurrentGame();
+  if (!current.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+  if (current.status === "none") return { ok: false, code: "NO_ACTIVE_GAME" };
+  if (current.status === "corrupt") return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+  if (current.record.gameId !== gameId) return { ok: false, code: "STALE_GAME_REVISION" };
+
+  const generation = current.record.storyState.narrative.generation;
+  if (generation.status === "pending") {
+    return { ok: true, result: "already_pending", jobId: String(generation.job.jobId) };
+  }
+  if (generation.status !== "failed") return { ok: true, result: "not_failed" };
+
+  const committed = await commitState(repository, {
+    gameId,
+    expectedRevision: current.record.revision,
+    nextWorldState: current.record.worldState,
+    nextStoryState: {
+      ...current.record.storyState,
+      narrative: {
+        ...current.record.storyState.narrative,
+        generation: { status: "pending", job: generation.job },
+      },
+    },
+    incrementRevision: false,
+    expectedNarrativeGeneration: { status: "failed", jobId: String(generation.job.jobId) },
+  });
+  if (!committed.ok) return { ok: false, code: committed.code };
+  return { ok: true, result: "requeued", jobId: String(generation.job.jobId) };
+}

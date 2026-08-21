@@ -9,7 +9,7 @@ import { createGame, createFixtureOpeningSource } from "@/game/application/creat
 import { generatePendingScene } from "@/game/application/generatePendingScene";
 import { createDeterministicSceneSource } from "@/game/application/deterministicSceneSource";
 import { buildSceneGenerationContext, type SceneGenerationContext } from "@/game/application/sceneGenerationContext";
-import type { SceneSource, SceneSourceResult } from "@/game/application/sceneSource";
+import type { SceneSource, ScenePerformanceProposal } from "@/game/application/sceneSource";
 import { createDeterministicEvolutionSource } from "@/game/application/deterministicEvolutionSource";
 import type { WorldEvolutionSource } from "@/game/application/worldEvolutionSource";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
@@ -145,9 +145,9 @@ export function createJourneyEvolutionSource(): WorldEvolutionSource {
     async propose(ctx) {
       switch (ctx.need.kind) {
         case "none":
-          return { proposal: null };
+          return { ok: true, proposal: null };
         case "next_act":
-          return { proposal: journeyNextActProposal(ctx.need.act, String(ctx.worldState.currentLocationId)) };
+          return { ok: true, proposal: journeyNextActProposal(ctx.need.act, String(ctx.worldState.currentLocationId)) };
         case "ending_pair":
           // 结局对走 Task 3 确定性源的规则化要求（关键 NPC 亲和度分歧）。
           return deterministic.propose(ctx);
@@ -314,11 +314,12 @@ export async function loadGameRecord(repo: GameRepository): Promise<GameRecord |
  */
 export async function pendingSceneProposal(
   repo: GameRepository,
-): Promise<{ context: SceneGenerationContext; proposal: SceneSourceResult } | null> {
+): Promise<{ context: SceneGenerationContext; proposal: ScenePerformanceProposal } | null> {
   const record = await loadGameRecord(repo);
   if (record === null) return null;
   if (record.storyState.narrative.generation.status !== "pending") return null;
   const context = buildSceneGenerationContext(record);
   const proposal = await createDeterministicSceneSource().generateScene(context);
-  return { context, proposal };
+  if (!proposal.ok) throw new Error("expected success");
+  return { context, proposal: proposal.proposal };
 }

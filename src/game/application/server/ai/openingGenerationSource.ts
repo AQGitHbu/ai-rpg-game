@@ -1,7 +1,6 @@
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
 import type { OpeningGenerationSource } from "../../createGame";
-import { createFixtureOpeningSource } from "../../createGame";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import { parseOpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import type { GameLength, GameSetup } from "@/game/domain/newGame";
@@ -11,12 +10,14 @@ import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import { buildStylePolicy } from "../../stylePolicy";
 import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./rpgAiClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
+import { AiGenerationError, classifyAiFailure, transportFailureCodeToCategory } from "../../aiGenerationFailure";
 
 // ---------------------------------------------------------------------------
 // 开局生成源（live/fixture）。
 //
 // 编排：AI 原始 JSON → schema parse → 机械修复（无创意）→ 引用完整性修复 →
-// 纯 validator → 确定性 fallback（fixture 必须通过同一 validator/compiler）。
+// 纯 validator → 成功返回 generated candidate。
+// 失败抛出携带稳定 kind 的 AiGenerationError，由 createGame 负责返回失败。
 // 机械修复只允许空数组/空字符串/数值回退等无创意修复；不得修改剧情语义。
 // 敏感信息不进入日志。
 // ---------------------------------------------------------------------------
@@ -192,26 +193,16 @@ export type OpeningGenerationSourceDeps = {
   readonly aiClient?: RpgAiClient;
   readonly jsonMode?: ProviderJsonMode;
   readonly logger?: GameLogger;
-  /** 生产 live 模式关闭静默 fixture 降级，保证开局设计确实来自 API。 */
-  readonly allowFallback?: boolean;
-  /** 只回传安全来源标记；用于严格区分 AI 成功和可恢复 fallback。 */
-  readonly onResult?: (result: OpeningGenerationResultMarker) => void;
 };
-
-export type OpeningGenerationResultMarker = Readonly<{
-  readonly seed: string;
-  readonly source: "generated" | "fallback";
-}>;
 
 export const LIVE_OPENING_MAX_TOKENS = RPG_AI_DEFAULT_POLICIES.opening.maxTokens ?? 0;
 
-// live 开局源：AI 产出 → parse → 机械修复 → 引用修复 → 校验 → 失败回退 fixture。
-// fixture 必须通过同一 validator/compiler（由 createFixtureOpeningSource 保证）。
+// live 开局源：AI 产出 → parse → 机械修复 → 引用修复 → 校验 → 成功返回 generated candidate。
+// 失败抛出携带稳定 kind 的 AiGenerationError，不调用 generateFallback。
 export function createOpeningGenerationSource(
   deps: OpeningGenerationSourceDeps,
 ): OpeningGenerationSource {
-  const fixture = createFixtureOpeningSource();
-  const { transport, config, logger, jsonMode, onResult } = deps;
+  const { transport, config, logger, jsonMode } = deps;
   const aiClient = deps.aiClient ?? (transport && config
     ? createRpgAiClient({
       transport,
@@ -221,32 +212,20 @@ export function createOpeningGenerationSource(
     })
     : undefined);
 
+  const failOpening = (category: Parameters<typeof classifyAiFailure>[0]["category"]): AiGenerationError => {
+    const failure = classifyAiFailure({ phase: "opening", category });
+    return new AiGenerationError(failure.kind, "opening", `opening generation failed: ${category}`);
+  };
+
   return {
-    // 这是相似度耗尽后的结构性兜底，不是 provider 故障时的静默降级：
-    // 它返回另一条完整候选，createGame 仍会再次做 schema/gameplay/novelty 校验。
-    async generateFallback(input) {
-      onResult?.({ seed: input.seed, source: "fallback" });
-      return fixture.generate(input);
-    },
     async generate(input) {
-        const fallback = async (): Promise<OpeningGenerationCandidate> => {
-        if (deps.allowFallback === false) {
-          throw new Error("LIVE_OPENING_UNAVAILABLE");
-        }
-        onResult?.({ seed: input.seed, source: "fallback" });
-        return fixture.generate(input);
-      };
-      const generated = (candidate: OpeningGenerationCandidate): OpeningGenerationCandidate => {
-        onResult?.({ seed: input.seed, source: "generated" });
-        return candidate;
-      };
-      // 无 AI client：确定性 fallback（fixture 通过同一 validator/compiler）。
       if (!aiClient) {
-        return fallback();
+        throw failOpening("unavailable");
       }
 
+      let result: Awaited<ReturnType<typeof aiClient.complete>>;
       try {
-        const result = await aiClient.complete("opening", [
+        result = await aiClient.complete("opening", [
           { role: "system", content: buildOpeningPrompt(input) },
           { role: "user", content: `生成游戏类型 ${input.gameType} / 长度 ${input.gameLength} / 种子 ${input.seed} / 尝试 ${input.attempt ?? 0} 的开场切片。` },
         ], {
@@ -260,58 +239,59 @@ export function createOpeningGenerationSource(
             attempt: input.attempt ?? 0,
           },
         });
-
-        if (!result.ok) {
-          logger?.warn("opening_generation_ai_failed", { code: result.code });
-          return fallback();
-        }
-        const parsed = parseJsonResponse(result.content);
-        if (parsed === null) {
-          logger?.warn("opening_generation_parse_failed", { reason: "json_parse_error" });
-          return fallback();
-        }
-
-        // 机械修复（无创意）后走同一 schema parser + validator。
-        const repaired = repairOpeningGenerationCandidate(parsed);
-        if (repaired.candidate === null) {
-          logger?.warn("opening_generation_repair_failed", { reason: "schema_invalid" });
-          return fallback();
-        }
-
-        // 引用完整性修复（无创意）：NPC fact key 必须存在于 publicFacts，
-        // 删除悬空引用不改剧情语义，避免整局回退 fixture 丢失玩家世界观。
-        const sanitized = sanitizeOpeningFactReferences(repaired.candidate);
-
-        const validated = validateOpeningGenerationCandidate(sanitized, {
-          gameLength: input.gameLength,
-          targetActs: TARGET_ACTS[input.gameLength],
-        });
-        if (!validated.ok) {
-          logger?.warn("opening_generation_validation_failed", {
-            reason: validated.issues[0]?.code ?? "unknown",
-            issueCount: validated.issues.length,
-          });
-          return fallback();
-        }
-        // 玩家开局配置是权威输入；实体名、地点和任务仍来自本次 AI 候选，
-        // 不在服务端用另一套硬编码内容覆盖候选。
-        if (input.setup !== undefined) {
-          const candidate = validated.validated;
-          return generated({
-            ...candidate,
-            player: {
-              ...candidate.player,
-              name: input.setup.characterName,
-              identity: input.setup.characterIdentity,
-              backgroundSummary: input.setup.characterProfile ?? candidate.player.backgroundSummary,
-            },
-          });
-        }
-        return generated(validated.validated);
       } catch (error) {
+        if (error instanceof AiGenerationError) throw error;
         logger?.warn("opening_generation_transport_failed", { message: (error as Error)?.message });
-        return fallback();
+        throw failOpening("unknown");
       }
+
+      if (!result.ok) {
+        logger?.warn("opening_generation_ai_failed", { code: result.code });
+        throw failOpening(transportFailureCodeToCategory(result.code));
+      }
+      const parsed = parseJsonResponse(result.content);
+      if (parsed === null) {
+        logger?.warn("opening_generation_parse_failed", { reason: "json_parse_error" });
+        throw failOpening("invalid_json");
+      }
+
+      // 机械修复（无创意）后走同一 schema parser + validator。
+      const repaired = repairOpeningGenerationCandidate(parsed);
+      if (repaired.candidate === null) {
+        logger?.warn("opening_generation_repair_failed", { reason: "schema_invalid" });
+        throw failOpening("invalid_schema");
+      }
+
+      // 引用完整性修复（无创意）：NPC fact key 必须存在于 publicFacts，
+      // 删除悬空引用不改剧情语义，避免整局回退 fixture 丢失玩家世界观。
+      const sanitized = sanitizeOpeningFactReferences(repaired.candidate);
+
+      const validated = validateOpeningGenerationCandidate(sanitized, {
+        gameLength: input.gameLength,
+        targetActs: TARGET_ACTS[input.gameLength],
+      });
+      if (!validated.ok) {
+        logger?.warn("opening_generation_validation_failed", {
+          reason: validated.issues[0]?.code ?? "unknown",
+          issueCount: validated.issues.length,
+        });
+        throw failOpening("invalid_schema");
+      }
+      // 玩家开局配置是权威输入；实体名、地点和任务仍来自本次 AI 候选，
+      // 不在服务端用另一套硬编码内容覆盖候选。
+      if (input.setup !== undefined) {
+        const candidate = validated.validated;
+        return {
+          ...candidate,
+          player: {
+            ...candidate.player,
+            name: input.setup.characterName,
+            identity: input.setup.characterIdentity,
+            backgroundSummary: input.setup.characterProfile ?? candidate.player.backgroundSummary,
+          },
+        };
+      }
+      return validated.validated;
     },
   };
 }

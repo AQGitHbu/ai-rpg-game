@@ -1,13 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { AiFailureKind } from "@/game/application";
 
-type GenerationStatusModalProps = {
-  readonly kind: "creation" | "narrative" | "action";
-  readonly onRetry?: () => void;
-  /** 战斗回合生成中时保留竞技场可见，只把状态收敛成上方提示条。 */
-  readonly battleVisible?: boolean;
-};
+type GenerationStatusModalProps =
+  | {
+      readonly kind: "creation" | "narrative" | "action";
+      readonly onRetry?: () => void | Promise<void>;
+      readonly battleVisible?: boolean;
+    }
+  | {
+      readonly kind: "narrative-failure";
+      readonly failureKind: AiFailureKind;
+      readonly onRetry: () => void | Promise<void>;
+      readonly battleVisible?: boolean;
+    };
 
 const COPY = {
   creation: {
@@ -27,8 +34,19 @@ const COPY = {
   },
 } as const;
 
-export function GenerationStatusModal({ kind, onRetry, battleVisible = false }: GenerationStatusModalProps) {
-  const copy = COPY[kind];
+const FAILURE_COPY: Record<AiFailureKind, { readonly title: string; readonly description: string }> = {
+  AI_CALL_FAILED: { title: "AI 调用失败", description: "AI 调用失败，请重试。" },
+  AI_RESPONSE_INVALID: { title: "AI 返回格式不符合要求", description: "AI 返回格式不符合要求，请重试。" },
+};
+
+export function GenerationStatusModal(props: GenerationStatusModalProps) {
+  const { kind, onRetry, battleVisible = false } = props;
+  const failure = kind === "narrative-failure" ? FAILURE_COPY[props.failureKind] : undefined;
+  const copy = kind === "narrative-failure" ? {
+    title: failure?.title ?? "生成失败",
+    description: failure?.description ?? "生成失败，请重试。",
+    hint: "当前已提交的规则状态已保留。",
+  } : COPY[kind];
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
@@ -45,12 +63,16 @@ export function GenerationStatusModal({ kind, onRetry, battleVisible = false }: 
     >
       <div className="narrative-generation-modal-backdrop" />
       <section className="narrative-generation-modal-content" aria-live="polite">
-        <span className="narrative-generation-spinner" aria-hidden="true" />
+        {kind === "narrative-failure" ? null : <span className="narrative-generation-spinner" aria-hidden="true" />}
         <h2 id="generation-status-title">{copy.title}</h2>
-        <p>{battleVisible ? "战斗结果正在结算，下一回合即将开始。" : copy.description}</p>
+        {kind === "narrative-failure" ? <p role="alert">{copy.description}</p> : <p>{battleVisible ? "战斗结果正在结算，下一回合即将开始。" : copy.description}</p>}
         <p className="narrative-generation-modal-hint">{copy.hint}</p>
         <p className="narrative-generation-modal-elapsed">已等待 {elapsedSeconds} 秒</p>
-        {onRetry && elapsedSeconds >= 15 ? (
+        {kind === "narrative-failure" ? (
+          <button type="button" className="narrative-generation-modal-retry" onClick={() => void onRetry?.()}>
+            重试
+          </button>
+        ) : onRetry && elapsedSeconds >= 15 ? (
           <button type="button" className="narrative-generation-modal-retry" onClick={onRetry}>
             重新检查生成状态
           </button>

@@ -6,7 +6,7 @@
 
 ## 已有闭环
 
-当前规则已支持：创建 fallback 世界、观察/交谈/调查、地点移动、物品取得、任务解锁、确定性 boss 战，以及成功/失败两个可恢复结局。所有状态仍由 application facade → gameplay 规则 → SQLite CAS 保存。
+当前显式 offline fixture 已支持：创建确定性 fixture 世界、观察/交谈/调查、地点移动、物品取得、任务解锁、确定性 boss 战，以及成功/失败两个可恢复结局。所有状态仍由 application facade → gameplay 规则 → SQLite CAS 保存。本文件不描述生产 AI 不可用时的用户体验；生产链会显示稳定 AI 失败并等待手动重试。
 
 ## 本次实现约束
 
@@ -38,4 +38,4 @@ npm run phase:status
 
 ## 最近维护
 
-- 2026-08-04：开发环境「使用已有数据开始」扩展为 7 题材下拉；按 caseId 复用 data/story-eval/cases/v2.json 输入 + 派生 seed 创建 offline 存档（确定性 fallback 蓝图 + runtimeNarrativeMode:"offline"，零 AI）。新增 src/game/application/server/offlineBaselines.ts（题材→caseId 白名单 + seed 派生）与 7 题材零 AI 规则通关回归 src/game/application/testing/offlineGenreJourney.test.ts。
+- 2026-08-04：开发环境「使用已有数据开始」扩展为 7 题材下拉；按 caseId 复用 data/story-eval/cases/v2.json 输入 + 派生 seed 创建 offline 存档（显式 deterministic fixture + `runtimeNarrativeMode:"offline"`，零 AI）。新增 `src/game/application/server/offlineBaselines.ts`（题材→caseId 白名单 + seed 派生）与 7 题材零 AI 规则通关回归 `src/game/application/testing/offlineGenreJourney.test.ts`。

@@ -2,6 +2,7 @@ import type { AiMessage, AiTransport, AiTransportConfig } from "@ai-game/ai-tran
 import type { GameLogger } from "@/game/logging";
 import type {
   SceneSource,
+  SceneSourceResult,
   ScenePerformanceProposal,
   ScenePerformanceSegment,
   LinearActionNarrative,
@@ -9,12 +10,13 @@ import type {
 import { sceneInvestigationResultFrom } from "../../sceneSource";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
 import {
-  createDeterministicSceneSource,
   buildSelectableSceneCandidates,
   formatSceneChoiceLabel,
   usesFallbackDialogueChoiceLabels,
   type SceneChoiceCandidate,
-} from "../../deterministicSceneSource";
+} from "../../sceneChoiceCandidates";
+import { classifyAiFailure, transportFailureCodeToCategory } from "../../aiGenerationFailure";
+import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
 import { NARRATIVE_EMOTIONS, type NarrativeEmotion } from "@/game/domain/narrative";
 import {
   isGenericNpcAcknowledgement,
@@ -29,8 +31,8 @@ import type { ProviderJsonMode } from "./providerRequestOptions";
 // ---------------------------------------------------------------------------
 // live 场景表演源（Task 6，取代 liveSceneSource）。
 //
-// 编排：AI 原始 JSON → 纯解析/校验（非法字段、越权引用直接丢弃）→ 失败/异常
-// 回退确定性 source。source 只做"提案"，不做审批/铸造 token/写状态
+// 编排：AI 原始 JSON → 纯解析/校验（非法字段、越权引用直接失败）→ typed failure。
+// source 只做"提案"，不做审批/铸造 token/写状态
 // （那些是 approveScenePerformance 纯函数职责）。sensitive 配置绝不进日志。
 // 提示词只含安全段落：风格政策、玩家本轮原话、已解决规则结果节拍、目标转换、
 // 当前地点、最近故事节拍、预算/节奏、已批准实体、焦点 NPC 上下文、合法选项 ID、
@@ -45,8 +47,6 @@ export type LiveScenePerformanceDeps = {
   /** 仅由已验证兼容的 AI_OUTPUT_FORMAT=json_object 启用。 */
   readonly jsonMode?: ProviderJsonMode;
   readonly logger?: GameLogger;
-  /** 生产 live 模式关闭静默确定性降级；失败会让 pending 保留，等待下一次真实 API 重试。 */
-  readonly allowFallback?: boolean;
 };
 
 /**
@@ -102,8 +102,8 @@ function sceneResponseShape(raw: unknown): Record<string, string | number | bool
 }
 
 /**
- * live prompt 只需要知道服务端允许的动作语义，不应看到 deterministic
- * source 的自然语言 label。否则模型很容易把 fallback 示例误当成当前
+ * live prompt 只需要知道服务端允许的动作语义，不应看到离线 fixture
+ * source 的自然语言 label。否则模型很容易把 fixture 示例误当成当前
  * NPC 台词对应的玩家回应，尤其是在连续对话的 support/challenge 分支。
  */
 function describeChoiceCandidate(candidate: SceneChoiceCandidate): string {
@@ -202,7 +202,7 @@ export function resolvePerformanceChoices(
   return [
     // candidateId/action 仍由服务端候选集决定；label 允许 AI 在同一份
     // 剧情上下文上生成自然措辞，最后只由服务端统一格式化，避免又被
-    // 角色/关键词 fallback 覆盖成与 NPC 台词无关的模板。
+    // 角色/关键词模板覆盖成与 NPC 台词无关的文本。
     { candidateId: cx.candidateId, label: formatSceneChoiceLabel(cx.action, x.label.trim()) },
     { candidateId: cy.candidateId, label: formatSceneChoiceLabel(cy.action, y.label.trim()) },
   ];
@@ -286,7 +286,7 @@ export function parseScenePerformanceJson(
       }
       // 让“自创节拍 ID”进入机械修复路径：有焦点 NPC 时保留真实
       // API 返回的台词，只用服务端已批准的节拍/确定性段落补齐，
-      // 避免到了最终审批才静默写 fallback 或永久卡 pending。
+      // 避免到了最终审批才静默写入非法响应或永久卡 pending。
       if (!allowedBeatIds.has(s.beatId.trim())) {
         return { ok: false, reason: "segment_unknown_beat" };
       }
@@ -372,49 +372,12 @@ export function parseScenePerformanceJson(
 
 /**
  * JSON object mode 下 provider 偶尔把 NPC 直接台词放成字符串、或给出不合法
- * 数量的选项。只要这段台词本身通过同一角色/多句/泛问候校验，就保留它，
- * 用同一 SceneGenerationContext 交给确定性源补全节拍和选择框架；因此即使
- * live 只返回 NPC 台词，support/challenge 仍承接本局种子、回合与交互序列，
- * 不会退回角色名驱动的固定整组对白。这不是 fallback NPC 文案。
+ * 数量的选项。此函数已废弃——live source 不再调用 deterministic source
+ * 做 partial repair。保留导出仅为兼容外部测试引用；内部不再调用。
  */
-function repairPartialLiveScene(
-  raw: unknown,
-  context: SceneGenerationContext,
-  deterministic: SceneSource,
-): Promise<ScenePerformanceProposal | null> {
-  if (!isRecord(raw)) return Promise.resolve(null);
-  const rawLine = typeof raw.npcLine === "string"
-    ? { npcId: String(context.focusNpcContext?.id ?? ""), text: raw.npcLine, emotion: "neutral" }
-    : isRecord(raw.npcLine) ? raw.npcLine as LiveNpcLineCandidate : null;
-  const resolved = isUsableLiveNpcLine(rawLine, context);
-  if (resolved === null) return Promise.resolve(null);
-  return deterministic.generateScene(context).then((fallback) => {
-    const currentLineSelectable = buildSelectableSceneCandidates(context, resolved.text);
-    const labelsByCandidateId = new Map(currentLineSelectable.map((choice) => [choice.candidateId, choice.label]));
-    return {
-      ...fallback,
-      npcLine: {
-        npcId: String(resolved.npcId),
-        text: resolved.text,
-        emotion: resolved.emotion,
-        answeredBeatIds: context.mandatoryBeats
-          .filter((beat) => beat.kind === "player_utterance")
-          .map((beat) => beat.beatId),
-        usedFactIds: [],
-        usedInteractionActionIds: [],
-      },
-      choices: fallback.choices.map((choice) => ({
-        candidateId: choice.candidateId,
-        label: labelsByCandidateId.get(choice.candidateId) ?? choice.label,
-      })) as unknown as ScenePerformanceProposal["choices"],
-      source: "generated" as const,
-    };
-  });
-}
 
-/** live 场景表演源：AI 提案 → 纯解析/校验 → 失败回退确定性源。 */
+/** live 场景表演源：AI 提案 → 纯解析/校验 → 失败返回稳定 typed failure，不调用 deterministic source。 */
 export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps): SceneSource {
-  const deterministic = createDeterministicSceneSource();
   const { transport, config, logger, jsonMode } = deps;
   const maxContentRepairAttempts = 1;
   const aiClient = deps.aiClient ?? (transport && config
@@ -425,18 +388,18 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
       policies: { scene: { jsonMode: jsonMode ?? "prompt_only" } },
     })
     : undefined);
-  const fallbackScene = (context: SceneGenerationContext): Promise<ScenePerformanceProposal> => {
-    if (deps.allowFallback === false) {
-      throw new Error("LIVE_SCENE_UNAVAILABLE");
-    }
-    return deterministic.generateScene(context);
+
+  const failScene = (category: Parameters<typeof classifyAiFailure>[0]["category"]): SceneSourceResult => {
+    const failure: AiGenerationFailure = classifyAiFailure({ phase: "scene", category });
+    logger?.warn("scene_generation_failed", { category, kind: failure.kind });
+    return { ok: false, failure };
   };
 
-  const generateSceneInner = async (context: SceneGenerationContext): Promise<ScenePerformanceProposal> => {
+  const generateSceneInner = async (context: SceneGenerationContext): Promise<SceneSourceResult> => {
       try {
         const selectable = buildSelectableSceneCandidates(context);
-        if (selectable.length < 2) return fallbackScene(context);
-        if (aiClient === undefined) return fallbackScene(context);
+        if (selectable.length < 2) return failScene("invalid_schema");
+        if (aiClient === undefined) return failScene("unavailable");
 
         const messages: readonly AiMessage[] = [
           { role: "system", content: buildLiveScenePrompt(context, selectable) },
@@ -445,7 +408,7 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
 
         // 场景生成位于每个玩家回合的必经等待界面。瞬态网络失败由统一 client
         // 按角色策略重试；解析/契约失败则最多再发起一次带失败原因的内容修复，
-        // 避免把一次可修复的格式/结构偏差直接降级成 fallback。
+        // 修复仍失败时返回稳定 typed failure，不降级到 deterministic scene。
         const result = await aiClient.complete("scene", messages, {
           purpose: "scene_performance",
           trigger: context.auditTrigger ?? `${context.job.actionSummary.kind}_action`,
@@ -456,7 +419,7 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
         if (!result.ok) {
           logger?.warn("scene_generation_ai_failed", { code: result.code });
           // empty_response 没有可解析内容，RpgAiClient 不会重复相同请求；
-          // 这里允许一次带修复指令的内容重试，仍为空才 fallback。
+          // 这里允许一次带修复指令的内容重试，仍为空才返回 typed failure。
           const repairAttempt = context.repairAttempt?.attempt ?? 0;
           if (result.code === "empty_response" && repairAttempt < maxContentRepairAttempts) {
             logger?.warn("scene_generation_content_retry", {
@@ -468,14 +431,17 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
               repairAttempt: { attempt: repairAttempt + 1, reason: result.code },
             });
           }
-          return fallbackScene(context);
+          return failScene(transportFailureCodeToCategory(result.code));
         }
 
         const parsed = parseJsonResponse(result.content);
         const parseResult = parsed.ok
           ? parseScenePerformanceJson(parsed.value, context, selectable)
           : parsed;
-        if (parseResult.ok) return markContentRepairAttempt(parseResult.proposal, context);
+        if (parseResult.ok) {
+          const proposal = markContentRepairAttempt(parseResult.proposal, context);
+          return { ok: true, proposal };
+        }
 
         const repairAttempt = context.repairAttempt?.attempt ?? 0;
         if (repairAttempt < maxContentRepairAttempts) {
@@ -487,32 +453,28 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
           });
         }
 
-        const repaired = await repairPartialLiveScene(parsed.ok ? parsed.value : null, context, deterministic);
-        if (repaired !== null) {
-          logger?.info("scene_generation_repaired", { kind: "npc_line_only" });
-          return markContentRepairAttempt(repaired, context);
-        }
-
         logger?.warn("scene_generation_invalid_data", {
           reason: parseResult.reason,
           ...(parsed.ok
             ? sceneResponseShape(parsed.value)
             : { object: false, kind: "invalid_json" }),
         });
-        return fallbackScene(context);
+          return failScene(parsed.ok ? "invalid_schema" : "invalid_json");
       } catch (error) {
         logger?.error("scene_generation_error", { error: error instanceof Error ? error.message : "unknown" });
-        return fallbackScene(context);
+        return failScene("unknown");
       }
     };
 
-  // Task 5：已结算调查结果随提案携带（覆盖 generated 与 fallback 两种来源）。
-  const generateScene = async (context: SceneGenerationContext): Promise<ScenePerformanceProposal> => {
-    const proposal = await generateSceneInner(context);
+  // Task 5：已结算调查结果随提案携带（live proposal 仍保持 generated 来源）。
+  const generateScene = async (context: SceneGenerationContext): Promise<SceneSourceResult> => {
+    const result = await generateSceneInner(context);
+    if (!result.ok) return result;
     const investigationResult = sceneInvestigationResultFrom(context);
-    return investigationResult === undefined
-      ? proposal
-      : { ...proposal, investigationResult };
+    const proposal = investigationResult === undefined
+      ? result.proposal
+      : { ...result.proposal, investigationResult };
+    return { ok: true, proposal };
   };
 
   return { generateScene };
@@ -563,7 +525,7 @@ export function buildLiveScenePrompt(
 
   // 审批器要求每幕至少有一个 segment。开局没有规则节拍时，必须明确告诉
   // 模型使用唯一合法的 atmosphere 节拍；否则模型很自然会返回空数组，进而
-  // 把一次已成功返回的 AI 调用误降级为 fallback。
+  // 把一次已成功返回的 AI 调用误标记为失败。
   const hasMandatoryBeats = context.mandatoryBeats.length > 0;
   const beatsSection = hasMandatoryBeats
     ? context.mandatoryBeats.map((b) => `- ${b.beatId} [${b.kind}] ${b.instruction}`).join("\n")

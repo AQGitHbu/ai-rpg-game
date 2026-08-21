@@ -12,6 +12,19 @@ import { PLAYER_UTTERANCE_MAX_LENGTH } from "@/game/domain/pendingNarrativeJob";
 
 export type ParseError = { readonly ok: false; readonly code: "INVALID_INPUT" };
 
+export type EnsureNarrativeBodyResult =
+  | { readonly ok: true; readonly retry?: true }
+  | { readonly ok: false; readonly code: "INVALID_INPUT" };
+
+/** POST /api/game/narrative/ensure accepts exactly {} or { retry: true }. */
+export function parseEnsureNarrativeBody(body: unknown): EnsureNarrativeBodyResult {
+  if (!isRecord(body)) return { ok: false, code: "INVALID_INPUT" };
+  const keys = Object.keys(body);
+  if (keys.length === 0) return { ok: true };
+  if (keys.length === 1 && body.retry === true) return { ok: true, retry: true };
+  return { ok: false, code: "INVALID_INPUT" };
+}
+
 export type ActionRequest = {
   readonly actionId: string;
   readonly interaction:
@@ -106,6 +119,12 @@ export function httpStatusForCode(code: string | undefined): number {
     case "ACTION_REJECTED":
       return 422;
     case "INFRASTRUCTURE_FAILURE":
+      return 503;
+    case "AI_CALL_FAILED":
+      return 503;
+    case "AI_RESPONSE_INVALID":
+      return 502;
+    case "AI_GENERATION_FAILED":
       return 503;
     default:
       return 500;

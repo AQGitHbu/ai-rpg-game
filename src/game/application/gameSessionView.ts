@@ -9,6 +9,7 @@ import type { ItemCategory, ItemRarity, ItemStatLine } from "@/game/domain/world
 import { resolveItemPresentation, type ItemIconKey } from "@/game/domain/itemPresentation";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
+import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 import { buildChoiceMap, hasExplorableContent, currentInvestigationApproachChoices } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
@@ -19,7 +20,6 @@ import { composeDirectNpcGreeting, composeIdleNpcLine, normalizeNpcSpeech } from
 import { isObjectiveEntityReleased, isQuestObjectiveReleased } from "@/game/gameplay/rpg/worldEvolution";
 import { formatSceneChoiceLabel } from "./deterministicSceneSource";
 import { decorateNarrativePages, decorateNarrativeText } from "./narrativeText";
-import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 
 export type PlayerChoiceView = {
   readonly choiceToken: string;
@@ -721,13 +721,9 @@ export function projectGameSessionView(
       npcLine: projectedNpcLine,
       npcDialogues,
     },
-    narrativeGeneration: (() => {
-      const gen = storyState.narrative.generation;
-      if (gen.status === "failed") {
-        return { status: "failed" as const, failureKind: gen.failure.kind };
-      }
-      return { status: gen.status };
-    })(),
+    narrativeGeneration: storyState.narrative.generation.status === "failed"
+      ? { status: "failed", failureKind: storyState.narrative.generation.failure.kind }
+      : { status: storyState.narrative.generation.status },
     battle,
     quests: worldState.quests.map((quest) => ({
       name: quest.name,

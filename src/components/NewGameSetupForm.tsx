@@ -198,6 +198,7 @@ type CreateGameApiBody = {
   ok?: boolean;
   revision?: number;
   code?: string;
+  failureKind?: "AI_CALL_FAILED" | "AI_RESPONSE_INVALID";
 };
 
 export type NewGameSetupFormProps = {
@@ -224,6 +225,7 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [retryableGeneration, setRetryableGeneration] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({});
   const selectedType = GAME_TYPES.find((type) => type.id === gameType)!;
   // 当前题材的主题色，用于整套页面的配色切换。
@@ -302,6 +304,7 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
 
     setFieldErrors({});
     setErrorMessage("");
+    setRetryableGeneration(false);
     setSubmitting(true);
     setStatusMessage("正在生成世界，请稍候……");
     try {
@@ -331,8 +334,11 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
         case "INVALID_INPUT":
           setErrorMessage("开局资料未通过校验，请修正表单后重试。");
           break;
-        case "GENERATION_FAILED":
-          setErrorMessage("开局生成未通过规则校验，请调整开局资料后重试。");
+        case "AI_GENERATION_FAILED":
+          setRetryableGeneration(true);
+          setErrorMessage(body?.failureKind === "AI_CALL_FAILED"
+            ? "AI 调用失败，请重试。"
+            : "AI 返回格式不符合要求，请重试。");
           break;
         case "INFRASTRUCTURE_FAILURE":
           setErrorMessage("本地存档数据库暂时不可用，请稍后重试。");
@@ -621,7 +627,7 @@ export function NewGameSetupForm({ onCreated, restart }: NewGameSetupFormProps) 
         <div className="new-game-actions">
           <p>提交后将在本地生成开局并保存为当前存档。</p>
           <InlineButton type="submit" size="md" disabled={submitting} className="journey-button">
-            踏上旅程
+            {retryableGeneration ? "重试" : "踏上旅程"}
           </InlineButton>
         </div>
 

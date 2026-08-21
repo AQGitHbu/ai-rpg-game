@@ -29,15 +29,16 @@ import {
   prewarmBattleVictoryScene,
   type BattleScenePrewarm,
 } from "./battleScenePrewarm";
-import { createDeterministicSceneSource } from "../deterministicSceneSource";
 import { commitState } from "../stateCommit";
 import { buildChoiceMap } from "../buildChoiceMap";
 import type { StoryState } from "@/game/domain/storyState";
+import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 import type { Action, Interaction } from "@/game/domain/action";
 import type { GameSessionView } from "../gameSessionView";
 import type { GameTypeId, GameLength, GameSetup } from "@/game/domain/newGame";
 import { deriveEndingSessionIdentity, matchesEndingSessionIdentity } from "./endingSessionIdentity";
 import { BackgroundEnsureCoordinator } from "./ai/_shared/ensureCoordinator";
+import { retryNarrativeGeneration } from "../retryNarrativeGeneration";
 
 export type { RequestLogContext };
 
@@ -70,12 +71,21 @@ type PerformTurnEntryPointResult =
   | { readonly ok: true; readonly revision: number; readonly feedback: string; readonly view: GameSessionView }
   | { readonly ok: false; readonly code: string; readonly feedback?: string };
 
+export type EnsureNarrativeOptions = { readonly retry?: true };
+export type EnsureNarrativeEntryPointResult =
+  | { readonly ok: true; readonly result: "queued" | "already_running" | "not_pending" }
+  | {
+      readonly ok: false;
+      readonly code: "INVALID_INPUT" | "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "AI_GENERATION_FAILED" | "AI_CALL_FAILED" | "AI_RESPONSE_INVALID" | "INFRASTRUCTURE_FAILURE";
+      readonly failureKind?: AiFailureKind;
+    };
+
 export type ServerGameEntryPoints = {
   createGame(input: CreateGameHttpInput, traceId?: string): Promise<{
     ok: boolean;
     revision?: number;
     code?: string;
-    generationSource?: "generated" | "fallback";
+    failureKind?: AiFailureKind;
   }>;
   performTurn(command: {
     actionId: string;
@@ -83,7 +93,7 @@ export type ServerGameEntryPoints = {
     expectedRevision: number;
   }, traceId?: string): Promise<PerformTurnEntryPointResult>;
   getCurrentGame(traceId?: string): Promise<{ ok: boolean; status: string; view?: GameSessionView; revision?: number }>;
-  ensureNarrativeScene(traceId?: string): Promise<{ ok: boolean; result?: string }>;
+  ensureNarrativeScene(options?: EnsureNarrativeOptions, traceId?: string): Promise<EnsureNarrativeEntryPointResult>;
   ackPrologue(traceId?: string): Promise<{ ok: boolean; revision?: number; code?: string }>;
   clearDevelopmentCurrentGame(traceId?: string): Promise<{ status: "cleared" | "none" | "disabled" }>;
   executeHttpRequest(
@@ -241,48 +251,16 @@ export function createServerGameEntryPoints(
   // One provider transport/client per server composition root. Role policy,
   // thinking mode, budgets, and transient retries are centralized there.
   const aiClient = createServerRpgAiClient(env, logger, auditRecorder);
-  const openingGenerationSources = new Map<string, "generated" | "fallback">();
-  const source = createOpeningGenerationSource(env, logger, (marker) => {
-    openingGenerationSources.set(marker.seed, marker.source);
-  }, aiClient);
-  // Task 3：AI 可用注入 live 世界演化源，否则确定性源（不再直接注入 deterministic）。
+  const source = createOpeningGenerationSource(env, logger, aiClient);
+  // Task 3：AI 可用注入 live 世界演化源，否则 unavailable source；deterministic
+  // source 只由显式 offline fixture composition 注入。
   const worldEvolutionSource = createWorldEvolutionSource(env, logger, aiClient);
   const sceneSource = createSceneSource(env, logger, aiClient);
-  // 战斗只保留胜利/失败两态后，战斗开始即后台预热胜利场景。API 提案和
-  // 确定性提案并行准备：API 优先用于剧情质量，确定性提案只负责保证最后
-  // 一击不会再打开叙事等待。预热结果只存 server memory，最终写回仍以
-  // 最后一击的权威 World/Story 记录为准。
+  // 战斗只保留胜利/失败两态后，战斗开始即后台预热 live 胜利场景。预热结果
+  // 只存 server memory；失败时交给普通 pending coordinator 重新调用 live source，
+  // 最终写回仍以最后一击的权威 World/Story 记录为准。
   const battleScenePrewarmCache = new Map<string, BattleScenePrewarm>();
   const battleScenePrewarmPromises = new Map<string, Promise<BattleScenePrewarm | null>>();
-  const battleSceneFallbackPromises = new Map<string, Promise<BattleScenePrewarm | null>>();
-  const deterministicSceneSource = createDeterministicSceneSource();
-  const ensureBattleSceneFallback = (record: Parameters<typeof prewarmBattleVictoryScene>[0]): Promise<BattleScenePrewarm | null> => {
-    const battle = record.worldState.battle;
-    if (battle.status !== "active" || battle.battleKey === undefined) return Promise.resolve(null);
-    const cached = battleScenePrewarmCache.get(battle.battleKey);
-    if (cached !== undefined) return Promise.resolve(cached);
-    const existing = battleSceneFallbackPromises.get(battle.battleKey);
-    if (existing !== undefined) return existing;
-    const promise = prewarmBattleVictoryScene(record, {
-      sceneSource: deterministicSceneSource,
-      logger,
-      now,
-      requireGenerated: false,
-      auditLink: { gameId: String(record.gameId) },
-    })
-      .then((prewarm) => {
-        if (prewarm !== null && !battleScenePrewarmCache.has(prewarm.battleKey)) {
-          battleScenePrewarmCache.set(prewarm.battleKey, prewarm);
-        }
-        return prewarm;
-      })
-      .catch(() => null)
-      .finally(() => {
-        battleSceneFallbackPromises.delete(battle.battleKey!);
-      });
-    battleSceneFallbackPromises.set(battle.battleKey, promise);
-    return promise;
-  };
   const ensureBattleScenePrewarm = (
     record: Parameters<typeof prewarmBattleVictoryScene>[0],
     traceId?: string,
@@ -290,10 +268,7 @@ export function createServerGameEntryPoints(
     const battle = record.worldState.battle;
     if (battle.status !== "active" || battle.battleKey === undefined) return;
     if (battleScenePrewarmCache.has(battle.battleKey) || battleScenePrewarmPromises.has(battle.battleKey)) return;
-    // 先把无网络的战后提案放进内存，确保玩家无论战斗多快结束，都不会
-    // 因 live provider 的慢响应在胜利后看到“正在处理”。live 结果回来后
-    // 会覆盖 fallback，并在最后一击前优先使用 generated。
-    void ensureBattleSceneFallback(record);
+    // 预热只接受 generated proposal；失败时交给普通 pending coordinator。
     const promise = prewarmBattleVictoryScene(record, {
       sceneSource,
       logger,
@@ -420,6 +395,7 @@ export function createServerGameEntryPoints(
       if (!current.ok) return { ok: false, result: "unavailable" };
       if (current.status !== "active") return { ok: false, result: "not_pending" };
       const generation = current.record.storyState.narrative.generation;
+      if (generation.status === "failed") return { ok: false, result: "failed" };
       if (generation.status !== "pending") return { ok: false, result: "not_pending" };
       if (!("job" in generation) || generation.job === undefined) {
         return { ok: false, result: "unavailable" };
@@ -440,7 +416,6 @@ export function createServerGameEntryPoints(
       sceneSource,
       worldEvolutionSource,
       logger,
-      allowDeterministicFallback: true,
       now,
       textAuditRecorder: auditRecorder,
       ...(traceId !== undefined ? { auditLink: { traceId } } : {}),
@@ -607,18 +582,14 @@ export function createServerGameEntryPoints(
         },
       );
       if (result.ok) {
-        const generationSource = openingGenerationSources.get(generationSeed);
-        openingGenerationSources.delete(generationSeed);
         // 开局存档已经包含首场景 pending job；立即排队，让序幕阅读时间覆盖生成延迟。
         await narrativeCoordinator.ensure(traceId);
         return {
           ok: true,
           revision: result.revision,
-          ...(generationSource === undefined ? {} : { generationSource }),
         };
       }
-      openingGenerationSources.delete(generationSeed);
-      return { ok: false, code: result.code };
+      return { ok: false, code: result.code, ...(result.failureKind === undefined ? {} : { failureKind: result.failureKind }) };
     },
     performTurn: async (command, traceId) => {
       const current = await repository.getCurrentGame();
@@ -640,7 +611,6 @@ export function createServerGameEntryPoints(
           now,
           worldEvolutionSource,
           intentParserSource,
-          allowDeterministicWorldEvolutionFallback: true,
           auditLink: { gameId: String(current.record.gameId), traceId },
         },
       );
@@ -683,7 +653,6 @@ export function createServerGameEntryPoints(
                   sceneSource,
                   worldEvolutionSource,
                   logger,
-                  allowDeterministicFallback: true,
                   now,
                   textAuditRecorder: auditRecorder,
                   auditLink: { traceId, gameId: readyRecord.gameId },
@@ -701,12 +670,7 @@ export function createServerGameEntryPoints(
                   }
                 }
               } else {
-                // fallback 提案在战斗开始时并行准备；若玩家极快结束战斗，
-                // 这里仅等待本地确定性计算（通常为毫秒级），绝不等待 API。
-                let prewarm = battleScenePrewarmCache.get(resolvedBattle.battleKey);
-                if (prewarm === undefined) {
-                  prewarm = await ensureBattleSceneFallback(readyRecord) ?? undefined;
-                }
+                const prewarm = battleScenePrewarmCache.get(resolvedBattle.battleKey);
                 if (prewarm !== undefined) {
                   const usedPrewarm = await applyPrewarmedBattleScene(readyRecord, prewarm, { traceId, gameId: readyRecord.gameId });
                   if (usedPrewarm) {
@@ -723,7 +687,7 @@ export function createServerGameEntryPoints(
                     }
                   }
                 } else {
-                  // 仅在本地提案确实不可用时保留 live promise 的异步接管。
+                  // 预热失败时由正常 pending coordinator 调用 live source。
                   battlePrewarmPending = deferBattleSceneToPrewarm(resolvedBattle.battleKey, traceId);
                 }
               }
@@ -734,7 +698,6 @@ export function createServerGameEntryPoints(
                 sceneSource,
                 worldEvolutionSource,
                 logger,
-                allowDeterministicFallback: true,
                 now,
                 textAuditRecorder: auditRecorder,
                 auditLink: { traceId, gameId: readyRecord.gameId },
@@ -752,7 +715,7 @@ export function createServerGameEntryPoints(
                 }
               }
             }
-            // 普通胜利若 live/fallback 预热仍未返回，交给预热 promise 接管；
+            // 普通胜利若 live 预热仍未返回，交给预热 promise 接管；
             // 需要世界演化的胜利若同步编排未完成，则立即走 coordinator 恢复。
             if (
               view.narrativeGeneration.status === "pending"
@@ -781,9 +744,48 @@ export function createServerGameEntryPoints(
       );
       return { ok: true, status: "active", view, revision: current.record.revision };
     },
-    ensureNarrativeScene: async (traceId) => {
+    ensureNarrativeScene: async (options = {}, traceId) => {
+      const current = await repository.getCurrentGame();
+      if (!current.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      if (current.status === "none") return { ok: false, code: "NO_ACTIVE_GAME" };
+      if (current.status === "corrupt") return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+
+      if (options.retry === true) {
+        const retried = await retryNarrativeGeneration(repository, current.record.gameId, now);
+        if (!retried.ok) return retried;
+        if (retried.result === "requeued" || retried.result === "already_pending") {
+          const queued = await narrativeCoordinator.ensure(traceId);
+          if (queued === "failed") {
+            const latest = await repository.getCurrentGame();
+            if (latest.ok && latest.status === "active" && latest.record.storyState.narrative.generation.status === "failed") {
+              const failureKind = latest.record.storyState.narrative.generation.failure.kind;
+              return { ok: false, code: "AI_GENERATION_FAILED", failureKind };
+            }
+            return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+          }
+          if (queued === "unavailable") return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+          return { ok: true, result: queued === "not_pending" ? "not_pending" : queued };
+        }
+      }
+
+      const generation = current.record.storyState.narrative.generation;
+      if (generation.status === "failed") {
+        return { ok: false, code: "AI_GENERATION_FAILED", failureKind: generation.failure.kind };
+      }
       const result = await narrativeCoordinator.ensure(traceId);
-      return { ok: result !== "unavailable", result };
+      if (result === "failed") {
+        const latest = await repository.getCurrentGame();
+        if (latest.ok && latest.status === "active" && latest.record.storyState.narrative.generation.status === "failed") {
+          return {
+            ok: false,
+            code: "AI_GENERATION_FAILED",
+            failureKind: latest.record.storyState.narrative.generation.failure.kind,
+          };
+        }
+        return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      }
+      if (result === "unavailable") return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+      return { ok: true, result };
     },
     ackPrologue: async (_traceId) => {
       // 与后台场景 CAS 撞车时重新读取一次；确认是单调、幂等的 UI 元数据，
@@ -827,7 +829,6 @@ export function createServerGameEntryPoints(
       await narrativeCoordinator.waitForIdle();
       await Promise.allSettled([
         ...battleScenePrewarmPromises.values(),
-        ...battleSceneFallbackPromises.values(),
       ]);
       try {
         await repository.close();

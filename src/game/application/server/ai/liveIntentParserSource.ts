@@ -17,6 +17,7 @@ import {
 } from "@/game/domain/worldEntity";
 import { createRpgAiClient, type RpgAiClient } from "./rpgAiClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
+import { classifyAiFailure, transportFailureCodeToCategory } from "../../aiGenerationFailure";
 
 // ---------------------------------------------------------------------------
 // live/fixture IntentParserSource。
@@ -24,8 +25,10 @@ import type { ProviderJsonMode } from "./providerRequestOptions";
 //   worktree 依赖 junction 缺失时本模块仍可单测与运行（composition root 注入真实 transport）。
 // - 规则源：对话行为短语表（我相信你→support / 你在撒谎→challenge / 问候→ask）
 //   + 实体名匹配；输出必须绑定在场目标 NPC；非法/不可归类 → unclassifiable。
+//   规则源仅用于显式 fixture/offline composition，不作为 live source 的失败 fallback。
 // - live 源：AI 输出有效且通过 schema+目标合法性才采用；超时/非法 JSON/越界 act
-//   → 规则降级；规则仍不可归类才 unclassifiable（converter 降级 freeform）。
+//   → 返回带 failureKind 的 service_error，不转给 ruleParse；
+//   规则仍不可归类才 unclassifiable（converter 降级 freeform）。
 // ---------------------------------------------------------------------------
 
 export type LiveTransportResponse = {
@@ -79,30 +82,31 @@ function presentNpcByName(ctx: IntentContext, text: string): NpcId | null {
 
 /**
  * Task 5 Step 3：主题引用白名单解析。
- * 只允许选择服务端供应的 fact/quest/thread ID；ID 不存在或 kind 非法一律降级 general。
+ * 只允许选择服务端供应的 fact/quest/thread ID；ID 不存在或 kind 非法视为响应契约失败。
  */
-export function resolveIntentTopic(raw: unknown, ctx: IntentContext): StructuredDialogueTopic {
-  if (raw === null || typeof raw !== "object") return { kind: "general" };
+export function resolveIntentTopic(raw: unknown, ctx: IntentContext): StructuredDialogueTopic | null {
+  if (raw === undefined || raw === null) return { kind: "general" };
+  if (typeof raw !== "object" || Array.isArray(raw)) return null;
   const data = raw as { kind?: unknown; factId?: unknown; questId?: unknown; threadId?: unknown };
   if (data.kind === "fact" && typeof data.factId === "string") {
     if (ctx.topicRefs.some((r) => r.kind === "fact" && String(r.id) === data.factId)) {
       return { kind: "fact", factId: asFactId(data.factId) };
     }
-    return { kind: "general" };
+    return null;
   }
   if (data.kind === "quest" && typeof data.questId === "string") {
     if (ctx.topicRefs.some((r) => r.kind === "quest" && String(r.id) === data.questId)) {
       return { kind: "quest", questId: asQuestId(data.questId) };
     }
-    return { kind: "general" };
+    return null;
   }
   if (data.kind === "thread" && typeof data.threadId === "string") {
     if (ctx.topicRefs.some((r) => r.kind === "thread" && String(r.id) === data.threadId)) {
       return { kind: "thread", threadId: data.threadId };
     }
-    return { kind: "general" };
+    return null;
   }
-  return { kind: "general" };
+  return null;
 }
 
 /**
@@ -139,6 +143,8 @@ export function parseIntentPayload(
     }
     const target = resolvePresentNpc(ctx, rawTarget);
     if (target === null) return { ok: false, reason: "unclassifiable" };
+    const topic = resolveIntentTopic(data.topic, ctx);
+    if (topic === null) return { ok: false, reason: "unclassifiable" };
     return {
       ok: true,
       action: {
@@ -146,7 +152,7 @@ export function parseIntentPayload(
         npcId: target,
         dialogueAct: act,
         utterance: trimmed,
-        topic: resolveIntentTopic(data.topic, ctx),
+        topic,
       },
     };
   }
@@ -266,7 +272,7 @@ function buildUserPrompt(text: string, ctx: IntentContext, targetNpcId?: NpcId):
   ].join("\n");
 }
 
-/** AI 配置有效时的 live 意图源：AI 失败一律规则降级，绝不抛穿回合流水线。 */
+/** AI 配置有效时的 live 意图源：AI 失败返回带 failureKind 的 service_error，不转给 ruleParse。 */
 export function createLiveIntentParser(
   transport?: LiveIntentTransport,
   config?: LiveTransportConfig,
@@ -274,7 +280,6 @@ export function createLiveIntentParser(
   jsonMode: ProviderJsonMode = "prompt_only",
   aiClient?: RpgAiClient,
 ): IntentParserSource {
-  const rule = createRuleIntentParser();
   const cfg = config ?? { baseUrl: "", apiKey: "", model: "" };
   const client = aiClient ?? (transport
     ? createRpgAiClient({
@@ -284,16 +289,27 @@ export function createLiveIntentParser(
       policies: { intent: { jsonMode } },
     })
     : undefined);
+  const failIntent = (category: Parameters<typeof classifyAiFailure>[0]["category"]): IntentParserResult => {
+    const failure = classifyAiFailure({ phase: "intent", category });
+    return { ok: false, reason: "service_error", failureKind: failure.kind };
+  };
+  const maxContentRepairAttempts = 1;
   return {
     sourceVersion: "live-intent",
     async parseIntent(text, ctx, targetNpcId?, auditLink?: IntentAuditLink) {
+      const parseAttempt = async (attempt: number, repairReason?: string): Promise<IntentParserResult> => {
+      if (client === undefined) {
+        return failIntent("unavailable");
+      }
       try {
-        if (client === undefined) return rule.parseIntent(text, ctx, targetNpcId, auditLink);
+        const repairMessage = repairReason === undefined
+          ? ""
+          : `上一次返回未通过 ${repairReason} 校验。请只修复 JSON 结构与可执行意图引用，不要解释。`;
         const response = await client.complete(
           "intent",
           [
             { role: "system", content: "你是 RPG 意图解析器，只返回严格 JSON。" },
-            { role: "user", content: buildUserPrompt(text, ctx, targetNpcId) },
+            { role: "user", content: `${buildUserPrompt(text, ctx, targetNpcId)}${repairMessage}` },
           ],
           {
             purpose: "intent_parsing",
@@ -303,28 +319,46 @@ export function createLiveIntentParser(
               kind: "free_text_action",
               ...(targetNpcId === undefined ? {} : { targetNpcId: String(targetNpcId) }),
             },
+            ...(repairReason === undefined ? {} : { repair: { attempt, reason: repairReason } }),
           },
         );
-        if (response.ok && typeof response.content === "string") {
-          const parsed = parseJsonResponse(response.content);
-          if (parsed !== null) {
-            const checked = parseIntentPayload(parsed, text, ctx, targetNpcId);
-            if (checked.ok) return checked;
-          }
+        if (!response.ok) {
+          logger?.warn("live_intent_ai_failed", { code: response.code });
+          return failIntent(transportFailureCodeToCategory(response.code));
         }
+        if (typeof response.content !== "string") {
+          return attempt < maxContentRepairAttempts
+            ? parseAttempt(attempt + 1, "empty_response")
+            : failIntent("empty_response");
+        }
+        const parsed = parseJsonResponse(response.content);
+        if (parsed === null) {
+          return attempt < maxContentRepairAttempts
+            ? parseAttempt(attempt + 1, "invalid_json")
+            : failIntent("invalid_json");
+        }
+        const checked = parseIntentPayload(parsed, text, ctx, targetNpcId);
+        if (checked.ok) return checked;
+        // live source 的 JSON 已经代表 AI 对本轮输入作出的结构化判断；
+        // 若它没有产出可执行且权限合法的 action，必须按响应契约失败处理，
+        // 不能把 unclassifiable 交给 rule parser 或默认 NPC action。
+        return failIntent("invalid_schema");
       } catch (error) {
         logger?.warn("live_intent_ai_error", {
           error: error instanceof Error ? error.message : "unknown",
         });
+        return failIntent("unknown");
       }
-      return rule.parseIntent(text, ctx, targetNpcId, auditLink);
+      };
+      return parseAttempt(0);
     },
   };
 }
 
 /**
  * composition root 工厂：读 env 判定 AI 可用性。
- * AI 配置有效且注入 transport → live 源；否则防御性降级 rule 源。
+ * AI 配置有效且注入 transport → live 源；否则返回不可用源（只返回 service_error）。
+ * 不再返回 rule 源作为 live fallback；rule 源仅通过显式 fixture composition 注入。
  */
 export function createIntentParserSource(
   env: Record<string, string | undefined> = process.env,
@@ -338,5 +372,11 @@ export function createIntentParserSource(
   if (baseUrl !== "" && apiKey !== "" && model !== "" && (transport !== undefined || aiClient !== undefined)) {
     return createLiveIntentParser(transport, { baseUrl, apiKey, model }, undefined, jsonMode, aiClient);
   }
-  return createRuleIntentParser();
+  // AI 配置缺失时返回不可用源，不返回 rule 源
+  return {
+    sourceVersion: "unavailable-intent",
+    async parseIntent(): Promise<IntentParserResult> {
+      return { ok: false, reason: "service_error", failureKind: "AI_CALL_FAILED" };
+    },
+  };
 }

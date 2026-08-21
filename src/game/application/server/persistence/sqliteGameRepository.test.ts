@@ -9,9 +9,11 @@ import { asGameId } from "./gameRepository";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asLocationId, asGenerationId, asFactId } from "@/game/domain/worldEntity";
+import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
+import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 
 // 每个 Vitest 进程使用独立的 OS 临时目录，避免 Git Bash/Windows 下多个
 // test run 争用源码目录中的固定 SQLite 文件，也避免清理残留目录时受句柄影响。
@@ -246,6 +248,67 @@ describe("sqliteGameRepository", () => {
     const r2 = await repo.applyState({ gameId, expectedRevision: 0, nextWorldState: worldState, nextStoryState: storyState });
     expect(r2.ok).toBe(true);
     if (r2.ok) expect(r2.record.revision).toBe(1);
+  });
+
+  it("revision-preserving narrative retry CAS also checks failed status and jobId", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    const { worldState, storyState } = buildTestState();
+    const jobResult = createPendingNarrativeJob({
+      jobId: asNarrativeJobId("retry-job"),
+      turnId: asTurnId("retry-turn"),
+      actionId: "retry-action",
+      expectedRevision: 0,
+      turnNumber: 1,
+      actionSummary: { kind: "explore" },
+      resolvedEvent: {
+        actionId: "retry-action", status: "success", eventKind: "observe",
+        facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [],
+      },
+      domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+      requestedAt: "2026-01-01",
+      objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+      mandatoryBeats: [],
+    });
+    expect(jobResult.ok).toBe(true);
+    if (!jobResult.ok) return;
+    const failedStoryState: StoryState = {
+      ...storyState,
+      narrative: {
+        ...storyState.narrative,
+        generation: {
+          status: "failed",
+          job: jobResult.job,
+          failure: { kind: "AI_CALL_FAILED", phase: "scene", failedAt: "2026-01-01" },
+        },
+      },
+    };
+    const gameId = asGameId("g-retry-cas");
+    await repo.createInitialGame({ gameId, worldState, storyState: failedStoryState, createdAt: "2026-01-01" });
+
+    const pendingStoryState: StoryState = {
+      ...failedStoryState,
+      narrative: { ...failedStoryState.narrative, generation: { status: "pending", job: jobResult.job } },
+    };
+    const first = await repo.applyState({
+      gameId,
+      expectedRevision: 0,
+      nextWorldState: worldState,
+      nextStoryState: pendingStoryState,
+      incrementRevision: false,
+      expectedNarrativeGeneration: { status: "failed", jobId: "retry-job" },
+    });
+    expect(first.ok).toBe(true);
+
+    const second = await repo.applyState({
+      gameId,
+      expectedRevision: 0,
+      nextWorldState: worldState,
+      nextStoryState: pendingStoryState,
+      incrementRevision: false,
+      expectedNarrativeGeneration: { status: "failed", jobId: "retry-job" },
+    });
+    expect(second).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
   });
 
   it("applySceneWriteBack persists full world + story through one CAS", async () => {

@@ -3,16 +3,15 @@ import { parseAiRuntimeConfig, type AiOutputFormat } from "./aiRuntimeConfig";
 import type { ProviderJsonMode } from "./providerRequestOptions";
 import { createServerRpgAiClient, type RpgAiClient } from "./rpgAiClient";
 import type { OpeningGenerationSource } from "../../createGame";
-import type { SceneSource } from "../../sceneSource";
+import type { SceneSource, SceneSourceResult } from "../../sceneSource";
 import {
   createOpeningGenerationSource as createValidatedOpeningGenerationSource,
-  type OpeningGenerationResultMarker,
 } from "./openingGenerationSource";
-import { createDeterministicSceneSource } from "../../deterministicSceneSource";
 import { createLiveWorldEvolutionSource } from "./liveWorldEvolutionSource";
-import { createDeterministicEvolutionSource } from "../../deterministicEvolutionSource";
-import type { WorldEvolutionSource } from "../../worldEvolutionSource";
+import type { WorldEvolutionSource, WorldEvolutionSourceResult } from "../../worldEvolutionSource";
 import { createLiveScenePerformanceSource } from "./liveScenePerformanceSource";
+import { classifyAiFailure } from "../../aiGenerationFailure";
+import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
 
 // ---------------------------------------------------------------------------
 // AI source 工厂：根据运行时配置注入 live 或 fixture/deterministic source。
@@ -32,26 +31,23 @@ function providerJsonModeFor(format: AiOutputFormat): ProviderJsonMode {
 export function createOpeningGenerationSource(
   env: Record<string, string | undefined> = process.env,
   logger?: GameLogger,
-  onResult?: (result: OpeningGenerationResultMarker) => void,
   aiClient?: RpgAiClient,
 ): OpeningGenerationSource {
   const runtime = parseAiRuntimeConfig(env);
   const client = aiClient ?? createServerRpgAiClient(env, logger);
   if (runtime.status === "available" && client !== undefined) {
     logger?.info("opening_source_live", { model: runtime.config.model });
-    // live 源带机械修复 + 校验 + 确定性 fallback 编排。
     return createValidatedOpeningGenerationSource({
       aiClient: client,
       jsonMode: providerJsonModeFor(runtime.outputFormat),
       logger,
-      allowFallback: false,
-      onResult,
     });
   }
-  logger?.info("opening_source_fixture", {
+  logger?.info("opening_source_unavailable", {
     diagnostics: runtime.status === "available" ? ["AI_CLIENT_UNAVAILABLE"] : runtime.diagnostics,
   });
-  return createValidatedOpeningGenerationSource({ onResult });
+  // AI 配置不可用时返回不可用源，失败时抛出 AiGenerationError
+  return createValidatedOpeningGenerationSource({ logger });
 }
 
 export function createSceneSource(
@@ -67,23 +63,21 @@ export function createSceneSource(
       aiClient: client,
       jsonMode: providerJsonModeFor(runtime.outputFormat),
       logger,
-      // API 优先；provider 短暂不可用时仍允许同一审批链的确定性恢复，
-      // 避免玩家被永久锁在 pending。成功的 live proposal 仍保持 generated。
-      allowFallback: true,
     });
   }
-  logger?.info("scene_source_deterministic", {
+  logger?.info("scene_source_unavailable", {
     diagnostics: runtime.status === "available" ? ["AI_CLIENT_UNAVAILABLE"] : runtime.diagnostics,
   });
-  return createDeterministicSceneSource();
+  // AI 配置不可用时返回 unavailable source，只返回 typed failure
+  return createUnavailableSceneSource();
 }
 
 // --- World Evolution Source Factory（Task 3） ---
 
 /**
- * Task 3：按 AI 运行时配置选择 live / deterministic WorldEvolutionSource。
- * - AI 可用 → live 源（AI 提案 → 纯解析/校验/引用过滤，失败回退确定性源）。
- * - 无配置 → 确定性源（always materializes a completable next act）。
+ * 按 AI 运行时配置选择 live / unavailable WorldEvolutionSource。
+ * - AI 可用 → live 源（AI 提案 → 纯解析/校验/引用过滤，失败返回 typed failure）。
+ * - 无配置 → unavailable 源（只返回 typed failure，不调用 deterministic source）。
  * 生产唯一注入点：compositionRoot。
  */
 export function createWorldEvolutionSource(
@@ -99,11 +93,30 @@ export function createWorldEvolutionSource(
       aiClient: client,
       jsonMode: providerJsonModeFor(runtime.outputFormat),
       logger,
-      allowFallback: false,
     });
   }
-  logger?.info("world_evolution_source_fixture", {
+  logger?.info("world_evolution_source_unavailable", {
     diagnostics: runtime.status === "available" ? ["AI_CLIENT_UNAVAILABLE"] : runtime.diagnostics,
   });
-  return createDeterministicEvolutionSource();
+  return createUnavailableWorldEvolutionSource();
+}
+
+/** AI 配置不可用时的场景源：只返回 typed failure，不调用 deterministic source。 */
+function createUnavailableSceneSource(): SceneSource {
+  return {
+    async generateScene(): Promise<SceneSourceResult> {
+      const failure: AiGenerationFailure = classifyAiFailure({ phase: "scene", category: "unavailable" });
+      return { ok: false, failure };
+    },
+  };
+}
+
+/** AI 配置不可用时的世界演化源：只返回 typed failure，不调用 deterministic source。 */
+function createUnavailableWorldEvolutionSource(): WorldEvolutionSource {
+  return {
+    async propose(): Promise<WorldEvolutionSourceResult> {
+      const failure: AiGenerationFailure = classifyAiFailure({ phase: "world", category: "unavailable" });
+      return { ok: false, failure };
+    },
+  };
 }

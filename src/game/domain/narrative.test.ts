@@ -8,6 +8,7 @@ import type {
   NarrativeSceneState,
   PlayerNpcChatState,
 } from "./narrative";
+import type { NarrativeGenerationFailure } from "./narrativeGenerationFailure";
 
 function canonicalResolvedEvent(): ResolvedEvent {
   return {
@@ -96,37 +97,44 @@ describe("NarrativeGenerationState 契约", () => {
     expect(playerText).toBeUndefined();
   });
 
-  it("failed 变体携带 job 和稳定 failure 分类", () => {
+  it("failed 变体携带 job 与稳定 failure", () => {
+    const failure: NarrativeGenerationFailure = {
+      kind: "AI_RESPONSE_INVALID",
+      phase: "scene",
+      failedAt: "2026-08-21T00:00:00.000Z",
+    };
     const failed: NarrativeGenerationState = {
       status: "failed",
       job: pendingWithJob().job,
+      failure,
+    };
+
+    expect(failed.status).toBe("failed");
+    expect(failed.failure.kind).toBe("AI_RESPONSE_INVALID");
+    expect(failed.failure.phase).toBe("scene");
+    expect(failed.failure.failedAt).toBe("2026-08-21T00:00:00.000Z");
+    expect(failed.job.actionId).toBe("action-1");
+  });
+
+  it("failed 变体不允许缺失 failure", () => {
+    // @ts-expect-error failed 必须携带 failure
+    const missingFailure: NarrativeGenerationState = {
+      status: "failed",
+      job: pendingWithJob().job,
+    };
+    expect(missingFailure.status).toBe("failed");
+  });
+
+  it("failed 变体不允许缺失 job", () => {
+    // @ts-expect-error failed 必须携带 job
+    const missingJob: NarrativeGenerationState = {
+      status: "failed",
       failure: {
         kind: "AI_CALL_FAILED",
         phase: "scene",
         failedAt: "2026-08-21T00:00:00.000Z",
       },
     };
-    expect(failed.status).toBe("failed");
-    expect(failed.failure.kind).toBe("AI_CALL_FAILED");
-    expect(failed.failure.phase).toBe("scene");
-    expect(failed.job.actionId).toBe("action-1");
-  });
-
-  it("failed 变体不允许缺少 failure", () => {
-    // @ts-expect-error failed 必须携带 failure
-    const incomplete: NarrativeGenerationState = {
-      status: "failed",
-      job: pendingWithJob().job,
-    };
-    expect(incomplete.status).toBe("failed");
-  });
-
-  it("failed 变体不允许缺少 job", () => {
-    // @ts-expect-error failed 必须携带 job
-    const noJob: NarrativeGenerationState = {
-      status: "failed",
-      failure: { kind: "AI_RESPONSE_INVALID", phase: "scene", failedAt: "2026-08-21T00:00:00.000Z" },
-    };
-    expect(noJob.status).toBe("failed");
+    expect(missingJob.status).toBe("failed");
   });
 });

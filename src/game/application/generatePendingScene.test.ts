@@ -7,12 +7,12 @@ import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
-import type { SceneSource, SceneSourceResult } from "./sceneSource";
+import type { SceneSource, SceneSourceResult, ScenePerformanceProposal } from "./sceneSource";
 import type { NarrativeEventKind } from "@/game/domain/narrative";
 import type { ResolvedEvent, ResolvedEventStatus } from "@/game/domain/resolvedEvent";
 import { ATMOSPHERE_BEAT_ID } from "./approveAndWriteScene";
 import { createDeterministicEvolutionSource } from "./deterministicEvolutionSource";
-import { buildInvestigationOutcomeNarrative } from "./deterministicSceneSource";
+import { createDeterministicSceneSource, buildInvestigationOutcomeNarrative } from "./deterministicSceneSource";
 
 const IMPORTANT_ACTION_ID = "act_persist";
 const IMPORTANT_JOB_ID = "job_persist";
@@ -119,17 +119,27 @@ function makeGameRecord(option:
 }
 
 function makeMockRepo(record: GameRecord | null): GameRepository {
+  let currentRecord = record;
   return {
     createInitialGame: vi.fn(),
     replaceCurrentGame: vi.fn(),
     getCurrentGame: vi.fn(async () => {
-      if (record === null) return { ok: true as const, status: "none" as const };
-      return { ok: true as const, status: "active" as const, record };
+      if (currentRecord === null) return { ok: true as const, status: "none" as const };
+      return { ok: true as const, status: "active" as const, record: currentRecord };
     }),
-    applyState: vi.fn(),
+    applyState: vi.fn(async (input) => {
+      if (currentRecord === null) return { ok: false as const, code: "NO_ACTIVE_GAME" as const };
+      currentRecord = {
+        ...currentRecord,
+        worldState: input.nextWorldState,
+        storyState: input.nextStoryState,
+        revision: input.incrementRevision === false ? currentRecord.revision : currentRecord.revision + 1,
+      };
+      return { ok: true as const, record: currentRecord };
+    }),
     applySceneWriteBack: vi.fn(async () => {
-      if (record === null) return { ok: false as const, code: "NO_ACTIVE_GAME" as const };
-      return { ok: true as const, record };
+      if (currentRecord === null) return { ok: false as const, code: "NO_ACTIVE_GAME" as const };
+      return { ok: true as const, record: currentRecord };
     }),
     clearCurrentGame: vi.fn(async () => ({ ok: true as const })),
   };
@@ -140,7 +150,7 @@ function makeSpySceneSource(): { source: SceneSource; contexts: () => readonly S
   const sceneSource: SceneSource = {
     async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
       seen.push(context);
-      return {
+      const proposal: ScenePerformanceProposal = {
         sceneId: `scene-${context.job.jobId}`,
         segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "dummy" }],
         npcLine: null,
@@ -151,6 +161,7 @@ function makeSpySceneSource(): { source: SceneSource; contexts: () => readonly S
         ],
         source: "fallback",
       };
+      return { ok: true, proposal };
     },
   };
   return { source: sceneSource, contexts: () => seen };
@@ -195,13 +206,16 @@ describe("generatePendingScene", () => {
     expect(result).toBe("unavailable");
   });
 
-  it("returns unavailable when the scene source fails", async () => {
+  it("persists failed when the scene source fails", async () => {
     const record = makeGameRecord({
       kind: "pending",
       job: makeJob({ summary: { kind: "explore" }, eventKind: "observe" }),
     });
-    const result = await generatePendingScene(makeDeps(record, failingSceneSource()));
-    expect(result).toBe("unavailable");
+    const deps = makeDeps(record, failingSceneSource());
+    const result = await generatePendingScene(deps);
+    expect(result).toBe("failed");
+    const latest = await deps.repository.getCurrentGame();
+    expect(latest.ok && latest.status === "active" ? latest.record.storyState.narrative.generation.status : "idle").toBe("failed");
   });
 
   it("hands the real persisted job to the source and writes back to idle", async () => {
@@ -270,7 +284,7 @@ describe("generatePendingScene", () => {
     expect(writeBack.nextWorldState.items).toHaveLength(1);
   });
 
-  it("move job: materializes an immediate deterministic destination scene without waiting for the configured source", async () => {
+  it("move job: uses the injected source when no generated queue entry exists", async () => {
     const record = makeGameRecord({
       kind: "pending",
       job: makeJob({ summary: { kind: "move", locationId: asLocationId("loc_1") }, eventKind: "travel" }),
@@ -279,13 +293,13 @@ describe("generatePendingScene", () => {
     const deps = makeDeps(record, spy.source);
     const result = await generatePendingScene(deps);
     expect(result).toBe("saved");
-    expect(spy.contexts()).toHaveLength(0);
+    expect(spy.contexts()).toHaveLength(1);
     const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
     expect(writeBack.nextStoryState.narrative.currentScene?.event?.kind).toBe("travel");
     expect(writeBack.nextStoryState.narrative.currentScene?.source).toBe("fallback");
   });
 
-  it("take_item job: completes with an immediate deterministic scene without calling the configured source", async () => {
+  it("take_item job: uses the injected source when no generated queue entry exists", async () => {
     const record = makeGameRecord({
       kind: "pending",
       job: makeJob({ summary: { kind: "take_item", itemId: asItemId("item_1") }, eventKind: "item" }),
@@ -295,7 +309,7 @@ describe("generatePendingScene", () => {
     const result = await generatePendingScene(deps);
 
     expect(result).toBe("saved");
-    expect(spy.contexts()).toHaveLength(0);
+    expect(spy.contexts()).toHaveLength(1);
     const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
     expect(writeBack.nextStoryState.narrative.currentScene?.source).toBe("fallback");
     expect(writeBack.nextStoryState.narrative.generation.status).toBe("idle");
@@ -365,13 +379,13 @@ describe("generatePendingScene", () => {
     return makeGameRecord({ kind: "pending", job });
   }
 
-  it("stub 提案缺强制 player_utterance 节拍 → 整场回退确定性源并保存（fallback 过同一审批）", async () => {
+  it("stub 提案缺强制 player_utterance 节拍 → 持久化失败，不生成 deterministic 场景", async () => {
     const record = utteranceRecord();
     const repo = makeMockRepo(record);
     // stub 源只给 atmosphere 段、无台词 → 缺强制节拍 → 审批拒绝 → 确定性 fallback
     const stub: SceneSource = {
       async generateScene(): Promise<SceneSourceResult> {
-        return {
+        return { ok: true, proposal: {
           sceneId: "scene-stub",
           segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "dummy" }],
           npcLine: null,
@@ -381,16 +395,12 @@ describe("generatePendingScene", () => {
             { candidateId: "candidate_2", label: "b" },
           ],
           source: "generated",
-        };
+        } };
       },
     };
     const result = await generatePendingScene({ repository: repo, sceneSource: stub, now: () => "2026-01-02" });
-    expect(result).toBe("saved");
-    const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
-    const scene = input.nextStoryState.narrative.currentScene!;
-    expect(scene.source).toBe("fallback");
-    expect(scene.npcLine?.npcId).toBe(asNpcId("npc_1"));
-    expect(scene.npcLine?.answeredBeatIds).toContain("player_utterance");
+    expect(result).toBe("failed");
+    expect(vi.mocked(repo.applySceneWriteBack)).not.toHaveBeenCalled();
   });
 
   it("真实 AI 形状的提案被审批拒绝时先修复重试，成功后保持 generated", async () => {
@@ -403,7 +413,7 @@ describe("generatePendingScene", () => {
         calls += 1;
         if (calls === 2) {
           expect(context.repairAttempt).toEqual({ attempt: 1, reason: "approval:missing_mandatory_beat" });
-          return {
+          return { ok: true, proposal: {
             sceneId: "scene-repaired-generated",
             segments: [
               { beatId: "player_utterance", text: "你把疑问问得很直白。" },
@@ -423,9 +433,9 @@ describe("generatePendingScene", () => {
               { candidateId: "candidate_2", label: "先观察现场" },
             ],
             source: "generated",
-          };
+          } };
         }
-        return {
+        return { ok: true, proposal: {
           sceneId: "scene-invalid-generated",
           segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
           npcLine: null,
@@ -435,7 +445,7 @@ describe("generatePendingScene", () => {
             { candidateId: "candidate_2", label: "观察" },
           ],
           source: "generated",
-        };
+        } };
       },
     };
 
@@ -462,7 +472,7 @@ describe("generatePendingScene", () => {
     const repo = makeMockRepo(record);
     const answering: SceneSource = {
       async generateScene(): Promise<SceneSourceResult> {
-        return {
+        return { ok: true, proposal: {
           sceneId: "scene-answer",
           segments: [
             { beatId: "player_utterance", text: "你提出了你的疑问。" },
@@ -475,7 +485,7 @@ describe("generatePendingScene", () => {
             { candidateId: "candidate_2", label: "质疑" },
           ],
           source: "generated",
-        };
+        } };
       },
     };
     const result = await generatePendingScene({ repository: repo, sceneSource: answering, now: () => "2026-01-02" });
@@ -539,7 +549,7 @@ describe("generatePendingScene", () => {
     const repo = makeMockRepo(record);
     const pregenerated: SceneSource = {
       async generateScene(): Promise<SceneSourceResult> {
-        return {
+        return { ok: true, proposal: {
           sceneId: "scene-pregenerated",
           segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
           npcLine: null,
@@ -553,7 +563,7 @@ describe("generatePendingScene", () => {
             { actionKind: "move", locationId: "loc_2", narration: "北巷旧道就在前方，夜色掩不住那条土路。" },
           ],
           source: "generated",
-        };
+        } };
       },
     };
     const result = await generatePendingScene({ repository: repo, sceneSource: pregenerated, now: () => "2026-01-02" });
@@ -565,13 +575,13 @@ describe("generatePendingScene", () => {
     ]);
   });
 
-  it("保留通过独立审批的线性队列，即使整场 proposal 触发 fallback", async () => {
+  it("整场 proposal 触发审批失败时不写入 deterministic fallback", async () => {
     const record = linearObjectiveRecord();
     const repo = makeMockRepo(record);
     const logger = { warn: vi.fn() };
     const sceneWithBrokenCore: SceneSource = {
       async generateScene(): Promise<SceneSourceResult> {
-        return {
+        return { ok: true, proposal: {
           sceneId: "scene-broken-core",
           segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
           npcLine: null,
@@ -587,7 +597,7 @@ describe("generatePendingScene", () => {
             { actionKind: "move", locationId: "loc_2", narration: "北巷旧道隐在夜色尽头。" },
           ],
           source: "generated",
-        };
+        } };
       },
     };
     const result = await generatePendingScene({
@@ -596,13 +606,8 @@ describe("generatePendingScene", () => {
       logger: logger as never,
       now: () => "2026-01-02",
     });
-    expect(result).toBe("saved");
-    const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
-    expect(input.nextStoryState.narrative.currentScene?.source).toBe("fallback");
-    expect(input.nextStoryState.narrative.linearNarrativeQueue).toEqual([
-      { actionKind: "investigate", factId: asFactId("fact_2"), narration: "车轮印向北巷旧道延伸。", source: "generated" },
-      { actionKind: "move", locationId: asLocationId("loc_2"), narration: "北巷旧道隐在夜色尽头。", source: "generated" },
-    ]);
+    expect(result).toBe("failed");
+    expect(vi.mocked(repo.applySceneWriteBack)).not.toHaveBeenCalled();
   });
 
   it("drops linearActionNarratives referencing entities outside the authoritative objective chain", async () => {
@@ -611,7 +616,7 @@ describe("generatePendingScene", () => {
     const logger = { warn: vi.fn() };
     const fabricated: SceneSource = {
       async generateScene(): Promise<SceneSourceResult> {
-        return {
+        return { ok: true, proposal: {
           sceneId: "scene-fabricated",
           segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
           npcLine: null,
@@ -626,7 +631,7 @@ describe("generatePendingScene", () => {
             { actionKind: "investigate", factId: "fact_fabricated", narration: "我凭空捏造了一个新事实。" },
           ],
           source: "generated",
-        };
+        } };
       },
     };
     const result = await generatePendingScene({
@@ -700,7 +705,7 @@ describe("generatePendingScene", () => {
     ]);
   });
 
-  it("falls back to deterministic investigate scene when queue has no matching entry", async () => {
+  it("calls the injected source when investigate queue has no matching entry", async () => {
     const base = investigateResolvedRecord();
     const record: GameRecord = {
       ...base,
@@ -731,21 +736,12 @@ describe("generatePendingScene", () => {
       },
     };
     const logger = { warn: vi.fn() };
-    const spy = makeSpySceneSource();
-    const deps = { ...makeDeps(record, spy.source), logger: logger as never };
+    const deps = { ...makeDeps(record, createDeterministicSceneSource()), logger: logger as never };
     const result = await generatePendingScene(deps);
     expect(result).toBe("saved");
-    expect(spy.contexts()).toHaveLength(0);
     const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
     const scene = writeBack.nextStoryState.narrative.currentScene!;
     expect(scene.source).toBe("fallback");
-    // 兜底正文 = 事实文本（beat instruction）+ objectiveTarget 派生的下一目标动线提示。
-    expect(scene.narration).toContain("发现了线索：车轮印在后巷泥水中断续向北延伸。");
-    expect(scene.narration).toContain("接下来去北巷旧道核对现场");
-    expect(logger.warn).toHaveBeenCalledWith("linear_narrative_fallback", {
-      actionKind: "investigate",
-      entityId: "fact_2",
-    });
     expect(writeBack.nextStoryState.narrative.linearNarrativeQueue).toEqual([
       { actionKind: "move", locationId: asLocationId("loc_2"), narration: "北巷旧道就在前方。", source: "generated" },
     ]);
@@ -770,16 +766,14 @@ describe("generatePendingScene", () => {
     };
     const evolutionSource = createDeterministicEvolutionSource();
     const proposeSpy = vi.spyOn(evolutionSource, "propose");
-    const spy = makeSpySceneSource();
     const result = await generatePendingScene({
       repository: makeMockRepo(record),
-      sceneSource: spy.source,
+      sceneSource: createDeterministicSceneSource(),
       worldEvolutionSource: evolutionSource,
       now: () => "2026-01-02",
     });
-    expect(result).toBe("saved");
+    expect(result).toBe("failed");
     expect(proposeSpy).toHaveBeenCalled();
-    expect(spy.contexts()).toHaveLength(1);
   });
 
   // ── Task 5：调查方法结果反馈链 ─────────────────────────────────────────

@@ -1,8 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { parseActionRequest, httpStatusForCode } from "./requestParser";
+import { parseActionRequest, parseEnsureNarrativeBody, httpStatusForCode } from "./requestParser";
 import { PLAYER_UTTERANCE_MAX_LENGTH } from "@/game/domain/pendingNarrativeJob";
 
 const ACTION_ID = "11111111-1111-4111-8111-111111111111";
+
+describe("parseEnsureNarrativeBody", () => {
+  it("accepts polling and explicit retry bodies", () => {
+    expect(parseEnsureNarrativeBody({})).toEqual({ ok: true });
+    expect(parseEnsureNarrativeBody({ retry: true })).toEqual({ ok: true, retry: true });
+  });
+
+  it.each([null, [], { retry: false }, { retry: "true" }, { retry: true, extra: 1 }, { unknown: true }])(
+    "rejects non-canonical body %#",
+    (body) => expect(parseEnsureNarrativeBody(body)).toEqual({ ok: false, code: "INVALID_INPUT" }),
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Task 10：严格 API discriminated union 解析器。

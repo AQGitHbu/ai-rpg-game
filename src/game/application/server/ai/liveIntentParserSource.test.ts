@@ -115,30 +115,22 @@ describe("parseIntentPayload dialogueAct 映射表", () => {
     }
   });
 
-  it("topic ID 不在服务端白名单 → 降级 general（绝不接受自创 ID）", () => {
+  it("topic ID 不在服务端白名单 → 拒绝响应（绝不接受自创 ID）", () => {
     const fakeFact = parseIntentPayload(
       { dialogueAct: "ask", topic: { kind: "fact", factId: "fact_ghost" } },
       "关于幽灵线索", ctx, asNpcId("npc_1"));
-    expect(fakeFact.ok).toBe(true);
-    if (fakeFact.ok && fakeFact.action.type === "talk") {
-      expect(fakeFact.action.topic).toEqual({ kind: "general" });
-    }
+    expect(fakeFact).toEqual({ ok: false, reason: "unclassifiable" });
     const fakeQuest = parseIntentPayload(
       { dialogueAct: "ask", topic: { kind: "quest", questId: "quest_ghost" } },
       "关于幽灵任务", ctx, asNpcId("npc_1"));
-    if (fakeQuest.ok && fakeQuest.action.type === "talk") {
-      expect(fakeQuest.action.topic).toEqual({ kind: "general" });
-    }
+    expect(fakeQuest).toEqual({ ok: false, reason: "unclassifiable" });
   });
 
-  it("kind 未知或结构非法 → 降级 general", () => {
+  it("kind 未知或结构非法 → 拒绝响应", () => {
     const badKind = parseIntentPayload(
       { dialogueAct: "ask", topic: { kind: "memory", factId: "fact_1" } },
       "还记得吗", ctx, asNpcId("npc_1"));
-    expect(badKind.ok).toBe(true);
-    if (badKind.ok && badKind.action.type === "talk") {
-      expect(badKind.action.topic).toEqual({ kind: "general" });
-    }
+    expect(badKind).toEqual({ ok: false, reason: "unclassifiable" });
   });
 
   it("无 topic 字段 → general（既有行为）", () => {
@@ -149,7 +141,7 @@ describe("parseIntentPayload dialogueAct 映射表", () => {
     }
   });
 
-  it("live 源透传合法 topic；AI 返回非法 topic 时规则降级仍保留 general", async () => {
+  it("live 源透传合法 topic；非法 topic 进入稳定响应失败", async () => {
     const live = createLiveIntentParser(
       stubTransport({ ok: true, content: '{"dialogueAct":"ask","topic":{"kind":"fact","factId":"fact_1"}}' }),
     );
@@ -158,6 +150,14 @@ describe("parseIntentPayload dialogueAct 映射表", () => {
     if (result.ok && result.action.type === "talk") {
       expect(result.action.topic).toEqual({ kind: "fact", factId: asFactId("fact_1") });
     }
+    const invalid = createLiveIntentParser(
+      stubTransport({ ok: true, content: '{"dialogueAct":"ask","topic":{"kind":"fact","factId":"fact_ghost"}}' }),
+    );
+    await expect(invalid.parseIntent("关于未知线索", ctx, asNpcId("npc_1"))).resolves.toEqual({
+      ok: false,
+      reason: "service_error",
+      failureKind: "AI_RESPONSE_INVALID",
+    });
   });
 });
 
@@ -228,19 +228,20 @@ describe("createLiveIntentParser（AI 配置有效时的 live 源）", () => {
     }
   });
 
-  it("非法 JSON → 规则降级；规则可归类时返回规则结果", async () => {
+  it("非法 JSON → 内容修复耗尽后返回稳定格式失败", async () => {
     const live = createLiveIntentParser(stubTransport({ ok: true, content: "not a json" }));
     const result = await live.parseIntent("我相信你", ctx, asNpcId("npc_1"));
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.action).toMatchObject({ type: "talk", dialogueAct: "support" });
-    }
+    expect(result.ok).toBe(false);
+    if (result.ok || result.reason !== "service_error") throw new Error("expected service failure");
+    expect(result.failureKind).toBe("AI_RESPONSE_INVALID");
   });
 
-  it("非法 JSON 且规则不可归类 → ok=false（converter 降级 freeform）", async () => {
+  it("非法 JSON 且规则不可归类 → 返回稳定格式失败", async () => {
     const live = createLiveIntentParser(stubTransport({ ok: true, content: "not a json" }));
     const result = await live.parseIntent("我的等级升到100", ctx);
     expect(result.ok).toBe(false);
+    if (result.ok || result.reason !== "service_error") throw new Error("expected service failure");
+    expect(result.failureKind).toBe("AI_RESPONSE_INVALID");
   });
 
   it("AI 超时（transport 返回失败）→ ok=false 兜底 result，绝不抛出", async () => {
@@ -249,23 +250,17 @@ describe("createLiveIntentParser（AI 配置有效时的 live 源）", () => {
     expect(result.ok).toBe(false);
   });
 
-it("AI 声称的 npcId 与玩家显式目标不一致 → 丢弃 AI 的 npcId，仍绑定玩家目标在场 NPC（不静默改送其它 NPC）", async () => {
+it("AI 声称的 npcId 与玩家显式目标不一致 → 返回稳定引用失败", async () => {
     const live = createLiveIntentParser(
       stubTransport({ ok: true, content: '{"dialogueAct":"support","npcId":"npc_2"}' }),
     );
     const result = await live.parseIntent("我相信你", ctx, asNpcId("npc_1"));
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.action.type).toBe("talk");
-      if (result.action.type === "talk") {
-        // 玩家显式目标是 npc_1；AI 声称的 npc_2 不合法且 npc_2 不在场 → 必须落到玩家目标，绝不能改送 npc_2。
-        expect(result.action.npcId).toBe(asNpcId("npc_1"));
-        expect(result.action.npcId).not.toBe(asNpcId("npc_2"));
-      }
-    }
+    expect(result.ok).toBe(false);
+    if (result.ok || result.reason !== "service_error") throw new Error("expected service failure");
+    expect(result.failureKind).toBe("AI_RESPONSE_INVALID");
   });
 
-it("AI 抛异常 → 规则降级，绝不炸穿", async () => {
+it("AI 抛异常 → 返回调用失败，绝不炸穿", async () => {
     const exploding = {
       async complete() {
         throw new Error("transport exploded");
@@ -273,26 +268,25 @@ it("AI 抛异常 → 规则降级，绝不炸穿", async () => {
     } as unknown as LiveIntentTransport;
     const live = createLiveIntentParser(exploding);
     const result = await live.parseIntent("我相信你", ctx, asNpcId("npc_1"));
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.action).toMatchObject({ type: "talk", dialogueAct: "support" });
-    }
+    expect(result.ok).toBe(false);
+    if (result.ok || result.reason !== "service_error") throw new Error("expected service failure");
+    expect(result.failureKind).toBe("AI_CALL_FAILED");
   });
 });
 
 describe("createIntentParserSource（composition root 工厂）", () => {
-  it("无 AI 配置 → 确定性 rule 源", () => {
+  it("无 AI 配置 → 不可用源", () => {
     const source = createIntentParserSource({});
-    expect(source.sourceVersion).toBe("rule-intent");
+    expect(source.sourceVersion).toBe("unavailable-intent");
   });
 
-  it("AI 配置有效但未注入 transport → 防御性降级为 rule 源", () => {
+  it("AI 配置有效但未注入 transport → 不可用源", () => {
     const source = createIntentParserSource({
       AI_API_BASE_URL: "https://api.example.com/v1",
       AI_MODEL: "small-model",
       AI_API_KEY: "sk-test",
     });
-    expect(source.sourceVersion).toBe("rule-intent");
+    expect(source.sourceVersion).toBe("unavailable-intent");
   });
 
   it("AI 配置有效且注入 transport → live 源", () => {

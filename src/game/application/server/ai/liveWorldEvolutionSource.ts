@@ -1,20 +1,20 @@
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
-import type { WorldEvolutionSource, WorldEvolutionSourceContext } from "../../worldEvolutionSource";
+import type { WorldEvolutionSource, WorldEvolutionSourceContext, WorldEvolutionSourceResult } from "../../worldEvolutionSource";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
-import { createDeterministicEvolutionSource } from "../../deterministicEvolutionSource";
 import type { WorldState, InvestigationApproach } from "@/game/domain/worldState";
 import type { GameTypeId } from "@/game/domain/newGame";
-import { defaultInvestigationApproachesFor } from "../../deterministicEvolutionBeats";
 import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./rpgAiClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
+import { classifyAiFailure, transportFailureCodeToCategory } from "../../aiGenerationFailure";
+import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
 
 // ---------------------------------------------------------------------------
 // WorldEvolution live source（Task 3）。
 //
 // 编排：AI 原始 JSON → 纯解析/校验（非法字段、越权引用直接丢弃）→ 失败/异常
-// 回退确定性 source（保证总能产出可装配的下幕/结局对/修复提案）。source 只做
-// “提案”，不做审批/分配 ID/写状态（那些是 gameplay worldEvolution 纯函数职责）。
+// 返回稳定 typed failure（保证调用方知道是 AI 调用失败还是响应格式不对）。source
+// 只做“提案”，不做审批/分配 ID/写状态（那些是 gameplay worldEvolution 纯函数职责）。
 // 敏感信息（apiKey 等）绝不进入日志。
 // ---------------------------------------------------------------------------
 
@@ -25,13 +25,11 @@ export type WorldEvolutionLiveDeps = {
   readonly aiClient?: RpgAiClient;
   readonly jsonMode?: ProviderJsonMode;
   readonly logger?: GameLogger;
-  /** 生产 live 模式关闭静默确定性降级，失败会让演化需求保留并等待真实 API 重试。 */
-  readonly allowFallback?: boolean;
 };
 
 /**
  * 世界演化与场景共用同一兼容 provider；30 秒会在正文到达前中止合法 JSON。
- * 该超时只决定何时明确记录失败，不会把 fallback 当成一次有效 AI 演化。
+ * 该超时只决定何时明确记录失败，不会把失败当成一次有效 AI 演化。
  */
 export const LIVE_WORLD_EVOLUTION_TIMEOUT_MS = RPG_AI_DEFAULT_POLICIES.world.timeoutMs;
 /** 世界演化只生成一次增量，限制输出以保持场景等待可控。 */
@@ -125,25 +123,20 @@ export type ParsedInvestigationApproaches = {
  * - 非数组或缺省 = 自动揭示，不产生日志；
  * - 逐条拒绝：approachId/label/hint 非空、quality 枚举、张力在界内、id 唯一、
  *   硬泄漏（完整正文子串）；
- * - 软泄漏（关键名词重合）：替换为题材词库的固定 label、丢弃 hint，记
- *   investigation_label_overlap（绝不整体拒绝本轮）；
- * - 过滤后数量不在 2-3 时降级为空列表，记 investigation_approach_invalid。
+ * - 软泄漏（关键名词重合）或任一条目非法：整组响应失败，记稳定
+ *   investigation_approach_invalid；不使用本地词库修补，也不把部分响应转换成成功。
  */
 export function parseFactInvestigationApproaches(
   raw: unknown,
   factText: string,
-  gameType?: GameTypeId,
-): ParsedInvestigationApproaches {
-  if (!Array.isArray(raw) || raw.length === 0) {
-    return { approaches: [], logCategories: [] };
+): ParsedInvestigationApproaches | null {
+  if (!Array.isArray(raw) || raw.length < MIN_APPROACH_COUNT || raw.length > MAX_APPROACH_COUNT) {
+    return null;
   }
-  const repairLabels = defaultInvestigationApproachesFor(gameType ?? "generic");
-  let repairIndex = 0;
   const seenIds = new Set<string>();
   const kept: InvestigationApproach[] = [];
-  const logCategories: string[] = [];
   for (const item of raw) {
-    if (typeof item !== "object" || item === null || Array.isArray(item)) continue;
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
     const entry = item as Record<string, unknown>;
     const approachId = typeof entry.approachId === "string" ? entry.approachId.trim() : "";
     const label = typeof entry.label === "string" ? entry.label.trim() : "";
@@ -152,33 +145,23 @@ export function parseFactInvestigationApproaches(
     const tensionDelta = typeof entry.tensionDelta === "number" && Number.isFinite(entry.tensionDelta)
       ? entry.tensionDelta
       : null;
-    if (approachId === "" || label === "" || hint === "" || quality === null || tensionDelta === null) continue;
-    if (tensionDelta < MIN_TENSION_DELTA || tensionDelta > MAX_TENSION_DELTA) continue;
-    if (seenIds.has(approachId)) continue;
+    if (approachId === "" || label === "" || hint === "" || quality === null || tensionDelta === null) return null;
+    if (tensionDelta < MIN_TENSION_DELTA || tensionDelta > MAX_TENSION_DELTA) return null;
+    if (seenIds.has(approachId)) return null;
     const leakTexts = [label, ...(hint === undefined ? [] : [hint])];
     const factTrimmed = factText.trim();
-    if (leakTexts.some((text) => text.includes(factTrimmed))) continue;
-    if (leakTexts.some((text) => sharesFactFragment(text, factText))) {
-      const repair = repairLabels[repairIndex % repairLabels.length]!;
-      repairIndex += 1;
-      logCategories.push("investigation_label_overlap");
-      seenIds.add(approachId);
-      kept.push({ approachId, label: repair.label, evidenceQuality: quality, tensionDelta });
-      continue;
-    }
+    if (factTrimmed !== "" && leakTexts.some((text) => text.includes(factTrimmed))) return null;
+    if (leakTexts.some((text) => sharesFactFragment(text, factText))) return null;
     seenIds.add(approachId);
     kept.push({ approachId, label, ...(hint === undefined ? {} : { hint }), evidenceQuality: quality, tensionDelta });
   }
-  if (kept.length < MIN_APPROACH_COUNT || kept.length > MAX_APPROACH_COUNT) {
-    return { approaches: [], logCategories: [...logCategories, "investigation_approach_invalid"] };
-  }
-  return { approaches: kept, logCategories };
+  return { approaches: kept, logCategories: [] };
 }
 
 /** 把 AI 原始 JSON 逐字段解析/校验为合法 WorldDeltaProposal；非法整条丢弃。 */
 export function parseWorldDeltaProposal(
   raw: unknown,
-  gameType?: GameTypeId,
+  _gameType?: GameTypeId,
 ): { readonly proposal: WorldDeltaProposal; readonly logCategories: readonly string[] } | null {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const rec = raw as Record<string, unknown>;
@@ -252,15 +235,15 @@ export function parseWorldDeltaProposal(
     const rawApproaches = f.investigationApproaches;
     const parsedApproaches = rawApproaches === undefined
       ? undefined
-      : parseFactInvestigationApproaches(rawApproaches, f.text.trim(), gameType);
+      : parseFactInvestigationApproaches(rawApproaches, f.text.trim());
+    if (parsedApproaches === null) return null;
     approachCategories = parsedApproaches?.logCategories ?? [];
     newFact = {
       text: f.text.trim(),
       visibility,
       ...(investigationLabel === undefined ? {} : { investigationLabel: investigationLabel.trim() }),
-      // 非数组输入丢弃字段（保持自动揭示且无字段）；显式数组一律落盘
-      // （含降级后的空列表，空列表在审批层保持自动揭示）。
-      ...(parsedApproaches === undefined || !Array.isArray(rawApproaches)
+      // 缺省字段表示自动揭示；显式列表必须完整通过 source schema 校验。
+      ...(parsedApproaches === undefined
         ? {}
         : { investigationApproaches: parsedApproaches.approaches }),
     };
@@ -311,9 +294,8 @@ export function filterProposalRefs(proposal: WorldDeltaProposal, ws: WorldState)
   return proposal;
 }
 
-/** live 世界演化源：AI 提案 → 纯解析/校验/引用过滤 → 失败回退确定性源。 */
+/** live 世界演化源：AI 提案 → 纯解析/校验/引用过滤 → 失败返回稳定 typed failure。 */
 export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): WorldEvolutionSource {
-  const deterministic = createDeterministicEvolutionSource();
   const { transport, config, logger, jsonMode } = deps;
   const aiClient = deps.aiClient ?? (transport && config
     ? createRpgAiClient({
@@ -323,17 +305,16 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
       policies: { world: { jsonMode: jsonMode ?? "prompt_only" } },
     })
     : undefined);
-  const fallbackProposal = (ctx: WorldEvolutionSourceContext): Promise<{ readonly proposal: WorldDeltaProposal | null }> => {
-    if (deps.allowFallback === false) {
-      throw new Error("LIVE_WORLD_EVOLUTION_UNAVAILABLE");
-    }
-    return deterministic.propose(ctx);
+  const failWorld = (category: Parameters<typeof classifyAiFailure>[0]["category"]): WorldEvolutionSourceResult => {
+    const failure: AiGenerationFailure = classifyAiFailure({ phase: "world", category });
+    logger?.warn("world_evolution_failed", { category, kind: failure.kind });
+    return { ok: false, failure };
   };
 
   return {
     async propose(ctx) {
       if (!aiClient) {
-        return fallbackProposal(ctx);
+        return failWorld("unavailable");
       }
       try {
         const messages = [
@@ -353,7 +334,7 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
         });
         if (!result.ok) {
           logger?.warn("world_evolution_ai_failed", { code: result.code });
-          return fallbackProposal(ctx);
+          return failWorld(transportFailureCodeToCategory(result.code));
         }
           const parsed = parseJsonResponse(result.content);
           const rawProposal = typeof parsed === "object" && parsed !== null && "proposal" in parsed
@@ -366,13 +347,16 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
               logger?.warn(category, {});
             }
             const filtered = filterProposalRefs(parsedResult.proposal, ctx.worldState);
-            return { proposal: filtered };
+            if (filtered === null) {
+              return failWorld("invalid_reference");
+            }
+            return { ok: true, proposal: filtered };
           }
           logger?.warn("world_evolution_invalid_data");
-          return fallbackProposal(ctx);
+          return failWorld("invalid_schema");
       } catch (error) {
         logger?.warn("world_evolution_transport_failed", { message: (error as Error)?.message });
-        return fallbackProposal(ctx);
+        return failWorld("unknown");
       }
     },
   };
