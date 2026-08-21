@@ -39,6 +39,7 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
     };
     const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } });
     const result = await source.propose({ worldState: ws, storyState: ss, need: { kind: "ending_pair", finalAct: 3 }, reason: "test" });
+    if (!result.ok) throw new Error("expected success");
     expect(result.proposal).not.toBeNull();
     const pair = result.proposal!.endingPair;
     expect(pair).toHaveLength(2);
@@ -63,6 +64,7 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
     const warm = await source.propose({ worldState: makeWorldWithNpc(20), storyState: ss, need: { kind: "ending_pair", finalAct: 3 }, reason: "warm" });
     const cold = await source.propose({ worldState: makeWorldWithNpc(-20), storyState: ss, need: { kind: "ending_pair", finalAct: 3 }, reason: "cold" });
 
+    if (!warm.ok || !cold.ok) throw new Error("expected success");
     const warmTrust = warm.proposal!.endingPair![0]!.requirements![0]!;
     const coldDoubt = cold.proposal!.endingPair![1]!.requirements![0]!;
     // 亲暖互动（高亲和度）应满足信任要求；敌意互动（低亲和度）应满足质疑要求。
@@ -88,6 +90,7 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
     const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 2, quests: 2, events: 0 } });
 
     const result = await source.propose({ worldState: ws, storyState: ss, need: { kind: "next_act", act: 3 }, reason: "test" });
+    if (!result.ok) throw new Error("expected success");
 
     expect(result.proposal?.newNpc?.name).toBe("苏绾·3");
     expect(result.proposal?.nextMainQuest?.name).toBe("追问断碑谷·第3幕");
@@ -102,6 +105,7 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
       need: { kind: "next_act", act: 2 },
       reason: "medium-playtest",
     });
+    if (!result.ok) throw new Error("expected success");
 
     expect(result.proposal?.newItem).toMatchObject({
       name: "染血腰牌",
@@ -126,6 +130,7 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
       need: { kind: "next_act", act: 3 },
       reason: "medium-story-coherence",
     });
+    if (!result.ok) throw new Error("expected success");
     expect(result.proposal?.newLocation?.name).toBe("断碑谷");
     expect(result.proposal?.newNpc?.locationRef).toEqual({ kind: "new_location" });
     expect(result.proposal?.newItem?.locationRef).toBe("new_location");

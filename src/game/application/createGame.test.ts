@@ -126,13 +126,14 @@ describe("createGame", () => {
     expect(getRecord()!.worldState.npcs[0]!.name).toBe(acceptedNpcName);
   });
 
-  it("live API 连续重复时使用结构性 fallback，而不是接受最后一个重复候选", async () => {
+  it("live API 连续重复时返回稳定格式失败，而不接受重复候选", async () => {
     const { repo, getRecord } = createInMemoryRepo();
     const fixture = createFixtureOpeningSource();
     const repeated = await fixture.generate({ gameType: "wuxia", gameLength: "short", seed: "live-repeat-seed", attempt: 0 });
     const history = createOpeningNoveltyRecord({ candidate: repeated, gameType: "wuxia", createdAt: "2026-01-01" });
+    let calls = 0;
     const transport = {
-      complete: async () => ({ ok: true, content: JSON.stringify(repeated), latencyMs: 1 }),
+      complete: async () => { calls += 1; return { ok: true, content: JSON.stringify(repeated), latencyMs: 1 }; },
     } as unknown as AiTransport;
     const source = createOpeningGenerationSource({
       transport,
@@ -150,10 +151,9 @@ describe("createGame", () => {
       },
     );
 
-    expect(result.ok).toBe(true);
-    expect(getRecord()!.worldState.generation.openingAttempt).toBe(3);
-    expect(getRecord()!.worldState.npcs[0]!.name).not.toBe(repeated.opening.npc.name);
-    expect(getRecord()!.worldState.locations[0]!.name).not.toBe(repeated.opening.location.name);
+    expect(result).toEqual({ ok: false, code: "AI_GENERATION_FAILED", failureKind: "AI_RESPONSE_INVALID" });
+    expect(calls).toBeGreaterThan(0);
+    expect(getRecord()).toBeNull();
   });
 
   it("persists byte-equivalent compiled state for one seed and structural differences for another", async () => {
@@ -260,7 +260,7 @@ describe("createGame", () => {
         now: () => "2026-01-02",
       },
     );
-    expect(generationFailure).toEqual({ ok: false, code: "GENERATION_FAILED" });
+    expect(generationFailure).toEqual({ ok: false, code: "AI_GENERATION_FAILED", failureKind: "AI_RESPONSE_INVALID" });
     expect(getRecord()).toEqual(oldRecord);
 
     const stale = await createGame(

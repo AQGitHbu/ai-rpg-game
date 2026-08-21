@@ -17,6 +17,7 @@ import { asGenerationId } from "@/game/domain/worldEntity";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
+import { AiGenerationError, type AiFailureKind } from "./aiGenerationFailure";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局生成编排改为 source → parse → validate → compile。
@@ -42,8 +43,6 @@ export type OpeningGenerationInput = {
 
 export type OpeningGenerationSource = {
   generate(input: OpeningGenerationInput): Promise<OpeningGenerationCandidate>;
-  /** 相似候选耗尽重试后生成另一条完整候选，不改写 AI 已返回的实体名。 */
-  generateFallback?(input: OpeningGenerationInput): Promise<OpeningGenerationCandidate>;
 };
 
 export type CreateGameInput = {
@@ -60,7 +59,7 @@ export type CreateGameInput = {
 
 export type CreateGameResult =
   | { readonly ok: true; readonly revision: number }
-  | { readonly ok: false; readonly code: "ACTIVE_GAME_EXISTS" | "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "GAME_NOT_ENDED" | "GENERATION_FAILED" | "INFRASTRUCTURE_FAILURE" };
+  | { readonly ok: false; readonly code: "ACTIVE_GAME_EXISTS" | "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "GAME_NOT_ENDED" | "AI_GENERATION_FAILED" | "INFRASTRUCTURE_FAILURE"; readonly failureKind?: AiFailureKind };
 
 // ---------------------------------------------------------------------------
 // 开局配置解析：路由层不得直连 domain，统一经 application 层调用
@@ -190,6 +189,7 @@ export async function createGame(
     readonly novelty: OpeningNoveltyRecord;
     readonly attempt: number;
   } | null = null;
+  let lastFailureKind: AiFailureKind | undefined;
 
   for (let attempt = 0; attempt < MAX_OPENING_GENERATION_ATTEMPTS; attempt += 1) {
     let generated: OpeningGenerationCandidate;
@@ -211,7 +211,11 @@ export async function createGame(
           },
         }),
       });
-    } catch {
+    } catch (error) {
+      // AiGenerationError 携带稳定 failureKind，直接返回失败结果
+      if (error instanceof AiGenerationError) {
+        lastFailureKind = error.kind;
+      }
       continue;
     }
     if (!generated) continue;
@@ -230,30 +234,12 @@ export async function createGame(
   }
 
   // API 可能在三次请求中仍返回同一结构。不能把最后一个重复候选
-  // 当作成功；改用 source 提供的完整结构性兜底，仍走同一校验链。
-  if (accepted === null && deps.source.generateFallback !== undefined) {
-    try {
-      const generated = await deps.source.generateFallback({
-        gameType: input.gameType,
-        seed: input.seed,
-        gameLength: input.gameLength,
-        ...(input.setup === undefined ? {} : { setup: input.setup }),
-        novelty: { recent: [...recentHistory, ...rejectedCandidates], attempt: MAX_OPENING_GENERATION_ATTEMPTS },
-        attempt: MAX_OPENING_GENERATION_ATTEMPTS,
-      });
-      const prepared = prepareCandidate(generated);
-      if (prepared !== null && !isOpeningTooSimilar(prepared.novelty, recentHistory)) {
-        accepted = {
-          candidate: prepared.candidate,
-          novelty: prepared.novelty,
-          attempt: MAX_OPENING_GENERATION_ATTEMPTS,
-        };
-      }
-    } catch {
-      // 兜底也失败时返回稳定的 GENERATION_FAILED，不将重复故事伪装成成功。
-    }
-  }
-  if (accepted === null) return { ok: false, code: "GENERATION_FAILED" };
+  // 当作成功；全部候选失败后直接返回 AI_GENERATION_FAILED。
+  if (accepted === null) return {
+    ok: false,
+    code: "AI_GENERATION_FAILED",
+    failureKind: lastFailureKind ?? "AI_RESPONSE_INVALID",
+  };
 
   const generation = {
     generationId: asGenerationId(`gen_${input.seed}`),
@@ -301,7 +287,7 @@ export async function createGame(
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: [],
   });
-  if (!jobResult.ok) return { ok: false, code: "GENERATION_FAILED" };
+  if (!jobResult.ok) return { ok: false, code: "AI_GENERATION_FAILED", failureKind: "AI_RESPONSE_INVALID" };
 
   const storyStateWithPending: StoryState = {
     ...storyState,

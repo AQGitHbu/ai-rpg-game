@@ -39,7 +39,7 @@ export const RPG_AI_DEFAULT_POLICIES: Readonly<Record<RpgAiRole, RpgAiRolePolicy
     timeoutMs: 30_000,
     maxTokens: 320,
     jsonMode: "prompt_only",
-    maxAttempts: 1,
+    maxAttempts: 2,
   },
   opening: {
     thinking: "off",

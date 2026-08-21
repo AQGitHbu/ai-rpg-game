@@ -4,6 +4,8 @@ import type {
   AiGenerationFailure,
 } from "@/game/domain/narrativeGenerationFailure";
 
+export type { AiFailureKind };
+
 /**
  * Server/application 层的 AI 生成错误。
  *
@@ -70,4 +72,25 @@ export function classifyAiFailure(input: {
     ? "AI_CALL_FAILED"
     : "AI_RESPONSE_INVALID";
   return { kind, phase: input.phase };
+}
+
+/**
+ * 将 AiTransportFailureCode 映射到 AiFailureCategory。
+ * Transport 层的 code 名称与 AiFailureCategory 大致对应；
+ * http_error/invalid_response 映射为 service_error（属于 AI 调用失败）；
+ * invalid_config/aborted 映射为 unknown。
+ */
+export function transportFailureCodeToCategory(code: string): AiFailureCategory {
+  switch (code) {
+    case "timeout": return "timeout";
+    case "rate_limited": return "rate_limit";
+    case "service_error": return "service_error";
+    case "network_error": return "transport";
+    case "empty_response": return "empty_response";
+    case "invalid_response": return "invalid_json";
+    case "http_error": return "service_error";
+    case "invalid_config": return "unavailable";
+    case "aborted": return "unknown";
+    default: return "unknown";
+  }
 }

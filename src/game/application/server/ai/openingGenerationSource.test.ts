@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { repairOpeningGenerationCandidate, createOpeningGenerationSource, sanitizeOpeningFactReferences } from "./openingGenerationSource";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
-import { validateOpeningGenerationCandidate } from "@/game/gameplay/rpg/openingGeneration";
 import type { AiTransport } from "@ai-game/ai-transport";
 import { buildStylePolicy } from "../../stylePolicy";
+import { createFixtureOpeningSource } from "../../createGame";
 
 function validCandidate(): OpeningGenerationCandidate {
   return {
@@ -113,33 +113,23 @@ describe("sanitizeOpeningFactReferences", () => {
 });
 
 describe("createOpeningGenerationSource", () => {
-  it("无 transport 时确定性 fallback 只返回开场切片且通过同一 validator", async () => {
-    const results: Array<{ seed: string; source: "generated" | "fallback" }> = [];
-    const source = createOpeningGenerationSource({ onResult: (result) => results.push(result) });
-    const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
-    expect(candidate).toBeTruthy();
-    expect(candidate.world.publicFacts.length).toBeGreaterThan(0);
-    expect(candidate.opening.location.scale).toBe("town");
-    expect(candidate.opening.quest.objective).toEqual({ kind: "talk_to_opening_npc" });
-    const validated = validateOpeningGenerationCandidate(candidate, { gameLength: "short", targetActs: 3 });
-    expect(validated.ok).toBe(true);
-    expect(results).toEqual([{ seed: "s", source: "fallback" }]);
+  it("无 transport 时返回稳定调用失败", async () => {
+    const source = createOpeningGenerationSource({});
+    await expect(source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" }))
+      .rejects.toMatchObject({ kind: "AI_CALL_FAILED", phase: "opening" });
   });
 
   it("AI 返回有效开场切片时经机械修复 + 校验通过", async () => {
     const transport = {
       complete: async () => ({ ok: true, content: JSON.stringify(validCandidate()), latencyMs: 1 }),
     } as unknown as AiTransport;
-    const results: Array<{ seed: string; source: "generated" | "fallback" }> = [];
     const source = createOpeningGenerationSource({
       transport,
       config: { baseUrl: "x", apiKey: "k", model: "m" },
-      onResult: (result) => results.push(result),
     });
     const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
     expect(candidate.opening.npc.name).toBe("沈掌柜");
     expect(candidate.opening.location.scale).toBe("town");
-    expect(results).toEqual([{ seed: "s", source: "generated" }]);
   });
 
   it("机械修复保留 AI 的建筑名与结构标签", async () => {
@@ -255,7 +245,7 @@ describe("createOpeningGenerationSource", () => {
     expect(candidate.player.name).toBe("陆遥");
   });
 
-  it("AI 失败回退 fixture 时仍消费开局配置的玩家身份", async () => {
+  it("AI 响应失败时不回退 fixture", async () => {
     const transport = {
       complete: async () => ({ ok: true, content: "not json", latencyMs: 1 }),
     } as unknown as AiTransport;
@@ -269,9 +259,8 @@ describe("createOpeningGenerationSource", () => {
       narrativeStyle: "cinematic" as const,
       contentIntensity: "normal" as const,
     };
-    const candidate = await source.generate({ gameType: "fantasy", seed: "s", gameLength: "short", setup });
-    expect(candidate.player.name).toBe("沈砚");
-    expect(candidate.player.identity).toBe("被逐出师门的机关师");
+    await expect(source.generate({ gameType: "fantasy", seed: "s", gameLength: "short", setup }))
+      .rejects.toMatchObject({ kind: "AI_RESPONSE_INVALID", phase: "opening" });
   });
 
   it("AI 候选 NPC 含悬空 fact key 时经引用完整性修复而非整体回退", async () => {
@@ -296,7 +285,7 @@ describe("createOpeningGenerationSource", () => {
     expect(candidate.opening.npc.privateFactKeys).not.toContain("fact_ghost");
   });
 
-  it("AI 返回 empty_response 时不重复相同请求并回退", async () => {
+  it("AI 返回 empty_response 时不重复相同请求并返回调用失败", async () => {
     let calls = 0;
     const transport = {
       complete: async () => {
@@ -305,49 +294,49 @@ describe("createOpeningGenerationSource", () => {
       },
     } as unknown as AiTransport;
     const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
-    const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
+    await expect(source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" }))
+      .rejects.toMatchObject({ kind: "AI_CALL_FAILED", phase: "opening" });
     expect(calls).toBe(1);
-    expect(candidate.opening.npc.name).toBeTruthy();
   });
 
-  it("AI 返回非法 JSON 时回退 fixture", async () => {
+  it("AI 返回非法 JSON 时返回稳定格式失败", async () => {
     const transport = {
       complete: async () => ({ ok: true, content: "not json", latencyMs: 1 }),
     } as unknown as AiTransport;
     const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
-    const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
-    expect(candidate.opening.location.scale).toBe("town");
+    await expect(source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" }))
+      .rejects.toMatchObject({ kind: "AI_RESPONSE_INVALID", phase: "opening" });
   });
 
-  it("AI 返回 schema 错误候选时回退 fixture（不修剧情语义）", async () => {
+  it("AI 返回 schema 错误候选时返回稳定格式失败", async () => {
     const bad = JSON.parse(JSON.stringify(validCandidate()));
     (bad.opening as Record<string, unknown>).quest = { ...(bad.opening as Record<string, unknown>).quest as object, objective: { kind: "visit_location" } };
     const transport = {
       complete: async () => ({ ok: true, content: JSON.stringify(bad), latencyMs: 1 }),
     } as unknown as AiTransport;
     const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
-    const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
-    expect(candidate.opening.quest.objective).toEqual({ kind: "talk_to_opening_npc" });
+    await expect(source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" }))
+      .rejects.toMatchObject({ kind: "AI_RESPONSE_INVALID", phase: "opening" });
   });
 
-  it("AI 返回 targetActs 与档位不符的契约时回退 fixture", async () => {
+  it("AI 返回 targetActs 与档位不符的契约时返回稳定格式失败", async () => {
     const wrongActs = JSON.parse(JSON.stringify(validCandidate()));
     wrongActs.storyContract.targetActs = 5;
     const transport = {
       complete: async () => ({ ok: true, content: JSON.stringify(wrongActs), latencyMs: 1 }),
     } as unknown as AiTransport;
     const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
-    const candidate = await source.generate({ gameType: "wuxia", seed: "wrong-acts", gameLength: "short" });
-    expect(candidate.storyContract.targetActs).toBe(3);
+    await expect(source.generate({ gameType: "wuxia", seed: "wrong-acts", gameLength: "short" }))
+      .rejects.toMatchObject({ kind: "AI_RESPONSE_INVALID", phase: "opening" });
   });
 
-  it("确定性 fallback 同 seed 可重放（replay 字节相等）", async () => {
-    const first = await createOpeningGenerationSource({}).generate({ gameType: "wuxia", seed: "replay-seed", gameLength: "short" });
-    const replay = await createOpeningGenerationSource({}).generate({ gameType: "wuxia", seed: "replay-seed", gameLength: "short" });
+  it("显式 fixture source 同 seed 可重放（replay 字节相等）", async () => {
+    const first = await createFixtureOpeningSource().generate({ gameType: "wuxia", seed: "replay-seed", gameLength: "short" });
+    const replay = await createFixtureOpeningSource().generate({ gameType: "wuxia", seed: "replay-seed", gameLength: "short" });
     expect(replay).toEqual(first);
   });
 
-  it("transport 失败时回退 fixture 且不泄露 apiKey 到日志", async () => {
+  it("transport 失败时返回调用失败且不泄露 apiKey 到日志", async () => {
     const warns: Array<{ ctx: string; params?: unknown }> = [];
     const transport = {
       complete: async () => ({ ok: false, code: "network_error", retryable: true, latencyMs: 1 }),
@@ -357,8 +346,8 @@ describe("createOpeningGenerationSource", () => {
       config: { baseUrl: "x", apiKey: "SECRET_KEY", model: "m" },
       logger: { warn: (ctx: string, params?: unknown) => warns.push({ ctx, params }) } as never,
     });
-    const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
-    expect(candidate.opening.location.scale).toBe("town");
+    await expect(source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" }))
+      .rejects.toMatchObject({ kind: "AI_CALL_FAILED", phase: "opening" });
     const allLog = JSON.stringify(warns);
     expect(allLog).not.toContain("SECRET_KEY");
   });

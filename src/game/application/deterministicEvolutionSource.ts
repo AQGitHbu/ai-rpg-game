@@ -163,6 +163,26 @@ function planSceneCandidateRecovery(ws: WorldState): WorldDeltaProposal {
   };
 }
 
+/** 无行动上下文的 pacing 预览只补一名当前地点路人，避免离线 fixture 抢占主线物品。 */
+function planScenePacingRecovery(ws: WorldState): WorldDeltaProposal {
+  return {
+    beatSummary: "当前地点多了一名可以提供旁观信息的路人",
+    newLocation: null,
+    newNpc: {
+      name: uniqueName("旁观者", ws.npcs.map((npc) => npc.name), String(ws.npcs.length + 1)),
+      role: "路人",
+      description: "在场的普通路人，知道一些公开的动静。",
+      locationRef: { kind: "existing", id: currentLocationId(ws) },
+      goals: ["观察动静"],
+    },
+    newItem: null,
+    newEnemy: null,
+    newFact: null,
+    nextMainQuest: null,
+    endingPair: null,
+  };
+}
+
 function uniqueName(base: string, existingNames: readonly string[], suffix: string): string {
   const taken = new Set(existingNames);
   if (!taken.has(base)) return base;
@@ -272,18 +292,19 @@ export function createDeterministicEvolutionSource(): WorldEvolutionSource {
     async propose(ctx) {
       switch (ctx.need.kind) {
         case "none":
-          return { proposal: null };
+          return { ok: true, proposal: null };
         case "next_act":
-          return { proposal: planNextAct(ctx.worldState, ctx.need.act) };
+          return { ok: true, proposal: planNextAct(ctx.worldState, ctx.need.act) };
         case "ending_pair":
-          return { proposal: planEndingPair(ctx.worldState, ctx.storyState) };
+          return { ok: true, proposal: planEndingPair(ctx.worldState, ctx.storyState) };
         case "pacing":
           return {
+            ok: true,
             proposal: ctx.action
               ? planRepairByAction(ctx.worldState, ctx.action)
               : ctx.reason === "scene_candidate_shortage"
                 ? planSceneCandidateRecovery(ctx.worldState)
-                : null,
+                : planScenePacingRecovery(ctx.worldState),
           };
       }
     },

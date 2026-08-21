@@ -1,6 +1,7 @@
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
+import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
 
 /**
  * SceneGenerator 的事件提议（spec §7.4 newEvents）。
@@ -42,7 +43,7 @@ export type ScenePerformanceObjectiveLink = {
 
 /**
  * 单线行动（investigate/move）的 AI 预生成叙事（Task 1）。
- * 仅 live 提案携带；随审批持久化后由 fast path 消费，fallback 提案不携带。
+ * 仅 live 提案携带；随审批持久化后由 fast path 消费，offline fixture 提案不携带。
  * 引用必须命中 SceneGenerationContext.upcomingLinearObjectives 的权威实体。
  */
 export type LinearActionNarrative =
@@ -98,10 +99,15 @@ export function sceneInvestigationResultFrom(
   };
 }
 
-/** 兼容现有 source 命名；结果本身就是尚未批准的表演提案。 */
-export type SceneSourceResult = ScenePerformanceProposal;
+/**
+ * 场景 source 结果：成功返回 generated proposal，失败返回稳定 AiGenerationFailure。
+ * 失败时不返回 fallback 正文，也不把 deterministic scene 标记成 generated。
+ */
+export type SceneSourceResult =
+  | { readonly ok: true; readonly proposal: ScenePerformanceProposal }
+  | { readonly ok: false; readonly failure: AiGenerationFailure };
 
-/** 可注入的叙事场景 source。离线 fixture 不调用 AI。 */
+/** 可注入的叙事场景 source。显式离线 fixture 返回 ok:true + fallback proposal；live source 失败返回 ok:false。 */
 export type SceneSource = {
   generateScene(context: SceneGenerationContext): Promise<SceneSourceResult>;
 };

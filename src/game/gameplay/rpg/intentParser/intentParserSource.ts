@@ -1,6 +1,7 @@
 import type { IntentContext } from "./intentContext";
 import type { Action } from "@/game/domain/action";
 import type { NpcId } from "@/game/domain/worldEntity";
+import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 
 /** Optional request correlation metadata; never part of gameplay state or intent rules. */
 export type IntentAuditLink = Readonly<{
@@ -20,7 +21,12 @@ export type IntentAuditLink = Readonly<{
 
 export type IntentParserResult =
   | { readonly ok: true; readonly action: Action }
-  | { readonly ok: false; readonly reason: "unclassifiable" | "service_error" };
+  | { readonly ok: false; readonly reason: "unclassifiable" }
+  | {
+      readonly ok: false;
+      readonly reason: "service_error";
+      readonly failureKind: AiFailureKind;
+    };
 
 export type IntentParserSource = {
   readonly sourceVersion: string;

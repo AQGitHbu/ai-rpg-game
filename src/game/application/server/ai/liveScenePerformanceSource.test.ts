@@ -201,8 +201,9 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
     const source = createLiveScenePerformanceSource({ transport, config });
     const proposal = await source.generateScene(context);
-    expect(proposal.source).toBe("generated");
-    const itemSegment = proposal.segments.find((s) => s.beatId === "item_0");
+    if (!proposal.ok) throw new Error("expected success");
+    expect(proposal.proposal.source).toBe("generated");
+    const itemSegment = proposal.proposal.segments.find((s) => s.beatId === "item_0");
     expect(itemSegment).toBeDefined();
     expect(itemSegment!.text).toContain("盟誓印谱");
   });
@@ -238,7 +239,8 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
     const source = createLiveScenePerformanceSource({ transport, config });
     const proposal = await source.generateScene(context);
-    const battleSegment = proposal.segments.find((s) => s.beatId === "battle_0");
+    if (!proposal.ok) throw new Error("expected success");
+    const battleSegment = proposal.proposal.segments.find((s) => s.beatId === "battle_0");
     expect(battleSegment).toBeDefined();
     expect(battleSegment!.text).toContain("击败");
     expect(battleSegment!.text).toContain("80");
@@ -287,13 +289,14 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
     const source = createLiveScenePerformanceSource({ transport, config });
     const proposal = await source.generateScene(context);
-    const advanced = proposal.segments.find((s) => s.beatId === "quest_adv_0");
+    if (!proposal.ok) throw new Error("expected success");
+    const advanced = proposal.proposal.segments.find((s) => s.beatId === "quest_adv_0");
     expect(advanced).toBeDefined();
     expect(advanced!.text).not.toContain("盟誓印谱");
     expect(advanced!.referencedEntityIds).toEqual(["item_seal"]);
-    expect(proposal.objectiveLink).toEqual({ questId: "quest_0", objectiveIndex: 1, mode: "handoff" });
-    expect(proposal.objectiveLink!.questId).toBe(String(context.objectiveTransition.after!.questId));
-    expect(proposal.objectiveLink!.objectiveIndex).toBe(context.objectiveTransition.after!.objectiveIndex);
+    expect(proposal.proposal.objectiveLink).toEqual({ questId: "quest_0", objectiveIndex: 1, mode: "handoff" });
+    expect(proposal.proposal.objectiveLink!.questId).toBe(String(context.objectiveTransition.after!.questId));
+    expect(proposal.proposal.objectiveLink!.objectiveIndex).toBe(context.objectiveTransition.after!.objectiveIndex);
   });
 
   it("prompt 包含必需安全段落：玩家原话、合法选项 ID、目标、焦点 NPC；不泄漏私密正文/账本", async () => {
@@ -480,21 +483,24 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     }).generateScene(context);
 
     expect(attempts).toBe(2);
-    expect(proposal.source).toBe("generated");
-    expect(proposal.choices.map((choice) => choice.label).join(" ")).not.toContain("既然你愿意继续说");
+    expect(proposal.ok).toBe(true);
+    if (!proposal.ok) throw new Error("expected success");
+    expect(proposal.proposal.source).toBe("generated");
+    expect(proposal.proposal.choices.map((choice) => choice.label).join(" ")).not.toContain("既然你愿意继续说");
     expect(logger.warn).toHaveBeenCalledWith("scene_generation_content_retry", {
       reason: "choices_stale_template",
       attempt: 1,
     });
   });
 
-  it("AI 返回不可解析 JSON → 回退确定性 source（source=fallback）", async () => {
+  it("AI 返回不可解析 JSON → 返回稳定格式失败，不调用 deterministic source", async () => {
     const context = makeContext();
     const transport = stubTransport(null, "这不是 JSON");
     const source = createLiveScenePerformanceSource({ transport, config });
     const proposal = await source.generateScene(context);
-    expect(proposal.source).toBe("fallback");
-    expect(proposal.segments.length).toBeGreaterThan(0);
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected failure");
+    expect(proposal.failure.kind).toBe("AI_RESPONSE_INVALID");
   });
 
   it("最终结构非法时只记录安全形状，不记录模型文本", async () => {
@@ -507,7 +513,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
 
     await source.generateScene(makeContext());
 
-    expect(logger.warn).toHaveBeenLastCalledWith("scene_generation_invalid_data", {
+    expect(logger.warn).toHaveBeenCalledWith("scene_generation_invalid_data", {
       reason: "segments_empty",
       object: true,
       keys: "choices,npcLine,objectiveLink,segments",
@@ -667,8 +673,10 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       logger: logger as never,
     }).generateScene(makeContext());
 
-    expect(proposal.source).toBe("generated");
-    expect(proposal.contentRepairAttempt).toBe(1);
+    expect(proposal.ok).toBe(true);
+    if (!proposal.ok) throw new Error("expected success");
+    expect(proposal.proposal.source).toBe("generated");
+    expect(proposal.proposal.contentRepairAttempt).toBe(1);
     expect(attempts).toBe(2);
     expect(logger.warn).toHaveBeenCalledWith("scene_generation_content_retry", {
       reason: "segments_empty",
@@ -676,7 +684,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
   });
 
-  it("内容修复仍失败时最多两次请求后才回退，并记录第二次的脱敏原因", async () => {
+  it("内容修复仍失败时最多两次请求后返回稳定失败，并记录第二次的脱敏原因", async () => {
     const logger = { warn: vi.fn() };
     let attempts = 0;
     const transport: AiTransport = {
@@ -701,10 +709,12 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       logger: logger as never,
     }).generateScene(makeContext());
 
-    expect(proposal.source).toBe("fallback");
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected failure");
+    expect(proposal.failure.kind).toBe("AI_RESPONSE_INVALID");
     expect(attempts).toBe(2);
     expect(logger).toMatchObject({ warn: expect.any(Function) });
-    expect(logger.warn).toHaveBeenLastCalledWith("scene_generation_invalid_data", {
+    expect(logger.warn).toHaveBeenCalledWith("scene_generation_invalid_data", {
       reason: "segments_empty",
       object: true,
       keys: "choices,npcLine,objectiveLink,segments",
@@ -715,7 +725,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
   });
 
-  it("JSON mode 把合格的字符串 NPC 台词与服务器节拍/选项机械合成为 generated 场景", async () => {
+  it("JSON mode 返回非法字符串字段时返回稳定格式失败", async () => {
     const context = makeContext({
       job: makeJob({
         utterance: "商队失踪的事你知道吗？",
@@ -731,15 +741,12 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
 
     const proposal = await createLiveScenePerformanceSource({ transport, config, logger: logger as never }).generateScene(context);
-
-    expect(proposal.source).toBe("generated");
-    expect(proposal.npcLine?.text).toContain("松脂");
-    expect(proposal.npcLine?.answeredBeatIds).toEqual(["player_utterance"]);
-    expect(proposal.choices).toHaveLength(2);
-    expect(logger.info).toHaveBeenCalledWith("scene_generation_repaired", { kind: "npc_line_only" });
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected failure");
+    expect(proposal.failure.kind).toBe("AI_RESPONSE_INVALID");
   });
 
-  it("局部 live 修复沿用带回合上下文的 fallback 选项，不重复整组对白", async () => {
+  it("局部 live 修复仍失败时不写入 fallback 选项", async () => {
     const raw = {
       segments: [{ beatId: "invented", text: "不采用的旁白" }],
       npcLine: "商队离开前，有人用松脂封住了后门的锁孔。去巷口找那枚沾松脂的铜钱，它能证明谁来过。",
@@ -750,22 +757,15 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     const first = await source.generateScene(makeContext({
       job: makeJob(),
     }));
+    expect(first.ok).toBe(false);
+    if (first.ok) throw new Error("expected failure");
     const second = await source.generateScene(makeContext({
       job: { ...makeJob(), actionId: "act_2", turnNumber: 2 },
     }));
-
-    expect(first.source).toBe("generated");
-    expect(second.source).toBe("generated");
-    expect(first.choices).toHaveLength(2);
-    expect(second.choices).toHaveLength(2);
-    const firstLabels = first.choices.map((choice) => choice.label).join(" ");
-    const secondLabels = second.choices.map((choice) => choice.label).join(" ");
-    expect(firstLabels).not.toContain("商队离开前，有人用松脂封住了后门的锁孔");
-    expect(secondLabels).not.toContain("商队离开前，有人用松脂封住了后门的锁孔");
-    expect(firstLabels).toContain("线索");
-    expect(firstLabels).toContain("证物");
-    expect(secondLabels).toContain("线索");
-    expect(secondLabels).toContain("证物");
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error("expected failure");
+    expect(first.failure.kind).toBe("AI_RESPONSE_INVALID");
+    expect(second.failure.kind).toBe("AI_RESPONSE_INVALID");
   });
 
   it("首个 AI 响应为空时用修复提示重试一次", async () => {
@@ -794,13 +794,14 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     } as unknown as AiTransport;
 
     const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
+    if (!proposal.ok) throw new Error("expected success");
 
     expect(attempts).toBe(2);
-    expect(proposal.source).toBe("generated");
-    expect(proposal.contentRepairAttempt).toBe(1);
+    expect(proposal.proposal.source).toBe("generated");
+    expect(proposal.proposal.contentRepairAttempt).toBe(1);
   });
 
-  it("AI 返回非法选项 ID → 回退确定性 source", async () => {
+  it("AI 返回非法选项 ID → 返回稳定格式失败", async () => {
     const context = makeContext();
     const transport = stubTransport({
       segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "旁白" }],
@@ -813,10 +814,12 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
     const source = createLiveScenePerformanceSource({ transport, config });
     const proposal = await source.generateScene(context);
-    expect(proposal.source).toBe("fallback");
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected failure");
+    expect(proposal.failure.kind).toBe("AI_RESPONSE_INVALID");
   });
 
-  it("AI 返回带叙述前缀的通用确认句 → 清理后仍判定为无上下文并回退", async () => {
+  it("AI 返回带叙述前缀的通用确认句 → 返回稳定格式失败", async () => {
     const context = makeContext({
       job: makeJob({
         utterance: "商队失踪的事你知道吗？",
@@ -841,14 +844,12 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
     const source = createLiveScenePerformanceSource({ transport, config });
     const proposal = await source.generateScene(context);
-    expect(proposal.source).toBe("fallback");
-    expect(proposal.npcLine?.text).toContain("眼前这条线索");
-    expect(proposal.npcLine?.text).not.toMatch(/门闩|松脂|车辙/u);
-    expect(proposal.npcLine?.text).not.toContain("你刚才问的");
-    expect(proposal.npcLine?.text).not.toContain("如实答道");
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected failure");
+    expect(proposal.failure.kind).toBe("AI_RESPONSE_INVALID");
   });
 
-  it("AI 返回脱离上下文的通用问候 → 回退到不编造事实的安全台词", async () => {
+  it("AI 返回脱离上下文的通用问候 → 返回稳定格式失败", async () => {
     const baseContext = makeContext({
       presentNpcs: [{
         id: asNpcId("npc_1"), name: "顾砚", role: "旧案传讯人", publicProfile: "带着旧案线索的人",
@@ -883,9 +884,9 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       ],
     });
     const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
-    expect(proposal.source).toBe("fallback");
-    expect(proposal.npcLine?.text).toContain("只回答亲眼见过或已经核对的部分");
-    expect(proposal.npcLine?.text).not.toMatch(/盟誓铁印|无灯马车|告示|松脂|车辙/u);
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected failure");
+    expect(proposal.failure.kind).toBe("AI_RESPONSE_INVALID");
   });
 
   it("AI 返回带叙述前缀的具体回应 → 持久化前归一化为直接台词", async () => {
@@ -910,11 +911,12 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
     const source = createLiveScenePerformanceSource({ transport, config });
     const proposal = await source.generateScene(context);
-    expect(proposal.source).toBe("generated");
-    expect(proposal.npcLine?.text).toBe("商队离开前，有人用松脂封住了后门的锁孔。去巷口找那枚沾松脂的铜钱，它能证明谁来过。");
+    if (!proposal.ok) throw new Error("expected success");
+    expect(proposal.proposal.source).toBe("generated");
+    expect(proposal.proposal.npcLine?.text).toBe("商队离开前，有人用松脂封住了后门的锁孔。去巷口找那枚沾松脂的铜钱，它能证明谁来过。");
   });
 
-  it("AI 只用空泛追问接话时回退到角色化台词", async () => {
+  it("AI 只用空泛追问接话时返回稳定格式失败", async () => {
     const context = makeContext({ job: makeJob({ utterance: "商队失踪的事你知道吗？" }) });
     const transport = stubTransport({
       segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
@@ -934,12 +936,12 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
 
     const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
-
-    expect(proposal.source).toBe("fallback");
-    expect(proposal.npcLine?.text).not.toContain("你还想从哪一段");
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected failure");
+    expect(proposal.failure.kind).toBe("AI_RESPONSE_INVALID");
   });
 
-  it("焦点 NPC 只返回一句对白时回退到多轮角色化台词", async () => {
+  it("焦点 NPC 只返回一句对白时返回稳定格式失败", async () => {
     const context = makeContext({ job: makeJob({ utterance: "商队失踪的事你知道吗？" }) });
     const transport = stubTransport({
       segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
@@ -958,10 +960,9 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       ],
     });
     const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
-    expect(proposal.source).toBe("fallback");
-    expect(proposal.npcLine?.text).toContain("眼前这条线索");
-    expect(proposal.npcLine?.text).not.toMatch(/门闩|松脂|车辙/u);
-    expect(proposal.npcLine?.text).toContain("把手里的证据带上");
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected failure");
+    expect(proposal.failure.kind).toBe("AI_RESPONSE_INVALID");
   });
 
   // ── Task 5：调查方法结果反馈链 ─────────────────────────────────────────
@@ -1018,8 +1019,9 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     });
     const source = createLiveScenePerformanceSource({ transport, config });
     const proposal = await source.generateScene(context);
-    expect(proposal.source).toBe("generated");
-    expect(proposal.investigationResult).toEqual({
+    if (!proposal.ok) throw new Error("expected success");
+    expect(proposal.proposal.source).toBe("generated");
+    expect(proposal.proposal.investigationResult).toEqual({
       factId: "fact_1",
       approachLabel: "沿痕迹追查",
       evidenceQuality: "clean",

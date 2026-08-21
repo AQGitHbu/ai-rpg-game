@@ -31,7 +31,7 @@ function fakeRecorder(): AiTextAuditRecorder & { records: AiTextAuditPayload[] }
 
 describe("createRpgAiClient", () => {
   it("has explicit off thinking policies and role-specific budgets", () => {
-    expect(RPG_AI_DEFAULT_POLICIES.intent).toMatchObject({ thinking: "off", maxTokens: 320, maxAttempts: 1 });
+    expect(RPG_AI_DEFAULT_POLICIES.intent).toMatchObject({ thinking: "off", maxTokens: 320, maxAttempts: 2 });
     expect(RPG_AI_DEFAULT_POLICIES.scene).toMatchObject({ thinking: "off", maxTokens: 3_000, maxAttempts: 2 });
     expect(RPG_AI_DEFAULT_POLICIES.world).toMatchObject({ thinking: "off", maxTokens: 3_200, maxAttempts: 3 });
     expect(RPG_AI_DEFAULT_POLICIES.opening).toMatchObject({ thinking: "off", maxTokens: 5_000 });

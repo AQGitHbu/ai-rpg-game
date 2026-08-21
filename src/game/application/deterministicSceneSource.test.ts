@@ -173,34 +173,40 @@ describe("deterministicSceneSource", () => {
   it("derives sceneId purely from the job: scene-<jobId>, identical across calls", async () => {
     const context = makeContext(makeJob({ jobId: "job_7" }));
     const first = await source.generateScene(context);
+    if (!first.ok) throw new Error("expected success");
     const second = await source.generateScene(context);
-    expect(first.sceneId).toBe("scene-job_7");
-    expect(second.sceneId).toBe("scene-job_7");
+    if (!second.ok) throw new Error("expected success");
+    expect(first.proposal.sceneId).toBe("scene-job_7");
+    expect(second.proposal.sceneId).toBe("scene-job_7");
   });
 
   it("is fully deterministic: same context → same proposal package", async () => {
     const context = makeContext(makeJob({ jobId: "job_det" }));
     const first = await source.generateScene(context);
+    if (!first.ok) throw new Error("expected success");
     const second = await source.generateScene(context);
+    if (!second.ok) throw new Error("expected success");
     expect(first).toEqual(second);
-    expect(first.choices).toHaveLength(2);
+    expect(first.proposal.choices).toHaveLength(2);
   });
 
   it("produces a performance proposal with segments, two distinct legal choices and source=fallback", async () => {
     const result = await source.generateScene(makeContext(makeJob({ eventKind: "travel" })));
-    expect(result.segments.length).toBeGreaterThan(0);
-    expect(result.source).toBe("fallback");
-    expect(result.choices).toHaveLength(2);
-    expect(result.choices[0].candidateId).not.toBe(result.choices[1].candidateId);
-    expect(result.choices.every((choice) => choice.label.length > 0)).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.segments.length).toBeGreaterThan(0);
+    expect(result.proposal.source).toBe("fallback");
+    expect(result.proposal.choices).toHaveLength(2);
+    expect(result.proposal.choices[0].candidateId).not.toBe(result.proposal.choices[1].candidateId);
+    expect(result.proposal.choices.every((choice) => choice.label.length > 0)).toBe(true);
   });
 
   it("deterministic proposal passes the same approval used for generated scenes", async () => {
     const context = makeContext(makeJob({ eventKind: "travel" }));
-    const proposal = await source.generateScene(context);
+    const sceneResult = await source.generateScene(context);
+    if (!sceneResult.ok) throw new Error("expected success");
     const approved = approveScenePerformance({
       context,
-      proposal,
+      proposal: sceneResult.proposal,
       basedOnRevision: 1,
       existingCandidateEventPool: [],
     });
@@ -224,7 +230,8 @@ describe("deterministicSceneSource", () => {
     }));
     expect(buildEventState(context)).toEqual({ kind: "dialogue", focusNpcId: asNpcId("npc_1") });
     const result = await source.generateScene(context);
-    expect(result.npcLine?.npcId).toBe("npc_1");
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.npcLine?.npcId).toBe("npc_1");
   });
 
   it("keeps the old NPC as the speaker during an advanced-act handoff while exposing the new objective", async () => {
@@ -263,7 +270,9 @@ describe("deterministicSceneSource", () => {
     expect(candidates[0]?.action).toEqual({ type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" });
     expect(candidates[1]?.action).toEqual({ type: "talk", npcId: asNpcId("npc_2"), dialogueAct: "ask" });
     expect(buildSceneChoices(context)[0]?.label).toBe("与客人交谈");
-    expect((await source.generateScene(context)).npcLine?.npcId).toBe("npc_1");
+    const result = await source.generateScene(context);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.npcLine?.npcId).toBe("npc_1");
   });
 
   it("dialogue choices use structured facts rather than NPC role keywords", () => {
@@ -388,12 +397,13 @@ describe("deterministicSceneSource", () => {
     expect(labels).toContain("证物");
 
     const generated = await source.generateScene(continued);
-    expect(generated.npcLine?.text).toBeTruthy();
-    const generatedAnchor = generated.npcLine?.text
+    if (!generated.ok) throw new Error("expected success");
+    expect(generated.proposal.npcLine?.text).toBeTruthy();
+    const generatedAnchor = generated.proposal.npcLine?.text
       .replace(/[“”"「」『』。！？!?\s]/gu, "")
       .slice(-14);
     expect(generatedAnchor).toBeTruthy();
-    expect(generated.choices.every((choice) => !choice.label.includes(generatedAnchor ?? ""))).toBe(true);
+    expect(generated.proposal.choices.every((choice) => !choice.label.includes(generatedAnchor ?? ""))).toBe(true);
   });
 
   it("本轮 NPC 有结构化事实引用时，不再优先复用上一轮 support 模板", () => {
@@ -454,11 +464,12 @@ describe("deterministicSceneSource", () => {
         { ...makeContext(job).presentNpcs[1]!, id: asNpcId("npc_2"), name: "苏绾", role: "失踪镖队幸存者" },
       ],
     });
-    expect(result.npcLine?.npcId).toBe("npc_1");
-    expect(result.npcLine?.text).toContain("眼前能确认的范围");
-    expect(result.npcLine?.text).toContain("眼前这条线索");
-    expect(result.npcLine?.text).not.toContain("你说的旧案是不是和镖队有关");
-    expect(result.npcLine?.text).not.toContain("你刚才问的");
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.npcLine?.npcId).toBe("npc_1");
+    expect(result.proposal.npcLine?.text).toContain("眼前能确认的范围");
+    expect(result.proposal.npcLine?.text).toContain("眼前这条线索");
+    expect(result.proposal.npcLine?.text).not.toContain("你说的旧案是不是和镖队有关");
+    expect(result.proposal.npcLine?.text).not.toContain("你刚才问的");
   });
 
   it("offers two explicit and mutually exclusive dialogue decisions when the ending pair is ready", () => {
@@ -522,29 +533,32 @@ describe("deterministicSceneSource", () => {
       beats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应" }],
     });
     const result = await source.generateScene(makeContext(job, makeFocusContext("trusted")));
-    const utteranceSegment = result.segments.find((s) => s.beatId === "player_utterance");
+    if (!result.ok) throw new Error("expected success");
+    const utteranceSegment = result.proposal.segments.find((s) => s.beatId === "player_utterance");
     expect(utteranceSegment?.text).not.toContain(utterance);
     expect(utteranceSegment?.text).toContain("能核查");
-    expect(result.npcLine?.npcId).toBe("npc_1");
-    expect(result.npcLine?.answeredBeatIds).toContain("player_utterance");
+    expect(result.proposal.npcLine?.npcId).toBe("npc_1");
+    expect(result.proposal.npcLine?.answeredBeatIds).toContain("player_utterance");
   });
 
   it("does not rewrite partial_success/failure/blocked: the NPC line keeps the status tone", async () => {
     for (const status of ["partial_success", "failure", "blocked"] as const) {
       const result = await source.generateScene(makeContext(makeJob({ status, eventKind: "dialogue", summary: { kind: "talk", npcId: asNpcId("npc_1") }, focusNpcId: "npc_1" })));
-      expect(result.npcLine?.text).toBeTruthy();
+      if (!result.ok) throw new Error("expected success");
+      expect(result.proposal.npcLine?.text).toBeTruthy();
       if (status === "partial_success") {
-        expect(result.npcLine?.text).toContain("不方便");
-        expect(result.npcLine?.text).toContain("全说");
+        expect(result.proposal.npcLine?.text).toContain("不方便");
+        expect(result.proposal.npcLine?.text).toContain("全说");
       } else {
-        expect(result.npcLine?.text).not.toContain("欢迎光临");
+        expect(result.proposal.npcLine?.text).not.toContain("欢迎光临");
       }
     }
   });
 
   it("keeps NPC presentation data as proposal fields; ready pages are built only after approval", async () => {
     const result = await source.generateScene(makeContext(makeJob({ eventKind: "dialogue", summary: { kind: "talk", npcId: asNpcId("npc_1") }, focusNpcId: "npc_1" })));
-    expect(result.npcLine?.npcId).toBe("npc_1");
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.npcLine?.npcId).toBe("npc_1");
     expect("npcDialogues" in result).toBe(false);
   });
 
@@ -556,9 +570,11 @@ describe("deterministicSceneSource", () => {
       mode: "progressed",
     };
     const withAfter = await source.generateScene(makeContext(makeJob({ transition })));
-    expect(withAfter.objectiveLink).toEqual({ questId: "quest_0", objectiveIndex: 1, mode: "progress" });
+    if (!withAfter.ok) throw new Error("expected success");
+    expect(withAfter.proposal.objectiveLink).toEqual({ questId: "quest_0", objectiveIndex: 1, mode: "progress" });
     const withoutAfter = await source.generateScene(makeContext(makeJob()));
-    expect(withoutAfter.objectiveLink).toBeNull();
+    if (!withoutAfter.ok) throw new Error("expected success");
+    expect(withoutAfter.proposal.objectiveLink).toBeNull();
   });
 
   it("segments cover every mandatory beat with its beatId, in order, plus optional atmosphere last", async () => {
@@ -569,9 +585,10 @@ describe("deterministicSceneSource", () => {
       ],
     });
     const result = await source.generateScene(makeContext(job));
-    expect(result.segments.map((s) => s.beatId)).toEqual(["item_0", "atmosphere"]);
-    expect(result.segments[0]?.text).toContain("盟誓印谱");
-    expect(result.segments[0]?.text).toContain("收好");
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.segments.map((s) => s.beatId)).toEqual(["item_0", "atmosphere"]);
+    expect(result.proposal.segments[0]?.text).toContain("盟誓印谱");
+    expect(result.proposal.segments[0]?.text).toContain("收好");
   });
 
   it("turns concise combat beat labels into readable scene sentences", async () => {
@@ -579,8 +596,9 @@ describe("deterministicSceneSource", () => {
       beats: [{ beatId: "battle_0", kind: "battle_resolved", subjectIds: ["enemy_1"], instruction: "与灰狼的战斗以胜利告终" }],
     });
     const result = await source.generateScene(makeContext(job));
-    expect(result.segments[0]?.text).toContain("与灰狼的战斗以胜利告终。");
-    expect(result.segments[0]?.text).toContain("重新确认眼前留下的线索");
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.segments[0]?.text).toContain("与灰狼的战斗以胜利告终。");
+    expect(result.proposal.segments[0]?.text).toContain("重新确认眼前留下的线索");
   });
 
   it("investigate fallback: fact segment appends the next-target movement handoff derived from objectiveTarget", async () => {
@@ -610,10 +628,11 @@ describe("deterministicSceneSource", () => {
       },
     };
     const proposal = await source.generateScene(context);
-    const segment = proposal.segments.find((s) => s.beatId === "fact_discovered_0");
+    if (!proposal.ok) throw new Error("expected success");
+    const segment = proposal.proposal.segments.find((s) => s.beatId === "fact_discovered_0");
     expect(segment?.text).toContain("泥地里的车轮印向北延伸");
     expect(segment?.text).toContain("接下来去北巷旧道核对现场");
-    const approved = approveScenePerformance({ context, proposal, basedOnRevision: 1, existingCandidateEventPool: [] });
+    const approved = approveScenePerformance({ context, proposal: proposal.proposal, basedOnRevision: 1, existingCandidateEventPool: [] });
     expect(approved.ok).toBe(true);
   });
 
@@ -675,12 +694,13 @@ describe("deterministicSceneSource", () => {
       },
     };
     const proposal = await source.generateScene(context);
-    const segment = proposal.segments.find((s) => s.beatId === "fact_discovered_0");
+    if (!proposal.ok) throw new Error("expected success");
+    const segment = proposal.proposal.segments.find((s) => s.beatId === "fact_discovered_0");
     expect(segment?.text).toContain("翻查附近杂物");
     expect(segment?.text).toContain("泥地里的车轮印向北延伸");
     expect(segment?.text).toMatch(/动静|惊动/);
     expect(segment?.text).toContain("北巷旧道");
-    const approved = approveScenePerformance({ context, proposal, basedOnRevision: 1, existingCandidateEventPool: [] });
+    const approved = approveScenePerformance({ context, proposal: proposal.proposal, basedOnRevision: 1, existingCandidateEventPool: [] });
     expect(approved.ok).toBe(true);
   });
 
@@ -708,17 +728,19 @@ describe("deterministicSceneSource", () => {
       objectiveTarget: { questId: asQuestId("quest_0"), objectiveIndex: 1, entityId: "npc_dyn_1", entityName: "信使" },
     };
     const proposal = await source.generateScene(context);
-    const segment = proposal.segments.find((s) => s.beatId === "qa");
+    if (!proposal.ok) throw new Error("expected success");
+    const segment = proposal.proposal.segments.find((s) => s.beatId === "qa");
     expect(segment?.text).toContain("信使");
-    const approved = approveScenePerformance({ context, proposal, basedOnRevision: 1, existingCandidateEventPool: [] });
+    const approved = approveScenePerformance({ context, proposal: proposal.proposal, basedOnRevision: 1, existingCandidateEventPool: [] });
     expect(approved.ok).toBe(true);
   });
 
   it("choices include a move action toward a reachable location", async () => {
     const context = makeContext(makeJob());
     const result = await source.generateScene(context);
+    if (!result.ok) throw new Error("expected success");
     const selectable = buildSelectableSceneCandidates(context);
-    const actions = result.choices.map((choice) => selectable.find((c) => c.candidateId === choice.candidateId)?.action);
+    const actions = result.proposal.choices.map((choice) => selectable.find((c) => c.candidateId === choice.candidateId)?.action);
     expect(actions.some((a) => a?.type === "move" && String(a.locationId) === "loc_2")).toBe(true);
   });
 
@@ -753,8 +775,9 @@ describe("deterministicSceneSource", () => {
       ],
     };
     const result = await source.generateScene(context);
+    if (!result.ok) throw new Error("expected success");
     const selectable = buildSelectableSceneCandidates(context);
-    const actions = result.choices.map((choice) => selectable.find((c) => c.candidateId === choice.candidateId)?.action);
+    const actions = result.proposal.choices.map((choice) => selectable.find((c) => c.candidateId === choice.candidateId)?.action);
     expect(actions).toEqual([
       { type: "battle_action", action: "attack" },
       { type: "battle_action", action: "guard" },
@@ -777,8 +800,9 @@ describe("deterministicSceneSource", () => {
       objectiveTarget: { questId: "quest_0", objectiveIndex: 0, entityId: "loc_2", entityName: "街道" },
     };
     const result = await source.generateScene(context);
+    if (!result.ok) throw new Error("expected success");
     const selectable = buildSelectableSceneCandidates(context);
-    const chosenLabels = result.choices.map((choice) => selectable.find((c) => c.candidateId === choice.candidateId)?.label);
+    const chosenLabels = result.proposal.choices.map((choice) => selectable.find((c) => c.candidateId === choice.candidateId)?.label);
     expect(chosenLabels).toContain("（前往街道）");
   });
 
@@ -786,24 +810,28 @@ describe("deterministicSceneSource", () => {
 
   it("hostile 与 trusted 对同一 talk action 产出肉眼可辨的不同台词", async () => {
     const hostile = await source.generateScene(makeUtteranceContext("hostile"));
+    if (!hostile.ok) throw new Error("expected success");
     const trusted = await source.generateScene(makeUtteranceContext("trusted"));
-    expect(hostile.npcLine?.text).not.toBe(trusted.npcLine?.text);
-    expect(hostile.npcLine?.text).toBeTruthy();
-    expect(trusted.npcLine?.text).toBeTruthy();
+    if (!trusted.ok) throw new Error("expected success");
+    expect(hostile.proposal.npcLine?.text).not.toBe(trusted.proposal.npcLine?.text);
+    expect(hostile.proposal.npcLine?.text).toBeTruthy();
+    expect(trusted.proposal.npcLine?.text).toBeTruthy();
   });
 
   it("hostile 档位 NPC 的台词为冷淡拒绝式", async () => {
     const result = await source.generateScene(makeUtteranceContext("hostile"));
-    expect(result.npcLine?.text).toMatch(/不关你的事|不想回答/);
-    expect(result.npcLine?.text).not.toMatch(/答道|说道|看了你一眼/);
-    expect(result.npcLine?.emotion).toBe("angry");
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.npcLine?.text).toMatch(/不关你的事|不想回答/);
+    expect(result.proposal.npcLine?.text).not.toMatch(/答道|说道|看了你一眼/);
+    expect(result.proposal.npcLine?.emotion).toBe("angry");
   });
 
   it("trusted 档位 NPC 的台词为坦诚主动式", async () => {
     const result = await source.generateScene(makeUtteranceContext("trusted"));
-    expect(result.npcLine?.text).toMatch(/来龙去脉|想和你谈/);
-    expect(result.npcLine?.text).not.toMatch(/坦诚地说|说道|答道/);
-    expect(result.npcLine?.emotion).toBe("warm");
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.npcLine?.text).toMatch(/来龙去脉|想和你谈/);
+    expect(result.proposal.npcLine?.text).not.toMatch(/坦诚地说|说道|答道/);
+    expect(result.proposal.npcLine?.emotion).toBe("warm");
   });
 
   it("neutral fallback gives a structured handoff instead of inventing role-specific evidence", async () => {
@@ -815,11 +843,12 @@ describe("deterministicSceneSource", () => {
       beats: [{ beatId: "player_utterance", kind: "player_utterance", subjectIds: ["npc_1"], instruction: "直接回应" }],
     });
     const result = await source.generateScene(makeContext(job, makeFocusContext("neutral")));
-    expect(result.npcLine?.text).toContain("眼前这条线索");
-    expect(result.npcLine?.text).not.toMatch(/门闩|松脂|车辙|半枚官印|腰牌背纹/u);
-    expect(result.npcLine?.text).not.toBe("我知道了。");
-    expect(result.npcLine?.text).not.toContain("你刚才问的");
-    expect(result.npcLine?.text).not.toMatch(/如实答道|说道|答道/);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.npcLine?.text).toContain("眼前这条线索");
+    expect(result.proposal.npcLine?.text).not.toMatch(/门闩|松脂|车辙|半枚官印|腰牌背纹/u);
+    expect(result.proposal.npcLine?.text).not.toBe("我知道了。");
+    expect(result.proposal.npcLine?.text).not.toContain("你刚才问的");
+    expect(result.proposal.npcLine?.text).not.toMatch(/如实答道|说道|答道/);
   });
 
   it("uses the current fixed dialogue stance to hand off the structured objective", async () => {
@@ -866,14 +895,16 @@ describe("deterministicSceneSource", () => {
         selectedChoice: { dialogueAct: "support", topic: { kind: "general" } },
       },
     });
-    expect(result.npcLine?.text).toContain("接下来去北巷核对现场");
-    expect(result.npcLine?.text).not.toMatch(/半枚官印|腰牌背纹|门闩|松脂|车辙/u);
-    expect(result.npcLine?.text).not.toContain("你来得正好");
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.npcLine?.text).toContain("接下来去北巷核对现场");
+    expect(result.proposal.npcLine?.text).not.toMatch(/半枚官印|腰牌背纹|门闩|松脂|车辙/u);
+    expect(result.proposal.npcLine?.text).not.toContain("你来得正好");
   });
 
   it("有 player_utterance 节拍时 npcLine 的 answeredBeatIds 包含该节拍 ID", async () => {
     const result = await source.generateScene(makeUtteranceContext("trusted"));
-    expect(result.npcLine?.answeredBeatIds).toEqual(["player_utterance"]);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.npcLine?.answeredBeatIds).toEqual(["player_utterance"]);
   });
 
   it("无 player_utterance 节拍时 answeredBeatIds 为空数组", async () => {
@@ -882,7 +913,8 @@ describe("deterministicSceneSource", () => {
       summary: { kind: "move", locationId: asLocationId("loc_2") },
     }));
     const result = await source.generateScene(context);
-    expect(result.npcLine?.answeredBeatIds).toEqual([]);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.npcLine?.answeredBeatIds).toEqual([]);
   });
 
   it("buildSceneChoices returns exactly two distinct candidate IDs from the legal set", () => {
@@ -896,13 +928,15 @@ describe("deterministicSceneSource", () => {
 
   it("dark intensity 的氛围 segment 与 normal 不同（暗色意象 vs 含蓄）", async () => {
     const normal = await source.generateScene(makeContext(makeJob()));
+    if (!normal.ok) throw new Error("expected success");
     const darkCtx: SceneGenerationContext = {
       ...makeContext(makeJob()),
       story: { ...makeContext(makeJob()).story, stylePolicy: buildStylePolicy({ contentIntensity: "dark" }) },
     };
     const dark = await source.generateScene(darkCtx);
-    const normalAtmos = normal.segments.find((s) => s.beatId === "atmosphere")?.text ?? "";
-    const darkAtmos = dark.segments.find((s) => s.beatId === "atmosphere")?.text ?? "";
+    if (!dark.ok) throw new Error("expected success");
+    const normalAtmos = normal.proposal.segments.find((s) => s.beatId === "atmosphere")?.text ?? "";
+    const darkAtmos = dark.proposal.segments.find((s) => s.beatId === "atmosphere")?.text ?? "";
     expect(normalAtmos).not.toBe(darkAtmos);
     expect(darkAtmos).toContain("阴影");
   });
@@ -914,11 +948,13 @@ describe("deterministicSceneSource", () => {
       story: { ...baseCtx.story, stylePolicy: buildStylePolicy({ personalityTags: ["多疑"], contentIntensity: "dark" }) },
     };
     const a = await source.generateScene(baseCtx);
+    if (!a.ok) throw new Error("expected success");
     const b = await source.generateScene(darkCtx);
-    expect(a.choices).toEqual(b.choices);
-    expect(a.objectiveLink).toEqual(b.objectiveLink);
-    expect(a.npcLine).toEqual(b.npcLine);
-    expect(a.segments.map((s) => s.text)).not.toEqual(b.segments.map((s) => s.text));
+    if (!b.ok) throw new Error("expected success");
+    expect(a.proposal.choices).toEqual(b.proposal.choices);
+    expect(a.proposal.objectiveLink).toEqual(b.proposal.objectiveLink);
+    expect(a.proposal.npcLine).toEqual(b.proposal.npcLine);
+    expect(a.proposal.segments.map((s) => s.text)).not.toEqual(b.proposal.segments.map((s) => s.text));
   });
 
   it("冲动标签的玩家追问 segment 保留冲动特征前缀，但不回显原话", async () => {
@@ -934,7 +970,8 @@ describe("deterministicSceneSource", () => {
       job: impJob,
     };
     const result = await source.generateScene(impCtx);
-    const utteranceSegment = result.segments.find((s) => s.beatId === "player_utterance");
+    if (!result.ok) throw new Error("expected success");
+    const utteranceSegment = result.proposal.segments.find((s) => s.beatId === "player_utterance");
     expect(utteranceSegment?.text).toContain("没多想");
     expect(utteranceSegment?.text).not.toContain(utterance);
   });
