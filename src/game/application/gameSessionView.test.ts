@@ -1428,4 +1428,44 @@ describe("projectGameSessionView town read model", () => {
     const view = projectGameSessionView(base, createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } }), 0, "test-ending-session");
     expect(view.currentLocation.town).toBeNull();
   });
+
+  it("projects only the stable AI failure kind", () => {
+    const baseStory = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+    const failedStory: StoryState = {
+      ...baseStory,
+      narrative: {
+        ...baseStory.narrative,
+        generation: {
+          status: "failed",
+          job: { jobId: "job_1", actionId: "a_1" } as unknown as StoryState["narrative"]["generation"] extends { job: infer J } ? J : never,
+          failure: { kind: "AI_RESPONSE_INVALID", phase: "scene", failedAt: "2026-08-21T00:00:00.000Z" },
+        } as unknown as StoryState["narrative"]["generation"],
+      },
+    };
+    const view = projectGameSessionView(makeTownWorld(), failedStory, 3, "ending-id");
+    expect(view.narrativeGeneration).toEqual({
+      status: "failed",
+      failureKind: "AI_RESPONSE_INVALID",
+    });
+  });
+
+  it("projects failed with AI_CALL_FAILED kind", () => {
+    const baseStory = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+    const failedStory: StoryState = {
+      ...baseStory,
+      narrative: {
+        ...baseStory.narrative,
+        generation: {
+          status: "failed",
+          job: { jobId: "job_2", actionId: "a_2" } as unknown as StoryState["narrative"]["generation"] extends { job: infer J } ? J : never,
+          failure: { kind: "AI_CALL_FAILED", phase: "scene", failedAt: "2026-08-21T00:00:00.000Z" },
+        } as unknown as StoryState["narrative"]["generation"],
+      },
+    };
+    const view = projectGameSessionView(makeTownWorld(), failedStory, 5, "ending-id");
+    expect(view.narrativeGeneration).toEqual({
+      status: "failed",
+      failureKind: "AI_CALL_FAILED",
+    });
+  });
 });

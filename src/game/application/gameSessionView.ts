@@ -19,6 +19,7 @@ import { composeDirectNpcGreeting, composeIdleNpcLine, normalizeNpcSpeech } from
 import { isObjectiveEntityReleased, isQuestObjectiveReleased } from "@/game/gameplay/rpg/worldEvolution";
 import { formatSceneChoiceLabel } from "./deterministicSceneSource";
 import { decorateNarrativePages, decorateNarrativeText } from "./narrativeText";
+import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 
 export type PlayerChoiceView = {
   readonly choiceToken: string;
@@ -140,7 +141,7 @@ export type GameSessionView = {
     readonly npcLine: { readonly text: string; readonly emotion: string; readonly speaker?: string } | null;
     readonly npcDialogues: readonly NpcDialogueView[];
   };
-  readonly narrativeGeneration: { readonly status: "idle" | "pending" };
+  readonly narrativeGeneration: { readonly status: "idle" | "pending" | "failed"; readonly failureKind?: AiFailureKind };
   readonly battle: BattleView | null;
   readonly quests: readonly {
     readonly name: string;
@@ -720,7 +721,13 @@ export function projectGameSessionView(
       npcLine: projectedNpcLine,
       npcDialogues,
     },
-    narrativeGeneration: { status: storyState.narrative.generation.status },
+    narrativeGeneration: (() => {
+      const gen = storyState.narrative.generation;
+      if (gen.status === "failed") {
+        return { status: "failed" as const, failureKind: gen.failure.kind };
+      }
+      return { status: gen.status };
+    })(),
     battle,
     quests: worldState.quests.map((quest) => ({
       name: quest.name,

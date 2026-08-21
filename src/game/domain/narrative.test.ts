@@ -95,4 +95,38 @@ describe("NarrativeGenerationState 契约", () => {
     const playerText: string | undefined = idle.playerText;
     expect(playerText).toBeUndefined();
   });
+
+  it("failed 变体携带 job 和稳定 failure 分类", () => {
+    const failed: NarrativeGenerationState = {
+      status: "failed",
+      job: pendingWithJob().job,
+      failure: {
+        kind: "AI_CALL_FAILED",
+        phase: "scene",
+        failedAt: "2026-08-21T00:00:00.000Z",
+      },
+    };
+    expect(failed.status).toBe("failed");
+    expect(failed.failure.kind).toBe("AI_CALL_FAILED");
+    expect(failed.failure.phase).toBe("scene");
+    expect(failed.job.actionId).toBe("action-1");
+  });
+
+  it("failed 变体不允许缺少 failure", () => {
+    // @ts-expect-error failed 必须携带 failure
+    const incomplete: NarrativeGenerationState = {
+      status: "failed",
+      job: pendingWithJob().job,
+    };
+    expect(incomplete.status).toBe("failed");
+  });
+
+  it("failed 变体不允许缺少 job", () => {
+    // @ts-expect-error failed 必须携带 job
+    const noJob: NarrativeGenerationState = {
+      status: "failed",
+      failure: { kind: "AI_RESPONSE_INVALID", phase: "scene", failedAt: "2026-08-21T00:00:00.000Z" },
+    };
+    expect(noJob.status).toBe("failed");
+  });
 });

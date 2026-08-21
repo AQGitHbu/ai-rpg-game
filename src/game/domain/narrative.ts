@@ -1,6 +1,7 @@
 import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "./worldEntity";
 import { paginateSpeechText } from "./speechPagination";
 import type { PendingNarrativeJob } from "./pendingNarrativeJob";
+import type { NarrativeGenerationFailure } from "./narrativeGenerationFailure";
 import type { ApprovedChoice } from "./approvedChoice";
 import { composeDirectNpcGreeting, normalizeNpcSpeech } from "./npcSpeech";
 
@@ -111,7 +112,14 @@ export type NarrativeGenerationState =
       readonly status: "pending";
       /** pending 的唯一载体；玩家原文只在 job.utterance 内。 */
       readonly job: PendingNarrativeJob;
-  };
+    }
+  | {
+      readonly status: "failed";
+      /** 失败前仍持有的 job；手动重试时复用同一 jobId 恢复为 pending。 */
+      readonly job: PendingNarrativeJob;
+      /** 稳定失败分类 + 时间戳，不含 provider code 或错误正文。 */
+      readonly failure: NarrativeGenerationFailure;
+    };
 
 /** 一段 NPC 对话的服务端会话游标；选择不会在第一轮直接完成 talk 目标。 */
 export type DialogueSessionState = {
