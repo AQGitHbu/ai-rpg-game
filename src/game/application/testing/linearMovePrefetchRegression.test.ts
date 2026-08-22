@@ -414,13 +414,17 @@ describe("Step 3：自动/手动日志断言（含历史兼容）", () => {
     expect((normalized as { origin: string }).origin).not.toBe("normal");
   });
 
-  it("历史兼容：真实旧审计日志 query 可显示（各行 JSON 可解析）且不臆测 manual_failed_job", async () => {
-    const runId = "2026-08-22T05-54-41.505Z";
-    const relPath = join(process.cwd(), "logs", "ai-text-audit", runId, "events.jsonl");
-    if (!existsSync(relPath)) {
-      throw new Error(`历史审计 run 缺失，请将 ${runId} 放到 logs/ai-text-audit 下：${relPath}`);
+  // 历史数据 gitignored 不入库；数据缺失时跳过（干净 checkout 也可跑），
+  // 存在时才做真实文件断言（Finding #2：不 throw 断流水线）。
+  const runId = "2026-08-22T05-54-41.505Z";
+  const historicalRunPath = join(process.cwd(), "logs", "ai-text-audit", runId, "events.jsonl");
+  const hasHistoricalRun = existsSync(historicalRunPath);
+  it.skipIf(!hasHistoricalRun)("历史兼容：真实旧审计日志 query 可显示（各行 JSON 可解析）且不臆测 manual_failed_job", async () => {
+    if (!hasHistoricalRun) {
+      // skipIf 已覆盖缺数据场景；此处为截止保护，确保真实断言只在数据在时执行。
+      return;
     }
-    const raw = await readFile(relPath, "utf8");
+    const raw = await readFile(historicalRunPath, "utf8");
     const lines = raw.split("\n").filter((line) => line.trim().length > 0);
     expect(lines.length).toBeGreaterThan(0);
 
@@ -434,20 +438,32 @@ describe("Step 3：自动/手动日志断言（含历史兼容）", () => {
       // verify 的必需上下文字段。
       expect(context.purpose).toBeTruthy();
       expect(context.trigger).toBeTruthy();
+
       const norm = normalizeRetryContext({ context }) as { origin?: string } | undefined;
       const hasRetry = context.retry !== undefined;
-      // 历史仅含 repair 的事件只归一为 legacy_unknown，绝不臆测成 manual_failed_job。
-      if (context.repair !== undefined && !hasRetry) {
+      const hasRepair = context.repair !== undefined;
+      // 分支不变量（与既有语义一致，未削弱）：
+      if (hasRepair && !hasRetry) {
+        // 历史仅含 repair 的事件只归一为 legacy_unknown，绝不臆测成 manual_failed_job。
         expect(norm?.origin).toBe("legacy_unknown");
       } else if (hasRetry) {
         // 新事件只接受 normal / manual_failed_job 两个合法 origin。
         expect(["normal", "manual_failed_job"]).toContain(norm?.origin);
-        if (norm?.origin === "manual_failed_job" && !hasRetry) speculatedManual = true;
+      } else {
+        // 既无 retry 也无 repair 的事件（本 run 全部 game_api/ai_call 均落此）：
+        // 不得凭空造出来源——确保守卫在该 run 上真实生效而非空转。
+        expect(norm).toBeUndefined();
       }
+
+      // “不臆测 manual_failed_job”守卫：对每个事件独立置位判定，与分支解耦，
+      // 不再套在 if(hasRetry) 死分支内。仅当事件带真实 manual_failed_job
+      // provenance 时，其归一 origin 才算合法的 manual_failed_job。
+      const legitManual = hasRetry && context.retry?.origin === "manual_failed_job";
+      if (norm?.origin === "manual_failed_job" && !legitManual) speculatedManual = true;
     }
     // 整个历史 run 没有任何事件被臆测成 manual_failed_job。
     expect(speculatedManual).toBe(false);
-    // 该 run 含人工轮询产生的 game_api/ai_call 事件（query 可显示即通过了只读校验）。
+    // 该 run 确实被检查而非空转：包含充足数量的可读事件（game_api/ai_call）。
     expect(lines.length).toBeGreaterThan(0);
   });
 });
