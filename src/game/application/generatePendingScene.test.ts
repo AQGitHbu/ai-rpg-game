@@ -735,7 +735,7 @@ describe("generatePendingScene", () => {
         },
       },
     };
-    const logger = { warn: vi.fn() };
+    const logger = { warn: vi.fn(), info: vi.fn() };
     const deps = { ...makeDeps(record, createDeterministicSceneSource()), logger: logger as never };
     const result = await generatePendingScene(deps);
     expect(result).toBe("saved");
@@ -745,6 +745,7 @@ describe("generatePendingScene", () => {
     expect(writeBack.nextStoryState.narrative.linearNarrativeQueue).toEqual([
       { actionKind: "move", locationId: asLocationId("loc_2"), narration: "北巷旧道就在前方。", source: "generated" },
     ]);
+    expect(logger.info).toHaveBeenCalledWith("narrative_queue_miss", { generationPath: "live_scene" });
   });
 
   it("does not use fast path when evolution demands next act or ending pair", async () => {
@@ -787,6 +788,118 @@ describe("generatePendingScene", () => {
     });
     expect(narration).toContain("翻查附近杂物");
     expect(narration).toContain("留下了动静");
+  });
+
+  // ── Task 4：单线移动优先消费预生成队列 ──────────────────────────────────
+
+  it("move job: consumes the pre-generated queue narrative without calling scene or world AI", async () => {
+    const base = investigateResolvedRecord();
+    const record: GameRecord = {
+      ...base,
+      storyState: {
+        ...base.storyState,
+        narrative: {
+          ...base.storyState.narrative,
+          generation: {
+            status: "pending",
+            job: makeJob({ summary: { kind: "move", locationId: asLocationId("loc_2") }, eventKind: "travel" }),
+          },
+          linearNarrativeQueue: [
+            { actionKind: "investigate", factId: asFactId("fact_2"), narration: "车轮印在后巷泥水中断续向北延伸。", source: "generated" },
+            { actionKind: "move", locationId: asLocationId("loc_2"), narration: "北巷旧道就在前方，夜色掩不住那条土路。", source: "generated" },
+          ],
+        },
+      },
+    };
+    const spy = makeSpySceneSource();
+    const evolutionSource = createDeterministicEvolutionSource();
+    const proposeSpy = vi.spyOn(evolutionSource, "propose");
+    const deps = { ...makeDeps(record, spy.source), worldEvolutionSource: evolutionSource };
+    const result = await generatePendingScene(deps);
+    expect(result).toBe("saved");
+    expect(spy.contexts()).toHaveLength(0);
+    expect(proposeSpy).not.toHaveBeenCalled();
+    const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
+    const scene = writeBack.nextStoryState.narrative.currentScene!;
+    expect(scene.narration).toBe("北巷旧道就在前方，夜色掩不住那条土路。");
+    expect(scene.source).toBe("generated");
+    // 消费即除：只移除精确匹配的 move 条目，investigate 条目原样保留。
+    expect(writeBack.nextStoryState.narrative.linearNarrativeQueue).toEqual([
+      { actionKind: "investigate", factId: asFactId("fact_2"), narration: "车轮印在后巷泥水中断续向北延伸。", source: "generated" },
+    ]);
+  });
+
+  it("move job: queue miss does not consume and preserves other future queue entries", async () => {
+    const base = investigateResolvedRecord();
+    const record: GameRecord = {
+      ...base,
+      storyState: {
+        ...base.storyState,
+        narrative: {
+          ...base.storyState.narrative,
+          generation: {
+            status: "pending",
+            job: makeJob({ summary: { kind: "move", locationId: asLocationId("loc_2") }, eventKind: "travel" }),
+          },
+          // 当前 move 未命中，但未来 investigate 仍有已审批的预生成叙事；
+          // 即时 live 兜底不应把这条后续队列一起清掉。
+          linearNarrativeQueue: [
+            { actionKind: "investigate", factId: asFactId("fact_2"), narration: "车轮印在后巷泥水中断续向北延伸。", source: "generated" },
+          ],
+        },
+      },
+    };
+    const deps = makeDeps(record, createDeterministicSceneSource());
+    const result = await generatePendingScene(deps);
+    expect(result).toBe("saved");
+    const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
+    expect(writeBack.nextStoryState.narrative.currentScene?.source).toBe("fallback");
+    expect(writeBack.nextStoryState.narrative.linearNarrativeQueue).toEqual([
+      { actionKind: "investigate", factId: asFactId("fact_2"), narration: "车轮印在后巷泥水中断续向北延伸。", source: "generated" },
+    ]);
+  });
+
+  it("move job: queue hit with insufficient legal candidates must not call world/scene AI (stable invalid)", async () => {
+    const isolatedLocation: LocationEntry = {
+      ...loc,
+      npcIds: [],
+      connectedLocationIds: [],
+    };
+    const isolatedWorld = createInitialWorldState({
+      generation: { generationId: asGenerationId("g-shortage-queue"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+      player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
+      startingLocation: isolatedLocation,
+      startingItemIds: [],
+    });
+    const job = makeJob({ summary: { kind: "move", locationId: asLocationId("loc_1") }, eventKind: "travel" });
+    const base = makeGameRecord({ kind: "pending", job });
+    const record: GameRecord = {
+      ...base,
+      worldState: isolatedWorld,
+      storyState: {
+        ...base.storyState,
+        narrative: {
+          ...base.storyState.narrative,
+          generation: { status: "pending", job },
+          linearNarrativeQueue: [
+            { actionKind: "move", locationId: asLocationId("loc_1"), narration: "旧纸堆里的暗记被你翻了出来。", source: "generated" },
+          ],
+        },
+      },
+    };
+    const spy = makeSpySceneSource();
+    const evolutionSource = createDeterministicEvolutionSource();
+    const proposeSpy = vi.spyOn(evolutionSource, "propose");
+    const result = await generatePendingScene({
+      repository: makeMockRepo(record),
+      sceneSource: spy.source,
+      worldEvolutionSource: evolutionSource,
+      now: () => "2026-01-02",
+    });
+    expect(result).toBe("failed");
+    // 队列命中绝不能落入 scene_candidate_shortage 补救调用 world AI。
+    expect(proposeSpy).not.toHaveBeenCalled();
+    expect(spy.contexts()).toHaveLength(0);
   });
 
   it("composes the queued investigation narration with the settled approach/evidence result and the next objective", async () => {
