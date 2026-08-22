@@ -97,6 +97,7 @@ describe("WorldDeltaProposal", () => {
         name: "迷雾林",
         description: "常年雾气笼罩的林地。",
         scale: "scene",
+        placement: "world",
         connectFromLocationId: "loc_1",
       },
       newNpc: {

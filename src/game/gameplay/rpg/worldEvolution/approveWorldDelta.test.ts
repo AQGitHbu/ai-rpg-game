@@ -52,6 +52,7 @@ function nextActProposal(): WorldDeltaProposal {
       name: "青山别院",
       description: "山腰上一座独立的别院，与世隔绝。",
       scale: "scene",
+      placement: "world",
       connectFromLocationId: "loc_0",
     },
     newNpc: {
@@ -138,6 +139,44 @@ describe("approveWorldDelta", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.approved.newNpcs[0]?.locationId).toBe(asLocationId("loc_0"));
+  });
+
+  it("keeps a town building out of the world map and binds its NPC to the current town", () => {
+    let town = createTownRuntime({ locationId: asLocationId("loc_0"), seed: "s#town#loc_0" });
+    town = bindNpcToTownSlot(town, asNpcId("npc_0")).town;
+    const base = makeWorld();
+    const ws = {
+      ...base,
+      locations: base.locations.map((location) =>
+        location.id === asLocationId("loc_0") ? { ...location, name: "青石镇", scale: "town" as const, town } : location,
+      ),
+    };
+    const result = approveWorldDelta({
+      proposal: {
+        beatSummary: "城镇里出现新的茶馆线人",
+        newLocation: {
+          name: "青石镇茶馆", description: "临街茶馆里藏着一名带来密信的线人。", scale: "scene",
+          placement: "town_building", connectFromLocationId: "loc_0",
+        },
+        newNpc: {
+          name: "茶馆线人", role: "旧案传讯人", description: "在茶馆等候交出密信的线人。",
+          locationRef: { kind: "new_location" }, goals: ["交出密信"],
+        },
+        newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null,
+      },
+      need: { kind: "pacing", pacingNeed: "complicate" },
+      ws,
+      ss: makeStory({ currentAct: 2, targetActs: 3, tension: 10 }),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.mintedLocationIds).toEqual([]);
+    expect(result.approved.newLocations).toEqual([]);
+    expect(result.approved.newNpcs[0]?.locationId).toBe(asLocationId("loc_0"));
+    expect(result.approved.townBuildingBindings).toEqual([{
+      locationId: asLocationId("loc_0"), npcId: asNpcId("npc_dyn_1"), displayName: "青石镇茶馆",
+    }]);
+    expect(result.approved.nextEvolution.nextLocationOrdinal).toBe(1);
   });
 
   it("rejects a second main quest for the same act", () => {
@@ -555,7 +594,7 @@ describe("act objective shape variants", () => {
 
   // 五类实体齐全的最小提案与铸 ID（deriveActObjectives 只读其存在性）
   const FULL_PROPOSAL = {
-    newFact: { text: "t" }, newLocation: { name: "l" }, newNpc: { name: "n" },
+    newFact: { text: "t" }, newLocation: { name: "l", placement: "world" }, newNpc: { name: "n" },
     newItem: { name: "i" }, newEnemy: { name: "e" },
   } as never;
   const FULL_IDS = {
@@ -580,7 +619,7 @@ describe("act objective shape variants", () => {
   });
 
   it("变体过滤后为空时回退全程链（提案只有 newLocation+newItem 时 confrontation_focus 无可保留项）", () => {
-    const proposal = { newLocation: { name: "l" }, newItem: { name: "i" } } as never;
+    const proposal = { newLocation: { name: "l", placement: "world" }, newItem: { name: "i" } } as never;
     const ids = { locationId: "l", itemId: "i" } as never;
     const kinds = deriveActObjectives(proposal, ids, "confrontation_focus")!.map((o) => o.kind);
     expect(kinds).toEqual(["visit_location", "obtain_item"]);

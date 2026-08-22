@@ -46,6 +46,7 @@ function planRepairByAction(ws: WorldState, action: Action): WorldDeltaProposal 
               name: `延伸之地·${ws.locations.length + 1}`,
               description: "从当前城镇延伸出的一处新地界，承接这次交谈。",
               scale: "scene",
+              placement: "world",
               connectFromLocationId: current,
             }
           : null,
@@ -72,6 +73,7 @@ function planRepairByAction(ws: WorldState, action: Action): WorldDeltaProposal 
           name: `延伸之地·${ws.locations.length + 1}`,
           description: "自当前所在之处延伸出的一小片新地界。",
           scale: "scene",
+          placement: "world",
           connectFromLocationId: current,
         },
         newNpc: null,
@@ -135,6 +137,7 @@ function planSceneCandidateRecovery(ws: WorldState): WorldDeltaProposal {
           name: uniqueName("新岔路", ws.locations.map((location) => location.name), String(ws.locations.length + 1)),
           description: "一条刚刚显露的岔路，与当前所在地相连。",
           scale: "scene",
+          placement: "world",
           connectFromLocationId: currentLocationId(ws),
         }
       : null,
@@ -207,10 +210,11 @@ function planNextAct(ws: WorldState, act: number): WorldDeltaProposal {
     beatSummary: `第${act}幕：${npcName}承接上一幕留下的线索`,
     newLocation: beat.newLocation
       ? {
-          name: uniqueName(beat.newLocation.name, ws.locations.map((location) => location.name), String(act)),
-          description: beat.newLocation.description,
-          scale: "scene",
-          connectFromLocationId: currentLocationId(ws),
+              name: uniqueName(beat.newLocation.name, ws.locations.map((location) => location.name), String(act)),
+              description: beat.newLocation.description,
+              scale: "scene",
+              placement: "world",
+              connectFromLocationId: currentLocationId(ws),
         }
       : null,
     // 有新地点时，NPC、物品和敌人一起落在新地点，主线目标会先要求玩家前往

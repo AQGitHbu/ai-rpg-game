@@ -26,13 +26,18 @@ export type MaterializeWorldDeltaInput = {
 type LocationPatch = {
   readonly npcIds?: readonly NpcId[];
   readonly availableItemIds?: readonly ItemId[];
+  readonly townBuildingNames?: readonly { readonly npcId: NpcId; readonly displayName: string }[];
 };
 
-function bindTownNpcIfAvailable(town: TownRuntimeState, npcId: NpcId): TownRuntimeState {
+function bindTownNpcIfAvailable(
+  town: TownRuntimeState,
+  npcId: NpcId,
+  displayName?: string,
+): TownRuntimeState {
   // 满槽小镇里的临时剧情人物仍挂在 locationId 上，但不占用建筑入口。
   // 有空槽时才绑定一个建筑；这样 town 的几何保持稳定，场景层仍可展示该人物。
   if (!town.slots.some((slot) => slot.boundNpcId === null)) return town;
-  return bindNpcToTownSlot(town, npcId).town;
+  return bindNpcToTownSlot(town, npcId, displayName).town;
 }
 
 export function materializeWorldDelta(input: MaterializeWorldDeltaInput): ApprovedWorldDelta {
@@ -49,7 +54,19 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
   const patch = new Map<LocationId, LocationPatch>();
   for (const npc of approved.newNpcs) {
     const cur = patch.get(npc.locationId) ?? {};
-    patch.set(npc.locationId, { ...cur, npcIds: [...(cur.npcIds ?? []), npc.id] });
+    const townBuildingBinding = approved.townBuildingBindings.find((binding) => binding.npcId === npc.id);
+    patch.set(npc.locationId, {
+      ...cur,
+      npcIds: [...(cur.npcIds ?? []), npc.id],
+      ...(townBuildingBinding === undefined
+        ? {}
+        : {
+            townBuildingNames: [
+              ...(cur.townBuildingNames ?? []),
+              { npcId: npc.id, displayName: townBuildingBinding.displayName },
+            ],
+          }),
+    });
   }
   if (approved.itemLocationId && approved.newItems[0]) {
     const cur = patch.get(approved.itemLocationId) ?? {};
@@ -69,7 +86,11 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
       let town = loc.town;
       if (town !== undefined && p?.npcIds) {
         for (const npcId of p.npcIds) {
-          town = bindTownNpcIfAvailable(town, npcId);
+          town = bindTownNpcIfAvailable(
+            town,
+            npcId,
+            p.townBuildingNames?.find((binding) => binding.npcId === npcId)?.displayName,
+          );
         }
       }
       return {

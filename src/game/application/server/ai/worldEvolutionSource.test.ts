@@ -51,6 +51,25 @@ describe("parseWorldDeltaProposal", () => {
     expect(parseWorldDeltaProposal({ beatSummary: "空实体", newLocation: null, newNpc: null, newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null })).toBeNull();
   });
 
+  it("requires an explicit placement for generated locations", () => {
+    expect(parseWorldDeltaProposal({
+      beatSummary: "缺少空间归属",
+      newLocation: { name: "青山别院", description: "独立别院。", scale: "scene", connectFromLocationId: "loc_a" },
+    })).toBeNull();
+    const townBuilding = parseWorldDeltaProposal({
+      beatSummary: "城镇内部场所",
+      newLocation: {
+        name: "青石镇茶馆", description: "临街茶馆。", scale: "scene", placement: "town_building",
+        connectFromLocationId: "loc_a",
+      },
+      newNpc: {
+        name: "茶馆线人", role: "传讯人", description: "等候交信的线人。",
+        locationRef: { kind: "new_location" }, goals: [],
+      },
+    });
+    expect(townBuilding?.proposal.newLocation?.placement).toBe("town_building");
+  });
+
   it("validates an ending pair shape but allows trust/doubt", () => {
     const parsed = parseWorldDeltaProposal({
       beatSummary: "终幕结局对",
@@ -149,7 +168,7 @@ describe("filterProposalRefs", () => {
     const ws = makeWorld();
     const loc = parseWorldDeltaProposal({
       beatSummary: "新地点",
-      newLocation: { name: "青山别院", description: "独立别院。", scale: "scene", connectFromLocationId: "loc_missing" },
+      newLocation: { name: "青山别院", description: "独立别院。", scale: "scene", placement: "world", connectFromLocationId: "loc_missing" },
     })!.proposal;
     expect(filterProposalRefs(loc, ws)).toBeNull();
 
@@ -204,6 +223,7 @@ describe("createLiveWorldEvolutionSource", () => {
     expect(prompt).toContain("本次是下一幕需求");
     expect(prompt).toContain("禁止输出 endingPair");
     expect(prompt).toContain("endingPair 字段必须完全省略");
+    expect(prompt).toContain("placement");
     expect(prompt).not.toContain("终局={");
   });
 

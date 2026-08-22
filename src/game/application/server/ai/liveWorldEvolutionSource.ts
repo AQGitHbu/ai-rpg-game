@@ -1,7 +1,7 @@
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
 import type { WorldEvolutionSource, WorldEvolutionSourceContext, WorldEvolutionSourceResult } from "../../worldEvolutionSource";
-import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
+import type { WorldDeltaProposal, DynamicLocationPlacement } from "@/game/domain/worldDelta";
 import type { WorldState, InvestigationApproach } from "@/game/domain/worldState";
 import type { GameTypeId } from "@/game/domain/newGame";
 import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./rpgAiClient";
@@ -173,6 +173,12 @@ export function parseWorldDeltaProposal(
     if (typeof rec.newLocation !== "object" || Array.isArray(rec.newLocation)) return null;
     const l = rec.newLocation as Record<string, unknown>;
     const scale = l.scale;
+    const placement: DynamicLocationPlacement | null = l.placement === "world"
+      ? "world"
+      : l.placement === "town_building"
+        ? "town_building"
+        : null;
+    if (placement === null) return null;
     if (!validName(l.name) || !validText(l.description)) return null;
     if (scale !== "scene" && scale !== "town") return null;
     if (!isStr(l.connectFromLocationId) || l.connectFromLocationId.trim() === "") return null;
@@ -180,6 +186,7 @@ export function parseWorldDeltaProposal(
       name: l.name.trim(),
       description: l.description.trim(),
       scale,
+      placement,
       connectFromLocationId: l.connectFromLocationId.trim(),
     };
   }
@@ -291,6 +298,16 @@ export function filterProposalRefs(proposal: WorldDeltaProposal, ws: WorldState)
   const locIds = new Set(ws.locations.map((l) => String(l.id)));
   if (proposal.newLocation && !locIds.has(proposal.newLocation.connectFromLocationId)) return null;
   if (proposal.newNpc && proposal.newNpc.locationRef.kind === "existing" && !locIds.has(proposal.newNpc.locationRef.id)) return null;
+  if (proposal.newLocation?.placement === "town_building") {
+    const parent = ws.locations.find((location) => String(location.id) === proposal.newLocation!.connectFromLocationId);
+    if (
+      parent === undefined
+      || parent.id !== ws.currentLocationId
+      || parent.scale !== "town"
+      || parent.town === undefined
+      || proposal.newNpc?.locationRef.kind !== "new_location"
+    ) return null;
+  }
   return proposal;
 }
 
@@ -389,7 +406,7 @@ function buildWorldEvolutionPrompt(ctx: WorldEvolutionSourceContext): string {
       ? "本次是终幕结局对需求：必须输出 endingPair，且恰好包含 trust 与 doubt 两个不同方向；禁止输出 nextMainQuest，nextMainQuest 字段必须完全省略。"
       : "本次是节奏补足需求：只补充一个必要的新实体或事实；禁止输出 nextMainQuest 和 endingPair，这两个字段必须完全省略。";
   const outputSchema = [
-    `新地点={"newLocation":{"name":"","description":"","scale":"scene","connectFromLocationId":"现有地点ID"}}。`,
+    `新地点={"newLocation":{"name":"","description":"","scale":"scene","placement":"world或town_building","connectFromLocationId":"现有地点ID"}}。`,
     `新NPC={"newNpc":{"name":"","role":"","description":"","locationRef":{"kind":"existing","id":"现有地点ID"}或{"kind":"new_location"},"goals":[""]}}。`,
     ...(ctx.need.kind === "next_act"
       ? [`新任务={"nextMainQuest":{"name":"","description":"","objectiveText":""}}。`]
@@ -398,8 +415,12 @@ function buildWorldEvolutionPrompt(ctx: WorldEvolutionSourceContext): string {
       ? [`终局={"endingPair":[{"name":"","description":"","themeKey":"trust"},{"name":"","description":"","themeKey":"doubt"}]}。`]
       : []),
   ].join("\n");
+  const locationRule = currentLoc?.scale === "town"
+    ? "当前地点是城镇容器：茶馆、酒楼、客栈、铺面、宅院、后巷等城镇内部空间必须使用 placement=town_building；它们不会成为世界地图节点，且 newNpc.locationRef 必须使用 new_location，由系统把人物绑定到当前城镇建筑。只有城镇外、需要独立旅行的地点才使用 placement=world。"
+    : "当前地点不是城镇容器；新地点通常使用 placement=world。";
   return `只输出 JSON，不能解释。你为 RPG 生成一次小型世界演化。${genreGuard}
-需求=${kindText(ctx.need)}；原因=${ctx.reason}；地点=${currentLoc?.name ?? "未知"}；现有地点ID=${existingLocationIds}；幕=${storyState.currentAct}/${storyState.targetActs}。
+需求=${kindText(ctx.need)}；原因=${ctx.reason}；地点=${currentLoc?.name ?? "未知"}；地点层级=${currentLoc?.scale ?? "未知"}；现有地点ID=${existingLocationIds}；幕=${storyState.currentAct}/${storyState.targetActs}。
+${locationRule}
 世界背景=${setup?.worldPremise ?? worldState.generation.gameType}；故事开端=${setup?.storyOpening ?? "沿用当前主线冲突"}。
 外层必须是 {"proposal":{...}}。proposal 必有 beatSummary；未使用字段直接省略，不要写 null。
 ${outputSchema}

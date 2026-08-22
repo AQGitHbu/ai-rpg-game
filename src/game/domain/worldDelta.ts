@@ -32,6 +32,9 @@ export type EvolutionNeed =
   | { readonly kind: "pacing"; readonly pacingNeed: "complicate" | "escalate" }
   | { readonly kind: "ending_pair"; readonly finalAct: number };
 
+/** 动态地点的空间归属：世界地图地点，或当前城镇内的剧情建筑。 */
+export type DynamicLocationPlacement = "world" | "town_building";
+
 // ---------------------------------------------------------------------------
 // 世界演化提议：AI 产出、纯引用（普通字符串 ID），经审批后由服务端铸造品牌化 ID。
 // Task 3 细化下述占位类型与审批/具象化流程。
@@ -62,6 +65,8 @@ export type WorldDeltaProposal = {
     readonly name: string;
     readonly description: string;
     readonly scale: "scene" | "town";
+    /** town_building 不会铸造 LocationEntry，而是绑定到 connectFromLocationId 的城镇 slot。 */
+    readonly placement: DynamicLocationPlacement;
     readonly connectFromLocationId: string;
   };
   readonly newNpc: null | {

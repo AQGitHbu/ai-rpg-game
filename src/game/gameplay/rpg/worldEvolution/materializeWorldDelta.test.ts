@@ -59,7 +59,7 @@ function approve(input: {
 function nextActProposal(): WorldDeltaProposal {
   return {
     beatSummary: "新的人物与地点浮现",
-    newLocation: { name: "青山别院", description: "山腰上一座独立的别院，与世隔绝。", scale: "scene", connectFromLocationId: "loc_0" },
+    newLocation: { name: "青山别院", description: "山腰上一座独立的别院，与世隔绝。", scale: "scene", placement: "world", connectFromLocationId: "loc_0" },
     newNpc: {
       name: "新出现的信使", role: "传话人", description: "风尘仆仆的赶路人，怀里揣着密信。",
       locationRef: { kind: "new_location" }, goals: ["送达密信"],
@@ -162,7 +162,7 @@ describe("materializeWorldDelta", () => {
     const ss = makeStory({ currentAct: 2, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_next_act" } });
     const proposal: WorldDeltaProposal = {
       beatSummary: "新的小镇浮现",
-      newLocation: { name: "青山集", description: "山脚下的集贸小镇。", scale: "town", connectFromLocationId: "loc_0" },
+      newLocation: { name: "青山集", description: "山脚下的集贸小镇。", scale: "town", placement: "world", connectFromLocationId: "loc_0" },
       newNpc: {
         name: "集市管事", role: "管事", description: "打理集市秩序的管事。",
         locationRef: { kind: "new_location" }, goals: [],
@@ -177,6 +177,43 @@ describe("materializeWorldDelta", () => {
     expect(locNew.town?.locationId).toBe(asLocationId("loc_dyn_1"));
     expect(locNew.town?.seed).toBe("s#town#loc_dyn_1");
     expect(locNew.town?.slots[0]?.boundNpcId).toBe(asNpcId("npc_dyn_1"));
+  });
+
+  it("materializes a town building without creating a world-map location", () => {
+    const base = makeWorld();
+    let town = createTownRuntime({ locationId: asLocationId("loc_0"), seed: "s#town#loc_0" });
+    town = bindNpcToTownSlot(town, asNpcId("npc_0")).town;
+    const ws: WorldState = {
+      ...base,
+      currentLocationId: asLocationId("loc_0"),
+      locations: base.locations.map((location) =>
+        location.id === asLocationId("loc_0")
+          ? { ...location, name: "青石镇", scale: "town" as const, town }
+          : location,
+      ),
+    };
+    const ss = makeStory({ currentAct: 2, targetActs: 3 });
+    const proposal: WorldDeltaProposal = {
+      beatSummary: "城镇里出现新的茶馆线人",
+      newLocation: {
+        name: "青石镇茶馆", description: "临街茶馆里藏着一名带来密信的线人。", scale: "scene",
+        placement: "town_building", connectFromLocationId: "loc_0",
+      },
+      newNpc: {
+        name: "茶馆线人", role: "旧案传讯人", description: "在茶馆等候交出密信的线人。",
+        locationRef: { kind: "new_location" }, goals: ["交出密信"],
+      },
+      newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null,
+    };
+    const approved = approveWorldDelta({ proposal, need: { kind: "pacing", pacingNeed: "complicate" }, ws, ss });
+    if (!approved.ok) throw new Error(`fixture approval failed: ${approved.code}`);
+    const delta = materializeWorldDelta({ approved: approved.approved, need: { kind: "pacing", pacingNeed: "complicate" }, ws, ss, now: () => "2026-01-02" });
+    const townLocation = delta.previewWorldState.locations.find((location) => location.id === asLocationId("loc_0"))!;
+    expect(delta.previewWorldState.locations).toHaveLength(ws.locations.length);
+    expect(delta.previewWorldState.locations.some((location) => location.name === "青石镇茶馆")).toBe(false);
+    expect(townLocation.npcIds).toContain(asNpcId("npc_dyn_1"));
+    expect(townLocation.town?.slots.find((slot) => slot.boundNpcId === asNpcId("npc_dyn_1"))?.displayName)
+      .toBe("青石镇茶馆");
   });
 
   it("binds an NPC materialized into an existing town to the FIRST FREE slot (slot_0 stays bound)", () => {

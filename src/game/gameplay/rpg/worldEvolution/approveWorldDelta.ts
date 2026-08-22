@@ -186,6 +186,12 @@ export type ApprovedWorldDeltaCore = {
   readonly newFacts: readonly WorldFactEntry[];
   readonly newQuests: readonly QuestEntry[];
   readonly newEndings: readonly EndingEntry[];
+  /** 当前城镇内新剧情建筑的 NPC 绑定；不产生世界地图地点。 */
+  readonly townBuildingBindings: readonly {
+    readonly locationId: LocationId;
+    readonly npcId: NpcId;
+    readonly displayName: string;
+  }[];
   /** item/enemy 的挂载地点（fact 为世界级事实，无地点）。 */
   readonly itemLocationId: LocationId | null;
   readonly enemyLocationId: LocationId | null;
@@ -252,7 +258,9 @@ function mintIds(
   p: WorldDeltaProposal,
   override: WorldDeltaIdOverride | undefined,
 ): MintedIds {
-  const dynLocationId = p.newLocation ? asLocationId(`loc_dyn_${ev.nextLocationOrdinal}`) : null;
+  const dynLocationId = p.newLocation?.placement === "world"
+    ? asLocationId(`loc_dyn_${ev.nextLocationOrdinal}`)
+    : null;
   const dynNpcId = p.newNpc ? asNpcId(`npc_dyn_${ev.nextNpcOrdinal}`) : null;
   const dynItemId = p.newItem ? asItemId(`item_dyn_${ev.nextItemOrdinal}`) : null;
   const dynEnemyId = p.newEnemy ? asEnemyId(`enemy_dyn_${ev.nextEnemyOrdinal}`) : null;
@@ -288,16 +296,23 @@ function resolveNpcLocationId(ws: WorldState, p: WorldDeltaProposal, mintedLocat
     const ref = p.newNpc!.locationRef.id;
     return ws.locations.some((l) => l.id === ref) ? ref as LocationId : null;
   }
+  if (p.newLocation?.placement === "town_building") {
+    return asLocationId(p.newLocation.connectFromLocationId);
+  }
   return mintedLocationId;
 }
 
 function resolveMountedLocationId(
   ws: WorldState,
+  p: WorldDeltaProposal,
   ref: "current" | "new_location",
   mintedLocationId: LocationId | null,
 ): LocationId | null {
   if (ref === "current") {
     return ws.locations.some((l) => l.id === ws.currentLocationId) ? ws.currentLocationId : null;
+  }
+  if (p.newLocation?.placement === "town_building") {
+    return asLocationId(p.newLocation.connectFromLocationId);
   }
   return mintedLocationId;
 }
@@ -307,7 +322,9 @@ function deriveAnchorObjective(
   ids: MintedIds,
 ): QuestObjective | null {
   if (p.newNpc && ids.npcId) return { kind: "talk_to_npc", npcId: ids.npcId };
-  if (p.newLocation && ids.locationId) return { kind: "visit_location", locationId: ids.locationId };
+  if (p.newLocation?.placement === "world" && ids.locationId) {
+    return { kind: "visit_location", locationId: ids.locationId };
+  }
   if (p.newItem && ids.itemId) return { kind: "obtain_item", itemId: ids.itemId };
   if (p.newFact && ids.factId) return { kind: "discover_fact", factId: ids.factId };
   if (p.newEnemy && ids.enemyId) return { kind: "defeat_enemy", enemyId: ids.enemyId };
@@ -384,7 +401,9 @@ export function deriveActObjectives(
 ): readonly QuestObjective[] | null {
   const full: QuestObjective[] = [];
   if (p.newFact && ids.factId) full.push({ kind: "discover_fact", factId: ids.factId });
-  if (p.newLocation && ids.locationId) full.push({ kind: "visit_location", locationId: ids.locationId });
+  if (p.newLocation?.placement === "world" && ids.locationId) {
+    full.push({ kind: "visit_location", locationId: ids.locationId });
+  }
   if (p.newNpc && ids.npcId) full.push({ kind: "talk_to_npc", npcId: ids.npcId });
   if (p.newItem && ids.itemId) full.push({ kind: "obtain_item", itemId: ids.itemId });
   if (p.newEnemy && ids.enemyId) full.push({ kind: "defeat_enemy", enemyId: ids.enemyId });
@@ -405,7 +424,7 @@ export function deriveActObjectives(
   // storyReveal 的 visit_location 释放游标解锁，而后续幕会把 NPC/物品/敌人
   // 挂载到其上，主线目标不可达 → 主线永远无法推进（可完成性不变约束）。
   // 链首保留也维持 materializeWorldDelta 的“首个目标即释放新地点”优化。
-  if (p.newLocation && ids.locationId && !chain.some((objective) => objective.kind === "visit_location")) {
+  if (p.newLocation?.placement === "world" && ids.locationId && !chain.some((objective) => objective.kind === "visit_location")) {
     chain = [{ kind: "visit_location", locationId: ids.locationId }, ...chain];
   }
   return chain;
@@ -509,16 +528,33 @@ export function approveWorldDelta(input: {
     // 这样幕边界不会因为建筑容量把主线人物铸造到玩家不可见的新地点。
   }
   if (p.newItem) {
-    itemLocationId = resolveMountedLocationId(ws, p.newItem.locationRef, ids.locationId);
+    itemLocationId = resolveMountedLocationId(ws, p, p.newItem.locationRef, ids.locationId);
     if (itemLocationId === null) return reject("invalid_location_ref", "item_location");
   }
   if (p.newEnemy) {
-    enemyLocationId = resolveMountedLocationId(ws, p.newEnemy.locationRef, ids.locationId);
+    enemyLocationId = resolveMountedLocationId(ws, p, p.newEnemy.locationRef, ids.locationId);
     if (enemyLocationId === null) return reject("invalid_location_ref", "enemy_location");
   }
   const connectFrom = p.newLocation;
   if (connectFrom && !ws.locations.some((l) => l.id === connectFrom.connectFromLocationId)) {
     return reject("invalid_location_ref", "connect_from");
+  }
+  if (connectFrom?.placement === "town_building") {
+    const parent = ws.locations.find((location) => location.id === connectFrom.connectFromLocationId);
+    if (
+      parent === undefined
+      || parent.id !== ws.currentLocationId
+      || parent.scale !== "town"
+      || parent.town === undefined
+    ) {
+      return reject("invalid_location_ref", "town_building_parent");
+    }
+    if (p.newNpc?.locationRef.kind !== "new_location") {
+      return reject("invalid_location_ref", "town_building_needs_npc");
+    }
+    if (!parent.town.slots.some((slot) => slot.boundNpcId === null)) {
+      return reject("town_capacity", "town_building_slots_full");
+    }
   }
 
   // 重名约束：新实体不得与既有同名实体撞名（敌人、跨幕任务名一并纳入）。
@@ -587,7 +623,7 @@ export function approveWorldDelta(input: {
 
   // 预算预占（在铸造实体前校验，避免无效提议占用序号）。
   const neededKinds: ("location" | "npc" | "quest" | "ending" | "item" | "enemy" | "fact")[] = [];
-  if (p.newLocation) neededKinds.push("location");
+  if (p.newLocation?.placement === "world") neededKinds.push("location");
   if (p.newNpc) neededKinds.push("npc");
   if (p.newItem) neededKinds.push("item");
   if (p.newEnemy) neededKinds.push("enemy");
@@ -607,9 +643,14 @@ export function approveWorldDelta(input: {
   const newFacts: WorldFactEntry[] = [];
   const newQuests: QuestEntry[] = [];
   const newEndings: EndingEntry[] = [];
+  const townBuildingBindings: {
+    locationId: LocationId;
+    npcId: NpcId;
+    displayName: string;
+  }[] = [];
   const logCategories: string[] = [];
 
-  if (p.newLocation && ids.locationId) {
+  if (p.newLocation?.placement === "world" && ids.locationId) {
     newLocations.push({
       id: ids.locationId,
       name: p.newLocation.name,
@@ -643,6 +684,13 @@ export function approveWorldDelta(input: {
         goals: p.newNpc.goals,
       },
     });
+    if (p.newLocation?.placement === "town_building") {
+      townBuildingBindings.push({
+        locationId: asLocationId(p.newLocation.connectFromLocationId),
+        npcId: ids.npcId,
+        displayName: p.newLocation.name,
+      });
+    }
   }
 
   if (p.newItem && ids.itemId) {
@@ -750,6 +798,7 @@ export function approveWorldDelta(input: {
       newFacts,
       newQuests,
       newEndings,
+      townBuildingBindings,
       itemLocationId,
       enemyLocationId,
       ...(logCategories.length > 0 ? { logCategories } : {}),

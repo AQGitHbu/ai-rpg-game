@@ -110,6 +110,7 @@ function journeyNextActProposal(act: number, currentLocationId: string): WorldDe
       name: `延伸之地·${act}`,
       description: `第${act}幕线索延伸出的一处新地界。`,
       scale: "scene",
+      placement: "world",
       connectFromLocationId: currentLocationId,
     },
     newNpc: {
