@@ -397,6 +397,25 @@ describe("world source 内容修复契约", () => {
     });
   });
 
+  it("手动失败 job 的内容修复保留 auditLink 中的 retry origin", async () => {
+    const ai = makeClient("not json");
+    const source = createLiveWorldEvolutionSource({ aiClient: ai });
+
+    const result = await source.propose(makeCtx({
+      auditLink: {
+        traceId: "t-manual-retry",
+        retry: { origin: "manual_failed_job", mechanism: "initial", attempt: 0 },
+      },
+      contentRepair: { attempt: 1, reason: "invalid_json" },
+    }));
+
+    expect(result).toMatchObject({ ok: false, repairReason: "invalid_json" });
+    const auditContext = ai.complete.mock.calls[0]?.[2] as { readonly retry?: unknown };
+    expect(auditContext.retry).toEqual({
+      origin: "manual_failed_job", mechanism: "content_repair", attempt: 1, reason: "invalid_json",
+    });
+  });
+
   it("审批拒绝修复会把稳定审批 code 并入修复 prompt 与审计 reason", async () => {
     const ai = makeClient("not json");
     const source = createLiveWorldEvolutionSource({ aiClient: ai });

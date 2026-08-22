@@ -363,7 +363,7 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
         const repairRetry = ctx.contentRepair === undefined
           ? undefined
           : {
-              origin: "normal" as const,
+              origin: ctx.auditLink?.retry?.origin ?? "normal",
               mechanism: "content_repair" as const,
               attempt: ctx.contentRepair.attempt,
               reason: repairAuditReason(ctx.contentRepair),
