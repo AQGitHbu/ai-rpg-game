@@ -339,7 +339,7 @@ function NpcDialogueModal({
             ) : null}
           </>
         ) : (
-          /* 非焦点 NPC：零回合闲聊展示；有台词 + “知道了”关闭，不提交任何请求 */
+          /* 非焦点 NPC：零回合展示；交接回答用唯一选项关闭，普通闲聊用“知道了”关闭 */
           <>
             {dialogue.choices.length > 0 ? (
               <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
@@ -355,7 +355,17 @@ function NpcDialogueModal({
                   </button>
                 ))}
               </div>
-            ) : playerResponse === null || playerResponse === undefined ? (
+            ) : playerResponse !== null && playerResponse !== undefined ? (
+              <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
+                <button
+                  type="button"
+                  className="npc-dialogue-talk-cta"
+                  onClick={onClose}
+                >
+                  {normalizeDisplayText(playerResponse)}
+                </button>
+              </div>
+            ) : (
               <div className="npc-dialogue-choices" role="group" aria-label="对话操作">
                 <button
                   type="button"
@@ -365,7 +375,7 @@ function NpcDialogueModal({
                   知道了
                 </button>
               </div>
-            ) : null}
+            )}
           </>
         )}
       </section>

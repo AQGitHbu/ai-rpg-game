@@ -281,8 +281,9 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(vi.mocked(postAction)).not.toHaveBeenCalled();
   });
 
-  it("shows the handoff travel choice as the player's final dialogue instead of a dismiss button", () => {
+  it("shows the handoff travel choice as the player's final dialogue button", async () => {
     const playerResponse = "（（抱拳）多谢先生指点，那练刀场在断魂崖后山何处？我这就去瞧瞧。）";
+    const onSubmit = vi.fn();
     const handoffView: GameSessionView = {
       ...buildView(),
       story: {
@@ -314,14 +315,20 @@ describe("AdventureGameShell canonical opaque choices", () => {
     render(<LocationSceneScreen
       view={handoffView}
       busy={false}
-      onSubmit={vi.fn()}
+      onSubmit={onSubmit}
       onReturnMap={vi.fn()}
     />);
 
     const dialogue = screen.getByRole("dialog", { name: "与陈半仙对话" });
     expect(dialogue).toHaveTextContent(playerResponse);
-    expect(within(dialogue).queryByRole("button", { name: "知道了" })).not.toBeInTheDocument();
+    const responseButton = within(dialogue).getByRole("button", { name: playerResponse });
+    expect(responseButton).toBeInTheDocument();
+    expect(within(dialogue).getAllByRole("button")).toHaveLength(2);
     expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
+
+    await userEvent.click(responseButton);
+    expect(screen.queryByRole("dialog", { name: "与陈半仙对话" })).not.toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("keeps ordinary narrative pending modal while locking rule actions", () => {
