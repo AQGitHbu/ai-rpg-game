@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { getActionIdGenerator, setActionIdGenerator, postAction, type ActionPayload } from "./gameActionRequest";
+import { getActionIdGenerator, setActionIdGenerator, postAction, ensureNarrative, retryNarrative, type ActionPayload } from "./gameActionRequest";
 
 // ---------------------------------------------------------------------------
 // Task 10：客户端 actionId 改用 UUID，提供测试环境可注入 fallback；
@@ -38,6 +38,59 @@ describe("actionId 生成器", () => {
   it("测试环境可注入确定性生成器", () => {
     setActionIdGenerator(() => "fixed-action-id");
     expect(getActionIdGenerator()()).toBe("fixed-action-id");
+  });
+});
+
+describe("narrative 轮询与手动重试的请求体分流", () => {
+  it("ensureNarrative() 只发送空对象 {}，不携带 retry", async () => {
+    const bodies: string[] = [];
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      bodies.push(String(init?.body));
+      return new Response(
+        JSON.stringify({ ok: true, result: "not_pending" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const outcome = await ensureNarrative();
+    expect(outcome).toEqual({ ok: true, result: "not_pending" });
+    expect(bodies).toEqual(["{}"]);
+  });
+
+  it("retryNarrative() 发送 { retry: true }，不发送普通空对象", async () => {
+    const bodies: string[] = [];
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      bodies.push(String(init?.body));
+      return new Response(
+        JSON.stringify({ ok: true, result: "queued" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const outcome = await retryNarrative();
+    expect(outcome).toEqual({ ok: true, result: "queued" });
+    expect(bodies).toEqual(['{"retry":true}']);
+  });
+
+  it("普通轮询与手动重试都打到同一 ensure 端点，但请求体语义不同", async () => {
+    const seen: Array<{ url: string; body: string }> = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      seen.push({ url, body: String(init?.body) });
+      return new Response(
+        JSON.stringify({ ok: true, result: "not_pending" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    await ensureNarrative();
+    await retryNarrative();
+    await ensureNarrative();
+
+    expect(seen).toEqual([
+      { url: "/api/game/narrative/ensure", body: "{}" },
+      { url: "/api/game/narrative/ensure", body: '{"retry":true}' },
+      { url: "/api/game/narrative/ensure", body: "{}" },
+    ]);
   });
 });
 

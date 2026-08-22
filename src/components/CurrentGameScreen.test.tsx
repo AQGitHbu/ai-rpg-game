@@ -148,6 +148,28 @@ describe("CurrentGameScreen prologue display", () => {
     await waitFor(() => expect(retryNarrative).toHaveBeenCalledOnce());
   });
 
+  it("failed 时不自动轮询，只有点击“重试”才发送 retryNarrative", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const failedPrologueView: GameSessionView = {
+      ...activeViewWithPrologue,
+      narrativeGeneration: { status: "failed", failureKind: "AI_CALL_FAILED" },
+    };
+    vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: failedPrologueView });
+    render(<CurrentGameScreen />);
+
+    await screen.findByRole("alert");
+    // failed 状态不应触发任何 fetchCurrentGame 之后的普通轮询（ensureNarrative 不被调用）。
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(ensureNarrative).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(retryNarrative).toHaveBeenCalledOnce());
+    expect(ensureNarrative).not.toHaveBeenCalled();
+  });
+
   it("does not submit the prologue acknowledgement twice while the first request is pending", async () => {
     globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
       status: 200,
