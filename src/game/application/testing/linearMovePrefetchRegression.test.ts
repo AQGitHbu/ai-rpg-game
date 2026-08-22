@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
@@ -81,15 +81,15 @@ function createFakeLiveSceneSource(): { readonly source: SceneSource; readonly c
           return [];
         },
       );
-      const candidate = buildSelectableSceneCandidates(context)[0];
       const relabel = (choice: ScenePerformanceProposal["choices"][number]): ScenePerformanceProposal["choices"][number] => {
         const c = buildSelectableSceneCandidates(context).find((entry) => entry.candidateId === choice.candidateId);
         if (c === undefined || c.action.type !== "talk") return choice;
-        const npc = context.presentNpcs.find((entry) => String(entry.id) === String(c.action.npcId));
+        const talkAction = c.action;
+        const npc = context.presentNpcs.find((entry) => String(entry.id) === String(talkAction.npcId));
         const npcName = npc?.name ?? "对方";
         return {
           candidateId: choice.candidateId,
-          label: formatSceneChoiceLabel(c.action, c.action.dialogueAct === "support" ? `想请${npcName}把这条线索的来龙去脉再说细一些` : `向${npcName}提出质疑，请她把话说明白`),
+          label: formatSceneChoiceLabel(talkAction, talkAction.dialogueAct === "support" ? `想请${npcName}把这条线索的来龙去脉再说细一些` : `向${npcName}提出质疑，请她把话说明白`),
         };
       };
       return {
@@ -160,10 +160,11 @@ describe("Step 1：移动队列回归 journey（最小夹具重放队列命中�
       const ok = await advanceScene(store.repo, worldSource.source);
       expect(ok, "场景生成应保存").toBe(true);
     };
-    const record = (): GameRecord => loadGameRecord(store.repo).then((r) => {
+    const record = async (): Promise<GameRecord> => {
+      const r = await loadGameRecord(store.repo);
       if (r === null) throw new Error("游戏记录不可用");
       return r;
-    });
+    };
 
     // 序幕（deterministic 清空）→ 交谈（第 1 幕完成，演化挂起）→ 第 2 幕
     // 具象化手渡（fake live source 预生成 [investigate, move] 队列）→ 二次对话。

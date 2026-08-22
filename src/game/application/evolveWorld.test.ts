@@ -7,7 +7,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import type { WorldState } from "@/game/domain/worldState";
-import { asLocationId, asGenerationId, asNpcId } from "@/game/domain/worldEntity";
+import { asLocationId, asGenerationId } from "@/game/domain/worldEntity";
 
 function makeWorld(): WorldState {
   return createInitialWorldState({
