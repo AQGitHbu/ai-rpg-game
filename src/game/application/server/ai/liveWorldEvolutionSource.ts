@@ -383,13 +383,25 @@ function buildWorldEvolutionPrompt(ctx: WorldEvolutionSourceContext): string {
   const genreGuard = worldState.generation.gameType === "wuxia"
     ? "这是武侠世界：只能使用江湖、门派、镖局、官府、山川、兵器、线索和武学语汇；禁止魔法、巫师、精灵、骑士、幽灵/灵魂、祭坛、法阵、圣光、异界等奇幻或超自然实体。"
     : `题材=${worldState.generation.gameType}，所有实体必须服从该题材，不得跨题材借词。`;
+  const needContract = ctx.need.kind === "next_act"
+    ? "本次是下一幕需求：必须输出 nextMainQuest，并可输出下一幕所需的新实体；禁止输出 endingPair，endingPair 字段必须完全省略。"
+    : ctx.need.kind === "ending_pair"
+      ? "本次是终幕结局对需求：必须输出 endingPair，且恰好包含 trust 与 doubt 两个不同方向；禁止输出 nextMainQuest，nextMainQuest 字段必须完全省略。"
+      : "本次是节奏补足需求：只补充一个必要的新实体或事实；禁止输出 nextMainQuest 和 endingPair，这两个字段必须完全省略。";
+  const outputSchema = [
+    `新地点={"newLocation":{"name":"","description":"","scale":"scene","connectFromLocationId":"现有地点ID"}}。`,
+    `新NPC={"newNpc":{"name":"","role":"","description":"","locationRef":{"kind":"existing","id":"现有地点ID"}或{"kind":"new_location"},"goals":[""]}}。`,
+    ...(ctx.need.kind === "next_act"
+      ? [`新任务={"nextMainQuest":{"name":"","description":"","objectiveText":""}}。`]
+      : []),
+    ...(ctx.need.kind === "ending_pair"
+      ? [`终局={"endingPair":[{"name":"","description":"","themeKey":"trust"},{"name":"","description":"","themeKey":"doubt"}]}。`]
+      : []),
+  ].join("\n");
   return `只输出 JSON，不能解释。你为 RPG 生成一次小型世界演化。${genreGuard}
 需求=${kindText(ctx.need)}；原因=${ctx.reason}；地点=${currentLoc?.name ?? "未知"}；现有地点ID=${existingLocationIds}；幕=${storyState.currentAct}/${storyState.targetActs}。
 世界背景=${setup?.worldPremise ?? worldState.generation.gameType}；故事开端=${setup?.storyOpening ?? "沿用当前主线冲突"}。
 外层必须是 {"proposal":{...}}。proposal 必有 beatSummary；未使用字段直接省略，不要写 null。
-新地点={"newLocation":{"name":"","description":"","scale":"scene","connectFromLocationId":"现有地点ID"}}。
-新NPC={"newNpc":{"name":"","role":"","description":"","locationRef":{"kind":"existing","id":"现有地点ID"}或{"kind":"new_location"},"goals":[""]}}。
-新任务={"nextMainQuest":{"name":"","description":"","objectiveText":""}}。
-终局={"endingPair":[{"name":"","description":"","themeKey":"trust"},{"name":"","description":"","themeKey":"doubt"}]}。
-下一幕必须给新地点、新NPC和新任务；终局必须只给两个不同结局；其他情况只补一个必要实体。名称2-40字、描述200字内。不要创造与题材不符的角色、地点、物品或结局意象。`;
+${outputSchema}
+${needContract} 名称2-40字、描述200字内。不要创造与题材不符的角色、地点、物品或结局意象。`;
 }

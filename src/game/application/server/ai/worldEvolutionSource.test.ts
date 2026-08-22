@@ -176,6 +176,37 @@ describe("createLiveWorldEvolutionSource", () => {
     expect(LIVE_WORLD_EVOLUTION_TIMEOUT_MS).toBe(45_000);
   });
 
+  it("明确区分下一幕与终幕结局对字段，避免模型重复输出非法 endingPair", async () => {
+    let prompt = "";
+    const aiClient = {
+      complete: vi.fn(async (_role: "world", messages: readonly { readonly role: string; readonly content: string }[]) => {
+        prompt = messages[0]?.content ?? "";
+        return { ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 };
+      }),
+      policy: () => ({
+        thinking: "off" as const,
+        timeoutMs: 45_000,
+        maxTokens: 3_200,
+        jsonMode: "prompt_only" as const,
+        maxAttempts: 1,
+      }),
+    };
+    const source = createLiveWorldEvolutionSource({ aiClient });
+    const ctx: WorldEvolutionSourceContext = {
+      worldState: makeWorld(),
+      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      need: { kind: "next_act", act: 2 },
+      reason: "scene_evolution",
+    };
+
+    await source.propose(ctx);
+
+    expect(prompt).toContain("本次是下一幕需求");
+    expect(prompt).toContain("禁止输出 endingPair");
+    expect(prompt).toContain("endingPair 字段必须完全省略");
+    expect(prompt).not.toContain("终局={");
+  });
+
   it("returns a typed failure without a transport", async () => {
     const source = createLiveWorldEvolutionSource({});
     const ctx: WorldEvolutionSourceContext = {
