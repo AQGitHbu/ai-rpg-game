@@ -39,6 +39,7 @@ type DialogueUiState = {
 type DialogueUiAction =
   | { readonly kind: "set"; readonly npcId: string | null }
   | { readonly kind: "submit"; readonly playerResponse: string; readonly choiceToken: string | null }
+  | { readonly kind: "clear_pending" }
   | { readonly kind: "sync_revision"; readonly revision: number; readonly close: boolean };
 
 type DialoguePhase = "choice" | "waiting";
@@ -52,6 +53,7 @@ function reduceDialogueUiState(state: DialogueUiState, action: DialogueUiAction)
   switch (action.kind) {
     case "set": return { ...state, npcId: action.npcId, pendingPlayerResponse: null, pendingChoiceToken: null };
     case "submit": return { ...state, pendingPlayerResponse: action.playerResponse, pendingChoiceToken: action.choiceToken };
+    case "clear_pending": return { ...state, pendingPlayerResponse: null, pendingChoiceToken: null };
     case "sync_revision": return {
       revision: action.revision,
       npcId: action.close ? null : state.npcId,
@@ -233,6 +235,7 @@ function NpcDialogueModal({
   playerResponse,
   pendingPlayerResponse,
   pendingChoiceToken,
+  resetInputNonce,
   onSubmit,
   onClose,
 }: {
@@ -243,10 +246,18 @@ function NpcDialogueModal({
   readonly playerResponse?: string | null;
   readonly pendingPlayerResponse: string | null;
   readonly pendingChoiceToken: string | null;
+  readonly resetInputNonce: number;
   readonly onSubmit: (interaction: PlayerInteraction, playerResponse: string) => void;
   readonly onClose: () => void;
 }) {
   const [text, setText] = useState("");
+  const previousResetInputNonce = useRef(resetInputNonce);
+
+  useEffect(() => {
+    if (previousResetInputNonce.current === resetInputNonce) return;
+    previousResetInputNonce.current = resetInputNonce;
+    setText("");
+  }, [resetInputNonce]);
 
   // 焦点 NPC 的正式对话严格由两个批准选项或自由输入标识；
   // 非焦点 NPC 的单个 talk choice 是唯一的正式交谈入口。
@@ -257,8 +268,12 @@ function NpcDialogueModal({
     const normalized = text.trim();
     if (normalized === "") return;
     onSubmit({ kind: "free_text", text: normalized, targetNpcId: dialogue.npcId }, normalized);
-    setText("");
   }
+
+  const waitingChoices = [
+    ...dialogue.choices,
+    ...dialogue.giveChoices.map((entry) => entry.choice),
+  ];
 
   return (
     <div 
@@ -310,7 +325,7 @@ function NpcDialogueModal({
         {phase === "waiting" ? (
           <>
             <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
-              {dialogue.choices.map((choice) => (
+              {waitingChoices.map((choice) => (
                 <button
                   key={choice.choiceToken}
                   type="button"
@@ -576,6 +591,7 @@ export function LocationSceneScreen({
   });
   const openDialogueNpcId = dialogueUi.npcId;
   const [dialoguePhase, setDialoguePhase] = useState<DialoguePhase>("choice");
+  const [dialogueInputResetNonce, setDialogueInputResetNonce] = useState(0);
   const submittedDialogueRef = useRef<SubmittedDialogue | null>(null);
   const previousBusyRef = useRef(busy);
 
@@ -622,14 +638,19 @@ export function LocationSceneScreen({
     return undefined;
   }, [view.battle]);
 
-  // 正式对白请求结束后直接恢复下一组选项；失败/拒绝也恢复原选项。
-  // pending 期间旧选项被隐藏，避免重复提交，但不额外插入确认按钮。
+  // 正式对白请求结束后直接恢复下一组选项。普通拒绝/错误不会产生新 revision，
+  // 所以保留自由输入草稿供玩家修正；ready 快照则清空该草稿并直接显示新对白。
+  // AI failure 仍保持 busy，因而会保留内联等待态，直到重试真正结束。
   useEffect(() => {
     const wasBusy = previousBusyRef.current;
     previousBusyRef.current = busy;
     const submitted = submittedDialogueRef.current;
     if (submitted === null || wasBusy === false || busy) return;
     setDialoguePhase("choice");
+    dispatchDialogueUi({ kind: "clear_pending" });
+    if (view.revision !== submitted.revision) {
+      setDialogueInputResetNonce((current) => current + 1);
+    }
     submittedDialogueRef.current = null;
   }, [busy, view.revision, view.turnNumber]);
 
@@ -758,6 +779,7 @@ export function LocationSceneScreen({
           type="button"
           className="scene-return-map-btn"
           onClick={onReturnMap}
+          disabled={busy || pending}
         >
           {view.currentLocation.scale === "town" ? "返回小镇" : "返回地图"}
         </button>
@@ -860,6 +882,7 @@ export function LocationSceneScreen({
             : null}
           pendingPlayerResponse={dialogueUi.pendingPlayerResponse}
           pendingChoiceToken={dialogueUi.pendingChoiceToken}
+          resetInputNonce={dialogueInputResetNonce}
           onSubmit={(interaction, playerResponse) => {
             // 提交前先记录临时的玩家回应和选择token
             const choiceToken = interaction.kind === "fixed_choice" ? interaction.choiceToken : null;
