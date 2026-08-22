@@ -426,4 +426,21 @@ describe("world source 内容修复契约", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.repairReason).toBeUndefined();
   });
+
+  it("世界 prompt 收紧 world 新地点与其 NPC 的 locationRef 可达性约束并只列出已有地点摘要", async () => {
+    const ai = makeClient("not json");
+    const source = createLiveWorldEvolutionSource({ aiClient: ai });
+    let prompt = "";
+    ai.complete.mockImplementation(async (_role, messages, _ctx) => {
+      prompt = (messages[0] as { readonly content?: string } | undefined)?.content ?? "";
+      return { ok: true as const, content: "not json", latencyMs: 1 };
+    });
+    await source.propose(makeCtx({ need: { kind: "next_act", act: 2 } }));
+    expect(prompt).toContain("newNpc.locationRef 必须为 {\"kind\":\"new_location\"}");
+    expect(prompt).toContain("新地点名称不得与现有地点名称重复");
+    // 只提供已批准地点的安全名称/ID 摘要，不序列化完整存档或私密事实。
+    expect(prompt).toContain("客栈");
+    expect(prompt).toContain("loc_a");
+    expect(prompt).not.toContain("worldFacts");
+  });
 });

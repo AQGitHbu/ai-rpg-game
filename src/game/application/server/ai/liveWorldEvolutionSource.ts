@@ -450,6 +450,11 @@ function buildWorldEvolutionPrompt(ctx: WorldEvolutionSourceContext): string {
   const { worldState, storyState } = ctx;
   const currentLoc = worldState.locations.find((l) => l.id === worldState.currentLocationId);
   const existingLocationIds = worldState.locations.map((location) => String(location.id)).join("、") || "无";
+  // 只提供已批准地点的安全名称/ID 摘要，帮助 AI 避开重名与未知引用；不序列化
+  // 完整存档或私密事实（世界事实、NPC 机密等绝不进入 prompt）。
+  const existingLocationSummary = worldState.locations
+    .map((location) => `${String(location.id)}(${location.name})`)
+    .join("、") || "无";
   const setup = worldState.generation.setup;
   const genreGuard = worldState.generation.gameType === "wuxia"
     ? "这是武侠世界：只能使用江湖、门派、镖局、官府、山川、兵器、线索和武学语汇；禁止魔法、巫师、精灵、骑士、幽灵/灵魂、祭坛、法阵、圣光、异界等奇幻或超自然实体。"
@@ -472,9 +477,12 @@ function buildWorldEvolutionPrompt(ctx: WorldEvolutionSourceContext): string {
   const locationRule = currentLoc?.scale === "town"
     ? "当前地点是城镇容器：茶馆、酒楼、客栈、铺面、宅院、后巷等城镇内部空间必须使用 placement=town_building；它们不会成为世界地图节点，且 newNpc.locationRef 必须使用 new_location，由系统把人物绑定到当前城镇建筑。只有城镇外、需要独立旅行的地点才使用 placement=world。"
     : "当前地点不是城镇容器；新地点通常使用 placement=world。";
+  const reachabilityRule = "如果 newLocation.placement=world 且 newNpc 同时存在，newNpc.locationRef 必须为 {\"kind\":\"new_location\"}，除非本次任务明确不把该 NPC 作为新地点目标。新地点名称不得与现有地点名称重复；新任务的目标顺序必须在玩家可达的地点/实体上成立。";
   return `只输出 JSON，不能解释。你为 RPG 生成一次小型世界演化。${genreGuard}
-需求=${kindText(ctx.need)}；原因=${ctx.reason}；地点=${currentLoc?.name ?? "未知"}；地点层级=${currentLoc?.scale ?? "未知"}；现有地点ID=${existingLocationIds}；幕=${storyState.currentAct}/${storyState.targetActs}。
+需求=${kindText(ctx.need)}；原因=${ctx.reason}；地点=${currentLoc?.name ?? "未知"}；地点层级=${currentLoc?.scale ?? "未知"}；幕=${storyState.currentAct}/${storyState.targetActs}。
+现有地点摘要=${existingLocationSummary}（ID:名称）；全部现有地点ID=${existingLocationIds}。
 ${locationRule}
+${reachabilityRule}
 世界背景=${setup?.worldPremise ?? worldState.generation.gameType}；故事开端=${setup?.storyOpening ?? "沿用当前主线冲突"}。
 外层必须是 {"proposal":{...}}。proposal 必有 beatSummary；未使用字段直接省略，不要写 null。
 ${outputSchema}

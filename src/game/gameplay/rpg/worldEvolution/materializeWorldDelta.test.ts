@@ -114,6 +114,20 @@ describe("materializeWorldDelta", () => {
     expect(delta.previewStoryState.reveal).toEqual({ questId: "quest_dyn_1", visibleObjectiveIndex: 0 });
   });
 
+  it("keeps new location npcIds, the npc locationId and the talk_to_npc objective mutually consistent", () => {
+    const ws = makeWorld();
+    const ss = makeStory({ currentAct: 2, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_next_act" } });
+    const approved = approve({ proposal: nextActProposal(), need: { kind: "next_act", act: 2 }, ws, ss });
+    const delta = materializeWorldDelta({ approved, need: { kind: "next_act", act: 2 }, ws, ss, now: () => "2026-01-02" });
+    const npc = delta.previewWorldState.npcs.find((n) => n.id === "npc_dyn_1")!;
+    const locNew = delta.previewWorldState.locations.find((l) => l.id === "loc_dyn_1")!;
+    expect(npc.locationId).toBe("loc_dyn_1");
+    expect(locNew.npcIds).toContain("npc_dyn_1");
+    const quest = delta.previewWorldState.quests.find((q) => q.id === "quest_dyn_1")!;
+    expect(quest.objectives.find((o) => o.kind === "talk_to_npc"))
+      .toEqual({ kind: "talk_to_npc", npcId: "npc_dyn_1" });
+  });
+
   it("materializes two disjoint endings at the final act and resets status stable", () => {
     const ws = makeWorld();
     const ss = makeStory({ currentAct: 3, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_ending_pair" } });

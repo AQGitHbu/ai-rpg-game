@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { approveWorldDelta, actObjectiveShape, deriveActObjectives } from "./approveWorldDelta";
+import { approveWorldDelta, actObjectiveShape, deriveActObjectives, REJECT_REASON_NPC_NOT_AT_NEW_LOCATION } from "./approveWorldDelta";
 import type { WorldState, NpcEntry, InvestigationApproach } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -221,6 +221,37 @@ describe("approveWorldDelta", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("invalid_location_ref");
+  });
+
+  it("rejects a next_act world location whose target NPC is parked at the old location", () => {
+    const base = nextActProposal();
+    const proposal: WorldDeltaProposal = {
+      ...base,
+      newNpc: {
+        ...base.newNpc!,
+        locationRef: { kind: "existing" as const, id: "loc_0" },
+      },
+    };
+    const result = approveWorldDelta({
+      proposal,
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("unreachable_objective");
+    expect(result.reason).toBe(REJECT_REASON_NPC_NOT_AT_NEW_LOCATION);
+  });
+
+  it("mints the NPC into the new world location and indexes it there when locationRef is new_location", () => {
+    const ws = makeWorld();
+    const ss = makeStory({ currentAct: 2, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_next_act" } });
+    const result = approveWorldDelta({ proposal: nextActProposal(), need: { kind: "next_act", act: 2 }, ws, ss });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.newNpcs[0]?.locationId).toBe("loc_dyn_1");
+    expect(result.approved.newLocations[0]?.npcIds).toEqual(["npc_dyn_1"]);
   });
 
   it("rejects a duplicate name against an existing NPC", () => {

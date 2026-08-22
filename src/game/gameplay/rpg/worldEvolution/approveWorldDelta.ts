@@ -170,6 +170,14 @@ export type WorldDeltaRejection =
   | "main_quest_conflict"
   | "ending_pair_invalid";
 
+/**
+ * unreachable_objective 的内部 reason：物化新世界地点时，目标 NPC 必须落在该
+ * 新地点（locationRef=new_location）。若 NPC 落在旧地点而幕目标链要求“先到新
+ * 地点再与该 NPC 交谈”，该链在空间上矛盾 → 玩家永远看不到目标 NPC。审批层在
+ * ID 铸造/预算预占前硬拒绝，而不是把旧地点的 NPC 静默搬迁到新地点。
+ */
+export const REJECT_REASON_NPC_NOT_AT_NEW_LOCATION = "npc_not_at_new_location" as const;
+
 export type ApprovedWorldDeltaCore = {
   readonly beatSummary: string;
   readonly mintedLocationIds: readonly LocationId[];
@@ -619,6 +627,23 @@ export function approveWorldDelta(input: {
     if (stageCollision) return reject("main_quest_conflict", `act_${need.act}_has_main_quest`);
     const objectives = deriveActObjectives(p, ids, shape);
     if (objectives === null) return reject("unreachable_objective", "no_anchor_entity");
+  }
+
+  // 空间一致性门槛：幕演化同时铸造 world 新地点、目标 NPC 与主线任务时，该 NPC
+  // 必须落在新地点（locationRef=new_location，按 proposal 直接检查）。否则目标链
+  // “先抵达新地点、再与该 NPC 交谈”在空间上矛盾，审批通过只会产生玩家被要求去
+  // 新地点却永远看不到目标 NPC 的死链。此规则在预算预占/实体条目铸造前硬拒绝，
+  // 而不是把旧地点的 NPC 静默搬迁到新地点。其余更具体的原因（invalid_location_ref/
+  // duplicate_name/genre_constraint）由前置校验先行使，本门槛只收口仍未触发的组合。
+  if (
+    need.kind === "next_act"
+    && p.nextMainQuest !== null
+    && p.newLocation !== null
+    && p.newLocation.placement === "world"
+    && p.newNpc !== null
+    && p.newNpc.locationRef.kind !== "new_location"
+  ) {
+    return reject("unreachable_objective", REJECT_REASON_NPC_NOT_AT_NEW_LOCATION);
   }
 
   // 预算预占（在铸造实体前校验，避免无效提议占用序号）。
