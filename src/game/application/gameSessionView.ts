@@ -234,7 +234,7 @@ function projectQuestObjectives(
     switch (objective.kind) {
       case "visit_location": {
         const location = worldState.locations.find((entry) => entry.id === objective.locationId);
-        return { label: location?.name ?? "未知地点", completed: worldState.visitedLocationIds.includes(objective.locationId) };
+        return { label: `前往${location?.name ?? "未知地点"}`, completed: worldState.visitedLocationIds.includes(objective.locationId) };
       }
       case "talk_to_npc": {
         const npc = worldState.npcs.find((entry) => entry.id === objective.npcId);
@@ -386,7 +386,7 @@ export function projectGameSessionView(
       visited: worldState.visitedLocationIds.includes(location.id),
       scale: locationScaleOf(location),
       travelChoice: travelTargets.has(location.id)
-        ? choice({ type: "move", locationId: location.id }, revision, location.name, "travel")
+        ? choice({ type: "move", locationId: location.id }, revision, `前往${location.name}`, "travel")
         : null,
     }));
 

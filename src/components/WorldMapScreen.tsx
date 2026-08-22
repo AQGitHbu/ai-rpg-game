@@ -51,7 +51,7 @@ export function WorldMapScreen({ view, busy, onEnterCurrent, onMove }: WorldMapS
                 onClick={() => onMove(location.travelChoice!.choiceToken)}
               >
                 <AdventureVisual gameType={gameType} kind="map_node" label={location.name} decorative />
-                {location.name}
+                前往{location.name}
                 {location.scale === "town" ? <span className="map-node-scale" aria-hidden="true">小镇</span> : null}
               </button>
             );

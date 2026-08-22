@@ -63,7 +63,7 @@ function buildView(options: { battle?: GameSessionView["battle"] } = {}): GameSe
     worldMap: {
       locations: [
         { name: "客栈", current: true, visited: true, scale: "scene", travelChoice: null },
-        { name: "街道", current: false, visited: false, scale: "scene", travelChoice: choice(TOKENS.travel, "街道", "travel") },
+        { name: "街道", current: false, visited: false, scale: "scene", travelChoice: choice(TOKENS.travel, "前往街道", "travel") },
       ],
     },
     currentLocation: {
@@ -164,12 +164,13 @@ describe("AdventureGameShell canonical opaque choices", () => {
   it("starts on the world map with current and travel nodes", () => {
     renderShell();
     expect(screen.getByRole("button", { name: "客栈" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "街道" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "前往街道" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "进入客栈" })).not.toBeInTheDocument();
   });
 
-  it("forwards the server token for 街道 from the map", async () => {
+  it("forwards the server token for 前往街道 from the map", async () => {
     renderShell();
-    await userEvent.click(screen.getByRole("button", { name: "街道" }));
+    await userEvent.click(screen.getByRole("button", { name: "前往街道" }));
     expect(postAction).toHaveBeenCalledWith({
       interaction: { kind: "fixed_choice", choiceToken: TOKENS.travel },
       revision: 9,
@@ -427,7 +428,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
         turnNumber: base.turnNumber + 1,
         story: {
           ...base.story,
-          currentObjectiveLabel: "街道",
+          currentObjectiveLabel: "前往街道",
           currentObjectiveChoiceToken: TOKENS.travel,
         },
         narrative: {
@@ -1303,7 +1304,7 @@ describe("AdventureGameShell three-layer navigation", () => {
       worldMap: {
         locations: [
           { name: "客栈", current: true, visited: true, scale: "town", travelChoice: null },
-          { name: "街道", current: false, visited: false, scale: "scene", travelChoice: choice(TOKENS.travel, "街道", "travel") },
+          { name: "街道", current: false, visited: false, scale: "scene", travelChoice: choice(TOKENS.travel, "前往街道", "travel") },
         ],
       },
       currentLocation: {
@@ -1338,8 +1339,7 @@ describe("AdventureGameShell three-layer navigation", () => {
     />);
     await user.click(screen.getByRole("button", { name: "客栈" }));
     await user.click(screen.getByRole("button", { name: interactive.displayName }));
-    const storyBuilding = screen.getByRole("group", { name: "剧情建筑" });
-    await user.click(within(storyBuilding).getByRole("button", { name: interactive.displayName }));
+    await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
     expect(screen.getByRole("region", { name: `地点场景：${interactive.displayName}` })).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: `地点场景：${interactive.displayName}` })).getByRole("heading", { name: interactive.displayName, level: 2 })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: new RegExp(`${interactive.npcName}.*`) }).length).toBeGreaterThan(0);
@@ -1362,14 +1362,13 @@ describe("AdventureGameShell three-layer navigation", () => {
 
     await user.click(screen.getByRole("button", { name: "客栈" }));
     await user.click(screen.getByRole("button", { name: interactive.displayName }));
-    const storyBuildingA = screen.getByRole("group", { name: "剧情建筑" });
-    await user.click(within(storyBuildingA).getByRole("button", { name: interactive.displayName }));
+    await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
 
     rerender(<AdventureGameShell
       view={{
         ...initialView,
         revision: initialView.revision + 1,
-        story: { ...initialView.story, currentObjectiveLabel: "街道与线人交谈" },
+        story: { ...initialView.story, currentObjectiveLabel: "前往街道与线人交谈" },
       }}
       onViewChange={vi.fn()}
       onStaleRevision={vi.fn()}
@@ -1409,8 +1408,7 @@ describe("AdventureGameShell three-layer navigation", () => {
 
     await user.click(screen.getByRole("button", { name: "客栈" }));
     await user.click(screen.getByRole("button", { name: interactive.displayName }));
-    const storyBuildingEntry = screen.getByRole("group", { name: "剧情建筑" });
-    await user.click(within(storyBuildingEntry).getByRole("button", { name: interactive.displayName }));
+    await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
 
     expect(screen.getByRole("region", { name: `地点场景：${interactive.displayName}` })).toBeInTheDocument();
     expect(postAction).not.toHaveBeenCalled();
@@ -1471,8 +1469,7 @@ describe("AdventureGameShell three-layer navigation", () => {
 
     await user.click(screen.getByRole("button", { name: "客栈" }));
     await user.click(screen.getByRole("button", { name: clickedBuilding.displayName }));
-    const clickedStoryBuilding = screen.getByRole("group", { name: "剧情建筑" });
-    await user.click(within(clickedStoryBuilding).getByRole("button", { name: clickedBuilding.displayName }));
+    await user.click(screen.getByRole("button", { name: `进入${clickedBuilding.displayName}` }));
 
     expect(screen.getByRole("region", { name: `地点场景：${clickedBuilding.displayName}` })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: new RegExp(`${clickedBuilding.npcName}.*`) })).toBeInTheDocument();
@@ -1490,8 +1487,7 @@ describe("AdventureGameShell three-layer navigation", () => {
     />);
     await user.click(screen.getByRole("button", { name: "客栈" }));
     await user.click(screen.getByRole("button", { name: interactive.displayName }));
-    const storyBuildingB = screen.getByRole("group", { name: "剧情建筑" });
-    await user.click(within(storyBuildingB).getByRole("button", { name: interactive.displayName }));
+    await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
     // 场景 → 小镇
     await user.click(screen.getByRole("button", { name: "返回小镇" }));
     expect(screen.getByRole("region", { name: `小镇：客栈` })).toBeInTheDocument();
