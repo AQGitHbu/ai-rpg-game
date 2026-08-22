@@ -144,7 +144,7 @@ describe("CurrentGameScreen prologue display", () => {
 
     expect(screen.queryByText("我收到一封来自失踪妹妹、却署着三年前日期的信……")).not.toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent("AI 返回格式不符合要求");
-    await userEvent.click(screen.getByRole("button", { name: "重试" }));
+    await userEvent.click(screen.getByRole("button", { name: "重试生成回应" }));
     await waitFor(() => expect(retryNarrative).toHaveBeenCalledOnce());
   });
 

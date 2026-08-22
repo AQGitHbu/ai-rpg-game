@@ -23,4 +23,31 @@ describe("GenerationStatusModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "重新检查生成状态" }));
     expect(onRetry).toHaveBeenCalledOnce();
   });
+
+  it("distinguishes action retry from narrative retry", () => {
+    const onRetry = vi.fn();
+    const { rerender } = render(
+      <GenerationStatusModal
+        kind="action-failure"
+        failureKind="AI_CALL_FAILED"
+        onRetry={onRetry}
+      />,
+    );
+
+    expect(screen.getByRole("heading")).toHaveTextContent("本次选择提交失败");
+    expect(screen.getByRole("alert")).toHaveTextContent(/这次选择尚未生效/);
+    fireEvent.click(screen.getByRole("button", { name: "重试当前选择" }));
+    expect(onRetry).toHaveBeenCalledOnce();
+
+    rerender(
+      <GenerationStatusModal
+        kind="narrative-failure"
+        failureKind="AI_RESPONSE_INVALID"
+        onRetry={onRetry}
+      />,
+    );
+    expect(screen.getByRole("heading")).toHaveTextContent("NPC回应生成失败");
+    expect(screen.getByRole("alert")).toHaveTextContent(/你的选择已经生效/);
+    expect(screen.getByRole("button", { name: "重试生成回应" })).toBeInTheDocument();
+  });
 });

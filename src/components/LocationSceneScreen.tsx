@@ -10,7 +10,7 @@ import { normalizeDisplayText } from "./displayText";
 type LocationSceneScreenProps = {
   readonly view: GameSessionView;
   readonly busy: boolean;
-  readonly onSubmit: (interaction: PlayerInteraction) => void;
+  readonly onSubmit: (interaction: PlayerInteraction, origin?: "npc-dialogue") => void;
   readonly onReturnMap: () => void;
   /** Task 7：从小镇建筑进入场景时聚焦该建筑绑定的 NPC（打开其对话）。 */
   readonly initialFocusNpcId?: string | null;
@@ -32,10 +32,19 @@ type BattleFeedback = {
 type DialogueUiState = {
   readonly npcId: string | null;
   readonly revision: number;
+  readonly pendingPlayerResponse: string | null;
+  readonly pendingChoiceToken: string | null;
+  /**
+   * 已提交对白仅用于本页等待态展示。pending read model 不保证保留 choices，
+   * 因此不能由它重建已选回应、其它固定选项或给予道具选项。
+   */
+  readonly pendingDialogue: Dialogue | null;
 };
 
 type DialogueUiAction =
   | { readonly kind: "set"; readonly npcId: string | null }
+  | { readonly kind: "submit"; readonly playerResponse: string; readonly choiceToken: string | null; readonly dialogue: Dialogue }
+  | { readonly kind: "clear_pending" }
   | { readonly kind: "sync_revision"; readonly revision: number; readonly close: boolean };
 
 type DialoguePhase = "choice" | "waiting";
@@ -47,10 +56,20 @@ type SubmittedDialogue = {
 
 function reduceDialogueUiState(state: DialogueUiState, action: DialogueUiAction): DialogueUiState {
   switch (action.kind) {
-    case "set": return { ...state, npcId: action.npcId };
+    case "set": return { ...state, npcId: action.npcId, pendingPlayerResponse: null, pendingChoiceToken: null, pendingDialogue: null };
+    case "submit": return {
+      ...state,
+      pendingPlayerResponse: action.playerResponse,
+      pendingChoiceToken: action.choiceToken,
+      pendingDialogue: action.dialogue,
+    };
+    case "clear_pending": return { ...state, pendingPlayerResponse: null, pendingChoiceToken: null, pendingDialogue: null };
     case "sync_revision": return {
       revision: action.revision,
       npcId: action.close ? null : state.npcId,
+      pendingPlayerResponse: action.close ? null : state.pendingPlayerResponse,
+      pendingChoiceToken: action.close ? null : state.pendingChoiceToken,
+      pendingDialogue: action.close ? null : state.pendingDialogue,
     };
   }
 }
@@ -225,6 +244,9 @@ function NpcDialogueModal({
   busy,
   phase,
   playerResponse,
+  pendingPlayerResponse,
+  pendingChoiceToken,
+  resetInputNonce,
   onSubmit,
   onClose,
 }: {
@@ -233,10 +255,20 @@ function NpcDialogueModal({
   readonly busy: boolean;
   readonly phase: DialoguePhase;
   readonly playerResponse?: string | null;
-  readonly onSubmit: (interaction: PlayerInteraction) => void;
+  readonly pendingPlayerResponse: string | null;
+  readonly pendingChoiceToken: string | null;
+  readonly resetInputNonce: number;
+  readonly onSubmit: (interaction: PlayerInteraction, playerResponse: string) => void;
   readonly onClose: () => void;
 }) {
   const [text, setText] = useState("");
+  const previousResetInputNonce = useRef(resetInputNonce);
+
+  useEffect(() => {
+    if (previousResetInputNonce.current === resetInputNonce) return;
+    previousResetInputNonce.current = resetInputNonce;
+    setText("");
+  }, [resetInputNonce]);
 
   // 焦点 NPC 的正式对话严格由两个批准选项或自由输入标识；
   // 非焦点 NPC 的单个 talk choice 是唯一的正式交谈入口。
@@ -246,18 +278,29 @@ function NpcDialogueModal({
     event.preventDefault();
     const normalized = text.trim();
     if (normalized === "") return;
-    onSubmit({ kind: "free_text", text: normalized, targetNpcId: dialogue.npcId });
-    setText("");
+    onSubmit({ kind: "free_text", text: normalized, targetNpcId: dialogue.npcId }, normalized);
   }
 
+  const waitingChoices = [
+    ...dialogue.choices,
+    ...dialogue.giveChoices.map((entry) => entry.choice),
+  ];
+
   return (
-    <div className="npc-dialogue-backdrop" role="dialog" aria-modal="true" aria-label={`与${dialogue.name}对话`}>
+    <div 
+      className="npc-dialogue-backdrop" 
+      role="dialog" 
+      aria-modal="true" 
+      aria-label={`与${dialogue.name}对话`}
+      aria-busy={phase === "waiting"}
+    >
       <section className="npc-dialogue-panel">
         <button
           type="button"
           className="npc-dialogue-close"
           aria-label="关闭对话"
           onClick={onClose}
+          disabled={busy || phase === "waiting"}
         >
           ×
         </button>
@@ -276,11 +319,38 @@ function NpcDialogueModal({
             {dialogue.speechPages.map((page, index) => (
               <p key={`${dialogue.npcId}-${index}`} className="npc-dialogue-speech-text">{normalizeDisplayText(page)}</p>
             ))}
+            {playerResponse !== null && playerResponse !== undefined ? (
+              <p className="npc-dialogue-speech-text npc-dialogue-speech-text--player">
+                {normalizeDisplayText(playerResponse)}
+              </p>
+            ) : null}
+            {pendingPlayerResponse !== null && pendingChoiceToken === null ? (
+              <p className="npc-dialogue-speech-text npc-dialogue-speech-text--player">
+                {normalizeDisplayText(pendingPlayerResponse)}
+                {phase === "waiting" ? <span data-testid="npc-dialogue-spinner" className="npc-dialogue-inline-spinner" aria-hidden="true" /> : null}
+              </p>
+            ) : null}
           </div>
         </div>
 
         {phase === "waiting" ? (
-          <p className="npc-dialogue-status" role="status" aria-live="polite">正在等待{dialogue.name}回应……</p>
+          <>
+            <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
+              {waitingChoices.map((choice) => (
+                <button
+                  key={choice.choiceToken}
+                  type="button"
+                  disabled={true}
+                  aria-current={choice.choiceToken === pendingChoiceToken ? "true" : undefined}
+                  className={choice.choiceToken === pendingChoiceToken ? "npc-dialogue-choice--selected" : undefined}
+                >
+                  {choice.label}
+                  {choice.choiceToken === pendingChoiceToken ? <span data-testid="npc-dialogue-spinner" className="npc-dialogue-inline-spinner" aria-hidden="true" /> : null}
+                </button>
+              ))}
+            </div>
+            <p className="npc-dialogue-status" role="status" aria-live="polite">正在等待{dialogue.name}回应……</p>
+          </>
         ) : hasFocusInteraction ? (
           /* 焦点 NPC：显示固定选项 + 给予道具 + 自由输入 */
           <>
@@ -290,7 +360,7 @@ function NpcDialogueModal({
                   key={choice.choiceToken}
                   type="button"
                   disabled={busy}
-                  onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken })}
+                  onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken }, choice.label)}
                 >
                   {choice.label}
                 </button>
@@ -306,7 +376,7 @@ function NpcDialogueModal({
                     key={entry.choice.choiceToken}
                     type="button"
                     disabled={busy}
-                    onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: entry.choice.choiceToken })}
+                    onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: entry.choice.choiceToken }, entry.choice.label)}
                   >
                     {entry.choice.label}
                   </button>
@@ -344,7 +414,7 @@ function NpcDialogueModal({
                     type="button"
                     disabled={busy}
                     className="npc-dialogue-talk-cta"
-                    onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken })}
+                    onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken }, choice.label)}
                   >
                     {choice.label}
                   </button>
@@ -365,6 +435,7 @@ function NpcDialogueModal({
                 <button
                   type="button"
                   className="npc-dialogue-dismiss-btn"
+                  disabled={busy}
                   onClick={onClose}
                 >
                   知道了
@@ -393,11 +464,9 @@ export function LocationSceneScreen({
 
   const isTest = typeof globalThis !== "undefined" && ("vitest" in globalThis || "vi" in globalThis);
 
-  const activeDialogues = pending
-    ? []
-    : (view.narrative.npcDialogues ?? []).filter((dialogue) =>
-        initialFocusNpcId === null || initialFocusNpcId === undefined || dialogue.npcId === initialFocusNpcId,
-      );
+  const activeDialogues = (view.narrative.npcDialogues ?? []).filter((dialogue) =>
+    initialFocusNpcId === null || initialFocusNpcId === undefined || dialogue.npcId === initialFocusNpcId,
+  );
   const focusedDialogueName = initialFocusNpcId === null || initialFocusNpcId === undefined
     ? null
     : activeDialogues.find((dialogue) => dialogue.npcId === initialFocusNpcId)?.name ?? null;
@@ -538,9 +607,13 @@ export function LocationSceneScreen({
   const [dialogueUi, dispatchDialogueUi] = useReducer(reduceDialogueUiState, {
     npcId: initialOpenDialogueNpcId,
     revision: view.revision,
+    pendingPlayerResponse: null,
+    pendingChoiceToken: null,
+    pendingDialogue: null,
   });
   const openDialogueNpcId = dialogueUi.npcId;
   const [dialoguePhase, setDialoguePhase] = useState<DialoguePhase>("choice");
+  const [dialogueInputResetNonce, setDialogueInputResetNonce] = useState(0);
   const submittedDialogueRef = useRef<SubmittedDialogue | null>(null);
   const previousBusyRef = useRef(busy);
 
@@ -549,7 +622,7 @@ export function LocationSceneScreen({
   }
 
   function resetDialogue(): void {
-    setOpenDialogueNpcId(null);
+    dispatchDialogueUi({ kind: "set", npcId: null });
     setDialoguePhase("choice");
     submittedDialogueRef.current = null;
   }
@@ -587,14 +660,19 @@ export function LocationSceneScreen({
     return undefined;
   }, [view.battle]);
 
-  // 正式对白请求结束后直接恢复下一组选项；失败/拒绝也恢复原选项。
-  // pending 期间旧选项被隐藏，避免重复提交，但不额外插入确认按钮。
+  // 正式对白请求结束后直接恢复下一组选项。普通拒绝/错误不会产生新 revision，
+  // 所以保留自由输入草稿供玩家修正；ready 快照则清空该草稿并直接显示新对白。
+  // AI failure 仍保持 busy，因而会保留内联等待态，直到重试真正结束。
   useEffect(() => {
     const wasBusy = previousBusyRef.current;
     previousBusyRef.current = busy;
     const submitted = submittedDialogueRef.current;
     if (submitted === null || wasBusy === false || busy) return;
     setDialoguePhase("choice");
+    dispatchDialogueUi({ kind: "clear_pending" });
+    if (view.revision !== submitted.revision) {
+      setDialogueInputResetNonce((current) => current + 1);
+    }
     submittedDialogueRef.current = null;
   }, [busy, view.revision, view.turnNumber]);
 
@@ -658,6 +736,11 @@ export function LocationSceneScreen({
   const openDialogue: Dialogue | undefined = openDialogueNpcId
     ? allDialoguesMap.get(openDialogueNpcId)
     : undefined;
+  // 成功规则提交后的 pending 快照不会携带旧的 approved choices。等待中只能
+  // 使用提交前捕获的临时展示快照；ready 写回后 effect 会清理它并显示新场景。
+  const displayedDialogue = dialoguePhase === "waiting" && dialogueUi.pendingDialogue !== null
+    ? dialogueUi.pendingDialogue
+    : openDialogue;
 
   // 幕交接时旧焦点 NPC 可能只剩一次普通 ask 入口。若继续保留旧弹窗，
   // 玩家会看到单个“与 NPC 交谈”按钮，却误以为仍在正式双选项对话中。
@@ -723,6 +806,7 @@ export function LocationSceneScreen({
           type="button"
           className="scene-return-map-btn"
           onClick={onReturnMap}
+          disabled={busy || pending}
         >
           {view.currentLocation.scale === "town" ? "返回小镇" : "返回地图"}
         </button>
@@ -815,24 +899,28 @@ export function LocationSceneScreen({
       ) : null}
 
       {/* NPC 对话模态弹层：只有用户主动点击时才弹出 */}
-      {openDialogue ? (
+      {displayedDialogue ? (
         <NpcDialogueModal
-          dialogue={openDialogue}
+          dialogue={displayedDialogue}
           gameType={gameType}
           busy={busy || pending}
-          playerResponse={openDialogue.choices.length === 0 && !openDialogue.freeInputEnabled
+          playerResponse={displayedDialogue.choices.length === 0 && !displayedDialogue.freeInputEnabled
             ? handoffPlayerResponse
             : null}
-          onSubmit={(interaction) => {
-            // 提交后保留当前 NPC 的会话焦点。pending 期间 activeDialogues 会暂时
-            // 让弹窗隐去；下一幕 ready 后，同一 NPC 的新台词会自动回到眼前，玩家
-            // 先展示回应，再由玩家确认继续，避免自定义输入像是石沉大海。
+          pendingPlayerResponse={dialogueUi.pendingPlayerResponse}
+          pendingChoiceToken={dialogueUi.pendingChoiceToken}
+          resetInputNonce={dialogueInputResetNonce}
+          onSubmit={(interaction, playerResponse) => {
+            // 提交前先记录临时的玩家回应和选择token
+            const choiceToken = interaction.kind === "fixed_choice" ? interaction.choiceToken : null;
+            dispatchDialogueUi({ kind: "submit", playerResponse, choiceToken, dialogue: displayedDialogue });
+            // 提交后保留当前 NPC 的会话焦点并设置等待状态
             submittedDialogueRef.current = {
               revision: view.revision,
               turnNumber: view.turnNumber,
             };
             setDialoguePhase("waiting");
-            onSubmit(interaction);
+            onSubmit(interaction, "npc-dialogue");
           }}
           phase={dialoguePhase}
           onClose={() => {

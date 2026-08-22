@@ -19,6 +19,7 @@ type AdventureHudProps = {
   readonly onOpen: (panel: DetailsPanel) => void;
   readonly developmentTools: boolean;
   readonly onOpenDevTools: () => void;
+  readonly disabled?: boolean;
 };
 
 /** 当前目标推导：优先进行中主线；主线全部完成时回退任意未完成任务。 */
@@ -35,7 +36,7 @@ function deriveObjective(view: GameSessionView): string {
   return "暂无线索";
 }
 
-export function AdventureHud({ view, screen, sceneLocationName, onOpen, developmentTools, onOpenDevTools }: AdventureHudProps) {
+export function AdventureHud({ view, screen, sceneLocationName, onOpen, developmentTools, onOpenDevTools, disabled = false }: AdventureHudProps) {
   const objectiveText = deriveObjective(view);
   const inTown = screen === "scene" && view.currentLocation.scale === "town";
   const sceneTitle = sceneLocationName ?? view.currentLocation.name;
@@ -47,6 +48,8 @@ export function AdventureHud({ view, screen, sceneLocationName, onOpen, developm
           type="button"
           className="adventure-hud-player-card"
           onClick={() => onOpen("character")}
+          disabled={disabled}
+          aria-disabled={disabled}
         >
           <span className="adventure-hud-avatar" aria-hidden="true">
             <svg viewBox="0 0 64 64" focusable="false" aria-hidden="true">
@@ -84,12 +87,23 @@ export function AdventureHud({ view, screen, sceneLocationName, onOpen, developm
 
         <nav className="adventure-hud-actions" aria-label="信息入口">
           {(Object.keys(PANEL_LABELS) as DetailsPanel[]).map((panel) => (
-            <button key={panel} type="button" onClick={() => onOpen(panel)}>
+            <button 
+              key={panel} 
+              type="button" 
+              onClick={() => onOpen(panel)}
+              disabled={disabled}
+              aria-disabled={disabled}
+            >
               {PANEL_LABELS[panel]}
             </button>
           ))}
           {developmentTools ? (
-            <button type="button" onClick={() => onOpenDevTools()}>
+            <button 
+              type="button" 
+              onClick={() => onOpenDevTools()}
+              disabled={disabled}
+              aria-disabled={disabled}
+            >
               开发工具
             </button>
           ) : null}

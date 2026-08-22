@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { InlineButton } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
+import type { AiFailureKind } from "@/game/application";
 import { postAction, type ActionOutcome, type PlayerInteraction } from "./gameActionRequest";
 import { AdventureHud, type DetailsPanel } from "./AdventureHud";
 import { AdventureOverlay } from "./AdventureOverlay";
@@ -22,12 +23,14 @@ type Props = {
 
 type AdventureScreen = "map" | "town" | "scene";
 
+type InteractionOrigin = "npc-dialogue" | "other";
+
 type ActionFeedback =
   | { readonly phase: "idle" }
   | { readonly phase: "submitting" }
   | { readonly phase: "success"; readonly message: string }
   | { readonly phase: "rejected"; readonly message: string }
-  | { readonly phase: "retryable"; readonly message: string; readonly interaction: PlayerInteraction }
+  | { readonly phase: "retryable"; readonly message: string; readonly interaction: PlayerInteraction; readonly failureKind: AiFailureKind; readonly origin: InteractionOrigin }
   | { readonly phase: "error"; readonly message: string };
 
 const DETAIL_TITLE: Record<DetailsPanel, string> = {
@@ -49,6 +52,7 @@ export function AdventureGameShell({
   const [devToolsOpen, setDevToolsOpen] = useState(false);
   const [devClearPhase, setDevClearPhase] = useState<"idle" | "confirm" | "clearing" | "error">("idle");
   const [feedback, setFeedback] = useState<ActionFeedback>({ phase: "idle" });
+  const [lastInteractionOrigin, setLastInteractionOrigin] = useState<InteractionOrigin>("other");
   const [sceneContext, setSceneContext] = useState<{
     readonly locationName: string;
     readonly npcId: string;
@@ -63,6 +67,10 @@ export function AdventureGameShell({
   const pending = view.narrativeGeneration.status === "pending";
   const narrativeFailed = view.narrativeGeneration.status === "failed";
   const isSubmitting = feedback.phase === "submitting";
+  const actionFailed = feedback.phase === "retryable";
+  const dialogueSubmissionBusy = lastInteractionOrigin === "npc-dialogue" && (isSubmitting || pending);
+  const ordinaryProgressBusy = !dialogueSubmissionBusy && (isSubmitting || pending);
+  const controlsBusy = isSubmitting || pending || narrativeFailed || actionFailed;
   // API/后台编排期间保持全屏模态，锁住地图、信息面板和所有规则行动，
   // 避免玩家在旧 revision 上继续点击；模态中的重试只在 pending 时提供。
   const busy = isSubmitting || pending || narrativeFailed;
@@ -105,7 +113,7 @@ export function AdventureGameShell({
     }
   }, [pending, view.story.currentObjectiveLabel]);
 
-  function applyOutcome(outcome: ActionOutcome): void {
+  function applyOutcome(outcome: ActionOutcome, origin: InteractionOrigin): void {
     switch (outcome.kind) {
       case "success":
         setFeedback({
@@ -113,28 +121,43 @@ export function AdventureGameShell({
           message: outcome.message === "Action performed" ? "行动已完成" : outcome.message,
         });
         onViewChange(outcome.view);
+        // success 后只在返回 view 不再 pending 时重置为 "other"
+        if (outcome.view.narrativeGeneration.status !== "pending") {
+          setLastInteractionOrigin("other");
+        }
         break;
       case "stale":
         setFeedback({ phase: "idle" });
+        setLastInteractionOrigin("other");
         onStaleRevision();
         break;
       case "rejected":
       case "error":
         setFeedback({ phase: outcome.kind, message: outcome.message });
+        setLastInteractionOrigin("other");
         break;
       case "ai-failure":
-        setFeedback({ phase: "retryable", message: outcome.message, interaction: outcome.interaction });
+        setFeedback({ 
+          phase: "retryable", 
+          message: outcome.message, 
+          interaction: outcome.interaction,
+          failureKind: outcome.failureKind,
+          origin,
+        });
+        // AI failure保留origin供重试使用
         break;
     }
   }
 
-  function submitInteraction(interaction: PlayerInteraction): void {
+  function submitInteraction(interaction: PlayerInteraction, origin: InteractionOrigin = "other"): void {
     setFeedback({ phase: "submitting" });
-    void postAction({ interaction, revision: view.revision }).then(applyOutcome);
+    setLastInteractionOrigin(origin);
+    void postAction({ interaction, revision: view.revision }).then((outcome) => applyOutcome(outcome, origin));
   }
 
-  function retryAction(interaction: PlayerInteraction): void {
-    submitInteraction(interaction);
+  function retryAction(): void {
+    if (feedback.phase !== "retryable") return;
+    submitInteraction(feedback.interaction, feedback.origin);
   }
 
   function enterNpcBuilding(npcId: string): void {
@@ -184,12 +207,13 @@ export function AdventureGameShell({
           devToolsTriggerRef.current = document.activeElement as HTMLElement;
           setDevToolsOpen(true);
         }}
+        disabled={controlsBusy}
       />
 
       {screen === "map" ? (
         <WorldMapScreen
           view={view}
-          busy={busy}
+          busy={controlsBusy}
           onEnterCurrent={() => {
             setSceneContext(null);
             setScreen(entryScreenFor(view));
@@ -199,14 +223,14 @@ export function AdventureGameShell({
       ) : screen === "town" && view.currentLocation.town !== null ? (
         <TownLayerScreen
           town={view.currentLocation.town}
-          busy={busy}
+          busy={controlsBusy}
           onEnterBuilding={enterNpcBuilding}
           onReturnMap={() => setScreen("map")}
         />
       ) : (
         <LocationSceneScreen
           view={view}
-          busy={busy}
+          busy={controlsBusy}
           onSubmit={submitInteraction}
           onReturnMap={returnFromScene}
           initialFocusNpcId={sceneContext?.npcId}
@@ -262,31 +286,33 @@ export function AdventureGameShell({
         </p>
       ) : null}
 
-      {feedback.phase === "rejected" || feedback.phase === "error" || feedback.phase === "retryable" ? (
+      {feedback.phase === "rejected" || feedback.phase === "error" ? (
         <p role="status" aria-live="polite" className={`action-feedback ${feedback.phase}`}>
           {feedback.message}
         </p>
       ) : null}
 
-      {feedback.phase === "retryable" ? (
-        <InlineButton onClick={() => retryAction(feedback.interaction)}>重试</InlineButton>
-      ) : null}
-
-      {busy ? (
-        narrativeFailed ? (
-          <GenerationStatusModal
-            kind="narrative-failure"
-            failureKind={view.narrativeGeneration.failureKind ?? "AI_CALL_FAILED"}
-            onRetry={async () => { await onRetryNarrative?.(); }}
-            battleVisible={view.battle !== null}
-          />
-        ) : (
-          <GenerationStatusModal
-            kind={pending ? "narrative" : "action"}
-            onRetry={pending ? onRetryNarrative : undefined}
-            battleVisible={view.battle !== null}
-          />
-        )
+      {narrativeFailed ? (
+        <GenerationStatusModal
+          kind="narrative-failure"
+          failureKind={view.narrativeGeneration.failureKind ?? "AI_CALL_FAILED"}
+          onRetry={async () => { await onRetryNarrative?.(); }}
+          battleVisible={view.battle !== null}
+        />
+      ) : feedback.phase === "retryable" ? (
+        <GenerationStatusModal
+          kind="action-failure"
+          failureKind={feedback.failureKind}
+          onRetry={retryAction}
+          battleVisible={view.battle !== null}
+        />
+      ) : dialogueSubmissionBusy ? null
+      : ordinaryProgressBusy ? (
+        <GenerationStatusModal
+          kind={pending ? "narrative" : "action"}
+          onRetry={pending ? onRetryNarrative : undefined}
+          battleVisible={view.battle !== null}
+        />
       ) : null}
     </div>
   );

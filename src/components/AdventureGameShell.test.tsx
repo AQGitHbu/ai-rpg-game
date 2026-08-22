@@ -1,5 +1,6 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GameSessionView } from "@/game/application";
 import { AdventureGameShell } from "./AdventureGameShell";
@@ -221,7 +222,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     });
   });
 
-  it("sets the common busy state for NPC fixed choices until the request settles", async () => {
+  it("keeps the selected NPC response inline while locking every game control", async () => {
     let resolveRequest!: (outcome: ActionOutcome) => void;
     vi.mocked(postAction).mockImplementationOnce(() => new Promise<ActionOutcome>((resolve) => {
       resolveRequest = resolve;
@@ -232,16 +233,202 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     await user.click(screen.getByRole("button", { name: "追问线索" }));
 
-    // 等待期间弹窗进入等待态：不渲染任何对话选项
-    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
-    expect(screen.getByText("正在等待老板回应……")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "追问线索" })).not.toBeInTheDocument();
+    const dialogue = screen.getByRole("dialog", { name: "与老板对话" });
+    const selectedChoice = within(dialogue).getByRole("button", { name: "追问线索" });
+    expect(dialogue).toHaveAttribute("aria-busy", "true");
+    expect(selectedChoice).toBeDisabled();
+    expect(selectedChoice).toHaveAttribute("aria-current", "true");
+    expect(within(selectedChoice).getByTestId("npc-dialogue-spinner")).toHaveAttribute("aria-hidden", "true");
+    expect(within(dialogue).getByRole("button", { name: "表示理解" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("正在等待老板回应");
+    expect(screen.queryByRole("dialog", { name: "正在处理……" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "正在编排下一幕……" })).not.toBeInTheDocument();
+
+    for (const button of screen.getAllByRole("button")) {
+      expect(button).toBeDisabled();
+    }
 
     resolveRequest({ kind: "rejected", message: "stop" });
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "追问线索" })).toBeEnabled();
     });
     expect(screen.getByRole("button", { name: "表示理解" })).toBeEnabled();
+  });
+
+  it("keeps the submitted dialogue snapshot through an empty pending view, then replaces it when ready", async () => {
+    const base = buildView();
+    const pendingView: GameSessionView = {
+      ...base,
+      revision: base.revision + 1,
+      turnNumber: base.turnNumber + 1,
+      narrative: {
+        ...base.narrative,
+        npcDialogues: [{
+          ...base.narrative.npcDialogues[0]!,
+          choices: [],
+          giveChoices: [],
+          freeInputEnabled: false,
+        }],
+      },
+      narrativeGeneration: { status: "pending" },
+    };
+    const readyView: GameSessionView = {
+      ...pendingView,
+      revision: pendingView.revision + 1,
+      narrative: {
+        ...pendingView.narrative,
+        npcDialogues: [{
+          ...pendingView.narrative.npcDialogues[0]!,
+          speechPages: ["账本我已经核过了，下一步得先找到送货的人。"],
+          choices: [
+            choice("c_0000000000000011", "追查送货人", "dialogue"),
+            choice("c_0000000000000012", "先整理账本", "dialogue"),
+          ],
+          freeInputEnabled: true,
+        }],
+      },
+      narrativeGeneration: { status: "idle" },
+    };
+    vi.mocked(postAction).mockResolvedValueOnce({
+      kind: "success",
+      view: pendingView,
+      message: "Action performed",
+    });
+    const user = userEvent.setup();
+    let setView: Dispatch<SetStateAction<GameSessionView>> | null = null;
+    function ShellHarness() {
+      const [view, updateView] = useState(base);
+      setView = updateView;
+      return <AdventureGameShell
+        view={view}
+        onViewChange={updateView}
+        onStaleRevision={vi.fn()}
+        onClearDevelopmentSave={vi.fn(async () => {})}
+      />;
+    }
+    render(<ShellHarness />);
+    await enterScene(user);
+    await user.click(screen.getByRole("button", { name: "追问线索" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledOnce());
+
+    const dialogue = screen.getByRole("dialog", { name: "与老板对话" });
+    const selectedChoice = within(dialogue).getByRole("button", { name: "追问线索" });
+    expect(dialogue).toHaveAttribute("aria-busy", "true");
+    expect(selectedChoice).toHaveAttribute("aria-current", "true");
+    expect(within(selectedChoice).getByTestId("npc-dialogue-spinner")).toBeInTheDocument();
+    expect(within(dialogue).getByRole("button", { name: "表示理解" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "返回地图" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /老板/ })).toBeDisabled();
+
+    await act(async () => {
+      setView?.(readyView);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("账本我已经核过了，下一步得先找到送货的人。")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "追查送货人" })).toBeEnabled();
+    });
+    expect(screen.getByRole("button", { name: "先整理账本" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "追问线索" })).not.toBeInTheDocument();
+  });
+
+  it("restores custom dialogue input after an ordinary action error", async () => {
+    let resolveRequest!: (outcome: ActionOutcome) => void;
+    vi.mocked(postAction).mockImplementationOnce(() => new Promise<ActionOutcome>((resolve) => {
+      resolveRequest = resolve;
+    }));
+    const user = userEvent.setup();
+    renderShell();
+    await enterScene(user);
+
+    await user.type(screen.getByRole("textbox", { name: "自定义回应" }), "我有一个主意");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    const dialogue = screen.getByRole("dialog", { name: "与老板对话" });
+    const playerReply = within(dialogue).getByText("我有一个主意");
+    expect(within(playerReply).getByTestId("npc-dialogue-spinner")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "自定义回应" })).not.toBeInTheDocument();
+
+    resolveRequest({ kind: "error", message: "network" });
+    const restoredInput = await screen.findByRole("textbox", { name: "自定义回应" });
+    expect(restoredInput).toHaveValue("我有一个主意");
+    expect(screen.queryByTestId("npc-dialogue-spinner")).not.toBeInTheDocument();
+  });
+
+  it("retries an NPC action failure in place with the same interaction", async () => {
+    let resolveRetry!: (outcome: ActionOutcome) => void;
+    vi.mocked(postAction)
+      .mockResolvedValueOnce({
+        kind: "ai-failure",
+        message: "AI 调用失败，请重试。",
+        failureKind: "AI_CALL_FAILED",
+        interaction: { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
+      })
+      .mockImplementationOnce(() => new Promise<ActionOutcome>((resolve) => {
+        resolveRetry = resolve;
+      }));
+    const user = userEvent.setup();
+    renderShell();
+    await enterScene(user);
+
+    await user.click(screen.getByRole("button", { name: "追问线索" }));
+    expect(await screen.findByRole("dialog", { name: "本次选择提交失败" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button").filter((button) => !button.hasAttribute("disabled"))).toEqual([
+      screen.getByRole("button", { name: "重试当前选择" }),
+    ]);
+    await user.click(screen.getByRole("button", { name: "重试当前选择" }));
+
+    await waitFor(() => expect(postAction).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(postAction).mock.calls[1]?.[0]).toEqual({
+      interaction: { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
+      revision: 9,
+    });
+    const selectedChoice = screen.getByRole("button", { name: "追问线索" });
+    expect(within(selectedChoice).getByTestId("npc-dialogue-spinner")).toBeInTheDocument();
+
+    resolveRetry({ kind: "rejected", message: "stop" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "追问线索" })).toBeEnabled());
+  });
+
+  it("retries a failed NPC narrative without resubmitting its action", async () => {
+    const base = buildView();
+    const pendingView: GameSessionView = {
+      ...base,
+      revision: base.revision + 1,
+      turnNumber: base.turnNumber + 1,
+      narrativeGeneration: { status: "pending" },
+    };
+    const onRetryNarrative = vi.fn(async () => {});
+    vi.mocked(postAction).mockResolvedValueOnce({
+      kind: "success",
+      view: pendingView,
+      message: "Action performed",
+    });
+    const user = userEvent.setup();
+    const { rerender } = render(<AdventureGameShell
+      view={base}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+      onRetryNarrative={onRetryNarrative}
+    />);
+    await enterScene(user);
+    await user.click(screen.getByRole("button", { name: "追问线索" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledOnce());
+
+    rerender(<AdventureGameShell
+      view={{ ...pendingView, narrativeGeneration: { status: "failed", failureKind: "AI_RESPONSE_INVALID" } }}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+      onRetryNarrative={onRetryNarrative}
+    />);
+
+    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "NPC回应生成失败" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重试生成回应" }));
+    expect(onRetryNarrative).toHaveBeenCalledOnce();
+    expect(postAction).toHaveBeenCalledOnce();
   });
 
   it("renders zero-turn idle dialogue for handed-off NPC with dismiss button and no submission", async () => {
@@ -358,10 +545,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "追问线索" }));
 
-    expect(onSubmit).toHaveBeenCalledWith({
-      kind: "fixed_choice",
-      choiceToken: TOKENS.dialogueOne,
-    });
+    expect(onSubmit).toHaveBeenCalledWith(
+      { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
+      "npc-dialogue",
+    );
     expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("正在等待老板回应");
   });
@@ -407,11 +594,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     await userEvent.type(screen.getByRole("textbox", { name: "自定义回应" }), "请把昨夜的经过说清楚");
     await userEvent.click(screen.getByRole("button", { name: "发送" }));
-    expect(onSubmit).toHaveBeenCalledWith({
-      kind: "free_text",
-      text: "请把昨夜的经过说清楚",
-      targetNpcId: "npc_1",
-    });
+    expect(onSubmit).toHaveBeenCalledWith(
+      { kind: "free_text", text: "请把昨夜的经过说清楚", targetNpcId: "npc_1" },
+      "npc-dialogue",
+    );
 
     rerender(<LocationSceneScreen
       view={{ ...base, narrativeGeneration: { status: "pending" } }}
@@ -419,7 +605,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onSubmit={onSubmit}
       onReturnMap={vi.fn()}
     />);
-    expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "与老板对话" })).toHaveAttribute("aria-busy", "true");
 
     rerender(<LocationSceneScreen
       view={{
@@ -878,7 +1064,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.getByRole("button", { name: "探索街道" })).toBeInTheDocument();
   });
 
-  it("hides NPC dialogue panels while narrative generation is pending instead of showing empty choices", async () => {
+  it("preserves an existing NPC dialogue while narrative generation is pending", async () => {
     const view = {
       ...buildView(),
       narrativeGeneration: { status: "pending" as const },
@@ -890,8 +1076,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    // 叙事生成中：对话面板与底图重复文案都不渲染，统一由外层模态负责锁定与提示
-    expect(screen.queryByRole("heading", { name: "老板" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "老板" })).toBeInTheDocument();
     expect(screen.queryByText("正在编排下一幕……")).not.toBeInTheDocument();
   });
 
@@ -1148,10 +1334,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(onSubmit).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "追问线索" }));
-    expect(onSubmit).toHaveBeenCalledWith({
-      kind: "fixed_choice",
-      choiceToken: TOKENS.dialogueOne,
-    });
+    expect(onSubmit).toHaveBeenCalledWith(
+      { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
+      "npc-dialogue",
+    );
   });
 
   it("keeps battle sides explicit and shows the attack feedback before the next snapshot", async () => {
@@ -1290,7 +1476,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.queryByRole("button", { name: /聊几句/ })).not.toBeInTheDocument();
     expect(screen.queryByText("正在准备对话……")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "与猎人交谈" }));
-    expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: "c_hunter_talk" });
+    expect(onSubmit).toHaveBeenCalledWith(
+      { kind: "fixed_choice", choiceToken: "c_hunter_talk" },
+      "npc-dialogue",
+    );
   });
 });
 

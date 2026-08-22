@@ -3423,3 +3423,39 @@ body:has(.adventure-game-shell) {
     max-height: calc(100dvh - 260px);
   }
 }
+
+/* NPC 对话内联加载 spinner */
+.npc-dialogue-inline-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-left: 8px;
+  border: 2px solid var(--game-surface-border);
+  border-top-color: var(--game-accent);
+  border-radius: 50%;
+  animation: npc-dialogue-spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes npc-dialogue-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .npc-dialogue-inline-spinner { animation: none; }
+}
+
+/* NPC 对话选中回应的样式 */
+.npc-dialogue-choice--selected {
+  opacity: 1 !important;
+  color: var(--game-text-primary) !important;
+  border-color: var(--game-accent) !important;
+  cursor: wait;
+}
+
+.npc-dialogue-choices button:disabled.npc-dialogue-choice--selected {
+  opacity: 1;
+  color: var(--game-text-primary);
+  border-color: var(--game-accent);
+  cursor: wait;
+}
