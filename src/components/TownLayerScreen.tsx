@@ -62,7 +62,7 @@ export function TownLayerScreen({ town, busy, onEnterBuilding, onReturnMap }: To
                 onClick={() => onEnterBuilding(selectedInteractive.npcId)}
                 disabled={busy}
               >
-                进入{selectedInteractive.displayName}
+                {selectedInteractive.displayName}
               </InlineButton>
             </div>
           ) : (

@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TownView } from "@/game/application";
@@ -81,7 +81,8 @@ describe("TownLayerScreen", () => {
     />);
     await user.click(screen.getByRole("button", { name: interactive.displayName }));
     expect(screen.queryByText("当前剧情")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
+    const storyBuilding = screen.getByRole("group", { name: "剧情建筑" });
+    await user.click(within(storyBuilding).getByRole("button", { name: interactive.displayName }));
     expect(onEnterBuilding).toHaveBeenCalledWith(interactive.npcId);
   });
 

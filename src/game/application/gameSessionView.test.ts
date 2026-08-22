@@ -970,7 +970,7 @@ describe("projectGameSessionView", () => {
 
     const view = projectGameSessionView(completeWorld, ss, 7, "test-ending-session");
     const travel = view.worldMap.locations.find((location) => location.name === "街道")?.travelChoice;
-    expect(travel).toMatchObject({ label: "前往街道", presentation: "travel" });
+    expect(travel).toMatchObject({ label: "街道", presentation: "travel" });
     expect(travel?.choiceToken).toMatch(/^c_[0-9a-f]{16}$/);
     expect(travel?.choiceToken).not.toContain("loc_2");
 
