@@ -276,11 +276,6 @@ function NpcDialogueModal({
             {dialogue.speechPages.map((page, index) => (
               <p key={`${dialogue.npcId}-${index}`} className="npc-dialogue-speech-text">{normalizeDisplayText(page)}</p>
             ))}
-            {playerResponse !== null && playerResponse !== undefined ? (
-              <p className="npc-dialogue-speech-text npc-dialogue-speech-text--player">
-                {normalizeDisplayText(playerResponse)}
-              </p>
-            ) : null}
           </div>
         </div>
 

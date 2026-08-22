@@ -1356,12 +1356,6 @@ body:has(.adventure-game-shell) {
   line-height: 1.7;
 }
 
-.npc-dialogue-speech-text--player {
-  padding-top: 8px;
-  border-top: 1px solid var(--game-surface-border);
-  color: var(--game-accent);
-}
-
 .npc-dialogue-phase-label {
   color: var(--game-accent);
   font-size: 0.72rem;

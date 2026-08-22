@@ -321,6 +321,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     const dialogue = screen.getByRole("dialog", { name: "与陈半仙对话" });
     expect(dialogue).toHaveTextContent(playerResponse);
+    expect(dialogue.querySelector(".npc-dialogue-speech-text--player")).toBeNull();
     const responseButton = within(dialogue).getByRole("button", { name: playerResponse });
     expect(responseButton).toBeInTheDocument();
     expect(within(dialogue).getAllByRole("button")).toHaveLength(2);
