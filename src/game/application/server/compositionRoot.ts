@@ -4,7 +4,7 @@ import {
   createServerLogRuntime,
   type RequestLogContext,
 } from "@/game/logging/serverConsoleLogger";
-import { asGameId, type GameId } from "./persistence/gameRepository";
+import { asGameId, type GameId, type GameRepository } from "./persistence/gameRepository";
 import { createServerSqliteClientFactory } from "./persistence/sqliteClient";
 import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
 import { createGame } from "../createGame";
@@ -236,6 +236,7 @@ async function recordGameApiExchange(
 export function createServerGameEntryPoints(
   env: Record<string, string | undefined> = process.env,
   externalAuditRecorder?: AiTextAuditRecorder,
+  externalRepository?: GameRepository & { close(): Promise<void> },
 ): ServerGameEntryPoints {
   const logRuntime = createServerLogRuntime(env);
   const { logger } = logRuntime;
@@ -244,7 +245,9 @@ export function createServerGameEntryPoints(
     onWriteFailure: () => logger.warn("ai_text_audit_write_failed", {}),
     onConfigIssue: (code) => logger.warn("ai_text_audit_config_issue", { code }),
   });
-  const repository = createSqliteGameRepository({
+  // 测试缝隙：外部调用方可注入内存/桩 repository，便于在组合层直接锁定
+  // "retry body → failed→pending CAS → 恰好一次 coordinator" 的组合断言。
+  const repository = externalRepository ?? createSqliteGameRepository({
     clientFactory: createServerSqliteClientFactory(env),
     logError: (operation) => logger.error("sqlite_repository_failure", { operation }),
   });
@@ -469,9 +472,11 @@ export function createServerGameEntryPoints(
     // body，也不依赖 handler 已消费的 body——通过 request.clone() 只读取布尔
     // retry，用于在 compact 事件 context.retry 区分普通轮询与手动失败重试。
     let auditRetryOrigin: AiRetryOrigin | undefined;
-    if (request !== undefined && route === "/api/game/narrative/ensure") {
+    if (route === "/api/game/narrative/ensure") {
       try {
-        const retryBody = await request.clone().text();
+        // 无 body / request 为 undefined 的普通轮询同样写 origin=normal，
+        // 而不是省略 context.retry；仅当解析出布尔 retry===true 才标记手动重试。
+        const retryBody = request === undefined ? "" : await request.clone().text();
         const parsedRetry = retryBody.length > 0 ? tryParseJson(retryBody) : undefined;
         auditRetryOrigin = parsedRetry !== undefined
           && typeof parsedRetry === "object"
@@ -480,7 +485,8 @@ export function createServerGameEntryPoints(
           ? "manual_failed_job"
           : "normal";
       } catch {
-        // best-effort: leave undefined
+        // best-effort：无法读取时收敛为普通轮询来源，不阻塞审计也不泄露 body。
+        auditRetryOrigin = "normal";
       }
     }
 

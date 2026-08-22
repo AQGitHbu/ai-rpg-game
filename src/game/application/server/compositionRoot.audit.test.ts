@@ -177,6 +177,26 @@ describe("compositionRoot audit recording", () => {
     await entryPoints.close();
   });
 
+  it("records origin=normal for a no-body / request-undefined ensure poll", async () => {
+    const audit = fakeRecorder("compact");
+    const entryPoints = createServerGameEntryPoints({ NODE_ENV: "test" }, audit);
+
+    // 无 body 的普通 ensure 轮询：request 为 undefined 时也应收敛为 origin=normal。
+    await entryPoints.executeHttpRequest(
+      "POST",
+      "/api/game/narrative/ensure",
+      async () => new Response(JSON.stringify({ ok: true, result: "queued" }), { status: 200 }),
+      "trace-poll-nobody",
+    );
+
+    const records = audit.records.filter((entry) => entry.kind === "game_api");
+    const poll = records.find((entry) => entry.context.traceId === "trace-poll-nobody") as Extract<AiTextAuditPayload, { kind: "game_api"; detail: "compact" }> | undefined;
+    expect(poll).toBeDefined();
+    expect(poll?.context.retry).toEqual({ origin: "normal", mechanism: "initial", attempt: 0 });
+
+    await entryPoints.close();
+  });
+
   it("captures polling bodies in full mode and omits game_api events in off mode", async () => {
     const fullAudit = fakeRecorder("full");
     const fullEntryPoints = createServerGameEntryPoints({ NODE_ENV: "test" }, fullAudit);
