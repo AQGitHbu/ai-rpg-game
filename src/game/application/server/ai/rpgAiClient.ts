@@ -8,7 +8,7 @@ import {
 import type { GameLogger } from "@/game/logging";
 import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
 import { createProviderRequestOptions, type ProviderJsonMode, type ProviderThinking } from "./providerRequestOptions";
-import type { AiTextAuditContext, AiTextAuditRecorder, AiTextAuditRequestOptions, AiTextAuditRole } from "./textAuditTypes";
+import type { AiRetryContext, AiTextAuditContext, AiTextAuditRecorder, AiTextAuditRequestOptions, AiTextAuditRole } from "./textAuditTypes";
 
 export const RPG_AI_ROLES = ["intent", "opening", "scene", "world"] as const;
 /** Reuses the AiTextAuditRole union from textAuditTypes.ts; textAuditTypes never imports rpgAiClient, eliminating a type-cycle. */
@@ -161,6 +161,10 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
         ? crypto.randomUUID()
         : `call-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const auditContextToUse = auditContext ?? defaultAuditContext(role);
+      const callerRetry = auditContextToUse.retry;
+      // transport retry 只在此层识别：attempt>1 时为 provider 重试，
+      // 保留来源（origin），机制覆盖为 transport，reason 为上一失败的稳定码。
+      let lastFailureCode: string | undefined;
 
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         const providerOptions = createProviderRequestOptions(
@@ -184,13 +188,23 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
             jsonMode: policy.jsonMode,
             thinking: policy.thinking,
           };
+          const isTransportRetry = attempt > 1;
+          const retry: AiRetryContext = {
+            origin: callerRetry?.origin ?? "normal",
+            mechanism: isTransportRetry ? "transport" : (callerRetry?.mechanism ?? "initial"),
+            attempt: isTransportRetry ? attempt : (callerRetry?.attempt ?? 0),
+            ...(isTransportRetry
+              ? (lastFailureCode === undefined ? {} : { reason: lastFailureCode })
+              : (callerRetry?.reason === undefined ? {} : { reason: callerRetry.reason })),
+          };
+          const recordContext = { ...auditContextToUse, retry };
           try {
             await audit.record({
               kind: "ai_call",
               callId,
               role,
               attempt,
-              context: auditContextToUse,
+              context: recordContext,
               input: { messages, options: auditOptions },
               output: result,
             });
@@ -238,6 +252,7 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
           attempt,
           code: result.code,
         });
+        lastFailureCode = result.code;
       }
 
       // maxAttempts is normalized above, so this branch is unreachable.

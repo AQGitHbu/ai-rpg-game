@@ -1,7 +1,21 @@
 // @vitest-environment node
 
-import { describe, expect, it } from "vitest";
-import { getServerGameEntryPoints, shouldCompleteSceneInAction } from "./compositionRoot";
+import { describe, expect, it, vi } from "vitest";
+
+// 钉死 generatePendingScene（coordinator 的执行体）：在不依赖真实 AI/source 与
+// 复杂合法 state 的前提下，直接观测 coordinator 是否被调用、以什么 origin 调用。
+const { mockedGeneratePendingScene } = vi.hoisted(() => ({
+  mockedGeneratePendingScene: vi.fn().mockResolvedValue("saved"),
+}));
+
+vi.mock("../generatePendingScene", () => ({
+  generatePendingScene: mockedGeneratePendingScene,
+}));
+
+import { createServerGameEntryPoints, getServerGameEntryPoints, shouldCompleteSceneInAction } from "./compositionRoot";
+import { asGameId, type ApplyStateInput, type GameRecord, type GameRepository } from "./persistence/gameRepository";
+import type { WorldState } from "@/game/domain/worldState";
+import type { StoryState } from "@/game/domain/storyState";
 import { asFactId } from "@/game/domain/worldEntity";
 import type { Action } from "@/game/domain/action";
 
@@ -37,5 +51,104 @@ describe("shouldCompleteSceneInAction", () => {
   it("investigate 携带服务端下发的 approachId 时同样在 action 请求内完成场景写回", () => {
     const approachInvestigate: Action = { type: "investigate", factId: asFactId("fact_trace"), approachId: "follow" };
     expect(shouldCompleteSceneInAction(approachInvestigate)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 发现#1（brief Step1）：retry body → failed→pending CAS → 恰好一次 coordinator 调用
+// ---------------------------------------------------------------------------
+
+/**
+ * 内存桩 repository：首个 pending job 处于 failed，applyState 带
+ * expectedNarrativeGeneration={status:"failed"} 时模拟 CAS 成功并恢复到 pending。
+ * 其余端口为 no-op，让 coordinator 只触发被测路径。
+ */
+function createFailedStateFakeRepository(): {
+  repo: GameRepository & { close(): Promise<void> };
+  appliedStateCalls: ApplyStateInput[];
+  repoStatus: () => "failed" | "pending";
+} {
+  const jobId = "job-retry-combined";
+  let generationStatus: "failed" | "pending" = "failed";
+  const appliedStateCalls: ApplyStateInput[] = [];
+
+  const buildRecord = (): GameRecord => {
+    const generation =
+      generationStatus === "failed"
+        ? {
+            status: "failed" as const,
+            job: { jobId },
+            failure: { kind: "AI_CALL_FAILED" as const, phase: "scene" as const, failedAt: "2026-01-01T00:00:00.000Z" },
+          }
+        : { status: "pending" as const, job: { jobId } };
+    return {
+      gameId: asGameId("game-retry-combined"),
+      worldState: {
+        eventLedger: [],
+        currentLocationId: "loc_retry",
+        battle: { status: "idle" },
+      } as unknown as WorldState,
+      storyState: {
+        recentBeats: [],
+        npcContacts: [],
+        reducedThroughEventCount: 0,
+        narrative: { generation, currentScene: null, choiceRegistry: {}, candidateEventPool: [] },
+        evolution: { status: "idle" },
+      } as unknown as StoryState,
+      revision: 5,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    } as unknown as GameRecord;
+  };
+
+  const repo = {
+    getCurrentGame: vi.fn(async () => ({ ok: true as const, status: "active" as const, record: buildRecord() })),
+    applyState: vi.fn(async (input: ApplyStateInput) => {
+      appliedStateCalls.push(input);
+      // CAS 命中：把同一 failed job 恢复到 pending（expectedNarrativeGeneration 判定）。
+      if (input.expectedNarrativeGeneration?.status === "failed") {
+        generationStatus = "pending";
+      }
+      return { ok: true as const, record: buildRecord() };
+    }),
+    createInitialGame: vi.fn(async () => ({ ok: true as const })),
+    replaceCurrentGame: vi.fn(async () => ({ ok: true as const })),
+    applySceneWriteBack: vi.fn(async () => ({ ok: true as const, record: buildRecord() })),
+    clearCurrentGame: vi.fn(async () => ({ ok: true as const })),
+    close: vi.fn(async () => {}),
+  };
+
+  return { repo, appliedStateCalls, repoStatus: () => generationStatus } as unknown as {
+    repo: GameRepository & { close(): Promise<void> };
+    appliedStateCalls: ApplyStateInput[];
+    repoStatus: () => "failed" | "pending";
+  };
+}
+
+describe("ensureNarrativeScene retry 组合断言（发现#1）", () => {
+  it("从 failed 状态以 {retry:true} 调用，恰好触发一次 coordinator 且 origin=manual_failed_job，CAS failed→pending 被触发", async () => {
+    const { repo, appliedStateCalls, repoStatus } = createFailedStateFakeRepository();
+    const entryPoints = createServerGameEntryPoints({ NODE_ENV: "test" }, undefined, repo);
+
+    const result = await entryPoints.ensureNarrativeScene({ retry: true });
+    expect(result).toEqual({ ok: true, result: "queued" });
+
+    // failed→pending 的 CAS 路径被触发：applyState 恰好一次、以 failed 期望、不递增 revision。
+    expect(appliedStateCalls).toHaveLength(1);
+    expect(appliedStateCalls[0].expectedNarrativeGeneration).toEqual({
+      status: "failed",
+      jobId: "job-retry-combined",
+    });
+    expect(appliedStateCalls[0].incrementRevision).toBe(false);
+    // CAS 提交后存档恢复到 pending，coordinator 才能识别到待生成 job。
+    expect(repoStatus()).toBe("pending");
+
+    // coordinator 恰被调用一次，且 origin=manual_failed_job（mechanism=initial, attempt=0）。
+    expect(mockedGeneratePendingScene).toHaveBeenCalledTimes(1);
+    const runDeps = mockedGeneratePendingScene.mock.calls[0][0] as {
+      auditLink?: { retry?: { origin?: string; mechanism?: string; attempt?: number } };
+    };
+    expect(runDeps?.auditLink?.retry).toEqual({ origin: "manual_failed_job", mechanism: "initial", attempt: 0 });
+
+    await entryPoints.close();
   });
 });

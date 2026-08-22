@@ -49,6 +49,27 @@ const SECRET_FIELD_PATTERNS = ["apiKey", "authorization", "baseUrl", "cookie", "
 // Required context fields for each event kind.
 const REQUIRED_CONTEXT_FIELDS = ["purpose", "trigger"];
 
+/**
+ * Read-only normalization of retry metadata for display only. Never rewrites
+ * JSONL. Prefers the new `context.retry`; historical events carrying only the
+ * deprecated `repair` field are derived to a legacy marker that is NOT a valid
+ * AiRetryOrigin (callers must not assert its origin was normal/manual).
+ */
+function normalizeRetryContext(entry) {
+  const context = entry?.context;
+  if (!context || typeof context !== "object") return undefined;
+  if (context.retry && typeof context.retry === "object") return context.retry;
+  if (context.repair && typeof context.repair === "object") {
+    return {
+      origin: "legacy_unknown",
+      mechanism: "content_repair",
+      ...(typeof context.repair.attempt === "number" ? { attempt: context.repair.attempt } : {}),
+      ...(typeof context.repair.reason === "string" ? { reason: context.repair.reason } : {}),
+    };
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -148,7 +169,9 @@ async function cmdQuery(rootDir, args) {
   }
 
   for (const entry of filtered) {
-    console.log(JSON.stringify(entry));
+    // Read-only derived `retry` display (retry ?? repair). JSONL is never touched.
+    const retry = normalizeRetryContext(entry);
+    console.log(JSON.stringify(retry === undefined ? entry : { ...entry, retry }));
   }
 
   return errors.length > 0 ? 2 : 0;

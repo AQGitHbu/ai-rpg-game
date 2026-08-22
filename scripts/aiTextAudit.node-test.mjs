@@ -124,6 +124,37 @@ async function buildSecretRun(rootDir, runId = "secret-run") {
 }
 
 /**
+ * Build a legacy run whose ai_call events carry only the old `repair`
+ * field (no `retry`). Used to prove CLI read-only normalization keeps
+ * historical logs valid.
+ */
+async function buildLegacyRepairRun(rootDir, runId = "legacy-repair-run") {
+  const runDir = join(rootDir, runId);
+  await mkdir(runDir, { recursive: true });
+  const events = [
+    {
+      sequence: 1,
+      timestamp: "2026-08-20T00:00:00.000Z",
+      kind: "ai_call",
+      callId: "c1",
+      role: "scene",
+      attempt: 1,
+      context: {
+        purpose: "scene_performance",
+        trigger: "talk_choice",
+        gameId: "game-1",
+        repair: { attempt: 1, reason: "invalid_json" },
+      },
+      input: { messages: [] },
+      output: { ok: true, content: "a", latencyMs: 1 },
+    },
+  ];
+  const lines = events.map((e) => JSON.stringify(e)).join("\n") + "\n";
+  await writeFile(join(runDir, "events.jsonl"), lines, "utf8");
+  return runDir;
+}
+
+/**
  * Build a run with malformed JSON.
  */
 async function buildBadJsonRun(rootDir, runId = "badjson-run") {
@@ -254,6 +285,24 @@ describe("aiTextAudit CLI", () => {
       assert.notEqual(result.status, 0, "expected non-zero exit for unsafe runId");
       assert.match(result.stderr || result.stdout, /invalid.*run/i);
     });
+
+    it("shows legacy repair as derived legend-unknown retry without rewriting JSONL", async () => {
+      await buildLegacyRepairRun(tempRoot, "query-legacy");
+      const result = runCli(["query", "--run", "query-legacy"], { AI_TEXT_AUDIT_DIR: tempRoot });
+      assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+      const lines = result.stdout.trim().split("\n").filter((l) => l.startsWith("{"));
+      assert.equal(lines.length, 1);
+      const entry = JSON.parse(lines[0]);
+      // Original raw event is untouched: only context.repair is present.
+      assert.equal(entry.context.repair.attempt, 1);
+      assert.equal(entry.context.repair.reason, "invalid_json");
+      // Derived top-level retry field normalizes legacy repair for display.
+      assert.equal(entry.retry.origin, "legacy_unknown");
+      assert.equal(entry.retry.mechanism, "content_repair");
+      assert.equal(entry.retry.attempt, 1);
+      assert.equal(entry.retry.reason, "invalid_json");
+      assert.equal(entry.context.retry, undefined);
+    });
   });
 
   describe("verify", () => {
@@ -292,6 +341,12 @@ describe("aiTextAudit CLI", () => {
         "utf8");
       const result = runCli(["verify", "--run", "verify-missing"], { AI_TEXT_AUDIT_DIR: tempRoot });
       assert.notEqual(result.status, 0, "expected non-zero exit for missing context");
+    });
+
+    it("accepts legacy repair-only events (no retry) as valid", async () => {
+      await buildLegacyRepairRun(tempRoot, "verify-legacy-repair");
+      const result = runCli(["verify", "--run", "verify-legacy-repair"], { AI_TEXT_AUDIT_DIR: tempRoot });
+      assert.equal(result.status, 0, `expected exit 0 for legacy repair\nstderr: ${result.stderr}\nstdout: ${result.stdout}`);
     });
   });
 

@@ -132,6 +132,71 @@ describe("compositionRoot audit recording", () => {
     await entryPoints.close();
   });
 
+  it("records manual/poll retry origin for the ensure route in compact audit context", async () => {
+    const audit = fakeRecorder("compact");
+    const entryPoints = createServerGameEntryPoints({ NODE_ENV: "test" }, audit);
+
+    // 普通轮询：不传 retry，context.retry.origin=normal
+    await entryPoints.executeHttpRequest(
+      "POST",
+      "/api/game/narrative/ensure",
+      async () => new Response(JSON.stringify({ ok: true, result: "queued" }), { status: 200 }),
+      "trace-poll",
+      new Request("http://localhost/api/game/narrative/ensure", {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+    );
+    // 手动失败 job 重试：body 携带 { retry: true }
+    await entryPoints.executeHttpRequest(
+      "POST",
+      "/api/game/narrative/ensure",
+      async () => new Response(JSON.stringify({ ok: true, result: "queued" }), { status: 200 }),
+      "trace-retry",
+      new Request("http://localhost/api/game/narrative/ensure", {
+        method: "POST",
+        body: JSON.stringify({ retry: true }),
+      }),
+    );
+
+    const records = audit.records.filter((entry) => entry.kind === "game_api");
+    const poll = records.find((entry) => entry.context.traceId === "trace-poll") as Extract<AiTextAuditPayload, { kind: "game_api"; detail: "compact" }> | undefined;
+    const retry = records.find((entry) => entry.context.traceId === "trace-retry") as Extract<AiTextAuditPayload, { kind: "game_api"; detail: "compact" }> | undefined;
+
+    expect(poll).toBeDefined();
+    expect(poll?.detail).toBe("compact");
+    expect(poll?.context.retry).toEqual({ origin: "normal", mechanism: "initial", attempt: 0 });
+    // compact 模式不保存原始 body
+    expect(poll && "rawBody" in poll.request).toBe(false);
+
+    expect(retry).toBeDefined();
+    expect(retry?.detail).toBe("compact");
+    expect(retry?.context.retry).toEqual({ origin: "manual_failed_job", mechanism: "initial", attempt: 0 });
+    expect(retry && "rawBody" in retry.request).toBe(false);
+
+    await entryPoints.close();
+  });
+
+  it("records origin=normal for a no-body / request-undefined ensure poll", async () => {
+    const audit = fakeRecorder("compact");
+    const entryPoints = createServerGameEntryPoints({ NODE_ENV: "test" }, audit);
+
+    // 无 body 的普通 ensure 轮询：request 为 undefined 时也应收敛为 origin=normal。
+    await entryPoints.executeHttpRequest(
+      "POST",
+      "/api/game/narrative/ensure",
+      async () => new Response(JSON.stringify({ ok: true, result: "queued" }), { status: 200 }),
+      "trace-poll-nobody",
+    );
+
+    const records = audit.records.filter((entry) => entry.kind === "game_api");
+    const poll = records.find((entry) => entry.context.traceId === "trace-poll-nobody") as Extract<AiTextAuditPayload, { kind: "game_api"; detail: "compact" }> | undefined;
+    expect(poll).toBeDefined();
+    expect(poll?.context.retry).toEqual({ origin: "normal", mechanism: "initial", attempt: 0 });
+
+    await entryPoints.close();
+  });
+
   it("captures polling bodies in full mode and omits game_api events in off mode", async () => {
     const fullAudit = fakeRecorder("full");
     const fullEntryPoints = createServerGameEntryPoints({ NODE_ENV: "test" }, fullAudit);

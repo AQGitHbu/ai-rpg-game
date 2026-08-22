@@ -40,6 +40,12 @@ export type GeneratePendingSceneResult =
   | "unavailable"
   | "legacy_pending";
 
+/**
+ * 单线叙事来源标记，仅用于 server logger 的结构化字段，不持久化到
+ * StoryState / GameSessionView 或审计正文。
+ */
+export type NarrativeGenerationPath = "pre_generated_queue" | "live_scene";
+
 function buildAuditedSceneGenerationContext(
   record: GameRecord,
   auditLink: AiTextAuditLink | undefined,
@@ -128,19 +134,37 @@ export async function generatePendingScene(
   let scenarioWs = record.worldState;
   let scenarioSs = record.storyState;
   const summary = generation.job.actionSummary;
-  // 单线调查与移动/拾取同为规则已完全确定的即时反馈；但幕推进/结局对
-  // 挂起时必须保留完整演化编排，不能被 fast path 短路。
+  // 幕推进/结局对挂起时必须保留完整演化编排，不能被 fast path 短路。
+  const evolutionBlocksImmediatePath = record.storyState.evolution.status === "needs_next_act"
+    || record.storyState.evolution.status === "needs_ending_pair";
+  // 单线调查与移动/拾取同为规则已完全确定的即时反馈（保留既有规则写回语义）。
   const immediateAction = (summary.kind === "move"
     || summary.kind === "take_item"
     || summary.kind === "investigate")
-    && record.storyState.evolution.status !== "needs_next_act"
-    && record.storyState.evolution.status !== "needs_ending_pair";
-  // 移动落点和拾取结果都已由规则回合完全确定，但 AI mode 仍须由 live
-  // scene source 提供表现；只有命中已审批队列或显式 offline fixture 才不发起
-  // live 调用。AI 失败必须进入 failed，不改写为确定性成功。
-  const derivedNeed = immediateAction
+    && !evolutionBlocksImmediatePath;
+  // take_item 是规则已确定的即时动作但不参与队列匹配（无预生成叙事）。
+  // 只有 move/investigate 且演化未挂起时，才可能命中已审批预生成队列。
+  const isQueueEligible = !evolutionBlocksImmediatePath
+    && (summary.kind === "move" || summary.kind === "investigate");
+  // 在任何 derivedNeed 计算/初始世界演化/scene_candidate_shortage 补救之前，
+  // 直接从当前权威 record 查找预生成叙事；命中即跳过全部演化编排，绝不再
+  // 为了补足候选调用 world/scene AI。后续消费统一沿用本次查找的 queuedEntry。
+  const queuedEntry = isQueueEligible
+    ? findMatchingQueueEntry(record.storyState.narrative.linearNarrativeQueue, summary)
+    : undefined;
+  const hasPreGeneratedNarrative = queuedEntry !== undefined;
+  const generationPath: NarrativeGenerationPath = hasPreGeneratedNarrative
+    ? "pre_generated_queue"
+    : "live_scene";
+  // 移动落点和拾取结果都已由规则回合完全确定，但 AI mode 仍须由 live scene
+  // source 提供表现；只有命中已审批队列或显式 offline fixture 才不发起 live
+  // 调用。队列命中的正文已由 live AI 预生成并通过审批，世界无需再次演化。
+  // AI 失败必须进入 failed，不改写为确定性成功。
+  const derivedNeed = hasPreGeneratedNarrative
     ? { kind: "none" as const }
-    : deriveEvolutionNeed(record.worldState, record.storyState);
+    : immediateAction
+      ? { kind: "none" as const }
+      : deriveEvolutionNeed(record.worldState, record.storyState);
   // 结局对已具象化后，规则层在最终选择回合仍可能保留
   // needs_ending_pair 标记；不能再次向 source 请求同一对结局并把合法收尾判成重复。
   const need = derivedNeed.kind === "ending_pair" && record.worldState.endings.length >= 2
@@ -178,57 +202,62 @@ export async function generatePendingScene(
 
   let context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink);
 
-  // ready scene 必须有两个语义不同的合法选择。若当前世界只有一个候选，
-  // 不让生成任务永久 pending，也不在客户端伪造按钮；生产链将候选不足视为
-  // AI/审批失败，显式 offline fixture 才能注入演化 source 补足测试旅程。
-  if (buildSelectableSceneCandidates(context).length < 2) {
-    const recovery = await evolveWorld({
-      need: { kind: "pacing", pacingNeed: "complicate" },
-      worldState: scenarioWs,
-      storyState: scenarioSs,
-      source: deps.worldEvolutionSource,
-      reason: "scene_candidate_shortage",
-      auditLink: { ...deps.auditLink, gameId: String(record.gameId), jobId: String(generation.job.jobId), turnNumber: generation.job.turnNumber },
-      now: deps.now,
-    });
-    if (recovery.ok) {
-      for (const category of recovery.approved.logCategories ?? []) {
-        deps.logger?.warn(category, {});
-      }
-      scenarioWs = recovery.delta.previewWorldState;
-      scenarioSs = recovery.delta.previewStoryState;
-      scenarioRecord = {
-        ...record,
+  // 队列命中不许进入世界演化补救：候选不足属于坏存档，必须无 AI 地稳定失败，
+  // 且这种存档不一致异常不应落入下方通用 provider 异常分支被误报成 AI_CALL_FAILED。
+  if (hasPreGeneratedNarrative) {
+    if (buildSelectableSceneCandidates(context).length < 2) {
+      deps.logger?.warn("world_state_inconsistent", {});
+      return fail(sceneFailure("AI_RESPONSE_INVALID"));
+    }
+    deps.logger?.info("narrative_queue_hit", { generationPath });
+  } else {
+    // ready scene 必须有两个语义不同的合法选择。若当前世界只有一个候选，
+    // 不让生成任务永久 pending，也不在客户端伪造按钮；生产链将候选不足视为
+    // AI/审批失败，显式 offline fixture 才能注入演化 source 补足测试旅程。
+    if (buildSelectableSceneCandidates(context).length < 2) {
+      const recovery = await evolveWorld({
+        need: { kind: "pacing", pacingNeed: "complicate" },
         worldState: scenarioWs,
         storyState: scenarioSs,
-      };
-      context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink);
-    } else if (recovery.failure !== undefined) {
-      return fail({ ...recovery.failure, phase: "scene", failedAt: deps.now() });
-    } else {
-      return fail(sceneFailure("AI_RESPONSE_INVALID"));
+        source: deps.worldEvolutionSource,
+        reason: "scene_candidate_shortage",
+        auditLink: { ...deps.auditLink, gameId: String(record.gameId), jobId: String(generation.job.jobId), turnNumber: generation.job.turnNumber },
+        now: deps.now,
+      });
+      if (recovery.ok) {
+        for (const category of recovery.approved.logCategories ?? []) {
+          deps.logger?.warn(category, {});
+        }
+        scenarioWs = recovery.delta.previewWorldState;
+        scenarioSs = recovery.delta.previewStoryState;
+        scenarioRecord = {
+          ...record,
+          worldState: scenarioWs,
+          storyState: scenarioSs,
+        };
+        context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink);
+      } else if (recovery.failure !== undefined) {
+        return fail({ ...recovery.failure, phase: "scene", failedAt: deps.now() });
+      } else {
+        return fail(sceneFailure("AI_RESPONSE_INVALID"));
+      }
+    }
+    if (buildSelectableSceneCandidates(context).length < 2) return fail(sceneFailure("AI_RESPONSE_INVALID"));
+    // 仅 move/investigate 的未命中记录 miss；take_item 等其余即时路径不参与队列。
+    if (isQueueEligible) {
+      deps.logger?.info("narrative_queue_miss", { generationPath });
     }
   }
 
-  if (buildSelectableSceneCandidates(context).length < 2) return fail(sceneFailure("AI_RESPONSE_INVALID"));
-
-  // Task 3：单线调查/移动优先消费上一次场景写回时 AI 预生成的权威叙事
-  // （actionKind + 实体 ID 精确匹配）；未命中才调用当前注入的 scene source。
-  // 必须在候选补足等可能重建 scenarioSs 的步骤之后查找，避免使用旧状态的
-  // 对象引用；写回时也按稳定键移除，而不是按对象 identity 移除。
-  const consumeEntry = immediateAction
-    ? findMatchingQueueEntry(scenarioSs.narrative.linearNarrativeQueue, summary)
-    : undefined;
-
   let proposal: ScenePerformanceProposal;
   try {
-    if (consumeEntry !== undefined) {
+    if (queuedEntry !== undefined) {
       // 命中的预生成叙事已在写入时通过审批：以其正文作为场景唯一正文来源，
       // 场景其余结构（节拍覆盖/选项/目标链接/事件）仍走同一审批链。
       // Task 5：已结算的 investigate 结果把队列叙事作为 baseNarrative，
       // 叠加所选方式/证据质量/下一目标（与确定性节拍同一包装函数）；
       // 不得在场景写回阶段再次修改事件账本或 tension。
-      proposal = buildQueuedGeneratedSceneProposal(context, consumeEntry.narration);
+      proposal = buildQueuedGeneratedSceneProposal(context, queuedEntry.narration);
       const investigationBeatId = context.mandatoryBeats.find((beat) => beat.kind === "fact_discovered")?.beatId;
       proposal = {
         ...proposal,
@@ -244,12 +273,12 @@ export async function generatePendingScene(
                 approachLabel: resolved.approachLabel,
                 evidenceQuality: resolved.evidenceQuality,
                 factText: fact?.text ?? "",
-                baseNarrative: consumeEntry.narration,
+                baseNarrative: queuedEntry.narration,
                 ...(context.objectiveTarget === null ? {} : { nextObjectiveLabel: context.objectiveTarget.entityName }),
               }),
             };
           }
-          return { ...segment, text: consumeEntry.narration };
+          return { ...segment, text: queuedEntry.narration };
         }),
         source: "generated",
       };
@@ -259,6 +288,12 @@ export async function generatePendingScene(
       proposal = sceneResult.proposal;
     }
   } catch {
+    // 队列命中分支只做纯本地合成：候选已在 try 外校验，唯一可能抛出的存档问题
+    // 属于状态不一致而非 provider 失败，绝不能误报成 AI_CALL_FAILED。
+    if (hasPreGeneratedNarrative) {
+      deps.logger?.warn("world_state_inconsistent", {});
+      return fail(sceneFailure("AI_RESPONSE_INVALID"));
+    }
     return fail(sceneFailure("AI_CALL_FAILED"));
   }
 
@@ -379,7 +414,7 @@ export async function generatePendingScene(
         // 避免一次确定性兜底把后续 move/investigate 预生成叙事全部清空。
         // 非 immediate 路径仍以本次场景审批结果覆盖队列。
         linearNarrativeQueue: immediateAction
-          ? (consumeEntry === undefined
+          ? (queuedEntry === undefined
             ? (scenarioSs.narrative.linearNarrativeQueue ?? [])
             : removeMatchingQueueEntry(scenarioSs.narrative.linearNarrativeQueue, summary))
           : approved.linearNarrativeQueue,

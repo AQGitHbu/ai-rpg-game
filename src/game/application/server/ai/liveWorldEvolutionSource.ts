@@ -1,6 +1,6 @@
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { GameLogger } from "@/game/logging";
-import type { WorldEvolutionSource, WorldEvolutionSourceContext, WorldEvolutionSourceResult } from "../../worldEvolutionSource";
+import type { WorldEvolutionContentRepair, WorldEvolutionRepairReason, WorldEvolutionSource, WorldEvolutionSourceContext, WorldEvolutionSourceResult } from "../../worldEvolutionSource";
 import type { WorldDeltaProposal, DynamicLocationPlacement } from "@/game/domain/worldDelta";
 import type { WorldState, InvestigationApproach } from "@/game/domain/worldState";
 import type { GameTypeId } from "@/game/domain/newGame";
@@ -322,11 +322,29 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
       policies: { world: { jsonMode: jsonMode ?? "prompt_only" } },
     })
     : undefined);
-  const failWorld = (category: Parameters<typeof classifyAiFailure>[0]["category"]): WorldEvolutionSourceResult => {
+  const failWorld = (
+    category: Parameters<typeof classifyAiFailure>[0]["category"],
+    repairReason?: WorldEvolutionRepairReason,
+  ): WorldEvolutionSourceResult => {
     const failure: AiGenerationFailure = classifyAiFailure({ phase: "world", category });
     logger?.warn("world_evolution_failed", { category, kind: failure.kind });
-    return { ok: false, failure };
+    return repairReason === undefined
+      ? { ok: false, failure }
+      : { ok: false, failure, repairReason };
   };
+
+  /**
+   * 审计 reason：审批拒绝用 `approval_rejected:<code>` 保留稳定 code，
+   * 其余直接使用解析器稳定原因。该字符串只进审计/诊断字段，不进玩家可见正文。
+   */
+  function repairAuditReason(repair: WorldEvolutionContentRepair): string {
+    if (repair.reason === "approval_rejected") {
+      return repair.approvalCode === undefined
+        ? "approval_rejected"
+        : `approval_rejected:${repair.approvalCode}`;
+    }
+    return repair.reason;
+  }
 
   return {
     async propose(ctx) {
@@ -340,10 +358,21 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
         ];
         // 瞬态网络失败由统一 client 按角色策略重试；empty_response 或非法
         // JSON 不再重复相同请求，避免 provider reasoning 失败时重复计费。
+        // content repair（由 application 层控制预算）通过 retry.origin/mechanism
+        // 标记为 content_repair，传输层 only 保留 origin/mechanism/attempt/reason。
+        const repairRetry = ctx.contentRepair === undefined
+          ? undefined
+          : {
+              origin: ctx.auditLink?.retry?.origin ?? "normal",
+              mechanism: "content_repair" as const,
+              attempt: ctx.contentRepair.attempt,
+              reason: repairAuditReason(ctx.contentRepair),
+            };
         const result = await aiClient.complete("world", messages, {
           purpose: "world_evolution",
           trigger: ctx.reason,
           ...(ctx.auditLink ?? {}),
+          ...(repairRetry === undefined ? {} : { retry: repairRetry }),
           action: {
             need: ctx.need,
             ...(ctx.action === undefined ? {} : { action: ctx.action }),
@@ -354,6 +383,10 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
           return failWorld(transportFailureCodeToCategory(result.code));
         }
           const parsed = parseJsonResponse(result.content);
+          if (parsed === null) {
+            logger?.warn("world_evolution_invalid_json");
+            return failWorld("invalid_json", "invalid_json");
+          }
           const rawProposal = typeof parsed === "object" && parsed !== null && "proposal" in parsed
             ? (parsed as Record<string, unknown>).proposal
             : parsed;
@@ -365,12 +398,12 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
             }
             const filtered = filterProposalRefs(parsedResult.proposal, ctx.worldState);
             if (filtered === null) {
-              return failWorld("invalid_reference");
+              return failWorld("invalid_reference", "invalid_reference");
             }
             return { ok: true, proposal: filtered };
           }
           logger?.warn("world_evolution_invalid_data");
-          return failWorld("invalid_schema");
+          return failWorld("invalid_schema", "invalid_schema");
       } catch (error) {
         logger?.warn("world_evolution_transport_failed", { message: (error as Error)?.message });
         return failWorld("unknown");
@@ -392,10 +425,36 @@ function kindText(need: WorldEvolutionSourceContext["need"]): string {
   }
 }
 
+function repairText(repair: WorldEvolutionContentRepair): string {
+  switch (repair.reason) {
+    case "invalid_json": return "非法 JSON";
+    case "invalid_schema": return "非法 schema";
+    case "invalid_reference": return "引用了不存在的实体";
+    case "approval_rejected": {
+      return repair.approvalCode === undefined
+        ? "审批拒绝"
+        : `审批拒绝（${repair.approvalCode}）`;
+    }
+  }
+}
+
+function repairInstruction(repair: WorldEvolutionContentRepair | undefined): string {
+  if (repair === undefined) return "";
+  const reasonCode = repair.reason === "approval_rejected" && repair.approvalCode !== undefined
+    ? `approval_rejected:${repair.approvalCode}`
+    : repair.reason;
+  return `\n上一轮的响应需要一次内容修复（content repair）：原因=${repairText(repair)}（${reasonCode}）。只修复该问题并重发完整提案；保留当前世界事实边界，严禁通过省略字段绕过 placement、locationRef、已有地点名、任务目标可达性等契约。`;
+}
+
 function buildWorldEvolutionPrompt(ctx: WorldEvolutionSourceContext): string {
   const { worldState, storyState } = ctx;
   const currentLoc = worldState.locations.find((l) => l.id === worldState.currentLocationId);
   const existingLocationIds = worldState.locations.map((location) => String(location.id)).join("、") || "无";
+  // 只提供已批准地点的安全名称/ID 摘要，帮助 AI 避开重名与未知引用；不序列化
+  // 完整存档或私密事实（世界事实、NPC 机密等绝不进入 prompt）。
+  const existingLocationSummary = worldState.locations
+    .map((location) => `${String(location.id)}(${location.name})`)
+    .join("、") || "无";
   const setup = worldState.generation.setup;
   const genreGuard = worldState.generation.gameType === "wuxia"
     ? "这是武侠世界：只能使用江湖、门派、镖局、官府、山川、兵器、线索和武学语汇；禁止魔法、巫师、精灵、骑士、幽灵/灵魂、祭坛、法阵、圣光、异界等奇幻或超自然实体。"
@@ -418,11 +477,14 @@ function buildWorldEvolutionPrompt(ctx: WorldEvolutionSourceContext): string {
   const locationRule = currentLoc?.scale === "town"
     ? "当前地点是城镇容器：茶馆、酒楼、客栈、铺面、宅院、后巷等城镇内部空间必须使用 placement=town_building；它们不会成为世界地图节点，且 newNpc.locationRef 必须使用 new_location，由系统把人物绑定到当前城镇建筑。只有城镇外、需要独立旅行的地点才使用 placement=world。"
     : "当前地点不是城镇容器；新地点通常使用 placement=world。";
+  const reachabilityRule = "如果 newLocation.placement=world 且 newNpc 同时存在，newNpc.locationRef 必须为 {\"kind\":\"new_location\"}，除非本次任务明确不把该 NPC 作为新地点目标。新地点名称不得与现有地点名称重复；新任务的目标顺序必须在玩家可达的地点/实体上成立。";
   return `只输出 JSON，不能解释。你为 RPG 生成一次小型世界演化。${genreGuard}
-需求=${kindText(ctx.need)}；原因=${ctx.reason}；地点=${currentLoc?.name ?? "未知"}；地点层级=${currentLoc?.scale ?? "未知"}；现有地点ID=${existingLocationIds}；幕=${storyState.currentAct}/${storyState.targetActs}。
+需求=${kindText(ctx.need)}；原因=${ctx.reason}；地点=${currentLoc?.name ?? "未知"}；地点层级=${currentLoc?.scale ?? "未知"}；幕=${storyState.currentAct}/${storyState.targetActs}。
+现有地点摘要=${existingLocationSummary}（ID:名称）；全部现有地点ID=${existingLocationIds}。
 ${locationRule}
+${reachabilityRule}
 世界背景=${setup?.worldPremise ?? worldState.generation.gameType}；故事开端=${setup?.storyOpening ?? "沿用当前主线冲突"}。
 外层必须是 {"proposal":{...}}。proposal 必有 beatSummary；未使用字段直接省略，不要写 null。
 ${outputSchema}
-${needContract} 名称2-40字、描述200字内。不要创造与题材不符的角色、地点、物品或结局意象。`;
+${needContract} 名称2-40字、描述200字内。不要创造与题材不符的角色、地点、物品或结局意象。${repairInstruction(ctx.contentRepair)}`;
 }
