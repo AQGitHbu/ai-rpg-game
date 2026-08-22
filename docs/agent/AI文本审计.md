@@ -37,7 +37,7 @@ AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录�
 
 ### game_api
 
-记录六个 canonical API route 的请求/响应摘要或完整交换。`/api/game/current` 与 `/api/game/narrative/ensure` 属于前端轮询路由，在默认 `compact` 模式下不保存 body；创建、玩家行动、序幕确认和开发清档等业务/调试路由在 `compact` 模式仍保存完整 body。
+记录六个 canonical API route 的请求/响应摘要或完整交换。`/api/game/current` 与 `/api/game/narrative/ensure` 属于前端轮询路由，在默认 `compact` 模式下不保存 body；创建、玩家行动、序幕确认和开发清档等业务/调试路由在 `compact` 模式仍保存完整 body。普通 ensure 轮询 body `{}` 的事件 `context.retry={origin:"normal",mechanism:"initial",attempt:0}`；仅 `{ "retry": true }` 手动重试同一 failed job 后在事件中标记 `origin="manual_failed_job"`（`compact` 不保存原始 body，只按布尔 `retry` 投影这个结构化标记）。
 
 | 字段 | 说明 |
 | --- | --- |
@@ -78,7 +78,23 @@ AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录�
 | `turnNumber` | 回合编号 |
 | `revision` | 存档 revision |
 | `action` | 结构化行动摘要 |
-| `repair` | 内容修复重试编号与拒绝原因 |
+| `retry` | 结构化重试元数据 `{origin, mechanism, attempt, reason}`（见下“context.retry”） |
+| `repair` | **deprecated** 只读兼容：历史事件可能仅含此字段，新事件不再写入 |
+
+### context.retry（重试元数据，2026-08-22）
+
+`context.retry` 独立于顶层 `ai_call.attempt`，唯一区分四类调用来源与机制：
+
+| 字段 | 说明 |
+| --- | --- |
+| `origin` | `normal`（普通产生/轮询）或 `manual_failed_job`（`{ "retry": true }` 手动恢复同一 failed job 后） |
+| `mechanism` | `initial`（首次调用）/ `transport`（provider 传输超时/限流/5xx 重试）/ `content_repair`（结构化解析/审批失败的一次内容修复） |
+| `attempt` | 该机制下的逻辑重试序号（`initial=0`、`content_repair=1`、`transport` 为 provider attempt 值） |
+| `reason` | 稳定原因码（如 `invalid_json`、`approval_rejected:<WorldDeltaRejection>`、`network_error`） |
+
+**`ai_call.attempt` 与内容修复 attempt 的区别**：顶层 `ai_call.attempt` 是每次真实 provider transport 调用的序号（首次为 1，传输重试为 2/…），同一个逻辑调用（共享 `callId`）的多次传输 attempt 都写同一事件系列；`context.retry.attempt` 是服务端逻辑重试分类内的序号，其中内容修复 attempt=1 表示同一 pending 回合第二次向 source 发起带修复原因的请求，两者含义不同、不可混淆。
+
+`RpgAiClient` 负责把缺省上下文补成 `{origin:"normal",mechanism:"initial",attempt:0}`，再按 provider attempt>1 覆盖 `mechanism=transport`（保留 `origin`）；内容修复由 scene/world 源写入 `mechanism=content_repair, attempt=1`。历史 `repair` 字段只在 CLI `query`/`verify` 中做只读归一（`retry ?? repair`），仅有 `repair` 的旧事件派生为 `origin="legacy_unknown"`，绝不被臆测为 `manual_failed_job` 或 `normal`，也绝不改写 append-only JSONL。
 
 ## 四类 AI 角色
 

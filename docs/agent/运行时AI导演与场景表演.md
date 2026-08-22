@@ -6,6 +6,16 @@
 
 真机回合的 live 场景表演调用以 45 秒为单次上限；场景表演和世界演化分别使用 3000/3200 completion tokens，因为 provider 可能仍把 reasoning_content 计入同一预算。当前 new-api → DeepSeek 官方 OpenAI-compatible 链路通过请求体 `thinking: { type: "disabled" }` 关闭默认思考，显式角色策略才发送 `type: "enabled"`。若预算被 reasoning 消耗完，API 可能返回 HTTP 200 但没有可解析的 `message.content`，仍按 AI 提案失败处理。生产配置启用 live 时由单一 `RpgAiClient` 统一执行：timeout、限流、5xx 和网络失败按角色策略重试；AI 已返回但 JSON/场景契约或审批不通过时，同一回合最多再发送一次带失败原因的内容修复请求，修复仍失败就返回稳定 failure。`empty_response` 仍不在客户端重复相同请求，避免再次消耗预算却重复得到空 final content；失败不会被改写成 generated，也不会让玩家永久停留在 `narrativeGeneration.pending`：pending 场景持久化为 failed，玩家可手动重试同一 job。无 AI 配置时生产注入 unavailable source；确定性 source 只由显式离线 fixture 使用。
 
+## 重试分层与修复边界（2026-08-22）
+
+场景/world 的“传输 retry、内容修复、手动 failed-job retry”是三层互相独立的机制，由审计的 `context.retry.{origin,mechanism,attempt,reason}` 区分：
+
+- **传输 retry（transport）**：`RpgAiClient` 在 `maxAttempts`（intent/opening/scene=2、world=3）内对 timeout/网络/限流/5xx 的 provider 级重试。顶层 `ai_call.attempt` 记 2/…，`mechanism=transport`，保留上游传入的 `origin`（`normal`/`manual_failed_job`），**绝不覆盖 origin**。`empty_response` 不重复发送完全相同请求。
+- **内容修复（content_repair）**：结构化 JSON/schema/reference 解析失败或审批拒绝时，同一 pending 回合**最多再发送一次**带稳定原因/拒绝码的修复请求；`mechanism=content_repair`、`context.retry.attempt=1`。world 由 `evolveWorld` 两轮循环统一控制（见 `世界动态具象化.md`），scene 沿用 `repairAttempt` 且整个回合最多一次。修复耗尽统一返回稳定 `AI_RESPONSE_INVALID`，不创建 deterministic 成功。
+- **手动 failed-job 重试（manual_failed_job）**：只有 `{ "retry": true }` 才以同一 job CAS 将 `failed→pending` 并重跑，`origin=manual_failed_job`（该 job 第一次 AI 请求仍是 `mechanism=initial`，后续内容修复仍保持该 origin）。普通 `/api/game/narrative/ensure` 轮询只观察/恢复 pending、绝不自动重跑 failed job，`origin=normal`。
+
+`attempt` 语义：顶层 `ai_call.attempt` 是 provider transport 序号（初始 1）；`context.retry.attempt` 是重试分类内的逻辑序号（`initial=0`、`content_repair=1`、`transport` 为 provider attempt 值），两者不可混淆。
+
 一旦 pending job 已由规则结果完全确定，服务器立即在后台生成，不等待“开始冒险”、继续、确认或下一次客户端 ensure。创建新局与成功回合返回前只完成快速排队，不等待 AI；协调器以 `gameId + jobId` 去重，客户端 ensure/polling 只负责崩溃恢复和结果观测。
 
 ## 当前生产闭环
@@ -39,7 +49,7 @@
 - scene CAS 与序幕确认并发时，repository 单调保留已确认的 `prologueShown=true`；确认接口对 stale revision 读取新快照后有限重试。
 - 离线 fixture 可使用 deterministic source，并经过同一 proposal → approval → write-back 链；生产成功的 live proposal 才能标记 `source=generated`。API 失败或内容修复/审批重试仍拒绝时不写确定性剧情，而是保存稳定 failure 和原 job。场景核心审批与 `linearActionNarratives` 审批相互独立：核心失败时，已通过权威实体链校验的线性队列仍随同一次 CAS 写回。
 - active battle、ending 或候选不足时不伪造普通场景选择。
-- 移动/拾取/调查是规则结果已完全确定的单动作（`immediateAction`）；pending 场景同步完成审批/写回。调查/移动优先从 `linearNarrativeQueue` 精确匹配（actionKind+entityId）消费对话回合 AI 预生成的叙事（source=generated，零 live 调用、消费即除）；AI mode 未命中时调用 live scene source，失败持久化 failed 并等待手动重试。拾取仍保留规则 CAS 和结构化 `item_obtained` 节拍。显式 offline fixture 可提供 deterministic 即时 source；幕推进/结局对挂起时不被 fast path 短路。
+- 移动/拾取/调查是规则结果已完全确定的单动作（`immediateAction`）；pending 场景同步完成审批/写回。**队列命中优先于候选不足/world 演化**：`move/investigate`（且 `evolution.status` 非 `needs_next_act/needs_ending_pair`）在 `derivedNeed` 计算、初始 `evolveWorld` 与 `scene_candidate_shortage` 的 `evolveWorld` 之前，直接从当前权威 `linearNarrativeQueue` 精确匹配（actionKind+entityId）消费对话回合 AI 预生成的叙事（source=generated，零 scene/world AI 调用、消费即除）；`take_item` 不参与队列匹配（仍保留规则 CAS 和结构化 `item_obtained` 节拍）。队列命中仍走同一场景审批/CAS：`buildQueuedGeneratedSceneProposal` 用当前合法候选构造两个 choice；若命中但合法候选不足两个，在无任何 AI 调用下返回稳定 `AI_RESPONSE_INVALID`（phase=scene），且 server logger 记 `world_state_inconsistent`。只有未命中才沿 `immediateAction`/`deriveEvolutionNeed` 逻辑，AI mode 调用 live scene source，失败持久化 failed 并等待手动重试。`NarrativeGenerationPath`（`pre_generated_queue`/`live_scene`）只是 server logger 结构化字段，不持久化到 StoryState/GameSessionView。显式 offline fixture 才提供 deterministic 即时 source；幕推进/结局对挂起时不被 fast path 短路。
 - active battle 采用规则 fast path：不创建 pending 场景、不调用 scene source；界面只提供攻击/防守，撤退不再作为可执行选项。战斗开始时保存玩家属性、已击败敌人和事件账本快照；失败只恢复快照并可重新挑战，不推进剧情。
 - 战斗胜利的 `battle_resolved` 场景可以在战斗开始时预热 live proposal；预热失败不使用 deterministic prewarm，最后一击后的正常 pending coordinator 继续调用 live source，仍失败就持久化 failed 并等待手动重试。战斗失败沿用战斗开始前快照恢复世界、属性和事件账本，回到可重新挑战状态，不推进剧情。
 - 武侠世界的世界演化审批与 live 提示词共同执行题材边界，拒绝骑士、灵魂、祭坛、圣光等跨题材实体或结局意象，避免 AI 合法 JSON 造成世界观漂移。
