@@ -10,6 +10,12 @@ type GenerationStatusModalProps =
       readonly battleVisible?: boolean;
     }
   | {
+      readonly kind: "action-failure";
+      readonly failureKind: AiFailureKind;
+      readonly onRetry: () => void | Promise<void>;
+      readonly battleVisible?: boolean;
+    }
+  | {
       readonly kind: "narrative-failure";
       readonly failureKind: AiFailureKind;
       readonly onRetry: () => void | Promise<void>;
@@ -34,18 +40,29 @@ const COPY = {
   },
 } as const;
 
-const FAILURE_COPY: Record<AiFailureKind, { readonly title: string; readonly description: string }> = {
-  AI_CALL_FAILED: { title: "AI 调用失败", description: "AI 调用失败，请重试。" },
-  AI_RESPONSE_INVALID: { title: "AI 返回格式不符合要求", description: "AI 返回格式不符合要求，请重试。" },
-};
+const FAILURE_COPY = {
+  action: {
+    AI_CALL_FAILED: { title: "本次选择提交失败", description: "这次选择尚未生效，AI 调用失败。" },
+    AI_RESPONSE_INVALID: { title: "本次选择提交失败", description: "这次选择尚未生效，AI 返回格式不符合要求。" },
+  },
+  narrative: {
+    AI_CALL_FAILED: { title: "NPC回应生成失败", description: "你的选择已经生效，但 AI 调用失败。" },
+    AI_RESPONSE_INVALID: { title: "NPC回应生成失败", description: "你的选择已经生效，但 AI 返回格式不符合要求。" },
+  },
+} as const;
 
 export function GenerationStatusModal(props: GenerationStatusModalProps) {
   const { kind, onRetry, battleVisible = false } = props;
-  const failure = kind === "narrative-failure" ? FAILURE_COPY[props.failureKind] : undefined;
-  const copy = kind === "narrative-failure" ? {
-    title: failure?.title ?? "生成失败",
-    description: failure?.description ?? "生成失败，请重试。",
-    hint: "当前已提交的规则状态已保留。",
+  const actionFailure = kind === "action-failure" ? FAILURE_COPY.action[props.failureKind] : undefined;
+  const narrativeFailure = kind === "narrative-failure" ? FAILURE_COPY.narrative[props.failureKind] : undefined;
+  const copy = kind === "action-failure" ? {
+    title: actionFailure?.title ?? "本次选择提交失败",
+    description: actionFailure?.description ?? "本次选择提交失败，请重试。",
+    hint: "这次选择尚未生效，规则状态未变化。",
+  } : kind === "narrative-failure" ? {
+    title: narrativeFailure?.title ?? "NPC回应生成失败",
+    description: narrativeFailure?.description ?? "NPC回应生成失败，请重试。",
+    hint: "你的选择已经生效，规则状态已保留。",
   } : COPY[kind];
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
@@ -63,14 +80,18 @@ export function GenerationStatusModal(props: GenerationStatusModalProps) {
     >
       <div className="narrative-generation-modal-backdrop" />
       <section className="narrative-generation-modal-content" aria-live="polite">
-        {kind === "narrative-failure" ? null : <span className="narrative-generation-spinner" aria-hidden="true" />}
+        {kind === "narrative-failure" || kind === "action-failure" ? null : <span className="narrative-generation-spinner" aria-hidden="true" />}
         <h2 id="generation-status-title">{copy.title}</h2>
-        {kind === "narrative-failure" ? <p role="alert">{copy.description}</p> : <p>{battleVisible ? "战斗结果正在结算，下一回合即将开始。" : copy.description}</p>}
+        {kind === "narrative-failure" || kind === "action-failure" ? <p role="alert">{copy.description}</p> : <p>{battleVisible ? "战斗结果正在结算，下一回合即将开始。" : copy.description}</p>}
         <p className="narrative-generation-modal-hint">{copy.hint}</p>
         <p className="narrative-generation-modal-elapsed">已等待 {elapsedSeconds} 秒</p>
-        {kind === "narrative-failure" ? (
+        {kind === "action-failure" ? (
           <button type="button" className="narrative-generation-modal-retry" onClick={() => void onRetry?.()}>
-            重试
+            重试当前选择
+          </button>
+        ) : kind === "narrative-failure" ? (
+          <button type="button" className="narrative-generation-modal-retry" onClick={() => void onRetry?.()}>
+            重试生成回应
           </button>
         ) : onRetry && elapsedSeconds >= 15 ? (
           <button type="button" className="narrative-generation-modal-retry" onClick={onRetry}>

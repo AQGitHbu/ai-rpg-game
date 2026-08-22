@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { InlineButton } from "@ai-game/ui";
 import type { GameSessionView } from "@/game/application";
+import type { AiFailureKind } from "@/game/application";
 import { postAction, type ActionOutcome, type PlayerInteraction } from "./gameActionRequest";
 import { AdventureHud, type DetailsPanel } from "./AdventureHud";
 import { AdventureOverlay } from "./AdventureOverlay";
@@ -22,12 +23,14 @@ type Props = {
 
 type AdventureScreen = "map" | "town" | "scene";
 
+type InteractionOrigin = "npc-dialogue" | "other";
+
 type ActionFeedback =
   | { readonly phase: "idle" }
   | { readonly phase: "submitting" }
   | { readonly phase: "success"; readonly message: string }
   | { readonly phase: "rejected"; readonly message: string }
-  | { readonly phase: "retryable"; readonly message: string; readonly interaction: PlayerInteraction }
+  | { readonly phase: "retryable"; readonly message: string; readonly interaction: PlayerInteraction; readonly failureKind: AiFailureKind; readonly origin: InteractionOrigin }
   | { readonly phase: "error"; readonly message: string };
 
 const DETAIL_TITLE: Record<DetailsPanel, string> = {
@@ -105,7 +108,7 @@ export function AdventureGameShell({
     }
   }, [pending, view.story.currentObjectiveLabel]);
 
-  function applyOutcome(outcome: ActionOutcome): void {
+  function applyOutcome(outcome: ActionOutcome, origin: InteractionOrigin): void {
     switch (outcome.kind) {
       case "success":
         setFeedback({
@@ -123,18 +126,25 @@ export function AdventureGameShell({
         setFeedback({ phase: outcome.kind, message: outcome.message });
         break;
       case "ai-failure":
-        setFeedback({ phase: "retryable", message: outcome.message, interaction: outcome.interaction });
+        setFeedback({ 
+          phase: "retryable", 
+          message: outcome.message, 
+          interaction: outcome.interaction,
+          failureKind: outcome.failureKind,
+          origin,
+        });
         break;
     }
   }
 
-  function submitInteraction(interaction: PlayerInteraction): void {
+  function submitInteraction(interaction: PlayerInteraction, origin: InteractionOrigin = "other"): void {
     setFeedback({ phase: "submitting" });
-    void postAction({ interaction, revision: view.revision }).then(applyOutcome);
+    void postAction({ interaction, revision: view.revision }).then((outcome) => applyOutcome(outcome, origin));
   }
 
-  function retryAction(interaction: PlayerInteraction): void {
-    submitInteraction(interaction);
+  function retryAction(): void {
+    if (feedback.phase !== "retryable") return;
+    submitInteraction(feedback.interaction, feedback.origin);
   }
 
   function enterNpcBuilding(npcId: string): void {
@@ -262,14 +272,10 @@ export function AdventureGameShell({
         </p>
       ) : null}
 
-      {feedback.phase === "rejected" || feedback.phase === "error" || feedback.phase === "retryable" ? (
+      {feedback.phase === "rejected" || feedback.phase === "error" ? (
         <p role="status" aria-live="polite" className={`action-feedback ${feedback.phase}`}>
           {feedback.message}
         </p>
-      ) : null}
-
-      {feedback.phase === "retryable" ? (
-        <InlineButton onClick={() => retryAction(feedback.interaction)}>重试</InlineButton>
       ) : null}
 
       {busy ? (
@@ -278,6 +284,13 @@ export function AdventureGameShell({
             kind="narrative-failure"
             failureKind={view.narrativeGeneration.failureKind ?? "AI_CALL_FAILED"}
             onRetry={async () => { await onRetryNarrative?.(); }}
+            battleVisible={view.battle !== null}
+          />
+        ) : feedback.phase === "retryable" ? (
+          <GenerationStatusModal
+            kind="action-failure"
+            failureKind={feedback.failureKind}
+            onRetry={retryAction}
             battleVisible={view.battle !== null}
           />
         ) : (
