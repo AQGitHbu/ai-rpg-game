@@ -1,4 +1,5 @@
 import { NOOP_GAME_LOGGER, type GameLogger } from "@/game/logging";
+import type { AiRetryOrigin } from "../textAuditTypes";
 
 // ---------------------------------------------------------------------------
 // AI source 共享基础设施：后台 ensure 去重调度器。
@@ -21,7 +22,7 @@ export type BackgroundEnsureConfig = {
   /** 读取当前存档并判定是否有 pending 工作；ok 时给出去重 key。 */
   loadPending(): Promise<EnsurePending>;
   /** 执行 pending 工作；返回 "unavailable" 记 warn，抛错记 error。 */
-  run(traceId?: string): Promise<unknown>;
+  run(traceId?: string, origin?: AiRetryOrigin): Promise<unknown>;
   /** 结构化日志 event 名（如 runtime_narrative_task / town_plan_task）。 */
   logKey: string;
   logger?: GameLogger;
@@ -38,7 +39,10 @@ export class BackgroundEnsureCoordinator {
     this.logger = config.logger ?? NOOP_GAME_LOGGER;
   }
 
-  async ensure(traceId?: string): Promise<EnsureResult> {
+  async ensure(traceId?: string, options?: { readonly origin?: AiRetryOrigin }): Promise<EnsureResult> {
+    // 普通轮询同样携带 retry 来源：调用方未显式指定时收敛为 normal，
+    // 用于在审计/日志中区分"本轮由玩家点击重试恢复"与"普通轮询观察/恢复"。
+    const origin = options?.origin ?? "normal";
     const pending = await this.config.loadPending();
     if (!pending.ok) {
       this.logger.info(this.config.logKey, {
@@ -59,16 +63,18 @@ export class BackgroundEnsureCoordinator {
     this.logger.info(this.config.logKey, {
       traceId,
       gameId: key,
+      retryOrigin: origin,
       result: "queued"
     });
     const startedAt = Date.now();
     const task = Promise.resolve()
-      .then(() => this.config.run(traceId))
+      .then(() => this.config.run(traceId, origin))
       .then((result) => {
         const level = result === "unavailable" ? "warn" : "info";
         this.logger[level](this.config.logKey, {
           traceId,
           gameId: key,
+          retryOrigin: origin,
           result: typeof result === "string" ? result : "completed",
           durationMs: Date.now() - startedAt
         });
@@ -77,6 +83,7 @@ export class BackgroundEnsureCoordinator {
         this.logger.error(this.config.logKey, {
           traceId,
           gameId: key,
+          retryOrigin: origin,
           result: "unavailable",
           durationMs: Date.now() - startedAt
         });

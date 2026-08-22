@@ -414,7 +414,18 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
           trigger: context.auditTrigger ?? `${context.job.actionSummary.kind}_action`,
           ...(context.auditLink ?? {}),
           action: context.job.actionSummary,
-          ...(context.repairAttempt === undefined ? {} : { repair: context.repairAttempt }),
+          // Task 5：内容修复写入结构化 retry（origin 沿用调用方来源），历史
+          // repair 字段仅作只读兼容，不再写入新事件。
+          ...(context.repairAttempt === undefined
+            ? {}
+            : {
+                retry: {
+                  origin: context.auditLink?.retry?.origin ?? "normal",
+                  mechanism: "content_repair" as const,
+                  attempt: context.repairAttempt.attempt,
+                  reason: context.repairAttempt.reason,
+                },
+              }),
         });
         if (!result.ok) {
           logger?.warn("scene_generation_ai_failed", { code: result.code });
