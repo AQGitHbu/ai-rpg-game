@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createTextAuditRecorder } from "./textAuditRecorder";
-import type { AiTextAuditPayload } from "./textAuditTypes";
+import type { AiRetryContext, AiTextAuditPayload } from "./textAuditTypes";
 
 function readJsonLines(filePath: string): unknown[] {
   const text = readFileSync(filePath, "utf8");
@@ -393,6 +393,78 @@ describe("createTextAuditRecorder", () => {
       // close twice - second should not throw
       await recorder.close();
       await expect(recorder.close()).resolves.toBeUndefined();
+    } finally {
+      await cleanup(tempDir);
+    }
+  });
+
+  it("records ai_call events with all four retry metadata variants", async () => {
+    tempDir = await makeTempDir();
+    try {
+      const recorder = createTextAuditRecorder(
+        { AI_TEXT_AUDIT_RUN_ID: "run-retry" },
+        { rootDir: tempDir },
+      );
+      const variants: AiRetryContext[] = [
+        { origin: "normal", mechanism: "initial", attempt: 0 },
+        { origin: "normal", mechanism: "transport", attempt: 2, reason: "network_error" },
+        { origin: "normal", mechanism: "content_repair", attempt: 1, reason: "invalid_json" },
+        { origin: "manual_failed_job", mechanism: "initial", attempt: 0 },
+      ];
+      for (let i = 0; i < variants.length; i++) {
+        await recorder.record({
+          kind: "ai_call",
+          callId: `call-${i}`,
+          role: "scene",
+          attempt: i,
+          context: {
+            purpose: "scene_performance",
+            trigger: "talk_choice",
+            gameId: "game-1",
+            retry: variants[i],
+          },
+          input: { messages: [{ role: "system", content: "prompt" }] },
+          output: { ok: true, content: "ok", latencyMs: 1 },
+        });
+      }
+      await recorder.close();
+
+      const rows = readJsonLines(join(tempDir, "run-retry", "events.jsonl"));
+      expect(rows.map((r) => (r as { context: { retry: unknown } }).context.retry)).toEqual(variants);
+    } finally {
+      await cleanup(tempDir);
+    }
+  });
+
+  it("legacy ai_call event carrying only repair (no retry) remains valid", async () => {
+    tempDir = await makeTempDir();
+    try {
+      const recorder = createTextAuditRecorder(
+        { AI_TEXT_AUDIT_RUN_ID: "run-legacy-repair" },
+        { rootDir: tempDir },
+      );
+      await recorder.record({
+        kind: "ai_call",
+        callId: "call-legacy",
+        role: "scene",
+        attempt: 1,
+        context: {
+          purpose: "scene_performance",
+          trigger: "talk_choice",
+          gameId: "game-1",
+          repair: { attempt: 1, reason: "invalid_json" },
+        },
+        input: { messages: [] },
+        output: { ok: true, content: "ok", latencyMs: 1 },
+      });
+      await recorder.close();
+
+      const rows = readJsonLines(join(tempDir, "run-legacy-repair", "events.jsonl"));
+      expect((rows[0] as { context: { repair: unknown; retry?: unknown } }).context.repair).toEqual({
+        attempt: 1,
+        reason: "invalid_json",
+      });
+      expect((rows[0] as { context: { retry?: unknown } }).context.retry).toBeUndefined();
     } finally {
       await cleanup(tempDir);
     }

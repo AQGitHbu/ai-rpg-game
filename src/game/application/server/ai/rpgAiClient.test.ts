@@ -277,6 +277,67 @@ describe("audit recorder integration", () => {
     await expect(client.complete("scene", messages)).resolves.toBeDefined();
   });
 
+  it("marks provider transport retry as mechanism=transport keeping origin", async () => {
+    const audit = fakeRecorder();
+    let calls = 0;
+    const client = createRpgAiClient({
+      transport: transportFor(async () => {
+        calls += 1;
+        if (calls === 1) return { ok: false as const, code: "network_error" as const, retryable: true, latencyMs: 1 };
+        return { ok: true as const, content: "ok", latencyMs: 1 };
+      }),
+      config,
+      auditRecorder: audit,
+    });
+
+    await client.complete("scene", messages, {
+      purpose: "scene_performance",
+      trigger: "talk_choice",
+    });
+
+    const events = audit.records.filter((r) => r.kind === "ai_call");
+    expect(events.map((event) => event.context.retry)).toEqual([
+      { origin: "normal", mechanism: "initial", attempt: 0 },
+      { origin: "normal", mechanism: "transport", attempt: 2, reason: "network_error" },
+    ]);
+  });
+
+  it("content repair callback uses a new callId, shares link fields and marks content_repair", async () => {
+    const audit = fakeRecorder();
+    const client = createRpgAiClient({
+      transport: transportFor(async () => ({ ok: true as const, content: "ok", latencyMs: 1 })),
+      config,
+      auditRecorder: audit,
+    });
+    const link = { gameId: "game-1", jobId: "job-1", traceId: "trace-1" };
+
+    await client.complete("intent", messages, {
+      ...link,
+      purpose: "intent_parsing",
+      trigger: "free_text_action",
+      retry: { origin: "normal", mechanism: "initial", attempt: 0 },
+    });
+    await client.complete("intent", messages, {
+      ...link,
+      purpose: "intent_parsing",
+      trigger: "free_text_action",
+      retry: { origin: "normal", mechanism: "content_repair", attempt: 1, reason: "invalid_json" },
+    });
+
+    const events = audit.records.filter((r) => r.kind === "ai_call");
+    expect(events).toHaveLength(2);
+    expect(events[0].callId).not.toBe(events[1].callId);
+    expect(events[0].context).toMatchObject(link);
+    expect(events[1].context).toMatchObject(link);
+    expect(events[0].context.retry).toEqual({ origin: "normal", mechanism: "initial", attempt: 0 });
+    expect(events[1].context.retry).toEqual({
+      origin: "normal",
+      mechanism: "content_repair",
+      attempt: 1,
+      reason: "invalid_json",
+    });
+  });
+
   it("does not include apiKey, authorization or baseUrl in the record", async () => {
     const audit = fakeRecorder();
     const client = createRpgAiClient({

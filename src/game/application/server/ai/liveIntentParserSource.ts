@@ -319,7 +319,9 @@ export function createLiveIntentParser(
               kind: "free_text_action",
               ...(targetNpcId === undefined ? {} : { targetNpcId: String(targetNpcId) }),
             },
-            ...(repairReason === undefined ? {} : { repair: { attempt, reason: repairReason } }),
+            ...(repairReason === undefined
+              ? {}
+              : { retry: { origin: "normal", mechanism: "content_repair", attempt, reason: repairReason } }),
           },
         );
         if (!response.ok) {

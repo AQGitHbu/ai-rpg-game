@@ -24,10 +24,36 @@ export type GameApiAuditMode = "off" | "compact" | "full";
 export type AiTextAuditRole = "intent" | "opening" | "scene" | "world";
 
 /**
- * 审计关联 link：只携带 traceId/gameId/jobId/turnNumber，不进入游戏状态。
+ * 重试来源：初始化于首次普通调用或手动失败 job 重试。legacy_unknown 只作为
+ * CLI 对历史仅含 repair 字段的只读派生显示值，不属于本联合类型。
+ */
+export type AiRetryOrigin = "normal" | "manual_failed_job";
+
+/**
+ * 重试机制：
+ * - initial：首次调用；
+ * - transport：RpgAiClient 在 maxAttempts 内的超时/网络/限流/5xx 重试；
+ * - content_repair：非法 JSON/schema/reference 或审批拒绝触发的单次内容修复。
+ */
+export type AiRetryMechanism = "initial" | "transport" | "content_repair";
+
+/**
+ * 结构化重试元数据。只记录稳定类型、原因码与关联 attempt/traceId/gameId/
+ * jobId/turnNumber，不记录 API key、Authorization、Cookie 或完整 URL。
+ */
+export type AiRetryContext = Readonly<{
+  readonly origin: AiRetryOrigin;
+  readonly mechanism: AiRetryMechanism;
+  readonly attempt: number;
+  readonly reason?: string;
+}>;
+
+/**
+ * 审计关联 link：只携带 traceId/gameId/jobId/turnNumber/retry，不进入游戏状态。
+ * 通过 link.retry.origin 判定来源，不再新增独立 retryOrigin 字段。
  */
 export type AiTextAuditLink = Readonly<
-  Pick<AiTextAuditContext, "traceId" | "gameId" | "jobId" | "turnNumber">
+  Pick<AiTextAuditContext, "traceId" | "gameId" | "jobId" | "turnNumber" | "retry">
 >;
 
 /**
@@ -49,7 +75,15 @@ export type AiTextAuditContext = {
   readonly turnNumber?: number;
   readonly revision?: number;
   readonly action?: unknown;
-  /** 内容修复重试编号与拒绝原因（scene/opening 的 repair 路径）。 */
+  /**
+   * 结构化重试元数据（来源 + 机制）。新事件统一使用 retry，
+   * CLI 对 retry ?? repair 做只读归一。
+   */
+  readonly retry?: AiRetryContext;
+  /**
+   * @deprecated 只读兼容。历史事件可能仅含此字段，新事件不再写入；
+   * CLI 将其归一为 origin="legacy_unknown"、mechanism="content_repair"。
+   */
   readonly repair?: { readonly attempt: number; readonly reason: string };
 };
 

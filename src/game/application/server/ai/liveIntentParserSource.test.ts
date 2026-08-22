@@ -7,6 +7,9 @@ import {
   parseIntentPayload,
   type LiveIntentTransport,
 } from "./liveIntentParserSource";
+import { createRpgAiClient } from "./rpgAiClient";
+import type { AiTransport } from "@ai-game/ai-transport";
+import type { AiTextAuditRecorder, AiTextAuditPayload } from "./textAuditTypes";
 import type { IntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
 import { asNpcId, asLocationId, asFactId, asQuestId } from "@/game/domain/worldEntity";
 
@@ -234,6 +237,42 @@ describe("createLiveIntentParser（AI 配置有效时的 live 源）", () => {
     expect(result.ok).toBe(false);
     if (result.ok || result.reason !== "service_error") throw new Error("expected service failure");
     expect(result.failureKind).toBe("AI_RESPONSE_INVALID");
+  });
+
+  it("内容修复调用把 context.retry 标为 content_repair（不再用旧 repair 字段）", async () => {
+    const records: AiTextAuditPayload[] = [];
+    const audit: AiTextAuditRecorder = {
+      enabled: true,
+      gameApiMode: "compact",
+      record: async (p) => { records.push(p); },
+      close: async () => {},
+    };
+    let calls = 0;
+    const client = createRpgAiClient({
+      transport: {
+        complete: async () => {
+          calls += 1;
+          return calls === 1
+            ? { ok: true as const, content: "not a json", latencyMs: 1 }
+            : { ok: true as const, content: '{"dialogueAct":"support"}', latencyMs: 1 };
+        },
+      } as unknown as AiTransport,
+      config: { baseUrl: "http://provider.test/v1", apiKey: "secret", model: "model" },
+      auditRecorder: audit,
+    });
+    const live = createLiveIntentParser(undefined, undefined, undefined, "prompt_only", client);
+    const result = await live.parseIntent("我相信你", ctx, asNpcId("npc_1"));
+    expect(result.ok).toBe(true);
+    const aiCalls = records.filter((r) => r.kind === "ai_call");
+    expect(aiCalls).toHaveLength(2);
+    expect(aiCalls[0].callId).not.toBe(aiCalls[1].callId);
+    expect(aiCalls[0].context.retry).toEqual({ origin: "normal", mechanism: "initial", attempt: 0 });
+    expect(aiCalls[1].context.retry).toEqual({
+      origin: "normal",
+      mechanism: "content_repair",
+      attempt: 1,
+      reason: "invalid_json",
+    });
   });
 
   it("非法 JSON 且规则不可归类 → 返回稳定格式失败", async () => {
