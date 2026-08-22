@@ -131,7 +131,7 @@ describe("LocationSceneScreen objective handoff inside a building scene", () => 
     currentObjectiveChoiceToken: "c_move_objective",
   };
 
-  it("shows the authoritative pre-generated move choice in the action rail after dialogue handoff", () => {
+  it("does not repeat the authoritative move choice in the action rail after dialogue handoff", () => {
     renderBuildingScene(buildBuildingView({
       eventKind: "observe",
       narration: handoffNarration,
@@ -139,11 +139,9 @@ describe("LocationSceneScreen objective handoff inside a building scene", () => 
       narrativeChoices: handoffChoices,
     }));
 
-    const rail = screen.getByRole("navigation", { name: "行动栏" });
-    expect(rail).toHaveTextContent("（放下茶钱，起身）北巷旧道是吧，我这就去瞧瞧。");
-    // 旧焦点的过期对白选项不再进入行动栏，避免伪装成新主线入口。
-    expect(rail).not.toHaveTextContent("那脚印的事你还知道多少");
-    expect(rail).not.toHaveTextContent("当前场景没有可执行行动");
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
+    // 旧焦点的过期对白选项和移动入口都不再进入行动栏，避免重复主线入口。
+    expect(screen.queryByText("那脚印的事你还知道多少")).not.toBeInTheDocument();
   });
 
   it("shows the handoff narration with NPC guidance over the static building description", () => {
@@ -167,8 +165,7 @@ describe("LocationSceneScreen objective handoff inside a building scene", () => 
       narrativeChoices: handoffChoices,
     }));
 
-    const rail = screen.getByRole("navigation", { name: "行动栏" });
-    expect(rail).toHaveTextContent("主线已指向别处——与顾砚交谈");
-    expect(rail).not.toHaveTextContent("当前场景没有可执行行动");
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
+    expect(screen.queryByText("主线已指向别处——与顾砚交谈")).not.toBeInTheDocument();
   });
 });

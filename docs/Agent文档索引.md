@@ -41,6 +41,10 @@
 
 - `GameSessionView` 只投影 `generated` 场景正文；AI 失败不生成场景正文，而是投影 `narrativeGeneration.status = "failed"` 与稳定 `failureKind`。显式 offline fixture 的 deterministic 文本不代表生产 AI 成功。
 
+## 2026-08-22 NPC 交接对白与底部入口收口
+
+- 地图与地点冒险：NPC 交接到移动目标时，旧 NPC 对话框展示当前权威 travel choice 的玩家文案作为最后一句对白，不再显示误导性的“知道了”；底部行动栏隐藏重复的 travel/dialogue/空状态提示，仅保留探索、调查、拾取和战斗等真实场景动作。canonical 文件为 `src/components/LocationSceneScreen.tsx` 与 `src/components/AdventureGameShell.test.tsx`。
+
 ## 维护规则
 
 - 玩法事实变化时同步更新策划文档。

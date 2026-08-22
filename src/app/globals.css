@@ -1356,6 +1356,12 @@ body:has(.adventure-game-shell) {
   line-height: 1.7;
 }
 
+.npc-dialogue-speech-text--player {
+  padding-top: 8px;
+  border-top: 1px solid var(--game-surface-border);
+  color: var(--game-accent);
+}
+
 .npc-dialogue-phase-label {
   color: var(--game-accent);
   font-size: 0.72rem;
@@ -3048,13 +3054,6 @@ body:has(.adventure-game-shell) {
 
 .scene-action-rail button:hover:not(:disabled) {
   border-color: var(--game-accent);
-}
-
-.scene-action-rail-empty {
-  padding: 8px 4px;
-  color: var(--game-text-muted);
-  font-size: 0.82rem;
-  letter-spacing: 0.06em;
 }
 
 /* 场景内容给顶栏/底部行动栏留出空间 */

@@ -84,6 +84,40 @@ const RETRYABLE_ROLE_CODES = new Set([
   "network_error",
 ]);
 
+type RpgAiProviderMetadata = Readonly<{
+  finishReason?: string;
+  reasoningTokens?: number;
+  hasReasoningContent?: boolean;
+}>;
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null ? value as Record<string, unknown> : undefined;
+
+const readFiniteNumber = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+/**
+ * The mounted 0.1.0 transport exposes only the stable base result contract.
+ * Newer compatible transports may add these safe provider metadata fields;
+ * read them at this RPG boundary without widening the shared package type.
+ */
+function readProviderMetadata(result: AiCompletionResult): RpgAiProviderMetadata {
+  const resultRecord = asRecord(result);
+  const usageRecord = result.ok ? asRecord(result.usage) : undefined;
+  const finishReason = resultRecord?.finishReason;
+  const directReasoningTokens = readFiniteNumber(resultRecord?.reasoningTokens);
+  const usageReasoningTokens = readFiniteNumber(usageRecord?.reasoningTokens);
+  const hasReasoningContent = resultRecord?.hasReasoningContent;
+
+  return {
+    ...(typeof finishReason === "string" && finishReason.length > 0 ? { finishReason } : {}),
+    ...(directReasoningTokens === undefined && usageReasoningTokens === undefined
+      ? {}
+      : { reasoningTokens: directReasoningTokens ?? usageReasoningTokens }),
+    ...(typeof hasReasoningContent === "boolean" ? { hasReasoningContent } : {}),
+  };
+}
+
 function mergePolicies(overrides: RpgAiRolePolicyOverrides | undefined): Record<RpgAiRole, RpgAiRolePolicy> {
   return Object.fromEntries(
     RPG_AI_ROLES.map((role) => [
@@ -166,15 +200,14 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
           }
         }
 
-        const reasoningTokens = result.reasoningTokens
-          ?? (result.ok ? result.usage?.reasoningTokens : undefined);
-        if (result.hasReasoningContent === true || (reasoningTokens ?? 0) > 0) {
+        const providerMetadata = readProviderMetadata(result);
+        if (providerMetadata.hasReasoningContent === true || (providerMetadata.reasoningTokens ?? 0) > 0) {
           options.logger?.warn("rpg_ai_provider_reasoning_observed", {
             role,
             requestedThinking: policy.thinking,
-            ...(result.finishReason === undefined ? {} : { finishReason: result.finishReason }),
-            ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
-            ...(result.hasReasoningContent === undefined ? {} : { hasReasoningContent: result.hasReasoningContent }),
+            ...(providerMetadata.finishReason === undefined ? {} : { finishReason: providerMetadata.finishReason }),
+            ...(providerMetadata.reasoningTokens === undefined ? {} : { reasoningTokens: providerMetadata.reasoningTokens }),
+            ...(providerMetadata.hasReasoningContent === undefined ? {} : { hasReasoningContent: providerMetadata.hasReasoningContent }),
           });
         }
 
@@ -189,9 +222,9 @@ export function createRpgAiClient(options: CreateRpgAiClientOptions): RpgAiClien
             role,
             code: result.code,
             latencyMs: result.latencyMs,
-            ...(result.finishReason === undefined ? {} : { finishReason: result.finishReason }),
-            ...(result.reasoningTokens === undefined ? {} : { reasoningTokens: result.reasoningTokens }),
-            ...(result.hasReasoningContent === undefined ? {} : { hasReasoningContent: result.hasReasoningContent }),
+            ...(providerMetadata.finishReason === undefined ? {} : { finishReason: providerMetadata.finishReason }),
+            ...(providerMetadata.reasoningTokens === undefined ? {} : { reasoningTokens: providerMetadata.reasoningTokens }),
+            ...(providerMetadata.hasReasoningContent === undefined ? {} : { hasReasoningContent: providerMetadata.hasReasoningContent }),
           });
           return result;
         }

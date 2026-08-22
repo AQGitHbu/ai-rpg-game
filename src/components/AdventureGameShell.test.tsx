@@ -281,6 +281,49 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(vi.mocked(postAction)).not.toHaveBeenCalled();
   });
 
+  it("shows the handoff travel choice as the player's final dialogue instead of a dismiss button", () => {
+    const playerResponse = "（（抱拳）多谢先生指点，那练刀场在断魂崖后山何处？我这就去瞧瞧。）";
+    const handoffView: GameSessionView = {
+      ...buildView(),
+      story: {
+        ...buildView().story,
+        currentObjectiveLabel: "前往断魂崖后山练刀场",
+        currentObjectiveChoiceToken: "c_handoff_move",
+        currentObjectiveChoiceTokens: ["c_handoff_move"],
+      },
+      currentLocation: {
+        ...buildView().currentLocation,
+        npcs: [{ npcId: "npc_chen", name: "陈半仙", role: "算命先生", talkChoice: null }],
+      },
+      narrative: {
+        ...buildView().narrative,
+        eventKind: "dialogue",
+        choices: [choice("c_handoff_move", playerResponse, "travel")],
+        npcDialogues: [{
+          npcId: "npc_chen",
+          name: "陈半仙",
+          role: "算命先生",
+          speechPages: ["断魂崖后山那片废弃的练刀场，夜里常有刀气破空。"],
+          choices: [],
+          freeInputEnabled: false,
+          giveChoices: [],
+        }],
+      },
+    };
+
+    render(<LocationSceneScreen
+      view={handoffView}
+      busy={false}
+      onSubmit={vi.fn()}
+      onReturnMap={vi.fn()}
+    />);
+
+    const dialogue = screen.getByRole("dialog", { name: "与陈半仙对话" });
+    expect(dialogue).toHaveTextContent(playerResponse);
+    expect(within(dialogue).queryByRole("button", { name: "知道了" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
+  });
+
   it("keeps ordinary narrative pending modal while locking rule actions", () => {
     render(<AdventureGameShell
       view={{ ...buildView(), narrativeGeneration: { status: "pending" } }}
@@ -611,8 +654,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       sceneLocationName="福来酒楼"
     />);
 
-    const actionRail = screen.getByRole("navigation", { name: "行动栏" });
-    expect(within(actionRail).queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "返回地图" })).toBeInTheDocument();
   });
 
@@ -646,7 +688,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       sceneNpcName="老板"
     />);
 
-    expect(within(screen.getByRole("navigation", { name: "行动栏" })).queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
   });
 
   it("keeps a same-location investigation action visible after an NPC handoff", () => {
@@ -926,9 +968,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     const sideNote = screen.getByRole("region", { name: "地点旁注" });
     expect(sideNote.querySelectorAll("button")).toHaveLength(0);
-    const actionRail = screen.getByRole("navigation", { name: "行动栏" });
-    expect(within(actionRail).getByRole("button", { name: "与老板交谈" })).toBeInTheDocument();
-    expect(within(actionRail).getByRole("button", { name: "与吴九交谈" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
   });
 
   it("does not show NPC replies in the location side note", () => {
@@ -967,7 +1007,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    expect(screen.getByRole("alert")).toHaveTextContent("当前场景没有可执行行动，请返回地图或重新载入存档。");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("shows only the current objective action in the scene action rail", () => {
@@ -1000,7 +1040,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    expect(screen.getByRole("button", { name: "与老板交谈" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "探索客栈" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "挑战灰狼" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "与吴九交谈" })).not.toBeInTheDocument();
@@ -1035,10 +1075,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
     />);
 
     const actionRail = screen.getByRole("navigation", { name: "行动栏" });
-    // 底栏保留当前地点的全部场景动作
+    // 底栏只保留没有专属入口的真实场景动作；NPC 交谈由右侧人物卡打开。
     expect(within(actionRail).getByRole("button", { name: "探索客栈" })).toBeInTheDocument();
-    expect(within(actionRail).getByRole("button", { name: "与老板交谈" })).toBeInTheDocument();
     expect(within(actionRail).getByRole("button", { name: "挑战灰狼" })).toBeInTheDocument();
+    expect(within(actionRail).queryByRole("button", { name: "与老板交谈" })).not.toBeInTheDocument();
     // 已准备好的回应对进入自动打开的对话弹窗，不占用底栏
     expect(within(actionRail).queryByRole("button", { name: "回应老板：我愿意把证据摊开。" })).not.toBeInTheDocument();
     expect(within(actionRail).queryByRole("button", { name: "质疑老板：我会先核对证据。" })).not.toBeInTheDocument();
@@ -1094,7 +1134,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       initialFocusNpcId="npc_1"
     />);
 
-    await userEvent.click(screen.getByRole("button", { name: "与老板交谈" }));
+    await userEvent.click(screen.getByRole("button", { name: /老板.*路人/ }));
 
     expect(onSubmit).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();

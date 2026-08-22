@@ -68,7 +68,7 @@ Phase 1/Phase 2 不发起 AI 调用（Phase 2 使用显式 deterministic fixture
 - 生产 composition root（`src/game/application/server/compositionRoot.ts`）经 `parseAiRuntimeConfig(env)` 解析 `AI_API_BASE_URL` / `AI_MODEL` / `AI_API_KEY`：三键有效 ⇒ 注入 live source（shared `@ai-game/ai-transport`）；无效 ⇒ 注入 unavailable source，调用返回 `AI_CALL_FAILED`，不注入 deterministic source。
 - 第四个非敏感可选键 `AI_OUTPUT_FORMAT`（Phase 4C）：严格三值 `json_schema | json_object | prompt_only`，**大小写敏感**（trim 包裹空白后校验），缺失/空白缺省 `prompt_only`（请求形状与 Phase 4B 完全一致，不发送 `response_format`）；无效值 ⇒ 诊断码 `AI_CONFIG_OUTPUT_FORMAT_INVALID`（绝不回显值）⇒ unavailable source ⇒ `AI_CALL_FAILED`。经本 provider 的兼容性验证，只有 `json_object` 会由 live source 经 extraBody 附带 OpenAI-compatible `response_format`；`json_schema` 目前仍接受配置但按 `prompt_only` 请求，避免未支持的 schema 参数伪造成可用能力。输出格式不进 audit、玩家 API、UI、存档或客户端 bundle。
 - 生产 AI 请求由一个 server composition root 级别的 `RpgAiClient` 统一发出；`intent`、`opening`、`scene`、`world` 四个角色各自拥有 timeout、`max_tokens`、JSON mode、retry 上限和 `thinking` 策略。当前链路是 new-api → DeepSeek 官方 OpenAI-compatible API：默认所有角色 `thinking=off` 时发送 `extraBody.thinking = { type: "disabled" }`，只有显式设置 `AI_RUNTIME_THINKING_ROLES` 中的角色才发送 `{ type: "enabled" }`；它与评估专用的 `AI_THINKING_ROLES` 完全隔离。
-- DeepSeek 官方以 `thinking.type` 作为思考模式开关；不要用 Qwen/SGLang 专用的 `chat_template_kwargs.enable_thinking` 替代它。shared transport 会保留安全的 `finishReason`、`usage.reasoningTokens`、`hasReasoningContent` 元数据；如果 provider 仍输出 reasoning 但没有最终 `message.content`，RPG client 记录 `rpg_ai_provider_reasoning_observed` / `rpg_ai_provider_empty_final_content`，不再用相同请求盲目重试。
+- DeepSeek 官方以 `thinking.type` 作为思考模式开关；不要用 Qwen/SGLang 专用的 `chat_template_kwargs.enable_thinking` 替代它。当前挂载的 shared transport `0.1.0` 公共契约只保证 content、latency 和基础 usage；RPG client 兼容性读取由更新版 transport 或测试 doubles 提供的安全 `finishReason`、`usage.reasoningTokens`、`hasReasoningContent` 可选元数据。若 provider 仍输出 reasoning 但没有最终 `message.content`，且 transport 暴露了这些元数据，RPG client 记录 `rpg_ai_provider_reasoning_observed` / `rpg_ai_provider_empty_final_content`，不再用相同请求盲目重试。
 - 2026-08-14 真实 RPG scene/world 验证：两次请求均发送 `thinking.type=disabled` 且不带旧字段，均返回 `finish_reason=stop`、可解析 JSON、`scene=generated` / `world=proposal`，provider 未返回 reasoning token 或 reasoning_content。
 - `.env.local` 仍只在 RPG 自己的检出里；运行时与测试不读 `../ai-slg-game/.env*`。
 
@@ -100,7 +100,7 @@ $env:RUN_REAL_AI_SMOKE='1'; npm run smoke:ai:phase4b
 
 ## 运行时 AI 导演与场景表演
 
-- 复用现有 `AI_API_BASE_URL`、`AI_MODEL`、`AI_API_KEY`、`AI_OUTPUT_FORMAT`、`AI_RUNTIME_THINKING_ROLES` 和 `@ai-game/ai-transport@0.1.1` public API；RPG 的 provider 角色策略位于 `RpgAiClient`，shared package 只提供通用 transport 与安全响应元数据。
+- 复用现有 `AI_API_BASE_URL`、`AI_MODEL`、`AI_API_KEY`、`AI_OUTPUT_FORMAT`、`AI_RUNTIME_THINKING_ROLES` 和 `@ai-game/ai-transport@0.1.0` public API；RPG 的 provider 角色策略位于 `RpgAiClient`，shared package 只提供通用 transport 与基础安全响应契约，扩展元数据由 RPG facade 兼容性读取。
 - 运行时只走两类可选调用：开局生成（opening slice）与逐次世界演化（仅 `EvolutionNeed !== none` 时）；每个 ready 场景由一次场景表演调用产出（`liveScenePerformanceSource`），不再有 director/writer/npc 三次独立调用管线。开局由 live API 生成实体与文本并返回抽象结构标签；服务端持久化开局指纹，按近期同题材历史执行相似度校验，过于雷同就带着差异上下文重试，不对 AI 候选做实体名覆盖。开发清档不删除开局历史，因此连续新局仍有去重依据。
 - 日常 fixture 回归零网络零计费；完整离线回放命令为 `npm run journey:phase10` 与 `npm run journey:foundation`。
 - 真实完整旅程只在 `RUN_REAL_AI_JOURNEY=1 npm run smoke:ai:phase10-journey` 时运行；该命令不是 CI，也不替代离线回放。

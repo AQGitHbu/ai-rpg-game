@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
+import type { AiCompletionResult, AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import {
   createRpgAiClient,
   createServerRpgAiClient,
@@ -11,9 +11,11 @@ import type { AiTextAuditRecorder, AiTextAuditPayload } from "./textAuditTypes";
 const config: AiTransportConfig = { baseUrl: "http://provider.test/v1", apiKey: "secret", model: "model" };
 const messages = [{ role: "user" as const, content: "返回 JSON" }];
 
-function transportFor(complete: AiTransport["complete"]): AiTransport {
+type TestCompletion = (...args: Parameters<AiTransport["complete"]>) => Promise<unknown>;
+
+function transportFor(complete: TestCompletion): AiTransport {
   return {
-    complete,
+    complete: async (...args) => (await complete(...args)) as AiCompletionResult,
     stream: async () => ({ ok: false as const, code: "network_error" as const, retryable: true, latencyMs: 1 }),
   };
 }

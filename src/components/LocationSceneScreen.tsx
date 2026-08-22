@@ -224,6 +224,7 @@ function NpcDialogueModal({
   gameType,
   busy,
   phase,
+  playerResponse,
   onSubmit,
   onClose,
 }: {
@@ -231,6 +232,7 @@ function NpcDialogueModal({
   readonly gameType: NewGameInput["gameType"];
   readonly busy: boolean;
   readonly phase: DialoguePhase;
+  readonly playerResponse?: string | null;
   readonly onSubmit: (interaction: PlayerInteraction) => void;
   readonly onClose: () => void;
 }) {
@@ -274,6 +276,11 @@ function NpcDialogueModal({
             {dialogue.speechPages.map((page, index) => (
               <p key={`${dialogue.npcId}-${index}`} className="npc-dialogue-speech-text">{normalizeDisplayText(page)}</p>
             ))}
+            {playerResponse !== null && playerResponse !== undefined ? (
+              <p className="npc-dialogue-speech-text npc-dialogue-speech-text--player">
+                {normalizeDisplayText(playerResponse)}
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -348,7 +355,7 @@ function NpcDialogueModal({
                   </button>
                 ))}
               </div>
-            ) : (
+            ) : playerResponse === null || playerResponse === undefined ? (
               <div className="npc-dialogue-choices" role="group" aria-label="对话操作">
                 <button
                   type="button"
@@ -358,7 +365,7 @@ function NpcDialogueModal({
                   知道了
                 </button>
               </div>
-            )}
+            ) : null}
           </>
         )}
       </section>
@@ -497,8 +504,14 @@ export function LocationSceneScreen({
       !sceneActionTokens.has(choice.choiceToken) && !sceneActionLabels.has(choice.label),
     ),
   ];
-  const hasDialogueInteraction = activeDialogues.length > 0;
-
+  // 地图已经是移动入口，右侧人物卡已经是 NPC 入口；底栏只保留当前场景
+  // 没有专属入口的真实行动，避免把同一个主线选择重复投影成提示按钮。
+  const visibleActionRailChoices = actionRailChoices.filter((choice) =>
+    choice.presentation !== "travel" && choice.presentation !== "dialogue",
+  );
+  const handoffPlayerResponse = currentObjectiveAction?.presentation === "travel"
+    ? currentObjectiveAction.label
+    : null;
   // 统一构建所有 NPC 的 Dialogue 数据（读模型已为在场全部 NPC 投影对话，
   // 含非焦点 NPC 的零回合闲聊；此处不再用问候语合成缺省条目）。
   const allDialoguesMap = new Map<string, Dialogue>();
@@ -789,18 +802,12 @@ export function LocationSceneScreen({
         ) : null}
       </div>
 
-      {/* 底部行动栏：与 NPC 交谈只打开本幕对话，弹窗选项才提交正式回合 */}
-      <nav className="scene-action-rail scene-action-rail--bottom" aria-label="行动栏">
-        {actionRailChoices.length > 0
-          ? actionRailChoices.map(renderChoiceButton)
-          : handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation
-            ? <span className="scene-action-rail-empty" role="status">
-                主线已指向别处——{view.story.currentObjectiveLabel}。请返回小镇或地图，再前往下一处。
-              </span>
-            : sceneNarrativeChoices.length === 0 && view.battle === null && !hasDialogueInteraction
-              ? <span className="scene-action-rail-empty" role="alert">当前场景没有可执行行动，请返回地图或重新载入存档。</span>
-              : null}
-      </nav>
+      {/* 底部行动栏：只保留没有地图/人物专属入口的真实场景行动 */}
+      {visibleActionRailChoices.length > 0 ? (
+        <nav className="scene-action-rail scene-action-rail--bottom" aria-label="行动栏">
+          {visibleActionRailChoices.map(renderChoiceButton)}
+        </nav>
+      ) : null}
 
       {/* NPC 对话模态弹层：只有用户主动点击时才弹出 */}
       {openDialogue ? (
@@ -808,6 +815,9 @@ export function LocationSceneScreen({
           dialogue={openDialogue}
           gameType={gameType}
           busy={busy || pending}
+          playerResponse={openDialogue.choices.length === 0 && !openDialogue.freeInputEnabled
+            ? handoffPlayerResponse
+            : null}
           onSubmit={(interaction) => {
             // 提交后保留当前 NPC 的会话焦点。pending 期间 activeDialogues 会暂时
             // 让弹窗隐去；下一幕 ready 后，同一 NPC 的新台词会自动回到眼前，玩家
