@@ -2,7 +2,7 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
 import type { EvolutionNeed, ApprovedWorldDelta, WorldDeltaProposal } from "@/game/domain/worldDelta";
-import type { WorldEvolutionSource, WorldEvolutionSourceContext } from "./worldEvolutionSource";
+import type { WorldEvolutionContentRepair, WorldEvolutionSource, WorldEvolutionSourceContext } from "./worldEvolutionSource";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
 import {
@@ -16,8 +16,9 @@ import {
 // ---------------------------------------------------------------------------
 // Template：application 层世界演化编排。纯触发（需求已由领域派生）→（条件）
 // await source 提案 → 纯审批/装配预览状态；不写状态、不做 AI 内置。
-// source 只执行一次；AI 失败或提案未通过审批时返回稳定失败，不能在 application
-// 层悄悄创建 deterministic source 把生产失败伪装成成功。
+// 最多两轮循环（初次 + 一次 content repair）统一覆盖"source 解析失败"与
+// "approveWorldDelta 拒绝"；transport/不可用/空响应不进内容修复循环，修复耗尽
+// 统一返回稳定失败，不在 application 层悄悄创建 deterministic source。
 // ---------------------------------------------------------------------------
 
 export type EvolveWorldResult =
@@ -85,43 +86,66 @@ export async function evolveWorld(input: EvolveWorldInput): Promise<EvolveWorldR
   }
 
   try {
-    const sourceResult = await source.propose(context);
-    if (!sourceResult.ok) {
-      return { ok: false, code: "source_error", failure: sourceResult.failure };
-    }
-    if (sourceResult.proposal === null) {
-      return {
-        ok: false,
-        code: "no_proposal",
-        failure: { kind: "AI_RESPONSE_INVALID", phase: "world" },
-      };
+    let repair: WorldEvolutionContentRepair | undefined;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const sourceResult = await source.propose({ ...context, contentRepair: repair });
+
+      if (!sourceResult.ok) {
+        if (attempt === 0 && sourceResult.repairReason !== undefined) {
+          repair = { attempt: 1, reason: sourceResult.repairReason };
+          continue;
+        }
+        return { ok: false, code: "source_error", failure: sourceResult.failure };
+      }
+
+      if (sourceResult.proposal === null) {
+        if (attempt === 0) {
+          repair = { attempt: 1, reason: "invalid_schema" };
+          continue;
+        }
+        return {
+          ok: false,
+          code: "no_proposal",
+          failure: { kind: "AI_RESPONSE_INVALID", phase: "world" },
+        };
+      }
+
+      const approval = approveWorldDelta({
+        proposal: sourceResult.proposal,
+        need: input.need,
+        ws: input.worldState,
+        ss: input.storyState,
+        idOverride: input.idOverride,
+      });
+      if (!approval.ok) {
+        if (attempt === 0) {
+          repair = { attempt: 1, reason: "approval_rejected", approvalCode: approval.code };
+          continue;
+        }
+        return {
+          ok: false,
+          code: "rejected",
+          rejectionCode: approval.code,
+          failure: { kind: "AI_RESPONSE_INVALID", phase: "world" },
+        };
+      }
+
+      const delta = materializeWorldDelta({
+        approved: approval.approved,
+        need: input.need,
+        ws: input.worldState,
+        ss: input.storyState,
+        now: input.now,
+      });
+
+      return { ok: true, proposal: sourceResult.proposal, approved: approval.approved, delta };
     }
 
-    const approval = approveWorldDelta({
-      proposal: sourceResult.proposal,
-      need: input.need,
-      ws: input.worldState,
-      ss: input.storyState,
-      idOverride: input.idOverride,
-    });
-    if (!approval.ok) {
-      return {
-        ok: false,
-        code: "rejected",
-        rejectionCode: approval.code,
-        failure: { kind: "AI_RESPONSE_INVALID", phase: "world" },
-      };
-    }
-
-    const delta = materializeWorldDelta({
-      approved: approval.approved,
-      need: input.need,
-      ws: input.worldState,
-      ss: input.storyState,
-      now: input.now,
-    });
-
-    return { ok: true, proposal: sourceResult.proposal, approved: approval.approved, delta };
+    return {
+      ok: false,
+      code: "rejected",
+      failure: { kind: "AI_RESPONSE_INVALID", phase: "world" },
+    };
   } catch {
     return {
       ok: false,
