@@ -1,5 +1,6 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GameSessionView } from "@/game/application";
 import { AdventureGameShell } from "./AdventureGameShell";
@@ -251,6 +252,83 @@ describe("AdventureGameShell canonical opaque choices", () => {
       expect(screen.getByRole("button", { name: "追问线索" })).toBeEnabled();
     });
     expect(screen.getByRole("button", { name: "表示理解" })).toBeEnabled();
+  });
+
+  it("keeps the submitted dialogue snapshot through an empty pending view, then replaces it when ready", async () => {
+    const base = buildView();
+    const pendingView: GameSessionView = {
+      ...base,
+      revision: base.revision + 1,
+      turnNumber: base.turnNumber + 1,
+      narrative: {
+        ...base.narrative,
+        npcDialogues: [{
+          ...base.narrative.npcDialogues[0]!,
+          choices: [],
+          giveChoices: [],
+          freeInputEnabled: false,
+        }],
+      },
+      narrativeGeneration: { status: "pending" },
+    };
+    const readyView: GameSessionView = {
+      ...pendingView,
+      revision: pendingView.revision + 1,
+      narrative: {
+        ...pendingView.narrative,
+        npcDialogues: [{
+          ...pendingView.narrative.npcDialogues[0]!,
+          speechPages: ["账本我已经核过了，下一步得先找到送货的人。"],
+          choices: [
+            choice("c_0000000000000011", "追查送货人", "dialogue"),
+            choice("c_0000000000000012", "先整理账本", "dialogue"),
+          ],
+          freeInputEnabled: true,
+        }],
+      },
+      narrativeGeneration: { status: "idle" },
+    };
+    vi.mocked(postAction).mockResolvedValueOnce({
+      kind: "success",
+      view: pendingView,
+      message: "Action performed",
+    });
+    const user = userEvent.setup();
+    let setView: Dispatch<SetStateAction<GameSessionView>> | null = null;
+    function ShellHarness() {
+      const [view, updateView] = useState(base);
+      setView = updateView;
+      return <AdventureGameShell
+        view={view}
+        onViewChange={updateView}
+        onStaleRevision={vi.fn()}
+        onClearDevelopmentSave={vi.fn(async () => {})}
+      />;
+    }
+    render(<ShellHarness />);
+    await enterScene(user);
+    await user.click(screen.getByRole("button", { name: "追问线索" }));
+    await waitFor(() => expect(postAction).toHaveBeenCalledOnce());
+
+    const dialogue = screen.getByRole("dialog", { name: "与老板对话" });
+    const selectedChoice = within(dialogue).getByRole("button", { name: "追问线索" });
+    expect(dialogue).toHaveAttribute("aria-busy", "true");
+    expect(selectedChoice).toHaveAttribute("aria-current", "true");
+    expect(within(selectedChoice).getByTestId("npc-dialogue-spinner")).toBeInTheDocument();
+    expect(within(dialogue).getByRole("button", { name: "表示理解" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "返回地图" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /老板/ })).toBeDisabled();
+
+    await act(async () => {
+      setView?.(readyView);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("账本我已经核过了，下一步得先找到送货的人。")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "追查送货人" })).toBeEnabled();
+    });
+    expect(screen.getByRole("button", { name: "先整理账本" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "追问线索" })).not.toBeInTheDocument();
   });
 
   it("restores custom dialogue input after an ordinary action error", async () => {

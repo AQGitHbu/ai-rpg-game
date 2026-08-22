@@ -34,11 +34,16 @@ type DialogueUiState = {
   readonly revision: number;
   readonly pendingPlayerResponse: string | null;
   readonly pendingChoiceToken: string | null;
+  /**
+   * 已提交对白仅用于本页等待态展示。pending read model 不保证保留 choices，
+   * 因此不能由它重建已选回应、其它固定选项或给予道具选项。
+   */
+  readonly pendingDialogue: Dialogue | null;
 };
 
 type DialogueUiAction =
   | { readonly kind: "set"; readonly npcId: string | null }
-  | { readonly kind: "submit"; readonly playerResponse: string; readonly choiceToken: string | null }
+  | { readonly kind: "submit"; readonly playerResponse: string; readonly choiceToken: string | null; readonly dialogue: Dialogue }
   | { readonly kind: "clear_pending" }
   | { readonly kind: "sync_revision"; readonly revision: number; readonly close: boolean };
 
@@ -51,14 +56,20 @@ type SubmittedDialogue = {
 
 function reduceDialogueUiState(state: DialogueUiState, action: DialogueUiAction): DialogueUiState {
   switch (action.kind) {
-    case "set": return { ...state, npcId: action.npcId, pendingPlayerResponse: null, pendingChoiceToken: null };
-    case "submit": return { ...state, pendingPlayerResponse: action.playerResponse, pendingChoiceToken: action.choiceToken };
-    case "clear_pending": return { ...state, pendingPlayerResponse: null, pendingChoiceToken: null };
+    case "set": return { ...state, npcId: action.npcId, pendingPlayerResponse: null, pendingChoiceToken: null, pendingDialogue: null };
+    case "submit": return {
+      ...state,
+      pendingPlayerResponse: action.playerResponse,
+      pendingChoiceToken: action.choiceToken,
+      pendingDialogue: action.dialogue,
+    };
+    case "clear_pending": return { ...state, pendingPlayerResponse: null, pendingChoiceToken: null, pendingDialogue: null };
     case "sync_revision": return {
       revision: action.revision,
       npcId: action.close ? null : state.npcId,
       pendingPlayerResponse: action.close ? null : state.pendingPlayerResponse,
       pendingChoiceToken: action.close ? null : state.pendingChoiceToken,
+      pendingDialogue: action.close ? null : state.pendingDialogue,
     };
   }
 }
@@ -588,6 +599,7 @@ export function LocationSceneScreen({
     revision: view.revision,
     pendingPlayerResponse: null,
     pendingChoiceToken: null,
+    pendingDialogue: null,
   });
   const openDialogueNpcId = dialogueUi.npcId;
   const [dialoguePhase, setDialoguePhase] = useState<DialoguePhase>("choice");
@@ -714,6 +726,11 @@ export function LocationSceneScreen({
   const openDialogue: Dialogue | undefined = openDialogueNpcId
     ? allDialoguesMap.get(openDialogueNpcId)
     : undefined;
+  // 成功规则提交后的 pending 快照不会携带旧的 approved choices。等待中只能
+  // 使用提交前捕获的临时展示快照；ready 写回后 effect 会清理它并显示新场景。
+  const displayedDialogue = dialoguePhase === "waiting" && dialogueUi.pendingDialogue !== null
+    ? dialogueUi.pendingDialogue
+    : openDialogue;
 
   // 幕交接时旧焦点 NPC 可能只剩一次普通 ask 入口。若继续保留旧弹窗，
   // 玩家会看到单个“与 NPC 交谈”按钮，却误以为仍在正式双选项对话中。
@@ -872,12 +889,12 @@ export function LocationSceneScreen({
       ) : null}
 
       {/* NPC 对话模态弹层：只有用户主动点击时才弹出 */}
-      {openDialogue ? (
+      {displayedDialogue ? (
         <NpcDialogueModal
-          dialogue={openDialogue}
+          dialogue={displayedDialogue}
           gameType={gameType}
           busy={busy || pending}
-          playerResponse={openDialogue.choices.length === 0 && !openDialogue.freeInputEnabled
+          playerResponse={displayedDialogue.choices.length === 0 && !displayedDialogue.freeInputEnabled
             ? handoffPlayerResponse
             : null}
           pendingPlayerResponse={dialogueUi.pendingPlayerResponse}
@@ -886,7 +903,7 @@ export function LocationSceneScreen({
           onSubmit={(interaction, playerResponse) => {
             // 提交前先记录临时的玩家回应和选择token
             const choiceToken = interaction.kind === "fixed_choice" ? interaction.choiceToken : null;
-            dispatchDialogueUi({ kind: "submit", playerResponse, choiceToken });
+            dispatchDialogueUi({ kind: "submit", playerResponse, choiceToken, dialogue: displayedDialogue });
             // 提交后保留当前 NPC 的会话焦点并设置等待状态
             submittedDialogueRef.current = {
               revision: view.revision,
