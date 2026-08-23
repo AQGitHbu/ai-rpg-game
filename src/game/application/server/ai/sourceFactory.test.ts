@@ -121,6 +121,13 @@ describe("createLiveScenePerformanceSource 焦点 NPC", () => {
       presentNpcs: [npcA, npcB],
       story: {
         currentAct: 1, targetActs: 3, tension: 30, nextPacingNeed: "reveal",
+        contract: {
+          centralConflict: "旧案背后的盟约正在瓦解",
+          endingDirections: [
+            { key: "trust", theme: "与盟友共同揭露真相" },
+            { key: "doubt", theme: "独自追查真相" },
+          ],
+        },
         remainingBudget: { remainingLocations: 1, remainingNpcs: 1, remainingEvents: 1, remainingSideQuests: 0 },
         unresolvedThreadSummaries: [],
         stylePolicy: buildStylePolicy(),

@@ -32,6 +32,13 @@
   → GameSessionView
 ```
 
+## Scene Prompt 编译器（2026-08-23）
+
+- `liveScenePerformanceSource` 现在只通过 `compileSceneNarrativeContext(context, selectable)` 生成 Prompt；scene Prompt 的唯一 schema/块定义来源是 `src/game/application/server/ai/narrativeContext/contextBlock.ts`、`sceneNarrativeContext.ts` 与 `renderNarrativeContext.ts`，不再在 source 内额外拼接第二份 schema。
+- scene 编译块会投影：规则与题材约束、故事契约、当前剧情状态、玩家安全事实卡、当前可见事实、已结算强制节拍与 `objectiveLink`、当前位置、焦点 NPC 隔离上下文、最近 beats、风格策略、当前回合输入、合法候选动作、上一轮对话、单线预生成目标和 repair 指令。
+- scene 编译块明确不投影：完整 `GameRecord`、完整 `eventLedger`、其他 NPC 的私密记忆、焦点 NPC 的私密事实正文、玩家长期自由文本历史、隐藏 registry/effect/debug 结构，以及任何未在 `narrativeReferenceIds`/allowlist 中批准的实体 ID。
+- 编译产物的 manifest 只进入审计上下文 `context.narrativeContext` 作为元数据；source 不保存第二份 Prompt 副本，也不把渲染后的 Prompt 文本写入存档或 manifest。
+
 ## 已冻结约束
 
 - SceneSource 只返回表演 proposal，不能返回可直接落库的 ready state。
@@ -75,7 +82,7 @@
 ## 焦点 NPC 隔离上下文
 
 - 场景表演只收到**一名焦点 NPC** 的隔离记忆：`focusNpcContext` 只含该 NPC 的公开档案、关系回应政策、可披露事实卡（`speakableFactCards`）、最近 5 条结构化交互（`recentInteractions`，仅 actionId + dialogueAct + topicSummary + outcome + summary）、目标与回合后情绪。
-- 绝不包含其他 NPC 的记忆条目；绝不包含玩家原文；未获披露批准的私密事实只下发 ID + 扣留指示（`responsePolicy.privateKnowledgeIds`），正文永不出现。
+- 绝不包含其他 NPC 的记忆条目；绝不包含玩家原文；未获披露批准的私密事实只下发不含 ID 的扣留指示，正文永不出现。
 - 关系以"回合后档位（tier）+ 情绪 + 本轮 relationshipDelta/outcome"承载，绝不裸给数字。
 - 玩家自由文本只供当前回合意图解析；原文只存在于 `PendingNarrativeJob.utterance`，不进入长期记忆、事件账本、prompt replay 或日志。
 - AI narration 与 NPC 台词不是规则事实。事实、任务、关系与结局只能来自已提交的结构化事件。
@@ -101,6 +108,7 @@
 - `src/game/application/evolveWorld.ts` / `worldEvolutionSource.ts` — 可选世界演化编排与 port。
 - `src/game/gameplay/rpg/narrativeContext/` — `buildOutcomeBeats` / `deriveObjectiveTransition` / `npcResponsePolicy`。
 - `src/game/application/server/ai/liveScenePerformanceSource.ts` / `liveWorldEvolutionSource.ts` / `sourceFactory.ts`。
+- `src/game/application/server/ai/narrativeContext/contextBlock.ts` / `compileNarrativeContext.ts` / `sceneNarrativeContext.ts` / `renderNarrativeContext.ts`。
 - `src/game/application/server/ai/rpgAiClient.ts` — 唯一 server-side transport facade；按 `intent/opening/scene/world` 独立控制 thinking、预算、超时、JSON mode 和 transient retry。
 
 ## 验收重点

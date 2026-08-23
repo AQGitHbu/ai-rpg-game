@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import type { AiMessage, AiCompletionResult } from "@ai-game/ai-transport";
+import type { NarrativeContextManifest } from "./narrativeContext/contextBlock";
 
 /**
  * 审计模式：缺省、空白或非 "off" 值均按 "full" 处理，只有 trim 后等于 "off" 才关闭。
@@ -75,6 +76,10 @@ export type AiTextAuditContext = {
   readonly turnNumber?: number;
   readonly revision?: number;
   readonly action?: unknown;
+  /**
+   * 编译后的叙事上下文清单：只含 block 元数据、预算与裁剪结果，不含 Prompt 正文。
+   */
+  readonly narrativeContext?: NarrativeContextManifest;
   /**
    * 结构化重试元数据（来源 + 机制）。新事件统一使用 retry，
    * CLI 对 retry ?? repair 做只读归一。

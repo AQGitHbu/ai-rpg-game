@@ -10,7 +10,9 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-23-long-form-narrative-entity-memory-architecture.md`（NAR-01、NAR-02、NAR-03、NAR-17）
 
-> 状态：待执行
+> 状态：已完成
+
+> 完成备注：分支 `codex/narrative-context-compiler` 已完成；最终验证通过（1526 tests passed, 1 skipped；typecheck/lint/build/phase status passed）。
 
 ## Global Constraints
 
@@ -75,7 +77,7 @@ src/game/application/server/ai/narrativeContext/
 - Modify: `docs/agent/当前开发阶段.md`
 - Modify: `docs/Agent文档索引.md`
 
-- [ ] **Step 1: 将机器可读阶段切换为 planned/not_started**
+- [x] **Step 1: 将机器可读阶段切换为 planned/not_started**
 
 用以下完整内容替换 `docs/agent/current-phase.json`：
 
@@ -116,7 +118,7 @@ src/game/application/server/ai/narrativeContext/
 }
 ```
 
-- [ ] **Step 2: 更新人读阶段入口，但不提前写实现事实**
+- [x] **Step 2: 更新人读阶段入口，但不提前写实现事实**
 
 在 `docs/agent/当前开发阶段.md` 中把顶部和唯一执行入口改成以下精确内容；随后保留当前生产运行链、玩家选择闭环、兼容边界和既有可玩性证明，这些仍是 Task 1 开始前的实现事实：
 
@@ -143,19 +145,19 @@ src/game/application/server/ai/narrativeContext/
 
 同时只更新 `docs/Agent文档索引.md` 的“当前开发阶段”一行：状态写为“计划待执行”，当前 Plan 指向 `superpowers/plans/2026-08-23-narrative-context-compiler.md`；其他系统行在代码实现前保持原有事实。
 
-- [ ] **Step 3: 验证 handoff 文档状态**
+- [x] **Step 3: 验证 handoff 文档状态**
 
 Run: `npm run handoff:check:docs`
 Expected: PASS，输出 `narrative-context-compiler`、`planned / not_started`、目标分支和本 Plan 路径。
 
-- [ ] **Step 4: 提交阶段指针**
+- [x] **Step 4: 提交阶段指针**
 
 ```bash
 git add docs/agent/current-phase.json docs/agent/当前开发阶段.md docs/Agent文档索引.md docs/superpowers/plans/2026-08-23-narrative-context-compiler.md
 git commit -m "docs(phase): plan narrative context compiler"
 ```
 
-- [ ] **Step 5: 创建并验证阶段 worktree**
+- [x] **Step 5: 创建并验证阶段 worktree**
 
 Run: `npm run phase:start`
 Expected: PASS，创建 `.worktrees/narrative-context-compiler` 和 `codex/narrative-context-compiler`，完成 setup 与 strict handoff check。
@@ -179,7 +181,7 @@ Expected: PASS，当前分支为 `codex/narrative-context-compiler`。
 - Create: `src/game/application/server/ai/narrativeContext/compileNarrativeContext.test.ts`
 - Create: `src/game/application/server/ai/narrativeContext/index.ts`
 
-- [ ] **Step 1: 写失败测试，固定权威、预算和确定性语义**
+- [x] **Step 1: 写失败测试，固定权威、预算和确定性语义**
 
 在 `compileNarrativeContext.test.ts` 写出以下测试和完整工厂：
 
@@ -292,12 +294,12 @@ it("token 估算区分 ASCII 与非 ASCII code point", () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- src/game/application/server/ai/narrativeContext/compileNarrativeContext.test.ts`
 Expected: FAIL，模块尚不存在。
 
-- [ ] **Step 3: 实现精确类型**
+- [x] **Step 3: 实现精确类型**
 
 `contextBlock.ts` 定义并导出：
 
@@ -376,7 +378,7 @@ export const NARRATIVE_CONTEXT_SLOT_ORDER: readonly NarrativeContextSlot[] = [
 
 manifest 的 selected/dropped 项只含 `id`、`slot`、`sourceKind`、`sourceRefs`、`estimatedTokens`；dropped 额外含 `reason`。绝不含 `title` 或 `content`。
 
-- [ ] **Step 4: 实现保守 token 估算**
+- [x] **Step 4: 实现保守 token 估算**
 
 `estimateNarrativeTokens.ts` 必须确定性、零依赖：按 Unicode code point 遍历；ASCII 字符累计 `0.25`，非 ASCII 累计 `1`，最后 `Math.max(1, Math.ceil(total))`。同时导出：
 
@@ -390,7 +392,7 @@ export function estimateNarrativeBlockTokens(block: NarrativeContextBlock): numb
 
 编译器的固定 framing 成本为 `estimateNarrativeTokens(NARRATIVE_CONTEXT_HEADER + "\n\n")`；`selectedEstimatedTokens` 等于该固定成本加所有入选 block 的 `estimatedTokens`。这样预算覆盖实际标题、slot 和分隔符，而不只计算正文。空白正文在估算前以 `empty` 丢弃。
 
-- [ ] **Step 5: 实现编译算法**
+- [x] **Step 5: 实现编译算法**
 
 `compileNarrativeContext()` 严格按以下顺序处理：
 
@@ -405,14 +407,14 @@ export function estimateNarrativeBlockTokens(block: NarrativeContextBlock): numb
 
 对非法预算（非有限数或小于 1）抛 `RangeError`；不静默改写调用方错误。
 
-- [ ] **Step 6: 运行测试并做类型检查**
+- [x] **Step 6: 运行测试并做类型检查**
 
 Run: `npm test -- src/game/application/server/ai/narrativeContext/compileNarrativeContext.test.ts`
 Expected: PASS，10 tests。
 Run: `npm run typecheck`  
 Expected: PASS。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add src/game/application/server/ai/narrativeContext/contextBlock.ts src/game/application/server/ai/narrativeContext/estimateNarrativeTokens.ts src/game/application/server/ai/narrativeContext/compileNarrativeContext.ts src/game/application/server/ai/narrativeContext/compileNarrativeContext.test.ts src/game/application/server/ai/narrativeContext/index.ts
@@ -434,7 +436,7 @@ git commit -m "feat(narrative): add deterministic context compiler"
 - Modify: `src/game/application/server/ai/narrativeContext/contextBlock.ts`
 - Modify: `src/game/application/server/ai/narrativeContext/index.ts`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖：
 
@@ -490,12 +492,12 @@ it("标题与正文使用固定格式且末尾只有一个换行", () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- src/game/application/server/ai/narrativeContext/renderNarrativeContext.test.ts`
 Expected: FAIL，renderer 尚不存在。
 
-- [ ] **Step 3: 最小实现 renderer**
+- [x] **Step 3: 最小实现 renderer**
 
 renderer 不二次排序、不解释业务语义，只按已编译 selected 顺序输出：固定版本头、空行、`## [slot] title`、正文。正文只做首尾 trim，不做压缩或改写。
 
@@ -511,12 +513,12 @@ export type NarrativePromptCompilation = Readonly<{
 
 构造该对象时 `manifest` 必须直接引用 `context.manifest`，不得重新计算或创建第二套 selected/dropped 逻辑。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `npm test -- src/game/application/server/ai/narrativeContext/renderNarrativeContext.test.ts src/game/application/server/ai/narrativeContext/compileNarrativeContext.test.ts`
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/game/application/server/ai/narrativeContext/contextBlock.ts src/game/application/server/ai/narrativeContext/renderNarrativeContext.ts src/game/application/server/ai/narrativeContext/renderNarrativeContext.test.ts src/game/application/server/ai/narrativeContext/index.ts
@@ -538,7 +540,7 @@ git commit -m "feat(narrative): render compiled context blocks"
 - Modify fixtures returned by:
   `rg -l "SceneGenerationContext" src --glob '*.test.ts' --glob '*.testutil.ts'`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `sceneGenerationContext.test.ts` 构造带非空契约的 record，并断言：
 
@@ -553,12 +555,12 @@ expect(context.story.contract).toEqual({
 expect(JSON.stringify(context.story.contract)).not.toMatch(/futureEntity|eventLedger|hiddenFactIds/);
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- src/game/application/sceneGenerationContext.test.ts`  
 Expected: FAIL，`story.contract` 尚未投影。
 
-- [ ] **Step 3: 增加必需的最小契约类型与投影**
+- [x] **Step 3: 增加必需的最小契约类型与投影**
 
 在 `SceneGenerationContext["story"]` 中增加只读必需字段：
 
@@ -568,7 +570,7 @@ readonly contract: Pick<StoryContract, "centralConflict" | "endingDirections">;
 
 `buildSceneGenerationContext()` 逐字段复制 `ss.contract`，不传递整个 `StoryState` 对象。
 
-- [ ] **Step 4: 更新所有手工 fixture**
+- [x] **Step 4: 更新所有手工 fixture**
 
 当前直接构造完整 DTO 的测试文件是 `src/game/application/deterministicSceneSource.test.ts`、`src/game/application/approveAndWriteScene.test.ts` 和 `src/game/application/server/ai/liveScenePerformanceSource.test.ts`。它们的共享/局部 fixture 使用明确值，不使用 `as any`：
 
@@ -584,14 +586,14 @@ contract: {
 
 先运行 `rg -n "SceneGenerationContext\\s*=|satisfies SceneGenerationContext" src --glob '*.ts'` 复核直接构造点，再由 `npm run typecheck` 证明无遗漏。如果实施基线新增了直接构造文件，只补该文件的契约 fixture，不改变其测试语义。
 
-- [ ] **Step 5: 运行测试和类型检查**
+- [x] **Step 5: 运行测试和类型检查**
 
 Run: `npm test -- src/game/application/sceneGenerationContext.test.ts`  
 Expected: PASS。  
 Run: `npm run typecheck`  
 Expected: PASS。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add src/game/application/sceneGenerationContext.ts src/game/application/sceneGenerationContext.test.ts src/game/application/deterministicSceneSource.test.ts src/game/application/approveAndWriteScene.test.ts src/game/application/server/ai/liveScenePerformanceSource.test.ts
@@ -616,7 +618,7 @@ git commit -m "feat(narrative): expose story contract to scene context"
 - Modify: `src/game/application/server/ai/liveScenePerformanceSource.ts`
 - Modify: `src/game/application/server/ai/liveScenePerformanceSource.test.ts`
 
-- [ ] **Step 1: 写 scene block 失败测试**
+- [x] **Step 1: 写 scene block 失败测试**
 
 使用与 `liveScenePerformanceSource.test.ts` 相同语义的最小 fixture，断言编译结果包含以下块且来源正确：
 
@@ -666,12 +668,12 @@ expect(compilation.prompt).not.toContain("eventLedger");
 expect(compilation.prompt).not.toContain(context.generationSeed ?? "seed-not-present");
 ```
 
-- [ ] **Step 2: 运行新测试确认失败**
+- [x] **Step 2: 运行新测试确认失败**
 
 Run: `npm test -- src/game/application/server/ai/narrativeContext/sceneNarrativeContext.test.ts`
 Expected: FAIL，模块尚不存在。
 
-- [ ] **Step 3: 实现 scene projection**
+- [x] **Step 3: 实现 scene projection**
 
 导出：
 
@@ -717,7 +719,7 @@ export function compileSceneNarrativeContext(
 
 `scene:repair` 继承 `scene:resolution` 的 state/mandatory/950。不存在的条件块不创建空 block。标题固定为“规则与事实优先级、世界与题材、故事契约、当前剧情状态、当前已结算结果、当前地点、焦点角色、相关近期事件、上一轮对话、导演与风格、玩家本轮行动、合法候选动作、输出契约”；测试依赖的 `legal_actions` 标题精确为“合法候选动作”。
 
-- [ ] **Step 4: 迁移 live scene source，保留兼容函数**
+- [x] **Step 4: 迁移 live scene source，保留兼容函数**
 
 在 `liveScenePerformanceSource.ts` 导出：
 
@@ -737,11 +739,11 @@ export function buildLiveScenePrompt(
 
 生产调用点只编译一次：把 `compilation.prompt` 发送给 `aiClient.complete()`，保留现有 user message、重试、解析和 typed failure 行为。
 
-- [ ] **Step 5: 把原 prompt 回归断言迁移到块标题后的正文**
+- [x] **Step 5: 把原 prompt 回归断言迁移到块标题后的正文**
 
 现有测试中依赖 `候选动作=...` 单行正则的断言，改为定位 `## [legal_actions] 合法候选动作` 块；其余关键语义断言必须继续通过。新增断言：central conflict、act/tension/pacing、recent beats、五条 focus interactions 都出现在 Prompt 中。
 
-- [ ] **Step 6: 运行 targeted tests**
+- [x] **Step 6: 运行 targeted tests**
 
 Run:
 
@@ -751,7 +753,7 @@ npm test -- src/game/application/server/ai/narrativeContext/sceneNarrativeContex
 
 Expected: PASS；现有 parser、ID 过滤、对白、调查、移动预生成和内容修复测试无回归。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add src/game/application/server/ai/narrativeContext/sceneNarrativeContext.ts src/game/application/server/ai/narrativeContext/sceneNarrativeContext.test.ts src/game/application/server/ai/narrativeContext/index.ts src/game/application/server/ai/liveScenePerformanceSource.ts src/game/application/server/ai/liveScenePerformanceSource.test.ts
@@ -772,7 +774,7 @@ git commit -m "refactor(narrative): compile live scene context"
 - Create: `src/game/application/server/ai/narrativeContext/worldNarrativeContext.test.ts`
 - Modify: `src/game/application/server/ai/narrativeContext/index.ts`
 
-- [ ] **Step 1: 写失败测试，覆盖当前 parser 已支持的全部分支**
+- [x] **Step 1: 写失败测试，覆盖当前 parser 已支持的全部分支**
 
 测试文件定义一个返回 `WorldEvolutionSourceContext` 的完整 typed `makeWorldContext(need)` 工厂：武侠 setup 的当前地点为 `loc_a/客栈`，另有 `loc_b/北巷`；包含 `npc_1/老板`、`item_1/账册`、`enemy_1/拦路人`、活动主线 `quest_1/追查失踪商队`、一个已发现公开事实和一个未发现事实；NPC memory 放入独有的字符串 `DO_NOT_LEAK_PRIVATE_MEMORY`；StoryState 使用非空 central conflict、trust/doubt 方向、`currentAct=2`、`tension=55`、`nextPacingNeed="complicate"` 和一条合法 recent beat。所有 ID 通过现有 `as*Id()` helper 构造，工厂返回值使用 `satisfies WorldEvolutionSourceContext`，不使用 `as any`。
 
@@ -831,12 +833,12 @@ it("Prompt 不含账本、NPC 私密记忆、交互历史或裸关系值", () =>
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- src/game/application/server/ai/narrativeContext/worldNarrativeContext.test.ts`
 Expected: FAIL，模块尚不存在。
 
-- [ ] **Step 3: 实现 world projection**
+- [x] **Step 3: 实现 world projection**
 
 导出：
 
@@ -884,12 +886,12 @@ export function compileWorldNarrativeContext(
 
 活动任务和 current objective 使用 `currentObjectiveOf(context.worldState, context.storyState)` 与任务状态投影，不从任务描述文本猜测；只从 `@/game/gameplay/rpg/narrativeContext` facade 导入，不 deep-import 内部实现。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `npm test -- src/game/application/server/ai/narrativeContext/worldNarrativeContext.test.ts`
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/game/application/server/ai/narrativeContext/worldNarrativeContext.ts src/game/application/server/ai/narrativeContext/worldNarrativeContext.test.ts src/game/application/server/ai/narrativeContext/index.ts
@@ -912,7 +914,7 @@ git commit -m "feat(narrative): compile world evolution context"
 - Modify: `src/game/application/server/ai/liveWorldEvolutionSource.ts`
 - Modify: `src/game/application/server/ai/worldEvolutionSource.test.ts`
 
-- [ ] **Step 1: 写审计失败测试**
+- [x] **Step 1: 写审计失败测试**
 
 在两个 live source 测试中分别使用 fake `RpgAiClient` 捕获 `complete()` 第三个参数：
 
@@ -931,7 +933,7 @@ expect(JSON.stringify(auditContext.narrativeContext)).not.toContain("fact_secret
 
 world 断言 ID 为 `world:rules` 和 `world:output-contract`。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run:
 
@@ -941,7 +943,7 @@ npm test -- src/game/application/server/ai/liveScenePerformanceSource.test.ts sr
 
 Expected: FAIL，审计上下文尚无 manifest，world source 尚未使用 compiler。
 
-- [ ] **Step 3: 扩展审计纯类型**
+- [x] **Step 3: 扩展审计纯类型**
 
 `textAuditTypes.ts` 必须直接从纯类型叶子 `./narrativeContext/contextBlock` 使用 `import type` 引入 `NarrativeContextManifest`，不得从 `./narrativeContext/index` 导入，避免 `textAuditTypes → index → sceneNarrativeContext → SceneGenerationContext → textAuditTypes` 的类型环。在 `AiTextAuditContext` 增加：
 
@@ -951,11 +953,11 @@ readonly narrativeContext?: NarrativeContextManifest;
 
 不修改 recorder 文件格式、脱敏逻辑或 `RpgAiClient.complete` 签名；现有 `context` 会自然落盘。
 
-- [ ] **Step 4: 接入 scene manifest**
+- [x] **Step 4: 接入 scene manifest**
 
 Task 4 的生产调用点将 `narrativeContext: compilation.manifest` 放入 scene audit context。内容修复每次重新编译，manifest 与实际发送 Prompt 一一对应。
 
-- [ ] **Step 5: 迁移 world source**
+- [x] **Step 5: 迁移 world source**
 
 导出兼容测试入口：
 
@@ -968,13 +970,13 @@ export function buildWorldEvolutionPrompt(ctx: WorldEvolutionSourceContext): str
 
 生产调用只编译一次并发送 `compilation.prompt`，同时把 manifest 放入 audit context。删除旧私有 `buildWorldEvolutionPrompt` 内的字符串拼装；保留 `kindText`/repair 语义时可移动到 `worldNarrativeContext.ts`，但不得在两处保留输出 schema 双源。
 
-- [ ] **Step 6: 保持现有 world 回归并新增完整契约断言**
+- [x] **Step 6: 保持现有 world 回归并新增完整契约断言**
 
 现有以下断言必须继续通过：next_act/ending_pair 区分、placement、town_building、`new_location`、duplicate name repair、content repair、JSON mode、typed failures。
 
 新增对生产 `buildWorldEvolutionPrompt()` 的断言：包含 central conflict、current pacing、recent beats、active quest、newItem/newEnemy/newFact 完整 schema；不含 eventLedger/hidden facts/interaction history。
 
-- [ ] **Step 7: 运行 targeted tests 与类型检查**
+- [x] **Step 7: 运行 targeted tests 与类型检查**
 
 Run:
 
@@ -985,7 +987,7 @@ npm run typecheck
 
 Expected: PASS。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add src/game/application/server/ai/textAuditTypes.ts src/game/application/server/ai/liveScenePerformanceSource.ts src/game/application/server/ai/liveScenePerformanceSource.test.ts src/game/application/server/ai/liveWorldEvolutionSource.ts src/game/application/server/ai/worldEvolutionSource.test.ts
@@ -1005,7 +1007,7 @@ git commit -m "refactor(narrative): audit compiled scene and world prompts"
 - Modify: `src/game/application/server/ai/liveScenePerformanceSource.test.ts`
 - Modify: `src/game/application/server/ai/worldEvolutionSource.test.ts`
 
-- [ ] **Step 1: 写规则权威顺序测试**
+- [x] **Step 1: 写规则权威顺序测试**
 
 构造包含相互冲突文本的 scene fixture：旧 `recentBeats` 声称玩家仍未获得物品，而当前 mandatory beat 声明已经获得。断言：
 
@@ -1046,7 +1048,7 @@ const parsed = parseScenePerformanceJson({
 expect(parsed).toEqual({ ok: false, reason: "segment_unknown_beat" });
 ```
 
-- [ ] **Step 2: 写一次调用测试**
+- [x] **Step 2: 写一次调用测试**
 
 对成功 scene generation 和 world evolution 各断言 `aiClient.complete` 调用一次。内容修复路径保持现状：scene 的单次修复由 live scene source 既有的 `repairAttempt` 递归发起，world 的单次修复由 application 层 `evolveWorld` 的修复循环发起；compiler 不调用 AI，除上述既有 scene 修复递归外，source 不增加新的调用或重试层。
 
@@ -1104,7 +1106,7 @@ await source.propose({
 expect(complete).toHaveBeenCalledTimes(1);
 ```
 
-- [ ] **Step 3: 写战斗语义回归**
+- [x] **Step 3: 写战斗语义回归**
 
 复用现有 battle fixture，断言：
 
@@ -1133,7 +1135,7 @@ expect(compilation.prompt).not.toContain("BattleStartSnapshot");
 
 本任务只补测试；若测试暴露非编译器引入的现有战斗问题，停止并单独报告，不把战斗重构扩大进 Plan 1。
 
-- [ ] **Step 4: 运行跨层 tests**
+- [x] **Step 4: 运行跨层 tests**
 
 Run:
 
@@ -1143,7 +1145,7 @@ npm test -- src/game/application/generatePendingScene.test.ts src/game/applicati
 
 Expected: PASS；scene/world 正常路径每次仍只有一次 AI 调用。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/game/application/server/ai/liveScenePerformanceSource.test.ts src/game/application/server/ai/worldEvolutionSource.test.ts
@@ -1168,7 +1170,7 @@ git commit -m "test(narrative): protect compiled prompt authority and turn flow"
 - Modify: `docs/agent/current-phase.json`
 - Modify: `docs/Agent文档索引.md`
 
-- [ ] **Step 1: 记录 compiler 实现事实**
+- [x] **Step 1: 记录 compiler 实现事实**
 
 文档必须明确：
 
@@ -1179,15 +1181,15 @@ git commit -m "test(narrative): protect compiled prompt authority and turn flow"
 - opening/intent 尚未迁移，Entity/Episode/Living Outline 尚属后续 Plan；
 - 本阶段没有存档迁移、没有额外 AI 调用、没有改变战斗失败回滚。
 
-- [ ] **Step 2: 更新 Agent 索引摘要**
+- [x] **Step 2: 更新 Agent 索引摘要**
 
 在相关系统行增加 2026-08-23 的 Context Compiler 事实，链接现有 agent 文档；不把 `docs/superpowers/specs/` 当成实现事实入口。
 
-- [ ] **Step 3: 把已实现阶段转入待验收**
+- [x] **Step 3: 把已实现阶段转入待验收**
 
 保持启动阶段已经写入的唯一 Plan、目标分支和 worktree 不变；将 `docs/agent/当前开发阶段.md` 的状态改为“待验收”并按已通过测试的真实接口更新阶段目标摘要。在 `docs/agent/current-phase.json` 中只把 `status` 与 `implementationStatus` 都改为 `"implemented"`，其他字段保持执行启动时的值；在索引中记录实现事实日期。不要在验收和合并完成前写成 `completed/merged`。
 
-- [ ] **Step 4: 校验文档引用和 placeholder**
+- [x] **Step 4: 校验文档引用和 placeholder**
 
 Run:
 
@@ -1198,7 +1200,7 @@ rg -n "TODO|TBD|待补|占位" src/game/application/server/ai/narrativeContext
 
 Expected: 第一条能定位所有实现入口；第二条无命中。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add docs/agent/剧情连续性与结构化记忆.md docs/agent/运行时AI导演与场景表演.md docs/agent/世界动态具象化.md docs/agent/AI文本审计.md docs/agent/当前开发阶段.md docs/agent/current-phase.json docs/Agent文档索引.md
@@ -1218,7 +1220,7 @@ git commit -m "docs(narrative): document context compiler"
 - No planned production changes.
 - Modify only the exact failing Plan 1 file if a gate reveals a regression;修复后重跑该 gate 及后续全部 gate。
 
-- [ ] **Step 1: 运行 narrative targeted suite**
+- [x] **Step 1: 运行 narrative targeted suite**
 
 Run:
 
@@ -1228,7 +1230,7 @@ npm test -- src/game/application/server/ai/narrativeContext src/game/application
 
 Expected: PASS。
 
-- [ ] **Step 2: 运行完整离线游戏 journey**
+- [x] **Step 2: 运行完整离线游戏 journey**
 
 Run: `npm run test:foundation-journey`  
 Expected: PASS；至少 15 个成功回合，跨 reload，覆盖固定 NPC 选择、自定义输入、旅行、拾取、探索、战斗和结局。  
@@ -1237,7 +1239,7 @@ Expected: PASS；与上一步相同的零网络 replay 入口可从命令行完�
 Run: `npm test -- src/game/application/testing/mediumActJourney.test.ts`  
 Expected: PASS；中篇 5 幕经真实幕链推进至结局，`currentAct == targetActs`，结局具象化并解析，预算未越界。
 
-- [ ] **Step 3: 运行全量工程门禁**
+- [x] **Step 3: 运行全量工程门禁**
 
 Run: `npm run check:standards`
 Expected: PASS。
@@ -1258,7 +1260,7 @@ Expected: PASS。
 Run: `npm run phase:status`
 Expected: PASS，显示 `narrative-context-compiler / implemented` 与本 Plan。
 
-- [ ] **Step 4: 做架构与隐私扫描**
+- [x] **Step 4: 做架构与隐私扫描**
 
 Run:
 
@@ -1274,7 +1276,7 @@ Expected:
 - 第二条证明 scene/world schema 各自只有一个 projection/contract 实现，compat wrapper 不复制正文；
 - 第三条无命中。
 
-- [ ] **Step 5: 检查 diff 和提交历史**
+- [x] **Step 5: 检查 diff 和提交历史**
 
 Run: `git status --short`  
 Expected: 只显示实施前已确认保留的用户改动，或完全干净；不得出现未知生成文件。  
@@ -1283,7 +1285,7 @@ Expected: 变更范围只覆盖本 Plan 列出的 application、server AI tests/
 Run: `git log --oneline main..HEAD`  
 Expected: 每个 Task 有对应小提交。
 
-- [ ] **Step 6: 处理门禁修复（仅在产生变更时）**
+- [x] **Step 6: 处理门禁修复（仅在产生变更时）**
 
 如果门禁暴露回归，返回引入该回归的 Task，使用该 Task 已列出的精确 `git add` 和提交命令提交修复，然后从 Task 9 Step 1 重新执行。不要使用目录级或通配 `git add`，也不新增一个无法追溯到原任务的泛化收尾提交。
 
@@ -1291,20 +1293,20 @@ Expected: 每个 Task 有对应小提交。
 
 ## Acceptance Checklist
 
-- [ ] `SceneGenerationContext` 可看到当前 Story Contract，但仍是最小 DTO。
-- [ ] scene Prompt 包含 act、tension、pacing、active quest、unresolved thread 引用、recent beats 和焦点 NPC 最近五条结构化交互。
-- [ ] world Prompt 包含 Story Contract、当前节奏/任务/近期事件和现有实体安全摘要。
-- [ ] WorldDelta 的 newLocation/newNpc/newItem/newEnemy/newFact/nextMainQuest/endingPair schema 与 parser 一致，并按 EvolutionNeed 精确限制。
-- [ ] rule/state/event/plan/memory/lore 冲突按固定权威顺序解决。
-- [ ] mandatory 不因预算被丢弃，optional 丢弃可审计。
-- [ ] 同一输入产生逐字相同 Prompt 和 manifest。
-- [ ] manifest 不含 Prompt 正文、玩家原文或 NPC 私密事实正文。
-- [ ] scene/world 每条正常生成路径仍只调用一次 AI。
-- [ ] parser、approval、规则结算和持久化 schema 未改变。
-- [ ] 战斗失败恢复战前状态的代码和行为未改变。
-- [ ] opening 与 intent 明确保持现状，没有形成第二套半迁移协议。
-- [ ] 完整离线 journey、全量 tests、typecheck、lint、build 全部通过。
-- [ ] 短篇和中篇仍能从新游戏完整玩到结局。
+- [x] `SceneGenerationContext` 可看到当前 Story Contract，但仍是最小 DTO。
+- [x] scene Prompt 包含 act、tension、pacing、active quest、unresolved thread 引用、recent beats 和焦点 NPC 最近五条结构化交互。
+- [x] world Prompt 包含 Story Contract、当前节奏/任务/近期事件和现有实体安全摘要。
+- [x] WorldDelta 的 newLocation/newNpc/newItem/newEnemy/newFact/nextMainQuest/endingPair schema 与 parser 一致，并按 EvolutionNeed 精确限制。
+- [x] rule/state/event/plan/memory/lore 冲突按固定权威顺序解决。
+- [x] mandatory 不因预算被丢弃，optional 丢弃可审计。
+- [x] 同一输入产生逐字相同 Prompt 和 manifest。
+- [x] manifest 不含 Prompt 正文、玩家原文或 NPC 私密事实正文。
+- [x] scene/world 每条正常生成路径仍只调用一次 AI。
+- [x] parser、approval、规则结算和持久化 schema 未改变。
+- [x] 战斗失败恢复战前状态的代码和行为未改变。
+- [x] opening 与 intent 明确保持现状，没有形成第二套半迁移协议。
+- [x] 完整离线 journey、全量 tests、typecheck、lint、build 全部通过。
+- [x] 短篇和中篇仍能从新游戏完整玩到结局。
 
 ---
 

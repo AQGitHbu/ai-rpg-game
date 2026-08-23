@@ -1,6 +1,7 @@
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { hasExplorableContent } from "./buildChoiceMap";
 import type { PacingNeed } from "@/game/domain/storyState";
+import type { StoryContract } from "@/game/domain/storyContract";
 import type {
   LocationId,
   NpcId,
@@ -204,6 +205,7 @@ export type SceneGenerationContext = {
     readonly targetActs: number;
     readonly tension: number;
     readonly nextPacingNeed: PacingNeed;
+    readonly contract: Pick<StoryContract, "centralConflict" | "endingDirections">;
     readonly remainingBudget: BudgetSummary;
     readonly unresolvedThreadSummaries: readonly string[];
     /** 当前权威主线的最小叙事摘要；选项/提示词不得再从对白文本猜主题。 */
@@ -648,6 +650,19 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
       targetActs: ss.targetActs,
       tension: ss.tension,
       nextPacingNeed: ss.nextPacingNeed,
+      contract: {
+        centralConflict: ss.contract.centralConflict,
+        endingDirections: [
+          {
+            key: ss.contract.endingDirections[0].key,
+            theme: ss.contract.endingDirections[0].theme,
+          },
+          {
+            key: ss.contract.endingDirections[1].key,
+            theme: ss.contract.endingDirections[1].theme,
+          },
+        ],
+      },
       remainingBudget: {
         remainingLocations: Math.max(0, ss.budget.locations.max - ss.budget.locations.expanded),
         remainingNpcs: Math.max(0, ss.budget.npcs.max - ss.budget.npcs.expanded),

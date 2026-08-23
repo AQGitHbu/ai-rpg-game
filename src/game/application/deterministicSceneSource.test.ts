@@ -134,6 +134,13 @@ function makeContext(job: PendingNarrativeJob, focus?: FocusNpcContext): SceneGe
     story: {
       currentAct: ss.currentAct, targetActs: ss.targetActs, tension: ss.tension,
       nextPacingNeed: ss.nextPacingNeed,
+      contract: {
+        centralConflict: "商队失踪案背后的内应",
+        endingDirections: [
+          { key: "trust", theme: "共同揭露" },
+          { key: "doubt", theme: "独自追查" },
+        ],
+      },
       remainingBudget: { remainingLocations: 1, remainingNpcs: 1, remainingEvents: 1 },
       unresolvedThreadSummaries: [],
       stylePolicy: buildStylePolicy(),

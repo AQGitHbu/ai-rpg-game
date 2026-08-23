@@ -8,6 +8,8 @@ import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./
 import type { ProviderJsonMode } from "./providerRequestOptions";
 import { classifyAiFailure, transportFailureCodeToCategory } from "../../aiGenerationFailure";
 import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
+import { compileWorldNarrativeContext } from "./narrativeContext";
+import type { NarrativePromptCompilation } from "./narrativeContext";
 
 // ---------------------------------------------------------------------------
 // WorldEvolution live source（Task 3）。
@@ -352,8 +354,9 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
         return failWorld("unavailable");
       }
       try {
+        const compilation = compileLiveWorldEvolutionPrompt(ctx);
         const messages = [
-          { role: "system" as const, content: buildWorldEvolutionPrompt(ctx) },
+          { role: "system" as const, content: compilation.prompt },
           { role: "user" as const, content: userPrompt(ctx) },
         ];
         // 瞬态网络失败由统一 client 按角色策略重试；empty_response 或非法
@@ -377,6 +380,7 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
             need: ctx.need,
             ...(ctx.action === undefined ? {} : { action: ctx.action }),
           },
+          narrativeContext: compilation.manifest,
         });
         if (!result.ok) {
           logger?.warn("world_evolution_ai_failed", { code: result.code });
@@ -425,66 +429,13 @@ function kindText(need: WorldEvolutionSourceContext["need"]): string {
   }
 }
 
-function repairText(repair: WorldEvolutionContentRepair): string {
-  switch (repair.reason) {
-    case "invalid_json": return "非法 JSON";
-    case "invalid_schema": return "非法 schema";
-    case "invalid_reference": return "引用了不存在的实体";
-    case "approval_rejected": {
-      return repair.approvalCode === undefined
-        ? "审批拒绝"
-        : `审批拒绝（${repair.approvalCode}）`;
-    }
-  }
+export function compileLiveWorldEvolutionPrompt(
+  ctx: WorldEvolutionSourceContext,
+): NarrativePromptCompilation {
+  return compileWorldNarrativeContext(ctx);
 }
 
-function repairInstruction(repair: WorldEvolutionContentRepair | undefined): string {
-  if (repair === undefined) return "";
-  const reasonCode = repair.reason === "approval_rejected" && repair.approvalCode !== undefined
-    ? `approval_rejected:${repair.approvalCode}`
-    : repair.reason;
-  return `\n上一轮的响应需要一次内容修复（content repair）：原因=${repairText(repair)}（${reasonCode}）。只修复该问题并重发完整提案；保留当前世界事实边界，严禁通过省略字段绕过 placement、locationRef、已有地点名、任务目标可达性等契约。`;
-}
-
-function buildWorldEvolutionPrompt(ctx: WorldEvolutionSourceContext): string {
-  const { worldState, storyState } = ctx;
-  const currentLoc = worldState.locations.find((l) => l.id === worldState.currentLocationId);
-  const existingLocationIds = worldState.locations.map((location) => String(location.id)).join("、") || "无";
-  // 只提供已批准地点的安全名称/ID 摘要，帮助 AI 避开重名与未知引用；不序列化
-  // 完整存档或私密事实（世界事实、NPC 机密等绝不进入 prompt）。
-  const existingLocationSummary = worldState.locations
-    .map((location) => `${String(location.id)}(${location.name})`)
-    .join("、") || "无";
-  const setup = worldState.generation.setup;
-  const genreGuard = worldState.generation.gameType === "wuxia"
-    ? "这是武侠世界：只能使用江湖、门派、镖局、官府、山川、兵器、线索和武学语汇；禁止魔法、巫师、精灵、骑士、幽灵/灵魂、祭坛、法阵、圣光、异界等奇幻或超自然实体。"
-    : `题材=${worldState.generation.gameType}，所有实体必须服从该题材，不得跨题材借词。`;
-  const needContract = ctx.need.kind === "next_act"
-    ? "本次是下一幕需求：必须输出 nextMainQuest，并可输出下一幕所需的新实体；禁止输出 endingPair，endingPair 字段必须完全省略。"
-    : ctx.need.kind === "ending_pair"
-      ? "本次是终幕结局对需求：必须输出 endingPair，且恰好包含 trust 与 doubt 两个不同方向；禁止输出 nextMainQuest，nextMainQuest 字段必须完全省略。"
-      : "本次是节奏补足需求：只补充一个必要的新实体或事实；禁止输出 nextMainQuest 和 endingPair，这两个字段必须完全省略。";
-  const outputSchema = [
-    `新地点={"newLocation":{"name":"","description":"","scale":"scene","placement":"world或town_building","connectFromLocationId":"现有地点ID"}}。`,
-    `新NPC={"newNpc":{"name":"","role":"","description":"","locationRef":{"kind":"existing","id":"现有地点ID"}或{"kind":"new_location"},"goals":[""]}}。`,
-    ...(ctx.need.kind === "next_act"
-      ? [`新任务={"nextMainQuest":{"name":"","description":"","objectiveText":""}}。`]
-      : []),
-    ...(ctx.need.kind === "ending_pair"
-      ? [`终局={"endingPair":[{"name":"","description":"","themeKey":"trust"},{"name":"","description":"","themeKey":"doubt"}]}。`]
-      : []),
-  ].join("\n");
-  const locationRule = currentLoc?.scale === "town"
-    ? "当前地点是城镇容器：茶馆、酒楼、客栈、铺面、宅院、后巷等城镇内部空间必须使用 placement=town_building；它们不会成为世界地图节点，且 newNpc.locationRef 必须使用 new_location，由系统把人物绑定到当前城镇建筑。只有城镇外、需要独立旅行的地点才使用 placement=world。"
-    : "当前地点不是城镇容器；新地点通常使用 placement=world。";
-  const reachabilityRule = "如果 newLocation.placement=world 且 newNpc 同时存在，newNpc.locationRef 必须为 {\"kind\":\"new_location\"}，除非本次任务明确不把该 NPC 作为新地点目标。新地点名称不得与现有地点名称重复；新任务的目标顺序必须在玩家可达的地点/实体上成立。";
-  return `只输出 JSON，不能解释。你为 RPG 生成一次小型世界演化。${genreGuard}
-需求=${kindText(ctx.need)}；原因=${ctx.reason}；地点=${currentLoc?.name ?? "未知"}；地点层级=${currentLoc?.scale ?? "未知"}；幕=${storyState.currentAct}/${storyState.targetActs}。
-现有地点摘要=${existingLocationSummary}（ID:名称）；全部现有地点ID=${existingLocationIds}。
-${locationRule}
-${reachabilityRule}
-世界背景=${setup?.worldPremise ?? worldState.generation.gameType}；故事开端=${setup?.storyOpening ?? "沿用当前主线冲突"}。
-外层必须是 {"proposal":{...}}。proposal 必有 beatSummary；未使用字段直接省略，不要写 null。
-${outputSchema}
-${needContract} 名称2-40字、描述200字内。不要创造与题材不符的角色、地点、物品或结局意象。${repairInstruction(ctx.contentRepair)}`;
+/** Compatibility entry point for prompt-only callers and existing fixtures. */
+export function buildWorldEvolutionPrompt(ctx: WorldEvolutionSourceContext): string {
+  return compileLiveWorldEvolutionPrompt(ctx).prompt;
 }

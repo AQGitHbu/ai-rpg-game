@@ -100,10 +100,16 @@ AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录�
 
 | 角色 | purpose | 说明 |
 | --- | --- | --- |
-| `opening` | `opening_generation` | 开局世界生成 |
-| `intent` | `intent_parsing` | 自由输入意图解析 |
-| `world` | `world_evolution` | 按需世界演化（幕推进/结局对/候选补足） |
-| `scene` | `scene_performance` | 每次 ready 场景表演 |
+| `opening` | `opening_generation` | 开局世界生成；2026-08-23 仍未迁入 narrative context compiler |
+| `intent` | `intent_parsing` | 自由输入意图解析；2026-08-23 仍未迁入 narrative context compiler |
+| `world` | `world_evolution` | 按需世界演化（幕推进/结局对/候选补足）；2026-08-23 起附带编译后的 `narrativeContext` manifest |
+| `scene` | `scene_performance` | 每次 ready 场景表演；2026-08-23 起附带编译后的 `narrativeContext` manifest |
+
+## Narrative Context Manifest（2026-08-23）
+
+- `AiTextAuditContext.narrativeContext` 的类型是 `NarrativeContextManifest`，仅记录 `compilerVersion`、预算上限、selected/dropped token 统计，以及每个 block 的 `id/slot/sourceKind/sourceRefs/estimatedTokens`。
+- 审计事件不会把 `renderNarrativeContext()` 产出的 Prompt 正文、副本化 schema 或 block `content` 存进 manifest；完整 Prompt 仍只出现在 `ai_call.input.messages` 的原始请求记录中。
+- 当前只有 `scene` 与 `world` 两类 live 调用会附带该 manifest；`opening` 与 `intent` 事件仍无该字段，直到后续 Plan 明确迁移。
 
 ## 触发动作映射
 
