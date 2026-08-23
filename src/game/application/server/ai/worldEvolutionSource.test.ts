@@ -101,6 +101,25 @@ describe("parseWorldDeltaProposal", () => {
     expect(parsed?.logCategories).toEqual([]);
   });
 
+  it("允许调查方式复用事实中的地点或 NPC 关键词", () => {
+    const parsed = parseWorldDeltaProposal({
+      beatSummary: "追查黑剑客去向",
+      newFact: {
+        text: "赵四爷私下告诉沈青崖，黑剑客从醉月楼后门离开，往枯井坊方向去了。",
+        visibility: "npc_private",
+        investigationApproaches: [
+          { approachId: "tail_zhao", label: "尾随赵四爷", hint: "观察赵四爷是否再次前往枯井坊。", evidenceQuality: "clean", tensionDelta: 5 },
+          { approachId: "search_tavern", label: "搜查醉月楼", hint: "检查黑剑客曾经落脚的房间。", evidenceQuality: "noisy", tensionDelta: 3 },
+        ],
+      },
+    });
+
+    expect(parsed?.proposal.newFact?.investigationApproaches).toEqual([
+      { approachId: "tail_zhao", label: "尾随赵四爷", hint: "观察赵四爷是否再次前往枯井坊。", evidenceQuality: "clean", tensionDelta: 5 },
+      { approachId: "search_tavern", label: "搜查醉月楼", hint: "检查黑剑客曾经落脚的房间。", evidenceQuality: "noisy", tensionDelta: 3 },
+    ]);
+  });
+
   it("investigationApproaches 非数组时拒绝整条世界提案", () => {
     const parsed = parseWorldDeltaProposal({
       beatSummary: "调查线索",
@@ -147,7 +166,7 @@ describe("parseWorldDeltaProposal", () => {
     }
   });
 
-  it("完整正文或软重合泄漏时拒绝整条世界提案，不用题材词库修补", () => {
+  it("完整事实正文泄漏时拒绝整条世界提案", () => {
     const parsed = parseWorldDeltaProposal({
       beatSummary: "调查线索",
       newFact: {
@@ -225,6 +244,7 @@ describe("createLiveWorldEvolutionSource", () => {
     expect(prompt).toContain("禁止输出 endingPair");
     expect(prompt).toContain("endingPair 字段必须完全省略");
     expect(prompt).toContain("placement");
+    expect(prompt).toContain("label/hint 可以引用事实中的地点、人物或线索关键词");
     expect(prompt).not.toContain("终局={");
   });
 

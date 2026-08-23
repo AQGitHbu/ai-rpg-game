@@ -99,22 +99,6 @@ const MAX_APPROACH_COUNT = 3;
 const MIN_TENSION_DELTA = -5;
 const MAX_TENSION_DELTA = 20;
 
-/**
- * 判定软泄漏：label/hint 与事实正文共享 >=2 字符子串（完整正文命中除外，
- * 走硬泄漏）。与 gameplay 审批层的判定一致（词库文案与剧本事实无重合，
- * 确定性路径不会被误伤）。
- */
-function sharesFactFragment(candidate: string, factText: string): boolean {
-  const t = factText.trim();
-  if (t === "" || candidate.trim() === "") return false;
-  for (let size = 2; size <= Math.min(8, t.length); size += 1) {
-    for (let i = 0; i + size <= t.length; i += 1) {
-      if (candidate.includes(t.slice(i, i + size))) return true;
-    }
-  }
-  return false;
-}
-
 export type ParsedInvestigationApproaches = {
   readonly approaches: readonly InvestigationApproach[];
   readonly logCategories: readonly string[];
@@ -125,8 +109,8 @@ export type ParsedInvestigationApproaches = {
  * - 非数组或缺省 = 自动揭示，不产生日志；
  * - 逐条拒绝：approachId/label/hint 非空、quality 枚举、张力在界内、id 唯一、
  *   硬泄漏（完整正文子串）；
- * - 软泄漏（关键名词重合）或任一条目非法：整组响应失败，记稳定
- *   investigation_approach_invalid；不使用本地词库修补，也不把部分响应转换成成功。
+ * - label/hint 可以复用事实中的地点、人物和线索关键词；只有完整事实正文
+ *   出现在 label/hint 中时才拒绝，避免把正常的调查入口误判为泄漏。
  */
 export function parseFactInvestigationApproaches(
   raw: unknown,
@@ -153,7 +137,6 @@ export function parseFactInvestigationApproaches(
     const leakTexts = [label, ...(hint === undefined ? [] : [hint])];
     const factTrimmed = factText.trim();
     if (factTrimmed !== "" && leakTexts.some((text) => text.includes(factTrimmed))) return null;
-    if (leakTexts.some((text) => sharesFactFragment(text, factText))) return null;
     seenIds.add(approachId);
     kept.push({ approachId, label, ...(hint === undefined ? {} : { hint }), evidenceQuality: quality, tensionDelta });
   }

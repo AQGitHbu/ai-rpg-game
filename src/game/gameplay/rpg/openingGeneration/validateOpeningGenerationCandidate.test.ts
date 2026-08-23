@@ -249,7 +249,7 @@ describe("validateOpeningGenerationCandidate · investigationApproaches", () => 
     expect(result.ok).toBe(false);
   });
 
-  it("与正文关键名词重合的软泄漏同样拒绝（开局无题材词库修复，走确定性 fallback）", () => {
+  it("调查方式可以复用事实关键词", () => {
     const result = validateOpeningGenerationCandidate(candidateWithApproaches({
       text: "密道入口在井下",
       approaches: [
@@ -257,7 +257,7 @@ describe("validateOpeningGenerationCandidate · investigationApproaches", () => 
         { approachId: "b", label: "检查井沿", evidenceQuality: "noisy", tensionDelta: 4 },
       ],
     }), { gameLength: "short", targetActs: 3 });
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
   });
 
   it("部分非法列表（3 条中 1 条硬泄漏正文、其余 2 条合法）整体拒绝——过滤后放行会让泄漏条目随原样字段进入 compile", () => {

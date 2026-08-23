@@ -49,24 +49,8 @@ const MIN_TENSION_DELTA = -5;
 const MAX_TENSION_DELTA = 20;
 
 /**
- * 判定软泄漏：label/hint 与事实正文共享 >=2 字符子串（完整正文命中除外，
- * 走硬泄漏）。正文片段是确定性输入的剪贴风险面，任何 2 字符重合都视为
- * “关键名词重合”并拒绝/修复；词库文案与剧本事实无重合（见
- * defaultInvestigationApproachesFor 的约束），确定性路径不会被误伤。
- */
-function sharesFactFragment(candidate: string, factText: string): boolean {
-  const t = factText.trim();
-  if (t === "" || candidate.trim() === "") return false;
-  for (let size = 2; size <= Math.min(8, t.length); size += 1) {
-    for (let i = 0; i + size <= t.length; i += 1) {
-      if (candidate.includes(t.slice(i, i + size))) return true;
-    }
-  }
-  return false;
-}
-
-/**
- * 单条调查方式规范化校验：字段形状/枚举/张力越界/硬泄漏/软泄漏任一不通过
+ * 单条调查方式规范化校验：字段形状/枚举/张力越界/完整正文泄漏/重复 id
+ * 任一不通过；正常复用事实关键词是允许的。
  * 返回 null；通过则返回规范后的条目。供审批（过滤语义）与开局校验（严格
  * 语义）共用，两条路径的逐条判定必须一致。
  */
@@ -86,8 +70,7 @@ function normalizeApproachEntry(
   if (approachId === "" || label === "" || hint === "" || !qualityValid || !tensionValid) return null;
   const leakTexts = [label, ...(hint === undefined ? [] : [hint])];
   const hardLeak = leakTexts.some((text) => text.includes(factText.trim()));
-  const softLeak = leakTexts.some((text) => sharesFactFragment(text, factText));
-  if (hardLeak || softLeak) return null;
+  if (hardLeak) return null;
   return {
     approachId,
     label,
@@ -101,11 +84,9 @@ function normalizeApproachEntry(
  * 调查方式审批（世界演化层，防御性校验）：
  * - 缺省/空列表 = 自动揭示，不产生日志；
  * - 逐条校验：approachId/label/hint 非空、quality 枚举、张力在界内、id 唯一、
- *   硬泄漏（完整正文子串）/软泄漏（关键名词重合）均拒绝该条目；
+ *   只有硬泄漏（完整正文子串）拒绝该条目；正常复用事实关键词是允许的；
  * - 只保留校验通过者；显式非空列表过滤后数量不在 2-3 时降级为空列表，
  *   并记录 investigation_approach_invalid（规则层修复，绝不拒绝本轮）。
- * 软泄漏此处直接拒绝而非修复：修复需要题材词库，审批层无词库（词库在
- * application 层），软泄漏由 AI 输入解析器在上游处理。
  */
 export function validateInvestigationApproaches(
   approaches: readonly InvestigationApproach[] | undefined,
@@ -131,7 +112,7 @@ export function validateInvestigationApproaches(
 
 /**
  * 严格校验（开局候选用，fail-fast）：显式非空列表必须整体合规——数量 2-3、
- * 每条都通过 normalizeApproachEntry（含硬/软泄漏、重复 id、越界张力）。
+ * 每条都通过 normalizeApproachEntry（含完整正文泄漏、重复 id、越界张力）。
  * 任意一条非法即整体拒绝：开局有确定性 fallback，未获批数据绝不能进入
  * compile（compile 对 investigationApproaches 是逐字拷贝，不做任何过滤）。
  */

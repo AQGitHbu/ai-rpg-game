@@ -567,6 +567,23 @@ describe("approveWorldDelta · investigationApproaches", () => {
     expect(result.approved.logCategories).toBeUndefined();
   });
 
+  it("调查方式可以复用事实关键词并保留原文", () => {
+    const approaches: readonly InvestigationApproach[] = [
+      { approachId: "a", label: "检查裂痕", hint: "确认盟约裂痕是否由近期冲突造成。", evidenceQuality: "clean", tensionDelta: 2 },
+      { approachId: "b", label: "询问掌柜", evidenceQuality: "noisy", tensionDelta: 4 },
+    ];
+    const result = approveWorldDelta({
+      proposal: proposalWithApproaches(approaches),
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.newFacts[0]?.investigationApproaches).toEqual(approaches);
+    expect(result.approved.logCategories).toBeUndefined();
+  });
+
   it("非法列表（数量/重复 id/越界张力/正文泄漏）降级为空并记录 investigation_approach_invalid，不拒绝本轮", () => {
     const invalidLists: readonly (readonly InvestigationApproach[])[] = [
       [{ approachId: "a", label: "检查酒坛", evidenceQuality: "clean", tensionDelta: 2 }],
