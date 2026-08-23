@@ -71,10 +71,6 @@ export function AdventureGameShell({
   const dialogueSubmissionBusy = lastInteractionOrigin === "npc-dialogue" && (isSubmitting || pending);
   const ordinaryProgressBusy = !dialogueSubmissionBusy && (isSubmitting || pending);
   const controlsBusy = isSubmitting || pending || narrativeFailed || actionFailed;
-  // API/后台编排期间保持全屏模态，锁住地图、信息面板和所有规则行动，
-  // 避免玩家在旧 revision 上继续点击；模态中的重试只在 pending 时提供。
-  const busy = isSubmitting || pending || narrativeFailed;
-
   // 三层导航：从地图进入当前地点——town 地点先进小镇层，scene 地点直达场景。
   function entryScreenFor(view: GameSessionView): AdventureScreen {
     return view.currentLocation.scale === "town" && view.currentLocation.town !== null ? "town" : "scene";

@@ -299,6 +299,99 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(proposal.proposal.objectiveLink!.objectiveIndex).toBe(context.objectiveTransition.after!.objectiveIndex);
   });
 
+  it("幕交接解析旧焦点 NPC 台词与同次 API 生成的非焦点 NPC 闲聊", () => {
+    const transition: ObjectiveTransition = {
+      before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老周交谈" },
+      completed: [],
+      after: { questId: asQuestId("quest_0"), objectiveIndex: 1, label: "与赵四交谈" },
+      mode: "advanced_act",
+    };
+    const job = makeJob({
+      transition,
+      beats: [
+        { beatId: "quest_adv_0", kind: "quest_advanced", subjectIds: ["quest_0"], instruction: "交接到赵四" },
+        { beatId: ATMOSPHERE_BEAT_ID, kind: "atmosphere", subjectIds: [], instruction: "氛围" },
+      ],
+    });
+    const context: SceneGenerationContext = {
+      ...makeContext({
+        job,
+        presentNpcs: [
+          makeContext().presentNpcs[0]!,
+          {
+            ...makeContext().presentNpcs[0]!,
+            id: asNpcId("npc_2"),
+            name: "赵四",
+            role: "客栈掌柜",
+            recentInteractionActionIds: [],
+          },
+        ],
+        objectiveTarget: { questId: "quest_0", objectiveIndex: 1, entityId: "npc_2", entityName: "赵四" },
+      }),
+      narrativeReferenceIds: ["npc_1", "npc_2", "quest_0"],
+      focusNpcContext: {
+        ...makeContext().focusNpcContext!,
+        id: asNpcId("npc_1"),
+        name: "老板",
+      },
+    };
+    const result = parseScenePerformanceJson({
+      segments: [
+        { beatId: "quest_adv_0", text: "线索把你引向赵四。", referencedEntityIds: ["npc_2"] },
+        { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" },
+      ],
+      npcLine: {
+        npcId: "npc_1",
+        text: "旧案的线索我会说清楚。你去客栈找赵四，他见过那晚的来客。",
+        emotion: "neutral",
+        answeredBeatIds: [],
+        usedFactIds: [],
+        usedInteractionActionIds: [],
+      },
+      npcDialogues: [{ npcId: "npc_2", text: "客官若要打听旧案，先坐下喝口热茶。店里的出入我记得几分。" }],
+      objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
+      choices: [
+        { candidateId: "candidate_1", label: "去客栈找赵四" },
+        { candidateId: "candidate_2", label: "先在路边观察" },
+      ],
+    }, context, buildSelectableSceneCandidates(context));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.proposal.npcLine?.npcId).toBe("npc_1");
+    expect(result.proposal.npcDialogues).toEqual([
+      { npcId: "npc_2", text: "客官若要打听旧案，先坐下喝口热茶。店里的出入我记得几分。" },
+    ]);
+  });
+
+  it("非焦点 NPC 对白不能静默接受未知、重复或焦点 NPC 条目", () => {
+    const context = makeContext({
+      presentNpcs: [
+        makeContext().presentNpcs[0]!,
+        { ...makeContext().presentNpcs[0]!, id: asNpcId("npc_2"), name: "赵四" },
+      ],
+    });
+    const base = {
+      segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "炉火轻响。" }],
+      npcLine: { npcId: "npc_1", text: "旧案我会说清楚。你先听我把线索交代完。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+      objectiveLink: null,
+      choices: [
+        { candidateId: "candidate_1", label: "继续追问" },
+        { candidateId: "candidate_2", label: "先观察" },
+      ],
+    };
+    for (const npcDialogues of [
+      [{ npcId: "ghost", text: "我不在这里。" }],
+      [{ npcId: "npc_2", text: "我在。" }, { npcId: "npc_2", text: "又来一遍。" }],
+      [{ npcId: "npc_1", text: "焦点不应重复。" }],
+    ]) {
+      const result = parseScenePerformanceJson({ ...base, npcDialogues }, context, buildSelectableSceneCandidates(context));
+      expect(result.ok).toBe(false);
+      if (result.ok) continue;
+      expect(result.reason).toBe("npc_dialogues_invalid");
+    }
+  });
+
   it("prompt 包含必需安全段落：玩家原话、合法选项 ID、目标、焦点 NPC；不泄漏私密正文/账本", async () => {
     const job = makeJob({
       utterance: "商队失踪的事你知道吗？",

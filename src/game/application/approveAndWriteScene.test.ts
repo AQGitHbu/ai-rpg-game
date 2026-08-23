@@ -621,11 +621,12 @@ describe("approveScenePerformance (Task 6)", () => {
       proposal: makeProposal({
         segments: [
           { beatId: "player_utterance", text: "你提出了你的疑问。" },
-          { beatId: "quest_advanced", text: "主线推进到新掌柜。" },
+          { beatId: "quest_advanced", text: "主线推进到新掌柜。", referencedEntityIds: ["npc_2"] },
           { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉" },
         ],
         npcLine: { npcId: "npc_1", text: "告示的来历我会说清楚。新掌柜掌握的是下一页卷宗。", emotion: "neutral", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
         objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
+        npcDialogues: [{ npcId: "npc_2", text: "客官若要查旧案，去找赵四。店里的出入他记得最清楚。" }],
         choices: [
           { candidateId: "candidate_1", label: "表示愿意支持新掌柜" },
           { candidateId: "candidate_2", label: "质疑新掌柜的说法" },
@@ -635,6 +636,106 @@ describe("approveScenePerformance (Task 6)", () => {
       existingCandidateEventPool: [],
     });
     expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.scene.npcDialogues?.find((dialogue) => dialogue.npcId === "npc_2")?.speechSource).toBe("generated");
+  });
+
+  it("无 player_utterance 的幕交接也必须由旧焦点 NPC 说最后一句", () => {
+    const oldNpc = makeContext().presentNpcs[0]!;
+    const newNpc = { ...oldNpc, id: asNpcId("npc_2"), name: "新掌柜", recentInteractionActionIds: [] };
+    const job = makeJob({
+      transition: {
+        before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老掌柜交谈" },
+        completed: [{ questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老掌柜交谈" }],
+        after: { questId: asQuestId("quest_0"), objectiveIndex: 1, label: "与新掌柜交谈" },
+        mode: "advanced_act",
+      },
+      beats: [
+        { beatId: "quest_advanced", kind: "quest_advanced", subjectIds: ["quest_0"], instruction: "主线推进" },
+        { beatId: ATMOSPHERE_BEAT_ID, kind: "atmosphere", subjectIds: [], instruction: "氛围" },
+      ],
+    });
+    const context = {
+      ...makeContext({
+        job,
+        presentNpcs: [oldNpc, newNpc],
+        focusNpcContext: { ...makeContext().focusNpcContext!, id: asNpcId("npc_1") },
+        objectiveTarget: { questId: "quest_0", objectiveIndex: 1, entityId: "npc_2", entityName: "新掌柜" },
+      }),
+      narrativeReferenceIds: ["npc_1", "npc_2", "quest_0"],
+    } satisfies SceneGenerationContext;
+    const result = approveScenePerformance({
+      context,
+      proposal: makeProposal({
+        segments: [
+          { beatId: "quest_advanced", text: "线索把你引向新掌柜。", referencedEntityIds: ["npc_2"] },
+          { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" },
+        ],
+        npcLine: { npcId: "npc_2", text: "客官找我有什么事？我知道一些情况。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
+        npcDialogues: [{ npcId: "npc_1", text: "旧案我会说清楚。你去找新掌柜，他见过关键来客。" }],
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result).toEqual({ ok: false, code: "handoff_npc_unanswered" });
+  });
+
+  it("幕交接缺少新目标引用时进入内容修复失败码", () => {
+    const oldNpc = makeContext().presentNpcs[0]!;
+    const job = makeJob({
+      transition: {
+        before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老掌柜交谈" },
+        completed: [],
+        after: { questId: asQuestId("quest_0"), objectiveIndex: 1, label: "与新掌柜交谈" },
+        mode: "advanced_act",
+      },
+      beats: [
+        { beatId: "quest_advanced", kind: "quest_advanced", subjectIds: ["quest_0"], instruction: "主线推进" },
+        { beatId: ATMOSPHERE_BEAT_ID, kind: "atmosphere", subjectIds: [], instruction: "氛围" },
+      ],
+    });
+    const context = {
+      ...makeContext({
+        job,
+        presentNpcs: [oldNpc, { ...oldNpc, id: asNpcId("npc_2"), name: "新掌柜", recentInteractionActionIds: [] }],
+        focusNpcContext: { ...makeContext().focusNpcContext!, id: asNpcId("npc_1") },
+        objectiveTarget: { questId: "quest_0", objectiveIndex: 1, entityId: "npc_2", entityName: "新掌柜" },
+      }),
+      narrativeReferenceIds: ["npc_1", "npc_2", "quest_0"],
+    } satisfies SceneGenerationContext;
+    const result = approveScenePerformance({
+      context,
+      proposal: makeProposal({
+        segments: [
+          { beatId: "quest_advanced", text: "线索带你走向下一处。" },
+          { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" },
+        ],
+        npcLine: { npcId: "npc_1", text: "旧案我会说清楚。你去找新掌柜，他知道下一步。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
+        npcDialogues: [{ npcId: "npc_2", text: "客官若要查旧案，先坐下喝茶。店里的出入我记得几分。" }],
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result).toEqual({ ok: false, code: "handoff_missing_objective_reference" });
+  });
+
+  it("generated 场景缺少非焦点 NPC 对白时拒绝写入", () => {
+    const npc1 = makeContext().presentNpcs[0]!;
+    const npc2 = { ...npc1, id: asNpcId("npc_2"), name: "赵四", recentInteractionActionIds: [] };
+    const result = approveScenePerformance({
+      context: makeContext({
+        presentNpcs: [npc1, npc2],
+        focusNpcContext: { ...makeContext().focusNpcContext!, id: asNpcId("npc_1") },
+      }),
+      proposal: makeProposal({
+        npcLine: { npcId: "npc_1", text: "旧案我会说清楚。你先听我把线索交代完。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result).toEqual({ ok: false, code: "missing_non_focus_npc_dialogue" });
   });
 
   // ── 目标一致性 ─────────────────────────────────────────────────────────
@@ -794,7 +895,7 @@ describe("approveScenePerformance (Task 6)", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("幕推进时不逐字复述目标名也不拒绝场景，并报告缺失结构化引用", () => {
+  it("幕推进缺少目标结构化引用时进入内容修复失败码", () => {
     const job = makeJob({
       eventKind: "travel",
       summary: { kind: "move", locationId: asLocationId("loc_2") },
@@ -824,9 +925,7 @@ describe("approveScenePerformance (Task 6)", () => {
       basedOnRevision: 8,
       existingCandidateEventPool: [],
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.qualityWarnings).toContain("missing_objective_reference");
+    expect(result).toEqual({ ok: false, code: "handoff_missing_objective_reference" });
   });
 
   it("幕推进时 quest_advanced 节拍点名新目标实体 → 通过", () => {
@@ -852,7 +951,7 @@ describe("approveScenePerformance (Task 6)", () => {
       proposal: makeProposal({
         objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
         segments: [
-          { beatId: "quest_adv_0", text: "主线推进，接下来要获取盟誓印谱。" },
+          { beatId: "quest_adv_0", text: "主线推进，接下来要获取盟誓印谱。", referencedEntityIds: ["item_seal"] },
           { beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉" },
         ],
       }),

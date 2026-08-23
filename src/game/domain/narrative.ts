@@ -72,7 +72,9 @@ export type NpcDialogueInScene = {
   readonly npcRole: string;
   /** 复用现有分页机制（paginateSpeechText）。 */
   readonly speechPages: readonly string[];
-  /** 非焦点 NPC 的闲聊：AI 生成，点击后直接显示回复，不消耗回合。 */
+  /** 台词来源；旧存档缺失时由 read model 按兼容规则推断。 */
+  readonly speechSource?: "generated" | "fallback";
+  /** 旧存档兼容字段；新 live 场景使用 speechPages + speechSource。 */
   readonly smallTalk?: {
     readonly prompt: string;
     readonly response: string;
@@ -186,6 +188,8 @@ export function buildNpcDialoguePages(
   options?: {
     readonly focusNpcId?: unknown;
     readonly focusSpeech?: string;
+    readonly generatedNpcLines?: ReadonlyMap<string, string>;
+    readonly speechSource?: "generated" | "fallback";
     readonly smallTalkData?: ReadonlyMap<string, { prompt: string; response: string }>;
   },
 ): readonly NpcDialogueInScene[] {
@@ -196,9 +200,17 @@ export function buildNpcDialoguePages(
     const isFocus = options?.focusNpcId !== undefined
       && String(npc.id) === String(options.focusNpcId)
       && normalizedFocusSpeech !== "";
+    const generatedNpcLine = options?.generatedNpcLines?.get(String(npc.id));
+    const normalizedGeneratedNpcLine = generatedNpcLine === undefined
+      ? ""
+      : normalizeNpcSpeech(generatedNpcLine, npc.name);
+    const hasGeneratedLine = !isFocus && normalizedGeneratedNpcLine !== "";
+    const focusSpeechSource = options?.speechSource ?? "generated";
     const text = isFocus
       ? normalizedFocusSpeech
-      : composeDeterministicNpcLine(npc.name, npc.role);
+      : hasGeneratedLine
+        ? normalizedGeneratedNpcLine
+        : composeDeterministicNpcLine(npc.name, npc.role);
     const smallTalk = !isFocus && options?.smallTalkData
       ? options.smallTalkData.get(String(npc.id))
       : undefined;
@@ -207,6 +219,7 @@ export function buildNpcDialoguePages(
       npcName: npc.name,
       npcRole: npc.role,
       speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
+      speechSource: isFocus ? focusSpeechSource : hasGeneratedLine ? "generated" : "fallback",
       ...(smallTalk ? { smallTalk } : {}),
     };
   });

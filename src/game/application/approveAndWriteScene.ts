@@ -1,6 +1,10 @@
 import { parseEventCandidate } from "@/game/domain/candidateEvent";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import type { EventProposal, ScenePerformanceProposal, ScenePerformanceNpcLine } from "./sceneSource";
+import type {
+  EventProposal,
+  ScenePerformanceProposal,
+  ScenePerformanceNpcLine,
+} from "./sceneSource";
 import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState, LinearActionNarrativeState } from "@/game/domain/narrative";
 import { buildNpcDialoguePages } from "@/game/domain/narrative";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
@@ -16,7 +20,12 @@ import {
 } from "./deterministicSceneSource";
 import { asFactId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
-import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
+import {
+  isGenericNpcAcknowledgement,
+  isGenericNpcGreeting,
+  isGenericNpcInquiry,
+  normalizeNpcSpeech,
+} from "@/game/domain/npcSpeech";
 
 // ---------------------------------------------------------------------------
 // R4（Task 21）：候选事件池审批 + Task 6：场景表演契约审批。
@@ -118,11 +127,14 @@ export type SceneRejectionCode =
   | "duplicate_candidate_ids"
   | "illegal_choice_target"
   | "no_objective_progress_choices"
-  | "invalid_investigation_narrative";
+  | "invalid_investigation_narrative"
+  | "handoff_npc_unanswered"
+  | "handoff_missing_objective_reference"
+  | "missing_non_focus_npc_dialogue";
 
 /**
  * 场景核心结构合法后，仍可供运营/评测观察的叙事质量信号。
- * 这些信号不能阻断场景写回，也不能改变规则层状态。
+ * 普通场景只记录这些信号；handoff 缺少新目标引用时由审批器升级为内容修复失败。
  */
 export type SceneQualityWarningCode =
   | "missing_objective_reference"
@@ -170,6 +182,49 @@ function rebuildNpcLine(
     usedFactIds: line.usedFactIds.map((id) => asFactId(id)),
     answeredBeatIds: [...line.answeredBeatIds],
   };
+}
+
+function buildGeneratedNpcDialogueMap(
+  proposal: ScenePerformanceProposal,
+  context: SceneGenerationContext,
+  focusNpcId: string | undefined,
+): { readonly ok: true; readonly lines: ReadonlyMap<string, string> } | { readonly ok: false; readonly code: "missing_non_focus_npc_dialogue" } {
+  const entries = proposal.npcDialogues ?? [];
+  const presentIds = new Set(context.presentNpcs.map((npc) => String(npc.id)));
+  const lines = new Map<string, string>();
+  for (const entry of entries) {
+    if (!isRecord(entry)
+      || typeof entry.npcId !== "string"
+      || typeof entry.text !== "string"
+      || !presentIds.has(String(entry.npcId))
+      || String(entry.npcId) === focusNpcId
+      || lines.has(String(entry.npcId))) {
+      return { ok: false, code: "missing_non_focus_npc_dialogue" };
+    }
+    const npc = context.presentNpcs.find((candidate) => String(candidate.id) === String(entry.npcId));
+    const text = npc === undefined ? "" : normalizeNpcSpeech(entry.text, npc.name);
+    if (text === ""
+      || isGenericNpcAcknowledgement(text)
+      || isGenericNpcGreeting(text)
+      || isGenericNpcInquiry(text)) {
+      return { ok: false, code: "missing_non_focus_npc_dialogue" };
+    }
+    lines.set(String(entry.npcId), text);
+  }
+
+  const requiresCoverage = proposal.source === "generated"
+    && context.focusNpcContext !== undefined
+    && proposal.npcLine !== null
+    && context.presentNpcs.length > 1;
+  if (requiresCoverage) {
+    const expectedIds = context.presentNpcs
+      .map((npc) => String(npc.id))
+      .filter((npcId) => npcId !== focusNpcId);
+    if (expectedIds.length !== lines.size || expectedIds.some((npcId) => !lines.has(npcId))) {
+      return { ok: false, code: "missing_non_focus_npc_dialogue" };
+    }
+  }
+  return { ok: true, lines };
 }
 
 /** 焦点 NPC 的可见对白至少应是两句可独立阅读的话，不能把开场或回答压成一句。 */
@@ -358,6 +413,21 @@ export function approveScenePerformance(input: {
     }
   }
 
+  const generatedNpcDialogues = buildGeneratedNpcDialogueMap(
+    proposal,
+    context,
+    npcLine === null ? undefined : String(npcLine.npcId),
+  );
+  if (!generatedNpcDialogues.ok) return generatedNpcDialogues;
+
+  const handoffFocusNpcId = context.objectiveTransition.mode === "advanced_act"
+    ? context.focusNpcContext?.id
+    : undefined;
+  if (handoffFocusNpcId !== undefined
+    && (npcLine === null || String(npcLine.npcId) !== String(handoffFocusNpcId))) {
+    return { ok: false, code: "handoff_npc_unanswered" };
+  }
+
   // Task 5 Step 4：player_utterance 应答钩子。有玩家原话节拍时，提案必须由
   // 实际被玩家交谈的 NPC 应答并显式列出节拍 ID；幕交接中的新目标 NPC
   // 不能篡改成这句话的收件人。
@@ -448,7 +518,8 @@ export function approveScenePerformance(input: {
   }
 
   // 叙事 grounding 质量诊断：目标身份由 objectiveLink 与稳定实体 ID
-  // 决定，不能再用旁白是否逐字包含 entityName 作为整场拒绝条件。
+  // 决定；普通场景不因旁白未逐字包含 entityName 拒绝，handoff 的目标引用
+  // 则必须存在，否则交给同一 pending 回合的内容修复。
   const qualityWarnings: SceneQualityWarningCode[] = [];
   if (context.objectiveTransition.mode === "advanced_act" && objectiveTarget !== null) {
     const advancedBeat = context.mandatoryBeats.find((b) => b.kind === "quest_advanced");
@@ -467,6 +538,13 @@ export function approveScenePerformance(input: {
         qualityWarnings.push("missing_objective_reference");
       }
     }
+  }
+  if (
+    context.objectiveTransition.mode === "advanced_act"
+    && objectiveTarget !== null
+    && (qualityWarnings.includes("missing_objective_surface") || qualityWarnings.includes("missing_objective_reference"))
+  ) {
+    return { ok: false, code: "handoff_missing_objective_reference" };
   }
 
   // ── 铸造 registry 与 ready scene ─────────────────────────────────────────
@@ -513,6 +591,8 @@ export function approveScenePerformance(input: {
           npcDialogues: buildNpcDialoguePages(context.presentNpcs, {
             focusNpcId: rebuiltNpcLine?.npcId,
             focusSpeech: rebuiltNpcLine?.text,
+            generatedNpcLines: generatedNpcDialogues.lines,
+            speechSource: proposal.source,
           }),
         }
       : {}),

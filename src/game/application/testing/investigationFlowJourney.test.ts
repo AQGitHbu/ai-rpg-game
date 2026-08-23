@@ -53,6 +53,14 @@ function createFakeLiveSceneSource(withLinearNarratives: boolean): FakeLiveSourc
       if (!baseResult.ok) throw new Error("expected success");
       if (!withLinearNarratives) return baseResult;
       const proposal = baseResult.proposal;
+      const npcDialogues = context.focusNpcContext !== undefined && context.presentNpcs.length > 1
+        ? context.presentNpcs
+          .filter((npc) => String(npc.id) !== String(proposal.npcLine?.npcId))
+          .map((npc) => ({
+            npcId: String(npc.id),
+            text: `我在${context.currentLocation.name}忙着自己的事。你若有正事，先去找眼前正在交谈的人。`,
+          }))
+        : undefined;
       const narratives: LinearActionNarrative[] = (context.upcomingLinearObjectives ?? []).flatMap(
         (ref): readonly LinearActionNarrative[] => {
           if (ref.kind === "discover_fact") {
@@ -99,6 +107,7 @@ function createFakeLiveSceneSource(withLinearNarratives: boolean): FakeLiveSourc
         ok: true,
         proposal: {
           ...proposal,
+          ...(npcDialogues === undefined ? {} : { npcDialogues }),
           choices: [relabel(first), relabel(second)],
           ...(narratives.length > 0 ? { linearActionNarratives: narratives } : {}),
           source: "generated",

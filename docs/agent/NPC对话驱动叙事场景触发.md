@@ -14,9 +14,9 @@ NPC 对话是持续推进故事的主要入口。每个 ready 的焦点 NPC 场�
 - 自定义输入必须绑定当前焦点 NPC。每次提交生成新的浏览器 UUID，即使连续对同一 NPC 输入也分别计为独立回合。
 - 玩家输入表达意图，不声明事实。服务端意图解析器只能转换成当前受支持 Action；越权声明不能直接改变任务、知识、关系、物品、战斗或结局。
 - 每个成功输入都会推进 `turnNumber`、更新结构化 NPC 记忆/关系、产生一个 `PendingNarrativeJob`；服务端在规则写入成功后立即后台排队下一幕，不等待玩家再次点击或客户端 ensure 才开始生成。
-- 当一次对话完成当前幕并具象化出下一任务时，新场景是非焦点的任务交接场景：上一名 NPC 立即失去双选项/自定义输入，场景选择优先包含权威新目标；新出现的 NPC 不会被界面自动打开。
+- 当一次对话完成当前幕并具象化出下一任务时，新场景是任务交接场景：旧焦点 NPC 必须在本次生成的 `npcLine` 中说完承接新目标的最后一句，场景选择随后切换到权威新目标；新出现的 NPC 不会被界面自动打开。
 - 交接离开当前建筑/地点时，旧焦点对话框和旧行动栏一起关闭；玩家回到地图/小镇进入新目标后，才由新 NPC 提供正式对白，避免旧 NPC 的双选项伪装成新主线。
-- 交接/非目标 NPC 点击后是零回合闲聊弹窗（预生成提醒或中性台词 + “知道了”关闭），不提交回合、不创建 pending、不推进剧情；正式对话只能经当前权威 talk 目标入口开启。
+- 交接/非目标 NPC 点击后是零回合闲聊弹窗（由同一次 live scene API 的 `npcDialogues` 同步生成 + “知道了”关闭），不提交回合、不创建 pending、不推进剧情；正式对话只能经当前权威 talk 目标入口开启。generated 闲聊缺失会触发内容修复，旧存档才使用确定性兼容台词。
 - 若权威当前目标已经切换为调查、移动、取物或战斗，上一轮 NPC 的回应仍可展示，但旧的 dialogue focus、自由输入和 support/challenge 选项必须降级/关闭；不能因为旧 token 仍能通过机械合法性检查，就把玩家留在上一轮对话里。只有当前目标仍是该 NPC 的交谈，或明确进入结局抉择时，才保留焦点对话。
 - 新地点刚被编排出来时，场景事件可能仍是 travel/observe；只要当前主线目标已锁定该地点的焦点 NPC，read model 仍可从权威目标铸造两项 opaque 的 support/challenge 回应，并接受绑定该 NPC 的自定义对白，不能要求玩家重复点击一次无意义的交谈入口。
 - 同一幕可以预先具象化后续 NPC、证物和敌人，但只有当前释放目标对应的实体进入场景与 NPC 上下文。前置调查未完成时不展示远端 NPC；玩家抵达新地点后，NPC 首句必须承接已完成的调查事实与到达过程，不能默认双方已经交换过密信、腰牌或完整案情。
@@ -78,6 +78,7 @@ type ActionRequest = {
 - `src/game/application/gameSessionView.ts` — 焦点 NPC 对话 read model。
 - `src/game/domain/npcSpeech.ts` — 直接台词归一化、通用确认句识别和无场景问候兜底。
 - `src/game/application/sceneGenerationContext.ts` — 从当前场景与 pending job 投影上一轮 NPC 台词/玩家选项，供 live 与 deterministic source 共用。
+- `src/game/application/server/ai/liveScenePerformanceSource.ts` — 生成并解析焦点 NPC 台词、handoff 交接和同次 API 的非焦点 NPC 闲聊。
 - `src/game/domain/approvedChoice.ts` — 保留 talk 的 `dialogueAct/topic`，并将主题纳入语义去重与 opaque token 派生。
 
 ## 主要验收
@@ -94,8 +95,8 @@ type ActionRequest = {
 - 规则裁决和 NPC 知识边界不能交给 AI；AI 只负责 proposal 与表达。
 - `src/game/gameplay/rpg/ruleEngine/index.ts` — 维护最少两轮的 dialogue session，防止首次回应直接完成交谈目标。
 - 场景生成、审批写回和 read model 投影都执行台词归一化，因此旧存档中已保存的“NPC 名称 + 动作 + 台词”包装不会继续出现在对话框。
-- read model 会兼容旧交接存档：当已保存的 dialogue focus 与当前在场 talk 目标不一致时，丢弃过期的焦点选项并把旧 NPC 降为零回合闲聊（'知道了'关闭）；不要求玩家清档。
-- 旧场景中可能持久化的 `smallTalk` 数据不再投影到客户端；非焦点 NPC 只显示零回合闲聊（`choices: []`），`ask` 入口仅由当前权威 talk 目标投影。
+- read model 会兼容旧交接存档：当已保存的 dialogue focus 与当前在场 talk 目标不一致时，丢弃过期的焦点选项并把旧 NPC 降为零回合闲聊（“知道了”关闭）；新 generated 场景的 NPC 台词按持久化 `speechSource` 展示，不再误标为 fallback。
+- 旧场景中可能持久化的 `smallTalk` 数据不再投影到客户端；非焦点 NPC 只显示零回合闲聊（`choices: []`），`ask` 入口仅由当前权威 talk 目标投影。新的 `npcDialogues` 台词由场景 API 同步生成并随 scene 写回。
 - 任何新输入形态必须先扩展 `Interaction` union，并继续通过 `/api/game/actions` 与 `performTurn`，不能新增并行入口。
 
 ## 历史说明
