@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   createLiveScenePerformanceSource,
+  compileLiveScenePrompt,
   buildLiveScenePrompt,
   LIVE_SCENE_MAX_TOKENS,
   LIVE_SCENE_TIMEOUT_MS,
@@ -282,6 +283,38 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(battleSegment!.text).not.toContain("败北");
   });
 
+  it("current_resolution 先于 recentBeats，且 parser 只接受当前 mandatory beat ID", () => {
+    const job = makeJob({
+      beats: [{
+        beatId: "item_0",
+        kind: "item_obtained",
+        subjectIds: ["item_seal"],
+        instruction: "服务端已结算：玩家获得盟誓印谱",
+      }],
+    });
+    const context: SceneGenerationContext = {
+      ...makeContext({ job }),
+      recentBeats: [{ turn: 0, kind: "old_memory", summary: "玩家仍未获得盟誓印谱" }],
+    };
+    const prompt = buildLiveScenePrompt(context, buildSelectableSceneCandidates(context));
+
+    expect(prompt.indexOf("## [current_resolution]")).toBeLessThan(prompt.indexOf("## [relevant_events]"));
+    expect(prompt).toContain("服务端已结算");
+    expect(prompt).toContain("不得改写已结算结果");
+
+    const parsed = parseScenePerformanceJson({
+      segments: [{ beatId: "old_memory", text: "仍未获得。" }],
+      npcLine: null,
+      npcDialogues: [],
+      objectiveLink: null,
+      choices: [
+        { candidateId: "candidate_1", label: "继续核对" },
+        { candidateId: "candidate_2", label: "查看四周" },
+      ],
+    }, context, buildSelectableSceneCandidates(context));
+    expect(parsed).toEqual({ ok: false, reason: "segment_unknown_beat" });
+  });
+
   it("任务推进：segment 点名下一目标实体，objectiveLink 与 HUD 目标一致", async () => {
     const transition: ObjectiveTransition = {
       before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老板交谈" },
@@ -526,6 +559,44 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain("当前没有其他强制节拍");
     expect(prompt).toContain("beatId 为 atmosphere");
     expect(prompt).toContain("不得返回空数组");
+  });
+
+  it("成功生成合法场景时只调用一次 AI complete", async () => {
+    const complete = vi.fn(async () => ({
+      ok: true as const,
+      content: JSON.stringify({
+        segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "炉火映亮桌角。" }],
+        npcLine: {
+          npcId: "npc_1",
+          text: "旧案我会说明。你先核对账册。",
+          emotion: "neutral",
+          answeredBeatIds: [],
+          usedFactIds: [],
+          usedInteractionActionIds: [],
+        },
+        npcDialogues: [],
+        objectiveLink: null,
+        choices: [
+          { candidateId: "candidate_1", label: "请说清旧案" },
+          { candidateId: "candidate_2", label: "（查看账册）" },
+        ],
+      }),
+      latencyMs: 1,
+    }));
+    const aiClient = {
+      complete,
+      policy: () => ({
+        thinking: "off" as const,
+        timeoutMs: 45_000,
+        maxTokens: 3_000,
+        jsonMode: "prompt_only" as const,
+        maxAttempts: 1,
+      }),
+    };
+
+    await createLiveScenePerformanceSource({ aiClient }).generateScene(makeContext());
+
+    expect(complete).toHaveBeenCalledTimes(1);
   });
 
   it("后续对话 prompt 注入上一句 NPC 台词、玩家选项和结构化主题", () => {
@@ -1283,6 +1354,27 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain("沿痕迹追查");
     expect(prompt).toContain("证据质量");
     expect(prompt).toContain("北巷旧道");
+  });
+
+  it("battle prompt 只表演服务端已结算 outcome/HP，不引入 battle snapshot 语义", () => {
+    const job = makeJob({
+      eventKind: "battle",
+      summary: { kind: "battle_action", action: "attack" },
+      beats: [{
+        beatId: "battle_0",
+        kind: "battle_resolved",
+        subjectIds: ["enemy_1"],
+        instruction: "服务端已结算：玩家胜利，当前 HP=80",
+      }],
+    });
+    const context = makeContext({ job });
+    const compilation = compileLiveScenePrompt(context, buildSelectableSceneCandidates(context));
+
+    expect(compilation.context.selected.find((block) => block.id === "scene:resolution")?.content)
+      .toContain("当前 HP=80");
+    expect(compilation.prompt).toContain("服务端已结算：玩家胜利，当前 HP=80");
+    expect(compilation.prompt).not.toContain("preBattleSnapshot");
+    expect(compilation.prompt).not.toContain("BattleStartSnapshot");
   });
 
   it("已结算调查结果随提案携带，且不泄漏 tensionDelta", async () => {

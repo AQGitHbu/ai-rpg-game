@@ -318,6 +318,39 @@ describe("createLiveWorldEvolutionSource", () => {
     expect(result.ok).toBe(false);
     expect(result.ok ? null : result.failure.kind).toBe("AI_CALL_FAILED");
   });
+
+  it("成功生成合法世界演化提案时只调用一次 AI complete", async () => {
+    const complete = vi.fn(async () => ({
+      ok: true as const,
+      content: JSON.stringify({
+        proposal: {
+          beatSummary: "补足一条调查线索",
+          newFact: { text: "井沿留有新鲜绳痕。", visibility: "public" },
+        },
+      }),
+      latencyMs: 1,
+    }));
+    const aiClient = {
+      complete,
+      policy: () => ({
+        thinking: "off" as const,
+        timeoutMs: 45_000,
+        maxTokens: 3_200,
+        jsonMode: "prompt_only" as const,
+        maxAttempts: 1,
+      }),
+    };
+    const source = createLiveWorldEvolutionSource({ aiClient });
+
+    await source.propose({
+      worldState: makeWorld(),
+      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      need: { kind: "pacing", pacingNeed: "complicate" },
+      reason: "scene_evolution",
+    });
+
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("world source 内容修复契约", () => {
