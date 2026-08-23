@@ -520,6 +520,113 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("keeps the old NPC's final line and exposes one dialogue handoff to the next target", async () => {
+    const base = buildView();
+    const onSubmit = vi.fn();
+    const initialView: GameSessionView = {
+      ...base,
+      currentLocation: {
+        ...base.currentLocation,
+        scale: "town",
+        actions: [
+          choice(TOKENS.dialogueOne, "与赵铁嘴交谈", "dialogue"),
+          choice(TOKENS.dialogueTwo, "与老郎中交谈", "dialogue"),
+        ],
+        npcs: [
+          { npcId: "npc_1", name: "赵铁嘴", role: "告示栏旁的算命先生", talkChoice: choice(TOKENS.dialogueOne, "与赵铁嘴交谈", "dialogue") },
+          { npcId: "npc_2", name: "老郎中", role: "医馆掌柜", talkChoice: choice(TOKENS.dialogueTwo, "与老郎中交谈", "dialogue") },
+        ],
+      },
+      story: {
+        ...base.story,
+        currentObjectiveLabel: "与赵铁嘴交谈",
+        currentObjectiveChoiceToken: TOKENS.dialogueOne,
+        currentObjectiveChoiceTokens: [TOKENS.dialogueOne],
+      },
+      narrative: {
+        ...base.narrative,
+        npcDialogues: [{
+          ...base.narrative.npcDialogues[0]!,
+          name: "赵铁嘴",
+          role: "告示栏旁的算命先生",
+          choices: [
+            choice(TOKENS.dialogueOne, "追问告示线索", "dialogue"),
+            choice(TOKENS.dialogueTwo, "追问老郎中的去向", "dialogue"),
+          ],
+          freeInputEnabled: true,
+        }],
+      },
+    };
+    const { rerender } = render(<LocationSceneScreen
+      view={initialView}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+      initialFocusNpcId="npc_1"
+      sceneNpcName="赵铁嘴"
+      sceneLocationName="镇口告示栏"
+    />);
+
+    await userEvent.click(screen.getByRole("button", { name: /赵铁嘴/ }));
+    await userEvent.click(screen.getByRole("button", { name: "追问老郎中的去向" }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      { kind: "fixed_choice", choiceToken: TOKENS.dialogueTwo },
+      "npc-dialogue",
+    );
+
+    rerender(<LocationSceneScreen
+      view={{ ...initialView, narrativeGeneration: { status: "pending" } }}
+      busy={true}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+      initialFocusNpcId="npc_1"
+      sceneNpcName="赵铁嘴"
+      sceneLocationName="镇口告示栏"
+    />);
+    rerender(<LocationSceneScreen
+      view={{
+        ...initialView,
+        revision: initialView.revision + 1,
+        turnNumber: initialView.turnNumber + 1,
+        currentLocation: {
+          ...initialView.currentLocation,
+          actions: [choice(TOKENS.dialogueTwo, "与老郎中交谈", "dialogue")],
+        },
+        story: {
+          ...initialView.story,
+          currentObjectiveLabel: "与老郎中交谈",
+          currentObjectiveChoiceToken: TOKENS.dialogueTwo,
+          currentObjectiveChoiceTokens: [TOKENS.dialogueTwo],
+        },
+        narrative: {
+          ...initialView.narrative,
+          eventKind: "observe",
+          npcDialogues: [{
+            ...initialView.narrative.npcDialogues[0]!,
+            speechPages: ["黑影往后巷医馆去了，老郎中或许知道那名伤者的来历。"],
+            choices: [],
+            freeInputEnabled: false,
+          }],
+        },
+        narrativeGeneration: { status: "idle" },
+      }}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+      initialFocusNpcId="npc_1"
+      sceneNpcName="赵铁嘴"
+      sceneLocationName="镇口告示栏"
+    />);
+
+    const dialogue = screen.getByRole("dialog", { name: "与赵铁嘴对话" });
+    expect(dialogue).toHaveTextContent("黑影往后巷医馆去了");
+    const nextTargetButton = within(dialogue).getByRole("button", { name: "与老郎中交谈" });
+    expect(nextTargetButton).toBeInTheDocument();
+    await userEvent.click(nextTargetButton);
+    expect(screen.queryByRole("dialog", { name: "与赵铁嘴对话" })).not.toBeInTheDocument();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps ordinary narrative pending modal while locking rule actions", () => {
     render(<AdventureGameShell
       view={{ ...buildView(), narrativeGeneration: { status: "pending" } }}

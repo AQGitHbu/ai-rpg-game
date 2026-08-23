@@ -512,6 +512,13 @@ export function LocationSceneScreen({
       || currentObjectiveAction.presentation === "investigate"
       || (currentObjectiveAction.presentation === "item"
         && buildingItems.some((item) => item.choice.choiceToken === currentObjectiveAction.choiceToken)));
+  // 交接到同一地点的下一位 NPC 时，当前目标的 talk action 仍是一个有效的
+  // 单线入口。它不是“离开当前建筑”的空状态：旧 NPC 需要先把最后一句话
+  // 展示完，再由唯一的“与下一位 NPC 交谈”按钮把玩家交给下一步。
+  const currentObjectiveIsPresentNpcDialogue = currentObjectiveAction?.presentation === "dialogue"
+    && view.currentLocation.npcs.some((npc) =>
+      npc.talkChoice?.choiceToken === currentObjectiveAction.choiceToken,
+    );
   // 动态行动场景（调查/拾取/移动）与目标交接场景的旁注是玩家刚触发的
   // 剧情反馈（含焦点 NPC 的引导词），必须优先于静态建筑氛围；初始进入
   // 或纯对话/观察场景才展示建筑描述。
@@ -540,16 +547,16 @@ export function LocationSceneScreen({
   const handoffLeavesCurrentBuilding = hasBuildingSceneContext
     && view.story.currentObjectiveLabel !== null
     && !currentObjectiveIsSceneAction
+    && !currentObjectiveIsPresentNpcDialogue
     && !sceneNpcIsObjectiveTalkTarget;
   const handoffLeavesCurrentLocation = view.story.currentObjectiveLabel !== null
     && view.story.currentObjectiveChoiceToken === null;
   // 当前目标是调查/拾取/战斗/移动时，必须优先给出该规则行动（移动含
   // 对话回合预生成的交接选项）。否则上一轮对话仍有两项回应时会抢占底栏，
   // 物品热点又可能被地点旁注遮住，玩家会失去唯一可推进的入口。
-  // 仍停留在上一座建筑、但主线目标在当前场景无权威行动入口（例如新目标
-  // NPC 在别处建筑）时，不能继续把旧 NPC、探索或战斗当作当前任务入口。
-  // 保持原场景供玩家读完回应；下一步由 HUD 与行动栏动线提示指明，玩家
-  // 返回小镇后从目标人物自己的建筑或地图进入，避免把两处空间混成一幕。
+  // 仍停留在上一座建筑、但主线目标不在当前地点或没有权威行动入口时，不能
+  // 继续把旧 NPC、探索或战斗当作当前任务入口。若目标是同地点另一建筑的 NPC，
+  // 则由旧对话保留最后一句和唯一 talk 引导，玩家关闭后返回小镇进入目标建筑。
   const sceneActions = (() => {
     if (handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation) return [];
     if (currentObjectiveTokens.length === 0) return view.currentLocation.actions;
@@ -584,6 +591,7 @@ export function LocationSceneScreen({
     choice.presentation !== "travel" && choice.presentation !== "dialogue",
   );
   const handoffPlayerResponse = currentObjectiveAction?.presentation === "travel"
+    || currentObjectiveAction?.presentation === "dialogue"
     ? currentObjectiveAction.label
     : null;
   // 统一构建所有 NPC 的 Dialogue 数据（读模型已为在场全部 NPC 投影对话，
@@ -757,6 +765,7 @@ export function LocationSceneScreen({
           && openDialogue !== undefined
           && !openDialogue.freeInputEnabled
           && openDialogue.choices.length !== 2
+          && handoffPlayerResponse === null
         )
       );
     dispatchDialogueUi({ kind: "sync_revision", revision: view.revision, close: shouldClose });
@@ -764,6 +773,7 @@ export function LocationSceneScreen({
     dialogueUi.revision,
     handoffLeavesCurrentBuilding,
     handoffLeavesCurrentLocation,
+    handoffPlayerResponse,
     dialoguePhase,
     openDialogue,
     pending,
