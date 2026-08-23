@@ -50,6 +50,8 @@ function makeSceneContext(): SceneGenerationContext {
         instruction: "把下一步明确交接到北巷旧道",
       },
     ],
+    generationKind: "npc_free_text",
+    sceneRequestKind: "npc_handoff",
   });
   if (!pending.ok) throw new Error("fixture job failed");
 

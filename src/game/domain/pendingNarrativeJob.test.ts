@@ -5,6 +5,7 @@ import { asLocationId, asNpcId, asQuestId } from "./worldEntity";
 import {
   PLAYER_UTTERANCE_MAX_LENGTH,
   createPendingNarrativeJob,
+  parsePendingNarrativeJob,
   type CreatePendingNarrativeJobInput,
   type PendingNarrativeJob,
   type StructuredActionSummary,
@@ -39,6 +40,8 @@ const DEFAULT_INPUT: CreatePendingNarrativeJobInput = {
   requestedAt: "2026-08-08T08:00:00.000Z",
   objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
   mandatoryBeats: [],
+  generationKind: "npc_fixed_choice",
+  sceneRequestKind: "npc_response",
 };
 
 function createValidJob(
@@ -65,11 +68,13 @@ describe("PendingNarrativeJob", () => {
       "basedOnRevision",
       "domainEventRange",
       "focusNpcId",
+      "generationKind",
       "jobId",
       "mandatoryBeats",
       "objectiveTransition",
       "requestedAt",
       "resolvedEvent",
+      "sceneRequestKind",
       "turnId",
       "turnNumber",
       "utterance",
@@ -283,5 +288,84 @@ describe("PendingNarrativeJob", () => {
     ] as const) {
       expect(createResult({ objectiveTransition: transition as never }).ok).toBe(false);
     }
+  });
+
+  it("generationKind 和 sceneRequestKind 持久化到 job", () => {
+    const job = createValidJob();
+    expect(job.generationKind).toBe("npc_fixed_choice");
+    expect(job.sceneRequestKind).toBe("npc_response");
+  });
+
+  it("opening + opening 配对合法", () => {
+    expect(createResult({
+      generationKind: "opening",
+      sceneRequestKind: "opening",
+      actionSummary: { kind: "freeform" },
+    }).ok).toBe(true);
+  });
+
+  it("npc_fixed_choice + npc_handoff 配对合法", () => {
+    expect(createResult({
+      generationKind: "npc_fixed_choice",
+      sceneRequestKind: "npc_handoff",
+    }).ok).toBe(true);
+  });
+
+  it("npc_free_text + npc_response 配对合法", () => {
+    expect(createResult({
+      generationKind: "npc_free_text",
+      sceneRequestKind: "npc_response",
+    }).ok).toBe(true);
+  });
+
+  it("拒绝非白名单 generationKind", () => {
+    expect(createResult({
+      generationKind: "prepared_action" as never,
+      sceneRequestKind: "npc_response",
+    }).ok).toBe(false);
+  });
+
+  it("拒绝交叉配对（opening + npc_response）", () => {
+    expect(createResult({
+      generationKind: "opening",
+      sceneRequestKind: "npc_response",
+    }).ok).toBe(false);
+  });
+
+  it("拒绝交叉配对（npc_fixed_choice + opening）", () => {
+    expect(createResult({
+      generationKind: "npc_fixed_choice",
+      sceneRequestKind: "opening",
+    }).ok).toBe(false);
+  });
+
+  it("parsePendingNarrativeJob 从 JSON 重建合法 job", () => {
+    const job = createValidJob();
+    const parsed = parsePendingNarrativeJob(JSON.parse(JSON.stringify(job)));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.job).toEqual(job);
+    }
+  });
+
+  it("parsePendingNarrativeJob 拒绝未知 generationKind", () => {
+    const job = createValidJob();
+    const raw = JSON.parse(JSON.stringify(job)) as Record<string, unknown>;
+    raw.generationKind = "prepared_action";
+    expect(parsePendingNarrativeJob(raw).ok).toBe(false);
+  });
+
+  it("parsePendingNarrativeJob 拒绝交叉配对", () => {
+    const job = createValidJob();
+    const raw = JSON.parse(JSON.stringify(job)) as Record<string, unknown>;
+    raw.generationKind = "opening";
+    raw.sceneRequestKind = "npc_response";
+    expect(parsePendingNarrativeJob(raw).ok).toBe(false);
+  });
+
+  it("parsePendingNarrativeJob 拒绝非对象输入", () => {
+    expect(parsePendingNarrativeJob(null).ok).toBe(false);
+    expect(parsePendingNarrativeJob("hello").ok).toBe(false);
+    expect(parsePendingNarrativeJob(42).ok).toBe(false);
   });
 });

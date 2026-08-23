@@ -24,6 +24,7 @@ function fixture(): { record: GameRecord; repository: GameRepository } {
     jobId: asNarrativeJobId("job_failed"), turnId: asTurnId("turn_failed"), actionId: "action_failed", basedOnRevision: 1, turnNumber: 1,
     actionSummary: { kind: "explore" }, resolvedEvent: { actionId: "action_failed", status: "success", eventKind: "observe", facts: [], stateChanges: [], costs: [], rewards: [], triggeredEvents: [], rejectedEffects: [] },
     domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 0 }, requestedAt: "now", objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" }, mandatoryBeats: [],
+    generationKind: "npc_fixed_choice", sceneRequestKind: "npc_response",
   };
   const record: GameRecord = {
     gameId, worldState, storyState: { ...story, narrative: { ...story.narrative, generation: { status: "pending", job } } }, revision: 1, createdAt: "now",

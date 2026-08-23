@@ -43,6 +43,8 @@ function pendingWithJob(): Extract<
     requestedAt: "2026-08-08T08:00:00.000Z",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: [],
+    generationKind: "npc_fixed_choice",
+    sceneRequestKind: "npc_response",
   });
   if (!result.ok) throw new Error("fixture 构造失败");
   return { status: "pending", job: result.job };

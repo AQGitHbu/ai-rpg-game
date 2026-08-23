@@ -173,6 +173,8 @@ function makePendingJob(): PendingNarrativeJob {
     requestedAt: "2026-01-02",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: [],
+    generationKind: "npc_fixed_choice",
+    sceneRequestKind: "npc_response",
   });
   if (!result.ok) throw new Error("fixture job 构造失败");
   return result.job;
@@ -297,6 +299,8 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
     expect(generation.job.domainEventRange).toEqual({ fromLedgerIndex: 1, toLedgerIndexExclusive: 2 });
     expect(generation.job.requestedAt).toBe("2026-01-02");
+    expect(generation.job.generationKind).toBe("npc_fixed_choice");
+    expect(generation.job.sceneRequestKind).toBe("npc_response");
   });
 
   it("pending job.resolvedEvent 等于真实 TurnResolution.primaryResult，basedOnRevision 等于提交后 revision", async () => {
@@ -347,6 +351,8 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
     expect(generation.job.utterance).toBe("和老板聊聊");
     expect(generation.job.focusNpcId).toBe("npc_1");
+    expect(generation.job.generationKind).toBe("npc_free_text");
+    expect(generation.job.sceneRequestKind).toBe("npc_response");
     // Task 5 Step 4：talk + 玩家原话 → 强制 player_utterance 节拍进入 job
     const utteranceBeat = generation.job.mandatoryBeats.find((b) => b.kind === "player_utterance");
     expect(utteranceBeat).toBeDefined();

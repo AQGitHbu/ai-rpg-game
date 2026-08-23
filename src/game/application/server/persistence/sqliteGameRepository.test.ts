@@ -269,6 +269,8 @@ describe("sqliteGameRepository", () => {
       requestedAt: "2026-01-01",
       objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
       mandatoryBeats: [],
+      generationKind: "npc_fixed_choice",
+      sceneRequestKind: "npc_response",
     });
     expect(jobResult.ok).toBe(true);
     if (!jobResult.ok) return;

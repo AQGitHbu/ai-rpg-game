@@ -33,6 +33,8 @@ function makeJob(): PendingNarrativeJob {
     requestedAt: "2026-08-21T00:00:00.000Z",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: [],
+    generationKind: "npc_fixed_choice",
+    sceneRequestKind: "npc_response",
   };
 }
 

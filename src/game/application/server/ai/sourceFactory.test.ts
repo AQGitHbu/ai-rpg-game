@@ -109,6 +109,8 @@ describe("createLiveScenePerformanceSource 焦点 NPC", () => {
       requestedAt: "2026-01-02",
       objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
       mandatoryBeats: [],
+      generationKind: "npc_fixed_choice",
+      sceneRequestKind: "npc_response",
     });
     if (!jobResult.ok) throw new Error("job 构造失败");
 

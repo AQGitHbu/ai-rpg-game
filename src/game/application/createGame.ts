@@ -286,6 +286,8 @@ export async function createGame(
     requestedAt: deps.now(),
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: [],
+    generationKind: "opening",
+    sceneRequestKind: "opening",
   });
   if (!jobResult.ok) return { ok: false, code: "AI_GENERATION_FAILED", failureKind: "AI_RESPONSE_INVALID" };
 

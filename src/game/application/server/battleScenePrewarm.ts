@@ -114,6 +114,8 @@ function projectedVictoryRecord(record: GameRecord): { readonly record: GameReco
     requestedAt: "prewarm",
     objectiveTransition,
     mandatoryBeats,
+    generationKind: "npc_fixed_choice",
+    sceneRequestKind: "npc_response",
   });
   if (!jobResult.ok) return null;
 

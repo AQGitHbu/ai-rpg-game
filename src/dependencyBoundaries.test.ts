@@ -60,7 +60,8 @@ const FACADES: readonly FacadeSpec[] = [
   { name: "town", path: "@/game/gameplay/rpg/town", anchors: ["generateTown", "createTownRuntime", "bindNpcToTownSlot"] },
   { name: "intentParser", path: "@/game/gameplay/rpg/intentParser", anchors: ["intentContext", "intentParserSource"] },
   { name: "dialogue", path: "@/game/gameplay/rpg/dialogue", anchors: ["dialogueResolution"] },
-  { name: "candidateEvents", path: "@/game/gameplay/rpg/candidateEvents", anchors: ["approveCandidateEvents", "compileCandidateEvent"] }
+  { name: "candidateEvents", path: "@/game/gameplay/rpg/candidateEvents", anchors: ["approveCandidateEvents", "compileCandidateEvent"] },
+  { name: "narrativeExecution", path: "@/game/gameplay/rpg/narrativeExecution", anchors: ["narrativeExecutionPolicy"] }
 ] as const satisfies readonly FacadeSpec[];
 
 /** 由 facade 清单生成 deep-import 规则：只许门面本体，禁止任何内部文件。 */

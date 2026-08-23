@@ -210,7 +210,9 @@ describe("createGame", () => {
     expect(job).toMatchObject({
       actionSummary: { kind: "talk", npcId: openingNpcId },
       focusNpcId: openingNpcId,
+      generationKind: "opening",
       resolvedEvent: { eventKind: "dialogue" },
+      sceneRequestKind: "opening",
     });
   });
 

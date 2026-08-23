@@ -12,6 +12,34 @@ import { MAX_MANDATORY_BEATS, type MandatoryNarrativeBeat, type ObjectiveTransit
 /** 玩家原话（utterance）的长度上限：全链路统一引用的常量。 */
 export const PLAYER_UTTERANCE_MAX_LENGTH = 200 as const;
 
+/** 生产环境允许触发 provider 调用的生成种类（白名单）。 */
+export const PROVIDER_GENERATION_KINDS = [
+  "opening",
+  "npc_fixed_choice",
+  "npc_free_text",
+] as const;
+
+export type ProviderGenerationKind = (typeof PROVIDER_GENERATION_KINDS)[number];
+
+/** 场景请求种类：与 generationKind 配对，决定 prompt 路由。 */
+export type NarrativeSceneRequestKind = "opening" | "npc_response" | "npc_handoff";
+
+/** 合法的 generationKind + sceneRequestKind 配对。 */
+const VALID_KIND_PAIRS: ReadonlyMap<string, readonly NarrativeSceneRequestKind[]> = new Map([
+  ["opening", ["opening"]],
+  ["npc_fixed_choice", ["npc_response", "npc_handoff"]],
+  ["npc_free_text", ["npc_response", "npc_handoff"]],
+]);
+
+function isValidKindPair(
+  generationKind: unknown,
+  sceneRequestKind: unknown,
+): boolean {
+  if (typeof generationKind !== "string" || typeof sceneRequestKind !== "string") return false;
+  const allowed = VALID_KIND_PAIRS.get(generationKind);
+  return allowed !== undefined && (allowed as readonly string[]).includes(sceneRequestKind);
+}
+
 /**
  * 当前场景生成所需的结构化行动摘要：只收藏状态实体引用（封闭 union），
  * 不保存完整 World State，也不允许任意 path patch。
@@ -53,6 +81,10 @@ export type PendingNarrativeJob = {
   readonly requestedAt: string;
   readonly objectiveTransition: ObjectiveTransition;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
+  /** 该 job 触发的 provider 生成种类；必须属于 PROVIDER_GENERATION_KINDS 白名单。 */
+  readonly generationKind: ProviderGenerationKind;
+  /** 场景请求种类；必须与 generationKind 合法配对。 */
+  readonly sceneRequestKind: NarrativeSceneRequestKind;
 };
 
 export type CreatePendingNarrativeJobInput = {
@@ -78,6 +110,10 @@ export type CreatePendingNarrativeJobInput = {
   readonly requestedAt: string;
   readonly objectiveTransition: ObjectiveTransition;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
+  /** 该 job 触发的 provider 生成种类；必须属于 PROVIDER_GENERATION_KINDS 白名单。 */
+  readonly generationKind: ProviderGenerationKind;
+  /** 场景请求种类；必须与 generationKind 合法配对。 */
+  readonly sceneRequestKind: NarrativeSceneRequestKind;
 };
 
 export type PendingNarrativeJobErrorCode =
@@ -86,7 +122,10 @@ export type PendingNarrativeJobErrorCode =
   | "INVALID_LEDGER_RANGE"
   | "UTTERANCE_TOO_LONG"
   | "OBJECTIVE_TRANSITION_INVALID"
-  | "MANDATORY_BEATS_OVER_CAP";
+  | "MANDATORY_BEATS_OVER_CAP"
+  | "INVALID_GENERATION_KIND"
+  | "INVALID_SCENE_REQUEST_KIND"
+  | "INVALID_KIND_PAIR";
 
 export type PendingNarrativeJobError = {
   readonly code: PendingNarrativeJobErrorCode;
@@ -172,6 +211,13 @@ export function createPendingNarrativeJob(
   ) {
     errors.push({ code: "UTTERANCE_TOO_LONG" });
   }
+  if (!isValidKindPair(input.generationKind, input.sceneRequestKind)) {
+    if (!VALID_KIND_PAIRS.has(input.generationKind)) {
+      errors.push({ code: "INVALID_GENERATION_KIND" });
+    } else {
+      errors.push({ code: "INVALID_KIND_PAIR" });
+    }
+  }
   if (!isValidObjectiveTransition(input.objectiveTransition)) {
     errors.push({ code: "OBJECTIVE_TRANSITION_INVALID" });
   }
@@ -199,9 +245,48 @@ export function createPendingNarrativeJob(
       requestedAt: input.requestedAt,
       objectiveTransition: input.objectiveTransition,
       mandatoryBeats: input.mandatoryBeats,
+      generationKind: input.generationKind,
+      sceneRequestKind: input.sceneRequestKind,
       ...(input.utterance !== undefined ? { utterance: input.utterance } : {}),
       ...(input.focusNpcId !== undefined ? { focusNpcId: input.focusNpcId } : {}),
       ...(input.selectedDialogue !== undefined ? { selectedDialogue: input.selectedDialogue } : {}),
     },
   };
+}
+
+/** 解析未知值为 PendingNarrativeJob；拒绝非白名单 kind 和非法配对。 */
+export type ParsePendingNarrativeJobResult =
+  | { readonly ok: true; readonly job: PendingNarrativeJob }
+  | { readonly ok: false; readonly code: "INVALID_PENDING_NARRATIVE_JOB" };
+
+export function parsePendingNarrativeJob(value: unknown): ParsePendingNarrativeJobResult {
+  if (!value || typeof value !== "object") return { ok: false, code: "INVALID_PENDING_NARRATIVE_JOB" };
+  const v = value as Record<string, unknown>;
+  const result = createPendingNarrativeJob({
+    jobId: v.jobId as NarrativeJobId,
+    turnId: v.turnId as TurnId,
+    actionId: v.actionId as string,
+    expectedRevision: typeof v.basedOnRevision === "number" ? v.basedOnRevision - 1 : -1,
+    turnNumber: v.turnNumber as number,
+    actionSummary: v.actionSummary as StructuredActionSummary,
+    utterance: v.utterance as string | undefined,
+    resolvedEvent: v.resolvedEvent as ResolvedEvent,
+    domainEventRange: v.domainEventRange as {
+      readonly fromLedgerIndex: number;
+      readonly toLedgerIndexExclusive: number;
+    },
+    focusNpcId: v.focusNpcId as NpcId | undefined,
+    selectedDialogue: v.selectedDialogue as {
+      readonly dialogueAct: import("./action").DialogueAct;
+      readonly topic?: import("./action").DialogueTopic;
+      readonly label?: string;
+    } | undefined,
+    requestedAt: v.requestedAt as string,
+    objectiveTransition: v.objectiveTransition as ObjectiveTransition,
+    mandatoryBeats: v.mandatoryBeats as readonly MandatoryNarrativeBeat[],
+    generationKind: v.generationKind as ProviderGenerationKind,
+    sceneRequestKind: v.sceneRequestKind as NarrativeSceneRequestKind,
+  });
+  if (!result.ok) return { ok: false, code: "INVALID_PENDING_NARRATIVE_JOB" };
+  return { ok: true, job: result.job };
 }
