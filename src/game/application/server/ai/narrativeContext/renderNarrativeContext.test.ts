@@ -20,6 +20,16 @@ function block(
 }
 
 describe("renderNarrativeContext", () => {
+  it("selected 为空时仍只有一个结尾换行", () => {
+    const compiled = compileNarrativeContext({
+      maxEstimatedTokens: 200,
+      blocks: [block({ id: "empty", content: " \n " })],
+    });
+    const prompt = renderNarrativeContext(compiled);
+    expect(compiled.selected).toEqual([]);
+    expect(prompt).toBe("[NARRATIVE_CONTEXT v1]\n");
+  });
+
   it("无论输入顺序如何都按 slot 顺序渲染，output_contract 最后", () => {
     const compiled = compileNarrativeContext({
       maxEstimatedTokens: 200,

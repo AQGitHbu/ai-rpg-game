@@ -9,6 +9,9 @@ function renderBlock(block: CompiledNarrativeContext["selected"][number]): strin
 }
 
 export function renderNarrativeContext(context: CompiledNarrativeContext): string {
+  if (context.selected.length === 0) {
+    return `${NARRATIVE_CONTEXT_HEADER}\n`;
+  }
   let prompt = `${NARRATIVE_CONTEXT_HEADER}\n\n`;
   for (const block of context.selected) {
     prompt += renderBlock(block);

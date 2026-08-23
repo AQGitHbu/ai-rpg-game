@@ -101,3 +101,32 @@ Result:
 ## Concerns
 
 - None for Task 2 scope. The new `NarrativePromptCompilation` helper is additive and currently unused outside the new renderer module, which is consistent with this task’s layering-only requirement.
+
+## 2026-08-23 Review Fix
+
+### Finding addressed
+
+- Empty compiled contexts were returning `"[NARRATIVE_CONTEXT v1]\n\n"` instead of the one-trailing-newline contract required by Task 2.
+
+### Code change
+
+- Updated `renderNarrativeContext` so `selected.length === 0` returns `"[NARRATIVE_CONTEXT v1]\n"`.
+- Added a focused regression test that compiles an all-empty block set and asserts:
+  - `compiled.selected` is `[]`
+  - rendered output is exactly `"[NARRATIVE_CONTEXT v1]\n"`
+
+### Commands run
+
+```bash
+npm test -- src/game/application/server/ai/narrativeContext/renderNarrativeContext.test.ts src/game/application/server/ai/narrativeContext/compileNarrativeContext.test.ts
+```
+
+### Output
+
+```text
+✓ src/game/application/server/ai/narrativeContext/compileNarrativeContext.test.ts (10 tests) 4ms
+✓ src/game/application/server/ai/narrativeContext/renderNarrativeContext.test.ts (4 tests) 2ms
+
+Test Files  2 passed (2)
+Tests  14 passed (14)
+```
