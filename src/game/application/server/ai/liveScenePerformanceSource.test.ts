@@ -418,7 +418,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain("玩家只能被称为“侠客”");
     expect(prompt).toContain("candidate_1");
     expect(prompt).toContain("candidate_2");
-    const candidateSection = prompt.match(/候选动作=([^\n]*)/u)?.[1] ?? "";
+    const candidateSection = prompt.match(/## \[legal_actions\] 合法候选动作\n([\s\S]*?)(?=\n## |$)/u)?.[1] ?? "";
     expect(candidateSection).toContain("candidate_1");
     expect(candidateSection).toContain("candidate_2");
     expect(candidateSection).not.toContain("请把你刚才提到的这条线索");
@@ -427,6 +427,12 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain("与老板交谈"); // 目标 label
     expect(prompt).toContain("老板"); // 焦点 NPC
     expect(prompt).toContain("已知线索"); // 允许披露事实正文可写进台词
+    expect(prompt).toContain("商队失踪案背后的内应");
+    expect(prompt).toContain("currentAct=1");
+    expect(prompt).toContain("tension=30");
+    expect(prompt).toContain("nextPacingNeed=reveal");
+    expect(prompt).toContain("NPC met: npc_1");
+    expect(prompt).toContain("inter_1");
     expect(prompt).not.toContain("绝不外泄的私密"); // 私密事实正文绝不出现
     expect(prompt).not.toContain("eventLedger");
     // Task 8：政策指令作为【风格政策】段落整体出现
@@ -435,6 +441,27 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain(policy.intensityInstruction);
     expect(prompt).toContain("不得输出“主线推进到第X幕”“已完成：”“当前目标：”等系统元话术");
     expect(prompt).toContain("先完成 npcLine，再根据本轮 npcLine 的文本和 usedFactIds 生成 choices");
+  });
+
+  it("prompt retains all five structured focus interactions", () => {
+    const base = makeContext();
+    const interactionIds = ["interaction_1", "interaction_2", "interaction_3", "interaction_4", "interaction_5"];
+    const context: SceneGenerationContext = {
+      ...base,
+      focusNpcContext: {
+        ...base.focusNpcContext!,
+        recentInteractions: interactionIds.map((actionId, index) => ({
+          actionId,
+          dialogueAct: "ask" as const,
+          topicSummary: `主题${index + 1}`,
+          outcome: "neutral" as const,
+          summary: `交互摘要${index + 1}`,
+        })),
+      },
+    };
+
+    const prompt = buildLiveScenePrompt(context, buildSelectableSceneCandidates(context));
+    for (const actionId of interactionIds) expect(prompt).toContain(actionId);
   });
 
   it("解析场景时只保留服务端允许的结构化叙事引用，不把未知 ID 传给审批层", () => {
