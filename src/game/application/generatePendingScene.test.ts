@@ -145,7 +145,7 @@ function makeMockRepo(record: GameRecord | null): GameRepository {
   };
 }
 
-function makeSpySceneSource(): { source: SceneSource; contexts: () => readonly SceneGenerationContext[] } {
+function makeSpySceneSource(sourceKind: ScenePerformanceProposal["source"] = "fallback"): { source: SceneSource; contexts: () => readonly SceneGenerationContext[] } {
   const seen: SceneGenerationContext[] = [];
   const sceneSource: SceneSource = {
     async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
@@ -159,7 +159,7 @@ function makeSpySceneSource(): { source: SceneSource; contexts: () => readonly S
           { candidateId: "candidate_1", label: "a" },
           { candidateId: "candidate_2", label: "b" },
         ],
-        source: "fallback",
+        source: sourceKind,
       };
       return { ok: true, proposal };
     },
@@ -544,6 +544,36 @@ describe("generatePendingScene", () => {
     };
   }
 
+  function linearArrivalRecord(): GameRecord {
+    const record = linearObjectiveRecord();
+    const ambientNpc: NpcEntry = {
+      ...npc,
+      id: asNpcId("npc_2"),
+      name: "值夜伙计",
+      locationId: asLocationId("loc_1"),
+      memory: { ...npc.memory, npcId: asNpcId("npc_2") },
+    };
+    return {
+      ...record,
+      worldState: {
+        ...record.worldState,
+        locations: record.worldState.locations.map((location) =>
+          String(location.id) === "loc_1"
+            ? { ...location, npcIds: [asNpcId("npc_2")] }
+            : String(location.id) === "loc_2"
+              ? { ...location, npcIds: [asNpcId("npc_1")] }
+            : location),
+        npcs: [
+          ...record.worldState.npcs.map((entry) =>
+            String(entry.id) === "npc_1"
+              ? { ...entry, locationId: asLocationId("loc_2") }
+              : entry),
+          ambientNpc,
+        ],
+      },
+    };
+  }
+
   it("persists approved linearActionNarratives into linearNarrativeQueue on scene write-back", async () => {
     const record = linearObjectiveRecord();
     const repo = makeMockRepo(record);
@@ -573,6 +603,52 @@ describe("generatePendingScene", () => {
       { actionKind: "investigate", factId: asFactId("fact_2"), narration: "车轮印在后巷泥水中断续向北延伸。", source: "generated" },
       { actionKind: "move", locationId: asLocationId("loc_2"), narration: "北巷旧道就在前方，夜色掩不住那条土路。", source: "generated" },
     ]);
+  });
+
+  it("persists the target NPC line together with a pre-generated move", async () => {
+    const record = linearArrivalRecord();
+    const repo = makeMockRepo(record);
+    const pregenerated: SceneSource = {
+      async generateScene(): Promise<SceneSourceResult> {
+        return { ok: true, proposal: {
+          sceneId: "scene-arrival-pregenerated",
+          segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+          npcLine: null,
+          objectiveLink: { questId: "quest_1", objectiveIndex: 0, mode: "hint" },
+          choices: [
+            { candidateId: "candidate_1", label: "查看四周" },
+            { candidateId: "candidate_2", label: "整理线索" },
+          ],
+          linearActionNarratives: [{
+            actionKind: "move",
+            locationId: "loc_2",
+            narration: "你沿着旧道赶往北巷旧道。",
+            arrivalNpcLine: {
+              npcId: "npc_1",
+              text: "你就是来查旧镖局的人吧。镖局出事那晚，我亲眼见过一件关键的事。",
+              emotion: "neutral",
+              usedFactIds: [],
+            },
+          }],
+          source: "generated",
+        } };
+      },
+    };
+    const result = await generatePendingScene({ repository: repo, sceneSource: pregenerated, now: () => "2026-01-02" });
+    expect(result).toBe("saved");
+    const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
+    expect(input.nextStoryState.narrative.linearNarrativeQueue).toEqual([{
+      actionKind: "move",
+      locationId: asLocationId("loc_2"),
+      narration: "你沿着旧道赶往北巷旧道。",
+      source: "generated",
+      arrivalNpcLine: {
+        npcId: asNpcId("npc_1"),
+        text: "你就是来查旧镖局的人吧。镖局出事那晚，我亲眼见过一件关键的事。",
+        emotion: "neutral",
+        usedFactIds: [],
+      },
+    }]);
   });
 
   it("整场 proposal 触发审批失败时不写入 deterministic fallback", async () => {
@@ -827,6 +903,100 @@ describe("generatePendingScene", () => {
     expect(writeBack.nextStoryState.narrative.linearNarrativeQueue).toEqual([
       { actionKind: "investigate", factId: asFactId("fact_2"), narration: "车轮印在后巷泥水中断续向北延伸。", source: "generated" },
     ]);
+  });
+
+  it("move queue hit writes the arrival NPC line as generated dialogue without another scene call", async () => {
+    const base = linearArrivalRecord();
+    const record: GameRecord = {
+      ...base,
+      worldState: {
+        ...base.worldState,
+        currentLocationId: asLocationId("loc_2"),
+        visitedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")],
+        worldFacts: base.worldState.worldFacts.map((fact) =>
+          String(fact.factId) === "fact_2" ? { ...fact, discovered: true } : fact),
+      },
+      storyState: {
+        ...base.storyState,
+        narrative: {
+          ...base.storyState.narrative,
+          generation: {
+            status: "pending",
+            job: makeJob({ summary: { kind: "move", locationId: asLocationId("loc_2") }, eventKind: "travel" }),
+          },
+          linearNarrativeQueue: [{
+            actionKind: "move",
+            locationId: asLocationId("loc_2"),
+            narration: "你沿着旧道赶往北巷旧道。",
+            source: "generated",
+            arrivalNpcLine: {
+              npcId: asNpcId("npc_1"),
+              text: "你就是来查旧镖局的人吧。镖局出事那晚，我亲眼见过一件关键的事。",
+              emotion: "neutral",
+              usedFactIds: [],
+            },
+          }],
+        },
+      },
+    };
+    const spy = makeSpySceneSource();
+    const deps = makeDeps(record, spy.source);
+    const result = await generatePendingScene(deps);
+    expect(result).toBe("saved");
+    expect(spy.contexts()).toHaveLength(0);
+    const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
+    const scene = writeBack.nextStoryState.narrative.currentScene!;
+    expect(scene.source).toBe("generated");
+    expect(scene.npcLine).toMatchObject({
+      npcId: asNpcId("npc_1"),
+      text: "你就是来查旧镖局的人吧。镖局出事那晚，我亲眼见过一件关键的事。",
+    });
+    expect(scene.npcDialogues).toContainEqual(expect.objectContaining({
+      npcId: asNpcId("npc_1"),
+      speechSource: "generated",
+      speechPages: ["你就是来查旧镖局的人吧。镖局出事那晚，我亲眼见过一件关键的事。"],
+    }));
+    expect(writeBack.nextStoryState.narrative.linearNarrativeQueue).toEqual([]);
+  });
+
+  it("does not consume a legacy move entry without arrival dialogue", async () => {
+    const base = linearArrivalRecord();
+    const record: GameRecord = {
+      ...base,
+      worldState: {
+        ...base.worldState,
+        currentLocationId: asLocationId("loc_2"),
+        visitedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")],
+        worldFacts: base.worldState.worldFacts.map((fact) =>
+          String(fact.factId) === "fact_2" ? { ...fact, discovered: true } : fact),
+      },
+      storyState: {
+        ...base.storyState,
+        narrative: {
+          ...base.storyState.narrative,
+          generation: {
+            status: "pending",
+            job: makeJob({ summary: { kind: "move", locationId: asLocationId("loc_2") }, eventKind: "travel" }),
+          },
+          linearNarrativeQueue: [{
+            actionKind: "move",
+            locationId: asLocationId("loc_2"),
+            narration: "你沿着旧道赶往北巷旧道。",
+            source: "generated",
+          }],
+        },
+      },
+    };
+    const spy = makeSpySceneSource("generated");
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const deps = { ...makeDeps(record, spy.source), logger: logger as never };
+    const result = await generatePendingScene(deps);
+    expect(result).toBe("failed");
+    expect(spy.contexts()).toHaveLength(1);
+    expect(logger.warn).toHaveBeenCalledWith("narrative_queue_incomplete", {
+      reason: "missing_arrival_npc_dialogue",
+    });
+    expect(deps.repository.applySceneWriteBack).not.toHaveBeenCalled();
   });
 
   it("move job: queue miss does not consume and preserves other future queue entries", async () => {

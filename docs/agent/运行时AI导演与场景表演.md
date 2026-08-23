@@ -56,10 +56,10 @@
 
 ## 线性调查叙事队列（2026-08-19）
 
-- **生成点**：对话回合（唯一实时 AI 生成点）的场景表演提案可携带 `linearActionNarratives`（`investigate`→factId / `move`→locationId + narration）。live prompt 在 `SceneGenerationContext.upcomingLinearObjectives` 非空时要求生成；约束：只演绎服务端下发权威事实（factText）、必须解释为何前往下一地点、不得捏造新事实/实体/时间、无系统元话术。分段旁白可选 `referencedEntityIds` 表达 grounding，旁白正文保持自然语言，不承担实体身份判定。
-- **投影语义**：`upcomingLinearObjectives` 是从当前权威目标开始的连续单线前缀（discover_fact / visit_location；遇 talk_to_npc / defeat_enemy 等分支点立即停止）；当前目标即分支点或无单线链时为空。
-- **审批与持久化**：live parser 先按 `SceneGenerationContext.narrativeReferenceIds` allowlist 去重并过滤未知 `referencedEntityIds`；`approveScenePerformance` 对 `objectiveLink`、节拍、NPC、选项等结构做硬校验，对幕交接缺少目标引用只产出 `SceneQualityWarningCode`（`missing_objective_reference` / `invalid_objective_reference` / `missing_objective_surface`），不再用旁白 `includes(entityName)` 拒绝整场。`linearActionNarratives` 独立逐条校验，非法条目整字段丢弃并 logger warn，不拒整场；通过后随同一次场景 CAS 写回覆盖式持久化到 `storyState.narrative.linearNarrativeQueue`（`LinearActionNarrativeState`，source 恒为 "generated"）。场景核心失败时仍保留原 proposal 中已通过独立审批的队列；旧存档缺失视为空，零迁移。
-- **fast path 消费**：调查/移动走 `immediateAction` 时从 `linearNarrativeQueue` 精确匹配（actionKind+entityId）消费，消费即除、零 live 调用；未命中在 AI mode 进入 live source，失败为 failed + stable failureKind。显式 offline fixture 才使用 deterministic source；幕推进/结局对挂起时保留完整世界演化编排。
+- **生成点**：对话回合（唯一实时 AI 生成点）的场景表演提案可携带 `linearActionNarratives`（`investigate`→factId / `move`→locationId + narration）。若移动地点的下一目标是同地点 NPC，`move` 还必须携带 `arrivalNpcLine`（目标 NPC ID、两句直接对白、可说事实引用）；这段对白随移动预生成，不创建回合、不生成选项。live prompt 在 `SceneGenerationContext.upcomingLinearObjectives` 非空时要求生成；约束：只演绎服务端下发权威事实（factText）、必须解释为何前往下一地点、不得捏造新事实/实体/时间、无系统元话术。分段旁白可选 `referencedEntityIds` 表达 grounding，旁白正文保持自然语言，不承担实体身份判定。
+- **投影语义**：`upcomingLinearObjectives` 是从当前权威目标开始的连续单线前缀（discover_fact / visit_location；遇 talk_to_npc / defeat_enemy 等分支点立即停止）；visit_location 若紧邻 talk_to_npc 且 NPC 已由世界演化同步生成，则附带该 NPC 的最小权限对白上下文。当前目标即分支点或无单线链时为空。
+- **审批与持久化**：live parser 先按 `SceneGenerationContext.narrativeReferenceIds` allowlist 去重并过滤未知 `referencedEntityIds`；`approveScenePerformance` 对 `objectiveLink`、节拍、NPC、选项等结构做硬校验，对幕交接缺少目标引用只产出 `SceneQualityWarningCode`（`missing_objective_reference` / `invalid_objective_reference` / `missing_objective_surface`），不再用旁白 `includes(entityName)` 拒绝整场。带目标 NPC 的移动缺少 `arrivalNpcLine` 视为整场内容契约失败，自动内容修复一次，仍失败则保存 failed 等待手动重试；不生成 deterministic/fallback 场景。通过后随同一次场景 CAS 写回覆盖式持久化到 `storyState.narrative.linearNarrativeQueue`（`LinearActionNarrativeState`，source 恒为 "generated"）。场景核心失败时仍保留原 proposal 中已通过独立审批的队列；旧存档缺失视为空，零迁移。
+- **fast path 消费**：调查/移动走 `immediateAction` 时从 `linearNarrativeQueue` 精确匹配（actionKind+entityId）消费，消费即除、零 live 调用；调查场景重建时保留尚未消费的后续队列条目，避免丢失抵达对白。未命中或命中不完整旧队列时在 AI mode 进入 live source，失败为 failed + stable failureKind。显式 offline fixture 才使用 deterministic source；幕推进/结局对挂起时保留完整世界演化编排。
 - **离线动线 fixture**：deterministic investigate fixture 可在权威事实文本后追加结构化下一目标动线提示；该文案只用于离线旅程和规则回放，不代表生产 AI 失败时的用户体验。
 
 ## 强制节拍与目标链接

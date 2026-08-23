@@ -146,6 +146,13 @@ export type LinearActionNarrativeState =
       readonly locationId: LocationId;
       readonly narration: string;
       readonly source: "generated";
+      /** 移动抵达后即将成为主线目标的 NPC 首句。 */
+      readonly arrivalNpcLine?: {
+        readonly npcId: NpcId;
+        readonly text: string;
+        readonly emotion: NarrativeEmotion;
+        readonly usedFactIds: readonly FactId[];
+      };
     };
 
 /** Runtime AI is opt-in per save. Offline development presets never call it. */

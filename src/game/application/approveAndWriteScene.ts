@@ -6,7 +6,7 @@ import type {
   ScenePerformanceNpcLine,
 } from "./sceneSource";
 import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState, LinearActionNarrativeState } from "@/game/domain/narrative";
-import { buildNpcDialoguePages } from "@/game/domain/narrative";
+import { buildNpcDialoguePages, NARRATIVE_EMOTIONS } from "@/game/domain/narrative";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice, semanticSummaryOf } from "@/game/domain/approvedChoice";
@@ -30,7 +30,8 @@ import {
 // ---------------------------------------------------------------------------
 // R4（Task 21）：候选事件池审批 + Task 6：场景表演契约审批。
 // 只做 schema 解析与结构校验，绝不在写回阶段改动 World State / tension /
-// 任务 / 关系，也绝不立即执行候选。核心结构非法 → 整场回退确定性源。
+// 任务 / 关系，也绝不立即执行候选。核心结构非法 → 返回稳定审批失败；是否
+// 继续重试由上层编排决定，生产 live 路径不在此处创建确定性场景。
 // ---------------------------------------------------------------------------
 
 /** 候选事件池 FIFO 上限（Spec §11.3）。 */
@@ -110,7 +111,7 @@ function containsPathPatch(candidate: EventCandidate): boolean {
 // 核心结构非法 → 返回稳定审批失败；显式 offline fixture 仍复用本函数，防止契约漂移。
 // ---------------------------------------------------------------------------
 
-/** 场景核心结构非法时整场回退的原因。 */
+/** 场景核心结构非法时整场拒绝的原因。 */
 export type SceneRejectionCode =
   | "empty_segments"
   | "invented_beat_id"
@@ -130,7 +131,8 @@ export type SceneRejectionCode =
   | "invalid_investigation_narrative"
   | "handoff_npc_unanswered"
   | "handoff_missing_objective_reference"
-  | "missing_non_focus_npc_dialogue";
+  | "missing_non_focus_npc_dialogue"
+  | "missing_arrival_npc_dialogue";
 
 /**
  * 场景核心结构合法后，仍可供运营/评测观察的叙事质量信号。
@@ -273,10 +275,63 @@ export function approveLinearActionNarratives(
     }
     if (entry.actionKind === "move") {
       if (typeof entry.locationId !== "string") return drop("invalid_reference");
-      if (!upcoming.some((ref) => ref.kind === "visit_location" && String(ref.locationId) === entry.locationId)) {
+      const ref = upcoming.find((candidate) =>
+        candidate.kind === "visit_location" && String(candidate.locationId) === entry.locationId,
+      );
+      if (ref === undefined || ref.kind !== "visit_location") {
         return drop("invalid_reference");
       }
-      narratives.push({ actionKind: "move", locationId: asLocationId(entry.locationId), narration, source: "generated" });
+      let arrivalNpcLine: NonNullable<Extract<
+        LinearActionNarrativeState,
+        { readonly actionKind: "move" }
+      >["arrivalNpcLine"]> | undefined;
+      if (ref.arrivalNpc !== undefined) {
+        const rawArrivalLine = entry.arrivalNpcLine;
+        if (!isRecord(rawArrivalLine)
+          || typeof rawArrivalLine.npcId !== "string"
+          || rawArrivalLine.npcId !== String(ref.arrivalNpc.id)
+          || typeof rawArrivalLine.text !== "string") {
+          return drop("invalid_arrival_npc_line");
+        }
+        const text = normalizeNpcSpeech(rawArrivalLine.text, ref.arrivalNpc.name);
+        if (text === ""
+          || !hasExpandedNpcDialogue(text)
+          || isGenericNpcAcknowledgement(text)
+          || isGenericNpcGreeting(text)
+          || isGenericNpcInquiry(text)) {
+          return drop("invalid_arrival_npc_line");
+        }
+        const usedFactIds = rawArrivalLine.usedFactIds === undefined
+          ? []
+          : Array.isArray(rawArrivalLine.usedFactIds)
+            ? rawArrivalLine.usedFactIds.filter((id): id is string => typeof id === "string")
+            : null;
+        if (usedFactIds === null) return drop("invalid_arrival_npc_line");
+        const allowedFactIds = new Set([
+          ...ref.arrivalNpc.knownFactCards.map((fact) => String(fact.factId)),
+          ...ref.arrivalNpc.sceneVisibleFactIds.map(String),
+        ]);
+        if (usedFactIds.some((id) => !allowedFactIds.has(id))) return drop("invalid_arrival_npc_line");
+        if (rawArrivalLine.usedFactIds !== undefined && usedFactIds.length !== rawArrivalLine.usedFactIds.length) {
+          return drop("invalid_arrival_npc_line");
+        }
+        const emotion = NARRATIVE_EMOTIONS.includes(rawArrivalLine.emotion as typeof NARRATIVE_EMOTIONS[number])
+          ? rawArrivalLine.emotion as typeof NARRATIVE_EMOTIONS[number]
+          : "neutral";
+        arrivalNpcLine = {
+          npcId: asNpcId(ref.arrivalNpc.id),
+          text,
+          emotion,
+          usedFactIds: usedFactIds.map(asFactId),
+        };
+      }
+      narratives.push({
+        actionKind: "move",
+        locationId: asLocationId(entry.locationId),
+        narration,
+        source: "generated",
+        ...(arrivalNpcLine === undefined ? {} : { arrivalNpcLine }),
+      });
       continue;
     }
     return drop("unknown_action_kind");
@@ -444,6 +499,18 @@ export function approveScenePerformance(input: {
     if (!hasExpandedNpcDialogue(npcLine.text)) return { ok: false, code: "npc_dialogue_too_short" };
   }
 
+  // 移动抵达后若权威目标已经是当前地点的 NPC，必须使用已生成的目标首句；
+  // 不能让 fast path 以 npcLine=null 写回，再由 read model 合成 fallback。
+  const moveArrivalNpc = proposal.source === "generated"
+    && context.job.actionSummary.kind === "move"
+    && context.objectiveTarget !== null
+    ? context.presentNpcs.find((npc) => String(npc.id) === String(context.objectiveTarget?.entityId))
+    : undefined;
+  if (moveArrivalNpc !== undefined
+    && (npcLine === null || String(npcLine.npcId) !== String(moveArrivalNpc.id))) {
+    return { ok: false, code: "missing_arrival_npc_dialogue" };
+  }
+
   // ── 目标一致性：objectiveLink 必须匹配 after ────────────────────────────
   const after = context.objectiveTransition.after;
   const objectiveLink = proposal.objectiveLink;
@@ -598,13 +665,22 @@ export function approveScenePerformance(input: {
       : {}),
   };
 
+  const linearNarrativeQueue = approveLinearActionNarratives(proposal, context, input.logger);
+  const requiresArrivalPrefetch = proposal.source === "generated"
+    && context.job.actionSummary.kind !== "move"
+    && context.upcomingLinearObjectives?.some((ref) => ref.kind === "visit_location" && ref.arrivalNpc !== undefined) === true;
+  if (requiresArrivalPrefetch
+    && !linearNarrativeQueue.some((entry) => entry.actionKind === "move" && entry.arrivalNpcLine !== undefined)) {
+    return { ok: false, code: "missing_arrival_npc_dialogue" };
+  }
+
   return {
     ok: true,
     scene,
     choiceRegistry: [approvedA.choice, approvedB.choice],
     // 场景表演契约不含候选事件：池原样保留，事件生命周期由独立审批处理。
     candidateEventPool: [...input.existingCandidateEventPool],
-    linearNarrativeQueue: approveLinearActionNarratives(proposal, context, input.logger),
+    linearNarrativeQueue,
     qualityWarnings,
   };
 }

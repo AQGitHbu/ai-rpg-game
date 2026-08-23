@@ -1,6 +1,6 @@
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import type { AiTextAuditRecorder, AiTextAuditLink } from "./server/ai/textAuditTypes";
-import type { SceneSource, ScenePerformanceProposal } from "./sceneSource";
+import type { LinearActionNarrative, SceneSource, ScenePerformanceProposal } from "./sceneSource";
 import { sceneInvestigationResultFrom } from "./sceneSource";
 import { buildSceneGenerationContext } from "./sceneGenerationContext";
 import {
@@ -70,11 +70,15 @@ function buildAuditedSceneGenerationContext(
 function buildQueuedGeneratedSceneProposal(
   context: ReturnType<typeof buildAuditedSceneGenerationContext>,
   narration: string,
+  arrivalNpcLine?: Extract<LinearActionNarrativeState, { readonly actionKind: "move" }>["arrivalNpcLine"],
+  queuedNarratives: readonly LinearActionNarrative[] = [],
 ): ScenePerformanceProposal {
   const beatIds = context.mandatoryBeats.length > 0
     ? context.mandatoryBeats.map((beat) => beat.beatId)
     : [ATMOSPHERE_BEAT_ID];
-  if (buildSelectableSceneCandidates(context).length < 2) throw new Error("queued generated scene requires two legal candidates");
+  if (buildSelectableSceneCandidates(context, arrivalNpcLine?.text).length < 2) {
+    throw new Error("queued generated scene requires two legal candidates");
+  }
   const after = context.objectiveTransition.after;
   const objectiveLink: ScenePerformanceProposal["objectiveLink"] = after === null
     ? null
@@ -87,13 +91,47 @@ function buildQueuedGeneratedSceneProposal(
             ? "progress"
             : "hint",
       };
+  const generatedArrivalNpcLine = arrivalNpcLine === undefined
+    ? null
+    : {
+        npcId: String(arrivalNpcLine.npcId),
+        text: arrivalNpcLine.text,
+        emotion: arrivalNpcLine.emotion,
+        answeredBeatIds: [],
+        usedFactIds: arrivalNpcLine.usedFactIds.map(String),
+        usedInteractionActionIds: [],
+      };
   return {
     sceneId: `scene-${context.job.jobId}`,
     segments: beatIds.map((beatId) => ({ beatId, text: narration })),
-    npcLine: null,
+    npcLine: generatedArrivalNpcLine,
     objectiveLink,
-    choices: buildSceneChoices(context),
+    choices: buildSceneChoices(context, generatedArrivalNpcLine?.text),
+    ...(queuedNarratives.length === 0 ? {} : { linearActionNarratives: queuedNarratives }),
     source: "generated",
+  };
+}
+
+function queuedStateToProposalNarrative(entry: LinearActionNarrativeState): LinearActionNarrative {
+  if (entry.actionKind === "investigate") {
+    return {
+      actionKind: "investigate",
+      factId: String(entry.factId),
+      narration: entry.narration,
+    };
+  }
+  return {
+    actionKind: "move",
+    locationId: String(entry.locationId),
+    narration: entry.narration,
+    ...(entry.arrivalNpcLine === undefined ? {} : {
+      arrivalNpcLine: {
+        npcId: String(entry.arrivalNpcLine.npcId),
+        text: entry.arrivalNpcLine.text,
+        emotion: entry.arrivalNpcLine.emotion,
+        usedFactIds: entry.arrivalNpcLine.usedFactIds.map(String),
+      },
+    }),
   };
 }
 
@@ -149,9 +187,15 @@ export async function generatePendingScene(
   // 在任何 derivedNeed 计算/初始世界演化/scene_candidate_shortage 补救之前，
   // 直接从当前权威 record 查找预生成叙事；命中即跳过全部演化编排，绝不再
   // 为了补足候选调用 world/scene AI。后续消费统一沿用本次查找的 queuedEntry。
-  const queuedEntry = isQueueEligible
+  const matchingQueueEntry = isQueueEligible
     ? findMatchingQueueEntry(record.storyState.narrative.linearNarrativeQueue, summary)
     : undefined;
+  const queuedEntry = matchingQueueEntry !== undefined && !queueEntryHasArrivalNpcDialogue(record, matchingQueueEntry)
+    ? undefined
+    : matchingQueueEntry;
+  if (matchingQueueEntry !== undefined && queuedEntry === undefined) {
+    deps.logger?.warn("narrative_queue_incomplete", { reason: "missing_arrival_npc_dialogue" });
+  }
   const hasPreGeneratedNarrative = queuedEntry !== undefined;
   const generationPath: NarrativeGenerationPath = hasPreGeneratedNarrative
     ? "pre_generated_queue"
@@ -257,7 +301,14 @@ export async function generatePendingScene(
       // Task 5：已结算的 investigate 结果把队列叙事作为 baseNarrative，
       // 叠加所选方式/证据质量/下一目标（与确定性节拍同一包装函数）；
       // 不得在场景写回阶段再次修改事件账本或 tension。
-      proposal = buildQueuedGeneratedSceneProposal(context, queuedEntry.narration);
+      proposal = buildQueuedGeneratedSceneProposal(
+        context,
+        queuedEntry.narration,
+        queuedEntry.actionKind === "move" ? queuedEntry.arrivalNpcLine : undefined,
+        (record.storyState.narrative.linearNarrativeQueue ?? [])
+          .filter((entry) => entry !== queuedEntry)
+          .map(queuedStateToProposalNarrative),
+      );
       const investigationBeatId = context.mandatoryBeats.find((beat) => beat.kind === "fact_discovered")?.beatId;
       proposal = {
         ...proposal,
@@ -414,7 +465,7 @@ export async function generatePendingScene(
         // 避免一次确定性兜底把后续 move/investigate 预生成叙事全部清空。
         // 非 immediate 路径仍以本次场景审批结果覆盖队列。
         linearNarrativeQueue: immediateAction
-          ? (queuedEntry === undefined
+          ? (matchingQueueEntry === undefined
             ? (scenarioSs.narrative.linearNarrativeQueue ?? [])
             : removeMatchingQueueEntry(scenarioSs.narrative.linearNarrativeQueue, summary))
           : approved.linearNarrativeQueue,
@@ -512,6 +563,19 @@ function findMatchingQueueEntry(
     );
   }
   return undefined;
+}
+
+function queueEntryHasArrivalNpcDialogue(
+  record: GameRecord,
+  entry: LinearActionNarrativeState,
+): boolean {
+  if (entry.actionKind !== "move") return true;
+  const context = buildSceneGenerationContext(record);
+  const targetNpc = context.objectiveTarget === null
+    ? undefined
+    : context.presentNpcs.find((npc) => String(npc.id) === String(context.objectiveTarget?.entityId));
+  return targetNpc === undefined
+    || (entry.arrivalNpcLine !== undefined && String(entry.arrivalNpcLine.npcId) === String(targetNpc.id));
 }
 
 function removeMatchingQueueEntry(

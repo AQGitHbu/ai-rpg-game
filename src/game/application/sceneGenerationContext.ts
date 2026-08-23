@@ -55,6 +55,12 @@ export type NpcSceneContext = {
   readonly forbiddenKnowledgeIds: readonly FactId[];
 };
 
+/** 下一地点即将成为主线目标的 NPC：只用于移动预生成，不等同于当前在场 NPC。 */
+export type UpcomingArrivalNpcContext = Pick<
+  NpcSceneContext,
+  "id" | "name" | "role" | "publicProfile" | "knownFactCards" | "sceneVisibleFactIds" | "goals"
+>;
+
 export type PlayerSceneSummary = {
   readonly name: string;
   readonly identity: string;
@@ -134,8 +140,8 @@ export type ResolvedInvestigationContext = {
 /**
  * 从当前权威目标开始的单线链目标投影（Task 1）：只投影 discover_fact /
  * visit_location（含当前目标），供 live prompt 预生成 investigate/move 叙事；
- * 链末或下一目标为分支点时不携带 nextObjectiveEntityName（实体名由服务端
- * 权威下发，prompt 要求逐字照抄）。
+ * 如果 visit_location 的下一目标是同一地点的 talk_to_npc，则额外携带该 NPC
+ * 的最小权限上下文，让移动预生成同时产出抵达后的首句对白。
  */
 export type UpcomingObjectiveRef =
   | {
@@ -151,6 +157,7 @@ export type UpcomingObjectiveRef =
       readonly locationId: LocationId;
       readonly locationName: string;
       readonly nextObjectiveEntityName?: string;
+      readonly arrivalNpc?: UpcomingArrivalNpcContext;
     };
 
 /** 当前 pending 回合要承接的上一轮 NPC 台词与玩家回应。 */
@@ -369,6 +376,29 @@ function buildUpcomingLinearObjectives(
   if (after === null) return [];
   const quest = ws.quests.find((q) => String(q.id) === String(after.questId));
   if (quest === undefined) return [];
+  const factById = new Map(ws.worldFacts.map((fact) => [String(fact.factId), fact]));
+  const buildArrivalNpc = (locationId: LocationId, objectiveIndex: number): UpcomingArrivalNpcContext | undefined => {
+    const next = quest.objectives[objectiveIndex + 1];
+    if (next?.kind !== "talk_to_npc") return undefined;
+    const npc = ws.npcs.find((entry) =>
+      String(entry.id) === String(next.npcId) && String(entry.locationId) === String(locationId),
+    );
+    if (npc === undefined) return undefined;
+    return {
+      id: npc.id,
+      name: npc.name,
+      role: npc.role,
+      publicProfile: npc.description,
+      knownFactCards: npc.memory.knownFactIds
+        .map((id) => factById.get(String(id)))
+        .filter((fact): fact is NonNullable<typeof fact> => fact !== undefined)
+        .map((fact) => ({ factId: fact.factId, text: fact.text })),
+      sceneVisibleFactIds: ws.worldFacts
+        .filter((fact) => fact.discovered)
+        .map((fact) => fact.factId),
+      goals: [...npc.memory.goals],
+    };
+  };
   const result: UpcomingObjectiveRef[] = [];
   for (let index = after.objectiveIndex; index < quest.objectives.length; index += 1) {
     const objective = quest.objectives[index];
@@ -386,11 +416,15 @@ function buildUpcomingLinearObjectives(
     }
     if (objective.kind === "visit_location") {
       const loc = ws.locations.find((l) => String(l.id) === String(objective.locationId));
+      const arrivalNpc = buildArrivalNpc(objective.locationId, index);
       result.push({
         kind: "visit_location",
         locationId: objective.locationId,
         locationName: loc?.name ?? "某地",
-        ...(nextEntityName === undefined ? {} : { nextObjectiveEntityName: nextEntityName }),
+        ...(arrivalNpc === undefined && nextEntityName === undefined
+          ? {}
+          : { nextObjectiveEntityName: arrivalNpc?.name ?? nextEntityName }),
+        ...(arrivalNpc === undefined ? {} : { arrivalNpc }),
       });
       continue;
     }
@@ -583,7 +617,10 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     ...(objectiveTarget === null ? [] : [objectiveTarget.entityId]),
     ...upcomingLinearObjectives.flatMap((ref) => ref.kind === "discover_fact"
       ? [String(ref.factId)]
-      : [String(ref.locationId)]),
+      : [
+          String(ref.locationId),
+          ...(ref.arrivalNpc === undefined ? [] : [String(ref.arrivalNpc.id)]),
+        ]),
   ])];
 
   return {

@@ -694,6 +694,137 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(invalid.ok).toBe(true);
     if (!invalid.ok) return;
     expect(invalid.proposal.linearActionNarratives).toBeUndefined();
+
+    const moveOnly: SceneGenerationContext = {
+      ...makeContext(),
+      upcomingLinearObjectives: [
+        {
+          kind: "visit_location",
+          locationId: asLocationId("loc_north_lane"),
+          locationName: "北巷旧道",
+        },
+      ],
+    };
+    const partialLogger = { warn: vi.fn() };
+    const partiallyValid = parseScenePerformanceJson(
+      {
+        segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色渐沉。" }],
+        npcLine: null,
+        objectiveLink: null,
+        choices: [
+          { candidateId: "candidate_1", label: "支持老板" },
+          { candidateId: "candidate_2", label: "质疑老板" },
+        ],
+        linearActionNarratives: [
+          { actionKind: "investigate", factId: "fact_1", narration: "不在当前目标链中的调查。" },
+          { actionKind: "move", locationId: "loc_north_lane", narration: "你沿旧道向北行去。" },
+        ],
+      },
+      moveOnly,
+      buildSelectableSceneCandidates(moveOnly),
+      partialLogger,
+    );
+    expect(partiallyValid.ok).toBe(true);
+    if (!partiallyValid.ok) return;
+    expect(partiallyValid.proposal.linearActionNarratives).toEqual([
+      { actionKind: "move", locationId: "loc_north_lane", narration: "你沿旧道向北行去。" },
+    ]);
+    expect(partialLogger.warn).toHaveBeenCalledWith("linear_narrative_entries_ignored", {
+      sceneId: "scene-job_1",
+      ignoredCount: 1,
+      acceptedCount: 1,
+    });
+  });
+
+  it("requires and preserves the target NPC dialogue on a pre-generated move", () => {
+    const context: SceneGenerationContext = {
+      ...makeContext(),
+      upcomingLinearObjectives: [{
+        kind: "visit_location",
+        locationId: asLocationId("loc_iron_flag_bureau"),
+        locationName: "铁旗镖局旧址",
+        nextObjectiveEntityName: "老镖师赵铁山",
+        arrivalNpc: {
+          id: asNpcId("npc_zhaotieshan"),
+          name: "老镖师赵铁山",
+          role: "老镖师",
+          publicProfile: "守在旧址附近的老镖师",
+          knownFactCards: [{ factId: asFactId("fact_escort"), text: "亲眼见过镖局出事当晚的经过" }],
+          sceneVisibleFactIds: [],
+          goals: ["查明镖局旧案"],
+        },
+      }],
+    };
+    const selectable = buildSelectableSceneCandidates(context);
+    const response = {
+      segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "暮色压在旧道尽头。" }],
+      npcLine: null,
+      objectiveLink: null,
+      choices: [
+        { candidateId: "candidate_1", label: "观察旧址" },
+        { candidateId: "candidate_2", label: "整理线索" },
+      ],
+      linearActionNarratives: [{
+        actionKind: "move",
+        locationId: "loc_iron_flag_bureau",
+        narration: "你沿着旧道赶往铁旗镖局旧址。",
+        arrivalNpcLine: {
+          npcId: "npc_zhaotieshan",
+          text: "你就是来查旧镖局的人吧。镖局出事那晚，我亲眼见过一件关键的事。",
+          emotion: "guarded",
+          usedFactIds: ["fact_escort"],
+        },
+      }],
+    };
+    const valid = parseScenePerformanceJson(response, context, selectable);
+    expect(valid.ok).toBe(true);
+    if (!valid.ok) return;
+    expect(valid.proposal.linearActionNarratives).toEqual([{
+      actionKind: "move",
+      locationId: "loc_iron_flag_bureau",
+      narration: "你沿着旧道赶往铁旗镖局旧址。",
+      arrivalNpcLine: {
+        npcId: "npc_zhaotieshan",
+        text: "你就是来查旧镖局的人吧。镖局出事那晚，我亲眼见过一件关键的事。",
+        emotion: "guarded",
+        usedFactIds: ["fact_escort"],
+      },
+    }]);
+
+    const missing = parseScenePerformanceJson({
+      ...response,
+      linearActionNarratives: [{
+        actionKind: "move",
+        locationId: "loc_iron_flag_bureau",
+        narration: "你沿着旧道赶往铁旗镖局旧址。",
+      }],
+    }, context, selectable);
+    expect(missing).toEqual({ ok: false, reason: "linear_arrival_npc_line_invalid" });
+  });
+
+  it("includes the arrival NPC in the single-line prompt contract", () => {
+    const context: SceneGenerationContext = {
+      ...makeContext(),
+      upcomingLinearObjectives: [{
+        kind: "visit_location",
+        locationId: asLocationId("loc_iron_flag_bureau"),
+        locationName: "铁旗镖局旧址",
+        arrivalNpc: {
+          id: asNpcId("npc_zhaotieshan"),
+          name: "老镖师赵铁山",
+          role: "老镖师",
+          publicProfile: "守在旧址附近的老镖师",
+          knownFactCards: [{ factId: asFactId("fact_escort"), text: "亲眼见过镖局出事当晚的经过" }],
+          sceneVisibleFactIds: [],
+          goals: ["查明镖局旧案"],
+        },
+      }],
+    };
+    const prompt = buildLiveScenePrompt(context, buildSelectableSceneCandidates(context));
+    expect(prompt).toContain("npc_zhaotieshan");
+    expect(prompt).toContain("老镖师赵铁山");
+    expect(prompt).toContain("arrivalNpcLine");
+    expect(prompt).toContain("不推进回合，不生成选项");
   });
 
   it("prompt 在 upcomingLinearObjectives 非空时要求预生成 linearActionNarratives，为空时要求省略该字段", () => {
@@ -720,6 +851,20 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(prompt).toContain("北巷旧道"); // 下一地点实体名照抄服务端下发
     expect(prompt).toContain("不得捏造新事实");
     expect(prompt).not.toContain("省略 linearActionNarratives");
+
+    const moveOnly: SceneGenerationContext = {
+      ...makeContext(),
+      upcomingLinearObjectives: [
+        {
+          kind: "visit_location",
+          locationId: asLocationId("loc_north_lane"),
+          locationName: "北巷旧道",
+        },
+      ],
+    };
+    const moveOnlyPrompt = buildLiveScenePrompt(moveOnly, buildSelectableSceneCandidates(moveOnly));
+    expect(moveOnlyPrompt).toContain('"actionKind":"move"');
+    expect(moveOnlyPrompt).not.toContain('"actionKind":"investigate"');
 
     const plain = buildLiveScenePrompt(makeContext(), buildSelectableSceneCandidates(makeContext()));
     expect(plain).toContain("省略 linearActionNarratives");

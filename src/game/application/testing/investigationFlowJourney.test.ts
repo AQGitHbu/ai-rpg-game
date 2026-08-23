@@ -51,7 +51,9 @@ function createFakeLiveSceneSource(withLinearNarratives: boolean): FakeLiveSourc
       calls += 1;
       const baseResult = await base.generateScene(context);
       if (!baseResult.ok) throw new Error("expected success");
-      if (!withLinearNarratives) return baseResult;
+      if (!withLinearNarratives) {
+        return { ...baseResult, proposal: { ...baseResult.proposal, source: "generated" } };
+      }
       const proposal = baseResult.proposal;
       const npcDialogues = context.focusNpcContext !== undefined && context.presentNpcs.length > 1
         ? context.presentNpcs
@@ -76,6 +78,14 @@ function createFakeLiveSceneSource(withLinearNarratives: boolean): FakeLiveSourc
               actionKind: "move",
               locationId: String(ref.locationId),
               narration: `你决定动身前往${ref.locationName}，把车轮印的来路查个清楚。`,
+              ...(ref.arrivalNpc === undefined ? {} : {
+                arrivalNpcLine: {
+                  npcId: String(ref.arrivalNpc.id),
+                  text: `我就是你要找的${ref.arrivalNpc.name}。镖局出事那晚，我亲眼见过一件关键的事。`,
+                  emotion: "neutral" as const,
+                  usedFactIds: [],
+                },
+              }),
             };
             return [entry];
           }
@@ -167,7 +177,7 @@ async function runJourney(withLinearNarratives: boolean): Promise<JourneyHandles
       logger: logger.logger,
       now: journeyNow,
     });
-    expect(result, "live 场景应保存").toBe("saved");
+    expect(result, JSON.stringify({ result, events: logger.events })).toBe("saved");
   };
   const record = (): GameRecord => {
     const current = store.record();
@@ -185,6 +195,17 @@ async function runJourney(withLinearNarratives: boolean): Promise<JourneyHandles
   expect(openingNpcName).not.toBe("");
 
   await fixed("交谈"); // 回合 1：第 1 幕完成，演化挂起
+  if (!withLinearNarratives) {
+    const result = await generatePendingScene({
+      repository: store.repo,
+      sceneSource: fake.source,
+      worldEvolutionSource: evolution,
+      logger: logger.logger,
+      now: journeyNow,
+    });
+    expect(result).toBe("failed");
+    return { store, fake, logger, evolution, openingNpcName, fixed, scene, liveScene, record, sceneOf };
+  }
   await liveScene(); // 第 2 幕具象化 + 手渡场景
 
   // 手渡场景的权威 ask 入口 → 焦点对话（第二轮），队列随后续场景写回重新持久化。
@@ -260,50 +281,13 @@ describe("AI 预生成单线调查流程旅程（Task 1 端到端回归）", () 
     expect(talkScene.source).toBe("generated");
   });
 
-  it("Chain B：显式离线 fixture 未预生成叙事时仍即时完成", async () => {
+  it("Chain B：缺少抵达目标 NPC 预生成对白时失败并等待手动重试，不写入 fallback", async () => {
     const journey = await runJourney(false);
 
-    // 无预生成叙事：队列始终为空。
+    // 缺少 arrivalNpcLine 的内容契约在自动内容重试后仍失败；不能生成
+    // fallback 场景，更不能让玩家抵达后看到通用 NPC 台词。
     expect(journey.record().storyState.narrative.linearNarrativeQueue ?? []).toHaveLength(0);
-
-    // 调查：显式 fixture source 生成即时结构，narration 含 Task 5 增强后的动线文本。
-    const act2FactId = journey.record().worldState.worldFacts
-      .find((fact) => fact.investigationLabel === "酒楼后巷的车轮印")?.factId ?? "";
-    expect(String(act2FactId)).not.toBe("");
-    const callsBeforeInvestigate = journey.fake.callCount();
-    const approachLabel = journey.record().worldState.worldFacts
-      .find((fact) => fact.investigationLabel === "酒楼后巷的车轮印")
-      ?.investigationApproaches?.[0]?.label ?? "";
-    expect(approachLabel).not.toBe("");
-    await journey.fixed(approachLabel);
-    await journey.liveScene();
-    expect(journey.fake.callCount()).toBe(callsBeforeInvestigate + 1);
-    const investigateScene = journey.sceneOf();
-    expect(investigateScene.source).toBe("fallback");
-    expect(investigateScene.narration).toContain(WHEEL_TRACK_FACT_TEXT);
-    // Task 4：已结算 approach 的兜底旁白为 方式 → 事实 → 动静代价 → 下一目标。
-    // Task 6：中段的证据质量/动静代价（evidenceQuality=clean → 无动静）必须可读。
-    expect(investigateScene.narration).toContain(approachLabel);
-    expect(investigateScene.narration).toContain("没有惊动任何人");
-    expect(investigateScene.narration).toContain(NORTH_LANE_NAME);
-
-    // 移动：同样即时完成，显式 fixture source 提供结构。
-    const northLaneId = journey.record().worldState.locations
-      .find((location) => location.name === NORTH_LANE_NAME)?.id ?? "";
-    const callsBeforeMove = journey.fake.callCount();
-    await journey.fixed(MOVE_LABEL);
-    await journey.liveScene();
-    expect(journey.fake.callCount()).toBe(callsBeforeMove + 1);
-    expect(journey.record().worldState.currentLocationId).toBe(northLaneId);
-    expect(journey.sceneOf().source).toBe("fallback");
-
-    // 兜底旅程同样抵达北巷旧道并与顾砚展开对话。
-    const view = await loadGameView(journey.store.repo);
-    expect(view.story.currentObjectiveLabel).toBe(GUYAN_TALK_LABEL);
-    expect(view.currentLocation.npcs.map((npc) => npc.name)).toContain(GUYAN_NAME);
-    const callsBeforeTalk = journey.fake.callCount();
-    await journey.fixed(GUYAN_TALK_LABEL);
-    await journey.liveScene();
-    expect(journey.fake.callCount()).toBe(callsBeforeTalk + 1);
+    expect(journey.record().storyState.narrative.generation.status).toBe("failed");
+    expect(journey.fake.callCount()).toBe(2);
   });
 });

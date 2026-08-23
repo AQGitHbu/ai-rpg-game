@@ -54,7 +54,20 @@ export type ScenePerformanceObjectiveLink = {
  */
 export type LinearActionNarrative =
   | { readonly actionKind: "investigate"; readonly factId: string; readonly narration: string }
-  | { readonly actionKind: "move"; readonly locationId: string; readonly narration: string };
+  | {
+      readonly actionKind: "move";
+      readonly locationId: string;
+      readonly narration: string;
+      /** 移动抵达后即将成为主线目标的 NPC 首句；随同移动预生成，不创建回合。 */
+      readonly arrivalNpcLine?: LinearActionNpcLine;
+    };
+
+export type LinearActionNpcLine = {
+  readonly npcId: string;
+  readonly text: string;
+  readonly emotion: NarrativeEmotion;
+  readonly usedFactIds: readonly string[];
+};
 
 /**
  * Task 5：已结算调查结果（investigate 主动选择后由规则层写入 eventLedger）。

@@ -84,7 +84,19 @@ function createFakeLiveSceneSource(): { readonly source: SceneSource; readonly c
             return [{ actionKind: "investigate", factId: String(ref.factId), narration: `你循着${ref.investigationLabel}留下的痕迹仔细查看：${ref.factText}` }];
           }
           if (ref.kind === "visit_location") {
-            return [{ actionKind: "move", locationId: String(ref.locationId), narration: `你决定动身前往${ref.locationName}，把车轮印的来路查个清楚。` }];
+            return [{
+              actionKind: "move",
+              locationId: String(ref.locationId),
+              narration: `你决定动身前往${ref.locationName}，把车轮印的来路查个清楚。`,
+              ...(ref.arrivalNpc === undefined ? {} : {
+                arrivalNpcLine: {
+                  npcId: String(ref.arrivalNpc.id),
+                  text: `我就是你要找的${ref.arrivalNpc.name}。镖局出事那晚，我亲眼见过一件关键的事。`,
+                  emotion: "neutral" as const,
+                  usedFactIds: [],
+                },
+              }),
+            }];
           }
           return [];
         },
@@ -149,7 +161,8 @@ describe("Step 1：移动队列回归 journey（最小夹具重放队列命中�
     const store = created.repo;
     const worldSource = countingWorldSource();
     const fake = createFakeLiveSceneSource();
-    const logger = createCapturingLogger().logger;
+    const capturedLogger = createCapturingLogger();
+    const logger = capturedLogger.logger;
 
     const fixed = async (label: string) => {
       const result = await playIssuedChoice(store.repo, label, worldSource.source);
@@ -163,7 +176,7 @@ describe("Step 1：移动队列回归 journey（最小夹具重放队列命中�
         logger,
         now: journeyNow,
       });
-      expect(result, "live 场景应保存").toBe("saved");
+      expect(result, JSON.stringify({ result, events: capturedLogger.events, record: await loadGameRecord(store.repo) })).toBe("saved");
     };
     const scene = async () => {
       const ok = await advanceScene(store.repo, worldSource.source);
@@ -272,6 +285,7 @@ describe("Step 2：世界提案坏响应修复 journey", () => {
     const created = await createJourneyGame(undefined, undefined, SEED, "short");
     const store = created.repo;
     const logger = createCapturingLogger().logger;
+    const fakeScene = createFakeLiveSceneSource();
     const goodBase = createDeterministicEvolutionSource();
 
     let proposeCalls = 0;
@@ -299,7 +313,7 @@ describe("Step 2：世界提案坏响应修复 journey", () => {
 
     const result = await generatePendingScene({
       repository: store.repo,
-      sceneSource: createDeterministicSceneSource(),
+      sceneSource: fakeScene.source,
       worldEvolutionSource: repairWorld,
       logger,
       now: journeyNow,

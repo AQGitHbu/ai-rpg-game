@@ -7,9 +7,10 @@ import type {
   ScenePerformanceNpcDialogue,
   ScenePerformanceSegment,
   LinearActionNarrative,
+  LinearActionNpcLine,
 } from "../../sceneSource";
 import { sceneInvestigationResultFrom } from "../../sceneSource";
-import type { SceneGenerationContext } from "../../sceneGenerationContext";
+import type { SceneGenerationContext, UpcomingObjectiveRef } from "../../sceneGenerationContext";
 import {
   buildSelectableSceneCandidates,
   formatSceneChoiceLabel,
@@ -32,7 +33,8 @@ import type { ProviderJsonMode } from "./providerRequestOptions";
 // ---------------------------------------------------------------------------
 // live 场景表演源（Task 6，取代 liveSceneSource）。
 //
-// 编排：AI 原始 JSON → 纯解析/校验（非法字段、越权引用直接失败）→ typed failure。
+// 编排：AI 原始 JSON → 纯解析/校验（非法核心字段直接失败；线性预生成条目按权威
+// ID 局部过滤）→ typed failure。
 // source 只做"提案"，不做审批/铸造 token/写状态
 // （那些是 approveScenePerformance 纯函数职责）。sensitive 配置绝不进日志。
 // 提示词只含安全段落：风格政策、玩家本轮原话、已解决规则结果节拍、目标转换、
@@ -132,6 +134,7 @@ export type ScenePerformanceParseFailureReason =
   | "npc_line_invalid_shape"
   | "npc_line_unusable"
   | "npc_dialogues_invalid"
+  | "linear_arrival_npc_line_invalid"
   | "objective_link_invalid_shape"
   | "objective_link_invalid_fields"
   | "choices_invalid"
@@ -163,7 +166,7 @@ function isUsableLiveNpcLine<TNpcId>(
 
 /**
  * 归一化 AI 返回的 npcLine：npcId 必须真实存在于在场 NPC、text 非空、
- * emotion 收敛到合法枚举，否则返回 null（调用方用确定性兜底）。
+ * emotion 收敛到合法枚举，否则返回 null（上层进入内容修复/失败流程）。
  * 纯函数：零 AI / IO / 随机。
  */
 export function resolveLiveNpcLine<TNpcId>(
@@ -179,7 +182,7 @@ export function resolveLiveNpcLine<TNpcId>(
   const text = normalizeNpcSpeech(candidate.text, presentNpc.name);
   if (text === "") return null;
   // 这句没有身份、地点或线索承接，AI 在新幕里返回它会把角色演绎
-  // 退化成同一个模板。整场回退到同轨角色化台词，避免玩家看到假上下文。
+  // 退化成同一个模板；拒绝后由上层进入内容修复，不写入兜底台词。
   if (isGenericNpcGreeting(text)) return null;
   const emotion = NARRATIVE_EMOTIONS.includes(candidate.emotion as NarrativeEmotion)
     ? (candidate.emotion as NarrativeEmotion)
@@ -213,37 +216,121 @@ export function resolvePerformanceChoices(
 /**
  * 解析/校验 AI 返回的 linearActionNarratives（Task 1）：actionKind/factId/locationId/
  * narration 逐字段校验，引用必须命中 context.upcomingLinearObjectives 的权威实体；
- * 任意非法条目 → 整字段丢弃（返回 null，不阻塞主场景解析）。
+ * 非法条目被忽略，合法条目继续进入队列，不让一条多余的行动叙事吞掉合法预生成结果。
  */
+type LinearActionNarrativeParseResult = {
+  readonly narratives: readonly LinearActionNarrative[];
+  readonly ignoredCount: number;
+} | { readonly requiredArrivalNpcLineInvalid: true };
+
+function parseLinearArrivalNpcLine(
+  rawValue: unknown,
+  arrivalNpc: NonNullable<Extract<UpcomingObjectiveRef, { kind: "visit_location" }>["arrivalNpc"]>,
+): LinearActionNpcLine | null {
+  if (!isRecord(rawValue)
+    || typeof rawValue.npcId !== "string"
+    || rawValue.npcId.trim() !== String(arrivalNpc.id)
+    || typeof rawValue.text !== "string") {
+    return null;
+  }
+  const text = normalizeNpcSpeech(rawValue.text, arrivalNpc.name);
+  if (text === ""
+    || !hasDialogicContinuation(text)
+    || isGenericNpcAcknowledgement(text)
+    || isGenericNpcGreeting(text)
+    || isGenericNpcInquiry(text)) {
+    return null;
+  }
+  const usedFactIds = rawValue.usedFactIds === undefined
+    ? []
+    : Array.isArray(rawValue.usedFactIds)
+      ? strArray(rawValue.usedFactIds)
+      : null;
+  if (usedFactIds === null) return null;
+  if (Array.isArray(rawValue.usedFactIds) && usedFactIds.length !== rawValue.usedFactIds.length) return null;
+  const allowedFactIds = new Set([
+    ...arrivalNpc.knownFactCards.map((fact) => String(fact.factId)),
+    ...arrivalNpc.sceneVisibleFactIds.map(String),
+  ]);
+  if (usedFactIds.some((factId) => !allowedFactIds.has(factId))) return null;
+  const emotion = NARRATIVE_EMOTIONS.includes(rawValue.emotion as NarrativeEmotion)
+    ? (rawValue.emotion as NarrativeEmotion)
+    : "neutral";
+  return {
+    npcId: String(arrivalNpc.id),
+    text,
+    emotion,
+    usedFactIds,
+  };
+}
+
 function parseLinearActionNarratives(
   rawValue: unknown,
   context: SceneGenerationContext,
-): readonly LinearActionNarrative[] | null {
-  if (!Array.isArray(rawValue)) return null;
+): LinearActionNarrativeParseResult | undefined {
+  if (!Array.isArray(rawValue)) return undefined;
   const upcoming = context.upcomingLinearObjectives ?? [];
   const narratives: LinearActionNarrative[] = [];
+  let ignoredCount = 0;
   for (const entry of rawValue) {
-    if (!isRecord(entry)) return null;
-    if (typeof entry.narration !== "string" || entry.narration.trim() === "") return null;
+    if (!isRecord(entry)) {
+      ignoredCount += 1;
+      continue;
+    }
+    if (typeof entry.narration !== "string" || entry.narration.trim() === "") {
+      ignoredCount += 1;
+      continue;
+    }
     if (entry.actionKind === "investigate") {
-      if (typeof entry.factId !== "string") return null;
+      if (typeof entry.factId !== "string") {
+        ignoredCount += 1;
+        continue;
+      }
       if (!upcoming.some((ref) => ref.kind === "discover_fact" && String(ref.factId) === entry.factId)) {
-        return null;
+        ignoredCount += 1;
+        continue;
       }
       narratives.push({ actionKind: "investigate", factId: entry.factId, narration: entry.narration.trim() });
       continue;
     }
     if (entry.actionKind === "move") {
-      if (typeof entry.locationId !== "string") return null;
-      if (!upcoming.some((ref) => ref.kind === "visit_location" && String(ref.locationId) === entry.locationId)) {
-        return null;
+      if (typeof entry.locationId !== "string") {
+        ignoredCount += 1;
+        continue;
       }
-      narratives.push({ actionKind: "move", locationId: entry.locationId, narration: entry.narration.trim() });
+      if (!upcoming.some((ref) => ref.kind === "visit_location" && String(ref.locationId) === entry.locationId)) {
+        ignoredCount += 1;
+        continue;
+      }
+      const ref = upcoming.find((candidate) =>
+        candidate.kind === "visit_location" && String(candidate.locationId) === entry.locationId,
+      );
+      if (ref === undefined) {
+        ignoredCount += 1;
+        continue;
+      }
+      if (ref !== undefined && ref.kind === "visit_location" && ref.arrivalNpc !== undefined) {
+        const arrivalNpcLine = parseLinearArrivalNpcLine(entry.arrivalNpcLine, ref.arrivalNpc);
+        if (arrivalNpcLine === null) return { requiredArrivalNpcLineInvalid: true };
+        narratives.push({
+          actionKind: "move",
+          locationId: entry.locationId,
+          narration: entry.narration.trim(),
+          arrivalNpcLine,
+        });
+      } else {
+        narratives.push({
+          actionKind: "move",
+          locationId: entry.locationId,
+          narration: entry.narration.trim(),
+        });
+      }
       continue;
     }
-    return null;
+    ignoredCount += 1;
   }
-  return narratives;
+  if (narratives.length === 0 && ignoredCount === 0) return undefined;
+  return { narratives, ignoredCount };
 }
 
 /**
@@ -292,11 +379,12 @@ function parseNpcDialogues(
   return result;
 }
 
-/** 把 AI 返回的任意形状解析/校验为合法表演提案；非法返回 null（调用方走确定性兜底）。 */
+/** 把 AI 返回的任意形状解析/校验为合法表演提案；非法返回 typed failure（上层重试）。 */
 export function parseScenePerformanceJson(
   raw: unknown,
   context: SceneGenerationContext,
   selectable: readonly SceneChoiceCandidate[],
+  logger?: Pick<GameLogger, "warn">,
 ): ScenePerformanceParseResult {
   if (!isRecord(raw)) return { ok: false, reason: "root_not_object" };
 
@@ -382,11 +470,35 @@ export function parseScenePerformanceJson(
     return { ok: false, reason: "choices_stale_template" };
   }
 
-  // 单线行动预生成叙事：非法条目整字段丢弃，绝不阻塞主场景解析/审批。
+  // 单线行动预生成叙事：非法条目局部忽略，绝不阻塞主场景解析/审批。
   let linearActionNarratives: ScenePerformanceProposal["linearActionNarratives"];
+  const requiredArrivalNpc = (context.upcomingLinearObjectives ?? [])
+    .find((ref) => ref.kind === "visit_location" && ref.arrivalNpc !== undefined);
+  if (requiredArrivalNpc !== undefined
+    && (!Array.isArray(raw.linearActionNarratives) || raw.linearActionNarratives.length === 0)) {
+    return { ok: false, reason: "linear_arrival_npc_line_invalid" };
+  }
   if (raw.linearActionNarratives !== undefined && raw.linearActionNarratives !== null) {
     const parsed = parseLinearActionNarratives(raw.linearActionNarratives, context);
-    if (parsed !== null) linearActionNarratives = parsed;
+    if (parsed !== undefined) {
+      if ("requiredArrivalNpcLineInvalid" in parsed) {
+        return { ok: false, reason: "linear_arrival_npc_line_invalid" };
+      }
+      if (parsed.ignoredCount > 0) {
+        logger?.warn("linear_narrative_entries_ignored", {
+          sceneId: `scene-${context.job.jobId}`,
+          ignoredCount: parsed.ignoredCount,
+          acceptedCount: parsed.narratives.length,
+        });
+      }
+      if (requiredArrivalNpc !== undefined
+        && !parsed.narratives.some((entry) =>
+          entry.actionKind === "move" && entry.arrivalNpcLine !== undefined,
+        )) {
+        return { ok: false, reason: "linear_arrival_npc_line_invalid" };
+      }
+      if (parsed.narratives.length > 0) linearActionNarratives = parsed.narratives;
+    }
   }
 
   return {
@@ -481,7 +593,7 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
 
         const parsed = parseJsonResponse(result.content);
         const parseResult = parsed.ok
-          ? parseScenePerformanceJson(parsed.value, context, selectable)
+          ? parseScenePerformanceJson(parsed.value, context, selectable, logger)
           : parsed;
         if (parseResult.ok) {
           const proposal = markContentRepairAttempt(parseResult.proposal, context);
@@ -616,11 +728,21 @@ export function buildLiveScenePrompt(
     ? "题材锁定为武侠：对白和旁白只能使用江湖、门派、镖局、官府、山川、兵器、线索、武学语汇；不得出现魔法、巫师、精灵、骑士、幽灵/灵魂、祭坛、法阵、圣光、异界等奇幻或超自然词汇。"
     : `题材锁定为${context.gameType ?? "当前游戏"}，不得跨题材改写世界规则。`;
 
-  // 单线行动预告：有权威单线链时，输出契约额外要求预生成 investigate/move 叙事。
+  // 单线行动预告：有权威单线链时，输出契约额外要求预生成当前目标链中的
+  // investigate/move 叙事；schema 只展示本次实际授权的行动类型，避免模型照抄
+  // 未授权的另一种行动。
   const upcoming = context.upcomingLinearObjectives ?? [];
+  const linearArrivalNpcJson = (ref: (typeof upcoming)[number]) =>
+    ref.kind === "visit_location" && ref.arrivalNpc !== undefined
+      ? `,"arrivalNpcLine":{"npcId":"${ref.arrivalNpc.id}","text":"抵达后目标 NPC 的两句直接对白","emotion":"neutral","usedFactIds":[]}`
+      : "";
+  const linearJsonShape = upcoming.map((ref) => ref.kind === "discover_fact"
+    ? `{"actionKind":"investigate","factId":"${ref.factId}","narration":"调查发现的剧情正文"}`
+    : `{"actionKind":"move","locationId":"${ref.locationId}","narration":"动身与抵达的剧情正文"${linearArrivalNpcJson(ref)}}`
+  ).join(",");
   const linearJsonField = upcoming.length === 0
     ? ""
-    : `,"linearActionNarratives":[{"actionKind":"investigate","factId":"权威factId","narration":"调查发现的剧情正文"},{"actionKind":"move","locationId":"权威locationId","narration":"动身与抵达的剧情正文"}]`;
+    : `,"linearActionNarratives":[${linearJsonShape}]`;
 
   const prompt = `只输出 JSON，不能有解释或 Markdown。写一幕 RPG 场景，不得改规则。
 ${genreContract}
@@ -654,9 +776,18 @@ NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰�
     : `单线行动预告（AI 预生成，服务端权威下发，不得增删改写）：
 ${upcoming.map((ref) => ref.kind === "discover_fact"
       ? `- 调查：factId=${ref.factId}；调查入口=${ref.investigationLabel}；权威正文=${ref.factText}${ref.nextObjectiveEntityName === undefined ? "" : `；下一地点=${ref.nextObjectiveEntityName}`}`
-      : `- 移动：locationId=${ref.locationId}；地点名=${ref.locationName}${ref.nextObjectiveEntityName === undefined ? "" : `；下一目标=${ref.nextObjectiveEntityName}`}`).join("\n")}
-输出契约：linearActionNarratives 必须为上面每个预告各生成一条叙事，形状为 [{"actionKind":"investigate","factId":"上面给出的精确factId","narration":"..."},{"actionKind":"move","locationId":"上面给出的精确locationId","narration":"..."}]；未预告的 actionKind 与实体 ID 一律不得输出。
-约束：investigate 的 narration 只能演绎该条权威正文的既有事实（事实内容不得改写），并解释为何前往下一地点，下一地点实体名必须逐字照抄服务端下发；move 的 narration 描写动身与抵达该地点的所见所感；不得捏造新事实、新实体或具体时间；不得输出“主线推进到第X幕”“当前目标：”“调查完成”等系统元话术。`;
+      : `- 移动：locationId=${ref.locationId}；地点名=${ref.locationName}${ref.nextObjectiveEntityName === undefined ? "" : `；下一目标=${ref.nextObjectiveEntityName}`}${ref.arrivalNpc === undefined ? "" : `；抵达后目标 NPC=id=${ref.arrivalNpc.id}；${ref.arrivalNpc.name}（${ref.arrivalNpc.role}；公开身份=${ref.arrivalNpc.publicProfile}；可说事实=${ref.arrivalNpc.knownFactCards.map((fact) => `${fact.factId}=${fact.text}`).join("；") || "无"}）`}`).join("\n")}
+输出契约：linearActionNarratives 必须为上面每个预告各生成一条叙事，形状为 [${linearJsonShape}]；未预告的 actionKind 与实体 ID 一律不得输出。
+${upcoming.some((ref) => ref.kind === "discover_fact")
+      ? "investigate 的 narration 只能演绎该条权威正文的既有事实（事实内容不得改写），并解释为何前往下一地点，下一地点实体名必须逐字照抄服务端下发。"
+      : ""}
+${upcoming.some((ref) => ref.kind === "visit_location")
+      ? "move 的 narration 描写动身与抵达该地点的所见所感。"
+      : ""}
+${upcoming.some((ref) => ref.kind === "visit_location" && ref.arrivalNpc !== undefined)
+      ? "move 条目若带有抵达后目标 NPC，必须同时生成 arrivalNpcLine；它是抵达该地点后玩家首次看到的目标 NPC 两句直接对白，不推进回合，不生成选项，不得使用通用兜底句。arrivalNpcLine.npcId 必须逐字使用服务端下发的目标 NPC ID，usedFactIds 只能使用该 NPC 可说事实或场景可见事实；缺少该字段视为整场内容契约失败。"
+      : ""}
+不得捏造新事实、新实体或具体时间；不得输出“主线推进到第X幕”“当前目标：”“调查完成”等系统元话术。`;
   return `${prompt}\n` +
     `${linearNarrativesContract}\n` +
     `ID 复核：segments.beatId 只能逐字复制“节拍”列表中的 ID，禁止创造 item_given、dialogue_response 等新 ID；` +
