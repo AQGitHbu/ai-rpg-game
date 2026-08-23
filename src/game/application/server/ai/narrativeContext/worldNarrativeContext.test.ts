@@ -21,6 +21,7 @@ function makeWorldContext(need: EvolutionNeed) {
   const questId = asQuestId("quest_1");
   const publicFactId = asFactId("fact_public");
   const hiddenFactId = asFactId("fact_hidden");
+  const unrevealedFactId = asFactId("fact_UNREVEALED_ID_MARKER");
 
   return {
     worldState: {
@@ -87,11 +88,11 @@ function makeWorldContext(need: EvolutionNeed) {
             actionId: "action_private",
             locationId: locA,
             dialogueAct: "ask",
-            topicSummary: "DO_NOT_LEAK_PRIVATE_MEMORY",
+            topicSummary: "PRIVATE_INTERACTION_MEMORY_MARKER",
             outcome: "neutral",
             relationshipDelta: 2,
             learnedFactIds: [publicFactId],
-            summary: "DO_NOT_LEAK_PRIVATE_MEMORY",
+            summary: "PRIVATE_INTERACTION_MEMORY_MARKER",
           }],
           relationship: { affinity: 42 },
           emotion: "guarded",
@@ -117,6 +118,13 @@ function makeWorldContext(need: EvolutionNeed) {
         {
           factId: hiddenFactId,
           text: "掌柜私下替内应传递密信。",
+          source: "generated",
+          discovered: false,
+          locationId: locA,
+        },
+        {
+          factId: unrevealedFactId,
+          text: "尚未发现的账册夹层暗记。",
           source: "generated",
           discovered: false,
           locationId: locA,
@@ -171,7 +179,10 @@ function makeWorldContext(need: EvolutionNeed) {
       narrative: { currentScene: null, generation: { status: "idle" }, mode: "ai" },
       prologueShown: true,
       prologueText: "",
-      recentBeats: [{ turn: 6, kind: "fact_discovered", summary: "账册指向北巷的货运线。" }],
+      recentBeats: [
+        { turn: 6, kind: "fact_discovered", summary: "账册指向北巷的货运线。" },
+        { turn: 7, kind: "npc_met", summary: "PRIVATE_INTERACTION_MEMORY_MARKER" },
+      ],
       npcContacts: [],
       reducedThroughEventCount: 8,
       contract: {
@@ -197,6 +208,7 @@ function makeWorldContext(need: EvolutionNeed) {
     },
     need,
     reason: "scene_evolution",
+    action: { type: "investigate", factId: unrevealedFactId, approachId: "inspect_ledger" },
   } satisfies WorldEvolutionSourceContext;
 }
 
@@ -246,13 +258,17 @@ describe("worldNarrativeContext", () => {
   it("Prompt 不含账本、NPC 私密记忆、交互历史或裸关系值", () => {
     const prompt = compileWorldNarrativeContext(makeWorldContext({ kind: "next_act", act: 3 })).prompt;
     expect(prompt).not.toContain("eventLedger");
-    expect(prompt).not.toContain("DO_NOT_LEAK_PRIVATE_MEMORY");
+    expect(prompt).not.toContain("PRIVATE_INTERACTION_MEMORY_MARKER");
     expect(prompt).not.toContain("hiddenFactIds");
     expect(prompt).not.toContain("interactionHistory");
     expect(prompt).not.toContain("affinity=");
     expect(prompt).not.toContain("fact_hidden");
+    expect(prompt).not.toContain("UNREVEALED_ID_MARKER");
     expect(prompt).not.toContain("掌柜私下替内应传递密信");
+    expect(prompt).toContain("账册指向北巷的货运线。");
     expect(JSON.stringify(compileWorldNarrativeContext(makeWorldContext({ kind: "next_act", act: 3 })).manifest))
       .not.toContain("fact_hidden");
+    expect(JSON.stringify(compileWorldNarrativeContext(makeWorldContext({ kind: "next_act", act: 3 })).manifest))
+      .not.toContain("UNREVEALED_ID_MARKER");
   });
 });

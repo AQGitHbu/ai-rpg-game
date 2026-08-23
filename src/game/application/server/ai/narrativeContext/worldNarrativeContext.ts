@@ -52,14 +52,14 @@ function locationPlacementRule(currentLocation: WorldState["locations"][number] 
   return "当前地点不是城镇容器：新地点通常使用 placement=world；town_building 只可挂在当前城镇容器。";
 }
 
-function describeSafeAction(action: Action | undefined, hiddenFactIds: ReadonlySet<string>): string {
+function describeSafeAction(action: Action | undefined, disclosedPublicFactIds: ReadonlySet<string>): string {
   if (action === undefined) return "无";
   switch (action.type) {
     case "talk": return `type=talk;npcId=${action.npcId};dialogueAct=${action.dialogueAct}`;
     case "move": return `type=move;locationId=${action.locationId}`;
-    case "investigate": return hiddenFactIds.has(String(action.factId))
-      ? `type=investigate;approachId=${action.approachId ?? "无"}`
-      : `type=investigate;factId=${action.factId};approachId=${action.approachId ?? "无"}`;
+    case "investigate": return disclosedPublicFactIds.has(String(action.factId))
+      ? `type=investigate;factId=${action.factId};approachId=${action.approachId ?? "无"}`
+      : `type=investigate;approachId=${action.approachId ?? "无"}`;
     case "take_item": return `type=take_item;itemId=${action.itemId}`;
     case "give_item": return `type=give_item;itemId=${action.itemId};npcId=${action.npcId}`;
     case "attack": return `type=attack;enemyId=${action.enemyId}`;
@@ -124,13 +124,19 @@ export function buildWorldNarrativeContextBlocks(
   const targetEntityId = objectiveEntityId(currentQuestObjective);
   const hiddenFactIds = new Set(world.npcs.flatMap((npc) => npc.memory.hiddenFactIds.map(String)));
   const publicFacts = world.worldFacts.filter((fact) => fact.discovered && !hiddenFactIds.has(String(fact.factId)));
+  const disclosedPublicFactIds = new Set(publicFacts.map((fact) => String(fact.factId)));
   const privateFactTexts = world.worldFacts
     .filter((fact) => hiddenFactIds.has(String(fact.factId)))
     .map((fact) => fact.text)
     .filter((text) => text.trim() !== "");
+  const privateInteractionTexts = world.npcs.flatMap((npc) => npc.memory.interactionHistory.flatMap((interaction) => [
+    interaction.topicSummary,
+    interaction.summary,
+  ])).filter((text) => text.trim() !== "");
+  const privateRecentBeatMarkers = [...hiddenFactIds, ...privateFactTexts, ...privateInteractionTexts];
   const recentBeats = story.recentBeats
     .filter(isRecentBeat)
-    .filter((beat) => ![...hiddenFactIds, ...privateFactTexts].some((privateFact) => beat.summary.includes(privateFact)))
+    .filter((beat) => !privateRecentBeatMarkers.some((marker) => beat.summary.includes(marker)))
     .slice(-5);
   const neighboringLocationIds = new Set(currentLocation?.connectedLocationIds.map(String) ?? []);
   const nearbyLocationIds = new Set([
@@ -204,7 +210,7 @@ export function buildWorldNarrativeContextBlocks(
     worldBlock({
       id: "world:evolution-need", slot: "current_resolution", title: "本次演化需求", sourceKind: "world_evolution_source_context", sourceRefs: [],
       authority: "state", retention: "mandatory", priority: 950,
-      content: `need=${JSON.stringify(context.need)}；reason=${context.reason}；action=${describeSafeAction(context.action, hiddenFactIds)}；contentRepair=${context.contentRepair === undefined ? "无" : JSON.stringify(context.contentRepair)}。`,
+      content: `need=${JSON.stringify(context.need)}；reason=${context.reason}；action=${describeSafeAction(context.action, disclosedPublicFactIds)}；contentRepair=${context.contentRepair === undefined ? "无" : JSON.stringify(context.contentRepair)}。`,
     }),
     worldBlock({
       id: "world:output-contract", slot: "output_contract", title: "WorldDelta 输出契约", sourceKind: "world_delta_parser", sourceRefs: [],
