@@ -4,6 +4,8 @@ import {
   intentProviderAllowedFor,
   providerAllowedFor,
   type NarrativeExecutionInput,
+  type ProviderGenerationKind,
+  type NarrativeSceneRequestKind,
 } from "@/game/gameplay/rpg/narrativeExecution";
 
 describe("narrative execution provider whitelist", () => {
@@ -15,6 +17,14 @@ describe("narrative execution provider whitelist", () => {
     ["rule_only", false],
   ] as const)("%s providerAllowed=%s", (kind, allowed) => {
     expect(providerAllowedFor(kind)).toBe(allowed);
+  });
+
+  it("re-exports provider trigger types from the facade", () => {
+    const kinds: readonly [ProviderGenerationKind, NarrativeSceneRequestKind] = [
+      "npc_fixed_choice",
+      "npc_response",
+    ];
+    expect(kinds).toEqual(["npc_fixed_choice", "npc_response"]);
   });
 
   it("classifies formal NPC choices as provider work", () => {

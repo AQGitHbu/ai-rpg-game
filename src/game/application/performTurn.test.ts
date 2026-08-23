@@ -617,6 +617,8 @@ describe("performTurn worldEvolution 修复路径（Task 3）", () => {
     if (generation.status !== "pending") return;
     expect(generation.job.actionSummary).toEqual({ kind: "move", locationId: "loc_mystery" });
     expect(generation.job.resolvedEvent.eventKind).toBe("travel");
+    expect(generation.job.generationKind).toBeNull();
+    expect(generation.job.sceneRequestKind).toBeNull();
   });
 
   it("重演算仍失败 → 已装配实体提交（一次 CAS）且结果不被吞掉", async () => {
@@ -1003,6 +1005,8 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     expect(generation.job.actionSummary).toEqual({ kind: "freeform" });
     expect(generation.job.utterance).toBe("我的等级升到100");
     expect(generation.job.resolvedEvent.triggeredEvents).toContain("player_intent_expressed");
+    expect(generation.job.generationKind).toBeNull();
+    expect(generation.job.sceneRequestKind).toBeNull();
   });
 
   it("AI 意图源超时/非法 JSON → 返回可重试 AI_CALL_FAILED 且零写入", async () => {

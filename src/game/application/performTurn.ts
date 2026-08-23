@@ -17,6 +17,7 @@ import {
   type NarrativeSceneRequestKind,
 } from "@/game/domain/pendingNarrativeJob";
 import { buildIntentContext, type IntentParserSource } from "@/game/gameplay/rpg/intentParser";
+import { decideNarrativeExecution } from "@/game/gameplay/rpg/narrativeExecution";
 import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import { buildOutcomeBeats, currentObjectiveOf, deriveObjectiveTransition } from "@/game/gameplay/rpg/narrativeContext";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
@@ -92,6 +93,36 @@ export function buildActionSummary(action: Action): StructuredActionSummary {
     case "ack_prologue": return { kind: "ack_prologue" };
     case "freeform": return { kind: "freeform" };
   }
+}
+
+type PendingNarrativeProviderTrigger = {
+  readonly generationKind: ProviderGenerationKind | null;
+  readonly sceneRequestKind: NarrativeSceneRequestKind | null;
+};
+
+function resolvePendingNarrativeProviderTrigger(input: {
+  readonly action: Action;
+  readonly interactionKind: "fixed_choice" | "free_text" | null;
+  readonly objectiveTransition: ObjectiveTransition;
+  readonly primaryResult: ResolvedEvent;
+}): PendingNarrativeProviderTrigger {
+  const decision = decideNarrativeExecution({
+    action: input.action,
+    interactionKind: input.action.type === "talk" ? input.interactionKind : null,
+    advancesObjective: input.objectiveTransition.mode !== "unchanged",
+    hasPreparedStep: false,
+    battleWillResolve: input.primaryResult.eventKind === "battle",
+    dialogueWillComplete: input.objectiveTransition.mode === "advanced_act",
+  });
+  return decision.kind === "provider"
+    ? {
+        generationKind: decision.generationKind,
+        sceneRequestKind: decision.sceneRequestKind,
+      }
+    : {
+        generationKind: null,
+        sceneRequestKind: null,
+      };
 }
 
 /**
@@ -247,8 +278,12 @@ export async function performTurn(
             objectiveTransition: narrative.objectiveTransition,
             mandatoryBeats: narrative.mandatoryBeats,
             dialogueChoiceLabel,
-            generationKind: command.interaction.kind === "free_text" ? "npc_free_text" : "npc_fixed_choice",
-            sceneRequestKind: narrative.objectiveTransition.mode === "advanced_act" ? "npc_handoff" : "npc_response",
+            ...resolvePendingNarrativeProviderTrigger({
+              action: converted.action,
+              interactionKind: command.interaction.kind,
+              objectiveTransition: narrative.objectiveTransition,
+              primaryResult: reEvaluated.resolution.primaryResult,
+            }),
           });
         }
         // 重演算仍失败：实体提交必须真实发生（供下一回合使用），行动本身被拒绝。
@@ -367,8 +402,12 @@ export async function performTurn(
     objectiveTransition: narrative.objectiveTransition,
     mandatoryBeats: narrative.mandatoryBeats,
     dialogueChoiceLabel,
-    generationKind: command.interaction.kind === "free_text" ? "npc_free_text" : "npc_fixed_choice",
-    sceneRequestKind: narrative.objectiveTransition.mode === "advanced_act" ? "npc_handoff" : "npc_response",
+    ...resolvePendingNarrativeProviderTrigger({
+      action: converted.action,
+      interactionKind: command.interaction.kind,
+      objectiveTransition: narrative.objectiveTransition,
+      primaryResult: resolution.primaryResult,
+    }),
   });
 }
 
@@ -448,8 +487,8 @@ type CommitResolutionInput = {
   readonly objectiveTransition: ObjectiveTransition;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
   readonly dialogueChoiceLabel?: string;
-  readonly generationKind: ProviderGenerationKind;
-  readonly sceneRequestKind: NarrativeSceneRequestKind;
+  readonly generationKind: ProviderGenerationKind | null;
+  readonly sceneRequestKind: NarrativeSceneRequestKind | null;
 };
 
 /**

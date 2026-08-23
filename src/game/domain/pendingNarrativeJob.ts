@@ -23,6 +23,11 @@ export type ProviderGenerationKind = (typeof PROVIDER_GENERATION_KINDS)[number];
 
 /** 场景请求种类：与 generationKind 配对，决定 prompt 路由。 */
 export type NarrativeSceneRequestKind = "opening" | "npc_response" | "npc_handoff";
+const NARRATIVE_SCENE_REQUEST_KINDS = [
+  "opening",
+  "npc_response",
+  "npc_handoff",
+] as const satisfies readonly NarrativeSceneRequestKind[];
 
 /** 合法的 generationKind + sceneRequestKind 配对。 */
 const VALID_KIND_PAIRS: ReadonlyMap<string, readonly NarrativeSceneRequestKind[]> = new Map([
@@ -35,9 +40,17 @@ function isValidKindPair(
   generationKind: unknown,
   sceneRequestKind: unknown,
 ): boolean {
+  if (generationKind === null || sceneRequestKind === null) {
+    return generationKind === null && sceneRequestKind === null;
+  }
   if (typeof generationKind !== "string" || typeof sceneRequestKind !== "string") return false;
   const allowed = VALID_KIND_PAIRS.get(generationKind);
   return allowed !== undefined && (allowed as readonly string[]).includes(sceneRequestKind);
+}
+
+function isKnownSceneRequestKind(value: unknown): value is NarrativeSceneRequestKind {
+  return typeof value === "string"
+    && (NARRATIVE_SCENE_REQUEST_KINDS as readonly string[]).includes(value);
 }
 
 /**
@@ -82,9 +95,9 @@ export type PendingNarrativeJob = {
   readonly objectiveTransition: ObjectiveTransition;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
   /** 该 job 触发的 provider 生成种类；必须属于 PROVIDER_GENERATION_KINDS 白名单。 */
-  readonly generationKind: ProviderGenerationKind;
+  readonly generationKind: ProviderGenerationKind | null;
   /** 场景请求种类；必须与 generationKind 合法配对。 */
-  readonly sceneRequestKind: NarrativeSceneRequestKind;
+  readonly sceneRequestKind: NarrativeSceneRequestKind | null;
 };
 
 export type CreatePendingNarrativeJobInput = {
@@ -111,9 +124,9 @@ export type CreatePendingNarrativeJobInput = {
   readonly objectiveTransition: ObjectiveTransition;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
   /** 该 job 触发的 provider 生成种类；必须属于 PROVIDER_GENERATION_KINDS 白名单。 */
-  readonly generationKind: ProviderGenerationKind;
+  readonly generationKind: ProviderGenerationKind | null;
   /** 场景请求种类；必须与 generationKind 合法配对。 */
-  readonly sceneRequestKind: NarrativeSceneRequestKind;
+  readonly sceneRequestKind: NarrativeSceneRequestKind | null;
 };
 
 export type PendingNarrativeJobErrorCode =
@@ -212,8 +225,10 @@ export function createPendingNarrativeJob(
     errors.push({ code: "UTTERANCE_TOO_LONG" });
   }
   if (!isValidKindPair(input.generationKind, input.sceneRequestKind)) {
-    if (!VALID_KIND_PAIRS.has(input.generationKind)) {
+    if (input.generationKind !== null && !VALID_KIND_PAIRS.has(input.generationKind)) {
       errors.push({ code: "INVALID_GENERATION_KIND" });
+    } else if (input.sceneRequestKind !== null && !isKnownSceneRequestKind(input.sceneRequestKind)) {
+      errors.push({ code: "INVALID_SCENE_REQUEST_KIND" });
     } else {
       errors.push({ code: "INVALID_KIND_PAIR" });
     }
@@ -284,8 +299,8 @@ export function parsePendingNarrativeJob(value: unknown): ParsePendingNarrativeJ
     requestedAt: v.requestedAt as string,
     objectiveTransition: v.objectiveTransition as ObjectiveTransition,
     mandatoryBeats: v.mandatoryBeats as readonly MandatoryNarrativeBeat[],
-    generationKind: v.generationKind as ProviderGenerationKind,
-    sceneRequestKind: v.sceneRequestKind as NarrativeSceneRequestKind,
+    generationKind: v.generationKind as ProviderGenerationKind | null,
+    sceneRequestKind: v.sceneRequestKind as NarrativeSceneRequestKind | null,
   });
   if (!result.ok) return { ok: false, code: "INVALID_PENDING_NARRATIVE_JOB" };
   return { ok: true, job: result.job };

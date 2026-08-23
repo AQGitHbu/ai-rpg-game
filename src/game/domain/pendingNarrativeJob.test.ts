@@ -318,6 +318,19 @@ describe("PendingNarrativeJob", () => {
     }).ok).toBe(true);
   });
 
+  it("非 provider pending job 接受 null/null metadata", () => {
+    const result = createResult({
+      actionSummary: { kind: "move", locationId: asLocationId("loc_2") },
+      generationKind: null as never,
+      sceneRequestKind: null as never,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.job.generationKind).toBeNull();
+      expect(result.job.sceneRequestKind).toBeNull();
+    }
+  });
+
   it("拒绝非白名单 generationKind", () => {
     expect(createResult({
       generationKind: "prepared_action" as never,
@@ -336,6 +349,13 @@ describe("PendingNarrativeJob", () => {
     expect(createResult({
       generationKind: "npc_fixed_choice",
       sceneRequestKind: "opening",
+    }).ok).toBe(false);
+  });
+
+  it("拒绝半空配对（null + npc_response）", () => {
+    expect(createResult({
+      generationKind: null as never,
+      sceneRequestKind: "npc_response",
     }).ok).toBe(false);
   });
 
@@ -361,6 +381,20 @@ describe("PendingNarrativeJob", () => {
     raw.generationKind = "opening";
     raw.sceneRequestKind = "npc_response";
     expect(parsePendingNarrativeJob(raw).ok).toBe(false);
+  });
+
+  it("parsePendingNarrativeJob 接受 null/null metadata", () => {
+    const job = createValidJob({
+      actionSummary: { kind: "move", locationId: asLocationId("loc_2") },
+      generationKind: null as never,
+      sceneRequestKind: null as never,
+    });
+    const parsed = parsePendingNarrativeJob(JSON.parse(JSON.stringify(job)));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.job.generationKind).toBeNull();
+      expect(parsed.job.sceneRequestKind).toBeNull();
+    }
   });
 
   it("parsePendingNarrativeJob 拒绝非对象输入", () => {

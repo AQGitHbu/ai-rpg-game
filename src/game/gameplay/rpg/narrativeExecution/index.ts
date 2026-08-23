@@ -6,3 +6,8 @@ export {
   type NarrativeExecutionInput,
   type NarrativeExecutionDecision,
 } from "./narrativeExecutionPolicy";
+
+export type {
+  ProviderGenerationKind,
+  NarrativeSceneRequestKind,
+} from "@/game/domain/pendingNarrativeJob";
