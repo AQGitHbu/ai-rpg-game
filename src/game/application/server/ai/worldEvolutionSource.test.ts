@@ -342,7 +342,7 @@ describe("createLiveWorldEvolutionSource", () => {
     };
     const source = createLiveWorldEvolutionSource({ aiClient });
 
-    await source.propose({
+    const result = await source.propose({
       worldState: makeWorld(),
       storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: { kind: "pacing", pacingNeed: "complicate" },
@@ -350,6 +350,18 @@ describe("createLiveWorldEvolutionSource", () => {
     });
 
     expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal).toEqual({
+      beatSummary: "补足一条调查线索",
+      newLocation: null,
+      newNpc: null,
+      newItem: null,
+      newEnemy: null,
+      newFact: { text: "井沿留有新鲜绳痕。", visibility: "public" },
+      nextMainQuest: null,
+      endingPair: null,
+    });
   });
 });
 

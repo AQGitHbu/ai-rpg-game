@@ -594,9 +594,21 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       }),
     };
 
-    await createLiveScenePerformanceSource({ aiClient }).generateScene(makeContext());
+    const result = await createLiveScenePerformanceSource({ aiClient }).generateScene(makeContext());
 
     expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.source).toBe("generated");
+    expect(result.proposal.segments).toEqual([{ beatId: ATMOSPHERE_BEAT_ID, text: "炉火映亮桌角。" }]);
+    expect(result.proposal.npcLine).toEqual({
+      npcId: "npc_1",
+      text: "旧案我会说明。你先核对账册。",
+      emotion: "neutral",
+      answeredBeatIds: [],
+      usedFactIds: [],
+      usedInteractionActionIds: [],
+    });
   });
 
   it("后续对话 prompt 注入上一句 NPC 台词、玩家选项和结构化主题", () => {
