@@ -27,7 +27,7 @@ describe("renderNarrativeContext", () => {
     });
     const prompt = renderNarrativeContext(compiled);
     expect(compiled.selected).toEqual([]);
-    expect(prompt).toBe("[NARRATIVE_CONTEXT v1]\n");
+    expect(prompt).toBe("[NARRATIVE_CONTEXT v1]\n\n");
   });
 
   it("无论输入顺序如何都按 slot 顺序渲染，output_contract 最后", () => {

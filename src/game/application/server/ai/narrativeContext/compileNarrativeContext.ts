@@ -74,9 +74,7 @@ function compareDuplicateWinner(left: PreparedBlock, right: PreparedBlock): numb
     compareNumberDesc(left.block.priority, right.block.priority) ||
     compareSlot(left.block.slot, right.block.slot) ||
     compareBinaryString(left.trimmedTitle, right.trimmedTitle) ||
-    // Controller ruling for Task 1: preserve the brief's executable contract where
-    // the "甲正文" fixture wins over "乙正文" for same-id duplicates.
-    compareBinaryString(right.trimmedContent, left.trimmedContent) ||
+    compareBinaryString(left.trimmedContent, right.trimmedContent) ||
     compareBinaryString(left.block.source.kind, right.block.source.kind) ||
     compareBinaryString(sourceRefsKey(left.block.source.refs), sourceRefsKey(right.block.source.refs)) ||
     compareBinaryString(left.block.conflictKey ?? "", right.block.conflictKey ?? "")

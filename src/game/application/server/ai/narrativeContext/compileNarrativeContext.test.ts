@@ -78,10 +78,9 @@ describe("compileNarrativeContext", () => {
     const b = block({ id: "same", title: "同名", content: "乙正文" });
     const forward = compileNarrativeContext({ maxEstimatedTokens: 200, blocks: [b, a] });
     const reverse = compileNarrativeContext({ maxEstimatedTokens: 200, blocks: [a, b] });
-    // Task 1 controller ruling: preserve the exact brief fixture expectation even
-    // though the prose algorithm text is inconsistent about this sub-order.
+    // 二进制升序：U+4E59(乙) < U+7532(甲)，所以"乙正文"胜出
     expect(forward).toEqual(reverse);
-    expect(forward.selected[0]?.content).toBe("甲正文");
+    expect(forward.selected[0]?.content).toBe("乙正文");
     expect(forward.dropped).toContainEqual(expect.objectContaining({ id: "same", reason: "duplicate" }));
   });
 
