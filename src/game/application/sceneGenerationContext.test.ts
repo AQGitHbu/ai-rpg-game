@@ -205,6 +205,33 @@ describe("buildSceneGenerationContext", () => {
     expect(serialized).not.toContain("worldFacts");
   });
 
+  it("projects the minimal story contract without leaking future-facing story state", () => {
+    const base = makeRecord();
+    const record = {
+      ...base,
+      storyState: {
+        ...base.storyState,
+        contract: {
+          ...base.storyState.contract,
+          centralConflict: "镖银失踪牵出门派内应",
+          endingDirections: [
+            { key: "trust", theme: "与旧友共同揭露真相" },
+            { key: "doubt", theme: "独自追查并承担代价" },
+          ] as const,
+        },
+      },
+    };
+    const context = buildSceneGenerationContext(record);
+    expect(context.story.contract).toEqual({
+      centralConflict: "镖银失踪牵出门派内应",
+      endingDirections: [
+        { key: "trust", theme: "与旧友共同揭露真相" },
+        { key: "doubt", theme: "独自追查并承担代价" },
+      ],
+    });
+    expect(JSON.stringify(context.story.contract)).not.toMatch(/futureEntity|eventLedger|hiddenFactIds/);
+  });
+
   it("is deterministic: same record produces an identical context", () => {
     const contextA = buildSceneGenerationContext(makeRecord());
     const contextB = buildSceneGenerationContext(makeRecord());

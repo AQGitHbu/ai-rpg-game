@@ -160,6 +160,13 @@ function makeContext(overrides: {
     }],
     story: {
       currentAct: 1, targetActs: 3, tension: 30, nextPacingNeed: "reveal",
+      contract: {
+        centralConflict: "商队失踪案背后的内应",
+        endingDirections: [
+          { key: "trust", theme: "共同揭露" },
+          { key: "doubt", theme: "独自追查" },
+        ],
+      },
       remainingBudget: { remainingLocations: 1, remainingNpcs: 1, remainingEvents: 1 },
       unresolvedThreadSummaries: [],
       stylePolicy: buildStylePolicy({ personalityTags: ["冷静"], narrativeStyle: "concise", contentIntensity: "normal" }),
