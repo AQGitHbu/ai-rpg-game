@@ -812,6 +812,10 @@ describe("deterministicSceneSource", () => {
       label: "（拔出兵器，向黑衣人发起攻击）",
       action: { type: "attack", enemyId: "enemy_1" },
     });
+    expect(formatSceneChoiceLabel(
+      { type: "move", locationId: asLocationId("loc_2") },
+      "（握紧刀柄，转身朝镇外走去）乱葬岗，我去看看那新翻的土。",
+    )).toBe("（握紧刀柄，转身朝镇外走去；乱葬岗，我去看看那新翻的土。）");
   });
 
   it("active battle fallback proposes two distinct executable battle actions", async () => {

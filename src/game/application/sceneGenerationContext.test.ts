@@ -449,6 +449,44 @@ describe("buildSceneGenerationContext", () => {
     expect(context.focusNpcContext?.thisTurn).toEqual({ relationshipDelta: 0, outcome: "neutral" });
   });
 
+  it("非对白行动抵达当前 talk_to_npc 目标时，焦点切到新目标而不是沿用旧 NPC", () => {
+    const secondNpc: NpcEntry = {
+      ...npc1,
+      id: asNpcId("npc_2"),
+      name: "传讯人",
+      role: "信使",
+      locationId: loc1.id,
+    };
+    const world = {
+      ...makeWorld(),
+      npcs: [npc1, secondNpc],
+      quests: [{
+        id: asQuestId("quest_handoff"),
+        name: "循迹",
+        description: "找到传讯人",
+        objectives: [{ kind: "talk_to_npc" as const, npcId: secondNpc.id }],
+        onSuccess: { kind: "advance_story" as const },
+        onFailure: { kind: "closed" as const },
+        tags: [],
+        kind: "main" as const,
+        stage: 1,
+        status: "active" as const,
+      }],
+    };
+    const record = makeRecord(true, makeJob({
+      summary: { kind: "move", locationId: loc1.id },
+    }), world);
+    const context = buildSceneGenerationContext({
+      ...record,
+      storyState: {
+        ...record.storyState,
+        reveal: { questId: asQuestId("quest_handoff"), visibleObjectiveIndex: 0 },
+      },
+    });
+
+    expect(context.focusNpcContext?.id).toBe(secondNpc.id);
+  });
+
   it("focusNpcContext 不含玩家原话、其他 NPC 交互或私密事实正文", () => {
     const world = makeQuestWorld();
     const secretB = asFactId("fact_secret_b");

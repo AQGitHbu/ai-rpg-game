@@ -111,6 +111,55 @@ describe("ruleEngine facade", () => {
     expect(second.resolution.domainEvents.map((event) => event.type)).toContain("quest_completed");
     expect(second.resolution.nextStoryState.narrative.dialogueSession).toMatchObject({ turnCount: 2, completed: true });
   });
+
+  it("交接到另一名 NPC 时重置已完成会话，不能用第一项回应完成新目标", () => {
+    const oldNpc: NpcEntry = {
+      id: asNpcId("npc_old"), name: "旧 NPC", role: "线人", description: "旧线人",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
+      memory: { npcId: asNpcId("npc_old"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const nextNpc: NpcEntry = {
+      id: asNpcId("npc_next"), name: "新 NPC", role: "掌柜", description: "新掌柜",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_next"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const handoffWorld = {
+      ...appendNpc(appendNpc(ws, oldNpc), nextNpc),
+      quests: [{
+        id: asQuestId("quest_next"), name: "新目标", description: "与新 NPC 交谈",
+        objectives: [{ kind: "talk_to_npc" as const, npcId: nextNpc.id }],
+        onSuccess: { kind: "advance_story" as const }, onFailure: { kind: "closed" as const },
+        tags: [], kind: "main" as const, stage: 1, status: "active" as const,
+      }],
+    };
+    const handoffStory = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        dialogueSession: { npcId: oldNpc.id, turnCount: 2, requiredTurns: 2, completed: true },
+      },
+    };
+    const result = resolveTurn(
+      handoffWorld,
+      handoffStory,
+      { type: "talk", npcId: nextNpc.id, dialogueAct: "support", topic: { kind: "general" } },
+      "handoff_dialogue_1",
+      0,
+      asTurnId("turn_handoff_dialogue_1"),
+      "fixed_choice",
+      deps,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.resolution.nextStoryState.narrative.dialogueSession).toMatchObject({
+        npcId: nextNpc.id,
+        turnCount: 1,
+        requiredTurns: 2,
+        completed: false,
+      });
+      expect(result.resolution.nextWorldState.quests[0]?.status).toBe("active");
+    }
+  });
 });
 
 describe("ruleEngine status passthrough", () => {

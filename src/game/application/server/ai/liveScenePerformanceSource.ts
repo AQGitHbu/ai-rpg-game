@@ -10,7 +10,7 @@ import type {
   LinearActionNpcLine,
 } from "../../sceneSource";
 import { sceneInvestigationResultFrom } from "../../sceneSource";
-import type { SceneGenerationContext, UpcomingObjectiveRef } from "../../sceneGenerationContext";
+import { isFinalDialogueHandoff, type SceneGenerationContext, type UpcomingObjectiveRef } from "../../sceneGenerationContext";
 import {
   buildSelectableSceneCandidates,
   formatSceneChoiceLabel,
@@ -187,23 +187,25 @@ export function resolveLiveNpcLine<TNpcId>(
 export function resolvePerformanceChoices(
   selectable: readonly SceneChoiceCandidate[],
   selected: unknown,
+  allowSingle = false,
 ): ScenePerformanceProposal["choices"] | null {
-  if (!Array.isArray(selected) || selected.length !== 2) return null;
-  const [x, y] = selected as readonly unknown[];
-  if (!isRecord(x) || !isRecord(y)) return null;
-  if (typeof x.candidateId !== "string" || typeof y.candidateId !== "string") return null;
-  if (String(x.candidateId) === String(y.candidateId)) return null;
-  const cx = selectable.find((c) => c.candidateId === String(x.candidateId));
-  const cy = selectable.find((c) => c.candidateId === String(y.candidateId));
-  if (cx === undefined || cy === undefined) return null;
-  if (typeof x.label !== "string" || x.label.trim() === "" || typeof y.label !== "string" || y.label.trim() === "") return null;
-  return [
-    // candidateId/action 仍由服务端候选集决定；label 允许 AI 在同一份
-    // 剧情上下文上生成自然措辞，最后只由服务端统一格式化，避免又被
-    // 角色/关键词模板覆盖成与 NPC 台词无关的文本。
-    { candidateId: cx.candidateId, label: formatSceneChoiceLabel(cx.action, x.label.trim()) },
-    { candidateId: cy.candidateId, label: formatSceneChoiceLabel(cy.action, y.label.trim()) },
-  ];
+  const expectedCount = allowSingle ? 1 : 2;
+  if (!Array.isArray(selected) || selected.length !== expectedCount) return null;
+  const parsed = selected as readonly unknown[];
+  const resolved: Array<{ readonly candidateId: string; readonly label: string }> = [];
+  for (const rawChoice of parsed) {
+    if (!isRecord(rawChoice) || typeof rawChoice.candidateId !== "string" || typeof rawChoice.label !== "string" || rawChoice.label.trim() === "") {
+      return null;
+    }
+    if (resolved.some((choice) => choice.candidateId === rawChoice.candidateId)) return null;
+    const candidate = selectable.find((entry) => entry.candidateId === rawChoice.candidateId);
+    if (candidate === undefined) return null;
+    resolved.push({
+      candidateId: candidate.candidateId,
+      label: formatSceneChoiceLabel(candidate.action, rawChoice.label.trim()),
+    });
+  }
+  return resolved;
 }
 
 /**
@@ -453,12 +455,18 @@ export function parseScenePerformanceJson(
   const currentLineSelectable = npcLine === null
     ? selectable
     : buildSelectableSceneCandidates(context, npcLine);
-  const choices = resolvePerformanceChoices(currentLineSelectable, raw.choices);
+  const choices = resolvePerformanceChoices(
+    currentLineSelectable,
+    raw.choices,
+    isFinalDialogueHandoff(context),
+  );
   if (choices === null) return { ok: false, reason: "choices_invalid" };
   if (
     npcLine !== null
-    && context.previousDialogue !== undefined
-    && usesFallbackDialogueChoiceLabels(selectable, choices)
+    && (
+      usesFallbackDialogueChoiceLabels(selectable, choices)
+      || usesFallbackDialogueChoiceLabels(currentLineSelectable, choices)
+    )
   ) {
     return { ok: false, reason: "choices_stale_template" };
   }
@@ -537,7 +545,7 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
   const generateSceneInner = async (context: SceneGenerationContext): Promise<SceneSourceResult> => {
       try {
         const selectable = buildSelectableSceneCandidates(context);
-        if (selectable.length < 2) return failScene("invalid_schema");
+        if (selectable.length < (isFinalDialogueHandoff(context) ? 1 : 2)) return failScene("invalid_schema");
         if (aiClient === undefined) return failScene("unavailable");
 
         const compilation = compileLiveScenePrompt(context, selectable);

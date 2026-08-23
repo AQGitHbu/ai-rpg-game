@@ -7,7 +7,7 @@ import type {
 } from "./sceneSource";
 import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState, LinearActionNarrativeState } from "@/game/domain/narrative";
 import { buildNpcDialoguePages, NARRATIVE_EMOTIONS } from "@/game/domain/narrative";
-import type { SceneGenerationContext } from "./sceneGenerationContext";
+import { isFinalDialogueHandoff, type SceneGenerationContext } from "./sceneGenerationContext";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice, semanticSummaryOf } from "@/game/domain/approvedChoice";
 import type { GameLogger } from "@/game/logging";
@@ -133,7 +133,8 @@ export type SceneRejectionCode =
   | "handoff_npc_unanswered"
   | "handoff_missing_objective_reference"
   | "missing_non_focus_npc_dialogue"
-  | "missing_arrival_npc_dialogue";
+  | "missing_arrival_npc_dialogue"
+  | "missing_focus_npc_dialogue";
 
 /**
  * 场景核心结构合法后，仍可供运营/评测观察的叙事质量信号。
@@ -512,6 +513,18 @@ export function approveScenePerformance(input: {
     return { ok: false, code: "missing_arrival_npc_dialogue" };
   }
 
+  // generated 场景只要有明确的焦点 NPC，就必须写入该 NPC 的真实台词。
+  // 如果允许 npcLine=null，buildNpcDialoguePages 会在写回后合成 fallback
+  // 问候，导致“抵达下一目标”看似成功却丢失剧情交接。对白回合保留原
+  // focusNpcId；非对白回合的 focusNpcId 已由 context 切到当前目标 NPC。
+  const generatedFocusNpc = proposal.source === "generated"
+    ? context.focusNpcContext
+    : undefined;
+  if (generatedFocusNpc !== undefined
+    && (npcLine === null || String(npcLine.npcId) !== String(generatedFocusNpc.id))) {
+    return { ok: false, code: "missing_focus_npc_dialogue" };
+  }
+
   // ── 目标一致性：objectiveLink 必须匹配 after ────────────────────────────
   const after = context.objectiveTransition.after;
   const objectiveLink = proposal.objectiveLink;
@@ -533,41 +546,45 @@ export function approveScenePerformance(input: {
   const selectable = buildSelectableSceneCandidates(context, npcLine === null ? undefined : npcLine);
   const candidateById = new Map(selectable.map((c) => [c.candidateId, c]));
 
-  if (!Array.isArray(proposal.choices) || proposal.choices.length !== 2) {
+  const finalDialogueHandoff = isFinalDialogueHandoff(context);
+  const expectedChoiceCount = finalDialogueHandoff ? 1 : 2;
+  if (!Array.isArray(proposal.choices) || proposal.choices.length !== expectedChoiceCount) {
     return { ok: false, code: "illegal_choice_target" };
   }
-  const [a, b] = proposal.choices as readonly [
-    { readonly candidateId: string; readonly label: string },
-    { readonly candidateId: string; readonly label: string },
-  ];
-  if (!isRecord(a) || !isRecord(b)
+  const [a, b] = proposal.choices;
+  if (!isRecord(a)
     || typeof a.candidateId !== "string"
-    || typeof b.candidateId !== "string"
     || typeof a.label !== "string"
     || a.label.trim() === ""
-    || typeof b.label !== "string"
-    || b.label.trim() === "") {
+    || (!finalDialogueHandoff && (!isRecord(b)
+      || typeof b.candidateId !== "string"
+      || typeof b.label !== "string"
+      || b.label.trim() === ""))) {
     return { ok: false, code: "illegal_choice_target" };
   }
-  if (String(a.candidateId) === String(b.candidateId)) {
+  if (!finalDialogueHandoff && String(a.candidateId) === String(b?.candidateId)) {
     return { ok: false, code: "duplicate_candidate_ids" };
   }
   const ca = candidateById.get(String(a.candidateId));
-  const cb = candidateById.get(String(b.candidateId));
-  if (ca === undefined || cb === undefined) return { ok: false, code: "illegal_choice_target" };
+  const cb = finalDialogueHandoff || b === undefined
+    ? undefined
+    : candidateById.get(String(b.candidateId));
+  if (ca === undefined || (!finalDialogueHandoff && cb === undefined)) return { ok: false, code: "illegal_choice_target" };
 
   // 生成路径不能把本回合生成前的两个 fixture talk label 原样带回。
   // 只拦 generated，避免 live 响应复用离线模板。
   if (
     proposal.source === "generated"
     && npcLine !== null
-    && context.previousDialogue !== undefined
-    && usesFallbackDialogueChoiceLabels(buildSelectableSceneCandidates(context), [a, b])
+    && (
+      usesFallbackDialogueChoiceLabels(buildSelectableSceneCandidates(context), [a, ...(b === undefined ? [] : [b])])
+      || usesFallbackDialogueChoiceLabels(selectable, [a, ...(b === undefined ? [] : [b])])
+    )
   ) {
     return { ok: false, code: "stale_choice_template" };
   }
 
-  if (semanticSummaryOf(ca.action) === semanticSummaryOf(cb.action)) {
+  if (!finalDialogueHandoff && cb !== undefined && semanticSummaryOf(ca.action) === semanticSummaryOf(cb.action)) {
     return { ok: false, code: "semantic_duplicate_choices" };
   }
 
@@ -578,8 +595,9 @@ export function approveScenePerformance(input: {
     && context.objectiveTarget !== null
     ? context.presentNpcs.find((npc) => String(npc.id) === String(context.objectiveTarget?.entityId))
     : undefined;
+  const selectedActions = [ca.action, ...(cb === undefined ? [] : [cb.action])];
   if (focusedArrivalObjectiveNpc !== undefined
-    && ![ca.action, cb.action].every((action) =>
+    && !selectedActions.every((action) =>
       action.type === "talk" && String(action.npcId) === String(focusedArrivalObjectiveNpc.id))) {
     return { ok: false, code: "focused_dialogue_requires_talk_choices" };
   }
@@ -591,7 +609,7 @@ export function approveScenePerformance(input: {
       (c) => actionTargetsObjective(c.action, objectiveTarget.entityId),
     );
     if (progressCapableExists) {
-      const chosenProgresses = [ca.action, cb.action].some(
+      const chosenProgresses = selectedActions.some(
         (action) => actionTargetsObjective(action, objectiveTarget.entityId),
       );
       if (!chosenProgresses) return { ok: false, code: "no_objective_progress_choices" };
@@ -640,18 +658,24 @@ export function approveScenePerformance(input: {
     ]),
     action: ca.action,
   });
-  const approvedB = createApprovedChoice({
-    sceneId: proposal.sceneId,
-    basedOnRevision: input.basedOnRevision,
-    label: approvedChoiceLabel(cb.action, b.label, cb.label, [
-      ...(npcLine === null ? [] : [npcLine.text]),
-      ...(context.previousDialogue === undefined ? [] : [context.previousDialogue.npcLine]),
-    ]),
-    action: cb.action,
-  });
-  if (!approvedA.ok || !approvedB.ok || approvedA.choice.choiceToken === approvedB.choice.choiceToken) {
+  const approvedB = cb === undefined || b === undefined
+    ? null
+    : createApprovedChoice({
+        sceneId: proposal.sceneId,
+        basedOnRevision: input.basedOnRevision,
+        label: approvedChoiceLabel(cb.action, b.label, cb.label, [
+          ...(npcLine === null ? [] : [npcLine.text]),
+          ...(context.previousDialogue === undefined ? [] : [context.previousDialogue.npcLine]),
+        ]),
+        action: cb.action,
+      });
+  if (!approvedA.ok || (approvedB !== null && !approvedB.ok)
+    || (approvedB !== null && approvedA.choice.choiceToken === approvedB.choice.choiceToken)) {
     return { ok: false, code: "illegal_choice_target" };
   }
+  const approvedChoices = approvedB === null
+    ? [approvedA.choice]
+    : [approvedA.choice, approvedB.choice];
 
   const narration = proposal.segments.map((s) => s.text).join("\n");
   const rebuiltNpcLine = npcLine === null ? null : rebuildNpcLine(npcLine, context.presentNpcs);
@@ -661,10 +685,10 @@ export function approveScenePerformance(input: {
     narration,
     usedFactIds: rebuiltNpcLine?.usedFactIds ?? [],
     npcLine: rebuiltNpcLine,
-    choices: [
-      { choiceToken: approvedA.choice.choiceToken, label: approvedA.choice.label },
-      { choiceToken: approvedB.choice.choiceToken, label: approvedB.choice.label },
-    ],
+    choices: approvedChoices.map((choice) => ({
+      choiceToken: choice.choiceToken,
+      label: choice.label,
+    })),
     source: proposal.source,
     event: rebuildEvent(buildEventState(context)),
     ...(context.presentNpcs.length > 0
@@ -691,7 +715,7 @@ export function approveScenePerformance(input: {
   return {
     ok: true,
     scene,
-    choiceRegistry: [approvedA.choice, approvedB.choice],
+    choiceRegistry: approvedChoices,
     // 场景表演契约不含候选事件：池原样保留，事件生命周期由独立审批处理。
     candidateEventPool: [...input.existingCandidateEventPool],
     linearNarrativeQueue,

@@ -1,5 +1,5 @@
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
-import type { SceneGenerationContext, UpcomingObjectiveRef } from "@/game/application/sceneGenerationContext";
+import { isFinalDialogueHandoff, type SceneGenerationContext, type UpcomingObjectiveRef } from "@/game/application/sceneGenerationContext";
 import type { SceneChoiceCandidate } from "@/game/application/sceneChoiceCandidates";
 import { compileNarrativeContext } from "./compileNarrativeContext";
 import type { NarrativeContextBlock, NarrativePromptCompilation } from "./contextBlock";
@@ -157,6 +157,13 @@ export function buildSceneNarrativeContextBlocks(
     ? "非焦点 NPC 同步闲聊：无非焦点 NPC，输出 npcDialogues=[]。"
     : `非焦点 NPC 同步闲聊：为以下每个非焦点在场 NPC 各生成一条直接闲聊：${nonFocus.join("；")}。`;
   const previousDialogue = previousDialogueContent(context);
+  const finalDialogueHandoff = isFinalDialogueHandoff(context);
+  const choiceShape = finalDialogueHandoff
+    ? "choices:[{\"candidateId\":\"唯一下一步候选ID\",\"label\":\"玩家最后一句直接回应，并推进当前目标\"}]（只能一个）"
+    : "choices:[{\"candidateId\":\"选项ID\",\"label\":\"玩家行动\"},{\"candidateId\":\"另一选项ID\",\"label\":\"玩家行动\"}]（必须两个）";
+  const finalDialogueContract = finalDialogueHandoff
+    ? "本轮是上一名 NPC 对话的收尾：npcLine 是该 NPC 的最后一句直接回应；choices 必须只返回一个合法候选，作为玩家最后一句对白/动作，直接承接 NPC 台词并把玩家带向当前 objectiveLink 指向的任务、地点或人物。不要返回第二个选项，不要返回“知道了”、纯确认或脱离上下文的继续调查。"
+    : "普通对话必须返回两个语义不同的合法候选；两个选项都要直接回应本轮 NPC 台词，并至少一个推进当前主线目标。";
   const blocks: NarrativeContextBlock[] = [
     sceneBlock({
       id: "scene:rules", slot: "system_rules", title: "规则与事实优先级", sourceKind: "scene_generation_context", sourceRefs: [String(job.jobId)],
@@ -231,7 +238,7 @@ export function buildSceneNarrativeContextBlocks(
     sceneBlock({
       id: "scene:output-contract", slot: "output_contract", title: "输出契约", sourceKind: "scene_schema", sourceRefs: [],
       authority: "rule", retention: "mandatory", priority: 1000,
-      content: `JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白","referencedEntityIds":["可选的服务端实体ID"]}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"npcDialogues":[{"npcId":"非焦点在场NPC ID","text":"一句到两句符合身份和当前场景的直接闲聊"}],"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},"choices":[{"candidateId":"选项ID","label":"玩家行动"},{"candidateId":"另一选项ID","label":"玩家行动"}]${linearJsonField}}\n${beats.segmentInstruction}\nNPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。${previousDialogue === undefined ? "无上一轮 NPC 对话；这是当前对话的开场。" : `${previousDialogue}\n若有上一轮 NPC 原话，必须先直接承接其中的问题、信息或拒答，再补充本轮可核验线索或下一步；不得突然切换到无关案件。`}若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。任何具体地点、人物、时间、物品或证物，都必须能在主线剧情摘要、NPC 可说事实卡、场景可见事实或上一轮已引用事实中找到依据；如果没有依据，只能使用当前 objectiveLink/目标实体给出的下一步，不得自行补出新的核验细节。非焦点 npcDialogues 中每条 text 必须是直接闲聊，不得包含任务推进、私密事实、动作旁白或通用兜底句。选项生成顺序：先完成 npcLine，再根据本轮 npcLine 的文本和 usedFactIds 生成 choices；上一轮选择只用于理解承接关系，不得直接复用为本轮可见选项。choices 的 candidateId 必须逐字使用上方候选动作中的两个不同 ID；候选动作只提供服务端合法的 candidateId 和动作语义，不提供可直接复用的自然语言选项。label 是玩家实际要说的话或动作，不要加“回应某人/追问某人”等前缀，不要机械复述 NPC 原话；动作选项必须用全角括号包裹。两个选项都要直接回应本轮 NPC 台词，并且至少一个要推进当前主线目标或核对 NPC 刚提供的事实，不能只输出“继续调查/相信/不相信”等脱离语境的态度。请依据主线剧情上下文、NPC 可说事实和本轮台词写出两句自然、具体、互不重复的玩家对白或动作。\nID 复核：segments.beatId 只能逐字复制“已解决的本轮规则结果节拍”列表中的 ID，禁止创造 item_given、dialogue_response 等新 ID；segments.referencedEntityIds 只能从 [${(context.narrativeReferenceIds ?? []).join(", ")}] 选择；npcLine.usedFactIds 只能从 [${allowedFactIds.join(", ")}] 选择，npcLine.usedInteractionActionIds 只能从 [${allowedInteractionIds.join(", ")}] 选择；没有对应引用时必须输出空数组。输出前逐项核对这些 ID。玩家可见旁白必须是连续、具体的剧情正文；不得输出“主线推进到第X幕”“已完成：”“当前目标：”等系统元话术，任务状态由 HUD 单独展示。${upcoming.length === 0 ? "\n无单线行动预告：输出中必须省略 linearActionNarratives 字段。" : ""}`,
+      content: `JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白","referencedEntityIds":["可选的服务端实体ID"]}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"npcDialogues":[{"npcId":"非焦点在场NPC ID","text":"一句到两句符合身份和当前场景的直接闲聊"}],"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},${choiceShape}}${linearJsonField}}\n${beats.segmentInstruction}\n${finalDialogueContract}\nNPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。${previousDialogue === undefined ? "无上一轮 NPC 对话；这是当前对话的开场。" : `${previousDialogue}\n若有上一轮 NPC 原话，必须先直接承接其中的问题、信息或拒答，再补充本轮可核验线索或下一步；不得突然切换到无关案件。`}若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。任何具体地点、人物、时间、物品或证物，都必须能在主线剧情摘要、NPC 可说事实或场景可见事实中找到依据；如果没有依据，只能使用当前 objectiveLink/目标实体给出的下一步，不得自行补出新的核验细节。非焦点 npcDialogues 中每条 text 必须是直接闲聊，不得包含任务推进、私密事实、动作旁白或通用兜底句。选项生成顺序：先完成 npcLine，再根据本轮 npcLine 的文本和 usedFactIds 生成 choices；上一轮选择只用于理解承接关系，不得直接复用为本轮可见选项。choices 的 candidateId 必须逐字使用上方候选动作中的合法 ID；候选动作只提供服务端合法的 candidateId 和动作语义，不提供可直接复用的自然语言选项。label 是玩家实际要说的话或动作，不要加“回应某人/追问某人”等前缀，不要机械复述 NPC 原话；动作选项必须用全角括号包裹。${finalDialogueHandoff ? "唯一 handoff 选项必须是玩家的一句具体回应，并沿着当前目标推进，不得是泛化态度。" : "请依据主线剧情上下文、NPC 可说事实和本轮台词写出两句自然、具体、互不重复的玩家对白或动作。"}\nID 复核：segments.beatId 只能逐字复制“已解决的本轮规则结果节拍”列表中的 ID，禁止创造 item_given、dialogue_response 等新 ID；segments.referencedEntityIds 只能从 [${(context.narrativeReferenceIds ?? []).join(", ")}] 选择；npcLine.usedFactIds 只能从 [${allowedFactIds.join(", ")}] 选择，npcLine.usedInteractionActionIds 只能从 [${allowedInteractionIds.join(", ")}] 选择；没有对应引用时必须输出空数组。输出前逐项核对这些 ID。玩家可见旁白必须是连续、具体的剧情正文；不得输出“主线推进到第X幕”“已完成：”“当前目标：”等系统元话术，任务状态由 HUD 单独展示。${upcoming.length === 0 ? "\n无单线行动预告：输出中必须省略 linearActionNarratives 字段。" : ""}`,
     }),
   ];
 

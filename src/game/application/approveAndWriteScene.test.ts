@@ -142,6 +142,7 @@ function makeContext(overrides: {
   legalActionCandidates?: SceneGenerationContext["legalActionCandidates"];
   objectiveTarget?: SceneGenerationContext["objectiveTarget"];
   focusNpcContext?: SceneGenerationContext["focusNpcContext"];
+  dialogueSessionCompleted?: boolean;
 } = {}): SceneGenerationContext {
   const job = overrides.job ?? makeJob();
   return {
@@ -188,6 +189,9 @@ function makeContext(overrides: {
     beatSubjects: [],
     focusNpcContext: overrides.focusNpcContext,
     objectiveTarget: overrides.objectiveTarget ?? null,
+    ...(overrides.dialogueSessionCompleted === undefined
+      ? {}
+      : { dialogueSessionCompleted: overrides.dialogueSessionCompleted }),
   };
 }
 
@@ -585,6 +589,25 @@ describe("approveScenePerformance (Task 6)", () => {
     expect(result).toEqual({ ok: false, code: "npc_dialogue_too_short" });
   });
 
+  it("generated 场景缺少焦点 NPC 台词时拒绝写回，不能由 read model 合成 fallback", () => {
+    const result = approveScenePerformance({
+      context: makeContext({
+        focusNpcContext: {
+          id: asNpcId("npc_1"), name: "老板", role: "酒肆老板娘",
+          publicProfile: "t",
+          responsePolicy: createNpcResponsePolicy({ tier: "neutral", allowedDisclosureFactIds: [], privateKnowledgeIds: [] }),
+          speakableFactCards: [], recentInteractions: [], goals: [], emotion: "neutral",
+          thisTurn: { relationshipDelta: 0, outcome: "neutral" },
+        },
+      }),
+      proposal: makeProposal(),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+
+    expect(result).toEqual({ ok: false, code: "missing_focus_npc_dialogue" });
+  });
+
   it("幕交接时仍由原 NPC 回应上一回合原话 → 通过", () => {
     const oldNpc = makeContext().presentNpcs[0]!;
     const newNpc: SceneGenerationContext["presentNpcs"][number] = {
@@ -799,6 +822,28 @@ describe("approveScenePerformance (Task 6)", () => {
       existingCandidateEventPool: [],
     });
     expect(result.ok).toBe(true);
+  });
+
+  it("对话收尾写回一个唯一 handoff choice，不生成第二个选项", () => {
+    const result = approveScenePerformance({
+      context: makeContext({
+        job: makeJob({ transition: progressionTransition }),
+        dialogueSessionCompleted: true,
+        objectiveTarget: { questId: "quest_0", objectiveIndex: 1, entityId: "item_1", entityName: "盟誓印谱" },
+      }),
+      proposal: makeProposal({
+        npcLine: { npcId: "npc_1", text: "线索已经指向街道。你现在过去，就能赶上留下的痕迹。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "progress" },
+        choices: [{ candidateId: "candidate_1", label: "我这就去核对。" }],
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.scene.choices).toHaveLength(1);
+      expect(result.choiceRegistry).toHaveLength(1);
+    }
   });
 
   it("choices 使用重复 candidateId → 整场拒绝 duplicate_candidate_ids", () => {

@@ -87,7 +87,8 @@ export type NarrativeSceneState = {
   readonly narration: string;
   readonly usedFactIds: readonly FactId[];
   readonly npcLine: NarrativeNpcLineState | null;
-  readonly choices: readonly [NarrativeChoiceState, NarrativeChoiceState];
+  /** 普通场景为两个选择；NPC 对话收尾场景为单个 handoff 选择。 */
+  readonly choices: readonly NarrativeChoiceState[];
   readonly source: "generated" | "fallback";
   /** 新存档写入；旧场景缺失时按 legacy world-action 场景读取。 */
   readonly event?: NarrativeEventState;

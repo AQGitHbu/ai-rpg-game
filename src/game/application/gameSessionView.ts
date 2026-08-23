@@ -34,11 +34,12 @@ export type NpcDialogueView = {
   readonly role: string;
   readonly speechPages: readonly string[];
   /**
-   * 契约：焦点 NPC 恒为 0 或 2 个批准选项（交接双选项）；
-   * 非焦点 NPC 恒为空数组（零回合闲聊，不含任何可提交选项）。
-   * UI 不得为非焦点 NPC 渲染可提交按钮。
+   * 契约：正式对话为 2 个批准选项；对话收尾为 0 个 choices + 1 个
+   * handoffChoice；非焦点闲聊为空数组且无 handoffChoice。
    */
   readonly choices: readonly PlayerChoiceView[];
+  /** 上一名 NPC 的最后一句对白对应的唯一合法下一步。 */
+  readonly handoffChoice?: PlayerChoiceView;
   readonly freeInputEnabled: boolean;
   /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
   readonly giveChoices: readonly { readonly itemName: string; readonly choice: PlayerChoiceView }[];
@@ -459,6 +460,14 @@ export function projectGameSessionView(
   const sceneLineNpcId = scene?.npcLine === null || scene?.npcLine === undefined
     ? null
     : String(scene.npcLine.npcId);
+  // 规则层的 dialogueSession 在第二次正式回应后置 completed=true；此时
+  // scene 允许只有一个 choices，它是旧 NPC 最后一段对白后的真实 handoff，
+  // 不能再按普通地点行动或闲聊处理。
+  const singleChoiceDialogueHandoff = scene !== null
+    && scene !== undefined
+    && scene.choices.length === 1
+    && sceneLineNpcId !== null
+    && storyState.narrative.dialogueSession?.completed === true;
   const generatedObjectiveNpcFocus = currentObjectiveNpcId !== null
     && sceneLineNpcId === currentObjectiveNpcId
     && presentNpcs.some((npc) => String(npc.id) === currentObjectiveNpcId)
@@ -507,7 +516,9 @@ export function projectGameSessionView(
         || approved.action.type !== "talk"
         || String(approved.action.npcId) !== generatedObjectiveNpcFocus;
     });
-  const persistedFocusNpcId = scene?.event?.kind === "dialogue"
+  const persistedFocusNpcId = singleChoiceDialogueHandoff
+    ? null
+    : scene?.event?.kind === "dialogue"
     ? String(scene.event.focusNpcId)
     : generatedObjectiveNpcFocus ?? pairedDialogueNpcId;
   const persistedFocusNpc = persistedFocusNpcId === null
@@ -571,12 +582,16 @@ export function projectGameSessionView(
       presentation: presentationForAction(approved.action),
     };
   };
+  const projectedHandoffChoice = singleChoiceDialogueHandoff && scene?.choices[0] !== undefined
+    ? projectSceneChoice(scene.choices[0])
+    : null;
   const projectedSceneChoices = staleDialogueFocus
     ? []
     : scene?.choices
       .map(projectSceneChoice)
       .filter((entry): entry is PlayerChoiceView => entry !== null) ?? [];
   const isDialogueScene = focusNpcId !== null;
+  const isSingleChoiceHandoff = projectedHandoffChoice !== null && sceneLineNpcId !== null;
   const dialogueChoices: NpcDialogueView["choices"] = handoffFocusNpc !== undefined
     ? handoffDialogueChoices(handoffFocusNpc, revision)
     : isDialogueScene && projectedSceneChoices.length === 2
@@ -632,6 +647,9 @@ export function projectGameSessionView(
       // 非焦点 NPC 是零回合闲聊：不提供任何可提交选项；正式对话只能经
       // 当前权威 talk 目标入口（交接双选项 / 行动栏目标交谈）开启。
       choices: isFocus ? dialogueChoices : [],
+      ...(isSingleChoiceHandoff && String(npc.id) === sceneLineNpcId
+        ? { handoffChoice: projectedHandoffChoice! }
+        : {}),
       freeInputEnabled: isFocus,
       giveChoices: isFocus
         ? worldState.inventory.map((itemId) => {
@@ -737,7 +755,7 @@ export function projectGameSessionView(
         eventKind: scene.event?.kind,
         narration: decorateNarrativeText(scene.narration, scene.source),
       }),
-      choices: isDialogueScene ? [] : projectedSceneChoices,
+      choices: isDialogueScene || isSingleChoiceHandoff ? [] : projectedSceneChoices,
       npcLine: projectedNpcLine,
       npcDialogues,
     },

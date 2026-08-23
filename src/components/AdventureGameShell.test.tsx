@@ -516,8 +516,11 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
 
     await userEvent.click(responseButton);
-    expect(screen.queryByRole("dialog", { name: "与陈半仙对话" })).not.toBeInTheDocument();
-    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onSubmit).toHaveBeenCalledWith(
+      { kind: "fixed_choice", choiceToken: "c_handoff_move" },
+      "npc-dialogue",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("正在等待陈半仙回应");
   });
 
   it("keeps the old NPC's final line and exposes one dialogue handoff to the next target", async () => {

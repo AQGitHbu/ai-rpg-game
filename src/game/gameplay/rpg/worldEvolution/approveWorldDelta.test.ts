@@ -9,9 +9,9 @@ import { asLocationId, asNpcId, asEnemyId, asGenerationId, asQuestId } from "@/g
 import { bindNpcToTownSlot, createTownRuntime } from "@/game/gameplay/rpg/town";
 import { TRUST_ENDING_MIN_AFFINITY, DOUBT_ENDING_MAX_AFFINITY } from "@/game/application/deterministicEvolutionSource";
 
-function makeWorld(): WorldState {
+function makeWorld(seed = "seed-a"): WorldState {
   const base = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "seed-a", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
+    generation: { generationId: asGenerationId("g1"), seed, templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
     player: { name: "林惊羽", identity: "外门弟子", stats: { hp: 100, attack: 10, defense: 5 } },
     startingLocation: {
       id: asLocationId("loc_0"), name: "听雨客栈", description: "山脚小镇的客栈。", kind: "main",
@@ -94,6 +94,23 @@ describe("approveWorldDelta", () => {
     ]);
     expect(result.approved.nextEvolution.status).toBe("needs_next_act");
     expect(result.approved.nextEvolution.nextNpcOrdinal).toBe(2);
+  });
+
+  it("目标链先抵达新地点时，将同幕调查事实挂载到新地点", () => {
+    const result = approveWorldDelta({
+      proposal: nextActProposal(),
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld("seed-f"),
+      ss: makeStory({ currentAct: 2 }),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.newQuests[0]?.objectives[0]).toEqual({
+      kind: "visit_location",
+      locationId: "loc_dyn_1",
+    });
+    expect(result.approved.newFacts[0]?.locationId).toBe("loc_dyn_1");
   });
 
   it("rejects when the need is none (no materialization)", () => {

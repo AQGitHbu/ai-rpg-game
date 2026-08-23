@@ -503,6 +503,7 @@ export function approveWorldDelta(input: {
   // 目标链结构变体仅 next_act 消费（下方校验与铸造共用同一次计算，避免两处口径漂移）；
   // pacing / ending_pair 不铸造主线目标链，shape 保持 null。
   let shape: ActObjectiveShape | null = null;
+  let actObjectives: readonly QuestObjective[] | null = null;
 
   // 引用解析：NPC/物品/敌人 的落点地点必须真实存在或本次同池铸造。
   let npcLocationId: LocationId | null = null;
@@ -606,8 +607,8 @@ export function approveWorldDelta(input: {
     shape = actObjectiveShape(ws.generation.seed, need.act);
     const stageCollision = ws.quests.some((q) => q.kind === "main" && q.stage === need.act && q.status !== "closed");
     if (stageCollision) return reject("main_quest_conflict", `act_${need.act}_has_main_quest`);
-    const objectives = deriveActObjectives(p, ids, shape);
-    if (objectives === null) return reject("unreachable_objective", "no_anchor_entity");
+    actObjectives = deriveActObjectives(p, ids, shape);
+    if (actObjectives === null) return reject("unreachable_objective", "no_anchor_entity");
   }
 
   // 空间一致性门槛：幕演化同时铸造 world 新地点、目标 NPC 与主线任务时，该 NPC
@@ -655,6 +656,16 @@ export function approveWorldDelta(input: {
     displayName: string;
   }[] = [];
   const logCategories: string[] = [];
+
+  // 如果新幕的目标链先要求抵达同批新地点，调查事实也必须挂在该地点；否则
+  // 事实仍被放在旧地点，玩家抵达后无法合法调查，场景候选会退化为不足两项。
+  // 目标链仍以“现场调查优先”的形状保持旧地点事实语义，只有首目标确实是
+  // visit_location 时才切换挂载位置。
+  const newFactLocationId = p.newFact && ids.factId
+    && actObjectives?.[0]?.kind === "visit_location"
+    && ids.locationId !== null
+    ? ids.locationId
+    : ws.currentLocationId;
 
   if (p.newLocation?.placement === "world" && ids.locationId) {
     newLocations.push({
@@ -735,7 +746,7 @@ export function approveWorldDelta(input: {
       ...(approachResult.approaches.length > 0 ? { investigationApproaches: approachResult.approaches } : {}),
       // 第一阶段必须是玩家当前所在的酒楼后巷/现场调查；否则新地点一
       // 生成就会把“现场线索”错误地放到尚未抵达的地点。
-      locationId: ws.currentLocationId,
+      locationId: newFactLocationId,
     });
     logCategories.push(...approachResult.logCategories);
   }
@@ -746,7 +757,7 @@ export function approveWorldDelta(input: {
       name: p.nextMainQuest.name,
       description: p.nextMainQuest.description,
       // need.kind === "next_act" 时上方校验块必然已为 shape 赋值。
-      objectives: deriveActObjectives(p, ids, shape!)!,
+      objectives: actObjectives!,
       onSuccess: { kind: "advance_story" },
       onFailure: { kind: "closed" },
       tags: ["dynamic"],

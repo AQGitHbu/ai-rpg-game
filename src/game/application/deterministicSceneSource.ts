@@ -1,12 +1,20 @@
 import type { SceneSource, SceneSourceResult, ScenePerformanceSegment, ScenePerformanceProposal } from "./sceneSource";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
+import { isFinalDialogueHandoff } from "./sceneGenerationContext";
 import type { NarrativeEmotion, NarrativeEventState } from "@/game/domain/narrative";
-import type { Action, DialogueTopic } from "@/game/domain/action";
+import type { Action } from "@/game/domain/action";
 import { semanticSummaryOf } from "@/game/domain/approvedChoice";
-import { asEnemyId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import type { RelationshipTier } from "@/game/domain/relationship";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { composeDirectNpcGreeting, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
+import {
+  buildSelectableSceneCandidates as buildSharedSelectableSceneCandidates,
+  type CurrentNpcLineContext,
+  type SceneChoiceCandidate,
+} from "./sceneChoiceCandidates";
+
+export { formatSceneChoiceLabel, usesFallbackDialogueChoiceLabels } from "./sceneChoiceCandidates";
+export type { CurrentNpcLineContext, SceneChoiceCandidate } from "./sceneChoiceCandidates";
 
 // ---------------------------------------------------------------------------
 // 确定性 fallback 场景表演生成器（spec §7.6 安全降级模板）。
@@ -32,45 +40,6 @@ export function answeredUtteranceBeatIds(context: SceneGenerationContext): reado
   return beat !== undefined ? [beat.beatId] : [];
 }
 
-/** 场景表演的合法选项候选（服务端权威）：审批、确定性源、live 提示词共用。 */
-export type SceneChoiceCandidate = {
-  readonly candidateId: string;
-  readonly label: string;
-  readonly action: Action;
-};
-
-/**
- * 当前 NPC 台词的结构化投影。选项生成只消费事实引用，不再扫描台词文本
- * 猜测“这是问路/告示/住店”等主题；旧的 string 入参仅为兼容历史测试/调用者。
- */
-export type CurrentNpcLineContext = {
-  readonly text: string;
-  readonly usedFactIds?: readonly string[];
-};
-
-/**
- * 判断 live 是否把本回合之前生成的 deterministic talk label 原样带回来了。
- * 这是结构化候选文案的精确复用保护，不读取/匹配 NPC 台词关键词；只有在
- * 同一 NPC 的两个 talk 选项都完整复用旧候选文案时才命中。
- */
-export function usesFallbackDialogueChoiceLabels(
-  selectable: readonly SceneChoiceCandidate[],
-  choices: readonly { readonly candidateId: string; readonly label: string }[],
-): boolean {
-  if (selectable.length < 2 || choices.length !== 2) return false;
-  const selectableById = new Map(selectable.map((candidate) => [candidate.candidateId, candidate]));
-  return choices.every((choice) => {
-    const candidate = selectableById.get(String(choice.candidateId));
-    return candidate !== undefined
-      && candidate.action.type === "talk"
-      && compactChoiceLabel(choice.label) === compactChoiceLabel(candidate.label);
-  });
-}
-
-function compactChoiceLabel(label: string): string {
-  return label.replace(/[\s“”"「」『』。！？!?，,；;：:、（）()]/gu, "");
-}
-
 /** 判断某行动是否推进/接近/搜集当前目标（objectiveTarget.entityId）。 */
 export function actionTargetsObjective(action: Action, entityId: string): boolean {
   switch (action.type) {
@@ -83,107 +52,11 @@ export function actionTargetsObjective(action: Action, entityId: string): boolea
   }
 }
 
-/**
- * 从上下文投影服务端权威的可选候选（candidateId 与 approval 使用同一集合）：
- * - dialogue 事件 → 焦点 NPC 的固定 support/challenge 两选项；
- * - 其余事件 → legalActionCandidates 去重映射（candidate_1..N）。
- */
 export function buildSelectableSceneCandidates(
   context: SceneGenerationContext,
   currentNpcLine?: string | CurrentNpcLineContext,
 ): readonly SceneChoiceCandidate[] {
-  const event = buildEventState(context);
-  // 结局对已经由规则铸造后，玩家必须以两个明确、互斥的对白方向作出
-  // 最后决定。不能把“观察”或“挑战敌人”伪装成结局选择，更不能让任意
-  // 后续行动自动触发结局。
-  if (context.objectiveTransition.mode === "ready_for_ending") {
-    const npc = focusNpc(context);
-    if (npc === undefined) return [];
-    return [
-      {
-        candidateId: "candidate_1",
-        label: "我愿意和你一起把证据摊开，让该承担的人面对真相。",
-        action: { type: "talk", npcId: npc.id, dialogueAct: "support", topic: dialogueTopicFor(context, false) },
-      },
-      {
-        candidateId: "candidate_2",
-        label: "我会核对每一份证据，在确认之前不会把结论交给任何人。",
-        action: { type: "talk", npcId: npc.id, dialogueAct: "challenge", topic: dialogueTopicFor(context, true) },
-      },
-    ];
-  }
-  // ready scene 已经把当前主线目标 NPC 编排到当前地点。这个场景的真实
-  // event 可以仍然是 travel/observe（用于表达“抵达/新线索出现”），但玩家
-  // 进入目标 NPC 后需要直接拥有对该 NPC 的两项回应，而不是把场景里的
-  // `与某人交谈` / `查看四周` 当成对话选项，再额外提交一次 talk。
-  // 仅在 focusNpcContext 与主线目标一致时启用，避免玩家主动和旁 NPC 闲谈
-  // 后把主线目标错误地投影成当前对话对象。
-  const objectiveNpc = context.objectiveTarget !== null
-    ? context.presentNpcs.find((entry) => String(entry.id) === context.objectiveTarget?.entityId)
-    : undefined;
-  const focusedObjectiveNpc = objectiveNpc !== undefined
-    && context.focusNpcContext !== undefined
-    && String(context.focusNpcContext.id) === String(objectiveNpc.id)
-    ? objectiveNpc
-    : undefined;
-  const dialogueNpcId = event.kind === "dialogue" ? event.focusNpcId : focusedObjectiveNpc?.id;
-  if (dialogueNpcId !== undefined) {
-    const npc = context.presentNpcs.find((entry) => String(entry.id) === String(dialogueNpcId));
-    if (npc === undefined) return [];
-    const dialogueLabels = dialogueChoiceLabels(context, npc, currentNpcLine);
-    const dialogueCandidate: SceneChoiceCandidate = {
-      candidateId: "candidate_1",
-      label: dialogueLabels.support,
-      action: { type: "talk", npcId: npc.id, dialogueAct: "support", topic: dialogueTopicFor(context, false) },
-    };
-    if (event.kind === "dialogue" || focusedObjectiveNpc !== undefined) {
-      // 已经进入当前目标 NPC 的人物对话应保留完整的支持/质疑两项回应，
-      // 即使抵达场景的底层 event 仍然是 travel；不能把离开/探索动作
-      // 投影进 NPC 对话框，导致一个选择不推进对话主线。
-      return [
-        dialogueCandidate,
-        {
-          candidateId: "candidate_2",
-          label: dialogueLabels.challenge,
-          action: { type: "talk", npcId: npc.id, dialogueAct: "challenge", topic: dialogueTopicFor(context, true) },
-        },
-      ];
-    }
-    const nonDialogueCandidate = context.legalActionCandidates
-      .map((candidate) => ({ candidate, action: actionFromLegalCandidate(candidate) }))
-      .filter((entry): entry is { candidate: SceneGenerationContext["legalActionCandidates"][number]; action: Action } =>
-        entry.action !== null && entry.action.type !== "talk")
-      .map(({ candidate, action }): SceneChoiceCandidate => ({
-        candidateId: "candidate_2",
-        label: nonDialogueChoiceLabel(action, candidate.label),
-        action,
-      }))[0];
-    return [
-      dialogueCandidate,
-      nonDialogueCandidate ?? {
-        candidateId: "candidate_2",
-        label: nonDialogueChoiceLabel({ type: "explore" }),
-        action: { type: "explore" },
-      },
-    ];
-  }
-  const candidates: SceneChoiceCandidate[] = [];
-  const seen = new Set<string>();
-  for (const candidate of context.legalActionCandidates) {
-    const action = actionFromLegalCandidate(candidate);
-    if (action === null) continue;
-    const key = semanticSummaryOf(action);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    candidates.push({
-      candidateId: `candidate_${candidates.length + 1}`,
-      label: action.type === "attack"
-        ? nonDialogueChoiceLabel(action, candidate.label)
-        : formatSceneChoiceLabel(action, candidate.label),
-      action,
-    });
-  }
-  return candidates;
+  return buildSharedSelectableSceneCandidates(context, currentNpcLine);
 }
 
 export function createDeterministicSceneSource(): SceneSource {
@@ -385,131 +258,6 @@ function buildNpcLineState(context: SceneGenerationContext): ScenePerformancePro
   };
 }
 
-type DialogueChoiceLabels = {
-  readonly support: string;
-  readonly challenge: string;
-};
-
-/**
- * 选项 fallback 只从结构化剧情状态生成：当前任务、NPC 可说事实、上一轮
- * 的结构化回应状态。它不读取 NPC 台词文本，也不按角色名/关键词分类。
- * 正常 live 路径会在同一份上下文上生成自然措辞；candidateId/action 仍由
- * 服务端保留，因而 AI 不能借措辞越权改变剧情动作。
- */
-function dialogueChoiceLabels(
-  context: SceneGenerationContext,
-  npc: SceneGenerationContext["presentNpcs"][number],
-  currentNpcLine?: string | CurrentNpcLineContext,
-): DialogueChoiceLabels {
-  const lineContext = typeof currentNpcLine === "string"
-    ? { text: currentNpcLine, usedFactIds: [] as readonly string[] }
-    : currentNpcLine;
-  const focusFacts = context.focusNpcContext?.speakableFactCards ?? [];
-  const sceneFacts = [...context.sceneVisibleFacts, ...context.publicWorldFacts];
-  const factsById = new Map<string, FactCardLike>();
-  for (const fact of [...focusFacts, ...sceneFacts]) factsById.set(String(fact.factId), fact);
-  const referencedFacts = lineContext?.usedFactIds
-    ?.map((factId) => factsById.get(String(factId)))
-    .filter((fact): fact is FactCardLike => fact !== undefined) ?? [];
-  const groundingFacts = referencedFacts.length > 0 ? referencedFacts : focusFacts;
-  const hasGrounding = groundingFacts.length > 0;
-  const hasQuest = context.story.activeQuest !== undefined;
-  const previousAct = context.previousDialogue?.selectedChoice?.dialogueAct;
-
-  // 历史回应优先于当前事实池：同一 NPC 的第二轮必须先承接玩家上一轮
-  // 的立场，再引出下一处核验点；事实卡只决定可谈范围，不覆盖对话状态。
-  const hasCurrentLineGrounding = lineContext !== undefined && referencedFacts.length > 0;
-  if (previousAct === "challenge" && !hasCurrentLineGrounding) {
-    return {
-      support: "你先逐点回应刚才的疑问，再把能核对的下一步说清楚。",
-      challenge: "刚才的疑点还没有解开；请指出一件能让我们当场核对的证物。",
-    };
-  }
-  if (previousAct === "support" && !hasCurrentLineGrounding) {
-    return {
-      support: "既然你愿意继续说，就把下一步和能够核对的凭据交代清楚。",
-      challenge: "我可以继续听，但每个判断都要有能落到实处的证物支撑。",
-    };
-  }
-  if (hasGrounding) {
-    const variants: readonly DialogueChoiceLabels[] = [
-      {
-        support: "请把你刚才提到的这条线索的来历、时间和地点说清楚，我好按眼前的主线核对。",
-        challenge: "这条线索还不能直接下结论；哪一件原始证物能把它和眼前的主线联系起来？",
-      },
-      {
-        support: "把这条线索的来历、时间和地点交代清楚，我会按眼前的主线逐一核对。",
-        challenge: "这还只是一个线索；请指出能把它和眼前主线对上的原件或证物。",
-      },
-    ];
-    return variants[dialogueChoiceVariantIndex(context, npc, variants.length)] ?? variants[0]!;
-  }
-  if (hasQuest) {
-    return {
-      support: "先把眼前主线下一步要核对的人、地点或物证说清楚，我就按它查下去。",
-      challenge: "眼前的主线还不能只凭传闻下结论；哪一件原件能证明你的说法？",
-    };
-  }
-  // 只剩通用结构化兜底，不尝试从角色名或 NPC 台词猜主题。
-  const variants: readonly DialogueChoiceLabels[] = [
-    {
-      support: "请把这件事的来历和下一步说清楚，我按能核对的线索查下去。",
-      challenge: "这还不足以下结论；请指出一件能当场核对的原件或证物。",
-    },
-    {
-      support: "先交代清楚你掌握的事实，以及我接下来该去核对什么。",
-      challenge: "我不会只凭一句话判断；什么证据能证明你的说法？",
-    },
-  ];
-  const variant = variants[dialogueChoiceVariantIndex(context, npc, variants.length)] ?? variants[0]!;
-  return variant;
-}
-
-type FactCardLike = { readonly factId: string; readonly text: string };
-
-function dialogueTopicFor(context: SceneGenerationContext, secondary: boolean): DialogueTopic {
-  if (!secondary) return { kind: "general" };
-  const threadId = context.story.unresolvedThreadSummaries[0];
-  if (threadId !== undefined && threadId.trim() !== "") return { kind: "thread", threadId };
-  const questId = context.objectiveTransition.after?.questId;
-  if (questId !== undefined) return { kind: "quest", questId: asQuestId(String(questId)) };
-  return { kind: "general" };
-}
-
-function dialogueChoiceVariantIndex(
-  context: SceneGenerationContext,
-  npc: SceneGenerationContext["presentNpcs"][number],
-  variantCount: number,
-): number {
-  if (variantCount <= 1) return 0;
-  const recentInteractions = context.focusNpcContext?.recentInteractions ?? [];
-  // 旧的最小测试/旧存档上下文没有 generationSeed，也没有可用历史时，保持
-  // 第一组基础文案；真实上下文由 buildSceneGenerationContext 注入本局 seed，
-  // 因此不会牺牲新开局之间的多样性。
-  if (context.generationSeed === undefined && recentInteractions.length === 0) return 0;
-  const seed = [
-    context.generationSeed ?? "",
-    String(npc.id),
-    npc.name,
-    npc.role,
-    String(context.currentLocation.id),
-    context.objectiveTarget?.entityId ?? "",
-    context.job.actionSummary.kind,
-    String(context.story.currentAct),
-    context.story.nextPacingNeed,
-  ].join("|");
-  let hash = 2_166_136_261;
-  for (const character of seed) {
-    hash ^= character.codePointAt(0) ?? 0;
-    hash = Math.imul(hash, 16_777_619) >>> 0;
-  }
-  // 回合号 + 已有交互条数是“同一 NPC 连续交谈”的序列游标；它让相邻
-  // 正式回合不会因为 actionId 的散列碰撞又回到同一组文案；当前地点、
-  // 目标、行动类型、幕次和节奏则为不同剧情分支提供不同起点。
-  const sequenceOffset = context.job.turnNumber + recentInteractions.length;
-  return (hash % variantCount + sequenceOffset) % variantCount;
-}
-
 /** 同一档位的回退台词也必须承接当前话语，且只使用 NPC 第一人称。 */
 function buildContextualTierLine(context: SceneGenerationContext, tier: RelationshipTier): string {
   if ((context.job.utterance?.trim() ?? "") === "") {
@@ -610,8 +358,11 @@ export function buildSceneChoices(
   currentNpcLine?: string | CurrentNpcLineContext,
 ): ScenePerformanceProposal["choices"] {
   const selectable = buildSelectableSceneCandidates(context, currentNpcLine);
-  if (selectable.length < 2) {
-    throw new Error("scene fallback requires at least two legal action candidates");
+  const finalDialogueHandoff = isFinalDialogueHandoff(context);
+  if (selectable.length < (finalDialogueHandoff ? 1 : 2)) {
+    throw new Error(finalDialogueHandoff
+      ? "scene fallback requires a legal handoff candidate"
+      : "scene fallback requires at least two legal action candidates");
   }
   const targetEntityId = context.objectiveTarget?.entityId;
   const ordered = [...selectable].sort((a, b) => {
@@ -626,10 +377,13 @@ export function buildSceneChoices(
     if (seen.has(key)) continue;
     seen.add(key);
     distinct.push(candidate);
-    if (distinct.length === 2) break;
+    if (distinct.length === (finalDialogueHandoff ? 1 : 2)) break;
   }
-  if (distinct.length !== 2) {
+  if (distinct.length !== (finalDialogueHandoff ? 1 : 2)) {
     throw new Error("scene fallback requires two distinct legal action candidates");
+  }
+  if (finalDialogueHandoff) {
+    return [{ candidateId: distinct[0]!.candidateId, label: distinct[0]!.label }];
   }
   return [
     { candidateId: distinct[0]!.candidateId, label: distinct[0]!.label },
@@ -673,66 +427,4 @@ export function buildEventState(context: SceneGenerationContext): NarrativeEvent
     default:
       return { kind: "observe", locationId: currentLocation.id };
   }
-}
-
-export function actionFromLegalCandidate(
-  candidate: SceneGenerationContext["legalActionCandidates"][number],
-): Action | null {
-  switch (candidate.kind) {
-    case "explore": return { type: "explore" };
-    case "move": return candidate.targetId === undefined
-      ? null
-      : { type: "move", locationId: asLocationId(candidate.targetId) };
-    case "talk": return candidate.targetId === undefined
-      ? null
-      : { type: "talk", npcId: asNpcId(candidate.targetId), dialogueAct: "ask" };
-    case "attack": return candidate.targetId === undefined
-      ? null
-      : { type: "attack", enemyId: asEnemyId(candidate.targetId) };
-    case "battle_action": return candidate.targetId === "attack"
-      || candidate.targetId === "guard"
-      || candidate.targetId === "flee"
-      ? { type: "battle_action", action: candidate.targetId }
-      : null;
-  }
-}
-
-function nonDialogueChoiceLabel(action: Action, sourceLabel?: string): string {
-  const label = (() => {
-  switch (action.type) {
-    case "explore": return "默默不作声，先观察四周";
-    case "move": return "不再追问，离开这里";
-    case "take_item": return "暂不回应，先拾取眼前物品";
-    case "investigate": return "暂不回应，先调查现场";
-    case "attack": {
-      const target = sourceLabel?.replace(/^挑战/u, "").trim() || "眼前的敌人";
-      return `（拔出兵器，向${target}发起攻击）`;
-    }
-    case "battle_action": return "暂不回应，先做好应战准备";
-    default: return "暂不回应，先做自己的事";
-  }
-  })();
-  return formatSceneChoiceLabel(action, label);
-}
-
-/**
- * 场景选项的可见文案契约：对白就是主角要说的话，行动用全角括号包裹。
- * 审批层也会调用它，避免 live source 用角色前缀或未包裹的行动文案绕过
- * 这个契约。
- */
-export function formatSceneChoiceLabel(action: Action, label: string): string {
-  const trimmed = label.trim();
-  if (action.type === "talk") return stripDialoguePrefix(trimmed);
-  if (/^（.*）$/u.test(trimmed)) return trimmed;
-  const withoutAsciiWrapper = trimmed.match(/^\((.*)\)$/u)?.[1]?.trim() ?? trimmed;
-  return `（${withoutAsciiWrapper}）`;
-}
-
-function stripDialoguePrefix(label: string): string {
-  const withoutPrefix = label.replace(/^(?:回应|追问|质疑|询问)[^：:]{0,24}[：:]\s*/u, "").trim();
-  if ((withoutPrefix.startsWith("“") && withoutPrefix.endsWith("”"))
-    || (withoutPrefix.startsWith("\"") && withoutPrefix.endsWith("\""))) {
-    return withoutPrefix.slice(1, -1).trim();
-  }
-  return withoutPrefix;
 }

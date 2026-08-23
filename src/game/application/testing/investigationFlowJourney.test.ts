@@ -24,8 +24,8 @@ import {
 // Task 1 单线调查流程的端到端旅程回归（Chain A / Chain B）：
 // 开局切片 → 首次对话触发第 2 幕具象化（deterministic evolution source，
 // 真实武侠 beats：顾砚/北巷旧道/车轮印）→ 手渡场景由 fake live source 预生成
-// investigate/move 叙事并随审批持久化 → 调查/移动即时完成、零 live 调用并消费
-// 队列叙事 → 抵达新地点与顾砚展开对话。Chain B 复跑同一旅程，验证 AI 未提供
+// investigate/move 叙事并随审批持久化 → 调查消费队列；抵达目标 NPC 时若队列
+// 不完整则补做一次 live 生成完整场景 → 抵达新地点与顾砚展开对话。Chain B 复跑同一旅程，验证 AI 未提供
 // 叙事时调查/移动仍即时完成，source=fallback 且记录 linear_narrative_fallback。
 // ---------------------------------------------------------------------------
 
@@ -50,7 +50,14 @@ function createFakeLiveSceneSource(withLinearNarratives: boolean): FakeLiveSourc
     async generateScene(context: SceneGenerationContext) {
       calls += 1;
       const baseResult = await base.generateScene(context);
-      if (!baseResult.ok) throw new Error("expected success");
+      if (!baseResult.ok) throw new Error(JSON.stringify({
+        job: context.job.actionSummary,
+        eventKind: context.job.resolvedEvent.eventKind,
+        objective: context.objectiveTarget,
+        focus: context.focusNpcContext?.id,
+        present: context.presentNpcs.map((npc) => String(npc.id)),
+        candidates: buildSelectableSceneCandidates(context),
+      }));
       if (!withLinearNarratives) {
         return { ...baseResult, proposal: { ...baseResult.proposal, source: "generated" } };
       }
@@ -95,8 +102,6 @@ function createFakeLiveSceneSource(withLinearNarratives: boolean): FakeLiveSourc
       // 真实 live 源会在同一份剧情上下文上润色对白选项；直接复用确定性
       // 模板 label 的 generated 提案会被审批器以 stale_choice_template 拒绝。
       const selectable = buildSelectableSceneCandidates(context);
-      const first = proposal.choices[0];
-      const second = proposal.choices[1];
       const relabel = (choice: ScenePerformanceProposal["choices"][number]): ScenePerformanceProposal["choices"][number] => {
         const candidate = selectable.find((entry) => entry.candidateId === choice.candidateId);
         if (candidate === undefined || candidate.action.type !== "talk") return choice;
@@ -113,12 +118,13 @@ function createFakeLiveSceneSource(withLinearNarratives: boolean): FakeLiveSourc
           ),
         };
       };
+      const relabeledChoices = proposal.choices.map(relabel);
       return {
         ok: true,
         proposal: {
           ...proposal,
           ...(npcDialogues === undefined ? {} : { npcDialogues }),
-          choices: [relabel(first), relabel(second)],
+          choices: relabeledChoices,
           ...(narratives.length > 0 ? { linearActionNarratives: narratives } : {}),
           source: "generated",
         },
@@ -194,7 +200,7 @@ async function runJourney(withLinearNarratives: boolean): Promise<JourneyHandles
   const openingNpcName = record().worldState.npcs[0]?.name ?? "";
   expect(openingNpcName).not.toBe("");
 
-  await fixed("交谈"); // 回合 1：第 1 幕完成，演化挂起
+  await fixed("回应"); // 正式对白第 1 轮
   if (!withLinearNarratives) {
     const result = await generatePendingScene({
       repository: store.repo,
@@ -208,15 +214,15 @@ async function runJourney(withLinearNarratives: boolean): Promise<JourneyHandles
   }
   await liveScene(); // 第 2 幕具象化 + 手渡场景
 
-  // 手渡场景的权威 ask 入口 → 焦点对话（第二轮），队列随后续场景写回重新持久化。
-  await fixed(openingNpcName);
+  // 手渡场景的第二个正式对白选择完成会话，收尾场景只返回一个 handoff。
+  await fixed("质疑");
   await liveScene();
 
   return { store, fake, logger, evolution, openingNpcName, fixed, scene, liveScene, record, sceneOf };
 }
 
 describe("AI 预生成单线调查流程旅程（Task 1 端到端回归）", () => {
-  it("Chain A：手渡场景预生成两段叙事；调查/移动零 live 调用并消费队列叙事", async () => {
+  it("Chain A：手渡场景预生成两段叙事；调查消费队列，抵达目标 NPC 时生成完整场景", async () => {
     const journey = await runJourney(true);
 
     // 第 2 幕手渡后：当前权威目标进入 discover_fact，队列持两段 AI 叙事。
@@ -258,7 +264,9 @@ describe("AI 预生成单线调查流程旅程（Task 1 端到端回归）", () 
     const callsBeforeMove = journey.fake.callCount();
     await journey.fixed(MOVE_LABEL);
     await journey.liveScene();
-    expect(journey.fake.callCount()).toBe(callsBeforeMove);
+    // 目标 NPC 在抵达后必须拿到完整对白场景；若队列只有不完整的 arrival
+    // 叙事，边界守卫会跳过它并补做一次 live 生成。
+    expect(journey.fake.callCount()).toBe(callsBeforeMove + 1);
     expect(journey.record().worldState.currentLocationId).toBe(northLaneId);
     const moveScene = journey.sceneOf();
     expect(moveScene.source).toBe("generated");

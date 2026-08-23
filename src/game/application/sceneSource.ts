@@ -93,10 +93,8 @@ export type ScenePerformanceProposal = {
   /** 由同一次 live scene API 生成的非焦点 NPC 台词，不创建回合。 */
   readonly npcDialogues?: readonly ScenePerformanceNpcDialogue[];
   readonly objectiveLink: ScenePerformanceObjectiveLink | null;
-  readonly choices: readonly [
-    { readonly candidateId: string; readonly label: string },
-    { readonly candidateId: string; readonly label: string },
-  ];
+  /** 普通场景为两个选项；对话完成交接场景严格为一个唯一下一步。 */
+  readonly choices: readonly { readonly candidateId: string; readonly label: string }[];
   /** Task 1：仅 live 提案携带的 AI 预生成单线行动叙事；随审批持久化后由 fast path 消费。 */
   readonly linearActionNarratives?: readonly LinearActionNarrative[];
   /** Task 5：本回合已结算调查结果的叙事上下文；仅 investigate + 已结算时携带。 */

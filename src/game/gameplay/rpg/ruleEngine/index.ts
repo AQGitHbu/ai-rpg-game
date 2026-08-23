@@ -54,13 +54,17 @@ function advanceDialogueSession(
     || (isExplicitDialogueResponse && String(objectiveNpcId) === String(action.npcId));
   if (!canStart) return storyState;
 
-  const requiredTurns = existing?.requiredTurns ?? DIALOGUE_REQUIRED_TURNS;
+  // 交接到另一名 NPC 时必须开启新的两轮会话；不能继承上一名 NPC 的
+  // completed=true，否则新 NPC 的第一项回应会被误判为终句并立即完成目标。
+  const requiredTurns = sameSession
+    ? existing?.requiredTurns ?? DIALOGUE_REQUIRED_TURNS
+    : DIALOGUE_REQUIRED_TURNS;
   const turnCount = sameSession ? existing.turnCount + 1 : 1;
   const dialogueSession = {
     npcId: action.npcId,
     turnCount,
     requiredTurns,
-    completed: existing?.completed === true || turnCount >= requiredTurns,
+    completed: (sameSession && existing?.completed === true) || turnCount >= requiredTurns,
   };
   return {
     ...storyState,

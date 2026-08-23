@@ -1,6 +1,6 @@
 import type { Action, DialogueTopic } from "@/game/domain/action";
 import { semanticSummaryOf } from "@/game/domain/approvedChoice";
-import { asEnemyId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
+import { asEnemyId, asFactId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import type { NarrativeEventState } from "@/game/domain/narrative";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 
@@ -11,7 +11,7 @@ export type SceneChoiceCandidate = {
   readonly action: Action;
 };
 
-type CurrentNpcLineContext = {
+export type CurrentNpcLineContext = {
   readonly text: string;
   readonly usedFactIds?: readonly string[];
 };
@@ -75,7 +75,7 @@ export function buildSelectableSceneCandidates(
       label: dialogueLabels.support,
       action: { type: "talk", npcId: npc.id, dialogueAct: "support", topic: dialogueTopicFor(context, false) },
     };
-    if (event.kind === "dialogue") {
+    if (event.kind === "dialogue" || focusedObjectiveNpc !== undefined) {
       return [
         dialogueCandidate,
         {
@@ -104,6 +104,21 @@ export function buildSelectableSceneCandidates(
     ];
   }
   const candidates: SceneChoiceCandidate[] = [];
+  const investigationFactId = context.objectiveTarget?.entityId;
+  if (investigationFactId !== undefined && context.currentInvestigationApproaches !== undefined) {
+    for (const approach of context.currentInvestigationApproaches) {
+      const action: Action = {
+        type: "investigate",
+        factId: asFactId(investigationFactId),
+        approachId: approach.approachId,
+      };
+      candidates.push({
+        candidateId: `candidate_${candidates.length + 1}`,
+        label: formatSceneChoiceLabel(action, approach.label),
+        action,
+      });
+    }
+  }
   const seen = new Set<string>();
   for (const candidate of context.legalActionCandidates) {
     const action = actionFromLegalCandidate(candidate);
@@ -176,8 +191,8 @@ function dialogueChoiceLabels(
         challenge: "这条线索还不能直接下结论；哪一件原始证物能把它和眼前的主线联系起来？",
       },
       {
-        support: "把这条线索的来历、时间和地点交代清楚，我会按眼前的主线逐一核对。",
-        challenge: "这还只是一个线索；请指出能把它和眼前主线对上的原件或证物。",
+        support: "请把这条线索落到可核对的事实，再沿眼前的主线查下去。",
+        challenge: "这条线索还不能下结论；请指出一件能当场核对的原始证物。",
       },
     ];
     return variants[dialogueChoiceVariantIndex(context, npc, variants.length)] ?? variants[0]!;
@@ -301,6 +316,13 @@ export function formatSceneChoiceLabel(action: Action, label: string): string {
   const trimmed = label.trim();
   if (action.type === "talk") return stripDialoguePrefix(trimmed);
   if (/^（.*）$/u.test(trimmed)) return trimmed;
+  // AI 偶尔会把动作写成“（动作）随后说出的对白”。不要再给整句套一层
+  // 括号，避免玩家看到“（（动作）对白）”这种伪舞台说明；把两部分合并成
+  // 一个可执行的玩家回应/动作选项。
+  const leadingWrapper = trimmed.match(/^（([^（）]*)）(.+)$/u);
+  if (leadingWrapper !== null) {
+    return `（${leadingWrapper[1]}；${leadingWrapper[2]!.trim()}）`;
+  }
   const withoutAsciiWrapper = trimmed.match(/^\((.*)\)$/u)?.[1]?.trim() ?? trimmed;
   return `（${withoutAsciiWrapper}）`;
 }

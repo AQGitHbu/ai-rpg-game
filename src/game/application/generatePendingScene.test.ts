@@ -781,6 +781,49 @@ describe("generatePendingScene", () => {
     ]);
   });
 
+  it("investigate queue is bypassed when the same result releases a talk NPC", async () => {
+    const base = linearArrivalRecord();
+    const record: GameRecord = {
+      ...base,
+      worldState: {
+        ...base.worldState,
+        currentLocationId: asLocationId("loc_2"),
+        visitedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")],
+        worldFacts: base.worldState.worldFacts.map((fact) =>
+          String(fact.factId) === "fact_2" ? { ...fact, discovered: true } : fact),
+      },
+      storyState: {
+        ...base.storyState,
+        narrative: {
+          ...base.storyState.narrative,
+          generation: { status: "pending", job: investigateJob() },
+          linearNarrativeQueue: [{
+            actionKind: "investigate",
+            factId: asFactId("fact_2"),
+            narration: "车轮印在后巷泥水中断续向北延伸。",
+            source: "generated",
+          }],
+        },
+      },
+    };
+    const seen: SceneGenerationContext[] = [];
+    const fallback = createDeterministicSceneSource();
+    const source: SceneSource = {
+      async generateScene(context) {
+        seen.push(context);
+        return fallback.generateScene(context);
+      },
+    };
+    const repository = makeMockRepo(record);
+    const result = await generatePendingScene({ repository, sceneSource: source, now: () => "2026-01-02" });
+    expect(result).toBe("saved");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.focusNpcContext?.id).toBe(asNpcId("npc_1"));
+    const writeBack = vi.mocked(repository.applySceneWriteBack).mock.calls[0]![0];
+    expect(writeBack.nextStoryState.narrative.linearNarrativeQueue).toEqual([]);
+    expect(writeBack.nextStoryState.narrative.currentScene?.npcLine?.npcId).toBe(asNpcId("npc_1"));
+  });
+
   it("calls the injected source when investigate queue has no matching entry", async () => {
     const base = investigateResolvedRecord();
     const record: GameRecord = {
@@ -905,7 +948,7 @@ describe("generatePendingScene", () => {
     ]);
   });
 
-  it("move queue hit writes the arrival NPC line as generated dialogue without another scene call", async () => {
+  it("does not consume a focused move queue entry as a partial NPC scene", async () => {
     const base = linearArrivalRecord();
     const record: GameRecord = {
       ...base,
@@ -939,27 +982,27 @@ describe("generatePendingScene", () => {
         },
       },
     };
-    const spy = makeSpySceneSource();
-    const deps = makeDeps(record, spy.source);
+    const seen: SceneGenerationContext[] = [];
+    const fallback = createDeterministicSceneSource();
+    const source: SceneSource = {
+      async generateScene(context) {
+        seen.push(context);
+        return fallback.generateScene(context);
+      },
+    };
+    const deps = makeDeps(record, source);
     const result = await generatePendingScene(deps);
     expect(result).toBe("saved");
-    expect(spy.contexts()).toHaveLength(0);
+    expect(seen).toHaveLength(1);
     const writeBack = vi.mocked(deps.repository.applySceneWriteBack).mock.calls[0]![0];
     const scene = writeBack.nextStoryState.narrative.currentScene!;
-    expect(scene.source).toBe("generated");
-    expect(scene.npcLine).toMatchObject({
-      npcId: asNpcId("npc_1"),
-      text: "你就是来查旧镖局的人吧。镖局出事那晚，我亲眼见过一件关键的事。",
-    });
-    expect(scene.npcDialogues).toContainEqual(expect.objectContaining({
-      npcId: asNpcId("npc_1"),
-      speechSource: "generated",
-      speechPages: ["你就是来查旧镖局的人吧。镖局出事那晚，我亲眼见过一件关键的事。"],
-    }));
+    expect(scene.source).toBe("fallback");
+    expect(scene.npcLine?.npcId).toBe(asNpcId("npc_1"));
+    expect(scene.npcLine?.text).not.toBe("");
     expect(writeBack.nextStoryState.narrative.linearNarrativeQueue).toEqual([]);
   });
 
-  it("does not consume a legacy move entry without arrival dialogue", async () => {
+  it("does not consume a legacy move entry without a complete focused NPC scene", async () => {
     const base = linearArrivalRecord();
     const record: GameRecord = {
       ...base,
@@ -992,9 +1035,10 @@ describe("generatePendingScene", () => {
     const deps = { ...makeDeps(record, spy.source), logger: logger as never };
     const result = await generatePendingScene(deps);
     expect(result).toBe("failed");
-    expect(spy.contexts()).toHaveLength(1);
+    // 队列被识别为不完整后，generated source 仍获得一次内容修复机会。
+    expect(spy.contexts()).toHaveLength(2);
     expect(logger.warn).toHaveBeenCalledWith("narrative_queue_incomplete", {
-      reason: "missing_arrival_npc_dialogue",
+      reason: "missing_focus_npc_scene",
     });
     expect(deps.repository.applySceneWriteBack).not.toHaveBeenCalled();
   });

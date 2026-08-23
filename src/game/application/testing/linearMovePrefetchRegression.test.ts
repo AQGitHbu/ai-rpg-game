@@ -193,9 +193,9 @@ describe("Step 1：移动队列回归 journey（最小夹具重放队列命中�
     await scene(); // 序幕
     const openingNpcName = (await record()).worldState.npcs[0]?.name ?? "";
     expect(openingNpcName).not.toBe("");
-    await fixed("交谈"); // 回合 1：第 1 幕完成，演化挂起
+    await fixed("回应"); // 正式对白第 1 轮
     await liveScene(); // 第 2 幕具象化 + 手渡场景
-    await fixed(openingNpcName); // 手渡 ask 入口 → 焦点二次对话
+    await fixed("质疑"); // 正式对白第 2 轮 → 收尾 handoff
     await liveScene(); // 队列随场景写回重新持久化
 
     // 手渡后：当前目标为调查，队列持 [investigate, move] 两段 AI 叙事。
@@ -238,8 +238,9 @@ describe("Step 1：移动队列回归 journey（最小夹具重放队列命中�
     const recordAfterMove = await record();
     expect(recordAfterMove.revision).toBe(revisionBeforeMove + 2); // + 场景写回
 
-    // 移动 scene 直接用预生成叙事；场景/世界源 provider 零新增调用。
-    expect(fake.calls()).toBe(sceneCallsBeforeMove);
+    // 队列只有不完整的 arrival 叙事时，抵达目标 NPC 的边界守卫会补做一次
+    // live 生成，确保落地场景包含完整对白和正式选项。
+    expect(fake.calls()).toBe(sceneCallsBeforeMove + 1);
     expect(worldSource.calls()).toBe(worldCallsBeforeMove);
     const moveScene = recordAfterMove.storyState.narrative.currentScene;
     expect(moveScene?.source).toBe("generated");

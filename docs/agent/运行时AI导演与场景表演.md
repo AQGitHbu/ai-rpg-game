@@ -44,10 +44,10 @@
 - SceneSource 只返回表演 proposal，不能返回可直接落库的 ready state。
 - **一次场景表演调用**：每个 ready 场景只调用一次 live 场景表演源；不再有 director/writer/npc 三次独立请求管线。
 - **世界演化是按需的可选调用**：仅当 `EvolutionNeed.kind !== "none"`（幕推进/节奏/终局对）才触发；正常对话回合不调用演化源。
-- **候选不足处理**：若真实可执行候选少于两个，生产编排将 `scene_candidate_shortage` 视为 AI/审批失败，持久化 failed，不把无内容的 explore 当作合法候选。离线 journey 可显式注入 deterministic evolution fixture 补齐候选，但不代表生产 AI 失败时的行为。
-- 对话场景绑定一个在场焦点 NPC，并提出两个语义不同的 TalkAction；其他场景从服务端给出的合法候选 ID 中选择两个不同 Action。
+- **候选不足处理**：普通 ready 场景若真实可执行候选少于两个，生产编排将 `scene_candidate_shortage` 视为 AI/审批失败，持久化 failed，不把无内容的 explore 当作合法候选；只有 `dialogueSession.completed=true` 且目标已推进的收尾 handoff scene 允许一个候选。离线 journey 可显式注入 deterministic evolution fixture 补齐候选，但不代表生产 AI 失败时的行为。
+- 普通对话场景绑定一个在场焦点 NPC，并提出两个语义不同的 TalkAction；收尾场景由同一次生成返回旧 NPC 的最后一句和一个绑定下一任务/地点/人物的 handoff Action。其他场景从服务端给出的合法候选 ID 中选择两个不同 Action。
 - `ObjectiveTransition.mode === advanced_act` 时叙事事件仍记录为非对话的任务交接；上一轮带 `player_utterance` 时焦点保持在原 NPC，由其先回应本轮话语，新目标只作为权威行动入口出现。进入地点或点击 talk 只打开 ready 对话，不再为首次交谈额外提交一次 `ask` API。玩家主动点击旁 NPC 时仍保持普通 `ask` 语义。目标身份由服务端锁定的 `objectiveLink` 和实体 ID 决定，旁白不要求逐字复述目标标签。
-- 已由一键 `move` / `investigate` / `take_item` 唯一确定结果的单动作仍可即时完成规则结算；命中已审批的 `linearNarrativeQueue` 时复用 generated 叙事，未命中时在 AI mode 调用注入的 live scene source，失败就持久化 failed，不在编排层创建 deterministic scene。离线 fixture 才能注入确定性即时 source。幕推进/结局对挂起（`evolution.status === needs_next_act / needs_ending_pair`）时不被即时路径短路，保留完整世界演化编排。
+- 已由一键 `move` / `investigate` / `take_item` 唯一确定结果的单动作仍可即时完成规则结算；命中已审批的 `linearNarrativeQueue` 时复用 generated 叙事，未命中或队列只有不完整的旁白/抵达首句而当前目标已释放焦点 NPC 时，在 AI mode 调用 live scene source 重新生成完整 scene，失败就持久化 failed，不在编排层创建 deterministic scene。离线 fixture 才能注入确定性即时 source。幕推进/结局对挂起（`evolution.status === needs_next_act / needs_ending_pair`）时不被即时路径短路，保留完整世界演化编排。
 - 两个已批准选择若都指向同一在场 NPC 的 TalkAction，即使触发事件是 travel/battle，也投影为该 NPC 的焦点对白；底栏只保留一个“与 NPC 交谈”主线入口，回答分支只在对话框显示。
 - live source 只能选择服务端候选 ID，不能发明任意 `actionKey`、实体 ID、事实 ID 或规则结果。
 - 审批器逐字段重建 scene/event/choice；生成对象原引用不能直接持久化。
@@ -56,14 +56,14 @@
 - scene CAS 与序幕确认并发时，repository 单调保留已确认的 `prologueShown=true`；确认接口对 stale revision 读取新快照后有限重试。
 - 离线 fixture 可使用 deterministic source，并经过同一 proposal → approval → write-back 链；生产成功的 live proposal 才能标记 `source=generated`。API 失败或内容修复/审批重试仍拒绝时不写确定性剧情，而是保存稳定 failure 和原 job。场景核心审批与 `linearActionNarratives` 审批相互独立：核心失败时，已通过权威实体链校验的线性队列仍随同一次 CAS 写回。
 - active battle、ending 或候选不足时不伪造普通场景选择。
-- 移动/拾取/调查是规则结果已完全确定的单动作（`immediateAction`）；pending 场景同步完成审批/写回。**队列命中优先于候选不足/world 演化**：`move/investigate`（且 `evolution.status` 非 `needs_next_act/needs_ending_pair`）在 `derivedNeed` 计算、初始 `evolveWorld` 与 `scene_candidate_shortage` 的 `evolveWorld` 之前，直接从当前权威 `linearNarrativeQueue` 精确匹配（actionKind+entityId）消费对话回合 AI 预生成的叙事（source=generated，零 scene/world AI 调用、消费即除）；`take_item` 不参与队列匹配（仍保留规则 CAS 和结构化 `item_obtained` 节拍）。队列命中仍走同一场景审批/CAS：`buildQueuedGeneratedSceneProposal` 用当前合法候选构造两个 choice；若命中但合法候选不足两个，在无任何 AI 调用下返回稳定 `AI_RESPONSE_INVALID`（phase=scene），且 server logger 记 `world_state_inconsistent`。只有未命中才沿 `immediateAction`/`deriveEvolutionNeed` 逻辑，AI mode 调用 live scene source，失败持久化 failed 并等待手动重试。`NarrativeGenerationPath`（`pre_generated_queue`/`live_scene`）只是 server logger 结构化字段，不持久化到 StoryState/GameSessionView。显式 offline fixture 才提供 deterministic 即时 source；幕推进/结局对挂起时不被 fast path 短路。
+- 移动/拾取/调查是规则结果已完全确定的单动作（`immediateAction`）；pending 场景同步完成审批/写回。**队列命中优先于候选不足/world 演化**：`move/investigate`（且 `evolution.status` 非 `needs_next_act/needs_ending_pair`）在 `derivedNeed` 计算、初始 `evolveWorld` 与 `scene_candidate_shortage` 的 `evolveWorld` 之前，直接从当前权威 `linearNarrativeQueue` 精确匹配（actionKind+entityId）消费对话回合 AI 预生成的叙事（source=generated，零 scene/world AI 调用、消费即除）；但若当前规则目标已释放焦点 NPC，队列旁白不视为完整 scene，必须走 live scene source，消费后的旧条目与新生成的未来条目按 action/entity 合并。`take_item` 不参与队列匹配（仍保留规则 CAS 和结构化 `item_obtained` 节拍）。普通队列命中用两个 choice；收尾对话 scene 只用一个 handoff choice；候选不足时在无任何 AI 调用下返回稳定 `AI_RESPONSE_INVALID`（phase=scene），且 server logger 记 `world_state_inconsistent`。只有未命中或队列不完整才沿 `immediateAction`/`deriveEvolutionNeed` 逻辑，AI mode 调用 live scene source，失败持久化 failed 并等待手动重试。`NarrativeGenerationPath`（`pre_generated_queue`/`live_scene`）只是 server logger 结构化字段，不持久化到 StoryState/GameSessionView。显式 offline fixture 才提供 deterministic 即时 source；幕推进/结局对挂起时不被 fast path 短路。
 - active battle 采用规则 fast path：不创建 pending 场景、不调用 scene source；界面只提供攻击/防守，撤退不再作为可执行选项。战斗开始时保存玩家属性、已击败敌人和事件账本快照；失败只恢复快照并可重新挑战，不推进剧情。
 - 战斗胜利的 `battle_resolved` 场景可以在战斗开始时预热 live proposal；预热失败不使用 deterministic prewarm，最后一击后的正常 pending coordinator 继续调用 live source，仍失败就持久化 failed 并等待手动重试。战斗失败沿用战斗开始前快照恢复世界、属性和事件账本，回到可重新挑战状态，不推进剧情。
 - 武侠世界的世界演化审批与 live 提示词共同执行题材边界，拒绝骑士、灵魂、祭坛、圣光等跨题材实体或结局意象，避免 AI 合法 JSON 造成世界观漂移。
 
 ## 线性调查叙事队列（2026-08-19）
 
-- **生成点**：对话回合（唯一实时 AI 生成点）的场景表演提案可携带 `linearActionNarratives`（`investigate`→factId / `move`→locationId + narration）。若移动地点的下一目标是同地点 NPC，`move` 还必须携带 `arrivalNpcLine`（目标 NPC ID、两句直接对白、可说事实引用）；这段对白随移动预生成，不创建回合、不生成选项。live prompt 在 `SceneGenerationContext.upcomingLinearObjectives` 非空时要求生成；约束：只演绎服务端下发权威事实（factText）、必须解释为何前往下一地点、不得捏造新事实/实体/时间、无系统元话术。分段旁白可选 `referencedEntityIds` 表达 grounding，旁白正文保持自然语言，不承担实体身份判定。
+- **生成点**：对话回合（唯一实时 AI 生成点）的场景表演提案可携带 `linearActionNarratives`（`investigate`→factId / `move`→locationId + narration）。若移动地点的下一目标是同地点 NPC，`move` 还必须携带 `arrivalNpcLine`（目标 NPC ID、两句直接对白、可说事实引用）；这段对白随移动预生成，不创建回合、不生成选项。对话会话完成且目标推进时，主 scene 另返回旧 NPC 的最后一句和唯一 handoff choice。live prompt 在 `SceneGenerationContext.upcomingLinearObjectives` 非空时要求生成；约束：只演绎服务端下发权威事实（factText）、必须解释为何前往下一地点、不得捏造新事实/实体/时间、无系统元话术。分段旁白可选 `referencedEntityIds` 表达 grounding，旁白正文保持自然语言，不承担实体身份判定。
 - **投影语义**：`upcomingLinearObjectives` 是从当前权威目标开始的连续单线前缀（discover_fact / visit_location；遇 talk_to_npc / defeat_enemy 等分支点立即停止）；visit_location 若紧邻 talk_to_npc 且 NPC 已由世界演化同步生成，则附带该 NPC 的最小权限对白上下文。当前目标即分支点或无单线链时为空。
 - **审批与持久化**：live parser 先按 `SceneGenerationContext.narrativeReferenceIds` allowlist 去重并过滤未知 `referencedEntityIds`；`approveScenePerformance` 对 `objectiveLink`、节拍、NPC、选项等结构做硬校验，对幕交接缺少目标引用只产出 `SceneQualityWarningCode`（`missing_objective_reference` / `invalid_objective_reference` / `missing_objective_surface`），不再用旁白 `includes(entityName)` 拒绝整场。带目标 NPC 的移动缺少 `arrivalNpcLine` 视为整场内容契约失败，自动内容修复一次，仍失败则保存 failed 等待手动重试；不生成 deterministic/fallback 场景。通过后随同一次场景 CAS 写回覆盖式持久化到 `storyState.narrative.linearNarrativeQueue`（`LinearActionNarrativeState`，source 恒为 "generated"）。场景核心失败时仍保留原 proposal 中已通过独立审批的队列；旧存档缺失视为空，零迁移。
 - **fast path 消费**：调查/移动走 `immediateAction` 时从 `linearNarrativeQueue` 精确匹配（actionKind+entityId）消费，消费即除、零 live 调用；调查场景重建时保留尚未消费的后续队列条目，避免丢失抵达对白。未命中或命中不完整旧队列时在 AI mode 进入 live source，失败为 failed + stable failureKind。显式 offline fixture 才使用 deterministic source；幕推进/结局对挂起时保留完整世界演化编排。
@@ -113,7 +113,7 @@
 
 ## 验收重点
 
-- generated 场景各有两个 proposal、两个不同 token，scene JSON 无 `actionKey`；AI 失败只产生 stable failed 状态。
+- 普通 generated 场景有两个不同 token；对话收尾 generated scene 有一个绑定下一步的 handoff token；scene JSON 无 `actionKey`；AI 失败只产生 stable failed 状态。
 - 分段旁白逐段命中强制节拍 ID；`objectiveLink` 与 HUD 当前目标一致；焦点 NPC 台词应答当前 `player_utterance`。
 - NPC 台词只保留直接对白正文，不能以“邵叔如实答道：……”形式把舞台说明混入气泡；旧存档投影也必须满足同一断言。
 - registry 的 `basedOnRevision` 等于 scene 写回后的 revision。

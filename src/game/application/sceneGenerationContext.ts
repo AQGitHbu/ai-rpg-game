@@ -252,9 +252,25 @@ export type SceneGenerationContext = {
   readonly upcomingLinearObjectives?: readonly UpcomingObjectiveRef[];
   /** 若本轮是对当前场景 NPC 的后续回应，提供上一句原话及玩家选项。 */
   readonly previousDialogue?: PreviousDialogueContext;
+  /** 规则层在完成所需正式回应后置位；用于区分普通 talk 与收尾 handoff。 */
+  readonly dialogueSessionCompleted?: boolean;
   /** AI 提案未通过内容契约时的单次修复提示。 */
   readonly repairAttempt?: SceneGenerationRepair;
 };
+
+/**
+ * 对话目标完成后的收尾场景：上一名 NPC 已经说完本轮最后一句，下一步由
+ * 同一次场景生成返回一个唯一、可执行的 handoff 选项，不能再伪造第二个对白选项。
+ */
+export function isFinalDialogueHandoff(
+  context: Pick<SceneGenerationContext, "job" | "objectiveTransition" | "dialogueSessionCompleted">,
+): boolean {
+  return context.job.actionSummary.kind === "talk"
+    && context.dialogueSessionCompleted === true
+    && context.objectiveTransition.completed.length > 0
+    && context.objectiveTransition.after !== null
+    && context.objectiveTransition.mode !== "unchanged";
+}
 
 function buildPreviousDialogueContext(
   narrative: GameRecord["storyState"]["narrative"],
@@ -533,10 +549,18 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
         const objective = quest?.objectives[transition.after?.objectiveIndex ?? -1];
         return objective?.kind === "talk_to_npc" ? objective.npcId : undefined;
       })();
-  const focusNpcId = job.focusNpcId
-    ?? (objectiveNpcId !== undefined && presentNpcs.some((npc) => String(npc.id) === String(objectiveNpcId))
+  // 对话回合必须继续由玩家刚回应的 NPC 承接；非对白回合只有在本回合
+  // 的权威目标已经是当前地点的 talk_to_npc 时才有焦点 NPC。普通调查、移动
+  // 或探索即使地点里有已释放 NPC，也不能把该 NPC误当成焦点，否则队列旁白
+  // 会被错误地当成正式对白场景，最终以 npcLine=null 写回并触发 fallback。
+  const objectiveNpcIsPresent = objectiveNpcId !== undefined
+    && presentNpcs.some((npc) => String(npc.id) === String(objectiveNpcId));
+  const focusNpcId = job.actionSummary.kind === "talk"
+    ? job.focusNpcId
+      ?? (objectiveNpcIsPresent ? objectiveNpcId : presentNpcs[0]?.id)
+    : objectiveNpcIsPresent
       ? objectiveNpcId
-      : presentNpcs[0]?.id);
+      : undefined;
   const focusNpcContext = focusNpcId !== undefined
     ? buildFocusNpcContext(record, focusNpcId)
     : undefined;
@@ -729,5 +753,6 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     ...(resolvedInvestigation === undefined ? {} : { resolvedInvestigation }),
     upcomingLinearObjectives,
     ...(previousDialogue === undefined ? {} : { previousDialogue }),
+    ...(ss.narrative.dialogueSession?.completed === true ? { dialogueSessionCompleted: true } : {}),
   };
 }

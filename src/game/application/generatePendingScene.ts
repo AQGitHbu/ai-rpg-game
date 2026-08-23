@@ -2,7 +2,7 @@ import type { GameRepository, GameRecord } from "./server/persistence/gameReposi
 import type { AiTextAuditRecorder, AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { LinearActionNarrative, SceneSource, ScenePerformanceProposal } from "./sceneSource";
 import { sceneInvestigationResultFrom } from "./sceneSource";
-import { buildSceneGenerationContext } from "./sceneGenerationContext";
+import { buildSceneGenerationContext, isFinalDialogueHandoff } from "./sceneGenerationContext";
 import {
   approveLinearActionNarratives,
   approveScenePerformance,
@@ -76,8 +76,8 @@ function buildQueuedGeneratedSceneProposal(
   const beatIds = context.mandatoryBeats.length > 0
     ? context.mandatoryBeats.map((beat) => beat.beatId)
     : [ATMOSPHERE_BEAT_ID];
-  if (buildSelectableSceneCandidates(context, arrivalNpcLine?.text).length < 2) {
-    throw new Error("queued generated scene requires two legal candidates");
+  if (buildSelectableSceneCandidates(context, arrivalNpcLine?.text).length < (isFinalDialogueHandoff(context) ? 1 : 2)) {
+    throw new Error("queued generated scene has insufficient legal candidates");
   }
   const after = context.objectiveTransition.after;
   const objectiveLink: ScenePerformanceProposal["objectiveLink"] = after === null
@@ -190,11 +190,14 @@ export async function generatePendingScene(
   const matchingQueueEntry = isQueueEligible
     ? findMatchingQueueEntry(record.storyState.narrative.linearNarrativeQueue, summary)
     : undefined;
-  const queuedEntry = matchingQueueEntry !== undefined && !queueEntryHasArrivalNpcDialogue(record, matchingQueueEntry)
+  const queueEntryIssue = matchingQueueEntry === undefined
     ? undefined
-    : matchingQueueEntry;
-  if (matchingQueueEntry !== undefined && queuedEntry === undefined) {
-    deps.logger?.warn("narrative_queue_incomplete", { reason: "missing_arrival_npc_dialogue" });
+    : queueEntryIssueForCurrentScene(record, matchingQueueEntry);
+  const queuedEntry = matchingQueueEntry !== undefined && queueEntryIssue === undefined
+    ? matchingQueueEntry
+    : undefined;
+  if (queueEntryIssue !== undefined) {
+    deps.logger?.warn("narrative_queue_incomplete", { reason: queueEntryIssue });
   }
   const hasPreGeneratedNarrative = queuedEntry !== undefined;
   const generationPath: NarrativeGenerationPath = hasPreGeneratedNarrative
@@ -249,7 +252,7 @@ export async function generatePendingScene(
   // 队列命中不许进入世界演化补救：候选不足属于坏存档，必须无 AI 地稳定失败，
   // 且这种存档不一致异常不应落入下方通用 provider 异常分支被误报成 AI_CALL_FAILED。
   if (hasPreGeneratedNarrative) {
-    if (buildSelectableSceneCandidates(context).length < 2) {
+    if (buildSelectableSceneCandidates(context).length < (isFinalDialogueHandoff(context) ? 1 : 2)) {
       deps.logger?.warn("world_state_inconsistent", {});
       return fail(sceneFailure("AI_RESPONSE_INVALID"));
     }
@@ -258,7 +261,7 @@ export async function generatePendingScene(
     // ready scene 必须有两个语义不同的合法选择。若当前世界只有一个候选，
     // 不让生成任务永久 pending，也不在客户端伪造按钮；生产链将候选不足视为
     // AI/审批失败，显式 offline fixture 才能注入演化 source 补足测试旅程。
-    if (buildSelectableSceneCandidates(context).length < 2) {
+    if (buildSelectableSceneCandidates(context).length < (isFinalDialogueHandoff(context) ? 1 : 2)) {
       const recovery = await evolveWorld({
         need: { kind: "pacing", pacingNeed: "complicate" },
         worldState: scenarioWs,
@@ -338,7 +341,10 @@ export async function generatePendingScene(
       if (!sceneResult.ok) return fail({ ...sceneResult.failure, phase: "scene", failedAt: deps.now() });
       proposal = sceneResult.proposal;
     }
-  } catch {
+  } catch (error) {
+    deps.logger?.warn("scene_generation_source_exception", {
+      message: error instanceof Error ? error.message.slice(0, 240) : "unknown_error",
+    });
     // 队列命中分支只做纯本地合成：候选已在 try 外校验，唯一可能抛出的存档问题
     // 属于状态不一致而非 provider 失败，绝不能误报成 AI_CALL_FAILED。
     if (hasPreGeneratedNarrative) {
@@ -392,7 +398,7 @@ export async function generatePendingScene(
     if (proposal.source === "generated") {
       deps.logger?.warn("scene_generation_rejected", { code: approvedGenerated.code });
     }
-    if (!immediateAction
+    if ((!immediateAction || queueEntryIssue !== undefined)
       && proposal.source === "generated"
       && context.repairAttempt === undefined
       && proposal.contentRepairAttempt === undefined) {
@@ -465,9 +471,14 @@ export async function generatePendingScene(
         // 避免一次确定性兜底把后续 move/investigate 预生成叙事全部清空。
         // 非 immediate 路径仍以本次场景审批结果覆盖队列。
         linearNarrativeQueue: immediateAction
-          ? (matchingQueueEntry === undefined
-            ? (scenarioSs.narrative.linearNarrativeQueue ?? [])
-            : removeMatchingQueueEntry(scenarioSs.narrative.linearNarrativeQueue, summary))
+          ? (queueEntryIssue !== undefined && approved.scene.source === "generated"
+            ? mergeLinearNarrativeQueue(
+                removeMatchingQueueEntry(scenarioSs.narrative.linearNarrativeQueue, summary),
+                approved.linearNarrativeQueue,
+              )
+            : matchingQueueEntry === undefined
+              ? (scenarioSs.narrative.linearNarrativeQueue ?? [])
+              : removeMatchingQueueEntry(scenarioSs.narrative.linearNarrativeQueue, summary))
           : approved.linearNarrativeQueue,
       },
       candidateEventPool: approved.candidateEventPool,
@@ -565,17 +576,32 @@ function findMatchingQueueEntry(
   return undefined;
 }
 
-function queueEntryHasArrivalNpcDialogue(
+type QueueEntryIssue = "missing_arrival_npc_dialogue" | "missing_focus_npc_scene";
+
+/**
+ * 线性队列只预生成旁白；它不是完整场景快照。
+ *
+ * 调查行动可能在同一规则回合中释放后续 talk_to_npc 目标。此时队列条目
+ * 仍然只有调查正文，没有新 NPC 的正式台词和两个对白选项，不能走纯本地
+ * fast path；必须让 live scene source 依据新焦点 NPC 重新生成整幕。
+ */
+function queueEntryIssueForCurrentScene(
   record: GameRecord,
   entry: LinearActionNarrativeState,
-): boolean {
-  if (entry.actionKind !== "move") return true;
+): QueueEntryIssue | undefined {
   const context = buildSceneGenerationContext(record);
+  // arrivalNpcLine 只解决“抵达时的首句”，不包含正式对话所需的两条
+  // 基于本轮台词的选项。只要当前目标已经让 NPC 成为焦点，队列就不是完整
+  // 场景，必须交给 live source 生成整幕。
+  if (context.focusNpcContext !== undefined) return "missing_focus_npc_scene";
+  if (entry.actionKind === "investigate") return undefined;
   const targetNpc = context.objectiveTarget === null
     ? undefined
     : context.presentNpcs.find((npc) => String(npc.id) === String(context.objectiveTarget?.entityId));
   return targetNpc === undefined
-    || (entry.arrivalNpcLine !== undefined && String(entry.arrivalNpcLine.npcId) === String(targetNpc.id));
+    || (entry.arrivalNpcLine !== undefined && String(entry.arrivalNpcLine.npcId) === String(targetNpc.id))
+    ? undefined
+    : "missing_arrival_npc_dialogue";
 }
 
 function removeMatchingQueueEntry(
@@ -594,4 +620,24 @@ function removeMatchingQueueEntry(
     removed = true;
     return false;
   });
+}
+
+function linearNarrativeQueueKey(entry: LinearActionNarrativeState): string {
+  return entry.actionKind === "investigate"
+    ? `investigate:${String(entry.factId)}`
+    : `move:${String(entry.locationId)}`;
+}
+
+/** 队列不完整而重新走 live 时，保留未消费的旧预告并接入新生成的未来预告。 */
+function mergeLinearNarrativeQueue(
+  existing: readonly LinearActionNarrativeState[],
+  generated: readonly LinearActionNarrativeState[],
+): readonly LinearActionNarrativeState[] {
+  const merged = [...existing];
+  for (const entry of generated) {
+    const index = merged.findIndex((candidate) => linearNarrativeQueueKey(candidate) === linearNarrativeQueueKey(entry));
+    if (index < 0) merged.push(entry);
+    else merged[index] = entry;
+  }
+  return merged;
 }

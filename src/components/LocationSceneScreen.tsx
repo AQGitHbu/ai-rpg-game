@@ -247,6 +247,8 @@ function NpcDialogueModal({
   pendingPlayerResponse,
   pendingChoiceToken,
   resetInputNonce,
+  handoffChoice,
+  onHandoffChoice,
   onSubmit,
   onClose,
 }: {
@@ -258,7 +260,9 @@ function NpcDialogueModal({
   readonly pendingPlayerResponse: string | null;
   readonly pendingChoiceToken: string | null;
   readonly resetInputNonce: number;
+  readonly handoffChoice?: PlayerChoiceView | null;
   readonly onSubmit: (interaction: PlayerInteraction, playerResponse: string) => void;
+  readonly onHandoffChoice?: (choice: PlayerChoiceView) => void;
   readonly onClose: () => void;
 }) {
   const [text, setText] = useState("");
@@ -404,7 +408,8 @@ function NpcDialogueModal({
             ) : null}
           </>
         ) : (
-          /* 非焦点 NPC：零回合展示；交接回答用唯一选项关闭，普通闲聊用“知道了”关闭 */
+          /* 非焦点 NPC：零回合展示；剧情交接只保留一个真实下一步，
+             普通闲聊才允许用 dismiss 关闭。 */
           <>
             {dialogue.choices.length > 0 ? (
               <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
@@ -425,7 +430,13 @@ function NpcDialogueModal({
                 <button
                   type="button"
                   className="npc-dialogue-talk-cta"
-                  onClick={onClose}
+                  onClick={() => {
+                    if (handoffChoice !== null && handoffChoice !== undefined) {
+                      onHandoffChoice?.(handoffChoice);
+                    } else {
+                      onClose();
+                    }
+                  }}
                 >
                   {normalizeDisplayText(playerResponse)}
                 </button>
@@ -788,6 +799,35 @@ export function LocationSceneScreen({
     submittedDialogueRef.current = null;
   }
 
+  function submitDialogueInteraction(interaction: PlayerInteraction, playerResponse: string): void {
+    const choiceToken = interaction.kind === "fixed_choice" ? interaction.choiceToken : null;
+    dispatchDialogueUi({ kind: "submit", playerResponse, choiceToken, dialogue: displayedDialogue ?? openDialogue! });
+    submittedDialogueRef.current = {
+      revision: view.revision,
+      turnNumber: view.turnNumber,
+    };
+    setDialoguePhase("waiting");
+    onSubmit(interaction, "npc-dialogue");
+  }
+
+  function handleHandoffChoice(choice: PlayerChoiceView): void {
+    if (choice.presentation === "dialogue") {
+      const matchingNpc = locationNpcs.find((npc) => npc.talkChoice?.choiceToken === choice.choiceToken);
+      const dialogue = matchingNpc === undefined ? undefined : allDialoguesMap.get(matchingNpc.npcId);
+      if (dialogue !== undefined) {
+        setOpenDialogueNpcId(dialogue.npcId);
+        setDialoguePhase("choice");
+        submittedDialogueRef.current = null;
+        return;
+      }
+      // 目标 NPC 尚未有可打开的正式场景时，只结束旧 NPC 的收尾展示；
+      // 不能把“打开对话”的 ask token 误提交成额外回合。
+      resetDialogue();
+      return;
+    }
+    submitDialogueInteraction({ kind: "fixed_choice", choiceToken: choice.choiceToken }, choice.label);
+  }
+
   if (view.battle !== null) {
     return (
       <BattleScene
@@ -915,23 +955,16 @@ export function LocationSceneScreen({
           gameType={gameType}
           busy={busy || pending}
           playerResponse={displayedDialogue.choices.length === 0 && !displayedDialogue.freeInputEnabled
-            ? handoffPlayerResponse
+            ? displayedDialogue.handoffChoice?.label ?? handoffPlayerResponse
+            : null}
+          handoffChoice={displayedDialogue.choices.length === 0 && !displayedDialogue.freeInputEnabled
+            ? displayedDialogue.handoffChoice ?? currentObjectiveAction
             : null}
           pendingPlayerResponse={dialogueUi.pendingPlayerResponse}
           pendingChoiceToken={dialogueUi.pendingChoiceToken}
           resetInputNonce={dialogueInputResetNonce}
-          onSubmit={(interaction, playerResponse) => {
-            // 提交前先记录临时的玩家回应和选择token
-            const choiceToken = interaction.kind === "fixed_choice" ? interaction.choiceToken : null;
-            dispatchDialogueUi({ kind: "submit", playerResponse, choiceToken, dialogue: displayedDialogue });
-            // 提交后保留当前 NPC 的会话焦点并设置等待状态
-            submittedDialogueRef.current = {
-              revision: view.revision,
-              turnNumber: view.turnNumber,
-            };
-            setDialoguePhase("waiting");
-            onSubmit(interaction, "npc-dialogue");
-          }}
+          onSubmit={submitDialogueInteraction}
+          onHandoffChoice={handleHandoffChoice}
           phase={dialoguePhase}
           onClose={() => {
             resetDialogue();

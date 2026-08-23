@@ -9,7 +9,7 @@ import {
 } from "./liveScenePerformanceSource";
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
-import { buildSelectableSceneCandidates } from "../../deterministicSceneSource";
+import { buildSelectableSceneCandidates } from "../../sceneChoiceCandidates";
 import { buildStylePolicy } from "../../stylePolicy";
 import { asLocationId, asNpcId, asFactId, asQuestId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
@@ -59,6 +59,7 @@ function makeContext(overrides: {
   presentNpcs?: SceneGenerationContext["presentNpcs"];
   legalActionCandidates?: SceneGenerationContext["legalActionCandidates"];
   objectiveTarget?: SceneGenerationContext["objectiveTarget"];
+  dialogueSessionCompleted?: boolean;
 } = {}): SceneGenerationContext {
   const job = overrides.job ?? makeJob();
   return {
@@ -111,6 +112,9 @@ function makeContext(overrides: {
     ],
     narrativeReferenceIds: ["item_seal", "npc_1", "fact_a", "fact_vis"],
     objectiveTarget: overrides.objectiveTarget ?? null,
+    ...(overrides.dialogueSessionCompleted === undefined
+      ? {}
+      : { dialogueSessionCompleted: overrides.dialogueSessionCompleted }),
     focusNpcContext: {
       id: asNpcId("npc_1"),
       name: "老板",
@@ -176,6 +180,61 @@ describe("liveScenePerformanceSource（Task 6）", () => {
   it("reserves enough completion budget for provider reasoning and scene JSON", () => {
     expect(LIVE_SCENE_MAX_TOKENS).toBeGreaterThanOrEqual(3_000);
     expect(LIVE_SCENE_TIMEOUT_MS).toBe(45_000);
+  });
+
+  it("生产候选投影：抵达当前主线 NPC 时只提供该 NPC 的两项对白", () => {
+    const context = makeContext({
+      job: makeJob({
+        eventKind: "travel",
+        summary: { kind: "move", locationId: asLocationId("loc_2") },
+      }),
+      legalActionCandidates: [
+        { kind: "talk", label: "与老板交谈", targetId: "npc_1" },
+        { kind: "move", label: "离开客栈", targetId: "loc_2" },
+      ],
+      objectiveTarget: {
+        questId: asQuestId("quest_0"),
+        objectiveIndex: 0,
+        entityId: asNpcId("npc_1"),
+        entityName: "老板",
+      },
+    });
+
+    const candidates = buildSelectableSceneCandidates(context);
+
+    expect(candidates).toHaveLength(2);
+    expect(candidates.every((candidate) =>
+      candidate.action.type === "talk" && String(candidate.action.npcId) === "npc_1",
+    )).toBe(true);
+  });
+
+  it("生产候选投影：抵达调查地点时使用已审批的两种调查方式补足场景选项", () => {
+    const context = makeContext({
+      job: makeJob({
+        eventKind: "travel",
+        summary: { kind: "move", locationId: asLocationId("loc_2") },
+      }),
+      objectiveTarget: {
+        questId: asQuestId("quest_0"),
+        objectiveIndex: 0,
+        entityId: asFactId("fact_a"),
+        entityName: "门前令牌的来历",
+      },
+    });
+    const withApproaches: SceneGenerationContext = {
+      ...context,
+      currentInvestigationApproaches: [
+        { approachId: "observe", label: "先观察令牌上的刻痕", evidenceQuality: "clean", tensionDelta: 0 },
+        { approachId: "ask", label: "向守门弟子打听令牌来历", evidenceQuality: "noisy", tensionDelta: 1 },
+      ],
+    };
+
+    const candidates = buildSelectableSceneCandidates(withApproaches);
+
+    expect(candidates.slice(0, 2).map((candidate) => candidate.action)).toEqual([
+      { type: "investigate", factId: asFactId("fact_a"), approachId: "observe" },
+      { type: "investigate", factId: asFactId("fact_a"), approachId: "ask" },
+    ]);
   });
 
   it("bounds live scene generation before deterministic fallback", async () => {
@@ -365,6 +424,38 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(proposal.proposal.objectiveLink).toEqual({ questId: "quest_0", objectiveIndex: 1, mode: "handoff" });
     expect(proposal.proposal.objectiveLink!.questId).toBe(String(context.objectiveTransition.after!.questId));
     expect(proposal.proposal.objectiveLink!.objectiveIndex).toBe(context.objectiveTransition.after!.objectiveIndex);
+  });
+
+  it("对话收尾只接受一个 handoff 选项，不再接受第二个或知道了", () => {
+    const transition: ObjectiveTransition = {
+      before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老板交谈" },
+      completed: [{ questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老板交谈" }],
+      after: { questId: asQuestId("quest_0"), objectiveIndex: 1, label: "前往街道" },
+      mode: "progressed",
+    };
+    const context = makeContext({ job: makeJob({ transition }), dialogueSessionCompleted: true });
+    const response = {
+      segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "老板把声音压低了。" }],
+      npcLine: {
+        npcId: "npc_1", text: "线索就在街道尽头。你现在过去，正好能赶上留下的痕迹。",
+        emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [],
+      },
+      objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "progress" },
+    };
+    const valid = parseScenePerformanceJson({
+      ...response,
+      choices: [{ candidateId: "candidate_1", label: "我这就去街道核对。" }],
+    }, context, buildSelectableSceneCandidates(context));
+    expect(valid.ok).toBe(true);
+    if (valid.ok) expect(valid.proposal.choices).toHaveLength(1);
+    const extraChoice = parseScenePerformanceJson({
+      ...response,
+      choices: [
+        { candidateId: "candidate_1", label: "我这就去街道核对。" },
+        { candidateId: "candidate_2", label: "知道了" },
+      ],
+    }, context, buildSelectableSceneCandidates(context));
+    expect(extraChoice).toEqual({ ok: false, reason: "choices_invalid" });
   });
 
   it("幕交接解析旧焦点 NPC 台词与同次 API 生成的非焦点 NPC 闲聊", () => {
@@ -729,6 +820,33 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       reason: "choices_stale_template",
       attempt: 1,
     });
+  });
+
+  it("新 NPC 首次回应也拒绝当前场景的 fallback 选项模板", () => {
+    const context = makeContext();
+    const staleLabels = buildSelectableSceneCandidates(context).map((choice) => ({
+      candidateId: choice.candidateId,
+      label: choice.label,
+    }));
+    const result = parseScenePerformanceJson(
+      {
+        segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "门外风声一紧。" }],
+        npcLine: {
+          npcId: "npc_1",
+          text: "那面旗确实有人见过，但我不会只凭传闻替你下结论。你若要查，就先说清楚要从哪一步开始。",
+          emotion: "neutral",
+          answeredBeatIds: [],
+          usedFactIds: ["fact_a"],
+          usedInteractionActionIds: [],
+        },
+        objectiveLink: null,
+        choices: staleLabels,
+      },
+      context,
+      buildSelectableSceneCandidates(context),
+    );
+
+    expect(result).toEqual({ ok: false, reason: "choices_stale_template" });
   });
 
   it("AI 返回不可解析 JSON → 返回稳定格式失败，不调用 deterministic source", async () => {
