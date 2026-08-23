@@ -12,7 +12,7 @@
 |---|---|---|---|
 | 共享基础设施 | `共同规范/共享模块开发流程.md` | `共同规范/共享模块目录.json` | 仅按触发条件读取 |
 | 项目脚手架 | `agent/项目脚手架.md` | — | 已建立；提供 `branch:finish` 合并后 worktree/分支收尾入口；SQLite 仓储测试使用每进程独占的 OS 临时目录，兼容 Windows/Git Bash 管道运行 |
-| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | 待验收（本计划实现已完成 Task 1-7）：世界演化结构化/审批失败自动一次内容修复；单线 `move/investigate` 命中预生成队列时优先于候选不足与世界演化；新地点与目标 NPC 空间一致由审批层硬拒绝；审计以 `context.retry` 区分传输/内容修复/手动 failed-job 重试，历史 `repair` 只读归一为 `legacy_unknown`；当前 Plan：`superpowers/plans/2026-08-22-narrative-auto-retry-and-linear-move-consistency.md` |
+| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | 计划待执行；当前 Plan：`superpowers/plans/2026-08-23-narrative-context-compiler.md` |
 | 生产链边界 | `agent/当前开发阶段.md` | — | 只允许无版本后缀的生产命名；旧 route、旧 application/UI 链、兼容 facade、类型隔离和旧存档迁移均不存在。历史文档只作决策记录 |
 | MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | 创建/恢复、选择驱动推进、探索、物品、战斗、分支和多结局可由显式 offline fixture 完整游玩；生产 AI 失败显示 stable failure 并手动重试 |
 | 行动裁决 | `agent/行动裁决.md` | `策划文档/AI生成RPG_MVP.md` | 固定 choiceToken 与 NPC 自定义输入统一进入 `performTurn`；Action union 只保留有规则实现的 action，已移除无推进作用的 rest，成功回合单次 StateCommit/CAS |

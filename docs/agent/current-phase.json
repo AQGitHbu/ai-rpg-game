@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "phase": "narrative-auto-retry-and-linear-move-consistency",
-  "status": "implemented",
-  "implementationStatus": "implemented",
-  "targetBranch": "codex/narrative-auto-retry-linear-move",
-  "worktreeName": "narrative-auto-retry-linear-move",
+  "phase": "narrative-context-compiler",
+  "status": "planned",
+  "implementationStatus": "not_started",
+  "targetBranch": "codex/narrative-context-compiler",
+  "worktreeName": "narrative-context-compiler",
   "repositories": ["ai-rpg-game"],
-  "plan": "docs/superpowers/plans/2026-08-22-narrative-auto-retry-and-linear-move-consistency.md",
+  "plan": "docs/superpowers/plans/2026-08-23-narrative-context-compiler.md",
   "sharedInfrastructureChangeAllowed": false,
   "startCommand": "npm run phase:start",
   "entryDocs": [
@@ -14,7 +14,8 @@
     "docs/游戏开发规范.md",
     "docs/Agent文档索引.md",
     "docs/agent/当前开发阶段.md",
-    "docs/superpowers/plans/2026-08-22-narrative-auto-retry-and-linear-move-consistency.md"
+    "docs/superpowers/specs/2026-08-23-long-form-narrative-entity-memory-architecture.md",
+    "docs/superpowers/plans/2026-08-23-narrative-context-compiler.md"
   ],
   "acceptanceCommands": [
     "npm run check:standards",
@@ -22,14 +23,11 @@
     "npm run lint",
     "npm run test:boundaries",
     "npm run test:fast",
-    "npm run test:game-domain",
-    "npm run test:game-gameplay",
     "npm run test:game-application",
-    "npm run test:components",
-    "npm run test:app",
     "npm test",
     "npm run test:foundation-journey",
     "npm run journey:foundation",
+    "npm test -- src/game/application/testing/mediumActJourney.test.ts",
     "npm run build",
     "npm run phase:status"
   ]
