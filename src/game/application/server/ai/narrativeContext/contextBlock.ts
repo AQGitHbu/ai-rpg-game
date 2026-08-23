@@ -50,6 +50,12 @@ export type CompiledNarrativeContext = Readonly<{
   manifest: NarrativeContextManifest;
 }>;
 
+export type NarrativePromptCompilation = Readonly<{
+  prompt: string;
+  context: CompiledNarrativeContext;
+  manifest: NarrativeContextManifest;
+}>;
+
 export const NARRATIVE_CONTEXT_COMPILER_VERSION = 1 as const;
 export const NARRATIVE_CONTEXT_HEADER = "[NARRATIVE_CONTEXT v1]" as const;
 export const NARRATIVE_CONTEXT_AUTHORITY_ORDER: readonly NarrativeContextAuthority[] = [
