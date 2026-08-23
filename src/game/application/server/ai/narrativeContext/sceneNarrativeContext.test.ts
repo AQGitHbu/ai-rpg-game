@@ -344,6 +344,8 @@ describe("sceneNarrativeContext", () => {
     expect(selectedById.get("scene:resolution")?.content).toContain("先直接回应玩家对内应的追问");
     expect(selectedById.get("scene:focus-npc")?.content).toContain("thisTurn.outcome=positive");
     expect(selectedById.get("scene:output-contract")?.content).toContain("linearActionNarratives");
+    expect(selectedById.get("scene:focus-npc")?.content).not.toContain("fact_focus_secret");
+    expect(selectedById.get("scene:linear-prefetch")?.source.refs).toEqual(["loc_north_lane"]);
     expect(compilation.prompt).toContain("镖银失踪牵出门派内应");
     expect(compilation.prompt).toContain("currentAct=2");
     expect(compilation.prompt).toContain("tension=55");
@@ -352,9 +354,35 @@ describe("sceneNarrativeContext", () => {
     for (const actionId of ["interaction_1", "interaction_2", "interaction_3", "interaction_4", "interaction_5"]) {
       expect(compilation.prompt).toContain(actionId);
     }
+    expect(compilation.prompt).not.toContain("fact_focus_secret");
+    expect(JSON.stringify(compilation.manifest)).not.toContain("fact_focus_secret");
     expect(compilation.prompt).not.toContain("DO_NOT_LEAK_OTHER_NPC_SECRET");
     expect(compilation.prompt).not.toContain("eventLedger");
     expect(compilation.prompt).not.toContain("affinity=18");
     expect(compilation.prompt).not.toContain(context.generationSeed ?? "seed-not-present");
+  });
+
+  it("keeps only safe location and arrival-NPC refs in the linear prefetch manifest", () => {
+    const context = makeSceneContext();
+    const discoverFact = context.upcomingLinearObjectives?.find((ref) => ref.kind === "discover_fact");
+    const arrivalNpc = context.presentNpcs.find((npc) => String(npc.id) === "npc_other");
+    if (discoverFact === undefined || arrivalNpc === undefined) throw new Error("fixture is incomplete");
+
+    const compilation = compileSceneNarrativeContext({
+      ...context,
+      upcomingLinearObjectives: [
+        discoverFact,
+        {
+          kind: "visit_location",
+          locationId: asLocationId("loc_arrival"),
+          locationName: "南门渡口",
+          arrivalNpc,
+        },
+      ],
+    }, []);
+    const manifestEntry = compilation.manifest.selected.find((entry) => entry.id === "scene:linear-prefetch");
+
+    expect(manifestEntry?.sourceRefs).toEqual(["loc_arrival", "npc_other"]);
+    expect(manifestEntry?.sourceRefs).not.toContain(String(discoverFact.factId));
   });
 });

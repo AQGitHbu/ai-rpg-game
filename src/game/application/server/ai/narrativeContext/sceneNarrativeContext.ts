@@ -74,7 +74,7 @@ function focusContent(context: SceneGenerationContext): string {
     .map((interaction) => `${interaction.actionId}：dialogueAct=${interaction.dialogueAct}；topicSummary=${interaction.topicSummary}；outcome=${interaction.outcome}；summary=${interaction.summary}`)
     .join("\n") || "无（usedInteractionActionIds 必须为 []）";
   return `id=${focus.id}；${focus.name}（${focus.role}）；公开档案=${focus.publicProfile}；\n` +
-    `回应政策：tier=${focus.responsePolicy.tier}；tone=${focus.responsePolicy.toneInstruction}；initiative=${focus.responsePolicy.initiative}；允许披露事实 ID=[${focus.responsePolicy.allowedDisclosureFactIds.join(", ")}]；私密知识仅可扣留，ID=[${focus.responsePolicy.privateKnowledgeIds.join(", ")}]，正文不得编造或泄露；\n` +
+    `回应政策：tier=${focus.responsePolicy.tier}；tone=${focus.responsePolicy.toneInstruction}；initiative=${focus.responsePolicy.initiative}；允许披露事实 ID=[${focus.responsePolicy.allowedDisclosureFactIds.join(", ")}]；私密知识必须扣留，正文不得编造或泄露；\n` +
     `目标=${focus.goals.join("、") || "无"}；情绪=${focus.emotion}；thisTurn.outcome=${focus.thisTurn.outcome}；\n` +
     `可说线索卡：${factCards(focus.speakableFactCards)}；\n` +
     `最近结构化交互（最多 5 条）：\n${interactions}`;
@@ -111,6 +111,12 @@ function linearPrefetchContent(upcoming: readonly UpcomingObjectiveRef[]): strin
     `${upcoming.some((ref) => ref.kind === "visit_location") ? "move 的 narration 描写动身与抵达该地点的所见所感。\n" : ""}` +
     `${upcoming.some((ref) => ref.kind === "visit_location" && ref.arrivalNpc !== undefined) ? "move 条目若带有抵达后目标 NPC，必须同时生成 arrivalNpcLine；它是抵达该地点后玩家首次看到的目标 NPC 两句直接对白，不推进回合，不生成选项，不得使用通用兜底句。arrivalNpcLine.npcId 必须逐字使用服务端下发的目标 NPC ID，usedFactIds 只能使用该 NPC 可说事实或场景可见事实；缺少该字段视为整场内容契约失败。\n" : ""}` +
     "不得捏造新事实、新实体或具体时间；不得输出“主线推进到第X幕”“当前目标：”“调查完成”等系统元话术。";
+}
+
+function linearPrefetchSourceRefs(upcoming: readonly UpcomingObjectiveRef[]): readonly string[] {
+  return upcoming.flatMap((ref) => ref.kind === "discover_fact"
+    ? []
+    : [String(ref.locationId), ...(ref.arrivalNpc === undefined ? [] : [String(ref.arrivalNpc.id)])]);
 }
 
 export function buildSceneNarrativeContextBlocks(
@@ -244,7 +250,7 @@ export function buildSceneNarrativeContextBlocks(
   }
   if (upcoming.length > 0) {
     blocks.push(sceneBlock({
-      id: "scene:linear-prefetch", slot: "director_guidance", title: "导演与风格", sourceKind: "upcoming_linear_objectives", sourceRefs: upcoming.map((ref) => ref.kind === "discover_fact" ? String(ref.factId) : String(ref.locationId)),
+      id: "scene:linear-prefetch", slot: "director_guidance", title: "导演与风格", sourceKind: "upcoming_linear_objectives", sourceRefs: linearPrefetchSourceRefs(upcoming),
       authority: "state", retention: "mandatory", priority: 875, content: linearPrefetchContent(upcoming),
     }));
   }
