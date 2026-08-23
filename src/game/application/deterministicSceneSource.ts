@@ -136,10 +136,10 @@ export function buildSelectableSceneCandidates(
       label: dialogueLabels.support,
       action: { type: "talk", npcId: npc.id, dialogueAct: "support", topic: dialogueTopicFor(context, false) },
     };
-    if (event.kind === "dialogue") {
-      // 已经由玩家主动点开的人物对话应保留完整的支持/质疑两项回应，
-      // 即使当前主线正在等待调查或移动；旁支交谈不应被读模型降格成
-      // 一次只有“与某人交谈”的空壳回合。
+    if (event.kind === "dialogue" || focusedObjectiveNpc !== undefined) {
+      // 已经进入当前目标 NPC 的人物对话应保留完整的支持/质疑两项回应，
+      // 即使抵达场景的底层 event 仍然是 travel；不能把离开/探索动作
+      // 投影进 NPC 对话框，导致一个选择不推进对话主线。
       return [
         dialogueCandidate,
         {
@@ -158,8 +158,6 @@ export function buildSelectableSceneCandidates(
         label: nonDialogueChoiceLabel(action, candidate.label),
         action,
       }))[0];
-    // 对话场景仍必须给出两种不同输入类型；buildChoiceMap 同源允许
-    // explore，保证即使地点没有物品/敌人，玩家也能选择暂不回应而观察现场。
     return [
       dialogueCandidate,
       nonDialogueCandidate ?? {

@@ -861,6 +861,47 @@ describe("approveScenePerformance (Task 6)", () => {
     expect(result.code).toBe("no_objective_progress_choices");
   });
 
+  it("移动抵达当前目标 NPC 时，混入 move 的对话选项被拒绝", () => {
+    const job = makeJob({
+      eventKind: "travel",
+      summary: { kind: "move", locationId: asLocationId("loc_2") },
+      transition: {
+        before: null,
+        completed: [],
+        after: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老板交谈" },
+        mode: "unchanged",
+      },
+    });
+    const result = approveScenePerformance({
+      context: makeContext({
+        job,
+        objectiveTarget: { questId: asQuestId("quest_0"), objectiveIndex: 0, entityId: asNpcId("npc_1"), entityName: "老板" },
+        legalActionCandidates: [
+          { kind: "talk", label: "与老板交谈", targetId: "npc_1" },
+          { kind: "move", label: "离开客栈", targetId: "loc_2" },
+        ],
+      }),
+      proposal: makeProposal({
+        npcLine: {
+          npcId: "npc_1",
+          text: "老板终于抬眼看你，把旧案中最关键的线索说了出来。",
+          emotion: "neutral",
+          answeredBeatIds: [],
+          usedFactIds: [],
+          usedInteractionActionIds: [],
+        },
+        objectiveLink: { questId: "quest_0", objectiveIndex: 0, mode: "hint" },
+        choices: [
+          { candidateId: "candidate_1", label: "支持老板" },
+          { candidateId: "candidate_2", label: "不再追问，离开这里" },
+        ],
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result).toEqual({ ok: false, code: "focused_dialogue_requires_talk_choices" });
+  });
+
   it("after 存在且有可推进选项，提案选择推进选项 → 通过", () => {
     const job = makeJob({
       eventKind: "travel",

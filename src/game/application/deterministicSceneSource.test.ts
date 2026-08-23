@@ -744,6 +744,48 @@ describe("deterministicSceneSource", () => {
     expect(actions.some((a) => a?.type === "move" && String(a.locationId) === "loc_2")).toBe(true);
   });
 
+  it("arrival at the objective NPC keeps both selectable choices in dialogue", () => {
+    const context = {
+      ...makeContext(
+        makeJob({
+          eventKind: "travel",
+          summary: { kind: "move", locationId: loc2.id },
+          transition: {
+            before: null,
+            completed: [],
+            after: {
+              questId: asQuestId("quest_0"),
+              objectiveIndex: 0,
+              label: "与客栈老板交谈",
+            },
+            mode: "unchanged",
+          },
+        }),
+        makeFocusContext("neutral"),
+      ),
+      legalActionCandidates: [
+        { kind: "talk", label: "与客栈老板交谈", targetId: npc1.id },
+        { kind: "move", label: "前往街道", targetId: loc2.id },
+      ] as const,
+      objectiveTarget: {
+        questId: asQuestId("quest_0"),
+        objectiveIndex: 0,
+        entityId: npc1.id,
+        entityName: "客栈老板",
+      },
+    };
+
+    const candidates = buildSelectableSceneCandidates(context);
+
+    expect(candidates).toHaveLength(2);
+    expect(candidates.every((candidate) => candidate.action.type === "talk")).toBe(true);
+    expect(
+      candidates.every(
+        (candidate) => candidate.action.type === "talk" && candidate.action.npcId === npc1.id,
+      ),
+    ).toBe(true);
+  });
+
   it("玩家对白不带角色前缀，攻击动作使用括号且仍绑定真实 attack action", () => {
     const talkLabel = formatSceneChoiceLabel(
       { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" },

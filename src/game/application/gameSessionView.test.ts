@@ -1074,6 +1074,56 @@ describe("projectGameSessionView", () => {
     expect(dialogue?.choices.map((choice) => choice.presentation)).toEqual(["dialogue", "dialogue"]);
   });
 
+  it("旧移动抵达场景含有 move 时，读模型修复为两个 talk 选项", () => {
+    const scene = {
+      sceneId: "scene-arrival-dialogue",
+      turn: 3,
+      narration: "你抵达客栈，老板迎了上来。",
+      usedFactIds: [],
+      npcLine: { npcId: asNpcId("npc_1"), text: "老板把旧案的关键线索说给你听。", emotion: "neutral" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "arrival-1", label: "请把下一步说清楚。" },
+        { choiceToken: "arrival-2", label: "不再追问，离开这里" },
+      ] as const,
+      source: "generated" as const,
+      event: { kind: "travel" as const, locationId: asLocationId("loc_1") },
+    };
+    const story = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        choiceRegistry: [
+          approved("arrival-1", scene.sceneId, 3, scene.choices[0].label, { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" }),
+          approved("arrival-2", scene.sceneId, 3, scene.choices[1].label, { type: "move", locationId: asLocationId("loc_2") }),
+        ],
+      },
+    };
+    const world = {
+      ...ws,
+      quests: [{
+        id: asQuestId("quest_arrival"),
+        name: "追查旧案",
+        description: "查明旧案真相",
+        objectives: [{ kind: "talk_to_npc" as const, npcId: asNpcId("npc_1") }],
+        onSuccess: { kind: "advance_story" as const },
+        onFailure: { kind: "closed" as const },
+        tags: [],
+        kind: "main" as const,
+        stage: 1,
+        status: "active" as const,
+      }],
+    };
+
+    const view = projectGameSessionView(world, story, 3, "test-ending-session");
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1");
+    expect(dialogue?.choices).toHaveLength(2);
+    expect(dialogue?.choices.every((choice) => choice.presentation === "dialogue")).toBe(true);
+    const executable = buildChoiceMap(world, story, 3);
+    expect(dialogue?.choices.every((choice) => executable.has(choice.choiceToken))).toBe(true);
+    expect(view.narrative.choices).toEqual([]);
+  });
+
   it("projects quest objectives, pending/reload data, and ending without leaking server state", () => {
     const endingId = asEndingId("ending_home");
     const secretText = "皇城密道位于古井之下";

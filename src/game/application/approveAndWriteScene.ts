@@ -127,6 +127,7 @@ export type SceneRejectionCode =
   | "semantic_duplicate_choices"
   | "duplicate_candidate_ids"
   | "illegal_choice_target"
+  | "focused_dialogue_requires_talk_choices"
   | "no_objective_progress_choices"
   | "invalid_investigation_narrative"
   | "handoff_npc_unanswered"
@@ -568,6 +569,19 @@ export function approveScenePerformance(input: {
 
   if (semanticSummaryOf(ca.action) === semanticSummaryOf(cb.action)) {
     return { ok: false, code: "semantic_duplicate_choices" };
+  }
+
+  // 移动抵达后若当前权威目标是现场 NPC，场景已进入该 NPC 的对话入口。
+  // 两个已批准选项都必须是该 NPC 的 talk，不能让一个离开/探索动作混入
+  // 对话框，绕过“每个对话选项都应有剧情推进意义”的契约。
+  const focusedArrivalObjectiveNpc = context.job.actionSummary.kind === "move"
+    && context.objectiveTarget !== null
+    ? context.presentNpcs.find((npc) => String(npc.id) === String(context.objectiveTarget?.entityId))
+    : undefined;
+  if (focusedArrivalObjectiveNpc !== undefined
+    && ![ca.action, cb.action].every((action) =>
+      action.type === "talk" && String(action.npcId) === String(focusedArrivalObjectiveNpc.id))) {
+    return { ok: false, code: "focused_dialogue_requires_talk_choices" };
   }
 
   // Step 4：after 存在且有可推进的合法候选时，至少一个选中选项必须推进目标。

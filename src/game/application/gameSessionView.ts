@@ -492,6 +492,21 @@ export function projectGameSessionView(
       ? String(npcId)
       : null;
   })();
+  const generatedObjectiveSceneHasInvalidChoices = generatedObjectiveNpcFocus !== null
+    && scene !== null
+    && scene !== undefined
+    && scene.event?.kind !== "dialogue"
+    && scene.choices.length === 2
+    && scene.choices.some((sceneChoice) => {
+      const approved = registry.find((entry) =>
+        entry.choiceToken === sceneChoice.choiceToken
+        && entry.sceneId === scene.sceneId
+        && entry.basedOnRevision === revision,
+      );
+      return approved === undefined
+        || approved.action.type !== "talk"
+        || String(approved.action.npcId) !== generatedObjectiveNpcFocus;
+    });
   const persistedFocusNpcId = scene?.event?.kind === "dialogue"
     ? String(scene.event.focusNpcId)
     : generatedObjectiveNpcFocus ?? pairedDialogueNpcId;
@@ -524,6 +539,10 @@ export function projectGameSessionView(
       // 当前目标已不是交谈目标时，只保留仍有两个合法 talk choice 的终局对白；
       // 旧场景若 choice token 已过期，就必须退回地点层行动（例如战斗入口）。
       || (currentObjectiveNpcId === null && pairedDialogueNpcId !== persistedFocusNpcId)
+      // 兼容已经写入存档的旧抵达场景：它可能把 move/explore 与目标 NPC
+      // 的 talk 混进同一组 choices。隐藏这组过期 token，改由下方 handoff
+      // 分支即时铸造两个合法 talk runtime token，避免旧坏数据继续可提交。
+      || generatedObjectiveSceneHasInvalidChoices
     );
   const handoffFocusNpc = staleDialogueFocus || persistedFocusNpcId === null
     ? currentObjectiveNpcId === null
