@@ -88,14 +88,33 @@ function outputContract(need: EvolutionNeed): string {
 
   switch (need.kind) {
     case "next_act":
-      return `${outer}\n${commonFields}\n本次是下一幕需求：必须输出 nextMainQuest={"name":"2-40字名称","description":"非空且≤200字","objectiveText":"非空且≤200字"}，并可补充下一幕必要的新实体或事实。endingPair 字段必须完全省略。`;
+      return `${outer}\n${commonFields}\n本次是下一幕需求：必须输出 nextMainQuest={"name":"2-40字名称","description":"非空且≤200字","objectiveText":"非空且≤200字"}，并可补充下一幕必要的新实体或事实。禁止输出 endingPair，endingPair 字段必须完全省略。`;
     case "ending_pair":
-      return `${outer}\n${commonFields}\n本次是终幕结局对需求：必须输出 endingPair=[{"name":"2-40字名称","description":"非空且≤200字","themeKey":"trust"},{"name":"2-40字名称","description":"非空且≤200字","themeKey":"doubt"}]；必须恰好一条 trust 和一条 doubt，不能提交 requirements。nextMainQuest 字段必须完全省略。`;
+      return `${outer}\n${commonFields}\n本次是终幕结局对需求：必须输出 endingPair=[{"name":"2-40字名称","description":"非空且≤200字","themeKey":"trust"},{"name":"2-40字名称","description":"非空且≤200字","themeKey":"doubt"}]；必须恰好一条 trust 和一条 doubt，不能提交 requirements。禁止输出 nextMainQuest，nextMainQuest 字段必须完全省略。`;
     case "pacing":
       return `${outer}\n${commonFields}\n本次是节奏补足需求：只补充一个必要的新实体或事实。nextMainQuest 和 endingPair 字段必须完全省略。`;
     case "none":
       return `${outer}\n当前没有世界演化需求；不得产生 proposal。`;
   }
+}
+
+function contentRepairInstruction(
+  repair: WorldEvolutionSourceContext["contentRepair"],
+): string {
+  if (repair === undefined) return "contentRepair=无。";
+  const reasonText = repair.reason === "invalid_json"
+    ? "非法 JSON"
+    : repair.reason === "invalid_schema"
+      ? "非法 schema"
+      : repair.reason === "invalid_reference"
+        ? "引用了不存在的实体"
+        : repair.approvalCode === undefined
+          ? "审批拒绝"
+          : `审批拒绝（${repair.approvalCode}）`;
+  const reasonCode = repair.reason === "approval_rejected" && repair.approvalCode !== undefined
+    ? `approval_rejected:${repair.approvalCode}`
+    : repair.reason;
+  return `上一轮的响应需要一次内容修复（content repair）：原因=${reasonText}（${reasonCode}）。只修复该问题并重发完整提案；保留当前世界事实边界，严禁通过省略字段绕过 placement、locationRef、已有地点名、任务目标可达性等契约。`;
 }
 
 function detailPriority(input: {
@@ -171,7 +190,7 @@ export function buildWorldNarrativeContextBlocks(
     worldBlock({
       id: "world:rules", slot: "system_rules", title: "世界演化规则", sourceKind: "world_evolution_source_context", sourceRefs: [],
       authority: "rule", retention: "mandatory", priority: 1000,
-      content: `你只提出一次可审批的世界增量，不得改写、删除或否认当前已批准的世界、任务、事实或结局事实；不得引用实体索引之外的既有 ID，不得复用已有名称。${genreRule(world.generation.gameType)}`,
+      content: `你只提出一次可审批的世界增量，不得改写、删除或否认当前已批准的世界、任务、事实或结局事实；不得引用实体索引之外的既有 ID，不得复用已有名称。新地点名称不得与现有地点名称重复。如果 newLocation.placement=world 且 newNpc 同时存在，newNpc.locationRef 必须为 {"kind":"new_location"}，除非本次任务明确不把该 NPC 作为新地点目标。新任务的目标顺序必须在玩家可达的地点/实体上成立。${genreRule(world.generation.gameType)}`,
     }),
     worldBlock({
       id: "world:canon", slot: "world_canon", title: "世界设定", sourceKind: "game_setup", sourceRefs: [],
@@ -210,7 +229,7 @@ export function buildWorldNarrativeContextBlocks(
     worldBlock({
       id: "world:evolution-need", slot: "current_resolution", title: "本次演化需求", sourceKind: "world_evolution_source_context", sourceRefs: [],
       authority: "state", retention: "mandatory", priority: 950,
-      content: `need=${JSON.stringify(context.need)}；reason=${context.reason}；action=${describeSafeAction(context.action, disclosedPublicFactIds)}；contentRepair=${context.contentRepair === undefined ? "无" : JSON.stringify(context.contentRepair)}。`,
+      content: `need=${JSON.stringify(context.need)}；reason=${context.reason}；action=${describeSafeAction(context.action, disclosedPublicFactIds)}；${contentRepairInstruction(context.contentRepair)}`,
     }),
     worldBlock({
       id: "world:output-contract", slot: "output_contract", title: "WorldDelta 输出契约", sourceKind: "world_delta_parser", sourceRefs: [],

@@ -144,6 +144,34 @@ function stubTransport(payload: unknown, content: string | null = null): AiTrans
 const config: AiTransportConfig = { baseUrl: "x", apiKey: "k", model: "m" };
 
 describe("liveScenePerformanceSource（Task 6）", () => {
+  it("passes the exact compiled narrative manifest to AI text audit without prompt text", async () => {
+    const complete = vi.fn(async (_role: "scene", _messages: readonly unknown[], _ctx?: unknown) =>
+      ({ ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 }));
+    const source = createLiveScenePerformanceSource({
+      aiClient: {
+        complete,
+        policy: () => ({
+          thinking: "off" as const, timeoutMs: 45_000, maxTokens: 3_000,
+          jsonMode: "prompt_only" as const, maxAttempts: 2,
+        }),
+      },
+    });
+
+    await source.generateScene(makeContext());
+
+    const auditContext = complete.mock.calls[0]?.[2] as { readonly narrativeContext?: unknown };
+    expect(auditContext.narrativeContext).toEqual(expect.objectContaining({
+      compilerVersion: 1,
+      maxEstimatedTokens: 8_000,
+      selectedEstimatedTokens: expect.any(Number),
+      overflowEstimatedTokens: expect.any(Number),
+      selected: expect.arrayContaining([expect.objectContaining({ id: "scene:rules" })]),
+      dropped: expect.any(Array),
+    }));
+    expect(JSON.stringify(auditContext.narrativeContext)).not.toContain("绝不外泄的私密");
+    expect(JSON.stringify(auditContext.narrativeContext)).not.toContain("fact_secret");
+  });
+
   it("reserves enough completion budget for provider reasoning and scene JSON", () => {
     expect(LIVE_SCENE_MAX_TOKENS).toBeGreaterThanOrEqual(3_000);
     expect(LIVE_SCENE_TIMEOUT_MS).toBe(45_000);

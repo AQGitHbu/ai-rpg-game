@@ -3,11 +3,12 @@ import {
   parseWorldDeltaProposal,
   filterProposalRefs,
   createLiveWorldEvolutionSource,
+  buildWorldEvolutionPrompt,
   LIVE_WORLD_EVOLUTION_MAX_TOKENS,
   LIVE_WORLD_EVOLUTION_TIMEOUT_MS,
 } from "./liveWorldEvolutionSource";
 import { createInitialWorldState } from "@/game/domain/worldState";
-import { asLocationId, asGenerationId, asNpcId } from "@/game/domain/worldEntity";
+import { asFactId, asLocationId, asGenerationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { AiTransport } from "@ai-game/ai-transport";
 import type { WorldState } from "@/game/domain/worldState";
@@ -340,6 +341,78 @@ describe("world source 内容修复契约", () => {
     });
     return { complete, policy };
   }
+
+  it("passes the exact compiled narrative manifest to AI text audit without private text", async () => {
+    const secretFactId = asFactId("fact_secret");
+    const base = makeCtx();
+    const ctx: WorldEvolutionSourceContext = {
+      ...base,
+      worldState: {
+        ...base.worldState,
+        worldFacts: [{
+          factId: secretFactId,
+          text: "私密正文",
+          source: "generated",
+          discovered: false,
+        }],
+      },
+    };
+    const ai = makeClient("not json");
+
+    await createLiveWorldEvolutionSource({ aiClient: ai }).propose(ctx);
+
+    const auditContext = ai.complete.mock.calls[0]?.[2] as { readonly narrativeContext?: unknown };
+    expect(auditContext.narrativeContext).toEqual(expect.objectContaining({
+      compilerVersion: 1,
+      maxEstimatedTokens: 8_000,
+      selectedEstimatedTokens: expect.any(Number),
+      overflowEstimatedTokens: expect.any(Number),
+      selected: expect.arrayContaining([
+        expect.objectContaining({ id: "world:rules" }),
+        expect.objectContaining({ id: "world:output-contract" }),
+      ]),
+      dropped: expect.any(Array),
+    }));
+    expect(JSON.stringify(auditContext.narrativeContext)).not.toContain("私密正文");
+    expect(JSON.stringify(auditContext.narrativeContext)).not.toContain("fact_secret");
+  });
+
+  it("buildWorldEvolutionPrompt keeps the complete compiled world contract", () => {
+    const base = makeCtx({ need: { kind: "next_act", act: 2 } });
+    const prompt = buildWorldEvolutionPrompt({
+      ...base,
+      worldState: {
+        ...base.worldState,
+        quests: [{
+          id: asQuestId("quest_1"),
+          name: "追查失踪商队",
+          description: "确认商队最后的落脚处。",
+          objectives: [],
+          onSuccess: { kind: "advance_story" },
+          onFailure: { kind: "closed" },
+          tags: [],
+          kind: "main",
+          stage: 1,
+          status: "active",
+        }],
+      },
+      storyState: {
+        ...base.storyState,
+        nextPacingNeed: "complicate",
+        recentBeats: [{ turn: 1, kind: "npc_met", summary: "遇见客栈掌柜。" }],
+        contract: { ...base.storyState.contract, centralConflict: "商队失踪牵出内应" },
+      },
+    });
+
+    expect(prompt).toContain("中心冲突=商队失踪牵出内应");
+    expect(prompt).toContain("nextPacingNeed=complicate");
+    expect(prompt).toContain("遇见客栈掌柜。");
+    expect(prompt).toContain("追查失踪商队");
+    for (const field of ["newItem", "newEnemy", "newFact"]) expect(prompt).toContain(field);
+    expect(prompt).not.toContain("eventLedger");
+    expect(prompt).not.toContain("hiddenFactIds");
+    expect(prompt).not.toContain("interactionHistory");
+  });
 
   it("非法 JSON：单次 propose 只调用 complete 一次，并返回 invalid_json 修复原因", async () => {
     const ai = makeClient("not json");
