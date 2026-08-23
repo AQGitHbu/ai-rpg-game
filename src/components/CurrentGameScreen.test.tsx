@@ -148,7 +148,7 @@ describe("CurrentGameScreen prologue display", () => {
     await waitFor(() => expect(retryNarrative).toHaveBeenCalledOnce());
   });
 
-  it("failed 时不自动轮询，只有点击“重试”才发送 retryNarrative", async () => {
+  it("failed 时不自动轮询，只有点击“重试生成回应”才发送 retryNarrative", async () => {
     globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
@@ -165,7 +165,7 @@ describe("CurrentGameScreen prologue display", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(ensureNarrative).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: "重试" }));
+    await userEvent.click(screen.getByRole("button", { name: "重试生成回应" }));
     await waitFor(() => expect(retryNarrative).toHaveBeenCalledOnce());
     expect(ensureNarrative).not.toHaveBeenCalled();
   });

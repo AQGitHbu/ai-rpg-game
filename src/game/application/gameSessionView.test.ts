@@ -1144,6 +1144,7 @@ describe("projectGameSessionView", () => {
           npcName: "韩征",
           npcRole: "捕头",
           speechPages: ["韩征看了你一眼，继续巡视。"],
+          speechSource: "generated" as const,
           smallTalk: {
             prompt: "向韩征打个招呼",
             response: "韩征点了点头：「有什么事直接找我，别耽误正事。」",
@@ -1186,6 +1187,7 @@ describe("projectGameSessionView", () => {
     expect(nonFocusNpc).not.toHaveProperty("smallTalk");
     expect(nonFocusNpc?.speechPages.join("")).not.toContain("继续巡视");
     expect(nonFocusNpc?.speechPages.length).toBeGreaterThan(0);
+    expect(nonFocusNpc?.speechPages.join("")).not.toContain("【fallback】");
   });
 
   it("交接后的非焦点 NPC 只提供零回合闲聊，不再投影可提交的 ask 选项", () => {

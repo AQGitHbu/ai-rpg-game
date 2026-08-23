@@ -4,6 +4,7 @@ import type {
   SceneSource,
   SceneSourceResult,
   ScenePerformanceProposal,
+  ScenePerformanceNpcDialogue,
   ScenePerformanceSegment,
   LinearActionNarrative,
 } from "../../sceneSource";
@@ -130,6 +131,7 @@ export type ScenePerformanceParseFailureReason =
   | "segment_unknown_beat"
   | "npc_line_invalid_shape"
   | "npc_line_unusable"
+  | "npc_dialogues_invalid"
   | "objective_link_invalid_shape"
   | "objective_link_invalid_fields"
   | "choices_invalid"
@@ -262,6 +264,34 @@ function parseReferencedEntityIds(
   return ids;
 }
 
+/** 解析同一次 API 返回的非焦点 NPC 闲聊台词。 */
+function parseNpcDialogues(
+  rawValue: unknown,
+  context: SceneGenerationContext,
+  focusNpcId: string | undefined,
+): readonly ScenePerformanceNpcDialogue[] | undefined | "invalid" {
+  if (rawValue === undefined) return undefined;
+  if (!Array.isArray(rawValue)) return "invalid";
+  const presentIds = new Set(context.presentNpcs.map((npc) => String(npc.id)));
+  const seen = new Set<string>();
+  const result: ScenePerformanceNpcDialogue[] = [];
+  for (const entry of rawValue) {
+    if (!isRecord(entry) || typeof entry.npcId !== "string" || typeof entry.text !== "string") return "invalid";
+    const npcId = entry.npcId.trim();
+    if (!presentIds.has(npcId) || npcId === focusNpcId || seen.has(npcId)) return "invalid";
+    const npc = context.presentNpcs.find((candidate) => String(candidate.id) === npcId);
+    if (npc === undefined) return "invalid";
+    const text = normalizeNpcSpeech(entry.text, npc.name);
+    if (text === ""
+      || isGenericNpcAcknowledgement(text)
+      || isGenericNpcGreeting(text)
+      || isGenericNpcInquiry(text)) return "invalid";
+    seen.add(npcId);
+    result.push({ npcId, text });
+  }
+  return result;
+}
+
 /** 把 AI 返回的任意形状解析/校验为合法表演提案；非法返回 null（调用方走确定性兜底）。 */
 export function parseScenePerformanceJson(
   raw: unknown,
@@ -317,6 +347,9 @@ export function parseScenePerformanceJson(
     };
   }
 
+  const npcDialogues = parseNpcDialogues(raw.npcDialogues, context, npcLine?.npcId);
+  if (npcDialogues === "invalid") return { ok: false, reason: "npc_dialogues_invalid" };
+
   let objectiveLink: ScenePerformanceProposal["objectiveLink"] = null;
   if (raw.objectiveLink !== null && raw.objectiveLink !== undefined) {
     if (!isRecord(raw.objectiveLink)) return { ok: false, reason: "objective_link_invalid_shape" };
@@ -362,6 +395,7 @@ export function parseScenePerformanceJson(
       sceneId: `scene-${context.job.jobId}`,
       segments,
       npcLine,
+      ...(npcDialogues === undefined ? {} : { npcDialogues }),
       objectiveLink,
       choices,
       ...(linearActionNarratives === undefined ? {} : { linearActionNarratives }),
@@ -526,6 +560,11 @@ export function buildLiveScenePrompt(
       `上一轮已引用事实=${context.previousDialogue.usedFactIds?.join("、") || "无"}。`;
 
   const presentNpcLine = context.presentNpcs.map((n) => `${n.id}=${n.name}`).join("、") || "无";
+  const focusNpcIds = new Set(focus === undefined ? [] : [String(focus.id)]);
+  const nonFocusNpcSection = context.presentNpcs
+    .filter((npc) => !focusNpcIds.has(String(npc.id)))
+    .map((npc) => `${npc.id}=${npc.name}（${npc.role}；公开身份=${npc.publicProfile}）`)
+    .join("；") || "无";
   const activeQuestSection = story.activeQuest === undefined
     ? "无已解析的当前主线摘要；沿用目标转换和 NPC 可说事实。"
     : `主线=${story.activeQuest.name}；主线说明=${story.activeQuest.description}；` +
@@ -564,8 +603,15 @@ export function buildLiveScenePrompt(
     ? "本轮没有玩家原话节拍。"
     : `本轮玩家原话节拍的精确 beatId 是 ${utteranceBeat.beatId}；npcLine.npcId 必须是 ${utteranceBeat.subjectIds[0] ?? "焦点 NPC"}，answeredBeatIds 必须精确包含 ["${utteranceBeat.beatId}"]。`;
   const handoffContract = context.objectiveTransition.mode === "advanced_act" && context.objectiveTarget !== null
-    ? `quest_advanced 是幕交接节拍；objectiveLink 已由服务端锁定。请用自然语言表达线索如何把玩家带向新目标，不要求逐字复述当前目标标签；如需标记 grounding，可在该 segment 的 referencedEntityIds 中使用服务端允许的实体 ID。`
+    ? `quest_advanced 是幕交接节拍；objectiveLink 已由服务端锁定。${focus === undefined
+      ? "本轮没有旧焦点 NPC，不生成旧 NPC 交接台词。"
+      : `npcLine.npcId 必须是旧焦点 NPC ${focus.id}；这名 NPC 的最后一句必须自然引出「${context.objectiveTarget.entityName}」，不得把 npcLine 切换给新目标 NPC。`}
+      请用自然语言表达线索如何把玩家带向新目标，不要输出系统元话术；quest_advanced segment 的 referencedEntityIds 必须包含精确目标实体 ID ${context.objectiveTarget.entityId}。`
     : "";
+  const nonFocusDialogueContract = `非焦点 NPC 同步闲聊：${nonFocusNpcSection === "无"
+    ? "无非焦点 NPC，输出 npcDialogues=[]。"
+    : `为以下每个非焦点在场 NPC 各生成一条直接闲聊：${nonFocusNpcSection}。`}
+闲聊只用于零回合展示，不推进任务、不改变规则、不泄露私密事实、不创造当前上下文之外的人物地点证物；可以承接当前地点和公开身份，但不要抢先替焦点 NPC 回答主线。`;
   const genreContract = context.gameType === "wuxia"
     ? "题材锁定为武侠：对白和旁白只能使用江湖、门派、镖局、官府、山川、兵器、线索、武学语汇；不得出现魔法、巫师、精灵、骑士、幽灵/灵魂、祭坛、法阵、圣光、异界等奇幻或超自然词汇。"
     : `题材锁定为${context.gameType ?? "当前游戏"}，不得跨题材改写世界规则。`;
@@ -590,11 +636,12 @@ ${repairSection}
 目标=${objectiveSection}
 调查结果=${investigationSection}
 ${utteranceContract} ${handoffContract}
+${nonFocusDialogueContract}
 候选动作=${selectable.map(describeChoiceCandidate).join("；")}
-JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白","referencedEntityIds":["可选的服务端实体ID"]}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},"choices":[{"candidateId":"选项ID","label":"玩家行动"},{"candidateId":"另一选项ID","label":"玩家行动"}]${linearJsonField}}
+JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白","referencedEntityIds":["可选的服务端实体ID"]}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"npcDialogues":[{"npcId":"非焦点在场NPC ID","text":"一句到两句符合身份和当前场景的直接闲聊"}],"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},"choices":[{"candidateId":"选项ID","label":"玩家行动"},{"candidateId":"另一选项ID","label":"玩家行动"}]${linearJsonField}}
 ${segmentInstruction}
 ${atmosphereInstruction}
-NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。玩家只能被称为“${context.player.name}”，不得使用其他姓名、姓氏、代号或未经上下文批准的身份称呼。若有上一轮 NPC 原话，必须先直接承接其中的问题、信息或拒答，再补充本轮可核验线索或下一步；不得突然切换到无关案件。若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。任何具体地点、人物、时间、物品或证物，都必须能在主线剧情摘要、NPC 可说线索卡、场景可见事实或上一轮已引用事实中找到依据；如果没有依据，只能使用当前 objectiveLink/目标实体给出的下一步，不得自行补出新的核验细节。选项生成顺序：先完成 npcLine，再根据本轮 npcLine 的文本和 usedFactIds 生成 choices；上一轮选择只用于理解承接关系，不得直接复用为本轮可见选项。choices 的 candidateId 必须逐字使用上方候选动作中的两个不同 ID；候选动作只提供服务端合法的 candidateId 和动作语义，不提供可直接复用的自然语言选项。label 是玩家实际要说的话或动作，不要加“回应某人/追问某人”等前缀，不要机械复述 NPC 原话；动作选项必须用全角括号包裹。两个选项都要直接回应本轮 NPC 台词，并且至少一个要推进当前主线目标或核对 NPC 刚提供的事实，不能只输出“继续调查/相信/不相信”等脱离语境的态度。请依据主线剧情上下文、NPC 可说事实和本轮台词写出两句自然、具体、互不重复的玩家对白或动作。`;
+NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。玩家只能被称为“${context.player.name}”，不得使用其他姓名、姓氏、代号或未经上下文批准的身份称呼。若有上一轮 NPC 原话，必须先直接承接其中的问题、信息或拒答，再补充本轮可核验线索或下一步；不得突然切换到无关案件。若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。任何具体地点、人物、时间、物品或证物，都必须能在主线剧情摘要、NPC 可说事实卡、场景可见事实或上一轮已引用事实中找到依据；如果没有依据，只能使用当前 objectiveLink/目标实体给出的下一步，不得自行补出新的核验细节。非焦点 npcDialogues 中每条 text 必须是直接闲聊，不得包含任务推进、私密事实、动作旁白或通用兜底句。选项生成顺序：先完成 npcLine，再根据本轮 npcLine 的文本和 usedFactIds 生成 choices；上一轮选择只用于理解承接关系，不得直接复用为本轮可见选项。choices 的 candidateId 必须逐字使用上方候选动作中的两个不同 ID；候选动作只提供服务端合法的 candidateId 和动作语义，不提供可直接复用的自然语言选项。label 是玩家实际要说的话或动作，不要加“回应某人/追问某人”等前缀，不要机械复述 NPC 原话；动作选项必须用全角括号包裹。两个选项都要直接回应本轮 NPC 台词，并且至少一个要推进当前主线目标或核对 NPC 刚提供的事实，不能只输出“继续调查/相信/不相信”等脱离语境的态度。请依据主线剧情上下文、NPC 可说事实和本轮台词写出两句自然、具体、互不重复的玩家对白或动作。`;
   const allowedFactIds = focus === undefined
     ? []
     : [...new Set([

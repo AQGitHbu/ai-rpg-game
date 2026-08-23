@@ -34,6 +34,12 @@ export type ScenePerformanceNpcLine = {
   readonly usedInteractionActionIds: readonly string[];
 };
 
+/** 同一场景 API 为非焦点 NPC 生成的零回合闲聊台词。 */
+export type ScenePerformanceNpcDialogue = {
+  readonly npcId: string;
+  readonly text: string;
+};
+
 /** objectiveLink 必须与 ObjectiveTransition.after 一致（无 after 时必须为 null）。 */
 export type ScenePerformanceObjectiveLink = {
   readonly questId: string;
@@ -71,6 +77,8 @@ export type ScenePerformanceProposal = {
   readonly sceneId: string;
   readonly segments: readonly ScenePerformanceSegment[];
   readonly npcLine: ScenePerformanceNpcLine | null;
+  /** 由同一次 live scene API 生成的非焦点 NPC 台词，不创建回合。 */
+  readonly npcDialogues?: readonly ScenePerformanceNpcDialogue[];
   readonly objectiveLink: ScenePerformanceObjectiveLink | null;
   readonly choices: readonly [
     { readonly candidateId: string; readonly label: string },

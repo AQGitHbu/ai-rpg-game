@@ -583,9 +583,10 @@ export function projectGameSessionView(
     const usableSupplied = suppliedSpeechPages.length > 0 && !onlyLegacyGenericGreeting
       ? suppliedSpeechPages
       : null;
-    const speechSource = scene !== null && sceneLineNpcId === String(npc.id)
+    const inferredSpeechSource = scene !== null && sceneLineNpcId === String(npc.id)
       ? scene.source
       : "fallback";
+    const speechSource = supplied?.speechSource ?? inferredSpeechSource;
     const interactionCount = npc.memory.interactionHistory.length;
     // 非焦点 NPC 的零回合闲聊台词：参与过剧情且有权威目标 → 提醒；否则中性闲聊
     const idleLine = composeIdleNpcLine({

@@ -8,6 +8,7 @@ import type {
   NarrativeSceneState,
   PlayerNpcChatState,
 } from "./narrative";
+import { buildNpcDialoguePages } from "./narrative";
 import type { NarrativeGenerationFailure } from "./narrativeGenerationFailure";
 
 function canonicalResolvedEvent(): ResolvedEvent {
@@ -63,6 +64,24 @@ describe("NarrativeSceneState", () => {
     } satisfies NarrativeSceneState;
     expect(scene.choices).toHaveLength(2);
     expect(JSON.stringify(scene)).not.toContain("actionKey");
+  });
+
+  it("AI 生成的非焦点 NPC 台词保留 generated 来源，不走确定性 fallback", () => {
+    const dialogues = buildNpcDialoguePages([
+      { id: asNpcId("npc_1"), name: "老周", role: "茶摊老人" },
+      { id: asNpcId("npc_2"), name: "赵四", role: "客栈掌柜" },
+    ], {
+      focusNpcId: asNpcId("npc_1"),
+      focusSpeech: "旧案的线索我会说清楚。你去客栈找赵四，他见过那晚的来客。",
+      generatedNpcLines: new Map([
+        ["npc_2", "客官若是来打听旧案，先坐下喝口热茶。店里的出入我都记得几分。"],
+      ]),
+    });
+
+    expect(dialogues[0]?.speechSource).toBe("generated");
+    expect(dialogues[1]?.speechSource).toBe("generated");
+    expect(dialogues[1]?.speechPages.join("")).toContain("出入我都记得几分");
+    expect(dialogues[1]?.speechPages.join("")).not.toContain("有什么要问的");
   });
 });
 
