@@ -243,12 +243,11 @@ function NpcDialogueModal({
   gameType,
   busy,
   phase,
-  playerResponse,
   pendingPlayerResponse,
   pendingChoiceToken,
   resetInputNonce,
-  handoffChoice,
-  onHandoffChoice,
+  handoffAcknowledgement,
+  onAcknowledge,
   onSubmit,
   onClose,
 }: {
@@ -256,13 +255,12 @@ function NpcDialogueModal({
   readonly gameType: NewGameInput["gameType"];
   readonly busy: boolean;
   readonly phase: DialoguePhase;
-  readonly playerResponse?: string | null;
   readonly pendingPlayerResponse: string | null;
   readonly pendingChoiceToken: string | null;
   readonly resetInputNonce: number;
-  readonly handoffChoice?: PlayerChoiceView | null;
+  readonly handoffAcknowledgement?: Dialogue["handoffAcknowledgement"] | null;
   readonly onSubmit: (interaction: PlayerInteraction, playerResponse: string) => void;
-  readonly onHandoffChoice?: (choice: PlayerChoiceView) => void;
+  readonly onAcknowledge?: () => void;
   readonly onClose: () => void;
 }) {
   const [text, setText] = useState("");
@@ -323,11 +321,6 @@ function NpcDialogueModal({
             {dialogue.speechPages.map((page, index) => (
               <p key={`${dialogue.npcId}-${index}`} className="npc-dialogue-speech-text">{normalizeDisplayText(page)}</p>
             ))}
-            {playerResponse !== null && playerResponse !== undefined && (dialogue.choices.length > 0 || dialogue.freeInputEnabled) ? (
-              <p className="npc-dialogue-speech-text npc-dialogue-speech-text--player">
-                {normalizeDisplayText(playerResponse)}
-              </p>
-            ) : null}
             {pendingPlayerResponse !== null && pendingChoiceToken === null ? (
               <p className="npc-dialogue-speech-text npc-dialogue-speech-text--player">
                 {normalizeDisplayText(pendingPlayerResponse)}
@@ -425,20 +418,14 @@ function NpcDialogueModal({
                   </button>
                 ))}
               </div>
-            ) : playerResponse !== null && playerResponse !== undefined ? (
+            ) : handoffAcknowledgement !== null && handoffAcknowledgement !== undefined ? (
               <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
                 <button
                   type="button"
                   className="npc-dialogue-talk-cta"
-                  onClick={() => {
-                    if (handoffChoice !== null && handoffChoice !== undefined) {
-                      onHandoffChoice?.(handoffChoice);
-                    } else {
-                      onClose();
-                    }
-                  }}
+                  onClick={onAcknowledge ?? onClose}
                 >
-                  {normalizeDisplayText(playerResponse)}
+                  {normalizeDisplayText(handoffAcknowledgement.label)}
                 </button>
               </div>
             ) : (
@@ -810,24 +797,6 @@ export function LocationSceneScreen({
     onSubmit(interaction, "npc-dialogue");
   }
 
-  function handleHandoffChoice(choice: PlayerChoiceView): void {
-    if (choice.presentation === "dialogue") {
-      const matchingNpc = locationNpcs.find((npc) => npc.talkChoice?.choiceToken === choice.choiceToken);
-      const dialogue = matchingNpc === undefined ? undefined : allDialoguesMap.get(matchingNpc.npcId);
-      if (dialogue !== undefined) {
-        setOpenDialogueNpcId(dialogue.npcId);
-        setDialoguePhase("choice");
-        submittedDialogueRef.current = null;
-        return;
-      }
-      // 目标 NPC 尚未有可打开的正式场景时，只结束旧 NPC 的收尾展示；
-      // 不能把“打开对话”的 ask token 误提交成额外回合。
-      resetDialogue();
-      return;
-    }
-    submitDialogueInteraction({ kind: "fixed_choice", choiceToken: choice.choiceToken }, choice.label);
-  }
-
   if (view.battle !== null) {
     return (
       <BattleScene
@@ -954,17 +923,14 @@ export function LocationSceneScreen({
           dialogue={displayedDialogue}
           gameType={gameType}
           busy={busy || pending}
-          playerResponse={displayedDialogue.choices.length === 0 && !displayedDialogue.freeInputEnabled
-            ? displayedDialogue.handoffChoice?.label ?? handoffPlayerResponse
-            : null}
-          handoffChoice={displayedDialogue.choices.length === 0 && !displayedDialogue.freeInputEnabled
-            ? displayedDialogue.handoffChoice ?? currentObjectiveAction
+          handoffAcknowledgement={displayedDialogue.choices.length === 0 && !displayedDialogue.freeInputEnabled
+            ? displayedDialogue.handoffAcknowledgement ?? null
             : null}
           pendingPlayerResponse={dialogueUi.pendingPlayerResponse}
           pendingChoiceToken={dialogueUi.pendingChoiceToken}
           resetInputNonce={dialogueInputResetNonce}
           onSubmit={submitDialogueInteraction}
-          onHandoffChoice={handleHandoffChoice}
+          onAcknowledge={resetDialogue}
           phase={dialoguePhase}
           onClose={() => {
             resetDialogue();

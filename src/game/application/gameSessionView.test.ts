@@ -837,7 +837,7 @@ describe("projectGameSessionView", () => {
     expect(guest!.speechPages.join("")).toMatch(/^【fallback】/u);
   });
 
-  it("对话终句把唯一 scene choice 投影为旧 NPC 的 handoff，而不是‘知道了’", () => {
+  it("对话终句投影为本地 handoff acknowledgement，不铸造可提交 choice", () => {
     const scene = {
       sceneId: "scene-handoff",
       turn: 2,
@@ -845,6 +845,7 @@ describe("projectGameSessionView", () => {
       usedFactIds: [],
       npcLine: { npcId: npc1.id, text: "线索已经指向街道。你现在过去，就能赶上留下的痕迹。", emotion: "neutral" as const, usedFactIds: [] },
       choices: [{ choiceToken: "handoff-token", label: "我这就去核对。" }],
+      handoffAcknowledgement: "我这就去核对。",
       source: "generated" as const,
       event: { kind: "dialogue" as const, focusNpcId: npc1.id },
       npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["线索已经指向街道。你现在过去，就能赶上留下的痕迹。"] }],
@@ -861,9 +862,10 @@ describe("projectGameSessionView", () => {
     const view = projectGameSessionView(ws, story, 0, "test-ending-session");
     const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(npc1.id));
     expect(dialogue?.choices).toEqual([]);
-    expect(dialogue?.handoffChoice?.label).toBe("（我这就去核对。）");
+    expect(dialogue).toMatchObject({ handoffAcknowledgement: { label: "我这就去核对。" } });
+    expect((dialogue as unknown as { handoffChoice?: unknown } | undefined)?.handoffChoice).toBeUndefined();
     expect(view.narrative.choices).toEqual([]);
-    expect(dialogue?.handoffChoice?.label).not.toBe("知道了");
+    expect(view.story.currentObjectiveChoiceToken).toBeNull();
   });
 
   it("在 read model 统一标记 fallback 场景的旁白、NPC 台词和对白页", () => {

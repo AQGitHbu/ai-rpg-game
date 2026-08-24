@@ -169,6 +169,15 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.queryByRole("button", { name: "进入客栈" })).not.toBeInTheDocument();
   });
 
+  it("enters the current map node locally without submitting an action", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await user.click(screen.getByRole("button", { name: "客栈" }));
+
+    expect(screen.getByRole("region", { name: "地点场景：客栈" })).toBeInTheDocument();
+    expect(postAction).not.toHaveBeenCalled();
+  });
+
   it("forwards the server token for 前往街道 from the map", async () => {
     renderShell();
     await userEvent.click(screen.getByRole("button", { name: "前往街道" }));
@@ -176,6 +185,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       interaction: { kind: "fixed_choice", choiceToken: TOKENS.travel },
       revision: 9,
     });
+    expect(screen.queryByRole("dialog", { name: "正在编排下一幕……" })).not.toBeInTheDocument();
   });
 
   for (const [label, token] of [
@@ -469,9 +479,19 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(vi.mocked(postAction)).not.toHaveBeenCalled();
   });
 
-  it("shows the handoff travel choice as the player's final dialogue button", async () => {
+  it("closes a handoff acknowledgement locally without submitting or waiting", async () => {
     const playerResponse = "（（抱拳）多谢先生指点，那练刀场在断魂崖后山何处？我这就去瞧瞧。）";
     const onSubmit = vi.fn();
+    const onReturnMap = vi.fn();
+    const handoffDialogue = Object.assign({
+      npcId: "npc_chen",
+      name: "陈半仙",
+      role: "算命先生",
+      speechPages: ["断魂崖后山那片废弃的练刀场，夜里常有刀气破空。"],
+      choices: [],
+      freeInputEnabled: false,
+      giveChoices: [],
+    }, { handoffAcknowledgement: { label: playerResponse } });
     const handoffView: GameSessionView = {
       ...buildView(),
       story: {
@@ -488,15 +508,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
         ...buildView().narrative,
         eventKind: "dialogue",
         choices: [choice("c_handoff_move", playerResponse, "travel")],
-        npcDialogues: [{
-          npcId: "npc_chen",
-          name: "陈半仙",
-          role: "算命先生",
-          speechPages: ["断魂崖后山那片废弃的练刀场，夜里常有刀气破空。"],
-          choices: [],
-          freeInputEnabled: false,
-          giveChoices: [],
-        }],
+        npcDialogues: [handoffDialogue as unknown as GameSessionView["narrative"]["npcDialogues"][number]],
       },
     };
 
@@ -504,7 +516,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       view={handoffView}
       busy={false}
       onSubmit={onSubmit}
-      onReturnMap={vi.fn()}
+      onReturnMap={onReturnMap}
     />);
 
     const dialogue = screen.getByRole("dialog", { name: "与陈半仙对话" });
@@ -516,14 +528,13 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
 
     await userEvent.click(responseButton);
-    expect(onSubmit).toHaveBeenCalledWith(
-      { kind: "fixed_choice", choiceToken: "c_handoff_move" },
-      "npc-dialogue",
-    );
-    expect(screen.getByRole("status")).toHaveTextContent("正在等待陈半仙回应");
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status", { name: /等待.*回应/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "与陈半仙对话" })).not.toBeInTheDocument();
+    expect(onReturnMap).not.toHaveBeenCalled();
   });
 
-  it("keeps the old NPC's final line and exposes one dialogue handoff to the next target", async () => {
+  it("keeps the old NPC's final line and closes its acknowledgement locally", async () => {
     const base = buildView();
     const onSubmit = vi.fn();
     const initialView: GameSessionView = {
@@ -608,6 +619,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
             ...initialView.narrative.npcDialogues[0]!,
             speechPages: ["黑影往后巷医馆去了，老郎中或许知道那名伤者的来历。"],
             choices: [],
+            handoffAcknowledgement: { label: "知道了" },
             freeInputEnabled: false,
           }],
         },
@@ -623,11 +635,12 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     const dialogue = screen.getByRole("dialog", { name: "与赵铁嘴对话" });
     expect(dialogue).toHaveTextContent("黑影往后巷医馆去了");
-    const nextTargetButton = within(dialogue).getByRole("button", { name: "与老郎中交谈" });
-    expect(nextTargetButton).toBeInTheDocument();
-    await userEvent.click(nextTargetButton);
+    const acknowledgement = within(dialogue).getByRole("button", { name: "知道了" });
+    expect(acknowledgement).toBeInTheDocument();
+    await userEvent.click(acknowledgement);
     expect(screen.queryByRole("dialog", { name: "与赵铁嘴对话" })).not.toBeInTheDocument();
     expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("status", { name: /等待.*回应/ })).not.toBeInTheDocument();
   });
 
   it("keeps ordinary narrative pending modal while locking rule actions", () => {
@@ -1793,6 +1806,7 @@ describe("AdventureGameShell three-layer navigation", () => {
     // 小镇 → 世界地图
     await user.click(screen.getByRole("button", { name: "返回地图" }));
     expect(screen.getByRole("button", { name: "客栈" })).toBeInTheDocument();
+    expect(postAction).not.toHaveBeenCalled();
   });
 
   it("a scene-scale location continues map → scene directly", async () => {

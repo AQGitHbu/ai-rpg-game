@@ -33,13 +33,9 @@ export type NpcDialogueView = {
   readonly name: string;
   readonly role: string;
   readonly speechPages: readonly string[];
-  /**
-   * 契约：正式对话为 2 个批准选项；对话收尾为 0 个 choices + 1 个
-   * handoffChoice；非焦点闲聊为空数组且无 handoffChoice。
-   */
+  /** 正式对白收尾的本地确认句；不携带 choice token、action 或 revision。 */
+  readonly handoffAcknowledgement?: { readonly label: string };
   readonly choices: readonly PlayerChoiceView[];
-  /** 上一名 NPC 的最后一句对白对应的唯一合法下一步。 */
-  readonly handoffChoice?: PlayerChoiceView;
   readonly freeInputEnabled: boolean;
   /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
   readonly giveChoices: readonly { readonly itemName: string; readonly choice: PlayerChoiceView }[];
@@ -593,16 +589,17 @@ export function projectGameSessionView(
       presentation: presentationForAction(approved.action),
     };
   };
-  const projectedHandoffChoice = singleChoiceDialogueHandoff && scene?.choices[0] !== undefined
-    ? projectSceneChoice(scene.choices[0])
-    : null;
   const projectedSceneChoices = readyNarrative === null || staleDialogueFocus
     ? []
     : scene?.choices
       .map(projectSceneChoice)
       .filter((entry): entry is PlayerChoiceView => entry !== null) ?? [];
   const isDialogueScene = focusNpcId !== null;
-  const isSingleChoiceHandoff = projectedHandoffChoice !== null && sceneLineNpcId !== null;
+  const isSingleChoiceHandoff = singleChoiceDialogueHandoff && sceneLineNpcId !== null;
+  const projectedHandoffAcknowledgement = scene?.handoffAcknowledgement?.trim() === undefined
+    || scene.handoffAcknowledgement.trim() === ""
+    ? null
+    : { label: scene.handoffAcknowledgement };
   const dialogueChoices: NpcDialogueView["choices"] = handoffFocusNpc !== undefined
     ? handoffDialogueChoices(handoffFocusNpc, revision)
     : isDialogueScene && projectedSceneChoices.length === 2
@@ -658,8 +655,8 @@ export function projectGameSessionView(
       // 非焦点 NPC 是零回合闲聊：不提供任何可提交选项；正式对话只能经
       // 当前权威 talk 目标入口（交接双选项 / 行动栏目标交谈）开启。
       choices: isFocus ? dialogueChoices : [],
-      ...(isSingleChoiceHandoff && String(npc.id) === sceneLineNpcId
-        ? { handoffChoice: projectedHandoffChoice! }
+      ...(projectedHandoffAcknowledgement !== null && String(npc.id) === sceneLineNpcId
+        ? { handoffAcknowledgement: projectedHandoffAcknowledgement }
         : {}),
       freeInputEnabled: isFocus,
       giveChoices: isFocus
