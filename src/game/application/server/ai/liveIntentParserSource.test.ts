@@ -231,6 +231,24 @@ describe("createLiveIntentParser（AI 配置有效时的 live 源）", () => {
     }
   });
 
+  it("绑定焦点 NPC 时明确要求 AI 只能返回对话意图，避免把自由文本误判为移动", async () => {
+    let userPrompt = "";
+    const transport: LiveIntentTransport = {
+      async complete(_config, messages) {
+        userPrompt = messages.find((message) => message.role === "user")?.content ?? "";
+        return { ok: true, content: '{"dialogueAct":"ask"}' };
+      },
+    };
+    const live = createLiveIntentParser(transport);
+
+    const result = await live.parseIntent("我去西边看看", ctx, asNpcId("npc_1"));
+
+    expect(result.ok).toBe(true);
+    expect(userPrompt).toContain("目标 NPC 已由服务端绑定");
+    expect(userPrompt).toContain("只能返回 talk 对话意图");
+    expect(userPrompt).toContain("不得返回 type=move、type=take_item 或 type=explore");
+  });
+
   it("接受 fenced JSON 并记录规范化", async () => {
     const logger = { warn: vi.fn() };
     const live = createLiveIntentParser(

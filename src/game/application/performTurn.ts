@@ -123,11 +123,8 @@ export async function performTurn(
 
   if (command.interaction.kind === "free_text") {
     const focusedNpcId = focusedNpcForFreeText(record.worldState, record.storyState);
-    const intentInteraction = command.interaction.targetNpcId === undefined && focusedNpcId !== null
-      ? { ...command.interaction, targetNpcId: focusedNpcId as import("@/game/domain/worldEntity").NpcId }
-      : command.interaction;
     if (!intentProviderAllowedFor({
-      interaction: intentInteraction,
+      interaction: command.interaction,
       focusedNpcId: focusedNpcId as import("@/game/domain/worldEntity").NpcId | null,
     })) {
     return {

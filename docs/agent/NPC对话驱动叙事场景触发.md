@@ -11,7 +11,7 @@ NPC 对话是持续推进故事的主要入口。每个 ready 的焦点 NPC 场�
 - 任务面板中的 `talk_to_npc` 完成标记与两轮会话状态一致；NPC 的世界事实 `met` 只能表示已经接触过，不能提前把未完成的对白会话显示为完成。
 - 小镇建筑只负责进入建筑场景，不提交回合；地点行动栏中的明确 talk 行动只打开该 NPC 已预生成的 dialogue scene；行动栏与 `talkChoice` 只为当前权威 talk 目标铸造。焦点对话必须展示两个固定选择和一个自定义输入，只有选择或提交自定义输入才发起正式回合；点击 NPC 资料卡仍只查看信息，observe 场景中的 NPC 旁白不构成焦点对话。
 - 固定选择由服务器批准并以 opaque `choiceToken` 下发；客户端只显示 label/hint，不知道 Action 或 `actionKey`。
-- 自定义输入必须绑定当前焦点 NPC。每次提交生成新的浏览器 UUID，即使连续对同一 NPC 输入也分别计为独立回合。
+- 自定义输入必须绑定当前焦点 NPC。每次提交生成新的浏览器 UUID，即使连续对同一 NPC 输入也分别计为独立回合；即便原文包含地点或物品动作词，在该对话上下文中也必须作为对焦点 NPC 的 utterance 解析，不能切换为移动、取物或探索 Action。
 - 玩家输入表达意图，不声明事实。服务端意图解析器只能转换成当前受支持 Action；越权声明不能直接改变任务、知识、关系、物品、战斗或结局。
 - 每个成功输入都会推进 `turnNumber`、更新结构化 NPC 记忆/关系，并产生一个白名单内的 `PendingNarrativeJob`；服务端在规则写入成功后立即后台排队下一幕，不等待玩家再次点击或客户端 ensure 才开始生成。
 - 生产 provider 触发只允许开局 `opening` 与焦点 NPC 的正式 `npc_fixed_choice` / `npc_free_text` 分支。一次正式 NPC proposal 通过审批时，同时写入当前 scene 与到下一处正式 NPC 决策前的 `PreparedContinuationState`；移动、调查、物品、战斗边界和回退导航不得再调用 provider。

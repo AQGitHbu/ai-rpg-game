@@ -626,6 +626,27 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     expect(applyCalls()).toHaveLength(0);
   });
 
+  it("rejects a missing free-text target before intent classification and writes nothing", async () => {
+    let parserCalls = 0;
+    const parser: IntentParserSource = {
+      sourceVersion: "must-not-run",
+      async parseIntent() {
+        parserCalls += 1;
+        return { ok: false, reason: "unclassifiable" };
+      },
+    };
+    const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
+
+    const result = await performTurn(
+      { gameId: asGameId("g1"), actionId: "missing-target", interaction: { kind: "free_text", text: "我相信你" }, expectedRevision: 0, choiceMap: new Map() },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: parser },
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "ACTION_REJECTED" });
+    expect(parserCalls).toBe(0);
+    expect(applyCalls()).toHaveLength(0);
+  });
+
   it("keeps location-like text addressed to the focused NPC as dialogue", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 

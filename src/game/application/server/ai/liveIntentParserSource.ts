@@ -246,7 +246,12 @@ function buildUserPrompt(text: string, ctx: IntentContext, targetNpcId?: NpcId):
   const locNames = ctx.connectedLocations.map((l) => l.name).join("、") || "无";
   const itemNames = ctx.availableItems.map((i) => i.name).join("、") || "无";
   const topicRefs = ctx.topicRefs.map((r) => `${r.kind}:${String(r.id)}`).join("、") || "无";
-  const targetLine = targetNpcId !== undefined ? `目标NPC：${String(targetNpcId)}` : "无明确目标";
+  const targetLine = targetNpcId !== undefined
+    ? `目标NPC：${String(targetNpcId)}（目标 NPC 已由服务端绑定；只能返回 talk 对话意图，不得返回 type=move、type=take_item 或 type=explore。即使玩家文本包含地点或物品动作，也必须把原文视为对该 NPC 的 utterance。）`
+    : "无明确目标";
+  const outputContract = targetNpcId !== undefined
+    ? "返回严格 JSON：{\"dialogueAct\":\"ask|support|challenge|threaten|deceive|offer|refuse|reassure\",\"topic\":{\"kind\":\"fact|quest|thread|general\",\"factId\"|\"questId\"|\"threadId\":\"服务端ID\"},\"npcId\":\"目标NPC\"}"
+    : "返回严格 JSON：{\"dialogueAct\":\"ask|support|challenge|threaten|deceive|offer|refuse|reassure\",\"topic\":{\"kind\":\"fact|quest|thread|general\",\"factId\"|\"questId\"|\"threadId\":\"服务端ID\"},\"npcId\":\"目标NPC\"} 或 {\"type\":\"talk\"|\"move\"|\"take_item\"|\"explore\", ...}";
   return [
     `玩家输入：${text}`,
     targetLine,
@@ -254,7 +259,7 @@ function buildUserPrompt(text: string, ctx: IntentContext, targetNpcId?: NpcId):
     `可达地点：${locNames}`,
     `可用物品：${itemNames}`,
     `可引用主题（仅以下 ID，topic.kind/ID 必须原样使用其中之一）：${topicRefs}`,
-    "返回严格 JSON：{\"dialogueAct\":\"ask|support|challenge|threaten|deceive|offer|refuse|reassure\",\"topic\":{\"kind\":\"fact|quest|thread|general\",\"factId\"|\"questId\"|\"threadId\":\"服务端ID\"},\"npcId\":\"目标NPC\"} 或 {\"type\":\"talk\"|\"move\"|\"take_item\"|\"explore\", ...}",
+    outputContract,
   ].join("\n");
 }
 
