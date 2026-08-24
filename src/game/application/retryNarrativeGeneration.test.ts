@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, expect, it, vi } from "vitest";
 import { retryNarrativeGeneration } from "./retryNarrativeGeneration";
 import type { GameRecord, GameRepository } from "./server/persistence/gameRepository";
@@ -33,6 +34,8 @@ function makeJob(): PendingNarrativeJob {
     requestedAt: "2026-08-21T00:00:00.000Z",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: [],
+    generationKind: "npc_fixed_choice",
+    sceneRequestKind: "npc_response",
   };
 }
 
@@ -54,20 +57,28 @@ function makeRecord(status: "pending" | "failed" | "idle"): GameRecord {
     startingItemIds: [],
   });
   const job = makeJob();
-  const story = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
+  const story = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
   return {
     gameId,
     worldState,
     storyState: {
       ...story,
-      narrative: {
-        ...story.narrative,
-        generation: status === "idle"
-          ? { status: "idle" }
-          : status === "pending"
-            ? { status: "pending", job }
-            : { status: "failed", job, failure: { kind: "AI_CALL_FAILED", phase: "scene", failedAt: "2026-08-21T00:00:00.000Z" } },
-      },
+      narrative: status === "idle"
+        ? createFixtureNarrativeRuntimeState()
+        : status === "pending"
+          ? {
+              status: "provider_pending",
+              mode: "offline",
+              job,
+              lastPresentedScene: story.narrative.status === "ready" ? story.narrative.currentScene : null,
+            }
+          : {
+              status: "provider_failed",
+              mode: "offline",
+              job,
+              lastPresentedScene: story.narrative.status === "ready" ? story.narrative.currentScene : null,
+              failure: { kind: "AI_CALL_FAILED", phase: "scene", failedAt: "2026-08-21T00:00:00.000Z" },
+            },
     },
     revision: 3,
     createdAt: "2026-08-21T00:00:00.000Z",
@@ -81,13 +92,13 @@ function makeRepository(initial: GameRecord): { repository: GameRepository; reco
     replaceCurrentGame: vi.fn(),
     getCurrentGame: vi.fn(async () => ({ ok: true as const, status: "active" as const, record: current })),
     applyState: vi.fn(async (input) => {
-      const expected = input.expectedNarrativeGeneration;
-      const generation = current.storyState.narrative.generation;
+      const expected = input.expectedNarrativeJob;
+      const narrative = current.storyState.narrative;
       if (input.expectedRevision !== current.revision
         || (expected !== undefined
-          && (generation.status !== expected.status
-            || generation.status === "idle"
-            || String(generation.job.jobId) !== expected.jobId))) {
+          && (narrative.status !== expected.status
+            || narrative.status === "ready"
+            || String(narrative.job.jobId) !== expected.jobId))) {
         return { ok: false as const, code: "STALE_GAME_REVISION" as const };
       }
       current = {
@@ -113,10 +124,10 @@ describe("retryNarrativeGeneration", () => {
     expect(result).toEqual({ ok: true, result: "requeued", jobId: "job_retry" });
     expect(fixture.record().revision).toBe(before.revision);
     expect(fixture.record().worldState).toEqual(before.worldState);
-    expect(fixture.record().storyState.narrative.generation).toMatchObject({ status: "pending", job: { jobId: "job_retry" } });
+    expect(fixture.record().storyState.narrative).toMatchObject({ status: "provider_pending", job: { jobId: "job_retry" } });
     expect(vi.mocked(fixture.repository.applyState).mock.calls[0]?.[0]).toMatchObject({
       incrementRevision: false,
-      expectedNarrativeGeneration: { status: "failed", jobId: "job_retry" },
+      expectedNarrativeJob: { status: "provider_failed", jobId: "job_retry" },
     });
   });
 
@@ -129,7 +140,7 @@ describe("retryNarrativeGeneration", () => {
 
     expect(results.filter((result) => result.ok && result.result === "requeued")).toHaveLength(1);
     expect(results.filter((result) => !result.ok && result.code === "STALE_GAME_REVISION")).toHaveLength(1);
-    expect(fixture.record().storyState.narrative.generation.status).toBe("pending");
+    expect(fixture.record().storyState.narrative.status).toBe("provider_pending");
   });
 
   it("does not rewrite pending or idle generation", async () => {
@@ -142,5 +153,25 @@ describe("retryNarrativeGeneration", () => {
     expect(await retryNarrativeGeneration(idle.repository, gameId, () => "now"))
       .toEqual({ ok: true, result: "not_failed" });
     expect(idle.repository.applyState).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed failed job outside the provider whitelist without a CAS", async () => {
+    const failed = makeRecord("failed");
+    if (failed.storyState.narrative.status !== "provider_failed") throw new Error("failed fixture missing");
+    const forged: GameRecord = {
+      ...failed,
+      storyState: {
+        ...failed.storyState,
+        narrative: {
+          ...failed.storyState.narrative,
+          job: { ...failed.storyState.narrative.job, generationKind: "prepared_action" } as never,
+        },
+      },
+    };
+    const fixture = makeRepository(forged);
+
+    expect(await retryNarrativeGeneration(fixture.repository, gameId, () => "now"))
+      .toEqual({ ok: false, code: "AI_RESPONSE_INVALID" });
+    expect(fixture.repository.applyState).not.toHaveBeenCalled();
   });
 });

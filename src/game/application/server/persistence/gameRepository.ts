@@ -55,8 +55,8 @@ export type ApplyStateInput = {
    */
   readonly incrementRevision?: boolean;
   /** Optional state predicate for revision-preserving narrative status transitions. */
-  readonly expectedNarrativeGeneration?: {
-    readonly status: "pending" | "failed";
+  readonly expectedNarrativeJob?: {
+    readonly status: "provider_pending" | "provider_failed";
     readonly jobId: string;
   };
 };

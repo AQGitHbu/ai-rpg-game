@@ -202,15 +202,17 @@ describe("createGame", () => {
   it("prepares the opening NPC dialogue before the player submits a turn", async () => {
     const record = await createPersistedGame({ seed: "opening-dialogue", gameLength: "short" });
     const openingNpcId = record.worldState.npcs[0]!.id;
-    const generation = record.storyState.narrative.generation;
+    const generation = record.storyState.narrative;
 
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status !== "provider_pending") return;
     const job = generation.job;
     expect(job).toMatchObject({
       actionSummary: { kind: "talk", npcId: openingNpcId },
       focusNpcId: openingNpcId,
+      generationKind: "opening",
       resolvedEvent: { eventKind: "dialogue" },
+      sceneRequestKind: "opening",
     });
   });
 

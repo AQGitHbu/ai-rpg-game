@@ -10,6 +10,7 @@ import { classifyAiFailure, transportFailureCodeToCategory } from "../../aiGener
 import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
 import { compileWorldNarrativeContext } from "./narrativeContext";
 import type { NarrativePromptCompilation } from "./narrativeContext";
+import { parseStructuredJsonObject } from "@/game/core/json";
 
 // ---------------------------------------------------------------------------
 // WorldEvolution live source（Task 3）。
@@ -38,22 +39,6 @@ export const LIVE_WORLD_EVOLUTION_TIMEOUT_MS = RPG_AI_DEFAULT_POLICIES.world.tim
 // 同一 provider 的演化 JSON 也会先输出 reasoning_content；completion token 预算
 // 必须同时预留 reasoning 和完整提案正文空间，避免长度截断后的无效 proposal。
 export const LIVE_WORLD_EVOLUTION_MAX_TOKENS = RPG_AI_DEFAULT_POLICIES.world.maxTokens ?? 0;
-
-function parseJsonResponse(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    const match = text.match(/```json\s*([\s\S]*?)```/);
-    if (match) {
-      try {
-        return JSON.parse(match[1]);
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
-}
 
 const MAX_NAME = 40;
 const MAX_TEXT = 200;
@@ -369,14 +354,17 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
           logger?.warn("world_evolution_ai_failed", { code: result.code });
           return failWorld(transportFailureCodeToCategory(result.code));
         }
-          const parsed = parseJsonResponse(result.content);
-          if (parsed === null) {
+          const parsed = parseStructuredJsonObject(result.content);
+          if (!parsed.ok) {
             logger?.warn("world_evolution_invalid_json");
-            return failWorld("invalid_json", "invalid_json");
+            return parsed.reason === "root_not_object"
+              ? failWorld("invalid_schema", "invalid_schema")
+              : failWorld("invalid_json", "invalid_json");
           }
-          const rawProposal = typeof parsed === "object" && parsed !== null && "proposal" in parsed
-            ? (parsed as Record<string, unknown>).proposal
-            : parsed;
+          if (parsed.normalization === "json_fence") {
+            logger?.warn("world_evolution_json_fence_normalized");
+          }
+          const rawProposal = "proposal" in parsed.value ? parsed.value.proposal : parsed.value;
           const parsedResult = parseWorldDeltaProposal(rawProposal, ctx.worldState.generation.gameType);
           if (parsedResult !== null) {
             // 解析层修复/降级类别（不含任何事实正文，安全入日志）。

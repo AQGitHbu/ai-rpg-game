@@ -58,8 +58,8 @@ AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录�
 | --- | --- |
 | `kind` | `"story_text"` |
 | `context` | `AiTextAuditContext`（trigger 由动作类型派生） |
-| `source` | `"generated"` / `"fallback"` / `"deterministic"` |
-| `path` | `"normal"`（正常场景编排）/ `"prewarmed"`（战斗预热写回） |
+| `source` | `"generated"` / `"fixture"` / `"rule"` |
+| `path` | `"normal"`（provider 场景编排写回）；prepared/rule/fixture 消费不产生新的 `story_text` provider 调用 |
 | `scene` | 审批后的完整 `NarrativeSceneState` |
 | `visibleText` | 投影的玩家可见文本（narration/npcLine/npcDialogues/choices） |
 
@@ -70,7 +70,7 @@ AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录�
 | 字段 | 说明 |
 | --- | --- |
 | `purpose` | `opening_generation` / `intent_parsing` / `world_evolution` / `scene_performance` / `final_story_text` / `game_api` |
-| `trigger` | 稳定触发值（如 `talk_choice`、`free_text_dialogue`、`create_game`、`battle_prewarm`） |
+| `trigger` | 稳定触发值（如 `talk_choice`、`free_text_dialogue`、`create_game`、`move_action`、`battle_action`）；规则/prepared 消费不会新增 provider trigger |
 | `gameId` | 游戏 ID |
 | `traceId` | 请求追踪 ID |
 | `jobId` | 待处理叙事任务 ID |
@@ -127,7 +127,6 @@ AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录�
 | 战斗行动 | `battle_action` |
 | 确认序幕 | `ack_prologue_action` |
 | 自由形式 | `freeform_action` |
-| 战斗预热 | `battle_prewarm` |
 
 ## 安全排除项
 

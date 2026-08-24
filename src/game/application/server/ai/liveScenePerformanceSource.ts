@@ -6,11 +6,10 @@ import type {
   ScenePerformanceProposal,
   ScenePerformanceNpcDialogue,
   ScenePerformanceSegment,
-  LinearActionNarrative,
-  LinearActionNpcLine,
+  PreparedContinuationProposal,
 } from "../../sceneSource";
 import { sceneInvestigationResultFrom } from "../../sceneSource";
-import { isFinalDialogueHandoff, type SceneGenerationContext, type UpcomingObjectiveRef } from "../../sceneGenerationContext";
+import { isFinalDialogueHandoff, type SceneGenerationContext } from "../../sceneGenerationContext";
 import {
   buildSelectableSceneCandidates,
   formatSceneChoiceLabel,
@@ -31,6 +30,7 @@ import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./
 import type { ProviderJsonMode } from "./providerRequestOptions";
 import { compileSceneNarrativeContext } from "./narrativeContext";
 import type { NarrativePromptCompilation } from "./narrativeContext";
+import { parseStructuredJsonObject } from "@/game/core/json";
 
 // ---------------------------------------------------------------------------
 // live 场景表演源（Task 6，取代 liveSceneSource）。
@@ -65,26 +65,6 @@ export const LIVE_SCENE_TIMEOUT_MS = RPG_AI_DEFAULT_POLICIES.scene.timeoutMs;
 // 的 reasoning_content；completion token 预算必须同时容纳 reasoning 和最终正文，
 // 否则会得到 HTTP 200 但 message.content 为空的响应。
 export const LIVE_SCENE_MAX_TOKENS = RPG_AI_DEFAULT_POLICIES.scene.maxTokens ?? 0;
-
-type SceneJsonParseResult =
-  | { readonly ok: true; readonly value: unknown }
-  | { readonly ok: false; readonly reason: "invalid_json" };
-
-function parseJsonResponse(text: string): SceneJsonParseResult {
-  try {
-    return { ok: true, value: JSON.parse(text) };
-  } catch {
-    const match = text.match(/```json\s*([\s\S]*?)```/);
-    if (match) {
-      try {
-        return { ok: true, value: JSON.parse(match[1]) };
-      } catch {
-        return { ok: false, reason: "invalid_json" };
-      }
-    }
-    return { ok: false, reason: "invalid_json" };
-  }
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -127,11 +107,12 @@ export type ScenePerformanceParseFailureReason =
   | "npc_line_invalid_shape"
   | "npc_line_unusable"
   | "npc_dialogues_invalid"
-  | "linear_arrival_npc_line_invalid"
   | "objective_link_invalid_shape"
   | "objective_link_invalid_fields"
   | "choices_invalid"
-  | "choices_stale_template";
+  | "choices_stale_template"
+  | "handoff_acknowledgement_invalid"
+  | "prepared_continuations_invalid";
 
 export type ScenePerformanceParseResult =
   | { readonly ok: true; readonly proposal: ScenePerformanceProposal }
@@ -187,9 +168,8 @@ export function resolveLiveNpcLine<TNpcId>(
 export function resolvePerformanceChoices(
   selectable: readonly SceneChoiceCandidate[],
   selected: unknown,
-  allowSingle = false,
+  expectedCount = 2,
 ): ScenePerformanceProposal["choices"] | null {
-  const expectedCount = allowSingle ? 1 : 2;
   if (!Array.isArray(selected) || selected.length !== expectedCount) return null;
   const parsed = selected as readonly unknown[];
   const resolved: Array<{ readonly candidateId: string; readonly label: string }> = [];
@@ -208,124 +188,107 @@ export function resolvePerformanceChoices(
   return resolved;
 }
 
-/**
- * 解析/校验 AI 返回的 linearActionNarratives（Task 1）：actionKind/factId/locationId/
- * narration 逐字段校验，引用必须命中 context.upcomingLinearObjectives 的权威实体；
- * 非法条目被忽略，合法条目继续进入队列，不让一条多余的行动叙事吞掉合法预生成结果。
- */
-type LinearActionNarrativeParseResult = {
-  readonly narratives: readonly LinearActionNarrative[];
-  readonly ignoredCount: number;
-} | { readonly requiredArrivalNpcLineInvalid: true };
-
-function parseLinearArrivalNpcLine(
+/** Parse the provider's natural-language seed for each server-authored descriptor. */
+function parsePreparedNpcLine(
   rawValue: unknown,
-  arrivalNpc: NonNullable<Extract<UpcomingObjectiveRef, { kind: "visit_location" }>["arrivalNpc"]>,
-): LinearActionNpcLine | null {
+  descriptor: NonNullable<SceneGenerationContext["preparedStepDescriptors"]>[number],
+): ScenePerformanceProposal["npcLine"] | null {
+  if (rawValue === null) return null;
   if (!isRecord(rawValue)
     || typeof rawValue.npcId !== "string"
-    || rawValue.npcId.trim() !== String(arrivalNpc.id)
-    || typeof rawValue.text !== "string") {
-    return null;
-  }
-  const text = normalizeNpcSpeech(rawValue.text, arrivalNpc.name);
-  if (text === ""
-    || !hasDialogicContinuation(text)
-    || isGenericNpcAcknowledgement(text)
-    || isGenericNpcGreeting(text)
-    || isGenericNpcInquiry(text)) {
-    return null;
-  }
-  const usedFactIds = rawValue.usedFactIds === undefined
-    ? []
-    : Array.isArray(rawValue.usedFactIds)
-      ? strArray(rawValue.usedFactIds)
-      : null;
-  if (usedFactIds === null) return null;
-  if (Array.isArray(rawValue.usedFactIds) && usedFactIds.length !== rawValue.usedFactIds.length) return null;
-  const allowedFactIds = new Set([
-    ...arrivalNpc.knownFactCards.map((fact) => String(fact.factId)),
-    ...arrivalNpc.sceneVisibleFactIds.map(String),
-  ]);
+    || typeof rawValue.text !== "string"
+    || rawValue.text.trim() === "") return null;
+  if (descriptor.arrivalNpc === undefined || rawValue.npcId !== String(descriptor.arrivalNpc.id)) return null;
+  const text = normalizeNpcSpeech(rawValue.text, descriptor.arrivalNpc.name);
+  if (text === "" || !hasDialogicContinuation(text)) return null;
+  const usedFactIds = strArray(rawValue.usedFactIds);
+  const allowedFactIds = new Set(descriptor.authority.visibleFactIds.map(String));
   if (usedFactIds.some((factId) => !allowedFactIds.has(factId))) return null;
   const emotion = NARRATIVE_EMOTIONS.includes(rawValue.emotion as NarrativeEmotion)
-    ? (rawValue.emotion as NarrativeEmotion)
+    ? rawValue.emotion as NarrativeEmotion
     : "neutral";
   return {
-    npcId: String(arrivalNpc.id),
+    npcId: String(descriptor.arrivalNpc.id),
     text,
     emotion,
+    answeredBeatIds: strArray(rawValue.answeredBeatIds),
     usedFactIds,
+    usedInteractionActionIds: strArray(rawValue.usedInteractionActionIds),
   };
 }
 
-function parseLinearActionNarratives(
+function parsePreparedContinuations(
   rawValue: unknown,
   context: SceneGenerationContext,
-): LinearActionNarrativeParseResult | undefined {
-  if (!Array.isArray(rawValue)) return undefined;
-  const upcoming = context.upcomingLinearObjectives ?? [];
-  const narratives: LinearActionNarrative[] = [];
-  let ignoredCount = 0;
-  for (const entry of rawValue) {
-    if (!isRecord(entry)) {
-      ignoredCount += 1;
-      continue;
+): readonly PreparedContinuationProposal[] | null {
+  const descriptors = context.preparedStepDescriptors ?? [];
+  if (!Array.isArray(rawValue) || rawValue.length !== descriptors.length) return null;
+  const descriptorById = new Map(descriptors.map((descriptor) => [descriptor.stepId, descriptor]));
+  const seen = new Set<string>();
+  const result: PreparedContinuationProposal[] = [];
+  for (const rawStep of rawValue) {
+    if (!isRecord(rawStep) || typeof rawStep.stepId !== "string" || seen.has(rawStep.stepId)) return null;
+    const descriptor = descriptorById.get(rawStep.stepId);
+    if (descriptor === undefined) return null;
+    if (!Array.isArray(rawStep.segments) || rawStep.segments.length === 0) return null;
+    const segments: ScenePerformanceSegment[] = [];
+    for (const rawSegment of rawStep.segments) {
+      if (!isRecord(rawSegment)
+        || typeof rawSegment.beatId !== "string"
+        || rawSegment.beatId.trim() === ""
+        || typeof rawSegment.text !== "string"
+        || rawSegment.text.trim() === "") return null;
+      const referencedEntityIds = parseReferencedEntityIds(rawSegment.referencedEntityIds, context);
+      segments.push({
+        beatId: rawSegment.beatId,
+        text: rawSegment.text.trim(),
+        ...(referencedEntityIds === undefined || referencedEntityIds.length === 0 ? {} : { referencedEntityIds }),
+      });
     }
-    if (typeof entry.narration !== "string" || entry.narration.trim() === "") {
-      ignoredCount += 1;
-      continue;
+    if (!Array.isArray(rawStep.choices) || rawStep.choices.length !== descriptor.choiceCandidates.length) return null;
+    const candidateIds = new Set(descriptor.choiceCandidates.map((candidate) => candidate.candidateId));
+    const choices: Array<{ readonly candidateId: string; readonly label: string }> = [];
+    const seenCandidates = new Set<string>();
+    for (const rawChoice of rawStep.choices) {
+      if (!isRecord(rawChoice)
+        || typeof rawChoice.candidateId !== "string"
+        || typeof rawChoice.label !== "string"
+        || rawChoice.label.trim() === ""
+        || !candidateIds.has(rawChoice.candidateId)
+        || seenCandidates.has(rawChoice.candidateId)) return null;
+      seenCandidates.add(rawChoice.candidateId);
+      const candidate = descriptor.choiceCandidates.find((entry) => entry.candidateId === rawChoice.candidateId);
+      if (candidate === undefined) return null;
+      choices.push({
+        candidateId: candidate.candidateId,
+        label: formatSceneChoiceLabel(candidate.action, rawChoice.label.trim()),
+      });
     }
-    if (entry.actionKind === "investigate") {
-      if (typeof entry.factId !== "string") {
-        ignoredCount += 1;
-        continue;
-      }
-      if (!upcoming.some((ref) => ref.kind === "discover_fact" && String(ref.factId) === entry.factId)) {
-        ignoredCount += 1;
-        continue;
-      }
-      narratives.push({ actionKind: "investigate", factId: entry.factId, narration: entry.narration.trim() });
-      continue;
+    let objectiveLink: PreparedContinuationProposal["objectiveLink"] = null;
+    if (rawStep.objectiveLink !== null && rawStep.objectiveLink !== undefined) {
+      if (!isRecord(rawStep.objectiveLink)
+        || typeof rawStep.objectiveLink.questId !== "string"
+        || typeof rawStep.objectiveLink.objectiveIndex !== "number"
+        || !["hint", "progress", "handoff"].includes(rawStep.objectiveLink.mode as string)) return null;
+      objectiveLink = {
+        questId: rawStep.objectiveLink.questId,
+        objectiveIndex: rawStep.objectiveLink.objectiveIndex,
+        mode: rawStep.objectiveLink.mode as "hint" | "progress" | "handoff",
+      };
     }
-    if (entry.actionKind === "move") {
-      if (typeof entry.locationId !== "string") {
-        ignoredCount += 1;
-        continue;
-      }
-      if (!upcoming.some((ref) => ref.kind === "visit_location" && String(ref.locationId) === entry.locationId)) {
-        ignoredCount += 1;
-        continue;
-      }
-      const ref = upcoming.find((candidate) =>
-        candidate.kind === "visit_location" && String(candidate.locationId) === entry.locationId,
-      );
-      if (ref === undefined) {
-        ignoredCount += 1;
-        continue;
-      }
-      if (ref !== undefined && ref.kind === "visit_location" && ref.arrivalNpc !== undefined) {
-        const arrivalNpcLine = parseLinearArrivalNpcLine(entry.arrivalNpcLine, ref.arrivalNpc);
-        if (arrivalNpcLine === null) return { requiredArrivalNpcLineInvalid: true };
-        narratives.push({
-          actionKind: "move",
-          locationId: entry.locationId,
-          narration: entry.narration.trim(),
-          arrivalNpcLine,
-        });
-      } else {
-        narratives.push({
-          actionKind: "move",
-          locationId: entry.locationId,
-          narration: entry.narration.trim(),
-        });
-      }
-      continue;
-    }
-    ignoredCount += 1;
+    const npcLine = parsePreparedNpcLine(rawStep.npcLine, descriptor);
+    if (rawStep.npcLine !== null && npcLine === null) return null;
+    seen.add(rawStep.stepId);
+    result.push({
+      stepId: descriptor.stepId,
+      segments,
+      npcLine,
+      objectiveLink,
+      choices,
+      source: "generated",
+    });
   }
-  if (narratives.length === 0 && ignoredCount === 0) return undefined;
-  return { narratives, ignoredCount };
+  return result;
 }
 
 /**
@@ -379,7 +342,7 @@ export function parseScenePerformanceJson(
   raw: unknown,
   context: SceneGenerationContext,
   selectable: readonly SceneChoiceCandidate[],
-  logger?: Pick<GameLogger, "warn">,
+  _logger?: Pick<GameLogger, "warn">,
 ): ScenePerformanceParseResult {
   if (!isRecord(raw)) return { ok: false, reason: "root_not_object" };
 
@@ -455,10 +418,11 @@ export function parseScenePerformanceJson(
   const currentLineSelectable = npcLine === null
     ? selectable
     : buildSelectableSceneCandidates(context, npcLine);
+  const finalDialogueHandoff = isFinalDialogueHandoff(context);
   const choices = resolvePerformanceChoices(
     currentLineSelectable,
     raw.choices,
-    isFinalDialogueHandoff(context),
+    finalDialogueHandoff ? 0 : 2,
   );
   if (choices === null) return { ok: false, reason: "choices_invalid" };
   if (
@@ -471,36 +435,20 @@ export function parseScenePerformanceJson(
     return { ok: false, reason: "choices_stale_template" };
   }
 
-  // 单线行动预生成叙事：非法条目局部忽略，绝不阻塞主场景解析/审批。
-  let linearActionNarratives: ScenePerformanceProposal["linearActionNarratives"];
-  const requiredArrivalNpc = (context.upcomingLinearObjectives ?? [])
-    .find((ref) => ref.kind === "visit_location" && ref.arrivalNpc !== undefined);
-  if (requiredArrivalNpc !== undefined
-    && (!Array.isArray(raw.linearActionNarratives) || raw.linearActionNarratives.length === 0)) {
-    return { ok: false, reason: "linear_arrival_npc_line_invalid" };
+  const handoffAcknowledgement = raw.handoffAcknowledgement === undefined
+    ? undefined
+    : typeof raw.handoffAcknowledgement === "string" && raw.handoffAcknowledgement.trim() !== ""
+      ? raw.handoffAcknowledgement.trim()
+      : null;
+  if (handoffAcknowledgement === null || (finalDialogueHandoff && handoffAcknowledgement === undefined)) {
+    return { ok: false, reason: "handoff_acknowledgement_invalid" };
   }
-  if (raw.linearActionNarratives !== undefined && raw.linearActionNarratives !== null) {
-    const parsed = parseLinearActionNarratives(raw.linearActionNarratives, context);
-    if (parsed !== undefined) {
-      if ("requiredArrivalNpcLineInvalid" in parsed) {
-        return { ok: false, reason: "linear_arrival_npc_line_invalid" };
-      }
-      if (parsed.ignoredCount > 0) {
-        logger?.warn("linear_narrative_entries_ignored", {
-          sceneId: `scene-${context.job.jobId}`,
-          ignoredCount: parsed.ignoredCount,
-          acceptedCount: parsed.narratives.length,
-        });
-      }
-      if (requiredArrivalNpc !== undefined
-        && !parsed.narratives.some((entry) =>
-          entry.actionKind === "move" && entry.arrivalNpcLine !== undefined,
-        )) {
-        return { ok: false, reason: "linear_arrival_npc_line_invalid" };
-      }
-      if (parsed.narratives.length > 0) linearActionNarratives = parsed.narratives;
-    }
-  }
+  const descriptors = context.preparedStepDescriptors ?? [];
+  const preparedRaw = raw.preparedContinuations === undefined && descriptors.length === 0
+    ? []
+    : raw.preparedContinuations;
+  const preparedContinuations = parsePreparedContinuations(preparedRaw, context);
+  if (preparedContinuations === null) return { ok: false, reason: "prepared_continuations_invalid" };
 
   return {
     ok: true,
@@ -511,7 +459,8 @@ export function parseScenePerformanceJson(
       ...(npcDialogues === undefined ? {} : { npcDialogues }),
       objectiveLink,
       choices,
-      ...(linearActionNarratives === undefined ? {} : { linearActionNarratives }),
+      ...(handoffAcknowledgement === undefined ? {} : { handoffAcknowledgement }),
+      preparedContinuations,
       source: "generated",
     },
   };
@@ -526,7 +475,6 @@ export function parseScenePerformanceJson(
 /** live 场景表演源：AI 提案 → 纯解析/校验 → 失败返回稳定 typed failure，不调用 deterministic source。 */
 export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps): SceneSource {
   const { transport, config, logger, jsonMode } = deps;
-  const maxContentRepairAttempts = 1;
   const aiClient = deps.aiClient ?? (transport && config
     ? createRpgAiClient({
       transport,
@@ -536,7 +484,9 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
     })
     : undefined);
 
-  const failScene = (category: Parameters<typeof classifyAiFailure>[0]["category"]): SceneSourceResult => {
+  const failScene = (
+    category: Parameters<typeof classifyAiFailure>[0]["category"],
+  ): Extract<SceneSourceResult, { readonly ok: false }> => {
     const failure: AiGenerationFailure = classifyAiFailure({ phase: "scene", category });
     logger?.warn("scene_generation_failed", { category, kind: failure.kind });
     return { ok: false, failure };
@@ -554,63 +504,31 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
           { role: "user", content: `当前回合：${context.job.actionId}（${context.job.actionSummary.kind}）` },
         ];
 
-        // 场景生成位于每个玩家回合的必经等待界面。瞬态网络失败由统一 client
-        // 按角色策略重试；解析/契约失败则最多再发起一次带失败原因的内容修复，
-        // 修复仍失败时返回稳定 typed failure，不降级到 deterministic scene。
+        // 场景 source 只负责一次 provider attempt。transport retry 属于
+        // RpgAiClient；内容修复预算与审批重试属于上层 use case。
         const result = await aiClient.complete("scene", messages, {
           purpose: "scene_performance",
           trigger: context.auditTrigger ?? `${context.job.actionSummary.kind}_action`,
           ...(context.auditLink ?? {}),
           action: context.job.actionSummary,
           narrativeContext: compilation.manifest,
-          // Task 5：内容修复写入结构化 retry（origin 沿用调用方来源），历史
-          // repair 字段仅作只读兼容，不再写入新事件。
-          ...(context.repairAttempt === undefined
-            ? {}
-            : {
-                retry: {
-                  origin: context.auditLink?.retry?.origin ?? "normal",
-                  mechanism: "content_repair" as const,
-                  attempt: context.repairAttempt.attempt,
-                  reason: context.repairAttempt.reason,
-                },
-              }),
         });
         if (!result.ok) {
           logger?.warn("scene_generation_ai_failed", { code: result.code });
-          // empty_response 没有可解析内容，RpgAiClient 不会重复相同请求；
-          // 这里允许一次带修复指令的内容重试，仍为空才返回 typed failure。
-          const repairAttempt = context.repairAttempt?.attempt ?? 0;
-          if (result.code === "empty_response" && repairAttempt < maxContentRepairAttempts) {
-            logger?.warn("scene_generation_content_retry", {
-              reason: result.code,
-              attempt: repairAttempt + 1,
-            });
-            return generateSceneInner({
-              ...context,
-              repairAttempt: { attempt: repairAttempt + 1, reason: result.code },
-            });
-          }
-          return failScene(transportFailureCodeToCategory(result.code));
+          return result.code === "empty_response"
+            ? { ...failScene(transportFailureCodeToCategory(result.code)), repairReason: "empty_response" }
+            : failScene(transportFailureCodeToCategory(result.code));
         }
 
-        const parsed = parseJsonResponse(result.content);
+        const parsed = parseStructuredJsonObject(result.content);
+        if (parsed.ok && parsed.normalization === "json_fence") {
+          logger?.warn("scene_generation_json_fence_normalized");
+        }
         const parseResult = parsed.ok
           ? parseScenePerformanceJson(parsed.value, context, selectable, logger)
           : parsed;
         if (parseResult.ok) {
-          const proposal = markContentRepairAttempt(parseResult.proposal, context);
-          return { ok: true, proposal };
-        }
-
-        const repairAttempt = context.repairAttempt?.attempt ?? 0;
-        if (repairAttempt < maxContentRepairAttempts) {
-          const reason = parsed.ok ? parseResult.reason : "invalid_json";
-          logger?.warn("scene_generation_content_retry", { reason, attempt: repairAttempt + 1 });
-          return generateSceneInner({
-            ...context,
-            repairAttempt: { attempt: repairAttempt + 1, reason },
-          });
+          return { ok: true, proposal: parseResult.proposal };
         }
 
         logger?.warn("scene_generation_invalid_data", {
@@ -619,7 +537,9 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
             ? sceneResponseShape(parsed.value)
             : { object: false, kind: "invalid_json" }),
         });
-          return failScene(parsed.ok ? "invalid_schema" : "invalid_json");
+          return parsed.ok
+            ? { ...failScene("invalid_schema"), repairReason: "invalid_schema" }
+            : { ...failScene("invalid_json"), repairReason: "invalid_json" };
       } catch (error) {
         logger?.error("scene_generation_error", { error: error instanceof Error ? error.message : "unknown" });
         return failScene("unknown");
@@ -638,15 +558,6 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
   };
 
   return { generateScene };
-}
-
-function markContentRepairAttempt(
-  proposal: ScenePerformanceProposal,
-  context: SceneGenerationContext,
-): ScenePerformanceProposal {
-  return context.repairAttempt === undefined
-    ? proposal
-    : { ...proposal, contentRepairAttempt: context.repairAttempt.attempt };
 }
 
 /** Compatibility entry point for prompt-only callers and existing fixtures. */

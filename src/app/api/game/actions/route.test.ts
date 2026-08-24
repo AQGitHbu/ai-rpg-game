@@ -59,6 +59,22 @@ describe("POST /api/game/actions", () => {
   });
 
   it.each([
+    { code: "NARRATIVE_CONTINUATION_MISSING", status: 409 },
+    { code: "NARRATIVE_CONTINUATION_INVALID", status: 500 },
+  ])("maps $code to its stable HTTP status", async ({ code, status }) => {
+    mocks.performTurn.mockResolvedValue({ ok: false, code, feedback: "stable failure" });
+
+    const response = await POST(request({
+      actionId: ACTION_ID,
+      interaction: { kind: "fixed_choice", choiceToken: "opaque-token" },
+      expectedRevision: 7,
+    }));
+
+    expect(response.status).toBe(status);
+    expect(await response.json()).toMatchObject({ ok: false, code });
+  });
+
+  it.each([
     { actionId: ACTION_ID, expectedRevision: 0, interaction: { kind: "unknown" } },
     { actionId: ACTION_ID, expectedRevision: 0, interaction: { kind: "free_text", text: "你好" } },
     { actionId: ACTION_ID, expectedRevision: 0, interaction: { kind: "free_text", text: "", targetNpcId: "npc_1" } },

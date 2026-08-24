@@ -105,7 +105,7 @@ export function parseActionRequest(body: unknown): ActionRequestResult {
  * canonical 错误 → HTTP 状态映射（Spec §16.3）：
  * - 400 输入非法；404 无活动存档；409 stale revision；
  * - 422 行动被规则拒绝（含未知选项）；503 基础设施/AI 暂不可用；
- * - 500 损坏存档或未分类内部错误。
+ * - 500 损坏存档、失效预备叙事图或未分类内部错误。
  */
 export function httpStatusForCode(code: string | undefined): number {
   switch (code) {
@@ -114,6 +114,7 @@ export function httpStatusForCode(code: string | undefined): number {
     case "NO_ACTIVE_GAME":
       return 404;
     case "STALE_GAME_REVISION":
+    case "NARRATIVE_CONTINUATION_MISSING":
       return 409;
     case "UNKNOWN_CHOICE":
     case "ACTION_REJECTED":
@@ -124,6 +125,8 @@ export function httpStatusForCode(code: string | undefined): number {
       return 503;
     case "AI_RESPONSE_INVALID":
       return 502;
+    case "NARRATIVE_CONTINUATION_INVALID":
+      return 500;
     case "AI_GENERATION_FAILED":
       return 503;
     default:

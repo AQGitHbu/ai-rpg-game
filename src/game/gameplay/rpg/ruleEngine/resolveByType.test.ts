@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { resolveByType, autoResolveCurrentInvestigation } from "./resolveByType";
 import { updateStoryMetrics } from "./updateStoryMetrics";
@@ -290,7 +291,7 @@ describe("resolveByType — investigate approaches", () => {
   }
 
   function storyWithDiscoverFact(): StoryState {
-    return createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 1, events: 0 } });
+    return createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 1, events: 0 } });
   }
 
   it("records clean versus noisy evidence and applies the declared tension cost", () => {
@@ -366,7 +367,7 @@ describe("autoResolveCurrentInvestigation", () => {
   }
 
   function storyWithDiscoverFact(): StoryState {
-    return createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 1, events: 0 } });
+    return createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 1, events: 0 } });
   }
 
   it("automatically discovers an approach-less fact at a reveal boundary without exposing a player action", () => {

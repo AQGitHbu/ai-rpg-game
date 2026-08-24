@@ -5,10 +5,12 @@ import {
   playTurn,
   playIssuedChoice,
   advanceScene,
+  loadGameView,
   loadWorldState,
   loadStoryState,
   type InMemoryRepo,
 } from "./foundationJourney.testutil";
+import { readyScene } from "@/game/domain/narrativeTestFixture.testutil";
 
 // ---------------------------------------------------------------------------
 // Step 1：动态具象化旅程。
@@ -81,13 +83,16 @@ describe("动态具象化旅程（Step 1）", () => {
     expect(ws?.quests.length).toBeGreaterThanOrEqual(2);
     expect(ss?.currentAct).toBe(2);
     const sceneRecord = store.record();
-    const sceneNarration = sceneRecord?.storyState.narrative.currentScene?.narration ?? "";
+    const sceneNarration = sceneRecord === null ? "" : readyScene(sceneRecord.storyState).narration;
     expect(sceneNarration).not.toContain("传讯人·2");
     expect(ss?.reveal).toEqual({ questId: "quest_dyn_1", visibleObjectiveIndex: 0 });
     expect(ws?.unlockedLocationIds).toContain("loc_dyn_1");
-    const handoffScene = sceneRecord?.storyState.narrative.currentScene;
+    const handoffScene = sceneRecord === null ? null : readyScene(sceneRecord.storyState);
     expect(handoffScene?.event?.kind).toBe("observe");
-    expect(handoffScene?.choices.some((choice) => choice.label.includes("延伸之地·2"))).toBe(true);
+    expect(handoffScene?.choices).toEqual([]);
+    const handoffView = await loadGameView(store.repo);
+    expect(handoffView.worldMap.locations.find((location) => location.name === "延伸之地·2")?.travelChoice?.label)
+      .toContain("前往延伸之地·2");
     expect(ws?.eventLedger.some((event) => event.type === "blueprint_expanded")).toBe(true);
 
     await fixed("延伸之地·2"); // 4: 前往新地点，释放 NPC

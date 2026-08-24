@@ -1,10 +1,11 @@
 import type { GameId } from "./server/persistence/gameRepository";
 import type { GameRepository } from "./server/persistence/gameRepository";
 import { commitState } from "./stateCommit";
+import { providerAllowedFor } from "@/game/gameplay/rpg/narrativeExecution";
 
 export type RetryNarrativeGenerationResult =
   | { readonly ok: true; readonly result: "requeued" | "already_pending" | "not_failed"; readonly jobId?: string }
-  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "INFRASTRUCTURE_FAILURE" };
+  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "AI_RESPONSE_INVALID" | "INFRASTRUCTURE_FAILURE" };
 
 /** Restore the same failed job to pending with a revision-preserving CAS. */
 export async function retryNarrativeGeneration(
@@ -18,11 +19,14 @@ export async function retryNarrativeGeneration(
   if (current.status === "corrupt") return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
   if (current.record.gameId !== gameId) return { ok: false, code: "STALE_GAME_REVISION" };
 
-  const generation = current.record.storyState.narrative.generation;
-  if (generation.status === "pending") {
+  const generation = current.record.storyState.narrative;
+  if (generation.status === "provider_pending") {
     return { ok: true, result: "already_pending", jobId: String(generation.job.jobId) };
   }
-  if (generation.status !== "failed") return { ok: true, result: "not_failed" };
+  if (generation.status !== "provider_failed") return { ok: true, result: "not_failed" };
+  if (!providerAllowedFor(generation.job.generationKind)) {
+    return { ok: false, code: "AI_RESPONSE_INVALID" };
+  }
 
   const committed = await commitState(repository, {
     gameId,
@@ -31,12 +35,15 @@ export async function retryNarrativeGeneration(
     nextStoryState: {
       ...current.record.storyState,
       narrative: {
-        ...current.record.storyState.narrative,
-        generation: { status: "pending", job: generation.job },
+        status: "provider_pending",
+        mode: generation.mode,
+        job: generation.job,
+        lastPresentedScene: generation.lastPresentedScene,
+        ...(generation.dialogueSession === undefined ? {} : { dialogueSession: generation.dialogueSession }),
       },
     },
     incrementRevision: false,
-    expectedNarrativeGeneration: { status: "failed", jobId: String(generation.job.jobId) },
+    expectedNarrativeJob: { status: "provider_failed", jobId: String(generation.job.jobId) },
   });
   if (!committed.ok) return { ok: false, code: committed.code };
   return { ok: true, result: "requeued", jobId: String(generation.job.jobId) };

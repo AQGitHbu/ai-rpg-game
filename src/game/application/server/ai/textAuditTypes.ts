@@ -159,8 +159,8 @@ export type AiTextAuditPayload =
   | {
       readonly kind: "story_text";
       readonly context: AiTextAuditContext;
-      readonly source: "generated" | "fallback" | "deterministic";
-      readonly path?: "normal" | "prewarmed";
+      readonly source: "generated" | "fixture" | "rule" | "deterministic";
+      readonly path?: "normal";
       readonly scene?: unknown;
       readonly visibleText: unknown;
       readonly qualityWarnings?: readonly string[];

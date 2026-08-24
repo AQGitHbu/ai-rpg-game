@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, expect, it } from "vitest";
 import { buildChoiceMap, hasExplorableContent } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
@@ -498,7 +499,7 @@ function buildStoryState(opts: {
   readonly choices?: readonly [NarrativeChoiceState, NarrativeChoiceState];
   readonly registry?: readonly ApprovedChoice[];
 }): StoryState {
-  const base = createInitialStoryState({
+  const base = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
     gameLength: "short",
     initialEntityCounts: { locations: 5, npcs: 5, events: 2, quests: 2 },
     mainThreadId: "main_thread",
@@ -522,9 +523,10 @@ function buildStoryState(opts: {
     ],
   };
   const narrative: NarrativeRuntimeState = {
-    ...base.narrative,
+    status: "ready",
+    mode: "offline",
     currentScene: scene,
-    ...(opts.registry !== undefined ? { choiceRegistry: opts.registry } : {}),
+    choiceRegistry: opts.registry ?? [],
   };
   return { ...base, narrative };
 }

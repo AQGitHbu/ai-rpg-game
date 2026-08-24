@@ -5,17 +5,41 @@ import {
   createInitialStoryState,
   derivePacingNeed,
 } from "./storyState";
+import { asLocationId } from "./worldEntity";
+
+const initialNarrative = {
+  status: "ready",
+  mode: "offline",
+  currentScene: {
+    sceneId: "scene-initial",
+    turn: 0,
+    narration: "开场。",
+    usedFactIds: [],
+    npcLine: null,
+    choices: [],
+    source: "fixture",
+    event: { kind: "observe", locationId: asLocationId("loc_0") },
+  },
+  choiceRegistry: [],
+} as const;
+
+const initialInput = {
+  gameLength: "short",
+  initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 },
+  initialNarrative,
+} as const;
 
 describe("StoryState", () => {
-  it("initializes the v5 schema at turn zero", () => {
-    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
+  it("initializes the v6 schema at turn zero with the supplied runtime", () => {
+    const ss = createInitialStoryState(initialInput);
 
-    expect(STORY_STATE_SCHEMA_VERSION).toBe(5);
-    expect(ss.version).toBe(5);
+    expect(STORY_STATE_SCHEMA_VERSION).toBe(6);
+    expect(ss.version).toBe(6);
     expect(ss.turnNumber).toBe(0);
+    expect(ss.narrative).toBe(initialNarrative);
   });
 
-  it("classifies legacy v2/v3/v4 without silently migrating them", () => {
+  it("classifies legacy v2/v3/v4/v5 without silently migrating them", () => {
     expect(classifyStoryStateSchemaVersion(2)).toEqual({
       ok: false,
       code: "UNSUPPORTED_RECORD",
@@ -29,17 +53,17 @@ describe("StoryState", () => {
       code: "UNSUPPORTED_RECORD",
     });
     expect(classifyStoryStateSchemaVersion(5)).toEqual({
-      ok: true,
-      version: 5,
+      ok: false,
+      code: "UNSUPPORTED_RECORD",
     });
     expect(classifyStoryStateSchemaVersion(6)).toEqual({
-      ok: false,
-      code: "UNSUPPORTED_STORY_STATE_VERSION",
+      ok: true,
+      version: 6,
     });
   });
 
   it("createInitialStoryState sets act=1, tension=30, reveal", () => {
-    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
+    const ss = createInitialStoryState(initialInput);
     expect(ss.currentAct).toBe(1);
     expect(ss.tension).toBe(30);
     expect(ss.nextPacingNeed).toBe("reveal");
@@ -50,7 +74,7 @@ describe("StoryState", () => {
   });
 
   it("populates a default story contract and a stable evolution state", () => {
-    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
+    const ss = createInitialStoryState(initialInput);
     expect(ss.contract.version).toBe(1);
     expect(ss.contract.targetActs).toBe(3);
     expect(ss.contract.endingDirections.map((d) => d.key)).toEqual(["trust", "doubt"]);
@@ -63,24 +87,24 @@ describe("StoryState", () => {
   });
 
   it("derivePacingNeed returns reveal in act 1", () => {
-    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
+    const ss = createInitialStoryState(initialInput);
     expect(derivePacingNeed(ss)).toBe("reveal");
   });
 
   it("derivePacingNeed returns resolve when endingAllowed and no threads", () => {
-    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
+    const ss = createInitialStoryState(initialInput);
     const ss2 = { ...ss, currentAct: 3, endingAllowed: true, unresolvedThreads: [] };
     expect(derivePacingNeed(ss2)).toBe("resolve");
   });
 
   it("derivePacingNeed returns climax at final act with high progress", () => {
-    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
+    const ss = createInitialStoryState(initialInput);
     const ss2 = { ...ss, currentAct: 3, targetActs: 3, storyProgress: 90, endingAllowed: false, unresolvedThreads: ["t1"] };
     expect(derivePacingNeed(ss2)).toBe("climax");
   });
 
   it("derivePacingNeed returns develop by default", () => {
-    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
+    const ss = createInitialStoryState(initialInput);
     const ss2 = { ...ss, currentAct: 2, tension: 50, storyProgress: 40, endingAllowed: false, unresolvedThreads: ["t1"] };
     expect(derivePacingNeed(ss2)).toBe("develop");
   });

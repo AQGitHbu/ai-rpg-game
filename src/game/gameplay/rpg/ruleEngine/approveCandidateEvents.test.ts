@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { approveCandidateEvents } from "./approveCandidateEvents";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -76,7 +77,7 @@ function candidate(overrides?: Partial<EventCandidate>): EventCandidate {
 }
 
 describe("approveCandidateEvents（经 ruleEngine 兼容再导出）", () => {
-  const ss = createInitialStoryState({
+  const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
     gameLength: "short",
     initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 },
   });

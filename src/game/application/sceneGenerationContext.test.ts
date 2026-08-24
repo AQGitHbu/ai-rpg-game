@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import {
   buildSceneGenerationContext,
@@ -49,6 +50,7 @@ function makeJob(overrides: {
   summary?: PendingNarrativeJob["actionSummary"];
   focusNpcId?: string;
   utterance?: string;
+  sceneRequestKind?: PendingNarrativeJob["sceneRequestKind"];
 } = {}): PendingNarrativeJob {
   const result = createPendingNarrativeJob({
     jobId: asNarrativeJobId("job_1"),
@@ -74,6 +76,8 @@ function makeJob(overrides: {
     requestedAt: "2026-01-02",
     objectiveTransition: overrides.transition ?? { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: overrides.beats ?? [],
+    generationKind: "npc_fixed_choice",
+    sceneRequestKind: overrides.sceneRequestKind ?? "npc_response",
   });
   if (!result.ok) throw new Error("fixture job 构造失败");
   return result.job;
@@ -91,9 +95,17 @@ function makeWorld(): ReturnType<typeof createInitialWorldState> {
 }
 
 function makeRecord(withJob = true, job?: PendingNarrativeJob, world?: ReturnType<typeof makeWorld>): GameRecord {
-  const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
+  const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
   const storyState: StoryState = withJob
-    ? { ...ss, narrative: { ...ss.narrative, generation: { status: "pending", job: job ?? makeJob() } } }
+    ? {
+        ...ss,
+        narrative: {
+          status: "provider_pending",
+          mode: "offline",
+          job: job ?? makeJob(),
+          lastPresentedScene: ss.narrative.status === "ready" ? ss.narrative.currentScene : null,
+        },
+      }
     : ss;
   return {
     gameId: "g1" as never,
@@ -135,8 +147,8 @@ describe("buildSceneGenerationContext", () => {
   it("copies the pending job and derives current location, present NPCs and story hints", () => {
     const record = makeRecord();
     const context = buildSceneGenerationContext(record);
-    const generation = record.storyState.narrative.generation;
-    expect(context.job).toEqual(generation.status === "pending" ? generation.job : undefined);
+    const narrative = record.storyState.narrative;
+    expect(context.job).toEqual(narrative.status === "provider_pending" ? narrative.job : undefined);
     expect(context.currentLocation).toEqual({
       id: loc1.id, name: loc1.name, description: loc1.description, kind: "main",
     });
@@ -538,5 +550,64 @@ describe("buildSceneGenerationContext", () => {
     expect(context.focusNpcContext?.recentInteractions[0]?.actionId).toBe(IMPORTANT_ACTION_ID);
     // 本轮 delta/outcome 来自 actionId 匹配的 interaction
     expect(context.focusNpcContext?.thisTurn).toEqual({ relationshipDelta: -2, outcome: "negative" });
+  });
+
+  it("把 provider job 的 generation/handoff 语义与完整 prepared graph 投影到 context", () => {
+    const base = makeWorld();
+    const arrivalNpc: NpcEntry = {
+      ...npc1,
+      id: asNpcId("npc_beggar"),
+      name: "老乞丐",
+      role: "破庙守夜人",
+      description: "常年借宿镇外破庙",
+      locationId: loc2.id,
+      memory: { ...npc1.memory, npcId: asNpcId("npc_beggar"), goals: ["确认来者是否可信"] },
+    };
+    const world = {
+      ...base,
+      locations: base.locations.map((location) => location.id === loc2.id
+        ? { ...location, npcIds: [arrivalNpc.id] }
+        : location),
+      npcs: [arrivalNpc],
+      quests: [{
+        id: asQuestId("quest_prepared"),
+        name: "追查破庙",
+        description: "找到破庙守夜人",
+        objectives: [
+          { kind: "visit_location" as const, locationId: loc2.id },
+          { kind: "talk_to_npc" as const, npcId: arrivalNpc.id },
+        ],
+        onSuccess: { kind: "advance_story" as const },
+        onFailure: { kind: "closed" as const },
+        tags: [],
+        kind: "main" as const,
+        stage: 1,
+        status: "active" as const,
+      }],
+    };
+    const transition: ObjectiveTransition = {
+      before: null,
+      completed: [],
+      after: { questId: asQuestId("quest_prepared"), objectiveIndex: 0, label: "前往街道" },
+      mode: "unchanged",
+    };
+    const context = buildSceneGenerationContext({
+      ...makeRecord(true, makeJob({
+        summary: { kind: "move", locationId: loc2.id },
+        transition,
+      }), world),
+    });
+
+    expect(context.generationKind).toBe("npc_fixed_choice");
+    expect(context.finalDialogueHandoff).toBe(false);
+    expect(context.preparedActiveStepIds).toHaveLength(1);
+    expect(context.preparedStepDescriptors?.[0]).toMatchObject({
+      trigger: { kind: "move", locationId: loc2.id },
+      arrivalNpc: { id: arrivalNpc.id },
+      choiceCandidates: [
+        { candidateId: "prepared_1_choice_1" },
+        { candidateId: "prepared_1_choice_2" },
+      ],
+    });
   });
 });

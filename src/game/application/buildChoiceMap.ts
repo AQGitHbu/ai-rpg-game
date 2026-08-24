@@ -58,6 +58,9 @@ export function buildChoiceMap(
   currentRevision: number,
 ): ActionChoiceMap {
   const map = new Map<string, Action>();
+  const readyNarrative = storyState.narrative.status === "ready"
+    ? storyState.narrative
+    : null;
   const addRuntimeAction = (action: Action): void => {
     map.set(deriveRuntimeChoiceToken(action, currentRevision), action);
   };
@@ -103,8 +106,8 @@ export function buildChoiceMap(
     const objectiveTarget = objective === null
       ? undefined
       : quest?.objectives[objective.objectiveIndex];
-    const sceneFocusNpcId = storyState.narrative.currentScene?.event?.kind === "dialogue"
-      ? storyState.narrative.currentScene.event.focusNpcId
+    const sceneFocusNpcId = readyNarrative?.currentScene.event?.kind === "dialogue"
+      ? readyNarrative.currentScene.event.focusNpcId
       : undefined;
     const dialogueNpcId = objectiveTarget?.kind === "talk_to_npc"
       ? objectiveTarget.npcId
@@ -181,9 +184,9 @@ export function buildChoiceMap(
 
   // 叙事场景的固定选项：只从服务端 choiceRegistry 按 token 映射。
   // 不再解析 scene.choices 的 actionKey；未知/过期 token 不产生映射。
-  const scene = storyState.narrative.currentScene;
-  const registry = storyState.narrative.choiceRegistry;
-  if (scene !== null && registry !== undefined) {
+  const scene = readyNarrative?.currentScene;
+  const registry = readyNarrative?.choiceRegistry;
+  if (scene !== undefined && registry !== undefined) {
     const currentSceneTokens = new Set(scene.choices.map((choice) => choice.choiceToken));
     for (const entry of registry) {
       if (entry.sceneId !== scene.sceneId) continue;
@@ -267,7 +270,8 @@ export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
   // 对话场景始终提供一个非对白的“暂不回应，先观察”分支。它仍是
   // 正式 explore 回合，不是零写入闲聊旁路；固定选项因此明确覆盖
   // “玩家口吻对白 / 玩家动作”两种输入类型。
-  if (ss.narrative.currentScene?.event?.kind === "dialogue") return true;
+  if (ss.narrative.status === "ready"
+    && ss.narrative.currentScene.event?.kind === "dialogue") return true;
 
   // 1) 本地点仍有未发现的线索事实（含 NPC 私密事实：探索可引动揭示，不泄漏正文）。
   //    有已审批调查方式（≥2 条）的事实已有正式调查入口，不再叠加一个无分支的

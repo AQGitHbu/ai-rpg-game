@@ -2,6 +2,7 @@ import type { Action, DialogueTopic } from "@/game/domain/action";
 import { semanticSummaryOf } from "@/game/domain/approvedChoice";
 import { asEnemyId, asFactId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import type { NarrativeEventState } from "@/game/domain/narrative";
+import type { PreparedStepDescriptor } from "@/game/gameplay/rpg/preparedContinuation";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 
 /** 服务端权威的场景选项候选；live source 与显式 fixture 共用这份投影。 */
@@ -17,6 +18,30 @@ export type CurrentNpcLineContext = {
 };
 
 type FactCardLike = { readonly factId: string; readonly text: string };
+
+/**
+ * Adapts server-authored prepared choices without renumbering their opaque
+ * candidate IDs. Labels are only a read-model concern; actions and IDs remain
+ * owned by the gameplay projection.
+ */
+export function buildPreparedSceneCandidates(
+  descriptor: Pick<PreparedStepDescriptor, "choiceCandidates">,
+): readonly SceneChoiceCandidate[] {
+  return descriptor.choiceCandidates.map((candidate) => ({
+    candidateId: candidate.candidateId,
+    label: preparedChoiceLabel(candidate.action),
+    action: candidate.action,
+  }));
+}
+
+function preparedChoiceLabel(action: Action): string {
+  if (action.type !== "talk") return formatSceneChoiceLabel(action, "继续行动");
+  switch (action.dialogueAct) {
+    case "support": return "表示支持，继续听对方说明";
+    case "challenge": return "提出质疑，要求对方拿出依据";
+    default: return "继续询问对方";
+  }
+}
 
 export function usesFallbackDialogueChoiceLabels(
   selectable: readonly SceneChoiceCandidate[],

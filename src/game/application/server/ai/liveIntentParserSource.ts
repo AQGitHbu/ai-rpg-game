@@ -18,6 +18,8 @@ import {
 import { createRpgAiClient, type RpgAiClient } from "./rpgAiClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
 import { classifyAiFailure, transportFailureCodeToCategory } from "../../aiGenerationFailure";
+import { parseStructuredJsonObject } from "@/game/core/json";
+import { runBoundedAttempts } from "@/game/core/retry";
 
 // ---------------------------------------------------------------------------
 // live/fixture IntentParserSource。
@@ -239,28 +241,17 @@ export function createRuleIntentParser(): IntentParserSource {
   };
 }
 
-function parseJsonResponse(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    const match = text.match(/```json\s*([\s\S]*?)```/);
-    if (match) {
-      try {
-        return JSON.parse(match[1] ?? "");
-      } catch {
-        // fall through
-      }
-    }
-    return null;
-  }
-}
-
 function buildUserPrompt(text: string, ctx: IntentContext, targetNpcId?: NpcId): string {
   const npcNames = ctx.presentNpcs.map((n) => n.name).join("、") || "无";
   const locNames = ctx.connectedLocations.map((l) => l.name).join("、") || "无";
   const itemNames = ctx.availableItems.map((i) => i.name).join("、") || "无";
   const topicRefs = ctx.topicRefs.map((r) => `${r.kind}:${String(r.id)}`).join("、") || "无";
-  const targetLine = targetNpcId !== undefined ? `目标NPC：${String(targetNpcId)}` : "无明确目标";
+  const targetLine = targetNpcId !== undefined
+    ? `目标NPC：${String(targetNpcId)}（目标 NPC 已由服务端绑定；只能返回 talk 对话意图，不得返回 type=move、type=take_item 或 type=explore。即使玩家文本包含地点或物品动作，也必须把原文视为对该 NPC 的 utterance。）`
+    : "无明确目标";
+  const outputContract = targetNpcId !== undefined
+    ? "返回严格 JSON：{\"dialogueAct\":\"ask|support|challenge|threaten|deceive|offer|refuse|reassure\",\"topic\":{\"kind\":\"fact|quest|thread|general\",\"factId\"|\"questId\"|\"threadId\":\"服务端ID\"},\"npcId\":\"目标NPC\"}"
+    : "返回严格 JSON：{\"dialogueAct\":\"ask|support|challenge|threaten|deceive|offer|refuse|reassure\",\"topic\":{\"kind\":\"fact|quest|thread|general\",\"factId\"|\"questId\"|\"threadId\":\"服务端ID\"},\"npcId\":\"目标NPC\"} 或 {\"type\":\"talk\"|\"move\"|\"take_item\"|\"explore\", ...}";
   return [
     `玩家输入：${text}`,
     targetLine,
@@ -268,7 +259,7 @@ function buildUserPrompt(text: string, ctx: IntentContext, targetNpcId?: NpcId):
     `可达地点：${locNames}`,
     `可用物品：${itemNames}`,
     `可引用主题（仅以下 ID，topic.kind/ID 必须原样使用其中之一）：${topicRefs}`,
-    "返回严格 JSON：{\"dialogueAct\":\"ask|support|challenge|threaten|deceive|offer|refuse|reassure\",\"topic\":{\"kind\":\"fact|quest|thread|general\",\"factId\"|\"questId\"|\"threadId\":\"服务端ID\"},\"npcId\":\"目标NPC\"} 或 {\"type\":\"talk\"|\"move\"|\"take_item\"|\"explore\", ...}",
+    outputContract,
   ].join("\n");
 }
 
@@ -293,66 +284,76 @@ export function createLiveIntentParser(
     const failure = classifyAiFailure({ phase: "intent", category });
     return { ok: false, reason: "service_error", failureKind: failure.kind };
   };
-  const maxContentRepairAttempts = 1;
   return {
     sourceVersion: "live-intent",
     async parseIntent(text, ctx, targetNpcId?, auditLink?: IntentAuditLink) {
-      const parseAttempt = async (attempt: number, repairReason?: string): Promise<IntentParserResult> => {
-      if (client === undefined) {
-        return failIntent("unavailable");
-      }
-      try {
-        const repairMessage = repairReason === undefined
-          ? ""
-          : `上一次返回未通过 ${repairReason} 校验。请只修复 JSON 结构与可执行意图引用，不要解释。`;
-        const response = await client.complete(
-          "intent",
-          [
-            { role: "system", content: "你是 RPG 意图解析器，只返回严格 JSON。" },
-            { role: "user", content: `${buildUserPrompt(text, ctx, targetNpcId)}${repairMessage}` },
-          ],
-          {
-            purpose: "intent_parsing",
-            trigger: "free_text_action",
-            ...(auditLink ?? {}),
-            action: {
-              kind: "free_text_action",
-              ...(targetNpcId === undefined ? {} : { targetNpcId: String(targetNpcId) }),
-            },
-            ...(repairReason === undefined
-              ? {}
-              : { retry: { origin: "normal", mechanism: "content_repair", attempt, reason: repairReason } }),
-          },
-        );
-        if (!response.ok) {
-          logger?.warn("live_intent_ai_failed", { code: response.code });
-          return failIntent(transportFailureCodeToCategory(response.code));
-        }
-        if (typeof response.content !== "string") {
-          return attempt < maxContentRepairAttempts
-            ? parseAttempt(attempt + 1, "empty_response")
-            : failIntent("empty_response");
-        }
-        const parsed = parseJsonResponse(response.content);
-        if (parsed === null) {
-          return attempt < maxContentRepairAttempts
-            ? parseAttempt(attempt + 1, "invalid_json")
-            : failIntent("invalid_json");
-        }
-        const checked = parseIntentPayload(parsed, text, ctx, targetNpcId);
-        if (checked.ok) return checked;
-        // live source 的 JSON 已经代表 AI 对本轮输入作出的结构化判断；
-        // 若它没有产出可执行且权限合法的 action，必须按响应契约失败处理，
-        // 不能把 unclassifiable 交给 rule parser 或默认 NPC action。
-        return failIntent("invalid_schema");
-      } catch (error) {
-        logger?.warn("live_intent_ai_error", {
-          error: error instanceof Error ? error.message : "unknown",
-        });
-        return failIntent("unknown");
-      }
-      };
-      return parseAttempt(0);
+      if (client === undefined) return failIntent("unavailable");
+
+      type IntentAttemptReason = "empty_response" | "invalid_json" | "invalid_schema" | "provider_failure";
+      let terminalResult: IntentParserResult = failIntent("unknown");
+      const bounded = await runBoundedAttempts<IntentParserResult, IntentAttemptReason>({
+        maxAttempts: 2,
+        runAttempt: async (attempt, priorReason) => {
+          const auditAttempt = attempt - 1;
+          try {
+            const repairMessage = priorReason === undefined
+              ? ""
+              : `上一次返回未通过 ${priorReason} 校验。请只修复 JSON 结构与可执行意图引用，不要解释。`;
+            const response = await client.complete(
+              "intent",
+              [
+                { role: "system", content: "你是 RPG 意图解析器，只返回严格 JSON。" },
+                { role: "user", content: `${buildUserPrompt(text, ctx, targetNpcId)}${repairMessage}` },
+              ],
+              {
+                purpose: "intent_parsing",
+                trigger: "free_text_action",
+                ...(auditLink ?? {}),
+                action: {
+                  kind: "free_text_action",
+                  ...(targetNpcId === undefined ? {} : { targetNpcId: String(targetNpcId) }),
+                },
+                ...(priorReason === undefined
+                  ? {}
+                  : { retry: { origin: "normal", mechanism: "content_repair", attempt: auditAttempt, reason: priorReason } }),
+              },
+            );
+            if (!response.ok) {
+              logger?.warn("live_intent_ai_failed", { code: response.code });
+              terminalResult = failIntent(transportFailureCodeToCategory(response.code));
+              return { ok: false, retryable: false, reason: "provider_failure" as const };
+            }
+            if (typeof response.content !== "string") {
+              terminalResult = failIntent("empty_response");
+              return { ok: false, retryable: true, reason: "empty_response" as const };
+            }
+            const parsed = parseStructuredJsonObject(response.content);
+            if (!parsed.ok) {
+              terminalResult = failIntent(parsed.reason === "root_not_object" ? "invalid_schema" : "invalid_json");
+              if (parsed.reason === "root_not_object") {
+                return { ok: false, retryable: false, reason: "invalid_schema" as const };
+              }
+              return { ok: false, retryable: true, reason: "invalid_json" as const };
+            }
+            if (parsed.normalization === "json_fence") {
+              logger?.warn("live_intent_json_fence_normalized");
+            }
+            const checked = parseIntentPayload(parsed.value, text, ctx, targetNpcId);
+            if (checked.ok) return { ok: true, value: checked };
+            // JSON 已经代表 AI 对本轮输入作出的结构化判断；越权/不可执行
+            // 的 action 不进入内容修复，避免把规则失败误报为 JSON 修复。
+            terminalResult = failIntent("invalid_schema");
+            return { ok: false, retryable: false, reason: "invalid_schema" as const };
+          } catch (error) {
+            logger?.warn("live_intent_ai_error", {
+              error: error instanceof Error ? error.message : "unknown",
+            });
+            terminalResult = failIntent("unknown");
+            return { ok: false, retryable: false, reason: "provider_failure" as const };
+          }
+        },
+      });
+      return bounded.ok ? bounded.value : terminalResult;
     },
   };
 }

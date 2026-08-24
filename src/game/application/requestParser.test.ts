@@ -111,6 +111,10 @@ describe("httpStatusForCode — Spec §16.3 状态映射", () => {
   it("输入非法 → 400", () => expect(httpStatusForCode("INVALID_INPUT")).toBe(400));
   it("无活动存档 → 404", () => expect(httpStatusForCode("NO_ACTIVE_GAME")).toBe(404));
   it("stale revision → 409", () => expect(httpStatusForCode("STALE_GAME_REVISION")).toBe(409));
+  it("预备叙事缺失 → 409；预备叙事失效 → 500", () => {
+    expect(httpStatusForCode("NARRATIVE_CONTINUATION_MISSING")).toBe(409);
+    expect(httpStatusForCode("NARRATIVE_CONTINUATION_INVALID")).toBe(500);
+  });
   it("业务拒绝/未知选项 → 422", () => {
     expect(httpStatusForCode("ACTION_REJECTED")).toBe(422);
     expect(httpStatusForCode("UNKNOWN_CHOICE")).toBe(422);

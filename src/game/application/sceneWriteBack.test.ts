@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { writeBackScene } from "./sceneWriteBack";
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
@@ -66,7 +67,7 @@ function buildTestState(): { worldState: WorldState; storyState: StoryState } {
     startingLocation: loc,
     startingItemIds: [],
   });
-  const storyState = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
+  const storyState = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
   return { worldState, storyState };
 }
 

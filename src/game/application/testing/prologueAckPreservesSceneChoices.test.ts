@@ -5,7 +5,7 @@ import { buildChoiceMap } from "@/game/application/buildChoiceMap";
 import { projectGameSessionView } from "@/game/application/gameSessionView";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
 import { asNpcId } from "@/game/domain/worldEntity";
-import type { StoryState } from "@/game/domain/storyState";
+import type { NarrativeSceneState } from "@/game/domain/narrative";
 
 // ---------------------------------------------------------------------------
 // 回归：ackPrologue 不递增 revision（方案 B）。
@@ -43,7 +43,7 @@ describe("ackPrologue 不递增 revision，场景固定选项保持有效", () =
     });
     if (!choiceA.ok || !choiceB.ok) throw new Error("fixture approval failed");
 
-    const scene: StoryState["narrative"]["currentScene"] = {
+    const scene: NarrativeSceneState = {
       sceneId,
       turn: storyState.turnNumber,
       narration: "沈掌柜注视着你。",
@@ -65,9 +65,9 @@ describe("ackPrologue 不递增 revision，场景固定选项保持有效", () =
       nextStoryState: {
         ...storyState,
         narrative: {
-          ...storyState.narrative,
+          status: "ready",
+          mode: "ai",
           currentScene: scene,
-          generation: { status: "idle" },
           choiceRegistry: [choiceA.choice, choiceB.choice],
         },
         candidateEventPool: storyState.candidateEventPool,

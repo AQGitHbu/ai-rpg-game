@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect, vi } from "vitest";
 import {
   parseWorldDeltaProposal,
@@ -233,7 +234,7 @@ describe("createLiveWorldEvolutionSource", () => {
     const source = createLiveWorldEvolutionSource({ aiClient });
     const ctx: WorldEvolutionSourceContext = {
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: { kind: "next_act", act: 2 },
       reason: "scene_evolution",
     };
@@ -252,7 +253,7 @@ describe("createLiveWorldEvolutionSource", () => {
     const source = createLiveWorldEvolutionSource({});
     const ctx: WorldEvolutionSourceContext = {
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: pacingNeed,
       action: { type: "move", locationId: asLocationId("loc_b") },
       reason: "UNKNOWN_LOCATION",
@@ -273,7 +274,7 @@ describe("createLiveWorldEvolutionSource", () => {
     });
     const ctx: WorldEvolutionSourceContext = {
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: pacingNeed,
       action: { type: "talk", npcId: asNpcId("npc_new"), dialogueAct: "ask" },
       reason: "UNKNOWN_NPC",
@@ -281,6 +282,34 @@ describe("createLiveWorldEvolutionSource", () => {
     const result = await source.propose(ctx);
     expect(result.ok).toBe(false);
     expect(result.ok ? null : result.failure.kind).toBe("AI_RESPONSE_INVALID");
+  });
+
+  it("accepts fenced JSON and records normalization", async () => {
+    const logger = { warn: vi.fn() };
+    const transport: AiTransport = {
+      complete: async () => ({
+        ok: true as const,
+        content: "```json\n{\"proposal\":{\"beatSummary\":\"补足线索\",\"newFact\":{\"text\":\"井沿留有新鲜绳痕。\",\"visibility\":\"public\"}}}\n```",
+        latencyMs: 1,
+      }),
+      stream: async () => ({ ok: false as const, code: "network_error" as const, retryable: true, message: "unused", latencyMs: 1 }),
+    };
+    const source = createLiveWorldEvolutionSource({
+      transport,
+      config: { apiKey: "k", baseUrl: "http://x", model: "m" },
+      logger: logger as never,
+    });
+    const ctx: WorldEvolutionSourceContext = {
+      worldState: makeWorld(),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      need: pacingNeed,
+      action: { type: "talk", npcId: asNpcId("npc_new"), dialogueAct: "ask" },
+      reason: "UNKNOWN_NPC",
+    };
+
+    const result = await source.propose(ctx);
+    expect(result.ok).toBe(true);
+    expect(logger.warn).toHaveBeenCalledWith("world_evolution_json_fence_normalized");
   });
 
   it("uses JSON object mode when explicitly enabled", async () => {
@@ -296,7 +325,7 @@ describe("createLiveWorldEvolutionSource", () => {
     });
     const ctx: WorldEvolutionSourceContext = {
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: pacingNeed,
       action: { type: "talk", npcId: asNpcId("npc_new"), dialogueAct: "ask" },
       reason: "UNKNOWN_NPC",
@@ -326,7 +355,7 @@ describe("createLiveWorldEvolutionSource", () => {
     });
     const ctx: WorldEvolutionSourceContext = {
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: pacingNeed,
       action: { type: "talk", npcId: asNpcId("npc_new"), dialogueAct: "ask" },
       reason: "UNKNOWN_NPC",
@@ -364,7 +393,7 @@ describe("createLiveWorldEvolutionSource", () => {
 
     const result = await source.propose({
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: { kind: "pacing", pacingNeed: "complicate" },
       reason: "scene_evolution",
     });
@@ -389,7 +418,7 @@ describe("world source 内容修复契约", () => {
   function makeCtx(overrides?: Partial<WorldEvolutionSourceContext>): WorldEvolutionSourceContext {
     return {
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: pacingNeed,
       reason: "scene_evolution",
       ...overrides,

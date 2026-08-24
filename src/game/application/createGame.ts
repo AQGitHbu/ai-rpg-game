@@ -1,12 +1,16 @@
 import type { GameRepository } from "./server/persistence/gameRepository";
 import type { GameId } from "./server/persistence/gameRepository";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
-import type { StoryState } from "@/game/domain/storyState";
+import type { NarrativeRuntimeState } from "@/game/domain/narrative";
 import type { GameTypeId, GameLength, GameSetup, NewGameInput } from "@/game/domain/newGame";
 import { validateNewGameInput } from "@/game/domain/newGame";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import { parseOpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
-import { validateOpeningGenerationCandidate, compileOpeningGenerationCandidate } from "@/game/gameplay/rpg/openingGeneration";
+import {
+  OPENING_NPC_ID,
+  compileOpeningGenerationCandidate,
+  validateOpeningGenerationCandidate,
+} from "@/game/gameplay/rpg/openingGeneration";
 import {
   createOpeningNoveltyRecord,
   isOpeningTooSimilar,
@@ -18,6 +22,7 @@ import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import { AiGenerationError, type AiFailureKind } from "./aiGenerationFailure";
+import { runBoundedAttempts } from "@/game/core/retry";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局生成编排改为 source → parse → validate → compile。
@@ -184,62 +189,60 @@ export async function createGame(
       }),
     };
   };
-  let accepted: {
-    readonly candidate: OpeningGenerationCandidate;
-    readonly novelty: OpeningNoveltyRecord;
-    readonly attempt: number;
-  } | null = null;
   let lastFailureKind: AiFailureKind | undefined;
-
-  for (let attempt = 0; attempt < MAX_OPENING_GENERATION_ATTEMPTS; attempt += 1) {
-    let generated: OpeningGenerationCandidate;
-    try {
-      generated = await deps.source.generate({
-        gameType: input.gameType,
-        seed: input.seed,
-        gameLength: input.gameLength,
-        ...(input.setup === undefined ? {} : { setup: input.setup }),
-        novelty: {
-          recent: [...recentHistory, ...rejectedCandidates],
-          attempt,
-        },
-        attempt,
-        ...(deps.auditLink === undefined ? {} : {
-          auditLink: {
-            ...deps.auditLink,
-            gameId: String(input.gameId),
+  type OpeningAttemptReason = "source_error" | "empty_candidate" | "invalid_candidate" | "novelty_conflict";
+  const bounded = await runBoundedAttempts<
+    { readonly candidate: OpeningGenerationCandidate; readonly novelty: OpeningNoveltyRecord; readonly attempt: number },
+    OpeningAttemptReason
+  >({
+    maxAttempts: MAX_OPENING_GENERATION_ATTEMPTS,
+    runAttempt: async (attempt) => {
+      const openingAttempt = attempt - 1;
+      let generated: OpeningGenerationCandidate;
+      try {
+        generated = await deps.source.generate({
+          gameType: input.gameType,
+          seed: input.seed,
+          gameLength: input.gameLength,
+          ...(input.setup === undefined ? {} : { setup: input.setup }),
+          novelty: {
+            recent: [...recentHistory, ...rejectedCandidates],
+            attempt: openingAttempt,
           },
-        }),
-      });
-    } catch (error) {
-      // AiGenerationError 携带稳定 failureKind，直接返回失败结果
-      if (error instanceof AiGenerationError) {
-        lastFailureKind = error.kind;
+          attempt: openingAttempt,
+          ...(deps.auditLink === undefined ? {} : {
+            auditLink: {
+              ...deps.auditLink,
+              gameId: String(input.gameId),
+            },
+          }),
+        });
+      } catch (error) {
+        if (error instanceof AiGenerationError) lastFailureKind = error.kind;
+        return { ok: false, retryable: true, reason: "source_error" as const };
       }
-      continue;
-    }
-    if (!generated) continue;
+      if (!generated) return { ok: false, retryable: true, reason: "empty_candidate" as const };
 
-    // schema parse → gameplay validate → compile。
-    const prepared = prepareCandidate(generated);
-    if (prepared === null) continue;
+      const prepared = prepareCandidate(generated);
+      if (prepared === null) return { ok: false, retryable: true, reason: "invalid_candidate" as const };
 
-    const comparableHistory = [...recentHistory, ...rejectedCandidates];
-    if (isOpeningTooSimilar(prepared.novelty, comparableHistory)) {
-      rejectedCandidates.push(prepared.novelty);
-      continue;
-    }
-    accepted = { candidate: prepared.candidate, novelty: prepared.novelty, attempt };
-    break;
-  }
+      const comparableHistory = [...recentHistory, ...rejectedCandidates];
+      if (isOpeningTooSimilar(prepared.novelty, comparableHistory)) {
+        rejectedCandidates.push(prepared.novelty);
+        return { ok: false, retryable: true, reason: "novelty_conflict" as const };
+      }
+      return { ok: true, value: { ...prepared, attempt: openingAttempt } };
+    },
+  });
 
   // API 可能在三次请求中仍返回同一结构。不能把最后一个重复候选
   // 当作成功；全部候选失败后直接返回 AI_GENERATION_FAILED。
-  if (accepted === null) return {
+  if (!bounded.ok) return {
     ok: false,
     code: "AI_GENERATION_FAILED",
     failureKind: lastFailureKind ?? "AI_RESPONSE_INVALID",
   };
+  const accepted = bounded.value;
 
   const generation = {
     generationId: asGenerationId(`gen_${input.seed}`),
@@ -251,29 +254,20 @@ export async function createGame(
     ...(accepted.attempt === 0 ? {} : { openingAttempt: accepted.attempt }),
   };
 
-  const { worldState, storyState } = compileOpeningGenerationCandidate({
-    candidate: accepted.candidate,
-    generation,
-    gameLength: input.gameLength,
-  });
-
-  // Set narrative to pending so the first scene (prologue) gets generated
-  // by the ensure polling mechanism (spec §9.1: 生成序幕场景)。
-  // pending 唯一载体是带 job 的 PendingNarrativeJob（Spec §10.3），
-  // 不再使用无 job 的 requestedAt legacy 形式。
+  // Opening construction is atomic: create the provider-authorized job first,
+  // then compile StoryState with its final runtime instead of overwriting it.
   const narrativeMode = deps.aiEnabled ? "ai" : "offline";
-  const openingNpcId = worldState.npcs[0]?.id;
   const jobResult = createPendingNarrativeJob({
     jobId: asNarrativeJobId(`job_${input.seed}_0`),
     turnId: asTurnId(`turn_${input.seed}_0`),
     actionId: `start_${input.seed}`,
     expectedRevision: 0,
     turnNumber: 0,
-    actionSummary: openingNpcId === undefined ? { kind: "explore" } : { kind: "talk", npcId: openingNpcId },
+    actionSummary: { kind: "talk", npcId: OPENING_NPC_ID },
     resolvedEvent: {
       actionId: `start_${input.seed}`,
       status: "success",
-      eventKind: openingNpcId === undefined ? "observe" : "dialogue",
+      eventKind: "dialogue",
       facts: [],
       stateChanges: [],
       costs: [],
@@ -282,34 +276,39 @@ export async function createGame(
       rejectedEffects: [],
     },
     domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
-    ...(openingNpcId === undefined ? {} : { focusNpcId: openingNpcId }),
+    focusNpcId: OPENING_NPC_ID,
     requestedAt: deps.now(),
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: [],
+    generationKind: "opening",
+    sceneRequestKind: "opening",
   });
   if (!jobResult.ok) return { ok: false, code: "AI_GENERATION_FAILED", failureKind: "AI_RESPONSE_INVALID" };
 
-  const storyStateWithPending: StoryState = {
-    ...storyState,
-    narrative: {
-      ...storyState.narrative,
-      mode: narrativeMode,
-      generation: { status: "pending", job: jobResult.job },
-      ...(openingNpcId === undefined ? {} : {
-        dialogueSession: {
-          npcId: openingNpcId,
-          turnCount: 0,
-          requiredTurns: 2,
-          completed: false,
-        },
-      }),
+  const initialNarrative = {
+    status: "provider_pending",
+    mode: narrativeMode,
+    job: jobResult.job,
+    lastPresentedScene: null,
+    dialogueSession: {
+      npcId: OPENING_NPC_ID,
+      turnCount: 0,
+      requiredTurns: 2,
+      completed: false,
     },
-  };
+  } satisfies NarrativeRuntimeState;
+
+  const { worldState, storyState } = compileOpeningGenerationCandidate({
+    candidate: accepted.candidate,
+    generation,
+    gameLength: input.gameLength,
+    initialNarrative,
+  });
 
   const persistedInput = {
     gameId: input.gameId,
     worldState,
-    storyState: storyStateWithPending,
+    storyState,
     createdAt: deps.now(),
     openingHistory: accepted.novelty,
   };

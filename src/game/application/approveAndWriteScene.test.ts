@@ -131,6 +131,8 @@ function makeJob(overrides: {
     requestedAt: "2026-01-02",
     objectiveTransition: overrides.transition ?? { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: overrides.beats ?? [],
+    generationKind: "npc_fixed_choice",
+    sceneRequestKind: "npc_response",
   });
   if (!result.ok) throw new Error("fixture job 构造失败");
   return result.job;
@@ -205,6 +207,7 @@ function makeProposal(overrides?: Partial<ScenePerformanceProposal>): ScenePerfo
       { candidateId: "candidate_1", label: "支持老板" },
       { candidateId: "candidate_2", label: "质疑老板" },
     ],
+    preparedContinuations: [],
     source: "generated",
     ...overrides,
   };

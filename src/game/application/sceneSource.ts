@@ -47,26 +47,14 @@ export type ScenePerformanceObjectiveLink = {
   readonly mode: "hint" | "progress" | "handoff";
 };
 
-/**
- * 单线行动（investigate/move）的 AI 预生成叙事（Task 1）。
- * 仅 live 提案携带；随审批持久化后由 fast path 消费，offline fixture 提案不携带。
- * 引用必须命中 SceneGenerationContext.upcomingLinearObjectives 的权威实体。
- */
-export type LinearActionNarrative =
-  | { readonly actionKind: "investigate"; readonly factId: string; readonly narration: string }
-  | {
-      readonly actionKind: "move";
-      readonly locationId: string;
-      readonly narration: string;
-      /** 移动抵达后即将成为主线目标的 NPC 首句；随同移动预生成，不创建回合。 */
-      readonly arrivalNpcLine?: LinearActionNpcLine;
-    };
-
-export type LinearActionNpcLine = {
-  readonly npcId: string;
-  readonly text: string;
-  readonly emotion: NarrativeEmotion;
-  readonly usedFactIds: readonly string[];
+/** One provider-authored scene seed; graph identity and actions remain server-owned. */
+export type PreparedContinuationProposal = {
+  readonly stepId: string;
+  readonly segments: readonly ScenePerformanceSegment[];
+  readonly npcLine: ScenePerformanceNpcLine | null;
+  readonly objectiveLink: ScenePerformanceObjectiveLink | null;
+  readonly choices: readonly { readonly candidateId: string; readonly label: string }[];
+  readonly source?: "generated" | "fixture";
 };
 
 /**
@@ -93,15 +81,15 @@ export type ScenePerformanceProposal = {
   /** 由同一次 live scene API 生成的非焦点 NPC 台词，不创建回合。 */
   readonly npcDialogues?: readonly ScenePerformanceNpcDialogue[];
   readonly objectiveLink: ScenePerformanceObjectiveLink | null;
-  /** 普通场景为两个选项；对话完成交接场景严格为一个唯一下一步。 */
+  /** 普通场景为两个选项；最终交接场景为零个可执行选项。 */
   readonly choices: readonly { readonly candidateId: string; readonly label: string }[];
-  /** Task 1：仅 live 提案携带的 AI 预生成单线行动叙事；随审批持久化后由 fast path 消费。 */
-  readonly linearActionNarratives?: readonly LinearActionNarrative[];
+  /** Local acknowledgement for a final NPC handoff; it is never an executable choice. */
+  readonly handoffAcknowledgement?: string;
+  /** Atomic server-authored continuation seeds through the next NPC boundary. */
+  readonly preparedContinuations: readonly PreparedContinuationProposal[];
   /** Task 5：本回合已结算调查结果的叙事上下文；仅 investigate + 已结算时携带。 */
   readonly investigationResult?: SceneInvestigationResult;
-  readonly source: "generated" | "fallback";
-  /** 仅供 pending 编排限制内容修复次数，不进入 ready scene 持久化。 */
-  readonly contentRepairAttempt?: number;
+  readonly source: "generated" | "fixture";
 };
 
 /** 从场景上下文投影已结算调查结果（无结果时返回 undefined）。 */
@@ -124,9 +112,14 @@ export function sceneInvestigationResultFrom(
  */
 export type SceneSourceResult =
   | { readonly ok: true; readonly proposal: ScenePerformanceProposal }
-  | { readonly ok: false; readonly failure: AiGenerationFailure };
+  | {
+      readonly ok: false;
+      readonly failure: AiGenerationFailure;
+      /** Source reports the repairable content reason; the caller owns the budget. */
+      readonly repairReason?: "empty_response" | "invalid_json" | "invalid_schema";
+    };
 
-/** 可注入的叙事场景 source。显式离线 fixture 返回 ok:true + fallback proposal；live source 失败返回 ok:false。 */
+/** 可注入的叙事场景 source。显式离线 fixture 返回 ok:true + fixture proposal；live source 失败返回 ok:false。 */
 export type SceneSource = {
   generateScene(context: SceneGenerationContext): Promise<SceneSourceResult>;
 };

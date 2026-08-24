@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import {
   createDeterministicSceneSource,
@@ -41,7 +42,7 @@ const npc2: NpcEntry = {
 };
 
 function makeStory(): StoryState {
-  return createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 2, quests: 0, events: 0 } });
+  return createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 2, quests: 0, events: 0 } });
 }
 
 function makeResolvedEvent(
@@ -89,6 +90,8 @@ function makeJob(overrides: JobOverrides = {}): PendingNarrativeJob {
     requestedAt: "2026-01-02",
     objectiveTransition: overrides.transition ?? { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: overrides.beats ?? [],
+    generationKind: "npc_fixed_choice",
+    sceneRequestKind: "npc_response",
   });
   if (!result.ok) throw new Error("fixture job 构造失败");
   return result.job;
@@ -197,11 +200,11 @@ describe("deterministicSceneSource", () => {
     expect(first.proposal.choices).toHaveLength(2);
   });
 
-  it("produces a performance proposal with segments, two distinct legal choices and source=fallback", async () => {
+  it("produces an explicit fixture proposal with segments and two distinct legal choices", async () => {
     const result = await source.generateScene(makeContext(makeJob({ eventKind: "travel" })));
     if (!result.ok) throw new Error("expected success");
     expect(result.proposal.segments.length).toBeGreaterThan(0);
-    expect(result.proposal.source).toBe("fallback");
+    expect(result.proposal.source).toBe("fixture");
     expect(result.proposal.choices).toHaveLength(2);
     expect(result.proposal.choices[0].candidateId).not.toBe(result.proposal.choices[1].candidateId);
     expect(result.proposal.choices.every((choice) => choice.label.length > 0)).toBe(true);
@@ -219,7 +222,7 @@ describe("deterministicSceneSource", () => {
     });
     expect(approved.ok).toBe(true);
     if (approved.ok) {
-      expect(approved.scene.source).toBe("fallback");
+      expect(approved.scene.source).toBe("fixture");
       expect(approved.scene.narration.length).toBeGreaterThan(0);
     }
   });

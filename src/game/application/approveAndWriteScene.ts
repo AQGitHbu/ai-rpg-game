@@ -5,8 +5,8 @@ import type {
   ScenePerformanceProposal,
   ScenePerformanceNpcLine,
 } from "./sceneSource";
-import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState, LinearActionNarrativeState } from "@/game/domain/narrative";
-import { buildNpcDialoguePages, NARRATIVE_EMOTIONS } from "@/game/domain/narrative";
+import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState } from "@/game/domain/narrative";
+import { buildNpcDialoguePages } from "@/game/domain/narrative";
 import { isFinalDialogueHandoff, type SceneGenerationContext } from "./sceneGenerationContext";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice, semanticSummaryOf } from "@/game/domain/approvedChoice";
@@ -18,8 +18,9 @@ import {
   formatSceneChoiceLabel,
   usesFallbackDialogueChoiceLabels,
 } from "./deterministicSceneSource";
-import { asFactId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
+import { asFactId, asNpcId } from "@/game/domain/worldEntity";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
+import { approvePreparedContinuation } from "./approvePreparedContinuation";
 import {
   isGenericNpcAcknowledgement,
   isGenericNpcGreeting,
@@ -134,7 +135,8 @@ export type SceneRejectionCode =
   | "handoff_missing_objective_reference"
   | "missing_non_focus_npc_dialogue"
   | "missing_arrival_npc_dialogue"
-  | "missing_focus_npc_dialogue";
+  | "missing_focus_npc_dialogue"
+  | "invalid_prepared_continuation";
 
 /**
  * 场景核心结构合法后，仍可供运营/评测观察的叙事质量信号。
@@ -149,8 +151,7 @@ export type ApprovedSceneWriteBack = {
   readonly scene: NarrativeSceneState;
   readonly choiceRegistry: readonly ApprovedChoice[];
   readonly candidateEventPool: readonly EventCandidate[];
-  /** Task 2：审批过滤后的 AI 预生成单线行动叙事队列（整字段丢弃时为空）。 */
-  readonly linearNarrativeQueue: readonly LinearActionNarrativeState[];
+  readonly preparedContinuation: import("@/game/domain/preparedContinuation").PreparedContinuationState;
   /** 叙事质量告警：只用于日志/审计，不阻断场景写回。 */
   readonly qualityWarnings: readonly SceneQualityWarningCode[];
 };
@@ -241,121 +242,13 @@ function hasExpandedNpcDialogue(text: string): boolean {
 }
 
 /**
- * 审批 AI 预生成单线行动叙事（Task 2）：
- * - factId/locationId 必须精确命中 `context.upcomingLinearObjectives` 的权威实体，
- *   AI 只能演绎服务端下发的目标链实体，不得捏造新事实/新实体（无越权）；
- * - narration 非空且不含"主线推进/当前目标"等系统元话术；
- * - 任意非法条目 → 整字段丢弃（记 logger warn，绝不因该字段拒绝整场）；
- * - 通过后逐字段重建 `LinearActionNarrativeState`（source 恒为 "generated"），
- *   提案对象原引用不直接持久化。
- */
-export function approveLinearActionNarratives(
-  proposal: ScenePerformanceProposal,
-  context: SceneGenerationContext,
-  logger: Pick<GameLogger, "warn"> | undefined,
-): readonly LinearActionNarrativeState[] {
-  const raw = proposal.linearActionNarratives;
-  if (raw === undefined) return [];
-  const upcoming = context.upcomingLinearObjectives ?? [];
-  const drop = (reason: string): readonly LinearActionNarrativeState[] => {
-    logger?.warn("linear_narratives_dropped", { reason, sceneId: proposal.sceneId });
-    return [];
-  };
-  const narratives: LinearActionNarrativeState[] = [];
-  for (const entry of raw) {
-    if (!isRecord(entry)) return drop("invalid_shape");
-    if (typeof entry.narration !== "string" || entry.narration.trim() === "") return drop("empty_narration");
-    const narration = entry.narration.trim();
-    if (containsSystemMetaSpeech(narration)) return drop("meta_speech");
-    if (entry.actionKind === "investigate") {
-      if (typeof entry.factId !== "string") return drop("invalid_reference");
-      if (!upcoming.some((ref) => ref.kind === "discover_fact" && String(ref.factId) === entry.factId)) {
-        return drop("invalid_reference");
-      }
-      narratives.push({ actionKind: "investigate", factId: asFactId(entry.factId), narration, source: "generated" });
-      continue;
-    }
-    if (entry.actionKind === "move") {
-      if (typeof entry.locationId !== "string") return drop("invalid_reference");
-      const ref = upcoming.find((candidate) =>
-        candidate.kind === "visit_location" && String(candidate.locationId) === entry.locationId,
-      );
-      if (ref === undefined || ref.kind !== "visit_location") {
-        return drop("invalid_reference");
-      }
-      let arrivalNpcLine: NonNullable<Extract<
-        LinearActionNarrativeState,
-        { readonly actionKind: "move" }
-      >["arrivalNpcLine"]> | undefined;
-      if (ref.arrivalNpc !== undefined) {
-        const rawArrivalLine = entry.arrivalNpcLine;
-        if (!isRecord(rawArrivalLine)
-          || typeof rawArrivalLine.npcId !== "string"
-          || rawArrivalLine.npcId !== String(ref.arrivalNpc.id)
-          || typeof rawArrivalLine.text !== "string") {
-          return drop("invalid_arrival_npc_line");
-        }
-        const text = normalizeNpcSpeech(rawArrivalLine.text, ref.arrivalNpc.name);
-        if (text === ""
-          || !hasExpandedNpcDialogue(text)
-          || isGenericNpcAcknowledgement(text)
-          || isGenericNpcGreeting(text)
-          || isGenericNpcInquiry(text)) {
-          return drop("invalid_arrival_npc_line");
-        }
-        const usedFactIds = rawArrivalLine.usedFactIds === undefined
-          ? []
-          : Array.isArray(rawArrivalLine.usedFactIds)
-            ? rawArrivalLine.usedFactIds.filter((id): id is string => typeof id === "string")
-            : null;
-        if (usedFactIds === null) return drop("invalid_arrival_npc_line");
-        const allowedFactIds = new Set([
-          ...ref.arrivalNpc.knownFactCards.map((fact) => String(fact.factId)),
-          ...ref.arrivalNpc.sceneVisibleFactIds.map(String),
-        ]);
-        if (usedFactIds.some((id) => !allowedFactIds.has(id))) return drop("invalid_arrival_npc_line");
-        if (rawArrivalLine.usedFactIds !== undefined && usedFactIds.length !== rawArrivalLine.usedFactIds.length) {
-          return drop("invalid_arrival_npc_line");
-        }
-        const emotion = NARRATIVE_EMOTIONS.includes(rawArrivalLine.emotion as typeof NARRATIVE_EMOTIONS[number])
-          ? rawArrivalLine.emotion as typeof NARRATIVE_EMOTIONS[number]
-          : "neutral";
-        arrivalNpcLine = {
-          npcId: asNpcId(ref.arrivalNpc.id),
-          text,
-          emotion,
-          usedFactIds: usedFactIds.map(asFactId),
-        };
-      }
-      narratives.push({
-        actionKind: "move",
-        locationId: asLocationId(entry.locationId),
-        narration,
-        source: "generated",
-        ...(arrivalNpcLine === undefined ? {} : { arrivalNpcLine }),
-      });
-      continue;
-    }
-    return drop("unknown_action_kind");
-  }
-  return narratives;
-}
-
-/** 系统元话术：任务状态由 HUD 单独展示，不得写进玩家可见的叙事正文。 */
-const SYSTEM_META_PATTERNS = /主线推进|当前目标|已完成：|完成了任务/;
-
-function containsSystemMetaSpeech(text: string): boolean {
-  return SYSTEM_META_PATTERNS.test(text);
-}
-
-/**
  * 审批 AI 生成的场景表演提案（spec §10.3，Task 6）：
  * - 分段旁白：每个强制节拍恰好一个 segment 且按节拍顺序排列；atmosphere 可选且最后；
  * - NPC 台词：归属在场 NPC，fact/交互引用必须属于该 NPC 的允许集合；
  * - player_utterance 必须由焦点 NPC 应答并列出节拍 ID；
  * - objectiveLink 必须与 ObjectiveTransition.after 一致；
  * - 选项必须来自服务端合法候选、两两不同，且 after 存在时至少一项推进目标；
- * - Task 2：linearActionNarratives 逐条校验，非法整字段丢弃，不拒整场；
+ * - Task 4：preparedContinuations 逐条复建为 server-authored continuation state；
  * - 通过后逐字段重建 ready scene 与 ApprovedChoice registry；提案对象不直达持久化。
  * 纯函数：不读时钟/随机数/DB（可选 logger 仅为可观测性，不改变结果）。
  */
@@ -547,35 +440,40 @@ export function approveScenePerformance(input: {
   const candidateById = new Map(selectable.map((c) => [c.candidateId, c]));
 
   const finalDialogueHandoff = isFinalDialogueHandoff(context);
-  const expectedChoiceCount = finalDialogueHandoff ? 1 : 2;
+  const localHandoff = finalDialogueHandoff && proposal.handoffAcknowledgement !== undefined;
+  const expectedChoiceCount = localHandoff ? 0 : finalDialogueHandoff ? 1 : 2;
   if (!Array.isArray(proposal.choices) || proposal.choices.length !== expectedChoiceCount) {
     return { ok: false, code: "illegal_choice_target" };
   }
   const [a, b] = proposal.choices;
-  if (!isRecord(a)
+  if (localHandoff) {
+    if (proposal.handoffAcknowledgement.trim() === "") return { ok: false, code: "illegal_choice_target" };
+  }
+  if (!localHandoff && (!isRecord(a)
     || typeof a.candidateId !== "string"
     || typeof a.label !== "string"
     || a.label.trim() === ""
     || (!finalDialogueHandoff && (!isRecord(b)
       || typeof b.candidateId !== "string"
       || typeof b.label !== "string"
-      || b.label.trim() === ""))) {
+      || b.label.trim() === "")))) {
     return { ok: false, code: "illegal_choice_target" };
   }
-  if (!finalDialogueHandoff && String(a.candidateId) === String(b?.candidateId)) {
+  if (!localHandoff && !finalDialogueHandoff && String(a?.candidateId) === String(b?.candidateId)) {
     return { ok: false, code: "duplicate_candidate_ids" };
   }
-  const ca = candidateById.get(String(a.candidateId));
-  const cb = finalDialogueHandoff || b === undefined
+  const ca = localHandoff ? undefined : candidateById.get(String(a?.candidateId));
+  const cb = localHandoff || finalDialogueHandoff || b === undefined
     ? undefined
     : candidateById.get(String(b.candidateId));
-  if (ca === undefined || (!finalDialogueHandoff && cb === undefined)) return { ok: false, code: "illegal_choice_target" };
+  if (!localHandoff && (ca === undefined || (!finalDialogueHandoff && cb === undefined))) return { ok: false, code: "illegal_choice_target" };
 
   // 生成路径不能把本回合生成前的两个 fixture talk label 原样带回。
   // 只拦 generated，避免 live 响应复用离线模板。
   if (
     proposal.source === "generated"
     && npcLine !== null
+    && !localHandoff
     && (
       usesFallbackDialogueChoiceLabels(buildSelectableSceneCandidates(context), [a, ...(b === undefined ? [] : [b])])
       || usesFallbackDialogueChoiceLabels(selectable, [a, ...(b === undefined ? [] : [b])])
@@ -584,7 +482,7 @@ export function approveScenePerformance(input: {
     return { ok: false, code: "stale_choice_template" };
   }
 
-  if (!finalDialogueHandoff && cb !== undefined && semanticSummaryOf(ca.action) === semanticSummaryOf(cb.action)) {
+  if (!localHandoff && !finalDialogueHandoff && cb !== undefined && ca !== undefined && semanticSummaryOf(ca.action) === semanticSummaryOf(cb.action)) {
     return { ok: false, code: "semantic_duplicate_choices" };
   }
 
@@ -595,7 +493,10 @@ export function approveScenePerformance(input: {
     && context.objectiveTarget !== null
     ? context.presentNpcs.find((npc) => String(npc.id) === String(context.objectiveTarget?.entityId))
     : undefined;
-  const selectedActions = [ca.action, ...(cb === undefined ? [] : [cb.action])];
+  const selectedActions = [
+    ...(ca === undefined ? [] : [ca.action]),
+    ...(cb === undefined ? [] : [cb.action]),
+  ];
   if (focusedArrivalObjectiveNpc !== undefined
     && !selectedActions.every((action) =>
       action.type === "talk" && String(action.npcId) === String(focusedArrivalObjectiveNpc.id))) {
@@ -604,7 +505,7 @@ export function approveScenePerformance(input: {
 
   // Step 4：after 存在且有可推进的合法候选时，至少一个选中选项必须推进目标。
   const objectiveTarget = context.objectiveTarget;
-  if (after !== null && objectiveTarget !== null) {
+  if (!localHandoff && after !== null && objectiveTarget !== null) {
     const progressCapableExists = selectable.some(
       (c) => actionTargetsObjective(c.action, objectiveTarget.entityId),
     );
@@ -647,7 +548,9 @@ export function approveScenePerformance(input: {
   }
 
   // ── 铸造 registry 与 ready scene ─────────────────────────────────────────
-  const approvedA = createApprovedChoice({
+  const approvedA = ca === undefined || a === undefined
+    ? null
+    : createApprovedChoice({
     sceneId: proposal.sceneId,
     basedOnRevision: input.basedOnRevision,
     // candidateId/action 由服务端候选集决定；对白 label 可以由 live source
@@ -669,13 +572,15 @@ export function approveScenePerformance(input: {
         ]),
         action: cb.action,
       });
-  if (!approvedA.ok || (approvedB !== null && !approvedB.ok)
-    || (approvedB !== null && approvedA.choice.choiceToken === approvedB.choice.choiceToken)) {
+  if ((approvedA !== null && !approvedA.ok) || (approvedB !== null && !approvedB.ok)
+    || (approvedA !== null && approvedB !== null && approvedA.choice.choiceToken === approvedB.choice.choiceToken)) {
     return { ok: false, code: "illegal_choice_target" };
   }
-  const approvedChoices = approvedB === null
-    ? [approvedA.choice]
-    : [approvedA.choice, approvedB.choice];
+  const approvedChoices = approvedA === null
+    ? []
+    : approvedB === null
+      ? [approvedA.choice]
+      : [approvedA.choice, approvedB.choice];
 
   const narration = proposal.segments.map((s) => s.text).join("\n");
   const rebuiltNpcLine = npcLine === null ? null : rebuildNpcLine(npcLine, context.presentNpcs);
@@ -689,6 +594,9 @@ export function approveScenePerformance(input: {
       choiceToken: choice.choiceToken,
       label: choice.label,
     })),
+    ...(proposal.handoffAcknowledgement === undefined
+      ? {}
+      : { handoffAcknowledgement: proposal.handoffAcknowledgement.trim() }),
     source: proposal.source,
     event: rebuildEvent(buildEventState(context)),
     ...(context.presentNpcs.length > 0
@@ -703,14 +611,13 @@ export function approveScenePerformance(input: {
       : {}),
   };
 
-  const linearNarrativeQueue = approveLinearActionNarratives(proposal, context, input.logger);
-  const requiresArrivalPrefetch = proposal.source === "generated"
-    && context.job.actionSummary.kind !== "move"
-    && context.upcomingLinearObjectives?.some((ref) => ref.kind === "visit_location" && ref.arrivalNpc !== undefined) === true;
-  if (requiresArrivalPrefetch
-    && !linearNarrativeQueue.some((entry) => entry.actionKind === "move" && entry.arrivalNpcLine !== undefined)) {
-    return { ok: false, code: "missing_arrival_npc_dialogue" };
-  }
+  const preparedApproval = approvePreparedContinuation({
+    originJobId: context.job.jobId,
+    proposals: proposal.preparedContinuations ?? [],
+    descriptors: context.preparedStepDescriptors ?? [],
+    activeStepIds: context.preparedActiveStepIds ?? [],
+  });
+  if (!preparedApproval.ok) return { ok: false, code: "invalid_prepared_continuation" };
 
   return {
     ok: true,
@@ -718,7 +625,7 @@ export function approveScenePerformance(input: {
     choiceRegistry: approvedChoices,
     // 场景表演契约不含候选事件：池原样保留，事件生命周期由独立审批处理。
     candidateEventPool: [...input.existingCandidateEventPool],
-    linearNarrativeQueue,
+    preparedContinuation: preparedApproval.prepared,
     qualityWarnings,
   };
 }

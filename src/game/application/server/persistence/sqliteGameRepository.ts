@@ -18,6 +18,7 @@ import type {
 } from "./gameRepository";
 import type { WorldState } from "@/game/domain/worldState";
 import { STORY_STATE_SCHEMA_VERSION, type StoryState } from "@/game/domain/storyState";
+import { parseNarrativeRuntimeState } from "@/game/domain/narrative";
 import { parseOpeningVariationProfile, type OpeningNoveltyRecord } from "@/game/domain/openingNovelty";
 import type { GameTypeId } from "@/game/domain/newGame";
 import type { SqliteClient, SqliteClientFactory, SqliteStatement } from "./sqliteClient";
@@ -171,12 +172,23 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
     return corrupt("UNPARSEABLE_RECORD");
   }
 
-  if (worldState["version"] === 1 || storyState["version"] === 1 || storyState["version"] === 2 || storyState["version"] === 3 || storyState["version"] === 4) {
+  if (worldState["version"] === 1
+    || storyState["version"] === 1
+    || storyState["version"] === 2
+    || storyState["version"] === 3
+    || storyState["version"] === 4
+    || storyState["version"] === 5) {
     return corrupt("UNSUPPORTED_RECORD");
   }
   if (worldState["version"] !== 2 || storyState["version"] !== STORY_STATE_SCHEMA_VERSION) {
     return corrupt("VERSION_MISMATCH");
   }
+  const parsedNarrative = parseNarrativeRuntimeState(storyState["narrative"]);
+  if (!parsedNarrative.ok) return corrupt("UNPARSEABLE_RECORD");
+  const parsedStoryState = {
+    ...storyState,
+    narrative: parsedNarrative.value,
+  } as unknown as StoryState;
 
   return {
     ok: true,
@@ -184,7 +196,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
     record: {
       gameId: asGameId(gameId),
       worldState: worldState as unknown as WorldState,
-      storyState: storyState as unknown as StoryState,
+      storyState: parsedStoryState,
       revision,
       createdAt,
     },
@@ -448,10 +460,10 @@ export function createSqliteGameRepository(
         }
 
         const incrementRevision = input.incrementRevision ?? true;
-        const narrativePredicate = input.expectedNarrativeGeneration === undefined
+        const narrativePredicate = input.expectedNarrativeJob === undefined
           ? ""
-          : ` AND json_extract(story_state_json, '$.narrative.generation.status') = ?
-              AND json_extract(story_state_json, '$.narrative.generation.job.jobId') = ?`;
+          : ` AND json_extract(story_state_json, '$.narrative.status') = ?
+              AND json_extract(story_state_json, '$.narrative.job.jobId') = ?`;
         const updateResult = await tx.execute({
           sql: `UPDATE game_records SET world_state_json = ?, story_state_json = ?,
                 revision = CASE WHEN ? THEN revision + 1 ELSE revision END
@@ -462,9 +474,9 @@ export function createSqliteGameRepository(
             incrementRevision ? 1 : 0,
             input.gameId,
             input.expectedRevision,
-            ...(input.expectedNarrativeGeneration === undefined
+            ...(input.expectedNarrativeJob === undefined
               ? []
-              : [input.expectedNarrativeGeneration.status, input.expectedNarrativeGeneration.jobId]),
+              : [input.expectedNarrativeJob.status, input.expectedNarrativeJob.jobId]),
           ],
         });
         const rowsAffected = Number(updateResult.rowsAffected ?? 0);

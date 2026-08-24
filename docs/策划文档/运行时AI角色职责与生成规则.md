@@ -56,7 +56,7 @@ NPC 可以表现误判、回避或敌意，但不能因为模型看到不该看�
 ## 7. 失败与手动重试
 
 - transport/content 自动重试耗尽后，开局返回 `AI_GENERATION_FAILED`，并只携带稳定的 `failureKind`：`AI_CALL_FAILED` 或 `AI_RESPONSE_INVALID`。
-- 已提交规则回合的场景保留原 `PendingNarrativeJob` 和规则状态，将 `narrative.generation` 持久化为 `failed`；客户端显示失败原因，玩家点击“重试”后以同一 job 重新调用 AI。
+- 已提交正式 NPC 回合的场景保留原 `PendingNarrativeJob` 和规则状态，将 runtime narrative state 持久化为 `provider_failed`；客户端显示失败原因，玩家点击“重试”后以同一 job 恢复 `provider_pending` 并重新调用 AI。prepared/rule action 不创建 provider failed。
 - 失败态跨 reload 保留；普通 ensure 只观察 pending/failed，不会偷偷再次调用 AI。手动重试通过 revision/jobId CAS，两个并发请求最多恢复一次。
 - 生产 AI 不可用时不生成确定性剧情正文，也不把 deterministic scene 标记为 `generated`。确定性 source 仅属于显式离线 fixture 与回放装配。
 

@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, expect, it } from "vitest";
 import type {
   ApprovedWorldDelta,
@@ -154,7 +155,7 @@ describe("ApprovedWorldDelta", () => {
         },
         startingItemIds: [],
       }),
-      previewStoryState: createInitialStoryState({
+      previewStoryState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
         gameLength: "short",
         initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 },
       }),

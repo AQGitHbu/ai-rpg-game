@@ -11,6 +11,7 @@ import { buildStylePolicy } from "../../stylePolicy";
 import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./rpgAiClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
 import { AiGenerationError, classifyAiFailure, transportFailureCodeToCategory } from "../../aiGenerationFailure";
+import { parseStructuredJsonObject } from "@/game/core/json";
 
 // ---------------------------------------------------------------------------
 // 开局生成源（live/fixture）。
@@ -21,22 +22,6 @@ import { AiGenerationError, classifyAiFailure, transportFailureCodeToCategory } 
 // 机械修复只允许空数组/空字符串/数值回退等无创意修复；不得修改剧情语义。
 // 敏感信息不进入日志。
 // ---------------------------------------------------------------------------
-
-function parseJsonResponse(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    const match = text.match(/```json\s*([\s\S]*?)```/);
-    if (match) {
-      try {
-        return JSON.parse(match[1]);
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -249,14 +234,17 @@ export function createOpeningGenerationSource(
         logger?.warn("opening_generation_ai_failed", { code: result.code });
         throw failOpening(transportFailureCodeToCategory(result.code));
       }
-      const parsed = parseJsonResponse(result.content);
-      if (parsed === null) {
+      const parsed = parseStructuredJsonObject(result.content);
+      if (!parsed.ok) {
         logger?.warn("opening_generation_parse_failed", { reason: "json_parse_error" });
-        throw failOpening("invalid_json");
+        throw failOpening(parsed.reason === "root_not_object" ? "invalid_schema" : "invalid_json");
+      }
+      if (parsed.normalization === "json_fence") {
+        logger?.warn("opening_generation_json_fence_normalized");
       }
 
       // 机械修复（无创意）后走同一 schema parser + validator。
-      const repaired = repairOpeningGenerationCandidate(parsed);
+      const repaired = repairOpeningGenerationCandidate(parsed.value);
       if (repaired.candidate === null) {
         logger?.warn("opening_generation_repair_failed", { reason: "schema_invalid" });
         throw failOpening("invalid_schema");

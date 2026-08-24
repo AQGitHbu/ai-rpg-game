@@ -13,17 +13,18 @@ import {
   PLAYER_UTTERANCE_MAX_LENGTH,
   type PendingNarrativeJob,
   type StructuredActionSummary,
+  type ProviderGenerationKind,
+  type NarrativeSceneRequestKind,
 } from "@/game/domain/pendingNarrativeJob";
 import { buildIntentContext, type IntentParserSource } from "@/game/gameplay/rpg/intentParser";
-import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
+import { decideNarrativeExecution, intentProviderAllowedFor } from "@/game/gameplay/rpg/narrativeExecution";
 import { buildOutcomeBeats, currentObjectiveOf, deriveObjectiveTransition } from "@/game/gameplay/rpg/narrativeContext";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
-import type { EvolutionNeed } from "@/game/domain/worldDelta";
-import { evolveWorld, repairIdOverrideForAction } from "./evolveWorld";
-import type { WorldEvolutionSource } from "./worldEvolutionSource";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import { advanceStoryReveal, isActionReleased } from "@/game/gameplay/rpg/worldEvolution";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
+import { consumePreparedContinuation, hasPreparedContinuationMatch } from "./consumePreparedContinuation";
+import { buildRuleOwnedScene } from "./ruleOwnedScene";
 
 export type PerformTurnCommand = {
   readonly gameId: GameId;
@@ -35,7 +36,7 @@ export type PerformTurnCommand = {
 
 export type PerformTurnResult =
   | { readonly ok: true; readonly revision: number; readonly resolvedEvent: ResolvedEvent; readonly feedback: string }
-  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "UNKNOWN_CHOICE" | "ACTION_REJECTED" | "AI_CALL_FAILED" | "AI_RESPONSE_INVALID" | "INFRASTRUCTURE_FAILURE"; readonly feedback: string; readonly failureKind?: AiFailureKind };
+  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "UNKNOWN_CHOICE" | "ACTION_REJECTED" | "AI_CALL_FAILED" | "AI_RESPONSE_INVALID" | "NARRATIVE_CONTINUATION_MISSING" | "NARRATIVE_CONTINUATION_INVALID" | "INFRASTRUCTURE_FAILURE"; readonly feedback: string; readonly failureKind?: AiFailureKind };
 
 export type PerformTurnDeps = {
   readonly repository: GameRepository;
@@ -43,12 +44,8 @@ export type PerformTurnDeps = {
   readonly intentParserSource?: IntentParserSource;
   /** 仅用于关联 intent/world AI 审计事件，不进入游戏状态。 */
   readonly auditLink?: AiTextAuditLink;
-  /**
-   * Task 3：worldEvolution 由 application 编排——source 只负责产出提案
-   * （await 由 performTurn 完成），gameplay `worldEvolution/` 仅做纯决策。
-   * 触发→审批→预览→重演算全部路径都只走单次 CAS。
-   */
-  readonly worldEvolutionSource?: WorldEvolutionSource;
+  /** Deprecated compatibility input; provider orchestration is job-owned. */
+  readonly worldEvolutionSource?: unknown;
 };
 
 /**
@@ -70,7 +67,9 @@ function focusedNpcForFreeText(worldState: WorldState, storyState: StoryState): 
     }
   }
 
-  const scene = storyState.narrative.currentScene;
+  const scene = storyState.narrative.status === "ready"
+    ? storyState.narrative.currentScene
+    : null;
   return scene?.event?.kind === "dialogue" ? String(scene.event.focusNpcId) : null;
 }
 
@@ -116,25 +115,23 @@ export async function performTurn(
     return { ok: false, code: "STALE_GAME_REVISION", feedback: "Stale revision" };
   }
 
-  // spec §11.4: pending 期间不允许玩家再次推进世界（ack_prologue 例外，
-  // 仅能经 fixed_choice 达成；free_text 无法解析为 ack_prologue，同样被拦）
-  if (record.storyState.narrative.generation.status === "pending") {
-    const isAck =
-      command.interaction.kind === "fixed_choice" &&
-      command.choiceMap.get(command.interaction.choiceToken)?.type === "ack_prologue";
-    if (!isAck) {
-      return { ok: false, code: "ACTION_REJECTED", feedback: "正在编排下一幕，请稍候。" };
-    }
+  // Provider states carry no executable choices. Only a ready runtime can
+  // accept a gameplay interaction.
+  if (record.storyState.narrative.status !== "ready") {
+    return { ok: false, code: "ACTION_REJECTED", feedback: "正在编排下一幕，请稍候。" };
   }
 
-  if (command.interaction.kind === "free_text" && command.interaction.targetNpcId !== undefined) {
+  if (command.interaction.kind === "free_text") {
     const focusedNpcId = focusedNpcForFreeText(record.worldState, record.storyState);
-    if (focusedNpcId !== command.interaction.targetNpcId) {
-      return {
-        ok: false,
-        code: "ACTION_REJECTED",
-        feedback: "自定义对话目标已失效，请使用当前场景重新选择。",
-      };
+    if (!intentProviderAllowedFor({
+      interaction: command.interaction,
+      focusedNpcId: focusedNpcId as import("@/game/domain/worldEntity").NpcId | null,
+    })) {
+    return {
+      ok: false,
+      code: "ACTION_REJECTED",
+      feedback: "自定义对话目标已失效，请使用当前场景重新选择。",
+    };
     }
   }
 
@@ -170,7 +167,7 @@ export async function performTurn(
     : undefined;
   const dialogueChoiceLabel = fixedChoiceToken === undefined
     ? undefined
-    : record.storyState.narrative.choiceRegistry?.find((entry) => entry.choiceToken === fixedChoiceToken)?.label;
+    : record.storyState.narrative.choiceRegistry.find((entry) => entry.choiceToken === fixedChoiceToken)?.label;
 
   const resolved = resolveTurn(
     record.worldState,
@@ -183,93 +180,7 @@ export async function performTurn(
     { now: deps.now },
   );
 
-  if (!resolved.ok) {
-    // Task 3：回合修复路径——未知实体引用（UNKNOWN_*）强制节奏需求
-    // complicate；非未知失败按常规需求派生。命中且装配成功才允许提交，
-    // 否则保持零写入并保留原始拒绝信息。
-    const repairMode = UNKNOWN_REPAIR_CODES.has(resolved.code);
-    const need: EvolutionNeed = repairMode
-      ? { kind: "pacing", pacingNeed: "complicate" }
-      : deriveEvolutionNeed(record.worldState, record.storyState);
-
-    // 需要演化时必须调用注入的 source；缺失 source 由 evolveWorld 映射为
-    // AI_CALL_FAILED，不能静默退回普通 ACTION_REJECTED。
-    if (need.kind !== "none") {
-      const outcome = await evolveWorld({
-        need,
-        worldState: record.worldState,
-        storyState: record.storyState,
-        source: deps.worldEvolutionSource,
-        action: converted.action,
-        reason: resolved.code,
-        auditLink: deps.auditLink,
-        idOverride: repairMode ? repairIdOverrideForAction(converted.action) : undefined,
-        now: deps.now,
-      });
-      if (outcome.ok) {
-        const reEvaluated = resolveTurn(
-          outcome.delta.previewWorldState,
-          outcome.delta.previewStoryState,
-          converted.action,
-          command.actionId,
-          record.revision,
-          asTurnId(command.actionId),
-          command.interaction.kind,
-          { now: deps.now },
-        );
-        if (reEvaluated.ok && reEvaluated.resolution.primaryResult.status === "success") {
-          const revealed = advanceStoryReveal({
-            worldState: reEvaluated.resolution.nextWorldState,
-            storyState: reEvaluated.resolution.nextStoryState,
-          });
-          // 重演算成功：单次 CAS 提交（含已世界演化实体 + 行动效果 + pending job）
-          const narrative = buildTurnNarrative(
-            { worldState: record.worldState, storyState: record.storyState },
-            revealed,
-            reEvaluated.resolution.primaryResult,
-            converted.action,
-          );
-          return commitResolution({
-            repository: deps.repository,
-            gameId: command.gameId,
-            actionId: command.actionId,
-            expectedRevision: record.revision,
-            action: converted.action,
-            turnId: reEvaluated.resolution.turnId,
-            nextWorldState: revealed.worldState,
-            nextStoryState: revealed.storyState,
-            turnNumber: reEvaluated.resolution.turnNumber,
-            primaryResult: reEvaluated.resolution.primaryResult,
-            baseLedgerLength: record.worldState.eventLedger.length,
-            now: deps.now(),
-            objectiveTransition: narrative.objectiveTransition,
-            mandatoryBeats: narrative.mandatoryBeats,
-            dialogueChoiceLabel,
-          });
-        }
-        // 重演算仍失败：实体提交必须真实发生（供下一回合使用），行动本身被拒绝。
-        const commitResult = await commitState(deps.repository, {
-          gameId: command.gameId,
-          expectedRevision: record.revision,
-          nextWorldState: outcome.delta.previewWorldState,
-          nextStoryState: outcome.delta.previewStoryState,
-        });
-        if (!commitResult.ok) {
-          return { ok: false, code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE", feedback: "Commit failed" };
-        }
-        return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };
-      }
-      if (outcome.failure !== undefined) {
-        return {
-          ok: false,
-          code: outcome.failure.kind,
-          failureKind: outcome.failure.kind,
-          feedback: outcome.failure.kind === "AI_CALL_FAILED" ? "AI 调用失败，请重试。" : "AI 返回格式不符合要求，请重试。",
-        };
-      }
-    }
-    return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };
-  }
+  if (!resolved.ok) return { ok: false, code: "ACTION_REJECTED", feedback: resolved.feedback };
 
   const { resolution } = resolved;
 
@@ -278,52 +189,31 @@ export async function performTurn(
     return { ok: false, code: "ACTION_REJECTED", feedback: "被战斗阻止" };
   }
 
-  // 战斗失败不进入叙事生成：按用户可理解的“两态战斗”规则，恢复到本场
-  // 战斗开始前的世界/剧情状态，玩家可以立即重新挑战同一场战斗。
-  if (
-    converted.action.type === "battle_action"
-    && resolution.nextWorldState.battle.status === "resolved"
-    && resolution.nextWorldState.battle.outcome === "defeat"
-  ) {
-    const restoredWorldState = restoreAfterBattleDefeat(record.worldState);
-    const commitResult = await commitState(deps.repository, {
-      gameId: command.gameId,
-      expectedRevision: record.revision,
-      nextWorldState: restoredWorldState,
-      nextStoryState: record.storyState,
-    });
-    if (!commitResult.ok) {
-      return {
-        ok: false,
-        code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
-        feedback: "Commit failed",
-      };
-    }
-    return {
-      ok: true,
-      revision: commitResult.record.revision,
-      resolvedEvent: resolution.primaryResult,
-      feedback: "战斗失败，已恢复到战斗开始前，可以重新挑战。",
-    };
-  }
-
   const revealed = advanceStoryReveal({
     worldState: resolution.nextWorldState,
     storyState: resolution.nextStoryState,
   });
 
-  // 活跃战斗是低延迟规则路径：只要本次推进后仍在战斗中，直接 CAS
-  // 提交队列状态，不创建 PendingNarrativeJob，也不等待 AI 场景编排。
-  // 终结战斗仍继续走下方叙事任务路径，保证结局/任务有表现机会。
+  // 活跃战斗回合是规则路径：直接 materialize rule-owned presentation，
+  // 不创建 PendingNarrativeJob，也不等待 AI 场景编排。终结战斗仍继续
+  // 走下方 prepared continuation 路径，要求精确的 battle_resolved 节点。
   if (
     resolution.nextWorldState.battle.status === "active"
     && (converted.action.type === "attack" || converted.action.type === "battle_action")
+    && !resolution.domainEvents.some((event) => event.type === "battle_started")
   ) {
+    const ruleOwned = buildRuleOwnedScene({
+      action: converted.action,
+      resolvedEvent: resolution.primaryResult,
+      worldState: revealed.worldState,
+      storyState: revealed.storyState,
+      turn: resolution.turnNumber,
+    });
     const commitResult = await commitState(deps.repository, {
       gameId: command.gameId,
       expectedRevision: record.revision,
       nextWorldState: revealed.worldState,
-      nextStoryState: revealed.storyState,
+      nextStoryState: ruleOwned.storyState,
     });
     if (!commitResult.ok) {
       return {
@@ -346,48 +236,111 @@ export async function performTurn(
     resolution.primaryResult,
     converted.action,
   );
-
-  return commitResolution({
-    repository: deps.repository,
-    gameId: command.gameId,
-    actionId: command.actionId,
-    expectedRevision: record.revision,
+  const hasPreparedStep = hasPreparedContinuationMatch({
+    storyState: record.storyState,
     action: converted.action,
-    turnId: resolution.turnId,
-    nextWorldState: revealed.worldState,
-    nextStoryState: revealed.storyState,
-    turnNumber: resolution.turnNumber,
-    primaryResult: resolution.primaryResult,
-    baseLedgerLength: record.worldState.eventLedger.length,
-    now: deps.now(),
-    objectiveTransition: narrative.objectiveTransition,
-    mandatoryBeats: narrative.mandatoryBeats,
-    dialogueChoiceLabel,
+    resolvedEvent: resolution.primaryResult,
+    domainEvents: resolution.domainEvents,
   });
-}
+  const decision = decideNarrativeExecution({
+    action: converted.action,
+    interactionKind: command.interaction.kind,
+    advancesObjective: narrative.objectiveTransition.mode !== "unchanged",
+    hasPreparedStep,
+    battleWillResolve: resolution.domainEvents.some((event) => event.type === "battle_resolved"),
+    dialogueWillComplete: dialogueCompletesObjective({
+      action: converted.action,
+      beforeWorldState: record.worldState,
+      transition: narrative.objectiveTransition,
+    }),
+  });
 
-function restoreAfterBattleDefeat(worldState: WorldState): WorldState {
-  const battle = worldState.battle;
-  if (battle.status !== "active" || battle.preBattleSnapshot === undefined) {
-    return { ...worldState, battle: { status: "idle" } };
+  if (decision.kind === "provider") {
+    return commitResolution({
+      repository: deps.repository,
+      gameId: command.gameId,
+      actionId: command.actionId,
+      expectedRevision: record.revision,
+      action: converted.action,
+      turnId: resolution.turnId,
+      nextWorldState: revealed.worldState,
+      nextStoryState: revealed.storyState,
+      turnNumber: resolution.turnNumber,
+      primaryResult: resolution.primaryResult,
+      baseLedgerLength: record.worldState.eventLedger.length,
+      now: deps.now(),
+      objectiveTransition: narrative.objectiveTransition,
+      mandatoryBeats: narrative.mandatoryBeats,
+      dialogueChoiceLabel,
+      generationKind: decision.generationKind,
+      sceneRequestKind: decision.sceneRequestKind,
+    });
+  }
+
+  const nextStoryState = decision.kind === "prepared"
+    ? consumePreparedContinuation({
+        beforeWorldState: record.worldState,
+        beforeStoryState: record.storyState,
+        resolvedWorldState: revealed.worldState,
+        resolvedStoryState: revealed.storyState,
+        action: converted.action,
+        postCommitRevision: record.revision + 1,
+        resolvedEvent: resolution.primaryResult,
+        domainEvents: resolution.domainEvents,
+        now: deps.now,
+      })
+    : { ok: true as const, nextWorldState: revealed.worldState, nextStoryState: buildRuleOwnedScene({
+        action: converted.action,
+        resolvedEvent: resolution.primaryResult,
+        worldState: revealed.worldState,
+        storyState: revealed.storyState,
+        turn: resolution.turnNumber,
+      }).storyState };
+  if (!nextStoryState.ok) {
+    return {
+      ok: false,
+      code: nextStoryState.code,
+      feedback: nextStoryState.code === "NARRATIVE_CONTINUATION_MISSING"
+        ? "当前行动没有可消费的预备叙事。"
+        : "预备叙事图已失效，请重新开始当前回合。",
+    };
+  }
+  const commitResult = await commitState(deps.repository, {
+    gameId: command.gameId,
+    expectedRevision: record.revision,
+    nextWorldState: nextStoryState.nextWorldState,
+    nextStoryState: nextStoryState.nextStoryState,
+  });
+  if (!commitResult.ok) {
+    return {
+      ok: false,
+      code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
+      feedback: "Commit failed",
+    };
   }
   return {
-    ...worldState,
-    player: { ...worldState.player, stats: battle.preBattleSnapshot.playerStats },
-    defeatedEnemyIds: battle.preBattleSnapshot.defeatedEnemyIds,
-    eventLedger: battle.preBattleSnapshot.eventLedger,
-    battle: { status: "idle" },
+    ok: true,
+    revision: commitResult.record.revision,
+    resolvedEvent: resolution.primaryResult,
+    feedback: "Action performed",
   };
 }
 
-/** Task 3：可经回合修复路径装配的未知实体引用代码。 */
-const UNKNOWN_REPAIR_CODES: ReadonlySet<string> = new Set([
-  "UNKNOWN_NPC",
-  "UNKNOWN_LOCATION",
-  "UNKNOWN_FACT",
-  "UNKNOWN_ITEM",
-  "UNKNOWN_ENEMY",
-]);
+function dialogueCompletesObjective(input: {
+  readonly action: Action;
+  readonly beforeWorldState: WorldState;
+  readonly transition: ReturnType<typeof buildTurnNarrative>["objectiveTransition"];
+}): boolean {
+  if (input.action.type !== "talk" || input.transition.before === null) return false;
+  const quest = input.beforeWorldState.quests.find((entry) => entry.id === input.transition.before?.questId);
+  const objective = quest?.objectives[input.transition.before.objectiveIndex];
+  return objective?.kind === "talk_to_npc"
+    && String(objective.npcId) === String(input.action.npcId)
+    && input.transition.completed.some((completed) =>
+      completed.questId === input.transition.before?.questId
+      && completed.objectiveIndex === input.transition.before?.objectiveIndex,
+    );
+}
 
 /** 玩家原文长度上限与 job 构造常量保持一致（spec §7.3 截断）。 */
 function clipPlayerUtterance(text: string): string {
@@ -442,6 +395,8 @@ type CommitResolutionInput = {
   readonly objectiveTransition: ObjectiveTransition;
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
   readonly dialogueChoiceLabel?: string;
+  readonly generationKind: ProviderGenerationKind | null;
+  readonly sceneRequestKind: NarrativeSceneRequestKind | null;
 };
 
 /**
@@ -449,6 +404,30 @@ type CommitResolutionInput = {
  * job 构造失败（如零事件回合）或 commit 失败时零写入 / 不返回成功。
  */
 async function commitResolution(input: CommitResolutionInput): Promise<PerformTurnResult> {
+  if (input.generationKind === null || input.sceneRequestKind === null) {
+    const commitResult = await commitState(input.repository, {
+      gameId: input.gameId,
+      expectedRevision: input.expectedRevision,
+      nextWorldState: input.nextWorldState,
+      nextStoryState: input.nextStoryState,
+    });
+    if (!commitResult.ok) {
+      return {
+        ok: false,
+        code: commitResult.code === "STALE_GAME_REVISION"
+          ? "STALE_GAME_REVISION"
+          : "INFRASTRUCTURE_FAILURE",
+        feedback: "Commit failed",
+      };
+    }
+    return {
+      ok: true,
+      revision: commitResult.record.revision,
+      resolvedEvent: input.primaryResult,
+      feedback: "Action performed",
+    };
+  }
+
   const built = createPendingNarrativeJob({
     jobId: asNarrativeJobId(`job_${input.actionId}`),
     turnId: input.turnId,
@@ -483,17 +462,28 @@ async function commitResolution(input: CommitResolutionInput): Promise<PerformTu
     requestedAt: input.now,
     objectiveTransition: input.objectiveTransition,
     mandatoryBeats: input.mandatoryBeats,
+    generationKind: input.generationKind,
+    sceneRequestKind: input.sceneRequestKind,
   });
   if (!built.ok) {
     return { ok: false, code: "ACTION_REJECTED", feedback: "本回合无法形成叙事任务" };
   }
   const pendingJob: PendingNarrativeJob = built.job;
+  const currentNarrative = input.nextStoryState.narrative;
+  if (currentNarrative.status !== "ready") {
+    return { ok: false, code: "ACTION_REJECTED", feedback: "叙事状态已失效" };
+  }
 
   const nextStoryState: StoryState = {
     ...input.nextStoryState,
     narrative: {
-      ...input.nextStoryState.narrative,
-      generation: { status: "pending", job: pendingJob },
+      status: "provider_pending",
+      mode: currentNarrative.mode,
+      job: pendingJob,
+      lastPresentedScene: currentNarrative.currentScene,
+      ...(currentNarrative.dialogueSession === undefined
+        ? {}
+        : { dialogueSession: currentNarrative.dialogueSession }),
     },
   };
 

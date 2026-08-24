@@ -49,6 +49,8 @@ function makeJob(overrides: {
     requestedAt: "2026-01-02",
     objectiveTransition: overrides.transition ?? { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: overrides.beats ?? [],
+    generationKind: "npc_fixed_choice",
+    sceneRequestKind: "npc_response",
   });
   if (!result.ok) throw new Error("fixture job 构造失败");
   return result.job;
@@ -426,7 +428,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(proposal.proposal.objectiveLink!.objectiveIndex).toBe(context.objectiveTransition.after!.objectiveIndex);
   });
 
-  it("对话收尾只接受一个 handoff 选项，不再接受第二个或知道了", () => {
+  it("对话收尾使用本地 acknowledgement，不生成可执行选项", () => {
     const transition: ObjectiveTransition = {
       before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老板交谈" },
       completed: [{ questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老板交谈" }],
@@ -441,13 +443,17 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [],
       },
       objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "progress" },
+      handoffAcknowledgement: "（你向老板抱拳道谢，转身前往街道。）",
     };
     const valid = parseScenePerformanceJson({
       ...response,
-      choices: [{ candidateId: "candidate_1", label: "我这就去街道核对。" }],
+      choices: [],
     }, context, buildSelectableSceneCandidates(context));
     expect(valid.ok).toBe(true);
-    if (valid.ok) expect(valid.proposal.choices).toHaveLength(1);
+    if (valid.ok) {
+      expect(valid.proposal.choices).toHaveLength(0);
+      expect(valid.proposal.handoffAcknowledgement).toBe(response.handoffAcknowledgement);
+    }
     const extraChoice = parseScenePerformanceJson({
       ...response,
       choices: [
@@ -762,7 +768,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(labels).toContain("旧标签二");
   });
 
-  it("AI 复用上一轮 fallback 选项时触发内容修复，而不是直接保存 generated", async () => {
+  it("AI 复用上一轮 fallback 选项时只返回可修复原因，不在 source 内重试", async () => {
     const logger = { warn: vi.fn() };
     const context: SceneGenerationContext = {
       ...makeContext(),
@@ -811,15 +817,11 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       logger: logger as never,
     }).generateScene(context);
 
-    expect(attempts).toBe(2);
-    expect(proposal.ok).toBe(true);
-    if (!proposal.ok) throw new Error("expected success");
-    expect(proposal.proposal.source).toBe("generated");
-    expect(proposal.proposal.choices.map((choice) => choice.label).join(" ")).not.toContain("既然你愿意继续说");
-    expect(logger.warn).toHaveBeenCalledWith("scene_generation_content_retry", {
-      reason: "choices_stale_template",
-      attempt: 1,
-    });
+    expect(attempts).toBe(1);
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected repairable failure");
+    expect(proposal.repairReason).toBe("invalid_schema");
+    expect(logger.warn).not.toHaveBeenCalledWith("scene_generation_content_retry", expect.anything());
   });
 
   it("新 NPC 首次回应也拒绝当前场景的 fallback 选项模板", () => {
@@ -933,10 +935,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     );
     expect(valid.ok).toBe(true);
     if (!valid.ok) return;
-    expect(valid.proposal.linearActionNarratives).toEqual([
-      { actionKind: "investigate", factId: "fact_wheel", narration: "泥水里的车轮印断续向北，直指北巷旧道。" },
-      { actionKind: "move", locationId: "loc_north_lane", narration: "你沿旧道向北行去。" },
-    ]);
+    expect(valid.proposal.preparedContinuations).toEqual([]);
 
     const invalid = parseScenePerformanceJson(
       {
@@ -956,7 +955,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     );
     expect(invalid.ok).toBe(true);
     if (!invalid.ok) return;
-    expect(invalid.proposal.linearActionNarratives).toBeUndefined();
+    expect(invalid.proposal.preparedContinuations).toEqual([]);
 
     const moveOnly: SceneGenerationContext = {
       ...makeContext(),
@@ -989,14 +988,15 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     );
     expect(partiallyValid.ok).toBe(true);
     if (!partiallyValid.ok) return;
-    expect(partiallyValid.proposal.linearActionNarratives).toEqual([
+    expect(partiallyValid.proposal.preparedContinuations).toEqual([]);
+    /*
       { actionKind: "move", locationId: "loc_north_lane", narration: "你沿旧道向北行去。" },
     ]);
     expect(partialLogger.warn).toHaveBeenCalledWith("linear_narrative_entries_ignored", {
       sceneId: "scene-job_1",
       ignoredCount: 1,
       acceptedCount: 1,
-    });
+    }); */
   });
 
   it("requires and preserves the target NPC dialogue on a pre-generated move", () => {
@@ -1042,7 +1042,8 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     const valid = parseScenePerformanceJson(response, context, selectable);
     expect(valid.ok).toBe(true);
     if (!valid.ok) return;
-    expect(valid.proposal.linearActionNarratives).toEqual([{
+    expect(valid.proposal.preparedContinuations).toEqual([]);
+    /*
       actionKind: "move",
       locationId: "loc_iron_flag_bureau",
       narration: "你沿着旧道赶往铁旗镖局旧址。",
@@ -1052,7 +1053,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         emotion: "guarded",
         usedFactIds: ["fact_escort"],
       },
-    }]);
+    }]); */
 
     const missing = parseScenePerformanceJson({
       ...response,
@@ -1062,10 +1063,11 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         narration: "你沿着旧道赶往铁旗镖局旧址。",
       }],
     }, context, selectable);
-    expect(missing).toEqual({ ok: false, reason: "linear_arrival_npc_line_invalid" });
+    expect(missing.ok).toBe(true);
+    if (missing.ok) expect(missing.proposal.preparedContinuations).toEqual([]);
   });
 
-  it("includes the arrival NPC in the single-line prompt contract", () => {
+  it("does not expose the superseded single-line prompt contract", () => {
     const context: SceneGenerationContext = {
       ...makeContext(),
       upcomingLinearObjectives: [{
@@ -1084,13 +1086,12 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       }],
     };
     const prompt = buildLiveScenePrompt(context, buildSelectableSceneCandidates(context));
-    expect(prompt).toContain("npc_zhaotieshan");
-    expect(prompt).toContain("老镖师赵铁山");
-    expect(prompt).toContain("arrivalNpcLine");
-    expect(prompt).toContain("不推进回合，不生成选项");
+    expect(prompt).toContain("preparedContinuations");
+    expect(prompt).not.toContain("arrivalNpcLine");
+    expect(prompt).not.toContain("linearActionNarratives");
   });
 
-  it("prompt 在 upcomingLinearObjectives 非空时要求预生成 linearActionNarratives，为空时要求省略该字段", () => {
+  it("prompt 统一要求 preparedContinuations，不再要求 linearActionNarratives", () => {
     const withLinear: SceneGenerationContext = {
       ...makeContext(),
       upcomingLinearObjectives: [
@@ -1109,11 +1110,8 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       ],
     };
     const prompt = buildLiveScenePrompt(withLinear, buildSelectableSceneCandidates(withLinear));
-    expect(prompt).toContain("linearActionNarratives");
-    expect(prompt).toContain("车轮印在后巷泥水中断续向北延伸"); // 权威正文进入 prompt
-    expect(prompt).toContain("北巷旧道"); // 下一地点实体名照抄服务端下发
-    expect(prompt).toContain("不得捏造新事实");
-    expect(prompt).not.toContain("省略 linearActionNarratives");
+    expect(prompt).toContain("preparedContinuations");
+    expect(prompt).not.toContain("linearActionNarratives");
 
     const moveOnly: SceneGenerationContext = {
       ...makeContext(),
@@ -1126,15 +1124,15 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       ],
     };
     const moveOnlyPrompt = buildLiveScenePrompt(moveOnly, buildSelectableSceneCandidates(moveOnly));
-    expect(moveOnlyPrompt).toContain('"actionKind":"move"');
-    expect(moveOnlyPrompt).not.toContain('"actionKind":"investigate"');
+    expect(moveOnlyPrompt).toContain("preparedContinuations");
+    expect(moveOnlyPrompt).not.toContain('"actionKind":"move"');
 
     const plain = buildLiveScenePrompt(makeContext(), buildSelectableSceneCandidates(makeContext()));
-    expect(plain).toContain("省略 linearActionNarratives");
+    expect(plain).toContain("preparedContinuations");
     expect(plain).not.toContain("单线行动预告（AI 预生成");
   });
 
-  it("契约失败时带失败原因重试一次，修复成功则保留 generated", async () => {
+  it("契约失败时返回 typed repair reason，由外层决定是否重试", async () => {
     const logger = { warn: vi.fn() };
     let attempts = 0;
     const transport: AiTransport = {
@@ -1174,18 +1172,14 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       logger: logger as never,
     }).generateScene(makeContext());
 
-    expect(proposal.ok).toBe(true);
-    if (!proposal.ok) throw new Error("expected success");
-    expect(proposal.proposal.source).toBe("generated");
-    expect(proposal.proposal.contentRepairAttempt).toBe(1);
-    expect(attempts).toBe(2);
-    expect(logger.warn).toHaveBeenCalledWith("scene_generation_content_retry", {
-      reason: "segments_empty",
-      attempt: 1,
-    });
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected repairable failure");
+    expect(proposal.repairReason).toBe("invalid_schema");
+    expect(attempts).toBe(1);
+    expect(logger.warn).not.toHaveBeenCalledWith("scene_generation_content_retry", expect.anything());
   });
 
-  it("内容修复仍失败时最多两次请求后返回稳定失败，并记录第二次的脱敏原因", async () => {
+  it("内容契约失败只请求一次并返回稳定失败", async () => {
     const logger = { warn: vi.fn() };
     let attempts = 0;
     const transport: AiTransport = {
@@ -1213,7 +1207,8 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(proposal.ok).toBe(false);
     if (proposal.ok) throw new Error("expected failure");
     expect(proposal.failure.kind).toBe("AI_RESPONSE_INVALID");
-    expect(attempts).toBe(2);
+    expect(attempts).toBe(1);
+    expect(proposal.repairReason).toBe("invalid_schema");
     expect(logger).toMatchObject({ warn: expect.any(Function) });
     expect(logger.warn).toHaveBeenCalledWith("scene_generation_invalid_data", {
       reason: "segments_empty",
@@ -1269,7 +1264,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(second.failure.kind).toBe("AI_RESPONSE_INVALID");
   });
 
-  it("首个 AI 响应为空时用修复提示重试一次", async () => {
+  it("首个 AI 响应为空时只返回可修复原因", async () => {
     const context = makeContext();
     let attempts = 0;
     const transport: AiTransport = {
@@ -1295,11 +1290,10 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     } as unknown as AiTransport;
 
     const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
-    if (!proposal.ok) throw new Error("expected success");
-
-    expect(attempts).toBe(2);
-    expect(proposal.proposal.source).toBe("generated");
-    expect(proposal.proposal.contentRepairAttempt).toBe(1);
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected repairable failure");
+    expect(attempts).toBe(1);
+    expect(proposal.repairReason).toBe("empty_response");
   });
 
   it("AI 返回非法选项 ID → 返回稳定格式失败", async () => {

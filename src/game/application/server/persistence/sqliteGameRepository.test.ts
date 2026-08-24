@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 /** @vitest-environment node */
 import { describe, it, expect, afterAll } from "vitest";
 import { join } from "node:path";
@@ -30,7 +31,7 @@ function buildTestState(): { worldState: WorldState; storyState: StoryState } {
     startingLocation: loc,
     startingItemIds: [],
   });
-  const storyState = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
+  const storyState = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
   return { worldState, storyState };
 }
 
@@ -151,7 +152,7 @@ describe("sqliteGameRepository", () => {
       expect(current.record.gameId).toBe(gameId);
       expect(current.record.revision).toBe(0);
       expect(current.record.worldState.version).toBe(2);
-      expect(current.record.storyState.version).toBe(5);
+      expect(current.record.storyState.version).toBe(6);
     }
   });
 
@@ -269,18 +270,21 @@ describe("sqliteGameRepository", () => {
       requestedAt: "2026-01-01",
       objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
       mandatoryBeats: [],
+      generationKind: "npc_fixed_choice",
+      sceneRequestKind: "npc_response",
     });
     expect(jobResult.ok).toBe(true);
     if (!jobResult.ok) return;
     const failedStoryState: StoryState = {
       ...storyState,
       narrative: {
-        ...storyState.narrative,
-        generation: {
-          status: "failed",
-          job: jobResult.job,
-          failure: { kind: "AI_CALL_FAILED", phase: "scene", failedAt: "2026-01-01" },
-        },
+        status: "provider_failed",
+        mode: "offline",
+        job: jobResult.job,
+        lastPresentedScene: storyState.narrative.status === "ready"
+          ? storyState.narrative.currentScene
+          : null,
+        failure: { kind: "AI_CALL_FAILED", phase: "scene", failedAt: "2026-01-01" },
       },
     };
     const gameId = asGameId("g-retry-cas");
@@ -288,7 +292,14 @@ describe("sqliteGameRepository", () => {
 
     const pendingStoryState: StoryState = {
       ...failedStoryState,
-      narrative: { ...failedStoryState.narrative, generation: { status: "pending", job: jobResult.job } },
+      narrative: {
+        status: "provider_pending",
+        mode: failedStoryState.narrative.mode,
+        job: jobResult.job,
+        lastPresentedScene: failedStoryState.narrative.status === "provider_failed"
+          ? failedStoryState.narrative.lastPresentedScene
+          : null,
+      },
     };
     const first = await repo.applyState({
       gameId,
@@ -296,7 +307,7 @@ describe("sqliteGameRepository", () => {
       nextWorldState: worldState,
       nextStoryState: pendingStoryState,
       incrementRevision: false,
-      expectedNarrativeGeneration: { status: "failed", jobId: "retry-job" },
+      expectedNarrativeJob: { status: "provider_failed", jobId: "retry-job" },
     });
     expect(first.ok).toBe(true);
 
@@ -306,7 +317,7 @@ describe("sqliteGameRepository", () => {
       nextWorldState: worldState,
       nextStoryState: pendingStoryState,
       incrementRevision: false,
-      expectedNarrativeGeneration: { status: "failed", jobId: "retry-job" },
+      expectedNarrativeJob: { status: "provider_failed", jobId: "retry-job" },
     });
     expect(second).toEqual({ ok: false, code: "STALE_GAME_REVISION" });
   });
@@ -335,6 +346,8 @@ describe("sqliteGameRepository", () => {
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.record.storyState.narrative.mode).toBe("ai");
+      expect(r.record.storyState.narrative.status).toBe("ready");
+      if (r.record.storyState.narrative.status !== "ready") return;
       expect(r.record.storyState.narrative.choiceRegistry).toEqual([approved.choice]);
       expect(r.record.storyState.tension).toBe(storyState.tension);
       expect(r.record.worldState.currentLocationId).toBe(asLocationId("loc_1"));

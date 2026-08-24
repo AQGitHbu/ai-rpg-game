@@ -151,24 +151,27 @@ export function CurrentGameScreen() {
 
   // 任何持久化 pending 都立即触发幂等 ensure。首场景在黑屏序幕阅读期间
   // 静默生成；prologueShown 由仓储在并发场景写回中单调保留，不再靠延迟生成避竞态。
-  const narrativePending = state.phase === "active" &&
-    state.view.narrativeGeneration.status === "pending";
+  const pendingJobKey = state.phase === "active"
+    && state.view.narrativeGeneration.status === "pending"
+    ? state.view.narrativeGeneration.jobKey
+    : null;
+  const observedPendingJobKey = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!narrativePending) return;
+    if (pendingJobKey === null) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let failures = 0;
 
     async function poll() {
-      const outcome = await ensureNarrative();
-      if (cancelled) return;
-      if (!outcome.ok) {
-        failures++;
-      } else {
-        failures = 0;
+      if (observedPendingJobKey.current !== pendingJobKey) {
+        observedPendingJobKey.current = pendingJobKey;
+        const outcome = await ensureNarrative();
+        if (cancelled) return;
+        if (!outcome.ok) failures++;
       }
-      // Re-fetch current game
+      // ensure is a one-time kick for this opaque job; subsequent observations
+      // are GET-only so polling cannot repeatedly enqueue provider work.
       const res = await fetchCurrentGame();
       if (!cancelled) applyResponse(res);
       if (!cancelled) {
@@ -181,7 +184,7 @@ export function CurrentGameScreen() {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [narrativePending, applyResponse]);
+  }, [pendingJobKey, applyResponse]);
 
   async function handleRetryNarrative(): Promise<void> {
     if (narrativeRetryInFlight.current) return;

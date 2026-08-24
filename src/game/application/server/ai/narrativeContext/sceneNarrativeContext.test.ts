@@ -5,7 +5,59 @@ import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { SceneGenerationContext } from "@/game/application/sceneGenerationContext";
 import { buildSelectableSceneCandidates } from "@/game/application/deterministicSceneSource";
 import { buildStylePolicy } from "@/game/application/stylePolicy";
+import type { PreparedStepDescriptor } from "@/game/gameplay/rpg/preparedContinuation";
 import { compileSceneNarrativeContext } from "./sceneNarrativeContext";
+
+function makePreparedStepDescriptors(): readonly PreparedStepDescriptor[] {
+  return [
+    {
+      stepId: "prepared_arrival",
+      objectiveKey: "quest_main:1",
+      consumptionGroupKey: "quest_main:1:move",
+      trigger: { kind: "move", locationId: asLocationId("loc_north_lane") },
+      authority: {
+        questId: asQuestId("quest_main"),
+        objectiveIndex: 1,
+        allowedEntityIds: ["loc_north_lane", "npc_other"],
+        visibleFactIds: [asFactId("fact_shared")],
+      },
+      arrivalNpc: {
+        id: asNpcId("npc_other"),
+        name: "赵四",
+        role: "码头脚夫",
+        publicProfile: "经常替人跑腿的码头脚夫",
+        knownFactCards: [],
+        sceneVisibleFactIds: [asFactId("fact_shared")],
+        goals: ["保住自己在码头的活路"],
+      },
+      choiceCandidates: [
+        {
+          candidateId: "prepared_arrival_choice_1",
+          action: { type: "talk", npcId: asNpcId("npc_other"), dialogueAct: "support", topic: { kind: "general" } },
+        },
+        {
+          candidateId: "prepared_arrival_choice_2",
+          action: { type: "talk", npcId: asNpcId("npc_other"), dialogueAct: "challenge", topic: { kind: "general" } },
+        },
+      ],
+      nextStepIds: ["prepared_followup"],
+    },
+    {
+      stepId: "prepared_followup",
+      objectiveKey: "quest_main:2",
+      consumptionGroupKey: "quest_main:2:investigate",
+      trigger: { kind: "investigate", factId: asFactId("fact_shared"), approachId: "approach_tracks" },
+      authority: {
+        questId: asQuestId("quest_main"),
+        objectiveIndex: 2,
+        allowedEntityIds: ["fact_shared"],
+        visibleFactIds: [],
+      },
+      choiceCandidates: [],
+      nextStepIds: [],
+    },
+  ];
+}
 
 function makeSceneContext(): SceneGenerationContext {
   const pending = createPendingNarrativeJob({
@@ -50,6 +102,8 @@ function makeSceneContext(): SceneGenerationContext {
         instruction: "把下一步明确交接到北巷旧道",
       },
     ],
+    generationKind: "npc_free_text",
+    sceneRequestKind: "npc_handoff",
   });
   if (!pending.ok) throw new Error("fixture job failed");
 
@@ -277,20 +331,8 @@ function makeSceneContext(): SceneGenerationContext {
       evidenceQuality: "clean",
       tensionDelta: 2,
     },
-    upcomingLinearObjectives: [
-      {
-        kind: "discover_fact",
-        factId: asFactId("fact_shared"),
-        investigationLabel: "沿车辙追查",
-        factText: "后门锁孔残留的松脂与北巷旧道上的车辙痕迹彼此印证。",
-        nextObjectiveEntityName: "北巷旧道",
-      },
-      {
-        kind: "visit_location",
-        locationId: asLocationId("loc_north_lane"),
-        locationName: "北巷旧道",
-      },
-    ],
+    preparedStepDescriptors: makePreparedStepDescriptors(),
+    preparedActiveStepIds: ["prepared_arrival"],
     previousDialogue: {
       npcId: asNpcId("npc_focus"),
       npcLine: "昨夜我亲眼看见有人把镖车往北巷旧道引去，可我没看清那人的脸。",
@@ -331,7 +373,7 @@ describe("sceneNarrativeContext", () => {
     expect(selectedById.get("scene:focus-npc")).toBeDefined();
     expect(selectedById.get("scene:non-focus-npcs")).toBeDefined();
     expect(selectedById.get("scene:style-policy")).toBeDefined();
-    expect(selectedById.get("scene:linear-prefetch")).toBeDefined();
+    expect(selectedById.get("scene:prepared-continuations")).toBeDefined();
     expect(selectedById.get("scene:repair")).toBeDefined();
     expect(selectedById.get("scene:player-action")).toBeDefined();
     expect(selectedById.get("scene:legal-actions")).toBeDefined();
@@ -343,9 +385,21 @@ describe("sceneNarrativeContext", () => {
     expect(selectedById.get("scene:current-state")?.content).toContain("activeQuest=");
     expect(selectedById.get("scene:resolution")?.content).toContain("先直接回应玩家对内应的追问");
     expect(selectedById.get("scene:focus-npc")?.content).toContain("thisTurn.outcome=positive");
-    expect(selectedById.get("scene:output-contract")?.content).toContain("linearActionNarratives");
+    expect(selectedById.get("scene:output-contract")?.content).toContain("preparedContinuations");
+    expect(selectedById.get("scene:output-contract")?.content).toContain('"choices":[{"candidateId":"选项ID"');
+    expect(selectedById.get("scene:output-contract")?.content).not.toContain("linearActionNarratives");
     expect(selectedById.get("scene:focus-npc")?.content).not.toContain("fact_focus_secret");
-    expect(selectedById.get("scene:linear-prefetch")?.source.refs).toEqual(["loc_north_lane"]);
+    expect(selectedById.get("scene:prepared-continuations")?.source.refs).toEqual([
+      "prepared_arrival",
+      "prepared_followup",
+    ]);
+    expect(selectedById.get("scene:prepared-continuations")?.content).toContain("stepId=prepared_arrival");
+    expect(selectedById.get("scene:prepared-continuations")?.content).toContain("stepId=prepared_followup");
+    expect(compilation.prompt).not.toContain("linear-prefetch");
+    expect(compilation.prompt).not.toContain("trigger");
+    expect(compilation.prompt).not.toContain("consumptionGroupKey");
+    expect(compilation.prompt).not.toContain("nextStepIds");
+    expect(compilation.prompt).not.toContain("activeStepIds");
     expect(compilation.prompt).toContain("镖银失踪牵出门派内应");
     expect(compilation.prompt).toContain("currentAct=2");
     expect(compilation.prompt).toContain("tension=55");
@@ -362,27 +416,27 @@ describe("sceneNarrativeContext", () => {
     expect(compilation.prompt).not.toContain(context.generationSeed ?? "seed-not-present");
   });
 
-  it("keeps only safe location and arrival-NPC refs in the linear prefetch manifest", () => {
+  it("requires two prepared choices for every arrival step and one output entry per descriptor", () => {
     const context = makeSceneContext();
-    const discoverFact = context.upcomingLinearObjectives?.find((ref) => ref.kind === "discover_fact");
-    const arrivalNpc = context.presentNpcs.find((npc) => String(npc.id) === "npc_other");
-    if (discoverFact === undefined || arrivalNpc === undefined) throw new Error("fixture is incomplete");
+    const compilation = compileSceneNarrativeContext(context, []);
+    const prepared = compilation.context.selected.find((block) => block.id === "scene:prepared-continuations");
 
-    const compilation = compileSceneNarrativeContext({
-      ...context,
-      upcomingLinearObjectives: [
-        discoverFact,
-        {
-          kind: "visit_location",
-          locationId: asLocationId("loc_arrival"),
-          locationName: "南门渡口",
-          arrivalNpc,
-        },
-      ],
-    }, []);
-    const manifestEntry = compilation.manifest.selected.find((entry) => entry.id === "scene:linear-prefetch");
+    expect(prepared?.content).toContain("arrival step 必须恰好生成两个 choices");
+    expect(prepared?.content).toContain("prepared_arrival_choice_1");
+    expect(prepared?.content).toContain("prepared_arrival_choice_2");
+    expect(prepared?.content).toContain("每个 descriptor 恰好生成一个 preparedContinuations 条目");
+    expect(compilation.prompt).toContain("prepared_arrival");
+    expect(compilation.prompt).toContain("prepared_followup");
+  });
 
-    expect(manifestEntry?.sourceRefs).toEqual(["loc_arrival", "npc_other"]);
-    expect(manifestEntry?.sourceRefs).not.toContain(String(discoverFact.factId));
+  it("uses zero current choices and one acknowledgement for a final handoff", () => {
+    const context: SceneGenerationContext = { ...makeSceneContext(), finalDialogueHandoff: true };
+    const compilation = compileSceneNarrativeContext(context, []);
+    const output = compilation.context.selected.find((block) => block.id === "scene:output-contract");
+
+    expect(output?.content).toContain('"choices":[]');
+    expect(output?.content).toContain('"handoffAcknowledgement":"玩家对当前 NPC 的具体致意"');
+    expect(output?.content).toContain("final handoff 必须返回零个当前 choices");
+    expect(output?.content).not.toContain("final handoff 必须返回一个当前 choice");
   });
 });

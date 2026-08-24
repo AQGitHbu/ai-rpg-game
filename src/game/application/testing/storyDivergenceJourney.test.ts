@@ -80,37 +80,26 @@ async function runBranch(branch: Branch, replay: number) {
     store = next;
     reloads += 1;
   };
-  const freeText = async (text: string) => {
-    const npcId = store.record()!.worldState.npcs[0]!.id;
-    accept(await playTurn(store.repo, { kind: "free_text", text, targetNpcId: asNpcId(npcId) }, new Map(), () => "2026-08-09T00:00:00.000Z", source));
-  };
   const finalTalkNpcId = (): string => finalTalkNpcIdOf(store.record()!.worldState);
   const freeTextToFinalNpc = async (text: string) => {
     accept(await playTurn(store.repo, { kind: "free_text", text, targetNpcId: asNpcId(finalTalkNpcId()) }, new Map(), () => "2026-08-09T00:00:00.000Z", source));
   };
-  const openingNpcName = store.record()!.worldState.npcs[0]!.name;
-
   await scene(); // 1: 序幕
   await fixed("交谈"); // 2: 完成第一幕
   await scene(); // 具象化第 2 幕内容
-  // 手渡场景仍把开场 NPC 作为权威 ask 入口；之后焦点对话内直接自由输入。
-  //（任务目标已切换到第 2 幕，开场 NPC 不再有可再次开启的 ask 入口，
-  //  分歧输入必须发生在本次权威对话回合内，不能先“固定回应”再重新交谈）
-  await fixed(openingNpcName); // 3: 手渡场景的权威 ask 入口 → 焦点对话
-  await scene();
-  await freeText(branch.customText); // 4: 自定义分支输入（分歧来源）
-  await scene();
+  // NPC handoff 的确认按钮是本地 UI 行为；分支自由输入放在最终
+  // 已准备好的终局 NPC 上，保证它确实是正式 NPC provider 回合。
   reload(); // 重载 1
-  await fixed("延伸之地·2"); // 5: 前往第 2 幕地点
+  await fixed("延伸之地·2"); // 3: 前往第 2 幕地点
   await scene();
-  await fixed("传讯人·2"); // 6: 完成第 2 幕主线交谈步骤
+  await fixed("传讯人·2"); // 4: 完成第 2 幕主线交谈步骤
   await scene();
   await finishActEvidence(2);
   await scene(); // 具象化第 3 幕内容
   reload(); // 重载 2
-  await fixed("延伸之地·3"); // 7: 前往最终幕地点
+  await fixed("延伸之地·3"); // 5: 前往最终幕地点
   await scene();
-  await fixed("传讯人·3"); // 8: 完成最终幕主线交谈步骤
+  await fixed("传讯人·3"); // 6: 完成最终幕主线交谈步骤
   await scene();
   await freeTextToFinalNpc(branch.customText); // 终幕向结局锚点 NPC 提交支持/质疑，驱动亲和度分化
   await scene();

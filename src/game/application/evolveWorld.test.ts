@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect, vi } from "vitest";
 import { evolveWorld } from "./evolveWorld";
 import type { EvolveWorldInput } from "./evolveWorld";
@@ -22,7 +23,7 @@ function makeWorld(): WorldState {
 }
 
 function makeStory(overrides?: Partial<StoryState>): StoryState {
-  const base = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 1, events: 0 } });
+  const base = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 1, events: 0 } });
   return {
     ...base,
     evolution: {

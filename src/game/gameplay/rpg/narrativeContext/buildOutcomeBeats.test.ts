@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, expect, it } from "vitest";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { MandatoryNarrativeBeat } from "@/game/domain/narrativeBeat";
@@ -9,7 +10,7 @@ import { asItemId, asNpcId } from "@/game/domain/worldEntity";
 import type { ItemEntry, WorldState } from "@/game/domain/worldState";
 import { buildOutcomeBeats, capMandatoryBeats } from "./buildOutcomeBeats";
 
-const ss = createInitialStoryState({
+const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
   gameLength: "short",
   initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 },
 });

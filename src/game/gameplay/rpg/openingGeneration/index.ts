@@ -7,6 +7,7 @@ export {
 } from "./validateOpeningGenerationCandidate";
 export {
   compileOpeningGenerationCandidate,
+  OPENING_NPC_ID,
   type CompileOpeningGenerationCandidateInput,
   type CompileOpeningGenerationCandidateResult,
 } from "./compileOpeningGenerationCandidate";

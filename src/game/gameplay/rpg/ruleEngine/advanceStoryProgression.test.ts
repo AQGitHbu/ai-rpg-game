@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { advanceStoryProgression } from "./advanceStoryProgression";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -31,7 +32,7 @@ function makeWorld(overrides?: Partial<WorldState>): WorldState {
 }
 
 describe("advanceStoryProgression", () => {
-  const ss = createInitialStoryState({
+  const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
     gameLength: "short",
     initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 },
   });

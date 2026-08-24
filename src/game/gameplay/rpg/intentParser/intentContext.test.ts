@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { buildIntentContext } from "./intentContext";
 import { createInitialWorldState, appendLocation, appendNpc, appendItem, type LocationEntry, type NpcEntry, type ItemEntry } from "@/game/domain/worldState";
@@ -29,7 +30,7 @@ describe("buildIntentContext", () => {
     memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
   };
   const ws = appendItem(appendLocation(appendNpc(baseWs, npc1), loc2), item1);
-  const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
+  const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
 
   it("includes current location name and connected locations", () => {
     const ctx = buildIntentContext(ws);

@@ -11,17 +11,18 @@ NPC 对话是持续推进故事的主要入口。每个 ready 的焦点 NPC 场�
 - 任务面板中的 `talk_to_npc` 完成标记与两轮会话状态一致；NPC 的世界事实 `met` 只能表示已经接触过，不能提前把未完成的对白会话显示为完成。
 - 小镇建筑只负责进入建筑场景，不提交回合；地点行动栏中的明确 talk 行动只打开该 NPC 已预生成的 dialogue scene；行动栏与 `talkChoice` 只为当前权威 talk 目标铸造。焦点对话必须展示两个固定选择和一个自定义输入，只有选择或提交自定义输入才发起正式回合；点击 NPC 资料卡仍只查看信息，observe 场景中的 NPC 旁白不构成焦点对话。
 - 固定选择由服务器批准并以 opaque `choiceToken` 下发；客户端只显示 label/hint，不知道 Action 或 `actionKey`。
-- 自定义输入必须绑定当前焦点 NPC。每次提交生成新的浏览器 UUID，即使连续对同一 NPC 输入也分别计为独立回合。
+- 自定义输入必须绑定当前焦点 NPC。每次提交生成新的浏览器 UUID，即使连续对同一 NPC 输入也分别计为独立回合；即便原文包含地点或物品动作词，在该对话上下文中也必须作为对焦点 NPC 的 utterance 解析，不能切换为移动、取物或探索 Action。
 - 玩家输入表达意图，不声明事实。服务端意图解析器只能转换成当前受支持 Action；越权声明不能直接改变任务、知识、关系、物品、战斗或结局。
-- 每个成功输入都会推进 `turnNumber`、更新结构化 NPC 记忆/关系、产生一个 `PendingNarrativeJob`；服务端在规则写入成功后立即后台排队下一幕，不等待玩家再次点击或客户端 ensure 才开始生成。
-- 当一次对话完成当前幕并具象化出下一任务时，新场景是任务交接场景：旧焦点 NPC 必须在本次生成的 `npcLine` 中说完承接新目标的最后一句；同一次生成必须返回一个绑定权威目标的 handoff choice，玩家用这一句对白/动作进入新任务、地点或人物。收尾 scene 只允许一个 choice，不能显示“知道了”或泛化的“继续调查”；新出现的 NPC 不会被界面自动打开。
-- 交接离开当前建筑/地点时，旧焦点对话框和旧行动栏一起关闭；玩家回到地图/小镇进入新目标后，才由新 NPC 提供正式对白，避免旧 NPC 的双选项伪装成新主线。
+- 每个成功输入都会推进 `turnNumber`、更新结构化 NPC 记忆/关系，并产生一个白名单内的 `PendingNarrativeJob`；服务端在规则写入成功后立即后台排队下一幕，不等待玩家再次点击或客户端 ensure 才开始生成。
+- 生产 provider 触发只允许开局 `opening` 与焦点 NPC 的正式 `npc_fixed_choice` / `npc_free_text` 分支。一次正式 NPC proposal 通过审批时，同时写入当前 scene 与到下一处正式 NPC 决策前的 `PreparedContinuationState`；移动、调查、物品、战斗边界和回退导航不得再调用 provider。
+- 当一次对话完成当前幕并具象化出下一任务时，新场景是任务交接场景：旧焦点 NPC 必须在本次生成的 `npcLine` 中说完承接新目标的最后一句；下一步由服务端批准的 prepared continuation 或地图 travel 入口承接，不再把 handoff 做成可重复提交的 action。收尾 scene 不生成“知道了”或泛化的“继续调查” choice；新出现的 NPC 不会被界面自动打开。
+- 交接离开当前建筑/地点时，旧焦点对话框由本地 acknowledgement 关闭；该动作没有 choiceToken、不创建 action、不改变 revision/turn/location，也不显示等待 NPC 状态。玩家回到地图/小镇进入新目标后，才由新 NPC 提供正式对白，避免旧 NPC 的双选项伪装成新主线。
 - 交接/非目标 NPC 点击后是零回合闲聊弹窗（由同一次 live scene API 的 `npcDialogues` 同步生成 + “知道了”关闭），不提交回合、不创建 pending、不推进剧情；正式对话只能经当前权威 talk 目标入口开启。generated 闲聊缺失会触发内容修复，旧存档才使用确定性兼容台词。
 - 若权威当前目标已经切换为调查、移动、取物或战斗，上一轮 NPC 的回应仍可展示，但旧的 dialogue focus、自由输入和 support/challenge 选项必须降级/关闭；不能因为旧 token 仍能通过机械合法性检查，就把玩家留在上一轮对话里。只有当前目标仍是该 NPC 的交谈，或明确进入结局抉择时，才保留焦点对话。
-- 若对话收束后权威当前目标切换为同一地点另一名 NPC 的 `talk_to_npc`，旧 NPC 的最后一句仍保留在原对话框中，并只显示一个由当前目标 opaque token 驱动的“与下一位 NPC 交谈”单线按钮；该按钮只是交接/关闭旧对话，不重复提交回合。进入目标 NPC 所在建筑后，再打开其已准备好的正式双选项对话。
-- 若对话收束后权威当前目标切换为地点、物品或调查，旧 NPC 的最后一句同样保留在原对话框中，并只显示同一次 scene 生成的唯一 handoff choice；点击后才提交真实的下一步行动。只有非焦点零回合闲聊仍使用“知道了”关闭。
-- 新地点刚被编排出来时，场景事件可能仍是 travel/observe；只要当前主线目标已锁定该地点的焦点 NPC，read model 仍可从权威目标铸造两项 opaque 的 support/challenge 回应，并接受绑定该 NPC 的自定义对白，不能要求玩家重复点击一次无意义的交谈入口。
-- 同一幕可以预先具象化后续 NPC、证物和敌人，但只有当前释放目标对应的实体进入场景与 NPC 上下文。前置调查未完成时不展示远端 NPC；玩家抵达新地点后，NPC 首句必须承接已完成的调查事实与到达过程，不能默认双方已经交换过密信、腰牌或完整案情。
+- 若对话收束后权威当前目标切换为同一地点另一名 NPC 的 `talk_to_npc`，旧 NPC 的最后一句仍保留在原对话框中，并显示本地“与下一位 NPC 交谈”关闭入口；该入口不带 choiceToken、不提交回合。进入目标 NPC 所在建筑后，再打开其已准备好的正式双选项对话。
+- 若对话收束后权威当前目标切换为地点、物品或调查，旧 NPC 的最后一句同样保留在原对话框中；地点目标由权威 `travelChoice` 承接，物品/调查目标由 prepared step 或规则场景承接，不把本地关闭动作伪装成新的 action。只有非焦点零回合闲聊仍使用“知道了”关闭。
+- 新地点刚被编排出来时，场景事件可能仍是 travel/observe；只要当前主线目标已锁定该地点的焦点 NPC，read model 仍可从权威目标铸造两项 opaque 的 support/challenge 回应，并接受绑定该 NPC 的自定义对白，不能要求玩家重复点击一次无意义的交谈入口。若当前目标是已批准 continuation 的移动/调查/战斗节点，则先消费该节点，再在 post-commit revision 上铸造正式选择 token。
+- 同一幕可以在 prepared continuation 中审批后续 NPC、证物和敌人，但只有当前 active step 对应的实体进入场景与 NPC 上下文。前置调查未完成时不展示远端 NPC；玩家抵达新地点后，NPC 首句必须承接已完成的调查事实与到达过程，不能默认双方已经交换过密信、腰牌或完整案情。调查方式和战斗结果等兄弟 step 共用消费组，消费一个分支会裁剪未选分支。
 - 正式对白提交后保留原 NPC 对话模态；选中的固定回应或自定义回应的本地临时展示保留在当前模态中，并在其后显示等待 NPC 回应的内联 loading。等待态从提交前捕获的本页临时对话快照渲染，不能依赖 pending `GameSessionView` 继续提供 choices；因此固定选项、已选态、spinner 与给予道具选项在 pending 快照清空 choices 时仍可见。自定义输入只保留在当前页面临时状态，不写入对话记录。对话选项、输入、关闭和其它游戏入口全部锁定。ready 写回后清理临时快照，直接显示同一 NPC 的新台词和下一组选项，不增加继续按钮。场景生成 failed 时只弹出失败重试模态；行动尚未提交的 AI 失败重试原 interaction，规则已提交的场景失败复用同一 narrative job。若目标变化，HUD/任务面板显示权威下一步，旧焦点对白按交接规则关闭。
 - 玩家原文不写入长期记忆、事件账本或日志；长期记录只保存规则归一化的 dialogue act、topic summary 和 fact IDs。
 - `npcLine.text` 是直接展示给玩家的 NPC 第一人称台词正文，不得包含 NPC 名称、角色动作或“说道/答道”等叙述性前缀；点击 NPC 时 UI 已经单独展示名称。
@@ -68,6 +69,13 @@ type ActionRequest = {
 - ready scene、choice registry 和候选事件池由一次 scene write-back CAS 持久化。
 - 固定 token 只在其场景和 revision 有效；tampered、stale 或重复消费均零写入。
 - 自定义输入也必须经过当前 NPC 在场、焦点匹配、文本长度和规则合法性检查。
+
+## Prepared continuation 边界
+
+- `PreparedContinuationState` 是服务端维护的有向无环图，不是客户端可读的队列。step 的 trigger、消费组、后继和 active membership 均由服务端审批；AI 只提供 scene seed 的文案、事件和合法 choice seed。
+- 移动、调查、battle start/resolution 的规则结果、prepared scene 物化、choice token 铸造、continuation 消费和 revision 递增在同一次 repository CAS 中完成。active battle round、无 prepared step 的物品交换和回退导航直接使用 `source="rule"` 场景。
+- 找不到当前 trigger 的 active step 返回 `NARRATIVE_CONTINUATION_MISSING`；图或权威事件不匹配返回 `NARRATIVE_CONTINUATION_INVALID`。两者都不调用 provider 且零状态写入。
+- `GameSessionView.narrativeGeneration` 只投影 `idle`、`pending(jobKey)` 或 `failed(jobKey, failureKind)`；客户端对新 job 只发起一次 ensure，后续仅 GET 观测，failed 不因轮询自动恢复。
 
 ## 主要文件
 

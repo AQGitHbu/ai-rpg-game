@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { materializeWorldDelta } from "./materializeWorldDelta";
 import type { WorldState, NpcEntry } from "@/game/domain/worldState";
@@ -28,7 +29,7 @@ function makeWorld(): WorldState {
 }
 
 function makeStory(overrides?: Partial<StoryState>): StoryState {
-  const base = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } });
+  const base = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } });
   return {
     ...base,
     evolution: {

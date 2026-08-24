@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, expect, it, vi } from "vitest";
 import type { Action } from "./action";
 import {
@@ -44,7 +45,7 @@ function createStates(): {
   readonly nextWorldState: WorldState;
   readonly domainEvents: readonly GameEvent[];
 } {
-  const previousStoryState = createInitialStoryState({
+  const previousStoryState = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
     gameLength: "short",
     initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 },
   });
@@ -191,7 +192,7 @@ describe("TurnResolution", () => {
       turnNumber: resolution.turnNumber,
       ledgerCursor: resolution.nextWorldState.eventLedger.length,
     }).toEqual({
-      schemaVersion: 5,
+      schemaVersion: 6,
       baseRevision: 41,
       turnNumber: 1,
       ledgerCursor: 7,

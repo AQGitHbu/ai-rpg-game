@@ -4,6 +4,7 @@ import { validateOpeningGenerationCandidate } from "./validateOpeningGenerationC
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import type { StoryState } from "@/game/domain/storyState";
 import { asGenerationId, asLocationId, asNpcId, asQuestId, asFactId } from "@/game/domain/worldEntity";
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 
 function validCandidate(): OpeningGenerationCandidate {
   return {
@@ -57,6 +58,7 @@ function compile(candidate: OpeningGenerationCandidate = validCandidate()) {
       gameType: "wuxia",
     },
     gameLength: "short",
+    initialNarrative: createFixtureNarrativeRuntimeState(),
   });
 }
 
@@ -147,6 +149,7 @@ describe("compileOpeningGenerationCandidate", () => {
         gameType: "fantasy",
       },
       gameLength: "medium",
+      initialNarrative: createFixtureNarrativeRuntimeState(),
     });
     const { worldState, storyState } = result;
     expect(storyState.targetActs).toBe(5);

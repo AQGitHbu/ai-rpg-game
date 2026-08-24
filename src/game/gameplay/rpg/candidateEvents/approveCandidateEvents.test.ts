@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { approveCandidateEvents } from "./approveCandidateEvents";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -62,7 +63,7 @@ function makeWorldState(): ReturnType<typeof createInitialWorldState> {
 }
 
 function makeSs(): ReturnType<typeof createInitialStoryState> {
-  return createInitialStoryState({
+  return createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
     gameLength: "short",
     initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 },
   });
