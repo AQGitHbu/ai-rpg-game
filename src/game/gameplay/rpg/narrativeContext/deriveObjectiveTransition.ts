@@ -15,6 +15,32 @@ function refsEqual(a: ObjectiveRef | null, b: ObjectiveRef | null): boolean {
   return a.questId === b.questId && a.objectiveIndex === b.objectiveIndex && a.label === b.label;
 }
 
+/**
+ * `NpcEntry.met` 只表示玩家已经接触过 NPC；两轮正式对白仍必须由同一
+ * `dialogueSession` 结算后才能满足 talk_to_npc。否则第一轮规则回合写入
+ * met=true 后，目标转换会提前生成 npc_handoff，下一幕就会按收尾合同省略
+ * 两个正式对白选项。
+ */
+export function isObjectiveSatisfiedInStory(
+  ws: WorldState,
+  ss: StoryState,
+  objective: WorldState["quests"][number]["objectives"][number],
+): boolean {
+  if (!isObjectiveSatisfied(ws, objective)) return false;
+  if (objective.kind !== "talk_to_npc") return true;
+  const session = ss.narrative.dialogueSession;
+  if (
+    session === undefined
+    // 开局 session 的 turnCount=0 只是“已进入第一段对话”的兼容标记；
+    // 旧开局入口的首次 ask 仍然是一次有效的单回合幕起点。
+    || session.turnCount === 0
+  ) return true;
+  // 旧 NPC 的 completed 会话不能完成当前 NPC 的目标；规则层可能已经在
+  // 本回合把新 NPC 标记为 met，但这只代表接触发生，不代表两轮对白结束。
+  if (String(session.npcId) !== String(objective.npcId)) return false;
+  return session.completed;
+}
+
 // authoritative：当前幕第一个 active 主线任务的首个未完成目标；无则回退到第一个 active 任务。
 export function currentObjectiveOf(ws: WorldState, ss: StoryState): ObjectiveRef | null {
   const mainline = ws.quests.find(
@@ -30,7 +56,7 @@ export function currentObjectiveOf(ws: WorldState, ss: StoryState): ObjectiveRef
     ? quest.objectives.length - 1
     : Math.min(reveal.visibleObjectiveIndex, quest.objectives.length - 1);
   const firstOpen = quest.objectives.findIndex((obj, index) =>
-    index <= maxVisibleIndex && !isObjectiveSatisfied(ws, obj),
+    index <= maxVisibleIndex && !isObjectiveSatisfiedInStory(ws, ss, obj),
   );
   const objectiveIndex = firstOpen === -1
     ? Math.max(0, maxVisibleIndex)
@@ -45,6 +71,8 @@ export function currentObjectiveOf(ws: WorldState, ss: StoryState): ObjectiveRef
 function completedObjectives(
   beforeW: WorldState,
   afterW: WorldState,
+  beforeS: StoryState,
+  afterS: StoryState,
   before: ObjectiveRef | null,
 ): ObjectiveRef[] {
   if (!before) return [];
@@ -54,7 +82,11 @@ function completedObjectives(
   const completed: ObjectiveRef[] = [];
   for (let i = 0; i <= before.objectiveIndex && i < beforeQuest.objectives.length; i += 1) {
     const objective = beforeQuest.objectives[i];
-    if (objective && !isObjectiveSatisfied(beforeW, objective) && isObjectiveSatisfied(afterW, objective)) {
+    if (
+      objective
+      && !isObjectiveSatisfiedInStory(beforeW, beforeS, objective)
+      && isObjectiveSatisfiedInStory(afterW, afterS, objective)
+    ) {
       completed.push({
         questId: before.questId,
         objectiveIndex: i,
@@ -74,7 +106,13 @@ export function deriveObjectiveTransition(input: DeriveObjectiveTransitionInput)
     return { before, completed: [], after, mode: "ready_for_ending" };
   }
 
-  const completed = completedObjectives(beforeWorldState, afterWorldState, before);
+  const completed = completedObjectives(
+    beforeWorldState,
+    afterWorldState,
+    beforeStoryState,
+    afterStoryState,
+    before,
+  );
   const actAdvanced = afterStoryState.currentAct > beforeStoryState.currentAct;
 
   if (actAdvanced) {

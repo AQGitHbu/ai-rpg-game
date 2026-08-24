@@ -5,8 +5,8 @@ import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import type { MandatoryNarrativeBeat, MandatoryNarrativeBeatKind } from "@/game/domain/narrativeBeat";
 import { ATMOSPHERE_BEAT_ID, MAX_MANDATORY_BEATS } from "@/game/domain/narrativeBeat";
 import type { NpcId } from "@/game/domain/worldEntity";
-import { isObjectiveSatisfied, objectiveLabel } from "./objectiveRules";
-import { currentObjectiveOf } from "./deriveObjectiveTransition";
+import { objectiveLabel } from "./objectiveRules";
+import { currentObjectiveOf, isObjectiveSatisfiedInStory } from "./deriveObjectiveTransition";
 
 export type BuildOutcomeBeatsInput = {
   readonly resolvedEvent: ResolvedEvent;
@@ -92,7 +92,11 @@ function collectRawBeats({ beforeW, afterW, beforeS, afterS }: CollectInput): Ma
       const newlySatisfied: string[] = [];
       for (let i = 0; i <= limit && i < beforeQuest.objectives.length; i += 1) {
         const objective = beforeQuest.objectives[i];
-        if (objective && !isObjectiveSatisfied(beforeW, objective) && isObjectiveSatisfied(afterW, objective)) {
+        if (
+          objective
+          && !isObjectiveSatisfiedInStory(beforeW, beforeS, objective)
+          && isObjectiveSatisfiedInStory(afterW, afterS, objective)
+        ) {
           newlySatisfied.push(objectiveLabel(afterW, afterQuest.objectives[i] ?? objective));
         }
       }

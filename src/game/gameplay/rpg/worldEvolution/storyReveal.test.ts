@@ -149,6 +149,7 @@ function stagedState(): { worldState: WorldState; storyState: ReturnType<typeof 
 describe("story reveal cursor", () => {
   it("releases exactly one investigation → travel → NPC → item → enemy step", () => {
     let { worldState, storyState } = stagedState();
+    const npcId = asNpcId("npc_dyn_1");
     const revision = 7;
 
     let view = projectGameSessionView(worldState, storyState, revision, "ending-session");
@@ -186,6 +187,26 @@ describe("story reveal cursor", () => {
     worldState = {
       ...worldState,
       npcs: worldState.npcs.map((npc) => ({ ...npc, met: true })),
+    };
+    storyState = {
+      ...storyState,
+      narrative: {
+        ...storyState.narrative,
+        dialogueSession: { npcId, turnCount: 1, requiredTurns: 2, completed: false },
+      },
+    };
+    ({ worldState, storyState } = advanceStoryReveal({ worldState, storyState }));
+    expect(storyState.reveal?.visibleObjectiveIndex).toBe(2);
+    view = projectGameSessionView(worldState, storyState, revision, "ending-session");
+    expect(view.story.currentObjectiveLabel).toBe("与顾砚交谈");
+    expect(view.obtainableItems).toEqual([]);
+
+    storyState = {
+      ...storyState,
+      narrative: {
+        ...storyState.narrative,
+        dialogueSession: { npcId, turnCount: 2, requiredTurns: 2, completed: true },
+      },
     };
     ({ worldState, storyState } = advanceStoryReveal({ worldState, storyState }));
     expect(storyState.reveal?.visibleObjectiveIndex).toBe(3);

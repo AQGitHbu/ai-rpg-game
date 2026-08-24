@@ -9,6 +9,7 @@ NPC 对话是持续推进故事的主要入口。每个 ready 的焦点 NPC 场�
 - 普通 ready 场景只有一个焦点 NPC；其面板显示恰好两个固定选择和一个自定义输入。对话会话完成且权威目标已推进时，收尾 scene 由同一次生成返回旧 NPC 的最后一句台词和恰好一个 handoff 选择；该收尾选择不是第二个分支，也不是“知道了”。
 - 两个固定选择必须是当前 NPC 台词的直接回应；每次选择只消耗一轮，不代表对话立即结束。默认对话会话至少连续两轮，第一轮后保留同一 NPC 与话题，第二轮收束后才允许 `talk_to_npc` 目标完成。
 - 任务面板中的 `talk_to_npc` 完成标记与两轮会话状态一致；NPC 的世界事实 `met` 只能表示已经接触过，不能提前把未完成的对白会话显示为完成。
+- 运行时目标判定必须同时匹配 `dialogueSession.npcId` 与当前 `talk_to_npc.npcId`，并要求该会话 `completed=true`；旧 NPC 的已完成会话、或新 NPC 本回合刚写入的 `met=true`，都不能跳过新 NPC 的第一轮正式回应。只有同 NPC 的完整会话完成后，才允许生成 `npc_handoff` 收尾场景。
 - 小镇建筑只负责进入建筑场景，不提交回合；地点行动栏中的明确 talk 行动只打开该 NPC 已预生成的 dialogue scene；行动栏与 `talkChoice` 只为当前权威 talk 目标铸造。焦点对话必须展示两个固定选择和一个自定义输入，只有选择或提交自定义输入才发起正式回合；点击 NPC 资料卡仍只查看信息，observe 场景中的 NPC 旁白不构成焦点对话。
 - 固定选择由服务器批准并以 opaque `choiceToken` 下发；客户端只显示 label/hint，不知道 Action 或 `actionKey`。
 - 自定义输入必须绑定当前焦点 NPC。每次提交生成新的浏览器 UUID，即使连续对同一 NPC 输入也分别计为独立回合；即便原文包含地点或物品动作词，在该对话上下文中也必须作为对焦点 NPC 的 utterance 解析，不能切换为移动、取物或探索 Action。
@@ -106,6 +107,7 @@ type ActionRequest = {
 - `src/game/gameplay/rpg/ruleEngine/index.ts` — 维护最少两轮的 dialogue session，防止首次回应直接完成交谈目标。
 - 场景生成、审批写回和 read model 投影都执行台词归一化，因此旧存档中已保存的“NPC 名称 + 动作 + 台词”包装不会继续出现在对话框。
 - read model 会兼容旧交接存档：当已保存的 dialogue focus 与当前在场 talk 目标不一致时，丢弃过期的焦点选项并把旧 NPC 降为零回合闲聊（“知道了”关闭）；新 generated 场景的 NPC 台词按持久化 `speechSource` 展示，不再误标为 fallback。
+- 非终幕目标完成但下一幕尚未编排时，规则状态会暂存 `evolution.status=needs_next_act`；当前地点投影一次“继续追查下一幕线索”服务器行动，提交后进入既有世界演化/场景编排链，避免 HUD 暂无线索时无法继续。终幕 `ready_for_ending` 仍沿用匹配完成会话的收尾判定。
 - 旧场景中可能持久化的 `smallTalk` 数据不再投影到客户端；非焦点 NPC 只显示零回合闲聊（`choices: []`），`ask` 入口仅由当前权威 talk 目标投影。新的 `npcDialogues` 台词由场景 API 同步生成并随 scene 写回。
 - 任何新输入形态必须先扩展 `Interaction` union，并继续通过 `/api/game/actions` 与 `performTurn`，不能新增并行入口。
 

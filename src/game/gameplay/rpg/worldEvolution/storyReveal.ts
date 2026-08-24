@@ -1,7 +1,7 @@
 import type { Action } from "@/game/domain/action";
 import type { StoryState } from "@/game/domain/storyState";
 import type { QuestObjective, QuestEntry, WorldState } from "@/game/domain/worldState";
-import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
+import { isObjectiveSatisfiedInStory } from "@/game/gameplay/rpg/narrativeContext/deriveObjectiveTransition";
 
 /** 旧存档没有 reveal 字段时，保持既有“全部已物化内容可用”的兼容语义。 */
 export function isQuestObjectiveReleased(
@@ -84,7 +84,11 @@ export function advanceStoryReveal(input: {
 
   const quest = worldState.quests.find((entry) => String(entry.id) === String(reveal.questId));
   const currentObjective = quest?.objectives[reveal.visibleObjectiveIndex];
-  if (quest === undefined || currentObjective === undefined || !isObjectiveSatisfied(worldState, currentObjective)) {
+  if (
+    quest === undefined
+    || currentObjective === undefined
+    || !isObjectiveSatisfiedInStory(worldState, storyState, currentObjective)
+  ) {
     return { worldState, storyState };
   }
 

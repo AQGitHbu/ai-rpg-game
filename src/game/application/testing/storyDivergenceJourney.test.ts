@@ -92,14 +92,18 @@ async function runBranch(branch: Branch, replay: number) {
   reload(); // 重载 1
   await fixed("延伸之地·2"); // 3: 前往第 2 幕地点
   await scene();
-  await fixed("传讯人·2"); // 4: 完成第 2 幕主线交谈步骤
+  await fixed("传讯人·2"); // 4: 第 2 幕第一轮正式交谈
+  await scene();
+  await fixed("传讯人·2"); // 5: 第 2 幕第二轮正式交谈
   await scene();
   await finishActEvidence(2);
   await scene(); // 具象化第 3 幕内容
   reload(); // 重载 2
-  await fixed("延伸之地·3"); // 5: 前往最终幕地点
+  await fixed("延伸之地·3"); // 6: 前往最终幕地点
   await scene();
-  await fixed("传讯人·3"); // 6: 完成最终幕主线交谈步骤
+  await fixed("传讯人·3"); // 7: 最终幕第一轮正式交谈
+  await scene();
+  await fixed("传讯人·3"); // 8: 最终幕第二轮正式交谈
   await scene();
   await freeTextToFinalNpc(branch.customText); // 终幕向结局锚点 NPC 提交支持/质疑，驱动亲和度分化
   await scene();

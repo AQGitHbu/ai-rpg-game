@@ -68,6 +68,11 @@
 - **消费语义**：`move`、`investigate`、`battle_started`、`battle_resolved` 先由规则核对权威实体/事实/敌人与 trigger，再在同一次 CAS 中应用规则结果、物化 prepared scene、按 post-commit revision 铸造 choices、消费当前 group 并递增 revision。
 - **错误边界**：没有 active matching step 返回 `NARRATIVE_CONTINUATION_MISSING`；图结构、权威事件或实体不一致返回 `NARRATIVE_CONTINUATION_INVALID`。两者都不调用 provider 且零状态写入，不回退为 live 或 deterministic 生产场景。
 
+## 叙事边界编排（2026-08-25）
+
+- 非对白行动完成当前幕最后一个主线目标后，若 `evolution.status=needs_next_act` 或 `needs_ending_pair`，read model 会投影一次“继续追查下一幕线索”探索入口；该入口只负责提交边界编排请求，不把无目标地点伪装成普通探索。
+- `performTurn` 对边界请求复用已批准的 provider 世界/场景编排链；新幕或结局写回前保持 pending 锁定。终幕最后一轮 `talk_to_npc` 即使目标转换模式为 `ready_for_ending`，也必须依据匹配且已完成的 `dialogueSession` 选择 `npc_handoff`，不能退回普通双选项场景。
+
 ## 强制节拍与目标链接
 
 - 每个 ready 场景以**分段旁白**呈现；每一段必须对应服务端下发的强制节拍 ID（`player_utterance` / `item_obtained` / `fact_discovered` / `quest_progress` / `quest_advanced` / `battle_started` / `battle_round` / `battle_resolved` / `entity_introduced`），数量 ≤8，可另附一个 `atmosphere` 段且必须置于最后。

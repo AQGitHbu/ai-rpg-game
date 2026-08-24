@@ -341,6 +341,138 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(generation.job.basedOnRevision).toBe(1);
   });
 
+  it("两轮对话第一轮即使规则回合写入 met 也必须生成普通 npc_response，而不是 handoff", async () => {
+    const { repo, record } = createSpyRepo(buildWorldWithMainQuest(), buildFocusedDialogueStoryState());
+
+    const result = await performTurn(
+      {
+        gameId: asGameId("g1"),
+        actionId: "dialogue_first_response",
+        interaction: { kind: "fixed_choice", choiceToken: "tok_talk" },
+        expectedRevision: 0,
+        choiceMap: new Map([[
+          "tok_talk",
+          { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support", topic: { kind: "general" } },
+        ]]),
+      },
+      { repository: repo, now: () => "2026-01-02" },
+    );
+
+    expect(result.ok).toBe(true);
+    const generation = pendingNarrative(record()!.storyState.narrative);
+    expect(generation.job.sceneRequestKind).toBe("npc_response");
+    expect(generation.job.objectiveTransition.completed).toEqual([]);
+    expect(generation.job.objectiveTransition.after?.objectiveIndex).toBe(0);
+  });
+
+  it("终幕第二轮完成最后 talk 目标时仍生成 npc_handoff", async () => {
+    const baseWorld = buildWorldWithMainQuest();
+    const finalWorld = {
+      ...baseWorld,
+      quests: baseWorld.quests.map((quest) => ({
+        ...quest,
+        objectives: [quest.objectives[0]!],
+      })),
+    };
+    const finalStory = {
+      ...buildStoryState(),
+      unresolvedThreads: [],
+      currentAct: 1,
+      targetActs: 1,
+      storyProgress: 0,
+    };
+    const { repo, record } = createSpyRepo(finalWorld, finalStory);
+    const first = await performTurn(
+      {
+        gameId: asGameId("g1"),
+        actionId: "final_dialogue_first",
+        interaction: { kind: "fixed_choice", choiceToken: "tok_talk" },
+        expectedRevision: 0,
+        choiceMap: new Map([[
+          "tok_talk",
+          { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support", topic: { kind: "general" } },
+        ]]),
+      },
+      { repository: repo, now: () => "2026-01-02" },
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const afterFirst = record()!;
+    const sceneWrite = await repo.applySceneWriteBack({
+      gameId: afterFirst.gameId,
+      expectedRevision: afterFirst.revision,
+      nextWorldState: afterFirst.worldState,
+      nextStoryState: {
+        ...afterFirst.storyState,
+        narrative: {
+          status: "ready",
+          mode: "ai",
+          currentScene: {
+            sceneId: "scene-final-dialogue",
+            turn: 1,
+            narration: "老板等着你的下一句话。",
+            usedFactIds: [],
+            npcLine: { npcId: asNpcId("npc_1"), text: "请继续。", emotion: "neutral", usedFactIds: [] },
+            choices: [],
+            source: "fixture",
+            event: { kind: "dialogue", focusNpcId: asNpcId("npc_1") },
+          },
+          choiceRegistry: [],
+          ...(afterFirst.storyState.narrative.dialogueSession === undefined
+            ? {}
+            : { dialogueSession: afterFirst.storyState.narrative.dialogueSession }),
+        },
+      },
+    });
+    expect(sceneWrite.ok).toBe(true);
+    if (!sceneWrite.ok) return;
+
+    const second = await performTurn(
+      {
+        gameId: asGameId("g1"),
+        actionId: "final_dialogue_second",
+        interaction: { kind: "fixed_choice", choiceToken: "tok_talk_second" },
+        expectedRevision: sceneWrite.record.revision,
+        choiceMap: new Map([[
+          "tok_talk_second",
+          { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "challenge", topic: { kind: "general" } },
+        ]]),
+      },
+      { repository: repo, now: () => "2026-01-03" },
+    );
+
+    expect(second.ok).toBe(true);
+    const generation = pendingNarrative(record()!.storyState.narrative);
+    expect(generation.job.sceneRequestKind).toBe("npc_handoff");
+  });
+
+  it("非对白幕边界必须留下场景编排任务，避免 needs_next_act 卡在无目标界面", async () => {
+    const boundaryWorld = {
+      ...buildWorldWithMainQuest(),
+      npcs: buildWorldWithMainQuest().npcs.map((npc) => ({ ...npc, met: true })),
+      quests: buildWorldWithMainQuest().quests.map((quest) => ({ ...quest, objectives: [quest.objectives[0]!] })),
+    };
+    const boundaryStory = buildStoryState();
+    const { repo, record } = createSpyRepo(boundaryWorld, boundaryStory);
+
+    const result = await performTurn(
+      {
+        gameId: asGameId("g1"),
+        actionId: "boundary_prepare",
+        interaction: { kind: "fixed_choice", choiceToken: "tok_explore" },
+        expectedRevision: 0,
+        choiceMap: new Map([["tok_explore", { type: "explore" }]]),
+      },
+      { repository: repo, now: () => "2026-01-02" },
+    );
+
+    expect(result.ok).toBe(true);
+    const generation = pendingNarrative(record()!.storyState.narrative);
+    expect(generation.job.generationKind).toBe("npc_fixed_choice");
+    expect(generation.job.sceneRequestKind).toBe("npc_response");
+  });
+
   it("free_text 行动携带 utterance 进入 pending job", async () => {
     const { repo, record } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 

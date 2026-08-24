@@ -42,6 +42,34 @@ describe("narrative execution provider whitelist", () => {
     });
   });
 
+  it("classifies a completed-act boundary as provider work for scene/world preparation", () => {
+    expect(decideNarrativeExecution({
+      action: { type: "explore" },
+      interactionKind: "fixed_choice",
+      advancesObjective: false,
+      hasPreparedStep: false,
+      battleWillResolve: false,
+      dialogueWillComplete: false,
+      worldBoundaryNeedsPreparation: true,
+    })).toEqual({
+      kind: "provider",
+      generationKind: "npc_fixed_choice",
+      sceneRequestKind: "npc_response",
+    });
+  });
+
+  it("prepared continuation wins over a coincident act-boundary status", () => {
+    expect(decideNarrativeExecution({
+      action: { type: "move", locationId: "loc_2" as never },
+      interactionKind: null,
+      advancesObjective: true,
+      hasPreparedStep: true,
+      battleWillResolve: false,
+      dialogueWillComplete: false,
+      worldBoundaryNeedsPreparation: true,
+    })).toEqual({ kind: "prepared" });
+  });
+
   const nonDialogueInputs: readonly NarrativeExecutionInput[] = [
     { action: { type: "move", locationId: "loc_2" as never }, interactionKind: null, advancesObjective: true, hasPreparedStep: true, battleWillResolve: false, dialogueWillComplete: false },
     { action: { type: "investigate", factId: "fact_2" as never }, interactionKind: null, advancesObjective: true, hasPreparedStep: true, battleWillResolve: false, dialogueWillComplete: false },

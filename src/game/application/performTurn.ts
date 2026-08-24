@@ -251,8 +251,11 @@ export async function performTurn(
     dialogueWillComplete: dialogueCompletesObjective({
       action: converted.action,
       beforeWorldState: record.worldState,
+      afterStoryState: revealed.storyState,
       transition: narrative.objectiveTransition,
     }),
+    worldBoundaryNeedsPreparation: revealed.storyState.evolution.status === "needs_next_act"
+      || revealed.storyState.evolution.status === "needs_ending_pair",
   });
 
   if (decision.kind === "provider") {
@@ -329,17 +332,30 @@ export async function performTurn(
 function dialogueCompletesObjective(input: {
   readonly action: Action;
   readonly beforeWorldState: WorldState;
+  readonly afterStoryState: StoryState;
   readonly transition: ReturnType<typeof buildTurnNarrative>["objectiveTransition"];
 }): boolean {
   if (input.action.type !== "talk" || input.transition.before === null) return false;
   const quest = input.beforeWorldState.quests.find((entry) => entry.id === input.transition.before?.questId);
   const objective = quest?.objectives[input.transition.before.objectiveIndex];
-  return objective?.kind === "talk_to_npc"
-    && String(objective.npcId) === String(input.action.npcId)
-    && input.transition.completed.some((completed) =>
-      completed.questId === input.transition.before?.questId
-      && completed.objectiveIndex === input.transition.before?.objectiveIndex,
-    );
+  if (
+    objective?.kind !== "talk_to_npc"
+    || String(objective.npcId) !== String(input.action.npcId)
+  ) return false;
+
+  if (input.transition.completed.some((completed) =>
+    completed.questId === input.transition.before?.questId
+    && completed.objectiveIndex === input.transition.before?.objectiveIndex,
+  )) return true;
+
+  // 最后一项主线目标完成时，规则层会同时把 transition 切到
+  // ready_for_ending，并保留 completed=[]；仍需依据已完成的同 NPC 会话
+  // 选择 npc_handoff，否则终幕会错误地再投影普通对白选项。
+  if (input.transition.mode !== "ready_for_ending") return false;
+  const session = input.afterStoryState.narrative.dialogueSession;
+  return session !== undefined
+    && String(session.npcId) === String(input.action.npcId)
+    && session.completed;
 }
 
 /** 玩家原文长度上限与 job 构造常量保持一致（spec §7.3 截断）。 */

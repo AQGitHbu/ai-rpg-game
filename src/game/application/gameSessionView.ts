@@ -10,7 +10,7 @@ import { resolveItemPresentation, type ItemIconKey } from "@/game/domain/itemPre
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
-import { buildChoiceMap, hasExplorableContent, currentInvestigationApproachChoices } from "./buildChoiceMap";
+import { buildChoiceMap, hasExplorableContent, currentInvestigationApproachChoices, needsWorldBoundaryPreparation } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
@@ -397,8 +397,11 @@ export function projectGameSessionView(
   if (activeBattle === null) {
     // 探索：仅当前地点有可探索内容（未发现线索/未处理物品或敌人/未满足目标/候选事件）
     // 时显示，避免无剧情钩子地点的空转选项（方案 1）。
-    if (hasExplorableContent(worldState, storyState)) {
-      locationActions.push(choice({ type: "explore" }, revision, `探索${currentLocation?.name ?? "此地"}`, "explore"));
+    if (hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState)) {
+      const label = needsWorldBoundaryPreparation(storyState)
+        ? "继续追查下一幕线索"
+        : `探索${currentLocation?.name ?? "此地"}`;
+      locationActions.push(choice({ type: "explore" }, revision, label, "explore"));
     }
     // 当前 discover_fact 主线目标事实的已审批调查方式 → 每个 approach 一个
     // 行动按钮；只暴露 label/hint，不泄漏事实正文/方式 id（Task 4）。

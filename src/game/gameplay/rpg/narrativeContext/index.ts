@@ -3,7 +3,7 @@
 export type { BuildOutcomeBeatsInput } from "./buildOutcomeBeats";
 export { buildOutcomeBeats, capMandatoryBeats } from "./buildOutcomeBeats";
 export type { DeriveObjectiveTransitionInput } from "./deriveObjectiveTransition";
-export { deriveObjectiveTransition, currentObjectiveOf } from "./deriveObjectiveTransition";
+export { deriveObjectiveTransition, currentObjectiveOf, isObjectiveSatisfiedInStory } from "./deriveObjectiveTransition";
 // Task 5：关系档位 → NPC 回应政策（纯映射，零 AI/IO）。
 export type { NpcResponsePolicy } from "./npcResponsePolicy";
 export { createNpcResponsePolicy, selectAllowedDisclosureFactIds } from "./npcResponsePolicy";

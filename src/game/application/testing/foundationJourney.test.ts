@@ -101,6 +101,8 @@ describe("foundation 动态闭环旅程", () => {
     await scene();
     await fixed("传讯人·2");
     await scene();
+    await fixed("传讯人·2");
+    await scene();
     await fixed("拾取");
     await scene();
     ws = await loadWorldState(store.repo);
@@ -118,6 +120,8 @@ describe("foundation 动态闭环旅程", () => {
 
     // 第 3 幕同样先移动，再交谈、取物、战斗。
     await fixed("延伸之地");
+    await scene();
+    await fixed("传讯人·3");
     await scene();
     await fixed("传讯人·3");
     await scene();

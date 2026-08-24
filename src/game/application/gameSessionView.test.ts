@@ -1048,6 +1048,22 @@ describe("projectGameSessionView", () => {
     }
   });
 
+  it("幕边界待编排时投影继续追查入口，避免无目标界面卡死", () => {
+    const boundaryStory = {
+      ...ss,
+      evolution: { ...ss.evolution, status: "needs_next_act" as const },
+    };
+    const view = projectGameSessionView(ws, boundaryStory, 0, "test-ending-session");
+
+    expect(view.story.currentObjectiveLabel).toBeNull();
+    expect(view.currentLocation.actions).toEqual([
+      expect.objectContaining({
+        label: "继续追查下一幕线索",
+        presentation: "explore",
+      }),
+    ]);
+  });
+
   it("projects active battle controls as attack and guard tokens and no non-battle location actions", () => {
     const enemyId = asEnemyId("enemy_wolf");
     const battleWorld: WorldState = {

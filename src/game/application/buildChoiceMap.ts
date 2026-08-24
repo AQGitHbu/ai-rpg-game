@@ -177,7 +177,7 @@ export function buildChoiceMap(
 
     // 探索：仅当前地点有可探索内容（未发现线索/未拾取物品或敌人/未满足目标/候选事件）
     // 时才作为合法世界行动（方案 1：无剧情钩子不显示探索）。
-    if (hasExplorableContent(worldState, storyState)) {
+    if (hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState)) {
       addRuntimeAction({ type: "explore" });
     }
   }
@@ -225,7 +225,7 @@ function isCurrentlyLegalRegistryAction(
       return worldActionMap.has(deriveRuntimeChoiceToken(action, currentRevision));
     // 探索：只有当前地点有可探索内容时，AI 提案的探索选项才合法并投影。
     case "explore":
-      return hasExplorableContent(worldState, storyState);
+      return hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState);
     case "investigate":
       // 只接受当前 discover_fact 目标事实的已审批 approach（Task 4）。
       return currentInvestigationApproachChoices(worldState, storyState).some((entry) =>
@@ -315,6 +315,11 @@ export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
     !isExpiredCandidate(candidate, ss.turnNumber) &&
     candidateTouchesLocation(ws, candidate, currentId),
   );
+}
+
+/** 当前幕已结算但下一幕/结局尚未装配时，允许玩家提交一次边界编排行动。 */
+export function needsWorldBoundaryPreparation(ss: StoryState): boolean {
+  return ss.evolution.status === "needs_next_act" || ss.evolution.status === "needs_ending_pair";
 }
 
 function candidateTouchesLocation(

@@ -15,6 +15,8 @@ export type NarrativeExecutionInput = {
   readonly hasPreparedStep: boolean;
   readonly battleWillResolve: boolean;
   readonly dialogueWillComplete: boolean;
+  /** 非对白行动刚完成一幕/结局前置目标，需要一次场景编排来装配边界内容。 */
+  readonly worldBoundaryNeedsPreparation?: boolean;
 };
 
 export type NarrativeExecutionDecision =
@@ -49,6 +51,13 @@ export function decideNarrativeExecution(input: NarrativeExecutionInput): Narrat
       generationKind: input.interactionKind === "free_text" ? "npc_free_text" : "npc_fixed_choice",
       sceneRequestKind: input.dialogueWillComplete ? "npc_handoff" : "npc_response",
     };
+  }
+  if (
+    input.worldBoundaryNeedsPreparation === true
+    && input.action.type !== "talk"
+    && !input.hasPreparedStep
+  ) {
+    return { kind: "provider", generationKind: "npc_fixed_choice", sceneRequestKind: "npc_response" };
   }
   // Item exchange is a deterministic inventory boundary. It only consumes a
   // prepared scene when one was explicitly projected; otherwise the rule

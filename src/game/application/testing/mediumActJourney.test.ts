@@ -97,6 +97,8 @@ describe("中篇 5 幕离线可完成性", () => {
       await scene();
       await fixed(`传讯人·${act}`);
       await scene();
+      await fixed(`传讯人·${act}`);
+      await scene();
       await fixed(`信物·${act}`);
       await scene();
       await defeat(`守径人·${act}`);

@@ -194,7 +194,9 @@ describe("叙事落地旅程（Step 2）", () => {
 
     await playIssuedChoice(store.repo, "延伸之地·2");
     await advanceScene(store.repo);
-    await playIssuedChoice(store.repo, "表示支持");
+    await playIssuedChoice(store.repo, "回应");
+    await advanceScene(store.repo);
+    await playIssuedChoice(store.repo, "回应");
     await advanceScene(store.repo);
 
     // 物品拾取。

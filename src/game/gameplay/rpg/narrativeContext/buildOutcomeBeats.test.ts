@@ -60,6 +60,33 @@ describe("buildOutcomeBeats（Task 4）", () => {
     expect(got[0].instruction).toContain("与老板交谈");
   });
 
+  it("第一轮正式对白即使写入 met，也不产生 quest_progress 节拍", () => {
+    const before = withQuest(baseWorld(), quest([{ kind: "talk_to_npc", npcId: NPC_1_ID }]));
+    const beforeStory = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        dialogueSession: { npcId: NPC_1_ID, turnCount: 0, requiredTurns: 2, completed: false },
+      },
+    };
+    const afterStory = {
+      ...beforeStory,
+      narrative: {
+        ...beforeStory.narrative,
+        dialogueSession: { npcId: NPC_1_ID, turnCount: 1, requiredTurns: 2, completed: false },
+      },
+    };
+    const result = buildOutcomeBeats({
+      resolvedEvent: canonicalResolvedEvent(),
+      beforeWorldState: before,
+      beforeStoryState: beforeStory,
+      afterWorldState: withMet(before),
+      afterStoryState: afterStory,
+    });
+
+    expect(oneOfKind(result, "quest_progress")).toEqual([]);
+  });
+
   it("quest_advanced：幕推进时发出新阶段节拍", () => {
     const before = withQuest(baseWorld(), quest([{ kind: "talk_to_npc", npcId: NPC_1_ID }]));
     const afterWorld = withNextAct(before);

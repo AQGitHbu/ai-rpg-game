@@ -98,15 +98,17 @@ describe("动态具象化旅程（Step 1）", () => {
     await fixed("延伸之地·2"); // 4: 前往新地点，释放 NPC
     await scene();
     expect((await loadStoryState(store.repo))?.reveal?.visibleObjectiveIndex).toBe(1);
-    await fixed("传讯人·2"); // 5: 交谈后释放物品
+    await fixed("传讯人·2"); // 5: 第一轮正式交谈
+    await scene();
+    await fixed("传讯人·2"); // 6: 第二轮正式交谈后释放物品
     await scene();
     expect((await loadStoryState(store.repo))?.reveal?.visibleObjectiveIndex).toBe(2);
-    await fixed("拾取"); // 6: 物品获取后释放敌人
+    await fixed("拾取"); // 7: 物品获取后释放敌人
     await scene();
     ws = await loadWorldState(store.repo);
     expect(ws?.inventory.length).toBeGreaterThanOrEqual(1);
 
-    await fixed("挑战"); // 7: 战斗开始
+    await fixed("挑战"); // 8: 战斗开始
     await scene();
     await fightToVictory();
     ws = await loadWorldState(store.repo);
@@ -115,16 +117,18 @@ describe("动态具象化旅程（Step 1）", () => {
 
     reload(); // 重载 2
 
-    await fixed("延伸之地·3"); // 8: 第 3 幕先前往新地点
+    await fixed("延伸之地·3"); // 9: 第 3 幕先前往新地点
     await scene();
-    await fixed("传讯人·3"); // 9: 完成第 3 幕主线的交谈步骤
+    await fixed("传讯人·3"); // 10: 第 3 幕第一轮正式交谈
+    await scene();
+    await fixed("传讯人·3"); // 11: 第 3 幕第二轮正式交谈
     await scene();
     ss = await loadStoryState(store.repo);
     expect(ss?.currentAct).toBe(3);
 
-    await fixed("拾取"); // 10: 第 3 幕物品
+    await fixed("拾取"); // 12: 第 3 幕物品
     await scene();
-    await fixed("挑战"); // 11: 第 3 幕战斗
+    await fixed("挑战"); // 13: 第 3 幕战斗
     await scene();
     await fightToVictory();
     reload(); // 重载 3

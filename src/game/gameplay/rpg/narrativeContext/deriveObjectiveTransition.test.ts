@@ -79,6 +79,72 @@ describe("deriveObjectiveTransition（Task 4）", () => {
     expect(t.mode).toBe("progressed");
   });
 
+  it("两轮对话第一轮只记录 met，不得把 talk_to_npc 目标判定为完成", () => {
+    const before = withQuest(baseWorld(), quest([
+      { kind: "talk_to_npc", npcId: NPC_1_ID },
+      { kind: "obtain_item", itemId: ITEM_SEAL_ID },
+    ]));
+    const after = withMet(before);
+    const beforeStory = story();
+    const afterStory = {
+      ...beforeStory,
+      narrative: {
+        ...beforeStory.narrative,
+        dialogueSession: {
+          npcId: NPC_1_ID,
+          turnCount: 1,
+          requiredTurns: 2,
+          completed: false,
+        },
+      },
+    };
+
+    const t = deriveObjectiveTransition({
+      beforeWorldState: before,
+      beforeStoryState: beforeStory,
+      afterWorldState: after,
+      afterStoryState: afterStory,
+    });
+
+    expect(t.completed).toEqual([]);
+    expect(t.after).toEqual({
+      questId: asQuestId("quest_0"),
+      objectiveIndex: 0,
+      label: "与老板交谈",
+    });
+    expect(t.mode).toBe("unchanged");
+  });
+
+  it("旧 NPC 的已完成会话不能让新 NPC 的 met 标记跳过两轮对白", () => {
+    const before = withQuest(
+      withAddedNpc(baseWorld(), makeNpc(NPC_2_ID, "信使", "传信人")),
+      quest([{ kind: "talk_to_npc", npcId: NPC_2_ID }]),
+    );
+    const beforeStory = {
+      ...story(),
+      narrative: {
+        ...story().narrative,
+        dialogueSession: {
+          npcId: NPC_1_ID,
+          turnCount: 2,
+          requiredTurns: 2,
+          completed: true,
+        },
+      },
+    };
+    const after = withMet(before, NPC_2_ID);
+    const t = deriveObjectiveTransition({
+      beforeWorldState: before,
+      beforeStoryState: beforeStory,
+      afterWorldState: after,
+      afterStoryState: beforeStory,
+    });
+
+    expect(t.completed).toEqual([]);
+    expect(t.after?.label).toBe("与信使交谈");
+    expect(t.mode).toBe("unchanged");
+  });
+
   it("物品已拾取后即使交给 NPC，当前目标也不会退回获取该物品", () => {
     const before = withQuest(baseWorld(), quest([
       { kind: "talk_to_npc", npcId: NPC_1_ID },
