@@ -31,6 +31,7 @@ import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./
 import type { ProviderJsonMode } from "./providerRequestOptions";
 import { compileSceneNarrativeContext } from "./narrativeContext";
 import type { NarrativePromptCompilation } from "./narrativeContext";
+import { parseStructuredJsonObject } from "@/game/core/json";
 
 // ---------------------------------------------------------------------------
 // live 场景表演源（Task 6，取代 liveSceneSource）。
@@ -65,26 +66,6 @@ export const LIVE_SCENE_TIMEOUT_MS = RPG_AI_DEFAULT_POLICIES.scene.timeoutMs;
 // 的 reasoning_content；completion token 预算必须同时容纳 reasoning 和最终正文，
 // 否则会得到 HTTP 200 但 message.content 为空的响应。
 export const LIVE_SCENE_MAX_TOKENS = RPG_AI_DEFAULT_POLICIES.scene.maxTokens ?? 0;
-
-type SceneJsonParseResult =
-  | { readonly ok: true; readonly value: unknown }
-  | { readonly ok: false; readonly reason: "invalid_json" };
-
-function parseJsonResponse(text: string): SceneJsonParseResult {
-  try {
-    return { ok: true, value: JSON.parse(text) };
-  } catch {
-    const match = text.match(/```json\s*([\s\S]*?)```/);
-    if (match) {
-      try {
-        return { ok: true, value: JSON.parse(match[1]) };
-      } catch {
-        return { ok: false, reason: "invalid_json" };
-      }
-    }
-    return { ok: false, reason: "invalid_json" };
-  }
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -526,7 +507,6 @@ export function parseScenePerformanceJson(
 /** live 场景表演源：AI 提案 → 纯解析/校验 → 失败返回稳定 typed failure，不调用 deterministic source。 */
 export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps): SceneSource {
   const { transport, config, logger, jsonMode } = deps;
-  const maxContentRepairAttempts = 1;
   const aiClient = deps.aiClient ?? (transport && config
     ? createRpgAiClient({
       transport,
@@ -536,7 +516,9 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
     })
     : undefined);
 
-  const failScene = (category: Parameters<typeof classifyAiFailure>[0]["category"]): SceneSourceResult => {
+  const failScene = (
+    category: Parameters<typeof classifyAiFailure>[0]["category"],
+  ): Extract<SceneSourceResult, { readonly ok: false }> => {
     const failure: AiGenerationFailure = classifyAiFailure({ phase: "scene", category });
     logger?.warn("scene_generation_failed", { category, kind: failure.kind });
     return { ok: false, failure };
@@ -554,63 +536,31 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
           { role: "user", content: `当前回合：${context.job.actionId}（${context.job.actionSummary.kind}）` },
         ];
 
-        // 场景生成位于每个玩家回合的必经等待界面。瞬态网络失败由统一 client
-        // 按角色策略重试；解析/契约失败则最多再发起一次带失败原因的内容修复，
-        // 修复仍失败时返回稳定 typed failure，不降级到 deterministic scene。
+        // 场景 source 只负责一次 provider attempt。transport retry 属于
+        // RpgAiClient；内容修复预算与审批重试属于上层 use case。
         const result = await aiClient.complete("scene", messages, {
           purpose: "scene_performance",
           trigger: context.auditTrigger ?? `${context.job.actionSummary.kind}_action`,
           ...(context.auditLink ?? {}),
           action: context.job.actionSummary,
           narrativeContext: compilation.manifest,
-          // Task 5：内容修复写入结构化 retry（origin 沿用调用方来源），历史
-          // repair 字段仅作只读兼容，不再写入新事件。
-          ...(context.repairAttempt === undefined
-            ? {}
-            : {
-                retry: {
-                  origin: context.auditLink?.retry?.origin ?? "normal",
-                  mechanism: "content_repair" as const,
-                  attempt: context.repairAttempt.attempt,
-                  reason: context.repairAttempt.reason,
-                },
-              }),
         });
         if (!result.ok) {
           logger?.warn("scene_generation_ai_failed", { code: result.code });
-          // empty_response 没有可解析内容，RpgAiClient 不会重复相同请求；
-          // 这里允许一次带修复指令的内容重试，仍为空才返回 typed failure。
-          const repairAttempt = context.repairAttempt?.attempt ?? 0;
-          if (result.code === "empty_response" && repairAttempt < maxContentRepairAttempts) {
-            logger?.warn("scene_generation_content_retry", {
-              reason: result.code,
-              attempt: repairAttempt + 1,
-            });
-            return generateSceneInner({
-              ...context,
-              repairAttempt: { attempt: repairAttempt + 1, reason: result.code },
-            });
-          }
-          return failScene(transportFailureCodeToCategory(result.code));
+          return result.code === "empty_response"
+            ? { ...failScene(transportFailureCodeToCategory(result.code)), repairReason: "empty_response" }
+            : failScene(transportFailureCodeToCategory(result.code));
         }
 
-        const parsed = parseJsonResponse(result.content);
+        const parsed = parseStructuredJsonObject(result.content);
+        if (parsed.ok && parsed.normalization === "json_fence") {
+          logger?.warn("scene_generation_json_fence_normalized");
+        }
         const parseResult = parsed.ok
           ? parseScenePerformanceJson(parsed.value, context, selectable, logger)
           : parsed;
         if (parseResult.ok) {
-          const proposal = markContentRepairAttempt(parseResult.proposal, context);
-          return { ok: true, proposal };
-        }
-
-        const repairAttempt = context.repairAttempt?.attempt ?? 0;
-        if (repairAttempt < maxContentRepairAttempts) {
-          const reason = parsed.ok ? parseResult.reason : "invalid_json";
-          logger?.warn("scene_generation_content_retry", { reason, attempt: repairAttempt + 1 });
-          return generateSceneInner({
-            ...context,
-            repairAttempt: { attempt: repairAttempt + 1, reason },
-          });
+          return { ok: true, proposal: parseResult.proposal };
         }
 
         logger?.warn("scene_generation_invalid_data", {
@@ -619,7 +569,9 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
             ? sceneResponseShape(parsed.value)
             : { object: false, kind: "invalid_json" }),
         });
-          return failScene(parsed.ok ? "invalid_schema" : "invalid_json");
+          return parsed.ok
+            ? { ...failScene("invalid_schema"), repairReason: "invalid_schema" }
+            : { ...failScene("invalid_json"), repairReason: "invalid_json" };
       } catch (error) {
         logger?.error("scene_generation_error", { error: error instanceof Error ? error.message : "unknown" });
         return failScene("unknown");
@@ -638,15 +590,6 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
   };
 
   return { generateScene };
-}
-
-function markContentRepairAttempt(
-  proposal: ScenePerformanceProposal,
-  context: SceneGenerationContext,
-): ScenePerformanceProposal {
-  return context.repairAttempt === undefined
-    ? proposal
-    : { ...proposal, contentRepairAttempt: context.repairAttempt.attempt };
 }
 
 /** Compatibility entry point for prompt-only callers and existing fixtures. */

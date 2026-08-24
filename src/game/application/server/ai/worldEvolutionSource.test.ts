@@ -284,6 +284,34 @@ describe("createLiveWorldEvolutionSource", () => {
     expect(result.ok ? null : result.failure.kind).toBe("AI_RESPONSE_INVALID");
   });
 
+  it("accepts fenced JSON and records normalization", async () => {
+    const logger = { warn: vi.fn() };
+    const transport: AiTransport = {
+      complete: async () => ({
+        ok: true as const,
+        content: "```json\n{\"proposal\":{\"beatSummary\":\"补足线索\",\"newFact\":{\"text\":\"井沿留有新鲜绳痕。\",\"visibility\":\"public\"}}}\n```",
+        latencyMs: 1,
+      }),
+      stream: async () => ({ ok: false as const, code: "network_error" as const, retryable: true, message: "unused", latencyMs: 1 }),
+    };
+    const source = createLiveWorldEvolutionSource({
+      transport,
+      config: { apiKey: "k", baseUrl: "http://x", model: "m" },
+      logger: logger as never,
+    });
+    const ctx: WorldEvolutionSourceContext = {
+      worldState: makeWorld(),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      need: pacingNeed,
+      action: { type: "talk", npcId: asNpcId("npc_new"), dialogueAct: "ask" },
+      reason: "UNKNOWN_NPC",
+    };
+
+    const result = await source.propose(ctx);
+    expect(result.ok).toBe(true);
+    expect(logger.warn).toHaveBeenCalledWith("world_evolution_json_fence_normalized");
+  });
+
   it("uses JSON object mode when explicitly enabled", async () => {
     const complete = vi.fn(async () => ({ ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 }));
     const transport: AiTransport = {

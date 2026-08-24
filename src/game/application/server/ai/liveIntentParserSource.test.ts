@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   createRuleIntentParser,
   createLiveIntentParser,
@@ -229,6 +229,19 @@ describe("createLiveIntentParser（AI 配置有效时的 live 源）", () => {
     if (result.ok) {
       expect(result.action).toMatchObject({ type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" });
     }
+  });
+
+  it("接受 fenced JSON 并记录规范化", async () => {
+    const logger = { warn: vi.fn() };
+    const live = createLiveIntentParser(
+      stubTransport({ ok: true, content: "```json\n{\"dialogueAct\":\"support\"}\n```" }),
+      undefined,
+      logger,
+    );
+    const result = await live.parseIntent("我相信你", ctx, asNpcId("npc_1"));
+
+    expect(result.ok).toBe(true);
+    expect(logger.warn).toHaveBeenCalledWith("live_intent_json_fence_normalized");
   });
 
   it("非法 JSON → 内容修复耗尽后返回稳定格式失败", async () => {

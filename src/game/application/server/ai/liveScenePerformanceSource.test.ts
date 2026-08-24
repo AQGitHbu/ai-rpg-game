@@ -764,7 +764,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(labels).toContain("旧标签二");
   });
 
-  it("AI 复用上一轮 fallback 选项时触发内容修复，而不是直接保存 generated", async () => {
+  it("AI 复用上一轮 fallback 选项时只返回可修复原因，不在 source 内重试", async () => {
     const logger = { warn: vi.fn() };
     const context: SceneGenerationContext = {
       ...makeContext(),
@@ -813,15 +813,11 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       logger: logger as never,
     }).generateScene(context);
 
-    expect(attempts).toBe(2);
-    expect(proposal.ok).toBe(true);
-    if (!proposal.ok) throw new Error("expected success");
-    expect(proposal.proposal.source).toBe("generated");
-    expect(proposal.proposal.choices.map((choice) => choice.label).join(" ")).not.toContain("既然你愿意继续说");
-    expect(logger.warn).toHaveBeenCalledWith("scene_generation_content_retry", {
-      reason: "choices_stale_template",
-      attempt: 1,
-    });
+    expect(attempts).toBe(1);
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected repairable failure");
+    expect(proposal.repairReason).toBe("invalid_schema");
+    expect(logger.warn).not.toHaveBeenCalledWith("scene_generation_content_retry", expect.anything());
   });
 
   it("新 NPC 首次回应也拒绝当前场景的 fallback 选项模板", () => {
@@ -1136,7 +1132,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(plain).not.toContain("单线行动预告（AI 预生成");
   });
 
-  it("契约失败时带失败原因重试一次，修复成功则保留 generated", async () => {
+  it("契约失败时返回 typed repair reason，由外层决定是否重试", async () => {
     const logger = { warn: vi.fn() };
     let attempts = 0;
     const transport: AiTransport = {
@@ -1176,18 +1172,14 @@ describe("liveScenePerformanceSource（Task 6）", () => {
       logger: logger as never,
     }).generateScene(makeContext());
 
-    expect(proposal.ok).toBe(true);
-    if (!proposal.ok) throw new Error("expected success");
-    expect(proposal.proposal.source).toBe("generated");
-    expect(proposal.proposal.contentRepairAttempt).toBe(1);
-    expect(attempts).toBe(2);
-    expect(logger.warn).toHaveBeenCalledWith("scene_generation_content_retry", {
-      reason: "segments_empty",
-      attempt: 1,
-    });
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected repairable failure");
+    expect(proposal.repairReason).toBe("invalid_schema");
+    expect(attempts).toBe(1);
+    expect(logger.warn).not.toHaveBeenCalledWith("scene_generation_content_retry", expect.anything());
   });
 
-  it("内容修复仍失败时最多两次请求后返回稳定失败，并记录第二次的脱敏原因", async () => {
+  it("内容契约失败只请求一次并返回稳定失败", async () => {
     const logger = { warn: vi.fn() };
     let attempts = 0;
     const transport: AiTransport = {
@@ -1215,7 +1207,8 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(proposal.ok).toBe(false);
     if (proposal.ok) throw new Error("expected failure");
     expect(proposal.failure.kind).toBe("AI_RESPONSE_INVALID");
-    expect(attempts).toBe(2);
+    expect(attempts).toBe(1);
+    expect(proposal.repairReason).toBe("invalid_schema");
     expect(logger).toMatchObject({ warn: expect.any(Function) });
     expect(logger.warn).toHaveBeenCalledWith("scene_generation_invalid_data", {
       reason: "segments_empty",
@@ -1271,7 +1264,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(second.failure.kind).toBe("AI_RESPONSE_INVALID");
   });
 
-  it("首个 AI 响应为空时用修复提示重试一次", async () => {
+  it("首个 AI 响应为空时只返回可修复原因", async () => {
     const context = makeContext();
     let attempts = 0;
     const transport: AiTransport = {
@@ -1297,11 +1290,10 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     } as unknown as AiTransport;
 
     const proposal = await createLiveScenePerformanceSource({ transport, config }).generateScene(context);
-    if (!proposal.ok) throw new Error("expected success");
-
-    expect(attempts).toBe(2);
-    expect(proposal.proposal.source).toBe("generated");
-    expect(proposal.proposal.contentRepairAttempt).toBe(1);
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected repairable failure");
+    expect(attempts).toBe(1);
+    expect(proposal.repairReason).toBe("empty_response");
   });
 
   it("AI 返回非法选项 ID → 返回稳定格式失败", async () => {

@@ -22,6 +22,7 @@ import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import { AiGenerationError, type AiFailureKind } from "./aiGenerationFailure";
+import { runBoundedAttempts } from "@/game/core/retry";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局生成编排改为 source → parse → validate → compile。
@@ -188,62 +189,60 @@ export async function createGame(
       }),
     };
   };
-  let accepted: {
-    readonly candidate: OpeningGenerationCandidate;
-    readonly novelty: OpeningNoveltyRecord;
-    readonly attempt: number;
-  } | null = null;
   let lastFailureKind: AiFailureKind | undefined;
-
-  for (let attempt = 0; attempt < MAX_OPENING_GENERATION_ATTEMPTS; attempt += 1) {
-    let generated: OpeningGenerationCandidate;
-    try {
-      generated = await deps.source.generate({
-        gameType: input.gameType,
-        seed: input.seed,
-        gameLength: input.gameLength,
-        ...(input.setup === undefined ? {} : { setup: input.setup }),
-        novelty: {
-          recent: [...recentHistory, ...rejectedCandidates],
-          attempt,
-        },
-        attempt,
-        ...(deps.auditLink === undefined ? {} : {
-          auditLink: {
-            ...deps.auditLink,
-            gameId: String(input.gameId),
+  type OpeningAttemptReason = "source_error" | "empty_candidate" | "invalid_candidate" | "novelty_conflict";
+  const bounded = await runBoundedAttempts<
+    { readonly candidate: OpeningGenerationCandidate; readonly novelty: OpeningNoveltyRecord; readonly attempt: number },
+    OpeningAttemptReason
+  >({
+    maxAttempts: MAX_OPENING_GENERATION_ATTEMPTS,
+    runAttempt: async (attempt) => {
+      const openingAttempt = attempt - 1;
+      let generated: OpeningGenerationCandidate;
+      try {
+        generated = await deps.source.generate({
+          gameType: input.gameType,
+          seed: input.seed,
+          gameLength: input.gameLength,
+          ...(input.setup === undefined ? {} : { setup: input.setup }),
+          novelty: {
+            recent: [...recentHistory, ...rejectedCandidates],
+            attempt: openingAttempt,
           },
-        }),
-      });
-    } catch (error) {
-      // AiGenerationError 携带稳定 failureKind，直接返回失败结果
-      if (error instanceof AiGenerationError) {
-        lastFailureKind = error.kind;
+          attempt: openingAttempt,
+          ...(deps.auditLink === undefined ? {} : {
+            auditLink: {
+              ...deps.auditLink,
+              gameId: String(input.gameId),
+            },
+          }),
+        });
+      } catch (error) {
+        if (error instanceof AiGenerationError) lastFailureKind = error.kind;
+        return { ok: false, retryable: true, reason: "source_error" as const };
       }
-      continue;
-    }
-    if (!generated) continue;
+      if (!generated) return { ok: false, retryable: true, reason: "empty_candidate" as const };
 
-    // schema parse → gameplay validate → compile。
-    const prepared = prepareCandidate(generated);
-    if (prepared === null) continue;
+      const prepared = prepareCandidate(generated);
+      if (prepared === null) return { ok: false, retryable: true, reason: "invalid_candidate" as const };
 
-    const comparableHistory = [...recentHistory, ...rejectedCandidates];
-    if (isOpeningTooSimilar(prepared.novelty, comparableHistory)) {
-      rejectedCandidates.push(prepared.novelty);
-      continue;
-    }
-    accepted = { candidate: prepared.candidate, novelty: prepared.novelty, attempt };
-    break;
-  }
+      const comparableHistory = [...recentHistory, ...rejectedCandidates];
+      if (isOpeningTooSimilar(prepared.novelty, comparableHistory)) {
+        rejectedCandidates.push(prepared.novelty);
+        return { ok: false, retryable: true, reason: "novelty_conflict" as const };
+      }
+      return { ok: true, value: { ...prepared, attempt: openingAttempt } };
+    },
+  });
 
   // API 可能在三次请求中仍返回同一结构。不能把最后一个重复候选
   // 当作成功；全部候选失败后直接返回 AI_GENERATION_FAILED。
-  if (accepted === null) return {
+  if (!bounded.ok) return {
     ok: false,
     code: "AI_GENERATION_FAILED",
     failureKind: lastFailureKind ?? "AI_RESPONSE_INVALID",
   };
+  const accepted = bounded.value;
 
   const generation = {
     generationId: asGenerationId(`gen_${input.seed}`),

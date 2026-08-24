@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { repairOpeningGenerationCandidate, createOpeningGenerationSource, sanitizeOpeningFactReferences } from "./openingGenerationSource";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import type { AiTransport } from "@ai-game/ai-transport";
@@ -130,6 +130,25 @@ describe("createOpeningGenerationSource", () => {
     const candidate = await source.generate({ gameType: "wuxia", seed: "s", gameLength: "short" });
     expect(candidate.opening.npc.name).toBe("沈掌柜");
     expect(candidate.opening.location.scale).toBe("town");
+  });
+
+  it("接受 fenced JSON 并记录规范化，而不是各 source 自己解析 fence", async () => {
+    const logger = { warn: vi.fn() };
+    const transport = {
+      complete: async () => ({
+        ok: true,
+        content: `\`\`\`json\n${JSON.stringify(validCandidate())}\n\`\`\``,
+        latencyMs: 1,
+      }),
+    } as unknown as AiTransport;
+    const source = createOpeningGenerationSource({
+      transport,
+      config: { baseUrl: "x", apiKey: "k", model: "m" },
+      logger: logger as never,
+    });
+
+    await expect(source.generate({ gameType: "wuxia", seed: "fenced", gameLength: "short" })).resolves.toBeDefined();
+    expect(logger.warn).toHaveBeenCalledWith("opening_generation_json_fence_normalized");
   });
 
   it("机械修复保留 AI 的建筑名与结构标签", async () => {
