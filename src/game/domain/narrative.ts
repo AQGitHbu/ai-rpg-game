@@ -1,9 +1,17 @@
 import type { EnemyId, FactId, ItemId, LocationId, NpcId } from "./worldEntity";
 import { paginateSpeechText } from "./speechPagination";
-import type { PendingNarrativeJob } from "./pendingNarrativeJob";
-import type { ApprovedChoice } from "./approvedChoice";
+import {
+  parsePendingNarrativeJob,
+  PROVIDER_GENERATION_KINDS,
+  type PendingNarrativeJob,
+} from "./pendingNarrativeJob";
+import { createApprovedChoice, type ApprovedChoice } from "./approvedChoice";
 import { composeDirectNpcGreeting, normalizeNpcSpeech } from "./npcSpeech";
 import type { NarrativeGenerationFailure } from "./narrativeGenerationFailure";
+import {
+  parsePreparedContinuationState,
+  type PreparedContinuationState,
+} from "./preparedContinuation";
 
 export const NARRATIVE_EMOTIONS = [
   "neutral", "warm", "guarded", "afraid", "angry", "sad"
@@ -48,23 +56,6 @@ export type NarrativeNpcLineState = {
   readonly answeredBeatIds?: readonly string[];
 };
 
-/** Pre-generated branch consumed immediately by a dialogue response choice. */
-export type NarrativeDialogueFollowupState = {
-  readonly dialogueIntent: string;
-  readonly narration: string;
-  readonly npcLine: NarrativeNpcLineState;
-  readonly nextEventHint?: string;
-};
-
-/** Phase 14: 场景生成的触发上下文，让导演知道场景是为何触发的。 */
-export type NarrativeTriggerContext =
-  | { readonly kind: "initial_opening"; readonly npcId: NpcId }
-  | { readonly kind: "talk"; readonly npcId: NpcId; readonly isFirstMeeting: boolean }
-  | { readonly kind: "narrative_choice_followup"; readonly previousChoiceActionKey: string }
-  | { readonly kind: "dialogue_response"; readonly npcId: NpcId; readonly dialogueIntent: string; readonly playerText: string }
-  | { readonly kind: "free_input"; readonly npcId: NpcId; readonly playerText: string }
-  | { readonly kind: "location_entered"; readonly locationId: string; readonly isFirstVisit: boolean };
-
 /** Phase 14: 场景内 NPC 的对白（含焦点 NPC 与其他在场 NPC）。 */
 export type NpcDialogueInScene = {
   readonly npcId: NpcId;
@@ -73,7 +64,7 @@ export type NpcDialogueInScene = {
   /** 复用现有分页机制（paginateSpeechText）。 */
   readonly speechPages: readonly string[];
   /** 台词来源；旧存档缺失时由 read model 按兼容规则推断。 */
-  readonly speechSource?: "generated" | "fallback";
+  readonly speechSource?: "generated" | "fixture";
   /** 旧存档兼容字段；新 live 场景使用 speechPages + speechSource。 */
   readonly smallTalk?: {
     readonly prompt: string;
@@ -89,39 +80,13 @@ export type NarrativeSceneState = {
   readonly npcLine: NarrativeNpcLineState | null;
   /** 普通场景为两个选择；NPC 对话收尾场景为单个 handoff 选择。 */
   readonly choices: readonly NarrativeChoiceState[];
-  readonly source: "generated" | "fallback";
+  readonly handoffAcknowledgement?: string;
+  readonly source: "generated" | "rule" | "fixture";
   /** 新存档写入；旧场景缺失时按 legacy world-action 场景读取。 */
   readonly event?: NarrativeEventState;
   /** Phase 14: 场景内多 NPC 对白（含焦点 NPC）。 */
   readonly npcDialogues?: readonly NpcDialogueInScene[];
-  /** Pre-generated dialogue branches; intentionally server-only in read models. */
-  readonly dialogueFollowups?: readonly [NarrativeDialogueFollowupState, NarrativeDialogueFollowupState];
-  /** Safe hint shown only after a pre-generated branch is selected. */
-  readonly nextEventHint?: string;
 };
-
-// 玩家自由输入触发叙事场景时的上下文快照：随 pending 变体单次消费，
-// 场景 ready 时 generation 收窄回 idle 自动丢弃，防止跨场景残留。
-export type PlayerNpcChatState = {
-  readonly npcId: NpcId;
-  readonly playerText: string;
-  readonly npcName: string;
-  readonly npcRole: string;
-};
-
-export type NarrativeGenerationState =
-  | { readonly status: "idle" }
-  | {
-      readonly status: "pending";
-      /** pending 的唯一载体；玩家原文只在 job.utterance 内。 */
-      readonly job: PendingNarrativeJob;
-    }
-  | {
-      readonly status: "failed";
-      /** 失败时仍保留原 job，使重试能复用同一 jobId/行动摘要而不重复规则回合。 */
-      readonly job: PendingNarrativeJob;
-      readonly failure: NarrativeGenerationFailure;
-    };
 
 /** 一段 NPC 对话的服务端会话游标；选择不会在第一轮直接完成 talk 目标。 */
 export type DialogueSessionState = {
@@ -131,53 +96,246 @@ export type DialogueSessionState = {
   readonly completed: boolean;
 };
 
-/**
- * AI 预生成单线行动（investigate/move）叙事的持久化形态（Task 2）。
- * 由审批器从 `LinearActionNarrative` 逐字段重建：绝不直接持久化提案对象原引用。
- */
-export type LinearActionNarrativeState =
-  | {
-      readonly actionKind: "investigate";
-      readonly factId: FactId;
-      readonly narration: string;
-      readonly source: "generated";
-    }
-  | {
-      readonly actionKind: "move";
-      readonly locationId: LocationId;
-      readonly narration: string;
-      readonly source: "generated";
-      /** 移动抵达后即将成为主线目标的 NPC 首句。 */
-      readonly arrivalNpcLine?: {
-        readonly npcId: NpcId;
-        readonly text: string;
-        readonly emotion: NarrativeEmotion;
-        readonly usedFactIds: readonly FactId[];
-      };
-    };
-
 /** Runtime AI is opt-in per save. Offline development presets never call it. */
 export type NarrativeMode = "ai" | "offline";
 
-export type NarrativeRuntimeState = {
-  readonly currentScene: NarrativeSceneState | null;
-  readonly generation: NarrativeGenerationState;
-  readonly mode: NarrativeMode;
-  readonly dialogueSession?: DialogueSessionState;
-  /**
-   * 服务端持久化选项注册表（Spec §8.2）：ApprovedChoice 只存在于服务端，
-   * 绝不进入 read model；客户端只能拿到 { choiceToken, label, hint? }。
-   * 条目自带 sceneId/basedOnRevision，消费时校验
-   * entry.sceneId === currentScene.sceneId &&
-   * entry.basedOnRevision === 当前 record revision，否则视为过期失效。
-   */
-  readonly choiceRegistry?: readonly ApprovedChoice[];
-  /**
-   * AI 预生成单线行动叙事队列（Task 2）：随场景写回覆盖式更新，仅 fast path
-   * 消费时读取，消费即除；残留条目仅在实体 ID 精确匹配时生效，无越权风险。
-   */
-  readonly linearNarrativeQueue?: readonly LinearActionNarrativeState[];
+export type NarrativeRuntimeState =
+  | {
+      readonly status: "ready";
+      readonly mode: NarrativeMode;
+      readonly currentScene: NarrativeSceneState;
+      readonly choiceRegistry: readonly ApprovedChoice[];
+      readonly preparedContinuation?: PreparedContinuationState;
+      readonly dialogueSession?: DialogueSessionState;
+    }
+  | {
+      readonly status: "provider_pending";
+      readonly mode: NarrativeMode;
+      readonly job: PendingNarrativeJob;
+      readonly lastPresentedScene: NarrativeSceneState | null;
+      readonly dialogueSession?: DialogueSessionState;
+    }
+  | {
+      readonly status: "provider_failed";
+      readonly mode: NarrativeMode;
+      readonly job: PendingNarrativeJob;
+      readonly failure: NarrativeGenerationFailure;
+      readonly lastPresentedScene: NarrativeSceneState | null;
+      readonly dialogueSession?: DialogueSessionState;
+    };
+
+export type ParseNarrativeRuntimeStateResult =
+  | { readonly ok: true; readonly value: NarrativeRuntimeState }
+  | { readonly ok: false; readonly code: "INVALID_NARRATIVE_RUNTIME" };
+
+const INVALID_NARRATIVE_RUNTIME: ParseNarrativeRuntimeStateResult = {
+  ok: false,
+  code: "INVALID_NARRATIVE_RUNTIME",
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const allowedKeys = new Set(allowed);
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+function isNarrativeEvent(value: unknown): value is NarrativeEventState {
+  if (!isRecord(value) || typeof value.kind !== "string") return false;
+  switch (value.kind) {
+    case "dialogue":
+      return hasOnlyKeys(value, ["kind", "focusNpcId"]) && isNonEmptyString(value.focusNpcId);
+    case "investigate":
+      return hasOnlyKeys(value, ["kind", "factId"]) && isNonEmptyString(value.factId);
+    case "item":
+      return hasOnlyKeys(value, ["kind", "itemId"]) && isNonEmptyString(value.itemId);
+    case "battle":
+      return hasOnlyKeys(value, ["kind", "enemyId"]) && isNonEmptyString(value.enemyId);
+    case "travel":
+    case "observe":
+      return hasOnlyKeys(value, ["kind", "locationId"]) && isNonEmptyString(value.locationId);
+    default:
+      return false;
+  }
+}
+
+function isNarrativeNpcLine(value: unknown): value is NarrativeNpcLineState {
+  return isRecord(value)
+    && hasOnlyKeys(value, ["npcId", "text", "emotion", "usedFactIds", "answeredBeatIds"])
+    && isNonEmptyString(value.npcId)
+    && isNonEmptyString(value.text)
+    && (NARRATIVE_EMOTIONS as readonly unknown[]).includes(value.emotion)
+    && isStringArray(value.usedFactIds)
+    && (value.answeredBeatIds === undefined || isStringArray(value.answeredBeatIds));
+}
+
+function isNarrativeChoice(value: unknown): value is NarrativeChoiceState {
+  return isRecord(value)
+    && hasOnlyKeys(value, ["choiceToken", "label", "hint"])
+    && isNonEmptyString(value.choiceToken)
+    && isNonEmptyString(value.label)
+    && (value.hint === undefined || typeof value.hint === "string");
+}
+
+function isNpcDialogue(value: unknown): value is NpcDialogueInScene {
+  return isRecord(value)
+    && hasOnlyKeys(value, [
+      "npcId", "npcName", "npcRole", "speechPages", "speechSource", "smallTalk",
+    ])
+    && isNonEmptyString(value.npcId)
+    && typeof value.npcName === "string"
+    && typeof value.npcRole === "string"
+    && isStringArray(value.speechPages)
+    && (value.speechSource === undefined
+      || value.speechSource === "generated"
+      || value.speechSource === "fixture")
+    && (value.smallTalk === undefined || (
+      isRecord(value.smallTalk)
+      && hasOnlyKeys(value.smallTalk, ["prompt", "response"])
+      && typeof value.smallTalk.prompt === "string"
+      && typeof value.smallTalk.response === "string"
+    ));
+}
+
+function isNarrativeScene(value: unknown): value is NarrativeSceneState {
+  return isRecord(value)
+    && hasOnlyKeys(value, [
+      "sceneId", "turn", "narration", "usedFactIds", "npcLine", "choices",
+      "handoffAcknowledgement", "source", "event", "npcDialogues",
+    ])
+    && isNonEmptyString(value.sceneId)
+    && Number.isInteger(value.turn)
+    && (value.turn as number) >= 0
+    && typeof value.narration === "string"
+    && isStringArray(value.usedFactIds)
+    && (value.npcLine === null || isNarrativeNpcLine(value.npcLine))
+    && Array.isArray(value.choices)
+    && value.choices.every(isNarrativeChoice)
+    && (value.handoffAcknowledgement === undefined
+      || isNonEmptyString(value.handoffAcknowledgement))
+    && ["generated", "rule", "fixture"].includes(value.source as string)
+    && (value.event === undefined || isNarrativeEvent(value.event))
+    && (value.npcDialogues === undefined
+      || (Array.isArray(value.npcDialogues) && value.npcDialogues.every(isNpcDialogue)));
+}
+
+function isDialogueSession(value: unknown): value is DialogueSessionState {
+  return isRecord(value)
+    && hasOnlyKeys(value, ["npcId", "turnCount", "requiredTurns", "completed"])
+    && isNonEmptyString(value.npcId)
+    && Number.isInteger(value.turnCount)
+    && (value.turnCount as number) >= 0
+    && Number.isInteger(value.requiredTurns)
+    && (value.requiredTurns as number) > 0
+    && typeof value.completed === "boolean";
+}
+
+function isApprovedChoice(value: unknown): value is ApprovedChoice {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "choiceToken", "sceneId", "basedOnRevision", "label", "action", "semanticSummary",
+  ])) return false;
+  if (!isNonEmptyString(value.choiceToken)
+    || !isNonEmptyString(value.sceneId)
+    || !Number.isInteger(value.basedOnRevision)
+    || (value.basedOnRevision as number) < 0
+    || !isNonEmptyString(value.label)
+    || !isRecord(value.action)
+    || typeof value.action.type !== "string"
+    || !isNonEmptyString(value.semanticSummary)) return false;
+  try {
+    const rebuilt = createApprovedChoice({
+      sceneId: value.sceneId,
+      basedOnRevision: value.basedOnRevision as number,
+      label: value.label,
+      action: value.action as ApprovedChoice["action"],
+    });
+    return rebuilt.ok
+      && rebuilt.choice.choiceToken === value.choiceToken
+      && rebuilt.choice.semanticSummary === value.semanticSummary;
+  } catch {
+    return false;
+  }
+}
+
+function isFailure(value: unknown): value is NarrativeGenerationFailure {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["kind", "phase", "failedAt"])) return false;
+  if ((value.kind !== "AI_CALL_FAILED" && value.kind !== "AI_RESPONSE_INVALID")
+    || value.phase !== "scene"
+    || typeof value.failedAt !== "string") return false;
+  const timestamp = new Date(value.failedAt);
+  return !Number.isNaN(timestamp.valueOf()) && timestamp.toISOString() === value.failedAt;
+}
+
+function parseProviderJob(value: unknown): PendingNarrativeJob | null {
+  try {
+    const parsed = parsePendingNarrativeJob(value);
+    if (!parsed.ok) return null;
+    if (!(PROVIDER_GENERATION_KINDS as readonly (string | null)[])
+      .includes(parsed.job.generationKind)) return null;
+    return parsed.job;
+  } catch {
+    return null;
+  }
+}
+
+/** Strict persisted-state parser. Legacy and mixed discriminants are rejected. */
+export function parseNarrativeRuntimeState(value: unknown): ParseNarrativeRuntimeStateResult {
+  if (!isRecord(value) || (value.mode !== "ai" && value.mode !== "offline")) {
+    return INVALID_NARRATIVE_RUNTIME;
+  }
+  const dialogueSessionValid = value.dialogueSession === undefined
+    || isDialogueSession(value.dialogueSession);
+  if (!dialogueSessionValid) return INVALID_NARRATIVE_RUNTIME;
+
+  if (value.status === "ready") {
+    if (!hasOnlyKeys(value, [
+      "status", "mode", "currentScene", "choiceRegistry", "preparedContinuation", "dialogueSession",
+    ])) return INVALID_NARRATIVE_RUNTIME;
+    if (!isNarrativeScene(value.currentScene)
+      || !Array.isArray(value.choiceRegistry)
+      || !value.choiceRegistry.every(isApprovedChoice)) return INVALID_NARRATIVE_RUNTIME;
+    if (value.preparedContinuation !== undefined
+      && !parsePreparedContinuationState(value.preparedContinuation).ok) {
+      return INVALID_NARRATIVE_RUNTIME;
+    }
+    return { ok: true, value: value as NarrativeRuntimeState };
+  }
+
+  if (value.status === "provider_pending") {
+    if (!hasOnlyKeys(value, ["status", "mode", "job", "lastPresentedScene", "dialogueSession"])) {
+      return INVALID_NARRATIVE_RUNTIME;
+    }
+    if (parseProviderJob(value.job) === null
+      || (value.lastPresentedScene !== null && !isNarrativeScene(value.lastPresentedScene))) {
+      return INVALID_NARRATIVE_RUNTIME;
+    }
+    return { ok: true, value: value as NarrativeRuntimeState };
+  }
+
+  if (value.status === "provider_failed") {
+    if (!hasOnlyKeys(value, [
+      "status", "mode", "job", "failure", "lastPresentedScene", "dialogueSession",
+    ])) return INVALID_NARRATIVE_RUNTIME;
+    if (parseProviderJob(value.job) === null
+      || !isFailure(value.failure)
+      || (value.lastPresentedScene !== null && !isNarrativeScene(value.lastPresentedScene))) {
+      return INVALID_NARRATIVE_RUNTIME;
+    }
+    return { ok: true, value: value as NarrativeRuntimeState };
+  }
+
+  return INVALID_NARRATIVE_RUNTIME;
+}
 
 /** 场景对白每页字符预算：纯展示策略常量。 */
 export const NPC_SCENE_PAGE_CHAR_BUDGET = 48;
@@ -197,7 +355,7 @@ export function buildNpcDialoguePages(
     readonly focusNpcId?: unknown;
     readonly focusSpeech?: string;
     readonly generatedNpcLines?: ReadonlyMap<string, string>;
-    readonly speechSource?: "generated" | "fallback";
+    readonly speechSource?: "generated" | "fixture";
     readonly smallTalkData?: ReadonlyMap<string, { prompt: string; response: string }>;
   },
 ): readonly NpcDialogueInScene[] {
@@ -227,7 +385,7 @@ export function buildNpcDialoguePages(
       npcName: npc.name,
       npcRole: npc.role,
       speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
-      speechSource: isFocus ? focusSpeechSource : hasGeneratedLine ? "generated" : "fallback",
+      speechSource: isFocus ? focusSpeechSource : hasGeneratedLine ? "generated" : "fixture",
       ...(smallTalk ? { smallTalk } : {}),
     };
   });

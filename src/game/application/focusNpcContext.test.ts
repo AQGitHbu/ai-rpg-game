@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { buildFocusNpcContext } from "./focusNpcContext";
 import type { FocusNpcContext } from "./focusNpcContext";
@@ -139,13 +140,18 @@ function makeRecord(): GameRecord {
     ],
   };
 
-  const ss: StoryState = createInitialStoryState({
+  const ss: StoryState = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
     gameLength: "short",
     initialEntityCounts: { locations: 1, npcs: 2, quests: 0, events: 0 },
   });
   const storyState: StoryState = {
     ...ss,
-    narrative: { ...ss.narrative, generation: { status: "pending", job: makeJob("act_5") } },
+    narrative: {
+      status: "provider_pending",
+      mode: "offline",
+      job: makeJob("act_5"),
+      lastPresentedScene: ss.narrative.status === "ready" ? ss.narrative.currentScene : null,
+    },
   };
 
   return { gameId: "g1" as never, worldState, storyState, revision: 0, createdAt: "2026-01-01" };

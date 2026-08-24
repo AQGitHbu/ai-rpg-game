@@ -70,7 +70,7 @@ export function createDeterministicSceneSource(): SceneSource {
         npcLine,
         objectiveLink: buildObjectiveLink(context),
         choices: buildSceneChoices(context, npcLine === null ? undefined : npcLine),
-        source: "fallback",
+        source: "fixture",
       };
       return { ok: true, proposal };
     },

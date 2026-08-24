@@ -11,8 +11,8 @@ export type CommitStateInput = {
   readonly nextStoryState: StoryState;
   /** 是否递增 revision（默认 true）；元数据更新（如 prologueShown）传 false。 */
   readonly incrementRevision?: boolean;
-  readonly expectedNarrativeGeneration?: {
-    readonly status: "pending" | "failed";
+  readonly expectedNarrativeJob?: {
+    readonly status: "provider_pending" | "provider_failed";
     readonly jobId: string;
   };
 };
@@ -44,6 +44,6 @@ export async function commitState(
     nextWorldState: input.nextWorldState,
     nextStoryState,
     ...(input.incrementRevision === undefined ? {} : { incrementRevision: input.incrementRevision }),
-    ...(input.expectedNarrativeGeneration === undefined ? {} : { expectedNarrativeGeneration: input.expectedNarrativeGeneration }),
+    ...(input.expectedNarrativeJob === undefined ? {} : { expectedNarrativeJob: input.expectedNarrativeJob }),
   });
 }

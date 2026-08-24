@@ -11,7 +11,7 @@ import type { QuestId } from "./worldEntity";
 // 结构化候选事件契约由 candidateEvent.ts 定义并在此再导出，保持既有调用点兼容。
 export type { EventCandidate, EventCandidateKind, ProposedEffect } from "./candidateEvent";
 
-export const STORY_STATE_SCHEMA_VERSION = 5 as const;
+export const STORY_STATE_SCHEMA_VERSION = 6 as const;
 
 export type StoryStateSchemaVersionErrorCode =
   | "UNSUPPORTED_RECORD"
@@ -23,7 +23,7 @@ export type StoryStateSchemaVersionClassification =
 
 /**
  * 只分类存档 schema，不执行迁移。DB revision 与回合号由各自契约维护。
- * v2/v3/v4 均按旧 record 分类，不提供迁移或兼容读取。
+ * v2/v3/v4/v5 均按旧 record 分类，不提供迁移或兼容读取。
  */
 export function classifyStoryStateSchemaVersion(
   version: unknown,
@@ -31,7 +31,7 @@ export function classifyStoryStateSchemaVersion(
   if (version === STORY_STATE_SCHEMA_VERSION) {
     return { ok: true, version: STORY_STATE_SCHEMA_VERSION };
   }
-  if (version === 2 || version === 3 || version === 4) {
+  if (version === 2 || version === 3 || version === 4 || version === 5) {
     return { ok: false, code: "UNSUPPORTED_RECORD" };
   }
   return { ok: false, code: "UNSUPPORTED_STORY_STATE_VERSION" };
@@ -81,11 +81,19 @@ export type StoryState = {
   readonly reveal?: StoryRevealState | null;
 };
 
-export function createInitialStoryState(input: {
-  gameLength: GameLength;
-  initialEntityCounts: { locations: number; npcs: number; quests: number; events: number };
-  mainThreadId?: ThreadId;
-}): StoryState {
+export type CreateInitialStoryStateInput = {
+  readonly gameLength: GameLength;
+  readonly initialEntityCounts: {
+    readonly locations: number;
+    readonly npcs: number;
+    readonly quests: number;
+    readonly events: number;
+  };
+  readonly initialNarrative: NarrativeRuntimeState;
+  readonly mainThreadId?: ThreadId;
+};
+
+export function createInitialStoryState(input: CreateInitialStoryStateInput): StoryState {
   const budget = createStoryBudget(input.gameLength, input.initialEntityCounts);
   const contract = createStoryContract({
     // 默认契约只区分短/中档；long/open 暂按 medium（5 幕）处理，后续任务覆盖。
@@ -106,11 +114,7 @@ export function createInitialStoryState(input: {
     candidateEventPool: [],
     endingAllowed: false,
     endingProposed: false,
-    narrative: {
-      currentScene: null,
-      generation: { status: "idle" },
-      mode: "offline",
-    },
+    narrative: input.initialNarrative,
     prologueShown: false,
     prologueText: "",
     recentBeats: [],

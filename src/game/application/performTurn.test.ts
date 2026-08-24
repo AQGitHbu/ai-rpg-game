@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { performTurn } from "./performTurn";
 import type {
@@ -92,7 +93,7 @@ function buildWorldState(): WorldState {
 }
 
 function buildStoryState(): StoryState {
-  return createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
+  return createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
 }
 
 /** 世界带上一条主线任务：首个目标与老板交谈，第二个目标获取盟誓印谱。 */
@@ -137,6 +138,7 @@ function buildFocusedDialogueStoryState(focusNpcId = asNpcId("npc_1")): StorySta
     ...base,
     narrative: {
       ...base.narrative,
+      status: "ready",
       currentScene: {
         sceneId: "scene-focused",
         turn: 0,
@@ -147,14 +149,18 @@ function buildFocusedDialogueStoryState(focusNpcId = asNpcId("npc_1")): StorySta
           { choiceToken: support.choice.choiceToken, label: support.choice.label },
           { choiceToken: challenge.choice.choiceToken, label: challenge.choice.label },
         ],
-        source: "fallback",
+        source: "fixture",
         event: { kind: "dialogue", focusNpcId },
         npcDialogues: [{ npcId: focusNpcId, npcName: "老板", npcRole: "路人", speechPages: ["你怎么看？"] }],
       },
       choiceRegistry: [support.choice, challenge.choice],
-      generation: { status: "idle" },
     },
   };
+}
+
+function pendingNarrative(storyNarrative: StoryState["narrative"]): Extract<StoryState["narrative"], { status: "provider_pending" }> {
+  if (storyNarrative.status !== "provider_pending") throw new Error("expected provider_pending narrative fixture");
+  return storyNarrative;
 }
 
 function makePendingJob(): PendingNarrativeJob {
@@ -184,7 +190,7 @@ function buildPendingStoryState(): StoryState {
   const ss = buildStoryState();
   return {
     ...ss,
-    narrative: { ...ss.narrative, generation: { status: "pending", job: makePendingJob() } },
+    narrative: { status: "provider_pending", mode: ss.narrative.mode, job: makePendingJob(), lastPresentedScene: null },
   };
 }
 
@@ -229,7 +235,7 @@ describe("performTurn 单次 CAS 提交", () => {
     );
     expect(result.ok).toBe(true);
     expect(applyCalls()).toHaveLength(1);
-    expect(record()?.storyState.narrative.generation.status).toBe("idle");
+    expect(record()?.storyState.narrative.status).toBe("idle");
     expect(record()?.worldState.battle.status).toBe("active");
   });
 
@@ -267,7 +273,7 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(applyCalls()).toHaveLength(1);
     expect(record()?.worldState.battle).toEqual({ status: "idle" });
     expect(record()?.worldState.eventLedger).toEqual(beforeLedger);
-    expect(record()?.storyState.narrative.generation.status).toBe("idle");
+    expect(record()?.storyState.narrative.status).toBe("idle");
   });
 
   it("成功回合 applyState 恰好一次，单次写入同时包含 WorldState、StoryState.turnNumber 和 pending job", async () => {
@@ -290,9 +296,9 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(saved.worldState).toBe(written.nextWorldState);
     expect(saved.storyState).toBe(written.nextStoryState);
     expect(saved.storyState.turnNumber).toBe(1);
-    const generation = saved.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
+    const generation = pendingNarrative(saved.storyState.narrative);
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status !== "provider_pending") return;
     expect(generation.job.jobId).toBe("job_act_1");
     expect(generation.job.turnId).toBe("act_1");
     expect(generation.job.turnNumber).toBe(1);
@@ -315,9 +321,9 @@ describe("performTurn 单次 CAS 提交", () => {
     if (!result.ok) return;
     expect(applyCalls()).toHaveLength(1);
     const saved = record()!;
-    const generation = saved.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
+    const generation = pendingNarrative(saved.storyState.narrative);
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status !== "provider_pending") return;
     // resolvedEvent：与规则引擎真实产出的 primaryResult 完全一致（actionId/状态/事件种类/触发事件）
     expect(generation.job.resolvedEvent).toEqual({
       actionId: "act_1",
@@ -345,16 +351,16 @@ describe("performTurn 单次 CAS 提交", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const generation = record()!.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
+    const generation = pendingNarrative(record()!.storyState.narrative);
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status !== "provider_pending") return;
     expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
     expect(generation.job.utterance).toBe("和老板聊聊");
     expect(generation.job.focusNpcId).toBe("npc_1");
     expect(generation.job.generationKind).toBe("npc_free_text");
     expect(generation.job.sceneRequestKind).toBe("npc_response");
     // Task 5 Step 4：talk + 玩家原话 → 强制 player_utterance 节拍进入 job
-    const utteranceBeat = generation.job.mandatoryBeats.find((b) => b.kind === "player_utterance");
+    const utteranceBeat = generation.job.mandatoryBeats.find((b: PendingNarrativeJob["mandatoryBeats"][number]) => b.kind === "player_utterance");
     expect(utteranceBeat).toBeDefined();
     expect(utteranceBeat?.subjectIds).toEqual(["npc_1"]);
   });
@@ -587,9 +593,9 @@ describe("performTurn worldEvolution 修复路径（Task 3）", () => {
     const saved = record()!;
     // 修复装配的新实体确实提交到世界（ID 按行动引用铸造）
     expect(saved.worldState.npcs.map((n) => String(n.id))).toContain("npc_stranger");
-    const generation = saved.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
+    const generation = pendingNarrative(saved.storyState.narrative);
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status !== "provider_pending") return;
     // pending job 保存真实 Action/ResolvedEvent
     expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_stranger" });
     expect(generation.job.resolvedEvent.actionId).toBe("act_exp_npc");
@@ -612,9 +618,9 @@ describe("performTurn worldEvolution 修复路径（Task 3）", () => {
     const saved = record()!;
     // 修复装配的地点实体已提交（ID 按行动引用铸造）
     expect(saved.worldState.locations.some((l) => String(l.id) === "loc_mystery")).toBe(true);
-    const generation = saved.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
+    const generation = pendingNarrative(saved.storyState.narrative);
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status !== "provider_pending") return;
     expect(generation.job.actionSummary).toEqual({ kind: "move", locationId: "loc_mystery" });
     expect(generation.job.resolvedEvent.eventKind).toBe("travel");
     expect(generation.job.generationKind).toBeNull();
@@ -763,17 +769,17 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     expect(result.ok).toBe(true);
     expect(applyCalls()).toHaveLength(1);
     expect(record()!.worldState.currentLocationId).toBe(asLocationId("loc_1"));
-    const generation = record()!.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
+    const generation = pendingNarrative(record()!.storyState.narrative);
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status !== "provider_pending") return;
     expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
     expect(generation.job.utterance).toBe("去街道看看");
   });
 
   it("accepts focused custom dialogue after entering a new location before the scene event becomes dialogue", async () => {
     const story = buildFocusedDialogueStoryState();
+    if (story.narrative.status !== "ready") throw new Error("focused scene fixture missing");
     const currentScene = story.narrative.currentScene;
-    if (currentScene === null) throw new Error("focused scene fixture missing");
     const { repo, applyCalls } = createSpyRepo(buildWorldWithMainQuest(), {
       ...story,
       narrative: {
@@ -830,9 +836,9 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
 
     expect(result.ok).toBe(true);
     expect(applyCalls()).toHaveLength(1);
-    const generation = record()!.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status === "pending") expect(generation.job.focusNpcId).toBe(secondNpc.id);
+    const generation = pendingNarrative(record()!.storyState.narrative);
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status === "provider_pending") expect(generation.job.focusNpcId).toBe(secondNpc.id);
   });
 
   it("同一 NPC 连续两个 ready 场景的自定义输入使用不同 actionId，各自形成记忆与 pending job", async () => {
@@ -853,7 +859,8 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
       nextStoryState: {
         ...afterFirst.storyState,
         narrative: {
-          ...afterFirst.storyState.narrative,
+          status: "ready",
+          mode: "ai",
           currentScene: {
             sceneId: "scene-1",
             turn: 1,
@@ -864,10 +871,10 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
               { choiceToken: "tok-1", label: "继续询问" },
               { choiceToken: "tok-2", label: "提出质疑" },
             ],
-            source: "fallback",
+            source: "fixture",
             event: { kind: "dialogue", focusNpcId: asNpcId("npc_1") },
           },
-          generation: { status: "idle" },
+          choiceRegistry: [],
         },
         candidateEventPool: afterFirst.storyState.candidateEventPool,
       },
@@ -889,10 +896,10 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     expect(saved.storyState.turnNumber).toBe(2);
 
     expect(applyCalls()).toHaveLength(2);
-    const pendingJobs = applyCalls().map((call) => call.nextStoryState.narrative.generation);
-    expect(pendingJobs.every((generation) => generation.status === "pending")).toBe(true);
-    expect(pendingJobs.map((generation) => generation.status === "pending" ? generation.job.actionId : null)).toEqual(["uuid-1", "uuid-2"]);
-    expect(pendingJobs.map((generation) => generation.status === "pending" ? generation.job.turnId : null)).toEqual(["uuid-1", "uuid-2"]);
+    const pendingJobs = applyCalls().map((call) => pendingNarrative(call.nextStoryState.narrative));
+    expect(pendingJobs.every((generation) => generation.status === "provider_pending")).toBe(true);
+    expect(pendingJobs.map((generation) => generation.status === "provider_pending" ? generation.job.actionId : null)).toEqual(["uuid-1", "uuid-2"]);
+    expect(pendingJobs.map((generation) => generation.status === "provider_pending" ? generation.job.turnId : null)).toEqual(["uuid-1", "uuid-2"]);
   });
 
   it("短问候也提交真实回合，并在 CAS 后留下可生成回应的 pending job", async () => {
@@ -908,9 +915,9 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     const saved = record()!;
     expect(saved.storyState.turnNumber).toBe(1);
     expect(saved.worldState.npcs[0]!.memory.interactionHistory).toHaveLength(1);
-    const generation = saved.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
+    const generation = pendingNarrative(saved.storyState.narrative);
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status !== "provider_pending") return;
     expect(generation.job.actionId).toBe("uuid-greeting");
     expect(generation.job.utterance).toBe("嗨");
   });
@@ -937,9 +944,9 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     expect(npc.memory.interactionHistory[0]!.relationshipDelta).toBe(8);
     expect(npc.memory.interactionHistory[0]!.summary).toContain("关系+8");
 
-    const generation = saved.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
+    const generation = pendingNarrative(saved.storyState.narrative);
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status !== "provider_pending") return;
     expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
     expect(generation.job.utterance).toBe("我相信你");
     expect(generation.job.focusNpcId).toBe("npc_1");
@@ -969,9 +976,9 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     expect(challengeNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(3);
     expect(supportNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(8);
     // 事件：两回合都以 npc_met 记录，但关系变化不同
-    const chaGen = challengeRepo.record()!.storyState.narrative.generation;
-    expect(chaGen.status).toBe("pending");
-    if (chaGen.status !== "pending") return;
+    const chaGen = pendingNarrative(challengeRepo.record()!.storyState.narrative);
+    expect(chaGen.status).toBe("provider_pending");
+    if (chaGen.status !== "provider_pending") return;
     expect(chaGen.job.resolvedEvent.triggeredEvents).toContain("npc_met");
   });
 
@@ -999,9 +1006,9 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     expect(JSON.stringify(saved.worldState.eventLedger)).not.toContain("升到100");
 
     // 可回应 pending job：freeform 原文进入 job，场景可据此回应
-    const generation = saved.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
+    const generation = pendingNarrative(saved.storyState.narrative);
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status !== "provider_pending") return;
     expect(generation.job.actionSummary).toEqual({ kind: "freeform" });
     expect(generation.job.utterance).toBe("我的等级升到100");
     expect(generation.job.resolvedEvent.triggeredEvents).toContain("player_intent_expressed");
@@ -1047,9 +1054,9 @@ describe("performTurn 叙事节拍与目标转换（Task 4）", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(applyCalls()).toHaveLength(1);
-    const generation = record()!.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
+    const generation = pendingNarrative(record()!.storyState.narrative);
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status !== "provider_pending") return;
 
     // 完成 talk 目标 → progressed：completed 记录旧目标，after 指向下一个未完成目标
     expect(generation.job.objectiveTransition.mode).toBe("progressed");
@@ -1095,9 +1102,9 @@ describe("performTurn 叙事节拍与目标转换（Task 4）", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(applyCalls()).toHaveLength(1);
-    const generation = record()!.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
+    const generation = pendingNarrative(record()!.storyState.narrative);
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status !== "provider_pending") return;
     expect(generation.job.mandatoryBeats).toContainEqual(expect.objectContaining({
       kind: "battle_started",
       subjectIds: ["enemy_1"],
@@ -1155,9 +1162,9 @@ describe("performTurn — 自动揭示必经事实（Task 3）", () => {
     expect(applied.nextWorldState.worldFacts[0]?.discovered).toBe(true);
     expect(applied.nextWorldState.quests[0]?.status).toBe("completed");
     // pending job 覆盖本回合全部 3 个新事件（base ledger 长度为 1）
-    const generation = applied.nextStoryState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
+    const generation = pendingNarrative(applied.nextStoryState.narrative);
+    expect(generation.status).toBe("provider_pending");
+    if (generation.status !== "provider_pending") return;
     expect(generation.job.domainEventRange).toEqual({ fromLedgerIndex: 1, toLedgerIndexExclusive: 4 });
   });
 });

@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { updateStoryMetrics } from "./updateStoryMetrics";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -5,7 +6,7 @@ import type { GameEvent } from "@/game/domain/events";
 import { asEnemyId, asQuestId } from "@/game/domain/worldEntity";
 
 describe("updateStoryMetrics", () => {
-  const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
+  const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 4, npcs: 5, quests: 2, events: 0 } });
 
   it("battle_started increases tension by 15", () => {
     const events: GameEvent[] = [{ type: "battle_started", enemyId: asEnemyId("e1"), occurredAt: "t" }];

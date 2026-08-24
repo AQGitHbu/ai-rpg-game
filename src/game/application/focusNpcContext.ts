@@ -83,8 +83,8 @@ export function buildFocusNpcContext(record: GameRecord, npcId: NpcId): FocusNpc
     throw new Error(`buildFocusNpcContext: unknown NPC ${String(npcId)}`);
   }
 
-  const generation = record.storyState.narrative.generation;
-  const job = generation.status === "pending" ? generation.job : null;
+  const narrative = record.storyState.narrative;
+  const job = narrative.status === "provider_pending" ? narrative.job : null;
 
   const tier: RelationshipTier = relationshipTierOf(npc.memory.relationship);
   const allowedDisclosureFactIds = selectAllowedDisclosureFactIds({

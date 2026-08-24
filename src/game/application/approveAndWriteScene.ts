@@ -5,7 +5,7 @@ import type {
   ScenePerformanceProposal,
   ScenePerformanceNpcLine,
 } from "./sceneSource";
-import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState, LinearActionNarrativeState } from "@/game/domain/narrative";
+import type { NarrativeEmotion, NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState } from "@/game/domain/narrative";
 import { buildNpcDialoguePages, NARRATIVE_EMOTIONS } from "@/game/domain/narrative";
 import { isFinalDialogueHandoff, type SceneGenerationContext } from "./sceneGenerationContext";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
@@ -149,11 +149,29 @@ export type ApprovedSceneWriteBack = {
   readonly scene: NarrativeSceneState;
   readonly choiceRegistry: readonly ApprovedChoice[];
   readonly candidateEventPool: readonly EventCandidate[];
-  /** Task 2：审批过滤后的 AI 预生成单线行动叙事队列（整字段丢弃时为空）。 */
-  readonly linearNarrativeQueue: readonly LinearActionNarrativeState[];
   /** 叙事质量告警：只用于日志/审计，不阻断场景写回。 */
   readonly qualityWarnings: readonly SceneQualityWarningCode[];
 };
+
+export type ApprovedLinearActionNarrative =
+  | {
+      readonly actionKind: "investigate";
+      readonly factId: import("@/game/domain/worldEntity").FactId;
+      readonly narration: string;
+      readonly source: "generated";
+    }
+  | {
+      readonly actionKind: "move";
+      readonly locationId: import("@/game/domain/worldEntity").LocationId;
+      readonly narration: string;
+      readonly source: "generated";
+      readonly arrivalNpcLine?: {
+        readonly npcId: import("@/game/domain/worldEntity").NpcId;
+        readonly text: string;
+        readonly emotion: NarrativeEmotion;
+        readonly usedFactIds: readonly import("@/game/domain/worldEntity").FactId[];
+      };
+    };
 
 export type ApproveScenePerformanceResult =
   | ({ readonly ok: true } & ApprovedSceneWriteBack)
@@ -246,22 +264,22 @@ function hasExpandedNpcDialogue(text: string): boolean {
  *   AI 只能演绎服务端下发的目标链实体，不得捏造新事实/新实体（无越权）；
  * - narration 非空且不含"主线推进/当前目标"等系统元话术；
  * - 任意非法条目 → 整字段丢弃（记 logger warn，绝不因该字段拒绝整场）；
- * - 通过后逐字段重建 `LinearActionNarrativeState`（source 恒为 "generated"），
+ * - 通过后逐字段重建 application-only approval output（source 恒为 "generated"），
  *   提案对象原引用不直接持久化。
  */
 export function approveLinearActionNarratives(
   proposal: ScenePerformanceProposal,
   context: SceneGenerationContext,
   logger: Pick<GameLogger, "warn"> | undefined,
-): readonly LinearActionNarrativeState[] {
+): readonly ApprovedLinearActionNarrative[] {
   const raw = proposal.linearActionNarratives;
   if (raw === undefined) return [];
   const upcoming = context.upcomingLinearObjectives ?? [];
-  const drop = (reason: string): readonly LinearActionNarrativeState[] => {
+  const drop = (reason: string): readonly ApprovedLinearActionNarrative[] => {
     logger?.warn("linear_narratives_dropped", { reason, sceneId: proposal.sceneId });
     return [];
   };
-  const narratives: LinearActionNarrativeState[] = [];
+  const narratives: ApprovedLinearActionNarrative[] = [];
   for (const entry of raw) {
     if (!isRecord(entry)) return drop("invalid_shape");
     if (typeof entry.narration !== "string" || entry.narration.trim() === "") return drop("empty_narration");
@@ -284,7 +302,7 @@ export function approveLinearActionNarratives(
         return drop("invalid_reference");
       }
       let arrivalNpcLine: NonNullable<Extract<
-        LinearActionNarrativeState,
+        ApprovedLinearActionNarrative,
         { readonly actionKind: "move" }
       >["arrivalNpcLine"]> | undefined;
       if (ref.arrivalNpc !== undefined) {
@@ -703,22 +721,12 @@ export function approveScenePerformance(input: {
       : {}),
   };
 
-  const linearNarrativeQueue = approveLinearActionNarratives(proposal, context, input.logger);
-  const requiresArrivalPrefetch = proposal.source === "generated"
-    && context.job.actionSummary.kind !== "move"
-    && context.upcomingLinearObjectives?.some((ref) => ref.kind === "visit_location" && ref.arrivalNpc !== undefined) === true;
-  if (requiresArrivalPrefetch
-    && !linearNarrativeQueue.some((entry) => entry.actionKind === "move" && entry.arrivalNpcLine !== undefined)) {
-    return { ok: false, code: "missing_arrival_npc_dialogue" };
-  }
-
   return {
     ok: true,
     scene,
     choiceRegistry: approvedChoices,
     // 场景表演契约不含候选事件：池原样保留，事件生命周期由独立审批处理。
     candidateEventPool: [...input.existingCandidateEventPool],
-    linearNarrativeQueue,
     qualityWarnings,
   };
 }

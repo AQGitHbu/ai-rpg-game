@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { asNarrativeJobId, asTurnId } from "./events";
 import type { ResolvedEvent } from "./resolvedEvent";
-import { createPendingNarrativeJob } from "./pendingNarrativeJob";
-import { asNpcId } from "./worldEntity";
+import { createPendingNarrativeJob, type PendingNarrativeJob } from "./pendingNarrativeJob";
+import { asLocationId, asNpcId } from "./worldEntity";
 import type {
-  NarrativeGenerationState,
+  NarrativeRuntimeState,
   NarrativeSceneState,
-  PlayerNpcChatState,
 } from "./narrative";
-import { buildNpcDialoguePages } from "./narrative";
+import { buildNpcDialoguePages, parseNarrativeRuntimeState } from "./narrative";
 import type { NarrativeGenerationFailure } from "./narrativeGenerationFailure";
 
 function canonicalResolvedEvent(): ResolvedEvent {
@@ -25,10 +24,7 @@ function canonicalResolvedEvent(): ResolvedEvent {
   };
 }
 
-function pendingWithJob(): Extract<
-  NarrativeGenerationState,
-  { readonly status: "pending" }
-> {
+function providerJob(): PendingNarrativeJob {
   const result = createPendingNarrativeJob({
     jobId: asNarrativeJobId("job-1"),
     turnId: asTurnId("turn-1"),
@@ -47,28 +43,42 @@ function pendingWithJob(): Extract<
     sceneRequestKind: "npc_response",
   });
   if (!result.ok) throw new Error("fixture 构造失败");
-  return { status: "pending", job: result.job };
+  return result.job;
 }
 
+const readyScene = {
+  sceneId: "scene-1",
+  turn: 1,
+  narration: "雨声压低了酒馆里的交谈。",
+  usedFactIds: [],
+  npcLine: null,
+  choices: [
+    { choiceToken: "c_0123456789abcdef", label: "询问掌柜" },
+    { choiceToken: "c_fedcba9876543210", label: "检查角落", hint: "可能发现新线索" },
+  ],
+  source: "fixture",
+  event: { kind: "observe", locationId: asLocationId("loc_1") },
+} satisfies NarrativeSceneState;
+
+const failure = {
+  kind: "AI_RESPONSE_INVALID",
+  phase: "scene",
+  failedAt: "2026-08-21T00:00:00.000Z",
+} satisfies NarrativeGenerationFailure;
+
 describe("NarrativeSceneState", () => {
-  it("requires exactly two approved choices", () => {
+  it("stores fixture scenes and optional handoff acknowledgement", () => {
     const scene = {
-      sceneId: "scene-1",
-      turn: 1,
-      narration: "雨声压低了酒馆里的交谈。",
-      usedFactIds: [],
-      npcLine: null,
-      choices: [
-        { choiceToken: "c_0123456789abcdef", label: "询问掌柜" },
-        { choiceToken: "c_fedcba9876543210", label: "检查角落", hint: "可能发现新线索" }
-      ],
-      source: "generated"
+      ...readyScene,
+      handoffAcknowledgement: "我会沿着河岸去找他。",
     } satisfies NarrativeSceneState;
+
     expect(scene.choices).toHaveLength(2);
+    expect(scene.source).toBe("fixture");
     expect(JSON.stringify(scene)).not.toContain("actionKey");
   });
 
-  it("AI 生成的非焦点 NPC 台词保留 generated 来源，不走确定性 fallback", () => {
+  it("marks deterministic non-focus NPC speech as fixture", () => {
     const dialogues = buildNpcDialoguePages([
       { id: asNpcId("npc_1"), name: "老周", role: "茶摊老人" },
       { id: asNpcId("npc_2"), name: "赵四", role: "客栈掌柜" },
@@ -82,80 +92,80 @@ describe("NarrativeSceneState", () => {
 
     expect(dialogues[0]?.speechSource).toBe("generated");
     expect(dialogues[1]?.speechSource).toBe("generated");
-    expect(dialogues[1]?.speechPages.join("")).toContain("出入我都记得几分");
-    expect(dialogues[1]?.speechPages.join("")).not.toContain("有什么要问的");
+    expect(buildNpcDialoguePages([
+      { id: asNpcId("npc_3"), name: "钱五", role: "脚夫" },
+    ])[0]?.speechSource).toBe("fixture");
   });
 });
 
-describe("PlayerNpcChatState 快照类型", () => {
-  it("正确构造", () => {
-    const chat: PlayerNpcChatState = { npcId: "npc_1" as never, playerText: "你好", npcName: "铁匠", npcRole: "铁匠铺老板" };
-    expect(chat.npcId).toBe("npc_1");
-    expect(chat.playerText).toBe("你好");
-  });
-});
+describe("NarrativeRuntimeState", () => {
+  const ready = {
+    status: "ready",
+    mode: "offline",
+    currentScene: readyScene,
+    choiceRegistry: [],
+  } satisfies NarrativeRuntimeState;
+  const pending = {
+    status: "provider_pending",
+    mode: "ai",
+    job: providerJob(),
+    lastPresentedScene: readyScene,
+  } satisfies NarrativeRuntimeState;
+  const failed = {
+    status: "provider_failed",
+    mode: "ai",
+    job: providerJob(),
+    failure,
+    lastPresentedScene: readyScene,
+  } satisfies NarrativeRuntimeState;
 
-describe("NarrativeGenerationState 契约", () => {
-  it("pending 变体必须携带 job（唯一载体）", () => {
-    const pending = pendingWithJob();
-
-    expect(pending.status).toBe("pending");
-    expect(pending.job.actionId).toBe("action-1");
-    expect(pending.job.requestedAt).toBe("2026-08-08T08:00:00.000Z");
-    expect(pending.job.utterance).toBe("我想打听矿坑的事");
-  });
-
-  it("pending 变体不允许只有 requestedAt 而无 job", () => {
-    // @ts-expect-error pending 的唯一载体是 job，不能再单有 requestedAt
-    const legacy: NarrativeGenerationState = { status: "pending", requestedAt: "2026-01-01T00:00:00Z" };
-    expect(legacy.status).toBe("pending");
-  });
-
-  it("idle 变体不残留玩家原文", () => {
-    const idle: NarrativeGenerationState = { status: "idle" };
-    // @ts-expect-error idle 不是玩家原文的载体
-    const playerText: string | undefined = idle.playerText;
-    expect(playerText).toBeUndefined();
+  it.each([ready, pending, failed])("parses valid $status state", (runtime) => {
+    expect(parseNarrativeRuntimeState(runtime)).toEqual({ ok: true, value: runtime });
   });
 
-  it("failed 变体携带 job 与稳定 failure", () => {
-    const failure: NarrativeGenerationFailure = {
-      kind: "AI_RESPONSE_INVALID",
-      phase: "scene",
-      failedAt: "2026-08-21T00:00:00.000Z",
-    };
-    const failed: NarrativeGenerationState = {
-      status: "failed",
-      job: pendingWithJob().job,
-      failure,
-    };
-
-    expect(failed.status).toBe("failed");
-    expect(failed.failure.kind).toBe("AI_RESPONSE_INVALID");
-    expect(failed.failure.phase).toBe("scene");
-    expect(failed.failure.failedAt).toBe("2026-08-21T00:00:00.000Z");
-    expect(failed.job.actionId).toBe("action-1");
+  it("rejects legacy generation and mixed variant fields", () => {
+    expect(parseNarrativeRuntimeState({
+      ...ready,
+      generation: { status: "idle" },
+    })).toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
+    expect(parseNarrativeRuntimeState({ ...ready, job: providerJob() }))
+      .toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
+    expect(parseNarrativeRuntimeState({ ...pending, choiceRegistry: [] }))
+      .toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
+    expect(parseNarrativeRuntimeState({ ...failed, currentScene: readyScene }))
+      .toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
   });
 
-  it("failed 变体不允许缺失 failure", () => {
-    // @ts-expect-error failed 必须携带 failure
-    const missingFailure: NarrativeGenerationState = {
-      status: "failed",
-      job: pendingWithJob().job,
-    };
-    expect(missingFailure.status).toBe("failed");
+  it("rejects ready state without its scene or registry", () => {
+    const { currentScene: _scene, ...missingScene } = ready;
+    const { choiceRegistry: _registry, ...missingRegistry } = ready;
+    expect(parseNarrativeRuntimeState(missingScene))
+      .toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
+    expect(parseNarrativeRuntimeState(missingRegistry))
+      .toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
   });
 
-  it("failed 变体不允许缺失 job", () => {
-    // @ts-expect-error failed 必须携带 job
-    const missingJob: NarrativeGenerationState = {
-      status: "failed",
-      failure: {
-        kind: "AI_CALL_FAILED",
-        phase: "scene",
-        failedAt: "2026-08-21T00:00:00.000Z",
+  it("rejects provider states whose job is not provider-authorized", () => {
+    const localJob = { ...providerJob(), generationKind: null, sceneRequestKind: null };
+    expect(parseNarrativeRuntimeState({ ...pending, job: localJob }))
+      .toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
+  });
+
+  it("rejects malformed persisted failure", () => {
+    expect(parseNarrativeRuntimeState({
+      ...failed,
+      failure: { kind: "AI_RESPONSE_INVALID", phase: "world", failedAt: "yesterday" },
+    })).toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
+  });
+
+  it("rejects a prepared graph containing unknown active IDs", () => {
+    expect(parseNarrativeRuntimeState({
+      ...ready,
+      preparedContinuation: {
+        originJobId: asNarrativeJobId("job-prepared"),
+        steps: [],
+        activeStepIds: ["missing-step"],
       },
-    };
-    expect(missingJob.status).toBe("failed");
+    })).toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
   });
 });

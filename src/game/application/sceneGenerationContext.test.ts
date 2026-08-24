@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import {
   buildSceneGenerationContext,
@@ -93,9 +94,17 @@ function makeWorld(): ReturnType<typeof createInitialWorldState> {
 }
 
 function makeRecord(withJob = true, job?: PendingNarrativeJob, world?: ReturnType<typeof makeWorld>): GameRecord {
-  const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
+  const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
   const storyState: StoryState = withJob
-    ? { ...ss, narrative: { ...ss.narrative, generation: { status: "pending", job: job ?? makeJob() } } }
+    ? {
+        ...ss,
+        narrative: {
+          status: "provider_pending",
+          mode: "offline",
+          job: job ?? makeJob(),
+          lastPresentedScene: ss.narrative.status === "ready" ? ss.narrative.currentScene : null,
+        },
+      }
     : ss;
   return {
     gameId: "g1" as never,
@@ -137,8 +146,8 @@ describe("buildSceneGenerationContext", () => {
   it("copies the pending job and derives current location, present NPCs and story hints", () => {
     const record = makeRecord();
     const context = buildSceneGenerationContext(record);
-    const generation = record.storyState.narrative.generation;
-    expect(context.job).toEqual(generation.status === "pending" ? generation.job : undefined);
+    const narrative = record.storyState.narrative;
+    expect(context.job).toEqual(narrative.status === "provider_pending" ? narrative.job : undefined);
     expect(context.currentLocation).toEqual({
       id: loc1.id, name: loc1.name, description: loc1.description, kind: "main",
     });

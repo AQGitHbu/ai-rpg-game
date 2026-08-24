@@ -73,7 +73,9 @@ function focusedNpcForFreeText(worldState: WorldState, storyState: StoryState): 
     }
   }
 
-  const scene = storyState.narrative.currentScene;
+  const scene = storyState.narrative.status === "ready"
+    ? storyState.narrative.currentScene
+    : null;
   return scene?.event?.kind === "dialogue" ? String(scene.event.focusNpcId) : null;
 }
 
@@ -149,15 +151,10 @@ export async function performTurn(
     return { ok: false, code: "STALE_GAME_REVISION", feedback: "Stale revision" };
   }
 
-  // spec §11.4: pending 期间不允许玩家再次推进世界（ack_prologue 例外，
-  // 仅能经 fixed_choice 达成；free_text 无法解析为 ack_prologue，同样被拦）
-  if (record.storyState.narrative.generation.status === "pending") {
-    const isAck =
-      command.interaction.kind === "fixed_choice" &&
-      command.choiceMap.get(command.interaction.choiceToken)?.type === "ack_prologue";
-    if (!isAck) {
-      return { ok: false, code: "ACTION_REJECTED", feedback: "正在编排下一幕，请稍候。" };
-    }
+  // Provider states carry no executable choices. Only a ready runtime can
+  // accept a gameplay interaction.
+  if (record.storyState.narrative.status !== "ready") {
+    return { ok: false, code: "ACTION_REJECTED", feedback: "正在编排下一幕，请稍候。" };
   }
 
   if (command.interaction.kind === "free_text" && command.interaction.targetNpcId !== undefined) {
@@ -203,7 +200,7 @@ export async function performTurn(
     : undefined;
   const dialogueChoiceLabel = fixedChoiceToken === undefined
     ? undefined
-    : record.storyState.narrative.choiceRegistry?.find((entry) => entry.choiceToken === fixedChoiceToken)?.label;
+    : record.storyState.narrative.choiceRegistry.find((entry) => entry.choiceToken === fixedChoiceToken)?.label;
 
   const resolved = resolveTurn(
     record.worldState,
@@ -496,6 +493,30 @@ type CommitResolutionInput = {
  * job 构造失败（如零事件回合）或 commit 失败时零写入 / 不返回成功。
  */
 async function commitResolution(input: CommitResolutionInput): Promise<PerformTurnResult> {
+  if (input.generationKind === null || input.sceneRequestKind === null) {
+    const commitResult = await commitState(input.repository, {
+      gameId: input.gameId,
+      expectedRevision: input.expectedRevision,
+      nextWorldState: input.nextWorldState,
+      nextStoryState: input.nextStoryState,
+    });
+    if (!commitResult.ok) {
+      return {
+        ok: false,
+        code: commitResult.code === "STALE_GAME_REVISION"
+          ? "STALE_GAME_REVISION"
+          : "INFRASTRUCTURE_FAILURE",
+        feedback: "Commit failed",
+      };
+    }
+    return {
+      ok: true,
+      revision: commitResult.record.revision,
+      resolvedEvent: input.primaryResult,
+      feedback: "Action performed",
+    };
+  }
+
   const built = createPendingNarrativeJob({
     jobId: asNarrativeJobId(`job_${input.actionId}`),
     turnId: input.turnId,
@@ -537,12 +558,21 @@ async function commitResolution(input: CommitResolutionInput): Promise<PerformTu
     return { ok: false, code: "ACTION_REJECTED", feedback: "本回合无法形成叙事任务" };
   }
   const pendingJob: PendingNarrativeJob = built.job;
+  const currentNarrative = input.nextStoryState.narrative;
+  if (currentNarrative.status !== "ready") {
+    return { ok: false, code: "ACTION_REJECTED", feedback: "叙事状态已失效" };
+  }
 
   const nextStoryState: StoryState = {
     ...input.nextStoryState,
     narrative: {
-      ...input.nextStoryState.narrative,
-      generation: { status: "pending", job: pendingJob },
+      status: "provider_pending",
+      mode: currentNarrative.mode,
+      job: pendingJob,
+      lastPresentedScene: currentNarrative.currentScene,
+      ...(currentNarrative.dialogueSession === undefined
+        ? {}
+        : { dialogueSession: currentNarrative.dialogueSession }),
     },
   };
 

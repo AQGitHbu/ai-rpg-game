@@ -22,7 +22,7 @@ export type AiGenerationFailure = {
 };
 
 /**
- * 可持久化到 NarrativeGenerationState 的场景失败。
+ * 可持久化到 NarrativeRuntimeState provider_failed 变体的场景失败。
  * phase 固定为 "scene"，并记录失败时间戳。
  * failedAt 使用 ISO 8601 字符串，不携带任何 provider 细节。
  */

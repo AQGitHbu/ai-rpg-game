@@ -277,7 +277,9 @@ function buildPreviousDialogueContext(
   job: PendingNarrativeJob,
 ): PreviousDialogueContext | undefined {
   if (job.actionSummary.kind !== "talk") return undefined;
-  const scene = narrative.currentScene;
+  const scene = narrative.status === "ready"
+    ? narrative.currentScene
+    : narrative.lastPresentedScene;
   const npcLine = scene?.npcLine;
   if (npcLine === null || npcLine === undefined) return undefined;
   if (String(npcLine.npcId) !== String(job.actionSummary.npcId)) return undefined;
@@ -457,10 +459,10 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
   const ss = record.storyState;
 
   const narrative = ss.narrative;
-  if (narrative.generation.status !== "pending") {
+  if (narrative.status !== "provider_pending") {
     throw new Error("buildSceneGenerationContext requires a pending narrative job");
   }
-  const job = narrative.generation.job;
+  const job = narrative.job;
   const previousDialogue = buildPreviousDialogueContext(narrative, job);
 
   // Task 4：节拍与目标转换引用的 subject ID 全部收集后从持久化状态解析描述。

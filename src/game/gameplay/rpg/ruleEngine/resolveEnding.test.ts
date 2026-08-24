@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { resolveEnding } from "./resolveEnding";
 import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
@@ -16,7 +17,7 @@ describe("resolveEnding", () => {
     startingLocation: loc,
     startingItemIds: [],
   });
-  const baseSs = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
+  const baseSs = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
   const deps = { now: () => "2026-01-01" };
 
   it("triggers ending when requirements met and endingAllowed", () => {

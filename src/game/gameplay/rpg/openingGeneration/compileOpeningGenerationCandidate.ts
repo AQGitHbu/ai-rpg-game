@@ -6,6 +6,7 @@ import type { WorldState } from "@/game/domain/worldState";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
+import type { NarrativeRuntimeState } from "@/game/domain/narrative";
 import { createTownRuntime, townSeedFor, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 import { PLAYER_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
 
@@ -21,6 +22,7 @@ export type CompileOpeningGenerationCandidateInput = {
   readonly candidate: OpeningGenerationCandidate;
   readonly generation: GenerationMetadata;
   readonly gameLength: GameLength;
+  readonly initialNarrative: NarrativeRuntimeState;
 };
 
 export type CompileOpeningGenerationCandidateResult = {
@@ -28,13 +30,15 @@ export type CompileOpeningGenerationCandidateResult = {
   readonly storyState: StoryState;
 };
 
+export const OPENING_NPC_ID = asNpcId("npc_0");
+
 export function compileOpeningGenerationCandidate(
   input: CompileOpeningGenerationCandidateInput,
 ): CompileOpeningGenerationCandidateResult {
   const { candidate, generation, gameLength } = input;
 
   const locationId = asLocationId("loc_0");
-  const npcId = asNpcId("npc_0");
+  const npcId = OPENING_NPC_ID;
   const questId = asQuestId("quest_0");
 
   const factIds = candidate.world.publicFacts.map((fact, index) => ({
@@ -131,6 +135,7 @@ export function compileOpeningGenerationCandidate(
   const baseStoryState = createInitialStoryState({
     gameLength,
     initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 },
+    initialNarrative: input.initialNarrative,
   });
   const storyState: StoryState = {
     ...baseStoryState,

@@ -22,22 +22,22 @@ export async function markNarrativeGenerationFailed(
   if (current.status === "corrupt") return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
   if (current.record.revision !== record.revision) return { ok: false, code: "STALE_GAME_REVISION" };
 
-  const generation = current.record.storyState.narrative.generation;
-  const originalGeneration = record.storyState.narrative.generation;
-  if (originalGeneration.status !== "pending") return { ok: false, code: "STALE_GAME_REVISION" };
-  if (generation.status !== "pending" || generation.job.jobId !== originalGeneration.job.jobId) {
+  const generation = current.record.storyState.narrative;
+  const originalGeneration = record.storyState.narrative;
+  if (originalGeneration.status !== "provider_pending") return { ok: false, code: "STALE_GAME_REVISION" };
+  if (generation.status !== "provider_pending" || generation.job.jobId !== originalGeneration.job.jobId) {
     return { ok: false, code: "STALE_GAME_REVISION" };
   }
 
   const nextStoryState = {
     ...current.record.storyState,
     narrative: {
-      ...current.record.storyState.narrative,
-      generation: {
-        status: "failed" as const,
-        job: generation.job,
-        failure,
-      },
+      status: "provider_failed" as const,
+      mode: generation.mode,
+      job: generation.job,
+      failure,
+      lastPresentedScene: generation.lastPresentedScene,
+      ...(generation.dialogueSession === undefined ? {} : { dialogueSession: generation.dialogueSession }),
     },
   };
   const committed = await commitState(repository, {
@@ -46,7 +46,7 @@ export async function markNarrativeGenerationFailed(
     nextWorldState: current.record.worldState,
     nextStoryState,
     incrementRevision: false,
-    expectedNarrativeGeneration: { status: "pending", jobId: String(generation.job.jobId) },
+    expectedNarrativeJob: { status: "provider_pending", jobId: String(generation.job.jobId) },
   });
   if (committed === undefined || !committed.ok) {
     return { ok: false, code: committed?.code ?? "INFRASTRUCTURE_FAILURE" };

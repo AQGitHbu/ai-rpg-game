@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { projectGameSessionView } from "./gameSessionView";
 import { buildChoiceMap } from "./buildChoiceMap";
@@ -29,7 +30,10 @@ describe("projectGameSessionView", () => {
     startingLocation: loc1,
     startingItemIds: [],
   }), loc2), npc1), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
-  const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } });
+  const ss = {
+    ...createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 0, events: 0 } }),
+    narrative: createFixtureNarrativeRuntimeState(),
+  };
 
   function approved(
     choiceToken: string,
@@ -237,7 +241,7 @@ describe("projectGameSessionView", () => {
         { choiceToken: "move-handoff", label: "（动身前往街道）谢过老板，我这就去瞧瞧。" },
         { choiceToken: "talk-more", label: "老板，那脚印可有什么说法？" },
       ] as const,
-      source: "fallback" as const,
+      source: "fixture" as const,
       event: { kind: "observe" as const, locationId: asLocationId("loc_1") },
       npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["那脚印往街道那边去了。"] }],
     };
@@ -362,7 +366,6 @@ describe("projectGameSessionView", () => {
         ...ss.narrative,
         currentScene: scene,
         choiceRegistry: [approved("t1", "scene-1", 0, "x", { type: "move", locationId: asLocationId("loc_2") })],
-        generation: { status: "pending" as const, job: { kind: "scene" as const, sceneId: "scene-1", seed: "s", inputDigest: "d", gameType: "wuxia" as const, intent: { kind: "initial" as const }, context: { triggerContext: { kind: "initial_opening" as const, npcId: asNpcId("npc_1") }, locationId: asLocationId("loc_1"), presentNpcIds: [] }, mode: "ai" as const, utterance: "你好" } } as unknown as import("@/game/domain/storyState").StoryState["narrative"]["generation"],
       },
     };
     const view = projectGameSessionView(ws, ssWithScene, 0, "test-ending-session");
@@ -462,7 +465,7 @@ describe("projectGameSessionView", () => {
         { choiceToken: "t1", label: "表示愿意支持老板" },
         { choiceToken: "t2", label: "质疑老板的说法" },
       ] as const,
-      source: "fallback" as const,
+      source: "fixture" as const,
       event: { kind: "dialogue" as const, focusNpcId: npc1.id },
       npcDialogues: [
         { npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["去找传讯人吧。"] },
@@ -539,7 +542,7 @@ describe("projectGameSessionView", () => {
         { choiceToken: "support-after-talk", label: "支持老板" },
         { choiceToken: "challenge-after-talk", label: "质疑老板" },
       ] as const,
-      source: "fallback" as const,
+      source: "fixture" as const,
       event: { kind: "dialogue" as const, focusNpcId: npc1.id },
       npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["这枚腰牌该交给你了。"] }],
     };
@@ -604,7 +607,7 @@ describe("projectGameSessionView", () => {
         { choiceToken: "t1", label: "表示愿意支持传讯人" },
         { choiceToken: "t2", label: "质疑传讯人的说法" },
       ] as const,
-      source: "fallback" as const,
+      source: "fixture" as const,
       event: { kind: "travel" as const, locationId: asLocationId("loc_1") },
       npcDialogues: [
         { npcId: secondNpc.id, npcName: secondNpc.name, npcRole: secondNpc.role, speechPages: ["我手里有一条线索。"] },
@@ -653,7 +656,7 @@ describe("projectGameSessionView", () => {
         { choiceToken: "end-support", label: "回应老板：我愿意把证据摊开。" },
         { choiceToken: "end-challenge", label: "质疑老板：我会先核对证据。" },
       ] as const,
-      source: "fallback" as const,
+      source: "fixture" as const,
       event: { kind: "battle" as const, enemyId: asEnemyId("enemy_1") },
       npcDialogues: [
         { npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["证据已经齐了，你准备怎样面对众人？"] },
@@ -875,7 +878,7 @@ describe("projectGameSessionView", () => {
           usedFactIds: [],
           npcLine: { npcId: npc1.id, text: "确定性回应。", emotion: "neutral" as const, usedFactIds: [] },
           choices: [] as never,
-          source: "fallback" as const,
+          source: "fixture" as const,
           event: { kind: "dialogue" as const, focusNpcId: npc1.id },
           npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["确定性回应。"] }],
         },
@@ -899,7 +902,7 @@ describe("projectGameSessionView", () => {
           usedFactIds: [],
           npcLine: { npcId: asNpcId("npc_1"), text: "老板如实答道：\"我知道了。\"", emotion: "neutral" as const, usedFactIds: [] },
           choices: [] as never,
-          source: "fallback" as const,
+          source: "fixture" as const,
           event: { kind: "dialogue" as const, focusNpcId: asNpcId("npc_1") },
           npcDialogues: [
             { npcId: asNpcId("npc_1"), npcName: "老板", npcRole: "路人", speechPages: ["老板如实答道：\"我知道了。\""] },
@@ -1171,9 +1174,10 @@ describe("projectGameSessionView", () => {
       ...ss,
       candidateEventPool: [{ secretEffect: "must-never-leak" }] as unknown as StoryState["candidateEventPool"],
       narrative: {
-        ...ss.narrative,
-        choiceRegistry: [{ secretRegistry: true }] as unknown as NonNullable<StoryState["narrative"]["choiceRegistry"]>,
-        generation: { status: "pending", job: { utterance: "private player text" } } as unknown as StoryState["narrative"]["generation"],
+        status: "provider_pending" as const,
+        mode: "ai" as const,
+        job: { utterance: "private player text", jobId: "job-pending" } as never,
+        lastPresentedScene: ss.narrative.currentScene,
       },
     };
     const view = projectGameSessionView(fullWorld, pendingStory, 12, "opaque-ended-session");
@@ -1310,7 +1314,7 @@ describe("projectGameSessionView", () => {
           usedFactIds: [],
           npcLine: { npcId: npc1.id, text: "接下来去查明车轮印。", emotion: "neutral" as const, usedFactIds: [] },
           choices: [] as never,
-          source: "fallback" as const,
+          source: "fixture" as const,
           event: { kind: "observe" as const, locationId: loc1.id },
         },
       },
@@ -1393,7 +1397,7 @@ describe("projectGameSessionView", () => {
           usedFactIds: [],
           npcLine: null,
           choices: [] as never,
-          source: "fallback" as const,
+          source: "fixture" as const,
           event: { kind: "observe" as const, locationId: loc1.id },
         },
       },
@@ -1415,9 +1419,8 @@ describe("projectGameSessionView", () => {
     const failedStory: StoryState = {
       ...ss,
       narrative: {
-        ...ss.narrative,
-        generation: {
-          status: "failed",
+          status: "provider_failed",
+          mode: "ai",
           job: {
             jobId: "job-failed-1" as never,
             turnId: "turn-1" as never,
@@ -1432,13 +1435,15 @@ describe("projectGameSessionView", () => {
             requestedAt: "2026-08-21T00:00:00.000Z",
             objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
             mandatoryBeats: [],
+            generationKind: "npc_fixed_choice",
+            sceneRequestKind: "npc_response",
           } as never,
+          lastPresentedScene: ss.narrative.currentScene,
           failure: {
             kind: "AI_RESPONSE_INVALID",
             phase: "scene",
             failedAt: "2026-08-21T00:00:00.000Z",
           },
-        } as never,
       },
     };
     const view = projectGameSessionView(ws, failedStory, 3, "ending-id");
@@ -1453,9 +1458,8 @@ describe("projectGameSessionView", () => {
     const failedStory: StoryState = {
       ...ss,
       narrative: {
-        ...ss.narrative,
-        generation: {
-          status: "failed",
+          status: "provider_failed",
+          mode: "ai",
           job: {
             jobId: "job-failed-1" as never,
             turnId: "turn-1" as never,
@@ -1470,13 +1474,15 @@ describe("projectGameSessionView", () => {
             requestedAt: "2026-08-21T00:00:00.000Z",
             objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
             mandatoryBeats: [],
+            generationKind: "npc_fixed_choice",
+            sceneRequestKind: "npc_response",
           } as never,
+          lastPresentedScene: ss.narrative.currentScene,
           failure: {
             kind: "AI_CALL_FAILED",
             phase: "scene",
             failedAt: "2026-08-21T00:00:00.000Z",
           },
-        } as never,
       },
     };
     const view = projectGameSessionView(ws, failedStory, 3, "ending-id");
@@ -1520,7 +1526,7 @@ describe("projectGameSessionView town read model", () => {
 
   it("currentLocation.town 暴露快照 + 已绑定交互建筑条目", () => {
     const townWs = makeTownWorld();
-    const townSs = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+    const townSs = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
     const view = projectGameSessionView(townWs, townSs, 0, "test-ending-session");
     const town = view.currentLocation.town;
     expect(town).not.toBeNull();
@@ -1554,7 +1560,7 @@ describe("projectGameSessionView town read model", () => {
     };
     const view = projectGameSessionView(
       townWs,
-      createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 2, quests: 0, events: 0 } }),
+      createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 2, quests: 0, events: 0 } }),
       0,
       "test-ending-session",
     );
@@ -1567,7 +1573,7 @@ describe("projectGameSessionView town read model", () => {
 
   it("town 读模型不泄漏 seed/空闲 slot/生成器内部", () => {
     const townWs = makeTownWorld();
-    const townSs = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+    const townSs = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
     const view = projectGameSessionView(townWs, townSs, 0, "test-ending-session");
     const serialized = JSON.stringify(view.currentLocation.town);
     expect(serialized).not.toMatch(/"seed"/);
@@ -1583,21 +1589,20 @@ describe("projectGameSessionView town read model", () => {
       startingLocation: townLoc1,
       startingItemIds: [],
     });
-    const view = projectGameSessionView(base, createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } }), 0, "test-ending-session");
+    const view = projectGameSessionView(base, createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } }), 0, "test-ending-session");
     expect(view.currentLocation.town).toBeNull();
   });
 
   it("projects only the stable AI failure kind", () => {
-    const baseStory = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+    const baseStory = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
     const failedStory: StoryState = {
       ...baseStory,
       narrative: {
-        ...baseStory.narrative,
-        generation: {
-          status: "failed",
-          job: { jobId: "job_1", actionId: "a_1" } as unknown as StoryState["narrative"]["generation"] extends { job: infer J } ? J : never,
+        status: "provider_failed",
+        mode: "ai",
+        job: { jobId: "job_1", actionId: "a_1", generationKind: "npc_fixed_choice", sceneRequestKind: "npc_response" } as never,
+        lastPresentedScene: null,
           failure: { kind: "AI_RESPONSE_INVALID", phase: "scene", failedAt: "2026-08-21T00:00:00.000Z" },
-        } as unknown as StoryState["narrative"]["generation"],
       },
     };
     const view = projectGameSessionView(makeTownWorld(), failedStory, 3, "ending-id");
@@ -1608,16 +1613,15 @@ describe("projectGameSessionView town read model", () => {
   });
 
   it("projects failed with AI_CALL_FAILED kind", () => {
-    const baseStory = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
+    const baseStory = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 } });
     const failedStory: StoryState = {
       ...baseStory,
       narrative: {
-        ...baseStory.narrative,
-        generation: {
-          status: "failed",
-          job: { jobId: "job_2", actionId: "a_2" } as unknown as StoryState["narrative"]["generation"] extends { job: infer J } ? J : never,
+        status: "provider_failed",
+        mode: "ai",
+        job: { jobId: "job_2", actionId: "a_2", generationKind: "npc_fixed_choice", sceneRequestKind: "npc_response" } as never,
+        lastPresentedScene: null,
           failure: { kind: "AI_CALL_FAILED", phase: "scene", failedAt: "2026-08-21T00:00:00.000Z" },
-        } as unknown as StoryState["narrative"]["generation"],
       },
     };
     const view = projectGameSessionView(makeTownWorld(), failedStory, 5, "ending-id");

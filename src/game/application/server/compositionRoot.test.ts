@@ -104,8 +104,8 @@ function createFailedStateFakeRepository(): {
     getCurrentGame: vi.fn(async () => ({ ok: true as const, status: "active" as const, record: buildRecord() })),
     applyState: vi.fn(async (input: ApplyStateInput) => {
       appliedStateCalls.push(input);
-      // CAS 命中：把同一 failed job 恢复到 pending（expectedNarrativeGeneration 判定）。
-      if (input.expectedNarrativeGeneration?.status === "failed") {
+      // CAS 命中：把同一 failed job 恢复到 pending（expectedNarrativeJob 判定）。
+      if (input.expectedNarrativeJob?.status === "provider_failed") {
         generationStatus = "pending";
       }
       return { ok: true as const, record: buildRecord() };
@@ -134,8 +134,8 @@ describe("ensureNarrativeScene retry 组合断言（发现#1）", () => {
 
     // failed→pending 的 CAS 路径被触发：applyState 恰好一次、以 failed 期望、不递增 revision。
     expect(appliedStateCalls).toHaveLength(1);
-    expect(appliedStateCalls[0].expectedNarrativeGeneration).toEqual({
-      status: "failed",
+    expect(appliedStateCalls[0].expectedNarrativeJob).toEqual({
+      status: "provider_failed",
       jobId: "job-retry-combined",
     });
     expect(appliedStateCalls[0].incrementRevision).toBe(false);

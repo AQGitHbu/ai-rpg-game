@@ -99,7 +99,7 @@ export type ScenePerformanceProposal = {
   readonly linearActionNarratives?: readonly LinearActionNarrative[];
   /** Task 5：本回合已结算调查结果的叙事上下文；仅 investigate + 已结算时携带。 */
   readonly investigationResult?: SceneInvestigationResult;
-  readonly source: "generated" | "fallback";
+  readonly source: "generated" | "fixture";
   /** 仅供 pending 编排限制内容修复次数，不进入 ready scene 持久化。 */
   readonly contentRepairAttempt?: number;
 };
@@ -126,7 +126,7 @@ export type SceneSourceResult =
   | { readonly ok: true; readonly proposal: ScenePerformanceProposal }
   | { readonly ok: false; readonly failure: AiGenerationFailure };
 
-/** 可注入的叙事场景 source。显式离线 fixture 返回 ok:true + fallback proposal；live source 失败返回 ok:false。 */
+/** 可注入的叙事场景 source。显式离线 fixture 返回 ok:true + fixture proposal；live source 失败返回 ok:false。 */
 export type SceneSource = {
   generateScene(context: SceneGenerationContext): Promise<SceneSourceResult>;
 };

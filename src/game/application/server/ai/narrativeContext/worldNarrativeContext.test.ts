@@ -10,6 +10,7 @@ import {
   asQuestId,
 } from "@/game/domain/worldEntity";
 import type { WorldEvolutionSourceContext } from "@/game/application/worldEvolutionSource";
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { compileWorldNarrativeContext } from "./worldNarrativeContext";
 
 function makeWorldContext(need: EvolutionNeed) {
@@ -158,7 +159,7 @@ function makeWorldContext(need: EvolutionNeed) {
       eventLedger: [],
     },
     storyState: {
-      version: 5,
+      version: 6,
       turnNumber: 7,
       currentAct: 2,
       targetActs: 3,
@@ -176,7 +177,7 @@ function makeWorldContext(need: EvolutionNeed) {
       candidateEventPool: [],
       endingAllowed: false,
       endingProposed: false,
-      narrative: { currentScene: null, generation: { status: "idle" }, mode: "ai" },
+      narrative: createFixtureNarrativeRuntimeState(),
       prologueShown: true,
       prologueText: "",
       recentBeats: [

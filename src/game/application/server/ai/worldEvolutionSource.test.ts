@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect, vi } from "vitest";
 import {
   parseWorldDeltaProposal,
@@ -233,7 +234,7 @@ describe("createLiveWorldEvolutionSource", () => {
     const source = createLiveWorldEvolutionSource({ aiClient });
     const ctx: WorldEvolutionSourceContext = {
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: { kind: "next_act", act: 2 },
       reason: "scene_evolution",
     };
@@ -252,7 +253,7 @@ describe("createLiveWorldEvolutionSource", () => {
     const source = createLiveWorldEvolutionSource({});
     const ctx: WorldEvolutionSourceContext = {
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: pacingNeed,
       action: { type: "move", locationId: asLocationId("loc_b") },
       reason: "UNKNOWN_LOCATION",
@@ -273,7 +274,7 @@ describe("createLiveWorldEvolutionSource", () => {
     });
     const ctx: WorldEvolutionSourceContext = {
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: pacingNeed,
       action: { type: "talk", npcId: asNpcId("npc_new"), dialogueAct: "ask" },
       reason: "UNKNOWN_NPC",
@@ -296,7 +297,7 @@ describe("createLiveWorldEvolutionSource", () => {
     });
     const ctx: WorldEvolutionSourceContext = {
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: pacingNeed,
       action: { type: "talk", npcId: asNpcId("npc_new"), dialogueAct: "ask" },
       reason: "UNKNOWN_NPC",
@@ -326,7 +327,7 @@ describe("createLiveWorldEvolutionSource", () => {
     });
     const ctx: WorldEvolutionSourceContext = {
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: pacingNeed,
       action: { type: "talk", npcId: asNpcId("npc_new"), dialogueAct: "ask" },
       reason: "UNKNOWN_NPC",
@@ -364,7 +365,7 @@ describe("createLiveWorldEvolutionSource", () => {
 
     const result = await source.propose({
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: { kind: "pacing", pacingNeed: "complicate" },
       reason: "scene_evolution",
     });
@@ -389,7 +390,7 @@ describe("world source 内容修复契约", () => {
   function makeCtx(overrides?: Partial<WorldEvolutionSourceContext>): WorldEvolutionSourceContext {
     return {
       worldState: makeWorld(),
-      storyState: createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } }),
       need: pacingNeed,
       reason: "scene_evolution",
       ...overrides,

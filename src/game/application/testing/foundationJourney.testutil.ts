@@ -318,7 +318,7 @@ export async function pendingSceneProposal(
 ): Promise<{ context: SceneGenerationContext; proposal: ScenePerformanceProposal } | null> {
   const record = await loadGameRecord(repo);
   if (record === null) return null;
-  if (record.storyState.narrative.generation.status !== "pending") return null;
+  if (record.storyState.narrative.status !== "provider_pending") return null;
   const context = buildSceneGenerationContext(record);
   const proposal = await createDeterministicSceneSource().generateScene(context);
   if (!proposal.ok) throw new Error("expected success");

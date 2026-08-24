@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 // @vitest-environment node
 
 import { describe, expect, it } from "vitest";
@@ -34,7 +35,7 @@ function recordWithEvolutionStatus(
     },
     startingItemIds: [],
   });
-  const initialStoryState = createInitialStoryState({
+  const initialStoryState = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
     gameLength: "short",
     initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 },
   });

@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState, readyScene } from "@/game/domain/narrativeTestFixture.testutil";
 /** @vitest-environment node */
 import { describe, it, expect, afterAll } from "vitest";
 import { join } from "node:path";
@@ -157,7 +158,7 @@ function worldWithApproachlessFact(): WorldState {
 }
 
 function storyWithDiscoverFact(): StoryState {
-  return createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 1, events: 0 } });
+  return createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 1, events: 0 } });
 }
 
 type InvestigationChoiceJourney = {
@@ -290,12 +291,12 @@ describe("调查选择旅程（Task 6 端到端）", () => {
     expect(noisyRecord.storyState.tension).toBeGreaterThan(cleanRecord.storyState.tension);
 
     // ready scene narration：点名所选方式与证据/动静代价。
-    const cleanScene = cleanRecord.storyState.narrative.currentScene;
-    const noisyScene = noisyRecord.storyState.narrative.currentScene;
-    expect(cleanScene?.narration).toContain("沿痕迹追查");
-    expect(cleanScene?.narration).toContain("没有惊动任何人");
-    expect(noisyScene?.narration).toContain("翻查附近杂物");
-    expect(noisyScene?.narration).toContain("留下了动静");
-    expect(cleanScene?.narration).not.toContain("留下了动静");
+    const cleanScene = readyScene(cleanRecord.storyState);
+    const noisyScene = readyScene(noisyRecord.storyState);
+    expect(cleanScene.narration).toContain("沿痕迹追查");
+    expect(cleanScene.narration).toContain("没有惊动任何人");
+    expect(noisyScene.narration).toContain("翻查附近杂物");
+    expect(noisyScene.narration).toContain("留下了动静");
+    expect(cleanScene.narration).not.toContain("留下了动静");
   });
 });

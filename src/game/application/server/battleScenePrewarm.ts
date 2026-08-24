@@ -46,7 +46,8 @@ function battleKeyOf(record: GameRecord): string | null {
  */
 function projectedVictoryRecord(record: GameRecord): { readonly record: GameRecord; readonly battleKey: string } | null {
   const battle = record.worldState.battle;
-  if (battle.status !== "active" || battle.battleKey === undefined) return null;
+  if (battle.status !== "active" || battle.battleKey === undefined
+    || record.storyState.narrative.status !== "ready") return null;
 
   const actorId = battle.combatants?.[battle.turnIndex ?? -1]?.combatantId;
   const target = battle.combatants?.find((unit) => unit.side === "enemies" && unit.hp > 0);
@@ -118,6 +119,8 @@ function projectedVictoryRecord(record: GameRecord): { readonly record: GameReco
     sceneRequestKind: "npc_response",
   });
   if (!jobResult.ok) return null;
+  const projectedNarrative = resolved.resolution.nextStoryState.narrative;
+  if (projectedNarrative.status !== "ready") return null;
 
   return {
     battleKey: battle.battleKey,
@@ -127,8 +130,13 @@ function projectedVictoryRecord(record: GameRecord): { readonly record: GameReco
       storyState: {
         ...resolved.resolution.nextStoryState,
         narrative: {
-          ...resolved.resolution.nextStoryState.narrative,
-          generation: { status: "pending", job: jobResult.job },
+          status: "provider_pending",
+          mode: projectedNarrative.mode,
+          job: jobResult.job,
+          lastPresentedScene: projectedNarrative.currentScene,
+          ...(projectedNarrative.dialogueSession === undefined
+            ? {}
+            : { dialogueSession: projectedNarrative.dialogueSession }),
         },
       },
     },

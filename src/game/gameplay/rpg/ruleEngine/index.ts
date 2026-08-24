@@ -29,11 +29,14 @@ function advanceDialogueSession(
 ): StoryState {
   if (action.type !== "talk") return storyState;
   const existing = storyState.narrative.dialogueSession;
-  const currentSceneNpcId = storyState.narrative.currentScene?.event?.kind === "dialogue"
-    ? storyState.narrative.currentScene.event.focusNpcId
+  const readyScene = storyState.narrative.status === "ready"
+    ? storyState.narrative.currentScene
+    : null;
+  const currentSceneNpcId = readyScene?.event?.kind === "dialogue"
+    ? readyScene.event.focusNpcId
     : undefined;
-  const currentSceneHasDialogue = storyState.narrative.currentScene?.npcLine !== null
-    && storyState.narrative.currentScene?.npcLine !== undefined
+  const currentSceneHasDialogue = readyScene?.npcLine !== null
+    && readyScene?.npcLine !== undefined
     && String(currentSceneNpcId) === String(action.npcId);
   // 某些旧流程先展示“与 NPC 交谈”入口，再由下一回合打开正式双选项。
   // 这个入口本身不是玩家对 NPC 台词的回应，不应消耗多轮会话的一轮。

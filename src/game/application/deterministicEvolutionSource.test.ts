@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { createDeterministicEvolutionSource, TRUST_ENDING_MIN_AFFINITY, DOUBT_ENDING_MAX_AFFINITY } from "./deterministicEvolutionSource";
 import { createInitialWorldState, type NpcEntry, type WorldState } from "@/game/domain/worldState";
@@ -37,7 +38,7 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
         tags: [], kind: "main", stage: 9, status: "active",
       }],
     };
-    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } });
+    const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } });
     const result = await source.propose({ worldState: ws, storyState: ss, need: { kind: "ending_pair", finalAct: 3 }, reason: "test" });
     if (!result.ok) throw new Error("expected success");
     expect(result.proposal).not.toBeNull();
@@ -59,7 +60,7 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
 
   it("the affinity threshold splits a trust-leaning vs doubt-leaning play", async () => {
     const source = createDeterministicEvolutionSource();
-    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } });
+    const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } });
 
     const warm = await source.propose({ worldState: makeWorldWithNpc(20), storyState: ss, need: { kind: "ending_pair", finalAct: 3 }, reason: "warm" });
     const cold = await source.propose({ worldState: makeWorldWithNpc(-20), storyState: ss, need: { kind: "ending_pair", finalAct: 3 }, reason: "cold" });
@@ -87,7 +88,7 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
         kind: "main", stage: 2, status: "completed",
       }],
     };
-    const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 2, quests: 2, events: 0 } });
+    const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 2, quests: 2, events: 0 } });
 
     const result = await source.propose({ worldState: ws, storyState: ss, need: { kind: "next_act", act: 3 }, reason: "test" });
     if (!result.ok) throw new Error("expected success");
@@ -101,7 +102,7 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
     const source = createDeterministicEvolutionSource();
     const result = await source.propose({
       worldState: makeWorldWithNpc(0),
-      storyState: createInitialStoryState({ gameLength: "medium", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } }),
+      storyState: createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "medium", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } }),
       need: { kind: "next_act", act: 2 },
       reason: "medium-playtest",
     });
@@ -120,7 +121,7 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
 
   it("把带新地点的幕拍人物与物品、敌人放在同一条主线地点上", async () => {
     const source = createDeterministicEvolutionSource();
-    const storyState = createInitialStoryState({
+    const storyState = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
       gameLength: "medium",
       initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 },
     });

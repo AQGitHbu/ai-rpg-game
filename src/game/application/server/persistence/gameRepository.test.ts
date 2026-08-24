@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import type { GameRepository, GameRecord, CreateInitialGameInput, ApplyStateInput, ApplySceneWriteBackInput } from "./gameRepository";
 import type { WorldState } from "@/game/domain/worldState";
@@ -66,7 +67,7 @@ function buildTestRecord(): { worldState: WorldState; storyState: StoryState } {
     startingLocation: loc,
     startingItemIds: [],
   });
-  const storyState = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
+  const storyState = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
   return { worldState, storyState };
 }
 
@@ -113,6 +114,8 @@ describe("GameRepository in-memory", () => {
     if (r.ok) {
       expect(r.record.revision).toBe(1);
       expect(r.record.storyState.narrative.mode).toBe("ai");
+      expect(r.record.storyState.narrative.status).toBe("ready");
+      if (r.record.storyState.narrative.status !== "ready") return;
       expect(r.record.storyState.narrative.choiceRegistry).toEqual([approved.choice]);
       expect(r.record.storyState.candidateEventPool).toEqual(storyState.candidateEventPool);
       expect(r.record.storyState.tension).toBe(storyState.tension);

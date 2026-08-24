@@ -1,12 +1,16 @@
 import type { GameRepository } from "./server/persistence/gameRepository";
 import type { GameId } from "./server/persistence/gameRepository";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
-import type { StoryState } from "@/game/domain/storyState";
+import type { NarrativeRuntimeState } from "@/game/domain/narrative";
 import type { GameTypeId, GameLength, GameSetup, NewGameInput } from "@/game/domain/newGame";
 import { validateNewGameInput } from "@/game/domain/newGame";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import { parseOpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
-import { validateOpeningGenerationCandidate, compileOpeningGenerationCandidate } from "@/game/gameplay/rpg/openingGeneration";
+import {
+  OPENING_NPC_ID,
+  compileOpeningGenerationCandidate,
+  validateOpeningGenerationCandidate,
+} from "@/game/gameplay/rpg/openingGeneration";
 import {
   createOpeningNoveltyRecord,
   isOpeningTooSimilar,
@@ -251,29 +255,20 @@ export async function createGame(
     ...(accepted.attempt === 0 ? {} : { openingAttempt: accepted.attempt }),
   };
 
-  const { worldState, storyState } = compileOpeningGenerationCandidate({
-    candidate: accepted.candidate,
-    generation,
-    gameLength: input.gameLength,
-  });
-
-  // Set narrative to pending so the first scene (prologue) gets generated
-  // by the ensure polling mechanism (spec §9.1: 生成序幕场景)。
-  // pending 唯一载体是带 job 的 PendingNarrativeJob（Spec §10.3），
-  // 不再使用无 job 的 requestedAt legacy 形式。
+  // Opening construction is atomic: create the provider-authorized job first,
+  // then compile StoryState with its final runtime instead of overwriting it.
   const narrativeMode = deps.aiEnabled ? "ai" : "offline";
-  const openingNpcId = worldState.npcs[0]?.id;
   const jobResult = createPendingNarrativeJob({
     jobId: asNarrativeJobId(`job_${input.seed}_0`),
     turnId: asTurnId(`turn_${input.seed}_0`),
     actionId: `start_${input.seed}`,
     expectedRevision: 0,
     turnNumber: 0,
-    actionSummary: openingNpcId === undefined ? { kind: "explore" } : { kind: "talk", npcId: openingNpcId },
+    actionSummary: { kind: "talk", npcId: OPENING_NPC_ID },
     resolvedEvent: {
       actionId: `start_${input.seed}`,
       status: "success",
-      eventKind: openingNpcId === undefined ? "observe" : "dialogue",
+      eventKind: "dialogue",
       facts: [],
       stateChanges: [],
       costs: [],
@@ -282,7 +277,7 @@ export async function createGame(
       rejectedEffects: [],
     },
     domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
-    ...(openingNpcId === undefined ? {} : { focusNpcId: openingNpcId }),
+    focusNpcId: OPENING_NPC_ID,
     requestedAt: deps.now(),
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: [],
@@ -291,27 +286,30 @@ export async function createGame(
   });
   if (!jobResult.ok) return { ok: false, code: "AI_GENERATION_FAILED", failureKind: "AI_RESPONSE_INVALID" };
 
-  const storyStateWithPending: StoryState = {
-    ...storyState,
-    narrative: {
-      ...storyState.narrative,
-      mode: narrativeMode,
-      generation: { status: "pending", job: jobResult.job },
-      ...(openingNpcId === undefined ? {} : {
-        dialogueSession: {
-          npcId: openingNpcId,
-          turnCount: 0,
-          requiredTurns: 2,
-          completed: false,
-        },
-      }),
+  const initialNarrative = {
+    status: "provider_pending",
+    mode: narrativeMode,
+    job: jobResult.job,
+    lastPresentedScene: null,
+    dialogueSession: {
+      npcId: OPENING_NPC_ID,
+      turnCount: 0,
+      requiredTurns: 2,
+      completed: false,
     },
-  };
+  } satisfies NarrativeRuntimeState;
+
+  const { worldState, storyState } = compileOpeningGenerationCandidate({
+    candidate: accepted.candidate,
+    generation,
+    gameLength: input.gameLength,
+    initialNarrative,
+  });
 
   const persistedInput = {
     gameId: input.gameId,
     worldState,
-    storyState: storyStateWithPending,
+    storyState,
     createdAt: deps.now(),
     openingHistory: accepted.novelty,
   };

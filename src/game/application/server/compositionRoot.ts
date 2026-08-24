@@ -304,8 +304,8 @@ export function createServerGameEntryPoints(
     prewarm: BattleScenePrewarm,
     auditLink?: AiTextAuditLink,
   ): Promise<boolean> => {
-    const generation = record.storyState.narrative.generation;
-    if (generation.status !== "pending" || !("job" in generation) || generation.job === undefined) return false;
+    const generation = record.storyState.narrative;
+    if (generation.status !== "provider_pending") return false;
     const context = buildSceneGenerationContext(record);
     const approved = approveScenePerformance({
       context,
@@ -325,10 +325,13 @@ export function createServerGameEntryPoints(
         ...record.storyState,
         candidateEventPool: approved.candidateEventPool,
         narrative: {
-          ...record.storyState.narrative,
+          status: "ready",
+          mode: generation.mode,
           currentScene: approved.scene,
-          generation: { status: "idle" },
           choiceRegistry: approved.choiceRegistry,
+          ...(generation.dialogueSession === undefined
+            ? {}
+            : { dialogueSession: generation.dialogueSession }),
         },
       },
     });
@@ -377,7 +380,7 @@ export function createServerGameEntryPoints(
       if (!current.ok || current.status !== "active") return;
       if (current.record.worldState.battle.status !== "resolved"
         || current.record.worldState.battle.battleKey !== battleKey
-        || current.record.storyState.narrative.generation.status !== "pending") return;
+        || current.record.storyState.narrative.status !== "provider_pending") return;
       const prewarm = battleScenePrewarmCache.get(battleKey);
       if (prewarm !== undefined) {
         const applied = await applyPrewarmedBattleScene(current.record, prewarm, { traceId });
@@ -400,12 +403,9 @@ export function createServerGameEntryPoints(
       const current = await repository.getCurrentGame();
       if (!current.ok) return { ok: false, result: "unavailable" };
       if (current.status !== "active") return { ok: false, result: "not_pending" };
-      const generation = current.record.storyState.narrative.generation;
-      if (generation.status === "failed") return { ok: false, result: "failed" };
-      if (generation.status !== "pending") return { ok: false, result: "not_pending" };
-      if (!("job" in generation) || generation.job === undefined) {
-        return { ok: false, result: "unavailable" };
-      }
+      const generation = current.record.storyState.narrative;
+      if (generation.status === "provider_failed") return { ok: false, result: "failed" };
+      if (generation.status !== "provider_pending") return { ok: false, result: "not_pending" };
       const battle = current.record.worldState.battle;
       if (battle.status === "resolved"
         && battle.battleKey !== undefined
@@ -793,8 +793,8 @@ export function createServerGameEntryPoints(
           const queued = await narrativeCoordinator.ensure(traceId, { origin: "manual_failed_job" });
           if (queued === "failed") {
             const latest = await repository.getCurrentGame();
-            if (latest.ok && latest.status === "active" && latest.record.storyState.narrative.generation.status === "failed") {
-              const failureKind = latest.record.storyState.narrative.generation.failure.kind;
+            if (latest.ok && latest.status === "active" && latest.record.storyState.narrative.status === "provider_failed") {
+              const failureKind = latest.record.storyState.narrative.failure.kind;
               return { ok: false, code: "AI_GENERATION_FAILED", failureKind };
             }
             return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
@@ -804,18 +804,18 @@ export function createServerGameEntryPoints(
         }
       }
 
-      const generation = current.record.storyState.narrative.generation;
-      if (generation.status === "failed") {
+      const generation = current.record.storyState.narrative;
+      if (generation.status === "provider_failed") {
         return { ok: false, code: "AI_GENERATION_FAILED", failureKind: generation.failure.kind };
       }
       const result = await narrativeCoordinator.ensure(traceId);
       if (result === "failed") {
         const latest = await repository.getCurrentGame();
-        if (latest.ok && latest.status === "active" && latest.record.storyState.narrative.generation.status === "failed") {
+        if (latest.ok && latest.status === "active" && latest.record.storyState.narrative.status === "provider_failed") {
           return {
             ok: false,
             code: "AI_GENERATION_FAILED",
-            failureKind: latest.record.storyState.narrative.generation.failure.kind,
+            failureKind: latest.record.storyState.narrative.failure.kind,
           };
         }
         return { ok: false, code: "INFRASTRUCTURE_FAILURE" };

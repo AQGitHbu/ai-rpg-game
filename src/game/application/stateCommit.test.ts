@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { commitState } from "./stateCommit";
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
@@ -78,7 +79,7 @@ function buildTestState(): { worldState: WorldState; storyState: StoryState } {
     startingLocation: loc,
     startingItemIds: [],
   });
-  const storyState = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
+  const storyState = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
   return { worldState, storyState };
 }
 
@@ -125,8 +126,12 @@ describe("commitState", () => {
       ...storyState,
       turnNumber: 1,
       narrative: {
-        ...storyState.narrative,
-        generation: { status: "pending", job },
+        status: "provider_pending",
+        mode: "offline",
+        job,
+        lastPresentedScene: storyState.narrative.status === "ready"
+          ? storyState.narrative.currentScene
+          : null,
       },
     };
 
@@ -135,12 +140,14 @@ describe("commitState", () => {
     if (!result.ok) return;
 
     const saved = getRecord()!;
-    const generation = saved.storyState.narrative.generation;
-    expect(generation.status).toBe("pending");
-    if (generation.status !== "pending") return;
-    expect(generation.job).toEqual(job);
-    expect(generation.job.basedOnRevision).toBe(1);
-    expect(saved.storyState.narrative.currentScene).toBe(storyState.narrative.currentScene);
+    const narrative = saved.storyState.narrative;
+    expect(narrative.status).toBe("provider_pending");
+    if (narrative.status !== "provider_pending") return;
+    expect(narrative.job).toEqual(job);
+    expect(narrative.job.basedOnRevision).toBe(1);
+    expect(narrative.lastPresentedScene).toBe(
+      storyState.narrative.status === "ready" ? storyState.narrative.currentScene : null,
+    );
     expect(saved.storyState.narrative.mode).toBe(storyState.narrative.mode);
   });
 });

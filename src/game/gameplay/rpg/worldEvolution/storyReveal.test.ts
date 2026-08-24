@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, expect, it } from "vitest";
 import { buildChoiceMap } from "@/game/application/buildChoiceMap";
 import { projectGameSessionView } from "@/game/application/gameSessionView";
@@ -135,7 +136,7 @@ function stagedState(): { worldState: WorldState; storyState: ReturnType<typeof 
     unlockedLocationIds: [loc0],
   };
   const storyState = {
-    ...createInitialStoryState({
+    ...createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
       gameLength: "medium",
       initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 },
     }),

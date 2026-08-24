@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { ruleEngine, resolveTurn } from "./index";
 import { createInitialWorldState, appendNpc, appendLocation, type LocationEntry, type NpcEntry, type EnemyEntry, type WorldState } from "@/game/domain/worldState";
@@ -21,7 +22,7 @@ describe("ruleEngine facade", () => {
     startingItemIds: [],
   });
   const ws = { ...appendLocation(baseWs, loc2), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
-  const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
+  const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
   const deps = { now: () => "2026-01-01" };
 
   it("returns ok for valid move action", () => {
@@ -178,7 +179,7 @@ describe("ruleEngine status passthrough", () => {
     startingItemIds: [],
   });
   const ws = { ...appendLocation(baseWs, loc2), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
-  const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
+  const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
   const deps = { now: () => "2026-01-01" };
 
   it("passes partial_success from resolveByType to ResolvedEvent", () => {
@@ -231,7 +232,7 @@ describe("resolveTurn facade", () => {
     startingItemIds: [],
   });
   const ws = { ...appendLocation(baseWs, loc2), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
-  const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
+  const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
   const deps = { now: () => "2026-01-01" };
   const baseRevision = 7;
   const turnId = asTurnId("turn_9");
@@ -491,7 +492,7 @@ describe("candidate reaction events integrate after player action (Task 20)", ()
 
   function makeSs(candidatePool: ReturnType<typeof createInitialStoryState>["candidateEventPool"]) {
     return {
-      ...createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } }),
+      ...createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } }),
       candidateEventPool: candidatePool,
     };
   }
@@ -574,7 +575,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     startingItemIds: [],
   });
   const ws = { ...appendLocation(baseWs, loc2), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
-  const ss = createInitialStoryState({ gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
+  const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 0, quests: 0, events: 0 } });
   const deps = { now: () => "2026-01-01" };
   const FACT_1_ID = asFactId("fact_1");
   const FACT_2_ID = asFactId("fact_2");

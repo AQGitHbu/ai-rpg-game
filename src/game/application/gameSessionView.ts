@@ -289,9 +289,12 @@ function currentObjectiveChoiceToken(
       // move 选项（scene scope token，与 runtime token 派生自不同 sceneId，
       // 永不相等）。优先采用该已审批选项的 token，让 UI 行动栏直接给出
       // 角色化交接入口（“我这就去瞧瞧”），并保持 NPC 引导台词的展示链路。
-      const scene = storyState.narrative.currentScene;
-      if (scene !== null && scene !== undefined) {
-        const registry = storyState.narrative.choiceRegistry ?? [];
+      const readyNarrative = storyState.narrative.status === "ready"
+        ? storyState.narrative
+        : null;
+      if (readyNarrative !== null) {
+        const scene = readyNarrative.currentScene;
+        const registry = readyNarrative.choiceRegistry;
         for (const sceneChoice of scene.choices) {
           const approved = registry.find((entry) =>
             entry.choiceToken === sceneChoice.choiceToken
@@ -453,7 +456,13 @@ export function projectGameSessionView(
       })
     : [];
 
-  const scene = storyState.narrative.currentScene;
+  const readyNarrative = storyState.narrative.status === "ready"
+    ? storyState.narrative
+    : null;
+  const scene = readyNarrative?.currentScene
+    ?? (storyState.narrative.status === "ready"
+      ? null
+      : storyState.narrative.lastPresentedScene);
   // 只有结构化 dialogue event 才能赋予 NPC“焦点对话”能力。
   // observe/travel 等场景也可能带 npcLine 作为旁白表演，但不能因此泄露
   // 自由输入或伪造一个没有两个批准选项的焦点对话框。
@@ -473,7 +482,7 @@ export function projectGameSessionView(
     && presentNpcs.some((npc) => String(npc.id) === currentObjectiveNpcId)
     ? currentObjectiveNpcId
     : null;
-  const registry = storyState.narrative.choiceRegistry ?? [];
+  const registry = readyNarrative?.choiceRegistry ?? [];
   const legalChoiceMap = buildChoiceMap(worldState, storyState, revision);
   // 终幕（或一次战斗/移动后的追问）有时已没有未完成 objective，却仍由同
   // 一名在场 NPC 给出两个已批准的 TalkAction。这是该 NPC 的回答分支，不是
@@ -560,9 +569,11 @@ export function projectGameSessionView(
       ? undefined
       : presentNpcs.find((npc) => String(npc.id) === currentObjectiveNpcId)
     : undefined;
-  const focusNpcId = handoffFocusNpc === undefined
-    ? staleDialogueFocus ? null : persistedFocusNpcId
-    : String(handoffFocusNpc.id);
+  const focusNpcId = readyNarrative === null
+    ? null
+    : handoffFocusNpc === undefined
+      ? staleDialogueFocus ? null : persistedFocusNpcId
+      : String(handoffFocusNpc.id);
   const projectSceneChoice = (sceneChoice: NonNullable<typeof scene>["choices"][number]): PlayerChoiceView | null => {
     const approved = registry.find((entry) =>
       entry.choiceToken === sceneChoice.choiceToken
@@ -585,7 +596,7 @@ export function projectGameSessionView(
   const projectedHandoffChoice = singleChoiceDialogueHandoff && scene?.choices[0] !== undefined
     ? projectSceneChoice(scene.choices[0])
     : null;
-  const projectedSceneChoices = staleDialogueFocus
+  const projectedSceneChoices = readyNarrative === null || staleDialogueFocus
     ? []
     : scene?.choices
       .map(projectSceneChoice)
@@ -619,7 +630,7 @@ export function projectGameSessionView(
       : null;
     const inferredSpeechSource = scene !== null && sceneLineNpcId === String(npc.id)
       ? scene.source
-      : "fallback";
+      : "fixture";
     const speechSource = supplied?.speechSource ?? inferredSpeechSource;
     const interactionCount = npc.memory.interactionHistory.length;
     // 非焦点 NPC 的零回合闲聊台词：参与过剧情且有权威目标 → 提醒；否则中性闲聊
@@ -759,9 +770,11 @@ export function projectGameSessionView(
       npcLine: projectedNpcLine,
       npcDialogues,
     },
-    narrativeGeneration: storyState.narrative.generation.status === "failed"
-      ? { status: "failed", failureKind: storyState.narrative.generation.failure.kind }
-      : { status: storyState.narrative.generation.status },
+    narrativeGeneration: storyState.narrative.status === "provider_failed"
+      ? { status: "failed", failureKind: storyState.narrative.failure.kind }
+      : storyState.narrative.status === "provider_pending"
+        ? { status: "pending" }
+        : { status: "idle" },
     battle,
     quests: worldState.quests.map((quest) => ({
       name: quest.name,

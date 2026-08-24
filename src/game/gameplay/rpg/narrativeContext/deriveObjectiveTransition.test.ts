@@ -1,3 +1,4 @@
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, expect, it } from "vitest";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asQuestId } from "@/game/domain/worldEntity";
@@ -10,7 +11,7 @@ import { objectiveLabel } from "./objectiveRules";
 import { asLocationId } from "@/game/domain/worldEntity";
 
 function story() {
-  return createInitialStoryState({
+  return createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
     gameLength: "short",
     initialEntityCounts: { locations: 1, npcs: 1, quests: 0, events: 0 },
   });
