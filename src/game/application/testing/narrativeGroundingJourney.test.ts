@@ -5,6 +5,7 @@ import {
   playIssuedChoice,
   advanceScene,
   pendingSceneProposal,
+  loadGameView,
   loadWorldState,
   loadGameRecord,
 } from "./foundationJourney.testutil";
@@ -80,12 +81,8 @@ describe("叙事落地旅程（Step 2）", () => {
       const record = await loadGameRecord(store.repo);
       if (record === null) throw new Error("记录不可用");
 
-      // 先建立指向 npc_0 的 dialogue 场景（自由输入要求当前场景焦点 NPC 匹配）。
-      await advanceScene(store.repo);
-      await playIssuedChoice(store.repo, "交谈");
-      await advanceScene(store.repo);
-      const openingNpcName = store.record()!.worldState.npcs[0]!.name;
-      await playIssuedChoice(store.repo, openingNpcName);
+      // 开局场景已由 opening provider 生成；先设置关系，再用正式 NPC 选择
+      // 触发一次允许的 NPC provider job。
       await advanceScene(store.repo);
 
       // 直接设置 NPC 亲和度（不依赖大量回合交互）。
@@ -124,13 +121,12 @@ describe("叙事落地旅程（Step 2）", () => {
       });
       if (!commitResult.ok) throw new Error(`亲和度注入失败: ${commitResult.code}`);
 
-      // 提交自由输入（当前场景仍是指向 npc_0 的 dialogue）。
-      const npcId = store.record()!.worldState.npcs[0]!.id;
-      await playTurn(store.repo, {
+      const response = await playTurn(store.repo, {
         kind: "free_text",
-        text: "你愿意告诉我真相吗？",
-        targetNpcId: asNpcId(npcId),
+        text: "请把你知道的证据和来龙去脉说清楚",
+        targetNpcId: asNpcId(npc.id),
       });
+      expect(response.ok).toBe(true);
 
       const pending = await pendingSceneProposal(store.repo);
       if (pending === null) throw new Error("无 pending 场景");
@@ -157,7 +153,14 @@ describe("叙事落地旅程（Step 2）", () => {
     // Helper: 对当前 pending 断言场景覆盖全部强制节拍 + objectiveLink 一致性。
     async function assertSceneCoversBeatsAndObjective() {
       const pending = await pendingSceneProposal(store.repo);
-      expect(pending).not.toBeNull();
+      if (pending === null) {
+        const ready = store.record()?.storyState.narrative;
+        expect(ready?.status).toBe("ready");
+        if (ready?.status === "ready") {
+          expect(["rule", "fixture", "generated"]).toContain(ready.currentScene.source);
+        }
+        return;
+      }
       const { context, proposal } = pending!;
 
       // 每个强制节拍（排除 atmosphere）恰好对应一个 segment。
@@ -191,7 +194,7 @@ describe("叙事落地旅程（Step 2）", () => {
 
     await playIssuedChoice(store.repo, "延伸之地·2");
     await advanceScene(store.repo);
-    await playIssuedChoice(store.repo, "传讯人·2");
+    await playIssuedChoice(store.repo, "表示支持");
     await advanceScene(store.repo);
 
     // 物品拾取。
@@ -216,9 +219,15 @@ describe("叙事落地旅程（Step 2）", () => {
       expect(await pendingSceneProposal(store.repo)).toBeNull();
     }
 
-    // 完成第 2 幕主线。
-    await playIssuedChoice(store.repo, "传讯人·2");
-    await assertSceneCoversBeatsAndObjective();
-    expect(await advanceScene(store.repo)).toBe(true);
+    // 战斗结算后不再为下一幕同步请求 provider；下一幕地点已在前一个
+    // NPC provider 回合中具象化，并由 prepared move 节点承接。
+    const afterBattle = await loadGameView(store.repo);
+    expect(afterBattle.story.currentAct).toBe(3);
+    expect(afterBattle.worldMap.locations.find((location) => location.name === "延伸之地·3")?.travelChoice?.label)
+      .toContain("前往延伸之地·3");
+    await playIssuedChoice(store.repo, "延伸之地·3");
+    const afterMove = await loadGameView(store.repo);
+    expect(afterMove.narrativeGeneration.status).toBe("idle");
+    expect(afterMove.narrative.npcDialogues.some((dialogue) => dialogue.name.includes("传讯人·3"))).toBe(true);
   });
 });

@@ -227,7 +227,7 @@ function completeSceneSentence(text: string): string {
 /**
  * Task 4：已结算调查结果的确定性旁白包装。
  * 组合顺序：采取方式 → 发现事实 → 证据质量/动静代价 → 下一目标。
- * baseNarrative（Task 5 linearNarrativeQueue 提供的已结算叙事）存在时优先
+ * baseNarrative（已结算叙事上下文）存在时优先
  * 作为主体，approach/evidence/next 随后补充。
  */
 export function buildInvestigationOutcomeNarrative(input: {

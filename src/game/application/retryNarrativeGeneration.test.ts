@@ -154,4 +154,24 @@ describe("retryNarrativeGeneration", () => {
       .toEqual({ ok: true, result: "not_failed" });
     expect(idle.repository.applyState).not.toHaveBeenCalled();
   });
+
+  it("rejects a malformed failed job outside the provider whitelist without a CAS", async () => {
+    const failed = makeRecord("failed");
+    if (failed.storyState.narrative.status !== "provider_failed") throw new Error("failed fixture missing");
+    const forged: GameRecord = {
+      ...failed,
+      storyState: {
+        ...failed.storyState,
+        narrative: {
+          ...failed.storyState.narrative,
+          job: { ...failed.storyState.narrative.job, generationKind: "prepared_action" } as never,
+        },
+      },
+    };
+    const fixture = makeRepository(forged);
+
+    expect(await retryNarrativeGeneration(fixture.repository, gameId, () => "now"))
+      .toEqual({ ok: false, code: "AI_RESPONSE_INVALID" });
+    expect(fixture.repository.applyState).not.toHaveBeenCalled();
+  });
 });

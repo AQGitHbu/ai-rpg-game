@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GameSessionView } from "@/game/application";
@@ -43,11 +43,12 @@ const activeViewWithPrologue: GameSessionView = {
 
 const pendingPrologueView: GameSessionView = {
   ...activeViewWithPrologue,
-  narrativeGeneration: { status: "pending" },
+  narrativeGeneration: { status: "pending", jobKey: "job-opening" },
 };
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   window.sessionStorage.clear();
   vi.clearAllMocks();
 });
@@ -137,7 +138,7 @@ describe("CurrentGameScreen prologue display", () => {
         characterProfile: null,
         narrativeStyle: null,
       },
-      narrativeGeneration: { status: "failed", failureKind: "AI_RESPONSE_INVALID" },
+      narrativeGeneration: { status: "failed", failureKind: "AI_RESPONSE_INVALID", jobKey: "job-failed" },
     };
     vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: failedGenerationView });
     render(<CurrentGameScreen />);
@@ -155,7 +156,7 @@ describe("CurrentGameScreen prologue display", () => {
     }));
     const failedPrologueView: GameSessionView = {
       ...activeViewWithPrologue,
-      narrativeGeneration: { status: "failed", failureKind: "AI_CALL_FAILED" },
+      narrativeGeneration: { status: "failed", failureKind: "AI_CALL_FAILED", jobKey: "job-failed" },
     };
     vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: failedPrologueView });
     render(<CurrentGameScreen />);
@@ -215,6 +216,32 @@ describe("CurrentGameScreen prologue display", () => {
     await waitFor(() => expect(ensureNarrative).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: "开始冒险" })).toBeInTheDocument();
     expect(screen.getByText("你在听雨客栈醒来，雨声压住了街道上的马蹄。")).toBeInTheDocument();
+  });
+
+  it("ensures a pending job once, then polls GET until that same job is ready", async () => {
+    vi.useFakeTimers();
+    const readyView = { ...pendingPrologueView, narrativeGeneration: { status: "idle" as const } };
+    vi.mocked(ensureNarrative).mockResolvedValueOnce({ ok: true, result: "queued" });
+    vi.mocked(fetchCurrentGame)
+      .mockResolvedValueOnce({ ok: true, status: "active", view: pendingPrologueView })
+      .mockResolvedValueOnce({ ok: true, status: "active", view: pendingPrologueView })
+      .mockResolvedValueOnce({ ok: true, status: "active", view: readyView });
+    render(<CurrentGameScreen />);
+
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) await Promise.resolve();
+    });
+    expect(ensureNarrative).toHaveBeenCalledOnce();
+    await act(async () => {
+      for (let index = 0; index < 3; index += 1) await Promise.resolve();
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(750); });
+    await act(async () => {
+      for (let index = 0; index < 3; index += 1) await Promise.resolve();
+    });
+
+    expect(ensureNarrative).toHaveBeenCalledOnce();
+    expect(vi.mocked(fetchCurrentGame).mock.calls.length).toBeGreaterThan(2);
   });
 
   it("uses only the button busy state while acknowledging the prologue", async () => {

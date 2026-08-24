@@ -342,7 +342,7 @@ export function parseScenePerformanceJson(
   raw: unknown,
   context: SceneGenerationContext,
   selectable: readonly SceneChoiceCandidate[],
-  logger?: Pick<GameLogger, "warn">,
+  _logger?: Pick<GameLogger, "warn">,
 ): ScenePerformanceParseResult {
   if (!isRecord(raw)) return { ok: false, reason: "root_not_object" };
 

@@ -280,7 +280,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
           freeInputEnabled: false,
         }],
       },
-      narrativeGeneration: { status: "pending" },
+      narrativeGeneration: { status: "pending", jobKey: "job-pending" },
     };
     const readyView: GameSessionView = {
       ...pendingView,
@@ -406,7 +406,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
       ...base,
       revision: base.revision + 1,
       turnNumber: base.turnNumber + 1,
-      narrativeGeneration: { status: "pending" },
+      narrativeGeneration: { status: "pending", jobKey: "job-pending" },
     };
     const onRetryNarrative = vi.fn(async () => {});
     vi.mocked(postAction).mockResolvedValueOnce({
@@ -427,7 +427,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     await waitFor(() => expect(postAction).toHaveBeenCalledOnce());
 
     rerender(<AdventureGameShell
-      view={{ ...pendingView, narrativeGeneration: { status: "failed", failureKind: "AI_RESPONSE_INVALID" } }}
+      view={{ ...pendingView, narrativeGeneration: { status: "failed", failureKind: "AI_RESPONSE_INVALID", jobKey: "job-pending" } }}
       onViewChange={vi.fn()}
       onStaleRevision={vi.fn()}
       onClearDevelopmentSave={vi.fn(async () => {})}
@@ -589,7 +589,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     );
 
     rerender(<LocationSceneScreen
-      view={{ ...initialView, narrativeGeneration: { status: "pending" } }}
+      view={{ ...initialView, narrativeGeneration: { status: "pending", jobKey: "job-pending" } }}
       busy={true}
       onSubmit={onSubmit}
       onReturnMap={vi.fn()}
@@ -645,7 +645,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
   it("keeps ordinary narrative pending modal while locking rule actions", () => {
     render(<AdventureGameShell
-      view={{ ...buildView(), narrativeGeneration: { status: "pending" } }}
+      view={{ ...buildView(), narrativeGeneration: { status: "pending", jobKey: "job-pending" } }}
       onViewChange={vi.fn()}
       onStaleRevision={vi.fn()}
       onClearDevelopmentSave={vi.fn(async () => {})}
@@ -723,7 +723,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     );
 
     rerender(<LocationSceneScreen
-      view={{ ...base, narrativeGeneration: { status: "pending" } }}
+      view={{ ...base, narrativeGeneration: { status: "pending", jobKey: "job-pending" } }}
       busy={true}
       onSubmit={onSubmit}
       onReturnMap={vi.fn()}
@@ -773,7 +773,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "追问线索" }));
     rerender(<LocationSceneScreen
-      view={{ ...base, narrativeGeneration: { status: "pending" } }}
+      view={{ ...base, narrativeGeneration: { status: "pending", jobKey: "job-pending" } }}
       busy={true}
       onSubmit={onSubmit}
       onReturnMap={vi.fn()}
@@ -815,7 +815,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "关闭对话" }));
     rerender(<LocationSceneScreen
-      view={{ ...base, narrativeGeneration: { status: "pending" } }}
+      view={{ ...base, narrativeGeneration: { status: "pending", jobKey: "job-pending" } }}
       busy={true}
       onSubmit={onSubmit}
       onReturnMap={vi.fn()}
@@ -872,7 +872,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "关闭对话" }));
     rerender(<LocationSceneScreen
-      view={{ ...base, narrativeGeneration: { status: "pending" } }}
+      view={{ ...base, narrativeGeneration: { status: "pending", jobKey: "job-pending" } }}
       busy={true}
       onSubmit={onSubmit}
       onReturnMap={vi.fn()}
@@ -919,7 +919,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
         ...initial,
         revision: initial.revision + 1,
         story: { ...initial.story, currentObjectiveLabel: null },
-        narrativeGeneration: { status: "pending" },
+        narrativeGeneration: { status: "pending", jobKey: "job-pending" },
       }}
       onViewChange={vi.fn()}
       onStaleRevision={vi.fn()}
@@ -1190,7 +1190,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
   it("preserves an existing NPC dialogue while narrative generation is pending", async () => {
     const view = {
       ...buildView(),
-      narrativeGeneration: { status: "pending" as const },
+      narrativeGeneration: { status: "pending" as const, jobKey: "job-pending" },
     };
     render(<LocationSceneScreen
       view={view}

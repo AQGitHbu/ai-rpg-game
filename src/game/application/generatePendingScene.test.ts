@@ -3,17 +3,17 @@ import { describe, it, expect, vi } from "vitest";
 import { generatePendingScene } from "./generatePendingScene";
 import { createInitialWorldState, appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asFactId, asItemId, asLocationId, asNpcId, asGenerationId, asQuestId } from "@/game/domain/worldEntity";
+import { asFactId, asItemId, asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { SceneSource, SceneSourceResult, ScenePerformanceProposal } from "./sceneSource";
+import type { WorldEvolutionSource } from "./worldEvolutionSource";
 import type { NarrativeEventKind } from "@/game/domain/narrative";
 import type { ResolvedEvent, ResolvedEventStatus } from "@/game/domain/resolvedEvent";
 import { ATMOSPHERE_BEAT_ID } from "./approveAndWriteScene";
 import { createDeterministicEvolutionSource } from "./deterministicEvolutionSource";
-import { createDeterministicSceneSource, buildInvestigationOutcomeNarrative } from "./deterministicSceneSource";
 
 const IMPORTANT_ACTION_ID = "act_persist";
 const IMPORTANT_JOB_ID = "job_persist";
@@ -58,6 +58,7 @@ type JobFixture = {
   actionId?: string;
   beats?: PendingNarrativeJob["mandatoryBeats"];
   facts?: ResolvedEvent["facts"];
+  generationKind?: PendingNarrativeJob["generationKind"];
 };
 
 function makeJob(fixture: JobFixture): PendingNarrativeJob {
@@ -85,7 +86,7 @@ function makeJob(fixture: JobFixture): PendingNarrativeJob {
     requestedAt: "2026-01-02",
     objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
     mandatoryBeats: fixture.beats ?? [],
-    generationKind: "npc_fixed_choice",
+    generationKind: fixture.generationKind ?? "npc_fixed_choice",
     sceneRequestKind: "npc_response",
   });
   if (!result.ok) throw new Error("fixture job 构造失败");
@@ -161,6 +162,7 @@ function makeSpySceneSource(sourceKind: ScenePerformanceProposal["source"] = "fi
           { candidateId: "candidate_1", label: "a" },
           { candidateId: "candidate_2", label: "b" },
         ],
+        preparedContinuations: [],
         source: sourceKind,
       };
       return { ok: true, proposal };
@@ -198,6 +200,30 @@ describe("generatePendingScene", () => {
     const spy = makeSpySceneSource();
     const result = await generatePendingScene(makeDeps(null, spy.source));
     expect(result).toBe("unavailable");
+  });
+
+  it("rejects a forged non-whitelist job before calling scene or world providers", async () => {
+    const validJob = makeJob({ summary: { kind: "explore" }, eventKind: "observe" });
+    const forgedJob = {
+      ...validJob,
+      generationKind: "prepared_action",
+    } as unknown as PendingNarrativeJob;
+    const record = makeGameRecord({ kind: "pending", job: forgedJob });
+    const scene = makeSpySceneSource();
+    const propose = vi.fn();
+    const repository = makeMockRepo(record);
+    const result = await generatePendingScene({
+      repository,
+      sceneSource: scene.source,
+      worldEvolutionSource: { propose } as unknown as WorldEvolutionSource,
+      now: () => "2026-01-02",
+    });
+
+    expect(result).toBe("failed");
+    expect(scene.contexts()).toHaveLength(0);
+    expect(propose).not.toHaveBeenCalled();
+    const latest = await repository.getCurrentGame();
+    expect(latest.ok && latest.status === "active" ? latest.record.storyState.narrative.status : "ready").toBe("provider_failed");
   });
 
   it("persists failed when the scene source fails", async () => {
@@ -392,6 +418,7 @@ describe("generatePendingScene", () => {
             { candidateId: "candidate_1", label: "a" },
             { candidateId: "candidate_2", label: "b" },
           ],
+          preparedContinuations: [],
           source: "generated",
         } };
       },
@@ -430,6 +457,7 @@ describe("generatePendingScene", () => {
               { candidateId: "candidate_1", label: "请把线索交代清楚" },
               { candidateId: "candidate_2", label: "先观察现场" },
             ],
+            preparedContinuations: [],
             source: "generated",
           } };
         }
@@ -442,6 +470,7 @@ describe("generatePendingScene", () => {
             { candidateId: "candidate_1", label: "支持" },
             { candidateId: "candidate_2", label: "观察" },
           ],
+          preparedContinuations: [],
           source: "generated",
         } };
       },
@@ -484,6 +513,7 @@ describe("generatePendingScene", () => {
             { candidateId: "candidate_1", label: "支持" },
             { candidateId: "candidate_2", label: "质疑" },
           ],
+          preparedContinuations: [],
           source: "generated",
         } };
       },

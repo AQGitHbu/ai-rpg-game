@@ -2,7 +2,7 @@
 
 ## 系统定位
 
-玩家选择题材和短篇/中篇长度创建一局游戏；系统只生成一个可完成的开局切片（故事契约 + 世界前提 + 玩家 + 序幕 + 1 地点/1 NPC/1 主线 + 预算），后续实体由可选的运行时世界演化按需具象化。玩家通过服务器批准的固定选择或焦点 NPC 自定义输入持续推进，规则结果进入结构化状态，场景表演据此准备下一幕，直到抵达结局。
+玩家选择题材和短篇/中篇长度创建一局游戏；系统只生成一个可完成的开局切片（故事契约 + 世界前提 + 玩家 + 序幕 + 1 地点/1 NPC/1 主线 + 预算），后续实体由允许的 provider job 按需具象化。玩家通过服务器批准的固定选择或焦点 NPC 自定义输入持续推进，规则结果进入结构化状态；正式 NPC scene 同时准备下一处正式 NPC 决策前的 continuation，线性动作只消费 prepared 或 rule scene，直到抵达结局。
 
 ## 当前闭环
 
@@ -14,12 +14,12 @@
   → GameSessionView
   → fixed_choice | free_text
   → performTurn → TurnResolution → 单次规则 CAS（派生 ObjectiveTransition + 强制节拍 ≤8）
-  → PendingNarrativeJob
+  → PendingNarrativeJob（仅 opening / npc_fixed_choice / npc_free_text）
   → generatePendingScene
        └（可选）world-evolution：EvolutionNeed → proposal → 审批 → 铸 ID → 预览状态
-       → scene-performance proposal（分段旁白 / objectiveLink / 焦点 NPC 台词 / 合法选项）
+       → scene-performance proposal（分段旁白 / objectiveLink / 焦点 NPC 台词 / 合法选项 / prepared continuation）
        → approveAndWriteScene
-  → 单次 scene CAS（原子写回已批准世界演化 + ready scene + choice registry + 候选事件）
+  → 单次 scene CAS（原子写回已批准世界演化 + ready scene + choice registry + prepared continuation）
   → 下一次 GameSessionView
   → … → battle / ending
 ```
@@ -30,11 +30,11 @@
 - **开局切片**：恰一个起始地点、一个开场 NPC、一条活动主线与开场目标所需事实；不生成未来实体名。
 - **运行时世界演化**：幕推进（`needs_next_act`）、节奏（`pacing`）、终局（`needs_ending_pair`）触发；AI 提案 → 规则审批 → 服务端铸 ID → 具象化到预算边界。
 - 焦点 NPC 两个固定对白选择和一个自定义输入；两者走同一 `/api/game/actions` 与 `performTurn`。
-- **场景表演**：每个 ready 场景一次调用，分段旁白逐段对应强制节拍，`objectiveLink` 与 HUD 当前目标一致，焦点 NPC 收到隔离记忆与关系政策。
+- **场景表演**：每个 provider-ready 场景一次调用，分段旁白逐段对应强制节拍，`objectiveLink` 与 HUD 当前目标一致，焦点 NPC 收到隔离记忆与关系政策；线性 prepared/rule 场景不追加 provider 调用。
 - 探索、调查、移动、拾取、NPC 关系/记忆、候选事件、确定性战斗与结局。
 - AI/fixture 只生成 proposal；规则审批、Action、任务、知识、关系、战斗、预算和结局独占正式状态。
 - SQLite `game_records + current_game`、单一 revision CAS、刷新恢复、开发环境安全清档。
-- live AI 不可用时使用同轨确定性 fallback，仍可离线完成一局。
+- live AI 不可用时保存稳定 failure 并等待同一 job 手动重试；完整离线旅程只由显式 fixture source 驱动，不代表生产 AI 失败时切换为 deterministic 成功。
 
 ## 每局不同与可完成性
 

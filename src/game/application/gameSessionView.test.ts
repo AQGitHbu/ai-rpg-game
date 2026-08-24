@@ -1184,7 +1184,7 @@ describe("projectGameSessionView", () => {
     };
     const view = projectGameSessionView(fullWorld, pendingStory, 12, "opaque-ended-session");
     expect(view.revision).toBe(12);
-    expect(view.narrativeGeneration).toEqual({ status: "pending" });
+    expect(view.narrativeGeneration).toEqual({ status: "pending", jobKey: "job-pending" });
     expect(view.quests[0]?.objectives).toEqual([{ label: "调查现场线索", completed: false }]);
     expect(view.ending).toMatchObject({ name: "故事结局", outcome: "success", restartIdentity: "opaque-ended-session" });
 
@@ -1453,6 +1453,7 @@ describe("projectGameSessionView", () => {
     expect(view.narrativeGeneration).toEqual({
       status: "failed",
       failureKind: "AI_RESPONSE_INVALID",
+      jobKey: "job-failed-1",
     });
   });
 
@@ -1491,7 +1492,7 @@ describe("projectGameSessionView", () => {
     const serialized = JSON.stringify(view.narrativeGeneration);
 
     expect(serialized).not.toContain("private player text");
-    expect(serialized).not.toContain("job-failed-1");
+    expect(view.narrativeGeneration).toMatchObject({ jobKey: "job-failed-1" });
     expect(serialized).not.toContain("action-1");
     expect(serialized).not.toContain("failedAt");
   });
@@ -1611,6 +1612,7 @@ describe("projectGameSessionView town read model", () => {
     expect(view.narrativeGeneration).toEqual({
       status: "failed",
       failureKind: "AI_RESPONSE_INVALID",
+      jobKey: "job_1",
     });
   });
 
@@ -1630,6 +1632,7 @@ describe("projectGameSessionView town read model", () => {
     expect(view.narrativeGeneration).toEqual({
       status: "failed",
       failureKind: "AI_CALL_FAILED",
+      jobKey: "job_2",
     });
   });
 });

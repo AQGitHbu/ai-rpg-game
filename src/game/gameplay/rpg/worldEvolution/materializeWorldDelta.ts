@@ -156,9 +156,15 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
     ...ss,
     evolution: { ...approved.nextEvolution, status: "stable" },
     budget: approved.nextBudget,
+    // A provider NPC handoff may pre-materialize the following act while the
+    // current act still has item/battle objectives. That hidden future quest
+    // must not steal the current reveal cursor; only the natural act boundary
+    // (need.act === currentAct) releases its first objective.
     reveal: stagedQuest === undefined || stagedQuest.objectives.length === 0
       ? ss.reveal ?? null
-      : { questId: stagedQuest.id, visibleObjectiveIndex: 0 },
+      : stagedQuest.stage === ss.currentAct
+        ? { questId: stagedQuest.id, visibleObjectiveIndex: 0 }
+        : ss.reveal ?? null,
   };
 
   return {

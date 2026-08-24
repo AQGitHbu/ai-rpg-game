@@ -3,18 +3,22 @@ import type { AiTextAuditRecorder, AiTextAuditLink } from "./server/ai/textAudit
 import type { SceneSource, ScenePerformanceProposal } from "./sceneSource";
 import { sceneInvestigationResultFrom } from "./sceneSource";
 import { buildSceneGenerationContext, isFinalDialogueHandoff } from "./sceneGenerationContext";
+import { buildSelectableSceneCandidates } from "./deterministicSceneSource";
 import {
   approveScenePerformance,
   type ApprovedSceneWriteBack,
 } from "./approveAndWriteScene";
-import { buildSelectableSceneCandidates } from "./deterministicSceneSource";
 import { deriveEvolutionNeed } from "@/game/gameplay/rpg/worldEvolution";
 import { evolveWorld } from "./evolveWorld";
 import type { WorldEvolutionSource } from "./worldEvolutionSource";
+import type { EvolutionNeed } from "@/game/domain/worldDelta";
+import type { NarrativeSceneRequestKind } from "@/game/domain/pendingNarrativeJob";
+import { providerAllowedFor } from "@/game/gameplay/rpg/narrativeExecution";
 import type { GameLogger } from "@/game/logging";
 import type { StructuredActionSummary } from "@/game/domain/pendingNarrativeJob";
 import type { NarrativeGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
 import { markNarrativeGenerationFailed } from "./markNarrativeGenerationFailed";
+import { runBoundedAttempts } from "@/game/core/retry";
 
 export type GeneratePendingSceneDeps = {
   readonly repository: GameRepository;
@@ -54,6 +58,41 @@ function buildAuditedSceneGenerationContext(
 }
 
 /**
+ * A completed formal NPC handoff is the only point at which the provider job
+ * may prepare the next world boundary. If the current act still has a linear
+ * tail, materialize the following act now so battle resolution cannot become
+ * an accidental world-AI trigger. Likewise, a final-act tail gets its ending
+ * pair before the deterministic battle path reaches it.
+ */
+function derivePreparedBoundaryNeed(
+  worldState: GameRecord["worldState"],
+  storyState: GameRecord["storyState"],
+  sceneRequestKind: NarrativeSceneRequestKind,
+): EvolutionNeed {
+  if (sceneRequestKind !== "npc_handoff") return { kind: "none" };
+
+  const currentQuest = worldState.quests.find((quest) =>
+    quest.kind === "main"
+    && quest.stage === storyState.currentAct
+    && quest.status === "active",
+  );
+  if (currentQuest === undefined) return { kind: "none" };
+
+  if (storyState.currentAct >= storyState.targetActs && worldState.endings.length < 2) {
+    return { kind: "ending_pair", finalAct: storyState.currentAct };
+  }
+
+  const nextAct = storyState.currentAct + 1;
+  const nextActAlreadyMaterialized = worldState.quests.some((quest) =>
+    quest.kind === "main" && quest.stage === nextAct,
+  );
+  if (storyState.currentAct < storyState.targetActs && !nextActAlreadyMaterialized) {
+    return { kind: "next_act", act: nextAct };
+  }
+  return { kind: "none" };
+}
+
+/**
  * 执行一个 pending 叙事场景请求（spec §7 + §11）。
  * 读 provider_pending job → buildSceneGenerationContext → 调 SceneSource → 写回 ready。
  * 不再伪造 ResolvedEvent：source 只接收 job 驱动的上下文。
@@ -80,28 +119,42 @@ export async function generatePendingScene(
     failedAt: deps.now(),
   });
 
+  if (!providerAllowedFor(generation.job.generationKind)) {
+    deps.logger?.warn("provider_trigger_rejected", {
+      runtimeStatus: generation.status,
+      generationKind: generation.job.generationKind,
+    });
+    return fail(sceneFailure("AI_RESPONSE_INVALID"));
+  }
+
   // Task 3：场景编排同样可能挂着演化需求（幕推进/结局对）。
   // 先把 delta 装配为预览记录（只读预览，不落库），再以预览世界/故事状态出场景，
   // 最后经 applySceneWriteBack 单次 CAS 一并写回实体与场景。
   let scenarioWs = record.worldState;
   let scenarioSs = record.storyState;
-  const summary = generation.job.actionSummary;
-  // 幕推进/结局对挂起时必须保留完整演化编排，不能被 fast path 短路。
-  const evolutionBlocksImmediatePath = record.storyState.evolution.status === "needs_next_act"
-    || record.storyState.evolution.status === "needs_ending_pair";
-  // 单线调查与移动/拾取同为规则已完全确定的即时反馈（保留既有规则写回语义）。
-  const immediateAction = (summary.kind === "move"
-    || summary.kind === "take_item"
-    || summary.kind === "investigate")
-    && !evolutionBlocksImmediatePath;
-  const derivedNeed = immediateAction
-    ? { kind: "none" as const }
-    : deriveEvolutionNeed(record.worldState, record.storyState);
+  const derivedNeed = deriveEvolutionNeed(record.worldState, record.storyState);
   // 结局对已具象化后，规则层在最终选择回合仍可能保留
   // needs_ending_pair 标记；不能再次向 source 请求同一对结局并把合法收尾判成重复。
-  const need = derivedNeed.kind === "ending_pair" && record.worldState.endings.length >= 2
+  const naturalNeed = derivedNeed.kind === "ending_pair" && record.worldState.endings.length >= 2
     ? { kind: "none" as const }
-    : derivedNeed;
+    : derivedNeed.kind === "next_act" && record.worldState.quests.some((quest) =>
+        quest.kind === "main" && quest.stage === derivedNeed.act,
+      )
+      ? { kind: "none" as const }
+      : derivedNeed;
+  const proactiveNeed = derivePreparedBoundaryNeed(
+    record.worldState,
+    record.storyState,
+    generation.job.sceneRequestKind ?? "opening",
+  );
+  const structuralNeed = naturalNeed.kind === "next_act" || naturalNeed.kind === "ending_pair"
+    ? naturalNeed
+    : { kind: "none" as const };
+  const need = structuralNeed.kind !== "none"
+    ? structuralNeed
+    : proactiveNeed.kind !== "none"
+      ? proactiveNeed
+      : naturalNeed;
   // 未注入演化源时不主动演化：保持既有时景写回行为，仅当配置了 source 才装配预览。
   if (need.kind !== "none") {
     const outcome = await evolveWorld({
@@ -134,9 +187,10 @@ export async function generatePendingScene(
 
   let context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink);
 
-  // ready scene 必须有两个语义不同的合法选择。若当前世界只有一个候选，
-  // 不让生成任务永久 pending，也不在客户端伪造按钮；显式 offline fixture
-  // 可以注入演化 source 补足测试旅程。
+  // Candidate capacity is a provider-job concern: the job may ask the world
+  // evolution source for enough rule-owned entities before the single scene
+  // write-back. This path is unreachable from deterministic action turns,
+  // which never create a provider_pending job for linear actions.
   if (buildSelectableSceneCandidates(context).length < (isFinalDialogueHandoff(context) ? 1 : 2)) {
     const recovery = await evolveWorld({
       need: { kind: "pacing", pacingNeed: "complicate" },
@@ -144,114 +198,93 @@ export async function generatePendingScene(
       storyState: scenarioSs,
       source: deps.worldEvolutionSource,
       reason: "scene_candidate_shortage",
-      auditLink: { ...deps.auditLink, gameId: String(record.gameId), jobId: String(generation.job.jobId), turnNumber: generation.job.turnNumber },
+      auditLink: {
+        ...deps.auditLink,
+        gameId: String(record.gameId),
+        jobId: String(generation.job.jobId),
+        turnNumber: generation.job.turnNumber,
+      },
       now: deps.now,
     });
-    if (recovery.ok) {
-      for (const category of recovery.approved.logCategories ?? []) {
-        deps.logger?.warn(category, {});
-      }
-      scenarioWs = recovery.delta.previewWorldState;
-      scenarioSs = recovery.delta.previewStoryState;
-      scenarioRecord = {
-        ...record,
-        worldState: scenarioWs,
-        storyState: scenarioSs,
-      };
-      context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink);
-    } else if (recovery.failure !== undefined) {
-      return fail({ ...recovery.failure, phase: "scene", failedAt: deps.now() });
-    } else {
+    if (!recovery.ok) {
+      if (recovery.failure !== undefined) return fail({ ...recovery.failure, phase: "scene", failedAt: deps.now() });
       return fail(sceneFailure("AI_RESPONSE_INVALID"));
     }
-  }
-  if (buildSelectableSceneCandidates(context).length < (isFinalDialogueHandoff(context) ? 1 : 2)) {
-    return fail(sceneFailure("AI_RESPONSE_INVALID"));
-  }
-
-  let proposal: ScenePerformanceProposal;
-  try {
-    const sceneResult = await deps.sceneSource.generateScene(context);
-    if (!sceneResult.ok) return fail({ ...sceneResult.failure, phase: "scene", failedAt: deps.now() });
-    proposal = sceneResult.proposal;
-  } catch (error) {
-    deps.logger?.warn("scene_generation_source_exception", {
-      message: error instanceof Error ? error.message.slice(0, 240) : "unknown_error",
-    });
-    return fail(sceneFailure("AI_CALL_FAILED"));
-  }
-
-  // Task 5：已结算调查结果的叙事上下文随提案携带（覆盖确定性/live/stub 各来源）。
-  const investigationResult = sceneInvestigationResultFrom(context);
-  if (investigationResult !== undefined) {
-    proposal = { ...proposal, investigationResult };
-  }
-
-  // 完整场景表演审批（Task 6）：核心结构非法（缺强制节拍/自创节拍 ID/
-  // 错误 NPC 应答/forbidden fact/他人交互/过期目标/重复选项/无推进选项）时，
-  // 先给 generated proposal 一次带拒绝码的内容修复机会；修复仍失败就持久化
-  // AI_RESPONSE_INVALID，不写入 deterministic 场景。
-  let approved: ApprovedSceneWriteBack | null = null;
-  const approvedGenerated = approveScenePerformance({
-    context,
-    proposal,
-    basedOnRevision: record.revision + 1,
-    existingCandidateEventPool: record.storyState.candidateEventPool,
-    logger: deps.logger,
-  });
-  if (approvedGenerated.ok) {
-    approved = approvedGenerated;
-    for (const code of approvedGenerated.qualityWarnings) {
-      deps.logger?.warn("scene_quality_warning", { code });
+    for (const category of recovery.approved.logCategories ?? []) {
+      deps.logger?.warn(category, {});
     }
-  } else {
-    // live source 已成功取得并解析响应、但审批拒绝时先给同一上下文一次
-    // 内容修复机会。修复提示携带结构化拒绝码，避免完全重复同一个请求；
-    // repairAttempt 也限制整个 pending 回合最多一次内容重试。
-    if (proposal.source === "generated") {
-      deps.logger?.warn("scene_generation_rejected", { code: approvedGenerated.code });
-    }
-    if (!immediateAction
-      && proposal.source === "generated"
-      && context.repairAttempt === undefined
-      && proposal.contentRepairAttempt === undefined) {
-      const repairContext = {
-        ...context,
-        repairAttempt: { attempt: 1, reason: `approval:${approvedGenerated.code}` },
-      };
+    scenarioWs = recovery.delta.previewWorldState;
+    scenarioSs = recovery.delta.previewStoryState;
+    scenarioRecord = { ...record, worldState: scenarioWs, storyState: scenarioSs };
+    context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink);
+  }
+
+  type SceneAttemptValue = {
+    readonly proposal: ScenePerformanceProposal;
+    readonly approved: ApprovedSceneWriteBack;
+    readonly context: ReturnType<typeof buildAuditedSceneGenerationContext>;
+  };
+  let terminalFailure: NarrativeGenerationFailure = sceneFailure("AI_RESPONSE_INVALID");
+  const bounded = await runBoundedAttempts<SceneAttemptValue, string>({
+    maxAttempts: 2,
+    runAttempt: async (attempt, priorReason) => {
+      const attemptContext = attempt === 1
+        ? context
+        : { ...context, repairAttempt: { attempt: 1, reason: priorReason ?? "invalid_schema" } };
+      let sceneResult;
       try {
+        sceneResult = await deps.sceneSource.generateScene(attemptContext);
+      } catch (error) {
+        deps.logger?.warn("scene_generation_source_exception", {
+          message: error instanceof Error ? error.message.slice(0, 240) : "unknown_error",
+        });
+        terminalFailure = sceneFailure("AI_CALL_FAILED");
+        return { ok: false, retryable: false, reason: "source_exception" };
+      }
+      if (!sceneResult.ok) {
+        terminalFailure = { ...sceneResult.failure, phase: "scene", failedAt: deps.now() };
+        return {
+          ok: false,
+          retryable: attempt === 1 && sceneResult.repairReason !== undefined,
+          reason: sceneResult.repairReason ?? "source_failure",
+        };
+      }
+
+      let proposal = sceneResult.proposal;
+      const investigationResult = sceneInvestigationResultFrom(attemptContext);
+      if (investigationResult !== undefined) proposal = { ...proposal, investigationResult };
+
+      const approvedGenerated = approveScenePerformance({
+        context: attemptContext,
+        proposal,
+        basedOnRevision: record.revision + 1,
+        existingCandidateEventPool: record.storyState.candidateEventPool,
+        logger: deps.logger,
+      });
+      if (approvedGenerated.ok) {
+        for (const code of approvedGenerated.qualityWarnings) {
+          deps.logger?.warn("scene_quality_warning", { code });
+        }
+        return { ok: true, value: { proposal, approved: approvedGenerated, context: attemptContext } };
+      }
+
+      if (proposal.source === "generated") {
+        deps.logger?.warn("scene_generation_rejected", { code: approvedGenerated.code });
+      }
+      terminalFailure = sceneFailure("AI_RESPONSE_INVALID");
+      const canRepair = attempt === 1 && proposal.source === "generated";
+      if (canRepair) {
         deps.logger?.warn("scene_generation_content_retry", {
           reason: `approval:${approvedGenerated.code}`,
-          attempt: 1,
+          attempt,
         });
-        const repairedResult = await deps.sceneSource.generateScene(repairContext);
-        if (repairedResult.ok && repairedResult.proposal.source === "generated") {
-          const repairedProposal = repairedResult.proposal;
-          const repairedApproval = approveScenePerformance({
-            context: repairContext,
-            proposal: repairedProposal,
-            basedOnRevision: record.revision + 1,
-            existingCandidateEventPool: record.storyState.candidateEventPool,
-            logger: deps.logger,
-          });
-          if (repairedApproval.ok) {
-            approved = repairedApproval;
-            for (const code of repairedApproval.qualityWarnings) {
-              deps.logger?.warn("scene_quality_warning", { code });
-            }
-          } else {
-            deps.logger?.warn("scene_generation_retry_rejected", { code: repairedApproval.code });
-          }
-        }
-      } catch {
-        deps.logger?.warn("scene_generation_retry_failed", { reason: approvedGenerated.code });
       }
-    }
-
-    if (approved === null) {
-      return fail(sceneFailure("AI_RESPONSE_INVALID"));
-    }
-  }
+      return { ok: false, retryable: canRepair, reason: `approval:${approvedGenerated.code}` };
+    },
+  });
+  if (!bounded.ok) return fail(terminalFailure);
+  const { approved, context: acceptedContext } = bounded.value;
+  context = acceptedContext;
 
   const pendingRuntime = scenarioSs.narrative;
   if (pendingRuntime.status !== "provider_pending") {
@@ -269,6 +302,7 @@ export async function generatePendingScene(
         mode: pendingRuntime.mode,
         currentScene: approved.scene,
         choiceRegistry: approved.choiceRegistry,
+        preparedContinuation: approved.preparedContinuation,
         ...(pendingRuntime.dialogueSession === undefined
           ? {}
           : { dialogueSession: pendingRuntime.dialogueSession }),

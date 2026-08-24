@@ -5,7 +5,6 @@ import { buildChoiceMap } from "@/game/application/buildChoiceMap";
 import { projectGameSessionView } from "@/game/application/gameSessionView";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
 import { asNpcId } from "@/game/domain/worldEntity";
-import type { StoryState } from "@/game/domain/storyState";
 import type { NarrativeSceneState } from "@/game/domain/narrative";
 
 // ---------------------------------------------------------------------------

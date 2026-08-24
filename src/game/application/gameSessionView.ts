@@ -138,7 +138,10 @@ export type GameSessionView = {
     readonly npcLine: { readonly text: string; readonly emotion: string; readonly speaker?: string } | null;
     readonly npcDialogues: readonly NpcDialogueView[];
   };
-  readonly narrativeGeneration: { readonly status: "idle" | "pending" | "failed"; readonly failureKind?: AiFailureKind };
+  readonly narrativeGeneration:
+    | { readonly status: "idle" }
+    | { readonly status: "pending"; readonly jobKey: string }
+    | { readonly status: "failed"; readonly failureKind?: AiFailureKind; readonly jobKey: string };
   readonly battle: BattleView | null;
   readonly quests: readonly {
     readonly name: string;
@@ -768,9 +771,9 @@ export function projectGameSessionView(
       npcDialogues,
     },
     narrativeGeneration: storyState.narrative.status === "provider_failed"
-      ? { status: "failed", failureKind: storyState.narrative.failure.kind }
+      ? { status: "failed", failureKind: storyState.narrative.failure.kind, jobKey: String(storyState.narrative.job.jobId) }
       : storyState.narrative.status === "provider_pending"
-        ? { status: "pending" }
+        ? { status: "pending", jobKey: String(storyState.narrative.job.jobId) }
         : { status: "idle" },
     battle,
     quests: worldState.quests.map((quest) => ({

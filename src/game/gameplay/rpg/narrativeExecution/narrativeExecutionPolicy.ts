@@ -40,12 +40,21 @@ export function intentProviderAllowedFor(input: {
 }
 
 export function decideNarrativeExecution(input: NarrativeExecutionInput): NarrativeExecutionDecision {
+  if (input.interactionKind === "free_text" && input.action.type === "freeform") {
+    return { kind: "provider", generationKind: "npc_free_text", sceneRequestKind: "npc_response" };
+  }
   if (input.action.type === "talk" && input.interactionKind !== null) {
     return {
       kind: "provider",
       generationKind: input.interactionKind === "free_text" ? "npc_free_text" : "npc_fixed_choice",
       sceneRequestKind: input.dialogueWillComplete ? "npc_handoff" : "npc_response",
     };
+  }
+  // Item exchange is a deterministic inventory boundary. It only consumes a
+  // prepared scene when one was explicitly projected; otherwise the rule
+  // result owns its local presentation even when the item completes a quest.
+  if ((input.action.type === "take_item" || input.action.type === "give_item") && !input.hasPreparedStep) {
+    return { kind: "rule_only" };
   }
   if (input.advancesObjective || input.hasPreparedStep || input.battleWillResolve) return { kind: "prepared" };
   return { kind: "rule_only" };

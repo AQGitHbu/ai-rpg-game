@@ -5,7 +5,7 @@ import type {
   ScenePerformanceProposal,
   ScenePerformanceNpcLine,
 } from "./sceneSource";
-import type { NarrativeEmotion, NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState } from "@/game/domain/narrative";
+import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState } from "@/game/domain/narrative";
 import { buildNpcDialoguePages } from "@/game/domain/narrative";
 import { isFinalDialogueHandoff, type SceneGenerationContext } from "./sceneGenerationContext";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";

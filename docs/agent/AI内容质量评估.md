@@ -226,7 +226,7 @@ thinking 可能改善导演的多步规划和约束遵循，尤其适合实验 `
 
 ### continuation bridge 后续场景修复（2026-08-03）
 
-`performAction` 现对 AI 模式下所有成功规则行动统一使用同一 narrative queue 边界：只要结算后仍有至少两个合法行动，就持久化 `narrative.generation=pending`，不仅限于 `narrative_choice/dialogue_choice`。这样评估器的直接 `move/talk/investigate/observe/take_item` bridge 不会把游戏留在“可继续但没有场景”的空状态。新增 direct-action pending 回归测试；应用套件 65 个文件、509 项测试通过。此前真实 explore artifact 是修复前产物，不能用来判断修复后的 explore 收敛率，需在后续 baseline 中重新采集。
+该段记录的是 2026-08-03 的历史 continuation bridge 结论：当时评估器以旧的 narrative queue 边界判断直接行动是否需要 pending。当前 canonical runtime 已由 prepared continuation 图和 rule-owned scene 取代该模型；`move/investigate/battle` 消费已审批 step，物品/回退导航使用规则场景，只有白名单 provider job 才进入 pending。
 
 修复后使用同一 captured blueprint 重跑真实 explore：`artifacts/story-eval/wuxia-a-explore-0-2026-08-03T06-13-48-158Z-1050839c`，13 幕、`status=converged`、`fallbackRate=0`、`trueDeadEnds=0`、`recoveryLoops=0`。`hasResolutionEvidence=true`、`stageWindowViolations=0`，generated facts 使用/调查覆盖均为 `1.00`；paired checkpoint 的 state/event/narration 三类差异均成立。与 objective artifact 一起重跑 pilot gate，结果仍为 `GENERATION_GRADE_OK`。这才是 continuation 修复后的有效 explore 证据；七题材 release matrix 仍未执行。
 

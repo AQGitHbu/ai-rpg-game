@@ -17,6 +17,11 @@ export type CommitStateInput = {
   };
 };
 
+/**
+ * The prepared-continuation consumer and rule-owned presentation both pass
+ * their complete next states through this one CAS. Scene write-back remains
+ * reserved for provider-job completion and is never a second step of a turn.
+ */
 export async function commitState(
   repo: GameRepository,
   input: CommitStateInput,

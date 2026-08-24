@@ -39,6 +39,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   UNKNOWN_CHOICE: "选项无效，请刷新页面。",
   AI_CALL_FAILED: "AI 调用失败，请重试。",
   AI_RESPONSE_INVALID: "AI 返回格式不符合要求，请重试。",
+  NARRATIVE_CONTINUATION_MISSING: "当前行动没有可消费的预备叙事。",
+  NARRATIVE_CONTINUATION_INVALID: "预备叙事已失效，请刷新或重新开始。",
 };
 
 /**
@@ -140,7 +142,7 @@ export type EnsureNarrativeOutcome =
   | { readonly ok: true; readonly result: "queued" | "already_running" | "not_pending" }
   | {
       readonly ok: false;
-      readonly code: "INVALID_INPUT" | "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "AI_GENERATION_FAILED" | "AI_CALL_FAILED" | "AI_RESPONSE_INVALID" | "INFRASTRUCTURE_FAILURE";
+      readonly code: "INVALID_INPUT" | "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "AI_GENERATION_FAILED" | "AI_CALL_FAILED" | "AI_RESPONSE_INVALID" | "NARRATIVE_CONTINUATION_MISSING" | "NARRATIVE_CONTINUATION_INVALID" | "INFRASTRUCTURE_FAILURE";
       readonly failureKind?: AiFailureKind;
     };
 

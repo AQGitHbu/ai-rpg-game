@@ -8,6 +8,12 @@ import type {
   QuestId,
 } from "./worldEntity";
 
+export const NARRATIVE_CONTINUATION_MISSING = "NARRATIVE_CONTINUATION_MISSING" as const;
+export const NARRATIVE_CONTINUATION_INVALID = "NARRATIVE_CONTINUATION_INVALID" as const;
+export type PreparedContinuationErrorCode =
+  | typeof NARRATIVE_CONTINUATION_MISSING
+  | typeof NARRATIVE_CONTINUATION_INVALID;
+
 export type PreparedContinuationTrigger =
   | { readonly kind: "move"; readonly locationId: LocationId }
   | { readonly kind: "investigate"; readonly factId: FactId; readonly approachId?: string }

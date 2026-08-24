@@ -9,6 +9,8 @@ import { createInitialWorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asFactId, asLocationId, asNpcId, asQuestId, asGenerationId } from "@/game/domain/worldEntity";
+import { asNarrativeJobId } from "@/game/domain/events";
+import { createPreparedContinuationState } from "@/game/domain/preparedContinuation";
 import { asGameId, type GameRecord } from "@/game/application/server/persistence/gameRepository";
 import { createSqliteGameRepository } from "@/game/application/server/persistence/sqliteGameRepository";
 import { createSqliteClient } from "@/game/application/server/persistence/sqliteClient";
@@ -158,7 +160,37 @@ function worldWithApproachlessFact(): WorldState {
 }
 
 function storyWithDiscoverFact(): StoryState {
-  return createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 1, events: 0 } });
+  const base = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 1, events: 0 } });
+  if (base.narrative.status !== "ready") throw new Error("调查夹具需要 ready narrative");
+  const prepared = createPreparedContinuationState({
+    originJobId: asNarrativeJobId("job-investigation-fixture"),
+    activeStepIds: ["investigate-choice", "investigate-noisy"],
+    steps: ["follow", "search"].map((approachId, index) => ({
+      stepId: index === 0 ? "investigate-choice" : "investigate-noisy",
+      objectiveKey: "quest_choice:0",
+      consumptionGroupKey: "quest_choice:0:investigate",
+      trigger: { kind: "investigate" as const, factId: asFactId(CHOICE_FACT_ID), approachId },
+      scene: {
+        segments: [{
+          beatId: "fixture-investigate",
+          text: approachId === "follow"
+            ? "沿痕迹追查，你没有惊动任何人。"
+            : "翻查附近杂物时，现场留下了动静。",
+        }],
+        event: { kind: "investigate", factId: asFactId(CHOICE_FACT_ID) },
+        npcLine: null,
+        objectiveLink: { questId: asQuestId("quest_choice"), objectiveIndex: 0, mode: "progress" },
+        choiceSeeds: [],
+        source: "fixture",
+      },
+      nextStepIds: [],
+    })),
+  });
+  if (!prepared.ok) throw new Error("调查预备夹具无效");
+  return {
+    ...base,
+    narrative: { ...base.narrative, preparedContinuation: prepared.value },
+  };
 }
 
 type InvestigationChoiceJourney = {

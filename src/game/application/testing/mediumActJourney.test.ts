@@ -79,7 +79,10 @@ describe("中篇 5 幕离线可完成性", () => {
       expect(result.ok, JSON.stringify(result)).toBe(true);
       if (result.ok) successfulTurns += 1;
     };
-    const fixed = async (label: string) => accept(await playIssuedChoice(store.repo, label, source));
+    const fixed = async (label: string) => {
+      const result = await playIssuedChoice(store.repo, label, source);
+      accept(result);
+    };
     const scene = async () => {
       const ok = await advanceScene(store.repo, source);
       expect(ok).toBe(true);

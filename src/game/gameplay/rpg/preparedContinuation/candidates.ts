@@ -10,7 +10,6 @@ import {
   type WorldState,
 } from "@/game/domain/worldState";
 import type {
-  EnemyId,
   FactId,
   LocationId,
   NpcId,
@@ -98,6 +97,14 @@ function arrivalNpcFor(
   const npc = findNpc(worldState, next.npcId);
   if (npc === undefined || npc.locationId !== locationId) return undefined;
 
+  return preparedNpcContext(worldState, npc);
+}
+
+function preparedNpcContext(
+  worldState: WorldState,
+  npc: WorldState["npcs"][number],
+): PreparedArrivalNpcContext {
+
   const knownFactIds = factIdsForNpc(worldState, npc.id);
   const known = new Set(knownFactIds.map(String));
   const knownFactCards = worldState.worldFacts
@@ -116,6 +123,27 @@ function arrivalNpcFor(
     sceneVisibleFactIds,
     goals: [...npc.memory.goals],
   };
+}
+
+/**
+ * The final battle outcome can expose the already-materialized ending NPC as
+ * the next formal decision. The player still makes that decision through a
+ * normal NPC choice, so it remains a provider-authorized boundary while the
+ * battle resolution itself stays prepared/rule-owned.
+ */
+function finalEndingNpcFor(
+  worldState: WorldState,
+  storyState: StoryState,
+  outcome: "victory" | "defeat" | "withdraw",
+): PreparedArrivalNpcContext | undefined {
+  if (
+    outcome !== "victory"
+    || worldState.endings.length < 2
+    || storyState.currentAct < storyState.targetActs
+  ) return undefined;
+  const npc = worldState.npcs.at(-1);
+  if (npc === undefined || npc.locationId !== worldState.currentLocationId) return undefined;
+  return preparedNpcContext(worldState, npc);
 }
 
 function choicesForNpc(npc: PreparedArrivalNpcContext | undefined, stepId: string): readonly PreparedChoiceCandidate[] {
@@ -167,7 +195,7 @@ function isAcyclic(descriptors: readonly PreparedStepDescriptor[]): boolean {
 export function buildPreparedStepDescriptors(
   input: BuildPreparedStepDescriptorsInput,
 ): BuildPreparedStepDescriptorsResult {
-  const { worldState, transition } = input;
+  const { worldState, storyState, transition } = input;
   if (transition.after === null) return { descriptors: [], activeStepIds: [] };
 
   const quest = worldState.quests.find((candidate) => candidate.id === transition.after?.questId);
@@ -190,11 +218,34 @@ export function buildPreparedStepDescriptors(
     descriptors[index] = { ...descriptor, nextStepIds: [...nextStepIds] };
   };
 
-  const buildObjective = (objectiveIndex: number, branchKey: string): readonly string[] => {
-    const objective = quest.objectives[objectiveIndex];
-    if (objective === undefined) return [];
+  const buildObjective = (
+    objectiveIndex: number,
+    branchKey: string,
+    activeQuest: typeof quest = quest,
+  ): readonly string[] => {
+    const objective = activeQuest.objectives[objectiveIndex];
+    if (objective === undefined) {
+      // A provider job may have materialized the next act before the current
+      // act's deterministic tail (item/battle) resolves. Carry that already
+      // approved graph through the next move and stop at its NPC boundary.
+      if (activeQuest.id === quest.id && storyState.currentAct < storyState.targetActs) {
+        const nextQuest = worldState.quests.find((candidate) =>
+          candidate.kind === "main"
+          && candidate.stage === storyState.currentAct + 1,
+        );
+        return nextQuest === undefined
+          ? []
+          : buildObjective(0, branchKey, nextQuest);
+      }
+      return [];
+    }
 
-    if (objective.kind === "talk_to_npc" || objective.kind === "obtain_item") return [];
+    // A talk objective is the next provider decision boundary. Inventory
+    // objectives are deterministic and have no scene trigger of their own,
+    // so walk through them to prepare the following investigation/travel or
+    // battle boundary in the same provider-owned bundle.
+    if (objective.kind === "talk_to_npc") return [];
+    if (objective.kind === "obtain_item") return buildObjective(objectiveIndex + 1, branchKey, activeQuest);
 
     if (objective.kind === "visit_location") {
       const trigger: PreparedContinuationTrigger = {
@@ -219,7 +270,7 @@ export function buildPreparedStepDescriptors(
         choiceCandidates: choicesForNpc(arrivalNpc, `prepared_${nextOrdinal}`),
       });
       const nextStepIds = arrivalNpc === undefined
-        ? buildObjective(objectiveIndex + 1, `${branchKey}b${stepId}`)
+        ? buildObjective(objectiveIndex + 1, `${branchKey}b${stepId}`, activeQuest)
         : [];
       setSuccessors(stepId, nextStepIds);
       return [stepId];
@@ -248,7 +299,7 @@ export function buildPreparedStepDescriptors(
           },
           choiceCandidates: [],
         });
-        const nextStepIds = buildObjective(objectiveIndex + 1, `${branchKey}v${variantIndex + 1}`);
+        const nextStepIds = buildObjective(objectiveIndex + 1, `${branchKey}v${variantIndex + 1}`, activeQuest);
         setSuccessors(stepId, nextStepIds);
         stepIds.push(stepId);
       }
@@ -282,12 +333,22 @@ export function buildPreparedStepDescriptors(
           authority: {
             questId: quest.id,
             objectiveIndex,
-            allowedEntityIds: entityIdsForObjective(objective),
+            allowedEntityIds: [
+              ...entityIdsForObjective(objective),
+              ...(finalEndingNpcFor(worldState, storyState, outcome) === undefined
+                ? []
+                : [String(finalEndingNpcFor(worldState, storyState, outcome)!.id)]),
+            ],
             visibleFactIds: [],
           },
-          choiceCandidates: [],
+          ...(finalEndingNpcFor(worldState, storyState, outcome) === undefined
+            ? {}
+            : { arrivalNpc: finalEndingNpcFor(worldState, storyState, outcome) }),
+          choiceCandidates: finalEndingNpcFor(worldState, storyState, outcome) === undefined
+            ? []
+            : choicesForNpc(finalEndingNpcFor(worldState, storyState, outcome), `prepared_${nextOrdinal}`),
         });
-        const nextStepIds = buildObjective(objectiveIndex + 1, `${branchKey}o${outcome}`);
+        const nextStepIds = buildObjective(objectiveIndex + 1, `${branchKey}o${outcome}`, activeQuest);
         setSuccessors(outcomeId, nextStepIds);
         outcomeIds.push(outcomeId);
       }
