@@ -1,4 +1,4 @@
-import type { SceneSource, SceneSourceResult, ScenePerformanceSegment, ScenePerformanceProposal } from "./sceneSource";
+import type { SceneSource, SceneSourceResult, ScenePerformanceSegment, ScenePerformanceProposal, PreparedContinuationProposal } from "./sceneSource";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import { isFinalDialogueHandoff } from "./sceneGenerationContext";
 import type { NarrativeEmotion, NarrativeEventState } from "@/game/domain/narrative";
@@ -9,6 +9,7 @@ import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { composeDirectNpcGreeting, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 import {
   buildSelectableSceneCandidates as buildSharedSelectableSceneCandidates,
+  buildPreparedSceneCandidates,
   type CurrentNpcLineContext,
   type SceneChoiceCandidate,
 } from "./sceneChoiceCandidates";
@@ -64,17 +65,67 @@ export function createDeterministicSceneSource(): SceneSource {
     async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
       const sceneId = `scene-${context.job.jobId}`;
       const npcLine = buildNpcLineState(context);
+      const finalDialogueHandoff = isFinalDialogueHandoff(context);
       const proposal: ScenePerformanceProposal = {
         sceneId,
         segments: buildSegments(context),
         npcLine,
         objectiveLink: buildObjectiveLink(context),
-        choices: buildSceneChoices(context, npcLine === null ? undefined : npcLine),
+        choices: finalDialogueHandoff ? [] : buildSceneChoices(context, npcLine === null ? undefined : npcLine),
+        ...(finalDialogueHandoff ? { handoffAcknowledgement: "你向对方点头致意，记下新的线索。" } : {}),
+        preparedContinuations: buildPreparedContinuations(context),
         source: "fixture",
       };
       return { ok: true, proposal };
     },
   };
+}
+
+function buildPreparedContinuations(context: SceneGenerationContext): readonly PreparedContinuationProposal[] {
+  return (context.preparedStepDescriptors ?? []).map((descriptor) => ({
+    stepId: descriptor.stepId,
+    segments: [{
+      beatId: ATMOSPHERE_BEAT_ID,
+      text: preparedStepNarration(context, descriptor.trigger),
+    }],
+    npcLine: descriptor.arrivalNpc === undefined
+      ? null
+      : {
+          npcId: String(descriptor.arrivalNpc.id),
+          text: `${descriptor.arrivalNpc.name}抬眼看向你。这里的线索还没有说完，你最好先证明自己值得信任。`,
+          emotion: "guarded" as const,
+          answeredBeatIds: [],
+          usedFactIds: [],
+          usedInteractionActionIds: [],
+        },
+    objectiveLink: {
+      questId: String(descriptor.authority.questId),
+      objectiveIndex: descriptor.authority.objectiveIndex,
+      mode: "hint" as const,
+    },
+    choices: buildPreparedSceneCandidates(descriptor).map((choice) => ({
+      candidateId: choice.candidateId,
+      label: choice.label,
+    })),
+    source: "fixture" as const,
+  }));
+}
+
+function preparedStepNarration(
+  context: SceneGenerationContext,
+  trigger: import("@/game/domain/preparedContinuation").PreparedContinuationTrigger,
+): string {
+  switch (trigger.kind) {
+    case "move": {
+      const location = context.currentLocation.id === trigger.locationId
+        ? context.currentLocation.name
+        : String(trigger.locationId);
+      return `你沿着线索抵达${location}，新的迹象在前方等待核对。`;
+    }
+    case "investigate": return `你围绕${String(trigger.factId)}留下的痕迹继续查证。`;
+    case "battle_started": return `你在路口遭遇${String(trigger.enemyId)}，战斗一触即发。`;
+    case "battle_resolved": return `战斗${trigger.outcome}后，你重新整理现场留下的线索。`;
+  }
 }
 
 /** 一段节拍对应一个 segment（强制节拍顺序即上下文顺序；atmosphere 可选放最后）。 */

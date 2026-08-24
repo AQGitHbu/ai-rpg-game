@@ -1,6 +1,7 @@
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
-import { isFinalDialogueHandoff, type SceneGenerationContext, type UpcomingObjectiveRef } from "@/game/application/sceneGenerationContext";
+import { isFinalDialogueHandoff, type SceneGenerationContext } from "@/game/application/sceneGenerationContext";
 import type { SceneChoiceCandidate } from "@/game/application/sceneChoiceCandidates";
+import type { PreparedStepDescriptor } from "@/game/gameplay/rpg/preparedContinuation";
 import { compileNarrativeContext } from "./compileNarrativeContext";
 import type { NarrativeContextBlock, NarrativePromptCompilation } from "./contextBlock";
 import { createNarrativePromptCompilation } from "./renderNarrativeContext";
@@ -89,34 +90,45 @@ function previousDialogueContent(context: SceneGenerationContext): string | unde
     `上一轮已引用事实=${context.previousDialogue.usedFactIds?.join("、") || "无"}。`;
 }
 
-function linearJsonShape(upcoming: readonly UpcomingObjectiveRef[]): string {
-  return upcoming.map((ref) => {
-    if (ref.kind === "discover_fact") {
-      return `{"actionKind":"investigate","factId":"${ref.factId}","narration":"调查发现的剧情正文"}`;
-    }
-    const arrivalNpcLine = ref.arrivalNpc === undefined
-      ? ""
-      : `,"arrivalNpcLine":{"npcId":"${ref.arrivalNpc.id}","text":"抵达后目标 NPC 的两句直接对白","emotion":"neutral","usedFactIds":[]}`;
-    return `{"actionKind":"move","locationId":"${ref.locationId}","narration":"动身与抵达的剧情正文"${arrivalNpcLine}}`;
+function preparedStepAction(descriptor: PreparedStepDescriptor): string {
+  switch (descriptor.trigger.kind) {
+    case "move": return `move(locationId=${descriptor.trigger.locationId})`;
+    case "investigate": return `investigate(factId=${descriptor.trigger.factId}${descriptor.trigger.approachId === undefined ? "" : `；approachId=${descriptor.trigger.approachId}`})`;
+    case "battle_started": return `battle_started(enemyId=${descriptor.trigger.enemyId})`;
+    case "battle_resolved": return `battle_resolved(enemyId=${descriptor.trigger.enemyId}；outcome=${descriptor.trigger.outcome})`;
+  }
+}
+
+function preparedStepDescriptorContent(descriptor: PreparedStepDescriptor): string {
+  const arrival = descriptor.arrivalNpc === undefined
+    ? "arrivalNpc=无；choices=[]"
+    : `arrivalNpc=${descriptor.arrivalNpc.id}（${descriptor.arrivalNpc.name}；${descriptor.arrivalNpc.role}；公开身份=${descriptor.arrivalNpc.publicProfile}；可说事实=${factCards(descriptor.arrivalNpc.knownFactCards)}）；合法 choices=${descriptor.choiceCandidates.map((candidate) => describeChoiceCandidate({
+      candidateId: candidate.candidateId,
+      label: "",
+      action: candidate.action,
+    })).join("；") || "无"}`;
+  return `- stepId=${descriptor.stepId}；action=${preparedStepAction(descriptor)}；objectiveKey=${descriptor.objectiveKey}；允许实体=[${descriptor.authority.allowedEntityIds.join(", ")}]；${arrival}`;
+}
+
+function preparedContinuationsContent(descriptors: readonly PreparedStepDescriptor[]): string {
+  if (descriptors.length === 0) return "服务端 descriptor 列表为空；preparedContinuations 必须输出 []。";
+  const arrivalSteps = descriptors.filter((descriptor) => descriptor.arrivalNpc !== undefined);
+  return `服务端 descriptor 列表（只读，必须逐条使用）：\n${descriptors.map(preparedStepDescriptorContent).join("\n")}\n` +
+    `输出契约：每个 descriptor 恰好生成一个 preparedContinuations 条目，stepId 必须逐字复制且不得新增、遗漏或重复；${arrivalSteps.length === 0 ? "当前没有 arrival step。" : "arrival step 必须恰好生成两个 choices，且 candidateId 必须逐字使用该 descriptor 的两个合法候选。"}非 arrival step 的 choices 必须为 []。每个条目的字段只允许 stepId、segments、npcLine、objectiveLink、choices；图结构和消费状态由服务端保留，AI 不得追加服务端元数据字段。不得捏造新事实、新实体或具体时间，不得输出系统元话术。`;
+}
+
+function preparedContinuationsJsonShape(descriptors: readonly PreparedStepDescriptor[]): string {
+  const entries = descriptors.map((descriptor) => {
+    const arrival = descriptor.arrivalNpc !== undefined;
+    const choices = arrival
+      ? `[{"candidateId":"${descriptor.choiceCandidates[0]?.candidateId ?? "第一个合法候选ID"}","label":"玩家对白或动作"},{"candidateId":"${descriptor.choiceCandidates[1]?.candidateId ?? "第二个合法候选ID"}","label":"另一句玩家对白或动作"}]`
+      : "[]";
+    const npcLine = arrival
+      ? `{"npcId":"${descriptor.arrivalNpc?.id ?? "目标 NPC ID"}","text":"抵达后目标 NPC 的两句直接对白","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]}`
+      : "null";
+    return `{"stepId":"${descriptor.stepId}","segments":[{"beatId":"${ATMOSPHERE_BEAT_ID}","text":"续行场景正文"}],"npcLine":${npcLine},"objectiveLink":null或{"questId":"${descriptor.authority.questId}","objectiveIndex":${descriptor.authority.objectiveIndex},"mode":"hint"},"choices":${choices}}`;
   }).join(",");
-}
-
-function linearPrefetchContent(upcoming: readonly UpcomingObjectiveRef[]): string {
-  const shape = linearJsonShape(upcoming);
-  return `单线行动预告（AI 预生成，服务端权威下发，不得增删改写）：\n${upcoming.map((ref) => ref.kind === "discover_fact"
-    ? `- 调查：factId=${ref.factId}；调查入口=${ref.investigationLabel}；权威正文=${ref.factText}${ref.nextObjectiveEntityName === undefined ? "" : `；下一地点=${ref.nextObjectiveEntityName}`}`
-    : `- 移动：locationId=${ref.locationId}；地点名=${ref.locationName}${ref.nextObjectiveEntityName === undefined ? "" : `；下一目标=${ref.nextObjectiveEntityName}`}${ref.arrivalNpc === undefined ? "" : `；抵达后目标 NPC=id=${ref.arrivalNpc.id}；${ref.arrivalNpc.name}（${ref.arrivalNpc.role}；公开身份=${ref.arrivalNpc.publicProfile}；可说事实=${factCards(ref.arrivalNpc.knownFactCards)}）`}`).join("\n")}\n` +
-    `输出契约：linearActionNarratives 必须为上面每个预告各生成一条叙事，形状为 [${shape}]；未预告的 actionKind 与实体 ID 一律不得输出。\n` +
-    `${upcoming.some((ref) => ref.kind === "discover_fact") ? "investigate 的 narration 只能演绎该条权威正文的既有事实（事实内容不得改写），并解释为何前往下一地点，下一地点实体名必须逐字照抄服务端下发。\n" : ""}` +
-    `${upcoming.some((ref) => ref.kind === "visit_location") ? "move 的 narration 描写动身与抵达该地点的所见所感。\n" : ""}` +
-    `${upcoming.some((ref) => ref.kind === "visit_location" && ref.arrivalNpc !== undefined) ? "move 条目若带有抵达后目标 NPC，必须同时生成 arrivalNpcLine；它是抵达该地点后玩家首次看到的目标 NPC 两句直接对白，不推进回合，不生成选项，不得使用通用兜底句。arrivalNpcLine.npcId 必须逐字使用服务端下发的目标 NPC ID，usedFactIds 只能使用该 NPC 可说事实或场景可见事实；缺少该字段视为整场内容契约失败。\n" : ""}` +
-    "不得捏造新事实、新实体或具体时间；不得输出“主线推进到第X幕”“当前目标：”“调查完成”等系统元话术。";
-}
-
-function linearPrefetchSourceRefs(upcoming: readonly UpcomingObjectiveRef[]): readonly string[] {
-  return upcoming.flatMap((ref) => ref.kind === "discover_fact"
-    ? []
-    : [String(ref.locationId), ...(ref.arrivalNpc === undefined ? [] : [String(ref.arrivalNpc.id)])]);
+  return `"preparedContinuations":[${entries}]`;
 }
 
 export function buildSceneNarrativeContextBlocks(
@@ -125,7 +137,7 @@ export function buildSceneNarrativeContextBlocks(
 ): readonly NarrativeContextBlock[] {
   const { story, job } = context;
   const focus = context.focusNpcContext;
-  const upcoming = context.upcomingLinearObjectives ?? [];
+  const preparedDescriptors = context.preparedStepDescriptors ?? [];
   const beats = mandatoryBeatContent(context);
   const after = context.objectiveTransition.after;
   const utteranceBeat = context.mandatoryBeats.find((beat) => beat.kind === "player_utterance");
@@ -140,7 +152,6 @@ export function buildSceneNarrativeContextBlocks(
     ...context.presentNpcs.flatMap((npc) => npc.sceneVisibleFactIds.map(String)),
   ])];
   const allowedInteractionIds = focus?.recentInteractions.map((interaction) => interaction.actionId) ?? [];
-  const linearJsonField = upcoming.length === 0 ? "" : `,"linearActionNarratives":[${linearJsonShape(upcoming)}]`;
   const objective = after === null
     ? "无当前目标；objectiveLink 必须为 null。"
     : `当前目标：${after.label}；objectiveLink 必须为 {"questId":"${after.questId}","objectiveIndex":${after.objectiveIndex},"mode":"${objectiveMode(context)}"}。`;
@@ -159,11 +170,18 @@ export function buildSceneNarrativeContextBlocks(
   const previousDialogue = previousDialogueContent(context);
   const finalDialogueHandoff = isFinalDialogueHandoff(context);
   const choiceShape = finalDialogueHandoff
-    ? "choices:[{\"candidateId\":\"唯一下一步候选ID\",\"label\":\"玩家最后一句直接回应，并推进当前目标\"}]（只能一个）"
-    : "choices:[{\"candidateId\":\"选项ID\",\"label\":\"玩家行动\"},{\"candidateId\":\"另一选项ID\",\"label\":\"玩家行动\"}]（必须两个）";
+    ? "\"choices\":[],\"handoffAcknowledgement\":\"玩家对当前 NPC 的具体致意\""
+    : "\"choices\":[{\"candidateId\":\"选项ID\",\"label\":\"玩家行动\"},{\"candidateId\":\"另一选项ID\",\"label\":\"玩家行动\"}]";
   const finalDialogueContract = finalDialogueHandoff
-    ? "本轮是上一名 NPC 对话的收尾：npcLine 是该 NPC 的最后一句直接回应；choices 必须只返回一个合法候选，作为玩家最后一句对白/动作，直接承接 NPC 台词并把玩家带向当前 objectiveLink 指向的任务、地点或人物。不要返回第二个选项，不要返回“知道了”、纯确认或脱离上下文的继续调查。"
-    : "普通对话必须返回两个语义不同的合法候选；两个选项都要直接回应本轮 NPC 台词，并至少一个推进当前主线目标。";
+    ? "本轮是上一名 NPC 对话的收尾：npcLine 是该 NPC 的最后一句直接回应；final handoff 必须返回零个当前 choices，并且恰好返回一个 handoffAcknowledgement，作为玩家对该 NPC 的具体致意。不要返回任何当前可执行选项，不要返回“知道了”、纯确认或脱离上下文的继续调查。"
+    : "普通场景必须返回两个语义不同的合法当前 choices，且不得返回 handoffAcknowledgement；两个选项都要直接回应本轮 NPC 台词，并至少一个推进当前主线目标。";
+  const outputContract = [
+    `JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白","referencedEntityIds":["可选的服务端实体ID"]}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"npcDialogues":[{"npcId":"非焦点在场NPC ID","text":"一句到两句符合身份和当前场景的直接闲聊"}],"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},${choiceShape},${preparedContinuationsJsonShape(preparedDescriptors)}}`,
+    beats.segmentInstruction,
+    finalDialogueContract,
+    `NPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。${previousDialogue === undefined ? "无上一轮 NPC 对话；这是当前对话的开场。" : `${previousDialogue}\n若有上一轮 NPC 原话，必须先直接承接其中的问题、信息或拒答，再补充本轮可核验线索或下一步；不得突然切换到无关案件。`}若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。任何具体地点、人物、时间、物品或证物，都必须能在主线剧情摘要、NPC 可说事实或场景可见事实中找到依据；如果没有依据，只能使用当前 objectiveLink/目标实体给出的下一步，不得自行补出新的核验细节。非焦点 npcDialogues 中每条 text 必须是直接闲聊，不得包含任务推进、私密事实、动作旁白或通用兜底句。选项生成顺序：先完成 npcLine，再根据本轮 npcLine 的文本和 usedFactIds 生成 choices；上一轮选择只用于理解承接关系，不得直接复用为本轮可见选项。choices 的 candidateId 必须逐字使用上方候选动作中的合法 ID；候选动作只提供服务端合法的 candidateId 和动作语义，不提供可直接复用的自然语言选项。label 是玩家实际要说的话或动作，不要加“回应某人/追问某人”等前缀，不要机械复述 NPC 原话；动作选项必须用全角括号包裹。${finalDialogueHandoff ? "final handoff 的 handoffAcknowledgement 必须是玩家对当前 NPC 的具体致意，不得是可执行 choice。" : "请依据主线剧情上下文、NPC 可说事实和本轮台词写出两句自然、具体、互不重复的玩家对白或动作。"}`,
+    `ID 复核：segments.beatId 只能逐字复制“已解决的本轮规则结果节拍”列表中的 ID，禁止创造 item_given、dialogue_response 等新 ID；segments.referencedEntityIds 只能从 [${(context.narrativeReferenceIds ?? []).join(", ")}] 选择；npcLine.usedFactIds 只能从 [${allowedFactIds.join(", ")}] 选择，npcLine.usedInteractionActionIds 只能从 [${allowedInteractionIds.join(", ")}] 选择；没有对应引用时必须输出空数组。输出前逐项核对这些 ID。玩家可见旁白必须是连续、具体的剧情正文；不得输出“主线推进到第X幕”“已完成：”“当前目标：”等系统元话术，任务状态由 HUD 单独展示。`,
+  ].join("\n");
   const blocks: NarrativeContextBlock[] = [
     sceneBlock({
       id: "scene:rules", slot: "system_rules", title: "规则与事实优先级", sourceKind: "scene_generation_context", sourceRefs: [String(job.jobId)],
@@ -238,7 +256,7 @@ export function buildSceneNarrativeContextBlocks(
     sceneBlock({
       id: "scene:output-contract", slot: "output_contract", title: "输出契约", sourceKind: "scene_schema", sourceRefs: [],
       authority: "rule", retention: "mandatory", priority: 1000,
-      content: `JSON={"segments":[{"beatId":"必须从上面节拍列表逐字复制的ID","text":"旁白","referencedEntityIds":["可选的服务端实体ID"]}],"npcLine":null或{"npcId":"在场ID","text":"第一句直接回应。第二句补充线索或下一步。","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"npcDialogues":[{"npcId":"非焦点在场NPC ID","text":"一句到两句符合身份和当前场景的直接闲聊"}],"objectiveLink":null或{"questId":"目标questId","objectiveIndex":0,"mode":"hint"},${choiceShape}}${linearJsonField}}\n${beats.segmentInstruction}\n${finalDialogueContract}\nNPC 台词硬约束：有焦点 NPC 时 npcLine 不能为 null，text 必须恰好包含两句以“。”、“！”或“？”结尾的直接对白；两句之间用中文句号分隔。不要使用任何引号、角色名、动作、表情或“说道/答道”等舞台说明，不要用分号代替第二句。${previousDialogue === undefined ? "无上一轮 NPC 对话；这是当前对话的开场。" : `${previousDialogue}\n若有上一轮 NPC 原话，必须先直接承接其中的问题、信息或拒答，再补充本轮可核验线索或下一步；不得突然切换到无关案件。`}若有 player_utterance，answeredBeatIds 必须包含对应的精确 beatId，并由该焦点 NPC 先回应玩家，再给出可核验线索或下一步。不得说“想听哪一段/想问什么/我知道了”。只能说 NPC 可说线索，不能编造私密知识。任何具体地点、人物、时间、物品或证物，都必须能在主线剧情摘要、NPC 可说事实或场景可见事实中找到依据；如果没有依据，只能使用当前 objectiveLink/目标实体给出的下一步，不得自行补出新的核验细节。非焦点 npcDialogues 中每条 text 必须是直接闲聊，不得包含任务推进、私密事实、动作旁白或通用兜底句。选项生成顺序：先完成 npcLine，再根据本轮 npcLine 的文本和 usedFactIds 生成 choices；上一轮选择只用于理解承接关系，不得直接复用为本轮可见选项。choices 的 candidateId 必须逐字使用上方候选动作中的合法 ID；候选动作只提供服务端合法的 candidateId 和动作语义，不提供可直接复用的自然语言选项。label 是玩家实际要说的话或动作，不要加“回应某人/追问某人”等前缀，不要机械复述 NPC 原话；动作选项必须用全角括号包裹。${finalDialogueHandoff ? "唯一 handoff 选项必须是玩家的一句具体回应，并沿着当前目标推进，不得是泛化态度。" : "请依据主线剧情上下文、NPC 可说事实和本轮台词写出两句自然、具体、互不重复的玩家对白或动作。"}\nID 复核：segments.beatId 只能逐字复制“已解决的本轮规则结果节拍”列表中的 ID，禁止创造 item_given、dialogue_response 等新 ID；segments.referencedEntityIds 只能从 [${(context.narrativeReferenceIds ?? []).join(", ")}] 选择；npcLine.usedFactIds 只能从 [${allowedFactIds.join(", ")}] 选择，npcLine.usedInteractionActionIds 只能从 [${allowedInteractionIds.join(", ")}] 选择；没有对应引用时必须输出空数组。输出前逐项核对这些 ID。玩家可见旁白必须是连续、具体的剧情正文；不得输出“主线推进到第X幕”“已完成：”“当前目标：”等系统元话术，任务状态由 HUD 单独展示。${upcoming.length === 0 ? "\n无单线行动预告：输出中必须省略 linearActionNarratives 字段。" : ""}`,
+      content: outputContract,
     }),
   ];
 
@@ -255,10 +273,10 @@ export function buildSceneNarrativeContextBlocks(
       authority: "event", retention: "mandatory", priority: 875, content: previousDialogue,
     }));
   }
-  if (upcoming.length > 0) {
+  if (preparedDescriptors.length > 0) {
     blocks.push(sceneBlock({
-      id: "scene:linear-prefetch", slot: "director_guidance", title: "导演与风格", sourceKind: "upcoming_linear_objectives", sourceRefs: linearPrefetchSourceRefs(upcoming),
-      authority: "state", retention: "mandatory", priority: 875, content: linearPrefetchContent(upcoming),
+      id: "scene:prepared-continuations", slot: "director_guidance", title: "导演与风格", sourceKind: "prepared_step_descriptors", sourceRefs: preparedDescriptors.map((descriptor) => descriptor.stepId),
+      authority: "state", retention: "mandatory", priority: 875, content: preparedContinuationsContent(preparedDescriptors),
     }));
   }
   if (context.repairAttempt !== undefined) {

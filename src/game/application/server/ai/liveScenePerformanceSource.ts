@@ -6,11 +6,10 @@ import type {
   ScenePerformanceProposal,
   ScenePerformanceNpcDialogue,
   ScenePerformanceSegment,
-  LinearActionNarrative,
-  LinearActionNpcLine,
+  PreparedContinuationProposal,
 } from "../../sceneSource";
 import { sceneInvestigationResultFrom } from "../../sceneSource";
-import { isFinalDialogueHandoff, type SceneGenerationContext, type UpcomingObjectiveRef } from "../../sceneGenerationContext";
+import { isFinalDialogueHandoff, type SceneGenerationContext } from "../../sceneGenerationContext";
 import {
   buildSelectableSceneCandidates,
   formatSceneChoiceLabel,
@@ -108,11 +107,12 @@ export type ScenePerformanceParseFailureReason =
   | "npc_line_invalid_shape"
   | "npc_line_unusable"
   | "npc_dialogues_invalid"
-  | "linear_arrival_npc_line_invalid"
   | "objective_link_invalid_shape"
   | "objective_link_invalid_fields"
   | "choices_invalid"
-  | "choices_stale_template";
+  | "choices_stale_template"
+  | "handoff_acknowledgement_invalid"
+  | "prepared_continuations_invalid";
 
 export type ScenePerformanceParseResult =
   | { readonly ok: true; readonly proposal: ScenePerformanceProposal }
@@ -168,9 +168,8 @@ export function resolveLiveNpcLine<TNpcId>(
 export function resolvePerformanceChoices(
   selectable: readonly SceneChoiceCandidate[],
   selected: unknown,
-  allowSingle = false,
+  expectedCount = 2,
 ): ScenePerformanceProposal["choices"] | null {
-  const expectedCount = allowSingle ? 1 : 2;
   if (!Array.isArray(selected) || selected.length !== expectedCount) return null;
   const parsed = selected as readonly unknown[];
   const resolved: Array<{ readonly candidateId: string; readonly label: string }> = [];
@@ -189,124 +188,107 @@ export function resolvePerformanceChoices(
   return resolved;
 }
 
-/**
- * 解析/校验 AI 返回的 linearActionNarratives（Task 1）：actionKind/factId/locationId/
- * narration 逐字段校验，引用必须命中 context.upcomingLinearObjectives 的权威实体；
- * 非法条目被忽略，合法条目继续进入队列，不让一条多余的行动叙事吞掉合法预生成结果。
- */
-type LinearActionNarrativeParseResult = {
-  readonly narratives: readonly LinearActionNarrative[];
-  readonly ignoredCount: number;
-} | { readonly requiredArrivalNpcLineInvalid: true };
-
-function parseLinearArrivalNpcLine(
+/** Parse the provider's natural-language seed for each server-authored descriptor. */
+function parsePreparedNpcLine(
   rawValue: unknown,
-  arrivalNpc: NonNullable<Extract<UpcomingObjectiveRef, { kind: "visit_location" }>["arrivalNpc"]>,
-): LinearActionNpcLine | null {
+  descriptor: NonNullable<SceneGenerationContext["preparedStepDescriptors"]>[number],
+): ScenePerformanceProposal["npcLine"] | null {
+  if (rawValue === null) return null;
   if (!isRecord(rawValue)
     || typeof rawValue.npcId !== "string"
-    || rawValue.npcId.trim() !== String(arrivalNpc.id)
-    || typeof rawValue.text !== "string") {
-    return null;
-  }
-  const text = normalizeNpcSpeech(rawValue.text, arrivalNpc.name);
-  if (text === ""
-    || !hasDialogicContinuation(text)
-    || isGenericNpcAcknowledgement(text)
-    || isGenericNpcGreeting(text)
-    || isGenericNpcInquiry(text)) {
-    return null;
-  }
-  const usedFactIds = rawValue.usedFactIds === undefined
-    ? []
-    : Array.isArray(rawValue.usedFactIds)
-      ? strArray(rawValue.usedFactIds)
-      : null;
-  if (usedFactIds === null) return null;
-  if (Array.isArray(rawValue.usedFactIds) && usedFactIds.length !== rawValue.usedFactIds.length) return null;
-  const allowedFactIds = new Set([
-    ...arrivalNpc.knownFactCards.map((fact) => String(fact.factId)),
-    ...arrivalNpc.sceneVisibleFactIds.map(String),
-  ]);
+    || typeof rawValue.text !== "string"
+    || rawValue.text.trim() === "") return null;
+  if (descriptor.arrivalNpc === undefined || rawValue.npcId !== String(descriptor.arrivalNpc.id)) return null;
+  const text = normalizeNpcSpeech(rawValue.text, descriptor.arrivalNpc.name);
+  if (text === "" || !hasDialogicContinuation(text)) return null;
+  const usedFactIds = strArray(rawValue.usedFactIds);
+  const allowedFactIds = new Set(descriptor.authority.visibleFactIds.map(String));
   if (usedFactIds.some((factId) => !allowedFactIds.has(factId))) return null;
   const emotion = NARRATIVE_EMOTIONS.includes(rawValue.emotion as NarrativeEmotion)
-    ? (rawValue.emotion as NarrativeEmotion)
+    ? rawValue.emotion as NarrativeEmotion
     : "neutral";
   return {
-    npcId: String(arrivalNpc.id),
+    npcId: String(descriptor.arrivalNpc.id),
     text,
     emotion,
+    answeredBeatIds: strArray(rawValue.answeredBeatIds),
     usedFactIds,
+    usedInteractionActionIds: strArray(rawValue.usedInteractionActionIds),
   };
 }
 
-function parseLinearActionNarratives(
+function parsePreparedContinuations(
   rawValue: unknown,
   context: SceneGenerationContext,
-): LinearActionNarrativeParseResult | undefined {
-  if (!Array.isArray(rawValue)) return undefined;
-  const upcoming = context.upcomingLinearObjectives ?? [];
-  const narratives: LinearActionNarrative[] = [];
-  let ignoredCount = 0;
-  for (const entry of rawValue) {
-    if (!isRecord(entry)) {
-      ignoredCount += 1;
-      continue;
+): readonly PreparedContinuationProposal[] | null {
+  const descriptors = context.preparedStepDescriptors ?? [];
+  if (!Array.isArray(rawValue) || rawValue.length !== descriptors.length) return null;
+  const descriptorById = new Map(descriptors.map((descriptor) => [descriptor.stepId, descriptor]));
+  const seen = new Set<string>();
+  const result: PreparedContinuationProposal[] = [];
+  for (const rawStep of rawValue) {
+    if (!isRecord(rawStep) || typeof rawStep.stepId !== "string" || seen.has(rawStep.stepId)) return null;
+    const descriptor = descriptorById.get(rawStep.stepId);
+    if (descriptor === undefined) return null;
+    if (!Array.isArray(rawStep.segments) || rawStep.segments.length === 0) return null;
+    const segments: ScenePerformanceSegment[] = [];
+    for (const rawSegment of rawStep.segments) {
+      if (!isRecord(rawSegment)
+        || typeof rawSegment.beatId !== "string"
+        || rawSegment.beatId.trim() === ""
+        || typeof rawSegment.text !== "string"
+        || rawSegment.text.trim() === "") return null;
+      const referencedEntityIds = parseReferencedEntityIds(rawSegment.referencedEntityIds, context);
+      segments.push({
+        beatId: rawSegment.beatId,
+        text: rawSegment.text.trim(),
+        ...(referencedEntityIds === undefined || referencedEntityIds.length === 0 ? {} : { referencedEntityIds }),
+      });
     }
-    if (typeof entry.narration !== "string" || entry.narration.trim() === "") {
-      ignoredCount += 1;
-      continue;
+    if (!Array.isArray(rawStep.choices) || rawStep.choices.length !== descriptor.choiceCandidates.length) return null;
+    const candidateIds = new Set(descriptor.choiceCandidates.map((candidate) => candidate.candidateId));
+    const choices: Array<{ readonly candidateId: string; readonly label: string }> = [];
+    const seenCandidates = new Set<string>();
+    for (const rawChoice of rawStep.choices) {
+      if (!isRecord(rawChoice)
+        || typeof rawChoice.candidateId !== "string"
+        || typeof rawChoice.label !== "string"
+        || rawChoice.label.trim() === ""
+        || !candidateIds.has(rawChoice.candidateId)
+        || seenCandidates.has(rawChoice.candidateId)) return null;
+      seenCandidates.add(rawChoice.candidateId);
+      const candidate = descriptor.choiceCandidates.find((entry) => entry.candidateId === rawChoice.candidateId);
+      if (candidate === undefined) return null;
+      choices.push({
+        candidateId: candidate.candidateId,
+        label: formatSceneChoiceLabel(candidate.action, rawChoice.label.trim()),
+      });
     }
-    if (entry.actionKind === "investigate") {
-      if (typeof entry.factId !== "string") {
-        ignoredCount += 1;
-        continue;
-      }
-      if (!upcoming.some((ref) => ref.kind === "discover_fact" && String(ref.factId) === entry.factId)) {
-        ignoredCount += 1;
-        continue;
-      }
-      narratives.push({ actionKind: "investigate", factId: entry.factId, narration: entry.narration.trim() });
-      continue;
+    let objectiveLink: PreparedContinuationProposal["objectiveLink"] = null;
+    if (rawStep.objectiveLink !== null && rawStep.objectiveLink !== undefined) {
+      if (!isRecord(rawStep.objectiveLink)
+        || typeof rawStep.objectiveLink.questId !== "string"
+        || typeof rawStep.objectiveLink.objectiveIndex !== "number"
+        || !["hint", "progress", "handoff"].includes(rawStep.objectiveLink.mode as string)) return null;
+      objectiveLink = {
+        questId: rawStep.objectiveLink.questId,
+        objectiveIndex: rawStep.objectiveLink.objectiveIndex,
+        mode: rawStep.objectiveLink.mode as "hint" | "progress" | "handoff",
+      };
     }
-    if (entry.actionKind === "move") {
-      if (typeof entry.locationId !== "string") {
-        ignoredCount += 1;
-        continue;
-      }
-      if (!upcoming.some((ref) => ref.kind === "visit_location" && String(ref.locationId) === entry.locationId)) {
-        ignoredCount += 1;
-        continue;
-      }
-      const ref = upcoming.find((candidate) =>
-        candidate.kind === "visit_location" && String(candidate.locationId) === entry.locationId,
-      );
-      if (ref === undefined) {
-        ignoredCount += 1;
-        continue;
-      }
-      if (ref !== undefined && ref.kind === "visit_location" && ref.arrivalNpc !== undefined) {
-        const arrivalNpcLine = parseLinearArrivalNpcLine(entry.arrivalNpcLine, ref.arrivalNpc);
-        if (arrivalNpcLine === null) return { requiredArrivalNpcLineInvalid: true };
-        narratives.push({
-          actionKind: "move",
-          locationId: entry.locationId,
-          narration: entry.narration.trim(),
-          arrivalNpcLine,
-        });
-      } else {
-        narratives.push({
-          actionKind: "move",
-          locationId: entry.locationId,
-          narration: entry.narration.trim(),
-        });
-      }
-      continue;
-    }
-    ignoredCount += 1;
+    const npcLine = parsePreparedNpcLine(rawStep.npcLine, descriptor);
+    if (rawStep.npcLine !== null && npcLine === null) return null;
+    seen.add(rawStep.stepId);
+    result.push({
+      stepId: descriptor.stepId,
+      segments,
+      npcLine,
+      objectiveLink,
+      choices,
+      source: "generated",
+    });
   }
-  if (narratives.length === 0 && ignoredCount === 0) return undefined;
-  return { narratives, ignoredCount };
+  return result;
 }
 
 /**
@@ -436,10 +418,11 @@ export function parseScenePerformanceJson(
   const currentLineSelectable = npcLine === null
     ? selectable
     : buildSelectableSceneCandidates(context, npcLine);
+  const finalDialogueHandoff = isFinalDialogueHandoff(context);
   const choices = resolvePerformanceChoices(
     currentLineSelectable,
     raw.choices,
-    isFinalDialogueHandoff(context),
+    finalDialogueHandoff ? 0 : 2,
   );
   if (choices === null) return { ok: false, reason: "choices_invalid" };
   if (
@@ -452,36 +435,20 @@ export function parseScenePerformanceJson(
     return { ok: false, reason: "choices_stale_template" };
   }
 
-  // 单线行动预生成叙事：非法条目局部忽略，绝不阻塞主场景解析/审批。
-  let linearActionNarratives: ScenePerformanceProposal["linearActionNarratives"];
-  const requiredArrivalNpc = (context.upcomingLinearObjectives ?? [])
-    .find((ref) => ref.kind === "visit_location" && ref.arrivalNpc !== undefined);
-  if (requiredArrivalNpc !== undefined
-    && (!Array.isArray(raw.linearActionNarratives) || raw.linearActionNarratives.length === 0)) {
-    return { ok: false, reason: "linear_arrival_npc_line_invalid" };
+  const handoffAcknowledgement = raw.handoffAcknowledgement === undefined
+    ? undefined
+    : typeof raw.handoffAcknowledgement === "string" && raw.handoffAcknowledgement.trim() !== ""
+      ? raw.handoffAcknowledgement.trim()
+      : null;
+  if (handoffAcknowledgement === null || (finalDialogueHandoff && handoffAcknowledgement === undefined)) {
+    return { ok: false, reason: "handoff_acknowledgement_invalid" };
   }
-  if (raw.linearActionNarratives !== undefined && raw.linearActionNarratives !== null) {
-    const parsed = parseLinearActionNarratives(raw.linearActionNarratives, context);
-    if (parsed !== undefined) {
-      if ("requiredArrivalNpcLineInvalid" in parsed) {
-        return { ok: false, reason: "linear_arrival_npc_line_invalid" };
-      }
-      if (parsed.ignoredCount > 0) {
-        logger?.warn("linear_narrative_entries_ignored", {
-          sceneId: `scene-${context.job.jobId}`,
-          ignoredCount: parsed.ignoredCount,
-          acceptedCount: parsed.narratives.length,
-        });
-      }
-      if (requiredArrivalNpc !== undefined
-        && !parsed.narratives.some((entry) =>
-          entry.actionKind === "move" && entry.arrivalNpcLine !== undefined,
-        )) {
-        return { ok: false, reason: "linear_arrival_npc_line_invalid" };
-      }
-      if (parsed.narratives.length > 0) linearActionNarratives = parsed.narratives;
-    }
-  }
+  const descriptors = context.preparedStepDescriptors ?? [];
+  const preparedRaw = raw.preparedContinuations === undefined && descriptors.length === 0
+    ? []
+    : raw.preparedContinuations;
+  const preparedContinuations = parsePreparedContinuations(preparedRaw, context);
+  if (preparedContinuations === null) return { ok: false, reason: "prepared_continuations_invalid" };
 
   return {
     ok: true,
@@ -492,7 +459,8 @@ export function parseScenePerformanceJson(
       ...(npcDialogues === undefined ? {} : { npcDialogues }),
       objectiveLink,
       choices,
-      ...(linearActionNarratives === undefined ? {} : { linearActionNarratives }),
+      ...(handoffAcknowledgement === undefined ? {} : { handoffAcknowledgement }),
+      preparedContinuations,
       source: "generated",
     },
   };

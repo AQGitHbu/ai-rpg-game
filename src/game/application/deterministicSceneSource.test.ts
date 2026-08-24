@@ -200,11 +200,11 @@ describe("deterministicSceneSource", () => {
     expect(first.proposal.choices).toHaveLength(2);
   });
 
-  it("produces a performance proposal with segments, two distinct legal choices and source=fallback", async () => {
+  it("produces an explicit fixture proposal with segments and two distinct legal choices", async () => {
     const result = await source.generateScene(makeContext(makeJob({ eventKind: "travel" })));
     if (!result.ok) throw new Error("expected success");
     expect(result.proposal.segments.length).toBeGreaterThan(0);
-    expect(result.proposal.source).toBe("fallback");
+    expect(result.proposal.source).toBe("fixture");
     expect(result.proposal.choices).toHaveLength(2);
     expect(result.proposal.choices[0].candidateId).not.toBe(result.proposal.choices[1].candidateId);
     expect(result.proposal.choices.every((choice) => choice.label.length > 0)).toBe(true);
@@ -222,7 +222,7 @@ describe("deterministicSceneSource", () => {
     });
     expect(approved.ok).toBe(true);
     if (approved.ok) {
-      expect(approved.scene.source).toBe("fallback");
+      expect(approved.scene.source).toBe("fixture");
       expect(approved.scene.narration.length).toBeGreaterThan(0);
     }
   });

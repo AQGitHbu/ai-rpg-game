@@ -1,0 +1,177 @@
+import type {
+  PreparedContinuationProposal,
+  ScenePerformanceNpcLine,
+  ScenePerformanceObjectiveLink,
+  ScenePerformanceSegment,
+} from "./sceneSource";
+import type {
+  NarrativeEventState,
+  NarrativeNpcLineState,
+} from "@/game/domain/narrative";
+import {
+  createPreparedContinuationState,
+  type PreparedContinuationState,
+  type PreparedContinuationStepState,
+  type PreparedNarrativeSegmentState,
+  type PreparedObjectiveLinkState,
+} from "@/game/domain/preparedContinuation";
+import { asEnemyId, asFactId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
+import type { NarrativeJobId } from "@/game/domain/events";
+import type { WorldState } from "@/game/domain/worldState";
+import type { PreparedStepDescriptor } from "@/game/gameplay/rpg/preparedContinuation";
+
+export type PreparedContinuationRejection =
+  | "missing_step"
+  | "duplicate_step"
+  | "unknown_step"
+  | "invalid_graph"
+  | "invalid_entity_reference"
+  | "invalid_fact_reference"
+  | "invalid_choice_count"
+  | "invalid_choice_candidate";
+
+export type ApprovePreparedContinuationResult =
+  | { readonly ok: true; readonly prepared: PreparedContinuationState }
+  | { readonly ok: false; readonly code: PreparedContinuationRejection };
+
+function eventForTrigger(descriptor: PreparedStepDescriptor): NarrativeEventState {
+  switch (descriptor.trigger.kind) {
+    case "move":
+      return { kind: "travel", locationId: asLocationId(descriptor.trigger.locationId) };
+    case "investigate":
+      return { kind: "investigate", factId: asFactId(descriptor.trigger.factId) };
+    case "battle_started":
+    case "battle_resolved":
+      return { kind: "battle", enemyId: asEnemyId(descriptor.trigger.enemyId) };
+  }
+}
+
+function rebuildNpcLine(
+  line: ScenePerformanceNpcLine | null,
+  descriptor: PreparedStepDescriptor,
+): NarrativeNpcLineState | null {
+  if (line === null) return null;
+  if (!descriptor.authority.allowedEntityIds.some((entityId) => String(entityId) === String(line.npcId))) return null;
+  if (descriptor.arrivalNpc !== undefined && String(line.npcId) !== String(descriptor.arrivalNpc.id)) return null;
+  const allowedFactIds = new Set(descriptor.authority.visibleFactIds.map(String));
+  if (line.usedFactIds.some((factId) => !allowedFactIds.has(String(factId)))) return null;
+  return {
+    npcId: asNpcId(line.npcId),
+    text: line.text.trim(),
+    emotion: line.emotion,
+    usedFactIds: line.usedFactIds.map(asFactId),
+    answeredBeatIds: [...line.answeredBeatIds],
+  };
+}
+
+function rebuildObjectiveLink(
+  link: ScenePerformanceObjectiveLink | null,
+  descriptor: PreparedStepDescriptor,
+): PreparedObjectiveLinkState | null | undefined {
+  if (link === null) return null;
+  if (String(link.questId) !== String(descriptor.authority.questId)
+    || link.objectiveIndex !== descriptor.authority.objectiveIndex) return undefined;
+  return {
+    questId: asQuestId(link.questId),
+    objectiveIndex: link.objectiveIndex,
+    mode: link.mode,
+  };
+}
+
+function rebuildSegments(segments: readonly ScenePerformanceSegment[]): readonly PreparedNarrativeSegmentState[] | null {
+  if (segments.length === 0) return null;
+  const result: PreparedNarrativeSegmentState[] = [];
+  for (const segment of segments) {
+    if (segment.beatId.trim() === "" || segment.text.trim() === "") return null;
+    result.push({
+      beatId: segment.beatId,
+      text: segment.text.trim(),
+      ...(segment.referencedEntityIds === undefined
+        ? {}
+        : { referencedEntityIds: [...segment.referencedEntityIds] }),
+    });
+  }
+  return result;
+}
+
+function rebuildStep(
+  proposal: PreparedContinuationProposal,
+  descriptor: PreparedStepDescriptor,
+): PreparedContinuationStepState | { readonly code: PreparedContinuationRejection } {
+  const segments = rebuildSegments(proposal.segments);
+  if (segments === null) return { code: "invalid_graph" };
+  const npcLine = rebuildNpcLine(proposal.npcLine, descriptor);
+  if (proposal.npcLine !== null && npcLine === null) return { code: "invalid_entity_reference" };
+  const objectiveLink = rebuildObjectiveLink(proposal.objectiveLink, descriptor);
+  if (objectiveLink === undefined) return { code: "invalid_entity_reference" };
+
+  if (proposal.choices.length !== descriptor.choiceCandidates.length) {
+    return { code: "invalid_choice_count" };
+  }
+  const expectedCandidates = new Map(descriptor.choiceCandidates.map((candidate) => [candidate.candidateId, candidate]));
+  const choiceSeeds = proposal.choices.map((choice) => {
+    const expected = expectedCandidates.get(choice.candidateId);
+    if (expected === undefined || choice.label.trim() === "") return null;
+    return { label: choice.label.trim(), action: expected.action };
+  });
+  if (choiceSeeds.some((choice) => choice === null)
+    || new Set(proposal.choices.map((choice) => choice.candidateId)).size !== proposal.choices.length) {
+    return { code: "invalid_choice_candidate" };
+  }
+
+  return {
+    stepId: descriptor.stepId,
+    objectiveKey: descriptor.objectiveKey,
+    consumptionGroupKey: descriptor.consumptionGroupKey,
+    trigger: descriptor.trigger,
+    scene: {
+      segments,
+      event: eventForTrigger(descriptor),
+      npcLine,
+      objectiveLink,
+      choiceSeeds: choiceSeeds as NonNullable<typeof choiceSeeds[number]>[],
+      source: proposal.source ?? "generated",
+    },
+    nextStepIds: [...descriptor.nextStepIds],
+  };
+}
+
+export function approvePreparedContinuation(input: {
+  readonly originJobId: NarrativeJobId;
+  readonly proposals: readonly PreparedContinuationProposal[];
+  readonly descriptors: readonly PreparedStepDescriptor[];
+  readonly activeStepIds: readonly string[];
+  readonly worldState?: WorldState;
+}): ApprovePreparedContinuationResult {
+  void input.worldState;
+  const descriptorsById = new Map(input.descriptors.map((descriptor) => [descriptor.stepId, descriptor]));
+  if (descriptorsById.size !== input.descriptors.length) return { ok: false, code: "duplicate_step" };
+  if (new Set(input.activeStepIds).size !== input.activeStepIds.length
+    || input.activeStepIds.some((stepId) => !descriptorsById.has(stepId))) {
+    return { ok: false, code: "invalid_graph" };
+  }
+  if (input.proposals.length !== input.descriptors.length) return { ok: false, code: "missing_step" };
+
+  const proposalsById = new Map<string, PreparedContinuationProposal>();
+  for (const proposal of input.proposals) {
+    if (proposalsById.has(proposal.stepId)) return { ok: false, code: "duplicate_step" };
+    if (!descriptorsById.has(proposal.stepId)) return { ok: false, code: "unknown_step" };
+    proposalsById.set(proposal.stepId, proposal);
+  }
+
+  const steps: PreparedContinuationStepState[] = [];
+  for (const descriptor of input.descriptors) {
+    const proposal = proposalsById.get(descriptor.stepId);
+    if (proposal === undefined) return { ok: false, code: "missing_step" };
+    const rebuilt = rebuildStep(proposal, descriptor);
+    if ("code" in rebuilt) return { ok: false, code: rebuilt.code };
+    steps.push(rebuilt);
+  }
+
+  const parsed = createPreparedContinuationState({
+    originJobId: input.originJobId,
+    steps,
+    activeStepIds: [...input.activeStepIds],
+  });
+  return parsed.ok ? { ok: true, prepared: parsed.value } : { ok: false, code: "invalid_graph" };
+}

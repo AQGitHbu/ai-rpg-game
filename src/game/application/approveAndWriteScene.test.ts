@@ -207,6 +207,7 @@ function makeProposal(overrides?: Partial<ScenePerformanceProposal>): ScenePerfo
       { candidateId: "candidate_1", label: "支持老板" },
       { candidateId: "candidate_2", label: "质疑老板" },
     ],
+    preparedContinuations: [],
     source: "generated",
     ...overrides,
   };
