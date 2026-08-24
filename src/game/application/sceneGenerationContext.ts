@@ -1,4 +1,4 @@
-import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import type { PendingNarrativeJob, ProviderGenerationKind } from "@/game/domain/pendingNarrativeJob";
 import { hasExplorableContent } from "./buildChoiceMap";
 import type { PacingNeed } from "@/game/domain/storyState";
 import type { StoryContract } from "@/game/domain/storyContract";
@@ -14,6 +14,10 @@ import type { RecentBeat } from "@/game/domain/materializedView";
 import type { MandatoryNarrativeBeat, ObjectiveRef, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { WorldState } from "@/game/domain/worldState";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
+import {
+  buildPreparedStepDescriptors,
+  type PreparedStepDescriptor,
+} from "@/game/gameplay/rpg/preparedContinuation";
 import { buildFocusNpcContext, type FocusNpcContext, type FactCard } from "./focusNpcContext";
 import { isObjectiveEntityReleased } from "@/game/gameplay/rpg/worldEvolution";
 import { buildStylePolicy, type StylePolicy } from "./stylePolicy";
@@ -195,6 +199,13 @@ export type SceneGenerationContext = {
   readonly worldPremise?: string;
   readonly storyOpening?: string;
   readonly job: PendingNarrativeJob;
+  /** Provider authorization is copied from the immutable pending job. */
+  readonly generationKind?: ProviderGenerationKind;
+  /** Handoff semantics are fixed by the job, never inferred from mutable dialogue state. */
+  readonly finalDialogueHandoff?: boolean;
+  /** Server-authored continuation graph projected for this accepted rule result. */
+  readonly preparedStepDescriptors?: readonly PreparedStepDescriptor[];
+  readonly preparedActiveStepIds?: readonly string[];
   readonly player: PlayerSceneSummary;
   readonly currentLocation: LocationSceneCard;
   readonly publicWorldFacts: readonly FactCard[];
@@ -263,8 +274,10 @@ export type SceneGenerationContext = {
  * 同一次场景生成返回一个唯一、可执行的 handoff 选项，不能再伪造第二个对白选项。
  */
 export function isFinalDialogueHandoff(
-  context: Pick<SceneGenerationContext, "job" | "objectiveTransition" | "dialogueSessionCompleted">,
+  context: Pick<SceneGenerationContext, "job" | "objectiveTransition" | "dialogueSessionCompleted">
+    & Pick<SceneGenerationContext, "finalDialogueHandoff">,
 ): boolean {
+  if (context.finalDialogueHandoff !== undefined) return context.finalDialogueHandoff;
   return context.job.actionSummary.kind === "talk"
     && context.dialogueSessionCompleted === true
     && context.objectiveTransition.completed.length > 0
@@ -640,6 +653,11 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
 
   const objectiveTarget = resolveObjectiveTarget(ws, transition.after);
   const upcomingLinearObjectives = buildUpcomingLinearObjectives(ws, transition.after);
+  const preparedProjection = buildPreparedStepDescriptors({
+    worldState: ws,
+    storyState: ss,
+    transition,
+  });
   const narrativeReferenceIds = [...new Set([
     ...beatSubjects.map((subject) => subject.id),
     ...(objectiveTarget === null ? [] : [objectiveTarget.entityId]),
@@ -649,6 +667,11 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
           String(ref.locationId),
           ...(ref.arrivalNpc === undefined ? [] : [String(ref.arrivalNpc.id)]),
         ]),
+    ...preparedProjection.descriptors.flatMap((descriptor) => [
+      ...descriptor.authority.allowedEntityIds,
+      ...descriptor.authority.visibleFactIds.map(String),
+      ...(descriptor.arrivalNpc === undefined ? [] : [String(descriptor.arrivalNpc.id)]),
+    ]),
   ])];
 
   return {
@@ -657,6 +680,10 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     ...(ws.generation.setup?.worldPremise === undefined ? {} : { worldPremise: ws.generation.setup.worldPremise }),
     ...(ws.generation.setup?.storyOpening === undefined ? {} : { storyOpening: ws.generation.setup.storyOpening }),
     job,
+    ...(job.generationKind === null ? {} : { generationKind: job.generationKind }),
+    finalDialogueHandoff: job.sceneRequestKind === "npc_handoff",
+    preparedStepDescriptors: preparedProjection.descriptors,
+    preparedActiveStepIds: preparedProjection.activeStepIds,
     player: {
       name: ws.player.name,
       identity: ws.player.identity,
