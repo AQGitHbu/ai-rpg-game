@@ -240,7 +240,9 @@ export function CurrentGameScreen() {
 
   if (state.phase === "active") {
     const { view } = state;
-    if (view.narrativeGeneration.status === "failed") {
+    // 结局一旦由规则层写入就是终态；兼容旧存档中结局已保存但场景
+    // provider job 随后失败的状态，不能让失败模态遮蔽结局页。
+    if (view.ending === null && view.narrativeGeneration.status === "failed") {
       return (
         <AdventureGameShell
           view={view}

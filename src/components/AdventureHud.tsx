@@ -28,6 +28,15 @@ function deriveObjective(view: GameSessionView): string {
     return view.story.currentObjectiveLabel;
   }
 
+  // 下一幕任务可能要在 pending 场景写回时才物化；这段期间旧 quest 已
+  // 完成，不能把“尚未投影”误报成“暂无线索”。
+  if (view.narrativeGeneration.status === "pending") {
+    return "正在编排下一幕……";
+  }
+  if (view.narrativeGeneration.status === "failed") {
+    return "叙事生成失败，请重试";
+  }
+
   const activeMain = view.quests.find((quest) => quest.kind === "main" && quest.status === "active");
   const nextMain = view.quests.find((quest) => quest.kind === "main" && quest.status !== "completed" && quest.status !== "failed");
   const quest = activeMain ?? nextMain ?? view.quests.find((entry) => entry.status === "active");

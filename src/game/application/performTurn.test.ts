@@ -16,7 +16,7 @@ import {
 } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asItemId, asFactId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asItemId, asFactId, asEndingId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { WorldState } from "@/game/domain/worldState";
@@ -194,6 +194,63 @@ function buildPendingStoryState(): StoryState {
 
 describe("performTurn 单次 CAS 提交", () => {
   const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" };
+
+  it("最终立场结算后直接保存结局，不再为已结束的游戏排队场景生成", async () => {
+    const finalWorld: WorldState = {
+      ...buildWorldState(),
+      quests: [{
+        id: asQuestId("quest_final"),
+        name: "终幕主线",
+        description: "查明真相",
+        objectives: [{ kind: "visit_location", locationId: asLocationId("loc_1") }],
+        onSuccess: { kind: "closed" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 3,
+        status: "completed",
+      }],
+      endings: [
+        {
+          id: asEndingId("ending_trust"),
+          name: "共担真相",
+          description: "与盟友共同揭露真相。",
+          requirements: [{ kind: "npc_affinity_at_least", npcId: asNpcId("npc_1"), value: 1 }],
+        },
+        {
+          id: asEndingId("ending_doubt"),
+          name: "独自揭露",
+          description: "独自追查到底。",
+          requirements: [{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_1"), value: 0 }],
+        },
+      ],
+    };
+    const finalStory = {
+      ...buildFocusedDialogueStoryState(),
+      currentAct: 3,
+      targetActs: 3,
+      storyProgress: 100,
+      endingAllowed: true,
+    };
+    const supportToken = finalStory.narrative.status === "ready"
+      ? finalStory.narrative.currentScene.choices[0]?.choiceToken
+      : undefined;
+    if (supportToken === undefined) throw new Error("ending fixture missing support choice");
+    const { repo, applyCalls, record } = createSpyRepo(finalWorld, finalStory);
+
+    const result = await performTurn({
+      gameId: asGameId("g1"),
+      actionId: "act_final_choice",
+      interaction: { kind: "fixed_choice", choiceToken: supportToken },
+      expectedRevision: 0,
+      choiceMap: new Map([[supportToken, { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" }]]),
+    }, { repository: repo, now: () => "2026-01-02" });
+
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+    expect(record()?.worldState.ending).not.toBeNull();
+    expect(record()?.storyState.narrative.status).toBe("ready");
+  });
 
   it("活跃战斗推进直接 CAS，不创建 pending narrative job", async () => {
     const enemy = {

@@ -501,6 +501,51 @@ describe("projectGameSessionView", () => {
     expect(view.story.currentObjectiveLabel).toBe("与传讯人交谈");
   });
 
+  it("does not present a newly released talk target as fallback NPC speech before its scene is generated", () => {
+    const targetQuest: WorldState["quests"][number] = {
+      id: asQuestId("quest_target_pending"),
+      name: "找到传讯人",
+      description: "与刚出现的传讯人交谈",
+      objectives: [{ kind: "talk_to_npc", npcId: npc1.id }],
+      onSuccess: { kind: "advance_story" },
+      onFailure: { kind: "closed" },
+      tags: [],
+      kind: "main",
+      stage: 1,
+      status: "active",
+    };
+    const pendingTargetStory: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: {
+          ...ss.narrative.currentScene,
+          sceneId: "scene-pending-target",
+          source: "generated",
+          npcLine: null,
+          choices: [],
+          event: { kind: "observe", locationId: loc1.id },
+          npcDialogues: [],
+        },
+      },
+    };
+
+    const view = projectGameSessionView(
+      { ...ws, quests: [targetQuest] },
+      pendingTargetStory,
+      0,
+      "test-ending-session",
+    );
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(npc1.id));
+
+    expect(view.story.currentObjectiveLabel).toBe("与老板交谈");
+    expect(view.currentLocation.npcs[0]?.talkChoice).not.toBeNull();
+    expect(dialogue?.choices).toHaveLength(2);
+    expect(dialogue?.freeInputEnabled).toBe(false);
+    expect(dialogue?.speechPages).toEqual([]);
+    expect(JSON.stringify(dialogue)).not.toContain("fallback");
+  });
+
   it("旧对白 choice 过期且当前目标已非交谈时，不会吞掉地点战斗入口", () => {
     const enemy = {
       id: asEnemyId("enemy_1"), name: "夺旗客", tier: "normal" as const,
@@ -1061,6 +1106,41 @@ describe("projectGameSessionView", () => {
         label: "继续追查下一幕线索",
         presentation: "explore",
       }),
+    ]);
+  });
+
+  it("终幕结局对已准备好时投影结局决策目标，避免回退为无目标", () => {
+    const endingWorld: WorldState = {
+      ...ws,
+      endings: [
+        {
+          id: asEndingId("ending_trust"),
+          name: "共担真相",
+          description: "与盟友共同揭露真相。",
+          requirements: [],
+        },
+        {
+          id: asEndingId("ending_doubt"),
+          name: "独自揭露",
+          description: "独自追查到底。",
+          requirements: [],
+        },
+      ],
+    };
+    const endingStory: StoryState = {
+      ...ss,
+      currentAct: 3,
+      targetActs: 3,
+      storyProgress: 100,
+      endingAllowed: true,
+      evolution: { ...ss.evolution, status: "stable" },
+    };
+
+    const view = projectGameSessionView(endingWorld, endingStory, 0, "test-ending-session");
+
+    expect(view.story.currentObjectiveLabel).toBe("选择结局方向");
+    expect(view.currentLocation.actions).toEqual([
+      expect.objectContaining({ label: "面对最终抉择", presentation: "explore" }),
     ]);
   });
 

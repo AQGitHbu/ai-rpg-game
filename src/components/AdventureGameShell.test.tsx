@@ -940,6 +940,18 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("下一步：与传讯人交谈");
   });
 
+  it("does not show an empty current objective while the next scene is pending", () => {
+    renderShell({
+      ...buildView(),
+      story: { ...buildView().story, currentObjectiveLabel: null },
+      quests: [{ name: "已完成旧案", description: "", kind: "main", status: "completed", objectives: [{ label: "旧目标", completed: true }] }],
+      narrativeGeneration: { status: "pending", jobKey: "job-next-scene" },
+    });
+
+    expect(within(screen.getByLabelText("游戏 HUD")).getByText("正在编排下一幕……")).toBeInTheDocument();
+    expect(screen.queryByText("暂无线索")).not.toBeInTheDocument();
+  });
+
   it("does not leave old-building actions beside a new NPC handoff", () => {
     const base = buildView();
     render(<LocationSceneScreen

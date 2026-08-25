@@ -54,6 +54,19 @@ afterEach(() => {
 });
 
 describe("CurrentGameScreen ending restart", () => {
+  it("已保存结局优先于旧的场景失败状态，刷新后仍进入结局页", async () => {
+    const endedAfterStaleFailure: GameSessionView = {
+      ...endedView,
+      narrativeGeneration: { status: "failed", failureKind: "AI_RESPONSE_INVALID", jobKey: "stale-scene-job" },
+    };
+    vi.mocked(fetchCurrentGame).mockResolvedValue({ ok: true, status: "active", view: endedAfterStaleFailure });
+
+    render(<CurrentGameScreen />);
+
+    expect(await screen.findByRole("region", { name: "冒险结局" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "NPC回应生成失败" })).not.toBeInTheDocument();
+  });
+
   it("opens a replacement-game form instead of reloading the same ended record", async () => {
     globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true, revision: 0 }), {
       status: 200,

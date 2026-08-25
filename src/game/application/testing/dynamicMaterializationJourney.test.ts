@@ -133,9 +133,26 @@ describe("动态具象化旅程（Step 1）", () => {
     await fightToVictory();
     reload(); // 重载 3
 
-    await fixed("回应"); // 12: 完成短篇最后一幕后选择结局方向
-    await scene();
-    await fixed("回应"); // 12: 明确选择结局方向后落定
+    // 规则层若已在最终 NPC 的明确立场回合落定结局，后续不再生成
+    // provider 场景，也不应继续寻找不存在的“回应”选项；兼容两种
+    // 合法的确定性旅程收尾时序。
+    const afterBattle = await loadWorldState(store.repo);
+    if (afterBattle?.ending === null) {
+      const endingView = await loadGameView(store.repo);
+      const hasEndingResponse = endingView.narrative.npcDialogues.some((dialogue) => dialogue.choices.length > 0)
+        || endingView.narrative.choices.length > 0;
+      if (!hasEndingResponse) {
+        await fixed("继续追查");
+        await scene();
+      }
+      if ((await loadWorldState(store.repo))?.ending === null) {
+        await fixed("回应"); // 完成短篇最后一幕后选择结局方向
+        await scene();
+      }
+      if ((await loadWorldState(store.repo))?.ending === null) {
+        await fixed("回应"); // 明确选择结局方向后落定
+      }
+    }
 
     const record = store.record();
     if (record === null) throw new Error("旅程结束后存档缺失");

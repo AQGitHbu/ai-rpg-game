@@ -364,6 +364,12 @@ export function projectGameSessionView(
   const currentObjective = currentObjectiveRef === null
     ? undefined
     : currentObjectiveQuest?.objectives[currentObjectiveRef.objectiveIndex];
+  // 终幕结局对已经物化、且玩家尚未作出最后立场时，任务链本身没有未完成
+  // objective。仍需向 HUD 投影一个权威目标，避免玩家看到“暂无线索”后
+  // 只能靠点击 NPC 试探性地触发下一段对白。
+  const endingDecisionReady = storyState.endingAllowed
+    && worldState.ending === null
+    && worldState.endings.length >= 2;
   const currentObjectiveToken = currentObjectiveChoiceToken(worldState, storyState, currentObjective, revision);
   // Task 4：discover_fact 多 approach 时 = 每个已审批调查方式的 token；
   // 其余目标保持单一兼容 token（无目标时为空数组）。
@@ -397,8 +403,12 @@ export function projectGameSessionView(
   if (activeBattle === null) {
     // 探索：仅当前地点有可探索内容（未发现线索/未处理物品或敌人/未满足目标/候选事件）
     // 时显示，避免无剧情钩子地点的空转选项（方案 1）。
-    if (hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState)) {
-      const label = needsWorldBoundaryPreparation(storyState)
+    if (hasExplorableContent(worldState, storyState)
+      || needsWorldBoundaryPreparation(storyState)
+      || endingDecisionReady) {
+      const label = endingDecisionReady
+        ? "面对最终抉择"
+        : needsWorldBoundaryPreparation(storyState)
         ? "继续追查下一幕线索"
         : `探索${currentLocation?.name ?? "此地"}`;
       locationActions.push(choice({ type: "explore" }, revision, label, "explore"));
@@ -635,6 +645,17 @@ export function projectGameSessionView(
       ? scene.source
       : "fixture";
     const speechSource = supplied?.speechSource ?? inferredSpeechSource;
+    // 新目标 NPC 的 talk handoff 只说明“下一步要找谁”，并不代表该 NPC
+    // 已经有一段可展示的正式回应。旧逻辑在这里调用
+    // composeDeterministicNpcLine，导致玩家看到一个带 fallback 标记的伪
+    // 角色发言，并误以为已经进入了 AI 对话。保留 handoff 的两项入口，
+    // 但在 provider 场景写回前不伪造角色台词或自由输入。
+    const isPendingHandoffFocus = isFocus
+      && handoffFocusNpc !== undefined
+      && String(handoffFocusNpc.id) === String(npc.id)
+      && usableSupplied === null
+      && focusLine === null
+      && scene?.event?.kind !== "dialogue";
     const interactionCount = npc.memory.interactionHistory.length;
     // 非焦点 NPC 的零回合闲聊台词：参与过剧情且有权威目标 → 提醒；否则中性闲聊
     const idleLine = composeIdleNpcLine({
@@ -642,7 +663,9 @@ export function projectGameSessionView(
       hasInteractionHistory: interactionCount > 0,
       variantIndex: storyState.turnNumber + storyState.currentAct + interactionCount,
     });
-    const speechPages = usableSupplied !== null
+    const speechPages = isPendingHandoffFocus
+      ? []
+      : usableSupplied !== null
       ? decorateNarrativePages(usableSupplied, speechSource)
       : decorateNarrativePages(
           paginateSpeechText(
@@ -664,8 +687,8 @@ export function projectGameSessionView(
       ...(projectedHandoffAcknowledgement !== null && String(npc.id) === sceneLineNpcId
         ? { handoffAcknowledgement: projectedHandoffAcknowledgement }
         : {}),
-      freeInputEnabled: isFocus,
-      giveChoices: isFocus
+      freeInputEnabled: isFocus && !isPendingHandoffFocus,
+      giveChoices: isFocus && !isPendingHandoffFocus
         ? worldState.inventory.map((itemId) => {
             const item = worldState.items.find((entry) => entry.id === itemId);
             const itemName = item?.name ?? "未知物品";
@@ -758,7 +781,7 @@ export function projectGameSessionView(
       tension: storyState.tension,
       pacingNeed: storyState.nextPacingNeed,
       storyProgress: storyState.storyProgress,
-      currentObjectiveLabel: currentObjectiveRef?.label ?? null,
+      currentObjectiveLabel: currentObjectiveRef?.label ?? (endingDecisionReady ? "选择结局方向" : null),
       currentObjectiveChoiceToken: currentObjectiveToken,
       currentObjectiveChoiceTokens: currentObjectiveTokens,
     },

@@ -46,7 +46,7 @@
 - **provider 触发白名单**：生产 provider job 只允许 `opening`、`npc_fixed_choice`、`npc_free_text`。正式 NPC job 内可按 `EvolutionNeed` 完成所需 world evolution；移动、调查、物品、战斗和回退导航不能在动作路径新增 provider 调用。
 - **候选不足处理**：普通 ready 场景若真实可执行候选少于两个，生产编排将 `scene_candidate_shortage` 视为 AI/审批失败，持久化 failed，不把无内容的 explore 当作合法候选；只有 `dialogueSession.completed=true` 且目标已推进的收尾 handoff scene 允许一个候选。离线 journey 可显式注入 deterministic evolution fixture 补齐候选，但不代表生产 AI 失败时的行为。
 - 普通对话场景绑定一个在场焦点 NPC，并提出两个语义不同的 TalkAction；收尾场景由同一次生成返回旧 NPC 的最后一句和一个绑定下一任务/地点/人物的 handoff Action。其他场景从服务端给出的合法候选 ID 中选择两个不同 Action。
-- `ObjectiveTransition.mode === advanced_act` 时叙事事件仍记录为非对话的任务交接；上一轮带 `player_utterance` 时焦点保持在原 NPC，由其先回应本轮话语，新目标只作为权威行动入口出现。进入地点或点击 talk 只打开 ready 对话，不再为首次交谈额外提交一次 `ask` API。玩家主动点击旁 NPC 时仍保持普通 `ask` 语义。目标身份由服务端锁定的 `objectiveLink` 和实体 ID 决定，旁白不要求逐字复述目标标签。
+- `ObjectiveTransition.mode === advanced_act` 时叙事事件仍记录为非对话的任务交接；上一轮带 `player_utterance` 时焦点保持在原 NPC，由其先回应本轮话语，新目标只作为权威行动入口出现。新 talk 目标还没有 ready scene 时，read model 只能提供两项 handoff 回应入口，不能合成角色 fallback 台词或开放自由输入；正式选择提交后才创建 provider job。进入地点或点击 talk 本身不额外提交一次 `ask` API。玩家主动点击旁 NPC 时仍保持普通 `ask` 语义。目标身份由服务端锁定的 `objectiveLink` 和实体 ID 决定，旁白不要求逐字复述目标标签。
 - `move` / `investigate` / battle start-resolve 命中已审批的 `PreparedContinuationState` 时，规则结果、prepared scene 物化、choice token 铸造、continuation 消费和 revision 递增共用一次 CAS，零 live/world/intent provider 调用。无 prepared step 的 `take_item` / `give_item`、回退导航和 active battle round 直接产生 `source="rule"` 场景。
 - 两个已批准选择若都指向同一在场 NPC 的 TalkAction，即使触发事件是 travel/battle，也投影为该 NPC 的焦点对白；底栏只保留一个“与 NPC 交谈”主线入口，回答分支只在对话框显示。
 - live source 只能选择服务端候选 ID，不能发明任意 `actionKey`、实体 ID、事实 ID 或规则结果。
@@ -70,8 +70,8 @@
 
 ## 叙事边界编排（2026-08-25）
 
-- 非对白行动完成当前幕最后一个主线目标后，若 `evolution.status=needs_next_act` 或 `needs_ending_pair`，read model 会投影一次“继续追查下一幕线索”探索入口；该入口只负责提交边界编排请求，不把无目标地点伪装成普通探索。
-- `performTurn` 对边界请求复用已批准的 provider 世界/场景编排链；新幕或结局写回前保持 pending 锁定。终幕最后一轮 `talk_to_npc` 即使目标转换模式为 `ready_for_ending`，也必须依据匹配且已完成的 `dialogueSession` 选择 `npc_handoff`，不能退回普通双选项场景。
+- 非对白行动完成当前幕最后一个主线目标后，若 `evolution.status=needs_next_act` 或 `needs_ending_pair`，read model 会投影一次“继续追查下一幕线索”探索入口；该入口只负责提交边界编排请求，不把无目标地点伪装成普通探索。结局对物化且 `endingAllowed=true` 后，read model 继续投影“选择结局方向”目标和“面对最终抉择”入口，直到玩家提交最后的 support/challenge 立场。
+- `performTurn` 对边界请求复用已批准的 provider 世界/场景编排链；新幕或结局写回前保持 pending 锁定。终幕最后一轮 `talk_to_npc` 即使目标转换模式为 `ready_for_ending`，也必须依据匹配且已完成的 `dialogueSession` 选择 `npc_handoff`，不能退回普通双选项场景。最终 support/challenge 一旦由规则层写入 `ending`，直接 CAS 保存结局并停止 provider scene job，避免后台失败遮蔽结局页。
 
 ## 强制节拍与目标链接
 
@@ -105,7 +105,7 @@
 - `src/game/application/deterministicEvolutionBeats.ts` — 离线 fixture 节拍与"线索→新地点"动线因果。
 - `src/game/application/focusNpcContext.ts` — 焦点 NPC 隔离记忆与关系政策投影。
 - `src/game/application/deterministicSceneSource.ts` — 显式离线 fixture proposal。
-- `src/game/application/gameSessionView.ts` — 投影焦点能力，并修复旧存档中与权威目标冲突的过期焦点；调查/移动/取物/战斗目标出现时会关闭上一轮 NPC 的双选项焦点。
+- `src/game/application/gameSessionView.ts` — 投影焦点能力，并修复旧存档中与权威目标冲突的过期焦点；调查/移动/取物/战斗目标出现时会关闭上一轮 NPC 的双选项焦点；新 talk 目标在 scene 未 ready 前不投影 fallback 台词或自由输入；终幕结局对就绪后投影稳定的结局决策目标。
 - `src/game/application/approveAndWriteScene.ts` — 场景表演审批与写回。
 - `src/game/application/generatePendingScene.ts` — 生成编排与原子 write-back。
 - `src/game/application/markNarrativeGenerationFailed.ts` / `retryNarrativeGeneration.ts` — failed 持久化与同 job CAS 手动重试。
@@ -120,6 +120,7 @@
 - 普通 generated 场景有两个不同 token；对话收尾 generated scene 有一个绑定下一步的 handoff token；scene JSON 无 `actionKey`；AI 失败只产生 stable failed 状态。
 - 分段旁白逐段命中强制节拍 ID；`objectiveLink` 与 HUD 当前目标一致；焦点 NPC 台词应答当前 `player_utterance`。
 - NPC 台词只保留直接对白正文，不能以“邵叔如实答道：……”形式把舞台说明混入气泡；旧存档投影也必须满足同一断言。
+- 新 talk 目标的交接提示不是 NPC 台词：在 `event.kind` 不是 dialogue 且没有可用 `npcLine`/dialogue pages 时，read model 保留两项 handoff 入口但对白页为空；生产 live/generated scene 不得用 deterministic fallback 冒充成功。
 - registry 的 `basedOnRevision` 等于 scene 写回后的 revision。
 - tampered、stale、重复 token 零写入。
 - live source 越权引用或失败不会绕过审批；失败保留规则已提交状态并等待手动重试。离线旅程通过显式 fixture source 完成，不代表生产 AI 失败时仍可通关。

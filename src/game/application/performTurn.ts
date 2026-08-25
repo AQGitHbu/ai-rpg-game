@@ -194,6 +194,31 @@ export async function performTurn(
     storyState: resolution.nextStoryState,
   });
 
+  // 终幕 support/challenge 已由规则层结算出 ending 时，游戏已经结束；不能
+  // 再为同一回合创建 provider scene job。否则后台场景失败会遮蔽已保存的
+  // 结局，刷新后玩家会看到“NPC 回应生成失败”而不是结局页。
+  if (revealed.worldState.ending !== null) {
+    const commitResult = await commitState(deps.repository, {
+      gameId: command.gameId,
+      expectedRevision: record.revision,
+      nextWorldState: revealed.worldState,
+      nextStoryState: revealed.storyState,
+    });
+    if (!commitResult.ok) {
+      return {
+        ok: false,
+        code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
+        feedback: "Commit failed",
+      };
+    }
+    return {
+      ok: true,
+      revision: commitResult.record.revision,
+      resolvedEvent: resolution.primaryResult,
+      feedback: "Action performed",
+    };
+  }
+
   // 活跃战斗回合是规则路径：直接 materialize rule-owned presentation，
   // 不创建 PendingNarrativeJob，也不等待 AI 场景编排。终结战斗仍继续
   // 走下方 prepared continuation 路径，要求精确的 battle_resolved 节点。
