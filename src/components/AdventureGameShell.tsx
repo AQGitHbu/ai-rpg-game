@@ -156,9 +156,9 @@ export function AdventureGameShell({
     submitInteraction(feedback.interaction, feedback.origin);
   }
 
-  function enterNpcBuilding(npcId: string): void {
-    // 建筑入口只负责切换到地点场景。进入建筑不能提交回合，
-    // 也不能因为当前目标是交谈就提前触发下一幕编排。
+  function enterNpcBuilding(npcId: string, arrivalChoiceToken?: string): void {
+    // 普通建筑入口只负责切换到地点场景；若服务端为当前事实目标建筑
+    // 下发了 arrivalChoiceToken，则进入建筑同时消费一次规则型 explore。
     const building = view.currentLocation.town?.interactiveBuildings.find((entry) => entry.npcId === npcId);
     if (building === undefined) return;
     setSceneContext({
@@ -168,6 +168,9 @@ export function AdventureGameShell({
       buildingId: building.buildingId,
     });
     setScreen("scene");
+    if (arrivalChoiceToken !== undefined) {
+      submitInteraction({ kind: "fixed_choice", choiceToken: arrivalChoiceToken });
+    }
   }
 
   function openDetails(panel: DetailsPanel): void {

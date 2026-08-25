@@ -7,14 +7,14 @@ import { TownMapSvg } from "./town/TownMapSvg";
 
 // ---------------------------------------------------------------------------
 // Town 层（第三层入口）：小镇逻辑地图 + 已绑定建筑交互入口。
-// 点击剧情建筑→选中侧边栏→进入建筑触发 onEnterBuilding(npcId)→
-// 打开该建筑绑定 NPC 的场景对话。
+// 点击剧情建筑→选中侧边栏→进入建筑触发 onEnterBuilding(npcId, token?)→
+// 普通建筑只打开场景；事实目标建筑还会消费服务端下发的规则 token。
 // ---------------------------------------------------------------------------
 
 type TownLayerScreenProps = {
   readonly town: TownView;
   readonly busy: boolean;
-  readonly onEnterBuilding: (npcId: string) => void;
+  readonly onEnterBuilding: (npcId: string, arrivalChoiceToken?: string) => void;
   readonly onReturnMap: () => void;
 };
 
@@ -59,7 +59,13 @@ export function TownLayerScreen({ town, busy, onEnterBuilding, onReturnMap }: To
               <h3>{selectedInteractive.displayName}</h3>
               <p>{selectedInteractive.npcName}</p>
               <InlineButton
-                onClick={() => onEnterBuilding(selectedInteractive.npcId)}
+                onClick={() => {
+                  if (selectedInteractive.arrivalChoiceToken === undefined) {
+                    onEnterBuilding(selectedInteractive.npcId);
+                  } else {
+                    onEnterBuilding(selectedInteractive.npcId, selectedInteractive.arrivalChoiceToken);
+                  }
+                }}
                 disabled={busy}
               >
                 进入{selectedInteractive.displayName}

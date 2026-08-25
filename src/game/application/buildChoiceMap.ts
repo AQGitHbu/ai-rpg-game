@@ -1,5 +1,6 @@
 import type { Action } from "@/game/domain/action";
 import { isTravelTarget, type WorldState } from "@/game/domain/worldState";
+import { locationScaleOf } from "@/game/domain/worldEntity";
 import type { StoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { isExpiredCandidate } from "@/game/domain/candidateEvent";
@@ -147,6 +148,17 @@ export function buildChoiceMap(
   // 不再解析 scene.choices 的 actionKey；未知/过期 token 不产生映射。
   const scene = readyNarrative?.currentScene;
   const registry = readyNarrative?.choiceRegistry;
+  const dialogueResume = readyNarrative?.dialogueResume;
+  if (dialogueResume !== undefined) {
+    // 规则型 travel 会替换 currentScene，但未消费的正式 NPC 场景仍保存在
+    // dialogueResume 中。按当前 revision 重铸其 talk token，允许恢复后的
+    // 对话继续走同一条服务端 action/CAS 链。
+    for (const entry of dialogueResume.choiceRegistry) {
+      if (entry.action.type !== "talk") continue;
+      if (!isCurrentlyLegalRegistryAction(entry.action, worldState, storyState, map, currentRevision)) continue;
+      map.set(deriveRuntimeChoiceToken(entry.action, currentRevision), entry.action);
+    }
+  }
   if (scene !== undefined && registry !== undefined) {
     const currentSceneTokens = new Set(scene.choices.map((choice) => choice.choiceToken));
     for (const entry of registry) {
@@ -206,6 +218,12 @@ function isCurrentlyLegalRegistryAction(
 // ---------------------------------------------------------------------------
 export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
   const currentId = ws.currentLocationId;
+
+  // town_building 不会产生独立的 move 回合，进入建筑本身是纯 UI 导航。
+  // 若当前事实目标的下一步是该建筑内的 NPC，给建筑入口一个 explore 边界，
+  // 让进入义庄/茶馆等场景仍能触发规则自动揭示；调查方式字段不能让这条链
+  // 再次退化成已经下线的 investigate 按钮。
+  if (townBuildingInvestigationTargetNpcId(ws, ss) !== null) return true;
 
   // 物品与敌人都是场景中可被观察、靠近和处理的实体；有它们时“探索”不是
   // 空转，而是允许玩家先观察现场，再决定拾取或开战。
@@ -272,6 +290,38 @@ export function hasExplorableContent(ws: WorldState, ss: StoryState): boolean {
     !isExpiredCandidate(candidate, ss.turnNumber) &&
     candidateTouchesLocation(ws, candidate, currentId),
   );
+}
+
+/**
+ * 返回当前城镇中承载事实目标的建筑 NPC。town_building 复用城镇容器的
+ * currentLocationId，因此没有 visit_location 可消费；只有在建筑绑定的下一
+ * 个 NPC 与当前 discover_fact 连续时，进入该建筑才允许提交一次 explore。
+ */
+export function townBuildingInvestigationTargetNpcId(
+  ws: WorldState,
+  ss: StoryState,
+): string | null {
+  const currentLocation = ws.locations.find((location) => location.id === ws.currentLocationId);
+  if (currentLocation === undefined || locationScaleOf(currentLocation) !== "town" || currentLocation.town === undefined) {
+    return null;
+  }
+
+  const objectiveRef = currentObjectiveOf(ws, ss);
+  if (objectiveRef === null) return null;
+  const quest = ws.quests.find((entry) => String(entry.id) === String(objectiveRef.questId));
+  const objective = quest?.objectives[objectiveRef.objectiveIndex];
+  if (objective?.kind !== "discover_fact") return null;
+
+  const fact = ws.worldFacts.find((entry) => String(entry.factId) === String(objective.factId));
+  if (fact === undefined || fact.discovered || (fact.locationId !== undefined && String(fact.locationId) !== String(currentLocation.id))) {
+    return null;
+  }
+
+  const nextObjective = quest?.objectives[objectiveRef.objectiveIndex + 1];
+  if (nextObjective?.kind !== "talk_to_npc") return null;
+  const npc = ws.npcs.find((entry) => String(entry.id) === String(nextObjective.npcId));
+  if (npc === undefined || String(npc.locationId) !== String(currentLocation.id)) return null;
+  return String(npc.id);
 }
 
 /** 当前幕已结算但下一幕/结局尚未装配时，允许玩家提交一次边界编排行动。 */

@@ -65,6 +65,10 @@ export function decideNarrativeExecution(input: NarrativeExecutionInput): Narrat
   if ((input.action.type === "take_item" || input.action.type === "give_item") && !input.hasPreparedStep) {
     return { kind: "rule_only" };
   }
-  if (input.advancesObjective || input.hasPreparedStep || input.battleWillResolve) return { kind: "prepared" };
+  // 目标推进本身不等于存在可消费的 prepared continuation。比如玩家
+  // 重返一个调查地点时，规则层可能在移动回合自动确认 discover_fact，
+  // 但该移动没有对应的 AI 预备节点；此时必须保留规则场景并继续展示
+  // 推进后的目标，不能把一次合法移动送进 continuation missing 错误。
+  if (input.hasPreparedStep || input.battleWillResolve) return { kind: "prepared" };
   return { kind: "rule_only" };
 }

@@ -10,7 +10,7 @@ NPC 对话是持续推进故事的主要入口。每个 ready 的焦点 NPC 场�
 - 两个固定选择必须是当前 NPC 台词的直接回应；每次选择只消耗一轮，不代表对话立即结束。默认对话会话至少连续两轮，第一轮后保留同一 NPC 与话题，第二轮收束后才允许 `talk_to_npc` 目标完成。
 - 任务面板中的 `talk_to_npc` 完成标记与两轮会话状态一致；NPC 的世界事实 `met` 只能表示已经接触过，不能提前把未完成的对白会话显示为完成。
 - 运行时目标判定必须同时匹配 `dialogueSession.npcId` 与当前 `talk_to_npc.npcId`，并要求该会话 `completed=true`；旧 NPC 的已完成会话、或新 NPC 本回合刚写入的 `met=true`，都不能跳过新 NPC 的第一轮正式回应。只有同 NPC 的完整会话完成后，才允许生成 `npc_handoff` 收尾场景。
-- 小镇建筑只负责进入建筑场景，不提交回合；地点行动栏中的明确 talk 行动只打开当前读模型。行动栏与 `talkChoice` 只为当前权威 talk 目标铸造。若新 talk 目标尚无 ready dialogue scene，读模型可以展示两项服务端铸造的 handoff 回应入口，但不伪造 NPC 台词，也不开放自定义输入；选择其中一项后才发起正式回合并请求 provider scene。已有 ready 焦点对话必须展示两个固定选择和一个自定义输入；点击 NPC 资料卡本身仍只查看信息，observe 场景中的 NPC 旁白不构成焦点对话。
+- 普通小镇建筑只负责进入建筑场景，不提交回合；若当前 discover_fact 的下一目标是该建筑 NPC，入口例外消费服务端下发的规则型 `arrivalChoiceToken`，不调用 provider。地点行动栏中的明确 talk 行动只打开当前读模型。行动栏与 `talkChoice` 只为当前权威 talk 目标铸造。若新 talk 目标尚无 ready dialogue scene，读模型可以展示两项服务端铸造的 handoff 回应入口，但不伪造 NPC 台词，也不开放自定义输入；选择其中一项后才发起正式回合并请求 provider scene。已有 ready 焦点对话必须展示两个固定选择和一个自定义输入；点击 NPC 资料卡本身仍只查看信息，observe 场景中的 NPC 旁白不构成焦点对话。
 - 固定选择由服务器批准并以 opaque `choiceToken` 下发；客户端只显示 label/hint，不知道 Action 或 `actionKey`。
 - 自定义输入必须绑定当前焦点 NPC。每次提交生成新的浏览器 UUID，即使连续对同一 NPC 输入也分别计为独立回合；即便原文包含地点或物品动作词，在该对话上下文中也必须作为对焦点 NPC 的 utterance 解析，不能切换为移动、取物或探索 Action。
 - 玩家输入表达意图，不声明事实。服务端意图解析器只能转换成当前受支持 Action；越权声明不能直接改变任务、知识、关系、物品、战斗或结局。
@@ -25,6 +25,7 @@ NPC 对话是持续推进故事的主要入口。每个 ready 的焦点 NPC 场�
 - 新地点刚被编排出来时，场景事件可能仍是 travel/observe；只要当前主线目标已锁定该地点的焦点 NPC，read model 仍可从权威目标铸造两项 opaque 的 support/challenge 回应，但在该 NPC 的 ready scene 写回前不生成角色台词或开放自定义对白，不能把交接提示误报成 NPC 已回应。若当前目标是已批准 continuation 的移动/调查/战斗节点，则先消费该节点，再在 post-commit revision 上铸造正式选择 token。
 - 同一幕可以在 prepared continuation 中审批后续 NPC、证物和敌人，但只有当前 active step 对应的实体进入场景与 NPC 上下文。前置调查未完成时不展示远端 NPC；玩家抵达新地点后，NPC 首句必须承接已完成的调查事实与到达过程，不能默认双方已经交换过密信、腰牌或完整案情。调查方式和战斗结果等兄弟 step 共用消费组，消费一个分支会裁剪未选分支。
 - 正式对白提交后保留原 NPC 对话模态；选中的固定回应或自定义回应的本地临时展示保留在当前模态中，并在其后显示等待 NPC 回应的内联 loading。等待态从提交前捕获的本页临时对话快照渲染，不能依赖 pending `GameSessionView` 继续提供 choices；因此固定选项、已选态、spinner 与给予道具选项在 pending 快照清空 choices 时仍可见。自定义输入只保留在当前页面临时状态，不写入对话记录。对话选项、输入、关闭和其它游戏入口全部锁定。ready 写回后清理临时快照，直接显示同一 NPC 的新台词和下一组选项，不增加继续按钮。场景生成 failed 时只弹出失败重试模态；行动尚未提交的 AI 失败重试原 interaction，规则已提交的场景失败复用同一 narrative job。若目标变化，HUD/任务面板显示权威下一步，旧焦点对白按交接规则关闭。
+- 已生成但尚未消费的抵达对白与已审批 talk action 会写入 ready narrative 的 `dialogueResume`；玩家离开后再返回目标地点时，read model 按当前 revision 重铸 opaque token，恢复原 NPC 台词和选项。旧存档若只剩 rule-owned travel scene，则目标 NPC 点击直接补发一次权威 `ask` 回合生成正式对白，不展示空白气泡或伪造的默认 support/challenge 选项。
 - 玩家原文不写入长期记忆、事件账本或日志；长期记录只保存规则归一化的 dialogue act、topic summary 和 fact IDs。
 - `npcLine.text` 是直接展示给玩家的 NPC 第一人称台词正文，不得包含 NPC 名称、角色动作或“说道/答道”等叙述性前缀；点击 NPC 时 UI 已经单独展示名称。
 - NPC 回应必须承接当前玩家话语或当前交谈情境；“我知道了”“好的”“嗯”等无对象确认句，以及“你想问哪一段 / 你还想了解什么”这类只把责任推回玩家的空泛追问，都不是合法的上下文回应，live source 会先带失败原因重试一次，仍不合格就返回 `AI_RESPONSE_INVALID`，场景进入 failed 并等待手动重试。

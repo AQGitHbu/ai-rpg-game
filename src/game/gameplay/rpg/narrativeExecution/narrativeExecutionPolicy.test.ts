@@ -94,7 +94,7 @@ describe("narrative execution provider whitelist", () => {
     })).toEqual({ kind: "rule_only" });
   });
 
-  it("routes an objective action with missing prepared content to the prepared error path", () => {
+  it("目标推进但没有 prepared content 时保留规则场景，不伪造 continuation 消费", () => {
     expect(decideNarrativeExecution({
       action: { type: "move", locationId: "loc_2" as never },
       interactionKind: null,
@@ -102,7 +102,7 @@ describe("narrative execution provider whitelist", () => {
       hasPreparedStep: false,
       battleWillResolve: false,
       dialogueWillComplete: false,
-    })).toEqual({ kind: "prepared" });
+    })).toEqual({ kind: "rule_only" });
   });
 
   it("allows intent AI only for free text bound to the authoritative focused NPC", () => {

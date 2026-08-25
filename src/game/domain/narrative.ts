@@ -100,6 +100,21 @@ export type DialogueSessionState = {
   readonly completed: boolean;
 };
 
+/**
+ * 未消费的正式 NPC 抵达场景缓存。
+ *
+ * 玩家可以在收到 NPC 的第一句和两个已审批回应后先离开地点，再从地图
+ * 返回。规则型 travel 场景会替换 currentScene，但不应丢失这段尚未消费的
+ * 对话；恢复时由 application 按当前 revision 重新铸造 opaque token。
+ */
+export type DialogueResumeState = {
+  readonly objectiveKey: string;
+  readonly npcId: NpcId;
+  readonly locationId: LocationId;
+  readonly scene: NarrativeSceneState;
+  readonly choiceRegistry: readonly ApprovedChoice[];
+};
+
 /** Runtime AI is opt-in per save. Offline development presets never call it. */
 export type NarrativeMode = "ai" | "offline";
 
@@ -111,6 +126,7 @@ export type NarrativeRuntimeState =
       readonly choiceRegistry: readonly ApprovedChoice[];
       readonly preparedContinuation?: PreparedContinuationState;
       readonly dialogueSession?: DialogueSessionState;
+      readonly dialogueResume?: DialogueResumeState;
     }
   | {
       readonly status: "provider_pending";
@@ -245,6 +261,17 @@ function isDialogueSession(value: unknown): value is DialogueSessionState {
     && typeof value.completed === "boolean";
 }
 
+function isDialogueResume(value: unknown): value is DialogueResumeState {
+  return isRecord(value)
+    && hasOnlyKeys(value, ["objectiveKey", "npcId", "locationId", "scene", "choiceRegistry"])
+    && isNonEmptyString(value.objectiveKey)
+    && isNonEmptyString(value.npcId)
+    && isNonEmptyString(value.locationId)
+    && isNarrativeScene(value.scene)
+    && Array.isArray(value.choiceRegistry)
+    && value.choiceRegistry.every(isApprovedChoice);
+}
+
 function isApprovedChoice(value: unknown): value is ApprovedChoice {
   if (!isRecord(value) || !hasOnlyKeys(value, [
     "choiceToken", "sceneId", "basedOnRevision", "label", "action", "semanticSummary",
@@ -312,13 +339,16 @@ export function parseNarrativeRuntimeState(value: unknown): ParseNarrativeRuntim
 
   if (value.status === "ready") {
     if (!hasOnlyKeys(value, [
-      "status", "mode", "currentScene", "choiceRegistry", "preparedContinuation", "dialogueSession",
+      "status", "mode", "currentScene", "choiceRegistry", "preparedContinuation", "dialogueSession", "dialogueResume",
     ])) return INVALID_NARRATIVE_RUNTIME;
     if (!isNarrativeScene(value.currentScene)
       || !Array.isArray(value.choiceRegistry)
       || !value.choiceRegistry.every(isApprovedChoice)) return INVALID_NARRATIVE_RUNTIME;
     if (value.preparedContinuation !== undefined
       && !parsePreparedContinuationState(value.preparedContinuation).ok) {
+      return INVALID_NARRATIVE_RUNTIME;
+    }
+    if (value.dialogueResume !== undefined && !isDialogueResume(value.dialogueResume)) {
       return INVALID_NARRATIVE_RUNTIME;
     }
     return { ok: true, value: value as NarrativeRuntimeState };

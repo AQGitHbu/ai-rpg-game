@@ -333,6 +333,72 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(record()?.worldState).toBe(world);
   });
 
+  it("移动触发自动调查推进目标但没有 prepared continuation 时仍保存规则场景", async () => {
+    const factId = asFactId("fact_shadow");
+    const questId = asQuestId("quest_shadow");
+    const shadowNpc = { ...npc1, locationId: loc2.id };
+    const world: WorldState = {
+      ...buildWorldState(),
+      locations: [
+        loc1,
+        { ...loc2, npcIds: [shadowNpc.id] },
+      ],
+      npcs: [shadowNpc],
+      visitedLocationIds: [loc1.id, loc2.id],
+      worldFacts: [{
+        factId,
+        text: "黑影曾从乱葬岗离开。",
+        source: "generated",
+        discovered: false,
+        investigationLabel: "黑影去向",
+        investigationApproaches: [
+          { approachId: "track", label: "追踪脚印", hint: "泥土松软。", evidenceQuality: "clean", tensionDelta: 1 },
+          { approachId: "ask", label: "询问守墓人", hint: "守墓人就在附近。", evidenceQuality: "noisy", tensionDelta: 1 },
+        ],
+        locationId: loc2.id,
+      }],
+      quests: [{
+        id: questId,
+        name: "乱葬岗的足迹",
+        description: "查明黑影去向。",
+        objectives: [
+          { kind: "visit_location", locationId: loc2.id },
+          { kind: "discover_fact", factId },
+          { kind: "talk_to_npc", npcId: shadowNpc.id },
+        ],
+        onSuccess: { kind: "advance_story" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 1,
+        status: "active",
+      }],
+    };
+    const story: StoryState = {
+      ...buildStoryState(),
+      reveal: { questId, visibleObjectiveIndex: 1 },
+    };
+    const store = createSpyRepo(world, story);
+    const result = await performTurn(
+      {
+        gameId: asGameId("g1"),
+        actionId: "return-to-investigation-site",
+        interaction: { kind: "fixed_choice", choiceToken: "move" },
+        expectedRevision: 0,
+        choiceMap: new Map([["move", { type: "move", locationId: loc2.id }]]),
+      },
+      { repository: store.repo, now: () => "2026-01-02" },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(store.record()?.worldState.worldFacts[0]?.discovered).toBe(true);
+    const saved = store.record();
+    expect(saved?.storyState.narrative.status).toBe("ready");
+    if (saved?.storyState.narrative.status === "ready") {
+      expect(saved.storyState.narrative.currentScene.source).toBe("rule");
+    }
+  });
+
   it("成功回合 applyState 恰好一次，单次写入同时包含 WorldState、StoryState.turnNumber 和 pending job", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 

@@ -1526,6 +1526,45 @@ describe("AdventureGameShell canonical opaque choices", () => {
     );
   });
 
+  it("repairs a missing prepared dialogue by starting the authoritative talk action on NPC click", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const base = buildView();
+    const missingPreparedDialogue: GameSessionView = {
+      ...base,
+      story: {
+        ...base.story,
+        currentObjectiveLabel: "与老板交谈",
+        currentObjectiveChoiceToken: TOKENS.dialogueOne,
+        currentObjectiveChoiceTokens: [TOKENS.dialogueOne],
+      },
+      narrative: {
+        ...base.narrative,
+        npcDialogues: [{
+          ...base.narrative.npcDialogues[0]!,
+          speechPages: [],
+          choices: [],
+          freeInputEnabled: false,
+          startChoice: choice(TOKENS.dialogueOne, "与老板交谈", "dialogue"),
+        }],
+      },
+    };
+
+    render(<LocationSceneScreen
+      view={missingPreparedDialogue}
+      busy={false}
+      onSubmit={onSubmit}
+      onReturnMap={vi.fn()}
+    />);
+
+    await user.click(screen.getByRole("button", { name: /老板.*路人/ }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
+      "npc-dialogue",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("正在等待老板回应");
+  });
+
   it("keeps battle sides explicit and shows the attack feedback before the next snapshot", async () => {
     const base = buildBattleView();
     const onSubmit = vi.fn();
@@ -1787,6 +1826,39 @@ describe("AdventureGameShell three-layer navigation", () => {
 
     expect(screen.getByRole("region", { name: `地点场景：${interactive.displayName}` })).toBeInTheDocument();
     expect(postAction).not.toHaveBeenCalled();
+  });
+
+  it("submits the server-provided arrival explore token for a fact-target building", async () => {
+    const user = userEvent.setup();
+    const base = buildTownView();
+    const arrivalToken = "c_00000000000000aa";
+    const view: GameSessionView = {
+      ...base,
+      currentLocation: {
+        ...base.currentLocation,
+        town: {
+          ...base.currentLocation.town!,
+          interactiveBuildings: base.currentLocation.town!.interactiveBuildings.map((entry, index) =>
+            index === 0 ? { ...entry, arrivalChoiceToken: arrivalToken } : entry,
+          ),
+        },
+      },
+    };
+    render(<AdventureGameShell
+      view={view}
+      onViewChange={vi.fn()}
+      onStaleRevision={vi.fn()}
+      onClearDevelopmentSave={vi.fn(async () => {})}
+    />);
+
+    await user.click(screen.getByRole("button", { name: "客栈" }));
+    await user.click(screen.getByRole("button", { name: interactive.displayName }));
+    await user.click(screen.getByRole("button", { name: `进入${interactive.displayName}` }));
+
+    expect(postAction).toHaveBeenCalledWith({
+      interaction: { kind: "fixed_choice", choiceToken: arrivalToken },
+      revision: 9,
+    });
   });
 
   it("uses the NPC bound to the clicked building instead of the current objective NPC", async () => {

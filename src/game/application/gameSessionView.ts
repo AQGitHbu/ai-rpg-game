@@ -1,8 +1,10 @@
 import type { Action } from "@/game/domain/action";
+import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import {
   NPC_SCENE_PAGE_CHAR_BUDGET,
   composeDeterministicNpcLine,
 } from "@/game/domain/narrative";
+import type { DialogueResumeState, NarrativeSceneState } from "@/game/domain/narrative";
 import { paginateSpeechText } from "@/game/domain/speechPagination";
 import { locationScaleOf } from "@/game/domain/worldEntity";
 import type { ItemCategory, ItemRarity, ItemStatLine } from "@/game/domain/worldEntity";
@@ -10,7 +12,12 @@ import { resolveItemPresentation, type ItemIconKey } from "@/game/domain/itemPre
 import type { StoryState } from "@/game/domain/storyState";
 import { isTravelTarget, type WorldState } from "@/game/domain/worldState";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
-import { buildChoiceMap, hasExplorableContent, needsWorldBoundaryPreparation } from "./buildChoiceMap";
+import {
+  buildChoiceMap,
+  hasExplorableContent,
+  needsWorldBoundaryPreparation,
+  townBuildingInvestigationTargetNpcId,
+} from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
@@ -35,6 +42,8 @@ export type NpcDialogueView = {
   readonly speechPages: readonly string[];
   /** 正式对白收尾的本地确认句；不携带 choice token、action 或 revision。 */
   readonly handoffAcknowledgement?: { readonly label: string };
+  /** 旧存档缺少已准备抵达对白时，用当前权威 talk action 触发一次补生成。 */
+  readonly startChoice?: PlayerChoiceView;
   readonly choices: readonly PlayerChoiceView[];
   readonly freeInputEnabled: boolean;
   /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
@@ -218,6 +227,44 @@ function handoffDialogueChoices(
   ];
 }
 
+function restoreDialogueResume(
+  resume: DialogueResumeState,
+  revision: number,
+): { readonly scene: NarrativeSceneState; readonly choiceRegistry: readonly ApprovedChoice[] } | null {
+  const entries = resume.scene.choices
+    .map((sceneChoice) => resume.choiceRegistry.find((entry) =>
+      entry.choiceToken === sceneChoice.choiceToken
+      && entry.sceneId === resume.scene.sceneId,
+    ))
+    .filter((entry): entry is ApprovedChoice => entry !== undefined);
+  if (entries.length !== resume.scene.choices.length) return null;
+  if (entries.some((entry) => {
+    if (entry.action.type !== "talk") return true;
+    return String(entry.action.npcId) !== String(resume.npcId);
+  })) return null;
+
+  const sceneId = `scene-resume-dialogue-${resume.npcId}-${revision}`;
+  const choiceRegistry = entries.map((entry) => ({
+    ...entry,
+    choiceToken: deriveRuntimeChoiceToken(entry.action, revision),
+    sceneId,
+    basedOnRevision: revision,
+  }));
+  const choices = resume.scene.choices.map((sceneChoice, index) => ({
+    ...sceneChoice,
+    choiceToken: choiceRegistry[index]!.choiceToken,
+  }));
+  return {
+    scene: {
+      ...resume.scene,
+      sceneId,
+      turn: revision,
+      choices,
+    },
+    choiceRegistry,
+  };
+}
+
 function projectQuestObjectives(
   worldState: WorldState,
   storyState: StoryState,
@@ -364,6 +411,20 @@ export function projectGameSessionView(
   const townView = currentLocation === undefined
     ? null
     : buildTownView(worldState, currentLocation.id, currentObjectiveNpcId);
+  const townBuildingNpcId = townBuildingInvestigationTargetNpcId(worldState, storyState);
+  const townBuildingArrivalToken = townBuildingNpcId === null
+    ? null
+    : choice({ type: "explore" }, revision, "探索目标建筑", "explore").choiceToken;
+  const projectedTownView = townView === null || townBuildingArrivalToken === null
+    ? townView
+    : {
+        ...townView,
+        interactiveBuildings: townView.interactiveBuildings.map((entry) =>
+          String(entry.npcId) === townBuildingNpcId
+            ? { ...entry, arrivalChoiceToken: townBuildingArrivalToken }
+            : entry,
+        ),
+      };
 
   const mapLocations = worldState.locations
     .filter((location) => worldState.unlockedLocationIds.includes(location.id))
@@ -421,7 +482,7 @@ export function projectGameSessionView(
         objective.kind === "obtain_item" && String(objective.itemId) === String(itemId)))
       .map((itemId, index) => {
         const item = worldState.items.find((entry) => entry.id === itemId);
-        const townBuildings = townView?.interactiveBuildings ?? [];
+        const townBuildings = projectedTownView?.interactiveBuildings ?? [];
         const townBuilding = townBuildings.length > 0
           ? townBuildings[index % townBuildings.length]
           : undefined;
@@ -437,10 +498,24 @@ export function projectGameSessionView(
   const readyNarrative = storyState.narrative.status === "ready"
     ? storyState.narrative
     : null;
-  const scene = readyNarrative?.currentScene
+  const currentScene = readyNarrative?.currentScene
     ?? (storyState.narrative.status === "ready"
       ? null
       : storyState.narrative.lastPresentedScene);
+  const dialogueResume = readyNarrative?.dialogueResume;
+  const canResumeDialogue = dialogueResume !== undefined
+    && currentObjectiveRef !== null
+    && currentObjective !== undefined
+    && currentObjective.kind === "talk_to_npc"
+    && `${currentObjectiveRef.questId}:${currentObjectiveRef.objectiveIndex}` === dialogueResume.objectiveKey
+    && String(currentObjective.npcId) === String(dialogueResume.npcId)
+    && String(worldState.currentLocationId) === String(dialogueResume.locationId)
+    && presentNpcs.some((npc) => String(npc.id) === String(dialogueResume.npcId));
+  const restoredDialogue = canResumeDialogue && dialogueResume !== undefined
+    ? restoreDialogueResume(dialogueResume, revision)
+    : null;
+  const scene = restoredDialogue?.scene ?? currentScene;
+  const registry = restoredDialogue?.choiceRegistry ?? readyNarrative?.choiceRegistry ?? [];
   // 只有结构化 dialogue event 才能赋予 NPC“焦点对话”能力。
   // observe/travel 等场景也可能带 npcLine 作为旁白表演，但不能因此泄露
   // 自由输入或伪造一个没有两个批准选项的焦点对话框。
@@ -460,7 +535,6 @@ export function projectGameSessionView(
     && presentNpcs.some((npc) => String(npc.id) === currentObjectiveNpcId)
     ? currentObjectiveNpcId
     : null;
-  const registry = readyNarrative?.choiceRegistry ?? [];
   const legalChoiceMap = buildChoiceMap(worldState, storyState, revision);
   // 终幕（或一次战斗/移动后的追问）有时已没有未完成 objective，却仍由同
   // 一名在场 NPC 给出两个已批准的 TalkAction。这是该 NPC 的回答分支，不是
@@ -641,7 +715,15 @@ export function projectGameSessionView(
             NPC_SCENE_PAGE_CHAR_BUDGET,
           ),
           speechSource,
-        );
+      );
+    const startChoice = isPendingHandoffFocus
+      ? choice(
+          { type: "talk", npcId: npc.id, dialogueAct: "ask" },
+          revision,
+          `与${npc.name}交谈`,
+          "dialogue",
+        )
+      : undefined;
     return {
       npcId: String(npc.id),
       name: npc.name,
@@ -649,10 +731,11 @@ export function projectGameSessionView(
       speechPages,
       // 非焦点 NPC 是零回合闲聊：不提供任何可提交选项；正式对话只能经
       // 当前权威 talk 目标入口（NPC 卡片/交接双选项）开启。
-      choices: isFocus ? dialogueChoices : [],
+      choices: isFocus && !isPendingHandoffFocus ? dialogueChoices : [],
       ...(projectedHandoffAcknowledgement !== null && String(npc.id) === sceneLineNpcId
         ? { handoffAcknowledgement: projectedHandoffAcknowledgement }
         : {}),
+      ...(startChoice === undefined ? {} : { startChoice }),
       freeInputEnabled: isFocus && !isPendingHandoffFocus,
       giveChoices: isFocus && !isPendingHandoffFocus
         ? worldState.inventory.map((itemId) => {
@@ -730,7 +813,7 @@ export function projectGameSessionView(
             )
           : null,
       })),
-      town: townView,
+      town: projectedTownView,
     },
     obtainableItems,
     inventory: worldState.inventory.map((itemId) => {

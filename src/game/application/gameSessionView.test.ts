@@ -7,7 +7,9 @@ import { createInitialStoryState, type StoryState } from "@/game/domain/storySta
 import { asLocationId, asNpcId, asGenerationId, asFactId, asItemId, asEnemyId, asEndingId, asQuestId } from "@/game/domain/worldEntity";
 import type { Action } from "@/game/domain/action";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
+import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
+import { buildRuleOwnedScene } from "./ruleOwnedScene";
 
 describe("projectGameSessionView", () => {
   const loc1: LocationEntry = {
@@ -538,7 +540,8 @@ describe("projectGameSessionView", () => {
 
     expect(view.story.currentObjectiveLabel).toBe("与老板交谈");
     expect(view.currentLocation.npcs[0]?.talkChoice).not.toBeNull();
-    expect(dialogue?.choices).toHaveLength(2);
+    expect(dialogue?.choices).toEqual([]);
+    expect(dialogue?.startChoice).toMatchObject({ label: "与老板交谈", presentation: "dialogue" });
     expect(dialogue?.freeInputEnabled).toBe(false);
     expect(dialogue?.speechPages).toEqual([]);
     expect(JSON.stringify(dialogue)).not.toContain("fallback");
@@ -1252,6 +1255,89 @@ describe("projectGameSessionView", () => {
     expect(view.narrative.choices).toEqual([]);
   });
 
+  it("离开后返回目标地点时恢复已生成的 NPC 抵达对白，而不是默认选项", () => {
+    const questId = asQuestId("quest_resume_dialogue");
+    const worldWithQuest: WorldState = {
+      ...ws,
+      quests: [{
+        id: questId,
+        name: "追查旧案",
+        description: "找到客栈老板",
+        objectives: [{ kind: "talk_to_npc", npcId: npc1.id }],
+        onSuccess: { kind: "advance_story" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 1,
+        status: "active",
+      }],
+    };
+    const arrivalScene = {
+      sceneId: "scene-generated-arrival",
+      turn: 0,
+      narration: "老板从门后抬起眼，显然早已等候多时。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text: "这件事牵涉到旧案。你若真想查，就先把手里的证据摊开。", emotion: "guarded" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "arrival-support", label: "我愿意先把证据交给你核对。" },
+        { choiceToken: "arrival-challenge", label: "我会逐项核对，你凭什么让我相信？" },
+      ] as const,
+      source: "generated" as const,
+      event: { kind: "travel" as const, locationId: loc1.id },
+    };
+    const arrivalStory: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: arrivalScene,
+        choiceRegistry: [
+          approved("arrival-support", arrivalScene.sceneId, 0, arrivalScene.choices[0].label, { type: "talk", npcId: npc1.id, dialogueAct: "support" }),
+          approved("arrival-challenge", arrivalScene.sceneId, 0, arrivalScene.choices[1].label, { type: "talk", npcId: npc1.id, dialogueAct: "challenge" }),
+        ],
+      },
+    };
+    const moveEvent = (actionId: string): ResolvedEvent => ({
+      actionId,
+      status: "success",
+      eventKind: "travel",
+      facts: [],
+      stateChanges: [],
+      costs: [],
+      rewards: [],
+      triggeredEvents: [],
+      rejectedEffects: [],
+    });
+
+    const awayWorld = { ...worldWithQuest, currentLocationId: loc2.id };
+    const away = buildRuleOwnedScene({
+      action: { type: "move", locationId: loc2.id },
+      resolvedEvent: moveEvent("move-away"),
+      worldState: awayWorld,
+      storyState: arrivalStory,
+      turn: 1,
+    });
+    const returnedWorld = { ...awayWorld, currentLocationId: loc1.id };
+    const returned = buildRuleOwnedScene({
+      action: { type: "move", locationId: loc1.id },
+      resolvedEvent: moveEvent("move-back"),
+      worldState: returnedWorld,
+      storyState: away.storyState,
+      turn: 2,
+    });
+
+    const view = projectGameSessionView(returnedWorld, returned.storyState, 2, "test-ending-session");
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(npc1.id));
+    expect(dialogue?.speechPages.join("")).toContain("这件事牵涉到旧案");
+    expect(dialogue?.speechPages.join("")).not.toContain("【fallback】");
+    expect(dialogue?.choices.map((choice) => choice.label)).toEqual([
+      "我愿意先把证据交给你核对。",
+      "我会逐项核对，你凭什么让我相信？",
+    ]);
+    expect(dialogue?.freeInputEnabled).toBe(true);
+    const executable = buildChoiceMap(returnedWorld, returned.storyState, 2);
+    expect(dialogue?.choices.every((choice) => executable.has(choice.choiceToken))).toBe(true);
+  });
+
   it("projects quest objectives, pending/reload data, and ending without leaking server state", () => {
     const endingId = asEndingId("ending_home");
     const secretText = "皇城密道位于古井之下";
@@ -1633,6 +1719,59 @@ describe("projectGameSessionView town read model", () => {
     expect(interactive.length).toBeGreaterThan(0);
     expect(interactive[0]?.npcId).toBe("npc_1");
     expect(interactive[0]?.npcName).toBe("老板");
+  });
+
+  it("当前事实目标由城镇建筑承载时，下发进入即探索的 opaque token", () => {
+    const questId = asQuestId("quest_town_investigation");
+    const factId = asFactId("fact_town_hidden_compartment");
+    const townWs: WorldState = {
+      ...makeTownWorld(),
+      worldFacts: [{
+        factId,
+        text: "义庄暗格藏着一封密信。",
+        source: "generated",
+        discovered: false,
+        locationId: asLocationId("loc_1"),
+        investigationLabel: "义庄暗格",
+        investigationApproaches: [
+          { approachId: "search", label: "翻找暗格", evidenceQuality: "clean", tensionDelta: 0 },
+          { approachId: "observe", label: "观察机关", evidenceQuality: "clean", tensionDelta: 0 },
+        ],
+      }],
+      quests: [{
+        id: questId,
+        name: "义庄密信",
+        description: "查清暗格中的密信",
+        objectives: [
+          { kind: "discover_fact", factId },
+          { kind: "talk_to_npc", npcId: asNpcId("npc_1") },
+        ],
+        onSuccess: { kind: "closed" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 1,
+        status: "active",
+      }],
+    };
+    const baseStory = createInitialStoryState({
+      initialNarrative: createFixtureNarrativeRuntimeState(),
+      gameLength: "short",
+      initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 },
+    });
+    const townSs: StoryState = {
+      ...baseStory,
+      reveal: { questId, visibleObjectiveIndex: 0 },
+    };
+
+    const view = projectGameSessionView(townWs, townSs, 4, "test-ending-session");
+    const explore = view.currentLocation.actions.find((entry) => entry.presentation === "explore");
+    const targetBuilding = view.currentLocation.town?.interactiveBuildings.find((entry) => entry.npcId === "npc_1");
+
+    expect(explore).toBeDefined();
+    expect(targetBuilding?.arrivalChoiceToken).toBe(explore?.choiceToken);
+    expect(buildChoiceMap(townWs, townSs, 4).get(explore!.choiceToken)).toEqual({ type: "explore" });
+    expect(view.currentLocation.npcs).toEqual([]);
   });
 
   it("town 地点的同一物品只投影到一个可进入建筑，不会在每个建筑场景重复出现", () => {
