@@ -68,6 +68,32 @@ function mandatoryBeatContent(context: SceneGenerationContext): { readonly beats
   };
 }
 
+function repairInstruction(context: SceneGenerationContext): string {
+  const reason = context.repairAttempt?.reason;
+  if (reason === undefined) return "";
+  switch (reason) {
+    case "segment_unknown_beat": {
+      const allowedBeatIds = [
+        ...new Set([
+          ...context.mandatoryBeats.map((beat) => beat.beatId),
+          ATMOSPHERE_BEAT_ID,
+        ]),
+      ];
+      return `上次失败字段：segments[].beatId 使用了未授权节拍。segments[].beatId 只能逐字复制允许列表 [${allowedBeatIds.join(", ")}]; 禁止使用 actionId、jobId、questId 或任何自创 ID。`;
+    }
+    case "segments_empty":
+      return `上次失败字段：segments 为空。必须返回至少一段，并使用允许的 beatId；当前无强制节拍时只能返回 ${ATMOSPHERE_BEAT_ID}。`;
+    case "invalid_json":
+      return "上次失败：响应不是可解析的完整 JSON。只返回一个 JSON 对象，不要加解释文字或 Markdown 围栏。";
+    case "root_not_object":
+      return "上次失败：JSON 根节点不是对象。只返回契约要求的 JSON 对象。";
+    case "choices_stale_template":
+      return "上次失败：choices 沿用了上一轮或旧模板文案。保留服务端给出的 candidateId，但根据本轮 NPC 回应重写两个具体、可执行的选项 label。";
+    default:
+      return `上次失败字段：${reason}。只修复该契约问题，其他主线、NPC、历史对话和事实边界保持不变。`;
+  }
+}
+
 function focusContent(context: SceneGenerationContext): string {
   const focus = context.focusNpcContext;
   if (focus === undefined) return "无焦点 NPC；npcLine 必须为 null。";
@@ -283,7 +309,7 @@ export function buildSceneNarrativeContextBlocks(
     blocks.push(sceneBlock({
       id: "scene:repair", slot: "current_resolution", title: "当前已结算结果", sourceKind: "scene_generation_repair", sourceRefs: [String(job.jobId)],
       authority: "state", retention: "mandatory", priority: 950,
-      content: `这是同一回合的第${context.repairAttempt.attempt + 1}次内容生成。上一次提案未通过${context.repairAttempt.reason}，请只修复该契约问题，保留当前主线、NPC、历史对话和事实边界。`,
+      content: `这是同一回合的第${context.repairAttempt.attempt + 1}次内容生成。上一次提案未通过${context.repairAttempt.reason}。${repairInstruction(context)} 请保留当前主线、NPC、历史对话和事实边界。`,
     }));
   }
   return blocks;

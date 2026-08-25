@@ -315,15 +315,6 @@ function makeSceneContext(): SceneGenerationContext {
       emotion: "guarded",
       thisTurn: { relationshipDelta: 2, outcome: "positive" },
     },
-    currentInvestigationApproaches: [
-      {
-        approachId: "approach_tracks",
-        label: "沿车辙追查",
-        hint: "顺着湿泥里的车辙一路往北",
-        evidenceQuality: "clean",
-        tensionDelta: 2,
-      },
-    ],
     resolvedInvestigation: {
       factId: asFactId("fact_shared"),
       approachId: "approach_tracks",
@@ -414,6 +405,19 @@ describe("sceneNarrativeContext", () => {
     expect(compilation.prompt).not.toContain("eventLedger");
     expect(compilation.prompt).not.toContain("affinity=18");
     expect(compilation.prompt).not.toContain(context.generationSeed ?? "seed-not-present");
+  });
+
+  it("把非法 beatId 的字段级原因和允许列表写入修复 prompt", () => {
+    const context: SceneGenerationContext = {
+      ...makeSceneContext(),
+      repairAttempt: { attempt: 1, reason: "segment_unknown_beat" },
+    };
+    const compilation = compileSceneNarrativeContext(context, buildSelectableSceneCandidates(context));
+    const repair = compilation.context.selected.find((block) => block.id === "scene:repair");
+
+    expect(repair?.content).toContain("segments[].beatId");
+    expect(repair?.content).toContain("atmosphere");
+    expect(repair?.content).toContain("actionId、jobId");
   });
 
   it("requires two prepared choices for every arrival step and one output entry per descriptor", () => {

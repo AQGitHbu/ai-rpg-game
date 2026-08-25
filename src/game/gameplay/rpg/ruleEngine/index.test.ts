@@ -627,7 +627,7 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     expect(r.nextWorldState.worldFacts[1]?.discovered).toBe(false);
   });
 
-  it("有已审批 approach 的事实不自动揭示，留待玩家调查", () => {
+  it("有已审批 approach 的事实也自动揭示，不再留待玩家调查", () => {
     const autoWs: WorldState = {
       ...ws,
       worldFacts: [{
@@ -643,9 +643,9 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("explore should succeed");
     const r = result.resolution;
-    expect(r.domainEvents.some((e) => e.type === "fact_discovered")).toBe(false);
-    expect(r.nextWorldState.worldFacts[0]?.discovered).toBe(false);
-    expect(r.nextWorldState.quests[0]?.status).toBe("active");
+    expect(r.domainEvents.some((e) => e.type === "fact_discovered")).toBe(true);
+    expect(r.nextWorldState.worldFacts[0]?.discovered).toBe(true);
+    expect(r.nextWorldState.quests[0]?.status).toBe("completed");
   });
 
   it("当前目标不是 discover_fact 时不自动揭示", () => {

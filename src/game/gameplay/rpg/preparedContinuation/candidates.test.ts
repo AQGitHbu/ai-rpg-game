@@ -167,7 +167,7 @@ describe("prepared continuation candidate projection", () => {
     expect(move?.nextStepIds).toEqual([]);
   });
 
-  it("keeps investigation approaches as sibling triggers and projects branch-specific successors", () => {
+  it("skips investigation approaches and prepares the next move directly", () => {
     const ws = worldState({
       quests: [quest([
         { kind: "discover_fact", factId: factTracks },
@@ -183,21 +183,11 @@ describe("prepared continuation candidate projection", () => {
     });
 
     const investigations = result.descriptors.filter((descriptor) => descriptor.trigger.kind === "investigate");
-    expect(investigations).toHaveLength(2);
-    expect(investigations.map((descriptor) => descriptor.trigger)).toEqual([
-      { kind: "investigate", factId: factTracks, approachId: "quiet" },
-      { kind: "investigate", factId: factTracks, approachId: "forceful" },
-    ]);
-    expect(new Set(investigations.map((descriptor) => descriptor.consumptionGroupKey)).size).toBe(1);
-    expect(investigations.every((descriptor) => descriptor.nextStepIds.length === 1)).toBe(true);
-
-    for (const investigation of investigations) {
-      const successorId = investigation.nextStepIds[0];
-      const successor = result.descriptors.find((descriptor) => descriptor.stepId === successorId);
-      expect(successor?.trigger).toEqual({ kind: "move", locationId: locTemple });
-      expect(successor?.arrivalNpc?.id).toBe(npcBeggar);
-      expect(successor?.nextStepIds).toEqual([]);
-    }
+    expect(investigations).toHaveLength(0);
+    const move = result.descriptors.find((descriptor) => descriptor.trigger.kind === "move");
+    expect(move?.trigger).toEqual({ kind: "move", locationId: locTemple });
+    expect(move?.arrivalNpc?.id).toBe(npcBeggar);
+    expect(move?.nextStepIds).toEqual([]);
 
     expect(result.descriptors.some((descriptor) => (
       descriptor.trigger.kind === "move" && descriptor.trigger.locationId === locTown

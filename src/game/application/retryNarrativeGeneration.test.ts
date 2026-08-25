@@ -39,7 +39,11 @@ function makeJob(): PendingNarrativeJob {
   };
 }
 
-function makeRecord(status: "pending" | "failed" | "idle"): GameRecord {
+function makeRecord(
+  status: "pending" | "failed" | "idle",
+  failureReason: "provider_failure" | "segment_unknown_beat" | null = "provider_failure",
+  failureKind: "AI_CALL_FAILED" | "AI_RESPONSE_INVALID" = "AI_CALL_FAILED",
+): GameRecord {
   const startingLocation = {
     id: asLocationId("loc_retry"),
     name: "客栈",
@@ -77,7 +81,12 @@ function makeRecord(status: "pending" | "failed" | "idle"): GameRecord {
               mode: "offline",
               job,
               lastPresentedScene: story.narrative.status === "ready" ? story.narrative.currentScene : null,
-              failure: { kind: "AI_CALL_FAILED", phase: "scene", failedAt: "2026-08-21T00:00:00.000Z" },
+              failure: {
+                kind: failureKind,
+                phase: "scene",
+                failedAt: "2026-08-21T00:00:00.000Z",
+                ...(failureReason === null ? {} : { reason: failureReason }),
+              },
             },
     },
     revision: 3,
@@ -124,7 +133,11 @@ describe("retryNarrativeGeneration", () => {
     expect(result).toEqual({ ok: true, result: "requeued", jobId: "job_retry" });
     expect(fixture.record().revision).toBe(before.revision);
     expect(fixture.record().worldState).toEqual(before.worldState);
-    expect(fixture.record().storyState.narrative).toMatchObject({ status: "provider_pending", job: { jobId: "job_retry" } });
+    expect(fixture.record().storyState.narrative).toMatchObject({
+      status: "provider_pending",
+      job: { jobId: "job_retry" },
+      retryContext: { attempt: 1, reason: "provider_failure" },
+    });
     expect(vi.mocked(fixture.repository.applyState).mock.calls[0]?.[0]).toMatchObject({
       incrementRevision: false,
       expectedNarrativeJob: { status: "provider_failed", jobId: "job_retry" },
@@ -141,6 +154,16 @@ describe("retryNarrativeGeneration", () => {
     expect(results.filter((result) => result.ok && result.result === "requeued")).toHaveLength(1);
     expect(results.filter((result) => !result.ok && result.code === "STALE_GAME_REVISION")).toHaveLength(1);
     expect(fixture.record().storyState.narrative.status).toBe("provider_pending");
+  });
+
+  it("旧 failed 存档没有 reason 时使用安全兼容原因", async () => {
+    const fixture = makeRepository(makeRecord("failed", null, "AI_RESPONSE_INVALID"));
+    await retryNarrativeGeneration(fixture.repository, gameId, () => "now");
+
+    expect(fixture.record().storyState.narrative).toMatchObject({
+      status: "provider_pending",
+      retryContext: { attempt: 1, reason: "invalid_schema" },
+    });
   });
 
   it("does not rewrite pending or idle generation", async () => {

@@ -378,7 +378,7 @@ export function actObjectiveShape(seed: string, act: number): ActObjectiveShape 
 
 /**
  * 正式幕必须留出可阅读、可验证的过程，而非一次交谈就结束。完整动态幕
- * 按“调查现场 → 前往新地点 → 与人物交谈 → 取得证物 → 处理阻拦”串成
+ * 按“前往新地点 → 自动确认现场事实 → 与人物交谈 → 取得证物 → 处理阻拦”串成
  * 单向主线；提案缺少某类实体时自动跳过该类，但不压缩仍存在的步骤。
  * 结构变体在完整链基础上按 shape 过滤子集；过滤后为空时回退全程链，
  * 仍为空时回落锚点目标（可返回 null）。
@@ -389,10 +389,10 @@ export function deriveActObjectives(
   shape: ActObjectiveShape,
 ): readonly QuestObjective[] | null {
   const full: QuestObjective[] = [];
-  if (p.newFact && ids.factId) full.push({ kind: "discover_fact", factId: ids.factId });
   if (p.newLocation?.placement === "world" && ids.locationId) {
     full.push({ kind: "visit_location", locationId: ids.locationId });
   }
+  if (p.newFact && ids.factId) full.push({ kind: "discover_fact", factId: ids.factId });
   if (p.newNpc && ids.npcId) full.push({ kind: "talk_to_npc", npcId: ids.npcId });
   if (p.newItem && ids.itemId) full.push({ kind: "obtain_item", itemId: ids.itemId });
   if (p.newEnemy && ids.enemyId) full.push({ kind: "defeat_enemy", enemyId: ids.enemyId });
@@ -657,10 +657,8 @@ export function approveWorldDelta(input: {
   }[] = [];
   const logCategories: string[] = [];
 
-  // 如果新幕的目标链先要求抵达同批新地点，调查事实也必须挂在该地点；否则
-  // 事实仍被放在旧地点，玩家抵达后无法合法调查，场景候选会退化为不足两项。
-  // 目标链仍以“现场调查优先”的形状保持旧地点事实语义，只有首目标确实是
-  // visit_location 时才切换挂载位置。
+  // 新地点目标必须与同批生成的现场事实共址。目标链以 visit_location 起步，
+  // 抵达后由规则层自动确认事实，避免把“调查渡口”投影成旧地点的点击按钮。
   const newFactLocationId = p.newFact && ids.factId
     && actObjectives?.[0]?.kind === "visit_location"
     && ids.locationId !== null

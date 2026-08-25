@@ -260,6 +260,38 @@ describe("generatePendingScene", () => {
     expect(context.job.actionId).toBe(IMPORTANT_ACTION_ID);
   });
 
+  it("从失败 job 恢复时把上次稳定原因带入首个内容修复请求", async () => {
+    const baseRecord = makeGameRecord({
+      kind: "pending",
+      job: makeJob({ summary: { kind: "explore" }, eventKind: "observe" }),
+    });
+    if (baseRecord.storyState.narrative.status !== "provider_pending") throw new Error("pending fixture missing");
+    const record: GameRecord = {
+      ...baseRecord,
+      storyState: {
+        ...baseRecord.storyState,
+        narrative: {
+          ...baseRecord.storyState.narrative,
+          retryContext: { attempt: 1, reason: "segment_unknown_beat" },
+        },
+      },
+    };
+    const spy = makeSpySceneSource();
+    const result = await generatePendingScene({
+      ...makeDeps(record, spy.source),
+      auditLink: { traceId: "trace-retry" },
+    });
+
+    expect(result).toBe("saved");
+    expect(spy.contexts()[0]?.repairAttempt).toEqual({ attempt: 1, reason: "segment_unknown_beat" });
+    expect(spy.contexts()[0]?.auditLink?.retry).toEqual({
+      origin: "normal",
+      mechanism: "content_repair",
+      attempt: 1,
+      reason: "segment_unknown_beat",
+    });
+  });
+
   it("materializes reachable content before scene generation when fewer than two choices exist", async () => {
     const isolatedLocation: LocationEntry = {
       ...loc,
@@ -433,9 +465,11 @@ describe("generatePendingScene", () => {
     const repo = makeMockRepo(record);
     const logger = { warn: vi.fn() };
     let calls = 0;
+    const seenContexts: SceneGenerationContext[] = [];
     const invalidGenerated: SceneSource = {
       async generateScene(context): Promise<SceneSourceResult> {
         calls += 1;
+        seenContexts.push(context);
         if (calls === 2) {
           expect(context.repairAttempt).toEqual({ attempt: 1, reason: "approval:missing_mandatory_beat" });
           return { ok: true, proposal: {
@@ -489,6 +523,12 @@ describe("generatePendingScene", () => {
     expect(logger.warn).toHaveBeenCalledWith("scene_generation_content_retry", {
       reason: "approval:missing_mandatory_beat",
       attempt: 1,
+    });
+    expect(seenContexts[1]?.auditLink?.retry).toEqual({
+      origin: "normal",
+      mechanism: "content_repair",
+      attempt: 1,
+      reason: "approval:missing_mandatory_beat",
     });
     const input = vi.mocked(repo.applySceneWriteBack).mock.calls[0]![0];
     expect(input.nextStoryState.narrative.status).toBe("ready");

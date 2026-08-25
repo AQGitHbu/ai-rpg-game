@@ -1,6 +1,6 @@
 import type { Action, DialogueTopic } from "@/game/domain/action";
 import { semanticSummaryOf } from "@/game/domain/approvedChoice";
-import { asEnemyId, asFactId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
+import { asEnemyId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import type { NarrativeEventState } from "@/game/domain/narrative";
 import type { PreparedStepDescriptor } from "@/game/gameplay/rpg/preparedContinuation";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
@@ -129,21 +129,6 @@ export function buildSelectableSceneCandidates(
     ];
   }
   const candidates: SceneChoiceCandidate[] = [];
-  const investigationFactId = context.objectiveTarget?.entityId;
-  if (investigationFactId !== undefined && context.currentInvestigationApproaches !== undefined) {
-    for (const approach of context.currentInvestigationApproaches) {
-      const action: Action = {
-        type: "investigate",
-        factId: asFactId(investigationFactId),
-        approachId: approach.approachId,
-      };
-      candidates.push({
-        candidateId: `candidate_${candidates.length + 1}`,
-        label: formatSceneChoiceLabel(action, approach.label),
-        action,
-      });
-    }
-  }
   const seen = new Set<string>();
   for (const candidate of context.legalActionCandidates) {
     const action = actionFromLegalCandidate(candidate);

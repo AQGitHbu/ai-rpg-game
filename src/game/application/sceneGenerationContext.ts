@@ -25,6 +25,7 @@ import type { GameRecord } from "./server/persistence/gameRepository";
 import type { GameTypeId } from "@/game/domain/newGame";
 import type { DialogueAct, DialogueTopic } from "@/game/domain/action";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
+import type { NarrativeGenerationRepairReason } from "@/game/domain/narrativeGenerationFailure";
 
 /**
  * SceneGenerator 的最小输入 DTO（spec §7.1 / §10.1-10.2）：
@@ -116,20 +117,6 @@ export type ObjectiveTargetRef = {
 };
 
 /**
- * Task 4：当前 discover_fact 主线目标事实的已审批调查方式（安全标签 + 结果表现
- * 约束）。只含 approachId/label/hint/evidenceQuality/tensionDelta，不含事实正文；
- * 供导演预生成调查叙事并评估动静代价。少于两个 approach 的事实（自动揭示路径）
- * 不投影。
- */
-export type InvestigationApproachContext = {
-  readonly approachId: string;
-  readonly label: string;
-  readonly hint?: string;
-  readonly evidenceQuality: "clean" | "noisy";
-  readonly tensionDelta: number;
-};
-
-/**
  * Task 4：本回合已结算的调查方式结果（investigate + player 主动选择时存在）。
  * 从 job.domainEventRange 覆盖的 eventLedger 中解析 fact_discovered 事件；
  * 自动揭示（无 approachId）或范围内未命中时不存在。approachLabel 回退"现场调查"。
@@ -144,7 +131,7 @@ export type ResolvedInvestigationContext = {
 
 /**
  * 从当前权威目标开始的单线链目标投影（Task 1）：只投影 discover_fact /
- * visit_location（含当前目标），供 live prompt 预生成 investigate/move 叙事；
+ * visit_location（含当前目标），供 live prompt 预生成抵达/事实确认叙事；
  * 如果 visit_location 的下一目标是同一地点的 talk_to_npc，则额外携带该 NPC
  * 的最小权限上下文，让移动预生成同时产出抵达后的首句对白。
  */
@@ -181,7 +168,7 @@ export type PreviousDialogueContext = {
 /** 同一 pending 回合的内容修复尝试；不持久化，只用于下一次 live prompt。 */
 export type SceneGenerationRepair = {
   readonly attempt: number;
-  readonly reason: string;
+  readonly reason: NarrativeGenerationRepairReason;
 };
 
 export type SceneGenerationContext = {
@@ -250,8 +237,6 @@ export type SceneGenerationContext = {
   readonly focusNpcContext?: FocusNpcContext;
   /** Task 6：当前权威目标引用的目标实体（无 after 目标时为 null）。 */
   readonly objectiveTarget: ObjectiveTargetRef | null;
-  /** Task 4：当前 discover_fact 目标事实的已审批调查方式（无正文，供导演预生成调查叙事）。 */
-  readonly currentInvestigationApproaches?: readonly InvestigationApproachContext[];
   /** Task 4：本回合已结算的调查方式结果（approach 选择 + 证据质量 + 动静代价）。 */
   readonly resolvedInvestigation?: ResolvedInvestigationContext;
   /**
@@ -607,27 +592,6 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
       objective.kind === "defeat_enemy" && String(objective.enemyId) === String(enemy.id)))
     .map((enemy) => enemy.id);
 
-  // Task 4：当前 discover_fact 主线目标事实的已审批调查方式。只从权威目标解析
-  // 安全标签与结果表现约束，绝不携带事实正文（事实正文经强制节拍 instruction
-  // 在场景表演时下发）。少于两个 approach 视为自动揭示路径，不暴露可选方式。
-  const currentInvestigationApproaches = (() => {
-    const after = transition.after;
-    if (after === null) return undefined;
-    const quest = ws.quests.find((entry) => String(entry.id) === String(after.questId));
-    const objective = quest?.objectives[after.objectiveIndex];
-    if (objective?.kind !== "discover_fact") return undefined;
-    const fact = ws.worldFacts.find((entry) => String(entry.factId) === String(objective.factId));
-    const approaches = fact?.investigationApproaches ?? [];
-    if (approaches.length < 2) return undefined;
-    return approaches.map((approach) => ({
-      approachId: approach.approachId,
-      label: approach.label,
-      ...(approach.hint === undefined ? {} : { hint: approach.hint }),
-      evidenceQuality: approach.evidenceQuality,
-      tensionDelta: approach.tensionDelta,
-    }));
-  })();
-
   // Task 4：本回合已结算的调查方式结果。仅在 investigate 行动（player 主动选择
   // approach）时存在；自动揭示（无 approachId）或范围外未命中时不存在。
   const resolvedInvestigation = (() => {
@@ -778,7 +742,6 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     focusNpcContext,
     objectiveTarget,
     narrativeReferenceIds,
-    ...(currentInvestigationApproaches === undefined ? {} : { currentInvestigationApproaches }),
     ...(resolvedInvestigation === undefined ? {} : { resolvedInvestigation }),
     upcomingLinearObjectives,
     ...(previousDialogue === undefined ? {} : { previousDialogue }),

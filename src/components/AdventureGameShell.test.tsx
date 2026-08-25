@@ -206,18 +206,13 @@ describe("AdventureGameShell canonical opaque choices", () => {
     });
   }
 
-  it("forwards a non-dialogue scene action when no prepared main dialogue is present", async () => {
-    const user = userEvent.setup();
+  it("does not render non-dialogue scene actions in the removed bottom rail", async () => {
     renderShell({
       ...buildView(),
       narrative: { ...buildView().narrative, npcDialogues: [] },
     });
-    await enterScene(user);
-    await user.click(screen.getByRole("button", { name: "探索客栈" }));
-    expect(postAction).toHaveBeenCalledWith({
-      interaction: { kind: "fixed_choice", choiceToken: TOKENS.explore },
-      revision: 9,
-    });
+    expect(screen.queryByRole("button", { name: "探索客栈" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
   });
 
   it("forwards custom dialogue input without constructing a semantic token", async () => {
@@ -676,6 +671,56 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.getByRole("status")).toHaveTextContent("正在等待老板回应");
   });
 
+  it("keeps the NPC dialog open when the action response already contains the ready reply", async () => {
+    const base = buildView();
+    const readyView: GameSessionView = {
+      ...base,
+      revision: base.revision + 1,
+      turnNumber: base.turnNumber + 1,
+      narrative: {
+        ...base.narrative,
+        eventKind: "dialogue",
+        npcDialogues: [{
+          ...base.narrative.npcDialogues[0]!,
+          speechPages: ["账本上的墨迹还没干。你若要查下去，先去后巷找送货的人。"],
+          choices: [
+            choice("c_ready_dialogue_1", "追问账本来源", "dialogue"),
+            choice("c_ready_dialogue_2", "先去后巷查看", "dialogue"),
+          ],
+        }],
+      },
+      narrativeGeneration: { status: "idle" },
+    };
+    vi.mocked(postAction).mockResolvedValueOnce({
+      kind: "success",
+      view: readyView,
+      message: "Action performed",
+    });
+    function ShellHarness() {
+      const [view, updateView] = useState(base);
+      return <AdventureGameShell
+        view={view}
+        onViewChange={updateView}
+        onStaleRevision={vi.fn()}
+        onClearDevelopmentSave={vi.fn(async () => {})}
+      />;
+    }
+
+    const user = userEvent.setup();
+    render(<ShellHarness />);
+    await enterScene(user);
+    await user.click(screen.getByRole("button", { name: "追问线索" }));
+
+    await waitFor(() => {
+      expect(postAction).toHaveBeenCalledOnce();
+      expect(screen.getByText("账本上的墨迹还没干。你若要查下去，先去后巷找送货的人。")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "追问账本来源" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "先去后巷查看" })).toBeEnabled();
+    expect(screen.queryByRole("status", { name: /等待.*回应/ })).not.toBeInTheDocument();
+  });
+
   it("does not show a town item inside a different building scene", () => {
     const town = townViewFixture();
     const itemBuildingId = town.interactiveBuildings[0]?.buildingId;
@@ -705,7 +750,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.queryByRole("button", { name: "拾取染血腰牌" })).not.toBeInTheDocument();
   });
 
-  it("closes the old NPC dialog when custom input finishes with a story handoff", async () => {
+  it("keeps the final NPC handoff visible until the player acknowledges it", async () => {
     const base = buildView();
     const onSubmit = vi.fn();
     const { rerender } = render(<LocationSceneScreen
@@ -757,6 +802,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
+    const dialogue = screen.getByRole("dialog", { name: "与老板对话" });
+    expect(dialogue).toHaveTextContent("我看见告示是子时后贴上的");
+    expect(within(dialogue).getByRole("button", { name: "知道了" })).toBeInTheDocument();
+    await userEvent.click(within(dialogue).getByRole("button", { name: "知道了" }));
     expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "查看下一步" })).not.toBeInTheDocument();
   });
@@ -1021,7 +1070,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
   });
 
-  it("keeps a same-location investigation action visible after an NPC handoff", () => {
+  it("does not render a same-location investigation action after an NPC handoff", () => {
     const base = buildView();
     render(<LocationSceneScreen
       view={{
@@ -1047,10 +1096,11 @@ describe("AdventureGameShell canonical opaque choices", () => {
       sceneNpcName="老板"
     />);
 
-    expect(screen.getByRole("button", { name: "调查酒楼后巷的车轮印" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "调查酒楼后巷的车轮印" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
   });
 
-  it("renders all investigation method buttons of the current objective token set", () => {
+  it("does not render investigation method buttons of the current objective token set", () => {
     const base = buildView();
     render(<LocationSceneScreen
       view={{
@@ -1076,9 +1126,9 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    const rail = screen.getByRole("navigation", { name: "行动栏" });
-    expect(within(rail).getByRole("button", { name: "沿痕迹追查" })).toBeInTheDocument();
-    expect(within(rail).getByRole("button", { name: "翻查附近杂物" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "沿痕迹追查" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "翻查附近杂物" })).not.toBeInTheDocument();
   });
 
   it("keeps the current item objective in the action rail while the prior NPC dialogue is ready", () => {
@@ -1113,7 +1163,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
       sceneBuildingId="building_1"
     />);
 
-    expect(within(screen.getByRole("navigation", { name: "行动栏" })).getByRole("button", { name: "拾取染血腰牌" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "拾取染血腰牌" })).toBeInTheDocument();
   });
 
   it("sets the same busy state for NPC free text until the request settles", async () => {
@@ -1194,9 +1245,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onClearDevelopmentSave={vi.fn(async () => {})}
     />);
 
-    // 移动到新地点后应自动进入场景视图，显示新地点的探索/活动行动栏
+    // 移动到新地点后应自动进入场景视图；场景不再显示底部行动栏
     expect(screen.getByRole("region", { name: "地点场景：街道" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "探索街道" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "探索街道" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
   });
 
   it("preserves an existing NPC dialogue while narrative generation is pending", async () => {
@@ -1340,7 +1392,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("shows only the current objective action in the scene action rail", () => {
+  it("does not render current objective actions in a scene action rail", () => {
     const base = buildView();
     render(<LocationSceneScreen
       view={{
@@ -1374,6 +1426,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(screen.queryByRole("button", { name: "探索客栈" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "挑战灰狼" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "与吴九交谈" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "与老板交谈" })).not.toBeInTheDocument();
   });
 
   it("keeps a prepared same-NPC response pair inside dialogue and leaves all scene actions in the rail", () => {
@@ -1404,14 +1457,12 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    const actionRail = screen.getByRole("navigation", { name: "行动栏" });
-    // 底栏只保留没有专属入口的真实场景动作；NPC 交谈由右侧人物卡打开。
-    expect(within(actionRail).getByRole("button", { name: "探索客栈" })).toBeInTheDocument();
-    expect(within(actionRail).getByRole("button", { name: "挑战灰狼" })).toBeInTheDocument();
-    expect(within(actionRail).queryByRole("button", { name: "与老板交谈" })).not.toBeInTheDocument();
-    // 已准备好的回应对进入自动打开的对话弹窗，不占用底栏
-    expect(within(actionRail).queryByRole("button", { name: "回应老板：我愿意把证据摊开。" })).not.toBeInTheDocument();
-    expect(within(actionRail).queryByRole("button", { name: "质疑老板：我会先核对证据。" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "探索客栈" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "挑战灰狼" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "与老板交谈" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "回应老板：我愿意把证据摊开。" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "质疑老板：我会先核对证据。" })).not.toBeInTheDocument();
     const dialogue = screen.getByRole("dialog", { name: "与老板对话" });
     expect(within(dialogue).getByRole("button", { name: "追问线索" })).toBeInTheDocument();
     expect(within(dialogue).getByRole("button", { name: "表示理解" })).toBeInTheDocument();

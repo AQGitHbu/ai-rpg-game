@@ -98,11 +98,10 @@ describe("projectGameSessionView", () => {
     return projectGameSessionView(worldWithApproaches(), storyWithDiscoverFact(), 0, "ending");
   }
 
-  describe("Task 4：investigate approach 投影", () => {
-    it("projects two approach choices and no generic investigate button", () => {
+  describe("调查方式不再进入玩家投影", () => {
+    it("does not project approach choices or a generic investigate button", () => {
       const view = projectGameSessionView(worldWithApproaches(), storyWithDiscoverFact(), 0, "ending");
-      expect(view.currentLocation.actions.filter((choice) => choice.presentation === "investigate").map((choice) => choice.label))
-        .toEqual(["沿痕迹追查", "翻查附近杂物"]);
+      expect(view.currentLocation.actions.filter((choice) => choice.presentation === "investigate")).toHaveLength(0);
       expect(view.currentLocation.actions.some((choice) => choice.label === "调查现场线索")).toBe(false);
     });
 
@@ -111,30 +110,25 @@ describe("projectGameSessionView", () => {
       expect(view.currentLocation.actions.filter((choice) => choice.presentation === "investigate")).toHaveLength(0);
     });
 
-    it("每个 approach 各获一个 opaque token，且同 fact 不同 approach 的 token 互不相同", () => {
+    it("多个 approach 也不生成 opaque token", () => {
       const view = viewWithInvestigationApproaches();
       const investigate = view.currentLocation.actions.filter((choice) => choice.presentation === "investigate");
-      expect(investigate).toHaveLength(2);
-      expect(investigate[0]!.choiceToken).not.toBe(investigate[1]!.choiceToken);
-      expect(investigate.every((choice) => /^c_[0-9a-f]{16}$/.test(choice.choiceToken))).toBe(true);
+      expect(investigate).toHaveLength(0);
     });
 
-    it("行动按钮只暴露 label/hint，不泄漏事实正文/approachId/evidenceQuality/tensionDelta", () => {
+    it("当前地点行动不携带调查方式正文或内部字段", () => {
       const view = viewWithInvestigationApproaches();
       const serialized = JSON.stringify(view.currentLocation.actions);
       expect(serialized).not.toContain("车辙尽头藏着半枚令牌");
       expect(serialized).not.toContain("follow");
       expect(serialized).not.toContain("noisy");
       expect(serialized).not.toContain("tensionDelta");
-      const search = view.currentLocation.actions.find((choice) => choice.label === "翻查附近杂物");
-      expect(search?.hint).toBe("动静较大，可能惊动旁人");
     });
 
-    it("discover_fact 多 approach 时 currentObjectiveChoiceTokens 返回全部 token，单一兼容 token 取第一个", () => {
+    it("discover_fact 由规则自动确认，不生成当前目标 token", () => {
       const view = viewWithInvestigationApproaches();
-      const investigate = view.currentLocation.actions.filter((choice) => choice.presentation === "investigate");
-      expect(view.story.currentObjectiveChoiceTokens).toEqual(investigate.map((choice) => choice.choiceToken));
-      expect(view.story.currentObjectiveChoiceToken).toBe(investigate[0]?.choiceToken ?? null);
+      expect(view.story.currentObjectiveChoiceTokens).toEqual([]);
+      expect(view.story.currentObjectiveChoiceToken).toBeNull();
     });
 
     it("approach-less 事实：currentObjectiveChoiceTokens 为空，单一 token 为 null，行动栏无伪入口", () => {

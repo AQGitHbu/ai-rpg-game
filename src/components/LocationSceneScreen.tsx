@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useReducer, useRef, type FormEvent } from "react";
 import { type GameSessionView, type NewGameInput } from "@/game/application";
-import type { PlayerChoiceView } from "@/game/application/gameSessionView";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { AdventureVisual } from "./adventureVisuals";
 import { normalizeDisplayText } from "./displayText";
@@ -487,9 +486,8 @@ export function LocationSceneScreen({
   const selectedNpcChoiceToken = currentSceneNpcName === null
     ? null
     : locationNpcs[0]?.talkChoice?.choiceToken ?? null;
-  // 权威当前目标的可执行行动集合：优先当前目标的全量 token（discover_fact
-  // 多 approach 时保留全部调查方法），兼容旧单一 token（降级为单元素集合）。
-  // Task 5：不再用单一 currentObjectiveChoiceToken 把第二个调查方法过滤掉。
+  // 权威当前目标的可执行行动集合；discover_fact 自动确认，不生成调查 token。
+  // 其余目标兼容旧的单一 token 表示。
   const currentObjectiveTokens = view.story.currentObjectiveChoiceTokens.length > 0
     ? view.story.currentObjectiveChoiceTokens
     : view.story.currentObjectiveChoiceToken === null ? [] : [view.story.currentObjectiveChoiceToken];
@@ -537,9 +535,6 @@ export function LocationSceneScreen({
   // 已准备好的焦点对白代表当前主线的唯一入口。两个 support/challenge 是
   // 对话框内的回答，不应和探索、战斗等地点通用动作并排在底栏；否则一次
   // 主线场景会被误读成多条可同时推进的任务。
-  const preparedDialogue = activeDialogues.find((dialogue) =>
-    dialogue.choices.length === 2 || dialogue.freeInputEnabled,
-  );
   const sceneNpcIsObjectiveTalkTarget = selectedNpcChoiceToken !== null
     && selectedNpcChoiceToken === view.story.currentObjectiveChoiceToken;
   const handoffLeavesCurrentBuilding = hasBuildingSceneContext
@@ -549,45 +544,8 @@ export function LocationSceneScreen({
     && !sceneNpcIsObjectiveTalkTarget;
   const handoffLeavesCurrentLocation = view.story.currentObjectiveLabel !== null
     && view.story.currentObjectiveChoiceToken === null;
-  // 当前目标是调查/拾取/战斗/移动时，必须优先给出该规则行动（移动含
-  // 对话回合预生成的交接选项）。否则上一轮对话仍有两项回应时会抢占底栏，
-  // 物品热点又可能被地点旁注遮住，玩家会失去唯一可推进的入口。
-  // 仍停留在上一座建筑、但主线目标不在当前地点或没有权威行动入口时，不能
-  // 继续把旧 NPC、探索或战斗当作当前任务入口。若目标是同地点另一建筑的 NPC，
-  // 则由旧对话保留最后一句和唯一 talk 引导，玩家关闭后返回小镇进入目标建筑。
-  const sceneActions = (() => {
-    if (handoffLeavesCurrentBuilding || handoffLeavesCurrentLocation) return [];
-    if (currentObjectiveTokens.length === 0) return view.currentLocation.actions;
-    // 目标 token 集合可以命中地点行动栏、建筑内物品或对话回合预生成的
-    // 交接选项（move）——多调查方法时全部保留，同 token 只留一个入口。
-    const byToken = new Map<string, PlayerChoiceView>();
-    for (const token of currentObjectiveTokens) {
-      const hit = view.currentLocation.actions.find((action) => action.choiceToken === token)
-        ?? buildingItems.find((item) => item.choice.choiceToken === token)?.choice
-        ?? view.narrative.choices.find((choice) => choice.choiceToken === token);
-      if (hit !== undefined) byToken.set(token, hit);
-    }
-    return [...byToken.values()];
-  })();
-  const sceneNarrativeChoices = preparedDialogue === undefined
-    && !handoffLeavesCurrentBuilding
-    && view.story.currentObjectiveLabel === null
-    && view.narrative.eventKind !== "dialogue"
-    ? view.narrative.choices
-    : [];
-  const sceneActionTokens = new Set(sceneActions.map((action) => action.choiceToken));
-  const sceneActionLabels = new Set(sceneActions.map((action) => action.label));
-  const actionRailChoices = [
-    ...sceneActions,
-    ...sceneNarrativeChoices.filter((choice) =>
-      !sceneActionTokens.has(choice.choiceToken) && !sceneActionLabels.has(choice.label),
-    ),
-  ];
-  // 地图已经是移动入口，右侧人物卡已经是 NPC 入口；底栏只保留当前场景
-  // 没有专属入口的真实行动，避免把同一个主线选择重复投影成提示按钮。
-  const visibleActionRailChoices = actionRailChoices.filter((choice) =>
-    choice.presentation !== "travel" && choice.presentation !== "dialogue",
-  );
+  // 地图、右侧人物卡、场景热点和战斗面板分别承载各自的交互入口；
+  // 地点场景不再把世界行动集中投影到底部按钮栏。
   const handoffPlayerResponse = currentObjectiveAction?.presentation === "travel"
     || currentObjectiveAction?.presentation === "dialogue"
     ? currentObjectiveAction.label
@@ -621,6 +579,11 @@ export function LocationSceneScreen({
   const [dialoguePhase, setDialoguePhase] = useState<DialoguePhase>("choice");
   const [dialogueInputResetNonce, setDialogueInputResetNonce] = useState(0);
   const submittedDialogueRef = useRef<SubmittedDialogue | null>(null);
+  // busy 从 waiting 变回 ready 时，提交前的 ref 会在同一个 effect 中被清理。
+  // 交接场景的 ready 快照可能只有最后一句 NPC 台词和一个 acknowledgement，
+  // 必须让 revision 同步 effect 先保留该弹窗，否则它会把“已返回的回应”误判成
+  // 过期焦点并直接卸载，玩家连最后一句话都看不到。
+  const completedDialogueRef = useRef<SubmittedDialogue | null>(null);
   const previousBusyRef = useRef(busy);
 
   function setOpenDialogueNpcId(npcId: string | null): void {
@@ -631,6 +594,7 @@ export function LocationSceneScreen({
     dispatchDialogueUi({ kind: "set", npcId: null });
     setDialoguePhase("choice");
     submittedDialogueRef.current = null;
+    completedDialogueRef.current = null;
   }
   const [battleFeedback, setBattleFeedback] = useState<BattleFeedback | null>(null);
   const previousBattleRef = useRef(view.battle);
@@ -679,45 +643,9 @@ export function LocationSceneScreen({
     if (view.revision !== submitted.revision) {
       setDialogueInputResetNonce((current) => current + 1);
     }
+    completedDialogueRef.current = submitted;
     submittedDialogueRef.current = null;
   }, [busy, view.revision, view.turnNumber]);
-
-  function renderChoiceButton(choice: { choiceToken: string; label: string }) {
-    // “与 NPC 交谈”只是打开本幕已经生成好的对话；只有弹窗内的两个选项
-    // 或自定义输入才是正式回合，避免进入地点或点开交谈入口就提前编排下一幕。
-    const matchingNpc = locationNpcs.find((n) => n.talkChoice?.choiceToken === choice.choiceToken);
-    if (matchingNpc) {
-      return (
-        <button
-          key={choice.choiceToken}
-          type="button"
-          disabled={busy || pending}
-          onClick={() => {
-            // 按 npcId 精确桥接（同名 NPC 不再错配），allDialoguesMap 以 npcId 为键。
-            const dialogue = allDialoguesMap.get(matchingNpc.npcId);
-            if (dialogue !== undefined) {
-              setOpenDialogueNpcId(dialogue.npcId);
-              setDialoguePhase("choice");
-              submittedDialogueRef.current = null;
-            }
-          }}
-        >
-          {choice.label}
-        </button>
-      );
-    }
-
-    return (
-      <button
-        key={choice.choiceToken}
-        type="button"
-        disabled={busy || pending}
-        onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken })}
-      >
-        {choice.label}
-      </button>
-    );
-  }
 
   // 右侧侧边栏列表
   const sidebarNpcs: Array<{
@@ -753,7 +681,9 @@ export function LocationSceneScreen({
   // 用 reducer 同步 revision，避免 effect 内直接 setState 触发 cascading render。
   useEffect(() => {
     if (dialogueUi.revision === view.revision) return;
-    const shouldPreservePendingDialogue = submittedDialogueRef.current !== null;
+    const completedDialogue = completedDialogueRef.current;
+    const shouldPreservePendingDialogue = submittedDialogueRef.current !== null
+      || completedDialogue !== null;
     const shouldClose = !pending && !shouldPreservePendingDialogue
       && (
         handoffLeavesCurrentBuilding
@@ -767,6 +697,9 @@ export function LocationSceneScreen({
         )
       );
     dispatchDialogueUi({ kind: "sync_revision", revision: view.revision, close: shouldClose });
+    // 只保护刚刚完成的这一份 ready 快照；下一次与对白无关的 revision
+    // 仍应按正常交接规则降级旧焦点。
+    if (completedDialogue !== null) completedDialogueRef.current = null;
   }, [
     dialogueUi.revision,
     handoffLeavesCurrentBuilding,
@@ -909,13 +842,6 @@ export function LocationSceneScreen({
           <p className="location-scene-caption">{displayLocationDescription}</p>
         ) : null}
       </div>
-
-      {/* 底部行动栏：只保留没有地图/人物专属入口的真实场景行动 */}
-      {visibleActionRailChoices.length > 0 ? (
-        <nav className="scene-action-rail scene-action-rail--bottom" aria-label="行动栏">
-          {visibleActionRailChoices.map(renderChoiceButton)}
-        </nav>
-      ) : null}
 
       {/* NPC 对话模态弹层：只有用户主动点击时才弹出 */}
       {displayedDialogue ? (

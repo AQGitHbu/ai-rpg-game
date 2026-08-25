@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { GameSessionView } from "@/game/application";
 import { LocationSceneScreen } from "./LocationSceneScreen";
 
-/** Task 5：当前目标为 discover_fact 且两个调查方法都已投影为 opaque token。 */
+/** 回归夹具：历史 view 仍可能带 investigate presentation，但地点页不再渲染它。 */
 function viewWithInvestigationApproaches(): GameSessionView {
   return {
     revision: 9,
@@ -45,10 +45,11 @@ function viewWithInvestigationApproaches(): GameSessionView {
   };
 }
 
-describe("LocationSceneScreen（Task 5：调查方法按钮）", () => {
-  it("renders two investigation methods as separate action buttons", async () => {
+describe("LocationSceneScreen：调查和底部行动栏已移除", () => {
+  it("does not render investigation buttons or the bottom action rail", () => {
     render(<LocationSceneScreen view={viewWithInvestigationApproaches()} busy={false} onSubmit={vi.fn()} onReturnMap={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "沿痕迹追查" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "翻查附近杂物" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "沿痕迹追查" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "翻查附近杂物" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
   });
 });

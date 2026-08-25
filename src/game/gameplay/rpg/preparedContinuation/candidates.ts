@@ -240,10 +240,10 @@ export function buildPreparedStepDescriptors(
       return [];
     }
 
-    // A talk objective is the next provider decision boundary. Inventory
-    // objectives are deterministic and have no scene trigger of their own,
-    // so walk through them to prepare the following investigation/travel or
-    // battle boundary in the same provider-owned bundle.
+    // A talk objective is the next provider decision boundary. Inventory and
+    // fact objectives are deterministic and have no player choice of their
+    // own, so walk through them to prepare the following travel or battle
+    // boundary in the same provider-owned bundle.
     if (objective.kind === "talk_to_npc") return [];
     if (objective.kind === "obtain_item") return buildObjective(objectiveIndex + 1, branchKey, activeQuest);
 
@@ -277,33 +277,10 @@ export function buildPreparedStepDescriptors(
     }
 
     if (objective.kind === "discover_fact") {
-      const fact = worldState.worldFacts.find((candidate) => candidate.factId === objective.factId);
-      const approaches = fact?.investigationApproaches?.length
-        ? fact.investigationApproaches
-        : [undefined];
-      const stepIds: string[] = [];
-      for (let variantIndex = 0; variantIndex < approaches.length; variantIndex += 1) {
-        const approach = approaches[variantIndex];
-        const trigger: PreparedContinuationTrigger = approach === undefined
-          ? { kind: "investigate", factId: objective.factId }
-          : { kind: "investigate", factId: objective.factId, approachId: approach.approachId };
-        const stepId = createDescriptor({
-          objectiveKey: objectiveKey(quest.id, objectiveIndex),
-          consumptionGroupKey: groupKeyFor(quest.id, objectiveIndex, "investigate", branchKey),
-          trigger,
-          authority: {
-            questId: quest.id,
-            objectiveIndex,
-            allowedEntityIds: entityIdsForObjective(objective),
-            visibleFactIds: [],
-          },
-          choiceCandidates: [],
-        });
-        const nextStepIds = buildObjective(objectiveIndex + 1, `${branchKey}v${variantIndex + 1}`, activeQuest);
-        setSuccessors(stepId, nextStepIds);
-        stepIds.push(stepId);
-      }
-      return stepIds;
+      // Facts are confirmed by the rule boundary after arrival/successful
+      // action. Investigation approaches remain a legacy domain action, but
+      // are not a player-facing continuation branch.
+      return buildObjective(objectiveIndex + 1, branchKey, activeQuest);
     }
 
     if (objective.kind === "defeat_enemy") {

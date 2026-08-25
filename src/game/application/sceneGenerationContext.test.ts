@@ -412,15 +412,9 @@ describe("buildSceneGenerationContext", () => {
     return makeRecord(true, job, worldWithInvestigation);
   }
 
-  it("当前 discover_fact 目标提供安全的 approach labels 与结果表现约束（不含事实正文）", () => {
+  it("当前 discover_fact 目标不再投影调查方式", () => {
     const context = buildSceneGenerationContext(makeInvestigateRecord());
-    expect(context.currentInvestigationApproaches).toEqual([
-      { approachId: "follow", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
-      { approachId: "search", label: "翻查附近杂物", hint: "动静较大", evidenceQuality: "noisy", tensionDelta: 12 },
-    ]);
-    const serialized = JSON.stringify(context.currentInvestigationApproaches);
-    expect(serialized).not.toContain("泥地上有两行车辙");
-    expect(serialized).not.toContain("fact_trace");
+    expect("currentInvestigationApproaches" in context).toBe(false);
   });
 
   it("investigate job 从 eventLedger 范围内解析已结算的 approach/evidence 结果", () => {
@@ -437,10 +431,9 @@ describe("buildSceneGenerationContext", () => {
     expect(serialized).not.toContain("follow");
   });
 
-  it("非 investigate 行动不投影 resolvedInvestigation，approach-less 事实不投影 approach labels", () => {
+  it("非 investigate 行动不投影 resolvedInvestigation", () => {
     const context = buildSceneGenerationContext(makeRecord());
     expect(context.resolvedInvestigation).toBeUndefined();
-    expect(context.currentInvestigationApproaches).toBeUndefined();
   });
 
   // ── Task 5：焦点 NPC 隔离上下文 ─────────────────────────────────────────

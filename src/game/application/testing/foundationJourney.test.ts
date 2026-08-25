@@ -25,10 +25,8 @@ function cmap(entries: readonly [string, Action][]): ActionChoiceMap {
 // 这正是 act-boundary / quest_advanced fallback 之前未被覆盖的原因）。
 //
 // 动作覆盖说明（Task 6）：本旅程不再把"点击调查"当作无分支动作计数。
-// 调查在重构后只有两条路径——选择已审批调查方式、或由规则在交接边界自动
-// 揭示无方式事实；它们分别由 investigationChoiceJourney.test.ts（选择驱动 +
-// 自动揭示，走真实 SQLite/CAS）与 investigationFlowJourney.test.ts（AI 预生成
-// 单线流）覆盖。本旅程继续覆盖交谈/移动/拾取/战斗/幕推进/结局的闭环。
+// 当前任务流中的事实统一由规则在交接边界自动揭示；历史 investigate 事件仍由
+// 兼容性测试覆盖。本旅程继续覆盖交谈/移动/拾取/战斗/幕推进/结局的闭环。
 // ---------------------------------------------------------------------------
 
 describe("foundation 动态闭环旅程", () => {

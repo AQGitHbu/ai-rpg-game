@@ -1,7 +1,10 @@
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
-import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
+import type {
+  AiGenerationFailure,
+  NarrativeGenerationRepairReason,
+} from "@/game/domain/narrativeGenerationFailure";
 
 /**
  * SceneGenerator 的事件提议（spec §7.4 newEvents）。
@@ -116,7 +119,7 @@ export type SceneSourceResult =
       readonly ok: false;
       readonly failure: AiGenerationFailure;
       /** Source reports the repairable content reason; the caller owns the budget. */
-      readonly repairReason?: "empty_response" | "invalid_json" | "invalid_schema";
+      readonly repairReason?: NarrativeGenerationRepairReason;
     };
 
 /** 可注入的叙事场景 source。显式离线 fixture 返回 ok:true + fixture proposal；live source 失败返回 ok:false。 */

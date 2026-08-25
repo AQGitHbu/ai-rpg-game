@@ -64,6 +64,7 @@ const failure = {
   kind: "AI_RESPONSE_INVALID",
   phase: "scene",
   failedAt: "2026-08-21T00:00:00.000Z",
+  reason: "segment_unknown_beat",
 } satisfies NarrativeGenerationFailure;
 
 describe("NarrativeSceneState", () => {
@@ -110,6 +111,7 @@ describe("NarrativeRuntimeState", () => {
     mode: "ai",
     job: providerJob(),
     lastPresentedScene: readyScene,
+    retryContext: { attempt: 1, reason: "segment_unknown_beat" },
   } satisfies NarrativeRuntimeState;
   const failed = {
     status: "provider_failed",
@@ -121,6 +123,13 @@ describe("NarrativeRuntimeState", () => {
 
   it.each([ready, pending, failed])("parses valid $status state", (runtime) => {
     expect(parseNarrativeRuntimeState(runtime)).toEqual({ ok: true, value: runtime });
+  });
+
+  it("保留 provider pending 的上次稳定失败原因", () => {
+    expect(parseNarrativeRuntimeState(pending)).toMatchObject({
+      ok: true,
+      value: { retryContext: { attempt: 1, reason: "segment_unknown_beat" } },
+    });
   });
 
   it("rejects legacy generation and mixed variant fields", () => {
@@ -155,6 +164,10 @@ describe("NarrativeRuntimeState", () => {
     expect(parseNarrativeRuntimeState({
       ...failed,
       failure: { kind: "AI_RESPONSE_INVALID", phase: "world", failedAt: "yesterday" },
+    })).toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
+    expect(parseNarrativeRuntimeState({
+      ...failed,
+      failure: { kind: "AI_RESPONSE_INVALID", phase: "scene", failedAt: "2026-08-21T00:00:00.000Z", reason: "contains spaces" },
     })).toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
   });
 

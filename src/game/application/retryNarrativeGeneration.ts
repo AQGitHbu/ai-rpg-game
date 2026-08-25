@@ -28,6 +28,11 @@ export async function retryNarrativeGeneration(
     return { ok: false, code: "AI_RESPONSE_INVALID" };
   }
 
+  // 同一个 failed job 的下一次生成必须知道上一次失败的稳定原因；
+  // 旧存档没有 reason 时使用安全兜底，仍保证一次自动内容修复预算。
+  const repairReason = generation.failure.reason
+    ?? (generation.failure.kind === "AI_RESPONSE_INVALID" ? "invalid_schema" : "provider_failure");
+
   const committed = await commitState(repository, {
     gameId,
     expectedRevision: current.record.revision,
@@ -39,6 +44,7 @@ export async function retryNarrativeGeneration(
         mode: generation.mode,
         job: generation.job,
         lastPresentedScene: generation.lastPresentedScene,
+        retryContext: { attempt: 1, reason: repairReason },
         ...(generation.dialogueSession === undefined ? {} : { dialogueSession: generation.dialogueSession }),
       },
     },

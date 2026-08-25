@@ -1,4 +1,4 @@
-import { createFixtureNarrativeRuntimeState, readyScene } from "@/game/domain/narrativeTestFixture.testutil";
+import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 /** @vitest-environment node */
 import { describe, it, expect, afterAll } from "vitest";
 import { join } from "node:path";
@@ -9,8 +9,6 @@ import { createInitialWorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { asFactId, asLocationId, asNpcId, asQuestId, asGenerationId } from "@/game/domain/worldEntity";
-import { asNarrativeJobId } from "@/game/domain/events";
-import { createPreparedContinuationState } from "@/game/domain/preparedContinuation";
 import { asGameId, type GameRecord } from "@/game/application/server/persistence/gameRepository";
 import { createSqliteGameRepository } from "@/game/application/server/persistence/sqliteGameRepository";
 import { createSqliteClient } from "@/game/application/server/persistence/sqliteClient";
@@ -18,11 +16,10 @@ import { projectGameSessionView, type GameSessionView } from "@/game/application
 import { playIssuedChoice, advanceScene } from "./foundationJourney.testutil";
 
 // ---------------------------------------------------------------------------
-// Task 6：端到端调查选择旅程。
-//   - mode="offline"：真实临时 SQLite 上建立一个含两个已审批调查方式的事实，
-//     经 application facade（performTurn）只提交服务端下发的 opaque token 选择
-//     调查方式；断言 clean/noisy 的结构化分化（eventLedger / tension / 场景旁白）
-//     与 reload 后 revision 不变（只恢复已结算结果）。
+// Task 6：端到端事实自动揭示旅程。
+//   - mode="offline"：真实临时 SQLite 上建立一个含两个历史调查方式的事实，
+//     经 application facade（performTurn）验证当前 read model 不再下发调查 token，
+//     普通探索行动后由规则层自动确认事实。
 //   - mode="legacy_fact"：旧形状事实（无 investigationApproaches）在同一个规则
 //     回合内自动揭示；行动栏永不出现 investigate 按钮；reload 只恢复已写入的
 //     fact_discovered，不等待不存在的 pending。
@@ -78,7 +75,7 @@ function worldWithApproaches(): WorldState {
     text: "车辙尽头的旧镖局地窖里压着半枚盟誓印。",
     source: "generated" as const,
     discovered: false,
-    locationId: asLocationId("loc_invest"),
+    locationId: asLocationId("loc_next"),
     investigationLabel: "泥地上的车辙",
     investigationApproaches: [
       { approachId: "follow", label: "沿痕迹追查", evidenceQuality: "clean" as const, tensionDelta: 4 },
@@ -90,8 +87,8 @@ function worldWithApproaches(): WorldState {
     name: "追查车轮印",
     description: "查清车辙通向何处。",
     objectives: [
-      { kind: "discover_fact" as const, factId: fact.factId },
       { kind: "visit_location" as const, locationId: asLocationId("loc_next") },
+      { kind: "discover_fact" as const, factId: fact.factId },
     ],
     onSuccess: { kind: "advance_story" as const },
     onFailure: { kind: "closed" as const },
@@ -160,37 +157,11 @@ function worldWithApproachlessFact(): WorldState {
 }
 
 function storyWithDiscoverFact(): StoryState {
-  const base = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 2, npcs: 1, quests: 1, events: 0 } });
-  if (base.narrative.status !== "ready") throw new Error("调查夹具需要 ready narrative");
-  const prepared = createPreparedContinuationState({
-    originJobId: asNarrativeJobId("job-investigation-fixture"),
-    activeStepIds: ["investigate-choice", "investigate-noisy"],
-    steps: ["follow", "search"].map((approachId, index) => ({
-      stepId: index === 0 ? "investigate-choice" : "investigate-noisy",
-      objectiveKey: "quest_choice:0",
-      consumptionGroupKey: "quest_choice:0:investigate",
-      trigger: { kind: "investigate" as const, factId: asFactId(CHOICE_FACT_ID), approachId },
-      scene: {
-        segments: [{
-          beatId: "fixture-investigate",
-          text: approachId === "follow"
-            ? "沿痕迹追查，你没有惊动任何人。"
-            : "翻查附近杂物时，现场留下了动静。",
-        }],
-        event: { kind: "investigate", factId: asFactId(CHOICE_FACT_ID) },
-        npcLine: null,
-        objectiveLink: { questId: asQuestId("quest_choice"), objectiveIndex: 0, mode: "progress" },
-        choiceSeeds: [],
-        source: "fixture",
-      },
-      nextStepIds: [],
-    })),
+  return createInitialStoryState({
+    initialNarrative: createFixtureNarrativeRuntimeState(),
+    gameLength: "short",
+    initialEntityCounts: { locations: 2, npcs: 1, quests: 1, events: 0 },
   });
-  if (!prepared.ok) throw new Error("调查预备夹具无效");
-  return {
-    ...base,
-    narrative: { ...base.narrative, preparedContinuation: prepared.value },
-  };
 }
 
 type InvestigationChoiceJourney = {
@@ -269,14 +240,16 @@ async function createInvestigationChoiceJourney(input: { mode: "offline" | "lega
 // ---------------------------------------------------------------------------
 
 describe("调查选择旅程（Task 6 端到端）", () => {
-  it("choice-driven investigation records durable divergence", async () => {
+  it("multiple historical approaches do not create player investigation choices", async () => {
     const journey = await createInvestigationChoiceJourney({ mode: "offline" });
-    expect(journey.view().currentLocation.actions.map((choice) => choice.label)).toEqual([
-      "沿痕迹追查", "翻查附近杂物",
-    ]);
-    await journey.choose("沿痕迹追查");
+    expect(journey.view().currentLocation.actions.some((choice) => choice.presentation === "investigate")).toBe(false);
+    await journey.choose("前往旧镖局");
     const first = journey.record();
-    expect(first.worldState.eventLedger.at(-1)).toMatchObject({ evidenceQuality: "clean" });
+    expect(first.worldState.worldFacts.find((fact) => fact.factId === CHOICE_FACT_ID)?.discovered).toBe(true);
+    expect(first.worldState.eventLedger).toContainEqual(expect.objectContaining({
+      type: "fact_discovered",
+      factId: CHOICE_FACT_ID,
+    }));
     const revisionBeforeReload = first.revision;
     await journey.reload();
     expect(journey.record().revision).toBe(revisionBeforeReload);
@@ -294,41 +267,31 @@ describe("调查选择旅程（Task 6 端到端）", () => {
     }));
   });
 
-  it("clean 与 noisy 两条路径完成同一个 discover_fact objective，并产生结构化分化", async () => {
-    const clean = await createInvestigationChoiceJourney({ mode: "offline" });
-    await clean.choose("沿痕迹追查");
-    await clean.scene();
-    const cleanRecord = clean.record();
+  it("facts with historical approaches auto-resolve without evidence divergence", async () => {
+    const first = await createInvestigationChoiceJourney({ mode: "offline" });
+    await first.choose("前往旧镖局");
+    await first.scene();
 
-    const noisy = await createInvestigationChoiceJourney({ mode: "offline" });
-    await noisy.choose("翻查附近杂物");
-    await noisy.scene();
-    const noisyRecord = noisy.record();
+    const second = await createInvestigationChoiceJourney({ mode: "offline" });
+    await second.choose("前往旧镖局");
+    await second.scene();
 
-    // 两条路径都发现同一事实 → 同一个 discover_fact objective 完成。
-    const cleanFact = cleanRecord.worldState.worldFacts.find((fact) => String(fact.factId) === CHOICE_FACT_ID);
-    const noisyFact = noisyRecord.worldState.worldFacts.find((fact) => String(fact.factId) === CHOICE_FACT_ID);
-    expect(cleanFact?.discovered).toBe(true);
-    expect(noisyFact?.discovered).toBe(true);
-    expect(clean.view().quests[0]?.objectives[0]?.completed).toBe(true);
-    expect(noisy.view().quests[0]?.objectives[0]?.completed).toBe(true);
-
-    // eventLedger：证据质量与张力代价写入结构化事件。
-    const cleanEvent = cleanRecord.worldState.eventLedger.filter((event) => event.type === "fact_discovered").at(-1);
-    const noisyEvent = noisyRecord.worldState.eventLedger.filter((event) => event.type === "fact_discovered").at(-1);
-    expect(cleanEvent).toMatchObject({ evidenceQuality: "clean", tensionDelta: 4 });
-    expect(noisyEvent).toMatchObject({ evidenceQuality: "noisy", tensionDelta: 12 });
-
-    // StoryState.tension：noisy 路径高于 clean 路径。
-    expect(noisyRecord.storyState.tension).toBeGreaterThan(cleanRecord.storyState.tension);
-
-    // ready scene narration：点名所选方式与证据/动静代价。
-    const cleanScene = readyScene(cleanRecord.storyState);
-    const noisyScene = readyScene(noisyRecord.storyState);
-    expect(cleanScene.narration).toContain("沿痕迹追查");
-    expect(cleanScene.narration).toContain("没有惊动任何人");
-    expect(noisyScene.narration).toContain("翻查附近杂物");
-    expect(noisyScene.narration).toContain("留下了动静");
-    expect(cleanScene.narration).not.toContain("留下了动静");
+    const firstRecord = first.record();
+    const secondRecord = second.record();
+    const firstEvent = firstRecord.worldState.eventLedger.filter((event) => event.type === "fact_discovered").at(-1);
+    const secondEvent = secondRecord.worldState.eventLedger.filter((event) => event.type === "fact_discovered").at(-1);
+    expect(firstEvent).toMatchObject({ factId: CHOICE_FACT_ID });
+    expect(secondEvent).toMatchObject({ factId: CHOICE_FACT_ID });
+    if (firstEvent?.type === "fact_discovered") {
+      expect(firstEvent.approachId).toBeUndefined();
+      expect(firstEvent.evidenceQuality).toBeUndefined();
+      expect(firstEvent.tensionDelta).toBeUndefined();
+    }
+    if (secondEvent?.type === "fact_discovered") {
+      expect(secondEvent.approachId).toBeUndefined();
+      expect(secondEvent.evidenceQuality).toBeUndefined();
+      expect(secondEvent.tensionDelta).toBeUndefined();
+    }
+    expect(firstRecord.storyState.tension).toBe(secondRecord.storyState.tension);
   });
 });

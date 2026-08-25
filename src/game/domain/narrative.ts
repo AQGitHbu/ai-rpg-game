@@ -7,7 +7,11 @@ import {
 } from "./pendingNarrativeJob";
 import { createApprovedChoice, type ApprovedChoice } from "./approvedChoice";
 import { composeDirectNpcGreeting, normalizeNpcSpeech } from "./npcSpeech";
-import type { NarrativeGenerationFailure } from "./narrativeGenerationFailure";
+import {
+  isSafeNarrativeGenerationRepairReason,
+  type NarrativeGenerationFailure,
+  type NarrativeGenerationRetryContext,
+} from "./narrativeGenerationFailure";
 import {
   parsePreparedContinuationState,
   type PreparedContinuationState,
@@ -113,6 +117,7 @@ export type NarrativeRuntimeState =
       readonly mode: NarrativeMode;
       readonly job: PendingNarrativeJob;
       readonly lastPresentedScene: NarrativeSceneState | null;
+      readonly retryContext?: NarrativeGenerationRetryContext;
       readonly dialogueSession?: DialogueSessionState;
     }
   | {
@@ -268,12 +273,20 @@ function isApprovedChoice(value: unknown): value is ApprovedChoice {
 }
 
 function isFailure(value: unknown): value is NarrativeGenerationFailure {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["kind", "phase", "failedAt"])) return false;
+  if (!isRecord(value) || !hasOnlyKeys(value, ["kind", "phase", "failedAt", "reason"])) return false;
   if ((value.kind !== "AI_CALL_FAILED" && value.kind !== "AI_RESPONSE_INVALID")
     || value.phase !== "scene"
     || typeof value.failedAt !== "string") return false;
+  if (value.reason !== undefined && !isSafeNarrativeGenerationRepairReason(value.reason)) return false;
   const timestamp = new Date(value.failedAt);
   return !Number.isNaN(timestamp.valueOf()) && timestamp.toISOString() === value.failedAt;
+}
+
+function isRetryContext(value: unknown): value is NarrativeGenerationRetryContext {
+  return isRecord(value)
+    && hasOnlyKeys(value, ["attempt", "reason"])
+    && value.attempt === 1
+    && isSafeNarrativeGenerationRepairReason(value.reason);
 }
 
 function parseProviderJob(value: unknown): PendingNarrativeJob | null {
@@ -312,11 +325,12 @@ export function parseNarrativeRuntimeState(value: unknown): ParseNarrativeRuntim
   }
 
   if (value.status === "provider_pending") {
-    if (!hasOnlyKeys(value, ["status", "mode", "job", "lastPresentedScene", "dialogueSession"])) {
+    if (!hasOnlyKeys(value, ["status", "mode", "job", "lastPresentedScene", "retryContext", "dialogueSession"])) {
       return INVALID_NARRATIVE_RUNTIME;
     }
     if (parseProviderJob(value.job) === null
-      || (value.lastPresentedScene !== null && !isNarrativeScene(value.lastPresentedScene))) {
+      || (value.lastPresentedScene !== null && !isNarrativeScene(value.lastPresentedScene))
+      || (value.retryContext !== undefined && !isRetryContext(value.retryContext))) {
       return INVALID_NARRATIVE_RUNTIME;
     }
     return { ok: true, value: value as NarrativeRuntimeState };

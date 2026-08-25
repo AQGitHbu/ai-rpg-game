@@ -10,7 +10,7 @@ import { resolveItemPresentation, type ItemIconKey } from "@/game/domain/itemPre
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
-import { buildChoiceMap, hasExplorableContent, currentInvestigationApproachChoices, needsWorldBoundaryPreparation } from "./buildChoiceMap";
+import { buildChoiceMap, hasExplorableContent, needsWorldBoundaryPreparation } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
@@ -122,11 +122,7 @@ export type GameSessionView = {
     readonly currentObjectiveLabel: string | null;
     /** 当前目标对应的世界行动 opaque token；目标不在当前地点时为 null。 */
     readonly currentObjectiveChoiceToken: string | null;
-    /**
-     * Task 4：当前目标的全部权威行动 token。
-     * discover_fact 多 approach 时 = 每个已审批调查方式各一个 opaque token；
-     * 其余目标 = 单一兼容 token（与 currentObjectiveChoiceToken 相同）或空数组。
-     */
+    /** 当前目标的全部权威行动 token；discover_fact 自动确认，因此不生成 token。 */
     readonly currentObjectiveChoiceTokens: readonly string[];
   };
   readonly narrative: {
@@ -284,10 +280,9 @@ function currentObjectiveChoiceToken(
         || !currentLocation.connectedLocationIds.includes(objective.locationId)
         || !worldState.unlockedLocationIds.includes(objective.locationId)
       ) return null;
-      // 对话回合完成 talk 目标后，AI 会在交接场景预生成指向下一地点的
+      // 对话回合完成 talk 目标后，AI 可能在交接场景预生成指向下一地点的
       // move 选项（scene scope token，与 runtime token 派生自不同 sceneId，
-      // 永不相等）。优先采用该已审批选项的 token，让 UI 行动栏直接给出
-      // 角色化交接入口（“我这就去瞧瞧”），并保持 NPC 引导台词的展示链路。
+      // 永不相等）。保留该 token 供 handoff/旁注识别；真正移动入口由地图层承载。
       const readyNarrative = storyState.narrative.status === "ready"
         ? storyState.narrative
         : null;
@@ -326,13 +321,8 @@ function currentObjectiveChoiceToken(
         : null;
     }
     case "discover_fact": {
-      // Task 4：单一兼容 token 取当前事实第一个已审批 approach 的 token；
-      // 无已审批方式（含自动揭示路径）时为 null，全量 token 见
-      // currentObjectiveChoiceTokens。
-      const first = currentInvestigationApproachChoices(worldState, storyState)[0];
-      return first === undefined
-        ? null
-        : choice(first.action, revision, first.approach.label, "investigate").choiceToken;
+      // 事实在规则边界自动确认，不再生成调查按钮。
+      return null;
     }
     case "defeat_enemy": {
       const enemy = worldState.enemies.find((entry) => entry.id === objective.enemyId);
@@ -371,12 +361,8 @@ export function projectGameSessionView(
     && worldState.ending === null
     && worldState.endings.length >= 2;
   const currentObjectiveToken = currentObjectiveChoiceToken(worldState, storyState, currentObjective, revision);
-  // Task 4：discover_fact 多 approach 时 = 每个已审批调查方式的 token；
-  // 其余目标保持单一兼容 token（无目标时为空数组）。
-  const currentObjectiveTokens = currentObjective?.kind === "discover_fact"
-    ? currentInvestigationApproachChoices(worldState, storyState)
-      .map(({ action }) => deriveRuntimeChoiceToken(action, revision))
-    : (currentObjectiveToken === null ? [] : [currentObjectiveToken]);
+  // discover_fact 由规则边界自动确认；其余目标保持单一兼容 token。
+  const currentObjectiveTokens = currentObjectiveToken === null ? [] : [currentObjectiveToken];
   const currentObjectiveNpcId = currentObjective?.kind === "talk_to_npc"
     ? String(currentObjective.npcId)
     : null;
@@ -412,18 +398,6 @@ export function projectGameSessionView(
         ? "继续追查下一幕线索"
         : `探索${currentLocation?.name ?? "此地"}`;
       locationActions.push(choice({ type: "explore" }, revision, label, "explore"));
-    }
-    // 当前 discover_fact 主线目标事实的已审批调查方式 → 每个 approach 一个
-    // 行动按钮；只暴露 label/hint，不泄漏事实正文/方式 id（Task 4）。
-    // 无已审批方式（少于两个 approach 或自动揭示路径）时不投影调查入口。
-    for (const { action, approach } of currentInvestigationApproachChoices(worldState, storyState)) {
-      locationActions.push(choice(
-        action,
-        revision,
-        approach.label,
-        "investigate",
-        approach.hint,
-      ));
     }
     // 正式交谈入口只属于当前权威 talk 目标；其余在场 NPC 一律零回合闲聊展示，
     // 不再提供可提交的 ask 行动。
@@ -682,7 +656,7 @@ export function projectGameSessionView(
       role: npc.role,
       speechPages,
       // 非焦点 NPC 是零回合闲聊：不提供任何可提交选项；正式对话只能经
-      // 当前权威 talk 目标入口（交接双选项 / 行动栏目标交谈）开启。
+      // 当前权威 talk 目标入口（NPC 卡片/交接双选项）开启。
       choices: isFocus ? dialogueChoices : [],
       ...(projectedHandoffAcknowledgement !== null && String(npc.id) === sceneLineNpcId
         ? { handoffAcknowledgement: projectedHandoffAcknowledgement }

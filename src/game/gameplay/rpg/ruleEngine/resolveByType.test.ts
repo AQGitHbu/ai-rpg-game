@@ -412,7 +412,7 @@ describe("autoResolveCurrentInvestigation", () => {
     expect(result.events).toEqual([]);
   });
 
-  it("returns no-op when the current fact has approved approaches (player path only)", () => {
+  it("automatically discovers the current fact even when it has approved approaches", () => {
     const ws: WorldState = {
       ...worldWithApproaches(),
       quests: [{
@@ -423,7 +423,7 @@ describe("autoResolveCurrentInvestigation", () => {
       }],
     };
     const result = autoResolveCurrentInvestigation(ws, storyWithDiscoverFact());
-    expect(result.events).toEqual([]);
-    expect(result.nextWorldState).toBe(ws);
+    expect(result.events).toContainEqual(expect.objectContaining({ type: "fact_discovered", factId: FACT_1_ID }));
+    expect(result.nextWorldState).not.toBe(ws);
   });
 });

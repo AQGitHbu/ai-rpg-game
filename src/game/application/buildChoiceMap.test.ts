@@ -365,7 +365,7 @@ describe("hasExplorableContent（方案 1：有剧情钩子才允许探索）", 
   });
 });
 
-describe("investigate：只为当前 discover_fact 主线目标事实的已审批 approach 铸造 token", () => {
+describe("investigate：调查动作保留规则兼容，但不再进入当前玩家 choice map", () => {
   const approachFact = {
     factId: asFactId("fact_trace"),
     text: "泥地上有两行车辙",
@@ -414,22 +414,11 @@ describe("investigate：只为当前 discover_fact 主线目标事实的已审�
     return buildStoryState({});
   }
 
-  it("为同一事实的两个已审批 approach 各铸造一个互不相同的 runtime token", () => {
+  it("即使事实有多个已审批方式，也不铸造调查 token", () => {
     const map = buildChoiceMap(worldWithApproaches(), storyWithDiscoverFact(), 0);
     const investigate = [...map.values()].filter((action): action is Extract<Action, { type: "investigate" }> => action.type === "investigate");
-    expect(investigate).toHaveLength(2);
-    const follow = investigate.find((action) => action.approachId === "follow");
-    const search = investigate.find((action) => action.approachId === "search");
-    expect(follow).toEqual({ type: "investigate", factId: asFactId("fact_trace"), approachId: "follow" });
-    expect(search).toEqual({ type: "investigate", factId: asFactId("fact_trace"), approachId: "search" });
-    const tokens = investigate.map((action) => deriveRuntimeChoiceToken(action, 0));
-    expect(new Set(tokens).size).toBe(2);
-  });
-
-  it("不铸造无 approachId 的 generic investigate，也不铸造不存在的 approach", () => {
-    const map = buildChoiceMap(worldWithApproaches(), storyWithDiscoverFact(), 0);
-    expect(map.has(deriveRuntimeChoiceToken({ type: "investigate", factId: asFactId("fact_trace") }, 0))).toBe(false);
-    expect(map.has(deriveRuntimeChoiceToken({ type: "investigate", factId: asFactId("fact_trace"), approachId: "bogus" }, 0))).toBe(false);
+    expect(investigate).toHaveLength(0);
+    expect(map.has(deriveRuntimeChoiceToken({ type: "investigate", factId: asFactId("fact_trace"), approachId: "follow" }, 0))).toBe(false);
   });
 
   it("approach-less 事实不铸造任何 investigate token（规则层自动揭示路径）", () => {
@@ -437,32 +426,7 @@ describe("investigate：只为当前 discover_fact 主线目标事实的已审�
     expect([...map.values()].some((action) => action.type === "investigate")).toBe(false);
   });
 
-  it("同一地点的非目标未发现事实不投影 investigate 行动", () => {
-    const world = {
-      ...worldWithApproaches(),
-      worldFacts: [
-        approachFact,
-        { factId: asFactId("fact_side"), text: "角落的暗记", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") },
-      ],
-    };
-    const map = buildChoiceMap(world, storyWithDiscoverFact(), 0);
-    const investigate = [...map.values()].filter((action): action is Extract<Action, { type: "investigate" }> => action.type === "investigate");
-    expect(investigate).toHaveLength(2);
-    expect(investigate.every((action) => String(action.factId) === "fact_trace")).toBe(true);
-  });
-
-  it("stale revision 仍零写入：不同 revision 铸造的 investigate token 互不通用", () => {
-    const map0 = buildChoiceMap(worldWithApproaches(), storyWithDiscoverFact(), 0);
-    const map1 = buildChoiceMap(worldWithApproaches(), storyWithDiscoverFact(), 1);
-    const tokens0 = [...map0.values()].filter((action): action is Extract<Action, { type: "investigate" }> => action.type === "investigate")
-      .map((action) => deriveRuntimeChoiceToken(action, 0));
-    const actions1 = [...map1.values()].filter((action): action is Extract<Action, { type: "investigate" }> => action.type === "investigate");
-    expect(actions1).toHaveLength(2);
-    expect(actions1.every((action) => !map0.has(deriveRuntimeChoiceToken(action, 1)))).toBe(true);
-    expect(actions1.every((action) => !tokens0.includes(deriveRuntimeChoiceToken(action, 1)))).toBe(true);
-  });
-
-  it("registry investigate action 校验：approach 已不属于当前事实或事实已发现时不映射", () => {
+  it("registry 中遗留的 investigate choice 也不再映射", () => {
     const approvedFollow = approvedFor({
       sceneId: "scene-current", basedOnRevision: 0,
       label: "沿痕迹追查", action: { type: "investigate", factId: asFactId("fact_trace"), approachId: "follow" },
@@ -472,25 +436,7 @@ describe("investigate：只为当前 discover_fact 主线目标事实的已审�
       choices: [{ choiceToken: approvedFollow.choiceToken, label: "沿痕迹追查" }, { choiceToken: "t_b", label: "B" }],
     });
     const map = buildChoiceMap(worldWithApproaches(), story, 0);
-    expect(map.get(approvedFollow.choiceToken)).toEqual({ type: "investigate", factId: asFactId("fact_trace"), approachId: "follow" });
-
-    // 事实已发现 → 不映射
-    const discoveredWorld = {
-      ...worldWithApproaches(),
-      worldFacts: [{ ...approachFact, discovered: true }],
-    };
-    expect(buildChoiceMap(discoveredWorld, story, 0).has(approvedFollow.choiceToken)).toBe(false);
-
-    // approach 不属于当前事实 → 不映射
-    const otherApproach = approvedFor({
-      sceneId: "scene-current", basedOnRevision: 0,
-      label: "旁门左道", action: { type: "investigate", factId: asFactId("fact_trace"), approachId: "bogus" },
-    });
-    const story2 = buildStoryState({
-      registry: [otherApproach],
-      choices: [{ choiceToken: otherApproach.choiceToken, label: "旁门左道" }, { choiceToken: "t_b", label: "B" }],
-    });
-    expect(buildChoiceMap(worldWithApproaches(), story2, 0).has(otherApproach.choiceToken)).toBe(false);
+    expect(map.has(approvedFollow.choiceToken)).toBe(false);
   });
 });
 

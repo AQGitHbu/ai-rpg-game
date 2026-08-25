@@ -254,8 +254,8 @@ export type AutoResolveInvestigationResult = {
 };
 
 /**
- * 纯规则的有界辅助：当前主线首目标是当前地点、无 approach 的 discover_fact 时，
- * 返回一次 automatic 事实发现结算；否则返回 no-op。
+ * 纯规则的有界辅助：当前主线首目标是当前地点的 discover_fact 时，返回一次
+ * automatic 事实发现结算；调查方式不再构成玩家操作入口，统一在规则边界自动确认。
  * 不运行任务 reconciliation、不自行更新 ledger、不创建 pending job（由 resolveTurn 编排）。
  */
 export function autoResolveCurrentInvestigation(
@@ -278,9 +278,6 @@ export function autoResolveCurrentInvestigation(
   if (fact === undefined || fact.discovered) return noOp;
   // 旧档案事实可能缺 locationId（Task 6 线性模式 legacy_fact 兼容）：视为当前地点。
   if (fact.locationId !== undefined && String(fact.locationId) !== String(worldState.currentLocationId)) return noOp;
-  const approaches = fact.investigationApproaches ?? [];
-  if (approaches.length >= 2) return noOp;
-
   const action: Extract<Action, { readonly type: "investigate" }> = { type: "investigate", factId: fact.factId };
   const resolved = resolveFactDiscovery(worldState, action, { kind: "automatic" }, { now: deps?.now ?? (() => "") });
   if (!resolved.ok) return noOp;

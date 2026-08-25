@@ -89,8 +89,8 @@ describe("approveWorldDelta", () => {
     expect(result.approved.newQuests[0]!.stage).toBe(2);
     expect(result.approved.newQuests[0]!.kind).toBe("main");
     expect(result.approved.newQuests[0]!.objectives).toEqual([
-      { kind: "discover_fact", factId: "fact_dyn_0" },
       { kind: "visit_location", locationId: "loc_dyn_1" },
+      { kind: "discover_fact", factId: "fact_dyn_0" },
       { kind: "talk_to_npc", npcId: "npc_dyn_1" },
     ]);
     expect(result.approved.nextEvolution.status).toBe("needs_next_act");
@@ -667,9 +667,9 @@ describe("act objective shape variants", () => {
     factId: "f", locationId: "l", npcId: "n", itemId: "i", enemyId: "e",
   } as never;
 
-  it("full_chain 保留全部五类目标且顺序不变", () => {
+  it("full_chain 保留全部五类目标且先抵达新地点", () => {
     const kinds = deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "full_chain")!.map((objective) => objective.kind);
-    expect(kinds).toEqual(["discover_fact", "visit_location", "talk_to_npc", "obtain_item", "defeat_enemy"]);
+    expect(kinds).toEqual(["visit_location", "discover_fact", "talk_to_npc", "obtain_item", "defeat_enemy"]);
   });
 
   it("investigation_focus 去掉移动与战斗，保留调查-交谈-取证；物化新地点时链首强制保留抵达", () => {

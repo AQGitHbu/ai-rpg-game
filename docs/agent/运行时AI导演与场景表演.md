@@ -4,15 +4,15 @@
 
 运行时 AI 负责提出下一幕的结构化场景表演（分段旁白、焦点 NPC 台词、目标链接与合法选项）；规则系统负责审批候选、铸造玩家 token、裁决行动、审批世界演化并写入状态。AI 不直接写存档，也不能决定任务、关系、知识、战斗或结局。
 
-真机回合的 live 场景表演调用以 45 秒为单次上限；场景表演和世界演化分别使用 3000/3200 completion tokens，因为 provider 可能仍把 reasoning_content 计入同一预算。当前 new-api → DeepSeek 官方 OpenAI-compatible 链路通过请求体 `thinking: { type: "disabled" }` 关闭默认思考，显式角色策略才发送 `type: "enabled"`。若预算被 reasoning 消耗完，API 可能返回 HTTP 200 但没有可解析的 `message.content`，仍按 AI 提案失败处理。生产配置启用 live 时由单一 `RpgAiClient` 统一执行：timeout、限流、5xx 和网络失败按角色策略重试；AI 已返回但 JSON/场景契约或审批不通过时，同一回合最多再发送一次带失败原因的内容修复请求，修复仍失败就返回稳定 failure。`empty_response` 仍不在客户端重复相同请求，避免再次消耗预算却重复得到空 final content；失败不会被改写成 generated，也不会让玩家永久停留在 `provider_pending`：provider job 持久化为 `provider_failed`，玩家可手动重试同一 job。无 AI 配置时生产注入 unavailable source；确定性 source 只由显式离线 fixture 使用。
+真机回合的 live 场景表演调用以 45 秒为单次上限；场景表演和世界演化分别使用 3000/3200 completion tokens，因为 provider 可能仍把 reasoning_content 计入同一预算。当前 new-api → DeepSeek 官方 OpenAI-compatible 链路通过请求体 `thinking: { type: "disabled" }` 关闭默认思考，显式角色策略才发送 `type: "enabled"`。若预算被 reasoning 消耗完，API 可能返回 HTTP 200 但没有可解析的 `message.content`，仍按 AI 提案失败处理。生产配置启用 live 时由单一 `RpgAiClient` 统一执行：timeout、限流、5xx 和网络失败按角色策略重试；AI 已返回但 JSON/场景契约或审批不通过时，同一回合最多再发送一次带稳定字段级失败原因的内容修复请求，修复仍失败就返回稳定 failure。`empty_response` 仍不在客户端重复相同请求，避免再次消耗预算却重复得到空 final content；失败不会被改写成 generated，也不会让玩家永久停留在 `provider_pending`：provider job 持久化为 `provider_failed`，玩家可手动重试同一 job。无 AI 配置时生产注入 unavailable source；确定性 source 只由显式离线 fixture 使用。
 
 ## 重试分层与修复边界（2026-08-22）
 
 场景/world 的“传输 retry、内容修复、手动 failed-job retry”是三层互相独立的机制，由审计的 `context.retry.{origin,mechanism,attempt,reason}` 区分：
 
 - **传输 retry（transport）**：`RpgAiClient` 在 `maxAttempts`（intent/opening/scene=2、world=3）内对 timeout/网络/限流/5xx 的 provider 级重试。顶层 `ai_call.attempt` 记 2/…，`mechanism=transport`，保留上游传入的 `origin`（`normal`/`manual_failed_job`），**绝不覆盖 origin**。`empty_response` 不重复发送完全相同请求。
-- **内容修复（content_repair）**：结构化 JSON/schema/reference 解析失败或审批拒绝时，同一 pending 回合**最多再发送一次**带稳定原因/拒绝码的修复请求；`mechanism=content_repair`、`context.retry.attempt=1`。world 由 `evolveWorld` 两轮循环统一控制（见 `世界动态具象化.md`），scene 沿用 `repairAttempt` 且整个回合最多一次。修复耗尽统一返回稳定 `AI_RESPONSE_INVALID`，不创建 deterministic 成功。
-- **手动 failed-job 重试（manual_failed_job）**：只有 `{ "retry": true }` 才以同一 job CAS 将 `failed→pending` 并重跑，`origin=manual_failed_job`（该 job 第一次 AI 请求仍是 `mechanism=initial`，后续内容修复仍保持该 origin）。普通 `/api/game/narrative/ensure` 轮询只观察/恢复 pending、绝不自动重跑 failed job，`origin=normal`。
+- **内容修复（content_repair）**：结构化 JSON/schema/reference 解析失败或审批拒绝时，同一 pending 回合**最多再发送一次**带稳定字段级原因/拒绝码的修复请求；`mechanism=content_repair`、`context.retry.attempt=1`。场景解析器会保留 `segment_unknown_beat`、`segments_empty`、`choices_stale_template` 等原因码，prompt 会把原因展开成对应字段的修复指令；world 由 `evolveWorld` 两轮循环统一控制（见 `世界动态具象化.md`），scene 沿用 `repairAttempt` 且整个回合最多一次。修复耗尽统一返回稳定 `AI_RESPONSE_INVALID`，不创建 deterministic 成功。
+- **手动 failed-job 重试（manual_failed_job）**：只有 `{ "retry": true }` 才以同一 job CAS 将 `failed→pending` 并重跑；failed 状态中的稳定 `failure.reason` 会写入 pending 的内部 `retryContext`，因此该次重跑的首个 AI 请求已经是 `mechanism=content_repair`、`attempt=1`，并保留 `origin=manual_failed_job`。如果该请求再次返回可修复失败，当前生成预算仍可再执行一次内容修复。普通 `/api/game/narrative/ensure` 轮询只观察/恢复 pending、绝不自动重跑 failed job，`origin=normal`。
 
 `attempt` 语义：顶层 `ai_call.attempt` 是 provider transport 序号（初始 1）；`context.retry.attempt` 是重试分类内的逻辑序号（`initial=0`、`content_repair=1`、`transport` 为 provider attempt 值），两者不可混淆。
 
@@ -47,8 +47,8 @@
 - **候选不足处理**：普通 ready 场景若真实可执行候选少于两个，生产编排将 `scene_candidate_shortage` 视为 AI/审批失败，持久化 failed，不把无内容的 explore 当作合法候选；只有 `dialogueSession.completed=true` 且目标已推进的收尾 handoff scene 允许一个候选。离线 journey 可显式注入 deterministic evolution fixture 补齐候选，但不代表生产 AI 失败时的行为。
 - 普通对话场景绑定一个在场焦点 NPC，并提出两个语义不同的 TalkAction；收尾场景由同一次生成返回旧 NPC 的最后一句和一个绑定下一任务/地点/人物的 handoff Action。其他场景从服务端给出的合法候选 ID 中选择两个不同 Action。
 - `ObjectiveTransition.mode === advanced_act` 时叙事事件仍记录为非对话的任务交接；上一轮带 `player_utterance` 时焦点保持在原 NPC，由其先回应本轮话语，新目标只作为权威行动入口出现。新 talk 目标还没有 ready scene 时，read model 只能提供两项 handoff 回应入口，不能合成角色 fallback 台词或开放自由输入；正式选择提交后才创建 provider job。进入地点或点击 talk 本身不额外提交一次 `ask` API。玩家主动点击旁 NPC 时仍保持普通 `ask` 语义。目标身份由服务端锁定的 `objectiveLink` 和实体 ID 决定，旁白不要求逐字复述目标标签。
-- `move` / `investigate` / battle start-resolve 命中已审批的 `PreparedContinuationState` 时，规则结果、prepared scene 物化、choice token 铸造、continuation 消费和 revision 递增共用一次 CAS，零 live/world/intent provider 调用。无 prepared step 的 `take_item` / `give_item`、回退导航和 active battle round 直接产生 `source="rule"` 场景。
-- 两个已批准选择若都指向同一在场 NPC 的 TalkAction，即使触发事件是 travel/battle，也投影为该 NPC 的焦点对白；底栏只保留一个“与 NPC 交谈”主线入口，回答分支只在对话框显示。
+- `move` / battle start-resolve 命中已审批的 `PreparedContinuationState` 时，规则结果、prepared scene 物化、choice token 铸造、continuation 消费和 revision 递增共用一次 CAS，零 live/world/intent provider 调用。`discover_fact` 在规则边界自动确认；历史 investigate step 仅兼容旧状态。无 prepared step 的 `take_item` / `give_item`、回退导航和 active battle round 直接产生 `source="rule"` 场景。
+- 两个已批准选择若都指向同一在场 NPC 的 TalkAction，即使触发事件是 travel/battle，也投影为该 NPC 的焦点对白；回答分支只在对话框显示，地点页不再渲染底部行动栏。
 - live source 只能选择服务端候选 ID，不能发明任意 `actionKey`、实体 ID、事实 ID 或规则结果。
 - 审批器逐字段重建 scene/event/choice；生成对象原引用不能直接持久化。
 - 服务器根据 post-writeback revision 铸造 opaque `choiceToken`；客户端场景不含 `actionKey`、registry、候选 effect、隐藏事实或 AI diagnostics。
@@ -56,7 +56,7 @@
 - scene CAS 与序幕确认并发时，repository 单调保留已确认的 `prologueShown=true`；确认接口对 stale revision 读取新快照后有限重试。
 - 离线 fixture 可使用 deterministic source，并经过同一 proposal → approval → write-back 链；生产成功的 live proposal 才能标记 `source=generated`。API 失败或内容修复/审批重试仍拒绝时不写确定性剧情，而是保存稳定 failure 和原 job。场景核心与 prepared continuation 必须来自同一次 accepted attempt，不能从被拒绝的 proposal 拆取未来内容。
 - active battle、ending 或候选不足时不伪造普通场景选择。
-- `PreparedContinuationState` 是服务端维护的有向无环图，不是客户端可读的扁平队列。每个 step 带有 server-authored trigger、消费组和后继；调查方式、战斗结果等 sibling step 共享消费组，消费后只激活声明的 successor 并裁剪未选分支。step 不保存 minted token，只有物化为当前 scene 后才按 post-commit revision 铸造 token。
+- `PreparedContinuationState` 是服务端维护的有向无环图，不是客户端可读的扁平队列。每个 step 带有 server-authored trigger、消费组和后继；战斗结果等 sibling step 共享消费组，消费后只激活声明的 successor 并裁剪未选分支。历史调查 step 仅兼容旧状态；step 不保存 minted token，只有物化为当前 scene 后才按 post-commit revision 铸造 token。
 - active battle 采用规则 fast path：不创建 pending 场景、不调用 scene source；界面只提供攻击/防守，撤退不再作为可执行选项。战斗开始时保存玩家属性、已击败敌人和事件账本快照；失败只恢复快照并可重新挑战，不推进剧情。
 - 战斗胜利的 `battle_resolved` scene 只能消费已审批 prepared step；不执行战斗预热，不在最后一击后创建 provider job。战斗失败沿用战斗开始前快照恢复世界、属性和事件账本，回到可重新挑战状态，不推进剧情。
 - 武侠世界的世界演化审批与 live 提示词共同执行题材边界，拒绝骑士、灵魂、祭坛、圣光等跨题材实体或结局意象，避免 AI 合法 JSON 造成世界观漂移。
@@ -65,7 +65,7 @@
 
 - **生成点**：开局或正式 NPC fixed/free-text 的一次 accepted scene proposal 可携带完整的 `preparedContinuations` scene seed。服务端根据候选 projection 重建 step ID、trigger、消费组、后继与 active membership；AI 不提交图元数据，也不能决定未来实体的释放顺序。
 - **图与分支**：图必须 step ID/后继唯一、无环、每条 active 路径最终抵达下一处正式 NPC 决策边界。调查 approaches、battle outcomes 等兄弟分支共享消费组；消费一个 step 会裁剪同组未选分支，只激活 server-authored successors。
-- **消费语义**：`move`、`investigate`、`battle_started`、`battle_resolved` 先由规则核对权威实体/事实/敌人与 trigger，再在同一次 CAS 中应用规则结果、物化 prepared scene、按 post-commit revision 铸造 choices、消费当前 group 并递增 revision。
+- **消费语义**：`move`、`battle_started`、`battle_resolved` 先由规则核对权威实体/敌人与 trigger，再在同一次 CAS 中应用规则结果、物化 prepared scene、按 post-commit revision 铸造 choices、消费当前 group 并递增 revision；事实发现由规则边界自动完成。
 - **错误边界**：没有 active matching step 返回 `NARRATIVE_CONTINUATION_MISSING`；图结构、权威事件或实体不一致返回 `NARRATIVE_CONTINUATION_INVALID`。两者都不调用 provider 且零状态写入，不回退为 live 或 deterministic 生产场景。
 
 ## 叙事边界编排（2026-08-25）

@@ -17,7 +17,10 @@ import {
   type SceneChoiceCandidate,
 } from "../../sceneChoiceCandidates";
 import { classifyAiFailure, transportFailureCodeToCategory } from "../../aiGenerationFailure";
-import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
+import type {
+  AiGenerationFailure,
+  NarrativeGenerationRepairReason,
+} from "@/game/domain/narrativeGenerationFailure";
 import { NARRATIVE_EMOTIONS, type NarrativeEmotion } from "@/game/domain/narrative";
 import {
   isGenericNpcAcknowledgement,
@@ -99,20 +102,15 @@ export type LiveNpcLineCandidate = {
   readonly emotion: string;
 };
 
-export type ScenePerformanceParseFailureReason =
-  | "root_not_object"
-  | "segments_empty"
-  | "segment_invalid"
-  | "segment_unknown_beat"
-  | "npc_line_invalid_shape"
-  | "npc_line_unusable"
-  | "npc_dialogues_invalid"
-  | "objective_link_invalid_shape"
-  | "objective_link_invalid_fields"
-  | "choices_invalid"
-  | "choices_stale_template"
-  | "handoff_acknowledgement_invalid"
-  | "prepared_continuations_invalid";
+export type ScenePerformanceParseFailureReason = Exclude<
+  NarrativeGenerationRepairReason,
+  "empty_response"
+  | "invalid_json"
+  | "invalid_schema"
+  | "provider_failure"
+  | "source_exception"
+  | `approval:${string}`
+>;
 
 export type ScenePerformanceParseResult =
   | { readonly ok: true; readonly proposal: ScenePerformanceProposal }
@@ -537,9 +535,9 @@ export function createLiveScenePerformanceSource(deps: LiveScenePerformanceDeps)
             ? sceneResponseShape(parsed.value)
             : { object: false, kind: "invalid_json" }),
         });
-          return parsed.ok
-            ? { ...failScene("invalid_schema"), repairReason: "invalid_schema" }
-            : { ...failScene("invalid_json"), repairReason: "invalid_json" };
+        return parsed.ok
+          ? { ...failScene("invalid_schema"), repairReason: parseResult.reason }
+          : { ...failScene(parsed.reason === "root_not_object" ? "invalid_schema" : "invalid_json"), repairReason: parsed.reason };
       } catch (error) {
         logger?.error("scene_generation_error", { error: error instanceof Error ? error.message : "unknown" });
         return failScene("unknown");

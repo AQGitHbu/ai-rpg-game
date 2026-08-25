@@ -210,7 +210,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     )).toBe(true);
   });
 
-  it("生产候选投影：抵达调查地点时使用已审批的两种调查方式补足场景选项", () => {
+  it("生产候选投影：抵达调查地点时不再注入调查方式选项", () => {
     const context = makeContext({
       job: makeJob({
         eventKind: "travel",
@@ -223,20 +223,8 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         entityName: "门前令牌的来历",
       },
     });
-    const withApproaches: SceneGenerationContext = {
-      ...context,
-      currentInvestigationApproaches: [
-        { approachId: "observe", label: "先观察令牌上的刻痕", evidenceQuality: "clean", tensionDelta: 0 },
-        { approachId: "ask", label: "向守门弟子打听令牌来历", evidenceQuality: "noisy", tensionDelta: 1 },
-      ],
-    };
-
-    const candidates = buildSelectableSceneCandidates(withApproaches);
-
-    expect(candidates.slice(0, 2).map((candidate) => candidate.action)).toEqual([
-      { type: "investigate", factId: asFactId("fact_a"), approachId: "observe" },
-      { type: "investigate", factId: asFactId("fact_a"), approachId: "ask" },
-    ]);
+    const candidates = buildSelectableSceneCandidates(context);
+    expect(candidates.some((candidate) => candidate.action.type === "investigate")).toBe(false);
   });
 
   it("bounds live scene generation before deterministic fallback", async () => {
@@ -820,8 +808,29 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     expect(attempts).toBe(1);
     expect(proposal.ok).toBe(false);
     if (proposal.ok) throw new Error("expected repairable failure");
-    expect(proposal.repairReason).toBe("invalid_schema");
+    expect(proposal.repairReason).toBe("choices_stale_template");
     expect(logger.warn).not.toHaveBeenCalledWith("scene_generation_content_retry", expect.anything());
+  });
+
+  it("非法 beatId 返回字段级修复原因，供自动重试精准修复", async () => {
+    const source = createLiveScenePerformanceSource({
+      transport: stubTransport({
+        segments: [{ beatId: "act_1", text: "错误节拍" }],
+        npcLine: null,
+        objectiveLink: null,
+        choices: [
+          { candidateId: "candidate_1", label: "继续核对" },
+          { candidateId: "candidate_2", label: "先观察现场" },
+        ],
+      }),
+      config,
+    });
+
+    const proposal = await source.generateScene(makeContext());
+
+    expect(proposal.ok).toBe(false);
+    if (proposal.ok) throw new Error("expected repairable failure");
+    expect(proposal.repairReason).toBe("segment_unknown_beat");
   });
 
   it("新 NPC 首次回应也拒绝当前场景的 fallback 选项模板", () => {
@@ -1174,7 +1183,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
 
     expect(proposal.ok).toBe(false);
     if (proposal.ok) throw new Error("expected repairable failure");
-    expect(proposal.repairReason).toBe("invalid_schema");
+    expect(proposal.repairReason).toBe("segments_empty");
     expect(attempts).toBe(1);
     expect(logger.warn).not.toHaveBeenCalledWith("scene_generation_content_retry", expect.anything());
   });
@@ -1208,7 +1217,7 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     if (proposal.ok) throw new Error("expected failure");
     expect(proposal.failure.kind).toBe("AI_RESPONSE_INVALID");
     expect(attempts).toBe(1);
-    expect(proposal.repairReason).toBe("invalid_schema");
+    expect(proposal.repairReason).toBe("segments_empty");
     expect(logger).toMatchObject({ warn: expect.any(Function) });
     expect(logger.warn).toHaveBeenCalledWith("scene_generation_invalid_data", {
       reason: "segments_empty",

@@ -13,6 +13,39 @@ export type AiFailureKind = "AI_CALL_FAILED" | "AI_RESPONSE_INVALID";
 export type AiFailurePhase = "opening" | "intent" | "world" | "scene";
 
 /**
+ * 可安全持久化、可直接写入修复 prompt 的原因码。
+ * 原因码只描述契约/编排问题，不包含 provider 原文、用户输入或模型输出。
+ */
+export type NarrativeGenerationRepairReason =
+  | "empty_response"
+  | "invalid_json"
+  | "root_not_object"
+  | "segments_empty"
+  | "segment_invalid"
+  | "segment_unknown_beat"
+  | "npc_line_invalid_shape"
+  | "npc_line_unusable"
+  | "npc_dialogues_invalid"
+  | "objective_link_invalid_shape"
+  | "objective_link_invalid_fields"
+  | "choices_invalid"
+  | "choices_stale_template"
+  | "handoff_acknowledgement_invalid"
+  | "prepared_continuations_invalid"
+  | "invalid_schema"
+  | "provider_failure"
+  | "source_exception"
+  | `approval:${string}`;
+
+/** Persisted reason codes must stay short, opaque, and free of model/provider text. */
+export function isSafeNarrativeGenerationRepairReason(value: unknown): value is NarrativeGenerationRepairReason {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 128
+    && /^[a-z0-9:_-]+$/u.test(value);
+}
+
+/**
  * 通用 AI 生成失败：可出现在任何 phase。
  * 不持久化到 StoryState——只有场景失败（NarrativeGenerationFailure）才持久化。
  */
@@ -29,4 +62,12 @@ export type AiGenerationFailure = {
 export type NarrativeGenerationFailure = AiGenerationFailure & {
   readonly phase: "scene";
   readonly failedAt: string;
+  /** 上一次失败的稳定原因码，旧存档可缺省。 */
+  readonly reason?: NarrativeGenerationRepairReason;
 };
+
+/** provider_failed → provider_pending 时携带给下一次生成的修复上下文。 */
+export type NarrativeGenerationRetryContext = Readonly<{
+  readonly attempt: 1;
+  readonly reason: NarrativeGenerationRepairReason;
+}>;

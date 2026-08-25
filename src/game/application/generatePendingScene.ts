@@ -17,6 +17,7 @@ import { providerAllowedFor } from "@/game/gameplay/rpg/narrativeExecution";
 import type { GameLogger } from "@/game/logging";
 import type { StructuredActionSummary } from "@/game/domain/pendingNarrativeJob";
 import type { NarrativeGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
+import type { NarrativeGenerationRepairReason } from "@/game/domain/narrativeGenerationFailure";
 import { markNarrativeGenerationFailed } from "./markNarrativeGenerationFailed";
 import { runBoundedAttempts } from "@/game/core/retry";
 
@@ -43,18 +44,51 @@ export type GeneratePendingSceneResult =
 function buildAuditedSceneGenerationContext(
   record: GameRecord,
   auditLink: AiTextAuditLink | undefined,
+  retryContext: Extract<GameRecord["storyState"]["narrative"], { status: "provider_pending" }>["retryContext"] | undefined,
 ) {
   const context = buildSceneGenerationContext(record);
+  const repairAttempt = retryContext === undefined
+    ? undefined
+    : { attempt: retryContext.attempt, reason: retryContext.reason };
+  const retry = retryContext === undefined
+    ? auditLink?.retry
+    : {
+        origin: auditLink?.retry?.origin ?? "normal",
+        mechanism: "content_repair" as const,
+        attempt: retryContext.attempt,
+        reason: retryContext.reason,
+      };
   return {
     ...context,
+    ...(repairAttempt === undefined ? {} : { repairAttempt }),
     auditLink: {
       ...auditLink,
       gameId: String(record.gameId),
       jobId: String(context.job.jobId),
       turnNumber: context.job.turnNumber,
+      ...(retry === undefined ? {} : { retry }),
     },
     auditTrigger: deriveSceneTrigger(context.job.actionSummary, context.job),
   };
+}
+
+function withSceneRepairContext<TContext extends ReturnType<typeof buildAuditedSceneGenerationContext>>(
+  context: TContext,
+  repairAttempt: { readonly attempt: 1; readonly reason: NarrativeGenerationRepairReason },
+): TContext {
+  return {
+    ...context,
+    repairAttempt,
+    auditLink: {
+      ...context.auditLink,
+      retry: {
+        origin: context.auditLink?.retry?.origin ?? "normal",
+        mechanism: "content_repair",
+        attempt: repairAttempt.attempt,
+        reason: repairAttempt.reason,
+      },
+    },
+  } as TContext;
 }
 
 /**
@@ -113,10 +147,14 @@ export async function generatePendingScene(
     return marked.code === "STALE_GAME_REVISION" ? "stale" : "unavailable";
   };
 
-  const sceneFailure = (kind: "AI_CALL_FAILED" | "AI_RESPONSE_INVALID"): NarrativeGenerationFailure => ({
+  const sceneFailure = (
+    kind: "AI_CALL_FAILED" | "AI_RESPONSE_INVALID",
+    reason?: NarrativeGenerationRepairReason,
+  ): NarrativeGenerationFailure => ({
     kind,
     phase: "scene",
     failedAt: deps.now(),
+    ...(reason === undefined ? {} : { reason }),
   });
 
   if (!providerAllowedFor(generation.job.generationKind)) {
@@ -124,7 +162,7 @@ export async function generatePendingScene(
       runtimeStatus: generation.status,
       generationKind: generation.job.generationKind,
     });
-    return fail(sceneFailure("AI_RESPONSE_INVALID"));
+    return fail(sceneFailure("AI_RESPONSE_INVALID", "invalid_schema"));
   }
 
   // Task 3：场景编排同样可能挂着演化需求（幕推进/结局对）。
@@ -185,7 +223,7 @@ export async function generatePendingScene(
     storyState: scenarioSs,
   };
 
-  let context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink);
+  let context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink, generation.retryContext);
 
   // Candidate capacity is a provider-job concern: the job may ask the world
   // evolution source for enough rule-owned entities before the single scene
@@ -216,7 +254,7 @@ export async function generatePendingScene(
     scenarioWs = recovery.delta.previewWorldState;
     scenarioSs = recovery.delta.previewStoryState;
     scenarioRecord = { ...record, worldState: scenarioWs, storyState: scenarioSs };
-    context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink);
+    context = buildAuditedSceneGenerationContext(scenarioRecord, deps.auditLink, generation.retryContext);
   }
 
   type SceneAttemptValue = {
@@ -225,12 +263,15 @@ export async function generatePendingScene(
     readonly context: ReturnType<typeof buildAuditedSceneGenerationContext>;
   };
   let terminalFailure: NarrativeGenerationFailure = sceneFailure("AI_RESPONSE_INVALID");
-  const bounded = await runBoundedAttempts<SceneAttemptValue, string>({
+  const bounded = await runBoundedAttempts<SceneAttemptValue, NarrativeGenerationRepairReason>({
     maxAttempts: 2,
     runAttempt: async (attempt, priorReason) => {
       const attemptContext = attempt === 1
         ? context
-        : { ...context, repairAttempt: { attempt: 1, reason: priorReason ?? "invalid_schema" } };
+        : withSceneRepairContext(context, {
+            attempt: 1,
+            reason: priorReason ?? "invalid_schema",
+          });
       let sceneResult;
       try {
         sceneResult = await deps.sceneSource.generateScene(attemptContext);
@@ -238,15 +279,17 @@ export async function generatePendingScene(
         deps.logger?.warn("scene_generation_source_exception", {
           message: error instanceof Error ? error.message.slice(0, 240) : "unknown_error",
         });
-        terminalFailure = sceneFailure("AI_CALL_FAILED");
+        terminalFailure = sceneFailure("AI_CALL_FAILED", "source_exception");
         return { ok: false, retryable: false, reason: "source_exception" };
       }
       if (!sceneResult.ok) {
-        terminalFailure = { ...sceneResult.failure, phase: "scene", failedAt: deps.now() };
+        const reason = sceneResult.repairReason
+          ?? (sceneResult.failure.kind === "AI_CALL_FAILED" ? "provider_failure" : "invalid_schema");
+        terminalFailure = sceneFailure(sceneResult.failure.kind, reason);
         return {
           ok: false,
           retryable: attempt === 1 && sceneResult.repairReason !== undefined,
-          reason: sceneResult.repairReason ?? "source_failure",
+          reason,
         };
       }
 
@@ -271,15 +314,16 @@ export async function generatePendingScene(
       if (proposal.source === "generated") {
         deps.logger?.warn("scene_generation_rejected", { code: approvedGenerated.code });
       }
-      terminalFailure = sceneFailure("AI_RESPONSE_INVALID");
+      const repairReason = `approval:${approvedGenerated.code}` as const;
+      terminalFailure = sceneFailure("AI_RESPONSE_INVALID", repairReason);
       const canRepair = attempt === 1 && proposal.source === "generated";
       if (canRepair) {
         deps.logger?.warn("scene_generation_content_retry", {
-          reason: `approval:${approvedGenerated.code}`,
+          reason: repairReason,
           attempt,
         });
       }
-      return { ok: false, retryable: canRepair, reason: `approval:${approvedGenerated.code}` };
+      return { ok: false, retryable: canRepair, reason: repairReason };
     },
   });
   if (!bounded.ok) return fail(terminalFailure);
