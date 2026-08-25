@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   createInitialWorldState,
   findLocation,
+  isTravelTarget,
   findNpc,
   appendLocation,
   appendNpc,
@@ -68,6 +69,25 @@ describe("WorldState", () => {
     const ws2 = appendLocation(ws, newLoc);
     expect(findLocation(ws2, asLocationId("loc_new"))).toBeDefined();
     expect(findLocation(ws, asLocationId("loc_new"))).toBeUndefined(); // 原state不变
+  });
+
+  it("允许回访已到访地点，但未到访地点仍要求当前地点相邻", () => {
+    const loc1 = asLocationId("loc_1");
+    const loc2 = asLocationId("loc_2");
+    const loc3 = asLocationId("loc_3");
+    const ws = {
+      ...createInitialWorldState({ ...baseInput, startingLocation: { ...startingLocation, connectedLocationIds: [loc2] } }),
+      locations: [
+        { ...startingLocation, id: loc1, connectedLocationIds: [loc2] },
+        { ...startingLocation, id: loc2, connectedLocationIds: [loc1, loc3] },
+        { ...startingLocation, id: loc3, connectedLocationIds: [loc2] },
+      ],
+      unlockedLocationIds: [loc1, loc2, loc3],
+      visitedLocationIds: [loc1, loc2],
+    };
+
+    expect(isTravelTarget(ws, loc2)).toBe(true);
+    expect(isTravelTarget(ws, loc3)).toBe(false);
   });
 
   it("appendNpc adds new npc immutably with default memory", () => {

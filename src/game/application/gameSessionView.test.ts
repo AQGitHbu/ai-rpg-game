@@ -176,11 +176,15 @@ describe("projectGameSessionView", () => {
     expect(view.narrative.npcDialogues[0]?.freeInputEnabled).toBe(false);
   });
 
-  it("projects available moves to connected unlocked locations", () => {
-    const view = projectGameSessionView(ws, ss, 0, "test-ending-session");
+  it("projects adjacent new locations and previously visited locations for return travel", () => {
+    const view = projectGameSessionView({
+      ...ws,
+      currentLocationId: asLocationId("loc_2"),
+      visitedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")],
+    }, ss, 0, "test-ending-session");
     const moves = view.worldMap.locations.filter((location) => location.travelChoice !== null);
     expect(moves).toHaveLength(1);
-    expect(moves[0]?.name).toBe("街道");
+    expect(moves[0]?.name).toBe("客栈");
   });
 
   it("projects story metrics", () => {

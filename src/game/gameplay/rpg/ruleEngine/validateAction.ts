@@ -1,5 +1,5 @@
 import type { WorldState } from "@/game/domain/worldState";
-import { findLocation, findNpc, findItem, findQuest } from "@/game/domain/worldState";
+import { findLocation, findNpc, findItem, findQuest, isTravelTarget } from "@/game/domain/worldState";
 import type { Action } from "@/game/domain/action";
 import { DIALOGUE_ACTS } from "@/game/domain/action";
 
@@ -26,8 +26,7 @@ export function validateAction(ws: WorldState, action: Action): ValidateResult {
       if (loc === undefined) return { ok: false, code: "UNKNOWN_LOCATION", params: { locationId: String(action.locationId) } };
       if (ws.currentLocationId === action.locationId) return { ok: false, code: "LOCATION_ALREADY_CURRENT", params: {} };
       if (!ws.unlockedLocationIds.includes(action.locationId)) return { ok: false, code: "LOCATION_LOCKED", params: {} };
-      const current = findLocation(ws, ws.currentLocationId);
-      if (current !== undefined && !current.connectedLocationIds.includes(action.locationId)) return { ok: false, code: "LOCATION_NOT_CONNECTED", params: {} };
+      if (!isTravelTarget(ws, action.locationId)) return { ok: false, code: "LOCATION_NOT_CONNECTED", params: {} };
       return { ok: true };
     }
     case "talk": {

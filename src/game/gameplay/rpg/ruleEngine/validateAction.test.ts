@@ -55,6 +55,23 @@ describe("validateAction", () => {
     }
   });
 
+  it("allows returning directly to a visited unlocked location", () => {
+    const loc2: LocationEntry = {
+      ...startingLocation,
+      id: asLocationId("loc_2"),
+      name: "已到访地点",
+      connectedLocationIds: [],
+    };
+    const ws2 = {
+      ...ws,
+      locations: [startingLocation, loc2],
+      currentLocationId: startingLocation.id,
+      unlockedLocationIds: [startingLocation.id, loc2.id],
+      visitedLocationIds: [startingLocation.id, loc2.id],
+    };
+    expect(validateAction(ws2, { type: "move", locationId: loc2.id })).toEqual({ ok: true });
+  });
+
   it("rejects talk to unknown npc", () => {
     const result = validateAction(ws, { type: "talk", npcId: asNpcId("unknown"), dialogueAct: "ask" });
     expect(result.ok).toBe(false);

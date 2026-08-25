@@ -1,5 +1,5 @@
 import type { Action } from "@/game/domain/action";
-import type { WorldState } from "@/game/domain/worldState";
+import { isTravelTarget, type WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { isExpiredCandidate } from "@/game/domain/candidateEvent";
@@ -93,12 +93,12 @@ export function buildChoiceMap(
       addRuntimeAction({ type: "talk", npcId: dialogueNpcId, dialogueAct: "challenge" });
     }
 
-    // 连接且已解锁的地点 → move
+    // 未到访地点要求相邻；已到访地点允许回访，避免回到上游地点后被地图锁死。
     const currentLoc = worldState.locations.find((l) => l.id === worldState.currentLocationId);
     if (currentLoc !== undefined) {
-      for (const locId of currentLoc.connectedLocationIds) {
-        if (worldState.unlockedLocationIds.includes(locId)) {
-          addRuntimeAction({ type: "move", locationId: locId });
+      for (const loc of worldState.locations) {
+        if (isTravelTarget(worldState, loc.id)) {
+          addRuntimeAction({ type: "move", locationId: loc.id });
         }
       }
     }

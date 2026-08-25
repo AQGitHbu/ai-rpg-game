@@ -8,7 +8,7 @@ import { locationScaleOf } from "@/game/domain/worldEntity";
 import type { ItemCategory, ItemRarity, ItemStatLine } from "@/game/domain/worldEntity";
 import { resolveItemPresentation, type ItemIconKey } from "@/game/domain/itemPresentation";
 import type { StoryState } from "@/game/domain/storyState";
-import type { WorldState } from "@/game/domain/worldState";
+import { isTravelTarget, type WorldState } from "@/game/domain/worldState";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 import { buildChoiceMap, hasExplorableContent, needsWorldBoundaryPreparation } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
@@ -274,12 +274,7 @@ function currentObjectiveChoiceToken(
   switch (objective.kind) {
     case "visit_location": {
       const currentLocation = worldState.locations.find((entry) => entry.id === worldState.currentLocationId);
-      if (
-        currentLocation === undefined
-        || objective.locationId === worldState.currentLocationId
-        || !currentLocation.connectedLocationIds.includes(objective.locationId)
-        || !worldState.unlockedLocationIds.includes(objective.locationId)
-      ) return null;
+      if (currentLocation === undefined || !isTravelTarget(worldState, objective.locationId)) return null;
       // 对话回合完成 talk 目标后，AI 可能在交接场景预生成指向下一地点的
       // move 选项（scene scope token，与 runtime token 派生自不同 sceneId，
       // 永不相等）。保留该 token 供 handoff/旁注识别；真正移动入口由地图层承载。
@@ -370,9 +365,6 @@ export function projectGameSessionView(
     ? null
     : buildTownView(worldState, currentLocation.id, currentObjectiveNpcId);
 
-  const travelTargets = new Set(
-    activeBattle === null ? currentLocation?.connectedLocationIds ?? [] : [],
-  );
   const mapLocations = worldState.locations
     .filter((location) => worldState.unlockedLocationIds.includes(location.id))
     .map((location) => ({
@@ -380,7 +372,7 @@ export function projectGameSessionView(
       current: location.id === worldState.currentLocationId,
       visited: worldState.visitedLocationIds.includes(location.id),
       scale: locationScaleOf(location),
-      travelChoice: travelTargets.has(location.id)
+      travelChoice: activeBattle === null && isTravelTarget(worldState, location.id)
         ? choice({ type: "move", locationId: location.id }, revision, `前往${location.name}`, "travel")
         : null,
     }));

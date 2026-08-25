@@ -204,6 +204,23 @@ export function findLocation(ws: WorldState, id: LocationId): LocationEntry | un
   return ws.locations.find((l) => l.id === id);
 }
 
+/**
+ * 判断地点是否可以作为地图移动目标。
+ *
+ * 未到访地点仍必须沿当前地点的相邻边进入；已解锁且已经到访的地点
+ * 则允许从地图直接回访，避免玩家回到上游地点后被迫沿剧情链逐段折返。
+ * 这是地图投影、choice map 和规则校验共用的旅行边界。
+ */
+export function isTravelTarget(ws: WorldState, locationId: LocationId): boolean {
+  if (
+    findLocation(ws, locationId) === undefined
+    || locationId === ws.currentLocationId
+    || !ws.unlockedLocationIds.includes(locationId)
+  ) return false;
+  if (ws.visitedLocationIds.includes(locationId)) return true;
+  return findLocation(ws, ws.currentLocationId)?.connectedLocationIds.includes(locationId) ?? false;
+}
+
 export function findNpc(ws: WorldState, id: NpcId): NpcEntry | undefined {
   return ws.npcs.find((n) => n.id === id);
 }

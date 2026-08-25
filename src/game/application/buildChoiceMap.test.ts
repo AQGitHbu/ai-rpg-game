@@ -114,6 +114,22 @@ describe("buildChoiceMap", () => {
     expect(map.get(deriveRuntimeChoiceToken(talkSmith, 0))).toEqual({ type: "talk", npcId: asNpcId("npc_smith"), dialogueAct: "ask" });
   });
 
+  it("已到访地点即使不与当前地点直接相邻也可回访", () => {
+    const loc3: LocationEntry = {
+      id: asLocationId("loc_3"), name: "旧码头", description: "d", kind: "main",
+      connectedLocationIds: [asLocationId("loc_2")], npcIds: [], availableItemIds: [], tags: [],
+    };
+    const world = {
+      ...buildWorldState(),
+      locations: [...buildWorldState().locations, loc3],
+      currentLocationId: asLocationId("loc_1"),
+      visitedLocationIds: [asLocationId("loc_1"), asLocationId("loc_3")],
+      unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2"), asLocationId("loc_3")],
+    };
+    const map = buildChoiceMap(world, buildStoryState({}), 0);
+    expect(map.get(deriveRuntimeChoiceToken({ type: "move", locationId: loc3.id }, 0))).toEqual({ type: "move", locationId: loc3.id });
+  });
+
   it("有物品或敌人的地点允许先探索再处理实体", () => {
     expect(hasExplorableContent(buildWorldState(), buildStoryState({}))).toBe(true);
   });
