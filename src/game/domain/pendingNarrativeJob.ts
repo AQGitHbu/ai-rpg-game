@@ -7,10 +7,70 @@ import type {
   LocationId,
   NpcId,
 } from "./worldEntity";
+import type { Action } from "./action";
 import { MAX_MANDATORY_BEATS, type MandatoryNarrativeBeat, type ObjectiveTransition } from "./narrativeBeat";
 
 /** 玩家原话（utterance）的长度上限：全链路统一引用的常量。 */
 export const PLAYER_UTTERANCE_MAX_LENGTH = 200 as const;
+
+// ---------------------------------------------------------------------------
+// Decision boundary classification (additive — Task 1 of the narrative bundle
+// plan). The legacy PROVIDER_GENERATION_KINDS / NarrativeSceneRequestKind
+// remain until Task 7 switches every caller and removes them atomically.
+// ---------------------------------------------------------------------------
+
+/** 新语义决策边界种类：唯一合法的 AI 触发点。 */
+export const DECISION_BOUNDARY_KINDS = [
+  "initialization",
+  "narrative_choice",
+  "npc_free_text",
+] as const;
+
+export type DecisionBoundaryKind = (typeof DECISION_BOUNDARY_KINDS)[number];
+
+/** 分类器输入：从已保存的 ready 场景和 registry 证明触发来源。 */
+export type DecisionBoundaryProofInput = {
+  readonly action: Action;
+  readonly interactionKind: "fixed_choice" | "free_text" | null;
+  readonly fixedChoiceIsCurrentFormalDecision: boolean;
+  readonly focusedNpcId: NpcId | null;
+};
+
+/**
+ * 将一次玩家提交分类为语义决策边界或 null。
+ *
+ * - `narrative_choice`：talk + fixed_choice + fixedChoiceIsCurrentFormalDecision
+ * - `npc_free_text`：talk + free_text + 目标是当前焦点 NPC
+ * - `null`：其他所有情况
+ *
+ * Task 7 在迁移全部 caller 后移除 `worldBoundaryNeedsPreparation` 和
+ * `npc_fixed_choice`。
+ */
+export function classifyProviderDecisionBoundary(
+  input: DecisionBoundaryProofInput,
+): DecisionBoundaryKind | null {
+  // Formal fixed choice: must be a talk action with a fixed_choice interaction
+  // that has been proven to belong to the current formal decision.
+  if (
+    input.action.type === "talk"
+    && input.interactionKind === "fixed_choice"
+    && input.fixedChoiceIsCurrentFormalDecision
+  ) {
+    return "narrative_choice";
+  }
+
+  // Free text: must be a talk action targeting the current focus NPC.
+  if (
+    input.action.type === "talk"
+    && input.interactionKind === "free_text"
+    && input.focusedNpcId !== null
+    && input.action.npcId === input.focusedNpcId
+  ) {
+    return "npc_free_text";
+  }
+
+  return null;
+}
 
 /** 生产环境允许触发 provider 调用的生成种类（白名单）。 */
 export const PROVIDER_GENERATION_KINDS = [

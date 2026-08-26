@@ -6,6 +6,8 @@ import {
   PLAYER_UTTERANCE_MAX_LENGTH,
   createPendingNarrativeJob,
   parsePendingNarrativeJob,
+  DECISION_BOUNDARY_KINDS,
+  classifyProviderDecisionBoundary,
   type CreatePendingNarrativeJobInput,
   type PendingNarrativeJob,
   type StructuredActionSummary,
@@ -401,5 +403,135 @@ describe("PendingNarrativeJob", () => {
     expect(parsePendingNarrativeJob(null).ok).toBe(false);
     expect(parsePendingNarrativeJob("hello").ok).toBe(false);
     expect(parsePendingNarrativeJob(42).ok).toBe(false);
+  });
+});
+
+describe("decision boundary classification", () => {
+  it("DECISION_BOUNDARY_KINDS 只包含三种语义明确的触发点", () => {
+    expect(DECISION_BOUNDARY_KINDS).toEqual([
+      "initialization",
+      "narrative_choice",
+      "npc_free_text",
+    ]);
+  });
+
+  it("正式剧情二选一分类为 narrative_choice", () => {
+    const result = classifyProviderDecisionBoundary({
+      action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" },
+      interactionKind: "fixed_choice",
+      fixedChoiceIsCurrentFormalDecision: true,
+      focusedNpcId: asNpcId("npc_1"),
+    });
+    expect(result).toBe("narrative_choice");
+  });
+
+  it("当前焦点 NPC 自定义输入分类为 npc_free_text", () => {
+    const result = classifyProviderDecisionBoundary({
+      action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" },
+      interactionKind: "free_text",
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: asNpcId("npc_1"),
+    });
+    expect(result).toBe("npc_free_text");
+  });
+
+  it("free_text 发给非焦点 NPC 返回 null", () => {
+    const result = classifyProviderDecisionBoundary({
+      action: { type: "talk", npcId: asNpcId("npc_2"), dialogueAct: "ask" },
+      interactionKind: "free_text",
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: asNpcId("npc_1"),
+    });
+    expect(result).toBeNull();
+  });
+
+  it("fixed_choice 但不是当前正式决策返回 null", () => {
+    const result = classifyProviderDecisionBoundary({
+      action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" },
+      interactionKind: "fixed_choice",
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: asNpcId("npc_1"),
+    });
+    expect(result).toBeNull();
+  });
+
+  it("移动行动返回 null", () => {
+    const result = classifyProviderDecisionBoundary({
+      action: { type: "move", locationId: asLocationId("loc_2") as never },
+      interactionKind: null,
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: null,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("探索行动返回 null", () => {
+    const result = classifyProviderDecisionBoundary({
+      action: { type: "explore" },
+      interactionKind: null,
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: null,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("调查行动返回 null", () => {
+    const result = classifyProviderDecisionBoundary({
+      action: { type: "investigate", factId: "fact_1" as never },
+      interactionKind: null,
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: null,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("拾取物品行动返回 null", () => {
+    const result = classifyProviderDecisionBoundary({
+      action: { type: "take_item", itemId: "item_1" as never },
+      interactionKind: null,
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: null,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("交付物品行动返回 null", () => {
+    const result = classifyProviderDecisionBoundary({
+      action: { type: "give_item", itemId: "item_1" as never, npcId: asNpcId("npc_1") },
+      interactionKind: null,
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: null,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("攻击行动返回 null", () => {
+    const result = classifyProviderDecisionBoundary({
+      action: { type: "attack", enemyId: "enemy_1" as never },
+      interactionKind: null,
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: null,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("战斗回合行动返回 null", () => {
+    const result = classifyProviderDecisionBoundary({
+      action: { type: "battle_action", action: "attack" },
+      interactionKind: null,
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: null,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("合成 talk token（无正式交互）返回 null", () => {
+    const result = classifyProviderDecisionBoundary({
+      action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" },
+      interactionKind: null,
+      fixedChoiceIsCurrentFormalDecision: false,
+      focusedNpcId: asNpcId("npc_1"),
+    });
+    expect(result).toBeNull();
   });
 });
