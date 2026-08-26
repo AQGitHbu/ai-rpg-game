@@ -139,7 +139,10 @@ export function buildChoiceMap(
 
     // 探索：仅当前地点有可探索内容（未发现线索/未拾取物品或敌人/未满足目标/候选事件）
     // 时才作为合法世界行动（方案 1：无剧情钩子不显示探索）。
-    if (hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState)) {
+    const endingDecisionReady = storyState.endingAllowed
+      && worldState.ending === null
+      && worldState.endings.length >= 2;
+    if (hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState) || endingDecisionReady) {
       addRuntimeAction({ type: "explore" });
     }
   }

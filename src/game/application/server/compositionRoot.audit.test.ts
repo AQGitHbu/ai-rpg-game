@@ -36,7 +36,7 @@ describe("compositionRoot audit recording", () => {
       AI_TEXT_AUDIT: "full",
       AI_TEXT_AUDIT_RUN_ID: "test-create",
       NODE_ENV: "test",
-      // No AI config so deterministic sources are used
+      // No AI config: production sources remain unavailable and never become deterministic.
     };
     const entryPoints = createServerGameEntryPoints(env, audit);
 

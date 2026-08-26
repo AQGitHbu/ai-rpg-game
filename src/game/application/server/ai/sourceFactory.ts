@@ -14,7 +14,8 @@ import { classifyAiFailure } from "../../aiGenerationFailure";
 import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
 
 // ---------------------------------------------------------------------------
-// AI source 工厂：根据运行时配置注入 live 或 fixture/deterministic source。
+// 生产 AI source 工厂：根据运行时配置只注入 live 或 unavailable source。
+// fixture/deterministic source 只能由显式 offline 测试装配，禁止在这里回退。
 // live source 共用 composition root 创建的 RpgAiClient，不各自创建 transport。
 // Task 6：场景源已迁移到场景表演契约（liveScenePerformanceSource）。
 // ---------------------------------------------------------------------------

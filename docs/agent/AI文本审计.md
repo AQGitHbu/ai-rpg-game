@@ -4,6 +4,8 @@
 
 AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录，完整保存游戏运行时的 AI 调用和最终玩家可见文本；游戏 API 交换按独立模式记录，支持文本质量审核并保留必要的游戏还原证据。
 
+生产真实游戏的验收必须检查：所有 provider `story_text.source` 均为 `generated`，`mode="ai"` 的 ready 场景不得为 `fixture`，玩家可见/API 正文不得含 `【fallback】`；调用或内容失败只能留下 `provider_failed` 与同 job 手动重试证据。`source="rule"` 只用于规则型移动、物品和战斗反馈，不计作 AI 文本，也不得包含伪造的 AI 旁白或 NPC 台词。
+
 ## 默认开关
 
 - 默认开启：`AI_TEXT_AUDIT` 缺失、空白或非 `off` 值均按 `full` 处理。

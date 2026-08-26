@@ -35,6 +35,7 @@ NPC 对话是持续推进故事的主要入口。每个 ready 的焦点 NPC 场�
 - “承接”不等于复读玩家原文。NPC 必须以角色自身的第一人称口吻给出回答、可核对的线索、保留或下一步；禁止以“你刚才问的……”加引号复述长句来充当回复。
 - 焦点 NPC 的 ready 台词至少包含两句直接对白：第一句回应当前问题或线索，第二句继续补充、追问或给出下一步；审批器会拒绝焦点开场、正式回应或终局追问中的单句台词，内容修复仍失败时返回 `AI_RESPONSE_INVALID`，不改写为生产 deterministic 成功。
 - 对话生成只使用 live source 的结构化上下文和服务端候选；显式 offline fixture 才按当前主线目标与结构化对话状态生成可重放台词。NPC 可说事实卡由 live performer 按 `usedFactIds` 约束使用，越权引用或审批拒绝均进入失败态。
+- 真实游戏的 read model 只展示 scene 中已持久化并审批的 NPC 台词；不得在读取时调用确定性问候或目标提醒补齐空白。`mode="ai"` 的旧/损坏存档若带 `source="fixture"` 场景，一律拒绝投影；缺少正式 focus 台词时只保留权威 `ask` 生成入口，API 失败进入 failed 并重试同一 job。
 - 真机 AI 验收只接受持久化 `narrative.currentScene.source = generated` 的回合；AI 失败必须暴露稳定 `failureKind`，点击“重试”后复用同一 job，不计为 deterministic 通关。
 
 ## 单一路径

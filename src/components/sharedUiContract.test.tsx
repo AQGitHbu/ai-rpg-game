@@ -82,7 +82,7 @@ function buildBuildingView(overrides: {
   };
 }
 
-function renderBuildingScene(view: GameSessionView): void {
+function renderBuildingScene(view: GameSessionView, sceneLocationName = "福来酒楼"): void {
   render(<LocationSceneScreen
     view={view}
     busy={false}
@@ -90,7 +90,7 @@ function renderBuildingScene(view: GameSessionView): void {
     onReturnMap={vi.fn()}
     initialFocusNpcId="npc_1"
     sceneNpcName="老板"
-    sceneLocationName="福来酒楼"
+    sceneLocationName={sceneLocationName}
     sceneBuildingId="building_1"
   />);
 }
@@ -116,6 +116,28 @@ describe("LocationSceneScreen building scene side note", () => {
     const sideNote = screen.getByRole("region", { name: "地点旁注" });
     expect(sideNote).toHaveTextContent("福来酒楼里酒气、炭火和低声交谈混在一起");
     expect(sideNote).not.toHaveTextContent("前厅的灯笼刚刚点亮");
+  });
+
+  it("prefers an AI-generated notice-board name over the retained tavern slot type", () => {
+    const view = buildBuildingView({ eventKind: "observe", narration: "前厅的灯笼刚刚点亮。" });
+    const building = view.currentLocation.town?.interactiveBuildings[0];
+    if (building === undefined) throw new Error("missing building fixture");
+    const noticeBoardView: GameSessionView = {
+      ...view,
+      currentLocation: {
+        ...view.currentLocation,
+        town: {
+          ...view.currentLocation.town!,
+          interactiveBuildings: [{ ...building, displayName: "镇口告示栏" }],
+        },
+      },
+    };
+
+    renderBuildingScene(noticeBoardView, "镇口告示栏");
+
+    const sideNote = screen.getByRole("region", { name: "地点旁注" });
+    expect(sideNote).toHaveTextContent("镇口告示栏前的新旧纸张层层叠压");
+    expect(sideNote).not.toHaveTextContent("酒气、炭火");
   });
 });
 

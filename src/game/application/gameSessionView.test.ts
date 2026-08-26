@@ -919,11 +919,12 @@ describe("projectGameSessionView", () => {
     }
   });
 
-  it("npcDialogues prefer scene dialogue pages and fall back to deterministic line", () => {
+  it("npcDialogues display only persisted approved speech and never synthesize a fallback", () => {
     const sceneWithDialogue = {
       ...ss,
       narrative: {
         ...ss.narrative,
+        mode: "ai" as const,
         currentScene: {
           sceneId: "scene-1",
           turn: 0,
@@ -953,8 +954,47 @@ describe("projectGameSessionView", () => {
     expect(lu!.speechPages.join("")).toBe("需要什么吗？");
     expect(view.narrative.narration).toBe("你在客栈。");
     expect(view.narrative.npcLine?.text).toBe("需要什么吗？");
-    expect(guest!.speechPages.length).toBeGreaterThan(0);
-    expect(guest!.speechPages.join("")).toMatch(/^【fallback】/u);
+    expect(guest!.speechPages).toEqual([]);
+    expect(JSON.stringify(guest)).not.toContain("fallback");
+  });
+
+  it("a malformed generated focus scene cannot enable dialogue controls through synthesized speech", () => {
+    const malformedStory: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        mode: "ai",
+        currentScene: {
+          sceneId: "scene-missing-focus-speech",
+          turn: 0,
+          narration: "客栈里有人等候。",
+          usedFactIds: [],
+          npcLine: null,
+          choices: [],
+          source: "generated",
+          event: { kind: "dialogue", focusNpcId: npc1.id },
+          npcDialogues: [{
+            npcId: npc1.id,
+            npcName: npc1.name,
+            npcRole: npc1.role,
+            speechPages: [],
+            speechSource: "generated",
+            speechPurpose: "focus",
+          }],
+        },
+        choiceRegistry: [],
+      },
+    };
+
+    const view = projectGameSessionView(ws, malformedStory, 0, "test-ending-session");
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(npc1.id));
+
+    expect(dialogue?.speechPages).toEqual([]);
+    expect(dialogue?.choices).toEqual([]);
+    expect(dialogue?.freeInputEnabled).toBe(false);
+    expect(dialogue?.giveChoices).toEqual([]);
+    expect(dialogue?.startChoice).toBeUndefined();
+    expect(JSON.stringify(dialogue)).not.toContain("fallback");
   });
 
   it("对话终句投影为本地 handoff acknowledgement，不铸造可提交 choice", () => {
@@ -1010,6 +1050,42 @@ describe("projectGameSessionView", () => {
     expect(view.narrative.narration).toBe("【fallback】确定性旁白。");
     expect(view.narrative.npcLine?.text).toBe("【fallback】确定性回应。");
     expect(view.narrative.npcDialogues[0]?.speechPages).toEqual(["【fallback】确定性回应。"]);
+  });
+
+  it("AI mode refuses a persisted fixture scene instead of exposing fallback text", () => {
+    const view = projectGameSessionView(ws, {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        mode: "ai",
+        currentScene: {
+          sceneId: "scene-production-must-not-fallback",
+          turn: 0,
+          narration: "确定性旁白。",
+          usedFactIds: [],
+          npcLine: { npcId: npc1.id, text: "确定性回应。", emotion: "neutral", usedFactIds: [] },
+          choices: [],
+          source: "fixture",
+          event: { kind: "dialogue", focusNpcId: npc1.id },
+          npcDialogues: [{
+            npcId: npc1.id,
+            npcName: npc1.name,
+            npcRole: npc1.role,
+            speechPages: ["确定性回应。"],
+            speechSource: "fixture",
+            speechPurpose: "focus",
+          }],
+        },
+        choiceRegistry: [],
+      },
+    }, 0, "ending");
+
+    expect(view.narrative.narration).toBeUndefined();
+    expect(view.narrative.npcLine).toBeNull();
+    expect(view.narrative.npcDialogues[0]?.speechPages).toEqual([]);
+    expect(JSON.stringify(view)).not.toContain("【fallback】");
+    expect(JSON.stringify(view)).not.toContain("确定性旁白");
+    expect(JSON.stringify(view)).not.toContain("确定性回应");
   });
 
   it("旧存档中的 NPC 名称/动作前缀在 read model 投影时被清理", () => {
@@ -1214,6 +1290,9 @@ describe("projectGameSessionView", () => {
     const view = projectGameSessionView(endingWorld, endingStory, 0, "test-ending-session");
 
     expect(view.story.currentObjectiveLabel).toBe("选择结局方向");
+    const decision = view.currentLocation.actions.find((entry) => entry.label === "面对最终抉择");
+    expect(decision).toBeDefined();
+    expect(buildChoiceMap(endingWorld, endingStory, 0).has(decision!.choiceToken)).toBe(true);
     expect(view.currentLocation.actions).toEqual([
       expect.objectContaining({ label: "面对最终抉择", presentation: "explore" }),
     ]);
@@ -1265,6 +1344,7 @@ describe("projectGameSessionView", () => {
       ...ss,
       narrative: {
         ...ss.narrative,
+        mode: "ai" as const,
         currentScene: scene,
         choiceRegistry: [
           approved(scene.choices[0].choiceToken, scene.sceneId, 2, scene.choices[0].label, { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }),
@@ -1503,6 +1583,7 @@ describe("projectGameSessionView", () => {
       ...ss,
       narrative: {
         ...ss.narrative,
+        mode: "ai" as const,
         currentScene: scene,
         choiceRegistry: [
           approved("c_choice1", scene.sceneId, 2, "追问详情", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }),
@@ -1520,14 +1601,14 @@ describe("projectGameSessionView", () => {
     expect(focusNpc?.choices).toHaveLength(2);
     expect(focusNpc?.freeInputEnabled).toBe(true);
 
-    // 非焦点 NPC (韩征)：无 ask 选项；动作旁白被清洗后回落闲聊台词
+    // 非焦点 NPC (韩征)：无 ask 选项；动作旁白被清洗为空后不合成闲聊兜底
     const nonFocusNpc = dialogues.find((d) => d.npcId === "npc_2");
     expect(nonFocusNpc).toBeDefined();
     expect(nonFocusNpc?.choices).toEqual([]);
     expect(nonFocusNpc?.freeInputEnabled).toBe(false);
     expect(nonFocusNpc).not.toHaveProperty("smallTalk");
     expect(nonFocusNpc?.speechPages.join("")).not.toContain("继续巡视");
-    expect(nonFocusNpc?.speechPages.length).toBeGreaterThan(0);
+    expect(nonFocusNpc?.speechPages).toEqual([]);
     expect(nonFocusNpc?.speechPages.join("")).not.toContain("【fallback】");
   });
 
@@ -1594,7 +1675,7 @@ describe("projectGameSessionView", () => {
     expect(view.currentLocation.npcs[0]?.talkChoice).toBeNull();
   });
 
-  it("非焦点 NPC 无场景台词时，按权威目标 label 投影 composeIdleNpcLine 提醒变体", () => {
+  it("非焦点 NPC 无已审批场景台词时保持为空，不从权威目标合成提醒", () => {
     const factTracks = {
       factId: asFactId("fact_tracks"),
       text: "车轮印",
@@ -1646,8 +1727,9 @@ describe("projectGameSessionView", () => {
       reveal: { questId: asQuestId("quest_tracks"), visibleObjectiveIndex: 1 },
       narrative: {
         ...ss.narrative,
+        mode: "ai",
         dialogueSession: { npcId: npc1.id, turnCount: 2, requiredTurns: 2, completed: true },
-        // 该 NPC 既无场景台词，也无焦点台词 → 非焦点 NPC 走 idleLine
+        // 该 NPC 既无场景台词，也无焦点台词 → 不在 read model 合成任何文本
         currentScene: {
           sceneId: "scene-reminder-idle",
           turn: 5,
@@ -1655,7 +1737,7 @@ describe("projectGameSessionView", () => {
           usedFactIds: [],
           npcLine: null,
           choices: [] as never,
-          source: "fixture" as const,
+          source: "generated" as const,
           event: { kind: "observe" as const, locationId: loc1.id },
         },
       },
@@ -1666,8 +1748,7 @@ describe("projectGameSessionView", () => {
     expect(idle).toBeDefined();
     expect(idle?.choices).toEqual([]);
     expect(idle?.freeInputEnabled).toBe(false);
-    // 有结构化交互历史 + 权威目标 label → 提醒台词承接权威目标（未发现事实 → 调查investigationLabel）
-    expect(idle?.speechPages.join("")).toContain("调查车轮印");
+    expect(idle?.speechPages).toEqual([]);
     // 行动栏与 talkChoice 不再为非目标 NPC 提供交谈入口
     expect(view.currentLocation.actions.some((action) => action.presentation === "dialogue")).toBe(false);
     expect(view.currentLocation.npcs[0]?.talkChoice).toBeNull();

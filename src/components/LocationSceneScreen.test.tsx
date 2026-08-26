@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { GameSessionView } from "@/game/application";
 import { LocationSceneScreen } from "./LocationSceneScreen";
@@ -51,5 +51,32 @@ describe("LocationSceneScreen：调查和底部行动栏已移除", () => {
     expect(screen.queryByRole("button", { name: "沿痕迹追查" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "翻查附近杂物" })).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "行动栏" })).not.toBeInTheDocument();
+  });
+
+  it("renders the sole AI boundary-preparation action so a completed act cannot dead-end", () => {
+    const onSubmit = vi.fn();
+    const view: GameSessionView = {
+      ...viewWithInvestigationApproaches(),
+      currentLocation: {
+        ...viewWithInvestigationApproaches().currentLocation,
+        actions: [{ choiceToken: "c_boundary", label: "继续追查下一幕线索", presentation: "explore" }],
+      },
+      story: {
+        ...viewWithInvestigationApproaches().story,
+        currentObjectiveLabel: null,
+        currentObjectiveChoiceToken: null,
+        currentObjectiveChoiceTokens: [],
+      },
+      narrative: {
+        ...viewWithInvestigationApproaches().narrative,
+        mode: "ai",
+      },
+    };
+
+    render(<LocationSceneScreen view={view} busy={false} onSubmit={onSubmit} onReturnMap={vi.fn()} />);
+
+    const button = screen.getByRole("button", { name: "继续追查下一幕线索" });
+    fireEvent.click(button);
+    expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: "c_boundary" });
   });
 });

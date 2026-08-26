@@ -46,7 +46,7 @@
 - **provider 触发白名单**：生产 provider job 只允许 `opening`、`npc_fixed_choice`、`npc_free_text`。正式 NPC job 内可按 `EvolutionNeed` 完成所需 world evolution；移动、调查、物品、战斗和回退导航不能在动作路径新增 provider 调用。
 - **候选不足处理**：普通 ready 场景若真实可执行候选少于两个，生产编排将 `scene_candidate_shortage` 视为 AI/审批失败，持久化 failed，不把无内容的 explore 当作合法候选；只有 `dialogueSession.completed=true` 且目标已推进的收尾 handoff scene 允许一个候选。离线 journey 可显式注入 deterministic evolution fixture 补齐候选，但不代表生产 AI 失败时的行为。
 - 普通对话场景绑定一个在场焦点 NPC，并提出两个语义不同的 TalkAction；收尾场景由同一次生成返回旧 NPC 的最后一句和一个绑定下一任务/地点/人物的 handoff Action。其他场景从服务端给出的合法候选 ID 中选择两个不同 Action。
-- `ObjectiveTransition.mode === advanced_act` 时叙事事件仍记录为非对话的任务交接；上一轮带 `player_utterance` 时焦点保持在原 NPC，由其先回应本轮话语，新目标只作为权威行动入口出现。新 talk 目标还没有 ready scene 时，read model 只能提供两项 handoff 回应入口，不能合成角色 fallback 台词或开放自由输入；正式选择提交后才创建 provider job。进入地点或点击 talk 本身不额外提交一次 `ask` API。玩家主动点击旁 NPC 时仍保持普通 `ask` 语义。目标身份由服务端锁定的 `objectiveLink` 和实体 ID 决定，旁白不要求逐字复述目标标签。
+- `ObjectiveTransition.mode === advanced_act` 时叙事事件仍记录为非对话的任务交接；上一轮带 `player_utterance` 时焦点保持在原 NPC，由其先回应本轮话语，新目标只作为权威行动入口出现。新 talk 目标还没有 ready focus scene 时，read model 不合成角色台词、不开放自由输入或默认双选项，只下发单一权威 `ask`；玩家点击目标 NPC 即提交该入口并创建 provider job。目标身份由服务端锁定的 `objectiveLink` 和实体 ID 决定，旁白不要求逐字复述目标标签。
 - `move` / battle start-resolve 命中已审批的 `PreparedContinuationState` 时，规则结果、prepared scene 物化、choice token 铸造、continuation 消费和 revision 递增共用一次 CAS，零 live/world/intent provider 调用。`discover_fact` 在规则边界自动确认；历史 investigate step 仅兼容旧状态。无 prepared step 的 `take_item` / `give_item`、回退导航和 active battle round 直接产生 `source="rule"` 场景。
 - 两个已批准选择若都指向同一在场 NPC 的 TalkAction，即使触发事件是 travel/battle，也投影为该 NPC 的焦点对白；回答分支只在对话框显示，地点页不再渲染底部行动栏。
 - live source 只能选择服务端候选 ID，不能发明任意 `actionKey`、实体 ID、事实 ID 或规则结果。
@@ -55,6 +55,7 @@
 - ready scene、choice registry、candidate event pool 与已批准世界演化同一次 scene CAS 写回；行动消费时再次验证当前 scene、revision 与规则合法性。
 - scene CAS 与序幕确认并发时，repository 单调保留已确认的 `prologueShown=true`；确认接口对 stale revision 读取新快照后有限重试。
 - 离线 fixture 可使用 deterministic source，并经过同一 proposal → approval → write-back 链；生产成功的 live proposal 才能标记 `source=generated`。API 失败或内容修复/审批重试仍拒绝时不写确定性剧情，而是保存稳定 failure 和原 job。场景核心与 prepared continuation 必须来自同一次 accepted attempt，不能从被拒绝的 proposal 拆取未来内容。
+- `mode="ai"` 的 read model 拒绝投影任何持久化 `source="fixture"` 场景，也不在缺少 NPC 台词时调用 `composeDeterministicNpcLine` / `composeIdleNpcLine`。真实游戏只显示已审批的 persisted speech；缺失正式 focus 台词时回到单一权威 `ask` 生成入口，失败仍走同 job 手动重试。
 - active battle、ending 或候选不足时不伪造普通场景选择。
 - `PreparedContinuationState` 是服务端维护的有向无环图，不是客户端可读的扁平队列。每个 step 带有 server-authored trigger、消费组和后继；战斗结果等 sibling step 共享消费组，消费后只激活声明的 successor 并裁剪未选分支。历史调查 step 仅兼容旧状态；step 不保存 minted token，只有物化为当前 scene 后才按 post-commit revision 铸造 token。
 - active battle 采用规则 fast path：不创建 pending 场景、不调用 scene source；界面只提供攻击/防守，撤退不再作为可执行选项。战斗开始时保存玩家属性、已击败敌人和事件账本快照；失败只恢复快照并可重新挑战，不推进剧情。
@@ -125,7 +126,7 @@
 - 普通 generated 场景有两个不同 token；对话收尾 generated scene 有一个绑定下一步的 handoff token；scene JSON 无 `actionKey`；AI 失败只产生 stable failed 状态。
 - 分段旁白逐段命中强制节拍 ID；`objectiveLink` 与 HUD 当前目标一致；焦点 NPC 台词应答当前 `player_utterance`。
 - NPC 台词只保留直接对白正文，不能以“邵叔如实答道：……”形式把舞台说明混入气泡；旧存档投影也必须满足同一断言。
-- 新 talk 目标的交接提示不是 NPC 台词：在 `event.kind` 不是 dialogue 且没有可用 `npcLine`/dialogue pages 时，read model 保留两项 handoff 入口但对白页为空；生产 live/generated scene 不得用 deterministic fallback 冒充成功。
+- 新 talk 目标的交接提示不是 NPC 台词：没有可用 focus `npcLine`/dialogue pages 时，read model 只保留单一权威 `ask`，对白页为空；生产 live/generated scene 不得用 deterministic fallback 冒充成功。
 - registry 的 `basedOnRevision` 等于 scene 写回后的 revision。
 - tampered、stale、重复 token 零写入。
 - live source 越权引用或失败不会绕过审批；失败保留规则已提交状态并等待手动重试。离线旅程通过显式 fixture source 完成，不代表生产 AI 失败时仍可通关。
