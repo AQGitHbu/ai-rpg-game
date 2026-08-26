@@ -2769,13 +2769,15 @@ body:has(.adventure-game-shell) {
 .scene-interactive-layer {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  /* 热点必须高于地点旁注（z-index: 4）。首个物品位于左侧时曾被旁注
+     完全遮挡，画面显示“拾取”但真实点击永远不会抵达按钮。 */
+  z-index: 6;
   pointer-events: none;
 }
 
 .scene-interactive-hotspot {
   position: absolute;
-  z-index: 3;
+  z-index: 7;
   pointer-events: auto;
   display: flex;
   flex-direction: column;

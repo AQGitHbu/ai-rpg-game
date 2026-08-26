@@ -66,6 +66,10 @@
 - NPC 对话驱动叙事场景触发：场景中的 NPC 台词新增 `speechPurpose=focus|ambient`；API 生成来源与台词用途不再混为一谈。新目标若只有上一场景的 generated ambient 闲聊，读模型不展示该台词或默认 support/challenge，只下发单一权威 `ask`，点击后等待正式 provider 场景。旧存档缺字段时，仅 `scene.npcLine.npcId` 兼容推断为 focus，无需清档。
 - 剧情连续性与结构化记忆：权威 `ask` 初始化目标 NPC 的零轮未完成会话，两次正式回应后才完成 `talk_to_npc` 并写入 `npc_dialogue_completed`。规则推进始终携带当前会话，`met` 仅代表接触事实，旧 NPC 已完成会话和新 NPC 刚写入的 `met` 都不能让下一段对话跳步。
 
+## 2026-08-26 真实游戏禁止 fallback
+
+- 游戏设计原则/运行时 AI：生产环境由 AI 承担的剧情、旁白、NPC 台词和选项只接受已审批 `generated`；传输、解析或审批失败进入 `provider_failed` 并重试同一 job，禁止 deterministic/fixture/default 文案接管。`mode="ai"` 的 read model 拒绝 fixture scene，也不再即时合成 NPC 问候或目标提醒；规则型移动、物品和战斗反馈仍可为 `source="rule"`，但不能冒充 AI 剧情。
+
 ## 维护规则
 
 - 玩法事实变化时同步更新策划文档。

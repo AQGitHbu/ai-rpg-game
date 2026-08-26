@@ -3,6 +3,7 @@ import type { GameLogger } from "@/game/logging";
 import type { WorldEvolutionContentRepair, WorldEvolutionRepairReason, WorldEvolutionSource, WorldEvolutionSourceContext, WorldEvolutionSourceResult } from "../../worldEvolutionSource";
 import type { WorldDeltaProposal, DynamicLocationPlacement } from "@/game/domain/worldDelta";
 import type { WorldState, InvestigationApproach } from "@/game/domain/worldState";
+import type { StoryState } from "@/game/domain/storyState";
 import type { GameTypeId } from "@/game/domain/newGame";
 import { createRpgAiClient, RPG_AI_DEFAULT_POLICIES, type RpgAiClient } from "./rpgAiClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
@@ -264,21 +265,46 @@ export function parseWorldDeltaProposal(
 }
 
 /** 引用越权过滤：connectFromLocationId / 现有地点引用必须真实存在（source 层不做审批）。 */
-export function filterProposalRefs(proposal: WorldDeltaProposal, ws: WorldState): WorldDeltaProposal | null {
+export function filterProposalRefs(
+  proposal: WorldDeltaProposal,
+  ws: WorldState,
+  storyState?: StoryState,
+): WorldDeltaProposal | null {
   const locIds = new Set(ws.locations.map((l) => String(l.id)));
   if (proposal.newLocation && !locIds.has(proposal.newLocation.connectFromLocationId)) return null;
   if (proposal.newNpc && proposal.newNpc.locationRef.kind === "existing" && !locIds.has(proposal.newNpc.locationRef.id)) return null;
-  if (proposal.newLocation?.placement === "town_building") {
-    const parent = ws.locations.find((location) => String(location.id) === proposal.newLocation!.connectFromLocationId);
+
+  // Provider 偶尔会在续幕提案中把已经在场的角色再作为 newNpc 回传（通常还会
+  // 错把它留在旧地点）。这不是新的剧情事实；若交给审批器，会先因空间约束
+  // 被拒绝，随后又让同一条错误角色反复消耗人工重试。保留 AI 生成的地点、
+  // 线索和任务，只去掉这条与当前世界完全重名的“新增”声明。这样没有合成
+  // 任何玩家可见文本，也不会把旧 NPC 静默搬到新地点。
+  const duplicateNpc = proposal.newNpc !== null
+    && ws.npcs.some((npc) => npc.name.trim() === proposal.newNpc!.name.trim());
+  // 物品、敌人和事实共用 events 预算。容量已用尽时，它们不能成为本次续幕
+  // 的锚点；剔除这些可选增量仍保留 AI 给出的主线地点/角色/任务，避免同一
+  // 正文因可预判的预算溢出反复失败。未传入 storyState 的纯引用校验调用不做
+  // 此归一化。
+  const eventCapacityExhausted = storyState !== undefined
+    && storyState.budget.events.expanded >= storyState.budget.events.max;
+  const normalized = {
+    ...proposal,
+    ...(duplicateNpc ? { newNpc: null } : {}),
+    ...(eventCapacityExhausted
+      ? { newItem: null, newEnemy: null, newFact: null }
+      : {}),
+  };
+  if (normalized.newLocation?.placement === "town_building") {
+    const parent = ws.locations.find((location) => String(location.id) === normalized.newLocation!.connectFromLocationId);
     if (
       parent === undefined
       || parent.id !== ws.currentLocationId
       || parent.scale !== "town"
       || parent.town === undefined
-      || proposal.newNpc?.locationRef.kind !== "new_location"
+      || normalized.newNpc?.locationRef.kind !== "new_location"
     ) return null;
   }
-  return proposal;
+  return normalized;
 }
 
 /** live 世界演化源：AI 提案 → 纯解析/校验/引用过滤 → 失败返回稳定 typed failure。 */
@@ -371,7 +397,7 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
             for (const category of parsedResult.logCategories) {
               logger?.warn(category, {});
             }
-            const filtered = filterProposalRefs(parsedResult.proposal, ctx.worldState);
+            const filtered = filterProposalRefs(parsedResult.proposal, ctx.worldState, ctx.storyState);
             if (filtered === null) {
               return failWorld("invalid_reference", "invalid_reference");
             }

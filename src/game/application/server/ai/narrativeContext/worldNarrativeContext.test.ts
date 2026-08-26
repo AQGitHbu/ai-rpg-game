@@ -231,6 +231,9 @@ describe("worldNarrativeContext", () => {
     for (const field of ["newLocation", "newNpc", "newItem", "newEnemy", "newFact", "nextMainQuest"]) {
       expect(prompt).toContain(field);
     }
+    expect(prompt).toContain('必须输出一个 placement="world" 的 newLocation');
+    expect(prompt).toContain("不能直接叙述中心冲突已解决或写出结局");
+    expect(prompt).toContain("只有对应剩余容量大于 0 才能输出");
     expect(prompt).toContain("endingPair 字段必须完全省略");
   });
 

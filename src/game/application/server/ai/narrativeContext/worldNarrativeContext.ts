@@ -94,7 +94,7 @@ function outputContract(need: EvolutionNeed): string {
 
   switch (need.kind) {
     case "next_act":
-      return `${outer}\n${commonFields}\n本次是下一幕需求：必须输出 nextMainQuest={"name":"2-40字名称","description":"非空且≤200字","objectiveText":"非空且≤200字"}，并可补充下一幕必要的新实体或事实。禁止输出 endingPair，endingPair 字段必须完全省略。`;
+      return `${outer}\n${commonFields}\n本次是下一幕需求：必须输出 nextMainQuest={"name":"2-40字名称","description":"非空且≤200字","objectiveText":"非空且≤200字"}，并且必须输出一个 placement="world" 的 newLocation，connectFromLocationId 必须等于当前地点 ID；这条任务必须把玩家带到该新地点，不能直接叙述中心冲突已解决或写出结局。newNpc/newItem/newEnemy/newFact 均为可选，只有对应剩余容量大于 0 才能输出。禁止输出 endingPair，endingPair 字段必须完全省略。`;
     case "ending_pair":
       return `${outer}\n${commonFields}\n本次是终幕结局对需求：必须输出 endingPair=[{"name":"2-40字名称","description":"非空且≤200字","themeKey":"trust"},{"name":"2-40字名称","description":"非空且≤200字","themeKey":"doubt"}]；必须恰好一条 trust 和一条 doubt，不能提交 requirements。禁止输出 nextMainQuest，nextMainQuest 字段必须完全省略。`;
     case "pacing":

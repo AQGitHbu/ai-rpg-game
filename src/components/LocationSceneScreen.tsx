@@ -94,6 +94,11 @@ function cleanLocationSideNote(text: string): string {
 /** 城镇建筑是独立的可游玩场景，不能把镇口/街道的公共说明搬进室内。 */
 function describeBuildingScene(buildingType: string | undefined, buildingName: string, npcName: string | null | undefined): string {
   const npcClause = npcName ? `${npcName}就在近处，留意着你的来意。` : "屋内有人留意着门口的动静。";
+  // 剧情建筑名称由 AI 生成；当名称已经明确说明它不是室内业态时，名称语义必须优先于
+  // 运行时为剧情槽位保留的 tavern/house 类型，避免把告示栏渲染成酒楼。
+  if (/告示(?:栏|牌)?|榜/gu.test(buildingName)) {
+    return `${buildingName}前的新旧纸张层层叠压，风一过便露出被雨水晕开的墨迹。${npcClause}`;
+  }
   switch (buildingType) {
     case "tavern": return `${buildingName}里酒气、炭火和低声交谈混在一起，靠窗的木桌还留着湿漉漉的斗笠。${npcClause}`;
     case "blacksmith": return `${buildingName}的炉火映红铁砧，锤声一停，空气里只剩铁屑和焦炭的味道。${npcClause}`;
@@ -562,6 +567,13 @@ export function LocationSceneScreen({
     || currentObjectiveAction?.presentation === "dialogue"
     ? currentObjectiveAction.label
     : null;
+  // 幕边界没有普通任务目标：服务端会下发唯一的 explore token，用它触发下一幕
+  // 或终幕结局对的 AI 编排。地点页通常隐藏通用行动栏，但不能因此把唯一可执行
+  // 的边界动作藏掉，否则玩家会停在“暂无线索”的死局。
+  const boundaryPreparationAction = view.currentLocation.actions.find((action) =>
+    action.presentation === "explore"
+      && (action.label === "继续追查下一幕线索" || action.label === "面对最终抉择"),
+  );
   // 统一构建所有 NPC 的 Dialogue 数据（读模型已为在场全部 NPC 投影对话，
   // 含非焦点 NPC 的零回合闲聊；此处不再用问候语合成缺省条目）。
   const allDialoguesMap = new Map<string, Dialogue>();
@@ -873,6 +885,18 @@ export function LocationSceneScreen({
         {shouldShowLocationDescription ? (
           <p className="location-scene-caption">{displayLocationDescription}</p>
         ) : null}
+
+        {boundaryPreparationAction === undefined ? null : (
+          <nav className="scene-action-rail--bottom" aria-label="行动栏">
+            <button
+              type="button"
+              disabled={busy || pending}
+              onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: boundaryPreparationAction.choiceToken })}
+            >
+              {boundaryPreparationAction.label}
+            </button>
+          </nav>
+        )}
       </div>
 
       {/* NPC 对话模态弹层：只有用户主动点击时才弹出 */}

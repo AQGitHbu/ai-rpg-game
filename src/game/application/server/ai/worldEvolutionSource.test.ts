@@ -209,6 +209,53 @@ describe("filterProposalRefs", () => {
     })!.proposal;
     expect(filterProposalRefs(proposal, ws)).not.toBeNull();
   });
+
+  it("drops a duplicate newNpc declaration while retaining the AI-proposed next-act content", () => {
+    const ws = {
+      ...makeWorld(),
+      npcs: [{ name: "韩征" } as WorldState["npcs"][number]],
+    };
+    const proposal = parseWorldDeltaProposal({
+      beatSummary: "旧角色指出了新的去处",
+      newLocation: { name: "潮痕深处", description: "裂隙尽头的能量空腔。", scale: "scene", placement: "world", connectFromLocationId: "loc_a" },
+      newNpc: { name: "韩征", role: "掌柜", description: "已经在客栈中的掌柜。", locationRef: { kind: "existing", id: "loc_a" }, goals: [] },
+      nextMainQuest: { name: "进入潮痕深处", description: "沿着裂隙深入。", objectiveText: "前往潮痕深处。" },
+    })!.proposal;
+
+    const filtered = filterProposalRefs(proposal, ws);
+    expect(filtered).not.toBeNull();
+    expect(filtered?.newLocation?.name).toBe("潮痕深处");
+    expect(filtered?.nextMainQuest?.name).toBe("进入潮痕深处");
+    expect(filtered?.newNpc).toBeNull();
+  });
+
+  it("drops optional event expansions when the shared events budget is exhausted", () => {
+    const story = createInitialStoryState({
+      initialNarrative: createFixtureNarrativeRuntimeState(),
+      gameLength: "short",
+      initialEntityCounts: { locations: 1, npcs: 0, quests: 1, events: 0 },
+    });
+    const exhaustedStory = {
+      ...story,
+      budget: {
+        ...story.budget,
+        events: { ...story.budget.events, expanded: story.budget.events.max },
+      },
+    };
+    const proposal = parseWorldDeltaProposal({
+      beatSummary: "通往新地点的路在眼前展开",
+      newLocation: { name: "潮痕深处", description: "裂隙尽头的能量空腔。", scale: "scene", placement: "world", connectFromLocationId: "loc_a" },
+      newItem: { name: "多余的符石", description: "已经没有事件预算承载的符石。", locationRef: "new_location" },
+      newFact: { text: "已经没有事件预算承载的新事实。", visibility: "public" },
+      nextMainQuest: { name: "进入潮痕深处", description: "沿着裂隙深入。", objectiveText: "前往潮痕深处。" },
+    })!.proposal;
+
+    const filtered = filterProposalRefs(proposal, makeWorld(), exhaustedStory);
+    expect(filtered?.newLocation?.name).toBe("潮痕深处");
+    expect(filtered?.nextMainQuest?.name).toBe("进入潮痕深处");
+    expect(filtered?.newItem).toBeNull();
+    expect(filtered?.newFact).toBeNull();
+  });
 });
 
 describe("createLiveWorldEvolutionSource", () => {

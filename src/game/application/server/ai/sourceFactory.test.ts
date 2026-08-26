@@ -2,11 +2,48 @@ import { describe, it, expect } from "vitest";
 import { resolveLiveNpcLine, resolvePerformanceChoices } from "./liveScenePerformanceSource";
 import { asLocationId } from "@/game/domain/worldEntity";
 import { buildStylePolicy } from "../../stylePolicy";
+import {
+  createOpeningGenerationSource,
+  createSceneSource,
+  createWorldEvolutionSource,
+} from "./sourceFactory";
 
 const presentNpcs = [
   { id: "npc_1", name: "老板" },
   { id: "npc_2", name: "客人" },
 ] as readonly { readonly id: unknown; readonly name: string }[];
+
+describe("production AI source factories", () => {
+  it("rejects an opening when live AI is unavailable instead of returning a fixture", async () => {
+    const source = createOpeningGenerationSource({});
+
+    await expect(source.generate({
+      gameType: "wuxia",
+      gameLength: "medium",
+      seed: "production-no-fallback",
+    })).rejects.toMatchObject({
+      name: "AiGenerationError",
+      kind: "AI_CALL_FAILED",
+      phase: "opening",
+    });
+  });
+
+  it("returns typed scene/world failures when live AI is unavailable", async () => {
+    const scene = await createSceneSource({}).generateScene({} as never);
+    const world = await createWorldEvolutionSource({}).propose({} as never);
+
+    expect(scene).toEqual({
+      ok: false,
+      failure: { kind: "AI_CALL_FAILED", phase: "scene" },
+    });
+    expect(world).toEqual({
+      ok: false,
+      failure: { kind: "AI_CALL_FAILED", phase: "world" },
+    });
+    expect(JSON.stringify({ scene, world })).not.toContain("fixture");
+    expect(JSON.stringify({ scene, world })).not.toContain("fallback");
+  });
+});
 
 describe("resolveLiveNpcLine", () => {
   it("keeps a line whose npcId belongs to a present NPC", () => {

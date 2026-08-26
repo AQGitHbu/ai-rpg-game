@@ -473,11 +473,22 @@ export function projectGameSessionView(
   const readyNarrative = storyState.narrative.status === "ready"
     ? storyState.narrative
     : null;
-  const currentScene = readyNarrative?.currentScene
+  const persistedCurrentScene = readyNarrative?.currentScene
     ?? (storyState.narrative.status === "ready"
       ? null
       : storyState.narrative.lastPresentedScene);
-  const dialogueResume = readyNarrative?.dialogueResume;
+  // AI mode 永不向玩家投影 fixture 场景。生产 source 失败只能进入
+  // provider_failed/manual retry；历史或损坏记录中的 fixture 也不能作为
+  // “临时可玩”内容接管真实游戏。
+  const currentScene = storyState.narrative.mode === "ai"
+    && persistedCurrentScene?.source === "fixture"
+    ? null
+    : persistedCurrentScene;
+  const persistedDialogueResume = readyNarrative?.dialogueResume;
+  const dialogueResume = storyState.narrative.mode === "ai"
+    && persistedDialogueResume?.scene.source === "fixture"
+    ? undefined
+    : persistedDialogueResume;
   const canResumeDialogue = dialogueResume !== undefined
     && currentObjectiveRef !== null
     && currentObjective !== undefined
@@ -490,7 +501,9 @@ export function projectGameSessionView(
     ? restoreDialogueResume(dialogueResume, revision)
     : null;
   const scene = restoredDialogue?.scene ?? currentScene;
-  const registry = restoredDialogue?.choiceRegistry ?? readyNarrative?.choiceRegistry ?? [];
+  const registry = restoredDialogue?.choiceRegistry
+    ?? (scene === null ? [] : readyNarrative?.choiceRegistry)
+    ?? [];
   // 只有结构化 dialogue event 才能赋予 NPC“焦点对话”能力。
   // observe/travel 等场景也可能带 npcLine 作为旁白表演，但不能因此泄露
   // 自由输入或伪造一个没有两个批准选项的焦点对话框。
@@ -537,6 +550,19 @@ export function projectGameSessionView(
       ? String(npcId)
       : null;
   })();
+  const endingPairFocusNpcId = storyState.endingAllowed && scene?.choices.length === 2
+    ? (() => {
+        const actions = scene.choices.map((sceneChoice) => registry.find((entry) =>
+          entry.choiceToken === sceneChoice.choiceToken && entry.sceneId === scene.sceneId,
+        )?.action);
+        const npcId = actions[0]?.type === "talk" ? String(actions[0].npcId) : null;
+        return npcId !== null
+          && actions.every((action) => action?.type === "talk" && String(action.npcId) === npcId)
+          && presentNpcs.some((npc) => String(npc.id) === npcId)
+          ? npcId
+          : null;
+      })()
+    : null;
   const generatedObjectiveSceneHasInvalidChoices = generatedObjectiveNpcFocus !== null
     && scene !== null
     && scene !== undefined
@@ -556,7 +582,7 @@ export function projectGameSessionView(
     ? null
     : scene?.event?.kind === "dialogue"
     ? String(scene.event.focusNpcId)
-    : generatedObjectiveNpcFocus ?? pairedDialogueNpcId;
+    : generatedObjectiveNpcFocus ?? pairedDialogueNpcId ?? endingPairFocusNpcId;
   const persistedFocusNpc = persistedFocusNpcId === null
     ? undefined
     : worldState.npcs.find((npc) => String(npc.id) === persistedFocusNpcId);
@@ -585,7 +611,9 @@ export function projectGameSessionView(
         && presentNpcs.some((npc) => String(npc.id) === currentObjectiveNpcId))
       // 当前目标已不是交谈目标时，只保留仍有两个合法 talk choice 的终局对白；
       // 旧场景若 choice token 已过期，就必须退回地点层行动（例如战斗入口）。
-      || (currentObjectiveNpcId === null && pairedDialogueNpcId !== persistedFocusNpcId)
+      || (!isEndingDialogueDecision
+        && currentObjectiveNpcId === null
+        && pairedDialogueNpcId !== persistedFocusNpcId)
       // 兼容已经写入存档的旧抵达场景：它可能把 move/explore 与目标 NPC
       // 的 talk 混进同一组 choices。隐藏这组过期 token，改由下方 handoff
       // 分支即时铸造两个合法 talk runtime token，避免旧坏数据继续可提交。
@@ -625,7 +653,13 @@ export function projectGameSessionView(
     : scene?.choices
       .map(projectSceneChoice)
       .filter((entry): entry is PlayerChoiceView => entry !== null) ?? [];
-  const isDialogueScene = focusNpcId !== null;
+  const endingChoiceNpcId = storyState.endingAllowed && projectedSceneChoices.length === 2
+    ? (() => {
+        const action = registry.find((entry) => entry.choiceToken === projectedSceneChoices[0]?.choiceToken)?.action;
+        return action?.type === "talk" ? String(action.npcId) : null;
+      })()
+    : null;
+  const isDialogueScene = focusNpcId !== null || endingChoiceNpcId !== null;
   const isSingleChoiceHandoff = singleChoiceDialogueHandoff && sceneLineNpcId !== null;
   const projectedHandoffAcknowledgement = scene?.handoffAcknowledgement?.trim() === undefined
     || scene.handoffAcknowledgement.trim() === ""
@@ -636,7 +670,7 @@ export function projectGameSessionView(
       : [];
   const sceneDialogues = new Map((scene?.npcDialogues ?? []).map((entry) => [String(entry.npcId), entry]));
   const npcDialogues: readonly NpcDialogueView[] = presentNpcs.map((npc) => {
-    const isFocus = focusNpcId === String(npc.id);
+    const isFocus = focusNpcId === String(npc.id) || endingChoiceNpcId === String(npc.id);
     const supplied = sceneDialogues.get(String(npc.id));
     const normalizedFocusLine = scene?.npcLine !== null
       && scene?.npcLine !== undefined
@@ -660,36 +694,56 @@ export function projectGameSessionView(
     const speechSource = supplied?.speechSource ?? inferredSpeechSource;
     // 新场景显式保存台词用途；旧存档只允许 scene.npcLine 的说话者被推断为
     // focus。非焦点 ambient 台词即使后来成为任务目标，也不能升级成正式回应。
-    const speechPurpose = supplied?.speechPurpose
+    const speechPurpose = endingChoiceNpcId === String(npc.id)
+      ? "focus"
+      : supplied?.speechPurpose
       ?? (sceneLineNpcId === String(npc.id) ? "focus" : "ambient");
     const hasFormalFocusSpeech = speechPurpose === "focus"
       && (usableSupplied !== null || focusLine !== null);
+    const allowOfflineSynthesis = storyState.narrative.mode === "offline";
     // 新目标 NPC 尚未拥有可消费的正式场景 registry 时，统一进入 start
     // 状态：NPC 卡点击提交一次 ask，由 provider 生成真正的首句和两项批准
     // 回应。环境闲聊、deterministic fallback 和自由输入都不能伪装 ready。
-    const requiresFormalDialogueStart = isFocus
-      && handoffFocusNpc !== undefined
-      && String(handoffFocusNpc.id) === String(npc.id);
+    const isAuthoritativeTalkTarget = isFocus
+      && currentObjectiveNpcId === String(npc.id);
+    const requiresFormalDialogueStart = isFocus && (
+      (handoffFocusNpc !== undefined && String(handoffFocusNpc.id) === String(npc.id))
+      || (isAuthoritativeTalkTarget && !hasFormalFocusSpeech && !allowOfflineSynthesis)
+    );
     const interactionCount = npc.memory.interactionHistory.length;
-    // 非焦点 NPC 的零回合闲聊台词：参与过剧情且有权威目标 → 提醒；否则中性闲聊
-    const idleLine = composeIdleNpcLine({
-      currentObjectiveLabel: currentObjectiveRef?.label ?? null,
-      hasInteractionHistory: interactionCount > 0,
-      variantIndex: storyState.turnNumber + storyState.currentAct + interactionCount,
-    });
+    const offlineIdleLine = allowOfflineSynthesis
+      ? composeIdleNpcLine({
+          currentObjectiveLabel: currentObjectiveRef?.label ?? null,
+          hasInteractionHistory: interactionCount > 0,
+          variantIndex: storyState.turnNumber + storyState.currentAct + interactionCount,
+        })
+      : null;
+    const hasDisplayableSpeech = usableSupplied !== null
+      || focusLine !== null
+      || allowOfflineSynthesis;
     const speechPages = requiresFormalDialogueStart && !hasFormalFocusSpeech
       ? []
       : usableSupplied !== null
       ? decorateNarrativePages(usableSupplied, speechSource)
-      : decorateNarrativePages(
+      : focusLine !== null
+      ? decorateNarrativePages(
           paginateSpeechText(
-            isFocus
-              ? focusLine ?? composeDeterministicNpcLine(npc.name, npc.role)
-              : focusLine ?? idleLine,
+            focusLine,
             NPC_SCENE_PAGE_CHAR_BUDGET,
           ),
           speechSource,
-      );
+        )
+      : allowOfflineSynthesis
+      ? decorateNarrativePages(
+          paginateSpeechText(
+            isFocus
+              ? composeDeterministicNpcLine(npc.name, npc.role)
+              : offlineIdleLine ?? "",
+            NPC_SCENE_PAGE_CHAR_BUDGET,
+          ),
+          speechSource,
+        )
+      : [];
     const startChoice = requiresFormalDialogueStart
       ? choice(
           { type: "talk", npcId: npc.id, dialogueAct: "ask" },
@@ -698,6 +752,10 @@ export function projectGameSessionView(
           "dialogue",
         )
       : undefined;
+    const formalDialogueReady = isFocus
+      && (hasFormalFocusSpeech || allowOfflineSynthesis)
+      && hasDisplayableSpeech
+      && !requiresFormalDialogueStart;
     return {
       npcId: String(npc.id),
       name: npc.name,
@@ -705,13 +763,13 @@ export function projectGameSessionView(
       speechPages,
       // 非焦点 NPC 是零回合闲聊：不提供任何可提交选项；正式对话只能经
       // 当前权威 talk 目标入口（NPC 卡片/交接双选项）开启。
-      choices: isFocus && !requiresFormalDialogueStart ? dialogueChoices : [],
+      choices: formalDialogueReady ? dialogueChoices : [],
       ...(projectedHandoffAcknowledgement !== null && String(npc.id) === sceneLineNpcId
         ? { handoffAcknowledgement: projectedHandoffAcknowledgement }
         : {}),
       ...(startChoice === undefined ? {} : { startChoice }),
-      freeInputEnabled: isFocus && !requiresFormalDialogueStart,
-      giveChoices: isFocus && !requiresFormalDialogueStart
+      freeInputEnabled: formalDialogueReady,
+      giveChoices: formalDialogueReady
         ? worldState.inventory.map((itemId) => {
             const item = worldState.items.find((entry) => entry.id === itemId);
             const itemName = item?.name ?? "未知物品";
