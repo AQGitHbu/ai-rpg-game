@@ -110,6 +110,10 @@ describe("ruleEngine facade", () => {
     if (!second.ok) throw new Error("第二轮对话不应失败");
     expect(second.resolution.nextWorldState.quests[0]?.status).toBe("completed");
     expect(second.resolution.domainEvents.map((event) => event.type)).toContain("quest_completed");
+    expect(second.resolution.domainEvents).toContainEqual(expect.objectContaining({
+      type: "npc_dialogue_completed",
+      npcId: npc.id,
+    }));
     expect(second.resolution.nextStoryState.narrative.dialogueSession).toMatchObject({ turnCount: 2, completed: true });
   });
 
@@ -160,6 +164,57 @@ describe("ruleEngine facade", () => {
       });
       expect(result.resolution.nextWorldState.quests[0]?.status).toBe("active");
     }
+  });
+
+  it("交接到新 NPC 的 ask 只启动零轮会话，不得把 met 当成目标完成", () => {
+    const oldNpc: NpcEntry = {
+      id: asNpcId("npc_old_ask"), name: "旧 NPC", role: "线人", description: "旧线人",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
+      memory: { npcId: asNpcId("npc_old_ask"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const nextNpc: NpcEntry = {
+      id: asNpcId("npc_next_ask"), name: "赵文远", role: "州府师爷", description: "负责告示",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_next_ask"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const handoffWorld = {
+      ...appendNpc(appendNpc(ws, oldNpc), nextNpc),
+      quests: [{
+        id: asQuestId("quest_next_ask"), name: "当铺暗影", description: "与赵文远交谈",
+        objectives: [{ kind: "talk_to_npc" as const, npcId: nextNpc.id }],
+        onSuccess: { kind: "advance_story" as const }, onFailure: { kind: "closed" as const },
+        tags: [], kind: "main" as const, stage: 2, status: "active" as const,
+      }],
+    };
+    const handoffStory = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        dialogueSession: { npcId: oldNpc.id, turnCount: 2, requiredTurns: 2, completed: true },
+      },
+    };
+
+    const result = resolveTurn(
+      handoffWorld,
+      handoffStory,
+      { type: "talk", npcId: nextNpc.id, dialogueAct: "ask" },
+      "handoff_dialogue_ask",
+      0,
+      asTurnId("turn_handoff_dialogue_ask"),
+      "fixed_choice",
+      deps,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.resolution.nextStoryState.narrative.dialogueSession).toEqual({
+      npcId: nextNpc.id,
+      turnCount: 0,
+      requiredTurns: 2,
+      completed: false,
+    });
+    expect(result.resolution.nextWorldState.quests[0]?.status).toBe("active");
+    expect(result.resolution.domainEvents.map((event) => event.type)).not.toContain("quest_completed");
   });
 });
 

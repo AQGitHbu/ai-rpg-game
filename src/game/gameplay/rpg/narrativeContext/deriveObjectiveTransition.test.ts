@@ -115,6 +115,35 @@ describe("deriveObjectiveTransition（Task 4）", () => {
     expect(t.mode).toBe("unchanged");
   });
 
+  it("目标 NPC 的 ask 只建立 turnCount=0 会话，不得被 met 提前判定完成", () => {
+    const before = withQuest(baseWorld(), quest([{ kind: "talk_to_npc", npcId: NPC_1_ID }]));
+    const after = withMet(before);
+    const beforeStory = story();
+    const afterStory = {
+      ...beforeStory,
+      narrative: {
+        ...beforeStory.narrative,
+        dialogueSession: {
+          npcId: NPC_1_ID,
+          turnCount: 0,
+          requiredTurns: 2,
+          completed: false,
+        },
+      },
+    };
+
+    const transition = deriveObjectiveTransition({
+      beforeWorldState: before,
+      beforeStoryState: beforeStory,
+      afterWorldState: after,
+      afterStoryState: afterStory,
+    });
+
+    expect(transition.completed).toEqual([]);
+    expect(transition.after?.label).toBe("与老板交谈");
+    expect(transition.mode).toBe("unchanged");
+  });
+
   it("旧 NPC 的已完成会话不能让新 NPC 的 met 标记跳过两轮对白", () => {
     const before = withQuest(
       withAddedNpc(baseWorld(), makeNpc(NPC_2_ID, "信使", "传信人")),

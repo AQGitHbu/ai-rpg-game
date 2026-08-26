@@ -14,7 +14,14 @@ function hasObtainedItem(ws: WorldState, itemId: ItemId): boolean {
 export function isObjectiveSatisfied(ws: WorldState, objective: QuestObjective): boolean {
   switch (objective.kind) {
     case "visit_location": return ws.visitedLocationIds.includes(objective.locationId);
-    case "talk_to_npc": return ws.npcs.find((n) => n.id === objective.npcId)?.met ?? false;
+    case "talk_to_npc": {
+      const completed = ws.eventLedger.some((event) =>
+        event.type === "npc_dialogue_completed" && event.npcId === objective.npcId);
+      if (completed) return true;
+      // 旧存档没有 dialogue-completed 事件；在当前会话规则介入前仍按 met
+      // 兼容读取。新运行时的当前 NPC 总会由 dialogueSession 覆盖此结果。
+      return ws.npcs.find((n) => n.id === objective.npcId)?.met ?? false;
+    }
     // 物品取得是历史事实：玩家可能先拾取、再按剧情交给 NPC，不能因为
     // 当前背包为空就把已经完成的“获取”目标重新打开。
     case "obtain_item": return hasObtainedItem(ws, objective.itemId);

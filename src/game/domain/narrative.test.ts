@@ -92,10 +92,14 @@ describe("NarrativeSceneState", () => {
     });
 
     expect(dialogues[0]?.speechSource).toBe("generated");
+    expect(dialogues[0]?.speechPurpose).toBe("focus");
     expect(dialogues[1]?.speechSource).toBe("generated");
-    expect(buildNpcDialoguePages([
+    expect(dialogues[1]?.speechPurpose).toBe("ambient");
+    const fallback = buildNpcDialoguePages([
       { id: asNpcId("npc_3"), name: "钱五", role: "脚夫" },
-    ])[0]?.speechSource).toBe("fixture");
+    ])[0];
+    expect(fallback?.speechSource).toBe("fixture");
+    expect(fallback?.speechPurpose).toBe("ambient");
   });
 });
 

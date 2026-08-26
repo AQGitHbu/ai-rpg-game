@@ -202,31 +202,6 @@ function presentationForAction(action: Action): PlayerChoiceView["presentation"]
   }
 }
 
-/**
- * 幕交接时，新目标 NPC 还没有上一轮的 scene registry 可继承。读模型从
- * 当前权威目标派生两项语义不同的服务器运行时 token，让玩家能直接开始
- * 正式对话，而非提交一个只为“打开对话”的 ask 回合。
- */
-function handoffDialogueChoices(
-  npc: WorldState["npcs"][number],
-  revision: number,
-): readonly [PlayerChoiceView, PlayerChoiceView] {
-  return [
-    choice(
-      { type: "talk", npcId: npc.id, dialogueAct: "support" },
-      revision,
-      "我愿意先把手里的证据交给你核对，请你把知道的那一段说清楚。",
-      "dialogue",
-    ),
-    choice(
-      { type: "talk", npcId: npc.id, dialogueAct: "challenge" },
-      revision,
-      "我会逐项核对线索；你凭什么确定它们指向同一个人？",
-      "dialogue",
-    ),
-  ];
-}
-
 function restoreDialogueResume(
   resume: DialogueResumeState,
   revision: number,
@@ -656,9 +631,7 @@ export function projectGameSessionView(
     || scene.handoffAcknowledgement.trim() === ""
     ? null
     : { label: scene.handoffAcknowledgement };
-  const dialogueChoices: NpcDialogueView["choices"] = handoffFocusNpc !== undefined
-    ? handoffDialogueChoices(handoffFocusNpc, revision)
-    : isDialogueScene && projectedSceneChoices.length === 2
+  const dialogueChoices: NpcDialogueView["choices"] = isDialogueScene && projectedSceneChoices.length === 2
       ? [projectedSceneChoices[0]!, projectedSceneChoices[1]!]
       : [];
   const sceneDialogues = new Map((scene?.npcDialogues ?? []).map((entry) => [String(entry.npcId), entry]));
@@ -685,17 +658,18 @@ export function projectGameSessionView(
       ? scene.source
       : "fixture";
     const speechSource = supplied?.speechSource ?? inferredSpeechSource;
-    // 新目标 NPC 的 talk handoff 只说明“下一步要找谁”，并不代表该 NPC
-    // 已经有一段可展示的正式回应。旧逻辑在这里调用
-    // composeDeterministicNpcLine，导致玩家看到一个带 fallback 标记的伪
-    // 角色发言，并误以为已经进入了 AI 对话。保留 handoff 的两项入口，
-    // 但在 provider 场景写回前不伪造角色台词或自由输入。
-    const isPendingHandoffFocus = isFocus
+    // 新场景显式保存台词用途；旧存档只允许 scene.npcLine 的说话者被推断为
+    // focus。非焦点 ambient 台词即使后来成为任务目标，也不能升级成正式回应。
+    const speechPurpose = supplied?.speechPurpose
+      ?? (sceneLineNpcId === String(npc.id) ? "focus" : "ambient");
+    const hasFormalFocusSpeech = speechPurpose === "focus"
+      && (usableSupplied !== null || focusLine !== null);
+    // 新目标 NPC 尚未拥有可消费的正式场景 registry 时，统一进入 start
+    // 状态：NPC 卡点击提交一次 ask，由 provider 生成真正的首句和两项批准
+    // 回应。环境闲聊、deterministic fallback 和自由输入都不能伪装 ready。
+    const requiresFormalDialogueStart = isFocus
       && handoffFocusNpc !== undefined
-      && String(handoffFocusNpc.id) === String(npc.id)
-      && usableSupplied === null
-      && focusLine === null
-      && scene?.event?.kind !== "dialogue";
+      && String(handoffFocusNpc.id) === String(npc.id);
     const interactionCount = npc.memory.interactionHistory.length;
     // 非焦点 NPC 的零回合闲聊台词：参与过剧情且有权威目标 → 提醒；否则中性闲聊
     const idleLine = composeIdleNpcLine({
@@ -703,7 +677,7 @@ export function projectGameSessionView(
       hasInteractionHistory: interactionCount > 0,
       variantIndex: storyState.turnNumber + storyState.currentAct + interactionCount,
     });
-    const speechPages = isPendingHandoffFocus
+    const speechPages = requiresFormalDialogueStart && !hasFormalFocusSpeech
       ? []
       : usableSupplied !== null
       ? decorateNarrativePages(usableSupplied, speechSource)
@@ -716,7 +690,7 @@ export function projectGameSessionView(
           ),
           speechSource,
       );
-    const startChoice = isPendingHandoffFocus
+    const startChoice = requiresFormalDialogueStart
       ? choice(
           { type: "talk", npcId: npc.id, dialogueAct: "ask" },
           revision,
@@ -731,13 +705,13 @@ export function projectGameSessionView(
       speechPages,
       // 非焦点 NPC 是零回合闲聊：不提供任何可提交选项；正式对话只能经
       // 当前权威 talk 目标入口（NPC 卡片/交接双选项）开启。
-      choices: isFocus && !isPendingHandoffFocus ? dialogueChoices : [],
+      choices: isFocus && !requiresFormalDialogueStart ? dialogueChoices : [],
       ...(projectedHandoffAcknowledgement !== null && String(npc.id) === sceneLineNpcId
         ? { handoffAcknowledgement: projectedHandoffAcknowledgement }
         : {}),
       ...(startChoice === undefined ? {} : { startChoice }),
-      freeInputEnabled: isFocus && !isPendingHandoffFocus,
-      giveChoices: isFocus && !isPendingHandoffFocus
+      freeInputEnabled: isFocus && !requiresFormalDialogueStart,
+      giveChoices: isFocus && !requiresFormalDialogueStart
         ? worldState.inventory.map((itemId) => {
             const item = worldState.items.find((entry) => entry.id === itemId);
             const itemName = item?.name ?? "未知物品";

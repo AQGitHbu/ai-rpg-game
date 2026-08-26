@@ -8,8 +8,11 @@ import {
   loadGameView,
   loadWorldState,
   loadStoryState,
+  loadGameRecord,
+  createJourneyEvolutionSource,
   type InMemoryRepo,
 } from "./foundationJourney.testutil";
+import type { WorldEvolutionSource } from "@/game/application/worldEvolutionSource";
 import { readyScene } from "@/game/domain/narrativeTestFixture.testutil";
 
 // ---------------------------------------------------------------------------
@@ -21,6 +24,78 @@ import { readyScene } from "@/game/domain/narrativeTestFixture.testutil";
 // ---------------------------------------------------------------------------
 
 describe("动态具象化旅程（Step 1）", () => {
+  it("同地点新目标的 ambient 台词不能冒充正式开场，点击后才创建目标 NPC provider job", async () => {
+    const created = await createJourneyGame(undefined, undefined, "same-town-dialogue", "short");
+    const fallbackEvolution = createJourneyEvolutionSource();
+    const sameTownEvolution: WorldEvolutionSource = {
+      async propose(context) {
+        if (context.need.kind !== "next_act") return fallbackEvolution.propose(context);
+        return {
+          ok: true,
+          proposal: {
+            beatSummary: "老茶头把线索交给同镇的赵文远",
+            newLocation: {
+              name: "废弃当铺",
+              description: "镇东一间久未开门的旧当铺。",
+              scale: "scene",
+              placement: "town_building",
+              connectFromLocationId: String(context.worldState.currentLocationId),
+            },
+            newNpc: {
+              name: "赵文远",
+              role: "州府师爷",
+              description: "负责拟定缉凶告示，暂住在镇东当铺。",
+              locationRef: { kind: "new_location" },
+              goals: ["查清告示背后的旧案"],
+            },
+            newItem: null,
+            newEnemy: null,
+            newFact: null,
+            nextMainQuest: {
+              name: "当铺暗影",
+              description: "向赵文远查问缉凶告示。",
+              objectiveText: "与赵文远交谈",
+            },
+            endingPair: null,
+          },
+        };
+      },
+    };
+
+    await advanceScene(created.repo.repo, sameTownEvolution);
+    const firstTalk = await playIssuedChoice(created.repo.repo, "回应", sameTownEvolution);
+    expect(firstTalk.ok).toBe(true);
+    expect(await advanceScene(created.repo.repo, sameTownEvolution)).toBe(true);
+    const secondTalk = await playIssuedChoice(created.repo.repo, "回应", sameTownEvolution);
+    expect(secondTalk.ok).toBe(true);
+    expect(await advanceScene(created.repo.repo, sameTownEvolution)).toBe(true);
+
+    const handoffView = await loadGameView(created.repo.repo);
+    const zhaoBeforeTalk = handoffView.narrative.npcDialogues.find((entry) => entry.name === "赵文远");
+    expect(handoffView.story.currentObjectiveLabel).toBe("与赵文远交谈");
+    expect(zhaoBeforeTalk?.speechPages).toEqual([]);
+    expect(zhaoBeforeTalk?.choices).toEqual([]);
+    expect(zhaoBeforeTalk?.freeInputEnabled).toBe(false);
+    expect(zhaoBeforeTalk?.startChoice?.label).toBe("与赵文远交谈");
+
+    const startTalk = await playIssuedChoice(created.repo.repo, "赵文远", sameTownEvolution);
+    expect(startTalk.ok).toBe(true);
+    const pending = await loadGameRecord(created.repo.repo);
+    expect(pending?.storyState.narrative.status).toBe("provider_pending");
+    if (pending?.storyState.narrative.status !== "provider_pending") return;
+    expect(pending.storyState.narrative.job.focusNpcId).toBe("npc_dyn_1");
+    expect(pending.storyState.narrative.job.generationKind).toBe("npc_fixed_choice");
+    expect(pending.storyState.narrative.job.sceneRequestKind).toBe("npc_response");
+
+    expect(await advanceScene(created.repo.repo, sameTownEvolution)).toBe(true);
+    const ready = await loadGameView(created.repo.repo);
+    const zhaoReady = ready.narrative.npcDialogues.find((entry) => entry.name === "赵文远");
+    expect(zhaoReady?.speechPages.length).toBeGreaterThan(0);
+    expect(zhaoReady?.choices).toHaveLength(2);
+    expect(zhaoReady?.freeInputEnabled).toBe(true);
+    expect(zhaoReady?.startChoice).toBeUndefined();
+  });
+
   it("开局切片 → 首次对话触发具象化 → 拾取/移动/战斗 → ≥15 回合 3 次重载抵达结局", async () => {
     const created = await createJourneyGame(undefined, undefined, "q20", "short");
     let store: InMemoryRepo = created.repo;
@@ -71,8 +146,10 @@ describe("动态具象化旅程（Step 1）", () => {
 
     await scene(); // 1: 序幕场景
 
-    await fixed("交谈"); // 2: 与 npc_0 交谈 → quest_0 完成 → 幕推进
-    await scene(); // 3: 下一叙事写回 + 世界演化触发
+    await fixed("回应"); // 2: 与 npc_0 第一轮正式交谈
+    await scene();
+    await fixed("回应"); // 3: 第二轮正式交谈 → quest_0 完成 → 幕推进
+    await scene(); // 4: 下一叙事写回 + 世界演化触发
 
     // 具象化断言：完整新幕已写入世界，但第一可见目标只有前往新地点。
     ws = await loadWorldState(store.repo);
@@ -187,7 +264,7 @@ describe("动态具象化旅程（Step 1）", () => {
     expect(store.applyCalls().length - applyAfterTurn).toBe(0);
 
     expect(await advanceScene(store.repo)).toBe(true);
-    const unblocked = await playIssuedChoice(store.repo, "延伸之地·2");
+    const unblocked = await playIssuedChoice(store.repo, "回应");
     expect(unblocked.ok).toBe(true);
   });
 });

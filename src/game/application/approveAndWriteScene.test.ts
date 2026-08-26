@@ -466,6 +466,7 @@ describe("approveScenePerformance (Task 6)", () => {
     if (!result.ok) return;
     expect(result.scene.npcLine?.text).toBe("我知道了。");
     expect(result.scene.npcDialogues?.[0]?.speechPages.join("")).toBe("我知道了。");
+    expect(result.scene.npcDialogues?.[0]?.speechPurpose).toBe("focus");
   });
 
   it("引用其他 NPC 的交互（不在本 NPC recentInteractionActionIds）→ 整场拒绝 wrong_npc_interaction", () => {

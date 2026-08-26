@@ -426,6 +426,7 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(generation.job.turnId).toBe("act_1");
     expect(generation.job.turnNumber).toBe(1);
     expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
+    expect(generation.job.focusNpcId).toBe("npc_1");
     expect(generation.job.domainEventRange).toEqual({ fromLedgerIndex: 1, toLedgerIndexExclusive: 2 });
     expect(generation.job.requestedAt).toBe("2026-01-02");
     expect(generation.job.generationKind).toBe("npc_fixed_choice");

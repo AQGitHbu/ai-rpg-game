@@ -1526,7 +1526,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     );
   });
 
-  it("repairs a missing prepared dialogue by starting the authoritative talk action on NPC click", async () => {
+  it("starts the authoritative provider talk on NPC click without showing ambient or fallback speech", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     const base = buildView();
@@ -1557,11 +1557,13 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
+    expect(screen.queryByText(/欢迎光临|晚风还要凉/u)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /老板.*路人/ }));
     expect(onSubmit).toHaveBeenCalledWith(
       { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
       "npc-dialogue",
     );
+    expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("status")).toHaveTextContent("正在等待老板回应");
   });
 

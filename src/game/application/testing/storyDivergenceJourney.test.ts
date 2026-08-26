@@ -85,7 +85,9 @@ async function runBranch(branch: Branch, replay: number) {
     accept(await playTurn(store.repo, { kind: "free_text", text, targetNpcId: asNpcId(finalTalkNpcId()) }, new Map(), () => "2026-08-09T00:00:00.000Z", source));
   };
   await scene(); // 1: 序幕
-  await fixed("交谈"); // 2: 完成第一幕
+  await fixed("回应"); // 2: 第一幕第一轮正式交谈
+  await scene();
+  await fixed("回应"); // 3: 第二轮完成第一幕
   await scene(); // 具象化第 2 幕内容
   // NPC handoff 的确认按钮是本地 UI 行为；分支自由输入放在最终
   // 已准备好的终局 NPC 上，保证它确实是正式 NPC provider 回合。

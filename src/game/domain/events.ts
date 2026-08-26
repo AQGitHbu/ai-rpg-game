@@ -53,6 +53,16 @@ export type NpcMetEvent = {
   readonly interactionKind?: "greet" | "ask_main_quest";
 };
 
+/**
+ * 一名 NPC 的正式多轮对话会话已经完成。`npc_met` 只表示接触发生；任务和
+ * 后续目标必须以本事件或当前 completed dialogueSession 作为历史完成事实。
+ */
+export type NpcDialogueCompletedEvent = {
+  readonly type: "npc_dialogue_completed";
+  readonly npcId: NpcId;
+  readonly occurredAt: string;
+};
+
 /** 玩家发现世界事实：由 investigate 行动成功时追加；重复调查不产生此事件。 */
 export type FactDiscoveredEvent = {
   readonly type: "fact_discovered";
@@ -287,6 +297,7 @@ export type GameEvent =
   | GameInitializedEvent
   | LocationObservedEvent
   | NpcMetEvent
+  | NpcDialogueCompletedEvent
   | FactDiscoveredEvent
   | LocationVisitedEvent
   | LocationExploredEvent

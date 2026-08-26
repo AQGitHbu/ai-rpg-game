@@ -78,10 +78,12 @@ describe("foundation 动态闭环旅程", () => {
 
     await scene(); // 序幕场景（确定性）
 
-    // 回合 1：与开局 NPC 交谈 → 第一幕完成。
+    // 开局 NPC 必须完成两轮正式回应，不能让一次接触直接完成第一幕。
     const applyBefore = store.applyCalls().length;
-    await fixed("交谈");
+    await fixed("回应");
     expect(store.applyCalls().length - applyBefore).toBe(1); // 单次 CAS
+    await scene();
+    await fixed("回应");
     ss = await loadStoryState(store.repo);
     expect(ss?.currentAct).toBe(2);
 

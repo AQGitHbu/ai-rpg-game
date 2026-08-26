@@ -433,7 +433,7 @@ describe("projectGameSessionView", () => {
     expect(view.narrative.choices ?? []).toHaveLength(0);
   });
 
-  it("demotes a persisted stale focus when another present NPC is the current talk objective", () => {
+  it("demotes a persisted stale focus and starts the new target through one authoritative ask", () => {
     const secondNpc: NpcEntry = {
       id: asNpcId("npc_2"), name: "传讯人", role: "信使", description: "带来下一幕消息",
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
@@ -491,12 +491,13 @@ describe("projectGameSessionView", () => {
     // 旧断言：expect(oldNpc?.choices.map((entry) => entry.label)).toEqual(["与老板交谈"]);
     expect(oldNpc?.choices).toEqual([]);
     expect(oldNpc?.speechPages.length).toBeGreaterThan(0);
-    expect(newNpc?.freeInputEnabled).toBe(true);
-    expect(newNpc?.choices).toHaveLength(2);
-    expect(newNpc?.choices.map((entry) => entry.label)).toEqual([
-      "我愿意先把手里的证据交给你核对，请你把知道的那一段说清楚。",
-      "我会逐项核对线索；你凭什么确定它们指向同一个人？",
-    ]);
+    expect(newNpc?.speechPages).toEqual([]);
+    expect(newNpc?.freeInputEnabled).toBe(false);
+    expect(newNpc?.choices).toEqual([]);
+    expect(newNpc?.startChoice).toMatchObject({
+      label: "与传讯人交谈",
+      presentation: "dialogue",
+    });
     expect(view.narrative.choices).toHaveLength(0);
     expect(view.story.currentObjectiveLabel).toBe("与传讯人交谈");
   });
@@ -544,6 +545,79 @@ describe("projectGameSessionView", () => {
     expect(dialogue?.startChoice).toMatchObject({ label: "与老板交谈", presentation: "dialogue" });
     expect(dialogue?.freeInputEnabled).toBe(false);
     expect(dialogue?.speechPages).toEqual([]);
+    expect(JSON.stringify(dialogue)).not.toContain("fallback");
+  });
+
+  it("does not promote generated ambient speech into Zhao Wenyuan's formal objective dialogue", () => {
+    const zhao: NpcEntry = {
+      id: asNpcId("npc_zhao"), name: "赵文远", role: "州府师爷", description: "负责缉凶告示",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: ["dynamic"], met: false,
+      memory: { npcId: asNpcId("npc_zhao"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const quest: WorldState["quests"][number] = {
+      id: asQuestId("quest_zhao"),
+      name: "当铺暗影",
+      description: "向赵文远查问告示",
+      objectives: [{ kind: "talk_to_npc", npcId: zhao.id }],
+      onSuccess: { kind: "advance_story" },
+      onFailure: { kind: "closed" },
+      tags: ["dynamic"],
+      kind: "main",
+      stage: 2,
+      status: "active",
+    };
+    const generatedHandoff: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        dialogueSession: { npcId: npc1.id, turnCount: 2, requiredTurns: 2, completed: true },
+        currentScene: {
+          sceneId: "scene-zhao-handoff",
+          turn: 2,
+          narration: "老茶头让你去找赵文远。",
+          usedFactIds: [],
+          npcLine: { npcId: npc1.id, text: "赵师爷就在镇东，你去问他吧。", emotion: "warm", usedFactIds: [] },
+          choices: [],
+          handoffAcknowledgement: "多谢老丈指点。",
+          source: "generated",
+          event: { kind: "observe", locationId: loc1.id },
+          npcDialogues: [
+            {
+              npcId: npc1.id,
+              npcName: npc1.name,
+              npcRole: npc1.role,
+              speechPages: ["赵师爷就在镇东，你去问他吧。"],
+              speechSource: "generated",
+              speechPurpose: "focus",
+            },
+            {
+              npcId: zhao.id,
+              npcName: zhao.name,
+              npcRole: zhao.role,
+              speechPages: ["这青石镇的晚风，倒比州府衙门里的穿堂风还凉。"],
+              speechSource: "generated",
+              speechPurpose: "ambient",
+            },
+          ],
+        },
+        choiceRegistry: [],
+      },
+    };
+
+    const view = projectGameSessionView(
+      { ...ws, npcs: [...ws.npcs, zhao], quests: [quest] },
+      generatedHandoff,
+      5,
+      "test-ending-session",
+    );
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(zhao.id));
+
+    expect(view.story.currentObjectiveLabel).toBe("与赵文远交谈");
+    expect(dialogue?.speechPages).toEqual([]);
+    expect(dialogue?.choices).toEqual([]);
+    expect(dialogue?.freeInputEnabled).toBe(false);
+    expect(dialogue?.startChoice).toMatchObject({ label: "与赵文远交谈", presentation: "dialogue" });
+    expect(JSON.stringify(dialogue)).not.toContain("这青石镇的晚风");
     expect(JSON.stringify(dialogue)).not.toContain("fallback");
   });
 
@@ -1205,7 +1279,7 @@ describe("projectGameSessionView", () => {
     expect(dialogue?.choices.map((choice) => choice.presentation)).toEqual(["dialogue", "dialogue"]);
   });
 
-  it("旧移动抵达场景含有 move 时，读模型修复为两个 talk 选项", () => {
+  it("旧移动抵达场景含有非法 move 时，保留生成台词并以 ask 重新建立正式对话", () => {
     const scene = {
       sceneId: "scene-arrival-dialogue",
       turn: 3,
@@ -1248,10 +1322,12 @@ describe("projectGameSessionView", () => {
 
     const view = projectGameSessionView(world, story, 3, "test-ending-session");
     const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1");
-    expect(dialogue?.choices).toHaveLength(2);
-    expect(dialogue?.choices.every((choice) => choice.presentation === "dialogue")).toBe(true);
+    expect(dialogue?.speechPages.join("")).toContain("旧案的关键线索");
+    expect(dialogue?.choices).toEqual([]);
+    expect(dialogue?.freeInputEnabled).toBe(false);
+    expect(dialogue?.startChoice).toMatchObject({ label: "与老板交谈", presentation: "dialogue" });
     const executable = buildChoiceMap(world, story, 3);
-    expect(dialogue?.choices.every((choice) => executable.has(choice.choiceToken))).toBe(true);
+    expect(executable.has(dialogue!.startChoice!.choiceToken)).toBe(true);
     expect(view.narrative.choices).toEqual([]);
   });
 

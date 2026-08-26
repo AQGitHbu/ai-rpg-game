@@ -29,15 +29,13 @@ export function isObjectiveSatisfiedInStory(
   if (!isObjectiveSatisfied(ws, objective)) return false;
   if (objective.kind !== "talk_to_npc") return true;
   const session = ss.narrative.dialogueSession;
-  if (
-    session === undefined
-    // 开局 session 的 turnCount=0 只是“已进入第一段对话”的兼容标记；
-    // 旧开局入口的首次 ask 仍然是一次有效的单回合幕起点。
-    || session.turnCount === 0
-  ) return true;
+  if (session === undefined) return true;
   // 旧 NPC 的 completed 会话不能完成当前 NPC 的目标；规则层可能已经在
   // 本回合把新 NPC 标记为 met，但这只代表接触发生，不代表两轮对白结束。
-  if (String(session.npcId) !== String(objective.npcId)) return false;
+  if (String(session.npcId) !== String(objective.npcId)) {
+    return ws.eventLedger.some((event) =>
+      event.type === "npc_dialogue_completed" && event.npcId === objective.npcId);
+  }
   return session.completed;
 }
 

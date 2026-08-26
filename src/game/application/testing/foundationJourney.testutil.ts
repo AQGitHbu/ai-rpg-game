@@ -231,6 +231,8 @@ function allIssuedChoices(view: GameSessionView): readonly PlayerChoiceView[] {
     ...view.obtainableItems.map((item) => item.choice),
     ...view.narrative.choices,
     ...view.narrative.npcDialogues.flatMap((dialogue) => dialogue.choices),
+    ...view.narrative.npcDialogues.flatMap((dialogue) =>
+      dialogue.startChoice === undefined ? [] : [dialogue.startChoice]),
     ...(view.battle?.controls ?? []),
   ];
 }

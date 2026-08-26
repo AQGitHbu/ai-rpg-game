@@ -26,8 +26,10 @@ describe("叙事落地旅程（Step 2）", () => {
     const store = created.repo;
     await advanceScene(store.repo);
 
-    // 先通过交谈让 NPC 在场景中
-    await playIssuedChoice(store.repo, "交谈");
+    // 先完成开场 NPC 的两轮正式回应，不能用一次接触跳过第一幕。
+    await playIssuedChoice(store.repo, "回应");
+    await advanceScene(store.repo);
+    await playIssuedChoice(store.repo, "回应");
     await advanceScene(store.repo);
 
     // 下一幕先释放并执行抵达步骤，抵达后才释放主线 NPC。
@@ -188,8 +190,10 @@ describe("叙事落地旅程（Step 2）", () => {
       }
     }
 
-    // 回合 1: 交谈 → 完成 quest_0，幕推进。
-    await playIssuedChoice(store.repo, "交谈");
+    // 开场两轮正式交谈 → 完成 quest_0，幕推进。
+    await playIssuedChoice(store.repo, "回应");
+    await advanceScene(store.repo);
+    await playIssuedChoice(store.repo, "回应");
     await advanceScene(store.repo);
 
     await playIssuedChoice(store.repo, "延伸之地·2");

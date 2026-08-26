@@ -69,6 +69,12 @@ export type NpcDialogueInScene = {
   readonly speechPages: readonly string[];
   /** 台词来源；旧存档缺失时由 read model 按兼容规则推断。 */
   readonly speechSource?: "generated" | "fixture";
+  /**
+   * 这段台词在生成它的场景中的用途。`focus` 才是可承载正式玩家回应的
+   * 焦点对白；`ambient` 只是零回合环境闲聊，之后即使该 NPC 成为任务目标
+   * 也不能被升级为正式回应。旧存档缺失时按 scene.npcLine.npcId 推断。
+   */
+  readonly speechPurpose?: "focus" | "ambient";
   /** 旧存档兼容字段；新 live 场景使用 speechPages + speechSource。 */
   readonly smallTalk?: {
     readonly prompt: string;
@@ -211,7 +217,7 @@ function isNarrativeChoice(value: unknown): value is NarrativeChoiceState {
 function isNpcDialogue(value: unknown): value is NpcDialogueInScene {
   return isRecord(value)
     && hasOnlyKeys(value, [
-      "npcId", "npcName", "npcRole", "speechPages", "speechSource", "smallTalk",
+      "npcId", "npcName", "npcRole", "speechPages", "speechSource", "speechPurpose", "smallTalk",
     ])
     && isNonEmptyString(value.npcId)
     && typeof value.npcName === "string"
@@ -220,6 +226,9 @@ function isNpcDialogue(value: unknown): value is NpcDialogueInScene {
     && (value.speechSource === undefined
       || value.speechSource === "generated"
       || value.speechSource === "fixture")
+    && (value.speechPurpose === undefined
+      || value.speechPurpose === "focus"
+      || value.speechPurpose === "ambient")
     && (value.smallTalk === undefined || (
       isRecord(value.smallTalk)
       && hasOnlyKeys(value.smallTalk, ["prompt", "response"])
@@ -430,6 +439,7 @@ export function buildNpcDialoguePages(
       npcRole: npc.role,
       speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
       speechSource: isFocus ? focusSpeechSource : hasGeneratedLine ? "generated" : "fixture",
+      speechPurpose: isFocus ? "focus" : "ambient",
       ...(smallTalk ? { smallTalk } : {}),
     };
   });

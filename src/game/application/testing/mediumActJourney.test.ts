@@ -110,7 +110,9 @@ describe("中篇 5 幕离线可完成性", () => {
     expect(ss?.targetActs).toBe(5);
 
     await scene(); // 序幕
-    await fixed("交谈"); // 完成第 1 幕主线 → 具象化第 2 幕
+    await fixed("回应"); // 第 1 幕第一轮正式交谈
+    await scene();
+    await fixed("回应"); // 第二轮完成第 1 幕主线 → 具象化第 2 幕
     await scene();
     ss = await loadStoryState(store.repo);
     expect(ss?.currentAct).toBe(2);

@@ -53,7 +53,11 @@ function advanceDialogueSession(
   const sameSession = existing !== undefined
     && String(existing.npcId) === String(action.npcId)
     && isExplicitDialogueResponse;
-  const canStart = sameSession
+  const isObjectiveDialogueBootstrap = action.dialogueAct === "ask"
+    && !isExplicitDialogueResponse
+    && String(objectiveNpcId) === String(action.npcId);
+  const canStart = isObjectiveDialogueBootstrap
+    || sameSession
     || (currentSceneHasDialogue && isExplicitDialogueResponse)
     || (isExplicitDialogueResponse && String(objectiveNpcId) === String(action.npcId));
   if (!canStart) return storyState;
@@ -63,7 +67,9 @@ function advanceDialogueSession(
   const requiredTurns = sameSession
     ? existing?.requiredTurns ?? DIALOGUE_REQUIRED_TURNS
     : DIALOGUE_REQUIRED_TURNS;
-  const turnCount = sameSession ? existing.turnCount + 1 : 1;
+  const turnCount = isObjectiveDialogueBootstrap
+    ? 0
+    : sameSession ? existing.turnCount + 1 : 1;
   const dialogueSession = {
     npcId: action.npcId,
     turnCount,
@@ -169,9 +175,21 @@ export function resolveTurn(
 
   // Step 1: 任务推进（使用传播后的 WS）
   const dialogueStoryState = advanceDialogueSession(propagatedWs, storyState, action);
+  const previousDialogueSession = storyState.narrative.dialogueSession;
   const dialogueSession = dialogueStoryState.narrative.dialogueSession;
-  const dialogueSessionAdvanced = dialogueStoryState !== storyState;
-  const quests = reconcileQuests(propagatedWs, deps, !dialogueSessionAdvanced || dialogueSession === undefined
+  const dialogueEvents: GameEvent[] = dialogueSession !== undefined
+    && dialogueSession.completed
+    && (
+      previousDialogueSession === undefined
+      || String(previousDialogueSession.npcId) !== String(dialogueSession.npcId)
+      || !previousDialogueSession.completed
+    )
+    ? [{ type: "npc_dialogue_completed", npcId: dialogueSession.npcId, occurredAt: deps.now() }]
+    : [];
+  // 当前会话是 talk_to_npc 是否完成的权威游标。即使本回合不是正式回应，
+  // 也要持续传入；否则 ask 写入的 met=true 或随后一次移动/探索会让通用
+  // objective 判定绕过两轮会话，直接完成当前 NPC 目标。
+  const quests = reconcileQuests(propagatedWs, deps, dialogueSession === undefined
     ? undefined
     : {
         talkToNpcSession: {
@@ -179,8 +197,8 @@ export function resolveTurn(
           completed: dialogueSession.completed,
         },
       });
-  // 初步 domainEvents：resolver + quest（ending 事件在 Step 5 结算后追加）
-  const domainEvents: GameEvent[] = [...resolved.events, ...quests.events];
+  // 初步 domainEvents：resolver + 对话完成 + quest（ending 在 Step 5 追加）
+  const domainEvents: GameEvent[] = [...resolved.events, ...dialogueEvents, ...quests.events];
 
   // Step 1b: 先在本规则回合内推进一次 reveal 游标，再判断抵达后是否已经进入
   // discover_fact。此前这里仍使用回合开始时的 dialogueStoryState，导致 move
@@ -203,7 +221,7 @@ export function resolveTurn(
     questEvents = [...questEvents, ...autoInvestigation.events, ...afterAutoInvestigation.events];
   }
   const allQuestEvents = questEvents;
-  domainEvents.splice(0, domainEvents.length, ...resolved.events, ...allQuestEvents);
+  domainEvents.splice(0, domainEvents.length, ...resolved.events, ...dialogueEvents, ...allQuestEvents);
 
   // Step 2: 幕推进 + storyProgress + endingAllowed 推导（§13.1 在 resolveEnding 之前）
   const progression = advanceStoryProgression(
