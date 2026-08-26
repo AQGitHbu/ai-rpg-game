@@ -125,6 +125,16 @@ function preparedNpcContext(
   };
 }
 
+function authorizedFactIdsForArrivalNpc(
+  npc: PreparedArrivalNpcContext,
+): readonly FactId[] {
+  const ids = new Set([
+    ...npc.sceneVisibleFactIds.map(String),
+    ...npc.knownFactCards.map((fact) => String(fact.factId)),
+  ]);
+  return [...ids].map((id) => id as FactId);
+}
+
 /**
  * The final battle outcome can expose the already-materialized ending NPC as
  * the next formal decision. The player still makes that decision through a
@@ -252,19 +262,22 @@ export function buildPreparedStepDescriptors(
         kind: "move",
         locationId: objective.locationId,
       };
-      const arrivalNpc = arrivalNpcFor(worldState, quest.objectives, objectiveIndex + 1, objective.locationId);
+      const arrivalNpc = arrivalNpcFor(worldState, activeQuest.objectives, objectiveIndex + 1, objective.locationId);
       const stepId = createDescriptor({
-        objectiveKey: objectiveKey(quest.id, objectiveIndex),
-        consumptionGroupKey: groupKeyFor(quest.id, objectiveIndex, "move", branchKey),
+        objectiveKey: objectiveKey(activeQuest.id, objectiveIndex),
+        consumptionGroupKey: groupKeyFor(activeQuest.id, objectiveIndex, "move", branchKey),
         trigger,
         authority: {
-          questId: quest.id,
+          questId: activeQuest.id,
           objectiveIndex,
           allowedEntityIds: [
             ...entityIdsForObjective(objective),
             ...(arrivalNpc === undefined ? [] : [String(arrivalNpc.id)]),
           ],
-          visibleFactIds: arrivalNpc?.sceneVisibleFactIds ?? [],
+          // 抵达 NPC 可以引用自己的 known fact，即使玩家尚未通过规则边界
+          // discover 该事实；这里只给本次 prepared 台词做最小授权，不把事实
+          // 自动写入玩家已发现集合。
+          visibleFactIds: arrivalNpc === undefined ? [] : authorizedFactIdsForArrivalNpc(arrivalNpc),
         },
         ...(arrivalNpc === undefined ? {} : { arrivalNpc }),
         choiceCandidates: choicesForNpc(arrivalNpc, `prepared_${nextOrdinal}`),
@@ -285,11 +298,11 @@ export function buildPreparedStepDescriptors(
 
     if (objective.kind === "defeat_enemy") {
       const startedId = createDescriptor({
-        objectiveKey: objectiveKey(quest.id, objectiveIndex),
-        consumptionGroupKey: groupKeyFor(quest.id, objectiveIndex, "battle_started", branchKey),
+        objectiveKey: objectiveKey(activeQuest.id, objectiveIndex),
+        consumptionGroupKey: groupKeyFor(activeQuest.id, objectiveIndex, "battle_started", branchKey),
         trigger: { kind: "battle_started", enemyId: objective.enemyId },
         authority: {
-          questId: quest.id,
+          questId: activeQuest.id,
           objectiveIndex,
           allowedEntityIds: entityIdsForObjective(objective),
           visibleFactIds: [],
@@ -304,11 +317,11 @@ export function buildPreparedStepDescriptors(
           outcome,
         };
         const outcomeId = createDescriptor({
-          objectiveKey: objectiveKey(quest.id, objectiveIndex),
-          consumptionGroupKey: groupKeyFor(quest.id, objectiveIndex, "battle_resolved", branchKey),
+          objectiveKey: objectiveKey(activeQuest.id, objectiveIndex),
+          consumptionGroupKey: groupKeyFor(activeQuest.id, objectiveIndex, "battle_resolved", branchKey),
           trigger,
           authority: {
-            questId: quest.id,
+            questId: activeQuest.id,
             objectiveIndex,
             allowedEntityIds: [
               ...entityIdsForObjective(objective),

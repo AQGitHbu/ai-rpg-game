@@ -47,7 +47,13 @@ function genreRule(gameType: string): string {
 
 function locationPlacementRule(currentLocation: WorldState["locations"][number] | undefined): string {
   if (currentLocation?.scale === "town") {
-    return "当前地点是城镇容器：城镇内部的茶馆、酒楼、客栈、铺面、宅院或后巷必须使用 placement=town_building；该建筑不会成为世界地图节点，且同次新 NPC 的 locationRef 必须为 {\"kind\":\"new_location\"}。需要独立旅行的地点才使用 placement=world。";
+    const slots = currentLocation.town?.slots ?? [];
+    const freeSlotCount = slots.filter((slot) => slot.boundNpcId === null).length;
+    const capacity = `${freeSlotCount}/${slots.length}`;
+    if (freeSlotCount === 0) {
+      return `当前地点是城镇容器，但剧情建筑槽位已满（可用槽位=${capacity}）：本次禁止使用 placement=town_building。需要独立旅行的地点必须使用 placement=world；如果同时创建 newNpc 且该 NPC 属于新地点，newNpc.locationRef 必须是 {\"kind\":\"new_location\"}，不能写 current 城镇或任何 existing 地点。`;
+    }
+    return `当前地点是城镇容器：城镇内部的茶馆、酒楼、客栈、铺面、宅院或后巷必须使用 placement=town_building；当前剧情建筑槽位可用=${capacity}。该建筑不会成为世界地图节点，且同次新 NPC 的 locationRef 必须为 {\"kind\":\"new_location\"}。需要独立旅行的地点才使用 placement=world。`;
   }
   return "当前地点不是城镇容器：新地点通常使用 placement=world；town_building 只可挂在当前城镇容器。";
 }
@@ -114,7 +120,12 @@ function contentRepairInstruction(
   const reasonCode = repair.reason === "approval_rejected" && repair.approvalCode !== undefined
     ? `approval_rejected:${repair.approvalCode}`
     : repair.reason;
-  return `上一轮的响应需要一次内容修复（content repair）：原因=${reasonText}（${reasonCode}）。只修复该问题并重发完整提案；保留当前世界事实边界，严禁通过省略字段绕过 placement、locationRef、已有地点名、任务目标可达性等契约。`;
+  const repairDirective = repair.approvalCode === "town_capacity"
+    ? "当前城镇建筑槽位已满：必须把新地点改为 placement=world；若同时有 newNpc，必须把其 locationRef 改为 {\"kind\":\"new_location\"}，不能继续引用当前城镇。"
+    : repair.approvalCode === "unreachable_objective"
+      ? "新地点主线不可达：next_act 的 world 新地点必须把 connectFromLocationId 写成当前地点 ID；若同时有 newNpc、newItem 或 newEnemy 且它们进入下一幕主线，必须把对应 locationRef 写成 {\"kind\":\"new_location\"}，以保证先抵达新地点再处理目标。"
+      : "";
+  return `上一轮的响应需要一次内容修复（content repair）：原因=${reasonText}（${reasonCode}）。${repairDirective}只修复该问题并重发完整提案；保留当前世界事实边界，严禁通过省略字段绕过 placement、locationRef、已有地点名、任务目标可达性等契约。`;
 }
 
 function detailPriority(input: {

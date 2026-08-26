@@ -158,6 +158,11 @@ export type WorldDeltaRejection =
  * ID 铸造/预算预占前硬拒绝，而不是把旧地点的 NPC 静默搬迁到新地点。
  */
 export const REJECT_REASON_NPC_NOT_AT_NEW_LOCATION = "npc_not_at_new_location" as const;
+/** 下一幕的主线新地点必须从玩家当前所在地点接入，保证目标不是只能绕路回退后才能抵达。 */
+export const REJECT_REASON_LOCATION_NOT_FROM_CURRENT = "location_not_from_current" as const;
+/** 下一幕主线目标中的物品/敌人必须与该幕新地点共址。 */
+export const REJECT_REASON_ITEM_NOT_AT_NEW_LOCATION = "item_not_at_new_location" as const;
+export const REJECT_REASON_ENEMY_NOT_AT_NEW_LOCATION = "enemy_not_at_new_location" as const;
 
 export type ApprovedWorldDeltaCore = {
   readonly beatSummary: string;
@@ -626,6 +631,32 @@ export function approveWorldDelta(input: {
     && p.newNpc.locationRef.kind !== "new_location"
   ) {
     return reject("unreachable_objective", REJECT_REASON_NPC_NOT_AT_NEW_LOCATION);
+  }
+  if (
+    need.kind === "next_act"
+    && p.nextMainQuest !== null
+    && p.newLocation?.placement === "world"
+    && String(p.newLocation.connectFromLocationId) !== String(ws.currentLocationId)
+  ) {
+    return reject("unreachable_objective", REJECT_REASON_LOCATION_NOT_FROM_CURRENT);
+  }
+  if (
+    need.kind === "next_act"
+    && p.nextMainQuest !== null
+    && p.newLocation?.placement === "world"
+    && p.newItem?.locationRef === "current"
+    && actObjectives?.some((objective) => objective.kind === "obtain_item")
+  ) {
+    return reject("unreachable_objective", REJECT_REASON_ITEM_NOT_AT_NEW_LOCATION);
+  }
+  if (
+    need.kind === "next_act"
+    && p.nextMainQuest !== null
+    && p.newLocation?.placement === "world"
+    && p.newEnemy?.locationRef === "current"
+    && actObjectives?.some((objective) => objective.kind === "defeat_enemy")
+  ) {
+    return reject("unreachable_objective", REJECT_REASON_ENEMY_NOT_AT_NEW_LOCATION);
   }
 
   // 预算预占（在铸造实体前校验，避免无效提议占用序号）。

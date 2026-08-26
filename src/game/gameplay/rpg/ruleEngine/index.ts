@@ -16,6 +16,7 @@ import { updateStoryMetrics } from "./updateStoryMetrics";
 import { propagateKnownFacts } from "./propagateKnownFacts";
 import { advanceStoryProgression } from "./advanceStoryProgression";
 import { approveCandidateEvents, compileCandidateEvent } from "@/game/gameplay/rpg/candidateEvents";
+import { advanceStoryReveal } from "@/game/gameplay/rpg/worldEvolution";
 import { reconcileMaterializedView } from "@/game/domain/materializedView";
 import type { RecentBeat, NpcContact } from "@/game/domain/materializedView";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
@@ -170,7 +171,7 @@ export function resolveTurn(
   const dialogueStoryState = advanceDialogueSession(propagatedWs, storyState, action);
   const dialogueSession = dialogueStoryState.narrative.dialogueSession;
   const dialogueSessionAdvanced = dialogueStoryState !== storyState;
-  let quests = reconcileQuests(propagatedWs, deps, !dialogueSessionAdvanced || dialogueSession === undefined
+  const quests = reconcileQuests(propagatedWs, deps, !dialogueSessionAdvanced || dialogueSession === undefined
     ? undefined
     : {
         talkToNpcSession: {
@@ -181,35 +182,47 @@ export function resolveTurn(
   // 初步 domainEvents：resolver + quest（ending 事件在 Step 5 结算后追加）
   const domainEvents: GameEvent[] = [...resolved.events, ...quests.events];
 
-  // Step 1b: 自动揭示——reconcile 后的当前主线首目标是当前地点、无 approach 的
-  // discover_fact 时，本回合自动发现该事实（最多一个事实目标），并为该自动事实
-  // 只再执行一次 quest reconciliation。自动事件、目标推进、张力和 eventLedger
-  // 仍属于同一个规则回合/CAS；触发条件覆盖所有成功 action 类型。
-  const autoInvestigation = autoResolveCurrentInvestigation(quests.nextWorldState, dialogueStoryState, { now: deps.now });
+  // Step 1b: 先在本规则回合内推进一次 reveal 游标，再判断抵达后是否已经进入
+  // discover_fact。此前这里仍使用回合开始时的 dialogueStoryState，导致 move
+  // 完成 visit_location 后游标停在旧目标；带 investigationApproaches 的事实又
+  // 不投影 investigate 按钮，于是新地点出现“无 action”死路。
+  // 自动揭示最多一个事实，并为该自动事实只再执行一次 quest reconciliation。
+  // 自动事件、目标推进、张力和 eventLedger 仍属于同一个规则回合/CAS。
+  const revealedAtBoundary = advanceStoryReveal({
+    worldState: quests.nextWorldState,
+    storyState: dialogueStoryState,
+  });
+  let ruleWorldState = revealedAtBoundary.worldState;
+  const ruleStoryState = revealedAtBoundary.storyState;
+  let questEvents = quests.events;
+  const autoInvestigation = autoResolveCurrentInvestigation(ruleWorldState, ruleStoryState, { now: deps.now });
   if (autoInvestigation.events.length > 0) {
-    domainEvents.push(...autoInvestigation.events);
-    quests = reconcileQuests(autoInvestigation.nextWorldState, deps);
-    domainEvents.push(...quests.events);
+    ruleWorldState = autoInvestigation.nextWorldState;
+    const afterAutoInvestigation = reconcileQuests(ruleWorldState, deps);
+    ruleWorldState = afterAutoInvestigation.nextWorldState;
+    questEvents = [...questEvents, ...autoInvestigation.events, ...afterAutoInvestigation.events];
   }
+  const allQuestEvents = questEvents;
+  domainEvents.splice(0, domainEvents.length, ...resolved.events, ...allQuestEvents);
 
   // Step 2: 幕推进 + storyProgress + endingAllowed 推导（§13.1 在 resolveEnding 之前）
   const progression = advanceStoryProgression(
-    quests.nextWorldState,
-    dialogueStoryState,
+    ruleWorldState,
+    ruleStoryState,
     domainEvents,
   );
 
   // Step 3: candidateEventPool 审批（纯规则）+ 编译批准候选为真实领域事件
   const approval = approveCandidateEvents(
     {
-      worldState: quests.nextWorldState,
+      worldState: ruleWorldState,
       storyState: progression.nextStoryState,
       candidates: progression.nextStoryState.candidateEventPool,
     },
     { now: deps.now },
   );
   const candidateFlowEvents: GameEvent[] = [...approval.events];
-  let afterCandidateWs = quests.nextWorldState;
+  let afterCandidateWs = ruleWorldState;
   for (const candidate of approval.approvedCandidates) {
     const compiled = compileCandidateEvent(afterCandidateWs, candidate, { now: deps.now });
     afterCandidateWs = compiled.worldState;

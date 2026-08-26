@@ -1,6 +1,12 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
-import { approveWorldDelta, actObjectiveShape, deriveActObjectives, REJECT_REASON_NPC_NOT_AT_NEW_LOCATION } from "./approveWorldDelta";
+import {
+  approveWorldDelta,
+  actObjectiveShape,
+  deriveActObjectives,
+  REJECT_REASON_NPC_NOT_AT_NEW_LOCATION,
+  REJECT_REASON_LOCATION_NOT_FROM_CURRENT,
+} from "./approveWorldDelta";
 import type { WorldState, NpcEntry, InvestigationApproach } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -260,6 +266,55 @@ describe("approveWorldDelta", () => {
     if (result.ok) return;
     expect(result.code).toBe("unreachable_objective");
     expect(result.reason).toBe(REJECT_REASON_NPC_NOT_AT_NEW_LOCATION);
+  });
+
+  it("rejects a next_act main location that is not connected from the current location", () => {
+    const base = makeWorld();
+    const ws: WorldState = {
+      ...base,
+      locations: [
+        ...base.locations,
+        {
+          id: asLocationId("loc_other"),
+          name: "旧驿道",
+          description: "一条通往远方的旧路。",
+          kind: "main",
+          connectedLocationIds: [],
+          npcIds: [],
+          availableItemIds: [],
+          tags: [],
+          scale: "scene",
+        },
+      ],
+      currentLocationId: asLocationId("loc_other"),
+    };
+    const result = approveWorldDelta({
+      proposal: nextActProposal(),
+      need: { kind: "next_act", act: 2 },
+      ws,
+      ss: makeStory({ currentAct: 2 }),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("unreachable_objective");
+    expect(result.reason).toBe(REJECT_REASON_LOCATION_NOT_FROM_CURRENT);
+  });
+
+  it("rejects a next_act main item parked at the old location", () => {
+    const base = nextActProposal();
+    const result = approveWorldDelta({
+      proposal: {
+        ...base,
+        newItem: { name: "密册残页", description: "夹在信物中的残页。", locationRef: "current" },
+      },
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("unreachable_objective");
+    expect(result.reason).toBe("item_not_at_new_location");
   });
 
   it("mints the NPC into the new world location and indexes it there when locationRef is new_location", () => {

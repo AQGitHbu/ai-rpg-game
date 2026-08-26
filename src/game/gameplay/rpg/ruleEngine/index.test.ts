@@ -648,6 +648,52 @@ describe("resolveTurn — 自动揭示无 approach 的必经事实 (Task 3)", ()
     expect(r.nextWorldState.quests[0]?.status).toBe("completed");
   });
 
+  it("移动完成 visit_location 后，同回合推进游标并自动揭示下一事实", () => {
+    const autoWs: WorldState = {
+      ...ws,
+      worldFacts: [{
+        factId: FACT_1_ID,
+        text: "车轮印",
+        source: "generated",
+        discovered: false,
+        locationId: asLocationId("loc_2"),
+        investigationApproaches: [
+          { approachId: "careful", label: "沿痕迹追查", evidenceQuality: "clean", tensionDelta: 4 },
+          { approachId: "risky", label: "翻查附近杂物", evidenceQuality: "noisy", tensionDelta: 12 },
+        ],
+      }],
+      quests: [{
+        id: asQuestId("quest_move_fact"),
+        name: "追查线索",
+        description: "前往现场并查明线索。",
+        objectives: [
+          { kind: "visit_location", locationId: asLocationId("loc_2") },
+          { kind: "discover_fact", factId: FACT_1_ID },
+        ],
+        onSuccess: { kind: "advance_story" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 1,
+        status: "active",
+      }],
+      visitedLocationIds: [asLocationId("loc_1")],
+    };
+    const revealedStory = {
+      ...ss,
+      reveal: { questId: asQuestId("quest_move_fact"), visibleObjectiveIndex: 0 },
+    };
+    const result = resolveTurn(autoWs, revealedStory, { type: "move", locationId: asLocationId("loc_2") }, "act_move_fact", 0, asTurnId("turn_move_fact"), "fixed_choice", deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("move should succeed");
+    expect(result.resolution.nextWorldState.currentLocationId).toBe(asLocationId("loc_2"));
+    expect(result.resolution.nextWorldState.worldFacts[0]?.discovered).toBe(true);
+    expect(result.resolution.domainEvents.map((event) => event.type)).toContain("fact_discovered");
+    expect(result.resolution.nextStoryState.reveal).toEqual({
+      questId: asQuestId("quest_move_fact"), visibleObjectiveIndex: 1,
+    });
+  });
+
   it("当前目标不是 discover_fact 时不自动揭示", () => {
     const autoWs: WorldState = {
       ...ws,

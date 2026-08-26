@@ -68,6 +68,11 @@
 - **消费语义**：`move`、`battle_started`、`battle_resolved` 先由规则核对权威实体/敌人与 trigger，再在同一次 CAS 中应用规则结果、物化 prepared scene、按 post-commit revision 铸造 choices、消费当前 group 并递增 revision；事实发现由规则边界自动完成。
 - **错误边界**：没有 active matching step 返回 `NARRATIVE_CONTINUATION_MISSING`；图结构、权威事件或实体不一致返回 `NARRATIVE_CONTINUATION_INVALID`。两者都不调用 provider 且零状态写入，不回退为 live 或 deterministic 生产场景。
 
+## 跨幕 prepared descriptor 归属（2026-08-26）
+
+- 正式 NPC 收尾回合若已具象化下一幕，prepared continuation projection 递归进入下一主线任务后，`questId`、`objectiveIndex`、`objectiveKey`、消费组、arrival NPC 和后继必须全部从递归中的 `activeQuest` 读取，不能沿用外层已完成任务的身份或 objective 列表。
+- AI 只按该服务端 descriptor 提供 prepared scene seed；审批器用同一 descriptor 校验 `objectiveLink`、实体和合法候选。旧任务身份泄漏会使 provider 虽返回 HTTP 200/合法 JSON，仍因 `invalid_prepared_continuation` 进入 `AI_RESPONSE_INVALID`。
+
 ## 叙事边界编排（2026-08-25）
 
 - 非对白行动完成当前幕最后一个主线目标后，若 `evolution.status=needs_next_act` 或 `needs_ending_pair`，read model 会投影一次“继续追查下一幕线索”探索入口；该入口只负责提交边界编排请求，不把无目标地点伪装成普通探索。结局对物化且 `endingAllowed=true` 后，read model 继续投影“选择结局方向”目标和“面对最终抉择”入口，直到玩家提交最后的 support/challenge 立场。

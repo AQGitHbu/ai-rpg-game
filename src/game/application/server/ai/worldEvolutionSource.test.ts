@@ -15,6 +15,7 @@ import type { AiTransport } from "@ai-game/ai-transport";
 import type { WorldState } from "@/game/domain/worldState";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { WorldEvolutionSourceContext } from "../../worldEvolutionSource";
+import { bindNpcToTownSlot, createTownRuntime } from "@/game/gameplay/rpg/town";
 
 function makeWorld(): WorldState {
   return createInitialWorldState({
@@ -597,6 +598,33 @@ describe("world source 内容修复契约", () => {
     expect(prompt).toContain("duplicate_name");
     const auditContext = ai.complete.mock.calls[0]?.[2] as { readonly retry?: { readonly reason?: string } };
     expect(auditContext.retry?.reason).toBe("approval_rejected:duplicate_name");
+  });
+
+  it("满槽城镇把世界地点容量与新地点 NPC 归属明确写入 prompt", () => {
+    const base = makeCtx({ need: { kind: "next_act", act: 2 } });
+    let town = createTownRuntime({ locationId: asLocationId("loc_a"), seed: "s#town#loc_a" });
+    for (let i = 0; i < town.slots.length; i += 1) {
+      town = bindNpcToTownSlot(town, asNpcId(`npc_slot_${i}`)).town;
+    }
+    const worldState = {
+      ...base.worldState,
+      locations: base.worldState.locations.map((location) => location.id === asLocationId("loc_a")
+        ? { ...location, scale: "town" as const, town }
+        : location),
+    };
+    const prompt = buildWorldEvolutionPrompt({ ...base, worldState });
+    expect(prompt).toContain("剧情建筑槽位已满（可用槽位=0/");
+    expect(prompt).toContain("本次禁止使用 placement=town_building");
+    expect(prompt).toContain("placement=world");
+    expect(prompt).toContain("newNpc.locationRef 必须是 {\"kind\":\"new_location\"}");
+
+    const repairPrompt = buildWorldEvolutionPrompt({
+      ...base,
+      worldState,
+      contentRepair: { attempt: 1, reason: "approval_rejected", approvalCode: "town_capacity" },
+    });
+    expect(repairPrompt).toContain("当前城镇建筑槽位已满：必须把新地点改为 placement=world");
+    expect(repairPrompt).toContain("必须把其 locationRef 改为 {\"kind\":\"new_location\"}");
   });
 
   it("source 自身不递归：即使传输失败也不重复相同请求", async () => {

@@ -55,6 +55,11 @@
 
 - NPC 对话驱动叙事场景触发：未消费的 AI 抵达对白与批准动作由 ready narrative 的 `dialogueResume` 跨 rule-owned travel 保留，返回目标地点时按当前 revision 恢复；旧存档缺少该缓存时，点击目标 NPC 直接补发权威 `ask` 生成，不显示空白对白或默认 support/challenge 选项。移动回合触发自动调查并推进目标时，若没有精确 prepared continuation，则保留规则场景继续推进，不返回 continuation missing。
 - 地图与地点冒险：`town_building` 复用城镇 `currentLocationId`，不能依赖 visit/move 抵达来触发事实自动揭示；当前 discover_fact 的下一步若是建筑 NPC，服务端为目标建筑投影 opaque `arrivalChoiceToken`，进入时提交一次规则型 explore，揭示事实后再按释放游标显示 NPC；普通建筑入口保持纯 UI 导航。
+- 运行时 AI 导演与场景表演：跨幕 prepared continuation 递归进入下一主线任务后，descriptor 的任务身份、目标序号、消费组和抵达 NPC 均以 `activeQuest` 为准，避免 AI 返回成功但审批因 `invalid_prepared_continuation` 将 NPC 回合标为失败。
+- 世界动态具象化：满槽城镇的建筑容量与 `town_building`/`world` 选择、同批新 NPC 的 `locationRef` 约束已进入 world prompt，避免连续审批拒绝后错误显示通用 NPC AI 失败（2026-08-26）。
+- 探索与任务推进：移动回合先推进故事揭示游标，再自动确认下一事实，避免访问地点后没有可操作项（2026-08-26）。
+- 世界动态具象化：下一幕主线世界地点必须从玩家当前地点接入，避免新地点虽已物化却只能回退绕行才能抵达（2026-08-26）。
+- 世界动态具象化：下一幕主线物品/敌人也必须与新地点共址，避免任务目标实体留在上一地点而场景无操作项（2026-08-26）。
 
 ## 维护规则
 

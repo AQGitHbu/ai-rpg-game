@@ -7,6 +7,7 @@ import {
   asEnemyId,
   asFactId,
   asGenerationId,
+  asItemId,
   asLocationId,
   asNpcId,
   asQuestId,
@@ -192,6 +193,50 @@ describe("prepared continuation candidate projection", () => {
     expect(result.descriptors.some((descriptor) => (
       descriptor.trigger.kind === "move" && descriptor.trigger.locationId === locTown
     ))).toBe(false);
+  });
+
+  it("跨幕继续时使用下一主线任务的 descriptor 身份与抵达 NPC", () => {
+    const nextQuestId = asQuestId("quest_next_act");
+    const nextItemId = asItemId("item_current_act");
+    const base = worldState();
+    const ws = worldState({
+      npcs: base.npcs.map((npc) => npc.id === npcBeggar
+        ? { ...npc, memory: { ...npc.memory, knownFactIds: [factTracks] } }
+        : npc),
+      quests: [
+        quest([{ kind: "obtain_item", itemId: nextItemId }]),
+        {
+          id: nextQuestId,
+          name: "下一幕线索",
+          description: "继续追查破庙留下的线索。",
+          objectives: [
+            { kind: "visit_location", locationId: locTemple },
+            { kind: "talk_to_npc", npcId: npcBeggar },
+          ],
+          onSuccess: { kind: "advance_story" },
+          onFailure: { kind: "closed" },
+          tags: [],
+          kind: "main",
+          stage: 2,
+          status: "active",
+        },
+      ],
+    });
+
+    const result = buildPreparedStepDescriptors({
+      worldState: ws,
+      storyState: storyState(),
+      transition: transition({ questId, objectiveIndex: 0, label: "取得当前幕物品" }),
+    });
+
+    const move = result.descriptors.find((descriptor) => descriptor.trigger.kind === "move");
+    expect(move).toMatchObject({
+      objectiveKey: `${nextQuestId}:0`,
+      consumptionGroupKey: `${nextQuestId}:0:move`,
+      authority: { questId: nextQuestId, objectiveIndex: 0 },
+      arrivalNpc: { id: npcBeggar },
+    });
+    expect(move?.authority.visibleFactIds).toContain(factTracks);
   });
 
   it("keeps all battle outcomes reachable behind one battle-start descriptor", () => {
