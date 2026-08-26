@@ -49,14 +49,16 @@ export type NarrativeBundleProposal = {
   readonly worldDelta: WorldDeltaProposal | null;
   readonly currentScene: BundleSceneProposal;
   readonly continuationScenes: readonly BundleStepProposal[];
-  readonly terminal: {
-    readonly kind: "next_decision" | "ending";
-    readonly stepKey?: string;
-  };
+  readonly terminal:
+    | { readonly kind: "next_decision"; readonly target: { readonly kind: "current_scene" } }
+    | { readonly kind: "next_decision"; readonly target: { readonly kind: "continuation_step"; readonly stepKey: string } }
+    | { readonly kind: "ending" };
 };
 ```
 
-AI 可以提议世界内容和文本，不能提交步骤 ID、图边、active roots、opaque choice token 或任意状态 patch。新实体在 provider JSON 中使用受限符号引用：
+`currentScene` 本身可以就是下一决策，例如开局首场景或同一 NPC 的下一轮回应；这时 `target.kind="current_scene"`，`continuationScenes` 必须为空，且当前场景必须映射到服务端生成的恰好两个正式候选。只有玩家还要先消费移动、调查、物品或胜利等线性步骤时，才使用 `target.kind="continuation_step"` 指向服务端图中的终点步骤；此时 `currentScene` 不得携带可执行选项。结局正文始终位于 `currentScene`，并且不得携带可执行选项或 continuation。
+
+AI 可以提议世界内容和文本，不能提交持久化步骤 ID、图边、active roots、opaque choice token 或任意状态 patch。`BundleStepProposal.stepKey` 只是从封闭语法生成的 provider-facing 动作选择器，例如 `move:@new.location`、`investigate:@new.fact:<approachId>` 或 `battle_resolved:victory:@new.enemy`；其中实体部分只能是 prompt 已下发的现有实体 ID 或下列受限符号引用。服务端先解析符号，再将它规范化为真实 trigger key，与重建后的 descriptor 一一匹配，最后铸造持久化 `stepId`；provider key 不是图身份。
 
 ```text
 @current.location
@@ -76,8 +78,8 @@ AI 可以提议世界内容和文本，不能提交步骤 ID、图边、active r
 1. 解析完整 JSON。
 2. 审批 `worldDelta`，铸造真实 ID，并构造只读预览状态。
 3. 从预览状态和任务目标纯函数重建步骤描述符、合法 trigger、候选 action 和图边。
-4. 解析并解析符号引用，逐条匹配 AI 文本与服务端描述符。
-5. 验证当前结果场景、所有可达步骤、终点和选项数量。
+4. 解析符号引用，逐条匹配 AI 文本与服务端描述符。
+5. 验证当前结果场景、所有可达步骤、终点位置和选项数量；当前场景终点与 continuation 终点不能同时存在。
 6. 世界增量、当前场景、完整 continuation 和候选 token 在一次 CAS 中写回。
 
 任一步失败都不得部分落库。内容修复重新提交完整包，并继续使用原 `jobId`。
@@ -117,6 +119,9 @@ move(new_location)
 - “你完成了物品交接。”
 - “战斗结果已经由规则结算。”
 - “你环顾当前地点，确认了周围的结构。”
+- “行动未能完全达成。”
+- “你记下了眼前的安排。”
+- “行动结果已经由规则记录。”
 - 自动合成的 NPC 问候、闲聊、`startChoice` 文案；
 - 战斗 UI 拼接的“你攻击了……”“战斗结算完成”等剧情句子。
 
@@ -190,7 +195,7 @@ NPC 卡片点击永远只打开已经生成的对话。读模型删除 `startCho
 
 ## 12. 可观测性与验收
 
-每条 provider 审计事件必须含 `gameId`、`jobId`、`triggerKind`、`turnNumber`、`attempt` 和 `retryOrigin`。同一玩家边界产生的 world、scene、repair 审计共享同一 `jobId`，不得再出现独立 world/scene 初始调用。
+每条 provider 审计事件必须含 `gameId`、`jobId`、`triggerKind`、`turnNumber`、`attempt` 和结构化 `retry.origin`。统一调用使用 `role="narrative_bundle"`、`purpose="narrative_bundle_generation"`。初始化在第一次 source 调用前创建稳定的逻辑 `jobId`（即使不会持久化为 pending），所有开局 novelty/content/transport 重试复用它；正式选择和自定义输入使用持久化 pending job 的 `jobId`。同一边界产生的 proposal、repair 和最终 story-text 审计共享同一 `jobId`，不得再出现独立 world/scene 初始调用。
 
 验收矩阵至少证明：
 

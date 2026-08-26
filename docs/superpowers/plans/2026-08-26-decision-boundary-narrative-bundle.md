@@ -51,8 +51,8 @@
 - `src/game/application/server/ai/intentParserSourceFactory.test.ts`
 - `src/game/application/server/ai/liveIntentParserSource.ts`
 - `src/game/application/server/ai/liveIntentParserSource.test.ts`
-- `src/game/application/intentParserSource.ts`
-- `src/game/application/intentParserSource.test.ts`
+- `src/game/application/server/ai/intentParserSource.ts`
+- `src/game/application/server/ai/intentParserSource.test.ts`
 - `src/game/application/evolveWorld.ts`
 - `src/game/application/evolveWorld.test.ts`
 - `src/game/application/sceneSource.ts`
@@ -111,12 +111,12 @@ npx vitest run src/game/domain/pendingNarrativeJob.test.ts
 
 Expected: FAIL because the semantic boundary classifier does not exist.
 
-- [ ] **Step 3: Replace the execution-policy input with proof of a formal decision**
+- [ ] **Step 3: Add a formal-decision proof classifier**
 
-Implement this exact public shape:
+Introduce the classifier with a dedicated proof input. Do not modify the `NarrativeExecutionInput` already consumed by `decideNarrativeExecution`; it stays unchanged until Task 7 so existing call sites continue to compile.
 
 ```ts
-export type NarrativeExecutionInput = {
+export type DecisionBoundaryProofInput = {
   readonly action: Action;
   readonly interactionKind: "fixed_choice" | "free_text";
   readonly fixedChoiceIsCurrentFormalDecision: boolean;
@@ -124,11 +124,11 @@ export type NarrativeExecutionInput = {
 };
 
 export function classifyProviderDecisionBoundary(
-  input: NarrativeExecutionInput,
+  input: DecisionBoundaryProofInput,
 ): DecisionBoundaryKind | null;
 ```
 
-Return `narrative_choice` only for `talk + fixed_choice + fixedChoiceIsCurrentFormalDecision`; return `npc_free_text` only when the target is the current focus NPC. Return `null` for every other shape. Leave `decideNarrativeExecution` unchanged until Task 7 so existing call sites continue to compile.
+Return `narrative_choice` only for `talk + fixed_choice + fixedChoiceIsCurrentFormalDecision`; return `npc_free_text` only when the target is the current focus NPC. Return `null` for every other shape.
 
 - [ ] **Step 4: Add the negative trigger matrix**
 
@@ -161,13 +161,14 @@ git commit -m "refactor: restrict ai to narrative decisions"
 - Modify: `src/game/domain/preparedContinuation.test.ts`
 - Modify: `src/game/domain/narrative.ts`
 - Modify: `src/game/domain/narrative.test.ts`
+- Modify: `src/game/application/sceneSource.ts`
 
 **Interfaces:**
 
 - Produces: `MAX_NARRATIVE_BUNDLE_STEPS = 12`.
 - Produces: `NarrativeSymbolRef`, `NarrativeBundleProposal`, `NarrativeBundleTerminal`, `NarrativeBundleState`.
 - Defines: the replacement trigger union inside `narrativeBundle.ts`; existing `PreparedContinuationTrigger` remains compatible until Task 7 migrates consumers.
-- Keeps: schema 6 and legacy scene provenance temporarily; Task 9 changes them after all production writers have migrated.
+- Keeps: schema 6 and legacy scene provenance temporarily; Task 7 performs the schema/bundle/provenance cutover after all production writers and the active-battle path migrate.
 
 - [ ] **Step 1: Add failing strict-parser tests**
 
@@ -175,7 +176,8 @@ Cover these cases:
 
 ```ts
 expect(parseNarrativeBundleProposal(validBundle).ok).toBe(true);
-expect(parseNarrativeBundleProposal({ ...validBundle, terminal: { kind: "next_decision" } }).ok).toBe(false);
+expect(parseNarrativeBundleProposal({ ...validBundle, terminal: { kind: "next_decision", target: { kind: "current_scene" } }, continuationScenes: [oneStep] }).ok).toBe(false);
+expect(parseNarrativeBundleProposal({ ...validBundle, terminal: { kind: "next_decision", target: { kind: "continuation_step" } } }).ok).toBe(false);
 expect(parseNarrativeBundleProposal({ ...validBundle, continuationScenes: thirteenSteps }).ok).toBe(false);
 ```
 
@@ -187,7 +189,7 @@ Run:
 npx vitest run src/game/domain/narrativeBundle.test.ts src/game/domain/preparedContinuation.test.ts src/game/domain/narrative.test.ts
 ```
 
-Expected: FAIL because the bundle contract and version 7 do not exist.
+Expected: FAIL because the additive bundle contract does not exist.
 
 - [ ] **Step 3: Add the bundle proposal contract**
 
@@ -209,7 +211,8 @@ export type NarrativeSymbolRef =
   | "@ending.doubt";
 
 export type NarrativeBundleTerminal =
-  | { readonly kind: "next_decision"; readonly stepKey: string }
+  | { readonly kind: "next_decision"; readonly target: { readonly kind: "current_scene" } }
+  | { readonly kind: "next_decision"; readonly target: { readonly kind: "continuation_step"; readonly stepKey: string } }
   | { readonly kind: "ending" };
 
 export type BundleSceneProposal = {
@@ -234,7 +237,21 @@ export type NarrativeBundleProposal = {
 };
 ```
 
-Reuse `ScenePerformanceSegment`, NPC line and objective-link shapes instead of defining duplicate text contracts. The parser must allow only documented keys, non-empty text and known symbol references.
+Move the pure `ScenePerformanceSegment`, `ScenePerformanceNpcLine`, `ScenePerformanceNpcDialogue` and `ScenePerformanceObjectiveLink` value types from `sceneSource.ts` into `narrativeBundle.ts`; temporarily re-export them from `sceneSource.ts` so legacy callers remain typecheck-clean. Domain code must not import from application. The parser must allow only documented keys, non-empty text and known symbol references.
+
+`BundleStepProposal.stepKey` is a provider-facing selector from this closed grammar, not a persisted graph ID:
+
+```text
+move:<location-ref>
+explore:<location-ref>
+investigate:<fact-ref>[:<approachId>]
+take_item:<item-ref>
+give_item:<item-ref>:<npc-ref>
+battle_started:<enemy-ref>
+battle_resolved:victory:<enemy-ref>
+```
+
+Each ref must be either an existing entity ID explicitly exposed in the prompt or a compatible `NarrativeSymbolRef`. Approval resolves symbols, canonicalizes the selector, matches it one-to-one to a server-rebuilt descriptor and then mints the actual `stepId`; provider output never controls edges or active roots. Reject unknown verbs, malformed arity, refs outside the authority set and duplicate canonical selectors.
 
 - [ ] **Step 4: Define the replacement one-shot trigger union**
 
@@ -259,23 +276,33 @@ Persist the server-owned graph and explicit terminal as a new type; do not repla
 
 ```ts
 export type NarrativeBundleTerminalState =
-  | { readonly kind: "next_decision"; readonly stepId: string }
+  | { readonly kind: "next_decision"; readonly target: { readonly kind: "current_scene" } }
+  | { readonly kind: "next_decision"; readonly target: { readonly kind: "continuation_step"; readonly stepId: string } }
   | { readonly kind: "ending" };
+
+export type NarrativeBundleStepState = {
+  readonly stepId: string;
+  readonly objectiveKey: string;
+  readonly consumptionGroupKey: string;
+  readonly trigger: NarrativeBundleTrigger;
+  readonly scene: PreparedSceneSeedState;
+  readonly nextStepIds: readonly string[];
+};
 
 export type NarrativeBundleState = {
   readonly contractVersion: 1;
   readonly originJobId: NarrativeJobId;
-  readonly steps: readonly PreparedContinuationStepState[];
+  readonly steps: readonly NarrativeBundleStepState[];
   readonly activeStepIds: readonly string[];
   readonly terminal: NarrativeBundleTerminalState;
 };
 ```
 
-Move current `PreparedContinuationState` consumers to this type or make it a temporary alias in this task. Parsing must reject cycles, unknown edges, duplicate trigger siblings, more than 12 steps and terminal IDs not present in the graph.
+Keep current `PreparedContinuationState` consumers unchanged in this additive task. Parse `NarrativeBundleState` independently and reject cycles, unknown edges, duplicate trigger siblings, more than 12 steps, a continuation terminal whose `stepId` is absent, a current-scene terminal with any continuation steps, and an ending bundle with continuation steps.
 
 - [ ] **Step 6: Add a compatibility seam for later migration**
 
-Export pure conversion helpers that turn approved bundle steps into the existing ready runtime shape without accepting `source="rule"` as new bundle input. Do not change `NarrativeSceneState.source` or `STORY_STATE_SCHEMA_VERSION` yet; Task 9 changes both after old writers are gone.
+Export pure conversion helpers that turn approved bundle steps into the existing ready runtime shape without accepting `source="rule"` as new bundle input. Do not change `NarrativeSceneState.source` or `STORY_STATE_SCHEMA_VERSION` yet; Task 7 changes both with the first non-empty bundle write after old writers are gone.
 
 - [ ] **Step 7: Run domain tests**
 
@@ -291,7 +318,7 @@ Expected: all domain tests and typecheck pass because this task is additive.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/game/domain/narrativeBundle.ts src/game/domain/narrativeBundle.test.ts src/game/domain/preparedContinuation.ts src/game/domain/preparedContinuation.test.ts src/game/domain/narrative.ts src/game/domain/narrative.test.ts
+git add src/game/domain/narrativeBundle.ts src/game/domain/narrativeBundle.test.ts src/game/domain/preparedContinuation.ts src/game/domain/preparedContinuation.test.ts src/game/domain/narrative.ts src/game/domain/narrative.test.ts src/game/application/sceneSource.ts
 git commit -m "feat: define atomic narrative bundle contract"
 ```
 
@@ -314,6 +341,33 @@ git commit -m "feat: define atomic narrative bundle contract"
 - Produces: `validateNarrativeBundleCoverage(graph): BundleCoverageResult`.
 - Consumes later: symbolic step keys and candidate IDs used by prompt and approval.
 
+Define the shared graph shapes in `descriptors.ts`:
+
+```ts
+export type BundleStepDescriptor = {
+  readonly stepKey: string;
+  readonly objectiveKey: string;
+  readonly consumptionGroupKey: string;
+  readonly trigger: NarrativeBundleTrigger;
+  readonly absorbedObjectiveIndexes: readonly number[];
+  readonly authority: {
+    readonly questId: QuestId;
+    readonly allowedEntityIds: readonly string[];
+    readonly visibleFactIds: readonly FactId[];
+  };
+  readonly arrivalNpc?: PreparedArrivalNpcContext;
+  readonly choiceCandidates: readonly PreparedChoiceCandidate[];
+  readonly nextStepKeys: readonly string[];
+};
+
+export type BundleDescriptorGraph = {
+  readonly steps: readonly BundleStepDescriptor[];
+  readonly activeStepKeys: readonly string[];
+  readonly currentChoiceCandidates: readonly PreparedChoiceCandidate[];
+  readonly terminal: NarrativeBundleTerminal;
+};
+```
+
 - [ ] **Step 1: Add the reproduced `visit -> discover -> talk` failure test**
 
 Build a quest with exactly those three objectives and assert:
@@ -321,11 +375,15 @@ Build a quest with exactly those three objectives and assert:
 ```ts
 const graph = buildNarrativeBundleDescriptors({ worldState, storyState, transition });
 expect(graph.activeStepKeys).toEqual(["move:loc_dyn_1"]);
+expect(graph.currentChoiceCandidates).toEqual([]);
 expect(graph.steps).toHaveLength(1);
 expect(graph.steps[0]?.absorbedObjectiveIndexes).toEqual([0, 1, 2]);
 expect(graph.steps[0]?.arrivalNpc?.id).toBe(npcDyn1);
 expect(graph.steps[0]?.choiceCandidates).toHaveLength(2);
-expect(graph.terminal).toEqual({ kind: "next_decision", stepKey: "move:loc_dyn_1" });
+expect(graph.terminal).toEqual({
+  kind: "next_decision",
+  target: { kind: "continuation_step", stepKey: "move:loc_dyn_1" },
+});
 ```
 
 - [ ] **Step 2: Add coverage rejection tests**
@@ -349,35 +407,35 @@ The descriptor walker must scan through automatic `discover_fact` objectives and
 Use deterministic step keys:
 
 ```ts
-function stepKeyFor(trigger: PreparedContinuationTrigger): string {
-  return preparedContinuationTriggerKey(trigger);
-}
+export function narrativeBundleTriggerKey(trigger: NarrativeBundleTrigger): string;
 ```
 
-Graph edges, candidate actions and active roots must be derived after world-delta materialization and never copied from provider output.
+Implement every member of the closed union explicitly (`move`, `explore`, `investigate`, `take_item`, `give_item`, `battle_started`, `battle_resolved:victory`). Add a separate parser/resolver for the provider selector grammar from Task 2; after symbol resolution it must equal `narrativeBundleTriggerKey(descriptor.trigger)`. Graph edges, candidate actions and active roots must be derived after world-delta materialization and never copied from provider output.
 
 - [ ] **Step 5: Implement exact leaf coverage**
 
 `validateNarrativeBundleCoverage` returns success only when:
 
 ```ts
+export type BundleCoverageErrorCode =
+  | "step_limit_exceeded"
+  | "cycle"
+  | "unknown_edge"
+  | "unreachable_step"
+  | "missing_terminal"
+  | "invalid_terminal_choice_count"
+  | "executable_after_ending";
+
 type BundleCoverageResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly code:
-      | "step_limit_exceeded"
-      | "cycle"
-      | "unknown_edge"
-      | "unreachable_step"
-      | "missing_terminal"
-      | "invalid_terminal_choice_count"
-      | "executable_after_ending" };
+  | { readonly ok: false; readonly code: BundleCoverageErrorCode };
 ```
 
-Require every reachable leaf to equal the declared terminal. A `next_decision` terminal has exactly two server-authored `talk` candidates for one focus NPC; an `ending` terminal has no successor and no executable choice.
+For `target.kind="continuation_step"`, require no current-scene candidates, require every reachable graph leaf to equal the declared terminal step and require that step to have exactly two server-authored `talk` candidates for one focus NPC. For `target.kind="current_scene"`, require an empty continuation graph and exactly two `currentChoiceCandidates` for one focus NPC. An `ending` terminal has an empty continuation graph and no current-scene candidate. Approval separately requires provider labels to match these server-authored candidate IDs exactly.
 
 - [ ] **Step 6: Preserve battle retry topology**
 
-For `defeat_enemy`, generate one `battle_started` step followed only by `battle_resolved:victory`. Mark the start step as the retry root in descriptor metadata so Task 8 can reactivate it after restoring the battle checkpoint. Do not create generated defeat/withdraw scenes.
+For `defeat_enemy`, generate one `battle_started` step followed only by `battle_resolved:victory`. The pre-battle checkpoint captures the bundle while `battle_started` is still active, so Task 8 can restore that exact state after defeat or withdrawal. Do not create generated defeat/withdraw scenes or reconstruct roots independently.
 
 - [ ] **Step 7: Run gameplay tests**
 
@@ -444,19 +502,50 @@ Add this union without provider dependencies:
 
 ```ts
 export type NarrativeBundleSourceContext =
-  | { readonly kind: "opening"; readonly input: OpeningGenerationInput; readonly auditLink?: AiTextAuditLink }
-  | { readonly kind: "decision"; readonly record: GameRecord; readonly job: PendingNarrativeJob; readonly auditLink?: AiTextAuditLink; readonly contentRepair?: NarrativeBundleRepair };
+  | { readonly kind: "opening"; readonly jobId: NarrativeJobId; readonly input: OpeningGenerationInput; readonly auditLink?: AiTextAuditLink }
+  | { readonly kind: "decision"; readonly worldState: WorldState; readonly storyState: StoryState; readonly job: PendingNarrativeJob; readonly auditLink?: AiTextAuditLink; readonly contentRepair?: NarrativeBundleRepair };
+
+export type OpeningNarrativeBundleProposal = {
+  readonly opening: OpeningGenerationCandidate;
+  readonly currentScene: BundleSceneProposal;
+  readonly continuationScenes: readonly [];
+  readonly terminal: { readonly kind: "next_decision"; readonly target: { readonly kind: "current_scene" } };
+};
 
 export type NarrativeBundleSourceResult =
-  | { readonly ok: true; readonly proposal: NarrativeBundleProposal }
+  | { readonly ok: true; readonly kind: "opening"; readonly proposal: OpeningNarrativeBundleProposal }
+  | { readonly ok: true; readonly kind: "decision"; readonly proposal: NarrativeBundleProposal }
   | { readonly ok: false; readonly failure: AiGenerationFailure; readonly repairReason?: NarrativeBundleRepairReason };
 
 export type NarrativeBundleSource = {
   generate(context: NarrativeBundleSourceContext): Promise<NarrativeBundleSourceResult>;
 };
+
+export type NarrativeBundleRepairReason =
+  | "invalid_json"
+  | "invalid_schema"
+  | "invalid_reference"
+  | "coverage_rejected"
+  | "approval_rejected";
+
+export type NarrativeBundleRejection =
+  | "world_delta_rejected"
+  | "bundle_missing_step"
+  | "bundle_unknown_step"
+  | "bundle_duplicate_step"
+  | "bundle_invalid_reference"
+  | "bundle_invalid_scene"
+  | "bundle_invalid_terminal"
+  | BundleCoverageErrorCode;
+
+export type NarrativeBundleRepair = {
+  readonly attempt: 1;
+  readonly reason: NarrativeBundleRepairReason;
+  readonly rejectionCode?: NarrativeBundleRejection;
+};
 ```
 
-Opening-specific world candidate fields can be carried by the opening proposal union, but the public source method remains one `generate` call.
+The public source method remains one `generate` call. It must reject a success whose result `kind` does not match the input context kind.
 
 - [ ] **Step 4: Implement ordered atomic approval**
 
@@ -481,6 +570,10 @@ type ApprovedNarrativeBundle = {
   readonly bundle: NarrativeBundleState;
   readonly candidateEventPool: readonly EventCandidate[];
 };
+
+export type ApproveNarrativeBundleResult =
+  | { readonly ok: true; readonly approved: ApprovedNarrativeBundle }
+  | { readonly ok: false; readonly code: NarrativeBundleRejection };
 ```
 
 - [ ] **Step 5: Reuse pure validators, not IO orchestration**
@@ -514,8 +607,6 @@ git commit -m "feat: approve narrative bundles atomically"
 - Create: `src/game/application/server/ai/liveNarrativeBundleSource.test.ts`
 - Create: `src/game/application/server/ai/narrativeContext/bundleNarrativeContext.ts`
 - Create: `src/game/application/server/ai/narrativeContext/bundleNarrativeContext.test.ts`
-- Create: `src/game/application/generatePendingNarrativeBundle.ts`
-- Create: `src/game/application/generatePendingNarrativeBundle.test.ts`
 - Modify: `src/game/application/server/ai/sourceFactory.ts`
 - Modify: `src/game/application/server/ai/sourceFactory.test.ts`
 - Modify: `src/game/application/server/ai/textAuditTypes.ts`
@@ -523,8 +614,7 @@ git commit -m "feat: approve narrative bundles atomically"
 **Interfaces:**
 
 - Produces: `createNarrativeBundleSource(...)` alongside legacy factories until Task 7 switches composition.
-- Produces: `generatePendingNarrativeBundle(deps): Promise<GeneratePendingNarrativeBundleResult>`.
-- Keeps production wiring unchanged in this additive task; Task 7 replaces `generatePendingScene` in `BackgroundEnsureCoordinator`.
+- Keeps production wiring and persistence unchanged in this additive task; Task 7 creates the pending-job orchestrator and replaces `generatePendingScene` in `BackgroundEnsureCoordinator`.
 
 - [ ] **Step 1: Write a one-call source test**
 
@@ -539,23 +629,19 @@ expect(complete).toHaveBeenCalledWith(
 );
 ```
 
-The prompt assertion must contain the symbolic-reference whitelist, maximum 12 steps, exactly two terminal choices, and the instruction that battle failure returns to its checkpoint and therefore has no generated failure branch.
+The prompt assertion must contain the symbolic-reference whitelist, maximum 12 steps, the distinction between `current_scene` and `continuation_step`, exactly two choices at the selected next-decision target, and the instruction that battle failure returns to its checkpoint and therefore has no generated failure branch.
 
-- [ ] **Step 2: Write a pending-job orchestration test**
-
-Given one `provider_pending` record, assert the generator calls the source once, calls `approveNarrativeBundle` once, and calls `applySceneWriteBack` once with world delta and narrative bundle together. When approval fails, assert zero scene/world writes and a `provider_failed` state with the same `jobId`.
-
-- [ ] **Step 3: Run tests and verify failure**
+- [ ] **Step 2: Run tests and verify failure**
 
 Run:
 
 ```bash
-npx vitest run src/game/application/server/ai/liveNarrativeBundleSource.test.ts src/game/application/server/ai/narrativeContext/bundleNarrativeContext.test.ts src/game/application/generatePendingNarrativeBundle.test.ts
+npx vitest run src/game/application/server/ai/liveNarrativeBundleSource.test.ts src/game/application/server/ai/narrativeContext/bundleNarrativeContext.test.ts
 ```
 
-Expected: FAIL because the unified source and generator do not exist.
+Expected: FAIL because the unified live source and prompt compiler do not exist.
 
-- [ ] **Step 4: Compile one prompt and parse one response**
+- [ ] **Step 3: Compile one prompt and parse one response**
 
 `liveNarrativeBundleSource` must make exactly one `aiClient.complete("narrative_bundle", ...)` call per attempt. Parsing may perform non-creative normalization such as JSON-fence removal, but may not issue nested world or scene calls.
 
@@ -569,11 +655,7 @@ The decision prompt must provide:
 - conditional step-key rules;
 - exact JSON shape and terminal rules.
 
-- [ ] **Step 5: Centralize full-bundle content repair**
-
-Use `runBoundedAttempts` with `maxAttempts: 2`. Attempt 2 receives a stable rejection code from parsing or `approveNarrativeBundle`; it resubmits the entire bundle with the same job and audit identity. Transport retries inside `RpgAiClient` and manual retries also retain the same logical job.
-
-- [ ] **Step 6: Add the bundle factory without switching production composition**
+- [ ] **Step 4: Add the bundle factory without switching production composition**
 
 Export:
 
@@ -587,25 +669,25 @@ export function createNarrativeBundleSource(
 
 Factory tests must prove AI-available and unavailable behavior. Do not inject it into `compositionRoot.ts` until Task 7, when pending job kinds and action callers switch together.
 
-- [ ] **Step 7: Define collapsed audit identity**
+- [ ] **Step 5: Define collapsed audit identity**
 
-The new source emits one initial provider audit kind `narrative_bundle` with `gameId`, `jobId`, `generationKind`, `turnNumber`, `attempt` and `retryOrigin`. The final story-text audit remains separate because it records approved output. Production stops emitting initial `world_evolution` and `scene_performance` events after the Task 7 composition switch.
+Extend `AiTextAuditRole` with `"narrative_bundle"`, the purpose union with `"narrative_bundle_generation"`, and the new audit context/link with `triggerKind: DecisionBoundaryKind`. The unified call emits the existing `ai_call` event with `role="narrative_bundle"`, `purpose="narrative_bundle_generation"`, `gameId`, `jobId`, `triggerKind`, `turnNumber`, top-level `attempt` and structured `retry.origin`. The final `story_text` event remains separate because it records approved output, but shares the same link. Production stops emitting initial `world_evolution` and `scene_performance` events after the Task 7 composition switch.
 
-- [ ] **Step 8: Run source, composition and boundary tests**
+- [ ] **Step 6: Run source and factory tests**
 
 Run:
 
 ```bash
-npx vitest run src/game/application/server/ai/liveNarrativeBundleSource.test.ts src/game/application/server/ai/narrativeContext/bundleNarrativeContext.test.ts src/game/application/generatePendingNarrativeBundle.test.ts src/game/application/server/ai/sourceFactory.test.ts
+npx vitest run src/game/application/server/ai/liveNarrativeBundleSource.test.ts src/game/application/server/ai/narrativeContext/bundleNarrativeContext.test.ts src/game/application/server/ai/sourceFactory.test.ts
 npm run typecheck
 ```
 
-Expected: PASS and every one-job assertion reports one source invocation.
+Expected: PASS and every one-attempt assertion reports one provider invocation; no production persistence or composition path has switched yet.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/game/application/server/ai/liveNarrativeBundleSource.ts src/game/application/server/ai/liveNarrativeBundleSource.test.ts src/game/application/server/ai/narrativeContext/bundleNarrativeContext.ts src/game/application/server/ai/narrativeContext/bundleNarrativeContext.test.ts src/game/application/generatePendingNarrativeBundle.ts src/game/application/generatePendingNarrativeBundle.test.ts src/game/application/server/ai/sourceFactory.ts src/game/application/server/ai/sourceFactory.test.ts src/game/application/server/ai/textAuditTypes.ts
+git add src/game/application/server/ai/liveNarrativeBundleSource.ts src/game/application/server/ai/liveNarrativeBundleSource.test.ts src/game/application/server/ai/narrativeContext/bundleNarrativeContext.ts src/game/application/server/ai/narrativeContext/bundleNarrativeContext.test.ts src/game/application/server/ai/sourceFactory.ts src/game/application/server/ai/sourceFactory.test.ts src/game/application/server/ai/textAuditTypes.ts
 git commit -m "feat: generate runtime narrative in one bundle call"
 ```
 
@@ -645,7 +727,7 @@ expect(saved.storyState.narrative.currentScene.choices).toHaveLength(2);
 expect(saved.storyState.narrative.currentScene.npcLine?.npcId).toBe(OPENING_NPC_ID);
 ```
 
-Assert invalid first-decision output creates no save. Assert novelty/content retries call the same logical initialization source with increasing `attempt` and do not create intermediate records.
+Assert invalid first-decision output creates no save. Assert `createGame` derives one initialization `jobId` before the first source call; novelty/content retries reuse that exact ID with increasing `attempt` and do not create intermediate records.
 
 - [ ] **Step 2: Run opening tests and verify failure**
 
@@ -659,7 +741,7 @@ Expected: FAIL because opening currently creates a pending scene that triggers a
 
 - [ ] **Step 3: Extend the opening candidate with its first decision scene**
 
-The opening provider JSON must include the initial focus NPC line, scene narration, exactly two candidate labels and an explicit `next_decision` terminal. Candidate actions remain server-authored `support` and `challenge` against `OPENING_NPC_ID`.
+The opening provider JSON must include the initial focus NPC line, scene narration, exactly two candidate labels and `terminal={ kind:"next_decision", target:{ kind:"current_scene" } }` with an empty continuation list. Candidate actions remain server-authored `support` and `challenge` against `OPENING_NPC_ID`.
 
 - [ ] **Step 4: Compile the initial scene and choices before persistence**
 
@@ -678,7 +760,7 @@ npx vitest run src/game/application/createGame.test.ts src/game/application/serv
 npm run typecheck
 ```
 
-Expected: PASS; opening audit contains one logical provider event and no pending-scene event.
+Expected: PASS; opening audit contains one logical initialization `jobId` shared by every retry/approved-text event and no pending-scene event.
 
 - [ ] **Step 7: Commit**
 
@@ -699,28 +781,42 @@ git commit -m "refactor: initialize games with one ready narrative bundle"
 - Modify: `src/game/application/consumePreparedContinuation.test.ts`
 - Modify: `src/game/application/buildChoiceMap.ts`
 - Modify: `src/game/application/buildChoiceMap.test.ts`
+- Create: `src/game/application/generatePendingNarrativeBundle.ts`
+- Create: `src/game/application/generatePendingNarrativeBundle.test.ts`
+- Create: `src/game/application/performBattleRound.ts`
+- Create: `src/game/application/performBattleRound.test.ts`
+- Modify: `src/game/application/combatView.ts`
+- Modify: `src/game/application/combatView.test.ts`
 - Modify: `src/game/application/server/compositionRoot.ts`
 - Modify: `src/game/application/server/compositionRoot.test.ts`
 - Modify: `src/game/application/server/compositionRoot.audit.test.ts`
 - Modify: `src/game/application/server/ai/sourceFactory.ts`
+- Modify: `src/game/domain/narrative.ts`
+- Modify: `src/game/domain/narrative.test.ts`
 - Modify: `src/game/domain/pendingNarrativeJob.ts`
 - Modify: `src/game/domain/pendingNarrativeJob.test.ts`
+- Modify: `src/game/domain/storyState.ts`
+- Modify: `src/game/domain/storyState.test.ts`
+- Modify: `src/game/application/server/persistence/sqliteGameRepository.test.ts`
 - Modify: `src/game/gameplay/rpg/narrativeExecution/narrativeExecutionPolicy.ts`
 - Modify: `src/game/gameplay/rpg/narrativeExecution/narrativeExecutionPolicy.test.ts`
 - Modify: `src/game/application/testing/providerTriggerMatrix.test.ts`
-- Delete: `src/game/application/ruleOwnedScene.ts`
-- Delete: `src/game/application/ruleOwnedScene.test.ts`
 - Delete: `src/game/application/server/ai/intentParserSourceFactory.ts`
 - Delete: `src/game/application/server/ai/intentParserSourceFactory.test.ts`
 - Delete: `src/game/application/server/ai/liveIntentParserSource.ts`
 - Delete: `src/game/application/server/ai/liveIntentParserSource.test.ts`
+- Delete: `src/game/application/ruleOwnedScene.ts`
+- Delete: `src/game/application/ruleOwnedScene.test.ts`
 
 **Interfaces:**
 
 - Fixed choice provider proof: the token belongs to both `currentScene.choices` and `choiceRegistry`, and its action is `talk` to the current focus NPC.
 - Free text conversion: a local neutral `talk/ask` action with clipped player utterance.
 - Non-boundary outcome: consume an exact generated bundle step or return `NARRATIVE_CONTINUATION_MISSING` with zero writes.
+- Produces: `generatePendingNarrativeBundle(deps): Promise<GeneratePendingNarrativeBundleResult>`.
 - Production coordinator: `NarrativeBundleSource` + `generatePendingNarrativeBundle` only.
+- Persistence cutover: ready narrative uses `NarrativeBundleState`, schema becomes 7, and schema 6 is read-only unsupported from the same commit onward.
+- Schema-7 battle seam: ready narrative always contains `battleCheckpoint: BattleNarrativeCheckpointState | null`; Task 7 initializes it to `null`, and Task 8 activates its rollback behavior.
 
 - [ ] **Step 1: Add the complete trigger/consumption matrix**
 
@@ -736,6 +832,12 @@ Create table-driven cases that assert provider-call count, state writes and resu
 | non-focus free text | 0 | reject, zero writes |
 
 The test source spy must throw if invoked from a zero-provider case.
+
+In `generatePendingNarrativeBundle.test.ts`, start from one `provider_pending` record and assert the orchestrator calls the source once, calls `approveNarrativeBundle` once, and requests one atomic write containing the approved world, current scene, choice registry and complete bundle. Add approval-failure and lost-CAS cases that expose no partial state and retain the original `jobId`.
+
+In `performBattleRound.test.ts`, add one active non-terminal round proving the world battle fields and database revision change while the entire story state remains equal and the bundle source is never called. Full defeat/withdraw restoration cases remain for Task 8.
+
+Add one battle-start assertion that the schema-7 checkpoint is captured before `battle_started` is consumed and still contains that active root. Task 8 adds restoration assertions for defeat and withdrawal.
 
 - [ ] **Step 2: Add the free-text no-intent-provider regression**
 
@@ -757,81 +859,50 @@ No `IntentParserSource` dependency may appear in `PerformTurnDeps` or `compositi
 Run:
 
 ```bash
-npx vitest run src/game/application/actionConverter.test.ts src/game/application/performTurn.test.ts src/game/application/consumePreparedContinuation.test.ts src/game/application/testing/providerTriggerMatrix.test.ts
+npx vitest run src/game/application/actionConverter.test.ts src/game/application/performTurn.test.ts src/game/application/consumePreparedContinuation.test.ts src/game/application/generatePendingNarrativeBundle.test.ts src/game/application/performBattleRound.test.ts src/game/application/testing/providerTriggerMatrix.test.ts
 ```
 
-Expected: FAIL because non-dialogue boundaries can still create provider jobs, free text can call intent AI, and rule-owned fallback scenes still exist.
+Expected: FAIL because the pending bundle orchestrator and structured active-round path do not exist, non-dialogue boundaries can still create provider jobs, free text can call intent AI, and rule-owned fallback scenes still exist.
 
-- [ ] **Step 4: Prove formal fixed choices before resolving the turn**
+- [ ] **Step 4: Implement atomic pending-job generation and repair**
+
+`generatePendingNarrativeBundle` calls the source once, calls `approveNarrativeBundle` once, and commits the approved world, current scene, choice registry and complete `NarrativeBundleState` in one CAS. When approval fails, it performs no partial world/scene write and records `provider_failed` with the same `jobId`.
+
+Use `runBoundedAttempts` with `maxAttempts: 2`. Attempt 2 receives a stable rejection code from parsing or approval and resubmits the entire bundle with the same job and audit identity. Transport retries inside `RpgAiClient` and manual retries also retain the same logical job. Add a race test proving a lost CAS leaves the newer record untouched.
+
+- [ ] **Step 5: Prove formal fixed choices before resolving the turn**
 
 In `performTurn`, derive `fixedChoiceIsCurrentFormalDecision` from the saved ready scene and registry, not from client input or action type alone. Require exactly two current scene choices and a matching focus NPC. A single start/continue token can never pass this proof.
 
-- [ ] **Step 5: Convert free text locally**
+- [ ] **Step 6: Convert free text locally**
 
 Remove provider intent parsing from `convertInteraction`. Validate focus NPC and length, then emit neutral `talk/ask` with the original clipped utterance. Keep the utterance in the pending job and audit context; never store it in arbitrary world fields.
 
-- [ ] **Step 6: Remove provider boundary fallbacks**
+- [ ] **Step 7: Remove provider boundary fallbacks**
 
-Replace job `generationKind` with `DecisionBoundaryKind`, remove `NarrativeSceneRequestKind`, `sceneRequestKind`, their pairing map, `npc_fixed_choice` and `worldBoundaryNeedsPreparation`. A final formal choice still commits a pending `narrative_choice` job; its approved bundle ends with `terminal.kind="ending"`.
+Change the job `generationKind` field to `DecisionBoundaryKind`, remove `NarrativeSceneRequestKind`, `sceneRequestKind`, their pairing map, `npc_fixed_choice` and `worldBoundaryNeedsPreparation`. Audit projection exposes this value as `triggerKind`; do not preserve the legacy label in new audit events. A final formal choice still commits a pending `narrative_choice` job; its approved bundle ends with `terminal.kind="ending"`.
 
-- [ ] **Step 7: Fail closed for every剧情 action**
+- [ ] **Step 8: Fail closed for every剧情 action**
 
 For move, plot explore, investigate, take, give, battle start and battle victory, call `consumePreparedContinuation`. If no exact active trigger exists, return the stable missing/invalid code before `commitState`; do not call `buildRuleOwnedScene`, retain the rule feedback sentence, or synthesize a scene.
 
 Pure navigation/view operations must be separated from剧情 actions: they may update UI navigation state or expose already AI-generated location descriptions, but must not create a turn, replace `currentScene`, or append剧情 prose.
 
-- [ ] **Step 8: Delete rule-owned and live intent sources**
+For an already active battle, delegate before generic story reduction to an initial `performBattleRound` path. It applies deterministic combat rules, preserves the complete story state during non-terminal rounds, commits only structured battle state/results and never calls a source. Task 8 extends this path with defeat/withdraw rollback.
 
-Remove the listed application intent-source files and all imports. Rewrite tests to construct the neutral `talk/ask` action directly; do not retain an intent-source fixture or compatibility port.
+When consuming `battle_started`, store the schema-7 narrative checkpoint first. Non-terminal active rounds leave it untouched; victory consumes only `battle_resolved:victory` and clears the checkpoint. Task 8 adds defeat/withdraw restoration and strengthens all terminal-outcome tests.
 
-- [ ] **Step 9: Switch production composition to the unified generator**
+- [ ] **Step 9: Delete rule-owned and live intent sources**
+
+Remove the listed application intent-source and `ruleOwnedScene` files with all imports. Rewrite tests to construct the neutral `talk/ask` action directly and to consume structured battle results; do not retain an intent-source fixture, compatibility port or rule-scene builder.
+
+- [ ] **Step 10: Switch production composition to the unified generator**
 
 Instantiate one `narrativeBundleSource` from `sourceFactory`. Change the background coordinator to call only `generatePendingNarrativeBundle`; remove production construction/injection of opening/world/scene/intent sources that are no longer used. Keep ensure polling and manual retry semantics, and prove both reuse the existing persisted job.
 
-- [ ] **Step 10: Run application, composition and trigger tests**
+- [ ] **Step 11: Cut persistence over to schema 7 atomically**
 
-Run:
-
-```bash
-npx vitest run src/game/application/actionConverter.test.ts src/game/application/performTurn.test.ts src/game/application/consumePreparedContinuation.test.ts src/game/application/testing/providerTriggerMatrix.test.ts src/game/application/server/providerTriggerBoundary.test.ts src/game/application/server/compositionRoot.test.ts src/game/application/server/compositionRoot.audit.test.ts
-npm run test:game-application
-npm run typecheck
-```
-
-Expected: PASS and zero references to `buildRuleOwnedScene`.
-
-- [ ] **Step 11: Commit**
-
-```bash
-git add -A src/game/domain/pendingNarrativeJob.ts src/game/domain/pendingNarrativeJob.test.ts src/game/gameplay/rpg/narrativeExecution src/game/application src/game/application/testing/providerTriggerMatrix.test.ts
-git commit -m "refactor: consume generated narrative between decisions"
-```
-
-## Task 8: Isolate turn-based combat and restore the pre-battle checkpoint on failure
-
-**Files:**
-
-- Create: `src/game/application/performBattleRound.ts`
-- Create: `src/game/application/performBattleRound.test.ts`
-- Modify: `src/game/domain/narrative.ts`
-- Modify: `src/game/domain/narrative.test.ts`
-- Modify: `src/game/domain/worldState.ts`
-- Modify: `src/game/gameplay/rpg/ruleEngine/battleResolver.ts`
-- Modify: `src/game/gameplay/rpg/ruleEngine/battleResolver.test.ts`
-- Modify: `src/game/application/performTurn.ts`
-- Modify: `src/game/application/performTurn.test.ts`
-- Modify: `src/game/application/combatView.ts`
-- Modify: `src/game/application/combatView.test.ts`
-
-**Interfaces:**
-
-- Produces: `BattleNarrativeCheckpointState` inside ready narrative runtime.
-- Produces: `performBattleRound(input, deps)` with no AI/source dependency.
-- Battle failure semantics: restore checkpoint, set battle idle, keep database revision monotonic.
-
-- [ ] **Step 1: Add battle checkpoint tests**
-
-Start from a ready generated encounter scene and bundle containing `battle_started -> battle_resolved:victory`. Assert battle start stores:
+Replace the ready runtime's legacy prepared continuation field with `NarrativeBundleState`, remove `"rule"` from schema-7 scene provenance, and set `STORY_STATE_SCHEMA_VERSION = 7` in this same task—the first task that writes a non-empty bundle. Define the stable checkpoint shape now, initialize it to `null` outside battle, and make both null and battle-start snapshots round-trip:
 
 ```ts
 type BattleNarrativeCheckpointState = {
@@ -851,11 +922,58 @@ type BattleNarrativeCheckpointState = {
 };
 ```
 
+Classify every v6 record as `UNSUPPORTED_RECORD`; loading it must not update SQLite, create a job or emit a provider audit. Add v7 JSON/parser and SQLite round-trip tests for `battleCheckpoint: null`. Do not temporarily serialize the new bundle under version 6.
+
+- [ ] **Step 12: Run application, composition and trigger tests**
+
+Run:
+
+```bash
+npx vitest run src/game/application/actionConverter.test.ts src/game/application/performTurn.test.ts src/game/application/consumePreparedContinuation.test.ts src/game/application/generatePendingNarrativeBundle.test.ts src/game/application/performBattleRound.test.ts src/game/application/combatView.test.ts src/game/application/testing/providerTriggerMatrix.test.ts src/game/application/server/providerTriggerBoundary.test.ts src/game/application/server/compositionRoot.test.ts src/game/application/server/compositionRoot.audit.test.ts src/game/domain/narrative.test.ts src/game/domain/storyState.test.ts src/game/application/server/persistence/sqliteGameRepository.test.ts
+npm run test:game-application
+npm run typecheck
+```
+
+Expected: PASS and `rg -n "buildRuleOwnedScene|source:\\s*['\"]rule['\"]" src/game --glob '!*.test.*'` returns no production match.
+
+- [ ] **Step 13: Commit**
+
+```bash
+git add -A src/game/domain/narrative.ts src/game/domain/narrative.test.ts src/game/domain/pendingNarrativeJob.ts src/game/domain/pendingNarrativeJob.test.ts src/game/domain/storyState.ts src/game/domain/storyState.test.ts src/game/gameplay/rpg/narrativeExecution src/game/application src/game/application/testing/providerTriggerMatrix.test.ts
+git commit -m "refactor: consume generated narrative between decisions"
+```
+
+## Task 8: Add pre-battle checkpoints and restore them on failure
+
+**Files:**
+
+- Modify: `src/game/application/performBattleRound.ts`
+- Modify: `src/game/application/performBattleRound.test.ts`
+- Modify: `src/game/domain/narrative.ts`
+- Modify: `src/game/domain/narrative.test.ts`
+- Modify: `src/game/domain/worldState.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/battleResolver.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/battleResolver.test.ts`
+- Modify: `src/game/application/performTurn.ts`
+- Modify: `src/game/application/performTurn.test.ts`
+- Modify: `src/game/application/combatView.ts`
+- Modify: `src/game/application/combatView.test.ts`
+
+**Interfaces:**
+
+- Consumes: the nullable `BattleNarrativeCheckpointState` already defined by schema 7 in Task 7.
+- Produces: `performBattleRound(input, deps)` with no AI/source dependency.
+- Battle failure semantics: restore checkpoint, set battle idle, keep database revision monotonic.
+
+- [ ] **Step 1: Expand battle checkpoint tests**
+
+Starting from the Task 7 battle-start regression, assert every field of the stored schema-7 `BattleNarrativeCheckpointState` matches the pre-consumption state and its bundle snapshot still has `battle_started` as an active root. Add the failure/withdraw restoration assertions below.
+
 The existing `BattleStartSnapshot` continues to own player stats, defeated IDs and event-ledger checkpoint.
 
-- [ ] **Step 2: Add active-round zero-narrative tests**
+- [ ] **Step 2: Expand active-round zero-narrative tests**
 
-For attack, skill and guard while battle remains active, assert:
+Extend the Task 7 non-terminal regression across attack, skill and guard while battle remains active, and assert:
 
 ```ts
 expect(after.storyState).toEqual(before.storyState);
@@ -878,15 +996,15 @@ Run:
 npx vitest run src/game/application/performBattleRound.test.ts src/game/gameplay/rpg/ruleEngine/battleResolver.test.ts src/game/application/combatView.test.ts src/game/application/performTurn.test.ts -t "battle|战斗"
 ```
 
-Expected: FAIL because active rounds currently pass through generic story reduction and defeat persists a resolved state.
+Expected: FAIL because defeat and withdrawal still persist resolved state instead of restoring the existing pre-battle checkpoints.
 
-- [ ] **Step 5: Implement the dedicated battle-round application path**
+- [ ] **Step 5: Extend the dedicated battle-round application path**
 
-When `worldState.battle.status === "active"`, `performTurn` accepts only a valid `battle_action` token and delegates before the generic `resolveTurn` path. `performBattleRound` calls deterministic combat rules, commits battle state, and returns structured combat results. It has no `NarrativeBundleSource`, `PendingNarrativeJob` or coordinator reference.
+Keep the Task 7 rule that an active battle accepts only a valid `battle_action` token and delegates before the generic `resolveTurn` path. Extend `performBattleRound` with checkpoint-aware result handling while retaining no `NarrativeBundleSource`, `PendingNarrativeJob` or coordinator reference.
 
-- [ ] **Step 6: Create and restore checkpoints**
+- [ ] **Step 6: Restore checkpoints on failure**
 
-On battle start, save the narrative checkpoint before consuming `battle_started`. On defeat/withdraw, restore its exact fields, restore the existing world `preBattleSnapshot`, set battle to idle, reactivate the descriptor graph's battle retry root and clear both checkpoints. Do not decrement database revision.
+Keep the Task 7 rule that battle start saves the narrative checkpoint before consuming `battle_started`. On defeat/withdraw, restore its exact scene, registry, bundle and active roots, restore the existing world `preBattleSnapshot`, set battle to idle and clear both checkpoints. The restored bundle already makes `battle_started` available again; do not reconstruct roots from provider or descriptor metadata. Do not decrement database revision.
 
 - [ ] **Step 7: Consume only victory prose**
 
@@ -929,16 +1047,13 @@ git commit -m "feat: restore prebattle state after combat defeat"
 - Modify: `src/game/application/narrativeText.ts`
 - Modify: `src/game/application/narrativeText.test.ts`
 - Modify: `src/game/application/neutralRuntimeContract.test.ts`
-- Modify: `src/game/domain/storyState.ts`
-- Modify: `src/game/domain/storyState.test.ts`
-- Modify: `src/game/application/server/persistence/sqliteGameRepository.test.ts`
 
 **Interfaces:**
 
 - Removes: `Dialogue.startChoice` and all automatic submission on NPC card click.
 - Produces: an explicit non-narrative `narrativeUnavailable` read-model state for incomplete/unsupported saves.
 - Battle UI consumes only structured combat fields.
-- Changes: production narrative provenance to generated/fixture only and `STORY_STATE_SCHEMA_VERSION` to 7.
+- Preserves: the generated/fixture-only schema-7 provenance already enforced in Task 7.
 
 - [ ] **Step 1: Rewrite the NPC card regression test**
 
@@ -958,6 +1073,9 @@ const forbidden = [
   "你完成了物品交接。",
   "战斗结果已经由规则结算。",
   "你环顾当前地点，确认了周围的结构。",
+  "行动未能完全达成。",
+  "你记下了眼前的安排。",
+  "行动结果已经由规则记录。",
   "战斗结算完成",
 ];
 for (const text of forbidden) expect(productionSource).not.toContain(text);
@@ -974,7 +1092,7 @@ Run:
 npx vitest run src/components/AdventureGameShell.test.tsx src/game/application/gameSessionView.test.ts src/game/application/neutralRuntimeContract.test.ts
 ```
 
-Expected: FAIL because `startChoice`, synthesized NPC speech, rule scene copy and battle feedback prose still exist.
+Expected: FAIL because `startChoice`, synthesized NPC speech, legacy hardcoded action copy and battle feedback prose still exist.
 
 - [ ] **Step 4: Remove `startChoice` end to end**
 
@@ -994,9 +1112,9 @@ Add a projection test proving `projectGameSessionView` never reads rule `feedbac
 
 When a current objective requires a focus NPC but no generated terminal scene with two choices exists, return `narrativeUnavailable: { code: "INCOMPLETE_NARRATIVE_BUNDLE" }`. The UI shows a system error/restart instruction and never fabricates a choice or calls ensure unless a persisted pending/failed job already exists.
 
-- [ ] **Step 8: Enforce schema 7 and generated-only production scenes**
+- [ ] **Step 8: Verify the generated-only schema remains closed**
 
-Set `STORY_STATE_SCHEMA_VERSION = 7`, classify v6 as `UNSUPPORTED_RECORD`, and reject `source="rule"` in schema-7 narrative parsing. Keep `fixture` only for explicitly composed tests; production source factory never returns it. Add SQLite round-trip coverage for v7 and a v6 read test that performs no update and no provider call.
+Keep `fixture` limited to explicitly composed tests and verify the production source factory never returns it. Re-run the Task 7 schema tests proving schema-7 records reject rule-owned scenes and v6 reads perform no update or provider call; Task 9 must not loosen those invariants while deleting presentation fallbacks.
 
 - [ ] **Step 9: Run UI, persistence and text-provenance tests**
 
@@ -1012,7 +1130,7 @@ Expected: PASS.
 - [ ] **Step 10: Commit**
 
 ```bash
-git add src/game/application/gameSessionView.ts src/game/application/gameSessionView.test.ts src/components/LocationSceneScreen.tsx src/components/AdventureGameShell.test.tsx src/components/CurrentGameScreen.tsx src/game/domain/npcSpeech.ts src/game/domain/npcSpeech.test.ts src/game/application/narrativeText.ts src/game/application/narrativeText.test.ts src/game/application/neutralRuntimeContract.test.ts src/game/domain/storyState.ts src/game/domain/storyState.test.ts src/game/application/server/persistence/sqliteGameRepository.test.ts
+git add src/game/application/gameSessionView.ts src/game/application/gameSessionView.test.ts src/components/LocationSceneScreen.tsx src/components/AdventureGameShell.test.tsx src/components/CurrentGameScreen.tsx src/game/domain/npcSpeech.ts src/game/domain/npcSpeech.test.ts src/game/application/narrativeText.ts src/game/application/narrativeText.test.ts src/game/application/neutralRuntimeContract.test.ts
 git commit -m "refactor: remove synthetic and hardcoded story text"
 ```
 
@@ -1036,8 +1154,13 @@ git commit -m "refactor: remove synthetic and hardcoded story text"
 - Delete: `src/game/application/server/ai/liveScenePerformanceSource.test.ts`
 - Delete: `src/game/application/server/ai/openingGenerationSource.ts`
 - Delete: `src/game/application/server/ai/openingGenerationSource.test.ts`
-- Delete: `src/game/application/intentParserSource.ts`
-- Delete: `src/game/application/intentParserSource.test.ts`
+- Delete: `src/game/application/server/ai/intentParserSource.ts`
+- Delete: `src/game/application/server/ai/intentParserSource.test.ts`
+- Modify: `src/game/application/index.ts`
+- Modify: `src/game/domain/narrative.ts`
+- Modify: `src/game/domain/narrative.test.ts`
+- Modify: `src/game/domain/npcSpeech.ts`
+- Modify: `src/game/domain/npcSpeech.test.ts`
 - Modify: `src/game/application/server/ai/sourceFactory.ts`
 - Modify: `src/game/application/server/providerTriggerBoundary.test.ts`
 - Modify: `src/game/application/testing/foundationJourney.testutil.ts`
@@ -1082,7 +1205,7 @@ Replace separate deterministic evolution/scene sources with one deterministic `N
 
 - [ ] **Step 3: Move pure proposal types and delete obsolete provider orchestration**
 
-Move `ScenePerformanceSegment`, `ScenePerformanceNpcLine`, `ScenePerformanceNpcDialogue` and `ScenePerformanceObjectiveLink` into `narrativeBundleSource.ts`; update bundle/domain imports to that single pure contract. Move any opening prompt blocks still required by the unified source into `bundleNarrativeContext.ts`. Replace deterministic world/scene/opening test sources with one `createFixtureNarrativeBundleSource` in `src/game/application/testing/foundationJourney.testutil.ts`, then delete every listed old file. Do not leave a second production source factory under a compatibility name.
+Remove the temporary `sceneSource.ts` re-exports of `ScenePerformanceSegment`, `ScenePerformanceNpcLine`, `ScenePerformanceNpcDialogue` and `ScenePerformanceObjectiveLink`; their canonical pure definitions remain in `domain/narrativeBundle.ts`, and application/source code imports them from there. Move any opening prompt blocks still required by the unified source into `bundleNarrativeContext.ts`. Replace deterministic world/scene/opening test sources with one data-only `createFixtureNarrativeBundleSource` in `src/game/application/testing/foundationJourney.testutil.ts`, then delete every listed old file. Delete the now-dead `composeDirectNpcGreeting`, `composeDeterministicNpcLine`, `composeIdleNpcLine`, their template constants, exports and tests; fixtures must carry explicit bundle text rather than call a prose composer. Do not leave a second production source factory or narrative builder under a compatibility name.
 
 - [ ] **Step 4: Update gameplay/design documentation**
 
@@ -1137,8 +1260,8 @@ Expected: all commands pass.
 Run:
 
 ```bash
-rg -n "source:\\s*['\"]rule['\"]|buildRuleOwnedScene|startChoice|worldBoundaryNeedsPreparation|你收起了眼前的物品|你完成了物品交接|战斗结果已经由规则结算|你环顾当前地点" src
-rg -n 'createWorldEvolutionSource|createSceneSource|createServerIntentParserSource|generatePendingScene' src
+rg -n "source:\\s*['\"]rule['\"]|buildRuleOwnedScene|startChoice|worldBoundaryNeedsPreparation|composeDirectNpcGreeting|composeDeterministicNpcLine|composeIdleNpcLine|IDLE_REMINDER_VARIANTS|IDLE_AMBIENT_VARIANTS|你收起了眼前的物品|你完成了物品交接|战斗结果已经由规则结算|你环顾当前地点|你确认了脚下的方向|你按规则记录下眼前的调查结果|行动未能完全达成|你记下了眼前的安排|行动结果已经由规则记录|战斗结算完成" src --glob '!*.test.*' --glob '!*.testutil.*'
+rg -n 'createWorldEvolutionSource|createSceneSource|createServerIntentParserSource|generatePendingScene' src --glob '!*.test.*' --glob '!*.testutil.*'
 ```
 
 Expected: no production matches. Test names may mention removed behavior only in explicit negative source guards.
