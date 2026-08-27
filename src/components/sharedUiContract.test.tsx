@@ -42,7 +42,7 @@ function buildBuildingView(overrides: {
       description: "灯笼沿街亮起的青石小镇。",
       scale: "town",
       actions: [],
-      npcs: [{ npcId: "npc_1", name: "老板", role: "掌柜", talkChoice: null }],
+      npcs: [{ npcId: "npc_1", name: "老板", role: "掌柜", talkChoice: null, relationshipTier: "neutral" }],
       town: {
         townName: "青石镇",
         snapshot: { grid: { width: 4, height: 4, tiles: [] }, buildings: [], roadGraph: { nodes: [], edges: [] }, plots: [] },

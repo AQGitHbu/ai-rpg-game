@@ -301,7 +301,7 @@ describe("provider trigger matrix", () => {
       setup: { storyOpening: null, worldPremise: null, characterProfile: null, narrativeStyle: null },
       player: { name: "侠客", identity: "旅人", hp: 100, attack: 10, defense: 5 },
       worldMap: { locations: [{ name: "旧道", current: true, visited: true, scale: "scene", travelChoice: null }] },
-      currentLocation: { name: "旧道", description: "旧道", scale: "scene", actions: [], npcs: [{ npcId: "npc_guide", name: "引路人", role: "信使", talkChoice: null }], town: null },
+      currentLocation: { name: "旧道", description: "旧道", scale: "scene", actions: [], npcs: [{ npcId: "npc_guide", name: "引路人", role: "信使", talkChoice: null, relationshipTier: "neutral" }], town: null },
       obtainableItems: [],
       inventory: [],
       story: { currentAct: 1, targetActs: 3, tension: 20, pacingNeed: "reveal", storyProgress: 1, currentObjectiveLabel: "前往破庙", currentObjectiveChoiceToken: "move", currentObjectiveChoiceTokens: ["move"] },
