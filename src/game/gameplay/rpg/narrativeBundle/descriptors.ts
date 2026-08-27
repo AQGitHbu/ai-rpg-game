@@ -412,7 +412,7 @@ export function buildNarrativeBundleDescriptors(
   // Determine terminal
   const lastStep = descriptors[descriptors.length - 1];
   let terminal: NarrativeBundleTerminal;
-  let currentChoiceCandidates: readonly PreparedChoiceCandidate[] = [];
+  const currentChoiceCandidates: readonly PreparedChoiceCandidate[] = [];
 
   if (descriptors.length === 0) {
     terminal = { kind: "next_decision", target: { kind: "current_scene" } };
