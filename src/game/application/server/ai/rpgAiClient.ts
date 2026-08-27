@@ -62,6 +62,13 @@ export const RPG_AI_DEFAULT_POLICIES: Readonly<Record<RpgAiRole, RpgAiRolePolicy
     jsonMode: "prompt_only",
     maxAttempts: 3,
   },
+  narrative_bundle: {
+    thinking: "off",
+    timeoutMs: 240_000,
+    maxTokens: 8_000,
+    jsonMode: "prompt_only",
+    maxAttempts: 2,
+  },
 };
 
 export type RpgAiClient = Readonly<{

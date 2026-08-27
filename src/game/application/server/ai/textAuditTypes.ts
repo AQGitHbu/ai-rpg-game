@@ -22,7 +22,7 @@ export type GameApiAuditMode = "off" | "compact" | "full";
 /**
  * role 的唯一契约来源。textAuditTypes 不导入 rpgAiClient，rpgAiClient 复用此类型。
  */
-export type AiTextAuditRole = "intent" | "opening" | "scene" | "world";
+export type AiTextAuditRole = "intent" | "opening" | "scene" | "world" | "narrative_bundle";
 
 /**
  * 重试来源：初始化于首次普通调用或手动失败 job 重试。legacy_unknown 只作为
@@ -66,6 +66,7 @@ export type AiTextAuditContext = {
     | "intent_parsing"
     | "world_evolution"
     | "scene_performance"
+    | "narrative_bundle_generation"
     | "final_story_text"
     | "game_api";
   readonly trigger: string;
