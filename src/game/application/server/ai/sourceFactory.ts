@@ -12,6 +12,8 @@ import type { WorldEvolutionSource, WorldEvolutionSourceResult } from "../../wor
 import { createLiveScenePerformanceSource } from "./liveScenePerformanceSource";
 import { classifyAiFailure } from "../../aiGenerationFailure";
 import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailure";
+import { createNarrativeBundleSource } from "./liveNarrativeBundleSource";
+import type { NarrativeBundleSource } from "../../narrativeBundleSource";
 
 // ---------------------------------------------------------------------------
 // 生产 AI source 工厂：根据运行时配置只注入 live 或 unavailable source。
@@ -100,6 +102,29 @@ export function createWorldEvolutionSource(
     diagnostics: runtime.status === "available" ? ["AI_CLIENT_UNAVAILABLE"] : runtime.diagnostics,
   });
   return createUnavailableWorldEvolutionSource();
+}
+
+// --- Narrative Bundle Source Factory (Task 7) ---
+
+export function createNarrativeBundleSourceFactory(
+  env: Record<string, string | undefined> = process.env,
+  logger?: GameLogger,
+  aiClient?: RpgAiClient,
+): NarrativeBundleSource {
+  const runtime = parseAiRuntimeConfig(env);
+  const client = aiClient ?? createServerRpgAiClient(env, logger);
+  if (runtime.status === "available" && client !== undefined) {
+    logger?.info("narrative_bundle_source_live", { model: runtime.config.model });
+    return createNarrativeBundleSource({
+      aiClient: client,
+      jsonMode: providerJsonModeFor(runtime.outputFormat),
+      logger,
+    });
+  }
+  logger?.info("narrative_bundle_source_unavailable", {
+    diagnostics: runtime.status === "available" ? ["AI_CLIENT_UNAVAILABLE"] : runtime.diagnostics,
+  });
+  return createNarrativeBundleSource({ logger });
 }
 
 /** AI 配置不可用时的场景源：只返回 typed failure，不调用 deterministic source。 */
