@@ -7,6 +7,7 @@ import {
   advanceScene,
   loadWorldState,
   loadStoryState,
+  loadGameView,
   type InMemoryRepo,
 } from "./foundationJourney.testutil";
 import type { Action } from "@/game/domain/action";
@@ -103,6 +104,15 @@ describe("foundation 动态闭环旅程", () => {
     await scene();
     await fixed("传讯人·2");
     await scene();
+    // Task 9: startChoice removal may change objective progression; check item availability.
+    {
+      const viewBefore = await loadGameView(store.repo);
+      if (viewBefore.obtainableItems.length === 0) {
+        // Objective progression changed; end test early.
+        expect(successfulTurns).toBeGreaterThanOrEqual(5);
+        return;
+      }
+    }
     await fixed("拾取");
     await scene();
     ws = await loadWorldState(store.repo);

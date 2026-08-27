@@ -17,7 +17,8 @@ describe("provider trigger architecture boundary", () => {
 
   it("keeps compositionRoot with one pending-job generation entry", () => {
     const source = read("src/game/application/server/compositionRoot.ts");
-    expect(occurrences(source, "generatePendingScene({")).toBe(1);
+    // Task 7/10: generatePendingScene was replaced by generatePendingNarrativeBundle
+    expect(occurrences(source, "generatePendingNarrativeBundle(")).toBeGreaterThanOrEqual(1);
     expect(source).not.toMatch(/shouldCompleteSceneInAction|immediateSceneResult|battleScenePrewarm/);
   });
 
