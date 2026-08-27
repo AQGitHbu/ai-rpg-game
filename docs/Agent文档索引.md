@@ -70,6 +70,14 @@
 
 - 游戏设计原则/运行时 AI：生产环境由 AI 承担的剧情、旁白、NPC 台词和选项只接受已审批 `generated`；传输、解析或审批失败进入 `provider_failed` 并重试同一 job，禁止 deterministic/fixture/default 文案接管。`mode="ai"` 的 read model 拒绝 fixture scene，也不再即时合成 NPC 问候或目标提醒；规则型移动、物品和战斗反馈仍可为 `source="rule"`，但不能冒充 AI 剧情。
 
+## 2026-08-28 决策边界叙事生成包架构
+
+- 运行时 AI 导演与场景表演：AI 触发点严格收口为 `initialization`（开局）、`narrative_choice`（正式剧情选项）和 `npc_free_text`（焦点 NPC 自定义输入）。一次逻辑调用通过 `NarrativeBundleSource.generate` 返回原子生成包提案（`worldDelta` + `currentScene` + `continuationScenes` + `terminal`），经 `approveNarrativeBundle` 原子审批后单次 CAS 写回。
+- 运行时 AI 导演与场景表演：开局初始化（Task 6）直接编译为 `ready` 叙事 bundle，不再创建 `provider_pending` 场景和后续 `ensure` 调用。`OpeningGenerationCandidate` 可选携带 `firstScene`（焦点 NPC 台词、旁白、恰好两个候选选项），编译时直接生成 `ready` 的 `NarrativeRuntimeState`。
+- 运行时 AI 导演与场景表演：`generatePendingNarrativeBundle`（Task 7）是 pending job 的原子生成编排器，调用 `NarrativeBundleSource` 一次 → `approveNarrativeBundle` 一次 → 单次 CAS 提交世界增量+场景+选项注册表+bundle。审批失败时不进行部分写入，记录 `provider_failed` 并保留同一 `jobId`。`runBoundedAttempts` 最大 2 次，第二次携带 `contentRepair` 稳定拒绝码重试。
+- 运行时 AI 导演与场景表演：composition root 已切换到统一 `NarrativeBundleSource`，不再为 `ensure` 路径注入独立的 scene/world/intent source。
+- 剧情连续性与结构化记忆：`narrativeBundleTriggerKey` 使用闭包语法（`move:<locId>` 等），描述符图最多 12 步、必须无环、所有可达叶必须终止于恰好两个选项的 `next_decision` 或 `ending`。
+
 ## 维护规则
 
 - 玩法事实变化时同步更新策划文档。
