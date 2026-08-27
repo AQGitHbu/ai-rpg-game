@@ -25,6 +25,7 @@ import { advanceStoryReveal, isActionReleased } from "@/game/gameplay/rpg/worldE
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 import { consumePreparedContinuation, hasPreparedContinuationMatch } from "./consumePreparedContinuation";
 import { buildRuleOwnedScene } from "./ruleOwnedScene";
+import { performBattleRound } from "./performBattleRound";
 
 export type PerformTurnCommand = {
   readonly gameId: GameId;
@@ -219,38 +220,35 @@ export async function performTurn(
     };
   }
 
-  // 活跃战斗回合是规则路径：直接 materialize rule-owned presentation，
+  // 活跃战斗回合是规则路径：委托给专门的 performBattleRound 处理，
   // 不创建 PendingNarrativeJob，也不等待 AI 场景编排。终结战斗仍继续
   // 走下方 prepared continuation 路径，要求精确的 battle_resolved 节点。
   if (
-    resolution.nextWorldState.battle.status === "active"
+    record.worldState.battle.status === "active"
     && (converted.action.type === "attack" || converted.action.type === "battle_action")
     && !resolution.domainEvents.some((event) => event.type === "battle_started")
   ) {
-    const ruleOwned = buildRuleOwnedScene({
-      action: converted.action,
-      resolvedEvent: resolution.primaryResult,
-      worldState: revealed.worldState,
-      storyState: revealed.storyState,
-      turn: resolution.turnNumber,
-    });
-    const commitResult = await commitState(deps.repository, {
-      gameId: command.gameId,
-      expectedRevision: record.revision,
-      nextWorldState: revealed.worldState,
-      nextStoryState: ruleOwned.storyState,
-    });
-    if (!commitResult.ok) {
+    const battleResult = await performBattleRound(
+      {
+        gameId: command.gameId,
+        actionId: command.actionId,
+        interactionKind: command.interaction.kind,
+        action: converted.action,
+        expectedRevision: record.revision,
+      },
+      { repository: deps.repository, now: deps.now },
+    );
+    if (!battleResult.ok) {
       return {
         ok: false,
-        code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
-        feedback: "Commit failed",
+        code: battleResult.code,
+        feedback: battleResult.feedback,
       };
     }
     return {
       ok: true,
-      revision: commitResult.record.revision,
-      resolvedEvent: resolution.primaryResult,
+      revision: battleResult.revision,
+      resolvedEvent: battleResult.resolvedEvent,
       feedback: "Action performed",
     };
   }

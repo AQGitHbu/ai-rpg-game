@@ -292,10 +292,9 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(applyCalls()).toHaveLength(1);
     const saved = record();
     expect(saved?.storyState.narrative.status).toBe("ready");
-    if (saved?.storyState.narrative.status === "ready") {
-      expect(saved.storyState.narrative.currentScene.source).toBe("rule");
-    }
-    expect(record()?.worldState.battle.status).toBe("active");
+    // Task 8: active battle rounds no longer create rule-owned scenes;
+    // storyState stays unchanged from before the battle action.
+    expect(saved?.worldState.battle.status).toBe("active");
   });
 
   it("战斗结算缺少精确预备结果时零写入并返回稳定缺失码", async () => {
@@ -328,9 +327,14 @@ describe("performTurn 单次 CAS 提交", () => {
       { gameId: asGameId("g1"), actionId: "battle_defeat", interaction: { kind: "fixed_choice", choiceToken: "battle" }, expectedRevision: 0, choiceMap: new Map([["battle", action]]) },
       { repository: repo, now: () => "2026-01-02" },
     );
-    expect(result).toMatchObject({ ok: false, code: "NARRATIVE_CONTINUATION_MISSING" });
-    expect(applyCalls()).toHaveLength(0);
-    expect(record()?.worldState).toBe(world);
+    // Task 8: defeat/withdraw now restores pre-battle checkpoint via performBattleRound.
+    // The battle is set to idle, player stats and event ledger are restored.
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+    const saved = record();
+    expect(saved?.worldState.battle.status).toBe("idle");
+    expect(saved?.worldState.player.stats).toEqual(base.player.stats);
+    expect(saved?.worldState.eventLedger).toBe(beforeLedger);
   });
 
   it("移动触发自动调查推进目标但没有 prepared continuation 时仍保存规则场景", async () => {
