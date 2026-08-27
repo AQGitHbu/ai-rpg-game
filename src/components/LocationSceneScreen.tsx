@@ -290,7 +290,6 @@ function NpcDialogueModal({
   const waitingChoices = [
     ...dialogue.choices,
     ...dialogue.giveChoices.map((entry) => entry.choice),
-    ...(dialogue.startChoice === undefined ? [] : [dialogue.startChoice]),
   ];
 
   return (
@@ -353,17 +352,6 @@ function NpcDialogueModal({
             </div>
             <p className="npc-dialogue-status" role="status" aria-live="polite">正在等待{dialogue.name}回应……</p>
           </>
-        ) : dialogue.startChoice !== undefined ? (
-          <div className="npc-dialogue-choices" role="group" aria-label="对话选项">
-            <button
-              type="button"
-              className="npc-dialogue-talk-cta"
-              disabled={busy}
-              onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: dialogue.startChoice!.choiceToken }, dialogue.startChoice!.label)}
-            >
-              {dialogue.startChoice.label}
-            </button>
-          </div>
         ) : hasFocusInteraction ? (
           /* 焦点 NPC：显示固定选项 + 给予道具 + 自由输入 */
           <>
@@ -736,7 +724,7 @@ export function LocationSceneScreen({
     view.revision,
   ]);
 
-  // 普通 NPC 点击只打开对话弹窗；旧存档的兼容 startChoice 会在同一次点击中补发 ask 回合。
+  // Task 9: NPC card click only opens the dialogue panel; no auto-submit.
   function submitDialogueInteractionFor(
     dialogue: Dialogue,
     interaction: PlayerInteraction,
@@ -752,22 +740,11 @@ export function LocationSceneScreen({
     onSubmit(interaction, "npc-dialogue");
   }
 
+  // Task 9: NPC card click only opens the dialogue panel; no auto-submit.
   function handleNpcCardClick(npc: typeof sidebarNpcs[number]) {
-    const dialogue = allDialoguesMap.get(npc.dialogueId);
     setOpenDialogueNpcId(npc.dialogueId);
     setDialoguePhase("choice");
     submittedDialogueRef.current = null;
-    // 旧存档可能已经消费了抵达 prepared step，只留下当前目标 NPC 和一个
-    // rule-owned travel scene。此时 read model 明确下发 startChoice；点击 NPC
-    // 直接补发一次权威 ask 回合，让 provider 生成真正的开场对白，不展示伪造
-    // 的默认 support/challenge 选项。
-    if (dialogue?.startChoice !== undefined) {
-      submitDialogueInteractionFor(
-        dialogue,
-        { kind: "fixed_choice", choiceToken: dialogue.startChoice.choiceToken },
-        dialogue.startChoice.label,
-      );
-    }
   }
 
   function submitDialogueInteraction(interaction: PlayerInteraction, playerResponse: string): void {

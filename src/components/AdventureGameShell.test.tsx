@@ -1526,7 +1526,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
     );
   });
 
-  it("starts the authoritative provider talk on NPC click without showing ambient or fallback speech", async () => {
+  it("opens dialogue panel on NPC click without auto-submitting or showing ambient speech", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     const base = buildView();
@@ -1545,7 +1545,6 @@ describe("AdventureGameShell canonical opaque choices", () => {
           speechPages: [],
           choices: [],
           freeInputEnabled: false,
-          startChoice: choice(TOKENS.dialogueOne, "与老板交谈", "dialogue"),
         }],
       },
     };
@@ -1559,12 +1558,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     expect(screen.queryByText(/欢迎光临|晚风还要凉/u)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /老板.*路人/ }));
-    expect(onSubmit).toHaveBeenCalledWith(
-      { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
-      "npc-dialogue",
-    );
-    expect(onSubmit).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("status")).toHaveTextContent("正在等待老板回应");
+    // Task 9: NPC card click only opens dialogue panel; no auto-submit.
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("keeps battle sides explicit and shows the attack feedback before the next snapshot", async () => {

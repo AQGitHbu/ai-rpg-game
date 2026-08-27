@@ -2,7 +2,6 @@ import type { Action } from "@/game/domain/action";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import {
   NPC_SCENE_PAGE_CHAR_BUDGET,
-  composeDeterministicNpcLine,
 } from "@/game/domain/narrative";
 import type { DialogueResumeState, NarrativeSceneState } from "@/game/domain/narrative";
 import { paginateSpeechText } from "@/game/domain/speechPagination";
@@ -23,7 +22,7 @@ import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
 import { buildTownView, type TownView } from "./townView";
 import { projectCombatView, type BattleView } from "./combatView";
-import { composeDirectNpcGreeting, composeIdleNpcLine, normalizeNpcSpeech } from "@/game/domain/npcSpeech";
+import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 import { isObjectiveEntityReleased, isQuestObjectiveReleased } from "@/game/gameplay/rpg/worldEvolution";
 import { formatSceneChoiceLabel } from "./deterministicSceneSource";
 import { decorateNarrativePages, decorateNarrativeText } from "./narrativeText";
@@ -42,8 +41,6 @@ export type NpcDialogueView = {
   readonly speechPages: readonly string[];
   /** 正式对白收尾的本地确认句；不携带 choice token、action 或 revision。 */
   readonly handoffAcknowledgement?: { readonly label: string };
-  /** 旧存档缺少已准备抵达对白时，用当前权威 talk action 触发一次补生成。 */
-  readonly startChoice?: PlayerChoiceView;
   readonly choices: readonly PlayerChoiceView[];
   readonly freeInputEnabled: boolean;
   /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
@@ -682,10 +679,8 @@ export function projectGameSessionView(
     const suppliedSpeechPages = supplied?.speechPages
       .map((page) => normalizeNpcSpeech(page, npc.name))
       .filter((page) => page !== "") ?? [];
-    // 旧场景“欢迎光临”类通用问候没有剧情上下文，读取时重建
-    const onlyLegacyGenericGreeting = suppliedSpeechPages.length > 0
-      && suppliedSpeechPages.every((page) => page === composeDirectNpcGreeting());
-    const usableSupplied = suppliedSpeechPages.length > 0 && !onlyLegacyGenericGreeting
+    // Task 9: Remove synthetic NPC starts — only generated/fixture speech is displayable.
+    const usableSupplied = suppliedSpeechPages.length > 0
       ? suppliedSpeechPages
       : null;
     const inferredSpeechSource = scene !== null && sceneLineNpcId === String(npc.id)
@@ -698,32 +693,12 @@ export function projectGameSessionView(
       ? "focus"
       : supplied?.speechPurpose
       ?? (sceneLineNpcId === String(npc.id) ? "focus" : "ambient");
+    // Task 9: No synthetic NPC start. Only generated/fixture speech is displayable.
     const hasFormalFocusSpeech = speechPurpose === "focus"
       && (usableSupplied !== null || focusLine !== null);
-    const allowOfflineSynthesis = storyState.narrative.mode === "offline";
-    // 新目标 NPC 尚未拥有可消费的正式场景 registry 时，统一进入 start
-    // 状态：NPC 卡点击提交一次 ask，由 provider 生成真正的首句和两项批准
-    // 回应。环境闲聊、deterministic fallback 和自由输入都不能伪装 ready。
-    const isAuthoritativeTalkTarget = isFocus
-      && currentObjectiveNpcId === String(npc.id);
-    const requiresFormalDialogueStart = isFocus && (
-      (handoffFocusNpc !== undefined && String(handoffFocusNpc.id) === String(npc.id))
-      || (isAuthoritativeTalkTarget && !hasFormalFocusSpeech && !allowOfflineSynthesis)
-    );
-    const interactionCount = npc.memory.interactionHistory.length;
-    const offlineIdleLine = allowOfflineSynthesis
-      ? composeIdleNpcLine({
-          currentObjectiveLabel: currentObjectiveRef?.label ?? null,
-          hasInteractionHistory: interactionCount > 0,
-          variantIndex: storyState.turnNumber + storyState.currentAct + interactionCount,
-        })
-      : null;
     const hasDisplayableSpeech = usableSupplied !== null
-      || focusLine !== null
-      || allowOfflineSynthesis;
-    const speechPages = requiresFormalDialogueStart && !hasFormalFocusSpeech
-      ? []
-      : usableSupplied !== null
+      || focusLine !== null;
+    const speechPages = usableSupplied !== null
       ? decorateNarrativePages(usableSupplied, speechSource)
       : focusLine !== null
       ? decorateNarrativePages(
@@ -733,29 +708,11 @@ export function projectGameSessionView(
           ),
           speechSource,
         )
-      : allowOfflineSynthesis
-      ? decorateNarrativePages(
-          paginateSpeechText(
-            isFocus
-              ? composeDeterministicNpcLine(npc.name, npc.role)
-              : offlineIdleLine ?? "",
-            NPC_SCENE_PAGE_CHAR_BUDGET,
-          ),
-          speechSource,
-        )
       : [];
-    const startChoice = requiresFormalDialogueStart
-      ? choice(
-          { type: "talk", npcId: npc.id, dialogueAct: "ask" },
-          revision,
-          `与${npc.name}交谈`,
-          "dialogue",
-        )
-      : undefined;
+    // Task 9: No startChoice — NPC card click only opens metadata/dialogue panel.
     const formalDialogueReady = isFocus
-      && (hasFormalFocusSpeech || allowOfflineSynthesis)
-      && hasDisplayableSpeech
-      && !requiresFormalDialogueStart;
+      && hasFormalFocusSpeech
+      && hasDisplayableSpeech;
     return {
       npcId: String(npc.id),
       name: npc.name,
@@ -767,7 +724,6 @@ export function projectGameSessionView(
       ...(projectedHandoffAcknowledgement !== null && String(npc.id) === sceneLineNpcId
         ? { handoffAcknowledgement: projectedHandoffAcknowledgement }
         : {}),
-      ...(startChoice === undefined ? {} : { startChoice }),
       freeInputEnabled: formalDialogueReady,
       giveChoices: formalDialogueReady
         ? worldState.inventory.map((itemId) => {

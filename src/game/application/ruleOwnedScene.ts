@@ -33,20 +33,11 @@ function eventForAction(action: Action, worldState: WorldState): NarrativeEventS
   }
 }
 
-function narrationFor(action: Action, resolvedEvent: ResolvedEvent): string {
-  if (resolvedEvent.status === "failure" || resolvedEvent.status === "partial_success") return resolvedEvent.rejectedEffects[0]?.description ?? "行动未能完全达成。";
-  switch (action.type) {
-    case "move": return "你确认了脚下的方向，暂时退回熟悉的路径。";
-    case "investigate": return "你按规则记录下眼前的调查结果。";
-    case "take_item": return "你收起了眼前的物品。";
-    case "give_item": return "你完成了物品交接。";
-    case "attack":
-    case "battle_action": return "战斗结果已经由规则结算。";
-    case "explore": return "你环顾当前地点，确认了周围的结构。";
-    case "ack_prologue": return "你记下了眼前的安排。";
-    case "talk":
-    case "freeform": return "行动结果已经由规则记录。";
-  }
+function narrationFor(_action: Action, resolvedEvent: ResolvedEvent): string {
+  // Task 9: Rule-owned scenes no longer produce player-visible prose.
+  // Only generated/fixture scenes carry narration text.
+  if (resolvedEvent.status === "failure" || resolvedEvent.status === "partial_success") return "";
+  return "";
 }
 
 function dialogueResumeFor(

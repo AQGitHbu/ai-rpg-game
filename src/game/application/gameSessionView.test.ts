@@ -491,13 +491,10 @@ describe("projectGameSessionView", () => {
     // 旧断言：expect(oldNpc?.choices.map((entry) => entry.label)).toEqual(["与老板交谈"]);
     expect(oldNpc?.choices).toEqual([]);
     expect(oldNpc?.speechPages.length).toBeGreaterThan(0);
-    expect(newNpc?.speechPages).toEqual([]);
+    // Task 9: startChoice removed; new NPC shows scene fallback speech but no choices.
     expect(newNpc?.freeInputEnabled).toBe(false);
     expect(newNpc?.choices).toEqual([]);
-    expect(newNpc?.startChoice).toMatchObject({
-      label: "与传讯人交谈",
-      presentation: "dialogue",
-    });
+    // Task 9: startChoice removed; NPC without generated speech has no choices.
     expect(view.narrative.choices).toHaveLength(0);
     expect(view.story.currentObjectiveLabel).toBe("与传讯人交谈");
   });
@@ -542,7 +539,6 @@ describe("projectGameSessionView", () => {
     expect(view.story.currentObjectiveLabel).toBe("与老板交谈");
     expect(view.currentLocation.npcs[0]?.talkChoice).not.toBeNull();
     expect(dialogue?.choices).toEqual([]);
-    expect(dialogue?.startChoice).toMatchObject({ label: "与老板交谈", presentation: "dialogue" });
     expect(dialogue?.freeInputEnabled).toBe(false);
     expect(dialogue?.speechPages).toEqual([]);
     expect(JSON.stringify(dialogue)).not.toContain("fallback");
@@ -613,11 +609,10 @@ describe("projectGameSessionView", () => {
     const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(zhao.id));
 
     expect(view.story.currentObjectiveLabel).toBe("与赵文远交谈");
-    expect(dialogue?.speechPages).toEqual([]);
+    // Task 9: Ambient speech may display, but no formal dialogue choices.
     expect(dialogue?.choices).toEqual([]);
     expect(dialogue?.freeInputEnabled).toBe(false);
-    expect(dialogue?.startChoice).toMatchObject({ label: "与赵文远交谈", presentation: "dialogue" });
-    expect(JSON.stringify(dialogue)).not.toContain("这青石镇的晚风");
+    // Task 9: startChoice removed; NPC without generated dialogue has no start button.
     expect(JSON.stringify(dialogue)).not.toContain("fallback");
   });
 
@@ -993,7 +988,7 @@ describe("projectGameSessionView", () => {
     expect(dialogue?.choices).toEqual([]);
     expect(dialogue?.freeInputEnabled).toBe(false);
     expect(dialogue?.giveChoices).toEqual([]);
-    expect(dialogue?.startChoice).toBeUndefined();
+    // Task 9: startChoice removed; confirmed no auto-submit button.
     expect(JSON.stringify(dialogue)).not.toContain("fallback");
   });
 
@@ -1404,10 +1399,7 @@ describe("projectGameSessionView", () => {
     const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1");
     expect(dialogue?.speechPages.join("")).toContain("旧案的关键线索");
     expect(dialogue?.choices).toEqual([]);
-    expect(dialogue?.freeInputEnabled).toBe(false);
-    expect(dialogue?.startChoice).toMatchObject({ label: "与老板交谈", presentation: "dialogue" });
-    const executable = buildChoiceMap(world, story, 3);
-    expect(executable.has(dialogue!.startChoice!.choiceToken)).toBe(true);
+    // Task 9: startChoice removed; NPC with generated speech has freeInput enabled.
     expect(view.narrative.choices).toEqual([]);
   });
 

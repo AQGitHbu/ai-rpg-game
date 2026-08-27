@@ -231,8 +231,8 @@ function allIssuedChoices(view: GameSessionView): readonly PlayerChoiceView[] {
     ...view.obtainableItems.map((item) => item.choice),
     ...view.narrative.choices,
     ...view.narrative.npcDialogues.flatMap((dialogue) => dialogue.choices),
-    ...view.narrative.npcDialogues.flatMap((dialogue) =>
-      dialogue.startChoice === undefined ? [] : [dialogue.startChoice]),
+    // Task 9: startChoice removed; talkChoice is now the authoritative NPC talk trigger.
+    ...view.currentLocation.npcs.flatMap((npc) => npc.talkChoice === null ? [] : [npc.talkChoice]),
     ...(view.battle?.controls ?? []),
   ];
 }
@@ -254,11 +254,16 @@ export async function playIssuedChoice(
     : labelIncludes === "追问" || labelIncludes === "质疑"
       ? dialogueChoices[1]
       : undefined;
+  // Task 9: also check talkChoice for NPC names (replaces removed startChoice).
+  const namedNpcTalkChoice = view.currentLocation.npcs
+    .find((npc) => npc.name.includes(labelIncludes))
+    ?.talkChoice;
   const namedNpcChoice = view.narrative.npcDialogues
     .find((dialogue) => dialogue.name.includes(labelIncludes))
     ?.choices[0];
   const choice = legacyDialogueChoice
     ?? namedNpcChoice
+    ?? namedNpcTalkChoice
     ?? allIssuedChoices(view).find((entry) => entry.label.includes(labelIncludes));
   if (choice === undefined) {
     throw new Error(`找不到服务器选项：${labelIncludes}`);
