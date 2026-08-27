@@ -62,7 +62,8 @@ const FACADES: readonly FacadeSpec[] = [
   { name: "dialogue", path: "@/game/gameplay/rpg/dialogue", anchors: ["dialogueResolution"] },
   { name: "candidateEvents", path: "@/game/gameplay/rpg/candidateEvents", anchors: ["approveCandidateEvents", "compileCandidateEvent"] },
   { name: "narrativeExecution", path: "@/game/gameplay/rpg/narrativeExecution", anchors: ["narrativeExecutionPolicy"] },
-  { name: "preparedContinuation", path: "@/game/gameplay/rpg/preparedContinuation", anchors: ["candidates"] }
+  { name: "preparedContinuation", path: "@/game/gameplay/rpg/preparedContinuation", anchors: ["candidates"] },
+  { name: "narrativeBundle", path: "@/game/gameplay/rpg/narrativeBundle", anchors: ["descriptors", "coverage"] }
 ] as const satisfies readonly FacadeSpec[];
 
 /** 由 facade 清单生成 deep-import 规则：只许门面本体，禁止任何内部文件。 */

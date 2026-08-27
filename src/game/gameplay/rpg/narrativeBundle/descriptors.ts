@@ -1,0 +1,433 @@
+import type { Action } from "@/game/domain/action";
+import type {
+  NarrativeBundleTerminal,
+  NarrativeBundleTrigger,
+} from "@/game/domain/narrativeBundle";
+import { narrativeBundleTriggerKey } from "@/game/domain/narrativeBundle";
+export { narrativeBundleTriggerKey };
+import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
+import type { StoryState } from "@/game/domain/storyState";
+import {
+  findNpc,
+  type QuestObjective,
+  type WorldState,
+} from "@/game/domain/worldState";
+import type {
+  FactId,
+  LocationId,
+  NpcId,
+  QuestId,
+} from "@/game/domain/worldEntity";
+import type { PreparedChoiceCandidate, PreparedArrivalNpcContext } from "@/game/gameplay/rpg/preparedContinuation/candidates";
+
+export type { PreparedChoiceCandidate, PreparedArrivalNpcContext };
+
+export type BundleStepDescriptor = {
+  readonly stepKey: string;
+  readonly objectiveKey: string;
+  readonly consumptionGroupKey: string;
+  readonly trigger: NarrativeBundleTrigger;
+  readonly absorbedObjectiveIndexes: readonly number[];
+  readonly authority: {
+    readonly questId: QuestId;
+    readonly allowedEntityIds: readonly string[];
+    readonly visibleFactIds: readonly FactId[];
+    readonly objectiveIndex: number;
+  };
+  readonly arrivalNpc?: PreparedArrivalNpcContext;
+  readonly choiceCandidates: readonly PreparedChoiceCandidate[];
+  readonly nextStepKeys: readonly string[];
+};
+
+export type BundleDescriptorGraph = {
+  readonly steps: readonly BundleStepDescriptor[];
+  readonly activeStepKeys: readonly string[];
+  readonly currentChoiceCandidates: readonly PreparedChoiceCandidate[];
+  readonly terminal: NarrativeBundleTerminal;
+};
+
+export type BuildNarrativeBundleDescriptorsInput = {
+  readonly worldState: WorldState;
+  readonly storyState: StoryState;
+  readonly transition: ObjectiveTransition;
+};
+
+function objectiveKey(questId: QuestId, objectiveIndex: number): string {
+  return `${String(questId)}:${objectiveIndex}`;
+}
+
+function entityIdsForObjective(objective: QuestObjective): readonly string[] {
+  switch (objective.kind) {
+    case "visit_location": return [String(objective.locationId)];
+    case "talk_to_npc": return [String(objective.npcId)];
+    case "obtain_item": return [String(objective.itemId)];
+    case "discover_fact": return [String(objective.factId)];
+    case "defeat_enemy": return [String(objective.enemyId)];
+  }
+}
+
+function factIdsForNpc(worldState: WorldState, npcId: NpcId): readonly FactId[] {
+  const npc = findNpc(worldState, npcId);
+  if (npc === undefined) return [];
+  const known = new Set(npc.memory.knownFactIds.map(String));
+  return worldState.worldFacts
+    .filter((fact) => known.has(String(fact.factId)))
+    .map((fact) => fact.factId);
+}
+
+function preparedNpcContext(
+  worldState: WorldState,
+  npc: WorldState["npcs"][number],
+): PreparedArrivalNpcContext {
+  const knownFactIds = factIdsForNpc(worldState, npc.id);
+  const known = new Set(knownFactIds.map(String));
+  const knownFactCards = worldState.worldFacts
+    .filter((fact) => known.has(String(fact.factId)))
+    .map((fact) => ({ factId: fact.factId, text: fact.text }));
+  const sceneVisibleFactIds = worldState.worldFacts
+    .filter((fact) => fact.discovered)
+    .map((fact) => fact.factId);
+
+  return {
+    id: npc.id,
+    name: npc.name,
+    role: npc.role,
+    publicProfile: npc.description,
+    knownFactCards,
+    sceneVisibleFactIds,
+    goals: [...npc.memory.goals],
+  };
+}
+
+function arrivalNpcFor(
+  worldState: WorldState,
+  objectives: readonly QuestObjective[],
+  nextObjectiveIndex: number,
+  locationId: LocationId,
+): PreparedArrivalNpcContext | undefined {
+  // Scan through zero-action objectives (discover_fact) to find the talk_to_npc
+  // boundary that marks the next formal decision.
+  let idx = nextObjectiveIndex;
+  while (idx < objectives.length) {
+    const obj = objectives[idx];
+    if (obj === undefined) return undefined;
+    if (obj.kind === "talk_to_npc") {
+      const npc = findNpc(worldState, obj.npcId);
+      if (npc === undefined || npc.locationId !== locationId) return undefined;
+      return preparedNpcContext(worldState, npc);
+    }
+    // discover_fact is zero-action — keep scanning
+    if (obj.kind !== "discover_fact") return undefined;
+    idx += 1;
+  }
+  return undefined;
+}
+
+function authorizedFactIdsForArrivalNpc(
+  npc: PreparedArrivalNpcContext,
+): readonly FactId[] {
+  const ids = new Set([
+    ...npc.sceneVisibleFactIds.map(String),
+    ...npc.knownFactCards.map((fact) => String(fact.factId)),
+  ]);
+  return [...ids].map((id) => id as FactId);
+}
+
+function choicesForNpc(npc: PreparedArrivalNpcContext | undefined, stepKey: string): readonly PreparedChoiceCandidate[] {
+  if (npc === undefined) return [];
+  return [
+    {
+      candidateId: `${stepKey}_choice_1`,
+      action: { type: "talk", npcId: npc.id, dialogueAct: "support" } as Action,
+    },
+    {
+      candidateId: `${stepKey}_choice_2`,
+      action: { type: "talk", npcId: npc.id, dialogueAct: "challenge" } as Action,
+    },
+  ];
+}
+
+function groupKeyFor(
+  questId: QuestId,
+  objectiveIndex: number,
+  kind: string,
+  branchKey: string,
+): string {
+  const base = `${objectiveKey(questId, objectiveIndex)}:${kind}`;
+  return branchKey.length === 0 ? base : `${base}:${branchKey}`;
+}
+
+function isAcyclic(descriptors: readonly BundleStepDescriptor[]): boolean {
+  const byKey = new Map(descriptors.map((d) => [d.stepKey, d]));
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (key: string): boolean => {
+    if (visiting.has(key)) return false;
+    if (visited.has(key)) return true;
+    const descriptor = byKey.get(key);
+    if (descriptor === undefined) return false;
+    visiting.add(key);
+    if (!descriptor.nextStepKeys.every(visit)) return false;
+    visiting.delete(key);
+    visited.add(key);
+    return true;
+  };
+  return descriptors.every((d) => visit(d.stepKey));
+}
+
+/**
+ * Projects the server-authoritative continuation graph from quest objectives.
+ *
+ * Key differences from the legacy prepared-continuation walker:
+ * - Step keys use `narrativeBundleTriggerKey` (the closed grammar), not ordinal IDs
+ * - `discover_fact` objectives are folded (zero-action) into the preceding step
+ * - `obtain_item` and `defeat_enemy` stop the fold (they require player actions)
+ * - Only `battle_resolved:victory` is generated (defeat/withdraw restore checkpoints)
+ * - `talk_to_npc` is the terminal — it stops the walk and marks the step as the
+ *   next formal decision boundary
+ */
+export function buildNarrativeBundleDescriptors(
+  input: BuildNarrativeBundleDescriptorsInput,
+): BundleDescriptorGraph {
+  const { worldState, storyState, transition } = input;
+  if (transition.after === null) {
+    return {
+      steps: [],
+      activeStepKeys: [],
+      currentChoiceCandidates: [],
+      terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+    };
+  }
+
+  const quest = worldState.quests.find((q) => q.id === transition.after?.questId);
+  if (quest === undefined) {
+    return {
+      steps: [],
+      activeStepKeys: [],
+      currentChoiceCandidates: [],
+      terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+    };
+  }
+
+  const descriptors: BundleStepDescriptor[] = [];
+
+  const setSuccessors = (stepKey: string, nextStepKeys: readonly string[]): void => {
+    const idx = descriptors.findIndex((d) => d.stepKey === stepKey);
+    const desc = descriptors[idx];
+    if (desc === undefined) throw new Error(`Unknown descriptor ${stepKey}`);
+    descriptors[idx] = { ...desc, nextStepKeys: [...nextStepKeys] };
+  };
+
+  const buildObjective = (
+    objectiveIndex: number,
+    branchKey: string,
+    absorbedIndexes: readonly number[],
+    activeQuest: typeof quest = quest,
+  ): readonly string[] => {
+    const objective = activeQuest.objectives[objectiveIndex];
+    if (objective === undefined) {
+      // Cross-act: look for next act's main quest
+      if (activeQuest.id === quest.id && storyState.currentAct < storyState.targetActs) {
+        const nextQuest = worldState.quests.find((q) =>
+          q.kind === "main" && q.stage === storyState.currentAct + 1,
+        );
+        return nextQuest === undefined
+          ? []
+          : buildObjective(0, branchKey, absorbedIndexes, nextQuest);
+      }
+      return [];
+    }
+
+    // talk_to_npc is the terminal — stop and mark as next decision.
+    // Its index is absorbed into the last created step.
+    if (objective.kind === "talk_to_npc") {
+      const lastDesc = descriptors[descriptors.length - 1];
+      if (lastDesc !== undefined) {
+        const idx = descriptors.length - 1;
+        descriptors[idx] = {
+          ...lastDesc,
+          absorbedObjectiveIndexes: [...lastDesc.absorbedObjectiveIndexes, objectiveIndex],
+        };
+      }
+      return [];
+    }
+
+    // discover_fact: fold into the last created step (zero-action)
+    if (objective.kind === "discover_fact") {
+      const lastDesc = descriptors[descriptors.length - 1];
+      if (lastDesc !== undefined) {
+        const idx = descriptors.length - 1;
+        descriptors[idx] = {
+          ...lastDesc,
+          absorbedObjectiveIndexes: [...lastDesc.absorbedObjectiveIndexes, objectiveIndex],
+        };
+      }
+      return buildObjective(objectiveIndex + 1, branchKey, [], activeQuest);
+    }
+
+    // visit_location: create a move step, fold discovered facts, find arrival NPC
+    if (objective.kind === "visit_location") {
+      const trigger: NarrativeBundleTrigger = {
+        kind: "move",
+        locationId: objective.locationId,
+      };
+      const stepKey = narrativeBundleTriggerKey(trigger);
+      const arrivalNpc = arrivalNpcFor(
+        worldState,
+        activeQuest.objectives,
+        objectiveIndex + 1,
+        objective.locationId,
+      );
+      const allAbsorbed = [...absorbedIndexes, objectiveIndex];
+      descriptors.push({
+        stepKey,
+        objectiveKey: objectiveKey(activeQuest.id, objectiveIndex),
+        consumptionGroupKey: groupKeyFor(activeQuest.id, objectiveIndex, "move", branchKey),
+        trigger,
+        absorbedObjectiveIndexes: allAbsorbed,
+        authority: {
+          questId: activeQuest.id,
+          objectiveIndex,
+          allowedEntityIds: [
+            ...entityIdsForObjective(objective),
+            ...(arrivalNpc === undefined ? [] : [String(arrivalNpc.id)]),
+          ],
+          visibleFactIds: arrivalNpc === undefined ? [] : authorizedFactIdsForArrivalNpc(arrivalNpc),
+        },
+        ...(arrivalNpc === undefined ? {} : { arrivalNpc }),
+        choiceCandidates: choicesForNpc(arrivalNpc, stepKey),
+        nextStepKeys: [],
+      });
+      if (arrivalNpc === undefined) {
+        // No talk_to_npc boundary ahead — continue folding subsequent objectives
+        const nextStepKeys = buildObjective(objectiveIndex + 1, `${branchKey}b${stepKey}`, [], activeQuest);
+        setSuccessors(stepKey, nextStepKeys);
+        return [stepKey];
+      }
+      // Arrival NPC found: fold trailing discover_fact and the terminal talk_to_npc
+      // into this step's absorbedObjectiveIndexes.
+      let foldIdx = objectiveIndex + 1;
+      while (foldIdx < activeQuest.objectives.length) {
+        const foldObj = activeQuest.objectives[foldIdx];
+        if (foldObj === undefined) break;
+        if (foldObj.kind === "discover_fact" || foldObj.kind === "talk_to_npc") {
+          allAbsorbed.push(foldIdx);
+          if (foldObj.kind === "talk_to_npc") break;
+          foldIdx += 1;
+        } else {
+          break;
+        }
+      }
+      descriptors[descriptors.length - 1] = {
+        ...descriptors[descriptors.length - 1]!,
+        absorbedObjectiveIndexes: [...allAbsorbed],
+      };
+      return [stepKey];
+    }
+
+    // obtain_item: stop fold, create a take_item step
+    if (objective.kind === "obtain_item") {
+      const trigger: NarrativeBundleTrigger = {
+        kind: "take_item",
+        itemId: objective.itemId,
+      };
+      const stepKey = narrativeBundleTriggerKey(trigger);
+      const allAbsorbed = [...absorbedIndexes, objectiveIndex];
+      descriptors.push({
+        stepKey,
+        objectiveKey: objectiveKey(activeQuest.id, objectiveIndex),
+        consumptionGroupKey: groupKeyFor(activeQuest.id, objectiveIndex, "take_item", branchKey),
+        trigger,
+        absorbedObjectiveIndexes: allAbsorbed,
+        authority: {
+          questId: activeQuest.id,
+          objectiveIndex,
+          allowedEntityIds: entityIdsForObjective(objective),
+          visibleFactIds: [],
+        },
+        choiceCandidates: [],
+        nextStepKeys: [],
+      });
+      const nextStepKeys = buildObjective(objectiveIndex + 1, `${branchKey}t${stepKey}`, [], activeQuest);
+      setSuccessors(stepKey, nextStepKeys);
+      return [stepKey];
+    }
+
+    // defeat_enemy: create battle_started + battle_resolved:victory only
+    if (objective.kind === "defeat_enemy") {
+      const startedTrigger: NarrativeBundleTrigger = {
+        kind: "battle_started",
+        enemyId: objective.enemyId,
+      };
+      const startedKey = narrativeBundleTriggerKey(startedTrigger);
+      descriptors.push({
+        stepKey: startedKey,
+        objectiveKey: objectiveKey(activeQuest.id, objectiveIndex),
+        consumptionGroupKey: groupKeyFor(activeQuest.id, objectiveIndex, "battle_started", branchKey),
+        trigger: startedTrigger,
+        absorbedObjectiveIndexes: [...absorbedIndexes, objectiveIndex],
+        authority: {
+          questId: activeQuest.id,
+          objectiveIndex,
+          allowedEntityIds: entityIdsForObjective(objective),
+          visibleFactIds: [],
+        },
+        choiceCandidates: [],
+        nextStepKeys: [],
+      });
+
+      const victoryTrigger: NarrativeBundleTrigger = {
+        kind: "battle_resolved",
+        enemyId: objective.enemyId,
+        outcome: "victory",
+      };
+      const victoryKey = narrativeBundleTriggerKey(victoryTrigger);
+      descriptors.push({
+        stepKey: victoryKey,
+        objectiveKey: objectiveKey(activeQuest.id, objectiveIndex),
+        consumptionGroupKey: groupKeyFor(activeQuest.id, objectiveIndex, "battle_resolved", branchKey),
+        trigger: victoryTrigger,
+        absorbedObjectiveIndexes: [],
+        authority: {
+          questId: activeQuest.id,
+          objectiveIndex,
+          allowedEntityIds: entityIdsForObjective(objective),
+          visibleFactIds: [],
+        },
+        choiceCandidates: [],
+        nextStepKeys: [],
+      });
+      const nextStepKeys = buildObjective(objectiveIndex + 1, `${branchKey}v${victoryKey}`, [], activeQuest);
+      setSuccessors(victoryKey, nextStepKeys);
+      setSuccessors(startedKey, [victoryKey]);
+      return [startedKey];
+    }
+
+    return [];
+  };
+
+  const activeStepKeys = buildObjective(transition.after.objectiveIndex, "", []);
+  if (!isAcyclic(descriptors)) throw new Error("Bundle descriptor projection must be acyclic");
+
+  // Determine terminal
+  const lastStep = descriptors[descriptors.length - 1];
+  let terminal: NarrativeBundleTerminal;
+  let currentChoiceCandidates: readonly PreparedChoiceCandidate[] = [];
+
+  if (descriptors.length === 0) {
+    terminal = { kind: "next_decision", target: { kind: "current_scene" } };
+  } else if (lastStep?.choiceCandidates.length === 2) {
+    // The last step has two choices → it's the next decision boundary
+    terminal = { kind: "next_decision", target: { kind: "continuation_step", stepKey: lastStep.stepKey } };
+  } else {
+    // No explicit NPC boundary found — current scene is the terminal
+    terminal = { kind: "next_decision", target: { kind: "current_scene" } };
+  }
+
+  return {
+    steps: descriptors,
+    activeStepKeys,
+    currentChoiceCandidates,
+    terminal,
+  };
+}
