@@ -460,8 +460,7 @@ export function createServerGameEntryPoints(
         },
       );
       if (result.ok) {
-        // 开局存档已经包含首场景 pending job；立即排队，让序幕阅读时间覆盖生成延迟。
-        await narrativeCoordinator.ensure(traceId);
+        // Task 6: 开局存档已包含 ready 叙事 bundle，不再需要 ensure 排队。
         return {
           ok: true,
           revision: result.revision,

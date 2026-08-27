@@ -204,16 +204,13 @@ describe("createGame", () => {
     const openingNpcId = record.worldState.npcs[0]!.id;
     const generation = record.storyState.narrative;
 
-    expect(generation.status).toBe("provider_pending");
-    if (generation.status !== "provider_pending") return;
-    const job = generation.job;
-    expect(job).toMatchObject({
-      actionSummary: { kind: "talk", npcId: openingNpcId },
-      focusNpcId: openingNpcId,
-      generationKind: "opening",
-      resolvedEvent: { eventKind: "dialogue" },
-      sceneRequestKind: "opening",
-    });
+    // Task 6: 开局现在直接生成 ready 叙事 bundle，不再走 provider_pending
+    expect(generation.status).toBe("ready");
+    if (generation.status !== "ready") return;
+    expect(generation.currentScene.source).toBe("generated");
+    expect(generation.currentScene.npcLine?.npcId).toBe(openingNpcId);
+    expect(generation.currentScene.choices).toHaveLength(2);
+    expect(generation.choiceRegistry).toHaveLength(2);
   });
 
   it("honors every game type in compiled fallback structure and remains deterministic", async () => {

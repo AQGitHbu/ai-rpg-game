@@ -1,7 +1,7 @@
 import type { GameRepository } from "./server/persistence/gameRepository";
 import type { GameId } from "./server/persistence/gameRepository";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
-import type { NarrativeRuntimeState } from "@/game/domain/narrative";
+import type { NarrativeRuntimeState, NarrativeSceneState } from "@/game/domain/narrative";
 import type { GameTypeId, GameLength, GameSetup, NewGameInput } from "@/game/domain/newGame";
 import { validateNewGameInput } from "@/game/domain/newGame";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
@@ -20,6 +20,7 @@ import {
 import { asGenerationId } from "@/game/domain/worldEntity";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { createApprovedChoice, type ApprovedChoice } from "@/game/domain/approvedChoice";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import { AiGenerationError, type AiFailureKind } from "./aiGenerationFailure";
 import { runBoundedAttempts } from "@/game/core/retry";
@@ -254,49 +255,106 @@ export async function createGame(
     ...(accepted.attempt === 0 ? {} : { openingAttempt: accepted.attempt }),
   };
 
-  // Opening construction is atomic: create the provider-authorized job first,
-  // then compile StoryState with its final runtime instead of overwriting it.
+  // Task 6: 开局初始化为单一 ready bundle——不再创建 provider_pending 场景
+  // 和后续 ensure 调用。如果候选携带 firstScene，直接编译为 ready 状态；
+  // 否则回退到旧的 provider_pending 路径以保持兼容。
   const narrativeMode = deps.aiEnabled ? "ai" : "offline";
-  const jobResult = createPendingNarrativeJob({
-    jobId: asNarrativeJobId(`job_${input.seed}_0`),
-    turnId: asTurnId(`turn_${input.seed}_0`),
-    actionId: `start_${input.seed}`,
-    expectedRevision: 0,
-    turnNumber: 0,
-    actionSummary: { kind: "talk", npcId: OPENING_NPC_ID },
-    resolvedEvent: {
-      actionId: `start_${input.seed}`,
-      status: "success",
-      eventKind: "dialogue",
-      facts: [],
-      stateChanges: [],
-      costs: [],
-      rewards: [],
-      triggeredEvents: [],
-      rejectedEffects: [],
-    },
-    domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
-    focusNpcId: OPENING_NPC_ID,
-    requestedAt: deps.now(),
-    objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
-    mandatoryBeats: [],
-    generationKind: "opening",
-    sceneRequestKind: "opening",
-  });
-  if (!jobResult.ok) return { ok: false, code: "AI_GENERATION_FAILED", failureKind: "AI_RESPONSE_INVALID" };
+  const jobId = asNarrativeJobId(`job_${input.seed}_0`);
 
-  const initialNarrative = {
-    status: "provider_pending",
-    mode: narrativeMode,
-    job: jobResult.job,
-    lastPresentedScene: null,
-    dialogueSession: {
-      npcId: OPENING_NPC_ID,
-      turnCount: 0,
-      requiredTurns: 2,
-      completed: false,
-    },
-  } satisfies NarrativeRuntimeState;
+  let initialNarrative: NarrativeRuntimeState;
+  if (accepted.candidate.opening.firstScene !== undefined) {
+    const fs = accepted.candidate.opening.firstScene;
+    const factKeyToId = new Map<string, string>();
+    accepted.candidate.world.publicFacts.forEach((fact, index) => {
+      factKeyToId.set(fact.key, `fact_${index}`);
+    });
+    const usedFactIds = fs.npcLine.usedFactKeys
+      .map((key) => factKeyToId.get(key))
+      .filter((id): id is string => id !== undefined);
+
+    const sceneId = `scene-${String(jobId)}`;
+    const choiceRegistry: ApprovedChoice[] = [];
+    for (const choice of fs.choices) {
+      const approved = createApprovedChoice({
+        sceneId,
+        basedOnRevision: 0,
+        label: choice.label,
+        action: choice.candidateId === "support"
+          ? { type: "talk", npcId: OPENING_NPC_ID, dialogueAct: "support", utterance: "" }
+          : { type: "talk", npcId: OPENING_NPC_ID, dialogueAct: "challenge", utterance: "" },
+      });
+      if (!approved.ok) return { ok: false, code: "AI_GENERATION_FAILED", failureKind: "AI_RESPONSE_INVALID" };
+      choiceRegistry.push(approved.choice);
+    }
+
+    const currentScene: NarrativeSceneState = {
+      sceneId,
+      turn: 0,
+      narration: fs.narration,
+      usedFactIds: usedFactIds as never[],
+      npcLine: {
+        npcId: OPENING_NPC_ID,
+        text: fs.npcLine.text,
+        emotion: fs.npcLine.emotion,
+        usedFactIds: usedFactIds as never[],
+        answeredBeatIds: [],
+      },
+      choices: choiceRegistry.map((c) => ({
+        choiceToken: c.choiceToken,
+        label: c.label,
+      })),
+      source: "generated",
+    };
+
+    initialNarrative = {
+      status: "ready",
+      mode: narrativeMode,
+      currentScene,
+      choiceRegistry,
+    };
+  } else {
+    // Legacy path: candidate without firstScene → provider_pending
+    const jobResult = createPendingNarrativeJob({
+      jobId,
+      turnId: asTurnId(`turn_${input.seed}_0`),
+      actionId: `start_${input.seed}`,
+      expectedRevision: 0,
+      turnNumber: 0,
+      actionSummary: { kind: "talk", npcId: OPENING_NPC_ID },
+      resolvedEvent: {
+        actionId: `start_${input.seed}`,
+        status: "success",
+        eventKind: "dialogue",
+        facts: [],
+        stateChanges: [],
+        costs: [],
+        rewards: [],
+        triggeredEvents: [],
+        rejectedEffects: [],
+      },
+      domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
+      focusNpcId: OPENING_NPC_ID,
+      requestedAt: deps.now(),
+      objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
+      mandatoryBeats: [],
+      generationKind: "opening",
+      sceneRequestKind: "opening",
+    });
+    if (!jobResult.ok) return { ok: false, code: "AI_GENERATION_FAILED", failureKind: "AI_RESPONSE_INVALID" };
+
+    initialNarrative = {
+      status: "provider_pending",
+      mode: narrativeMode,
+      job: jobResult.job,
+      lastPresentedScene: null,
+      dialogueSession: {
+        npcId: OPENING_NPC_ID,
+        turnCount: 0,
+        requiredTurns: 2,
+        completed: false,
+      },
+    };
+  }
 
   const { worldState, storyState } = compileOpeningGenerationCandidate({
     candidate: accepted.candidate,
@@ -487,6 +545,18 @@ export function createFixtureOpeningSource(): OpeningGenerationSource {
             objective: { kind: "talk_to_opening_npc" },
           },
           variationProfile,
+          firstScene: {
+            narration: `${variant.venue}内光线昏暗，${variant.npc}见你走进来，放下手中的活计。`,
+            npcLine: {
+              text: `${variant.town}近来不太平。你要是来得巧，正好帮我看看这${variant.clue}的来路。`,
+              emotion: "guarded" as const,
+              usedFactKeys: ["fact_inn"],
+            },
+            choices: [
+              { candidateId: "support", label: "我来帮你查清这件事。" },
+              { candidateId: "challenge", label: "你先说清楚你自己跟这事有什么关系。" },
+            ],
+          },
         },
       };
     },
