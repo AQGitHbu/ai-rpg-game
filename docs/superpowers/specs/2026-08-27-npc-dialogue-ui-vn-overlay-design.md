@@ -11,9 +11,9 @@
 ### 1.1 范围内
 
 - `LocationSceneScreen.tsx` 中 `NpcDialogueModal`（约 :245-464）的布局与渲染重构
-- 等待快照 reducer（现 `LocationSceneScreen.tsx:31-47` 类型与 `:56-74` 函数）随组件迁移
+- 等待快照 reducer（现 `LocationSceneScreen.tsx:31-54` 类型与 `:56-74` 函数）随组件迁移
 - 对话期间场景面板取舍（隐藏右侧 NPC 侧栏与底部行动栏）
-- `GameSessionView.npcs[]` 新增 `relationshipTier` 只读投影字段
+- `GameSessionView.currentLocation.npcs[]` 新增 `relationshipTier` 只读投影字段
 - `globals.css` 新增对话覆盖层样式区块
 
 ### 1.2 明确不做
@@ -62,7 +62,7 @@
 采用方案 A（抽独立组件）：
 
 - 新增 `src/components/NpcDialogueOverlay.tsx`：取代 `NpcDialogueModal` 的全部渲染职责。接收 `NpcDialogueView` 数据与回调（`onSubmit`、`onAcknowledge`、`onClose`）、`phase`、等待快照相关 props（`pendingPlayerResponse`、`pendingChoiceToken`、`resetInputNonce`）、`gameType` 与新增的 `relationshipTier`。纯展示 + 局部交互状态，不访问 store、不生成/解析 token。
-- 等待快照 reducer（现 `LocationSceneScreen.tsx:31-47` 类型与 `:56-74` 函数）迁移至新组件文件（或其同目录私有模块），行为不变。
+- 等待快照 reducer（现 `LocationSceneScreen.tsx:31-54` 类型与 `:56-74` 函数）迁移至新组件文件（或其同目录私有模块），行为不变。
 - `LocationSceneScreen.tsx`：保留覆盖层显隐调度与对话数据装配；覆盖层打开时隐藏右侧 NPC 侧栏与底部行动栏的渲染。
 - 样式：在 `src/app/globals.css` 新增独立样式区块（项目规范：RPG 主题 CSS 集中于该文件），命名前缀 `npc-dialogue-overlay-*`。同时清理被取代的旧对话样式：现有对话样式分散于四处（约 `:1247-1487`、`:2873-2894`、`:3101-3126`、`:3430-3458`），其中 `npc-dialogue-pager`、`npc-dialogue-continue`、`npc-dialogue-next-step`、`npc-dialogue-reply`、`npc-dialogue-phase-label` 为零引用死样式，随本次重构删除；仍被其他界面使用的样式不删。
 
@@ -101,7 +101,7 @@
 ## 5. 数据流与 read model
 
 - 对话内容来源不变：`GameSessionView.narrative.npcDialogues`（`NpcDialogueView`：`speechPages` / `choices` / `freeInputEnabled` / `giveChoices` / `startChoice` / `handoffAcknowledgement`）。
-- 新增投影字段：`GameSessionView.npcs[]` 每项增加 `relationshipTier: RelationshipTier`（`"hostile" | "cold" | "neutral" | "friendly" | "trusted"`），由 `projectGameSessionView` 用现有纯函数 `relationshipTierOf(npc.memory.relationship)` 计算。只投影既有领域事实，不新增领域字段；旧存档缺省回落中立。
+- 新增投影字段：`GameSessionView.currentLocation.npcs[]` 每项增加 `relationshipTier: RelationshipTier`（`"hostile" | "cold" | "neutral" | "friendly" | "trusted"`），由 `projectGameSessionView` 用现有纯函数 `relationshipTierOf(npc.memory.relationship)` 计算。只投影既有领域事实，不新增领域字段；旧存档缺省回落中立由上游 worldState 迁移保证（`npc.memory.relationship` 在类型上必存在），投影层直接调用 `relationshipTierOf`，不做额外兜底。
 - 徽标取值规则：按当前显示对话的 `npcId` 从 `GameSessionView.currentLocation.npcs[]` 匹配 `relationshipTier`；该规则同时覆盖非焦点闲聊与 handoff 显示旧 NPC 台词的情况；匹配不到时隐藏徽标，不做默认值兜底。
 - 档位→中文文案映射在组件层（敌视/冷淡/中立/友善/信任），UI 永不显示原始数值，遵守现有"关系绝不裸给数字"约定。
 - `RelationshipTier` 类型经 `@/game/application` facade 导出供组件使用；组件不 import domain。
@@ -117,11 +117,11 @@
 ## 7. 测试策略
 
 - 新增 `src/components/NpcDialogueOverlay.test.tsx`（规范：新模块必须同目录测试）：
-  - 展示：首页台词且选项面板隐藏；翻到末页选项面板出现；名字横幅、好感度档位徽标、占位头像渲染；对话期间侧栏/行动栏隐藏。
+  - 展示：首页台词且选项面板隐藏；翻到末页选项面板出现；名字横幅、好感度档位徽标、占位头像渲染。
   - 交互：点击与键盘翻页；新台词到达重置页码；固定选项与自由输入经 `onSubmit` 提交；等待快照（台词 + 已选项 + 赠物可见且全部入口禁用）；handoff 确认关闭；"知道了"关闭；startChoice 空态。
-- 现有测试迁移：对话相关用例（约 20+ 例）位于 `AdventureGameShell.test.tsx`，迁入新测试文件并按新布局改写（新布局的 DOM 结构与查询方式必然变化，如等待态 spinner 断言）；`LocationSceneScreen.test.tsx` 仅有调查/行动栏用例，保持不动。
-- `gameSessionView.test.ts`：新增 `relationshipTier` 投影用例（五档边界值、旧存档缺省回落中立）；现有 fixture 已含 `relationship` 数据。
-- 行为回归：`AdventureGameShell.test.tsx` 中"焦点 NPC 恰好两个固定选择 + 一个自定义输入、同一请求 helper"的语义断言必须在迁移后的新测试中继续成立。
+- 现有测试适配：对话相关用例（约 20+ 例）是 `AdventureGameShell.test.tsx` 中的壳层集成用例（开局→地点→对话→回合），保留在原文件并按新 DOM 适配查询（新布局的 DOM 结构与查询方式必然变化，如等待态 spinner 断言），语义断言不变量必须继续成立；`NpcDialogueOverlay.test.tsx` 承担覆盖层单元级契约（展示/翻页/提交/等待快照/各状态）；`LocationSceneScreen.test.tsx` 新增对话期间侧栏/行动栏隐藏与徽标取值/隐藏的集成用例，既有调查/行动栏用例保持不动。
+- `gameSessionView.test.ts`：新增 `relationshipTier` 投影用例（五档边界值；旧存档缺省回落由上游迁移保证，投影层无兜底路径，不单独设例）；现有 fixture 已含 `relationship` 数据。
+- 行为回归：`AdventureGameShell.test.tsx` 中"焦点 NPC 恰好两个固定选择 + 一个自定义输入、同一请求 helper"的语义断言必须在适配后的壳层用例中继续成立。
 
 ### 验收门禁
 
