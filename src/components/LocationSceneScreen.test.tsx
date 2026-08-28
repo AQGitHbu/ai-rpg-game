@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { GameSessionView } from "@/game/application";
+import type { GameSessionView, NpcDialogueView } from "@/game/application";
 import { LocationSceneScreen } from "./LocationSceneScreen";
 
 /** 回归夹具：历史 view 仍可能带 investigate presentation，但地点页不再渲染它。 */
@@ -78,5 +78,55 @@ describe("LocationSceneScreen：调查和底部行动栏已移除", () => {
     const button = screen.getByRole("button", { name: "继续追查下一幕线索" });
     fireEvent.click(button);
     expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: "c_boundary" });
+  });
+});
+
+const veraAmbient: NpcDialogueView = {
+  npcId: "npc_1",
+  name: "薇拉",
+  role: "酒保女儿",
+  speechPages: ["最近来问井的事的人不少。"],
+  choices: [],
+  freeInputEnabled: false,
+  giveChoices: [],
+};
+
+function viewWithVeraDialogue(): GameSessionView {
+  const base = viewWithInvestigationApproaches();
+  return {
+    ...base,
+    currentLocation: {
+      ...base.currentLocation,
+      actions: [{ choiceToken: "c_boundary", label: "继续追查下一幕线索", presentation: "explore" }],
+      npcs: [{ npcId: "npc_1", name: "薇拉", role: "酒保女儿", talkChoice: null, relationshipTier: "friendly" }],
+    },
+    story: {
+      ...base.story,
+      currentObjectiveLabel: null,
+      currentObjectiveChoiceToken: null,
+      currentObjectiveChoiceTokens: [],
+    },
+    narrative: { ...base.narrative, mode: "ai", npcDialogues: [veraAmbient] },
+  };
+}
+
+describe("LocationSceneScreen：对话覆盖层集成", () => {
+  it("对话打开时隐藏侧栏与行动栏，徽标按显示 NPC 匹配档位文案", () => {
+    render(<LocationSceneScreen view={viewWithVeraDialogue()} busy={false} onSubmit={vi.fn()} onReturnMap={vi.fn()} />);
+    expect(screen.getByRole("dialog", { name: "与薇拉对话" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("场景人物")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "行动栏" })).toBeNull();
+    expect(screen.getByText(/薇拉 · 友善/)).toBeInTheDocument();
+  });
+
+  it("显示对话的 npcId 不在 currentLocation.npcs 时隐藏徽标", () => {
+    const base = viewWithVeraDialogue();
+    const view: GameSessionView = {
+      ...base,
+      currentLocation: { ...base.currentLocation, npcs: [] },
+    };
+    render(<LocationSceneScreen view={view} busy={false} onSubmit={vi.fn()} onReturnMap={vi.fn()} />);
+    expect(screen.getByRole("dialog", { name: "与薇拉对话" })).toBeInTheDocument();
+    expect(screen.queryByText(/友善/)).toBeNull();
   });
 });
