@@ -332,13 +332,16 @@ export function LocationSceneScreen({
     }
     return null;
   })();
-  const [dialogueUi, dispatchDialogueUi] = useReducer(reduceDialogueUiState, {
+  // 显式标注 reducer 初始态：既固定对话编排的起始形状，也让 brief 要求的
+  // DialogueUiState 导入保持有效引用。
+  const dialogueUiInitialState: DialogueUiState = {
     npcId: initialOpenDialogueNpcId,
     revision: view.revision,
     pendingPlayerResponse: null,
     pendingChoiceToken: null,
     pendingDialogue: null,
-  });
+  };
+  const [dialogueUi, dispatchDialogueUi] = useReducer(reduceDialogueUiState, dialogueUiInitialState);
   const openDialogueNpcId = dialogueUi.npcId;
   const [dialoguePhase, setDialoguePhase] = useState<DialoguePhase>("choice");
   const [dialogueInputResetNonce, setDialogueInputResetNonce] = useState(0);
