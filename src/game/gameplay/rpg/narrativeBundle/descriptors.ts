@@ -147,6 +147,30 @@ function choicesForNpc(npc: PreparedArrivalNpcContext | undefined, stepKey: stri
   ];
 }
 
+/**
+ * A bundle whose next formal decision is already in currentScene still needs
+ * server-authored actions.  The provider may supply only the two labels.
+ */
+function currentSceneChoicesFor(
+  worldState: WorldState,
+  objectives: readonly QuestObjective[],
+  startIndex: number,
+): readonly PreparedChoiceCandidate[] {
+  let index = startIndex;
+  while (index < objectives.length) {
+    const objective = objectives[index];
+    if (objective === undefined) return [];
+    if (objective.kind === "discover_fact") {
+      index += 1;
+      continue;
+    }
+    if (objective.kind !== "talk_to_npc") return [];
+    const npc = findNpc(worldState, objective.npcId);
+    return npc === undefined ? [] : choicesForNpc(preparedNpcContext(worldState, npc), "current_scene");
+  }
+  return [];
+}
+
 function groupKeyFor(
   questId: QuestId,
   objectiveIndex: number,
@@ -190,12 +214,12 @@ export function buildNarrativeBundleDescriptors(
   input: BuildNarrativeBundleDescriptorsInput,
 ): BundleDescriptorGraph {
   const { worldState, storyState, transition } = input;
-  if (transition.after === null) {
+  if (transition.mode === "ready_for_ending" || transition.after === null) {
     return {
       steps: [],
       activeStepKeys: [],
       currentChoiceCandidates: [],
-      terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+      terminal: { kind: "ending" },
     };
   }
 
@@ -238,15 +262,31 @@ export function buildNarrativeBundleDescriptors(
       return [];
     }
 
-    // talk_to_npc is the terminal — stop and mark as next decision.
-    // Its index is absorbed into the last created step.
+    // talk_to_npc is the terminal — attach its NPC authority and two formal
+    // responses to the preceding executable step.  That allows an item or
+    // battle resolution to be consumed without another AI call and still
+    // land on the server-owned dialogue boundary.
     if (objective.kind === "talk_to_npc") {
       const lastDesc = descriptors[descriptors.length - 1];
       if (lastDesc !== undefined) {
         const idx = descriptors.length - 1;
+        const npc = findNpc(worldState, objective.npcId);
+        const arrivalNpc = npc === undefined ? undefined : preparedNpcContext(worldState, npc);
         descriptors[idx] = {
           ...lastDesc,
           absorbedObjectiveIndexes: [...lastDesc.absorbedObjectiveIndexes, objectiveIndex],
+          authority: {
+            ...lastDesc.authority,
+            allowedEntityIds: [...new Set([
+              ...lastDesc.authority.allowedEntityIds,
+              ...(arrivalNpc === undefined ? [] : [String(arrivalNpc.id)]),
+            ])],
+            visibleFactIds: arrivalNpc === undefined
+              ? lastDesc.authority.visibleFactIds
+              : authorizedFactIdsForArrivalNpc(arrivalNpc),
+          },
+          ...(arrivalNpc === undefined ? {} : { arrivalNpc }),
+          choiceCandidates: choicesForNpc(arrivalNpc, lastDesc.stepKey),
         };
       }
       return [];
@@ -382,6 +422,13 @@ export function buildNarrativeBundleDescriptors(
         outcome: "victory",
       };
       const victoryKey = narrativeBundleTriggerKey(victoryTrigger);
+      const followup = activeQuest.objectives[objectiveIndex + 1];
+      const victoryNpc = followup?.kind === "talk_to_npc"
+        ? findNpc(worldState, followup.npcId)
+        : undefined;
+      const victoryNpcContext = victoryNpc === undefined
+        ? undefined
+        : preparedNpcContext(worldState, victoryNpc);
       descriptors.push({
         stepKey: victoryKey,
         objectiveKey: objectiveKey(activeQuest.id, objectiveIndex),
@@ -391,10 +438,14 @@ export function buildNarrativeBundleDescriptors(
         authority: {
           questId: activeQuest.id,
           objectiveIndex,
-          allowedEntityIds: entityIdsForObjective(objective),
-          visibleFactIds: [],
+          allowedEntityIds: [
+            ...entityIdsForObjective(objective),
+            ...(victoryNpcContext === undefined ? [] : [String(victoryNpcContext.id)]),
+          ],
+          visibleFactIds: victoryNpcContext === undefined ? [] : authorizedFactIdsForArrivalNpc(victoryNpcContext),
         },
-        choiceCandidates: [],
+        ...(victoryNpcContext === undefined ? {} : { arrivalNpc: victoryNpcContext }),
+        choiceCandidates: choicesForNpc(victoryNpcContext, victoryKey),
         nextStepKeys: [],
       });
       const nextStepKeys = buildObjective(objectiveIndex + 1, `${branchKey}v${victoryKey}`, [], activeQuest);
@@ -412,7 +463,11 @@ export function buildNarrativeBundleDescriptors(
   // Determine terminal
   const lastStep = descriptors[descriptors.length - 1];
   let terminal: NarrativeBundleTerminal;
-  const currentChoiceCandidates: readonly PreparedChoiceCandidate[] = [];
+  const currentChoiceCandidates = currentSceneChoicesFor(
+    worldState,
+    quest.objectives,
+    transition.after.objectiveIndex,
+  );
 
   if (descriptors.length === 0) {
     terminal = { kind: "next_decision", target: { kind: "current_scene" } };

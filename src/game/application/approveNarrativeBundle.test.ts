@@ -166,6 +166,30 @@ function validProposal(): NarrativeBundleProposal {
   };
 }
 
+function currentSceneProposal(): NarrativeBundleProposal {
+  return {
+    worldDelta: null,
+    currentScene: {
+      segments: [{ beatId: "atmosphere", text: "老乞丐抬眼看向你。" }],
+      npcLine: {
+        npcId: String(npcDyn1),
+        text: "你想问什么？",
+        emotion: "guarded",
+        answeredBeatIds: [],
+        usedFactIds: [],
+        usedInteractionActionIds: [],
+      },
+      objectiveLink: { questId: String(questId), objectiveIndex: 0, mode: "hint" },
+      choices: [
+        { candidateId: "current_scene_choice_1", label: "坦诚询问" },
+        { candidateId: "current_scene_choice_2", label: "试探追问" },
+      ],
+    },
+    continuationScenes: [],
+    terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+  };
+}
+
 function baseInput(overrides: Partial<ApproveNarrativeBundleInput> = {}): ApproveNarrativeBundleInput {
   return {
     proposal: validProposal(),
@@ -225,6 +249,159 @@ describe("approveNarrativeBundle", () => {
     };
     const result = approveNarrativeBundle(baseInput({ proposal }));
     expect(result.ok).toBe(false);
+  });
+
+  it("approves a current_scene terminal only when it provides both server candidates", () => {
+    const ws = worldState();
+    const directTalkWorld: WorldState = {
+      ...ws,
+      quests: [{
+        ...ws.quests[0]!,
+        objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }],
+      }],
+    };
+
+    const result = approveNarrativeBundle(baseInput({
+      proposal: currentSceneProposal(),
+      worldState: directTalkWorld,
+    }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.choiceRegistry).toHaveLength(2);
+    expect(result.approved.currentScene.choices).toHaveLength(2);
+    expect(result.approved.currentScene.event).toEqual({ kind: "dialogue", focusNpcId: npcDyn1 });
+  });
+
+  it("derives a dialogue boundary from server choices when the AI omits npcLine", () => {
+    const ws = worldState();
+    const directTalkWorld: WorldState = {
+      ...ws,
+      quests: [{ ...ws.quests[0]!, objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }] }],
+    };
+    const proposal = currentSceneProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: { ...proposal, currentScene: { ...proposal.currentScene, npcLine: null } },
+      worldState: directTalkWorld,
+    }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.currentScene.event).toEqual({ kind: "dialogue", focusNpcId: npcDyn1 });
+  });
+
+  it("rejects a current_scene terminal that omits one of the two candidates", () => {
+    const ws = worldState();
+    const directTalkWorld: WorldState = {
+      ...ws,
+      quests: [{
+        ...ws.quests[0]!,
+        objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }],
+      }],
+    };
+    const proposal = currentSceneProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: { ...proposal.currentScene, choices: [proposal.currentScene.choices[0]!] },
+      },
+      worldState: directTalkWorld,
+    }));
+
+    expect(result).toEqual({ ok: false, code: "bundle_invalid_scene" });
+  });
+
+  it("rejects a proposal terminal that does not match the server graph", () => {
+    const ws = worldState();
+    const directTalkWorld: WorldState = {
+      ...ws,
+      quests: [{
+        ...ws.quests[0]!,
+        objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }],
+      }],
+    };
+    const proposal = currentSceneProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: { ...proposal.currentScene, choices: [] },
+        terminal: { kind: "ending" },
+      },
+      worldState: directTalkWorld,
+    }));
+
+    expect(result).toEqual({ ok: false, code: "bundle_invalid_terminal" });
+  });
+
+  it("anchors an act-boundary bundle at the newly materialized first objective", () => {
+    const ws = worldState();
+    const preExpansionWorld: WorldState = {
+      ...ws,
+      locations: [{ ...ws.locations[0]!, connectedLocationIds: [] }],
+      npcs: [],
+      items: [],
+      enemies: [],
+      worldFacts: [],
+      quests: [{ ...ws.quests[0]!, status: "completed" }],
+    };
+    const ss: StoryState = {
+      ...storyState(),
+      currentAct: 2,
+      targetActs: 3,
+      evolution: {
+        ...storyState().evolution,
+        nextLocationOrdinal: 1,
+        nextNpcOrdinal: 1,
+        nextItemOrdinal: 1,
+        nextEnemyOrdinal: 1,
+        nextQuestOrdinal: 1,
+        status: "needs_next_act",
+      },
+    };
+    const proposal: NarrativeBundleProposal = {
+      worldDelta: {
+        beatSummary: "旧案把侠客引向镇外。",
+        newLocation: { name: "枯柳驿", description: "镇外荒废的驿站。", scale: "scene", placement: "world", connectFromLocationId: "loc_0" },
+        newNpc: { name: "老驼子", role: "守夜人", description: "守在驿站里的老人。", locationRef: { kind: "new_location" }, goals: ["守住秘密"] },
+        newItem: { name: "半块令牌", description: "断裂的旧令牌。", locationRef: "new_location" },
+        newEnemy: { name: "蒙面劫匪", tier: "normal", locationRef: "new_location" },
+        newFact: null,
+        nextMainQuest: { name: "枯柳驿线索", description: "前往枯柳驿调查。", objectiveText: "调查枯柳驿" },
+        endingPair: null,
+      },
+      currentScene: {
+        segments: [{ beatId: "closing", text: "旧人指向了镇外。" }],
+        npcLine: null,
+        objectiveLink: null,
+        choices: [],
+      },
+      continuationScenes: [{
+        stepKey: "move:loc_dyn_1",
+        scene: {
+          segments: [{ beatId: "arrival", text: "你来到枯柳驿。" }],
+          npcLine: { npcId: "npc_dyn_1", text: "来者何人？", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+          objectiveLink: null,
+          choices: [
+            { candidateId: "move:loc_dyn_1_choice_1", label: "表明身份" },
+            { candidateId: "move:loc_dyn_1_choice_2", label: "先行试探" },
+          ],
+        },
+      }],
+      terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: "move:loc_dyn_1" } },
+    };
+
+    const result = approveNarrativeBundle(baseInput({
+      proposal,
+      worldState: preExpansionWorld,
+      storyState: ss,
+      transition: { before: null, completed: [], after: null, mode: "advanced_act" },
+      evolutionNeed: { kind: "next_act", act: 2 },
+    }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.bundle.activeStepIds).toEqual(["move:loc_dyn_1"]);
+    expect(result.approved.choiceRegistry).toHaveLength(2);
   });
 
   it("does not expose partial result on failure", () => {

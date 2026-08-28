@@ -586,12 +586,12 @@ describe("canonical AI sources stay server-only and layered", () => {
       readFileSync(resolve(sourceRoot, "game/application/server/compositionRoot.ts"), "utf8")
     );
     expect(rootSpecifiers).toContain("../server/ai/sourceFactory");
-    expect(rootSpecifiers).toContain("../server/ai/intentParserSourceFactory");
+    expect(rootSpecifiers).not.toContain("../server/ai/intentParserSourceFactory");
     const factorySpecifiers = extractSpecifiers(
       readFileSync(resolve(sourceRoot, "game/application/server/ai/sourceFactory.ts"), "utf8")
     );
     expect(factorySpecifiers).toContain("./rpgAiClient");
-    expect(factorySpecifiers).toContain("./openingGenerationSource");
+    expect(factorySpecifiers).toContain("./liveNarrativeBundleSource");
 
     const clientSpecifiers = extractSpecifiers(
       readFileSync(resolve(sourceRoot, "game/application/server/ai/rpgAiClient.ts"), "utf8")

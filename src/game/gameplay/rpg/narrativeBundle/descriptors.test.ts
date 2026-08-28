@@ -200,6 +200,12 @@ describe("buildNarrativeBundleDescriptors", () => {
     expect(graph.steps).toHaveLength(2);
     expect(graph.steps[0]?.stepKey).toBe("move:loc_dyn_1");
     expect(graph.steps[1]?.stepKey).toBe("take_item:item_seal");
+    expect(graph.steps[1]?.arrivalNpc?.id).toBe(npcDyn1);
+    expect(graph.steps[1]?.choiceCandidates).toHaveLength(2);
+    expect(graph.terminal).toEqual({
+      kind: "next_decision",
+      target: { kind: "continuation_step", stepKey: "take_item:item_seal" },
+    });
   });
 
   it("generates battle_started followed only by battle_resolved:victory", () => {
@@ -229,6 +235,39 @@ describe("buildNarrativeBundleDescriptors", () => {
     expect(graph.steps[0]?.nextStepKeys).toEqual(["battle_resolved:victory:enemy_wolf"]);
   });
 
+  it("uses the post-victory talk objective as the battle bundle's formal decision", () => {
+    const ws = worldState({
+      enemies: [{
+        id: enemyWolf,
+        name: "野狼",
+        tier: "normal",
+        stats: { hp: 30, attack: 8, defense: 2 },
+        locationId: locDyn1,
+        tags: [],
+      }],
+      quests: [quest([
+        { kind: "defeat_enemy", enemyId: enemyWolf },
+        { kind: "talk_to_npc", npcId: npcDyn1 },
+      ])],
+    });
+
+    const graph = buildNarrativeBundleDescriptors({
+      worldState: ws,
+      storyState: storyState(),
+      transition: transition(0),
+    });
+
+    expect(graph.steps[1]?.stepKey).toBe("battle_resolved:victory:enemy_wolf");
+    expect(graph.steps[1]?.choiceCandidates.map((choice) => choice.candidateId)).toEqual([
+      "battle_resolved:victory:enemy_wolf_choice_1",
+      "battle_resolved:victory:enemy_wolf_choice_2",
+    ]);
+    expect(graph.terminal).toEqual({
+      kind: "next_decision",
+      target: { kind: "continuation_step", stepKey: "battle_resolved:victory:enemy_wolf" },
+    });
+  });
+
   it("returns empty graph when transition.after is null", () => {
     const graph = buildNarrativeBundleDescriptors({
       worldState: worldState(),
@@ -238,5 +277,49 @@ describe("buildNarrativeBundleDescriptors", () => {
 
     expect(graph.steps).toEqual([]);
     expect(graph.activeStepKeys).toEqual([]);
+    expect(graph.terminal).toEqual({ kind: "ending" });
+  });
+
+  it("makes a direct talk objective a current_scene formal decision with two server candidates", () => {
+    const ws = worldState({
+      quests: [quest([
+        { kind: "talk_to_npc", npcId: npcDyn1 },
+      ])],
+    });
+
+    const graph = buildNarrativeBundleDescriptors({
+      worldState: ws,
+      storyState: storyState(),
+      transition: transition(0),
+    });
+
+    expect(graph.steps).toEqual([]);
+    expect(graph.terminal).toEqual({
+      kind: "next_decision",
+      target: { kind: "current_scene" },
+    });
+    expect(graph.currentChoiceCandidates).toHaveLength(2);
+    expect(graph.currentChoiceCandidates.map((candidate) => candidate.candidateId)).toEqual([
+      "current_scene_choice_1",
+      "current_scene_choice_2",
+    ]);
+  });
+
+  it("declares an ending terminal when the rule transition is ready_for_ending", () => {
+    const graph = buildNarrativeBundleDescriptors({
+      worldState: worldState(),
+      storyState: storyState(),
+      transition: {
+        before: null,
+        completed: [],
+        after: { questId, objectiveIndex: 0, label: "终局" },
+        mode: "ready_for_ending",
+      },
+    });
+
+    expect(graph.steps).toEqual([]);
+    expect(graph.activeStepKeys).toEqual([]);
+    expect(graph.currentChoiceCandidates).toEqual([]);
+    expect(graph.terminal).toEqual({ kind: "ending" });
   });
 });

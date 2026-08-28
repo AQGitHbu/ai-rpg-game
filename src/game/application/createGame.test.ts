@@ -1,12 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { createGame, createFixtureOpeningSource, parseGameSetup } from "./createGame";
+import { describe, it, expect, vi } from "vitest";
+import { createGame, createFixtureOpeningCandidateSource, createFixtureOpeningSource, parseGameSetup } from "./createGame";
 import type { GameId, GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import { asGameId } from "./server/persistence/gameRepository";
 import type { GameLength, GameTypeId } from "@/game/domain/newGame";
 import { asEndingId } from "@/game/domain/worldEntity";
 import { createOpeningNoveltyRecord } from "@/game/domain/openingNovelty";
-import { createOpeningGenerationSource } from "./server/ai/openingGenerationSource";
-import type { AiTransport } from "@ai-game/ai-transport";
+import type { NarrativeBundleSourceContext } from "./narrativeBundleSource";
 
 function createInMemoryRepo(): { repo: GameRepository; getRecord: () => GameRecord | null } {
   let record: GameRecord | null = null;
@@ -90,21 +89,19 @@ describe("createGame", () => {
   it("检测到近期故事过于相似时重新请求，而不是覆盖 AI 的实体名称", async () => {
     const { repo, getRecord } = createInMemoryRepo();
     const fixture = createFixtureOpeningSource();
-    const duplicate = await fixture.generate({ gameType: "wuxia", gameLength: "short", seed: "novelty-seed", attempt: 0 });
+    const duplicate = await createFixtureOpeningCandidateSource().generate({ gameType: "wuxia", gameLength: "short", seed: "novelty-seed", attempt: 0 });
     const history = createOpeningNoveltyRecord({ candidate: duplicate, gameType: "wuxia", createdAt: "2026-01-01" });
     let calls = 0;
     let acceptedNpcName = "";
     const source = {
-      async generate(input: Parameters<typeof fixture.generate>[0]) {
+      async generate(context: NarrativeBundleSourceContext) {
         calls += 1;
-        if (calls === 1) return duplicate;
-        const next = await fixture.generate(input);
-        acceptedNpcName = next.opening.npc.name;
-        return next;
-      },
-      async generateFallback(input: Parameters<typeof fixture.generate>[0]) {
-        const next = await fixture.generate(input);
-        acceptedNpcName = next.opening.npc.name;
+        const next = await fixture.generate(context);
+        if (!next.ok || next.kind !== "opening") return next;
+        if (calls === 1) {
+          return { ...next, proposal: { ...next.proposal, opening: duplicate } };
+        }
+        acceptedNpcName = next.proposal.opening.opening.npc.name;
         return next;
       },
     };
@@ -129,16 +126,17 @@ describe("createGame", () => {
   it("live API 连续重复时返回稳定格式失败，而不接受重复候选", async () => {
     const { repo, getRecord } = createInMemoryRepo();
     const fixture = createFixtureOpeningSource();
-    const repeated = await fixture.generate({ gameType: "wuxia", gameLength: "short", seed: "live-repeat-seed", attempt: 0 });
+    const repeated = await createFixtureOpeningCandidateSource().generate({ gameType: "wuxia", gameLength: "short", seed: "live-repeat-seed", attempt: 0 });
     const history = createOpeningNoveltyRecord({ candidate: repeated, gameType: "wuxia", createdAt: "2026-01-01" });
     let calls = 0;
-    const transport = {
-      complete: async () => { calls += 1; return { ok: true, content: JSON.stringify(repeated), latencyMs: 1 }; },
-    } as unknown as AiTransport;
-    const source = createOpeningGenerationSource({
-      transport,
-      config: { baseUrl: "x", apiKey: "k", model: "m" },
-    });
+    const source = {
+      async generate(context: NarrativeBundleSourceContext) {
+        calls += 1;
+        const next = await fixture.generate(context);
+        if (!next.ok || next.kind !== "opening") return next;
+        return { ...next, proposal: { ...next.proposal, opening: repeated } };
+      },
+    };
     const result = await createGame(
       { gameId: asGameId("live-repeat"), gameType: "wuxia", gameLength: "short", seed: "live-repeat-seed" },
       {
@@ -323,6 +321,32 @@ describe("createGame", () => {
       expect(record!.worldState.locations.length).toBe(1);
       expect(record!.worldState.npcs.length).toBe(1);
       expect(record!.storyState.currentAct).toBe(1);
+    }
+  });
+
+  it("initialization invokes one opening bundle and persists its ready first decision", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const source = { generate: vi.fn(fixture.generate) };
+
+    const result = await createGame(
+      { gameId: asGameId("opening-one-bundle"), gameType: "wuxia", gameLength: "short", seed: "opening-one-bundle" },
+      { repository: repo, source, now: () => "2026-01-01", aiEnabled: true },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(source.generate).toHaveBeenCalledTimes(1);
+    expect(source.generate).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "opening",
+      jobId: "job_opening-one-bundle_0",
+    }));
+    const narrative = getRecord()!.storyState.narrative;
+    expect(narrative.status).toBe("ready");
+    if (narrative.status === "ready") {
+      expect(narrative.currentScene.source).toBe("generated");
+      expect(narrative.currentScene.npcLine?.npcId).toBe("npc_0");
+      expect(narrative.currentScene.choices).toHaveLength(2);
+      expect(narrative.choiceRegistry).toHaveLength(2);
     }
   });
 

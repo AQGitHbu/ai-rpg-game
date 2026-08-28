@@ -152,7 +152,7 @@ describe("sqliteGameRepository", () => {
       expect(current.record.gameId).toBe(gameId);
       expect(current.record.revision).toBe(0);
       expect(current.record.worldState.version).toBe(2);
-      expect(current.record.storyState.version).toBe(6);
+      expect(current.record.storyState.version).toBe(7);
     }
   });
 

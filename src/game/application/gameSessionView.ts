@@ -710,9 +710,15 @@ export function projectGameSessionView(
         )
       : [];
     // Task 9: No startChoice — NPC card click only opens metadata/dialogue panel.
+    // A provider may deliberately use pure narration for the decision beat
+    // and omit npcLine while still returning the two server-authorized talk
+    // choices.  The choices themselves establish the formal dialogue
+    // boundary; rendering them does not synthesize any NPC text.
     const formalDialogueReady = isFocus
-      && hasFormalFocusSpeech
-      && hasDisplayableSpeech;
+      && (
+        (hasFormalFocusSpeech && hasDisplayableSpeech)
+        || dialogueChoices.length === 2
+      );
     return {
       npcId: String(npc.id),
       name: npc.name,

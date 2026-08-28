@@ -9,6 +9,9 @@ import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import { createGame, createFixtureOpeningSource } from "./createGame";
+import { asGameId } from "./server/persistence/gameRepository";
+import { projectGameSessionView } from "./gameSessionView";
 
 function createMinimalWorldState(): WorldState {
   return createInitialWorldState({
@@ -78,7 +81,17 @@ function createInMemoryRepo(record: GameRecord | null): { repo: GameRepository; 
   let applyCount = 0;
   return {
     repo: {
-      async createInitialGame() { return { ok: true as const }; },
+      async createInitialGame(input) {
+        if (current !== null) return { ok: false as const, code: "ACTIVE_GAME_EXISTS" as const };
+        current = {
+          gameId: input.gameId,
+          worldState: input.worldState,
+          storyState: input.storyState,
+          revision: 0,
+          createdAt: input.createdAt,
+        };
+        return { ok: true as const };
+      },
       async getCurrentGame() {
         if (current === null) return { ok: true as const, status: "none" as const };
         return { ok: true as const, status: "active" as const, record: current };
@@ -228,5 +241,80 @@ describe("generatePendingNarrativeBundle", () => {
 
     // With 2 max attempts, source should be called twice
     expect(generateMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("forges generated current-scene choices for the revision that will be persisted", async () => {
+    const { repo, getRecord } = createInMemoryRepo(null);
+    const opening = await createGame(
+      { gameId: asGameId("revision-alignment"), gameType: "wuxia", gameLength: "short", seed: "revision-alignment" },
+      { repository: repo, source: createFixtureOpeningSource(), now: () => "2026-01-01", aiEnabled: true },
+    );
+    expect(opening.ok).toBe(true);
+    const initialized = getRecord();
+    if (initialized === null || initialized.storyState.narrative.status !== "ready") throw new Error("opening fixture missing");
+
+    const npc = initialized.worldState.npcs[0]!;
+    const quest = initialized.worldState.quests[0]!;
+    const pendingJob: PendingNarrativeJob = {
+      ...createPendingJob(),
+      focusNpcId: npc.id,
+      actionSummary: { kind: "talk", npcId: npc.id },
+      objectiveTransition: {
+        before: { questId: quest.id, objectiveIndex: 0, label: "与 NPC 交谈" },
+        completed: [],
+        after: { questId: quest.id, objectiveIndex: 0, label: "与 NPC 交谈" },
+        mode: "unchanged",
+      },
+    };
+    const pendingWrite = await repo.applyState({
+      gameId: initialized.gameId,
+      expectedRevision: initialized.revision,
+      nextWorldState: initialized.worldState,
+      nextStoryState: {
+        ...initialized.storyState,
+        narrative: {
+          status: "provider_pending",
+          mode: "ai",
+          job: pendingJob,
+          lastPresentedScene: initialized.storyState.narrative.currentScene,
+          dialogueSession: { npcId: npc.id, turnCount: 1, requiredTurns: 2, completed: false },
+        },
+      },
+    });
+    expect(pendingWrite.ok).toBe(true);
+
+    const source: NarrativeBundleSource = {
+      async generate() {
+        return {
+          ok: true,
+          kind: "decision",
+          proposal: {
+            worldDelta: null,
+            currentScene: {
+              segments: [{ beatId: "atmosphere", text: "老酒鬼放下酒坛，等你开口。" }],
+              npcLine: {
+                npcId: String(npc.id), text: "这件事不能在街上说。", emotion: "guarded",
+                answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [],
+              },
+              objectiveLink: null,
+              choices: [
+                { candidateId: "current_scene_choice_1", label: "请他细说。" },
+                { candidateId: "current_scene_choice_2", label: "追问酒钱的缘由。" },
+              ],
+            },
+            continuationScenes: [],
+            terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+          },
+        };
+      },
+    };
+
+    const generated = await generatePendingNarrativeBundle({ repository: repo, source, now: () => "2026-01-01" });
+    expect(generated.ok).toBe(true);
+    const saved = getRecord();
+    if (saved === null || saved.storyState.narrative.status !== "ready") throw new Error("generated bundle missing");
+    expect(saved.storyState.narrative.choiceRegistry.every((choice) => choice.basedOnRevision === saved.revision)).toBe(true);
+    expect(saved.storyState.narrative.dialogueSession).toEqual({ npcId: npc.id, turnCount: 1, requiredTurns: 2, completed: false });
+    expect(projectGameSessionView(saved.worldState, saved.storyState, saved.revision, "test-session").narrative.npcDialogues[0]?.choices).toHaveLength(2);
   });
 });

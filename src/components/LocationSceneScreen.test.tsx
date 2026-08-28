@@ -79,4 +79,54 @@ describe("LocationSceneScreen：调查和底部行动栏已移除", () => {
     fireEvent.click(button);
     expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: "c_boundary" });
   });
+
+  it("renders the rule-owned battle start action without exposing general action clutter", () => {
+    const onSubmit = vi.fn();
+    const view: GameSessionView = {
+      ...viewWithInvestigationApproaches(),
+      currentLocation: {
+        ...viewWithInvestigationApproaches().currentLocation,
+        actions: [{ choiceToken: "c_battle", label: "挑战黑衣夜行者", presentation: "battle" }],
+      },
+      story: {
+        ...viewWithInvestigationApproaches().story,
+        currentObjectiveLabel: "击败黑衣夜行者",
+        currentObjectiveChoiceToken: "c_battle",
+        currentObjectiveChoiceTokens: ["c_battle"],
+      },
+    };
+
+    render(<LocationSceneScreen view={view} busy={false} onSubmit={onSubmit} onReturnMap={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "挑战黑衣夜行者" }));
+    expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: "c_battle" });
+    expect(screen.queryByRole("button", { name: "沿痕迹追查" })).not.toBeInTheDocument();
+  });
+
+  it("hides the next-act explore action when a pre-generated formal dialogue pair is ready", () => {
+    const base = viewWithInvestigationApproaches();
+    const view: GameSessionView = {
+      ...base,
+      currentLocation: {
+        ...base.currentLocation,
+        actions: [{ choiceToken: "c_boundary", label: "继续追查下一幕线索", presentation: "explore" }],
+      },
+      narrative: {
+        ...base.narrative,
+        npcDialogues: [{
+          npcId: "npc_1", name: "线人", role: "镖局旧人", speechPages: ["我有话要说。"],
+          choices: [
+            { choiceToken: "c_dialogue_1", label: "追问线索", presentation: "dialogue" },
+            { choiceToken: "c_dialogue_2", label: "先表明来意", presentation: "dialogue" },
+          ],
+          freeInputEnabled: true,
+          giveChoices: [],
+        }],
+      },
+    };
+
+    render(<LocationSceneScreen view={view} busy={false} onSubmit={vi.fn()} onReturnMap={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: "继续追查下一幕线索" })).not.toBeInTheDocument();
+  });
 });

@@ -22,10 +22,10 @@ describe("provider trigger architecture boundary", () => {
     expect(source).not.toMatch(/shouldCompleteSceneInAction|immediateSceneResult|battleScenePrewarm/);
   });
 
-  it("keeps free-text intent conversion as performTurn's only provider capability", () => {
+  it("keeps free-text conversion free of an independent intent provider", () => {
     const source = read("src/game/application/performTurn.ts");
-    expect(source).toMatch(/IntentParserSource/);
-    expect(occurrences(source, "intentParserSource")).toBeGreaterThan(0);
+    expect(source).not.toMatch(/IntentParserSource|buildIntentContext|createIntentParser/);
+    expect(source).toMatch(/targetNpcId/);
   });
 
   it("exposes the additive decision-boundary whitelist", () => {

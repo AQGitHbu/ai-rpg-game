@@ -10,7 +10,7 @@ import { parseAiRuntimeConfig } from "./aiRuntimeConfig";
 import { createProviderRequestOptions, type ProviderJsonMode, type ProviderThinking } from "./providerRequestOptions";
 import type { AiRetryContext, AiTextAuditContext, AiTextAuditRecorder, AiTextAuditRequestOptions, AiTextAuditRole } from "./textAuditTypes";
 
-export const RPG_AI_ROLES = ["intent", "opening", "scene", "world"] as const;
+export const RPG_AI_ROLES = ["intent", "opening", "scene", "world", "narrative_bundle"] as const;
 /** Reuses the AiTextAuditRole union from textAuditTypes.ts; textAuditTypes never imports rpgAiClient, eliminating a type-cycle. */
 export type RpgAiRole = AiTextAuditRole;
 export type RpgAiThinking = ProviderThinking;

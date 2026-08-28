@@ -1,6 +1,5 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
-import type { Action } from "@/game/domain/action";
 import type { EvolutionNeed, WorldDeltaProposal, ApprovedWorldDelta } from "@/game/domain/worldDelta";
 import type { NarrativeJobId } from "@/game/domain/events";
 import type {
@@ -12,7 +11,7 @@ import type {
   BundleSceneProposal,
   BundleStepProposal,
 } from "@/game/domain/narrativeBundle";
-import { parseNarrativeBundleProposal, narrativeBundleTriggerKey } from "@/game/domain/narrativeBundle";
+import { parseNarrativeBundleProposal } from "@/game/domain/narrativeBundle";
 import type {
   NarrativeSceneState,
   NarrativeNpcLineState,
@@ -93,6 +92,7 @@ function buildSceneFromProposal(
   sceneId: string,
   turn: number,
   trigger?: NarrativeBundleTrigger,
+  dialogueFocusNpcId?: NarrativeNpcLineState["npcId"],
 ): NarrativeSceneState {
   const narration = proposal.segments.map((s) => s.text).join("\n");
   const npcLine: NarrativeNpcLineState | null = proposal.npcLine === null
@@ -104,7 +104,16 @@ function buildSceneFromProposal(
         usedFactIds: proposal.npcLine.usedFactIds.map((id: string) => id as never),
         answeredBeatIds: [...proposal.npcLine.answeredBeatIds],
       };
-  const event = trigger === undefined ? undefined : eventForTrigger(trigger);
+  // The current-scene terminal is itself a formal NPC decision boundary.
+  // Unlike continuation steps it has no trigger, so derive its dialogue
+  // marker from the approved focused line and pair of server candidates.
+  const event = trigger === undefined
+    ? dialogueFocusNpcId !== undefined
+      ? { kind: "dialogue" as const, focusNpcId: dialogueFocusNpcId }
+      : npcLine !== null && proposal.choices.length === 2
+        ? { kind: "dialogue" as const, focusNpcId: npcLine.npcId }
+      : undefined
+    : eventForTrigger(trigger);
   return {
     sceneId,
     turn,
@@ -196,6 +205,30 @@ function resolveTerminalState(
   };
 }
 
+function terminalsMatch(
+  proposal: NarrativeBundleProposal["terminal"],
+  graph: BundleDescriptorGraph["terminal"],
+): boolean {
+  if (proposal.kind !== graph.kind) return false;
+  if (proposal.kind === "ending") return true;
+  if (graph.kind === "ending") return false;
+  if (proposal.target.kind !== graph.target.kind) return false;
+  if (proposal.target.kind === "current_scene") return true;
+  if (graph.target.kind !== "continuation_step") return false;
+  return proposal.target.stepKey === graph.target.stepKey;
+}
+
+function hasExactChoiceCandidates(
+  choices: BundleSceneProposal["choices"],
+  candidates: readonly BundleStepDescriptor["choiceCandidates"][number][],
+): boolean {
+  if (choices.length !== 2 || candidates.length !== 2) return false;
+  const choiceIds = choices.map((choice) => choice.candidateId);
+  if (new Set(choiceIds).size !== 2) return false;
+  const candidateIds = candidates.map((candidate) => candidate.candidateId);
+  return candidateIds.every((candidateId) => choiceIds.includes(candidateId));
+}
+
 export function approveNarrativeBundle(
   input: ApproveNarrativeBundleInput,
 ): ApproveNarrativeBundleResult {
@@ -233,11 +266,30 @@ export function approveNarrativeBundle(
     previewStoryState = approvedDelta.previewStoryState;
   }
 
-  // Step 3: Build descriptors from preview state
+  // Step 3: Build descriptors from preview state.  At a natural act boundary
+  // the rule turn has no `after` objective yet; materializing the approved
+  // next-act delta is what supplies that first objective.  Re-root the
+  // descriptor projection at the server-owned reveal cursor so the newly
+  // created arrival step is validated rather than being mistaken for an end.
+  const nextActReveal = previewStoryState.reveal;
+  const descriptorTransition: ObjectiveTransition = transition.after === null
+    && evolutionNeed.kind === "next_act"
+    && nextActReveal !== null
+    && nextActReveal !== undefined
+    ? {
+        ...transition,
+        after: {
+          questId: nextActReveal.questId,
+          objectiveIndex: nextActReveal.visibleObjectiveIndex,
+          label: "next_act_arrival",
+        },
+        mode: "advanced_act",
+      }
+    : transition;
   const graph = buildNarrativeBundleDescriptors({
     worldState: previewWorldState,
     storyState: previewStoryState,
-    transition,
+    transition: descriptorTransition,
   });
 
   // Step 4: Validate coverage
@@ -276,12 +328,26 @@ export function approveNarrativeBundle(
     }
   }
 
+  if (!terminalsMatch(proposal.terminal, graph.terminal)) {
+    return { ok: false, code: "bundle_invalid_terminal" };
+  }
+
   // Step 6: Build current scene
   const sceneId = `scene-${String(jobId)}`;
+  const firstCurrentChoice = graph.currentChoiceCandidates[0];
+  const currentDialogueFocusNpcId = graph.terminal.kind === "next_decision"
+    && graph.terminal.target.kind === "current_scene"
+    && graph.currentChoiceCandidates.length === 2
+    && graph.currentChoiceCandidates.every((candidate) => candidate.action.type === "talk")
+    && firstCurrentChoice?.action.type === "talk"
+    ? firstCurrentChoice.action.npcId
+    : undefined;
   const currentScene = buildSceneFromProposal(
     proposal.currentScene,
     sceneId,
     basedOnRevision,
+    undefined,
+    currentDialogueFocusNpcId,
   );
 
   // Step 7: Build choice registry from terminal
@@ -294,9 +360,14 @@ export function approveNarrativeBundle(
     if (terminalDescriptor === undefined) {
       return { ok: false, code: "bundle_invalid_terminal" };
     }
-    // Build choices from terminal descriptor candidates
-    const proposalChoiceMap = new Map(proposal.continuationScenes
-      .find((s) => s.stepKey === targetStepKey)?.scene.choices.map((c: { candidateId: string; label: string }) => [c.candidateId, c.label]) ?? []);
+    const terminalProposal = proposal.continuationScenes
+      .find((step) => step.stepKey === targetStepKey);
+    if (terminalProposal === undefined
+      || !hasExactChoiceCandidates(terminalProposal.scene.choices, terminalDescriptor.choiceCandidates)) {
+      return { ok: false, code: "bundle_invalid_scene" };
+    }
+    const proposalChoiceMap = new Map(terminalProposal.scene.choices
+      .map((choice) => [choice.candidateId, choice.label]));
     for (const candidate of terminalDescriptor.choiceCandidates) {
       const label = proposalChoiceMap.get(candidate.candidateId);
       if (label === undefined) {
@@ -314,20 +385,18 @@ export function approveNarrativeBundle(
       choiceRegistry.push(approved.choice);
     }
   } else if (terminal.kind === "next_decision" && terminal.target.kind === "current_scene") {
-    // Current scene has the choices
-    for (const choice of proposal.currentScene.choices) {
-      // For current_scene terminal, choices are just label/candidateId pairs
-      // The action is derived from the descriptor's currentChoiceCandidates
-      const matchingCandidate = graph.currentChoiceCandidates.find(
-        (c) => c.candidateId === choice.candidateId,
-      );
-      if (matchingCandidate === undefined) {
-        return { ok: false, code: "bundle_invalid_scene" };
-      }
+    if (!hasExactChoiceCandidates(proposal.currentScene.choices, graph.currentChoiceCandidates)) {
+      return { ok: false, code: "bundle_invalid_scene" };
+    }
+    const proposalChoiceMap = new Map(proposal.currentScene.choices
+      .map((choice) => [choice.candidateId, choice.label]));
+    for (const matchingCandidate of graph.currentChoiceCandidates) {
+      const label = proposalChoiceMap.get(matchingCandidate.candidateId);
+      if (label === undefined) return { ok: false, code: "bundle_invalid_scene" };
       const approved = createApprovedChoice({
         sceneId,
         basedOnRevision,
-        label: choice.label,
+        label,
         action: matchingCandidate.action,
       });
       if (!approved.ok) {

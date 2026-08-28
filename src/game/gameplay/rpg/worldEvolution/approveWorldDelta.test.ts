@@ -724,19 +724,19 @@ describe("act objective shape variants", () => {
 
   it("full_chain 保留全部五类目标且先抵达新地点", () => {
     const kinds = deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "full_chain")!.map((objective) => objective.kind);
-    expect(kinds).toEqual(["visit_location", "discover_fact", "talk_to_npc", "obtain_item", "defeat_enemy"]);
+    expect(kinds).toEqual(["visit_location", "discover_fact", "talk_to_npc", "obtain_item", "defeat_enemy", "talk_to_npc"]);
   });
 
-  it("investigation_focus 去掉移动与战斗，保留调查-交谈-取证；物化新地点时链首强制保留抵达", () => {
+  it("investigation_focus 去掉移动与战斗，取证后接正式对话；物化新地点时链首强制保留抵达", () => {
     const kinds = deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "investigation_focus")!.map((objective) => objective.kind);
-    expect(kinds).toEqual(["visit_location", "discover_fact", "talk_to_npc", "obtain_item"]);
+    expect(kinds).toEqual(["visit_location", "discover_fact", "talk_to_npc", "obtain_item", "talk_to_npc"]);
   });
 
   it("confrontation_focus 保留调查-交谈-对峙；errand_focus 保留移动-交谈-取证", () => {
     expect(deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "confrontation_focus")!.map((o) => o.kind))
-      .toEqual(["visit_location", "discover_fact", "talk_to_npc", "defeat_enemy"]);
+      .toEqual(["visit_location", "discover_fact", "talk_to_npc", "defeat_enemy", "talk_to_npc"]);
     expect(deriveActObjectives(FULL_PROPOSAL, FULL_IDS, "errand_focus")!.map((o) => o.kind))
-      .toEqual(["visit_location", "talk_to_npc", "obtain_item"]);
+      .toEqual(["visit_location", "talk_to_npc", "obtain_item", "talk_to_npc"]);
   });
 
   it("变体过滤后为空时回退全程链（提案只有 newLocation+newItem 时 confrontation_focus 无可保留项）", () => {

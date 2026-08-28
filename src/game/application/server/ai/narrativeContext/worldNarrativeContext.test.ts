@@ -159,7 +159,7 @@ function makeWorldContext(need: EvolutionNeed) {
       eventLedger: [],
     },
     storyState: {
-      version: 6,
+      version: 7,
       turnNumber: 7,
       currentAct: 2,
       targetActs: 3,

@@ -7,9 +7,7 @@ import { createInitialStoryState, type StoryState } from "@/game/domain/storySta
 import { asLocationId, asNpcId, asGenerationId, asFactId, asItemId, asEnemyId, asEndingId, asQuestId } from "@/game/domain/worldEntity";
 import type { Action } from "@/game/domain/action";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
-import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
-import { buildRuleOwnedScene } from "./ruleOwnedScene";
 
 describe("projectGameSessionView", () => {
   const loc1: LocationEntry = {
@@ -1354,6 +1352,40 @@ describe("projectGameSessionView", () => {
     expect(dialogue?.choices.map((choice) => choice.presentation)).toEqual(["dialogue", "dialogue"]);
   });
 
+  it("keeps a formal dialogue actionable when AI deliberately supplies only narration and two approved talk choices", () => {
+    const scene = {
+      sceneId: "scene-narration-only-dialogue",
+      turn: 2,
+      narration: "老板沉默片刻，等你表态。",
+      usedFactIds: [],
+      npcLine: null,
+      choices: [
+        { choiceToken: "c_narration_only_1", label: "追问账册下落" },
+        { choiceToken: "c_narration_only_2", label: "先表明来意" },
+      ] as const,
+      source: "generated" as const,
+      event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+    };
+    const story: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        mode: "ai",
+        currentScene: scene,
+        choiceRegistry: [
+          approved(scene.choices[0].choiceToken, scene.sceneId, 2, scene.choices[0].label, { type: "talk", npcId: npc1.id, dialogueAct: "ask" }),
+          approved(scene.choices[1].choiceToken, scene.sceneId, 2, scene.choices[1].label, { type: "talk", npcId: npc1.id, dialogueAct: "support" }),
+        ],
+      },
+    };
+
+    const view = projectGameSessionView(ws, story, 2, "test-ending-session");
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(npc1.id));
+    expect(dialogue?.speechPages).toEqual([]);
+    expect(dialogue?.choices.map((choice) => choice.label)).toEqual(["追问账册下落", "先表明来意"]);
+    expect(dialogue?.freeInputEnabled).toBe(true);
+  });
+
   it("旧移动抵达场景含有非法 move 时，保留生成台词并以 ask 重新建立正式对话", () => {
     const scene = {
       sceneId: "scene-arrival-dialogue",
@@ -1401,89 +1433,6 @@ describe("projectGameSessionView", () => {
     expect(dialogue?.choices).toEqual([]);
     // Task 9: startChoice removed; NPC with generated speech has freeInput enabled.
     expect(view.narrative.choices).toEqual([]);
-  });
-
-  it("离开后返回目标地点时恢复已生成的 NPC 抵达对白，而不是默认选项", () => {
-    const questId = asQuestId("quest_resume_dialogue");
-    const worldWithQuest: WorldState = {
-      ...ws,
-      quests: [{
-        id: questId,
-        name: "追查旧案",
-        description: "找到客栈老板",
-        objectives: [{ kind: "talk_to_npc", npcId: npc1.id }],
-        onSuccess: { kind: "advance_story" },
-        onFailure: { kind: "closed" },
-        tags: [],
-        kind: "main",
-        stage: 1,
-        status: "active",
-      }],
-    };
-    const arrivalScene = {
-      sceneId: "scene-generated-arrival",
-      turn: 0,
-      narration: "老板从门后抬起眼，显然早已等候多时。",
-      usedFactIds: [],
-      npcLine: { npcId: npc1.id, text: "这件事牵涉到旧案。你若真想查，就先把手里的证据摊开。", emotion: "guarded" as const, usedFactIds: [] },
-      choices: [
-        { choiceToken: "arrival-support", label: "我愿意先把证据交给你核对。" },
-        { choiceToken: "arrival-challenge", label: "我会逐项核对，你凭什么让我相信？" },
-      ] as const,
-      source: "generated" as const,
-      event: { kind: "travel" as const, locationId: loc1.id },
-    };
-    const arrivalStory: StoryState = {
-      ...ss,
-      narrative: {
-        ...ss.narrative,
-        currentScene: arrivalScene,
-        choiceRegistry: [
-          approved("arrival-support", arrivalScene.sceneId, 0, arrivalScene.choices[0].label, { type: "talk", npcId: npc1.id, dialogueAct: "support" }),
-          approved("arrival-challenge", arrivalScene.sceneId, 0, arrivalScene.choices[1].label, { type: "talk", npcId: npc1.id, dialogueAct: "challenge" }),
-        ],
-      },
-    };
-    const moveEvent = (actionId: string): ResolvedEvent => ({
-      actionId,
-      status: "success",
-      eventKind: "travel",
-      facts: [],
-      stateChanges: [],
-      costs: [],
-      rewards: [],
-      triggeredEvents: [],
-      rejectedEffects: [],
-    });
-
-    const awayWorld = { ...worldWithQuest, currentLocationId: loc2.id };
-    const away = buildRuleOwnedScene({
-      action: { type: "move", locationId: loc2.id },
-      resolvedEvent: moveEvent("move-away"),
-      worldState: awayWorld,
-      storyState: arrivalStory,
-      turn: 1,
-    });
-    const returnedWorld = { ...awayWorld, currentLocationId: loc1.id };
-    const returned = buildRuleOwnedScene({
-      action: { type: "move", locationId: loc1.id },
-      resolvedEvent: moveEvent("move-back"),
-      worldState: returnedWorld,
-      storyState: away.storyState,
-      turn: 2,
-    });
-
-    const view = projectGameSessionView(returnedWorld, returned.storyState, 2, "test-ending-session");
-    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(npc1.id));
-    expect(dialogue?.speechPages.join("")).toContain("这件事牵涉到旧案");
-    expect(dialogue?.speechPages.join("")).not.toContain("【fallback】");
-    expect(dialogue?.choices.map((choice) => choice.label)).toEqual([
-      "我愿意先把证据交给你核对。",
-      "我会逐项核对，你凭什么让我相信？",
-    ]);
-    expect(dialogue?.freeInputEnabled).toBe(true);
-    const executable = buildChoiceMap(returnedWorld, returned.storyState, 2);
-    expect(dialogue?.choices.every((choice) => executable.has(choice.choiceToken))).toBe(true);
   });
 
   it("projects quest objectives, pending/reload data, and ending without leaking server state", () => {

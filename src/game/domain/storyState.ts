@@ -11,7 +11,7 @@ import type { QuestId } from "./worldEntity";
 // 结构化候选事件契约由 candidateEvent.ts 定义并在此再导出，保持既有调用点兼容。
 export type { EventCandidate, EventCandidateKind, ProposedEffect } from "./candidateEvent";
 
-export const STORY_STATE_SCHEMA_VERSION = 6 as const;
+export const STORY_STATE_SCHEMA_VERSION = 7 as const;
 
 export type StoryStateSchemaVersionErrorCode =
   | "UNSUPPORTED_RECORD"
@@ -31,7 +31,7 @@ export function classifyStoryStateSchemaVersion(
   if (version === STORY_STATE_SCHEMA_VERSION) {
     return { ok: true, version: STORY_STATE_SCHEMA_VERSION };
   }
-  if (version === 2 || version === 3 || version === 4 || version === 5) {
+  if (version === 2 || version === 3 || version === 4 || version === 5 || version === 6) {
     return { ok: false, code: "UNSUPPORTED_RECORD" };
   }
   return { ok: false, code: "UNSUPPORTED_STORY_STATE_VERSION" };

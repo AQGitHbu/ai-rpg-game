@@ -37,6 +37,13 @@ describe("createRpgAiClient", () => {
     expect(RPG_AI_DEFAULT_POLICIES.scene).toMatchObject({ thinking: "off", maxTokens: 3_000, maxAttempts: 2 });
     expect(RPG_AI_DEFAULT_POLICIES.world).toMatchObject({ thinking: "off", maxTokens: 3_200, maxAttempts: 3 });
     expect(RPG_AI_DEFAULT_POLICIES.opening).toMatchObject({ thinking: "off", maxTokens: 5_000 });
+    expect(RPG_AI_DEFAULT_POLICIES.narrative_bundle).toMatchObject({ thinking: "off", maxTokens: 8_000, maxAttempts: 2 });
+
+    const client = createRpgAiClient({
+      transport: transportFor(async () => ({ ok: true as const, content: "{}", latencyMs: 1 })),
+      config,
+    });
+    expect(client.policy("narrative_bundle")).toMatchObject({ maxAttempts: 2, maxTokens: 8_000 });
   });
 
   it("builds DeepSeek thinking and JSON options from the selected role policy", async () => {

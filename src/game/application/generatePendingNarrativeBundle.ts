@@ -3,13 +3,10 @@ import type { NarrativeBundleSource } from "./narrativeBundleSource";
 import { approveNarrativeBundle, type ApprovedNarrativeBundle } from "./approveNarrativeBundle";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { GameLogger } from "@/game/logging";
-import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
-import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { NarrativeRuntimeState } from "@/game/domain/narrative";
-import type { NarrativeBundleState } from "@/game/domain/narrativeBundle";
 import { runBoundedAttempts } from "@/game/core/retry";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 
@@ -38,7 +35,7 @@ export type GeneratePendingNarrativeBundleDeps = {
 
 function deriveEvolutionNeed(storyState: StoryState): EvolutionNeed {
   if (storyState.evolution.status === "needs_next_act") {
-    return { kind: "next_act", act: storyState.currentAct + 1 };
+    return { kind: "next_act", act: storyState.currentAct };
   }
   if (storyState.evolution.status === "needs_ending_pair") {
     return { kind: "ending_pair", finalAct: storyState.targetActs };
@@ -81,7 +78,15 @@ export async function generatePendingNarrativeBundle(
         worldState,
         storyState,
         job,
-        ...(deps.auditLink === undefined ? {} : { auditLink: deps.auditLink }),
+        auditLink: {
+          ...(deps.auditLink ?? {}),
+          gameId: String(record.gameId),
+          jobId: String(job.jobId),
+          turnNumber: job.turnNumber,
+          retry: repairHint === undefined
+            ? (deps.auditLink?.retry ?? { origin: "normal", mechanism: "initial", attempt: 0 })
+            : { origin: deps.auditLink?.retry?.origin ?? "normal", mechanism: "content_repair", attempt: repairHint.attempt, reason: repairHint.reason },
+        },
         ...(repairHint === undefined ? {} : { contentRepair: repairHint }),
       });
 
@@ -99,7 +104,10 @@ export async function generatePendingNarrativeBundle(
         transition,
         evolutionNeed,
         jobId: job.jobId,
-        basedOnRevision: record.revision,
+        // applyState commits the approved scene in the next record revision.
+        // Choice tokens must be forged against that revision, otherwise the
+        // read model correctly treats every newly-generated choice as stale.
+        basedOnRevision: record.revision + 1,
         now: deps.now,
         ...(deps.auditLink === undefined ? {} : { auditLink: deps.auditLink }),
       });
@@ -154,9 +162,10 @@ export async function generatePendingNarrativeBundle(
     mode: narrative.mode,
     currentScene: approved.currentScene,
     choiceRegistry: approved.choiceRegistry,
-    ...(approved.bundle.steps.length > 0
-      ? {} // Bundle steps exist - they carry continuation data
-      : {}),
+    narrativeBundle: approved.bundle,
+    ...(narrative.dialogueSession === undefined
+      ? {}
+      : { dialogueSession: narrative.dialogueSession }),
   };
 
   // The next story state includes the new world state from the bundle,

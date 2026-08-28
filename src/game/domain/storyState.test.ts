@@ -30,16 +30,16 @@ const initialInput = {
 } as const;
 
 describe("StoryState", () => {
-  it("initializes the v6 schema at turn zero with the supplied runtime", () => {
+  it("initializes the v7 schema at turn zero with the supplied runtime", () => {
     const ss = createInitialStoryState(initialInput);
 
-    expect(STORY_STATE_SCHEMA_VERSION).toBe(6);
-    expect(ss.version).toBe(6);
+    expect(STORY_STATE_SCHEMA_VERSION).toBe(7);
+    expect(ss.version).toBe(7);
     expect(ss.turnNumber).toBe(0);
     expect(ss.narrative).toBe(initialNarrative);
   });
 
-  it("classifies legacy v2/v3/v4/v5 without silently migrating them", () => {
+  it("classifies legacy v2/v3/v4/v5/v6 without silently migrating them", () => {
     expect(classifyStoryStateSchemaVersion(2)).toEqual({
       ok: false,
       code: "UNSUPPORTED_RECORD",
@@ -57,8 +57,12 @@ describe("StoryState", () => {
       code: "UNSUPPORTED_RECORD",
     });
     expect(classifyStoryStateSchemaVersion(6)).toEqual({
+      ok: false,
+      code: "UNSUPPORTED_RECORD",
+    });
+    expect(classifyStoryStateSchemaVersion(7)).toEqual({
       ok: true,
-      version: 6,
+      version: 7,
     });
   });
 

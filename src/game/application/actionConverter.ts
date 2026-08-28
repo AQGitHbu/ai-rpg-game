@@ -1,28 +1,22 @@
 import type { Interaction, Action } from "@/game/domain/action";
-import {
-  preClassifyFreeText,
-  type IntentContext,
-  type IntentParserSource,
-  type IntentAuditLink,
-} from "@/game/gameplay/rpg/intentParser";
 import type { NpcId } from "@/game/domain/worldEntity";
-import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 
 export type ActionChoiceMap = ReadonlyMap<string, Action>;
 
 export type ConvertFreeTextDeps = {
-  readonly intentContext: IntentContext;
-  readonly intentParserSource?: IntentParserSource;
-  /** Task 9：自由输入显式绑定的目标 NPC（如对 NPC 说话/问候），透传给意图源做目标合法性校验。 */
+  /** @deprecated 仅供旧离线测试调用；运行时不读取。 */
+  readonly intentContext?: unknown;
+  /** @deprecated 运行时不读取，保留以便旧测试显式证明没有调用。 */
+  readonly intentParserSource?: unknown;
+  /** @deprecated 运行时不读取。 */
+  readonly auditLink?: unknown;
+  /** 自定义输入只能提交给已经由当前场景授权的焦点 NPC。 */
   readonly targetNpcId?: NpcId;
-  /** 仅用于关联 intent AI 审计事件，不参与意图判断。 */
-  readonly auditLink?: IntentAuditLink;
 };
 
 export type ConvertResult =
   | { readonly ok: true; readonly action: Action }
-  | { readonly ok: false; readonly reason: "unknown_choice" }
-  | { readonly ok: false; readonly reason: "ai_failure"; readonly failureKind: AiFailureKind };
+  | { readonly ok: false; readonly reason: "unknown_choice" };
 
 export async function convertInteraction(
   interaction: Interaction,
@@ -35,72 +29,19 @@ export async function convertInteraction(
     return { ok: true, action };
   }
 
-  // free_text 路径
-  const text = interaction.text;
-  const ctx = freeTextDeps?.intentContext;
-
-  // 无上下文时直接 freeform
-  if (ctx === undefined) {
-    return { ok: true, action: { type: "freeform", intent: "unclassified", rawText: text } };
-  }
-
-  // A custom response rendered under a focused NPC is dialogue by transport
-  // contract. Do not let movement/item keywords escape that authority before
-  // the dialogue intent has been classified. The server use case validates
-  // that this target is the authoritative scene focus before calling here.
+  // 自定义输入是一个正式叙事边界。它不做独立的意图 AI 调用；唯一的
+  // NarrativeBundleSource 会连同原文理解其语气和语义。
   const targetNpcId = freeTextDeps?.targetNpcId;
   if (targetNpcId !== undefined) {
-    if (freeTextDeps?.intentParserSource !== undefined) {
-      const classified = await freeTextDeps.intentParserSource.parseIntent(
-        text,
-        ctx,
-        targetNpcId,
-        freeTextDeps?.auditLink,
-      );
-      if (
-        classified.ok
-        && classified.action.type === "talk"
-        && classified.action.npcId === targetNpcId
-      ) {
-        return { ok: true, action: classified.action };
-      }
-      if (!classified.ok && classified.reason === "service_error") {
-        return { ok: false, reason: "ai_failure", failureKind: classified.failureKind };
-      }
-    }
     return {
       ok: true,
       action: {
         type: "talk",
         npcId: targetNpcId,
         dialogueAct: "ask",
-        utterance: text.trim(),
+        utterance: interaction.text.trim(),
       },
     };
   }
-
-  // 1. 纯规则预分类（零 AI）
-  const preClassified = preClassifyFreeText(text, ctx);
-  if (preClassified !== null) {
-    return { ok: true, action: preClassified };
-  }
-
-  // 2. AI 意图解析（如果有 source）；目标 NPC 透传做目标合法性校验
-  if (freeTextDeps?.intentParserSource !== undefined) {
-    const aiResult = await freeTextDeps.intentParserSource.parseIntent(
-      text,
-      ctx,
-      freeTextDeps.targetNpcId,
-      freeTextDeps.auditLink,
-    );
-    if (aiResult.ok) {
-      return { ok: true, action: aiResult.action };
-    }
-    if (aiResult.reason === "service_error") {
-      return { ok: false, reason: "ai_failure", failureKind: aiResult.failureKind };
-    }
-  }
-
-  // 3. 降级为 freeform
-  return { ok: true, action: { type: "freeform", intent: "unclassified", rawText: text } };
+  return { ok: false, reason: "unknown_choice" };
 }

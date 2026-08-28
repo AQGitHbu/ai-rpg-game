@@ -2,6 +2,7 @@ import type { GameRepository } from "./server/persistence/gameRepository";
 import type { GameId } from "./server/persistence/gameRepository";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { NarrativeRuntimeState, NarrativeSceneState } from "@/game/domain/narrative";
+import type { NarrativeBundleSource, OpeningNarrativeBundleProposal } from "./narrativeBundleSource";
 import type { GameTypeId, GameLength, GameSetup, NewGameInput } from "@/game/domain/newGame";
 import { validateNewGameInput } from "@/game/domain/newGame";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
@@ -18,8 +19,7 @@ import {
   type OpeningNoveltyRecord,
 } from "@/game/domain/openingNovelty";
 import { asGenerationId } from "@/game/domain/worldEntity";
-import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asNarrativeJobId } from "@/game/domain/events";
 import { createApprovedChoice, type ApprovedChoice } from "@/game/domain/approvedChoice";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import { AiGenerationError, type AiFailureKind } from "./aiGenerationFailure";
@@ -134,7 +134,8 @@ export function parseGameSetup(raw: ParseGameSetupInput): ParseGameSetupResult |
 
 export type CreateGameDeps = {
   readonly repository: GameRepository;
-  readonly source: OpeningGenerationSource;
+  /** 开局只能通过一次 NarrativeBundleSource opening 调用生成。 */
+  readonly source: NarrativeBundleSource;
   readonly now: () => string;
   /** Whether AI config is available (determines narrative.mode) */
   readonly aiEnabled?: boolean;
@@ -144,6 +145,86 @@ export type CreateGameDeps = {
 
 const OPENING_HISTORY_LOOKBACK = 12;
 const MAX_OPENING_GENERATION_ATTEMPTS = 3;
+
+function compileOpeningNarrative(
+  proposal: OpeningNarrativeBundleProposal,
+  jobId: ReturnType<typeof asNarrativeJobId>,
+  candidate: OpeningGenerationCandidate,
+  mode: "ai" | "offline",
+): NarrativeRuntimeState | null {
+  if (
+    proposal.continuationScenes.length !== 0
+    || proposal.terminal.kind !== "next_decision"
+    || proposal.terminal.target.kind !== "current_scene"
+  ) return null;
+
+  const { currentScene: scene } = proposal;
+  const npcLine = scene.npcLine;
+  if (npcLine === null || npcLine.npcId !== String(OPENING_NPC_ID)) return null;
+
+  const choiceIds = scene.choices.map((choice) => choice.candidateId);
+  if (
+    choiceIds.length !== 2
+    || new Set(choiceIds).size !== 2
+    || !choiceIds.includes("support")
+    || !choiceIds.includes("challenge")
+  ) return null;
+
+  const allowedFactIds = new Set(candidate.world.publicFacts.map((_, index) => `fact_${index}`));
+  if (!npcLine.usedFactIds.every((factId) => allowedFactIds.has(factId))) return null;
+
+  const sceneId = `scene-${String(jobId)}`;
+  const choiceRegistry: ApprovedChoice[] = [];
+  for (const choice of scene.choices) {
+    const approved = createApprovedChoice({
+      sceneId,
+      basedOnRevision: 0,
+      label: choice.label,
+      action: {
+        type: "talk",
+        npcId: OPENING_NPC_ID,
+        dialogueAct: choice.candidateId === "support" ? "support" : "challenge",
+        utterance: "",
+      },
+    });
+    if (!approved.ok) return null;
+    choiceRegistry.push(approved.choice);
+  }
+
+  const currentScene: NarrativeSceneState = {
+    sceneId,
+    turn: 0,
+    narration: scene.segments.map((segment) => segment.text).join("\n"),
+    usedFactIds: npcLine.usedFactIds as never[],
+    npcLine: {
+      npcId: OPENING_NPC_ID,
+      text: npcLine.text,
+      emotion: npcLine.emotion,
+      usedFactIds: npcLine.usedFactIds as never[],
+      answeredBeatIds: [...npcLine.answeredBeatIds],
+    },
+    choices: choiceRegistry.map((choice) => ({
+      choiceToken: choice.choiceToken,
+      label: choice.label,
+    })),
+    source: "generated",
+    event: { kind: "dialogue", focusNpcId: OPENING_NPC_ID },
+  };
+
+  return {
+    status: "ready",
+    mode,
+    currentScene,
+    choiceRegistry,
+    narrativeBundle: {
+      contractVersion: 1,
+      originJobId: jobId,
+      steps: [],
+      activeStepIds: [],
+      terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+    },
+  };
+}
 
 export async function createGame(
   input: CreateGameInput,
@@ -191,33 +272,65 @@ export async function createGame(
     };
   };
   let lastFailureKind: AiFailureKind | undefined;
+  // The logical initialization job exists before the first provider attempt so
+  // novelty/content/transport retries share the same audit identity.
+  const jobId = asNarrativeJobId(`job_${input.seed}_0`);
   type OpeningAttemptReason = "source_error" | "empty_candidate" | "invalid_candidate" | "novelty_conflict";
   const bounded = await runBoundedAttempts<
-    { readonly candidate: OpeningGenerationCandidate; readonly novelty: OpeningNoveltyRecord; readonly attempt: number },
+    {
+      readonly candidate: OpeningGenerationCandidate;
+      readonly narrative: NarrativeRuntimeState;
+      readonly novelty: OpeningNoveltyRecord;
+      readonly attempt: number;
+    },
     OpeningAttemptReason
   >({
     maxAttempts: MAX_OPENING_GENERATION_ATTEMPTS,
     runAttempt: async (attempt) => {
       const openingAttempt = attempt - 1;
       let generated: OpeningGenerationCandidate;
+      let narrative: NarrativeRuntimeState | null;
       try {
-        generated = await deps.source.generate({
-          gameType: input.gameType,
-          seed: input.seed,
-          gameLength: input.gameLength,
-          ...(input.setup === undefined ? {} : { setup: input.setup }),
-          novelty: {
-            recent: [...recentHistory, ...rejectedCandidates],
-            attempt: openingAttempt,
-          },
-          attempt: openingAttempt,
-          ...(deps.auditLink === undefined ? {} : {
-            auditLink: {
-              ...deps.auditLink,
-              gameId: String(input.gameId),
+        const result = await deps.source.generate({
+          kind: "opening",
+          jobId,
+          input: {
+            gameType: input.gameType,
+            seed: input.seed,
+            gameLength: input.gameLength,
+            ...(input.setup === undefined ? {} : { setup: input.setup }),
+            novelty: {
+              recent: [...recentHistory, ...rejectedCandidates],
+              attempt: openingAttempt,
             },
-          }),
+            attempt: openingAttempt,
+            ...(deps.auditLink === undefined ? {} : {
+              auditLink: {
+                ...deps.auditLink,
+                gameId: String(input.gameId),
+                jobId: String(jobId),
+              },
+            }),
+          },
+          auditLink: {
+            ...(deps.auditLink ?? {}),
+            gameId: String(input.gameId),
+            jobId: String(jobId),
+            turnNumber: 0,
+            retry: { origin: "normal", mechanism: openingAttempt === 0 ? "initial" : "content_repair", attempt: openingAttempt },
+          },
         });
+        if (!result.ok || result.kind !== "opening") {
+          lastFailureKind = result.ok ? "AI_RESPONSE_INVALID" : result.failure.kind;
+          return { ok: false, retryable: true, reason: "source_error" as const };
+        }
+        generated = result.proposal.opening;
+        narrative = compileOpeningNarrative(
+          result.proposal,
+          jobId,
+          generated,
+          deps.aiEnabled === false ? "offline" : "ai",
+        );
       } catch (error) {
         if (error instanceof AiGenerationError) lastFailureKind = error.kind;
         return { ok: false, retryable: true, reason: "source_error" as const };
@@ -226,13 +339,14 @@ export async function createGame(
 
       const prepared = prepareCandidate(generated);
       if (prepared === null) return { ok: false, retryable: true, reason: "invalid_candidate" as const };
+      if (narrative === null) return { ok: false, retryable: true, reason: "invalid_candidate" as const };
 
       const comparableHistory = [...recentHistory, ...rejectedCandidates];
       if (isOpeningTooSimilar(prepared.novelty, comparableHistory)) {
         rejectedCandidates.push(prepared.novelty);
         return { ok: false, retryable: true, reason: "novelty_conflict" as const };
       }
-      return { ok: true, value: { ...prepared, attempt: openingAttempt } };
+      return { ok: true, value: { ...prepared, narrative, attempt: openingAttempt } };
     },
   });
 
@@ -255,112 +369,11 @@ export async function createGame(
     ...(accepted.attempt === 0 ? {} : { openingAttempt: accepted.attempt }),
   };
 
-  // Task 6: 开局初始化为单一 ready bundle——不再创建 provider_pending 场景
-  // 和后续 ensure 调用。如果候选携带 firstScene，直接编译为 ready 状态；
-  // 否则回退到旧的 provider_pending 路径以保持兼容。
-  const narrativeMode = deps.aiEnabled ? "ai" : "offline";
-  const jobId = asNarrativeJobId(`job_${input.seed}_0`);
-
-  let initialNarrative: NarrativeRuntimeState;
-  if (accepted.candidate.opening.firstScene !== undefined) {
-    const fs = accepted.candidate.opening.firstScene;
-    const factKeyToId = new Map<string, string>();
-    accepted.candidate.world.publicFacts.forEach((fact, index) => {
-      factKeyToId.set(fact.key, `fact_${index}`);
-    });
-    const usedFactIds = fs.npcLine.usedFactKeys
-      .map((key) => factKeyToId.get(key))
-      .filter((id): id is string => id !== undefined);
-
-    const sceneId = `scene-${String(jobId)}`;
-    const choiceRegistry: ApprovedChoice[] = [];
-    for (const choice of fs.choices) {
-      const approved = createApprovedChoice({
-        sceneId,
-        basedOnRevision: 0,
-        label: choice.label,
-        action: choice.candidateId === "support"
-          ? { type: "talk", npcId: OPENING_NPC_ID, dialogueAct: "support", utterance: "" }
-          : { type: "talk", npcId: OPENING_NPC_ID, dialogueAct: "challenge", utterance: "" },
-      });
-      if (!approved.ok) return { ok: false, code: "AI_GENERATION_FAILED", failureKind: "AI_RESPONSE_INVALID" };
-      choiceRegistry.push(approved.choice);
-    }
-
-    const currentScene: NarrativeSceneState = {
-      sceneId,
-      turn: 0,
-      narration: fs.narration,
-      usedFactIds: usedFactIds as never[],
-      npcLine: {
-        npcId: OPENING_NPC_ID,
-        text: fs.npcLine.text,
-        emotion: fs.npcLine.emotion,
-        usedFactIds: usedFactIds as never[],
-        answeredBeatIds: [],
-      },
-      choices: choiceRegistry.map((c) => ({
-        choiceToken: c.choiceToken,
-        label: c.label,
-      })),
-      source: "generated",
-    };
-
-    initialNarrative = {
-      status: "ready",
-      mode: narrativeMode,
-      currentScene,
-      choiceRegistry,
-    };
-  } else {
-    // Legacy path: candidate without firstScene → provider_pending
-    const jobResult = createPendingNarrativeJob({
-      jobId,
-      turnId: asTurnId(`turn_${input.seed}_0`),
-      actionId: `start_${input.seed}`,
-      expectedRevision: 0,
-      turnNumber: 0,
-      actionSummary: { kind: "talk", npcId: OPENING_NPC_ID },
-      resolvedEvent: {
-        actionId: `start_${input.seed}`,
-        status: "success",
-        eventKind: "dialogue",
-        facts: [],
-        stateChanges: [],
-        costs: [],
-        rewards: [],
-        triggeredEvents: [],
-        rejectedEffects: [],
-      },
-      domainEventRange: { fromLedgerIndex: 0, toLedgerIndexExclusive: 1 },
-      focusNpcId: OPENING_NPC_ID,
-      requestedAt: deps.now(),
-      objectiveTransition: { before: null, completed: [], after: null, mode: "unchanged" },
-      mandatoryBeats: [],
-      generationKind: "opening",
-      sceneRequestKind: "opening",
-    });
-    if (!jobResult.ok) return { ok: false, code: "AI_GENERATION_FAILED", failureKind: "AI_RESPONSE_INVALID" };
-
-    initialNarrative = {
-      status: "provider_pending",
-      mode: narrativeMode,
-      job: jobResult.job,
-      lastPresentedScene: null,
-      dialogueSession: {
-        npcId: OPENING_NPC_ID,
-        turnCount: 0,
-        requiredTurns: 2,
-        completed: false,
-      },
-    };
-  }
-
   const { worldState, storyState } = compileOpeningGenerationCandidate({
     candidate: accepted.candidate,
     generation,
     gameLength: input.gameLength,
-    initialNarrative,
+    initialNarrative: accepted.narrative,
   });
 
   const persistedInput = {
@@ -387,7 +400,7 @@ export async function createGame(
 // 不生成任何未来命名实体。同 seed+gameType+attempt 完全可重放；玩家配置为权威输入。
 // ---------------------------------------------------------------------------
 
-export function createFixtureOpeningSource(): OpeningGenerationSource {
+export function createFixtureOpeningCandidateSource(): OpeningGenerationSource {
   return {
     async generate(input) {
       const profiles = {
@@ -557,6 +570,62 @@ export function createFixtureOpeningSource(): OpeningGenerationSource {
               { candidateId: "challenge", label: "你先说清楚你自己跟这事有什么关系。" },
             ],
           },
+        },
+      };
+    },
+  };
+}
+
+/**
+ * Explicit offline adapter for complete initialization bundles. It is the
+ * fixture counterpart of the production NarrativeBundleSource: one opening
+ * request returns both the opening world slice and the first formal decision.
+ */
+export function createFixtureOpeningSource(): NarrativeBundleSource {
+  const candidateSource = createFixtureOpeningCandidateSource();
+  return {
+    async generate(context) {
+      if (context.kind !== "opening") {
+        return {
+          ok: false,
+          failure: { kind: "AI_CALL_FAILED", phase: "scene" },
+        };
+      }
+
+      const opening = await candidateSource.generate(context.input);
+      const firstScene = opening.opening.firstScene;
+      if (firstScene === undefined) {
+        return {
+          ok: false,
+          failure: { kind: "AI_RESPONSE_INVALID", phase: "scene" },
+        };
+      }
+
+      const factIdForKey = new Map(opening.world.publicFacts.map((fact, index) => [fact.key, `fact_${index}`]));
+      const usedFactIds = firstScene.npcLine.usedFactKeys
+        .map((key) => factIdForKey.get(key))
+        .filter((factId): factId is string => factId !== undefined);
+
+      return {
+        ok: true,
+        kind: "opening",
+        proposal: {
+          opening,
+          currentScene: {
+            segments: [{ beatId: "opening", text: firstScene.narration }],
+            npcLine: {
+              npcId: String(OPENING_NPC_ID),
+              text: firstScene.npcLine.text,
+              emotion: firstScene.npcLine.emotion,
+              usedFactIds,
+              answeredBeatIds: [],
+              usedInteractionActionIds: [],
+            },
+            objectiveLink: null,
+            choices: firstScene.choices,
+          },
+          continuationScenes: [],
+          terminal: { kind: "next_decision", target: { kind: "current_scene" } },
         },
       };
     },

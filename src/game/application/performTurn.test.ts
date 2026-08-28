@@ -22,10 +22,6 @@ import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/doma
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
-import { createFixtureIntentParserSource } from "./server/ai/intentParserSource";
-import { createRuleIntentParser } from "./server/ai/liveIntentParserSource";
-import type { IntentParserSource } from "@/game/gameplay/rpg/intentParser/intentParserSource";
-import type { WorldEvolutionSource } from "./worldEvolutionSource";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
 import { ENEMY_COMBAT_STATS, PLAYER_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
 import { buildEncounter } from "@/game/gameplay/rpg/ruleEngine/buildEncounter";
@@ -161,6 +157,36 @@ function pendingNarrative(storyNarrative: StoryState["narrative"]): Extract<Stor
   return storyNarrative;
 }
 
+function firstApprovedChoice(story: StoryState) {
+  if (story.narrative.status !== "ready") throw new Error("expected ready narrative fixture");
+  const choice = story.narrative.choiceRegistry[0];
+  if (choice === undefined) throw new Error("expected approved choice fixture");
+  return choice;
+}
+
+function buildFocusedAskDialogueStoryState(): StoryState {
+  const story = buildFocusedDialogueStoryState();
+  if (story.narrative.status !== "ready") throw new Error("expected ready narrative fixture");
+  const ask = createApprovedChoice({
+    sceneId: story.narrative.currentScene.sceneId,
+    basedOnRevision: 0,
+    label: "询问",
+    action: { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" },
+  });
+  if (!ask.ok) throw new Error("ask choice fixture invalid");
+  return {
+    ...story,
+    narrative: {
+      ...story.narrative,
+      currentScene: {
+        ...story.narrative.currentScene,
+        choices: [{ choiceToken: ask.choice.choiceToken, label: ask.choice.label }],
+      },
+      choiceRegistry: [ask.choice],
+    },
+  };
+}
+
 function makePendingJob(): PendingNarrativeJob {
   const result = createPendingNarrativeJob({
     jobId: asNarrativeJobId("existing-job"),
@@ -195,7 +221,7 @@ function buildPendingStoryState(): StoryState {
 describe("performTurn 单次 CAS 提交", () => {
   const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" };
 
-  it("最终立场结算后直接保存结局，不再为已结束的游戏排队场景生成", async () => {
+  it("最终正式选择结算结局后仍创建 pending，由叙事包生成最终文本", async () => {
     const finalWorld: WorldState = {
       ...buildWorldState(),
       quests: [{
@@ -249,7 +275,7 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(result.ok).toBe(true);
     expect(applyCalls()).toHaveLength(1);
     expect(record()?.worldState.ending).not.toBeNull();
-    expect(record()?.storyState.narrative.status).toBe("ready");
+    expect(record()?.storyState.narrative.status).toBe("provider_pending");
   });
 
   it("活跃战斗推进直接 CAS，不创建 pending narrative job", async () => {
@@ -337,56 +363,12 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(saved?.worldState.eventLedger).toBe(beforeLedger);
   });
 
-  it("移动触发自动调查推进目标但没有 prepared continuation 时仍保存规则场景", async () => {
-    const factId = asFactId("fact_shadow");
-    const questId = asQuestId("quest_shadow");
-    const shadowNpc = { ...npc1, locationId: loc2.id };
-    const world: WorldState = {
-      ...buildWorldState(),
-      locations: [
-        loc1,
-        { ...loc2, npcIds: [shadowNpc.id] },
-      ],
-      npcs: [shadowNpc],
-      visitedLocationIds: [loc1.id, loc2.id],
-      worldFacts: [{
-        factId,
-        text: "黑影曾从乱葬岗离开。",
-        source: "generated",
-        discovered: false,
-        investigationLabel: "黑影去向",
-        investigationApproaches: [
-          { approachId: "track", label: "追踪脚印", hint: "泥土松软。", evidenceQuality: "clean", tensionDelta: 1 },
-          { approachId: "ask", label: "询问守墓人", hint: "守墓人就在附近。", evidenceQuality: "noisy", tensionDelta: 1 },
-        ],
-        locationId: loc2.id,
-      }],
-      quests: [{
-        id: questId,
-        name: "乱葬岗的足迹",
-        description: "查明黑影去向。",
-        objectives: [
-          { kind: "visit_location", locationId: loc2.id },
-          { kind: "discover_fact", factId },
-          { kind: "talk_to_npc", npcId: shadowNpc.id },
-        ],
-        onSuccess: { kind: "advance_story" },
-        onFailure: { kind: "closed" },
-        tags: [],
-        kind: "main",
-        stage: 1,
-        status: "active",
-      }],
-    };
-    const story: StoryState = {
-      ...buildStoryState(),
-      reveal: { questId, visibleObjectiveIndex: 1 },
-    };
-    const store = createSpyRepo(world, story);
+  it("非决策行动没有 bundle step 时零写入", async () => {
+    const store = createSpyRepo(buildWorldState(), buildStoryState());
     const result = await performTurn(
       {
         gameId: asGameId("g1"),
-        actionId: "return-to-investigation-site",
+        actionId: "move-without-bundle-step",
         interaction: { kind: "fixed_choice", choiceToken: "move" },
         expectedRevision: 0,
         choiceMap: new Map([["move", { type: "move", locationId: loc2.id }]]),
@@ -394,20 +376,18 @@ describe("performTurn 单次 CAS 提交", () => {
       { repository: store.repo, now: () => "2026-01-02" },
     );
 
-    expect(result.ok).toBe(true);
-    expect(store.record()?.worldState.worldFacts[0]?.discovered).toBe(true);
-    const saved = store.record();
-    expect(saved?.storyState.narrative.status).toBe("ready");
-    if (saved?.storyState.narrative.status === "ready") {
-      expect(saved.storyState.narrative.currentScene.source).toBe("rule");
-    }
+    expect(result).toMatchObject({ ok: false, code: "NARRATIVE_CONTINUATION_MISSING" });
+    expect(store.applyCalls()).toHaveLength(0);
+    expect(store.record()?.revision).toBe(0);
   });
 
   it("成功回合 applyState 恰好一次，单次写入同时包含 WorldState、StoryState.turnNumber 和 pending job", async () => {
-    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
+    const story = buildFocusedAskDialogueStoryState();
+    const choice = firstApprovedChoice(story);
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), story);
 
     const result = await performTurn(
-      { gameId: asGameId("g1"), actionId: "act_1", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", talkAction]]) },
+      { gameId: asGameId("g1"), actionId: "act_1", interaction: { kind: "fixed_choice", choiceToken: choice.choiceToken }, expectedRevision: 0, choiceMap: new Map([[choice.choiceToken, choice.action]]) },
       { repository: repo, now: () => "2026-01-02" },
     );
 
@@ -433,15 +413,15 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(generation.job.focusNpcId).toBe("npc_1");
     expect(generation.job.domainEventRange).toEqual({ fromLedgerIndex: 1, toLedgerIndexExclusive: 2 });
     expect(generation.job.requestedAt).toBe("2026-01-02");
-    expect(generation.job.generationKind).toBe("npc_fixed_choice");
-    expect(generation.job.sceneRequestKind).toBe("npc_response");
   });
 
   it("pending job.resolvedEvent 等于真实 TurnResolution.primaryResult，basedOnRevision 等于提交后 revision", async () => {
-    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
+    const story = buildFocusedAskDialogueStoryState();
+    const choice = firstApprovedChoice(story);
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), story);
 
     const result = await performTurn(
-      { gameId: asGameId("g1"), actionId: "act_1", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", talkAction]]) },
+      { gameId: asGameId("g1"), actionId: "act_1", interaction: { kind: "fixed_choice", choiceToken: choice.choiceToken }, expectedRevision: 0, choiceMap: new Map([[choice.choiceToken, choice.action]]) },
       { repository: repo, now: () => "2026-01-02" },
     );
 
@@ -469,136 +449,86 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(generation.job.basedOnRevision).toBe(1);
   });
 
-  it("两轮对话第一轮即使规则回合写入 met 也必须生成普通 npc_response，而不是 handoff", async () => {
-    const { repo, record } = createSpyRepo(buildWorldWithMainQuest(), buildFocusedDialogueStoryState());
+  it("正式已批准二选一创建 pending", async () => {
+    const story = buildFocusedDialogueStoryState();
+    const choice = firstApprovedChoice(story);
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldWithMainQuest(), story);
 
     const result = await performTurn(
       {
         gameId: asGameId("g1"),
         actionId: "dialogue_first_response",
-        interaction: { kind: "fixed_choice", choiceToken: "tok_talk" },
+        interaction: { kind: "fixed_choice", choiceToken: choice.choiceToken },
         expectedRevision: 0,
-        choiceMap: new Map([[
-          "tok_talk",
-          { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support", topic: { kind: "general" } },
-        ]]),
+        choiceMap: new Map([[choice.choiceToken, choice.action]]),
       },
       { repository: repo, now: () => "2026-01-02" },
     );
 
     expect(result.ok).toBe(true);
     const generation = pendingNarrative(record()!.storyState.narrative);
-    expect(generation.job.sceneRequestKind).toBe("npc_response");
-    expect(generation.job.objectiveTransition.completed).toEqual([]);
-    expect(generation.job.objectiveTransition.after?.objectiveIndex).toBe(0);
+    expect(applyCalls()).toHaveLength(1);
+    expect(generation.job.actionId).toBe("dialogue_first_response");
+    expect(generation.job.utterance).toBeUndefined();
   });
 
-  it("终幕第二轮完成最后 talk 目标时仍生成 npc_handoff", async () => {
-    const baseWorld = buildWorldWithMainQuest();
-    const finalWorld = {
-      ...baseWorld,
-      quests: baseWorld.quests.map((quest) => ({
-        ...quest,
-        objectives: [quest.objectives[0]!],
-      })),
-    };
-    const finalStory = {
-      ...buildStoryState(),
-      unresolvedThreads: [],
-      currentAct: 1,
-      targetActs: 1,
-      storyProgress: 0,
-    };
-    const { repo, record } = createSpyRepo(finalWorld, finalStory);
-    const first = await performTurn(
-      {
-        gameId: asGameId("g1"),
-        actionId: "final_dialogue_first",
-        interaction: { kind: "fixed_choice", choiceToken: "tok_talk" },
-        expectedRevision: 0,
-        choiceMap: new Map([[
-          "tok_talk",
-          { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support", topic: { kind: "general" } },
-        ]]),
-      },
-      { repository: repo, now: () => "2026-01-02" },
-    );
-    expect(first.ok).toBe(true);
-    if (!first.ok) return;
-
-    const afterFirst = record()!;
-    const sceneWrite = await repo.applySceneWriteBack({
-      gameId: afterFirst.gameId,
-      expectedRevision: afterFirst.revision,
-      nextWorldState: afterFirst.worldState,
-      nextStoryState: {
-        ...afterFirst.storyState,
-        narrative: {
-          status: "ready",
-          mode: "ai",
-          currentScene: {
-            sceneId: "scene-final-dialogue",
-            turn: 1,
-            narration: "老板等着你的下一句话。",
-            usedFactIds: [],
-            npcLine: { npcId: asNpcId("npc_1"), text: "请继续。", emotion: "neutral", usedFactIds: [] },
-            choices: [],
-            source: "fixture",
-            event: { kind: "dialogue", focusNpcId: asNpcId("npc_1") },
-          },
-          choiceRegistry: [],
-          ...(afterFirst.storyState.narrative.dialogueSession === undefined
-            ? {}
-            : { dialogueSession: afterFirst.storyState.narrative.dialogueSession }),
+  it("消费到达步骤后，将其 NPC 二选一作为下一次正式决策", async () => {
+    const npc2: NpcEntry = { ...npc1, id: asNpcId("npc_2"), name: "驿站守夜人", locationId: loc2.id };
+    const world = appendNpc(buildWorldState(), npc2);
+    const story = buildStoryState();
+    const preparedStory: StoryState = {
+      ...story,
+      narrative: {
+        status: "ready",
+        mode: story.narrative.mode,
+        currentScene: {
+          sceneId: "scene-before-arrival", turn: 0, narration: "动身前往驿站。", usedFactIds: [], npcLine: null,
+          choices: [], source: "fixture", event: { kind: "travel", locationId: loc2.id },
+        },
+        choiceRegistry: [],
+        narrativeBundle: {
+          contractVersion: 1,
+          originJobId: asNarrativeJobId("arrival-job"),
+          activeStepIds: ["move:loc_2"],
+          terminal: { kind: "next_decision", target: { kind: "continuation_step", stepId: "move:loc_2" } },
+          steps: [{
+            stepId: "move:loc_2", objectiveKey: "arrival", consumptionGroupKey: "arrival",
+            trigger: { kind: "move", locationId: loc2.id }, nextStepIds: [],
+            scene: {
+              segments: [{ beatId: "arrival", text: "守夜人站在门前。" }],
+              event: { kind: "travel", locationId: loc2.id },
+              npcLine: { npcId: npc2.id, text: "来者何人？", emotion: "guarded", usedFactIds: [], answeredBeatIds: [] },
+              objectiveLink: null,
+              choiceSeeds: [
+                { label: "表明身份", action: { type: "talk", npcId: npc2.id, dialogueAct: "support" } },
+                { label: "先行试探", action: { type: "talk", npcId: npc2.id, dialogueAct: "challenge" } },
+              ],
+              source: "generated",
+            },
+          }],
         },
       },
-    });
-    expect(sceneWrite.ok).toBe(true);
-    if (!sceneWrite.ok) return;
-
-    const second = await performTurn(
-      {
-        gameId: asGameId("g1"),
-        actionId: "final_dialogue_second",
-        interaction: { kind: "fixed_choice", choiceToken: "tok_talk_second" },
-        expectedRevision: sceneWrite.record.revision,
-        choiceMap: new Map([[
-          "tok_talk_second",
-          { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "challenge", topic: { kind: "general" } },
-        ]]),
-      },
-      { repository: repo, now: () => "2026-01-03" },
-    );
-
-    expect(second.ok).toBe(true);
-    const generation = pendingNarrative(record()!.storyState.narrative);
-    expect(generation.job.sceneRequestKind).toBe("npc_handoff");
-  });
-
-  it("非对白幕边界必须留下场景编排任务，避免 needs_next_act 卡在无目标界面", async () => {
-    const boundaryWorld = {
-      ...buildWorldWithMainQuest(),
-      npcs: buildWorldWithMainQuest().npcs.map((npc) => ({ ...npc, met: true })),
-      quests: buildWorldWithMainQuest().quests.map((quest) => ({ ...quest, objectives: [quest.objectives[0]!] })),
     };
-    const boundaryStory = buildStoryState();
-    const { repo, record } = createSpyRepo(boundaryWorld, boundaryStory);
+    const { repo, record } = createSpyRepo(world, preparedStory);
 
-    const result = await performTurn(
-      {
-        gameId: asGameId("g1"),
-        actionId: "boundary_prepare",
-        interaction: { kind: "fixed_choice", choiceToken: "tok_explore" },
-        expectedRevision: 0,
-        choiceMap: new Map([["tok_explore", { type: "explore" }]]),
-      },
-      { repository: repo, now: () => "2026-01-02" },
-    );
+    const move = await performTurn({
+      gameId: asGameId("g1"), actionId: "arrive", interaction: { kind: "fixed_choice", choiceToken: "move" }, expectedRevision: 0,
+      choiceMap: new Map([["move", { type: "move", locationId: loc2.id }]]),
+    }, { repository: repo, now: () => "2026-01-02" });
 
-    expect(result.ok).toBe(true);
-    const generation = pendingNarrative(record()!.storyState.narrative);
-    expect(generation.job.generationKind).toBe("npc_fixed_choice");
-    expect(generation.job.sceneRequestKind).toBe("npc_response");
+    expect(move.ok).toBe(true);
+    const arrived = record()!;
+    if (arrived.storyState.narrative.status !== "ready") throw new Error("arrival should be ready");
+    expect(arrived.storyState.narrative.currentScene.event).toEqual({ kind: "dialogue", focusNpcId: npc2.id });
+    const decision = arrived.storyState.narrative.choiceRegistry[0]!;
+
+    const response = await performTurn({
+      gameId: asGameId("g1"), actionId: "arrival-response", interaction: { kind: "fixed_choice", choiceToken: decision.choiceToken }, expectedRevision: 1,
+      choiceMap: new Map([[decision.choiceToken, decision.action]]),
+    }, { repository: repo, now: () => "2026-01-02" });
+
+    expect(response.ok).toBe(true);
+    expect(record()!.storyState.narrative.status).toBe("provider_pending");
   });
 
   it("free_text 行动携带 utterance 进入 pending job", async () => {
@@ -606,7 +536,7 @@ describe("performTurn 单次 CAS 提交", () => {
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_2", interaction: { kind: "free_text", text: "和老板聊聊", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
-      { repository: repo, now: () => "2026-01-02", intentParserSource: createFixtureIntentParserSource() },
+      { repository: repo, now: () => "2026-01-02" },
     );
 
     expect(result.ok).toBe(true);
@@ -617,8 +547,6 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(generation.job.actionSummary).toEqual({ kind: "talk", npcId: "npc_1" });
     expect(generation.job.utterance).toBe("和老板聊聊");
     expect(generation.job.focusNpcId).toBe("npc_1");
-    expect(generation.job.generationKind).toBe("npc_free_text");
-    expect(generation.job.sceneRequestKind).toBe("npc_response");
     // Task 5 Step 4：talk + 玩家原话 → 强制 player_utterance 节拍进入 job
     const utteranceBeat = generation.job.mandatoryBeats.find((b: PendingNarrativeJob["mandatoryBeats"][number]) => b.kind === "player_utterance");
     expect(utteranceBeat).toBeDefined();
@@ -652,7 +580,7 @@ describe("performTurn 单次 CAS 提交", () => {
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_6", interaction: { kind: "free_text", text: "和老板聊聊" }, expectedRevision: 0, choiceMap: new Map() },
-      { repository: repo, now: () => "2026-01-02", intentParserSource: createFixtureIntentParserSource() },
+      { repository: repo, now: () => "2026-01-02" },
     );
 
     expect(result.ok).toBe(false);
@@ -723,7 +651,7 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(applyCalls()).toHaveLength(0);
   });
 
-  it("ack_prologue 是本地规则场景，一次 CAS 进入 ready", async () => {
+  it("非决策 ack_prologue 没有 bundle step 时零写入", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
 
     const result = await performTurn(
@@ -731,13 +659,9 @@ describe("performTurn 单次 CAS 提交", () => {
       { repository: repo, now: () => "2026-01-02" },
     );
 
-    expect(result.ok).toBe(true);
-    expect(applyCalls()).toHaveLength(1);
-    const saved = record();
-    expect(saved?.storyState.narrative.status).toBe("ready");
-    if (saved?.storyState.narrative.status === "ready") {
-      expect(saved.storyState.narrative.currentScene.source).toBe("rule");
-    }
+    expect(result).toMatchObject({ ok: false, code: "NARRATIVE_CONTINUATION_MISSING" });
+    expect(applyCalls()).toHaveLength(0);
+    expect(record()?.revision).toBe(0);
   });
 
   it("没有活跃对局 → NO_ACTIVE_GAME", async () => {
@@ -760,68 +684,17 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(result.code).toBe("NO_ACTIVE_GAME");
   });
 
-  it("玩家行动优先完成后激活候选反应；池生命周期在单次 CAS 中持久化（Task 20）", async () => {
-    const enemyWs = {
-      ...buildWorldState(),
-      enemies: [{
-        id: asEnemyId("enemy_1"), name: "山贼", tier: "normal" as const,
-        stats: { hp: 10, attack: 5, defense: 2 },
-        locationId: asLocationId("loc_1"), tags: [],
-      }],
-    };
-    const candidate: EventCandidate = {
-      id: "ce-1",
-      kind: "enemy_appears",
-      involvedEntityIds: ["enemy_1", "loc_1"],
-      prerequisiteFactIds: [],
-      proposedEffects: [{ kind: "enemy_appears", enemyId: asEnemyId("enemy_1"), locationId: asLocationId("loc_1") }],
-      intendedPacing: "complicate",
-      reason: "敌人在客栈现身",
-      proposedAtTurn: 1,
-      expiresAtTurn: 9,
-    };
-    const ss = { ...buildStoryState(), candidateEventPool: [candidate] };
-    const { repo, record, applyCalls } = createSpyRepo(enemyWs, ss);
-
-    const moveAction: Action = { type: "move", locationId: asLocationId("loc_2") };
-    const result = await performTurn(
-      { gameId: asGameId("g1"), actionId: "act_move", interaction: { kind: "fixed_choice", choiceToken: "tok_move" }, expectedRevision: 0, choiceMap: new Map([["tok_move", moveAction]]) },
-      { repository: repo, now: () => "2026-01-02" },
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // 单次 CAS 提交
-    expect(applyCalls()).toHaveLength(1);
-    const saved = record()!;
-    // 玩家行动（location_visited）先于候选反应（battle_started + activated 审计）
-    const ledger = saved.worldState.eventLedger;
-    const types = ledger.map((e) => e.type);
-    expect(types.indexOf("location_visited")).toBeLessThan(types.indexOf("battle_started"));
-    expect(types.indexOf("battle_started")).toBeLessThan(types.indexOf("candidate_event_activated"));
-    // 已批准候选从池移除；池随状态一并持久化
-    expect(saved.storyState.candidateEventPool.map((c) => c.id)).not.toContain("ce-1");
-    expect(saved.worldState.battle).toEqual({ status: "active", enemyId: asEnemyId("enemy_1"), playerHp: 100, enemyHp: 10, round: 1 });
-  });
 });
 
 const npcStrangerChoice: Map<string, Action> = new Map([["tok_stranger", { type: "talk", npcId: asNpcId("npc_stranger"), dialogueAct: "ask" }]]);
 
-function throwingSource(): WorldEvolutionSource {
-  return {
-    async propose() {
-      throw new Error("AI evolution source exploded");
-    },
-  };
-}
-
 describe("performTurn provider boundary（Task 7）", () => {
-  it("未知 NPC 是客户端行动错误：不修复世界、不调用 world source、不写入", async () => {
+  it("未知 NPC 是客户端行动错误且零写入", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_exp_npc", interaction: { kind: "fixed_choice", choiceToken: "tok_stranger" }, expectedRevision: 0, choiceMap: npcStrangerChoice },
-      { repository: repo, now: () => "2026-01-02", worldEvolutionSource: throwingSource() },
+      { repository: repo, now: () => "2026-01-02" },
     );
 
     expect(result).toMatchObject({ ok: false, code: "ACTION_REJECTED" });
@@ -829,13 +702,13 @@ describe("performTurn provider boundary（Task 7）", () => {
     expect(record()?.worldState.npcs.some((npc) => npc.id === "npc_stranger")).toBe(false);
   });
 
-  it("未知地点是客户端行动错误：不修复世界、不调用 world source、不写入", async () => {
+  it("未知地点是客户端行动错误且零写入", async () => {
     const wsMystery = { ...buildWorldState(), unlockedLocationIds: [...buildWorldState().unlockedLocationIds, asLocationId("loc_mystery")] };
     const { repo, record, applyCalls } = createSpyRepo(wsMystery, buildStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_exp_move", interaction: { kind: "fixed_choice", choiceToken: "tok_move" }, expectedRevision: 0, choiceMap: new Map([["tok_move", { type: "move", locationId: asLocationId("loc_mystery") }]]) },
-      { repository: repo, now: () => "2026-01-02", worldEvolutionSource: throwingSource() },
+      { repository: repo, now: () => "2026-01-02" },
     );
 
     expect(result).toMatchObject({ ok: false, code: "ACTION_REJECTED" });
@@ -843,11 +716,13 @@ describe("performTurn provider boundary（Task 7）", () => {
     expect(record()?.worldState.locations.some((location) => location.id === "loc_mystery")).toBe(false);
   });
 
-  it("合法 NPC 回合只创建 provider job，performTurn 不调用 world source", async () => {
-    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
+  it("正式已批准 NPC 二选一创建 pending", async () => {
+    const story = buildFocusedDialogueStoryState();
+    const choice = firstApprovedChoice(story);
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), story);
     const legal = await performTurn(
-      { gameId: asGameId("g1"), actionId: "act_e1", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" }]]) },
-      { repository: repo, now: () => "2026-01-02", worldEvolutionSource: throwingSource() },
+      { gameId: asGameId("g1"), actionId: "act_e1", interaction: { kind: "fixed_choice", choiceToken: choice.choiceToken }, expectedRevision: 0, choiceMap: new Map([[choice.choiceToken, choice.action]]) },
+      { repository: repo, now: () => "2026-01-02" },
     );
     expect(legal.ok).toBe(true);
     if (!legal.ok) return;
@@ -863,47 +738,27 @@ describe("performTurn provider boundary（Task 7）", () => {
 // ---------------------------------------------------------------------------
 
 describe("performTurn 自由文本端到端（Task 9）", () => {
-  const ruleSource = createRuleIntentParser();
-
-  it("rejects a non-focused target before intent classification and writes nothing", async () => {
-    let parserCalls = 0;
-    const parser: IntentParserSource = {
-      sourceVersion: "must-not-run",
-      async parseIntent() {
-        parserCalls += 1;
-        return { ok: false, reason: "unclassifiable" };
-      },
-    };
+  it("rejects a non-focused target and writes nothing", async () => {
     const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "invalid-target", interaction: { kind: "free_text", text: "我相信你", targetNpcId: asNpcId("npc_2") }, expectedRevision: 0, choiceMap: new Map() },
-      { repository: repo, now: () => "2026-01-02", intentParserSource: parser },
+      { repository: repo, now: () => "2026-01-02" },
     );
 
     expect(result).toMatchObject({ ok: false, code: "ACTION_REJECTED" });
-    expect(parserCalls).toBe(0);
     expect(applyCalls()).toHaveLength(0);
   });
 
-  it("rejects a missing free-text target before intent classification and writes nothing", async () => {
-    let parserCalls = 0;
-    const parser: IntentParserSource = {
-      sourceVersion: "must-not-run",
-      async parseIntent() {
-        parserCalls += 1;
-        return { ok: false, reason: "unclassifiable" };
-      },
-    };
+  it("rejects a missing free-text target and writes nothing", async () => {
     const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "missing-target", interaction: { kind: "free_text", text: "我相信你" }, expectedRevision: 0, choiceMap: new Map() },
-      { repository: repo, now: () => "2026-01-02", intentParserSource: parser },
+      { repository: repo, now: () => "2026-01-02" },
     );
 
     expect(result).toMatchObject({ ok: false, code: "ACTION_REJECTED" });
-    expect(parserCalls).toBe(0);
     expect(applyCalls()).toHaveLength(0);
   });
 
@@ -912,7 +767,7 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "focused-dialogue", interaction: { kind: "free_text", text: "去街道看看", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
-      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+      { repository: repo, now: () => "2026-01-02" },
     );
 
     expect(result.ok).toBe(true);
@@ -948,7 +803,7 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
         expectedRevision: 0,
         choiceMap: new Map(),
       },
-      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+      { repository: repo, now: () => "2026-01-02" },
     );
 
     expect(result.ok).toBe(true);
@@ -980,7 +835,7 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
         interaction: { kind: "free_text", text: "我带来了腰牌，请把你亲眼看见的经过说清楚。", targetNpcId: secondNpc.id },
         expectedRevision: 0, choiceMap: new Map(),
       },
-      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+      { repository: repo, now: () => "2026-01-02" },
     );
 
     expect(result.ok).toBe(true);
@@ -995,7 +850,7 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
 
     const first = await performTurn(
       { gameId: asGameId("g1"), actionId: "uuid-1", interaction: { kind: "free_text", text: "我相信你", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
-      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+      { repository: repo, now: () => "2026-01-02" },
     );
     expect(first.ok).toBe(true);
     if (!first.ok) return;
@@ -1033,7 +888,7 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
 
     const second = await performTurn(
       { gameId: asGameId("g1"), actionId: "uuid-2", interaction: { kind: "free_text", text: "你在撒谎", targetNpcId: asNpcId("npc_1") }, expectedRevision: sceneWrite.record.revision, choiceMap: new Map() },
-      { repository: repo, now: () => "2026-01-03", intentParserSource: ruleSource },
+      { repository: repo, now: () => "2026-01-03" },
     );
     expect(second.ok).toBe(true);
     if (!second.ok) return;
@@ -1056,7 +911,7 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "uuid-greeting", interaction: { kind: "free_text", text: "嗨", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
-      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+      { repository: repo, now: () => "2026-01-02" },
     );
 
     expect(result.ok).toBe(true);
@@ -1071,12 +926,12 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     expect(generation.job.utterance).toBe("嗨");
   });
 
-  it("targetNpcId + 我相信你 → support talk：NPC 记忆变化 + pending job", async () => {
+  it("自定义输入按中性 ask 规则结算并创建 pending job", async () => {
     const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_sup", interaction: { kind: "free_text", text: "我相信你", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
-      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+      { repository: repo, now: () => "2026-01-02" },
     );
 
     expect(result.ok).toBe(true);
@@ -1087,11 +942,11 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     const saved = record()!;
     const npc = saved.worldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
     expect(npc.met).toBe(true);
-    // support：基础 +3 + 首次见面 +5 → affinity 8
-    expect(npc.memory.relationship.affinity).toBe(8);
+    // 自定义输入不在本地解析情感/意图；按中性 ask 结算。
+    expect(npc.memory.relationship.affinity).toBe(6);
     expect(npc.memory.emotion).toBe("warm");
-    expect(npc.memory.interactionHistory[0]!.relationshipDelta).toBe(8);
-    expect(npc.memory.interactionHistory[0]!.summary).toContain("关系+8");
+    expect(npc.memory.interactionHistory[0]!.relationshipDelta).toBe(6);
+    expect(npc.memory.interactionHistory[0]!.summary).toContain("关系+6");
 
     const generation = pendingNarrative(saved.storyState.narrative);
     expect(generation.status).toBe("provider_pending");
@@ -1101,64 +956,58 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     expect(generation.job.focusNpcId).toBe("npc_1");
   });
 
-  it("你在撒谎 → challenge talk：与 support 产生不同关系增量与记忆", async () => {
+  it("不同自定义措辞不触发本地意图分类，使用同一中性 ask 结算", async () => {
     const supportRepo = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
     const sup = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_sup", interaction: { kind: "free_text", text: "我相信你", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
-      { repository: supportRepo.repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+      { repository: supportRepo.repo, now: () => "2026-01-02" },
     );
     expect(sup.ok).toBe(true);
 
     const challengeRepo = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
     const cha = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_cha", interaction: { kind: "free_text", text: "你在撒谎", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
-      { repository: challengeRepo.repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+      { repository: challengeRepo.repo, now: () => "2026-01-02" },
     );
     expect(cha.ok).toBe(true);
     if (!cha.ok) return;
 
     const supportNpc = supportRepo.record()!.worldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
     const challengeNpc = challengeRepo.record()!.worldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
-    // challenge：基础 -2 + 首次见面 +5 → affinity 3，与 support(+8) 不同
-    expect(challengeNpc.memory.relationship.affinity).toBe(3);
-    expect(challengeNpc.memory.relationship.affinity).not.toBe(supportNpc.memory.relationship.affinity);
-    expect(challengeNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(3);
-    expect(supportNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(8);
-    // 事件：两回合都以 npc_met 记录，但关系变化不同
+    expect(challengeNpc.memory.relationship.affinity).toBe(6);
+    expect(challengeNpc.memory.relationship.affinity).toBe(supportNpc.memory.relationship.affinity);
+    expect(challengeNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(6);
+    expect(supportNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(6);
     const chaGen = pendingNarrative(challengeRepo.record()!.storyState.narrative);
     expect(chaGen.status).toBe("provider_pending");
     if (chaGen.status !== "provider_pending") return;
     expect(chaGen.job.resolvedEvent.triggeredEvents).toContain("npc_met");
   });
 
-  it("没有权威 NPC 目标的自由输入被拒绝且不调用意图源", async () => {
+  it("没有权威 NPC 目标的自由输入被拒绝", async () => {
     const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_free", interaction: { kind: "free_text", text: "我的等级升到100" }, expectedRevision: 0, choiceMap: new Map() },
-      { repository: repo, now: () => "2026-01-02", intentParserSource: ruleSource },
+      { repository: repo, now: () => "2026-01-02" },
     );
 
     expect(result).toMatchObject({ ok: false, code: "ACTION_REJECTED" });
     expect(applyCalls()).toHaveLength(0);
   });
 
-  it("AI 意图源超时/非法 JSON → 返回可重试 AI_CALL_FAILED 且零写入", async () => {
-    const failingSource: IntentParserSource = {
-      sourceVersion: "stub-failing",
-      async parseIntent() {
-        return { ok: false, reason: "service_error", failureKind: "AI_CALL_FAILED" };
-      },
-    };
-    const { repo, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
+  it("遗留意图源不参与自由输入；合法输入仍创建 pending", async () => {
+    const legacyIntentSource = { async parseIntent() { throw new Error("must not run"); } };
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldState(), buildFocusedDialogueStoryState());
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_fail", interaction: { kind: "free_text", text: "我的武功升到一百级", targetNpcId: asNpcId("npc_1") }, expectedRevision: 0, choiceMap: new Map() },
-      { repository: repo, now: () => "2026-01-02", intentParserSource: failingSource },
+      { repository: repo, now: () => "2026-01-02", intentParserSource: legacyIntentSource },
     );
 
-    expect(result).toMatchObject({ ok: false, code: "AI_CALL_FAILED" });
-    expect(applyCalls()).toHaveLength(0);
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+    expect(pendingNarrative(record()!.storyState.narrative).job.utterance).toBe("我的武功升到一百级");
   });
 });
 
@@ -1168,13 +1017,13 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
 // ---------------------------------------------------------------------------
 
 describe("performTurn 叙事节拍与目标转换（Task 4）", () => {
-  const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" };
-
   it("目标推进回合：job 携带真实 objectiveTransition（before/completed/after）与 quest_progress 节拍", async () => {
-    const { repo, record, applyCalls } = createSpyRepo(buildWorldWithMainQuest(), buildStoryState());
+    const story = buildFocusedAskDialogueStoryState();
+    const choice = firstApprovedChoice(story);
+    const { repo, record, applyCalls } = createSpyRepo(buildWorldWithMainQuest(), story);
 
     const result = await performTurn(
-      { gameId: asGameId("g1"), actionId: "act_quest", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", talkAction]]) },
+      { gameId: asGameId("g1"), actionId: "act_quest", interaction: { kind: "fixed_choice", choiceToken: choice.choiceToken }, expectedRevision: 0, choiceMap: new Map([[choice.choiceToken, choice.action]]) },
       { repository: repo, now: () => "2026-01-02" },
     );
 
@@ -1198,7 +1047,7 @@ describe("performTurn 叙事节拍与目标转换（Task 4）", () => {
     }));
   });
 
-  it("候选事件激活战斗：规则场景一次 CAS 完成，不创建 provider job", async () => {
+  it("非决策行动不消费候选事件，也不写入规则场景", async () => {
     const enemyWs = {
       ...buildWorldState(),
       enemies: [{
@@ -1219,23 +1068,15 @@ describe("performTurn 叙事节拍与目标转换（Task 4）", () => {
       expiresAtTurn: 9,
     };
     const ss = { ...buildStoryState(), candidateEventPool: [candidate] };
-    const { repo, record, applyCalls } = createSpyRepo(enemyWs, ss);
+    const { repo, applyCalls } = createSpyRepo(enemyWs, ss);
 
     const result = await performTurn(
       { gameId: asGameId("g1"), actionId: "act_battle", interaction: { kind: "fixed_choice", choiceToken: "tok_move" }, expectedRevision: 0, choiceMap: new Map([["tok_move", { type: "move", locationId: asLocationId("loc_2") }]]) },
       { repository: repo, now: () => "2026-01-02" },
     );
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(applyCalls()).toHaveLength(1);
-    const narrative = record()!.storyState.narrative;
-    expect(narrative.status).toBe("ready");
-    if (narrative.status !== "ready") return;
-    expect(narrative.currentScene.source).toBe("rule");
-    expect(narrative.currentScene.event?.kind).toBe("travel");
-    expect(narrative.currentScene.choices).toEqual([]);
-    expect(record()!.worldState.battle.status).toBe("active");
+    expect(result).toMatchObject({ ok: false, code: "NARRATIVE_CONTINUATION_MISSING" });
+    expect(applyCalls()).toHaveLength(0);
   });
 });
 
@@ -1260,11 +1101,12 @@ describe("performTurn — 自动揭示必经事实（Task 3）", () => {
         tags: [], kind: "main", stage: 1, status: "active",
       }],
     };
-    const { repo, applyCalls } = createSpyRepo(world, buildStoryState());
-    const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" };
+    const story = buildFocusedAskDialogueStoryState();
+    const choice = firstApprovedChoice(story);
+    const { repo, applyCalls } = createSpyRepo(world, story);
 
     const result = await performTurn(
-      { gameId: asGameId("g1"), actionId: "act_handoff", interaction: { kind: "fixed_choice", choiceToken: "tok_talk" }, expectedRevision: 0, choiceMap: new Map([["tok_talk", talkAction]]) },
+      { gameId: asGameId("g1"), actionId: "act_handoff", interaction: { kind: "fixed_choice", choiceToken: choice.choiceToken }, expectedRevision: 0, choiceMap: new Map([[choice.choiceToken, choice.action]]) },
       { repository: repo, now: () => "2026-01-02" },
     );
 

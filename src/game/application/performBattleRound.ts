@@ -2,13 +2,13 @@ import type { GameId } from "./server/persistence/gameRepository";
 import type { GameRepository } from "./server/persistence/gameRepository";
 import type { Action } from "@/game/domain/action";
 import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
-import type { WorldState, BattleStartSnapshot } from "@/game/domain/worldState";
+import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
-import type { NarrativeRuntimeState, NarrativeSceneState } from "@/game/domain/narrative";
-import type { ApprovedChoice } from "@/game/domain/approvedChoice";
+import type { NarrativeRuntimeState, BattleNarrativeCheckpointState } from "@/game/domain/narrative";
 import { resolveTurn } from "@/game/gameplay/rpg/ruleEngine";
 import { commitState } from "./stateCommit";
 import { asTurnId } from "@/game/domain/events";
+import { consumeNarrativeBundle } from "./consumeNarrativeBundle";
 
 // ---------------------------------------------------------------------------
 // Task 8: 专门处理活跃战斗回合的应用路径。
@@ -28,7 +28,7 @@ export type PerformBattleRoundInput = {
 
 export type PerformBattleRoundResult =
   | { readonly ok: true; readonly revision: number; readonly resolvedEvent: ResolvedEvent; readonly outcome: "active" | "victory" | "defeat" | "withdraw" }
-  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "ACTION_REJECTED" | "NARRATIVE_CONTINUATION_MISSING" | "INFRASTRUCTURE_FAILURE"; readonly feedback: string };
+  | { readonly ok: false; readonly code: "NO_ACTIVE_GAME" | "STALE_GAME_REVISION" | "ACTION_REJECTED" | "NARRATIVE_CONTINUATION_MISSING" | "NARRATIVE_CONTINUATION_INVALID" | "INFRASTRUCTURE_FAILURE"; readonly feedback: string };
 
 export type PerformBattleRoundDeps = {
   readonly repository: GameRepository;
@@ -36,22 +36,18 @@ export type PerformBattleRoundDeps = {
 };
 
 /** 叙事检查点：战斗开始前的完整叙事快照，用于失败/撤退时恢复。 */
-export type BattleNarrativeCheckpoint = {
-  readonly scene: NarrativeSceneState;
-  readonly choiceRegistry: readonly ApprovedChoice[];
-};
-
 function restoreNarrativeFromCheckpoint(
   beforeNarrative: NarrativeRuntimeState,
-  checkpoint: BattleNarrativeCheckpoint,
+  checkpoint: BattleNarrativeCheckpointState,
 ): NarrativeRuntimeState {
   if (beforeNarrative.status !== "ready") return beforeNarrative;
   return {
     status: "ready",
     mode: beforeNarrative.mode,
-    currentScene: checkpoint.scene,
+    currentScene: checkpoint.currentScene,
     choiceRegistry: checkpoint.choiceRegistry,
-    ...(beforeNarrative.dialogueSession === undefined ? {} : { dialogueSession: beforeNarrative.dialogueSession }),
+    ...(checkpoint.bundle === undefined ? {} : { narrativeBundle: checkpoint.bundle }),
+    ...(checkpoint.dialogueSession === undefined ? {} : { dialogueSession: checkpoint.dialogueSession }),
   };
 }
 
@@ -83,11 +79,9 @@ export async function performBattleRound(
   const beforeStoryState = record.storyState;
   const beforeNarrative = beforeStoryState.narrative;
 
-  // Capture narrative checkpoint if battle is active (for potential restoration)
-  const narrativeCheckpoint: BattleNarrativeCheckpoint | undefined =
-    beforeNarrative.status === "ready"
-      ? { scene: beforeNarrative.currentScene, choiceRegistry: beforeNarrative.choiceRegistry }
-      : undefined;
+  const narrativeCheckpoint = beforeNarrative.status === "ready"
+    ? beforeNarrative.battleCheckpoint
+    : undefined;
 
   const resolved = resolveTurn(
     beforeWorldState,
@@ -158,10 +152,9 @@ export async function performBattleRound(
           }
         : { ...afterWorldState, battle: { status: "idle" as const } };
 
-      const restoredStoryState: StoryState = {
-        ...beforeStoryState,
-        narrative: restoredNarrative,
-      };
+      const restoredStoryState: StoryState = narrativeCheckpoint === undefined
+        ? { ...beforeStoryState, narrative: restoredNarrative }
+        : { ...narrativeCheckpoint.storySnapshot, narrative: restoredNarrative };
 
       const commitResult = await commitState(deps.repository, {
         gameId: input.gameId,
@@ -184,17 +177,29 @@ export async function performBattleRound(
       };
     }
 
-    // Victory: commit the resolved state, clear checkpoint
+    // Victory consumes the already-approved battle_resolved:victory step. It
+    // never creates a provider job and never invents a post-battle scene.
     const victoryWorldState: WorldState = {
       ...afterWorldState,
       battle: { status: "idle" as const },
     };
 
+    const continued = consumeNarrativeBundle({
+      beforeStoryState,
+      resolvedWorldState: victoryWorldState,
+      resolvedStoryState: afterStoryState,
+      action: input.action,
+      actionId: input.actionId,
+      postCommitRevision: record.revision + 1,
+      resolvedEvent: resolution.primaryResult,
+      domainEvents: resolution.domainEvents,
+    });
+    if (!continued.ok) return { ok: false, code: continued.code, feedback: "当前战斗没有可消费的预备叙事。" };
     const commitResult = await commitState(deps.repository, {
       gameId: input.gameId,
       expectedRevision: record.revision,
-      nextWorldState: victoryWorldState,
-      nextStoryState: afterStoryState,
+      nextWorldState: continued.nextWorldState,
+      nextStoryState: continued.nextStoryState,
     });
     if (!commitResult.ok) {
       return {

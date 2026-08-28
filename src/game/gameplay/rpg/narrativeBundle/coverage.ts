@@ -1,4 +1,4 @@
-import type { BundleDescriptorGraph, BundleStepDescriptor } from "./descriptors";
+import type { BundleDescriptorGraph } from "./descriptors";
 
 export type BundleCoverageErrorCode =
   | "step_limit_exceeded"

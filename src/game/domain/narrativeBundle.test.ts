@@ -10,8 +10,6 @@ import {
   type BundleStepProposal,
   type NarrativeBundleProposal,
   type NarrativeBundleState,
-  type NarrativeBundleTerminal,
-  type NarrativeBundleTrigger,
 } from "./narrativeBundle";
 import type { PreparedSceneSeedState } from "./preparedContinuation";
 
@@ -110,6 +108,16 @@ describe("NarrativeBundleProposal parser", () => {
 
   it("accepts exactly 12 continuation steps", () => {
     const steps = Array.from({ length: 12 }, (_, i) => makeStep(`move:loc_${i}`));
+    steps[0] = {
+      ...steps[0]!,
+      scene: {
+        ...steps[0]!.scene,
+        choices: [
+          { candidateId: "choice_1", label: "继续" },
+          { candidateId: "choice_2", label: "停下" },
+        ],
+      },
+    };
     const bundle: NarrativeBundleProposal = {
       ...makeValidBundle(),
       continuationScenes: steps,
@@ -117,6 +125,17 @@ describe("NarrativeBundleProposal parser", () => {
       currentScene: { ...makeValidScene(), choices: [] },
     };
     expect(parseNarrativeBundleProposal(bundle).ok).toBe(true);
+  });
+
+  it("rejects a current_scene terminal without exactly two distinct choices", () => {
+    const bundle: NarrativeBundleProposal = {
+      ...makeValidBundle(),
+      currentScene: {
+        ...makeValidScene(),
+        choices: [{ candidateId: "support", label: "表示赞同" }],
+      },
+    };
+    expect(parseNarrativeBundleProposal(bundle).ok).toBe(false);
   });
 
   it("accepts ending terminal with no continuation and no choices", () => {

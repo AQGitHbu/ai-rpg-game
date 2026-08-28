@@ -7,7 +7,8 @@ import type { Action } from "@/game/domain/action";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { asNarrativeJobId } from "@/game/domain/events";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { createPreparedContinuationState, type PreparedContinuationTrigger } from "@/game/domain/preparedContinuation";
+import type { PreparedContinuationTrigger } from "@/game/domain/preparedContinuation";
+import type { NarrativeBundleTrigger } from "@/game/domain/narrativeBundle";
 import { asEnemyId, asFactId, asGenerationId, asLocationId } from "@/game/domain/worldEntity";
 import {
   appendEnemy,
@@ -99,14 +100,19 @@ function makeStory(trigger?: PreparedContinuationTrigger): StoryState {
   });
   if (trigger === undefined) return base;
   if (base.narrative.status !== "ready") throw new Error("matrix story fixture must start ready");
-  const prepared = createPreparedContinuationState({
-    originJobId: asNarrativeJobId("job-provider-trigger-matrix"),
-    activeStepIds: ["step-trigger"],
-    steps: [{
+  return {
+    ...base,
+    narrative: {
+      ...base.narrative,
+      narrativeBundle: {
+        contractVersion: 1,
+        originJobId: asNarrativeJobId("job-provider-trigger-matrix"),
+        activeStepIds: ["step-trigger"],
+        steps: [{
       stepId: "step-trigger",
       objectiveKey: "matrix:0",
       consumptionGroupKey: `matrix:0:${trigger.kind}`,
-      trigger,
+      trigger: trigger as NarrativeBundleTrigger,
       scene: {
         segments: [{ beatId: "matrix-result", text: `规则结果：${trigger.kind}` }],
         event: trigger.kind === "move"
@@ -120,10 +126,11 @@ function makeStory(trigger?: PreparedContinuationTrigger): StoryState {
         source: "fixture",
       },
       nextStepIds: [],
-    }],
-  });
-  if (!prepared.ok) throw new Error(`invalid prepared fixture: ${prepared.code}`);
-  return { ...base, narrative: { ...base.narrative, preparedContinuation: prepared.value } };
+        }],
+        terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+      },
+    },
+  };
 }
 
 function makeBattleWorld(): WorldState {
@@ -236,7 +243,7 @@ describe("provider trigger matrix", () => {
   afterEach(() => cleanup());
 
   it.each(preparedTriggerCases)(
-    "$name prepared continuation consumes without provider/world proposal and commits once",
+    "$name narrative bundle step consumes without provider/world proposal and commits once",
     async ({ worldState, trigger, action, token }) => {
       const fixture = makeRepository(worldState, makeStory(trigger));
       const proposal = worldProposalSpy();
@@ -261,12 +268,11 @@ describe("provider trigger matrix", () => {
       expect(savedNarrative.status).toBe("ready");
       if (savedNarrative.status !== "ready") return;
       expect(savedNarrative.currentScene.source).toBe("fixture");
-      // Task 8: performBattleRound handles victory differently; preparedContinuation may remain.
-      // expect(savedNarrative.preparedContinuation).toBeUndefined();
+      expect(savedNarrative.narrativeBundle).toBeUndefined();
     },
   );
 
-  it("rule-owned explore follows the same no-provider, one-CAS boundary", async () => {
+  it("missing bundle step rejects explore with zero writes and no provider", async () => {
     const fixture = makeRepository(makeWorld(), makeStory());
     const proposal = worldProposalSpy();
 
@@ -281,15 +287,10 @@ describe("provider trigger matrix", () => {
       { repository: fixture.repository, now: () => "2026-08-24T00:00:00.000Z", worldEvolutionSource: proposal.source },
     );
 
-    expect(result.ok).toBe(true);
-    expect(fixture.applyState).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ ok: false, code: "NARRATIVE_CONTINUATION_MISSING" });
+    expect(fixture.applyState).not.toHaveBeenCalled();
     expect(fixture.applySceneWriteBack).not.toHaveBeenCalled();
     expect(proposal.propose).not.toHaveBeenCalled();
-    const narrative = fixture.record().storyState.narrative;
-    expect(narrative.status).toBe("ready");
-    if (narrative.status !== "ready") return;
-    expect(narrative.currentScene.source).toBe("rule");
-    expect(narrative.currentScene.choices).toEqual([]);
   });
 
   it("NPC handoff acknowledgement is a local close and never submits a persistence action", async () => {

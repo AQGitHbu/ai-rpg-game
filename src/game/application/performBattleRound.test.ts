@@ -4,12 +4,11 @@ import type { GameRepository, GameRecord } from "./server/persistence/gameReposi
 import type { WorldState, BattleStartSnapshot } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { Action } from "@/game/domain/action";
-import { asEnemyId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
+import { asEnemyId, asLocationId } from "@/game/domain/worldEntity";
 import { asCombatantId } from "@/game/domain/combat";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { GameEvent } from "@/game/domain/events";
-import type { NarrativeSceneState } from "@/game/domain/narrative";
 
 function createInMemoryRepo(record: GameRecord | null): { repo: GameRepository; getRecord: () => GameRecord | null; getApplyCount: () => number } {
   let current: GameRecord | null = record;

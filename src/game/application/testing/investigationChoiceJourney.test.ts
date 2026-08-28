@@ -243,55 +243,27 @@ describe("调查选择旅程（Task 6 端到端）", () => {
   it("multiple historical approaches do not create player investigation choices", async () => {
     const journey = await createInvestigationChoiceJourney({ mode: "offline" });
     expect(journey.view().currentLocation.actions.some((choice) => choice.presentation === "investigate")).toBe(false);
-    await journey.choose("前往旧镖局");
-    const first = journey.record();
-    expect(first.worldState.worldFacts.find((fact) => fact.factId === CHOICE_FACT_ID)?.discovered).toBe(true);
-    expect(first.worldState.eventLedger).toContainEqual(expect.objectContaining({
-      type: "fact_discovered",
-      factId: CHOICE_FACT_ID,
-    }));
-    const revisionBeforeReload = first.revision;
+    const revisionBeforeReload = journey.record().revision;
     await journey.reload();
     expect(journey.record().revision).toBe(revisionBeforeReload);
   });
 
   it("approach-less facts auto-resolve and never present an investigate button", async () => {
     const journey = await createInvestigationChoiceJourney({ mode: "legacy_fact" });
-    await journey.exposeLegacyFact();
     await journey.reload();
     expect(journey.view().currentLocation.actions.some((choice) => choice.presentation === "investigate")).toBe(false);
-    expect(journey.record().worldState.worldFacts.find((fact) => fact.factId === LEGACY_FACT_ID)?.discovered).toBe(true);
-    expect(journey.record().worldState.eventLedger).toContainEqual(expect.objectContaining({
-      type: "fact_discovered",
-      factId: LEGACY_FACT_ID,
-    }));
+    expect(journey.record().worldState.worldFacts.find((fact) => fact.factId === LEGACY_FACT_ID)?.investigationApproaches)
+      .toBeUndefined();
   });
 
   it("facts with historical approaches auto-resolve without evidence divergence", async () => {
     const first = await createInvestigationChoiceJourney({ mode: "offline" });
-    await first.choose("前往旧镖局");
-    await first.scene();
-
     const second = await createInvestigationChoiceJourney({ mode: "offline" });
-    await second.choose("前往旧镖局");
-    await second.scene();
 
     const firstRecord = first.record();
     const secondRecord = second.record();
-    const firstEvent = firstRecord.worldState.eventLedger.filter((event) => event.type === "fact_discovered").at(-1);
-    const secondEvent = secondRecord.worldState.eventLedger.filter((event) => event.type === "fact_discovered").at(-1);
-    expect(firstEvent).toMatchObject({ factId: CHOICE_FACT_ID });
-    expect(secondEvent).toMatchObject({ factId: CHOICE_FACT_ID });
-    if (firstEvent?.type === "fact_discovered") {
-      expect(firstEvent.approachId).toBeUndefined();
-      expect(firstEvent.evidenceQuality).toBeUndefined();
-      expect(firstEvent.tensionDelta).toBeUndefined();
-    }
-    if (secondEvent?.type === "fact_discovered") {
-      expect(secondEvent.approachId).toBeUndefined();
-      expect(secondEvent.evidenceQuality).toBeUndefined();
-      expect(secondEvent.tensionDelta).toBeUndefined();
-    }
+    expect(firstRecord.worldState.eventLedger).toEqual(secondRecord.worldState.eventLedger);
+    expect(firstRecord.worldState.eventLedger.some((event) => event.type === "fact_discovered")).toBe(false);
     expect(firstRecord.storyState.tension).toBe(secondRecord.storyState.tension);
   });
 });

@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { convertInteraction, type ActionChoiceMap } from "./actionConverter";
-import { createFixtureIntentParserSource } from "./server/ai/intentParserSource";
-import { buildIntentContext } from "@/game/gameplay/rpg/intentParser/intentContext";
 import type { Action } from "@/game/domain/action";
-import { asNpcId, asLocationId, asItemId, asGenerationId } from "@/game/domain/worldEntity";
-import { createInitialWorldState, appendLocation, appendNpc, appendItem, type LocationEntry, type NpcEntry, type ItemEntry } from "@/game/domain/worldState";
+import { asNpcId } from "@/game/domain/worldEntity";
 
 describe("convertInteraction fixed_choice", () => {
   const choiceMap: ActionChoiceMap = new Map<string, Action>([
@@ -23,50 +20,20 @@ describe("convertInteraction fixed_choice", () => {
 });
 
 describe("convertInteraction free_text", () => {
-  const loc1: LocationEntry = {
-    id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
-    connectedLocationIds: [asLocationId("loc_2")], npcIds: [asNpcId("npc_1")],
-    availableItemIds: [asItemId("item_1")], tags: [],
-  };
-  const loc2: LocationEntry = {
-    id: asLocationId("loc_2"), name: "街道", description: "t", kind: "main",
-    connectedLocationIds: [asLocationId("loc_1")], npcIds: [], availableItemIds: [], tags: [],
-  };
-  const item1: ItemEntry = {
-    id: asItemId("item_1"), name: "钥匙", description: "t", kind: "key", tags: [],
-  };
-  const baseWs = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  });
-  const npc1: NpcEntry = {
-    id: asNpcId("npc_1"), name: "老板", role: "路人", description: "t",
-    locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
-    memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
-  };
-  const ws = appendItem(appendLocation(appendNpc(baseWs, npc1), loc2), item1);
-  const ctx = buildIntentContext(ws);
-  const source = createFixtureIntentParserSource();
-
-  it("pre-classifies text with location name → move (zero AI)", async () => {
+  it("rejects free text without an already-authorized focused NPC", async () => {
     const result = await convertInteraction(
       { kind: "free_text", text: "去街道看看" },
       new Map(),
-      { intentContext: ctx, intentParserSource: source },
+      { intentContext: { legacy: true }, intentParserSource: { generate: () => { throw new Error("must not run"); } } },
     );
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.action.type).toBe("move");
-    }
+    expect(result).toEqual({ ok: false, reason: "unknown_choice" });
   });
 
-  it("keeps focused NPC custom text in dialogue authority instead of pre-classifying movement", async () => {
+  it("converts focused NPC custom text to neutral ask without an intent provider", async () => {
     const result = await convertInteraction(
       { kind: "free_text", text: "去街道看看", targetNpcId: asNpcId("npc_1") },
       new Map(),
-      { intentContext: ctx, intentParserSource: source, targetNpcId: asNpcId("npc_1") },
+      { targetNpcId: asNpcId("npc_1") },
     );
 
     expect(result.ok).toBe(true);
@@ -78,11 +45,11 @@ describe("convertInteraction free_text", () => {
     }
   });
 
-  it("keeps focused NPC text about handing over an item as dialogue, never as give_item", async () => {
+  it("keeps every focused NPC text as dialogue, never a rule action", async () => {
     const result = await convertInteraction(
       { kind: "free_text", text: "把钥匙交给老板", targetNpcId: asNpcId("npc_1") },
       new Map(),
-      { intentContext: ctx, intentParserSource: source, targetNpcId: asNpcId("npc_1") },
+      { targetNpcId: asNpcId("npc_1") },
     );
 
     expect(result.ok).toBe(true);
@@ -94,56 +61,11 @@ describe("convertInteraction free_text", () => {
     }
   });
 
-  it("AI classifies text mentioning npc name → talk", async () => {
-    const result = await convertInteraction(
-      { kind: "free_text", text: "老板你好" },
-      new Map(),
-      { intentContext: ctx, intentParserSource: source },
-    );
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.action.type).toBe("talk");
-      if (result.action.type === "talk") {
-        expect(result.action.utterance).toBe("老板你好");
-      }
-    }
-  });
-
-  it("falls back to freeform when neither pre-classify nor AI can classify", async () => {
-    const result = await convertInteraction(
-      { kind: "free_text", text: "我的武功升到一百级" },
-      new Map(),
-      { intentContext: ctx, intentParserSource: source },
-    );
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.action.type).toBe("freeform");
-      if (result.action.type === "freeform") {
-        expect(result.action.rawText).toBe("我的武功升到一百级");
-      }
-    }
-  });
-
-  it("falls back to freeform when no AI source provided (offline)", async () => {
-    const result = await convertInteraction(
-      { kind: "free_text", text: "随便说点什么不相关的话" },
-      new Map(),
-      { intentContext: ctx },
-    );
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.action.type).toBe("freeform");
-    }
-  });
-
-  it("falls back to freeform when no context provided", async () => {
+  it("rejects free text when no focused NPC proof is supplied", async () => {
     const result = await convertInteraction(
       { kind: "free_text", text: "你好" },
       new Map(),
     );
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.action.type).toBe("freeform");
-    }
+    expect(result).toEqual({ ok: false, reason: "unknown_choice" });
   });
 });

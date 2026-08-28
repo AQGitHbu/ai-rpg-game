@@ -6,7 +6,6 @@ import type {
   ItemId,
   LocationId,
   NpcId,
-  QuestId,
 } from "./worldEntity";
 import type { PreparedSceneSeedState } from "./preparedContinuation";
 
@@ -191,6 +190,11 @@ function hasUniqueStrings(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
 }
 
+function hasExactlyTwoDistinctChoices(scene: BundleSceneProposal): boolean {
+  return scene.choices.length === 2
+    && hasUniqueStrings(scene.choices.map((choice) => choice.candidateId));
+}
+
 const NARRATIVE_EMOTIONS: readonly string[] = [
   "neutral", "warm", "guarded", "afraid", "angry", "sad",
 ];
@@ -288,19 +292,31 @@ export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBund
 
   // current_scene terminal must have empty continuation
   if (terminal.kind === "next_decision" && terminal.target.kind === "current_scene") {
-    if (continuationScenes.length > 0) return INVALID_PROPOSAL;
+    if (continuationScenes.length > 0 || !hasExactlyTwoDistinctChoices(value.currentScene)) {
+      return INVALID_PROPOSAL;
+    }
   }
 
   // continuation_step terminal must have at least one continuation scene
   if (terminal.kind === "next_decision" && terminal.target.kind === "continuation_step") {
     if (continuationScenes.length === 0) return INVALID_PROPOSAL;
+    if (value.currentScene.choices.length !== 0) return INVALID_PROPOSAL;
     const stepKeys = continuationScenes.map((s) => s.stepKey);
     if (!stepKeys.includes(terminal.target.stepKey)) return INVALID_PROPOSAL;
+    for (const step of continuationScenes) {
+      if (step.stepKey === terminal.target.stepKey) {
+        if (!hasExactlyTwoDistinctChoices(step.scene)) return INVALID_PROPOSAL;
+      } else if (step.scene.choices.length !== 0) {
+        return INVALID_PROPOSAL;
+      }
+    }
   }
 
   // ending terminal must have empty continuation
   if (terminal.kind === "ending") {
-    if (continuationScenes.length > 0) return INVALID_PROPOSAL;
+    if (continuationScenes.length > 0 || value.currentScene.choices.length !== 0) {
+      return INVALID_PROPOSAL;
+    }
   }
 
   // step limit

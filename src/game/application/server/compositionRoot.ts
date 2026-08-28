@@ -10,8 +10,7 @@ import { createSqliteGameRepository } from "./persistence/sqliteGameRepository";
 import { createGame } from "../createGame";
 import { performTurn } from "../performTurn";
 import { projectGameSessionView } from "../gameSessionView";
-import { createOpeningGenerationSource, createSceneSource, createWorldEvolutionSource, createNarrativeBundleSourceFactory } from "../server/ai/sourceFactory";
-import { createServerIntentParserSource } from "../server/ai/intentParserSourceFactory";
+import { createNarrativeBundleSourceFactory } from "../server/ai/sourceFactory";
 import { createServerRpgAiClient } from "../server/ai/rpgAiClient";
 import { parseAiRuntimeConfig } from "../server/ai/aiRuntimeConfig";
 import { createTextAuditRecorder } from "../server/ai/textAuditRecorder";
@@ -20,7 +19,6 @@ import type {
   AiTextAuditContext,
   GameApiAuditMode,
 } from "../server/ai/textAuditTypes";
-import { generatePendingScene } from "../generatePendingScene";
 import { generatePendingNarrativeBundle } from "../generatePendingNarrativeBundle";
 import { commitState } from "../stateCommit";
 import { buildChoiceMap } from "../buildChoiceMap";
@@ -239,16 +237,8 @@ export function createServerGameEntryPoints(
   // One provider transport/client per server composition root. Role policy,
   // thinking mode, budgets, and transient retries are centralized there.
   const aiClient = createServerRpgAiClient(env, logger, auditRecorder);
-  const source = createOpeningGenerationSource(env, logger, aiClient);
-  // Task 3：AI 可用注入 live 世界演化源，否则 unavailable source；deterministic
-  // source 只由显式 offline fixture composition 注入。
-  const worldEvolutionSource = createWorldEvolutionSource(env, logger, aiClient);
-  const sceneSource = createSceneSource(env, logger, aiClient);
-  // Task 7: Unified narrative bundle source replaces separate world/scene/intent sources.
+  // Unified source is the only runtime AI entry point for opening and decisions.
   const narrativeBundleSource = createNarrativeBundleSourceFactory(env, logger, aiClient);
-  // Task 9：对话自由输入统一走 performTurn 回合入口，AI 可用时注入 live 意图源，否则规则源。
-  // transport 构建收敛在 server/ai 工厂内（@ai-game/ai-transport 边界守卫）。
-  const intentParserSource = createServerIntentParserSource(env, aiClient);
   const narrativeCoordinator = new BackgroundEnsureCoordinator({
     loadPending: async () => {
       const current = await repository.getCurrentGame();
@@ -459,7 +449,7 @@ export function createServerGameEntryPoints(
         },
         {
           repository,
-          source,
+          source: narrativeBundleSource,
           now,
           aiEnabled,
           ...(traceId === undefined ? {} : { auditLink: { traceId } }),
@@ -489,8 +479,6 @@ export function createServerGameEntryPoints(
         {
           repository,
           now,
-          worldEvolutionSource,
-          intentParserSource,
           auditLink: { gameId: String(current.record.gameId), traceId },
         },
       );

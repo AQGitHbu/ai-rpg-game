@@ -13,9 +13,9 @@ import {
   asLocationId,
   asNpcId,
   asGenerationId,
-  asQuestId,
 } from "@/game/domain/worldEntity";
 import { asNarrativeJobId } from "@/game/domain/events";
+import { createFixtureOpeningCandidateSource } from "../../createGame";
 
 function mockAiClient(complete: ReturnType<typeof vi.fn>): RpgAiClient {
   return {
@@ -96,9 +96,19 @@ const validBundleResponse = {
   worldDelta: null,
   currentScene: {
     segments: [{ beatId: "atmosphere", text: "场景旁白" }],
-    npcLine: null,
+    npcLine: {
+      npcId: "npc_1",
+      text: "你来了。",
+      emotion: "neutral",
+      answeredBeatIds: [],
+      usedFactIds: [],
+      usedInteractionActionIds: [],
+    },
     objectiveLink: null,
-    choices: [],
+    choices: [
+      { candidateId: "support", label: "表示赞同" },
+      { candidateId: "challenge", label: "提出质疑" },
+    ],
   },
   continuationScenes: [],
   terminal: { kind: "next_decision", target: { kind: "current_scene" } },
@@ -164,6 +174,36 @@ describe("createNarrativeBundleSource", () => {
     }
   });
 
+  it("normalizes legacy decision presentation fields without inventing narrative text", async () => {
+    const legacy = {
+      ...validBundleResponse,
+      currentScene: {
+        ...validBundleResponse.currentScene,
+        npcLine: "我知道一些内情。",
+        objectiveLink: { questId: "旧任务名称", objectiveText: "旧格式的提示" },
+        choices: [
+          { candidateId: "support", text: "相信他。" },
+          { candidateId: "challenge", text: "质疑他。" },
+        ],
+      },
+    };
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(legacy) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    const result = await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeStoryState(),
+      job: makeJob(),
+    });
+
+    expect(result).toMatchObject({ ok: true, kind: "decision" });
+    if (!result.ok || result.kind !== "decision") return;
+    expect(result.proposal.currentScene.npcLine).toMatchObject({ npcId: "npc_1", text: "我知道一些内情。" });
+    expect(result.proposal.currentScene.objectiveLink).toBeNull();
+    expect(result.proposal.currentScene.choices.map((choice) => choice.label)).toEqual(["相信他。", "质疑他。"]);
+  });
+
   it("returns failure when AI returns an error", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: false,
@@ -203,5 +243,158 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain("12");
     expect(systemPrompt).toContain("current_scene");
     expect(systemPrompt).toContain("continuation_step");
+    expect(systemPrompt).toContain("禁止鬼魂");
+  });
+
+  it("projects the post-expansion arrival graph for a next-act response", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(validBundleResponse),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const storyState = {
+      ...makeStoryState(),
+      currentAct: 2,
+      evolution: { ...makeStoryState().evolution, status: "needs_next_act" as const },
+    };
+
+    await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState,
+      job: makeJob(),
+    });
+
+    const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
+    const systemPrompt = messages[0]!.content as string;
+    const locationId = `loc_dyn_${storyState.evolution.nextLocationOrdinal}`;
+    const npcId = `npc_dyn_${storyState.evolution.nextNpcOrdinal}`;
+    expect(systemPrompt).toContain(`move:${locationId}`);
+    expect(systemPrompt).toContain(`move:${locationId}_choice_1`);
+    expect(systemPrompt).toContain(npcId);
+    expect(systemPrompt).toContain('"kind":"continuation_step"');
+    expect(systemPrompt).not.toContain('terminal: {"kind":"ending"}');
+  });
+
+  it("normalizes a flattened next-act continuation without changing its text", async () => {
+    const nextLocationOrdinal = makeStoryState().evolution.nextLocationOrdinal;
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify({
+        worldDelta: {
+          beatSummary: "旧案指向镇外。",
+          newLocation: { name: "枯柳驿", description: "荒废驿站。", scale: "scene", placement: "world", connectFromLocationId: "loc_0" },
+          newNpc: { name: "老驼子", role: "守夜人", description: "警惕的守夜人。", locationRef: { kind: "new_location" }, goals: ["守住秘密"] },
+          newItem: { name: "半块令牌", description: "断裂的令牌。", locationRef: "new_location" },
+          newEnemy: { name: "蒙面劫匪", tier: "normal", locationRef: "new_location" },
+          newFact: null,
+          nextMainQuest: { name: "枯柳驿线索", description: "前往荒废驿站。", objectiveText: "调查枯柳驿" },
+          endingPair: null,
+        },
+        currentScene: {
+          segments: [{ beatId: "closing", text: "柳三娘递来一枚铜钱。" }],
+          npcLine: { npcId: "npc_1", text: "去枯柳驿看看。", emotion: "warm", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+          objectiveLink: { questId: "nextMainQuest", text: "旧格式" },
+          choices: [],
+        },
+        continuationScenes: [{
+          segments: [{ beatId: "arrival", text: "你抵达枯柳驿。" }],
+          npcLine: { npcId: "npc_dyn_1", text: "来者何人？", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+          objectiveLink: { questId: "nextMainQuest", text: "旧格式" },
+          choices: [
+            { candidateId: "wrong_1", label: "表明身份" },
+            { candidateId: "wrong_2", label: "先行试探" },
+          ],
+          terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: "wrong" } },
+        }],
+        terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: `move:loc_dyn_${nextLocationOrdinal}` } },
+      }),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const storyState = {
+      ...makeStoryState(),
+      currentAct: 2,
+      evolution: { ...makeStoryState().evolution, status: "needs_next_act" as const },
+    };
+
+    const result = await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState,
+      job: makeJob(),
+    });
+
+    expect(result).toMatchObject({ ok: true, kind: "decision" });
+    if (!result.ok || result.kind !== "decision") return;
+    const stepKey = `move:loc_dyn_${storyState.evolution.nextLocationOrdinal}`;
+    expect(result.proposal.continuationScenes[0]).toMatchObject({
+      stepKey,
+      scene: {
+        segments: [{ text: "你抵达枯柳驿。" }],
+        objectiveLink: null,
+        choices: [
+          { candidateId: `${stepKey}_choice_1`, label: "表明身份" },
+          { candidateId: `${stepKey}_choice_2`, label: "先行试探" },
+        ],
+      },
+    });
+  });
+
+  it("parses an opening proposal and emits the initialization audit link", async () => {
+    const opening = await createFixtureOpeningCandidateSource().generate({
+      gameType: "wuxia",
+      gameLength: "short",
+      seed: "opening-live-source",
+    });
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify({
+        opening,
+        currentScene: {
+          segments: [{ beatId: "opening", text: "客栈里风声低沉。" }],
+          npcLine: {
+            npcId: "npc_0",
+            text: "我等你很久了。",
+            emotion: "guarded",
+            answeredBeatIds: [],
+            usedFactIds: ["fact_0"],
+            usedInteractionActionIds: [],
+          },
+          objectiveLink: null,
+          choices: [
+            { candidateId: "support", label: "我愿意帮忙。" },
+            { candidateId: "challenge", label: "先说清楚缘由。" },
+          ],
+        },
+        continuationScenes: [],
+        terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+      }),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    const result = await source.generate({
+      kind: "opening",
+      jobId: asNarrativeJobId("job-opening"),
+      input: { gameType: "wuxia", gameLength: "short", seed: "opening-live-source" },
+      auditLink: { gameId: "game-opening", traceId: "trace-opening" },
+    });
+
+    expect(result).toMatchObject({ ok: true, kind: "opening" });
+    expect(complete).toHaveBeenCalledWith(
+      "narrative_bundle",
+      expect.any(Array),
+      expect.objectContaining({
+        purpose: "narrative_bundle_generation",
+        trigger: "initialization",
+        gameId: "game-opening",
+        traceId: "trace-opening",
+        jobId: "job-opening",
+        turnNumber: 0,
+      }),
+    );
+    const prompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
+    expect(prompt).toContain("backgroundSummary");
+    expect(prompt).toContain('"targetActs": 3');
+    expect(prompt).toContain('"scale": "town"');
   });
 });
