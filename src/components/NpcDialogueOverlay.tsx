@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type KeyboardEvent, type MouseEvent } from "react";
 import type { NpcDialogueView, NewGameInput, RelationshipTier } from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { normalizeDisplayText } from "./displayText";
@@ -110,6 +110,46 @@ export function NpcDialogueOverlay({
 
   const locked = busy || phase === "waiting";
 
+  const pages = dialogue.speechPages;
+  const lastIndex = Math.max(0, pages.length - 1);
+  const [pageIndex, setPageIndex] = useState(0);
+  const clampedIndex = Math.min(pageIndex, lastIndex);
+  const isLastPage = clampedIndex >= lastIndex;
+
+  // 内容键变化（新回应写回/切换 NPC）才重置；引用变化不重置。
+  const contentKey = `${dialogue.npcId}\u0001${pages.join("\u0001")}`;
+  const previousContentKey = useRef(contentKey);
+  useEffect(() => {
+    if (previousContentKey.current === contentKey) return;
+    previousContentKey.current = contentKey;
+    setPageIndex(0);
+  }, [contentKey]);
+
+  function advancePage(): void {
+    if (locked) return;
+    if (isLastPage) return;
+    setPageIndex(clampedIndex + 1);
+  }
+
+  // 交互控件（关闭按钮/未来的输入框与选项按钮）冒泡到对话框时不触发翻页。
+  function isInteractiveTarget(event: { readonly target: EventTarget | null }): boolean {
+    const target = event.target as HTMLElement;
+    return typeof target?.closest === "function" && target.closest("input, textarea, button, form") !== null;
+  }
+
+  function handleBoxClick(event: MouseEvent<HTMLElement>): void {
+    if (isInteractiveTarget(event)) return;
+    advancePage();
+  }
+
+  function handleBoxKeyDown(event: KeyboardEvent<HTMLElement>): void {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    // 自由输入框持有焦点时保留其输入/提交语义，不触发翻页。
+    if (isInteractiveTarget(event)) return;
+    event.preventDefault();
+    advancePage();
+  }
+
   return (
     <div
       className="npc-dialogue-overlay"
@@ -134,7 +174,13 @@ export function NpcDialogueOverlay({
 
       {/* 选项面板：Task 4 实现 */}
 
-      <section className="npc-dialogue-overlay-box" ref={boxRef} tabIndex={0}>
+      <section
+        className="npc-dialogue-overlay-box"
+        ref={boxRef}
+        tabIndex={0}
+        onClick={handleBoxClick}
+        onKeyDown={handleBoxKeyDown}
+      >
         <span className="npc-dialogue-overlay-name">{dialogue.name}</span>
         <button
           type="button"
@@ -146,8 +192,11 @@ export function NpcDialogueOverlay({
           ×
         </button>
         <p className="npc-dialogue-overlay-speech">
-          {dialogue.speechPages.length > 0 ? normalizeDisplayText(dialogue.speechPages[0]) : "还没有开始对话。"}
+          {pages.length > 0 ? normalizeDisplayText(pages[clampedIndex]) : "还没有开始对话。"}
         </p>
+        {!isLastPage && pages.length > 0 ? (
+          <span className="npc-dialogue-overlay-next" aria-hidden="true">▶</span>
+        ) : null}
       </section>
     </div>
   );

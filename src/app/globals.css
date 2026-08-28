@@ -3579,3 +3579,21 @@ body:has(.adventure-game-shell) {
   line-height: 1.8;
   color: var(--game-text-primary);
 }
+
+/* 未翻到末页时的翻页提示 */
+.npc-dialogue-overlay-next {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  color: var(--game-accent);
+  animation: npc-dialogue-overlay-next-bob 1.1s ease-in-out infinite;
+}
+
+@keyframes npc-dialogue-overlay-next-bob {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .npc-dialogue-overlay-next { animation: none; }
+}

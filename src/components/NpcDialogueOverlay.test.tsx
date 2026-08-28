@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { NpcDialogueOverlay, reduceDialogueUiState } from "./NpcDialogueOverlay";
@@ -81,6 +81,74 @@ describe("NpcDialogueOverlay 骨架", () => {
     unmount();
     expect(document.activeElement).toBe(trigger);
     trigger.remove();
+  });
+});
+
+describe("NpcDialogueOverlay 翻页", () => {
+  it("首页隐藏选项面板并显示翻页箭头", () => {
+    renderOverlay();
+    expect(screen.queryByLabelText("对话选项")).toBeNull();
+    expect(screen.getByText("▶")).toBeTruthy();
+  });
+
+  it("点击对话框翻到末页并隐藏箭头", async () => {
+    const user = userEvent.setup();
+    renderOverlay();
+    await user.click(screen.getByText("那天夜里井边传来很奇怪的声音。"));
+    expect(screen.getByText("我去看了一眼，但什么都没看清。")).toBeTruthy();
+    expect(screen.queryByText("▶")).toBeNull();
+  });
+
+  it("点击对话框内的关闭按钮只关闭、不翻页", async () => {
+    const user = userEvent.setup();
+    const { props } = renderOverlay();
+    await user.click(screen.getByLabelText("关闭对话"));
+    expect(screen.getByText("那天夜里井边传来很奇怪的声音。")).toBeTruthy();
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("键盘 Enter 翻页", () => {
+    renderOverlay();
+    const box = screen.getByRole("dialog", { name: "与薇拉对话" }).querySelector(".npc-dialogue-overlay-box")!;
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(screen.getByText("我去看了一眼，但什么都没看清。")).toBeTruthy();
+  });
+
+  it("台词内容变化时页码重置回首页", () => {
+    const { rerender, props } = renderOverlay();
+    const box = screen.getByRole("dialog", { name: "与薇拉对话" }).querySelector(".npc-dialogue-overlay-box")!;
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(screen.getByText("我去看了一眼，但什么都没看清。")).toBeTruthy();
+    rerender(
+      <NpcDialogueOverlay
+        {...props}
+        dialogue={makeDialogue({ speechPages: ["全新的第一页。", "全新的第二页。"] })}
+      />,
+    );
+    expect(screen.getByText("全新的第一页。")).toBeTruthy();
+    expect(screen.queryByText("全新的第二页。")).toBeNull();
+    // 重置确实发生：新内容从首页起可再翻一页（未重置时会被钳在末页）。
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(screen.getByText("全新的第二页。")).toBeTruthy();
+  });
+
+  it("内容相同的新数组引用不重置页码", () => {
+    const { rerender, props } = renderOverlay();
+    const box = screen.getByRole("dialog", { name: "与薇拉对话" }).querySelector(".npc-dialogue-overlay-box")!;
+    fireEvent.keyDown(box, { key: "Enter" });
+    rerender(<NpcDialogueOverlay {...props} dialogue={makeDialogue()} />);
+    expect(screen.getByText("我去看了一眼，但什么都没看清。")).toBeTruthy();
+  });
+
+  it("等待态时点击不翻页", () => {
+    renderOverlay({ phase: "waiting", pendingPlayerResponse: "我想帮你。", pendingChoiceToken: "token_b" });
+    fireEvent.click(screen.getByText("那天夜里井边传来很奇怪的声音。"));
+    expect(screen.queryByText("我去看了一眼，但什么都没看清。")).toBeNull();
+  });
+
+  it("speechPages 为空时显示空态文案", () => {
+    renderOverlay({ dialogue: makeDialogue({ speechPages: [] }) });
+    expect(screen.getByText("还没有开始对话。")).toBeTruthy();
   });
 });
 
