@@ -6,7 +6,7 @@ import { NpcDialogueOverlay, reduceDialogueUiState } from "./NpcDialogueOverlay"
 import type { DialogueUiState } from "./NpcDialogueOverlay";
 import type { NpcDialogueView } from "@/game/application";
 
-export function makeDialogue(overrides?: Partial<NpcDialogueView>): NpcDialogueView {
+function makeDialogue(overrides?: Partial<NpcDialogueView>): NpcDialogueView {
   return {
     npcId: "npc_1",
     name: "薇拉",
@@ -177,6 +177,14 @@ describe("NpcDialogueOverlay 翻页", () => {
     expect(screen.getByText("我去看了一眼，但什么都没看清。")).toBeTruthy();
   });
 
+  it("IME 组合输入期间的 Enter 不翻页（候选词提交不是翻页意图）", () => {
+    renderOverlay();
+    const box = screen.getByRole("dialog", { name: "与薇拉对话" }).querySelector(".npc-dialogue-overlay-box")!;
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+    expect(screen.getByText("那天夜里井边传来很奇怪的声音。")).toBeTruthy();
+    expect(screen.queryByText("我去看了一眼，但什么都没看清。")).toBeNull();
+  });
+
   it("台词内容变化时页码重置回首页", () => {
     const { rerender, props } = renderOverlay();
     const box = screen.getByRole("dialog", { name: "与薇拉对话" }).querySelector(".npc-dialogue-overlay-box")!;
@@ -212,6 +220,59 @@ describe("NpcDialogueOverlay 翻页", () => {
   it("speechPages 为空时显示空态文案", () => {
     renderOverlay({ dialogue: makeDialogue({ speechPages: [] }) });
     expect(screen.getByText("还没有开始对话。")).toBeTruthy();
+  });
+});
+
+// aria-modal="true" 声称覆盖层之外的内容对辅助技术不可达；
+// 若 Tab 能逃出覆盖层，键盘用户就会摸到被盖住的场景控件，模态语义失效。
+describe("NpcDialogueOverlay 焦点陷阱", () => {
+  it("Tab 按 DOM 顺序在覆盖层内循环（面板控件 → 对话框 → 关闭按钮），不逃出模态", () => {
+    renderOverlay();
+    fireEvent.click(screen.getByText("那天夜里井边传来很奇怪的声音。"));
+    const dialog = screen.getByRole("dialog", { name: "与薇拉对话" });
+    const box = dialog.querySelector(".npc-dialogue-overlay-box")! as HTMLElement;
+    const close = screen.getByLabelText("关闭对话");
+    const choices = screen.getAllByTestId("npc-dialogue-choice");
+    const input = screen.getByLabelText("自定义回应");
+    // 空草稿时发送按钮禁用（不可聚焦，正确地被排除出 Tab 序列）；填入草稿后进入序列。
+    fireEvent.change(input, { target: { value: "再讲讲那口井。" } });
+    const send = screen.getByRole("button", { name: "发送" });
+    // 挂载焦点在对话框（spec §6）；从它出发 Tab 到关闭按钮，再 Tab 回到面板首控件并顺序遍历。
+    expect(document.activeElement).toBe(box);
+    fireEvent.keyDown(box, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(close, { key: "Tab" });
+    expect(document.activeElement).toBe(choices[0]);
+    fireEvent.keyDown(choices[0], { key: "Tab" });
+    expect(document.activeElement).toBe(choices[1]);
+    fireEvent.keyDown(choices[1], { key: "Tab" });
+    expect(document.activeElement).toBe(input);
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect(document.activeElement).toBe(send);
+    fireEvent.keyDown(send, { key: "Tab" });
+    expect(document.activeElement).toBe(box);
+  });
+
+  it("Shift+Tab 反向循环：从对话框回到面板最末控件", () => {
+    renderOverlay();
+    fireEvent.click(screen.getByText("那天夜里井边传来很奇怪的声音。"));
+    const dialog = screen.getByRole("dialog", { name: "与薇拉对话" });
+    const box = dialog.querySelector(".npc-dialogue-overlay-box")! as HTMLElement;
+    fireEvent.change(screen.getByLabelText("自定义回应"), { target: { value: "再讲讲那口井。" } });
+    const send = screen.getByRole("button", { name: "发送" });
+    fireEvent.keyDown(box, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(send);
+  });
+
+  it("等待态所有控件禁用时焦点仍被困在对话框内", () => {
+    renderOverlay({ phase: "waiting", busy: true, pendingPlayerResponse: "我想帮你。", pendingChoiceToken: "token_b" });
+    const dialog = screen.getByRole("dialog", { name: "与薇拉对话" });
+    const box = dialog.querySelector(".npc-dialogue-overlay-box")! as HTMLElement;
+    expect(document.activeElement).toBe(box);
+    fireEvent.keyDown(box, { key: "Tab" });
+    expect(document.activeElement).toBe(box);
+    fireEvent.keyDown(box, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(box);
   });
 });
 

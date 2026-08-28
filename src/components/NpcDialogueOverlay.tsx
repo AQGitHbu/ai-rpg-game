@@ -135,6 +135,27 @@ export function NpcDialogueOverlay({
     return () => previouslyFocused?.focus();
   }, []);
 
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+
+  // aria-modal 模态语义：Tab 不得逃出覆盖层，在覆盖层内可聚焦元素间循环。
+  function handleOverlayKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== "Tab") return;
+    const root = overlayRef.current;
+    if (root === null) return;
+    const focusable = Array.from(
+      root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    if (focusable.length === 0) return;
+    const current = focusable.indexOf(document.activeElement as HTMLElement);
+    const nextIndex = event.shiftKey
+      ? current <= 0 ? focusable.length - 1 : current - 1
+      : (current + 1) % focusable.length;
+    event.preventDefault();
+    focusable[nextIndex]?.focus();
+  }
+
   const locked = busy || phase === "waiting";
 
   const pages = dialogue.speechPages;
@@ -179,7 +200,7 @@ export function NpcDialogueOverlay({
   // 因此旧模态的角色行必须回到名字横幅。空角色不渲染空行。
   const roleText = normalizeDisplayText(dialogue.role).trim();
 
-  async function submitFreeText(event: FormEvent<HTMLFormElement>): Promise<void> {
+  function submitFreeText(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const normalized = text.trim();
     if (normalized === "") return;
@@ -198,6 +219,8 @@ export function NpcDialogueOverlay({
   }
 
   function handleBoxKeyDown(event: KeyboardEvent<HTMLElement>): void {
+    // IME 组合输入中的确认键是候选词提交，不是翻页意图。
+    if (event.nativeEvent.isComposing) return;
     if (event.key !== "Enter" && event.key !== " ") return;
     // 自由输入框持有焦点时保留其输入/提交语义，不触发翻页。
     if (isInteractiveTarget(event)) return;
@@ -207,11 +230,13 @@ export function NpcDialogueOverlay({
 
   return (
     <div
+      ref={overlayRef}
       className="npc-dialogue-overlay"
       role="dialog"
       aria-modal="true"
       aria-label={`与${dialogue.name}对话`}
       aria-busy={phase === "waiting"}
+      onKeyDown={handleOverlayKeyDown}
     >
       {relationshipTier !== null ? (
         <div className="npc-dialogue-overlay-affinity" aria-label="好感度">
@@ -299,7 +324,7 @@ export function NpcDialogueOverlay({
               <p className="npc-dialogue-overlay-input-hint">自定义输入仅用于对白；交付道具请点击上方选项。</p>
             ) : null}
             {dialogue.freeInputEnabled ? (
-              <form className="npc-dialogue-overlay-input" onSubmit={(event) => void submitFreeText(event)}>
+              <form className="npc-dialogue-overlay-input" onSubmit={submitFreeText}>
                 <input
                   aria-label="自定义回应"
                   value={text}
