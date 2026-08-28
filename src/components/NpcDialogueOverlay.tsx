@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, type KeyboardEvent, type MouseEvent } from "react";
+import { useState, useEffect, useRef, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
 import type { NpcDialogueView, NewGameInput, RelationshipTier } from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { normalizeDisplayText } from "./displayText";
@@ -131,6 +131,29 @@ export function NpcDialogueOverlay({
     setPageIndex(clampedIndex + 1);
   }
 
+  // 焦点 NPC 的正式对话严格由两个批准选项或自由输入标识；
+  // 非焦点 NPC 的单个 talk choice 是唯一的正式交谈入口。
+  const hasFocusInteraction = dialogue.freeInputEnabled || dialogue.choices.length === 2;
+
+  // 非焦点零回合闲聊（无任何入口、非交接收尾）：对话框描边降级为灰色调（spec §2.3）。
+  const isAmbientChat = !hasFocusInteraction
+    && dialogue.startChoice === undefined
+    && dialogue.choices.length === 0
+    && (handoffAcknowledgement === null || handoffAcknowledgement === undefined);
+
+  const waitingChoices = [
+    ...dialogue.choices,
+    ...dialogue.giveChoices.map((entry) => entry.choice),
+    ...(dialogue.startChoice === undefined ? [] : [dialogue.startChoice]),
+  ];
+
+  async function submitFreeText(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const normalized = text.trim();
+    if (normalized === "") return;
+    onSubmit({ kind: "free_text", text: normalized, targetNpcId: dialogue.npcId }, normalized);
+  }
+
   // 交互控件（关闭按钮/未来的输入框与选项按钮）冒泡到对话框时不触发翻页。
   function isInteractiveTarget(event: { readonly target: EventTarget | null }): boolean {
     const target = event.target as HTMLElement;
@@ -172,10 +195,108 @@ export function NpcDialogueOverlay({
         <div className="npc-dialogue-overlay-avatar">{dialogue.name.charAt(0)}</div>
       </div>
 
-      {/* 选项面板：Task 4 实现 */}
+      {phase === "waiting" ? (
+        <div className="npc-dialogue-overlay-panel" role="group" aria-label="对话选项">
+          {waitingChoices.map((choice) => (
+            <button
+              key={choice.choiceToken}
+              type="button"
+              data-testid="npc-dialogue-choice"
+              disabled={true}
+              aria-current={choice.choiceToken === pendingChoiceToken ? "true" : undefined}
+              className={choice.choiceToken === pendingChoiceToken ? "npc-dialogue-overlay-choice--selected" : undefined}
+            >
+              <span aria-hidden="true">&gt; </span>{choice.label}
+              {choice.choiceToken === pendingChoiceToken ? (
+                <span data-testid="npc-dialogue-spinner" className="npc-dialogue-inline-spinner" aria-hidden="true" />
+              ) : null}
+            </button>
+          ))}
+          {/* 等待态不渲染自由输入表单：与现有模态逐条一致（spec §4.3"逐条保留现有行为"），
+              壳层用例（AdventureGameShell.test.tsx:355/:1185）断言等待态"自定义回应"输入框不在文档中。 */}
+          <p className="npc-dialogue-overlay-status" role="status" aria-live="polite">正在等待{dialogue.name}回应……</p>
+        </div>
+      ) : isLastPage ? (
+        dialogue.startChoice !== undefined ? (
+          <div className="npc-dialogue-overlay-panel" role="group" aria-label="对话选项">
+            <button
+              type="button"
+              className="npc-dialogue-overlay-cta"
+              disabled={busy}
+              onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: dialogue.startChoice!.choiceToken }, dialogue.startChoice!.label)}
+            >
+              <span aria-hidden="true">&gt; </span>{dialogue.startChoice.label}
+            </button>
+          </div>
+        ) : hasFocusInteraction ? (
+          <div className="npc-dialogue-overlay-panel" role="group" aria-label="对话选项">
+            {dialogue.choices.map((choice) => (
+              <button
+                key={choice.choiceToken}
+                type="button"
+                data-testid="npc-dialogue-choice"
+                disabled={busy}
+                onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken }, choice.label)}
+              >
+                <span aria-hidden="true">&gt; </span>{choice.label}
+              </button>
+            ))}
+            {/* spec §2.1 面板顺序：固定选项 → 赠物选项 → 分隔线（输入行 border-top 充当）→ 自由输入 */}
+            {dialogue.giveChoices.map((entry) => (
+              <button
+                key={entry.choice.choiceToken}
+                type="button"
+                data-testid={`npc-dialogue-overlay-give-${entry.choice.choiceToken}`}
+                disabled={busy}
+                onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: entry.choice.choiceToken }, entry.choice.label)}
+              >
+                <span aria-hidden="true">&gt; </span>{entry.choice.label}
+              </button>
+            ))}
+            {dialogue.freeInputEnabled ? (
+              <form className="npc-dialogue-overlay-input" onSubmit={(event) => void submitFreeText(event)}>
+                <input
+                  aria-label="自定义回应"
+                  value={text}
+                  disabled={busy}
+                  placeholder="或直接说……"
+                  onChange={(event) => setText(event.target.value)}
+                  maxLength={240}
+                />
+                <button type="submit" disabled={busy || text.trim() === ""}>发送</button>
+              </form>
+            ) : null}
+          </div>
+        ) : (
+          /* 非焦点 NPC：零回合展示；剧情交接只保留一个真实下一步，普通闲聊才用"知道了"关闭 */
+          <div className="npc-dialogue-overlay-panel" role="group" aria-label="对话选项">
+            {dialogue.choices.length > 0 ? (
+              dialogue.choices.map((choice) => (
+                <button
+                  key={choice.choiceToken}
+                  type="button"
+                  className="npc-dialogue-overlay-cta"
+                  disabled={busy}
+                  onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: choice.choiceToken }, choice.label)}
+                >
+                  <span aria-hidden="true">&gt; </span>{choice.label}
+                </button>
+              ))
+            ) : handoffAcknowledgement !== null && handoffAcknowledgement !== undefined ? (
+              <button type="button" className="npc-dialogue-overlay-cta" onClick={onAcknowledge ?? onClose}>
+                {normalizeDisplayText(handoffAcknowledgement.label)}
+              </button>
+            ) : (
+              <button type="button" className="npc-dialogue-overlay-dismiss" disabled={busy} onClick={onClose}>
+                知道了
+              </button>
+            )}
+          </div>
+        )
+      ) : null}
 
       <section
-        className="npc-dialogue-overlay-box"
+        className={`npc-dialogue-overlay-box${isAmbientChat ? " npc-dialogue-overlay-box--ambient" : ""}`}
         ref={boxRef}
         tabIndex={0}
         onClick={handleBoxClick}
@@ -194,6 +315,14 @@ export function NpcDialogueOverlay({
         <p className="npc-dialogue-overlay-speech">
           {pages.length > 0 ? normalizeDisplayText(pages[clampedIndex]) : "还没有开始对话。"}
         </p>
+        {pendingPlayerResponse !== null && pendingChoiceToken === null ? (
+          <p className="npc-dialogue-overlay-speech npc-dialogue-overlay-speech--player">
+            {normalizeDisplayText(pendingPlayerResponse)}
+            {phase === "waiting" ? (
+              <span data-testid="npc-dialogue-spinner" className="npc-dialogue-inline-spinner" aria-hidden="true" />
+            ) : null}
+          </p>
+        ) : null}
         {!isLastPage && pages.length > 0 ? (
           <span className="npc-dialogue-overlay-next" aria-hidden="true">▶</span>
         ) : null}

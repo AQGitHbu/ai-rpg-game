@@ -3597,3 +3597,95 @@ body:has(.adventure-game-shell) {
 @media (prefers-reduced-motion: reduce) {
   .npc-dialogue-overlay-next { animation: none; }
 }
+
+.npc-dialogue-overlay-panel {
+  position: absolute;
+  right: 4%;
+  bottom: 32%;
+  width: min(340px, 30vw);
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 10px;
+  background: rgb(10 16 12 / 92%);
+  z-index: 3;
+}
+
+.npc-dialogue-overlay-panel button {
+  padding: 8px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 8px;
+  background: var(--game-surface-raised);
+  color: var(--game-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.npc-dialogue-overlay-panel button:hover:not(:disabled) {
+  border-color: var(--game-accent);
+}
+
+.npc-dialogue-overlay-panel button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.npc-dialogue-overlay-choice--selected {
+  opacity: 1 !important;
+  border-color: var(--game-accent) !important;
+  cursor: wait;
+}
+
+/* 非焦点闲聊：对话框与名字横幅描边降级为灰色调（spec §2.3） */
+.npc-dialogue-overlay-box--ambient {
+  border-color: var(--game-surface-border);
+}
+
+.npc-dialogue-overlay-box--ambient .npc-dialogue-overlay-name {
+  border-color: var(--game-surface-border);
+  color: var(--game-text-muted);
+}
+
+.npc-dialogue-overlay-input {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--game-surface-border);
+}
+
+.npc-dialogue-overlay-input input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--game-surface-border);
+  border-radius: 6px;
+  background: var(--game-surface-raised);
+  color: inherit;
+}
+
+.npc-dialogue-overlay-input button {
+  padding: 8px 14px;
+}
+
+.npc-dialogue-overlay-cta {
+  border-color: var(--game-accent) !important;
+  color: var(--game-accent);
+  font-weight: 600;
+}
+
+.npc-dialogue-overlay-dismiss {
+  justify-self: end;
+}
+
+.npc-dialogue-overlay-status {
+  margin: 0;
+  color: var(--game-text-muted);
+  font-style: italic;
+  font-size: 0.85rem;
+}
+
+.npc-dialogue-overlay-speech--player {
+  margin-top: 10px;
+  color: var(--game-success);
+}

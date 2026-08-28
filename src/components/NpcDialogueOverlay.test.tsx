@@ -152,6 +152,152 @@ describe("NpcDialogueOverlay 翻页", () => {
   });
 });
 
+describe("NpcDialogueOverlay 选项面板", () => {
+  async function turnToLastPage() {
+    const user = userEvent.setup();
+    await user.click(screen.getByText("那天夜里井边传来很奇怪的声音。"));
+    return user;
+  }
+
+  it("末页显示选项面板；固定选项经 onSubmit 提交对应 token", async () => {
+    const { props } = renderOverlay();
+    const user = await turnToLastPage();
+    expect(screen.getByLabelText("对话选项")).toBeTruthy();
+    expect(screen.getAllByTestId("npc-dialogue-choice")).toHaveLength(2);
+    // 可访问名不含装饰性 ">" 前缀（aria-hidden），按语义 label 查询。
+    await user.click(screen.getByRole("button", { name: "我想帮你查清楚。" }));
+    expect(props.onSubmit).toHaveBeenCalledWith(
+      { kind: "fixed_choice", choiceToken: "token_b" },
+      "我想帮你查清楚。",
+    );
+  });
+
+  it("单页台词直接显示选项面板，无翻页箭头", () => {
+    renderOverlay({ dialogue: makeDialogue({ speechPages: ["只有一句。"] }) });
+    expect(screen.queryByText("▶")).toBeNull();
+    expect(screen.getByLabelText("对话选项")).toBeTruthy();
+  });
+
+  it("赠物选项并入面板并走 fixed_choice 提交", async () => {
+    const { props } = renderOverlay({
+      dialogue: makeDialogue({
+        giveChoices: [
+          // 与投影一致的赠物 label 文案（gameSessionView.ts:781 `把${itemName}交给${npc.name}`）。
+          { itemName: "药草", choice: { choiceToken: "token_give", label: "把药草交给薇拉", presentation: "item" } },
+        ],
+      }),
+    });
+    const user = await turnToLastPage();
+    await user.click(screen.getByTestId("npc-dialogue-overlay-give-token_give"));
+    expect(props.onSubmit).toHaveBeenCalledWith(
+      { kind: "fixed_choice", choiceToken: "token_give" },
+      "把药草交给薇拉",
+    );
+  });
+
+  it("自由输入以 free_text + targetNpcId 提交；草稿保留至父级 resetInputNonce", async () => {
+    const { props } = renderOverlay();
+    const user = await turnToLastPage();
+    const input = screen.getByLabelText("自定义回应");
+    await user.type(input, "我还有别的问题。");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    expect(props.onSubmit).toHaveBeenCalledWith(
+      { kind: "free_text", text: "我还有别的问题。", targetNpcId: "npc_1" },
+      "我还有别的问题。",
+    );
+    expect((input as HTMLInputElement).value).toBe("我还有别的问题。"); // 草稿保留，由父级经 resetInputNonce 清空
+  });
+
+  it("输入框内输入空格不触发翻页、不丢字符（键盘守卫）", async () => {
+    renderOverlay(); // 覆盖层必须先挂载，turnToLastPage 才有可点的台词
+    const user = await turnToLastPage();
+    const input = screen.getByLabelText("自定义回应") as HTMLInputElement;
+    await user.type(input, "好。 继续说");
+    expect(input.value).toBe("好。 继续说");
+  });
+
+  it("等待态：快照台词、固定选项与赠物可见且全部禁用，已选项带标记与 spinner", () => {
+    renderOverlay({
+      phase: "waiting",
+      busy: true,
+      pendingPlayerResponse: "我想帮你查清楚。",
+      pendingChoiceToken: "token_b",
+      dialogue: makeDialogue({
+        giveChoices: [
+          { itemName: "药草", choice: { choiceToken: "token_give", label: "把药草交给薇拉", presentation: "item" } },
+        ],
+      }),
+    });
+    expect(screen.getByText("那天夜里井边传来很奇怪的声音。")).toBeTruthy();
+    const options = screen.getAllByTestId("npc-dialogue-choice");
+    expect(options).toHaveLength(3); // 两个固定选项 + 一个赠物项（快照渲染，不依赖 pending view）
+    expect(options.every((el) => (el as HTMLButtonElement).disabled)).toBe(true);
+    expect(options[1].getAttribute("aria-current")).toBe("true");
+    expect(options.some((el) => el.textContent?.includes("把药草交给薇拉"))).toBe(true);
+    expect(screen.getAllByTestId("npc-dialogue-spinner").length).toBeGreaterThan(0);
+    // 固定选项提交时玩家回应由已选态承载：文案只出现在已选按钮内，不另渲染玩家回应行。
+    expect(screen.getAllByText("我想帮你查清楚。")).toHaveLength(1);
+    expect(screen.getByText("正在等待薇拉回应……")).toBeTruthy();
+  });
+
+  it("自由输入提交后的等待态临时展示玩家回应行与 spinner", () => {
+    renderOverlay({ phase: "waiting", busy: true, pendingPlayerResponse: "我还有别的问题。", pendingChoiceToken: null });
+    const playerLine = screen.getByText("我还有别的问题。");
+    expect(playerLine.closest(".npc-dialogue-overlay-speech--player")).toBeTruthy();
+    expect(screen.getAllByTestId("npc-dialogue-spinner").length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText("自定义回应")).toBeNull();
+  });
+
+  it("等待态锁定关闭按钮并隐藏自由输入（逐条保留现有行为）", () => {
+    renderOverlay({ phase: "waiting", busy: true, pendingPlayerResponse: "我想帮你查清楚。", pendingChoiceToken: "token_a" });
+    expect((screen.getByLabelText("关闭对话") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByLabelText("自定义回应")).toBeNull();
+    expect(screen.queryByRole("button", { name: "发送" })).toBeNull();
+  });
+
+  it("startChoice 空态只显示单一开始交谈入口", async () => {
+    const { props } = renderOverlay({
+      dialogue: makeDialogue({
+        speechPages: [],
+        choices: [],
+        freeInputEnabled: false,
+        startChoice: { choiceToken: "token_ask", label: "与薇拉交谈", presentation: "dialogue" },
+      }),
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "与薇拉交谈" }));
+    expect(props.onSubmit).toHaveBeenCalledWith(
+      { kind: "fixed_choice", choiceToken: "token_ask" },
+      "与薇拉交谈",
+    );
+    expect(screen.queryByLabelText("自定义回应")).toBeNull();
+  });
+
+  it("handoff 收尾只显示单一交接确认，点击走 onAcknowledge", async () => {
+    const { props } = renderOverlay({
+      dialogue: makeDialogue({ speechPages: ["旧 NPC 的最后一句。"], choices: [], freeInputEnabled: false }),
+      handoffAcknowledgement: { label: "与下一位 NPC 交谈" },
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "与下一位 NPC 交谈" }));
+    expect(props.onAcknowledge).toHaveBeenCalledTimes(1);
+    expect(props.onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("非焦点闲聊只有\"知道了\"，点击走 onClose，描边降级为灰色调", async () => {
+    const { props } = renderOverlay({
+      dialogue: makeDialogue({ speechPages: ["最近来问井的事的人不少。"], choices: [], freeInputEnabled: false }),
+    });
+    expect(
+      screen.getByRole("dialog", { name: "与薇拉对话" }).querySelector(".npc-dialogue-overlay-box--ambient"),
+    ).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "知道了" }));
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+    expect(props.onSubmit).not.toHaveBeenCalled();
+  });
+});
+
 // reduceDialogueUiState 与四个类型自 LocationSceneScreen.tsx 原样迁移，是 Task 5 消费的跨任务契约
 // （Task 5 才删除原件）。这里用纯函数单测钉住真实迁移行为，使 Tasks 3-4 期间两份副本的任何漂移立即可见。
 describe("reduceDialogueUiState 等待快照契约", () => {
