@@ -24,7 +24,7 @@ NPC 对话是持续推进故事的主要入口。每个 ready 的焦点 NPC 场�
 - 若对话收束后权威当前目标切换为地点、物品或调查，旧 NPC 的最后一句同样保留在原对话框中；地点目标由权威 `travelChoice` 承接，物品/调查目标由 prepared step 或规则场景承接，不把本地关闭动作伪装成新的 action。只有非焦点零回合闲聊仍使用“知道了”关闭。
 - 新地点刚被编排出来时，场景事件可能仍是 travel/observe；当前主线目标锁定该地点的焦点 NPC 后，read model 只从权威目标铸造单一 opaque `ask` 入口，在该 NPC 的 ready scene 写回前不生成角色台词、support/challenge 回应或自定义对白，不能把交接提示误报成 NPC 已回应。若当前目标是已批准 continuation 的移动/调查/战斗节点，则先消费该节点，再在 post-commit revision 上铸造正式选择 token。
 - 同一幕可以在 prepared continuation 中审批后续 NPC、证物和敌人，但只有当前 active step 对应的实体进入场景与 NPC 上下文。前置调查未完成时不展示远端 NPC；玩家抵达新地点后，NPC 首句必须承接已完成的调查事实与到达过程，不能默认双方已经交换过密信、腰牌或完整案情。调查方式和战斗结果等兄弟 step 共用消费组，消费一个分支会裁剪未选分支。
-- 正式对白提交后保留原 NPC 对话覆盖层；选中的固定回应或自定义回应的本地临时展示保留在当前覆盖层的等待快照中，并在其后显示等待 NPC 回应的内联 loading。等待态从提交前捕获的本页临时对话快照渲染，不能依赖 pending `GameSessionView` 继续提供 choices；因此固定选项、已选态、spinner 与给予道具选项在 pending 快照清空 choices 时仍可见。自定义输入只保留在当前页面临时状态，不写入对话记录。对话选项、输入、关闭和其它游戏入口全部锁定。ready 写回后清理临时快照，直接显示同一 NPC 的新台词和下一组选项，不增加继续按钮。场景生成 failed 时只弹出失败重试模态；行动尚未提交的 AI 失败重试原 interaction，规则已提交的场景失败复用同一 narrative job。若目标变化，HUD/任务面板显示权威下一步，旧焦点对白按交接规则关闭。
+- 正式对白提交后保留原 NPC 对话覆盖层；选中的固定回应或自定义回应的本地临时展示保留在当前覆盖层的等待快照中，并在其后显示等待 NPC 回应的内联 loading。等待态从提交前捕获的本页临时对话快照渲染，不能依赖 pending `GameSessionView` 继续提供 choices；因此固定选项、已选态、spinner 与给予道具选项在 pending 快照清空 choices 时仍可见。自定义输入只保留在当前页面临时状态，不写入对话记录。对话选项、输入、关闭和其它游戏入口全部锁定。ready 写回后清理临时快照，直接显示同一 NPC 的新台词和下一组选项，不增加继续按钮。场景生成 failed 时只弹出失败重试模态 `GenerationStatusModal`；行动尚未提交的 AI 失败重试原 interaction，规则已提交的场景失败复用同一 narrative job。若目标变化，HUD/任务面板显示权威下一步，旧焦点对白按交接规则关闭。
 - 已生成但尚未消费的抵达对白与已审批 talk action 会写入 ready narrative 的 `dialogueResume`；玩家离开后再返回目标地点时，read model 按当前 revision 重铸 opaque token，恢复原 NPC 台词和选项。旧存档若只剩 rule-owned travel scene，则目标 NPC 点击直接补发一次权威 `ask` 回合生成正式对白，不展示空白气泡或伪造的默认 support/challenge 选项。
 - 玩家原文不写入长期记忆、事件账本或日志；长期记录只保存规则归一化的 dialogue act、topic summary 和 fact IDs。
 - `npcLine.text` 是直接展示给玩家的 NPC 第一人称台词正文，不得包含 NPC 名称、角色动作或“说道/答道”等叙述性前缀；点击 NPC 时 UI 已经单独展示名称。
@@ -83,7 +83,7 @@ type ActionRequest = {
 ## 主要文件
 
 - `src/components/AdventureGameShell.tsx` — 两个固定选择和一个自定义输入。
-- `src/components/NpcDialogueOverlay.tsx` — 视觉小说式对话覆盖层（立绘占位、底部对话框点击翻页、右侧选项面板、好感档位徽标）与等待快照编排类型。
+- `src/components/NpcDialogueOverlay.tsx` — 视觉小说式对话覆盖层（立绘占位、底部对话框名字横幅＋其下 NPC 身份行、点击翻页、右侧选项面板内「固定选项 → 给予道具分组 → 自由输入」并附交付道具提示行、好感档位徽标）与等待快照编排类型。
 - `src/components/gameActionRequest.ts` — 统一请求与浏览器 action ID。
 - `src/app/api/game/actions/route.ts` — 唯一行动 HTTP adapter。
 - `src/game/application/requestParser.ts` — 请求白名单与 discriminated union 解析。
