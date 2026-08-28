@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { GameSessionView, NpcDialogueView } from "@/game/application";
 import { LocationSceneScreen } from "./LocationSceneScreen";
@@ -91,7 +91,7 @@ const veraAmbient: NpcDialogueView = {
   giveChoices: [],
 };
 
-function viewWithVeraDialogue(): GameSessionView {
+function viewWithVeraDialogue(dialogue: NpcDialogueView = veraAmbient): GameSessionView {
   const base = viewWithInvestigationApproaches();
   return {
     ...base,
@@ -106,9 +106,27 @@ function viewWithVeraDialogue(): GameSessionView {
       currentObjectiveChoiceToken: null,
       currentObjectiveChoiceTokens: [],
     },
-    narrative: { ...base.narrative, mode: "ai", npcDialogues: [veraAmbient] },
+    narrative: { ...base.narrative, mode: "ai", npcDialogues: [dialogue] },
   };
 }
+
+/**
+ * ready 焦点对话（审查 Finding B）：`gameSessionView.ts:776-787` 在 formalDialogueReady 时
+ * 把整只背包映射成 giveChoices，所以真实数据里这一行恒为非空。全部既有夹具都写
+ * `giveChoices: []`，赠物行从未被任何集成用例渲染过。这里按投影形状补一份焦点对白。
+ */
+const veraFocus: NpcDialogueView = {
+  ...veraAmbient,
+  speechPages: ["井边那晚我也听见了动静。", "之后灯就灭了，没人肯说看见什么。"],
+  choices: [
+    { choiceToken: "token_a", label: "你看见谁了？", presentation: "dialogue" },
+    { choiceToken: "token_b", label: "我想帮你查清楚。", presentation: "dialogue" },
+  ],
+  freeInputEnabled: true,
+  giveChoices: [
+    { itemName: "药草", choice: { choiceToken: "token_give", label: "把药草交给薇拉", presentation: "item" } },
+  ],
+};
 
 describe("LocationSceneScreen：对话覆盖层集成", () => {
   it("对话打开时隐藏侧栏与行动栏，徽标按显示 NPC 匹配档位文案", () => {
@@ -128,5 +146,38 @@ describe("LocationSceneScreen：对话覆盖层集成", () => {
     render(<LocationSceneScreen view={view} busy={false} onSubmit={vi.fn()} onReturnMap={vi.fn()} />);
     expect(screen.getByRole("dialog", { name: "与薇拉对话" })).toBeInTheDocument();
     expect(screen.queryByText(/友善/)).toBeNull();
+  });
+
+  // 审查 Finding B：giveChoices 在真实 ready 焦点对话里恒为非空（整只背包映射），
+  // 但既有夹具全是 []，赠物行从未走过整条链路。这里用投影形态的夹具补一次。
+  it("ready 焦点对话的赠物行与固定回应在读模型链路上可区分，点击仍只提交 opaque choiceToken", () => {
+    const onSubmit = vi.fn();
+    render(
+      <LocationSceneScreen
+        view={viewWithVeraDialogue(veraFocus)}
+        busy={false}
+        onSubmit={onSubmit}
+        onReturnMap={vi.fn()}
+      />,
+    );
+    const dialogue = screen.getByRole("dialog", { name: "与薇拉对话" });
+    // 审查 Finding A：对话期间侧栏被卸载，身份行必须在覆盖层内可见。
+    expect(within(dialogue).getByText("酒保女儿")).toBeInTheDocument();
+
+    // 翻到末页才出现选项面板。
+    fireEvent.click(within(dialogue).getByText("井边那晚我也听见了动静。"));
+    const panel = within(dialogue).getByRole("group", { name: "对话选项" });
+    const giveGroup = within(panel).getByRole("group", { name: "给予道具" });
+    expect(within(giveGroup).getByRole("button", { name: "把药草交给薇拉" })).toBeInTheDocument();
+    // 赠物不是"另一句回话"：固定回应留在外层面板、不在赠物分组内。
+    expect(within(giveGroup).queryByRole("button", { name: "你看见谁了？" })).toBeNull();
+    expect(within(panel).getByRole("button", { name: "你看见谁了？" })).toBeInTheDocument();
+    expect(
+      within(panel).getByText("自定义输入仅用于对白；交付道具请点击上方选项。"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(within(giveGroup).getByRole("button", { name: "把药草交给薇拉" }));
+    // 提交链路不变：只消费服务端 opaque choiceToken，经地点页唯一 onSubmit 出口。
+    expect(onSubmit).toHaveBeenCalledWith({ kind: "fixed_choice", choiceToken: "token_give" }, "npc-dialogue");
   });
 });

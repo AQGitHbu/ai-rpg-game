@@ -3221,7 +3221,7 @@ body:has(.adventure-game-shell) {
   right: 9%;
   bottom: 4%;
   min-height: 132px;
-  padding: 26px 22px 18px;
+  padding: 40px 22px 18px;
   border: 2px solid var(--game-accent);
   border-radius: 12px;
   background: rgb(14 20 16 / 94%);
@@ -3230,10 +3230,17 @@ body:has(.adventure-game-shell) {
   z-index: 2;
 }
 
-.npc-dialogue-overlay-name {
+/* 名字横幅：压在对话框上边框上，第一行名字、第二行身份（role） */
+.npc-dialogue-overlay-banner {
   position: absolute;
   top: -13px;
   left: 20px;
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+}
+
+.npc-dialogue-overlay-name {
   padding: 2px 14px;
   border: 1px solid var(--game-accent);
   border-radius: 6px;
@@ -3241,6 +3248,14 @@ body:has(.adventure-game-shell) {
   color: var(--game-accent);
   font-size: 0.86rem;
   font-weight: 700;
+}
+
+/* 身份行视觉从属于名字：无边框、无底色、更小更淡，落在框内上边距区 */
+.npc-dialogue-overlay-role {
+  padding: 0 4px;
+  color: var(--game-text-muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
 }
 
 .npc-dialogue-overlay-close {
@@ -3327,6 +3342,27 @@ body:has(.adventure-game-shell) {
   opacity: 1 !important;
   border-color: var(--game-accent) !important;
   cursor: wait;
+}
+
+/* 赠物分组：嵌在「对话选项」面板内的独立 role="group"，可见小标题把它与普通回话分开。
+   不加额外分隔线——spec §2.1 的唯一分隔线由下方自由输入行的 border-top 充当。 */
+.npc-dialogue-overlay-give {
+  display: grid;
+  gap: 6px;
+}
+
+.npc-dialogue-overlay-give-label {
+  color: var(--game-accent);
+  font-size: 0.75rem;
+  letter-spacing: 0.14em;
+}
+
+/* 交付道具与自由输入的分工提示（旧模态 npc-dialogue-input-hint 的覆盖层等价物） */
+.npc-dialogue-overlay-input-hint {
+  margin: 0;
+  color: var(--game-text-muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
 }
 
 /* 非焦点闲聊：对话框与名字横幅描边降级为灰色调（spec §2.3） */

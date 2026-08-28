@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
-import type { NpcDialogueView, NewGameInput, RelationshipTier } from "@/game/application";
+import type { NpcDialogueView, NewGameInput, PlayerChoiceView, RelationshipTier } from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { normalizeDisplayText } from "./displayText";
 import { AdventureVisual } from "./adventureVisuals";
@@ -61,6 +61,33 @@ const RELATIONSHIP_TIER_LABEL: Record<RelationshipTier, string> = {
   friendly: "友善",
   trusted: "信任",
 };
+
+/**
+ * 等待态快照中的单个入口：固定回应、赠物项与 startChoice 共用同一渲染，
+ * 一律禁用（spec §4.3「所有对话入口锁定」），已提交的那条带 aria-current 与内联 loading。
+ */
+function WaitingChoiceButton({
+  choice,
+  selected,
+}: {
+  readonly choice: PlayerChoiceView;
+  readonly selected: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid="npc-dialogue-choice"
+      disabled={true}
+      aria-current={selected ? "true" : undefined}
+      className={selected ? "npc-dialogue-overlay-choice--selected" : undefined}
+    >
+      <span aria-hidden="true">&gt; </span>{choice.label}
+      {selected ? (
+        <span data-testid="npc-dialogue-spinner" className="npc-dialogue-inline-spinner" aria-hidden="true" />
+      ) : null}
+    </button>
+  );
+}
 
 export type NpcDialogueOverlayProps = {
   readonly dialogue: NpcDialogueView;
@@ -141,11 +168,16 @@ export function NpcDialogueOverlay({
     && dialogue.choices.length === 0
     && (handoffAcknowledgement === null || handoffAcknowledgement === undefined);
 
-  const waitingChoices = [
+  // 等待态快照：固定回应/交接入口与赠物项分开渲染，赠物项保留独立「给予道具」分组，
+  // 与 ready 态的分组语义一致（审查 Finding B）。
+  const waitingFixedChoices = [
     ...dialogue.choices,
-    ...dialogue.giveChoices.map((entry) => entry.choice),
     ...(dialogue.startChoice === undefined ? [] : [dialogue.startChoice]),
   ];
+
+  // 审查 Finding A：对话期间人物侧栏被卸载，NPC 身份只能由覆盖层自己给出，
+  // 因此旧模态的角色行必须回到名字横幅。空角色不渲染空行。
+  const roleText = normalizeDisplayText(dialogue.role).trim();
 
   async function submitFreeText(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -197,23 +229,28 @@ export function NpcDialogueOverlay({
 
       {phase === "waiting" ? (
         <div className="npc-dialogue-overlay-panel" role="group" aria-label="对话选项">
-          {waitingChoices.map((choice) => (
-            <button
+          {waitingFixedChoices.map((choice) => (
+            <WaitingChoiceButton
               key={choice.choiceToken}
-              type="button"
-              data-testid="npc-dialogue-choice"
-              disabled={true}
-              aria-current={choice.choiceToken === pendingChoiceToken ? "true" : undefined}
-              className={choice.choiceToken === pendingChoiceToken ? "npc-dialogue-overlay-choice--selected" : undefined}
-            >
-              <span aria-hidden="true">&gt; </span>{choice.label}
-              {choice.choiceToken === pendingChoiceToken ? (
-                <span data-testid="npc-dialogue-spinner" className="npc-dialogue-inline-spinner" aria-hidden="true" />
-              ) : null}
-            </button>
+              choice={choice}
+              selected={choice.choiceToken === pendingChoiceToken}
+            />
           ))}
+          {dialogue.giveChoices.length > 0 ? (
+            <div className="npc-dialogue-overlay-give" role="group" aria-label="给予道具">
+              <span className="npc-dialogue-overlay-give-label">给予道具</span>
+              {dialogue.giveChoices.map((entry) => (
+                <WaitingChoiceButton
+                  key={entry.choice.choiceToken}
+                  choice={entry.choice}
+                  selected={entry.choice.choiceToken === pendingChoiceToken}
+                />
+              ))}
+            </div>
+          ) : null}
           {/* 等待态不渲染自由输入表单：与现有模态逐条一致（spec §4.3"逐条保留现有行为"），
-              壳层用例（AdventureGameShell.test.tsx:355/:1185）断言等待态"自定义回应"输入框不在文档中。 */}
+              壳层用例（AdventureGameShell.test.tsx:355/:1185）断言等待态"自定义回应"输入框不在文档中。
+              因此这里也不渲染只针对自由输入的交付提示行。 */}
           <p className="npc-dialogue-overlay-status" role="status" aria-live="polite">正在等待{dialogue.name}回应……</p>
         </div>
       ) : isLastPage ? (
@@ -242,17 +279,25 @@ export function NpcDialogueOverlay({
               </button>
             ))}
             {/* spec §2.1 面板顺序：固定选项 → 赠物选项 → 分隔线（输入行 border-top 充当）→ 自由输入 */}
-            {dialogue.giveChoices.map((entry) => (
-              <button
-                key={entry.choice.choiceToken}
-                type="button"
-                data-testid={`npc-dialogue-overlay-give-${entry.choice.choiceToken}`}
-                disabled={busy}
-                onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: entry.choice.choiceToken }, entry.choice.label)}
-              >
-                <span aria-hidden="true">&gt; </span>{entry.choice.label}
-              </button>
-            ))}
+            {dialogue.giveChoices.length > 0 ? (
+              <div className="npc-dialogue-overlay-give" role="group" aria-label="给予道具">
+                <span className="npc-dialogue-overlay-give-label">给予道具</span>
+                {dialogue.giveChoices.map((entry) => (
+                  <button
+                    key={entry.choice.choiceToken}
+                    type="button"
+                    data-testid={`npc-dialogue-overlay-give-${entry.choice.choiceToken}`}
+                    disabled={busy}
+                    onClick={() => onSubmit({ kind: "fixed_choice", choiceToken: entry.choice.choiceToken }, entry.choice.label)}
+                  >
+                    <span aria-hidden="true">&gt; </span>{entry.choice.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {dialogue.freeInputEnabled && dialogue.giveChoices.length > 0 ? (
+              <p className="npc-dialogue-overlay-input-hint">自定义输入仅用于对白；交付道具请点击上方选项。</p>
+            ) : null}
             {dialogue.freeInputEnabled ? (
               <form className="npc-dialogue-overlay-input" onSubmit={(event) => void submitFreeText(event)}>
                 <input
@@ -302,7 +347,10 @@ export function NpcDialogueOverlay({
         onClick={handleBoxClick}
         onKeyDown={handleBoxKeyDown}
       >
-        <span className="npc-dialogue-overlay-name">{dialogue.name}</span>
+        <div className="npc-dialogue-overlay-banner">
+          <span className="npc-dialogue-overlay-name">{dialogue.name}</span>
+          {roleText !== "" ? <span className="npc-dialogue-overlay-role">{roleText}</span> : null}
+        </div>
         <button
           type="button"
           className="npc-dialogue-overlay-close"

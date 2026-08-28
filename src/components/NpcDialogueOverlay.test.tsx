@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { NpcDialogueOverlay, reduceDialogueUiState } from "./NpcDialogueOverlay";
@@ -61,6 +61,32 @@ describe("NpcDialogueOverlay 骨架", () => {
   it("relationshipTier 为 null 时隐藏徽标", () => {
     renderOverlay({ relationshipTier: null });
     expect(screen.queryByText(/· 友善/)).toBeNull();
+  });
+
+  // 审查 Finding A：旧模态在立绘下渲染 dialogue.role，覆盖层重建时漏掉；
+  // 而同样显示 role 的人物侧栏在对话显示期间被卸载 —— 对话中玩家看不到 NPC 身份。
+  it("名字横幅第二行显示 NPC 身份（role），且不并入名字文本节点", () => {
+    renderOverlay();
+    const dialogue = screen.getByRole("dialog", { name: "与薇拉对话" });
+    const nameElement = within(dialogue).getByText("薇拉");
+    expect(nameElement.className).toContain("npc-dialogue-overlay-name");
+    // 名字文本节点保持稳定：壳层用例按 exact 文本查询名字横幅（AdventureGameShell.test.tsx:1274）。
+    expect(nameElement.textContent).toBe("薇拉");
+    const roleElement = within(dialogue).getByText("酒馆老板的女儿");
+    expect(roleElement).toBeTruthy();
+    // 身份行属于底部对话框（名字横幅区域），不是被卸载的侧栏残留。
+    const box = dialogue.querySelector(".npc-dialogue-overlay-box")!;
+    expect(box.contains(roleElement)).toBe(true);
+  });
+
+  it("role 与其它对白文本同样经 normalizeDisplayText 清洗", () => {
+    renderOverlay({ dialogue: makeDialogue({ role: "酒馆老板的女儿。。" }) });
+    expect(screen.getByText("酒馆老板的女儿。")).toBeTruthy();
+  });
+
+  it("role 为纯空白时不渲染身份行", () => {
+    const { container } = renderOverlay({ dialogue: makeDialogue({ role: "   " }) });
+    expect(container.querySelector(".npc-dialogue-overlay-role")).toBeNull();
   });
 
   it("点击关闭调用 onClose", async () => {
@@ -190,6 +216,12 @@ describe("NpcDialogueOverlay 翻页", () => {
 });
 
 describe("NpcDialogueOverlay 选项面板", () => {
+  // 投影形态复用件：与 gameSessionView.ts:776-787 的 giveChoices 形状/label 文案一致。
+  const veraGiveChoice: NpcDialogueView["giveChoices"][number] = {
+    itemName: "药草",
+    choice: { choiceToken: "token_give", label: "把药草交给薇拉", presentation: "item" },
+  };
+
   async function turnToLastPage() {
     const user = userEvent.setup();
     await user.click(screen.getByText("那天夜里井边传来很奇怪的声音。"));
@@ -230,6 +262,51 @@ describe("NpcDialogueOverlay 选项面板", () => {
       { kind: "fixed_choice", choiceToken: "token_give" },
       "把药草交给薇拉",
     );
+  });
+
+  // 审查 Finding B：旧模态的赠物区自带 role="group" aria-label="给予道具"、可见标签
+  // 和自由输入提示行；覆盖层重建时三者全丢，赠物项混进「对话选项」里，
+  // 屏幕阅读器用户无法区分"送礼"和"回话"。
+  it("赠物项在独立「给予道具」分组内：嵌套于对话选项面板且与固定回应可区分", async () => {
+    renderOverlay({ dialogue: makeDialogue({ giveChoices: [veraGiveChoice] }) });
+    await turnToLastPage();
+    const panel = screen.getByRole("group", { name: "对话选项" });
+    const giveGroup = within(panel).getByRole("group", { name: "给予道具" });
+    // 分组既有可访问名也有可见标签文案（沿用旧模态措辞）。
+    expect(within(giveGroup).getByText("给予道具")).toBeTruthy();
+    expect(within(giveGroup).getByRole("button", { name: "把药草交给薇拉" })).toBeTruthy();
+    // 固定回应属于外层面板但不属于赠物分组——这就是"可区分"的含义。
+    expect(within(giveGroup).queryByRole("button", { name: "我想帮你查清楚。" })).toBeNull();
+    expect(within(panel).getByRole("button", { name: "我想帮你查清楚。" })).toBeTruthy();
+    // 提示行只在赠物项与自由输入并存时出现，且不在赠物分组内（它说的是下方的输入行）。
+    expect(within(giveGroup).queryByLabelText("自定义回应")).toBeNull();
+    expect(
+      within(panel).getByText("自定义输入仅用于对白；交付道具请点击上方选项。"),
+    ).toBeTruthy();
+  });
+
+  it("无赠物项时不渲染空分组，也不显示交付道具提示行", async () => {
+    renderOverlay();
+    await turnToLastPage();
+    expect(screen.queryByRole("group", { name: "给予道具" })).toBeNull();
+    expect(screen.queryByText("自定义输入仅用于对白；交付道具请点击上方选项。")).toBeNull();
+  });
+
+  it("等待态快照同样把赠物项放进「给予道具」分组（与 ready 一致）", () => {
+    renderOverlay({
+      phase: "waiting",
+      busy: true,
+      pendingPlayerResponse: "我想帮你查清楚。",
+      pendingChoiceToken: "token_b",
+      dialogue: makeDialogue({ giveChoices: [veraGiveChoice] }),
+    });
+    const giveGroup = screen.getByRole("group", { name: "给予道具" });
+    const giveButton = within(giveGroup).getByRole("button", { name: "把药草交给薇拉" }) as HTMLButtonElement;
+    expect(giveButton.disabled).toBe(true);
+    // 等待态不渲染自由输入（既有行为），因此也不出现只对自由输入有意义的提示行。
+    expect(screen.queryByText("自定义输入仅用于对白；交付道具请点击上方选项。")).toBeNull();
+    // 固定回应仍在外层面板、不在赠物分组内。
+    expect(within(giveGroup).queryByRole("button", { name: "后来那口井里到底出了什么事？" })).toBeNull();
   });
 
   it("自由输入以 free_text + targetNpcId 提交；草稿保留至父级 resetInputNonce", async () => {
