@@ -1244,245 +1244,6 @@ body:has(.adventure-game-shell) {
   }
 }
 
-.npc-dialogue-panel {
-  position: relative;
-  display: grid;
-  gap: 12px;
-}
-
-.npc-dialogue-close {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 1;
-  display: inline-grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 1px solid var(--game-surface-border);
-  border-radius: 50%;
-  background: var(--game-surface-raised);
-  color: var(--game-text-muted);
-  font-size: 1.1rem;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.npc-dialogue-close:hover {
-  color: var(--game-text);
-  border-color: var(--game-accent);
-}
-
-.npc-dialogue-stage {
-  display: grid;
-  grid-template-columns: 100px 1fr;
-  gap: 16px;
-  align-items: start;
-}
-
-.npc-dialogue-figure {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  text-align: center;
-  margin: 0;
-}
-
-/* 长方形竖版头像 (3:4 比例) */
-.npc-dialogue-portrait {
-  width: 90px;
-  height: 120px;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #1a221d;
-  border: 1px solid var(--game-accent);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.npc-dialogue-portrait svg {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.npc-dialogue-figure h3 {
-  margin: 0;
-  font-size: 0.95rem;
-  color: var(--game-text-primary);
-}
-
-.npc-dialogue-figure > span {
-  color: var(--game-text-muted);
-  font-size: 0.78rem;
-}
-
-/* 非焦点 NPC：发起交谈 CTA 按钮 */
-.npc-dialogue-talk-cta {
-  width: 100%;
-  padding: 10px 16px;
-  border-radius: 8px;
-  border: 1px solid var(--game-accent);
-  background: rgba(215, 185, 111, 0.12);
-  color: var(--game-accent);
-  font-size: 0.9rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 140ms ease;
-}
-
-.npc-dialogue-talk-cta:hover:not(:disabled) {
-  background: var(--game-accent);
-  color: #111;
-}
-
-.npc-dialogue-speech {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  min-height: 120px;
-  padding: 14px 16px;
-  border-radius: 10px;
-  background: var(--game-surface-raised);
-  border: 1px solid var(--game-surface-border);
-}
-
-.npc-dialogue-speech-text {
-  margin: 0;
-  line-height: 1.7;
-}
-
-.npc-dialogue-phase-label {
-  color: var(--game-accent);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.npc-dialogue-status {
-  margin: 0;
-  color: var(--game-text-muted);
-  font-style: italic;
-}
-
-.npc-dialogue-next-step {
-  display: grid;
-  gap: 4px;
-  padding: 10px 12px;
-  border-left: 3px solid var(--game-accent);
-  background: rgba(215, 185, 111, 0.1);
-}
-
-.npc-dialogue-next-step span {
-  color: var(--game-accent);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.npc-dialogue-next-step strong {
-  line-height: 1.5;
-}
-
-.npc-dialogue-continue {
-  width: 100%;
-  padding: 10px 16px;
-  border: 1px solid var(--game-accent);
-  border-radius: 8px;
-  background: var(--game-accent);
-  color: #111;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.npc-dialogue-continue:hover {
-  filter: brightness(1.08);
-}
-
-.npc-dialogue-pager {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.npc-dialogue-pager button {
-  display: inline-grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 1px solid var(--game-surface-border);
-  border-radius: 6px;
-  background: none;
-  color: inherit;
-  cursor: pointer;
-}
-
-.npc-dialogue-pager button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.npc-dialogue-pager-status {
-  color: var(--game-text-muted);
-  font-size: 0.8rem;
-}
-
-.npc-dialogue-reply {
-  margin: 0;
-  color: var(--game-text-muted);
-  font-style: italic;
-}
-
-.npc-dialogue-choices {
-  display: grid;
-  gap: 8px;
-}
-
-.npc-dialogue-choices button {
-  padding: 8px 12px;
-  border: 1px solid var(--game-surface-border);
-  border-radius: 6px;
-  background: var(--game-surface-raised);
-  cursor: pointer;
-  text-align: left;
-}
-
-.npc-dialogue-choices button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.npc-dialogue-input {
-  display: flex;
-  gap: 8px;
-}
-
-.npc-dialogue-input input {
-  flex: 1;
-  padding: 8px 12px;
-  border: 1px solid var(--game-surface-border);
-  border-radius: 6px;
-  background: var(--game-surface-raised);
-  color: inherit;
-}
-
-.npc-dialogue-input button {
-  padding: 8px 16px;
-  border: 1px solid var(--game-surface-border);
-  border-radius: 6px;
-  background: var(--game-accent);
-  color: #fff;
-  cursor: pointer;
-}
-
 @media (max-width: 700px) {
   .adventure-hud-player-card {
     padding: 6px 8px;
@@ -2869,30 +2630,6 @@ body:has(.adventure-game-shell) {
   box-shadow: 0 8px 24px rgba(0,0,0,0.6);
 }
 
-/* NPC 对话 Modal 遮罩层 */
-.npc-dialogue-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px);
-  display: grid;
-  place-items: center;
-  padding: 16px;
-  animation: modal-fade-in 0.2s ease-out;
-}
-
-.npc-dialogue-backdrop .npc-dialogue-panel {
-  width: min(580px, 92vw);
-  max-height: 85vh;
-  overflow-y: auto;
-  background: rgba(16, 22, 18, 0.95);
-  border: 1px solid var(--game-accent);
-  border-radius: 16px;
-  padding: 24px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 20px rgba(215, 185, 111, 0.15);
-}
-
 @keyframes modal-fade-in {
   from { opacity: 0; transform: scale(0.96); }
   to { opacity: 1; transform: scale(1); }
@@ -3095,36 +2832,6 @@ body:has(.adventure-game-shell) {
 .scene-town-residents button span {
   color: var(--game-text-muted);
   font-size: 0.78rem;
-}
-
-/* 对话面板给予道具区 */
-.npc-dialogue-give {
-  display: grid;
-  gap: 6px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--game-surface-border);
-}
-
-.npc-dialogue-give-label {
-  color: var(--game-accent);
-  font-size: 0.75rem;
-  letter-spacing: 0.14em;
-}
-
-.npc-dialogue-give button {
-  text-align: left;
-  padding: 7px 12px;
-  border: 1px solid var(--game-surface-border);
-  border-radius: 6px;
-  background: var(--game-surface-raised);
-  color: var(--game-text-primary);
-  font-size: 0.82rem;
-  cursor: pointer;
-  transition: border-color 120ms ease;
-}
-
-.npc-dialogue-give button:hover:not(:disabled) {
-  border-color: var(--game-accent);
 }
 
 /* 地图节点小镇徽标 */
@@ -3447,21 +3154,6 @@ body:has(.adventure-game-shell) {
   .npc-dialogue-inline-spinner { animation: none; }
 }
 
-/* NPC 对话选中回应的样式 */
-.npc-dialogue-choice--selected {
-  opacity: 1 !important;
-  color: var(--game-text-primary) !important;
-  border-color: var(--game-accent) !important;
-  cursor: wait;
-}
-
-.npc-dialogue-choices button:disabled.npc-dialogue-choice--selected {
-  opacity: 1;
-  color: var(--game-text-primary);
-  border-color: var(--game-accent);
-  cursor: wait;
-}
-
 /* ==========================================================================
    NPC 对话覆盖层（视觉小说式布局）
    ========================================================================== */
@@ -3507,11 +3199,11 @@ body:has(.adventure-game-shell) {
 /* spec §2.1：立绘占位约 55% 屏高（旧稿的 19vw 只有约 24% 屏高）。
    窄屏以 100vw 兜底并保留 226px 下限，宽度始终取高度的 3/4 维持竖版比例。 */
 .npc-dialogue-overlay-avatar {
-  --npc-dialogue-figure-height: clamp(226px, min(55dvh, 100vw), 613px);
+  --npc-dialogue-overlay-figure-height: clamp(226px, min(55dvh, 100vw), 613px);
   position: relative;
   z-index: 1;
-  height: var(--npc-dialogue-figure-height);
-  width: calc(var(--npc-dialogue-figure-height) * 0.75);
+  height: var(--npc-dialogue-overlay-figure-height);
+  width: calc(var(--npc-dialogue-overlay-figure-height) * 0.75);
   display: grid;
   place-items: center;
   border: 2px solid var(--game-accent);

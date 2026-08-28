@@ -323,7 +323,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
     expect(within(selectedChoice).getByTestId("npc-dialogue-spinner")).toBeInTheDocument();
     expect(within(dialogue).getByRole("button", { name: "表示理解" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "返回地图" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /老板/ })).toBeDisabled();
+    // 旧断言检查等待态下侧栏「老板」卡片 disabled；对话显示时侧栏整体不再渲染（spec §2.2），
+    // 该入口锁定语义由三处覆盖：上方对覆盖层自身全部选项/关闭按钮的禁用断言、
+    // NpcDialogueOverlay.test.tsx「等待态：…全部禁用」「等待态锁定关闭按钮并隐藏自由输入」、
+    // LocationSceneScreen.test.tsx「对话打开时隐藏侧栏与行动栏」。
 
     await act(async () => {
       setView?.(readyView);
@@ -460,9 +463,10 @@ describe("AdventureGameShell canonical opaque choices", () => {
     renderShell(idleView);
     await enterScene(user);
 
-    // 点击老周卡片打开闲聊弹窗（纯本地打开，不消耗回合）
-    await user.click(screen.getByRole("button", { name: /老周/ }));
-
+    // 测试环境（isTest）默认打开首个活跃对话：闲聊覆盖层已直接展示，侧栏此时已隐藏。
+    // 「点击侧栏卡片本地打开对话、零提交」这一腿由本文件
+    // 「offers non-focus NPC only the real talk action」/
+    // 「starts the authoritative provider talk on NPC click …」两用例继续守住。
     expect(screen.getByText(/调查酒楼后巷的车轮印/)).toBeInTheDocument();
     // 不存在可提交的“与老周交谈”按钮，也不存在自由输入
     expect(screen.queryByRole("button", { name: "与老周交谈" })).not.toBeInTheDocument();
@@ -516,7 +520,7 @@ describe("AdventureGameShell canonical opaque choices", () => {
 
     const dialogue = screen.getByRole("dialog", { name: "与陈半仙对话" });
     expect(dialogue).toHaveTextContent(playerResponse);
-    expect(dialogue.querySelector(".npc-dialogue-speech-text--player")).toBeNull();
+    expect(dialogue.querySelector(".npc-dialogue-overlay-speech--player")).toBeNull();
     const responseButton = within(dialogue).getByRole("button", { name: playerResponse });
     expect(responseButton).toBeInTheDocument();
     expect(within(dialogue).getAllByRole("button")).toHaveLength(2);
@@ -1195,9 +1199,9 @@ describe("AdventureGameShell canonical opaque choices", () => {
     renderShell();
     await enterScene(user);
 
-    expect(screen.getByRole("heading", { name: "老板" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "关闭对话" }));
-    expect(screen.queryByRole("heading", { name: "老板" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "与老板对话" })).not.toBeInTheDocument();
   });
 
   it("auto-switches to the scene view when the player moves to a new location", () => {
@@ -1263,8 +1267,11 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    expect(screen.getByRole("dialog", { name: "与老板对话" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "老板" })).toBeInTheDocument();
+    // 名字横幅在新布局是覆盖层内的 <span>（旧模态用的是 <h3>）：仍钉住
+    // 「pending 期间对话内容与 NPC 名字未被通用加载态替换」，而非只看外壳存在。
+    const dialogue = screen.getByRole("dialog", { name: "与老板对话" });
+    expect(dialogue).toBeInTheDocument();
+    expect(within(dialogue).getByText("老板")).toBeInTheDocument();
     expect(screen.queryByText("正在编排下一幕……")).not.toBeInTheDocument();
   });
 
@@ -1558,6 +1565,9 @@ describe("AdventureGameShell canonical opaque choices", () => {
     />);
 
     expect(screen.queryByText(/欢迎光临|晚风还要凉/u)).not.toBeInTheDocument();
+    // 测试环境默认已打开该 NPC 的空台词覆盖层，侧栏随之整体隐藏；
+    // 先关闭回到场景视图，才能复现本用例要测的「点击侧栏 NPC 卡片补发权威 ask 回合」动线。
+    await user.click(screen.getByLabelText("关闭对话"));
     await user.click(screen.getByRole("button", { name: /老板.*路人/ }));
     expect(onSubmit).toHaveBeenCalledWith(
       { kind: "fixed_choice", choiceToken: TOKENS.dialogueOne },
@@ -1699,6 +1709,9 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
+    // 覆盖层内不提供多 NPC 切换（spec §2.2）：测试环境已自动打开焦点 NPC 老板的对话，
+    // 侧栏因此隐藏。先关闭它回到场景视图，再点击非焦点 NPC「猎人 · 游侠」卡片。
+    await userEvent.click(screen.getByLabelText("关闭对话"));
     await userEvent.click(screen.getByRole("button", { name: /猎人游侠/ }));
     expect(screen.queryByRole("button", { name: /聊几句/ })).not.toBeInTheDocument();
     expect(screen.queryByText("正在准备对话……")).not.toBeInTheDocument();
