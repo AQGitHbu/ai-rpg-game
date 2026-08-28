@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
-import { NpcDialogueOverlay } from "./NpcDialogueOverlay";
+import { NpcDialogueOverlay, reduceDialogueUiState } from "./NpcDialogueOverlay";
+import type { DialogueUiState } from "./NpcDialogueOverlay";
 import type { NpcDialogueView } from "@/game/application";
 
 export function makeDialogue(overrides?: Partial<NpcDialogueView>): NpcDialogueView {
@@ -80,5 +81,103 @@ describe("NpcDialogueOverlay 骨架", () => {
     unmount();
     expect(document.activeElement).toBe(trigger);
     trigger.remove();
+  });
+});
+
+// reduceDialogueUiState 与四个类型自 LocationSceneScreen.tsx 原样迁移，是 Task 5 消费的跨任务契约
+// （Task 5 才删除原件）。这里用纯函数单测钉住真实迁移行为，使 Tasks 3-4 期间两份副本的任何漂移立即可见。
+describe("reduceDialogueUiState 等待快照契约", () => {
+  const baseState: DialogueUiState = {
+    npcId: null,
+    revision: 0,
+    pendingPlayerResponse: null,
+    pendingChoiceToken: null,
+    pendingDialogue: null,
+  };
+
+  const submitted: DialogueUiState = {
+    npcId: "npc_1",
+    revision: 4,
+    pendingPlayerResponse: "我想帮你查清楚。",
+    pendingChoiceToken: "token_b",
+    pendingDialogue: makeDialogue(),
+  };
+
+  it("set 写入 npcId 并清空三个 pending 字段", () => {
+    const next = reduceDialogueUiState(submitted, { kind: "set", npcId: "npc_2" });
+    expect(next).toEqual({
+      npcId: "npc_2",
+      revision: 4,
+      pendingPlayerResponse: null,
+      pendingChoiceToken: null,
+      pendingDialogue: null,
+    });
+  });
+
+  it("set 传 null 时关闭对话并清空 pending", () => {
+    const next = reduceDialogueUiState(submitted, { kind: "set", npcId: null });
+    expect(next.npcId).toBeNull();
+    expect(next.pendingPlayerResponse).toBeNull();
+    expect(next.pendingChoiceToken).toBeNull();
+    expect(next.pendingDialogue).toBeNull();
+    expect(next.revision).toBe(4);
+  });
+
+  it("submit 记录 playerResponse、choiceToken 与捕获的对白，不动 npcId/revision", () => {
+    const dialogue = makeDialogue({ npcId: "npc_1", name: "沈观" });
+    const next = reduceDialogueUiState(
+      { ...baseState, npcId: "npc_1", revision: 7 },
+      { kind: "submit", playerResponse: "后来那口井里到底出了什么事？", choiceToken: "token_a", dialogue }
+    );
+    expect(next).toEqual({
+      npcId: "npc_1",
+      revision: 7,
+      pendingPlayerResponse: "后来那口井里到底出了什么事？",
+      pendingChoiceToken: "token_a",
+      pendingDialogue: dialogue,
+    });
+    // 捕获的对白按引用保存，供等待态展示已选回应。
+    expect(next.pendingDialogue).toBe(dialogue);
+  });
+
+  it("submit 允许 choiceToken 为 null（自由输入）", () => {
+    const next = reduceDialogueUiState(
+      { ...baseState, npcId: "npc_1" },
+      { kind: "submit", playerResponse: "我自己问", choiceToken: null, dialogue: makeDialogue() }
+    );
+    expect(next.pendingChoiceToken).toBeNull();
+    expect(next.pendingPlayerResponse).toBe("我自己问");
+    expect(next.pendingDialogue?.name).toBe("薇拉");
+  });
+
+  it("clear_pending 只清三个 pending 字段，保留 npcId 与 revision", () => {
+    const next = reduceDialogueUiState(submitted, { kind: "clear_pending" });
+    expect(next).toEqual({
+      npcId: "npc_1",
+      revision: 4,
+      pendingPlayerResponse: null,
+      pendingChoiceToken: null,
+      pendingDialogue: null,
+    });
+  });
+
+  it("sync_revision 在 close:false 时更新 revision 并保留 npcId 与 pending", () => {
+    const next = reduceDialogueUiState(submitted, { kind: "sync_revision", revision: 9, close: false });
+    expect(next).toEqual({ ...submitted, revision: 9 });
+    expect(next.npcId).toBe("npc_1");
+    expect(next.pendingPlayerResponse).toBe("我想帮你查清楚。");
+    expect(next.pendingChoiceToken).toBe("token_b");
+    expect(next.pendingDialogue).toBe(submitted.pendingDialogue);
+  });
+
+  it("sync_revision 在 close:true 时清空 npcId、pending 字段与 pending 对白", () => {
+    const next = reduceDialogueUiState(submitted, { kind: "sync_revision", revision: 11, close: true });
+    expect(next).toEqual({
+      npcId: null,
+      revision: 11,
+      pendingPlayerResponse: null,
+      pendingChoiceToken: null,
+      pendingDialogue: null,
+    });
   });
 });
