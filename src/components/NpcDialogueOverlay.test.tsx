@@ -107,6 +107,43 @@ describe("NpcDialogueOverlay 翻页", () => {
     expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
+  // spec §4.1：键盘翻页必须排除持有焦点的交互控件。
+  // 关闭按钮是唯一渲染在 `<section onKeyDown>` 内部的交互控件（选项面板/自由输入 form 都是它的兄弟），
+  // 所以它是唯一能真正走到共享守卫 isInteractiveTarget 的焦点目标——守卫用例只能建在它上面。
+  async function focusCloseButtonViaTab() {
+    const user = userEvent.setup();
+    const box = screen.getByRole("dialog", { name: "与薇拉对话" }).querySelector(".npc-dialogue-overlay-box")!;
+    const close = screen.getByLabelText("关闭对话");
+    // 前提成立才谈得上"守卫被调用"：keydown 会从按钮冒泡到持有 onKeyDown 的对话框。
+    expect(box.contains(close)).toBe(true);
+    // 挂载时焦点已在对话框上（spec §6），Tab 前移到框内唯一可聚焦控件。
+    await user.tab();
+    expect(document.activeElement).toBe(close);
+    return user;
+  }
+
+  it("关闭按钮持有焦点时 Enter 不翻页，且未吞掉按钮自身激活语义（键盘守卫）", async () => {
+    const { props } = renderOverlay();
+    const user = await focusCloseButtonViaTab();
+    // user-event 只在 keydown 未被 preventDefault 时才补发 Enter 的默认 click 激活，
+    // 故"onClose 被调用一次"同时钉住守卫放行（未误翻页）与未误吞按钮默认行为两半。
+    await user.keyboard("{Enter}");
+    expect(screen.getByText("那天夜里井边传来很奇怪的声音。")).toBeTruthy();
+    expect(screen.queryByText("我去看了一眼，但什么都没看清。")).toBeNull();
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("关闭按钮持有焦点时 Space 不翻页，且未吞掉按钮自身激活语义（键盘守卫）", async () => {
+    const { props } = renderOverlay();
+    const user = await focusCloseButtonViaTab();
+    // `[Space]` 按物理码取键（keyMap 里它的 key 是 " "）；Space 的默认激活发生在 keyup，
+    // 而 keydown 被 preventDefault 时 user-event 会抑制该默认行为。
+    await user.keyboard("[Space]");
+    expect(screen.getByText("那天夜里井边传来很奇怪的声音。")).toBeTruthy();
+    expect(screen.queryByText("我去看了一眼，但什么都没看清。")).toBeNull();
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("键盘 Enter 翻页", () => {
     renderOverlay();
     const box = screen.getByRole("dialog", { name: "与薇拉对话" }).querySelector(".npc-dialogue-overlay-box")!;
@@ -208,12 +245,31 @@ describe("NpcDialogueOverlay 选项面板", () => {
     expect((input as HTMLInputElement).value).toBe("我还有别的问题。"); // 草稿保留，由父级经 resetInputNonce 清空
   });
 
-  it("输入框内输入空格不触发翻页、不丢字符（键盘守卫）", async () => {
-    renderOverlay(); // 覆盖层必须先挂载，turnToLastPage 才有可点的台词
+  it("自由输入行在对话框之外：键入含空格文本不丢字符（面板位置不截获按键，非键盘守卫证据）", async () => {
+    const { container } = renderOverlay(); // 覆盖层必须先挂载，turnToLastPage 才有可点的台词
     const user = await turnToLastPage();
     const input = screen.getByLabelText("自定义回应") as HTMLInputElement;
+    // 本用例只钉住"输入不被吞"：form 所在面板是 <section onKeyDown> 的兄弟节点，
+    // 输入框内的按键根本不会冒泡进 handleBoxKeyDown，因此它不构成键盘守卫的证据
+    // （守卫用例见 describe("NpcDialogueOverlay 翻页") 内关闭按钮两例）。
+    const box = container.querySelector(".npc-dialogue-overlay-box")!;
+    expect(box.contains(input)).toBe(false);
     await user.type(input, "好。 继续说");
     expect(input.value).toBe("好。 继续说");
+  });
+
+  it("输入框内按 Enter 保持提交语义（free_text），未被翻页截获", async () => {
+    const { props } = renderOverlay();
+    const user = await turnToLastPage();
+    const input = screen.getByLabelText("自定义回应");
+    await user.type(input, "我还有别的问题。");
+    // user-event 只有在 keydown 未被 preventDefault 时才执行 Enter 的表单提交默认行为，
+    // 故本断言钉住"输入框内的 Enter 仍然是提交"（spec §4.1 后半句）。
+    await user.keyboard("{Enter}");
+    expect(props.onSubmit).toHaveBeenCalledWith(
+      { kind: "free_text", text: "我还有别的问题。", targetNpcId: "npc_1" },
+      "我还有别的问题。",
+    );
   });
 
   it("等待态：快照台词、固定选项与赠物可见且全部禁用，已选项带标记与 spinner", () => {
