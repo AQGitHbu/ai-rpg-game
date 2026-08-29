@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1288,6 +1288,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
+    // 测试环境自动打开首个对话；旁注在对话打开时由覆盖层接管整条隐藏，先本地关闭再断言旁注内容。
+    fireEvent.click(screen.getByRole("button", { name: "关闭对话" }));
     expect(screen.getAllByText("夜市灯火通明。")).toHaveLength(1);
   });
 
@@ -1306,6 +1308,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
+    // 对话打开时旁注整条隐藏，先本地关闭再断言旁注内容净化规则。
+    fireEvent.click(screen.getByRole("button", { name: "关闭对话" }));
     const sideNote = screen.getByRole("region", { name: "地点旁注" });
     expect(sideNote).toHaveTextContent("客栈");
     expect(sideNote).toHaveTextContent("你身处青石镇，灯笼沿着街檐亮起。");
@@ -1329,6 +1333,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
+    // 对话打开时旁注整条隐藏，先本地关闭再断言旁注内容净化规则。
+    fireEvent.click(screen.getByRole("button", { name: "关闭对话" }));
     const sideNote = screen.getByRole("region", { name: "地点旁注" });
     expect(sideNote).toHaveTextContent("你身处断碑谷，荒碑夹着一线山谷。");
     expect(sideNote).not.toHaveTextContent("。你身处");
@@ -1376,9 +1382,8 @@ describe("AdventureGameShell canonical opaque choices", () => {
       onReturnMap={vi.fn()}
     />);
 
-    const sideNote = screen.getByRole("region", { name: "地点旁注" });
-    expect(sideNote).not.toHaveTextContent("角色回应");
-    expect(sideNote).not.toHaveTextContent("这句对白只应在人物对话里出现。");
+    // 对话打开时旁注整条隐藏：NPC 台词不可能泄进旁注，覆盖层对话框是唯一台词出口。
+    expect(screen.queryByRole("region", { name: "地点旁注" })).not.toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "与老板对话" })).toHaveTextContent("这句对白只应在人物对话里出现。");
   });
 

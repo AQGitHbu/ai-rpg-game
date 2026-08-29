@@ -129,11 +129,13 @@ const veraFocus: NpcDialogueView = {
 };
 
 describe("LocationSceneScreen：对话覆盖层集成", () => {
-  it("对话打开时隐藏侧栏与行动栏，徽标按显示 NPC 匹配档位文案", () => {
+  it("对话打开时隐藏侧栏、行动栏与地点旁注，徽标按显示 NPC 匹配档位文案", () => {
     render(<LocationSceneScreen view={viewWithVeraDialogue()} busy={false} onSubmit={vi.fn()} onReturnMap={vi.fn()} />);
     expect(screen.getByRole("dialog", { name: "与薇拉对话" })).toBeInTheDocument();
     expect(screen.queryByLabelText("场景人物")).toBeNull();
     expect(screen.queryByRole("navigation", { name: "行动栏" })).toBeNull();
+    // 旁注与立绘同处左侧带，短视口下会被 55dvh 立绘压住（浏览器实测），对话期间一并隐藏。
+    expect(screen.queryByRole("region", { name: "地点旁注" })).toBeNull();
     expect(screen.getByText(/薇拉 · 友善/)).toBeInTheDocument();
   });
 

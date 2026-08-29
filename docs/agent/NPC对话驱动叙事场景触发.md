@@ -83,7 +83,7 @@ type ActionRequest = {
 ## 主要文件
 
 - `src/components/AdventureGameShell.tsx` — 两个固定选择和一个自定义输入。
-- `src/components/NpcDialogueOverlay.tsx` — 视觉小说式对话覆盖层（立绘占位、底部对话框名字横幅＋其下 NPC 身份行、点击翻页、右侧选项面板内「固定选项 → 给予道具分组 → 自由输入」并附交付道具提示行、好感档位徽标）与等待快照编排类型。模态焦点陷阱让 Tab/Shift+Tab 只在覆盖层内可聚焦控件间循环（aria-modal 语义，禁用控件自动排除）；Escape 等价关闭按钮（等待/忙碌时同样锁定）；键盘翻页与 Escape 均忽略 IME 组合输入中的确认/取消键（`isComposing`）。
+- `src/components/NpcDialogueOverlay.tsx` — 视觉小说式对话覆盖层（立绘占位、底部对话框名字横幅＋其下 NPC 身份行、点击翻页、右侧选项面板内「固定选项 → 给予道具分组 → 自由输入」并附交付道具提示行、好感档位徽标）与等待快照编排类型。模态焦点陷阱让 Tab/Shift+Tab 只在覆盖层内可聚焦控件间循环（aria-modal 语义，禁用控件自动排除）；Escape 等价关闭按钮（等待/忙碌时同样锁定）；键盘翻页与 Escape 均忽略 IME 组合输入中的确认/取消键（`isComposing`）。对话打开时场景人物侧栏、行动栏与地点旁注整条隐藏（旁注与立绘同处左侧带，短视口下会被 55dvh 立绘压住，浏览器实测确认后并入同一接管规则）；好感徽标位于右上角返回按钮下方，不遮挡 HUD 顶栏动作按钮。
 - `src/components/gameActionRequest.ts` — 统一请求与浏览器 action ID。
 - `src/app/api/game/actions/route.ts` — 唯一行动 HTTP adapter。
 - `src/game/application/requestParser.ts` — 请求白名单与 discriminated union 解析。

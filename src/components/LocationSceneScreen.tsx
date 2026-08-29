@@ -617,8 +617,9 @@ export function LocationSceneScreen({
           </div>
         ) : null}
 
-        {/* 叙事场景浮层（固定在底部中偏上） */}
-        {view.narrative.hasScene && displayNarration ? (
+        {/* 叙事场景浮层（固定在底部中偏上）：对话打开时与侧栏/行动栏一并隐藏，
+            否则短视口下 55dvh 立绘会压住旁注文字（浏览器实测 1024x600 碰撞） */}
+        {view.narrative.hasScene && displayNarration && displayedDialogue === undefined ? (
           <section className="scene-narrative scene-narrative--side-note" aria-label="地点旁注">
             <div className="scene-narrative-location-note">
               <span className="scene-narrative-kicker">地点旁注</span>
