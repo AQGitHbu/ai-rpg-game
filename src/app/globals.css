@@ -3168,7 +3168,9 @@ body:has(.adventure-game-shell) {
 
 .npc-dialogue-overlay-affinity {
   position: absolute;
-  top: 12px;
+  /* top: 116px 避开右上角两个存活控件：HUD 顶栏动作按钮（topbar 高约 55px）与
+     场景返回按钮 .scene-top-nav（top: 72px、按钮高约 35px）；窄视口在下方媒体查询再让开。 */
+  top: 116px;
   right: 14px;
   padding: 4px 12px;
   border-radius: 12px;
@@ -3177,6 +3179,14 @@ body:has(.adventure-game-shell) {
   color: var(--game-accent);
   font-size: 0.82rem;
   z-index: 3;
+}
+
+/* 窄视口：HUD 顶栏 flex-wrap 后更高，返回按钮则已移到左上（.scene-top-nav left:16px），
+   徽标只需让开换行后的顶栏。 */
+@media (max-width: 700px) {
+  .npc-dialogue-overlay-affinity {
+    top: 124px;
+  }
 }
 
 .npc-dialogue-overlay-figure {
@@ -3357,7 +3367,7 @@ body:has(.adventure-game-shell) {
   letter-spacing: 0.14em;
 }
 
-/* 交付道具与自由输入的分工提示（旧模态 npc-dialogue-input-hint 的覆盖层等价物） */
+/* 交付道具与自由输入的分工提示（旧模态输入提示行的覆盖层等价物） */
 .npc-dialogue-overlay-input-hint {
   margin: 0;
   color: var(--game-text-muted);

@@ -96,6 +96,25 @@ describe("NpcDialogueOverlay 骨架", () => {
     expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("Escape 等价关闭按钮：ready 态按 Escape 调用 onClose 且不提交", () => {
+    const { props } = renderOverlay();
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "与薇拉对话" }), { key: "Escape" });
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+    expect(props.onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("等待态锁定 Escape（与关闭按钮同一 locked 门禁）", () => {
+    const { props } = renderOverlay({ phase: "waiting", pendingPlayerResponse: "我想帮你。", pendingChoiceToken: "token_b" });
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "与薇拉对话" }), { key: "Escape" });
+    expect(props.onClose).not.toHaveBeenCalled();
+  });
+
+  it("IME 组合输入期间的 Escape 不关闭（取消候选词不是关闭意图）", () => {
+    const { props } = renderOverlay();
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "与薇拉对话" }), { key: "Escape", isComposing: true });
+    expect(props.onClose).not.toHaveBeenCalled();
+  });
+
   it("打开时对话框获得焦点；关闭（卸载）后焦点回到原元素", () => {
     const trigger = document.createElement("button");
     document.body.appendChild(trigger);

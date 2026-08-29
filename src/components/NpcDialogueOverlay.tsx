@@ -137,8 +137,16 @@ export function NpcDialogueOverlay({
 
   const overlayRef = useRef<HTMLDivElement | null>(null);
 
-  // aria-modal 模态语义：Tab 不得逃出覆盖层，在覆盖层内可聚焦元素间循环。
+  // aria-modal 模态语义：Tab 不得逃出覆盖层，在覆盖层内可聚焦元素间循环；
+  // Escape 等价关闭按钮（同一 locked 门禁），IME 组合中的 Escape 是取消候选词、不是关闭意图。
   function handleOverlayKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === "Escape") {
+      if (locked) return;
+      event.preventDefault();
+      onClose();
+      return;
+    }
     if (event.key !== "Tab") return;
     const root = overlayRef.current;
     if (root === null) return;

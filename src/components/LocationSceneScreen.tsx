@@ -475,7 +475,6 @@ export function LocationSceneScreen({
     handoffLeavesCurrentBuilding,
     handoffLeavesCurrentLocation,
     handoffPlayerResponse,
-    dialoguePhase,
     openDialogue,
     pending,
     view.narrative.eventKind,
@@ -517,7 +516,9 @@ export function LocationSceneScreen({
   }
 
   function submitDialogueInteraction(interaction: PlayerInteraction, playerResponse: string): void {
-    submitDialogueInteractionFor(displayedDialogue ?? openDialogue!, interaction, playerResponse);
+    const dialogue = displayedDialogue ?? openDialogue;
+    if (dialogue === undefined) return;
+    submitDialogueInteractionFor(dialogue, interaction, playerResponse);
   }
 
   if (view.battle !== null) {
