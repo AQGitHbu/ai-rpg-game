@@ -13,6 +13,7 @@ import {
   asLocationId,
   asNpcId,
   asEnemyId,
+  asItemId,
   asGenerationId,
 } from "@/game/domain/worldEntity";
 import type { NpcMemory } from "@/game/domain/worldState";
@@ -175,6 +176,40 @@ describe("createNarrativeBundleSource", () => {
       expect.objectContaining({ purpose: "narrative_bundle_generation" }),
     );
     expect(result.ok).toBe(true);
+  });
+
+  it("tells the provider whether each existing item is carried or still available at a location", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(validBundleResponse),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const base = makeWorldState();
+    const carriedId = asItemId("item_carried");
+    const groundId = asItemId("item_ground");
+    const worldState: WorldState = {
+      ...base,
+      items: [
+        { id: carriedId, name: "旧铜钱", description: "一枚旧铜钱。", kind: "clue", tags: [] },
+        { id: groundId, name: "燕字铁牌拓片", description: "一张拓片。", kind: "clue", tags: [] },
+      ],
+      inventory: [carriedId],
+      locations: [{ ...base.locations[0]!, availableItemIds: [groundId] }],
+    };
+
+    await source.generate({
+      kind: "decision",
+      worldState,
+      storyState: makeStoryState(),
+      job: makeJob(),
+    });
+
+    const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
+    const systemPrompt = messages[0]!.content as string;
+    expect(systemPrompt).toContain("旧铜钱（item_carried，玩家已持有）");
+    expect(systemPrompt).toContain("燕字铁牌拓片（item_ground，尚未拾取，位于小镇）");
+    expect(systemPrompt).toContain("尚未拾取的物品只能被观察、发现或拾取");
+    expect(systemPrompt).toContain("不得写成玩家已经持有、拿出或使用");
   });
 
   it("returns failure when AI client is unavailable", async () => {
@@ -390,14 +425,16 @@ describe("createNarrativeBundleSource", () => {
         attempt: 1,
         reason: "approval_rejected",
         rejectionCode: "world_delta_rejected",
-        detail: "duplicate_name:enemy",
+        detail: "duplicate_name:enemy:蒙面劫匪|item:旧令牌",
       },
     });
 
     const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
     const systemPrompt = messages[0]!.content as string;
     expect(systemPrompt).toContain("上一轮提案已被服务端拒绝");
-    expect(systemPrompt).toContain("拒绝码 world_delta_rejected，细分原因 duplicate_name:enemy");
+    expect(systemPrompt).toContain("拒绝码 world_delta_rejected，细分原因 duplicate_name:enemy:蒙面劫匪|item:旧令牌");
+    expect(systemPrompt).toContain("上一轮新enemy名称“蒙面劫匪”已与世界中现有实体重复");
+    expect(systemPrompt).toContain("上一轮新item名称“旧令牌”已与世界中现有实体重复");
   });
 
   it("契约类失败只给细分原因时，提示会点名终点步骤与候选选项要求", async () => {
@@ -432,7 +469,7 @@ describe("createNarrativeBundleSource", () => {
       content: JSON.stringify({
         worldDelta: {
           beatSummary: "旧案指向镇外。",
-          newLocation: { name: "枯柳驿", description: "荒废驿站。", scale: "scene", placement: "world", connectFromLocationId: "loc_0" },
+          newLocation: { name: "枯柳驿", description: "荒废驿站。", scale: "scene", placement: "world", connectFromLocationId: "小镇" },
           newNpc: { name: "老驼子", role: "守夜人", description: "警惕的守夜人。", locationRef: { kind: "new_location" }, goals: ["守住秘密"] },
           newItem: { name: "半块令牌", description: "断裂的令牌。", locationRef: "new_location" },
           newEnemy: { name: "蒙面劫匪", tier: "normal", locationRef: "new_location" },
@@ -487,6 +524,44 @@ describe("createNarrativeBundleSource", () => {
         ],
       },
     });
+    expect(result.proposal.worldDelta).toMatchObject({
+      newLocation: { connectFromLocationId: "loc_0" },
+    });
+  });
+
+  it("canonicalizes an ending terminal that carries an unnecessary target object", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify({
+        worldDelta: { endingPair: [] },
+        currentScene: {
+          segments: [{ beatId: "closing", text: "旧案终有了结。" }],
+          npcLine: null,
+          objectiveLink: null,
+          choices: [{ candidateId: "wrong", label: "多余选项" }],
+        },
+        continuationScenes: [],
+        terminal: { kind: "ending", target: { kind: "current_scene" } },
+      }),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const storyState: StoryState = {
+      ...makeStoryState(),
+      evolution: { ...makeStoryState().evolution, status: "needs_ending_pair" },
+    };
+
+    const result = await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState,
+      job: makeJob(),
+    });
+
+    expect(result).toMatchObject({ ok: true, kind: "decision" });
+    if (!result.ok || result.kind !== "decision") return;
+    expect(result.proposal.terminal).toEqual({ kind: "ending" });
+    expect(result.proposal.currentScene.choices).toEqual([]);
+    expect(result.proposal.continuationScenes).toEqual([]);
   });
 
   it("丢弃投影之外的过度规划步骤，只保留服务端投影的到达步骤", async () => {

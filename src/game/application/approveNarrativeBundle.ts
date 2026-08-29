@@ -17,6 +17,7 @@ import type {
   NarrativeNpcLineState,
   NarrativeEventState,
 } from "@/game/domain/narrative";
+import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
@@ -92,6 +93,35 @@ function eventForTrigger(trigger: NarrativeBundleTrigger): NarrativeEventState {
   }
 }
 
+function reclassifiedStageDirection(text: string): string {
+  return text.trim()
+    .replace(/^[…。，！？!?\s]+/u, "")
+    .replace(/^（(.+)）$/u, "$1")
+    .trim();
+}
+
+/** Surface every existing-world naming collision in one repair hint. */
+function duplicateNameDetail(proposal: WorldDeltaProposal, worldState: WorldState): string | undefined {
+  const npcName = proposal.newNpc?.name;
+  const locationName = proposal.newLocation?.name;
+  const itemName = proposal.newItem?.name;
+  const enemyName = proposal.newEnemy?.name;
+  const questName = proposal.nextMainQuest?.name;
+  const duplicates = [
+    npcName !== undefined && worldState.npcs.some((entry) => entry.name === npcName)
+      ? `npc:${npcName}` : null,
+    locationName !== undefined && worldState.locations.some((entry) => entry.name === locationName)
+      ? `location:${locationName}` : null,
+    itemName !== undefined && worldState.items.some((entry) => entry.name === itemName)
+      ? `item:${itemName}` : null,
+    enemyName !== undefined && worldState.enemies.some((entry) => entry.name === enemyName)
+      ? `enemy:${enemyName}` : null,
+    questName !== undefined && worldState.quests.some((entry) => entry.name === questName)
+      ? `quest:${questName}` : null,
+  ].filter((entry): entry is string => entry !== null);
+  return duplicates.length === 0 ? undefined : `duplicate_name:${duplicates.join("|")}`;
+}
+
 function buildSceneFromProposal(
   proposal: BundleSceneProposal,
   sceneId: string,
@@ -99,12 +129,22 @@ function buildSceneFromProposal(
   trigger?: NarrativeBundleTrigger,
   dialogueFocusNpcId?: NarrativeNpcLineState["npcId"],
 ): NarrativeSceneState {
-  const narration = proposal.segments.map((s) => s.text).join("\n");
+  const normalizedNpcText = proposal.npcLine === null
+    ? null
+    : normalizeNpcSpeech(proposal.npcLine.text);
+  const stageDirection = proposal.npcLine !== null && normalizedNpcText === ""
+    ? reclassifiedStageDirection(proposal.npcLine.text)
+    : "";
+  const narration = [
+    ...proposal.segments.map((s) => s.text),
+    ...(stageDirection === "" ? [] : [stageDirection]),
+  ].join("\n");
   const npcLine: NarrativeNpcLineState | null = proposal.npcLine === null
+    || normalizedNpcText === ""
     ? null
     : {
         npcId: proposal.npcLine.npcId as never,
-        text: proposal.npcLine.text,
+        text: normalizedNpcText!,
         emotion: proposal.npcLine.emotion,
         usedFactIds: proposal.npcLine.usedFactIds.map((id: string) => id as never),
         answeredBeatIds: [...proposal.npcLine.answeredBeatIds],
@@ -144,11 +184,18 @@ function buildStepState(
   }
 
   const event = eventForTrigger(descriptor.trigger);
+  const normalizedNpcText = proposal.scene.npcLine === null
+    ? null
+    : normalizeNpcSpeech(proposal.scene.npcLine.text);
+  const stageDirection = proposal.scene.npcLine !== null && normalizedNpcText === ""
+    ? reclassifiedStageDirection(proposal.scene.npcLine.text)
+    : "";
   const npcLine = proposal.scene.npcLine === null
+    || normalizedNpcText === ""
     ? null
     : {
         npcId: proposal.scene.npcLine.npcId as never,
-        text: proposal.scene.npcLine.text,
+        text: normalizedNpcText!,
         emotion: proposal.scene.npcLine.emotion,
         usedFactIds: proposal.scene.npcLine.usedFactIds.map((id: string) => id as never),
         answeredBeatIds: [...proposal.scene.npcLine.answeredBeatIds],
@@ -174,9 +221,11 @@ function buildStepState(
   }
 
   const scene: PreparedSceneSeedState = {
-    segments: proposal.scene.segments.map((s) => ({
+    segments: proposal.scene.segments.map((s, index) => ({
       beatId: s.beatId,
-      text: s.text,
+      text: stageDirection !== "" && index === proposal.scene.segments.length - 1
+        ? `${s.text}\n${stageDirection}`
+        : s.text,
       ...(s.referencedEntityIds === undefined ? {} : { referencedEntityIds: s.referencedEntityIds }),
     })),
     event,
@@ -249,18 +298,36 @@ export function approveNarrativeBundle(
   let approvedDelta: ApprovedWorldDelta | undefined;
 
   if (proposal.worldDelta !== null) {
+    const parsedDelta = proposal.worldDelta as WorldDeltaProposal;
+    const duplicateDetail = duplicateNameDetail(parsedDelta, worldState);
+    if (duplicateDetail !== undefined) {
+      return { ok: false, code: "world_delta_rejected", detail: duplicateDetail };
+    }
     const worldApproval = approveWorldDelta({
-      proposal: proposal.worldDelta as WorldDeltaProposal,
+      proposal: parsedDelta,
       need: evolutionNeed,
       ws: worldState,
       ss: storyState,
       idOverride: input.idOverride,
     });
     if (!worldApproval.ok) {
+      const duplicateName = worldApproval.code === "duplicate_name"
+        ? (() => {
+            const delta = parsedDelta;
+            switch (worldApproval.reason) {
+              case "npc": return delta.newNpc?.name;
+              case "location": return delta.newLocation?.name;
+              case "item": return delta.newItem?.name;
+              case "enemy": return delta.newEnemy?.name;
+              case "quest": return delta.nextMainQuest?.name;
+              default: return undefined;
+            }
+          })()
+        : undefined;
       return {
         ok: false,
         code: "world_delta_rejected",
-        detail: `${worldApproval.code}:${worldApproval.reason}`,
+        detail: `${worldApproval.code}:${worldApproval.reason}${duplicateName === undefined ? "" : `:${duplicateName}`}`,
       };
     }
 

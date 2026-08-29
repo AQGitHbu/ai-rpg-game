@@ -1,6 +1,7 @@
 import type { Action } from "@/game/domain/action";
 import type { StoryState } from "@/game/domain/storyState";
 import type { QuestObjective, QuestEntry, WorldState } from "@/game/domain/worldState";
+import type { ItemId } from "@/game/domain/worldEntity";
 import { isObjectiveSatisfiedInStory } from "@/game/gameplay/rpg/narrativeContext/deriveObjectiveTransition";
 
 /** 旧存档没有 reveal 字段时，保持既有“全部已物化内容可用”的兼容语义。 */
@@ -71,6 +72,24 @@ export function isActionReleased(
     case "freeform":
       return true;
   }
+}
+
+/**
+ * A v7 bundle owns which deterministic item action can be consumed next.
+ * Older saves without a bundle retain their historical projection behavior.
+ */
+export function isTakeItemPrepared(storyState: StoryState, itemId: ItemId): boolean {
+  const bundle = storyState.narrative.status === "ready"
+    ? storyState.narrative.narrativeBundle
+    : undefined;
+  // Live AI mode has always required a prepared continuation to consume a
+  // deterministic item action. Keep the permissive path only for offline
+  // fixture/legacy saves, which have no v7 bundle to consult.
+  if (bundle === undefined) return storyState.narrative.mode !== "ai";
+  const activeStepIds = new Set(bundle.activeStepIds);
+  return bundle.steps.some((step) => activeStepIds.has(step.stepId)
+    && step.trigger.kind === "take_item"
+    && String(step.trigger.itemId) === String(itemId));
 }
 
 /** 只把当前已释放目标推进一格；不会跳过中间的调查/抵达/交谈步骤。 */

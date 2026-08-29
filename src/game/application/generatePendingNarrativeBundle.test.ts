@@ -239,8 +239,9 @@ describe("generatePendingNarrativeBundle", () => {
       now: () => "2026-01-01",
     });
 
-    // With 2 max attempts, source should be called twice
-    expect(generateMock).toHaveBeenCalledTimes(2);
+    // The bundle coordinator keeps four bounded attempts so independent
+    // next-act entity-name collisions can be repaired in one job.
+    expect(generateMock).toHaveBeenCalledTimes(4);
   });
 
   it("forges generated current-scene choices for the revision that will be persisted", async () => {
@@ -353,7 +354,7 @@ describe("generatePendingNarrativeBundle", () => {
 
     await generatePendingNarrativeBundle({ repository: repo, source: { generate: generateMock }, now: () => "2026-01-01" });
 
-    expect(generateMock).toHaveBeenCalledTimes(2);
+    expect(generateMock).toHaveBeenCalledTimes(4);
     const firstContext = generateMock.mock.calls[0]?.[0];
     const secondContext = generateMock.mock.calls[1]?.[0];
     expect(firstContext?.contentRepair).toBeUndefined();

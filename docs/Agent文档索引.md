@@ -74,18 +74,18 @@
 
 - 运行时 AI 导演与场景表演：AI 触发点严格收口为 `initialization`（开局）、`narrative_choice`（正式剧情选项）和 `npc_free_text`（焦点 NPC 自定义输入）。一次逻辑调用通过 `NarrativeBundleSource.generate` 返回原子生成包提案（`worldDelta` + `currentScene` + `continuationScenes` + `terminal`），经 `approveNarrativeBundle` 原子审批后单次 CAS 写回。
 - 运行时 AI 导演与场景表演：开局初始化（Task 6）直接编译为 `ready` 叙事 bundle，不再创建 `provider_pending` 场景和后续 `ensure` 调用。`OpeningGenerationCandidate` 可选携带 `firstScene`（焦点 NPC 台词、旁白、恰好两个候选选项），编译时直接生成 `ready` 的 `NarrativeRuntimeState`。
-- 运行时 AI 导演与场景表演：`generatePendingNarrativeBundle`（Task 7）是 pending job 的原子生成编排器，调用 `NarrativeBundleSource` 一次 → `approveNarrativeBundle` 一次 → 单次 CAS 提交世界增量+场景+选项注册表+bundle。审批失败时不进行部分写入，记录 `provider_failed` 并保留同一 `jobId`。`runBoundedAttempts` 最大 2 次，第二次携带 `contentRepair` 稳定拒绝码重试。
+- 运行时 AI 导演与场景表演：`generatePendingNarrativeBundle`（Task 7）是 pending job 的原子生成编排器，调用 `NarrativeBundleSource` 一次 → `approveNarrativeBundle` 一次 → 单次 CAS 提交世界增量+场景+选项注册表+bundle。审批失败时不进行部分写入，记录 `provider_failed` 并保留同一 `jobId`。`runBoundedAttempts` 最多 4 次；后续尝试携带 `contentRepair` 的稳定拒绝码与细分原因，覆盖同包多个实体逐个改名的修复链。
 - 运行时 AI 导演与场景表演：composition root 已切换到统一 `NarrativeBundleSource`，不再为 `ensure` 路径注入独立的 scene/world/intent source。
 - 剧情连续性与结构化记忆：`narrativeBundleTriggerKey` 使用闭包语法（`move:<locId>` 等），描述符图最多 12 步、必须无环、所有可达叶必须终止于恰好两个选项的 `next_decision` 或 `ending`。
 
 ## 2026-08-29 v7 决策边界叙事捆绑包真机中篇回归
 
-- 运行时 AI 导演与场景表演：`narrativeBundle` 是 v7 唯一生产续接图，`PreparedContinuationState` 退为离线 fixture 专用。提案拒绝原因与规则引擎 `detail` 现在回传给第二轮修复重试，prompt 另下发「已占用实体名称」清单并要求 `continuationScenes` 与投影步骤一一对应，避免撞名或过度规划导致整包被拒后卡住 `provider_failed`。
-- 战斗与结局：终幕 support/challenge 立场改由 `src/game/gameplay/rpg/narrativeBundle/endingDecision.ts` 按 World/Story 状态铸造，经焦点 NPC 对话框下发；有立场时撤下必然零写入失败的「面对最终抉择」探索入口，结局对话不开放自由输入。
+- 运行时 AI 导演与场景表演：`narrativeBundle` 是 v7 唯一生产续接图，`PreparedContinuationState` 退为离线 fixture 专用。提案拒绝原因与规则引擎 `detail` 现在回传给后续内容修复；同次世界增量的全部撞名会聚合进一个 detail。prompt 下发「已占用实体名称」、物品持有/地点状态，并要求 `continuationScenes` 与投影步骤一一对应；结局包会把 provider 多余的 terminal target、choices 和 continuation canonicalize 为规则唯一的 ending 形状，避免格式兼容问题卡住 `provider_failed`。
+- 战斗与结局：终幕 support/challenge 立场改由 `src/game/gameplay/rpg/narrativeBundle/endingDecision.ts` 按 World/Story 状态铸造，经焦点 NPC 对话框下发；只要立场可提交，就算还有残留线索/候选事件也撤下必然零写入失败的「面对最终抉择」探索入口，结局对话不开放自由输入。
 - 探索与任务推进：`give_item` 与移动/战斗一样必须消费 bundle 步骤，缺步零写入，读模型只在活跃 `give_item` 步骤存在时投影给予按钮；任务链空窗改为投影桥接目标（在场 NPC → 未到访地点 → 可探索内容）并同步下发可执行 token，HUD 不再出现「暂无线索」断档。
 - 观感收口：地点旁注与地点描述不再复述同一氛围——展示层按小句比对字符重合度剔除旁注已表达的部分（`src/components/displayText.ts` 的 `removeCoveredClauses`），整段被覆盖时隐藏 caption。
 - 观感收口：NPC 台词归一化新增剥掉台词前的整段括号舞台说明、整段 `‘…’` 单弯引号与对话分页残留的单侧引号（`src/game/domain/npcSpeech.ts`），成对句内引用不受影响；`mode="ai"` 读模型投影与审批写回共用同一函数。
-- 验收事实：`codex/decision-boundary-narrative-bundle` 分支完成浏览器真实 AI 链路中篇通关（5 幕、第 29 回合、revision 56 达成结局「托付镖旗」），结局页与「重新开始」回到建角流程均可用。
+- 验收事实：`codex/decision-boundary-narrative-bundle` 分支完成 Chrome 真实 AI 链路中篇通关（5 幕、第 26 回合、revision 57 达成结局「信任」）；审计中的 44 次 AI 调用全部归因于 initialization、玩家正式选择或 NPC 自定义输入，移动、拾取、战斗和结局展示没有触发调用。
 
 ## 维护规则
 

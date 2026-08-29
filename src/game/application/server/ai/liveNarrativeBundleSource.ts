@@ -58,18 +58,44 @@ function occupiedNamesSection(worldState: WorldState): string {
   ].join("\n");
 }
 
+/** Keep item narration aligned with rule-owned possession and location state. */
+function itemStateSection(worldState: WorldState): string {
+  if (worldState.items.length === 0) return "（无）";
+  return worldState.items.map((item) => {
+    if (worldState.inventory.includes(item.id)) {
+      return `- ${item.name}（${item.id}，玩家已持有）: ${item.description}`;
+    }
+    const availableAt = worldState.locations.filter((location) => location.availableItemIds.includes(item.id));
+    if (availableAt.length === 1) {
+      return `- ${item.name}（${item.id}，尚未拾取，位于${availableAt[0]!.name}）: ${item.description}`;
+    }
+    return `- ${item.name}（${item.id}，当前不在玩家背包且不可拾取）: ${item.description}`;
+  }).join("\n");
+}
+
 function repairInstruction(repair: NarrativeBundleRepair | undefined): string {
   if (repair === undefined) return "";
   const rejection = [
     repair.rejectionCode === undefined ? "" : `拒绝码 ${repair.rejectionCode}`,
     repair.detail === undefined ? "" : `细分原因 ${repair.detail}`,
   ].filter((part) => part !== "").join("，");
+  const duplicateEntries = repair.detail?.startsWith("duplicate_name:")
+    ? repair.detail.slice("duplicate_name:".length).split("|")
+      .map((entry) => entry.match(/^(npc|location|item|enemy|quest):(.+)$/u))
+      .filter((entry): entry is RegExpMatchArray => entry !== null)
+    : [];
+  const duplicateInstruction = duplicateEntries.length === 0
+    ? ""
+    : duplicateEntries.map((entry) =>
+      `- 上一轮新${entry[1]}名称“${entry[2]}”已与世界中现有实体重复；本轮必须另起一个未占用名称，不能沿用或仅加“新”“另一个”等前缀。`,
+    ).join("\n");
   return `\n# 上一轮提案已被服务端拒绝
 ${rejection === "" ? `失败类型 ${repair.reason}。` : `${rejection}。`}
 本轮只需修正被拒绝的那一项，其余中文叙事文本可以沿用你自己的写法。硬性要求：
 - continuationScenes 必须与第 8 条投影的步骤一一对应：不得新增投影之外的步骤，也不得漏掉投影中的步骤。
 - 终点步骤（terminal.target.stepKey 指向的那一步）必须给出该步骤列出的全部 candidateId 选项，每个选项都要有中文 label；其余步骤 choices 必须为空。
 - 新地点/NPC/物品/敌人/任务的名称不得与上方“已占用实体名称”中的任何一项重复。
+${duplicateInstruction}
 `;
 }
 
@@ -149,6 +175,11 @@ ${locationSummary}
 
 ## NPC
 ${npcSummary}
+
+## 物品状态
+${itemStateSection(worldState)}
+
+尚未拾取的物品只能被观察、发现或拾取；在规则动作真正完成拾取前，不得写成玩家已经持有、拿出或使用，也不得让对话选项假定玩家已经持有。
 
 ## 任务
 ${questSummary}
@@ -430,8 +461,9 @@ function normalizeDecisionBundleShape(
     ? {
         stepKey: `move:loc_dyn_${storyState.evolution.nextLocationOrdinal}`,
         npcId: `npc_dyn_${storyState.evolution.nextNpcOrdinal}`,
-      }
+    }
     : null;
+  const isEndingBundle = storyState.evolution.status === "needs_ending_pair";
   const steps = projectedSteps(graph, nextActProjection);
   const fallbackNpcId = nextActProjection?.npcId ?? String(job.focusNpcId ?? "");
 
@@ -469,6 +501,26 @@ function normalizeDecisionBundleShape(
     // Invalid legacy objective prose cannot carry server authority. Dropping
     // it preserves the generated scene while keeping objective state rule-owned.
     return objectiveIsValid ? objectiveLink : null;
+  };
+
+  const normalizeWorldDelta = (source: unknown): unknown => {
+    const worldDelta = asRecord(source);
+    const newLocation = asRecord(worldDelta?.newLocation);
+    if (worldDelta === null || newLocation === null) return source;
+    const rawConnectFrom = newLocation.connectFromLocationId;
+    if (typeof rawConnectFrom !== "string") return source;
+    const resolvedLocationId = rawConnectFrom === "@current.location"
+      ? String(worldState.currentLocationId)
+      : (() => {
+          const matchingLocations = worldState.locations
+            .filter((location) => location.name === rawConnectFrom);
+          return matchingLocations.length === 1 ? String(matchingLocations[0]!.id) : null;
+        })();
+    if (resolvedLocationId === null || resolvedLocationId === rawConnectFrom) return source;
+    return {
+      ...worldDelta,
+      newLocation: { ...newLocation, connectFromLocationId: resolvedLocationId },
+    };
   };
 
   const normalizeScene = (
@@ -524,14 +576,20 @@ function normalizeDecisionBundleShape(
     return { stepKey: step.stepKey, scene: normalizeScene(entry.scene, step.candidates, fallbackNpcId) };
   }).filter((step): step is { stepKey: string; scene: Record<string, unknown> } => step !== null);
 
+  const normalizedCurrentScene = normalizeScene(
+    currentScene,
+    nextActProjection === null ? graph.currentChoiceCandidates : [],
+    fallbackNpcId,
+  );
   return {
     ...raw,
-    currentScene: normalizeScene(
-      currentScene,
-      nextActProjection === null ? graph.currentChoiceCandidates : [],
-      fallbackNpcId,
-    ),
-    continuationScenes,
+    worldDelta: normalizeWorldDelta(raw.worldDelta),
+    // Endings have no decision step inside the bundle: the server separately
+    // projects its two rule-owned stances. Providers often add a harmless
+    // target object to terminal; canonicalize that legacy shape here.
+    currentScene: isEndingBundle ? { ...normalizedCurrentScene, choices: [] } : normalizedCurrentScene,
+    continuationScenes: isEndingBundle ? [] : continuationScenes,
+    terminal: isEndingBundle ? { kind: "ending" } : raw.terminal,
   };
 }
 

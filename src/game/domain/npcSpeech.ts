@@ -63,6 +63,11 @@ function stripLeadingStageDirection(value: string): string {
   return withoutDirection === "" ? value : withoutDirection;
 }
 
+/** 纯舞台动作（包括前置沉默省略号）不能进入 NPC 对话气泡。 */
+function stripStandaloneStageDirection(value: string): string {
+  return /^[…。！？!?\s]*（[^）]*）[…。！？!?\s]*$/u.test(value) ? "" : value;
+}
+
 /**
  * 对话分页会把整段 `‘…’` 包装拆到页首页尾，留下单侧引号。台词边界不允许
  * 引号包装，所以只在两侧数量不等时剥掉多余的一侧；数量相等的成对引用
@@ -84,7 +89,7 @@ function stripUnbalancedSingleQuoteWrapper(value: string): string {
  */
 export function normalizeNpcSpeech(text: string, npcName?: string): string {
   const value = stripUnbalancedSingleQuoteWrapper(
-    stripLeadingStageDirection(repairDialogueQuoteArtifacts(text.trim())),
+    stripLeadingStageDirection(stripStandaloneStageDirection(repairDialogueQuoteArtifacts(text.trim()))),
   );
   if (value === "") return "";
 

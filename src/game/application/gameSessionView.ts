@@ -28,7 +28,7 @@ import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objec
 import { buildTownView, type TownView } from "./townView";
 import { projectCombatView, type BattleView } from "./combatView";
 import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
-import { isObjectiveEntityReleased, isQuestObjectiveReleased } from "@/game/gameplay/rpg/worldEvolution";
+import { isObjectiveEntityReleased, isQuestObjectiveReleased, isTakeItemPrepared } from "@/game/gameplay/rpg/worldEvolution";
 import { formatSceneChoiceLabel } from "./deterministicSceneSource";
 import { decorateNarrativePages, decorateNarrativeText } from "./narrativeText";
 
@@ -480,9 +480,13 @@ export function projectGameSessionView(
   if (activeBattle === null) {
     // 探索：仅当前地点有可探索内容（未发现线索/未处理物品或敌人/未满足目标/候选事件）
     // 时显示，避免无剧情钩子地点的空转选项（方案 1）。
-    if (hasExplorableContent(worldState, storyState)
-      || needsWorldBoundaryPreparation(storyState)
-      || (endingDecisionReady && endingStances.length === 0)) {
+    // 结局立场已可提交时，不能再投影普通探索：旧线索或残余世界内容
+    // 在结局束中没有对应的可消费步骤，继续显示会产生零写入死按钮。
+    if (
+      (!endingDecisionReady
+        && (hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState)))
+      || (endingDecisionReady && endingStances.length === 0)
+    ) {
       const label = endingDecisionReady
         ? "面对最终抉择"
         : needsWorldBoundaryPreparation(storyState)
@@ -528,6 +532,7 @@ export function projectGameSessionView(
       .filter((itemId) => !worldState.inventory.includes(itemId))
       .filter((itemId) => isObjectiveEntityReleased(worldState, storyState, (objective) =>
         objective.kind === "obtain_item" && String(objective.itemId) === String(itemId)))
+      .filter((itemId) => isTakeItemPrepared(storyState, itemId))
       .map((itemId, index) => {
         const item = worldState.items.find((entry) => entry.id === itemId);
         const townBuildings = projectedTownView?.interactiveBuildings ?? [];
@@ -777,9 +782,15 @@ export function projectGameSessionView(
       ? normalizeNpcSpeech(scene.npcLine.text, npc.name)
       : null;
     const focusLine = normalizedFocusLine === "" ? null : normalizedFocusLine;
-    const suppliedSpeechPages = supplied?.speechPages
-      .map((page) => normalizeNpcSpeech(page, npc.name))
-      .filter((page) => page !== "") ?? [];
+    const suppliedSpeechText = supplied === undefined
+      ? ""
+      : normalizeNpcSpeech(supplied.speechPages.join(""), npc.name);
+    // Old saves persist their original page boundaries. Rebuild them from the
+    // complete approved line so improved punctuation-aware pagination also
+    // fixes existing scenes instead of preserving a mid-word hard split.
+    const suppliedSpeechPages = suppliedSpeechText === ""
+      ? []
+      : paginateSpeechText(suppliedSpeechText, NPC_SCENE_PAGE_CHAR_BUDGET);
     // Task 9: Remove synthetic NPC starts — only generated/fixture speech is displayable.
     const usableSupplied = suppliedSpeechPages.length > 0
       ? suppliedSpeechPages

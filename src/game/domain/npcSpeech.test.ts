@@ -38,7 +38,11 @@ describe("NPC direct speech", () => {
     expect(normalizeNpcSpeech("他说过‘小心’，可我没能及时躲开。", "邵叔"))
       .toBe("他说过‘小心’，可我没能及时躲开。");
     // 只剩舞台说明时不产出台词正文。
-    expect(normalizeNpcSpeech("（他转身离去）", "邵叔")).toBe("（他转身离去）");
+    expect(normalizeNpcSpeech("（他转身离去）", "邵叔")).toBe("");
+    expect(normalizeNpcSpeech(
+      "……（哑巴张沉默地看着你，指了指地上的铁莲花镖囊，喉咙里发出含混的啊啊声。）",
+      "哑巴张",
+    )).toBe("");
   });
 
   it("分页留下的单侧弯引号也不残留在气泡里", () => {

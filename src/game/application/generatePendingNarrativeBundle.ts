@@ -10,6 +10,11 @@ import type { NarrativeRuntimeState } from "@/game/domain/narrative";
 import { runBoundedAttempts } from "@/game/core/retry";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
 
+// A next-act package contains five independently unique world entities. A
+// provider repair may correct one named collision at a time, so leave room for
+// the complete bounded repair chain before exposing a manual retry to players.
+const MAX_NARRATIVE_BUNDLE_ATTEMPTS = 4;
+
 // ---------------------------------------------------------------------------
 // Task 7: Atomic pending-job generation orchestrator.
 // Calls NarrativeBundleSource once, calls approveNarrativeBundle once,
@@ -64,7 +69,7 @@ export async function generatePendingNarrativeBundle(
   const evolutionNeed = deriveEvolutionNeed(storyState);
 
   const bounded = await runBoundedAttempts<ApprovedNarrativeBundle, NarrativeBundleRepair>({
-    maxAttempts: 2,
+    maxAttempts: MAX_NARRATIVE_BUNDLE_ATTEMPTS,
     runAttempt: async (attempt, priorRepair) => {
       const repairHint = attempt > 1 ? priorRepair : undefined;
 

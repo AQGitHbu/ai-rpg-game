@@ -13,5 +13,6 @@ export {
   isActionReleased,
   isObjectiveEntityReleased,
   isQuestObjectiveReleased,
+  isTakeItemPrepared,
 } from "./storyReveal";
 export { deriveKeyEndingNpcId } from "./keyEndingNpc";

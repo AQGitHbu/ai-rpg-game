@@ -334,6 +334,59 @@ describe("approveNarrativeBundle", () => {
     expect(result.approved.currentScene.event).toEqual({ kind: "dialogue", focusNpcId: npcDyn1 });
   });
 
+  it("normalizes whole-line quote wrappers before persisting generated NPC speech", () => {
+    const ws = worldState();
+    const directTalkWorld: WorldState = {
+      ...ws,
+      quests: [{
+        ...ws.quests[0]!,
+        objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }],
+      }],
+    };
+    const proposal = currentSceneProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: {
+          ...proposal.currentScene,
+          npcLine: {
+            ...proposal.currentScene.npcLine!,
+            text: "‘账本、血手。’",
+          },
+        },
+      },
+      worldState: directTalkWorld,
+    }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.currentScene.npcLine?.text).toBe("账本、血手。");
+  });
+
+  it("reclassifies a continuation's pure NPC stage direction as generated narration", () => {
+    const proposal = validProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        continuationScenes: [{
+          ...proposal.continuationScenes[0]!,
+          scene: {
+            ...proposal.continuationScenes[0]!.scene,
+            npcLine: {
+              ...proposal.continuationScenes[0]!.scene.npcLine!,
+              text: "……（哑巴张沉默地看着你，指了指地上的铁莲花镖囊，喉咙里发出含混的啊啊声。）",
+            },
+          },
+        }],
+      },
+    }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approved.bundle.steps[0]?.scene.npcLine).toBeNull();
+    expect(result.approved.bundle.steps[0]?.scene.segments[0]?.text).toContain("哑巴张沉默地看着你");
+  });
+
   it("derives a dialogue boundary from server choices when the AI omits npcLine", () => {
     const ws = worldState();
     const directTalkWorld: WorldState = {
@@ -433,7 +486,7 @@ describe("approveNarrativeBundle", () => {
       evolutionNeed: { kind: "next_act", act: 2 },
     }));
 
-    expect(result).toEqual({ ok: false, code: "world_delta_rejected", detail: "duplicate_name:enemy" });
+    expect(result).toEqual({ ok: false, code: "world_delta_rejected", detail: "duplicate_name:enemy:蒙面劫匪" });
   });
 
   it("does not expose partial result on failure", () => {

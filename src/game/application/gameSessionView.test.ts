@@ -176,6 +176,37 @@ describe("projectGameSessionView", () => {
     expect(view.narrative.npcDialogues[0]?.freeInputEnabled).toBe(false);
   });
 
+  it("repaginates persisted speech pages so an old hard split cannot remain inside a Chinese word", () => {
+    const text = "你要是跟他们一伙的，我劝你趁早回头；若不是，倒可以跟我说说，你一个镖师打扮的人，去那荒山野岭做什么？”";
+    const scene = {
+      sceneId: "scene-old-pagination",
+      turn: 1,
+      narration: "老猎户打量着来客。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text, emotion: "guarded" as const, usedFactIds: [] },
+      choices: [],
+      source: "generated" as const,
+      event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+      npcDialogues: [{
+        npcId: npc1.id,
+        npcName: npc1.name,
+        npcRole: npc1.role,
+        speechPages: [text.slice(0, -3), text.slice(-3)],
+        speechSource: "generated" as const,
+        speechPurpose: "focus" as const,
+      }],
+    };
+    const story: StoryState = {
+      ...ss,
+      narrative: { ...ss.narrative, currentScene: scene },
+    };
+
+    const view = projectGameSessionView(ws, story, 0, "test-ending-session");
+    const pages = view.narrative.npcDialogues[0]!.speechPages;
+    expect(pages.join("")).toBe(text);
+    expect(pages.some((page) => page.endsWith("什"))).toBe(false);
+  });
+
   it("projects adjacent new locations and previously visited locations for return travel", () => {
     const view = projectGameSessionView({
       ...ws,
@@ -1278,6 +1309,19 @@ describe("projectGameSessionView", () => {
       storyProgress: 100,
       endingAllowed: true,
       evolution: { ...ss.evolution, status: "stable" },
+      // 真实存档可能还留有可探索的旧候选；结局立场已就绪时它不能重新
+      // 变成无可消费叙事的 explore 死按钮。
+      candidateEventPool: [{
+        id: "ending-residual-candidate",
+        kind: "enemy_appears",
+        involvedEntityIds: ["loc_1"],
+        prerequisiteFactIds: [],
+        proposedEffects: [{ kind: "enemy_appears", enemyId: asEnemyId("enemy_residual"), locationId: asLocationId("loc_1") }],
+        intendedPacing: "escalate",
+        reason: "终幕前遗留的动静",
+        proposedAtTurn: 1,
+        expiresAtTurn: 5,
+      }],
     };
 
     const view = projectGameSessionView(endingWorld, endingStory, 0, "test-ending-session");
@@ -1939,6 +1983,68 @@ describe("projectGameSessionView", () => {
       expect(dialogue?.giveChoices[0]?.choice.choiceToken).toMatch(/^c_[0-9a-f]{16}$/);
       const executable = buildChoiceMap(world, storyWithFocusScene(giveBundle(["step_give_1"])), 0);
       expect(executable.has(dialogue!.giveChoices[0]!.choice.choiceToken)).toBe(true);
+    });
+  });
+
+  describe("拾取物品投影门禁", () => {
+    const itemId = asItemId("item_optional_map");
+    const enemyId = asEnemyId("enemy_active");
+    const world: WorldState = {
+      ...ws,
+      locations: ws.locations.map((location) => location.id === ws.currentLocationId
+        ? { ...location, availableItemIds: [itemId] }
+        : location),
+      items: [{ id: itemId, name: "旧地图", description: "一张旧地图", kind: "quest", tags: [] }],
+      enemies: [{ id: enemyId, name: "伏兵", tier: "normal", stats: { hp: 20, attack: 5, defense: 2 }, locationId: ws.currentLocationId, tags: [] }],
+    };
+
+    function storyWithBundle(trigger: unknown): StoryState {
+      return {
+        ...ss,
+        narrative: {
+          ...ss.narrative,
+          narrativeBundle: {
+            contractVersion: 1,
+            originJobId: "job_take_gate",
+            steps: [{
+              stepId: "step_active",
+              objectiveKey: "quest:0",
+              consumptionGroupKey: "quest:0:active",
+              trigger,
+              scene: { segments: [], event: { kind: "observe", locationId: ws.currentLocationId }, npcLine: null, objectiveLink: null, choiceSeeds: [], source: "generated" },
+              nextStepIds: [],
+            }],
+            activeStepIds: ["step_active"],
+            terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+          } as never,
+        },
+      };
+    }
+
+    it("当前束只有战斗步骤时，不显示也不注册无法消费的可拾取物品", () => {
+      const story = storyWithBundle({ kind: "battle_resolved", outcome: "victory", enemyId });
+      const view = projectGameSessionView(world, story, 0, "test-take-gate");
+      const executable = buildChoiceMap(world, story, 0);
+
+      expect(view.obtainableItems).toEqual([]);
+      expect([...executable.values()].some((action) => action.type === "take_item")).toBe(false);
+    });
+
+    it("AI 模式的叙事束已经消费完时，不恢复无法消费的遗留物品入口", () => {
+      const story: StoryState = {
+        ...ss,
+        narrative: { ...ss.narrative, mode: "ai" },
+      };
+      const view = projectGameSessionView(world, story, 0, "test-take-gate");
+      expect(view.obtainableItems).toEqual([]);
+      expect([...buildChoiceMap(world, story, 0).values()].some((action) => action.type === "take_item")).toBe(false);
+    });
+
+    it("当前束持有匹配的拾取步骤时，仍投影可执行的物品入口", () => {
+      const story = storyWithBundle({ kind: "take_item", itemId });
+      const view = projectGameSessionView(world, story, 0, "test-take-gate");
+      expect(view.obtainableItems.map((item) => item.name)).toEqual(["旧地图"]);
+      expect(buildChoiceMap(world, story, 0).has(view.obtainableItems[0]!.choice.choiceToken)).toBe(true);
     });
   });
 });

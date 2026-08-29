@@ -83,9 +83,9 @@
 
 - 生产续接图**唯一**由 `storyState.narrative.narrativeBundle` 承载（`schemaVersion 7`）。上文 2026-08-24 与 2026-08-26 两节描述的 `PreparedContinuationState` 自 v7 起只保留给显式离线 fixture，不是生产路径。
 - 消费语义：行动按 `narrativeBundleTriggerKey` 匹配 bundle 的 active step；命中才在同一次 CAS 内物化场景、铸造 token、裁剪消费组。缺步返回 `NARRATIVE_CONTINUATION_MISSING` 并零写入，不在动作路径转 live source。
-- Provider 契约边界：`terminal.kind === "ending"` 要求 `continuationScenes` 为空**且** `currentScene.choices` 为空；`next_decision` 的终点步骤必须有恰好两个不同选项，非终点步骤 `choices` 必须为空；最多 12 步、`stepKey` 唯一。终幕立场因此不能由 provider 提交，见 `战斗与结局.md`。
-- 拒因回传：`parseNarrativeBundleProposal` 失败携带细分 `reason`（`NarrativeBundleProposalRejectionReason`）与可选 `stepKey`；`approveNarrativeBundle` 的 `world_delta_rejected` 携带规则引擎 `detail`（如 `duplicate_name:enemy`）；`generatePendingNarrativeBundle` 的第二轮修复重试把上一轮真实拒因写进 prompt，不再笼统报 `approval_rejected`。
-- Prompt 侧预防措施：下发「已占用实体名称」清单（地点/NPC/物品/敌人/任务），要求新实体名称避开；要求 `continuationScenes` 与服务端投影步骤在数量、`stepKey`、顺序上完全一致，选项只写在 terminal 指向的那一步，禁止在投影之外自行规划未来步骤。
+- Provider 契约边界：`terminal.kind === "ending"` 要求 `continuationScenes` 为空**且** `currentScene.choices` 为空；`next_decision` 的终点步骤必须有恰好两个不同选项，非终点步骤 `choices` 必须为空；最多 12 步、`stepKey` 唯一。终幕立场因此不能由 provider 提交，见 `战斗与结局.md`。live source 对终幕 provider 常见的冗余 terminal target、choices 与 continuation 做窄幅 canonicalization，仍由审批层验证 worldDelta 与结局对。
+- 拒因回传：`parseNarrativeBundleProposal` 失败携带细分 `reason`（`NarrativeBundleProposalRejectionReason`）与可选 `stepKey`；`approveNarrativeBundle` 的 `world_delta_rejected` 携带规则引擎 `detail`。同一 proposal 的既有世界实体撞名会合并为 `duplicate_name:npc:…|item:…`，使一次修复可改完全部冲突；`generatePendingNarrativeBundle` 最多 4 次尝试，后续修复把上一轮真实拒因写进 prompt，不再笼统报 `approval_rejected`。
+- Prompt 侧预防措施：下发「已占用实体名称」清单（地点/NPC/物品/敌人/任务）和规则拥有的物品状态（已持有 / 未拾取且所在地点），要求新实体名称避开且不能把未拾取物品写成已持有；要求 `continuationScenes` 与服务端投影步骤在数量、`stepKey`、顺序上完全一致，选项只写在 terminal 指向的那一步，禁止在投影之外自行规划未来步骤。兼容 provider 把新地点名称而非 ID 填入 `connectFromLocationId` 的形状，仅在名称唯一时解析回当前世界 ID。
 - 观测入口：`logs/ai-text-audit/<runId>/events.jsonl` 与 `data/logs.db` 中的 `narrative_bundle_json_fence_normalized`、`narrative_bundle_invalid_schema`、`narrative_bundle_generation_failed`、`narrative_bundle_source_unavailable`。
 
 ## 强制节拍与目标链接

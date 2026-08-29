@@ -12,7 +12,7 @@ import {
   endingDecisionStances,
   isEndingDecisionDue,
 } from "@/game/gameplay/rpg/narrativeBundle";
-import { isObjectiveEntityReleased } from "@/game/gameplay/rpg/worldEvolution";
+import { isObjectiveEntityReleased, isTakeItemPrepared } from "@/game/gameplay/rpg/worldEvolution";
 
 // ---------------------------------------------------------------------------
 // 服务端 choiceMap 构建器：从当前 WorldState + StoryState 派生所有合法行动的
@@ -113,6 +113,7 @@ export function buildChoiceMap(
       for (const itemId of currentLoc.availableItemIds) {
         if (
           !worldState.inventory.includes(itemId)
+          && isTakeItemPrepared(storyState, itemId)
           && isObjectiveEntityReleased(worldState, storyState, (objective) =>
             objective.kind === "obtain_item" && String(objective.itemId) === String(itemId))
         ) {
@@ -151,9 +152,14 @@ export function buildChoiceMap(
     for (const stance of endingStances) {
       addRuntimeAction(stance.action);
     }
-    if (hasExplorableContent(worldState, storyState)
-      || needsWorldBoundaryPreparation(storyState)
-      || (isEndingDecisionDue(worldState, storyState) && endingStances.length === 0)) {
+    const endingDecisionDue = isEndingDecisionDue(worldState, storyState);
+    // 已有可提交的终幕立场时，普通探索即使仍侦测到旧线索/残留内容也
+    // 没有可消费的叙事步骤；不能把它作为死路 token 下发。
+    if (
+      (!endingDecisionDue
+        && (hasExplorableContent(worldState, storyState) || needsWorldBoundaryPreparation(storyState)))
+      || (endingDecisionDue && endingStances.length === 0)
+    ) {
       addRuntimeAction({ type: "explore" });
     }
   }
