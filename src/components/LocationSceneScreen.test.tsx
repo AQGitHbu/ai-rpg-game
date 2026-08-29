@@ -130,3 +130,27 @@ describe("LocationSceneScreen：调查和底部行动栏已移除", () => {
     expect(screen.queryByRole("button", { name: "继续追查下一幕线索" })).not.toBeInTheDocument();
   });
 });
+
+const SIDE_NOTE = "夜色如墨，窗外风声呜咽，远处矿洞方向隐约传来铁器碰撞的声响。";
+const LOCATION_DESCRIPTION = "废弃猎户小屋，木墙斑驳，窗外风声呜咽，远处隐约传来矿洞方向的动静。";
+
+describe("LocationSceneScreen：地点旁注与地点描述不重复复述", () => {
+  function renderWithNarration(narration: string) {
+    const base = viewWithInvestigationApproaches();
+    const view: GameSessionView = {
+      ...base,
+      currentLocation: { ...base.currentLocation, description: LOCATION_DESCRIPTION },
+      narrative: { ...base.narrative, narration },
+    };
+    return render(<LocationSceneScreen view={view} busy={false} onSubmit={vi.fn()} onReturnMap={vi.fn()} />)
+      .container.querySelector(".location-scene-caption")?.textContent ?? "";
+  }
+
+  it("旁注已经复述过的氛围小句不再出现在左下角描述里", () => {
+    expect(renderWithNarration(SIDE_NOTE)).toBe("废弃猎户小屋，木墙斑驳。");
+  });
+
+  it("没有旁注时完整保留地点描述", () => {
+    expect(renderWithNarration("")).toBe(LOCATION_DESCRIPTION);
+  });
+});

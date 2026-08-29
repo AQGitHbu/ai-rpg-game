@@ -4,7 +4,7 @@ import { useState, useEffect, useReducer, useRef, type FormEvent } from "react";
 import { type GameSessionView, type NewGameInput } from "@/game/application";
 import type { PlayerInteraction } from "./gameActionRequest";
 import { AdventureVisual } from "./adventureVisuals";
-import { normalizeDisplayText } from "./displayText";
+import { normalizeDisplayText, removeCoveredClauses } from "./displayText";
 
 type LocationSceneScreenProps = {
   readonly view: GameSessionView;
@@ -513,10 +513,9 @@ export function LocationSceneScreen({
     ? dynamicNarration
     : (buildingSideNote || dynamicNarration);
   const displayLocationDescription = activeBuilding === undefined
-    ? normalizeDisplayText(view.currentLocation.description)
+    ? removeCoveredClauses(normalizeDisplayText(view.currentLocation.description), displayNarration)
     : "";
-  const shouldShowLocationDescription = displayLocationDescription !== ""
-    && (displayNarration === "" || !displayNarration.includes(displayLocationDescription));
+  const shouldShowLocationDescription = displayLocationDescription !== "";
   // 已准备好的焦点对白代表当前主线的唯一入口。两个 support/challenge 是
   // 对话框内的回答，不应和探索、战斗等地点通用动作并排在底栏；否则一次
   // 主线场景会被误读成多条可同时推进的任务。
