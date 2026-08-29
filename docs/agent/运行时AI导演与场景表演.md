@@ -76,8 +76,17 @@
 
 ## 叙事边界编排（2026-08-25）
 
-- 非对白行动完成当前幕最后一个主线目标后，若 `evolution.status=needs_next_act` 或 `needs_ending_pair`，read model 会投影一次“继续追查下一幕线索”探索入口；该入口只负责提交边界编排请求，不把无目标地点伪装成普通探索。结局对物化且 `endingAllowed=true` 后，read model 继续投影“选择结局方向”目标和“面对最终抉择”入口，直到玩家提交最后的 support/challenge 立场。
+- 非对白行动完成当前幕最后一个主线目标后，若 `evolution.status=needs_next_act` 或 `needs_ending_pair`，read model 会投影一次“继续追查下一幕线索”探索入口；该入口只负责提交边界编排请求，不把无目标地点伪装成普通探索。结局对物化且 `endingAllowed=true` 后，read model 投影“选择结局方向”目标与两条服务端铸造的 support/challenge 立场（见 `战斗与结局.md`）；2026-08-25 曾使用的“面对最终抉择”探索入口在 v7 下已无对应可消费步骤，只在铸不出立场（无人在场）时保留为兜底。
 - `performTurn` 对边界请求复用已批准的 provider 世界/场景编排链；新幕或结局写回前保持 pending 锁定。终幕最后一轮 `talk_to_npc` 即使目标转换模式为 `ready_for_ending`，也必须依据匹配且已完成的 `dialogueSession` 选择 `npc_handoff`，不能退回普通双选项场景。最终 support/challenge 一旦由规则层写入 `ending`，直接 CAS 保存结局并停止 provider scene job，避免后台失败遮蔽结局页。
+
+## v7 决策边界叙事捆绑包（2026-08-29 真机中篇回归收口）
+
+- 生产续接图**唯一**由 `storyState.narrative.narrativeBundle` 承载（`schemaVersion 7`）。上文 2026-08-24 与 2026-08-26 两节描述的 `PreparedContinuationState` 自 v7 起只保留给显式离线 fixture，不是生产路径。
+- 消费语义：行动按 `narrativeBundleTriggerKey` 匹配 bundle 的 active step；命中才在同一次 CAS 内物化场景、铸造 token、裁剪消费组。缺步返回 `NARRATIVE_CONTINUATION_MISSING` 并零写入，不在动作路径转 live source。
+- Provider 契约边界：`terminal.kind === "ending"` 要求 `continuationScenes` 为空**且** `currentScene.choices` 为空；`next_decision` 的终点步骤必须有恰好两个不同选项，非终点步骤 `choices` 必须为空；最多 12 步、`stepKey` 唯一。终幕立场因此不能由 provider 提交，见 `战斗与结局.md`。
+- 拒因回传：`parseNarrativeBundleProposal` 失败携带细分 `reason`（`NarrativeBundleProposalRejectionReason`）与可选 `stepKey`；`approveNarrativeBundle` 的 `world_delta_rejected` 携带规则引擎 `detail`（如 `duplicate_name:enemy`）；`generatePendingNarrativeBundle` 的第二轮修复重试把上一轮真实拒因写进 prompt，不再笼统报 `approval_rejected`。
+- Prompt 侧预防措施：下发「已占用实体名称」清单（地点/NPC/物品/敌人/任务），要求新实体名称避开；要求 `continuationScenes` 与服务端投影步骤在数量、`stepKey`、顺序上完全一致，选项只写在 terminal 指向的那一步，禁止在投影之外自行规划未来步骤。
+- 观测入口：`logs/ai-text-audit/<runId>/events.jsonl` 与 `data/logs.db` 中的 `narrative_bundle_json_fence_normalized`、`narrative_bundle_invalid_schema`、`narrative_bundle_generation_failed`、`narrative_bundle_source_unavailable`。
 
 ## 强制节拍与目标链接
 
@@ -106,6 +115,11 @@
 
 ## 主要文件
 
+- `src/game/application/narrativeBundleSource.ts` — v7 `NarrativeBundleSource` 与 `NarrativeBundleRepair` 契约。
+- `src/game/application/server/ai/liveNarrativeBundleSource.ts` — 决策/开局 prompt 编译、投影图 reconcile、拒因回传。
+- `src/game/application/approveNarrativeBundle.ts` — worldDelta + 场景 + registry + bundle 的原子审批。
+- `src/game/application/generatePendingNarrativeBundle.ts` — pending job 原子编排与 `runBoundedAttempts` 修复重试。
+- `src/game/gameplay/rpg/narrativeBundle/` — 描述符图、消费、`endingDecision` 终幕立场派生。
 - `src/game/application/sceneSource.ts` — scene-performance proposal 契约。
 - `src/game/application/sceneGenerationContext.ts` — 最小权限上下文、合法候选、强制节拍、目标链接实体和 prepared continuation descriptors 投影。
 - `src/game/application/deterministicEvolutionBeats.ts` — 离线 fixture 节拍与"线索→新地点"动线因果。
