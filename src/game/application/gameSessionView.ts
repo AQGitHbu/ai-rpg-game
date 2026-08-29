@@ -19,6 +19,10 @@ import {
 } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
+import {
+  endingDecisionStances,
+  isEndingDecisionDue,
+} from "@/game/gameplay/rpg/narrativeBundle";
 import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
 import { buildTownView, type TownView } from "./townView";
 import { projectCombatView, type BattleView } from "./combatView";
@@ -371,9 +375,8 @@ export function projectGameSessionView(
   // 终幕结局对已经物化、且玩家尚未作出最后立场时，任务链本身没有未完成
   // objective。仍需向 HUD 投影一个权威目标，避免玩家看到“暂无线索”后
   // 只能靠点击 NPC 试探性地触发下一段对白。
-  const endingDecisionReady = storyState.endingAllowed
-    && worldState.ending === null
-    && worldState.endings.length >= 2;
+  const endingDecisionReady = isEndingDecisionDue(worldState, storyState);
+  const endingStances = endingDecisionStances(worldState, storyState);
   const currentObjectiveToken = currentObjectiveChoiceToken(worldState, storyState, currentObjective, revision);
   // discover_fact 由规则边界自动确认；其余目标保持单一兼容 token。
   const currentObjectiveTokens = currentObjectiveToken === null ? [] : [currentObjectiveToken];
@@ -416,7 +419,7 @@ export function projectGameSessionView(
     // 时显示，避免无剧情钩子地点的空转选项（方案 1）。
     if (hasExplorableContent(worldState, storyState)
       || needsWorldBoundaryPreparation(storyState)
-      || endingDecisionReady) {
+      || (endingDecisionReady && endingStances.length === 0)) {
       const label = endingDecisionReady
         ? "面对最终抉择"
         : needsWorldBoundaryPreparation(storyState)
@@ -650,12 +653,25 @@ export function projectGameSessionView(
     : scene?.choices
       .map(projectSceneChoice)
       .filter((entry): entry is PlayerChoiceView => entry !== null) ?? [];
+  // 结局立场由服务端直接投影：结局包的 terminal 是 "ending"，契约禁止 provider
+  // 提交 currentScene choices，所以这两个 talk token 是终幕唯一可提交的形式决策。
+  const endingStanceChoices: PlayerChoiceView[] = projectedSceneChoices.length >= 2
+    ? []
+    : endingStances.map((stance) => choice(
+        stance.action,
+        revision,
+        stance.label,
+        presentationForAction(stance.action),
+      ));
+  const endingStanceNpcId = endingStances.length === 2 ? String(endingStances[0].action.npcId) : null;
   const endingChoiceNpcId = storyState.endingAllowed && projectedSceneChoices.length === 2
     ? (() => {
         const action = registry.find((entry) => entry.choiceToken === projectedSceneChoices[0]?.choiceToken)?.action;
         return action?.type === "talk" ? String(action.npcId) : null;
       })()
-    : null;
+    : endingStanceChoices.length === 2
+      ? endingStanceNpcId
+      : null;
   const isDialogueScene = focusNpcId !== null || endingChoiceNpcId !== null;
   const isSingleChoiceHandoff = singleChoiceDialogueHandoff && sceneLineNpcId !== null;
   const projectedHandoffAcknowledgement = scene?.handoffAcknowledgement?.trim() === undefined
@@ -664,7 +680,9 @@ export function projectGameSessionView(
     : { label: scene.handoffAcknowledgement };
   const dialogueChoices: NpcDialogueView["choices"] = isDialogueScene && projectedSceneChoices.length === 2
       ? [projectedSceneChoices[0]!, projectedSceneChoices[1]!]
-      : [];
+      : isDialogueScene && endingStanceChoices.length === 2
+        ? [...endingStanceChoices]
+        : [];
   const sceneDialogues = new Map((scene?.npcDialogues ?? []).map((entry) => [String(entry.npcId), entry]));
   const npcDialogues: readonly NpcDialogueView[] = presentNpcs.map((npc) => {
     const isFocus = focusNpcId === String(npc.id) || endingChoiceNpcId === String(npc.id);
@@ -730,7 +748,10 @@ export function projectGameSessionView(
       ...(projectedHandoffAcknowledgement !== null && String(npc.id) === sceneLineNpcId
         ? { handoffAcknowledgement: projectedHandoffAcknowledgement }
         : {}),
-      freeInputEnabled: formalDialogueReady,
+      freeInputEnabled: formalDialogueReady
+        // 结局立场只有两条已批准的 talk 行动：结局束没有任何步骤可供自由输入
+        // 消费，开放输入框只会换来一次零写入失败。
+        && !(endingStanceNpcId !== null && String(npc.id) === endingStanceNpcId && dialogueChoices.length === 2),
       giveChoices: formalDialogueReady
         ? worldState.inventory.map((itemId) => {
             const item = worldState.items.find((entry) => entry.id === itemId);
@@ -835,7 +856,7 @@ export function projectGameSessionView(
         eventKind: scene.event?.kind,
         narration: decorateNarrativeText(scene.narration, scene.source),
       }),
-      choices: isDialogueScene || isSingleChoiceHandoff ? [] : projectedSceneChoices,
+      choices: isDialogueScene || isSingleChoiceHandoff ? [] : [...projectedSceneChoices, ...endingStanceChoices],
       npcLine: projectedNpcLine,
       npcDialogues,
     },

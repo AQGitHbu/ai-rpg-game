@@ -1253,7 +1253,7 @@ describe("projectGameSessionView", () => {
     ]);
   });
 
-  it("终幕结局对已准备好时投影结局决策目标，避免回退为无目标", () => {
+  it("终幕结局对已准备好时投影服务端铸造的两种结局立场，不再留下死路探索按钮", () => {
     const endingWorld: WorldState = {
       ...ws,
       endings: [
@@ -1281,14 +1281,49 @@ describe("projectGameSessionView", () => {
     };
 
     const view = projectGameSessionView(endingWorld, endingStory, 0, "test-ending-session");
+    const choiceMap = buildChoiceMap(endingWorld, endingStory, 0);
 
     expect(view.story.currentObjectiveLabel).toBe("选择结局方向");
-    const decision = view.currentLocation.actions.find((entry) => entry.label === "面对最终抉择");
-    expect(decision).toBeDefined();
-    expect(buildChoiceMap(endingWorld, endingStory, 0).has(decision!.choiceToken)).toBe(true);
+    expect(view.currentLocation.actions).toEqual([]);
+    // 结局立场经焦点 NPC 对话框下发：地点场景只渲染 npcDialogues 的选项。
+    expect(view.narrative.choices).toEqual([]);
+    const stanceDialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(asNpcId("npc_1")));
+    expect(stanceDialogue?.choices.map((entry) => entry.presentation)).toEqual(["dialogue", "dialogue"]);
+    expect(
+      stanceDialogue?.choices.map((entry) => choiceMap.get(entry.choiceToken)),
+    ).toEqual([
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "support" },
+      { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "challenge" },
+    ]);
+    // 结局束没有任何步骤可消费自由输入，终幕对话只留两个已批准立场。
+    expect(stanceDialogue?.freeInputEnabled).toBe(false);
+  });
+
+  it("结局对已具象化但无人在场时，仍保留探索兜底入口", () => {
+    const aloneWorld: WorldState = {
+      ...ws,
+      npcs: [{ ...npc1, locationId: asLocationId("loc_2") }],
+      endings: [
+        { id: asEndingId("ending_trust"), name: "共担真相", description: "", requirements: [] },
+        { id: asEndingId("ending_doubt"), name: "独自揭露", description: "", requirements: [] },
+      ],
+    };
+    const aloneStory: StoryState = {
+      ...ss,
+      currentAct: 3,
+      targetActs: 3,
+      storyProgress: 100,
+      endingAllowed: true,
+      evolution: { ...ss.evolution, status: "stable" },
+    };
+
+    const view = projectGameSessionView(aloneWorld, aloneStory, 0, "test-ending-session");
+
+    expect(view.narrative.choices).toEqual([]);
     expect(view.currentLocation.actions).toEqual([
       expect.objectContaining({ label: "面对最终抉择", presentation: "explore" }),
     ]);
+    expect(buildChoiceMap(aloneWorld, aloneStory, 0).has(view.currentLocation.actions[0]!.choiceToken)).toBe(true);
   });
 
   it("projects active battle controls as attack and guard tokens and no non-battle location actions", () => {
