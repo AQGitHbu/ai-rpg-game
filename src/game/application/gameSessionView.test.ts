@@ -1855,6 +1855,92 @@ describe("projectGameSessionView", () => {
       expect(view.story.currentObjectiveLabel).toBe("调查泥地上的异常痕迹");
     });
   });
+
+  describe("给予道具投影门禁", () => {
+    const itemId = asItemId("item_flag");
+
+    function worldWithInventory(): WorldState {
+      return {
+        ...ws,
+        inventory: [itemId],
+        items: [{ id: itemId, name: "半块镖旗", description: "半块旧镖旗", kind: "quest", tags: [] }],
+        quests: [{
+          id: asQuestId("quest_give"), name: "交付镖旗", description: "把镖旗带给老板",
+          objectives: [{ kind: "talk_to_npc", npcId: npc1.id }],
+          onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
+          tags: [], kind: "main", stage: 1, status: "active",
+        }] as unknown as WorldState["quests"],
+      };
+    }
+
+    const focusScene = {
+      sceneId: "scene-give-focus",
+      turn: 1,
+      narration: "老板在等你表态。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text: "东西带来了吗？", emotion: "neutral" as const, usedFactIds: [] },
+      choices: [
+        { choiceToken: "give-support", label: "支持老板" },
+        { choiceToken: "give-challenge", label: "质疑老板" },
+      ],
+      source: "generated" as const,
+      event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+    };
+
+    function storyWithFocusScene(bundle?: unknown): StoryState {
+      return {
+        ...ss,
+        narrative: {
+          ...ss.narrative,
+          status: "ready" as const,
+          currentScene: focusScene,
+          choiceRegistry: [
+            approved("give-support", focusScene.sceneId, 0, focusScene.choices[0].label, { type: "talk", npcId: npc1.id, dialogueAct: "support" }),
+            approved("give-challenge", focusScene.sceneId, 0, focusScene.choices[1].label, { type: "talk", npcId: npc1.id, dialogueAct: "challenge" }),
+          ],
+          ...(bundle === undefined ? {} : { narrativeBundle: bundle as never }),
+        },
+      } as StoryState;
+    }
+
+    function giveBundle(activeStepIds: readonly string[]): unknown {
+      return {
+        contractVersion: 1,
+        originJobId: "job_give",
+        steps: [{
+          stepId: "step_give_1",
+          objectiveKey: "quest_give:0",
+          consumptionGroupKey: "quest_give:0:give_item",
+          trigger: { kind: "give_item", itemId, npcId: npc1.id },
+          scene: { segments: [], event: { kind: "item", itemId }, npcLine: null, objectiveLink: null, choiceSeeds: [], source: "generated" },
+          nextStepIds: [],
+        }],
+        activeStepIds,
+        terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+      };
+    }
+
+    it("无叙事束或缺少 give_item 步骤时，焦点对话不投影给予按钮", () => {
+      const world = worldWithInventory();
+      const withoutBundle = projectGameSessionView(world, storyWithFocusScene(), 0, "test-give-session");
+      expect(withoutBundle.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1")?.giveChoices).toEqual([]);
+
+      const withInactiveStep = projectGameSessionView(world, storyWithFocusScene(giveBundle([])), 0, "test-give-session");
+      expect(withInactiveStep.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1")?.giveChoices).toEqual([]);
+    });
+
+    it("叙事束持有活跃 give_item 步骤时，投影给予按钮且 token 可执行", () => {
+      const world = worldWithInventory();
+      const view = projectGameSessionView(world, storyWithFocusScene(giveBundle(["step_give_1"])), 0, "test-give-session");
+      const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === "npc_1");
+      expect(dialogue?.giveChoices).toHaveLength(1);
+      expect(dialogue?.giveChoices[0]?.itemName).toBe("半块镖旗");
+      expect(dialogue?.giveChoices[0]?.choice.label).toBe("把半块镖旗交给老板");
+      expect(dialogue?.giveChoices[0]?.choice.choiceToken).toMatch(/^c_[0-9a-f]{16}$/);
+      const executable = buildChoiceMap(world, storyWithFocusScene(giveBundle(["step_give_1"])), 0);
+      expect(executable.has(dialogue!.giveChoices[0]!.choice.choiceToken)).toBe(true);
+    });
+  });
 });
 
 describe("projectGameSessionView town read model", () => {

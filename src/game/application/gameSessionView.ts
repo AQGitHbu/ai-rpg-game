@@ -4,6 +4,7 @@ import {
   NPC_SCENE_PAGE_CHAR_BUDGET,
 } from "@/game/domain/narrative";
 import type { DialogueResumeState, NarrativeSceneState } from "@/game/domain/narrative";
+import { narrativeBundleTriggerKey } from "@/game/domain/narrativeBundle";
 import { paginateSpeechText } from "@/game/domain/speechPagination";
 import { locationScaleOf } from "@/game/domain/worldEntity";
 import type { ItemCategory, ItemRarity, ItemStatLine } from "@/game/domain/worldEntity";
@@ -47,7 +48,7 @@ export type NpcDialogueView = {
   readonly handoffAcknowledgement?: { readonly label: string };
   readonly choices: readonly PlayerChoiceView[];
   readonly freeInputEnabled: boolean;
-  /** 给予道具入口：焦点 NPC 可接收背包内任意物品（走正式 give_item 回合）。 */
+  /** 给予道具入口：仅当叙事束持有该 NPC 的可消费 give_item 步骤时投影（走正式 give_item 回合）。 */
   readonly giveChoices: readonly { readonly itemName: string; readonly choice: PlayerChoiceView }[];
 };
 
@@ -756,6 +757,16 @@ export function projectGameSessionView(
         ? [...endingStanceChoices]
         : [];
   const sceneDialogues = new Map((scene?.npcDialogues ?? []).map((entry) => [String(entry.npcId), entry]));
+  // give_item 是必须消费叙事束权威步骤的剧情动作：缺步时服务端零写入失败。
+  // 只有当前束真正持有活跃的 give_item 步骤时，才允许投影对应的给予按钮。
+  const bundle = readyNarrative?.narrativeBundle;
+  const activeGiveStepKeys = new Set(
+    bundle === undefined
+      ? []
+      : bundle.steps
+        .filter((step) => step.trigger.kind === "give_item" && bundle.activeStepIds.includes(step.stepId))
+        .map((step) => narrativeBundleTriggerKey(step.trigger)),
+  );
   const npcDialogues: readonly NpcDialogueView[] = presentNpcs.map((npc) => {
     const isFocus = focusNpcId === String(npc.id) || endingChoiceNpcId === String(npc.id);
     const supplied = sceneDialogues.get(String(npc.id));
@@ -825,7 +836,11 @@ export function projectGameSessionView(
         // 消费，开放输入框只会换来一次零写入失败。
         && !(endingStanceNpcId !== null && String(npc.id) === endingStanceNpcId && dialogueChoices.length === 2),
       giveChoices: formalDialogueReady
-        ? worldState.inventory.map((itemId) => {
+        ? worldState.inventory
+          .filter((itemId) => activeGiveStepKeys.has(
+            narrativeBundleTriggerKey({ kind: "give_item", itemId, npcId: npc.id }),
+          ))
+          .map((itemId) => {
             const item = worldState.items.find((entry) => entry.id === itemId);
             const itemName = item?.name ?? "未知物品";
             return {
