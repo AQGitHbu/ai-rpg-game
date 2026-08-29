@@ -12,8 +12,10 @@ import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestF
 import {
   asLocationId,
   asNpcId,
+  asEnemyId,
   asGenerationId,
 } from "@/game/domain/worldEntity";
+import type { NpcMemory } from "@/game/domain/worldState";
 import { asNarrativeJobId } from "@/game/domain/events";
 import { createFixtureOpeningCandidateSource } from "../../createGame";
 
@@ -113,6 +115,41 @@ const validBundleResponse = {
   continuationScenes: [],
   terminal: { kind: "next_decision", target: { kind: "current_scene" } },
 };
+
+function makeNextActStoryState(): StoryState {
+  return {
+    ...makeStoryState(),
+    currentAct: 2,
+    evolution: { ...makeStoryState().evolution, status: "needs_next_act" },
+  };
+}
+
+/** A next-act response whose provider scenes are positional and over-planned. */
+function nextActOverPlanResponse(input: {
+  readonly choicesAt: number;
+  readonly totalScenes: number;
+}): unknown {
+  const stepKey = `move:loc_dyn_${makeStoryState().evolution.nextLocationOrdinal}`;
+  const scene = (index: number) => ({
+    segments: [{ beatId: `beat_${index}`, text: index === 0 ? "抵达新地点。" : `第 ${index} 段。` }],
+    npcLine: null,
+    objectiveLink: null,
+    choices: index === input.choicesAt
+      ? [{ candidateId: "wrong_1", label: "上前施礼" }, { candidateId: "wrong_2", label: "按住刀柄" }]
+      : [],
+  });
+  return {
+    worldDelta: null,
+    currentScene: {
+      segments: [{ beatId: "closing", text: "旧案指向镇外。" }],
+      npcLine: null,
+      objectiveLink: null,
+      choices: [],
+    },
+    continuationScenes: Array.from({ length: input.totalScenes }, (_, index) => scene(index)),
+    terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey } },
+  };
+}
 
 describe("createNarrativeBundleSource", () => {
   it("calls aiClient.complete with narrative_bundle role exactly once", async () => {
@@ -221,7 +258,7 @@ describe("createNarrativeBundleSource", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("prompt contains symbolic reference whitelist and step limit", async () => {
+  it("prompt contains symbolic reference whitelist and step graph alignment rules", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,
       content: JSON.stringify(validBundleResponse),
@@ -240,7 +277,8 @@ describe("createNarrativeBundleSource", () => {
     const systemPrompt = messages[0]!.content as string;
     expect(systemPrompt).toContain("@new.location");
     expect(systemPrompt).toContain("@new.npc");
-    expect(systemPrompt).toContain("12");
+    expect(systemPrompt).toContain("必须与第 8 条投影的步骤完全一致");
+    expect(systemPrompt).toContain("不得投影之外自行规划未来步骤");
     expect(systemPrompt).toContain("current_scene");
     expect(systemPrompt).toContain("continuation_step");
     expect(systemPrompt).toContain("禁止鬼魂");
@@ -274,6 +312,117 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain(npcId);
     expect(systemPrompt).toContain('"kind":"continuation_step"');
     expect(systemPrompt).not.toContain('terminal: {"kind":"ending"}');
+  });
+
+  it("把已占用实体名称交给 provider，新实体撞名会让整包被服务端拒绝", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(validBundleResponse),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const base = makeWorldState();
+    const npcMemory: NpcMemory = {
+      npcId: asNpcId("npc_7"),
+      knownFactIds: [],
+      hiddenFactIds: [],
+      interactionHistory: [],
+      relationship: { affinity: 0 },
+      emotion: "neutral",
+      goals: [],
+    };
+    const worldState: WorldState = {
+      ...base,
+      locations: [...base.locations, {
+        ...base.locations[0]!,
+        id: asLocationId("loc_9"),
+        name: "山涧密林",
+      }],
+      npcs: [{
+        id: asNpcId("npc_7"),
+        name: "灰衣老者",
+        role: "守林人",
+        description: "沉默的守林人。",
+        locationId: asLocationId("loc_0"),
+        isCompanion: false,
+        tags: [],
+        met: true,
+        memory: npcMemory,
+      }],
+      enemies: [{
+        id: asEnemyId("enemy_7"),
+        name: "黑衣暗哨",
+        tier: "normal",
+        stats: { hp: 50, attack: 12, defense: 4 },
+        locationId: asLocationId("loc_0"),
+        tags: [],
+      }],
+    };
+
+    await source.generate({
+      kind: "decision",
+      worldState,
+      storyState: makeStoryState(),
+      job: makeJob(),
+    });
+
+    const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
+    const systemPrompt = messages[0]!.content as string;
+    expect(systemPrompt).toContain("已占用实体名称");
+    expect(systemPrompt).toContain("- 地点：小镇、山涧密林");
+    expect(systemPrompt).toContain("- NPC：灰衣老者");
+    expect(systemPrompt).toContain("- 敌人：黑衣暗哨");
+    expect(systemPrompt).toContain("世界内实体名称唯一");
+  });
+
+  it("修复重试会把服务端拒绝码与细分理由写进提示", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(validBundleResponse),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeStoryState(),
+      job: makeJob(),
+      contentRepair: {
+        attempt: 1,
+        reason: "approval_rejected",
+        rejectionCode: "world_delta_rejected",
+        detail: "duplicate_name:enemy",
+      },
+    });
+
+    const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
+    const systemPrompt = messages[0]!.content as string;
+    expect(systemPrompt).toContain("上一轮提案已被服务端拒绝");
+    expect(systemPrompt).toContain("拒绝码 world_delta_rejected，细分原因 duplicate_name:enemy");
+  });
+
+  it("契约类失败只给细分原因时，提示会点名终点步骤与候选选项要求", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(validBundleResponse),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeStoryState(),
+      job: makeJob(),
+      contentRepair: {
+        attempt: 1,
+        reason: "invalid_schema",
+        detail: "terminal_step_requires_two_choices（步骤 battle_resolved:victory:enemy_dyn_3）",
+      },
+    });
+
+    const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
+    const systemPrompt = messages[0]!.content as string;
+    expect(systemPrompt).toContain("细分原因 terminal_step_requires_two_choices（步骤 battle_resolved:victory:enemy_dyn_3）");
+    expect(systemPrompt).toContain("终点步骤（terminal.target.stepKey 指向的那一步）必须给出该步骤列出的全部 candidateId 选项");
   });
 
   it("normalizes a flattened next-act continuation without changing its text", async () => {
@@ -338,6 +487,84 @@ describe("createNarrativeBundleSource", () => {
         ],
       },
     });
+  });
+
+  it("丢弃投影之外的过度规划步骤，只保留服务端投影的到达步骤", async () => {
+    const stepKey = `move:loc_dyn_${makeStoryState().evolution.nextLocationOrdinal}`;
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(nextActOverPlanResponse({ choicesAt: 0, totalScenes: 13 })),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    const result = await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeNextActStoryState(),
+      job: makeJob(),
+    });
+
+    expect(result).toMatchObject({ ok: true, kind: "decision" });
+    if (!result.ok || result.kind !== "decision") return;
+    expect(result.proposal.continuationScenes).toHaveLength(1);
+    expect(result.proposal.continuationScenes[0]).toMatchObject({
+      stepKey,
+      scene: {
+        segments: [{ text: "抵达新地点。" }],
+        choices: [
+          { candidateId: `${stepKey}_choice_1`, label: "上前施礼" },
+          { candidateId: `${stepKey}_choice_2`, label: "按住刀柄" },
+        ],
+      },
+    });
+  });
+
+  it("终点两选项落在更靠后的场景时，把它对齐回投影的终点步骤", async () => {
+    const stepKey = `move:loc_dyn_${makeStoryState().evolution.nextLocationOrdinal}`;
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(nextActOverPlanResponse({ choicesAt: 4, totalScenes: 13 })),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    const result = await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeNextActStoryState(),
+      job: makeJob(),
+    });
+
+    expect(result).toMatchObject({ ok: true, kind: "decision" });
+    if (!result.ok || result.kind !== "decision") return;
+    expect(result.proposal.continuationScenes).toHaveLength(1);
+    expect(result.proposal.continuationScenes[0]).toMatchObject({
+      stepKey,
+      scene: {
+        segments: [{ text: "第 4 段。" }],
+        choices: [{ candidateId: `${stepKey}_choice_1` }, { candidateId: `${stepKey}_choice_2` }],
+      },
+    });
+  });
+
+  it("过度规划且没有任何终点选项时仍然拒绝，但回传细分契约原因与步骤", async () => {
+    const stepKey = `move:loc_dyn_${makeStoryState().evolution.nextLocationOrdinal}`;
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(nextActOverPlanResponse({ choicesAt: -1, totalScenes: 13 })),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    const result = await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeNextActStoryState(),
+      job: makeJob(),
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.repairReason).toBe("invalid_schema");
+    expect(result.repairDetail).toBe(`terminal_step_requires_two_choices（步骤 ${stepKey}）`);
   });
 
   it("parses an opening proposal and emits the initialization audit link", async () => {

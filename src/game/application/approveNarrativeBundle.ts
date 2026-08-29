@@ -55,7 +55,12 @@ export type ApprovedNarrativeBundle = {
 
 export type ApproveNarrativeBundleResult =
   | { readonly ok: true; readonly approved: ApprovedNarrativeBundle }
-  | { readonly ok: false; readonly code: NarrativeBundleRejection };
+  | {
+    readonly ok: false;
+    readonly code: NarrativeBundleRejection;
+    /** 规则引擎给出的细分拒绝理由（如 duplicate_name:enemy）；供修复重试提示使用。 */
+    readonly detail?: string;
+  };
 
 export type ApproveNarrativeBundleInput = {
   readonly proposal: NarrativeBundleProposal;
@@ -252,7 +257,11 @@ export function approveNarrativeBundle(
       idOverride: input.idOverride,
     });
     if (!worldApproval.ok) {
-      return { ok: false, code: "world_delta_rejected" };
+      return {
+        ok: false,
+        code: "world_delta_rejected",
+        detail: `${worldApproval.code}:${worldApproval.reason}`,
+      };
     }
 
     approvedDelta = materializeWorldDelta({

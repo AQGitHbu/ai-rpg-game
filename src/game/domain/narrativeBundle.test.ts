@@ -74,7 +74,28 @@ describe("NarrativeBundleProposal parser", () => {
       ...makeValidBundle(),
       continuationScenes: [makeStep("move:loc_2")],
     };
-    expect(parseNarrativeBundleProposal(bundle).ok).toBe(false);
+    expect(parseNarrativeBundleProposal(bundle)).toMatchObject({
+      ok: false,
+      code: "INVALID_NARRATIVE_BUNDLE_PROPOSAL",
+      reason: "current_scene_terminal_requires_empty_continuation",
+    });
+  });
+
+  it("names the terminal step when it lacks exactly two distinct choices", () => {
+    const bundle: NarrativeBundleProposal = {
+      ...makeValidBundle(),
+      currentScene: { ...makeValidScene(), choices: [] },
+      continuationScenes: [makeStep("battle_resolved:victory:enemy_1")],
+      terminal: {
+        kind: "next_decision",
+        target: { kind: "continuation_step", stepKey: "battle_resolved:victory:enemy_1" },
+      },
+    };
+    expect(parseNarrativeBundleProposal(bundle)).toMatchObject({
+      ok: false,
+      reason: "terminal_step_requires_two_choices",
+      stepKey: "battle_resolved:victory:enemy_1",
+    });
   });
 
   it("rejects continuation_step terminal without continuation scenes", () => {

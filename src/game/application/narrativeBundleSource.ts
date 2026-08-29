@@ -41,6 +41,8 @@ export type NarrativeBundleRepair = {
   readonly attempt: 1;
   readonly reason: NarrativeBundleRepairReason;
   readonly rejectionCode?: NarrativeBundleRejection;
+  /** 规则引擎细分理由（如 `duplicate_name:enemy`）；只用于提示修复方向。 */
+  readonly detail?: string;
 };
 
 export type OpeningNarrativeBundleProposal = {
@@ -69,7 +71,13 @@ export type NarrativeBundleSourceContext =
 export type NarrativeBundleSourceResult =
   | { readonly ok: true; readonly kind: "opening"; readonly proposal: OpeningNarrativeBundleProposal }
   | { readonly ok: true; readonly kind: "decision"; readonly proposal: NarrativeBundleProposal }
-  | { readonly ok: false; readonly failure: AiGenerationFailure; readonly repairReason?: NarrativeBundleRepairReason };
+  | {
+    readonly ok: false;
+    readonly failure: AiGenerationFailure;
+    readonly repairReason?: NarrativeBundleRepairReason;
+    /** 规则引擎细分理由（如契约原因 terminal_step_requires_two_choices）；只用于修复提示。 */
+    readonly repairDetail?: string;
+  };
 
 export type NarrativeBundleSource = {
   generate(context: NarrativeBundleSourceContext): Promise<NarrativeBundleSourceResult>;

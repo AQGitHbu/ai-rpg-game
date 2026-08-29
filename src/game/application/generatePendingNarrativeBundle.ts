@@ -1,5 +1,5 @@
 import type { GameRepository } from "./server/persistence/gameRepository";
-import type { NarrativeBundleSource } from "./narrativeBundleSource";
+import type { NarrativeBundleSource, NarrativeBundleRepair } from "./narrativeBundleSource";
 import { approveNarrativeBundle, type ApprovedNarrativeBundle } from "./approveNarrativeBundle";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { GameLogger } from "@/game/logging";
@@ -63,15 +63,10 @@ export async function generatePendingNarrativeBundle(
   const transition: ObjectiveTransition = job.objectiveTransition;
   const evolutionNeed = deriveEvolutionNeed(storyState);
 
-  const bounded = await runBoundedAttempts<
-    ApprovedNarrativeBundle,
-    "source_failed" | "approval_failed"
-  >({
+  const bounded = await runBoundedAttempts<ApprovedNarrativeBundle, NarrativeBundleRepair>({
     maxAttempts: 2,
-    runAttempt: async (attempt) => {
-      const repairHint = attempt > 1
-        ? { attempt: 1 as const, reason: "approval_rejected" as const }
-        : undefined;
+    runAttempt: async (attempt, priorRepair) => {
+      const repairHint = attempt > 1 ? priorRepair : undefined;
 
       const sourceResult = await deps.source.generate({
         kind: "decision",
@@ -91,11 +86,19 @@ export async function generatePendingNarrativeBundle(
       });
 
       if (!sourceResult.ok) {
-        return { ok: false, retryable: true, reason: "source_failed" as const };
+        return {
+          ok: false,
+          retryable: true,
+          reason: {
+            attempt: 1,
+            reason: sourceResult.repairReason ?? "invalid_json",
+            ...(sourceResult.repairDetail === undefined ? {} : { detail: sourceResult.repairDetail }),
+          },
+        };
       }
 
       if (sourceResult.kind !== "decision") {
-        return { ok: false, retryable: true, reason: "source_failed" as const };
+        return { ok: false, retryable: true, reason: { attempt: 1, reason: "invalid_schema" } };
       }
       const approvalResult = approveNarrativeBundle({
         proposal: sourceResult.proposal,
@@ -113,7 +116,16 @@ export async function generatePendingNarrativeBundle(
       });
 
       if (!approvalResult.ok) {
-        return { ok: false, retryable: true, reason: "approval_failed" as const };
+        return {
+          ok: false,
+          retryable: true,
+          reason: {
+            attempt: 1,
+            reason: "approval_rejected",
+            rejectionCode: approvalResult.code,
+            ...(approvalResult.detail === undefined ? {} : { detail: approvalResult.detail }),
+          },
+        };
       }
 
       return { ok: true, value: approvalResult.approved };

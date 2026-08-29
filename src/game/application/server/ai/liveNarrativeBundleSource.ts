@@ -10,6 +10,7 @@ import type {
   NarrativeBundleSourceContext,
   NarrativeBundleSourceResult,
   NarrativeBundleRepairReason,
+  NarrativeBundleRepair,
 } from "../../narrativeBundleSource";
 import type { RpgAiClient } from "./rpgAiClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
@@ -34,17 +35,49 @@ export type LiveNarrativeBundleSourceDeps = {
 function failBundle(
   category: Parameters<typeof classifyAiFailure>[0]["category"],
   repairReason?: NarrativeBundleRepairReason,
+  repairDetail?: string,
 ): Extract<NarrativeBundleSourceResult, { readonly ok: false }> {
   const failure: AiGenerationFailure = classifyAiFailure({ phase: "scene", category });
-  return repairReason === undefined
-    ? { ok: false, failure }
-    : { ok: false, failure, repairReason };
+  return {
+    ok: false,
+    failure,
+    ...(repairReason === undefined ? {} : { repairReason }),
+    ...(repairDetail === undefined ? {} : { repairDetail }),
+  };
+}
+
+/** 服务端按名称去重：先把已占用名称交给 provider，避免整包因为撞名被拒。 */
+function occupiedNamesSection(worldState: WorldState): string {
+  const list = (names: readonly string[]): string => (names.length === 0 ? "（无）" : names.join("、"));
+  return [
+    `- 地点：${list(worldState.locations.map((location) => location.name))}`,
+    `- NPC：${list(worldState.npcs.map((npc) => npc.name))}`,
+    `- 物品：${list(worldState.items.map((item) => item.name))}`,
+    `- 敌人：${list(worldState.enemies.map((enemy) => enemy.name))}`,
+    `- 任务：${list(worldState.quests.map((quest) => quest.name))}`,
+  ].join("\n");
+}
+
+function repairInstruction(repair: NarrativeBundleRepair | undefined): string {
+  if (repair === undefined) return "";
+  const rejection = [
+    repair.rejectionCode === undefined ? "" : `拒绝码 ${repair.rejectionCode}`,
+    repair.detail === undefined ? "" : `细分原因 ${repair.detail}`,
+  ].filter((part) => part !== "").join("，");
+  return `\n# 上一轮提案已被服务端拒绝
+${rejection === "" ? `失败类型 ${repair.reason}。` : `${rejection}。`}
+本轮只需修正被拒绝的那一项，其余中文叙事文本可以沿用你自己的写法。硬性要求：
+- continuationScenes 必须与第 8 条投影的步骤一一对应：不得新增投影之外的步骤，也不得漏掉投影中的步骤。
+- 终点步骤（terminal.target.stepKey 指向的那一步）必须给出该步骤列出的全部 candidateId 选项，每个选项都要有中文 label；其余步骤 choices 必须为空。
+- 新地点/NPC/物品/敌人/任务的名称不得与上方“已占用实体名称”中的任何一项重复。
+`;
 }
 
 function buildDecisionPrompt(
   worldState: WorldState,
   storyState: StoryState,
   job: PendingNarrativeJob,
+  contentRepair?: NarrativeBundleRepair,
 ): string {
   const descriptorGraph = buildNarrativeBundleDescriptors({
     worldState,
@@ -120,13 +153,15 @@ ${npcSummary}
 ## 任务
 ${questSummary}
 
+## 已占用实体名称（新实体不得与下列任何名称重复）
+${occupiedNamesSection(worldState)}
+
 ## 玩家本轮行动
 ${actionSummary}
 
 ## 世界演化要求
 ${evolutionRequirement}
-
-# 输出要求
+${repairInstruction(contentRepair)}# 输出要求
 
 生成一个 JSON 对象，包含以下字段：
 - worldDelta: 世界增量提案（可为 null）
@@ -148,13 +183,16 @@ ${evolutionRequirement}
    - @ending.trust
    - @ending.doubt
 
-2. continuationScenes 最多 12 步。
+2. continuationScenes 必须与第 8 条投影的步骤完全一致：数量、stepKey、顺序都不得改动，
+   不得投影之外自行规划未来步骤。
 
 3. terminal 有两种合法形式：
    - current_scene: 当前场景就是下一决策点（continuationScenes 必须为空）
    - continuation_step: 需要先消费线性步骤（continuationScenes 至少一步）
 
-4. 终点必须有恰好两个选项（一个焦点 NPC 的两种正式回应）。
+4. 终点决策点必须有恰好两个选项，且必须写在 terminal 指向的那一步的 choices 里
+   （terminal 指向 current_scene 时写在 currentScene.choices），candidateId 逐字使用
+   第 8 条为该步骤列出的候选；其余步骤的 choices 必须为空数组。
 
 5. 战斗失败会恢复到战斗前检查点，因此不需要生成战斗失败/撤退的分支。
 
@@ -162,20 +200,23 @@ ${evolutionRequirement}
 
 6.1. ${genreRequirement}
 
-7. 这是服务端已经重建的唯一合法图，必须逐字使用其中的 stepKey 与 candidateId，
+7. 世界内实体名称唯一：新地点/NPC/物品/敌人/任务的名称必须避开上方“已占用
+实体名称”，否则整包会被服务端拒绝。
+
+8. 这是服务端已经重建的唯一合法图，必须逐字使用其中的 stepKey 与 candidateId，
 不得自创步骤或候选：
    - terminal: ${JSON.stringify(expectedTerminal)}
    - currentScene choices: ${expectedChoices}
    - continuationScenes:
 ${expectedSteps}
 
-8. choices 每项必须为 {"candidateId":"服务器给出的候选 ID","label":"中文选项文本"}；
+9. choices 每项必须为 {"candidateId":"服务器给出的候选 ID","label":"中文选项文本"}；
 npcLine 必须为 {"npcId":"实体 ID","text":"中文对白","emotion":"neutral|warm|guarded|afraid|angry|sad","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]}，不能是字符串。
 
-9. 若上方要求 worldDelta，严格使用：
+10. 若上方要求 worldDelta，严格使用：
 {"beatSummary":"...","newLocation":{"name":"...","description":"...","scale":"scene","placement":"world","connectFromLocationId":"现有地点 ID"},"newNpc":{"name":"...","role":"...","description":"...","locationRef":{"kind":"new_location"},"goals":["..."]},"newItem":{"name":"...","description":"...","locationRef":"new_location"},"newEnemy":{"name":"...","tier":"normal","locationRef":"new_location"},"newFact":null,"nextMainQuest":{"name":"...","description":"...","objectiveText":"..."},"endingPair":null}
 
-10. 当 worldDelta 要求 nextMainQuest 时，currentScene 只收束旧场景且 choices 必须为空；必须生成唯一的 continuationScenes[0]，其 stepKey、两个 choices 的 candidateId 和 npcLine.npcId 必须完全等于第 7 条给出的下一幕投影。该 continuation scene 表现玩家抵达新地点并与新 NPC 相遇。
+11. 当 worldDelta 要求 nextMainQuest 时，currentScene 只收束旧场景且 choices 必须为空；必须生成唯一的 continuationScenes[0]，其 stepKey、两个 choices 的 candidateId 和 npcLine.npcId 必须完全等于第 8 条给出的下一幕投影。该 continuation scene 表现玩家抵达新地点并与新 NPC 相遇。
 
 ## JSON 格式
 
@@ -347,6 +388,28 @@ function normalizeOpeningCandidateShape(value: unknown, targetActs: 3 | 5): unkn
   };
 }
 
+type ProjectedStep = {
+  readonly stepKey: string;
+  readonly candidates: readonly { readonly candidateId: string }[];
+};
+
+/** The only continuation graph a decision response may fill. */
+function projectedSteps(
+  graph: ReturnType<typeof buildNarrativeBundleDescriptors>,
+  nextActProjection: { readonly stepKey: string; readonly npcId: string } | null,
+): readonly ProjectedStep[] {
+  if (nextActProjection !== null) {
+    return [{
+      stepKey: nextActProjection.stepKey,
+      candidates: [
+        { candidateId: `${nextActProjection.stepKey}_choice_1` },
+        { candidateId: `${nextActProjection.stepKey}_choice_2` },
+      ],
+    }];
+  }
+  return graph.steps.map((step) => ({ stepKey: step.stepKey, candidates: step.choiceCandidates }));
+}
+
 /** Normalize legacy presentation aliases without changing any AI-authored text. */
 function normalizeDecisionBundleShape(
   value: unknown,
@@ -369,6 +432,8 @@ function normalizeDecisionBundleShape(
         npcId: `npc_dyn_${storyState.evolution.nextNpcOrdinal}`,
       }
     : null;
+  const steps = projectedSteps(graph, nextActProjection);
+  const fallbackNpcId = nextActProjection?.npcId ?? String(job.focusNpcId ?? "");
 
   const normalizeChoices = (
     sourceChoices: unknown,
@@ -381,11 +446,11 @@ function normalizeDecisionBundleShape(
       label: firstString(entry.label, entry.text),
     };
   });
-  const normalizeNpcLine = (source: unknown, fallbackNpcId: string): unknown => {
+  const normalizeNpcLine = (source: unknown, npcIdFallback: string): unknown => {
     const sourceNpcLine = asRecord(source);
     return sourceNpcLine ?? (typeof source === "string"
     ? {
-        npcId: fallbackNpcId,
+        npcId: npcIdFallback,
         text: source,
         emotion: "neutral",
         answeredBeatIds: [],
@@ -409,52 +474,62 @@ function normalizeDecisionBundleShape(
   const normalizeScene = (
     scene: Record<string, unknown>,
     candidates: readonly { readonly candidateId: string }[],
-    fallbackNpcId: string,
+    npcIdFallback: string,
   ): Record<string, unknown> => ({
     segments: scene.segments,
-    npcLine: normalizeNpcLine(scene.npcLine, fallbackNpcId),
+    npcLine: normalizeNpcLine(scene.npcLine, npcIdFallback),
     ...(scene.npcDialogues === undefined ? {} : { npcDialogues: scene.npcDialogues }),
     objectiveLink: normalizeObjectiveLink(scene.objectiveLink),
     choices: normalizeChoices(scene.choices, candidates),
     ...(scene.handoffAcknowledgement === undefined ? {} : { handoffAcknowledgement: scene.handoffAcknowledgement }),
   });
 
-  const continuationScenes = Array.isArray(raw.continuationScenes)
-    ? raw.continuationScenes.map((step, index) => {
-      const entry = asRecord(step);
-      if (entry === null) return step;
-      // Compatible providers commonly emit a scene directly in the array
-      // instead of the contract's { stepKey, scene } wrapper.  This is only
-      // a vocabulary/shape repair: all displayed text remains provider text.
+  // Compatible providers commonly emit a scene directly in the array instead of
+  // the contract's { stepKey, scene } wrapper, and some keep planning past the
+  // projected graph into the future they imagine. The server graph owns which
+  // steps exist; provider entries are matched into it, never invented by it.
+  const providerEntries = (Array.isArray(raw.continuationScenes) ? raw.continuationScenes : [])
+    .map((entryValue) => {
+      const entry = asRecord(entryValue);
+      if (entry === null) return null;
       const scene = asRecord(entry.scene) ?? entry;
-      const projectedCandidates = nextActProjection !== null && index === 0
-        ? [
-            { candidateId: `${nextActProjection.stepKey}_choice_1` },
-            { candidateId: `${nextActProjection.stepKey}_choice_2` },
-          ]
-        : graph.steps[index]?.choiceCandidates ?? [];
-      return {
-        stepKey: nextActProjection !== null && index === 0
-          ? nextActProjection.stepKey
-          // Some providers emit direct scene objects and omit the wrapper's
-          // stepKey entirely.  The position is not narrative authority: it
-          // maps to the already server-projected, ordered descriptor graph.
-          : firstString(entry.stepKey, graph.steps[index]?.stepKey),
-        scene: normalizeScene(
-          scene,
-          projectedCandidates,
-          nextActProjection?.npcId ?? String(job.focusNpcId ?? ""),
-        ),
-      };
-    })
-    : raw.continuationScenes;
+      return { stepKey: typeof entry.stepKey === "string" ? entry.stepKey : "", scene };
+    });
+  const projectedKeySet = new Set(steps.map((step) => step.stepKey));
+  const consumed = new Set<number>();
+  const choiceCountAt = (index: number): number => {
+    const scene = index >= 0 ? providerEntries[index]?.scene : undefined;
+    return Array.isArray(scene?.choices) ? (scene.choices as unknown[]).length : 0;
+  };
+  const findUnused = (
+    predicate: (entry: { stepKey: string; scene: Record<string, unknown> }, index: number) => boolean,
+  ): number => providerEntries.findIndex((entry, index) => entry !== null
+    && !consumed.has(index)
+    && predicate(entry, index));
+
+  const continuationScenes = steps.map((step, index) => {
+    const positional = findUnused((entry, entryIndex) => entryIndex === index
+      && (entry.stepKey === "" || entry.stepKey === step.stepKey || !projectedKeySet.has(entry.stepKey)));
+    // A scene carrying the terminal options cannot belong to a linear step:
+    // the contract requires every other step to have an empty choices list.
+    const optionsCarrier = step.candidates.length > 0 && choiceCountAt(positional) !== step.candidates.length
+      ? findUnused((entry, entryIndex) => entryIndex !== positional
+        && choiceCountAt(entryIndex) === step.candidates.length)
+      : -1;
+    const named = findUnused((entry) => entry.stepKey === step.stepKey);
+    const chosen = named >= 0 ? named : (optionsCarrier >= 0 ? optionsCarrier : positional);
+    const entry = chosen >= 0 ? providerEntries[chosen] : null;
+    if (entry === null) return null;
+    consumed.add(chosen);
+    return { stepKey: step.stepKey, scene: normalizeScene(entry.scene, step.candidates, fallbackNpcId) };
+  }).filter((step): step is { stepKey: string; scene: Record<string, unknown> } => step !== null);
 
   return {
     ...raw,
     currentScene: normalizeScene(
       currentScene,
       nextActProjection === null ? graph.currentChoiceCandidates : [],
-      String(job.focusNpcId ?? ""),
+      fallbackNpcId,
     ),
     continuationScenes,
   };
@@ -506,7 +581,7 @@ export function createNarrativeBundleSource(
 
       try {
         const prompt = context.kind === "decision"
-          ? buildDecisionPrompt(context.worldState, context.storyState, context.job)
+          ? buildDecisionPrompt(context.worldState, context.storyState, context.job, context.contentRepair)
           : buildOpeningPrompt(context);
 
         const messages: readonly AiMessage[] = [
@@ -557,8 +632,15 @@ export function createNarrativeBundleSource(
             context.job,
           ));
           if (!proposalResult.ok) {
-            logger?.warn("narrative_bundle_invalid_schema", { code: proposalResult.code });
-            return failBundle("invalid_schema", "invalid_schema");
+            const detail = proposalResult.stepKey === undefined
+              ? proposalResult.reason
+              : `${proposalResult.reason}（步骤 ${proposalResult.stepKey}）`;
+            logger?.warn("narrative_bundle_invalid_schema", {
+              code: proposalResult.code,
+              reason: proposalResult.reason,
+              ...(proposalResult.stepKey === undefined ? {} : { stepKey: proposalResult.stepKey }),
+            });
+            return failBundle("invalid_schema", "invalid_schema", detail);
           }
           return { ok: true, kind: "decision", proposal: proposalResult.proposal };
         }

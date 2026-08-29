@@ -11,6 +11,7 @@ import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestF
 import {
   asLocationId,
   asNpcId,
+  asEnemyId,
   asGenerationId,
   asQuestId,
   asFactId,
@@ -204,6 +205,66 @@ function baseInput(overrides: Partial<ApproveNarrativeBundleInput> = {}): Approv
   };
 }
 
+/** 自然幕边界：世界尚未扩张，storyState 需要下一幕，提案带完整 worldDelta。 */
+function actBoundaryFixture() {
+  const ws = worldState();
+  const preExpansionWorld: WorldState = {
+    ...ws,
+    locations: [{ ...ws.locations[0]!, connectedLocationIds: [] }],
+    npcs: [],
+    items: [],
+    enemies: [],
+    worldFacts: [],
+    quests: [{ ...ws.quests[0]!, status: "completed" }],
+  };
+  const ss: StoryState = {
+    ...storyState(),
+    currentAct: 2,
+    targetActs: 3,
+    evolution: {
+      ...storyState().evolution,
+      nextLocationOrdinal: 1,
+      nextNpcOrdinal: 1,
+      nextItemOrdinal: 1,
+      nextEnemyOrdinal: 1,
+      nextQuestOrdinal: 1,
+      status: "needs_next_act",
+    },
+  };
+  const proposal: NarrativeBundleProposal = {
+    worldDelta: {
+      beatSummary: "旧案把侠客引向镇外。",
+      newLocation: { name: "枯柳驿", description: "镇外荒废的驿站。", scale: "scene", placement: "world", connectFromLocationId: "loc_0" },
+      newNpc: { name: "老驼子", role: "守夜人", description: "守在驿站里的老人。", locationRef: { kind: "new_location" }, goals: ["守住秘密"] },
+      newItem: { name: "半块令牌", description: "断裂的旧令牌。", locationRef: "new_location" },
+      newEnemy: { name: "蒙面劫匪", tier: "normal", locationRef: "new_location" },
+      newFact: null,
+      nextMainQuest: { name: "枯柳驿线索", description: "前往枯柳驿调查。", objectiveText: "调查枯柳驿" },
+      endingPair: null,
+    },
+    currentScene: {
+      segments: [{ beatId: "closing", text: "旧人指向了镇外。" }],
+      npcLine: null,
+      objectiveLink: null,
+      choices: [],
+    },
+    continuationScenes: [{
+      stepKey: "move:loc_dyn_1",
+      scene: {
+        segments: [{ beatId: "arrival", text: "你来到枯柳驿。" }],
+        npcLine: { npcId: "npc_dyn_1", text: "来者何人？", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        objectiveLink: null,
+        choices: [
+          { candidateId: "move:loc_dyn_1_choice_1", label: "表明身份" },
+          { candidateId: "move:loc_dyn_1_choice_2", label: "先行试探" },
+        ],
+      },
+    }],
+    terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: "move:loc_dyn_1" } },
+  };
+  return { preExpansionWorld, ss, proposal };
+}
+
 describe("approveNarrativeBundle", () => {
   it("approves a valid bundle with continuation_step terminal", () => {
     const result = approveNarrativeBundle(baseInput());
@@ -334,61 +395,7 @@ describe("approveNarrativeBundle", () => {
   });
 
   it("anchors an act-boundary bundle at the newly materialized first objective", () => {
-    const ws = worldState();
-    const preExpansionWorld: WorldState = {
-      ...ws,
-      locations: [{ ...ws.locations[0]!, connectedLocationIds: [] }],
-      npcs: [],
-      items: [],
-      enemies: [],
-      worldFacts: [],
-      quests: [{ ...ws.quests[0]!, status: "completed" }],
-    };
-    const ss: StoryState = {
-      ...storyState(),
-      currentAct: 2,
-      targetActs: 3,
-      evolution: {
-        ...storyState().evolution,
-        nextLocationOrdinal: 1,
-        nextNpcOrdinal: 1,
-        nextItemOrdinal: 1,
-        nextEnemyOrdinal: 1,
-        nextQuestOrdinal: 1,
-        status: "needs_next_act",
-      },
-    };
-    const proposal: NarrativeBundleProposal = {
-      worldDelta: {
-        beatSummary: "旧案把侠客引向镇外。",
-        newLocation: { name: "枯柳驿", description: "镇外荒废的驿站。", scale: "scene", placement: "world", connectFromLocationId: "loc_0" },
-        newNpc: { name: "老驼子", role: "守夜人", description: "守在驿站里的老人。", locationRef: { kind: "new_location" }, goals: ["守住秘密"] },
-        newItem: { name: "半块令牌", description: "断裂的旧令牌。", locationRef: "new_location" },
-        newEnemy: { name: "蒙面劫匪", tier: "normal", locationRef: "new_location" },
-        newFact: null,
-        nextMainQuest: { name: "枯柳驿线索", description: "前往枯柳驿调查。", objectiveText: "调查枯柳驿" },
-        endingPair: null,
-      },
-      currentScene: {
-        segments: [{ beatId: "closing", text: "旧人指向了镇外。" }],
-        npcLine: null,
-        objectiveLink: null,
-        choices: [],
-      },
-      continuationScenes: [{
-        stepKey: "move:loc_dyn_1",
-        scene: {
-          segments: [{ beatId: "arrival", text: "你来到枯柳驿。" }],
-          npcLine: { npcId: "npc_dyn_1", text: "来者何人？", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
-          objectiveLink: null,
-          choices: [
-            { candidateId: "move:loc_dyn_1_choice_1", label: "表明身份" },
-            { candidateId: "move:loc_dyn_1_choice_2", label: "先行试探" },
-          ],
-        },
-      }],
-      terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: "move:loc_dyn_1" } },
-    };
+    const { preExpansionWorld, ss, proposal } = actBoundaryFixture();
 
     const result = approveNarrativeBundle(baseInput({
       proposal,
@@ -402,6 +409,31 @@ describe("approveNarrativeBundle", () => {
     if (!result.ok) return;
     expect(result.approved.bundle.activeStepIds).toEqual(["move:loc_dyn_1"]);
     expect(result.approved.choiceRegistry).toHaveLength(2);
+  });
+
+  it("撞名的下一幕提案带规则引擎理由被拒，供修复重试指明方向", () => {
+    const { preExpansionWorld, ss, proposal } = actBoundaryFixture();
+    const worldWithSameNameEnemy: WorldState = {
+      ...preExpansionWorld,
+      enemies: [{
+        id: asEnemyId("enemy_dyn_0"),
+        name: "蒙面劫匪",
+        tier: "normal",
+        stats: { hp: 40, attack: 8, defense: 3 },
+        locationId: locTown,
+        tags: [],
+      }],
+    };
+
+    const result = approveNarrativeBundle(baseInput({
+      proposal,
+      worldState: worldWithSameNameEnemy,
+      storyState: ss,
+      transition: { before: null, completed: [], after: null, mode: "advanced_act" },
+      evolutionNeed: { kind: "next_act", act: 2 },
+    }));
+
+    expect(result).toEqual({ ok: false, code: "world_delta_rejected", detail: "duplicate_name:enemy" });
   });
 
   it("does not expose partial result on failure", () => {

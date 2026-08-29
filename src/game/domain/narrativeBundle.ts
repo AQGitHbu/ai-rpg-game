@@ -151,18 +151,51 @@ export type NarrativeBundleState = {
 // Parsers
 // ---------------------------------------------------------------------------
 
+/**
+ * 提案契约的细分拒绝原因。整包仍然只按同一套规则严格校验，
+ * 这里只是把"哪一条规则没满足"带出来，供修复重试回传给 provider。
+ */
+export type NarrativeBundleProposalRejectionReason =
+  | "not_object"
+  | "unknown_keys"
+  | "current_scene_invalid"
+  | "continuation_scenes_invalid"
+  | "terminal_invalid"
+  | "current_scene_terminal_requires_empty_continuation"
+  | "current_scene_terminal_requires_two_choices"
+  | "continuation_terminal_requires_continuation_scenes"
+  | "current_scene_must_have_no_choices"
+  | "continuation_terminal_step_not_found"
+  | "terminal_step_requires_two_choices"
+  | "non_terminal_step_must_have_no_choices"
+  | "ending_terminal_requires_empty_bundle"
+  | "too_many_steps"
+  | "duplicate_step_keys";
+
 export type ParseNarrativeBundleProposalResult =
   | { readonly ok: true; readonly proposal: NarrativeBundleProposal }
-  | { readonly ok: false; readonly code: "INVALID_NARRATIVE_BUNDLE_PROPOSAL" };
+  | {
+    readonly ok: false;
+    readonly code: "INVALID_NARRATIVE_BUNDLE_PROPOSAL";
+    readonly reason: NarrativeBundleProposalRejectionReason;
+    readonly stepKey?: string;
+  };
 
 export type ParseNarrativeBundleStateResult =
   | { readonly ok: true; readonly value: NarrativeBundleState }
   | { readonly ok: false; readonly code: "INVALID_NARRATIVE_BUNDLE_STATE" };
 
-const INVALID_PROPOSAL: ParseNarrativeBundleProposalResult = {
-  ok: false,
-  code: "INVALID_NARRATIVE_BUNDLE_PROPOSAL",
-};
+function invalidProposal(
+  reason: NarrativeBundleProposalRejectionReason,
+  stepKey?: string,
+): ParseNarrativeBundleProposalResult {
+  return {
+    ok: false,
+    code: "INVALID_NARRATIVE_BUNDLE_PROPOSAL",
+    reason,
+    ...(stepKey === undefined ? {} : { stepKey }),
+  };
+}
 
 const INVALID_STATE: ParseNarrativeBundleStateResult = {
   ok: false,
@@ -280,34 +313,35 @@ function isBundleStepProposal(value: unknown): value is BundleStepProposal {
 }
 
 export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBundleProposalResult {
-  if (!isRecord(value)) return INVALID_PROPOSAL;
-  if (!hasOnlyKeys(value, ["worldDelta", "currentScene", "continuationScenes", "terminal"])) return INVALID_PROPOSAL;
+  if (!isRecord(value)) return invalidProposal("not_object");
+  if (!hasOnlyKeys(value, ["worldDelta", "currentScene", "continuationScenes", "terminal"])) return invalidProposal("unknown_keys");
   // worldDelta can be null or any object (approval validates it separately)
-  if (!isBundleSceneProposal(value.currentScene)) return INVALID_PROPOSAL;
-  if (!Array.isArray(value.continuationScenes) || !value.continuationScenes.every(isBundleStepProposal)) return INVALID_PROPOSAL;
-  if (!isTerminal(value.terminal)) return INVALID_PROPOSAL;
+  if (!isBundleSceneProposal(value.currentScene)) return invalidProposal("current_scene_invalid");
+  if (!Array.isArray(value.continuationScenes) || !value.continuationScenes.every(isBundleStepProposal)) return invalidProposal("continuation_scenes_invalid");
+  if (!isTerminal(value.terminal)) return invalidProposal("terminal_invalid");
 
   const continuationScenes = value.continuationScenes as readonly BundleStepProposal[];
   const terminal = value.terminal as NarrativeBundleTerminal;
 
   // current_scene terminal must have empty continuation
   if (terminal.kind === "next_decision" && terminal.target.kind === "current_scene") {
-    if (continuationScenes.length > 0 || !hasExactlyTwoDistinctChoices(value.currentScene)) {
-      return INVALID_PROPOSAL;
-    }
+    if (continuationScenes.length > 0) return invalidProposal("current_scene_terminal_requires_empty_continuation");
+    if (!hasExactlyTwoDistinctChoices(value.currentScene)) return invalidProposal("current_scene_terminal_requires_two_choices");
   }
 
   // continuation_step terminal must have at least one continuation scene
   if (terminal.kind === "next_decision" && terminal.target.kind === "continuation_step") {
-    if (continuationScenes.length === 0) return INVALID_PROPOSAL;
-    if (value.currentScene.choices.length !== 0) return INVALID_PROPOSAL;
+    if (continuationScenes.length === 0) return invalidProposal("continuation_terminal_requires_continuation_scenes");
+    if (value.currentScene.choices.length !== 0) return invalidProposal("current_scene_must_have_no_choices");
     const stepKeys = continuationScenes.map((s) => s.stepKey);
-    if (!stepKeys.includes(terminal.target.stepKey)) return INVALID_PROPOSAL;
+    if (!stepKeys.includes(terminal.target.stepKey)) {
+      return invalidProposal("continuation_terminal_step_not_found", terminal.target.stepKey);
+    }
     for (const step of continuationScenes) {
       if (step.stepKey === terminal.target.stepKey) {
-        if (!hasExactlyTwoDistinctChoices(step.scene)) return INVALID_PROPOSAL;
+        if (!hasExactlyTwoDistinctChoices(step.scene)) return invalidProposal("terminal_step_requires_two_choices", step.stepKey);
       } else if (step.scene.choices.length !== 0) {
-        return INVALID_PROPOSAL;
+        return invalidProposal("non_terminal_step_must_have_no_choices", step.stepKey);
       }
     }
   }
@@ -315,16 +349,16 @@ export function parseNarrativeBundleProposal(value: unknown): ParseNarrativeBund
   // ending terminal must have empty continuation
   if (terminal.kind === "ending") {
     if (continuationScenes.length > 0 || value.currentScene.choices.length !== 0) {
-      return INVALID_PROPOSAL;
+      return invalidProposal("ending_terminal_requires_empty_bundle");
     }
   }
 
   // step limit
-  if (continuationScenes.length > MAX_NARRATIVE_BUNDLE_STEPS) return INVALID_PROPOSAL;
+  if (continuationScenes.length > MAX_NARRATIVE_BUNDLE_STEPS) return invalidProposal("too_many_steps");
 
   // duplicate step keys
   const stepKeys = continuationScenes.map((s) => s.stepKey);
-  if (!hasUniqueStrings(stepKeys)) return INVALID_PROPOSAL;
+  if (!hasUniqueStrings(stepKeys)) return invalidProposal("duplicate_step_keys");
 
   return { ok: true, proposal: value as NarrativeBundleProposal };
 }

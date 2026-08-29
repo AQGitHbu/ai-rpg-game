@@ -317,4 +317,115 @@ describe("generatePendingNarrativeBundle", () => {
     expect(saved.storyState.narrative.dialogueSession).toEqual({ npcId: npc.id, turnCount: 1, requiredTurns: 2, completed: false });
     expect(projectGameSessionView(saved.worldState, saved.storyState, saved.revision, "test-session").narrative.npcDialogues[0]?.choices).toHaveLength(2);
   });
+
+  it("把审批拒绝码与理由带给第二次尝试，而不是泛化提示", async () => {
+    const worldState = createMinimalWorldState();
+    const job = createPendingJob();
+    const storyState = createMinimalStoryState({
+      status: "provider_pending",
+      mode: "ai",
+      job,
+      lastPresentedScene: null,
+    });
+    const { repo } = createInMemoryRepo({
+      gameId: "g1" as never,
+      worldState,
+      storyState,
+      revision: 0,
+      createdAt: "2026-01-01",
+    });
+
+    const generateMock = vi.fn().mockResolvedValue({
+      ok: true,
+      kind: "decision",
+      proposal: {
+        worldDelta: null,
+        currentScene: {
+          segments: [{ beatId: "atmosphere", text: "风穿过空巷。" }],
+          npcLine: null,
+          objectiveLink: null,
+          choices: [],
+        },
+        continuationScenes: [],
+        terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: "move:nowhere" } },
+      },
+    } as NarrativeBundleSourceResult);
+
+    await generatePendingNarrativeBundle({ repository: repo, source: { generate: generateMock }, now: () => "2026-01-01" });
+
+    expect(generateMock).toHaveBeenCalledTimes(2);
+    const firstContext = generateMock.mock.calls[0]?.[0];
+    const secondContext = generateMock.mock.calls[1]?.[0];
+    expect(firstContext?.contentRepair).toBeUndefined();
+    expect(secondContext?.contentRepair).toMatchObject({
+      attempt: 1,
+      reason: "approval_rejected",
+      rejectionCode: "bundle_invalid_scene",
+    });
+  });
+
+  it("传输失败时把 source 自身的修复原因带给下一次尝试", async () => {
+    const worldState = createMinimalWorldState();
+    const job = createPendingJob();
+    const storyState = createMinimalStoryState({
+      status: "provider_pending",
+      mode: "ai",
+      job,
+      lastPresentedScene: null,
+    });
+    const { repo } = createInMemoryRepo({
+      gameId: "g1" as never,
+      worldState,
+      storyState,
+      revision: 0,
+      createdAt: "2026-01-01",
+    });
+
+    const generateMock = vi.fn().mockResolvedValue({
+      ok: false,
+      failure: { kind: "AI_RESPONSE_INVALID", phase: "scene", failedAt: "2026-01-01" },
+      repairReason: "invalid_json",
+    } as NarrativeBundleSourceResult);
+
+    await generatePendingNarrativeBundle({ repository: repo, source: { generate: generateMock }, now: () => "2026-01-01" });
+
+    expect(generateMock.mock.calls[1]?.[0]).toMatchObject({
+      contentRepair: { attempt: 1, reason: "invalid_json" },
+    });
+  });
+
+  it("契约细分理由随 repairDetail 带给下一次尝试", async () => {
+    const worldState = createMinimalWorldState();
+    const job = createPendingJob();
+    const storyState = createMinimalStoryState({
+      status: "provider_pending",
+      mode: "ai",
+      job,
+      lastPresentedScene: null,
+    });
+    const { repo } = createInMemoryRepo({
+      gameId: "g1" as never,
+      worldState,
+      storyState,
+      revision: 0,
+      createdAt: "2026-01-01",
+    });
+
+    const generateMock = vi.fn().mockResolvedValue({
+      ok: false,
+      failure: { kind: "AI_RESPONSE_INVALID", phase: "scene", failedAt: "2026-01-01" },
+      repairReason: "invalid_schema",
+      repairDetail: "terminal_step_requires_two_choices（步骤 battle_resolved:victory:enemy_dyn_3）",
+    } as NarrativeBundleSourceResult);
+
+    await generatePendingNarrativeBundle({ repository: repo, source: { generate: generateMock }, now: () => "2026-01-01" });
+
+    expect(generateMock.mock.calls[1]?.[0]).toMatchObject({
+      contentRepair: {
+        attempt: 1,
+        reason: "invalid_schema",
+        detail: "terminal_step_requires_two_choices（步骤 battle_resolved:victory:enemy_dyn_3）",
+      },
+    });
+  });
 });
