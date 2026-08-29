@@ -93,7 +93,7 @@
 - 每个 ready 场景以**分段旁白**呈现；每一段必须对应服务端下发的强制节拍 ID（`player_utterance` / `item_obtained` / `fact_discovered` / `quest_progress` / `quest_advanced` / `battle_started` / `battle_round` / `battle_resolved` / `entity_introduced`），数量 ≤8，可另附一个 `atmosphere` 段且必须置于最后。
 - `objectiveLink` 必须与权威 `ObjectiveTransition.after` 一致（无 after 目标时为 null）；目标在本回合推进时，必须产出 `quest_advanced` 段命名新目标相关的已批准实体。
 - 当玩家对焦点 NPC 提交话语（`job.utterance`）时，表演契约必须返回该 NPC 的台词并列出它应答的 `player_utterance` 节拍；缺失应答使提案进入一次内容修复，修复仍缺失就返回 `AI_RESPONSE_INVALID`，不写 deterministic scene。玩家界面保留该 NPC 的会话焦点：pending 时短暂遮蔽，ready 后先显示这句回应，failed 时显示重试提示。
-- `npcLine.text` 的输出边界是 NPC 第一人称直接台词：不得带 NPC 名称、动作或“说道/答道”等叙述性包装。审批写回和 read model 会再次归一化，以兼容历史场景。
+- `npcLine.text` 的输出边界是 NPC 第一人称直接台词：不得带 NPC 名称、动作或“说道/答道”等叙述性包装。审批写回和 read model 会再次归一化，以兼容历史场景。归一化同样剥掉真机出现过的另外三种包装：台词前的整段括号舞台说明（`（哑巴猎户用炭笔写下几个字，推到你面前）…`）、整段 `‘…’` 单弯引号，以及对话分页把该包装拆到页首页尾后残留的单侧引号；两侧数量相等的句内引用（`我只听人提过 ‘铁旗会’ 这个名字。`）保持原样。
 - 对话上下文、选项和直接台词都由 live source 生成并经结构化审批；失败只返回 stable failure。显式 offline fixture 才可读取 `job.utterance`、关系档位和当前目标生成可重放回应。
 - 承接玩家原话时，NPC 以自己的口吻概括并回答，不得把整段玩家输入包进“你刚才问的‘……’”再反问。该质量门槛不通过时归类为 `AI_RESPONSE_INVALID`，不改写为生产 deterministic 成功。
 - 焦点 NPC 的开场、正式回应与终局追问至少两句：第一句回应，第二句补充线索、保留或下一步。质量门槛失败经过一次内容修复仍不通过时，场景进入 failed；live prompt 同时禁止把系统元话术写进玩家可见旁白。

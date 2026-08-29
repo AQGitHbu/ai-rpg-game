@@ -83,6 +83,8 @@
 - 运行时 AI 导演与场景表演：`narrativeBundle` 是 v7 唯一生产续接图，`PreparedContinuationState` 退为离线 fixture 专用。提案拒绝原因与规则引擎 `detail` 现在回传给第二轮修复重试，prompt 另下发「已占用实体名称」清单并要求 `continuationScenes` 与投影步骤一一对应，避免撞名或过度规划导致整包被拒后卡住 `provider_failed`。
 - 战斗与结局：终幕 support/challenge 立场改由 `src/game/gameplay/rpg/narrativeBundle/endingDecision.ts` 按 World/Story 状态铸造，经焦点 NPC 对话框下发；有立场时撤下必然零写入失败的「面对最终抉择」探索入口，结局对话不开放自由输入。
 - 探索与任务推进：`give_item` 与移动/战斗一样必须消费 bundle 步骤，缺步零写入，读模型只在活跃 `give_item` 步骤存在时投影给予按钮；任务链空窗改为投影桥接目标（在场 NPC → 未到访地点 → 可探索内容）并同步下发可执行 token，HUD 不再出现「暂无线索」断档。
+- 观感收口：地点旁注与地点描述不再复述同一氛围——展示层按小句比对字符重合度剔除旁注已表达的部分（`src/components/displayText.ts` 的 `removeCoveredClauses`），整段被覆盖时隐藏 caption。
+- 观感收口：NPC 台词归一化新增剥掉台词前的整段括号舞台说明、整段 `‘…’` 单弯引号与对话分页残留的单侧引号（`src/game/domain/npcSpeech.ts`），成对句内引用不受影响；`mode="ai"` 读模型投影与审批写回共用同一函数。
 - 验收事实：`codex/decision-boundary-narrative-bundle` 分支完成浏览器真实 AI 链路中篇通关（5 幕、第 29 回合、revision 56 达成结局「托付镖旗」），结局页与「重新开始」回到建角流程均可用。
 
 ## 维护规则
