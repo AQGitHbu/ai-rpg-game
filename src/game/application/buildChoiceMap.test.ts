@@ -15,7 +15,7 @@ import { createInitialStoryState } from "@/game/domain/storyState";
 import type { NarrativeSceneState, NarrativeChoiceState, NarrativeRuntimeState } from "@/game/domain/narrative";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
-import { asEnemyId, asFactId, asGenerationId, asItemId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
+import { asEndingId, asEnemyId, asFactId, asGenerationId, asItemId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import type { Action } from "@/game/domain/action";
 import { ENEMY_COMBAT_STATS, PLAYER_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
 import { buildEncounter } from "@/game/gameplay/rpg/ruleEngine/buildEncounter";
@@ -492,3 +492,70 @@ function buildStoryState(opts: {
   };
   return { ...base, narrative };
 }
+
+// ---------------------------------------------------------------------------
+// 终幕结局立场：结局包内没有可消费步骤，探索回合必然零写入失败。
+// ---------------------------------------------------------------------------
+
+const endingPair: WorldState["endings"] = [
+  { id: asEndingId("ending_trust"), name: "共担真相", description: "d", requirements: [] },
+  { id: asEndingId("ending_doubt"), name: "独自揭露", description: "d", requirements: [] },
+];
+
+function endingWorldState(overrides: Partial<WorldState> = {}): WorldState {
+  return {
+    ...buildWorldState(),
+    // 现场物品已取走、敌人已击败：本地点不再有任何探索钩子。
+    inventory: [asItemId("item_well_key")],
+    defeatedEnemyIds: [asEnemyId("enemy_wolf")],
+    ...overrides,
+  };
+}
+
+function endingStoryState(endingAllowed: boolean): StoryState {
+  return {
+    ...buildStoryState({}),
+    currentAct: 3,
+    targetActs: 3,
+    storyProgress: 100,
+    endingAllowed,
+  };
+}
+
+describe("buildChoiceMap 终幕结局立场", () => {
+  it("结局对已具象化时铸造两种立场，并撤下不可消费的探索回合", () => {
+    const ws = endingWorldState({ endings: endingPair });
+    const map = buildChoiceMap(ws, endingStoryState(true), 7);
+
+    expect(map.get(deriveRuntimeChoiceToken(
+      { type: "talk", npcId: asNpcId("npc_smith"), dialogueAct: "support" }, 7,
+    ))).toEqual({ type: "talk", npcId: asNpcId("npc_smith"), dialogueAct: "support" });
+    expect(map.get(deriveRuntimeChoiceToken(
+      { type: "talk", npcId: asNpcId("npc_smith"), dialogueAct: "challenge" }, 7,
+    ))).toEqual({ type: "talk", npcId: asNpcId("npc_smith"), dialogueAct: "challenge" });
+    expect(map.has(deriveRuntimeChoiceToken({ type: "explore" }, 7))).toBe(false);
+  });
+
+  it("结局 NPC 不在场时保留探索兜底", () => {
+    const ws = endingWorldState({
+      endings: endingPair,
+      npcs: [{ ...smith, locationId: asLocationId("loc_2") }],
+    });
+    const map = buildChoiceMap(ws, endingStoryState(true), 7);
+
+    expect(map.has(deriveRuntimeChoiceToken(
+      { type: "talk", npcId: asNpcId("npc_smith"), dialogueAct: "support" }, 7,
+    ))).toBe(false);
+    expect(map.has(deriveRuntimeChoiceToken({ type: "explore" }, 7))).toBe(true);
+  });
+
+  it("结局对尚未具象化时既不铸造立场也不开放结局探索", () => {
+    const ws = endingWorldState();
+    const map = buildChoiceMap(ws, endingStoryState(true), 7);
+
+    expect(map.has(deriveRuntimeChoiceToken(
+      { type: "talk", npcId: asNpcId("npc_smith"), dialogueAct: "support" }, 7,
+    ))).toBe(false);
+    expect(map.has(deriveRuntimeChoiceToken({ type: "explore" }, 7))).toBe(false);
+  });
+});

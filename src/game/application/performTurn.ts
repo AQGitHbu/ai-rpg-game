@@ -17,6 +17,7 @@ import {
   type NarrativeSceneRequestKind,
 } from "@/game/domain/pendingNarrativeJob";
 import { buildOutcomeBeats, currentObjectiveOf, deriveObjectiveTransition } from "@/game/gameplay/rpg/narrativeContext";
+import { endingDecisionStances } from "@/game/gameplay/rpg/narrativeBundle";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import { advanceStoryReveal, isActionReleased } from "@/game/gameplay/rpg/worldEvolution";
@@ -164,6 +165,15 @@ export async function performTurn(
       && entry.basedOnRevision === record.revision
     ));
 
+  // 结局立场由当前 World/Story 状态证明（结局对已具象化、故事未结算），不经过
+  // choiceRegistry：结局包的契约禁止 provider 提交 currentScene choices。
+  const submittedAction = converted.action;
+  const endingStance = command.interaction.kind === "fixed_choice" && submittedAction.type === "talk"
+    ? endingDecisionStances(record.worldState, record.storyState)
+      .find((stance) => stance.action.dialogueAct === submittedAction.dialogueAct
+        && String(stance.action.npcId) === String(submittedAction.npcId))
+    : undefined;
+
   // 战斗回合是纯规则操作，必须在通用规则/叙事路径之前短路。
   if (
     record.worldState.battle.status === "active"
@@ -208,7 +218,7 @@ export async function performTurn(
     resolution.primaryResult,
     converted.action,
   );
-  if (isFormalNarrativeChoice || command.interaction.kind === "free_text") {
+  if (isFormalNarrativeChoice || endingStance !== undefined || command.interaction.kind === "free_text") {
     return commitResolution({
       repository: deps.repository,
       gameId: command.gameId,
@@ -224,7 +234,7 @@ export async function performTurn(
       now: deps.now(),
       objectiveTransition: narrative.objectiveTransition,
       mandatoryBeats: narrative.mandatoryBeats,
-      dialogueChoiceLabel,
+      dialogueChoiceLabel: dialogueChoiceLabel ?? endingStance?.label,
       generationKind: command.interaction.kind === "free_text" ? "npc_free_text" : "npc_fixed_choice",
       sceneRequestKind: "npc_response",
     });

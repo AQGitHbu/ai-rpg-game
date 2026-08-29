@@ -1,6 +1,7 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { performTurn } from "./performTurn";
+import { buildChoiceMap } from "./buildChoiceMap";
 import type {
   ApplyStateInput,
   GameRecord,
@@ -275,6 +276,85 @@ describe("performTurn 单次 CAS 提交", () => {
     expect(result.ok).toBe(true);
     expect(applyCalls()).toHaveLength(1);
     expect(record()?.worldState.ending).not.toBeNull();
+    expect(record()?.storyState.narrative.status).toBe("provider_pending");
+  });
+
+  it("结局包内没有可消费步骤时，服务端铸造的结局立场仍可结算结局", async () => {
+    const base = buildStoryState();
+    const finalWorld: WorldState = {
+      ...buildWorldState(),
+      quests: [{
+        id: asQuestId("quest_final"),
+        name: "终幕主线",
+        description: "查明真相",
+        objectives: [{ kind: "visit_location", locationId: asLocationId("loc_1") }],
+        onSuccess: { kind: "closed" },
+        onFailure: { kind: "closed" },
+        tags: [],
+        kind: "main",
+        stage: 3,
+        status: "completed",
+      }],
+      endings: [
+        {
+          id: asEndingId("ending_trust"),
+          name: "共担真相",
+          description: "与盟友共同揭露真相。",
+          requirements: [{ kind: "npc_affinity_at_least", npcId: asNpcId("npc_1"), value: 1 }],
+        },
+        {
+          id: asEndingId("ending_doubt"),
+          name: "独自揭露",
+          description: "独自追查到底。",
+          requirements: [{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_1"), value: 0 }],
+        },
+      ],
+    };
+    const endingStory: StoryState = {
+      ...base,
+      currentAct: 3,
+      targetActs: 3,
+      storyProgress: 100,
+      endingAllowed: true,
+      narrative: {
+        status: "ready",
+        mode: "ai",
+        currentScene: {
+          sceneId: "scene-ending-pair",
+          turn: 0,
+          narration: "两条路都摆在面前，他必须做出选择。",
+          usedFactIds: [],
+          npcLine: null,
+          choices: [],
+          source: "generated",
+        },
+        choiceRegistry: [],
+        narrativeBundle: {
+          contractVersion: 1,
+          originJobId: asNarrativeJobId("job_ending_pair"),
+          steps: [],
+          activeStepIds: [],
+          terminal: { kind: "ending" },
+        },
+      },
+    };
+    const choiceMap = buildChoiceMap(finalWorld, endingStory, 0);
+    const supportToken = [...choiceMap.entries()].find(([, action]) =>
+      action.type === "talk" && action.dialogueAct === "support")?.[0];
+    if (supportToken === undefined) throw new Error("ending stance token missing");
+    const { repo, applyCalls, record } = createSpyRepo(finalWorld, endingStory);
+
+    const result = await performTurn({
+      gameId: asGameId("g1"),
+      actionId: "act_ending_stance",
+      interaction: { kind: "fixed_choice", choiceToken: supportToken },
+      expectedRevision: 0,
+      choiceMap,
+    }, { repository: repo, now: () => "2026-01-02" });
+
+    expect(result.ok).toBe(true);
+    expect(applyCalls()).toHaveLength(1);
+    expect(record()?.worldState.ending?.endingId).toBe(asEndingId("ending_trust"));
     expect(record()?.storyState.narrative.status).toBe("provider_pending");
   });
 

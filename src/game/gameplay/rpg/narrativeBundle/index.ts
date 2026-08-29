@@ -13,3 +13,9 @@ export {
   type BundleCoverageErrorCode,
   type BundleCoverageResult,
 } from "./coverage";
+
+export {
+  endingDecisionStances,
+  isEndingDecisionDue,
+  type EndingDecisionStance,
+} from "./endingDecision";
