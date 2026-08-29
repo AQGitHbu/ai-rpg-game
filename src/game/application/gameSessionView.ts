@@ -352,6 +352,56 @@ function currentObjectiveChoiceToken(
   }
 }
 
+type BridgeObjective = {
+  readonly label: string;
+  readonly choiceToken: string;
+  readonly npcId: string | null;
+};
+
+/**
+ * 幕内动态任务链空窗：上一任务刚被结算、AI 尚未在后续叙事束中铸造后继
+ * 任务时，会出现短暂的“无 active 任务”状态。此时向读模型投影一个权威桥
+ * 接目标（在场 NPC → 未到访地点 → 可探索内容），保证指引不断档；后继任务
+ * 一旦铸造，currentObjectiveOf 重新取得权威地位，桥接自动让位。
+ */
+function deriveBridgeObjective(
+  worldState: WorldState,
+  storyState: StoryState,
+  revision: number,
+): BridgeObjective | null {
+  const npc = worldState.npcs.find((entry) => entry.locationId === worldState.currentLocationId);
+  if (npc !== undefined) {
+    return {
+      label: `与${npc.name}交谈`,
+      choiceToken: choice({ type: "talk", npcId: npc.id, dialogueAct: "ask" }, revision, "与目标人物交谈", "dialogue").choiceToken,
+      npcId: String(npc.id),
+    };
+  }
+  const destination = worldState.locations.find((location) =>
+    worldState.unlockedLocationIds.includes(location.id)
+    && location.id !== worldState.currentLocationId
+    && !worldState.visitedLocationIds.includes(location.id)
+    && isTravelTarget(worldState, location.id));
+  if (destination !== undefined) {
+    return {
+      label: `前往${destination.name}`,
+      choiceToken: choice({ type: "move", locationId: destination.id }, revision, "前往目标地点", "travel").choiceToken,
+      npcId: null,
+    };
+  }
+  if (needsWorldBoundaryPreparation(storyState) || hasExplorableContent(worldState, storyState)) {
+    const label = needsWorldBoundaryPreparation(storyState)
+      ? "继续追查下一幕线索"
+      : `探索${worldState.locations.find((entry) => entry.id === worldState.currentLocationId)?.name ?? "此地"}`;
+    return {
+      label,
+      choiceToken: choice({ type: "explore" }, revision, "探索当前地点", "explore").choiceToken,
+      npcId: null,
+    };
+  }
+  return null;
+}
+
 export function projectGameSessionView(
   worldState: WorldState,
   storyState: StoryState,
@@ -377,12 +427,24 @@ export function projectGameSessionView(
   // 只能靠点击 NPC 试探性地触发下一段对白。
   const endingDecisionReady = isEndingDecisionDue(worldState, storyState);
   const endingStances = endingDecisionStances(worldState, storyState);
-  const currentObjectiveToken = currentObjectiveChoiceToken(worldState, storyState, currentObjective, revision);
+  // 任务链空窗（上一任务已结算、后继任务未铸造）时投影桥接目标，避免
+  // HUD 指引断档；战斗中被战斗面板接管，结局抉择有专属标签，任务链尚未
+  // 开启（零任务）时也没有可衔接的前驱，均不桥接。
+  const bridgedObjective = currentObjectiveRef === null
+    && worldState.quests.length > 0
+    && worldState.ending === null
+    && activeBattle === null
+    && !endingDecisionReady
+    ? deriveBridgeObjective(worldState, storyState, revision)
+    : null;
+  const currentObjectiveToken = currentObjectiveChoiceToken(worldState, storyState, currentObjective, revision)
+    ?? bridgedObjective?.choiceToken
+    ?? null;
   // discover_fact 由规则边界自动确认；其余目标保持单一兼容 token。
   const currentObjectiveTokens = currentObjectiveToken === null ? [] : [currentObjectiveToken];
   const currentObjectiveNpcId = currentObjective?.kind === "talk_to_npc"
     ? String(currentObjective.npcId)
-    : null;
+    : bridgedObjective?.npcId ?? null;
   const townView = currentLocation === undefined
     ? null
     : buildTownView(worldState, currentLocation.id, currentObjectiveNpcId);
@@ -440,6 +502,16 @@ export function projectGameSessionView(
         `与${objectiveNpc.name}交谈`,
         "dialogue",
       ));
+    } else if (bridgedObjective?.npcId !== null && bridgedObjective?.npcId !== undefined) {
+      const bridgedNpc = presentNpcs.find((npc) => String(npc.id) === bridgedObjective.npcId);
+      if (bridgedNpc !== undefined) {
+        locationActions.push(choice(
+          { type: "talk", npcId: bridgedNpc.id, dialogueAct: "ask" },
+          revision,
+          `与${bridgedNpc.name}交谈`,
+          "dialogue",
+        ));
+      }
     }
     for (const enemy of worldState.enemies) {
       if (enemy.locationId === worldState.currentLocationId && !worldState.defeatedEnemyIds.includes(enemy.id)) {
@@ -845,7 +917,7 @@ export function projectGameSessionView(
       tension: storyState.tension,
       pacingNeed: storyState.nextPacingNeed,
       storyProgress: storyState.storyProgress,
-      currentObjectiveLabel: currentObjectiveRef?.label ?? (endingDecisionReady ? "选择结局方向" : null),
+      currentObjectiveLabel: currentObjectiveRef?.label ?? bridgedObjective?.label ?? (endingDecisionReady ? "选择结局方向" : null),
       currentObjectiveChoiceToken: currentObjectiveToken,
       currentObjectiveChoiceTokens: currentObjectiveTokens,
     },

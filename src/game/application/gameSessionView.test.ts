@@ -1809,6 +1809,52 @@ describe("projectGameSessionView", () => {
     expect(serialized).not.toContain("action-1");
     expect(serialized).not.toContain("failedAt");
   });
+
+  describe("任务链空窗桥接目标", () => {
+    function worldWithOnlyCompletedQuests(): WorldState {
+      return {
+        ...ws,
+        quests: [{
+          id: asQuestId("quest_done"), name: "旧线索", description: "已结算", kind: "main" as const, stage: 1, status: "completed" as const,
+          objectives: [{ kind: "obtain_item" as const, itemId: asItemId("item_flag") }],
+          onSuccess: { kind: "advance_story" as const },
+          onFailure: { kind: "closed" as const },
+          tags: [],
+        }] as unknown as WorldState["quests"],
+      };
+    }
+
+    it("无 active 任务且 NPC 在场时，投影交谈桥接目标与可执行 token", () => {
+      const world = worldWithOnlyCompletedQuests();
+      const view = projectGameSessionView(world, ss, 3, "test-bridge-session");
+      expect(view.story.currentObjectiveLabel).toBe("与老板交谈");
+      expect(view.story.currentObjectiveChoiceToken).toMatch(/^c_[0-9a-f]{16}$/);
+      expect(view.story.currentObjectiveChoiceTokens).toEqual([view.story.currentObjectiveChoiceToken]);
+      expect(view.currentLocation.actions.some((action) =>
+        action.label === "与老板交谈" && action.presentation === "dialogue")).toBe(true);
+      const executable = buildChoiceMap(world, ss, 3);
+      expect(executable.has(view.story.currentObjectiveChoiceToken!)).toBe(true);
+    });
+
+    it("无 active 任务且无在场 NPC 时，投影前往未到访地点的桥接目标", () => {
+      const world: WorldState = {
+        ...worldWithOnlyCompletedQuests(),
+        npcs: [],
+        visitedLocationIds: [asLocationId("loc_1")],
+      };
+      const view = projectGameSessionView(world, ss, 3, "test-bridge-session");
+      expect(view.story.currentObjectiveLabel).toBe("前往街道");
+      expect(view.story.currentObjectiveChoiceToken).toMatch(/^c_[0-9a-f]{16}$/);
+      const executable = buildChoiceMap(world, ss, 3);
+      expect(executable.has(view.story.currentObjectiveChoiceToken!)).toBe(true);
+    });
+
+    it("存在权威任务目标时，桥接不让位也不覆盖权威标签", () => {
+      const world = worldWithApproaches();
+      const view = projectGameSessionView(world, ss, 0, "test-bridge-session");
+      expect(view.story.currentObjectiveLabel).toBe("调查泥地上的异常痕迹");
+    });
+  });
 });
 
 describe("projectGameSessionView town read model", () => {
