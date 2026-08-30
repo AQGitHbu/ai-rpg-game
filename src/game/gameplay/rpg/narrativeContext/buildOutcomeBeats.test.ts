@@ -161,7 +161,7 @@ it("battle_resolved：胜利、败北与撤退均落节拍", () => {
     const manyItems: readonly ItemEntry[] = Array.from({ length: 8 }, (_, i) => ({
       id: asItemId(`item_${i + 1}`), name: `物品${i + 1}`, description: "d", kind: "quest", tags: [],
     }));
-    let after: WorldState = { ...baseWorld(), items: manyItems, inventory: manyItems.map((i) => i.id) };
+    let after: WorldState = baseWorld({ items: manyItems, inventory: manyItems.map((i) => i.id) });
     after = withDiscoveredFact(after);
     after = withBattle(after, { status: "active", enemyId: ENEMY_WOLF_ID, playerHp: 100, enemyHp: 30, round: 1 });
     const result = beats(baseWorld(), after);
@@ -208,7 +208,7 @@ it("capMandatoryBeats：按固定优先级保留前 8 条且顺序稳定", () =>
     const manyItems: readonly ItemEntry[] = Array.from({ length: 8 }, (_, i) => ({
       id: asItemId(`item_${i + 1}`), name: `物品${i + 1}`, description: "d", kind: "quest", tags: [],
     }));
-    let after: WorldState = { ...baseWorld(), items: manyItems, inventory: manyItems.map((i) => i.id) };
+    let after: WorldState = baseWorld({ items: manyItems, inventory: manyItems.map((i) => i.id) });
     after = withBattle(after, { status: "active", enemyId: ENEMY_WOLF_ID, playerHp: 100, enemyHp: 30, round: 1 });
     const result = beats(baseWorld(), after, ss, {
       utterance: "我知道你在隐瞒什么",
@@ -230,7 +230,7 @@ it("capMandatoryBeats：按固定优先级保留前 8 条且顺序稳定", () =>
     const manyItems: readonly ItemEntry[] = Array.from({ length: 8 }, (_, i) => ({
       id: asItemId(`item_${i + 1}`), name: `物品${i + 1}`, description: "d", kind: "quest", tags: [],
     }));
-    const busy = beats(baseWorld(), { ...baseWorld(), items: manyItems, inventory: manyItems.map((i) => i.id) });
+    const busy = beats(baseWorld(), baseWorld({ items: manyItems, inventory: manyItems.map((i) => i.id) }));
     expect(busy.length).toBeLessThanOrEqual(8);
     expect(busy[busy.length - 1]?.beatId).toBe("atmosphere");
   });

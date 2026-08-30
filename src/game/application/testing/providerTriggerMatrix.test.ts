@@ -9,13 +9,13 @@ import { asNarrativeJobId } from "@/game/domain/events";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import type { PreparedContinuationTrigger } from "@/game/domain/preparedContinuation";
 import type { NarrativeBundleTrigger } from "@/game/domain/narrativeBundle";
-import { asEnemyId, asFactId, asGenerationId, asLocationId } from "@/game/domain/worldEntity";
+import { asEnemyId, asFactId, asGenerationId, asLocationId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
-  appendEnemy,
-  createInitialWorldState,
-  type LocationEntry,
-  type WorldState,
-} from "@/game/domain/worldState";
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
+import type { LocationEntry, WorldState } from "@/game/domain/worldState";
 import type { GameRecord, ApplyStateInput, GameRepository } from "@/game/application/server/persistence/gameRepository";
 import { asGameId } from "@/game/application/server/persistence/gameRepository";
 import type { WorldEvolutionSource } from "@/game/application/worldEvolutionSource";
@@ -32,64 +32,76 @@ const next = asLocationId("loc_next");
 const factId = asFactId("fact_trace");
 const enemyId = asEnemyId("enemy_wolf");
 
-function makeWorld(): WorldState {
-  const originLocation: LocationEntry = {
-    id: origin,
-    name: "旧道",
-    description: "一条潮湿的旧道。",
-    kind: "main",
-    connectedLocationIds: [next],
-    npcIds: [],
-    availableItemIds: [],
-    tags: [],
-  };
-  const nextLocation: LocationEntry = {
-    id: next,
-    name: "破庙",
-    description: "断墙后的破庙。",
-    kind: "main",
-    connectedLocationIds: [origin],
-    npcIds: [],
-    availableItemIds: [],
-    tags: [],
-  };
-  return {
-    ...createInitialWorldState({
-      generation: {
-        generationId: asGenerationId("generation-provider-trigger-matrix"),
-        seed: "provider-trigger-matrix",
-        templateVersion: "v1",
-        inputDigest: "provider-trigger-matrix",
-        gameType: "wuxia",
-      },
-      player: { name: "侠客", identity: "旅人", stats: toStatBlock(PLAYER_COMBAT_STATS) },
-      startingLocation: originLocation,
-      startingItemIds: [],
-    }),
-    locations: [originLocation, nextLocation],
-    unlockedLocationIds: [origin, next],
-    currentLocationId: origin,
-    visitedLocationIds: [origin],
-    worldFacts: [{
-      factId,
-      text: "泥地里留着半枚旧令牌。",
-      source: "generated",
-      discovered: false,
-      locationId: origin,
-      investigationLabel: "泥地上的痕迹",
-      investigationApproaches: [{
-        approachId: "follow",
-        label: "沿痕迹追查",
-        evidenceQuality: "clean",
-        tensionDelta: 4,
-      }, {
-        approachId: "search",
-        label: "翻查附近杂物",
-        evidenceQuality: "noisy",
-        tensionDelta: 12,
-      }],
+const ORIGIN_LOCATION: LocationEntry = {
+  id: origin,
+  name: "旧道",
+  description: "一条潮湿的旧道。",
+  kind: "main",
+  connectedLocationIds: [next],
+  npcIds: [],
+  availableItemIds: [],
+  tags: [],
+};
+const NEXT_LOCATION: LocationEntry = {
+  id: next,
+  name: "破庙",
+  description: "断墙后的破庙。",
+  kind: "main",
+  connectedLocationIds: [origin],
+  npcIds: [],
+  availableItemIds: [],
+  tags: [],
+};
+
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("generation-provider-trigger-matrix"),
+  seed: "provider-trigger-matrix",
+  templateVersion: "v1",
+  inputDigest: "provider-trigger-matrix",
+  gameType: "wuxia",
+};
+
+// 兼容投影即完整初始世界：相连地点两条 record 一次声明，不再事后 spread 数组。
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "侠客", identity: "旅人", stats: toStatBlock(PLAYER_COMBAT_STATS) },
+  locations: [ORIGIN_LOCATION, NEXT_LOCATION],
+  currentLocationId: origin,
+  unlockedLocationIds: [origin, next],
+  visitedLocationIds: [origin],
+  npcs: [],
+  items: [],
+  inventory: [],
+  worldFacts: [{
+    factId,
+    text: "泥地里留着半枚旧令牌。",
+    source: "generated",
+    discovered: false,
+    locationId: origin,
+    investigationLabel: "泥地上的痕迹",
+    investigationApproaches: [{
+      approachId: "follow",
+      label: "沿痕迹追查",
+      evidenceQuality: "clean",
+      tensionDelta: 4,
+    }, {
+      approachId: "search",
+      label: "翻查附近杂物",
+      evidenceQuality: "noisy",
+      tensionDelta: 12,
     }],
-  };
+  }],
+  quests: [],
+  enemies: [],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+function buildWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return createWorldStateFixtureWith({ generation: GENERATION, base: BASE_PROJECTION }, overrides);
+}
+
+function makeWorld(): WorldState {
+  return buildWorld();
 }
 
 function makeStory(trigger?: PreparedContinuationTrigger): StoryState {
@@ -142,10 +154,7 @@ function makeBattleWorld(): WorldState {
     locationId: origin,
     tags: [],
   };
-  const world = {
-    ...appendEnemy(makeWorld(), enemy),
-    player: { ...makeWorld().player, stats: toStatBlock(PLAYER_COMBAT_STATS) },
-  } as WorldState;
+  const world = buildWorld({ enemies: [enemy] });
   const encounter = buildEncounter(world, enemyId).map((combatant) => (
     combatant.side === "enemies" ? { ...combatant, hp: 1 } : combatant
   ));

@@ -1,10 +1,15 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect, vi } from "vitest";
 import { generatePendingScene } from "./generatePendingScene";
-import { createInitialWorldState, appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
+import { createInitialWorldState, type LocationEntry, type NpcEntry, type WorldFactEntry, type WorldState } from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asFactId, asItemId, asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asFactId, asItemId, asLocationId, asNpcId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { asNarrativeJobId, asTurnId, type GameEvent } from "@/game/domain/events";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import {
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { GameRepository, GameRecord } from "./server/persistence/gameRepository";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
@@ -28,24 +33,42 @@ const npc: NpcEntry = {
   memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
 };
 
-function makeWorldState() {
-  const base = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc,
-    startingItemIds: [],
-  });
-  return {
-    ...appendNpc(base, npc),
-    // 通用生成夹具保留一个真实可探索钩子，使 talk + explore 都是规则合法候选。
-    worldFacts: [{
-      factId: asFactId("fact_1"),
-      text: "柜台下藏着一张旧纸条。",
-      source: "generated" as const,
-      discovered: false,
-      locationId: asLocationId("loc_1"),
-    }],
-  };
+// 通用生成夹具保留一个真实可探索钩子，使 talk + explore 都是规则合法候选。
+const counterFact: WorldFactEntry = {
+  factId: asFactId("fact_1"),
+  text: "柜台下藏着一张旧纸条。",
+  source: "generated",
+  discovered: false,
+  locationId: asLocationId("loc_1"),
+};
+
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+};
+
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [loc],
+  currentLocationId: loc.id,
+  unlockedLocationIds: [loc.id],
+  visitedLocationIds: [loc.id],
+  npcs: [npc],
+  items: [],
+  inventory: [],
+  worldFacts: [counterFact],
+  quests: [],
+  enemies: [],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+
+function makeWorldState(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return createWorldStateFixtureWith(
+    { generation: GENERATION, base: BASE_PROJECTION },
+    { eventLedger: INITIALIZED_LEDGER, ...overrides },
+  );
 }
 
 type JobFixture = {

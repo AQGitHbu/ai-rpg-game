@@ -6,11 +6,15 @@ import {
   findNpc,
   appendLocation,
   appendNpc,
+  InitialWorldStateInvariantError,
   type LocationEntry,
   type NpcEntry,
   type WorldFactEntry,
 } from "./worldState";
 import { asLocationId, asNpcId, asItemId, asFactId, asGenerationId } from "./worldEntity";
+import { entitiesOfKind } from "./entity/entityStore";
+import { validateEntityCompatibilityProjection, type EntityCompatibilityProjection } from "./entity/entityProjection";
+import { createWorldStateFixture } from "./testing/worldStateFixture.testutil";
 
 describe("WorldState", () => {
   const startingLocation: LocationEntry = {
@@ -34,16 +38,54 @@ describe("WorldState", () => {
     },
     player: { name: "测试侠客", identity: "流浪剑客", stats: { hp: 100, attack: 10, defense: 5 } },
     startingLocation,
-    startingItemIds: [asItemId("item_1")] as const,
+    startingItemIds: [] as const,
   };
 
-  it("createInitialWorldState produces valid state with version 2", () => {
+  /** 只改地点集合的最小投影：其余实体类型留空，由 fixture helper 编译成 store。 */
+  function projectionFor(
+    locations: readonly LocationEntry[],
+    overrides: Partial<EntityCompatibilityProjection> = {},
+  ): EntityCompatibilityProjection {
+    return {
+      player: baseInput.player,
+      locations,
+      currentLocationId: locations[0].id,
+      unlockedLocationIds: locations.map((entry) => entry.id),
+      visitedLocationIds: [locations[0].id],
+      npcs: [],
+      items: [],
+      inventory: [],
+      worldFacts: [],
+      quests: [],
+      enemies: [],
+      defeatedEnemyIds: [],
+      factions: [],
+      ...overrides,
+    };
+  }
+
+  it("createInitialWorldState 编译 v3 store，兼容数组只是投影结果", () => {
     const ws = createInitialWorldState(baseInput);
-    expect(ws.version).toBe(2);
+    expect(ws.version).toBe(3);
     expect(ws.player.name).toBe("测试侠客");
     expect(ws.currentLocationId).toBe(asLocationId("loc_1"));
     expect(ws.locations).toHaveLength(1); // 起始地点必须在 locations 内，currentLocationId 不指向不存在的地点
     expect(ws.eventLedger[0]?.type).toBe("game_initialized");
+    // 开局 store 只有玩家 + 起始地点两条 record。
+    expect(ws.entityStore.records).toHaveLength(2);
+    expect(entitiesOfKind(ws.entityStore, "location").map((record) => record.core.id)).toEqual([asLocationId("loc_1")]);
+    expect(validateEntityCompatibilityProjection(ws.entityStore, ws)).toEqual([]);
+  });
+
+  it("只给 ID 的初始物品被拒绝：不允许从 ID 伪造实体", () => {
+    let thrown: unknown;
+    try {
+      createInitialWorldState({ ...baseInput, startingItemIds: [asItemId("item_1")] });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(InitialWorldStateInvariantError);
+    expect((thrown as InitialWorldStateInvariantError).code).toBe("initial_item_details_required");
   });
 
   it("findLocation returns entry by id, undefined if missing", () => {
@@ -53,7 +95,7 @@ describe("WorldState", () => {
     expect(findLocation(ws, asLocationId("nonexistent"))).toBeUndefined();
   });
 
-  it("appendLocation adds new location immutably", () => {
+  it("appendLocation 重建 store：兼容数组与 record 同步增长", () => {
     const ws = createInitialWorldState(baseInput);
     const newLoc: LocationEntry = {
       id: asLocationId("loc_new"),
@@ -69,22 +111,26 @@ describe("WorldState", () => {
     const ws2 = appendLocation(ws, newLoc);
     expect(findLocation(ws2, asLocationId("loc_new"))).toBeDefined();
     expect(findLocation(ws, asLocationId("loc_new"))).toBeUndefined(); // 原state不变
+    expect(entitiesOfKind(ws2.entityStore, "location").map((record) => record.core.id))
+      .toEqual([asLocationId("loc_1"), asLocationId("loc_new")]);
+    expect(validateEntityCompatibilityProjection(ws2.entityStore, ws2)).toEqual([]);
   });
 
   it("允许回访已到访地点，但未到访地点仍要求当前地点相邻", () => {
     const loc1 = asLocationId("loc_1");
     const loc2 = asLocationId("loc_2");
     const loc3 = asLocationId("loc_3");
-    const ws = {
-      ...createInitialWorldState({ ...baseInput, startingLocation: { ...startingLocation, connectedLocationIds: [loc2] } }),
-      locations: [
-        { ...startingLocation, id: loc1, connectedLocationIds: [loc2] },
-        { ...startingLocation, id: loc2, connectedLocationIds: [loc1, loc3] },
-        { ...startingLocation, id: loc3, connectedLocationIds: [loc2] },
-      ],
-      unlockedLocationIds: [loc1, loc2, loc3],
-      visitedLocationIds: [loc1, loc2],
-    };
+    const ws = createWorldStateFixture({
+      generation: baseInput.generation,
+      projection: projectionFor(
+        [
+          { ...startingLocation, id: loc1, connectedLocationIds: [loc2] },
+          { ...startingLocation, id: loc2, name: "loc2", connectedLocationIds: [loc1, loc3] },
+          { ...startingLocation, id: loc3, name: "loc3", connectedLocationIds: [loc2] },
+        ],
+        { visitedLocationIds: [loc1, loc2] },
+      ),
+    });
 
     expect(isTravelTarget(ws, loc2)).toBe(true);
     expect(isTravelTarget(ws, loc3)).toBe(false);
@@ -113,6 +159,9 @@ describe("WorldState", () => {
     };
     const ws2 = appendNpc(ws, newNpc);
     expect(findNpc(ws2, asNpcId("npc_new"))).toBeDefined();
+    // 位置由 PositionComponent 决定：名册随之派生，不再由调用方手填。
+    expect(findLocation(ws2, asLocationId("loc_1"))?.npcIds).toEqual([asNpcId("npc_new")]);
+    expect(validateEntityCompatibilityProjection(ws2.entityStore, ws2)).toEqual([]);
   });
 
   it("accepts a bounded investigation approach without exposing fact text", () => {

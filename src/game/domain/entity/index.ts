@@ -1,5 +1,5 @@
-// Entity/Component 层的公开面：类型化 store、稳定 ID 核心、固定组件与只读 selector。
-// 禁止反向 import worldState.ts；兼容投影在 entityProjection.ts（Task 2）中登记。
+// Entity/Component 层的公开面：类型化 store、稳定 ID 核心、固定组件、只读 selector
+// 与唯一的 legacy 兼容投影。禁止反向 import worldState.ts。
 export type { EntityCore, EntityId, EntityKind, EntityLifecycle } from "./entityCore";
 export type {
   EnemyComponent,
@@ -38,3 +38,15 @@ export {
   type EntityStoreValidationIssue,
   type ParseEntityStoreResult,
 } from "./entityStore";
+export {
+  compileEntityStoreFromCompatibilityProjection,
+  EntityProjectionInvariantError,
+  projectEntityStore,
+  validateCompatibilityProjectionInput,
+  validateEntityCompatibilityProjection,
+  validateEntityReferences,
+  type EntityCompatibilityProjection,
+  type EntityProjectionIssue,
+  type EntityReferenceIssue,
+  type EntityReferenceIssueCode,
+} from "./entityProjection";

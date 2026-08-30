@@ -8,13 +8,14 @@ import type {
   GameRepository,
 } from "./server/persistence/gameRepository";
 import { asGameId } from "./server/persistence/gameRepository";
+import { appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
+import type { GameEvent } from "@/game/domain/events";
+import type { GenerationMetadata } from "@/game/domain/worldEntity";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
-  createInitialWorldState,
-  appendLocation,
-  appendNpc,
-  type LocationEntry,
-  type NpcEntry,
-} from "@/game/domain/worldState";
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { asLocationId, asNpcId, asGenerationId, asEnemyId, asQuestId, asItemId, asFactId, asEndingId } from "@/game/domain/worldEntity";
@@ -77,14 +78,33 @@ const npc1: NpcEntry = {
   memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
 };
 
-function buildWorldState(): WorldState {
-  const base = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  });
-  return { ...appendNpc(appendLocation(base, loc2), npc1), unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+};
+
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [loc1, loc2],
+  currentLocationId: loc1.id,
+  unlockedLocationIds: [loc1.id, loc2.id],
+  visitedLocationIds: [loc1.id],
+  npcs: [npc1],
+  items: [],
+  inventory: [],
+  worldFacts: [],
+  quests: [],
+  enemies: [],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+
+function buildWorldState(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return createWorldStateFixtureWith(
+    { generation: GENERATION, base: BASE_PROJECTION },
+    { eventLedger: INITIALIZED_LEDGER, ...overrides },
+  );
 }
 
 function buildStoryState(): StoryState {
@@ -92,9 +112,8 @@ function buildStoryState(): StoryState {
 }
 
 /** 世界带上一条主线任务：首个目标与老板交谈，第二个目标获取盟誓印谱。 */
-function buildWorldWithMainQuest(): WorldState {
-  return {
-    ...buildWorldState(),
+function buildWorldWithMainQuest(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return buildWorldState({
     quests: [{
       id: asQuestId("quest_0"),
       name: "查明真相",
@@ -111,7 +130,8 @@ function buildWorldWithMainQuest(): WorldState {
       status: "active",
     }],
     items: [{ id: asItemId("item_seal"), name: "盟誓印谱", description: "刻着盟约的印谱", kind: "quest", tags: [] }],
-  };
+    ...overrides,
+  });
 }
 
 function buildFocusedDialogueStoryState(focusNpcId = asNpcId("npc_1")): StoryState {
@@ -223,8 +243,7 @@ describe("performTurn 单次 CAS 提交", () => {
   const talkAction: Action = { type: "talk", npcId: asNpcId("npc_1"), dialogueAct: "ask" };
 
   it("最终正式选择结算结局后仍创建 pending，由叙事包生成最终文本", async () => {
-    const finalWorld: WorldState = {
-      ...buildWorldState(),
+    const finalWorld = buildWorldState({
       quests: [{
         id: asQuestId("quest_final"),
         name: "终幕主线",
@@ -251,7 +270,7 @@ describe("performTurn 单次 CAS 提交", () => {
           requirements: [{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_1"), value: 0 }],
         },
       ],
-    };
+    });
     const finalStory = {
       ...buildFocusedDialogueStoryState(),
       currentAct: 3,
@@ -281,8 +300,7 @@ describe("performTurn 单次 CAS 提交", () => {
 
   it("结局包内没有可消费步骤时，服务端铸造的结局立场仍可结算结局", async () => {
     const base = buildStoryState();
-    const finalWorld: WorldState = {
-      ...buildWorldState(),
+    const finalWorld = buildWorldState({
       quests: [{
         id: asQuestId("quest_final"),
         name: "终幕主线",
@@ -309,7 +327,7 @@ describe("performTurn 单次 CAS 提交", () => {
           requirements: [{ kind: "npc_affinity_at_most", npcId: asNpcId("npc_1"), value: 0 }],
         },
       ],
-    };
+    });
     const endingStory: StoryState = {
       ...base,
       currentAct: 3,
@@ -363,12 +381,10 @@ describe("performTurn 单次 CAS 提交", () => {
       id: asEnemyId("enemy_1"), name: "灰狼", tier: "normal" as const,
       stats: toStatBlock(ENEMY_COMBAT_STATS.normal), locationId: asLocationId("loc_1"), tags: [],
     };
-    const base = buildWorldState();
-    const modern: WorldState = {
-      ...base,
-      player: { ...base.player, stats: toStatBlock(PLAYER_COMBAT_STATS) },
+    const modern = buildWorldState({
+      player: { name: "p", identity: "i", stats: toStatBlock(PLAYER_COMBAT_STATS) },
       enemies: [enemy],
-    };
+    });
     const encounter = buildEncounter(modern, enemy.id);
     const active = {
       status: "active" as const,
@@ -410,8 +426,7 @@ describe("performTurn 单次 CAS 提交", () => {
     };
     const base = buildWorldState();
     const beforeLedger = base.eventLedger;
-    const world: WorldState = {
-      ...base,
+    const world = buildWorldState({
       enemies: [enemy],
       battle: {
         status: "active",
@@ -426,7 +441,7 @@ describe("performTurn 单次 CAS 提交", () => {
           eventLedger: beforeLedger,
         },
       },
-    };
+    });
     const { repo, record, applyCalls } = createSpyRepo(world, buildStoryState());
     const action: Action = { type: "battle_action", action: "guard" };
     const result = await performTurn(
@@ -553,7 +568,10 @@ describe("performTurn 单次 CAS 提交", () => {
   });
 
   it("消费到达步骤后，将其 NPC 二选一作为下一次正式决策", async () => {
-    const npc2: NpcEntry = { ...npc1, id: asNpcId("npc_2"), name: "驿站守夜人", locationId: loc2.id };
+    const npc2: NpcEntry = {
+      ...npc1, id: asNpcId("npc_2"), name: "驿站守夜人", locationId: loc2.id,
+      memory: { ...npc1.memory, npcId: asNpcId("npc_2") },
+    };
     const world = appendNpc(buildWorldState(), npc2);
     const story = buildStoryState();
     const preparedStory: StoryState = {
@@ -783,7 +801,7 @@ describe("performTurn provider boundary（Task 7）", () => {
   });
 
   it("未知地点是客户端行动错误且零写入", async () => {
-    const wsMystery = { ...buildWorldState(), unlockedLocationIds: [...buildWorldState().unlockedLocationIds, asLocationId("loc_mystery")] };
+    const wsMystery = buildWorldState();
     const { repo, record, applyCalls } = createSpyRepo(wsMystery, buildStoryState());
 
     const result = await performTurn(
@@ -897,8 +915,7 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
       name: "传讯人",
       memory: { ...npc1.memory, npcId: asNpcId("npc_2") },
     };
-    const world: WorldState = {
-      ...buildWorldState(),
+    const world = buildWorldState({
       npcs: [npc1, secondNpc],
       quests: [{
         id: asQuestId("quest_handoff"), name: "循迹", description: "与传讯人核对线索",
@@ -906,7 +923,7 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
         onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" }, tags: [],
         kind: "main", stage: 1, status: "active",
       }],
-    };
+    });
     const { repo, record, applyCalls } = createSpyRepo(world, buildFocusedDialogueStoryState(npc1.id));
 
     const result = await performTurn(
@@ -1128,14 +1145,13 @@ describe("performTurn 叙事节拍与目标转换（Task 4）", () => {
   });
 
   it("非决策行动不消费候选事件，也不写入规则场景", async () => {
-    const enemyWs = {
-      ...buildWorldState(),
+    const enemyWs = buildWorldState({
       enemies: [{
-        id: asEnemyId("enemy_1"), name: "山贼", tier: "normal" as const,
+        id: asEnemyId("enemy_1"), name: "山贼", tier: "normal",
         stats: { hp: 10, attack: 5, defense: 2 },
         locationId: asLocationId("loc_1"), tags: [],
       }],
-    };
+    });
     const candidate: EventCandidate = {
       id: "ce-1",
       kind: "enemy_appears",
@@ -1168,8 +1184,7 @@ describe("performTurn 叙事节拍与目标转换（Task 4）", () => {
 describe("performTurn — 自动揭示必经事实（Task 3）", () => {
   it("交谈完成交接后同回合自动发现事实并完成任务，单次 CAS 且 job 覆盖自动事件", async () => {
     const FACT_1_ID = asFactId("fact_1");
-    const world: WorldState = {
-      ...buildWorldState(),
+    const world = buildWorldState({
       worldFacts: [{ factId: FACT_1_ID, text: "车轮印", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
       quests: [{
         id: asQuestId("quest_0"), name: "查明真相", description: "查清车轮印的来路",
@@ -1180,7 +1195,7 @@ describe("performTurn — 自动揭示必经事实（Task 3）", () => {
         onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
         tags: [], kind: "main", stage: 1, status: "active",
       }],
-    };
+    });
     const story = buildFocusedAskDialogueStoryState();
     const choice = firstApprovedChoice(story);
     const { repo, applyCalls } = createSpyRepo(world, story);

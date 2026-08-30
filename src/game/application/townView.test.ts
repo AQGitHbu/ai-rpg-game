@@ -1,31 +1,74 @@
 import { describe, expect, it } from "vitest";
 import { buildTownView } from "./townView";
-import type { WorldState, NpcEntry } from "@/game/domain/worldState";
-import { createInitialWorldState } from "@/game/domain/worldState";
+import type { LocationEntry, NpcEntry, PlayerState, WorldState } from "@/game/domain/worldState";
+import type { GenerationMetadata } from "@/game/domain/worldEntity";
+import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 import { asLocationId, asNpcId, asGenerationId } from "@/game/domain/worldEntity";
+
+// ---------------------------------------------------------------------------
+// Fixture：单地点小镇世界。起始地点与其名册、NPC 条目一次传入完整兼容投影，
+// 由 worldStateFixture 组装 entityStore 后再投影，禁止 spread 单条 legacy 数组。
+// ---------------------------------------------------------------------------
+
+const PLAYER: PlayerState = { name: "游侠", identity: "冒险者", stats: { hp: 100, attack: 10, defense: 5 } };
+
+function generationOf(generationId: string, seed: string): GenerationMetadata {
+  return {
+    generationId: asGenerationId(generationId), seed, templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+  };
+}
+
+function townNpc(id: NpcEntry["id"], name: string, role: string, description: string): NpcEntry {
+  return {
+    id, name, role, description,
+    locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: false,
+    memory: {
+      npcId: id, knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
+      relationship: { affinity: 0 }, emotion: "neutral", goals: [],
+    },
+  };
+}
+
+function townWorld(input: {
+  readonly generation: GenerationMetadata;
+  readonly location: LocationEntry;
+  readonly npcs: readonly NpcEntry[];
+}): WorldState {
+  return createWorldStateFixture({
+    generation: input.generation,
+    projection: {
+      player: PLAYER,
+      locations: [input.location],
+      currentLocationId: input.location.id,
+      unlockedLocationIds: [input.location.id],
+      visitedLocationIds: [input.location.id],
+      npcs: input.npcs,
+      items: [],
+      inventory: [],
+      worldFacts: [],
+      quests: [],
+      enemies: [],
+      defeatedEnemyIds: [],
+      factions: [],
+    },
+  });
+}
 
 function makeWorldWithTown(): WorldState {
   const town = bindNpcToTownSlot(
     createTownRuntime({ locationId: asLocationId("loc_0"), seed: "town-view-test" }),
     asNpcId("npc_0"),
   ).town;
-  const base = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "游侠", identity: "冒险者", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: {
+  return townWorld({
+    generation: generationOf("g1", "s"),
+    location: {
       id: asLocationId("loc_0"), name: "边陲小镇", description: "一座边陲小镇。", kind: "main",
       connectedLocationIds: [], npcIds: [asNpcId("npc_0")], availableItemIds: [], tags: [],
       scale: "town", town,
     },
-    startingItemIds: [],
+    npcs: [townNpc(asNpcId("npc_0"), "沈掌柜", "关键线人", "掌握消息的知情人。")],
   });
-  const npc: NpcEntry = {
-    id: asNpcId("npc_0"), name: "沈掌柜", role: "关键线人", description: "掌握消息的知情人。",
-    locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: false,
-    memory: { npcId: asNpcId("npc_0"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
-  };
-  return { ...base, npcs: [npc] };
 }
 
 describe("buildTownView", () => {
@@ -49,23 +92,14 @@ describe("buildTownView", () => {
       createTownRuntime({ locationId, seed: "named-town-view", openingBuildingName: "听雨客栈" }),
       npcId,
     ).town;
-    const base = createInitialWorldState({
-      generation: { generationId: asGenerationId("g-named"), seed: "s-named", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-      player: { name: "游侠", identity: "冒险者", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocation: {
+    const view = buildTownView(townWorld({
+      generation: generationOf("g-named", "s-named"),
+      location: {
         id: locationId, name: "青石镇", description: "一座边陲小镇。", kind: "main",
         connectedLocationIds: [], npcIds: [npcId], availableItemIds: [], tags: [], scale: "town", town,
       },
-      startingItemIds: [],
-    });
-    const view = buildTownView({
-      ...base,
-      npcs: [{
-        id: npcId, name: "沈掌柜", role: "关键线人", description: "掌握消息的知情人。", locationId,
-        isCompanion: false, tags: [], met: false,
-        memory: { npcId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
-      }],
-    }, locationId);
+      npcs: [townNpc(npcId, "沈掌柜", "关键线人", "掌握消息的知情人。")],
+    }), locationId);
 
     expect(view?.interactiveBuildings[0]?.displayName).toBe("听雨客栈");
     expect(view?.snapshot.buildings.find((building) => building.buildingId === town.slots[0]?.buildingId)?.displayName)
@@ -74,15 +108,14 @@ describe("buildTownView", () => {
 
   it("只暴露已绑定 NPC 的 slot；空闲 slot 不产生可交互条目", () => {
     const town = createTownRuntime({ locationId: asLocationId("loc_0"), seed: "town-view-test-2" });
-    const ws = createInitialWorldState({
-      generation: { generationId: asGenerationId("g2"), seed: "s2", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-      player: { name: "游侠", identity: "冒险者", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocation: {
+    const ws = townWorld({
+      generation: generationOf("g2", "s2"),
+      location: {
         id: asLocationId("loc_0"), name: "空镇", description: "一座无人小镇。", kind: "main",
         connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
         scale: "town", town,
       },
-      startingItemIds: [],
+      npcs: [],
     });
     const view = buildTownView(ws, "loc_0");
     expect(view).not.toBeNull();
@@ -93,23 +126,14 @@ describe("buildTownView", () => {
     const locationId = asLocationId("loc_0");
     const npcId = asNpcId("npc_0");
     const town = createTownRuntime({ locationId, seed: "town-view-repair" });
-    const base = createInitialWorldState({
-      generation: { generationId: asGenerationId("g3"), seed: "s3", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-      player: { name: "游侠", identity: "冒险者", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocation: {
+    const ws = townWorld({
+      generation: generationOf("g3", "s3"),
+      location: {
         id: locationId, name: "青石镇", description: "一座边陲小镇。", kind: "main",
         connectedLocationIds: [], npcIds: [npcId], availableItemIds: [], tags: [], scale: "town", town,
       },
-      startingItemIds: [],
+      npcs: [townNpc(npcId, "刘二", "关键线人", "掌握消息。")],
     });
-    const ws: WorldState = {
-      ...base,
-      npcs: [{
-        id: npcId, name: "刘二", role: "关键线人", description: "掌握消息。", locationId,
-        isCompanion: false, tags: [], met: false,
-        memory: { npcId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
-      }],
-    };
 
     const view = buildTownView(ws, locationId);
     expect(view?.interactiveBuildings).toEqual([
@@ -123,27 +147,18 @@ describe("buildTownView", () => {
     const slotNpcIds = town.slots.map((_, index) => asNpcId(`npc_slot_${index}`));
     for (const npcId of slotNpcIds) town = bindNpcToTownSlot(town, npcId).town;
     const focusNpcId = asNpcId("npc_focus");
-    const base = createInitialWorldState({
-      generation: { generationId: asGenerationId("g-focus"), seed: "s-focus", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-      player: { name: "游侠", identity: "冒险者", stats: { hp: 100, attack: 10, defense: 5 } },
-      startingLocation: {
+    const ws = townWorld({
+      generation: generationOf("g-focus", "s-focus"),
+      location: {
         id: locationId, name: "青石镇", description: "一座边陲小镇。", kind: "main",
         connectedLocationIds: [], npcIds: [...slotNpcIds, focusNpcId], availableItemIds: [], tags: [], scale: "town", town,
       },
-      startingItemIds: [],
-    });
-    const npc = (id: typeof focusNpcId, name: string) => ({
-      id, name, role: "旧案传讯人", description: "带着线索而来。", locationId,
-      isCompanion: false, tags: [], met: false,
-      memory: { npcId: id, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral" as const, goals: [] },
-    });
-    const view = buildTownView({
-      ...base,
       npcs: [
-        ...slotNpcIds.map((id, index) => npc(id, `旧人物${index + 1}`)),
-        npc(focusNpcId, "当前目标"),
+        ...slotNpcIds.map((id, index) => townNpc(id, `旧人物${index + 1}`, "旧案传讯人", "带着线索而来。")),
+        townNpc(focusNpcId, "当前目标", "旧案传讯人", "带着线索而来。"),
       ],
-    }, locationId, focusNpcId);
+    });
+    const view = buildTownView(ws, locationId, focusNpcId);
     expect(view?.interactiveBuildings).toHaveLength(town.slots.length);
     expect(view?.interactiveBuildings.filter((entry) => entry.isCurrentFocus)).toEqual([
       expect.objectContaining({ npcId: "npc_focus", npcName: "当前目标" }),

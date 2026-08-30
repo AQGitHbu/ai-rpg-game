@@ -1,71 +1,85 @@
 import { describe, it, expect } from "vitest";
 import { compileCandidateEvent } from "./compileCandidateEvent";
 import type { ApprovedEventCandidate } from "./approveCandidateEvents";
-import { asNpcId, asFactId, asEnemyId, asLocationId, asGenerationId } from "@/game/domain/worldEntity";
-import { createInitialWorldState, appendNpc, appendEnemy, findNpc } from "@/game/domain/worldState";
-import type { NpcEntry, EnemyEntry } from "@/game/domain/worldState";
+import { asNpcId, asFactId, asEnemyId, asLocationId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { findNpc } from "@/game/domain/worldState";
+import type {
+  EnemyEntry, LocationEntry, NpcEntry, PlayerState, WorldFactEntry, WorldState,
+} from "@/game/domain/worldState";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
+import { createWorldStateFixture, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 
 const NOW = () => "2026-08-09T00:00:00.000Z";
 
-function makeWorldState(): ReturnType<typeof createInitialWorldState> {
-  const ws = createInitialWorldState({
-    generation: {
-      generationId: asGenerationId("gen-1"),
-      seed: "seed-1",
-      templateVersion: "tpl-1",
-      inputDigest: "digest",
-      gameType: "wuxia",
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("gen-1"),
+  seed: "seed-1",
+  templateVersion: "tpl-1",
+  inputDigest: "digest",
+  gameType: "wuxia",
+};
+const PLAYER: PlayerState = { name: "P", identity: "hero", stats: { hp: 30, attack: 10, defense: 5 } };
+const LOC_1: LocationEntry = {
+  id: asLocationId("loc_1"),
+  name: "起点",
+  description: "",
+  kind: "main",
+  connectedLocationIds: [asLocationId("loc_2")],
+  npcIds: [],
+  availableItemIds: [],
+  tags: [],
+};
+const LOC_2: LocationEntry = {
+  id: asLocationId("loc_2"),
+  name: "岔路",
+  description: "",
+  kind: "main",
+  connectedLocationIds: [asLocationId("loc_1")],
+  npcIds: [],
+  availableItemIds: [],
+  tags: [],
+};
+const NPC_1: NpcEntry = {
+  id: asNpcId("npc_1"),
+  name: "老者",
+  role: "导师",
+  description: "",
+  locationId: asLocationId("loc_1"),
+  isCompanion: false,
+  tags: [],
+  met: true,
+  memory: {
+    npcId: asNpcId("npc_1"),
+    knownFactIds: [asFactId("fact_1")],
+    hiddenFactIds: [],
+    interactionHistory: [],
+    relationship: { affinity: 0 },
+    emotion: "neutral",
+    goals: [],
+  },
+};
+const ENEMY_1: EnemyEntry = {
+  id: asEnemyId("enemy_1"),
+  name: "山贼",
+  tier: "normal",
+  stats: { hp: 10, attack: 5, defense: 2 },
+  locationId: asLocationId("loc_1"),
+  tags: [],
+};
+// 老者已知的事实必须真实存在：v3 会在编译期拒绝悬空的 NPC 事实引用。
+const FACT_1: WorldFactEntry = { factId: asFactId("fact_1"), text: "老者守口的旧事", source: "generated", discovered: false, locationId: asLocationId("loc_1") };
+const FACT_2: WorldFactEntry = { factId: asFactId("fact_2"), text: "密道在古井之下", source: "generated", discovered: false, locationId: asLocationId("loc_1") };
+
+function makeWorldState(): WorldState {
+  return createWorldStateFixture({
+    generation: GENERATION,
+    projection: {
+      ...emptyProjection({ player: PLAYER, locations: [LOC_1, LOC_2], currentLocationId: LOC_1.id }),
+      npcs: [NPC_1],
+      enemies: [ENEMY_1],
+      worldFacts: [FACT_1, FACT_2],
     },
-    player: { name: "P", identity: "hero", stats: { hp: 30, attack: 10, defense: 5 } },
-    startingLocation: {
-      id: asLocationId("loc_1"),
-      name: "起点",
-      description: "",
-      kind: "main",
-      connectedLocationIds: [asLocationId("loc_2")],
-      npcIds: [],
-      availableItemIds: [],
-      tags: [],
-    },
-    startingItemIds: [],
   });
-  const npc: NpcEntry = {
-    id: asNpcId("npc_1"),
-    name: "老者",
-    role: "导师",
-    description: "",
-    locationId: asLocationId("loc_1"),
-    isCompanion: false,
-    tags: [],
-    met: true,
-    memory: {
-      npcId: asNpcId("npc_1"),
-      knownFactIds: [asFactId("fact_1")],
-      hiddenFactIds: [],
-      interactionHistory: [],
-      relationship: { affinity: 0 },
-      emotion: "neutral",
-      goals: [],
-    },
-  };
-  const enemy: EnemyEntry = {
-    id: asEnemyId("enemy_1"),
-    name: "山贼",
-    tier: "normal",
-    stats: { hp: 10, attack: 5, defense: 2 },
-    locationId: asLocationId("loc_1"),
-    tags: [],
-  };
-  const withNpc = appendNpc(ws, npc);
-  const withEnemy = appendEnemy(withNpc, enemy);
-  // 预置一条世界事实（未发现）
-  return {
-    ...withEnemy,
-    worldFacts: [
-      { factId: asFactId("fact_2"), text: "密道在古井之下", source: "generated", discovered: false, locationId: asLocationId("loc_1") },
-    ],
-  };
 }
 
 function approved(kind: EventCandidate["kind"]): ApprovedEventCandidate {

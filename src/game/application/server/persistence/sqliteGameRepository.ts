@@ -173,6 +173,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
   }
 
   if (worldState["version"] === 1
+    || worldState["version"] === 2
     || storyState["version"] === 1
     || storyState["version"] === 2
     || storyState["version"] === 3
@@ -180,7 +181,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
     || storyState["version"] === 5) {
     return corrupt("UNSUPPORTED_RECORD");
   }
-  if (worldState["version"] !== 2 || storyState["version"] !== STORY_STATE_SCHEMA_VERSION) {
+  if (worldState["version"] !== 3 || storyState["version"] !== STORY_STATE_SCHEMA_VERSION) {
     return corrupt("VERSION_MISMATCH");
   }
   const parsedNarrative = parseNarrativeRuntimeState(storyState["narrative"]);

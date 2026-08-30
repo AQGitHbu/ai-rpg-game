@@ -4,36 +4,54 @@ import type { GameRepository, GameRecord } from "./server/persistence/gameReposi
 import type { NarrativeBundleSource, NarrativeBundleSourceResult } from "./narrativeBundleSource";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
+import type { GenerationMetadata } from "@/game/domain/worldEntity";
+import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asNpcId, asLocationId } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
-import { createInitialWorldState } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { createGame, createFixtureOpeningSource } from "./createGame";
 import { asGameId } from "./server/persistence/gameRepository";
 import { projectGameSessionView } from "./gameSessionView";
 
+const GENERATION: GenerationMetadata = {
+  generationId: "gen_test" as never,
+  seed: "test",
+  templateVersion: "v2",
+  inputDigest: "",
+  gameType: "wuxia",
+};
+
+const LOC_0 = asLocationId("loc_0");
+
 function createMinimalWorldState(): WorldState {
-  return createInitialWorldState({
-    generation: {
-      generationId: "gen_test" as never,
-      seed: "test",
-      templateVersion: "v2",
-      inputDigest: "",
-      gameType: "wuxia",
+  return createWorldStateFixture({
+    generation: GENERATION,
+    projection: {
+      player: { name: "测试玩家", identity: "测试身份", stats: { hp: 100, attack: 10, defense: 5 } },
+      locations: [{
+        id: LOC_0,
+        name: "测试地点",
+        description: "一个测试地点",
+        kind: "main",
+        connectedLocationIds: [],
+        npcIds: [],
+        availableItemIds: [],
+        tags: [],
+      }],
+      currentLocationId: LOC_0,
+      unlockedLocationIds: [LOC_0],
+      visitedLocationIds: [LOC_0],
+      npcs: [],
+      items: [],
+      inventory: [],
+      worldFacts: [],
+      quests: [],
+      enemies: [],
+      defeatedEnemyIds: [],
+      factions: [],
     },
-    player: { name: "测试玩家", identity: "测试身份", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: {
-      id: asLocationId("loc_0"),
-      name: "测试地点",
-      description: "一个测试地点",
-      kind: "main",
-      connectedLocationIds: [],
-      npcIds: [asNpcId("npc_0")],
-      availableItemIds: [],
-      tags: [],
-    },
-    startingItemIds: [],
+    eventLedger: [{ type: "game_initialized", generation: GENERATION }],
   });
 }
 

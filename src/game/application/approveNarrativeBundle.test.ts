@@ -3,10 +3,17 @@ import { approveNarrativeBundle } from "./approveNarrativeBundle";
 import type { ApproveNarrativeBundleInput } from "./approveNarrativeBundle";
 import type { NarrativeBundleProposal } from "@/game/domain/narrativeBundle";
 import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
-import type { WorldState, NpcEntry } from "@/game/domain/worldState";
+import type {
+  LocationEntry, NpcEntry, QuestEntry, WorldFactEntry, WorldState,
+} from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { createInitialWorldState } from "@/game/domain/worldState";
+import type { GenerationMetadata } from "@/game/domain/worldEntity";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import {
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import {
   asLocationId,
@@ -32,91 +39,117 @@ function storyState(): StoryState {
   });
 }
 
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("generation_1"),
+  seed: "seed",
+  templateVersion: "v1",
+  inputDigest: "digest",
+  gameType: "wuxia",
+};
+
+const townLocation: LocationEntry = {
+  id: locTown,
+  name: "小镇",
+  description: "山脚下的小镇。",
+  kind: "main",
+  connectedLocationIds: [locDyn1],
+  npcIds: [],
+  availableItemIds: [],
+  tags: [],
+};
+
+const templeLocation: LocationEntry = {
+  id: locDyn1,
+  name: "破庙",
+  description: "一座破败的庙宇。",
+  kind: "main",
+  connectedLocationIds: [locTown],
+  npcIds: [npcDyn1],
+  availableItemIds: [],
+  tags: [],
+};
+
+const templeNpc: NpcEntry = {
+  id: npcDyn1,
+  name: "老乞丐",
+  role: "破庙守夜人",
+  description: "一个白发苍苍的老乞丐。",
+  locationId: locDyn1,
+  isCompanion: false,
+  tags: [],
+  met: false,
+  memory: {
+    npcId: npcDyn1,
+    knownFactIds: [],
+    hiddenFactIds: [],
+    interactionHistory: [],
+    relationship: { affinity: 0 },
+    emotion: "neutral",
+    goals: [],
+  },
+};
+
+const mainQuest: QuestEntry = {
+  id: questId,
+  name: "主线",
+  description: "追查破庙异状。",
+  objectives: [
+    { kind: "visit_location", locationId: locDyn1 },
+    { kind: "discover_fact", factId: factTracks },
+    { kind: "talk_to_npc", npcId: npcDyn1 },
+  ],
+  onSuccess: { kind: "advance_story" },
+  onFailure: { kind: "closed" },
+  tags: [],
+  kind: "main",
+  stage: 1,
+  status: "active",
+};
+
+const tracksFact: WorldFactEntry = {
+  factId: factTracks,
+  text: "泥地上有杂乱的脚印。",
+  source: "generated",
+  discovered: false,
+  locationId: locDyn1,
+  investigationLabel: "查看脚印",
+  investigationApproaches: [
+    { approachId: "quiet", label: "安静观察", evidenceQuality: "clean", tensionDelta: 0 },
+  ],
+};
+
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "侠客", identity: "旅人", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [townLocation, templeLocation],
+  currentLocationId: locTown,
+  unlockedLocationIds: [locTown],
+  visitedLocationIds: [locTown],
+  npcs: [templeNpc],
+  items: [],
+  inventory: [],
+  worldFacts: [tracksFact],
+  quests: [mainQuest],
+  enemies: [],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+function buildWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return createWorldStateFixtureWith(
+    { generation: GENERATION, base: BASE_PROJECTION },
+    { eventLedger: [{ type: "game_initialized", generation: GENERATION }], ...overrides },
+  );
+}
+
 function worldState(): WorldState {
-  const base = createInitialWorldState({
-    generation: {
-      generationId: asGenerationId("generation_1"),
-      seed: "seed",
-      templateVersion: "v1",
-      inputDigest: "digest",
-      gameType: "wuxia",
-    },
-    player: { name: "侠客", identity: "旅人", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: {
-      id: locTown,
-      name: "小镇",
-      description: "山脚下的小镇。",
-      kind: "main",
-      connectedLocationIds: [locDyn1],
-      npcIds: [],
-      availableItemIds: [],
-      tags: [],
-    },
-    startingItemIds: [],
+  return buildWorld();
+}
+
+/** 权威目标已切到交谈：当前地点名册里的 NPC 即焦点，终端回到 current_scene 决策点。 */
+function directTalkWorld(): WorldState {
+  return buildWorld({
+    quests: [{ ...mainQuest, objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }] }],
   });
-  const npc: NpcEntry = {
-    id: npcDyn1,
-    name: "老乞丐",
-    role: "破庙守夜人",
-    description: "一个白发苍苍的老乞丐。",
-    locationId: locDyn1,
-    isCompanion: false,
-    tags: [],
-    met: false,
-    memory: {
-      npcId: npcDyn1,
-      knownFactIds: [],
-      hiddenFactIds: [],
-      interactionHistory: [],
-      relationship: { affinity: 0 },
-      emotion: "neutral",
-      goals: [],
-    },
-  };
-  return {
-    ...base,
-    locations: [
-      base.locations[0]!,
-      {
-        id: locDyn1,
-        name: "破庙",
-        description: "一座破败的庙宇。",
-        kind: "main",
-        connectedLocationIds: [locTown],
-        npcIds: [npcDyn1],
-        availableItemIds: [],
-        tags: [],
-      },
-    ],
-    npcs: [npc],
-    quests: [{
-      id: questId,
-      name: "主线",
-      description: "追查破庙异状。",
-      objectives: [
-        { kind: "visit_location", locationId: locDyn1 },
-        { kind: "discover_fact", factId: factTracks },
-        { kind: "talk_to_npc", npcId: npcDyn1 },
-      ],
-      onSuccess: { kind: "advance_story" },
-      onFailure: { kind: "closed" },
-      tags: [],
-      kind: "main",
-      stage: 1,
-      status: "active",
-    }],
-    worldFacts: [{
-      factId: factTracks,
-      text: "泥地上有杂乱的脚印。",
-      source: "generated",
-      discovered: false,
-      locationId: locDyn1,
-      investigationLabel: "查看脚印",
-      investigationApproaches: [
-        { approachId: "quiet", label: "安静观察", evidenceQuality: "clean", tensionDelta: 0 },
-      ],
-    }],
-  };
 }
 
 function transition(objectiveIndex: number): ObjectiveTransition {
@@ -206,18 +239,26 @@ function baseInput(overrides: Partial<ApproveNarrativeBundleInput> = {}): Approv
   };
 }
 
-/** 自然幕边界：世界尚未扩张，storyState 需要下一幕，提案带完整 worldDelta。 */
-function actBoundaryFixture() {
-  const ws = worldState();
-  const preExpansionWorld: WorldState = {
-    ...ws,
-    locations: [{ ...ws.locations[0]!, connectedLocationIds: [] }],
+/**
+ * 幕边界前的世界：主线已收束、地点尚未扩张。
+ * 旧夹具让这条已完成主线继续指向 loc_dyn_1 / fact_tracks / npc_dyn_1——正是待审批
+ * worldDelta 才具象化的实体；v3 投影要求任务目标引用必须可解析，因此以空目标列表
+ * 表达同一条已完成主线，下一幕首个目标由具象化后的新任务供给。
+ */
+function preExpansionWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return buildWorld({
+    locations: [{ ...townLocation, connectedLocationIds: [] }],
     npcs: [],
     items: [],
     enemies: [],
     worldFacts: [],
-    quests: [{ ...ws.quests[0]!, status: "completed" }],
-  };
+    quests: [{ ...mainQuest, objectives: [], status: "completed" }],
+    ...overrides,
+  });
+}
+
+/** 自然幕边界：世界尚未扩张，storyState 需要下一幕，提案带完整 worldDelta；overrides 扩张幕前世界。 */
+function actBoundaryFixture(overrides: WorldStateFixtureOverrides = {}) {
   const ss: StoryState = {
     ...storyState(),
     currentAct: 2,
@@ -263,7 +304,7 @@ function actBoundaryFixture() {
     }],
     terminal: { kind: "next_decision", target: { kind: "continuation_step", stepKey: "move:loc_dyn_1" } },
   };
-  return { preExpansionWorld, ss, proposal };
+  return { preExpansionWorld: preExpansionWorld(overrides), ss, proposal };
 }
 
 describe("approveNarrativeBundle", () => {
@@ -314,18 +355,9 @@ describe("approveNarrativeBundle", () => {
   });
 
   it("approves a current_scene terminal only when it provides both server candidates", () => {
-    const ws = worldState();
-    const directTalkWorld: WorldState = {
-      ...ws,
-      quests: [{
-        ...ws.quests[0]!,
-        objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }],
-      }],
-    };
-
     const result = approveNarrativeBundle(baseInput({
       proposal: currentSceneProposal(),
-      worldState: directTalkWorld,
+      worldState: directTalkWorld(),
     }));
 
     expect(result.ok).toBe(true);
@@ -336,14 +368,6 @@ describe("approveNarrativeBundle", () => {
   });
 
   it("normalizes whole-line quote wrappers before persisting generated NPC speech", () => {
-    const ws = worldState();
-    const directTalkWorld: WorldState = {
-      ...ws,
-      quests: [{
-        ...ws.quests[0]!,
-        objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }],
-      }],
-    };
     const proposal = currentSceneProposal();
     const result = approveNarrativeBundle(baseInput({
       proposal: {
@@ -356,7 +380,7 @@ describe("approveNarrativeBundle", () => {
           },
         },
       },
-      worldState: directTalkWorld,
+      worldState: directTalkWorld(),
     }));
 
     expect(result.ok).toBe(true);
@@ -389,50 +413,29 @@ describe("approveNarrativeBundle", () => {
   });
 
   it("rejects a dialogue boundary whose current scene omits the focus NPC line", () => {
-    const ws = worldState();
-    const directTalkWorld: WorldState = {
-      ...ws,
-      quests: [{ ...ws.quests[0]!, objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }] }],
-    };
     const proposal = currentSceneProposal();
     const result = approveNarrativeBundle(baseInput({
       proposal: { ...proposal, currentScene: { ...proposal.currentScene, npcLine: null } },
-      worldState: directTalkWorld,
+      worldState: directTalkWorld(),
     }));
 
     expect(result).toEqual({ ok: false, code: "dialogue_focus_line_missing", detail: String(npcDyn1) });
   });
 
   it("rejects a current_scene terminal that omits one of the two candidates", () => {
-    const ws = worldState();
-    const directTalkWorld: WorldState = {
-      ...ws,
-      quests: [{
-        ...ws.quests[0]!,
-        objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }],
-      }],
-    };
     const proposal = currentSceneProposal();
     const result = approveNarrativeBundle(baseInput({
       proposal: {
         ...proposal,
         currentScene: { ...proposal.currentScene, choices: [proposal.currentScene.choices[0]!] },
       },
-      worldState: directTalkWorld,
+      worldState: directTalkWorld(),
     }));
 
     expect(result).toEqual({ ok: false, code: "bundle_invalid_scene" });
   });
 
   it("rejects a proposal terminal that does not match the server graph", () => {
-    const ws = worldState();
-    const directTalkWorld: WorldState = {
-      ...ws,
-      quests: [{
-        ...ws.quests[0]!,
-        objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }],
-      }],
-    };
     const proposal = currentSceneProposal();
     const result = approveNarrativeBundle(baseInput({
       proposal: {
@@ -440,7 +443,7 @@ describe("approveNarrativeBundle", () => {
         currentScene: { ...proposal.currentScene, choices: [] },
         terminal: { kind: "ending" },
       },
-      worldState: directTalkWorld,
+      worldState: directTalkWorld(),
     }));
 
     expect(result).toEqual({ ok: false, code: "bundle_invalid_terminal" });
@@ -464,9 +467,7 @@ describe("approveNarrativeBundle", () => {
   });
 
   it("撞名的下一幕提案带规则引擎理由被拒，供修复重试指明方向", () => {
-    const { preExpansionWorld, ss, proposal } = actBoundaryFixture();
-    const worldWithSameNameEnemy: WorldState = {
-      ...preExpansionWorld,
+    const { preExpansionWorld, ss, proposal } = actBoundaryFixture({
       enemies: [{
         id: asEnemyId("enemy_dyn_0"),
         name: "蒙面劫匪",
@@ -475,11 +476,11 @@ describe("approveNarrativeBundle", () => {
         locationId: locTown,
         tags: [],
       }],
-    };
+    });
 
     const result = approveNarrativeBundle(baseInput({
       proposal,
-      worldState: worldWithSameNameEnemy,
+      worldState: preExpansionWorld,
       storyState: ss,
       transition: { before: null, completed: [], after: null, mode: "advanced_act" },
       evolutionNeed: { kind: "next_act", act: 2 },

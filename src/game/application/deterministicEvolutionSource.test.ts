@@ -1,43 +1,85 @@
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { describe, it, expect } from "vitest";
 import { createDeterministicEvolutionSource, TRUST_ENDING_MIN_AFFINITY, DOUBT_ENDING_MAX_AFFINITY } from "./deterministicEvolutionSource";
-import { createInitialWorldState, type NpcEntry, type WorldState } from "@/game/domain/worldState";
+import type { LocationEntry, NpcEntry, WorldState } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asQuestId, asGenerationId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asQuestId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import {
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
 
-function makeWorldWithNpc(affinity: number): WorldState {
-  const base = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "林惊羽", identity: "外门弟子", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: {
-      id: asLocationId("loc_0"), name: "听雨客栈", description: "山脚小镇的客栈。", kind: "main",
-      connectedLocationIds: [], npcIds: [asNpcId("npc_0")], availableItemIds: [], tags: [],
-    },
-    startingItemIds: [],
-  });
-  const npc: NpcEntry = {
-    id: asNpcId("npc_0"), name: "韩征", role: "掌柜", description: "听雨客栈的掌柜。",
-    locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: true,
+const LOC_0 = asLocationId("loc_0");
+const NPC_0 = asNpcId("npc_0");
+const NPC_1 = asNpcId("npc_1");
+
+const innLocation: LocationEntry = {
+  id: LOC_0, name: "听雨客栈", description: "山脚小镇的客栈。", kind: "main",
+  connectedLocationIds: [], npcIds: [NPC_0], availableItemIds: [], tags: [],
+};
+
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+};
+
+function shopkeeper(affinity: number): NpcEntry {
+  return {
+    id: NPC_0, name: "韩征", role: "掌柜", description: "听雨客栈的掌柜。",
+    locationId: LOC_0, isCompanion: false, tags: [], met: true,
     memory: {
-      npcId: asNpcId("npc_0"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
+      npcId: NPC_0, knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
       relationship: { affinity }, emotion: "neutral", goals: [],
     },
   };
-  return { ...base, npcs: [npc] };
+}
+
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "林惊羽", identity: "外门弟子", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [innLocation],
+  currentLocationId: LOC_0,
+  unlockedLocationIds: [LOC_0],
+  visitedLocationIds: [LOC_0],
+  npcs: [shopkeeper(0)],
+  items: [],
+  inventory: [],
+  worldFacts: [],
+  quests: [],
+  enemies: [],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+function makeWorldWithNpc(affinity: number, overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return createWorldStateFixtureWith(
+    { generation: GENERATION, base: BASE_PROJECTION },
+    { npcs: [shopkeeper(affinity)], ...overrides },
+  );
 }
 
 describe("createDeterministicEvolutionSource ending_pair", () => {
   it("produces a requirement-bearing ending pair keyed to the final main-quest talk npc", async () => {
     const source = createDeterministicEvolutionSource();
-    const ws: WorldState = {
-      ...makeWorldWithNpc(0),
+    // 终幕主线的交谈目标必须在场：任务目标引用只能解析到真实实体。
+    // 断言仍然要求锚点取自目标 npc_9，而不是首位 NPC npc_0。
+    const finalTalkNpc: NpcEntry = {
+      id: asNpcId("npc_9"), name: "旧友", role: "证人", description: "终幕要交谈的人。",
+      locationId: LOC_0, isCompanion: false, tags: [], met: true,
+      memory: {
+        npcId: asNpcId("npc_9"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
+        relationship: { affinity: 0 }, emotion: "neutral", goals: [],
+      },
+    };
+    const ws = makeWorldWithNpc(0, {
+      locations: [{ ...innLocation, npcIds: [NPC_0, finalTalkNpc.id] }],
+      npcs: [shopkeeper(0), finalTalkNpc],
       quests: [{
         id: asQuestId("quest_final"), name: "终局", description: "d",
         objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_9") }],
         onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" },
         tags: [], kind: "main", stage: 9, status: "active",
       }],
-    };
+    });
     const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 1, quests: 1, events: 0 } });
     const result = await source.propose({ worldState: ws, storyState: ss, need: { kind: "ending_pair", finalAct: 3 }, reason: "test" });
     if (!result.ok) throw new Error("expected success");
@@ -77,17 +119,22 @@ describe("createDeterministicEvolutionSource ending_pair", () => {
 
   it("keeps scripted later-act NPCs and quests unique when their names already exist", async () => {
     const source = createDeterministicEvolutionSource();
-    const base = makeWorldWithNpc(0);
-    const existingNpc = { ...base.npcs[0]!, id: asNpcId("npc_1"), name: "苏绾" };
-    const ws: WorldState = {
-      ...base,
-      npcs: [...base.npcs, existingNpc],
+    // 克隆出的既有 NPC 的 memory 必须归属自身（store 校验 npcState.memory.npcId）。
+    const existingNpc: NpcEntry = {
+      ...shopkeeper(0),
+      id: NPC_1,
+      name: "苏绾",
+      memory: { ...shopkeeper(0).memory, npcId: NPC_1 },
+    };
+    const ws = makeWorldWithNpc(0, {
+      locations: [{ ...innLocation, npcIds: [NPC_0, NPC_1] }],
+      npcs: [shopkeeper(0), existingNpc],
       quests: [{
         id: asQuestId("quest_dyn_1"), name: "追问断碑谷", description: "上一幕。", objectives: [],
         onSuccess: { kind: "advance_story" }, onFailure: { kind: "closed" }, tags: ["dynamic"],
         kind: "main", stage: 2, status: "completed",
       }],
-    };
+    });
     const ss = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 2, quests: 2, events: 0 } });
 
     const result = await source.propose({ worldState: ws, storyState: ss, need: { kind: "next_act", act: 3 }, reason: "test" });

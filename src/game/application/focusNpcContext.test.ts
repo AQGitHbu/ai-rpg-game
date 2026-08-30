@@ -2,10 +2,21 @@ import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestF
 import { describe, it, expect } from "vitest";
 import { buildFocusNpcContext } from "./focusNpcContext";
 import type { FocusNpcContext } from "./focusNpcContext";
-import { createInitialWorldState, appendNpc, type LocationEntry, type NpcEntry, type NpcInteraction } from "@/game/domain/worldState";
+import {
+  type LocationEntry,
+  type NpcEntry,
+  type NpcInteraction,
+  type WorldFactEntry,
+  type WorldState,
+} from "@/game/domain/worldState";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asFactId, asGenerationId } from "@/game/domain/worldEntity";
-import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
+import { asLocationId, asNpcId, asFactId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { asNarrativeJobId, asTurnId, type GameEvent } from "@/game/domain/events";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import {
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { GameRecord } from "./server/persistence/gameRepository";
 
@@ -88,57 +99,79 @@ function makeJob(actionId: string): PendingNarrativeJob {
   return result.job;
 }
 
-function makeRecord(): GameRecord {
-  const ws = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc,
-    startingItemIds: [],
-  });
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+};
 
-  // 老板（焦点）：trusted 档位；知道公开 + 私密两条事实；有 6 条交互历史。
-  const history: NpcInteraction[] = [
-    makeInteraction({ actionId: "act_0", turnNumber: 1, topic: { kind: "general" }, topicSummary: "闲谈", outcome: "neutral", relationshipDelta: 1, summary: "首次见面，ask，语气平淡，关系+1" }),
-    makeInteraction({ actionId: "act_1", turnNumber: 2, dialogueAct: "support", topic: { kind: "fact", factId: FACT_PUBLIC }, topicSummary: "询问线索", outcome: "positive", relationshipDelta: 3, summary: "再次交谈，support，气氛融洽，关系+3" }),
-    makeInteraction({ actionId: "act_2", turnNumber: 3, topic: { kind: "quest", questId: "quest_0" as never }, topicSummary: "谈论任务", outcome: "positive", relationshipDelta: 2, summary: "再次交谈，ask，气氛融洽，关系+2" }),
-    makeInteraction({ actionId: "act_3", turnNumber: 4, topic: { kind: "thread", threadId: "main_thread" }, topicSummary: "延续话题", outcome: "neutral", relationshipDelta: 1, summary: "再次交谈，offer，语气平淡，关系+1" }),
-    makeInteraction({ actionId: "act_4", turnNumber: 5, topic: { kind: "general" }, topicSummary: "闲谈", outcome: "positive", relationshipDelta: 1, summary: "再次交谈，reassure，气氛融洽，关系+1" }),
-    // 本轮（job.actionId = act_5）—— relationshipDelta 应取自这条
-    makeInteraction({ actionId: "act_5", turnNumber: 9, topic: { kind: "fact", factId: FACT_PUBLIC }, topicSummary: "询问线索", outcome: "positive", relationshipDelta: 4, summary: "再次交谈，ask，气氛融洽，关系+4" }),
-  ];
-  const boss = makeNpc(NPC_1, {
-    memory: {
-      npcId: NPC_1,
-      knownFactIds: [FACT_PUBLIC, FACT_PRIVATE],
-      hiddenFactIds: [FACT_PRIVATE],
-      interactionHistory: history,
-      relationship: { affinity: 70 },
-      emotion: "warm",
-      goals: ["守住客栈的秘密"],
-    },
-  });
+// 老板（焦点）：trusted 档位；知道公开 + 私密两条事实；有 6 条交互历史。
+const bossHistory: NpcInteraction[] = [
+  makeInteraction({ actionId: "act_0", turnNumber: 1, topic: { kind: "general" }, topicSummary: "闲谈", outcome: "neutral", relationshipDelta: 1, summary: "首次见面，ask，语气平淡，关系+1" }),
+  makeInteraction({ actionId: "act_1", turnNumber: 2, dialogueAct: "support", topic: { kind: "fact", factId: FACT_PUBLIC }, topicSummary: "询问线索", outcome: "positive", relationshipDelta: 3, summary: "再次交谈，support，气氛融洽，关系+3" }),
+  makeInteraction({ actionId: "act_2", turnNumber: 3, topic: { kind: "quest", questId: "quest_0" as never }, topicSummary: "谈论任务", outcome: "positive", relationshipDelta: 2, summary: "再次交谈，ask，气氛融洽，关系+2" }),
+  makeInteraction({ actionId: "act_3", turnNumber: 4, topic: { kind: "thread", threadId: "main_thread" }, topicSummary: "延续话题", outcome: "neutral", relationshipDelta: 1, summary: "再次交谈，offer，语气平淡，关系+1" }),
+  makeInteraction({ actionId: "act_4", turnNumber: 5, topic: { kind: "general" }, topicSummary: "闲谈", outcome: "positive", relationshipDelta: 1, summary: "再次交谈，reassure，气氛融洽，关系+1" }),
+  // 本轮（job.actionId = act_5）—— relationshipDelta 应取自这条
+  makeInteraction({ actionId: "act_5", turnNumber: 9, topic: { kind: "fact", factId: FACT_PUBLIC }, topicSummary: "询问线索", outcome: "positive", relationshipDelta: 4, summary: "再次交谈，ask，气氛融洽，关系+4" }),
+];
 
-  // 客人（非焦点）：有自己的私密事实，绝不可进入焦点上下文。
-  const guest = makeNpc(NPC_2, {
-    memory: {
-      npcId: NPC_2,
-      knownFactIds: [FACT_OTHER_SECRET],
-      hiddenFactIds: [FACT_OTHER_SECRET],
-      interactionHistory: [makeInteraction({ actionId: "guest_1", summary: "客人自己的交谈记录" })],
-      relationship: { affinity: 5 },
-      emotion: "neutral",
-      goals: [],
-    },
-  });
+const bossNpc: NpcEntry = makeNpc(NPC_1, {
+  memory: {
+    npcId: NPC_1,
+    knownFactIds: [FACT_PUBLIC, FACT_PRIVATE],
+    hiddenFactIds: [FACT_PRIVATE],
+    interactionHistory: bossHistory,
+    relationship: { affinity: 70 },
+    emotion: "warm",
+    goals: ["守住客栈的秘密"],
+  },
+});
 
-  const worldState = {
-    ...appendNpc(appendNpc(ws, boss), guest),
-    worldFacts: [
-      { factId: FACT_PUBLIC, text: "矿坑里藏着密道", source: "generated" as const, discovered: true, locationId: LOC_1 },
-      { factId: FACT_PRIVATE, text: "老板年轻时犯下的旧案", source: "generated" as const, discovered: false, locationId: LOC_1 },
-      { factId: FACT_OTHER_SECRET, text: "客人暗藏的一批私货", source: "generated" as const, discovered: false, locationId: LOC_1 },
-    ],
-  };
+// 客人（非焦点）：有自己的私密事实，绝不可进入焦点上下文。
+const guestNpc: NpcEntry = makeNpc(NPC_2, {
+  memory: {
+    npcId: NPC_2,
+    knownFactIds: [FACT_OTHER_SECRET],
+    hiddenFactIds: [FACT_OTHER_SECRET],
+    interactionHistory: [makeInteraction({ actionId: "guest_1", summary: "客人自己的交谈记录" })],
+    relationship: { affinity: 5 },
+    emotion: "neutral",
+    goals: [],
+  },
+});
+
+const innFacts: readonly WorldFactEntry[] = [
+  { factId: FACT_PUBLIC, text: "矿坑里藏着密道", source: "generated", discovered: true, locationId: LOC_1 },
+  { factId: FACT_PRIVATE, text: "老板年轻时犯下的旧案", source: "generated", discovered: false, locationId: LOC_1 },
+  { factId: FACT_OTHER_SECRET, text: "客人暗藏的一批私货", source: "generated", discovered: false, locationId: LOC_1 },
+];
+
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "侠客", identity: "剑客", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [loc],
+  currentLocationId: LOC_1,
+  unlockedLocationIds: [LOC_1],
+  visitedLocationIds: [LOC_1],
+  npcs: [bossNpc, guestNpc],
+  items: [],
+  inventory: [],
+  worldFacts: innFacts,
+  quests: [],
+  enemies: [],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+
+function makeWorldState(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return createWorldStateFixtureWith(
+    { generation: GENERATION, base: BASE_PROJECTION },
+    { eventLedger: INITIALIZED_LEDGER, ...overrides },
+  );
+}
+
+function makeRecord(overrides: WorldStateFixtureOverrides = {}): GameRecord {
+  const worldState = makeWorldState(overrides);
 
   const ss: StoryState = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(),
     gameLength: "short",
@@ -177,18 +210,13 @@ describe("buildFocusNpcContext", () => {
   });
 
   it("hostile 档位 → 拒绝式政策，且允许披露集合为空", () => {
-    const record = makeRecord();
-    const hostileNpc = {
-      ...record.worldState.npcs.find((n) => n.id === NPC_1)!,
-      memory: {
-        ...record.worldState.npcs.find((n) => n.id === NPC_1)!.memory,
-        relationship: { affinity: -70 },
-      },
-    };
-    const context = buildFocusNpcContext({
-      ...record,
-      worldState: { ...record.worldState, npcs: record.worldState.npcs.map((n) => (n.id === NPC_1 ? hostileNpc : n)) },
-    }, NPC_1);
+    const record = makeRecord({
+      npcs: [
+        { ...bossNpc, memory: { ...bossNpc.memory, relationship: { affinity: -70 } } },
+        guestNpc,
+      ],
+    });
+    const context = buildFocusNpcContext(record, NPC_1);
     expect(context.responsePolicy.tier).toBe("hostile");
     expect(context.responsePolicy.initiative).toBe("refuse");
     expect(context.responsePolicy.allowedDisclosureFactIds).toEqual([]);

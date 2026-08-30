@@ -3,13 +3,12 @@ import { describe, expect, it } from "vitest";
 import { buildChoiceMap, hasExplorableContent } from "./buildChoiceMap";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import type { WorldState, LocationEntry, NpcEntry, EnemyEntry, ItemEntry } from "@/game/domain/worldState";
+import type { GenerationMetadata } from "@/game/domain/worldEntity";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
-  createInitialWorldState,
-  appendLocation,
-  appendNpc,
-  appendEnemy,
-  appendItem,
-} from "@/game/domain/worldState";
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
 import type { StoryState } from "@/game/domain/storyState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { NarrativeSceneState, NarrativeChoiceState, NarrativeRuntimeState } from "@/game/domain/narrative";
@@ -50,18 +49,28 @@ const wellKey: ItemEntry = {
   id: asItemId("item_well_key"), name: "井边钥匙", description: "d", kind: "key", tags: [],
 };
 
-function buildWorldState(): WorldState {
-  let ws = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc1,
-    startingItemIds: [],
-  });
-  ws = appendLocation(ws, loc2);
-  ws = appendNpc(ws, smith);
-  ws = appendItem(ws, wellKey);
-  ws = appendEnemy(ws, wolf);
-  return { ...ws, unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2")] };
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+};
+
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [loc1, loc2],
+  currentLocationId: loc1.id,
+  unlockedLocationIds: [loc1.id, loc2.id],
+  visitedLocationIds: [loc1.id],
+  npcs: [smith],
+  items: [wellKey],
+  inventory: [],
+  worldFacts: [],
+  quests: [],
+  enemies: [wolf],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+function buildWorldState(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return createWorldStateFixtureWith({ generation: GENERATION, base: BASE_PROJECTION }, overrides);
 }
 
 const talkSmith: Action = { type: "talk", npcId: asNpcId("npc_smith"), dialogueAct: "ask" };
@@ -88,10 +97,9 @@ function approvedFor(choice: {
 describe("buildChoiceMap", () => {
   it("世界行动候选只以 opaque token 构建：talk/move/attack/take/explore", () => {
     // 本地点有未发现线索事实 → explore 为合法世界行动（有剧情钩子）。
-    const hookedWorld = {
-      ...buildWorldState(),
-      worldFacts: [{ factId: asFactId("fact_trace"), text: "残月密函的线索", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") }],
-    };
+    const hookedWorld = buildWorldState({
+      worldFacts: [{ factId: asFactId("fact_trace"), text: "残月密函的线索", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
+    });
     const map = buildChoiceMap(hookedWorld, buildStoryState({}), 0);
     for (const action of [
       talkSmith,
@@ -115,17 +123,18 @@ describe("buildChoiceMap", () => {
   });
 
   it("已到访地点即使不与当前地点直接相邻也可回访", () => {
+    const loc2WithDock: LocationEntry = {
+      ...loc2, connectedLocationIds: [loc1.id, asLocationId("loc_3")],
+    };
     const loc3: LocationEntry = {
       id: asLocationId("loc_3"), name: "旧码头", description: "d", kind: "main",
-      connectedLocationIds: [asLocationId("loc_2")], npcIds: [], availableItemIds: [], tags: [],
+      connectedLocationIds: [loc2.id], npcIds: [], availableItemIds: [], tags: [],
     };
-    const world = {
-      ...buildWorldState(),
-      locations: [...buildWorldState().locations, loc3],
-      currentLocationId: asLocationId("loc_1"),
-      visitedLocationIds: [asLocationId("loc_1"), asLocationId("loc_3")],
-      unlockedLocationIds: [asLocationId("loc_1"), asLocationId("loc_2"), asLocationId("loc_3")],
-    };
+    const world = buildWorldState({
+      locations: [loc1, loc2WithDock, loc3],
+      visitedLocationIds: [loc1.id, loc3.id],
+      unlockedLocationIds: [loc1.id, loc2.id, loc3.id],
+    });
     const map = buildChoiceMap(world, buildStoryState({}), 0);
     expect(map.get(deriveRuntimeChoiceToken({ type: "move", locationId: loc3.id }, 0))).toEqual({ type: "move", locationId: loc3.id });
   });
@@ -135,10 +144,9 @@ describe("buildChoiceMap", () => {
   });
 
   it("战斗激活时只允许 battle_action", () => {
-    const ws: WorldState = {
-      ...buildWorldState(),
+    const ws = buildWorldState({
       battle: { status: "active", enemyId: asEnemyId("enemy_wolf"), playerHp: 90, enemyHp: 20, round: 1 },
-    };
+    });
     const map = buildChoiceMap(ws, buildStoryState({}), 0);
     const actions = [
       { type: "battle_action", action: "attack" },
@@ -148,12 +156,10 @@ describe("buildChoiceMap", () => {
   });
 
   it("现代多单位战斗的 token 绑定当前行动者与具体目标", () => {
-    const base = buildWorldState();
-    const modernWorld: WorldState = {
-      ...base,
-      player: { ...base.player, stats: toStatBlock(PLAYER_COMBAT_STATS) },
+    const modernWorld = buildWorldState({
+      player: { name: "p", identity: "i", stats: toStatBlock(PLAYER_COMBAT_STATS) },
       enemies: [{ ...wolf, stats: toStatBlock(ENEMY_COMBAT_STATS.normal) }],
-    };
+    });
     const encounter = buildEncounter(modernWorld, wolf.id);
     const active = {
       status: "active" as const,
@@ -267,15 +273,12 @@ describe("buildChoiceMap", () => {
 
 describe("hasExplorableContent（方案 1：有剧情钩子才允许探索）", () => {
   // 干净地点：无物品、无敌人、无事实、无任务、无候选事件。
-  function bareWorld(): WorldState {
-    const ws = buildWorldState();
-    return {
-      ...ws,
-      locations: ws.locations.map((l) =>
-        l.id === asLocationId("loc_1") ? { ...l, availableItemIds: [] } : l,
-      ),
+  function bareWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
+    return buildWorldState({
+      locations: [{ ...loc1, availableItemIds: [] }, loc2],
       enemies: [],
-    };
+      ...overrides,
+    });
   }
 
   it("无任何钩子的地点不可探索", () => {
@@ -285,23 +288,14 @@ describe("hasExplorableContent（方案 1：有剧情钩子才允许探索）", 
   });
 
   it("本地点仅有未拾取物品（无线索/目标/候选事件）→ 可先探索再拾取", () => {
-    const itemOnlyWorld = {
-      ...bareWorld(),
-      locations: bareWorld().locations.map((location) =>
-        location.id === asLocationId("loc_1")
-          ? { ...location, availableItemIds: [asItemId("item_well_key")] }
-          : location,
-      ),
-    };
+    const itemOnlyWorld = bareWorld({ locations: [loc1, loc2] });
     expect(hasExplorableContent(itemOnlyWorld, buildStoryState({}))).toBe(true);
   });
 
   it("本地点有未发现的线索事实 → 可探索；事实已发现 → 不可探索", () => {
     const fact = { factId: asFactId("fact_trace"), text: "残月密函的线索", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") };
-    const withFact = { ...bareWorld(), worldFacts: [fact] };
-    expect(hasExplorableContent(withFact, buildStoryState({}))).toBe(true);
-    const withDiscovered = { ...withFact, worldFacts: [{ ...fact, discovered: true }] };
-    expect(hasExplorableContent(withDiscovered, buildStoryState({}))).toBe(false);
+    expect(hasExplorableContent(bareWorld({ worldFacts: [fact] }), buildStoryState({}))).toBe(true);
+    expect(hasExplorableContent(bareWorld({ worldFacts: [{ ...fact, discovered: true }] }), buildStoryState({}))).toBe(false);
   });
 
   it("active 任务有指向本地点的未满足 visit_location 目标 → 可探索", () => {
@@ -311,14 +305,9 @@ describe("hasExplorableContent（方案 1：有剧情钩子才允许探索）", 
       objectives: [{ kind: "visit_location" as const, locationId: asLocationId("loc_1") }],
       onSuccess: { kind: "closed" as const }, onFailure: { kind: "closed" as const }, tags: [],
     };
-    const ws = {
-      ...bareWorld(),
-      quests: [quest],
-      visitedLocationIds: [],
-    };
-    expect(hasExplorableContent(ws, buildStoryState({}))).toBe(true);
+    expect(hasExplorableContent(bareWorld({ quests: [quest], visitedLocationIds: [] }), buildStoryState({}))).toBe(true);
     // 已访问后不再因该目标可探索
-    expect(hasExplorableContent({ ...ws, visitedLocationIds: [asLocationId("loc_1")] }, buildStoryState({}))).toBe(false);
+    expect(hasExplorableContent(bareWorld({ quests: [quest], visitedLocationIds: [loc1.id] }), buildStoryState({}))).toBe(false);
   });
 
   it("候选事件涉及当前地点（未过期）→ 可探索", () => {
@@ -370,10 +359,9 @@ describe("hasExplorableContent（方案 1：有剧情钩子才允许探索）", 
       ],
     });
     // 有未发现线索事实钩子的世界：探索选项可解析
-    const hooked = buildChoiceMap({
-      ...buildWorldState(),
-      worldFacts: [{ factId: asFactId("fact_trace"), text: "残月密函的线索", source: "generated" as const, discovered: false, locationId: asLocationId("loc_1") }],
-    }, storyWithChoice, 3);
+    const hooked = buildChoiceMap(buildWorldState({
+      worldFacts: [{ factId: asFactId("fact_trace"), text: "残月密函的线索", source: "generated", discovered: false, locationId: asLocationId("loc_1") }],
+    }), storyWithChoice, 3);
     expect(hooked.get(exploreChoice.choiceToken)).toEqual({ type: "explore" });
     // 干净地点：探索选项不映射
     const bare = buildChoiceMap(bareWorld(), storyWithChoice, 3);
@@ -419,11 +407,11 @@ describe("investigate：调查动作保留规则兼容，但不再进入当前�
   }
 
   function worldWithApproaches(): WorldState {
-    return { ...buildWorldState(), worldFacts: [approachFact], quests: [makeDiscoverQuest(approachFact)] };
+    return buildWorldState({ worldFacts: [approachFact], quests: [makeDiscoverQuest(approachFact)] });
   }
 
   function worldWithApproachlessFact(): WorldState {
-    return { ...buildWorldState(), worldFacts: [approachlessFact], quests: [makeDiscoverQuest(approachlessFact)] };
+    return buildWorldState({ worldFacts: [approachlessFact], quests: [makeDiscoverQuest(approachlessFact)] });
   }
 
   function storyWithDiscoverFact(): StoryState {
@@ -502,14 +490,14 @@ const endingPair: WorldState["endings"] = [
   { id: asEndingId("ending_doubt"), name: "独自揭露", description: "d", requirements: [] },
 ];
 
-function endingWorldState(overrides: Partial<WorldState> = {}): WorldState {
-  return {
-    ...buildWorldState(),
+function endingWorldState(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return buildWorldState({
     // 现场物品已取走、敌人已击败：本地点不再有任何探索钩子。
+    locations: [{ ...loc1, availableItemIds: [] }, loc2],
     inventory: [asItemId("item_well_key")],
     defeatedEnemyIds: [asEnemyId("enemy_wolf")],
     ...overrides,
-  };
+  });
 }
 
 function endingStoryState(endingAllowed: boolean): StoryState {

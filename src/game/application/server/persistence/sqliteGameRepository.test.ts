@@ -7,9 +7,11 @@ import { tmpdir } from "node:os";
 import { createSqliteGameRepository } from "./sqliteGameRepository";
 import { createSqliteClient, type SqliteClient } from "./sqliteClient";
 import { asGameId } from "./gameRepository";
-import { createInitialWorldState, type LocationEntry } from "@/game/domain/worldState";
+import type { LocationEntry } from "@/game/domain/worldState";
+import { createWorldStateFixtureWith, emptyProjection, type WorldStateFixtureOverrides } from "@/game/domain/testing/worldStateFixture.testutil";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import { createInitialStoryState } from "@/game/domain/storyState";
-import { asLocationId, asGenerationId, asFactId } from "@/game/domain/worldEntity";
+import { asLocationId, asGenerationId, asFactId, type GenerationMetadata } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
@@ -20,17 +22,26 @@ import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 // test run 争用源码目录中的固定 SQLite 文件，也避免清理残留目录时受句柄影响。
 const RUN_ROOT = mkdtempSync(join(tmpdir(), "ai-rpg-game-sqlite-"));
 
+const TEST_GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia",
+};
+const TEST_LOCATION: LocationEntry = {
+  id: asLocationId("loc_1"), name: "t", description: "t", kind: "main",
+  connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+};
+const TEST_PROJECTION: EntityCompatibilityProjection = emptyProjection({
+  player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [TEST_LOCATION],
+  currentLocationId: asLocationId("loc_1"),
+});
+
+/** 兼容投影 + 覆盖项经同一组装点重建 entityStore，禁止事后 spread legacy 数组。 */
+function buildTestWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return createWorldStateFixtureWith({ generation: TEST_GENERATION, base: TEST_PROJECTION }, overrides);
+}
+
 function buildTestState(): { worldState: WorldState; storyState: StoryState } {
-  const loc: LocationEntry = {
-    id: asLocationId("loc_1"), name: "t", description: "t", kind: "main",
-    connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
-  };
-  const worldState = createInitialWorldState({
-    generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
-    player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: loc,
-    startingItemIds: [],
-  });
+  const worldState = buildTestWorld();
   const storyState = createInitialStoryState({ initialNarrative: createFixtureNarrativeRuntimeState(), gameLength: "short", initialEntityCounts: { locations: 1, npcs: 0, quests: 0, events: 0 } });
   return { worldState, storyState };
 }
@@ -83,9 +94,8 @@ describe("sqliteGameRepository", () => {
     const dbPath = nextDbPath();
     const repo = openRepo(dbPath);
     await repo.initializeSchema();
-    const { worldState, storyState } = buildTestState();
-    const withApproaches: WorldState = {
-      ...worldState,
+    const { storyState } = buildTestState();
+    const withApproaches: WorldState = buildTestWorld({
       worldFacts: [{
         factId: asFactId("fact_0"),
         text: "密道入口在井下。",
@@ -97,7 +107,7 @@ describe("sqliteGameRepository", () => {
           { approachId: "b", label: "细听井底动静", evidenceQuality: "noisy", tensionDelta: 5 },
         ],
       }],
-    };
+    });
     await repo.createInitialGame({ gameId: asGameId("g-approaches"), worldState: withApproaches, storyState, createdAt: "2026-01-01T00:00:00.000Z" });
     const current = await repo.getCurrentGame();
     expect(current.ok).toBe(true);
@@ -151,7 +161,7 @@ describe("sqliteGameRepository", () => {
     if (current.ok && current.status === "active") {
       expect(current.record.gameId).toBe(gameId);
       expect(current.record.revision).toBe(0);
-      expect(current.record.worldState.version).toBe(2);
+      expect(current.record.worldState.version).toBe(3);
       expect(current.record.storyState.version).toBe(7);
     }
   });
@@ -335,7 +345,7 @@ describe("sqliteGameRepository", () => {
     });
     if (!approved.ok) throw new Error("fixture approval failed");
     const newNarrative = { ...storyState.narrative, mode: "ai" as const, choiceRegistry: [approved.choice] };
-    const nextWorldState = { ...worldState, currentLocationId: asLocationId("loc_1") };
+    const nextWorldState = buildTestWorld({ currentLocationId: asLocationId("loc_1") });
     const nextStoryState = { ...storyState, narrative: newNarrative, candidateEventPool: storyState.candidateEventPool };
     const r = await repo.applySceneWriteBack({
       gameId,
@@ -448,6 +458,38 @@ describe("sqliteGameRepository", () => {
       args: ["legacy_v1", 1, JSON.stringify({ version: 1 }), JSON.stringify({ version: 1 }), "2025-01-01", 0],
     });
     await raw.execute({ sql: "INSERT INTO current_game (slot, game_id) VALUES (1, ?)", args: ["legacy_v1"] });
+
+    const result = await repo.getCurrentGame();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.status).toBe("corrupt");
+      if (result.status === "corrupt") expect(result.reason).toBe("UNSUPPORTED_RECORD");
+    }
+  });
+
+  it("world version=2 的旧开发存档返回 UNSUPPORTED_RECORD（不迁移、不静默重置）", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    await repo.initializeSchema();
+    const raw = createSqliteClient(dbPath);
+    rawClients.push(raw);
+    await raw.batch(
+      [
+        `CREATE TABLE IF NOT EXISTS game_records (
+          game_id TEXT PRIMARY KEY, record_version INTEGER NOT NULL,
+          world_state_json TEXT NOT NULL, story_state_json TEXT NOT NULL,
+          created_at TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0)`,
+        `CREATE TABLE IF NOT EXISTS current_game (slot INTEGER PRIMARY KEY CHECK (slot = 1), game_id TEXT NOT NULL)`,
+      ],
+      "write",
+    );
+    const { storyState } = buildTestState();
+    await raw.execute({
+      sql: `INSERT INTO game_records (game_id, record_version, world_state_json, story_state_json, created_at, revision)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: ["legacy_world_v2", 1, JSON.stringify({ version: 2 }), JSON.stringify(storyState), "2025-01-01", 0],
+    });
+    await raw.execute({ sql: "INSERT INTO current_game (slot, game_id) VALUES (1, ?)", args: ["legacy_world_v2"] });
 
     const result = await repo.getCurrentGame();
     expect(result.ok).toBe(true);

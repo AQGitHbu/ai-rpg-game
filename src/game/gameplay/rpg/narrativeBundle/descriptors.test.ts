@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
-import { createInitialWorldState, type WorldState } from "@/game/domain/worldState";
+import type { GameEvent } from "@/game/domain/events";
+import type { WorldState } from "@/game/domain/worldState";
+import type { GenerationMetadata } from "@/game/domain/worldEntity";
+import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
+import {
+  createWorldStateFixtureWith,
+  type WorldStateFixtureOverrides,
+} from "@/game/domain/testing/worldStateFixture.testutil";
 import {
   asEnemyId,
   asFactId,
@@ -33,17 +40,23 @@ function storyState() {
   });
 }
 
-function worldState(overrides: Partial<WorldState> = {}): WorldState {
-  const base = createInitialWorldState({
-    generation: {
-      generationId: asGenerationId("generation_1"),
-      seed: "seed",
-      templateVersion: "v1",
-      inputDigest: "digest",
-      gameType: "wuxia",
-    },
-    player: { name: "侠客", identity: "旅人", stats: { hp: 100, attack: 10, defense: 5 } },
-    startingLocation: {
+const GENERATION: GenerationMetadata = {
+  generationId: asGenerationId("generation_1"),
+  seed: "seed",
+  templateVersion: "v1",
+  inputDigest: "digest",
+  gameType: "wuxia",
+};
+
+/** 与 createInitialWorldState 一致：开局事件仍在账本里。 */
+const INITIALIZED_LEDGER: readonly GameEvent[] = [{ type: "game_initialized", generation: GENERATION }];
+
+// 起始投影必须一次给全：小镇的连接边指向 loc_dyn_1，因此破庙与老乞丐同批具象化，
+// 且名册（locations.npcIds）与该 NPC 的 locationId 保持一致。
+const BASE_PROJECTION: EntityCompatibilityProjection = {
+  player: { name: "侠客", identity: "旅人", stats: { hp: 100, attack: 10, defense: 5 } },
+  locations: [
+    {
       id: locTown,
       name: "小镇",
       description: "山脚下的小镇。",
@@ -53,55 +66,63 @@ function worldState(overrides: Partial<WorldState> = {}): WorldState {
       availableItemIds: [],
       tags: [],
     },
-    startingItemIds: [],
-  });
-  return {
-    ...base,
-    locations: [
-      base.locations[0]!,
-      {
-        id: locDyn1,
-        name: "破庙",
-        description: "一座破败的庙宇。",
-        kind: "main",
-        connectedLocationIds: [locTown],
-        npcIds: [npcDyn1],
-        availableItemIds: [],
-        tags: [],
-      },
-    ],
-    npcs: [{
-      id: npcDyn1,
-      name: "老乞丐",
-      role: "破庙守夜人",
-      description: "一个白发苍苍的老乞丐。",
-      locationId: locDyn1,
-      isCompanion: false,
+    {
+      id: locDyn1,
+      name: "破庙",
+      description: "一座破败的庙宇。",
+      kind: "main",
+      connectedLocationIds: [locTown],
+      npcIds: [npcDyn1],
+      availableItemIds: [],
       tags: [],
-      met: false,
-      memory: {
-        npcId: npcDyn1,
-        knownFactIds: [],
-        hiddenFactIds: [],
-        interactionHistory: [],
-        relationship: { affinity: 0 },
-        emotion: "neutral",
-        goals: [],
-      },
-    }],
-    worldFacts: [{
-      factId: factTracks,
-      text: "泥地上有杂乱的脚印。",
-      source: "generated",
-      discovered: false,
-      locationId: locDyn1,
-      investigationLabel: "查看脚印",
-      investigationApproaches: [
-        { approachId: "quiet", label: "安静观察", evidenceQuality: "clean", tensionDelta: 0 },
-      ],
-    }],
-    ...overrides,
-  };
+    },
+  ],
+  currentLocationId: locTown,
+  unlockedLocationIds: [locTown],
+  visitedLocationIds: [locTown],
+  npcs: [{
+    id: npcDyn1,
+    name: "老乞丐",
+    role: "破庙守夜人",
+    description: "一个白发苍苍的老乞丐。",
+    locationId: locDyn1,
+    isCompanion: false,
+    tags: [],
+    met: false,
+    memory: {
+      npcId: npcDyn1,
+      knownFactIds: [],
+      hiddenFactIds: [],
+      interactionHistory: [],
+      relationship: { affinity: 0 },
+      emotion: "neutral",
+      goals: [],
+    },
+  }],
+  items: [],
+  inventory: [],
+  worldFacts: [{
+    factId: factTracks,
+    text: "泥地上有杂乱的脚印。",
+    source: "generated",
+    discovered: false,
+    locationId: locDyn1,
+    investigationLabel: "查看脚印",
+    investigationApproaches: [
+      { approachId: "quiet", label: "安静观察", evidenceQuality: "clean", tensionDelta: 0 },
+    ],
+  }],
+  quests: [],
+  enemies: [],
+  defeatedEnemyIds: [],
+  factions: [],
+};
+
+function worldState(overrides: WorldStateFixtureOverrides = {}): WorldState {
+  return createWorldStateFixtureWith(
+    { generation: GENERATION, base: BASE_PROJECTION },
+    { eventLedger: INITIALIZED_LEDGER, ...overrides },
+  );
 }
 
 function transition(objectiveIndex: number): ObjectiveTransition {
