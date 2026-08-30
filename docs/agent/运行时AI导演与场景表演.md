@@ -148,3 +148,7 @@
 ## 历史说明
 
 早期 dated 文档中的三角色 pipeline、版本化接口名和旧 scene adapter 只作历史记录。当前生产事实以本页列出的 neutral application/server 文件为准。
+
+## Entity Store 上下文边界
+
+场景、世界演化和叙事 bundle 的实体摘要从 v3 `entityStore` 的规则投影生成；mandatory closure、有限 optional 邻接和五类撞名索引不改变既有 block 顺序、预算或单次 provider 调用。Entity command parser/approver 尚未接入 provider 输出。
