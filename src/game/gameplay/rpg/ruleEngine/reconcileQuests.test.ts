@@ -1,8 +1,25 @@
 import { describe, it, expect } from "vitest";
 import { reconcileQuests } from "./reconcileQuests";
 import { createInitialWorldState, appendNpc, type NpcEntry, type LocationEntry } from "@/game/domain/worldState";
+import { projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
+import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asLocationId, asNpcId, asQuestId, asGenerationId, asItemId } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
+
+function withProjection(
+  worldState: WorldState,
+  overrides: Partial<EntityCompatibilityProjection>,
+  eventLedger = worldState.eventLedger,
+): WorldState {
+  return createWorldStateFixture({
+    generation: worldState.generation,
+    projection: { ...projectEntityStore(worldState.entityStore), ...overrides },
+    battle: worldState.battle,
+    endings: worldState.endings,
+    ending: worldState.ending,
+    eventLedger,
+  });
+}
 
 describe("reconcileQuests", () => {
   const loc: LocationEntry = {
@@ -23,15 +40,14 @@ describe("reconcileQuests", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
       memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const ws: WorldState = {
-      ...appendNpc(baseWs, npc),
+    const ws = withProjection(appendNpc(baseWs, npc), {
       quests: [{
         id: asQuestId("q1"), name: "talk quest", description: "t",
         objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_1") }],
         onSuccess: { kind: "closed" }, onFailure: { kind: "closed" },
         tags: [], kind: "side", status: "active",
       }],
-    };
+    });
     const result = reconcileQuests(ws, deps);
     expect(result.events[0]?.type).toBe("quest_completed");
     expect(result.nextWorldState.quests[0]?.status).toBe("completed");
@@ -59,17 +75,15 @@ describe("reconcileQuests", () => {
 
   it("item_obtained 历史事实在物品已交付后仍能完成获取目标", () => {
     const itemId = asItemId("item_1");
-    const ws: WorldState = {
-      ...baseWs,
+    const ws = withProjection(baseWs, {
       items: [{ id: itemId, name: "证物", description: "d", kind: "quest", tags: [] }],
-      eventLedger: [{ type: "item_obtained", itemId, locationId: asLocationId("loc_1"), occurredAt: "2026-01-01" }],
       quests: [{
         id: asQuestId("q_item"), name: "item quest", description: "t",
         objectives: [{ kind: "obtain_item", itemId }],
         onSuccess: { kind: "closed" }, onFailure: { kind: "closed" },
         tags: [], kind: "side", status: "active",
       }],
-    };
+    }, [{ type: "item_obtained", itemId, locationId: asLocationId("loc_1"), occurredAt: "2026-01-01" }]);
     const result = reconcileQuests(ws, deps);
     expect(result.events[0]?.type).toBe("quest_completed");
     expect(result.nextWorldState.quests[0]?.status).toBe("completed");
@@ -84,14 +98,14 @@ describe("reconcileQuests 完整 outcome", () => {
     id: asLocationId("loc_1"), name: "客栈", description: "t", kind: "main",
     connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
   };
-  function baseWs(overrides?: Partial<WorldState>): WorldState {
+  function baseWs(overrides?: Partial<EntityCompatibilityProjection>): WorldState {
     const ws = createInitialWorldState({
       generation: { generationId: asGenerationId("g1"), seed: "s", templateVersion: "v2", inputDigest: "", gameType: "wuxia" },
       player: { name: "p", identity: "i", stats: { hp: 100, attack: 10, defense: 5 } },
       startingLocation: loc1,
       startingItemIds: [],
     });
-    return overrides ? { ...ws, ...overrides } : ws;
+    return overrides === undefined ? ws : withProjection(ws, overrides);
   }
   const deps = { now: () => "2026-01-01" };
   const loc2: LocationEntry = {

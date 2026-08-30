@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "entity-component-world-state-foundation",
-  "status": "planned",
-  "implementationStatus": "not_started",
+  "status": "in_progress",
+  "implementationStatus": "in_progress",
   "targetBranch": "codex/entity-component-world-state-foundation",
   "worktreeName": "entity-component-world-state-foundation",
   "repositories": ["ai-rpg-game"],

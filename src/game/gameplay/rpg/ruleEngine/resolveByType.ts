@@ -8,6 +8,8 @@ import { startBattle, battleAction } from "./battleResolver";
 import { updateNpcMemory } from "./updateNpcMemory";
 import { resolveDialogue } from "@/game/gameplay/rpg/dialogue";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
+import { applyEntityMutations, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
+import { PLAYER_ENTITY_ID, type NpcId } from "@/game/domain/worldEntity";
 
 export type ResolveResult = {
   readonly ok: true;
@@ -29,6 +31,26 @@ export type ResolveDeps = {
   /** 当前回合号（写入 NpcInteraction.turnNumber）。 */
   readonly turnNumber: number;
 };
+
+/** 规则已完成 Action 校验；若 store 仍拒绝写入，视为损坏状态而非部分成功。 */
+function applyRuleMutations(ws: WorldState, mutations: readonly EntityMutation[]): WorldState | null {
+  const result = applyEntityMutations(ws, mutations);
+  return result.ok ? result.worldState : null;
+}
+
+function npcStateAfter(ws: WorldState, npcId: NpcId, npcAfter: ReturnType<typeof updateNpcMemory>): EntityMutation | null {
+  const record = ws.entityStore.records.find((entry) => entry.core.id === npcId && entry.core.kind === "npc");
+  if (record === undefined || record.core.kind !== "npc") return null;
+  return {
+    kind: "replace_npc_state",
+    npcId,
+    npcState: {
+      isCompanion: npcAfter.isCompanion,
+      met: npcAfter.met,
+      memory: npcAfter.memory,
+    },
+  };
+}
 
 export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps): ResolveResult {
   const occurredAt = deps.now();
@@ -64,14 +86,12 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
   switch (action.type) {
     case "move": {
       const event: GameEvent = { type: "location_visited", locationId: action.locationId, occurredAt };
+      const mutated = applyRuleMutations(ws, [{ kind: "move_player", toLocationId: action.locationId, markVisited: true }]);
+      if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
       const nextWs: WorldState = {
-        ...ws,
-        battle: ws.battle.status === "resolved" ? { status: "idle" } : ws.battle,
-        currentLocationId: action.locationId,
-        visitedLocationIds: ws.visitedLocationIds.includes(action.locationId)
-          ? ws.visitedLocationIds
-          : [...ws.visitedLocationIds, action.locationId],
-        eventLedger: [...ws.eventLedger, event],
+        ...mutated,
+        battle: mutated.battle.status === "resolved" ? { status: "idle" } : mutated.battle,
+        eventLedger: [...mutated.eventLedger, event],
       };
       const locName = findLocation(ws, action.locationId)?.name ?? "未知地点";
       const stateChanges: StateChange[] = [
@@ -90,10 +110,13 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         actionId: deps.actionId,
         turnNumber: deps.turnNumber,
       });
+      const npcState = npcStateAfter(ws, action.npcId, dialogue.npcAfter);
+      if (npcState === null) return { ok: false, feedback: "世界状态不一致。" };
+      const mutated = applyRuleMutations(ws, [npcState]);
+      if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
       const nextWs: WorldState = {
-        ...ws,
-        npcs: ws.npcs.map((n) => n.id === action.npcId ? dialogue.npcAfter : n),
-        eventLedger: [...ws.eventLedger, dialogue.event],
+        ...mutated,
+        eventLedger: [...mutated.eventLedger, dialogue.event],
       };
       return {
         ok: true,
@@ -113,15 +136,15 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
     }
     case "take_item": {
       const event: GameEvent = { type: "item_obtained", itemId: action.itemId, locationId: ws.currentLocationId, occurredAt };
+      const mutated = applyRuleMutations(ws, [{
+        kind: "transfer_item",
+        itemId: action.itemId,
+        owner: { kind: "player", playerId: PLAYER_ENTITY_ID },
+      }]);
+      if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
       const nextWs: WorldState = {
-        ...ws,
-        inventory: [...ws.inventory, action.itemId],
-        locations: ws.locations.map((l) =>
-          l.id === ws.currentLocationId
-            ? { ...l, availableItemIds: l.availableItemIds.filter((id) => id !== action.itemId) }
-            : l,
-        ),
-        eventLedger: [...ws.eventLedger, event],
+        ...mutated,
+        eventLedger: [...mutated.eventLedger, event],
       };
       const stateChanges: StateChange[] = [
         { path: "inventory", description: `获得物品 ${String(action.itemId)}`, operation: "add" },
@@ -146,11 +169,16 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         learnedFactIds: [],
         summary: `收下了${item.name}`,
       });
+      const npcState = npcStateAfter(ws, action.npcId, npcAfter);
+      if (npcState === null) return { ok: false, feedback: "世界状态不一致。" };
+      const mutated = applyRuleMutations(ws, [
+        { kind: "transfer_item", itemId: action.itemId, owner: { kind: "npc", npcId: action.npcId } },
+        npcState,
+      ]);
+      if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
       const nextWs: WorldState = {
-        ...ws,
-        inventory: ws.inventory.filter((id) => id !== action.itemId),
-        npcs: ws.npcs.map((n) => n.id === action.npcId ? npcAfter : n),
-        eventLedger: [...ws.eventLedger, event],
+        ...mutated,
+        eventLedger: [...mutated.eventLedger, event],
       };
       const stateChanges: StateChange[] = [
         { path: "inventory", description: `交出物品 ${item.name}`, operation: "remove" },
@@ -227,11 +255,9 @@ export function resolveFactDiscovery(
           tensionDelta: approach.tensionDelta,
         }),
   };
-  const nextWs: WorldState = {
-    ...ws,
-    worldFacts: ws.worldFacts.map((f) => f.factId === action.factId ? { ...f, discovered: true } : f),
-    eventLedger: [...ws.eventLedger, event],
-  };
+  const mutated = applyRuleMutations(ws, [{ kind: "discover_fact", factId: action.factId }]);
+  if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
+  const nextWs: WorldState = { ...mutated, eventLedger: [...mutated.eventLedger, event] };
   const stateChanges: StateChange[] = [
     { path: `worldFacts[${String(action.factId)}].discovered`, description: `发现线索`, operation: "set" },
   ];

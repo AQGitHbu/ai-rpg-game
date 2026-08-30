@@ -1,6 +1,7 @@
 import type { WorldState, QuestOutcome } from "@/game/domain/worldState";
 import type { GameEvent } from "@/game/domain/events";
 import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
+import { applyEntityMutations, EntityMutationInvariantError, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
 
 export type QuestReconcileResult = {
   readonly nextWorldState: WorldState;
@@ -33,7 +34,7 @@ export function reconcileQuests(
   options?: { readonly talkToNpcSession?: { readonly npcId: string; readonly completed: boolean } },
 ): QuestReconcileResult {
   const events: GameEvent[] = [];
-  let nextWorldState: WorldState = ws;
+  const mutations: EntityMutation[] = [];
 
   // 1) active 任务：objective 全满足 → 完成 + 应用 onSuccess（advance_story 零世界状态变化）。
   for (const quest of ws.quests) {
@@ -49,32 +50,23 @@ export function reconcileQuests(
     if (!allSatisfied) continue;
 
     events.push({ type: "quest_completed", questId: quest.id, occurredAt: deps.now() });
-    nextWorldState = {
-      ...nextWorldState,
-      quests: nextWorldState.quests.map((q) =>
-        q.id === quest.id ? { ...q, status: "completed" as const } : q,
-      ),
-    };
-    const successOutcome = applyOutcome(nextWorldState, quest.onSuccess);
-    nextWorldState = successOutcome.nextWorldState;
+    mutations.push({ kind: "set_quest_status", questId: quest.id, status: "completed" });
+    const successOutcome = applyOutcome(ws, quest.onSuccess);
     events.push(...successOutcome.events);
   }
 
   // 2) failed 任务：应用 onFailure（解锁失败路线或关闭）。onFailure 为 closed 时关闭任务。
   for (const quest of ws.quests) {
     if (quest.status !== "failed") continue;
-    const failureOutcome = applyOutcome(nextWorldState, quest.onFailure);
-    nextWorldState = failureOutcome.nextWorldState;
+    const failureOutcome = applyOutcome(ws, quest.onFailure);
     events.push(...failureOutcome.events);
     if (quest.onFailure.kind === "closed") {
-      nextWorldState = {
-        ...nextWorldState,
-        quests: nextWorldState.quests.map((q) =>
-          q.id === quest.id ? { ...q, status: "closed" as const } : q,
-        ),
-      };
+      mutations.push({ kind: "set_quest_status", questId: quest.id, status: "closed" });
     }
   }
 
-  return { nextWorldState, events };
+  if (mutations.length === 0) return { nextWorldState: ws, events };
+  const applied = applyEntityMutations(ws, mutations);
+  if (!applied.ok) throw new EntityMutationInvariantError(applied);
+  return { nextWorldState: applied.worldState, events };
 }

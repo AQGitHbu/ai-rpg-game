@@ -1,6 +1,7 @@
-import type { WorldState, NpcEntry } from "@/game/domain/worldState";
+import type { WorldState } from "@/game/domain/worldState";
 import type { FactChange, FactChangeSource } from "@/game/domain/resolvedEvent";
 import type { FactId } from "@/game/domain/worldEntity";
+import { applyEntityMutations, EntityMutationInvariantError, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
 
 /** 封闭来源集合：非此集合的 source 一律拒绝。 */
 const VALID_SOURCES: readonly FactChangeSource[] = [
@@ -46,25 +47,33 @@ export function propagateKnownFacts(
 
   if (additions.size === 0) return ws;
 
-  const newNpcs: NpcEntry[] = ws.npcs.map((npc) => {
+  const mutations: EntityMutation[] = ws.npcs.flatMap((npc) => {
     const adds = additions.get(String(npc.id));
-    if (adds === undefined) return npc;
+    if (adds === undefined) return [];
 
     const existingSet = new Set(npc.memory.knownFactIds.map(String));
     const toAdd = Array.from(adds).filter((f) => !existingSet.has(f));
-    if (toAdd.length === 0) return npc;
+    if (toAdd.length === 0) return [];
 
-    return {
-      ...npc,
-      memory: {
-        ...npc.memory,
-        knownFactIds: [
-          ...npc.memory.knownFactIds,
-          ...toAdd.map((f) => f as FactId),
-        ],
+    return [{
+      kind: "replace_npc_state" as const,
+      npcId: npc.id,
+      npcState: {
+        isCompanion: npc.isCompanion,
+        met: npc.met,
+        memory: {
+          ...npc.memory,
+          knownFactIds: [
+            ...npc.memory.knownFactIds,
+            ...toAdd.map((f) => f as FactId),
+          ],
+        },
       },
-    };
+    }];
   });
 
-  return { ...ws, npcs: newNpcs };
+  if (mutations.length === 0) return ws;
+  const applied = applyEntityMutations(ws, mutations);
+  if (!applied.ok) throw new EntityMutationInvariantError(applied);
+  return applied.worldState;
 }
