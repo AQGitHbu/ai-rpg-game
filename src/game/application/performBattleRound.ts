@@ -79,6 +79,9 @@ export async function performBattleRound(
   const beforeWorldState = record.worldState;
   const beforeStoryState = record.storyState;
   const beforeNarrative = beforeStoryState.narrative;
+  if (beforeNarrative.status !== "ready") {
+    return { ok: false, code: "ACTION_REJECTED", feedback: "正在编排下一幕，请稍候。" };
+  }
 
   const narrativeCheckpoint = beforeNarrative.status === "ready"
     ? beforeNarrative.battleCheckpoint
@@ -184,6 +187,41 @@ export async function performBattleRound(
       ...afterWorldState,
       battle: { status: "idle" as const },
     };
+
+    // Offline fixture worlds can exercise rule-only battle paths without a
+    // prepared continuation graph. Keep the victory atomic and clear the
+    // battle checkpoint; live AI worlds still require the approved bundle.
+    const hasContinuation = (beforeNarrative.narrativeBundle?.steps.length ?? 0) > 0
+      || (beforeNarrative.preparedContinuation?.steps.length ?? 0) > 0;
+    if (beforeNarrative.mode === "offline" && !hasContinuation) {
+      if (afterStoryState.narrative.status !== "ready") {
+        return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID", feedback: "当前战斗叙事状态无效。" };
+      }
+      const { battleCheckpoint: _checkpoint, ...narrativeWithoutCheckpoint } = afterStoryState.narrative;
+      const nextStoryState: StoryState = {
+        ...afterStoryState,
+        narrative: { ...narrativeWithoutCheckpoint, status: "ready" },
+      };
+      const commitResult = await commitState(deps.repository, {
+        gameId: input.gameId,
+        expectedRevision: record.revision,
+        nextWorldState: victoryWorldState,
+        nextStoryState,
+      });
+      if (!commitResult.ok) {
+        return {
+          ok: false,
+          code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
+          feedback: "Commit failed",
+        };
+      }
+      return {
+        ok: true,
+        revision: commitResult.record.revision,
+        resolvedEvent: resolution.primaryResult,
+        outcome: "victory",
+      };
+    }
 
     const continued = consumeNarrativeBundle({
       beforeStoryState,

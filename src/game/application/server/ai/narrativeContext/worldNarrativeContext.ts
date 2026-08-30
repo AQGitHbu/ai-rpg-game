@@ -146,12 +146,6 @@ export function buildWorldNarrativeContextBlocks(
   const world = {
     ...context.worldState,
     ...projected,
-    locations: projected.locations.length >= context.worldState.locations.length && (context.worldState.locations.some((location) => location.town !== undefined) === projected.locations.some((location) => location.town !== undefined)) ? projected.locations : context.worldState.locations,
-    npcs: projected.npcs.length >= context.worldState.npcs.length ? projected.npcs : context.worldState.npcs,
-    items: projected.items.length >= context.worldState.items.length ? projected.items : context.worldState.items,
-    quests: projected.quests.length >= context.worldState.quests.length ? projected.quests : context.worldState.quests,
-    worldFacts: projected.worldFacts.length >= context.worldState.worldFacts.length ? projected.worldFacts : context.worldState.worldFacts,
-    enemies: projected.enemies.length >= context.worldState.enemies.length ? projected.enemies : context.worldState.enemies,
   };
   const setup = world.generation.setup;
   const currentLocation = world.locations.find((location) => location.id === world.currentLocationId);

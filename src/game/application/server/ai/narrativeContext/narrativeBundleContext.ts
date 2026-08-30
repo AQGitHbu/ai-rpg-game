@@ -5,6 +5,7 @@ import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { relationshipTierOf } from "@/game/domain/relationship";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
+import { projectEntityStore } from "@/game/domain/entity";
 import { buildStylePolicy } from "@/game/application/stylePolicy";
 import { buildEntityContextProjection } from "@/game/application/entityContextProjection";
 import {
@@ -188,7 +189,11 @@ function expectedBundleProjection(worldState: WorldState, storyState: StoryState
 export function buildDecisionNarrativeContextBlocks(
   input: DecisionNarrativeContextInput,
 ): readonly NarrativeContextBlock[] {
-  const { worldState, storyState, job, contentRepair } = input;
+  const { storyState, job, contentRepair } = input;
+  // Prompt facts must exclusively originate from the authoritative store. The
+  // legacy arrays are a compatibility read model and may never repair a
+  // missing/inconsistent store projection here.
+  const worldState = { ...input.worldState, ...projectEntityStore(input.worldState.entityStore) };
   const entityContext = buildEntityContextProjection({ worldState, storyState, job });
   const projection = expectedBundleProjection(worldState, storyState, job);
   const currentLocation = worldState.locations.find((location) => location.id === worldState.currentLocationId);

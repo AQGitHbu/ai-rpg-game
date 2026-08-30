@@ -212,6 +212,60 @@ export async function performTurn(
     storyState: resolution.nextStoryState,
   });
 
+  // Offline fixture worlds may expose a deterministic item pickup without a
+  // provider-owned continuation graph. It is still a normal rule mutation:
+  // commit the resolved state atomically and keep the current scene intact.
+  // Production AI worlds always use a narrative bundle for this action and do
+  // not enter this compatibility path.
+  if (
+    readyNarrative.mode === "offline"
+    && readyNarrative.narrativeBundle === undefined
+    && (
+      converted.action.type === "take_item"
+      || (converted.action.type === "attack"
+        && (readyNarrative.preparedContinuation === undefined || readyNarrative.preparedContinuation.steps.length === 0))
+    )
+  ) {
+    const storyForCommit = converted.action.type === "attack"
+      && revealed.worldState.battle.status === "active"
+      && revealed.storyState.narrative.status === "ready"
+      ? (() => {
+          const { narrative: _narrative, ...storySnapshot } = record.storyState;
+          return {
+            ...revealed.storyState,
+            narrative: {
+              ...revealed.storyState.narrative,
+              battleCheckpoint: {
+                storySnapshot,
+                currentScene: readyNarrative.currentScene,
+                choiceRegistry: readyNarrative.choiceRegistry,
+                ...(readyNarrative.dialogueSession === undefined ? {} : { dialogueSession: readyNarrative.dialogueSession }),
+              },
+            },
+          };
+        })()
+      : revealed.storyState;
+    const commitResult = await commitState(deps.repository, {
+      gameId: command.gameId,
+      expectedRevision: record.revision,
+      nextWorldState: revealed.worldState,
+      nextStoryState: storyForCommit,
+    });
+    if (!commitResult.ok) {
+      return {
+        ok: false,
+        code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
+        feedback: "Commit failed",
+      };
+    }
+    return {
+      ok: true,
+      revision: commitResult.record.revision,
+      resolvedEvent: resolution.primaryResult,
+      feedback: "Action performed",
+    };
+  }
+
   const narrative = buildTurnNarrative(
     { worldState: record.worldState, storyState: record.storyState },
     revealed,

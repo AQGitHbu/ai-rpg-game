@@ -8,7 +8,8 @@ import {
   LIVE_WORLD_EVOLUTION_MAX_TOKENS,
   LIVE_WORLD_EVOLUTION_TIMEOUT_MS,
 } from "./liveWorldEvolutionSource";
-import { createInitialWorldState } from "@/game/domain/worldState";
+import { createInitialWorldState, createWorldStateFromProjection } from "@/game/domain/worldState";
+import { projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
 import { asFactId, asLocationId, asGenerationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { AiTransport } from "@ai-game/ai-transport";
@@ -26,6 +27,17 @@ function makeWorld(): WorldState {
       connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
     },
     startingItemIds: [],
+  });
+}
+
+function withProjection(base: WorldState, overrides: Partial<EntityCompatibilityProjection>): WorldState {
+  return createWorldStateFromProjection({
+    generation: base.generation,
+    projection: { ...projectEntityStore(base.entityStore), ...overrides },
+    battle: base.battle,
+    endings: base.endings,
+    ending: base.ending,
+    eventLedger: base.eventLedger,
   });
 }
 
@@ -489,15 +501,14 @@ describe("world source 内容修复契约", () => {
     const base = makeCtx();
     const ctx: WorldEvolutionSourceContext = {
       ...base,
-      worldState: {
-        ...base.worldState,
+      worldState: withProjection(base.worldState, {
         worldFacts: [{
           factId: secretFactId,
           text: "私密正文",
           source: "generated",
           discovered: false,
         }],
-      },
+      }),
     };
     const ai = makeClient("not json");
 
@@ -523,8 +534,7 @@ describe("world source 内容修复契约", () => {
     const base = makeCtx({ need: { kind: "next_act", act: 2 } });
     const prompt = buildWorldEvolutionPrompt({
       ...base,
-      worldState: {
-        ...base.worldState,
+      worldState: withProjection(base.worldState, {
         quests: [{
           id: asQuestId("quest_1"),
           name: "追查失踪商队",
@@ -537,7 +547,7 @@ describe("world source 内容修复契约", () => {
           stage: 1,
           status: "active",
         }],
-      },
+      }),
       storyState: {
         ...base.storyState,
         nextPacingNeed: "complicate",
@@ -653,12 +663,11 @@ describe("world source 内容修复契约", () => {
     for (let i = 0; i < town.slots.length; i += 1) {
       town = bindNpcToTownSlot(town, asNpcId(`npc_slot_${i}`)).town;
     }
-    const worldState = {
-      ...base.worldState,
+    const worldState = withProjection(base.worldState, {
       locations: base.worldState.locations.map((location) => location.id === asLocationId("loc_a")
         ? { ...location, scale: "town" as const, town }
         : location),
-    };
+    });
     const prompt = buildWorldEvolutionPrompt({ ...base, worldState });
     expect(prompt).toContain("剧情建筑槽位已满（可用槽位=0/");
     expect(prompt).toContain("本次禁止使用 placement=town_building");

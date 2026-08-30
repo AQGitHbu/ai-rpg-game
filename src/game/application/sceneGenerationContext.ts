@@ -458,12 +458,6 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
   const ws = {
     ...record.worldState,
     ...projected,
-    locations: projected.locations.length >= record.worldState.locations.length && (record.worldState.locations.some((location) => location.town !== undefined) === projected.locations.some((location) => location.town !== undefined)) ? projected.locations : record.worldState.locations,
-    npcs: projected.npcs.length >= record.worldState.npcs.length ? projected.npcs : record.worldState.npcs,
-    items: projected.items.length >= record.worldState.items.length ? projected.items : record.worldState.items,
-    quests: projected.quests.length >= record.worldState.quests.length ? projected.quests : record.worldState.quests,
-    worldFacts: projected.worldFacts.length >= record.worldState.worldFacts.length ? projected.worldFacts : record.worldState.worldFacts,
-    enemies: projected.enemies.length >= record.worldState.enemies.length ? projected.enemies : record.worldState.enemies,
   };
   const ss = record.storyState;
 
@@ -479,7 +473,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
   // 而场景装配的预览状态里下一幕任务已具象化，故在此修正投影）。
   const transition: ObjectiveTransition = {
     ...job.objectiveTransition,
-    after: currentObjectiveOf(record.worldState, record.storyState),
+    after: currentObjectiveOf(ws, record.storyState),
   };
   const activeQuest = transition.after === null
     ? undefined

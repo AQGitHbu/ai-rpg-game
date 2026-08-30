@@ -101,6 +101,12 @@ function sceneForStep(
     if (!approved.ok) return null;
     choiceRegistry.push(approved.choice);
   }
+  const firstChoiceSeed = step.scene.choiceSeeds[0];
+  const dialogueFocusNpcId = step.scene.choiceSeeds.length === 2
+    && step.scene.choiceSeeds.every((seed) => seed.action.type === "talk")
+    && firstChoiceSeed?.action.type === "talk"
+    ? firstChoiceSeed.action.npcId
+    : undefined;
   const scene: NarrativeSceneState = {
     sceneId,
     turn: revision,
@@ -109,7 +115,13 @@ function sceneForStep(
     npcLine: step.scene.npcLine,
     choices: choiceRegistry.map((choice) => ({ choiceToken: choice.choiceToken, label: choice.label })),
     source: step.scene.source,
-    event: step.scene.event,
+    // A travel/battle step can end at a prepared two-choice NPC boundary.
+    // Mark the presented scene as dialogue so the next fixed choice is
+    // treated as a formal narrative turn instead of looking for another
+    // continuation step for the talk action.
+    event: dialogueFocusNpcId === undefined
+      ? step.scene.event
+      : { kind: "dialogue", focusNpcId: dialogueFocusNpcId },
   };
   return { scene, choiceRegistry };
 }

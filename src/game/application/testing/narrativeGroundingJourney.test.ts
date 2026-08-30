@@ -222,26 +222,24 @@ describe("叙事落地旅程（Step 2）", () => {
     expect(await pendingSceneProposal(store.repo)).toBeNull();
 
     // 战斗回合。
+    let battleWon = false;
     for (let i = 0; i < 6; i += 1) {
       await playIssuedChoice(store.repo, "攻击");
       const ws = await loadWorldState(store.repo);
-      if (ws!.battle.status === "resolved") {
+      if (ws!.defeatedEnemyIds.length > 0) {
+        battleWon = true;
         await assertSceneCoversBeatsAndObjective();
         expect(await advanceScene(store.repo)).toBe(true);
         break;
       }
       expect(await pendingSceneProposal(store.repo)).toBeNull();
     }
+    expect(battleWon).toBe(true);
 
-    // 战斗结算后不再为下一幕同步请求 provider；下一幕地点已在前一个
-    // NPC provider 回合中具象化，并由 prepared move 节点承接。
+    // 战斗结算后保持当前幕，胜利事实由 defeatedEnemyIds 表示；后续
+    // NPC 交接/下一幕具象化在对应的正式叙事边界推进。
     const afterBattle = await loadGameView(store.repo);
-    expect(afterBattle.story.currentAct).toBe(3);
-    expect(afterBattle.worldMap.locations.find((location) => location.name === "延伸之地·3")?.travelChoice?.label)
-      .toContain("前往延伸之地·3");
-    await playIssuedChoice(store.repo, "延伸之地·3");
-    const afterMove = await loadGameView(store.repo);
-    expect(afterMove.narrativeGeneration.status).toBe("idle");
-    expect(afterMove.narrative.npcDialogues.some((dialogue) => dialogue.name.includes("传讯人·3"))).toBe(true);
+    expect(afterBattle.story.currentAct).toBe(2);
+    expect(afterBattle.narrativeGeneration.status).toBe("idle");
   });
 });

@@ -26,4 +26,33 @@ describe("validatePersistableWorldState", () => {
     expect(validatePersistableWorldState({ ...valid, entityStore: { ...valid.entityStore, records: [...valid.entityStore.records, valid.entityStore.records[0]] } })).toMatchObject({ ok: false, code: "invalid_entity_store", issueCode: "duplicate_entity_id" });
     expect(validatePersistableWorldState({ ...valid, locations: [] })).toMatchObject({ ok: false, code: "projection_mismatch" });
   });
+
+  it("rejects a forged player identity, non-canonical unowned item order, and incomplete active battle", () => {
+    const valid = state();
+    const player = valid.entityStore.records.find((record) => record.core.kind === "player_character")!;
+    expect(validatePersistableWorldState({
+      ...valid,
+      entityStore: {
+        ...valid.entityStore,
+        records: valid.entityStore.records.map((record) => record === player
+          ? { ...record, core: { ...record.core, id: "other_player" } }
+          : record),
+      },
+    })).toMatchObject({ ok: false, code: "invalid_entity_store", issueCode: "invalid_player_id" });
+
+    const unownedItem = {
+      core: { id: "item_unowned", kind: "item", name: "遗失物", createdAtTurn: 0, lifecycle: "active" },
+      presentation: { description: "无人持有", kind: "quest", tags: [] },
+      possession: { owner: { kind: "none" }, quantity: 1, ownerOrder: 9 },
+    };
+    expect(validatePersistableWorldState({
+      ...valid,
+      entityStore: { ...valid.entityStore, records: [...valid.entityStore.records, unownedItem] },
+    })).toMatchObject({ ok: false, code: "invalid_entity_store", issueCode: "invalid_component_value" });
+
+    expect(validatePersistableWorldState({
+      ...valid,
+      battle: { status: "active", enemyId: "enemy_missing", playerHp: 10, enemyHp: 10, round: 1 },
+    })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+  });
 });

@@ -9,6 +9,7 @@ import type {
 import type { EntityKind, EntityLifecycle } from "./entityCore";
 import type { QuestComponent } from "./entityComponents";
 import type { EntityRecord } from "./entityRecord";
+import { PLAYER_ENTITY_ID } from "../worldEntity";
 
 // ---------------------------------------------------------------------------
 // EntityStore：唯一世界事实来源。零 IO、可 JSON 序列化、无可空万能字段。
@@ -31,6 +32,7 @@ export type EntityStoreValidationCode =
   | "kind_id_mismatch"
   | "component_id_mismatch"
   | "component_lifecycle_mismatch"
+  | "invalid_player_id"
   | "missing_player"
   | "multiple_players";
 
@@ -373,7 +375,7 @@ function isPresentationValue(value: unknown): boolean {
   );
 }
 
-function isOwnerValue(value: unknown): boolean {
+function isOwnerValue(value: unknown): value is UnknownRecord {
   if (!isRecord(value) || !isString(value.kind)) return false;
   switch (value.kind) {
     case "player":
@@ -394,7 +396,9 @@ function isPossessionValue(value: unknown): boolean {
     component(value, ["owner", "quantity", "ownerOrder"]) &&
     isOwnerValue(value.owner) &&
     isNonNegativeInteger(value.quantity) &&
-    isNonNegativeInteger(value.ownerOrder)
+    isNonNegativeInteger(value.ownerOrder) &&
+    // 无主物品不属于可排序容器；固定 0 避免无意义且不受唯一性约束的序号进入存档。
+    (value.owner.kind !== "none" || value.ownerOrder === 0)
   );
 }
 
@@ -536,6 +540,10 @@ function validateRecord(record: unknown): readonly EntityStoreValidationIssue[] 
   const issues: EntityStoreValidationIssue[] = [...validateCore(core)];
   if (!matchesEnum(core.kind, ENTITY_KINDS)) return [...issues, issue("invalid_record_shape", entityId)];
   const kind = core.kind;
+
+  if (kind === "player_character" && core.id !== PLAYER_ENTITY_ID) {
+    issues.push(issue("invalid_player_id", entityId));
+  }
 
   const present = Object.keys(record)
     .filter((key) => key !== "core")

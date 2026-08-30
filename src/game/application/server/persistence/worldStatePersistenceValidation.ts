@@ -33,8 +33,36 @@ function isGeneration(value: unknown): value is GenerationMetadata {
     && typeof value.gameType === "string" && isJson(value);
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isBattleSnapshot(value: unknown): boolean {
+  return isObject(value)
+    && hasExactKeys(value, ["entityStore", "eventLedger"])
+    && Array.isArray(value.eventLedger)
+    && value.eventLedger.every(isGameEvent);
+}
+
 function isBattle(value: unknown): value is BattleState {
-  return isObject(value) && (value.status === "idle" || (typeof value.status === "string" && typeof value.enemyId === "string")) && isJson(value);
+  if (!isObject(value)) return false;
+  if (value.status === "idle") return hasExactKeys(value, ["status"]);
+  if (value.status === "resolved") {
+    return hasExactKeys(value, ["status", "enemyId", "outcome", "battleKey"])
+      && typeof value.enemyId === "string"
+      && (value.outcome === "victory" || value.outcome === "defeat" || value.outcome === "withdraw")
+      && (!("battleKey" in value) || typeof value.battleKey === "string");
+  }
+  if (value.status !== "active") return false;
+  const allowed = ["status", "enemyId", "enemyIds", "playerHp", "enemyHp", "round", "battleKey", "preBattleSnapshot", "combatants", "turnOrder", "turnIndex", "enemyIntents", "downedEnemyIds", "lastAdvance"];
+  return Object.keys(value).every((key) => allowed.includes(key))
+    && ["status", "enemyId", "playerHp", "enemyHp", "round", "preBattleSnapshot"].every((key) => key in value)
+    && typeof value.enemyId === "string"
+    && isFiniteNumber(value.playerHp)
+    && isFiniteNumber(value.enemyHp)
+    && typeof value.round === "number" && Number.isInteger(value.round) && value.round >= 0
+    && isBattleSnapshot(value.preBattleSnapshot)
+    && isJson(value);
 }
 
 function isEndingState(value: unknown): value is EndingState {

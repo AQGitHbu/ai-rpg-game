@@ -3,10 +3,10 @@ import type { AiMessage } from "@ai-game/ai-transport";
 import type { RpgAiClient } from "./rpgAiClient";
 import { createNarrativeBundleSource } from "./liveNarrativeBundleSource";
 import type { NarrativeBundleSourceContext } from "../../narrativeBundleSource";
-import type { WorldState } from "@/game/domain/worldState";
+import { createInitialWorldState, createWorldStateFromProjection, type WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
-import { createInitialWorldState } from "@/game/domain/worldState";
+import { projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
 import {
@@ -55,6 +55,17 @@ function makeWorldState(): WorldState {
       tags: [],
     },
     startingItemIds: [],
+  });
+}
+
+function withProjection(base: WorldState, overrides: Partial<EntityCompatibilityProjection>): WorldState {
+  return createWorldStateFromProjection({
+    generation: base.generation,
+    projection: { ...projectEntityStore(base.entityStore), ...overrides },
+    battle: base.battle,
+    endings: base.endings,
+    ending: base.ending,
+    eventLedger: base.eventLedger,
   });
 }
 
@@ -200,8 +211,7 @@ describe("createNarrativeBundleSource", () => {
       learnedFactIds: [] as const,
       summary: `第${index + 1}次结构化交互`,
     }));
-    const worldState: WorldState = {
-      ...base,
+    const worldState = withProjection(base, {
       worldFacts: [
         { factId: publicFactId, text: "公开账册记录了商队去向。", source: "generated", discovered: true },
         { factId: privateFactId, text: "DO_NOT_LEAK_OTHER_NPC_SECRET", source: "generated", discovered: true },
@@ -225,7 +235,7 @@ describe("createNarrativeBundleSource", () => {
           goals: ["查清商队失踪原因"],
         },
       }],
-    };
+    });
     const storyState: StoryState = {
       ...makeStoryState(),
       currentAct: 2,
@@ -292,15 +302,14 @@ describe("createNarrativeBundleSource", () => {
     const base = makeWorldState();
     const carriedId = asItemId("item_carried");
     const groundId = asItemId("item_ground");
-    const worldState: WorldState = {
-      ...base,
+    const worldState = withProjection(base, {
       items: [
         { id: carriedId, name: "旧铜钱", description: "一枚旧铜钱。", kind: "clue", tags: [] },
         { id: groundId, name: "燕字铁牌拓片", description: "一张拓片。", kind: "clue", tags: [] },
       ],
       inventory: [carriedId],
       locations: [{ ...base.locations[0]!, availableItemIds: [groundId] }],
-    };
+    });
 
     await source.generate({
       kind: "decision",
@@ -433,8 +442,7 @@ describe("createNarrativeBundleSource", () => {
 
     const worldState = makeWorldState();
     const npcId = asNpcId("npc_1");
-    const worldWithNpc: WorldState = {
-      ...worldState,
+    const worldWithNpc = withProjection(worldState, {
       npcs: [{
         id: npcId,
         name: "老掌柜",
@@ -454,7 +462,7 @@ describe("createNarrativeBundleSource", () => {
           goals: [],
         } as NpcMemory,
       }],
-    };
+    });
     const readyNarrative = makeStoryState().narrative;
     if (readyNarrative.status !== "ready") throw new Error("expected ready fixture");
     const storyState: StoryState = {
@@ -539,8 +547,7 @@ describe("createNarrativeBundleSource", () => {
       emotion: "neutral",
       goals: [],
     };
-    const worldState: WorldState = {
-      ...base,
+    const worldState = withProjection(base, {
       locations: [...base.locations, {
         ...base.locations[0]!,
         id: asLocationId("loc_9"),
@@ -565,7 +572,7 @@ describe("createNarrativeBundleSource", () => {
         locationId: asLocationId("loc_0"),
         tags: [],
       }],
-    };
+    });
 
     await source.generate({
       kind: "decision",
