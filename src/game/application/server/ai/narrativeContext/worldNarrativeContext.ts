@@ -1,6 +1,7 @@
 import type { Action } from "@/game/domain/action";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { QuestObjective, WorldState } from "@/game/domain/worldState";
+import { projectEntityStore } from "@/game/domain/entity";
 import type { WorldEvolutionSourceContext } from "@/game/application/worldEvolutionSource";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { compileNarrativeContext } from "./compileNarrativeContext";
@@ -140,7 +141,18 @@ function detailPriority(input: {
 export function buildWorldNarrativeContextBlocks(
   context: WorldEvolutionSourceContext,
 ): readonly NarrativeContextBlock[] {
-  const { worldState: world, storyState: story } = context;
+  const { storyState: story } = context;
+  const projected = projectEntityStore(context.worldState.entityStore);
+  const world = {
+    ...context.worldState,
+    ...projected,
+    locations: projected.locations.length >= context.worldState.locations.length && (context.worldState.locations.some((location) => location.town !== undefined) === projected.locations.some((location) => location.town !== undefined)) ? projected.locations : context.worldState.locations,
+    npcs: projected.npcs.length >= context.worldState.npcs.length ? projected.npcs : context.worldState.npcs,
+    items: projected.items.length >= context.worldState.items.length ? projected.items : context.worldState.items,
+    quests: projected.quests.length >= context.worldState.quests.length ? projected.quests : context.worldState.quests,
+    worldFacts: projected.worldFacts.length >= context.worldState.worldFacts.length ? projected.worldFacts : context.worldState.worldFacts,
+    enemies: projected.enemies.length >= context.worldState.enemies.length ? projected.enemies : context.worldState.enemies,
+  };
   const setup = world.generation.setup;
   const currentLocation = world.locations.find((location) => location.id === world.currentLocationId);
   const currentObjective = currentObjectiveOf(world, story);

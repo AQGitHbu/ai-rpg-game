@@ -13,6 +13,7 @@ import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type { RecentBeat } from "@/game/domain/materializedView";
 import type { MandatoryNarrativeBeat, ObjectiveRef, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { WorldState } from "@/game/domain/worldState";
+import { projectEntityStore } from "@/game/domain/entity";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import {
   buildPreparedStepDescriptors,
@@ -453,7 +454,17 @@ function buildUpcomingLinearObjectives(
 
 /** 从持久化 record 投影最小权限上下文（唯一构造入口）。 */
 export function buildSceneGenerationContext(record: GameRecord): SceneGenerationContext {
-  const ws = record.worldState;
+  const projected = projectEntityStore(record.worldState.entityStore);
+  const ws = {
+    ...record.worldState,
+    ...projected,
+    locations: projected.locations.length >= record.worldState.locations.length && (record.worldState.locations.some((location) => location.town !== undefined) === projected.locations.some((location) => location.town !== undefined)) ? projected.locations : record.worldState.locations,
+    npcs: projected.npcs.length >= record.worldState.npcs.length ? projected.npcs : record.worldState.npcs,
+    items: projected.items.length >= record.worldState.items.length ? projected.items : record.worldState.items,
+    quests: projected.quests.length >= record.worldState.quests.length ? projected.quests : record.worldState.quests,
+    worldFacts: projected.worldFacts.length >= record.worldState.worldFacts.length ? projected.worldFacts : record.worldState.worldFacts,
+    enemies: projected.enemies.length >= record.worldState.enemies.length ? projected.enemies : record.worldState.enemies,
+  };
   const ss = record.storyState;
 
   const narrative = ss.narrative;

@@ -6,6 +6,7 @@ import { relationshipTierOf } from "@/game/domain/relationship";
 import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import { buildStylePolicy } from "@/game/application/stylePolicy";
+import { buildEntityContextProjection } from "@/game/application/entityContextProjection";
 import {
   buildNarrativeBundleDescriptors,
 } from "@/game/gameplay/rpg/narrativeBundle";
@@ -188,6 +189,7 @@ export function buildDecisionNarrativeContextBlocks(
   input: DecisionNarrativeContextInput,
 ): readonly NarrativeContextBlock[] {
   const { worldState, storyState, job, contentRepair } = input;
+  const entityContext = buildEntityContextProjection({ worldState, storyState, job });
   const projection = expectedBundleProjection(worldState, storyState, job);
   const currentLocation = worldState.locations.find((location) => location.id === worldState.currentLocationId);
   const focusNpc = job.focusNpcId === undefined
@@ -292,8 +294,8 @@ export function buildDecisionNarrativeContextBlocks(
     block({
       id: "bundle:entity-index", slot: "current_state", title: "已批准实体索引",
       authority: "state", retention: "mandatory", priority: 825,
-      source: { kind: "world_entity_index", refs: [] },
-      content: `已占用实体名称（新实体不得与下列任何名称重复）：\n${occupiedNamesSection(worldState)}\n稳定引用：\n- 地点=${list(worldState.locations.map((entry) => `${entry.id}=${entry.name}`))}\n- NPC=${list(worldState.npcs.map((entry) => `${entry.id}=${entry.name}@${entry.locationId}`))}\n- 物品=${list(worldState.items.map((entry) => `${entry.id}=${entry.name}`))}\n- 敌人=${list(worldState.enemies.map((entry) => `${entry.id}=${entry.name}@${entry.locationId}`))}\n- 任务=${list(worldState.quests.map((entry) => `${entry.id}=${entry.name}(${entry.status})`))}\n世界内实体名称唯一：新实体名称不得与以上任何名称重复。`,
+      source: { kind: "world_entity_index", refs: entityContext.mandatory.map((entity) => entity.id) },
+      content: `已占用实体名称（新实体不得与下列任何名称重复）：\n${occupiedNamesSection(worldState)}\n规则闭包：\n${entityContext.mandatory.map((entity) => `- ${entity.kind}:${entity.id}=${entity.name}；${entity.summary}`).join("\n") || "（无）"}\n稳定引用：\n- 地点=${list(worldState.locations.map((entry) => `${entry.id}=${entry.name}`))}\n- NPC=${list(worldState.npcs.map((entry) => `${entry.id}=${entry.name}@${entry.locationId}`))}\n- 物品=${list(worldState.items.map((entry) => `${entry.id}=${entry.name}`))}\n- 敌人=${list(worldState.enemies.map((entry) => `${entry.id}=${entry.name}@${entry.locationId}`))}\n- 任务=${list(worldState.quests.map((entry) => `${entry.id}=${entry.name}(${entry.status})`))}\n世界内实体名称唯一：新实体名称不得与以上任何名称重复。`,
     }),
     block({
       id: "bundle:item-state", slot: "current_state", title: "物品权威状态",
