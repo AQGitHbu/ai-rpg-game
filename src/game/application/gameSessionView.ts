@@ -756,6 +756,18 @@ export function projectGameSessionView(
     || scene.handoffAcknowledgement.trim() === ""
     ? null
     : { label: scene.handoffAcknowledgement };
+  // 收场兜底：正式对话已完成后，若生成场景没有显式致意语，用权威下一目标
+  // 文案投影一个引导性收尾，绝不让收场退化为「知道了」纯确认。
+  const isConversationClosingScene = projectedHandoffAcknowledgement === null
+    && sceneLineNpcId !== null
+    && projectedSceneChoices.length === 0
+    && storyState.narrative.dialogueSession?.completed === true
+    && currentObjectiveRef !== null;
+  const effectiveHandoffAcknowledgement = projectedHandoffAcknowledgement !== null
+    ? projectedHandoffAcknowledgement
+    : isConversationClosingScene
+      ? { label: `告辞，${currentObjectiveRef!.label}` }
+      : null;
   const dialogueChoices: NpcDialogueView["choices"] = isDialogueScene && projectedSceneChoices.length === 2
       ? [projectedSceneChoices[0]!, projectedSceneChoices[1]!]
       : isDialogueScene && endingStanceChoices.length === 2
@@ -839,8 +851,8 @@ export function projectGameSessionView(
       // 非焦点 NPC 是零回合闲聊：不提供任何可提交选项；正式对话只能经
       // 当前权威 talk 目标入口（NPC 卡片/交接双选项）开启。
       choices: formalDialogueReady ? dialogueChoices : [],
-      ...(projectedHandoffAcknowledgement !== null && String(npc.id) === sceneLineNpcId
-        ? { handoffAcknowledgement: projectedHandoffAcknowledgement }
+      ...(effectiveHandoffAcknowledgement !== null && String(npc.id) === sceneLineNpcId
+        ? { handoffAcknowledgement: effectiveHandoffAcknowledgement }
         : {}),
       freeInputEnabled: formalDialogueReady
         // 结局立场只有两条已批准的 talk 行动：结局束没有任何步骤可供自由输入

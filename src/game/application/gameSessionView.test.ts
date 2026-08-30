@@ -1052,6 +1052,49 @@ describe("projectGameSessionView", () => {
     expect(view.story.currentObjectiveChoiceToken).toBeNull();
   });
 
+  it("收场场景缺 handoffAcknowledgement 时投影引导下一目标的兜底致意，绝不落到「知道了」", () => {
+    const visitQuest: WorldState["quests"][number] = {
+      id: asQuestId("quest_visit"),
+      name: "追寻痕迹",
+      description: "前往街道追查留下的痕迹",
+      objectives: [{ kind: "visit_location", locationId: loc2.id }],
+      onSuccess: { kind: "advance_story" },
+      onFailure: { kind: "closed" },
+      tags: [],
+      kind: "main",
+      stage: 1,
+      status: "active",
+    };
+    const scene = {
+      sceneId: "scene-handoff-no-ack",
+      turn: 2,
+      narration: "老板指向街道尽头。",
+      usedFactIds: [],
+      npcLine: { npcId: npc1.id, text: "线索已经指向街道。你现在过去，就能赶上留下的痕迹。", emotion: "neutral" as const, usedFactIds: [] },
+      choices: [] as const,
+      source: "generated" as const,
+      event: { kind: "dialogue" as const, focusNpcId: npc1.id },
+      npcDialogues: [{ npcId: npc1.id, npcName: npc1.name, npcRole: npc1.role, speechPages: ["线索已经指向街道。你现在过去，就能赶上留下的痕迹。"], speechSource: "generated" as const, speechPurpose: "focus" as const }],
+    };
+    const story: StoryState = {
+      ...ss,
+      narrative: {
+        ...ss.narrative,
+        currentScene: scene,
+        dialogueSession: { npcId: npc1.id, turnCount: 2, requiredTurns: 2, completed: true },
+        choiceRegistry: [],
+      },
+    };
+    const view = projectGameSessionView(
+      { ...ws, quests: [visitQuest] },
+      story,
+      0,
+      "test-ending-session",
+    );
+    const dialogue = view.narrative.npcDialogues.find((entry) => entry.npcId === String(npc1.id));
+    expect(dialogue?.handoffAcknowledgement?.label).toBe("告辞，前往街道");
+  });
+
   it("在 read model 统一标记 fallback 场景的旁白、NPC 台词和对白页", () => {
     const view = projectGameSessionView(ws, {
       ...ss,

@@ -88,6 +88,7 @@
 - Prompt 侧预防措施：下发「已占用实体名称」清单（地点/NPC/物品/敌人/任务）和规则拥有的物品状态（已持有 / 未拾取且所在地点），要求新实体名称避开且不能把未拾取物品写成已持有；要求 `continuationScenes` 与服务端投影步骤在数量、`stepKey`、顺序上完全一致，选项只写在 terminal 指向的那一步，禁止在投影之外自行规划未来步骤。兼容 provider 把新地点名称而非 ID 填入 `connectFromLocationId` 的形状，仅在名称唯一时解析回当前世界 ID。
 - 观测入口：`logs/ai-text-audit/<runId>/events.jsonl` 与 `data/logs.db` 中的 `narrative_bundle_json_fence_normalized`、`narrative_bundle_invalid_schema`、`narrative_bundle_generation_failed`、`narrative_bundle_source_unavailable`。
 - 真机回合情境投影与内容闸门（2026-08-30 浏览器中篇回归收口）：`buildDecisionPrompt` 除世界快照外还投影玩家当前位置、焦点 NPC、上一场景旁白/台词、固定选项原文（`selectedDialogue.label`）或自由输入、本回合强制节拍清单与逐字给出的 `objectiveLink` 期望值；下一幕回合另给出带真实 `stepKey`/candidateId/npcId 的抵达场景骨架，防止 provider 漏写终点两选项。`approveNarrativeBundle` 新增当前场景内容审批：强制节拍逐一覆盖（顺序不限）、禁止自创节拍、至多一个置尾 `atmosphere`；`player_utterance` 必须由焦点 NPC 台词应答；当前场景决策点或终点抵达步骤缺焦点/抵达 NPC 台词（`dialogue_focus_line_missing`）、`objectiveLink` 与权威转换不一致（`objective_link_mismatch`）均拒包并回传细分原因。纯舞台说明被重分类为旁白不算缺台词。节拍顺序不再作为拒因，避免消耗修复预算。
+- 对话收场引导（2026-08-30）：焦点 NPC 对话完成后的收场必须是一个引导下一动作的单选项（`handoffAcknowledgement`，本地关闭语义、不提交回合），禁止「知道了」式纯确认。read model 在收场场景（最后台词 NPC、`dialogueSession.completed`、无可提交选项）缺少显式致意语时，确定性地以权威当前目标投影「告辞，{下一目标}」兜底，保证任何存档都不再渲染「知道了」。该规则**不做成审批硬门**：真机验证 provider 会把该字段放到 JSON 根级（`unknown_keys`）或省略，硬门会耗尽 4 次尝试把玩家回合卡成 `provider_failed`；呈现层字段一律由确定性兜底保障，不阻塞主线。
 
 ## 强制节拍与目标链接
 

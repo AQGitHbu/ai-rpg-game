@@ -90,7 +90,9 @@
 ## 2026-08-30 v7 捆绑包回合情境与内容闸门回归
 
 - 运行时 AI 导演与场景表演：真机回归发现决策 prompt 只给世界快照（无当前位置/焦点 NPC/所选选项/上一场景/节拍清单），且审批只查结构不查内容，导致正式对话回合生成并持久化脱离情境的场景（旁白回到旧地点、`npcLine` 缺失、自创 `reflection` 节拍、选项与当前状态矛盾）。修复：`buildDecisionPrompt` 投影完整回合情境（含固定选项原文、逐字 `objectiveLink` 期望值、下一幕抵达场景骨架）；`approveNarrativeBundle` 新增当前场景内容闸门——强制节拍全覆盖（顺序不限、禁自创、至多一个置尾 atmosphere）、`player_utterance` 必须由焦点 NPC 应答、当前决策点与终点抵达步骤缺焦点/抵达 NPC 台词即拒（`dialogue_focus_line_missing`）、`objectiveLink` 必须镜像权威转换（`objective_link_mismatch`），拒因进入修复重试；节拍顺序不再作为拒因。
+- 地图与地点冒险：NPC 对话收场改为引导下一动作的单选项。read model 在收场场景缺显式 `handoffAcknowledgement` 时确定性投影「告辞，{下一目标}」，任何存档不再渲染「知道了」纯确认按钮。曾尝试把该字段做成审批硬门，真机验证 provider 会把字段放错层级（根级 `unknown_keys`）或省略，硬门会耗尽 4 次尝试卡死玩家回合（`provider_failed`），故回退为读模型兜底、绝不阻塞主线。
 - 验收事实：同分支浏览器中篇二次通关（5 幕、第 21 回合达成结局「承志而行」）；本轮 14 次 AI 调用全部归因于 initialization（1）、`narrative_choice`（11）或 `npc_free_text`（2），content_repair 为 0；移动、拾取、战斗、序幕确认与结局立场结算均未触发 provider。修复前的失败态（4 次尝试耗尽 → 「重试生成回应」）亦在真机出现过并被同一手动重试入口覆盖。
+- 验收事实（收场修复后第三局）：又一中篇 5 幕通关至分歧结局「疑心自守」（第 25 回合、质疑线）；含战败→检查点恢复→重赛获胜的完整战斗回归。卡死的 `provider_failed` 回合经「重试生成回应」（同 jobId 的 manual_failed_job 重试）在新代码下救回，此后所有收场均渲染引导性单选项，全程无「知道了」。
 
 ## 维护规则
 
