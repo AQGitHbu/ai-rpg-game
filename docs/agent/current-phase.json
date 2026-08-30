@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "phase": "narrative-context-compiler",
-  "status": "completed",
-  "implementationStatus": "merged",
-  "targetBranch": "codex/narrative-context-compiler",
-  "worktreeName": "narrative-context-compiler",
+  "phase": "entity-component-world-state-foundation",
+  "status": "planned",
+  "implementationStatus": "not_started",
+  "targetBranch": "codex/entity-component-world-state-foundation",
+  "worktreeName": "entity-component-world-state-foundation",
   "repositories": ["ai-rpg-game"],
-  "plan": "docs/superpowers/plans/2026-08-23-narrative-context-compiler.md",
+  "plan": "docs/superpowers/plans/2026-08-30-entity-component-world-state-foundation.md",
   "sharedInfrastructureChangeAllowed": false,
   "startCommand": "npm run phase:start",
   "entryDocs": [
@@ -15,7 +15,7 @@
     "docs/Agent文档索引.md",
     "docs/agent/当前开发阶段.md",
     "docs/superpowers/specs/2026-08-23-long-form-narrative-entity-memory-architecture.md",
-    "docs/superpowers/plans/2026-08-23-narrative-context-compiler.md"
+    "docs/superpowers/plans/2026-08-30-entity-component-world-state-foundation.md"
   ],
   "acceptanceCommands": [
     "npm run check:standards",
@@ -23,11 +23,13 @@
     "npm run lint",
     "npm run test:boundaries",
     "npm run test:fast",
+    "npm run test:game-domain",
+    "npm run test:game-gameplay",
     "npm run test:game-application",
     "npm test",
     "npm run test:foundation-journey",
     "npm run journey:foundation",
-    "npm test -- src/game/application/testing/mediumActJourney.test.ts",
+    "npm test -- src/game/application/testing/mediumActJourney.test.ts src/game/application/testing/entityProjectionJourney.test.ts",
     "npm run build",
     "npm run phase:status"
   ]

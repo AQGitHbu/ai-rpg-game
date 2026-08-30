@@ -12,7 +12,7 @@
 |---|---|---|---|
 | 共享基础设施 | `共同规范/共享模块开发流程.md` | `共同规范/共享模块目录.json` | 仅按触发条件读取 |
 | 项目脚手架 | `agent/项目脚手架.md` | — | 已建立；提供 `branch:finish` 合并后 worktree/分支收尾入口；SQLite 仓储测试使用每进程独占的 OS 临时目录，兼容 Windows/Git Bash 管道运行 |
-| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | 2026-08-23 叙事上下文编译器已验收、已合入 main；2026-08-30 复核确认 v7 生产决策链使用 `compileDecisionNarrativeContext` 并附带无正文 manifest。唯一已完成 Plan 仍为 `superpowers/plans/2026-08-23-narrative-context-compiler.md` |
+| 当前开发阶段 | `agent/当前开发阶段.md` | `agent/current-phase.json` | 2026-08-23 叙事上下文编译器已验收、已合入 main；2026-08-30 复核确认 v7 生产决策链使用 `compileDecisionNarrativeContext` 并附带无正文 manifest。唯一已完成 Plan 仍为 `superpowers/plans/2026-08-23-narrative-context-compiler.md`；下一阶段「实体与组件世界状态基础」（`superpowers/plans/2026-08-30-entity-component-world-state-foundation.md`）计划待执行，`WorldState.version=3`、`EntityStore`、兼容 projector 与 `ProposedEntityCommand` 均为目标架构，不是实现事实 |
 | 生产链边界 | `agent/当前开发阶段.md` | — | 只允许无版本后缀的生产命名；旧 route、旧 application/UI 链、兼容 facade、类型隔离和旧存档迁移均不存在。历史文档只作决策记录 |
 | MVP 核心闭环 | `agent/MVP核心闭环.md` | `策划文档/AI生成RPG_MVP.md` | 创建/恢复、选择驱动推进、探索、物品、战斗、分支和多结局可由显式 offline fixture 完整游玩；生产 AI 失败显示 stable failure 并手动重试 |
 | 行动裁决 | `agent/行动裁决.md` | `策划文档/AI生成RPG_MVP.md` | 固定 choiceToken 与 NPC 自定义输入统一进入 `performTurn`；Action union 只保留有规则实现的 action，已移除无推进作用的 rest，成功回合单次 StateCommit/CAS |
