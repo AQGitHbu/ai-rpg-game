@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { reconcileQuests } from "./reconcileQuests";
-import { createInitialWorldState, appendNpc, type NpcEntry, type LocationEntry } from "@/game/domain/worldState";
+import { createInitialWorldState, type NpcEntry, type LocationEntry } from "@/game/domain/worldState";
 import { projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asLocationId, asNpcId, asQuestId, asGenerationId, asItemId } from "@/game/domain/worldEntity";
@@ -40,7 +40,7 @@ describe("reconcileQuests", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
       memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const ws = withProjection(appendNpc(baseWs, npc), {
+    const ws = withProjection(withProjection(baseWs, { npcs: [npc] }), {
       quests: [{
         id: asQuestId("q1"), name: "talk quest", description: "t",
         objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_1") }],
@@ -59,15 +59,14 @@ describe("reconcileQuests", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const ws: WorldState = {
-      ...appendNpc(baseWs, npc),
+    const ws = withProjection(withProjection(baseWs, { npcs: [npc] }), {
       quests: [{
         id: asQuestId("q1"), name: "talk quest", description: "t",
         objectives: [{ kind: "talk_to_npc", npcId: asNpcId("npc_1") }],
         onSuccess: { kind: "closed" }, onFailure: { kind: "closed" },
         tags: [], kind: "side", status: "active",
       }],
-    };
+    });
     const result = reconcileQuests(ws, deps);
     expect(result.events).toHaveLength(0);
     expect(result.nextWorldState.quests[0]?.status).toBe("active");

@@ -4,8 +4,6 @@ import {
   findLocation,
   isTravelTarget,
   findNpc,
-  appendLocation,
-  appendNpc,
   InitialWorldStateInvariantError,
   type LocationEntry,
   type NpcEntry,
@@ -14,7 +12,7 @@ import {
 import { asLocationId, asNpcId, asItemId, asFactId, asGenerationId } from "./worldEntity";
 import { entitiesOfKind } from "./entity/entityStore";
 import { validateEntityCompatibilityProjection, type EntityCompatibilityProjection } from "./entity/entityProjection";
-import { createWorldStateFixture } from "./testing/worldStateFixture.testutil";
+import { createWorldStateFixture, updateWorldStateFixture } from "./testing/worldStateFixture.testutil";
 
 describe("WorldState", () => {
   const startingLocation: LocationEntry = {
@@ -95,7 +93,7 @@ describe("WorldState", () => {
     expect(findLocation(ws, asLocationId("nonexistent"))).toBeUndefined();
   });
 
-  it("appendLocation 重建 store：兼容数组与 record 同步增长", () => {
+  it("fixture 修改地点投影时重建 store：兼容数组与 record 同步增长", () => {
     const ws = createInitialWorldState(baseInput);
     const newLoc: LocationEntry = {
       id: asLocationId("loc_new"),
@@ -108,7 +106,7 @@ describe("WorldState", () => {
       tags: [],
       scale: "scene",
     };
-    const ws2 = appendLocation(ws, newLoc);
+    const ws2 = updateWorldStateFixture(ws, { locations: [...ws.locations, newLoc] });
     expect(findLocation(ws2, asLocationId("loc_new"))).toBeDefined();
     expect(findLocation(ws, asLocationId("loc_new"))).toBeUndefined(); // 原state不变
     expect(entitiesOfKind(ws2.entityStore, "location").map((record) => record.core.id))
@@ -136,7 +134,7 @@ describe("WorldState", () => {
     expect(isTravelTarget(ws, loc3)).toBe(false);
   });
 
-  it("appendNpc adds new npc immutably with default memory", () => {
+  it("fixture 修改 NPC 投影时由位置组件派生名册", () => {
     const ws = createInitialWorldState(baseInput);
     const newNpc: NpcEntry = {
       id: asNpcId("npc_new"),
@@ -157,7 +155,7 @@ describe("WorldState", () => {
         goals: [],
       },
     };
-    const ws2 = appendNpc(ws, newNpc);
+    const ws2 = updateWorldStateFixture(ws, { npcs: [...ws.npcs, newNpc] });
     expect(findNpc(ws2, asNpcId("npc_new"))).toBeDefined();
     // 位置由 PositionComponent 决定：名册随之派生，不再由调用方手填。
     expect(findLocation(ws2, asLocationId("loc_1"))?.npcIds).toEqual([asNpcId("npc_new")]);

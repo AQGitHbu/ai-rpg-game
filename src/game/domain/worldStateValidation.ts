@@ -1,6 +1,7 @@
 import type { EndingRequirement } from "./worldEntries";
 import type { WorldState } from "./worldState";
-import { entitiesOfKind } from "./entity/entityStore";
+import { entitiesOfKind, validateEntityStoreStructure } from "./entity/entityStore";
+import { validateEntityReferences } from "./entity/entityProjection";
 
 // ---------------------------------------------------------------------------
 // WorldState 层引用校验：battle 与 endings 对 Entity 的权威引用不在 store 内，
@@ -50,10 +51,17 @@ function battleIssues(worldState: WorldState, enemies: KnownBattleIds): readonly
       });
     }
   }
-  // 快照决定战败回滚到哪个世界：引用悬空时恢复必然损坏，宁可现在报错。
-  for (const enemyId of battle.preBattleSnapshot?.defeatedEnemyIds ?? []) {
-    if (!enemies.has(enemyId)) {
-      issues.push({ code: "invalid_battle_snapshot", entityId: battleEntityId, referencedId: enemyId });
+  // 快照决定战败回滚到哪个世界：它本身必须是可恢复的独立实体 store。
+  const snapshot = battle.preBattleSnapshot;
+  if (snapshot !== undefined) {
+    const [structureIssue] = validateEntityStoreStructure(snapshot.entityStore);
+    const [referenceIssue] = structureIssue === undefined ? validateEntityReferences(snapshot.entityStore) : [];
+    if (structureIssue !== undefined || referenceIssue !== undefined) {
+      issues.push({
+        code: "invalid_battle_snapshot",
+        entityId: battleEntityId,
+        ...(referenceIssue?.referencedId === undefined ? {} : { referencedId: referenceIssue.referencedId }),
+      });
     }
   }
   return issues;

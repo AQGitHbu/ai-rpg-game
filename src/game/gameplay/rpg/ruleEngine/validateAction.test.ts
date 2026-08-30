@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { validateAction } from "./validateAction";
-import { createInitialWorldState, appendEnemy, appendNpc, type LocationEntry, type EnemyEntry, type NpcEntry } from "@/game/domain/worldState";
+import { createInitialWorldState, type LocationEntry, type EnemyEntry, type NpcEntry } from "@/game/domain/worldState";
+import { updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asLocationId, asNpcId, asEnemyId, asGenerationId, asItemId, asFactId } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 
@@ -20,7 +21,7 @@ function makeWorldWithEnemy() {
     stats: { hp: 20, attack: 5, defense: 2 },
     locationId: asLocationId("loc_1"), tags: [],
   };
-  return appendEnemy(ws, enemy);
+  return updateWorldStateFixture(ws, { enemies: [enemy] });
 }
 
 describe("validateAction", () => {
@@ -182,8 +183,8 @@ describe("validateAction — battle_action", () => {
       memory: { npcId: asNpcId("npc_gift"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
     const item = { id: asItemId("item_gift"), name: "铜钥匙", description: "d", kind: "key", tags: [] } as const;
-    const base = appendNpc(giveBase, npc);
-    const withGift = { ...base, items: [...base.items, item], inventory: [...base.inventory, item.id] };
+    const base = updateWorldStateFixture(giveBase, { npcs: [npc] });
+    const withGift = updateWorldStateFixture(base, { items: [item], inventory: [item.id] });
 
     it("拥有物品且 NPC 在场时允许给予", () => {
       expect(validateAction(withGift, { type: "give_item", itemId: item.id, npcId: npc.id }).ok).toBe(true);

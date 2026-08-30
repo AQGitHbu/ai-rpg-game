@@ -2,6 +2,7 @@ import type { GenerationMetadata, LocationId } from "../worldEntity";
 import type { LocationEntry, PlayerState } from "../worldEntries";
 import type { GameEvent } from "../events";
 import type { EntityCompatibilityProjection } from "../entity/entityProjection";
+import { projectEntityStore } from "../entity/entityProjection";
 import {
   createWorldStateFromProjection,
   type BattleState,
@@ -88,4 +89,24 @@ export function createWorldStateFixtureWith(
     ...(ending === undefined ? {} : { ending }),
     ...(eventLedger === undefined ? {} : { eventLedger }),
   });
+}
+
+/**
+ * 在已有合法 fixture 上替换完整兼容投影字段。
+ * 测试不得 spread WorldState 后单改 legacy 数组；本入口会重新编译 store 并投影。
+ */
+export function updateWorldStateFixture(
+  worldState: WorldState,
+  overrides: WorldStateFixtureOverrides,
+): WorldState {
+  return createWorldStateFixtureWith(
+    { generation: worldState.generation, base: projectEntityStore(worldState.entityStore) },
+    {
+      battle: worldState.battle,
+      endings: worldState.endings,
+      ending: worldState.ending,
+      eventLedger: worldState.eventLedger,
+      ...overrides,
+    },
+  );
 }

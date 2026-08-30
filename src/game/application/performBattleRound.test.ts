@@ -52,8 +52,7 @@ function createBattleWorldState(overrides?: Partial<WorldState>): WorldState {
     startingItemIds: [],
   });
   const preBattleSnapshot: BattleStartSnapshot = {
-    playerStats: { hp: 100, attack: 20, defense: 10 },
-    defeatedEnemyIds: [],
+    entityStore: base.entityStore,
     eventLedger: [] as readonly GameEvent[],
   };
   return {
@@ -97,6 +96,45 @@ function createBattleStoryState(narrative?: StoryState["narrative"]): StoryState
 }
 
 describe("performBattleRound", () => {
+  it("restores the complete pre-battle entity store after defeat", async () => {
+    const worldState = createBattleWorldState({
+      battle: {
+        status: "active",
+        enemyId: asEnemyId("enemy_0"),
+        playerHp: 1,
+        enemyHp: 30,
+        round: 1,
+        preBattleSnapshot: { entityStore: createBattleWorldState().entityStore, eventLedger: [] },
+      },
+    });
+    if (worldState.battle.status !== "active" || worldState.battle.preBattleSnapshot === undefined) throw new Error("fixture must have snapshot");
+    const snapshot = worldState.battle.preBattleSnapshot;
+    const { repo, getRecord } = createInMemoryRepo({ gameId: "g1" as never, worldState, storyState: createBattleStoryState(), revision: 0, createdAt: "2026-01-01" });
+    const result = await performBattleRound(
+      { gameId: "g1" as never, actionId: "defeat", interactionKind: "fixed_choice", action: { type: "battle_action", action: "guard" }, expectedRevision: 0 },
+      { repository: repo, now: () => "2026-01-01" },
+    );
+    expect(result).toMatchObject({ ok: true, outcome: "defeat" });
+    expect(getRecord()?.worldState.entityStore).toEqual(snapshot.entityStore);
+    expect(getRecord()?.worldState.eventLedger).toEqual([]);
+    expect(getRecord()?.worldState.battle).toEqual({ status: "idle" });
+  });
+
+  it("restores the complete pre-battle entity store after withdraw", async () => {
+    const worldState = createBattleWorldState();
+    if (worldState.battle.status !== "active" || worldState.battle.preBattleSnapshot === undefined) throw new Error("fixture must have snapshot");
+    const snapshot = worldState.battle.preBattleSnapshot;
+    const { repo, getRecord } = createInMemoryRepo({ gameId: "g1" as never, worldState, storyState: createBattleStoryState(), revision: 0, createdAt: "2026-01-01" });
+    const result = await performBattleRound(
+      { gameId: "g1" as never, actionId: "withdraw", interactionKind: "fixed_choice", action: { type: "battle_action", action: "flee" }, expectedRevision: 0 },
+      { repository: repo, now: () => "2026-01-01" },
+    );
+    expect(result).toMatchObject({ ok: true, outcome: "withdraw" });
+    expect(getRecord()?.worldState.entityStore).toEqual(snapshot.entityStore);
+    expect(getRecord()?.worldState.eventLedger).toEqual([]);
+    expect(getRecord()?.worldState.battle).toEqual({ status: "idle" });
+  });
+
   it("returns NO_ACTIVE_GAME when no active game exists", async () => {
     const { repo } = createInMemoryRepo(null);
     const action: Action = { type: "battle_action", action: "attack", command: { actorId: asCombatantId("player") } };

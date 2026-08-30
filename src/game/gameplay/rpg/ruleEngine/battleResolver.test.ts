@@ -2,11 +2,11 @@ import { describe, it, expect } from "vitest";
 import { startBattle, battleAction } from "./battleResolver";
 import {
   createInitialWorldState,
-  appendEnemy,
   type WorldState,
   type EnemyEntry,
   type LocationEntry,
 } from "@/game/domain/worldState";
+import { updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asEnemyId, asLocationId, asGenerationId } from "@/game/domain/worldEntity";
 
 const FIXED_TIME = "2026-08-07T12:00:00Z";
@@ -37,7 +37,7 @@ function makeWorldWithEnemy(): WorldState {
     locationId: asLocationId("loc_1"),
     tags: [],
   };
-  return appendEnemy(ws, enemy);
+  return updateWorldStateFixture(ws, { enemies: [enemy] });
 }
 
 describe("startBattle", () => {

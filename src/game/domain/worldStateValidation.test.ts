@@ -122,7 +122,7 @@ function activeBattle(overrides: Partial<Extract<BattleState, { status: "active"
     playerHp: 20,
     enemyHp: 10,
     round: 1,
-    preBattleSnapshot: { playerStats: { hp: 20, attack: 5, defense: 3 }, defeatedEnemyIds: [], eventLedger: [] },
+    preBattleSnapshot: { entityStore: fixture({ battle: { status: "idle" } }).entityStore, eventLedger: [] },
     ...overrides,
   };
 }
@@ -186,15 +186,10 @@ describe("WorldState 层 Entity 引用校验", () => {
   it("战败恢复用的快照不得引用未知 enemy", () => {
     const issues = validateWorldStateEntityReferences(fixture({
       battle: activeBattle({
-        preBattleSnapshot: {
-          playerStats: { hp: 20, attack: 5, defense: 3 },
-          defeatedEnemyIds: [asEnemyId("enemy_404")],
-          eventLedger: [],
-        },
+        preBattleSnapshot: { entityStore: { version: 1, records: [] }, eventLedger: [] },
       }),
     }));
     expect(issues.map((issue) => issue.code)).toEqual(["invalid_battle_snapshot"]);
-    expect(issues[0]?.referencedId).toBe("enemy_404");
   });
 
   it("结局条件对 quest/fact/npc 的引用必须在 store 内", () => {

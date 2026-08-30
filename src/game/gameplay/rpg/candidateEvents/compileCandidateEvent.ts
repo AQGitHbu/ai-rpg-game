@@ -2,6 +2,8 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { GameEvent } from "@/game/domain/events";
 import type { ApprovedEventCandidate } from "./approveCandidateEvents";
 import type { ProposedEffect } from "@/game/domain/candidateEvent";
+import { applyEntityMutations, EntityMutationInvariantError } from "@/game/gameplay/rpg/entityWorld";
+import { entitiesOfKind } from "@/game/domain/entity";
 
 // ---------------------------------------------------------------------------
 // 纯候选事件编译（Spec §11.2 / Task 19）
@@ -50,15 +52,16 @@ function applyEffect(
   effect: ProposedEffect,
   occurredAt: string,
 ): { worldState: WorldState; events: readonly GameEvent[] } {
+  const mutate = (mutation: Parameters<typeof applyEntityMutations>[1]) => {
+    const applied = applyEntityMutations(ws, mutation);
+    if (!applied.ok) throw new EntityMutationInvariantError(applied);
+    return applied.worldState;
+  };
   switch (effect.kind) {
     case "npc_reveals_fact": {
       const event: GameEvent = { type: "fact_discovered", factId: effect.factId, occurredAt };
       return {
-        worldState: {
-          ...ws,
-          worldFacts: ws.worldFacts.map((f) => (f.factId === effect.factId ? { ...f, discovered: true } : f)),
-          eventLedger: [...ws.eventLedger, event],
-        },
+        worldState: { ...mutate([{ kind: "discover_fact", factId: effect.factId }]), eventLedger: [...ws.eventLedger, event] },
         events: [event],
       };
     }
@@ -69,25 +72,21 @@ function applyEffect(
         occurredAt,
         interactionKind: "greet",
       };
-      return {
-        worldState: {
-          ...ws,
-          npcs: ws.npcs.map((n) =>
-            n.id === effect.npcId
-              ? {
-                  ...n,
-                  memory: {
-                    ...n.memory,
-                    emotion: effect.stance === "hostile" ? "afraid"
-                      : effect.stance === "friendly" ? "warm"
-                      : effect.stance === "guarded" ? "guarded"
-                      : "neutral",
-                  },
-                }
-              : n,
-          ),
-          eventLedger: [...ws.eventLedger, event],
+      const npc = entitiesOfKind(ws.entityStore, "npc").find((record) => record.core.id === effect.npcId);
+      if (npc === undefined) throw new EntityMutationInvariantError({ code: "unknown_entity_id", entityId: effect.npcId });
+      const nextWorldState = mutate([{
+        kind: "replace_npc_state",
+        npcId: effect.npcId,
+        npcState: {
+          ...npc.npcState,
+          memory: {
+            ...npc.npcState.memory,
+            emotion: effect.stance === "hostile" ? "afraid" : effect.stance === "friendly" ? "warm" : effect.stance === "guarded" ? "guarded" : "neutral",
+          },
         },
+      }]);
+      return {
+        worldState: { ...nextWorldState, eventLedger: [...nextWorldState.eventLedger, event] },
         events: [event],
       };
     }
@@ -112,6 +111,7 @@ function applyEffect(
             playerHp: ws.player.stats.hp,
             enemyHp: enemy?.stats.hp ?? 0,
             round: 1,
+            preBattleSnapshot: { entityStore: ws.entityStore, eventLedger: ws.eventLedger },
           },
           eventLedger: [...ws.eventLedger, event],
         },
@@ -131,13 +131,11 @@ function applyEffect(
       const event: GameEvent = unlocked
         ? { type: "location_unlocked", locationId: effect.locationId, occurredAt }
         : { type: "location_visited", locationId: effect.locationId, occurredAt };
-      const nextWs: WorldState = {
-        ...ws,
-        unlockedLocationIds: unlocked && !ws.unlockedLocationIds.includes(effect.locationId)
-          ? [...ws.unlockedLocationIds, effect.locationId]
-          : ws.unlockedLocationIds,
-        eventLedger: [...ws.eventLedger, event],
-      };
+      const next = mutate([unlocked
+        ? { kind: "set_location_unlocked", locationId: effect.locationId, unlocked: true }
+        : { kind: "set_location_visited", locationId: effect.locationId, visited: true },
+      ]);
+      const nextWs: WorldState = { ...next, eventLedger: [...next.eventLedger, event] };
       return { worldState: nextWs, events: [event] };
     }
     default: {

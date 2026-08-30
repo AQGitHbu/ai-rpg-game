@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createInitialWorldState, appendEnemy, type WorldState } from "@/game/domain/worldState";
+import { createInitialWorldState, type WorldState } from "@/game/domain/worldState";
+import { updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { ENEMY_COMBAT_STATS, PLAYER_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
 import { asEnemyId, asGenerationId, asLocationId } from "@/game/domain/worldEntity";
 import { buildEncounter } from "@/game/gameplay/rpg/ruleEngine/buildEncounter";
@@ -16,9 +17,9 @@ function world(): WorldState {
     player: { name: "侠客", identity: "旅人", stats: toStatBlock(PLAYER_COMBAT_STATS) },
     startingLocation: location, startingItemIds: [],
   });
-  return appendEnemy(base, {
+  return updateWorldStateFixture(base, { enemies: [{
     id: asEnemyId("enemy_1"), name: "灰狼", tier: "normal", stats: toStatBlock(ENEMY_COMBAT_STATS.normal), locationId: location.id, tags: [],
-  });
+  }] });
 }
 
 describe("projectCombatView", () => {

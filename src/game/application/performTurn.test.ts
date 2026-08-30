@@ -8,12 +8,13 @@ import type {
   GameRepository,
 } from "./server/persistence/gameRepository";
 import { asGameId } from "./server/persistence/gameRepository";
-import { appendNpc, type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
+import { type LocationEntry, type NpcEntry } from "@/game/domain/worldState";
 import type { GameEvent } from "@/game/domain/events";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import type { EntityCompatibilityProjection } from "@/game/domain/entity/entityProjection";
 import {
   createWorldStateFixtureWith,
+  updateWorldStateFixture,
   type WorldStateFixtureOverrides,
 } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -436,8 +437,7 @@ describe("performTurn 单次 CAS 提交", () => {
         round: 1,
         battleKey: "battle-rollback",
         preBattleSnapshot: {
-          playerStats: base.player.stats,
-          defeatedEnemyIds: base.defeatedEnemyIds,
+          entityStore: base.entityStore,
           eventLedger: beforeLedger,
         },
       },
@@ -572,7 +572,8 @@ describe("performTurn 单次 CAS 提交", () => {
       ...npc1, id: asNpcId("npc_2"), name: "驿站守夜人", locationId: loc2.id,
       memory: { ...npc1.memory, npcId: asNpcId("npc_2") },
     };
-    const world = appendNpc(buildWorldState(), npc2);
+    const baseWorld = buildWorldState();
+    const world = updateWorldStateFixture(baseWorld, { npcs: [...baseWorld.npcs, npc2] });
     const story = buildStoryState();
     const preparedStory: StoryState = {
       ...story,

@@ -30,11 +30,10 @@ export type BattleState =
     & Partial<ActiveBattleCombatState>)
   | { readonly status: "resolved"; readonly enemyId: EnemyId; readonly outcome: "victory" | "defeat" | "withdraw"; readonly battleKey?: string };
 
-export type BattleStartSnapshot = {
-  readonly playerStats: PlayerState["stats"];
-  readonly defeatedEnemyIds: readonly EnemyId[];
+export type BattleStartSnapshot = Readonly<{
+  readonly entityStore: EntityStore;
   readonly eventLedger: readonly GameEvent[];
-};
+}>;
 
 export type EndingState = { readonly endingId: EndingId; readonly outcome: "success" | "failure" } | null;
 
@@ -166,61 +165,4 @@ export function findItem(ws: WorldState, id: ItemId): ItemEntry | undefined {
 
 export function findQuest(ws: WorldState, id: QuestId): QuestEntry | undefined {
   return ws.quests.find((q) => q.id === id);
-}
-
-// ── 过渡适配器 ──
-
-/** store 内最大 createdAtTurn：适配器没有轮次入参，只能从既有事实推出。 */
-function latestTurnOf(store: EntityStore): number {
-  return store.records.reduce((max, record) => Math.max(max, record.core.createdAtTurn), 0);
-}
-
-function projectionOf(ws: WorldState): EntityCompatibilityProjection {
-  return {
-    player: ws.player,
-    locations: ws.locations,
-    currentLocationId: ws.currentLocationId,
-    unlockedLocationIds: ws.unlockedLocationIds,
-    visitedLocationIds: ws.visitedLocationIds,
-    npcs: ws.npcs,
-    items: ws.items,
-    inventory: ws.inventory,
-    worldFacts: ws.worldFacts,
-    quests: ws.quests,
-    enemies: ws.enemies,
-    defeatedEnemyIds: ws.defeatedEnemyIds,
-    factions: ws.factions,
-  };
-}
-
-function withRebuiltStore(ws: WorldState, projection: EntityCompatibilityProjection): WorldState {
-  const entityStore = compileEntityStoreFromCompatibilityProjection({
-    projection,
-    createdAtTurn: latestTurnOf(ws.entityStore),
-    previousStore: ws.entityStore,
-  });
-  return { ...ws, entityStore, ...projectEntityStore(entityStore) };
-}
-
-/**
- * @deprecated 过渡适配器：把 legacy 条目合入兼容投影后立即重建 store 再投影，
- * 绝不只追加数组。Task 3/4 迁移完全部写入方后删除，生产代码不得新增调用。
- */
-export function appendLocation(ws: WorldState, loc: LocationEntry): WorldState {
-  return withRebuiltStore(ws, { ...projectionOf(ws), locations: [...ws.locations, loc] });
-}
-
-/** @deprecated 见 appendLocation；NPC 名册由 PositionComponent 派生，不由调用方手填。 */
-export function appendNpc(ws: WorldState, npc: NpcEntry): WorldState {
-  return withRebuiltStore(ws, { ...projectionOf(ws), npcs: [...ws.npcs, npc] });
-}
-
-/** @deprecated 见 appendLocation；新物品默认无主，拾取才改 PossessionComponent.owner。 */
-export function appendItem(ws: WorldState, item: ItemEntry): WorldState {
-  return withRebuiltStore(ws, { ...projectionOf(ws), items: [...ws.items, item] });
-}
-
-/** @deprecated 见 appendLocation；敌人归属仍由位置事实表达。 */
-export function appendEnemy(ws: WorldState, enemy: EnemyEntry): WorldState {
-  return withRebuiltStore(ws, { ...projectionOf(ws), enemies: [...ws.enemies, enemy] });
 }

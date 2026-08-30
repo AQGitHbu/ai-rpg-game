@@ -3,6 +3,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { QuestObjective, QuestEntry, WorldState } from "@/game/domain/worldState";
 import type { ItemId } from "@/game/domain/worldEntity";
 import { isObjectiveSatisfiedInStory } from "@/game/gameplay/rpg/narrativeContext/deriveObjectiveTransition";
+import { applyEntityMutations, EntityMutationInvariantError } from "@/game/gameplay/rpg/entityWorld";
 
 /** 旧存档没有 reveal 字段时，保持既有“全部已物化内容可用”的兼容语义。 */
 export function isQuestObjectiveReleased(
@@ -124,10 +125,9 @@ export function advanceStoryReveal(input: {
   // 新地点在“调查现场”完成后才解锁；之后的移动、交谈、取物、战斗仍按
   // 游标逐段释放，因此地图不会提前出现完整下一幕。
   if (nextObjective.kind === "visit_location" && !worldState.unlockedLocationIds.includes(nextObjective.locationId)) {
-    nextWorldState = {
-      ...worldState,
-      unlockedLocationIds: [...worldState.unlockedLocationIds, nextObjective.locationId],
-    };
+    const applied = applyEntityMutations(worldState, [{ kind: "set_location_unlocked", locationId: nextObjective.locationId, unlocked: true }]);
+    if (!applied.ok) throw new EntityMutationInvariantError(applied);
+    nextWorldState = applied.worldState;
   }
 
   return {

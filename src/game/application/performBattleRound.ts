@@ -9,6 +9,7 @@ import { resolveTurn } from "@/game/gameplay/rpg/ruleEngine";
 import { commitState } from "./stateCommit";
 import { asTurnId } from "@/game/domain/events";
 import { consumeNarrativeBundle } from "./consumeNarrativeBundle";
+import { projectEntityStore } from "@/game/domain/entity";
 
 // ---------------------------------------------------------------------------
 // Task 8: 专门处理活跃战斗回合的应用路径。
@@ -141,12 +142,12 @@ export async function performBattleRound(
         ? restoreNarrativeFromCheckpoint(beforeNarrative, narrativeCheckpoint)
         : beforeNarrative;
 
-      // Restore world state: player stats, defeated IDs, event ledger, battle → idle
+      // 恢复完整的权威 entity store，再投影全部 legacy 兼容字段；不能只恢复 HP/击败索引。
       const restoredWorldState: WorldState = preBattleSnapshot !== undefined
         ? {
             ...afterWorldState,
-            player: { ...afterWorldState.player, stats: preBattleSnapshot.playerStats },
-            defeatedEnemyIds: preBattleSnapshot.defeatedEnemyIds,
+            entityStore: preBattleSnapshot.entityStore,
+            ...projectEntityStore(preBattleSnapshot.entityStore),
             eventLedger: preBattleSnapshot.eventLedger,
             battle: { status: "idle" as const },
           }
