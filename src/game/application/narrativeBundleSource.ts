@@ -35,6 +35,12 @@ export type NarrativeBundleRejection =
   | "bundle_invalid_reference"
   | "bundle_invalid_scene"
   | "bundle_invalid_terminal"
+  | "invented_beat_id"
+  | "missing_mandatory_beat"
+  | "out_of_order_beats"
+  | "player_utterance_unanswered"
+  | "dialogue_focus_line_missing"
+  | "objective_link_mismatch"
   | BundleCoverageErrorCode;
 
 export type NarrativeBundleRepair = {

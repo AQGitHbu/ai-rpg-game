@@ -134,7 +134,7 @@ function validProposal(): NarrativeBundleProposal {
     currentScene: {
       segments: [{ beatId: "atmosphere", text: "你沿着山路走向破庙。" }],
       npcLine: null,
-      objectiveLink: null,
+      objectiveLink: { questId: String(questId), objectiveIndex: 0, mode: "progress" },
       choices: [],
     },
     continuationScenes: [
@@ -200,6 +200,7 @@ function baseInput(overrides: Partial<ApproveNarrativeBundleInput> = {}): Approv
     evolutionNeed: { kind: "none" },
     jobId: asNarrativeJobId("job_1"),
     basedOnRevision: 1,
+    mandatoryBeats: [],
     now: () => "2026-01-02T00:00:00.000Z",
     ...overrides,
   };
@@ -243,7 +244,7 @@ function actBoundaryFixture() {
       endingPair: null,
     },
     currentScene: {
-      segments: [{ beatId: "closing", text: "旧人指向了镇外。" }],
+      segments: [{ beatId: "atmosphere", text: "旧人指向了镇外。" }],
       npcLine: null,
       objectiveLink: null,
       choices: [],
@@ -387,7 +388,7 @@ describe("approveNarrativeBundle", () => {
     expect(result.approved.bundle.steps[0]?.scene.segments[0]?.text).toContain("哑巴张沉默地看着你");
   });
 
-  it("derives a dialogue boundary from server choices when the AI omits npcLine", () => {
+  it("rejects a dialogue boundary whose current scene omits the focus NPC line", () => {
     const ws = worldState();
     const directTalkWorld: WorldState = {
       ...ws,
@@ -399,9 +400,7 @@ describe("approveNarrativeBundle", () => {
       worldState: directTalkWorld,
     }));
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.approved.currentScene.event).toEqual({ kind: "dialogue", focusNpcId: npcDyn1 });
+    expect(result).toEqual({ ok: false, code: "dialogue_focus_line_missing", detail: String(npcDyn1) });
   });
 
   it("rejects a current_scene terminal that omits one of the two candidates", () => {
@@ -505,5 +504,138 @@ describe("approveNarrativeBundle", () => {
     expect(result.ok).toBe(false);
     expect("approved" in result).toBe(false);
     expect("nextWorldState" in result).toBe(false);
+  });
+
+  it("rejects a current scene that invents beat ids outside the mandatory list", () => {
+    const proposal = validProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: {
+          ...proposal.currentScene,
+          segments: [{ beatId: "reflection", text: "你回想起镇口的告示。" }],
+        },
+      },
+    }));
+
+    expect(result).toEqual({ ok: false, code: "invented_beat_id", detail: "reflection" });
+  });
+
+  it("rejects a current scene that skips a mandatory beat", () => {
+    const proposal = validProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: { ...proposal.currentScene, segments: [] },
+      },
+      mandatoryBeats: [
+        { beatId: "quest_progress_0", kind: "quest_progress", subjectIds: [String(questId)], instruction: "完成了任务目标" },
+        { beatId: "atmosphere", kind: "atmosphere", subjectIds: [], instruction: "氛围描写（可选，放在最后）" },
+      ],
+    }));
+
+    expect(result).toEqual({ ok: false, code: "missing_mandatory_beat", detail: "quest_progress_0（quest_progress）" });
+  });
+
+  it("requires the focus NPC to answer the player_utterance beat", () => {
+    const proposal = validProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: {
+          ...proposal.currentScene,
+          segments: [{ beatId: "player_utterance", text: "你开口追问。" }],
+          npcLine: null,
+        },
+      },
+      mandatoryBeats: [
+        { beatId: "player_utterance", kind: "player_utterance", subjectIds: [String(npcDyn1)], instruction: "直接回应玩家刚说的话" },
+      ],
+    }));
+
+    expect(result).toEqual({ ok: false, code: "player_utterance_unanswered", detail: String(npcDyn1) });
+  });
+
+  it("approves when the focus NPC answers the player_utterance beat", () => {
+    const proposal = validProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: {
+          ...proposal.currentScene,
+          segments: [{ beatId: "player_utterance", text: "你开口问起镖局的旧事。" }],
+          npcLine: {
+            npcId: String(npcDyn1),
+            text: "这事说来话长。",
+            emotion: "guarded",
+            answeredBeatIds: ["player_utterance"],
+            usedFactIds: [],
+            usedInteractionActionIds: [],
+          },
+        },
+      },
+      mandatoryBeats: [
+        { beatId: "player_utterance", kind: "player_utterance", subjectIds: [String(npcDyn1)], instruction: "直接回应玩家刚说的话" },
+      ],
+    }));
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects an objectiveLink that does not mirror the authoritative transition", () => {
+    const proposal = validProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: { ...proposal.currentScene, objectiveLink: null },
+      },
+    }));
+
+    expect(result).toEqual({ ok: false, code: "objective_link_mismatch", detail: `期望 ${String(questId)}:0` });
+  });
+
+  it("covers mandatory beats regardless of segment order", () => {
+    const proposal = validProposal();
+    const result = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...proposal,
+        currentScene: {
+          ...proposal.currentScene,
+          segments: [
+            { beatId: "quest_advanced_1", text: "主线推进。" },
+            { beatId: "quest_progress_0", text: "目标达成。" },
+            { beatId: "atmosphere", text: "暮色四合。" },
+          ],
+        },
+      },
+      mandatoryBeats: [
+        { beatId: "quest_progress_0", kind: "quest_progress", subjectIds: [String(questId)], instruction: "完成了任务目标" },
+        { beatId: "quest_advanced_1", kind: "quest_advanced", subjectIds: [String(questId)], instruction: "主线推进" },
+        { beatId: "atmosphere", kind: "atmosphere", subjectIds: [], instruction: "氛围描写（可选，放在最后）" },
+      ],
+    }));
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects an arrival terminal step that omits the arrival NPC line", () => {
+    const { preExpansionWorld, ss, proposal } = actBoundaryFixture();
+    const hollowed: NarrativeBundleProposal = {
+      ...proposal,
+      continuationScenes: [{
+        ...proposal.continuationScenes[0]!,
+        scene: { ...proposal.continuationScenes[0]!.scene, npcLine: null },
+      }],
+    };
+
+    const result = approveNarrativeBundle(baseInput({
+      proposal: hollowed,
+      worldState: preExpansionWorld,
+      storyState: ss,
+      transition: { before: null, completed: [], after: null, mode: "advanced_act" },
+      evolutionNeed: { kind: "next_act", act: 2 },
+    }));
+
+    expect(result).toEqual({ ok: false, code: "dialogue_focus_line_missing", detail: "npc_dyn_1" });
   });
 });

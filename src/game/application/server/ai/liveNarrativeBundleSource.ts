@@ -17,6 +17,8 @@ import type { ProviderJsonMode } from "./providerRequestOptions";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
+import type { Action } from "@/game/domain/action";
+import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
 import type { OpeningNarrativeBundleProposal } from "../../narrativeBundleSource";
 
@@ -152,14 +154,94 @@ function buildDecisionPrompt(
 
   const storySummary = `第 ${storyState.currentAct} 幕 / 共 ${storyState.targetActs} 幕`;
 
-  const actionSummary = job.utterance !== undefined
-    ? `玩家自定义输入：${job.utterance}`
-    : `玩家行动：${job.actionSummary.kind}`;
+  // ── 当前局势：玩家在哪、在和谁说话、上一幕刚发生什么 ──
+  const currentLocation = worldState.locations.find((l) => l.id === worldState.currentLocationId);
+  const focusNpc = job.focusNpcId === undefined
+    ? undefined
+    : worldState.npcs.find((n) => n.id === job.focusNpcId);
+  const lastScene = storyState.narrative.status === "ready"
+    ? null
+    : storyState.narrative.lastPresentedScene;
+  const clipText = (text: string, max: number): string =>
+    Array.from(text).length <= max ? text : `${Array.from(text).slice(0, max).join("")}……`;
+  const situationLines = [
+    currentLocation === undefined ? "" : `- 玩家当前位置：${currentLocation.name}（${currentLocation.id}）`,
+    focusNpc === undefined ? "" : `- 本回合对话焦点 NPC：${focusNpc.name}（${focusNpc.id}，${focusNpc.role}）`,
+    lastScene === null ? "" : `- 上一场景旁白：${clipText(lastScene.narration, 500)}`,
+    lastScene === null || lastScene.npcLine === null
+      ? ""
+      : `- 上一场景台词：${clipText(lastScene.npcLine.text, 200)}`,
+  ].filter((line) => line !== "");
+  const situationSection = situationLines.length === 0
+    ? ""
+    : `## 当前局势
+${situationLines.join("\n")}
+currentScene 必须直接承接上一场景与玩家本轮行动：不得回到更早的情节，不得重复上一场景的开场，也不得把玩家写成刚抵达上一场景已经到达的地方。
+
+`;
+
+  // ── 玩家本轮行动：固定选项带出所选文案，自由输入带出原话 ──
+  const actionLines: string[] = [];
+  if (job.utterance !== undefined) {
+    actionLines.push(`玩家自定义输入：${job.utterance}`);
+  } else if (job.selectedDialogue?.label !== undefined) {
+    actionLines.push(`玩家选择了选项：“${job.selectedDialogue.label}”`);
+  } else {
+    actionLines.push(`玩家行动：${job.actionSummary.kind}`);
+  }
+  if (job.actionSummary.kind === "talk" && focusNpc !== undefined) {
+    actionLines.push(`currentScene.npcLine 必须是 ${focusNpc.name} 对这句话/这个选择的第一人称直接回应，不能为 null。`);
+  }
+  const actionSummary = actionLines.join("\n");
+
+  // ── 强制节拍契约：segments 只能使用这些 beatId ──
+  const beatLines = job.mandatoryBeats.map((beat) => {
+    const requirement = beat.beatId === ATMOSPHERE_BEAT_ID
+      ? "可选，可省略；若写，必须放在所有 segments 最后"
+      : "必须覆盖，恰好一次";
+    return `- beatId="${beat.beatId}"（${beat.kind}，${requirement}）：${beat.instruction}`;
+  }).join("\n");
+  const utteranceBeat = job.mandatoryBeats.find((beat) => beat.kind === "player_utterance");
+  const utteranceRequirement = utteranceBeat === undefined
+    ? ""
+    : `\n存在 player_utterance 节拍：npcLine 必须为 npcId="${utteranceBeat.subjectIds[0] ?? ""}" 的台词，answeredBeatIds 必须包含 "${utteranceBeat.beatId}"，并以该 NPC 自己的口吻直接回应玩家刚说的话，不得把玩家原话整段复述。`;
+
+  // ── objectiveLink：与权威目标转换一致，直接给出期望值 ──
+  const expectedObjectiveLink = job.objectiveTransition.after === null
+    ? "null"
+    : JSON.stringify({
+        questId: job.objectiveTransition.after.questId,
+        objectiveIndex: job.objectiveTransition.after.objectiveIndex,
+        mode: "progress",
+      });
+
+  // ── 对话决策点：两个选项同指一名 NPC 时，场景必须带该 NPC 台词 ──
+  const currentTalkNpcIds = descriptorGraph.terminal.kind === "next_decision"
+    && descriptorGraph.terminal.target.kind === "current_scene"
+    ? descriptorGraph.currentChoiceCandidates
+        .map((candidate) => candidate.action)
+        .filter((action): action is Extract<Action, { readonly type: "talk" }> => action.type === "talk")
+        .map((action) => String(action.npcId))
+    : [];
+  const dialogueFocusNpc = descriptorGraph.currentChoiceCandidates.length === 2
+    && currentTalkNpcIds.length === 2
+    && currentTalkNpcIds[0] === currentTalkNpcIds[1]
+    ? worldState.npcs.find((n) => String(n.id) === currentTalkNpcIds[0])
+    : undefined;
+  const dialogueFocusRequirement = dialogueFocusNpc === undefined
+    ? ""
+    : `\n本回合的决策点是 ${dialogueFocusNpc.name} 的对话：currentScene.npcLine 必须提供 ${dialogueFocusNpc.name}（${dialogueFocusNpc.id}）的直接对白，不能为 null。`;
+
   const evolutionRequirement = storyState.evolution.status === "needs_next_act"
     ? `本回合已进入第 ${storyState.currentAct} 幕：worldDelta 绝不能为 null，必须提供 newLocation、newNpc、newItem、newEnemy、nextMainQuest；其余字段可为 null。`
     : storyState.evolution.status === "needs_ending_pair"
       ? "本回合需要结局：worldDelta 绝不能为 null，且必须严格为 {\"beatSummary\":\"...\",\"newLocation\":null,\"newNpc\":null,\"newItem\":null,\"newEnemy\":null,\"newFact\":null,\"nextMainQuest\":null,\"endingPair\":[{\"themeKey\":\"trust\",\"name\":\"...\",\"description\":\"...\"},{\"themeKey\":\"doubt\",\"name\":\"...\",\"description\":\"...\"}] }。不能创建地点、NPC、物品、敌人、任务；terminal 必须严格为 {\"kind\":\"ending\"}，continuationScenes 必须为 []。"
       : "本回合不需要世界演化：worldDelta 必须为 null。";
+  const arrivalSkeleton = nextActProjection === null
+    ? ""
+    : `
+下一幕抵达场景必须逐字使用以下骨架（只有 text/label/emotion 需要你创作，缺少两个 choices 会让整包被拒）：
+{"stepKey":"move:${nextActProjection.locationId}","scene":{"segments":[{"beatId":"atmosphere","text":"玩家抵达新地点并与新 NPC 相遇的旁白"}],"npcLine":{"npcId":"${nextActProjection.npcId}","text":"新 NPC 的第一人称开场对白","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"objectiveLink":null,"choices":[{"candidateId":"move:${nextActProjection.locationId}_choice_1","label":"..."},{"candidateId":"move:${nextActProjection.locationId}_choice_2","label":"..."}]}}`;
   const genreRequirement = worldState.generation.gameType === "wuxia"
     ? "武侠写实约束：角色、冲突与叙述只能采用江湖、人事、武学、机关等武侠元素；禁止鬼魂、幽灵、灵魂、超自然、魔法、法术、咒语、法阵、圣光、精灵、异界等玄幻/西幻元素。"
     : "叙述必须严格贴合当前题材，不混入其他题材的设定。";
@@ -187,11 +269,15 @@ ${questSummary}
 ## 已占用实体名称（新实体不得与下列任何名称重复）
 ${occupiedNamesSection(worldState)}
 
-## 玩家本轮行动
+${situationSection}## 玩家本轮行动
 ${actionSummary}
 
+## 本回合强制叙事节拍（currentScene.segments 的 beatId 只能是下列之一）
+${beatLines}${utteranceRequirement}${dialogueFocusRequirement}
+currentScene.objectiveLink 必须严格为 ${expectedObjectiveLink}。
+
 ## 世界演化要求
-${evolutionRequirement}
+${evolutionRequirement}${arrivalSkeleton}
 ${repairInstruction(contentRepair)}# 输出要求
 
 生成一个 JSON 对象，包含以下字段：
@@ -255,8 +341,11 @@ npcLine 必须为 {"npcId":"实体 ID","text":"中文对白","emotion":"neutral|
 {
   "worldDelta": null,
   "currentScene": {
-    "segments": [{ "beatId": "atmosphere", "text": "..." }],
-    "npcLine": null,
+    "segments": [
+      { "beatId": "上方强制节拍的 beatId", "text": "..." },
+      { "beatId": "atmosphere", "text": "可选氛围段，必须最后" }
+    ],
+    "npcLine": { "npcId": "实体 ID", "text": "第一人称直接对白", "emotion": "neutral", "answeredBeatIds": [], "usedFactIds": [], "usedInteractionActionIds": [] },
     "objectiveLink": null,
     "choices": []
   },

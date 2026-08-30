@@ -319,6 +319,75 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain("禁止鬼魂");
   });
 
+  it("projects current location, focus NPC, previous scene, chosen option, beats and objectiveLink", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(validBundleResponse),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    const worldState = makeWorldState();
+    const npcId = asNpcId("npc_1");
+    const worldWithNpc: WorldState = {
+      ...worldState,
+      npcs: [{
+        id: npcId,
+        name: "老掌柜",
+        role: "客栈掌柜",
+        description: "精瘦的老掌柜。",
+        locationId: asLocationId("loc_0"),
+        isCompanion: false,
+        tags: [],
+        met: true,
+        memory: {
+          npcId,
+          knownFactIds: [],
+          hiddenFactIds: [],
+          interactionHistory: [],
+          relationship: { affinity: 0 },
+          emotion: "neutral",
+          goals: [],
+        } as NpcMemory,
+      }],
+    };
+    const readyNarrative = makeStoryState().narrative;
+    if (readyNarrative.status !== "ready") throw new Error("expected ready fixture");
+    const storyState: StoryState = {
+      ...makeStoryState(),
+      narrative: {
+        status: "provider_pending",
+        mode: "ai",
+        job: makeJob(),
+        lastPresentedScene: readyNarrative.currentScene,
+      },
+    };
+    const job: PendingNarrativeJob = {
+      ...makeJob(),
+      selectedDialogue: { dialogueAct: "support", label: "出示令牌，请他行个方便。" },
+      objectiveTransition: {
+        before: null,
+        completed: [],
+        after: { questId: "quest_0" as never, objectiveIndex: 1, label: "与老掌柜交谈" },
+        mode: "progressed",
+      },
+      mandatoryBeats: [
+        { beatId: "quest_progress_0", kind: "quest_progress", subjectIds: ["quest_0"], instruction: "完成了任务目标" },
+        { beatId: "atmosphere", kind: "atmosphere", subjectIds: [], instruction: "氛围描写（可选，放在最后）" },
+      ],
+    };
+
+    await source.generate({ kind: "decision", worldState: worldWithNpc, storyState, job });
+
+    const systemPrompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
+    expect(systemPrompt).toContain("玩家当前位置：小镇");
+    expect(systemPrompt).toContain("本回合对话焦点 NPC：老掌柜（npc_1");
+    expect(systemPrompt).toContain("上一场景旁白：测试场景。");
+    expect(systemPrompt).toContain("玩家选择了选项：“出示令牌，请他行个方便。”");
+    expect(systemPrompt).toContain('beatId="quest_progress_0"');
+    expect(systemPrompt).toContain("currentScene.segments 的 beatId 只能是下列之一");
+    expect(systemPrompt).toContain('"questId":"quest_0","objectiveIndex":1,"mode":"progress"');
+  });
+
   it("projects the post-expansion arrival graph for a next-act response", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,

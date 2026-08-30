@@ -87,6 +87,7 @@
 - 拒因回传：`parseNarrativeBundleProposal` 失败携带细分 `reason`（`NarrativeBundleProposalRejectionReason`）与可选 `stepKey`；`approveNarrativeBundle` 的 `world_delta_rejected` 携带规则引擎 `detail`。同一 proposal 的既有世界实体撞名会合并为 `duplicate_name:npc:…|item:…`，使一次修复可改完全部冲突；`generatePendingNarrativeBundle` 最多 4 次尝试，后续修复把上一轮真实拒因写进 prompt，不再笼统报 `approval_rejected`。
 - Prompt 侧预防措施：下发「已占用实体名称」清单（地点/NPC/物品/敌人/任务）和规则拥有的物品状态（已持有 / 未拾取且所在地点），要求新实体名称避开且不能把未拾取物品写成已持有；要求 `continuationScenes` 与服务端投影步骤在数量、`stepKey`、顺序上完全一致，选项只写在 terminal 指向的那一步，禁止在投影之外自行规划未来步骤。兼容 provider 把新地点名称而非 ID 填入 `connectFromLocationId` 的形状，仅在名称唯一时解析回当前世界 ID。
 - 观测入口：`logs/ai-text-audit/<runId>/events.jsonl` 与 `data/logs.db` 中的 `narrative_bundle_json_fence_normalized`、`narrative_bundle_invalid_schema`、`narrative_bundle_generation_failed`、`narrative_bundle_source_unavailable`。
+- 真机回合情境投影与内容闸门（2026-08-30 浏览器中篇回归收口）：`buildDecisionPrompt` 除世界快照外还投影玩家当前位置、焦点 NPC、上一场景旁白/台词、固定选项原文（`selectedDialogue.label`）或自由输入、本回合强制节拍清单与逐字给出的 `objectiveLink` 期望值；下一幕回合另给出带真实 `stepKey`/candidateId/npcId 的抵达场景骨架，防止 provider 漏写终点两选项。`approveNarrativeBundle` 新增当前场景内容审批：强制节拍逐一覆盖（顺序不限）、禁止自创节拍、至多一个置尾 `atmosphere`；`player_utterance` 必须由焦点 NPC 台词应答；当前场景决策点或终点抵达步骤缺焦点/抵达 NPC 台词（`dialogue_focus_line_missing`）、`objectiveLink` 与权威转换不一致（`objective_link_mismatch`）均拒包并回传细分原因。纯舞台说明被重分类为旁白不算缺台词。节拍顺序不再作为拒因，避免消耗修复预算。
 
 ## 强制节拍与目标链接
 

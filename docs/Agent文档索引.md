@@ -87,6 +87,11 @@
 - 观感收口：NPC 台词归一化新增剥掉台词前的整段括号舞台说明、整段 `‘…’` 单弯引号与对话分页残留的单侧引号（`src/game/domain/npcSpeech.ts`），成对句内引用不受影响；`mode="ai"` 读模型投影与审批写回共用同一函数。
 - 验收事实：`codex/decision-boundary-narrative-bundle` 分支完成 Chrome 真实 AI 链路中篇通关（5 幕、第 26 回合、revision 57 达成结局「信任」）；审计中的 44 次 AI 调用全部归因于 initialization、玩家正式选择或 NPC 自定义输入，移动、拾取、战斗和结局展示没有触发调用。
 
+## 2026-08-30 v7 捆绑包回合情境与内容闸门回归
+
+- 运行时 AI 导演与场景表演：真机回归发现决策 prompt 只给世界快照（无当前位置/焦点 NPC/所选选项/上一场景/节拍清单），且审批只查结构不查内容，导致正式对话回合生成并持久化脱离情境的场景（旁白回到旧地点、`npcLine` 缺失、自创 `reflection` 节拍、选项与当前状态矛盾）。修复：`buildDecisionPrompt` 投影完整回合情境（含固定选项原文、逐字 `objectiveLink` 期望值、下一幕抵达场景骨架）；`approveNarrativeBundle` 新增当前场景内容闸门——强制节拍全覆盖（顺序不限、禁自创、至多一个置尾 atmosphere）、`player_utterance` 必须由焦点 NPC 应答、当前决策点与终点抵达步骤缺焦点/抵达 NPC 台词即拒（`dialogue_focus_line_missing`）、`objectiveLink` 必须镜像权威转换（`objective_link_mismatch`），拒因进入修复重试；节拍顺序不再作为拒因。
+- 验收事实：同分支浏览器中篇二次通关（5 幕、第 21 回合达成结局「承志而行」）；本轮 14 次 AI 调用全部归因于 initialization（1）、`narrative_choice`（11）或 `npc_free_text`（2），content_repair 为 0；移动、拾取、战斗、序幕确认与结局立场结算均未触发 provider。修复前的失败态（4 次尝试耗尽 → 「重试生成回应」）亦在真机出现过并被同一手动重试入口覆盖。
+
 ## 维护规则
 
 - 玩法事实变化时同步更新策划文档。

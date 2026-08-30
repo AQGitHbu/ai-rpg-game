@@ -297,7 +297,7 @@ describe("generatePendingNarrativeBundle", () => {
                 npcId: String(npc.id), text: "这件事不能在街上说。", emotion: "guarded",
                 answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [],
               },
-              objectiveLink: null,
+              objectiveLink: { questId: String(quest.id), objectiveIndex: 0, mode: "progress" },
               choices: [
                 { candidateId: "current_scene_choice_1", label: "请他细说。" },
                 { candidateId: "current_scene_choice_2", label: "追问酒钱的缘由。" },

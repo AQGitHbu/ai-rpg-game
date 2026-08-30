@@ -22,7 +22,8 @@ import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import type { PreparedSceneSeedState } from "@/game/domain/preparedContinuation";
-import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
+import type { ObjectiveTransition, MandatoryNarrativeBeat } from "@/game/domain/narrativeBeat";
+import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import {
   approveWorldDelta,
   materializeWorldDelta,
@@ -71,6 +72,8 @@ export type ApproveNarrativeBundleInput = {
   readonly evolutionNeed: EvolutionNeed;
   readonly jobId: NarrativeJobId;
   readonly basedOnRevision: number;
+  /** 本回合规则派生的强制节拍；currentScene 必须逐一覆盖。 */
+  readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
   readonly idOverride?: WorldDeltaIdOverride;
   readonly now: () => string;
   readonly auditLink?: AiTextAuditLink;
@@ -283,6 +286,92 @@ function hasExactChoiceCandidates(
   return candidateIds.every((candidateId) => choiceIds.includes(candidateId));
 }
 
+type SceneContentRejection = { readonly code: NarrativeBundleRejection; readonly detail?: string };
+
+/**
+ * 当前场景内容闸门：提案的 currentScene 必须直接承接本回合的规则结果。
+ * 缺失时拒绝整包并回传细分拒因，由修复重试要求 provider 纠正，
+ * 绝不让脱离当前情境的场景冒充成功写回。
+ */
+function validateCurrentSceneContent(input: {
+  readonly scene: BundleSceneProposal;
+  readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
+  readonly dialogueFocusNpcId: string | undefined;
+  readonly transition: ObjectiveTransition;
+  readonly worldState: WorldState;
+}): SceneContentRejection | null {
+  const { scene, mandatoryBeats, dialogueFocusNpcId, transition, worldState } = input;
+
+  // 节拍契约：强制节拍逐一覆盖（各恰好一次，顺序不限），
+  // 不得自创节拍；最多追加一个 atmosphere 段且必须置于最后。
+  const requiredBeats = mandatoryBeats.filter((beat) => beat.beatId !== ATMOSPHERE_BEAT_ID);
+  const segmentBeatIds = scene.segments.map((segment) => segment.beatId);
+  const allowedBeatIds = new Set([
+    ...requiredBeats.map((beat) => beat.beatId),
+    ATMOSPHERE_BEAT_ID,
+  ]);
+  for (const beatId of segmentBeatIds) {
+    if (!allowedBeatIds.has(beatId)) {
+      return { code: "invented_beat_id", detail: beatId };
+    }
+  }
+  for (const beat of requiredBeats) {
+    if (segmentBeatIds.filter((id) => id === beat.beatId).length !== 1) {
+      return { code: "missing_mandatory_beat", detail: `${beat.beatId}（${beat.kind}）` };
+    }
+  }
+  if (segmentBeatIds.filter((id) => id === ATMOSPHERE_BEAT_ID).length > 1) {
+    return { code: "out_of_order_beats", detail: "至多一个 atmosphere 段" };
+  }
+  const atmosphereIndex = segmentBeatIds.indexOf(ATMOSPHERE_BEAT_ID);
+  if (atmosphereIndex !== -1 && atmosphereIndex !== segmentBeatIds.length - 1) {
+    return { code: "out_of_order_beats", detail: "atmosphere 段必须置于最后" };
+  }
+
+  // player_utterance 节拍必须由焦点 NPC 的台词显式应答。
+  const utteranceBeat = mandatoryBeats.find((beat) => beat.kind === "player_utterance");
+  if (utteranceBeat !== undefined) {
+    const focusNpcId = utteranceBeat.subjectIds[0];
+    if (
+      scene.npcLine === null
+      || scene.npcLine.npcId !== focusNpcId
+      || !scene.npcLine.answeredBeatIds.includes(utteranceBeat.beatId)
+    ) {
+      return { code: "player_utterance_unanswered", detail: focusNpcId };
+    }
+  }
+
+  // 正式对话决策点：两个选项都指向同一焦点 NPC 时，场景必须带该 NPC 的直接台词，
+  // 玩家不能面对一组没有任何回应支撑的选项。
+  if (dialogueFocusNpcId !== undefined && scene.npcLine === null) {
+    return { code: "dialogue_focus_line_missing", detail: dialogueFocusNpcId };
+  }
+
+  // 台词说话人必须是世界内已存在的 NPC。
+  if (
+    scene.npcLine !== null
+    && !worldState.npcs.some((npc) => String(npc.id) === scene.npcLine!.npcId)
+  ) {
+    return { code: "bundle_invalid_scene", detail: `npcLine 说话人 ${scene.npcLine.npcId} 不存在` };
+  }
+
+  // objectiveLink 必须与权威 ObjectiveTransition 一致（无 after 时为 null）。
+  const after = transition.after;
+  if (after === null) {
+    if (scene.objectiveLink !== null) {
+      return { code: "objective_link_mismatch", detail: "after 为空时 objectiveLink 必须为 null" };
+    }
+  } else if (
+    scene.objectiveLink === null
+    || scene.objectiveLink.questId !== String(after.questId)
+    || scene.objectiveLink.objectiveIndex !== after.objectiveIndex
+  ) {
+    return { code: "objective_link_mismatch", detail: `期望 ${String(after.questId)}:${after.objectiveIndex}` };
+  }
+
+  return null;
+}
+
 export function approveNarrativeBundle(
   input: ApproveNarrativeBundleInput,
 ): ApproveNarrativeBundleResult {
@@ -404,6 +493,24 @@ export function approveNarrativeBundle(
     }
   }
 
+  // The terminal step is the next formal dialogue boundary: it must carry the
+  // arrival NPC's direct line, otherwise players face choices without speech.
+  if (graph.terminal.kind === "next_decision" && graph.terminal.target.kind === "continuation_step") {
+    const targetStepKey = graph.terminal.target.stepKey;
+    const terminalDescriptor = descriptorByKey.get(targetStepKey);
+    const terminalProposal = proposal.continuationScenes.find((step) => step.stepKey === targetStepKey);
+    // A written stage direction still counts as authored content (it is
+    // reclassified into narration); only a fully omitted line is rejected.
+    if (
+      terminalDescriptor?.arrivalNpc !== undefined
+      && (terminalProposal === undefined
+        || terminalProposal.scene.npcLine === null
+        || terminalProposal.scene.npcLine.npcId !== terminalDescriptor.arrivalNpc.id)
+    ) {
+      return { ok: false, code: "dialogue_focus_line_missing", detail: String(terminalDescriptor.arrivalNpc.id) };
+    }
+  }
+
   if (!terminalsMatch(proposal.terminal, graph.terminal)) {
     return { ok: false, code: "bundle_invalid_terminal" };
   }
@@ -418,6 +525,18 @@ export function approveNarrativeBundle(
     && firstCurrentChoice?.action.type === "talk"
     ? firstCurrentChoice.action.npcId
     : undefined;
+  const contentRejection = validateCurrentSceneContent({
+    scene: proposal.currentScene,
+    mandatoryBeats: input.mandatoryBeats,
+    dialogueFocusNpcId: currentDialogueFocusNpcId === undefined
+      ? undefined
+      : String(currentDialogueFocusNpcId),
+    transition,
+    worldState: previewWorldState,
+  });
+  if (contentRejection !== null) {
+    return { ok: false, code: contentRejection.code, ...(contentRejection.detail === undefined ? {} : { detail: contentRejection.detail }) };
+  }
   const currentScene = buildSceneFromProposal(
     proposal.currentScene,
     sceneId,

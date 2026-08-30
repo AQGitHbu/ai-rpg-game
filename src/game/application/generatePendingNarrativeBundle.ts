@@ -112,6 +112,7 @@ export async function generatePendingNarrativeBundle(
         transition,
         evolutionNeed,
         jobId: job.jobId,
+        mandatoryBeats: job.mandatoryBeats,
         // applyState commits the approved scene in the next record revision.
         // Choice tokens must be forged against that revision, otherwise the
         // read model correctly treats every newly-generated choice as stale.
