@@ -166,6 +166,21 @@ describe("sqliteGameRepository", () => {
     }
   });
 
+  it("classifies malformed v3 entity state as ENTITY_STATE_INVALID", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    const { worldState, storyState } = buildTestState();
+    const gameId = asGameId("g-corrupt-entity");
+    await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });
+    const raw = createSqliteClient(dbPath);
+    rawClients.push(raw);
+    await raw.execute({
+      sql: "UPDATE game_records SET world_state_json = ? WHERE game_id = ?",
+      args: [JSON.stringify({ ...worldState, entityStore: { ...worldState.entityStore, records: [...worldState.entityStore.records, worldState.entityStore.records[0]] } }), gameId],
+    });
+    expect(await repo.getCurrentGame()).toEqual({ ok: true, status: "corrupt", reason: "ENTITY_STATE_INVALID" });
+  });
+
   it("createInitialGame rejects when active game exists", async () => {
     const dbPath = nextDbPath();
     const repo = openRepo(dbPath);
@@ -174,6 +189,23 @@ describe("sqliteGameRepository", () => {
     await repo.createInitialGame({ gameId: asGameId("g1"), worldState, storyState, createdAt: "2026-01-01" });
     const result = await repo.createInitialGame({ gameId: asGameId("g2"), worldState, storyState, createdAt: "2026-01-01" });
     expect(result).toEqual({ ok: false, code: "ACTIVE_GAME_EXISTS" });
+  });
+
+  it("invalid entity world is rejected without replacing a valid record, but CAS predicates win", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    const { worldState, storyState } = buildTestState();
+    const gameId = asGameId("g-invalid");
+    await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" });
+    const invalid = { ...worldState, locations: [] } as WorldState;
+
+    expect(await repo.createInitialGame({ gameId: asGameId("other"), worldState: invalid, storyState, createdAt: "2026-01-01" }))
+      .toEqual({ ok: false, code: "ACTIVE_GAME_EXISTS" });
+    expect(await repo.applyState({ gameId, expectedRevision: 99, nextWorldState: invalid, nextStoryState: storyState }))
+      .toEqual({ ok: false, code: "STALE_GAME_REVISION" });
+    expect(await repo.applyState({ gameId, expectedRevision: 0, nextWorldState: invalid, nextStoryState: storyState }))
+      .toEqual({ ok: false, code: "INFRASTRUCTURE_FAILURE" });
+    expect(await repo.getCurrentGame()).toMatchObject({ ok: true, status: "active", record: { gameId, revision: 0 } });
   });
 
   it("atomically replaces the expected current revision and preserves it on stale failure", async () => {

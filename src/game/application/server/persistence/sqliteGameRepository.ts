@@ -16,10 +16,10 @@ import type {
   GameRepository,
   GetCurrentGameResult,
 } from "./gameRepository";
-import type { WorldState } from "@/game/domain/worldState";
 import { STORY_STATE_SCHEMA_VERSION, type StoryState } from "@/game/domain/storyState";
 import { parseNarrativeRuntimeState } from "@/game/domain/narrative";
 import { parseOpeningVariationProfile, type OpeningNoveltyRecord } from "@/game/domain/openingNovelty";
+import { validatePersistableWorldState } from "./worldStatePersistenceValidation";
 import type { GameTypeId } from "@/game/domain/newGame";
 import type { SqliteClient, SqliteClientFactory, SqliteStatement } from "./sqliteClient";
 
@@ -139,6 +139,11 @@ function corrupt(reason: CorruptGameReason): GetCurrentGameResult {
   return { ok: true, status: "corrupt", reason };
 }
 
+function serializeValidatedWorldState(value: unknown): string | null {
+  const validated = validatePersistableWorldState(value);
+  return validated.ok ? JSON.stringify(validated.value) : null;
+}
+
 function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
   const gameId = row["game_id"];
   const recordVersion = row["record_version"];
@@ -184,6 +189,8 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
   if (worldState["version"] !== 3 || storyState["version"] !== STORY_STATE_SCHEMA_VERSION) {
     return corrupt("VERSION_MISMATCH");
   }
+  const parsedWorldState = validatePersistableWorldState(worldState);
+  if (!parsedWorldState.ok) return corrupt("ENTITY_STATE_INVALID");
   const parsedNarrative = parseNarrativeRuntimeState(storyState["narrative"]);
   if (!parsedNarrative.ok) return corrupt("UNPARSEABLE_RECORD");
   const parsedStoryState = {
@@ -196,7 +203,7 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
     status: "active",
     record: {
       gameId: asGameId(gameId),
-      worldState: worldState as unknown as WorldState,
+      worldState: parsedWorldState.value,
       storyState: parsedStoryState,
       revision,
       createdAt,
@@ -233,12 +240,8 @@ export function createSqliteGameRepository(
   async function createInitialGame(
     input: CreateInitialGameInput,
   ): Promise<CreateInitialGameResult> {
-    let worldStateJson: string;
-    let storyStateJson: string;
     try {
       await ensureSchema();
-      worldStateJson = JSON.stringify(input.worldState);
-      storyStateJson = JSON.stringify(input.storyState);
     } catch (error) {
       logError("createInitialGame prepare failed", error);
       return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
@@ -254,6 +257,9 @@ export function createSqliteGameRepository(
         if (existing.rows.length > 0) {
           return { ok: false, code: "ACTIVE_GAME_EXISTS" };
         }
+        const worldStateJson = serializeValidatedWorldState(input.worldState);
+        if (worldStateJson === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        const storyStateJson = JSON.stringify(input.storyState);
         await tx.execute({
           sql: `INSERT INTO game_records (game_id, record_version, world_state_json, story_state_json, created_at, revision)
                 VALUES (?, ?, ?, ?, ?, ?)`,
@@ -319,12 +325,8 @@ export function createSqliteGameRepository(
   async function replaceCurrentGame(
     input: ReplaceCurrentGameInput,
   ): Promise<ReplaceCurrentGameResult> {
-    let worldStateJson: string;
-    let storyStateJson: string;
     try {
       await ensureSchema();
-      worldStateJson = JSON.stringify(input.worldState);
-      storyStateJson = JSON.stringify(input.storyState);
     } catch (error) {
       logError("replaceCurrentGame prepare failed", error);
       return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
@@ -354,6 +356,9 @@ export function createSqliteGameRepository(
         if (expected.rows[0]?.["revision"] !== input.expectedRevision) {
           return { ok: false, code: "STALE_GAME_REVISION" };
         }
+        const worldStateJson = serializeValidatedWorldState(input.worldState);
+        if (worldStateJson === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        const storyStateJson = JSON.stringify(input.storyState);
 
         await tx.execute({
           sql: `INSERT INTO game_records (game_id, record_version, world_state_json, story_state_json, created_at, revision)
@@ -407,14 +412,8 @@ export function createSqliteGameRepository(
     input: ApplyStateInput,
     options: { readonly preserveAcknowledgedPrologue?: boolean } = {},
   ): Promise<ApplyStateResult> {
-    let worldStateJson: string;
-    let storyStateJson: string | null;
     try {
       await ensureSchema();
-      worldStateJson = JSON.stringify(input.nextWorldState);
-      storyStateJson = options.preserveAcknowledgedPrologue === true
-        ? null
-        : JSON.stringify(input.nextStoryState);
     } catch (error) {
       logError("applyState prepare failed", error);
       return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
@@ -435,15 +434,28 @@ export function createSqliteGameRepository(
           return { ok: false, code: "NO_ACTIVE_GAME" };
         }
 
+        const currentRecord = await tx.execute({
+          sql: "SELECT revision, story_state_json FROM game_records WHERE game_id = ?",
+          args: [input.gameId],
+        });
+        if (currentRecord.rows.length === 0) return { ok: false, code: "NO_ACTIVE_GAME" };
+        if (currentRecord.rows[0]?.["revision"] !== input.expectedRevision) return { ok: false, code: "STALE_GAME_REVISION" };
+        if (input.expectedNarrativeJob !== undefined) {
+          const currentStory = parseJsonObject(currentRecord.rows[0]?.["story_state_json"] as string);
+          const narrative = currentStory?.["narrative"];
+          if (!isPlainObject(narrative) || narrative["status"] !== input.expectedNarrativeJob.status || !isPlainObject(narrative["job"]) || narrative["job"]["jobId"] !== input.expectedNarrativeJob.jobId) {
+            return { ok: false, code: "STALE_GAME_REVISION" };
+          }
+        }
+        const worldStateJson = serializeValidatedWorldState(input.nextWorldState);
+        if (worldStateJson === null) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
+        let storyStateJson: string | null = options.preserveAcknowledgedPrologue === true ? null : JSON.stringify(input.nextStoryState);
+
         // prologueShown 是只会从 false → true 的展示元数据。场景生成可能在
         // 序幕确认前读取旧快照，因此必须在同一个 write transaction 内读取
         // 当前值并做单调合并，不能让完整 StoryState 写回把确认状态覆盖回去。
         if (options.preserveAcknowledgedPrologue === true) {
-          const current = await tx.execute({
-            sql: "SELECT story_state_json FROM game_records WHERE game_id = ?",
-            args: [input.gameId],
-          });
-          const currentStoryJson = current.rows[0]?.["story_state_json"];
+          const currentStoryJson = currentRecord.rows[0]?.["story_state_json"];
           if (typeof currentStoryJson !== "string") {
             return { ok: false, code: "NO_ACTIVE_GAME" };
           }
@@ -500,10 +512,12 @@ export function createSqliteGameRepository(
         if (worldState === null || storyState === null) {
           return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
         }
+        const parsedWorldState = validatePersistableWorldState(worldState);
+        if (!parsedWorldState.ok) return { ok: false, code: "INFRASTRUCTURE_FAILURE" };
 
         const record: GameRecord = {
           gameId: asGameId(row["game_id"] as string),
-          worldState: worldState as unknown as WorldState,
+          worldState: parsedWorldState.value,
           storyState: storyState as unknown as StoryState,
           revision: row["revision"] as number,
           createdAt: row["created_at"] as string,

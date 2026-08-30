@@ -14,7 +14,8 @@ export function asGameId(raw: string): GameId {
 export type CorruptGameReason =
   | "UNPARSEABLE_RECORD"
   | "VERSION_MISMATCH"
-  | "UNSUPPORTED_RECORD";
+  | "UNSUPPORTED_RECORD"
+  | "ENTITY_STATE_INVALID";
 
 export type GameRecord = {
   readonly gameId: GameId;
