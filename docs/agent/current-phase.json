@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "phase": "narrative-context-compiler",
-  "status": "implemented",
-  "implementationStatus": "implemented",
+  "status": "completed",
+  "implementationStatus": "merged",
   "targetBranch": "codex/narrative-context-compiler",
   "worktreeName": "narrative-context-compiler",
   "repositories": ["ai-rpg-game"],

@@ -30,7 +30,7 @@ AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录�
 | --- | --- |
 | `kind` | `"ai_call"` |
 | `callId` | 同一逻辑调用的唯一 ID（重试共享） |
-| `role` | `"intent"` / `"opening"` / `"scene"` / `"world"` |
+| `role` | `"intent"` / `"opening"` / `"scene"` / `"world"` / `"narrative_bundle"` |
 | `attempt` | 本次重试序号 |
 | `context` | `AiTextAuditContext`（见下） |
 | `input.messages` | 完整 messages 数组 |
@@ -98,7 +98,7 @@ AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录�
 
 `RpgAiClient` 负责把缺省上下文补成 `{origin:"normal",mechanism:"initial",attempt:0}`，再按 provider attempt>1 覆盖 `mechanism=transport`（保留 `origin`）；内容修复由 scene/world 源写入 `mechanism=content_repair, attempt=1`。历史 `repair` 字段只在 CLI `query`/`verify` 中做只读归一（`retry ?? repair`），仅有 `repair` 的旧事件派生为 `origin="legacy_unknown"`，绝不被臆测为 `manual_failed_job` 或 `normal`，也绝不改写 append-only JSONL。
 
-## 四类 AI 角色
+## 五类 AI 角色
 
 | 角色 | purpose | 说明 |
 | --- | --- | --- |
@@ -106,12 +106,13 @@ AI 文本审计日志是独立于普通诊断日志的 append-only JSONL 记录�
 | `intent` | `intent_parsing` | 自由输入意图解析；2026-08-23 仍未迁入 narrative context compiler |
 | `world` | `world_evolution` | 按需世界演化（幕推进/结局对/候选补足）；2026-08-23 起附带编译后的 `narrativeContext` manifest |
 | `scene` | `scene_performance` | 每次 ready 场景表演；2026-08-23 起附带编译后的 `narrativeContext` manifest |
+| `narrative_bundle` | `narrative_bundle_generation` | v7 生产生成角色；初始化 opening 分支不附 manifest，玩家决策分支由 `compileDecisionNarrativeContext` 附带无正文 manifest |
 
 ## Narrative Context Manifest（2026-08-23）
 
 - `AiTextAuditContext.narrativeContext` 的类型是 `NarrativeContextManifest`，仅记录 `compilerVersion`、预算上限、selected/dropped token 统计，以及每个 block 的 `id/slot/sourceKind/sourceRefs/estimatedTokens`。
 - 审计事件不会把 `renderNarrativeContext()` 产出的 Prompt 正文、副本化 schema 或 block `content` 存进 manifest；完整 Prompt 仍只出现在 `ai_call.input.messages` 的原始请求记录中。
-- 当前只有 `scene` 与 `world` 两类 live 调用会附带该 manifest；`opening` 与 `intent` 事件仍无该字段，直到后续 Plan 明确迁移。
+- `scene`、`world` 及 `narrative_bundle` 的玩家决策分支会附带该 manifest；`opening`、`intent` 以及 `narrative_bundle` 的初始化 opening 分支仍无该字段，直到后续 Plan 明确迁移。
 
 ## 触发动作映射
 
@@ -172,7 +173,7 @@ npm run ai-text-audit -- export --run <runId> --out <file>
 - `src/game/application/server/ai/textAuditRecorder.ts` — append-only JSONL 记录器
 - `src/game/application/server/ai/rpgAiClient.ts` — AI 调用审计注入点
 - `src/game/application/server/compositionRoot.ts` — API 交换审计与 story_text 审计装配
-- `src/game/application/generatePendingScene.ts` — story_text 审计记录
+- `src/game/application/generatePendingScene.ts` — 历史 scene/fixture 链的 story_text 审计记录；v7 生产决策编排位于 `generatePendingNarrativeBundle.ts`
 - `scripts/aiTextAudit.mjs` — CLI 查询/验证/导出工具
 
 ## 主要测试

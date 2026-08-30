@@ -10,17 +10,15 @@ import type {
   NarrativeBundleSourceContext,
   NarrativeBundleSourceResult,
   NarrativeBundleRepairReason,
-  NarrativeBundleRepair,
 } from "../../narrativeBundleSource";
 import type { RpgAiClient } from "./rpgAiClient";
 import type { ProviderJsonMode } from "./providerRequestOptions";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
-import type { Action } from "@/game/domain/action";
-import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
 import type { OpeningNarrativeBundleProposal } from "../../narrativeBundleSource";
+import { compileDecisionNarrativeContext } from "./narrativeContext";
 
 // ---------------------------------------------------------------------------
 // Task 5：统一叙事生成包 live source。
@@ -46,314 +44,6 @@ function failBundle(
     ...(repairReason === undefined ? {} : { repairReason }),
     ...(repairDetail === undefined ? {} : { repairDetail }),
   };
-}
-
-/** 服务端按名称去重：先把已占用名称交给 provider，避免整包因为撞名被拒。 */
-function occupiedNamesSection(worldState: WorldState): string {
-  const list = (names: readonly string[]): string => (names.length === 0 ? "（无）" : names.join("、"));
-  return [
-    `- 地点：${list(worldState.locations.map((location) => location.name))}`,
-    `- NPC：${list(worldState.npcs.map((npc) => npc.name))}`,
-    `- 物品：${list(worldState.items.map((item) => item.name))}`,
-    `- 敌人：${list(worldState.enemies.map((enemy) => enemy.name))}`,
-    `- 任务：${list(worldState.quests.map((quest) => quest.name))}`,
-  ].join("\n");
-}
-
-/** Keep item narration aligned with rule-owned possession and location state. */
-function itemStateSection(worldState: WorldState): string {
-  if (worldState.items.length === 0) return "（无）";
-  return worldState.items.map((item) => {
-    if (worldState.inventory.includes(item.id)) {
-      return `- ${item.name}（${item.id}，玩家已持有）: ${item.description}`;
-    }
-    const availableAt = worldState.locations.filter((location) => location.availableItemIds.includes(item.id));
-    if (availableAt.length === 1) {
-      return `- ${item.name}（${item.id}，尚未拾取，位于${availableAt[0]!.name}）: ${item.description}`;
-    }
-    return `- ${item.name}（${item.id}，当前不在玩家背包且不可拾取）: ${item.description}`;
-  }).join("\n");
-}
-
-function repairInstruction(repair: NarrativeBundleRepair | undefined): string {
-  if (repair === undefined) return "";
-  const rejection = [
-    repair.rejectionCode === undefined ? "" : `拒绝码 ${repair.rejectionCode}`,
-    repair.detail === undefined ? "" : `细分原因 ${repair.detail}`,
-  ].filter((part) => part !== "").join("，");
-  const duplicateEntries = repair.detail?.startsWith("duplicate_name:")
-    ? repair.detail.slice("duplicate_name:".length).split("|")
-      .map((entry) => entry.match(/^(npc|location|item|enemy|quest):(.+)$/u))
-      .filter((entry): entry is RegExpMatchArray => entry !== null)
-    : [];
-  const duplicateInstruction = duplicateEntries.length === 0
-    ? ""
-    : duplicateEntries.map((entry) =>
-      `- 上一轮新${entry[1]}名称“${entry[2]}”已与世界中现有实体重复；本轮必须另起一个未占用名称，不能沿用或仅加“新”“另一个”等前缀。`,
-    ).join("\n");
-  return `\n# 上一轮提案已被服务端拒绝
-${rejection === "" ? `失败类型 ${repair.reason}。` : `${rejection}。`}
-本轮只需修正被拒绝的那一项，其余中文叙事文本可以沿用你自己的写法。硬性要求：
-- continuationScenes 必须与第 8 条投影的步骤一一对应：不得新增投影之外的步骤，也不得漏掉投影中的步骤。
-- 终点步骤（terminal.target.stepKey 指向的那一步）必须给出该步骤列出的全部 candidateId 选项，每个选项都要有中文 label；其余步骤 choices 必须为空。
-- 新地点/NPC/物品/敌人/任务的名称不得与上方“已占用实体名称”中的任何一项重复。
-${duplicateInstruction}
-`;
-}
-
-function buildDecisionPrompt(
-  worldState: WorldState,
-  storyState: StoryState,
-  job: PendingNarrativeJob,
-  contentRepair?: NarrativeBundleRepair,
-): string {
-  const descriptorGraph = buildNarrativeBundleDescriptors({
-    worldState,
-    storyState,
-    transition: job.objectiveTransition,
-  });
-  const nextActProjection = storyState.evolution.status === "needs_next_act"
-    ? {
-        locationId: `loc_dyn_${storyState.evolution.nextLocationOrdinal}`,
-        npcId: `npc_dyn_${storyState.evolution.nextNpcOrdinal}`,
-      }
-    : null;
-  // A next-act delta is materialized after this response is received, but its
-  // entity IDs are deterministically minted from the current evolution ledger.
-  // Project that post-materialization first step here.  Otherwise the prompt
-  // would demand the old graph while approval validates the new graph.
-  const expectedChoices = nextActProjection !== null
-    ? "当前场景不允许 choices；终点步骤的 choices 必须使用下方对应候选。"
-    : descriptorGraph.currentChoiceCandidates.length === 0
-      ? "当前场景不允许 choices；终点步骤的 choices 必须使用下方对应候选。"
-      : descriptorGraph.currentChoiceCandidates.map((candidate) => candidate.candidateId).join("、");
-  const expectedSteps = nextActProjection !== null
-    ? `- move:${nextActProjection.locationId}；choices: move:${nextActProjection.locationId}_choice_1、move:${nextActProjection.locationId}_choice_2；到达 NPC: ${nextActProjection.npcId}`
-    : descriptorGraph.steps.length === 0
-      ? "无 continuation step。"
-      : descriptorGraph.steps.map((step) => {
-        const choices = step.choiceCandidates.map((candidate) => candidate.candidateId).join("、") || "无";
-        return `- ${step.stepKey}；choices: ${choices}`;
-      }).join("\n");
-  const expectedTerminal = nextActProjection !== null
-    ? { kind: "next_decision", target: { kind: "continuation_step", stepKey: `move:${nextActProjection.locationId}` } }
-    : descriptorGraph.terminal;
-  const questSummary = worldState.quests.length > 0
-    ? worldState.quests.map((q) => `- ${q.name}（${q.status}）: ${q.description}`).join("\n")
-    : "（无活跃任务）";
-
-  const locationSummary = worldState.locations
-    .map((l) => `- ${l.name}（${l.id}）: ${l.description}`)
-    .join("\n");
-
-  const npcSummary = worldState.npcs
-    .map((n) => `- ${n.name}（${n.id}）: ${n.role}`)
-    .join("\n");
-
-  const playerSummary = `玩家：${worldState.player.name}（${worldState.player.identity}）`;
-
-  const storySummary = `第 ${storyState.currentAct} 幕 / 共 ${storyState.targetActs} 幕`;
-
-  // ── 当前局势：玩家在哪、在和谁说话、上一幕刚发生什么 ──
-  const currentLocation = worldState.locations.find((l) => l.id === worldState.currentLocationId);
-  const focusNpc = job.focusNpcId === undefined
-    ? undefined
-    : worldState.npcs.find((n) => n.id === job.focusNpcId);
-  const lastScene = storyState.narrative.status === "ready"
-    ? null
-    : storyState.narrative.lastPresentedScene;
-  const clipText = (text: string, max: number): string =>
-    Array.from(text).length <= max ? text : `${Array.from(text).slice(0, max).join("")}……`;
-  const situationLines = [
-    currentLocation === undefined ? "" : `- 玩家当前位置：${currentLocation.name}（${currentLocation.id}）`,
-    focusNpc === undefined ? "" : `- 本回合对话焦点 NPC：${focusNpc.name}（${focusNpc.id}，${focusNpc.role}）`,
-    lastScene === null ? "" : `- 上一场景旁白：${clipText(lastScene.narration, 500)}`,
-    lastScene === null || lastScene.npcLine === null
-      ? ""
-      : `- 上一场景台词：${clipText(lastScene.npcLine.text, 200)}`,
-  ].filter((line) => line !== "");
-  const situationSection = situationLines.length === 0
-    ? ""
-    : `## 当前局势
-${situationLines.join("\n")}
-currentScene 必须直接承接上一场景与玩家本轮行动：不得回到更早的情节，不得重复上一场景的开场，也不得把玩家写成刚抵达上一场景已经到达的地方。
-
-`;
-
-  // ── 玩家本轮行动：固定选项带出所选文案，自由输入带出原话 ──
-  const actionLines: string[] = [];
-  if (job.utterance !== undefined) {
-    actionLines.push(`玩家自定义输入：${job.utterance}`);
-  } else if (job.selectedDialogue?.label !== undefined) {
-    actionLines.push(`玩家选择了选项：“${job.selectedDialogue.label}”`);
-  } else {
-    actionLines.push(`玩家行动：${job.actionSummary.kind}`);
-  }
-  if (job.actionSummary.kind === "talk" && focusNpc !== undefined) {
-    actionLines.push(`currentScene.npcLine 必须是 ${focusNpc.name} 对这句话/这个选择的第一人称直接回应，不能为 null。`);
-  }
-  const actionSummary = actionLines.join("\n");
-
-  // ── 强制节拍契约：segments 只能使用这些 beatId ──
-  const beatLines = job.mandatoryBeats.map((beat) => {
-    const requirement = beat.beatId === ATMOSPHERE_BEAT_ID
-      ? "可选，可省略；若写，必须放在所有 segments 最后"
-      : "必须覆盖，恰好一次";
-    return `- beatId="${beat.beatId}"（${beat.kind}，${requirement}）：${beat.instruction}`;
-  }).join("\n");
-  const utteranceBeat = job.mandatoryBeats.find((beat) => beat.kind === "player_utterance");
-  const utteranceRequirement = utteranceBeat === undefined
-    ? ""
-    : `\n存在 player_utterance 节拍：npcLine 必须为 npcId="${utteranceBeat.subjectIds[0] ?? ""}" 的台词，answeredBeatIds 必须包含 "${utteranceBeat.beatId}"，并以该 NPC 自己的口吻直接回应玩家刚说的话，不得把玩家原话整段复述。`;
-
-  // ── objectiveLink：与权威目标转换一致，直接给出期望值 ──
-  const expectedObjectiveLink = job.objectiveTransition.after === null
-    ? "null"
-    : JSON.stringify({
-        questId: job.objectiveTransition.after.questId,
-        objectiveIndex: job.objectiveTransition.after.objectiveIndex,
-        mode: "progress",
-      });
-
-  // ── 对话决策点：两个选项同指一名 NPC 时，场景必须带该 NPC 台词 ──
-  const currentTalkNpcIds = descriptorGraph.terminal.kind === "next_decision"
-    && descriptorGraph.terminal.target.kind === "current_scene"
-    ? descriptorGraph.currentChoiceCandidates
-        .map((candidate) => candidate.action)
-        .filter((action): action is Extract<Action, { readonly type: "talk" }> => action.type === "talk")
-        .map((action) => String(action.npcId))
-    : [];
-  const dialogueFocusNpc = descriptorGraph.currentChoiceCandidates.length === 2
-    && currentTalkNpcIds.length === 2
-    && currentTalkNpcIds[0] === currentTalkNpcIds[1]
-    ? worldState.npcs.find((n) => String(n.id) === currentTalkNpcIds[0])
-    : undefined;
-  const dialogueFocusRequirement = dialogueFocusNpc === undefined
-    ? ""
-    : `\n本回合的决策点是 ${dialogueFocusNpc.name} 的对话：currentScene.npcLine 必须提供 ${dialogueFocusNpc.name}（${dialogueFocusNpc.id}）的直接对白，不能为 null。`;
-
-  const evolutionRequirement = storyState.evolution.status === "needs_next_act"
-    ? `本回合已进入第 ${storyState.currentAct} 幕：worldDelta 绝不能为 null，必须提供 newLocation、newNpc、newItem、newEnemy、nextMainQuest；其余字段可为 null。`
-    : storyState.evolution.status === "needs_ending_pair"
-      ? "本回合需要结局：worldDelta 绝不能为 null，且必须严格为 {\"beatSummary\":\"...\",\"newLocation\":null,\"newNpc\":null,\"newItem\":null,\"newEnemy\":null,\"newFact\":null,\"nextMainQuest\":null,\"endingPair\":[{\"themeKey\":\"trust\",\"name\":\"...\",\"description\":\"...\"},{\"themeKey\":\"doubt\",\"name\":\"...\",\"description\":\"...\"}] }。不能创建地点、NPC、物品、敌人、任务；terminal 必须严格为 {\"kind\":\"ending\"}，continuationScenes 必须为 []。"
-      : "本回合不需要世界演化：worldDelta 必须为 null。";
-  const arrivalSkeleton = nextActProjection === null
-    ? ""
-    : `
-下一幕抵达场景必须逐字使用以下骨架（只有 text/label/emotion 需要你创作，缺少两个 choices 会让整包被拒）：
-{"stepKey":"move:${nextActProjection.locationId}","scene":{"segments":[{"beatId":"atmosphere","text":"玩家抵达新地点并与新 NPC 相遇的旁白"}],"npcLine":{"npcId":"${nextActProjection.npcId}","text":"新 NPC 的第一人称开场对白","emotion":"neutral","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]},"objectiveLink":null,"choices":[{"candidateId":"move:${nextActProjection.locationId}_choice_1","label":"..."},{"candidateId":"move:${nextActProjection.locationId}_choice_2","label":"..."}]}}`;
-  const genreRequirement = worldState.generation.gameType === "wuxia"
-    ? "武侠写实约束：角色、冲突与叙述只能采用江湖、人事、武学、机关等武侠元素；禁止鬼魂、幽灵、灵魂、超自然、魔法、法术、咒语、法阵、圣光、精灵、异界等玄幻/西幻元素。"
-    : "叙述必须严格贴合当前题材，不混入其他题材的设定。";
-
-  return `你是武侠 RPG 的叙事 AI。你将在一次响应中生成完整的叙事生成包。
-
-# 当前世界状态
-${storySummary}
-${playerSummary}
-
-## 地点
-${locationSummary}
-
-## NPC
-${npcSummary}
-
-## 物品状态
-${itemStateSection(worldState)}
-
-尚未拾取的物品只能被观察、发现或拾取；在规则动作真正完成拾取前，不得写成玩家已经持有、拿出或使用，也不得让对话选项假定玩家已经持有。
-
-## 任务
-${questSummary}
-
-## 已占用实体名称（新实体不得与下列任何名称重复）
-${occupiedNamesSection(worldState)}
-
-${situationSection}## 玩家本轮行动
-${actionSummary}
-
-## 本回合强制叙事节拍（currentScene.segments 的 beatId 只能是下列之一）
-${beatLines}${utteranceRequirement}${dialogueFocusRequirement}
-currentScene.objectiveLink 必须严格为 ${expectedObjectiveLink}。
-
-## 世界演化要求
-${evolutionRequirement}${arrivalSkeleton}
-${repairInstruction(contentRepair)}# 输出要求
-
-生成一个 JSON 对象，包含以下字段：
-- worldDelta: 世界增量提案（可为 null）
-- currentScene: 当前场景（segments 数组、npcLine、objectiveLink、choices）
-- continuationScenes: 后续可消费场景数组
-- terminal: 终点声明
-
-## 规则
-
-1. 符号引用白名单（只允许以下符号，不允许直接使用实体 ID 之外的引用）：
-   - @current.location
-   - @current.focus_npc
-   - @new.location
-   - @new.npc
-   - @new.item
-   - @new.enemy
-   - @new.fact
-   - @new.quest
-   - @ending.trust
-   - @ending.doubt
-
-2. continuationScenes 必须与第 8 条投影的步骤完全一致：数量、stepKey、顺序都不得改动，
-   不得投影之外自行规划未来步骤。
-
-3. terminal 有两种合法形式：
-   - current_scene: 当前场景就是下一决策点（continuationScenes 必须为空）
-   - continuation_step: 需要先消费线性步骤（continuationScenes 至少一步）
-
-4. 终点决策点必须有恰好两个选项，且必须写在 terminal 指向的那一步的 choices 里
-   （terminal 指向 current_scene 时写在 currentScene.choices），candidateId 逐字使用
-   第 8 条为该步骤列出的候选；其余步骤的 choices 必须为空数组。
-
-5. 战斗失败会恢复到战斗前检查点，因此不需要生成战斗失败/撤退的分支。
-
-6. 所有文本必须是中文。
-
-6.1. ${genreRequirement}
-
-7. 世界内实体名称唯一：新地点/NPC/物品/敌人/任务的名称必须避开上方“已占用
-实体名称”，否则整包会被服务端拒绝。
-
-8. 这是服务端已经重建的唯一合法图，必须逐字使用其中的 stepKey 与 candidateId，
-不得自创步骤或候选：
-   - terminal: ${JSON.stringify(expectedTerminal)}
-   - currentScene choices: ${expectedChoices}
-   - continuationScenes:
-${expectedSteps}
-
-9. choices 每项必须为 {"candidateId":"服务器给出的候选 ID","label":"中文选项文本"}；
-npcLine 必须为 {"npcId":"实体 ID","text":"中文对白","emotion":"neutral|warm|guarded|afraid|angry|sad","answeredBeatIds":[],"usedFactIds":[],"usedInteractionActionIds":[]}，不能是字符串。
-
-10. 若上方要求 worldDelta，严格使用：
-{"beatSummary":"...","newLocation":{"name":"...","description":"...","scale":"scene","placement":"world","connectFromLocationId":"现有地点 ID"},"newNpc":{"name":"...","role":"...","description":"...","locationRef":{"kind":"new_location"},"goals":["..."]},"newItem":{"name":"...","description":"...","locationRef":"new_location"},"newEnemy":{"name":"...","tier":"normal","locationRef":"new_location"},"newFact":null,"nextMainQuest":{"name":"...","description":"...","objectiveText":"..."},"endingPair":null}
-
-11. 当 worldDelta 要求 nextMainQuest 时，currentScene 只收束旧场景且 choices 必须为空；必须生成唯一的 continuationScenes[0]，其 stepKey、两个 choices 的 candidateId 和 npcLine.npcId 必须完全等于第 8 条给出的下一幕投影。该 continuation scene 表现玩家抵达新地点并与新 NPC 相遇。
-
-## JSON 格式
-
-\`\`\`json
-{
-  "worldDelta": null,
-  "currentScene": {
-    "segments": [
-      { "beatId": "上方强制节拍的 beatId", "text": "..." },
-      { "beatId": "atmosphere", "text": "可选氛围段，必须最后" }
-    ],
-    "npcLine": { "npcId": "实体 ID", "text": "第一人称直接对白", "emotion": "neutral", "answeredBeatIds": [], "usedFactIds": [], "usedInteractionActionIds": [] },
-    "objectiveLink": null,
-    "choices": []
-  },
-  "continuationScenes": [],
-  "terminal": { "kind": "next_decision", "target": { "kind": "current_scene" } }
-}
-\`\`\`
-`;
 }
 
 function buildOpeningPrompt(context: Extract<NarrativeBundleSourceContext, { readonly kind: "opening" }>): string {
@@ -727,9 +417,17 @@ export function createNarrativeBundleSource(
       }
 
       try {
-        const prompt = context.kind === "decision"
-          ? buildDecisionPrompt(context.worldState, context.storyState, context.job, context.contentRepair)
-          : buildOpeningPrompt(context);
+        const decisionCompilation = context.kind === "decision"
+          ? compileDecisionNarrativeContext({
+              worldState: context.worldState,
+              storyState: context.storyState,
+              job: context.job,
+              ...(context.contentRepair === undefined ? {} : { contentRepair: context.contentRepair }),
+            })
+          : undefined;
+        const prompt = decisionCompilation?.prompt ?? buildOpeningPrompt(
+          context as Extract<NarrativeBundleSourceContext, { readonly kind: "opening" }>,
+        );
 
         const messages: readonly AiMessage[] = [
           { role: "system", content: prompt },
@@ -748,6 +446,9 @@ export function createNarrativeBundleSource(
             jobId: context.kind === "decision" ? String(context.job.jobId) : String(context.jobId),
             turnNumber: context.kind === "decision" ? context.job.turnNumber : 0,
             action: context.kind === "decision" ? context.job.actionSummary : undefined,
+            ...(decisionCompilation === undefined
+              ? {}
+              : { narrativeContext: decisionCompilation.manifest }),
           },
         );
 

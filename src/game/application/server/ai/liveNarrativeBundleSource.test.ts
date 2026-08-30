@@ -13,6 +13,7 @@ import {
   asLocationId,
   asNpcId,
   asEnemyId,
+  asFactId,
   asItemId,
   asGenerationId,
 } from "@/game/domain/worldEntity";
@@ -176,6 +177,110 @@ describe("createNarrativeBundleSource", () => {
       expect.objectContaining({ purpose: "narrative_bundle_generation" }),
     );
     expect(result.ok).toBe(true);
+  });
+
+  it("compiles the production decision prompt with continuity context and a body-free audit manifest", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(validBundleResponse),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+    const base = makeWorldState();
+    const focusNpcId = asNpcId("npc_1");
+    const privateFactId = asFactId("fact_private");
+    const publicFactId = asFactId("fact_public");
+    const interactionHistory = Array.from({ length: 5 }, (_, index) => ({
+      turnNumber: index + 1,
+      actionId: `interaction_${index + 1}`,
+      locationId: asLocationId("loc_0"),
+      dialogueAct: "support" as const,
+      topicSummary: `话题${index + 1}`,
+      outcome: "positive" as const,
+      relationshipDelta: 1,
+      learnedFactIds: [] as const,
+      summary: `第${index + 1}次结构化交互`,
+    }));
+    const worldState: WorldState = {
+      ...base,
+      worldFacts: [
+        { factId: publicFactId, text: "公开账册记录了商队去向。", source: "generated", discovered: true },
+        { factId: privateFactId, text: "DO_NOT_LEAK_OTHER_NPC_SECRET", source: "generated", discovered: true },
+      ],
+      npcs: [{
+        id: focusNpcId,
+        name: "老掌柜",
+        role: "客栈掌柜",
+        description: "言辞谨慎，重视承诺。",
+        locationId: asLocationId("loc_0"),
+        isCompanion: false,
+        tags: [],
+        met: true,
+        memory: {
+          npcId: focusNpcId,
+          knownFactIds: [publicFactId],
+          hiddenFactIds: [privateFactId],
+          interactionHistory,
+          relationship: { affinity: 25 },
+          emotion: "guarded",
+          goals: ["查清商队失踪原因"],
+        },
+      }],
+    };
+    const storyState: StoryState = {
+      ...makeStoryState(),
+      currentAct: 2,
+      tension: 55,
+      nextPacingNeed: "complicate",
+      recentBeats: [{ turn: 4, kind: "fact_discovered", summary: "玩家查到旧账册。" }],
+      contract: {
+        version: 1,
+        targetActs: 3,
+        centralConflict: "商队失踪牵出门派内应",
+        endingDirections: [
+          { key: "trust", theme: "与旧友共同揭露真相" },
+          { key: "doubt", theme: "独自追查并承担代价" },
+        ],
+      },
+    };
+
+    await source.generate({
+      kind: "decision",
+      worldState,
+      storyState,
+      job: makeJob(),
+    });
+
+    const [, messages, auditContext] = complete.mock.calls[0]!;
+    const systemPrompt = (messages as readonly AiMessage[])[0]!.content as string;
+    expect(systemPrompt.startsWith("[NARRATIVE_CONTEXT v1]")).toBe(true);
+    expect(systemPrompt).toContain("## [story_contract]");
+    expect(systemPrompt).toContain("## [focus_character]");
+    expect(systemPrompt).toContain("## [relevant_events]");
+    expect(systemPrompt).toContain("## [output_contract]");
+    expect(systemPrompt).toContain("商队失踪牵出门派内应");
+    expect(systemPrompt).toContain("currentAct=2");
+    expect(systemPrompt).toContain("tension=55");
+    expect(systemPrompt).toContain("nextPacingNeed=complicate");
+    expect(systemPrompt).toContain("玩家查到旧账册");
+    for (let index = 1; index <= 5; index += 1) {
+      expect(systemPrompt).toContain(`interaction_${index}`);
+    }
+    expect(systemPrompt).not.toContain("DO_NOT_LEAK_OTHER_NPC_SECRET");
+    expect(auditContext).toEqual(expect.objectContaining({
+      narrativeContext: expect.objectContaining({
+        compilerVersion: 1,
+        maxEstimatedTokens: 8_000,
+        overflowEstimatedTokens: 0,
+        selected: expect.arrayContaining([
+          expect.objectContaining({ id: "bundle:rules" }),
+          expect.objectContaining({ id: "bundle:output-contract" }),
+        ]),
+      }),
+    }));
+    expect(JSON.stringify((auditContext as { narrativeContext: unknown }).narrativeContext))
+      .not.toContain("商队失踪牵出门派内应");
+    expect(JSON.stringify((auditContext as { narrativeContext: unknown }).narrativeContext))
+      .not.toContain("DO_NOT_LEAK_OTHER_NPC_SECRET");
   });
 
   it("tells the provider whether each existing item is carried or still available at a location", async () => {
