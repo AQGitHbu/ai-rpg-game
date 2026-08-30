@@ -9,6 +9,7 @@ import { resolveTurn } from "@/game/gameplay/rpg/ruleEngine";
 import { commitState } from "./stateCommit";
 import { asTurnId } from "@/game/domain/events";
 import { consumeNarrativeBundle } from "./consumeNarrativeBundle";
+import { consumePreparedContinuation } from "./consumePreparedContinuation";
 import { projectEntityStore } from "@/game/domain/entity";
 
 // ---------------------------------------------------------------------------
@@ -191,9 +192,41 @@ export async function performBattleRound(
     // Offline fixture worlds can exercise rule-only battle paths without a
     // prepared continuation graph. Keep the victory atomic and clear the
     // battle checkpoint; live AI worlds still require the approved bundle.
-    const hasContinuation = (beforeNarrative.narrativeBundle?.steps.length ?? 0) > 0
-      || (beforeNarrative.preparedContinuation?.steps.length ?? 0) > 0;
-    if (beforeNarrative.mode === "offline" && !hasContinuation) {
+    if (beforeNarrative.mode === "offline" && beforeNarrative.narrativeBundle === undefined) {
+      const hasPreparedContinuation = (beforeNarrative.preparedContinuation?.steps.length ?? 0) > 0;
+      if (hasPreparedContinuation) {
+        const continued = consumePreparedContinuation({
+          beforeWorldState,
+          beforeStoryState,
+          resolvedWorldState: victoryWorldState,
+          resolvedStoryState: afterStoryState,
+          action: input.action,
+          postCommitRevision: record.revision + 1,
+          resolvedEvent: resolution.primaryResult,
+          domainEvents: resolution.domainEvents,
+          now: deps.now,
+        });
+        if (!continued.ok) return { ok: false, code: continued.code, feedback: "当前战斗没有可消费的预备叙事。" };
+        const commitResult = await commitState(deps.repository, {
+          gameId: input.gameId,
+          expectedRevision: record.revision,
+          nextWorldState: continued.nextWorldState,
+          nextStoryState: continued.nextStoryState,
+        });
+        if (!commitResult.ok) {
+          return {
+            ok: false,
+            code: commitResult.code === "STALE_GAME_REVISION" ? "STALE_GAME_REVISION" : "INFRASTRUCTURE_FAILURE",
+            feedback: "Commit failed",
+          };
+        }
+        return {
+          ok: true,
+          revision: commitResult.record.revision,
+          resolvedEvent: resolution.primaryResult,
+          outcome: "victory",
+        };
+      }
       if (afterStoryState.narrative.status !== "ready") {
         return { ok: false, code: "NARRATIVE_CONTINUATION_INVALID", feedback: "当前战斗叙事状态无效。" };
       }
