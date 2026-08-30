@@ -3158,11 +3158,18 @@ body:has(.adventure-game-shell) {
    NPC 对话覆盖层（视觉小说式布局）
    ========================================================================== */
 
-/* 透明全屏根：可见但拦截 HUD/场景交互，等效旧遮罩的锁定行为 */
+/* 透明全屏根：可见但拦截 HUD/场景交互，等效旧遮罩的锁定行为。
+   flex 列 + justify-content: flex-end 让选项面板与对话框按 DOM 顺序自然堆叠：
+   面板底部即对话框顶部，二者共用同一左右缩进（spec §2.1「对话框上方、右侧竖排」）。 */
 .npc-dialogue-overlay {
+  --npc-dialogue-overlay-inset-x: 9%;
   position: fixed;
   inset: 0;
   z-index: 100;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 0 var(--npc-dialogue-overlay-inset-x) 4%;
   animation: modal-fade-in 0.2s ease-out;
 }
 
@@ -3189,9 +3196,10 @@ body:has(.adventure-game-shell) {
   }
 }
 
+/* 立绘左边缘与下方对话框左边缘共用同一缩进 */
 .npc-dialogue-overlay-figure {
   position: absolute;
-  left: 5%;
+  left: var(--npc-dialogue-overlay-inset-x);
   bottom: 20%;
   display: flex;
   flex-direction: column;
@@ -3225,11 +3233,10 @@ body:has(.adventure-game-shell) {
   text-shadow: 0 2px 10px rgb(0 0 0 / 60%);
 }
 
+/* 覆盖层 flex 列的第二项：宽度由 stretch 撑满，底部由根 padding 决定；
+   relative 仍作为名字横幅/关闭按钮/翻页箭头的定位祖先。 */
 .npc-dialogue-overlay-box {
-  position: absolute;
-  left: 9%;
-  right: 9%;
-  bottom: 4%;
+  position: relative;
   min-height: 132px;
   padding: 40px 22px 18px;
   border: 2px solid var(--game-accent);
@@ -3315,10 +3322,10 @@ body:has(.adventure-game-shell) {
   .npc-dialogue-overlay-next { animation: none; }
 }
 
+/* 覆盖层 flex 列的第一项：右边缘与对话框右边缘对齐，底部紧贴对话框顶部 */
 .npc-dialogue-overlay-panel {
-  position: absolute;
-  right: 4%;
-  bottom: 32%;
+  position: relative;
+  align-self: flex-end;
   width: min(340px, 30vw);
   display: grid;
   gap: 8px;
