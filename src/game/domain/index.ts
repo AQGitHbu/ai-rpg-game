@@ -1,5 +1,5 @@
 // Public domain facade. Runtime internals use focused modules; consumers receive
-// only the stable new-game input contract through this boundary.
+// the stable new-game input contract and the read-only entity store contract here.
 export {
   validateNewGameInput,
   type ContentIntensity,
@@ -12,3 +12,16 @@ export {
   type ValidatedNewGameInput,
   type ValidateNewGameInputResult,
 } from "./newGame";
+
+export {
+  createEntityStore,
+  entitiesOfKind,
+  EntityStoreInvariantError,
+  getEntity,
+  parseEntityStore,
+  validateEntityStoreStructure,
+  type EntityStore,
+  type EntityStoreValidationCode,
+  type EntityStoreValidationIssue,
+  type ParseEntityStoreResult,
+} from "./entity";
