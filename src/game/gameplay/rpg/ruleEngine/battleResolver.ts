@@ -428,6 +428,10 @@ export function battleAction(
       playerHp,
       enemyHp,
       round: battle.round + 1,
+      // 战前快照与 battleKey 必须跨回合存活：快照是战败/撤退唯一可恢复的世界，
+      // 且落盘校验要求 active battle 携带它（丢掉等于悄悄取消回滚保证）。
+      ...(battle.battleKey === undefined ? {} : { battleKey: battle.battleKey }),
+      ...(battle.preBattleSnapshot === undefined ? {} : { preBattleSnapshot: battle.preBattleSnapshot }),
     },
     eventLedger: [...ws.eventLedger, ...events],
   };
