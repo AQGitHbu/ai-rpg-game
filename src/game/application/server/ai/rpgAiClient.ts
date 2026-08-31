@@ -64,7 +64,10 @@ export const RPG_AI_DEFAULT_POLICIES: Readonly<Record<RpgAiRole, RpgAiRolePolicy
   },
   narrative_bundle: {
     thinking: "off",
-    timeoutMs: 240_000,
+    // A decision bundle is player-facing scene generation.  It must obey the
+    // same bounded wait as a scene: a longer timeout leaves every control
+    // disabled while a stalled provider connection is still considered live.
+    timeoutMs: 45_000,
     maxTokens: 8_000,
     jsonMode: "prompt_only",
     maxAttempts: 2,

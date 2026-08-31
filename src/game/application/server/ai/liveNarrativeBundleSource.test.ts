@@ -26,7 +26,7 @@ function mockAiClient(complete: ReturnType<typeof vi.fn>): RpgAiClient {
     complete,
     policy: () => ({
       thinking: "off" as const,
-      timeoutMs: 240_000,
+      timeoutMs: 45_000,
       maxTokens: 5_000,
       jsonMode: "prompt_only" as const,
       maxAttempts: 1,
