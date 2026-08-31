@@ -18,8 +18,13 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * 编译期锁（只有 typecheck 牙齿，无运行时语义）：NpcEntityRecord 键集一旦漂移——
- * 重新带上 npcState 或缺任一分层组件——下面的 `= true` 赋值即 typecheck 失败。
+ * 编译期锁（只有 typecheck 牙齿，无运行时语义）：这是一次非分派的子集检查——
+ * `keyof NpcEntityRecord` 必须整体落在下面七个键之内。
+ * 能抓出：record 多出七键之外的任何键（例如重新带上 npcState）；
+ * `"" extends NpcRecordKeys` 只是键类型退化时的额外兜底。
+ * 抓不到缺分层组件：删掉或可选化某个键之后，剩下的键仍是七键的子集，锁照样为 true。
+ * 那种漂移由 NpcEntityRecord 的必填键类型（构造处即 typecheck 失败）与 entityStore 的
+ * 运行时组件签名校验（invalid_record_shape）负责。
  */
 type NpcRecordKeys = keyof NpcEntityRecord;
 type LayeredRecordLock = NpcRecordKeys extends

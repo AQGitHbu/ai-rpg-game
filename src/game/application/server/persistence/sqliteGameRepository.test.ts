@@ -195,7 +195,7 @@ describe("sqliteGameRepository", () => {
     expect(await repo.getCurrentGame()).toEqual({ ok: true, status: "corrupt", reason: "ENTITY_STATE_INVALID" });
   });
 
-  it("前一代存档（当前即 v3，store v1 世代）归类为 UNSUPPORTED_RECORD，不迁移也不伪装成损坏", async () => {
+  it("只降级 world version 到当前常量前一代（store 仍是当前版本）的存档归类为 UNSUPPORTED_RECORD，不迁移也不伪装成损坏", async () => {
     // 版本写差一时（常量与 LEGACY 闸门/解析器不同源）必须在这里暴露：
     // 旧世代只会落进 UNSUPPORTED_RECORD，绝不允许伪装成 ENTITY_STATE_INVALID 的内容损坏。
     const legacyWorldVersion = WORLD_STATE_SCHEMA_VERSION - 1;

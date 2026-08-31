@@ -106,44 +106,113 @@ function createBattleStoryState(narrative?: StoryState["narrative"]): StoryState
   };
 }
 
+type LegacyRollbackFixture = Readonly<{
+  harness: InMemoryHarness;
+  snapshotStore: EntityStore;
+  snapshotLedger: readonly GameEvent[];
+  preBattleNpc: NpcEntityRecord;
+  midBattleStore: EntityStore;
+  midBattleLedger: readonly GameEvent[];
+  midBattleNpc: NpcEntityRecord;
+  revision: number;
+}>;
+
+/**
+ * 与下面的「生产开战」fixture 不同：这里从一场已在跑的 legacy battle 起步，快照显式注入，
+ * 因此断言的是 performBattleRound 用的是存档里那一份快照。
+ *
+ * 关键一步是先走一次非终结回合：战前快照必须自己活过规则层的回合重建，
+ * 否则终结回合拿不到快照，回滚就只剩「什么都没变」的假阳性。
+ * 快照 ledger 故意留空，与活记录 ledger 不同，好让 ledger 恢复断言也有牙齿。
+ */
+async function driveLegacyBattleUntilLayersDiverge(): Promise<LegacyRollbackFixture> {
+  const worldState = layeredBattleWorld();
+  const snapshotStore = worldState.entityStore;
+  const snapshotLedger: readonly GameEvent[] = [];
+  const preBattleNpc = npcRecordOf(snapshotStore);
+  const harness = createInMemoryRepo({
+    gameId: GAME_ID,
+    worldState: {
+      ...worldState,
+      battle: {
+        status: "active" as const,
+        enemyId: ENEMY_ID,
+        playerHp: 8,
+        enemyHp: 60,
+        round: 1,
+        preBattleSnapshot: { entityStore: snapshotStore, eventLedger: snapshotLedger },
+      },
+    },
+    storyState: createBattleStoryState(),
+    revision: 0,
+    createdAt: "2026-01-01",
+  });
+
+  const nonTerminal = await performBattleRound(
+    {
+      gameId: GAME_ID,
+      actionId: "legacy_round",
+      interactionKind: "fixed_choice",
+      action: { type: "battle_action", action: "attack" },
+      expectedRevision: 0,
+    },
+    { repository: harness.repo, now: CLOCK },
+  );
+  expect(nonTerminal).toMatchObject({ ok: true, outcome: "active" });
+
+  const revision = await writeNpcLayersMidBattle(harness);
+  const record = harness.getRecord();
+  if (record === null) throw new Error("fixture must keep an active game");
+  return {
+    harness,
+    snapshotStore,
+    snapshotLedger,
+    preBattleNpc,
+    midBattleStore: record.worldState.entityStore,
+    midBattleLedger: record.worldState.eventLedger,
+    midBattleNpc: npcRecordOf(record.worldState.entityStore),
+    revision,
+  };
+}
+
+/** 终结回合回滚后：整店、整条 record 与 ledger 都必须回到注入快照那一份，且不靠别名通过。 */
+function expectRolledBackLegacy(fixture: LegacyRollbackFixture, record: GameRecord): void {
+  // 反空转前提：战斗确实写脏了 store 与 ledger，等值断言不是因为两者从头到尾同一个对象。
+  expect(fixture.midBattleStore).not.toEqual(fixture.snapshotStore);
+  expect(fixture.midBattleLedger).not.toEqual(fixture.snapshotLedger);
+  expect(fixture.midBattleNpc.knowledge).not.toEqual(fixture.preBattleNpc.knowledge);
+  expect(fixture.midBattleNpc.relationships).not.toEqual(fixture.preBattleNpc.relationships);
+  expect(fixture.midBattleNpc.history).not.toEqual(fixture.preBattleNpc.history);
+
+  expect(record.worldState.entityStore).toEqual(fixture.snapshotStore);
+  expect(npcRecordOf(record.worldState.entityStore)).toEqual(fixture.preBattleNpc);
+  expect(record.worldState.eventLedger).toEqual(fixture.snapshotLedger);
+  expect(record.worldState.battle).toEqual({ status: "idle" });
+}
+
 describe("performBattleRound", () => {
   it("restores the complete pre-battle entity store after defeat", async () => {
-    const worldState = createBattleWorldState({
-      battle: {
-        status: "active",
-        enemyId: asEnemyId("enemy_0"),
-        playerHp: 1,
-        enemyHp: 30,
-        round: 1,
-        preBattleSnapshot: { entityStore: createBattleWorldState().entityStore, eventLedger: [] },
-      },
-    });
-    if (worldState.battle.status !== "active" || worldState.battle.preBattleSnapshot === undefined) throw new Error("fixture must have snapshot");
-    const snapshot = worldState.battle.preBattleSnapshot;
-    const { repo, getRecord } = createInMemoryRepo({ gameId: "g1" as never, worldState, storyState: createBattleStoryState(), revision: 0, createdAt: "2026-01-01" });
+    const fixture = await driveLegacyBattleUntilLayersDiverge();
     const result = await performBattleRound(
-      { gameId: "g1" as never, actionId: "defeat", interactionKind: "fixed_choice", action: { type: "battle_action", action: "guard" }, expectedRevision: 0 },
-      { repository: repo, now: () => "2026-01-01" },
+      { gameId: GAME_ID, actionId: "defeat", interactionKind: "fixed_choice", action: { type: "battle_action", action: "guard" }, expectedRevision: fixture.revision },
+      { repository: fixture.harness.repo, now: CLOCK },
     );
     expect(result).toMatchObject({ ok: true, outcome: "defeat" });
-    expect(getRecord()?.worldState.entityStore).toEqual(snapshot.entityStore);
-    expect(getRecord()?.worldState.eventLedger).toEqual([]);
-    expect(getRecord()?.worldState.battle).toEqual({ status: "idle" });
+    const record = fixture.harness.getRecord();
+    if (record === null) throw new Error("fixture must keep an active game");
+    expectRolledBackLegacy(fixture, record);
   });
 
   it("restores the complete pre-battle entity store after withdraw", async () => {
-    const worldState = createBattleWorldState();
-    if (worldState.battle.status !== "active" || worldState.battle.preBattleSnapshot === undefined) throw new Error("fixture must have snapshot");
-    const snapshot = worldState.battle.preBattleSnapshot;
-    const { repo, getRecord } = createInMemoryRepo({ gameId: "g1" as never, worldState, storyState: createBattleStoryState(), revision: 0, createdAt: "2026-01-01" });
+    const fixture = await driveLegacyBattleUntilLayersDiverge();
     const result = await performBattleRound(
-      { gameId: "g1" as never, actionId: "withdraw", interactionKind: "fixed_choice", action: { type: "battle_action", action: "flee" }, expectedRevision: 0 },
-      { repository: repo, now: () => "2026-01-01" },
+      { gameId: GAME_ID, actionId: "withdraw", interactionKind: "fixed_choice", action: { type: "battle_action", action: "flee" }, expectedRevision: fixture.revision },
+      { repository: fixture.harness.repo, now: CLOCK },
     );
     expect(result).toMatchObject({ ok: true, outcome: "withdraw" });
-    expect(getRecord()?.worldState.entityStore).toEqual(snapshot.entityStore);
-    expect(getRecord()?.worldState.eventLedger).toEqual([]);
-    expect(getRecord()?.worldState.battle).toEqual({ status: "idle" });
+    const record = fixture.harness.getRecord();
+    if (record === null) throw new Error("fixture must keep an active game");
+    expectRolledBackLegacy(fixture, record);
   });
 
   it("returns NO_ACTIVE_GAME when no active game exists", async () => {
