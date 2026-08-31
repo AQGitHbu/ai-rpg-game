@@ -1186,10 +1186,12 @@ describe("commitment 操作", () => {
 });
 
 describe("模块 facade 暴露同一实现", () => {
-  it("index 重导出的 applyRelationshipSignal 与内部实现同引用", async () => {
+  it("index 只重导出组件入口，裸 applyRelationshipSignal 不在公开面上", async () => {
     const facade = await import("./index");
-    expect(facade.applyRelationshipSignal).toBe(applyRelationshipSignal);
+    expect(facade.applyRelationshipSignalToComponent).toBe(applyRelationshipSignalToComponent);
     expect(facade.RELATIONSHIP_SIGNAL_POLICY).toBe(RELATIONSHIP_SIGNAL_POLICY);
+    // 裸函数接受 edge: undefined，分不清「还没有边」与「调用方跳过了查边」，所以不给门面。
+    expect("applyRelationshipSignal" in facade).toBe(false);
   });
 });
 

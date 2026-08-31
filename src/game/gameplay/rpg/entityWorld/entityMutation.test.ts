@@ -614,9 +614,22 @@ describe("applyEntityMutations — apply_relationship_signal", () => {
     expect(edge.commitments).toEqual([]);
   });
 
-  it("载荷不携带任何数值通道：键集合封闭到 fromNpcId/targetId/signal/source", () => {
-    expect(Object.keys(signalMutation({ signal: "supported" })).sort()).toEqual(["fromNpcId", "kind", "signal", "source", "targetId"]);
-    expect(Object.keys(source())).toEqual(["kind", "actionId", "turnNumber"]);
+  it("载荷不携带任何数值通道：多一个 affinity 键过不了类型检查，运行时也进不了 store", () => {
+    // 负编译探针（本仓 @ts-expect-error 惯例）：载荷整行写完，指令只覆盖下一行。
+    // 删掉 affinity 后指令变成「未使用的 @ts-expect-error」，typecheck 直接报错——
+    // 所以这条锁的是 EntityMutation 的形状（RelationshipSignalPayloadKeysLock 那一族编译锁），
+    // 不是测试夹具自己写的字面量。
+    // @ts-expect-error affinity 不是 apply_relationship_signal 的载荷键
+    const signalWithNumber: EntityMutation = { kind: "apply_relationship_signal", fromNpcId: NPC_1, targetId: NPC_2, signal: "supported", source: source(), affinity: 50 };
+    // @ts-expect-error affinity 不是 apply_relationship_commitment 的载荷键
+    const commitmentWithNumber: EntityMutation = { kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2, operation: { kind: "open_debt", openKey: "task_help", direction: "source_owes_target", description: "d" }, source: source(), affinity: 50 };
+    // 运行时那一半同样是生产事实：类型没拦住的数值也不会被读进规则层。
+    const next = okApply(world(), [signalWithNumber]);
+    expect(edgeOf(next, NPC_1, NPC_2).dimensions).toEqual({ affinity: 3, trust: 2, fear: 0, hostility: 0 });
+    expect(edgeOf(next, NPC_1, NPC_2).commitments).toEqual([]);
+    const promised = okApply(next, [commitmentWithNumber]);
+    expect(edgeOf(promised, NPC_1, NPC_2).dimensions).toEqual({ affinity: 3, trust: 2, fear: 0, hostility: 0 });
+    expect(edgeOf(promised, NPC_1, NPC_2).commitments).toHaveLength(1);
   });
 
   it("A→B 的信号绝不镜像成 B→A", () => {
@@ -793,6 +806,28 @@ describe("applyEntityMutations — apply_relationship_commitment", () => {
     return okApply(ws, [signalMutation({ signal: "supported" })]);
   }
 
+  const baseCommitment = { kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2 } as const;
+  const openPromise: EntityMutation = {
+    ...baseCommitment,
+    operation: { kind: "open_promise", openKey: "escort", promisor: "source", description: "relationship.commitment.promise.escort" },
+    source: source(ACT_1, 4),
+  };
+
+  function withPromise(): WorldState {
+    return okApply(withEdge(), [openPromise]);
+  }
+
+  /** 取边上第一笔承诺的确定性 ID：新用例都按 ID 结案，不手搓 ID。 */
+  function commitmentIdOf(ws: WorldState): string {
+    const commitmentId = edgeOf(ws, NPC_1, NPC_2).commitments[0]?.commitmentId;
+    if (commitmentId === undefined) throw new Error("missing commitment on npc_1 -> npc_2");
+    return commitmentId;
+  }
+
+  function closeWith(operation: RelationshipCommitmentOperation, actionId: string, turnNumber: number): EntityMutation {
+    return { ...baseCommitment, operation, source: source(actionId, turnNumber) };
+  }
+
   it("开债只写 commitments 与 lastChangedAtTurn，ID 由行动确定性铸造", () => {
     const next = okApply(withEdge(), [openDebt]);
     const edge = edgeOf(next, NPC_1, NPC_2);
@@ -817,11 +852,7 @@ describe("applyEntityMutations — apply_relationship_commitment", () => {
   });
 
   it("结案操作按状态迁移表推进；promise 的 release 与 debt 的 release 各自稳定", () => {
-    const promised = okApply(withEdge(), [{
-      kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2,
-      operation: { kind: "open_promise", openKey: "escort", promisor: "source", description: "relationship.commitment.promise.escort" },
-      source: source(ACT_1, 4),
-    }]);
+    const promised = withPromise();
     const promiseId = edgeOf(promised, NPC_1, NPC_2).commitments[0]?.commitmentId;
     const released = okApply(promised, [{
       kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2,
@@ -835,6 +866,53 @@ describe("applyEntityMutations — apply_relationship_commitment", () => {
     }]);
     expect(rejected).toEqual({ ok: false, code: "illegal_relationship_commitment_transition", entityId: NPC_1 });
     expect(edgeOf(debt, NPC_1, NPC_2).commitments.map((entry) => entry.status)).toEqual(["open"]);
+  });
+
+  it("forgive 走 mutation：债务 open→forgiven 成立，promise 的 forgive 仍是非法迁移", () => {
+    const debt = okApply(withEdge(), [openDebt]);
+    const before = edgeOf(debt, NPC_1, NPC_2);
+    const next = okApply(debt, [closeWith({ kind: "forgive", commitmentId: commitmentIdOf(debt) }, "act_forgive", 7)]);
+    const edge = edgeOf(next, NPC_1, NPC_2);
+    expect(edge.commitments.map((entry) => entry.status)).toEqual(["forgiven"]);
+    expect(edge.lastChangedAtTurn).toBe(7);
+    // 结案操作不碰数值、stage、trend 与证据：证据数组按引用不变。
+    expect(edge.dimensions).toEqual(before.dimensions);
+    expect(edge.stage).toBe(before.stage);
+    expect(edge.trend).toBe(before.trend);
+    expect(edge.evidence).toBe(before.evidence);
+    // promise 的 forgive 在迁移表里是 null：稳定码 + 入参 store 引用逐字不变。
+    const promised = withPromise();
+    const records = promised.entityStore.records;
+    const rejected = applyEntityMutations(promised, [closeWith({ kind: "forgive", commitmentId: commitmentIdOf(promised) }, "act_forgive", 8)]);
+    expect(rejected).toEqual({ ok: false, code: "illegal_relationship_commitment_transition", entityId: NPC_1 });
+    expect(promised.entityStore.records).toBe(records);
+    expect(edgeOf(promised, NPC_1, NPC_2).commitments.map((entry) => entry.status)).toEqual(["open"]);
+  });
+
+  it("break 走 mutation：开着的承诺 open→broken 成立，已结案的再 break 是非法迁移", () => {
+    const promised = withPromise();
+    const promiseId = commitmentIdOf(promised);
+    const broken = okApply(promised, [closeWith({ kind: "break", commitmentId: promiseId }, "act_break", 6)]);
+    const edge = edgeOf(broken, NPC_1, NPC_2);
+    expect(edge.commitments.map((entry) => entry.kind)).toEqual(["promise"]);
+    expect(edge.commitments.map((entry) => entry.status)).toEqual(["broken"]);
+    expect(edge.lastChangedAtTurn).toBe(6);
+    const records = broken.entityStore.records;
+    const rejected = applyEntityMutations(broken, [closeWith({ kind: "break", commitmentId: promiseId }, "act_break_again", 7)]);
+    expect(rejected).toEqual({ ok: false, code: "illegal_relationship_commitment_transition", entityId: NPC_1 });
+    expect(broken.entityStore.records).toBe(records);
+    expect(edgeOf(broken, NPC_1, NPC_2).commitments.map((entry) => entry.status)).toEqual(["broken"]);
+  });
+
+  it("来源校验排在查边之前：非法来源即使指向不存在的边也不退化成 invalid_reference", () => {
+    const ws = world();
+    // npc_1 → npc_2 此刻还没有边：若把 findRelationshipEdge 挪到来源校验之前，
+    // 下面三条都会先返回 invalid_reference（entityId 也会从 NPC_1 变成 NPC_2）。
+    const openOperation = { kind: "open_debt", openKey: "task_help", direction: "source_owes_target", description: "d" } as const;
+    const initial: RelationshipMutationSource = { kind: "initial_world", createdAtTurn: 0, reasonKey: "npc.seed.ally" };
+    expectRejected(ws, [{ ...baseCommitment, operation: openOperation, source: initial }], { code: "invalid_relationship_source", entityId: NPC_1 });
+    expectRejected(ws, [{ ...baseCommitment, operation: openOperation, source: source("", 3) }], { code: "invalid_relationship_source", entityId: NPC_1 });
+    expectRejected(ws, [{ ...baseCommitment, operation: openOperation, source: source(ACT_1, -1) }], { code: "invalid_relationship_turn", entityId: NPC_1 });
   });
 
   it("未知 commitmentId 返回 unknown_relationship_commitment 且 store 逐字不变", () => {

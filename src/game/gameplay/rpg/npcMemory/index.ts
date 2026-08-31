@@ -1,5 +1,8 @@
 // npcMemory facade：NPC 记忆与关系的规则层公开面。
 // 3B 的 EntityMutation 只能经由这里调用规则，不得 deep-import 内部文件。
+// 刻意**不**重导出裸 `applyRelationshipSignal`：它的 `edge` 参数允许 undefined，
+// 分不清「还没有边」与「调用方跳过了查边」。gameplay/game 内的写入一律走组件入口
+// `applyRelationshipSignalToComponent`（它自己查边），规则层表测试直接 import 内部文件。
 export {
   RELATIONSHIP_COMMITMENT_OP_KINDS,
   RELATIONSHIP_COMMITMENT_TARGETS,
@@ -8,7 +11,6 @@ export {
   RELATIONSHIP_STAGE_GATES,
   RELATIONSHIP_STAGE_TRANSITIONS,
   applyRelationshipCommitment,
-  applyRelationshipSignal,
   applyRelationshipSignalToComponent,
   findRelationshipEdge,
   isAllowedRelationshipStageTransition,

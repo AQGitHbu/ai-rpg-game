@@ -13,6 +13,7 @@ import {
   type NpcRelationshipComponent,
   type PossessionComponent,
   type RelationshipSignal,
+  type RelationshipSource,
 } from "@/game/domain/entity";
 import type { WorldState } from "@/game/domain/worldState";
 import { PLAYER_ENTITY_ID, type EnemyId, type FactId, type ItemId, type LocationId, type NpcId, type QuestId } from "@/game/domain/worldEntity";
@@ -38,16 +39,16 @@ export type NpcLegacySyncLayers = Readonly<{
 }>;
 
 /**
- * 关系写入声明的来源。判别联合只有两支，且本 Plan 内只有 `action` 一支可写：
- * - `action`：必须携带本阶段真实已提交的 actionId 与 turnNumber；
- * - `initial_world`：**预留但当前一律拒绝**（稳定码 invalid_relationship_source）。
- *   3A 规则层建边与铸承诺 ID 时都固定按 action 起源写（`applyRelationshipSignal` 内
- *   origin = { kind: "action", … }），所以背景种子关系只能在 Task 6 的创建材料里落
- *   initial_world；在本层放行会静默把「创建期背景」伪造成「某次行动」。
+ * 关系写入声明的来源：**直接沿用 domain 的判别联合**（npcComponents.ts 的 `RelationshipSource`），
+ * 本层不再手抄任何一支——domain 新增第三支时这里不可能悄悄漂移。
+ * 但「类型里有这一支」不等于「本通道能用这一支」：本层只放行 `action` 一支，
+ * `initial_world` 在 checkRelationshipSource 里一律以 invalid_relationship_source 拒掉。
+ * 原因是 3A 规则层建边与铸承诺 ID 都固定按 action 起源写（`applyRelationshipSignal` 内
+ * origin = { kind: "action", … }），所以背景种子关系只能在 Task 6 的规则层入口里落
+ * initial_world；在本层放行会静默把「创建期背景」伪造成「某次行动」。
+ * 这一支保留在类型里是刻意的：形状由 domain 定权，Task 6 只需补能力、不必改载荷。
  */
-export type RelationshipMutationSource =
-  | { readonly kind: "action"; readonly actionId: string; readonly turnNumber: number }
-  | { readonly kind: "initial_world"; readonly createdAtTurn: number; readonly reasonKey: string };
+export type RelationshipMutationSource = RelationshipSource;
 
 /** 规则层唯一允许的实体写入语言；AI 输入不使用此联合。 */
 export type EntityMutation =
@@ -97,6 +98,7 @@ export type EntityMutationErrorCode =
   | "structure_invalid"
   // 关系 mutation 专用：与 RelationshipPolicyErrorCode 一一映射，逐个可判别，绝不折叠成消息字符串。
   | "relationship_self_edge"
+  // 本通道不可达（store 禁止同一 targetId 两条边，组件入口按 targetId 取边）：留着只为映射表穷尽性，没有对应用例。
   | "relationship_edge_mismatch"
   | "invalid_relationship_signal"
   | "invalid_relationship_source"
@@ -234,6 +236,8 @@ function checkRelationshipSource(declared: RelationshipMutationSource): Relation
   if (typeof declared !== "object" || declared === null) return { ok: false, code: "invalid_relationship_source" };
   if (declared.kind !== "action") return { ok: false, code: "invalid_relationship_source" };
   const { actionId, turnNumber } = declared;
+  // 下面两条形状检查与规则层 checkActionSource（relationshipSignalPolicy.ts:478-482）刻意重复：
+  // 本层要在任何写入之前失败，且 code 比 store 级 structure_invalid 精确得多。
   if (isBlank(actionId)) return { ok: false, code: "invalid_relationship_source" };
   if (typeof turnNumber !== "number" || !Number.isInteger(turnNumber) || turnNumber < 0) {
     return { ok: false, code: "invalid_relationship_turn" };
