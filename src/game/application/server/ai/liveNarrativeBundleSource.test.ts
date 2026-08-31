@@ -59,9 +59,16 @@ function makeWorldState(): WorldState {
 }
 
 function withProjection(base: WorldState, overrides: Partial<EntityCompatibilityProjection>): WorldState {
+  const projection = { ...projectEntityStore(base.entityStore), ...overrides };
   return createWorldStateFromProjection({
     generation: base.generation,
-    projection: { ...projectEntityStore(base.entityStore), ...overrides },
+    projection: {
+      ...projection,
+      locations: projection.locations.map((location) => ({
+        ...location,
+        npcIds: projection.npcs.filter((npc) => npc.locationId === location.id).map((npc) => npc.id),
+      })),
+    },
     battle: base.battle,
     endings: base.endings,
     ending: base.ending,
@@ -320,8 +327,8 @@ describe("createNarrativeBundleSource", () => {
 
     const messages = complete.mock.calls[0]![1] as readonly AiMessage[];
     const systemPrompt = messages[0]!.content as string;
-    expect(systemPrompt).toContain("旧铜钱（item_carried，玩家已持有）");
-    expect(systemPrompt).toContain("燕字铁牌拓片（item_ground，尚未拾取，位于小镇）");
+    expect(systemPrompt).toContain("旧铜钱（item_carried）：一枚旧铜钱。；玩家持有");
+    expect(systemPrompt).toContain("燕字铁牌拓片（item_ground）：一张拓片。；位于=loc_0");
     expect(systemPrompt).toContain("尚未拾取的物品只能被观察、发现或拾取");
     expect(systemPrompt).toContain("不得写成玩家已经持有、拿出或使用");
   });

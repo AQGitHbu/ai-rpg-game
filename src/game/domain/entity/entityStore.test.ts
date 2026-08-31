@@ -379,6 +379,31 @@ describe("entity store 读取与序列化", () => {
     ).toContain("invalid_record_shape");
   });
 
+  it("enforces non-lossy component ranges and town identity", () => {
+    const store = untrusted(createEntityStore(fullStoreRecords()));
+    expect(issueCodesOf(tamperStore(store, (records) => {
+      (records[4].possession as { quantity: number }).quantity = 2;
+    }))).toContain("invalid_component_value");
+    expect(issueCodesOf(tamperStore(store, (records) => {
+      (records[1].npcState as { memory: { relationship: { affinity: number } } }).memory.relationship.affinity = 101;
+    }))).toContain("invalid_component_value");
+    expect(issueCodesOf(tamperStore(store, (records) => {
+      records[2].location = {
+        ...(records[2].location as object),
+        town: { locationId: "loc_other", seed: "s", generatorVersion: "v", slots: [] },
+      };
+    }))).toContain("component_id_mismatch");
+    expect(issueCodesOf(tamperStore(store, (records) => {
+      records[2].location = {
+        ...(records[2].location as object),
+        town: {
+          locationId: "loc_0", seed: "s", generatorVersion: "v",
+          slots: [{ slotId: "s0", buildingId: "b0", buildingType: "castle", boundNpcId: null }],
+        },
+      };
+    }))).toContain("invalid_component_value");
+  });
+
   it("rejects quest and enemy lifecycle drift from their component state", () => {
     const store = untrusted(createEntityStore(fullStoreRecords()));
     expect(

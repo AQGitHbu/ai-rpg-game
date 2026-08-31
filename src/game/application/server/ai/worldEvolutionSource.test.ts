@@ -660,13 +660,22 @@ describe("world source 内容修复契约", () => {
   it("满槽城镇把世界地点容量与新地点 NPC 归属明确写入 prompt", () => {
     const base = makeCtx({ need: { kind: "next_act", act: 2 } });
     let town = createTownRuntime({ locationId: asLocationId("loc_a"), seed: "s#town#loc_a" });
+    const occupantId = asNpcId("npc_occupant");
     for (let i = 0; i < town.slots.length; i += 1) {
-      town = bindNpcToTownSlot(town, asNpcId(`npc_slot_${i}`)).town;
+      town = bindNpcToTownSlot(town, occupantId).town;
     }
     const worldState = withProjection(base.worldState, {
       locations: base.worldState.locations.map((location) => location.id === asLocationId("loc_a")
-        ? { ...location, scale: "town" as const, town }
+        ? { ...location, scale: "town" as const, town, npcIds: [occupantId] }
         : location),
+      npcs: [{
+        id: occupantId, name: "常住店主", role: "店主", description: "占用既有建筑的店主。",
+        locationId: asLocationId("loc_a"), isCompanion: false, tags: [], met: true,
+        memory: {
+          npcId: occupantId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
+          relationship: { affinity: 0 }, emotion: "neutral", goals: [],
+        },
+      }],
     });
     const prompt = buildWorldEvolutionPrompt({ ...base, worldState });
     expect(prompt).toContain("剧情建筑槽位已满（可用槽位=0/");

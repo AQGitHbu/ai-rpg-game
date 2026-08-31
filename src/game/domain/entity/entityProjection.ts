@@ -43,6 +43,8 @@ export type EntityReferenceIssueCode =
   | "unknown_quest_objective_ref"
   | "unknown_npc_fact_ref"
   | "unknown_player_location"
+  | "unknown_town_npc_ref"
+  | "town_npc_location_mismatch"
   | "duplicate_location_order"
   | "duplicate_owner_order";
 
@@ -463,10 +465,15 @@ function compileItems(
     const previous = previousRecords.get(entry.id);
     const previousPossession = previous?.possession;
     const container = containers.get(entry.id);
-    // 缺席 item：有 previous 时保留 npc|none 归属；全新 item 才补 owner=none, ownerOrder=0。
+    // legacy 容器无法表达 npc|none owner：只有这两种 previous owner 可以继承。
+    // player/location owner 一旦从对应容器移除，就必须变为 none，不能静默保留旧归属。
+    const retainedHiddenPossession = previousPossession?.owner.kind === "npc"
+      || previousPossession?.owner.kind === "none"
+      ? previousPossession
+      : undefined;
     const possession: PossessionComponent = container === undefined
-      ? (previousPossession ?? { owner: { kind: "none" }, quantity: 1, ownerOrder: 0 })
-      : { owner: container.owner, quantity: previousPossession?.quantity ?? 1, ownerOrder: container.ownerOrder };
+      ? (retainedHiddenPossession ?? { owner: { kind: "none" }, quantity: 1, ownerOrder: 0 })
+      : { owner: container.owner, quantity: 1, ownerOrder: container.ownerOrder };
     return {
       core: coreOf({
         id: entry.id,
@@ -487,9 +494,7 @@ function compileItems(
       possession,
     };
   });
-  const listed = new Set(projection.items.map((entry) => entry.id));
-  const retained = [...previousRecords.values()].filter((record) => !listed.has(record.core.id));
-  return [...compiled, ...retained];
+  return compiled;
 }
 
 function compileEnemies(
@@ -627,6 +632,17 @@ export function compileEntityStoreFromCompatibilityProjection(input: {
     ...compileFacts(projection, createdAtTurn, previousStore),
   ]);
   throwOnFirstIssue(validateEntityReferences(store));
+  // 旧 fixture 允许只在 NpcEntry.locationId 表达位置、遗漏 location.npcIds；编译器
+  // 将这一处兼容输入规范化为 roster。除此之外不得补齐、丢弃或重新挂载事实。
+  const derived = projectEntityStore(store);
+  const normalizedInput: EntityCompatibilityProjection = {
+    ...projection,
+    locations: projection.locations.map((location) => ({
+      ...location,
+      npcIds: derived.locations.find((entry) => entry.id === location.id)?.npcIds ?? location.npcIds,
+    })),
+  };
+  throwOnFirstIssue(validateEntityCompatibilityProjection(store, normalizedInput));
   return store;
 }
 
@@ -718,6 +734,7 @@ export function validateEntityReferences(store: EntityStore): readonly EntityRef
   const issues: EntityReferenceIssue[] = [];
   const known = knownIds(store);
   const locations = new Map(entitiesOfKind(store, "location").map((record) => [record.core.id, record]));
+  const npcs = new Map(entitiesOfKind(store, "npc").map((record) => [record.core.id, record]));
 
   for (const record of entitiesOfKind(store, "player_character")) {
     if (!known.locations.has(record.position.locationId)) {
@@ -753,6 +770,15 @@ export function validateEntityReferences(store: EntityStore): readonly EntityRef
       }
       if (!target.location.connectedLocationIds.includes(record.core.id)) {
         issues.push({ code: "asymmetric_connection", entityId: record.core.id, referencedId: targetId });
+      }
+    }
+    for (const slot of record.location.town?.slots ?? []) {
+      if (slot.boundNpcId === null) continue;
+      const npc = npcs.get(slot.boundNpcId);
+      if (npc === undefined) {
+        issues.push({ code: "unknown_town_npc_ref", entityId: record.core.id, referencedId: slot.boundNpcId });
+      } else if (npc.position.locationId !== record.core.id) {
+        issues.push({ code: "town_npc_location_mismatch", entityId: record.core.id, referencedId: slot.boundNpcId });
       }
     }
   }

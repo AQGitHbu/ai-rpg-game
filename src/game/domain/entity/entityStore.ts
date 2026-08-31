@@ -1,5 +1,7 @@
 import { DIALOGUE_ACTS } from "../action";
 import { NARRATIVE_EMOTIONS } from "../narrative";
+import { RELATIONSHIP_MAX, RELATIONSHIP_MIN } from "../relationship";
+import type { TownBuildingSlotType } from "../townState";
 import type {
   EnemyTier, FactSource, ItemCategory, ItemRarity, LocationKind, LocationScale,
 } from "../worldEntity";
@@ -78,6 +80,11 @@ const QUEST_OUTCOMES: readonly QuestOutcome["kind"][] = ["advance_story", "resol
 const INTERACTION_OUTCOMES: readonly NpcInteraction["outcome"][] = ["positive", "negative", "neutral", "mixed"];
 const EVIDENCE_QUALITIES: readonly InvestigationApproach["evidenceQuality"][] = ["clean", "noisy"];
 const DIALOGUE_ACT_VALUES: readonly string[] = [...DIALOGUE_ACTS, "freeform"];
+const TOWN_BUILDING_SLOT_TYPES: readonly TownBuildingSlotType[] = [
+  "tavern", "blacksmith", "house", "guild", "clinic", "market",
+];
+const MIN_INVESTIGATION_TENSION_DELTA = -5;
+const MAX_INVESTIGATION_TENSION_DELTA = 20;
 
 const OBJECTIVE_KINDS: readonly QuestObjective["kind"][] = [
   "visit_location", "talk_to_npc", "obtain_item", "discover_fact", "defeat_enemy",
@@ -298,6 +305,8 @@ function checkNpcState(value: unknown, coreId: string | undefined): { readonly s
     memory.interactionHistory.every(isInteractionValue) &&
     component(memory.relationship, ["affinity"]) &&
     isNumber(memory.relationship.affinity) &&
+    memory.relationship.affinity >= RELATIONSHIP_MIN &&
+    memory.relationship.affinity <= RELATIONSHIP_MAX &&
     matchesEnum(memory.emotion, NARRATIVE_EMOTIONS) &&
     isStringArray(memory.goals);
   return { shapeOk, idOk: isString(memory.npcId) && memory.npcId === coreId };
@@ -317,7 +326,7 @@ function isTownValue(value: unknown): boolean {
     ) {
       return false;
     }
-    if (!isString(slot.slotId) || !isString(slot.buildingId) || !isString(slot.buildingType)) return false;
+    if (!isString(slot.slotId) || !isString(slot.buildingId) || !matchesEnum(slot.buildingType, TOWN_BUILDING_SLOT_TYPES)) return false;
     if (!optionalIs(slot, "displayName", isString)) return false;
     return slot.boundNpcId === null || isString(slot.boundNpcId);
   });
@@ -347,6 +356,11 @@ function isLocationValue(value: unknown): boolean {
     optionalIs(value, "scale", (raw) => matchesEnum(raw, LOCATION_SCALES)) &&
     optionalIs(value, "town", isTownValue)
   );
+}
+
+function townLocationIdMatches(value: unknown, coreId: string | undefined): boolean {
+  if (!isRecord(value) || !("town" in value) || value.town === undefined) return true;
+  return isRecord(value.town) && isString(value.town.locationId) && value.town.locationId === coreId;
 }
 
 function isStatLinesValue(value: unknown): boolean {
@@ -395,7 +409,7 @@ function isPossessionValue(value: unknown): boolean {
   return (
     component(value, ["owner", "quantity", "ownerOrder"]) &&
     isOwnerValue(value.owner) &&
-    isNonNegativeInteger(value.quantity) &&
+    value.quantity === 1 &&
     isNonNegativeInteger(value.ownerOrder) &&
     // 无主物品不属于可排序容器；固定 0 避免无意义且不受唯一性约束的序号进入存档。
     (value.owner.kind !== "none" || value.ownerOrder === 0)
@@ -468,6 +482,8 @@ function isApproachValue(value: unknown): boolean {
     isString(value.label) &&
     matchesEnum(value.evidenceQuality, EVIDENCE_QUALITIES) &&
     isNumber(value.tensionDelta) &&
+    value.tensionDelta >= MIN_INVESTIGATION_TENSION_DELTA &&
+    value.tensionDelta <= MAX_INVESTIGATION_TENSION_DELTA &&
     optionalIs(value, "hint", isString)
   );
 }
@@ -567,6 +583,9 @@ function validateRecord(record: unknown): readonly EntityStoreValidationIssue[] 
     else if (!npcStateIssue.idOk) issues.push(issue("component_id_mismatch", entityId));
   }
   if (check === undefined || !check(record)) issues.push(issue("invalid_component_value", entityId));
+  if (kind === "location" && isLocationValue(record.location) && !townLocationIdMatches(record.location, entityId)) {
+    issues.push(issue("component_id_mismatch", entityId));
+  }
 
   if (kind === "quest" && questDrift(record.quest, core.lifecycle)) {
     issues.push(issue("component_lifecycle_mismatch", entityId));

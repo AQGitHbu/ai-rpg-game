@@ -250,14 +250,38 @@ describe("entity 兼容投影：legacy → store → legacy", () => {
     expect(projected.inventory).toEqual([asItemId("item_0")]);
     expect(projected.items.map((entry) => entry.id)).toContain(asItemId("item_1"));
 
-    const projectionWithoutItem1 = baseProjection({
+    const projectionWithHiddenItem1 = baseProjection({
       inventory: [asItemId("item_0")],
-      items: [item("item_0"), item("item_2")],
     });
-    expect(codesOf(validateCompatibilityProjectionInput(projectionWithoutItem1))).toEqual([]);
-    const recompiled = compile(projectionWithoutItem1, storeWithNpcItem);
+    expect(codesOf(validateCompatibilityProjectionInput(projectionWithHiddenItem1))).toEqual([]);
+    const recompiled = compile(projectionWithHiddenItem1, storeWithNpcItem);
     expect(requireRecord(recompiled, "item", asItemId("item_1")).possession.owner)
       .toEqual({ kind: "npc", npcId: NPC_0 });
+  });
+
+  it("does not retain an entity omitted from the complete items projection", () => {
+    const previous = compile(baseProjection());
+    const projection = baseProjection({
+      items: [item("item_0"), item("item_2")],
+      inventory: [asItemId("item_0")],
+    });
+
+    const recompiled = compile(projection, previous);
+    expect(entitiesOfKind(recompiled, "item").map((record) => record.core.id)).toEqual([
+      asItemId("item_0"), asItemId("item_2"),
+    ]);
+    expect(projectEntityStore(recompiled)).toEqual(projection);
+  });
+
+  it("turns a previous visible owner into none when the item leaves every visible container", () => {
+    const previous = compile(baseProjection());
+    const projection = baseProjection({ inventory: [asItemId("item_1")] });
+    const recompiled = compile(projection, previous);
+
+    expect(requireRecord(recompiled, "item", asItemId("item_0")).possession).toEqual({
+      owner: { kind: "none" }, quantity: 1, ownerOrder: 0,
+    });
+    expect(projectEntityStore(recompiled)).toEqual(projection);
   });
 
   it("compensates a brand-new absent item as owner none with order 0", () => {
@@ -322,6 +346,19 @@ describe("entity 兼容投影：legacy → store → legacy", () => {
 });
 
 describe("entity 兼容投影：非法输入返回稳定 issue", () => {
+  it("normalizes a legacy active NPC omitted from every location roster", () => {
+    const projection = baseProjection({
+      locations: BASE_LOCATIONS.map((entry) => ({ ...entry, npcIds: [] })),
+    });
+    const projected = projectEntityStore(compile(projection));
+    expect(projected.locations[0]?.npcIds).toEqual([NPC_0, NPC_1]);
+  });
+
+  it("rejects container references to an item missing from the entity list", () => {
+    const projection = baseProjection({ items: [item("item_0"), item("item_1")] });
+    expect(() => compile(projection)).toThrowError(EntityProjectionInvariantError);
+  });
+
   it("refuses to silently pick one location when an npc sits in two rosters", () => {
     const projection = withLocation(baseProjection(), "loc_1", { npcIds: [NPC_0] });
     const issues = validateCompatibilityProjectionInput(projection);
@@ -397,11 +434,12 @@ describe("entity 兼容投影：非法输入返回稳定 issue", () => {
     expect(codesOf(issues)).toContain("projection_mismatch");
     expect(issues[0]?.field).toContain("visitedLocationIds");
 
-    // 容器引用了没有 ItemEntry 的 ID：不伪造实体，只能由投影一致性校验暴露。
+    // 容器引用了没有 ItemEntry 的 ID：编译边界直接拒绝，不再产出漂移 store。
     const phantom = baseProjection({
       inventory: [asItemId("item_1"), asItemId("item_0"), asItemId("item_404")],
     });
-    const phantomIssues = validateEntityCompatibilityProjection(compile(phantom), phantom);
+    expect(() => compile(phantom)).toThrowError(EntityProjectionInvariantError);
+    const phantomIssues = validateEntityCompatibilityProjection(store, phantom);
     expect(codesOf(phantomIssues)).toEqual(["projection_mismatch"]);
     expect(phantomIssues[0]?.field).toContain("inventory");
   });

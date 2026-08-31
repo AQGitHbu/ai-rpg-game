@@ -7,7 +7,7 @@ import type { StoryState } from "@/game/domain/storyState";
 import type { WorldState } from "@/game/domain/worldState";
 import { projectEntityStore } from "@/game/domain/entity";
 import { buildStylePolicy } from "@/game/application/stylePolicy";
-import { buildEntityContextProjection } from "@/game/application/entityContextProjection";
+import { buildEntityContextProjection, type EntityContextProjection } from "@/game/application/entityContextProjection";
 import {
   buildNarrativeBundleDescriptors,
 } from "@/game/gameplay/rpg/narrativeBundle";
@@ -42,28 +42,21 @@ function list(values: readonly string[]): string {
   return values.length === 0 ? "（无）" : values.join("、");
 }
 
-function occupiedNamesSection(worldState: WorldState): string {
+function occupiedNamesSection(context: EntityContextProjection): string {
   return [
-    `- 地点：${list(worldState.locations.map((location) => location.name))}`,
-    `- NPC：${list(worldState.npcs.map((npc) => npc.name))}`,
-    `- 物品：${list(worldState.items.map((item) => item.name))}`,
-    `- 敌人：${list(worldState.enemies.map((enemy) => enemy.name))}`,
-    `- 任务：${list(worldState.quests.map((quest) => quest.name))}`,
+    `- 地点：${list(context.occupiedNames.location)}`,
+    `- NPC：${list(context.occupiedNames.npc)}`,
+    `- 物品：${list(context.occupiedNames.item)}`,
+    `- 敌人：${list(context.occupiedNames.enemy)}`,
+    `- 任务：${list(context.occupiedNames.quest)}`,
   ].join("\n");
 }
 
-function itemStateSection(worldState: WorldState): string {
-  if (worldState.items.length === 0) return "（无）";
-  return worldState.items.map((item) => {
-    if (worldState.inventory.includes(item.id)) {
-      return `- ${item.name}（${item.id}，玩家已持有）: ${item.description}`;
-    }
-    const availableAt = worldState.locations.filter((location) => location.availableItemIds.includes(item.id));
-    if (availableAt.length === 1) {
-      return `- ${item.name}（${item.id}，尚未拾取，位于${availableAt[0]!.name}）: ${item.description}`;
-    }
-    return `- ${item.name}（${item.id}，当前不在玩家背包且不可拾取）: ${item.description}`;
-  }).join("\n");
+function itemStateSection(context: EntityContextProjection): string {
+  const items = [...context.mandatory, ...context.optional].filter((entity) => entity.kind === "item");
+  return items.length === 0
+    ? "（当前闭包无相关物品）"
+    : items.map((item) => `- ${item.name}（${item.id}）：${item.summary}`).join("\n");
 }
 
 function repairInstruction(repair: NarrativeBundleRepair): string {
@@ -300,13 +293,13 @@ export function buildDecisionNarrativeContextBlocks(
       id: "bundle:entity-index", slot: "current_state", title: "已批准实体索引",
       authority: "state", retention: "mandatory", priority: 825,
       source: { kind: "world_entity_index", refs: entityContext.mandatory.map((entity) => entity.id) },
-      content: `已占用实体名称（新实体不得与下列任何名称重复）：\n${occupiedNamesSection(worldState)}\n规则闭包：\n${entityContext.mandatory.map((entity) => `- ${entity.kind}:${entity.id}=${entity.name}；${entity.summary}`).join("\n") || "（无）"}\n稳定引用：\n- 地点=${list(worldState.locations.map((entry) => `${entry.id}=${entry.name}`))}\n- NPC=${list(worldState.npcs.map((entry) => `${entry.id}=${entry.name}@${entry.locationId}`))}\n- 物品=${list(worldState.items.map((entry) => `${entry.id}=${entry.name}`))}\n- 敌人=${list(worldState.enemies.map((entry) => `${entry.id}=${entry.name}@${entry.locationId}`))}\n- 任务=${list(worldState.quests.map((entry) => `${entry.id}=${entry.name}(${entry.status})`))}\n世界内实体名称唯一：新实体名称不得与以上任何名称重复。`,
+      content: `已占用实体名称（新实体不得与下列任何名称重复）：\n${occupiedNamesSection(entityContext)}\n世界内实体名称唯一，新实体必须避开以上全局名称。\n规则闭包：\n${entityContext.mandatory.map((entity) => `- ${entity.kind}:${entity.id}=${entity.name}；${entity.summary}`).join("\n") || "（无）"}\n一跳相关实体：\n${entityContext.optional.map((entity) => `- ${entity.kind}:${entity.id}=${entity.name}；${entity.summary}`).join("\n") || "（无）"}\n只有规则闭包和一跳相关实体中的 ID 可作为当前场景既有实体引用；全局名称表只用于防撞名。`,
     }),
     block({
       id: "bundle:item-state", slot: "current_state", title: "物品权威状态",
       authority: "state", retention: "mandatory", priority: 875,
-      source: { kind: "possession_projection", refs: worldState.items.map((item) => String(item.id)) },
-      content: `${itemStateSection(worldState)}\n尚未拾取的物品只能被观察、发现或拾取；规则动作完成前，不得写成玩家已经持有、拿出或使用，也不得让选项假定玩家已经持有。`,
+      source: { kind: "possession_projection", refs: [...entityContext.mandatory, ...entityContext.optional].filter((entity) => entity.kind === "item").map((entity) => entity.id) },
+      content: `${itemStateSection(entityContext)}\n尚未拾取的物品只能被观察、发现或拾取；规则动作完成前，不得写成玩家已经持有、拿出或使用，也不得让选项假定玩家已经持有。`,
     }),
     block({
       id: "bundle:recent-events", slot: "relevant_events", title: "相关近期事件",
@@ -362,39 +355,12 @@ export function buildDecisionNarrativeContextBlocks(
       content: repairInstruction(contentRepair),
     }));
   }
-  for (const location of worldState.locations) {
-    if (location.id === worldState.currentLocationId) continue;
+  for (const entity of entityContext.optional) {
     blocks.push(block({
-      id: `bundle:location:${location.id}`, slot: "current_state", title: "相关地点",
-      authority: "state", retention: "optional", priority: worldState.unlockedLocationIds.includes(location.id) ? 500 : 300,
-      source: { kind: "location_projection", refs: [String(location.id)] },
-      content: `${location.id}=${location.name}：${location.description}；连接=${list(location.connectedLocationIds.map(String))}；当前${worldState.unlockedLocationIds.includes(location.id) ? "已解锁" : "未解锁"}。`,
-    }));
-  }
-  for (const npc of worldState.npcs) {
-    if (npc.id === focusNpc?.id) continue;
-    blocks.push(block({
-      id: `bundle:npc:${npc.id}`, slot: "current_state", title: "相关非焦点角色",
-      authority: "state", retention: "optional", priority: npc.locationId === worldState.currentLocationId ? 500 : 300,
-      source: { kind: "npc_public_projection", refs: [String(npc.id), String(npc.locationId)] },
-      content: `${npc.id}=${npc.name}（${npc.role}）：${npc.description}；位置=${npc.locationId}；目标=${list(npc.memory.goals)}。不得使用其私密事实、关系裸数值或交互历史。`,
-    }));
-  }
-  for (const enemy of worldState.enemies) {
-    blocks.push(block({
-      id: `bundle:enemy:${enemy.id}`, slot: "current_state", title: "相关敌人",
-      authority: "state", retention: "optional", priority: enemy.locationId === worldState.currentLocationId ? 500 : 300,
-      source: { kind: "enemy_projection", refs: [String(enemy.id), String(enemy.locationId)] },
-      content: `${enemy.id}=${enemy.name}；tier=${enemy.tier}；位置=${enemy.locationId}；defeated=${worldState.defeatedEnemyIds.includes(enemy.id)}。`,
-    }));
-  }
-  for (const quest of worldState.quests) {
-    if (quest.id === activeQuest?.id) continue;
-    blocks.push(block({
-      id: `bundle:quest:${quest.id}`, slot: "current_state", title: "相关任务",
-      authority: "state", retention: "optional", priority: quest.status === "active" ? 700 : 300,
-      source: { kind: "quest_projection", refs: [String(quest.id)] },
-      content: `${quest.id}=${quest.name}（${quest.status}）：${quest.description}；目标=${quest.objectives.map((objective) => objective.kind).join("→") || "无"}。`,
+      id: `bundle:entity:${entity.kind}:${entity.id}`, slot: "current_state", title: "一跳相关实体",
+      authority: "state", retention: "optional", priority: 500,
+      source: { kind: "entity_context_projection", refs: [entity.id, ...(entity.locationId === undefined ? [] : [entity.locationId])] },
+      content: `${entity.kind}:${entity.id}=${entity.name}；${entity.summary}。`,
     }));
   }
   return blocks;

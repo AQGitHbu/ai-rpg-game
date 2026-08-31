@@ -187,7 +187,8 @@ describe("approveWorldDelta", () => {
   it("accepts a roaming story NPC when every town building slot is occupied", () => {
     let town = createTownRuntime({ locationId: asLocationId("loc_0"), seed: "s#town#loc_0" });
     for (let i = 0; i < town.slots.length; i += 1) {
-      town = bindNpcToTownSlot(town, asNpcId(`npc_slot_${i}`)).town;
+      // 容量测试只关心 slot 是否为空；绑定 ID 仍必须指向 store 中真实 NPC。
+      town = bindNpcToTownSlot(town, NPC_0.id).town;
     }
     const ws = makeWorld({
       locations: [{ ...LOC_0, scale: "town", town }],

@@ -35,6 +35,10 @@ export function parseProposedEntityCommands(value: unknown): ParseProposedEntity
     } else if (raw.kind === "place_item") {
       if (!exact(raw, ["kind", "itemId", "owner"])) return parseFail("unknown_key", index);
       if (typeof raw.itemId !== "string" || !object(raw.owner)) return parseFail("invalid_field", index);
+      if ((raw.owner.kind === "location" && !exact(raw.owner, ["kind", "locationId"]))
+        || (raw.owner.kind === "npc" && !exact(raw.owner, ["kind", "npcId"]))) {
+        return parseFail("unknown_key", index);
+      }
       if (raw.owner.kind === "location" && exact(raw.owner, ["kind", "locationId"]) && typeof raw.owner.locationId === "string") proposals.push({ kind: "place_item", itemId: raw.itemId, owner: { kind: "location", locationId: raw.owner.locationId } });
       else if (raw.owner.kind === "npc" && exact(raw.owner, ["kind", "npcId"]) && typeof raw.owner.npcId === "string") proposals.push({ kind: "place_item", itemId: raw.itemId, owner: { kind: "npc", npcId: raw.owner.npcId } });
       else return parseFail("invalid_field", index);

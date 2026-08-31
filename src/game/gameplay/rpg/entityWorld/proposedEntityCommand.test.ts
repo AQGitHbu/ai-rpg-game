@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
+import type { EntityRecord, EntityStore } from "@/game/domain/entity";
 import { createWorldStateFromProjection } from "@/game/domain/worldState";
 import { asGenerationId, asItemId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import { parseProposedEntityCommands, approveProposedEntityCommands, entityMutationsForApprovedCommands } from "./proposedEntityCommand";
+import { applyEntityMutations } from "./entityMutation";
 
 const npcId = asNpcId("npc");
 const itemId = asItemId("item");
@@ -51,6 +53,74 @@ describe("ProposedEntityCommand", () => {
     expect(approveProposedEntityCommands(store.entityStore, parsed.proposals, { ...context, immovableEntityIds: [npcId] }))
       .toEqual({ ok: false, code: "entity_immovable", index: 0, entityId: npcId });
     expect(parseProposedEntityCommands([{ kind: "place_item", itemId: "item", owner: { kind: "npc", npcId: "npc", extra: true } }]))
-      .toEqual({ ok: false, code: "invalid_field", index: 0 });
+      .toEqual({ ok: false, code: "unknown_key", index: 0 });
+  });
+
+  it("rejects unknown IDs, wrong kinds and every missing allowlist grant", () => {
+    const proposals = [
+      [{ kind: "move_npc", npcId: "missing", toLocationId: "b" }],
+      [{ kind: "move_npc", npcId: "item", toLocationId: "b" }],
+      [{ kind: "move_npc", npcId: "npc", toLocationId: "b" }],
+      [{ kind: "place_item", itemId: "item", owner: { kind: "npc", npcId: "npc" } }],
+    ] as const;
+    const expected = ["unknown_entity", "wrong_entity_kind", "entity_not_allowed", "entity_not_allowed"];
+    proposals.forEach((raw, index) => {
+      const parsed = parseProposedEntityCommands(raw);
+      if (!parsed.ok) throw new Error("fixture parse failed");
+      const approvalContext = index === 2
+        ? { ...context, allowedEntityIds: [itemId] }
+        : index === 3
+          ? { ...context, allowedEntityIds: [itemId] }
+          : context;
+      expect(approveProposedEntityCommands(store.entityStore, parsed.proposals, approvalContext)).toMatchObject({
+        ok: false, code: expected[index], index: 0,
+      });
+    });
+  });
+
+  it("rejects inactive location/item and resolved NPC lifecycle transitions", () => {
+    const inactiveLocationStore: EntityStore = {
+      ...store.entityStore,
+      records: store.entityStore.records.map((record): EntityRecord => {
+        if (record.core.id !== locB) return record;
+        const location = record as Extract<EntityRecord, { core: { kind: "location" } }>;
+        return { ...location, core: { ...location.core, lifecycle: "inactive" } };
+      }),
+    };
+    const move = parseProposedEntityCommands([{ kind: "move_npc", npcId: "npc", toLocationId: "b" }]);
+    if (!move.ok) throw new Error("fixture parse failed");
+    expect(approveProposedEntityCommands(inactiveLocationStore, move.proposals, context)).toMatchObject({
+      ok: false, code: "invalid_entity_lifecycle", index: 0,
+    });
+
+    const resolvedNpcStore: EntityStore = {
+      ...store.entityStore,
+      records: store.entityStore.records.map((record): EntityRecord => {
+        if (record.core.id !== npcId) return record;
+        const npc = record as Extract<EntityRecord, { core: { kind: "npc" } }>;
+        return { ...npc, core: { ...npc.core, lifecycle: "resolved" } };
+      }),
+    };
+    const lifecycle = parseProposedEntityCommands([{ kind: "set_npc_lifecycle", npcId: "npc", lifecycle: "active" }]);
+    if (!lifecycle.ok) throw new Error("fixture parse failed");
+    expect(approveProposedEntityCommands(resolvedNpcStore, lifecycle.proposals, context)).toMatchObject({
+      ok: false, code: "invalid_lifecycle_transition", index: 0,
+    });
+  });
+
+  it("maps to absolute idempotent mutations", () => {
+    const parsed = parseProposedEntityCommands([
+      { kind: "move_npc", npcId: "npc", toLocationId: "b" },
+      { kind: "place_item", itemId: "item", owner: { kind: "npc", npcId: "npc" } },
+    ]);
+    if (!parsed.ok) throw new Error("fixture parse failed");
+    const approved = approveProposedEntityCommands(store.entityStore, parsed.proposals, context);
+    if (!approved.ok) throw new Error("fixture approval failed");
+    const mutations = entityMutationsForApprovedCommands(approved.commands);
+    const once = applyEntityMutations(store, mutations);
+    if (!once.ok) throw new Error("first mutation failed");
+    const twice = applyEntityMutations(once.worldState, mutations);
+    if (!twice.ok) throw new Error("second mutation failed");
+    expect(twice.worldState.entityStore).toEqual(once.worldState.entityStore);
   });
 });

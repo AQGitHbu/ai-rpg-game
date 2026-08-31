@@ -55,4 +55,49 @@ describe("validatePersistableWorldState", () => {
       battle: { status: "active", enemyId: "enemy_missing", playerHp: 10, enemyHp: 10, round: 1 },
     })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
   });
+
+  it("parses resolved battle optional fields and rejects malformed nested battle state", () => {
+    const valid = state();
+    expect(validatePersistableWorldState({
+      ...valid,
+      battle: { status: "resolved", enemyId: "enemy_missing", outcome: "defeat" },
+    })).toMatchObject({ ok: false, code: "invalid_entity_reference", issueCode: "unknown_battle_enemy_ref" });
+
+    expect(validatePersistableWorldState({
+      ...valid,
+      battle: {
+        status: "active", enemyId: "enemy_missing", playerHp: 10, enemyHp: 10, round: 1,
+        preBattleSnapshot: { entityStore: valid.entityStore, eventLedger: [] },
+        combatants: [{ combatantId: "bad", source: null }],
+      },
+    })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+  });
+
+  it("rejects unknown or malformed ending requirements without throwing", () => {
+    const valid = state();
+    expect(() => validatePersistableWorldState({
+      ...valid,
+      endings: [{ id: "ending_bad", name: "坏结局", description: "坏", requirements: [{ kind: "unknown" }] }],
+    })).not.toThrow();
+    expect(validatePersistableWorldState({
+      ...valid,
+      endings: [{ id: "ending_bad", name: "坏结局", description: "坏", requirements: [{ kind: "unknown" }] }],
+    })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+  });
+
+  it("rejects unknown event variants, extra keys and malformed generation metadata", () => {
+    const valid = state();
+    expect(validatePersistableWorldState({
+      ...valid,
+      eventLedger: [{ type: "invented_event", occurredAt: "now" }],
+    })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({
+      ...valid,
+      eventLedger: [{ type: "location_visited", locationId: "loc", occurredAt: "now", payload: "extra" }],
+    })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({
+      ...valid,
+      generation: { ...valid.generation, gameType: "unknown_genre" },
+    })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+  });
 });
