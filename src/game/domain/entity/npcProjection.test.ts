@@ -20,11 +20,12 @@ import {
 /**
  * 编译期锁（只有 typecheck 牙齿，无运行时语义）：这是一次非分派的子集检查——
  * `keyof NpcEntityRecord` 必须整体落在下面七个键之内。
- * 能抓出：record 多出七键之外的任何键（例如重新带上 npcState）；
- * `"" extends NpcRecordKeys` 只是键类型退化时的额外兜底。
+ * 能抓出：record 多出七键之外的任何键（例如重新带上 npcState）。
  * 抓不到缺分层组件：删掉或可选化某个键之后，剩下的键仍是七键的子集，锁照样为 true。
  * 那种漂移由 NpcEntityRecord 的必填键类型（构造处即 typecheck 失败）与 entityStore 的
  * 运行时组件签名校验（invalid_record_shape）负责。
+ * 键类型退化成 never 时本锁同样为 true（`never extends …` 恒真），内层 `""` 子句只在
+ * record 真的多出 `""` 键时为 false——那种情况外层子集检查已经拦下，内层不额外兜任何底。
  */
 type NpcRecordKeys = keyof NpcEntityRecord;
 type LayeredRecordLock = NpcRecordKeys extends
@@ -180,7 +181,7 @@ function playerRecord(): EntityRecord {
 }
 
 describe("npc projection：分层组件是唯一事实源", () => {
-  it("分层 record（形状由上方编译期锁钉死）可被 store 原样接受", () => {
+  it("分层 record 可被 store 原样接受（上方编译期锁只排除七键之外的多余键）", () => {
     const npc = record({ affinity: 12 });
     const store = createEntityStore([npc, playerRecord()]);
     expect(store.records[0]).toBe(npc);
