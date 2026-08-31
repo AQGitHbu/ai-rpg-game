@@ -253,6 +253,14 @@ function checkReferences(references: unknown): RejectedCode | undefined {
   return undefined;
 }
 
+/**
+ * 引用上下文的唯一取用口：入参必须是调用方对象上 `ownField` 读出的值——
+ * `references` 这个字段本身只挂在原型链上也等于「没有提供上下文」，与集合内容的自有性同一条规则。
+ */
+function asReferences(references: unknown): NpcKnowledgeReferences | undefined {
+  return checkReferences(references) === undefined ? (references as NpcKnowledgeReferences) : undefined;
+}
+
 type KnowledgeComponentGate =
   | Readonly<{ usable: true; knowledge: NpcKnowledgeComponent }>
   | Readonly<{ usable: false; knowledge: NpcKnowledgeComponent | undefined }>;
@@ -380,7 +388,7 @@ export function createNpcKnowledgeEntry(input: CreateNpcKnowledgeEntryInput): Cr
   if (typeof disclosure !== "string" || ownEntry(KNOWLEDGE_DISCLOSURE_VISIBILITY, disclosure) === undefined) {
     return fail("invalid_disclosure");
   }
-  const created = createNpcKnowledgeSource(input.source);
+  const created = createNpcKnowledgeSource(ownField(input, "source") as NpcKnowledgeSourceInput);
   if (!created.ok) return fail(created.code);
   return {
     ok: true,
@@ -487,17 +495,17 @@ export type WriteNpcKnowledgeResult =
 export function writeNpcKnowledge(input: WriteNpcKnowledgeInput): WriteNpcKnowledgeResult {
   // 入参组件原样使用：绝不 `?? { entries: [] }` 造一份空组件——那会让调用方漏传
   // knowledge 时「成功写入」一条谁也读不到的新知识，而零写入的对象同一性证据也失效。
-  const gated = gateKnowledgeComponent(input.knowledge);
+  const gated = gateKnowledgeComponent(ownField(input, "knowledge"));
   if (!gated.usable) return { ok: false, changed: false, code: "invalid_component", knowledge: gated.knowledge };
   const knowledge = gated.knowledge;
   const reject = (code: RejectedCode): WriteNpcKnowledgeResult => ({
     ok: false, changed: false, code, knowledge,
   });
-  const contextCode = checkReferences(input.references);
-  if (contextCode !== undefined) return reject(contextCode);
+  const references = asReferences(ownField(input, "references"));
+  if (references === undefined) return reject("invalid_reference_context");
   // 引用字段一律先过自有属性判定：挂在原型链上的 factId / npcId 不算提供了引用。
-  if (!isKnownNpc(input.references, ownString(input, "npcId"))) return reject("unknown_npc");
-  if (!isKnownFact(input.references, ownString(input, "factId"))) return reject("unknown_fact");
+  if (!isKnownNpc(references, ownString(input, "npcId"))) return reject("unknown_npc");
+  if (!isKnownFact(references, ownString(input, "factId"))) return reject("unknown_fact");
 
   const created = createNpcKnowledgeEntry(input);
   if (!created.ok) return reject(created.code);
@@ -505,7 +513,7 @@ export function writeNpcKnowledge(input: WriteNpcKnowledgeInput): WriteNpcKnowle
   // 说话人只可能出现在 npc_revealed 上（createNpcKnowledgeSource 已按 mode 策略裁决），
   // 因此这里只需判定「提供了引用 ⇒ 引用必须存在」。
   const speakerId = entry.source.kind === "action" ? ownString(entry.source, "sourceNpcId") : undefined;
-  if (speakerId !== undefined && !isKnownNpc(input.references, speakerId)) return reject("unknown_source_npc");
+  if (speakerId !== undefined && !isKnownNpc(references, speakerId)) return reject("unknown_source_npc");
 
   const index = knowledge.entries.findIndex((current) => sameId(current.factId, entry.factId));
   if (index < 0) {
@@ -576,15 +584,15 @@ export function setNpcKnowledgeDisclosure(
   input: SetNpcKnowledgeDisclosureInput,
 ): SetNpcKnowledgeDisclosureResult {
   // 与写入口同一把门：组件本体缺失也不能逃成裸 TypeError。
-  const gated = gateKnowledgeComponent(input.knowledge);
+  const gated = gateKnowledgeComponent(ownField(input, "knowledge"));
   if (!gated.usable) return { ok: false, changed: false, code: "invalid_component", knowledge: gated.knowledge };
   const knowledge = gated.knowledge;
   const reject = (code: RejectedCode): SetNpcKnowledgeDisclosureResult => ({
     ok: false, changed: false, code, knowledge,
   });
-  const contextCode = checkReferences(input.references);
-  if (contextCode !== undefined) return reject(contextCode);
-  if (!isKnownNpc(input.references, ownString(input, "npcId"))) return reject("unknown_npc");
+  const references = asReferences(ownField(input, "references"));
+  if (references === undefined) return reject("invalid_reference_context");
+  if (!isKnownNpc(references, ownString(input, "npcId"))) return reject("unknown_npc");
   // disclosure / actionId / turnNumber 与 factId 走同一把门：继承来的值一律不算提供，
   // 否则「只挂在原型链上的一份 evidence」就能推动一次真实的披露写入。
   const disclosure = ownField(input, "disclosure");
@@ -597,7 +605,7 @@ export function setNpcKnowledgeDisclosure(
   const turnNumber = ownField(input, "turnNumber");
   if (!isTurnCounter(turnNumber)) return reject("invalid_turn_number");
   const factId = ownString(input, "factId");
-  if (!isKnownFact(input.references, factId)) return reject("unknown_fact");
+  if (!isKnownFact(references, factId)) return reject("unknown_fact");
 
   const existing = findKnowledgeEntry(knowledge, factId as FactId);
   if (existing === undefined || !isExistingEntryIntact(existing)) return reject("knowledge_entry_not_found");

@@ -1074,14 +1074,19 @@ function knowledgeComponentOf(ws: WorldState, npcId: NpcId) {
 function expectKnowledgeRejected(
   ws: WorldState,
   mutations: readonly EntityMutation[],
-  expected: Readonly<{ code: EntityMutationErrorCode; entityId?: string }>,
+  expected: Readonly<{ code: EntityMutationErrorCode; entityId?: string; subjectId?: NpcId }>,
 ) {
   const store = ws.entityStore;
   const records = store.records;
-  const subjectId = expected.entityId === undefined ? undefined : (expected.entityId as NpcId);
+  // 诊断按本文件既有惯例报**越界的那个引用**（事实 ID / 说话人 ID），它通常不是行动主体；
+  // 所以零写入的取证对象要单独给，缺省才退化成 entityId。
+  const subjectId = expected.subjectId ?? (expected.entityId as NpcId | undefined);
   const knowledgeBefore = subjectId === undefined ? undefined : knowledgeComponentOf(ws, subjectId);
   const result = applyEntityMutations(ws, mutations);
-  expect(result).toEqual({ ok: false, ...expected });
+  // `subjectId` 只是取证用的入参，绝不是结果字段：这里逐字段构造期望，不整体展开。
+  expect(result).toEqual({
+    ok: false, code: expected.code, ...(expected.entityId === undefined ? {} : { entityId: expected.entityId }),
+  });
   expect(ws.entityStore).toBe(store);
   expect(ws.entityStore.records).toBe(records);
   if (subjectId !== undefined) expect(knowledgeComponentOf(ws, subjectId)).toBe(knowledgeBefore);
@@ -1106,7 +1111,7 @@ describe("applyEntityMutations — record_npc_knowledge", () => {
     });
   });
 
-  it("首写逐字采用规则层产出的 entry，且只替换 knowledge 一个组件", () => {
+  it("首写只替换主体的 knowledge 一个组件：其余组件与另一 NPC 的 knowledge 全部引用不变", () => {
     const ws = world();
     const before = npcRecord(ws, NPC_1);
     const next = okApply(ws, [recordKnowledge({ certainty: "suspected", disclosure: "conditional" })]);
@@ -1177,16 +1182,18 @@ describe("applyEntityMutations — record_npc_knowledge", () => {
 
   it("Fact、target NPC、source NPC 任一未知都各自返回稳定 code 且整批零写入", () => {
     const ws = world();
-    expectKnowledgeRejected(ws, [recordKnowledge({ factId: asFactId("fact_missing") })], { code: "unknown_knowledge_fact", entityId: NPC_1 });
+    expectKnowledgeRejected(ws, [recordKnowledge({ factId: asFactId("fact_missing") })], {
+      code: "unknown_knowledge_fact", entityId: asFactId("fact_missing"), subjectId: NPC_1,
+    });
     const result = applyEntityMutations(ws, [recordKnowledge({ npcId: asNpcId("npc_missing") })]);
     expect(result).toEqual({ ok: false, code: "unknown_entity_id", entityId: asNpcId("npc_missing") });
     expect(knowledgeOf(ws)).toBe(npcRecord(ws, NPC_1).knowledge);
     expectKnowledgeRejected(ws, [recordKnowledge({ source: knowledgeSource({ mode: "npc_revealed", sourceNpcId: asNpcId("npc_ghost") }) })], {
-      code: "unknown_knowledge_source_npc", entityId: NPC_1,
+      code: "unknown_knowledge_source_npc", entityId: asNpcId("npc_ghost"), subjectId: NPC_1,
     });
     // 玩家实体不是 NPC：它拿不到「知识说话人」这个身份。
     expectKnowledgeRejected(ws, [recordKnowledge({ source: knowledgeSource({ mode: "npc_revealed", sourceNpcId: asNpcId(String(PLAYER_ENTITY_ID)) }) })], {
-      code: "unknown_knowledge_source_npc", entityId: NPC_1,
+      code: "unknown_knowledge_source_npc", entityId: asNpcId(String(PLAYER_ENTITY_ID)), subjectId: NPC_1,
     });
   });
 
@@ -1197,7 +1204,7 @@ describe("applyEntityMutations — record_npc_knowledge", () => {
     });
     // 死掉的说话人不得借一条新知识洗白成 provenance。
     expectKnowledgeRejected(inactive, [recordKnowledge({ source: knowledgeSource({ mode: "npc_revealed", sourceNpcId: NPC_2 }) })], {
-      code: "unknown_knowledge_source_npc", entityId: NPC_1,
+      code: "unknown_knowledge_source_npc", entityId: NPC_2, subjectId: NPC_1,
     });
     const defeated = okApply(world(), [{ kind: "set_enemy_defeated", enemyId: ENEMY_1, defeated: true }]);
     expect(applyEntityMutations(defeated, [recordKnowledge({ npcId: asNpcId(String(ENEMY_1)) })]))
@@ -1209,10 +1216,32 @@ describe("applyEntityMutations — record_npc_knowledge", () => {
     const retired = okApply(ws, [{ kind: "create_entities", records: [factEntityRecord(FACT_2, "inactive")] }]);
     // 兼容数组按实体逐条投影、不看 lifecycle：拿它当引用上下文就会放行这条已停用的事实。
     expect(retired.worldFacts.some((fact) => String(fact.factId) === String(FACT_2))).toBe(true);
-    expectKnowledgeRejected(retired, [recordKnowledge({ factId: FACT_2 })], { code: "unknown_knowledge_fact", entityId: NPC_1 });
+    expectKnowledgeRejected(retired, [recordKnowledge({ factId: FACT_2 })], {
+      code: "unknown_knowledge_fact", entityId: FACT_2, subjectId: NPC_1,
+    });
     const live = okApply(ws, [{ kind: "create_entities", records: [factEntityRecord(FACT_2, "active")] }]);
     const next = okApply(live, [recordKnowledge({ factId: FACT_2 })]);
     expect(knowledgeOf(next).entries.map((entry) => String(entry.factId))).toEqual(["fact_2"]);
+  });
+
+  it("同批 create_entities 造出缺 knowledge 的 NPC：闸门收口成 structure_invalid，不逃成裸 TypeError", () => {
+    // 已提交的 store 里 npc 必带 knowledge（domain validator），所以这道门从存档出发不可达；
+    // 但 create_entities 原样收下调用方给的 record，整批校验要等所有 applyOne 跑完才做，
+    // 于是「同一批里新建的残缺 record」能真正走到这道门上——这条用例就是它的存在性证明。
+    const brokenRecord: EntityRecord = {
+      ...npcEntityRecord({
+        core: { id: asNpcId("npc_9"), kind: "npc", name: "残缺", createdAtTurn: 1, lifecycle: "active" },
+        identity: { role: "旅人", description: "", tags: [] },
+        position: { locationId: LOC_1, locationOrder: 0 },
+        npc: { isCompanion: false, met: false, memory: memoryOf(asNpcId("npc_9")) },
+      }),
+      knowledge: undefined,
+    } as unknown as EntityRecord;
+    const result = applyEntityMutations(world(), [
+      { kind: "create_entities", records: [brokenRecord] },
+      recordKnowledge({ npcId: asNpcId("npc_9") }),
+    ]);
+    expect(result).toEqual({ ok: false, code: "structure_invalid", entityId: asNpcId("npc_9") });
   });
 
   it("空白、非字符串与只挂在原型链上的 actionId 一律 invalid_knowledge_source", () => {
@@ -1275,7 +1304,7 @@ describe("applyEntityMutations — record_npc_knowledge", () => {
       recordKnowledge({ factId: FACT_1 }),
       recordKnowledge({ factId: asFactId("fact_missing") }),
     ]);
-    expect(result).toEqual({ ok: false, code: "unknown_knowledge_fact", entityId: NPC_1 });
+    expect(result).toEqual({ ok: false, code: "unknown_knowledge_fact", entityId: asFactId("fact_missing") });
     expect(ws.entityStore).toBe(store);
     expect(knowledgeOf(ws).entries).toHaveLength(0);
   });
@@ -1301,7 +1330,9 @@ describe("applyEntityMutations — set_npc_knowledge_disclosure", () => {
 
   it("未知 Fact 与「该 NPC 并不知道这件事」都零写入，且各自返回稳定 code", () => {
     const ws = world();
-    expectKnowledgeRejected(ws, [setDisclosure({ factId: asFactId("fact_missing") })], { code: "unknown_knowledge_fact", entityId: NPC_1 });
+    expectKnowledgeRejected(ws, [setDisclosure({ factId: asFactId("fact_missing") })], {
+      code: "unknown_knowledge_fact", entityId: asFactId("fact_missing"), subjectId: NPC_1,
+    });
     // 事实实体存在、NPC 也知道另一条事实：条目不存在就是 knowledge_entry_not_found，绝不隐式建条目。
     const seeded = okApply(ws, [recordKnowledge({ factId: FACT_1 })]);
     const withFact2 = okApply(seeded, [{ kind: "create_entities", records: [factEntityRecord(FACT_2)] }]);

@@ -784,4 +784,39 @@ describe("同一 input 对象的读取共用一把门（复审加固 #3）", () 
     expect(write({ references: halfOwn as never }))
       .toMatchObject({ ok: false, changed: false, code: "invalid_reference_context" });
   });
+
+  it("input 上的 knowledge / references / source 三个字段本身也只认自有属性", () => {
+    // 上面几项管的是「字段内容」的自有性；这里管「字段本身」：只挂在原型链上就等于没提供。
+    // 否则同一个 input 对象上会出现 certainty 走 ownField、source 走裸读的两把门。
+    expect(writeNpcKnowledge(Object.assign(Object.create({
+      knowledge: { entries: [] }, references: REFERENCES,
+    }), {
+      npcId: NPC_A, factId: FACT_1, certainty: "known", disclosure: "public", source: ACTION_SOURCE,
+    }) as never)).toMatchObject({ ok: false, changed: false, code: "invalid_component" });
+
+    expect(writeNpcKnowledge(Object.assign(Object.create({ references: REFERENCES }), {
+      npcId: NPC_A, knowledge: { entries: [] }, factId: FACT_1,
+      certainty: "known", disclosure: "public", source: ACTION_SOURCE,
+    }) as never)).toMatchObject({ ok: false, changed: false, code: "invalid_reference_context" });
+
+    expect(createNpcKnowledgeEntry(Object.assign(Object.create({ source: ACTION_SOURCE }), {
+      factId: FACT_1, certainty: "known", disclosure: "public",
+    }) as never)).toEqual({ ok: false, code: "invalid_source_kind" });
+
+    const disclosureSubject = {
+      npcId: NPC_A, knowledge: { entries: [entryOf({ factId: FACT_1 })] }, factId: FACT_1,
+      references: REFERENCES, disclosure: "secret" as const,
+      actionId: EVIDENCE.actionId, turnNumber: EVIDENCE.turnNumber,
+    };
+    expect(setNpcKnowledgeDisclosure(Object.assign(Object.create({
+      knowledge: disclosureSubject.knowledge,
+    }), {
+      npcId: NPC_A, factId: FACT_1, references: REFERENCES, disclosure: "secret",
+      actionId: EVIDENCE.actionId, turnNumber: EVIDENCE.turnNumber,
+    }) as never)).toMatchObject({ ok: false, changed: false, code: "invalid_component" });
+    expect(setNpcKnowledgeDisclosure(Object.assign(Object.create({ references: REFERENCES }), {
+      npcId: NPC_A, knowledge: { entries: [entryOf({ factId: FACT_1 })] }, factId: FACT_1,
+      disclosure: "secret", actionId: EVIDENCE.actionId, turnNumber: EVIDENCE.turnNumber,
+    }) as never)).toMatchObject({ ok: false, changed: false, code: "invalid_reference_context" });
+  });
 });

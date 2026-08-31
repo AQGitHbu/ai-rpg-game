@@ -195,8 +195,11 @@ const KNOWLEDGE_POLICY_ERROR_CODES: Readonly<Record<NpcKnowledgeErrorCode, Entit
   invalid_disclosure: "invalid_knowledge_disclosure",
   certainty_demotion_rejected: "knowledge_certainty_demotion_rejected",
   knowledge_entry_not_found: "knowledge_entry_not_found",
-  // 以下三支由本层构造方负责保证不可能出现，留着只为映射表的穷尽性：
-  // 组件永远取自 store 里那条 record（domain validator 已钉住 entries 是数组），
+  // 以下三支从**已提交的 store** 出发不可达（domain validator 已钉住 npc 必带 knowledge 组件），
+  // 留着只为映射表的穷尽性。唯一例外是同一批里的 create_entities：它原样收下调用方给的 record，
+  // 而整批校验要等 applyOne 全部跑完、createEntityStore 才做，所以
+  // [create_entities(缺 knowledge 的 npc), record_npc_knowledge] 会真的走到这道门上——
+  // 这正是它返回 structure_invalid 而不是抛裸 TypeError 的意义。
   invalid_component: "structure_invalid",
   // 引用上下文永远由 knowledgeReferences 现场构造（两个 Set 字面量），
   invalid_reference_context: "structure_invalid",
@@ -350,6 +353,23 @@ function checkKnowledgeSource(declared: KnowledgeMutationSource): EntityMutation
     return "invalid_knowledge_source";
   }
   return undefined;
+}
+
+/**
+ * 诊断 ID 沿用本文件的既有约定（`relationshipParties`、`move_player`、`transfer_item` 都如此）：
+ * `entityId` 报**越界的那个引用**，不是行动主体。未知 Fact 报 Fact ID、幽灵说话人报说话人 ID；
+ * 主体侧的失败（NPC 不存在、主体非活跃、certainty 阶梯冲突、条目不存在）里主体本身就是越界者，照旧报主体。
+ */
+function knowledgeOffenderId(
+  code: NpcKnowledgeErrorCode,
+  mutation: Readonly<{ npcId: NpcId; factId: FactId; source?: KnowledgeMutationSource }>,
+): string {
+  if (code === "unknown_fact") return mutation.factId;
+  // 说话人只存在于 action 支，且只在 npc_revealed 上可能被引用（mode 策略由规则层裁决）。
+  if (code === "unknown_source_npc" && mutation.source?.kind === "action") {
+    return mutation.source.sourceNpcId ?? mutation.npcId;
+  }
+  return mutation.npcId;
 }
 
 // ---------------------------------------------------------------------------
@@ -556,7 +576,9 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation): M
       });
       // applied.code 是规则层自己的封闭字面量 union（不是调用方数据），所以裸下标即可：
       // 表覆盖性由 KNOWLEDGE_POLICY_ERROR_CODES 的 satisfies 锁住，漏一行在 typecheck 就失败。
-      if (!applied.ok) return failure(KNOWLEDGE_POLICY_ERROR_CODES[applied.code], mutation.npcId);
+      if (!applied.ok) {
+        return failure(KNOWLEDGE_POLICY_ERROR_CODES[applied.code], knowledgeOffenderId(applied.code, mutation));
+      }
       // changed:false 是同一条事实重放的幂等结果：records 数组按引用原样返回，不是失败。
       if (!applied.changed) return { ok: true, records };
       // 只替换这一个主体的知识组件：其余组件按引用继承，兼容 memory 由 projector 重建。
@@ -579,7 +601,13 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation): M
         turnNumber: mutation.turnNumber,
         references: knowledgeReferences(records),
       });
-      if (!applied.ok) return failure(KNOWLEDGE_POLICY_ERROR_CODES[applied.code], mutation.npcId);
+      if (!applied.ok) {
+        // 本载荷没有说话人字段，可越界的引用只有 factId，因此不需要 source 一支。
+        return failure(
+          KNOWLEDGE_POLICY_ERROR_CODES[applied.code],
+          knowledgeOffenderId(applied.code, { npcId: mutation.npcId, factId: mutation.factId }),
+        );
+      }
       // 同值披露重放同样是零写入的成功；未知 Fact 与「不知道这件事」的区分由规则层的 code 给出。
       if (!applied.changed) return { ok: true, records };
       return {
