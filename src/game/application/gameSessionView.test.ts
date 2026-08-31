@@ -1070,7 +1070,7 @@ describe("projectGameSessionView", () => {
     expect(view.story.currentObjectiveChoiceToken).toBeNull();
   });
 
-  it("收场场景缺 handoffAcknowledgement 时投影引导下一目标的兜底致意，绝不落到「知道了」", () => {
+  it("幕切换清理 dialogueSession 后，收场场景仍投影引导下一目标的兜底致意", () => {
     const visitQuest: WorldState["quests"][number] = {
       id: asQuestId("quest_visit"),
       name: "追寻痕迹",
@@ -1099,7 +1099,7 @@ describe("projectGameSessionView", () => {
       narrative: {
         ...ss.narrative,
         currentScene: scene,
-        dialogueSession: { npcId: npc1.id, turnCount: 2, requiredTurns: 2, completed: true },
+        dialogueSession: undefined,
         choiceRegistry: [],
       },
     };

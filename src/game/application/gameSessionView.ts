@@ -756,12 +756,13 @@ export function projectGameSessionView(
     || scene.handoffAcknowledgement.trim() === ""
     ? null
     : { label: scene.handoffAcknowledgement };
-  // 收场兜底：正式对话已完成后，若生成场景没有显式致意语，用权威下一目标
-  // 文案投影一个引导性收尾，绝不让收场退化为「知道了」纯确认。
+  // 收场兜底：旧焦点 NPC 在幕切换时会随着旧 dialogueSession 一起被清理。
+  // 因此不能以 dialogueSession.completed 作为唯一判断；只要当前场景仍保留
+  // 该 NPC 的焦点台词、没有可提交选择且已有权威下一目标，就必须投影引导性
+  // 收尾，绝不让真实玩家界面退化为「知道了」纯确认。
   const isConversationClosingScene = projectedHandoffAcknowledgement === null
     && sceneLineNpcId !== null
     && projectedSceneChoices.length === 0
-    && storyState.narrative.dialogueSession?.completed === true
     && currentObjectiveRef !== null;
   const effectiveHandoffAcknowledgement = projectedHandoffAcknowledgement !== null
     ? projectedHandoffAcknowledgement
