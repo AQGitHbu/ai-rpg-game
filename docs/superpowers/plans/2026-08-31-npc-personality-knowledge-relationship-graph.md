@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript 5.8、Vitest 3、Next.js 16、现有 domain → gameplay/rpg → application 分层、SQLite JSON/CAS 存档、Narrative Context Compiler 与 Entity Store；不新增 npm 依赖或外部服务。
 
-**Spec:** `docs/superpowers/specs/2026-08-23-long-form-narrative-entity-memory-architecture.md`（Plan 3；§7；NAR-06、NAR-14、NAR-17）
+**Spec:** `docs/superpowers/specs/2026-08-23-long-form-narrative-entity-memory-architecture.md`（Plan 3；§7；NAR-06、NAR-07、NAR-14、NAR-17）
 
 > 状态：待执行
 
@@ -145,14 +145,20 @@ type NpcHistoryComponent = Readonly<{
 - `emotion/goals` = dynamic state 的兼容值，其中 goals 只投影 active/blocked 的 description；
 - `isCompanion/met` = dynamic state。
 
+Spec §7.1 的其余层次在本 Plan 的边界：
+
+- 健康/战斗状态：当前玩法中只存在于战斗 runtime（`CombatantSource` 参战单位），随 `preBattleSnapshot.entityStore` 在失败/撤退时整体恢复；本 Plan 不在 `dynamicState` 中新增健康字段。
+- Episodic References：本阶段由 `history.interactions`（最近 10 条）与关系边的证据（最近 12 条）承载；结构化 Episode 属 Plan 4。
+- Arc Role / `NarrativeRoleComponent`：依赖 Plan 5 才建立的 Arc 结构，本 Plan 不实现；Plan 6 只消费该结构做剧情规划，不再反向修改人格锚点。
+
 ## Relationship Rule Policy
 
 - `RelationshipSignal` 是封闭 union，至少包含 `supported`、`challenged`、`threatened`、`deceived`、`offered_help`、`reassured`、`refused`、`gave_item`、`shared_fact`、`fought_together`、`betrayed`、`kept_promise`、`broke_promise`；AI 和客户端都不能携带数值 delta。
 - 每个 signal 在 `relationshipSignalPolicy.ts` 中映射固定维度变化、severity、trend 与可选 commitment 操作。normal 单维绝对变化 ≤5、四维绝对变化总和 ≤8；major 单维 ≤12、总和 ≤20；所有维度最终 clamp 到 `[-100, 100]`。
 - 同一 `actionId + fromId + targetId + signal` 幂等，重复应用零写入；同一行动对同一边同一维度的累计变化还要受上述 cap 限制。
-- stage 由维度阈值和累计证据共同裁决，但每个已提交 action 最多沿允许图移动一档：`unknown ↔ acquainted`；`acquainted ↔ cooperative|wary`；`cooperative ↔ trusted|wary|acquainted`；`trusted ↔ bonded|cooperative|wary`；`bonded ↔ trusted|wary`；`wary ↔ hostile|acquainted|cooperative`；`hostile ↔ wary`。
+- stage 由维度阈值和累计证据共同裁决，但每个已提交 action 最多沿允许图移动一档。双向转换：`unknown ↔ acquainted`、`acquainted ↔ cooperative`、`acquainted ↔ wary`、`cooperative ↔ trusted`、`cooperative ↔ wary`、`trusted ↔ bonded`、`wary ↔ hostile`；单向降级：`trusted → wary`、`bonded → wary`。因此从 `wary` 恢复信任必须逐档经过 `cooperative`（或 `acquainted`）到 `trusted`，再升 `bonded`，不允许跳级回补。
 - `trusted` 至少要求 trust≥45、affinity≥35 且两条正向证据；`bonded` 至少要求 trust≥70、affinity≥60、三条正向证据且至少一条 major；`wary` 在 fear≥40、hostility≥25 或 affinity≤-20 时可候选；`hostile` 在 hostility≥60 或 affinity≤-60 时可候选。阈值满足但证据/相邻转换不满足时保持原 stage。
-- 初始定性种子只允许 `ally`、`rival`、`wary`、`indebted_to`、`protective_of`；规则层映射为保守初值，最高只能初始化到 `cooperative` 或 `wary`，不能直接创建 `trusted/bonded/hostile`。
+- 初始定性种子只允许 `ally`、`rival`、`wary`、`indebted_to`、`protective_of`；规则层映射为保守初值，最高只能初始化到 `cooperative` 或 `wary`，不能直接创建 `trusted/bonded/hostile`。固定映射：`ally` 与 `protective_of` → `cooperative` + 保守正向维度；`rival` 与 `wary` → `wary` + 保守负向维度；`indebted_to` → `cooperative` + 保守正向维度，并开一条 `source_owes_target` 的 open debt commitment（来源为 `initial_world`）。种子不携带数值，维度初值由 `relationshipSignalPolicy.ts` 的固定表给出。
 - 关系边只保存规则 key 与 ID，不保存玩家自由输入原文；Prompt 渲染 stage、trend、commitment 和最多三条相关证据摘要，不注入裸数值推理指令。
 
 ## Target File Structure
@@ -187,7 +193,7 @@ src/game/application/
 
 - `domain/openingGenerationCandidate.ts` 与 `domain/worldDelta.ts`：创建 NPC 时增加 anchors、类型化 goals 和定性 relationship seeds。
 - `gameplay/rpg/openingGeneration/*`、`worldEvolution/*`：审批创建材料并由服务端铸造 goal/relationship/evidence ID。
-- `gameplay/rpg/entityWorld/entityMutation.ts`：增加细粒度 NPC dynamic / knowledge / relationship / history mutation，移除 `replace_npc_state`。
+- `gameplay/rpg/entityWorld/entityMutation.ts`：Task 2 用过渡桥接 `sync_npc_legacy_memory` 替换 `replace_npc_state`（保持规则链可编译），随后增加细粒度 NPC dynamic / knowledge / relationship / history mutation，Task 5 拆除桥接。
 - `gameplay/rpg/dialogue/dialogueResolution.ts`、`ruleEngine/resolveByType.ts`、`propagateKnownFacts.ts`、`candidateEvents/compileCandidateEvent.ts`：改为规则信号与来源明确的知识写入。
 - `gameplay/rpg/ruleEngine/buildEncounter.ts` 与 `application/performBattleRound.ts`：同地点同伴读取统一 NPC 投影参战；胜利写 `fought_together`，失败/撤退随战前 store 回滚。
 - `application/focusNpcContext.ts`、`entityContextProjection.ts`、`sceneGenerationContext.ts` 与三个 narrative context renderer：只通过统一 NPC 投影构造 Prompt。
@@ -255,7 +261,7 @@ Expected: 当前分支为 `main`；Plan 2 为 `completed / merged`；旧 Plan 2 
     "npm test",
     "npm run test:foundation-journey",
     "npm run journey:foundation",
-    "npm test -- src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/investigationChoiceJourney.test.ts src/game/application/testing/mediumActJourney.test.ts",
+    "npm test -- src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/investigationChoiceJourney.test.ts src/game/application/testing/mediumActJourney.test.ts src/game/application/testing/storyDivergenceJourney.test.ts",
     "npm run build",
     "npm run phase:status"
   ]
@@ -337,6 +343,16 @@ git commit -m "feat(entity): define layered npc components"
 - Modify: `src/game/application/server/persistence/worldStatePersistenceValidation.test.ts`
 - Modify: `src/game/application/server/persistence/sqliteGameRepository.test.ts`
 - Modify: `src/game/domain/testing/worldStateFixture.testutil.ts`
+- Modify: `src/game/gameplay/rpg/entityWorld/entityMutation.ts`
+- Modify: `src/game/gameplay/rpg/entityWorld/entityMutation.test.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/resolveByType.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/propagateKnownFacts.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/propagateKnownFacts.test.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/index.ts`
+- Modify: `src/game/gameplay/rpg/ruleEngine/index.test.ts`
+- Modify: `src/game/gameplay/rpg/candidateEvents/compileCandidateEvent.ts`
+- Modify: `src/game/gameplay/rpg/candidateEvents/compileCandidateEvent.test.ts`
 
 - [ ] **Step 1: 写失败测试证明新 record 是唯一事实源**
 
@@ -344,22 +360,49 @@ git commit -m "feat(entity): define layered npc components"
 
 - [ ] **Step 2: 实现单向兼容策略**
 
-生产新 NPC 必须显式提供 anchors/typed goals；兼容 fixture 编译器可以使用固定 `legacy_import` 锚点与确定性 goal ID，且只用于一次构造。`projectEntityStore` 始终从新组件重建 `NpcEntry`；删除所有读取 `record.npcState.memory` 的 selector。
+Task 2 尚未扩展 opening / world delta 的 NPC 创建 schema，因此本任务允许**唯一临时创建桥**：现有生产创建路径和测试 compatibility fixture 都可从 legacy `NpcEntry` 确定性生成 `legacy_import` anchors、goal ID、initial knowledge，以及 affinity 等于 legacy compatibility 值、其余维度为 0 的 player edge，使切换 store v2 后游戏仍可创建和完整运行；不得从 AI prose 猜测缺失字段。Task 6 扩展创建 schema 后，生产 opening/world materialization 必须显式提供 anchors/typed goals，并删除生产路径的 `legacy_import` 回退；仅 `domain/testing/worldStateFixture.testutil.ts` 可继续为旧形状测试夹具使用它。`projectEntityStore` 始终从新组件重建 `NpcEntry`；删除所有读取 `record.npcState.memory` 的 selector。
 
-- [ ] **Step 3: 升版本并严格解析**
+- [ ] **Step 3: 桥接规则链，保持行为不变**
+
+移除 `replace_npc_state` 后 `resolveByType.npcStateAfter`、`propagateKnownFacts`、`compileCandidateEvent` 三处调用点必须仍可编译且行为逐条等价。做法：在 `entityMutation.ts` 增加过渡桥接 `sync_npc_legacy_memory`（payload 为 exact-key 的 `dynamicState + knowledge + relationships + history` 四组件）；在 `npcProjection.ts` 增加纯函数：
+
+```ts
+compileLegacyNpcSync(input: Readonly<{
+  before: NpcEntityRecord;
+  afterLegacy: NpcEntry;
+  actionId: string;
+  turnNumber: number;
+  addedKnowledge: readonly Readonly<{
+    factId: FactId;
+    mode: FactChangeSource;
+    sourceNpcId?: NpcId;
+  }>[];
+}>): Readonly<{
+  dynamicState: NpcDynamicStateComponent;
+  knowledge: NpcKnowledgeComponent;
+  relationships: NpcRelationshipComponent;
+  history: NpcHistoryComponent;
+}>
+```
+
+该函数从 `before` 保留非 legacy 可表达的字段，只应用可观察差量：affinity 差值只更新 player edge 的 affinity，新建边时其他维度为 0；已有 trust/fear/hostility、stage、commitments、evidence 和 origin 必须原样保留。新交互写 history（actionId 去重、上限 10）；`met/isCompanion/emotion` 写 dynamicState；legacy goals 未变化时保留原 typed goals，只有旧路径确实改变 goal descriptions 时才按 npcId + ordinal 确定性重建为 `legacy_import` goal。新增知识必须来自 `addedKnowledge`，不得仅比较 `knownFactIds` 后猜 source。
+
+`propagateKnownFacts` 在本步骤改为接收 `{ actionId, turnNumber }` 并把每条 `FactChangeSource` 组装为 `addedKnowledge`。`compileCandidateEvent` 当前由 `resolveTurn` 激活但自身没有 action context，因此同步把 deps 改为 `{ now, actionId, turnNumber }`，在 `ruleEngine/index.ts` 传入当前真实 actionId 与 story turn；测试显式提供固定 action ID。任何调用点缺少真实证据都必须编译失败或零写入，不得用 candidate ID/时间戳伪造。桥接是过渡写路径，不得新增第二个；行为回归用现有 `resolveByType/propagateKnownFacts/compileCandidateEvent/ruleEngine index` 测试证明逐条不变。
+
+- [ ] **Step 4: 升版本并严格解析**
 
 设置 `EntityStore.version=2`、`WorldState.version=4`；更新 active battle `preBattleSnapshot.entityStore` parser；所有新嵌套字段 exact-key 校验。v3/store v1、缺组件、额外 key、重复边/Fact、越界数值、坏 commitment/evidence 返回稳定 corrupt/unsupported 分类，不 throw 到基础设施层。
 
-- [ ] **Step 4: 保持战败回滚完整**
+- [ ] **Step 5: 保持战败回滚完整**
 
 证明战前 snapshot 包含全部 NPC 新组件；失败/撤退投影恢复后 identity、knowledge、relationships、history 与 dynamicState 均与战前 deep equal。
 
-- [ ] **Step 5: 运行并提交**
+- [ ] **Step 6: 运行并提交**
 
 ```bash
-npm test -- src/game/domain/entity src/game/domain/worldState.test.ts src/game/domain/worldStateValidation.test.ts src/game/application/server/persistence/worldStatePersistenceValidation.test.ts src/game/application/server/persistence/sqliteGameRepository.test.ts src/game/application/performBattleRound.test.ts
+npm test -- src/game/domain/entity src/game/domain/worldState.test.ts src/game/domain/worldStateValidation.test.ts src/game/application/server/persistence/worldStatePersistenceValidation.test.ts src/game/application/server/persistence/sqliteGameRepository.test.ts src/game/application/performBattleRound.test.ts src/game/gameplay/rpg/entityWorld/entityMutation.test.ts src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts src/game/gameplay/rpg/ruleEngine/propagateKnownFacts.test.ts src/game/gameplay/rpg/ruleEngine/index.test.ts src/game/gameplay/rpg/candidateEvents/compileCandidateEvent.test.ts
 npm run typecheck
-git add src/game/domain/entity src/game/domain/worldState.ts src/game/domain/worldState.test.ts src/game/domain/worldStateValidation.ts src/game/application/server/persistence src/game/domain/testing/worldStateFixture.testutil.ts src/game/application/performBattleRound.test.ts
+git add src/game/domain/entity src/game/domain/worldState.ts src/game/domain/worldState.test.ts src/game/domain/worldStateValidation.ts src/game/application/server/persistence src/game/domain/testing/worldStateFixture.testutil.ts src/game/application/performBattleRound.test.ts src/game/gameplay/rpg/entityWorld src/game/gameplay/rpg/ruleEngine/resolveByType.ts src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts src/game/gameplay/rpg/ruleEngine/propagateKnownFacts.ts src/game/gameplay/rpg/ruleEngine/propagateKnownFacts.test.ts src/game/gameplay/rpg/ruleEngine/index.ts src/game/gameplay/rpg/ruleEngine/index.test.ts src/game/gameplay/rpg/candidateEvents/compileCandidateEvent.ts src/game/gameplay/rpg/candidateEvents/compileCandidateEvent.test.ts
 git commit -m "refactor(entity): make layered npc state authoritative"
 ```
 
@@ -395,7 +438,7 @@ git commit -m "refactor(entity): make layered npc state authoritative"
 
 - [ ] **Step 4: 接入原子 EntityMutation**
 
-增加 `apply_relationship_signal`、`apply_relationship_commitment`；验证双方实体类型、self-edge、lifecycle、source 和 action ID。移除任何允许整块替换 relationships 的 mutation。
+增加 `apply_relationship_signal`、`apply_relationship_commitment`；验证双方实体类型、self-edge、lifecycle、source 和 action ID。`replace_npc_state` 已在 Task 2 移除；桥接 `sync_npc_legacy_memory` 内的 relationships 整体同步保留到 Task 5 拆除（它是本 Plan 唯一过渡写路径，不得新增第二个），从本任务起所有新增关系写入只允许走这两个细粒度 mutation。
 
 - [ ] **Step 5: 运行并提交**
 
@@ -432,11 +475,11 @@ git commit -m "feat(npc): add evidence bound relationship rules"
 
 - [ ] **Step 2: 给传播链补足真实证据输入**
 
-不要把 actionId 塞进每个 `FactChange` 重复存储；将 `propagateKnownFacts` 改为接收 `{ actionId, turnNumber }` 的规则上下文，并把现有 `FactChange.source/audience` 映射为 knowledge source。无 audience、未知 Fact/NPC 或非法 source 保持零写入。
+不要把 actionId 塞进每个 `FactChange` 重复存储；`propagateKnownFacts` 的 `{ actionId, turnNumber }` 规则上下文签名已在 Task 2 桥接时落地。本步骤负责 `npcKnowledge` 模块的 entry 语义：现有 `FactChange.source/audience` 完整映射为 knowledge source mode，无 audience、未知 Fact/NPC 或非法 source 保持零写入；桥接的知识编译改为复用本模块暴露的校验与构造函数。传播链从桥接改线为直接调用细粒度 mutation 属于 Task 5。
 
 - [ ] **Step 3: 增加细粒度知识 mutation**
 
-实现 `record_npc_knowledge` 与 `set_npc_knowledge_disclosure`，禁止整块替换 knowledge。mutation 原子验证 Fact Entity、source NPC 和 target NPC。
+实现 `record_npc_knowledge` 与 `set_npc_knowledge_disclosure`，新增 mutation 本身不得包含整块替换 knowledge 的种类（桥接内的整体知识同步保留到 Task 5 随传播链改线拆除）。mutation 原子验证 Fact Entity、source NPC 和 target NPC。
 
 - [ ] **Step 4: 实现 `projectNpcRuntimeProfile`**
 
@@ -479,19 +522,19 @@ git commit -m "feat(npc): track knowledge provenance and runtime projection"
 
 - [ ] **Step 1: 对话先输出定性信号再由规则更新**
 
-保留 `DialogueResolution.relationshipDelta` 作为兼容/叙事展示字段，但它必须等于关系引擎实际 affinity 差值，不能再由对话层自行计算写入。dialogue act → signal 映射固定；history、emotion、knowledge disclosure、player edge 在一次 entity mutation batch 中原子提交。
+保留 `DialogueResolution.relationshipDelta` 作为兼容/叙事展示字段，但它必须等于关系引擎实际 affinity 差值，不能再由对话层自行计算写入。dialogue act → signal 映射固定；history、emotion、knowledge disclosure、player edge 在一次 entity mutation batch 中原子提交。`give_item` 与本步骤一并改线（它与对话共用 `npcStateAfter` 桥接）：成功时对接收 NPC 写一条 history interaction 与 `gave_item` 关系信号，不再经 `updateNpcMemory`；debt 承诺语义与零写入守卫见 Task 7。
 
 - [ ] **Step 2: 事实传播写来源**
 
-从 `resolveTurn` 把本轮 actionId/turnNumber 传入；调查、player_told、npc_revealed、public_broadcast、faction_shared 各自保留 source mode。重复传播不得覆盖更早来源或追加重复 entry。
+事实传播从桥接整体同步改线为逐条调用 `record_npc_knowledge`（规则上下文 `{ actionId, turnNumber }` 自 Task 2 起已由 `resolveTurn` 传入）；现有 `FactChangeSource` 五个取值 `scene_witness`（在场可见，覆盖调查/目击）、`player_told`、`npc_revealed`、`public_broadcast`、`faction_shared` 各自保留 source mode。重复传播不得覆盖更早来源或追加重复 entry。
 
-- [ ] **Step 3: 收紧 `npc_changes_stance`**
+- [ ] **Step 3: 移除无真实因果证据的 `npc_changes_stance` 候选效果**
 
-把任意 `stance: string` 改为封闭定性 signal（例如 `became_wary/became_supportive/felt_threatened`）和可选 target NPC；parser exact keys、审批 target 存在且在 allowlist。编译器只调用 relationship/dynamic mutation，不再以 `npc_met` 事件伪装态度改变。
+当前 `candidateEventPool` 的候选可能跨回合保存，`npc_changes_stance` 只有任意 `stance: string`，既不绑定产生候选的 action，也没有 Plan 4 的稳定 source event；在激活回合套用当前 actionId 会制造错误因果证据。Task 5 从 `EventCandidateKind`、`ProposedEffect`、parser、审批和编译器中删除 `npc_changes_stance`，已有旧候选由 v4 持久化 parser 拒绝。对话、赠物、承诺和共同战斗的关系变化全部由本轮已裁决 Action 直接产生封闭 `RelationshipSignal`；NPC-to-NPC 初始关系由 Task 6 的受控 seed 建立。后续跨 NPC 剧情事件导致的动态关系变化，等 Plan 4 提供稳定 eventId 与参与者后再接入，不得在本 Plan 伪造。
 
-- [ ] **Step 4: 删除旧整块 memory 写路径**
+- [ ] **Step 4: 删除旧整块 memory 写路径与过渡桥接**
 
-全仓 `rg "replace_npc_state|updateNpcMemory|npcState\.memory" src` 最终只允许历史文档/迁移测试零命中生产代码。`ProposedEntityCommand` 不新增人格、知识或关系直接写权限。
+对话、事实传播与候选事件改线完成后，从 `entityMutation.ts` 移除 `sync_npc_legacy_memory` 及 `compileLegacyNpcSync`。全仓 `rg "replace_npc_state|sync_npc_legacy_memory|updateNpcMemory|npcState\.memory" src` 最终只允许历史文档/迁移测试命中，生产代码零命中。`ProposedEntityCommand` 不新增人格、知识或关系直接写权限。
 
 - [ ] **Step 5: 运行并提交**
 
@@ -514,6 +557,10 @@ git commit -m "refactor(npc): route dialogue facts and stance through components
 
 - Modify: `src/game/domain/openingGenerationCandidate.ts`
 - Modify: `src/game/domain/openingGenerationCandidate.test.ts`
+- Modify: `src/game/domain/entity/entityProjection.ts`
+- Modify: `src/game/domain/entity/entityProjection.test.ts`
+- Modify: `src/game/domain/worldState.ts`
+- Modify: `src/game/domain/worldState.test.ts`
 - Modify: `src/game/gameplay/rpg/openingGeneration/validateOpeningGenerationCandidate.ts`
 - Modify: `src/game/gameplay/rpg/openingGeneration/validateOpeningGenerationCandidate.test.ts`
 - Modify: `src/game/gameplay/rpg/openingGeneration/compileOpeningGenerationCandidate.ts`
@@ -525,6 +572,8 @@ git commit -m "refactor(npc): route dialogue facts and stance through components
 - Modify: `src/game/gameplay/rpg/worldEvolution/materializeWorldDelta.test.ts`
 - Modify: `src/game/application/server/ai/openingGenerationSource.ts`
 - Modify: `src/game/application/server/ai/openingGenerationSource.test.ts`
+- Modify: `src/game/application/createGame.ts`
+- Modify: `src/game/application/createGame.test.ts`
 - Modify: `src/game/application/server/ai/narrativeContext/narrativeBundleContext.ts`
 - Modify: `src/game/application/server/ai/liveNarrativeBundleSource.test.ts`
 - Modify: `src/game/application/testing/providerTriggerMatrix.test.ts`
@@ -535,22 +584,22 @@ opening NPC 与 `WorldDeltaProposal.newNpc` 增加 `anchors` 和 typed `goals`�
 
 - [ ] **Step 2: 审批创建材料**
 
-限制文本长度、数组数量、重复值和 goal 数；target 必须出现在该次 Entity context 的允许 NPC 集合且不能为新 NPC 自身。拒绝数值 delta/stage/evidence/actionId 和未知 key。
+限制文本长度、数组数量、重复值和 goal 数；seed target 必须出现在该次 `entityContextProjection` 实体规则闭包（mandatory + 直接引用扩展 + 当前地点 optional 集合）内的既有 active NPC 中，且不能为新 NPC 自身。拒绝数值 delta/stage/evidence/actionId 和未知 key。seed 的 bounded reason 只用于提案诊断/审计，不进入关系边；持久化 `RelationshipSource.reasonKey` 由服务器按 stance 映射固定 key，不能把 AI 解释提升为关系事实。
 
 - [ ] **Step 3: 服务端铸造 ID 并物化**
 
-goalId、commitmentId 与初始边来源均由服务器生成。seed 映射保守维度和最高 cooperative/wary stage；只创建 `newNpc → targetNpc`，不自动创建反向边。
+goalId、commitmentId 与初始边来源均由服务器生成。seed 映射保守维度和最高 cooperative/wary stage；只创建 `newNpc → targetNpc`，不自动创建反向边。`compileEntityStoreFromCompatibilityProjection` 对新 NPC 增加显式 `npcCreationComponentsById` 输入：previous store 已有 NPC 继续保留原组件，新 NPC 必须从该 map 取得已审批组件，否则稳定失败；不得在 domain 生产 compiler 内保留隐式 `legacy_import` fallback。测试 helper 自己调用 test-only legacy adapter 组装该 map，生产 opening compiler 与 world materializer 则分别从已验证 candidate / approved delta 组装。
 
 - [ ] **Step 4: 更新确定性 fixture/source**
 
-每个 stock NPC 提供明确且不矛盾的 anchors/goals；动态 materialization journey 至少创建一条 NPC-to-NPC 边。调用矩阵仍是 initialization 一次、每个需要的 narrative bundle 一次，无额外 persona/relationship 调用。
+确定性 stock NPC 在各题材 `createGame.ts` 的 `createFixtureOpeningCandidateSource` contacts 池中，每个 stock NPC 提供明确且不矛盾的 anchors/goals；`openingGenerationSource.ts` 是 live AI 源，同步扩展其 Prompt 契约。`repairOpeningGenerationCandidate` 只能机械归一已有数组/字符串 shape，不能为缺失的 selfConcept/values/speechStyle/boundaries/taboos 创作默认人格；缺少或语义无效的 anchors/goals 必须走现有 content retry。Task 6 删除 Task 2 在生产 opening/world materialization 上的 `legacy_import` 创建回退，并加扫描/测试证明只剩测试 fixture helper 可用。动态 materialization journey 至少创建一条 NPC-to-NPC 边。调用矩阵仍是 initialization 一次、每个需要的 narrative bundle 一次，无额外 persona/relationship 调用。
 
 - [ ] **Step 5: 运行并提交**
 
 ```bash
-npm test -- src/game/domain/openingGenerationCandidate.test.ts src/game/gameplay/rpg/openingGeneration src/game/gameplay/rpg/worldEvolution src/game/application/server/ai/openingGenerationSource.test.ts src/game/application/server/ai/liveNarrativeBundleSource.test.ts src/game/application/testing/providerTriggerMatrix.test.ts
+npm test -- src/game/domain/openingGenerationCandidate.test.ts src/game/domain/entity/entityProjection.test.ts src/game/domain/worldState.test.ts src/game/gameplay/rpg/openingGeneration src/game/gameplay/rpg/worldEvolution src/game/application/server/ai/openingGenerationSource.test.ts src/game/application/server/ai/liveNarrativeBundleSource.test.ts src/game/application/createGame.test.ts src/game/application/testing/providerTriggerMatrix.test.ts
 npm run typecheck
-git add src/game/domain src/game/gameplay/rpg/openingGeneration src/game/gameplay/rpg/worldEvolution src/game/application/server/ai src/game/application/testing/providerTriggerMatrix.test.ts
+git add src/game/domain src/game/gameplay/rpg/openingGeneration src/game/gameplay/rpg/worldEvolution src/game/application/server/ai src/game/application/createGame.ts src/game/application/createGame.test.ts src/game/application/testing/providerTriggerMatrix.test.ts
 git commit -m "feat(npc): materialize anchored npcs and directed seeds"
 ```
 
@@ -578,7 +627,7 @@ git commit -m "feat(npc): materialize anchored npcs and directed seeds"
 
 - [ ] **Step 1: 物品行为只对明确目标产生信号**
 
-成功 `give_item` 对接收 NPC 写 `gave_item`；需要回报的物品类型可按固定规则开 debt，普通物品不自动产生承诺。失败、tampered、stale、非 NPC owner 零关系写入。
+`give_item` 的 history 与 `gave_item` 信号已在 Task 5 接入；本步骤补承诺语义：需要回报的物品类型可按固定规则开 debt，普通物品不自动产生承诺。失败、tampered、stale、非 NPC owner 零关系写入。
 
 - [ ] **Step 2: 任务不凭空猜关系**
 
@@ -638,7 +687,7 @@ git commit -m "feat(npc): apply continuity rules across items quests and battle"
 
 - [ ] **Step 1: 建立单一 `NpcSpeechAuthority`**
 
-输入 world/store、speaker NPC、scene-visible Fact IDs 和当前 target；输出 allowedFactIds、withheldFactIds、allowedInteractionActionIds、identity anchors、关系档位/趋势/承诺与最多三条 evidence key。所有 renderer 和 approver 使用同一对象，禁止各自重算 allowlist。
+输入 world/store、speaker NPC、scene-visible Fact IDs 和当前 target；输出 allowedFactIds、withheldFactIds、allowedInteractionActionIds、identity anchors、关系档位/趋势/承诺与最多三条 evidence key。所有 renderer 和 approver 使用同一对象，禁止各自重算 allowlist。开局目前在 `createGame.compileOpeningNarrative` 中先审批 narrative、后编译 WorldState，不能直接调用要求 store 的 authority；本任务调整顺序为：先 parse/validate opening candidate → 用同一 candidate 编译只存在内存中的 preview WorldState/store → 基于 preview 调用 `NpcSpeechAuthority` 审批 opening currentScene → novelty 接受后再持久化同一 preview。不得另写一套 `publicFacts` opening allowlist，也不得增加 provider 调用。
 
 - [ ] **Step 2: Prompt 使用人格与关系语义，不暴露隐私/裸数值**
 
@@ -646,11 +695,11 @@ git commit -m "feat(npc): apply continuity rules across items quests and battle"
 
 - [ ] **Step 3: 补齐持久化引用字段**
 
-`NpcDialogueLine`、Narrative Bundle current/continuation line、prepared continuation 和必要的 ambient NPC line 都保留 `usedFactIds + usedInteractionActionIds`；opening 首句 interaction IDs 固定为空。解析器 exact keys，旧缺字段不在 v4 接受。
+现有台词类型与缺口（已核对代码）：提案侧 `ScenePerformanceNpcLine`（`domain/narrativeBundle.ts`）已有 `usedFactIds + usedInteractionActionIds`；零回合闲聊 `ScenePerformanceNpcDialogue` 只有 npcId/text；持久化侧 `NarrativeNpcLineState`（`domain/narrative.ts`）只有 `usedFactIds`；多 NPC 对白 `NpcDialogueInScene` 只有 speechPages。本步骤给 `NarrativeNpcLineState` 补 `usedInteractionActionIds`，给 `NpcDialogueInScene` 与 `ScenePerformanceNpcDialogue` 补 `usedFactIds + usedInteractionActionIds`（闲聊无引用时为只读空数组），Narrative Bundle current/continuation line 与 prepared continuation 同步保留两字段；解析器 exact keys，旧缺字段不在 v4 接受。opening 首句 interaction IDs 固定为空。
 
 - [ ] **Step 4: 四条审批路径统一验证**
 
-`createGame`、`approveNarrativeBundle`（current + 每个 continuation）、`approvePreparedContinuation`、`approveAndWriteScene` 都调用同一 authority。拒绝不存在/属于其他 NPC/未披露的 Fact、其他 NPC actionId、speaker 不在场和引用数组重复；拒绝整包/场景，绝不静默删引用后写回。
+现状校验强度不一致（已核对代码）：`createGame` 只校验开局首句 `usedFactIds ⊆ publicFacts`；`approveNarrativeBundle` 只校验说话人存在，引用仅透传；`approvePreparedContinuation` 校验 `usedFactIds ⊆ visibleFactIds` 但无 interaction 校验；`approveAndWriteScene` 已有 `npc_uses_forbidden_fact` / `wrong_npc_interaction` 两类校验。本步骤让四条路径都调用同一 authority 补齐到同一强度。拒绝不存在/属于其他 NPC/未披露的 Fact、其他 NPC actionId、speaker 不在场和引用数组重复；拒绝整包/场景，绝不静默删引用后写回。
 
 - [ ] **Step 5: 证明 context 预算和调用数不回退**
 
@@ -681,14 +730,15 @@ git commit -m "feat(narrative): ground npc speech in one authority projection"
 - Modify: `src/game/application/testing/investigationChoiceJourney.test.ts`
 - Modify: `src/game/application/testing/dynamicMaterializationJourney.test.ts`
 - Modify: `src/game/application/testing/mediumActJourney.test.ts`
+- Modify: `src/game/application/testing/storyDivergenceJourney.test.ts`
 
 - [ ] **Step 1: 构造至少 18 成功回合的离线 Journey**
 
-覆盖：开场 NPC anchors；支持与威胁的有限关系变化；同一 action 重放不重复；调查事实只进入显式 audience；私密事实不能由另一 NPC 引用；动态创建第二 NPC 并建立一条 directed seed；赠物产生规则信号；共同战斗胜利；至少三次 SQLite repository reload；最终完成当前中篇结局。
+注意：现有套件没有中篇结局完成证明——`mediumActJourney.test.ts` 目前只是 19 行冒烟测试（五幕开局 + 首个决定进入 `provider_pending`），因此“完成中篇结局”是本 Journey 新增的覆盖，不能假设已有测试背书。覆盖：开场 NPC anchors；支持与威胁的有限关系变化；同一 action 重放不重复；调查事实只进入显式 audience；私密事实不能由另一 NPC 引用；动态创建第二 NPC 并建立一条 directed seed；赠物产生规则信号；共同战斗胜利；至少三次 SQLite repository reload；最终把五幕中篇推进到结局解析。直接构造旧 `npc.memory`/`relationship.affinity` fixture 的 journey（`narrativeGroundingJourney` 的 `runWithAffinity`、`investigationChoiceJourney` 的 memory fixture）同步改为向统一关系组件/知识组件播种。
 
 - [ ] **Step 2: 明确断言不漂移与不跳级**
 
-每次 reload 后 opening NPC anchors deep equal；普通对话不能一次进入 trusted/bonded/hostile；A→B seed 不生成 B→A；每个维度 cap/stage/evidence/source 可追踪；兼容 affinity 与 player edge 一致。
+每次 reload 后 opening NPC anchors deep equal；普通对话不能一次进入 trusted/bonded/hostile；A→B seed 不生成 B→A；每个维度 cap/stage/evidence/source 可追踪；兼容 affinity 与 player edge 一致。`storyDivergenceJourney` 的现有结局要求（亲和度 ≥10 命中信任、≤9 命中质疑）属于玩家规则回归，不能为了让测试通过而改 stock threshold；relationship signal 的 affinity 固定表必须在限速范围内保持支持/质疑分支经真实多回合行动仍可达，必要时增加 journey 的合法对话回合，不修改结局条件。
 
 - [ ] **Step 3: 明确断言知识与台词引用**
 
@@ -701,7 +751,7 @@ NPC 台词 used Fact/Interaction IDs 全部属于其 speech authority；另一 N
 - [ ] **Step 5: 运行并提交**
 
 ```bash
-npm test -- src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/investigationChoiceJourney.test.ts src/game/application/testing/dynamicMaterializationJourney.test.ts src/game/application/testing/mediumActJourney.test.ts
+npm test -- src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/investigationChoiceJourney.test.ts src/game/application/testing/dynamicMaterializationJourney.test.ts src/game/application/testing/mediumActJourney.test.ts src/game/application/testing/storyDivergenceJourney.test.ts
 git add src/game/application/testing
 git commit -m "test(npc): prove continuity across long gameplay systems"
 ```
@@ -736,7 +786,7 @@ git commit -m "test(npc): prove continuity across long gameplay systems"
 - [ ] **Step 2: 清理旧生产写路径与过时注释**
 
 ```bash
-rg -n "replace_npc_state|updateNpcMemory|npcState\.memory" src
+rg -n "replace_npc_state|sync_npc_legacy_memory|updateNpcMemory|npcState\.memory" src
 rg -n "WorldState\.version=3|EntityStore\.version=1|Plan 3 才" src docs/agent
 ```
 
@@ -764,7 +814,7 @@ npm run test:app
 npm test
 npm run test:foundation-journey
 npm run journey:foundation
-npm test -- src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/investigationChoiceJourney.test.ts src/game/application/testing/mediumActJourney.test.ts
+npm test -- src/game/application/testing/npcContinuityJourney.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts src/game/application/testing/investigationChoiceJourney.test.ts src/game/application/testing/mediumActJourney.test.ts src/game/application/testing/storyDivergenceJourney.test.ts
 npm run build
 npm run phase:status
 ```
