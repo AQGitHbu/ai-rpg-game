@@ -39,6 +39,5 @@ export {
   type RelationshipSignalInput,
   type RelationshipSignalRule,
   type RelationshipSignalTableLock,
-  type RelationshipStageTableLock,
   type RelationshipTargetId,
 } from "./relationshipSignalPolicy";

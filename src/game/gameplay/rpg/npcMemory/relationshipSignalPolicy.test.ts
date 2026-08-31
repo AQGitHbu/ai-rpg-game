@@ -20,6 +20,7 @@ import { PLAYER_ENTITY_ID, asNpcId, type NpcId, type PlayerEntityId } from "@/ga
 import {
   RELATIONSHIP_SIGNAL_CAPS,
   RELATIONSHIP_SIGNAL_POLICY,
+  RELATIONSHIP_STAGE_GATES,
   RELATIONSHIP_STAGE_TRANSITIONS,
   applyRelationshipCommitment,
   applyRelationshipSignal,
@@ -160,6 +161,33 @@ function dimsOf(overrides: Partial<RelationshipDimensions> = {}): RelationshipDi
 
 function totalMagnitude(dimensions: RelationshipDimensions): number {
   return RELATIONSHIP_DIMENSION_KEYS.reduce((sum, key) => sum + Math.abs(dimensions[key]), 0);
+}
+
+/** 规则层的输入是未受信字符串：任何挂在 Object.prototype 上的键名都必须走「未知成员」分支。 */
+const PROTOTYPE_KEYS: readonly string[] = [
+  "toString", "constructor", "hasOwnProperty", "valueOf", "isPrototypeOf", "__proto__",
+];
+
+/** 尝试改写的结果：true 表示运行时守门生效（写入抛错），false 表示改写成功了。 */
+function writeRejected(write: () => void): boolean {
+  try {
+    write();
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/** 手工伪造一条证据：signal 字段故意放原型链键名，模拟绕过 validator 的持久化数据。 */
+function bogusEvidence(signal: string, actionId: string): RelationshipEvidence {
+  return {
+    evidenceId: `ev:${actionId}:bogus:${signal}`,
+    actionId,
+    turnNumber: 1,
+    signal: signal as RelationshipSignal,
+    severity: "major",
+    summaryKey: "relationship.signal.bogus",
+  };
 }
 
 function accepted(result: ApplyRelationshipSignalResult, label: string): DirectedRelationshipEdge {
@@ -533,6 +561,68 @@ describe("方向性与排序", () => {
   });
 });
 
+describe("闭集守门：原型链键不得穿透任何表查找", () => {
+  it("signal 取 Object.prototype 键名时返回稳定 invalid_signal，而不是抛 TypeError 或静默写入", () => {
+    for (const key of PROTOTYPE_KEYS) {
+      const result = applyRelationshipSignal({
+        edge: edgeOf(), fromNpcId: NPC_A, targetId: NPC_B, signal: key as RelationshipSignal,
+        actionId: "act_proto", turnNumber: 1,
+      });
+      expect(result.ok, key).toBe(false);
+      if (result.ok) continue;
+      expect(result.code, key).toBe("invalid_signal");
+    }
+  });
+
+  it("证据条目携带原型链 signal 时，同行动累计 delta 既不抛错也不变 NaN", () => {
+    const polluted = edgeOf({
+      stage: "acquainted",
+      evidence: [bogusEvidence("toString", "act_polluted"), bogusEvidence("constructor", "act_polluted")],
+    });
+    const edge = applySignal({ signal: "supported", actionId: "act_polluted", turnNumber: 2, edge: polluted });
+    expect(edge.dimensions).toEqual(dimsOf({ affinity: 3, trust: 2 }));
+    for (const key of RELATIONSHIP_DIMENSION_KEYS) {
+      expect(Number.isFinite(edge.dimensions[key]), `${key} 必须是有限数`).toBe(true);
+    }
+    // 这条边本身就带非法 signal：它只能来自绕过 validator 的持久化记录（validator 确实会拒绝），
+    // 规则层的义务是不抛错、不把累计值变成 NaN，而不是替它清洗数据。
+    expect(validateNpcRelationships({ outgoing: [edge] }).length).toBeGreaterThan(0);
+  });
+
+  it("stage 取原型链键名时保持原 stage、迁移判定为 false", () => {
+    for (const key of PROTOTYPE_KEYS) {
+      expect(
+        resolveRelationshipStage({ currentStage: key as RelationshipStage, candidate: "hostile" }), key,
+      ).toBe(key);
+      expect(isAllowedRelationshipStageTransition(key as RelationshipStage, "wary"), key).toBe(false);
+      expect(isAllowedRelationshipStageTransition("wary", key as RelationshipStage), key).toBe(false);
+    }
+  });
+
+  it("输入同一性：拒绝时原样回传入参组件，成功时不外借策略表的嵌套行对象", () => {
+    const relationships: NpcRelationshipComponent = { outgoing: [edgeOf()] };
+    const keysBefore = Object.keys(RELATIONSHIP_SIGNAL_POLICY);
+    const rejected = applyRelationshipSignalToComponent({
+      relationships, fromNpcId: NPC_A, targetId: NPC_B, signal: "toString" as RelationshipSignal,
+      actionId: "act_identity", turnNumber: 1,
+    });
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok) return;
+    expect(rejected.code).toBe("invalid_signal");
+    expect(rejected.relationships).toBe(relationships);
+    expect(rejected.relationships.outgoing).toBe(relationships.outgoing);
+    expect(Object.keys(RELATIONSHIP_SIGNAL_POLICY)).toEqual(keysBefore);
+    expect(Object.keys(RELATIONSHIP_SIGNAL_POLICY)).not.toContain("toString");
+    expect(Object.prototype.hasOwnProperty.call(RELATIONSHIP_SIGNAL_POLICY, "toString")).toBe(false);
+
+    const applied = applySignal({ signal: "supported", actionId: "act_identity_2" });
+    const written = applied.evidence[0];
+    expect(written?.summaryKey).toBe(RELATIONSHIP_SIGNAL_POLICY.supported.summaryKey);
+    expect(written).not.toBe(RELATIONSHIP_SIGNAL_POLICY.supported);
+    expect(applied.dimensions).not.toBe(RELATIONSHIP_SIGNAL_POLICY.supported.dimensions);
+  });
+});
+
 describe("证据上限 12", () => {
   function edgeWithEvidence(count: number): DirectedRelationshipEdge {
     const evidence = RELATIONSHIP_SIGNALS.map((signal, index) =>
@@ -627,6 +717,89 @@ describe("stage 候选由阈值与累计证据共同裁决", () => {
       evidence: positive(["supported", "offered_help"], "act_mix2"),
     })).toBe("wary");
   });
+
+  it("wary 压过 bonded：reviewer 反例必须判为 wary", () => {
+    const bondedEvidence = positive(["supported", "offered_help", "fought_together"], "act_bw");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 60, trust: 70, fear: 45, hostility: 30 }),
+      evidence: bondedEvidence,
+    })).toBe("wary");
+  });
+
+  it("wary 与 bonded 直接对撞：三条 wary 触发条件各自都压过 bonded", () => {
+    const bondedEvidence = positive(["supported", "offered_help", "kept_promise"], "act_bw2");
+    const bondedOnly = dimsOf({ affinity: 60, trust: 70 });
+    expect(relationshipStageCandidate({ dimensions: bondedOnly, evidence: bondedEvidence })).toBe("bonded");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 60, trust: 70, fear: 40 }), evidence: bondedEvidence,
+    })).toBe("wary");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 60, trust: 70, hostility: 25 }), evidence: bondedEvidence,
+    })).toBe("wary");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: -20, trust: 80 }), evidence: bondedEvidence,
+    })).toBe("wary");
+  });
+
+  it("降低信任不是制造 bonded 的开关：同一恐惧峰值下 70 与 60 都必须是 wary", () => {
+    const bondedEvidence = positive(["supported", "offered_help", "fought_together"], "act_mono");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 60, trust: 60, fear: 45, hostility: 30 }),
+      evidence: bondedEvidence,
+    })).toBe("wary");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 60, trust: 70, fear: 45, hostility: 30 }),
+      evidence: bondedEvidence,
+    })).toBe("wary");
+  });
+
+  it("裁决顺序逐档相邻：wary 阈值之下仍是 bonded，bonded 阈值之下仍是 trusted", () => {
+    const bondedEvidence = positive(["supported", "offered_help", "fought_together"], "act_order");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 60, trust: 70, fear: 39, hostility: 24 }), evidence: bondedEvidence,
+    })).toBe("bonded");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 60, trust: 70, hostility: 59 }), evidence: bondedEvidence,
+    })).toBe("wary");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 60, trust: 70, hostility: 60 }), evidence: bondedEvidence,
+    })).toBe("hostile");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 60, trust: 69 }), evidence: bondedEvidence,
+    })).toBe("trusted");
+  });
+
+  it("trusted 的 trust/affinity 门是闭区间下界：44 与 34 都差一档", () => {
+    const twoPositive = positive(["supported", "offered_help"], "act_tb");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 40, trust: 45 }), evidence: twoPositive,
+    })).toBe("trusted");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 40, trust: 44 }), evidence: twoPositive,
+    })).toBe("cooperative");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 35, trust: 50 }), evidence: twoPositive,
+    })).toBe("trusted");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 34, trust: 50 }), evidence: twoPositive,
+    })).toBe("cooperative");
+  });
+
+  it("bonded 的 trust/affinity 门是闭区间下界：69 与 59 都跌回 trusted", () => {
+    const threeWithMajor = positive(["supported", "offered_help", "kept_promise"], "act_bb");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 70, trust: 70 }), evidence: threeWithMajor,
+    })).toBe("bonded");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 70, trust: 69 }), evidence: threeWithMajor,
+    })).toBe("trusted");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 60, trust: 80 }), evidence: threeWithMajor,
+    })).toBe("bonded");
+    expect(relationshipStageCandidate({
+      dimensions: dimsOf({ affinity: 59, trust: 80 }), evidence: threeWithMajor,
+    })).toBe("trusted");
+  });
 });
 
 describe("允许转换图与速度", () => {
@@ -635,6 +808,13 @@ describe("允许转换图与速度", () => {
     for (const stage of RELATIONSHIP_STAGES) {
       expect([...RELATIONSHIP_STAGE_TRANSITIONS[stage]].sort(), stage)
         .toEqual([...(SPEC_ADJACENCY.get(stage) ?? [])].sort());
+    }
+  });
+
+  it("邻居数组严格按 RELATIONSHIP_STAGES 排序：BFS 的并列裁决因此确定", () => {
+    for (const stage of RELATIONSHIP_STAGES) {
+      const expectedOrdered = RELATIONSHIP_STAGES.filter((other) => other !== stage && SPEC_ALLOWED.has(pairKey(stage, other)));
+      expect([...RELATIONSHIP_STAGE_TRANSITIONS[stage]], `${stage} 邻居顺序`).toEqual(expectedOrdered);
     }
   });
 
@@ -843,7 +1023,7 @@ describe("commitment 操作", () => {
     expectValidEdge(broken, "broken promise");
   });
 
-  it("applyRelationshipCommitment 的四状态操作各自命中计划允许的迁移", () => {
+  it("applyRelationshipCommitment 对 debt 的三个结案操作各自命中计划允许的迁移（release 见下一用例）", () => {
     const debt = openDebtEdge();
     const debtId = debt.commitments[0]?.commitmentId ?? "";
     const cases: readonly (readonly [
@@ -1010,5 +1190,45 @@ describe("模块 facade 暴露同一实现", () => {
     const facade = await import("./index");
     expect(facade.applyRelationshipSignal).toBe(applyRelationshipSignal);
     expect(facade.RELATIONSHIP_SIGNAL_POLICY).toBe(RELATIONSHIP_SIGNAL_POLICY);
+  });
+});
+
+// 放在文件最后：下面的改写尝试若失败（未冻结），会污染同一模块实例的其它用例。
+describe("导出的规则表深冻结", () => {
+  it("嵌套 dimensions / commitment 行同样不可改写，规则行为不受改写尝试影响", () => {
+    const supported = RELATIONSHIP_SIGNAL_POLICY.supported;
+    const gaveItem = RELATIONSHIP_SIGNAL_POLICY.gave_item;
+    expect(Object.isFrozen(supported), "行本身").toBe(true);
+    expect(Object.isFrozen(supported.dimensions), "嵌套 dimensions").toBe(true);
+    expect(Object.isFrozen(gaveItem.commitment), "嵌套 commitment 规则").toBe(true);
+    expect(Object.isFrozen(RELATIONSHIP_SIGNAL_CAPS.normal)).toBe(true);
+    expect(Object.isFrozen(RELATIONSHIP_STAGE_GATES.bonded)).toBe(true);
+
+    expect(writeRejected(() => {
+      (supported.dimensions as { affinity: number }).affinity = 99;
+    }), "改写 dimensions.affinity").toBe(true);
+    expect(writeRejected(() => {
+      (supported as { summaryKey: string }).summaryKey = "hacked";
+    }), "改写 summaryKey").toBe(true);
+    expect(writeRejected(() => {
+      (gaveItem.commitment as { openKey: string }).openKey = "hacked";
+    }), "改写 commitment 规则").toBe(true);
+    expect(writeRejected(() => {
+      (RELATIONSHIP_SIGNAL_CAPS.normal as { singleDimension: number }).singleDimension = 500;
+    }), "改写 caps 行").toBe(true);
+    expect(writeRejected(() => {
+      (RELATIONSHIP_STAGE_GATES.bonded as { trust: number }).trust = 0;
+    }), "改写 stage 门行").toBe(true);
+
+    expect(RELATIONSHIP_SIGNAL_CAPS.normal.singleDimension).toBe(5);
+    expect(RELATIONSHIP_STAGE_GATES.bonded.trust).toBe(70);
+    const edge = applySignal({ signal: "supported", actionId: "act_after_freeze" });
+    expect(edge.dimensions).toEqual(dimsOf({ affinity: 3, trust: 2 }));
+    const debt = applySignal({ signal: "gave_item", actionId: "act_after_freeze_debt" });
+    const openedDebt = debt.commitments[0];
+    expect(openedDebt?.commitmentId).toContain("gave_item");
+    expect(openedDebt?.kind).toBe("debt");
+    if (openedDebt?.kind !== "debt") return;
+    expect(openedDebt.direction).toBe("source_owes_target");
   });
 });
