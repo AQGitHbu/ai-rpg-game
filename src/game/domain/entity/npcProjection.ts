@@ -180,6 +180,10 @@ export function normalizeLegacyNpcEntry(entry: NpcEntry): NpcEntry {
 // legacy → 分层组件
 // ---------------------------------------------------------------------------
 
+// Task 4A：以下是 knowledge entry 语义的**过渡拷贝**。权威实现（含 mode/certainty/
+// disclosure 闭集判定与 audience 映射）在 gameplay 的 npcKnowledge 模块，domain 不得
+// import gameplay，故本桥暂时保留自己的一份。它随过渡桥一起在 **Task 5**（传播链改线 +
+// 拆除 compileLegacyNpcSync）删除，不会在 Task 4B 存活下来成为第二事实来源。
 function knowledgeSource(input: Readonly<{
   factId: FactId;
   npcId: string;

@@ -43,3 +43,37 @@ export {
   type RelationshipSignalTableLock,
   type RelationshipTargetId,
 } from "./relationshipSignalPolicy";
+// Task 4A：知识 entry 语义。写入入口一律要求 `references`（canonical Fact / NPC 的
+// ID 集合），因此不存在「调用方跳过查表就能写知识」的裸函数面：
+// `writeNpcKnowledge` / `setNpcKnowledgeDisclosure` 自己按 factId 定位既有条目。
+export {
+  KNOWLEDGE_DISCLOSURE_VISIBILITY,
+  KNOWLEDGE_VISIBILITIES,
+  createNpcKnowledgeEntry,
+  createNpcKnowledgeSource,
+  findKnowledgeEntry,
+  knowledgeVisibilityOf,
+  knowledgeWritesFromFactChange,
+  partitionKnowledgeByVisibility,
+  setNpcKnowledgeDisclosure,
+  writeNpcKnowledge,
+  type CreateNpcKnowledgeEntryInput,
+  type CreateNpcKnowledgeEntryResult,
+  type CreateNpcKnowledgeSourceResult,
+  type FactChangeKnowledgeResult,
+  type FactChangeKnowledgeSkipped,
+  type FactChangeKnowledgeWrite,
+  type NpcKnowledgeBroadcastRequest,
+  type NpcKnowledgeErrorCode,
+  type NpcKnowledgeCertaintyRankLock,
+  type NpcKnowledgeDisclosureVisibilityLock,
+  type NpcKnowledgeReferences,
+  type NpcKnowledgeSourceInput,
+  type NpcKnowledgeSourceNpcPolicyLock,
+  type NpcKnowledgeVisibility,
+  type NpcKnowledgeVisibilityPartitions,
+  type SetNpcKnowledgeDisclosureInput,
+  type SetNpcKnowledgeDisclosureResult,
+  type WriteNpcKnowledgeInput,
+  type WriteNpcKnowledgeResult,
+} from "./npcKnowledge";
