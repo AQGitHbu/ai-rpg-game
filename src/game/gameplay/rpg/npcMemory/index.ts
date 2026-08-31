@@ -80,15 +80,29 @@ export {
 // Task 4C：NPC 运行时投影的**唯一读取面**。对话、调查、赠物、明确 NPC 任务与共同战斗
 // （Task 5 / 7 / 8）一律读 `projectNpcRuntimeProfile`，不得各自再拼一份 NPC 视图。
 // 披露→可见性的词汇仍归 npcKnowledge 所有（上面逐字重导出），本模块只 import 不复抄。
+// `NpcRuntimeProfile<M>` 按 `mode` 分臂：累计数值关系权威（边 dimensions/evidence/commitments
+// 与交互 relationshipDelta）只在 `M = "rule"` 那一臂，prompt 臂在类型上就读不到。
+// 读卡片时注意：`NpcProfileFactCard.text` **缺省有两件不同的意思**，判别式只有 `visibility`——
+// `rule_required` 且无正文是「本视图不许说」（模式授权），`shareable` 且无正文是「那条 Fact
+// 记录取不到」（数据缺口）；渲染侧必须分流，绝不把缺卡片当成「这位 NPC 无话可说」。
 export {
   NPC_PROFILE_INTERACTION_TAIL,
   NPC_RUNTIME_PROFILE_MODES,
   projectNpcRuntimeProfile,
+  type NpcProfileEdgeView,
   type NpcProfileErrorCode,
   type NpcProfileFactCard,
+  type NpcProfileInteractionView,
+  type NpcProfilePromptEdgeKeysLock,
+  type NpcProfilePromptInteraction,
+  type NpcProfilePromptInteractionKeysLock,
+  type NpcProfilePromptRelationshipEdge,
   type NpcProfileProseColumnLock,
   type NpcProfileProseTableLock,
+  type NpcProfileRuleEdgeKeysLock,
+  type NpcProfileRuleInteractionKeysLock,
   type NpcRuntimeProfile,
+  type NpcRuntimeProfileFailure,
   type NpcRuntimeProfileMode,
   type NpcRuntimeProfileRequest,
   type NpcRuntimeProfileResult,

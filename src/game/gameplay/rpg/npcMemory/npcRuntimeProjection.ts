@@ -27,16 +27,31 @@ import { knowledgeVisibilityOf, type NpcKnowledgeVisibility } from "./npcKnowled
 // 因此规则层内部可以在不改数据通路的前提下读同一个视图。
 //
 // ## 一次遍历，两个视图（`mode` 只有 "prompt" 与 "rule"）
-// `rule`：返回结构化权威值——certainty、disclosure、visibility、完整 source、stage/trend/dimensions。
-// `prompt`：只返回**允许披露的正文**。两者由同一次遍历产出，所以同一个字段不可能在
-// 两个视图里互相否定。授权差量只有两处，且都由表驱动：
+// `rule`：返回结构化权威值——certainty、disclosure、visibility、完整 source、stage/trend
+// 以及**累计数值关系权威**（边 `dimensions` / `evidence` / `commitments`、交互 `relationshipDelta`）。
+// `prompt`：只返回**允许披露的正文 + 定性的关系承载**。两者由同一次遍历产出，所以同一个字段
+// 不可能在两个视图里互相否定。授权差量只有三处，且都由表或类型驱动：
 //   - 正文：`PROSE_PERMISSIONS`（shareable 两模式都给；rule_required 只进 rule；
 //     withheld 两模式都不给——它只以 id 出现在 `withheldFactIds`）；
 //   - 目标：`prompt` 侧只保留 active/blocked 目标，口径与 domain 的兼容投影
 //     `npcProjection.visibleGoals` 一致（该函数是私有的，故本表必须由
 //     `npcRuntimeProjection.test.ts` 的「与 projectNpcMemory 逐字相同」用例钉住，
-//     漂移会在测试里失败，而不是靠两处注释互相指认）。
-// 其余字段（锚点、isCompanion/met/emotion、边、交互、卡片集合与顺序、扣留 id）两模式逐字相同。
+//     漂移会在测试里失败，而不是靠两处注释互相指认）；
+//   - 关系数值：`prompt` 侧的边只剩 `targetId + stage + trend`，交互只剩除
+//     `relationshipDelta` 以外的全部字段（边的**集合、条数与顺序**两模式相同）。
+// 其余字段（锚点、isCompanion/met/emotion、卡片集合与顺序、扣留 id）两模式逐字相同——
+// 而且「键相同」是**构造保证**而非抄写保证：两臂是同一个 `NpcRuntimeProfile<M>` 的两个实例化，
+// 全档案只有 `NpcProfileEdgeView<M>` 与 `NpcProfileInteractionView<M>` 两处按模式换形状。
+//
+// ## 为什么累计数值只进 rule 视图（文档事实，不是口味）
+// `docs/agent/运行时AI导演与场景表演.md:105`：关系以「回合后档位（tier）+ 情绪 + 本轮
+// relationshipDelta/outcome」承载，**绝不裸给数字**；同文 :103 列出的今日 prompt 面里
+// 根本没有 −100..100 的累计维度。于是本 selector 把 `dimensions`（四维累计数）与 `evidence`
+// （逐笔账本）留在 rule 臂，并把本轮数值 `relationshipDelta` 也从 prompt 臂的交互里去掉，
+// 只留定性的 `outcome`。这条窄化落在**类型层**：prompt 臂上读这三个键是编译错误
+// （`npcRuntimeProjection.test.ts` 的 @ts-expect-error 探针），不依赖任何人「记得别读」。
+// 刻意**保留** `interactions[].summary`：那串文本里内嵌「关系+N」
+// （`dialogue/dialogueResolution.ts:117`），改写它属于 Task 8 的 prompt 文本纪律，不在本模块做。
 //
 // ## 私密知识隔离为什么是结构性的
 // 私密事实的正文只存在 `FactComponent.text` 上（domain 的注释即规则），NPC 的知识条目只携带
@@ -49,14 +64,18 @@ import { knowledgeVisibilityOf, type NpcKnowledgeVisibility } from "./npcKnowled
 //    绝不手抄第二张 disclosure 表（那正是本 Plan 一路在消灭的东西）。
 //
 // ## 「无明确参与者时不猜关系后果」
-// `input.targetId` 缺省 ⇒ `outgoingEdge` / `incomingEdge` 都不存在（不是空边、不是零值边）。
+// `input.targetId` **缺省** ⇒ `outgoingEdge` / `incomingEdge` 都不存在（不是空边、不是零值边）。
 // incoming 永远是对**被指名那条记录**的定点查表，绝不枚举全部 NPC 找指向主体的边。
 // 主体自己的 `outgoingEdges` 仍然返回：它是主体组件的一部分，不是推断出的关系结论。
 //
 // ## 失败一律封闭 code，绝不抛，也绝不含部分 profile
 // `npc_not_found` / `not_an_npc` / `target_not_found` / `invalid_mode`，与 `npcKnowledge.ts`
-// 一样只返回码（调用方自己传入了 id，故不带 entityId 诊断）。两条刻意记在类型之外的读法：
+// 一样只返回码（调用方自己传入了 id，故不带 entityId 诊断）。三条刻意记在类型之外的读法：
 // - `mode` 先于任何 store 查表判定：请求形状错误与 store 内容无关。
+// - `targetId` 只要**给了**就必须是有效 id：空白/纯空格与非字符串与未知 id 同码
+//   `target_not_found`。只有「键缺省（或显式 undefined）」才读作「无明确参与者」。
+//   坏输入若静默降级成「没有关系结论的档案」，调用方就无法把它与「确实没有对手方」区分，
+//   那比报错更坏——所以这里失败封闭，且不新增错误码。
 // - 引用不到的 Fact 记录（悬空 factId）不是整体失败，只让那张卡片没有正文：
 //   读取面不因单个悬空引用拒绝整个 NPC 视图，但绝不因此伪造正文。
 // 读取侧刻意**不**做 lifecycle 闸门：存活判定是写入纪律（`entityMutation` 已把非活跃主体拒在
@@ -105,17 +124,17 @@ export type NpcProfileProseColumnLock = Expect<
   IsExactly<keyof (typeof PROSE_PERMISSIONS)[NpcRuntimeProfileMode], NpcKnowledgeVisibility>
 >;
 
-export type NpcRuntimeProfileRequest = Readonly<{
-  /** 投影主体：只读这一条 NPC 记录的组件。 */
-  npcId: NpcId;
-  /** 被指名的对手方（NPC 或玩家本体）。缺省即「无明确参与者」：不返回任何关系结论。 */
-  targetId?: RelationshipTargetId;
-  mode: NpcRuntimeProfileMode;
-}>;
-
 /**
  * 一张可说 Fact 卡片：结构化权威值两模式同形，正文按 `PROSE_PERMISSIONS` 放行。
- * `text` 缺省即「本视图不许说、或引用的 Fact 记录不存在」——绝不给空字符串冒充正文。
+ *
+ * **`text` 缺省有两件完全不同的意思，读侧必须用 `visibility` 分辨，绝不把「没有正文」当成空台词：**
+ * 1. **本视图不许说它**：`visibility === "rule_required"`（只有 rule 模式放行正文）。这是授权，
+ *    不是数据缺口——同一张卡片在 rule 视图里就有正文。
+ * 2. **引用的 Fact 记录取不到**：`visibility === "shareable"` 却没有正文，说明那条 Fact 不在
+ *    本次 `records` 里（或该 id 根本不是 Fact）。这是数据缺口，不是「这位 NPC 无话可说」。
+ * 判别式因此只有一个：`shareable` 且无 `text` ⇒ 悬空引用（2）；`rule_required` 且无 `text`
+ * ⇒ 模式授权（1）。withheld 条目根本不成卡（只进 `withheldFactIds`），所以卡片集合里没有第三种缺省。
+ * Task 8 的渲染器必须按此分流：把（2）渲染成沉默，等于把数据缺口伪装成角色的克制。
  */
 export type NpcProfileFactCard = Readonly<{
   factId: FactId;
@@ -126,9 +145,53 @@ export type NpcProfileFactCard = Readonly<{
   text?: string;
 }>;
 
-export type NpcRuntimeProfile = Readonly<{
+/**
+ * prompt 侧的关系边窄视图：只剩定性三项。`direction` 不在此列——domain 的边形状本身
+ * 就「没有」方向字段（方向由「它挂在哪条记录的 outgoing 上」与档案的
+ * `outgoingEdge` / `incomingEdge` 槽位名承载），所以抄不过来也不需要另造一个。
+ * 三个键都用索引取型，词汇与组件权威同源：domain 改 `stage`/`trend` union 时这里自动跟着改。
+ */
+export type NpcProfilePromptRelationshipEdge = Readonly<{
+  targetId: DirectedRelationshipEdge["targetId"];
+  stage: DirectedRelationshipEdge["stage"];
+  trend: DirectedRelationshipEdge["trend"];
+}>;
+
+/**
+ * prompt 侧的交互窄视图：只去掉本轮数值 `relationshipDelta`，其余字段（含 `summary`）全部保留。
+ * 正文改写归 Task 8，这里只负责「数字进不了 prompt 臂」。
+ */
+export type NpcProfilePromptInteraction = Omit<NpcInteraction, "relationshipDelta">;
+
+/** 模式 → 关系边视图：rule 交出组件里那条边本身（含累计数值与账本），prompt 只剩定性三项。 */
+export type NpcProfileEdgeView<M extends NpcRuntimeProfileMode = NpcRuntimeProfileMode> =
+  M extends "prompt" ? NpcProfilePromptRelationshipEdge : DirectedRelationshipEdge;
+
+/** 模式 → 交互视图：只有 prompt 臂少 `relationshipDelta` 一个键。 */
+export type NpcProfileInteractionView<M extends NpcRuntimeProfileMode = NpcRuntimeProfileMode> =
+  M extends "prompt" ? NpcProfilePromptInteraction : NpcInteraction;
+
+export type NpcRuntimeProfileRequest<M extends NpcRuntimeProfileMode = NpcRuntimeProfileMode> = Readonly<{
+  /** 投影主体：只读这一条 NPC 记录的组件。 */
   npcId: NpcId;
-  mode: NpcRuntimeProfileMode;
+  /**
+   * 被指名的对手方（NPC 或玩家本体）。**缺省**即「无明确参与者」：不返回任何关系结论；
+   * 但「给了却不是一个有效 id」（空白/纯空格/非字符串）是坏输入，按 `target_not_found` 失败。
+   */
+  targetId?: RelationshipTargetId;
+  mode: M;
+}>;
+
+/**
+ * NPC 运行时档案：同一批必读面在两种模式下的**同一个**类型，只有边与交互两处按 `M` 换形状。
+ *
+ * 默认参数是模式联合，所以「没有按字面量 mode 窄化」的调用方拿到的这两处成员是两臂的 union，
+ * 读 `dimensions` / `evidence` / `relationshipDelta` 同样是编译错误：数值权威必须**显式**
+ * 选臂（字面量 `mode: "rule"` 或 `NpcRuntimeProfile<"rule">`）才摸得到。
+ */
+export type NpcRuntimeProfile<M extends NpcRuntimeProfileMode = NpcRuntimeProfileMode> = Readonly<{
+  npcId: NpcId;
+  mode: M;
   /** 被指名参与者原样回显：调用方可据此判定这份视图是否含关系结论。 */
   targetId?: RelationshipTargetId;
   /** 长期人格锚点：主体组件里的同一对象。 */
@@ -141,15 +204,30 @@ export type NpcRuntimeProfile = Readonly<{
   }>;
   goals: readonly NpcGoal[];
   /** 主体全部出边，一律按 domain 唯一比较器排序（不是存储顺序）。 */
-  outgoingEdges: readonly DirectedRelationshipEdge[];
+  outgoingEdges: readonly NpcProfileEdgeView<M>[];
   /** 对指定 target 的出边；无指名或无此边时键不存在。 */
-  outgoingEdge?: DirectedRelationshipEdge;
+  outgoingEdge?: NpcProfileEdgeView<M>;
   /** 指名那条记录持有且指向主体的那条边；玩家记录不承载组件，故恒不存在。 */
-  incomingEdge?: DirectedRelationshipEdge;
+  incomingEdge?: NpcProfileEdgeView<M>;
   factCards: readonly NpcProfileFactCard[];
   withheldFactIds: readonly FactId[];
-  interactions: readonly NpcInteraction[];
+  interactions: readonly NpcProfileInteractionView<M>[];
 }>;
+
+/** 数值关系权威的臂锁：prompt 侧只剩定性三项，rule 侧仍是组件原边（多一列少一列都编译失败）。 */
+export type NpcProfilePromptEdgeKeysLock = Expect<
+  IsExactly<keyof NpcProfileEdgeView<"prompt">, "targetId" | "stage" | "trend">
+>;
+export type NpcProfileRuleEdgeKeysLock = Expect<
+  IsExactly<keyof NpcProfileEdgeView<"rule">, keyof DirectedRelationshipEdge>
+>;
+/** 交互的臂锁：prompt 侧只允许少 `relationshipDelta` 一个键，rule 侧一个都不许少。 */
+export type NpcProfilePromptInteractionKeysLock = Expect<
+  IsExactly<keyof NpcProfileInteractionView<"prompt">, Exclude<keyof NpcInteraction, "relationshipDelta">>
+>;
+export type NpcProfileRuleInteractionKeysLock = Expect<
+  IsExactly<keyof NpcProfileInteractionView<"rule">, keyof NpcInteraction>
+>;
 
 export type NpcProfileErrorCode =
   | "npc_not_found"
@@ -157,9 +235,12 @@ export type NpcProfileErrorCode =
   | "target_not_found"
   | "invalid_mode";
 
-export type NpcRuntimeProfileResult =
-  | Readonly<{ ok: true; profile: NpcRuntimeProfile }>
-  | Readonly<{ ok: false; code: NpcProfileErrorCode }>;
+/** 失败臂与模式无关：窄化只发生在成功臂上，所以 `failure()` 不需要跟着泛型化。 */
+export type NpcRuntimeProfileFailure = Readonly<{ ok: false; code: NpcProfileErrorCode }>;
+
+export type NpcRuntimeProfileResult<M extends NpcRuntimeProfileMode = NpcRuntimeProfileMode> =
+  | Readonly<{ ok: true; profile: NpcRuntimeProfile<M> }>
+  | NpcRuntimeProfileFailure;
 
 // ---------------------------------------------------------------------------
 // 原语：未受信字段一律只认自有属性
@@ -179,7 +260,7 @@ function ownEntry<V>(table: Readonly<Record<string, V>>, key: string): V | undef
   return Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined;
 }
 
-function failure(code: NpcProfileErrorCode): NpcRuntimeProfileResult {
+function failure(code: NpcProfileErrorCode): NpcRuntimeProfileFailure {
   return { ok: false, code };
 }
 
@@ -232,14 +313,51 @@ function incomingEdgeOf(
 }
 
 function orderedOutgoing(subject: NpcEntityRecord): readonly DirectedRelationshipEdge[] {
-  // 唯一比较器来自 domain；存储顺序本应已排序（validator 会拒未排序组件），
-  // 这里再排一次是为了让读取面的顺序由权威比较器决定，而不是由谁手搓过 record 决定。
+  // 顺序权威只有 domain 那一个比较器。注意这次重排是**纵深防御**，不是生产可达的补救：
+  // 组件校验器本身就拒绝未排序的 outgoing（`npcComponents.ts:704` 报
+  // `relationship_targets_unsorted`），所以经 store 进来的数据必然已经有序。这里再排一次
+  // 只保证一件事：读取面的顺序由权威比较器决定，而不是由「谁手工拼过一条 record」决定
+  // （测试夹具与未来的读侧构造正是这种未经校验器的手拼数据）。
   return Object.freeze(
     [...subject.relationships.outgoing].sort((left, right) => compareRelationshipTargetIds(
       left.targetId,
       right.targetId,
     )),
   );
+}
+
+/**
+ * 模式 → 边视图。rule 交出组件里那个对象本身（引用即权威，测试靠对象同一性钉方向性）；
+ * prompt 必须重新构造一个只有定性三项的冻结对象——把原对象交出去就等于把
+ * `dimensions` / `evidence` / `commitments` 一起交出去，那正是本模块拒绝对 prompt 做的事。
+ */
+function edgeViewOf(mode: NpcRuntimeProfileMode, edge: DirectedRelationshipEdge): NpcProfileEdgeView {
+  return mode === "prompt"
+    ? Object.freeze({ targetId: edge.targetId, stage: edge.stage, trend: edge.trend })
+    : edge;
+}
+
+/**
+ * 模式 → 交互视图（整段尾部一起换）。prompt 臂逐键点名抄写，**不用**解构丢弃：
+ * `Omit` 只保证「少 relationshipDelta 一个键」，点名每个键才能让 domain 将来给
+ * `NpcInteraction` 加字段时在这里编译失败，逼加字段的人当场决定新键属于哪一臂。
+ */
+function interactionsViewOf(
+  mode: NpcRuntimeProfileMode,
+  tail: readonly NpcInteraction[],
+): readonly NpcProfileInteractionView[] {
+  if (mode !== "prompt") return Object.freeze([...tail]);
+  return Object.freeze(tail.map((item) => Object.freeze({
+    turnNumber: item.turnNumber,
+    actionId: item.actionId,
+    locationId: item.locationId,
+    dialogueAct: item.dialogueAct,
+    ...(item.topic === undefined ? {} : { topic: item.topic }),
+    topicSummary: item.topicSummary,
+    outcome: item.outcome,
+    learnedFactIds: item.learnedFactIds,
+    summary: item.summary,
+  })));
 }
 
 function profileGoals(subject: NpcEntityRecord, mode: NpcRuntimeProfileMode): readonly NpcGoal[] {
@@ -277,14 +395,20 @@ function knowledgeView(
 }
 
 /**
- * NPC 运行时投影的唯一入口：七个必读面一次给全（锚点、目标/情绪、指名出边、相关回边、
+ * NPC 运行时投影的唯一入口：七个必读面一次给全（锚点、目标/情绪、出边与指名出边、相关回边、
  * 可说卡片、扣留 Fact ID、最近 5 条交互）。纯函数、无 IO、无 provider 调用，
  * 也不拼任何 prompt 文本——渲染归 Task 8。
+ *
+ * `M` 由调用方的**字面量** `mode` 推断：`mode: "prompt"` 拿到的档案在类型上就没有
+ * `dimensions` / `evidence` / `relationshipDelta`（未写字面量时同理，因为默认参数是两臂联合）。
+ * 泛型体内只有最后一处窄化 cast：运行时那条 `mode` 分支已经选定了形状，编译器却无法证明
+ * `M` 与它相等；两臂的真实形状由本文件的四条臂锁与测试里的 @ts-expect-error 探针钉住，
+ * 所以这里窄化的是**别名**，不是没人核对过的结构。
  */
-export function projectNpcRuntimeProfile(
+export function projectNpcRuntimeProfile<M extends NpcRuntimeProfileMode>(
   records: readonly EntityRecord[],
-  input: NpcRuntimeProfileRequest,
-): NpcRuntimeProfileResult {
+  input: NpcRuntimeProfileRequest<M>,
+): NpcRuntimeProfileResult<M> {
   // 请求形状先判：与 store 内容无关的错误必须先进同一把门，`mode` 只认自有属性且闭集。
   const mode = ownField(input, "mode");
   if (!isProfileMode(mode)) return failure("invalid_mode");
@@ -295,7 +419,12 @@ export function projectNpcRuntimeProfile(
   if (!isNpcRecord(found)) return failure("not_an_npc");
   const subject = found;
 
+  // 「没有对手方」与「对手方字段坏了」是两件事：只有键缺省（或显式 undefined）才是前者。
+  // 空白/纯空格/非字符串都是「给了却不是有效 id」，与未知 id 一样失败封闭——静默当成无参与者
+  // 会让损坏的调用方拿到一份没有关系结论的档案，而那与「确实没有对手方」在读侧无法分辨。
+  const targetField = ownField(input, "targetId");
   const targetRef = ownString(input, "targetId");
+  if (targetField !== undefined && targetRef === undefined) return failure("target_not_found");
   let target: EntityRecord | undefined;
   if (targetRef !== undefined) {
     // 自己不是自己的对手方：关系结论必须发生在两个参与者之间，否则同一条边会同时
@@ -309,34 +438,34 @@ export function projectNpcRuntimeProfile(
     target = foundTarget;
   }
 
-  const outgoingEdge = targetRef === undefined
+  // 一次遍历：每个组件只查一次表，`mode` 只决定每个槽位交出哪一副形状——两臂不可能互相否定。
+  const outgoing = orderedOutgoing(subject);
+  const targetedEdge = targetRef === undefined
     ? undefined
     : findRelationshipEdge(subject.relationships, targetRef as RelationshipTargetId);
   const incomingEdge = incomingEdgeOf(target, npcId as NpcId);
   const knowledge = knowledgeView(records, subject, mode);
   const interactions = subject.history.interactions;
+  const tail = interactions.slice(Math.max(interactions.length - NPC_PROFILE_INTERACTION_TAIL, 0));
 
-  return {
-    ok: true,
-    profile: Object.freeze({
-      npcId: npcId as NpcId,
-      mode,
-      anchors: subject.identity.anchors,
-      dynamicState: Object.freeze({
-        isCompanion: subject.dynamicState.isCompanion,
-        met: subject.dynamicState.met,
-        emotion: subject.dynamicState.emotion,
-      }),
-      goals: profileGoals(subject, mode),
-      outgoingEdges: orderedOutgoing(subject),
-      factCards: knowledge.factCards,
-      withheldFactIds: knowledge.withheldFactIds,
-      interactions: Object.freeze(
-        interactions.slice(Math.max(interactions.length - NPC_PROFILE_INTERACTION_TAIL, 0)),
-      ),
-      ...(targetRef === undefined ? {} : { targetId: targetRef as RelationshipTargetId }),
-      ...(outgoingEdge === undefined ? {} : { outgoingEdge }),
-      ...(incomingEdge === undefined ? {} : { incomingEdge }),
+  const profile: NpcRuntimeProfile = Object.freeze({
+    npcId: npcId as NpcId,
+    mode,
+    anchors: subject.identity.anchors,
+    dynamicState: Object.freeze({
+      isCompanion: subject.dynamicState.isCompanion,
+      met: subject.dynamicState.met,
+      emotion: subject.dynamicState.emotion,
     }),
-  };
+    goals: profileGoals(subject, mode),
+    outgoingEdges: Object.freeze(outgoing.map((edge) => edgeViewOf(mode, edge))),
+    factCards: knowledge.factCards,
+    withheldFactIds: knowledge.withheldFactIds,
+    interactions: interactionsViewOf(mode, tail),
+    ...(targetRef === undefined ? {} : { targetId: targetRef as RelationshipTargetId }),
+    ...(targetedEdge === undefined ? {} : { outgoingEdge: edgeViewOf(mode, targetedEdge) }),
+    ...(incomingEdge === undefined ? {} : { incomingEdge: edgeViewOf(mode, incomingEdge) }),
+  });
+  // 全模块唯一一次窄化：运行时那副形状已由 `mode` 分支选定，编译器却无法证明「选中的臂 == M」。
+  return { ok: true, profile: profile as NpcRuntimeProfile<M> };
 }

@@ -27,13 +27,18 @@ import {
   NPC_RUNTIME_PROFILE_MODES,
   projectNpcRuntimeProfile,
   type NpcProfileErrorCode,
+  type NpcProfilePromptInteraction,
+  type NpcProfilePromptRelationshipEdge,
   type NpcRuntimeProfile,
+  type NpcRuntimeProfileMode,
   type NpcRuntimeProfileRequest,
 } from "./npcRuntimeProjection";
 import {
   NPC_PROFILE_INTERACTION_TAIL as TAIL_VIA_FACADE,
   NPC_RUNTIME_PROFILE_MODES as MODES_VIA_FACADE,
   projectNpcRuntimeProfile as projectNpcRuntimeProfileViaFacade,
+  type NpcProfilePromptRelationshipEdge as PromptEdgeViaFacade,
+  type NpcRuntimeProfile as NpcRuntimeProfileViaFacade,
 } from "./index";
 
 // ---------------------------------------------------------------------------
@@ -44,7 +49,12 @@ import {
 //    条目取正文。另一 NPC 的 knowledge 组件不仅正文进不来，连 `entries` 被读一次
 //    都会被 Proxy 访问日志抓住——不靠 canary 字符串侥幸通过。
 // 2) **prompt 与 rule 是同一次遍历的两个视图**：两模式差量只允许出现在被明确授权的
-//    两处（rule_required 正文、prompt 侧 active/blocked 目标过滤），其余字段必须逐字相同。
+//    三处（rule_required 正文、prompt 侧 active/blocked 目标过滤、以及**只进 rule 的
+//    累计数值关系权威**：边 dimensions/evidence/commitments/origin/lastChangedAtTurn
+//    与交互 relationshipDelta），其余字段必须逐字相同。
+//    第三处由文档事实钉住（`docs/agent/运行时AI导演与场景表演.md:105`：关系以
+//    「回合后档位 + 情绪 + 本轮 outcome」承载，绝不裸给数字），并且是**类型层面**的：
+//    prompt 臂上读这些键是编译错误（见「编译探针」用例的 @ts-expect-error）。
 // 3) **无明确参与者 ⇒ 不猜关系后果**：incoming 只做定点查表，绝不枚举 NPC 找指向主体的边。
 // 4) **顺序即权威**：知识卡片沿用组件存储顺序（不重排、不按可见性分桶拼接），边一律走
 //    domain 唯一比较器，交互取尾部最近 5 条（数组是旧→新）。
@@ -59,6 +69,8 @@ const FACT_CONDITIONAL = asFactId("fact_conditional");
 const FACT_SECRET = asFactId("fact_secret");
 const FACT_OTHER_SECRET = asFactId("fact_other_secret");
 const FACT_ORPHAN = asFactId("fact_orphan");
+/** 表外披露档（domain union 里没有的值）引用的 Fact：它的正文同样必须在两种模式下缺席。 */
+const FACT_OFF_TABLE = asFactId("fact_off_table");
 const ITEM_1 = asItemId("item_1");
 
 /** 另一 NPC 的私密事实正文：任何一份 profile 的任何一种模式都不得带上它。 */
@@ -67,6 +79,8 @@ const OTHER_SECRET_CANARY = "别组NPC的私密事实正文_CANARY";
 const OWN_SECRET_PROSE = "主体自己的私密事实正文_OWN_SECRET";
 const CONDITIONAL_PROSE = "条件披露的事实正文_CONDITIONAL";
 const PUBLIC_PROSE = "公开事实正文_PUBLIC";
+/** 表外 disclosure 那条 Fact 的正文：它只以 id 出现（withheld），正文永不出现。 */
+const OFF_TABLE_PROSE = "表外披露档的事实正文_OFF_TABLE";
 
 // ---------------------------------------------------------------------------
 // 夹具：一律用分层组件形状手工构造（与 npcProjection.test.ts 同一口径）
@@ -265,7 +279,11 @@ function npcOf(records: readonly EntityRecord[], id: NpcId): NpcEntityRecord {
   return record;
 }
 
-function profileOf(records: readonly EntityRecord[], input: NpcRuntimeProfileRequest): NpcRuntimeProfile {
+function profileOf<M extends NpcRuntimeProfileMode>(
+  records: readonly EntityRecord[],
+  input: NpcRuntimeProfileRequest<M>,
+): NpcRuntimeProfile<M> {
+  // 字面量 mode 直接推断出臂：这正是「prompt 消费方拿不到数值权威」那条编译性质的前提。
   const result = projectNpcRuntimeProfile(records, input);
   if (!result.ok) throw new Error(`expected an ok profile, got ${result.code}`);
   return result.profile;
@@ -275,6 +293,38 @@ function codeOf(records: readonly EntityRecord[], input: NpcRuntimeProfileReques
   const result = projectNpcRuntimeProfile(records, input);
   if (result.ok) throw new Error("expected a rejected profile request");
   return result.code;
+}
+
+/**
+ * profile 序列化后每一层（含数组元素）的自有键名：数值权威只要出现在任何深度都会被抓到，
+ * 也不会因为「键在对象里但值为 undefined」而漏网。
+ */
+function keyNamesAtEveryLevel(profile: NpcRuntimeProfile): string[] {
+  const collected: string[] = [];
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+      return;
+    }
+    if (typeof value !== "object" || value === null) return;
+    for (const [key, item] of Object.entries(value)) {
+      collected.push(key);
+      walk(item);
+    }
+  };
+  walk(JSON.parse(JSON.stringify(profile)));
+  return collected;
+}
+
+/** 授权差量之一：prompt 侧的关系边只剩定性三项（数值与账本留在 rule 视图）。 */
+function qualitativeEdgeView(edge: DirectedRelationshipEdge): NpcProfilePromptRelationshipEdge {
+  return { targetId: edge.targetId, stage: edge.stage, trend: edge.trend };
+}
+
+/** 授权差量之二：prompt 侧的交互丢掉本轮 relationshipDelta，其余字段（含 summary）原样保留。 */
+function withoutRelationshipDelta(item: NpcInteraction): NpcProfilePromptInteraction {
+  const { relationshipDelta: _dropped, ...rest } = item;
+  return rest;
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +451,37 @@ describe("projectNpcRuntimeProfile — 私密知识隔离", () => {
     expect(visibilities).toEqual(new Set<NpcKnowledgeVisibility>(["rule_required", "shareable"]));
   });
 
+  it("存储条目 disclosure 在表外时按 withheld 处理：只给 id，两种模式都不给正文", () => {
+    // 钉住 `npcKnowledge.ts:222-226` 的失败封闭语义（表外披露档没有「默认可说」兜底）：
+    // 既有的 canary 与 Proxy 用例只覆盖表内的 secret，覆盖不到「值根本不在表上」这一格。
+    const offTable = entry(FACT_OFF_TABLE, "private" as NpcKnowledgeDisclosure);
+    const records: EntityRecord[] = [
+      npcRecord(NPC_A, { entries: [offTable, entry(FACT_PUBLIC, "public")] }),
+      factRecord(FACT_OFF_TABLE, OFF_TABLE_PROSE),
+      factRecord(FACT_PUBLIC, PUBLIC_PROSE),
+    ];
+    // 可见性权威本身：表外值 → withheld，读取面不复抄第二张表。
+    expect(knowledgeVisibilityOf(offTable)).toBe("withheld");
+    for (const mode of NPC_RUNTIME_PROFILE_MODES) {
+      const profile = profileOf(records, { npcId: NPC_A, mode });
+      expect(profile.withheldFactIds).toEqual([FACT_OFF_TABLE]);
+      expect(profile.factCards.map((card) => card.factId)).toEqual([FACT_PUBLIC]);
+      const serialized = JSON.stringify(profile);
+      expect(serialized).not.toContain(OFF_TABLE_PROSE);
+      // 表外条目连 Fact 记录都不查：正文与它的 id 一起被挡在卡片之外，只留在 withheld 里。
+      expect(serialized).toContain(String(FACT_OFF_TABLE));
+    }
+    // 正控制：同一夹具只把 disclosure 换成表内 public，正文就确实会进来，
+    // 所以上面的「不含」不是夹具坏了造成的空断言。
+    const controlRecords: EntityRecord[] = [
+      npcRecord(NPC_A, { entries: [entry(FACT_OFF_TABLE, "public"), entry(FACT_PUBLIC, "public")] }),
+      ...records.slice(1),
+    ];
+    const control = profileOf(controlRecords, { npcId: NPC_A, mode: "rule" });
+    expect(control.factCards.map((card) => card.factId)).toEqual([FACT_OFF_TABLE, FACT_PUBLIC]);
+    expect(control.factCards[0]?.text).toBe(OFF_TABLE_PROSE);
+  });
+
   it("引用的 Fact 记录不在 records 里时只给结构化值、不给正文", () => {
     const records: EntityRecord[] = [
       npcRecord(NPC_A, { entries: [entry(FACT_ORPHAN, "public"), entry(FACT_PUBLIC, "public")] }),
@@ -418,7 +499,7 @@ describe("projectNpcRuntimeProfile — 私密知识隔离", () => {
 // ---------------------------------------------------------------------------
 
 describe("projectNpcRuntimeProfile — prompt 与 rule 是同一次遍历的两个视图", () => {
-  it("rule_required 正文只在 rule 模式出现，其余字段逐字相同", () => {
+  it("rule_required 正文只在 rule 模式出现，数值关系权威只进 rule 视图，其余字段逐字相同", () => {
     const records = baseRecords();
     const rule = profileOf(records, { npcId: NPC_A, targetId: NPC_B, mode: "rule" });
     const prompt = profileOf(records, { npcId: NPC_A, targetId: NPC_B, mode: "prompt" });
@@ -434,14 +515,104 @@ describe("projectNpcRuntimeProfile — prompt 与 rule 是同一次遍历的两�
     expect(conditionalPrompt?.source).toBe(conditionalRule?.source);
     expect(conditionalPrompt?.disclosure).toBe(conditionalRule?.disclosure);
 
-    // 把 rule 视图只按两处授权差量变换，结果必须与 prompt 视图完全相等。
+    // 边的集合与顺序同样一致：模式只决定每条边交出多少，不决定交出几条。
+    expect(prompt.outgoingEdges.map((item) => item.targetId))
+      .toEqual(rule.outgoingEdges.map((item) => item.targetId));
+    expect(prompt.outgoingEdge?.targetId).toBe(rule.outgoingEdge?.targetId);
+    expect(prompt.incomingEdge?.targetId).toBe(rule.incomingEdge?.targetId);
+    // rule 侧交出的仍是组件里那个对象（引用即权威）；prompt 侧必须是重新构造的窄视图，
+    // 把原对象交出去等于把 dimensions/evidence/commitments 一起交出去。
+    expect(rule.outgoingEdge).toBe(npcOf(records, NPC_A).relationships.outgoing.find((item) => item.targetId === NPC_B));
+    expect(prompt.outgoingEdge).not.toBe(rule.outgoingEdge);
+    expect(prompt.incomingEdge).not.toBe(rule.incomingEdge);
+    expect(Object.keys(prompt.outgoingEdge ?? {}).sort()).toEqual(["stage", "targetId", "trend"]);
+    expect(Object.isFrozen(prompt.outgoingEdge)).toBe(true);
+    // 交互：条数与顺序不变，只少 relationshipDelta 这一个键。
+    expect(prompt.interactions.map((item) => item.actionId)).toEqual(rule.interactions.map((item) => item.actionId));
+    expect(Object.keys(prompt.interactions[0] ?? {}).sort())
+      .toEqual(Object.keys(rule.interactions[0]).filter((key) => key !== "relationshipDelta").sort());
+    // summary 刻意保留（它内嵌「关系+N」的文本改写归 Task 8），所以这里断言它没被动过。
+    expect(prompt.interactions[0]?.summary).toBe(rule.interactions[0]?.summary);
+
+    // 把 rule 视图只按三处授权差量变换，结果必须与 prompt 视图完全相等。
     const expectedPrompt = {
       ...rule,
       mode: "prompt",
       goals: rule.goals.filter((item) => item.status === "active" || item.status === "blocked"),
       factCards: rule.factCards.map((card) => (card.visibility === "shareable" ? card : { ...card, text: undefined })),
+      outgoingEdges: rule.outgoingEdges.map(qualitativeEdgeView),
+      outgoingEdge: rule.outgoingEdge === undefined ? undefined : qualitativeEdgeView(rule.outgoingEdge),
+      incomingEdge: rule.incomingEdge === undefined ? undefined : qualitativeEdgeView(rule.incomingEdge),
+      interactions: rule.interactions.map(withoutRelationshipDelta),
     };
     expect(JSON.parse(JSON.stringify(prompt))).toEqual(JSON.parse(JSON.stringify(expectedPrompt)));
+  });
+
+  it("prompt 档案任何深度都不出现 dimensions / evidence / relationshipDelta 键", () => {
+    const records = baseRecords();
+    // 正控制先跑：同一份输入在 rule 模式下这些键确实存在，否则下面的「不含」是空断言。
+    const ruleKeys = keyNamesAtEveryLevel(profileOf(records, { npcId: NPC_A, targetId: NPC_B, mode: "rule" }));
+    expect(ruleKeys).toContain("dimensions");
+    expect(ruleKeys).toContain("evidence");
+    expect(ruleKeys).toContain("relationshipDelta");
+
+    for (const fixture of [
+      { npcId: NPC_A, targetId: NPC_B, mode: "prompt" } as const,
+      { npcId: NPC_A, mode: "prompt" } as const,
+    ]) {
+      const profile = profileOf(records, fixture);
+      const keys = keyNamesAtEveryLevel(profile);
+      // 三项点名权威：累计数值、逐笔账本、本轮数值。
+      expect(keys).not.toContain("dimensions");
+      expect(keys).not.toContain("evidence");
+      expect(keys).not.toContain("relationshipDelta");
+      // 连带四个数值维度名与 rule 侧的关系账本/来源也不再出现：prompt 侧没有任何通道能读出数字。
+      expect(keys).not.toContain("affinity");
+      expect(keys).not.toContain("trust");
+      expect(keys).not.toContain("fear");
+      expect(keys).not.toContain("hostility");
+      expect(keys).not.toContain("commitments");
+      expect(keys).not.toContain("lastChangedAtTurn");
+      const serialized = JSON.stringify(profile);
+      expect(serialized).not.toContain("origin");
+      // 定性承载仍在：档位与趋势是 prompt 侧唯一的关系表达。
+      expect(keys).toContain("stage");
+      expect(keys).toContain("trend");
+    }
+  });
+
+  it("编译探针：prompt 档案上读数值关系权威是类型错误，rule 档案读得到", () => {
+    const records = baseRecords();
+    const prompt = profileOf(records, { npcId: NPC_A, targetId: NPC_B, mode: "prompt" });
+    // @ts-expect-error prompt 臂的边没有 dimensions：累计数值只进 rule 视图
+    const promptAffinity = prompt.outgoingEdge?.dimensions;
+    // @ts-expect-error prompt 臂的边没有 evidence：逐笔账本只进 rule 视图
+    const promptEvidence = prompt.incomingEdge?.evidence;
+    // @ts-expect-error prompt 臂的出边列表元素同样没有 dimensions
+    const promptListed = prompt.outgoingEdges[0]?.dimensions;
+    // @ts-expect-error prompt 臂的交互不带 relationshipDelta
+    const promptDelta = prompt.interactions[0]?.relationshipDelta;
+    expect([promptAffinity, promptEvidence, promptListed, promptDelta]).toEqual([
+      undefined, undefined, undefined, undefined,
+    ]);
+
+    // mode 未窄化（默认联合）时同样读不到：消费方必须先按字面量 mode 取臂，或显式 cast。
+    const unresolved: NpcRuntimeProfileRequest = { npcId: NPC_A, targetId: NPC_B, mode: "prompt" };
+    const erased = profileOf(records, unresolved);
+    // @ts-expect-error 未窄化 mode 的档案读不到 dimensions
+    const erasedAffinity = erased.outgoingEdge?.dimensions;
+    // @ts-expect-error 未窄化 mode 的档案读不到 relationshipDelta
+    const erasedDelta = erased.interactions[0]?.relationshipDelta;
+    // 这一行的运行时断言只是配套事实；真正被钉住的是上面两条指令（删掉它们 typecheck 即报错）。
+    expect([erasedAffinity, erasedDelta]).toEqual([undefined, undefined]);
+
+    // rule 臂是正向对照：删掉上面的 @ts-expect-error 指令会让 typecheck 报「未使用的指令」，
+    // 而这里的断言保证窄化没有把 rule 侧权威一起削掉。
+    const rule = profileOf(records, { npcId: NPC_A, targetId: NPC_B, mode: "rule" });
+    expect(rule.outgoingEdge?.dimensions.affinity).toBe(20);
+    expect(rule.incomingEdge?.dimensions.affinity).toBe(5);
+    expect(rule.outgoingEdges[0]?.evidence).toEqual([]);
+    expect(rule.interactions[0]?.relationshipDelta).toBe(1);
   });
 
   it("shareable 正文两种模式都给，且正文取自 Fact 组件而非 core.name", () => {
@@ -615,6 +786,39 @@ describe("projectNpcRuntimeProfile — 失败关闭的封闭 code", () => {
     expect(codeOf(baseRecords(), { npcId: "   " as NpcId, mode: "rule" })).toBe("npc_not_found");
   });
 
+  it("空白或非字符串的 targetId 失败关闭为 target_not_found，绝不降级成「无关系」profile", () => {
+    // 未知 id 会 target_not_found，而 `""` / `"   "` 曾经被当成「没有参与者」：
+    // 损坏的调用方于是静默拿到一份没有关系结论的档案。空白同样是「给了但坏了」。
+    const records = baseRecords();
+    const broken = [
+      "",
+      "   ",
+      "\t\n",
+      42,
+      Number.NaN,
+      {},
+      [],
+      asNpcId("   "),
+    ] as unknown as RelationshipTargetId[];
+    for (const targetId of broken) {
+      for (const mode of NPC_RUNTIME_PROFILE_MODES) {
+        expect(codeOf(records, { npcId: NPC_A, targetId, mode })).toBe("target_not_found");
+      }
+      const result = projectNpcRuntimeProfile(records, { npcId: NPC_A, targetId, mode: "rule" });
+      expect(result.ok).toBe(false);
+      expect("profile" in result).toBe(false);
+    }
+    // 正控制：缺省与显式 undefined 才是「无明确参与者」，那是合法读法，不是坏输入。
+    for (const input of [
+      { npcId: NPC_A, mode: "rule" } as NpcRuntimeProfileRequest,
+      { npcId: NPC_A, mode: "rule", targetId: undefined } as NpcRuntimeProfileRequest,
+    ]) {
+      const result = projectNpcRuntimeProfile(records, input);
+      expect(result.ok).toBe(true);
+      if (result.ok) expect("outgoingEdge" in result.profile).toBe(false);
+    }
+  });
+
   it("失败结果不携带任何部分 profile", () => {
     const requests = [
       { npcId: asNpcId("npc_ghost"), mode: "rule" },
@@ -679,8 +883,16 @@ describe("projectNpcRuntimeProfile — 分层组件是唯一读取权威", () =>
       expect(serialized).not.toContain("afraid");
       expect(serialized).not.toContain(OTHER_SECRET_CANARY);
       expect(profile.interactions.map((item) => item.actionId)).toEqual(["act_component"]);
-      expect(profile.outgoingEdge?.dimensions.affinity).toBe(20);
     }
+    // 组件边确实压过了兼容层的 `relationship.affinity: 77`——但这条数值权威只走 rule 臂。
+    expect(profileOf(records, { npcId: NPC_A, targetId: PLAYER_ENTITY_ID, mode: "rule" })
+      .outgoingEdge?.dimensions.affinity).toBe(20);
+    // prompt 臂同一条边：定性照给，数字一个都不给（77 与 20 都不许出现在档案里）。
+    const promptCompat = profileOf(records, { npcId: NPC_A, targetId: PLAYER_ENTITY_ID, mode: "prompt" });
+    expect(promptCompat.outgoingEdge).toEqual({
+      targetId: PLAYER_ENTITY_ID, stage: "cooperative", trend: "improving",
+    });
+    expect(JSON.stringify(promptCompat)).not.toContain("affinity");
   });
 });
 
@@ -698,5 +910,13 @@ describe("npcMemory facade 暴露运行时投影", () => {
       npcId: NPC_A, targetId: NPC_B, mode: "rule",
     } satisfies NpcRuntimeProfileRequest);
     expect(viaFacade.ok).toBe(true);
+    // 新的分臂类型也必须只经 facade 可达（Task 8 不许 deep-import 内部文件），
+    // 并且要与 selector 真正交出的形状一致：定性三项，不多不少。
+    const qualitative: PromptEdgeViaFacade = { targetId: NPC_B, stage: "cooperative", trend: "improving" };
+    const promptProfile: NpcRuntimeProfileViaFacade<"prompt"> = profileOf(baseRecords(), {
+      npcId: NPC_A, targetId: NPC_B, mode: "prompt",
+    });
+    expect(promptProfile.outgoingEdge).toEqual(qualitative);
+    expect(Object.keys(qualitative)).toHaveLength(3);
   });
 });
