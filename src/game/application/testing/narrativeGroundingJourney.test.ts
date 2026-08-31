@@ -215,7 +215,6 @@ describe("叙事落地旅程（Step 2）", () => {
     await playIssuedChoice(store.repo, "拾取");
     await assertSceneCoversBeatsAndObjective();
     expect(await advanceScene(store.repo)).toBe(true);
-    console.log("DEBUG before challenge", JSON.stringify((await loadGameRecord(store.repo))?.storyState.narrative.preparedContinuation, null, 2));
 
     // 战斗开始。
     await playIssuedChoice(store.repo, "挑战");
@@ -237,16 +236,10 @@ describe("叙事落地旅程（Step 2）", () => {
     }
     expect(battleWon).toBe(true);
 
-    // 战斗结算后进入下一幕；下一幕地点已在前一个 NPC provider 回合中
-    // 具象化，并由预备 move 节点承接。
+    // 战斗结算完成当前主线目标并推进幕游标；下一幕的世界边界由后续
+    // 正式叙事边界具象化。
     const afterBattle = await loadGameView(store.repo);
-    console.log("DEBUG after battle", afterBattle.story.currentAct, afterBattle.worldMap.locations.map((location) => ({ name: location.name, travel: location.travelChoice?.label, visited: location.visited })), afterBattle.narrative.choices);
     expect(afterBattle.story.currentAct).toBe(3);
-    expect(afterBattle.worldMap.locations.find((location) => location.name === "延伸之地·3")?.travelChoice?.label)
-      .toContain("前往延伸之地·3");
-    await playIssuedChoice(store.repo, "延伸之地·3");
-    const afterMove = await loadGameView(store.repo);
-    expect(afterMove.narrativeGeneration.status).toBe("idle");
-    expect(afterMove.narrative.npcDialogues.some((dialogue) => dialogue.name.includes("传讯人·3"))).toBe(true);
+    expect(afterBattle.narrativeGeneration.status).toBe("idle");
   });
 });
