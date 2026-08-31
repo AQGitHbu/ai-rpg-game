@@ -9,7 +9,9 @@ import {
   type NpcDynamicStateComponent,
   type NpcEntityRecord,
   type NpcHistoryComponent,
+  type NpcKnowledgeCertainty,
   type NpcKnowledgeComponent,
+  type NpcKnowledgeDisclosure,
   type NpcRelationshipComponent,
   type PossessionComponent,
   type RelationshipSignal,
@@ -21,7 +23,12 @@ import {
   applyRelationshipCommitment,
   applyRelationshipSignalToComponent,
   findRelationshipEdge,
+  setNpcKnowledgeDisclosure,
   upsertRelationshipEdge,
+  writeNpcKnowledge,
+  type NpcKnowledgeErrorCode,
+  type NpcKnowledgeReferences,
+  type NpcKnowledgeSourceInput,
   type RelationshipCommitmentOperation,
   type RelationshipPolicyErrorCode,
   type RelationshipTargetId,
@@ -50,6 +57,19 @@ export type NpcLegacySyncLayers = Readonly<{
  */
 export type RelationshipMutationSource = RelationshipSource;
 
+/**
+ * 知识写入声明的来源：**直接沿用规则层的判别联合**（npcMemory 的 `NpcKnowledgeSourceInput`），
+ * 本层不再手抄任何一支——规则层新增一支时这里不可能悄悄漂移。
+ * 与 RelationshipMutationSource 同理，「类型里有这一支」不等于「本通道能用这一支」：
+ * 本层只放行 `action` 一支，`initial_world` 在 checkKnowledgeSource 里一律以
+ * invalid_knowledge_source 拒掉。理由是背景知识的 provenance 属于**创建期**事实
+ * （由 Task 6 的锚定创建材料一次性给出），在一次运行时行动里写它等于把「世界一开始就是这样」
+ * 伪造成「某次行动让这条 NPC 知道的」；而本通道的 entry.source 一旦写下永不可改（首次来源是历史），
+ * 所以放行即是不可撤销的伪造。这一支保留在类型里是刻意的：形状由规则层定权，
+ * Task 6 只需补能力（届时也只需补一个开关，不必改载荷）。
+ */
+export type KnowledgeMutationSource = NpcKnowledgeSourceInput;
+
 /** 规则层唯一允许的实体写入语言；AI 输入不使用此联合。 */
 export type EntityMutation =
   | { readonly kind: "move_player"; readonly toLocationId: LocationId; readonly markVisited: true }
@@ -67,6 +87,15 @@ export type EntityMutation =
   | { readonly kind: "apply_relationship_commitment"; readonly fromNpcId: NpcId; readonly targetId: RelationshipTargetId; readonly operation: RelationshipCommitmentOperation; readonly source: RelationshipMutationSource }
   | { readonly kind: "transfer_item"; readonly itemId: ItemId; readonly owner: PossessionComponent["owner"] }
   | { readonly kind: "discover_fact"; readonly factId: FactId }
+  /**
+   * 知识写入：一支只写「某 NPC 知道某 Fact」这一条 entry。
+   * 载荷里没有整块组件、没有 entries 数组、没有兼容 memory——那三样都在类型层被
+   * 下面的键集合锁挡在门外，因为「替换整块知识」就是第二条写入通道。
+   * certainty / disclosure 只是首次写入的声明：既有条目的披露只能由下一支改。
+   */
+  | { readonly kind: "record_npc_knowledge"; readonly npcId: NpcId; readonly factId: FactId; readonly certainty: NpcKnowledgeCertainty; readonly disclosure: NpcKnowledgeDisclosure; readonly source: KnowledgeMutationSource }
+  /** 披露改动：唯一的 disclosure 写入通道，evidence 逐字段声明（不给 initial_world 留后门）。 */
+  | { readonly kind: "set_npc_knowledge_disclosure"; readonly npcId: NpcId; readonly factId: FactId; readonly disclosure: NpcKnowledgeDisclosure; readonly actionId: string; readonly turnNumber: number }
   | { readonly kind: "set_quest_status"; readonly questId: QuestId; readonly status: "locked" | "active" | "completed" | "failed" | "closed" }
   | { readonly kind: "set_enemy_defeated"; readonly enemyId: EnemyId; readonly defeated: boolean }
   | { readonly kind: "set_npc_lifecycle"; readonly npcId: NpcId; readonly lifecycle: "active" | "inactive" }
@@ -89,6 +118,19 @@ export type RelationshipCommitmentPayloadKeysLock = Expect<IsExactly<
   "kind" | "fromNpcId" | "targetId" | "operation" | "source"
 >>;
 
+/**
+ * 知识载荷的键集合封闭锁：「整块替换 knowledge」与「顺手写兼容 memory」在这里就是类型错误。
+ * 载荷能携带的只有单条 entry 的四个维度，组件本体永远进不来。
+ */
+export type RecordKnowledgePayloadKeysLock = Expect<IsExactly<
+  keyof Extract<EntityMutation, { readonly kind: "record_npc_knowledge" }>,
+  "kind" | "npcId" | "factId" | "certainty" | "disclosure" | "source"
+>>;
+export type SetKnowledgeDisclosurePayloadKeysLock = Expect<IsExactly<
+  keyof Extract<EntityMutation, { readonly kind: "set_npc_knowledge_disclosure" }>,
+  "kind" | "npcId" | "factId" | "disclosure" | "actionId" | "turnNumber"
+>>;
+
 export type EntityMutationErrorCode =
   | "unknown_entity_id"
   | "duplicate_entity_id"
@@ -105,7 +147,17 @@ export type EntityMutationErrorCode =
   | "invalid_relationship_turn"
   | "invalid_commitment_operation"
   | "unknown_relationship_commitment"
-  | "illegal_relationship_commitment_transition";
+  | "illegal_relationship_commitment_transition"
+  // 知识 mutation 专用：下表逐项覆盖 NpcKnowledgeErrorCode，每个码都可判别，绝不折叠成消息字符串；
+  // 合并只发生在「调用方拿到细分码也只会做同一件事」的地方（见下表注释）。
+  | "unknown_knowledge_fact"
+  | "unknown_knowledge_source_npc"
+  | "invalid_knowledge_source"
+  | "invalid_knowledge_turn"
+  | "invalid_knowledge_certainty"
+  | "invalid_knowledge_disclosure"
+  | "knowledge_certainty_demotion_rejected"
+  | "knowledge_entry_not_found";
 
 /**
  * 规则层封闭错误码 → 本层错误码：`satisfies` 锁住覆盖性，
@@ -121,6 +173,36 @@ const RELATIONSHIP_POLICY_ERROR_CODES: Readonly<Record<RelationshipPolicyErrorCo
   unknown_commitment: "unknown_relationship_commitment",
   illegal_commitment_transition: "illegal_relationship_commitment_transition",
 } as const satisfies Record<RelationshipPolicyErrorCode, EntityMutationErrorCode>;
+
+/**
+ * 知识规则层封闭错误码 → 本层错误码：同样是 `satisfies` 锁覆盖性，规则层新增一个 code
+ * 而本表漏一行就直接编译失败。折叠只发生在「调用方无法据此改变行为」的地方：
+ * 来源支不合法（kind 表外 / mode 表外 / 说话人策略不符 / 缺证据）都归一个码，
+ * 因为它们对调用方的指令完全相同——重新提供一份真实行动证据。
+ */
+const KNOWLEDGE_POLICY_ERROR_CODES: Readonly<Record<NpcKnowledgeErrorCode, EntityMutationErrorCode>> = {
+  unknown_fact: "unknown_knowledge_fact",
+  unknown_source_npc: "unknown_knowledge_source_npc",
+  // 主体 NPC 不存在本来就是 store 级引用错误：与 recordOfKind 走同一个码，调用方不必分派两次。
+  unknown_npc: "unknown_entity_id",
+  // 本通道只放行 action 支（见 KnowledgeMutationSource），规则层的四类来源缺陷合并成一个码。
+  invalid_source_kind: "invalid_knowledge_source",
+  invalid_mode: "invalid_knowledge_source",
+  invalid_source_npc: "invalid_knowledge_source",
+  invalid_action_source: "invalid_knowledge_source",
+  invalid_turn_number: "invalid_knowledge_turn",
+  invalid_certainty: "invalid_knowledge_certainty",
+  invalid_disclosure: "invalid_knowledge_disclosure",
+  certainty_demotion_rejected: "knowledge_certainty_demotion_rejected",
+  knowledge_entry_not_found: "knowledge_entry_not_found",
+  // 以下三支由本层构造方负责保证不可能出现，留着只为映射表的穷尽性：
+  // 组件永远取自 store 里那条 record（domain validator 已钉住 entries 是数组），
+  invalid_component: "structure_invalid",
+  // 引用上下文永远由 knowledgeReferences 现场构造（两个 Set 字面量），
+  invalid_reference_context: "structure_invalid",
+  // change 三取值只存在于 FactChange 广播入口，本通道不调用它。
+  invalid_change_kind: "structure_invalid",
+} as const satisfies Record<NpcKnowledgeErrorCode, EntityMutationErrorCode>;
 
 export type ApplyEntityMutationsResult =
   | { readonly ok: true; readonly worldState: WorldState }
@@ -212,6 +294,62 @@ function questLifecycle(status: Extract<EntityMutation, { readonly kind: "set_qu
   if (status === "active") return "active";
   if (status === "locked") return "inactive";
   return "resolved";
+}
+
+// ---------------------------------------------------------------------------
+// 知识 mutation 的边界校验（Task 4B）
+// ---------------------------------------------------------------------------
+
+type KnowledgeSubject =
+  | { readonly ok: true; readonly npc: NpcEntityRecord }
+  | { readonly ok: false; readonly code: EntityMutationErrorCode; readonly entityId: string };
+
+/**
+ * 知识主体：必须是一条 npc record，且必须仍然活着。
+ * 规则层的引用集合只做**存在性**判定（4A 明示不查 lifecycle），所以主体自己的存活
+ * 只能由本 mutation 校验——沿用 3B `relationshipParties` 的处理：非活跃主体一律
+ * invalid_lifecycle_transition。否则「停用/已结算的 NPC」就会成为新的写入目标，
+ * 而它随时可能被 projector 重新折叠回兼容数组，看不出差别。
+ */
+function knowledgeSubject(records: readonly EntityRecord[], npcId: NpcId): KnowledgeSubject {
+  const npc = recordOfKind(records, npcId, "npc");
+  if (!npc.ok) return npc;
+  if (npc.record.core.lifecycle !== "active") {
+    return { ok: false, code: "invalid_lifecycle_transition", entityId: npcId };
+  }
+  return { ok: true, npc: npc.record };
+}
+
+/**
+ * 引用上下文：两个 ID 集合都从**传入的 records 数组**现场派生，只收活跃实体。
+ * 为什么不取 `ws.worldFacts` / `ws.npcs`：
+ * 1. `applyOne` 的签名里根本没有 WorldState——它只拿到 records，写不出别的事实来源。
+ * 2. `ws.worldFacts` 与 `ws.npcs` 是 `projectEntityStore` 每次重建的**兼容读模型**，
+ *    且 `entitiesOfKind` 逐条投影、完全不看 lifecycle：拿它当上下文就会放行
+ *    一条已停用（inactive / resolved / destroyed）的 Fact Entity。
+ * 3. 说话人同理：死掉的 NPC 不得借一条新知识洗白成 provenance（entry.source 永不可改写）。
+ * canonical 判定权在实体层，兼容数组只是它的一个视图，视图不是依据。
+ */
+function knowledgeReferences(records: readonly EntityRecord[]): NpcKnowledgeReferences {
+  return {
+    factIds: new Set(records.filter((record) => record.core.kind === "fact" && record.core.lifecycle === "active").map((record) => record.core.id)),
+    npcIds: new Set(records.filter((record) => record.core.kind === "npc" && record.core.lifecycle === "active").map((record) => record.core.id)),
+  };
+}
+
+/**
+ * 来源判别式校验：本层只放行 `action` 一支，`initial_world` 一律拒绝（理由见
+ * KnowledgeMutationSource）。这里**不**重复检查 actionId / turnNumber 的形状——
+ * 那是规则层 `createNpcKnowledgeSource` 的唯一职责（`writeNpcKnowledge` 是 entry 写入的唯一入口），
+ * 在此再抄一遍就是第二事实来源。
+ * 也刻意不返回「闸门收紧后的那份来源」：写下去的就是调用方自己的 `mutation.source`，
+ * 闸门只回答「这一支能不能写」。
+ */
+function checkKnowledgeSource(declared: KnowledgeMutationSource): EntityMutationErrorCode | undefined {
+  if (typeof declared !== "object" || declared === null || declared.kind !== "action") {
+    return "invalid_knowledge_source";
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -399,6 +537,55 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation): M
       if (!fact.ok) return fact;
       if (fact.record.fact.discovered) return { ok: true, records };
       return { ok: true, records: replaceRecord(records, mutation.factId, { ...fact.record, fact: { ...fact.record.fact, discovered: true } }) };
+    }
+    case "record_npc_knowledge": {
+      // 三道边界（主体存活 / 来源支 / 引用上下文）先过，entry 语义一条都不在这里重算：
+      // 幂等键、certainty 阶梯、说话人策略、取值闭集全是规则层的判定，抄一遍就是第二事实来源。
+      const subject = knowledgeSubject(records, mutation.npcId);
+      if (!subject.ok) return failure(subject.code, subject.entityId);
+      const sourceCode = checkKnowledgeSource(mutation.source);
+      if (sourceCode !== undefined) return failure(sourceCode, mutation.npcId);
+      const applied = writeNpcKnowledge({
+        npcId: mutation.npcId,
+        knowledge: subject.npc.knowledge,
+        factId: mutation.factId,
+        certainty: mutation.certainty,
+        disclosure: mutation.disclosure,
+        source: mutation.source,
+        references: knowledgeReferences(records),
+      });
+      // applied.code 是规则层自己的封闭字面量 union（不是调用方数据），所以裸下标即可：
+      // 表覆盖性由 KNOWLEDGE_POLICY_ERROR_CODES 的 satisfies 锁住，漏一行在 typecheck 就失败。
+      if (!applied.ok) return failure(KNOWLEDGE_POLICY_ERROR_CODES[applied.code], mutation.npcId);
+      // changed:false 是同一条事实重放的幂等结果：records 数组按引用原样返回，不是失败。
+      if (!applied.changed) return { ok: true, records };
+      // 只替换这一个主体的知识组件：其余组件按引用继承，兼容 memory 由 projector 重建。
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.npcId, { ...subject.npc, knowledge: applied.knowledge }),
+      };
+    }
+    case "set_npc_knowledge_disclosure": {
+      // 披露通道的 evidence 是扁平字段（actionId + turnNumber），
+      // 所以 initial_world 这一支在本载荷里根本表达不出来——不需要、也不再有第二道开关。
+      const subject = knowledgeSubject(records, mutation.npcId);
+      if (!subject.ok) return failure(subject.code, subject.entityId);
+      const applied = setNpcKnowledgeDisclosure({
+        npcId: mutation.npcId,
+        knowledge: subject.npc.knowledge,
+        factId: mutation.factId,
+        disclosure: mutation.disclosure,
+        actionId: mutation.actionId,
+        turnNumber: mutation.turnNumber,
+        references: knowledgeReferences(records),
+      });
+      if (!applied.ok) return failure(KNOWLEDGE_POLICY_ERROR_CODES[applied.code], mutation.npcId);
+      // 同值披露重放同样是零写入的成功；未知 Fact 与「不知道这件事」的区分由规则层的 code 给出。
+      if (!applied.changed) return { ok: true, records };
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.npcId, { ...subject.npc, knowledge: applied.knowledge }),
+      };
     }
     case "set_quest_status": {
       const quest = recordOfKind(records, mutation.questId, "quest");

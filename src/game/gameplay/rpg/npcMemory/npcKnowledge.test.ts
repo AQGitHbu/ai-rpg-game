@@ -279,8 +279,11 @@ describe("writeNpcKnowledge", () => {
     const demotion = write({ knowledge: known.knowledge, certainty: "suspected" });
     expect(demotion).toEqual({ ok: false, changed: false, code: "certainty_demotion_rejected", knowledge: known.knowledge });
     if (demotion.ok) throw new Error("demotion must be rejected");
-    expect(demotion.knowledge).toBe(known.knowledge);
-    expect(demotion.knowledge.entries[0]?.certainty).toBe("known");
+    // 提供了组件的拒绝**必须**带回调用方那个对象：undefined 只允许出现在 invalid_component 臂上。
+    const untouched = demotion.knowledge;
+    if (untouched === undefined) throw new Error("rejection must return the caller's own component");
+    expect(untouched).toBe(known.knowledge);
+    expect(untouched.entries[0]?.certainty).toBe("known");
   });
 
   it("disclosure 只能由显式规则改变：普通写入不动既有披露", () => {
@@ -578,7 +581,14 @@ describe("references and compatibility", () => {
     };
     // 零写入的证据是**对象同一性**，所以本模块绝不 `?? { entries: [] }` 造一份新组件：
     // 伪造出来的空组件会让「漏传 knowledge」看起来像一次成功写入。
-    expect(() => writeNpcKnowledge(missing as never)).toThrow(TypeError);
+    // 但漏传也不得逃成裸 TypeError——规则层的契约是「永远返回封闭 code」，
+    // 调用方因此不需要为一条规则判断包 try/catch（Task 4A 复审加固 #1）。
+    const rejected = writeNpcKnowledge(missing as never);
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok) throw new Error("missing component must not pass");
+    expect(rejected.changed).toBe(false);
+    expect(rejected.code).toBe("invalid_component");
+    expect(rejected.knowledge).toBeUndefined();
   });
 
   it("既有组件里的表外既有取值走 knowledge_entry_not_found，写入口不得借道改写", () => {
@@ -656,3 +666,122 @@ function projectNpcMemoryFrom(
     hiddenFactIds: knowledge.entries.filter((entry) => entry.disclosure === "secret").map((entry) => String(entry.factId)),
   };
 }
+
+// ---------------------------------------------------------------------------
+// 7) Task 4A 复审加固：#1 组件本体的稳定 code、#3 同一对象上不得混用两把读取门
+// ---------------------------------------------------------------------------
+
+describe("npcKnowledge 的失败一律是封闭 code（复审加固 #1）", () => {
+  /** 不经 `write` 夹具：它的 `?? { entries: [] }` 缺省会替调用方伪造组件。 */
+  function writeRaw(knowledge: unknown) {
+    return writeNpcKnowledge({
+      npcId: NPC_A, knowledge: knowledge as never, factId: FACT_1, certainty: "known",
+      disclosure: "public", source: ACTION_SOURCE, references: REFERENCES,
+    });
+  }
+
+  /** 组件本体不是组件的每一种形状：调用方拿到 code，而不是 TypeError。 */
+  function expectInvalidComponent(
+    label: string,
+    knowledge: unknown,
+  ): void {
+    const notAForgedComponent = knowledge;
+    const written = writeRaw(knowledge);
+    expect(written.ok, label).toBe(false);
+    if (!written.ok) {
+      expect(written.code, label).toBe("invalid_component");
+      expect(written.changed, label).toBe(false);
+    }
+    const disclosed = setNpcKnowledgeDisclosure({
+      npcId: NPC_A, knowledge: knowledge as never, factId: FACT_1, disclosure: "secret",
+      actionId: EVIDENCE.actionId, turnNumber: EVIDENCE.turnNumber, references: REFERENCES,
+    });
+    expect(disclosed.ok, label).toBe(false);
+    if (!disclosed.ok) expect(disclosed.code, label).toBe("invalid_component");
+    // 「没有写入」的证据仍然是对象同一性：能原样带回的一律带回调用方自己那个对象。
+    if (typeof notAForgedComponent === "object" && notAForgedComponent !== null) {
+      if (!written.ok) expect(written.knowledge, label).toBe(notAForgedComponent);
+      if (!disclosed.ok) expect(disclosed.knowledge, label).toBe(notAForgedComponent);
+    }
+  }
+
+  it("knowledge 缺字段 / 为 null / 为数组 / entries 只挂在原型链上，全部落到 invalid_component", () => {
+    expectInvalidComponent("缺 entries", {});
+    expectInvalidComponent("entries 非数组", { entries: "fact_1" });
+    expectInvalidComponent("entries 只继承", Object.create({ entries: [] }));
+    expectInvalidComponent("undefined", undefined);
+    expectInvalidComponent("null", null);
+    expectInvalidComponent("数组", []);
+    expectInvalidComponent("字符串", "fact_1");
+  });
+
+  it("合法组件照常写入：本项加固没有把空 entries 组件误判成缺失", () => {
+    const result = write({ knowledge: { entries: [] } });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.changed).toBe(true);
+  });
+});
+
+describe("同一 input 对象的读取共用一把门（复审加固 #3）", () => {
+  it("继承来的 certainty / disclosure 不算声明：写入口与细构造函数都拒绝", () => {
+    const inheritedCertainty = Object.assign(Object.create({ certainty: "known", disclosure: "public" }), {
+      npcId: NPC_A, knowledge: { entries: [] }, factId: FACT_1,
+      source: ACTION_SOURCE, references: REFERENCES,
+    });
+    expect(writeNpcKnowledge(inheritedCertainty as never))
+      .toMatchObject({ ok: false, changed: false, code: "invalid_certainty" });
+
+    const inheritedDisclosure = Object.assign(Object.create({ disclosure: "public" }), {
+      factId: FACT_1, certainty: "known", source: ACTION_SOURCE,
+    });
+    expect(createNpcKnowledgeEntry(inheritedDisclosure as never))
+      .toEqual({ ok: false, code: "invalid_disclosure" });
+  });
+
+  it("setNpcKnowledgeDisclosure 的 disclosure / actionId / turnNumber 只认自有属性", () => {
+    // 被测字段在 own 属性上**完全缺席**，只留在原型链上：今天的裸读会把它当作已提供，
+    // 于是「一份只挂在原型链上的 evidence」就足以推动一次真实的披露写入。
+    const subject = {
+      npcId: NPC_A, knowledge: { entries: [entryOf({ factId: FACT_1 })] }, factId: FACT_1,
+      references: REFERENCES,
+    };
+    expect(setNpcKnowledgeDisclosure(Object.assign(Object.create({ disclosure: "secret" }), {
+      ...subject, actionId: EVIDENCE.actionId, turnNumber: EVIDENCE.turnNumber,
+    }) as never)).toMatchObject({ ok: false, changed: false, code: "invalid_disclosure" });
+    expect(setNpcKnowledgeDisclosure(Object.assign(Object.create({ actionId: EVIDENCE.actionId }), {
+      ...subject, disclosure: "secret", turnNumber: EVIDENCE.turnNumber,
+    }) as never)).toMatchObject({ ok: false, changed: false, code: "invalid_action_source" });
+    expect(setNpcKnowledgeDisclosure(Object.assign(Object.create({ turnNumber: EVIDENCE.turnNumber }), {
+      ...subject, disclosure: "secret", actionId: EVIDENCE.actionId,
+    }) as never)).toMatchObject({ ok: false, changed: false, code: "invalid_turn_number" });
+  });
+
+  it("广播请求继承来的证据被拒，继承来的缺省值不得左右写入", () => {
+    const change = factChange({ audience: [NPC_A] });
+    const inheritedAction = Object.assign(Object.create({ actionId: "act_7" }), { turnNumber: 3 });
+    expect(knowledgeWritesFromFactChange(change, inheritedAction as never, REFERENCES))
+      .toMatchObject({ ok: false, code: "invalid_action_source" });
+    const inheritedTurn = Object.assign(Object.create({ turnNumber: 3 }), { actionId: "act_7" });
+    expect(knowledgeWritesFromFactChange(change, inheritedTurn as never, REFERENCES))
+      .toMatchObject({ ok: false, code: "invalid_turn_number" });
+
+    // 表外值挂在原型链上时**不是**「非法 certainty」，而是「没有声明」：走自己的缺省。
+    const inheritedDefaults = Object.assign(Object.create({ certainty: "absolute", disclosure: "secret" }), {
+      actionId: "act_7", turnNumber: 3,
+    });
+    const result = knowledgeWritesFromFactChange(change, inheritedDefaults as never, REFERENCES);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.writes[0]).toMatchObject({ certainty: "known", disclosure: "public" });
+  });
+
+  it("引用上下文也只在自有属性上成立", () => {
+    const inheritedReferences = Object.create({ factIds: REFERENCES.factIds, npcIds: REFERENCES.npcIds });
+    expect(write({ references: inheritedReferences as never }))
+      .toMatchObject({ ok: false, changed: false, code: "invalid_reference_context" });
+    // 半继承（只把 npcIds 挂上原型）同样整体拒绝：不存在「一半上下文可信」。
+    const halfOwn = Object.assign(Object.create({ npcIds: REFERENCES.npcIds }), { factIds: REFERENCES.factIds });
+    expect(write({ references: halfOwn as never }))
+      .toMatchObject({ ok: false, changed: false, code: "invalid_reference_context" });
+  });
+});

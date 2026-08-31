@@ -4,6 +4,7 @@ export {
   type ApplyEntityMutationsResult,
   type EntityMutation,
   type EntityMutationErrorCode,
+  type KnowledgeMutationSource,
   type RelationshipMutationSource,
 } from "./entityMutation";
 export {

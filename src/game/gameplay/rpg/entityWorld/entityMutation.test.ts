@@ -8,8 +8,11 @@ import type {
   EnemyEntry, ItemEntry, LocationEntry, NpcEntry, PlayerState, QuestEntry, WorldFactEntry,
 } from "@/game/domain/worldState";
 import type {
-  EntityCompatibilityProjection, NpcEntityRecord, PositionComponent, PossessionComponent,
+  EntityCompatibilityProjection, EntityLifecycle, EntityRecord, NpcEntityRecord,
+  NpcKnowledgeCertainty, NpcKnowledgeDisclosure,
+  PositionComponent, PossessionComponent,
 } from "@/game/domain/entity";
+import type { FactChangeSource } from "@/game/domain/resolvedEvent";
 import { compileLegacyNpcSync, entitiesOfKind, getEntity, importNpcLayers, projectNpcEntry } from "@/game/domain/entity";
 import {
   asFactId, asGenerationId, asItemId, asLocationId, asNpcId, asQuestId, asEnemyId,
@@ -17,9 +20,10 @@ import {
 } from "@/game/domain/worldEntity";
 import {
   applyEntityMutations, EntityMutationInvariantError,
-  type EntityMutation, type EntityMutationErrorCode, type RelationshipMutationSource,
+  type EntityMutation, type EntityMutationErrorCode,
+  type KnowledgeMutationSource, type RelationshipMutationSource,
 } from "./entityMutation";
-import type { NpcId } from "@/game/domain/worldEntity";
+import type { FactId, NpcId } from "@/game/domain/worldEntity";
 import type { RelationshipSignal } from "@/game/domain/entity";
 import type { RelationshipCommitmentOperation, RelationshipTargetId } from "@/game/gameplay/rpg/npcMemory";
 
@@ -996,5 +1000,375 @@ describe("关系写入通道唯一性（Task 5 拆除桥前的过渡约束）", 
       })
       .map((entry) => entry.name);
     expect(writers.sort()).toEqual(["apply_relationship_commitment", "apply_relationship_signal", "sync_npc_legacy_memory"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 4B：知识写入只能走 record_npc_knowledge / set_npc_knowledge_disclosure。
+// entry 语义（幂等、certainty 阶梯、disclosure 独占通道、来源合法性、引用存在性）
+// 全部由 npcMemory 的 npcKnowledge 规则层裁决；本层只做三件事：
+// 主体 NPC 的边界校验、从 store 派生的引用上下文、以及只替换 knowledge 一个组件的原子写回。
+// ---------------------------------------------------------------------------
+
+const FACT_2 = asFactId("fact_2");
+
+/** 引用上下文只认 canonical Fact Entity，所以测试里的第二条事实也必须是一条实体。 */
+function factEntityRecord(id: FactId, lifecycle: EntityLifecycle = "active"): EntityRecord {
+  return {
+    core: { id, kind: "fact", name: `fact:${id}`, createdAtTurn: 0, lifecycle },
+    fact: { text: "古井下有密道", source: "generated", discovered: false },
+  };
+}
+
+function knowledgeSource(overrides: Partial<Readonly<{
+  mode: FactChangeSource; actionId: string; turnNumber: number; sourceNpcId: NpcId;
+}>> = {}): KnowledgeMutationSource {
+  return { kind: "action", mode: "scene_witness", actionId: ACT_1, turnNumber: 3, ...overrides };
+}
+
+function recordKnowledge(input: Readonly<{
+  npcId?: NpcId;
+  factId?: FactId;
+  /** 表外取值由调用点直接传字符串（生产类型是封闭 union）。 */
+  certainty?: NpcKnowledgeCertainty | string;
+  disclosure?: NpcKnowledgeDisclosure | string;
+  source?: KnowledgeMutationSource;
+}> = {}): EntityMutation {
+  return {
+    kind: "record_npc_knowledge",
+    npcId: input.npcId ?? NPC_1,
+    factId: input.factId ?? FACT_1,
+    certainty: (input.certainty ?? "known") as NpcKnowledgeCertainty,
+    disclosure: (input.disclosure ?? "public") as NpcKnowledgeDisclosure,
+    source: input.source ?? knowledgeSource(),
+  };
+}
+
+function setDisclosure(input: Readonly<{
+  npcId?: NpcId;
+  factId?: FactId;
+  disclosure?: NpcKnowledgeDisclosure | string;
+  actionId?: string;
+  turnNumber?: number;
+}> = {}): EntityMutation {
+  return {
+    kind: "set_npc_knowledge_disclosure",
+    npcId: input.npcId ?? NPC_1,
+    factId: input.factId ?? FACT_1,
+    disclosure: (input.disclosure ?? "secret") as NpcKnowledgeDisclosure,
+    actionId: input.actionId ?? ACT_1,
+    turnNumber: input.turnNumber ?? 3,
+  };
+}
+
+function knowledgeOf(ws: WorldState, npcId: NpcId = NPC_1) {
+  return npcRecord(ws, npcId).knowledge;
+}
+
+/** 未知主体的知识组件当然不存在：零写入断言不得因为查不到 record 就抛。 */
+function knowledgeComponentOf(ws: WorldState, npcId: NpcId) {
+  return entitiesOfKind(ws.entityStore, "npc").find((record) => record.core.id === npcId)?.knowledge;
+}
+
+/** 拒绝用例统一入口：稳定 code/entityId，且 store 与知识组件都按**引用**原样不动。 */
+function expectKnowledgeRejected(
+  ws: WorldState,
+  mutations: readonly EntityMutation[],
+  expected: Readonly<{ code: EntityMutationErrorCode; entityId?: string }>,
+) {
+  const store = ws.entityStore;
+  const records = store.records;
+  const subjectId = expected.entityId === undefined ? undefined : (expected.entityId as NpcId);
+  const knowledgeBefore = subjectId === undefined ? undefined : knowledgeComponentOf(ws, subjectId);
+  const result = applyEntityMutations(ws, mutations);
+  expect(result).toEqual({ ok: false, ...expected });
+  expect(ws.entityStore).toBe(store);
+  expect(ws.entityStore.records).toBe(records);
+  if (subjectId !== undefined) expect(knowledgeComponentOf(ws, subjectId)).toBe(knowledgeBefore);
+}
+
+describe("applyEntityMutations — record_npc_knowledge", () => {
+  it("两条知识 mutation 的载荷键集合恰好等于声明：整块 entries 与兼容 memory 都进不来", () => {
+    // 负编译探针（同 3B 惯例）：多余键写成字面量即 typecheck 失败，
+    // 锁的是 EntityMutation 的载荷形状（*PayloadKeysLock 那一族编译锁），不是夹具自己。
+    // @ts-expect-error entries 不是 record_npc_knowledge 的载荷键：Step 3 禁止整块替换 knowledge
+    const blockReplacement: EntityMutation = { kind: "record_npc_knowledge", npcId: NPC_1, factId: FACT_1, certainty: "known", disclosure: "public", source: knowledgeSource(), entries: [] };
+    // @ts-expect-error memory 不是 set_npc_knowledge_disclosure 的载荷键：兼容读模型没有写入口
+    const parallelMemory: EntityMutation = { kind: "set_npc_knowledge_disclosure", npcId: NPC_1, factId: FACT_1, disclosure: "secret", actionId: ACT_1, turnNumber: 3, memory: { knownFactIds: [FACT_1] } };
+    // 运行时那一半同样是生产事实：类型没拦住的多余键读不进规则层。
+    const next = okApply(world(), [blockReplacement, parallelMemory]);
+    const knowledge = knowledgeOf(next);
+    expect(Object.keys(knowledge)).toEqual(["entries"]);
+    expect(knowledge.entries).toHaveLength(1);
+    expect(knowledge.entries[0]).toEqual({
+      factId: FACT_1, certainty: "known", disclosure: "secret",
+      source: { kind: "action", mode: "scene_witness", actionId: ACT_1, learnedAtTurn: 3 },
+    });
+  });
+
+  it("首写逐字采用规则层产出的 entry，且只替换 knowledge 一个组件", () => {
+    const ws = world();
+    const before = npcRecord(ws, NPC_1);
+    const next = okApply(ws, [recordKnowledge({ certainty: "suspected", disclosure: "conditional" })]);
+    const after = npcRecord(next, NPC_1);
+    expect(after.knowledge).not.toBe(before.knowledge);
+    expect(after.core).toBe(before.core);
+    expect(after.identity).toBe(before.identity);
+    expect(after.position).toBe(before.position);
+    expect(after.dynamicState).toBe(before.dynamicState);
+    expect(after.relationships).toBe(before.relationships);
+    expect(after.history).toBe(before.history);
+    // npc_2 没有被顺手写入：本 mutation 只写主体的组件（方向性由签名保证）。
+    expect(npcRecord(next, NPC_2).knowledge).toBe(npcRecord(ws, NPC_2).knowledge);
+  });
+
+  it("兼容 memory 只由 projector 从新组件重建：本层不存在第二条平行写路径", () => {
+    const ws = world();
+    expect(ws.npcs.find((npc) => npc.id === NPC_1)?.memory.knownFactIds).toEqual([]);
+    const recorded = okApply(ws, [recordKnowledge()]);
+    expect(knowledgeOf(recorded).entries.map((entry) => String(entry.factId))).toEqual(["fact_1"]);
+    expect(recorded.npcs.find((npc) => npc.id === NPC_1)?.memory.knownFactIds).toEqual(["fact_1"]);
+    expect(recorded.npcs.find((npc) => npc.id === NPC_1)?.memory.hiddenFactIds).toEqual([]);
+    // 披露改动同样只经组件生效：hiddenFactIds 是 secret 条目的投影。
+    const withheld = okApply(recorded, [setDisclosure()]);
+    expect(withheld.npcs.find((npc) => npc.id === NPC_1)?.memory.hiddenFactIds).toEqual(["fact_1"]);
+    // 入参 WorldState 一分未动：兼容数组每次都是投影新建的。
+    expect(ws.npcs.find((npc) => npc.id === NPC_1)?.memory.knownFactIds).toEqual([]);
+    expect(ws.npcs.find((npc) => npc.id === NPC_1)?.memory.hiddenFactIds).toEqual([]);
+  });
+
+  it("certainty 阶梯由规则层裁决：suspected→known 升级，source 与 disclosure 逐字保留", () => {
+    const first = okApply(world(), [recordKnowledge({ certainty: "suspected", disclosure: "conditional" })]);
+    const entry = knowledgeOf(first).entries[0]!;
+    const upgraded = okApply(first, [recordKnowledge({ certainty: "known", disclosure: "public" })]);
+    const nextEntry = knowledgeOf(upgraded).entries[0]!;
+    expect(nextEntry.certainty).toBe("known");
+    expect(nextEntry.disclosure).toBe("conditional");
+    expect(nextEntry.source).toEqual(entry.source);
+    expect(knowledgeOf(upgraded).entries).toHaveLength(1);
+  });
+
+  it("known→suspected 隐式降级返回 knowledge_certainty_demotion_rejected 且零写入", () => {
+    const known = okApply(world(), [recordKnowledge({ certainty: "known" })]);
+    expectKnowledgeRejected(known, [recordKnowledge({ certainty: "suspected" })], { code: "knowledge_certainty_demotion_rejected", entityId: NPC_1 });
+  });
+
+  it("同一条事实重放是幂等成功而非错误：组件引用原样不变", () => {
+    const mutation = recordKnowledge();
+    const once = okApply(world(), [mutation]);
+    const component = knowledgeOf(once);
+    const batched = okApply(once, [mutation, mutation]);
+    expect(knowledgeOf(batched)).toBe(component);
+    const again = okApply(batched, [mutation]);
+    expect(knowledgeOf(again)).toBe(component);
+    expect(again.npcs.find((npc) => npc.id === NPC_1)?.memory.knownFactIds).toEqual(["fact_1"]);
+  });
+
+  it("引用上下文取自 store 实体：npc_revealed 的说话人必须是活跃 NPC", () => {
+    const next = okApply(world(), [recordKnowledge({
+      source: knowledgeSource({ mode: "npc_revealed", sourceNpcId: NPC_2 }),
+    })]);
+    expect(knowledgeOf(next).entries[0]?.source).toEqual({
+      kind: "action", mode: "npc_revealed", actionId: ACT_1, learnedAtTurn: 3, sourceNpcId: NPC_2,
+    });
+    // 说话人自己不会因此获得这条知识（sourceNpcId 不等于 audience）。
+    expect(knowledgeOf(next, NPC_2).entries).toHaveLength(0);
+  });
+
+  it("Fact、target NPC、source NPC 任一未知都各自返回稳定 code 且整批零写入", () => {
+    const ws = world();
+    expectKnowledgeRejected(ws, [recordKnowledge({ factId: asFactId("fact_missing") })], { code: "unknown_knowledge_fact", entityId: NPC_1 });
+    const result = applyEntityMutations(ws, [recordKnowledge({ npcId: asNpcId("npc_missing") })]);
+    expect(result).toEqual({ ok: false, code: "unknown_entity_id", entityId: asNpcId("npc_missing") });
+    expect(knowledgeOf(ws)).toBe(npcRecord(ws, NPC_1).knowledge);
+    expectKnowledgeRejected(ws, [recordKnowledge({ source: knowledgeSource({ mode: "npc_revealed", sourceNpcId: asNpcId("npc_ghost") }) })], {
+      code: "unknown_knowledge_source_npc", entityId: NPC_1,
+    });
+    // 玩家实体不是 NPC：它拿不到「知识说话人」这个身份。
+    expectKnowledgeRejected(ws, [recordKnowledge({ source: knowledgeSource({ mode: "npc_revealed", sourceNpcId: asNpcId(String(PLAYER_ENTITY_ID)) }) })], {
+      code: "unknown_knowledge_source_npc", entityId: NPC_1,
+    });
+  });
+
+  it("非活跃 NPC 既不能作为知识主体，也不能作为说话人洗白来源", () => {
+    const inactive = okApply(world(), [{ kind: "set_npc_lifecycle", npcId: NPC_2, lifecycle: "inactive" }]);
+    expectKnowledgeRejected(inactive, [recordKnowledge({ npcId: NPC_2, source: knowledgeSource({ mode: "npc_revealed", sourceNpcId: NPC_1 }) })], {
+      code: "invalid_lifecycle_transition", entityId: NPC_2,
+    });
+    // 死掉的说话人不得借一条新知识洗白成 provenance。
+    expectKnowledgeRejected(inactive, [recordKnowledge({ source: knowledgeSource({ mode: "npc_revealed", sourceNpcId: NPC_2 }) })], {
+      code: "unknown_knowledge_source_npc", entityId: NPC_1,
+    });
+    const defeated = okApply(world(), [{ kind: "set_enemy_defeated", enemyId: ENEMY_1, defeated: true }]);
+    expect(applyEntityMutations(defeated, [recordKnowledge({ npcId: asNpcId(String(ENEMY_1)) })]))
+      .toEqual({ ok: false, code: "wrong_entity_kind", entityId: ENEMY_1 });
+  });
+
+  it("生命周期处理是显式决定：非活跃 Fact 实体不在引用上下文里，哪怕兼容读模型仍然列着它", () => {
+    const ws = world();
+    const retired = okApply(ws, [{ kind: "create_entities", records: [factEntityRecord(FACT_2, "inactive")] }]);
+    // 兼容数组按实体逐条投影、不看 lifecycle：拿它当引用上下文就会放行这条已停用的事实。
+    expect(retired.worldFacts.some((fact) => String(fact.factId) === String(FACT_2))).toBe(true);
+    expectKnowledgeRejected(retired, [recordKnowledge({ factId: FACT_2 })], { code: "unknown_knowledge_fact", entityId: NPC_1 });
+    const live = okApply(ws, [{ kind: "create_entities", records: [factEntityRecord(FACT_2, "active")] }]);
+    const next = okApply(live, [recordKnowledge({ factId: FACT_2 })]);
+    expect(knowledgeOf(next).entries.map((entry) => String(entry.factId))).toEqual(["fact_2"]);
+  });
+
+  it("空白、非字符串与只挂在原型链上的 actionId 一律 invalid_knowledge_source", () => {
+    const ws = world();
+    expectKnowledgeRejected(ws, [recordKnowledge({ source: knowledgeSource({ actionId: "   " }) })], { code: "invalid_knowledge_source", entityId: NPC_1 });
+    expectKnowledgeRejected(ws, [recordKnowledge({ source: knowledgeSource({ actionId: "" }) })], { code: "invalid_knowledge_source", entityId: NPC_1 });
+    expectKnowledgeRejected(ws, [recordKnowledge({
+      source: knowledgeSource({ actionId: 42 as unknown as string }),
+    })], { code: "invalid_knowledge_source", entityId: NPC_1 });
+    // 只挂在原型链上的 actionId 不算提供了证据（规则层的 ownField 守门在本通道同样生效）。
+    const inherited = Object.assign(Object.create({ actionId: ACT_1 }), {
+      kind: "action", mode: "npc_revealed", turnNumber: 3, sourceNpcId: NPC_2,
+    }) as unknown as KnowledgeMutationSource;
+    expectKnowledgeRejected(ws, [recordKnowledge({ source: inherited })], { code: "invalid_knowledge_source", entityId: NPC_1 });
+  });
+
+  it("turnNumber 必须是非负有限整数：负数、小数、NaN 各返回 invalid_knowledge_turn", () => {
+    const ws = world();
+    for (const turnNumber of [-1, 1.5, Number.NaN]) {
+      expectKnowledgeRejected(ws, [recordKnowledge({ source: knowledgeSource({ turnNumber }) })], { code: "invalid_knowledge_turn", entityId: NPC_1 });
+    }
+  });
+
+  it("表外 certainty 与 disclosure 各自的 code 可判别（含原型链键名）", () => {
+    const ws = world();
+    for (const certainty of ["absolute", "toString", "constructor"]) {
+      expectKnowledgeRejected(ws, [recordKnowledge({ certainty })], { code: "invalid_knowledge_certainty", entityId: NPC_1 });
+    }
+    for (const disclosure of ["restricted", "__proto__", "hasOwnProperty"]) {
+      expectKnowledgeRejected(ws, [recordKnowledge({ disclosure })], { code: "invalid_knowledge_disclosure", entityId: NPC_1 });
+    }
+  });
+
+  it("initial_world 在本通道被拒：把知识写入开给创建期来源属 Task 6 的能力", () => {
+    const ws = world();
+    const initial: KnowledgeMutationSource = { kind: "initial_world", turnNumber: 0 };
+    expectKnowledgeRejected(ws, [recordKnowledge({ source: initial })], { code: "invalid_knowledge_source", entityId: NPC_1 });
+    // 判别式之外的 kind 同样落在这个码上：新增一支不会悄悄获得写入能力。
+    expectKnowledgeRejected(ws, [recordKnowledge({
+      source: { kind: "ai_said_so" } as unknown as KnowledgeMutationSource,
+    })], { code: "invalid_knowledge_source", entityId: NPC_1 });
+    // mode 表外值也一样：说话人策略表之外没有第二条通道。
+    expectKnowledgeRejected(ws, [recordKnowledge({
+      source: knowledgeSource({ mode: "toString" as FactChangeSource }),
+    })], { code: "invalid_knowledge_source", entityId: NPC_1 });
+  });
+
+  it("mode 与说话人策略不匹配时零写入：无说话人的 npc_revealed 与多余的 sourceNpcId 各自稳定", () => {
+    const ws = world();
+    expectKnowledgeRejected(ws, [recordKnowledge({ source: knowledgeSource({ mode: "npc_revealed" }) })], { code: "invalid_knowledge_source", entityId: NPC_1 });
+    expectKnowledgeRejected(ws, [recordKnowledge({
+      source: knowledgeSource({ mode: "player_told", sourceNpcId: NPC_2 }),
+    })], { code: "invalid_knowledge_source", entityId: NPC_1 });
+  });
+
+  it("合法写入与失败写入混在同一批时整批零修改", () => {
+    const ws = world();
+    const store = ws.entityStore;
+    const result = applyEntityMutations(ws, [
+      recordKnowledge({ factId: FACT_1 }),
+      recordKnowledge({ factId: asFactId("fact_missing") }),
+    ]);
+    expect(result).toEqual({ ok: false, code: "unknown_knowledge_fact", entityId: NPC_1 });
+    expect(ws.entityStore).toBe(store);
+    expect(knowledgeOf(ws).entries).toHaveLength(0);
+  });
+});
+
+describe("applyEntityMutations — set_npc_knowledge_disclosure", () => {
+  it("披露通道只改 disclosure：不建条目、不动 certainty、不改首次 source", () => {
+    const recorded = okApply(world(), [recordKnowledge({ certainty: "suspected", disclosure: "public" })]);
+    const before = knowledgeOf(recorded);
+    const entry = before.entries[0]!;
+    const next = okApply(recorded, [setDisclosure({ disclosure: "secret" })]);
+    const after = knowledgeOf(next);
+    expect(after).not.toBe(before);
+    expect(after.entries).toHaveLength(1);
+    const changed = after.entries[0]!;
+    expect(changed.disclosure).toBe("secret");
+    expect(changed.certainty).toBe("suspected");
+    expect(changed.source).toBe(entry.source);
+    expect(changed.factId).toBe(entry.factId);
+    // 首次来源是历史：披露改动不留自己的 actionId 痕迹。
+    expect(changed.source.kind === "action" && changed.source.actionId).toBe(ACT_1);
+  });
+
+  it("未知 Fact 与「该 NPC 并不知道这件事」都零写入，且各自返回稳定 code", () => {
+    const ws = world();
+    expectKnowledgeRejected(ws, [setDisclosure({ factId: asFactId("fact_missing") })], { code: "unknown_knowledge_fact", entityId: NPC_1 });
+    // 事实实体存在、NPC 也知道另一条事实：条目不存在就是 knowledge_entry_not_found，绝不隐式建条目。
+    const seeded = okApply(ws, [recordKnowledge({ factId: FACT_1 })]);
+    const withFact2 = okApply(seeded, [{ kind: "create_entities", records: [factEntityRecord(FACT_2)] }]);
+    expect(knowledgeOf(withFact2).entries.map((entry) => String(entry.factId))).toEqual(["fact_1"]);
+    // 码本身即证据：引用上下文认得 FACT_2，所以失败原因只能是「这条 NPC 没有该条目」。
+    expectKnowledgeRejected(withFact2, [setDisclosure({ factId: FACT_2 })], { code: "knowledge_entry_not_found", entityId: NPC_1 });
+  });
+
+  it("披露值本身与 evidence 一样只走封闭表", () => {
+    const recorded = okApply(world(), [recordKnowledge()]);
+    expectKnowledgeRejected(recorded, [setDisclosure({ disclosure: "restricted" })], { code: "invalid_knowledge_disclosure", entityId: NPC_1 });
+    expectKnowledgeRejected(recorded, [setDisclosure({ disclosure: "toString" })], { code: "invalid_knowledge_disclosure", entityId: NPC_1 });
+    expectKnowledgeRejected(recorded, [setDisclosure({ actionId: "" })], { code: "invalid_knowledge_source", entityId: NPC_1 });
+    expectKnowledgeRejected(recorded, [setDisclosure({ turnNumber: -3 })], { code: "invalid_knowledge_turn", entityId: NPC_1 });
+    expectKnowledgeRejected(recorded, [setDisclosure({ npcId: asNpcId("npc_missing") })], { code: "unknown_entity_id", entityId: asNpcId("npc_missing") });
+  });
+
+  it("同值披露重放零写入：组件引用原样不变", () => {
+    const recorded = okApply(world(), [recordKnowledge({ disclosure: "public" })]);
+    const withheld = okApply(recorded, [setDisclosure({ disclosure: "secret" })]);
+    const component = knowledgeOf(withheld);
+    const replayed = okApply(withheld, [setDisclosure({ disclosure: "secret", actionId: "act_later", turnNumber: 9 })]);
+    expect(knowledgeOf(replayed)).toBe(component);
+  });
+
+  it("非活跃主体与未知说话人一样先于写入被拒：披露通道也不能绕过生命周期", () => {
+    const recorded = okApply(world(), [recordKnowledge()]);
+    const inactive = okApply(recorded, [{ kind: "set_npc_lifecycle", npcId: NPC_1, lifecycle: "inactive" }]);
+    const result = applyEntityMutations(inactive, [setDisclosure()]);
+    expect(result).toEqual({ ok: false, code: "invalid_lifecycle_transition", entityId: NPC_1 });
+  });
+});
+
+describe("知识写入通道唯一性（Task 5 拆桥前的过渡约束）", () => {
+  it("桥仍可整体同步 knowledge：细粒度 mutation 之外没有第二条整块替换通道", () => {
+    const ws = world();
+    const before = npcRecord(ws, NPC_1);
+    const legacy = projectNpcEntry(before);
+    const next = okApply(ws, [{
+      kind: "sync_npc_legacy_memory",
+      npcId: NPC_1,
+      npc: compileLegacyNpcSync({
+        before,
+        afterLegacy: { ...legacy, memory: { ...legacy.memory, knownFactIds: [FACT_1] } },
+        actionId: ACT_1,
+        turnNumber: 3,
+        addedKnowledge: [{ factId: FACT_1, mode: "scene_witness" }],
+      }),
+    }]);
+    expect(npcRecord(next, NPC_1).knowledge).not.toBe(before.knowledge);
+    expect(npcRecord(next, NPC_1).knowledge.entries.map((entry) => String(entry.factId))).toEqual(["fact_1"]);
+  });
+
+  it("entityMutation.ts 里把 knowledge 组件写回 record 的 case 只有三个", () => {
+    const file = resolve(process.cwd(), "src/game/gameplay/rpg/entityWorld/entityMutation.ts");
+    expect(existsSync(file)).toBe(true);
+    const text = readFileSync(file, "utf8");
+    const body = text.slice(text.indexOf("function applyOne("), text.indexOf("export function applyEntityMutations"));
+    const labels = [...body.matchAll(/\n\s*case "([a-z_]+)":/g)]
+      .map((match) => ({ name: match[1] ?? "", at: match.index ?? 0 }));
+    expect(labels.length).toBeGreaterThan(0);
+    const writers = labels
+      .filter((entry, index) => {
+        const next = labels[index + 1];
+        return /\bknowledge\s*[:,}]/.test(body.slice(entry.at, next === undefined ? body.length : next.at));
+      })
+      .map((entry) => entry.name);
+    expect(writers.sort()).toEqual(["record_npc_knowledge", "set_npc_knowledge_disclosure", "sync_npc_legacy_memory"]);
   });
 });
