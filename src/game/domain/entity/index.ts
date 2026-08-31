@@ -69,6 +69,7 @@ export {
   type NpcGoalStatus,
   type NpcHistoryComponent,
   type NpcIdentityAnchors,
+  type NpcInteractionKeyLock,
   type NpcKnowledgeCertainty,
   type NpcKnowledgeComponent,
   type NpcKnowledgeDisclosure,
@@ -87,6 +88,7 @@ export {
   type RelationshipSource,
   type RelationshipStage,
   type RelationshipTrend,
+  type TopicIdFieldLock,
 } from "./npcComponents";
 export {
   createEntityStore,

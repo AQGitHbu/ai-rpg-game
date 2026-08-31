@@ -110,12 +110,33 @@ export const RELATIONSHIP_PROMISORS = Object.freeze(["source", "target"] as cons
 const DIALOGUE_ACT_VALUES: readonly string[] = [...DIALOGUE_ACTS, "freeform"];
 const INTERACTION_OUTCOMES: readonly NpcInteraction["outcome"][] = ["positive", "negative", "neutral", "mixed"];
 const TOPIC_KINDS: readonly StructuredDialogueTopic["kind"][] = ["fact", "quest", "thread", "general"];
-const TOPIC_ID_FIELDS: Readonly<Record<StructuredDialogueTopic["kind"], string>> = {
+/**
+ * kind → 引用字段名表：`satisfies` 锁住 kind 集合（漏一个或多一个都编译失败），
+ * 字段名由下面的 TopicIdFieldLock 逐 kind 锁定。validator 用 exact-keys 判定主题，
+ * 所以这张表是承重的：主题变体改了字段名而本表未改，合法记录会在存档解析期被拒。
+ */
+const TOPIC_ID_FIELDS = {
   fact: "factId",
   quest: "questId",
   thread: "threadId",
   general: "", // general 不引用实体，占位符永不读取
+} as const satisfies Readonly<Record<StructuredDialogueTopic["kind"], string>>;
+
+/** 每个主题 kind 除 kind 外真正携带的引用字段名；general 不引用实体，故不参与本表。 */
+type TopicIdFieldByKind = {
+  [K in Exclude<StructuredDialogueTopic["kind"], "general">]: Exclude<
+    keyof Extract<StructuredDialogueTopic, Readonly<{ kind: K }>>,
+    "kind"
+  >;
 };
+
+/** 引用型主题的字段名必须与 StructuredDialogueTopic 变体逐一对应，改名/新增字段都编译失败。 */
+export type TopicIdFieldLock = Expect<
+  IsExactly<Pick<typeof TOPIC_ID_FIELDS, keyof TopicIdFieldByKind>, TopicIdFieldByKind>
+>;
+
+// Task 2：entityStore.ts 的 isTopicValue 与 validateTopic 校验同一份 shape，
+// 切换 record 时删除它或改为委托本文件的 validator，不要让拷贝作为第二事实来源存活。
 
 // ---------------------------------------------------------------------------
 // 公开组件类型
@@ -692,11 +713,23 @@ export function validateNpcRelationships(
 // ---------------------------------------------------------------------------
 
 const HISTORY_KEYS = ["interactions"] as const;
+// 交互记录仍沿用 Plan 2 的 NpcInteraction：本表是那份字段清单的逐字拷贝，
+// 而 validateInteraction 用 exact-keys 判定，所以拷贝是承重的。NpcInteraction 新增
+// 任何必需或可选字段而本表未同步时，所有合法记录都会在存档解析期被判成
+// invalid_component_shape，且没有任何编译期信号——因此下面用类型锁住，不靠人记。
 const INTERACTION_REQUIRED_KEYS = [
   "turnNumber", "actionId", "locationId", "dialogueAct", "topicSummary", "outcome",
   "relationshipDelta", "learnedFactIds", "summary",
 ] as const;
 const INTERACTION_KEYS_ALLOWED = [...INTERACTION_REQUIRED_KEYS, "topic"] as const;
+
+/** 字段清单与 NpcInteraction 的键集合必须逐项一致：漏一项或多一项都在 typecheck 阶段失败。 */
+export type NpcInteractionKeyLock = Expect<
+  IsExactly<keyof NpcInteraction, (typeof INTERACTION_REQUIRED_KEYS)[number] | "topic">
+>;
+
+// Task 2：entityStore.ts 的 isInteractionValue 与 validateInteraction 校验同一份 shape，
+// 切换 record 时删除它或改为委托 validateNpcHistory，不要让拷贝作为第二事实来源存活。
 
 function validateTopic(issues: Issues, raw: unknown, path: string): void {
   if (!isRecord(raw) || !isString(raw.kind)) {
