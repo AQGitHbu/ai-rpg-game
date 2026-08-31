@@ -503,7 +503,7 @@ describe("buildSceneGenerationContext", () => {
       name: "传讯人",
       role: "信使",
       locationId: loc1.id,
-      // memory 属于该 NPC 自身：store 要求 npcState.memory.npcId 与 core.id 一致。
+      // memory 现由分层组件重建、不再被 store 校验归属；保持 npcId 与 core.id 一致只为可读。
       memory: { ...npc1.memory, npcId: asNpcId("npc_2") },
     };
     const world = makeWorld({

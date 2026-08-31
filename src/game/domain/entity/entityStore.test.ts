@@ -12,6 +12,7 @@ import {
 } from "../worldEntity";
 import type { EntityLifecycle } from "./entityCore";
 import type { EntityRecord, PlayerEntityRecord } from "./entityRecord";
+import { RELATIONSHIP_EVIDENCE_CAP } from "./npcComponents";
 import {
   createEntityStore,
   entitiesOfKind,
@@ -528,8 +529,14 @@ describe("entity store 读取与序列化", () => {
     })).toContain("invalid_component_value");
 
     expect(tamper((records) => {
+      // 恰在上限（当前 12 条）必须被接受：off-by-one（`>` 写成 `>=`）只会在这一支暴露。
       const edgeValue = (records[1].relationships as { outgoing: Record<string, unknown>[] }).outgoing[0]!;
-      edgeValue.evidence = Array.from({ length: 13 }, (_, index) => evidenceRecord(`ev_${index}`, `act_${index}`));
+      edgeValue.evidence = Array.from({ length: RELATIONSHIP_EVIDENCE_CAP }, (_, index) => evidenceRecord(`ev_${index}`, `act_${index}`));
+    })).toEqual([]);
+
+    expect(tamper((records) => {
+      const edgeValue = (records[1].relationships as { outgoing: Record<string, unknown>[] }).outgoing[0]!;
+      edgeValue.evidence = Array.from({ length: RELATIONSHIP_EVIDENCE_CAP + 1 }, (_, index) => evidenceRecord(`ev_${index}`, `act_${index}`));
     })).toContain("invalid_component_value");
 
     expect(tamper((records) => {

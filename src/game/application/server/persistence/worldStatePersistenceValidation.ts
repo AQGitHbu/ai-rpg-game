@@ -2,7 +2,7 @@ import { parseEntityStore, projectEntityStore, validateEntityCompatibilityProjec
 import type { EntityCompatibilityProjection } from "@/game/domain/entity";
 import type { GameEvent } from "@/game/domain/events";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
-import type { BattleState, EndingState, WorldState } from "@/game/domain/worldState";
+import { WORLD_STATE_SCHEMA_VERSION, type BattleState, type EndingState, type WorldState } from "@/game/domain/worldState";
 import type { EndingEntry } from "@/game/domain/worldEntries";
 import { validateWorldStateEntityReferences } from "@/game/domain/worldStateValidation";
 
@@ -275,10 +275,10 @@ function isGameEvent(value: unknown): value is GameEvent {
   }
 }
 
-/** SQLite 边界唯一接受的 WorldState v4 解析器；兼容投影始终由 store 重建。 */
+/** SQLite 边界唯一接受的 WorldState 解析器（版本与 WORLD_STATE_SCHEMA_VERSION 同源）；兼容投影始终由 store 重建。 */
 export function validatePersistableWorldState(value: unknown): PersistableWorldStateValidationResult {
   if (!isObject(value)) return { ok: false, code: "invalid_world_envelope" };
-  if (value.version !== 4) return { ok: false, code: "wrong_world_version" };
+  if (value.version !== WORLD_STATE_SCHEMA_VERSION) return { ok: false, code: "wrong_world_version" };
   if (!hasExactKeys(value, WORLD_KEYS) || !isGeneration(value.generation) || !isBattle(value.battle) || !Array.isArray(value.endings) || !value.endings.every(isEndingEntry) || !isEndingState(value.ending) || !Array.isArray(value.eventLedger) || !value.eventLedger.every(isGameEvent)) {
     return { ok: false, code: "invalid_world_envelope" };
   }
@@ -293,7 +293,7 @@ export function validatePersistableWorldState(value: unknown): PersistableWorldS
   const projectionIssue = validateEntityCompatibilityProjection(parsedStore.store, projection)[0];
   if (projectionIssue !== undefined) return { ok: false, code: "projection_mismatch", issueCode: projectionIssue.code };
   const normalized: WorldState = {
-    version: 4,
+    version: WORLD_STATE_SCHEMA_VERSION,
     generation: value.generation,
     entityStore: parsedStore.store,
     ...projectEntityStore(parsedStore.store),

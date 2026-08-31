@@ -56,6 +56,19 @@ function createInMemoryGameRepository(): GameRepository {
   };
 }
 
+/**
+ * 无条件读回 active 存档：GetCurrentGameResult 对 corrupt 分类同样返回 ok:true，
+ * 后置断言绝不允许被 status 守卫静默跳过。
+ */
+async function expectActiveCurrentGame(repo: GameRepository): Promise<GameRecord> {
+  const current = await repo.getCurrentGame();
+  expect(current).toMatchObject({ ok: true, status: "active" });
+  if (!current.ok || current.status !== "active") {
+    throw new Error("getCurrentGame 未返回 active 存档");
+  }
+  return current.record;
+}
+
 function buildTestRecord(): { worldState: WorldState; storyState: StoryState } {
   const loc: LocationEntry = {
     id: asLocationId("loc_1"), name: "t", description: "t", kind: "main",
@@ -77,12 +90,9 @@ describe("GameRepository in-memory", () => {
     const { worldState, storyState } = buildTestRecord();
     const gameId = asGameId("game_1");
     expect(await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" })).toEqual({ ok: true });
-    const current = await repo.getCurrentGame();
-    expect(current.ok).toBe(true);
-    if (current.ok && current.status === "active") {
-      expect(current.record.gameId).toBe(gameId);
-      expect(current.record.revision).toBe(0);
-    }
+    const record = await expectActiveCurrentGame(repo);
+    expect(record.gameId).toBe(gameId);
+    expect(record.revision).toBe(0);
   });
 
   it("applyState CAS success and stale rejection", async () => {

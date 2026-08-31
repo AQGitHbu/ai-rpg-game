@@ -17,13 +17,17 @@ import {
 // 本文件的 record 一律用新形状手工构造，绝不经过 npcState。
 // ---------------------------------------------------------------------------
 
-/** 编译期锁：record 一旦仍带 npcState 或缺任一分层组件，typecheck 直接失败。 */
+/**
+ * 编译期锁（只有 typecheck 牙齿，无运行时语义）：NpcEntityRecord 键集一旦漂移——
+ * 重新带上 npcState 或缺任一分层组件——下面的 `= true` 赋值即 typecheck 失败。
+ */
 type NpcRecordKeys = keyof NpcEntityRecord;
 type LayeredRecordLock = NpcRecordKeys extends
   "core" | "identity" | "position" | "dynamicState" | "knowledge" | "relationships" | "history"
   ? ("" extends NpcRecordKeys ? false : true)
   : false;
 const layeredRecord: LayeredRecordLock = true;
+void layeredRecord;
 
 const LOC = asLocationId("loc_0");
 const OTHER_NPC = asNpcId("npc_1");
@@ -171,13 +175,8 @@ function playerRecord(): EntityRecord {
 }
 
 describe("npc projection：分层组件是唯一事实源", () => {
-  it("record 只带分层组件，不含 npcState，且可进入 store", () => {
-    expect(layeredRecord).toBe(true);
+  it("分层 record（形状由上方编译期锁钉死）可被 store 原样接受", () => {
     const npc = record({ affinity: 12 });
-    expect(Object.keys(npc).sort()).toEqual(
-      ["core", "dynamicState", "history", "identity", "knowledge", "position", "relationships"],
-    );
-    expect("npcState" in npc).toBe(false);
     const store = createEntityStore([npc, playerRecord()]);
     expect(store.records[0]).toBe(npc);
   });

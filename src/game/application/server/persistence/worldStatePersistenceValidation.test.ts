@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createWorldStateFixtureWith, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
+import { WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
 import { asGenerationId, asLocationId } from "@/game/domain/worldEntity";
 import { validatePersistableWorldState } from "./worldStatePersistenceValidation";
 
@@ -13,11 +14,20 @@ const state = () => createWorldStateFixtureWith({
 });
 
 describe("validatePersistableWorldState", () => {
-  it("accepts v3 state and rebuilds compatibility projections from entityStore", () => {
+  it(`accepts v${WORLD_STATE_SCHEMA_VERSION} state and rebuilds compatibility projections from entityStore`, () => {
     const valid = state();
+    expect(valid.version).toBe(WORLD_STATE_SCHEMA_VERSION);
     const result = validatePersistableWorldState(valid);
     expect(result).toMatchObject({ ok: true });
     if (result.ok) expect(result.value.locations).toEqual(valid.locations);
+  });
+
+  it("版本闸门与 WORLD_STATE_SCHEMA_VERSION 同源：非当前世代（高低两侧）一律 wrong_world_version", () => {
+    // 闸门若重新写死字面量，版本再上台阶时旧/新世代会被静默放行或伪装成
+    // invalid_entity_store/ENTITY_STATE_INVALID（老存档误分类为内容损坏）。
+    const valid = state();
+    expect(validatePersistableWorldState({ ...valid, version: WORLD_STATE_SCHEMA_VERSION - 1 })).toMatchObject({ ok: false, code: "wrong_world_version" });
+    expect(validatePersistableWorldState({ ...valid, version: WORLD_STATE_SCHEMA_VERSION + 1 })).toMatchObject({ ok: false, code: "wrong_world_version" });
   });
 
   it("rejects a missing store, duplicate id and compatibility projection tampering", () => {
