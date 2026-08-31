@@ -180,10 +180,13 @@ export function normalizeLegacyNpcEntry(entry: NpcEntry): NpcEntry {
 // legacy → 分层组件
 // ---------------------------------------------------------------------------
 
-// Task 4A：以下是 knowledge entry 语义的**过渡拷贝**。权威实现（含 mode/certainty/
-// disclosure 闭集判定与 audience 映射）在 gameplay 的 npcKnowledge 模块，domain 不得
-// import gameplay，故本桥暂时保留自己的一份。它随过渡桥一起在 **Task 5**（传播链改线 +
-// 拆除 compileLegacyNpcSync）删除，不会在 Task 4B 存活下来成为第二事实来源。
+// Task 4A：以下是 knowledge entry 语义的**过渡拷贝**，与权威实现并不等价，Task 5 改线时
+// 不要当作同义替换：mode/certainty/disclosure 的闭集判定与 audience 映射的权威实现在
+// gameplay 的 npcKnowledge 模块（domain 不得 import gameplay，故本桥暂时保留自己的一份），
+// 而本拷贝 (1) 完全不校验 per-mode 的 sourceNpcId 必填/禁止策略，(2) compileKnowledge 只从
+// 兼容 hiddenFactIds 反推 disclosure，因此一个事实从 hiddenFactIds 消失就会把已保留的 secret
+// entry 隐式降回 public——权威实现只允许显式 disclosure 通道改这个字段。二者都随过渡桥一起在
+// **Task 5**（传播链改线 + 拆除 compileLegacyNpcSync）删除，不会在 Task 4B 存活下来成为第二事实来源。
 function knowledgeSource(input: Readonly<{
   factId: FactId;
   npcId: string;
