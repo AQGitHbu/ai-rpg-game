@@ -77,3 +77,19 @@ export {
   type WriteNpcKnowledgeInput,
   type WriteNpcKnowledgeResult,
 } from "./npcKnowledge";
+// Task 4C：NPC 运行时投影的**唯一读取面**。对话、调查、赠物、明确 NPC 任务与共同战斗
+// （Task 5 / 7 / 8）一律读 `projectNpcRuntimeProfile`，不得各自再拼一份 NPC 视图。
+// 披露→可见性的词汇仍归 npcKnowledge 所有（上面逐字重导出），本模块只 import 不复抄。
+export {
+  NPC_PROFILE_INTERACTION_TAIL,
+  NPC_RUNTIME_PROFILE_MODES,
+  projectNpcRuntimeProfile,
+  type NpcProfileErrorCode,
+  type NpcProfileFactCard,
+  type NpcProfileProseColumnLock,
+  type NpcProfileProseTableLock,
+  type NpcRuntimeProfile,
+  type NpcRuntimeProfileMode,
+  type NpcRuntimeProfileRequest,
+  type NpcRuntimeProfileResult,
+} from "./npcRuntimeProjection";
