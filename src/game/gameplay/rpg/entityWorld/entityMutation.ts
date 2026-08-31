@@ -12,9 +12,19 @@ import {
   type NpcKnowledgeComponent,
   type NpcRelationshipComponent,
   type PossessionComponent,
+  type RelationshipSignal,
 } from "@/game/domain/entity";
 import type { WorldState } from "@/game/domain/worldState";
 import { PLAYER_ENTITY_ID, type EnemyId, type FactId, type ItemId, type LocationId, type NpcId, type QuestId } from "@/game/domain/worldEntity";
+import {
+  applyRelationshipCommitment,
+  applyRelationshipSignalToComponent,
+  findRelationshipEdge,
+  upsertRelationshipEdge,
+  type RelationshipCommitmentOperation,
+  type RelationshipPolicyErrorCode,
+  type RelationshipTargetId,
+} from "@/game/gameplay/rpg/npcMemory";
 
 /**
  * 过渡桥载荷：四个分层组件的 exact-key 集合，由 domain 的 compileLegacyNpcSync 产出。
@@ -27,6 +37,18 @@ export type NpcLegacySyncLayers = Readonly<{
   history: NpcHistoryComponent;
 }>;
 
+/**
+ * 关系写入声明的来源。判别联合只有两支，且本 Plan 内只有 `action` 一支可写：
+ * - `action`：必须携带本阶段真实已提交的 actionId 与 turnNumber；
+ * - `initial_world`：**预留但当前一律拒绝**（稳定码 invalid_relationship_source）。
+ *   3A 规则层建边与铸承诺 ID 时都固定按 action 起源写（`applyRelationshipSignal` 内
+ *   origin = { kind: "action", … }），所以背景种子关系只能在 Task 6 的创建材料里落
+ *   initial_world；在本层放行会静默把「创建期背景」伪造成「某次行动」。
+ */
+export type RelationshipMutationSource =
+  | { readonly kind: "action"; readonly actionId: string; readonly turnNumber: number }
+  | { readonly kind: "initial_world"; readonly createdAtTurn: number; readonly reasonKey: string };
+
 /** 规则层唯一允许的实体写入语言；AI 输入不使用此联合。 */
 export type EntityMutation =
   | { readonly kind: "move_player"; readonly toLocationId: LocationId; readonly markVisited: true }
@@ -34,6 +56,14 @@ export type EntityMutation =
   | { readonly kind: "set_location_unlocked"; readonly locationId: LocationId; readonly unlocked: boolean }
   | { readonly kind: "set_location_visited"; readonly locationId: LocationId; readonly visited: boolean }
   | { readonly kind: "sync_npc_legacy_memory"; readonly npcId: NpcId; readonly npc: NpcLegacySyncLayers }
+  /**
+   * 关系信号：一支 mutation 只提交一个 signal（同行动内的提交顺序由批次数组顺序决定，
+   * 规则层的同行动累计预算对该顺序敏感，见 npcMemory 文件头 (b)/(c)）。
+   * 载荷里没有数值 delta、没有 stage、没有 trend、没有证据对象：那些全由规则表决定。
+   */
+  | { readonly kind: "apply_relationship_signal"; readonly fromNpcId: NpcId; readonly targetId: RelationshipTargetId; readonly signal: RelationshipSignal; readonly source: RelationshipMutationSource }
+  /** 承诺操作：只接受封闭六类操作名，且不建边（目标边必须已存在）。 */
+  | { readonly kind: "apply_relationship_commitment"; readonly fromNpcId: NpcId; readonly targetId: RelationshipTargetId; readonly operation: RelationshipCommitmentOperation; readonly source: RelationshipMutationSource }
   | { readonly kind: "transfer_item"; readonly itemId: ItemId; readonly owner: PossessionComponent["owner"] }
   | { readonly kind: "discover_fact"; readonly factId: FactId }
   | { readonly kind: "set_quest_status"; readonly questId: QuestId; readonly status: "locked" | "active" | "completed" | "failed" | "closed" }
@@ -42,13 +72,53 @@ export type EntityMutation =
   | { readonly kind: "replace_location_component"; readonly locationId: LocationId; readonly location: LocationComponent }
   | { readonly kind: "create_entities"; readonly records: readonly EntityRecord[] };
 
+type Expect<T extends true> = T;
+type IsExactly<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
+/**
+ * 关系载荷的键集合封闭锁：谁想「顺手」在 mutation 上多带一个数值 / stage / 证据字段，
+ * 先在 typecheck 失败，而不是悄悄开出第二条关系写入通道。
+ */
+export type RelationshipSignalPayloadKeysLock = Expect<IsExactly<
+  keyof Extract<EntityMutation, { readonly kind: "apply_relationship_signal" }>,
+  "kind" | "fromNpcId" | "targetId" | "signal" | "source"
+>>;
+export type RelationshipCommitmentPayloadKeysLock = Expect<IsExactly<
+  keyof Extract<EntityMutation, { readonly kind: "apply_relationship_commitment" }>,
+  "kind" | "fromNpcId" | "targetId" | "operation" | "source"
+>>;
+
 export type EntityMutationErrorCode =
   | "unknown_entity_id"
   | "duplicate_entity_id"
   | "wrong_entity_kind"
   | "invalid_reference"
   | "invalid_lifecycle_transition"
-  | "structure_invalid";
+  | "structure_invalid"
+  // 关系 mutation 专用：与 RelationshipPolicyErrorCode 一一映射，逐个可判别，绝不折叠成消息字符串。
+  | "relationship_self_edge"
+  | "relationship_edge_mismatch"
+  | "invalid_relationship_signal"
+  | "invalid_relationship_source"
+  | "invalid_relationship_turn"
+  | "invalid_commitment_operation"
+  | "unknown_relationship_commitment"
+  | "illegal_relationship_commitment_transition";
+
+/**
+ * 规则层封闭错误码 → 本层错误码：`satisfies` 锁住覆盖性，
+ * domain/规则层新增一个 code 而本表漏一行时直接编译失败（不存在吞掉错误的默认分支）。
+ */
+const RELATIONSHIP_POLICY_ERROR_CODES: Readonly<Record<RelationshipPolicyErrorCode, EntityMutationErrorCode>> = {
+  self_edge_rejected: "relationship_self_edge",
+  edge_target_mismatch: "relationship_edge_mismatch",
+  invalid_signal: "invalid_relationship_signal",
+  invalid_action_source: "invalid_relationship_source",
+  invalid_turn_number: "invalid_relationship_turn",
+  invalid_commitment_operation: "invalid_commitment_operation",
+  unknown_commitment: "unknown_relationship_commitment",
+  illegal_commitment_transition: "illegal_relationship_commitment_transition",
+} as const satisfies Record<RelationshipPolicyErrorCode, EntityMutationErrorCode>;
 
 export type ApplyEntityMutationsResult =
   | { readonly ok: true; readonly worldState: WorldState }
@@ -142,6 +212,63 @@ function questLifecycle(status: Extract<EntityMutation, { readonly kind: "set_qu
   return "resolved";
 }
 
+// ---------------------------------------------------------------------------
+// 关系 mutation 的边界校验（Task 3B）
+// ---------------------------------------------------------------------------
+
+type RelationshipSourceCheck =
+  | { readonly ok: true; readonly actionId: string; readonly turnNumber: number }
+  | { readonly ok: false; readonly code: EntityMutationErrorCode };
+
+function isBlank(value: unknown): boolean {
+  return typeof value !== "string" || value.trim().length === 0;
+}
+
+/**
+ * 来源判别式校验：本层只放行 `action` 一支，并要求 actionId 非空白、turnNumber 为非负整数。
+ * 「actionId 指向真实已提交行动」这件事本层无法自查——WorldState 里没有行动账本
+ * （eventLedger 的 GameEvent 不携带 actionId），所以调用方必须传服务端已铸造的那个 ID。
+ * initial_world 的拒绝理由见 RelationshipMutationSource。
+ */
+function checkRelationshipSource(declared: RelationshipMutationSource): RelationshipSourceCheck {
+  if (typeof declared !== "object" || declared === null) return { ok: false, code: "invalid_relationship_source" };
+  if (declared.kind !== "action") return { ok: false, code: "invalid_relationship_source" };
+  const { actionId, turnNumber } = declared;
+  if (isBlank(actionId)) return { ok: false, code: "invalid_relationship_source" };
+  if (typeof turnNumber !== "number" || !Number.isInteger(turnNumber) || turnNumber < 0) {
+    return { ok: false, code: "invalid_relationship_turn" };
+  }
+  return { ok: true, actionId, turnNumber };
+}
+
+type RelationshipParties =
+  | { readonly ok: true; readonly npc: NpcEntityRecord }
+  | { readonly ok: false; readonly code: EntityMutationErrorCode; readonly entityId: string };
+
+/**
+ * 关系两端的存在性与类型：来源必须是 NPC，目标只能是 NPC 或玩家本体——
+ * 地点 / 物品 / 敌人 / 任务都拿不到 wrong_entity_kind 之外的通道，非活跃与已结算实体一律不能当任一方。
+ */
+function relationshipParties(
+  records: readonly EntityRecord[],
+  fromNpcId: NpcId,
+  targetId: RelationshipTargetId,
+): RelationshipParties {
+  const npc = recordOfKind(records, fromNpcId, "npc");
+  if (!npc.ok) return npc;
+  const target = targetId === PLAYER_ENTITY_ID
+    ? recordOfKind(records, PLAYER_ENTITY_ID, "player_character")
+    : recordOfKind(records, targetId, "npc");
+  if (!target.ok) return target;
+  if (npc.record.core.lifecycle !== "active") {
+    return { ok: false, code: "invalid_lifecycle_transition", entityId: fromNpcId };
+  }
+  if (target.record.core.lifecycle !== "active") {
+    return { ok: false, code: "invalid_lifecycle_transition", entityId: targetId };
+  }
+  return { ok: true, npc: npc.record };
+}
+
 function applyOne(records: readonly EntityRecord[], mutation: EntityMutation): MutationResult {
   switch (mutation.kind) {
     case "move_player": {
@@ -193,6 +320,61 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation): M
           knowledge,
           relationships,
           history,
+        }),
+      };
+    }
+    case "apply_relationship_signal": {
+      // 边界校验在前，数值/stage/trend/证据/承诺一律交回规则层：本分支一个数字都不重算。
+      const parties = relationshipParties(records, mutation.fromNpcId, mutation.targetId);
+      if (!parties.ok) return failure(parties.code, parties.entityId);
+      if (mutation.fromNpcId === mutation.targetId) return failure("relationship_self_edge", mutation.fromNpcId);
+      const checkedSource = checkRelationshipSource(mutation.source);
+      if (!checkedSource.ok) return failure(checkedSource.code, mutation.fromNpcId);
+      const applied = applyRelationshipSignalToComponent({
+        relationships: parties.npc.relationships,
+        fromNpcId: mutation.fromNpcId,
+        targetId: mutation.targetId,
+        signal: mutation.signal,
+        actionId: checkedSource.actionId,
+        turnNumber: checkedSource.turnNumber,
+      });
+      // applied.code 是规则层自己的封闭字面量 union（不是调用方数据），所以裸下标即可：
+      // 表覆盖性由上面的 satisfies 锁定，漏一行在 typecheck 就失败，不会落回 undefined。
+      if (!applied.ok) return failure(RELATIONSHIP_POLICY_ERROR_CODES[applied.code], mutation.fromNpcId);
+      // changed:false 是同行动重放的幂等结果：零写入，但不是失败。
+      if (!applied.changed) return { ok: true, records };
+      // 只替换 relationships 一个组件：其余组件按引用继承，兼容 memory 由 projector 重建。
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.fromNpcId, {
+          ...parties.npc,
+          relationships: applied.relationships,
+        }),
+      };
+    }
+    case "apply_relationship_commitment": {
+      const parties = relationshipParties(records, mutation.fromNpcId, mutation.targetId);
+      if (!parties.ok) return failure(parties.code, parties.entityId);
+      if (mutation.fromNpcId === mutation.targetId) return failure("relationship_self_edge", mutation.fromNpcId);
+      const checkedSource = checkRelationshipSource(mutation.source);
+      if (!checkedSource.ok) return failure(checkedSource.code, mutation.fromNpcId);
+      // 承诺不建边：没有边就是引用了不存在的东西，与「未知 commitmentId」是两类错误。
+      const edge = findRelationshipEdge(parties.npc.relationships, mutation.targetId);
+      if (edge === undefined) return failure("invalid_reference", mutation.targetId);
+      const applied = applyRelationshipCommitment({
+        edge,
+        operation: mutation.operation,
+        actionId: checkedSource.actionId,
+        turnNumber: checkedSource.turnNumber,
+      });
+      if (!applied.ok) return failure(RELATIONSHIP_POLICY_ERROR_CODES[applied.code], mutation.fromNpcId);
+      if (!applied.changed) return { ok: true, records };
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.fromNpcId, {
+          ...parties.npc,
+          // 写回仍经 upsert：targetId 顺序由 domain 比较器裁决，本层不手抄排序规则。
+          relationships: { outgoing: upsertRelationshipEdge(parties.npc.relationships.outgoing, applied.edge) },
         }),
       };
     }

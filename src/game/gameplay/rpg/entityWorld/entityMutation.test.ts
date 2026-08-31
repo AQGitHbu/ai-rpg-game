@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import { emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createWorldStateFromProjection } from "@/game/domain/worldState";
@@ -13,7 +15,13 @@ import {
   asFactId, asGenerationId, asItemId, asLocationId, asNpcId, asQuestId, asEnemyId,
   PLAYER_ENTITY_ID, type GenerationMetadata,
 } from "@/game/domain/worldEntity";
-import { applyEntityMutations, EntityMutationInvariantError, type EntityMutation } from "./entityMutation";
+import {
+  applyEntityMutations, EntityMutationInvariantError,
+  type EntityMutation, type EntityMutationErrorCode, type RelationshipMutationSource,
+} from "./entityMutation";
+import type { NpcId } from "@/game/domain/worldEntity";
+import type { RelationshipSignal } from "@/game/domain/entity";
+import type { RelationshipCommitmentOperation, RelationshipTargetId } from "@/game/gameplay/rpg/npcMemory";
 
 // ---------------------------------------------------------------------------
 // 规则可信 mutation 闭包：store 是唯一写入目标，兼容投影一律由 projector 重建。
@@ -544,5 +552,371 @@ describe("EntityMutationInvariantError — 供上游写入方抛出的稳定失�
     expect(() => {
       throw new EntityMutationInvariantError(result);
     }).toThrow(EntityMutationInvariantError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3B：关系写入只能走 apply_relationship_signal / apply_relationship_commitment
+// 两条细粒度 mutation。数值、stage、trend、证据与承诺一律由 npcMemory 规则层裁决，
+// 本层只做边界校验（实体类型 / self-edge / lifecycle / source）与原子写回。
+// ---------------------------------------------------------------------------
+
+const ACT_1 = "act_1";
+
+function source(actionId: string = ACT_1, turnNumber = 3): RelationshipMutationSource {
+  return { kind: "action", actionId, turnNumber };
+}
+
+function signalMutation(input: Readonly<{
+  fromNpcId?: NpcId;
+  targetId?: RelationshipTargetId;
+  /** 表外 signal 由调用点直接传字符串（生产类型是封闭 union）。 */
+  signal?: RelationshipSignal | string;
+  source?: RelationshipMutationSource;
+}> = {}): EntityMutation {
+  return {
+    kind: "apply_relationship_signal",
+    fromNpcId: input.fromNpcId ?? NPC_1,
+    targetId: input.targetId ?? NPC_2,
+    signal: (input.signal ?? "supported") as RelationshipSignal,
+    source: input.source ?? source(),
+  };
+}
+
+function edgeOf(ws: WorldState, npcId: NpcId, targetId: string) {
+  const edge = npcRecord(ws, npcId).relationships.outgoing.find((entry) => entry.targetId === targetId);
+  if (edge === undefined) throw new Error(`missing edge ${npcId} -> ${targetId}`);
+  return edge;
+}
+
+/** 拒绝用例统一入口：断言稳定 code/entityId，且入参 store 引用与关系组件原样不动。 */
+function expectRejected(ws: WorldState, mutations: readonly EntityMutation[], expected: { readonly code: EntityMutationErrorCode; readonly entityId?: string }) {
+  const store = ws.entityStore;
+  const relationshipsBefore = npcRecord(ws, NPC_1).relationships;
+  const result = applyEntityMutations(ws, mutations);
+  expect(result).toEqual({ ok: false, ...expected });
+  expect(ws.entityStore).toBe(store);
+  expect(npcRecord(ws, NPC_1).relationships).toBe(relationshipsBefore);
+}
+
+describe("applyEntityMutations — apply_relationship_signal", () => {
+  it("合法信号在 A→B 建边并写入表决定的数值、stage、trend 与唯一证据", () => {
+    const next = okApply(world(), [signalMutation({ signal: "supported" })]);
+    const edge = edgeOf(next, NPC_1, NPC_2);
+    expect(edge.dimensions).toEqual({ affinity: 3, trust: 2, fear: 0, hostility: 0 });
+    expect(edge.stage).toBe("acquainted");
+    expect(edge.trend).toBe("improving");
+    expect(edge.origin).toEqual({ kind: "action", actionId: ACT_1, turnNumber: 3 });
+    expect(edge.evidence).toEqual([{
+      evidenceId: `ev:${ACT_1}:npc_1:npc_2:supported`, actionId: ACT_1, turnNumber: 3,
+      signal: "supported", severity: "normal", summaryKey: "relationship.signal.supported",
+    }]);
+    expect(edge.commitments).toEqual([]);
+  });
+
+  it("载荷不携带任何数值通道：键集合封闭到 fromNpcId/targetId/signal/source", () => {
+    expect(Object.keys(signalMutation({ signal: "supported" })).sort()).toEqual(["fromNpcId", "kind", "signal", "source", "targetId"]);
+    expect(Object.keys(source())).toEqual(["kind", "actionId", "turnNumber"]);
+  });
+
+  it("A→B 的信号绝不镜像成 B→A", () => {
+    const ws = world();
+    const reverseBefore = npcRecord(ws, NPC_2).relationships;
+    const next = okApply(ws, [signalMutation({ signal: "supported" })]);
+    expect(npcRecord(next, NPC_2).relationships).toBe(reverseBefore);
+    expect(npcRecord(next, NPC_2).relationships.outgoing.map((edge) => edge.targetId)).toEqual([PLAYER_ENTITY_ID]);
+    // 只有显式的第二条反向 mutation 才建立 B→A。
+    const mirrored = okApply(next, [signalMutation({ fromNpcId: NPC_2, targetId: NPC_1, signal: "challenged" })]);
+    expect(edgeOf(mirrored, NPC_2, NPC_1).dimensions).toEqual({ affinity: -3, trust: -1, fear: 0, hostility: 0 });
+    expect(edgeOf(mirrored, NPC_1, NPC_2).dimensions).toEqual({ affinity: 3, trust: 2, fear: 0, hostility: 0 });
+  });
+
+  it("只写 relationships 组件：同 record 其余组件引用不变，兼容 memory 由投影重建", () => {
+    const ws = world();
+    const before = npcRecord(ws, NPC_1);
+    const next = okApply(ws, [signalMutation({ targetId: PLAYER_ENTITY_ID, signal: "supported", source: source(ACT_1, 2) })]);
+    const after = npcRecord(next, NPC_1);
+    expect(after.relationships).not.toBe(before.relationships);
+    expect(after.core).toBe(before.core);
+    expect(after.identity).toBe(before.identity);
+    expect(after.position).toBe(before.position);
+    expect(after.dynamicState).toBe(before.dynamicState);
+    expect(after.knowledge).toBe(before.knowledge);
+    expect(after.history).toBe(before.history);
+    const entry = next.npcs.find((npc) => npc.id === NPC_1);
+    if (entry === undefined) throw new Error("missing npc_1");
+    // 兼容 memory 不是被并行改写的字段：它等于 projector 从新边重算出的那份。
+    expect(entry.memory.relationship.affinity).toBe(edgeOf(next, NPC_1, PLAYER_ENTITY_ID).dimensions.affinity);
+    expect(entry.memory.relationship.affinity).toBe(3);
+    expect(entry.memory.interactionHistory).toEqual([]);
+    expect(entry.met).toBe(false);
+  });
+
+  it("initial_world 起源的既有边不因规则信号被改写成 action 起源", () => {
+    const next = okApply(world(), [signalMutation({ targetId: PLAYER_ENTITY_ID, signal: "supported" })]);
+    const edge = edgeOf(next, NPC_1, PLAYER_ENTITY_ID);
+    expect(edge.origin.kind).toBe("initial_world");
+    expect("actionId" in edge.origin).toBe(false);
+    expect(edge.dimensions.trust).toBe(2);
+  });
+
+  it("同一行动同一信号重放零写入：批次内与跨批次都只留一条证据", () => {
+    const mutation = signalMutation({ signal: "supported" });
+    const batched = okApply(world(), [mutation, mutation]);
+    expect(edgeOf(batched, NPC_1, NPC_2).evidence).toHaveLength(1);
+    const twiceApplied = okApply(batched, [mutation]);
+    expect(twiceApplied.entityStore.records).toEqual(batched.entityStore.records);
+  });
+
+  it("同一行动的两条不同信号按批次数组顺序各写一条证据（本层不扇出、不重排）", () => {
+    const next = okApply(world(), [
+      signalMutation({ signal: "supported" }),
+      signalMutation({ signal: "offered_help" }),
+    ]);
+    const edge = edgeOf(next, NPC_1, NPC_2);
+    expect(edge.evidence.map((entry) => entry.signal)).toEqual(["supported", "offered_help"]);
+    // 一个行动最多一档：第二条信号不再移动 stage。
+    expect(edge.stage).toBe("acquainted");
+  });
+
+  it("self-edge 返回 relationship_self_edge 且整批零修改", () => {
+    const ws = world();
+    expectRejected(ws, [signalMutation({ fromNpcId: NPC_1, targetId: NPC_1 })], { code: "relationship_self_edge", entityId: NPC_1 });
+  });
+
+  it("目标必须是 NPC 或玩家：地点与敌人各返回 wrong_entity_kind", () => {
+    const ws = world();
+    expectRejected(ws, [signalMutation({ targetId: asNpcId(String(LOC_2)) })], { code: "wrong_entity_kind", entityId: LOC_2 });
+    expectRejected(ws, [signalMutation({ targetId: asNpcId(String(ENEMY_1)) })], { code: "wrong_entity_kind", entityId: ENEMY_1 });
+  });
+
+  it("来源必须是 NPC：对地点施加返回 wrong_entity_kind", () => {
+    const ws = world();
+    const result = applyEntityMutations(ws, [signalMutation({ fromNpcId: asNpcId(String(LOC_1)) })]);
+    expect(result).toEqual({ ok: false, code: "wrong_entity_kind", entityId: LOC_1 });
+  });
+
+  it("未知来源与未知目标分别返回 unknown_entity_id", () => {
+    const ws = world();
+    expectRejected(ws, [signalMutation({ fromNpcId: asNpcId("npc_missing") })], { code: "unknown_entity_id", entityId: asNpcId("npc_missing") });
+    const result = applyEntityMutations(ws, [signalMutation({ targetId: asNpcId("npc_missing") })]);
+    expect(result).toEqual({ ok: false, code: "unknown_entity_id", entityId: asNpcId("npc_missing") });
+  });
+
+  it("非活跃实体不得作为关系任一方：来源或目标 inactive 都返回 invalid_lifecycle_transition", () => {
+    const inactive = okApply(world(), [{ kind: "set_npc_lifecycle", npcId: NPC_2, lifecycle: "inactive" }]);
+    expect(npcRecord(inactive, NPC_2).core.lifecycle).toBe("inactive");
+    const store = inactive.entityStore;
+    const asTarget = applyEntityMutations(inactive, [signalMutation()]);
+    expect(asTarget).toEqual({ ok: false, code: "invalid_lifecycle_transition", entityId: NPC_2 });
+    const asSource = applyEntityMutations(inactive, [signalMutation({ fromNpcId: NPC_2, targetId: NPC_1 })]);
+    expect(asSource).toEqual({ ok: false, code: "invalid_lifecycle_transition", entityId: NPC_2 });
+    expect(inactive.entityStore).toBe(store);
+  });
+
+  it("已结算实体不得成为关系任一方：resolved NPC 与 defeated 敌人各返回稳定错误", () => {
+    const ws = world();
+    const retired = okApply(ws, [{
+      kind: "create_entities",
+      records: [npcEntityRecord({
+        core: { id: asNpcId("npc_old"), kind: "npc", name: "故人", createdAtTurn: 0, lifecycle: "resolved" },
+        identity: { role: "故人", description: "", tags: [] },
+        position: { locationId: LOC_1, locationOrder: 9 },
+        npc: { isCompanion: false, met: true, memory: memoryOf(asNpcId("npc_old")) },
+      })],
+    }]);
+    const result = applyEntityMutations(retired, [signalMutation({ targetId: asNpcId("npc_old") })]);
+    expect(result).toEqual({ ok: false, code: "invalid_lifecycle_transition", entityId: asNpcId("npc_old") });
+    const defeated = okApply(ws, [{ kind: "set_enemy_defeated", enemyId: ENEMY_1, defeated: true }]);
+    const enemyTarget = applyEntityMutations(defeated, [signalMutation({ targetId: asNpcId(String(ENEMY_1)) })]);
+    expect(enemyTarget).toEqual({ ok: false, code: "wrong_entity_kind", entityId: ENEMY_1 });
+  });
+
+  it("空白与缺失 actionId 都是稳定错误，且不会退化成一个凭空来源", () => {
+    const ws = world();
+    expectRejected(ws, [signalMutation({ source: source("   ") })], { code: "invalid_relationship_source", entityId: NPC_1 });
+    expectRejected(ws, [signalMutation({ source: { kind: "action", actionId: "", turnNumber: 3 } })], { code: "invalid_relationship_source", entityId: NPC_1 });
+  });
+
+  it("turnNumber 必须是非负整数", () => {
+    const ws = world();
+    expectRejected(ws, [signalMutation({ source: source(ACT_1, -1) })], { code: "invalid_relationship_turn", entityId: NPC_1 });
+    expectRejected(ws, [signalMutation({ source: source(ACT_1, 1.5) })], { code: "invalid_relationship_turn", entityId: NPC_1 });
+  });
+
+  it("表外 signal（含原型链键名）返回 invalid_relationship_signal 且零写入", () => {
+    const ws = world();
+    expectRejected(ws, [signalMutation({ signal: "toString" })], { code: "invalid_relationship_signal", entityId: NPC_1 });
+    expectRejected(ws, [signalMutation({ signal: "__proto__" })], { code: "invalid_relationship_signal", entityId: NPC_1 });
+    expectRejected(ws, [signalMutation({ signal: "affinity_plus_50" })], { code: "invalid_relationship_signal", entityId: NPC_1 });
+  });
+
+  it("initial_world 来源在本层被拒：规则层只按 action 起源建边与铸 ID（背景关系属 Task 6）", () => {
+    const ws = world();
+    const initial: RelationshipMutationSource = { kind: "initial_world", createdAtTurn: 0, reasonKey: "npc.seed.ally" };
+    expectRejected(ws, [signalMutation({ source: initial })], { code: "invalid_relationship_source", entityId: NPC_1 });
+    expectRejected(ws, [{
+      kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: PLAYER_ENTITY_ID,
+      operation: { kind: "open_debt", openKey: "k", direction: "source_owes_target", description: "d" },
+      source: initial,
+    }], { code: "invalid_relationship_source", entityId: NPC_1 });
+  });
+
+  it("来源判别联合之外的 kind 返回 invalid_relationship_source", () => {
+    const ws = world();
+    expectRejected(ws, [signalMutation({ source: { kind: "ai_said_so" } as unknown as RelationshipMutationSource })], {
+      code: "invalid_relationship_source", entityId: NPC_1,
+    });
+  });
+
+  it("合法信号与失败信号混在同一批时整批零修改", () => {
+    const ws = world();
+    const store = ws.entityStore;
+    const result = applyEntityMutations(ws, [
+      signalMutation({ signal: "supported" }),
+      signalMutation({ signal: "threatened", source: source(ACT_1, -2) }),
+    ]);
+    expect(result).toEqual({ ok: false, code: "invalid_relationship_turn", entityId: NPC_1 });
+    expect(ws.entityStore).toBe(store);
+    expect(npcRecord(ws, NPC_1).relationships.outgoing.map((edge) => edge.targetId)).toEqual([PLAYER_ENTITY_ID]);
+  });
+});
+
+describe("applyEntityMutations — apply_relationship_commitment", () => {
+  const openDebt: EntityMutation = {
+    kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2,
+    operation: { kind: "open_debt", openKey: "task_help", direction: "source_owes_target", description: "relationship.commitment.debt.help_received" },
+    source: source(ACT_1, 4),
+  };
+
+  function withEdge(ws: WorldState = world()): WorldState {
+    return okApply(ws, [signalMutation({ signal: "supported" })]);
+  }
+
+  it("开债只写 commitments 与 lastChangedAtTurn，ID 由行动确定性铸造", () => {
+    const next = okApply(withEdge(), [openDebt]);
+    const edge = edgeOf(next, NPC_1, NPC_2);
+    expect(edge.commitments).toEqual([{
+      kind: "debt", commitmentId: `cmt:action:${ACT_1}:open_debt:task_help`, direction: "source_owes_target",
+      status: "open", description: "relationship.commitment.debt.help_received",
+      source: { kind: "action", actionId: ACT_1, turnNumber: 4 },
+    }]);
+    expect(edge.dimensions).toEqual({ affinity: 3, trust: 2, fear: 0, hostility: 0 });
+    expect(edge.stage).toBe("acquainted");
+    expect(edge.trend).toBe("improving");
+    expect(edge.evidence).toHaveLength(1);
+    expect(edge.lastChangedAtTurn).toBe(4);
+  });
+
+  it("同一行动重放同一 open_debt 零写入；跨行动同 openKey 因 ID 含 actionId 而各自成立", () => {
+    const once = okApply(withEdge(), [openDebt]);
+    const twice = okApply(once, [openDebt]);
+    expect(twice.entityStore.records).toEqual(once.entityStore.records);
+    const otherAction = okApply(once, [{ ...openDebt, source: source("act_2", 5) }]);
+    expect(edgeOf(otherAction, NPC_1, NPC_2).commitments).toHaveLength(2);
+  });
+
+  it("结案操作按状态迁移表推进；promise 的 release 与 debt 的 release 各自稳定", () => {
+    const promised = okApply(withEdge(), [{
+      kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2,
+      operation: { kind: "open_promise", openKey: "escort", promisor: "source", description: "relationship.commitment.promise.escort" },
+      source: source(ACT_1, 4),
+    }]);
+    const promiseId = edgeOf(promised, NPC_1, NPC_2).commitments[0]?.commitmentId;
+    const released = okApply(promised, [{
+      kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2,
+      operation: { kind: "release", commitmentId: String(promiseId) }, source: source("act_2", 6),
+    }]);
+    expect(edgeOf(released, NPC_1, NPC_2).commitments.map((entry) => entry.status)).toEqual(["released"]);
+    const debt = okApply(withEdge(), [openDebt]);
+    const rejected = applyEntityMutations(debt, [{
+      kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2,
+      operation: { kind: "release", commitmentId: "cmt:action:act_1:open_debt:task_help" }, source: source("act_2", 6),
+    }]);
+    expect(rejected).toEqual({ ok: false, code: "illegal_relationship_commitment_transition", entityId: NPC_1 });
+    expect(edgeOf(debt, NPC_1, NPC_2).commitments.map((entry) => entry.status)).toEqual(["open"]);
+  });
+
+  it("未知 commitmentId 返回 unknown_relationship_commitment 且 store 逐字不变", () => {
+    const ws = withEdge();
+    const records = ws.entityStore.records;
+    const result = applyEntityMutations(ws, [{
+      kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2,
+      operation: { kind: "fulfill", commitmentId: "cmt:action:act_missing:open_promise:x" }, source: source("act_9", 9),
+    }]);
+    expect(result).toEqual({ ok: false, code: "unknown_relationship_commitment", entityId: NPC_1 });
+    expect(ws.entityStore.records).toBe(records);
+  });
+
+  it("本 mutation 不建边：指向不存在边返回 invalid_reference 并带上 targetId", () => {
+    const ws = world();
+    const result = applyEntityMutations(ws, [openDebt]);
+    expect(result).toEqual({ ok: false, code: "invalid_reference", entityId: NPC_2 });
+    expect(npcRecord(ws, NPC_1).relationships.outgoing.map((edge) => edge.targetId)).toEqual([PLAYER_ENTITY_ID]);
+  });
+
+  it("操作名不在封闭六类内返回 invalid_commitment_operation 且零写入", () => {
+    const ws = withEdge();
+    const records = ws.entityStore.records;
+    const forged = { kind: "erase_memory", commitmentId: "whatever" } as unknown as RelationshipCommitmentOperation;
+    const result = applyEntityMutations(ws, [{
+      kind: "apply_relationship_commitment", fromNpcId: NPC_1, targetId: NPC_2,
+      operation: forged, source: source(),
+    }]);
+    expect(result).toEqual({ ok: false, code: "invalid_commitment_operation", entityId: NPC_1 });
+    expect(ws.entityStore.records).toBe(records);
+  });
+
+  it("承诺 mutation 复用同一套边界校验：self-edge、错误目标类型与非法来源各自稳定", () => {
+    const ws = world();
+    const base = { kind: "apply_relationship_commitment", operation: { kind: "open_promise", openKey: "k", promisor: "source", description: "d" } } as const;
+    expect(applyEntityMutations(ws, [{ ...base, fromNpcId: NPC_1, targetId: NPC_1, source: source() }]))
+      .toEqual({ ok: false, code: "relationship_self_edge", entityId: NPC_1 });
+    expect(applyEntityMutations(ws, [{ ...base, fromNpcId: NPC_1, targetId: asNpcId(String(ITEM_A)), source: source() }]))
+      .toEqual({ ok: false, code: "wrong_entity_kind", entityId: ITEM_A });
+    expect(applyEntityMutations(ws, [{ ...base, fromNpcId: NPC_1, targetId: PLAYER_ENTITY_ID, source: source("", 3) }]))
+      .toEqual({ ok: false, code: "invalid_relationship_source", entityId: NPC_1 });
+  });
+});
+
+describe("关系写入通道唯一性（Task 5 拆除桥前的过渡约束）", () => {
+  it("桥仍可整体同步 relationships：只折叠 legacy 可见的 player 边，其余有向边原样保留", () => {
+    const seeded = okApply(world(), [signalMutation({ signal: "supported", source: source("act_seed", 1) })]);
+    const before = npcRecord(seeded, NPC_1);
+    const npcToNpcBefore = edgeOf(seeded, NPC_1, NPC_2);
+    const legacy = projectNpcEntry(before);
+    const next = okApply(seeded, [{
+      kind: "sync_npc_legacy_memory",
+      npcId: NPC_1,
+      npc: compileLegacyNpcSync({
+        before,
+        afterLegacy: { ...legacy, memory: { ...legacy.memory, relationship: { affinity: -40 } } },
+        actionId: "act_bridge_5",
+        turnNumber: 5,
+        addedKnowledge: [],
+      }),
+    }]);
+    const after = npcRecord(next, NPC_1);
+    expect(after.relationships).not.toBe(before.relationships);
+    expect(edgeOf(next, NPC_1, PLAYER_ENTITY_ID).dimensions.affinity).toBe(-40);
+    // 桥没有能力改写 NPC→NPC 边：既不是第二条细粒度通道，也不是逃生门。
+    expect(edgeOf(next, NPC_1, NPC_2)).toBe(npcToNpcBefore);
+  });
+
+  it("entityMutation.ts 里把 relationships 组件写回 record 的 case 只有三个", () => {
+    const file = resolve(process.cwd(), "src/game/gameplay/rpg/entityWorld/entityMutation.ts");
+    expect(existsSync(file)).toBe(true);
+    const text = readFileSync(file, "utf8");
+    const body = text.slice(text.indexOf("function applyOne("), text.indexOf("export function applyEntityMutations"));
+    const labels = [...body.matchAll(/\n\s*case "([a-z_]+)":/g)]
+      .map((match) => ({ name: match[1] ?? "", at: match.index ?? 0 }));
+    expect(labels.length).toBeGreaterThan(0);
+    const writers = labels
+      .filter((entry, index) => {
+        const next = labels[index + 1];
+        return /\brelationships\s*[:,}]/.test(body.slice(entry.at, next === undefined ? body.length : next.at));
+      })
+      .map((entry) => entry.name);
+    expect(writers.sort()).toEqual(["apply_relationship_commitment", "apply_relationship_signal", "sync_npc_legacy_memory"]);
   });
 });
