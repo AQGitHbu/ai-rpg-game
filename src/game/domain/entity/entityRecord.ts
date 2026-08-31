@@ -4,9 +4,12 @@ import type {
 import type { EntityCore } from "./entityCore";
 import type {
   EnemyComponent, FactionComponent, FactComponent, ItemPresentationComponent, LocationComponent,
-  NpcIdentityComponent, NpcStateComponent, PlayerIdentityComponent, PossessionComponent,
+  NpcIdentityComponent, PlayerIdentityComponent, PossessionComponent,
   PositionComponent, QuestComponent,
 } from "./entityComponents";
+import type {
+  NpcDynamicStateComponent, NpcHistoryComponent, NpcKnowledgeComponent, NpcRelationshipComponent,
+} from "./npcComponents";
 
 // ---------------------------------------------------------------------------
 // EntityRecord 是 8 分支判别联合：每个分支只携带该 kind 合法的组件。
@@ -23,7 +26,10 @@ export type NpcEntityRecord = Readonly<{
   core: EntityCore<NpcId, "npc">;
   identity: NpcIdentityComponent;
   position: PositionComponent;
-  npcState: NpcStateComponent;
+  dynamicState: NpcDynamicStateComponent;
+  knowledge: NpcKnowledgeComponent;
+  relationships: NpcRelationshipComponent;
+  history: NpcHistoryComponent;
 }>;
 
 export type LocationEntityRecord = Readonly<{

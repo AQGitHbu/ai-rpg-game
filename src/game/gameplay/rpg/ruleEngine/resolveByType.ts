@@ -9,6 +9,7 @@ import { updateNpcMemory } from "./updateNpcMemory";
 import { resolveDialogue } from "@/game/gameplay/rpg/dialogue";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { applyEntityMutations, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
+import { compileLegacyNpcSync, entitiesOfKind } from "@/game/domain/entity";
 import { PLAYER_ENTITY_ID, type NpcId } from "@/game/domain/worldEntity";
 
 export type ResolveResult = {
@@ -38,17 +39,30 @@ function applyRuleMutations(ws: WorldState, mutations: readonly EntityMutation[]
   return result.ok ? result.worldState : null;
 }
 
-function npcStateAfter(ws: WorldState, npcId: NpcId, npcAfter: ReturnType<typeof updateNpcMemory>): EntityMutation | null {
-  const record = ws.entityStore.records.find((entry) => entry.core.id === npcId && entry.core.kind === "npc");
-  if (record === undefined || record.core.kind !== "npc") return null;
+/**
+ * 过渡桥（Task 5 拆除）：旧 NPC 裁决只产 legacy 可观察差量，一律经
+ * compileLegacyNpcSync 折叠回四个分层组件；缺 before 记录即视为损坏状态，返回 null。
+ * 本路径永远不给 NPC 新增知识，故 addedKnowledge 为空：一旦旧路径确实写出了新事实，
+ * 桥会抛 legacy_knowledge_evidence_missing 而不是伪造来源。
+ */
+function npcSyncMutation(
+  ws: WorldState,
+  npcId: NpcId,
+  npcAfter: ReturnType<typeof updateNpcMemory>,
+  deps: Readonly<{ actionId: string; turnNumber: number }>,
+): EntityMutation | null {
+  const before = entitiesOfKind(ws.entityStore, "npc").find((record) => record.core.id === npcId);
+  if (before === undefined) return null;
   return {
-    kind: "replace_npc_state",
+    kind: "sync_npc_legacy_memory",
     npcId,
-    npcState: {
-      isCompanion: npcAfter.isCompanion,
-      met: npcAfter.met,
-      memory: npcAfter.memory,
-    },
+    npc: compileLegacyNpcSync({
+      before,
+      afterLegacy: npcAfter,
+      actionId: deps.actionId,
+      turnNumber: deps.turnNumber,
+      addedKnowledge: [],
+    }),
   };
 }
 
@@ -110,9 +124,9 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         actionId: deps.actionId,
         turnNumber: deps.turnNumber,
       });
-      const npcState = npcStateAfter(ws, action.npcId, dialogue.npcAfter);
-      if (npcState === null) return { ok: false, feedback: "世界状态不一致。" };
-      const mutated = applyRuleMutations(ws, [npcState]);
+      const npcSync = npcSyncMutation(ws, action.npcId, dialogue.npcAfter, deps);
+      if (npcSync === null) return { ok: false, feedback: "世界状态不一致。" };
+      const mutated = applyRuleMutations(ws, [npcSync]);
       if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
       const nextWs: WorldState = {
         ...mutated,
@@ -169,11 +183,11 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         learnedFactIds: [],
         summary: `收下了${item.name}`,
       });
-      const npcState = npcStateAfter(ws, action.npcId, npcAfter);
-      if (npcState === null) return { ok: false, feedback: "世界状态不一致。" };
+      const npcSync = npcSyncMutation(ws, action.npcId, npcAfter, deps);
+      if (npcSync === null) return { ok: false, feedback: "世界状态不一致。" };
       const mutated = applyRuleMutations(ws, [
         { kind: "transfer_item", itemId: action.itemId, owner: { kind: "npc", npcId: action.npcId } },
-        npcState,
+        npcSync,
       ]);
       if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
       const nextWs: WorldState = {

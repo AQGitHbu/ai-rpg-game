@@ -109,7 +109,9 @@ describe("compileOpeningGenerationCandidate", () => {
       { factId: asFactId("fact_1"), text: "旧盟书库藏着一份盟誓印谱。", source: "generated", discovered: false },
     ]);
     const npc = worldState.npcs[0]!;
-    expect(npc.memory.knownFactIds).toEqual([asFactId("fact_0")]);
+    // 新契约下 memory 由 knowledge 组件重建：knownFactIds 是全部 entry，
+    // hiddenFactIds 是 disclosure === "secret" 的子集，因此私有事实同时在两侧。
+    expect(npc.memory.knownFactIds).toEqual([asFactId("fact_0"), asFactId("fact_1")]);
     expect(npc.memory.hiddenFactIds).toEqual([asFactId("fact_1")]);
     expect(npc.memory.goals).toEqual(["查明幕后势力"]);
     expect(npc.locationId).toBe(asLocationId("loc_0"));

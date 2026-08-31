@@ -9,7 +9,6 @@ export type {
   ItemPresentationComponent,
   LocationComponent,
   NpcIdentityComponent,
-  NpcStateComponent,
   PlayerIdentityComponent,
   PossessionComponent,
   PositionComponent,
@@ -102,6 +101,20 @@ export {
   type EntityStoreValidationIssue,
   type ParseEntityStoreResult,
 } from "./entityStore";
+export {
+  LEGACY_IMPORT_REASON_KEY,
+  compileLegacyNpcSync,
+  importNpcLayers,
+  normalizeLegacyNpcEntry,
+  normalizeLegacyNpcMemory,
+  NpcLegacyBridgeError,
+  npcLegacyGoalId,
+  projectNpcEntry,
+  projectNpcMemory,
+  type AddedNpcKnowledge,
+  type NpcImportedLayers,
+  type NpcLegacyBridgeErrorCode,
+} from "./npcProjection";
 export {
   compileEntityStoreFromCompatibilityProjection,
   EntityProjectionInvariantError,

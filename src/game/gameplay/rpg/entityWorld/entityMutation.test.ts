@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
-import { createWorldStateFromProjection, type WorldState } from "@/game/domain/worldState";
+import { createWorldStateFromProjection } from "@/game/domain/worldState";
+import type { WorldState, NpcMemory } from "@/game/domain/worldState";
 import type {
   EnemyEntry, ItemEntry, LocationEntry, NpcEntry, PlayerState, QuestEntry, WorldFactEntry,
 } from "@/game/domain/worldState";
-import type { EntityCompatibilityProjection, NpcEntityRecord, NpcStateComponent, PossessionComponent } from "@/game/domain/entity";
-import { entitiesOfKind, getEntity } from "@/game/domain/entity";
+import type {
+  EntityCompatibilityProjection, NpcEntityRecord, PositionComponent, PossessionComponent,
+} from "@/game/domain/entity";
+import { compileLegacyNpcSync, entitiesOfKind, getEntity, importNpcLayers, projectNpcEntry } from "@/game/domain/entity";
 import {
   asFactId, asGenerationId, asItemId, asLocationId, asNpcId, asQuestId, asEnemyId,
   PLAYER_ENTITY_ID, type GenerationMetadata,
@@ -41,7 +44,7 @@ function location(id: LocationEntry["id"], connectedLocationIds: readonly Locati
   };
 }
 
-function memoryOf(npcId: NpcEntry["id"]): NpcStateComponent["memory"] {
+function memoryOf(npcId: NpcEntry["id"]): NpcMemory {
   return {
     npcId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
     relationship: { affinity: 0 }, emotion: "neutral", goals: [],
@@ -121,8 +124,39 @@ function locationRecord(ws: WorldState, locationId: LocationEntry["id"]) {
   return record;
 }
 
-function npcEntityRecord(record: NpcEntityRecord): NpcEntityRecord {
-  return record;
+/**
+ * 测试夹具专用：旧形状 → 分层 record 一律经 domain 的 legacy_import 创建桥，
+ * 测试里不手搓第二套组件形状。
+ */
+function npcEntityRecord(input: Readonly<{
+  core: NpcEntityRecord["core"];
+  identity: Readonly<{ role: string; description: string; tags: readonly string[] }>;
+  position: PositionComponent;
+  npc: Readonly<{ isCompanion: boolean; met: boolean; memory: NpcMemory }>;
+}>): NpcEntityRecord {
+  const layers = importNpcLayers({
+    entry: {
+      id: input.core.id,
+      name: input.core.name,
+      role: input.identity.role,
+      description: input.identity.description,
+      locationId: input.position.locationId,
+      isCompanion: input.npc.isCompanion,
+      tags: input.identity.tags,
+      met: input.npc.met,
+      memory: input.npc.memory,
+    },
+    createdAtTurn: input.core.createdAtTurn,
+  });
+  return {
+    core: input.core,
+    identity: { ...input.identity, anchors: layers.anchors },
+    position: input.position,
+    dynamicState: layers.dynamicState,
+    knowledge: layers.knowledge,
+    relationships: layers.relationships,
+    history: layers.history,
+  };
 }
 
 describe("applyEntityMutations — 玩家与 NPC 位置", () => {
@@ -199,7 +233,7 @@ describe("applyEntityMutations — 玩家与 NPC 位置", () => {
         core: { id: asNpcId("npc_old"), kind: "npc", name: "故人", createdAtTurn: 0, lifecycle: "resolved" },
         identity: { role: "故人", description: "", tags: [] },
         position: { locationId: LOC_1, locationOrder: 9 },
-        npcState: { isCompanion: false, met: true, memory: memoryOf(asNpcId("npc_old")) },
+        npc: { isCompanion: false, met: true, memory: memoryOf(asNpcId("npc_old")) },
       })],
     }]);
     const result = applyEntityMutations(retired, [{ kind: "set_npc_lifecycle", npcId: asNpcId("npc_old"), lifecycle: "active" }]);
@@ -296,37 +330,86 @@ describe("applyEntityMutations — 物品归属", () => {
 });
 
 describe("applyEntityMutations — NPC 记忆、事实、任务与敌人", () => {
-  it("replace_npc_state 只改 npcState，不触碰 identity/position", () => {
+  it("sync_npc_legacy_memory 只写四个分层组件，不触碰 core/identity/position", () => {
     const ws = world();
     const before = npcRecord(ws, NPC_1);
     const next = okApply(ws, [{
-      kind: "replace_npc_state",
+      kind: "sync_npc_legacy_memory",
       npcId: NPC_1,
-      npcState: { ...before.npcState, met: true },
+      npc: compileLegacyNpcSync({
+        before,
+        afterLegacy: { ...projectNpcEntry(before), met: true },
+        actionId: "act_bridge_1",
+        turnNumber: 5,
+        addedKnowledge: [],
+      }),
     }]);
     const after = npcRecord(next, NPC_1);
-    expect(after.npcState.met).toBe(true);
+    expect(after.dynamicState.met).toBe(true);
+    expect(after.core).toEqual(before.core);
     expect(after.identity).toEqual(before.identity);
     expect(after.position).toEqual(before.position);
     expect(next.npcs.find((n) => n.id === NPC_1)?.met).toBe(true);
+    // 桥不新增知识、不追加交互：这两份组件原样继承 before。
+    expect(after.knowledge).toEqual(before.knowledge);
+    expect(after.history).toEqual(before.history);
   });
 
-  it("replace_npc_state 引用非 NPC 返回 wrong_entity_kind", () => {
-    const result = applyEntityMutations(world(), [{
-      kind: "replace_npc_state", npcId: asNpcId(String(LOC_1)), npcState: { isCompanion: false, met: true, memory: memoryOf(NPC_1) },
-    }]);
-    expect(result).toEqual({ ok: false, code: "wrong_entity_kind", entityId: LOC_1 });
-  });
-
-  it("replace_npc_state 写入悬空 knownFactIds 时返回 invalid_reference 且零修改", () => {
+  it("sync_npc_legacy_memory 引用非 NPC 返回 wrong_entity_kind", () => {
     const ws = world();
     const result = applyEntityMutations(ws, [{
-      kind: "replace_npc_state",
-      npcId: NPC_1,
-      npcState: { ...npcRecord(ws, NPC_1).npcState, memory: { ...memoryOf(NPC_1), knownFactIds: [asFactId("fact_missing")] } },
+      kind: "sync_npc_legacy_memory",
+      npcId: asNpcId(String(LOC_1)),
+      npc: compileLegacyNpcSync({
+        before: npcRecord(ws, NPC_1),
+        afterLegacy: { ...projectNpcEntry(npcRecord(ws, NPC_1)), met: true },
+        actionId: "act_bridge_2",
+        turnNumber: 5,
+        addedKnowledge: [],
+      }),
     }]);
+    expect(result).toEqual({ ok: false, code: "wrong_entity_kind", entityId: LOC_1 });
+    expect(npcRecord(ws, NPC_1).dynamicState.met).toBe(false);
+  });
+
+  it("sync_npc_legacy_memory 写入悬空知识时返回 invalid_reference 且零修改", () => {
+    const ws = world();
+    const before = npcRecord(ws, NPC_1);
+    const layers = compileLegacyNpcSync({
+      before,
+      afterLegacy: {
+        ...projectNpcEntry(before),
+        memory: { ...projectNpcEntry(before).memory, knownFactIds: [asFactId("fact_missing")] },
+      },
+      actionId: "act_bridge_3",
+      turnNumber: 5,
+      addedKnowledge: [{ factId: asFactId("fact_missing"), mode: "player_told" }],
+    });
+    const result = applyEntityMutations(ws, [{ kind: "sync_npc_legacy_memory", npcId: NPC_1, npc: layers }]);
     expect(result).toMatchObject({ ok: false, code: "invalid_reference" });
     expect(ws.npcs.find((n) => n.id === NPC_1)?.memory.knownFactIds).toEqual([]);
+    expect(npcRecord(ws, NPC_1)).toBe(before);
+  });
+
+  it("桥载荷之外的键无法写进 record：分层组件不合法即 structure_invalid", () => {
+    const ws = world();
+    const before = npcRecord(ws, NPC_1);
+    const layers = compileLegacyNpcSync({
+      before,
+      afterLegacy: { ...projectNpcEntry(before), met: true },
+      actionId: "act_bridge_4",
+      turnNumber: 5,
+      addedKnowledge: [],
+    });
+    // 组件里多出未知键：桥逐键写入分层组件，越界形状只能被 store 校验拒掉。
+    const tampered = { ...layers, history: { ...layers.history, extra: "x" } };
+    const result = applyEntityMutations(ws, [{
+      kind: "sync_npc_legacy_memory",
+      npcId: NPC_1,
+      npc: tampered as unknown as typeof layers,
+    }]);
+    expect(result).toMatchObject({ ok: false, code: "structure_invalid" });
+    expect(npcRecord(ws, NPC_1)).toBe(before);
   });
 
   it("discover_fact 幂等：重复发现不改变 store", () => {
@@ -374,7 +457,7 @@ describe("applyEntityMutations — create_entities 与批量原子性", () => {
         core: { id: asNpcId("npc_9"), kind: "npc", name: "新旅人", createdAtTurn: 3, lifecycle: "active" },
         identity: { role: "旅人", description: "", tags: [] },
         position: { locationId: LOC_2, locationOrder: 0 },
-        npcState: { isCompanion: false, met: false, memory: memoryOf(asNpcId("npc_9")) },
+        npc: { isCompanion: false, met: false, memory: memoryOf(asNpcId("npc_9")) },
       })],
     }]);
     expect(next.npcs.map((n) => n.id)).toContain(asNpcId("npc_9"));
@@ -389,7 +472,7 @@ describe("applyEntityMutations — create_entities 与批量原子性", () => {
         core: { id: NPC_1, kind: "npc", name: "重复", createdAtTurn: 1, lifecycle: "active" },
         identity: { role: "r", description: "", tags: [] },
         position: { locationId: LOC_1, locationOrder: 5 },
-        npcState: { isCompanion: false, met: false, memory: memoryOf(NPC_1) },
+        npc: { isCompanion: false, met: false, memory: memoryOf(NPC_1) },
       })],
     }]);
     expect(result).toEqual({ ok: false, code: "duplicate_entity_id", entityId: NPC_1 });
@@ -402,7 +485,7 @@ describe("applyEntityMutations — create_entities 与批量原子性", () => {
         core: { id: asNpcId("npc_9"), kind: "npc", name: "新旅人", createdAtTurn: 1, lifecycle: "active" },
         identity: { role: "旅人", description: "", tags: [] },
         position: { locationId: asLocationId("loc_missing"), locationOrder: 0 },
-        npcState: { isCompanion: false, met: false, memory: memoryOf(asNpcId("npc_9")) },
+        npc: { isCompanion: false, met: false, memory: memoryOf(asNpcId("npc_9")) },
       })],
     }]);
     expect(result).toEqual({ ok: false, code: "invalid_reference", entityId: asNpcId("npc_9") });
@@ -432,7 +515,7 @@ describe("applyEntityMutations — create_entities 与批量原子性", () => {
   it("成功结果逐字携带非实体权威字段", () => {
     const ws = world();
     const next = okApply(ws, [{ kind: "discover_fact", factId: FACT_1 }]);
-    expect(next.version).toBe(3);
+    expect(next.version).toBe(4);
     expect(next.generation).toBe(ws.generation);
     expect(next.battle).toBe(ws.battle);
     expect(next.endings).toBe(ws.endings);

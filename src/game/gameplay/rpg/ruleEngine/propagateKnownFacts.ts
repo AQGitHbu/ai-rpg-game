@@ -1,7 +1,19 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { FactChange, FactChangeSource } from "@/game/domain/resolvedEvent";
-import type { FactId } from "@/game/domain/worldEntity";
+import {
+  compileLegacyNpcSync,
+  entitiesOfKind,
+  projectNpcEntry,
+  type AddedNpcKnowledge,
+} from "@/game/domain/entity";
 import { applyEntityMutations, EntityMutationInvariantError, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
+
+// ---------------------------------------------------------------------------
+// P4 Step 1：把本轮 discovered/revealed 事实传播给在场 NPC。
+// Plan 3 Task 2 后知识住在 NpcKnowledgeComponent：本文件只负责「哪些 NPC 因为哪条
+// 证据得到哪条事实」，写入统一走唯一过渡桥 sync_npc_legacy_memory，
+// 由 compileLegacyNpcSync 逐条带上 mode/actionId/learnedAtTurn，绝不从差集猜来源。
+// ---------------------------------------------------------------------------
 
 /** 封闭来源集合：非此集合的 source 一律拒绝。 */
 const VALID_SOURCES: readonly FactChangeSource[] = [
@@ -19,14 +31,16 @@ function isValidSource(source: FactChangeSource): boolean {
 export function propagateKnownFacts(
   ws: WorldState,
   factChanges: readonly FactChange[],
+  deps: Readonly<{ actionId: string; turnNumber: number }>,
 ): WorldState {
   if (factChanges.length === 0) return ws;
 
   const knownFactIds = new Set(ws.worldFacts.map((f) => String(f.factId)));
-  const presentNpcKeys = new Set(ws.npcs.map((n) => String(n.id)));
+  const records = entitiesOfKind(ws.entityStore, "npc");
+  const presentNpcKeys = new Set(records.map((record) => String(record.core.id)));
 
-  // 收集每个 NPC 需要追加的新事实
-  const additions = new Map<string, Set<string>>();
+  // 收集每个 NPC 需要追加的新事实：连同其真实来源一起记账，来源不能事后反推。
+  const additions = new Map<string, AddedNpcKnowledge[]>();
   for (const change of factChanges) {
     // 1) 拒绝非法 source
     if (!isValidSource(change.source)) continue;
@@ -40,35 +54,43 @@ export function propagateKnownFacts(
       const key = String(npcId);
       // 5) audience 中的 NPC 必须存在
       if (!presentNpcKeys.has(key)) continue;
-      if (!additions.has(key)) additions.set(key, new Set());
-      additions.get(key)!.add(String(change.factId));
+      const bucket = additions.get(key);
+      const added: AddedNpcKnowledge = {
+        factId: change.factId,
+        mode: change.source,
+      };
+      if (bucket === undefined) additions.set(key, [added]);
+      else if (!bucket.some((entry) => String(entry.factId) === String(added.factId))) bucket.push(added);
     }
   }
 
   if (additions.size === 0) return ws;
 
-  const mutations: EntityMutation[] = ws.npcs.flatMap((npc) => {
-    const adds = additions.get(String(npc.id));
+  const mutations: EntityMutation[] = records.flatMap((record) => {
+    const adds = additions.get(String(record.core.id));
     if (adds === undefined) return [];
 
-    const existingSet = new Set(npc.memory.knownFactIds.map(String));
-    const toAdd = Array.from(adds).filter((f) => !existingSet.has(f));
+    const before = projectNpcEntry(record);
+    const existingSet = new Set(before.memory.knownFactIds.map(String));
+    const toAdd = adds.filter((entry) => !existingSet.has(String(entry.factId)));
     if (toAdd.length === 0) return [];
 
     return [{
-      kind: "replace_npc_state" as const,
-      npcId: npc.id,
-      npcState: {
-        isCompanion: npc.isCompanion,
-        met: npc.met,
-        memory: {
-          ...npc.memory,
-          knownFactIds: [
-            ...npc.memory.knownFactIds,
-            ...toAdd.map((f) => f as FactId),
-          ],
+      kind: "sync_npc_legacy_memory" as const,
+      npcId: record.core.id,
+      npc: compileLegacyNpcSync({
+        before: record,
+        afterLegacy: {
+          ...before,
+          memory: {
+            ...before.memory,
+            knownFactIds: [...before.memory.knownFactIds, ...toAdd.map((entry) => entry.factId)],
+          },
         },
-      },
+        actionId: deps.actionId,
+        turnNumber: deps.turnNumber,
+        addedKnowledge: toAdd,
+      }),
     }];
   });
 

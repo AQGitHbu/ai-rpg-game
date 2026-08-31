@@ -17,6 +17,7 @@ import type {
   GetCurrentGameResult,
 } from "./gameRepository";
 import { STORY_STATE_SCHEMA_VERSION, type StoryState } from "@/game/domain/storyState";
+import { WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
 import { parseNarrativeRuntimeState } from "@/game/domain/narrative";
 import { parseOpeningVariationProfile, type OpeningNoveltyRecord } from "@/game/domain/openingNovelty";
 import { validatePersistableWorldState } from "./worldStatePersistenceValidation";
@@ -40,6 +41,15 @@ const GAME_RECORD_VERSION = 1;
 /** 旧 v2 存档的表级 record_version：明确识别为 legacy，不迁移不伪装。 */
 const UNSUPPORTED_RECORD_VERSION = 0;
 const INITIAL_REVISION = 0;
+
+/** JSON 内部的旧 WorldState 世代（含 v3 单层 npcState 形状）：整体按旧存档处理。 */
+const LEGACY_WORLD_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3];
+/** JSON 内部的旧 StoryState 世代。 */
+const LEGACY_STORY_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3, 4, 5];
+
+function isLegacyVersion(value: unknown, legacyVersions: readonly number[]): boolean {
+  return typeof value === "number" && Number.isInteger(value) && legacyVersions.includes(value);
+}
 
 const SCHEMA_STATEMENTS: readonly SqliteStatement[] = [
   {
@@ -177,16 +187,13 @@ function interpretGameRow(row: Record<string, unknown>): GetCurrentGameResult {
     return corrupt("UNPARSEABLE_RECORD");
   }
 
-  if (worldState["version"] === 1
-    || worldState["version"] === 2
-    || storyState["version"] === 1
-    || storyState["version"] === 2
-    || storyState["version"] === 3
-    || storyState["version"] === 4
-    || storyState["version"] === 5) {
+  // v4 起 NPC record 携带分层组件；更早的 WorldState / StoryState 世代是旧存档，
+  // 一律明确归类为 UNSUPPORTED_RECORD（不迁移、不填充默认值、不伪装成损坏内容）。
+  if (isLegacyVersion(worldState["version"], LEGACY_WORLD_SCHEMA_VERSIONS)
+    || isLegacyVersion(storyState["version"], LEGACY_STORY_SCHEMA_VERSIONS)) {
     return corrupt("UNSUPPORTED_RECORD");
   }
-  if (worldState["version"] !== 3 || storyState["version"] !== STORY_STATE_SCHEMA_VERSION) {
+  if (worldState["version"] !== WORLD_STATE_SCHEMA_VERSION || storyState["version"] !== STORY_STATE_SCHEMA_VERSION) {
     return corrupt("VERSION_MISMATCH");
   }
   const parsedWorldState = validatePersistableWorldState(worldState);

@@ -6,12 +6,26 @@ import {
   type EntityRecord,
   type ItemEntityRecord,
   type LocationComponent,
+  type NpcDynamicStateComponent,
   type NpcEntityRecord,
-  type NpcStateComponent,
+  type NpcHistoryComponent,
+  type NpcKnowledgeComponent,
+  type NpcRelationshipComponent,
   type PossessionComponent,
 } from "@/game/domain/entity";
 import type { WorldState } from "@/game/domain/worldState";
 import { PLAYER_ENTITY_ID, type EnemyId, type FactId, type ItemId, type LocationId, type NpcId, type QuestId } from "@/game/domain/worldEntity";
+
+/**
+ * 过渡桥载荷：四个分层组件的 exact-key 集合，由 domain 的 compileLegacyNpcSync 产出。
+ * 桥不携带 identity/anchors/position/core，也永远不携带 legacy memory 本体。
+ */
+export type NpcLegacySyncLayers = Readonly<{
+  dynamicState: NpcDynamicStateComponent;
+  knowledge: NpcKnowledgeComponent;
+  relationships: NpcRelationshipComponent;
+  history: NpcHistoryComponent;
+}>;
 
 /** 规则层唯一允许的实体写入语言；AI 输入不使用此联合。 */
 export type EntityMutation =
@@ -19,7 +33,7 @@ export type EntityMutation =
   | { readonly kind: "move_npc"; readonly npcId: NpcId; readonly toLocationId: LocationId }
   | { readonly kind: "set_location_unlocked"; readonly locationId: LocationId; readonly unlocked: boolean }
   | { readonly kind: "set_location_visited"; readonly locationId: LocationId; readonly visited: boolean }
-  | { readonly kind: "replace_npc_state"; readonly npcId: NpcId; readonly npcState: NpcStateComponent }
+  | { readonly kind: "sync_npc_legacy_memory"; readonly npcId: NpcId; readonly npc: NpcLegacySyncLayers }
   | { readonly kind: "transfer_item"; readonly itemId: ItemId; readonly owner: PossessionComponent["owner"] }
   | { readonly kind: "discover_fact"; readonly factId: FactId }
   | { readonly kind: "set_quest_status"; readonly questId: QuestId; readonly status: "locked" | "active" | "completed" | "failed" | "closed" }
@@ -166,10 +180,21 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation): M
         : { ...location.record.location, visited: mutation.visited };
       return { ok: true, records: replaceRecord(records, mutation.locationId, { ...location.record, location: locationComponent }) };
     }
-    case "replace_npc_state": {
+    case "sync_npc_legacy_memory": {
       const npc = recordOfKind(records, mutation.npcId, "npc");
       if (!npc.ok) return npc;
-      return { ok: true, records: replaceRecord(records, mutation.npcId, { ...npc.record, npcState: mutation.npcState }) };
+      const { dynamicState, knowledge, relationships, history } = mutation.npc;
+      // 逐键写入而非展开载荷：桥只覆盖四个分层组件，core/identity/position 不在其权限内。
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.npcId, {
+          ...npc.record,
+          dynamicState,
+          knowledge,
+          relationships,
+          history,
+        }),
+      };
     }
     case "transfer_item": {
       const item = recordOfKind(records, mutation.itemId, "item");

@@ -157,16 +157,18 @@ describe("sqliteGameRepository", () => {
     expect(await repo.createInitialGame({ gameId, worldState, storyState, createdAt: "2026-01-01" })).toEqual({ ok: true });
 
     const current = await repo.getCurrentGame();
-    expect(current.ok).toBe(true);
+    // 直接断言 active：corrupt 读取必须让本用例失败，不允许被 status 守卫跳过。
+    expect(current).toMatchObject({ ok: true, status: "active" });
     if (current.ok && current.status === "active") {
       expect(current.record.gameId).toBe(gameId);
       expect(current.record.revision).toBe(0);
-      expect(current.record.worldState.version).toBe(3);
+      expect(current.record.worldState.version).toBe(4);
+      expect(current.record.worldState.entityStore.version).toBe(2);
       expect(current.record.storyState.version).toBe(7);
     }
   });
 
-  it("classifies malformed v3 entity state as ENTITY_STATE_INVALID", async () => {
+  it("classifies malformed v4 entity state as ENTITY_STATE_INVALID", async () => {
     const dbPath = nextDbPath();
     const repo = openRepo(dbPath);
     const { worldState, storyState } = buildTestState();
@@ -179,6 +181,23 @@ describe("sqliteGameRepository", () => {
       args: [JSON.stringify({ ...worldState, entityStore: { ...worldState.entityStore, records: [...worldState.entityStore.records, worldState.entityStore.records[0]] } }), gameId],
     });
     expect(await repo.getCurrentGame()).toEqual({ ok: true, status: "corrupt", reason: "ENTITY_STATE_INVALID" });
+  });
+
+  it("v3 存档（store v1 世代）归类为 UNSUPPORTED_RECORD，不迁移也不伪装成损坏", async () => {
+    const dbPath = nextDbPath();
+    const repo = openRepo(dbPath);
+    await repo.initializeSchema();
+    const raw = createSqliteClient(dbPath);
+    rawClients.push(raw);
+    const { worldState, storyState } = buildTestState();
+    await raw.execute({
+      sql: `INSERT INTO game_records (game_id, record_version, world_state_json, story_state_json, created_at, revision)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: ["legacy_world_v3", 1, JSON.stringify({ ...worldState, version: 3 }), JSON.stringify(storyState), "2025-01-01", 0],
+    });
+    await raw.execute({ sql: "INSERT INTO current_game (slot, game_id) VALUES (1, ?)", args: ["legacy_world_v3"] });
+
+    expect(await repo.getCurrentGame()).toEqual({ ok: true, status: "corrupt", reason: "UNSUPPORTED_RECORD" });
   });
 
   it("createInitialGame rejects when active game exists", async () => {

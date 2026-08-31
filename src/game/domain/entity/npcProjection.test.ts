@@ -1,0 +1,598 @@
+import { describe, expect, it } from "vitest";
+import { PLAYER_ENTITY_ID, asFactId, asLocationId, asNpcId, asPlayerEntityId } from "../worldEntity";
+import type { FactId, LocationId, NpcId } from "../worldEntity";
+import type { NpcEntry, NpcInteraction } from "../worldEntries";
+import type { EntityRecord, NpcEntityRecord } from "./entityRecord";
+import type {
+  DirectedRelationshipEdge, NpcDynamicStateComponent, NpcGoal, NpcHistoryComponent,
+  NpcIdentityAnchors,
+} from "./npcComponents";
+import { createEntityStore } from "./entityStore";
+import {
+  LEGACY_IMPORT_REASON_KEY, compileLegacyNpcSync, importNpcLayers, npcLegacyGoalId, projectNpcEntry,
+} from "./npcProjection";
+
+// ---------------------------------------------------------------------------
+// Task 2 的唯一事实源证明：分层组件才是事实，legacy NpcEntry 只由 projector 重建。
+// 本文件的 record 一律用新形状手工构造，绝不经过 npcState。
+// ---------------------------------------------------------------------------
+
+/** 编译期锁：record 一旦仍带 npcState 或缺任一分层组件，typecheck 直接失败。 */
+type NpcRecordKeys = keyof NpcEntityRecord;
+type LayeredRecordLock = NpcRecordKeys extends
+  "core" | "identity" | "position" | "dynamicState" | "knowledge" | "relationships" | "history"
+  ? ("" extends NpcRecordKeys ? false : true)
+  : false;
+const layeredRecord: LayeredRecordLock = true;
+
+const LOC = asLocationId("loc_0");
+const OTHER_NPC = asNpcId("npc_1");
+
+function anchors(): NpcIdentityAnchors {
+  return {
+    selfConcept: "守夜人",
+    values: ["守诺"],
+    speechStyle: "短句",
+    capabilityBoundaries: ["不会骑马"],
+    taboos: ["不提旧主"],
+  };
+}
+
+function interaction(actionId: string, turnNumber = 1, learnedFactIds: readonly FactId[] = []): NpcInteraction {
+  return {
+    turnNumber,
+    actionId,
+    locationId: LOC,
+    dialogueAct: "ask",
+    topicSummary: "打听井钥",
+    outcome: "positive",
+    relationshipDelta: 1,
+    learnedFactIds,
+    summary: `${actionId} 的交谈`,
+  };
+}
+
+function edge(overrides: Partial<DirectedRelationshipEdge> & { targetId: string } = { targetId: PLAYER_ENTITY_ID }): DirectedRelationshipEdge {
+  return {
+    targetId: overrides.targetId,
+    dimensions: { affinity: 12, trust: 30, fear: 0, hostility: 0 },
+    stage: "cooperative",
+    trend: "improving",
+    commitments: [{
+      kind: "debt",
+      commitmentId: "cmt_1",
+      direction: "target_owes_source",
+      status: "open",
+      description: "欠一次引路",
+      source: { kind: "initial_world", createdAtTurn: 0, reasonKey: "opening_seed" },
+    }],
+    evidence: [{
+      evidenceId: "ev_act_1",
+      actionId: "act_1",
+      turnNumber: 1,
+      signal: "supported",
+      severity: "normal",
+      summaryKey: "supported",
+    }],
+    origin: { kind: "action", actionId: "act_1", turnNumber: 1 },
+    lastChangedAtTurn: 1,
+    ...(overrides.dimensions === undefined ? {} : { dimensions: overrides.dimensions }),
+    ...(overrides.stage === undefined ? {} : { stage: overrides.stage }),
+    ...(overrides.trend === undefined ? {} : { trend: overrides.trend }),
+    ...(overrides.commitments === undefined ? {} : { commitments: overrides.commitments }),
+    ...(overrides.evidence === undefined ? {} : { evidence: overrides.evidence }),
+    ...(overrides.origin === undefined ? {} : { origin: overrides.origin }),
+    ...(overrides.lastChangedAtTurn === undefined ? {} : { lastChangedAtTurn: overrides.lastChangedAtTurn }),
+  } as DirectedRelationshipEdge;
+}
+
+function goals(): readonly NpcGoal[] {
+  return [
+    { goalId: "npc_0_goal_1", horizon: "short", description: "守住客栈", priority: 2, status: "active", reason: "家业" },
+    { goalId: "npc_0_goal_2", horizon: "long", description: "找回弟弟", priority: 4, status: "blocked", reason: "线索断" },
+    { goalId: "npc_0_goal_3", horizon: "long", description: "离开小镇", priority: 5, status: "completed", reason: "已达成" },
+  ];
+}
+
+function record(overrides: Partial<{
+  known: readonly FactId[];
+  secret: readonly FactId[];
+  history: readonly NpcInteraction[];
+  affinity: number | undefined;
+  emotion: NpcDynamicStateComponent["emotion"];
+  met: boolean;
+  isCompanion: boolean;
+}> = {}): NpcEntityRecord {
+  const knownFacts = overrides.known ?? [asFactId("fact_0"), asFactId("fact_1")];
+  const secrets = new Set((overrides.secret ?? [asFactId("fact_1")]).map(String));
+  const outgoing: readonly DirectedRelationshipEdge[] = overrides.affinity === undefined
+    ? []
+    : [edge({ targetId: PLAYER_ENTITY_ID, dimensions: {
+      affinity: overrides.affinity, trust: 30, fear: 0, hostility: 0,
+    }, commitments: [], evidence: [] })];
+  return {
+    core: { id: asNpcId("npc_0"), kind: "npc", name: "老周", createdAtTurn: 0, lifecycle: "active" },
+    identity: { role: "掌柜", description: "客栈掌柜", tags: ["shopkeep"], anchors: anchors() },
+    position: { locationId: LOC, locationOrder: 0 },
+    dynamicState: {
+      isCompanion: overrides.isCompanion ?? false,
+      met: overrides.met ?? true,
+      emotion: overrides.emotion ?? "warm",
+      goals: goals(),
+    },
+    knowledge: {
+      entries: knownFacts.map((factId) => ({
+        factId,
+        certainty: "known" as const,
+        disclosure: secrets.has(String(factId)) ? ("secret" as const) : ("public" as const),
+        source: { kind: "initial_world" as const, learnedAtTurn: 0 },
+      })),
+    },
+    relationships: { outgoing },
+    history: { interactions: overrides.history ?? [interaction("act_1")] },
+  };
+}
+
+function legacyEntry(memory: NpcEntry["memory"], overrides: Partial<NpcEntry> = {}): NpcEntry {
+  return {
+    id: asNpcId("npc_0"),
+    name: "老周",
+    role: "掌柜",
+    description: "客栈掌柜",
+    locationId: LOC,
+    isCompanion: false,
+    tags: ["shopkeep"],
+    met: true,
+    memory,
+    ...overrides,
+  };
+}
+
+function legacyMemory(overrides: Partial<NpcEntry["memory"]> = {}): NpcEntry["memory"] {
+  return {
+    npcId: asNpcId("npc_0"),
+    knownFactIds: [asFactId("fact_0")],
+    hiddenFactIds: [],
+    interactionHistory: [],
+    relationship: { affinity: 0 },
+    emotion: "neutral",
+    goals: ["守住客栈"],
+    ...overrides,
+  };
+}
+
+/** store 的 missing_player 不变量要求每条记录集里都有玩家角色。 */
+function playerRecord(): EntityRecord {
+  return {
+    core: { id: asPlayerEntityId(PLAYER_ENTITY_ID), kind: "player_character", name: "沈希", createdAtTurn: 0, lifecycle: "active" },
+    identity: { identity: "走镖人", stats: { hp: 20, attack: 5, defense: 3 } },
+    position: { locationId: LOC, locationOrder: 0 },
+  };
+}
+
+describe("npc projection：分层组件是唯一事实源", () => {
+  it("record 只带分层组件，不含 npcState，且可进入 store", () => {
+    expect(layeredRecord).toBe(true);
+    const npc = record({ affinity: 12 });
+    expect(Object.keys(npc).sort()).toEqual(
+      ["core", "dynamicState", "history", "identity", "knowledge", "position", "relationships"],
+    );
+    expect("npcState" in npc).toBe(false);
+    const store = createEntityStore([npc, playerRecord()]);
+    expect(store.records[0]).toBe(npc);
+  });
+
+  it("legacy memory 由分层组件精确重建", () => {
+    const npc = record({ affinity: 12 });
+    const entry = projectNpcEntry(npc);
+    expect(entry.memory).toEqual({
+      npcId: asNpcId("npc_0"),
+      knownFactIds: [asFactId("fact_0"), asFactId("fact_1")],
+      hiddenFactIds: [asFactId("fact_1")],
+      interactionHistory: [interaction("act_1")],
+      relationship: { affinity: 12 },
+      emotion: "warm",
+      goals: ["守住客栈", "找回弟弟"],
+    });
+    expect(entry.role).toBe("掌柜");
+    expect(entry.description).toBe("客栈掌柜");
+    expect(entry.tags).toEqual(["shopkeep"]);
+    expect(entry.locationId).toBe(LOC);
+    expect(entry.isCompanion).toBe(false);
+    expect(entry.met).toBe(true);
+  });
+
+  it("没有指向玩家的边时 affinity 为 0；goals 只投影 active/blocked", () => {
+    const npc = record({ affinity: undefined });
+    expect(projectNpcEntry(npc).memory.relationship).toEqual({ affinity: 0 });
+    const withCompanion = record({ affinity: -100, isCompanion: true, met: false });
+    const projected = projectNpcEntry(withCompanion);
+    expect(projected.memory.relationship).toEqual({ affinity: -100 });
+    expect(projected.isCompanion).toBe(true);
+    expect(projected.met).toBe(false);
+  });
+
+  it("hiddenFactIds 只取 disclosure=secret", () => {
+    const npc = record({ secret: [] });
+    const projected = projectNpcEntry(npc);
+    expect(projected.memory.hiddenFactIds).toEqual([]);
+    expect(projected.memory.knownFactIds).toEqual([asFactId("fact_0"), asFactId("fact_1")]);
+  });
+});
+
+describe("npc projection：legacy 导入桥（保守 anchors / goal ID / initial knowledge / player edge）", () => {
+  it("全新导入生成保守 anchors、按 npcId+ordinal 铸造 goalId、initial_world 知识与 player 边", () => {
+    const entry = legacyEntry(legacyMemory({
+      knownFactIds: [asFactId("fact_0")],
+      hiddenFactIds: [asFactId("fact_secret")],
+      relationship: { affinity: 7 },
+      emotion: "guarded",
+      goals: ["守住客栈", "找回弟弟"],
+      interactionHistory: [interaction("act_1")],
+    }));
+    const layers = importNpcLayers({ entry, createdAtTurn: 3 });
+    expect(layers.anchors).toEqual({
+      selfConcept: LEGACY_IMPORT_REASON_KEY,
+      values: [LEGACY_IMPORT_REASON_KEY],
+      speechStyle: LEGACY_IMPORT_REASON_KEY,
+      capabilityBoundaries: [LEGACY_IMPORT_REASON_KEY],
+      taboos: [],
+    });
+    expect(layers.dynamicState).toEqual({
+      isCompanion: false,
+      met: true,
+      emotion: "guarded",
+      goals: [
+        {
+          goalId: npcLegacyGoalId("npc_0", 1), horizon: "short", description: "守住客栈",
+          priority: 3, status: "active", reason: LEGACY_IMPORT_REASON_KEY,
+        },
+        {
+          goalId: npcLegacyGoalId("npc_0", 2), horizon: "short", description: "找回弟弟",
+          priority: 3, status: "active", reason: LEGACY_IMPORT_REASON_KEY,
+        },
+      ],
+    });
+    // 私密事实同样是「知道」，只是不对外披露：条目顺序取 legacy 已知顺序后追加仅隐藏的条目。
+    expect(layers.knowledge.entries).toEqual([
+      {
+        factId: asFactId("fact_0"), certainty: "known", disclosure: "public",
+        source: { kind: "initial_world", learnedAtTurn: 3 },
+      },
+      {
+        factId: asFactId("fact_secret"), certainty: "known", disclosure: "secret",
+        source: { kind: "initial_world", learnedAtTurn: 3 },
+      },
+    ]);
+    expect(layers.relationships.outgoing).toEqual([edge({
+      targetId: PLAYER_ENTITY_ID,
+      dimensions: { affinity: 7, trust: 0, fear: 0, hostility: 0 },
+      stage: "acquainted",
+      trend: "stable",
+      commitments: [],
+      evidence: [],
+      origin: { kind: "initial_world", createdAtTurn: 3, reasonKey: LEGACY_IMPORT_REASON_KEY },
+      lastChangedAtTurn: 3,
+    })]);
+    expect(layers.history.interactions).toEqual([interaction("act_1")]);
+    // 导入结果必须能被 projectNpcEntry 逐字重建回 legacy memory。
+    expect(projectNpcEntry({ ...record(), ...layers, identity: { ...record().identity, anchors: layers.anchors } }).memory)
+      .toEqual({ ...entry.memory, knownFactIds: [asFactId("fact_0"), asFactId("fact_secret")] });
+  });
+
+  it("未见过面且 affinity 为 0 的导入仍然建立 player 边（stage=unknown）", () => {
+    const layers = importNpcLayers({
+      entry: legacyEntry(legacyMemory(), { met: false }),
+      createdAtTurn: 0,
+    });
+    expect(layers.relationships.outgoing).toEqual([edge({
+      targetId: PLAYER_ENTITY_ID,
+      dimensions: { affinity: 0, trust: 0, fear: 0, hostility: 0 },
+      stage: "unknown",
+      trend: "stable",
+      commitments: [],
+      evidence: [],
+      origin: { kind: "initial_world", createdAtTurn: 0, reasonKey: LEGACY_IMPORT_REASON_KEY },
+      lastChangedAtTurn: 0,
+    })]);
+  });
+
+  it("player 边按 targetId 稳定排序，npc 边在前", () => {
+    const previous: NpcEntityRecord = {
+      ...record({ affinity: 5 }),
+      relationships: { outgoing: [edge({ targetId: PLAYER_ENTITY_ID }), edge({ targetId: OTHER_NPC })] },
+    };
+    const layers = importNpcLayers({ entry: legacyEntry(legacyMemory({ relationship: { affinity: 9 } })), createdAtTurn: 0, previous });
+    expect(layers.relationships.outgoing.map((entry) => entry.targetId)).toEqual([OTHER_NPC, PLAYER_ENTITY_ID]);
+  });
+});
+
+describe("npc projection：previous store 的分层组件逐字保留", () => {
+  it("legacy memory 未变时五个字段全部原样继承，不被重建", () => {
+    const previous = record({ affinity: 12 });
+    const entry = legacyEntry(projectNpcEntry(previous).memory);
+    const layers = importNpcLayers({ entry, createdAtTurn: 9, previous });
+    expect(layers.anchors).toEqual(previous.identity.anchors);
+    expect(layers.dynamicState).toEqual(previous.dynamicState);
+    expect(layers.knowledge).toEqual(previous.knowledge);
+    expect(layers.relationships).toEqual(previous.relationships);
+    expect(layers.history).toEqual(previous.history);
+  });
+
+  it("保留 legacy 无法表达的 trust/stage/commitments/evidence/origin 与知识 provenance", () => {
+    const rich: NpcEntityRecord = {
+      ...record({ affinity: 12 }),
+      knowledge: {
+        entries: [
+          {
+            factId: asFactId("fact_0"), certainty: "known", disclosure: "public",
+            source: { kind: "action", mode: "player_told", actionId: "act_0", learnedAtTurn: 0 },
+          },
+          {
+            factId: asFactId("fact_1"), certainty: "suspected", disclosure: "secret",
+            source: { kind: "action", mode: "npc_revealed", actionId: "act_1", learnedAtTurn: 1, sourceNpcId: OTHER_NPC },
+          },
+        ],
+      },
+    };
+    const layers = importNpcLayers({ entry: legacyEntry(projectNpcEntry(rich).memory), createdAtTurn: 9, previous: rich });
+    expect(layers.knowledge).toEqual(rich.knowledge);
+    expect(layers.relationships).toEqual(rich.relationships);
+    expect(layers.anchors).toEqual(rich.identity.anchors);
+  });
+
+  it("affinity 变化只改 player 边的 affinity 与 lastChangedAtTurn", () => {
+    const rich = record({ affinity: 12 });
+    const layers = importNpcLayers({
+      entry: legacyEntry({ ...projectNpcEntry(rich).memory, relationship: { affinity: 20 } }),
+      createdAtTurn: 9,
+      previous: rich,
+    });
+    const playerEdge = layers.relationships.outgoing[0];
+    const before = rich.relationships.outgoing[0];
+    expect(playerEdge.dimensions).toEqual({ affinity: 20, trust: 30, fear: 0, hostility: 0 });
+    expect(playerEdge.stage).toBe(before.stage);
+    expect(playerEdge.trend).toBe(before.trend);
+    expect(playerEdge.commitments).toEqual(before.commitments);
+    expect(playerEdge.evidence).toEqual(before.evidence);
+    expect(playerEdge.origin).toEqual(before.origin);
+    expect(playerEdge.lastChangedAtTurn).toBe(9);
+  });
+});
+
+describe("compileLegacyNpcSync：规则链过渡桥只应用可观察差量", () => {
+  it("新增知识只接受显式 addedKnowledge，缺证据即失败", () => {
+    const before = record({ affinity: 0 });
+    const afterMemory: NpcEntry["memory"] = {
+      ...projectNpcEntry(before).memory,
+      knownFactIds: [asFactId("fact_0"), asFactId("fact_new")],
+    };
+    const synced = compileLegacyNpcSync({
+      before,
+      afterLegacy: legacyEntry(afterMemory),
+      actionId: "act_9",
+      turnNumber: 9,
+      addedKnowledge: [{ factId: asFactId("fact_new"), mode: "scene_witness" }],
+    });
+    expect(synced.knowledge.entries[1]).toEqual({
+      factId: asFactId("fact_new"),
+      certainty: "known",
+      disclosure: "public",
+      source: { kind: "action", mode: "scene_witness", actionId: "act_9", learnedAtTurn: 9 },
+    });
+    expect(synced.knowledge.entries[0]).toEqual(before.knowledge.entries[0]);
+
+    expect(() => compileLegacyNpcSync({
+      before,
+      afterLegacy: legacyEntry(afterMemory),
+      actionId: "act_9",
+      turnNumber: 9,
+      addedKnowledge: [],
+    })).toThrowError(/legacy_knowledge_evidence_missing/);
+  });
+
+  it("来源 NPC 已知的知识保留 sourceNpcId", () => {
+    const before = record({ affinity: 3 });
+    const afterMemory: NpcEntry["memory"] = {
+      ...projectNpcEntry(before).memory,
+      knownFactIds: [asFactId("fact_0"), asFactId("fact_1"), asFactId("fact_borrow")],
+    };
+    const synced = compileLegacyNpcSync({
+      before,
+      afterLegacy: legacyEntry(afterMemory),
+      actionId: "act_4",
+      turnNumber: 4,
+      addedKnowledge: [{ factId: asFactId("fact_borrow"), mode: "npc_revealed", sourceNpcId: OTHER_NPC }],
+    });
+    expect(synced.knowledge.entries[2]).toEqual({
+      factId: asFactId("fact_borrow"),
+      certainty: "known",
+      disclosure: "public",
+      source: {
+        kind: "action", mode: "npc_revealed", actionId: "act_4", learnedAtTurn: 4, sourceNpcId: OTHER_NPC,
+      },
+    });
+  });
+
+  it("新交互写 history：actionId 去重且只保留最近 10 条", () => {
+    const before = record({ affinity: 3, history: Array.from({ length: 10 }, (_, i) => interaction(`act_old_${i}`, i)) });
+    const beforeHistory: NpcHistoryComponent = before.history;
+    const withNew = compileLegacyNpcSync({
+      before,
+      afterLegacy: legacyEntry({
+        ...projectNpcEntry(before).memory,
+        interactionHistory: [...beforeHistory.interactions.slice(1), interaction("act_new", 7)],
+      }),
+      actionId: "act_new",
+      turnNumber: 7,
+      addedKnowledge: [],
+    });
+    expect(withNew.history.interactions.map((h) => h.actionId)).toEqual(
+      [...beforeHistory.interactions.slice(1).map((h) => h.actionId), "act_new"],
+    );
+    expect(withNew.history.interactions).toHaveLength(10);
+
+    // 同 actionId 重试：即使 legacy 侧内容更动也不重复追加、不回滚既有记录。
+    const retry = compileLegacyNpcSync({
+      before,
+      afterLegacy: legacyEntry({
+        ...projectNpcEntry(before).memory,
+        interactionHistory: [...beforeHistory.interactions, interaction("act_old_0", 99)],
+      }),
+      actionId: "act_old_0",
+      turnNumber: 99,
+      addedKnowledge: [],
+    });
+    expect(retry.history).toEqual(beforeHistory);
+  });
+
+  it("met/isCompanion/emotion 写入 dynamicState，无 affinity 变化时不新建 player 边", () => {
+    const before: NpcEntityRecord = { ...record({ affinity: undefined }) };
+    const synced = compileLegacyNpcSync({
+      before,
+      afterLegacy: legacyEntry({
+        ...projectNpcEntry(before).memory,
+        relationship: { affinity: 0 },
+        emotion: "afraid",
+      }),
+      actionId: "act_5",
+      turnNumber: 5,
+      addedKnowledge: [],
+    });
+    expect(synced.relationships.outgoing).toEqual([]);
+    expect(synced.dynamicState.emotion).toBe("afraid");
+    expect(synced.dynamicState.goals).toEqual(before.dynamicState.goals);
+    expect(synced.dynamicState.met).toBe(true);
+    expect(synced.dynamicState.isCompanion).toBe(false);
+  });
+
+  it("affinity 差值只更新 player 边；已有维度、stage、commitments、evidence、origin 原样保留", () => {
+    const before = record({ affinity: 12 });
+    const synced = compileLegacyNpcSync({
+      before,
+      afterLegacy: legacyEntry({ ...projectNpcEntry(before).memory, relationship: { affinity: -4 } }),
+      actionId: "act_6",
+      turnNumber: 6,
+      addedKnowledge: [],
+    });
+    expect(synced.relationships.outgoing).toHaveLength(1);
+    expect(synced.relationships.outgoing[0]).toEqual(edge({
+      ...before.relationships.outgoing[0],
+      dimensions: { affinity: -4, trust: 30, fear: 0, hostility: 0 },
+      lastChangedAtTurn: 6,
+    }));
+  });
+
+  it("legacy goals 未变保留 typed goals；确实改变时按 npcId + ordinal 重建", () => {
+    const before = record({ affinity: 12 });
+    const unchanged = compileLegacyNpcSync({
+      before,
+      afterLegacy: legacyEntry(projectNpcEntry(before).memory),
+      actionId: "act_7",
+      turnNumber: 7,
+      addedKnowledge: [],
+    });
+    expect(unchanged.dynamicState.goals).toEqual(before.dynamicState.goals);
+
+    const changed = compileLegacyNpcSync({
+      before,
+      afterLegacy: legacyEntry({
+        ...projectNpcEntry(before).memory,
+        goals: ["修好水井", "守住客栈", "找回弟弟"],
+      }),
+      actionId: "act_8",
+      turnNumber: 8,
+      addedKnowledge: [],
+    });
+    expect(changed.dynamicState.goals).toEqual<NpcGoal[]>([
+      {
+        goalId: npcLegacyGoalId("npc_0", 1), horizon: "short", description: "修好水井",
+        priority: 3, status: "active", reason: LEGACY_IMPORT_REASON_KEY,
+      },
+      {
+        goalId: npcLegacyGoalId("npc_0", 2), horizon: "short", description: "守住客栈",
+        priority: 3, status: "active", reason: LEGACY_IMPORT_REASON_KEY,
+      },
+      {
+        goalId: npcLegacyGoalId("npc_0", 3), horizon: "short", description: "找回弟弟",
+        priority: 3, status: "active", reason: LEGACY_IMPORT_REASON_KEY,
+      },
+    ]);
+  });
+
+  it("同步结果仍是合法分层组件：可直接写回 store 并重建 legacy memory", () => {
+    const before = record({ affinity: 12 });
+    const synced = compileLegacyNpcSync({
+      before,
+      afterLegacy: legacyEntry({
+        ...projectNpcEntry(before).memory,
+        relationship: { affinity: 18 },
+        emotion: "guarded",
+        interactionHistory: [...before.history.interactions, interaction("act_sync", 11)],
+        knownFactIds: [asFactId("fact_0"), asFactId("fact_1"), asFactId("fact_2")],
+      }),
+      actionId: "act_sync",
+      turnNumber: 11,
+      addedKnowledge: [{ factId: asFactId("fact_2"), mode: "public_broadcast" }],
+    });
+    const next: NpcEntityRecord = { ...before, ...synced };
+    const store = createEntityStore([next, playerRecord()]);
+    expect(store.records[0]).toBe(next);
+    expect(projectNpcEntry(next).memory.relationship).toEqual({ affinity: 18 });
+    expect(projectNpcEntry(next).memory.knownFactIds).toEqual([
+      asFactId("fact_0"), asFactId("fact_1"), asFactId("fact_2"),
+    ]);
+  });
+
+  it("隐藏事实的 provenance 在同步后仍保留 secret 标签", () => {
+    const before = record({ affinity: 12 });
+    const synced = compileLegacyNpcSync({
+      before,
+      afterLegacy: legacyEntry({
+        ...projectNpcEntry(before).memory,
+        hiddenFactIds: [asFactId("fact_1"), asFactId("fact_new_secret")],
+        knownFactIds: [asFactId("fact_0"), asFactId("fact_1"), asFactId("fact_new_secret")],
+      }),
+      actionId: "act_secret",
+      turnNumber: 12,
+      addedKnowledge: [{ factId: asFactId("fact_new_secret"), mode: "player_told" }],
+    });
+    expect(synced.knowledge.entries.map((entry) => [String(entry.factId), entry.disclosure])).toEqual([
+      ["fact_0", "public"], ["fact_1", "secret"], ["fact_new_secret", "secret"],
+    ]);
+    expect(projectNpcEntry({ ...before, ...synced }).memory.hiddenFactIds).toEqual([
+      asFactId("fact_1"), asFactId("fact_new_secret"),
+    ]);
+  });
+
+  it("NPC 之间的既有边不受 legacy affinity 影响，新边仍按稳定顺序排列", () => {
+    const before: NpcEntityRecord = {
+      ...record({ affinity: 12 }),
+      relationships: { outgoing: [edge({ targetId: OTHER_NPC }), edge({ targetId: PLAYER_ENTITY_ID })] },
+    };
+    const synced = compileLegacyNpcSync({
+      before,
+      afterLegacy: legacyEntry({ ...projectNpcEntry(before).memory, relationship: { affinity: 13 } }),
+      actionId: "act_13",
+      turnNumber: 13,
+      addedKnowledge: [],
+    });
+    expect(synced.relationships.outgoing.map((entry) => entry.targetId)).toEqual([OTHER_NPC, PLAYER_ENTITY_ID]);
+    expect(synced.relationships.outgoing[0].dimensions.affinity).toBe(12);
+    expect(synced.relationships.outgoing[1].dimensions.affinity).toBe(13);
+  });
+});
+
+describe("npc projection：地点与身份字段只透传", () => {
+  it("projectNpcEntry 不携带任何分层组件正文", () => {
+    const entry = projectNpcEntry(record({ affinity: 1 }));
+    expect(entry.locationId).toBe(LOC as LocationId);
+    expect(entry.id).toBe(asNpcId("npc_0") as NpcId);
+    expect("anchors" in entry).toBe(false);
+    expect("knowledge" in entry).toBe(false);
+    const serialized = JSON.stringify(entry);
+    for (const layeredKey of ["outgoing", "entries", "anchors", "dynamicState"]) {
+      expect(serialized).not.toContain(`"${layeredKey}"`);
+    }
+  });
+});

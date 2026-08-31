@@ -25,6 +25,7 @@ import {
   validateEntityReferences,
   type EntityCompatibilityProjection,
 } from "./entityProjection";
+import { importNpcLayers, projectNpcEntry } from "./npcProjection";
 
 // ---------------------------------------------------------------------------
 // legacy 兼容投影 fixture：8 类实体齐全，两名 NPC、三件物品、两条事实。
@@ -64,7 +65,8 @@ function npc(id: string, locationId: string, overrides: Partial<NpcEntry> = {}):
     met: true,
     memory: {
       npcId,
-      knownFactIds: [asFactId("fact_1")],
+      // 新模型里 secret 只是知识条目上的披露标签：隐藏的必然是已知的。
+      knownFactIds: [asFactId("fact_1"), asFactId("fact_2")],
       hiddenFactIds: [asFactId("fact_2")],
       interactionHistory: [],
       relationship: { affinity: 10 },
@@ -183,24 +185,32 @@ function tamperRecord(
     mutate(copy as Record<string, unknown>);
     return copy as typeof record;
   });
-  return { version: 1, records };
+  return { version: 2, records };
 }
 
 function inactiveNpcRecord(id: string, order: number, createdAtTurn: number): EntityStore["records"][number] {
+  const base = npc(id, "loc_0");
+  const layers = importNpcLayers({
+    entry: {
+      ...base,
+      met: false,
+      memory: { ...base.memory, knownFactIds: [], hiddenFactIds: [], interactionHistory: [] },
+    },
+    createdAtTurn,
+  });
   return {
     core: { id: asNpcId(id), kind: "npc", name: `隐藏-${id}`, createdAtTurn, lifecycle: "inactive" },
-    identity: { role: "线人", description: "暗中的线人", tags: [] },
+    identity: { role: "线人", description: "暗中的线人", tags: [], anchors: layers.anchors },
     position: { locationId: LOC_0, locationOrder: order },
-    npcState: {
-      isCompanion: false,
-      met: false,
-      memory: { ...npc(id, "loc_0").memory, knownFactIds: [], hiddenFactIds: [], interactionHistory: [] },
-    },
+    dynamicState: layers.dynamicState,
+    knowledge: layers.knowledge,
+    relationships: layers.relationships,
+    history: layers.history,
   };
 }
 
 function withRecords(store: EntityStore, extra: EntityStore["records"]): EntityStore {
-  return { version: 1, records: [...store.records, ...extra] };
+  return { version: 2, records: [...store.records, ...extra] };
 }
 
 /** 强类型取 record：嵌套判别式不收窄联合，组件字段只能经 entitiesOfKind 读取。 */
@@ -322,6 +332,91 @@ describe("entity 兼容投影：legacy → store → legacy", () => {
     expect(projectEntityStore(roundTripped)).toEqual(projectEntityStore(withHidden));
   });
 
+  it("previous store 的分层组件在再次编译时逐字保留，不被 legacy memory 覆盖", () => {
+    const rich = tamperRecord(compile(singleNpcProjection()), NPC_0, (record) => {
+      record.identity = {
+        ...(record.identity as object),
+        anchors: {
+          selfConcept: "守客栈的人", values: ["守诺"], speechStyle: "低声", capabilityBoundaries: ["不会武"], taboos: ["不提井"],
+        },
+      };
+      record.dynamicState = {
+        isCompanion: true,
+        met: true,
+        emotion: "warm",
+        goals: [{
+          goalId: "npc_0_goal_1", horizon: "long", description: "守住客栈", priority: 5, status: "blocked", reason: "井被封",
+        }],
+      };
+      record.knowledge = {
+        entries: [
+          {
+            factId: asFactId("fact_1"), certainty: "known", disclosure: "public",
+            source: { kind: "initial_world", learnedAtTurn: 0 },
+          },
+          {
+            factId: asFactId("fact_2"), certainty: "suspected", disclosure: "secret",
+            source: { kind: "action", mode: "player_told", actionId: "act_3", learnedAtTurn: 3 },
+          },
+        ],
+      };
+      record.relationships = {
+        outgoing: [{
+          targetId: PLAYER_ENTITY_ID,
+          dimensions: { affinity: 10, trust: 44, fear: 2, hostility: 0 },
+          stage: "trusted",
+          trend: "improving",
+          commitments: [{
+            kind: "promise", commitmentId: "cmt_1", promisor: "target", status: "open",
+            description: "带路", source: { kind: "action", actionId: "act_1", turnNumber: 1 },
+          }],
+          evidence: [{
+            evidenceId: "ev_act_1", actionId: "act_1", turnNumber: 1, signal: "supported", severity: "normal", summaryKey: "supported",
+          }],
+          origin: { kind: "action", actionId: "act_1", turnNumber: 1 },
+          lastChangedAtTurn: 4,
+        }],
+      };
+      record.history = {
+        interactions: [{
+          turnNumber: 1, actionId: "act_1", locationId: "loc_0", dialogueAct: "ask", topicSummary: "打听井",
+          outcome: "positive", relationshipDelta: 1, learnedFactIds: [], summary: "答应带路",
+        }],
+      };
+    });
+    const before = requireRecord(rich, "npc", NPC_0);
+    const roundTripped = requireRecord(compile(projectEntityStore(rich), rich), "npc", NPC_0);
+
+    expect(roundTripped.identity.anchors).toEqual(before.identity.anchors);
+    expect(roundTripped.dynamicState).toEqual(before.dynamicState);
+    expect(roundTripped.knowledge).toEqual(before.knowledge);
+    expect(roundTripped.relationships).toEqual(before.relationships);
+    expect(roundTripped.history).toEqual(before.history);
+    // legacy 侧只能看见 affinity / known / hidden / history / emotion / goals，其余全部由分层组件重建。
+    expect(projectNpcEntry(roundTripped).memory).toEqual(projectNpcEntry(before).memory);
+  });
+
+  it("legacy 只标隐藏、未标已知的事实不会被静默丢弃", () => {
+    const hiddenOnly = baseProjection({
+      locations: [
+        location("loc_0", { connectedLocationIds: [LOC_1], npcIds: [NPC_0], availableItemIds: [asItemId("item_2")] }),
+        location("loc_1", { connectedLocationIds: [LOC_0] }),
+      ],
+      npcs: [npc("npc_0", "loc_0", {
+        memory: { ...npc("npc_0", "loc_0").memory, knownFactIds: [], hiddenFactIds: [asFactId("fact_2")] },
+      })],
+    });
+    const store = compile(hiddenOnly);
+    const record = requireRecord(store, "npc", NPC_0);
+    expect(record.knowledge.entries.map((entry) => [String(entry.factId), entry.disclosure])).toEqual([
+      ["fact_2", "secret"],
+    ]);
+    // 重建回的 legacy memory 必然满足 hidden ⊆ known。
+    const rebuilt = projectEntityStore(store).npcs[0]!;
+    expect(rebuilt.memory.knownFactIds).toEqual([asFactId("fact_2")]);
+    expect(rebuilt.memory.hiddenFactIds).toEqual([asFactId("fact_2")]);
+  });
+
   it("uses a non-private core name for fact records", () => {
     const store = compile(baseProjection());
     const facts = entitiesOfKind(store, "fact");
@@ -403,7 +498,13 @@ describe("entity 兼容投影：非法输入返回稳定 issue", () => {
     })))).toContain("unknown_quest_objective_ref");
 
     expect(codesOf(validateEntityReferences(tamperRecord(base, NPC_0, (record) => {
-      record.npcState = { ...(record.npcState as object), memory: { ...(npc("npc_0", "loc_0").memory as object), knownFactIds: [asFactId("fact_404")] } };
+      const knowledge = record.knowledge as { entries: Record<string, unknown>[] };
+      knowledge.entries = [...knowledge.entries, {
+        factId: asFactId("fact_404"),
+        certainty: "known",
+        disclosure: "public",
+        source: { kind: "initial_world", learnedAtTurn: 0 },
+      }];
     })))).toContain("unknown_npc_fact_ref");
 
     expect(codesOf(validateEntityReferences(tamperRecord(base, asItemId("item_2"), (record) => {

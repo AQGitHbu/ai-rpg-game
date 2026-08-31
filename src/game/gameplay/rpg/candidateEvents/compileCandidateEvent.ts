@@ -3,7 +3,7 @@ import type { GameEvent } from "@/game/domain/events";
 import type { ApprovedEventCandidate } from "./approveCandidateEvents";
 import type { ProposedEffect } from "@/game/domain/candidateEvent";
 import { applyEntityMutations, EntityMutationInvariantError } from "@/game/gameplay/rpg/entityWorld";
-import { entitiesOfKind } from "@/game/domain/entity";
+import { compileLegacyNpcSync, entitiesOfKind, projectNpcEntry } from "@/game/domain/entity";
 
 // ---------------------------------------------------------------------------
 // 纯候选事件编译（Spec §11.2 / Task 19）
@@ -12,7 +12,15 @@ import { entitiesOfKind } from "@/game/domain/entity";
 // 纯函数：不读取时钟/随机数/AI/DB；时间由调用方注入 deps.now。
 // ---------------------------------------------------------------------------
 
-export type CompileCandidateEventDeps = { readonly now: () => string };
+/**
+ * actionId/turnNumber 由 resolveTurn 传入的**本回合真实行动**：candidate.id 与
+ * deps.now() 都不是证据，绝不允许拿来充当。
+ */
+export type CompileCandidateEventDeps = {
+  readonly now: () => string;
+  readonly actionId: string;
+  readonly turnNumber: number;
+};
 
 export type CompileCandidateEventResult = {
   readonly worldState: WorldState;
@@ -30,7 +38,7 @@ export function compileCandidateEvent(
   let ws = worldState;
 
   for (const effect of candidate.proposedEffects) {
-    const compiled = applyEffect(ws, effect, occurredAt);
+    const compiled = applyEffect(ws, effect, { occurredAt, actionId: deps.actionId, turnNumber: deps.turnNumber });
     ws = compiled.worldState;
     events.push(...compiled.events);
   }
@@ -47,11 +55,14 @@ export function compileCandidateEvent(
   return { worldState: ws, events };
 }
 
+type CompileEffectContext = Readonly<{ occurredAt: string; actionId: string; turnNumber: number }>;
+
 function applyEffect(
   ws: WorldState,
   effect: ProposedEffect,
-  occurredAt: string,
+  context: CompileEffectContext,
 ): { worldState: WorldState; events: readonly GameEvent[] } {
+  const { occurredAt } = context;
   const mutate = (mutation: Parameters<typeof applyEntityMutations>[1]) => {
     const applied = applyEntityMutations(ws, mutation);
     if (!applied.ok) throw new EntityMutationInvariantError(applied);
@@ -72,18 +83,21 @@ function applyEffect(
         occurredAt,
         interactionKind: "greet",
       };
-      const npc = entitiesOfKind(ws.entityStore, "npc").find((record) => record.core.id === effect.npcId);
-      if (npc === undefined) throw new EntityMutationInvariantError({ code: "unknown_entity_id", entityId: effect.npcId });
+      const before = entitiesOfKind(ws.entityStore, "npc").find((record) => record.core.id === effect.npcId);
+      if (before === undefined) throw new EntityMutationInvariantError({ code: "unknown_entity_id", entityId: effect.npcId });
+      const legacy = projectNpcEntry(before);
+      const stance = effect.stance === "hostile" ? "afraid" : effect.stance === "friendly" ? "warm" : effect.stance === "guarded" ? "guarded" : "neutral";
+      // 立场只改情绪：不新增知识（addedKnowledge 为空），也不追加交互记录。
       const nextWorldState = mutate([{
-        kind: "replace_npc_state",
+        kind: "sync_npc_legacy_memory",
         npcId: effect.npcId,
-        npcState: {
-          ...npc.npcState,
-          memory: {
-            ...npc.npcState.memory,
-            emotion: effect.stance === "hostile" ? "afraid" : effect.stance === "friendly" ? "warm" : effect.stance === "guarded" ? "guarded" : "neutral",
-          },
-        },
+        npc: compileLegacyNpcSync({
+          before,
+          afterLegacy: { ...legacy, memory: { ...legacy.memory, emotion: stance } },
+          actionId: context.actionId,
+          turnNumber: context.turnNumber,
+          addedKnowledge: [],
+        }),
       }]);
       return {
         worldState: { ...nextWorldState, eventLedger: [...nextWorldState.eventLedger, event] },

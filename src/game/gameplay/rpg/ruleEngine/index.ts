@@ -165,8 +165,11 @@ export function resolveTurn(
     };
   }
 
-  // P4 Step 1: NPC knownFactIds 传播
-  const propagatedWs = propagateKnownFacts(resolved.nextWorldState, resolved.facts);
+  // P4 Step 1: NPC knownFactIds 传播（知识写入必须带本轮真实 actionId/turn）
+  const propagatedWs = propagateKnownFacts(resolved.nextWorldState, resolved.facts, {
+    actionId,
+    turnNumber: storyState.turnNumber,
+  });
 
   // Spec §13.1 固定顺序：resolve → propagate → reconcile quests → advance act/
   // derive endingAllowed → approve candidate events → update tension/progress →
@@ -242,7 +245,12 @@ export function resolveTurn(
   const candidateFlowEvents: GameEvent[] = [...approval.events];
   let afterCandidateWs = ruleWorldState;
   for (const candidate of approval.approvedCandidates) {
-    const compiled = compileCandidateEvent(afterCandidateWs, candidate, { now: deps.now });
+    // 候选编译内的 NPC 写入沿用本回合真实行动：candidate.id 不是证据，不得充当 actionId。
+    const compiled = compileCandidateEvent(afterCandidateWs, candidate, {
+      now: deps.now,
+      actionId,
+      turnNumber: storyState.turnNumber,
+    });
     afterCandidateWs = compiled.worldState;
     candidateFlowEvents.push(...compiled.events);
   }

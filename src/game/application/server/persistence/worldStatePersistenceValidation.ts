@@ -275,10 +275,10 @@ function isGameEvent(value: unknown): value is GameEvent {
   }
 }
 
-/** SQLite 边界唯一接受的 WorldState v3 解析器；兼容投影始终由 store 重建。 */
+/** SQLite 边界唯一接受的 WorldState v4 解析器；兼容投影始终由 store 重建。 */
 export function validatePersistableWorldState(value: unknown): PersistableWorldStateValidationResult {
   if (!isObject(value)) return { ok: false, code: "invalid_world_envelope" };
-  if (value.version !== 3) return { ok: false, code: "wrong_world_version" };
+  if (value.version !== 4) return { ok: false, code: "wrong_world_version" };
   if (!hasExactKeys(value, WORLD_KEYS) || !isGeneration(value.generation) || !isBattle(value.battle) || !Array.isArray(value.endings) || !value.endings.every(isEndingEntry) || !isEndingState(value.ending) || !Array.isArray(value.eventLedger) || !value.eventLedger.every(isGameEvent)) {
     return { ok: false, code: "invalid_world_envelope" };
   }
@@ -293,7 +293,7 @@ export function validatePersistableWorldState(value: unknown): PersistableWorldS
   const projectionIssue = validateEntityCompatibilityProjection(parsedStore.store, projection)[0];
   if (projectionIssue !== undefined) return { ok: false, code: "projection_mismatch", issueCode: projectionIssue.code };
   const normalized: WorldState = {
-    version: 3,
+    version: 4,
     generation: value.generation,
     entityStore: parsedStore.store,
     ...projectEntityStore(parsedStore.store),

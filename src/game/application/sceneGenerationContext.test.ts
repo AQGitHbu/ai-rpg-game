@@ -318,9 +318,25 @@ describe("buildSceneGenerationContext", () => {
     expect(npcAContext.hiddenFactCards.map((f) => f.text)).not.toContain("客人的秘密B");
     expect(npcBContext.hiddenFactCards.map((f) => f.text)).toContain("客人的秘密B");
     expect(npcBContext.hiddenFactCards.map((f) => f.text)).not.toContain("老板的秘密A");
-    // 序列化后只出现各自秘密一次（无全局 publicWorldFacts 泄漏文本）
-    expect(serialized.split("老板的秘密A").length - 1).toBe(1);
-    expect(serialized.split("客人的秘密B").length - 1).toBe(1);
+    const countOf = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
+    // 新契约下 memory.knownFactIds 是 knowledge 全部 entry、hiddenFactIds 是其中
+    // disclosure === "secret" 的子集：主人的秘密在其自己的 known/hidden 两张卡各出现一次，
+    // 隔离性体现在「主人 context 块之外零出现」，而不是全局只出现一次。
+    const npcAJson = JSON.stringify(npcAContext);
+    const npcBJson = JSON.stringify(npcBContext);
+    expect(serialized).toContain(npcAJson);
+    expect(serialized).toContain(npcBJson);
+    expect(countOf(npcAJson, "老板的秘密A")).toBe(2);
+    expect(countOf(npcBJson, "客人的秘密B")).toBe(2);
+    expect(countOf(serialized, "老板的秘密A") - countOf(npcAJson, "老板的秘密A")).toBe(0);
+    expect(countOf(serialized, "客人的秘密B") - countOf(npcBJson, "客人的秘密B")).toBe(0);
+    // 其他 NPC 与所有全局投影都拿不到别人的私密事实正文
+    expect(npcAContext.knownFactCards.map((f) => f.text)).not.toContain("客人的秘密B");
+    expect(npcBContext.knownFactCards.map((f) => f.text)).not.toContain("老板的秘密A");
+    expect(context.publicWorldFacts.map((f) => f.text)).toEqual([]);
+    expect(context.sceneVisibleFacts.map((f) => f.text)).toEqual([]);
+    expect(context.player.knownFactCards.map((f) => f.text)).not.toContain("老板的秘密A");
+    expect(context.player.knownFactCards.map((f) => f.text)).not.toContain("客人的秘密B");
   });
 
   // ── Task 4：把规则结果/目标转换投影给场景源 ──────────────────────────────

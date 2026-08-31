@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compileCandidateEvent } from "./compileCandidateEvent";
+import { entitiesOfKind } from "@/game/domain/entity";
 import type { ApprovedEventCandidate } from "./approveCandidateEvents";
 import { asNpcId, asFactId, asEnemyId, asLocationId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
 import { findNpc } from "@/game/domain/worldState";
@@ -10,6 +11,8 @@ import type { EventCandidate } from "@/game/domain/candidateEvent";
 import { createWorldStateFixture, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 
 const NOW = () => "2026-08-09T00:00:00.000Z";
+/** NPC 写入只认这份显式行动证据：candidate.id/时间戳都不是证据。 */
+const DEPS = { now: NOW, actionId: "act_candidate_turn", turnNumber: 3 } as const;
 
 const GENERATION: GenerationMetadata = {
   generationId: asGenerationId("gen-1"),
@@ -104,7 +107,7 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       proposedEffects: [{ kind: "npc_reveals_fact", npcId: asNpcId("npc_1"), factId: asFactId("fact_2") }],
       involvedEntityIds: ["npc_1", "fact_2"],
     };
-    const result = compileCandidateEvent(makeWorldState(), c, { now: NOW });
+    const result = compileCandidateEvent(makeWorldState(), c, DEPS);
     expect(result.events.some((e) => e.type === "fact_discovered")).toBe(true);
     expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
     const fact = result.worldState.worldFacts.find((f) => f.factId === asFactId("fact_2"));
@@ -117,11 +120,18 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       proposedEffects: [{ kind: "npc_changes_stance", npcId: asNpcId("npc_1"), stance: "friendly" }],
       involvedEntityIds: ["npc_1"],
     };
-    const result = compileCandidateEvent(makeWorldState(), c, { now: NOW });
+    const result = compileCandidateEvent(makeWorldState(), c, DEPS);
     expect(result.events.length).toBeGreaterThan(0);
     expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
     const npcAfter = findNpc(result.worldState, asNpcId("npc_1"));
     expect(npcAfter?.memory.emotion).not.toBe("neutral");
+    // 桥只写可观察差量：情绪进 dynamicState，其余组件逐字不变。
+    const before = entitiesOfKind(makeWorldState().entityStore, "npc").find((record) => String(record.core.id) === "npc_1")!;
+    const after = entitiesOfKind(result.worldState.entityStore, "npc").find((record) => String(record.core.id) === "npc_1")!;
+    expect(after.dynamicState.emotion).toBe("warm");
+    expect(after.knowledge).toEqual(before.knowledge);
+    expect(after.history).toEqual(before.history);
+    expect(after.relationships).toEqual(before.relationships);
   });
 
   it("hostile_force_acts → 张力/威胁结构事件，World 不被任意修改", () => {
@@ -130,7 +140,7 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       proposedEffects: [{ kind: "hostile_force_acts", locationId: asLocationId("loc_1"), action: "attack_settlement" }],
       involvedEntityIds: ["loc_1"],
     };
-    const result = compileCandidateEvent(makeWorldState(), c, { now: NOW });
+    const result = compileCandidateEvent(makeWorldState(), c, DEPS);
     // 必须产生真实事件，而非仅 tension 文本
     expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
     expect(result.events.filter((e) => e.type !== "candidate_event_activated").length).toBeGreaterThan(0);
@@ -142,7 +152,7 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       proposedEffects: [{ kind: "enemy_appears", enemyId: asEnemyId("enemy_1"), locationId: asLocationId("loc_1") }],
       involvedEntityIds: ["enemy_1", "loc_1"],
     };
-    const result = compileCandidateEvent(makeWorldState(), c, { now: NOW });
+    const result = compileCandidateEvent(makeWorldState(), c, DEPS);
     expect(result.events.filter((e) => e.type !== "candidate_event_activated").length).toBeGreaterThan(0);
     expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
   });
@@ -156,7 +166,7 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
           : [{ kind: "thread_resolves", threadId: "thread_main" }],
         involvedEntityIds: ["thread_main"],
       };
-      const result = compileCandidateEvent(makeWorldState(), c, { now: NOW });
+      const result = compileCandidateEvent(makeWorldState(), c, DEPS);
       expect(result.events.filter((e) => e.type !== "candidate_event_activated").length).toBeGreaterThan(0);
       expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
     }
@@ -168,7 +178,7 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       proposedEffects: [{ kind: "location_state_changes", locationId: asLocationId("loc_2"), change: "unlocked" }],
       involvedEntityIds: ["loc_2"],
     };
-    const result = compileCandidateEvent(makeWorldState(), c, { now: NOW });
+    const result = compileCandidateEvent(makeWorldState(), c, DEPS);
     expect(result.events.filter((e) => e.type !== "candidate_event_activated").length).toBeGreaterThan(0);
     expect(result.worldState.unlockedLocationIds).toContain(asLocationId("loc_2"));
   });
@@ -179,7 +189,7 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
       proposedEffects: [{ kind: "arbitrary_patch", path: "x" }],
     };
     // 运行时拒绝未知 effect kind（封闭 union 之外一律报错）
-    expect(() => compileCandidateEvent(makeWorldState(), bad as unknown as ApprovedEventCandidate, { now: NOW }))
+    expect(() => compileCandidateEvent(makeWorldState(), bad as unknown as ApprovedEventCandidate, DEPS))
       .toThrow();
   });
 });

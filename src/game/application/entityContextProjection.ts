@@ -1,6 +1,7 @@
 import {
   entitiesOfKind,
   getEntity,
+  projectNpcMemory,
   type EntityKind,
   type EntityRecord,
 } from "@/game/domain/entity";
@@ -63,7 +64,7 @@ function directReferenceIds(record: EntityRecord, safeFactIds: ReadonlySet<strin
   }
   if (isEntityKind(record, "npc")) return [
     String(record.position.locationId),
-    ...record.npcState.memory.knownFactIds.map(String).filter((id) => safeFactIds.has(id)),
+    ...projectNpcMemory(record).knownFactIds.map(String).filter((id) => safeFactIds.has(id)),
   ];
   if (isEntityKind(record, "item")) {
     const owner = record.possession.owner;
@@ -88,12 +89,13 @@ function summaryOf(record: EntityRecord, focusNpcId: string | undefined): Narrat
     locationId: String(record.core.id),
   };
   if (isEntityKind(record, "npc")) {
+    const memory = projectNpcMemory(record);
     const recent = String(record.core.id) === focusNpcId
-      ? record.npcState.memory.interactionHistory.slice(-5).map((entry) => entry.summary).filter((entry) => entry.trim() !== "")
+      ? memory.interactionHistory.slice(-5).map((entry) => entry.summary).filter((entry) => entry.trim() !== "")
       : [];
     return {
       id: String(record.core.id), kind: record.core.kind, name: record.core.name,
-      summary: `角色=${record.identity.role}；${record.identity.description}；目标=${record.npcState.memory.goals.join("、") || "无"}${recent.length === 0 ? "" : `；最近交互=${recent.join("｜")}`}`,
+      summary: `角色=${record.identity.role}；${record.identity.description}；目标=${memory.goals.join("、") || "无"}${recent.length === 0 ? "" : `；最近交互=${recent.join("｜")}`}`,
       locationId: String(record.position.locationId),
     };
   }
@@ -151,7 +153,10 @@ export function buildEntityContextProjection(input: {
 }): EntityContextProjection {
   const { entityStore } = input.worldState;
   const hiddenFactIds = new Set(
-    entitiesOfKind(entityStore, "npc").flatMap((record) => record.npcState.memory.hiddenFactIds.map(String)),
+    entitiesOfKind(entityStore, "npc")
+      .flatMap((record) => record.knowledge.entries)
+      .filter((entry) => entry.disclosure === "secret")
+      .map((entry) => String(entry.factId)),
   );
   const safeFactIds = new Set(
     entitiesOfKind(entityStore, "fact")

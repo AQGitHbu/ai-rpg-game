@@ -6,7 +6,7 @@ import {
   type NpcEntry,
 } from "@/game/domain/worldState";
 import type { FactChange } from "@/game/domain/resolvedEvent";
-import { projectEntityStore } from "@/game/domain/entity";
+import { entitiesOfKind, projectEntityStore } from "@/game/domain/entity";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import {
   asNpcId,
@@ -23,6 +23,9 @@ const generation: GenerationMetadata = {
   inputDigest: "",
   gameType: "wuxia",
 };
+
+/** 知识写入必须挂在一次真实行动上：测试固定这份证据。 */
+const EVIDENCE = { actionId: "act_propagate", turnNumber: 4 } as const;
 
 function makeNpc(id: string, locationId = "loc_1", met = true): NpcEntry {
   return {
@@ -87,7 +90,7 @@ describe("propagateKnownFacts", () => {
     const changes: readonly FactChange[] = [
       { factId: asFactId("f_1"), change: "discovered", source: "player_told", audience: [asNpcId("npc_1")] },
     ];
-    const result = propagateKnownFacts(ws, changes);
+    const result = propagateKnownFacts(ws, changes, EVIDENCE);
     const npc1 = result.npcs.find((n) => String(n.id) === "npc_1")!;
     const npc2 = result.npcs.find((n) => String(n.id) === "npc_2")!;
     expect(npc1.memory.knownFactIds.map(String)).toContain("f_1");
@@ -99,7 +102,7 @@ describe("propagateKnownFacts", () => {
     const changes: readonly FactChange[] = [
       { factId: asFactId("f_1"), change: "revealed", source: "npc_revealed", audience: [asNpcId("npc_1")] },
     ];
-    const result = propagateKnownFacts(ws, changes);
+    const result = propagateKnownFacts(ws, changes, EVIDENCE);
     const npc1 = result.npcs.find((n) => String(n.id) === "npc_1")!;
     const npc2 = result.npcs.find((n) => String(n.id) === "npc_2")!;
     expect(npc1.memory.knownFactIds.map(String)).toContain("f_1");
@@ -111,9 +114,12 @@ describe("propagateKnownFacts", () => {
     const changes = [
       { factId: asFactId("f_1"), change: "discovered", source: "everyone_auto" as never, audience: [asNpcId("npc_1")] },
     ];
-    const result = propagateKnownFacts(ws, changes as readonly FactChange[]);
+    const result = propagateKnownFacts(ws, changes as readonly FactChange[], EVIDENCE);
     const npc1 = result.npcs.find((n) => String(n.id) === "npc_1")!;
     expect(npc1.memory.knownFactIds.map(String)).not.toContain("f_1");
+    // 非法来源连组件层都不留痕：不存在「先写再过滤」。
+    const record1 = entitiesOfKind(result.entityStore, "npc").find((record) => String(record.core.id) === "npc_1")!;
+    expect(record1.knowledge.entries).toEqual([]);
   });
 
   it("不存在的 factId 被拒绝（不传播）", () => {
@@ -121,7 +127,7 @@ describe("propagateKnownFacts", () => {
     const changes: readonly FactChange[] = [
       { factId: asFactId("f_missing"), change: "discovered", source: "player_told", audience: [asNpcId("npc_1")] },
     ];
-    const result = propagateKnownFacts(ws, changes);
+    const result = propagateKnownFacts(ws, changes, EVIDENCE);
     const npc1 = result.npcs.find((n) => String(n.id) === "npc_1")!;
     expect(npc1.memory.knownFactIds.map(String)).not.toContain("f_missing");
   });
@@ -131,7 +137,7 @@ describe("propagateKnownFacts", () => {
     const changes: readonly FactChange[] = [
       { factId: asFactId("f_1"), change: "discovered", source: "player_told", audience: [asNpcId("npc_ghost")] },
     ];
-    const result = propagateKnownFacts(ws, changes);
+    const result = propagateKnownFacts(ws, changes, EVIDENCE);
     expect(result.npcs.every((n) => !n.memory.knownFactIds.map(String).includes("f_1"))).toBe(true);
   });
 
@@ -140,7 +146,7 @@ describe("propagateKnownFacts", () => {
     const changes: readonly FactChange[] = [
       { factId: asFactId("f_1"), change: "discovered", source: "scene_witness" },
     ];
-    const result = propagateKnownFacts(ws, changes);
+    const result = propagateKnownFacts(ws, changes, EVIDENCE);
     expect(result.npcs.every((n) => n.memory.knownFactIds.length === 0)).toBe(true);
   });
 
@@ -150,7 +156,7 @@ describe("propagateKnownFacts", () => {
       { factId: asFactId("f_1"), change: "discovered", source: "player_told", audience: [asNpcId("npc_1")] },
       { factId: asFactId("f_1"), change: "discovered", source: "public_broadcast", audience: [asNpcId("npc_1")] },
     ];
-    const result = propagateKnownFacts(ws, changes);
+    const result = propagateKnownFacts(ws, changes, EVIDENCE);
     const npc1 = result.npcs.find((n) => String(n.id) === "npc_1")!;
     expect(npc1.memory.knownFactIds.filter((f) => String(f) === "f_1").length).toBe(1);
   });
@@ -160,8 +166,36 @@ describe("propagateKnownFacts", () => {
     const changes: readonly FactChange[] = [
       { factId: asFactId("f_1"), change: "discovered", source: "player_told", audience: [asNpcId("npc_1"), asNpcId("npc_2")] },
     ];
-    const a = propagateKnownFacts(ws, changes);
-    const b = propagateKnownFacts(ws, changes);
+    const a = propagateKnownFacts(ws, changes, EVIDENCE);
+    const b = propagateKnownFacts(ws, changes, EVIDENCE);
     expect(a.npcs).toEqual(b.npcs);
+  });
+
+  it("传播出的知识条目带着本轮真实 provenance", () => {
+    const ws = makeWs();
+    const changes: readonly FactChange[] = [
+      { factId: asFactId("f_1"), change: "discovered", source: "scene_witness", audience: [asNpcId("npc_1")] },
+    ];
+    const result = propagateKnownFacts(ws, changes, EVIDENCE);
+    const record1 = entitiesOfKind(result.entityStore, "npc").find((record) => String(record.core.id) === "npc_1")!;
+    expect(record1.knowledge.entries).toEqual([{
+      factId: asFactId("f_1"),
+      certainty: "known",
+      disclosure: "public",
+      source: { kind: "action", mode: "scene_witness", actionId: EVIDENCE.actionId, learnedAtTurn: EVIDENCE.turnNumber },
+    }]);
+  });
+
+  it("已经知道该事实的 NPC 零写入，provenance 不被重铸", () => {
+    const seeded = propagateKnownFacts(makeWs(), [
+      { factId: asFactId("f_1"), change: "discovered", source: "player_told", audience: [asNpcId("npc_1")] },
+    ], EVIDENCE);
+    const before = entitiesOfKind(seeded.entityStore, "npc").find((record) => String(record.core.id) === "npc_1")!;
+    const replayed = propagateKnownFacts(seeded, [
+      { factId: asFactId("f_1"), change: "discovered", source: "public_broadcast", audience: [asNpcId("npc_1")] },
+    ], { actionId: "act_other", turnNumber: 99 });
+    const after = entitiesOfKind(replayed.entityStore, "npc").find((record) => String(record.core.id) === "npc_1")!;
+    expect(after.knowledge).toEqual(before.knowledge);
+    expect(replayed.entityStore).toBe(seeded.entityStore);
   });
 });

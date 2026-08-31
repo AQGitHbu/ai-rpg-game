@@ -11,6 +11,7 @@ import type {
   LocationEntityRecord, NpcEntityRecord, PlayerEntityRecord, QuestEntityRecord,
 } from "./entityRecord";
 import { createEntityStore, entitiesOfKind, type EntityStore } from "./entityStore";
+import { importNpcLayers, normalizeLegacyNpcEntry, projectNpcEntry } from "./npcProjection";
 
 // ---------------------------------------------------------------------------
 // Entity Store ↔ legacy WorldState 兼容投影：两套形状之间唯一的编译/投影通道。
@@ -147,20 +148,6 @@ function locationEntryOf(
   };
 }
 
-function npcEntryOf(record: NpcEntityRecord): NpcEntry {
-  return {
-    id: record.core.id,
-    name: record.core.name,
-    role: record.identity.role,
-    description: record.identity.description,
-    locationId: record.position.locationId,
-    isCompanion: record.npcState.isCompanion,
-    tags: [...record.identity.tags],
-    met: record.npcState.met,
-    memory: record.npcState.memory,
-  };
-}
-
 function itemEntryOf(record: ItemEntityRecord): ItemEntry {
   const { presentation } = record;
   return {
@@ -266,7 +253,7 @@ export function projectEntityStore(store: EntityStore): EntityCompatibilityProje
     visitedLocationIds: locationRecords
       .filter((record) => record.location.visited)
       .map((record) => record.core.id),
-    npcs: npcRecords.map(npcEntryOf),
+    npcs: npcRecords.map(projectNpcEntry),
     items: itemRecords.map(itemEntryOf),
     inventory,
     worldFacts: entitiesOfKind(store, "fact").map(factEntryOf),
@@ -439,6 +426,11 @@ function compileNpcs(
       nextFreeOrder.set(entry.locationId, order + 1);
       position = { locationId: entry.locationId, locationOrder: order };
     }
+    const layers = importNpcLayers({
+      entry,
+      createdAtTurn: turnOf(previous, createdAtTurn),
+      ...(previous === undefined ? {} : { previous }),
+    });
     return {
       core: coreOf({
         id: entry.id,
@@ -447,9 +439,12 @@ function compileNpcs(
         lifecycle: retainedLifecycle(previous),
         createdAtTurn: turnOf(previous, createdAtTurn),
       }),
-      identity: { role: entry.role, description: entry.description, tags: [...entry.tags] },
+      identity: { role: entry.role, description: entry.description, tags: [...entry.tags], anchors: layers.anchors },
       position,
-      npcState: { isCompanion: entry.isCompanion, met: entry.met, memory: entry.memory },
+      dynamicState: layers.dynamicState,
+      knowledge: layers.knowledge,
+      relationships: layers.relationships,
+      history: layers.history,
     };
   });
 }
@@ -641,6 +636,9 @@ export function compileEntityStoreFromCompatibilityProjection(input: {
       ...location,
       npcIds: derived.locations.find((entry) => entry.id === location.id)?.npcIds ?? location.npcIds,
     })),
+    // 新模型里 hidden 只是知识条目的披露标签，"未知道的事实" 不可能对它隐藏；
+    // 编译器按 known ∪ hidden 建条目，故输入侧做同一处保守归一。
+    npcs: projection.npcs.map(normalizeLegacyNpcEntry),
   };
   throwOnFirstIssue(validateEntityCompatibilityProjection(store, normalizedInput));
   return store;
@@ -808,10 +806,9 @@ export function validateEntityReferences(store: EntityStore): readonly EntityRef
   }
 
   for (const record of entitiesOfKind(store, "npc")) {
-    const { memory } = record.npcState;
-    for (const factId of [...memory.knownFactIds, ...memory.hiddenFactIds]) {
-      if (!known.facts.has(factId)) {
-        issues.push({ code: "unknown_npc_fact_ref", entityId: record.core.id, referencedId: factId });
+    for (const entry of record.knowledge.entries) {
+      if (!known.facts.has(entry.factId)) {
+        issues.push({ code: "unknown_npc_fact_ref", entityId: record.core.id, referencedId: entry.factId });
       }
     }
   }
