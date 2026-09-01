@@ -9,10 +9,16 @@ import { createGame } from "@/game/application/createGame";
 import { createJourneyEvolutionSource, journeyNow } from "./foundationJourney.testutil";
 import type { WorldEvolutionSource } from "@/game/application/worldEvolutionSource";
 import type { EntityMutation } from "@/game/gameplay/rpg/entityWorld";
-import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
+import { applyEntityMutations, knowledgeReferences } from "@/game/gameplay/rpg/entityWorld";
 import { createEntityStore, entitiesOfKind, projectEntityStore, type NpcEntityRecord } from "@/game/domain/entity";
 import type { NpcId } from "@/game/domain/worldEntity";
 import type { PreparedContinuationState } from "@/game/domain/preparedContinuation";
+import type { FactChange } from "@/game/domain/resolvedEvent";
+import {
+  knowledgeWritesFromFactChange,
+  type NpcKnowledgeBroadcastRequest,
+} from "@/game/gameplay/rpg/npcMemory";
+import { propagateKnownFacts } from "@/game/gameplay/rpg/ruleEngine/propagateKnownFacts";
 
 const RUN_ROOT = mkdtempSync(join(tmpdir(), "ai-rpg-npc-continuity-journey-"));
 let journeyOrdinal = 0;
@@ -107,6 +113,49 @@ export async function commitNpcMutations(
     nextStoryState: current.storyState,
   });
   if (!committed.ok) throw new Error(`NPC mutation commit failed: ${committed.code}`);
+  return committed.record;
+}
+
+/**
+ * Test-only bridge for an explicit FactChange audience. The production
+ * `propagateKnownFacts` facade intentionally defaults disclosure to public;
+ * this journey also needs to prove a secret disclosure, so the bridge reuses
+ * the production audience mapper and only applies its returned writes through
+ * the existing entity mutation boundary before committing SQLite.
+ */
+export async function commitNpcFactChangeForTest(
+  journey: SqliteNpcJourney,
+  change: FactChange,
+  request: NpcKnowledgeBroadcastRequest,
+): Promise<GameRecord> {
+  const current = await journey.record();
+  const nextWorldState = request.disclosure === undefined && request.certainty === undefined
+    ? propagateKnownFacts(current.worldState, [change], request)
+    : (() => {
+        const mapped = knowledgeWritesFromFactChange(
+          change,
+          request,
+          knowledgeReferences(current.worldState.entityStore.records),
+        );
+        if (!mapped.ok) throw new Error(`FactChange knowledge mapping failed: ${mapped.code}`);
+        const applied = applyEntityMutations(current.worldState, mapped.writes.map((write) => ({
+          kind: "record_npc_knowledge" as const,
+          npcId: write.npcId,
+          factId: write.factId,
+          certainty: write.certainty,
+          disclosure: write.disclosure,
+          source: write.source,
+        })));
+        if (!applied.ok) throw new Error(`FactChange knowledge mutation failed: ${applied.code}`);
+        return applied.worldState;
+      })();
+  const committed = await commitState(journey.repo, {
+    gameId: journey.gameId,
+    expectedRevision: current.revision,
+    nextWorldState,
+    nextStoryState: current.storyState,
+  });
+  if (!committed.ok) throw new Error(`FactChange knowledge commit failed: ${committed.code}`);
   return committed.record;
 }
 

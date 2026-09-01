@@ -2,6 +2,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import {
   authoritativeNpcs,
+  commitNpcFactChangeForTest,
   commitNpcMutations,
   createSqliteNpcJourney,
   npcComponentsSnapshot,
@@ -12,10 +13,10 @@ import { advanceScene, journeyNow, loadGameView, pendingSceneProposal, playIssue
 import { buildChoiceMap } from "@/game/application/buildChoiceMap";
 import { buildSelectableSceneCandidates } from "@/game/application/sceneChoiceCandidates";
 import { compileSceneNarrativeContext } from "@/game/application/server/ai/narrativeContext";
-import { asNpcId } from "@/game/domain/worldEntity";
+import { asFactId, asNpcId } from "@/game/domain/worldEntity";
 import { PLAYER_ENTITY_ID, RETURN_REQUIRED_ITEM_TAG, asItemId } from "@/game/domain/worldEntity";
 import { buildNpcSpeechAuthority, validateNpcSpeechReferences } from "@/game/application/npcSpeechAuthority";
-import { projectEntityStore, type NpcEntityRecord } from "@/game/domain/entity";
+import { projectEntityStore, type FactEntityRecord, type NpcEntityRecord } from "@/game/domain/entity";
 import { applyEntityMutations, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
 import { resolveByType } from "@/game/gameplay/rpg/ruleEngine/resolveByType";
 import { createWorldStateFixtureWith } from "@/game/domain/testing/worldStateFixture.testutil";
@@ -25,6 +26,7 @@ import { isAllowedRelationshipStageTransition } from "@/game/gameplay/rpg/npcMem
 import { performBattleRound } from "@/game/application/performBattleRound";
 import { asNarrativeJobId } from "@/game/domain/events";
 import { createPreparedContinuationState, type PreparedContinuationState } from "@/game/domain/preparedContinuation";
+import type { FactChange } from "@/game/domain/resolvedEvent";
 
 const journeys: Awaited<ReturnType<typeof createSqliteNpcJourney>>[] = [];
 
@@ -499,47 +501,97 @@ describe("NPC continuity long-form journey", () => {
 
       if (dynamicNpcId !== undefined && !knowledgeAudienceProved) {
         const dynamic = npcById(record.worldState, dynamicNpcId);
-        const privateFact = record.worldState.worldFacts[0];
-        const publicFact = record.worldState.worldFacts.find((fact) => String(fact.factId) !== String(privateFact?.factId));
+        const privateFactId = asFactId("fact_task9_private_audience");
+        const publicFactId = asFactId("fact_task9_public_audience");
+        const audienceFacts: readonly FactEntityRecord[] = [
+          {
+            core: { id: privateFactId, kind: "fact", name: `fact:${privateFactId}`, createdAtTurn: record.storyState.turnNumber, lifecycle: "active" },
+            fact: { text: "只有指定听众可知的 Task 9 私密事实。", source: "generated", discovered: false },
+          },
+          {
+            core: { id: publicFactId, kind: "fact", name: `fact:${publicFactId}`, createdAtTurn: record.storyState.turnNumber, lifecycle: "active" },
+            fact: { text: "只向指定听众公开的 Task 9 事实。", source: "generated", discovered: false },
+          },
+        ];
+        record = await commitNpcMutations(journey, [{ kind: "create_entities", records: audienceFacts }]);
+        const privateFact = record.worldState.worldFacts.find((fact) => fact.factId === privateFactId);
+        const publicFact = record.worldState.worldFacts.find((fact) => fact.factId === publicFactId);
+        const openingKnowledge = npcById(record.worldState, "npc_0").knowledge;
+        expect(privateFact).toBeDefined();
+        expect(publicFact).toBeDefined();
+        expect(openingKnowledge.entries.some((entry) => entry.factId === privateFactId)).toBe(false);
+        expect(openingKnowledge.entries.some((entry) => entry.factId === publicFactId)).toBe(false);
+        expect(dynamic.knowledge.entries.some((entry) => entry.factId === privateFactId)).toBe(false);
+        expect(dynamic.knowledge.entries.some((entry) => entry.factId === publicFactId)).toBe(false);
         if (privateFact !== undefined && publicFact !== undefined) {
-          const privateEntry = npcById(record.worldState, "npc_0").knowledge.entries.find((entry) => entry.factId === privateFact.factId);
-          const privateMutation: EntityMutation = privateEntry === undefined
-            ? {
-                kind: "record_npc_knowledge",
-                npcId: asNpcId("npc_0"),
-                factId: privateFact.factId,
-                certainty: "known",
-                disclosure: "secret",
-                source: { kind: "action", mode: "player_told", actionId: "act_task9_private_fact", turnNumber: record.storyState.turnNumber + 1 },
-              }
-            : {
-                kind: "set_npc_knowledge_disclosure",
-                npcId: asNpcId("npc_0"),
-                factId: privateFact.factId,
-                disclosure: "secret",
-                actionId: "act_task9_private_fact",
-                turnNumber: record.storyState.turnNumber + 1,
-              };
-          await commitNpcMutations(journey, [privateMutation]);
-          record = await journey.record();
-          const publicMutation: EntityMutation = {
-            kind: "record_npc_knowledge",
-            npcId: dynamic.core.id,
+          const privateChange: FactChange = {
+            factId: privateFact.factId,
+            change: "discovered",
+            source: "player_told",
+            audience: [dynamic.core.id],
+          };
+          const privateRequest = {
+            actionId: "act_task9_private_fact",
+            turnNumber: record.storyState.turnNumber + 1,
+            disclosure: "secret" as const,
+          };
+          const openingKnowledgeBeforeAudience = npcById(record.worldState, "npc_0").knowledge;
+          const afterPrivate = await commitNpcFactChangeForTest(journey, privateChange, privateRequest);
+          const privateDynamic = npcById(afterPrivate.worldState, dynamicNpcId);
+          expect(privateDynamic.knowledge.entries.find((entry) => entry.factId === privateFact.factId)).toEqual({
+            factId: privateFact.factId,
+            certainty: "known",
+            disclosure: "secret",
+            source: {
+              kind: "action",
+              mode: "player_told",
+              actionId: privateRequest.actionId,
+              learnedAtTurn: privateRequest.turnNumber,
+            },
+          });
+          expect(npcById(afterPrivate.worldState, "npc_0").knowledge).toEqual(openingKnowledgeBeforeAudience);
+
+          const publicChange: FactChange = {
+            factId: publicFact.factId,
+            change: "revealed",
+            source: "npc_revealed",
+            audience: [dynamic.core.id],
+          };
+          const publicRequest = {
+            actionId: "act_task9_public_fact",
+            turnNumber: afterPrivate.storyState.turnNumber + 1,
+            speakerNpcId: asNpcId("npc_0"),
+          };
+          const afterKnowledge = await commitNpcFactChangeForTest(journey, publicChange, publicRequest);
+          const afterDynamic = npcById(afterKnowledge.worldState, dynamicNpcId);
+          expect(afterDynamic.knowledge.entries.find((entry) => entry.factId === publicFact.factId)).toEqual({
             factId: publicFact.factId,
             certainty: "known",
             disclosure: "public",
-            source: { kind: "action", mode: "npc_revealed", actionId: "act_task9_public_fact", turnNumber: record.storyState.turnNumber + 1, sourceNpcId: asNpcId("npc_0") },
-          };
-          await commitNpcMutations(journey, [publicMutation]);
-          const afterKnowledge = await journey.record();
+            source: {
+              kind: "action",
+              mode: "npc_revealed",
+              actionId: publicRequest.actionId,
+              learnedAtTurn: publicRequest.turnNumber,
+              sourceNpcId: asNpcId("npc_0"),
+            },
+          });
+          expect(npcById(afterKnowledge.worldState, "npc_0").knowledge).toEqual(openingKnowledgeBeforeAudience);
+
+          const repeated = await commitNpcFactChangeForTest(journey, publicChange, publicRequest);
+          const repeatedDynamic = npcById(repeated.worldState, dynamicNpcId);
+          expect(repeatedDynamic.knowledge.entries).toHaveLength(afterDynamic.knowledge.entries.length);
+          expect(repeatedDynamic.knowledge.entries).toEqual(afterDynamic.knowledge.entries);
+          expect(repeatedDynamic.knowledge.entries.map((entry) => entry.source)).toEqual(afterDynamic.knowledge.entries.map((entry) => entry.source));
+          expect(npcById(repeated.worldState, "npc_0").knowledge).toEqual(openingKnowledgeBeforeAudience);
           const openingAuthority = buildNpcSpeechAuthority({
-            store: afterKnowledge.worldState.entityStore,
+            store: repeated.worldState.entityStore,
             speakerNpcId: asNpcId("npc_0"),
             sceneVisibleFactIds: [privateFact.factId, publicFact.factId],
             targetContext: { targetId: PLAYER_ENTITY_ID },
           });
           const dynamicAuthority = buildNpcSpeechAuthority({
-            store: afterKnowledge.worldState.entityStore,
+            store: repeated.worldState.entityStore,
             speakerNpcId: dynamic.core.id,
             sceneVisibleFactIds: [privateFact.factId, publicFact.factId],
             targetContext: { targetId: PLAYER_ENTITY_ID },
@@ -557,13 +609,6 @@ describe("NPC continuity long-form journey", () => {
           expect(dynamicAuthority.allowedFactCards.some((card) => card.factId === publicFact.factId)).toBe(true);
 
           privateFactForPrompt = { id: String(privateFact.factId), text: privateFact.text };
-
-          const repeated = applyEntityMutations(afterKnowledge.worldState, [publicMutation]);
-          expect(repeated.ok).toBe(true);
-          if (repeated.ok) {
-            const repeatedDynamic = npcById(repeated.worldState, dynamicNpcId);
-            expect(repeatedDynamic.knowledge.entries.filter((entry) => entry.factId === publicFact.factId)).toHaveLength(1);
-          }
           knowledgeAudienceProved = true;
         }
       }
