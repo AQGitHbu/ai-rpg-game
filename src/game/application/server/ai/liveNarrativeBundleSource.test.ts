@@ -445,6 +445,65 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain("禁止鬼魂");
   });
 
+  it("includes typed NPC creation anchors, goals, and directed relationship seeds in the bundle contract", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify(validBundleResponse),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeStoryState(),
+      job: makeJob(),
+    });
+
+    const systemPrompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
+    expect(systemPrompt).toContain('"relationshipSeeds"');
+    expect(systemPrompt).toContain('"targetNpcId"');
+    expect(systemPrompt).toContain("只能引用实体规则闭包中的既有 active NPC");
+    expect(systemPrompt).toContain("不得提交 affinity、stage、evidence 或 actionId");
+  });
+
+  it("rejects an invalid dynamic NPC creation shape before returning a bundle proposal", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      ok: true,
+      content: JSON.stringify({
+        ...validBundleResponse,
+        worldDelta: {
+          beatSummary: "补充一名有旧交的信使",
+          newNpc: {
+            name: "新信使",
+            role: "传讯人",
+            description: "带来旧案消息的传讯人。",
+            locationRef: { kind: "existing", id: "loc_0" },
+            anchors: {
+              selfConcept: "守住旧案的传讯人",
+              values: ["守诺"],
+              speechStyle: "谨慎直接",
+              capabilityBoundaries: ["只说亲见之事"],
+              taboos: [],
+            },
+            goals: [{ horizon: "short", description: "送达消息", priority: 3, reason: "受人所托" }],
+            relationshipSeeds: [{ targetNpcId: "npc_1", stance: "ally", reason: "旧日相助", stage: "trusted" }],
+          },
+        },
+      }),
+    });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    const result = await source.generate({
+      kind: "decision",
+      worldState: makeWorldState(),
+      storyState: makeStoryState(),
+      job: makeJob(),
+    });
+
+    expect(result).toMatchObject({ ok: false, failure: { kind: "AI_RESPONSE_INVALID" } });
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
   it("projects current location, focus NPC, previous scene, chosen option, beats and objectiveLink", async () => {
     const complete = vi.fn().mockResolvedValue({
       ok: true,

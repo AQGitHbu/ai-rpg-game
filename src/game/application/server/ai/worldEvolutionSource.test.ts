@@ -123,6 +123,29 @@ describe("parseWorldDeltaProposal", () => {
     }
   });
 
+  it("rejects unknown world-delta keys instead of silently dropping them", () => {
+    expect(parseWorldDeltaProposal({
+      beatSummary: "带有未知字段的提案",
+      newNpc: {
+        ...NPC_CREATION,
+        name: "新来客", role: "过客", description: "路过的旅人。",
+        locationRef: { kind: "existing", id: "loc_a" },
+      },
+      serverOnly: true,
+    })).toBeNull();
+    expect(parseWorldDeltaProposal({
+      beatSummary: "带有未知地点字段的提案",
+      newLocation: {
+        name: "新地点", description: "一处新的地点。", scale: "scene", placement: "world",
+        connectFromLocationId: "loc_a", serverOnly: true,
+      },
+    })).toBeNull();
+    expect(parseWorldDeltaProposal({
+      beatSummary: "带有未知事实字段的提案",
+      newFact: { text: "一条新事实。", visibility: "public", provenance: "provider" },
+    })).toBeNull();
+  });
+
   it("drops proposals with illegal name length or missing fields", () => {
     expect(parseWorldDeltaProposal({ beatSummary: "", newNpc: null })).toBeNull();
     expect(parseWorldDeltaProposal({
@@ -788,5 +811,20 @@ describe("world source 内容修复契约", () => {
     expect(prompt).toContain("客栈");
     expect(prompt).toContain("loc_a");
     expect(prompt).not.toContain("worldFacts");
+  });
+
+  it("world-evolution prompt declares typed NPC anchors, goals, and directed seed boundaries", async () => {
+    const ai = makeClient("not json");
+    const source = createLiveWorldEvolutionSource({ aiClient: ai });
+    let prompt = "";
+    ai.complete.mockImplementation(async (_role, messages, _ctx) => {
+      prompt = (messages[0] as { readonly content?: string } | undefined)?.content ?? "";
+      return { ok: true as const, content: "not json", latencyMs: 1 };
+    });
+    await source.propose(makeCtx({ need: pacingNeed }));
+    expect(prompt).toContain('"relationshipSeeds"');
+    expect(prompt).toContain('"targetNpcId"');
+    expect(prompt).toContain("只能引用实体规则闭包中的既有 active NPC");
+    expect(prompt).toContain("不得提交 affinity、stage、evidence 或 actionId");
   });
 });

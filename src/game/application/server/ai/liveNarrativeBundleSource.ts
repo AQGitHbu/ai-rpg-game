@@ -19,6 +19,7 @@ import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBundle";
 import type { OpeningNarrativeBundleProposal } from "../../narrativeBundleSource";
 import { compileDecisionNarrativeContext } from "./narrativeContext";
+import { parseWorldDeltaProposal } from "./liveWorldEvolutionSource";
 
 // ---------------------------------------------------------------------------
 // Task 5：统一叙事生成包 live source。
@@ -480,12 +481,26 @@ export function createNarrativeBundleSource(
         }
 
         if (context.kind === "decision") {
-          const proposalResult = parseNarrativeBundleProposal(normalizeDecisionBundleShape(
+          const normalizedBundle = normalizeDecisionBundleShape(
             parsed.value,
             context.worldState,
             context.storyState,
             context.job,
-          ));
+          );
+          const normalizedRecord = asRecord(normalizedBundle);
+          const rawWorldDelta = context.storyState.evolution.status === "needs_ending_pair"
+            ? null
+            : normalizedRecord?.worldDelta;
+          const parsedWorldDelta = rawWorldDelta === null || rawWorldDelta === undefined
+            ? null
+            : parseWorldDeltaProposal(rawWorldDelta, context.worldState.generation.gameType);
+          if (rawWorldDelta !== null && rawWorldDelta !== undefined && parsedWorldDelta === null) {
+            logger?.warn("narrative_bundle_invalid_world_delta");
+            return failBundle("invalid_schema", "invalid_schema", "world_delta_invalid");
+          }
+          const proposalResult = parseNarrativeBundleProposal(normalizedRecord === null
+            ? normalizedBundle
+            : { ...normalizedRecord, worldDelta: parsedWorldDelta?.proposal ?? null });
           if (!proposalResult.ok) {
             const detail = proposalResult.stepKey === undefined
               ? proposalResult.reason

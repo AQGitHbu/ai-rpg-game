@@ -555,10 +555,10 @@ export function createFixtureOpeningCandidateSource(): OpeningGenerationSource {
               selfConcept: `守护${variant.town}线索的知情人`,
               values: ["守诺"],
               speechStyle: "谨慎简短",
-              capabilityBoundaries: ["不会替人作伪证"],
+              capabilityBoundaries: [`只提供${variant.route}的亲见消息`],
               taboos: ["不出卖无辜者"],
             },
-            goals: [{ horizon: "short", description: "查明幕后势力", priority: 4, reason: "客栈的线索正在消失" }],
+            goals: [{ horizon: "short", description: `查明${variant.boss}的动向`, priority: 4, reason: `${variant.venue}的${variant.clue}线索正在消失` }],
           },
           quest: {
             name: `取得${variant.npc}的信任`,

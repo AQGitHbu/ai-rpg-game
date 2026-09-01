@@ -226,6 +226,34 @@ describe("createGame", () => {
     }
   });
 
+  it("为每个题材的 stock contact 提供与开场地点一致的显式 anchors 与 typed goal", async () => {
+    const source = createFixtureOpeningCandidateSource();
+    const gameTypes: readonly GameTypeId[] = [
+      "wuxia", "xianxia", "fantasy", "science_fiction", "urban", "alternate_history", "post_apocalypse",
+    ];
+
+    for (const gameType of gameTypes) {
+      const candidate = await source.generate({ gameType, gameLength: "short", seed: `stock-${gameType}` });
+      const npc = candidate.opening.npc;
+      const buildingName = candidate.opening.location.buildingName ?? candidate.opening.location.name;
+
+      expect(npc.anchors.selfConcept).toContain(candidate.opening.location.name);
+      expect(npc.anchors.values.length).toBeGreaterThanOrEqual(1);
+      expect(npc.anchors.speechStyle.length).toBeGreaterThan(0);
+      expect(npc.anchors.capabilityBoundaries.length).toBeGreaterThanOrEqual(1);
+      expect(npc.anchors.taboos.length).toBeGreaterThanOrEqual(0);
+      expect(npc.goals.length).toBeGreaterThanOrEqual(1);
+      expect(npc.goals[0]).toEqual(expect.objectContaining({
+        horizon: expect.any(String),
+        description: expect.any(String),
+        priority: expect.any(Number),
+        reason: expect.stringContaining(buildingName),
+      }));
+      expect(npc.goals[0]).not.toHaveProperty("goalId");
+      expect(npc.goals[0]).not.toHaveProperty("status");
+    }
+  });
+
   it("atomically replaces an ended game and preserves it on stale replacement", async () => {
     const { repo, getRecord } = createInMemoryRepo();
     const first = await createGame(

@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { repairOpeningGenerationCandidate, createOpeningGenerationSource, sanitizeOpeningFactReferences } from "./openingGenerationSource";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
 import type { AiTransport } from "@ai-game/ai-transport";
@@ -410,5 +412,20 @@ describe("createOpeningGenerationSource", () => {
       .rejects.toMatchObject({ kind: "AI_CALL_FAILED", phase: "opening" });
     const allLog = JSON.stringify(warns);
     expect(allLog).not.toContain("SECRET_KEY");
+  });
+
+  it("keeps production NPC creation explicit and free of legacy_import or untyped goal contracts", () => {
+    const productionSources = [
+      "src/game/application/createGame.ts",
+      "src/game/application/server/ai/openingGenerationSource.ts",
+      "src/game/application/server/ai/liveNarrativeBundleSource.ts",
+      "src/game/application/server/ai/liveWorldEvolutionSource.ts",
+    ].map((file) => readFileSync(resolve(process.cwd(), file), "utf8"));
+
+    for (const source of productionSources) {
+      expect(source).not.toContain("legacy_import");
+      expect(source).not.toMatch(/goals\s*:\s*(?:readonly\s+)?string\[\]/u);
+    }
+    expect(productionSources[2]).toContain("parseWorldDeltaProposal");
   });
 });
