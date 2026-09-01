@@ -9,7 +9,8 @@ import {
   loadWorldState,
   loadGameRecord,
 } from "./foundationJourney.testutil";
-import { asNpcId } from "@/game/domain/worldEntity";
+import { PLAYER_ENTITY_ID, asNpcId } from "@/game/domain/worldEntity";
+import { entitiesOfKind, projectEntityStore } from "@/game/domain/entity";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { ATMOSPHERE_BEAT_ID } from "@/game/application/approveAndWriteScene";
 import { commitState } from "@/game/application/stateCommit";
@@ -87,37 +88,34 @@ describe("叙事落地旅程（Step 2）", () => {
       // 触发一次允许的 NPC provider job。
       await advanceScene(store.repo);
 
-      // 直接设置 NPC 亲和度（不依赖大量回合交互）。
+      // 直接设置 NPC 分层关系组件的亲和度（不依赖大量回合交互）。
       const current = await loadGameRecord(store.repo);
       if (current === null) throw new Error("记录不可用");
       const npc = current.worldState.npcs[0]!;
-      const npcAfter = {
-        ...npc,
-        memory: {
-          ...npc.memory,
-          relationship: { affinity },
-          interactionHistory: [
-            ...npc.memory.interactionHistory,
-            {
-              turnNumber: 0,
-              actionId: "setup",
-              locationId: current.worldState.currentLocationId,
-              dialogueAct: "ask" as const,
-              topicSummary: "初始互动",
-              outcome: "neutral" as const,
-              relationshipDelta: 0,
-              learnedFactIds: [],
-              summary: "初始互动",
-            },
-          ],
+      const npcRecord = entitiesOfKind(current.worldState.entityStore, "npc").find((entry) => entry.core.id === npc.id);
+      if (npcRecord === undefined) throw new Error("缺少 NPC 权威实体记录");
+      const playerEdge = npcRecord.relationships.outgoing.find((edge) => edge.targetId === PLAYER_ENTITY_ID);
+      if (playerEdge === undefined) throw new Error("缺少 NPC→player 权威关系边");
+      const updatedNpcRecord = {
+        ...npcRecord,
+        relationships: {
+          ...npcRecord.relationships,
+          outgoing: npcRecord.relationships.outgoing.map((edge) => edge.targetId === PLAYER_ENTITY_ID
+            ? { ...edge, dimensions: { ...edge.dimensions, affinity } }
+            : edge),
         },
+      };
+      const entityStore = {
+        ...current.worldState.entityStore,
+        records: current.worldState.entityStore.records.map((entry) => entry.core.id === npcRecord.core.id ? updatedNpcRecord : entry),
       };
       const commitResult = await commitState(store.repo, {
         gameId: created.gameId,
         expectedRevision: current.revision,
         nextWorldState: {
           ...current.worldState,
-          npcs: [npcAfter],
+          entityStore,
+          ...projectEntityStore(entityStore),
         },
         nextStoryState: current.storyState,
       });
@@ -139,12 +137,12 @@ describe("叙事落地旅程（Step 2）", () => {
     const trusted = await runWithAffinity(70);
 
     // 两种关系档位都必须用 NPC 直接台词，并且承接本轮玩家话语。
-    expect(hostile.proposal.npcLine?.text).toContain("既然你愿意继续查");
-    expect(trusted.proposal.npcLine?.text).toContain("既然你愿意继续查");
+    expect(hostile.proposal.npcLine?.text).toContain("这不关你的事");
+    expect(trusted.proposal.npcLine?.text).toContain("来龙去脉");
     expect(hostile.proposal.npcLine?.text).not.toMatch(/冷冷地答道|如实答道/);
     expect(trusted.proposal.npcLine?.text).not.toMatch(/坦诚地说|说道|答道/);
-    expect(hostile.proposal.npcLine?.emotion).toBe("neutral");
-    expect(trusted.proposal.npcLine?.emotion).toBe("neutral");
+    expect(hostile.proposal.npcLine?.emotion).toBe("angry");
+    expect(trusted.proposal.npcLine?.emotion).toBe("warm");
   });
 
   it("物品/任务/战斗 → 场景覆盖全部强制节拍 + objectiveLink == HUD 当前目标", async () => {

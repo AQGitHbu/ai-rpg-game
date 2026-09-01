@@ -79,3 +79,23 @@ RED 探针均通过 Edit/apply_patch 在 GREEN 阶段移除；没有使用 git c
 - `npm run check:standards`：passed。
 
 本轮无剩余 concern；生产代码未修改，未恢复任何被删除的旧行为。
+
+## Fix round 2
+
+复核指出 round 1 的旅程 fixture 只改了 legacy `npc.memory`，导致 hostile/trusted 断言退化为相同台词和 neutral 情绪。此次仅修改：
+
+- `src/game/application/testing/narrativeGroundingJourney.test.ts`：通过 `entitiesOfKind(entityStore, "npc")` 取得权威 NPC record，直接更新其 `relationships.outgoing` 中 NPC→player 边的 affinity，再以 `projectEntityStore` 重建兼容投影；恢复 hostile `这不关你的事`/`angry` 与 trusted `来龙去脉`/`warm` 的差异断言。
+- `.superpowers/sdd/2026-08-31-npc-personality-knowledge-relationship-graph/task-5C1-report.md`：追加本轮记录。
+
+本轮未修改任何生产代码，未恢复 5C1 删除的 tier modifier、首次见面 bonus 或裸 ask 关系写入。
+
+验证命令及最终输出：
+
+- `npm test -- src/game/application/testing/narrativeGroundingJourney.test.ts`：1 file，3/3 tests passed。
+- `npm test`：171 files，2225/2225 tests passed。
+- `npm run typecheck`：passed。
+- `npx eslint src/game/application/testing/narrativeGroundingJourney.test.ts`：passed。
+- `npm run test:boundaries`：105/105 tests passed。
+- `npm run check:standards`：passed。
+
+本轮 concern：None。
