@@ -1,5 +1,7 @@
 import type { WorldState, QuestOutcome } from "@/game/domain/worldState";
 import type { GameEvent } from "@/game/domain/events";
+import { entitiesOfKind } from "@/game/domain/entity";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { isObjectiveSatisfied } from "@/game/gameplay/rpg/narrativeContext/objectiveRules";
 import { applyEntityMutations, EntityMutationInvariantError, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
 
@@ -7,6 +9,46 @@ export type QuestReconcileResult = {
   readonly nextWorldState: WorldState;
   readonly events: readonly GameEvent[];
 };
+
+export type QuestActionContext = {
+  /** 当前行动明确记录的 NPC participant；不是由 quest 文本或 focus 推断。 */
+  readonly participantNpcId: string;
+  readonly actionId: string;
+  readonly turnNumber: number;
+  /** 由 resolveTurn 根据回合开始状态计算；不得来自 Action/AI payload。 */
+  readonly actionWasAlreadyUsed?: boolean;
+};
+
+export type QuestReconcileOptions = {
+  readonly talkToNpcSession?: { readonly npcId: string; readonly completed: boolean };
+  readonly actionContext?: QuestActionContext;
+};
+
+function npcUsedAction(ws: WorldState, npcId: string, actionId: string): boolean {
+  const npc = entitiesOfKind(ws.entityStore, "npc").find((record) => String(record.core.id) === npcId);
+  return npc?.history.interactions.some((entry) => entry.actionId === actionId)
+    || npc?.relationships.outgoing.some((edge) => edge.evidence.some((evidence) => evidence.actionId === actionId))
+    || false;
+}
+
+function canEmitNpcQuestSignal(
+  ws: WorldState,
+  objectiveNpcId: string,
+  options: QuestReconcileOptions | undefined,
+): boolean {
+  const session = options?.talkToNpcSession;
+  const context = options?.actionContext;
+  if (session === undefined || !session.completed || context === undefined) return false;
+  if (session.npcId !== objectiveNpcId || context.participantNpcId !== objectiveNpcId) return false;
+  const npc = entitiesOfKind(ws.entityStore, "npc").find((record) => String(record.core.id) === objectiveNpcId);
+  if (npc === undefined || npc.core.lifecycle !== "active") return false;
+  if (context.actionId.trim() === "" || !Number.isInteger(context.turnNumber) || context.turnNumber < 0) return false;
+  return context.actionWasAlreadyUsed === true
+    ? false
+    : context.actionWasAlreadyUsed === false
+      ? true
+      : !npcUsedAction(ws, objectiveNpcId, context.actionId);
+}
 
 // 应用任务 outcome（只改 worldState，不碰 eventLedger——由 resolveTurn 统一按序追加）。
 // Task 2 起任务不再引用预生成实体：
@@ -31,7 +73,7 @@ function applyOutcome(
 export function reconcileQuests(
   ws: WorldState,
   deps: { readonly now: () => string },
-  options?: { readonly talkToNpcSession?: { readonly npcId: string; readonly completed: boolean } },
+  options?: QuestReconcileOptions,
 ): QuestReconcileResult {
   const events: GameEvent[] = [];
   const mutations: EntityMutation[] = [];
@@ -50,6 +92,22 @@ export function reconcileQuests(
     if (!allSatisfied) continue;
 
     events.push({ type: "quest_completed", questId: quest.id, occurredAt: deps.now() });
+    const npcObjective = quest.objectives.find((obj) => {
+      if (obj.kind !== "talk_to_npc") return false;
+      return canEmitNpcQuestSignal(ws, String(obj.npcId), options);
+    });
+    if (npcObjective?.kind === "talk_to_npc") {
+      const context = options?.actionContext;
+      if (context !== undefined) {
+        mutations.push({
+          kind: "apply_relationship_signal",
+          fromNpcId: npcObjective.npcId,
+          targetId: PLAYER_ENTITY_ID,
+          signal: "kept_promise",
+          source: { kind: "action", actionId: context.actionId, turnNumber: context.turnNumber },
+        });
+      }
+    }
     mutations.push({ kind: "set_quest_status", questId: quest.id, status: "completed" });
     const successOutcome = applyOutcome(ws, quest.onSuccess);
     events.push(...successOutcome.events);

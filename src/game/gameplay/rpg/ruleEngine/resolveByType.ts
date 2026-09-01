@@ -1,4 +1,4 @@
-import type { WorldState } from "@/game/domain/worldState";
+import type { ItemEntry, WorldState } from "@/game/domain/worldState";
 import { findLocation, findNpc, findItem } from "@/game/domain/worldState";
 import type { Action } from "@/game/domain/action";
 import type { GameEvent } from "@/game/domain/events";
@@ -30,6 +30,13 @@ export type ResolveDeps = {
   /** 当前回合号（写入 NpcInteraction.turnNumber）。 */
   readonly turnNumber: number;
 };
+
+/** ItemCategory 是仓库已有的封闭语义集合；其中 quest 是唯一的 return-required marker。 */
+const RETURN_REQUIRED_ITEM_CATEGORY = "quest" as const;
+
+function giftRelationshipSignal(item: ItemEntry): "gave_item" | "offered_help" {
+  return item.category === RETURN_REQUIRED_ITEM_CATEGORY ? "gave_item" : "offered_help";
+}
 
 /** 规则已完成 Action 校验；若 store 仍拒绝写入，视为损坏状态而非部分成功。 */
 function applyRuleMutations(ws: WorldState, mutations: readonly EntityMutation[]): WorldState | null {
@@ -139,7 +146,14 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
     case "give_item": {
       const item = findItem(ws, action.itemId);
       const npc = findNpc(ws, action.npcId);
-      if (item === undefined || npc === undefined) return { ok: false, feedback: "无法交付这件物品。" };
+      if (item === undefined || npc === undefined) {
+        return { ok: false, feedback: "无法交付这件物品。" };
+      }
+      // 保持 Task 5C2 的 actionId 去重错误契约：重放先于 possession 检查被拒绝。
+      if (npc.memory.interactionHistory.some((entry) => entry.actionId === deps.actionId)) {
+        return { ok: false, feedback: "世界状态不一致。" };
+      }
+      if (!ws.inventory.includes(action.itemId)) return { ok: false, feedback: "无法交付这件物品。" };
       const event: GameEvent = { type: "item_given", itemId: action.itemId, npcId: action.npcId, locationId: ws.currentLocationId, occurredAt };
       const mutated = applyRuleMutations(ws, [
         { kind: "transfer_item", itemId: action.itemId, owner: { kind: "npc", npcId: action.npcId } },
@@ -147,7 +161,7 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
           kind: "apply_relationship_signal",
           fromNpcId: action.npcId,
           targetId: PLAYER_ENTITY_ID,
-          signal: "gave_item",
+          signal: giftRelationshipSignal(item),
           source: { kind: "action", actionId: deps.actionId, turnNumber: deps.turnNumber },
         },
         {

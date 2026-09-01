@@ -19,6 +19,7 @@ import { approveCandidateEvents, compileCandidateEvent } from "@/game/gameplay/r
 import { advanceStoryReveal } from "@/game/gameplay/rpg/worldEvolution";
 import { reconcileMaterializedView } from "@/game/domain/materializedView";
 import type { RecentBeat, NpcContact } from "@/game/domain/materializedView";
+import { entitiesOfKind } from "@/game/domain/entity";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 
 const DIALOGUE_REQUIRED_TURNS = 2;
@@ -199,6 +200,20 @@ export function resolveTurn(
           npcId: String(dialogueSession.npcId),
           completed: dialogueSession.completed,
         },
+        ...(action.type === "talk" ? {
+          actionContext: {
+            participantNpcId: String(action.npcId),
+            actionId,
+            turnNumber: storyState.turnNumber,
+            actionWasAlreadyUsed: (() => {
+              const npc = entitiesOfKind(worldState.entityStore, "npc")
+                .find((record) => String(record.core.id) === String(action.npcId));
+              return npc?.history.interactions.some((entry) => entry.actionId === actionId)
+                || npc?.relationships.outgoing.some((edge) => edge.evidence.some((evidence) => evidence.actionId === actionId))
+                || false;
+            })(),
+          },
+        } : {}),
       });
   // 初步 domainEvents：resolver + 对话完成 + quest（ending 在 Step 5 追加）
   const domainEvents: GameEvent[] = [...resolved.events, ...dialogueEvents, ...quests.events];

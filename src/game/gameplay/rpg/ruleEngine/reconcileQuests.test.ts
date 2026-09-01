@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { reconcileQuests } from "./reconcileQuests";
-import { createInitialWorldState, type NpcEntry, type LocationEntry } from "@/game/domain/worldState";
-import { projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
+import { createInitialWorldState, type EnemyEntry, type NpcEntry, type LocationEntry, type WorldFactEntry } from "@/game/domain/worldState";
+import { entitiesOfKind, projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
-import { asLocationId, asNpcId, asQuestId, asGenerationId, asItemId } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asQuestId, asGenerationId, asItemId, asFactId, asEnemyId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { WorldState } from "@/game/domain/worldState";
 
 function withProjection(
@@ -86,6 +86,90 @@ describe("reconcileQuests", () => {
     const result = reconcileQuests(ws, deps);
     expect(result.events[0]?.type).toBe("quest_completed");
     expect(result.nextWorldState.quests[0]?.status).toBe("completed");
+  });
+
+  it("只有明确 NPC objective 且当前 action participant 精确匹配时才产生 kept_promise signal", () => {
+    const npc: NpcEntry = {
+      id: asNpcId("npc_1"), name: "n", role: "r", description: "t",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
+      memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const ws = withProjection(withProjection(baseWs, { npcs: [npc] }), {
+      quests: [{
+        id: asQuestId("q_npc"), name: "npc quest", description: "t",
+        objectives: [{ kind: "talk_to_npc", npcId: npc.id }],
+        onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [], kind: "side", status: "active",
+      }],
+    });
+    const result = reconcileQuests(ws, deps, {
+      talkToNpcSession: { npcId: npc.id, completed: true },
+      actionContext: { participantNpcId: npc.id, actionId: "quest_action_1", turnNumber: 4 },
+    });
+    expect(result.nextWorldState.quests[0]?.status).toBe("completed");
+    const npcRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
+    const edge = npcRecord?.relationships.outgoing.find((candidate) => candidate.targetId === PLAYER_ENTITY_ID);
+    expect(edge?.evidence.at(-1)).toMatchObject({ signal: "kept_promise", actionId: "quest_action_1", turnNumber: 4 });
+  });
+
+  it("地点、敌人、物品、事实 objective 即使有 NPC focus 也不产生关系 signal", () => {
+    const npc: NpcEntry = {
+      id: asNpcId("npc_1"), name: "n", role: "r", description: "t",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
+      memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
+    const itemId = asItemId("item_neutral");
+    const fact: WorldFactEntry = { factId: asFactId("fact_neutral"), text: "fact", source: "generated", discovered: true };
+    const enemy: EnemyEntry = { id: asEnemyId("enemy_neutral"), name: "enemy", tier: "normal", stats: { hp: 1, attack: 1, defense: 1 }, locationId: loc.id, tags: [] };
+    const ws = withProjection(withProjection(baseWs, { npcs: [npc] }), {
+      items: [{ id: itemId, name: "item", description: "d", kind: "quest", tags: [] }],
+      worldFacts: [fact],
+      enemies: [enemy],
+      inventory: [itemId],
+      visitedLocationIds: [loc.id],
+      defeatedEnemyIds: [enemy.id],
+      quests: [
+        { id: asQuestId("q_loc"), name: "loc", description: "t", objectives: [{ kind: "visit_location", locationId: loc.id }], onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [], kind: "side", status: "active" },
+        { id: asQuestId("q_item"), name: "item", description: "t", objectives: [{ kind: "obtain_item", itemId }], onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [], kind: "side", status: "active" },
+        { id: asQuestId("q_fact"), name: "fact", description: "t", objectives: [{ kind: "discover_fact", factId: fact.factId }], onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [], kind: "side", status: "active" },
+        { id: asQuestId("q_enemy"), name: "enemy", description: "t", objectives: [{ kind: "defeat_enemy", enemyId: enemy.id }], onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [], kind: "side", status: "active" },
+      ],
+    });
+    const result = reconcileQuests(ws, deps, {
+      talkToNpcSession: { npcId: npc.id, completed: true },
+      actionContext: { participantNpcId: npc.id, actionId: "neutral_action", turnNumber: 5 },
+    });
+    expect(result.events.filter((event) => event.type === "quest_completed")).toHaveLength(4);
+    const npcRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
+    expect(npcRecord?.relationships.outgoing.flatMap((edge) => edge.evidence)).toEqual([]);
+  });
+
+  it("已被 dialogue/give_item 使用的 actionId 重放时不重复奖励关系", () => {
+    const actionId = "dialogue_used_action";
+    const npc: NpcEntry = {
+      id: asNpcId("npc_1"), name: "n", role: "r", description: "t",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
+      memory: {
+        npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [{
+          turnNumber: 3, actionId, locationId: asLocationId("loc_1"), dialogueAct: "ask",
+          topicSummary: "dialogue", outcome: "positive", learnedFactIds: [], relationshipDelta: 3, summary: "dialogue",
+        }], relationship: { affinity: 3 }, emotion: "neutral", goals: [],
+      },
+    };
+    const ws = withProjection(withProjection(baseWs, { npcs: [npc] }), {
+      quests: [{
+        id: asQuestId("q_replay"), name: "npc quest", description: "t",
+        objectives: [{ kind: "talk_to_npc", npcId: npc.id }],
+        onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [], kind: "side", status: "active",
+      }],
+    });
+    const result = reconcileQuests(ws, deps, {
+      talkToNpcSession: { npcId: npc.id, completed: true },
+      actionContext: { participantNpcId: npc.id, actionId, turnNumber: 3 },
+    });
+    expect(result.nextWorldState.quests[0]?.status).toBe("completed");
+    const npcRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
+    expect(npcRecord?.history.interactions).toHaveLength(1);
+    expect(npcRecord?.relationships.outgoing.flatMap((edge) => edge.evidence)).toEqual([]);
   });
 });
 

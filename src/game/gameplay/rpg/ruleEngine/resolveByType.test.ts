@@ -232,13 +232,20 @@ describe("resolveByType — attack", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const item: ItemEntry = { id: asItemId("item_gift"), name: "铜钥匙", description: "旧钥匙", kind: "key", tags: [] };
+    const item: ItemEntry = { id: asItemId("item_gift"), name: "铜钥匙", description: "旧钥匙", kind: "key", category: "quest", tags: [] };
+    const ordinaryItem: ItemEntry = { id: asItemId("item_ordinary_gift"), name: "苹果", description: "新鲜苹果", kind: "food", category: "consumable", tags: [] };
     const wsWithGift = createWorldStateFixtureWith({ generation: GENERATION, base: GIVE_BASE }, {
       npcs: [npc, unrelatedNpc],
       items: [item],
       inventory: [item.id],
     });
     const deps = { now: () => "2026-01-01", actionId: "act_give", turnNumber: 1 };
+
+    const wsWithOrdinaryGift = createWorldStateFixtureWith({ generation: GENERATION, base: GIVE_BASE }, {
+      npcs: [npc, unrelatedNpc],
+      items: [ordinaryItem],
+      inventory: [ordinaryItem.id],
+    });
 
     it("移交背包物品：通过 gave_item 信号记录关系与 offer 历史", () => {
       const beforeTarget = entitiesOfKind(wsWithGift.entityStore, "npc").find((record) => record.core.id === npc.id);
@@ -289,8 +296,31 @@ describe("resolveByType — attack", () => {
         });
         expect(afterRecord.history.interactions).toHaveLength(1);
         expect(afterRecord.history.interactions[0]?.relationshipDelta).toBe(4);
+        expect(edge?.commitments).toHaveLength(1);
+        expect(edge?.commitments[0]).toMatchObject({
+          kind: "debt",
+          direction: "source_owes_target",
+          status: "open",
+          source: { kind: "action", actionId: deps.actionId, turnNumber: deps.turnNumber },
+        });
         expect(result.status).toBe("success");
       }
+    });
+
+    it("普通礼物不打开 return-required debt，仍通过封闭关系策略记录正向 signal", () => {
+      const result = resolveByType(wsWithOrdinaryGift, { type: "give_item", itemId: ordinaryItem.id, npcId: npc.id }, {
+        ...deps,
+        actionId: "act_ordinary_give",
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const afterRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
+      if (afterRecord === undefined) throw new Error("missing ordinary gift NPC");
+      const edge = afterRecord.relationships.outgoing.find((candidate) => candidate.targetId === PLAYER_ENTITY_ID);
+      expect(edge?.evidence.at(-1)).toMatchObject({ signal: "offered_help", actionId: "act_ordinary_give" });
+      expect(edge?.commitments).toEqual([]);
+      expect(afterRecord.history.interactions[0]?.relationshipDelta).toBe(2);
     });
 
     it("重放相同 actionId 失败且不重复信号、交互或 item_given 事件", () => {
@@ -312,6 +342,33 @@ describe("resolveByType — attack", () => {
       const afterRecord = entitiesOfKind(first.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
       expect(afterRecord?.history.interactions.filter((entry) => entry.actionId === deps.actionId)).toHaveLength(1);
       expect(afterRecord?.relationships.outgoing.flatMap((edge) => edge.evidence).filter((evidence) => evidence.actionId === deps.actionId)).toHaveLength(1);
+      expect(afterRecord?.relationships.outgoing.flatMap((edge) => edge.commitments).filter((commitment) => commitment.source.kind === "action" && commitment.source.actionId === deps.actionId)).toHaveLength(1);
+    });
+
+    it("物品不在玩家背包或目标不是 NPC 时拒绝且零写入", () => {
+      const notOwned = createWorldStateFixtureWith({ generation: GENERATION, base: GIVE_BASE }, {
+        npcs: [npc, unrelatedNpc],
+        items: [item],
+        inventory: [],
+      });
+      const beforeStore = notOwned.entityStore;
+      const beforeLedger = notOwned.eventLedger;
+      const notOwnedResult = resolveByType(notOwned, { type: "give_item", itemId: item.id, npcId: npc.id }, {
+        ...deps,
+        actionId: "act_not_owned",
+      });
+      expect(notOwnedResult).toEqual({ ok: false, feedback: "无法交付这件物品。" });
+      expect(notOwnedResult.ok).toBe(false);
+      expect(notOwned.entityStore).toBe(beforeStore);
+      expect(notOwned.eventLedger).toBe(beforeLedger);
+
+      const beforeInvalidOwnerStore = wsWithGift.entityStore;
+      const invalidOwnerResult = resolveByType(wsWithGift, { type: "give_item", itemId: item.id, npcId: asNpcId("not_an_npc") }, {
+        ...deps,
+        actionId: "act_invalid_owner",
+      });
+      expect(invalidOwnerResult).toEqual({ ok: false, feedback: "无法交付这件物品。" });
+      expect(wsWithGift.entityStore).toBe(beforeInvalidOwnerStore);
     });
 
     it("NPC mutation 失败时返回稳定错误并保持记录与事件不变", () => {

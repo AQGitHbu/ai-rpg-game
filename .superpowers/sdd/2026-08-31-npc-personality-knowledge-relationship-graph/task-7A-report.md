@@ -1,0 +1,88 @@
+# Task 7A report — item and quest continuity effects
+
+## Result
+
+Task 7A is implemented from clean reviewed HEAD `7a9a2dc`. The implementation keeps
+the existing authoritative EntityMutation path and does not modify main or any Task
+7B combat file.
+
+## TDD evidence
+
+- **RED** — first added falsifiable tests, then ran:
+  `npm test -- --run src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts src/game/gameplay/rpg/ruleEngine/reconcileQuests.test.ts`
+  Result: 2 files, 40 passed / 4 failed. Failures covered ordinary-gift debt
+  gating, unowned-item zero-write rejection, and missing NPC quest participant
+  signal.
+- **GREEN** — added the smallest rule changes and ran the same focused command.
+  Result: 2 files, 44/44 passed.
+- **REFACTOR** — narrowed quest matching to the exact direct NPC objective,
+  removed an unnecessary record type guard, preserved the mutation order, and
+  verified with:
+  `npm run typecheck && npm test -- --run src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts src/game/gameplay/rpg/ruleEngine/reconcileQuests.test.ts src/game/gameplay/rpg/ruleEngine/index.test.ts`
+  Result: typecheck clean; 3 files, 70/70 passed.
+
+## Chosen marker and item behavior
+
+The canonical return-required marker is the existing closed `ItemCategory` value
+`category: "quest"`. No new tag/kind, debt field, or caller-controlled flag was
+introduced. `resolveByType` selects the signal from the authoritative item entry:
+
+- `category: "quest"` → existing `gave_item` policy, which opens the existing
+  fixed server-owned `source_owes_target` debt;
+- every other category (including absent category) → existing `offered_help`
+  policy, which has no commitment.
+
+The batch remains exactly `transfer_item → relationship signal →
+record_npc_interaction`; actionId is server-supplied through `ResolveDeps`, and
+the existing replay failure contract is retained. The player/AI cannot provide a
+debt parameter or numeric relationship delta.
+
+## Zero-write and participant evidence
+
+- Unknown item/NPC, non-NPC recipient, and item not owned by the player return
+  before any mutation. A replay is checked before possession so it retains the
+  stable `世界状态不一致。` result.
+- Inactive NPC mutation failure is still an atomic batch failure. Tests assert
+  unchanged store, record identities, and event ledger; therefore NPC history,
+  knowledge, and relationship components receive zero writes on rejection.
+- Existing `validateAction` remains the action-validation gate for tampered/stale
+  actions; `resolveByType` does not bypass it. The focused tests also cover
+  duplicate actionId replay without a second item event, history entry, signal,
+  or debt.
+- Quest relationship continuity requires all three explicit facts: a completed
+  `talk_to_npc` objective naming the NPC, a completed current dialogue session for
+  that same NPC, and an action context whose `participantNpcId` matches exactly.
+  The signal is the existing `kept_promise` policy row; no numeric payload is
+  supplied.
+- Location, enemy, item, and fact objectives remain relationship-neutral even
+  when an NPC is present as focus/participant context. A replayed action already
+  present in NPC history/evidence produces no second quest relationship reward.
+- `resolveTurn` computes `actionWasAlreadyUsed` from the回合开始 authoritative
+  NPC history and passes the smallest explicit context to reconciliation. The
+  automatic investigation reconciliation has no participant context and cannot
+  emit the NPC signal. Quest event/status ordering and historical
+  `item_obtained` semantics are unchanged.
+
+## Changed files
+
+- `src/game/gameplay/rpg/ruleEngine/resolveByType.ts`
+- `src/game/gameplay/rpg/ruleEngine/resolveByType.test.ts`
+- `src/game/gameplay/rpg/ruleEngine/reconcileQuests.ts`
+- `src/game/gameplay/rpg/ruleEngine/reconcileQuests.test.ts`
+- `src/game/gameplay/rpg/ruleEngine/index.ts` (narrow caller context wiring)
+
+The report itself is the only additional Task 7A artifact. No Task 7B
+`buildEncounter`, combat, `performBattleRound`, or `combatView` file was edited.
+
+## Verification
+
+Required gates all passed:
+
+- focused brief tests: 44/44;
+- full suite: 170 files, 2253/2253;
+- `npm run typecheck`;
+- `npm run lint`;
+- `npm run test:boundaries`: 105/105;
+- `npm run check:standards`.
+
+Task 7B combat/encounter implementation remains deferred and untouched.
