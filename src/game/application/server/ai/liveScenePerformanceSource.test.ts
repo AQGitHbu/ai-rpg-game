@@ -501,7 +501,12 @@ describe("liveScenePerformanceSource（Task 6）", () => {
         usedFactIds: [],
         usedInteractionActionIds: [],
       },
-      npcDialogues: [{ npcId: "npc_2", text: "客官若要打听旧案，先坐下喝口热茶。店里的出入我记得几分。" }],
+      npcDialogues: [{
+        npcId: "npc_2",
+        text: "客官若要打听旧案，先坐下喝口热茶。店里的出入我记得几分。",
+        usedFactIds: [],
+        usedInteractionActionIds: [],
+      }],
       objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
       choices: [
         { candidateId: "candidate_1", label: "去客栈找赵四" },
@@ -513,7 +518,12 @@ describe("liveScenePerformanceSource（Task 6）", () => {
     if (!result.ok) return;
     expect(result.proposal.npcLine?.npcId).toBe("npc_1");
     expect(result.proposal.npcDialogues).toEqual([
-      { npcId: "npc_2", text: "客官若要打听旧案，先坐下喝口热茶。店里的出入我记得几分。" },
+      {
+        npcId: "npc_2",
+        text: "客官若要打听旧案，先坐下喝口热茶。店里的出入我记得几分。",
+        usedFactIds: [],
+        usedInteractionActionIds: [],
+      },
     ]);
   });
 

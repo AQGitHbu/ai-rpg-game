@@ -100,6 +100,39 @@ describe("NarrativeSceneState", () => {
     ])[0];
     expect(fallback?.speechSource).toBe("fixture");
     expect(fallback?.speechPurpose).toBe("ambient");
+    expect(fallback?.usedFactIds).toEqual([]);
+    expect(fallback?.usedInteractionActionIds).toEqual([]);
+  });
+
+  it("requires both reference arrays on persisted NPC lines and dialogues", () => {
+    const legacyLine = {
+      npcId: "npc_1",
+      text: "我知道这件事。",
+      emotion: "neutral",
+      usedFactIds: [],
+      answeredBeatIds: [],
+    };
+    expect(parseNarrativeRuntimeState({
+      status: "ready",
+      mode: "offline",
+      currentScene: { ...readyScene, npcLine: legacyLine },
+      choiceRegistry: [],
+    }).ok).toBe(false);
+
+    const legacyDialogue = {
+      npcId: "npc_1",
+      npcName: "老周",
+      npcRole: "茶摊老人",
+      speechPages: ["路过喝口茶。"],
+      speechSource: "fixture",
+      speechPurpose: "ambient",
+    };
+    expect(parseNarrativeRuntimeState({
+      status: "ready",
+      mode: "offline",
+      currentScene: { ...readyScene, npcDialogues: [legacyDialogue] },
+      choiceRegistry: [],
+    }).ok).toBe(false);
   });
 });
 

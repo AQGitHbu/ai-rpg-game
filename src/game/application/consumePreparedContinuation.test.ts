@@ -100,6 +100,7 @@ function preparedStep(
         text: "后生，脚步放轻些。",
         emotion: "guarded",
         usedFactIds: [],
+        usedInteractionActionIds: [],
       },
       objectiveLink: { questId, objectiveIndex: 0, mode: "hint" },
       choiceSeeds: [

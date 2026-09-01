@@ -82,6 +82,20 @@ describe("approvePreparedContinuation", () => {
     })).toEqual({ ok: false, code: "invalid_choice_candidate" });
   });
 
+  it("rejects a prepared NPC line with an unauthorized fact reference atomically", () => {
+    const invalid = {
+      ...proposal(),
+      npcLine: { ...proposal().npcLine!, usedFactIds: ["fact_secret"] },
+    };
+    const result = approvePreparedContinuation({
+      originJobId: asNarrativeJobId("job_dialogue_2"),
+      proposals: [invalid],
+      descriptors: [descriptor()],
+      activeStepIds: ["prepared_1"],
+    });
+    expect(result).toEqual({ ok: false, code: "invalid_fact_reference" });
+  });
+
   it("rejects missing or unknown graph nodes atomically", () => {
     expect(approvePreparedContinuation({
       originJobId: asNarrativeJobId("job_dialogue_2"),

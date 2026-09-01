@@ -2,6 +2,7 @@ import type { GameRepository } from "./server/persistence/gameRepository";
 import type { GameId } from "./server/persistence/gameRepository";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
 import type { NarrativeRuntimeState, NarrativeSceneState } from "@/game/domain/narrative";
+import type { WorldState } from "@/game/domain/worldState";
 import type { NarrativeBundleSource, OpeningNarrativeBundleProposal } from "./narrativeBundleSource";
 import type { GameTypeId, GameLength, GameSetup, NewGameInput } from "@/game/domain/newGame";
 import { validateNewGameInput } from "@/game/domain/newGame";
@@ -24,6 +25,13 @@ import { createApprovedChoice, type ApprovedChoice } from "@/game/domain/approve
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import { AiGenerationError, type AiFailureKind } from "./aiGenerationFailure";
 import { runBoundedAttempts } from "@/game/core/retry";
+import { entitiesOfKind } from "@/game/domain/entity";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import {
+  buildNpcSpeechAuthority,
+  isValidNpcSpeechTarget,
+  validateNpcSpeechReferences,
+} from "./npcSpeechAuthority";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局生成编排改为 source → parse → validate → compile。
@@ -170,8 +178,10 @@ function compileOpeningNarrative(
     || !choiceIds.includes("challenge")
   ) return null;
 
+  if (!Array.isArray(npcLine.usedFactIds) || !Array.isArray(npcLine.usedInteractionActionIds)) return null;
   const allowedFactIds = new Set(candidate.world.publicFacts.map((_, index) => `fact_${index}`));
   if (!npcLine.usedFactIds.every((factId) => allowedFactIds.has(factId))) return null;
+  if (npcLine.usedInteractionActionIds.length !== 0) return null;
 
   const sceneId = `scene-${String(jobId)}`;
   const choiceRegistry: ApprovedChoice[] = [];
@@ -201,6 +211,7 @@ function compileOpeningNarrative(
       text: npcLine.text,
       emotion: npcLine.emotion,
       usedFactIds: npcLine.usedFactIds as never[],
+      usedInteractionActionIds: [],
       answeredBeatIds: [...npcLine.answeredBeatIds],
     },
     choices: choiceRegistry.map((choice) => ({
@@ -224,6 +235,32 @@ function compileOpeningNarrative(
       terminal: { kind: "next_decision", target: { kind: "current_scene" } },
     },
   };
+}
+
+function approveOpeningSpeech(
+  narrative: NarrativeRuntimeState,
+  worldState: WorldState,
+): boolean {
+  if (narrative.status !== "ready" || narrative.currentScene.npcLine === null) return false;
+  if (!isValidNpcSpeechTarget(worldState.entityStore, PLAYER_ENTITY_ID)) return false;
+  try {
+    const visibleFactIds = entitiesOfKind(worldState.entityStore, "fact")
+      .filter((fact) => fact.fact.discovered)
+      .map((fact) => fact.core.id);
+    const authority = buildNpcSpeechAuthority({
+      store: worldState.entityStore,
+      speakerNpcId: narrative.currentScene.npcLine.npcId,
+      sceneVisibleFactIds: visibleFactIds,
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+    });
+    return validateNpcSpeechReferences({
+      authority,
+      usedFactIds: narrative.currentScene.npcLine.usedFactIds,
+      usedInteractionActionIds: narrative.currentScene.npcLine.usedInteractionActionIds ?? [],
+    }).ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function createGame(
@@ -262,14 +299,7 @@ export async function createGame(
     });
     if (!validated.ok) return null;
 
-    return {
-      candidate: validated.validated,
-      novelty: createOpeningNoveltyRecord({
-        candidate: validated.validated,
-        gameType: input.gameType,
-        createdAt: deps.now(),
-      }),
-    };
+    return validated.validated;
   };
   let lastFailureKind: AiFailureKind | undefined;
   // The logical initialization job exists before the first provider attempt so
@@ -282,6 +312,8 @@ export async function createGame(
       readonly narrative: NarrativeRuntimeState;
       readonly novelty: OpeningNoveltyRecord;
       readonly attempt: number;
+      readonly worldState: ReturnType<typeof compileOpeningGenerationCandidate>["worldState"];
+      readonly storyState: ReturnType<typeof compileOpeningGenerationCandidate>["storyState"];
     },
     OpeningAttemptReason
   >({
@@ -289,7 +321,7 @@ export async function createGame(
     runAttempt: async (attempt) => {
       const openingAttempt = attempt - 1;
       let generated: OpeningGenerationCandidate;
-      let narrative: NarrativeRuntimeState | null;
+      let generatedProposal: OpeningNarrativeBundleProposal;
       try {
         const result = await deps.source.generate({
           kind: "opening",
@@ -325,28 +357,65 @@ export async function createGame(
           return { ok: false, retryable: true, reason: "source_error" as const };
         }
         generated = result.proposal.opening;
-        narrative = compileOpeningNarrative(
-          result.proposal,
-          jobId,
-          generated,
-          deps.aiEnabled === false ? "offline" : "ai",
-        );
+        generatedProposal = result.proposal;
       } catch (error) {
         if (error instanceof AiGenerationError) lastFailureKind = error.kind;
         return { ok: false, retryable: true, reason: "source_error" as const };
       }
       if (!generated) return { ok: false, retryable: true, reason: "empty_candidate" as const };
 
-      const prepared = prepareCandidate(generated);
-      if (prepared === null) return { ok: false, retryable: true, reason: "invalid_candidate" as const };
+      const candidate = prepareCandidate(generated);
+      if (candidate === null) return { ok: false, retryable: true, reason: "invalid_candidate" as const };
+
+      // Compile this exact candidate into an in-memory preview before any
+      // novelty decision. The preview is the state that will be persisted.
+      const narrative = compileOpeningNarrative(
+        generatedProposal,
+        jobId,
+        candidate,
+        deps.aiEnabled === false ? "offline" : "ai",
+      );
       if (narrative === null) return { ok: false, retryable: true, reason: "invalid_candidate" as const };
+      const generation = {
+        generationId: asGenerationId(`gen_${input.seed}`),
+        seed: input.seed,
+        templateVersion: "v2" as const,
+        inputDigest: "",
+        gameType: input.gameType,
+        ...(input.setup === undefined ? {} : { setup: input.setup }),
+        ...(openingAttempt === 0 ? {} : { openingAttempt }),
+      };
+      const preview = compileOpeningGenerationCandidate({
+        candidate,
+        generation,
+        gameLength: input.gameLength,
+        initialNarrative: narrative,
+      });
+      if (!approveOpeningSpeech(narrative, preview.worldState)) {
+        return { ok: false, retryable: true, reason: "invalid_candidate" as const };
+      }
 
       const comparableHistory = [...recentHistory, ...rejectedCandidates];
-      if (isOpeningTooSimilar(prepared.novelty, comparableHistory)) {
-        rejectedCandidates.push(prepared.novelty);
+      const novelty = createOpeningNoveltyRecord({
+        candidate,
+        gameType: input.gameType,
+        createdAt: deps.now(),
+      });
+      if (isOpeningTooSimilar(novelty, comparableHistory)) {
+        rejectedCandidates.push(novelty);
         return { ok: false, retryable: true, reason: "novelty_conflict" as const };
       }
-      return { ok: true, value: { ...prepared, narrative, attempt: openingAttempt } };
+      return {
+        ok: true,
+        value: {
+          candidate,
+          narrative,
+          novelty,
+          attempt: openingAttempt,
+          worldState: preview.worldState,
+          storyState: preview.storyState,
+        },
+      };
     },
   });
 
@@ -359,27 +428,10 @@ export async function createGame(
   };
   const accepted = bounded.value;
 
-  const generation = {
-    generationId: asGenerationId(`gen_${input.seed}`),
-    seed: input.seed,
-    templateVersion: "v2" as const,
-    inputDigest: "",
-    gameType: input.gameType,
-    ...(input.setup === undefined ? {} : { setup: input.setup }),
-    ...(accepted.attempt === 0 ? {} : { openingAttempt: accepted.attempt }),
-  };
-
-  const { worldState, storyState } = compileOpeningGenerationCandidate({
-    candidate: accepted.candidate,
-    generation,
-    gameLength: input.gameLength,
-    initialNarrative: accepted.narrative,
-  });
-
   const persistedInput = {
     gameId: input.gameId,
-    worldState,
-    storyState,
+    worldState: accepted.worldState,
+    storyState: accepted.storyState,
     createdAt: deps.now(),
     openingHistory: accepted.novelty,
   };

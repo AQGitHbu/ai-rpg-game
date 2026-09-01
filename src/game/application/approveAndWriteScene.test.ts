@@ -446,6 +446,61 @@ describe("approveScenePerformance (Task 6)", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("重复 speech reference 会整场拒绝而不是静默去重", () => {
+    const result = approveScenePerformance({
+      context: makeContext({
+        focusNpcContext: {
+          id: asNpcId("npc_1"),
+          name: "老板",
+          role: "路人",
+          publicProfile: "t",
+          responsePolicy: createNpcResponsePolicy({
+            tier: "neutral",
+            allowedDisclosureFactIds: [asFactId("fact_a")],
+            privateKnowledgeIds: [],
+          }),
+          speakableFactCards: [{ factId: asFactId("fact_a"), text: "已知" }],
+          recentInteractions: [],
+          goals: [],
+          emotion: "neutral",
+          thisTurn: { outcome: "neutral" },
+          speechAuthority: {
+            speakerNpcId: asNpcId("npc_1"),
+            responseTier: "neutral",
+            allowedFactIds: [asFactId("fact_a")],
+            withheldFactIds: [],
+            allowedFactCards: [{ factId: asFactId("fact_a"), text: "已知" }],
+            allowedInteractionActionIds: [],
+            recentInteractions: [],
+            identityAnchors: {
+              selfConcept: "守规矩的掌柜",
+              values: ["守诺"],
+              speechStyle: "谨慎",
+              capabilityBoundaries: ["不能替人裁决"],
+              taboos: [],
+            },
+            activeGoals: [],
+            relationships: [],
+            evidenceKeys: [],
+          },
+        },
+      }),
+      proposal: makeProposal({
+        npcLine: {
+          npcId: "npc_1",
+          text: "我知道这条线索。你可以继续追查。",
+          emotion: "neutral",
+          answeredBeatIds: [],
+          usedFactIds: ["fact_a", "fact_a"],
+          usedInteractionActionIds: [],
+        },
+      }),
+      basedOnRevision: 8,
+      existingCandidateEventPool: [],
+    });
+    expect(result).toEqual({ ok: false, code: "duplicate_npc_reference" });
+  });
+
   it("写回场景前统一清理 NPC 名称/动作前缀，scene 与 npcDialogues 都保存直接台词", () => {
     const result = approveScenePerformance({
       context: makeContext(),
@@ -660,7 +715,7 @@ describe("approveScenePerformance (Task 6)", () => {
         ],
         npcLine: { npcId: "npc_1", text: "告示的来历我会说清楚。新掌柜掌握的是下一页卷宗。", emotion: "neutral", answeredBeatIds: ["player_utterance"], usedFactIds: [], usedInteractionActionIds: [] },
         objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
-        npcDialogues: [{ npcId: "npc_2", text: "客官若要查旧案，去找赵四。店里的出入他记得最清楚。" }],
+        npcDialogues: [{ npcId: "npc_2", text: "客官若要查旧案，去找赵四。店里的出入他记得最清楚。", usedFactIds: [], usedInteractionActionIds: [] }],
         choices: [
           { candidateId: "candidate_1", label: "表示愿意支持新掌柜" },
           { candidateId: "candidate_2", label: "质疑新掌柜的说法" },
@@ -707,7 +762,7 @@ describe("approveScenePerformance (Task 6)", () => {
         ],
         npcLine: { npcId: "npc_2", text: "客官找我有什么事？我知道一些情况。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
         objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
-        npcDialogues: [{ npcId: "npc_1", text: "旧案我会说清楚。你去找新掌柜，他见过关键来客。" }],
+        npcDialogues: [{ npcId: "npc_1", text: "旧案我会说清楚。你去找新掌柜，他见过关键来客。", usedFactIds: [], usedInteractionActionIds: [] }],
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],
@@ -747,7 +802,7 @@ describe("approveScenePerformance (Task 6)", () => {
         ],
         npcLine: { npcId: "npc_1", text: "旧案我会说清楚。你去找新掌柜，他知道下一步。", emotion: "neutral", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
         objectiveLink: { questId: "quest_0", objectiveIndex: 1, mode: "handoff" },
-        npcDialogues: [{ npcId: "npc_2", text: "客官若要查旧案，先坐下喝茶。店里的出入我记得几分。" }],
+        npcDialogues: [{ npcId: "npc_2", text: "客官若要查旧案，先坐下喝茶。店里的出入我记得几分。", usedFactIds: [], usedInteractionActionIds: [] }],
       }),
       basedOnRevision: 8,
       existingCandidateEventPool: [],

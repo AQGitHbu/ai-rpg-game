@@ -12,6 +12,20 @@ import {
 import type { NpcInteraction } from "@/game/domain/worldEntries";
 import type { FactId, NpcId, PlayerEntityId } from "@/game/domain/worldEntity";
 import { relationshipTierOf, type RelationshipTier } from "@/game/domain/relationship";
+import {
+  areUniqueNpcSpeechReferenceIds,
+  isWellFormedNpcSpeechReferenceId,
+} from "@/game/domain/npcSpeechReferences";
+
+export type NpcSpeechReferenceRejection =
+  | "duplicate_npc_reference"
+  | "invalid_fact_reference"
+  | "invalid_interaction_reference";
+
+export type NpcSpeechReferenceAuthority = Pick<
+  NpcSpeechAuthority,
+  "allowedFactIds" | "allowedInteractionActionIds"
+>;
 
 /** The only context used to decide which references a speaker may expose. */
 export type NpcSpeechAuthorityInput = Readonly<{
@@ -68,6 +82,47 @@ export type NpcSpeechAuthority = Readonly<{
   }>;
   readonly evidenceKeys: readonly string[];
 }>;
+
+/**
+ * The single reference gate used by every narrative approval path.  It is
+ * intentionally non-normalizing: a malformed, duplicate, or unauthorized ID
+ * rejects the whole speech payload instead of silently dropping a reference.
+ */
+export function validateNpcSpeechReferences(input: {
+  readonly authority: NpcSpeechReferenceAuthority;
+  readonly usedFactIds: readonly string[];
+  readonly usedInteractionActionIds: readonly string[];
+}): { readonly ok: true } | { readonly ok: false; readonly code: NpcSpeechReferenceRejection } {
+  if (input.usedFactIds.some((id) => !isWellFormedNpcSpeechReferenceId(id))) {
+    return { ok: false, code: "invalid_fact_reference" };
+  }
+  if (input.usedInteractionActionIds.some((id) => !isWellFormedNpcSpeechReferenceId(id))) {
+    return { ok: false, code: "invalid_interaction_reference" };
+  }
+  if (!areUniqueNpcSpeechReferenceIds(input.usedFactIds)
+    || !areUniqueNpcSpeechReferenceIds(input.usedInteractionActionIds)) {
+    return { ok: false, code: "duplicate_npc_reference" };
+  }
+  const allowedFacts = new Set(input.authority.allowedFactIds.map(String));
+  if (input.usedFactIds.some((id) => !allowedFacts.has(String(id)))) {
+    return { ok: false, code: "invalid_fact_reference" };
+  }
+  const allowedInteractions = new Set(input.authority.allowedInteractionActionIds.map(String));
+  if (input.usedInteractionActionIds.some((id) => !allowedInteractions.has(String(id)))) {
+    return { ok: false, code: "invalid_interaction_reference" };
+  }
+  return { ok: true };
+}
+
+/** A target reference is valid only for an actual NPC or player entity. */
+export function isValidNpcSpeechTarget(
+  store: EntityStore,
+  targetId: PlayerEntityId | NpcId | undefined,
+): boolean {
+  if (targetId === undefined) return true;
+  const target = getEntity(store, String(targetId));
+  return target?.core.kind === "npc" || target?.core.kind === "player_character";
+}
 
 function compareId(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;

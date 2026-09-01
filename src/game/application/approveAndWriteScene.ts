@@ -22,6 +22,10 @@ import { asFactId, asNpcId } from "@/game/domain/worldEntity";
 import { ATMOSPHERE_BEAT_ID } from "@/game/domain/narrativeBeat";
 import { approvePreparedContinuation } from "./approvePreparedContinuation";
 import {
+  validateNpcSpeechReferences,
+  type NpcSpeechReferenceAuthority,
+} from "./npcSpeechAuthority";
+import {
   isGenericNpcAcknowledgement,
   isGenericNpcGreeting,
   isGenericNpcInquiry,
@@ -119,6 +123,7 @@ export type SceneRejectionCode =
   | "missing_mandatory_beat"
   | "out_of_order_beats"
   | "unknown_dialogue_npc"
+  | "duplicate_npc_reference"
   | "npc_uses_forbidden_fact"
   | "wrong_npc_interaction"
   | "player_utterance_unanswered"
@@ -185,7 +190,25 @@ function rebuildNpcLine(
     text: normalizeNpcSpeech(line.text, npcName),
     emotion: line.emotion,
     usedFactIds: line.usedFactIds.map((id) => asFactId(id)),
+    usedInteractionActionIds: [...line.usedInteractionActionIds],
     answeredBeatIds: [...line.answeredBeatIds],
+  };
+}
+
+function projectedNpcSpeechAuthority(
+  npc: SceneGenerationContext["presentNpcs"][number],
+  context: SceneGenerationContext,
+): NpcSpeechReferenceAuthority {
+  const focusAuthority = context.focusNpcContext?.speechAuthority;
+  if (focusAuthority !== undefined && String(focusAuthority.speakerNpcId) === String(npc.id)) {
+    return focusAuthority;
+  }
+  return {
+    allowedFactIds: [
+      ...npc.knownFactCards.map((fact) => fact.factId),
+      ...npc.sceneVisibleFactIds,
+    ],
+    allowedInteractionActionIds: npc.recentInteractionActionIds,
   };
 }
 
@@ -193,10 +216,10 @@ function buildGeneratedNpcDialogueMap(
   proposal: ScenePerformanceProposal,
   context: SceneGenerationContext,
   focusNpcId: string | undefined,
-): { readonly ok: true; readonly lines: ReadonlyMap<string, string> } | { readonly ok: false; readonly code: "missing_non_focus_npc_dialogue" } {
+): { readonly ok: true; readonly lines: ReadonlyMap<string, { readonly text: string; readonly usedFactIds: readonly string[]; readonly usedInteractionActionIds: readonly string[] }> } | { readonly ok: false; readonly code: SceneRejectionCode } {
   const entries = proposal.npcDialogues ?? [];
   const presentIds = new Set(context.presentNpcs.map((npc) => String(npc.id)));
-  const lines = new Map<string, string>();
+  const lines = new Map<string, { readonly text: string; readonly usedFactIds: readonly string[]; readonly usedInteractionActionIds: readonly string[] }>();
   for (const entry of entries) {
     if (!isRecord(entry)
       || typeof entry.npcId !== "string"
@@ -207,14 +230,37 @@ function buildGeneratedNpcDialogueMap(
       return { ok: false, code: "missing_non_focus_npc_dialogue" };
     }
     const npc = context.presentNpcs.find((candidate) => String(candidate.id) === String(entry.npcId));
-    const text = npc === undefined ? "" : normalizeNpcSpeech(entry.text, npc.name);
+    if (npc === undefined) return { ok: false, code: "missing_non_focus_npc_dialogue" };
+    if (!Array.isArray(entry.usedFactIds) || !Array.isArray(entry.usedInteractionActionIds)) {
+      return { ok: false, code: "missing_non_focus_npc_dialogue" };
+    }
+    const text = normalizeNpcSpeech(entry.text, npc.name);
     if (text === ""
       || isGenericNpcAcknowledgement(text)
       || isGenericNpcGreeting(text)
       || isGenericNpcInquiry(text)) {
       return { ok: false, code: "missing_non_focus_npc_dialogue" };
     }
-    lines.set(String(entry.npcId), text);
+    const referenceCheck = validateNpcSpeechReferences({
+      authority: projectedNpcSpeechAuthority(npc, context),
+      usedFactIds: entry.usedFactIds,
+      usedInteractionActionIds: entry.usedInteractionActionIds,
+    });
+    if (!referenceCheck.ok) {
+      return {
+        ok: false,
+        code: referenceCheck.code === "invalid_fact_reference"
+          ? "npc_uses_forbidden_fact"
+          : referenceCheck.code === "invalid_interaction_reference"
+            ? "wrong_npc_interaction"
+            : "duplicate_npc_reference",
+      };
+    }
+    lines.set(String(entry.npcId), {
+      text,
+      usedFactIds: [...(entry.usedFactIds ?? [])],
+      usedInteractionActionIds: [...(entry.usedInteractionActionIds ?? [])],
+    });
   }
 
   const requiresCoverage = proposal.source === "generated"
@@ -340,6 +386,9 @@ export function approveScenePerformance(input: {
       || typeof npcLine.emotion !== "string") {
       return { ok: false, code: "unknown_dialogue_npc" };
     }
+    if (!Array.isArray(npcLine.usedFactIds) || !Array.isArray(npcLine.usedInteractionActionIds)) {
+      return { ok: false, code: "unknown_dialogue_npc" };
+    }
     const present = context.presentNpcs.find((n) => String(n.id) === String(npcLine.npcId));
     if (present === undefined) return { ok: false, code: "unknown_dialogue_npc" };
     // 焦点 NPC 的开场、正式回应和终局追问都必须至少两句。提示词本身
@@ -350,16 +399,20 @@ export function approveScenePerformance(input: {
     if (isFocusedNpc) {
       if (!hasExpandedNpcDialogue(npcLine.text)) return { ok: false, code: "npc_dialogue_too_short" };
     }
-    const allowed = new Set<string>([
-      ...present.knownFactCards.map((f) => String(f.factId)),
-      ...present.sceneVisibleFactIds.map(String),
-    ]);
-    const interactionActionIds = new Set<string>(present.recentInteractionActionIds.map(String));
-    for (const factId of npcLine.usedFactIds ?? []) {
-      if (!allowed.has(String(factId))) return { ok: false, code: "npc_uses_forbidden_fact" };
-    }
-    for (const actionId of npcLine.usedInteractionActionIds ?? []) {
-      if (!interactionActionIds.has(String(actionId))) return { ok: false, code: "wrong_npc_interaction" };
+    const referenceCheck = validateNpcSpeechReferences({
+      authority: projectedNpcSpeechAuthority(present, context),
+      usedFactIds: npcLine.usedFactIds,
+      usedInteractionActionIds: npcLine.usedInteractionActionIds,
+    });
+    if (!referenceCheck.ok) {
+      return {
+        ok: false,
+        code: referenceCheck.code === "invalid_fact_reference"
+          ? "npc_uses_forbidden_fact"
+          : referenceCheck.code === "invalid_interaction_reference"
+            ? "wrong_npc_interaction"
+            : "duplicate_npc_reference",
+      };
     }
   }
 
@@ -584,6 +637,31 @@ export function approveScenePerformance(input: {
 
   const narration = proposal.segments.map((s) => s.text).join("\n");
   const rebuiltNpcLine = npcLine === null ? null : rebuildNpcLine(npcLine, context.presentNpcs);
+  const builtNpcDialogues = context.presentNpcs.length > 0
+    ? buildNpcDialoguePages(context.presentNpcs, {
+      focusNpcId: rebuiltNpcLine?.npcId,
+      focusSpeech: rebuiltNpcLine?.text,
+      generatedNpcLines: new Map(
+        [...generatedNpcDialogues.lines.entries()].map(([id, line]) => [id, line.text]),
+      ),
+      speechSource: proposal.source,
+    })
+    : undefined;
+  const npcDialogues = builtNpcDialogues?.map((dialogue) => {
+    const references = dialogue.npcId === rebuiltNpcLine?.npcId
+      ? {
+        usedFactIds: (rebuiltNpcLine?.usedFactIds ?? []).map((id) => asFactId(String(id))),
+        usedInteractionActionIds: rebuiltNpcLine?.usedInteractionActionIds ?? [],
+      }
+      : (() => {
+        const line = generatedNpcDialogues.lines.get(String(dialogue.npcId));
+        return line === undefined ? undefined : {
+          ...line,
+          usedFactIds: line.usedFactIds.map((id) => asFactId(id)),
+        };
+      })();
+    return references === undefined ? dialogue : { ...dialogue, ...references };
+  });
   const scene: NarrativeSceneState = {
     sceneId: proposal.sceneId,
     turn: context.job.turnNumber,
@@ -599,16 +677,7 @@ export function approveScenePerformance(input: {
       : { handoffAcknowledgement: proposal.handoffAcknowledgement.trim() }),
     source: proposal.source,
     event: rebuildEvent(buildEventState(context)),
-    ...(context.presentNpcs.length > 0
-      ? {
-          npcDialogues: buildNpcDialoguePages(context.presentNpcs, {
-            focusNpcId: rebuiltNpcLine?.npcId,
-            focusSpeech: rebuiltNpcLine?.text,
-            generatedNpcLines: generatedNpcDialogues.lines,
-            speechSource: proposal.source,
-          }),
-        }
-      : {}),
+    ...(npcDialogues === undefined ? {} : { npcDialogues }),
   };
 
   const preparedApproval = approvePreparedContinuation({

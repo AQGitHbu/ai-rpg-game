@@ -133,6 +133,7 @@ function focusNpcContent(worldState: WorldState, job: PendingNarrativeJob): stri
     `当前情绪=${focusNpc.memory.emotion}；目标=${list(focusNpc.memory.goals)}`,
     `本轮关系信号=${thisTurn === undefined ? "neutral" : `${thisTurn.outcome}（delta=${thisTurn.relationshipDelta}）`}`,
     `允许披露事实=${list(speakableFacts)}`,
+    "npcLine.usedFactIds 只能引用上述事实 ID；npcLine.usedInteractionActionIds 只能引用最近五条结构化交互中的 actionId；没有引用时必须输出显式空数组。",
     `最近五条结构化交互：\n${interactions.length === 0 ? "（无）" : interactions.map((entry) => `- ${entry}`).join("\n")}`,
     "私密事实正文与未授权知识不在本上下文中；不得自行补全。",
   ].join("\n");

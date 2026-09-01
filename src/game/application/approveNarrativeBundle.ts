@@ -22,7 +22,9 @@ import type {
   NarrativeNpcLineState,
   NarrativeEventState,
 } from "@/game/domain/narrative";
+import { NPC_SCENE_PAGE_CHAR_BUDGET } from "@/game/domain/narrative";
 import { normalizeNpcSpeech } from "@/game/domain/npcSpeech";
+import { paginateSpeechText } from "@/game/domain/speechPagination";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
 import { createApprovedChoice } from "@/game/domain/approvedChoice";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
@@ -42,6 +44,13 @@ import {
 } from "@/game/gameplay/rpg/narrativeBundle";
 import type { NarrativeBundleRejection } from "./narrativeBundleSource";
 import type { AiTextAuditLink } from "./server/ai/textAuditTypes";
+import { entitiesOfKind } from "@/game/domain/entity";
+import { asFactId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import {
+  buildNpcSpeechAuthority,
+  isValidNpcSpeechTarget,
+  validateNpcSpeechReferences,
+} from "./npcSpeechAuthority";
 
 // ---------------------------------------------------------------------------
 // Task 4：原子审批叙事生成包。
@@ -137,6 +146,7 @@ function buildSceneFromProposal(
   turn: number,
   trigger?: NarrativeBundleTrigger,
   dialogueFocusNpcId?: NarrativeNpcLineState["npcId"],
+  worldState?: WorldState,
 ): NarrativeSceneState {
   const normalizedNpcText = proposal.npcLine === null
     ? null
@@ -156,6 +166,7 @@ function buildSceneFromProposal(
         text: normalizedNpcText!,
         emotion: proposal.npcLine.emotion,
         usedFactIds: proposal.npcLine.usedFactIds.map((id: string) => id as never),
+        usedInteractionActionIds: [...proposal.npcLine.usedInteractionActionIds],
         answeredBeatIds: [...proposal.npcLine.answeredBeatIds],
       };
   // The current-scene terminal is itself a formal NPC decision boundary.
@@ -168,6 +179,20 @@ function buildSceneFromProposal(
         ? { kind: "dialogue" as const, focusNpcId: npcLine.npcId }
       : undefined
     : eventForTrigger(trigger);
+  const npcDialogues = proposal.npcDialogues?.map((dialogue) => {
+    const npc = worldState?.npcs.find((candidate) => String(candidate.id) === dialogue.npcId);
+    const text = normalizeNpcSpeech(dialogue.text, npc?.name);
+    return {
+      npcId: dialogue.npcId as never,
+      npcName: npc?.name ?? dialogue.npcId,
+      npcRole: npc?.role ?? "",
+      speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
+      speechSource: "generated" as const,
+      speechPurpose: dialogue.npcId === String(npcLine?.npcId) ? "focus" as const : "ambient" as const,
+      usedFactIds: (dialogue.usedFactIds ?? []).map(asFactId),
+      usedInteractionActionIds: [...(dialogue.usedInteractionActionIds ?? [])],
+    };
+  });
   return {
     sceneId,
     turn,
@@ -180,16 +205,21 @@ function buildSceneFromProposal(
     ...(proposal.handoffAcknowledgement === undefined
       ? {}
       : { handoffAcknowledgement: proposal.handoffAcknowledgement }),
+    ...(npcDialogues === undefined ? {} : { npcDialogues }),
   };
 }
 
 function buildStepState(
   proposal: BundleStepProposal,
   descriptor: BundleStepDescriptor,
+  worldState: WorldState,
 ): NarrativeBundleStepState | NarrativeBundleRejection {
   // The proposal stepKey must match the descriptor stepKey (after symbol resolution)
   if (proposal.stepKey !== descriptor.stepKey) {
     return "bundle_unknown_step";
+  }
+  if (validateBundleSceneNpcSpeech(proposal.scene, worldState, descriptor.arrivalNpc?.id) !== null) {
+    return "bundle_invalid_scene";
   }
 
   const event = eventForTrigger(descriptor.trigger);
@@ -207,6 +237,7 @@ function buildStepState(
         text: normalizedNpcText!,
         emotion: proposal.scene.npcLine.emotion,
         usedFactIds: proposal.scene.npcLine.usedFactIds.map((id: string) => id as never),
+        usedInteractionActionIds: [...proposal.scene.npcLine.usedInteractionActionIds],
         answeredBeatIds: [...proposal.scene.npcLine.answeredBeatIds],
       };
 
@@ -217,6 +248,20 @@ function buildStepState(
         objectiveIndex: proposal.scene.objectiveLink.objectiveIndex,
         mode: proposal.scene.objectiveLink.mode,
       };
+  const npcDialogues = proposal.scene.npcDialogues?.map((dialogue) => {
+    const npc = worldState.npcs.find((candidate) => String(candidate.id) === dialogue.npcId);
+    const text = normalizeNpcSpeech(dialogue.text, npc?.name);
+    return {
+      npcId: dialogue.npcId as never,
+      npcName: npc?.name ?? dialogue.npcId,
+      npcRole: npc?.role ?? "",
+      speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
+      speechSource: "generated" as const,
+      speechPurpose: dialogue.npcId === String(npcLine?.npcId) ? "focus" as const : "ambient" as const,
+      usedFactIds: (dialogue.usedFactIds ?? []).map(asFactId),
+      usedInteractionActionIds: [...(dialogue.usedInteractionActionIds ?? [])],
+    };
+  });
 
   // Build choice seeds from descriptor choice candidates and proposal choices
   const proposalChoiceMap = new Map(proposal.scene.choices.map((c: { candidateId: string; label: string }) => [c.candidateId, c.label]));
@@ -239,6 +284,7 @@ function buildStepState(
     })),
     event,
     npcLine,
+    ...(npcDialogues === undefined ? {} : { npcDialogues }),
     objectiveLink,
     choiceSeeds: choiceSeeds as NonNullable<typeof choiceSeeds[number]>[],
     source: "generated",
@@ -293,6 +339,60 @@ function hasExactChoiceCandidates(
 }
 
 type SceneContentRejection = { readonly code: NarrativeBundleRejection; readonly detail?: string };
+
+function validateBundleNpcSpeech(
+  line: { readonly npcId: string; readonly usedFactIds: readonly string[]; readonly usedInteractionActionIds: readonly string[] },
+  worldState: WorldState,
+): SceneContentRejection | null {
+  const visibleFactIds = entitiesOfKind(worldState.entityStore, "fact")
+    .filter((fact) => fact.fact.discovered)
+    .map((fact) => fact.core.id);
+  const targetIsValid = isValidNpcSpeechTarget(worldState.entityStore, PLAYER_ENTITY_ID);
+  if (!targetIsValid) return { code: "bundle_invalid_scene", detail: "invalid_target" };
+  try {
+    const authority = buildNpcSpeechAuthority({
+      store: worldState.entityStore,
+      speakerNpcId: line.npcId as never,
+      sceneVisibleFactIds: visibleFactIds,
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+    });
+    const result = validateNpcSpeechReferences({
+      authority,
+      usedFactIds: line.usedFactIds,
+      usedInteractionActionIds: line.usedInteractionActionIds,
+    });
+    if (result.ok) return null;
+    return { code: "bundle_invalid_scene", detail: result.code };
+  } catch {
+    return { code: "bundle_invalid_scene", detail: "missing_speaker" };
+  }
+}
+
+function validateBundleSceneNpcSpeech(
+  scene: BundleSceneProposal,
+  worldState: WorldState,
+  expectedNpcId?: string,
+): SceneContentRejection | null {
+  if (scene.npcLine !== null) {
+    if (expectedNpcId !== undefined && scene.npcLine.npcId !== expectedNpcId) {
+      return { code: "bundle_invalid_scene", detail: "missing_speaker" };
+    }
+    const rejection = validateBundleNpcSpeech(scene.npcLine, worldState);
+    if (rejection !== null) return rejection;
+  }
+  for (const dialogue of scene.npcDialogues ?? []) {
+    if (scene.npcLine !== null && dialogue.npcId === scene.npcLine.npcId) {
+      return { code: "bundle_invalid_scene", detail: "duplicate_speaker" };
+    }
+    const rejection = validateBundleNpcSpeech({
+      npcId: dialogue.npcId,
+      usedFactIds: dialogue.usedFactIds ?? [],
+      usedInteractionActionIds: dialogue.usedInteractionActionIds ?? [],
+    }, worldState);
+    if (rejection !== null) return rejection;
+  }
+  return null;
+}
 
 /**
  * 当前场景内容闸门：提案的 currentScene 必须直接承接本回合的规则结果。
@@ -360,6 +460,14 @@ function validateCurrentSceneContent(input: {
   ) {
     return { code: "bundle_invalid_scene", detail: `npcLine 说话人 ${scene.npcLine.npcId} 不存在` };
   }
+  if (dialogueFocusNpcId !== undefined
+    && scene.npcLine !== null
+    && scene.npcLine.npcId !== dialogueFocusNpcId) {
+    return { code: "bundle_invalid_scene", detail: "missing_speaker" };
+  }
+
+  const speechRejection = validateBundleSceneNpcSpeech(scene, worldState);
+  if (speechRejection !== null) return speechRejection;
 
   // objectiveLink 必须与权威 ObjectiveTransition 一致（无 after 时为 null）。
   const after = transition.after;
@@ -486,7 +594,7 @@ export function approveNarrativeBundle(
     if (descriptor === undefined) {
       return { ok: false, code: "bundle_unknown_step" };
     }
-    const stepResult = buildStepState(proposalStep, descriptor);
+    const stepResult = buildStepState(proposalStep, descriptor, previewWorldState);
     if (typeof stepResult === "string") {
       return { ok: false, code: stepResult };
     }
@@ -550,6 +658,7 @@ export function approveNarrativeBundle(
     basedOnRevision,
     undefined,
     currentDialogueFocusNpcId,
+    previewWorldState,
   );
 
   // Step 7: Build choice registry from terminal

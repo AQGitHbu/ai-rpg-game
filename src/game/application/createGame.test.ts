@@ -86,6 +86,37 @@ function structuralSignature(record: GameRecord) {
 }
 
 describe("createGame", () => {
+  it("authority-rejects an opening line that cites the NPC's undisclosed fact before persistence", async () => {
+    const { repo: repository } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const source = {
+      async generate(input: Parameters<typeof fixture.generate>[0]) {
+        const result = await fixture.generate(input);
+        if (!result.ok) return result;
+        if (result.kind !== "opening") return result;
+        const proposal = {
+          ...result.proposal,
+          opening: {
+            ...result.proposal.opening,
+            opening: {
+              ...result.proposal.opening.opening,
+              npc: {
+                ...result.proposal.opening.opening.npc,
+                privateFactKeys: [result.proposal.opening.world.publicFacts[0]!.key],
+              },
+            },
+          },
+        } as typeof result.proposal;
+        return { ...result, proposal };
+      },
+    };
+    const result = await createGame(
+      { gameId: "game-opening-authority" as never, gameType: "wuxia", gameLength: "short", seed: "opening-authority" },
+      { repository, source, now: () => "2026-01-01" },
+    );
+    expect(result).toMatchObject({ ok: false, code: "AI_GENERATION_FAILED" });
+    expect(await repository.getCurrentGame()).toMatchObject({ status: "none" });
+  });
   it("检测到近期故事过于相似时重新请求，而不是覆盖 AI 的实体名称", async () => {
     const { repo, getRecord } = createInMemoryRepo();
     const fixture = createFixtureOpeningSource();
