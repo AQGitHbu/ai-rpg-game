@@ -227,25 +227,109 @@ describe("resolveByType — attack", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
       memory: { npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 2 }, emotion: "neutral", goals: [] },
     };
+    const unrelatedNpc: NpcEntry = {
+      id: asNpcId("npc_2"), name: "旅人", role: "路人", description: "other",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
+      memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+    };
     const item: ItemEntry = { id: asItemId("item_gift"), name: "铜钥匙", description: "旧钥匙", kind: "key", tags: [] };
     const wsWithGift = createWorldStateFixtureWith({ generation: GENERATION, base: GIVE_BASE }, {
-      npcs: [npc],
+      npcs: [npc, unrelatedNpc],
       items: [item],
       inventory: [item.id],
     });
     const deps = { now: () => "2026-01-01", actionId: "act_give", turnNumber: 1 };
 
-    it("移交背包物品：背包原子移除、item_given 落账、NPC 好感上升", () => {
+    it("移交背包物品：通过 gave_item 信号记录关系与 offer 历史", () => {
+      const beforeTarget = entitiesOfKind(wsWithGift.entityStore, "npc").find((record) => record.core.id === npc.id);
+      const beforeUnrelated = entitiesOfKind(wsWithGift.entityStore, "npc").find((record) => record.core.id === unrelatedNpc.id);
+      const beforeItem = entitiesOfKind(wsWithGift.entityStore, "item").find((record) => record.core.id === item.id);
+      if (beforeTarget === undefined || beforeUnrelated === undefined || beforeItem === undefined) throw new Error("missing give_item fixture record");
+
       const result = resolveByType(wsWithGift, { type: "give_item", itemId: item.id, npcId: npc.id }, deps);
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.nextWorldState.inventory).not.toContain(item.id);
         expect(result.events[0]).toMatchObject({ type: "item_given", itemId: item.id, npcId: npc.id });
         const after = result.nextWorldState.npcs.find((n) => n.id === npc.id);
-        expect(after?.memory.relationship.affinity).toBe(3);
-        expect(after?.memory.interactionHistory.at(-1)?.dialogueAct).toBe("offer");
+        expect(after?.memory.relationship.affinity).toBe(6);
+        expect(after?.memory.interactionHistory).toHaveLength(1);
+        expect(after?.memory.interactionHistory[0]).toMatchObject({
+          turnNumber: deps.turnNumber,
+          actionId: deps.actionId,
+          locationId: giveLoc.id,
+          dialogueAct: "offer",
+          topicSummary: "收到玩家交付的铜钥匙",
+          outcome: "positive",
+          learnedFactIds: [],
+          relationshipDelta: 4,
+          summary: "再次交谈，offer，气氛融洽，关系+4",
+        });
+        const afterRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
+        const afterUnrelated = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === unrelatedNpc.id);
+        const afterItem = entitiesOfKind(result.nextWorldState.entityStore, "item").find((record) => record.core.id === item.id);
+        if (afterRecord === undefined || afterUnrelated === undefined || afterItem === undefined) throw new Error("missing mutated give_item record");
+        expect(afterRecord.core).toBe(beforeTarget.core);
+        expect(afterRecord.identity).toBe(beforeTarget.identity);
+        expect(afterRecord.position).toBe(beforeTarget.position);
+        expect(afterRecord.dynamicState).toBe(beforeTarget.dynamicState);
+        expect(afterRecord.knowledge).toBe(beforeTarget.knowledge);
+        expect(afterRecord.relationships).not.toBe(beforeTarget.relationships);
+        expect(afterRecord.history).not.toBe(beforeTarget.history);
+        expect(afterUnrelated).toBe(beforeUnrelated);
+        expect(afterItem.core).toBe(beforeItem.core);
+        expect(afterItem.presentation).toBe(beforeItem.presentation);
+        expect(afterItem.possession).not.toBe(beforeItem.possession);
+        const edge = afterRecord.relationships.outgoing.find((candidate) => candidate.targetId === PLAYER_ENTITY_ID);
+        expect(edge?.dimensions.affinity).toBe(6);
+        expect(edge?.evidence.at(-1)).toMatchObject({
+          actionId: deps.actionId,
+          turnNumber: deps.turnNumber,
+          signal: "gave_item",
+        });
+        expect(afterRecord.history.interactions).toHaveLength(1);
+        expect(afterRecord.history.interactions[0]?.relationshipDelta).toBe(4);
         expect(result.status).toBe("success");
       }
+    });
+
+    it("重放相同 actionId 失败且不重复信号、交互或 item_given 事件", () => {
+      const first = resolveByType(wsWithGift, { type: "give_item", itemId: item.id, npcId: npc.id }, deps);
+      expect(first.ok).toBe(true);
+      if (!first.ok) return;
+
+      const beforeStore = first.nextWorldState.entityStore;
+      const beforeRecords = beforeStore.records;
+      const beforeLedger = first.nextWorldState.eventLedger;
+      const replay = resolveByType(first.nextWorldState, { type: "give_item", itemId: item.id, npcId: npc.id }, deps);
+
+      expect(replay).toEqual({ ok: false, feedback: "世界状态不一致。" });
+      expect(first.nextWorldState.entityStore).toBe(beforeStore);
+      expect(first.nextWorldState.entityStore.records).toBe(beforeRecords);
+      first.nextWorldState.entityStore.records.forEach((record, index) => expect(record).toBe(beforeRecords[index]));
+      expect(first.nextWorldState.eventLedger).toBe(beforeLedger);
+      expect(first.nextWorldState.eventLedger.filter((event) => event.type === "item_given")).toHaveLength(1);
+      const afterRecord = entitiesOfKind(first.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
+      expect(afterRecord?.history.interactions.filter((entry) => entry.actionId === deps.actionId)).toHaveLength(1);
+      expect(afterRecord?.relationships.outgoing.flatMap((edge) => edge.evidence).filter((evidence) => evidence.actionId === deps.actionId)).toHaveLength(1);
+    });
+
+    it("NPC mutation 失败时返回稳定错误并保持记录与事件不变", () => {
+      const inactiveResult = applyEntityMutations(wsWithGift, [{ kind: "set_npc_lifecycle", npcId: npc.id, lifecycle: "inactive" }]);
+      expect(inactiveResult.ok).toBe(true);
+      if (!inactiveResult.ok) return;
+
+      const beforeStore = inactiveResult.worldState.entityStore;
+      const beforeRecords = beforeStore.records;
+      const beforeLedger = inactiveResult.worldState.eventLedger;
+      const result = resolveByType(inactiveResult.worldState, { type: "give_item", itemId: item.id, npcId: npc.id }, deps);
+
+      expect(result).toEqual({ ok: false, feedback: "世界状态不一致。" });
+      expect(inactiveResult.worldState.entityStore).toBe(beforeStore);
+      expect(inactiveResult.worldState.entityStore.records).toBe(beforeRecords);
+      inactiveResult.worldState.entityStore.records.forEach((record, index) => expect(record).toBe(beforeRecords[index]));
+      expect(inactiveResult.worldState.eventLedger).toBe(beforeLedger);
+      expect(inactiveResult.worldState.eventLedger.some((event) => event.type === "item_given")).toBe(false);
     });
 
     it("战斗中无法给予", () => {
