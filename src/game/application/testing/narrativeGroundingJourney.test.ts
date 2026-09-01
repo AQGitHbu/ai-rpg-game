@@ -139,12 +139,12 @@ describe("叙事落地旅程（Step 2）", () => {
     const trusted = await runWithAffinity(70);
 
     // 两种关系档位都必须用 NPC 直接台词，并且承接本轮玩家话语。
-    expect(hostile.proposal.npcLine?.text).toContain("不关你的事");
-    expect(trusted.proposal.npcLine?.text).toContain("来龙去脉");
+    expect(hostile.proposal.npcLine?.text).toContain("既然你愿意继续查");
+    expect(trusted.proposal.npcLine?.text).toContain("既然你愿意继续查");
     expect(hostile.proposal.npcLine?.text).not.toMatch(/冷冷地答道|如实答道/);
     expect(trusted.proposal.npcLine?.text).not.toMatch(/坦诚地说|说道|答道/);
-    expect(hostile.proposal.npcLine?.emotion).toBe("angry");
-    expect(trusted.proposal.npcLine?.emotion).toBe("warm");
+    expect(hostile.proposal.npcLine?.emotion).toBe("neutral");
+    expect(trusted.proposal.npcLine?.emotion).toBe("neutral");
   });
 
   it("物品/任务/战斗 → 场景覆盖全部强制节拍 + objectiveLink == HUD 当前目标", async () => {

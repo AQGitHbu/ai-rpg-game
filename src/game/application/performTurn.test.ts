@@ -1041,10 +1041,10 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
     const npc = saved.worldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
     expect(npc.met).toBe(true);
     // 自定义输入不在本地解析情感/意图；按中性 ask 结算。
-    expect(npc.memory.relationship.affinity).toBe(6);
-    expect(npc.memory.emotion).toBe("warm");
-    expect(npc.memory.interactionHistory[0]!.relationshipDelta).toBe(6);
-    expect(npc.memory.interactionHistory[0]!.summary).toContain("关系+6");
+    expect(npc.memory.relationship.affinity).toBe(0);
+    expect(npc.memory.emotion).toBe("neutral");
+    expect(npc.memory.interactionHistory[0]!.relationshipDelta).toBe(0);
+    expect(npc.memory.interactionHistory[0]!.summary).toContain("关系+0");
 
     const generation = pendingNarrative(saved.storyState.narrative);
     expect(generation.status).toBe("provider_pending");
@@ -1072,10 +1072,10 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
 
     const supportNpc = supportRepo.record()!.worldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
     const challengeNpc = challengeRepo.record()!.worldState.npcs.find((n) => n.id === asNpcId("npc_1"))!;
-    expect(challengeNpc.memory.relationship.affinity).toBe(6);
+    expect(challengeNpc.memory.relationship.affinity).toBe(0);
     expect(challengeNpc.memory.relationship.affinity).toBe(supportNpc.memory.relationship.affinity);
-    expect(challengeNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(6);
-    expect(supportNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(6);
+    expect(challengeNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(0);
+    expect(supportNpc.memory.interactionHistory[0]!.relationshipDelta).toBe(0);
     const chaGen = pendingNarrative(challengeRepo.record()!.storyState.narrative);
     expect(chaGen.status).toBe("provider_pending");
     if (chaGen.status !== "provider_pending") return;

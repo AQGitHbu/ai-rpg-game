@@ -60,3 +60,22 @@ RED 探针均通过 Edit/apply_patch 在 GREEN 阶段移除；没有使用 git c
 ## Concerns
 
 全量测试无法在不修改范围外测试、或违背 Task 5C1 裸 ask 与窄 batch要求的前提下全部通过。应用层旧断言应由后续兼容/整体验证任务单独更新；本任务未扩大范围处理。Task 5C2 的 give_item 旧链路未改动，符合本任务边界。
+
+## Fix round 1
+
+根据 review controller 的裁定，仅更新直接编码 5C1 行为变更的三个下游测试文件，未修改生产代码：
+
+- `src/game/application/performTurn.test.ts`：两个 free-text 用例的裸 ask 期望改为 affinity `0`、relationshipDelta `0`、`neutral` emotion 与 `关系+0` 摘要；两种不同自定义措辞仍断言相同的中性结果。
+- `src/game/application/testing/narrativeGroundingJourney.test.ts`：hostile/trusted 旅程断言改为当前窄 batch/裸 ask 语义下的 NPC 台词前缀与 `neutral` emotion；未改生产响应。
+- `.superpowers/sdd/2026-08-31-npc-personality-knowledge-relationship-graph/task-5C1-report.md`：追加本修复记录。
+
+验证命令及输出：
+
+- `npm test -- src/game/application/performTurn.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts`：2 files，38/38 passed。
+- `npm test`：171 files，2225/2225 tests passed。
+- `npm run typecheck`：passed。
+- `npx eslint src/game/gameplay/rpg src/game/application/performTurn.test.ts src/game/application/testing/narrativeGroundingJourney.test.ts`：passed。
+- `npm run test:boundaries`：105/105 tests passed。
+- `npm run check:standards`：passed。
+
+本轮无剩余 concern；生产代码未修改，未恢复任何被删除的旧行为。
