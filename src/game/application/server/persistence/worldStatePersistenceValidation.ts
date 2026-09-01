@@ -195,7 +195,9 @@ function isGameEvent(value: unknown): value is GameEvent {
         && typeof value.npcId === "string"
         && optionalMatches(value, "interactionKind", (entry) => entry === "greet" || entry === "ask_main_quest");
     case "npc_dialogue_completed":
-      return eventWithOccurredAt(value, ["npcId"]) && typeof value.npcId === "string";
+      return eventWithOccurredAt(value, ["npcId"], ["actionId"])
+        && typeof value.npcId === "string"
+        && optionalMatches(value, "actionId", (entry) => typeof entry === "string");
     case "fact_discovered":
       return eventWithOccurredAt(value, ["factId"], ["witnessNpcIds", "approachId", "evidenceQuality", "tensionDelta"])
         && typeof value.factId === "string"
@@ -211,8 +213,9 @@ function isGameEvent(value: unknown): value is GameEvent {
       return eventWithOccurredAt(value, ["itemId", "locationId"])
         && typeof value.itemId === "string" && typeof value.locationId === "string";
     case "item_given":
-      return eventWithOccurredAt(value, ["itemId", "npcId", "locationId"])
-        && typeof value.itemId === "string" && typeof value.npcId === "string" && typeof value.locationId === "string";
+      return eventWithOccurredAt(value, ["itemId", "npcId", "locationId"], ["actionId"])
+        && typeof value.itemId === "string" && typeof value.npcId === "string" && typeof value.locationId === "string"
+        && optionalMatches(value, "actionId", (entry) => typeof entry === "string");
     case "battle_started":
       return eventWithOccurredAt(value, ["enemyId"], ["enemyIds"])
         && typeof value.enemyId === "string" && optionalMatches(value, "enemyIds", isStringArray);

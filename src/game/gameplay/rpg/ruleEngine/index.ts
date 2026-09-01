@@ -10,7 +10,7 @@ import { createTurnResolution } from "@/game/domain/turnResolution";
 import type { ValidationCode } from "./validateAction";
 import { validateAction } from "./validateAction";
 import { resolveByType, autoResolveCurrentInvestigation } from "./resolveByType";
-import { reconcileQuests } from "./reconcileQuests";
+import { npcUsedAction, reconcileQuests } from "./reconcileQuests";
 import { resolveEnding } from "./resolveEnding";
 import { updateStoryMetrics } from "./updateStoryMetrics";
 import { propagateKnownFacts } from "./propagateKnownFacts";
@@ -19,7 +19,6 @@ import { approveCandidateEvents, compileCandidateEvent } from "@/game/gameplay/r
 import { advanceStoryReveal } from "@/game/gameplay/rpg/worldEvolution";
 import { reconcileMaterializedView } from "@/game/domain/materializedView";
 import type { RecentBeat, NpcContact } from "@/game/domain/materializedView";
-import { entitiesOfKind } from "@/game/domain/entity";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 
 const DIALOGUE_REQUIRED_TURNS = 2;
@@ -188,7 +187,7 @@ export function resolveTurn(
       || String(previousDialogueSession.npcId) !== String(dialogueSession.npcId)
       || !previousDialogueSession.completed
     )
-    ? [{ type: "npc_dialogue_completed", npcId: dialogueSession.npcId, occurredAt: deps.now() }]
+    ? [{ type: "npc_dialogue_completed", npcId: dialogueSession.npcId, actionId, occurredAt: deps.now() }]
     : [];
   // 当前会话是 talk_to_npc 是否完成的权威游标。即使本回合不是正式回应，
   // 也要持续传入；否则 ask 写入的 met=true 或随后一次移动/探索会让通用
@@ -205,13 +204,7 @@ export function resolveTurn(
             participantNpcId: String(action.npcId),
             actionId,
             turnNumber: storyState.turnNumber,
-            actionWasAlreadyUsed: (() => {
-              const npc = entitiesOfKind(worldState.entityStore, "npc")
-                .find((record) => String(record.core.id) === String(action.npcId));
-              return npc?.history.interactions.some((entry) => entry.actionId === actionId)
-                || npc?.relationships.outgoing.some((edge) => edge.evidence.some((evidence) => evidence.actionId === actionId))
-                || false;
-            })(),
+            actionWasAlreadyUsed: npcUsedAction(worldState, String(action.npcId), actionId),
           },
         } : {}),
       });

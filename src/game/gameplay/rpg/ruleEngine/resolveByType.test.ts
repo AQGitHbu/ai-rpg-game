@@ -5,9 +5,10 @@ import { updateStoryMetrics } from "./updateStoryMetrics";
 import { type EnemyEntry, type LocationEntry, type ItemEntry, type NpcEntry, type PlayerState, type QuestEntry, type WorldFactEntry, type WorldState } from "@/game/domain/worldState";
 import { importNpcLayers, type NpcEntityRecord } from "@/game/domain/entity";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
-import { asLocationId, asNpcId, asItemId, asFactId, asGenerationId, asEnemyId, asQuestId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { asLocationId, asNpcId, asItemId, asFactId, asGenerationId, asEnemyId, asQuestId, RETURN_REQUIRED_ITEM_TAG, type GenerationMetadata } from "@/game/domain/worldEntity";
 import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { entitiesOfKind } from "@/game/domain/entity";
+import { resolveItemPresentation } from "@/game/domain/itemPresentation";
 import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
 import {
   createWorldStateFixture,
@@ -232,8 +233,10 @@ describe("resolveByType — attack", () => {
       locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: false,
       memory: { npcId: asNpcId("npc_2"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
     };
-    const item: ItemEntry = { id: asItemId("item_gift"), name: "铜钥匙", description: "旧钥匙", kind: "key", category: "quest", tags: [] };
+    const item: ItemEntry = { id: asItemId("item_gift"), name: "铜钥匙", description: "旧钥匙", kind: "key", category: "consumable", tags: [RETURN_REQUIRED_ITEM_TAG] };
     const ordinaryItem: ItemEntry = { id: asItemId("item_ordinary_gift"), name: "苹果", description: "新鲜苹果", kind: "food", category: "consumable", tags: [] };
+    const derivedQuestItem: ItemEntry = { id: asItemId("item_derived_quest"), name: "展示钥匙", description: "展示分类来自 kind", kind: "key", tags: [] };
+    const presentationQuestItem: ItemEntry = { id: asItemId("item_presentation_quest"), name: "展示任务物品", description: "仅展示分类", kind: "token", category: "quest", tags: [] };
     const wsWithGift = createWorldStateFixtureWith({ generation: GENERATION, base: GIVE_BASE }, {
       npcs: [npc, unrelatedNpc],
       items: [item],
@@ -246,6 +249,16 @@ describe("resolveByType — attack", () => {
       items: [ordinaryItem],
       inventory: [ordinaryItem.id],
     });
+    const wsWithDerivedQuestItem = createWorldStateFixtureWith({ generation: GENERATION, base: GIVE_BASE }, {
+      npcs: [npc, unrelatedNpc],
+      items: [derivedQuestItem],
+      inventory: [derivedQuestItem.id],
+    });
+    const wsWithPresentationQuestItem = createWorldStateFixtureWith({ generation: GENERATION, base: GIVE_BASE }, {
+      npcs: [npc, unrelatedNpc],
+      items: [presentationQuestItem],
+      inventory: [presentationQuestItem.id],
+    });
 
     it("移交背包物品：通过 gave_item 信号记录关系与 offer 历史", () => {
       const beforeTarget = entitiesOfKind(wsWithGift.entityStore, "npc").find((record) => record.core.id === npc.id);
@@ -257,7 +270,7 @@ describe("resolveByType — attack", () => {
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.nextWorldState.inventory).not.toContain(item.id);
-        expect(result.events[0]).toMatchObject({ type: "item_given", itemId: item.id, npcId: npc.id });
+        expect(result.events[0]).toMatchObject({ type: "item_given", itemId: item.id, npcId: npc.id, actionId: deps.actionId });
         const after = result.nextWorldState.npcs.find((n) => n.id === npc.id);
         expect(after?.memory.relationship.affinity).toBe(6);
         expect(after?.memory.interactionHistory).toHaveLength(1);
@@ -286,7 +299,9 @@ describe("resolveByType — attack", () => {
         expect(afterUnrelated).toBe(beforeUnrelated);
         expect(afterItem.core).toBe(beforeItem.core);
         expect(afterItem.presentation).toBe(beforeItem.presentation);
+        expect(afterItem.presentation.tags).toEqual([RETURN_REQUIRED_ITEM_TAG]);
         expect(afterItem.possession).not.toBe(beforeItem.possession);
+        expect(result.nextWorldState.items.find((entry) => entry.id === item.id)?.tags).toEqual([RETURN_REQUIRED_ITEM_TAG]);
         const edge = afterRecord.relationships.outgoing.find((candidate) => candidate.targetId === PLAYER_ENTITY_ID);
         expect(edge?.dimensions.affinity).toBe(6);
         expect(edge?.evidence.at(-1)).toMatchObject({
@@ -321,6 +336,22 @@ describe("resolveByType — attack", () => {
       expect(edge?.evidence.at(-1)).toMatchObject({ signal: "offered_help", actionId: "act_ordinary_give" });
       expect(edge?.commitments).toEqual([]);
       expect(afterRecord.history.interactions[0]?.relationshipDelta).toBe(2);
+    });
+
+    it("展示 category=quest 或 kind 推导 category=quest 但没有 sealed marker 时都不打开 debt", () => {
+      expect(resolveItemPresentation({ kind: derivedQuestItem.kind }).category).toBe("quest");
+      for (const [giftWorld, giftItem, actionId] of [
+        [wsWithDerivedQuestItem, derivedQuestItem, "act_derived_quest"],
+        [wsWithPresentationQuestItem, presentationQuestItem, "act_presentation_quest"],
+      ] as const) {
+        const result = resolveByType(giftWorld, { type: "give_item", itemId: giftItem.id, npcId: npc.id }, { ...deps, actionId });
+        expect(result.ok).toBe(true);
+        if (!result.ok) continue;
+        const afterRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
+        const edge = afterRecord?.relationships.outgoing.find((candidate) => candidate.targetId === PLAYER_ENTITY_ID);
+        expect(edge?.commitments).toEqual([]);
+        expect(edge?.evidence.at(-1)).toMatchObject({ signal: "offered_help", actionId });
+      }
     });
 
     it("重放相同 actionId 失败且不重复信号、交互或 item_given 事件", () => {

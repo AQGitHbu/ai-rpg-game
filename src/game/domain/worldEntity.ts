@@ -68,6 +68,12 @@ export type StatBlock = {
 /** 背包界面页签的封闭分类：装备 / 道具 / 材料 / 任务。 */
 export type ItemCategory = "equipment" | "consumable" | "material" | "quest";
 
+/**
+ * 服务器审批内容使用的封闭归还标记；它不是 ItemCategory，也不参与展示分类推导。
+ * 玩家 Action 与 AI 提议都没有写入该 tag 的入口，Entity projection 会原样保留它。
+ */
+export const RETURN_REQUIRED_ITEM_TAG = "rule:return-required" as const;
+
 /** 展示用稀有度（不参与规则结算）。 */
 export type ItemRarity = "common" | "fine" | "rare" | "epic";
 

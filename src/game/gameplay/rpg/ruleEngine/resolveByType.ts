@@ -8,7 +8,7 @@ import { startBattle, battleAction } from "./battleResolver";
 import { resolveDialogue } from "@/game/gameplay/rpg/dialogue";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { applyEntityMutations, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
-import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { PLAYER_ENTITY_ID, RETURN_REQUIRED_ITEM_TAG } from "@/game/domain/worldEntity";
 
 export type ResolveResult = {
   readonly ok: true;
@@ -31,11 +31,8 @@ export type ResolveDeps = {
   readonly turnNumber: number;
 };
 
-/** ItemCategory 是仓库已有的封闭语义集合；其中 quest 是唯一的 return-required marker。 */
-const RETURN_REQUIRED_ITEM_CATEGORY = "quest" as const;
-
 function giftRelationshipSignal(item: ItemEntry): "gave_item" | "offered_help" {
-  return item.category === RETURN_REQUIRED_ITEM_CATEGORY ? "gave_item" : "offered_help";
+  return item.tags.includes(RETURN_REQUIRED_ITEM_TAG) ? "gave_item" : "offered_help";
 }
 
 /** 规则已完成 Action 校验；若 store 仍拒绝写入，视为损坏状态而非部分成功。 */
@@ -154,7 +151,14 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         return { ok: false, feedback: "世界状态不一致。" };
       }
       if (!ws.inventory.includes(action.itemId)) return { ok: false, feedback: "无法交付这件物品。" };
-      const event: GameEvent = { type: "item_given", itemId: action.itemId, npcId: action.npcId, locationId: ws.currentLocationId, occurredAt };
+      const event: GameEvent = {
+        type: "item_given",
+        itemId: action.itemId,
+        npcId: action.npcId,
+        locationId: ws.currentLocationId,
+        actionId: deps.actionId,
+        occurredAt,
+      };
       const mutated = applyRuleMutations(ws, [
         { kind: "transfer_item", itemId: action.itemId, owner: { kind: "npc", npcId: action.npcId } },
         {

@@ -4,6 +4,7 @@ import { createInitialWorldState, type EnemyEntry, type NpcEntry, type LocationE
 import { entitiesOfKind, projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
 import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { asLocationId, asNpcId, asQuestId, asGenerationId, asItemId, asFactId, asEnemyId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import type { GameEvent } from "@/game/domain/events";
 import type { WorldState } from "@/game/domain/worldState";
 
 function withProjection(
@@ -170,6 +171,68 @@ describe("reconcileQuests", () => {
     const npcRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
     expect(npcRecord?.history.interactions).toHaveLength(1);
     expect(npcRecord?.relationships.outgoing.flatMap((edge) => edge.evidence)).toEqual([]);
+  });
+
+  it("history/evidence 窗口裁剪后仍由持久化 eventLedger actionId 阻止 quest signal replay", () => {
+    const actionId = "old_dialogue_action";
+    const npc: NpcEntry = {
+      id: asNpcId("npc_1"), name: "n", role: "r", description: "t",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
+      memory: {
+        npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [],
+        interactionHistory: Array.from({ length: 10 }, (_, index) => ({
+          turnNumber: index + 10, actionId: `newer_${index}`, locationId: asLocationId("loc_1"), dialogueAct: "ask",
+          topicSummary: "newer", outcome: "positive", learnedFactIds: [], relationshipDelta: 0, summary: "newer",
+        })),
+        relationship: { affinity: 0 }, emotion: "neutral", goals: [],
+      },
+    };
+    const replayEvidence: GameEvent = {
+      type: "npc_dialogue_completed", npcId: npc.id, actionId, occurredAt: "2026-01-01",
+    };
+    const ws = withProjection(withProjection(baseWs, { npcs: [npc] }), {
+      quests: [{
+        id: asQuestId("q_replay_ledger"), name: "npc quest", description: "t",
+        objectives: [{ kind: "talk_to_npc", npcId: npc.id }],
+        onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [], kind: "side", status: "active",
+      }],
+    }, [replayEvidence]);
+    const result = reconcileQuests(ws, deps, {
+      talkToNpcSession: { npcId: npc.id, completed: true },
+      actionContext: { participantNpcId: npc.id, actionId, turnNumber: 20 },
+    });
+    expect(result.nextWorldState.quests[0]?.status).toBe("completed");
+    const npcRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
+    expect(npcRecord?.relationships.outgoing.flatMap((edge) => edge.evidence)).toEqual([]);
+  });
+
+  it("当前回合由 actionContext 明确标记为新 action 时，不因 reconcile 前已写入 history 而跳过 signal", () => {
+    const actionId = "current_dialogue_action";
+    const npc: NpcEntry = {
+      id: asNpcId("npc_1"), name: "n", role: "r", description: "t",
+      locationId: asLocationId("loc_1"), isCompanion: false, tags: [], met: true,
+      memory: {
+        npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [{
+          turnNumber: 4, actionId, locationId: asLocationId("loc_1"), dialogueAct: "ask",
+          topicSummary: "current", outcome: "positive", learnedFactIds: [], relationshipDelta: 0, summary: "current",
+        }], relationship: { affinity: 0 }, emotion: "neutral", goals: [],
+      },
+    };
+    const ws = withProjection(withProjection(baseWs, { npcs: [npc] }), {
+      quests: [{
+        id: asQuestId("q_current"), name: "npc quest", description: "t",
+        objectives: [{ kind: "talk_to_npc", npcId: npc.id }],
+        onSuccess: { kind: "closed" }, onFailure: { kind: "closed" }, tags: [], kind: "side", status: "active",
+      }],
+    });
+    const result = reconcileQuests(ws, deps, {
+      talkToNpcSession: { npcId: npc.id, completed: true },
+      actionContext: { participantNpcId: npc.id, actionId, turnNumber: 4, actionWasAlreadyUsed: false },
+    });
+    const npcRecord = entitiesOfKind(result.nextWorldState.entityStore, "npc").find((record) => record.core.id === npc.id);
+    expect(npcRecord?.relationships.outgoing.flatMap((edge) => edge.evidence)).toMatchObject([
+      expect.objectContaining({ signal: "kept_promise", actionId }),
+    ]);
   });
 });
 

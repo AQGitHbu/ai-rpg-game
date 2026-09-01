@@ -110,4 +110,25 @@ describe("validatePersistableWorldState", () => {
       generation: { ...valid.generation, gameType: "unknown_genre" },
     })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
   });
+
+  it("accepts server actionId evidence on dialogue/item events while retaining legacy event compatibility", () => {
+    const valid = state();
+    const result = validatePersistableWorldState({
+      ...valid,
+      eventLedger: [
+        { type: "npc_dialogue_completed", npcId: "npc_1", occurredAt: "now" },
+        { type: "npc_dialogue_completed", npcId: "npc_1", actionId: "dialogue_action", occurredAt: "now" },
+        { type: "item_given", itemId: "item_1", npcId: "npc_1", locationId: "loc", actionId: "give_action", occurredAt: "now" },
+      ],
+    });
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it("rejects malformed optional event actionId evidence", () => {
+    const valid = state();
+    expect(validatePersistableWorldState({
+      ...valid,
+      eventLedger: [{ type: "npc_dialogue_completed", npcId: "npc_1", actionId: 42, occurredAt: "now" }],
+    })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+  });
 });

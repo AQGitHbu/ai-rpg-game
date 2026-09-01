@@ -132,6 +132,7 @@ describe("ruleEngine facade", () => {
     expect(second.resolution.domainEvents).toContainEqual(expect.objectContaining({
       type: "npc_dialogue_completed",
       npcId: npc.id,
+      actionId: "dialogue_2",
     }));
     expect(second.resolution.nextStoryState.narrative.dialogueSession).toMatchObject({ turnCount: 2, completed: true });
   });

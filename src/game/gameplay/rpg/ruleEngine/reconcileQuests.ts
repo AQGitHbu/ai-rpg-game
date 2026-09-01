@@ -24,11 +24,17 @@ export type QuestReconcileOptions = {
   readonly actionContext?: QuestActionContext;
 };
 
-function npcUsedAction(ws: WorldState, npcId: string, actionId: string): boolean {
+export function npcUsedAction(ws: WorldState, npcId: string, actionId: string): boolean {
   const npc = entitiesOfKind(ws.entityStore, "npc").find((record) => String(record.core.id) === npcId);
-  return npc?.history.interactions.some((entry) => entry.actionId === actionId)
+  const npcMemoryUsed = npc?.history.interactions.some((entry) => entry.actionId === actionId)
     || npc?.relationships.outgoing.some((edge) => edge.evidence.some((evidence) => evidence.actionId === actionId))
     || false;
+  const actionEventUsed = ws.eventLedger.some((event) => (
+    (event.type === "npc_dialogue_completed" || event.type === "item_given")
+    && String(event.npcId) === npcId
+    && event.actionId === actionId
+  ));
+  return npcMemoryUsed || actionEventUsed;
 }
 
 function canEmitNpcQuestSignal(
