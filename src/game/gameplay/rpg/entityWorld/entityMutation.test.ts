@@ -1602,6 +1602,34 @@ describe("applyEntityMutations — record_npc_interaction", () => {
     expect(lastInteraction(next).summary).toContain("关系+0");
   });
 
+  it("stamp 是本批的变化量而不是绝对 affinity：起点非零且本批无信号时仍盖 0", () => {
+    // 上一批把 NPC_1→player 的 affinity 抬到 3；这一批只追加一条交互。
+    // 「盖绝对读数」的实现会在这里写 3 而不是 0——那等于把生涯累计值冒充成本次行动的关系变化，
+    // 并逐批单调膨胀地持久化进 relationshipDelta 这个计划点名的兼容读模型字段。
+    const warmed = okApply(world(), [signalMutation({ targetId: PLAYER_ENTITY_ID, signal: "supported" })]);
+    expect(edgeOf(warmed, NPC_1, PLAYER_ENTITY_ID).dimensions.affinity).toBe(3);
+    const next = okApply(warmed, [interaction({ actionId: ACT_1 })]);
+    expect(edgeOf(next, NPC_1, PLAYER_ENTITY_ID).dimensions.affinity).toBe(3);
+    expect(lastInteraction(next).relationshipDelta).toBe(0);
+    expect(lastInteraction(next).summary).toContain("关系+0");
+  });
+
+  it("同批两条交互读到同一个本批累计 delta（一行动一交互由调用方保证）", () => {
+    // 基线登记在「本批首次触及主体」那一刻，不随第二条交互再次归零：
+    // 若实现改成「距上一条交互的增量」，第二条会盖成 0 而在这里失败。
+    const next = okApply(world(), [
+      signalMutation({ targetId: PLAYER_ENTITY_ID, signal: "supported" }),
+      interaction({ actionId: ACT_1 }),
+      interaction({ actionId: "act_stamp_second" }),
+    ]);
+    const entries = next.npcs[0]?.memory.interactionHistory ?? [];
+    expect(entries.map((entry) => entry.relationshipDelta)).toEqual([3, 3]);
+    expect(entries.map((entry) => entry.summary)).toEqual([
+      "首次见面，support，气氛融洽，关系+3",
+      "首次见面，support，气氛融洽，关系+3",
+    ]);
+  });
+
   it("没有本批信号、没有 player 边、只动 NPC→NPC 边：三种情形都盖 0", () => {
     const alone = okApply(world(), [interaction()]);
     expect(lastInteraction(alone).relationshipDelta).toBe(0);

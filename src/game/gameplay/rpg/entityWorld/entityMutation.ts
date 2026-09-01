@@ -807,6 +807,8 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
       const baseline = ensureBatchBaseline(subject.npc, batch);
       // 重复就是重复：本通道永不静默去重、永不覆盖。同一 NPC 的同一个 actionId 第二次出现，
       // 意味着调用方在拿一次已铸造的行动重放，静默吞掉会让「这条行动记过没有」变成不可查的问题。
+      // 边界：判定只看保留中的 ≤NPC_HISTORY_CAP 条，被裁掉的最旧条目的 actionId 因此可以合法重现——
+      // 「一行动一交互」由调用方保证，本层不承诺跨裁剪窗口的唯一性。
       if (subject.npc.history.interactions.some((entry) => entry.actionId === mutation.actionId)) {
         return failure("duplicate_npc_interaction", mutation.npcId);
       }
