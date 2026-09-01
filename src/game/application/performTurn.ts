@@ -155,15 +155,25 @@ export async function performTurn(
     ? undefined
     : readyNarrative.choiceRegistry.find((entry) => entry.choiceToken === fixedChoiceToken)?.label;
 
-  const isFormalNarrativeChoice = command.interaction.kind === "fixed_choice"
-    && fixedChoiceToken !== undefined
-    && readyNarrative.currentScene.event?.kind === "dialogue"
-    && converted.action.type === "talk"
+  const isRegisteredSceneChoice = fixedChoiceToken !== undefined
     && readyNarrative.choiceRegistry.some((entry) => (
       entry.choiceToken === fixedChoiceToken
       && entry.sceneId === readyNarrative.currentScene.sceneId
       && entry.basedOnRevision === record.revision
     ));
+  const isFormalNarrativeChoice = command.interaction.kind === "fixed_choice"
+    && fixedChoiceToken !== undefined
+    && readyNarrative.currentScene.event?.kind === "dialogue"
+    && converted.action.type === "talk"
+    && isRegisteredSceneChoice;
+
+  // A server-authored NPC talk entry point can follow a rule-owned scene
+  // (notably after battle victory). It still starts a provider response and
+  // must not fall through to prepared-continuation consumption.
+  const isNpcTalkEntryPoint = command.interaction.kind === "fixed_choice"
+    && converted.action.type === "talk"
+    && converted.action.dialogueAct === "ask"
+    && !isRegisteredSceneChoice;
 
   // 结局立场由当前 World/Story 状态证明（结局对已具象化、故事未结算），不经过
   // choiceRegistry：结局包的契约禁止 provider 提交 currentScene choices。
@@ -274,7 +284,7 @@ export async function performTurn(
     resolution.primaryResult,
     converted.action,
   );
-  if (isFormalNarrativeChoice || endingStance !== undefined || command.interaction.kind === "free_text") {
+  if (isFormalNarrativeChoice || isNpcTalkEntryPoint || endingStance !== undefined || command.interaction.kind === "free_text") {
     return commitResolution({
       repository: deps.repository,
       gameId: command.gameId,

@@ -14,6 +14,7 @@ import { asGameId, type GameRecord } from "@/game/application/server/persistence
 import { createSqliteGameRepository } from "@/game/application/server/persistence/sqliteGameRepository";
 import { createSqliteClient } from "@/game/application/server/persistence/sqliteClient";
 import { projectGameSessionView, type GameSessionView } from "@/game/application/gameSessionView";
+import { entitiesOfKind } from "@/game/domain/entity";
 import { playIssuedChoice, advanceScene } from "./foundationJourney.testutil";
 
 // ---------------------------------------------------------------------------
@@ -265,6 +266,10 @@ async function createInvestigationChoiceJourney(input: { mode: "offline" | "lega
 describe("调查选择旅程（Task 6 端到端）", () => {
   it("multiple historical approaches do not create player investigation choices", async () => {
     const journey = await createInvestigationChoiceJourney({ mode: "offline" });
+    const fact = entitiesOfKind(journey.record().worldState.entityStore, "fact").find((entry) => entry.core.id === CHOICE_FACT_ID);
+    const npc = entitiesOfKind(journey.record().worldState.entityStore, "npc")[0];
+    expect(fact?.fact.investigationApproaches).toHaveLength(2);
+    expect(npc?.relationships.outgoing.some((edge) => edge.targetId === "player_0")).toBe(true);
     expect(journey.view().currentLocation.actions.some((choice) => choice.presentation === "investigate")).toBe(false);
     const revisionBeforeReload = journey.record().revision;
     await journey.reload();

@@ -120,6 +120,12 @@ describe("叙事落地旅程（Step 2）", () => {
         nextStoryState: current.storyState,
       });
       if (!commitResult.ok) throw new Error(`亲和度注入失败: ${commitResult.code}`);
+      const projected = commitResult.record.worldState.npcs.find((entry) => entry.id === npc.id);
+      const authoritative = entitiesOfKind(commitResult.record.worldState.entityStore, "npc")
+        .find((entry) => entry.core.id === npc.id);
+      expect(projected?.memory.relationship.affinity).toBe(affinity);
+      expect(authoritative?.relationships.outgoing.find((edge) => edge.targetId === PLAYER_ENTITY_ID)?.dimensions.affinity)
+        .toBe(affinity);
 
       const response = await playTurn(store.repo, {
         kind: "free_text",

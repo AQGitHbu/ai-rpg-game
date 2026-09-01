@@ -103,7 +103,15 @@ const RULE_INTENT_SOURCE: IntentParserSource = createRuleIntentParser();
  * 与延伸之地（地点），让旅程能覆盖 拾取物品 / 战斗 / 地图移动 / 多幕推进；
  * ending_pair 与 pacing 委托 Task 3 确定性源（零 AI）。
  */
-function journeyNextActProposal(act: number, currentLocationId: string): WorldDeltaProposal {
+type JourneyEvolutionOptions = Readonly<{
+  readonly relationshipSeedTargetNpcId?: string;
+}>;
+
+function journeyNextActProposal(
+  act: number,
+  currentLocationId: string,
+  options: JourneyEvolutionOptions = {},
+): WorldDeltaProposal {
   return {
     beatSummary: `第${act}幕的传讯人带来新的线索`,
     newLocation: {
@@ -126,7 +134,9 @@ function journeyNextActProposal(act: number, currentLocationId: string): WorldDe
         taboos: ["不篡改收到的消息"],
       },
       goals: [{ horizon: "short", description: `传递第${act}幕的线索`, priority: 3, reason: `这封信关系到第${act}幕的追索` }],
-      relationshipSeeds: [],
+      relationshipSeeds: options.relationshipSeedTargetNpcId === undefined || act !== 2
+        ? []
+        : [{ targetNpcId: options.relationshipSeedTargetNpcId, stance: "ally", reason: "共同追查同一条线索" }],
     },
     newItem: {
       name: `信物·${act}`,
@@ -148,7 +158,7 @@ function journeyNextActProposal(act: number, currentLocationId: string): WorldDe
   };
 }
 
-export function createJourneyEvolutionSource(): WorldEvolutionSource {
+export function createJourneyEvolutionSource(options: JourneyEvolutionOptions = {}): WorldEvolutionSource {
   const deterministic = createDeterministicEvolutionSource();
   return {
     async propose(ctx) {
@@ -156,7 +166,7 @@ export function createJourneyEvolutionSource(): WorldEvolutionSource {
         case "none":
           return { ok: true, proposal: null };
         case "next_act":
-          return { ok: true, proposal: journeyNextActProposal(ctx.need.act, String(ctx.worldState.currentLocationId)) };
+          return { ok: true, proposal: journeyNextActProposal(ctx.need.act, String(ctx.worldState.currentLocationId), options) };
         case "ending_pair":
           // 结局对走 Task 3 确定性源的规则化要求（关键 NPC 亲和度分歧）。
           return deterministic.propose(ctx);
