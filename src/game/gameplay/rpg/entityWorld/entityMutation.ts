@@ -396,8 +396,10 @@ function activeNpcSubject(records: readonly EntityRecord[], npcId: NpcId): NpcSu
  *    一条已停用（inactive / resolved / destroyed）的 Fact Entity。
  * 3. 说话人同理：死掉的 NPC 不得借一条新知识洗白成 provenance（entry.source 永不可改写）。
  * canonical 判定权在实体层，兼容数组只是它的一个视图，视图不是依据。
+ * 本函数就是这份派生的唯一公开面（纯读 helper，不开任何写通道）：规则层的传播与这里的
+ * `record_npc_knowledge` 共用它，两边对「这条 Fact / 这个 NPC 存不存在」才不会有两种答案。
  */
-function knowledgeReferences(records: readonly EntityRecord[]): NpcKnowledgeReferences {
+export function knowledgeReferences(records: readonly EntityRecord[]): NpcKnowledgeReferences {
   return {
     factIds: new Set(records.filter((record) => record.core.kind === "fact" && record.core.lifecycle === "active").map((record) => record.core.id)),
     npcIds: new Set(records.filter((record) => record.core.kind === "npc" && record.core.lifecycle === "active").map((record) => record.core.id)),
