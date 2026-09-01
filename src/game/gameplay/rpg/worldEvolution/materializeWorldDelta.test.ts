@@ -18,7 +18,7 @@ import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 
 // ---------------------------------------------------------------------------
 // Fixture：起始地点听雨客栈(loc_0) 与其名册内的掌柜韩征(npc_0) 一次给出完整合法
-// 兼容投影；v3 下 NPC 必须由 entityStore 派生，不能再 spread 单条 legacy 数组。
+// 兼容投影；当前版本 NPC 必须由 entityStore 派生，不能再 spread 单条 legacy 数组。
 // ---------------------------------------------------------------------------
 
 const LOC_0: LocationEntry = {

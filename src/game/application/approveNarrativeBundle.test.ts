@@ -247,7 +247,7 @@ function baseInput(overrides: Partial<ApproveNarrativeBundleInput> = {}): Approv
 /**
  * 幕边界前的世界：主线已收束、地点尚未扩张。
  * 旧夹具让这条已完成主线继续指向 loc_dyn_1 / fact_tracks / npc_dyn_1——正是待审批
- * worldDelta 才具象化的实体；v3 投影要求任务目标引用必须可解析，因此以空目标列表
+ * worldDelta 才具象化的实体；当前投影要求任务目标引用必须可解析，因此以空目标列表
  * 表达同一条已完成主线，下一幕首个目标由具象化后的新任务供给。
  */
 function preExpansionWorld(overrides: WorldStateFixtureOverrides = {}): WorldState {

@@ -67,7 +67,7 @@ const ENEMY_1: EnemyEntry = {
   locationId: asLocationId("loc_1"),
   tags: [],
 };
-// 老者已知的事实必须真实存在：v3 会在编译期拒绝悬空的 NPC 事实引用。
+// 老者已知的事实必须真实存在：当前 Entity Store 会在编译期拒绝悬空的 NPC 事实引用。
 const FACT_1: WorldFactEntry = { factId: asFactId("fact_1"), text: "老者守口的旧事", source: "generated", discovered: false, locationId: asLocationId("loc_1") };
 const FACT_2: WorldFactEntry = { factId: asFactId("fact_2"), text: "密道在古井之下", source: "generated", discovered: false, locationId: asLocationId("loc_1") };
 

@@ -23,7 +23,7 @@ import { TRUST_ENDING_MIN_AFFINITY, DOUBT_ENDING_MAX_AFFINITY } from "@/game/app
 
 // ---------------------------------------------------------------------------
 // Fixture：起始地点听雨客栈(loc_0) 与其名册内的掌柜韩征(npc_0) 一次给出完整合法
-// 兼容投影；v3 下 NPC 必须由 entityStore 派生，不能再 spread 单条 legacy 数组。
+// 兼容投影；当前版本 NPC 必须由 entityStore 派生，不能再 spread 单条 legacy 数组。
 // ---------------------------------------------------------------------------
 
 const LOC_0: LocationEntry = {
@@ -67,7 +67,7 @@ function proposalWithSeed(stance: string, reason = "旧日经历，仅供诊断"
 }
 
 // 结局要求由 stage 最大的主线任务的 talk_to_npc 目标派生：该目标 NPC 必须是世界里
-// 真实存在的实体（v3 投影不变量下 quest 目标引用未知 NPC 直接非法），所以把它
+// 真实存在的实体（当前投影不变量下 quest 目标引用未知 NPC 直接非法），所以把它
 // 补进投影；断言仍只关心派生出的 npcId 是否为 npc_9。
 const KEY_ENDING_NPC: NpcEntry = {
   id: asNpcId("npc_9"), name: "密信送信人", role: "信使", description: "掌握盟约裂痕证据的信使。",

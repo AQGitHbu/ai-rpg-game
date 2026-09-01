@@ -37,6 +37,13 @@
 - 决策编译块明确不投影：完整 `GameRecord`、完整 `eventLedger`、其他 NPC 的交互历史、任何 NPC 的私密事实正文、玩家长期自由文本历史、隐藏 registry/effect/debug 结构。
 - 编译产物的 manifest 只进入审计上下文 `context.narrativeContext` 作为元数据；source 不保存第二份 Prompt 副本，也不把渲染后的 Prompt 文本写入存档或 manifest。初始化 opening 分支仍使用现有专用 Prompt，没有 manifest。
 
+## Plan 3 NPC 台词权威与隐私（待验收）
+
+- `NpcSpeechAuthority` 是 opening preview、`approveNarrativeBundle`、`approvePreparedContinuation` 和 `approveAndWriteScene` 四条 NPC 台词路径共享的权限投影。它只从 speaker 的 Entity Components、scene-visible FactId、当前 target 和该 NPC 的 history 生成 allowed/withheld facts、interaction actionId、anchors、目标关系和 evidence key。
+- `secret` Fact 不因 NPC 已知就自动可说；`conditional` Fact 需要允许的关系 stage。其他 NPC 的私密事实正文、其他 NPC history、玩家自由文本和裸关系数字不会进入 prompt、manifest 或台词审批上下文。
+- 每条 line/dialogue 都必须带 `usedFactIds` 与 `usedInteractionActionIds`（opening 首句 interaction 为空）；`validateNpcSpeechReferences` 拒绝格式错误、重复、未披露、非 speaker 所有或不在当前 authority allowlist 的引用，拒绝整包而非静默裁剪。
+- 焦点块继续只投影最近 5 条结构化 interaction、active goals、关系 stage/trend/open commitments 和有限 evidence；`responseTier` 由规则组件派生，AI 不自行计算 affinity 或关系后果。缺少 authority 或正式 focus 台词时，read model fail closed 到权威 `ask` 入口。
+
 ## 已冻结约束
 
 - SceneSource 只返回表演 proposal，不能返回可直接落库的 ready state。
@@ -102,7 +109,7 @@
 
 - 场景表演只收到**一名焦点 NPC** 的隔离记忆：`focusNpcContext` 只含该 NPC 的公开档案、关系回应政策、可披露事实卡（`speakableFactCards`）、最近 5 条结构化交互（`recentInteractions`，仅 actionId + dialogueAct + topicSummary + outcome + summary）、目标与回合后情绪。
 - 绝不包含其他 NPC 的记忆条目；绝不包含玩家原文；未获披露批准的私密事实只下发不含 ID 的扣留指示，正文永不出现。
-- 关系以"回合后档位（tier）+ 情绪 + 本轮 relationshipDelta/outcome"承载，绝不裸给数字。
+- 关系以回合后档位/趋势、开放承诺、有限 evidence、情绪和本轮结构化 outcome 承载，绝不裸给数字或让 AI 计算关系变化。
 - 玩家自由文本只供当前回合意图解析；原文只存在于 `PendingNarrativeJob.utterance`，不进入长期记忆、事件账本、prompt replay 或日志。
 - AI narration 与 NPC 台词不是规则事实。事实、任务、关系与结局只能来自已提交的结构化事件。
 
@@ -110,7 +117,7 @@
 
 - 每个成功玩家回合都排队下一幕，选择结果进入结构化状态和有界记忆，下一次生成读取这些已批准结果；对话目标的下一幕焦点在 ready 场景生成时确定，避免把“打开对话”误当成新的剧情回合。
 - 相同 seed 与相同输入/选择序列可确定性 replay；不同 seed 改变初始世界结构。
-- 同 seed 下"支持/质疑"选择会改变 NPC affinity/emotion/history、候选事件和结局方向（trust/doubt 由规则要求按关键 NPC 亲和度裁决），不只是改写叙事文案。
+- 同 seed 下"支持/质疑"选择会改变 NPC 关系维度/stage、emotion/history、候选事件和结局方向（trust/doubt 由规则要求按关键 NPC 关系条件裁决），不只是改写叙事文案。
 - 开局小、随游玩增长：下一次世界演化批准的新 NPC/地点/物品会进入场景上下文，并要求场景提及该实体。
 
 ## 主要文件
@@ -124,6 +131,7 @@
 - `src/game/application/sceneGenerationContext.ts` — 最小权限上下文、合法候选、强制节拍、目标链接实体和 prepared continuation descriptors 投影。
 - `src/game/application/deterministicEvolutionBeats.ts` — 离线 fixture 节拍与"线索→新地点"动线因果。
 - `src/game/application/focusNpcContext.ts` — 焦点 NPC 隔离记忆与关系政策投影。
+- `src/game/application/npcSpeechAuthority.ts` / `src/game/domain/npcSpeechReferences.ts` — NPC 台词引用权限与格式校验。
 - `src/game/application/deterministicSceneSource.ts` — 显式离线 fixture proposal。
 - `src/game/application/gameSessionView.ts` — 投影焦点能力，并修复旧存档中与权威目标冲突的过期焦点；调查/移动/取物/战斗目标出现时会关闭上一轮 NPC 的双选项焦点；新 talk 目标在 scene 未 ready 前不投影 fallback 台词或自由输入；终幕结局对就绪后投影稳定的结局决策目标。
 - `src/game/application/approveAndWriteScene.ts` — 场景表演审批与写回。
@@ -144,6 +152,7 @@
 - registry 的 `basedOnRevision` 等于 scene 写回后的 revision。
 - tampered、stale、重复 token 零写入。
 - live source 越权引用或失败不会绕过审批；失败保留规则已提交状态并等待手动重试。离线旅程通过显式 fixture source 完成，不代表生产 AI 失败时仍可通关。
+- `npcSpeechAuthority.test.ts` 与四条 approval path 测试覆盖 speaker 在场、Fact/Interaction 引用归属、重复引用、未披露事实和 authority 缺失的 fail-closed 行为。
 
 ## 历史说明
 
@@ -151,4 +160,4 @@
 
 ## Entity Store 上下文边界
 
-场景、世界演化和叙事 bundle 的实体摘要从 v3 `entityStore` 的规则投影生成；mandatory closure、有限 optional 邻接和五类撞名索引不改变既有 block 顺序、预算或单次 provider 调用。Entity command parser/approver 尚未接入 provider 输出。
+场景、世界演化和叙事 bundle 的实体摘要从 v4 `entityStore` 的规则投影生成；mandatory closure、有限 optional 邻接和五类撞名索引不改变既有 block 顺序、预算或单次 provider 调用。NPC speech authority 在该投影上进一步限制 speaker 的事实/交互引用；Entity command parser/approver 尚未接入 provider 输出。
