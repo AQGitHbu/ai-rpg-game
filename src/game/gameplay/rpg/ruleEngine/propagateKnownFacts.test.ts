@@ -326,7 +326,7 @@ describe("propagateKnownFacts", () => {
   });
 
   it("窄通道写入：一次传播只替换 knowledge，其余组件按引用原样", () => {
-    // 会因何生产改动而失败：回到 sync_npc_legacy_memory 就会把四层一起重建。
+    // 会因何生产改动而失败：回到整体 NPC 组件替换路径就会把四层一起重建。
     // 值级断言看不出来（重建出来的值本就相同），只有引用同一性才是过渡桥已摘掉的见证。
     const ws = makeWs();
     const before = npcRecord(ws, "npc_1");

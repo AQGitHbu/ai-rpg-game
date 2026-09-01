@@ -66,14 +66,11 @@ import type { FactId, NpcId } from "@/game/domain/worldEntity";
 // 因为零写入的证据是「原样带回调用方那个对象」，没有对象可带回时就让 `knowledge` 为
 // `undefined`（`invalid_component` 是结果类型里唯一不带组件的那条臂）。
 //
-// ## 与 domain 过渡桥的关系（Task 4A 遗留的唯一分叉，见 task-4A-report）
-// `src/game/domain/entity/npcProjection.ts` 的 `compileLegacyNpcSync` 里有一份
-// `knowledgeSource()` 过渡实现（addedKnowledge → NpcKnowledgeSource）。本模块是它的
-// 目标替代，但 domain 不得 import gameplay（`src/dependencyBoundaries.test.ts` 的
-// `game/domain` 目录规则机械禁止），因此桥接尚未改为复用这里的构造函数：
-// **两份构造同一 source 的实现同时存活，只到 Task 5 拆除过渡桥为止**。
-// Task 5 改线后必须删除 `npcProjection.ts` 的 `knowledgeSource()` / `compileKnowledge()`，
-// 不要让这份拷贝作为第二事实来源继续存活。
+// ## 与兼容导入 adapter 的关系
+// domain 的 `npcProjection.ts` 只负责把旧兼容投影导入初始世界组件；
+// 运行期新增知识、来源和披露始终由本模块裁决，再由 EntityMutation 写入。
+// adapter 不构造行动来源，也不参与 gameplay 的知识政策，因此这里仍是唯一的
+// action source / audience / disclosure 规则实现。
 // ---------------------------------------------------------------------------
 
 type Expect<T extends true> = T;

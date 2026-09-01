@@ -16,7 +16,7 @@ import type {
 } from "@/game/domain/entity";
 import type { FactChangeSource } from "@/game/domain/resolvedEvent";
 import {
-  compileLegacyNpcSync, entitiesOfKind, getEntity, importNpcLayers, NPC_HISTORY_CAP, projectNpcEntry,
+  entitiesOfKind, getEntity, importNpcLayers, NPC_HISTORY_CAP,
 } from "@/game/domain/entity";
 import {
   asFactId, asGenerationId, asItemId, asLocationId, asNpcId, asQuestId, asEnemyId,
@@ -346,88 +346,6 @@ describe("applyEntityMutations — 物品归属", () => {
 });
 
 describe("applyEntityMutations — NPC 记忆、事实、任务与敌人", () => {
-  it("sync_npc_legacy_memory 只写四个分层组件，不触碰 core/identity/position", () => {
-    const ws = world();
-    const before = npcRecord(ws, NPC_1);
-    const next = okApply(ws, [{
-      kind: "sync_npc_legacy_memory",
-      npcId: NPC_1,
-      npc: compileLegacyNpcSync({
-        before,
-        afterLegacy: { ...projectNpcEntry(before), met: true },
-        actionId: "act_bridge_1",
-        turnNumber: 5,
-        addedKnowledge: [],
-      }),
-    }]);
-    const after = npcRecord(next, NPC_1);
-    expect(after.dynamicState.met).toBe(true);
-    expect(after.core).toEqual(before.core);
-    expect(after.identity).toEqual(before.identity);
-    expect(after.position).toEqual(before.position);
-    expect(next.npcs.find((n) => n.id === NPC_1)?.met).toBe(true);
-    // 桥不新增知识、不追加交互：这两份组件原样继承 before。
-    expect(after.knowledge).toEqual(before.knowledge);
-    expect(after.history).toEqual(before.history);
-  });
-
-  it("sync_npc_legacy_memory 引用非 NPC 返回 wrong_entity_kind", () => {
-    const ws = world();
-    const result = applyEntityMutations(ws, [{
-      kind: "sync_npc_legacy_memory",
-      npcId: asNpcId(String(LOC_1)),
-      npc: compileLegacyNpcSync({
-        before: npcRecord(ws, NPC_1),
-        afterLegacy: { ...projectNpcEntry(npcRecord(ws, NPC_1)), met: true },
-        actionId: "act_bridge_2",
-        turnNumber: 5,
-        addedKnowledge: [],
-      }),
-    }]);
-    expect(result).toEqual({ ok: false, code: "wrong_entity_kind", entityId: LOC_1 });
-    expect(npcRecord(ws, NPC_1).dynamicState.met).toBe(false);
-  });
-
-  it("sync_npc_legacy_memory 写入悬空知识时返回 invalid_reference 且零修改", () => {
-    const ws = world();
-    const before = npcRecord(ws, NPC_1);
-    const layers = compileLegacyNpcSync({
-      before,
-      afterLegacy: {
-        ...projectNpcEntry(before),
-        memory: { ...projectNpcEntry(before).memory, knownFactIds: [asFactId("fact_missing")] },
-      },
-      actionId: "act_bridge_3",
-      turnNumber: 5,
-      addedKnowledge: [{ factId: asFactId("fact_missing"), mode: "player_told" }],
-    });
-    const result = applyEntityMutations(ws, [{ kind: "sync_npc_legacy_memory", npcId: NPC_1, npc: layers }]);
-    expect(result).toMatchObject({ ok: false, code: "invalid_reference" });
-    expect(ws.npcs.find((n) => n.id === NPC_1)?.memory.knownFactIds).toEqual([]);
-    expect(npcRecord(ws, NPC_1)).toBe(before);
-  });
-
-  it("桥载荷之外的键无法写进 record：分层组件不合法即 structure_invalid", () => {
-    const ws = world();
-    const before = npcRecord(ws, NPC_1);
-    const layers = compileLegacyNpcSync({
-      before,
-      afterLegacy: { ...projectNpcEntry(before), met: true },
-      actionId: "act_bridge_4",
-      turnNumber: 5,
-      addedKnowledge: [],
-    });
-    // 组件里多出未知键：桥逐键写入分层组件，越界形状只能被 store 校验拒掉。
-    const tampered = { ...layers, history: { ...layers.history, extra: "x" } };
-    const result = applyEntityMutations(ws, [{
-      kind: "sync_npc_legacy_memory",
-      npcId: NPC_1,
-      npc: tampered as unknown as typeof layers,
-    }]);
-    expect(result).toMatchObject({ ok: false, code: "structure_invalid" });
-    expect(npcRecord(ws, NPC_1)).toBe(before);
-  });
-
   it("discover_fact 幂等：重复发现不改变 store", () => {
     const once = okApply(world(), [{ kind: "discover_fact", factId: FACT_1 }]);
     const twice = okApply(once, [{ kind: "discover_fact", factId: FACT_1 }]);
@@ -965,30 +883,7 @@ describe("applyEntityMutations — apply_relationship_commitment", () => {
   });
 });
 
-describe("关系写入通道唯一性（Task 5 拆除桥前的过渡约束）", () => {
-  it("桥仍可整体同步 relationships：只折叠 legacy 可见的 player 边，其余有向边原样保留", () => {
-    const seeded = okApply(world(), [signalMutation({ signal: "supported", source: source("act_seed", 1) })]);
-    const before = npcRecord(seeded, NPC_1);
-    const npcToNpcBefore = edgeOf(seeded, NPC_1, NPC_2);
-    const legacy = projectNpcEntry(before);
-    const next = okApply(seeded, [{
-      kind: "sync_npc_legacy_memory",
-      npcId: NPC_1,
-      npc: compileLegacyNpcSync({
-        before,
-        afterLegacy: { ...legacy, memory: { ...legacy.memory, relationship: { affinity: -40 } } },
-        actionId: "act_bridge_5",
-        turnNumber: 5,
-        addedKnowledge: [],
-      }),
-    }]);
-    const after = npcRecord(next, NPC_1);
-    expect(after.relationships).not.toBe(before.relationships);
-    expect(edgeOf(next, NPC_1, PLAYER_ENTITY_ID).dimensions.affinity).toBe(-40);
-    // 桥没有能力改写 NPC→NPC 边：既不是第二条细粒度通道，也不是逃生门。
-    expect(edgeOf(next, NPC_1, NPC_2)).toBe(npcToNpcBefore);
-  });
-
+describe("关系写入通道唯一性", () => {
   it("entityMutation.ts 里把 relationships 组件写回 record 的 case 只有三个", () => {
     const file = resolve(process.cwd(), "src/game/gameplay/rpg/entityWorld/entityMutation.ts");
     expect(existsSync(file)).toBe(true);
@@ -1003,7 +898,7 @@ describe("关系写入通道唯一性（Task 5 拆除桥前的过渡约束）", 
         return /\brelationships\s*[:,}]/.test(body.slice(entry.at, next === undefined ? body.length : next.at));
       })
       .map((entry) => entry.name);
-    expect(writers.sort()).toEqual(["apply_relationship_commitment", "apply_relationship_signal", "sync_npc_legacy_memory"]);
+    expect(writers.sort()).toEqual(["apply_relationship_commitment", "apply_relationship_signal"]);
   });
 });
 
@@ -1370,26 +1265,7 @@ describe("applyEntityMutations — set_npc_knowledge_disclosure", () => {
   });
 });
 
-describe("知识写入通道唯一性（Task 5 拆桥前的过渡约束）", () => {
-  it("桥仍可整体同步 knowledge：细粒度 mutation 之外没有第二条整块替换通道", () => {
-    const ws = world();
-    const before = npcRecord(ws, NPC_1);
-    const legacy = projectNpcEntry(before);
-    const next = okApply(ws, [{
-      kind: "sync_npc_legacy_memory",
-      npcId: NPC_1,
-      npc: compileLegacyNpcSync({
-        before,
-        afterLegacy: { ...legacy, memory: { ...legacy.memory, knownFactIds: [FACT_1] } },
-        actionId: ACT_1,
-        turnNumber: 3,
-        addedKnowledge: [{ factId: FACT_1, mode: "scene_witness" }],
-      }),
-    }]);
-    expect(npcRecord(next, NPC_1).knowledge).not.toBe(before.knowledge);
-    expect(npcRecord(next, NPC_1).knowledge.entries.map((entry) => String(entry.factId))).toEqual(["fact_1"]);
-  });
-
+describe("知识写入通道唯一性", () => {
   it("entityMutation.ts 里把 knowledge 组件写回 record 的 case 只有三个", () => {
     const file = resolve(process.cwd(), "src/game/gameplay/rpg/entityWorld/entityMutation.ts");
     expect(existsSync(file)).toBe(true);
@@ -1404,7 +1280,7 @@ describe("知识写入通道唯一性（Task 5 拆桥前的过渡约束）", () 
         return /\bknowledge\s*[:,}]/.test(body.slice(entry.at, next === undefined ? body.length : next.at));
       })
       .map((entry) => entry.name);
-    expect(writers.sort()).toEqual(["record_npc_knowledge", "set_npc_knowledge_disclosure", "sync_npc_legacy_memory"]);
+    expect(writers.sort()).toEqual(["record_npc_knowledge", "set_npc_knowledge_disclosure"]);
   });
 });
 
@@ -1947,48 +1823,7 @@ describe("applyEntityMutations — set_npc_met", () => {
   });
 });
 
-describe("NPC 组件与历史写入通道唯一性（Task 5 拆桥前的过渡约束）", () => {
-  it("桥仍可整体同步 history 与 dynamicState：细粒度 mutation 之外没有第二条整块替换通道", () => {
-    const ws = world();
-    const before = npcRecord(ws, NPC_1);
-    const legacy = projectNpcEntry(before);
-    const next = okApply(ws, [{
-      kind: "sync_npc_legacy_memory",
-      npcId: NPC_1,
-      npc: compileLegacyNpcSync({
-        before,
-        afterLegacy: {
-          ...legacy,
-          met: true,
-          memory: {
-            ...legacy.memory,
-            emotion: "afraid",
-            interactionHistory: [{
-              turnNumber: 5, actionId: "act_bridge_5a", locationId: LOC_1, dialogueAct: "ask",
-              topicSummary: "闲谈", outcome: "neutral", relationshipDelta: -2, learnedFactIds: [],
-              summary: "首次见面，ask，语气平淡，关系-2",
-            }],
-          },
-        },
-        actionId: "act_bridge_5a",
-        turnNumber: 5,
-        addedKnowledge: [],
-      }),
-    }]);
-    const after = npcRecord(next, NPC_1);
-    expect(after.dynamicState).not.toBe(before.dynamicState);
-    expect(after.dynamicState.met).toBe(true);
-    expect(after.dynamicState.emotion).toBe("afraid");
-    expect(after.history).not.toBe(before.history);
-    // 桥照单全收调用方给的数字：relationshipDelta -2 逐字落盘。
-    // 这正是 record_npc_interaction 不接受该键的理由——过渡期只有一条通道能带数值。
-    expect(after.history.interactions).toEqual([{
-      turnNumber: 5, actionId: "act_bridge_5a", locationId: LOC_1, dialogueAct: "ask",
-      topicSummary: "闲谈", outcome: "neutral", relationshipDelta: -2, learnedFactIds: [],
-      summary: "首次见面，ask，语气平淡，关系-2",
-    }]);
-  });
-
+describe("NPC 组件与历史写入通道唯一性", () => {
   it("entityMutation.ts 里把 history 组件写回 record 的 case 只有两个", () => {
     const file = resolve(process.cwd(), "src/game/gameplay/rpg/entityWorld/entityMutation.ts");
     expect(existsSync(file)).toBe(true);
@@ -2003,7 +1838,7 @@ describe("NPC 组件与历史写入通道唯一性（Task 5 拆桥前的过渡�
         return /\bhistory\s*[:,}]/.test(body.slice(entry.at, next === undefined ? body.length : next.at));
       })
       .map((entry) => entry.name);
-    expect(writers.sort()).toEqual(["record_npc_interaction", "sync_npc_legacy_memory"]);
+    expect(writers.sort()).toEqual(["record_npc_interaction"]);
   });
 
   it("entityMutation.ts 里把 dynamicState 组件写回 record 的 case 只有三个", () => {
@@ -2020,6 +1855,6 @@ describe("NPC 组件与历史写入通道唯一性（Task 5 拆桥前的过渡�
         return /\bdynamicState\s*[:,}]/.test(body.slice(entry.at, next === undefined ? body.length : next.at));
       })
       .map((entry) => entry.name);
-    expect(writers.sort()).toEqual(["set_npc_emotion", "set_npc_met", "sync_npc_legacy_memory"]);
+    expect(writers.sort()).toEqual(["set_npc_emotion", "set_npc_met"]);
   });
 });

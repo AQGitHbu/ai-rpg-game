@@ -1,6 +1,5 @@
 import { PLAYER_ENTITY_ID } from "../worldEntity";
-import type { FactId, NpcId } from "../worldEntity";
-import type { FactChangeSource } from "../resolvedEvent";
+import type { FactId } from "../worldEntity";
 import type { NpcEntry, NpcMemory } from "../worldEntries";
 import type { NpcEntityRecord } from "./entityRecord";
 import {
@@ -10,17 +9,15 @@ import {
 import type {
   DirectedRelationshipEdge, NpcDynamicStateComponent, NpcGoal, NpcHistoryComponent,
   NpcIdentityAnchors, NpcKnowledgeComponent, NpcKnowledgeDisclosure, NpcKnowledgeEntry,
-  NpcKnowledgeSource, NpcRelationshipComponent, RelationshipSource,
+  NpcRelationshipComponent,
 } from "./npcComponents";
 
 // ---------------------------------------------------------------------------
 // NPC 分层组件 ↔ legacy NpcEntry 的唯一投影通道（Plan 3 / Task 2）。
 //
-// 分层组件是唯一事实源：NpcEntry.memory 一律由 projectNpcMemory 重建，任何读取
-// record.npcState.memory 的 selector 都不允许存在。反方向只在两条被明确允许的
-// 桥接路径上使用：
-//   1) importNpcLayers：兼容投影 → store（Task 6 前的临时创建桥，legacy_import）。
-//   2) compileLegacyNpcSync：规则层旧裁决的可观察差量 → 四组件（Task 5 拆除）。
+// 分层组件是唯一事实源：NpcEntry.memory 一律由 projectNpcMemory 重建。反方向的
+// importNpcLayers 仅服务兼容投影与旧 fixture，将旧形状确定性导入分层组件；正式规则
+// 写入只能通过 EntityMutation 的细粒度通道完成。
 //
 // 本文件属于 domain：不 import gameplay / application，不持 IO，纯函数。
 // ---------------------------------------------------------------------------
@@ -33,23 +30,6 @@ export function npcLegacyGoalId(npcId: string, ordinal: number): string {
   return `${npcId}_goal_${ordinal}`;
 }
 
-/** 桥接缺证据即失败：错误只带 code/entityId/factId，绝不携带事实正文。 */
-export type NpcLegacyBridgeErrorCode = "legacy_knowledge_evidence_missing";
-
-export class NpcLegacyBridgeError extends Error {
-  readonly code: NpcLegacyBridgeErrorCode;
-  readonly entityId: string;
-  readonly factId?: string;
-
-  constructor(input: Readonly<{ code: NpcLegacyBridgeErrorCode; entityId: string; factId?: string }>) {
-    super(`npc legacy bridge invariant violated: ${input.code}`);
-    this.name = "NpcLegacyBridgeError";
-    this.code = input.code;
-    this.entityId = input.entityId;
-    this.factId = input.factId;
-  }
-}
-
 export type NpcImportedLayers = Readonly<{
   anchors: NpcIdentityAnchors;
   dynamicState: NpcDynamicStateComponent;
@@ -57,15 +37,6 @@ export type NpcImportedLayers = Readonly<{
   relationships: NpcRelationshipComponent;
   history: NpcHistoryComponent;
 }>;
-
-/** 新增知识的显式来源：缺此项就不写知识，绝不从 knownFactIds 差集猜来源。 */
-export type AddedNpcKnowledge = Readonly<{
-  factId: FactId;
-  mode: FactChangeSource;
-  sourceNpcId?: NpcId;
-}>;
-
-type LegacyEvidence = Readonly<{ actionId: string; turnNumber: number }>;
 
 // ---------------------------------------------------------------------------
 // 原语
@@ -180,44 +151,12 @@ export function normalizeLegacyNpcEntry(entry: NpcEntry): NpcEntry {
 // legacy → 分层组件
 // ---------------------------------------------------------------------------
 
-// Task 4A：以下是 knowledge entry 语义的**过渡拷贝**，与权威实现并不等价，Task 5 改线时
-// 不要当作同义替换：mode/certainty/disclosure 的闭集判定与 audience 映射的权威实现在
-// gameplay 的 npcKnowledge 模块（domain 不得 import gameplay，故本桥暂时保留自己的一份），
-// 而本拷贝 (1) 完全不校验 per-mode 的 sourceNpcId 必填/禁止策略，(2) compileKnowledge 只从
-// 兼容 hiddenFactIds 反推 disclosure，因此一个事实从 hiddenFactIds 消失就会把已保留的 secret
-// entry 隐式降回 public——权威实现只允许显式 disclosure 通道改这个字段。二者都随过渡桥一起在
-// **Task 5**（传播链改线 + 拆除 compileLegacyNpcSync）删除，不会在 Task 4B 存活下来成为第二事实来源。
-function knowledgeSource(input: Readonly<{
-  factId: FactId;
-  npcId: string;
-  turn: number;
-  evidence: LegacyEvidence | undefined;
-  added: AddedNpcKnowledge | undefined;
-}>): NpcKnowledgeSource {
-  const { evidence, added, factId, npcId, turn } = input;
-  if (evidence === undefined) return { kind: "initial_world", learnedAtTurn: turn };
-  // 过渡写路径必须自带真实行动证据；缺证据时零写入优于伪造。
-  if (added === undefined) {
-    throw new NpcLegacyBridgeError({ code: "legacy_knowledge_evidence_missing", entityId: npcId, factId: String(factId) });
-  }
-  return {
-    kind: "action",
-    mode: added.mode,
-    actionId: evidence.actionId,
-    learnedAtTurn: turn,
-    ...(added.sourceNpcId === undefined ? {} : { sourceNpcId: added.sourceNpcId }),
-  };
-}
-
 function compileKnowledge(input: Readonly<{
   memory: NpcMemory;
-  npcId: string;
   turn: number;
-  evidence: LegacyEvidence | undefined;
   previous: readonly NpcKnowledgeEntry[];
-  addedKnowledge: readonly AddedNpcKnowledge[];
 }>): NpcKnowledgeComponent {
-  const { memory, npcId, turn, evidence, previous, addedKnowledge } = input;
+  const { memory, turn, previous } = input;
   const hidden = new Set(memory.hiddenFactIds.map(String));
   const entries = memory.knownFactIds.map((factId): NpcKnowledgeEntry => {
     const retained = findFact(previous, factId);
@@ -230,13 +169,7 @@ function compileKnowledge(input: Readonly<{
       factId,
       certainty: retained?.certainty ?? "known",
       disclosure,
-      source: retained?.source ?? knowledgeSource({
-        factId,
-        npcId,
-        turn,
-        evidence,
-        added: evidence === undefined ? undefined : findFact(addedKnowledge.map((item) => ({ ...item, factId: item.factId })), factId),
-      }),
+      source: retained?.source ?? { kind: "initial_world", learnedAtTurn: turn },
     };
   });
   return { entries };
@@ -246,12 +179,8 @@ function importEdge(input: Readonly<{
   affinity: number;
   met: boolean;
   turn: number;
-  evidence: LegacyEvidence | undefined;
 }>): DirectedRelationshipEdge {
-  const { affinity, met, turn, evidence } = input;
-  const origin: RelationshipSource = evidence === undefined
-    ? { kind: "initial_world", createdAtTurn: turn, reasonKey: LEGACY_IMPORT_REASON_KEY }
-    : { kind: "action", actionId: evidence.actionId, turnNumber: evidence.turnNumber };
+  const { affinity, met, turn } = input;
   return {
     targetId: PLAYER_ENTITY_ID,
     dimensions: { affinity, trust: 0, fear: 0, hostility: 0 },
@@ -259,7 +188,7 @@ function importEdge(input: Readonly<{
     trend: "stable",
     commitments: [],
     evidence: [],
-    origin,
+    origin: { kind: "initial_world", createdAtTurn: turn, reasonKey: LEGACY_IMPORT_REASON_KEY },
     lastChangedAtTurn: turn,
   };
 }
@@ -272,11 +201,10 @@ function compileRelationships(input: Readonly<{
   memory: NpcMemory;
   met: boolean;
   turn: number;
-  evidence: LegacyEvidence | undefined;
   previous: readonly DirectedRelationshipEdge[];
   freshImport: boolean;
 }>): NpcRelationshipComponent {
-  const { memory, met, turn, evidence, previous, freshImport } = input;
+  const { memory, met, turn, previous, freshImport } = input;
   const affinity = memory.relationship.affinity;
   const index = previous.findIndex((edge) => edge.targetId === PLAYER_ENTITY_ID);
   let outgoing: DirectedRelationshipEdge[];
@@ -288,7 +216,7 @@ function compileRelationships(input: Readonly<{
         ? { ...entry, dimensions: { ...entry.dimensions, affinity }, lastChangedAtTurn: turn }
         : entry);
   } else if (freshImport || affinity !== 0) {
-    outgoing = [...previous, importEdge({ affinity, met, turn, evidence })];
+    outgoing = [...previous, importEdge({ affinity, met, turn })];
   } else {
     outgoing = [...previous];
   }
@@ -313,13 +241,11 @@ function buildLayers(input: Readonly<{
   entry: NpcEntry;
   createdAtTurn: number;
   previous: NpcEntityRecord | undefined;
-  evidence: LegacyEvidence | undefined;
-  addedKnowledge: readonly AddedNpcKnowledge[];
 }>): NpcImportedLayers {
-  const { entry, createdAtTurn, previous, evidence, addedKnowledge } = input;
+  const { entry, createdAtTurn, previous } = input;
   const memory = normalizeLegacyNpcMemory(entry.memory);
   const normalized: NpcEntry = { ...entry, memory };
-  const turn = evidence?.turnNumber ?? createdAtTurn;
+  const turn = createdAtTurn;
   const npcId = String(entry.id);
   return {
     anchors: previous?.identity.anchors ?? legacyImportAnchors(),
@@ -332,17 +258,13 @@ function buildLayers(input: Readonly<{
     }),
     knowledge: compileKnowledge({
       memory,
-      npcId,
       turn,
-      evidence,
       previous: previous?.knowledge.entries ?? [],
-      addedKnowledge,
     }),
     relationships: compileRelationships({
       memory,
       met: normalized.met,
       turn,
-      evidence,
       previous: previous?.relationships.outgoing ?? [],
       freshImport: previous === undefined,
     }),
@@ -364,33 +286,5 @@ export function importNpcLayers(input: Readonly<{
     entry: input.entry,
     createdAtTurn: input.createdAtTurn,
     previous: input.previous,
-    evidence: undefined,
-    addedKnowledge: [],
   });
-}
-
-/**
- * 规则链过渡桥：把旧 NPC 裁决结果折叠回四个分层组件。
- * 差量之外的字段一律继承 before；新增知识只能来自 addedKnowledge。
- */
-export function compileLegacyNpcSync(input: Readonly<{
-  before: NpcEntityRecord;
-  afterLegacy: NpcEntry;
-  actionId: string;
-  turnNumber: number;
-  addedKnowledge: readonly AddedNpcKnowledge[];
-}>): Readonly<{
-  dynamicState: NpcDynamicStateComponent;
-  knowledge: NpcKnowledgeComponent;
-  relationships: NpcRelationshipComponent;
-  history: NpcHistoryComponent;
-}> {
-  const { dynamicState, knowledge, relationships, history } = buildLayers({
-    entry: input.afterLegacy,
-    createdAtTurn: input.turnNumber,
-    previous: input.before,
-    evidence: { actionId: input.actionId, turnNumber: input.turnNumber },
-    addedKnowledge: input.addedKnowledge,
-  });
-  return { dynamicState, knowledge, relationships, history };
 }

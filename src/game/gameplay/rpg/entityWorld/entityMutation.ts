@@ -11,9 +11,7 @@ import {
   type NpcEntityRecord,
   type NpcHistoryComponent,
   type NpcKnowledgeCertainty,
-  type NpcKnowledgeComponent,
   type NpcKnowledgeDisclosure,
-  type NpcRelationshipComponent,
   type PossessionComponent,
   type RelationshipSignal,
   type RelationshipSource,
@@ -34,17 +32,6 @@ import {
   type RelationshipPolicyErrorCode,
   type RelationshipTargetId,
 } from "@/game/gameplay/rpg/npcMemory";
-
-/**
- * 过渡桥载荷：四个分层组件的 exact-key 集合，由 domain 的 compileLegacyNpcSync 产出。
- * 桥不携带 identity/anchors/position/core，也永远不携带 legacy memory 本体。
- */
-export type NpcLegacySyncLayers = Readonly<{
-  dynamicState: NpcDynamicStateComponent;
-  knowledge: NpcKnowledgeComponent;
-  relationships: NpcRelationshipComponent;
-  history: NpcHistoryComponent;
-}>;
 
 /**
  * 关系写入声明的来源：**直接沿用 domain 的判别联合**（npcComponents.ts 的 `RelationshipSource`），
@@ -77,7 +64,6 @@ export type EntityMutation =
   | { readonly kind: "move_npc"; readonly npcId: NpcId; readonly toLocationId: LocationId }
   | { readonly kind: "set_location_unlocked"; readonly locationId: LocationId; readonly unlocked: boolean }
   | { readonly kind: "set_location_visited"; readonly locationId: LocationId; readonly visited: boolean }
-  | { readonly kind: "sync_npc_legacy_memory"; readonly npcId: NpcId; readonly npc: NpcLegacySyncLayers }
   /**
    * 关系信号：一支 mutation 只提交一个 signal（同行动内的提交顺序由批次数组顺序决定，
    * 规则层的同行动累计预算对该顺序敏感，见 npcMemory 文件头 (b)/(c)）。
@@ -553,7 +539,7 @@ function interactionRelationshipDelta(npc: NpcEntityRecord, baseline: NpcBatchBa
  * 所以这段 prose 与条目里的 relationshipDelta 不可能互相矛盾。
  * 它只读入参、不写任何东西：放在本文件是为了跟盖章处贴在一起，不构成第二条写入通道。
  */
-export function formatNpcInteractionSummary(input: Readonly<{
+function formatNpcInteractionSummary(input: Readonly<{
   met: boolean;
   dialogueAct: NpcInteraction["dialogueAct"];
   outcome: NpcInteraction["outcome"];
@@ -617,22 +603,6 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
         ? { ...location.record.location, unlocked: mutation.unlocked }
         : { ...location.record.location, visited: mutation.visited };
       return { ok: true, records: replaceRecord(records, mutation.locationId, { ...location.record, location: locationComponent }) };
-    }
-    case "sync_npc_legacy_memory": {
-      const npc = recordOfKind(records, mutation.npcId, "npc");
-      if (!npc.ok) return npc;
-      const { dynamicState, knowledge, relationships, history } = mutation.npc;
-      // 逐键写入而非展开载荷：桥只覆盖四个分层组件，core/identity/position 不在其权限内。
-      return {
-        ok: true,
-        records: replaceRecord(records, mutation.npcId, {
-          ...npc.record,
-          dynamicState,
-          knowledge,
-          relationships,
-          history,
-        }),
-      };
     }
     case "apply_relationship_signal": {
       // 边界校验在前，数值/stage/trend/证据/承诺一律交回规则层：本分支一个数字都不重算。

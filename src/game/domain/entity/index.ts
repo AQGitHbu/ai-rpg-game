@@ -103,17 +103,13 @@ export {
 } from "./entityStore";
 export {
   LEGACY_IMPORT_REASON_KEY,
-  compileLegacyNpcSync,
   importNpcLayers,
   normalizeLegacyNpcEntry,
   normalizeLegacyNpcMemory,
-  NpcLegacyBridgeError,
   npcLegacyGoalId,
   projectNpcEntry,
   projectNpcMemory,
-  type AddedNpcKnowledge,
   type NpcImportedLayers,
-  type NpcLegacyBridgeErrorCode,
 } from "./npcProjection";
 export {
   compileEntityStoreFromCompatibilityProjection,

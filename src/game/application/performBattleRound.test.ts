@@ -15,7 +15,7 @@ import { createInitialWorldState } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { GameEvent } from "@/game/domain/events";
 import {
-  compileEntityStoreFromCompatibilityProjection, compileLegacyNpcSync, createEntityStore,
+  compileEntityStoreFromCompatibilityProjection, createEntityStore,
   entitiesOfKind, projectEntityStore, projectNpcEntry,
   type EnemyEntityRecord, type EntityRecord, type EntityStore, type FactEntityRecord,
   type NpcEntityRecord,
@@ -497,37 +497,36 @@ function staleCandidateStoryState(): StoryState {
 }
 
 /**
- * 战斗中改写 dynamic / knowledge / relationships / history：情绪走窄的
- * set_npc_emotion，另外三层仍走现有生产写入桥。回滚契约必须先按分层组件已写入
- * 的世界状态证明，否则 Task 3/5/7 接入战斗内知识、关系与历史时会静默丢档。
+ * 战斗中改写 dynamic / knowledge / relationships / history：每一层都走对应的窄
+ * mutation。回滚契约必须先按分层组件已写入的世界状态证明，否则战斗内知识、关系
+ * 与历史接入会静默丢档。
  */
 async function writeNpcLayersMidBattle(harness: InMemoryHarness): Promise<number> {
   const record = harness.getRecord();
   if (record === null) throw new Error("fixture must keep an active game");
-  const before = npcRecordOf(record.worldState.entityStore);
-  const legacy = projectNpcEntry(before);
-  const layers = compileLegacyNpcSync({
-    before,
-    afterLegacy: {
-      ...legacy,
-      memory: {
-        ...legacy.memory,
-        knownFactIds: [...legacy.memory.knownFactIds, MID_BATTLE_FACT_ID],
-        relationship: { affinity: legacy.memory.relationship.affinity + 7 },
-        interactionHistory: [
-          ...legacy.memory.interactionHistory,
-          npcInteraction("mid_battle_act", 2, [MID_BATTLE_FACT_ID]),
-        ],
-      },
-    },
-    actionId: "mid_battle_act",
-    turnNumber: 2,
-    addedKnowledge: [{ factId: MID_BATTLE_FACT_ID, mode: "player_told" }],
-  });
   const applied = applyEntityMutations(record.worldState, [{
-    kind: "sync_npc_legacy_memory",
+    kind: "record_npc_knowledge",
     npcId: NPC_ID,
-    npc: layers,
+    factId: MID_BATTLE_FACT_ID,
+    certainty: "known",
+    disclosure: "public",
+    source: { kind: "action", mode: "player_told", actionId: "mid_battle_act", turnNumber: 2 },
+  }, {
+    kind: "apply_relationship_signal",
+    fromNpcId: NPC_ID,
+    targetId: PLAYER_ENTITY_ID,
+    signal: "supported",
+    source: { kind: "action", actionId: "mid_battle_act", turnNumber: 2 },
+  }, {
+    kind: "record_npc_interaction",
+    npcId: NPC_ID,
+    turnNumber: 2,
+    actionId: "mid_battle_act",
+    locationId: LOC_0,
+    dialogueAct: "ask",
+    topicSummary: "战斗中的腰牌",
+    outcome: "positive",
+    learnedFactIds: [MID_BATTLE_FACT_ID],
   }, {
     kind: "set_npc_emotion",
     npcId: NPC_ID,
