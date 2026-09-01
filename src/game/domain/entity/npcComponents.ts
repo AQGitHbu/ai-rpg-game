@@ -177,6 +177,67 @@ export type NpcGoalProposal = Readonly<{
   reason: string;
 }>;
 
+const NPC_ANCHOR_KEYS = ["selfConcept", "values", "speechStyle", "capabilityBoundaries", "taboos"] as const;
+const NPC_GOAL_PROPOSAL_KEYS = ["horizon", "description", "priority", "reason"] as const;
+
+function boundedCreationText(value: unknown): value is string {
+  return typeof value === "string"
+    && value.trim().length > 0
+    && value.trim().length <= NPC_CREATION_TEXT_MAX_LENGTH;
+}
+
+function hasExactCreationKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const allowed = new Set(keys);
+  return Object.keys(value).every((key) => allowed.has(key))
+    && keys.every((key) => key in value);
+}
+
+/** Provider/approval boundary parser shared by opening and world-delta NPC creation. */
+export function parseNpcCreationAnchors(value: unknown): NpcIdentityAnchors | null {
+  if (!isRecord(value) || !hasExactCreationKeys(value, NPC_ANCHOR_KEYS)) return null;
+  if (!boundedCreationText(value.selfConcept) || !boundedCreationText(value.speechStyle)) return null;
+  const parseList = (raw: unknown, min: number): readonly string[] | null => {
+    if (!Array.isArray(raw) || raw.length < min || raw.length > NPC_ANCHOR_LIST_MAX) return null;
+    if (!raw.every(boundedCreationText)) return null;
+    const values = raw as readonly string[];
+    return new Set(values).size === values.length ? values : null;
+  };
+  const values = parseList(value.values, NPC_ANCHOR_LIST_MIN);
+  const capabilityBoundaries = parseList(value.capabilityBoundaries, NPC_ANCHOR_LIST_MIN);
+  const taboos = parseList(value.taboos, NPC_TABOO_LIST_MIN);
+  if (values === null || capabilityBoundaries === null || taboos === null) return null;
+  const anchors = {
+    selfConcept: value.selfConcept,
+    values,
+    speechStyle: value.speechStyle,
+    capabilityBoundaries,
+    taboos,
+  };
+  return validateNpcIdentityAnchors(anchors).length === 0 ? anchors : null;
+}
+
+/** Provider/approval boundary parser; IDs and runtime status are intentionally absent. */
+export function parseNpcGoalProposals(value: unknown): readonly NpcGoalProposal[] | null {
+  if (!Array.isArray(value) || value.length < NPC_GOAL_LIST_MIN || value.length > NPC_GOAL_LIST_MAX) return null;
+  const descriptions = new Set<string>();
+  const proposals: NpcGoalProposal[] = [];
+  for (const raw of value) {
+    if (!isRecord(raw) || !hasExactCreationKeys(raw, NPC_GOAL_PROPOSAL_KEYS)) return null;
+    if (!NPC_GOAL_HORIZONS.includes(raw.horizon as NpcGoalHorizon)) return null;
+    if (!NPC_GOAL_PRIORITIES.includes(raw.priority as NpcGoalPriority)) return null;
+    if (!boundedCreationText(raw.description) || !boundedCreationText(raw.reason)) return null;
+    if (descriptions.has(raw.description)) return null;
+    descriptions.add(raw.description);
+    proposals.push({
+      horizon: raw.horizon as NpcGoalHorizon,
+      description: raw.description,
+      priority: raw.priority as NpcGoalPriority,
+      reason: raw.reason,
+    });
+  }
+  return proposals;
+}
+
 export type NpcDynamicStateComponent = Readonly<{
   isCompanion: boolean;
   met: boolean;

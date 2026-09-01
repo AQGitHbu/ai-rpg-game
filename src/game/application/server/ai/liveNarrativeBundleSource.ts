@@ -73,7 +73,7 @@ function buildOpeningPrompt(context: Extract<NarrativeBundleSourceContext, { rea
 - player 必须是 {"name":"...","identity":"...","backgroundSummary":"...","baseStats":{"hp":100,"attack":10,"defense":5}}。姓名与身份必须保留开局输入。
 - storyContract 必须是 {"version":1,"targetActs":${targetActs},"centralConflict":"...","endingDirections":[{"key":"trust","theme":"..."},{"key":"doubt","theme":"..."}]}。
 - opening.location 必须有 name、description、buildingName 和固定 scale:"town"。
-- opening.npc 必须有 name、role、description、knownFactKeys、privateFactKeys、goals；两个 factKeys 数组只能引用 world.publicFacts 的 key。
+- opening.npc 必须有 name、role、description、knownFactKeys、privateFactKeys、anchors、goals；两个 factKeys 数组只能引用 world.publicFacts 的 key。anchors 必须包含 selfConcept、values、speechStyle、capabilityBoundaries、taboos 五个字段；goals 必须是至少一条的 typed creation proposals，每项只能包含 horizon、description、priority、reason。goalId/status 由服务端生成，禁止输出。
 - opening.quest 必须有 name、description 和固定 objective:{"kind":"talk_to_opening_npc"}。
 
 # JSON 轮廓
@@ -86,7 +86,11 @@ function buildOpeningPrompt(context: Extract<NarrativeBundleSourceContext, { rea
     "storyContract": { "version": 1, "targetActs": ${targetActs}, "centralConflict": "...", "endingDirections": [{ "key": "trust", "theme": "..." }, { "key": "doubt", "theme": "..." }] },
     "opening": {
       "location": { "name": "...", "description": "...", "buildingName": "...", "scale": "town" },
-      "npc": { "name": "...", "role": "...", "description": "...", "knownFactKeys": ["fact_0"], "privateFactKeys": [], "goals": ["..."] },
+      "npc": {
+        "name": "...", "role": "...", "description": "...", "knownFactKeys": ["fact_0"], "privateFactKeys": [],
+        "anchors": { "selfConcept": "...", "values": ["..."], "speechStyle": "...", "capabilityBoundaries": ["..."], "taboos": [] },
+        "goals": [{ "horizon": "short", "description": "...", "priority": 3, "reason": "..." }]
+      },
       "quest": { "name": "...", "description": "...", "objective": { "kind": "talk_to_opening_npc" } }
     }
   },
@@ -113,9 +117,11 @@ function firstString(...values: readonly unknown[]): string {
 }
 
 /**
- * Some compatible providers still emit the prior opening vocabulary despite
+ * Some compatible providers still emit prior presentation vocabulary despite
  * the current prompt. This is structural normalization only: it reuses text
  * already returned by the provider and never writes a rule-owned narrative.
+ * Creation fields are passed through untouched so missing/legacy material fails
+ * closed in parseOpeningGenerationCandidate instead of receiving defaults.
  */
 function normalizeOpeningCandidateShape(value: unknown, targetActs: 3 | 5): unknown {
   const raw = asRecord(value);
@@ -185,7 +191,8 @@ function normalizeOpeningCandidateShape(value: unknown, targetActs: 3 | 5): unkn
           description: firstString(providerNpc?.description, providerNpc?.role),
           knownFactKeys: Array.isArray(providerNpc?.knownFactKeys) ? providerNpc.knownFactKeys : [],
           privateFactKeys: Array.isArray(providerNpc?.privateFactKeys) ? providerNpc.privateFactKeys : [],
-          goals: Array.isArray(providerNpc?.goals) ? providerNpc.goals : [],
+          ...(providerNpc?.anchors === undefined ? {} : { anchors: providerNpc.anchors }),
+          ...(providerNpc?.goals === undefined ? {} : { goals: providerNpc.goals }),
         },
         quest: {
           ...(quest ?? {}),

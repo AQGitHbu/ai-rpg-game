@@ -277,7 +277,11 @@ function actBoundaryFixture(overrides: WorldStateFixtureOverrides = {}) {
     worldDelta: {
       beatSummary: "旧案把侠客引向镇外。",
       newLocation: { name: "枯柳驿", description: "镇外荒废的驿站。", scale: "scene", placement: "world", connectFromLocationId: "loc_0" },
-      newNpc: { name: "老驼子", role: "守夜人", description: "守在驿站里的老人。", locationRef: { kind: "new_location" }, goals: ["守住秘密"] },
+      newNpc: {
+        name: "老驼子", role: "守夜人", description: "守在驿站里的老人。", locationRef: { kind: "new_location" },
+        anchors: { selfConcept: "守着旧案秘密的老人", values: ["守诺"], speechStyle: "低声而谨慎", capabilityBoundaries: ["只知道亲身见闻"], taboos: [] },
+        goals: [{ horizon: "short", description: "守住秘密", priority: 3, reason: "旧案仍不能落入旁人之手" }],
+      },
       newItem: { name: "半块令牌", description: "断裂的旧令牌。", locationRef: "new_location" },
       newEnemy: { name: "蒙面劫匪", tier: "normal", locationRef: "new_location" },
       newFact: null,

@@ -42,6 +42,17 @@ function withProjection(base: WorldState, overrides: Partial<EntityCompatibility
   });
 }
 
+const NPC_CREATION = {
+  anchors: {
+    selfConcept: "守信的传讯人",
+    values: ["守信"],
+    speechStyle: "谨慎而直接",
+    capabilityBoundaries: ["不超出自身所知"],
+    taboos: [],
+  },
+  goals: [{ horizon: "short", description: "送达密信", priority: 3, reason: "必须完成传递" }],
+};
+
 const pacingNeed: EvolutionNeed = { kind: "pacing", pacingNeed: "complicate" };
 
 describe("parseWorldDeltaProposal", () => {
@@ -49,8 +60,9 @@ describe("parseWorldDeltaProposal", () => {
     const parsed = parseWorldDeltaProposal({
       beatSummary: "补给一名在场人物",
       newNpc: {
+        ...NPC_CREATION,
         name: "新来客", role: "过客", description: "路过的旅人。",
-        locationRef: { kind: "existing", id: "loc_a" }, goals: ["随缘"],
+        locationRef: { kind: "existing", id: "loc_a" },
       },
     });
     expect(parsed).not.toBeNull();
@@ -79,8 +91,9 @@ describe("parseWorldDeltaProposal", () => {
         connectFromLocationId: "loc_a",
       },
       newNpc: {
+        ...NPC_CREATION,
         name: "茶馆线人", role: "传讯人", description: "等候交信的线人。",
-        locationRef: { kind: "new_location" }, goals: [],
+        locationRef: { kind: "new_location" },
       },
     });
     expect(townBuilding?.proposal.newLocation?.placement).toBe("town_building");
@@ -209,7 +222,7 @@ describe("filterProposalRefs", () => {
 
     const npc = parseWorldDeltaProposal({
       beatSummary: "新人物",
-      newNpc: { name: "新来客", role: "过客", description: "路过的旅人。", locationRef: { kind: "existing", id: "loc_missing" }, goals: [] },
+      newNpc: { ...NPC_CREATION, name: "新来客", role: "过客", description: "路过的旅人。", locationRef: { kind: "existing", id: "loc_missing" } },
     })!.proposal;
     expect(filterProposalRefs(npc, ws)).toBeNull();
   });
@@ -218,7 +231,7 @@ describe("filterProposalRefs", () => {
     const ws = makeWorld();
     const proposal = parseWorldDeltaProposal({
       beatSummary: "新人物",
-      newNpc: { name: "新来客", role: "过客", description: "路过的旅人。", locationRef: { kind: "existing", id: "loc_a" }, goals: [] },
+      newNpc: { ...NPC_CREATION, name: "新来客", role: "过客", description: "路过的旅人。", locationRef: { kind: "existing", id: "loc_a" } },
     })!.proposal;
     expect(filterProposalRefs(proposal, ws)).not.toBeNull();
   });
@@ -231,7 +244,7 @@ describe("filterProposalRefs", () => {
     const proposal = parseWorldDeltaProposal({
       beatSummary: "旧角色指出了新的去处",
       newLocation: { name: "潮痕深处", description: "裂隙尽头的能量空腔。", scale: "scene", placement: "world", connectFromLocationId: "loc_a" },
-      newNpc: { name: "韩征", role: "掌柜", description: "已经在客栈中的掌柜。", locationRef: { kind: "existing", id: "loc_a" }, goals: [] },
+      newNpc: { ...NPC_CREATION, name: "韩征", role: "掌柜", description: "已经在客栈中的掌柜。", locationRef: { kind: "existing", id: "loc_a" } },
       nextMainQuest: { name: "进入潮痕深处", description: "沿着裂隙深入。", objectiveText: "前往潮痕深处。" },
     })!.proposal;
 

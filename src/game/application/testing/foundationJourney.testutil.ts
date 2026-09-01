@@ -118,7 +118,14 @@ function journeyNextActProposal(act: number, currentLocationId: string): WorldDe
       role: "信使",
       description: `风尘仆仆赶来的第${act}幕传讯人。`,
       locationRef: { kind: "new_location" },
-      goals: [`传递第${act}幕的线索`],
+      anchors: {
+        selfConcept: `守着第${act}幕线索的信使`,
+        values: ["守信"],
+        speechStyle: "谨慎而直接",
+        capabilityBoundaries: ["只能说明亲身见闻"],
+        taboos: ["不篡改收到的消息"],
+      },
+      goals: [{ horizon: "short", description: `传递第${act}幕的线索`, priority: 3, reason: `这封信关系到第${act}幕的追索` }],
     },
     newItem: {
       name: `信物·${act}`,

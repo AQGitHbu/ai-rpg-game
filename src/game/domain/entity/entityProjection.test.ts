@@ -267,12 +267,32 @@ describe("entity 兼容投影：legacy → store → legacy", () => {
       projection,
       createdAtTurn: 0,
       npcCreationComponentsById: new Map([[legacy.id, explicit]]),
-    } as Parameters<typeof compileEntityStoreFromCompatibilityProjection>[0];
+    } as unknown as Parameters<typeof compileEntityStoreFromCompatibilityProjection>[0];
 
     const store = compileEntityStoreFromCompatibilityProjection(input);
     const npc = entitiesOfKind(store, "npc").find((record) => record.core.id === legacy.id);
     expect(npc?.identity.anchors).toEqual(explicit.anchors);
     expect(npc?.dynamicState.goals).toEqual(explicit.dynamicState.goals);
+  });
+
+  it("rejects malformed explicit creation components with a stable typed code", () => {
+    const projection = singleNpcProjection();
+    const imported = importNpcLayers({ entry: projection.npcs[0]!, createdAtTurn: 0 });
+    const input = {
+      projection,
+      createdAtTurn: 0,
+      npcCreationComponentsById: new Map([[projection.npcs[0]!.id, {
+        ...imported,
+        dynamicState: { ...imported.dynamicState, goals: [{ description: "missing server fields" }] },
+      }]]),
+    } as unknown as Parameters<typeof compileEntityStoreFromCompatibilityProjection>[0];
+
+    expect(() => compileEntityStoreFromCompatibilityProjection(input)).toThrowError(EntityProjectionInvariantError);
+    try {
+      compileEntityStoreFromCompatibilityProjection(input);
+    } catch (error) {
+      expect(error).toMatchObject({ code: "npc_creation_components_invalid", entityId: "npc_0" });
+    }
   });
 
   it("retains every previous NPC component despite changed legacy memory", () => {

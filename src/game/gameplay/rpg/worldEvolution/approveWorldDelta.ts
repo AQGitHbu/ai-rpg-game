@@ -21,10 +21,16 @@ import {
 } from "@/game/domain/storyBudget";
 import type { EvolutionNeed, WorldDeltaProposal, StoryEvolutionState } from "@/game/domain/worldDelta";
 import {
-  asLocationId, asNpcId, asItemId, asEnemyId, asFactId, asQuestId, asEndingId,
+  asLocationId, asNpcId, asItemId, asEnemyId, asFactId, asQuestId, asEndingId, PLAYER_ENTITY_ID,
   type LocationId, type NpcId, type ItemId, type EnemyId, type FactId, type QuestId, type EndingId,
 } from "@/game/domain/worldEntity";
 import { ENEMY_COMBAT_STATS, toStatBlock } from "@/game/domain/combat";
+import { npcGoalId } from "@/game/domain/entity";
+import type {
+  NpcDynamicStateComponent, NpcGoal, NpcHistoryComponent, NpcImportedLayers,
+  NpcKnowledgeComponent, NpcRelationshipComponent,
+} from "@/game/domain/entity";
+import { parseNpcCreationAnchors, parseNpcGoalProposals } from "@/game/domain/entity";
 import { deriveKeyEndingNpcId } from "./keyEndingNpc";
 
 // ---------------------------------------------------------------------------
@@ -149,7 +155,8 @@ export type WorldDeltaRejection =
   | "duplicate_name"
   | "unreachable_objective"
   | "main_quest_conflict"
-  | "ending_pair_invalid";
+  | "ending_pair_invalid"
+  | "invalid_npc_creation_components";
 
 /**
  * unreachable_objective 的内部 reason：物化新世界地点时，目标 NPC 必须落在该
@@ -175,6 +182,7 @@ export type ApprovedWorldDeltaCore = {
   readonly mintedEndingIds: readonly EndingId[];
   readonly newLocations: readonly LocationEntry[];
   readonly newNpcs: readonly NpcEntry[];
+  readonly npcCreationComponentsById: ReadonlyMap<NpcId, NpcImportedLayers>;
   readonly newItems: readonly ItemEntry[];
   readonly newEnemies: readonly EnemyEntry[];
   readonly newFacts: readonly WorldFactEntry[];
@@ -224,6 +232,56 @@ function validName(name: string): boolean {
 function validText(text: string): boolean {
   const t = text.trim();
   return t.length > 0 && t.length <= MAX_ENTITY_TEXT_LENGTH;
+}
+
+function buildNpcCreationComponents(input: Readonly<{
+  npc: NonNullable<WorldDeltaProposal["newNpc"]>;
+  npcId: NpcId;
+  knownFactIds: readonly FactId[];
+  privateFactIds: readonly FactId[];
+  createdAtTurn: number;
+}>): NpcImportedLayers | null {
+  const anchors = parseNpcCreationAnchors(input.npc.anchors);
+  const proposals = parseNpcGoalProposals(input.npc.goals);
+  if (anchors === null || proposals === null) return null;
+
+  const privateFactIdSet = new Set(input.privateFactIds);
+  const knowledgeFactIds = [...new Set([...input.knownFactIds, ...input.privateFactIds])];
+  const knowledge: NpcKnowledgeComponent = {
+    entries: knowledgeFactIds.map((factId) => ({
+      factId,
+      certainty: "known",
+      disclosure: privateFactIdSet.has(factId) ? "secret" : "public",
+      source: { kind: "initial_world", learnedAtTurn: input.createdAtTurn },
+    })),
+  };
+  const dynamicState: NpcDynamicStateComponent = {
+    isCompanion: false,
+    met: false,
+    emotion: "neutral",
+    goals: proposals.map((proposal, index): NpcGoal => ({
+      goalId: npcGoalId(String(input.npcId), index + 1),
+      horizon: proposal.horizon,
+      description: proposal.description,
+      priority: proposal.priority,
+      status: "active",
+      reason: proposal.reason,
+    })),
+  };
+  const relationships: NpcRelationshipComponent = {
+    outgoing: [{
+      targetId: PLAYER_ENTITY_ID,
+      dimensions: { affinity: 0, trust: 0, fear: 0, hostility: 0 },
+      stage: "unknown",
+      trend: "stable",
+      commitments: [],
+      evidence: [],
+      origin: { kind: "initial_world", createdAtTurn: input.createdAtTurn, reasonKey: "world_delta_npc" },
+      lastChangedAtTurn: input.createdAtTurn,
+    }],
+  };
+  const history: NpcHistoryComponent = { interactions: [] };
+  return { anchors, dynamicState, knowledge, relationships, history };
 }
 
 function violatesGenre(ws: WorldState, texts: readonly string[]): boolean {
@@ -584,6 +642,9 @@ export function approveWorldDelta(input: {
   if (p.newNpc && (!validName(p.newNpc.name) || !validText(p.newNpc.role) || !validText(p.newNpc.description))) {
     return reject("genre_constraint", "npc_name_or_text");
   }
+  if (p.newNpc && (parseNpcCreationAnchors(p.newNpc.anchors) === null || parseNpcGoalProposals(p.newNpc.goals) === null)) {
+    return reject("invalid_npc_creation_components", "npc_creation_components");
+  }
   if (p.newLocation && (!validName(p.newLocation.name) || !validText(p.newLocation.description))) {
     return reject("genre_constraint", "location_name_or_text");
   }
@@ -608,7 +669,19 @@ export function approveWorldDelta(input: {
   const proposedText = [
     p.beatSummary,
     ...(p.newLocation ? [p.newLocation.name, p.newLocation.description] : []),
-    ...(p.newNpc ? [p.newNpc.name, p.newNpc.role, p.newNpc.description, ...p.newNpc.goals] : []),
+    ...(p.newNpc
+      ? [
+          p.newNpc.name,
+          p.newNpc.role,
+          p.newNpc.description,
+          p.newNpc.anchors.selfConcept,
+          p.newNpc.anchors.speechStyle,
+          ...p.newNpc.anchors.values,
+          ...p.newNpc.anchors.capabilityBoundaries,
+          ...p.newNpc.anchors.taboos,
+          ...p.newNpc.goals.flatMap((goal) => [goal.description, goal.reason]),
+        ]
+      : []),
     ...(p.newItem ? [p.newItem.name, p.newItem.description] : []),
     ...(p.newEnemy ? [p.newEnemy.name] : []),
     ...(p.newFact ? [p.newFact.text] : []),
@@ -739,7 +812,7 @@ export function approveWorldDelta(input: {
         interactionHistory: [],
         relationship: { affinity: 0 },
         emotion: "neutral",
-        goals: p.newNpc.goals,
+        goals: p.newNpc.goals.map((goal) => goal.description),
       },
     });
     if (p.newLocation?.placement === "town_building") {
@@ -825,6 +898,21 @@ export function approveWorldDelta(input: {
     );
   }
 
+  const npcCreationComponentsById = new Map<NpcId, NpcImportedLayers>();
+  if (p.newNpc && ids.npcId) {
+    const knownFactIds = p.newFact?.visibility === "public" && ids.factId ? [ids.factId] : [];
+    const privateFactIds = p.newFact?.visibility === "npc_private" && ids.factId ? [ids.factId] : [];
+    const components = buildNpcCreationComponents({
+      npc: p.newNpc,
+      npcId: ids.npcId,
+      knownFactIds,
+      privateFactIds,
+      createdAtTurn: ss.turnNumber,
+    });
+    if (components === null) return reject("invalid_npc_creation_components", "npc_creation_components");
+    npcCreationComponentsById.set(ids.npcId, components);
+  }
+
   const nextEvolution: StoryEvolutionState = {
     nextLocationOrdinal: ids.locationId ? ss.evolution.nextLocationOrdinal + 1 : ss.evolution.nextLocationOrdinal,
     nextNpcOrdinal: ids.npcId ? ss.evolution.nextNpcOrdinal + 1 : ss.evolution.nextNpcOrdinal,
@@ -851,6 +939,7 @@ export function approveWorldDelta(input: {
       mintedEndingIds: ids.endingIds,
       newLocations,
       newNpcs,
+      npcCreationComponentsById,
       newItems,
       newEnemies,
       newFacts,

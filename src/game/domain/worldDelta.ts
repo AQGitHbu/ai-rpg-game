@@ -10,6 +10,7 @@ import type {
 } from "./worldEntity";
 import type { StoryState } from "./storyState";
 import type { EndingRequirement, InvestigationApproach, WorldState } from "./worldState";
+import type { NpcGoalProposal, NpcIdentityAnchors } from "./entity/npcComponents";
 
 // ---------------------------------------------------------------------------
 // 故事演化状态与需求：运行时按需具象化的推进账本。
@@ -74,7 +75,8 @@ export type WorldDeltaProposal = {
     readonly role: string;
     readonly description: string;
     readonly locationRef: { readonly kind: "existing"; readonly id: string } | { readonly kind: "new_location" };
-    readonly goals: readonly string[];
+    readonly anchors: NpcIdentityAnchors;
+    readonly goals: readonly NpcGoalProposal[];
   };
   readonly newItem: null | { readonly name: string; readonly description: string; readonly locationRef: "current" | "new_location" };
   readonly newEnemy: null | { readonly name: string; readonly tier: "normal" | "boss"; readonly locationRef: "current" | "new_location" };

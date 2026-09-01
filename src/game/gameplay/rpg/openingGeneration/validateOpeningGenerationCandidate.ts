@@ -1,17 +1,7 @@
 import type { GameLength } from "@/game/domain/newGame";
 import { TARGET_ACTS } from "@/game/domain/storyBudget";
 import type { OpeningGenerationCandidate } from "@/game/domain/openingGenerationCandidate";
-import {
-  NPC_ANCHOR_LIST_MAX,
-  NPC_ANCHOR_LIST_MIN,
-  NPC_CREATION_TEXT_MAX_LENGTH,
-  NPC_GOAL_HORIZONS,
-  NPC_GOAL_LIST_MAX,
-  NPC_GOAL_LIST_MIN,
-  NPC_GOAL_PRIORITIES,
-  validateNpcIdentityAnchors,
-} from "@/game/domain/entity";
-import type { NpcGoalProposal } from "@/game/domain/entity";
+import { parseNpcCreationAnchors, parseNpcGoalProposals } from "@/game/domain/entity";
 import { investigationApproachListIsValid } from "@/game/gameplay/rpg/worldEvolution/approveWorldDelta";
 
 // ---------------------------------------------------------------------------
@@ -47,40 +37,12 @@ export type OpeningGenerationValidationContext = {
   readonly targetActs: number;
 };
 
-function boundedText(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0
-    && value.trim().length <= NPC_CREATION_TEXT_MAX_LENGTH;
-}
-
 function validOpeningAnchors(value: unknown): boolean {
-  if (validateNpcIdentityAnchors(value).length > 0) return false;
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const anchors = value as Record<string, unknown>;
-  if (!boundedText(anchors.selfConcept) || !boundedText(anchors.speechStyle)) return false;
-  for (const [raw, min] of [
-    [anchors.values, NPC_ANCHOR_LIST_MIN],
-    [anchors.capabilityBoundaries, NPC_ANCHOR_LIST_MIN],
-    [anchors.taboos, 0],
-  ] as const) {
-    if (!Array.isArray(raw) || raw.length < min || raw.length > NPC_ANCHOR_LIST_MAX) return false;
-    if (!raw.every(boundedText) || new Set(raw).size !== raw.length) return false;
-  }
-  return true;
+  return parseNpcCreationAnchors(value) !== null;
 }
 
-function validOpeningGoals(value: unknown): value is readonly NpcGoalProposal[] {
-  if (!Array.isArray(value) || value.length < NPC_GOAL_LIST_MIN || value.length > NPC_GOAL_LIST_MAX) return false;
-  const descriptions = new Set<string>();
-  return value.every((raw): raw is NpcGoalProposal => {
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return false;
-    const goal = raw as Record<string, unknown>;
-    if (Object.keys(goal).some((key) => !["horizon", "description", "priority", "reason"].includes(key))) return false;
-    if (!NPC_GOAL_HORIZONS.includes(goal.horizon as NpcGoalProposal["horizon"])) return false;
-    if (!NPC_GOAL_PRIORITIES.includes(goal.priority as NpcGoalProposal["priority"])) return false;
-    if (!boundedText(goal.description) || !boundedText(goal.reason) || descriptions.has(goal.description)) return false;
-    descriptions.add(goal.description);
-    return true;
-  });
+function validOpeningGoals(value: unknown): boolean {
+  return parseNpcGoalProposals(value) !== null;
 }
 
 export function validateOpeningGenerationCandidate(

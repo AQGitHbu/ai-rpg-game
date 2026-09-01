@@ -117,7 +117,7 @@ export function repairOpeningGenerationCandidate(
         const npc = isRecord(opening.npc) ? opening.npc : null;
         if (npc === null) {
           repaired = true;
-          return { name: "", role: "", description: "", knownFactKeys: [], privateFactKeys: [], goals: [] };
+          return { name: "", role: "", description: "", knownFactKeys: [], privateFactKeys: [] };
         }
         return {
           ...npc,
@@ -126,7 +126,6 @@ export function repairOpeningGenerationCandidate(
           description: fixString(npc.description),
           knownFactKeys: fixArray(npc.knownFactKeys),
           privateFactKeys: fixArray(npc.privateFactKeys),
-          goals: fixArray(npc.goals),
         };
       })(),
       quest: (() => {
@@ -329,7 +328,7 @@ ${setupSection}${noveltySection}
 3. prologue：故事序幕（2-3 句），聚焦故事钩子、主角动机和背景冲突：说明主角为什么会来到这条故事线上、什么未解事件或危险正在逼近、以及为什么值得继续行动。它可以提及已确定的世界背景，但不是当前地点的感官镜头；不要描写雨声、光线、气味、脚步、材质等即时细节，不要写 NPC 台词、玩家选项或完整场景表演
 4. storyContract：version=1、targetActs=${targetActs}（必须与档位一致）、centralConflict、endingDirections 恰好两个（key 分别为 "trust" 与 "doubt"）
 5. opening.location：开场地点，scale 必须是 "town"（小镇层级），buildingName 是该地点中承载首个 NPC 的剧情建筑名
-6. opening.npc：开场焦点 NPC，knownFactKeys/privateFactKeys 必须且只能引用 world.publicFacts 中已定义的 fact key
+6. opening.npc：开场焦点 NPC，knownFactKeys/privateFactKeys 必须且只能引用 world.publicFacts 中已定义的 fact key；必须提供完整 anchors；goals 必须是 typed creation proposals。goalId/status 由服务端生成，禁止输出
 7. opening.quest：首个主线任务，objective 只能是 { "kind": "talk_to_opening_npc" }
 8. opening.variationProfile：只描述结构差异，四个字段必须从以下枚举中各选一个：
    sceneFrame = street | market | inn | outskirts | station | workshop | shrine | other
@@ -347,7 +346,11 @@ ${setupSection}${noveltySection}
   "storyContract": { "version": 1, "targetActs": ${targetActs}, "centralConflict": "...", "endingDirections": [{ "key": "trust", "theme": "..." }, { "key": "doubt", "theme": "..." }] },
   "opening": {
     "location": { "name": "...", "description": "...", "buildingName": "...", "scale": "town" },
-    "npc": { "name": "...", "role": "...", "description": "...", "knownFactKeys": ["fact_xxx"], "privateFactKeys": [], "goals": [] },
+    "npc": {
+      "name": "...", "role": "...", "description": "...", "knownFactKeys": ["fact_xxx"], "privateFactKeys": [],
+      "anchors": { "selfConcept": "...", "values": ["..."], "speechStyle": "...", "capabilityBoundaries": ["..."], "taboos": [] },
+      "goals": [{ "horizon": "short", "description": "...", "priority": 3, "reason": "..." }]
+    },
     "quest": { "name": "...", "description": "...", "objective": { "kind": "talk_to_opening_npc" } },
     "variationProfile": { "sceneFrame": "street", "npcArchetype": "witness", "leadType": "trace", "conflictMode": "concealment" }
   }

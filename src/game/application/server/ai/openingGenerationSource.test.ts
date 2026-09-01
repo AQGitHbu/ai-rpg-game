@@ -132,6 +132,47 @@ describe("createOpeningGenerationSource", () => {
     expect(candidate.opening.location.scale).toBe("town");
   });
 
+  it("opening prompt requires five anchors and typed server-completed goal proposals", async () => {
+    let prompt = "";
+    const transport = {
+      complete: async (_config: unknown, messages: readonly { content: string }[]) => {
+        prompt = messages.map((message) => message.content).join("\n");
+        return { ok: true, content: JSON.stringify(validCandidate()), latencyMs: 1 };
+      },
+    } as unknown as AiTransport;
+    const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+
+    await source.generate({ gameType: "wuxia", seed: "typed-opening", gameLength: "short" });
+
+    for (const field of ["selfConcept", "values", "speechStyle", "capabilityBoundaries", "taboos"]) {
+      expect(prompt).toContain(`\"${field}\"`);
+    }
+    for (const field of ["horizon", "description", "priority", "reason"]) {
+      expect(prompt).toContain(`\"${field}\"`);
+    }
+    expect(prompt).not.toContain('\"goals\": []');
+    expect(prompt).toContain("goalId/status 由服务端生成");
+  });
+
+  it("provider-shaped opening without anchors or typed goals stays an invalid response", async () => {
+    const raw = JSON.parse(JSON.stringify(validCandidate())) as Record<string, unknown>;
+    const npc = (raw.opening as Record<string, unknown>).npc as Record<string, unknown>;
+    delete npc.anchors;
+    delete npc.goals;
+    let calls = 0;
+    const transport = {
+      complete: async () => {
+        calls += 1;
+        return { ok: true, content: JSON.stringify(raw), latencyMs: 1 };
+      },
+    } as unknown as AiTransport;
+    const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+
+    await expect(source.generate({ gameType: "wuxia", seed: "missing-creation", gameLength: "short" }))
+      .rejects.toMatchObject({ kind: "AI_RESPONSE_INVALID", phase: "opening" });
+    expect(calls).toBe(1);
+  });
+
   it("接受 fenced JSON 并记录规范化，而不是各 source 自己解析 fence", async () => {
     const logger = { warn: vi.fn() };
     const transport = {

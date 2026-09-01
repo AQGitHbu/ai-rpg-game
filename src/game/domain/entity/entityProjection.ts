@@ -13,6 +13,13 @@ import type {
 import { createEntityStore, entitiesOfKind, type EntityStore } from "./entityStore";
 import { normalizeLegacyNpcEntry, projectNpcEntry } from "./npcProjection";
 import type { NpcImportedLayers } from "./npcProjection";
+import {
+  validateNpcDynamicState,
+  validateNpcHistory,
+  validateNpcIdentityAnchors,
+  validateNpcKnowledge,
+  validateNpcRelationships,
+} from "./npcComponents";
 
 // ---------------------------------------------------------------------------
 // Entity Store ↔ legacy WorldState 兼容投影：两套形状之间唯一的编译/投影通道。
@@ -62,7 +69,8 @@ export type EntityProjectionIssue = Readonly<{
     | "npc_multiple_locations"
     | "npc_membership_mismatch"
     | "item_multiple_owners"
-    | "npc_creation_components_required";
+    | "npc_creation_components_required"
+    | "npc_creation_components_invalid";
   field: string;
   entityId?: string;
 }>;
@@ -284,6 +292,17 @@ function previousOfKind<K extends EntityKind>(
   return new Map(records.map((record) => [record.core.id, record] as const));
 }
 
+function validNpcCreationComponents(value: unknown): value is NpcImportedLayers {
+  if (!isRecord(value)) return false;
+  const keys = ["anchors", "dynamicState", "knowledge", "relationships", "history"];
+  if (Object.keys(value).length !== keys.length || keys.some((key) => !(key in value))) return false;
+  return validateNpcIdentityAnchors(value.anchors).length === 0
+    && validateNpcDynamicState(value.dynamicState).length === 0
+    && validateNpcKnowledge(value.knowledge).length === 0
+    && validateNpcRelationships(value.relationships).length === 0
+    && validateNpcHistory(value.history).length === 0;
+}
+
 function coreOf<Id extends EntityId, Kind extends EntityKind>(input: {
   readonly id: Id;
   readonly kind: Kind;
@@ -435,6 +454,13 @@ function compileNpcs(
     if (previous === undefined && layers === undefined) {
       throw new EntityProjectionInvariantError({
         code: "npc_creation_components_required",
+        field: "npcCreationComponentsById",
+        entityId: entry.id,
+      });
+    }
+    if (previous === undefined && !validNpcCreationComponents(layers)) {
+      throw new EntityProjectionInvariantError({
+        code: "npc_creation_components_invalid",
         field: "npcCreationComponentsById",
         entityId: entry.id,
       });

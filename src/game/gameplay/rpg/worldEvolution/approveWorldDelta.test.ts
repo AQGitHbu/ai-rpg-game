@@ -37,6 +37,17 @@ const NPC_0: NpcEntry = {
   memory: { npcId: asNpcId("npc_0"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
 };
 
+const NPC_CREATION = {
+  anchors: {
+    selfConcept: "守信的传讯人",
+    values: ["守信"],
+    speechStyle: "谨慎而直接",
+    capabilityBoundaries: ["不超出自身所知"],
+    taboos: [],
+  },
+  goals: [{ horizon: "short" as const, description: "送达密信", priority: 3 as const, reason: "必须完成传递" }],
+};
+
 // 结局要求由 stage 最大的主线任务的 talk_to_npc 目标派生：该目标 NPC 必须是世界里
 // 真实存在的实体（v3 投影不变量下 quest 目标引用未知 NPC 直接非法），所以把它
 // 补进投影；断言仍只关心派生出的 npcId 是否为 npc_9。
@@ -100,11 +111,11 @@ function nextActProposal(): WorldDeltaProposal {
       connectFromLocationId: "loc_0",
     },
     newNpc: {
+      ...NPC_CREATION,
       name: "新出现的信使",
       role: "传话人",
       description: "风尘仆仆的赶路人，怀里揣着密信。",
       locationRef: { kind: "new_location" },
-      goals: ["送达密信"],
     },
     newItem: null,
     newEnemy: null,
@@ -198,8 +209,9 @@ describe("approveWorldDelta", () => {
         beatSummary: "满槽小镇仍试图塞入新人物",
         newLocation: null,
         newNpc: {
+          ...NPC_CREATION,
           name: "无处落脚者", role: "旅人", description: "找不到空闲建筑的旅人。",
-          locationRef: { kind: "existing", id: "loc_0" }, goals: [],
+          locationRef: { kind: "existing", id: "loc_0" },
         },
         newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null,
       },
@@ -226,8 +238,9 @@ describe("approveWorldDelta", () => {
           placement: "town_building", connectFromLocationId: "loc_0",
         },
         newNpc: {
+          ...NPC_CREATION,
           name: "茶馆线人", role: "旧案传讯人", description: "在茶馆等候交出密信的线人。",
-          locationRef: { kind: "new_location" }, goals: ["交出密信"],
+          locationRef: { kind: "new_location" },
         },
         newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null,
       },
@@ -264,8 +277,9 @@ describe("approveWorldDelta", () => {
     const proposal: WorldDeltaProposal = {
       ...nextActProposal(),
       newNpc: {
+        ...NPC_CREATION,
         name: "新出现的信使", role: "传话人", description: "风尘仆仆的赶路人。",
-        locationRef: { kind: "existing", id: "loc_does_not_exist" }, goals: [],
+        locationRef: { kind: "existing", id: "loc_does_not_exist" },
       },
     };
     const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }) });
@@ -279,8 +293,9 @@ describe("approveWorldDelta", () => {
       ...nextActProposal(),
       newLocation: null,
       newNpc: {
+        ...NPC_CREATION,
         name: "新出现的信使", role: "传话人", description: "风尘仆仆的赶路人。",
-        locationRef: { kind: "new_location" }, goals: [],
+        locationRef: { kind: "new_location" },
       },
     };
     const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }) });
@@ -369,8 +384,9 @@ describe("approveWorldDelta", () => {
     const proposal: WorldDeltaProposal = {
       ...nextActProposal(),
       newNpc: {
+        ...NPC_CREATION,
         name: "韩征", role: "掌柜", description: "一个名叫韩征的人。",
-        locationRef: { kind: "new_location" }, goals: [],
+        locationRef: { kind: "new_location" },
       },
     };
     const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }) });
@@ -417,8 +433,9 @@ describe("approveWorldDelta", () => {
     const proposal: WorldDeltaProposal = {
       ...nextActProposal(),
       newNpc: {
+        ...NPC_CREATION,
         name: "青山别院", role: "掌柜", description: "一个跟同批新地点撞名的人。",
-        locationRef: { kind: "existing", id: "loc_0" }, goals: [],
+        locationRef: { kind: "existing", id: "loc_0" },
       },
     };
     const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }) });
@@ -590,8 +607,9 @@ describe("approveWorldDelta", () => {
     const proposal: WorldDeltaProposal = {
       ...nextActProposal(),
       newNpc: {
+        ...NPC_CREATION,
         name: "如", role: "掌柜", description: "风尘仆仆的赶路人。",
-        locationRef: { kind: "new_location" }, goals: [],
+        locationRef: { kind: "new_location" },
       },
     };
     const result = approveWorldDelta({ proposal, need: { kind: "next_act", act: 2 }, ws: makeWorld(), ss: makeStory({ currentAct: 2 }) });

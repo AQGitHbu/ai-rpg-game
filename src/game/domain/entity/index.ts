@@ -55,6 +55,8 @@ export {
   RELATIONSHIP_STAGES,
   RELATIONSHIP_TRENDS,
   compareRelationshipTargetIds,
+  parseNpcCreationAnchors,
+  parseNpcGoalProposals,
   validateNpcDynamicState,
   validateNpcHistory,
   validateNpcIdentityAnchors,

@@ -12,6 +12,7 @@ import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailu
 import { compileWorldNarrativeContext } from "./narrativeContext";
 import type { NarrativePromptCompilation } from "./narrativeContext";
 import { parseStructuredJsonObject } from "@/game/core/json";
+import { parseNpcCreationAnchors, parseNpcGoalProposals } from "@/game/domain/entity";
 
 // ---------------------------------------------------------------------------
 // WorldEvolution live source（Task 3）。
@@ -58,11 +59,6 @@ function validText(v: unknown): v is string {
   if (!isStr(v)) return false;
   const t = v.trim();
   return t.length > 0 && t.length <= MAX_TEXT;
-}
-
-function strList(v: unknown): readonly string[] {
-  if (!Array.isArray(v)) return [];
-  return v.filter(isStr).map((s) => s.trim()).filter((s) => s.length > 0).slice(0, 8);
 }
 
 function parseLocationRef(v: unknown): { readonly kind: "existing"; readonly id: string } | { readonly kind: "new_location" } | null {
@@ -169,12 +165,16 @@ export function parseWorldDeltaProposal(
     if (!validName(n.name) || !validText(n.role) || !validText(n.description)) return null;
     const locationRef = parseLocationRef(n.locationRef);
     if (locationRef === null) return null;
+    const anchors = parseNpcCreationAnchors(n.anchors);
+    const goals = parseNpcGoalProposals(n.goals);
+    if (anchors === null || goals === null) return null;
     newNpc = {
       name: n.name.trim(),
       role: n.role.trim(),
       description: n.description.trim(),
       locationRef,
-      goals: strList(n.goals),
+      anchors,
+      goals,
     };
   }
 

@@ -280,6 +280,10 @@ describe("createNarrativeBundleSource", () => {
     expect(systemPrompt).toContain("tension=55");
     expect(systemPrompt).toContain("nextPacingNeed=complicate");
     expect(systemPrompt).toContain("玩家查到旧账册");
+    expect(systemPrompt).toContain("anchors 五个字段都必需");
+    expect(systemPrompt).toContain("horizon");
+    expect(systemPrompt).toContain("capabilityBoundaries");
+    expect(systemPrompt).not.toContain('goals":["..."]');
     for (let index = 1; index <= 5; index += 1) {
       expect(systemPrompt).toContain(`interaction_${index}`);
     }
@@ -659,7 +663,11 @@ describe("createNarrativeBundleSource", () => {
         worldDelta: {
           beatSummary: "旧案指向镇外。",
           newLocation: { name: "枯柳驿", description: "荒废驿站。", scale: "scene", placement: "world", connectFromLocationId: "小镇" },
-          newNpc: { name: "老驼子", role: "守夜人", description: "警惕的守夜人。", locationRef: { kind: "new_location" }, goals: ["守住秘密"] },
+          newNpc: {
+            name: "老驼子", role: "守夜人", description: "警惕的守夜人。", locationRef: { kind: "new_location" },
+            anchors: { selfConcept: "守着旧案秘密的老人", values: ["守诺"], speechStyle: "低声而谨慎", capabilityBoundaries: ["只知道亲身见闻"], taboos: [] },
+            goals: [{ horizon: "short", description: "守住秘密", priority: 3, reason: "旧案仍不能落入旁人之手" }],
+          },
           newItem: { name: "半块令牌", description: "断裂的令牌。", locationRef: "new_location" },
           newEnemy: { name: "蒙面劫匪", tier: "normal", locationRef: "new_location" },
           newFact: null,
@@ -887,5 +895,42 @@ describe("createNarrativeBundleSource", () => {
     expect(prompt).toContain("backgroundSummary");
     expect(prompt).toContain('"targetActs": 3');
     expect(prompt).toContain('"scale": "town"');
+  });
+
+  it("requires opening NPC anchors and typed goal proposals without normalizer defaults", async () => {
+    const opening = await createFixtureOpeningCandidateSource().generate({
+      gameType: "wuxia",
+      gameLength: "short",
+      seed: "opening-live-contract",
+    });
+    const payload = JSON.parse(JSON.stringify({
+      opening,
+      currentScene: {
+        segments: [{ beatId: "opening", text: "客栈里风声低沉。" }],
+        npcLine: { npcId: "npc_0", text: "我等你很久了。", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        objectiveLink: null,
+        choices: [{ candidateId: "support", label: "我愿意帮忙。" }, { candidateId: "challenge", label: "先说清楚缘由。" }],
+      },
+      continuationScenes: [],
+      terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+    })) as { opening: { opening: { npc: Record<string, unknown> } } };
+    delete payload.opening.opening.npc.anchors;
+    delete payload.opening.opening.npc.goals;
+    const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(payload) });
+    const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+
+    const result = await source.generate({
+      kind: "opening",
+      jobId: asNarrativeJobId("job-opening-contract"),
+      input: { gameType: "wuxia", gameLength: "short", seed: "opening-live-contract" },
+    });
+
+    expect(result).toMatchObject({ ok: false, failure: { kind: "AI_RESPONSE_INVALID" } });
+    expect(complete).toHaveBeenCalledTimes(1);
+    const prompt = (complete.mock.calls[0]![1] as readonly AiMessage[])[0]!.content as string;
+    for (const field of ["selfConcept", "values", "speechStyle", "capabilityBoundaries", "taboos", "horizon", "description", "priority", "reason"]) {
+      expect(prompt).toContain(`\"${field}\"`);
+    }
+    expect(prompt).not.toContain('"goals": ["..."]');
   });
 });

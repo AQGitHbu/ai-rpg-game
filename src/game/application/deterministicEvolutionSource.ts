@@ -57,7 +57,14 @@ function planRepairByAction(ws: WorldState, action: Action): WorldDeltaProposal 
           locationRef: useNewLocation
             ? { kind: "new_location" }
             : { kind: "existing", id: current },
-          goals: ["随缘而行"],
+          anchors: {
+            selfConcept: "愿意替陌生人指路的过客",
+            values: ["守信"],
+            speechStyle: "爽快直白",
+            capabilityBoundaries: ["不了解未亲眼见过的远方"],
+            taboos: ["不卷入无关争斗"],
+          },
+          goals: [{ horizon: "short", description: "随缘而行", priority: 3, reason: "这次交谈让他决定顺路指引来者" }],
         },
         newItem: null,
         newEnemy: null,
@@ -149,7 +156,14 @@ function planSceneCandidateRecovery(ws: WorldState): WorldDeltaProposal {
           locationRef: useNewLocation
             ? { kind: "new_location" }
             : { kind: "existing", id: currentLocationId(ws) },
-          goals: ["指出前路"],
+          anchors: {
+            selfConcept: "把人带出迷路处的引路人",
+            values: ["守望"],
+            speechStyle: "只说亲眼见闻",
+            capabilityBoundaries: ["不掌握深层内幕"],
+            taboos: [],
+          },
+          goals: [{ horizon: "short", description: "指出前路", priority: 3, reason: "眼前有人需要一条可以继续追寻的方向" }],
         }
       : null,
     // 已有交谈/移动入口时只补一个探索钩子，避免候选恢复无谓占用 NPC/地点预算，
@@ -176,7 +190,14 @@ function planScenePacingRecovery(ws: WorldState): WorldDeltaProposal {
       role: "路人",
       description: "在场的普通路人，知道一些公开的动静。",
       locationRef: { kind: "existing", id: currentLocationId(ws) },
-      goals: ["观察动静"],
+      anchors: {
+        selfConcept: "留意街巷动静的旁观者",
+        values: ["谨慎"],
+        speechStyle: "先观察再开口",
+        capabilityBoundaries: ["只能提供公开见闻"],
+        taboos: ["不替陌生人作证"],
+      },
+      goals: [{ horizon: "short", description: "观察动静", priority: 2, reason: "周围的异常值得先留意清楚" }],
     },
     newItem: null,
     newEnemy: null,
@@ -227,7 +248,14 @@ function planNextAct(ws: WorldState, act: number): WorldDeltaProposal {
       locationRef: beat.newLocation
         ? { kind: "new_location" }
         : { kind: "existing", id: currentLocationId(ws) },
-      goals: [beat.npcGoal],
+      anchors: {
+        selfConcept: `承接第${act}幕线索的${beat.npcRole}`,
+        values: ["守住线索"],
+        speechStyle: "只陈述亲身见闻",
+        capabilityBoundaries: ["不能替别人作证"],
+        taboos: ["不泄露无关者身份"],
+      },
+      goals: [{ horizon: "short", description: beat.npcGoal, priority: 3, reason: beat.questDescription }],
     },
     newItem: {
       name: itemName,

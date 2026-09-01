@@ -12,6 +12,7 @@ import {
 } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { WorldDeltaProposal } from "@/game/domain/worldDelta";
 import { asLocationId, asNpcId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { entitiesOfKind } from "@/game/domain/entity";
 import { approveWorldDelta, type ApprovedWorldDeltaCore } from "./approveWorldDelta";
 import { createTownRuntime, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 
@@ -29,6 +30,17 @@ const NPC_0: NpcEntry = {
   id: asNpcId("npc_0"), name: "韩征", role: "掌柜", description: "听雨客栈的掌柜。",
   locationId: asLocationId("loc_0"), isCompanion: false, tags: [], met: false,
   memory: { npcId: asNpcId("npc_0"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+};
+
+const NPC_CREATION = {
+  anchors: {
+    selfConcept: "信使的自我认知",
+    values: ["守信"],
+    speechStyle: "谨慎而直接",
+    capabilityBoundaries: ["不超出自身所知"],
+    taboos: [],
+  },
+  goals: [{ horizon: "short" as const, description: "送达密信", priority: 3 as const, reason: "必须完成传递" }],
 };
 
 const BASE_PROJECTION: EntityCompatibilityProjection = {
@@ -90,8 +102,9 @@ function nextActProposal(): WorldDeltaProposal {
     beatSummary: "新的人物与地点浮现",
     newLocation: { name: "青山别院", description: "山腰上一座独立的别院，与世隔绝。", scale: "scene", placement: "world", connectFromLocationId: "loc_0" },
     newNpc: {
+      ...NPC_CREATION,
       name: "新出现的信使", role: "传话人", description: "风尘仆仆的赶路人，怀里揣着密信。",
-      locationRef: { kind: "new_location" }, goals: ["送达密信"],
+      locationRef: { kind: "new_location" },
     },
     newItem: null,
     newEnemy: null,
@@ -143,6 +156,39 @@ describe("materializeWorldDelta", () => {
     expect(delta.previewStoryState.reveal).toEqual({ questId: "quest_dyn_1", visibleObjectiveIndex: 0 });
   });
 
+  it("materializes NPC layers from the approved explicit creation map", () => {
+    const ws = makeWorld();
+    const ss = makeStory({ currentAct: 2, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_next_act" } });
+    const approved = approve({ proposal: nextActProposal(), need: { kind: "next_act", act: 2 }, ws, ss });
+    const layers = approved.npcCreationComponentsById.get(asNpcId("npc_dyn_1"));
+    expect(layers?.anchors.selfConcept).toBe("信使的自我认知");
+    expect(layers?.dynamicState.goals).toEqual([expect.objectContaining({
+      goalId: "npc_dyn_1_goal_1", description: "送达密信", status: "active",
+    })]);
+
+    const delta = materializeWorldDelta({ approved, need: { kind: "next_act", act: 2 }, ws, ss, now: () => "2026-01-02" });
+    const npc = entitiesOfKind(delta.previewWorldState.entityStore, "npc").find((record) => record.core.id === "npc_dyn_1");
+    expect(npc?.core.kind).toBe("npc");
+    if (npc?.core.kind === "npc") {
+      expect(npc.identity.anchors.selfConcept).toBe("信使的自我认知");
+      expect(npc.dynamicState.goals[0]?.goalId).toBe("npc_dyn_1_goal_1");
+    }
+  });
+
+  it("rejects materialization when the approved NPC creation map is missing", () => {
+    const ws = makeWorld();
+    const ss = makeStory({ currentAct: 2, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_next_act" } });
+    const approved = approve({ proposal: nextActProposal(), need: { kind: "next_act", act: 2 }, ws, ss });
+
+    expect(() => materializeWorldDelta({
+      approved: { ...approved, npcCreationComponentsById: new Map() },
+      need: { kind: "next_act", act: 2 },
+      ws,
+      ss,
+      now: () => "2026-01-02",
+    })).toThrowError(expect.objectContaining({ code: "npc_creation_components_required" }));
+  });
+
   it("keeps new location npcIds, the npc locationId and the talk_to_npc objective mutually consistent", () => {
     const ws = makeWorld();
     const ss = makeStory({ currentAct: 2, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_next_act" } });
@@ -186,8 +232,9 @@ describe("materializeWorldDelta", () => {
       beatSummary: "低张力下的新面孔",
       newLocation: null,
       newNpc: {
+        ...NPC_CREATION,
         name: "神秘镖师", role: "镖师", description: "护送商队的镖师。",
-        locationRef: { kind: "existing", id: "loc_0" }, goals: [],
+        locationRef: { kind: "existing", id: "loc_0" },
       },
       newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null,
     };
@@ -207,8 +254,9 @@ describe("materializeWorldDelta", () => {
       beatSummary: "新的小镇浮现",
       newLocation: { name: "青山集", description: "山脚下的集贸小镇。", scale: "town", placement: "world", connectFromLocationId: "loc_0" },
       newNpc: {
+        ...NPC_CREATION,
         name: "集市管事", role: "管事", description: "打理集市秩序的管事。",
-        locationRef: { kind: "new_location" }, goals: [],
+        locationRef: { kind: "new_location" },
       },
       newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null,
     };
@@ -237,8 +285,9 @@ describe("materializeWorldDelta", () => {
         placement: "town_building", connectFromLocationId: "loc_0",
       },
       newNpc: {
+        ...NPC_CREATION,
         name: "茶馆线人", role: "旧案传讯人", description: "在茶馆等候交出密信的线人。",
-        locationRef: { kind: "new_location" }, goals: ["交出密信"],
+        locationRef: { kind: "new_location" },
       },
       newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null,
     };
@@ -266,8 +315,9 @@ describe("materializeWorldDelta", () => {
       beatSummary: "小镇里的新来客",
       newLocation: null,
       newNpc: {
+        ...NPC_CREATION,
         name: "新来客", role: "旅人", description: "在小镇落脚的外乡人。",
-        locationRef: { kind: "existing", id: "loc_0" }, goals: [],
+        locationRef: { kind: "existing", id: "loc_0" },
       },
       newItem: null, newEnemy: null, newFact: null, nextMainQuest: null, endingPair: null,
     };
