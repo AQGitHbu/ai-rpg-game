@@ -211,11 +211,12 @@ function canDisclose(entry: NpcEntityRecord["knowledge"]["entries"][number], tar
 /**
  * Project the speaker's disclosure and reference authority from entity components.
  * This function deliberately never consults the compatibility `NpcEntry.memory` view.
+ * Returns null for an unknown or non-NPC speaker so callers fail closed without exceptions.
  */
-export function buildNpcSpeechAuthority(input: NpcSpeechAuthorityInput): NpcSpeechAuthority {
+export function buildNpcSpeechAuthority(input: NpcSpeechAuthorityInput): NpcSpeechAuthority | null {
   const speakerRecord = getEntity(input.store, String(input.speakerNpcId));
   if (!isNpc(speakerRecord)) {
-    throw new Error(`buildNpcSpeechAuthority: unknown NPC ${String(input.speakerNpcId)}`);
+    return null;
   }
 
   const targetId = input.targetContext?.targetId;

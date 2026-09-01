@@ -131,7 +131,7 @@ function authority(): NpcSpeechAuthority {
     speakerNpcId: NPC_A,
     sceneVisibleFactIds: [FACT_PUBLIC, FACT_PUBLIC, FACT_SECRET],
     targetContext: { targetId: PLAYER_ENTITY_ID, interactionActionIds: ["action_2", "unknown"] },
-  });
+  })!;
 }
 
 describe("NpcSpeechAuthority", () => {
@@ -175,7 +175,7 @@ describe("NpcSpeechAuthority", () => {
       store: { version: 2, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
-    });
+    })!;
 
     expect(result.allowedFactIds).toEqual([FACT_PUBLIC]);
     expect(result.allowedInteractionActionIds).toEqual(["action_1", "action_2"]);
@@ -187,7 +187,7 @@ describe("NpcSpeechAuthority", () => {
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: NPC_B },
-    });
+    })!;
 
     expect(result.relationships.map((relation) => relation.targetId)).toEqual([NPC_B]);
     expect(result.relationship?.targetId).toBe(NPC_B);
@@ -199,7 +199,7 @@ describe("NpcSpeechAuthority", () => {
       store: { version: 2, records: records() },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
-    });
+    })!;
 
     expect(result.relationships).toEqual([]);
     expect(result.relationship).toBeUndefined();
@@ -217,7 +217,7 @@ describe("NpcSpeechAuthority", () => {
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: unknownTarget },
-    });
+    })!;
 
     expect(result.relationships).toEqual([]);
     expect(result.relationship).toBeUndefined();
@@ -236,24 +236,24 @@ describe("NpcSpeechAuthority", () => {
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
       targetContext: { targetId: PLAYER_ENTITY_ID },
-    });
+    })!;
 
     expect(result.evidenceKeys).toEqual(["alpha", "beta", "delta"]);
   });
 
-  it("keeps empty history empty and rejects an unknown speaker", () => {
+  it("keeps empty history empty and returns null for an unknown speaker", () => {
     const speaker = { ...npcRecord(), history: { interactions: [] } };
     const result = buildNpcSpeechAuthority({
       store: { version: 2, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC],
-    });
+    })!;
     expect(result.recentInteractions).toEqual([]);
-    expect(() => buildNpcSpeechAuthority({
+    expect(buildNpcSpeechAuthority({
       store: { version: 2, records: records() },
       speakerNpcId: asNpcId("npc_missing"),
       sceneVisibleFactIds: [],
-    })).toThrow("unknown NPC");
+    })).toBeNull();
   });
 
   it("requires every allowed fact ID to have a fact record and a matching card", () => {
@@ -271,7 +271,7 @@ describe("NpcSpeechAuthority", () => {
       speakerNpcId: NPC_A,
       sceneVisibleFactIds: [FACT_PUBLIC, FACT_ORPHAN, asFactId("fact_scene_unknown")],
       targetContext: { targetId: PLAYER_ENTITY_ID },
-    });
+    })!;
 
     expect(result.allowedFactIds).toEqual([FACT_PUBLIC]);
     expect(result.withheldFactIds).toEqual([FACT_ORPHAN, FACT_SECRET]);

@@ -178,6 +178,30 @@ describe("approvePreparedContinuation", () => {
     expect(result).toEqual({ ok: false, code: "invalid_fact_reference" });
   });
 
+  it("reports duplicate speech references with their own rejection code", () => {
+    const duplicatedFacts = {
+      ...proposal(),
+      npcLine: { ...proposal().npcLine!, usedFactIds: ["fact_secret", "fact_secret"] },
+    };
+    expect(approvePreparedContinuation({
+      originJobId: asNarrativeJobId("job_dialogue_2"),
+      proposals: [duplicatedFacts],
+      descriptors: [descriptor()],
+      activeStepIds: ["prepared_1"],
+    })).toEqual({ ok: false, code: "duplicate_npc_reference" });
+
+    const duplicatedInteractions = {
+      ...proposal(),
+      npcLine: { ...proposal().npcLine!, usedInteractionActionIds: ["npc_beggar:trade", "npc_beggar:trade"] },
+    };
+    expect(approvePreparedContinuation({
+      originJobId: asNarrativeJobId("job_dialogue_2"),
+      proposals: [duplicatedInteractions],
+      descriptors: [descriptor()],
+      activeStepIds: ["prepared_1"],
+    })).toEqual({ ok: false, code: "duplicate_npc_reference" });
+  });
+
   it("rejects missing or unknown graph nodes atomically", () => {
     expect(approvePreparedContinuation({
       originJobId: asNarrativeJobId("job_dialogue_2"),

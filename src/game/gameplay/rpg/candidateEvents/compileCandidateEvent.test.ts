@@ -161,7 +161,7 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
     expect(result.worldState.unlockedLocationIds).toContain(asLocationId("loc_2"));
   });
 
-  it("旧候选效果不再可编译时无写入丢弃，不抛错且返回稳定 reason", () => {
+  it("旧候选效果不再可编译时无写入丢弃，不抛错且返回稳定 reason 与审计事件", () => {
     const legacyKind = ["npc", "changes", "stance"].join("_");
     const input = makeWorldState();
     const stale = {
@@ -173,7 +173,14 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
     const result = compileCandidateEvent(input, stale, DEPS);
 
     expect(result.worldState).toBe(input);
-    expect(result.events).toEqual([]);
+    expect(result.events).toEqual([{
+      type: "candidate_event_rejected",
+      candidateId: "ce-1",
+      kind: legacyKind,
+      reasonCode: "stale_effect_kind",
+      rejectedAtTurn: DEPS.turnNumber,
+      occurredAt: NOW(),
+    }]);
     expect(result.dropReason).toBe("stale_effect_kind");
   });
 });

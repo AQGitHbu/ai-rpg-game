@@ -17,7 +17,7 @@ Plan 3 将 NPC 的固定人格、动态状态、知识来源、结构化交互�
 - `relationships`：按 target 唯一、稳定排序的 outgoing directed edges。每条边保存 `affinity/trust/fear/hostility`（均为 `[-100,100]`）、stage、trend、open commitments、最近 12 条 evidence、origin 和最后变更回合。
 - `history`：最多 10 条去重的结构化交互，不保存玩家原文。
 
-`NpcEntry/NpcMemory/relationship.affinity` 只由 `projectNpcEntry/projectNpcMemory` 派生为兼容 read model。`importNpcLayers` 是兼容/测试 fixture adapter；生产规则写入走细粒度 `EntityMutation`，不替换整块组件。
+`NpcEntry/NpcMemory/relationship.affinity` 只由 `projectNpcEntry/projectNpcMemory` 派生为兼容 read model。`importNpcLayers` 是兼容/测试 fixture adapter；生产规则写入走细粒度 `EntityMutation`，不替换整块组件。规则裁决读取面（对话裁决、`give_item` 去重等）消费这份每次提交都重建的兼容 read model；`projectNpcRuntimeProfile`（npcMemory facade）是单测锁定的统一读取投影，其知识可见性分区与台词权威同源，但规则路径不直接调用它——唯一权威事实源始终是 Entity Store 分层组件，不存在第二状态源。
 
 ## 创建、知识与关系规则
 
@@ -26,6 +26,9 @@ Plan 3 将 NPC 的固定人格、动态状态、知识来源、结构化交互�
 - `normal/major` signal 受单维与总变化 cap、stage 邻接迁移、action 幂等和 evidence 上限约束；每个 action 对同一边最多一档。`debt/promise` 只经封闭 open/fulfill/forgive/break/release 操作改变。
 - `FactChange` 的 `audience` 是知识传播边界：没有 audience 不写入；`npc_revealed` 必须携带真实 `sourceNpcId`。同一 NPC 的同一 Fact 只保留一条 entry，certainty 只能从 suspected 升为 known，disclosure 只能由显式规则操作改变。
 - action provenance 使用真实 `actionId + turnNumber`；本 Plan 不伪造 `eventId`，稳定事件证据留给 Plan 4。
+- `record_npc_interaction` 对同一 `actionId` 重放以 `duplicate_npc_interaction` 硬拒绝（兄弟 mutation 是零写入）；生产重放由 `performTurn` 的 CAS `expectedRevision` 挡住，mutation 批是原子的，不会产生部分状态。
+- `cooperative` stage 正向门槛（trust 20 / affinity 20 / 正向证据 1）与对话 `statusFor` 的 hostile-ask `partial_success` 分支是超出计划阈值表的保守补充，用于保留定性语义；`relationshipSignalPolicy.ts` 的 stage 门槛表是唯一数值权威。
+- 证据老化后果：每条边只保留最近 12 条证据（`RELATIONSHIP_EVIDENCE_CAP`），被裁掉的旧条目不再阻止同一 `actionId+signal` 重放，`trusted/bonded` 可以仅因证据被淘汰而降档（无需负向信号）；以 `relationshipSignalPolicy.ts` 头部注释为准，不应读作缺陷。
 
 ## Speech authority 与隐私
 
@@ -69,3 +72,5 @@ Plan 4 负责稳定 `eventId`、Event/Episode 与 misinformation/因果模型；
 ## 最近维护
 
 2026-09-01：Plan 3 代码、测试与离线门禁完成；当前阶段标记为 `implemented / implemented`，人读入口保持“待验收”，目标分支尚未合并 main。
+
+2026-09-01（code review 修复）：重复引用拒绝码 `duplicate_npc_reference` 不再被误归为 `invalid_fact_reference`；过期候选事件丢弃改为发出 `candidate_event_rejected` 审计事件；战斗形状校验器统一收敛到 `src/game/application/battleShapeValidation.ts`；`buildNpcSpeechAuthority` 对未知 speaker 返回 `null`（调用方改为稳定拒绝，不再 try/catch）。统一读取路径的执行偏差已同步记录在 plan 的 Acceptance Checklist。

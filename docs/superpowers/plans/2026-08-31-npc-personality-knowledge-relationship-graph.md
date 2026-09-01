@@ -867,12 +867,14 @@ Expected: main 干净；Plan 3 分支/worktree 已按仓库安全工具清理；
 
 ## Acceptance Checklist
 
+> **执行偏差（2026-09-01，code review 记录）**：下方统一读取项的原始措辞要求五个玩法面“读取同一个 `projectNpcRuntimeProfile`”。实际实现中所有玩法面共享同一权威事实源（Entity Store 分层组件）：规则裁决读取面（`dialogueResolution`、`resolveByType` 的 give_item 去重等）消费 projector 每次提交都重建的 `NpcEntry.memory` 兼容 read model，台词与 prompt 读取面经 `NpcSpeechAuthority` 与同源可见性分区规则。`projectNpcRuntimeProfile` 已实现并由单测锁定，但规则路径不直接调用它。兼容投影始终由同一组件重建，行为等价且不存在第二状态源，故按“兼容桥是既定迁移读取路径”修正条目措辞而非改线。
+
 - [ ] `NpcEntityRecord` 的 identity/dynamic/knowledge/relationships/history 分层是唯一权威事实，legacy `NpcMemory` 仅为 projector 读模型。
 - [ ] 普通场景无法更新 identity anchors；opening 和动态 NPC 都有经过审批的稳定 anchors 与 typed goals。
 - [ ] 知识记录 FactId、披露策略、真实 actionId/turn 来源；没有 audience 不扩散，NPC 私密知识不进入其他 NPC Prompt。
 - [ ] NPC→玩家与 NPC→NPC 都是有向边；数值变化只来自规则 signal，有 cap、阈值、证据、幂等和每 action 一档的速度限制。
 - [ ] debt/promise 有稳定 ID、方向、状态与来源；AI 不能提交数值关系或直接 patch commitment。
-- [ ] 对话、调查、赠物、明确 NPC 任务和共同战斗读取同一个 `projectNpcRuntimeProfile`；无明确参与者时不猜关系后果。
+- [ ] 对话、调查、赠物、明确 NPC 任务和共同战斗都从同一权威事实源（Entity Store 分层组件）读取：规则裁决经 projector 重建的兼容 read model，台词与 prompt 经 `NpcSpeechAuthority` 同源可见性规则；无明确参与者时不猜关系后果。
 - [ ] 所有生成/预备/开局 NPC 台词都以同一 `NpcSpeechAuthority` 审批 Fact 与 Interaction 引用。
 - [ ] 同地点同伴可按确定性规则参战；失败/撤退恢复全部 NPC 组件，胜利才写共同作战证据。
 - [ ] provider 调用数、路由、CAS、一次生成逐步消费和战败恢复语义不变。

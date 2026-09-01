@@ -457,6 +457,7 @@ function buildUpcomingLinearObjectives(
         .map((fact) => fact.core.id),
       targetContext: { targetId: PLAYER_ENTITY_ID },
     });
+    if (authority === null) return undefined;
     return {
       id: npc.id,
       name: npc.name,
@@ -518,6 +519,7 @@ function enrichPreparedStepDescriptors(
       sceneVisibleFactIds,
       targetContext: { targetId: PLAYER_ENTITY_ID },
     });
+    if (speechAuthority === null) return descriptor;
     return {
       ...descriptor,
       authority: {
@@ -600,14 +602,15 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     .filter((n) => n.locationId === currentLocId)
     .filter((n) => isObjectiveEntityReleased(ws, ss, (objective) =>
       objective.kind === "talk_to_npc" && String(objective.npcId) === String(n.id)))
-    .map((n) => {
+    .flatMap((n) => {
       const speechAuthority = buildNpcSpeechAuthority({
         store: ws.entityStore,
         speakerNpcId: n.id,
         sceneVisibleFactIds: ws.worldFacts.filter((fact) => fact.discovered).map((fact) => fact.factId),
         targetContext: { targetId: PLAYER_ENTITY_ID },
       });
-      return {
+      if (speechAuthority === null) return [];
+      return [{
         id: n.id,
         name: n.name,
         role: n.role,
@@ -627,7 +630,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
         )?.dynamicState.emotion ?? "neutral",
         goals: speechAuthority.activeGoals,
         forbiddenKnowledgeIds: [],
-      };
+      }];
     });
 
   const reachableLocations = ws.locations.filter(

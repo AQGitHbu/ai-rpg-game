@@ -36,6 +36,7 @@ export type PreparedContinuationRejection =
   | "invalid_entity_reference"
   | "invalid_fact_reference"
   | "invalid_interaction_reference"
+  | "duplicate_npc_reference"
   | "invalid_choice_count"
   | "invalid_choice_candidate";
 
@@ -84,20 +85,14 @@ function rebuildNpcLine(
     return { code: "invalid_entity_reference" };
   }
   const worldSpeechAuthority = worldState !== undefined
-    ? (() => {
-      try {
-        return buildNpcSpeechAuthority({
-          store: worldState.entityStore,
-          speakerNpcId: line.npcId as never,
-          sceneVisibleFactIds: entitiesOfKind(worldState.entityStore, "fact")
-            .filter((fact) => fact.fact.discovered)
-            .map((fact) => fact.core.id),
-          targetContext: { targetId: PLAYER_ENTITY_ID },
-        });
-      } catch {
-        return null;
-      }
-    })()
+    ? buildNpcSpeechAuthority({
+      store: worldState.entityStore,
+      speakerNpcId: line.npcId as never,
+      sceneVisibleFactIds: entitiesOfKind(worldState.entityStore, "fact")
+        .filter((fact) => fact.fact.discovered)
+        .map((fact) => fact.core.id),
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+    })
     : undefined;
   if (worldState !== undefined && worldSpeechAuthority === null) {
     return { code: "invalid_entity_reference" };
@@ -110,11 +105,7 @@ function rebuildNpcLine(
     usedInteractionActionIds: line.usedInteractionActionIds,
   });
   if (!referenceCheck.ok) {
-    return {
-      code: referenceCheck.code === "duplicate_npc_reference"
-        ? "invalid_fact_reference"
-        : referenceCheck.code,
-    };
+    return { code: referenceCheck.code };
   }
   return {
     npcId: asNpcId(line.npcId),

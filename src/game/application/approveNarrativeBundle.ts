@@ -355,23 +355,20 @@ function validateBundleNpcSpeech(
     .map((fact) => fact.core.id);
   const targetIsValid = isValidNpcSpeechTarget(worldState.entityStore, PLAYER_ENTITY_ID);
   if (!targetIsValid) return { code: "bundle_invalid_scene", detail: "invalid_target" };
-  try {
-    const authority = buildNpcSpeechAuthority({
-      store: worldState.entityStore,
-      speakerNpcId: line.npcId as never,
-      sceneVisibleFactIds: visibleFactIds,
-      targetContext: { targetId: PLAYER_ENTITY_ID },
-    });
-    const result = validateNpcSpeechReferences({
-      authority,
-      usedFactIds: line.usedFactIds,
-      usedInteractionActionIds: line.usedInteractionActionIds,
-    });
-    if (result.ok) return null;
-    return { code: "bundle_invalid_scene", detail: result.code };
-  } catch {
-    return { code: "bundle_invalid_scene", detail: "missing_speaker" };
-  }
+  const authority = buildNpcSpeechAuthority({
+    store: worldState.entityStore,
+    speakerNpcId: line.npcId as never,
+    sceneVisibleFactIds: visibleFactIds,
+    targetContext: { targetId: PLAYER_ENTITY_ID },
+  });
+  if (authority === null) return { code: "bundle_invalid_scene", detail: "missing_speaker" };
+  const result = validateNpcSpeechReferences({
+    authority,
+    usedFactIds: line.usedFactIds,
+    usedInteractionActionIds: line.usedInteractionActionIds,
+  });
+  if (result.ok) return null;
+  return { code: "bundle_invalid_scene", detail: result.code };
 }
 
 function validateBundleSceneNpcSpeech(

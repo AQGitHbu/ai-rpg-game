@@ -118,6 +118,9 @@ export function buildFocusNpcContext(
     sceneVisibleFactIds: sceneVisibleFactIds(record),
     targetContext: targetContextOf(record, targetContext),
   });
+  if (authority === null) {
+    throw new Error(`buildFocusNpcContext: unknown NPC ${String(npcId)}`);
+  }
   const tier = authority.responseTier;
   const responsePolicy: FocusNpcResponsePolicy = {
     tier,

@@ -589,13 +589,13 @@ describe("NPC continuity long-form journey", () => {
             speakerNpcId: asNpcId("npc_0"),
             sceneVisibleFactIds: [privateFact.factId, publicFact.factId],
             targetContext: { targetId: PLAYER_ENTITY_ID },
-          });
+          })!;
           const dynamicAuthority = buildNpcSpeechAuthority({
             store: repeated.worldState.entityStore,
             speakerNpcId: dynamic.core.id,
             sceneVisibleFactIds: [privateFact.factId, publicFact.factId],
             targetContext: { targetId: PLAYER_ENTITY_ID },
-          });
+          })!;
           expect(openingAuthority.allowedFactIds).not.toContain(privateFact.factId);
           expect(JSON.stringify(dynamicAuthority)).not.toContain(privateFact.text);
           expect(openingAuthority.allowedFactCards.some((card) => card.factId === privateFact.factId)).toBe(false);

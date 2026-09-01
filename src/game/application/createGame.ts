@@ -239,24 +239,21 @@ function approveOpeningSpeech(
 ): boolean {
   if (narrative.status !== "ready" || narrative.currentScene.npcLine === null) return false;
   if (!isValidNpcSpeechTarget(worldState.entityStore, PLAYER_ENTITY_ID)) return false;
-  try {
-    const visibleFactIds = entitiesOfKind(worldState.entityStore, "fact")
-      .filter((fact) => fact.fact.discovered)
-      .map((fact) => fact.core.id);
-    const authority = buildNpcSpeechAuthority({
-      store: worldState.entityStore,
-      speakerNpcId: narrative.currentScene.npcLine.npcId,
-      sceneVisibleFactIds: visibleFactIds,
-      targetContext: { targetId: PLAYER_ENTITY_ID },
-    });
-    return validateNpcSpeechReferences({
-      authority,
-      usedFactIds: narrative.currentScene.npcLine.usedFactIds,
-      usedInteractionActionIds: narrative.currentScene.npcLine.usedInteractionActionIds,
-    }).ok;
-  } catch {
-    return false;
-  }
+  const visibleFactIds = entitiesOfKind(worldState.entityStore, "fact")
+    .filter((fact) => fact.fact.discovered)
+    .map((fact) => fact.core.id);
+  const authority = buildNpcSpeechAuthority({
+    store: worldState.entityStore,
+    speakerNpcId: narrative.currentScene.npcLine.npcId,
+    sceneVisibleFactIds: visibleFactIds,
+    targetContext: { targetId: PLAYER_ENTITY_ID },
+  });
+  if (authority === null) return false;
+  return validateNpcSpeechReferences({
+    authority,
+    usedFactIds: narrative.currentScene.npcLine.usedFactIds,
+    usedInteractionActionIds: narrative.currentScene.npcLine.usedInteractionActionIds,
+  }).ok;
 }
 
 export async function createGame(

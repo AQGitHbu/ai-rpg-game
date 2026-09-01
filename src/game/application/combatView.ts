@@ -3,115 +3,17 @@ import { SKILL_ENERGY_COST } from "@/game/domain/combat";
 import type { PlayerChoiceView } from "./gameSessionView";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import type { WorldState } from "@/game/domain/worldState";
+import {
+  MODERN_BATTLE_KEYS,
+  isCombatResult,
+  isCombatant,
+  isEnemyIntent,
+  isFiniteNumber,
+  isNonEmptyString,
+  isNonEmptyStringArray,
+} from "./battleShapeValidation";
 
 type ActiveBattle = Extract<WorldState["battle"], { status: "active" }>;
-const MODERN_BATTLE_KEYS = ["combatants", "turnOrder", "turnIndex", "enemyIntents", "downedEnemyIds", "lastAdvance"] as const;
-
-type CombatSourceValue =
-  | { readonly kind: "protagonist" }
-  | { readonly kind: "companion"; readonly npcId: string }
-  | { readonly kind: "enemy"; readonly enemyId: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Object.keys(value).length === keys.length && keys.every((key) => key in value);
-}
-
-function hasRequiredAndOptionalKeys(
-  value: Record<string, unknown>,
-  required: readonly string[],
-  optional: readonly string[],
-): boolean {
-  const allowed = new Set([...required, ...optional]);
-  return required.every((key) => key in value) && Object.keys(value).every((key) => allowed.has(key));
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
-function isStringArray(value: unknown): value is readonly string[] {
-  return Array.isArray(value) && value.every(isNonEmptyString);
-}
-
-function isNonEmptyStringArray(value: unknown): value is readonly string[] {
-  return isStringArray(value) && value.length > 0;
-}
-
-function optionalMatches(value: Record<string, unknown>, key: string, predicate: (entry: unknown) => boolean): boolean {
-  return !(key in value) || value[key] === undefined || predicate(value[key]);
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function isCombatSource(value: unknown): value is CombatSourceValue {
-  if (!isRecord(value)) return false;
-  if (value.kind === "protagonist") return hasExactKeys(value, ["kind"]);
-  if (value.kind === "companion") return hasExactKeys(value, ["kind", "npcId"]) && isNonEmptyString(value.npcId);
-  if (value.kind === "enemy") return hasExactKeys(value, ["kind", "enemyId"]) && isNonEmptyString(value.enemyId);
-  return false;
-}
-
-type CombatStatsValue = Readonly<{
-  readonly maxHp: number;
-  readonly maxEnergy: number;
-  readonly attack: number;
-  readonly defense: number;
-  readonly speed: number;
-}>;
-
-function isCombatStats(value: unknown): value is CombatStatsValue {
-  return isRecord(value)
-    && hasExactKeys(value, ["maxHp", "maxEnergy", "attack", "defense", "speed"])
-    && isFiniteNumber(value.maxHp) && value.maxHp > 0
-    && isFiniteNumber(value.maxEnergy) && value.maxEnergy >= 0
-    && isFiniteNumber(value.attack) && value.attack >= 0
-    && isFiniteNumber(value.defense) && value.defense >= 0
-    && isFiniteNumber(value.speed) && value.speed >= 0;
-}
-
-function isCombatant(value: unknown): value is BattleCombatant {
-  if (!isRecord(value)
-    || !hasExactKeys(value, ["combatantId", "side", "controller", "source", "name", "stats", "hp", "energy", "guarding"])
-    || !isNonEmptyString(value.combatantId)
-    || (value.side !== "allies" && value.side !== "enemies")
-    || (value.controller !== "player" && value.controller !== "rule")
-    || !isCombatSource(value.source)
-    || !isNonEmptyString(value.name)
-    || !isCombatStats(value.stats)
-    || !isFiniteNumber(value.hp) || value.hp < 0 || value.hp > value.stats.maxHp
-    || !isFiniteNumber(value.energy) || value.energy < 0 || value.energy > value.stats.maxEnergy
-    || typeof value.guarding !== "boolean") return false;
-  if (value.source.kind === "protagonist") return value.side === "allies" && value.controller === "player";
-  if (value.source.kind === "companion") return value.side === "allies" && value.controller === "rule";
-  return value.side === "enemies" && value.controller === "rule";
-}
-
-function isEnemyIntent(value: unknown): boolean {
-  return isRecord(value)
-    && hasRequiredAndOptionalKeys(value, ["actorId", "kind"], ["targetId"])
-    && isNonEmptyString(value.actorId)
-    && (value.kind === "attack" || value.kind === "skill" || value.kind === "guard")
-    && optionalMatches(value, "targetId", isNonEmptyString);
-}
-
-function isCombatResult(value: unknown): boolean {
-  return isRecord(value)
-    && hasRequiredAndOptionalKeys(value, ["round", "sequence", "actorId", "kind", "damage", "actorEnergyAfter"], ["targetId", "targetHpAfter"])
-    && Number.isInteger(value.round) && (value.round as number) >= 0
-    && Number.isInteger(value.sequence) && (value.sequence as number) >= 0
-    && isNonEmptyString(value.actorId)
-    && (value.targetId === undefined || isNonEmptyString(value.targetId))
-    && (value.kind === "attack" || value.kind === "skill" || value.kind === "guard" || value.kind === "flee")
-    && isFiniteNumber(value.damage) && value.damage >= 0
-    && isFiniteNumber(value.actorEnergyAfter) && value.actorEnergyAfter >= 0
-    && (value.targetHpAfter === undefined || (isFiniteNumber(value.targetHpAfter) && value.targetHpAfter >= 0));
-}
 
 function isModernBattle(worldState: WorldState, battle: ActiveBattle): battle is ActiveBattle & ActiveBattleCombatState {
   if (!isNonEmptyString(battle.enemyId)
@@ -144,12 +46,14 @@ function isModernBattle(worldState: WorldState, battle: ActiveBattle): battle is
   if (protagonistCount !== 1 || challengedEnemy === undefined) return false;
   if (battle.enemyIds !== undefined
     && (!isNonEmptyStringArray(battle.enemyIds)
+      || battle.enemyIds.length === 0
       || new Set(battle.enemyIds).size !== battle.enemyIds.length
       || battle.enemyIds.length !== enemySourceIds.size
       || !battle.enemyIds.every((enemyId) => enemySourceIds.has(String(enemyId))))) return false;
 
   const turnIndex = battle.turnIndex;
   if (!isNonEmptyStringArray(battle.turnOrder)
+    || battle.turnOrder.length === 0
     || new Set(battle.turnOrder).size !== battle.turnOrder.length
     || !battle.turnOrder.every((id) => byId.get(id)?.hp !== undefined && (byId.get(id)?.hp as number) > 0)
     || battle.turnOrder.length !== combatants.filter((unit) => unit.hp > 0).length

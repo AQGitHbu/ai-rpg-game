@@ -25,7 +25,7 @@ export type CompileCandidateEventResult = {
   readonly worldState: WorldState;
   /** 编译产生的真实领域事件 + candidate_event_activated 审计事件。 */
   readonly events: readonly GameEvent[];
-  /** 旧存档携带不可再表示的 effect 时的稳定诊断。 */
+  /** 旧存档携带不可再表示的 effect 时的稳定诊断；同批返回一条 candidate_event_rejected 审计事件。 */
   readonly dropReason?: CompileCandidateEventDropReason;
 };
 
@@ -43,7 +43,19 @@ export function compileCandidateEvent(
   for (const effect of candidate.proposedEffects) {
     const compiled = applyEffect(ws, effect, { occurredAt, actionId: deps.actionId, turnNumber: deps.turnNumber });
     if ("dropReason" in compiled) {
-      return { worldState, events: [], dropReason: compiled.dropReason };
+      // 丢弃不静默：落一条结构化审计事件（不含正文），调用方无需再消费 dropReason 也能查账。
+      return {
+        worldState,
+        events: [{
+          type: "candidate_event_rejected",
+          candidateId: candidate.id,
+          kind: candidate.kind,
+          reasonCode: compiled.dropReason,
+          rejectedAtTurn: deps.turnNumber,
+          occurredAt,
+        }],
+        dropReason: compiled.dropReason,
+      };
     }
     ws = compiled.worldState;
     events.push(...compiled.events);

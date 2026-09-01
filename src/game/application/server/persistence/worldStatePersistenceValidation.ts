@@ -5,6 +5,19 @@ import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import { WORLD_STATE_SCHEMA_VERSION, type BattleState, type EndingState, type WorldState } from "@/game/domain/worldState";
 import type { EndingEntry } from "@/game/domain/worldEntries";
 import { validateWorldStateEntityReferences } from "@/game/domain/worldStateValidation";
+import {
+  MODERN_BATTLE_KEYS,
+  hasExactKeys,
+  hasRequiredAndOptionalKeys,
+  isCombatResult,
+  isCombatant,
+  isEnemyIntent,
+  isFiniteNumber,
+  isNonEmptyString,
+  isNonEmptyStringArray,
+  isPlainRecord as isObject,
+  optionalMatches,
+} from "../../battleShapeValidation";
 
 export type PersistableWorldStateValidationResult =
   | { readonly ok: true; readonly value: WorldState }
@@ -13,35 +26,10 @@ export type PersistableWorldStateValidationResult =
 type JsonObject = Record<string, unknown>;
 const PROJECTION_KEYS = ["player", "locations", "currentLocationId", "unlockedLocationIds", "visitedLocationIds", "npcs", "items", "inventory", "worldFacts", "quests", "enemies", "defeatedEnemyIds", "factions"] as const;
 const WORLD_KEYS = ["version", "generation", "entityStore", ...PROJECTION_KEYS, "battle", "endings", "ending", "eventLedger"] as const;
-const MODERN_BATTLE_KEYS = ["combatants", "turnOrder", "turnIndex", "enemyIntents", "downedEnemyIds", "lastAdvance"] as const;
 
-function isObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasExactKeys(value: JsonObject, keys: readonly string[]): boolean {
-  return Object.keys(value).length === keys.length && keys.every((key) => key in value);
-}
-
-function hasRequiredAndOptionalKeys(value: JsonObject, required: readonly string[], optional: readonly string[] = []): boolean {
-  const allowed = new Set([...required, ...optional]);
-  return required.every((key) => key in value) && Object.keys(value).every((key) => allowed.has(key));
-}
-
+/** 持久化专用宽松数组判定：允许空字符串元素（战斗形状守卫用的是共享的非空版本）。 */
 function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
-function isNonEmptyStringArray(value: unknown): value is readonly string[] {
-  return Array.isArray(value) && value.every(isNonEmptyString);
-}
-
-function optionalMatches(value: JsonObject, key: string, predicate: (entry: unknown) => boolean): boolean {
-  return !(key in value) || value[key] === undefined || predicate(value[key]);
 }
 
 function isGeneration(value: unknown): value is GenerationMetadata {
@@ -72,10 +60,6 @@ function isGeneration(value: unknown): value is GenerationMetadata {
     && (setup.contentIntensity === "normal" || setup.contentIntensity === "dark");
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
 function isBattleSnapshot(value: unknown): boolean {
   if (!isObject(value) || !hasExactKeys(value, ["entityStore", "eventLedger"]) || !Array.isArray(value.eventLedger)) return false;
   return parseEntityStore(value.entityStore).ok && value.eventLedger.every(isGameEvent);
@@ -93,76 +77,6 @@ function findUnknownBattleCompanionReference(
     }
   }
   return undefined;
-}
-
-type CombatSourceValue =
-  | { readonly kind: "protagonist" }
-  | { readonly kind: "companion"; readonly npcId: string }
-  | { readonly kind: "enemy"; readonly enemyId: string };
-
-function isCombatSource(value: unknown): value is CombatSourceValue {
-  if (!isObject(value)) return false;
-  if (value.kind === "protagonist") return hasExactKeys(value, ["kind"]);
-  if (value.kind === "companion") return hasExactKeys(value, ["kind", "npcId"]) && isNonEmptyString(value.npcId);
-  if (value.kind === "enemy") return hasExactKeys(value, ["kind", "enemyId"]) && isNonEmptyString(value.enemyId);
-  return false;
-}
-
-type CombatStatsValue = Readonly<{
-  readonly maxHp: number;
-  readonly maxEnergy: number;
-  readonly attack: number;
-  readonly defense: number;
-  readonly speed: number;
-}>;
-
-function isCombatStats(value: unknown): value is CombatStatsValue {
-  return isObject(value) && hasExactKeys(value, ["maxHp", "maxEnergy", "attack", "defense", "speed"])
-    && isFiniteNumber(value.maxHp) && value.maxHp > 0
-    && isFiniteNumber(value.maxEnergy) && value.maxEnergy >= 0
-    && isFiniteNumber(value.attack) && value.attack >= 0
-    && isFiniteNumber(value.defense) && value.defense >= 0
-    && isFiniteNumber(value.speed) && value.speed >= 0;
-}
-
-function isCombatant(value: unknown): boolean {
-  if (!isObject(value)
-    || !hasExactKeys(value, ["combatantId", "side", "controller", "source", "name", "stats", "hp", "energy", "guarding"])
-    || !isNonEmptyString(value.combatantId)
-    || (value.side !== "allies" && value.side !== "enemies")
-    || (value.controller !== "player" && value.controller !== "rule")
-    || !isCombatSource(value.source)
-    || !isNonEmptyString(value.name)
-    || !isCombatStats(value.stats)
-    || !isFiniteNumber(value.hp) || value.hp < 0 || value.hp > value.stats.maxHp
-    || !isFiniteNumber(value.energy) || value.energy < 0 || value.energy > value.stats.maxEnergy
-    || typeof value.guarding !== "boolean") return false;
-  if (value.source.kind === "protagonist") return value.side === "allies" && value.controller === "player";
-  if (value.source.kind === "companion") return value.side === "allies" && value.controller === "rule";
-  return value.side === "enemies" && value.controller === "rule";
-}
-
-function isCombatAction(value: unknown): boolean {
-  return value === "attack" || value === "skill" || value === "guard" || value === "flee";
-}
-
-function isCombatResult(value: unknown): boolean {
-  return isObject(value)
-    && hasRequiredAndOptionalKeys(value, ["round", "sequence", "actorId", "kind", "damage", "actorEnergyAfter"], ["targetId", "targetHpAfter"])
-    && Number.isInteger(value.round) && (value.round as number) >= 0
-    && Number.isInteger(value.sequence) && (value.sequence as number) >= 0
-    && isNonEmptyString(value.actorId) && optionalMatches(value, "targetId", isNonEmptyString)
-    && isCombatAction(value.kind) && isFiniteNumber(value.damage) && value.damage >= 0
-    && isFiniteNumber(value.actorEnergyAfter) && value.actorEnergyAfter >= 0
-    && optionalMatches(value, "targetHpAfter", (entry) => isFiniteNumber(entry) && entry >= 0);
-}
-
-function isEnemyIntent(value: unknown): boolean {
-  return isObject(value)
-    && hasRequiredAndOptionalKeys(value, ["actorId", "kind"], ["targetId"])
-    && isNonEmptyString(value.actorId)
-    && (value.kind === "attack" || value.kind === "skill" || value.kind === "guard")
-    && optionalMatches(value, "targetId", isNonEmptyString);
 }
 
 function isCompleteModernBattle(value: JsonObject): boolean {
@@ -346,7 +260,7 @@ function isGameEvent(value: unknown): value is GameEvent {
       return eventWithOccurredAt(value, ["enemyId", "round", "playerHp", "enemyHp", "action"], ["results"])
         && typeof value.enemyId === "string" && Number.isInteger(value.round) && (value.round as number) >= 0
         && isFiniteNumber(value.playerHp) && isFiniteNumber(value.enemyHp)
-        && (isCombatAction(value.action) || value.action === "withdraw")
+        && (value.action === "attack" || value.action === "skill" || value.action === "guard" || value.action === "flee" || value.action === "withdraw")
         && optionalMatches(value, "results", (entry) => Array.isArray(entry) && entry.every(isCombatResult));
     case "battle_resolved":
       return eventWithOccurredAt(value, ["enemyId", "outcome"], ["enemyIds"])
