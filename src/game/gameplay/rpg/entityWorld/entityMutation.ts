@@ -669,7 +669,8 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
       if (mutation.fromNpcId === mutation.targetId) return failure("relationship_self_edge", mutation.fromNpcId);
       const checkedSource = checkRelationshipSource(mutation.source);
       if (!checkedSource.ok) return failure(checkedSource.code, mutation.fromNpcId);
-      // 承诺同样会动维度：登记时机与上一支一致，一律在写入之前。
+      // 防御性登记：承诺本身不动维度（relationshipSignalPolicy 只重写 commitments 与
+      // lastChangedAtTurn），但登记时机与上一支一致——一律在写入之前——以免将来给承诺加数值语义时漏登记。
       ensureBatchBaseline(parties.npc, batch);
       // 承诺不建边：没有边就是引用了不存在的东西，与「未知 commitmentId」是两类错误。
       const edge = findRelationshipEdge(parties.npc.relationships, mutation.targetId);
