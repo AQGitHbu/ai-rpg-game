@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createWorldStateFixtureWith, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
+import { createWorldStateFixtureWith, emptyProjection, updateWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 import { WORLD_STATE_SCHEMA_VERSION } from "@/game/domain/worldState";
-import { asGenerationId, asLocationId } from "@/game/domain/worldEntity";
+import { asEnemyId, asGenerationId, asLocationId } from "@/game/domain/worldEntity";
 import { validatePersistableWorldState } from "./worldStatePersistenceValidation";
 
 const state = () => createWorldStateFixtureWith({
@@ -12,6 +12,15 @@ const state = () => createWorldStateFixtureWith({
     currentLocationId: asLocationId("loc"),
   }),
 });
+
+function stateWithEnemy() {
+  return updateWorldStateFixture(state(), {
+    enemies: [{
+      id: asEnemyId("enemy_1"), name: "灰狼", tier: "normal",
+      stats: { hp: 30, attack: 8, defense: 4 }, locationId: asLocationId("loc"), tags: [],
+    }],
+  });
+}
 
 describe("validatePersistableWorldState", () => {
   it(`accepts v${WORLD_STATE_SCHEMA_VERSION} state and rebuilds compatibility projections from entityStore`, () => {
@@ -81,6 +90,91 @@ describe("validatePersistableWorldState", () => {
         combatants: [{ combatantId: "bad", source: null }],
       },
     })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+  });
+
+  it("保留完全 legacy active battle，但任一 modern 字段出现就要求六字段完整存在", () => {
+    const valid = stateWithEnemy();
+    const legacyBattle = {
+      status: "active" as const,
+      enemyId: asEnemyId("enemy_1"),
+      playerHp: 100,
+      enemyHp: 30,
+      round: 1,
+      preBattleSnapshot: { entityStore: valid.entityStore, eventLedger: valid.eventLedger },
+    };
+    expect(validatePersistableWorldState({ ...valid, battle: legacyBattle })).toMatchObject({ ok: true });
+
+    const completeModernBattle = {
+      ...legacyBattle,
+      combatants: [{
+        combatantId: "ally:protagonist",
+        side: "allies",
+        controller: "player",
+        source: { kind: "protagonist" },
+        name: "p",
+        stats: { maxHp: 100, maxEnergy: 40, attack: 10, defense: 5, speed: 12 },
+        hp: 100,
+        energy: 40,
+        guarding: false,
+      }, {
+        combatantId: "enemy:enemy_1",
+        side: "enemies",
+        controller: "rule",
+        source: { kind: "enemy", enemyId: "enemy_1" },
+        name: "灰狼",
+        stats: { maxHp: 30, maxEnergy: 30, attack: 8, defense: 4, speed: 8 },
+        hp: 30,
+        energy: 15,
+        guarding: false,
+      }],
+      turnOrder: ["ally:protagonist", "enemy:enemy_1"],
+      turnIndex: 0,
+      enemyIntents: [],
+      downedEnemyIds: [],
+      lastAdvance: [],
+    };
+    expect(validatePersistableWorldState({ ...valid, battle: completeModernBattle })).toMatchObject({ ok: true });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      combatants: [{
+        ...completeModernBattle.combatants[0]!,
+        stats: { ...completeModernBattle.combatants[0]!.stats, maxHp: 0 },
+      }],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      turnOrder: ["missing-combatant"],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      enemyIntents: [{ actorId: "ally:protagonist", kind: "attack", targetId: "enemy:enemy_1" }],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      lastAdvance: [{
+        round: 1, sequence: 0, actorId: "ally:protagonist", targetId: "enemy:enemy_1",
+        kind: "attack", damage: 1, actorEnergyAfter: 41, targetHpAfter: 29,
+      }],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      downedEnemyIds: ["enemy_1"],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+
+    const modernFields = [
+      { combatants: completeModernBattle.combatants },
+      { turnOrder: completeModernBattle.turnOrder },
+      { turnIndex: completeModernBattle.turnIndex },
+      { enemyIntents: completeModernBattle.enemyIntents },
+      { downedEnemyIds: completeModernBattle.downedEnemyIds },
+      { lastAdvance: completeModernBattle.lastAdvance },
+    ] as const;
+    for (const field of modernFields) {
+      expect(validatePersistableWorldState({
+        ...valid,
+        battle: { ...legacyBattle, ...field },
+      })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    }
   });
 
   it("rejects unknown or malformed ending requirements without throwing", () => {

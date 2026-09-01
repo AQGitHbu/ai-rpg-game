@@ -866,6 +866,22 @@ describe("performBattleRound：同伴共同战斗关系证据", () => {
     expect(evidence).toHaveLength(1);
     expect(evidence?.[0]).toMatchObject({ actionId: "battle_victory_1", signal: "fought_together" });
 
+    const replay = applyEntityMutations(record.worldState, [{
+      kind: "apply_relationship_signal",
+      fromNpcId: fixture.companionId,
+      targetId: PLAYER_ENTITY_ID,
+      signal: "fought_together",
+      source: { kind: "action", actionId: "battle_victory_1", turnNumber: 0 },
+    }]);
+    expect(replay.ok).toBe(true);
+    if (replay.ok) {
+      const replayedCompanion = replay.worldState.entityStore.records.find((entry) => entry.core.id === fixture.companionId);
+      if (replayedCompanion === undefined || replayedCompanion.core.kind !== "npc") throw new Error("replayed companion must persist");
+      expect(findRelationshipEdge((replayedCompanion as NpcEntityRecord).relationships, PLAYER_ENTITY_ID)?.evidence.filter(
+        (entry) => entry.signal === "fought_together",
+      )).toHaveLength(1);
+    }
+
     const absent = record.worldState.entityStore.records.find((entry) => entry.core.id === fixture.absentCompanionId);
     if (absent === undefined || absent.core.kind !== "npc") throw new Error("absent companion must persist");
     expect(findRelationshipEdge((absent as NpcEntityRecord).relationships, PLAYER_ENTITY_ID)).toBeUndefined();

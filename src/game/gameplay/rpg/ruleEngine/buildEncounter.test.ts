@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createInitialWorldState, type EnemyEntry, type WorldState } from "@/game/domain/worldState";
 import { asEnemyId, asGenerationId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
 import { createEntityStore, projectEntityStore, type NpcEntityRecord } from "@/game/domain/entity";
+import { COMPANION_COMBAT_STATS } from "@/game/domain/combat";
 import { buildEncounter } from "./buildEncounter";
 
 function makeWorld(enemies: readonly EnemyEntry[]): WorldState {
@@ -91,7 +92,7 @@ describe("buildEncounter", () => {
     ]);
     expect(encounter[1]).toMatchObject({
       side: "allies", controller: "rule", source: { kind: "companion", npcId: asNpcId("npc_a") },
-      name: "npc_a", stats: { maxHp: expect.any(Number), maxEnergy: expect.any(Number), attack: expect.any(Number), defense: expect.any(Number), speed: expect.any(Number) },
+      name: "npc_a", stats: COMPANION_COMBAT_STATS,
     });
   });
 });

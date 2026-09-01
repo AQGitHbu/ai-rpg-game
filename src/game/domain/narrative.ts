@@ -132,7 +132,9 @@ export type BattleNarrativeCheckpointState = {
   readonly currentScene: NarrativeSceneState;
   readonly choiceRegistry: readonly ApprovedChoice[];
   readonly bundle?: NarrativeBundleState;
+  readonly preparedContinuation?: PreparedContinuationState;
   readonly dialogueSession?: DialogueSessionState;
+  readonly dialogueResume?: DialogueResumeState;
 };
 
 /** Runtime AI is opt-in per save. Offline development presets never call it. */
@@ -300,13 +302,15 @@ function isDialogueResume(value: unknown): value is DialogueResumeState {
 
 function isBattleCheckpoint(value: unknown): value is BattleNarrativeCheckpointState {
   return isRecord(value)
-    && hasOnlyKeys(value, ["storySnapshot", "currentScene", "choiceRegistry", "bundle", "dialogueSession"])
+    && hasOnlyKeys(value, ["storySnapshot", "currentScene", "choiceRegistry", "bundle", "preparedContinuation", "dialogueSession", "dialogueResume"])
     && isRecord(value.storySnapshot)
     && isNarrativeScene(value.currentScene)
     && Array.isArray(value.choiceRegistry)
     && value.choiceRegistry.every(isApprovedChoice)
     && (value.bundle === undefined || parseNarrativeBundleState(value.bundle).ok)
-    && (value.dialogueSession === undefined || isDialogueSession(value.dialogueSession));
+    && (value.preparedContinuation === undefined || parsePreparedContinuationState(value.preparedContinuation).ok)
+    && (value.dialogueSession === undefined || isDialogueSession(value.dialogueSession))
+    && (value.dialogueResume === undefined || isDialogueResume(value.dialogueResume));
 }
 
 function isApprovedChoice(value: unknown): value is ApprovedChoice {

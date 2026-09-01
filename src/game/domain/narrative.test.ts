@@ -185,4 +185,38 @@ describe("NarrativeRuntimeState", () => {
       },
     })).toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
   });
+
+  it("round-trips complete battle checkpoint continuation fields and keeps old omissions compatible", () => {
+    const checkpoint = {
+      storySnapshot: { turnNumber: 3 },
+      currentScene: readyScene,
+      choiceRegistry: [],
+      preparedContinuation: {
+        originJobId: asNarrativeJobId("job-checkpoint"),
+        steps: [],
+        activeStepIds: [],
+      },
+      dialogueResume: {
+        objectiveKey: "quest_1:0",
+        npcId: asNpcId("npc_1"),
+        locationId: asLocationId("loc_1"),
+        scene: readyScene,
+        choiceRegistry: [],
+      },
+      dialogueSession: {
+        npcId: asNpcId("npc_1"), turnCount: 1, requiredTurns: 2, completed: false,
+      },
+    };
+    const runtime = { ...ready, battleCheckpoint: checkpoint };
+    expect(parseNarrativeRuntimeState(runtime)).toEqual({ ok: true, value: runtime });
+    expect(parseNarrativeRuntimeState({ ...ready, battleCheckpoint: {
+      storySnapshot: { turnNumber: 3 }, currentScene: readyScene, choiceRegistry: [],
+    } })).toMatchObject({ ok: true });
+    expect(parseNarrativeRuntimeState({ ...ready, battleCheckpoint: {
+      ...checkpoint, preparedContinuation: { ...checkpoint.preparedContinuation, unexpected: true },
+    } })).toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
+    expect(parseNarrativeRuntimeState({ ...ready, battleCheckpoint: {
+      ...checkpoint, dialogueResume: { ...checkpoint.dialogueResume, choiceRegistry: [null] },
+    } })).toEqual({ ok: false, code: "INVALID_NARRATIVE_RUNTIME" });
+  });
 });

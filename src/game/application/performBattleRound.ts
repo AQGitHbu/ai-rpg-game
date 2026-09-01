@@ -51,7 +51,9 @@ function restoreNarrativeFromCheckpoint(
     currentScene: checkpoint.currentScene,
     choiceRegistry: checkpoint.choiceRegistry,
     ...(checkpoint.bundle === undefined ? {} : { narrativeBundle: checkpoint.bundle }),
+    ...(checkpoint.preparedContinuation === undefined ? {} : { preparedContinuation: checkpoint.preparedContinuation }),
     ...(checkpoint.dialogueSession === undefined ? {} : { dialogueSession: checkpoint.dialogueSession }),
+    ...(checkpoint.dialogueResume === undefined ? {} : { dialogueResume: checkpoint.dialogueResume }),
   };
 }
 

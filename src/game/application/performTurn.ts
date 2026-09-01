@@ -239,7 +239,9 @@ export async function performTurn(
                 storySnapshot,
                 currentScene: readyNarrative.currentScene,
                 choiceRegistry: readyNarrative.choiceRegistry,
+                ...(readyNarrative.preparedContinuation === undefined ? {} : { preparedContinuation: readyNarrative.preparedContinuation }),
                 ...(readyNarrative.dialogueSession === undefined ? {} : { dialogueSession: readyNarrative.dialogueSession }),
+                ...(readyNarrative.dialogueResume === undefined ? {} : { dialogueResume: readyNarrative.dialogueResume }),
               },
             },
           };
@@ -341,7 +343,9 @@ export async function performTurn(
               currentScene: readyNarrative.currentScene,
               choiceRegistry: readyNarrative.choiceRegistry,
               ...(readyNarrative.narrativeBundle === undefined ? {} : { bundle: readyNarrative.narrativeBundle }),
+              ...(readyNarrative.preparedContinuation === undefined ? {} : { preparedContinuation: readyNarrative.preparedContinuation }),
               ...(readyNarrative.dialogueSession === undefined ? {} : { dialogueSession: readyNarrative.dialogueSession }),
+              ...(readyNarrative.dialogueResume === undefined ? {} : { dialogueResume: readyNarrative.dialogueResume }),
             },
           },
         };

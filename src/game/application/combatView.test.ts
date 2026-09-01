@@ -79,4 +79,55 @@ describe("projectCombatView", () => {
     expect(view.disabledControls).toEqual([]);
     expect(view.lastAdvance).toEqual([]);
   });
+
+  it("fails closed without throwing for malformed nested units, ranges, and references", () => {
+    const ws = world();
+    const encounter = buildEncounter(ws, asEnemyId("enemy_1"));
+    const active = {
+      status: "active" as const,
+      enemyId: asEnemyId("enemy_1"),
+      playerHp: 100,
+      enemyHp: 55,
+      round: 1,
+      combatants: encounter,
+      turnOrder: createTurnOrder(encounter),
+      turnIndex: 0,
+      enemyIntents: [],
+      downedEnemyIds: [],
+      lastAdvance: [],
+    };
+    const malformed = [
+      { ...active, turnIndex: 0.5 },
+      { ...active, turnIndex: 99 },
+      { ...active, combatants: undefined },
+      { ...active, combatants: [{ ...encounter[0], source: null }, encounter[1]] },
+      { ...active, combatants: [{ ...encounter[0], stats: { ...encounter[0].stats, maxHp: 0 } }, encounter[1]] },
+      { ...active, combatants: [{ ...encounter[0], hp: -1 }, encounter[1]] },
+      { ...active, turnOrder: ["missing-combatant"] },
+      { ...active, enemyIntents: [{ actorId: "missing-combatant", kind: "attack" }] },
+      { ...active, enemyIntents: [{ actorId: encounter[1]?.combatantId, kind: "attack", targetId: encounter[1]?.combatantId }] },
+      { ...active, downedEnemyIds: [asEnemyId("enemy_1")] },
+      {
+        ...active,
+        lastAdvance: [{
+          round: 1, sequence: 0, actorId: "missing-combatant", targetId: encounter[1]?.combatantId,
+          kind: "attack", damage: 1, actorEnergyAfter: 10, targetHpAfter: 54,
+        }],
+      },
+      {
+        ...active,
+        lastAdvance: [{
+          round: 1, sequence: 0, actorId: encounter[0]?.combatantId, targetId: encounter[1]?.combatantId,
+          kind: "attack", damage: 1, actorEnergyAfter: encounter[0]?.stats.maxEnergy + 1, targetHpAfter: 54,
+        }],
+      },
+    ];
+
+    for (const battle of malformed) {
+      expect(() => projectCombatView(ws, battle as never, 3)).not.toThrow();
+      expect(projectCombatView(ws, battle as never, 3)).toMatchObject({
+        units: [], controls: [], disabledControls: [], lastAdvance: [],
+      });
+    }
+  });
 });
