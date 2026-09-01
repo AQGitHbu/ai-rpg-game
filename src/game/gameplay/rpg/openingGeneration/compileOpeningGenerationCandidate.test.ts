@@ -5,6 +5,8 @@ import type { OpeningGenerationCandidate } from "@/game/domain/openingGeneration
 import type { StoryState } from "@/game/domain/storyState";
 import { asGenerationId, asLocationId, asNpcId, asQuestId, asFactId } from "@/game/domain/worldEntity";
 import { createFixtureNarrativeRuntimeState } from "@/game/domain/narrativeTestFixture.testutil";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { entitiesOfKind } from "@/game/domain/entity";
 
 function validCandidate(): OpeningGenerationCandidate {
   return {
@@ -37,7 +39,9 @@ function validCandidate(): OpeningGenerationCandidate {
       location: { name: "听雨客栈", description: "一座临近青石古道的落脚点。", scale: "town" },
       npc: {
         name: "沈掌柜", role: "关键线人", description: "掌握沿途消息的知情人。",
-        knownFactKeys: ["fact_inn"], privateFactKeys: ["fact_pact"], goals: ["查明幕后势力"],
+        knownFactKeys: ["fact_inn"], privateFactKeys: ["fact_pact"],
+        anchors: { selfConcept: "守住客栈秘密的人", values: ["守诺"], speechStyle: "短句", capabilityBoundaries: ["不会伪证"], taboos: [] },
+        goals: [{ horizon: "short", description: "查明幕后势力", priority: 4, reason: "客栈的线索正在消失" }],
       },
       quest: {
         name: "取得沈掌柜的信任", description: "从关键线人口中确认追索方向。",
@@ -63,6 +67,80 @@ function compile(candidate: OpeningGenerationCandidate = validCandidate()) {
 }
 
 describe("compileOpeningGenerationCandidate", () => {
+  it("从 anchors/goals proposals 显式创建 npc_0 的非占位组件与初始 provenance", () => {
+    const candidate = {
+      ...validCandidate(),
+      opening: {
+        ...validCandidate().opening,
+        npc: {
+          ...validCandidate().opening.npc,
+          anchors: {
+            selfConcept: "我是守住客栈秘密的人",
+            values: ["守诺"],
+            speechStyle: "短句，少解释",
+            capabilityBoundaries: ["不会替人作伪证"],
+            taboos: ["不出卖无辜者"],
+          },
+          goals: [{ horizon: "long", description: "守住盟约", priority: 5, reason: "这是我留下来的原因" }],
+        },
+      },
+    } as unknown as OpeningGenerationCandidate;
+
+    const { worldState } = compile(candidate);
+    const npcRecord = entitiesOfKind(worldState.entityStore, "npc").find((record) => record.core.id === asNpcId("npc_0"));
+    expect(npcRecord?.identity.anchors)
+      .toEqual(candidate.opening.npc.anchors);
+    expect(npcRecord?.dynamicState.goals).toEqual([
+      {
+        goalId: "npc_0_goal_1", horizon: "long", description: "守住盟约", priority: 5,
+        status: "active", reason: "这是我留下来的原因",
+      },
+    ]);
+    expect(npcRecord?.knowledge.entries).toEqual([
+      {
+        factId: asFactId("fact_0"), certainty: "known", disclosure: "public",
+        source: { kind: "initial_world", learnedAtTurn: 0 },
+      },
+      {
+        factId: asFactId("fact_1"), certainty: "known", disclosure: "secret",
+        source: { kind: "initial_world", learnedAtTurn: 0 },
+      },
+    ]);
+    expect(npcRecord?.relationships.outgoing).toEqual([{
+      targetId: PLAYER_ENTITY_ID,
+      dimensions: { affinity: 0, trust: 0, fear: 0, hostility: 0 },
+      stage: "unknown", trend: "stable", commitments: [], evidence: [],
+      origin: { kind: "initial_world", createdAtTurn: 0, reasonKey: "opening_npc" },
+      lastChangedAtTurn: 0,
+    }]);
+  });
+
+  it("server mints goal IDs from npc id and ordinal, ignoring AI-owned IDs/status", () => {
+    const candidate = {
+      ...validCandidate(),
+      opening: {
+        ...validCandidate().opening,
+        npc: {
+          ...validCandidate().opening.npc,
+          anchors: {
+            selfConcept: "自洽的人", values: ["守诺"], speechStyle: "简短",
+            capabilityBoundaries: ["不会伪证"], taboos: [],
+          },
+          goals: [
+            { horizon: "short", description: "目标一", priority: 2, reason: "原因一" },
+            { horizon: "long", description: "目标二", priority: 4, reason: "原因二" },
+          ],
+        },
+      },
+    } as unknown as OpeningGenerationCandidate;
+
+    const { worldState } = compile(candidate);
+    const npcRecord = entitiesOfKind(worldState.entityStore, "npc").find((record) => record.core.id === asNpcId("npc_0"));
+    expect(npcRecord?.dynamicState.goals.map((goal) => goal.goalId))
+      .toEqual(["npc_0_goal_1", "npc_0_goal_2"]);
+    expect(npcRecord?.dynamicState.goals.every((goal) => goal.status === "active")).toBe(true);
+  });
+
   it("只具象化一个地点/一个 NPC/一个 active 主任务，且无敌人、无结局、无锁定未来任务", () => {
     const { worldState } = compile();
     expect(worldState.locations).toHaveLength(1);

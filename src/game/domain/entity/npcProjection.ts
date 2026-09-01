@@ -26,8 +26,13 @@ import type {
 export const LEGACY_IMPORT_REASON_KEY = "legacy_import";
 
 /** 目标 ID 由 npcId + ordinal 确定性铸造，规则层不保存自由文本。 */
-export function npcLegacyGoalId(npcId: string, ordinal: number): string {
+export function npcGoalId(npcId: string, ordinal: number): string {
   return `${npcId}_goal_${ordinal}`;
+}
+
+/** @deprecated 仅供旧兼容夹具的 deterministic legacy adapter 使用。 */
+export function npcLegacyGoalId(npcId: string, ordinal: number): string {
+  return npcGoalId(npcId, ordinal);
 }
 
 export type NpcImportedLayers = Readonly<{
@@ -61,7 +66,7 @@ function visibleGoals(goals: readonly NpcGoal[]): readonly string[] {
 
 function legacyGoal(npcId: string, index: number, description: string): NpcGoal {
   return {
-    goalId: npcLegacyGoalId(npcId, index + 1),
+    goalId: npcGoalId(npcId, index + 1),
     horizon: "short",
     description,
     priority: 3,

@@ -8,6 +8,7 @@ import type {
   PlayerState, QuestEntry, WorldFactEntry,
 } from "./worldEntries";
 import type { EntityStore } from "./entity/entityStore";
+import type { NpcImportedLayers } from "./entity/npcProjection";
 import {
   compileEntityStoreFromCompatibilityProjection,
   projectEntityStore,
@@ -85,6 +86,8 @@ export function createWorldStateFromProjection(input: {
   readonly generation: GenerationMetadata;
   readonly projection: EntityCompatibilityProjection;
   readonly createdAtTurn?: number;
+  readonly previousStore?: EntityStore;
+  readonly npcCreationComponentsById?: ReadonlyMap<NpcId, NpcImportedLayers>;
   readonly battle?: BattleState;
   readonly endings?: readonly EndingEntry[];
   readonly ending?: EndingState;
@@ -93,6 +96,8 @@ export function createWorldStateFromProjection(input: {
   const entityStore = compileEntityStoreFromCompatibilityProjection({
     projection: input.projection,
     createdAtTurn: input.createdAtTurn ?? 0,
+    ...(input.previousStore === undefined ? {} : { previousStore: input.previousStore }),
+    ...(input.npcCreationComponentsById === undefined ? {} : { npcCreationComponentsById: input.npcCreationComponentsById }),
   });
   return {
     version: 4,

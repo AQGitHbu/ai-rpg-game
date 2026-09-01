@@ -3,13 +3,19 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { EvolutionNeed, ApprovedWorldDelta } from "@/game/domain/worldDelta";
 import type { BlueprintExpandedEvent } from "@/game/domain/events";
-import type { LocationId, NpcId, ItemId } from "@/game/domain/worldEntity";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import type { FactId, LocationId, NpcId, ItemId } from "@/game/domain/worldEntity";
 import type { TownRuntimeState } from "@/game/domain/townState";
 import { createTownRuntime, townSeedFor, bindNpcToTownSlot } from "@/game/gameplay/rpg/town";
 import {
   compileEntityStoreFromCompatibilityProjection,
   entitiesOfKind,
   projectEntityStore,
+} from "@/game/domain/entity";
+import { npcGoalId } from "@/game/domain/entity";
+import type {
+  NpcDynamicStateComponent, NpcGoal, NpcHistoryComponent, NpcImportedLayers,
+  NpcKnowledgeComponent, NpcRelationshipComponent,
 } from "@/game/domain/entity";
 import { applyEntityMutations, EntityMutationInvariantError, type EntityMutation } from "@/game/gameplay/rpg/entityWorld";
 
@@ -34,6 +40,61 @@ type LocationPatch = {
   readonly availableItemIds?: readonly ItemId[];
   readonly townBuildingNames?: readonly { readonly npcId: NpcId; readonly displayName: string }[];
 };
+
+function materializedNpcCreationComponents(
+  npc: WorldState["npcs"][number],
+  createdAtTurn: number,
+): NpcImportedLayers {
+  const privateFacts = new Set(npc.memory.hiddenFactIds.map(String));
+  const factIds = [...new Set([...npc.memory.knownFactIds, ...npc.memory.hiddenFactIds])];
+  const knowledge: NpcKnowledgeComponent = {
+    entries: factIds.map((factId: FactId) => ({
+      factId,
+      certainty: "known",
+      disclosure: privateFacts.has(String(factId)) ? "secret" : "public",
+      source: { kind: "initial_world", learnedAtTurn: createdAtTurn },
+    })),
+  };
+  const dynamicState: NpcDynamicStateComponent = {
+    isCompanion: npc.isCompanion,
+    met: npc.met,
+    emotion: npc.memory.emotion,
+    goals: npc.memory.goals.map((description, index): NpcGoal => ({
+      goalId: npcGoalId(String(npc.id), index + 1),
+      horizon: "short",
+      description,
+      priority: 3,
+      status: "active",
+      reason: "world_delta_npc",
+    })),
+  };
+  const relationships: NpcRelationshipComponent = {
+    outgoing: [{
+      targetId: PLAYER_ENTITY_ID,
+      dimensions: { affinity: npc.memory.relationship.affinity, trust: 0, fear: 0, hostility: 0 },
+      stage: npc.met ? "acquainted" : "unknown",
+      trend: "stable",
+      commitments: [],
+      evidence: [],
+      origin: { kind: "initial_world", createdAtTurn, reasonKey: "world_delta_npc" },
+      lastChangedAtTurn: createdAtTurn,
+    }],
+  };
+  const history: NpcHistoryComponent = { interactions: [...npc.memory.interactionHistory] };
+  return {
+    anchors: {
+      selfConcept: `${npc.role}：${npc.description}`.slice(0, 200),
+      values: ["守信"],
+      speechStyle: "谨慎而直接",
+      capabilityBoundaries: ["不超出自身所知"],
+      taboos: [],
+    },
+    dynamicState,
+    knowledge,
+    relationships,
+    history,
+  };
+}
 
 function bindTownNpcIfAvailable(
   town: TownRuntimeState,
@@ -157,6 +218,9 @@ export function materializeWorldDelta(input: MaterializeWorldDeltaInput): Approv
     },
     createdAtTurn: ss.turnNumber,
     previousStore: ws.entityStore,
+    npcCreationComponentsById: new Map(
+      approved.newNpcs.map((npc) => [npc.id, materializedNpcCreationComponents(npc, ss.turnNumber)] as const),
+    ),
   });
   const existingIds = new Set(ws.entityStore.records.map((record) => record.core.id));
   const mutations: EntityMutation[] = [];

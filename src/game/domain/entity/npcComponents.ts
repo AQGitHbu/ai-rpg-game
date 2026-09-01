@@ -29,6 +29,11 @@ export const NPC_ANCHOR_LIST_MIN = 1;
 export const NPC_ANCHOR_LIST_MAX = 4;
 /** 锚点列表内允许「可空」的那一档：长期禁区。 */
 export const NPC_TABOO_LIST_MIN = 0;
+/** 开放给创建提案的单条人格/目标文本上限，与实体文本预算保持一致。 */
+export const NPC_CREATION_TEXT_MAX_LENGTH = 200;
+/** 一个 NPC 出生时最多携带的并行目标数。 */
+export const NPC_GOAL_LIST_MIN = 1;
+export const NPC_GOAL_LIST_MAX = 4;
 /** 一条关系边保留的证据条数上限：超出即拒绝，裁剪由写入侧的确定性规则负责。 */
 export const RELATIONSHIP_EVIDENCE_CAP = 12;
 /** NPC 交互历史保留条数上限。 */
@@ -161,6 +166,14 @@ export type NpcGoal = Readonly<{
   description: string;
   priority: NpcGoalPriority;
   status: NpcGoalStatus;
+  reason: string;
+}>;
+
+/** AI 创建 NPC 时可提交的部分目标；goalId/status 始终由服务端补齐。 */
+export type NpcGoalProposal = Readonly<{
+  horizon: NpcGoalHorizon;
+  description: string;
+  priority: NpcGoalPriority;
   reason: string;
 }>;
 

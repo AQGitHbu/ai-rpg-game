@@ -48,7 +48,9 @@ function validCandidate(): OpeningGenerationCandidate {
       location: { name: "听雨客栈", description: "一座临近青石古道的落脚点。", scale: "town" },
       npc: {
         name: "沈掌柜", role: "关键线人", description: "掌握沿途消息的知情人。",
-        knownFactKeys: ["fact_inn"], privateFactKeys: ["fact_pact"], goals: ["查明幕后势力"],
+        knownFactKeys: ["fact_inn"], privateFactKeys: ["fact_pact"],
+        anchors: { selfConcept: "守住客栈秘密的人", values: ["守诺"], speechStyle: "短句", capabilityBoundaries: ["不会伪证"], taboos: [] },
+        goals: [{ horizon: "short", description: "查明幕后势力", priority: 4, reason: "客栈的线索正在消失" }],
       },
       quest: {
         name: "取得沈掌柜的信任", description: "从关键线人口中确认追索方向。",
@@ -59,6 +61,81 @@ function validCandidate(): OpeningGenerationCandidate {
 }
 
 describe("parseOpeningGenerationCandidate", () => {
+  it("接受带完整 anchors 与 typed goal proposals 的开场 NPC", () => {
+    const base = rawCandidate();
+    const candidate = {
+      ...base,
+      opening: {
+        ...base.opening,
+        npc: {
+          ...base.opening.npc,
+          anchors: {
+            selfConcept: "我是守住客栈秘密的人",
+            values: ["守诺"],
+            speechStyle: "短句，少解释",
+            capabilityBoundaries: ["不会替人作伪证"],
+            taboos: ["不出卖无辜者"],
+          },
+          goals: [{ horizon: "short", description: "查明幕后势力", priority: 4, reason: "客栈的线索正在消失" }],
+        },
+      },
+    };
+
+    const result = parseOpeningGenerationCandidate(candidate);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.opening.npc.anchors).toEqual(candidate.opening.npc.anchors);
+      expect(result.value.opening.npc.goals).toEqual(candidate.opening.npc.goals);
+    }
+  });
+
+  it("拒绝 malformed/duplicate/over-limit anchors and goals without defaults", () => {
+    const base = rawCandidate();
+    const npc = {
+      ...base.opening.npc,
+      anchors: {
+        selfConcept: "",
+        values: ["守诺", "守诺", "一", "二", "三"],
+        speechStyle: "短句",
+        capabilityBoundaries: ["不会伪证"],
+        taboos: [],
+        extra: "不得接受",
+      },
+      goals: [
+        { horizon: "mid", description: "目标", priority: 6, reason: "原因" },
+        { horizon: "short", description: "目标", priority: 3, reason: "原因" },
+      ],
+    };
+
+    const result = parseOpeningGenerationCandidate({
+      ...base,
+      opening: { ...base.opening, npc },
+    });
+
+    expect(result).toEqual({ ok: false, code: "INVALID_OPENING_NPC" });
+    expect(JSON.stringify(result)).not.toContain("legacy_import");
+  });
+
+  it("拒绝 goalId/status 以及 nested anchor/goal unknown keys", () => {
+    const base = rawCandidate();
+    const npc = {
+      ...base.opening.npc,
+      anchors: {
+        selfConcept: "我是守住客栈秘密的人",
+        values: ["守诺"],
+        speechStyle: "短句",
+        capabilityBoundaries: ["不会伪证"],
+        taboos: [],
+        role: "不应出现在 anchors",
+      },
+      goals: [{ horizon: "short", description: "查明幕后势力", priority: 4, reason: "客栈的线索正在消失", goalId: "ai_minted", status: "active" }],
+    };
+
+    expect(parseOpeningGenerationCandidate({ ...base, opening: { ...base.opening, npc } }))
+      .toEqual({ ok: false, code: "INVALID_OPENING_NPC" });
+  });
+
   it("接受完整合法候选并原样保留字段", () => {
     const result = parseOpeningGenerationCandidate(validCandidate());
     expect(result.ok).toBe(true);

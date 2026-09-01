@@ -36,7 +36,9 @@ function validCandidate(): OpeningGenerationCandidate {
       location: { name: "听雨客栈", description: "一座临近青石古道的落脚点。", scale: "town" },
       npc: {
         name: "沈掌柜", role: "关键线人", description: "掌握沿途消息的知情人。",
-        knownFactKeys: ["fact_inn"], privateFactKeys: ["fact_pact"], goals: ["查明幕后势力"],
+        knownFactKeys: ["fact_inn"], privateFactKeys: ["fact_pact"],
+        anchors: { selfConcept: "守住客栈秘密的人", values: ["守诺"], speechStyle: "短句", capabilityBoundaries: ["不会伪证"], taboos: [] },
+        goals: [{ horizon: "short", description: "查明幕后势力", priority: 4, reason: "客栈的线索正在消失" }],
       },
       quest: {
         name: "取得沈掌柜的信任", description: "从关键线人口中确认追索方向。",
@@ -53,15 +55,13 @@ describe("repairOpeningGenerationCandidate", () => {
     expect(candidate).not.toBeNull();
   });
 
-  it("数组字段为 null/非数组时机械修复为空数组", () => {
+  it("required NPC goals 被机械修复为空数组后仍因缺少创建材料而拒绝", () => {
     const raw = JSON.parse(JSON.stringify(validCandidate())) as Record<string, unknown>;
     (raw.world as Record<string, unknown>).publicFacts = null;
     (raw.opening as Record<string, unknown>).npc = { ...(raw.opening as Record<string, unknown>).npc as object, goals: "x" };
     const { candidate, repaired } = repairOpeningGenerationCandidate(raw);
     expect(repaired).toBe(true);
-    expect(candidate).not.toBeNull();
-    expect(candidate?.world.publicFacts).toEqual([]);
-    expect(candidate?.opening.npc.goals).toEqual([]);
+    expect(candidate).toBeNull();
   });
 
   it("字符串字段被修复为空字符串后仍经 parse 拒绝（不伪装）", () => {

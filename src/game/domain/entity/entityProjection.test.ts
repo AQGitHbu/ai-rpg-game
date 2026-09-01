@@ -26,6 +26,7 @@ import {
   type EntityCompatibilityProjection,
 } from "./entityProjection";
 import { importNpcLayers, projectNpcEntry } from "./npcProjection";
+import type { NpcImportedLayers } from "./npcProjection";
 
 // ---------------------------------------------------------------------------
 // legacy 兼容投影 fixture：8 类实体齐全，两名 NPC、三件物品、两条事实。
@@ -165,7 +166,15 @@ function withLocation(
 }
 
 function compile(projection: EntityCompatibilityProjection, previousStore?: EntityStore): EntityStore {
-  return compileEntityStoreFromCompatibilityProjection({ projection, createdAtTurn: 0, previousStore });
+  const previousNpcIds = new Set(
+    previousStore?.records.filter((record) => record.core.kind === "npc").map((record) => record.core.id) ?? [],
+  );
+  const npcCreationComponentsById = new Map(
+    projection.npcs
+      .filter((entry) => !previousNpcIds.has(entry.id))
+      .map((entry) => [entry.id, importNpcLayers({ entry, createdAtTurn: 0 })] as const),
+  );
+  return compileEntityStoreFromCompatibilityProjection({ projection, createdAtTurn: 0, previousStore, npcCreationComponentsById });
 }
 
 function codesOf(issues: readonly { code: string }[]): string[] {
@@ -227,6 +236,77 @@ function requireRecord<K extends EntityKind>(
 // ---------------------------------------------------------------------------
 
 describe("entity 兼容投影：legacy → store → legacy", () => {
+  it("rejects a new NPC when no explicit creation component map is supplied", () => {
+    const projection = singleNpcProjection();
+    const input = { projection, createdAtTurn: 0 } as Parameters<typeof compileEntityStoreFromCompatibilityProjection>[0];
+
+    expect(() => compileEntityStoreFromCompatibilityProjection(input)).toThrowError(EntityProjectionInvariantError);
+    try {
+      compileEntityStoreFromCompatibilityProjection(input);
+    } catch (error) {
+      expect(error).toMatchObject({ code: "npc_creation_components_required", entityId: "npc_0" });
+    }
+  });
+
+  it("uses explicit creation components for a new NPC", () => {
+    const projection = singleNpcProjection();
+    const legacy = projection.npcs[0]!;
+    const imported = importNpcLayers({ entry: legacy, createdAtTurn: 0 });
+    const explicit: NpcImportedLayers = {
+      ...imported,
+      anchors: {
+        selfConcept: "明确的自我认知", values: ["守诺"], speechStyle: "只说必要的话",
+        capabilityBoundaries: ["不会伪造证词"], taboos: ["不出卖孩子"],
+      },
+      dynamicState: {
+        ...imported.dynamicState,
+        goals: [{ goalId: "npc_0_goal_1", horizon: "short", description: "守住客栈", priority: 3, status: "active", reason: "legacy_import" }],
+      },
+    };
+    const input = {
+      projection,
+      createdAtTurn: 0,
+      npcCreationComponentsById: new Map([[legacy.id, explicit]]),
+    } as Parameters<typeof compileEntityStoreFromCompatibilityProjection>[0];
+
+    const store = compileEntityStoreFromCompatibilityProjection(input);
+    const npc = entitiesOfKind(store, "npc").find((record) => record.core.id === legacy.id);
+    expect(npc?.identity.anchors).toEqual(explicit.anchors);
+    expect(npc?.dynamicState.goals).toEqual(explicit.dynamicState.goals);
+  });
+
+  it("retains every previous NPC component despite changed legacy memory", () => {
+    const previous = compile(singleNpcProjection(), undefined);
+    const projected = projectEntityStore(previous);
+    const changed = {
+      ...projected,
+      npcs: projected.npcs.map((entry) => entry.id === NPC_0
+        ? {
+            ...entry,
+            memory: {
+              ...entry.memory,
+              knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 99 },
+              emotion: "angry" as const, goals: ["legacy overwrite"],
+            },
+          }
+        : entry),
+    };
+    const input = {
+      projection: changed,
+      createdAtTurn: 99,
+      previousStore: previous,
+    } as Parameters<typeof compileEntityStoreFromCompatibilityProjection>[0];
+
+    const roundTripped = compileEntityStoreFromCompatibilityProjection(input);
+    const after = entitiesOfKind(roundTripped, "npc").find((record) => record.core.id === NPC_0)!;
+    const previousNpc = entitiesOfKind(previous, "npc").find((record) => record.core.id === NPC_0)!;
+    expect(after.identity).toEqual(previousNpc.identity);
+    expect(after.dynamicState).toEqual(previousNpc.dynamicState);
+    expect(after.knowledge).toEqual(previousNpc.knowledge);
+    expect(after.relationships).toEqual(previousNpc.relationships);
+    expect(after.history).toEqual(previousNpc.history);
+  });
+
   it("compiles all eight kinds and re-projects the identical legacy shape", () => {
     const projection = baseProjection();
     const store = compile(projection);

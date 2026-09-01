@@ -8,7 +8,7 @@ import {
   LIVE_WORLD_EVOLUTION_MAX_TOKENS,
   LIVE_WORLD_EVOLUTION_TIMEOUT_MS,
 } from "./liveWorldEvolutionSource";
-import { createInitialWorldState, createWorldStateFromProjection } from "@/game/domain/worldState";
+import { createInitialWorldState } from "@/game/domain/worldState";
 import { projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
 import { asFactId, asLocationId, asGenerationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
 import { createInitialStoryState } from "@/game/domain/storyState";
@@ -17,6 +17,7 @@ import type { WorldState } from "@/game/domain/worldState";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { WorldEvolutionSourceContext } from "../../worldEvolutionSource";
 import { bindNpcToTownSlot, createTownRuntime } from "@/game/gameplay/rpg/town";
+import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 
 function makeWorld(): WorldState {
   return createInitialWorldState({
@@ -31,7 +32,7 @@ function makeWorld(): WorldState {
 }
 
 function withProjection(base: WorldState, overrides: Partial<EntityCompatibilityProjection>): WorldState {
-  return createWorldStateFromProjection({
+  return createWorldStateFixture({
     generation: base.generation,
     projection: { ...projectEntityStore(base.entityStore), ...overrides },
     battle: base.battle,

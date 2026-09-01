@@ -3,7 +3,7 @@ import type { AiMessage } from "@ai-game/ai-transport";
 import type { RpgAiClient } from "./rpgAiClient";
 import { createNarrativeBundleSource } from "./liveNarrativeBundleSource";
 import type { NarrativeBundleSourceContext } from "../../narrativeBundleSource";
-import { createInitialWorldState, createWorldStateFromProjection, type WorldState } from "@/game/domain/worldState";
+import { createInitialWorldState, type WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { projectEntityStore, type EntityCompatibilityProjection } from "@/game/domain/entity";
@@ -20,6 +20,7 @@ import {
 import type { NpcMemory } from "@/game/domain/worldState";
 import { asNarrativeJobId } from "@/game/domain/events";
 import { createFixtureOpeningCandidateSource } from "../../createGame";
+import { createWorldStateFixture } from "@/game/domain/testing/worldStateFixture.testutil";
 
 function mockAiClient(complete: ReturnType<typeof vi.fn>): RpgAiClient {
   return {
@@ -60,7 +61,7 @@ function makeWorldState(): WorldState {
 
 function withProjection(base: WorldState, overrides: Partial<EntityCompatibilityProjection>): WorldState {
   const projection = { ...projectEntityStore(base.entityStore), ...overrides };
-  return createWorldStateFromProjection({
+  return createWorldStateFixture({
     generation: base.generation,
     projection: {
       ...projection,

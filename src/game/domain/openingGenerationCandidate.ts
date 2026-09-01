@@ -3,6 +3,17 @@ import type { StoryContract } from "./storyContract";
 import type { InvestigationApproach } from "./worldState";
 import { parseOpeningVariationProfile, type OpeningVariationProfile } from "./openingNovelty";
 import type { NarrativeEmotion } from "./narrative";
+import {
+  NPC_ANCHOR_LIST_MAX,
+  NPC_ANCHOR_LIST_MIN,
+  NPC_CREATION_TEXT_MAX_LENGTH,
+  NPC_GOAL_HORIZONS,
+  NPC_GOAL_LIST_MAX,
+  NPC_GOAL_LIST_MIN,
+  NPC_GOAL_PRIORITIES,
+  validateNpcIdentityAnchors,
+} from "./entity/npcComponents";
+import type { NpcGoalProposal, NpcIdentityAnchors } from "./entity/npcComponents";
 
 // ---------------------------------------------------------------------------
 // Task 2：开局切片候选——AI/确定性 fallback 只产出这一份材料：
@@ -47,7 +58,8 @@ export type OpeningGenerationCandidate = {
       readonly description: string;
       readonly knownFactKeys: readonly string[];
       readonly privateFactKeys: readonly string[];
-      readonly goals: readonly string[];
+      readonly anchors: NpcIdentityAnchors;
+      readonly goals: readonly NpcGoalProposal[];
     };
     /** 描述开局结构的抽象标签，不包含实体名称。 */
     readonly variationProfile?: OpeningVariationProfile;
@@ -95,6 +107,56 @@ function isNumber(value: unknown): value is number {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isBoundedText(value: unknown): value is string {
+  return isNonEmptyString(value) && value.trim().length <= NPC_CREATION_TEXT_MAX_LENGTH;
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const allowed = new Set(keys);
+  return Object.keys(value).every((key) => allowed.has(key))
+    && keys.every((key) => key in value);
+}
+
+function parseNpcAnchors(value: unknown): NpcIdentityAnchors | null {
+  if (!isRecord(value) || !hasExactKeys(value, ["selfConcept", "values", "speechStyle", "capabilityBoundaries", "taboos"])) {
+    return null;
+  }
+  if (!isBoundedText(value.selfConcept) || !isBoundedText(value.speechStyle)) return null;
+  const list = (raw: unknown, min: number): readonly string[] | null => {
+    if (!Array.isArray(raw) || raw.length < min || raw.length > NPC_ANCHOR_LIST_MAX) return null;
+    if (!raw.every(isBoundedText)) return null;
+    const strings = raw as readonly string[];
+    return new Set(strings).size === strings.length ? strings : null;
+  };
+  const values = list(value.values, NPC_ANCHOR_LIST_MIN);
+  const capabilityBoundaries = list(value.capabilityBoundaries, NPC_ANCHOR_LIST_MIN);
+  const taboos = list(value.taboos, 0);
+  if (values === null || capabilityBoundaries === null || taboos === null) return null;
+  const parsed = { selfConcept: value.selfConcept, values, speechStyle: value.speechStyle, capabilityBoundaries, taboos };
+  return validateNpcIdentityAnchors(parsed).length === 0 ? parsed : null;
+}
+
+function parseNpcGoalProposals(value: unknown): readonly NpcGoalProposal[] | null {
+  if (!Array.isArray(value) || value.length < NPC_GOAL_LIST_MIN || value.length > NPC_GOAL_LIST_MAX) return null;
+  const goals: NpcGoalProposal[] = [];
+  const seenDescriptions = new Set<string>();
+  for (const raw of value) {
+    if (!isRecord(raw) || !hasExactKeys(raw, ["horizon", "description", "priority", "reason"])) return null;
+    if (!NPC_GOAL_HORIZONS.includes(raw.horizon as NpcGoalProposal["horizon"])) return null;
+    if (!NPC_GOAL_PRIORITIES.includes(raw.priority as NpcGoalProposal["priority"])) return null;
+    if (!isBoundedText(raw.description) || !isBoundedText(raw.reason)) return null;
+    if (seenDescriptions.has(raw.description)) return null;
+    seenDescriptions.add(raw.description);
+    goals.push({
+      horizon: raw.horizon as NpcGoalProposal["horizon"],
+      description: raw.description,
+      priority: raw.priority as NpcGoalProposal["priority"],
+      reason: raw.reason,
+    });
+  }
+  return goals;
 }
 
 const NARRATIVE_EMOTIONS: readonly string[] = [
@@ -206,13 +268,16 @@ export function parseOpeningGenerationCandidate(
       : null;
   if (buildingName === null) return { ok: false, code: "INVALID_OPENING_LOCATION" };
   if (!isRecord(opening.npc)) return { ok: false, code: "INVALID_OPENING_NPC" };
+  const anchors = parseNpcAnchors(opening.npc.anchors);
+  const goals = parseNpcGoalProposals(opening.npc.goals);
   if (
     typeof opening.npc.name !== "string"
     || typeof opening.npc.role !== "string"
     || typeof opening.npc.description !== "string"
     || !isStringArray(opening.npc.knownFactKeys)
     || !isStringArray(opening.npc.privateFactKeys)
-    || !isStringArray(opening.npc.goals)
+    || anchors === null
+    || goals === null
   ) {
     return { ok: false, code: "INVALID_OPENING_NPC" };
   }
@@ -310,7 +375,8 @@ export function parseOpeningGenerationCandidate(
         description: opening.npc.description as string,
         knownFactKeys: opening.npc.knownFactKeys,
         privateFactKeys: opening.npc.privateFactKeys,
-        goals: opening.npc.goals,
+        anchors,
+        goals,
       },
       quest: {
         name: opening.quest.name as string,

@@ -11,7 +11,8 @@ import type {
   LocationEntityRecord, NpcEntityRecord, PlayerEntityRecord, QuestEntityRecord,
 } from "./entityRecord";
 import { createEntityStore, entitiesOfKind, type EntityStore } from "./entityStore";
-import { importNpcLayers, normalizeLegacyNpcEntry, projectNpcEntry } from "./npcProjection";
+import { normalizeLegacyNpcEntry, projectNpcEntry } from "./npcProjection";
+import type { NpcImportedLayers } from "./npcProjection";
 
 // ---------------------------------------------------------------------------
 // Entity Store ↔ legacy WorldState 兼容投影：两套形状之间唯一的编译/投影通道。
@@ -60,7 +61,8 @@ export type EntityProjectionIssue = Readonly<{
     | "projection_mismatch"
     | "npc_multiple_locations"
     | "npc_membership_mismatch"
-    | "item_multiple_owners";
+    | "item_multiple_owners"
+    | "npc_creation_components_required";
   field: string;
   entityId?: string;
 }>;
@@ -406,6 +408,7 @@ function compileNpcs(
   projection: EntityCompatibilityProjection,
   createdAtTurn: number,
   previousStore: EntityStore | undefined,
+  npcCreationComponentsById: ReadonlyMap<NpcId, NpcImportedLayers> | undefined,
 ): readonly NpcEntityRecord[] {
   const occurrences = rosterOccurrences(projection);
   const previousRecords = previousOfKind(previousStore, "npc");
@@ -426,11 +429,16 @@ function compileNpcs(
       nextFreeOrder.set(entry.locationId, order + 1);
       position = { locationId: entry.locationId, locationOrder: order };
     }
-    const layers = importNpcLayers({
-      entry,
-      createdAtTurn: turnOf(previous, createdAtTurn),
-      ...(previous === undefined ? {} : { previous }),
-    });
+    const layers = previous === undefined
+      ? npcCreationComponentsById?.get(entry.id)
+      : undefined;
+    if (previous === undefined && layers === undefined) {
+      throw new EntityProjectionInvariantError({
+        code: "npc_creation_components_required",
+        field: "npcCreationComponentsById",
+        entityId: entry.id,
+      });
+    }
     return {
       core: coreOf({
         id: entry.id,
@@ -439,12 +447,17 @@ function compileNpcs(
         lifecycle: retainedLifecycle(previous),
         createdAtTurn: turnOf(previous, createdAtTurn),
       }),
-      identity: { role: entry.role, description: entry.description, tags: [...entry.tags], anchors: layers.anchors },
+      identity: previous?.identity ?? {
+        role: entry.role,
+        description: entry.description,
+        tags: [...entry.tags],
+        anchors: layers!.anchors,
+      },
       position,
-      dynamicState: layers.dynamicState,
-      knowledge: layers.knowledge,
-      relationships: layers.relationships,
-      history: layers.history,
+      dynamicState: previous?.dynamicState ?? layers!.dynamicState,
+      knowledge: previous?.knowledge ?? layers!.knowledge,
+      relationships: previous?.relationships ?? layers!.relationships,
+      history: previous?.history ?? layers!.history,
     };
   });
 }
@@ -612,14 +625,15 @@ export function compileEntityStoreFromCompatibilityProjection(input: {
   projection: EntityCompatibilityProjection;
   createdAtTurn: number;
   previousStore?: EntityStore;
+  npcCreationComponentsById?: ReadonlyMap<NpcId, NpcImportedLayers>;
 }): EntityStore {
-  const { projection, createdAtTurn, previousStore } = input;
+  const { projection, createdAtTurn, previousStore, npcCreationComponentsById } = input;
   // 歧义输入绝不在编译时“选一个”消解：先拒非法成员关系，再建立 store。
   throwOnFirstIssue(validateCompatibilityProjectionInput(projection));
   const store = createEntityStore([
     compilePlayer(projection, createdAtTurn, previousStore),
     ...compileLocations(projection, createdAtTurn, previousStore),
-    ...compileNpcs(projection, createdAtTurn, previousStore),
+    ...compileNpcs(projection, createdAtTurn, previousStore, npcCreationComponentsById),
     ...compileItems(projection, createdAtTurn, previousStore),
     ...compileEnemies(projection, createdAtTurn, previousStore),
     ...compileFactions(projection, createdAtTurn, previousStore),
@@ -630,6 +644,9 @@ export function compileEntityStoreFromCompatibilityProjection(input: {
   // 旧 fixture 允许只在 NpcEntry.locationId 表达位置、遗漏 location.npcIds；编译器
   // 将这一处兼容输入规范化为 roster。除此之外不得补齐、丢弃或重新挂载事实。
   const derived = projectEntityStore(store);
+  const previousNpcIds = new Set(
+    previousOfKind(previousStore, "npc").keys(),
+  );
   const normalizedInput: EntityCompatibilityProjection = {
     ...projection,
     locations: projection.locations.map((location) => ({
@@ -638,7 +655,12 @@ export function compileEntityStoreFromCompatibilityProjection(input: {
     })),
     // 新模型里 hidden 只是知识条目的披露标签，"未知道的事实" 不可能对它隐藏；
     // 编译器按 known ∪ hidden 建条目，故输入侧做同一处保守归一。
-    npcs: projection.npcs.map(normalizeLegacyNpcEntry),
+    // Existing NPC component layers are authoritative.  Their legacy memory may
+    // be stale or hand-edited, so only new NPCs are checked against the input
+    // memory during the compatibility round-trip.
+    npcs: projection.npcs.map((entry) => previousNpcIds.has(entry.id)
+      ? derived.npcs.find((candidate) => candidate.id === entry.id) ?? normalizeLegacyNpcEntry(entry)
+      : normalizeLegacyNpcEntry(entry)),
   };
   throwOnFirstIssue(validateEntityCompatibilityProjection(store, normalizedInput));
   return store;

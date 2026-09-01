@@ -12,6 +12,7 @@ import type { FactId } from "@/game/domain/worldEntity";
 import { asCombatantId } from "@/game/domain/combat";
 import { asTurnId } from "@/game/domain/events";
 import { createInitialWorldState } from "@/game/domain/worldState";
+import { npcCreationComponentsForProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { GameEvent } from "@/game/domain/events";
 import {
@@ -682,6 +683,7 @@ describe("performBattleRound：NPC 分层组件的战前快照与回滚", () => 
     const legacyOnly = npcRecordOf(compileEntityStoreFromCompatibilityProjection({
       projection: projectEntityStore(preBattleStore),
       createdAtTurn: 0,
+      npcCreationComponentsById: npcCreationComponentsForProjection(projectEntityStore(preBattleStore)),
     }));
     expect(legacyOnly).not.toEqual(preBattleNpc);
   });

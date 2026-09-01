@@ -550,7 +550,15 @@ export function createFixtureOpeningCandidateSource(): OpeningGenerationSource {
             name: variant.npc,
             role: "关键线人",
             description: `掌握${variant.route}沿途消息的知情人。`,
-            knownFactKeys: ["fact_inn"], privateFactKeys: ["fact_pact"], goals: ["查明幕后势力"],
+            knownFactKeys: ["fact_inn"], privateFactKeys: ["fact_pact"],
+            anchors: {
+              selfConcept: `守护${variant.town}线索的知情人`,
+              values: ["守诺"],
+              speechStyle: "谨慎简短",
+              capabilityBoundaries: ["不会替人作伪证"],
+              taboos: ["不出卖无辜者"],
+            },
+            goals: [{ horizon: "short", description: "查明幕后势力", priority: 4, reason: "客栈的线索正在消失" }],
           },
           quest: {
             name: `取得${variant.npc}的信任`,

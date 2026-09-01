@@ -3,6 +3,10 @@ import type { LocationEntry, PlayerState } from "../worldEntries";
 import type { GameEvent } from "../events";
 import type { EntityCompatibilityProjection } from "../entity/entityProjection";
 import { projectEntityStore } from "../entity/entityProjection";
+import { importNpcLayers } from "../entity/npcProjection";
+import type { EntityStore } from "../entity/entityStore";
+import type { NpcImportedLayers } from "../entity/npcProjection";
+import type { NpcId } from "../worldEntity";
 import {
   createWorldStateFromProjection,
   type BattleState,
@@ -21,11 +25,33 @@ export type WorldStateFixtureInput = Readonly<{
   generation: GenerationMetadata;
   projection: EntityCompatibilityProjection;
   createdAtTurn?: number;
+  previousStore?: EntityStore;
   battle?: BattleState;
   endings?: readonly EndingEntry[];
   ending?: EndingState;
   eventLedger?: readonly GameEvent[];
 }>;
+
+/**
+ * Test-only bridge for old-shaped NPC fixtures. Production callers must supply
+ * approved creation layers explicitly instead of importing legacy memory.
+ */
+export function npcCreationComponentsForProjection(
+  projection: EntityCompatibilityProjection,
+  previousStore?: EntityStore,
+  createdAtTurn = 0,
+): ReadonlyMap<NpcId, NpcImportedLayers> {
+  const previousNpcIds = new Set(
+    previousStore?.records
+      .filter((record) => record.core.kind === "npc")
+      .map((record) => record.core.id) ?? [],
+  );
+  return new Map(
+    projection.npcs
+      .filter((entry) => !previousNpcIds.has(entry.id))
+      .map((entry) => [entry.id, importNpcLayers({ entry, createdAtTurn })] as const),
+  );
+}
 
 /** 只填玩家与地点的最小投影骨架；其余实体集合为空，unlocked/visited 缺省同 createInitialWorldState。 */
 export function emptyProjection(input: Readonly<{
@@ -54,10 +80,17 @@ export function emptyProjection(input: Readonly<{
 
 /** 缺省值固定：createdAtTurn=0、battle={status:"idle"}、endings=[]、ending=null、eventLedger=[]。 */
 export function createWorldStateFixture(input: WorldStateFixtureInput): WorldState {
+  const npcCreationComponentsById = npcCreationComponentsForProjection(
+    input.projection,
+    input.previousStore,
+    input.createdAtTurn ?? 0,
+  );
   return createWorldStateFromProjection({
     generation: input.generation,
     projection: input.projection,
     createdAtTurn: input.createdAtTurn ?? 0,
+    ...(input.previousStore === undefined ? {} : { previousStore: input.previousStore }),
+    npcCreationComponentsById,
     battle: input.battle ?? { status: "idle" },
     endings: input.endings ?? [],
     ending: input.ending ?? null,
@@ -76,13 +109,14 @@ export type WorldStateFixtureOverrides = Partial<EntityCompatibilityProjection> 
 
 /** 以合法基投影 + 覆盖项合成 fixture：覆盖经同一组装点重建 store，再投影回兼容字段。 */
 export function createWorldStateFixtureWith(
-  input: Readonly<{ generation: GenerationMetadata; base: EntityCompatibilityProjection }>,
+  input: Readonly<{ generation: GenerationMetadata; base: EntityCompatibilityProjection; previousStore?: EntityStore }>,
   overrides: WorldStateFixtureOverrides = {},
 ): WorldState {
   const { createdAtTurn, battle, endings, ending, eventLedger, ...projection } = overrides;
   return createWorldStateFixture({
     generation: input.generation,
     projection: { ...input.base, ...projection },
+    ...(input.previousStore === undefined ? {} : { previousStore: input.previousStore }),
     ...(createdAtTurn === undefined ? {} : { createdAtTurn }),
     ...(battle === undefined ? {} : { battle }),
     ...(endings === undefined ? {} : { endings }),
@@ -100,7 +134,7 @@ export function updateWorldStateFixture(
   overrides: WorldStateFixtureOverrides,
 ): WorldState {
   return createWorldStateFixtureWith(
-    { generation: worldState.generation, base: projectEntityStore(worldState.entityStore) },
+    { generation: worldState.generation, base: projectEntityStore(worldState.entityStore), previousStore: worldState.entityStore },
     {
       battle: worldState.battle,
       endings: worldState.endings,

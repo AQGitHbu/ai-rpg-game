@@ -33,7 +33,9 @@ function validCandidate(): OpeningGenerationCandidate {
       location: { name: "听雨客栈", description: "一座临近青石古道的落脚点。", scale: "town" },
       npc: {
         name: "沈掌柜", role: "关键线人", description: "掌握沿途消息的知情人。",
-        knownFactKeys: ["fact_inn"], privateFactKeys: ["fact_pact"], goals: ["查明幕后势力"],
+        knownFactKeys: ["fact_inn"], privateFactKeys: ["fact_pact"],
+        anchors: { selfConcept: "守住客栈秘密的人", values: ["守诺"], speechStyle: "短句", capabilityBoundaries: ["不会伪证"], taboos: [] },
+        goals: [{ horizon: "short", description: "查明幕后势力", priority: 4, reason: "客栈的线索正在消失" }],
       },
       quest: {
         name: "取得沈掌柜的信任", description: "从关键线人口中确认追索方向。",
@@ -44,6 +46,53 @@ function validCandidate(): OpeningGenerationCandidate {
 }
 
 describe("validateOpeningGenerationCandidate", () => {
+  it("拒绝绕过 parser 的缺失或非法 anchors/goals，且不凭空补默认值", () => {
+    const candidate = {
+      ...validCandidate(),
+      opening: {
+        ...validCandidate().opening,
+        npc: {
+          ...validCandidate().opening.npc,
+          anchors: undefined,
+          goals: [{ horizon: "short", description: "", priority: 9, reason: "" }],
+        },
+      },
+    } as unknown as OpeningGenerationCandidate;
+
+    const result = validateOpeningGenerationCandidate(candidate, { gameLength: "short", targetActs: 3 });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.map((issue) => issue.code)).toEqual(
+        expect.arrayContaining(["invalid_npc_anchors", "invalid_npc_goals"]),
+      );
+    }
+  });
+
+  it("接受完整 anchors 与 typed goals，并保留 AI 提案字段等待服务端铸造", () => {
+    const candidate = {
+      ...validCandidate(),
+      opening: {
+        ...validCandidate().opening,
+        npc: {
+          ...validCandidate().opening.npc,
+          anchors: {
+            selfConcept: "我是守住客栈秘密的人",
+            values: ["守诺"],
+            speechStyle: "短句",
+            capabilityBoundaries: ["不会伪证"],
+            taboos: [],
+          },
+          goals: [{ horizon: "long", description: "守住盟约", priority: 5, reason: "这是我留下来的原因" }],
+        },
+      },
+    } as unknown as OpeningGenerationCandidate;
+
+    const result = validateOpeningGenerationCandidate(candidate, { gameLength: "short", targetActs: 3 });
+
+    expect(result.ok).toBe(true);
+  });
+
   it("合法开场切片通过（targetActs 与档位一致）", () => {
     const result = validateOpeningGenerationCandidate(validCandidate(), { gameLength: "short", targetActs: 3 });
     expect(result.ok).toBe(true);

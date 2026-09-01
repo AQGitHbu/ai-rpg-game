@@ -1,8 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect } from "vitest";
-import { emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
-import { createWorldStateFromProjection } from "@/game/domain/worldState";
+import { createWorldStateFixture, emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 import type { WorldState, NpcMemory, NpcInteraction } from "@/game/domain/worldState";
 import type { DialogueAct, StructuredDialogueTopic } from "@/game/domain/action";
 import type { NarrativeEmotion } from "@/game/domain/narrative";
@@ -108,7 +107,7 @@ const BASE: EntityCompatibilityProjection = {
 };
 
 function world(overrides: Partial<EntityCompatibilityProjection> = {}): WorldState {
-  return createWorldStateFromProjection({
+  return createWorldStateFixture({
     generation: GENERATION,
     projection: { ...BASE, ...overrides },
     battle: { status: "active", enemyId: ENEMY_1, playerHp: 90, enemyHp: 20, round: 1 },
