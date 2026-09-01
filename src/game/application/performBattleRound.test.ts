@@ -820,6 +820,42 @@ describe("performBattleRound：同伴共同战斗关系证据", () => {
     return { worldState: { ...world, battle }, companionId, absentCompanionId };
   }
 
+  function companionVictoryWorldWithAliveAndDowned(): {
+    worldState: WorldState;
+    aliveCompanionId: ReturnType<typeof asNpcId>;
+    downedCompanionId: ReturnType<typeof asNpcId>;
+  } {
+    const fixture = companionVictoryWorld();
+    const battle = fixture.worldState.battle;
+    if (battle.status !== "active" || battle.combatants === undefined) throw new Error("fixture must start an active battle");
+    const companion = battle.combatants.find((unit) => unit.source.kind === "companion");
+    if (companion === undefined || companion.source.kind !== "companion") throw new Error("fixture must include a companion combatant");
+    const aliveCompanion = { ...companion, hp: companion.stats.maxHp };
+    const downedCompanion = {
+      ...companion,
+      combatantId: asCombatantId(`companion:${String(fixture.absentCompanionId)}`),
+      source: { kind: "companion" as const, npcId: fixture.absentCompanionId },
+      name: "倒地同伴",
+      hp: 0,
+    };
+    const combatants = battle.combatants
+      .map((unit) => unit.source.kind === "companion" ? aliveCompanion : unit)
+      .concat(downedCompanion);
+    return {
+      ...fixture,
+      worldState: {
+        ...fixture.worldState,
+        battle: {
+          ...battle,
+          combatants,
+          turnOrder: createTurnOrder(combatants),
+        },
+      },
+      aliveCompanionId: companion.source.npcId,
+      downedCompanionId: fixture.absentCompanionId,
+    };
+  }
+
   it("awards one fought_together evidence to a participating downed companion only on victory", async () => {
     const fixture = companionVictoryWorld();
     const harness = createInMemoryRepo({
@@ -885,6 +921,52 @@ describe("performBattleRound：同伴共同战斗关系证据", () => {
     const absent = record.worldState.entityStore.records.find((entry) => entry.core.id === fixture.absentCompanionId);
     if (absent === undefined || absent.core.kind !== "npc") throw new Error("absent companion must persist");
     expect(findRelationshipEdge((absent as NpcEntityRecord).relationships, PLAYER_ENTITY_ID)).toBeUndefined();
+  });
+
+  it("awards alive and downed participating companions in one real terminal battle round", async () => {
+    const fixture = companionVictoryWorldWithAliveAndDowned();
+    const harness = createInMemoryRepo({
+      gameId: GAME_ID,
+      worldState: fixture.worldState,
+      storyState: createBattleStoryState({
+        status: "ready",
+        mode: "offline",
+        currentScene: {
+          sceneId: "scene-battle-victory-alive-downed",
+          turn: 1,
+          narration: "战斗",
+          usedFactIds: [],
+          npcLine: null,
+          choices: [],
+          source: "fixture",
+        },
+        choiceRegistry: [],
+      }),
+      revision: 0,
+      createdAt: "2026-01-01",
+    });
+
+    const result = await performBattleRound(
+      {
+        gameId: GAME_ID,
+        actionId: "battle_victory_alive_downed",
+        interactionKind: "fixed_choice",
+        action: { type: "battle_action", action: "attack" },
+        expectedRevision: 0,
+      },
+      { repository: harness.repo, now: CLOCK },
+    );
+    expect(result).toMatchObject({ ok: true, outcome: "victory" });
+    const record = harness.getRecord();
+    if (record === null) throw new Error("fixture must keep an active game");
+    for (const companionId of [fixture.aliveCompanionId, fixture.downedCompanionId]) {
+      const companion = record.worldState.entityStore.records.find((entry) => entry.core.id === companionId);
+      if (companion === undefined || companion.core.kind !== "npc") throw new Error("participating companion must persist");
+      const evidence = findRelationshipEdge((companion as NpcEntityRecord).relationships, PLAYER_ENTITY_ID)?.evidence.filter(
+        (entry) => entry.signal === "fought_together" && entry.actionId === "battle_victory_alive_downed",
+      );
+      expect(evidence).toHaveLength(1);
+    }
   });
 
   it("does not write a permanent companion relationship during a non-terminal round", async () => {

@@ -1,5 +1,5 @@
-import { parseEntityStore, projectEntityStore, validateEntityCompatibilityProjection, validateEntityReferences } from "@/game/domain/entity";
-import type { EntityCompatibilityProjection } from "@/game/domain/entity";
+import { entitiesOfKind, parseEntityStore, projectEntityStore, validateEntityCompatibilityProjection, validateEntityReferences } from "@/game/domain/entity";
+import type { EntityCompatibilityProjection, EntityStore } from "@/game/domain/entity";
 import type { GameEvent } from "@/game/domain/events";
 import type { GenerationMetadata } from "@/game/domain/worldEntity";
 import { WORLD_STATE_SCHEMA_VERSION, type BattleState, type EndingState, type WorldState } from "@/game/domain/worldState";
@@ -81,6 +81,20 @@ function isBattleSnapshot(value: unknown): boolean {
   return parseEntityStore(value.entityStore).ok && value.eventLedger.every(isGameEvent);
 }
 
+function findUnknownBattleCompanionReference(
+  battle: BattleState,
+  entityStore: EntityStore,
+): { readonly issueCode: "unknown_battle_combatant_companion_ref"; readonly entityId: string } | undefined {
+  if (battle.status !== "active") return undefined;
+  const npcIds = new Set(entitiesOfKind(entityStore, "npc").map((record) => String(record.core.id)));
+  for (const combatant of battle.combatants ?? []) {
+    if (combatant.source.kind === "companion" && !npcIds.has(String(combatant.source.npcId))) {
+      return { issueCode: "unknown_battle_combatant_companion_ref", entityId: String(combatant.combatantId) };
+    }
+  }
+  return undefined;
+}
+
 type CombatSourceValue =
   | { readonly kind: "protagonist" }
   | { readonly kind: "companion"; readonly npcId: string }
@@ -159,13 +173,17 @@ function isCompleteModernBattle(value: JsonObject): boolean {
   if (new Set(combatantIds).size !== combatantIds.length) return false;
   const combatantById = new Map(combatants.map((combatant) => [String(combatant.combatantId), combatant]));
   const enemyIds = new Set<string>();
+  const enemySourceIds: string[] = [];
   let protagonistCount = 0;
   for (const combatant of combatants) {
     const source = combatant.source as JsonObject;
     if (source.kind === "protagonist") protagonistCount += 1;
-    if (source.kind === "enemy") enemyIds.add(String(source.enemyId));
+    if (source.kind === "enemy") {
+      enemySourceIds.push(String(source.enemyId));
+      enemyIds.add(String(source.enemyId));
+    }
   }
-  if (protagonistCount !== 1 || !enemyIds.has(String(value.enemyId))) return false;
+  if (protagonistCount !== 1 || !enemyIds.has(String(value.enemyId)) || new Set(enemySourceIds).size !== enemySourceIds.length) return false;
   if (value.enemyIds !== undefined
     && (!isNonEmptyStringArray(value.enemyIds)
       || new Set(value.enemyIds).size !== value.enemyIds.length
@@ -195,13 +213,13 @@ function isCompleteModernBattle(value: JsonObject): boolean {
   })) return false;
 
   if (!isStringArray(value.downedEnemyIds) || new Set(value.downedEnemyIds).size !== value.downedEnemyIds.length) return false;
-  if (!value.downedEnemyIds.every((enemyId) => {
-    const enemy = combatants.find((combatant) => {
-      const source = combatant.source as JsonObject;
-      return source.kind === "enemy" && source.enemyId === enemyId;
-    });
-    return enemy !== undefined && (enemy.hp as number) <= 0;
-  })) return false;
+  const downedEnemySourceIds = combatants
+    .filter((combatant) => (combatant.source as JsonObject).kind === "enemy" && (combatant.hp as number) <= 0)
+    .map((combatant) => String((combatant.source as JsonObject).enemyId));
+  const downedEnemySet = new Set(downedEnemySourceIds);
+  if (downedEnemySet.size !== downedEnemySourceIds.length
+    || value.downedEnemyIds.length !== downedEnemySet.size
+    || !value.downedEnemyIds.every((enemyId) => downedEnemySet.has(enemyId))) return false;
 
   return Array.isArray(value.lastAdvance)
     && value.lastAdvance.every(isCombatResult)
@@ -397,6 +415,8 @@ export function validatePersistableWorldState(value: unknown): PersistableWorldS
   }
   const referenceIssue = validateEntityReferences(parsedStore.store)[0];
   if (referenceIssue !== undefined) return { ok: false, code: "invalid_entity_reference", issueCode: referenceIssue.code, entityId: referenceIssue.entityId };
+  const battleCompanionIssue = findUnknownBattleCompanionReference(value.battle, parsedStore.store);
+  if (battleCompanionIssue !== undefined) return { ok: false, code: "invalid_entity_reference", issueCode: battleCompanionIssue.issueCode, entityId: battleCompanionIssue.entityId };
   const projection = Object.fromEntries(PROJECTION_KEYS.map((key) => [key, value[key]])) as EntityCompatibilityProjection;
   const projectionIssue = validateEntityCompatibilityProjection(parsedStore.store, projection)[0];
   if (projectionIssue !== undefined) return { ok: false, code: "projection_mismatch", issueCode: projectionIssue.code };

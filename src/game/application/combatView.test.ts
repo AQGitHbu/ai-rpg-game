@@ -109,6 +109,14 @@ describe("projectCombatView", () => {
       { ...active, downedEnemyIds: [asEnemyId("enemy_1")] },
       {
         ...active,
+        combatants: encounter.map((unit) => unit.source.kind === "enemy" ? { ...unit, hp: 0 } : unit),
+        turnOrder: [encounter[0]?.combatantId],
+        enemyHp: 0,
+        downedEnemyIds: [],
+      },
+      { ...active, downedEnemyIds: [asEnemyId("enemy_1"), asEnemyId("enemy_1")] },
+      {
+        ...active,
         lastAdvance: [{
           round: 1, sequence: 0, actorId: "missing-combatant", targetId: encounter[1]?.combatantId,
           kind: "attack", damage: 1, actorEnergyAfter: 10, targetHpAfter: 54,

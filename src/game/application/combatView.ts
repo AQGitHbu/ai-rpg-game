@@ -136,6 +136,7 @@ function isModernBattle(worldState: WorldState, battle: ActiveBattle): battle is
     if (unit.source.kind === "enemy") {
       const enemyId = unit.source.enemyId;
       if (!worldState.enemies.some((enemy) => String(enemy.id) === String(enemyId))) return false;
+      if (enemySourceIds.has(String(enemyId))) return false;
       enemySourceIds.add(String(enemyId));
       if (String(enemyId) === String(battle.enemyId)) challengedEnemy = unit;
     }
@@ -168,9 +169,14 @@ function isModernBattle(worldState: WorldState, battle: ActiveBattle): battle is
   })) return false;
   if (!Array.isArray(battle.downedEnemyIds)
     || !battle.downedEnemyIds.every(isNonEmptyString)
-    || new Set(battle.downedEnemyIds).size !== battle.downedEnemyIds.length
-    || !battle.downedEnemyIds.every((id) => combatants.some((unit) => unit.source.kind === "enemy"
-      && String(unit.source.enemyId) === id && unit.hp <= 0))) return false;
+    || new Set(battle.downedEnemyIds).size !== battle.downedEnemyIds.length) return false;
+  const downedEnemySourceIds = combatants.flatMap((unit) => unit.source.kind === "enemy" && unit.hp <= 0
+    ? [String(unit.source.enemyId)]
+    : []);
+  const downedEnemySet = new Set(downedEnemySourceIds);
+  if (downedEnemySet.size !== downedEnemySourceIds.length
+    || battle.downedEnemyIds.length !== downedEnemySet.size
+    || !battle.downedEnemyIds.every((id) => downedEnemySet.has(String(id)))) return false;
   if (!Array.isArray(battle.lastAdvance) || !battle.lastAdvance.every(isCombatResult)) return false;
   if (new Set(battle.lastAdvance.map((result) => result.sequence)).size !== battle.lastAdvance.length) return false;
   return battle.lastAdvance.every((result) => {

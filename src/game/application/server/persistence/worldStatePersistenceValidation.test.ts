@@ -160,6 +160,39 @@ describe("validatePersistableWorldState", () => {
       ...completeModernBattle,
       downedEnemyIds: ["enemy_1"],
     } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      combatants: completeModernBattle.combatants.map((combatant) => combatant.source.kind === "enemy"
+        ? { ...combatant, hp: 0 }
+        : combatant),
+      turnOrder: ["ally:protagonist"],
+      downedEnemyIds: [],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      downedEnemyIds: ["enemy_1", "enemy_1"],
+    } })).toMatchObject({ ok: false, code: "invalid_world_envelope" });
+
+    const unknownCompanion = {
+      combatantId: "companion:npc_missing",
+      side: "allies",
+      controller: "rule",
+      source: { kind: "companion", npcId: "npc_missing" },
+      name: "缺席同伴",
+      stats: { maxHp: 80, maxEnergy: 40, attack: 16, defense: 8, speed: 10 },
+      hp: 80,
+      energy: 20,
+      guarding: false,
+    };
+    expect(validatePersistableWorldState({ ...valid, battle: {
+      ...completeModernBattle,
+      combatants: [completeModernBattle.combatants[0], unknownCompanion, completeModernBattle.combatants[1]],
+      turnOrder: ["ally:protagonist", "companion:npc_missing", "enemy:enemy_1"],
+    } })).toMatchObject({
+      ok: false,
+      code: "invalid_entity_reference",
+      issueCode: "unknown_battle_combatant_companion_ref",
+    });
 
     const modernFields = [
       { combatants: completeModernBattle.combatants },
