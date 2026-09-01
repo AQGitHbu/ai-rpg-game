@@ -285,6 +285,23 @@ describe("npc projection：legacy 导入桥（保守 anchors / goal ID / initial
       .toEqual({ ...entry.memory, knownFactIds: [asFactId("fact_0"), asFactId("fact_secret")] });
   });
 
+  it("兼容导入新建知识只使用 legacy_import 的 initial_world provenance", () => {
+    const layers = importNpcLayers({
+      entry: legacyEntry(legacyMemory({
+        knownFactIds: [asFactId("fact_new")],
+        hiddenFactIds: [],
+      })),
+      createdAtTurn: 8,
+    });
+    expect(layers.knowledge.entries).toEqual([{
+      factId: asFactId("fact_new"),
+      certainty: "known",
+      disclosure: "public",
+      source: { kind: "initial_world", learnedAtTurn: 8 },
+    }]);
+    expect(layers.knowledge.entries.every((entry) => entry.source.kind === "initial_world")).toBe(true);
+  });
+
   it("未见过面且 affinity 为 0 的导入仍然建立 player 边（stage=unknown）", () => {
     const layers = importNpcLayers({
       entry: legacyEntry(legacyMemory(), { met: false }),
@@ -344,6 +361,42 @@ describe("npc projection：previous store 的分层组件逐字保留", () => {
     expect(layers.knowledge).toEqual(rich.knowledge);
     expect(layers.relationships).toEqual(rich.relationships);
     expect(layers.anchors).toEqual(rich.identity.anchors);
+  });
+
+  it("兼容字段只映射显式 hidden：保留旧 disclosure 与 provenance，不静默降级 secret", () => {
+    const previous: NpcEntityRecord = {
+      ...record({ affinity: 12 }),
+      knowledge: {
+        entries: [
+          {
+            factId: asFactId("fact_0"), certainty: "known", disclosure: "secret",
+            source: { kind: "action", mode: "player_told", actionId: "act_secret", learnedAtTurn: 4 },
+          },
+          {
+            factId: asFactId("fact_1"), certainty: "suspected", disclosure: "conditional",
+            source: { kind: "initial_world", learnedAtTurn: 1 },
+          },
+        ],
+      },
+    };
+    const layers = importNpcLayers({
+      entry: legacyEntry(legacyMemory({
+        knownFactIds: [asFactId("fact_0"), asFactId("fact_1")],
+        hiddenFactIds: [asFactId("fact_1")],
+      })),
+      createdAtTurn: 9,
+      previous,
+    });
+    expect(layers.knowledge.entries).toEqual([
+      {
+        factId: asFactId("fact_0"), certainty: "known", disclosure: "secret",
+        source: { kind: "action", mode: "player_told", actionId: "act_secret", learnedAtTurn: 4 },
+      },
+      {
+        factId: asFactId("fact_1"), certainty: "suspected", disclosure: "secret",
+        source: { kind: "initial_world", learnedAtTurn: 1 },
+      },
+    ]);
   });
 
   it("affinity 变化只改 player 边的 affinity 与 lastChangedAtTurn", () => {

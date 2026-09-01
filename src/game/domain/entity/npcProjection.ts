@@ -9,7 +9,7 @@ import {
 import type {
   DirectedRelationshipEdge, NpcDynamicStateComponent, NpcGoal, NpcHistoryComponent,
   NpcIdentityAnchors, NpcKnowledgeComponent, NpcKnowledgeDisclosure, NpcKnowledgeEntry,
-  NpcRelationshipComponent,
+  NpcKnowledgeSource, NpcRelationshipComponent,
 } from "./npcComponents";
 
 // ---------------------------------------------------------------------------
@@ -151,7 +151,14 @@ export function normalizeLegacyNpcEntry(entry: NpcEntry): NpcEntry {
 // legacy → 分层组件
 // ---------------------------------------------------------------------------
 
-function compileKnowledge(input: Readonly<{
+/**
+ * 兼容导入专用：legacy 只能表达 known/hidden FactId。
+ *
+ * 已有 entry 的 certainty、disclosure 和 source 都是分层事实；只有 legacy 明确给出的
+ * hidden ID 才能把 disclosure 映射为 secret。legacy 新增的 ID 没有行动证据，只能显式
+ * 构造 initial_world source，不能在这里创造 action-era provenance。
+ */
+function importLegacyKnowledge(input: Readonly<{
   memory: NpcMemory;
   turn: number;
   previous: readonly NpcKnowledgeEntry[];
@@ -162,14 +169,13 @@ function compileKnowledge(input: Readonly<{
     const retained = findFact(previous, factId);
     const disclosure: NpcKnowledgeDisclosure = hidden.has(String(factId))
       ? "secret"
-      : retained !== undefined && retained.disclosure !== "secret"
-        ? retained.disclosure
-        : "public";
+      : retained?.disclosure ?? "public";
+    const source: NpcKnowledgeSource = retained?.source ?? { kind: "initial_world", learnedAtTurn: turn };
     return {
       factId,
       certainty: retained?.certainty ?? "known",
       disclosure,
-      source: retained?.source ?? { kind: "initial_world", learnedAtTurn: turn },
+      source,
     };
   });
   return { entries };
@@ -256,7 +262,7 @@ function buildLayers(input: Readonly<{
       met: normalized.met,
       previous: previous?.dynamicState,
     }),
-    knowledge: compileKnowledge({
+    knowledge: importLegacyKnowledge({
       memory,
       turn,
       previous: previous?.knowledge.entries ?? [],
@@ -277,6 +283,7 @@ function buildLayers(input: Readonly<{
  * previous 缺省即全新导入：anchors / goalId / knowledge provenance / player 边
  * 全部按 legacy_import 确定性生成（Task 6 用显式创建材料替换生产路径的回退）。
  */
+/** @internal Compatibility-only legacy projection adapter; runtime rules use narrow mutations. */
 export function importNpcLayers(input: Readonly<{
   entry: NpcEntry;
   createdAtTurn: number;

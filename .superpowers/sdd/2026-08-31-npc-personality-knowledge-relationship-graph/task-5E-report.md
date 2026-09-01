@@ -70,14 +70,66 @@ All three scans produced no matches.
 
 ## Verification
 
-- Focused entity/rule/battle/domain run: 22 test files passed, 422 tests passed.
-- Full `npm test`: 170 test files passed, 2205 tests passed.
+- Focused entity/rule/battle/domain run: 22 test files passed, 424 tests passed.
+- Full `npm test`: 170 test files passed, 2207 tests passed.
 - `npm run typecheck`: passed.
 - `npm run check:standards`: passed (`@ai-game/standards@0.5.0`).
 - `npm run test:boundaries`: 2 test files passed, 105 tests passed.
-- ESLint on touched source directories: passed with zero errors and zero warnings.
+- `npm run lint`: passed with zero errors and zero warnings.
 - `git diff --check`: passed.
 
 ## Concerns
 
 No known concerns. `importNpcLayers` remains intentionally available for compatibility projection and existing fixtures; no gameplay caller can use it as a live write path.
+
+## Reviewer fix TDD cycle
+
+### RED — before the fix
+
+The falsifiable adapter tests were added before changing production code and run with:
+
+```text
+npm test -- src/game/domain/entity/npcProjection.test.ts
+```
+
+The exact result was:
+
+```text
+FAIL src/game/domain/entity/npcProjection.test.ts > npc projection：previous store 的分层组件逐字保留 > 兼容字段只映射显式 hidden：保留旧 disclosure 与 provenance，不静默降级 secret
+AssertionError: expected ... to deeply equal ...
+- Expected: disclosure "secret"
++ Received: disclosure "public"
+Test Files  1 failed (1)
+Tests       1 failed | 12 passed (13)
+```
+
+This proved the old adapter retained the action source but silently demoted a retained secret when the compatibility `hiddenFactIds` omitted it.
+
+### GREEN — after the minimal implementation
+
+`compileKnowledge` was replaced by the private `importLegacyKnowledge` helper. Retained certainty, disclosure, and provenance are preserved; only an explicitly present legacy hidden ID maps disclosure to `secret`; new legacy IDs receive only `{ kind: "initial_world", learnedAtTurn }`. The adapter has no action-source input or construction path.
+
+The focused adapter run then passed:
+
+```text
+Test Files  1 passed (1)
+Tests       13 passed (13)
+```
+
+### REFACTOR
+
+The helper and public adapter now carry explicit compatibility-only names/documentation. Existing import, normalization, deterministic `legacy_import` anchors/goals/relationship construction, and all prior provenance-preservation tests remain unchanged in behavior.
+
+## Post-fix verification
+
+After the reviewer fix, the complete required gate set passed:
+
+- Focused adapter run: 1 test file passed, 13 tests passed.
+- Focused entity/rule/battle/domain run: 22 test files passed, 424 tests passed.
+- Full `npm test`: 170 test files passed, 2207 tests passed.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed.
+- `npm run test:boundaries`: 2 test files passed, 105 tests passed.
+- `npm run check:standards`: passed (`@ai-game/standards@0.5.0`).
+- `git diff --check`: passed.
+- All three required source scans exited 1 with no matches.
