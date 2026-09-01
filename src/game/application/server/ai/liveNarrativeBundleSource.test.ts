@@ -993,4 +993,60 @@ describe("createNarrativeBundleSource", () => {
     }
     expect(prompt).not.toContain('"goals": ["..."]');
   });
+
+  it("rejects unknown opening response and NPC relationship/runtime fields", async () => {
+    const opening = await createFixtureOpeningCandidateSource().generate({
+      gameType: "wuxia",
+      gameLength: "short",
+      seed: "opening-live-unknown-fields",
+    });
+    const basePayload = {
+      opening,
+      currentScene: {
+        segments: [{ beatId: "opening", text: "客栈里风声低沉。" }],
+        npcLine: { npcId: "npc_0", text: "我等你很久了。", emotion: "guarded", answeredBeatIds: [], usedFactIds: [], usedInteractionActionIds: [] },
+        objectiveLink: null,
+        choices: [{ candidateId: "support", label: "我愿意帮忙。" }, { candidateId: "challenge", label: "先说清楚缘由。" }],
+      },
+      continuationScenes: [],
+      terminal: { kind: "next_decision", target: { kind: "current_scene" } },
+    };
+    const mutations: readonly ((payload: Record<string, unknown>) => void)[] = [
+      (payload) => { payload.extra = true; },
+      (payload) => { ((payload.opening as Record<string, unknown>).opening as Record<string, unknown>).npc = {
+        ...((payload.opening as Record<string, unknown>).opening as Record<string, unknown>).npc as Record<string, unknown>,
+        relationshipSeeds: [{ targetNpcId: "npc_1", stance: "ally", reason: "旧识" }],
+      }; },
+      (payload) => { ((payload.opening as Record<string, unknown>).opening as Record<string, unknown>).npc = {
+        ...((payload.opening as Record<string, unknown>).opening as Record<string, unknown>).npc as Record<string, unknown>,
+        affinity: 10,
+      }; },
+      (payload) => { ((payload.opening as Record<string, unknown>).opening as Record<string, unknown>).npc = {
+        ...((payload.opening as Record<string, unknown>).opening as Record<string, unknown>).npc as Record<string, unknown>,
+        stage: "trusted",
+      }; },
+      (payload) => { ((payload.opening as Record<string, unknown>).opening as Record<string, unknown>).npc = {
+        ...((payload.opening as Record<string, unknown>).opening as Record<string, unknown>).npc as Record<string, unknown>,
+        evidence: [],
+      }; },
+      (payload) => { ((payload.opening as Record<string, unknown>).opening as Record<string, unknown>).npc = {
+        ...((payload.opening as Record<string, unknown>).opening as Record<string, unknown>).npc as Record<string, unknown>,
+        actionId: "action_1",
+      }; },
+    ];
+
+    for (const mutate of mutations) {
+      const payload = JSON.parse(JSON.stringify(basePayload)) as Record<string, unknown>;
+      mutate(payload);
+      const complete = vi.fn().mockResolvedValue({ ok: true, content: JSON.stringify(payload) });
+      const source = createNarrativeBundleSource({ aiClient: mockAiClient(complete) });
+      const result = await source.generate({
+        kind: "opening",
+        jobId: asNarrativeJobId("job-opening-unknown-fields"),
+        input: { gameType: "wuxia", gameLength: "short", seed: "opening-live-unknown-fields" },
+      });
+      expect(result).toMatchObject({ ok: false, failure: { kind: "AI_RESPONSE_INVALID" } });
+      expect(complete).toHaveBeenCalledTimes(1);
+    }
+  });
 });

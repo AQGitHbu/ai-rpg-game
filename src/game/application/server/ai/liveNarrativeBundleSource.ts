@@ -20,6 +20,7 @@ import { buildNarrativeBundleDescriptors } from "@/game/gameplay/rpg/narrativeBu
 import type { OpeningNarrativeBundleProposal } from "../../narrativeBundleSource";
 import { compileDecisionNarrativeContext } from "./narrativeContext";
 import { parseWorldDeltaProposal } from "./liveWorldEvolutionSource";
+import { hasOnlyKnownOpeningCandidateKeys } from "./openingGenerationSource";
 
 // ---------------------------------------------------------------------------
 // Task 5：统一叙事生成包 live source。
@@ -386,6 +387,10 @@ type ParseOpeningBundleResult =
 
 function parseOpeningBundleProposal(value: unknown, targetActs: 3 | 5): ParseOpeningBundleResult {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return { ok: false, reason: "root_not_object" };
+  const response = value as Record<string, unknown>;
+  const allowedResponseKeys = new Set(["opening", "currentScene", "continuationScenes", "terminal"]);
+  if (Object.keys(response).some((key) => !allowedResponseKeys.has(key))) return { ok: false, reason: "unknown_keys" };
+  if (!hasOnlyKnownOpeningCandidateKeys(response.opening)) return { ok: false, reason: "opening_unknown_keys" };
   const raw = normalizeOpeningCandidateShape(value, targetActs) as Record<string, unknown>;
   const opening = parseOpeningGenerationCandidate(raw.opening);
   if (!opening.ok) return { ok: false, reason: `opening_${opening.code}` };

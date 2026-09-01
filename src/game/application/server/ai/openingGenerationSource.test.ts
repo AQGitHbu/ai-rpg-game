@@ -175,6 +175,34 @@ describe("createOpeningGenerationSource", () => {
     expect(calls).toBe(1);
   });
 
+  it("live opening rejects unknown outer, NPC, and runtime relationship fields", async () => {
+    const mutations: readonly ((raw: Record<string, unknown>) => void)[] = [
+      (raw) => { raw.extra = true; },
+      (raw) => { ((raw.opening as Record<string, unknown>).npc as Record<string, unknown>).relationshipSeeds = [{ targetNpcId: "npc_1", stance: "ally", reason: "旧识" }]; },
+      (raw) => { ((raw.opening as Record<string, unknown>).npc as Record<string, unknown>).stage = "trusted"; },
+      (raw) => { ((raw.opening as Record<string, unknown>).npc as Record<string, unknown>).affinity = 10; },
+      (raw) => { ((raw.opening as Record<string, unknown>).npc as Record<string, unknown>).evidence = []; },
+      (raw) => { ((raw.opening as Record<string, unknown>).npc as Record<string, unknown>).actionId = "action_1"; },
+    ];
+
+    for (const mutate of mutations) {
+      const raw = JSON.parse(JSON.stringify(validCandidate())) as Record<string, unknown>;
+      mutate(raw);
+      let calls = 0;
+      const transport = {
+        complete: async () => {
+          calls += 1;
+          return { ok: true, content: JSON.stringify(raw), latencyMs: 1 };
+        },
+      } as unknown as AiTransport;
+      const source = createOpeningGenerationSource({ transport, config: { baseUrl: "x", apiKey: "k", model: "m" } });
+
+      await expect(source.generate({ gameType: "wuxia", seed: "unknown-opening-field", gameLength: "short" }))
+        .rejects.toMatchObject({ kind: "AI_RESPONSE_INVALID", phase: "opening" });
+      expect(calls).toBe(1);
+    }
+  });
+
   it("接受 fenced JSON 并记录规范化，而不是各 source 自己解析 fence", async () => {
     const logger = { warn: vi.fn() };
     const transport = {

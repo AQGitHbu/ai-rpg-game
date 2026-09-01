@@ -79,9 +79,11 @@ function hasNoUnknownKeys(value: Record<string, unknown>, keys: readonly string[
 function parseLocationRef(v: unknown): { readonly kind: "existing"; readonly id: string } | { readonly kind: "new_location" } | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
   const rec = v as Record<string, unknown>;
-  if (rec.kind === "new_location") return { kind: "new_location" };
+  if (rec.kind === "new_location") {
+    return hasExactKeys(rec, ["kind"]) ? { kind: "new_location" } : null;
+  }
   if (rec.kind === "existing" && isStr(rec.id) && rec.id.trim() !== "") {
-    return { kind: "existing", id: rec.id.trim() };
+    return hasExactKeys(rec, ["kind", "id"]) ? { kind: "existing", id: rec.id.trim() } : null;
   }
   return null;
 }
@@ -121,6 +123,7 @@ export function parseFactInvestigationApproaches(
   for (const item of raw) {
     if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
     const entry = item as Record<string, unknown>;
+    if (!hasNoUnknownKeys(entry, ["approachId", "label", "hint", "evidenceQuality", "tensionDelta"])) return null;
     const approachId = typeof entry.approachId === "string" ? entry.approachId.trim() : "";
     const label = typeof entry.label === "string" ? entry.label.trim() : "";
     const hint = entry.hint === undefined ? undefined : typeof entry.hint === "string" ? entry.hint.trim() : "";
@@ -418,7 +421,12 @@ export function createLiveWorldEvolutionSource(deps: WorldEvolutionLiveDeps): Wo
           if (parsed.normalization === "json_fence") {
             logger?.warn("world_evolution_json_fence_normalized");
           }
-          const rawProposal = "proposal" in parsed.value ? parsed.value.proposal : parsed.value;
+          const isWrapped = "proposal" in parsed.value;
+          if (isWrapped && !hasExactKeys(parsed.value, ["proposal"])) {
+            logger?.warn("world_evolution_invalid_wrapper");
+            return failWorld("invalid_schema", "invalid_schema");
+          }
+          const rawProposal = isWrapped ? parsed.value.proposal : parsed.value;
           const parsedResult = parseWorldDeltaProposal(rawProposal, ctx.worldState.generation.gameType);
           if (parsedResult !== null) {
             // 解析层修复/降级类别（不含任何事实正文，安全入日志）。
