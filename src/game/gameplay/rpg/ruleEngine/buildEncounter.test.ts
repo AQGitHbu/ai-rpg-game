@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createInitialWorldState, type EnemyEntry, type WorldState } from "@/game/domain/worldState";
-import { asEnemyId, asGenerationId, asLocationId } from "@/game/domain/worldEntity";
+import { asEnemyId, asGenerationId, asLocationId, asNpcId } from "@/game/domain/worldEntity";
+import { createEntityStore, projectEntityStore, type NpcEntityRecord } from "@/game/domain/entity";
 import { buildEncounter } from "./buildEncounter";
 
 function makeWorld(enemies: readonly EnemyEntry[]): WorldState {
@@ -16,6 +17,34 @@ function makeWorld(enemies: readonly EnemyEntry[]): WorldState {
     }),
     enemies,
   };
+}
+
+function companionRecord(id: string, locationId: ReturnType<typeof asLocationId>, options?: {
+  readonly isCompanion?: boolean;
+  readonly lifecycle?: "active" | "inactive";
+  readonly locationId?: ReturnType<typeof asLocationId>;
+}): NpcEntityRecord {
+  return {
+    core: { id: asNpcId(id), kind: "npc", name: id, createdAtTurn: 0, lifecycle: options?.lifecycle ?? "active" },
+    identity: {
+      role: "同行者", description: "同行者", tags: [],
+      anchors: {
+        selfConcept: "同行者", values: ["守望"], speechStyle: "简短",
+        capabilityBoundaries: ["不会飞"], taboos: [],
+      },
+    },
+    position: { locationId: options?.locationId ?? locationId, locationOrder: 0 },
+    dynamicState: { isCompanion: options?.isCompanion ?? true, met: true, emotion: "neutral", goals: [] },
+    knowledge: { entries: [] },
+    relationships: { outgoing: [] },
+    history: { interactions: [] },
+  };
+}
+
+function addNpcs(world: WorldState, records: readonly NpcEntityRecord[]): WorldState {
+  const store = createEntityStore([...world.entityStore.records, ...records]);
+  const projection = projectEntityStore(store);
+  return { ...world, entityStore: store, ...projection, enemies: world.enemies };
 }
 
 const normal = (id: string, name: string): EnemyEntry => ({
@@ -40,5 +69,29 @@ describe("buildEncounter", () => {
 
   it("returns no units for an unknown challenge target", () => {
     expect(buildEncounter(makeWorld([]), asEnemyId("unknown"))).toEqual([]);
+  });
+
+  it("selects one active same-location companion from authoritative records in stable id order", () => {
+    const locationId = asLocationId("loc_1");
+    const world = addNpcs(
+      makeWorld([normal("enemy_a", "敌人")]),
+      [
+        companionRecord("npc_z", locationId),
+        companionRecord("npc_a", locationId),
+        companionRecord("npc_inactive", locationId, { lifecycle: "inactive" }),
+        companionRecord("npc_elsewhere", locationId, { locationId: asLocationId("loc_elsewhere") }),
+        companionRecord("npc_not_companion", locationId, { isCompanion: false }),
+      ],
+    );
+    // Compatibility arrays are intentionally stale: selection must use the entity store.
+    const staleNpcs = world.npcs.map((npc) => ({ ...npc, isCompanion: false }));
+    const encounter = buildEncounter({ ...world, npcs: staleNpcs }, asEnemyId("enemy_a"));
+    expect(encounter.map((unit) => unit.combatantId)).toEqual([
+      "ally:protagonist", "companion:npc_a", "enemy:enemy_a",
+    ]);
+    expect(encounter[1]).toMatchObject({
+      side: "allies", controller: "rule", source: { kind: "companion", npcId: asNpcId("npc_a") },
+      name: "npc_a", stats: { maxHp: expect.any(Number), maxEnergy: expect.any(Number), attack: expect.any(Number), defense: expect.any(Number), speed: expect.any(Number) },
+    });
   });
 });

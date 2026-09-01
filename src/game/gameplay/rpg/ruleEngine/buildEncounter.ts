@@ -1,6 +1,8 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { EnemyId } from "@/game/domain/worldEntity";
+import { entitiesOfKind } from "@/game/domain/entity";
 import {
+  COMPANION_COMBAT_STATS,
   ENEMY_COMBAT_STATS,
   PLAYER_COMBAT_STATS,
   asCombatantId,
@@ -38,6 +40,24 @@ export function buildEncounter(worldState: WorldState, challengedEnemyId: EnemyI
     ...initialCombatResources(PLAYER_COMBAT_STATS),
   };
 
+  const companion = entitiesOfKind(worldState.entityStore, "npc")
+    .filter((npc) =>
+      npc.core.lifecycle === "active"
+      && npc.dynamicState.isCompanion
+      && npc.position.locationId === worldState.currentLocationId,
+    )
+    .sort((a, b) => String(a.core.id).localeCompare(String(b.core.id)))
+    .slice(0, 1)
+    .map((npc): BattleCombatant => ({
+      combatantId: asCombatantId(`companion:${String(npc.core.id)}`),
+      side: "allies",
+      controller: "rule",
+      source: { kind: "companion", npcId: npc.core.id },
+      name: npc.core.name,
+      stats: COMPANION_COMBAT_STATS,
+      ...initialCombatResources(COMPANION_COMBAT_STATS),
+    }));
+
   const enemies = enemyEntries.map((enemy): BattleCombatant => {
     const stats = ENEMY_COMBAT_STATS[enemy.tier];
     return {
@@ -51,5 +71,5 @@ export function buildEncounter(worldState: WorldState, challengedEnemyId: EnemyI
     };
   });
 
-  return [protagonist, ...enemies];
+  return [protagonist, ...companion, ...enemies];
 }

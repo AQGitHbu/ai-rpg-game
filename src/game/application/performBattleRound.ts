@@ -5,12 +5,14 @@ import type { ResolvedEvent } from "@/game/domain/resolvedEvent";
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
 import type { NarrativeRuntimeState, BattleNarrativeCheckpointState } from "@/game/domain/narrative";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { resolveTurn } from "@/game/gameplay/rpg/ruleEngine";
 import { commitState } from "./stateCommit";
 import { asTurnId } from "@/game/domain/events";
 import { consumeNarrativeBundle } from "./consumeNarrativeBundle";
 import { consumePreparedContinuation } from "./consumePreparedContinuation";
 import { projectEntityStore } from "@/game/domain/entity";
+import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
 
 // ---------------------------------------------------------------------------
 // Task 8: 专门处理活跃战斗回合的应用路径。
@@ -51,6 +53,28 @@ function restoreNarrativeFromCheckpoint(
     ...(checkpoint.bundle === undefined ? {} : { narrativeBundle: checkpoint.bundle }),
     ...(checkpoint.dialogueSession === undefined ? {} : { dialogueSession: checkpoint.dialogueSession }),
   };
+}
+
+function applyCompanionVictorySignals(
+  worldState: WorldState,
+  battle: Extract<WorldState["battle"], { status: "active" }>,
+  actionId: string,
+  turnNumber: number,
+): WorldState | null {
+  const participantIds = (battle.combatants ?? [])
+    .filter((unit) => unit.side === "allies" && unit.hp >= 0 && unit.source.kind === "companion")
+    .map((unit) => unit.source.kind === "companion" ? unit.source.npcId : undefined)
+    .filter((npcId): npcId is NonNullable<typeof npcId> => npcId !== undefined)
+    .filter((npcId, index, ids) => ids.findIndex((id) => String(id) === String(npcId)) === index);
+  if (participantIds.length === 0) return worldState;
+  const mutation = applyEntityMutations(worldState, participantIds.map((npcId) => ({
+    kind: "apply_relationship_signal" as const,
+    fromNpcId: npcId,
+    targetId: PLAYER_ENTITY_ID,
+    signal: "fought_together" as const,
+    source: { kind: "action" as const, actionId, turnNumber },
+  })));
+  return mutation.ok ? mutation.worldState : null;
 }
 
 export async function performBattleRound(
@@ -188,6 +212,12 @@ export async function performBattleRound(
       ...afterWorldState,
       battle: { status: "idle" as const },
     };
+    const withCompanionSignals = beforeWorldState.battle.status === "active"
+      ? applyCompanionVictorySignals(victoryWorldState, beforeWorldState.battle, input.actionId, beforeStoryState.turnNumber)
+      : victoryWorldState;
+    if (withCompanionSignals === null) {
+      return { ok: false, code: "ACTION_REJECTED", feedback: "战斗世界状态不一致。" };
+    }
 
     // Offline fixture worlds can exercise rule-only battle paths without a
     // prepared continuation graph. Keep the victory atomic and clear the
@@ -198,7 +228,7 @@ export async function performBattleRound(
         const continued = consumePreparedContinuation({
           beforeWorldState,
           beforeStoryState,
-          resolvedWorldState: victoryWorldState,
+          resolvedWorldState: withCompanionSignals,
           resolvedStoryState: afterStoryState,
           action: input.action,
           postCommitRevision: record.revision + 1,
@@ -238,7 +268,7 @@ export async function performBattleRound(
       const commitResult = await commitState(deps.repository, {
         gameId: input.gameId,
         expectedRevision: record.revision,
-        nextWorldState: victoryWorldState,
+        nextWorldState: withCompanionSignals,
         nextStoryState,
       });
       if (!commitResult.ok) {
@@ -258,7 +288,7 @@ export async function performBattleRound(
 
     const continued = consumeNarrativeBundle({
       beforeStoryState,
-      resolvedWorldState: victoryWorldState,
+      resolvedWorldState: withCompanionSignals,
       resolvedStoryState: afterStoryState,
       action: input.action,
       actionId: input.actionId,

@@ -86,6 +86,15 @@ export const PLAYER_COMBAT_STATS: CombatStats = {
   speed: 12,
 };
 
+/** 同伴的固定规则属性；同伴由规则控制，不会增加玩家操作单位。 */
+export const COMPANION_COMBAT_STATS: CombatStats = {
+  maxHp: 80,
+  maxEnergy: 40,
+  attack: 16,
+  defense: 8,
+  speed: 10,
+};
+
 export const ENEMY_COMBAT_STATS: Readonly<Record<"normal" | "boss", CombatStats>> = {
   normal: { maxHp: 55, maxEnergy: 30, attack: 13, defense: 7, speed: 8 },
   boss: { maxHp: 120, maxEnergy: 50, attack: 18, defense: 12, speed: 10 },

@@ -58,4 +58,25 @@ describe("projectCombatView", () => {
     const skill = projectCombatView(ws, active, 3).disabledControls?.find((control) => control.label.startsWith("技能"));
     expect(skill).toMatchObject({ enabled: false, choiceToken: null, disabledReason: "需要 20 能量" });
   });
+
+  it("fails closed instead of treating a partial combatant shape as a legacy battle", () => {
+    const ws = world();
+    const encounter = buildEncounter(ws, asEnemyId("enemy_1"));
+    const malformed = {
+      status: "active" as const,
+      enemyId: asEnemyId("enemy_1"),
+      playerHp: 100,
+      enemyHp: 55,
+      round: 1,
+      combatants: encounter,
+      turnOrder: createTurnOrder(encounter),
+      turnIndex: 0,
+      // New combatant state is incomplete: enemyIntents/downedEnemyIds/lastAdvance are absent.
+    } as never;
+    const view = projectCombatView(ws, malformed, 3);
+    expect(view.units).toEqual([]);
+    expect(view.controls).toEqual([]);
+    expect(view.disabledControls).toEqual([]);
+    expect(view.lastAdvance).toEqual([]);
+  });
 });

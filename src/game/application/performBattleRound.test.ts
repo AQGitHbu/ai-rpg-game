@@ -23,6 +23,9 @@ import {
 } from "@/game/domain/entity";
 import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
 import { resolveTurn } from "@/game/gameplay/rpg/ruleEngine";
+import { buildEncounter } from "@/game/gameplay/rpg/ruleEngine/buildEncounter";
+import { createTurnOrder } from "@/game/gameplay/rpg/ruleEngine/combatMath";
+import { findRelationshipEdge } from "@/game/gameplay/rpg/npcMemory";
 
 function createInMemoryRepo(record: GameRecord | null): { repo: GameRepository; getRecord: () => GameRecord | null; getApplyCount: () => number } {
   let current: GameRecord | null = record;
@@ -534,10 +537,19 @@ async function writeNpcLayersMidBattle(harness: InMemoryHarness): Promise<number
     emotion: "afraid",
   }]);
   if (!applied.ok) throw new Error(`fixture must be able to write npc layers: ${applied.code}`);
+  const withActionEvidence: WorldState = {
+    ...applied.worldState,
+    eventLedger: [...applied.worldState.eventLedger, {
+      type: "npc_dialogue_completed",
+      npcId: NPC_ID,
+      actionId: "mid_battle_act",
+      occurredAt: CLOCK(),
+    }],
+  };
   const committed = await commitState(harness.repo, {
     gameId: GAME_ID,
     expectedRevision: record.revision,
-    nextWorldState: applied.worldState,
+    nextWorldState: withActionEvidence,
     nextStoryState: record.storyState,
   });
   if (!committed.ok) throw new Error("fixture commit must succeed");
@@ -761,5 +773,139 @@ describe("performBattleRound：NPC 分层组件的战前快照与回滚", () => 
     const record = fixture.harness.getRecord();
     if (record === null) throw new Error("fixture must keep an active game");
     expectRolledBackToPreBattle(fixture, record);
+  });
+});
+
+describe("performBattleRound：同伴共同战斗关系证据", () => {
+  function companionVictoryWorld(): { worldState: WorldState; companionId: ReturnType<typeof asNpcId>; absentCompanionId: ReturnType<typeof asNpcId> } {
+    const base = layeredBattleWorld();
+    const companionId = NPC_ID;
+    const absentCompanionId = asNpcId("npc_z");
+    const companion = {
+      ...layeredNpcRecord(),
+      dynamicState: { ...layeredNpcRecord().dynamicState, isCompanion: true },
+      relationships: { outgoing: [] },
+    };
+    const absentCompanion = {
+      ...rivalNpcRecord(),
+      core: { ...rivalNpcRecord().core, id: absentCompanionId, name: "未参战同伴" },
+      position: { ...rivalNpcRecord().position, locationOrder: 2 },
+      dynamicState: { ...rivalNpcRecord().dynamicState, isCompanion: true },
+      relationships: { outgoing: [] },
+    };
+    const store = createEntityStore([
+      ...base.entityStore.records.filter((record) => record.core.id !== companionId),
+      companion,
+      absentCompanion,
+    ]);
+    const world = { ...base, entityStore: store, ...projectEntityStore(store) };
+    const encounter = buildEncounter(world, ENEMY_ID).map((unit) =>
+      unit.source.kind === "enemy" ? { ...unit, hp: 1 } : unit.source.kind === "companion" ? { ...unit, hp: 0 } : unit,
+    );
+    const battle = {
+      status: "active" as const,
+      enemyId: ENEMY_ID,
+      enemyIds: [ENEMY_ID],
+      playerHp: 100,
+      enemyHp: 1,
+      round: 1,
+      combatants: encounter,
+      turnOrder: createTurnOrder(encounter),
+      turnIndex: 0,
+      enemyIntents: [],
+      downedEnemyIds: [],
+      lastAdvance: [],
+      preBattleSnapshot: { entityStore: store, eventLedger: world.eventLedger },
+    };
+    return { worldState: { ...world, battle }, companionId, absentCompanionId };
+  }
+
+  it("awards one fought_together evidence to a participating downed companion only on victory", async () => {
+    const fixture = companionVictoryWorld();
+    const harness = createInMemoryRepo({
+      gameId: GAME_ID,
+      worldState: fixture.worldState,
+      storyState: createBattleStoryState({
+        status: "ready",
+        mode: "offline",
+        currentScene: {
+          sceneId: "scene-battle-victory",
+          turn: 1,
+          narration: "战斗",
+          usedFactIds: [],
+          npcLine: null,
+          choices: [],
+          source: "fixture",
+        },
+        choiceRegistry: [],
+      }),
+      revision: 0,
+      createdAt: "2026-01-01",
+    });
+
+    const result = await performBattleRound(
+      {
+        gameId: GAME_ID,
+        actionId: "battle_victory_1",
+        interactionKind: "fixed_choice",
+        action: { type: "battle_action", action: "attack" },
+        expectedRevision: 0,
+      },
+      { repository: harness.repo, now: CLOCK },
+    );
+    if (!result.ok) throw new Error(result.feedback);
+    expect(result).toMatchObject({ ok: true, outcome: "victory" });
+    const record = harness.getRecord();
+    if (record === null) throw new Error("fixture must keep an active game");
+    const companion = record.worldState.entityStore.records.find((entry) => entry.core.id === fixture.companionId);
+    if (companion === undefined || companion.core.kind !== "npc") throw new Error("companion must persist");
+    const companionNpc = companion as NpcEntityRecord;
+    const evidence = findRelationshipEdge(companionNpc.relationships, PLAYER_ENTITY_ID)?.evidence.filter(
+      (entry) => entry.signal === "fought_together",
+    );
+    expect(evidence).toHaveLength(1);
+    expect(evidence?.[0]).toMatchObject({ actionId: "battle_victory_1", signal: "fought_together" });
+
+    const absent = record.worldState.entityStore.records.find((entry) => entry.core.id === fixture.absentCompanionId);
+    if (absent === undefined || absent.core.kind !== "npc") throw new Error("absent companion must persist");
+    expect(findRelationshipEdge((absent as NpcEntityRecord).relationships, PLAYER_ENTITY_ID)).toBeUndefined();
+  });
+
+  it("does not write a permanent companion relationship during a non-terminal round", async () => {
+    const fixture = companionVictoryWorld();
+    const battle = fixture.worldState.battle;
+    if (battle.status !== "active" || battle.combatants === undefined) throw new Error("fixture must start an active battle");
+    const worldState = {
+      ...fixture.worldState,
+      battle: {
+        ...battle,
+        combatants: battle.combatants.map((unit) => unit.source.kind === "companion" ? { ...unit, hp: 1 } : unit.source.kind === "enemy" ? { ...unit, hp: 55 } : unit),
+        enemyHp: 55,
+      },
+    };
+    const harness = createInMemoryRepo({
+      gameId: GAME_ID,
+      worldState,
+      storyState: createBattleStoryState(),
+      revision: 0,
+      createdAt: "2026-01-01",
+    });
+    const result = await performBattleRound(
+      {
+        gameId: GAME_ID,
+        actionId: "battle_active_1",
+        interactionKind: "fixed_choice",
+        action: { type: "battle_action", action: "attack" },
+        expectedRevision: 0,
+      },
+      { repository: harness.repo, now: CLOCK },
+    );
+    expect(result).toMatchObject({ ok: true, outcome: "active" });
+    const record = harness.getRecord();
+    if (record === null) throw new Error("fixture must keep an active game");
+    const companion = record.worldState.entityStore.records.find((entry) => entry.core.id === fixture.companionId);
+    if (companion === undefined || companion.core.kind !== "npc") throw new Error("companion must persist");
+    expect(findRelationshipEdge((companion as NpcEntityRecord).relationships, PLAYER_ENTITY_ID)).toBeUndefined();
+    expect(record.storyState.turnNumber).toBe(0);
   });
 });

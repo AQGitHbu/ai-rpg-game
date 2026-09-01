@@ -4,6 +4,17 @@ import type { PlayerChoiceView } from "./gameSessionView";
 import { deriveRuntimeChoiceToken } from "./runtimeChoiceToken";
 import type { WorldState } from "@/game/domain/worldState";
 
+type ActiveBattle = Extract<WorldState["battle"], { status: "active" }>;
+
+function isModernBattle(battle: ActiveBattle): battle is ActiveBattle & ActiveBattleCombatState {
+  return Array.isArray(battle.combatants)
+    && Array.isArray(battle.turnOrder)
+    && typeof battle.turnIndex === "number"
+    && Array.isArray(battle.enemyIntents)
+    && Array.isArray(battle.downedEnemyIds)
+    && Array.isArray(battle.lastAdvance);
+}
+
 export type BattleCombatantView = {
   readonly slot: string;
   readonly name: string;
@@ -55,6 +66,19 @@ export type BattleView = {
   readonly lastAdvance?: readonly BattleAdvanceView[];
 };
 
+function closedBattleView(worldState: WorldState, battle: Extract<WorldState["battle"], { status: "active" }>): BattleView {
+  return {
+    enemyName: worldState.enemies.find((enemy) => enemy.id === battle.enemyId)?.name ?? "未知敌人",
+    playerHp: battle.playerHp,
+    enemyHp: battle.enemyHp,
+    round: battle.round,
+    units: [],
+    controls: [],
+    disabledControls: [],
+    lastAdvance: [],
+  };
+}
+
 function control(
   action: Extract<CombatActionKind, "attack" | "skill" | "guard" | "flee">,
   label: string,
@@ -93,10 +117,15 @@ export function projectCombatView(
   battle: Extract<WorldState["battle"], { status: "active" }>,
   revision: number,
 ): BattleView {
-  const modern = battle.combatants !== undefined
-    && battle.turnOrder !== undefined
-    && battle.enemyIntents !== undefined;
+  const modern = isModernBattle(battle);
   if (!modern) {
+    const hasModernShapeMarker = battle.combatants !== undefined
+      || battle.turnOrder !== undefined
+      || battle.turnIndex !== undefined
+      || battle.enemyIntents !== undefined
+      || battle.downedEnemyIds !== undefined
+      || battle.lastAdvance !== undefined;
+    if (hasModernShapeMarker) return closedBattleView(worldState, battle);
     return {
       enemyName: worldState.enemies.find((enemy) => enemy.id === battle.enemyId)?.name ?? "未知敌人",
       playerHp: battle.playerHp,
