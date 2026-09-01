@@ -46,7 +46,25 @@ const NPC_CREATION = {
     taboos: [],
   },
   goals: [{ horizon: "short" as const, description: "送达密信", priority: 3 as const, reason: "必须完成传递" }],
+  relationshipSeeds: [],
 };
+
+const ENTITY_CONTEXT_CLOSURE = {
+  mandatoryEntityIds: ["npc_0"],
+  directReferenceEntityIds: [],
+  currentLocationActiveNpcIds: [],
+};
+
+function proposalWithSeed(stance: string, reason = "旧日经历，仅供诊断"): WorldDeltaProposal {
+  const base = nextActProposal();
+  return {
+    ...base,
+    newNpc: {
+      ...base.newNpc!,
+      relationshipSeeds: [{ targetNpcId: "npc_0", stance, reason }],
+    },
+  } as WorldDeltaProposal;
+}
 
 // 结局要求由 stage 最大的主线任务的 talk_to_npc 目标派生：该目标 NPC 必须是世界里
 // 真实存在的实体（v3 投影不变量下 quest 目标引用未知 NPC 直接非法），所以把它
@@ -138,6 +156,140 @@ function makeWorldWithFinalMainQuestTalk(): WorldState {
 }
 
 describe("approveWorldDelta", () => {
+  it("requires an explicit entity-context closure for relationship seeds", () => {
+    const result = approveWorldDelta({
+      proposal: proposalWithSeed("ally"),
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+    } as never);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_npc_relationship_seeds");
+    expect(result.reason).toBe("entity_context_closure_required");
+  });
+
+  it.each([
+    ["ally", "cooperative"],
+    ["protective_of", "cooperative"],
+    ["indebted_to", "cooperative"],
+    ["rival", "wary"],
+    ["wary", "wary"],
+  ] as const)("maps %s to the bounded directed seed edge", (stance, stage) => {
+    const result = approveWorldDelta({
+      proposal: proposalWithSeed(stance),
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+      entityContextClosure: ENTITY_CONTEXT_CLOSURE,
+    } as never);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const layers = result.approved.npcCreationComponentsById.get(asNpcId("npc_dyn_1"));
+    const edge = layers?.relationships.outgoing.find((candidate) => candidate.targetId === asNpcId("npc_0"));
+    expect(edge?.stage).toBe(stage);
+    expect(edge?.origin).toEqual(expect.objectContaining({ kind: "initial_world", reasonKey: expect.any(String) }));
+    if (stance === "rival" || stance === "wary") {
+      expect(edge?.dimensions.affinity).toBeLessThan(0);
+    } else {
+      expect(edge?.dimensions.affinity).toBeGreaterThan(0);
+    }
+    if (stance === "indebted_to") {
+      expect(edge?.commitments).toHaveLength(1);
+      expect(edge?.commitments[0]).toEqual(expect.objectContaining({
+        kind: "debt", direction: "source_owes_target", status: "open",
+      }));
+    } else {
+      expect(edge?.commitments).toEqual([]);
+    }
+    expect(JSON.stringify(edge)).not.toContain("旧日经历");
+    expect(layers?.relationships.outgoing.some((candidate) => candidate.targetId === asNpcId("npc_dyn_1"))).toBe(false);
+  });
+
+  it("rejects seed targets outside the supplied active-NPC closure", () => {
+    for (const closure of [
+      ENTITY_CONTEXT_CLOSURE,
+      { ...ENTITY_CONTEXT_CLOSURE, mandatoryEntityIds: [] },
+      { ...ENTITY_CONTEXT_CLOSURE, currentLocationActiveNpcIds: ["npc_0"], mandatoryEntityIds: [] },
+    ] as const) {
+      const result = approveWorldDelta({
+        proposal: proposalWithSeed("ally"),
+        need: { kind: "next_act", act: 2 },
+        ws: makeWorld(),
+        ss: makeStory({ currentAct: 2 }),
+        entityContextClosure: closure,
+      } as never);
+      if (closure.mandatoryEntityIds.some((id) => id === "npc_0") || closure.currentLocationActiveNpcIds.some((id) => id === "npc_0")) {
+        expect(result.ok).toBe(true);
+      } else {
+        expect(result.ok).toBe(false);
+      }
+    }
+  });
+
+  it.each([
+    ["self", "npc_dyn_1", "self_target"],
+    ["unknown", "npc_unknown", "target_outside_entity_context"],
+  ] as const)("rejects %s seed target", (_label, targetNpcId, reason) => {
+    const base = nextActProposal();
+    const result = approveWorldDelta({
+      proposal: {
+        ...base,
+        newNpc: { ...base.newNpc!, relationshipSeeds: [{ targetNpcId, stance: "ally", reason: "诊断" }] },
+      },
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+      entityContextClosure: {
+        mandatoryEntityIds: ["npc_0", "npc_dyn_1"],
+        directReferenceEntityIds: [],
+        currentLocationActiveNpcIds: [],
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_npc_relationship_seeds");
+    expect(result.reason).toBe(reason);
+  });
+
+  it("rejects inactive and duplicate seed targets", () => {
+    const base = nextActProposal();
+    const inactive = makeWorld();
+    const inactiveStore = {
+      ...inactive.entityStore,
+      records: inactive.entityStore.records.map((record) => record.core.kind === "npc"
+        ? { ...record, core: { ...record.core, lifecycle: "inactive" as const } }
+        : record),
+    } as typeof inactive.entityStore;
+    const inactiveResult = approveWorldDelta({
+      proposal: { ...base, newNpc: { ...base.newNpc!, relationshipSeeds: [{ targetNpcId: "npc_0", stance: "ally", reason: "诊断" }] } },
+      need: { kind: "next_act", act: 2 },
+      ws: { ...inactive, entityStore: inactiveStore },
+      ss: makeStory({ currentAct: 2 }),
+      entityContextClosure: ENTITY_CONTEXT_CLOSURE,
+    });
+    expect(inactiveResult.ok).toBe(false);
+    if (!inactiveResult.ok) expect(inactiveResult.reason).toBe("target_inactive");
+
+    const duplicateResult = approveWorldDelta({
+      proposal: {
+        ...base,
+        newNpc: {
+          ...base.newNpc!,
+          relationshipSeeds: [
+            { targetNpcId: "npc_0", stance: "ally", reason: "诊断一" },
+            { targetNpcId: "npc_0", stance: "wary", reason: "诊断二" },
+          ],
+        },
+      } as never,
+      need: { kind: "next_act", act: 2 },
+      ws: makeWorld(),
+      ss: makeStory({ currentAct: 2 }),
+      entityContextClosure: ENTITY_CONTEXT_CLOSURE,
+    });
+    expect(duplicateResult.ok).toBe(false);
+    if (!duplicateResult.ok) expect(duplicateResult.code).toBe("invalid_npc_relationship_seeds");
+  });
   it("approves a valid next_act proposal and mints sequential server ids", () => {
     const ws = makeWorld();
     const ss = makeStory({

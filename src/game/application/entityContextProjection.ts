@@ -7,6 +7,7 @@ import {
 } from "@/game/domain/entity";
 import type { PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { StoryState } from "@/game/domain/storyState";
+import type { WorldDeltaEntityContextClosure } from "@/game/domain/worldDelta";
 import type { QuestObjective } from "@/game/domain/worldEntries";
 import type { WorldState } from "@/game/domain/worldState";
 
@@ -254,5 +255,26 @@ export function buildEntityContextProjection(input: {
       location: names("location"), npc: names("npc"), item: names("item"),
       enemy: names("enemy"), quest: names("quest"),
     },
+  };
+}
+
+/**
+ * 将同一应用边界已经计算出的实体闭包交给 world-delta 审批。
+ * 这是关系种子的 allowlist，不是让审批层自行遍历全世界的替代入口。
+ */
+export function buildWorldDeltaEntityContextClosure(input: {
+  readonly worldState: WorldState;
+  readonly storyState: StoryState;
+  readonly job: PendingNarrativeJob;
+}): WorldDeltaEntityContextClosure {
+  const projection = buildEntityContextProjection(input);
+  const currentLocationId = String(input.worldState.currentLocationId);
+  const currentLocationActiveNpcIds = entitiesOfKind(input.worldState.entityStore, "npc")
+    .filter((record) => record.core.lifecycle === "active" && String(record.position.locationId) === currentLocationId)
+    .map((record) => String(record.core.id));
+  return {
+    mandatoryEntityIds: projection.mandatory.map((entity) => entity.id),
+    directReferenceEntityIds: projection.mandatory.map((entity) => entity.id),
+    currentLocationActiveNpcIds,
   };
 }

@@ -9,6 +9,7 @@ import type { ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import type { NarrativeRuntimeState } from "@/game/domain/narrative";
 import { runBoundedAttempts } from "@/game/core/retry";
 import type { AiFailureKind } from "@/game/domain/narrativeGenerationFailure";
+import { buildWorldDeltaEntityContextClosure } from "./entityContextProjection";
 
 // A next-act package contains five independently unique world entities. A
 // provider repair may correct one named collision at a time, so leave room for
@@ -113,6 +114,7 @@ export async function generatePendingNarrativeBundle(
         evolutionNeed,
         jobId: job.jobId,
         mandatoryBeats: job.mandatoryBeats,
+        entityContextClosure: buildWorldDeltaEntityContextClosure({ worldState, storyState, job }),
         // applyState commits the approved scene in the next record revision.
         // Choice tokens must be forged against that revision, otherwise the
         // read model correctly treats every newly-generated choice as stale.

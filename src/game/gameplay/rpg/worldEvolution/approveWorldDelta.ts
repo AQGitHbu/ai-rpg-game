@@ -19,7 +19,12 @@ import {
   type StoryBudget,
   type BudgetDimensionKey,
 } from "@/game/domain/storyBudget";
-import type { EvolutionNeed, WorldDeltaProposal, StoryEvolutionState } from "@/game/domain/worldDelta";
+import type {
+  EvolutionNeed,
+  WorldDeltaEntityContextClosure,
+  WorldDeltaProposal,
+  StoryEvolutionState,
+} from "@/game/domain/worldDelta";
 import {
   asLocationId, asNpcId, asItemId, asEnemyId, asFactId, asQuestId, asEndingId, PLAYER_ENTITY_ID,
   type LocationId, type NpcId, type ItemId, type EnemyId, type FactId, type QuestId, type EndingId,
@@ -30,7 +35,19 @@ import type {
   NpcDynamicStateComponent, NpcGoal, NpcHistoryComponent, NpcImportedLayers,
   NpcKnowledgeComponent, NpcRelationshipComponent,
 } from "@/game/domain/entity";
-import { parseNpcCreationAnchors, parseNpcGoalProposals } from "@/game/domain/entity";
+import {
+  entitiesOfKind,
+  parseNpcCreationAnchors,
+  parseNpcGoalProposals,
+  parseNpcRelationshipSeedProposals,
+} from "@/game/domain/entity";
+import type { NpcRelationshipSeedProposal } from "@/game/domain/entity";
+import type { DirectedRelationshipEdge, RelationshipSource } from "@/game/domain/entity";
+import {
+  INITIAL_RELATIONSHIP_SEED_POLICY,
+  mintRelationshipCommitmentId,
+  upsertRelationshipEdge,
+} from "../npcMemory/relationshipSignalPolicy";
 import { deriveKeyEndingNpcId } from "./keyEndingNpc";
 
 // ---------------------------------------------------------------------------
@@ -156,7 +173,8 @@ export type WorldDeltaRejection =
   | "unreachable_objective"
   | "main_quest_conflict"
   | "ending_pair_invalid"
-  | "invalid_npc_creation_components";
+  | "invalid_npc_creation_components"
+  | "invalid_npc_relationship_seeds";
 
 /**
  * unreachable_objective 的内部 reason：物化新世界地点时，目标 NPC 必须落在该
@@ -240,6 +258,7 @@ function buildNpcCreationComponents(input: Readonly<{
   knownFactIds: readonly FactId[];
   privateFactIds: readonly FactId[];
   createdAtTurn: number;
+  relationshipSeeds: readonly NpcRelationshipSeedProposal[];
 }>): NpcImportedLayers | null {
   const anchors = parseNpcCreationAnchors(input.npc.anchors);
   const proposals = parseNpcGoalProposals(input.npc.goals);
@@ -268,8 +287,7 @@ function buildNpcCreationComponents(input: Readonly<{
       reason: proposal.reason,
     })),
   };
-  const relationships: NpcRelationshipComponent = {
-    outgoing: [{
+  const playerEdge: DirectedRelationshipEdge = {
       targetId: PLAYER_ENTITY_ID,
       dimensions: { affinity: 0, trust: 0, fear: 0, hostility: 0 },
       stage: "unknown",
@@ -278,10 +296,80 @@ function buildNpcCreationComponents(input: Readonly<{
       evidence: [],
       origin: { kind: "initial_world", createdAtTurn: input.createdAtTurn, reasonKey: "world_delta_npc" },
       lastChangedAtTurn: input.createdAtTurn,
-    }],
+  };
+  const seededEdges = input.relationshipSeeds.map((seed): DirectedRelationshipEdge => {
+    const rule = INITIAL_RELATIONSHIP_SEED_POLICY[seed.stance];
+    const origin: RelationshipSource = {
+      kind: "initial_world",
+      createdAtTurn: input.createdAtTurn,
+      reasonKey: rule.reasonKey,
+    };
+    const commitments = seed.stance === "indebted_to"
+      ? [{
+          kind: "debt" as const,
+          commitmentId: mintRelationshipCommitmentId({ source: origin, op: "open_debt", openKey: "indebted_to" }),
+          direction: "source_owes_target" as const,
+          status: "open" as const,
+          description: "relationship.commitment.initial.indebted_to",
+          source: origin,
+        }]
+      : [];
+    return {
+      targetId: asNpcId(seed.targetNpcId),
+      dimensions: rule.dimensions,
+      stage: rule.stage,
+      trend: "stable",
+      commitments,
+      evidence: [],
+      origin,
+      lastChangedAtTurn: input.createdAtTurn,
+    };
+  });
+  const relationships: NpcRelationshipComponent = {
+    outgoing: seededEdges.reduce(
+      (outgoing, edge) => upsertRelationshipEdge(outgoing, edge),
+      upsertRelationshipEdge([], playerEdge),
+    ),
   };
   const history: NpcHistoryComponent = { interactions: [] };
   return { anchors, dynamicState, knowledge, relationships, history };
+}
+
+type ValidatedRelationshipSeeds =
+  | { readonly ok: true; readonly seeds: readonly NpcRelationshipSeedProposal[] }
+  | { readonly ok: false; readonly reason: string };
+
+function validateRelationshipSeeds(input: Readonly<{
+  npcId: NpcId;
+  seeds: unknown;
+  closure: WorldDeltaEntityContextClosure | undefined;
+  ws: WorldState;
+}>): ValidatedRelationshipSeeds {
+  const parsed = parseNpcRelationshipSeedProposals(input.seeds);
+  if (parsed === null) return { ok: false, reason: "seed_shape" };
+  if (parsed.length === 0) return { ok: true, seeds: parsed };
+  if (input.closure === undefined) return { ok: false, reason: "entity_context_closure_required" };
+
+  const closureIds = new Set([
+    ...input.closure.mandatoryEntityIds,
+    ...input.closure.directReferenceEntityIds,
+    ...input.closure.currentLocationActiveNpcIds,
+  ]);
+  const activeNpcs = new Map(
+    entitiesOfKind(input.ws.entityStore, "npc").map((record) => [String(record.core.id), record.core.lifecycle]),
+  );
+  const seenTargets = new Set<string>();
+  for (const seed of parsed) {
+    const targetId = seed.targetNpcId;
+    if (seenTargets.has(targetId)) return { ok: false, reason: "duplicate_target" };
+    seenTargets.add(targetId);
+    if (targetId === String(input.npcId)) return { ok: false, reason: "self_target" };
+    if (!closureIds.has(targetId)) return { ok: false, reason: "target_outside_entity_context" };
+    const lifecycle = activeNpcs.get(targetId);
+    if (lifecycle === undefined) return { ok: false, reason: "target_unknown" };
+    if (lifecycle !== "active") return { ok: false, reason: "target_inactive" };
+  }
+  return { ok: true, seeds: parsed };
 }
 
 function violatesGenre(ws: WorldState, texts: readonly string[]): boolean {
@@ -534,6 +622,8 @@ export function approveWorldDelta(input: {
   readonly ss: StoryState;
   /** 回合修复路径：把行动引用 ID 原样铸造为缺失实体 ID（只作用于匹配 kind）。 */
   readonly idOverride?: WorldDeltaIdOverride;
+  /** 关系种子唯一允许消费的应用边界实体上下文闭包。 */
+  readonly entityContextClosure?: WorldDeltaEntityContextClosure;
 }): ApproveWorldDeltaResult {
   const { proposal: p, need, ws, ss } = input;
 
@@ -574,6 +664,7 @@ export function approveWorldDelta(input: {
   }
 
   const ids = mintIds(ss.evolution, p, input.idOverride);
+  let validatedRelationshipSeeds: readonly NpcRelationshipSeedProposal[] = [];
 
   // 目标链结构变体仅 next_act 消费（下方校验与铸造共用同一次计算，避免两处口径漂移）；
   // pacing / ending_pair 不铸造主线目标链，shape 保持 null。
@@ -644,6 +735,16 @@ export function approveWorldDelta(input: {
   }
   if (p.newNpc && (parseNpcCreationAnchors(p.newNpc.anchors) === null || parseNpcGoalProposals(p.newNpc.goals) === null)) {
     return reject("invalid_npc_creation_components", "npc_creation_components");
+  }
+  if (p.newNpc) {
+    const seeds = validateRelationshipSeeds({
+      npcId: ids.npcId!,
+      seeds: p.newNpc.relationshipSeeds,
+      closure: input.entityContextClosure,
+      ws,
+    });
+    if (!seeds.ok) return reject("invalid_npc_relationship_seeds", seeds.reason);
+    validatedRelationshipSeeds = seeds.seeds;
   }
   if (p.newLocation && (!validName(p.newLocation.name) || !validText(p.newLocation.description))) {
     return reject("genre_constraint", "location_name_or_text");
@@ -908,6 +1009,7 @@ export function approveWorldDelta(input: {
       knownFactIds,
       privateFactIds,
       createdAtTurn: ss.turnNumber,
+      relationshipSeeds: validatedRelationshipSeeds,
     });
     if (components === null) return reject("invalid_npc_creation_components", "npc_creation_components");
     npcCreationComponentsById.set(ids.npcId, components);

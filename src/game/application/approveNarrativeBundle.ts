@@ -1,6 +1,11 @@
 import type { WorldState } from "@/game/domain/worldState";
 import type { StoryState } from "@/game/domain/storyState";
-import type { EvolutionNeed, WorldDeltaProposal, ApprovedWorldDelta } from "@/game/domain/worldDelta";
+import type {
+  EvolutionNeed,
+  WorldDeltaEntityContextClosure,
+  WorldDeltaProposal,
+  ApprovedWorldDelta,
+} from "@/game/domain/worldDelta";
 import type { NarrativeJobId } from "@/game/domain/events";
 import type {
   NarrativeBundleProposal,
@@ -75,6 +80,7 @@ export type ApproveNarrativeBundleInput = {
   /** 本回合规则派生的强制节拍；currentScene 必须逐一覆盖。 */
   readonly mandatoryBeats: readonly MandatoryNarrativeBeat[];
   readonly idOverride?: WorldDeltaIdOverride;
+  readonly entityContextClosure?: WorldDeltaEntityContextClosure;
   readonly now: () => string;
   readonly auditLink?: AiTextAuditLink;
 };
@@ -398,6 +404,7 @@ export function approveNarrativeBundle(
       ws: worldState,
       ss: storyState,
       idOverride: input.idOverride,
+      entityContextClosure: input.entityContextClosure,
     });
     if (!worldApproval.ok) {
       const duplicateName = worldApproval.code === "duplicate_name"

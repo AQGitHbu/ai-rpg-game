@@ -51,6 +51,7 @@ const NPC_CREATION = {
     taboos: [],
   },
   goals: [{ horizon: "short", description: "送达密信", priority: 3, reason: "必须完成传递" }],
+  relationshipSeeds: [],
 };
 
 const pacingNeed: EvolutionNeed = { kind: "pacing", pacingNeed: "complicate" };
@@ -68,6 +69,58 @@ describe("parseWorldDeltaProposal", () => {
     expect(parsed).not.toBeNull();
     expect(parsed?.proposal.newNpc?.name).toBe("新来客");
     expect(parsed?.proposal.newNpc?.locationRef).toEqual({ kind: "existing", id: "loc_a" });
+  });
+
+  it("rejects a world-delta NPC that omits relationshipSeeds", () => {
+    const { relationshipSeeds: _omitted, ...legacyCreation } = NPC_CREATION;
+    expect(parseWorldDeltaProposal({
+      beatSummary: "缺少关系种子的 NPC",
+      newNpc: {
+        ...legacyCreation,
+        name: "新来客", role: "过客", description: "路过的旅人。",
+        locationRef: { kind: "existing", id: "loc_a" },
+      },
+    })).toBeNull();
+  });
+
+  it("parses bounded directed relationship seeds and fails closed for AI-owned fields", () => {
+    const parsed = parseWorldDeltaProposal({
+      beatSummary: "补充一名与掌柜有旧交的信使",
+      newNpc: {
+        ...NPC_CREATION,
+        name: "新来客", role: "过客", description: "路过的旅人。",
+        locationRef: { kind: "existing", id: "loc_a" },
+        relationshipSeeds: [{ targetNpcId: "npc_0", stance: "ally", reason: "曾共同守护一封密信" }],
+      },
+    });
+    expect(parsed?.proposal.newNpc?.relationshipSeeds).toEqual([
+      { targetNpcId: "npc_0", stance: "ally", reason: "曾共同守护一封密信" },
+    ]);
+
+    const invalidSeeds = [
+      [{ targetNpcId: "npc_0", stance: "unknown", reason: "不应接受" }],
+      [{ targetNpcId: "npc_0", stance: "ally", reason: "" }],
+      [{ targetNpcId: "npc_0", stance: "ally", reason: "有效", stage: "trusted" }],
+      [{ targetNpcId: "npc_0", stance: "ally", reason: "有效", affinity: 90 }],
+      [{ targetNpcId: "npc_0", stance: "ally", reason: "有效", evidence: [] }],
+      [{ targetNpcId: "npc_0", stance: "ally", reason: "有效", actionId: "action_1" }],
+      [{ targetNpcId: "npc_0", stance: "ally", reason: "有效", extra: true }],
+      [
+        { targetNpcId: "npc_0", stance: "ally", reason: "重复" },
+        { targetNpcId: "npc_0", stance: "rival", reason: "重复" },
+      ],
+    ];
+    for (const relationshipSeeds of invalidSeeds) {
+      expect(parseWorldDeltaProposal({
+        beatSummary: "非法关系种子",
+        newNpc: {
+          ...NPC_CREATION,
+          name: "新来客", role: "过客", description: "路过的旅人。",
+          locationRef: { kind: "existing", id: "loc_a" },
+          relationshipSeeds,
+        },
+      })).toBeNull();
+    }
   });
 
   it("drops proposals with illegal name length or missing fields", () => {

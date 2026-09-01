@@ -12,7 +12,11 @@ import type { AiGenerationFailure } from "@/game/domain/narrativeGenerationFailu
 import { compileWorldNarrativeContext } from "./narrativeContext";
 import type { NarrativePromptCompilation } from "./narrativeContext";
 import { parseStructuredJsonObject } from "@/game/core/json";
-import { parseNpcCreationAnchors, parseNpcGoalProposals } from "@/game/domain/entity";
+import {
+  parseNpcCreationAnchors,
+  parseNpcGoalProposals,
+  parseNpcRelationshipSeedProposals,
+} from "@/game/domain/entity";
 
 // ---------------------------------------------------------------------------
 // WorldEvolution live source（Task 3）。
@@ -59,6 +63,12 @@ function validText(v: unknown): v is string {
   if (!isStr(v)) return false;
   const t = v.trim();
   return t.length > 0 && t.length <= MAX_TEXT;
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const allowed = new Set(keys);
+  return Object.keys(value).every((key) => allowed.has(key))
+    && keys.every((key) => key in value);
 }
 
 function parseLocationRef(v: unknown): { readonly kind: "existing"; readonly id: string } | { readonly kind: "new_location" } | null {
@@ -162,12 +172,14 @@ export function parseWorldDeltaProposal(
   if (rec.newNpc !== null && rec.newNpc !== undefined) {
     if (typeof rec.newNpc !== "object" || Array.isArray(rec.newNpc)) return null;
     const n = rec.newNpc as Record<string, unknown>;
+    if (!hasExactKeys(n, ["name", "role", "description", "locationRef", "anchors", "goals", "relationshipSeeds"])) return null;
     if (!validName(n.name) || !validText(n.role) || !validText(n.description)) return null;
     const locationRef = parseLocationRef(n.locationRef);
     if (locationRef === null) return null;
     const anchors = parseNpcCreationAnchors(n.anchors);
     const goals = parseNpcGoalProposals(n.goals);
-    if (anchors === null || goals === null) return null;
+    const relationshipSeeds = parseNpcRelationshipSeedProposals(n.relationshipSeeds);
+    if (anchors === null || goals === null || relationshipSeeds === null) return null;
     newNpc = {
       name: n.name.trim(),
       role: n.role.trim(),
@@ -175,6 +187,7 @@ export function parseWorldDeltaProposal(
       locationRef,
       anchors,
       goals,
+      relationshipSeeds,
     };
   }
 

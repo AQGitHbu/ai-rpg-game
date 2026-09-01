@@ -108,6 +108,7 @@ describe("WorldDeltaProposal", () => {
         locationRef: { kind: "new_location" },
         anchors: { selfConcept: "替人传话的信使", values: ["守信"], speechStyle: "谨慎而直接", capabilityBoundaries: ["只知道亲身见闻"], taboos: [] },
         goals: [{ horizon: "short", description: "送达密信", priority: 3, reason: "必须完成传递" }],
+        relationshipSeeds: [],
       },
       newItem: null,
       newEnemy: { name: "山贼", tier: "normal", locationRef: "current" },

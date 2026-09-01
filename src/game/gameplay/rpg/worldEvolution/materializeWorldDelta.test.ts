@@ -41,6 +41,7 @@ const NPC_CREATION = {
     taboos: [],
   },
   goals: [{ horizon: "short" as const, description: "送达密信", priority: 3 as const, reason: "必须完成传递" }],
+  relationshipSeeds: [],
 };
 
 const BASE_PROJECTION: EntityCompatibilityProjection = {
@@ -91,6 +92,7 @@ function approve(input: {
   need: Parameters<typeof approveWorldDelta>[0]["need"];
   ws: WorldState;
   ss: StoryState;
+  entityContextClosure?: Parameters<typeof approveWorldDelta>[0]["entityContextClosure"];
 }): ApprovedWorldDeltaCore {
   const result = approveWorldDelta(input);
   if (!result.ok) throw new Error(`fixture approval failed: ${result.code}`);
@@ -115,6 +117,38 @@ function nextActProposal(): WorldDeltaProposal {
 }
 
 describe("materializeWorldDelta", () => {
+  it("materializes only the new NPC outgoing seed edge and preserves the target components", () => {
+    const ws = makeWorld();
+    const ss = makeStory({ currentAct: 2 });
+    const beforeTarget = entitiesOfKind(ws.entityStore, "npc").find((record) => record.core.id === asNpcId("npc_0"));
+    const approved = approve({
+      proposal: {
+        ...nextActProposal(),
+        newNpc: {
+          ...nextActProposal().newNpc!,
+          relationshipSeeds: [{ targetNpcId: "npc_0", stance: "ally", reason: "曾共同守护一封密信" }],
+        },
+      },
+      need: { kind: "next_act", act: 2 },
+      ws,
+      ss,
+      entityContextClosure: {
+        mandatoryEntityIds: ["npc_0"],
+        directReferenceEntityIds: [],
+        currentLocationActiveNpcIds: [],
+      },
+    });
+    const delta = materializeWorldDelta({ approved, need: { kind: "next_act", act: 2 }, ws, ss, now: () => "2026-09-01T00:00:00.000Z" });
+    const createdNpc = entitiesOfKind(delta.previewWorldState.entityStore, "npc").find((record) => record.core.id === asNpcId("npc_dyn_1"));
+    const targetAfter = entitiesOfKind(delta.previewWorldState.entityStore, "npc").find((record) => record.core.id === asNpcId("npc_0"));
+    expect(targetAfter).toEqual(beforeTarget);
+    expect(createdNpc?.relationships.outgoing.find((edge) => edge.targetId === asNpcId("npc_0"))).toEqual(expect.objectContaining({
+      stage: "cooperative",
+      dimensions: expect.objectContaining({ affinity: expect.any(Number) }),
+    }));
+    expect(createdNpc?.relationships.outgoing.some((edge) => edge.targetId === asNpcId("npc_dyn_1"))).toBe(false);
+  });
+
   it("materializes npc/location/quest/fact into preview world+story, consumes budget, resets status", () => {
     const ws = makeWorld();
     const ss = makeStory({ currentAct: 2, targetActs: 3, evolution: { ...makeStory().evolution, status: "needs_next_act" } });

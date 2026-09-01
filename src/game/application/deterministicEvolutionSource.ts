@@ -65,6 +65,7 @@ function planRepairByAction(ws: WorldState, action: Action): WorldDeltaProposal 
             taboos: ["不卷入无关争斗"],
           },
           goals: [{ horizon: "short", description: "随缘而行", priority: 3, reason: "这次交谈让他决定顺路指引来者" }],
+          relationshipSeeds: [],
         },
         newItem: null,
         newEnemy: null,
@@ -164,6 +165,7 @@ function planSceneCandidateRecovery(ws: WorldState): WorldDeltaProposal {
             taboos: [],
           },
           goals: [{ horizon: "short", description: "指出前路", priority: 3, reason: "眼前有人需要一条可以继续追寻的方向" }],
+          relationshipSeeds: [],
         }
       : null,
     // 已有交谈/移动入口时只补一个探索钩子，避免候选恢复无谓占用 NPC/地点预算，
@@ -198,6 +200,7 @@ function planScenePacingRecovery(ws: WorldState): WorldDeltaProposal {
         taboos: ["不替陌生人作证"],
       },
       goals: [{ horizon: "short", description: "观察动静", priority: 2, reason: "周围的异常值得先留意清楚" }],
+      relationshipSeeds: [],
     },
     newItem: null,
     newEnemy: null,
@@ -256,6 +259,7 @@ function planNextAct(ws: WorldState, act: number): WorldDeltaProposal {
         taboos: ["不泄露无关者身份"],
       },
       goals: [{ horizon: "short", description: beat.npcGoal, priority: 3, reason: beat.questDescription }],
+      relationshipSeeds: [],
     },
     newItem: {
       name: itemName,

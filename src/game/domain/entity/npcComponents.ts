@@ -177,8 +177,22 @@ export type NpcGoalProposal = Readonly<{
   reason: string;
 }>;
 
+/** AI 只能提出关系姿态；关系数值、来源与承诺由审批/规则层铸造。 */
+export const NPC_RELATIONSHIP_SEED_STANCES = Object.freeze([
+  "ally", "protective_of", "indebted_to", "rival", "wary",
+] as const);
+export type NpcRelationshipSeedStance = (typeof NPC_RELATIONSHIP_SEED_STANCES)[number];
+export const NPC_RELATIONSHIP_SEED_LIST_MAX = 4;
+export type NpcRelationshipSeedProposal = Readonly<{
+  targetNpcId: string;
+  stance: NpcRelationshipSeedStance;
+  /** 只用于审批失败诊断，不进入关系组件。 */
+  reason: string;
+}>;
+
 const NPC_ANCHOR_KEYS = ["selfConcept", "values", "speechStyle", "capabilityBoundaries", "taboos"] as const;
 const NPC_GOAL_PROPOSAL_KEYS = ["horizon", "description", "priority", "reason"] as const;
+const NPC_RELATIONSHIP_SEED_KEYS = ["targetNpcId", "stance", "reason"] as const;
 
 function boundedCreationText(value: unknown): value is string {
   return typeof value === "string"
@@ -236,6 +250,28 @@ export function parseNpcGoalProposals(value: unknown): readonly NpcGoalProposal[
     });
   }
   return proposals;
+}
+
+/** Provider/approval boundary parser; seed targets are resolved only at approval. */
+export function parseNpcRelationshipSeedProposals(value: unknown): readonly NpcRelationshipSeedProposal[] | null {
+  if (!Array.isArray(value) || value.length > NPC_RELATIONSHIP_SEED_LIST_MAX) return null;
+  const targetIds = new Set<string>();
+  const seeds: NpcRelationshipSeedProposal[] = [];
+  for (const raw of value) {
+    if (!isRecord(raw) || !hasExactCreationKeys(raw, NPC_RELATIONSHIP_SEED_KEYS)) return null;
+    if (!boundedCreationText(raw.targetNpcId)) return null;
+    if (!NPC_RELATIONSHIP_SEED_STANCES.includes(raw.stance as NpcRelationshipSeedStance)) return null;
+    if (!boundedCreationText(raw.reason)) return null;
+    const targetNpcId = raw.targetNpcId.trim();
+    if (targetIds.has(targetNpcId)) return null;
+    targetIds.add(targetNpcId);
+    seeds.push({
+      targetNpcId,
+      stance: raw.stance as NpcRelationshipSeedStance,
+      reason: raw.reason.trim(),
+    });
+  }
+  return seeds;
 }
 
 export type NpcDynamicStateComponent = Readonly<{

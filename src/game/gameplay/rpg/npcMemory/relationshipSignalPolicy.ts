@@ -20,6 +20,7 @@ import {
   type RelationshipSource,
   type RelationshipStage,
   type RelationshipTrend,
+  type NpcRelationshipSeedStance,
 } from "@/game/domain/entity";
 import type { NpcId, PlayerEntityId } from "@/game/domain/worldEntity";
 
@@ -61,7 +62,7 @@ import type { NpcId, PlayerEntityId } from "@/game/domain/worldEntity";
 // 错误码变成 TypeError、或把维度变成 NaN。本模块是全局数值权威，这条路径必须是全函数。
 //
 // 初始种子（ally/rival/wary/indebted_to/protective_of → 保守初值 + open debt）属
-// Task 6：本文件不预建种子表，避免同一事实出现第二个来源。
+// Task 6：只在本任务集中定义规则表，关系来源仍由审批层铸造。
 // ---------------------------------------------------------------------------
 
 type Expect<T extends true> = T;
@@ -183,6 +184,23 @@ export type RelationshipSignalRule = Readonly<{
 function delta(affinity: number, trust: number, fear = 0, hostility = 0): RelationshipDimensions {
   return { affinity, trust, fear, hostility };
 }
+
+export type InitialRelationshipSeedRule = Readonly<{
+  readonly dimensions: RelationshipDimensions;
+  readonly stage: "cooperative" | "wary";
+  readonly reasonKey: string;
+}>;
+
+const INITIAL_RELATIONSHIP_SEED_RULES = {
+  ally: { dimensions: delta(12, 8), stage: "cooperative", reasonKey: "relationship.initial.ally" },
+  protective_of: { dimensions: delta(10, 6, 0, 0), stage: "cooperative", reasonKey: "relationship.initial.protective_of" },
+  indebted_to: { dimensions: delta(8, 4), stage: "cooperative", reasonKey: "relationship.initial.indebted_to" },
+  rival: { dimensions: delta(-12, -4, 4, 4), stage: "wary", reasonKey: "relationship.initial.rival" },
+  wary: { dimensions: delta(-8, -3, 6, 2), stage: "wary", reasonKey: "relationship.initial.wary" },
+} as const satisfies Readonly<Record<NpcRelationshipSeedStance, InitialRelationshipSeedRule>>;
+
+export const INITIAL_RELATIONSHIP_SEED_POLICY: Readonly<Record<NpcRelationshipSeedStance, InitialRelationshipSeedRule>> =
+  deepFreeze(INITIAL_RELATIONSHIP_SEED_RULES);
 
 /**
  * signal → 固定变化。键集合由 `satisfies Record<RelationshipSignal, ...>` 锁死：

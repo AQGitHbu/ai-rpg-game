@@ -126,6 +126,7 @@ function journeyNextActProposal(act: number, currentLocationId: string): WorldDe
         taboos: ["不篡改收到的消息"],
       },
       goals: [{ horizon: "short", description: `传递第${act}幕的线索`, priority: 3, reason: `这封信关系到第${act}幕的追索` }],
+      relationshipSeeds: [],
     },
     newItem: {
       name: `信物·${act}`,
