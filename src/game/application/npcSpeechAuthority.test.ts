@@ -18,6 +18,7 @@ const NPC_B = asNpcId("npc_b");
 const LOCATION = asLocationId("loc_1");
 const FACT_PUBLIC = asFactId("fact_public");
 const FACT_SECRET = asFactId("fact_secret");
+const FACT_ORPHAN = asFactId("fact_orphan");
 
 const ANCHORS: NpcIdentityAnchors = {
   selfConcept: "守夜人",
@@ -73,6 +74,23 @@ function edge(targetId: DirectedRelationshipEdge["targetId"]): DirectedRelations
     }],
     origin: { kind: "initial_world", createdAtTurn: 0, reasonKey: "test" },
     lastChangedAtTurn: 1,
+  };
+}
+
+function edgeWithEvidence(
+  targetId: DirectedRelationshipEdge["targetId"],
+  summaryKeys: readonly string[],
+): DirectedRelationshipEdge {
+  const base = edge(targetId);
+  return {
+    ...base,
+    evidence: summaryKeys.map((summaryKey, index) => ({
+      ...base.evidence[0]!,
+      evidenceId: `evidence_${String(targetId)}_${index}`,
+      actionId: `action_${index}`,
+      turnNumber: index + 1,
+      summaryKey,
+    })),
   };
 }
 
@@ -148,7 +166,7 @@ describe("NpcSpeechAuthority", () => {
     expect(new Set(first.allowedFactIds).size).toBe(first.allowedFactIds.length);
     expect(new Set(first.withheldFactIds).size).toBe(first.withheldFactIds.length);
     expect(new Set(first.allowedInteractionActionIds).size).toBe(first.allowedInteractionActionIds.length);
-    expect(first.relationships.map((relation) => relation.targetId)).toEqual([NPC_B, PLAYER_ENTITY_ID]);
+    expect(first.relationships.map((relation) => relation.targetId)).toEqual([PLAYER_ENTITY_ID]);
     expect(first.evidenceKeys.length).toBeLessThanOrEqual(3);
   });
 
@@ -161,5 +179,104 @@ describe("NpcSpeechAuthority", () => {
 
     expect(result.allowedFactIds).toEqual([FACT_PUBLIC]);
     expect(result.allowedInteractionActionIds).toEqual(["action_1", "action_2"]);
+  });
+
+  it("crops relations and evidence to an explicitly requested NPC target", () => {
+    const result = buildNpcSpeechAuthority({
+      store: { version: 2, records: records() },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC],
+      targetContext: { targetId: NPC_B },
+    });
+
+    expect(result.relationships.map((relation) => relation.targetId)).toEqual([NPC_B]);
+    expect(result.relationship?.targetId).toBe(NPC_B);
+    expect(result.evidenceKeys).toEqual(["support_received"]);
+  });
+
+  it("returns no relation or evidence when target is absent", () => {
+    const result = buildNpcSpeechAuthority({
+      store: { version: 2, records: records() },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC],
+    });
+
+    expect(result.relationships).toEqual([]);
+    expect(result.relationship).toBeUndefined();
+    expect(result.evidenceKeys).toEqual([]);
+  });
+
+  it("fails closed for an unknown target instead of exposing remote edges", () => {
+    const unknownTarget = asNpcId("npc_unknown");
+    const speaker = {
+      ...npcRecord(),
+      relationships: { outgoing: [edge(unknownTarget), edge(NPC_B), edge(PLAYER_ENTITY_ID)] },
+    };
+    const result = buildNpcSpeechAuthority({
+      store: { version: 2, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC],
+      targetContext: { targetId: unknownTarget },
+    });
+
+    expect(result.relationships).toEqual([]);
+    expect(result.relationship).toBeUndefined();
+    expect(result.evidenceKeys).toEqual([]);
+  });
+
+  it("caps more than three real evidence keys after stable deduplication", () => {
+    const speaker = {
+      ...npcRecord(),
+      relationships: {
+        outgoing: [edgeWithEvidence(PLAYER_ENTITY_ID, ["zeta", "alpha", "delta", "beta", "alpha"])],
+      },
+    };
+    const result = buildNpcSpeechAuthority({
+      store: { version: 2, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC],
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+    });
+
+    expect(result.evidenceKeys).toEqual(["alpha", "beta", "delta"]);
+  });
+
+  it("keeps empty history empty and rejects an unknown speaker", () => {
+    const speaker = { ...npcRecord(), history: { interactions: [] } };
+    const result = buildNpcSpeechAuthority({
+      store: { version: 2, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC],
+    });
+    expect(result.recentInteractions).toEqual([]);
+    expect(() => buildNpcSpeechAuthority({
+      store: { version: 2, records: records() },
+      speakerNpcId: asNpcId("npc_missing"),
+      sceneVisibleFactIds: [],
+    })).toThrow("unknown NPC");
+  });
+
+  it("requires every allowed fact ID to have a fact record and a matching card", () => {
+    const speaker = {
+      ...npcRecord(),
+      knowledge: {
+        entries: [
+          ...npcRecord().knowledge.entries,
+          { factId: FACT_ORPHAN, certainty: "known" as const, disclosure: "public" as const, source: { kind: "initial_world" as const, learnedAtTurn: 0 } },
+        ],
+      },
+    };
+    const result = buildNpcSpeechAuthority({
+      store: { version: 2, records: records().map((record) => record.core.id === NPC_A ? speaker : record) },
+      speakerNpcId: NPC_A,
+      sceneVisibleFactIds: [FACT_PUBLIC, FACT_ORPHAN, asFactId("fact_scene_unknown")],
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+    });
+
+    expect(result.allowedFactIds).toEqual([FACT_PUBLIC]);
+    expect(result.withheldFactIds).toEqual([FACT_ORPHAN, FACT_SECRET]);
+    expect(result.allowedFactCards.map((card) => card.factId)).toEqual(result.allowedFactIds);
+    expect(result.allowedFactCards).toEqual([{ factId: FACT_PUBLIC, text: "桥下留有新鲜脚印" }]);
+    expect(result.allowedFactIds).not.toContain(asFactId("fact_scene_unknown"));
   });
 });

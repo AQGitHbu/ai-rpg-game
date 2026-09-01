@@ -19,6 +19,7 @@ import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import {
   buildPreparedStepDescriptors,
+  type PreparedArrivalNpcContext,
   type PreparedStepDescriptor,
 } from "@/game/gameplay/rpg/preparedContinuation";
 import { buildFocusNpcContext, type FocusNpcContext, type FactCard } from "./focusNpcContext";
@@ -75,7 +76,17 @@ export type NpcSceneContext = {
 export type UpcomingArrivalNpcContext = Pick<
   NpcSceneContext,
   "id" | "name" | "role" | "publicProfile" | "knownFactCards" | "sceneVisibleFactIds" | "goals"
->;
+> & Readonly<{
+  /** Production projections always fill this; old hand-built contexts may omit it. */
+  readonly speechAuthority?: import("./npcSpeechAuthority").NpcSpeechAuthority;
+}>;
+
+/** Application-only enriched descriptor; gameplay graph shape stays unchanged for 8B. */
+export type PreparedSceneStepDescriptor = Omit<PreparedStepDescriptor, "arrivalNpc"> & Readonly<{
+  readonly arrivalNpc?: PreparedArrivalNpcContext & Readonly<{
+    readonly speechAuthority?: import("./npcSpeechAuthority").NpcSpeechAuthority;
+  }>;
+}>;
 
 export type PlayerSceneSummary = {
   readonly name: string;
@@ -201,7 +212,7 @@ export type SceneGenerationContext = {
   /** Handoff semantics are fixed by the job, never inferred from mutable dialogue state. */
   readonly finalDialogueHandoff?: boolean;
   /** Server-authored continuation graph projected for this accepted rule result. */
-  readonly preparedStepDescriptors?: readonly PreparedStepDescriptor[];
+  readonly preparedStepDescriptors?: readonly PreparedSceneStepDescriptor[];
   readonly preparedActiveStepIds?: readonly string[];
   readonly player: PlayerSceneSummary;
   readonly currentLocation: LocationSceneCard;
@@ -439,7 +450,10 @@ function buildUpcomingLinearObjectives(
     const authority = buildNpcSpeechAuthority({
       store: ws.entityStore,
       speakerNpcId: npc.id,
-      sceneVisibleFactIds: ws.worldFacts.filter((fact) => fact.discovered).map((fact) => fact.factId),
+      sceneVisibleFactIds: entitiesOfKind(ws.entityStore, "fact")
+        .filter((fact) => fact.fact.discovered)
+        .map((fact) => fact.core.id),
+      targetContext: { targetId: PLAYER_ENTITY_ID },
     });
     return {
       id: npc.id,
@@ -447,10 +461,9 @@ function buildUpcomingLinearObjectives(
       role: npc.role,
       publicProfile: npc.description,
       knownFactCards: authority.allowedFactCards,
-      sceneVisibleFactIds: ws.worldFacts
-        .filter((fact) => fact.discovered)
-        .map((fact) => fact.factId),
+      sceneVisibleFactIds: authority.allowedFactIds,
       goals: authority.activeGoals,
+      speechAuthority: authority,
     };
   };
   const result: UpcomingObjectiveRef[] = [];
@@ -485,6 +498,39 @@ function buildUpcomingLinearObjectives(
     break;
   }
   return result;
+}
+
+function enrichPreparedStepDescriptors(
+  ws: WorldState,
+  descriptors: readonly PreparedStepDescriptor[],
+): readonly PreparedSceneStepDescriptor[] {
+  const sceneVisibleFactIds = entitiesOfKind(ws.entityStore, "fact")
+    .filter((fact) => fact.fact.discovered)
+    .map((fact) => fact.core.id);
+  return descriptors.map((descriptor) => {
+    const arrivalNpc = descriptor.arrivalNpc;
+    if (arrivalNpc === undefined) return descriptor;
+    const speechAuthority = buildNpcSpeechAuthority({
+      store: ws.entityStore,
+      speakerNpcId: arrivalNpc.id,
+      sceneVisibleFactIds,
+      targetContext: { targetId: PLAYER_ENTITY_ID },
+    });
+    return {
+      ...descriptor,
+      authority: {
+        ...descriptor.authority,
+        visibleFactIds: speechAuthority.allowedFactIds,
+      },
+      arrivalNpc: {
+        ...arrivalNpc,
+        knownFactCards: speechAuthority.allowedFactCards,
+        sceneVisibleFactIds: speechAuthority.allowedFactIds,
+        goals: speechAuthority.activeGoals,
+        speechAuthority,
+      },
+    };
+  });
 }
 
 /** 从持久化 record 投影最小权限上下文（唯一构造入口）。 */
@@ -667,6 +713,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     storyState: ss,
     transition,
   });
+  const preparedDescriptors = enrichPreparedStepDescriptors(ws, preparedProjection.descriptors);
   const narrativeReferenceIds = [...new Set([
     ...beatSubjects.map((subject) => subject.id),
     ...(objectiveTarget === null ? [] : [objectiveTarget.entityId]),
@@ -676,7 +723,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
           String(ref.locationId),
           ...(ref.arrivalNpc === undefined ? [] : [String(ref.arrivalNpc.id)]),
         ]),
-    ...preparedProjection.descriptors.flatMap((descriptor) => [
+    ...preparedDescriptors.flatMap((descriptor) => [
       ...descriptor.authority.allowedEntityIds,
       ...descriptor.authority.visibleFactIds.map(String),
       ...(descriptor.arrivalNpc === undefined ? [] : [String(descriptor.arrivalNpc.id)]),
@@ -691,7 +738,7 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
     job,
     ...(job.generationKind === null ? {} : { generationKind: job.generationKind }),
     finalDialogueHandoff: job.sceneRequestKind === "npc_handoff",
-    preparedStepDescriptors: preparedProjection.descriptors,
+    preparedStepDescriptors: preparedDescriptors,
     preparedActiveStepIds: preparedProjection.activeStepIds,
     player: {
       name: ws.player.name,

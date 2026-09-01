@@ -135,10 +135,13 @@ function interactionViews(history: readonly NpcInteraction[]): readonly NpcSpeec
 }
 
 function targetEdgeOf(
+  store: EntityStore,
   npc: NpcEntityRecord,
   targetId: PlayerEntityId | NpcId | undefined,
 ): DirectedRelationshipEdge | undefined {
   if (targetId === undefined) return undefined;
+  const target = getEntity(store, String(targetId));
+  if (target?.core.kind !== "npc" && target?.core.kind !== "player_character") return undefined;
   return npc.relationships.outgoing.find((edge) => String(edge.targetId) === String(targetId));
 }
 
@@ -161,16 +164,23 @@ export function buildNpcSpeechAuthority(input: NpcSpeechAuthorityInput): NpcSpee
   }
 
   const targetId = input.targetContext?.targetId;
-  const targetEdge = targetEdgeOf(speakerRecord, targetId);
+  const targetEdge = targetEdgeOf(input.store, speakerRecord, targetId);
   const targetRelationship = targetEdge === undefined ? undefined : relationshipOf(targetEdge);
   // Keep the public response policy compatible with the existing affinity-based
   // fallback while keeping the numeric component private to this projection.
   const responseTier = targetEdge === undefined
     ? "neutral"
     : relationshipTierOf(targetEdge.dimensions);
+  const factRecords = new Map(
+    input.store.records
+      .filter(isFact)
+      .map((record) => [String(record.core.id), record]),
+  );
   const visibleFactIds = new Set(input.sceneVisibleFactIds.map(String));
   const allowedEntries = speakerRecord.knowledge.entries.filter((entry) =>
-    visibleFactIds.has(String(entry.factId)) && canDisclose(entry, targetRelationship),
+    factRecords.has(String(entry.factId))
+      && visibleFactIds.has(String(entry.factId))
+      && canDisclose(entry, targetRelationship),
   );
   const allowedFactIds = uniqueSorted(allowedEntries.map((entry) => entry.factId), String);
   const allowedFactIdSet = new Set(allowedFactIds.map(String));
@@ -179,11 +189,6 @@ export function buildNpcSpeechAuthority(input: NpcSpeechAuthorityInput): NpcSpee
       .map((entry) => entry.factId)
       .filter((factId) => !allowedFactIdSet.has(String(factId))),
     String,
-  );
-  const factRecords = new Map(
-    input.store.records
-      .filter((record) => record.core.kind === "fact")
-      .map((record) => [String(record.core.id), record]),
   );
   const allowedFactCards = allowedFactIds
     .map((factId) => {
@@ -201,12 +206,9 @@ export function buildNpcSpeechAuthority(input: NpcSpeechAuthorityInput): NpcSpee
       : requestedActionIds.filter((actionId) => recentActionIds.includes(actionId)),
     String,
   );
-  const relationships = uniqueSorted(
-    speakerRecord.relationships.outgoing.map(relationshipOf),
-    (relationship) => String(relationship.targetId),
-  );
+  const relationships = targetEdge === undefined ? [] : [relationshipOf(targetEdge)];
   const evidenceKeys = uniqueSorted(
-    (targetEdge === undefined ? speakerRecord.relationships.outgoing : [targetEdge])
+    (targetEdge === undefined ? [] : [targetEdge])
       .flatMap((edge) => edge.evidence.map((evidence) => evidence.summaryKey)),
     (key) => key,
   ).slice(0, 3);

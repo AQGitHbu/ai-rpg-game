@@ -634,5 +634,14 @@ describe("buildSceneGenerationContext", () => {
         { candidateId: "prepared_1_choice_2" },
       ],
     });
+    expect(context.preparedStepDescriptors?.[0]?.arrivalNpc).toMatchObject({
+      speechAuthority: {
+        identityAnchors: expect.any(Object),
+        activeGoals: expect.any(Array),
+        relationships: expect.any(Array),
+        recentInteractions: expect.any(Array),
+        evidenceKeys: expect.any(Array),
+      },
+    });
   });
 });
