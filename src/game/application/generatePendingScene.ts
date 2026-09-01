@@ -313,6 +313,7 @@ export async function generatePendingScene(
         proposal,
         basedOnRevision: record.revision + 1,
         existingCandidateEventPool: record.storyState.candidateEventPool,
+        worldState: scenarioWs,
         logger: deps.logger,
       });
       if (approvedGenerated.ok) {

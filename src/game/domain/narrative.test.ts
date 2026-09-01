@@ -4,7 +4,9 @@ import type { ResolvedEvent } from "./resolvedEvent";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "./pendingNarrativeJob";
 import { asLocationId, asNpcId } from "./worldEntity";
 import type {
+  NarrativeNpcLineState,
   NarrativeRuntimeState,
+  NpcDialogueInScene,
   NarrativeSceneState,
 } from "./narrative";
 import { buildNpcDialoguePages, parseNarrativeRuntimeState } from "./narrative";
@@ -133,6 +135,26 @@ describe("NarrativeSceneState", () => {
       currentScene: { ...readyScene, npcDialogues: [legacyDialogue] },
       choiceRegistry: [],
     }).ok).toBe(false);
+  });
+
+  it("requires speech reference arrays in production DTO construction types", () => {
+    // @ts-expect-error v4 persisted NPC line construction must include the interaction array.
+    const missingLineReferences: NarrativeNpcLineState = {
+      npcId: asNpcId("npc_1"),
+      text: "我知道这件事。",
+      emotion: "neutral",
+      usedFactIds: [],
+    };
+    // @ts-expect-error v4 persisted scene dialogue construction must include both arrays.
+    const missingDialogueReferences: NpcDialogueInScene = {
+      npcId: asNpcId("npc_1"),
+      npcName: "老周",
+      npcRole: "茶摊老人",
+      speechPages: ["路过喝口茶。"],
+    };
+    void missingLineReferences;
+    void missingDialogueReferences;
+    expect(true).toBe(true);
   });
 });
 

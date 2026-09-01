@@ -10,6 +10,7 @@ import {
   type BundleStepProposal,
   type NarrativeBundleProposal,
   type NarrativeBundleState,
+  type ScenePerformanceNpcDialogue,
 } from "./narrativeBundle";
 import type { PreparedSceneSeedState } from "./preparedContinuation";
 
@@ -64,6 +65,16 @@ function makeValidBundleState(): NarrativeBundleState {
 }
 
 describe("NarrativeBundleProposal parser", () => {
+  it("requires speech reference arrays in the provider DTO construction type", () => {
+    // @ts-expect-error v4 provider dialogue construction must include both arrays.
+    const missingReferences: ScenePerformanceNpcDialogue = {
+      npcId: "npc_2",
+      text: "路过喝口茶。",
+    };
+    void missingReferences;
+    expect(true).toBe(true);
+  });
+
   it("accepts a valid current_scene terminal with empty continuation", () => {
     const result = parseNarrativeBundleProposal(makeValidBundle());
     expect(result.ok).toBe(true);

@@ -23,7 +23,7 @@ import {
   type PreparedStepDescriptor,
 } from "@/game/gameplay/rpg/preparedContinuation";
 import { buildFocusNpcContext, type FocusNpcContext, type FactCard } from "./focusNpcContext";
-import { buildNpcSpeechAuthority } from "./npcSpeechAuthority";
+import { buildNpcSpeechAuthority, type NpcSpeechAuthority } from "./npcSpeechAuthority";
 import { isObjectiveEntityReleased } from "@/game/gameplay/rpg/worldEvolution";
 import { buildStylePolicy, type StylePolicy } from "./stylePolicy";
 import type { GameRecord } from "./server/persistence/gameRepository";
@@ -51,6 +51,8 @@ export type NpcSceneContext = {
   readonly publicProfile: string;
   /** 该 NPC 已知的事实卡（自己的 knownFactIds）。 */
   readonly knownFactCards: readonly FactCard[];
+  /** 该 NPC 的服务端 speech authority；审批不得用下方兼容投影替代。 */
+  readonly speechAuthority?: NpcSpeechAuthority;
   /** 该 NPC 自己的 hidden facts（不泄漏给其他 NPC，只给该 NPC 自己）。 */
   readonly hiddenFactCards: readonly FactCard[];
   /** 当前场景对玩家可见的 factId（无正文泄漏）。 */
@@ -611,10 +613,9 @@ export function buildSceneGenerationContext(record: GameRecord): SceneGeneration
         role: n.role,
         publicProfile: n.description,
         knownFactCards: speechAuthority.allowedFactCards,
+        speechAuthority,
         hiddenFactCards: [],
-        sceneVisibleFactIds: ws.worldFacts
-          .filter((f) => f.discovered)
-          .map((f) => f.factId),
+        sceneVisibleFactIds: speechAuthority.allowedFactIds,
         recentInteractionSummaries: speechAuthority.recentInteractions.slice(-3).map((h) => h.summary),
         recentInteractionActionIds: speechAuthority.allowedInteractionActionIds,
         relationship: speechAuthority.relationship === undefined ? {} : {

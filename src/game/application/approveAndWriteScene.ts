@@ -6,6 +6,7 @@ import type {
   ScenePerformanceNpcLine,
 } from "./sceneSource";
 import type { NarrativeEventState, NarrativeNpcLineState, NarrativeSceneState } from "@/game/domain/narrative";
+import type { WorldState } from "@/game/domain/worldState";
 import { buildNpcDialoguePages } from "@/game/domain/narrative";
 import { isFinalDialogueHandoff, type SceneGenerationContext } from "./sceneGenerationContext";
 import type { ApprovedChoice } from "@/game/domain/approvedChoice";
@@ -198,18 +199,37 @@ function rebuildNpcLine(
 function projectedNpcSpeechAuthority(
   npc: SceneGenerationContext["presentNpcs"][number],
   context: SceneGenerationContext,
-): NpcSpeechReferenceAuthority {
+): NpcSpeechReferenceAuthority | undefined {
   const focusAuthority = context.focusNpcContext?.speechAuthority;
   if (focusAuthority !== undefined && String(focusAuthority.speakerNpcId) === String(npc.id)) {
     return focusAuthority;
   }
-  return {
-    allowedFactIds: [
-      ...npc.knownFactCards.map((fact) => fact.factId),
-      ...npc.sceneVisibleFactIds,
-    ],
-    allowedInteractionActionIds: npc.recentInteractionActionIds,
-  };
+  const speakerAuthority = npc.speechAuthority;
+  return speakerAuthority !== undefined
+    && String(speakerAuthority.speakerNpcId) === String(npc.id)
+    ? speakerAuthority
+    : undefined;
+}
+
+function validateNpcSpeechReferencesForSpeaker(input: {
+  readonly npc: SceneGenerationContext["presentNpcs"][number];
+  readonly context: SceneGenerationContext;
+  readonly usedFactIds: readonly string[];
+  readonly usedInteractionActionIds: readonly string[];
+}): ReturnType<typeof validateNpcSpeechReferences> {
+  const authority = projectedNpcSpeechAuthority(input.npc, input.context);
+  if (authority === undefined) {
+    // Empty reference arrays are safe for legacy hand-built contexts. Any
+    // non-empty array without the speaker's real authority fails closed.
+    if (input.usedFactIds.length > 0) return { ok: false, code: "invalid_fact_reference" };
+    if (input.usedInteractionActionIds.length > 0) return { ok: false, code: "invalid_interaction_reference" };
+    return { ok: true };
+  }
+  return validateNpcSpeechReferences({
+    authority,
+    usedFactIds: input.usedFactIds,
+    usedInteractionActionIds: input.usedInteractionActionIds,
+  });
 }
 
 function buildGeneratedNpcDialogueMap(
@@ -241,8 +261,9 @@ function buildGeneratedNpcDialogueMap(
       || isGenericNpcInquiry(text)) {
       return { ok: false, code: "missing_non_focus_npc_dialogue" };
     }
-    const referenceCheck = validateNpcSpeechReferences({
-      authority: projectedNpcSpeechAuthority(npc, context),
+    const referenceCheck = validateNpcSpeechReferencesForSpeaker({
+      npc,
+      context,
       usedFactIds: entry.usedFactIds,
       usedInteractionActionIds: entry.usedInteractionActionIds,
     });
@@ -258,8 +279,8 @@ function buildGeneratedNpcDialogueMap(
     }
     lines.set(String(entry.npcId), {
       text,
-      usedFactIds: [...(entry.usedFactIds ?? [])],
-      usedInteractionActionIds: [...(entry.usedInteractionActionIds ?? [])],
+      usedFactIds: [...entry.usedFactIds],
+      usedInteractionActionIds: [...entry.usedInteractionActionIds],
     });
   }
 
@@ -303,6 +324,8 @@ export function approveScenePerformance(input: {
   readonly proposal: ScenePerformanceProposal;
   readonly basedOnRevision: number;
   readonly existingCandidateEventPool: readonly EventCandidate[];
+  /** Prepared continuation authority must be derived from this same preview world. */
+  readonly worldState?: WorldState;
   /** Task 2：整字段丢弃预生成叙事时记录稳定事件（不拒整场）。 */
   readonly logger?: Pick<GameLogger, "warn">;
 }): ApproveScenePerformanceResult {
@@ -399,8 +422,9 @@ export function approveScenePerformance(input: {
     if (isFocusedNpc) {
       if (!hasExpandedNpcDialogue(npcLine.text)) return { ok: false, code: "npc_dialogue_too_short" };
     }
-    const referenceCheck = validateNpcSpeechReferences({
-      authority: projectedNpcSpeechAuthority(present, context),
+    const referenceCheck = validateNpcSpeechReferencesForSpeaker({
+      npc: present,
+      context,
       usedFactIds: npcLine.usedFactIds,
       usedInteractionActionIds: npcLine.usedInteractionActionIds,
     });
@@ -685,6 +709,7 @@ export function approveScenePerformance(input: {
     proposals: proposal.preparedContinuations ?? [],
     descriptors: context.preparedStepDescriptors ?? [],
     activeStepIds: context.preparedActiveStepIds ?? [],
+    ...(input.worldState === undefined ? {} : { worldState: input.worldState }),
   });
   if (!preparedApproval.ok) return { ok: false, code: "invalid_prepared_continuation" };
 

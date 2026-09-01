@@ -7,13 +7,35 @@ import {
 } from "./approveAndWriteScene";
 import type { EventCandidate } from "@/game/domain/candidateEvent";
 import type { ScenePerformanceProposal } from "./sceneSource";
-import { asEnemyId, asLocationId, asNpcId, asFactId, asQuestId } from "@/game/domain/worldEntity";
+import { asEnemyId, asGenerationId, asLocationId, asNpcId, asFactId, asQuestId } from "@/game/domain/worldEntity";
+import { createInitialWorldState } from "@/game/domain/worldState";
 import type { SceneGenerationContext } from "./sceneGenerationContext";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import { buildStylePolicy } from "./stylePolicy";
 import { createNpcResponsePolicy } from "@/game/gameplay/rpg/narrativeContext";
+import type { NpcSpeechAuthority } from "./npcSpeechAuthority";
+
+const FIXTURE_NPC_SPEECH_AUTHORITY: NpcSpeechAuthority = {
+  speakerNpcId: asNpcId("npc_1"),
+  responseTier: "neutral",
+  allowedFactIds: [asFactId("fact_a")],
+  withheldFactIds: [],
+  allowedFactCards: [{ factId: asFactId("fact_a"), text: "已知" }],
+  allowedInteractionActionIds: ["inter_1"],
+  recentInteractions: [],
+  identityAnchors: {
+    selfConcept: "谨慎的掌柜",
+    values: ["守诺"],
+    speechStyle: "克制",
+    capabilityBoundaries: ["不替人定罪"],
+    taboos: [],
+  },
+  activeGoals: [],
+  relationships: [],
+  evidenceKeys: [],
+};
 
 function validCandidate(id: string): EventCandidate {
   return {
@@ -157,6 +179,7 @@ function makeContext(overrides: {
       id: asNpcId("npc_1"), name: "老板", role: "路人", publicProfile: "t",
       knownFactCards: [{ factId: asFactId("fact_a"), text: "已知" }],
       hiddenFactCards: [], sceneVisibleFactIds: [asFactId("fact_vis")],
+      speechAuthority: FIXTURE_NPC_SPEECH_AUTHORITY,
       recentInteractionSummaries: [], recentInteractionActionIds: ["inter_1"],
       relationship: { affinity: 0 }, emotion: "neutral",
       goals: [], forbiddenKnowledgeIds: [],
@@ -213,6 +236,30 @@ function makeProposal(overrides?: Partial<ScenePerformanceProposal>): ScenePerfo
   };
 }
 
+function worldWithoutPreparedSpeaker() {
+  return createInitialWorldState({
+    generation: {
+      generationId: asGenerationId("generation_prepared"),
+      seed: "prepared",
+      templateVersion: "v2",
+      inputDigest: "",
+      gameType: "wuxia",
+    },
+    player: { name: "侠客", identity: "旅人", stats: { hp: 100, attack: 10, defense: 5 } },
+    startingLocation: {
+      id: asLocationId("loc_1"),
+      name: "客栈",
+      description: "测试地点",
+      kind: "main" as const,
+      connectedLocationIds: [],
+      npcIds: [],
+      availableItemIds: [],
+      tags: [],
+    },
+    startingItemIds: [],
+  });
+}
+
 const progressionTransition: ObjectiveTransition = {
   before: { questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老板交谈" },
   completed: [{ questId: asQuestId("quest_0"), objectiveIndex: 0, label: "与老板交谈" }],
@@ -221,6 +268,69 @@ const progressionTransition: ObjectiveTransition = {
 };
 
 describe("approveScenePerformance (Task 6)", () => {
+  it("passes the same world state to prepared approval instead of trusting a descriptor authority", () => {
+    const arrivalNpcId = asNpcId("npc_1");
+    const context: SceneGenerationContext = {
+      ...makeContext(),
+      preparedStepDescriptors: [{
+        stepId: "prepared_1",
+        objectiveKey: "quest_1:0",
+        consumptionGroupKey: "quest_1:0:move",
+        trigger: { kind: "move", locationId: asLocationId("loc_2") },
+        authority: {
+          questId: asQuestId("quest_1"),
+          objectiveIndex: 0,
+          allowedEntityIds: [String(arrivalNpcId)],
+          visibleFactIds: [],
+        },
+        arrivalNpc: {
+          id: arrivalNpcId,
+          name: "老板",
+          role: "路人",
+          publicProfile: "测试 NPC",
+          knownFactCards: [],
+          sceneVisibleFactIds: [],
+          goals: [],
+          speechAuthority: FIXTURE_NPC_SPEECH_AUTHORITY,
+        },
+        choiceCandidates: [
+          { candidateId: "prepared_1_choice_1", action: { type: "talk", npcId: arrivalNpcId, dialogueAct: "support" } },
+          { candidateId: "prepared_1_choice_2", action: { type: "talk", npcId: arrivalNpcId, dialogueAct: "challenge" } },
+        ],
+        nextStepIds: [],
+      }],
+      preparedActiveStepIds: ["prepared_1"],
+    };
+    const approved = approveScenePerformance({
+      context,
+      proposal: makeProposal({
+        preparedContinuations: [{
+          stepId: "prepared_1",
+          segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "你抵达客栈。" }],
+          npcLine: {
+            npcId: String(arrivalNpcId),
+            text: "我会把这里的情况说清楚。你先听我把来龙去脉讲完。",
+            emotion: "neutral",
+            answeredBeatIds: [],
+            usedFactIds: [],
+            usedInteractionActionIds: [],
+          },
+          objectiveLink: null,
+          choices: [
+            { candidateId: "prepared_1_choice_1", label: "请继续说" },
+            { candidateId: "prepared_1_choice_2", label: "我听着" },
+          ],
+          source: "generated",
+        }],
+      }),
+      basedOnRevision: 1,
+      existingCandidateEventPool: [],
+      worldState: worldWithoutPreparedSpeaker(),
+    });
+
+    expect(approved).toEqual({ ok: false, code: "invalid_prepared_continuation" });
+  });
+
   it("合法提案重建 ready scene + registry：narration 由 segment 按顺序拼接，token 绑定写回后 revision", () => {
     const result = approveScenePerformance({
       context: makeContext(),

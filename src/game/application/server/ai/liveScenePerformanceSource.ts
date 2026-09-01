@@ -35,6 +35,7 @@ import { compileSceneNarrativeContext } from "./narrativeContext";
 import type { NarrativePromptCompilation } from "./narrativeContext";
 import { parseStructuredJsonObject } from "@/game/core/json";
 import { areUniqueNpcSpeechReferenceIds } from "@/game/domain/npcSpeechReferences";
+import { validateNpcSpeechReferences } from "../../npcSpeechAuthority";
 
 // ---------------------------------------------------------------------------
 // live 场景表演源（Task 6，取代 liveSceneSource）。
@@ -82,6 +83,30 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
 function parseNpcSpeechReferenceIds(value: unknown): readonly string[] | null {
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) return null;
   return areUniqueNpcSpeechReferenceIds(value) ? value : null;
+}
+
+function liveNpcSpeechReferencesAreAuthorized(input: {
+  readonly npc: SceneGenerationContext["presentNpcs"][number];
+  readonly context: SceneGenerationContext;
+  readonly usedFactIds: readonly string[];
+  readonly usedInteractionActionIds: readonly string[];
+}): boolean {
+  const focusAuthority = input.context.focusNpcContext?.speechAuthority;
+  const authority = focusAuthority !== undefined
+    && String(focusAuthority.speakerNpcId) === String(input.npc.id)
+    ? focusAuthority
+    : input.npc.speechAuthority !== undefined
+      && String(input.npc.speechAuthority.speakerNpcId) === String(input.npc.id)
+      ? input.npc.speechAuthority
+      : undefined;
+  if (authority === undefined) {
+    return input.usedFactIds.length === 0 && input.usedInteractionActionIds.length === 0;
+  }
+  return validateNpcSpeechReferences({
+    authority,
+    usedFactIds: input.usedFactIds,
+    usedInteractionActionIds: input.usedInteractionActionIds,
+  }).ok;
 }
 
 /**
@@ -209,17 +234,20 @@ function parsePreparedNpcLine(
     || typeof rawValue.text !== "string"
     || rawValue.text.trim() === "") return null;
   if (descriptor.arrivalNpc === undefined || rawValue.npcId !== String(descriptor.arrivalNpc.id)) return null;
+  const speechAuthority = descriptor.arrivalNpc.speechAuthority;
+  if (speechAuthority === undefined
+    || String(speechAuthority.speakerNpcId) !== String(descriptor.arrivalNpc.id)) return null;
   const text = normalizeNpcSpeech(rawValue.text, descriptor.arrivalNpc.name);
   if (text === "" || !hasDialogicContinuation(text)) return null;
   const usedFactIds = parseNpcSpeechReferenceIds(rawValue.usedFactIds);
   const usedInteractionActionIds = parseNpcSpeechReferenceIds(rawValue.usedInteractionActionIds);
   if (usedFactIds === null || usedInteractionActionIds === null) return null;
-  const allowedFactIds = new Set(descriptor.authority.visibleFactIds.map(String));
-  if (usedFactIds.some((factId) => !allowedFactIds.has(factId))) return null;
-  const allowedInteractionIds = new Set(
-    descriptor.arrivalNpc?.speechAuthority?.allowedInteractionActionIds.map(String) ?? [],
-  );
-  if (usedInteractionActionIds.some((actionId) => !allowedInteractionIds.has(actionId))) return null;
+  const referenceCheck = validateNpcSpeechReferences({
+    authority: speechAuthority,
+    usedFactIds,
+    usedInteractionActionIds,
+  });
+  if (!referenceCheck.ok) return null;
   const emotion = NARRATIVE_EMOTIONS.includes(rawValue.emotion as NarrativeEmotion)
     ? rawValue.emotion as NarrativeEmotion
     : "neutral";
@@ -353,12 +381,12 @@ function parseNpcDialogues(
     const usedFactIds = parseNpcSpeechReferenceIds(entry.usedFactIds);
     const usedInteractionActionIds = parseNpcSpeechReferenceIds(entry.usedInteractionActionIds);
     if (usedFactIds === null || usedInteractionActionIds === null) return "invalid";
-    const allowedFactIds = new Set([
-      ...npc.knownFactCards.map((fact) => String(fact.factId)),
-      ...npc.sceneVisibleFactIds.map(String),
-    ]);
-    if (usedFactIds.some((factId) => !allowedFactIds.has(factId))) return "invalid";
-    if (usedInteractionActionIds.some((actionId) => !npc.recentInteractionActionIds.includes(actionId))) return "invalid";
+    if (!liveNpcSpeechReferencesAreAuthorized({
+      npc,
+      context,
+      usedFactIds,
+      usedInteractionActionIds,
+    })) return "invalid";
     seen.add(npcId);
     result.push({ npcId, text, usedFactIds, usedInteractionActionIds });
   }
@@ -420,22 +448,12 @@ export function parseScenePerformanceJson(
       return { ok: false, reason: "npc_line_invalid_shape" };
     }
     const presentNpc = context.presentNpcs.find((npc) => String(npc.id) === String(resolved.npcId));
-    const speechAuthority = context.focusNpcContext?.speechAuthority;
-    const allowedFactIds = speechAuthority !== undefined
-      && String(speechAuthority.speakerNpcId) === String(resolved.npcId)
-      ? speechAuthority.allowedFactIds.map(String)
-      : [
-        ...(presentNpc?.knownFactCards.map((fact) => String(fact.factId)) ?? []),
-        ...(presentNpc?.sceneVisibleFactIds.map(String) ?? []),
-      ];
-    const allowedInteractionIds = speechAuthority !== undefined
-      && String(speechAuthority.speakerNpcId) === String(resolved.npcId)
-      ? speechAuthority.allowedInteractionActionIds
-      : (presentNpc?.recentInteractionActionIds ?? []);
-    if (usedFactIds.some((factId) => !allowedFactIds.includes(factId))) {
-      return { ok: false, reason: "npc_line_unusable" };
-    }
-    if (usedInteractionActionIds.some((actionId) => !allowedInteractionIds.includes(actionId))) {
+    if (presentNpc === undefined || !liveNpcSpeechReferencesAreAuthorized({
+      npc: presentNpc,
+      context,
+      usedFactIds,
+      usedInteractionActionIds,
+    })) {
       return { ok: false, reason: "npc_line_unusable" };
     }
     npcLine = {

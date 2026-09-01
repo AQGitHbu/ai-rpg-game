@@ -63,7 +63,7 @@ export type NarrativeNpcLineState = {
   readonly emotion: NarrativeEmotion;
   readonly usedFactIds: readonly FactId[];
   /** Authority-checked interaction history references used by this line. */
-  readonly usedInteractionActionIds?: readonly string[];
+  readonly usedInteractionActionIds: readonly string[];
   /** Task 5：该台词应答的强制节拍 ID 列表（player_utterance 节拍必须命中）。 */
   readonly answeredBeatIds?: readonly string[];
 };
@@ -76,9 +76,9 @@ export type NpcDialogueInScene = {
   /** 复用现有分页机制（paginateSpeechText）。 */
   readonly speechPages: readonly string[];
   /** Authority-checked fact references used by this dialogue. */
-  readonly usedFactIds?: readonly FactId[];
+  readonly usedFactIds: readonly FactId[];
   /** Authority-checked interaction references used by this dialogue. */
-  readonly usedInteractionActionIds?: readonly string[];
+  readonly usedInteractionActionIds: readonly string[];
   /** 台词来源；旧存档缺失时由 read model 按兼容规则推断。 */
   readonly speechSource?: "generated" | "fixture";
   /**

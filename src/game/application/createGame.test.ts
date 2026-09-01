@@ -117,6 +117,112 @@ describe("createGame", () => {
     expect(result).toMatchObject({ ok: false, code: "AI_GENERATION_FAILED" });
     expect(await repository.getCurrentGame()).toMatchObject({ status: "none" });
   });
+
+  it("authority-rejects an opening line with a foreign interaction before persistence", async () => {
+    const { repo: repository } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const source = {
+      async generate(input: Parameters<typeof fixture.generate>[0]) {
+        const result = await fixture.generate(input);
+        if (!result.ok || result.kind !== "opening") return result;
+        return {
+          ...result,
+          proposal: {
+            ...result.proposal,
+            currentScene: {
+              ...result.proposal.currentScene,
+              npcLine: {
+                ...result.proposal.currentScene.npcLine!,
+                usedInteractionActionIds: ["npc_other:trade"],
+              },
+            },
+          },
+        } as typeof result;
+      },
+    };
+
+    const result = await createGame(
+      { gameId: "game-opening-interaction-authority" as never, gameType: "wuxia", gameLength: "short", seed: "opening-interaction-authority" },
+      { repository, source, now: () => "2026-01-01" },
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "AI_GENERATION_FAILED" });
+    expect(await repository.getCurrentGame()).toMatchObject({ status: "none" });
+  });
+
+  it("opening authority runs before novelty and persists the same preview without extra provider calls", async () => {
+    const { repo, getRecord } = createInMemoryRepo();
+    const fixture = createFixtureOpeningSource();
+    const events: string[] = [];
+    let calls = 0;
+    let nowCalls = 0;
+    let persistedWorldState: GameRecord["worldState"] | undefined;
+    const source = {
+      async generate(context: NarrativeBundleSourceContext) {
+        calls += 1;
+        events.push(`provider:${calls}`);
+        const result = await fixture.generate(context);
+        if (!result.ok || result.kind !== "opening") return result;
+        if (calls !== 1) return result;
+        const authorityOnlyFactIds = new Proxy(["fact_1"], {
+          get(target, property, receiver) {
+            if (property === "every") events.push("fact-array-validation");
+            return Reflect.get(target, property, receiver);
+          },
+        });
+        return {
+          ...result,
+          proposal: {
+            ...result.proposal,
+            currentScene: {
+              ...result.proposal.currentScene,
+              npcLine: {
+                ...result.proposal.currentScene.npcLine!,
+                // fact_1 is a valid candidate-world ID but is private to the
+                // opening NPC, so only the preview authority can reject it.
+                usedFactIds: authorityOnlyFactIds,
+              },
+            },
+          },
+        };
+      },
+    };
+    const repository: GameRepository = {
+      ...repo,
+      async createInitialGame(input) {
+        events.push("persist");
+        persistedWorldState = input.worldState;
+        return repo.createInitialGame(input);
+      },
+    };
+
+    const result = await createGame(
+      { gameId: asGameId("opening-preview-order"), gameType: "wuxia", gameLength: "short", seed: "opening-preview-order" },
+      {
+        repository,
+        source,
+        now: () => {
+          nowCalls += 1;
+          events.push(`now:${nowCalls}`);
+          return "2026-01-01";
+        },
+      },
+    );
+
+    expect(result).toEqual({ ok: true, revision: 0 });
+    expect(calls).toBe(2);
+    expect(events).toEqual([
+      "provider:1",
+      "fact-array-validation",
+      "provider:2",
+      "now:1",
+      "now:2",
+      "persist",
+    ]);
+    expect(persistedWorldState).toBe(getRecord()!.worldState);
+    expect(persistedWorldState?.generation.openingAttempt).toBe(1);
+  });
+
   it("检测到近期故事过于相似时重新请求，而不是覆盖 AI 的实体名称", async () => {
     const { repo, getRecord } = createInMemoryRepo();
     const fixture = createFixtureOpeningSource();

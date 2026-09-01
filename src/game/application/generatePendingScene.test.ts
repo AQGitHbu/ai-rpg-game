@@ -19,6 +19,7 @@ import type { NarrativeEventKind } from "@/game/domain/narrative";
 import type { ResolvedEvent, ResolvedEventStatus } from "@/game/domain/resolvedEvent";
 import { ATMOSPHERE_BEAT_ID } from "./approveAndWriteScene";
 import { createDeterministicEvolutionSource } from "./deterministicEvolutionSource";
+import { buildSelectableSceneCandidates } from "./sceneChoiceCandidates";
 
 const IMPORTANT_ACTION_ID = "act_persist";
 const IMPORTANT_JOB_ID = "job_persist";
@@ -281,6 +282,80 @@ describe("generatePendingScene", () => {
     const context = spy.contexts()[0];
     expect(context.job.jobId).toBe(IMPORTANT_JOB_ID);
     expect(context.job.actionId).toBe(IMPORTANT_ACTION_ID);
+  });
+
+  it("live proposal with another NPC's secret Fact is rejected before scene writeback", async () => {
+    const secretFact: WorldFactEntry = {
+      factId: asFactId("fact_secret"),
+      text: "只有过客知道的秘密。",
+      source: "generated",
+      discovered: true,
+      locationId: loc.id,
+    };
+    const otherNpc: NpcEntry = {
+      ...npc,
+      id: asNpcId("npc_2"),
+      name: "过客",
+      locationId: loc.id,
+      memory: {
+        ...npc.memory,
+        npcId: asNpcId("npc_2"),
+        knownFactIds: [secretFact.factId],
+        hiddenFactIds: [secretFact.factId],
+      },
+    };
+    const record: GameRecord = {
+      ...makeGameRecord({
+        kind: "pending",
+        job: makeJob({ summary: { kind: "explore" }, eventKind: "observe" }),
+      }),
+      worldState: makeWorldState({
+        locations: [{ ...loc, npcIds: [npc.id, otherNpc.id] }],
+        npcs: [npc, otherNpc],
+        worldFacts: [counterFact, secretFact],
+      }),
+    };
+    const repository = makeMockRepo(record);
+    let sourceCalls = 0;
+    const liveProposalSource: SceneSource = {
+      async generateScene(context: SceneGenerationContext): Promise<SceneSourceResult> {
+        sourceCalls += 1;
+        const choices = buildSelectableSceneCandidates(context).slice(0, 2).map((candidate) => ({
+          candidateId: candidate.candidateId,
+          label: candidate.label,
+        }));
+        return {
+          ok: true,
+          proposal: {
+            sceneId: `scene-${context.job.jobId}`,
+            segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "炉火在风里轻响。" }],
+            npcLine: null,
+            npcDialogues: [{
+              npcId: String(otherNpc.id),
+              text: "我不该提起这件秘密，但它确实发生过。",
+              usedFactIds: [String(secretFact.factId)],
+              usedInteractionActionIds: [],
+            }],
+            objectiveLink: null,
+            choices,
+            preparedContinuations: [],
+            source: "generated",
+          },
+        };
+      },
+    };
+
+    const result = await generatePendingScene({
+      repository,
+      sceneSource: liveProposalSource,
+      now: () => "2026-01-02",
+    });
+
+    expect(result).toBe("failed");
+    expect(sourceCalls).toBe(2);
+    expect(repository.applySceneWriteBack).not.toHaveBeenCalled();
+    const latest = await repository.getCurrentGame();
+    expect(latest.ok && latest.status === "active" ? latest.record.storyState.narrative.status : "ready").toBe("provider_failed");
   });
 
   it("从失败 job 恢复时把上次稳定原因带入首个内容修复请求", async () => {

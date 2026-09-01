@@ -160,14 +160,14 @@ function buildFocusedDialogueStoryState(focusNpcId = asNpcId("npc_1")): StorySta
         turn: 0,
         narration: "老板等着你的回应。",
         usedFactIds: [],
-        npcLine: { npcId: focusNpcId, text: "你怎么看？", emotion: "neutral", usedFactIds: [] },
+        npcLine: { npcId: focusNpcId, text: "你怎么看？", emotion: "neutral", usedFactIds: [], usedInteractionActionIds: [] },
         choices: [
           { choiceToken: support.choice.choiceToken, label: support.choice.label },
           { choiceToken: challenge.choice.choiceToken, label: challenge.choice.label },
         ],
         source: "fixture",
         event: { kind: "dialogue", focusNpcId },
-        npcDialogues: [{ npcId: focusNpcId, npcName: "老板", npcRole: "路人", speechPages: ["你怎么看？"] }],
+        npcDialogues: [{ npcId: focusNpcId, npcName: "老板", npcRole: "路人", speechPages: ["你怎么看？"], usedFactIds: [], usedInteractionActionIds: [] }],
       },
       choiceRegistry: [support.choice, challenge.choice],
     },
@@ -749,7 +749,7 @@ describe("performTurn 单次 CAS 提交", () => {
             scene: {
               segments: [{ beatId: "arrival", text: "守夜人站在门前。" }],
               event: { kind: "travel", locationId: loc2.id },
-              npcLine: { npcId: npc2.id, text: "来者何人？", emotion: "guarded", usedFactIds: [], answeredBeatIds: [] },
+              npcLine: { npcId: npc2.id, text: "来者何人？", emotion: "guarded", usedFactIds: [], usedInteractionActionIds: [], answeredBeatIds: [] },
               objectiveLink: null,
               choiceSeeds: [
                 { label: "表明身份", action: { type: "talk", npcId: npc2.id, dialogueAct: "support" } },
@@ -1121,7 +1121,7 @@ describe("performTurn 自由文本端到端（Task 9）", () => {
             turn: 1,
             narration: "老板等着你的下一句话。",
             usedFactIds: [],
-            npcLine: { npcId: asNpcId("npc_1"), text: "请继续。", emotion: "neutral", usedFactIds: [] },
+            npcLine: { npcId: asNpcId("npc_1"), text: "请继续。", emotion: "neutral", usedFactIds: [], usedInteractionActionIds: [] },
             choices: [
               { choiceToken: "tok-1", label: "继续询问" },
               { choiceToken: "tok-2", label: "提出质疑" },

@@ -181,13 +181,18 @@ describe("buildSceneGenerationContext", () => {
     expect(context.currentLocation).toEqual({
       id: loc1.id, name: loc1.name, description: loc1.description, kind: "main",
     });
-    expect(context.presentNpcs).toEqual([{
+    expect(context.presentNpcs).toEqual([expect.objectContaining({
       id: npc1.id, name: npc1.name, role: npc1.role, publicProfile: npc1.description,
       knownFactCards: [], hiddenFactCards: [], sceneVisibleFactIds: [],
       recentInteractionSummaries: [], recentInteractionActionIds: [],
       relationship: { stage: "unknown", trend: "stable" }, emotion: "neutral",
       goals: [], forbiddenKnowledgeIds: [],
-    }]);
+      speechAuthority: expect.objectContaining({
+        speakerNpcId: npc1.id,
+        allowedFactIds: [],
+        allowedInteractionActionIds: [],
+      }),
+    })]);
     expect(context.story.currentAct).toBe(1);
     expect(context.story.targetActs).toBe(3);
     expect(context.story.tension).toBe(30);

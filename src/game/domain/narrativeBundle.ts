@@ -37,8 +37,8 @@ export type ScenePerformanceNpcLine = {
 export type ScenePerformanceNpcDialogue = {
   readonly npcId: string;
   readonly text: string;
-  readonly usedFactIds?: readonly string[];
-  readonly usedInteractionActionIds?: readonly string[];
+  readonly usedFactIds: readonly string[];
+  readonly usedInteractionActionIds: readonly string[];
 };
 
 /** objectiveLink 必须与 ObjectiveTransition.after 一致（无 after 时必须为 null）。 */

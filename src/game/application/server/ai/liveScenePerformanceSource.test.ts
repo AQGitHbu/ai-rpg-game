@@ -7,6 +7,8 @@ import {
   LIVE_SCENE_TIMEOUT_MS,
   parseScenePerformanceJson,
 } from "./liveScenePerformanceSource";
+import { approveScenePerformance } from "../../approveAndWriteScene";
+import type { ScenePerformanceProposal } from "../../sceneSource";
 import type { AiTransport, AiTransportConfig } from "@ai-game/ai-transport";
 import type { SceneGenerationContext } from "../../sceneGenerationContext";
 import { buildSelectableSceneCandidates } from "../../sceneChoiceCandidates";
@@ -16,6 +18,35 @@ import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob, type PendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { MandatoryNarrativeBeat, ObjectiveTransition } from "@/game/domain/narrativeBeat";
 import { ATMOSPHERE_BEAT_ID } from "../../approveAndWriteScene";
+import type { NpcSpeechAuthority } from "../../npcSpeechAuthority";
+
+const FIXTURE_NPC_SPEECH_AUTHORITY: NpcSpeechAuthority = {
+  speakerNpcId: asNpcId("npc_1"),
+  responseTier: "neutral",
+  allowedFactIds: [asFactId("fact_a")],
+  withheldFactIds: [],
+  allowedFactCards: [{ factId: asFactId("fact_a"), text: "已知线索" }],
+  allowedInteractionActionIds: ["inter_1"],
+  recentInteractions: [],
+  identityAnchors: {
+    selfConcept: "谨慎的掌柜",
+    values: ["守诺"],
+    speechStyle: "克制",
+    capabilityBoundaries: ["不替人定罪"],
+    taboos: [],
+  },
+  activeGoals: [],
+  relationships: [],
+  evidenceKeys: [],
+};
+
+const OTHER_NPC_SPEECH_AUTHORITY: NpcSpeechAuthority = {
+  ...FIXTURE_NPC_SPEECH_AUTHORITY,
+  speakerNpcId: asNpcId("npc_2"),
+  allowedFactIds: [],
+  allowedFactCards: [],
+  allowedInteractionActionIds: [],
+};
 
 function makeJob(overrides: {
   eventKind?: PendingNarrativeJob["resolvedEvent"]["eventKind"];
@@ -75,6 +106,7 @@ function makeContext(overrides: {
       knownFactCards: [{ factId: asFactId("fact_a"), text: "已知线索" }],
       hiddenFactCards: [{ factId: asFactId("fact_secret"), text: "绝不外泄的私密" }],
       sceneVisibleFactIds: [asFactId("fact_vis")],
+      speechAuthority: FIXTURE_NPC_SPEECH_AUTHORITY,
       recentInteractionSummaries: ["ask 询问线索 / negative"], recentInteractionActionIds: ["inter_1"],
       relationship: { affinity: 20 }, emotion: "warm",
       goals: ["查清矿坑"], forbiddenKnowledgeIds: [asFactId("fact_secret")],
@@ -151,6 +183,154 @@ function stubTransport(payload: unknown, content: string | null = null): AiTrans
 const config: AiTransportConfig = { baseUrl: "x", apiKey: "k", model: "m" };
 
 describe("liveScenePerformanceSource（Task 6）", () => {
+  it("live 非焦点 NPC 引用另一个 NPC 已发现但未获授权的 Fact 时拒绝整场", () => {
+    const focusNpc = makeContext().presentNpcs[0]!;
+    const otherNpc = {
+      ...focusNpc,
+      id: asNpcId("npc_2"),
+      name: "过客",
+      knownFactCards: [{ factId: asFactId("fact_secret"), text: "另一 NPC 的私密事实" }],
+      sceneVisibleFactIds: [asFactId("fact_secret")],
+      speechAuthority: OTHER_NPC_SPEECH_AUTHORITY,
+      recentInteractionActionIds: [],
+    };
+    const context = makeContext({ presentNpcs: [focusNpc, otherNpc] });
+    const result = parseScenePerformanceJson({
+      segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "炉火在风里轻响。" }],
+      npcLine: {
+        npcId: "npc_1",
+        text: "我会把眼前的事说清楚。你先听我把来龙去脉讲完。",
+        emotion: "neutral",
+        answeredBeatIds: [],
+        usedFactIds: [],
+        usedInteractionActionIds: [],
+      },
+      npcDialogues: [{
+        npcId: "npc_2",
+        text: "那件私事我不该提起，但它确实发生过。",
+        usedFactIds: ["fact_secret"],
+        usedInteractionActionIds: [],
+      }],
+      objectiveLink: null,
+      choices: [
+        { candidateId: "candidate_1", label: "继续听" },
+        { candidateId: "candidate_2", label: "暂且作罢" },
+      ],
+    }, context, buildSelectableSceneCandidates(context));
+
+    expect(result).toEqual({ ok: false, reason: "npc_dialogues_invalid" });
+  });
+
+  it("live proposal 进入 approval 时，未授权非焦点 Fact 不得写回 scene", () => {
+    const focusNpc = makeContext().presentNpcs[0]!;
+    const otherNpc = {
+      ...focusNpc,
+      id: asNpcId("npc_2"),
+      name: "过客",
+      knownFactCards: [{ factId: asFactId("fact_secret"), text: "另一 NPC 的私密事实" }],
+      sceneVisibleFactIds: [asFactId("fact_secret")],
+      speechAuthority: OTHER_NPC_SPEECH_AUTHORITY,
+      recentInteractionActionIds: [],
+    };
+    const context = makeContext({ presentNpcs: [focusNpc, otherNpc] });
+    const proposal: ScenePerformanceProposal = {
+      sceneId: "scene-live-authority",
+      segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "炉火在风里轻响。" }],
+      npcLine: {
+        npcId: "npc_1",
+        text: "我会把眼前的事说清楚。你先听我把来龙去脉讲完。",
+        emotion: "neutral",
+        answeredBeatIds: [],
+        usedFactIds: [],
+        usedInteractionActionIds: [],
+      },
+      npcDialogues: [{
+        npcId: "npc_2",
+        text: "那件私事我不该提起，但它确实发生过。",
+        usedFactIds: ["fact_secret"],
+        usedInteractionActionIds: [],
+      }],
+      objectiveLink: null,
+      choices: [
+        { candidateId: "candidate_1", label: "继续听" },
+        { candidateId: "candidate_2", label: "暂且作罢" },
+      ],
+      preparedContinuations: [],
+      source: "generated",
+    };
+
+    const approved = approveScenePerformance({
+      context,
+      proposal,
+      basedOnRevision: 1,
+      existingCandidateEventPool: [],
+    });
+
+    expect(approved).toEqual({ ok: false, code: "npc_uses_forbidden_fact" });
+  });
+
+  it("prepared live line rejects descriptor visibleFactIds without speaker authority", () => {
+    const arrivalNpcId = asNpcId("npc_arrival");
+    const context: SceneGenerationContext = {
+      ...makeContext(),
+      preparedStepDescriptors: [{
+        stepId: "prepared_1",
+        objectiveKey: "quest_1:0",
+        consumptionGroupKey: "quest_1:0:move",
+        trigger: { kind: "move", locationId: asLocationId("loc_arrival") },
+        authority: {
+          questId: asQuestId("quest_1"),
+          objectiveIndex: 0,
+          allowedEntityIds: [String(arrivalNpcId)],
+          visibleFactIds: [asFactId("fact_secret")],
+        },
+        arrivalNpc: {
+          id: arrivalNpcId,
+          name: "抵达者",
+          role: "守门人",
+          publicProfile: "守在新地点的人",
+          knownFactCards: [{ factId: asFactId("fact_secret"), text: "不应由此人披露的事实" }],
+          sceneVisibleFactIds: [asFactId("fact_secret")],
+          goals: ["确认来者身份"],
+        },
+        choiceCandidates: [
+          { candidateId: "prepared_choice_1", action: { type: "talk", npcId: arrivalNpcId, dialogueAct: "support" } },
+          { candidateId: "prepared_choice_2", action: { type: "talk", npcId: arrivalNpcId, dialogueAct: "challenge" } },
+        ],
+        nextStepIds: [],
+      }],
+    };
+
+    const result = parseScenePerformanceJson({
+      segments: [{ beatId: ATMOSPHERE_BEAT_ID, text: "风穿过新地点的门廊。" }],
+      npcLine: null,
+      objectiveLink: null,
+      choices: [
+        { candidateId: "candidate_1", label: "继续观察" },
+        { candidateId: "candidate_2", label: "先离开这里" },
+      ],
+      preparedContinuations: [{
+        stepId: "prepared_1",
+        segments: [{ beatId: "atmosphere", text: "你抵达门廊。" }],
+        npcLine: {
+          npcId: String(arrivalNpcId),
+          text: "我知道那件不该外泄的事。你先听我把来龙去脉说完。",
+          emotion: "guarded",
+          answeredBeatIds: [],
+          usedFactIds: ["fact_secret"],
+          usedInteractionActionIds: [],
+        },
+        objectiveLink: null,
+        choices: [
+          { candidateId: "prepared_choice_1", label: "请继续说" },
+          { candidateId: "prepared_choice_2", label: "我会听着" },
+        ],
+      }],
+    }, context, buildSelectableSceneCandidates(context));
+
+    expect(result).toEqual({ ok: false, reason: "prepared_continuations_invalid" });
+  });
+
   it("passes the exact compiled narrative manifest to AI text audit without prompt text", async () => {
     const complete = vi.fn(async (_role: "scene", _messages: readonly unknown[], _ctx?: unknown) =>
       ({ ok: false as const, code: "empty_response" as const, retryable: false, latencyMs: 1 }));

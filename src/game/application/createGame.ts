@@ -157,7 +157,6 @@ const MAX_OPENING_GENERATION_ATTEMPTS = 3;
 function compileOpeningNarrative(
   proposal: OpeningNarrativeBundleProposal,
   jobId: ReturnType<typeof asNarrativeJobId>,
-  candidate: OpeningGenerationCandidate,
   mode: "ai" | "offline",
 ): NarrativeRuntimeState | null {
   if (
@@ -179,9 +178,6 @@ function compileOpeningNarrative(
   ) return null;
 
   if (!Array.isArray(npcLine.usedFactIds) || !Array.isArray(npcLine.usedInteractionActionIds)) return null;
-  const allowedFactIds = new Set(candidate.world.publicFacts.map((_, index) => `fact_${index}`));
-  if (!npcLine.usedFactIds.every((factId) => allowedFactIds.has(factId))) return null;
-  if (npcLine.usedInteractionActionIds.length !== 0) return null;
 
   const sceneId = `scene-${String(jobId)}`;
   const choiceRegistry: ApprovedChoice[] = [];
@@ -211,7 +207,7 @@ function compileOpeningNarrative(
       text: npcLine.text,
       emotion: npcLine.emotion,
       usedFactIds: npcLine.usedFactIds as never[],
-      usedInteractionActionIds: [],
+      usedInteractionActionIds: [...npcLine.usedInteractionActionIds],
       answeredBeatIds: [...npcLine.answeredBeatIds],
     },
     choices: choiceRegistry.map((choice) => ({
@@ -256,7 +252,7 @@ function approveOpeningSpeech(
     return validateNpcSpeechReferences({
       authority,
       usedFactIds: narrative.currentScene.npcLine.usedFactIds,
-      usedInteractionActionIds: narrative.currentScene.npcLine.usedInteractionActionIds ?? [],
+      usedInteractionActionIds: narrative.currentScene.npcLine.usedInteractionActionIds,
     }).ok;
   } catch {
     return false;
@@ -372,7 +368,6 @@ export async function createGame(
       const narrative = compileOpeningNarrative(
         generatedProposal,
         jobId,
-        candidate,
         deps.aiEnabled === false ? "offline" : "ai",
       );
       if (narrative === null) return { ok: false, retryable: true, reason: "invalid_candidate" as const };

@@ -189,8 +189,8 @@ function buildSceneFromProposal(
       speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
       speechSource: "generated" as const,
       speechPurpose: dialogue.npcId === String(npcLine?.npcId) ? "focus" as const : "ambient" as const,
-      usedFactIds: (dialogue.usedFactIds ?? []).map(asFactId),
-      usedInteractionActionIds: [...(dialogue.usedInteractionActionIds ?? [])],
+      usedFactIds: dialogue.usedFactIds.map(asFactId),
+      usedInteractionActionIds: [...dialogue.usedInteractionActionIds],
     };
   });
   return {
@@ -218,7 +218,13 @@ function buildStepState(
   if (proposal.stepKey !== descriptor.stepKey) {
     return "bundle_unknown_step";
   }
-  if (validateBundleSceneNpcSpeech(proposal.scene, worldState, descriptor.arrivalNpc?.id) !== null) {
+  const sceneLocationId = bundleSceneLocationId(descriptor.trigger, worldState);
+  if (validateBundleSceneNpcSpeech(
+    proposal.scene,
+    worldState,
+    descriptor.arrivalNpc?.id,
+    presentNpcIdsAtLocation(worldState, sceneLocationId),
+  ) !== null) {
     return "bundle_invalid_scene";
   }
 
@@ -258,8 +264,8 @@ function buildStepState(
       speechPages: paginateSpeechText(text, NPC_SCENE_PAGE_CHAR_BUDGET),
       speechSource: "generated" as const,
       speechPurpose: dialogue.npcId === String(npcLine?.npcId) ? "focus" as const : "ambient" as const,
-      usedFactIds: (dialogue.usedFactIds ?? []).map(asFactId),
-      usedInteractionActionIds: [...(dialogue.usedInteractionActionIds ?? [])],
+      usedFactIds: dialogue.usedFactIds.map(asFactId),
+      usedInteractionActionIds: [...dialogue.usedInteractionActionIds],
     };
   });
 
@@ -372,7 +378,19 @@ function validateBundleSceneNpcSpeech(
   scene: BundleSceneProposal,
   worldState: WorldState,
   expectedNpcId?: string,
+  presentNpcIds?: ReadonlySet<string>,
 ): SceneContentRejection | null {
+  const dialogues = scene.npcDialogues ?? [];
+  const speakers = [
+    ...(scene.npcLine === null ? [] : [scene.npcLine.npcId]),
+    ...dialogues.map((dialogue) => dialogue.npcId),
+  ];
+  if (new Set(speakers).size !== speakers.length) {
+    return { code: "bundle_invalid_scene", detail: "duplicate_speaker" };
+  }
+  if (presentNpcIds !== undefined && speakers.some((npcId) => !presentNpcIds.has(npcId))) {
+    return { code: "bundle_invalid_scene", detail: "missing_speaker" };
+  }
   if (scene.npcLine !== null) {
     if (expectedNpcId !== undefined && scene.npcLine.npcId !== expectedNpcId) {
       return { code: "bundle_invalid_scene", detail: "missing_speaker" };
@@ -380,18 +398,36 @@ function validateBundleSceneNpcSpeech(
     const rejection = validateBundleNpcSpeech(scene.npcLine, worldState);
     if (rejection !== null) return rejection;
   }
-  for (const dialogue of scene.npcDialogues ?? []) {
-    if (scene.npcLine !== null && dialogue.npcId === scene.npcLine.npcId) {
-      return { code: "bundle_invalid_scene", detail: "duplicate_speaker" };
-    }
+  for (const dialogue of dialogues) {
     const rejection = validateBundleNpcSpeech({
       npcId: dialogue.npcId,
-      usedFactIds: dialogue.usedFactIds ?? [],
-      usedInteractionActionIds: dialogue.usedInteractionActionIds ?? [],
+      usedFactIds: dialogue.usedFactIds,
+      usedInteractionActionIds: dialogue.usedInteractionActionIds,
     }, worldState);
     if (rejection !== null) return rejection;
   }
   return null;
+}
+
+function presentNpcIdsAtLocation(worldState: WorldState, locationId: string): ReadonlySet<string> {
+  return new Set(
+    worldState.npcs
+      .filter((npc) => String(npc.locationId) === locationId)
+      .map((npc) => String(npc.id)),
+  );
+}
+
+function bundleSceneLocationId(
+  trigger: NarrativeBundleTrigger,
+  worldState: WorldState,
+): string {
+  switch (trigger.kind) {
+    case "move":
+    case "explore":
+      return String(trigger.locationId);
+    default:
+      return String(worldState.currentLocationId);
+  }
 }
 
 /**
@@ -466,7 +502,12 @@ function validateCurrentSceneContent(input: {
     return { code: "bundle_invalid_scene", detail: "missing_speaker" };
   }
 
-  const speechRejection = validateBundleSceneNpcSpeech(scene, worldState);
+  const speechRejection = validateBundleSceneNpcSpeech(
+    scene,
+    worldState,
+    undefined,
+    presentNpcIdsAtLocation(worldState, String(worldState.currentLocationId)),
+  );
   if (speechRejection !== null) return speechRejection;
 
   // objectiveLink 必须与权威 ObjectiveTransition 一致（无 after 时为 null）。

@@ -148,6 +148,11 @@ function worldState(): WorldState {
 /** 权威目标已切到交谈：当前地点名册里的 NPC 即焦点，终端回到 current_scene 决策点。 */
 function directTalkWorld(): WorldState {
   return buildWorld({
+    locations: [
+      { ...townLocation, npcIds: [npcDyn1] },
+      { ...templeLocation, npcIds: [] },
+    ],
+    npcs: [{ ...templeNpc, locationId: locTown }],
     quests: [{ ...mainQuest, objectives: [{ kind: "talk_to_npc", npcId: npcDyn1 }] }],
   });
 }
@@ -359,6 +364,85 @@ describe("approveNarrativeBundle", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("rejects current-scene dialogue from an NPC absent from the current scene", () => {
+    const proposal = {
+      ...validProposal(),
+      currentScene: {
+        ...validProposal().currentScene,
+        npcDialogues: [{
+          npcId: String(npcDyn1),
+          text: "老乞丐不该在这里说话。",
+          usedFactIds: [],
+          usedInteractionActionIds: [],
+        }],
+      },
+    } satisfies NarrativeBundleProposal;
+
+    const result = approveNarrativeBundle(baseInput({ proposal }));
+
+    expect(result).toEqual({ ok: false, code: "bundle_invalid_scene", detail: "missing_speaker" });
+  });
+
+  it("rejects duplicate NPC dialogue IDs atomically before bundle writeback", () => {
+    const dialogue = {
+      npcId: String(npcDyn1),
+      text: "同一个人在场景里只能说一段闲聊。",
+      usedFactIds: [],
+      usedInteractionActionIds: [],
+    };
+    const proposal = {
+      ...validProposal(),
+      currentScene: {
+        ...validProposal().currentScene,
+        npcDialogues: [dialogue, { ...dialogue }],
+      },
+    } satisfies NarrativeBundleProposal;
+
+    const result = approveNarrativeBundle(baseInput({ proposal }));
+
+    expect(result).toEqual({ ok: false, code: "bundle_invalid_scene", detail: "duplicate_speaker" });
+  });
+
+  it("rejects undisclosed facts and foreign interactions through the bundle authority gate", () => {
+    const factProposal = validProposal();
+    const factResult = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...factProposal,
+        continuationScenes: [{
+          ...factProposal.continuationScenes[0]!,
+          scene: {
+            ...factProposal.continuationScenes[0]!.scene,
+            npcLine: {
+              ...factProposal.continuationScenes[0]!.scene.npcLine!,
+              usedFactIds: [String(factTracks)],
+            },
+          },
+        }],
+      },
+    }));
+    expect(factResult).toEqual({ ok: false, code: "bundle_invalid_scene" });
+    expect("approved" in factResult).toBe(false);
+
+    const interactionProposal = validProposal();
+    const interactionResult = approveNarrativeBundle(baseInput({
+      proposal: {
+        ...interactionProposal,
+        continuationScenes: [{
+          ...interactionProposal.continuationScenes[0]!,
+          scene: {
+            ...interactionProposal.continuationScenes[0]!.scene,
+            npcLine: {
+              ...interactionProposal.continuationScenes[0]!.scene.npcLine!,
+              usedInteractionActionIds: ["npc_other:trade"],
+            },
+          },
+        }],
+      },
+    }));
+    expect(interactionResult).toEqual({ ok: false, code: "bundle_invalid_scene" });
+    expect("approved" in interactionResult).toBe(false);
+  });
+
   it("approves a current_scene terminal only when it provides both server candidates", () => {
     const result = approveNarrativeBundle(baseInput({
       proposal: currentSceneProposal(),
@@ -563,7 +647,7 @@ describe("approveNarrativeBundle", () => {
   });
 
   it("approves when the focus NPC answers the player_utterance beat", () => {
-    const proposal = validProposal();
+    const proposal = currentSceneProposal();
     const result = approveNarrativeBundle(baseInput({
       proposal: {
         ...proposal,
@@ -583,6 +667,7 @@ describe("approveNarrativeBundle", () => {
       mandatoryBeats: [
         { beatId: "player_utterance", kind: "player_utterance", subjectIds: [String(npcDyn1)], instruction: "直接回应玩家刚说的话" },
       ],
+      worldState: directTalkWorld(),
     }));
 
     expect(result.ok).toBe(true);

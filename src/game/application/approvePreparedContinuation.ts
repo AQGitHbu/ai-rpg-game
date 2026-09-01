@@ -76,6 +76,10 @@ function rebuildNpcLine(
   if (!Array.isArray(line.usedFactIds)) return { code: "invalid_fact_reference" };
   if (!Array.isArray(line.usedInteractionActionIds)) return { code: "invalid_interaction_reference" };
   const arrivalSpeechAuthority = descriptor.arrivalNpc?.speechAuthority;
+  if (arrivalSpeechAuthority !== undefined
+    && String(arrivalSpeechAuthority.speakerNpcId) !== String(line.npcId)) {
+    return { code: "invalid_entity_reference" };
+  }
   if (worldState !== undefined && !isValidNpcSpeechTarget(worldState.entityStore, PLAYER_ENTITY_ID)) {
     return { code: "invalid_entity_reference" };
   }
@@ -98,14 +102,12 @@ function rebuildNpcLine(
   if (worldState !== undefined && worldSpeechAuthority === null) {
     return { code: "invalid_entity_reference" };
   }
-  const speechAuthority = worldSpeechAuthority ?? (arrivalSpeechAuthority ?? {
-    allowedFactIds: descriptor.authority.visibleFactIds,
-    allowedInteractionActionIds: [],
-  });
+  const speechAuthority = worldSpeechAuthority ?? arrivalSpeechAuthority;
+  if (speechAuthority === undefined) return { code: "invalid_entity_reference" };
   const referenceCheck = validateNpcSpeechReferences({
     authority: speechAuthority,
-    usedFactIds: line.usedFactIds ?? [],
-    usedInteractionActionIds: line.usedInteractionActionIds ?? [],
+    usedFactIds: line.usedFactIds,
+    usedInteractionActionIds: line.usedInteractionActionIds,
   });
   if (!referenceCheck.ok) {
     return {
@@ -119,7 +121,7 @@ function rebuildNpcLine(
     text: line.text.trim(),
     emotion: line.emotion,
     usedFactIds: line.usedFactIds.map(asFactId),
-    usedInteractionActionIds: [...(line.usedInteractionActionIds ?? [])],
+    usedInteractionActionIds: [...line.usedInteractionActionIds],
     answeredBeatIds: [...line.answeredBeatIds],
   };
 }
