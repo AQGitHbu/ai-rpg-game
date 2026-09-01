@@ -1,6 +1,7 @@
 export {
   applyEntityMutations,
   EntityMutationInvariantError,
+  formatNpcInteractionSummary,
   type ApplyEntityMutationsResult,
   type EntityMutation,
   type EntityMutationErrorCode,

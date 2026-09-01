@@ -1,5 +1,6 @@
 import {
   EntityStoreInvariantError,
+  NPC_HISTORY_CAP,
   createEntityStore,
   projectEntityStore,
   validateEntityReferences,
@@ -17,7 +18,7 @@ import {
   type RelationshipSignal,
   type RelationshipSource,
 } from "@/game/domain/entity";
-import type { WorldState } from "@/game/domain/worldState";
+import type { NpcInteraction, WorldState } from "@/game/domain/worldState";
 import { PLAYER_ENTITY_ID, type EnemyId, type FactId, type ItemId, type LocationId, type NpcId, type QuestId } from "@/game/domain/worldEntity";
 import {
   applyRelationshipCommitment,
@@ -99,8 +100,33 @@ export type EntityMutation =
   | { readonly kind: "set_quest_status"; readonly questId: QuestId; readonly status: "locked" | "active" | "completed" | "failed" | "closed" }
   | { readonly kind: "set_enemy_defeated"; readonly enemyId: EnemyId; readonly defeated: boolean }
   | { readonly kind: "set_npc_lifecycle"; readonly npcId: NpcId; readonly lifecycle: "active" | "inactive" }
+  /**
+   * 交互历史追加：载荷就是「存下来的那条 NpcInteraction 减去两个由实体层盖章的字段」。
+   * 少写的两支正好是 `relationshipDelta` 与 `summary`（R5-2）：整批里唯一知道裁剪后真实
+   * delta 的一方是批次本身，调用方再报一个数字就是给关系引擎已经拥有的数字立第二事实来源，
+   * 而 `summary` 把同一个数字嵌进了 prose，所以两支都不能从外面进来。
+   * 批次数组顺序是契约的一部分：signal 必须在前面，见 interactionRelationshipDelta。
+   */
+  | ({ readonly kind: "record_npc_interaction"; readonly npcId: NpcId } & NpcInteractionPayload)
+  /** 情绪写入：唯一的 dynamicState.emotion 通道，一支只写这一个字段。 */
+  | { readonly kind: "set_npc_emotion"; readonly npcId: NpcId; readonly emotion: NpcDynamicStateComponent["emotion"] }
+  /**
+   * 初遇标记：`met` 的字面量类型就是 true——「撤销初遇」在类型层没有写法，运行时也一律
+   * 返回 invalid_npc_met_value（单调只抬不降，与知识 certainty 只升同因）。
+   * `isCompanion` 与 `goals` 刻意没有通道：同伴与任务语义属 Task 7。
+   */
+  | { readonly kind: "set_npc_met"; readonly npcId: NpcId; readonly met: true }
   | { readonly kind: "replace_location_component"; readonly locationId: LocationId; readonly location: LocationComponent }
   | { readonly kind: "create_entities"; readonly records: readonly EntityRecord[] };
+
+/**
+ * `record_npc_interaction` 的载荷形状：**派生自** domain 的 NpcInteraction，
+ * 只挖掉实体层自己盖章的两支。为什么派生而不是手抄一份字段清单：
+ * domain 给 NpcInteraction 新增任何字段时，本载荷会立刻多出一个键，
+ * 于是下面的键集合锁当场编译失败，逼调用方对新字段做一次「谁拥有它」的决定，
+ * 而不是让兼容载荷悄悄漂到组件形状之外。
+ */
+export type NpcInteractionPayload = Omit<NpcInteraction, "relationshipDelta" | "summary">;
 
 type Expect<T extends true> = T;
 type IsExactly<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -131,6 +157,30 @@ export type SetKnowledgeDisclosurePayloadKeysLock = Expect<IsExactly<
   "kind" | "npcId" | "factId" | "disclosure" | "actionId" | "turnNumber"
 >>;
 
+/**
+ * 历史 / 情绪 / 初遇载荷的键集合封闭锁（Task 5A）。
+ *
+ * `record_npc_interaction` 的期望键是**派生载荷的展开**：它比存下来的那条 NpcInteraction 恰好
+ * 少 `relationshipDelta` 与 `summary`（见 NpcInteractionPayload 与 R5-2）。这里必须逐字把十个键
+ * 写出来，而不是 `keyof NpcInteractionPayload`：锁的对象是「这条 mutation 能携带什么」，
+ * 用派生式写出来就等于永远锁不上——domain 新增字段时载荷会跟着长，锁却永远成立。
+ * 手抄才是本锁的意义：新字段一出现就编译失败，逼调用方对它做一次归属判定。
+ */
+export type RecordInteractionPayloadKeysLock = Expect<IsExactly<
+  keyof Extract<EntityMutation, { readonly kind: "record_npc_interaction" }>,
+  "kind" | "npcId" | "turnNumber" | "actionId" | "locationId" | "dialogueAct" | "topic" | "topicSummary" | "outcome" | "learnedFactIds"
+>>;
+/** 情绪一支只写 dynamicState.emotion：met / isCompanion / goals 与整块组件都在门外。 */
+export type SetEmotionPayloadKeysLock = Expect<IsExactly<
+  keyof Extract<EntityMutation, { readonly kind: "set_npc_emotion" }>,
+  "kind" | "npcId" | "emotion"
+>>;
+/** 初遇一支只写 dynamicState.met；`isCompanion` 与 `goals` 刻意没有通道（Task 7）。 */
+export type SetMetPayloadKeysLock = Expect<IsExactly<
+  keyof Extract<EntityMutation, { readonly kind: "set_npc_met" }>,
+  "kind" | "npcId" | "met"
+>>;
+
 export type EntityMutationErrorCode =
   | "unknown_entity_id"
   | "duplicate_entity_id"
@@ -157,7 +207,15 @@ export type EntityMutationErrorCode =
   | "invalid_knowledge_certainty"
   | "invalid_knowledge_disclosure"
   | "knowledge_certainty_demotion_rejected"
-  | "knowledge_entry_not_found";
+  | "knowledge_entry_not_found"
+  // 历史 mutation 专用（Task 5A）。为什么不复用 domain 的 duplicate_history_action_id：
+  // 那道门在 createEntityStore 里，而它的所有 issue 都会被折叠成 invalid_component_value，
+  // 最终只以 structure_invalid + entityId 见客——调用方就分不出「这条行动已记过」与「形状不合法」。
+  // 本层要在任何写入之前失败并给出可判别的指令（换一个已铸造的 actionId），所以自持一个码。
+  | "duplicate_npc_interaction"
+  // met 的唯一合法取值就是 true：false / 非布尔都表达「撤销初遇」，而这条通道刻意不存在。
+  // 同样不能借 structure_invalid 表达——那是「数据形状不对」，这是「这个意图没有写入语言」。
+  | "invalid_npc_met_value";
 
 /**
  * 规则层封闭错误码 → 本层错误码：`satisfies` 锁住覆盖性，
@@ -300,21 +358,23 @@ function questLifecycle(status: Extract<EntityMutation, { readonly kind: "set_qu
 }
 
 // ---------------------------------------------------------------------------
-// 知识 mutation 的边界校验（Task 4B）
+// NPC 写入主体的共用闸门（Task 4B 知识两支 + Task 5A 历史/情绪/初遇三支）
 // ---------------------------------------------------------------------------
 
-type KnowledgeSubject =
+type NpcSubject =
   | { readonly ok: true; readonly npc: NpcEntityRecord }
   | { readonly ok: false; readonly code: EntityMutationErrorCode; readonly entityId: string };
 
 /**
- * 知识主体：必须是一条 npc record，且必须仍然活着。
+ * 写入主体：必须是一条 npc record，且必须仍然活着。
+ * 4B 的知识两支与 5A 的历史 / 情绪 / 初遇三支共用这一道门——「主体非活」对六支的含义完全相同，
+ * 抄第二份只会让两边在未来各自漂移。
  * 规则层的引用集合只做**存在性**判定（4A 明示不查 lifecycle），所以主体自己的存活
  * 只能由本 mutation 校验——沿用 3B `relationshipParties` 的处理：非活跃主体一律
  * invalid_lifecycle_transition。否则「停用/已结算的 NPC」就会成为新的写入目标，
  * 而它随时可能被 projector 重新折叠回兼容数组，看不出差别。
  */
-function knowledgeSubject(records: readonly EntityRecord[], npcId: NpcId): KnowledgeSubject {
+function activeNpcSubject(records: readonly EntityRecord[], npcId: NpcId): NpcSubject {
   const npc = recordOfKind(records, npcId, "npc");
   if (!npc.ok) return npc;
   if (npc.record.core.lifecycle !== "active") {
@@ -322,6 +382,10 @@ function knowledgeSubject(records: readonly EntityRecord[], npcId: NpcId): Knowl
   }
   return { ok: true, npc: npc.record };
 }
+
+// ---------------------------------------------------------------------------
+// 知识 mutation 的边界校验（Task 4B）
+// ---------------------------------------------------------------------------
 
 /**
  * 引用上下文：两个 ID 集合都从**传入的 records 数组**现场派生，只收活跃实体。
@@ -431,7 +495,90 @@ function relationshipParties(
   return { ok: true, npc: npc.record };
 }
 
-function applyOne(records: readonly EntityRecord[], mutation: EntityMutation): MutationResult {
+// ---------------------------------------------------------------------------
+// 历史 / 情绪 / 初遇 mutation 的批次内盖章（Task 5A）
+// ---------------------------------------------------------------------------
+
+/**
+ * 主体在**本批首次触及它那一刻**的对玩家 affinity。
+ * 只有这一样进批次：条目的 relationshipDelta = 应用后的读数 − 这一刻的读数，
+ * 而「这一刻」必须是批次开始动它之前——records 是逐步替换的，不记就回不去。
+ * `met` 刻意**不**在这里快照：摘要用的是追加那一刻的 live 值，
+ * 所以同批里排在交互之前的 `set_npc_met` 会（也应当）把措辞翻成「再次交谈」。
+ */
+type NpcBatchBaseline = Readonly<{ playerAffinity: number }>;
+
+/**
+ * 一次 `applyEntityMutations` 调用私有的上下文：一张「主体 → 本批首次触及时的 affinity」表。
+ * 它不是第二事实来源——只在批内存活，不写盘、不进结果、不外露，函数返回即随栈丢弃。
+ */
+type MutationBatch = { readonly baselines: Map<NpcId, NpcBatchBaseline> };
+
+/**
+ * 主体指向玩家的那条边的 affinity；没有这条边就是 0（与 projector 折叠 legacy affinity 同一读法）。
+ * 「查不到」在这里不是错误：同一批里新建、还没有任何 player 边的 NPC，第一条交互当然盖 0。
+ */
+function playerAffinityOf(npc: NpcEntityRecord): number {
+  return findRelationshipEdge(npc.relationships, PLAYER_ENTITY_ID)?.dimensions.affinity ?? 0;
+}
+
+/**
+ * 确保主体的本批前态已登记（首次触及才记，之后再来只读数）。
+ * 能改动玩家 affinity 的两支在**写入之前**调它并丢掉返回值——它们只要「这一刻被记住」；
+ * 交互一支则要用它记下的数算出本批实际应用的变化。
+ */
+function ensureBatchBaseline(npc: NpcEntityRecord, batch: MutationBatch): NpcBatchBaseline {
+  const existing = batch.baselines.get(npc.core.id);
+  if (existing !== undefined) return existing;
+  const baseline: NpcBatchBaseline = { playerAffinity: playerAffinityOf(npc) };
+  batch.baselines.set(npc.core.id, baseline);
+  return baseline;
+}
+
+/**
+ * 本批至今对该玩家边**实际**写入的 affinity 变化（R5-2 的盖章依据）。
+ * 读的是当前 records 上的数，所以规则层的单维/总量预算（同行动多条信号的累计裁剪）
+ * 天然已经生效：两条 normal 信号在 ±5 预算下合成 5，这里就得到 5，而不是表内相加的 7。
+ * 本函数一个数字都不重算，只做两次读数相减。
+ */
+function interactionRelationshipDelta(npc: NpcEntityRecord, baseline: NpcBatchBaseline): number {
+  return playerAffinityOf(npc) - baseline.playerAffinity;
+}
+
+/**
+ * 交互摘要的**唯一**模板：本文件与 dialogueResolution 共用这一份（后者只做排版转发）。
+ * 输入全部由持有事实的一方给定——数字是盖章后的真实变化，met 是追加那一刻主体自己的值——
+ * 所以这段 prose 与条目里的 relationshipDelta 不可能互相矛盾。
+ * 它只读入参、不写任何东西：放在本文件是为了跟盖章处贴在一起，不构成第二条写入通道。
+ */
+export function formatNpcInteractionSummary(input: Readonly<{
+  met: boolean;
+  dialogueAct: NpcInteraction["dialogueAct"];
+  outcome: NpcInteraction["outcome"];
+  relationshipDelta: number;
+}>): string {
+  const meetPart = input.met ? "再次交谈" : "首次见面";
+  const moodPart = input.outcome === "positive" ? "气氛融洽"
+    : input.outcome === "negative" ? "氛围紧张"
+    : input.outcome === "mixed" ? "气氛复杂"
+    : "语气平淡";
+  const deltaText = input.relationshipDelta >= 0 ? `+${input.relationshipDelta}` : `${input.relationshipDelta}`;
+  return `${meetPart}，${input.dialogueAct}，${moodPart}，关系${deltaText}`;
+}
+
+/**
+ * oldest→newest 追加并裁到共享上限：常量直接取 domain 的 NPC_HISTORY_CAP（唯一权威，本层不另立数字），
+ * 于是永远不可能出现「写入侧以为能存 10 条、校验侧按别的数判 history_cap_exceeded」。
+ * slice 从尾部保留，所以被裁掉的永远是最旧那条，新写入永不因为「装满了」而丢失。
+ */
+function appendNpcInteraction(
+  interactions: readonly NpcInteraction[],
+  entry: NpcInteraction,
+): NpcHistoryComponent {
+  return { interactions: [...interactions, entry].slice(-NPC_HISTORY_CAP) };
+}
+
+function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, batch: MutationBatch): MutationResult {
   switch (mutation.kind) {
     case "move_player": {
       const player = recordOfKind(records, PLAYER_ENTITY_ID, "player_character");
@@ -492,6 +639,8 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation): M
       if (mutation.fromNpcId === mutation.targetId) return failure("relationship_self_edge", mutation.fromNpcId);
       const checkedSource = checkRelationshipSource(mutation.source);
       if (!checkedSource.ok) return failure(checkedSource.code, mutation.fromNpcId);
+      // 写入之前先登记本批前态：同批稍后的交互要靠这一刻算出「本批实际应用了多少」。
+      ensureBatchBaseline(parties.npc, batch);
       const applied = applyRelationshipSignalToComponent({
         relationships: parties.npc.relationships,
         fromNpcId: mutation.fromNpcId,
@@ -520,6 +669,8 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation): M
       if (mutation.fromNpcId === mutation.targetId) return failure("relationship_self_edge", mutation.fromNpcId);
       const checkedSource = checkRelationshipSource(mutation.source);
       if (!checkedSource.ok) return failure(checkedSource.code, mutation.fromNpcId);
+      // 承诺同样会动维度：登记时机与上一支一致，一律在写入之前。
+      ensureBatchBaseline(parties.npc, batch);
       // 承诺不建边：没有边就是引用了不存在的东西，与「未知 commitmentId」是两类错误。
       const edge = findRelationshipEdge(parties.npc.relationships, mutation.targetId);
       if (edge === undefined) return failure("invalid_reference", mutation.targetId);
@@ -561,7 +712,7 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation): M
     case "record_npc_knowledge": {
       // 三道边界（主体存活 / 来源支 / 引用上下文）先过，entry 语义一条都不在这里重算：
       // 幂等键、certainty 阶梯、说话人策略、取值闭集全是规则层的判定，抄一遍就是第二事实来源。
-      const subject = knowledgeSubject(records, mutation.npcId);
+      const subject = activeNpcSubject(records, mutation.npcId);
       if (!subject.ok) return failure(subject.code, subject.entityId);
       const sourceCode = checkKnowledgeSource(mutation.source);
       if (sourceCode !== undefined) return failure(sourceCode, mutation.npcId);
@@ -590,7 +741,7 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation): M
     case "set_npc_knowledge_disclosure": {
       // 披露通道的 evidence 是扁平字段（actionId + turnNumber），
       // 所以 initial_world 这一支在本载荷里根本表达不出来——不需要、也不再有第二道开关。
-      const subject = knowledgeSubject(records, mutation.npcId);
+      const subject = activeNpcSubject(records, mutation.npcId);
       if (!subject.ok) return failure(subject.code, subject.entityId);
       const applied = setNpcKnowledgeDisclosure({
         npcId: mutation.npcId,
@@ -647,6 +798,83 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation): M
       }
       return { ok: true, records: replaceRecord(records, mutation.npcId, { ...npc.record, core: { ...npc.record.core, lifecycle: mutation.lifecycle } }) };
     }
+    case "record_npc_interaction": {
+      // 主体闸门与知识两支同一道门；地点必须是 store 里真实的 location 实体，
+      // 诊断照本文件惯例报**越界的那个引用**（locationId），不是主体。
+      const subject = activeNpcSubject(records, mutation.npcId);
+      if (!subject.ok) return failure(subject.code, subject.entityId);
+      if (!hasKind(records, mutation.locationId, "location")) return failure("invalid_reference", mutation.locationId);
+      const baseline = ensureBatchBaseline(subject.npc, batch);
+      // 重复就是重复：本通道永不静默去重、永不覆盖。同一 NPC 的同一个 actionId 第二次出现，
+      // 意味着调用方在拿一次已铸造的行动重放，静默吞掉会让「这条行动记过没有」变成不可查的问题。
+      if (subject.npc.history.interactions.some((entry) => entry.actionId === mutation.actionId)) {
+        return failure("duplicate_npc_interaction", mutation.npcId);
+      }
+      // 两个盖章字段：数字来自本批实际应用的变化（预算裁剪已在规则层生效，这里只读数），
+      // prose 由唯一模板拼出，met 读的是追加那一刻主体自己的值——同批先 set 再记就写成「再次交谈」。
+      const relationshipDelta = interactionRelationshipDelta(subject.npc, baseline);
+      const entry: NpcInteraction = {
+        turnNumber: mutation.turnNumber,
+        actionId: mutation.actionId,
+        locationId: mutation.locationId,
+        dialogueAct: mutation.dialogueAct,
+        // 逐键装配而非展开载荷：外部多给的键（伪造的 delta / summary / 整块数组）永远进不了条目。
+        ...(mutation.topic === undefined ? {} : { topic: mutation.topic }),
+        topicSummary: mutation.topicSummary,
+        outcome: mutation.outcome,
+        relationshipDelta,
+        learnedFactIds: mutation.learnedFactIds,
+        summary: formatNpcInteractionSummary({
+          // 只读取一个字段（点号访问，不重建组件）：dynamicState 的写入通道仍然只有那三支。
+          met: subject.npc.dynamicState.met,
+          dialogueAct: mutation.dialogueAct,
+          outcome: mutation.outcome,
+          relationshipDelta,
+        }),
+      };
+      // 只替换 history 一个组件：其余组件按引用继承，兼容 interactionHistory 由 projector 重建。
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.npcId, {
+          ...subject.npc,
+          history: appendNpcInteraction(subject.npc.history.interactions, entry),
+        }),
+      };
+    }
+    case "set_npc_emotion": {
+      const subject = activeNpcSubject(records, mutation.npcId);
+      if (!subject.ok) return failure(subject.code, subject.entityId);
+      // 同值重放是幂等成功：连组件对象都不重建，调用方可以用引用身份验出「确实零写入」。
+      // 取值闭集的判定权在 domain（validateNpcDynamicState），本层不抄第二份表——
+      // 表外情绪照样在任何写入之前失败，只是 code 落到 store 级 structure_invalid。
+      if (subject.npc.dynamicState.emotion === mutation.emotion) return { ok: true, records };
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.npcId, {
+          ...subject.npc,
+          // 展开旧组件、只覆盖一个键：goals 数组按引用继承，isCompanion 与 met 动不了。
+          dynamicState: { ...subject.npc.dynamicState, emotion: mutation.emotion },
+        }),
+      };
+    }
+    case "set_npc_met": {
+      const subject = activeNpcSubject(records, mutation.npcId);
+      if (!subject.ok) return failure(subject.code, subject.entityId);
+      // 类型层 `met: true` 已经把 false 写成编译错误，但 mutation 也可能来自已存盘 JSON 的回读，
+      // 所以运行时同样要有一道门：以 unknown 读数，任何非 true 一律 invalid_npc_met_value。
+      const declared: unknown = mutation.met;
+      if (declared !== true) return failure("invalid_npc_met_value", mutation.npcId);
+      // 已 met 再抬一次是幂等成功（零写入）：met 单调只升，与知识 certainty 只升同因，
+      // 「撤销初遇」在本语言里没有对应字段可写（isCompanion / goals 同理，Task 7 才谈）。
+      if (subject.npc.dynamicState.met) return { ok: true, records };
+      return {
+        ok: true,
+        records: replaceRecord(records, mutation.npcId, {
+          ...subject.npc,
+          dynamicState: { ...subject.npc.dynamicState, met: true },
+        }),
+      };
+    }
     case "replace_location_component": {
       const location = recordOfKind(records, mutation.locationId, "location");
       if (!location.ok) return location;
@@ -673,9 +901,12 @@ export function applyEntityMutations(
 ): ApplyEntityMutationsResult {
   if (mutations.length === 0) return { ok: true, worldState };
 
+  // 批内上下文：只服务本次调用，函数返回即丢弃；它记得「本批首次触及某主体时的前态」，
+  // 所以数组顺序就是契约的一部分——交互只会盖到排在它之前的信号实际造成的变化。
+  const batch: MutationBatch = { baselines: new Map() };
   let records = worldState.entityStore.records;
   for (const mutation of mutations) {
-    const applied = applyOne(records, mutation);
+    const applied = applyOne(records, mutation, batch);
     if (applied.ok === false) {
       return {
         ok: false,

@@ -5,6 +5,7 @@ import type { FactId } from "@/game/domain/worldEntity";
 import type { GameEvent } from "@/game/domain/events";
 import type { StateChange } from "@/game/domain/resolvedEvent";
 import { updateNpcMemory } from "@/game/gameplay/rpg/ruleEngine/updateNpcMemory";
+import { formatNpcInteractionSummary } from "@/game/gameplay/rpg/entityWorld";
 
 // ---------------------------------------------------------------------------
 // 固定对话选项的结构化裁决（Spec §7.2 / FND-03）。
@@ -102,19 +103,18 @@ function statusFor(
   return "success";
 }
 
+/**
+ * 交互摘要：模板本体已搬到实体层（`formatNpcInteractionSummary`，与 record_npc_interaction
+ * 的盖章处贴在一起），这里只留一个转发点——本模块不再持有第二份 prose 模板。
+ * 名字先留着：5A 只搬模板、不动裁决行为，等 5C 让对话改走 record_npc_interaction 时一并退役。
+ */
 function summaryFor(
   npc: NpcEntry,
   act: DialogueAct | "freeform",
   outcome: NpcInteraction["outcome"],
   delta: number,
 ): string {
-  const meetPart = npc.met ? "再次交谈" : "首次见面";
-  const moodPart = outcome === "positive" ? "气氛融洽"
-    : outcome === "negative" ? "氛围紧张"
-    : outcome === "mixed" ? "气氛复杂"
-    : "语气平淡";
-  const deltaText = delta >= 0 ? `+${delta}` : `${delta}`;
-  return `${meetPart}，${act}，${moodPart}，关系${deltaText}`;
+  return formatNpcInteractionSummary({ met: npc.met, dialogueAct: act, outcome, relationshipDelta: delta });
 }
 
 /** 主题摘要（规则生成，绝不含玩家原文；不含事实内容本身）。 */
@@ -176,6 +176,7 @@ export function resolveDialogue(
     outcome,
     relationshipDelta,
     learnedFactIds,
+    // 摘要模板的唯一副本在实体层（record_npc_interaction 盖章处旁边），summaryFor 只做转发。
     summary: summaryFor(npc, act, outcome, relationshipDelta),
   };
   const npcAfter = { ...updateNpcMemory(npc, interaction), met: true };

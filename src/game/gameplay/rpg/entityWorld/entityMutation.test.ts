@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import { emptyProjection } from "@/game/domain/testing/worldStateFixture.testutil";
 import { createWorldStateFromProjection } from "@/game/domain/worldState";
-import type { WorldState, NpcMemory } from "@/game/domain/worldState";
+import type { WorldState, NpcMemory, NpcInteraction } from "@/game/domain/worldState";
+import type { DialogueAct, StructuredDialogueTopic } from "@/game/domain/action";
+import type { NarrativeEmotion } from "@/game/domain/narrative";
 import type {
   EnemyEntry, ItemEntry, LocationEntry, NpcEntry, PlayerState, QuestEntry, WorldFactEntry,
 } from "@/game/domain/worldState";
@@ -13,7 +15,9 @@ import type {
   PositionComponent, PossessionComponent,
 } from "@/game/domain/entity";
 import type { FactChangeSource } from "@/game/domain/resolvedEvent";
-import { compileLegacyNpcSync, entitiesOfKind, getEntity, importNpcLayers, projectNpcEntry } from "@/game/domain/entity";
+import {
+  compileLegacyNpcSync, entitiesOfKind, getEntity, importNpcLayers, NPC_HISTORY_CAP, projectNpcEntry,
+} from "@/game/domain/entity";
 import {
   asFactId, asGenerationId, asItemId, asLocationId, asNpcId, asQuestId, asEnemyId,
   PLAYER_ENTITY_ID, type GenerationMetadata,
@@ -23,7 +27,7 @@ import {
   type EntityMutation, type EntityMutationErrorCode,
   type KnowledgeMutationSource, type RelationshipMutationSource,
 } from "./entityMutation";
-import type { FactId, NpcId } from "@/game/domain/worldEntity";
+import type { FactId, LocationId, NpcId } from "@/game/domain/worldEntity";
 import type { RelationshipSignal } from "@/game/domain/entity";
 import type { RelationshipCommitmentOperation, RelationshipTargetId } from "@/game/gameplay/rpg/npcMemory";
 
@@ -1401,5 +1405,557 @@ describe("知识写入通道唯一性（Task 5 拆桥前的过渡约束）", () 
       })
       .map((entry) => entry.name);
     expect(writers.sort()).toEqual(["record_npc_knowledge", "set_npc_knowledge_disclosure", "sync_npc_legacy_memory"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 5A：历史 / 情绪 / met 的窄规则侧 mutation。
+// 三支都不接受数值 delta、不接受 summary 正文、不接受整块组件：
+// `relationshipDelta` 与 `summary` 由实体层从**本批实际应用的关系变化**里盖章（ruling R5-2），
+// 兼容 memory 一律由 projector 重建，本层不存在第二条平行写路径。
+// ---------------------------------------------------------------------------
+
+const NPC_9 = asNpcId("npc_9");
+
+function interaction(input: Readonly<{
+  npcId?: NpcId;
+  turnNumber?: number;
+  actionId?: string;
+  locationId?: LocationId;
+  dialogueAct?: DialogueAct | "freeform";
+  topic?: StructuredDialogueTopic;
+  topicSummary?: string;
+  /** 表外 outcome 由调用点直接传字符串（生产类型是封闭 union）。 */
+  outcome?: NpcInteraction["outcome"] | string;
+  learnedFactIds?: readonly FactId[];
+}> = {}): EntityMutation {
+  return {
+    kind: "record_npc_interaction",
+    npcId: input.npcId ?? NPC_1,
+    turnNumber: input.turnNumber ?? 3,
+    actionId: input.actionId ?? ACT_1,
+    locationId: input.locationId ?? LOC_1,
+    dialogueAct: input.dialogueAct ?? "support",
+    ...(input.topic === undefined ? {} : { topic: input.topic }),
+    topicSummary: input.topicSummary ?? "谈论任务",
+    outcome: (input.outcome ?? "positive") as NpcInteraction["outcome"],
+    learnedFactIds: input.learnedFactIds ?? [],
+  };
+}
+
+function setEmotion(input: Readonly<{ npcId?: NpcId; emotion?: NarrativeEmotion | string }> = {}): EntityMutation {
+  return {
+    kind: "set_npc_emotion",
+    npcId: input.npcId ?? NPC_1,
+    emotion: (input.emotion ?? "warm") as NarrativeEmotion,
+  };
+}
+
+function setMet(input: Readonly<{ npcId?: NpcId }> = {}): EntityMutation {
+  return { kind: "set_npc_met", npcId: input.npcId ?? NPC_1, met: true };
+}
+
+function findNpcRecord(ws: WorldState, npcId: NpcId): NpcEntityRecord | undefined {
+  return entitiesOfKind(ws.entityStore, "npc").find((record) => record.core.id === npcId);
+}
+
+function historyOf(ws: WorldState, npcId: NpcId = NPC_1): readonly NpcInteraction[] {
+  const history = findNpcRecord(ws, npcId)?.history;
+  if (history === undefined) throw new Error(`missing npc ${String(npcId)}`);
+  return history.interactions;
+}
+
+function lastInteraction(ws: WorldState, npcId: NpcId = NPC_1): NpcInteraction {
+  const entries = historyOf(ws, npcId);
+  const entry = entries[entries.length - 1];
+  if (entry === undefined) throw new Error("history is empty");
+  return entry;
+}
+
+/** 一条 record 的全部组件（含可原地改写的数组）：零写入的取证对象。 */
+function layersOf(record: NpcEntityRecord): readonly unknown[] {
+  return [
+    record.core, record.identity, record.position, record.dynamicState, record.knowledge,
+    record.relationships, record.history, record.identity.anchors, record.dynamicState.goals,
+    record.relationships.outgoing, record.history.interactions,
+  ];
+}
+
+/**
+ * 三支 kind 共用的拒绝入口：稳定 code/entityId，且入参 store、records 数组与主体的
+ * **每一个组件对象（含数组）**都按引用原样不动——这是「没有半写入」的证据，不是快照相等。
+ */
+function expectNpcWriteRejected(
+  ws: WorldState,
+  mutations: readonly EntityMutation[],
+  expected: Readonly<{ code: EntityMutationErrorCode; entityId?: string; subjectId?: NpcId }>,
+) {
+  const store = ws.entityStore;
+  const records = store.records;
+  // 诊断按本文件惯例报**越界的那个引用**（地点 ID 等），它通常不是行动主体，
+  // 所以取证对象单独给；缺省才退化成 entityId。
+  const subjectId = expected.subjectId ?? (expected.entityId as NpcId | undefined);
+  const before = subjectId === undefined ? undefined : findNpcRecord(ws, subjectId);
+  const beforeLayers = before === undefined ? undefined : layersOf(before);
+  const result = applyEntityMutations(ws, mutations);
+  expect(result).toEqual({
+    ok: false, code: expected.code, ...(expected.entityId === undefined ? {} : { entityId: expected.entityId }),
+  });
+  expect(ws.entityStore).toBe(store);
+  expect(ws.entityStore.records).toBe(records);
+  if (subjectId !== undefined && beforeLayers !== undefined) {
+    const current = findNpcRecord(ws, subjectId);
+    expect(current).not.toBe(undefined);
+    if (current !== undefined) {
+      const afterLayers = layersOf(current);
+      expect(afterLayers).toHaveLength(beforeLayers.length);
+      afterLayers.forEach((layer, index) => expect(layer).toBe(beforeLayers[index]));
+    }
+  }
+}
+
+/** 把主体历史填到共享上限：actionId 互不相同，域校验才只可能因「新追加」而失败。 */
+function seedHistory(count = NPC_HISTORY_CAP): WorldState {
+  return okApply(world(), Array.from({ length: count }, (_unused, index) => interaction({
+    actionId: `act_seed_${index}`,
+    turnNumber: index + 1,
+  })));
+}
+
+describe("applyEntityMutations — record_npc_interaction", () => {
+  it("载荷键集合恰好等于声明：relationshipDelta、summary 与整块 history 都进不来", () => {
+    // 负编译探针（同 3B/4B 惯例）：多余键写成字面量即 typecheck 失败，
+    // 锁的是 EntityMutation 的载荷形状（RecordInteractionPayloadKeysLock），不是夹具自己。
+    // @ts-expect-error relationshipDelta 不是 record_npc_interaction 的载荷键：数值归关系引擎所有
+    const withDelta: EntityMutation = { kind: "record_npc_interaction", npcId: NPC_1, turnNumber: 3, actionId: "act_forged_delta", locationId: LOC_1, dialogueAct: "support", topicSummary: "谈论任务", outcome: "positive", learnedFactIds: [], relationshipDelta: 50 };
+    // @ts-expect-error summary 不是载荷键：prose 里嵌着同一个数字，接受它等于接受第二份数值事实
+    const withSummary: EntityMutation = { kind: "record_npc_interaction", npcId: NPC_1, turnNumber: 4, actionId: "act_forged_summary", locationId: LOC_1, dialogueAct: "support", topicSummary: "谈论任务", outcome: "positive", learnedFactIds: [], summary: "伪造" };
+    // @ts-expect-error interactions 不是载荷键：替换整块历史就是第二条写入通道
+    const wholeBlock: EntityMutation = { kind: "record_npc_interaction", npcId: NPC_1, turnNumber: 5, actionId: "act_forged_block", locationId: LOC_1, dialogueAct: "support", topicSummary: "谈论任务", outcome: "positive", learnedFactIds: [], interactions: [] };
+    // @ts-expect-error emotion 不是载荷键：一支 kind 只写一个组件字段
+    const crossField: EntityMutation = { kind: "record_npc_interaction", npcId: NPC_1, turnNumber: 6, actionId: "act_forged_emotion", locationId: LOC_1, dialogueAct: "support", topicSummary: "谈论任务", outcome: "positive", learnedFactIds: [], emotion: "angry" };
+    // 运行时那一半同样是生产事实：类型没拦住的键既进不了条目、也改不动别的组件。
+    // 四条各用不同 actionId，否则重复 actionId 的闸门会在第二支就把整批拒掉。
+    // before 必须取自同一个 ws：这里比的是引用身份，两次 world() 永远是两个对象。
+    const ws = world();
+    const before = npcRecord(ws, NPC_1);
+    const next = okApply(ws, [withDelta, withSummary, wholeBlock, crossField]);
+    const after = npcRecord(next, NPC_1);
+    expect(after.dynamicState).toBe(before.dynamicState);
+    expect(after.relationships).toBe(before.relationships);
+    const entries = historyOf(next);
+    expect(entries).toHaveLength(4);
+    // 盖章数字恒为 0（本批没有信号），伪造的 50 / "伪造" 都进不来。
+    expect([...new Set(entries.map((entry) => entry.relationshipDelta))]).toEqual([0]);
+    expect([...new Set(entries.map((entry) => entry.summary))]).toEqual(["首次见面，support，气氛融洽，关系+0"]);
+    expect(Object.keys(lastInteraction(next)).sort()).toEqual([
+      "actionId", "dialogueAct", "learnedFactIds", "locationId", "outcome",
+      "relationshipDelta", "summary", "topicSummary", "turnNumber",
+    ]);
+  });
+
+  it("topic 是可缺省键：省略即不留字段，给出则逐字保留", () => {
+    const next = okApply(world(), [
+      interaction({ actionId: "act_general" }),
+      interaction({ actionId: "act_fact", topic: { kind: "fact", factId: FACT_1 }, topicSummary: "询问线索" }),
+    ]);
+    const entries = historyOf(next);
+    expect("topic" in entries[0]!).toBe(false);
+    expect(entries[1]!.topic).toEqual({ kind: "fact", factId: FACT_1 });
+    // learnedFactIds 原样携带（引用存在性另有 Task 5B 的知识通道负责）。
+    const withFacts = okApply(world(), [interaction({ learnedFactIds: [FACT_1] })]);
+    expect(lastInteraction(withFacts).learnedFactIds).toEqual([FACT_1]);
+  });
+
+  it("stamp 记的是关系引擎实际写入的 affinity 变化（signal 在前的批次数组顺序）", () => {
+    const next = okApply(world(), [
+      signalMutation({ targetId: PLAYER_ENTITY_ID, signal: "supported" }),
+      interaction({ actionId: ACT_1 }),
+    ]);
+    expect(edgeOf(next, NPC_1, PLAYER_ENTITY_ID).dimensions.affinity).toBe(3);
+    expect(lastInteraction(next).relationshipDelta).toBe(3);
+    expect(lastInteraction(next).summary).toBe("首次见面，support，气氛融洽，关系+3");
+  });
+
+  it("预算裁剪后的真实变化才是 stamp：同行动两条 normal 信号被单维 ±5 压到 5，不是表内相加的 7", () => {
+    // gave_item = affinity +4，supported = affinity +3（表内原始和 7）；
+    // 同一行动对同一边的累计预算先把第二格压到 +1（4+1=5 正好贴单维 cap），
+    // 所以这条交互只能盖到 5。接受调用方传数字的实现会写 7 或写原始信号值——都在这里失败。
+    const next = okApply(world(), [
+      signalMutation({ targetId: PLAYER_ENTITY_ID, signal: "gave_item" }),
+      signalMutation({ targetId: PLAYER_ENTITY_ID, signal: "supported" }),
+      interaction({ actionId: ACT_1 }),
+    ]);
+    const edge = edgeOf(next, NPC_1, PLAYER_ENTITY_ID);
+    expect(edge.dimensions.affinity).toBe(5);
+    expect(lastInteraction(next).relationshipDelta).toBe(5);
+    expect(lastInteraction(next).summary).toBe("首次见面，support，气氛融洽，关系+5");
+  });
+
+  it("批次数组顺序就是契约：interaction 在 signal 之前只盖到 0", () => {
+    const next = okApply(world(), [
+      interaction({ actionId: ACT_1 }),
+      signalMutation({ targetId: PLAYER_ENTITY_ID, signal: "supported" }),
+    ]);
+    expect(edgeOf(next, NPC_1, PLAYER_ENTITY_ID).dimensions.affinity).toBe(3);
+    expect(lastInteraction(next).relationshipDelta).toBe(0);
+    expect(lastInteraction(next).summary).toContain("关系+0");
+  });
+
+  it("没有本批信号、没有 player 边、只动 NPC→NPC 边：三种情形都盖 0", () => {
+    const alone = okApply(world(), [interaction()]);
+    expect(lastInteraction(alone).relationshipDelta).toBe(0);
+    // 别的边上的变化不是这条交互的 delta：stamp 只看 player 目标。
+    const towardNpc = okApply(world(), [
+      signalMutation({ signal: "supported" }),
+      interaction({ actionId: ACT_1 }),
+    ]);
+    expect(edgeOf(towardNpc, NPC_1, NPC_2).dimensions.affinity).toBe(3);
+    expect(lastInteraction(towardNpc).relationshipDelta).toBe(0);
+    // 完全没有 player 边的 NPC（同批新建）同样是 0，而不是「查不到就失败」。
+    const created = okApply(world(), [{
+      kind: "create_entities",
+      records: [{
+        ...npcEntityRecord({
+          core: { id: NPC_9, kind: "npc", name: "无边的旅人", createdAtTurn: 1, lifecycle: "active" },
+          identity: { role: "旅人", description: "", tags: [] },
+          position: { locationId: LOC_1, locationOrder: 5 },
+          npc: { isCompanion: false, met: false, memory: memoryOf(NPC_9) },
+        }),
+        relationships: { outgoing: [] },
+      }],
+    }]);
+    expect(findNpcRecord(created, NPC_9)!.relationships.outgoing).toEqual([]);
+    const edgeless = okApply(created, [
+      signalMutation({ fromNpcId: NPC_9, targetId: NPC_2, signal: "supported" }),
+      interaction({ npcId: NPC_9, actionId: ACT_1 }),
+    ]);
+    expect(edgeOf(edgeless, NPC_9, NPC_2).dimensions.affinity).toBe(3);
+    expect(lastInteraction(edgeless, NPC_9).relationshipDelta).toBe(0);
+  });
+
+  it("summary 用盖章数字与追加那一刻的 dynamicState.met：同批先 set_npc_met 就写成再次交谈", () => {
+    const first = okApply(world(), [interaction({ actionId: ACT_1, outcome: "negative" })]);
+    expect(lastInteraction(first).summary).toBe("首次见面，support，氛围紧张，关系+0");
+    const remeeting = okApply(world(), [
+      setMet(),
+      interaction({ actionId: ACT_1, dialogueAct: "challenge", outcome: "mixed" }),
+    ]);
+    expect(npcRecord(remeeting, NPC_1).dynamicState.met).toBe(true);
+    // met 读的是**追加那一刻**的 live 值：同批排在前面的 set_npc_met 已经把措辞翻过来。
+    expect(lastInteraction(remeeting).summary).toBe("再次交谈，challenge，气氛复杂，关系+0");
+    // 反序是这条契约的另一半：set_npc_met 排在交互之后，追加时 met 仍是 false。
+    const reversed = okApply(world(), [
+      interaction({ actionId: ACT_1, dialogueAct: "challenge", outcome: "mixed" }),
+      setMet(),
+    ]);
+    expect(npcRecord(reversed, NPC_1).dynamicState.met).toBe(true);
+    expect(lastInteraction(reversed).summary).toBe("首次见面，challenge，气氛复杂，关系+0");
+    const again = okApply(remeeting, [interaction({ actionId: "act_2", dialogueAct: "ask", outcome: "neutral" })]);
+    expect(lastInteraction(again).summary).toBe("再次交谈，ask，语气平淡，关系+0");
+    // mixed / 负数数字的正向模板同样由实体层拼出：- 号不重复、+ 号不缺席。
+    const negative = okApply(world(), [
+      signalMutation({ targetId: PLAYER_ENTITY_ID, signal: "threatened" }),
+      interaction({ actionId: ACT_1, outcome: "negative" }),
+    ]);
+    expect(lastInteraction(negative).relationshipDelta).toBe(-4);
+    expect(lastInteraction(negative).summary).toBe("首次见面，support，氛围紧张，关系-4");
+  });
+
+  it("追加保持 oldest→newest 并裁到共享上限常量（裁最旧，永不裁新写入）", () => {
+    const seeded = seedHistory();
+    expect(historyOf(seeded)).toHaveLength(NPC_HISTORY_CAP);
+    expect(historyOf(seeded).map((entry) => entry.actionId)).toEqual(
+      Array.from({ length: NPC_HISTORY_CAP }, (_unused, index) => `act_seed_${index}`),
+    );
+    const overflow = okApply(seeded, [interaction({ actionId: "act_overflow", turnNumber: 99 })]);
+    const entries = historyOf(overflow);
+    expect(entries).toHaveLength(NPC_HISTORY_CAP);
+    expect(entries[0]!.actionId).toBe("act_seed_1");
+    expect(entries[entries.length - 1]!.actionId).toBe("act_overflow");
+    expect(entries.map((entry) => entry.turnNumber)).toEqual(
+      [...Array.from({ length: NPC_HISTORY_CAP - 1 }, (_unused, index) => index + 2), 99],
+    );
+  });
+
+  it("同一 NPC 重复 actionId 返回 duplicate_npc_interaction 且每个组件按引用不动", () => {
+    const ws = seedHistory(2);
+    expectNpcWriteRejected(ws, [interaction({ actionId: "act_seed_0" })], {
+      code: "duplicate_npc_interaction", entityId: NPC_1,
+    });
+    // 跨批次也算重复：本通道永不静默去重。
+    expectNpcWriteRejected(ws, [
+      interaction({ actionId: "act_new" }),
+      interaction({ actionId: "act_new" }),
+    ], { code: "duplicate_npc_interaction", entityId: NPC_1 });
+    expect(historyOf(ws)).toHaveLength(2);
+  });
+
+  it("只替换 history 一个组件：其余组件与另一 NPC 的 history 全部引用不变", () => {
+    const ws = world();
+    const before = npcRecord(ws, NPC_1);
+    const next = okApply(ws, [interaction({ topic: { kind: "general" } })]);
+    const after = npcRecord(next, NPC_1);
+    expect(after.history).not.toBe(before.history);
+    expect(after.core).toBe(before.core);
+    expect(after.identity).toBe(before.identity);
+    expect(after.position).toBe(before.position);
+    expect(after.dynamicState).toBe(before.dynamicState);
+    expect(after.knowledge).toBe(before.knowledge);
+    expect(after.relationships).toBe(before.relationships);
+    expect(npcRecord(next, NPC_2).history).toBe(npcRecord(ws, NPC_2).history);
+  });
+
+  it("兼容 interactionHistory 只由 projector 重建：本层不平行写 memory", () => {
+    const ws = world();
+    expect(ws.npcs.find((npc) => npc.id === NPC_1)?.memory.interactionHistory).toEqual([]);
+    const next = okApply(ws, [interaction({ actionId: ACT_1 }), setMet(), setEmotion()]);
+    const entry = next.npcs.find((npc) => npc.id === NPC_1)!;
+    expect(entry.memory.interactionHistory.map((item) => item.actionId)).toEqual([ACT_1]);
+    expect(entry.memory.interactionHistory[0]!.summary).toBe("首次见面，support，气氛融洽，关系+0");
+    expect(entry.met).toBe(true);
+    expect(entry.memory.emotion).toBe("warm");
+    expect(npcRecord(ws, NPC_1).history.interactions).toEqual([]);
+  });
+
+  it("未知 npc、非 npc（物品与玩家）、非活跃 npc、未知地点各返回稳定 code 且零写入", () => {
+    const ws = world();
+    expectNpcWriteRejected(ws, [interaction({ npcId: asNpcId("npc_missing") })], {
+      code: "unknown_entity_id", entityId: asNpcId("npc_missing"),
+    });
+    expectNpcWriteRejected(ws, [interaction({ npcId: asNpcId(String(ITEM_A)) })], {
+      code: "wrong_entity_kind", entityId: ITEM_A,
+    });
+    expectNpcWriteRejected(ws, [interaction({ npcId: asNpcId(String(PLAYER_ENTITY_ID)) })], {
+      code: "wrong_entity_kind", entityId: PLAYER_ENTITY_ID,
+    });
+    expectNpcWriteRejected(ws, [interaction({ locationId: asLocationId("loc_missing") })], {
+      code: "invalid_reference", entityId: asLocationId("loc_missing"), subjectId: NPC_1,
+    });
+    const inactive = okApply(world(), [{ kind: "set_npc_lifecycle", npcId: NPC_2, lifecycle: "inactive" }]);
+    expectNpcWriteRejected(inactive, [interaction({ npcId: NPC_2 })], {
+      code: "invalid_lifecycle_transition", entityId: NPC_2,
+    });
+  });
+
+  it("合法与失败混在同一批时整批零修改", () => {
+    const ws = world();
+    const result = applyEntityMutations(ws, [
+      interaction({ actionId: "act_ok" }),
+      interaction({ actionId: "act_bad", locationId: asLocationId("loc_missing") }),
+    ]);
+    expect(result).toEqual({ ok: false, code: "invalid_reference", entityId: asLocationId("loc_missing") });
+    expect(historyOf(ws)).toEqual([]);
+  });
+});
+
+describe("applyEntityMutations — set_npc_emotion", () => {
+  it("载荷键集合恰好等于声明：met、isCompanion、goals 与整块 dynamicState 都进不来", () => {
+    // @ts-expect-error met 不是 set_npc_emotion 的载荷键：一支 kind 只写一个字段
+    const withMet: EntityMutation = { kind: "set_npc_emotion", npcId: NPC_1, emotion: "warm", met: true };
+    // @ts-expect-error isCompanion 不是载荷键：同伴语义属 Task 7
+    const withCompanion: EntityMutation = { kind: "set_npc_emotion", npcId: NPC_1, emotion: "warm", isCompanion: true };
+    // @ts-expect-error goals 不是载荷键：目标永不接受运行时 patch
+    const withGoals: EntityMutation = { kind: "set_npc_emotion", npcId: NPC_1, emotion: "warm", goals: [] };
+    // @ts-expect-error 整块 dynamicState 不是载荷键：替换组件就是第二条通道
+    const wholeBlock: EntityMutation = { kind: "set_npc_emotion", npcId: NPC_1, dynamicState: { isCompanion: true, met: true, emotion: "angry", goals: [] } };
+    const ws = world();
+    const before = npcRecord(ws, NPC_1);
+    // 运行时那一半分两种：多给键（前三个）在逐键写入下根本落不了地；
+    // 少给载荷键（整块替换那一支）连 emotion 都没有，domain 的取值闭集在任何写入前把它挡下。
+    const next = okApply(ws, [withMet, withCompanion, withGoals]);
+    const after = npcRecord(next, NPC_1);
+    expect(after.dynamicState.emotion).toBe("warm");
+    expect(after.dynamicState.isCompanion).toBe(false);
+    expect(after.dynamicState.met).toBe(false);
+    expect(after.dynamicState.goals).toBe(before.dynamicState.goals);
+    expect(after.history).toBe(before.history);
+    expect(after.relationships).toBe(before.relationships);
+    expect(Object.keys(after.dynamicState).sort()).toEqual(["emotion", "goals", "isCompanion", "met"]);
+    // 整块 dynamicState 不是载荷：它既换不掉组件（载荷里没有 emotion），
+    // 也留不下半成品——整批零写入，取值闭集的权威在 domain。
+    expectNpcWriteRejected(ws, [wholeBlock], { code: "structure_invalid", entityId: NPC_1 });
+  });
+
+  it("同值情绪重放是幂等成功而非失败：组件引用原样不变", () => {
+    const ws = world();
+    expect(npcRecord(ws, NPC_1).dynamicState.emotion).toBe("neutral");
+    const sameValue = okApply(ws, [setEmotion({ emotion: "neutral" })]);
+    expect(npcRecord(sameValue, NPC_1).dynamicState).toBe(npcRecord(ws, NPC_1).dynamicState);
+    const once = okApply(ws, [setEmotion()]);
+    const component = npcRecord(once, NPC_1).dynamicState;
+    const batched = okApply(once, [setEmotion(), setEmotion()]);
+    expect(npcRecord(batched, NPC_1).dynamicState).toBe(component);
+    expect(npcRecord(batched, NPC_1).dynamicState.goals).toBe(npcRecord(ws, NPC_1).dynamicState.goals);
+  });
+
+  it("主体边界与另两支一致：未知、非 npc、非活跃各自稳定", () => {
+    const ws = world();
+    expectNpcWriteRejected(ws, [setEmotion({ npcId: asNpcId("npc_missing") })], {
+      code: "unknown_entity_id", entityId: asNpcId("npc_missing"),
+    });
+    expectNpcWriteRejected(ws, [setEmotion({ npcId: asNpcId(String(ITEM_A)) })], {
+      code: "wrong_entity_kind", entityId: ITEM_A,
+    });
+    const inactive = okApply(world(), [{ kind: "set_npc_lifecycle", npcId: NPC_1, lifecycle: "inactive" }]);
+    expectNpcWriteRejected(inactive, [setEmotion()], { code: "invalid_lifecycle_transition", entityId: NPC_1 });
+  });
+
+  it("表外取值不抄第二份检查：由 domain validator 在任何写入之前挡住并零写入", () => {
+    // 取值闭集的权威在 domain（validateNpcDynamicState 的 value_out_of_closed_set），
+    // 本层再抄一份 NARRATIVE_EMOTIONS 判断就是第二事实来源；store 级失败同样不落盘。
+    const ws = world();
+    const before = npcRecord(ws, NPC_1);
+    for (const emotion of ["toString", "constructor", "affinity_plus_50"]) {
+      const result = applyEntityMutations(ws, [setEmotion({ emotion })]);
+      expect(result).toEqual({ ok: false, code: "structure_invalid", entityId: NPC_1 });
+      expect(npcRecord(ws, NPC_1).dynamicState).toBe(before.dynamicState);
+    }
+  });
+});
+
+describe("applyEntityMutations — set_npc_met", () => {
+  it("载荷键集合恰好等于声明：emotion、isCompanion、goals 与整块 dynamicState 都进不来", () => {
+    // @ts-expect-error emotion 不是 set_npc_met 的载荷键
+    const withEmotion: EntityMutation = { kind: "set_npc_met", npcId: NPC_1, met: true, emotion: "warm" };
+    // @ts-expect-error isCompanion 不是载荷键：Task 7 才拥有同伴语义
+    const withCompanion: EntityMutation = { kind: "set_npc_met", npcId: NPC_1, met: true, isCompanion: true };
+    // @ts-expect-error goals 不是载荷键
+    const withGoals: EntityMutation = { kind: "set_npc_met", npcId: NPC_1, met: true, goals: [] };
+    // @ts-expect-error met 的字面量类型就是 true：false 在类型层没有写入通道
+    const unmeet: EntityMutation = { kind: "set_npc_met", npcId: NPC_1, met: false };
+    const ws = world();
+    const before = npcRecord(ws, NPC_1);
+    const next = okApply(ws, [withEmotion, withCompanion, withGoals]);
+    const after = npcRecord(next, NPC_1);
+    expect(after.dynamicState.met).toBe(true);
+    expect(after.dynamicState.emotion).toBe(before.dynamicState.emotion);
+    expect(after.dynamicState.isCompanion).toBe(false);
+    expect(after.dynamicState.goals).toBe(before.dynamicState.goals);
+    expect(after.history).toBe(before.history);
+    // 运行时那一半：伪造的 met:false 走稳定码，而不是静默把 met 改回 false。
+    expectNpcWriteRejected(ws, [unmeet], { code: "invalid_npc_met_value", entityId: NPC_1 });
+    expectNpcWriteRejected(ws, [{ kind: "set_npc_met", npcId: NPC_1, met: "true" as unknown as true }], {
+      code: "invalid_npc_met_value", entityId: NPC_1,
+    });
+    expectNpcWriteRejected(ws, [{ kind: "set_npc_met", npcId: NPC_1, met: 1 as unknown as true }], {
+      code: "invalid_npc_met_value", entityId: NPC_1,
+    });
+  });
+
+  it("已 met 的 NPC 再 set_npc_met(true) 是幂等成功：组件引用原样不变", () => {
+    const met = okApply(world(), [setMet()]);
+    const component = npcRecord(met, NPC_1).dynamicState;
+    const again = okApply(met, [setMet(), setMet()]);
+    expect(npcRecord(again, NPC_1).dynamicState).toBe(component);
+    expect(again.npcs.find((npc) => npc.id === NPC_1)?.met).toBe(true);
+  });
+
+  it("met 单调只抬 true：isCompanion 与 goals 在三支 kind 之后仍然动不了", () => {
+    const ws = world();
+    const before = npcRecord(ws, NPC_1);
+    const next = okApply(ws, [
+      signalMutation({ targetId: PLAYER_ENTITY_ID, signal: "supported" }),
+      interaction({ actionId: ACT_1 }),
+      setEmotion(),
+      setMet(),
+    ]);
+    const after = npcRecord(next, NPC_1);
+    expect(after.dynamicState.isCompanion).toBe(false);
+    expect(after.dynamicState.goals).toBe(before.dynamicState.goals);
+    expect(after.history.interactions).toHaveLength(1);
+    expect(after.relationships).not.toBe(before.relationships);
+    expect(npcRecord(ws, NPC_1).dynamicState).toBe(before.dynamicState);
+  });
+
+  it("主体边界与另两支一致：未知、非 npc、非活跃各自稳定", () => {
+    const ws = world();
+    expectNpcWriteRejected(ws, [setMet({ npcId: asNpcId("npc_missing") })], {
+      code: "unknown_entity_id", entityId: asNpcId("npc_missing"),
+    });
+    expectNpcWriteRejected(ws, [setMet({ npcId: asNpcId(String(ENEMY_1)) })], {
+      code: "wrong_entity_kind", entityId: ENEMY_1,
+    });
+    const inactive = okApply(world(), [{ kind: "set_npc_lifecycle", npcId: NPC_2, lifecycle: "inactive" }]);
+    expectNpcWriteRejected(inactive, [setMet({ npcId: NPC_2 })], {
+      code: "invalid_lifecycle_transition", entityId: NPC_2,
+    });
+  });
+});
+
+describe("NPC 组件与历史写入通道唯一性（Task 5 拆桥前的过渡约束）", () => {
+  it("桥仍可整体同步 history 与 dynamicState：细粒度 mutation 之外没有第二条整块替换通道", () => {
+    const ws = world();
+    const before = npcRecord(ws, NPC_1);
+    const legacy = projectNpcEntry(before);
+    const next = okApply(ws, [{
+      kind: "sync_npc_legacy_memory",
+      npcId: NPC_1,
+      npc: compileLegacyNpcSync({
+        before,
+        afterLegacy: {
+          ...legacy,
+          met: true,
+          memory: {
+            ...legacy.memory,
+            emotion: "afraid",
+            interactionHistory: [{
+              turnNumber: 5, actionId: "act_bridge_5a", locationId: LOC_1, dialogueAct: "ask",
+              topicSummary: "闲谈", outcome: "neutral", relationshipDelta: -2, learnedFactIds: [],
+              summary: "首次见面，ask，语气平淡，关系-2",
+            }],
+          },
+        },
+        actionId: "act_bridge_5a",
+        turnNumber: 5,
+        addedKnowledge: [],
+      }),
+    }]);
+    const after = npcRecord(next, NPC_1);
+    expect(after.dynamicState).not.toBe(before.dynamicState);
+    expect(after.dynamicState.met).toBe(true);
+    expect(after.dynamicState.emotion).toBe("afraid");
+    expect(after.history).not.toBe(before.history);
+    // 桥照单全收调用方给的数字：relationshipDelta -2 逐字落盘。
+    // 这正是 record_npc_interaction 不接受该键的理由——过渡期只有一条通道能带数值。
+    expect(after.history.interactions).toEqual([{
+      turnNumber: 5, actionId: "act_bridge_5a", locationId: LOC_1, dialogueAct: "ask",
+      topicSummary: "闲谈", outcome: "neutral", relationshipDelta: -2, learnedFactIds: [],
+      summary: "首次见面，ask，语气平淡，关系-2",
+    }]);
+  });
+
+  it("entityMutation.ts 里把 history 组件写回 record 的 case 只有两个", () => {
+    const file = resolve(process.cwd(), "src/game/gameplay/rpg/entityWorld/entityMutation.ts");
+    expect(existsSync(file)).toBe(true);
+    const text = readFileSync(file, "utf8");
+    const body = text.slice(text.indexOf("function applyOne("), text.indexOf("export function applyEntityMutations"));
+    const labels = [...body.matchAll(/\n\s*case "([a-z_]+)":/g)]
+      .map((match) => ({ name: match[1] ?? "", at: match.index ?? 0 }));
+    expect(labels.length).toBeGreaterThan(0);
+    const writers = labels
+      .filter((entry, index) => {
+        const next = labels[index + 1];
+        return /\bhistory\s*[:,}]/.test(body.slice(entry.at, next === undefined ? body.length : next.at));
+      })
+      .map((entry) => entry.name);
+    expect(writers.sort()).toEqual(["record_npc_interaction", "sync_npc_legacy_memory"]);
+  });
+
+  it("entityMutation.ts 里把 dynamicState 组件写回 record 的 case 只有三个", () => {
+    const file = resolve(process.cwd(), "src/game/gameplay/rpg/entityWorld/entityMutation.ts");
+    expect(existsSync(file)).toBe(true);
+    const text = readFileSync(file, "utf8");
+    const body = text.slice(text.indexOf("function applyOne("), text.indexOf("export function applyEntityMutations"));
+    const labels = [...body.matchAll(/\n\s*case "([a-z_]+)":/g)]
+      .map((match) => ({ name: match[1] ?? "", at: match.index ?? 0 }));
+    expect(labels.length).toBeGreaterThan(0);
+    const writers = labels
+      .filter((entry, index) => {
+        const next = labels[index + 1];
+        return /\bdynamicState\s*[:,}]/.test(body.slice(entry.at, next === undefined ? body.length : next.at));
+      })
+      .map((entry) => entry.name);
+    expect(writers.sort()).toEqual(["set_npc_emotion", "set_npc_met", "sync_npc_legacy_memory"]);
   });
 });
