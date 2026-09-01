@@ -3,8 +3,12 @@ import { describe, it, expect } from "vitest";
 import { resolveByType, autoResolveCurrentInvestigation } from "./resolveByType";
 import { updateStoryMetrics } from "./updateStoryMetrics";
 import { type EnemyEntry, type LocationEntry, type ItemEntry, type NpcEntry, type PlayerState, type QuestEntry, type WorldFactEntry, type WorldState } from "@/game/domain/worldState";
+import { importNpcLayers, type NpcEntityRecord } from "@/game/domain/entity";
 import { createInitialStoryState, type StoryState } from "@/game/domain/storyState";
 import { asLocationId, asNpcId, asItemId, asFactId, asGenerationId, asEnemyId, asQuestId, type GenerationMetadata } from "@/game/domain/worldEntity";
+import { PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
+import { entitiesOfKind } from "@/game/domain/entity";
+import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
 import {
   createWorldStateFixture,
   createWorldStateFixtureWith,
@@ -111,7 +115,7 @@ describe("resolveByType status and stateChanges", () => {
     }
   });
 
-  it("talk to hostile npc returns partial_success", () => {
+  it("hostile bare ask has neutral outcome but remains partial_success", () => {
     const hostileNpc: NpcEntry = {
       ...npc1,
       id: asNpcId("npc_hostile"),
@@ -253,6 +257,136 @@ describe("resolveByType — attack", () => {
         expect(result.nextWorldState.inventory).toContain(item.id);
       }
     });
+  });
+});
+
+describe("resolveByType — talk 的窄 mutation batch", () => {
+  const location: LocationEntry = {
+    id: asLocationId("talk_loc"), name: "客栈", description: "", kind: "main",
+    connectedLocationIds: [], npcIds: [], availableItemIds: [], tags: [],
+  };
+  const base = emptyProjection({ player: PLAYER, locations: [location], currentLocationId: location.id });
+
+  function worldWithNpc(input: Partial<NpcEntry> = {}): WorldState {
+    const npcId = asNpcId("talk_npc");
+    const entry: NpcEntry = {
+      id: npcId, name: "老板", role: "路人", description: "", locationId: location.id,
+      isCompanion: false, tags: [], met: false,
+      memory: { npcId, knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: 0 }, emotion: "neutral", goals: [] },
+      ...input,
+    };
+    const layers = importNpcLayers({ entry, createdAtTurn: 0 });
+    const record: NpcEntityRecord = {
+      core: { id: npcId, kind: "npc", name: entry.name, createdAtTurn: 0, lifecycle: "active" },
+      identity: { role: entry.role, description: entry.description, tags: entry.tags, anchors: layers.anchors },
+      position: { locationId: entry.locationId, locationOrder: 0 },
+      dynamicState: layers.dynamicState,
+      knowledge: layers.knowledge,
+      relationships: entry.memory.relationship.affinity === 0 ? { outgoing: [] } : layers.relationships,
+      history: layers.history,
+    };
+    const result = applyEntityMutations(createWorldStateFixture({ generation: GENERATION, projection: base }), [{ kind: "create_entities", records: [record] }]);
+    if (!result.ok) throw new Error(`failed to create talk NPC: ${result.code}`);
+    return result.worldState;
+  }
+
+  function npcRecord(ws: WorldState) {
+    const record = entitiesOfKind(ws.entityStore, "npc")[0];
+    if (record === undefined) throw new Error("missing talk NPC");
+    return record;
+  }
+
+  function edge(ws: WorldState) {
+    return npcRecord(ws).relationships.outgoing.find((item) => item.targetId === PLAYER_ENTITY_ID);
+  }
+
+  it("首次 support 在无 player edge 时写入 +3、met、history 摘要和 warm emotion", () => {
+    const ws = worldWithNpc();
+    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_1", turnNumber: 1 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const npc = result.nextWorldState.npcs[0]!;
+    expect(edge(result.nextWorldState)?.dimensions.affinity).toBe(3);
+    expect(npc.met).toBe(true);
+    expect(npc.memory.interactionHistory).toHaveLength(1);
+    expect(npc.memory.interactionHistory[0]).toMatchObject({ relationshipDelta: 3 });
+    expect(npc.memory.interactionHistory[0]?.summary).toEqual(expect.stringContaining("首次见面"));
+    expect(npc.memory.interactionHistory[0]?.summary).toEqual(expect.stringContaining("support"));
+    expect(npc.memory.interactionHistory[0]?.summary).toEqual(expect.stringContaining("气氛融洽"));
+    expect(npc.memory.interactionHistory[0]?.summary).toEqual(expect.stringContaining("+3"));
+    expect(npc.memory.emotion).toBe("warm");
+  });
+
+  it("第二次 support 使用不同 actionId 时 affinity 到 6 且摘要为再次交谈", () => {
+    const first = resolveByType(worldWithNpc(), { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_1", turnNumber: 1 });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const second = resolveByType(first.nextWorldState, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_2", turnNumber: 2 });
+    expect(second.ok).toBe(true);
+    if (second.ok) {
+      expect(edge(second.nextWorldState)?.dimensions.affinity).toBe(6);
+      expect(second.nextWorldState.npcs[0]?.memory.interactionHistory[1]?.summary).toContain("再次交谈");
+    }
+  });
+
+  it("重放相同 actionId 拒绝整次 talk，并保持每条原始 record 身份", () => {
+    const first = resolveByType(worldWithNpc(), { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_replay", turnNumber: 1 });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const beforeRecords = first.nextWorldState.entityStore.records;
+    const replay = resolveByType(first.nextWorldState, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "talk_replay", turnNumber: 1 });
+    expect(replay).toEqual({ ok: false, feedback: "世界状态不一致。" });
+    expect(first.nextWorldState.entityStore.records).toHaveLength(beforeRecords.length);
+    first.nextWorldState.entityStore.records.forEach((record, index) => expect(record).toBe(beforeRecords[index]));
+  });
+
+  it("bare ask 不建 player edge，只追加零 delta history 并保持 emotion", () => {
+    const ws = worldWithNpc();
+    const beforeNpc = npcRecord(ws);
+    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "ask" }, { now: () => "2026-01-01", actionId: "ask_empty", turnNumber: 1 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const afterNpc = npcRecord(result.nextWorldState);
+      expect(afterNpc.relationships.outgoing).toHaveLength(0);
+      expect(afterNpc.relationships).toBe(beforeNpc.relationships);
+      expect(afterNpc.dynamicState.emotion).toBe("neutral");
+      expect(afterNpc.history.interactions).toHaveLength(1);
+      expect(afterNpc.history.interactions[0]?.relationshipDelta).toBe(0);
+    }
+  });
+
+  it("talk 只写窄通道：knowledge identity 不变，而 history/dynamicState/relationships 改变", () => {
+    const ws = worldWithNpc();
+    const before = npcRecord(ws);
+    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "narrow", turnNumber: 1 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const after = npcRecord(result.nextWorldState);
+      expect(after.knowledge).toBe(before.knowledge);
+      expect(after.history).not.toBe(before.history);
+      expect(after.dynamicState).not.toBe(before.dynamicState);
+      expect(after.relationships).not.toBe(before.relationships);
+    }
+  });
+
+  it("hostile threaten 返回 failure 但仍写入 threatened 的 fear/hostility/affinity 数值", () => {
+    const ws = worldWithNpc({ met: true, memory: { npcId: asNpcId("talk_npc"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [], relationship: { affinity: -70 }, emotion: "neutral", goals: [] } });
+    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "threaten" }, { now: () => "2026-01-01", actionId: "threaten", turnNumber: 1 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.status).toBe("failure");
+      expect(edge(result.nextWorldState)?.dimensions).toMatchObject({ affinity: -74, fear: 10, hostility: 4 });
+    }
+  });
+
+  it("批次确实运行：WorldState 身份改变且只追加一个 eventLedger 事件", () => {
+    const ws = worldWithNpc();
+    const result = resolveByType(ws, { type: "talk", npcId: asNpcId("talk_npc"), dialogueAct: "support" }, { now: () => "2026-01-01", actionId: "event_batch", turnNumber: 1 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.nextWorldState).not.toBe(ws);
+      expect(result.nextWorldState.eventLedger).toHaveLength(ws.eventLedger.length + 1);
+    }
   });
 });
 

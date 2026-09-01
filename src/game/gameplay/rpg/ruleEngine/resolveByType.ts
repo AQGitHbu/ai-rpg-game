@@ -124,9 +124,7 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         actionId: deps.actionId,
         turnNumber: deps.turnNumber,
       });
-      const npcSync = npcSyncMutation(ws, action.npcId, dialogue.npcAfter, deps);
-      if (npcSync === null) return { ok: false, feedback: "世界状态不一致。" };
-      const mutated = applyRuleMutations(ws, [npcSync]);
+      const mutated = applyRuleMutations(ws, dialogue.mutations);
       if (mutated === null) return { ok: false, feedback: "世界状态不一致。" };
       const nextWs: WorldState = {
         ...mutated,
@@ -139,6 +137,7 @@ export function resolveByType(ws: WorldState, action: Action, deps: ResolveDeps)
         feedback: dialogue.feedback,
         status: dialogue.status,
         stateChanges: [...dialogue.stateChanges],
+        // 对话披露不等于 FactChange；玩家侧知识写入由 Task 7/8 的传播链负责。
         facts: [],
       };
     }

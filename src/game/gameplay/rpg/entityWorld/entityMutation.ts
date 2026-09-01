@@ -807,6 +807,14 @@ function applyOne(records: readonly EntityRecord[], mutation: EntityMutation, ba
       const subject = activeNpcSubject(records, mutation.npcId);
       if (!subject.ok) return failure(subject.code, subject.entityId);
       if (!hasKind(records, mutation.locationId, "location")) return failure("invalid_reference", mutation.locationId);
+      // interaction 声称「主体 NPC 把这些事实告诉了玩家」，所以权威是主体自己的
+      // knowledge.entries；报越界的 FactId。Quest/thread topic 引用留给 Task 7。
+      const knownFactIds = new Set(subject.npc.knowledge.entries.map((entry) => entry.factId));
+      const learnedOffender = mutation.learnedFactIds.find((factId) => !knownFactIds.has(factId));
+      if (learnedOffender !== undefined) return failure("invalid_reference", learnedOffender);
+      if (mutation.topic?.kind === "fact" && !knownFactIds.has(mutation.topic.factId)) {
+        return failure("invalid_reference", mutation.topic.factId);
+      }
       const baseline = ensureBatchBaseline(subject.npc, batch);
       // 重复就是重复：本通道永不静默去重、永不覆盖。同一 NPC 的同一个 actionId 第二次出现，
       // 意味着调用方在拿一次已铸造的行动重放，静默吞掉会让「这条行动记过没有」变成不可查的问题。

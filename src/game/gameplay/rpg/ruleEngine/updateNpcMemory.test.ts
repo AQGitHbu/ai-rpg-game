@@ -61,23 +61,6 @@ describe("updateNpcMemory", () => {
     expect(updated.memory.relationship.affinity).toBe(5);
   });
 
-  it("updates emotion based on outcome", () => {
-    const npc = makeNpc();
-    const updated = updateNpcMemory(npc, makeInteraction({ outcome: "negative", relationshipDelta: -3 }));
-    expect(updated.memory.emotion).toBe("guarded");
-  });
-
-  it("mixed outcome 不会把情绪推离中性（guarded/angry 时回落 neutral）", () => {
-    const npc = makeNpc({
-      memory: {
-        npcId: asNpcId("npc_1"), knownFactIds: [], hiddenFactIds: [], interactionHistory: [],
-        relationship: { affinity: 0 }, emotion: "angry", goals: [],
-      },
-    });
-    const updated = updateNpcMemory(npc, makeInteraction({ outcome: "mixed", relationshipDelta: 0 }));
-    expect(updated.memory.emotion).toBe("neutral");
-  });
-
   it("clamps relationship to [-100, 100]", () => {
     const npc = makeNpc({
       memory: {

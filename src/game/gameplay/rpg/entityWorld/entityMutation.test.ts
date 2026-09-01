@@ -1523,6 +1523,41 @@ function seedHistory(count = NPC_HISTORY_CAP): WorldState {
 }
 
 describe("applyEntityMutations — record_npc_interaction", () => {
+  it("learnedFactIds 必须属于主体 NPC 自己的 knowledge，并报告越界 FactId", () => {
+    expectNpcWriteRejected(world(), [interaction({ learnedFactIds: [FACT_2] })], {
+      code: "invalid_reference", entityId: FACT_2, subjectId: NPC_1,
+    });
+  });
+
+  it("fact topic 必须属于主体 NPC 自己的 knowledge，并报告越界 FactId", () => {
+    expectNpcWriteRejected(world(), [interaction({ topic: { kind: "fact", factId: FACT_2 } })], {
+      code: "invalid_reference", entityId: FACT_2, subjectId: NPC_1,
+    });
+  });
+
+  it("同批创建带 knowledge 的 NPC 后再记录 interaction 时读取当前 records 并成功", () => {
+    const npcId = NPC_9;
+    const created = npcEntityRecord({
+      core: { id: npcId, kind: "npc", name: "新旅人", createdAtTurn: 1, lifecycle: "active" },
+      identity: { role: "旅人", description: "", tags: [] },
+      position: { locationId: LOC_1, locationOrder: 5 },
+      npc: {
+        isCompanion: false, met: false,
+        memory: { ...memoryOf(npcId), knownFactIds: [FACT_1] },
+      },
+    });
+    const next = okApply(world(), [
+      { kind: "create_entities", records: [created] },
+      interaction({ npcId, learnedFactIds: [FACT_1], topic: { kind: "fact", factId: FACT_1 } }),
+    ]);
+    expect(lastInteraction(next, npcId).learnedFactIds).toEqual([FACT_1]);
+  });
+
+  it("quest topic 不在本闸门的验证范围内：没有 Quest record 也能记录", () => {
+    const next = okApply(world(), [interaction({ topic: { kind: "quest", questId: asQuestId("quest_missing") } })]);
+    expect(lastInteraction(next).topic).toEqual({ kind: "quest", questId: asQuestId("quest_missing") });
+  });
+
   it("载荷键集合恰好等于声明：relationshipDelta、summary 与整块 history 都进不来", () => {
     // 负编译探针（同 3B/4B 惯例）：多余键写成字面量即 typecheck 失败，
     // 锁的是 EntityMutation 的载荷形状（RecordInteractionPayloadKeysLock），不是夹具自己。
@@ -1555,15 +1590,16 @@ describe("applyEntityMutations — record_npc_interaction", () => {
   });
 
   it("topic 是可缺省键：省略即不留字段，给出则逐字保留", () => {
-    const next = okApply(world(), [
+    const knowledgeable = okApply(world(), [recordKnowledge({ factId: FACT_1 })]);
+    const next = okApply(knowledgeable, [
       interaction({ actionId: "act_general" }),
       interaction({ actionId: "act_fact", topic: { kind: "fact", factId: FACT_1 }, topicSummary: "询问线索" }),
     ]);
     const entries = historyOf(next);
     expect("topic" in entries[0]!).toBe(false);
     expect(entries[1]!.topic).toEqual({ kind: "fact", factId: FACT_1 });
-    // learnedFactIds 原样携带（引用存在性另有 Task 5B 的知识通道负责）。
-    const withFacts = okApply(world(), [interaction({ learnedFactIds: [FACT_1] })]);
+    // learnedFactIds 原样携带；主体 knowledge 引用闸门在 append 前负责越界拒绝。
+    const withFacts = okApply(knowledgeable, [interaction({ learnedFactIds: [FACT_1] })]);
     expect(lastInteraction(withFacts).learnedFactIds).toEqual([FACT_1]);
   });
 
