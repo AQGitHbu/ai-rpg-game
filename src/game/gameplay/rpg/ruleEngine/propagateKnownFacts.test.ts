@@ -222,7 +222,7 @@ describe("propagateKnownFacts", () => {
     }]);
   });
 
-  it("已经知道该事实的 NPC 零写入，provenance 不被重铸", () => {
+  it("已经知道该事实的 NPC 重放后没有任何 record 被重建，provenance 不被重铸", () => {
     const seeded = propagateKnownFacts(makeWs(), [
       { factId: asFactId("f_1"), change: "discovered", source: "player_told", audience: [asNpcId("npc_1")] },
     ], EVIDENCE);
@@ -375,6 +375,8 @@ describe("propagateKnownFacts", () => {
   it("suspected 被传播升级为 known，source 逐字不动（R5-4b 行为变化）", () => {
     // 会因何生产改动而失败：兼容 memory.knownFactIds 是「所有」entry（含 suspected），
     // 改线前那份过滤器就靠它把这条写入整个拦掉——过滤器一回来，certainty 就还是 suspected。
+    // 生产不可达：唯一的 FactChange 生产者不带 audience（resolveByType.ts:280-282），
+    // 所以本变化今天不改变任何已发布行为。
     const seeded = okApply(makeWs(), [{
       kind: "record_npc_knowledge", npcId: asNpcId("npc_1"), factId: asFactId("f_1"),
       certainty: "suspected", disclosure: "public",
@@ -395,6 +397,8 @@ describe("propagateKnownFacts", () => {
     // 会因何生产改动而失败：domain 那份拷贝能在事实离开 hiddenFactIds 时顺手降级 disclosure；
     // 传播层一旦自己去「对齐」披露（走 set_npc_knowledge_disclosure），secret 那半断言就红。
     // npc_2 那半负责排除假绿：本批确实写进了权威，只是动不了既有条目的披露。
+    // 生产不可达：唯一的 FactChange 生产者不带 audience（resolveByType.ts:280-282），
+    // 所以本变化今天不改变任何已发布行为。
     const seeded = okApply(makeWs(), [{
       kind: "record_npc_knowledge", npcId: asNpcId("npc_1"), factId: asFactId("f_1"),
       certainty: "known", disclosure: "secret",

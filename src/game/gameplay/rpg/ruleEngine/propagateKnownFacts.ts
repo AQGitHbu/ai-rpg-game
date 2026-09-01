@@ -63,8 +63,10 @@ export function propagateKnownFacts(
   // 零写入的唯一证据仍是「原样带回调用方那个对象」：幂等来自权威的 changed:false，
   // 而不是本地再去重（改线前的 Map + 兼容 knownFactIds 过滤器两者都在这里被删掉）。
   if (mutations.length === 0) return ws;
-  // 存在性与说话人已按 canonical 引用集合预筛，certainty 也固定是缺省的 known（升级方向），
-  // 所以整批在此被拒只剩「存档本身不合法」或有人新增了本层看不到的写入条件：真不变量违背，
+  // 存在性与说话人已按 canonical 引用集合预筛。certainty 只可能来自 deps 的缺省：本层签名不提供该
+  // 字段，默认 known 是映射面 npcKnowledge 给的，本层只是原样转发。R5-4b 已定归属——将来要实现
+  // 「传闻不得硬化」，是在调用方传 certainty，不是回来加预筛过滤器；那一天这一支必须改成逐条失败处理，
+  // 不能整批抛。所以此刻整批被拒只剩「存档本身不合法」或有人新增了本层看不到的写入条件：真不变量违背，
   // 不再是改线前那种「拿合法输入也会撞墙」的正常路径。
   const applied = applyEntityMutations(ws, mutations);
   if (!applied.ok) throw new EntityMutationInvariantError(applied);
