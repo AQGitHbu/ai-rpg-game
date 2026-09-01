@@ -1,9 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { compileCandidateEvent } from "./compileCandidateEvent";
-import { entitiesOfKind } from "@/game/domain/entity";
 import type { ApprovedEventCandidate } from "./approveCandidateEvents";
 import { asNpcId, asFactId, asEnemyId, asLocationId, asGenerationId, type GenerationMetadata } from "@/game/domain/worldEntity";
-import { findNpc } from "@/game/domain/worldState";
 import type {
   EnemyEntry, LocationEntry, NpcEntry, PlayerState, WorldFactEntry, WorldState,
 } from "@/game/domain/worldState";
@@ -114,26 +112,6 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
     expect(fact?.discovered).toBe(true);
   });
 
-  it("npc_changes_stance → 关系/情绪结构化变化事件", () => {
-    const c: ApprovedEventCandidate = {
-      ...approved("npc_changes_stance"),
-      proposedEffects: [{ kind: "npc_changes_stance", npcId: asNpcId("npc_1"), stance: "friendly" }],
-      involvedEntityIds: ["npc_1"],
-    };
-    const result = compileCandidateEvent(makeWorldState(), c, DEPS);
-    expect(result.events.length).toBeGreaterThan(0);
-    expect(result.events.some((e) => e.type === "candidate_event_activated")).toBe(true);
-    const npcAfter = findNpc(result.worldState, asNpcId("npc_1"));
-    expect(npcAfter?.memory.emotion).not.toBe("neutral");
-    // 桥只写可观察差量：情绪进 dynamicState，其余组件逐字不变。
-    const before = entitiesOfKind(makeWorldState().entityStore, "npc").find((record) => String(record.core.id) === "npc_1")!;
-    const after = entitiesOfKind(result.worldState.entityStore, "npc").find((record) => String(record.core.id) === "npc_1")!;
-    expect(after.dynamicState.emotion).toBe("warm");
-    expect(after.knowledge).toEqual(before.knowledge);
-    expect(after.history).toEqual(before.history);
-    expect(after.relationships).toEqual(before.relationships);
-  });
-
   it("hostile_force_acts → 张力/威胁结构事件，World 不被任意修改", () => {
     const c: ApprovedEventCandidate = {
       ...approved("hostile_force_acts"),
@@ -183,13 +161,19 @@ describe("compileCandidateEvent 每种 kind 至少编译为真实领域事件", 
     expect(result.worldState.unlockedLocationIds).toContain(asLocationId("loc_2"));
   });
 
-  it("编译不产生任意 path patch：未知 effect kind 直接拒绝", () => {
-    const bad = {
+  it("旧候选效果不再可编译时无写入丢弃，不抛错且返回稳定 reason", () => {
+    const legacyKind = ["npc", "changes", "stance"].join("_");
+    const input = makeWorldState();
+    const stale = {
       ...approved("npc_reveals_fact"),
-      proposedEffects: [{ kind: "arbitrary_patch", path: "x" }],
-    };
-    // 运行时拒绝未知 effect kind（封闭 union 之外一律报错）
-    expect(() => compileCandidateEvent(makeWorldState(), bad as unknown as ApprovedEventCandidate, DEPS))
-      .toThrow();
+      kind: legacyKind,
+      proposedEffects: [{ kind: legacyKind, npcId: asNpcId("npc_1"), stance: "friendly" }],
+    } as unknown as ApprovedEventCandidate;
+
+    const result = compileCandidateEvent(input, stale, DEPS);
+
+    expect(result.worldState).toBe(input);
+    expect(result.events).toEqual([]);
+    expect(result.dropReason).toBe("stale_effect_kind");
   });
 });

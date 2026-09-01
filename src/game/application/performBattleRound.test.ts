@@ -10,6 +10,7 @@ import type { NpcInteraction } from "@/game/domain/worldEntries";
 import { asEnemyId, asFactId, asLocationId, asNpcId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import type { FactId } from "@/game/domain/worldEntity";
 import { asCombatantId } from "@/game/domain/combat";
+import { asTurnId } from "@/game/domain/events";
 import { createInitialWorldState } from "@/game/domain/worldState";
 import { createInitialStoryState } from "@/game/domain/storyState";
 import type { GameEvent } from "@/game/domain/events";
@@ -20,6 +21,7 @@ import {
   type NpcEntityRecord,
 } from "@/game/domain/entity";
 import { applyEntityMutations } from "@/game/gameplay/rpg/entityWorld";
+import { resolveTurn } from "@/game/gameplay/rpg/ruleEngine";
 
 function createInMemoryRepo(record: GameRecord | null): { repo: GameRepository; getRecord: () => GameRecord | null; getApplyCount: () => number } {
   let current: GameRecord | null = record;
@@ -478,27 +480,25 @@ function activeSnapshotOf(worldState: WorldState): BattleStartSnapshot {
   return worldState.battle.preBattleSnapshot;
 }
 
-/** 战斗回合内可被规则批准的唯一 NPC 写入：候选事件 npc_changes_stance。 */
-function stanceCandidateStoryState(): StoryState {
-  const candidate: EventCandidate = {
-    id: "cand_battle_stance",
-    kind: "npc_changes_stance",
+function staleCandidateStoryState(): StoryState {
+  const legacyKind = ["npc", "changes", "stance"].join("_");
+  const candidate = {
+    id: "cand_battle_stale",
+    kind: legacyKind,
     involvedEntityIds: [String(NPC_ID)],
     prerequisiteFactIds: [],
-    proposedEffects: [{ kind: "npc_changes_stance", npcId: NPC_ID, stance: "hostile" }],
+    proposedEffects: [{ kind: legacyKind, npcId: NPC_ID, stance: "hostile" }],
     intendedPacing: "escalate",
-    reason: "战斗逼出敌意",
+    reason: "历史存档中的旧候选效果",
     proposedAtTurn: 1,
     expiresAtTurn: 99,
-  };
+  } as unknown as EventCandidate;
   return { ...createBattleStoryState(), candidateEventPool: [candidate] };
 }
 
 /**
- * 战斗中改写 knowledge / relationships / history：走唯一的生产写入桥
- * （compileLegacyNpcSync 折叠差量 + sync_npc_legacy_memory 落库 + commitState CAS）。
- * 今天没有任何战斗内规则会写这三层（战斗 resolver 只产 facts: []，
- * propagateKnownFacts 的 audience 尚无生产来源），但回滚契约必须先按分层组件已写入
+ * 战斗中改写 dynamic / knowledge / relationships / history：情绪走窄的
+ * set_npc_emotion，另外三层仍走现有生产写入桥。回滚契约必须先按分层组件已写入
  * 的世界状态证明，否则 Task 3/5/7 接入战斗内知识、关系与历史时会静默丢档。
  */
 async function writeNpcLayersMidBattle(harness: InMemoryHarness): Promise<number> {
@@ -528,6 +528,10 @@ async function writeNpcLayersMidBattle(harness: InMemoryHarness): Promise<number
     kind: "sync_npc_legacy_memory",
     npcId: NPC_ID,
     npc: layers,
+  }, {
+    kind: "set_npc_emotion",
+    npcId: NPC_ID,
+    emotion: "afraid",
   }]);
   if (!applied.ok) throw new Error(`fixture must be able to write npc layers: ${applied.code}`);
   const committed = await commitState(harness.repo, {
@@ -549,7 +553,7 @@ type MidBattleFixture = Readonly<{
   revision: number;
 }>;
 
-/** 开战 → 非终结回合（候选改情绪）→ 桥写三层，交给终结回合做回滚断言。 */
+/** 开战 → 非终结回合 → 分层写入（含窄情绪 mutation），交给终结回合做回滚断言。 */
 async function driveBattleUntilMidBattleNpcWrites(): Promise<MidBattleFixture> {
   const worldState = layeredBattleWorld();
   const preBattleStore = worldState.entityStore;
@@ -558,7 +562,7 @@ async function driveBattleUntilMidBattleNpcWrites(): Promise<MidBattleFixture> {
   const harness = createInMemoryRepo({
     gameId: GAME_ID,
     worldState,
-    storyState: stanceCandidateStoryState(),
+    storyState: createBattleStoryState(),
     revision: 0,
     createdAt: "2026-01-01",
   });
@@ -632,7 +636,7 @@ describe("performBattleRound：NPC 分层组件的战前快照与回滚", () => 
     const { repo, getRecord } = createInMemoryRepo({
       gameId: GAME_ID,
       worldState,
-      storyState: stanceCandidateStoryState(),
+      storyState: createBattleStoryState(),
       revision: 0,
       createdAt: "2026-01-01",
     });
@@ -666,8 +670,12 @@ describe("performBattleRound：NPC 分层组件的战前快照与回滚", () => 
     expect(persisted.history).toEqual(JSON.parse(JSON.stringify(preBattleNpc.history)));
     expect(snapshotNpc).toEqual(preBattleNpc);
     expect(snapshot.eventLedger).toEqual(worldState.eventLedger);
-    // 战斗回合确实写了活记录：快照与当前 store 必须已经分叉。
-    expect(npcRecordOf(record.worldState.entityStore).dynamicState.emotion).toBe("afraid");
+    // 战斗内窄 mutation 确实写了活记录：快照与当前 store 必须已经分叉。
+    const revision = await writeNpcLayersMidBattle({ repo, getRecord, getApplyCount: () => 0 });
+    const written = getRecord();
+    if (written === null) throw new Error("fixture must keep an active game");
+    expect(revision).toBe(2);
+    expect(npcRecordOf(written.worldState.entityStore).dynamicState.emotion).toBe("afraid");
     expect(snapshotNpc.dynamicState.emotion).toBe("warm");
 
     // 反空转 canary：只由 legacy 兼容投影重建的 store 无法还原这些层，
@@ -677,6 +685,45 @@ describe("performBattleRound：NPC 分层组件的战前快照与回滚", () => 
       createdAtTurn: 0,
     }));
     expect(legacyOnly).not.toEqual(preBattleNpc);
+  });
+
+  it("旧存档候选在真实回合中完成并从池移除，而不编译为情绪写入", async () => {
+    const worldState = layeredBattleWorld();
+    const storyState = staleCandidateStoryState();
+    const harness = createInMemoryRepo({
+      gameId: GAME_ID,
+      worldState,
+      storyState,
+      revision: 0,
+      createdAt: "2026-01-01",
+    });
+
+    const resolved = resolveTurn(
+      worldState,
+      storyState,
+      { type: "attack", enemyId: ENEMY_ID },
+      "stale_candidate_round",
+      0,
+      asTurnId("stale_candidate_round"),
+      "fixed_choice",
+      { now: CLOCK },
+    );
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.resolution.domainEvents.some((event) => event.type === "candidate_event_approved")).toBe(true);
+    expect(resolved.resolution.domainEvents.some((event) => event.type === "candidate_event_activated")).toBe(false);
+    const committed = await commitState(harness.repo, {
+      gameId: GAME_ID,
+      expectedRevision: 0,
+      nextWorldState: resolved.resolution.nextWorldState,
+      nextStoryState: resolved.resolution.nextStoryState,
+    });
+
+    expect(committed.ok).toBe(true);
+    const record = harness.getRecord();
+    if (record === null) throw new Error("fixture must keep an active game");
+    expect(record.storyState.candidateEventPool).toEqual([]);
+    expect(npcRecordOf(record.worldState.entityStore).dynamicState.emotion).toBe("warm");
   });
 
   it("restores all five NPC layers after defeat", async () => {

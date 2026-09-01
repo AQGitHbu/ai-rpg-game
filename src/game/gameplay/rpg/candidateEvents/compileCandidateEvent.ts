@@ -3,12 +3,11 @@ import type { GameEvent } from "@/game/domain/events";
 import type { ApprovedEventCandidate } from "./approveCandidateEvents";
 import type { ProposedEffect } from "@/game/domain/candidateEvent";
 import { applyEntityMutations, EntityMutationInvariantError } from "@/game/gameplay/rpg/entityWorld";
-import { compileLegacyNpcSync, entitiesOfKind, projectNpcEntry } from "@/game/domain/entity";
 
 // ---------------------------------------------------------------------------
 // 纯候选事件编译（Spec §11.2 / Task 19）
 // 把已批准的候选事件逐 effect 编译为真实 GameEvent 和 WorldState 变化。
-// effect 必须是封闭 union，禁止任意 path patch；未知 kind 直接抛错。
+// effect 必须是封闭 union，禁止任意 path patch；旧存档中的未知 kind 丢弃。
 // 纯函数：不读取时钟/随机数/AI/DB；时间由调用方注入 deps.now。
 // ---------------------------------------------------------------------------
 
@@ -26,7 +25,11 @@ export type CompileCandidateEventResult = {
   readonly worldState: WorldState;
   /** 编译产生的真实领域事件 + candidate_event_activated 审计事件。 */
   readonly events: readonly GameEvent[];
+  /** 旧存档携带不可再表示的 effect 时的稳定诊断。 */
+  readonly dropReason?: CompileCandidateEventDropReason;
 };
+
+export type CompileCandidateEventDropReason = "stale_effect_kind";
 
 export function compileCandidateEvent(
   worldState: WorldState,
@@ -39,6 +42,9 @@ export function compileCandidateEvent(
 
   for (const effect of candidate.proposedEffects) {
     const compiled = applyEffect(ws, effect, { occurredAt, actionId: deps.actionId, turnNumber: deps.turnNumber });
+    if ("dropReason" in compiled) {
+      return { worldState, events: [], dropReason: compiled.dropReason };
+    }
     ws = compiled.worldState;
     events.push(...compiled.events);
   }
@@ -61,7 +67,7 @@ function applyEffect(
   ws: WorldState,
   effect: ProposedEffect,
   context: CompileEffectContext,
-): { worldState: WorldState; events: readonly GameEvent[] } {
+): { worldState: WorldState; events: readonly GameEvent[] } | { dropReason: CompileCandidateEventDropReason } {
   const { occurredAt } = context;
   const mutate = (mutation: Parameters<typeof applyEntityMutations>[1]) => {
     const applied = applyEntityMutations(ws, mutation);
@@ -73,34 +79,6 @@ function applyEffect(
       const event: GameEvent = { type: "fact_discovered", factId: effect.factId, occurredAt };
       return {
         worldState: { ...mutate([{ kind: "discover_fact", factId: effect.factId }]), eventLedger: [...ws.eventLedger, event] },
-        events: [event],
-      };
-    }
-    case "npc_changes_stance": {
-      const event: GameEvent = {
-        type: "npc_met",
-        npcId: effect.npcId,
-        occurredAt,
-        interactionKind: "greet",
-      };
-      const before = entitiesOfKind(ws.entityStore, "npc").find((record) => record.core.id === effect.npcId);
-      if (before === undefined) throw new EntityMutationInvariantError({ code: "unknown_entity_id", entityId: effect.npcId });
-      const legacy = projectNpcEntry(before);
-      const stance = effect.stance === "hostile" ? "afraid" : effect.stance === "friendly" ? "warm" : effect.stance === "guarded" ? "guarded" : "neutral";
-      // 立场只改情绪：不新增知识（addedKnowledge 为空），也不追加交互记录。
-      const nextWorldState = mutate([{
-        kind: "sync_npc_legacy_memory",
-        npcId: effect.npcId,
-        npc: compileLegacyNpcSync({
-          before,
-          afterLegacy: { ...legacy, memory: { ...legacy.memory, emotion: stance } },
-          actionId: context.actionId,
-          turnNumber: context.turnNumber,
-          addedKnowledge: [],
-        }),
-      }]);
-      return {
-        worldState: { ...nextWorldState, eventLedger: [...nextWorldState.eventLedger, event] },
         events: [event],
       };
     }
@@ -154,7 +132,8 @@ function applyEffect(
     }
     default: {
       const _exhaustive: never = effect;
-      throw new Error(`compileCandidateEvent: 不支持的 effect kind ${String(_exhaustive)}`);
+      void _exhaustive;
+      return { dropReason: "stale_effect_kind" };
     }
   }
 }

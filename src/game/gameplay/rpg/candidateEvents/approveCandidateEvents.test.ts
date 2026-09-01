@@ -159,6 +159,23 @@ describe("approveCandidateEvents 审批失败矩阵", () => {
 });
 
 describe("approveCandidateEvents 成功路径", () => {
+  it("旧候选效果未被审批层识别时仍会通过，故编译器丢弃路径必须兜底", () => {
+    const legacyKind = ["npc", "changes", "stance"].join("_");
+    const stale = {
+      ...candidate({ id: "ce-stale" }),
+      kind: legacyKind,
+      proposedEffects: [{ kind: legacyKind, npcId: NPC_1.id, stance: "hostile" }],
+    } as unknown as EventCandidate;
+    const result = approveCandidateEvents({ worldState: makeWorldState(), storyState: makeSs(), candidates: [stale] }, { now: NOW });
+
+    // validateCandidateEntities 的 switch 会落空；这是编译器 drop reason 的 load-bearing 输入。
+    expect(result).toMatchObject({
+      approvedCandidates: [{ id: "ce-stale", kind: legacyKind }],
+      rejected: [],
+      nextStoryState: { candidateEventPool: [] },
+    });
+  });
+
   it("批准成功后生成 ApprovedEvent 与审计事件，并消耗事件预算", () => {
     const ss = makeSs();
     const result = approveCandidateEvents({ worldState: makeWorldState(), storyState: ss, candidates: [candidate()] }, { now: NOW });
