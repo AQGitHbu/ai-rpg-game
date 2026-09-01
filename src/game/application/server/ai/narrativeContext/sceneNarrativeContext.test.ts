@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asFactId, asLocationId, asNpcId, asQuestId } from "@/game/domain/worldEntity";
+import { asFactId, asLocationId, asNpcId, asQuestId, PLAYER_ENTITY_ID } from "@/game/domain/worldEntity";
 import { asNarrativeJobId, asTurnId } from "@/game/domain/events";
 import { createPendingNarrativeJob } from "@/game/domain/pendingNarrativeJob";
 import type { SceneGenerationContext } from "@/game/application/sceneGenerationContext";
@@ -260,6 +260,36 @@ function makeSceneContext(): SceneGenerationContext {
       name: "韩镖头",
       role: "旧镖局镖头",
       publicProfile: "受伤后隐居客栈的前任镖头",
+      identityAnchors: {
+        selfConcept: "守旧的镖头",
+        values: ["守信"],
+        speechStyle: "克制直接",
+        capabilityBoundaries: ["不替人定罪"],
+        taboos: ["不泄露无辜者秘密"],
+      },
+      speechAuthority: {
+        speakerNpcId: asNpcId("npc_focus"),
+        responseTier: "trusted",
+        allowedFactIds: [asFactId("fact_focus_1"), asFactId("fact_shared")],
+        withheldFactIds: [asFactId("fact_focus_secret")],
+        allowedFactCards: [
+          { factId: asFactId("fact_focus_1"), text: "韩镖头认得失踪当夜留下的镖旗断口。" },
+          { factId: asFactId("fact_shared"), text: "当前场景可见线索：后门锁孔残留松脂。" },
+        ],
+        allowedInteractionActionIds: ["interaction_1", "interaction_2", "interaction_3", "interaction_4", "interaction_5"],
+        recentInteractions: [],
+        identityAnchors: {
+          selfConcept: "守旧的镖头",
+          values: ["守信"],
+          speechStyle: "克制直接",
+          capabilityBoundaries: ["不替人定罪"],
+          taboos: ["不泄露无辜者秘密"],
+        },
+        activeGoals: ["查出吞镖内应", "保住旧镖局幸存者"],
+        relationships: [{ targetId: PLAYER_ENTITY_ID, stage: "cooperative", trend: "improving", openCommitments: [] }],
+        relationship: { targetId: PLAYER_ENTITY_ID, stage: "cooperative", trend: "improving", openCommitments: [] },
+        evidenceKeys: ["supported_fact"],
+      },
       responsePolicy: {
         tier: "friendly",
         toneInstruction: "先接玩家的话，再给可核验线索。",

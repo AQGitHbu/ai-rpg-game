@@ -97,13 +97,31 @@ function repairInstruction(context: SceneGenerationContext): string {
 function focusContent(context: SceneGenerationContext): string {
   const focus = context.focusNpcContext;
   if (focus === undefined) return "无焦点 NPC；npcLine 必须为 null。";
+  const authority = focus.speechAuthority;
+  if (authority === undefined || focus.identityAnchors === undefined) {
+    const interactions = focus.recentInteractions
+      .map((interaction) => `${interaction.actionId}：dialogueAct=${interaction.dialogueAct}；topicSummary=${interaction.topicSummary}；outcome=${interaction.outcome}；summary=${interaction.summary}`)
+      .join("\n") || "无（usedInteractionActionIds 必须为 []）";
+    return `id=${focus.id}；${focus.name}（${focus.role}）；公开档案=${focus.publicProfile}；\n` +
+      `回应政策：tier=${focus.responsePolicy.tier}；tone=${focus.responsePolicy.toneInstruction}；initiative=${focus.responsePolicy.initiative}；允许披露事实 ID=[${focus.responsePolicy.allowedDisclosureFactIds.join(", ")} ]；私密知识必须扣留，正文不得编造或泄露；\n` +
+      `目标=${focus.goals.join("、") || "无"}；情绪=${focus.emotion}；thisTurn.outcome=${focus.thisTurn.outcome}；\n` +
+      `可说线索卡：${factCards(focus.speakableFactCards)}；\n` +
+      `最近结构化交互（最多 5 条）：\n${interactions}`;
+  }
+  const anchors = authority.identityAnchors;
+  const relations = authority.relationships
+    .filter((relation) => context.presentNpcs.some((npc) => String(npc.id) === String(relation.targetId)) || String(relation.targetId) === "player_0")
+    .map((relation) => `${relation.targetId}：stage=${relation.stage}；trend=${relation.trend}；openCommitments=${relation.openCommitments.map((commitment) => `${commitment.kind}:${commitment.description}`).join("、") || "无"}`)
+    .join("\n") || "无明确相关关系";
   const interactions = focus.recentInteractions
     .map((interaction) => `${interaction.actionId}：dialogueAct=${interaction.dialogueAct}；topicSummary=${interaction.topicSummary}；outcome=${interaction.outcome}；summary=${interaction.summary}`)
     .join("\n") || "无（usedInteractionActionIds 必须为 []）";
   return `id=${focus.id}；${focus.name}（${focus.role}）；公开档案=${focus.publicProfile}；\n` +
-    `回应政策：tier=${focus.responsePolicy.tier}；tone=${focus.responsePolicy.toneInstruction}；initiative=${focus.responsePolicy.initiative}；允许披露事实 ID=[${focus.responsePolicy.allowedDisclosureFactIds.join(", ")}]；私密知识必须扣留，正文不得编造或泄露；\n` +
-    `目标=${focus.goals.join("、") || "无"}；情绪=${focus.emotion}；thisTurn.outcome=${focus.thisTurn.outcome}；\n` +
-    `可说线索卡：${factCards(focus.speakableFactCards)}；\n` +
+    `人格锚点：selfConcept=${anchors.selfConcept}；values=${anchors.values.join("、") || "无"}；speechStyle=${anchors.speechStyle}；capabilityBoundaries=${anchors.capabilityBoundaries.join("、") || "无"}；taboos=${anchors.taboos.join("、") || "无"}；\n` +
+    `回应政策：tier=${focus.responsePolicy.tier}；tone=${focus.responsePolicy.toneInstruction}；initiative=${focus.responsePolicy.initiative}；允许披露事实 ID=[${authority.allowedFactIds.join(", ")}]；私密知识必须扣留，正文不得编造或泄露；\n` +
+    `目标=${authority.activeGoals.join("、") || "无"}；情绪=${focus.emotion}；thisTurn.outcome=${focus.thisTurn.outcome}；\n` +
+    `相关关系：\n${relations}\n证据 keys=[${authority.evidenceKeys.join(", ") || "无"}]；\n` +
+    `可说线索卡：${factCards(authority.allowedFactCards)}；\n` +
     `最近结构化交互（最多 5 条）：\n${interactions}`;
 }
 
@@ -173,11 +191,8 @@ export function buildSceneNarrativeContextBlocks(
   const activeQuest = story.activeQuest === undefined
     ? "无已解析的当前主线摘要；沿用目标转换和 NPC 可说事实。"
     : `主线=${story.activeQuest.name}；主线说明=${story.activeQuest.description}；当前目标=${story.activeQuest.objectiveLabel}（${story.activeQuest.objectiveKind}，序号${story.activeQuest.objectiveIndex}）`;
-  const allowedFactIds = focus === undefined ? [] : [...new Set([
-    ...focus.speakableFactCards.map((fact) => String(fact.factId)),
-    ...context.presentNpcs.flatMap((npc) => npc.sceneVisibleFactIds.map(String)),
-  ])];
-  const allowedInteractionIds = focus?.recentInteractions.map((interaction) => interaction.actionId) ?? [];
+  const allowedFactIds = focus?.speechAuthority?.allowedFactIds.map(String) ?? focus?.speakableFactCards.map((fact) => String(fact.factId)) ?? [];
+  const allowedInteractionIds = focus?.speechAuthority?.allowedInteractionActionIds ?? focus?.recentInteractions.map((interaction) => interaction.actionId) ?? [];
   const objective = after === null
     ? "无当前目标；objectiveLink 必须为 null。"
     : `当前目标：${after.label}；objectiveLink 必须为 {"questId":"${after.questId}","objectiveIndex":${after.objectiveIndex},"mode":"${objectiveMode(context)}"}。`;

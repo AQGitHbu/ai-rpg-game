@@ -1,7 +1,7 @@
 import type { Action } from "@/game/domain/action";
 import type { EvolutionNeed } from "@/game/domain/worldDelta";
 import type { QuestObjective, WorldState } from "@/game/domain/worldState";
-import { projectEntityStore } from "@/game/domain/entity";
+import { entitiesOfKind, projectEntityStore } from "@/game/domain/entity";
 import type { WorldEvolutionSourceContext } from "@/game/application/worldEvolutionSource";
 import { currentObjectiveOf } from "@/game/gameplay/rpg/narrativeContext";
 import { compileNarrativeContext } from "./compileNarrativeContext";
@@ -158,14 +158,17 @@ export function buildWorldNarrativeContextBlocks(
     ? undefined
     : activeQuest.objectives[currentObjective.objectiveIndex];
   const targetEntityId = objectiveEntityId(currentQuestObjective);
-  const hiddenFactIds = new Set(world.npcs.flatMap((npc) => npc.memory.hiddenFactIds.map(String)));
+  const npcRecords = entitiesOfKind(context.worldState.entityStore, "npc");
+  const hiddenFactIds = new Set(npcRecords.flatMap((npc) => npc.knowledge.entries
+    .filter((entry) => entry.disclosure === "secret")
+    .map((entry) => String(entry.factId))));
   const publicFacts = world.worldFacts.filter((fact) => fact.discovered && !hiddenFactIds.has(String(fact.factId)));
   const disclosedPublicFactIds = new Set(publicFacts.map((fact) => String(fact.factId)));
   const privateFactTexts = world.worldFacts
     .filter((fact) => hiddenFactIds.has(String(fact.factId)))
     .map((fact) => fact.text)
     .filter((text) => text.trim() !== "");
-  const privateInteractionTexts = world.npcs.flatMap((npc) => npc.memory.interactionHistory.flatMap((interaction) => [
+  const privateInteractionTexts = npcRecords.flatMap((npc) => npc.history.interactions.flatMap((interaction) => [
     interaction.topicSummary,
     interaction.summary,
   ])).filter((text) => text.trim() !== "");
@@ -264,15 +267,15 @@ export function buildWorldNarrativeContextBlocks(
     }));
   }
 
-  for (const npc of world.npcs) {
+  for (const npc of npcRecords) {
     const priority = detailPriority({
-      id: String(npc.id), highPriorityIds,
+      id: String(npc.core.id), highPriorityIds,
       nearbyIds: new Set(world.npcs.filter((entry) => nearbyLocationIds.has(String(entry.locationId))).map((entry) => String(entry.id))),
     });
     blocks.push(worldBlock({
-      id: `world:npc:${npc.id}`, slot: "current_state", title: `角色 ${npc.name}`, sourceKind: "world_state", sourceRefs: [String(npc.id), String(npc.locationId)],
+      id: `world:npc:${npc.core.id}`, slot: "current_state", title: `角色 ${npc.core.name}`, sourceKind: "world_state", sourceRefs: [String(npc.core.id), String(npc.position.locationId)],
       authority: "state", retention: "optional", priority,
-      content: `id=${npc.id}；name=${npc.name}；role=${npc.role}；locationId=${npc.locationId}；goals=${npc.memory.goals.join("、") || "无"}。`,
+      content: `id=${npc.core.id}；name=${npc.core.name}；role=${npc.identity.role}；locationId=${npc.position.locationId}；goals=${npc.dynamicState.goals.filter((goal) => goal.status === "active" || goal.status === "blocked").map((goal) => goal.description).join("、") || "无"}。`,
     }));
   }
 

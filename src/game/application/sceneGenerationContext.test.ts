@@ -185,7 +185,7 @@ describe("buildSceneGenerationContext", () => {
       id: npc1.id, name: npc1.name, role: npc1.role, publicProfile: npc1.description,
       knownFactCards: [], hiddenFactCards: [], sceneVisibleFactIds: [],
       recentInteractionSummaries: [], recentInteractionActionIds: [],
-      relationship: { affinity: 0 }, emotion: "neutral",
+      relationship: { stage: "unknown", trend: "stable" }, emotion: "neutral",
       goals: [], forbiddenKnowledgeIds: [],
     }]);
     expect(context.story.currentAct).toBe(1);
@@ -313,23 +313,15 @@ describe("buildSceneGenerationContext", () => {
     const npcAContext = context.presentNpcs.find((n) => String(n.id) === "npc_1")!;
     const npcBContext = context.presentNpcs.find((n) => String(n.id) === "npc_2")!;
     const serialized = JSON.stringify(context);
-    // npcA 的私密事实正文只出现在 npcA 自己的 hiddenFactCards，不出现在 npcB context / 全局文本
-    expect(npcAContext.hiddenFactCards.map((f) => f.text)).toContain("老板的秘密A");
-    expect(npcAContext.hiddenFactCards.map((f) => f.text)).not.toContain("客人的秘密B");
-    expect(npcBContext.hiddenFactCards.map((f) => f.text)).toContain("客人的秘密B");
-    expect(npcBContext.hiddenFactCards.map((f) => f.text)).not.toContain("老板的秘密A");
-    const countOf = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
-    // 新契约下 memory.knownFactIds 是 knowledge 全部 entry、hiddenFactIds 是其中
-    // disclosure === "secret" 的子集：主人的秘密在其自己的 known/hidden 两张卡各出现一次，
-    // 隔离性体现在「主人 context 块之外零出现」，而不是全局只出现一次。
+    // Private fact bodies never enter the scene context, including the owner NPC's card.
+    expect(npcAContext.hiddenFactCards).toEqual([]);
+    expect(npcBContext.hiddenFactCards).toEqual([]);
+    expect(serialized).not.toContain("老板的秘密A");
+    expect(serialized).not.toContain("客人的秘密B");
     const npcAJson = JSON.stringify(npcAContext);
     const npcBJson = JSON.stringify(npcBContext);
     expect(serialized).toContain(npcAJson);
     expect(serialized).toContain(npcBJson);
-    expect(countOf(npcAJson, "老板的秘密A")).toBe(2);
-    expect(countOf(npcBJson, "客人的秘密B")).toBe(2);
-    expect(countOf(serialized, "老板的秘密A") - countOf(npcAJson, "老板的秘密A")).toBe(0);
-    expect(countOf(serialized, "客人的秘密B") - countOf(npcBJson, "客人的秘密B")).toBe(0);
     // 其他 NPC 与所有全局投影都拿不到别人的私密事实正文
     expect(npcAContext.knownFactCards.map((f) => f.text)).not.toContain("客人的秘密B");
     expect(npcBContext.knownFactCards.map((f) => f.text)).not.toContain("老板的秘密A");
@@ -493,7 +485,7 @@ describe("buildSceneGenerationContext", () => {
     expect(context.focusNpcContext?.responsePolicy.initiative).toBe("reactive");
     expect(context.focusNpcContext?.emotion).toBe("neutral");
     // talk job 无 interaction → 本轮默认 neutral/0
-    expect(context.focusNpcContext?.thisTurn).toEqual({ relationshipDelta: 0, outcome: "neutral" });
+    expect(context.focusNpcContext?.thisTurn).toEqual({ outcome: "neutral" });
   });
 
   it("非对白行动抵达当前 talk_to_npc 目标时，焦点切到新目标而不是沿用旧 NPC", () => {
@@ -586,7 +578,7 @@ describe("buildSceneGenerationContext", () => {
     expect(context.focusNpcContext?.recentInteractions).toHaveLength(1);
     expect(context.focusNpcContext?.recentInteractions[0]?.actionId).toBe(IMPORTANT_ACTION_ID);
     // 本轮 delta/outcome 来自 actionId 匹配的 interaction
-    expect(context.focusNpcContext?.thisTurn).toEqual({ relationshipDelta: -2, outcome: "negative" });
+    expect(context.focusNpcContext?.thisTurn).toEqual({ outcome: "negative" });
   });
 
   it("把 provider job 的 generation/handoff 语义与完整 prepared graph 投影到 context", () => {
